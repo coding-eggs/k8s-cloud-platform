@@ -1,0 +1,69 @@
+server:
+  port: 8080
+
+k8s:
+  cloud:
+    kubeconfig:
+      aes-key: daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=
+
+# MyBatis 配置
+mybatis:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.coding.data.models
+  configuration:
+    map-underscore-to-camel-case: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+spring:
+  servlet:
+    multipart:
+      max-file-size: 5120MB
+      max-request-size: 5120MB
+      enabled: true
+  application:
+    name: k8s-cloud-platform
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${MYSQL_URL:jdbc:mysql://192.168.31.80:1234/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:coding}
+    hikari:
+      minimum-idle: 3
+      maximum-pool-size: 10
+      max-lifetime: 0
+      connection-test-query: SELECT 1
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          audiences: gateway-code-client
+          jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/oauth2/jwks}
+          type: JWS
+          jws:
+            secret: 1232131321312323123sdaAAAasss2AA
+            secret-alg: HS256
+
+#          jwe:
+#            secret: 123231sdsadweasdasdsaqA23vvssa22
+#            secret-alg: A256KW
+#            enc-method: A256GCM
+
+
+jwt:
+  enabled: true
+  data-key: data
+
+logging:
+  level:
+    root: info

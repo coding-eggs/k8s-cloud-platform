@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.k8s.K8sClusterMapper">
+  <resultMap id="BaseResultMap" type="com.coding.data.models.k8s.K8sCluster">
+    <id column="cluster_id" jdbcType="VARCHAR" property="clusterId" />
+    <result column="cluster_name" jdbcType="VARCHAR" property="clusterName" />
+    <result column="kubeconfig" jdbcType="VARCHAR" property="kubeconfig" />
+    <result column="version" jdbcType="VARCHAR" property="version" />
+    <result column="istio_version" jdbcType="VARCHAR" property="istioVersion" />
+    <result column="calico_version" jdbcType="VARCHAR" property="calicoVersion" />
+    <result column="container_runtime" jdbcType="VARCHAR" property="containerRuntime" />
+    <result column="description" jdbcType="VARCHAR" property="description" />
+    <result column="ip_stack" jdbcType="VARCHAR" property="ipStack" />
+    <result column="status" jdbcType="VARCHAR" property="status" />
+    <result column="enabled" jdbcType="BOOLEAN" property="enabled" />
+    <result column="last_heartbeat_time" jdbcType="TIMESTAMP" property="lastHeartbeatTime" />
+    <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
+  </resultMap>
+  <sql id="Base_Column_List">
+    cluster_id, cluster_name, kubeconfig, version, istio_version, calico_version, container_runtime, 
+    description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at
+  </sql>
+  <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
+    select 
+    <include refid="Base_Column_List" />
+    from k8s_cluster
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+  </select>
+    <select id="listAll" resultType="com.coding.data.models.k8s.K8sCluster">
+      select * from k8s_cluster
+    </select>
+    <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
+    delete from k8s_cluster
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+  </delete>
+  <insert id="insert" keyColumn="cluster_id" keyProperty="clusterId" parameterType="com.coding.data.models.k8s.K8sCluster" useGeneratedKeys="true">
+    insert into k8s_cluster (cluster_name, kubeconfig, version, 
+      istio_version, calico_version, container_runtime, 
+      description, ip_stack, `status`, 
+      enabled, last_heartbeat_time, created_at, 
+      updated_at)
+    values (#{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR}, 
+      #{istioVersion,jdbcType=VARCHAR}, #{calicoVersion,jdbcType=VARCHAR}, #{containerRuntime,jdbcType=VARCHAR}, 
+      #{description,jdbcType=VARCHAR}, #{ipStack,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR}, 
+      #{enabled,jdbcType=BOOLEAN}, #{lastHeartbeatTime,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP}, 
+      #{updatedAt,jdbcType=TIMESTAMP})
+  </insert>
+  <insert id="insertSelective" keyColumn="cluster_id" keyProperty="clusterId" parameterType="com.coding.data.models.k8s.K8sCluster" useGeneratedKeys="true">
+    insert into k8s_cluster
+    <trim prefix="(" suffix=")" suffixOverrides=",">
+      <if test="clusterName != null">
+        cluster_name,
+      </if>
+      <if test="kubeconfig != null">
+        kubeconfig,
+      </if>
+      <if test="version != null">
+        version,
+      </if>
+      <if test="istioVersion != null">
+        istio_version,
+      </if>
+      <if test="calicoVersion != null">
+        calico_version,
+      </if>
+      <if test="containerRuntime != null">
+        container_runtime,
+      </if>
+      <if test="description != null">
+        description,
+      </if>
+      <if test="ipStack != null">
+        ip_stack,
+      </if>
+      <if test="status != null">
+        `status`,
+      </if>
+      <if test="enabled != null">
+        enabled,
+      </if>
+      <if test="lastHeartbeatTime != null">
+        last_heartbeat_time,
+      </if>
+      <if test="createdAt != null">
+        created_at,
+      </if>
+      <if test="updatedAt != null">
+        updated_at,
+      </if>
+    </trim>
+    <trim prefix="values (" suffix=")" suffixOverrides=",">
+      <if test="clusterName != null">
+        #{clusterName,jdbcType=VARCHAR},
+      </if>
+      <if test="kubeconfig != null">
+        #{kubeconfig,jdbcType=VARCHAR},
+      </if>
+      <if test="version != null">
+        #{version,jdbcType=VARCHAR},
+      </if>
+      <if test="istioVersion != null">
+        #{istioVersion,jdbcType=VARCHAR},
+      </if>
+      <if test="calicoVersion != null">
+        #{calicoVersion,jdbcType=VARCHAR},
+      </if>
+      <if test="containerRuntime != null">
+        #{containerRuntime,jdbcType=VARCHAR},
+      </if>
+      <if test="description != null">
+        #{description,jdbcType=VARCHAR},
+      </if>
+      <if test="ipStack != null">
+        #{ipStack,jdbcType=VARCHAR},
+      </if>
+      <if test="status != null">
+        #{status,jdbcType=VARCHAR},
+      </if>
+      <if test="enabled != null">
+        #{enabled,jdbcType=BOOLEAN},
+      </if>
+      <if test="lastHeartbeatTime != null">
+        #{lastHeartbeatTime,jdbcType=TIMESTAMP},
+      </if>
+      <if test="createdAt != null">
+        #{createdAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="updatedAt != null">
+        #{updatedAt,jdbcType=TIMESTAMP},
+      </if>
+    </trim>
+  </insert>
+  <update id="updateByPrimaryKeySelective" parameterType="com.coding.data.models.k8s.K8sCluster">
+    update k8s_cluster
+    <set>
+      <if test="clusterName != null">
+        cluster_name = #{clusterName,jdbcType=VARCHAR},
+      </if>
+      <if test="kubeconfig != null">
+        kubeconfig = #{kubeconfig,jdbcType=VARCHAR},
+      </if>
+      <if test="version != null">
+        version = #{version,jdbcType=VARCHAR},
+      </if>
+      <if test="istioVersion != null">
+        istio_version = #{istioVersion,jdbcType=VARCHAR},
+      </if>
+      <if test="calicoVersion != null">
+        calico_version = #{calicoVersion,jdbcType=VARCHAR},
+      </if>
+      <if test="containerRuntime != null">
+        container_runtime = #{containerRuntime,jdbcType=VARCHAR},
+      </if>
+      <if test="description != null">
+        description = #{description,jdbcType=VARCHAR},
+      </if>
+      <if test="ipStack != null">
+        ip_stack = #{ipStack,jdbcType=VARCHAR},
+      </if>
+      <if test="status != null">
+        `status` = #{status,jdbcType=VARCHAR},
+      </if>
+      <if test="enabled != null">
+        enabled = #{enabled,jdbcType=BOOLEAN},
+      </if>
+      <if test="lastHeartbeatTime != null">
+        last_heartbeat_time = #{lastHeartbeatTime,jdbcType=TIMESTAMP},
+      </if>
+      <if test="createdAt != null">
+        created_at = #{createdAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="updatedAt != null">
+        updated_at = #{updatedAt,jdbcType=TIMESTAMP},
+      </if>
+    </set>
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+  </update>
+  <update id="updateByPrimaryKey" parameterType="com.coding.data.models.k8s.K8sCluster">
+    update k8s_cluster
+    set cluster_name = #{clusterName,jdbcType=VARCHAR},
+      kubeconfig = #{kubeconfig,jdbcType=VARCHAR},
+      version = #{version,jdbcType=VARCHAR},
+      istio_version = #{istioVersion,jdbcType=VARCHAR},
+      calico_version = #{calicoVersion,jdbcType=VARCHAR},
+      container_runtime = #{containerRuntime,jdbcType=VARCHAR},
+      description = #{description,jdbcType=VARCHAR},
+      ip_stack = #{ipStack,jdbcType=VARCHAR},
+      `status` = #{status,jdbcType=VARCHAR},
+      enabled = #{enabled,jdbcType=BOOLEAN},
+      last_heartbeat_time = #{lastHeartbeatTime,jdbcType=TIMESTAMP},
+      created_at = #{createdAt,jdbcType=TIMESTAMP},
+      updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+  </update>
+</mapper>

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn compile *)",
+      "Bash(jar tf *)",
+      "Bash(unzip -p \"/c/Users/wsail/.m2/repository/org/springframework/security/spring-security-oauth2-authorization-server/7.0.5/spring-security-oauth2-authorization-server-7.0.5-sources.jar\" org/springframework/security/oauth2/server/authorization/client/RegisteredClientRepository.java)",
+      "Bash(unzip -p \"/c/Users/wsail/.m2/repository/org/springframework/security/spring-security-oauth2-authorization-server/7.0.5/spring-security-oauth2-authorization-server-7.0.5-sources.jar\" org/springframework/security/oauth2/server/authorization/client/JdbcRegisteredClientRepository.java)",
+      "Bash(unzip -p \"/c/Users/wsail/.m2/repository/org/springframework/security/spring-security-oauth2-authorization-server/7.0.5/spring-security-oauth2-authorization-server-7.0.5-sources.jar\" org/springframework/security/oauth2/server/authorization/client/oauth2-registered-client-schema-createschema-mysql.sql)",
+      "Bash(unzip -p \"/c/Users/wsail/.m2/repository/org/springframework/security/spring-security-oauth2-authorization-server/7.0.5/spring-security-oauth2-authorization-server-7.0.5-sources.jar\" org/springframework/security/oauth2/server/authorization/client/oauth2-registered-client-schema.sql)",
+      "Bash(unzip -p \"/c/Users/wsail/.m2/repository/org/springframework/security/spring-security-oauth2-authorization-server/7.0.5/spring-security-oauth2-authorization-server-7.0.5-sources.jar\" org/springframework/security/oauth2/server/authorization/settings/ClientSettings.java)",
+      "Bash(unzip -p \"/c/Users/wsail/.m2/repository/org/springframework/security/spring-security-oauth2-authorization-server/7.0.5/spring-security-oauth2-authorization-server-7.0.5-sources.jar\" org/springframework/security/oauth2/server/authorization/client/RegisteredClient.java)",
+      "Bash(curl -sL \"https://unpkg.com/vue@3/dist/vue.global.prod.js\" -o \"/mnt/d/coding/k8s-cloud-platform/platform-auth/src/main/resources/static/assets/vue.global.prod.js\")",
+      "PowerShell(\\(New-Object Net.WebClient\\).DownloadFile\\(\"https://unpkg.com/vue@3/dist/vue.global.prod.js\", \"D:\\\\coding\\\\k8s-cloud-platform\\\\platform-auth\\\\src\\\\main\\\\resources\\\\static\\\\assets\\\\vue.global.prod.js\"\\))",
+      "PowerShell(\\(New-Object Net.WebClient\\).DownloadFile\\(\"https://unpkg.com/element-plus/dist/index.css\", \"D:\\\\coding\\\\k8s-cloud-platform\\\\platform-auth\\\\src\\\\main\\\\resources\\\\static\\\\assets\\\\index.css\"\\))",
+      "PowerShell(\\(New-Object Net.WebClient\\).DownloadFile\\(\"https://unpkg.com/element-plus/dist/index.full.min.js\", \"D:\\\\coding\\\\k8s-cloud-platform\\\\platform-auth\\\\src\\\\main\\\\resources\\\\static\\\\assets\\\\index.full.min.js\"\\))",
+      "PowerShell(\\(New-Object Net.WebClient\\).DownloadFile\\(\"https://unpkg.com/axios/dist/axios.min.js\", \"D:\\\\coding\\\\k8s-cloud-platform\\\\platform-auth\\\\src\\\\main\\\\resources\\\\static\\\\assets\\\\axios.min.js\"\\))"
+    ]
+  }
+}

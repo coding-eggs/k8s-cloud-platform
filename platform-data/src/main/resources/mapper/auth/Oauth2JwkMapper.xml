@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.auth.Oauth2JwkMapper">
+  <resultMap id="BaseResultMap" type="com.coding.data.models.auth.Oauth2Jwk">
+    <id column="id" jdbcType="VARCHAR" property="id" />
+    <result column="kid" jdbcType="VARCHAR" property="kid" />
+    <result column="kty" jdbcType="VARCHAR" property="kty" />
+    <result column="use" jdbcType="VARCHAR" property="use" />
+    <result column="alg" jdbcType="VARCHAR" property="alg" />
+    <result column="crv" jdbcType="VARCHAR" property="crv" />
+    <result column="jwk_json" jdbcType="VARCHAR" property="jwkJson" />
+    <result column="status" jdbcType="VARCHAR" property="status" />
+    <result column="valid_from" jdbcType="TIMESTAMP" property="validFrom" />
+    <result column="valid_until" jdbcType="TIMESTAMP" property="validUntil" />
+    <result column="priority" jdbcType="INTEGER" property="priority" />
+    <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
+  </resultMap>
+  <sql id="Base_Column_List">
+    id, kid, kty, `use`, alg, crv, jwk_json, `status`, valid_from, valid_until, priority, 
+    created_at, updated_at
+  </sql>
+  <select id="selectByPrimaryKey" parameterType="java.lang.Long" resultMap="BaseResultMap">
+    select 
+    <include refid="Base_Column_List" />
+    from oauth2_jwk
+    where id = #{id,jdbcType=VARCHAR}
+  </select>
+    <select id="selectAll" resultType="com.coding.data.models.auth.Oauth2Jwk">
+      SELECT * FROM oauth2_jwk j WHERE j.status = 'ENABLED'
+      AND (j.valid_from IS NULL OR j.valid_from <![CDATA[ <= ]]> CURRENT_TIMESTAMP)
+      AND (j.valid_until IS NULL OR j.valid_until <![CDATA[ >= ]]>  CURRENT_TIMESTAMP)
+      ORDER BY j.priority ASC, j.created_at DESC
+    </select>
+    <delete id="deleteByPrimaryKey" parameterType="java.lang.Long">
+    delete from oauth2_jwk
+    where id = #{id,jdbcType=VARCHAR}
+  </delete>
+  <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.Oauth2Jwk" useGeneratedKeys="true">
+    insert into oauth2_jwk (id,kid, kty, `use`,
+      alg, crv, jwk_json, 
+      `status`, valid_from, valid_until, 
+      priority, created_at, updated_at
+      )
+    values (#{id},#{kid,jdbcType=VARCHAR}, #{kty,jdbcType=VARCHAR}, #{use,jdbcType=VARCHAR},
+      #{alg,jdbcType=VARCHAR}, #{crv,jdbcType=VARCHAR}, #{jwkJson,jdbcType=VARCHAR}, 
+      #{status,jdbcType=VARCHAR}, #{validFrom,jdbcType=TIMESTAMP}, #{validUntil,jdbcType=TIMESTAMP}, 
+      #{priority,jdbcType=INTEGER}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP}
+      )
+  </insert>
+  <insert id="insertSelective" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.Oauth2Jwk" useGeneratedKeys="true">
+    insert into oauth2_jwk
+    <trim prefix="(" suffix=")" suffixOverrides=",">
+      <if test="id != null">
+        id,
+      </if>
+      <if test="kid != null">
+        kid,
+      </if>
+      <if test="kty != null">
+        kty,
+      </if>
+      <if test="use != null">
+        `use`,
+      </if>
+      <if test="alg != null">
+        alg,
+      </if>
+      <if test="crv != null">
+        crv,
+      </if>
+      <if test="jwkJson != null">
+        jwk_json,
+      </if>
+      <if test="status != null">
+        `status`,
+      </if>
+      <if test="validFrom != null">
+        valid_from,
+      </if>
+      <if test="validUntil != null">
+        valid_until,
+      </if>
+      <if test="priority != null">
+        priority,
+      </if>
+      <if test="createdAt != null">
+        created_at,
+      </if>
+      <if test="updatedAt != null">
+        updated_at,
+      </if>
+    </trim>
+    <trim prefix="values (" suffix=")" suffixOverrides=",">
+      <if test="id != null">
+        #{id,jdbcType=VARCHAR},
+      </if>
+      <if test="kid != null">
+        #{kid,jdbcType=VARCHAR},
+      </if>
+      <if test="kty != null">
+        #{kty,jdbcType=VARCHAR},
+      </if>
+      <if test="use != null">
+        #{use,jdbcType=VARCHAR},
+      </if>
+      <if test="alg != null">
+        #{alg,jdbcType=VARCHAR},
+      </if>
+      <if test="crv != null">
+        #{crv,jdbcType=VARCHAR},
+      </if>
+      <if test="jwkJson != null">
+        #{jwkJson,jdbcType=VARCHAR},
+      </if>
+      <if test="status != null">
+        #{status,jdbcType=VARCHAR},
+      </if>
+      <if test="validFrom != null">
+        #{validFrom,jdbcType=TIMESTAMP},
+      </if>
+      <if test="validUntil != null">
+        #{validUntil,jdbcType=TIMESTAMP},
+      </if>
+      <if test="priority != null">
+        #{priority,jdbcType=INTEGER},
+      </if>
+      <if test="createdAt != null">
+        #{createdAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="updatedAt != null">
+        #{updatedAt,jdbcType=TIMESTAMP},
+      </if>
+    </trim>
+  </insert>
+  <update id="updateByPrimaryKeySelective" parameterType="com.coding.data.models.auth.Oauth2Jwk">
+    update oauth2_jwk
+    <set>
+      <if test="kid != null">
+        kid = #{kid,jdbcType=VARCHAR},
+      </if>
+      <if test="kty != null">
+        kty = #{kty,jdbcType=VARCHAR},
+      </if>
+      <if test="use != null">
+        `use` = #{use,jdbcType=VARCHAR},
+      </if>
+      <if test="alg != null">
+        alg = #{alg,jdbcType=VARCHAR},
+      </if>
+      <if test="crv != null">
+        crv = #{crv,jdbcType=VARCHAR},
+      </if>
+      <if test="jwkJson != null">
+        jwk_json = #{jwkJson,jdbcType=VARCHAR},
+      </if>
+      <if test="status != null">
+        `status` = #{status,jdbcType=VARCHAR},
+      </if>
+      <if test="validFrom != null">
+        valid_from = #{validFrom,jdbcType=TIMESTAMP},
+      </if>
+      <if test="validUntil != null">
+        valid_until = #{validUntil,jdbcType=TIMESTAMP},
+      </if>
+      <if test="priority != null">
+        priority = #{priority,jdbcType=INTEGER},
+      </if>
+      <if test="createdAt != null">
+        created_at = #{createdAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="updatedAt != null">
+        updated_at = #{updatedAt,jdbcType=TIMESTAMP},
+      </if>
+    </set>
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+  <update id="updateByPrimaryKey" parameterType="com.coding.data.models.auth.Oauth2Jwk">
+    update oauth2_jwk
+    set kid = #{kid,jdbcType=VARCHAR},
+      kty = #{kty,jdbcType=VARCHAR},
+      `use` = #{use,jdbcType=VARCHAR},
+      alg = #{alg,jdbcType=VARCHAR},
+      crv = #{crv,jdbcType=VARCHAR},
+      jwk_json = #{jwkJson,jdbcType=VARCHAR},
+      `status` = #{status,jdbcType=VARCHAR},
+      valid_from = #{validFrom,jdbcType=TIMESTAMP},
+      valid_until = #{validUntil,jdbcType=TIMESTAMP},
+      priority = #{priority,jdbcType=INTEGER},
+      created_at = #{createdAt,jdbcType=TIMESTAMP},
+      updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+</mapper>

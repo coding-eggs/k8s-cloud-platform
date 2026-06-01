@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth2 客户端管理 - 云平台</title>
+    <link rel="stylesheet" href="./assets/index.css">
+    <script src="./assets/vue.global.prod.js"></script>
+    <script src="./assets/index.full.min.js"></script>
+    <script src="./assets/axios.min.js"></script>
+    <script src="./assets/app.js"></script>
+    <script src="./assets/jose/index.umd.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 32px 24px;
+        }
+
+        /* Header bar */
+        .page-header {
+            max-width: 1280px; margin: 0 auto 24px; display: flex; align-items: center; justify-content: space-between;
+            background: rgba(255,255,255,.95); backdrop-filter: blur(12px); border-radius: 16px; padding: 20px 32px;
+            box-shadow: 0 8px 32px rgba(0,0,0,.08);
+        }
+        .page-header h1 { font-size: 22px; color: #303133; font-weight: 700; display:flex;align-items:center;gap:10px; }
+        .page-header h1 svg { flex-shrink:0; }
+        .header-badge { font-size: 13px !important; border-radius: 6px !important; }
+
+        /* Main card */
+        .main-card {
+            max-width: 1280px; margin: 0 auto; background: #fff; border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.1); overflow: hidden;
+        }
+
+        /* Toolbar */
+        .toolbar { padding: 20px 28px 20px; display:flex;align-items:center;gap:12px;flex-wrap:wrap; }
+
+        /* Table wrapper */
+        .table-wrapper { padding: 0 4px 12px; }
+        .el-table th { background:#fafafa !important; color:#606266; font-weight:600; font-size:13px; }
+
+        /* Tag chips in table — multi-line safe */
+        .chip-group { display:flex; flex-wrap:wrap; gap:4px; min-height:24px; align-items:center; }
+        .chip { display:inline-flex;align-items:center;padding:0 8px;height:22px;border-radius:12px;font-size:11.5px;line-height:22px;white-space:nowrap;font-weight:500;letter-spacing:.2px; }
+
+        /* Grant type chips — color by type */
+        .chip.ac     { background:#ecf5ff;color:#409eff;border:1px solid #d9ecff; }   /* authorization_code  */
+        .chip.cc     { background:#f4f4f5;color:#909399;border:1px solid #e9e9eb; }   /* client_credentials */
+        .chip.rc     { background:#fdf6ec;color:#b58135;border:1px solid #faecd8; }   /* refresh_token      */
+        .chip.dc     { background:#f0f9eb;color:#67c23a;border:1px solid #e1f3d8; }   /* device_code        */
+        .chip.te     { background:#fef0f5;color:#f56cab;border:1px solid #fde2ee; }   /* token-exchange     */
+        .chip.pt     { background:#fdf6ec;color:#b58135;border:1px solid #faecd8; }   /* password           */
+
+        /* Scope chips — green accent */
+        .chip.scope  { background:#f0f9eb;color:#67c23a;border:1px solid #e1f3d8; }
+
+        /* Auth method chips — warning amber */
+        .chip.auth   { background:#fdf6ec;color:#b58135;border:1px solid #faecd8; }
+
+        /* PKCE / JWT mini tag */
+        .mini-tag.yes { background:#f0f9eb;color:#67c23a; }
+        .mini-tag.no  { background:#fef0f0;color:#f56c6c; }
+        .mini-tag     { display:inline-flex;align-items:center;padding:0 8px;height:20px;border-radius:10px;font-size:11px;line-height:20px;font-weight:600;letter-spacing:.3px; }
+
+        /* Empty state */
+        .empty-state { text-align:center;padding:64px 20px;color:#c0c4cc; }
+        .empty-state svg { margin-bottom:12px;opacity:.5; }
+        .empty-state p   { font-size:14px;margin-top:8px; }
+
+        /* Drawer form */
+        .drawer-form { padding-right:20px; }
+        .section-block { margin-bottom:24px;border-radius:12px;padding:16px 20px;background:#fafbfc;border:1px solid #ebeef5; }
+        .section-title  { font-size:14px;font-weight:700;color:#303133;margin-bottom:16px;display:flex;align-items:center;gap:8px; }
+        .section-title::before { content:'';width:3.5px;height:15px;background:linear-gradient(180deg,#667eea,#764ba2);border-radius:2px;flex-shrink:0; }
+
+        /* Scope select — show descriptions */
+        .scope-option { display:flex;align-items:center;gap:6px;font-size:13px; }
+        .scope-option .s-name  { font-weight:600;color:#303133;white-space:nowrap; }
+        .scope-option .s-desc  { color:#909399;font-weight:400;margin-left:auto;padding-left:12px; }
+
+        /* Dialog detail */
+        .detail-row { display:flex;padding:10px 0;border-bottom:1px solid #f5f7fa;gap:8px;align-items:flex-start; }
+        .detail-row:last-child { border-bottom:none; }
+        .detail-label { width:120px;font-size:13px;color:#909399;flex-shrink:0;padding-top:2px;text-align:right; }
+        .detail-value { flex:1;font-size:13px;color:#303133;word-break:break-all;min-width:0; }
+
+        /* Drawer footer */
+        .drawer-footer { display:flex;justify-content:flex-end;gap:8px;padding-top:16px;border-top:1px solid #ebeef5;margin-top:8px; }
+
+        /* Action buttons in table */
+        .action-link  { cursor:pointer;color:#667eea;font-weight:500;margin-left:8px;transition:color .15s; }
+        .action-link:hover { color:#764ba2; }
+        .action-link.danger { color:#f56c6c; }
+        .action-link.danger:hover { color:#fde2e2; }
+
+        /* Date display */
+        .date-text { font-size:12.5px;color:#606266;font-variant-numeric:tabular-nums;white-space:nowrap; }
+    </style>
+    <script src="assets/dateUtil.js"></script>
+</head>
+<body>
+<div id="app">
+    <!-- Header -->
+    <div class="page-header">
+        <h1>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18"/><path d="m7 10 5-4 5 4"/><path d="m7 14 5 4 5-4"/>
+            </svg>
+            OAuth2 客户端管理
+        </h1>
+        <el-tag class="header-badge" type="info" round>{{ clientList.length }} 个客户端</el-tag>
+    </div>
+
+    <!-- Main Card -->
+    <div class="main-card">
+        <div class="toolbar">
+            <el-button type="primary" round @click="openCreate">
+                <el-icon style="margin-right:4px"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg></el-icon>新建客户端</el-button>
+            <el-input v-model="searchText" placeholder="搜索 Client ID / 名称…" clearable style="width:260px;margin-left:auto;" />
+        </div>
+
+        <div class="table-wrapper">
+            <el-table :data="filteredList" stripe style="width:100%" v-loading="loading" empty-text="">
+                <template #empty>
+                    <div class="empty-state">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="#c0c4cc"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+                        <p>暂无客户端，点击上方按钮创建</p>
+                    </div>
+                </template>
+
+                <el-table-column prop="clientId" label="Client ID" min-width="135" show-overflow-tooltip />
+                <el-table-column prop="clientName" label="显示名称" min-width="110" show-overflow-tooltip />
+                <el-table-column label="授权类型" min-width="165">
+                    <template #default="{ row }"><div class="chip-group" v-html="renderGrantChips(row.authorizationGrantTypes)"></div></template>
+                </el-table-column>
+                <el-table-column label="权限范围" min-width="130">
+                    <template #default="{ row }"><div class="chip-group" v-html="renderScopeChips(row.scopes)"></div></template>
+                </el-table-column>
+                <el-table-column label="认证方式" min-width="125">
+                    <template #default="{ row }"><div class="chip-group" v-html="renderAuthChips(row.clientAuthenticationMethods)"></div></template>
+                </el-table-column>
+                <el-table-column label="PKCE" width="70" align="center">
+                    <template #default="{ row }"><span class="mini-tag" :class="(row.requireProofKey||false)?'yes':'no'">{{ (row.requireProofKey||false)?'是':'否' }}</span></template>
+                </el-table-column>
+                <el-table-column label="密钥过期" width="145">
+                    <template #default="{ row }"><span class="date-text">{{ formatDate(row.clientSecretExpiresAt, "YYYY-MM-DD HH:mm:ss") }}</span></template>
+                </el-table-column>
+                <el-table-column label="创建时间" width="170">
+                    <template #default="{ row }"><span class="date-text">{{ formatDate(row.createdAt || row.clientIdIssuedAt, "YYYY-MM-DD HH:mm:ss") }}</span></template>
+                </el-table-column>
+                <el-table-column label="操作" width="125" fixed="right" align="center">
+                    <template #default="{ row }">
+                        <span class="action-link" @click="openEdit(row)">编辑</span>
+                        <el-popconfirm title="确认删除？" @confirm="handleDelete(row.id)" placement="top">
+                            <template #reference><span class="action-link danger">删除</span></template>
+                        </el-popconfirm>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </div>
+    </div>
+
+    <!-- Create / Edit Drawer -->
+    <el-drawer v-model="dialogVisible" :title="isEdit?'编辑客户端':'新建客户端'" size="720px" destroy-on-close>
+        <el-form ref="formRef" :model="form" label-width="136px" label-position="right" class="drawer-form">
+
+            <!-- Basic Info -->
+            <div class="section-block">
+                <div class="section-title">基本信息</div>
+                <el-form-item label="Client ID" required><el-input v-model="form.clientId" :disabled="isEdit" placeholder="如 my-app, backend-service" /></el-form-item>
+                <el-form-item label="显示名称"><el-input v-model="form.clientName" placeholder="客户端名称" /></el-form-item>
+
+                <!-- Secret fields: hidden for device_code -->
+                <template v-if="!isDeviceCode">
+                    <el-form-item label="Client Secret" :required="hasAuthCode && !isEdit">
+                        <el-input v-model="form.clientSecret" placeholder="客户端密钥" show-password style="width:100%" />
+                        <span v-if="hasAuthCode && !isEdit" style="font-size:12px;color:#909399;margin-top:4px;display:block">授权码模式下必填</span>
+                    </el-form-item>
+                    <el-form-item label="密钥过期时间">
+                        <el-date-picker
+                                v-model="form.clientSecretExpiresAt"
+                                type="datetime"
+                                placeholder="授权码模式下不填则默认 30 天"
+                                value-format="YYYY-MM-DD HH:mm:ss"
+                                format="YYYY-MM-DD HH:mm:ss"
+                                style="width: 100%"
+                        />
+                    </el-form-item>
+                </template>
+            </div>
+
+            <!-- Authorization Config -->
+            <div class="section-block">
+                <div class="section-title">授权配置</div>
+                <el-form-item label="授权类型" required>
+                    <el-select v-model="form.authorizationGrantTypes" multiple collapse-tags collapse-tags-tooltip filterable style="width:100%">
+                        <el-option v-for="g in grantTypeOptions" :key="g.value" :label="g.label" :value="g.value" />
+                    </el-select>
+                </el-form-item>
+
+                <!-- Auth methods: hidden for device_code -->
+                <el-form-item label="认证方式" v-if="!isDeviceCode" :required="!isEdit">
+                    <el-select v-model="form.clientAuthenticationMethods" multiple collapse-tags collapse-tags-tooltip filterable style="width:100%">
+                        <el-option v-for="m in authMethodOptions" :key="m.value" :label="m.label" :value="m.value" />
+                    </el-select>
+                </el-form-item>
+
+                <!-- Scopes — loaded from API -->
+                <el-form-item label="权限范围">
+                    <el-select v-model="form.scopes" multiple collapse-tags collapse-tags-tooltip filterable style="width:100%">
+                        <el-option v-for="s in scopeOptions" :key="s.name" :label="s.label" :value="s.name" />
+                    </el-select>
+                </el-form-item>
+            </div>
+
+            <!-- Redirect URIs — hidden for device_code -->
+            <div class="section-block" v-if="!isDeviceCode">
+                <div class="section-title">回调地址</div>
+                <el-form-item label="授权回调地址" :required="hasAuthCode">
+                    <el-input v-model="redirectUrisText" type="textarea" :rows="3" placeholder="每行一个 URL，如 https://app.com/callback" />
+                    <span v-if="hasAuthCode" style="font-size:12px;color:#909399;margin-top:4px;display:block">授权码模式下必填</span>
+                </el-form-item>
+                <el-form-item label="登出重定向地址"><el-input v-model="postLogoutUrisText" type="textarea" :rows="2" placeholder="每行一个 URL" /></el-form-item>
+            </div>
+
+            <!-- Client Settings -->
+            <div class="section-block">
+                <div class="section-title">客户端设置</div>
+                <el-row :gutter="16">
+                    <el-col :span="12">
+                        <el-form-item label="强制 PKCE" v-if="hasAuthCode"><el-switch v-model="form.requireProofKey" /></el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                        <el-form-item label="需要授权同意"><el-switch v-model="form.requireAuthorizationConsent" /></el-form-item>
+                    </el-col>
+                </el-row>
+
+                <!-- JWT Custom Settings -->
+                <div style="margin-top:4px;padding-top:16px;border-top:1px dashed #e4e7ed;">
+                    <div class="section-title">JWT 自定义配置</div>
+                    <el-form-item label="JWT 类型">
+                        <el-radio-group v-model="form.jwtType">
+                            <el-radio value="JWS">JWS（签名）</el-radio>
+                            <el-radio value="JWE">JWE（加密）</el-radio>
+                        </el-radio-group>
+                    </el-form-item>
+
+                    <!-- JWS Config -->
+                    <template v-if="form.jwtType === 'JWS'">
+                        <el-form-item label="签名算法" key="alg" required>
+                            <el-select v-model="form.jwsSigAlg" filterable placeholder="JWS 模式下必填" style="width:100%">
+                                <el-option v-for="opt in signatureAlgorithms"
+                                           :key="opt.value"
+                                           :label="opt.label"
+                                           :value="opt.value"/>
+                            </el-select>
+                        </el-form-item>
+                        <el-form-item v-if="isJwsSymmetric" label="签名密钥" required key="secret">
+                            <el-input v-model="form.jwsSecret" placeholder="HS256/HS384/HS512 对称算法必填" />
+                        </el-form-item>
+                    </template>
+
+                    <!-- JWE Config -->
+                    <template v-if="form.jwtType === 'JWE'">
+                        <el-form-item label="密钥加密算法" required>
+                            <el-select v-model="form.jweKeyAlg" filterable placeholder="JWE 模式下必填" style="width:100%">
+                                <el-option v-for="opt in keyAlgorithms"
+                                           :key="opt.value"
+                                           :label="opt.label"
+                                           :value="opt.value"/>
+                            </el-select>
+                        </el-form-item>
+
+                        <!-- 公钥地址：只在非对称算法时显示（RSA/ECDH） -->
+                        <el-form-item label="公钥地址(JWK URL)" v-if="isJweAsymmetric" required>
+                            <el-input v-model="form.jweJwkUrl" placeholder="https://client.example.com/.well-known/jwks.json" />
+                            <span style="font-size:12px;color:#909399;margin-top:4px;display:block">非对称加密算法必填</span>
+                        </el-form-item>
+
+                        <el-form-item label="内容加密算法">
+                            <el-select v-model="form.jweEncMethod" filterable style="width:100%">
+                                <el-option v-for="opt in encAlgorithms"
+                                           :key="opt.value"
+                                           :label="opt.label"
+                                           :value="opt.value"/>
+                            </el-select>
+                        </el-form-item>
+                        <el-form-item label="对称密钥" v-if="isJweSymmetric" required><el-input v-model="form.jweSecret" placeholder="dir/A*KW 对称算法必填" /></el-form-item>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Token Settings -->
+            <div class="section-block">
+                <div class="section-title">Token 设置</div>
+                <el-row :gutter="16">
+                    <el-col :span="12"><el-form-item label="Access Token(s)"><el-input-number v-model="form.accessTokenTimeToLive" :min="60" :step="300" controls-position="right" style="width:100%" /></el-form-item></el-col>
+                    <el-col :span="12"><el-form-item label="Refresh Token(s)"><el-input-number v-model="form.refreshTokenTimeToLive" :min="300" :step="3600" controls-position="right" style="width:100%" /></el-form-item></el-col>
+                </el-row>
+            </div>
+        </el-form>
+
+        <template #footer>
+            <div class="drawer-footer">
+                <el-button @click="dialogVisible=false">取消</el-button>
+                <el-button type="primary" :loading="submitting" round @click="handleSubmit">{{ isEdit?'保存':'创建' }}</el-button>
+            </div>
+        </template>
+    </el-drawer>
+
+    <!-- Detail Dialog -->
+    <el-dialog v-model="detailVisible" title="客户端详情" width="640px">
+        <template v-if="currentClient">
+            <div class="detail-row"><span class="detail-label">Client ID</span><span class="detail-value">{{ currentClient.clientId }}</span></div>
+            <div class="detail-row"><span class="detail-label">显示名称</span><span class="detail-value">{{ currentClient.clientName||'-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">授权类型</span><span class="detail-value" v-html="renderGrantChips(currentClient.authorizationGrantTypes)"></span></div>
+            <div class="detail-row"><span class="detail-label">权限范围</span><span class="detail-value" v-html="renderScopeChips(currentClient.scopes)"></span></div>
+            <div class="detail-row"><span class="detail-label">认证方式</span><span class="detail-value" v-html="renderAuthChips(currentClient.clientAuthenticationMethods)"></span></div>
+            <div class="detail-row"><span class="detail-label">回调地址</span><span class="detail-value"><div v-for="u in currentClient.redirectUris" :key="u" style="word-break:break-all;margin-bottom:2px;font-size:12px">{{ u }}</div></span></div>
+            <div class="detail-row"><span class="detail-label">PKCE</span><span class="detail-value"><el-tag :type="(currentClient.requireProofKey||false)?'success':'danger'" size="small" round>{{ (currentClient.requireProofKey||false)?'开启':'关闭' }}</el-tag></span></div>
+            <div class="detail-row"><span class="detail-label">Access Token</span><span class="detail-value">{{ (currentClient.accessTokenTimeToLive||0)/60 }} 分钟</span></div>
+            <div class="detail-row"><span class="detail-label">Refresh Token</span><span class="detail-value">{{ (currentClient.refreshTokenTimeToLive||0)/3600 }} 小时</span></div>
+        </template>
+    </el-dialog>
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, watchEffect } = Vue;
+
+createApp({
+    setup: function () {
+        const clientList = ref([]);
+        const searchText = ref('');
+        const loading = ref(false);
+        const dialogVisible = ref(false);
+        const detailVisible = ref(false);
+        const submitting = ref(false);
+        const isEdit = ref(false);
+        const currentId = ref('');
+        const currentClient = ref(null);
+        const formRef = ref(null);
+
+        const signatureAlgorithms = [
+            {label: 'HS256 — 对称', value: 'HS256'},
+            {label: 'HS384 — 对称', value: 'HS384'},
+            {label: 'HS512 — 对称', value: 'HS512'},
+            {label: 'RS256 — 非对称', value: 'RS256'},
+            {label: 'RS384 — 非对称', value: 'RS384'},
+            {label: 'RS512 — 非对称', value: 'RS512'},
+            {label: 'ES256 — 非对称', value: 'ES256'},
+            {label: 'ES384 — 非对称', value: 'ES384'},
+            {label: 'ES512 — 非对称', value: 'ES512'}
+        ]
+
+        const keyAlgorithms = [
+            {label: 'RSA-OAEP — 非对称', value: 'RSA-OAEP'},
+            {label: 'RSA-OAEP-256 — 非对称', value: 'RSA-OAEP-256'},
+            {label: 'ECDH_ES — 非对称', value: 'ECDH_ES'},
+            {label: 'ECDH_ES_A128KW — 非对称', value: 'ECDH_ES_A128KW'},
+            {label: 'ECDH_ES_A192KW — 非对称', value: 'ECDH_ES_A192KW'},
+            {label: 'ECDH_ES_A256KW — 非对称', value: 'ECDH_ES_A256KW'},
+            {label: 'A128KW — 对称', value: 'A128KW'},
+            {label: 'A192KW — 对称', value: 'A192KW'},
+            {label: 'A256KW — 对称', value: 'A256KW'},
+            {label: 'A128GCMKW — 对称', value: 'A128GCMKW'},
+            {label: 'A192GCMKW — 对称', value: 'A192GCMKW'},
+            {label: 'A256GCMKW — 对称', value: 'A256GCMKW'},
+            {label: 'dir - 对称', value: 'dir'},
+        ]
+
+        const encAlgorithms = [
+            {label: 'A128GCM', value: 'A128GCM'},
+            {label: 'A256GCM', value: 'A256GCM'},
+        ]
+
+        // Scope options loaded from API
+        const scopeOptions = ref([]);
+
+        // Grant type options (limited set)
+        const grantTypeOptions = [
+            {label: 'authorization_code（授权码模式）', value: 'authorization_code'},
+            {label: 'client_credentials（客户端凭证）', value: 'client_credentials'},
+            {label: 'device_code（设备码模式）', value: 'device_code'},
+            {label: 'token-exchange（Token交换）', value: 'urn:ietf:params:oauth:grant-type:token-exchange'},
+        ];
+
+        // Auth method options (no Client Secret JWT)
+        const authMethodOptions = [
+            {label: 'Client Secret Basic', value: 'client_secret_basic'},
+            {label: 'Client Secret Post', value: 'client_secret_post'},
+            {label: 'Private Key JWT', value: 'private_key_jwt'},
+        ];
+
+        // ==================== 表单模型 ====================
+        // 密文字段回显与保存机制：
+        // 后端返回的是加密后的密文（如 JWE 字符串），前端不直接展示密文以免泄露。
+        // 方案：用 _formRaw 存原始值，用 getter/setter 控制表单显示与写入。
+        //   - 编辑时如果用户没有修改密码字段，getter 返回 ****（脱敏显示）
+        //   - 用户一旦修改该字段，setter 将 _jwsSecretEdited/_jweSecretEdited 标记为 true，后续 getter 返回真实值
+        //   - 保存时：未修改则原样送回密文；已修改则将明文重新加密后发送
+        const _formRaw = { jwsSecret: null, jweSecret: null, jwsSecretKid: null, jweSecretKid: null, clientSecret: null };  // 存储从后端拿到的原始值（密文 + kid）
+        const _jwsSecretEdited = ref(false);   // 标记用户是否手动修改了 jwsSecret
+        const _jweSecretEdited = ref(false);   // 标记用户是否手动修改了 jweSecret
+        const _clientSecretEdited = ref(false); // 标记用户是否手动修改了 clientSecret
+
+        // 根据「是否编辑过」决定显示密文还是脱敏星号
+        function getMaskedSecret(raw, edited) {
+            if (edited) return raw;          // 用户已修改 → 返回真实值，让用户看到自己输入的内容继续编辑
+            if (raw) return '****';         // 有原始密文但未修改 → 脱敏显示，防止密文暴露在输入框中
+            return '';                      // 没有存储任何值 → 空字符串
+        }
+
+        // 表单的基础字段（不含 jwsSecret/jweSecret，那两个用 Object.defineProperty 单独定义）
+        const formBase = {
+            clientId: '',
+            clientName: '',
+            // clientSecret 用 Object.defineProperty 单独定义 getter/setter（不在这里直接赋值）
+            clientSecretExpiresAt: null,
+            authorizationGrantTypes: [],
+            scopes: [],
+            redirectUris: [],
+            postLogoutRedirectUris: [],
+            clientAuthenticationMethods: [],
+            requireProofKey: true,
+            requireAuthorizationConsent: false,
+            accessTokenTimeToLive: 3600,
+            refreshTokenTimeToLive: 86400,
+            jwtType: 'JWS',
+            jweJwkUrl: '',
+            jweKeyAlg: '',
+            jweEncMethod: '',
+            jwsSigAlg: ''
+        };
+
+        // 为 jwsSecret 定义自定义 getter/setter：读取时走脱敏逻辑，写入时存到 _formRaw 并标记已编辑
+        Object.defineProperty(formBase, 'jwsSecret', {
+            get() { return getMaskedSecret(_formRaw.jwsSecret, _jwsSecretEdited.value) },
+            set(v) { _formRaw.jwsSecret = v; _jwsSecretEdited.value = true; }
+        });
+        // 为 jweSecret 定义自定义 getter/setter：逻辑同上
+        Object.defineProperty(formBase, 'jweSecret', {
+            get() { return getMaskedSecret(_formRaw.jweSecret, _jweSecretEdited.value) },
+            set(v) { _formRaw.jweSecret = v; _jweSecretEdited.value = true; }
+        });
+        // 为 clientSecret 定义自定义 getter/setter：编辑时显示 ****，用户修改后返回明文
+        Object.defineProperty(formBase, 'clientSecret', {
+            get() { return getMaskedSecret(_formRaw.clientSecret, _clientSecretEdited.value) },
+            set(v) { _formRaw.clientSecret = v; _clientSecretEdited.value = true; }
+        });
+
+        // 将普通对象转为 Vue 响应式对象，这样模板中修改表单字段时界面能自动更新
+        const form = reactive(formBase);
+
+
+        // ==================== 计算属性 ====================
+        // 把 textarea 中的多行文本与表单数组双向绑定：换行分隔 → 数组，数组 → 换行拼接
+        const redirectUrisText = computed({
+            get: () => (form.redirectUris || []).join('\n'), set: v => {
+                form.redirectUris = splitLines(v);
+            }
+        });
+        const postLogoutUrisText = computed({
+            get: () => (form.postLogoutRedirectUris || []).join('\n'), set: v => {
+                form.postLogoutRedirectUris = splitLines(v);
+            }
+        });
+
+        // 判断当前是否选择了授权码模式（用于控制某些字段的显示/必填）
+        const hasAuthCode = computed(() => form.authorizationGrantTypes.includes('authorization_code'));
+        // 判断当前是否选择了设备码模式（设备码不需要 client_secret、回调地址等）
+        const isDeviceCode = computed(() => form.authorizationGrantTypes.includes('device_code'));
+        // JWS 签名算法是否为对称加密（HS256/384/512 需要密钥，非对称的 RS/ES 不需要）
+        const isJwsSymmetric = computed(() => ['HS256', 'HS384', 'HS512'].includes(form.jwsSigAlg));
+        // JWE 密钥加密算法是否为对称加密（dir/A*KW 需要客户端提供密钥）
+        const isJweSymmetric = computed(() => ['A128KW', 'A192KW', 'A256KW', 'A128GCMKW', 'A192GCMKW', 'A256GCMKW', 'dir'].includes(form.jweKeyAlg));
+        // JWE 密钥加密算法是否为非对称加密（RSA/ECDH 需要客户端提供公钥 URL）
+        const isJweAsymmetric = computed(() => form.jweKeyAlg && (form.jweKeyAlg.startsWith('RSA') || form.jweKeyAlg.startsWith('ECDH')));
+
+        // 表格搜索过滤：根据 searchText 匹配 clientId 或 clientName
+        const filteredList = computed(() => {
+            if (!searchText.value) return clientList.value;
+            const s = searchText.value.toLowerCase();
+            return clientList.value.filter(c => (c.clientId || '').toLowerCase().includes(s) || (c.clientName || '').toLowerCase().includes(s));
+        });
+
+        // 监听授权类型变化：新建模式下自动调整相关字段（编辑模式不干预，保留用户原值）
+        watchEffect(() => {
+            if (isEdit.value) return;  // 编辑模式下不做自动修改
+            if (!hasAuthCode.value) {
+                form.requireProofKey = false;  // 非授权码模式时关闭 PKCE
+            }
+            if (isDeviceCode.value) {
+                form.redirectUris = [];                  // 设备码不需要回调地址
+                form.postLogoutRedirectUris = [];
+                form.clientAuthenticationMethods = ['none'];  // 设备码使用 none 认证
+            } else if (form.clientAuthenticationMethods.length === 0) {
+                form.clientAuthenticationMethods = ['client_secret_basic'];  // 其他模式默认选 client_secret_basic
+            }
+        });
+
+        // 将换行分隔的文本转为去空格后的数组（用于 textarea ↔ 数组双向绑定）
+        function splitLines(text) {
+            return text ? text.split('\n').map(s => s.trim()).filter(Boolean) : [];
+        }
+
+        // ==================== API 调用 ====================
+        // 从后端获取客户端列表
+        async function fetchList() {
+            loading.value = true;
+            try {
+                const data = await api.get('/clients/list');
+                clientList.value = data || [];
+            } finally {
+                loading.value = false;
+            }
+        }
+
+        // 从后端加载可选的权限范围列表（scope options），失败则使用默认值
+        async function loadScopeOptions() {
+            try {
+                const data = await api.get('/clients/scope-list');
+                if (Array.isArray(data)) {
+                    scopeOptions.value = data.map(s => ({
+                        name: s.name,
+                        label: `${s.name} — ${s.description}`,
+                        description: s.description
+                    }));
+                }
+            } catch (e) { /* 接口失败时回退到默认值 */
+                scopeOptions.value = [{name: 'openid', label: 'openid'}, {
+                    name: 'profile',
+                    label: 'profile'
+                }, {name: 'email', label: 'email'}];
+            }
+        }
+
+        // ==================== 弹窗操作 ====================
+        // 打开新建客户端弹窗
+        function openCreate() {
+            isEdit.value = false;
+            currentId.value = '';
+            resetForm();
+            dialogVisible.value = true;
+        }
+
+        // 打开编辑客户端弹窗：将后端数据填充到表单
+        function openEdit(row) {
+            isEdit.value = true;
+            currentId.value = row.id;
+
+            // 关键步骤：先把后端返回的原始密文和 kid 存到 _formRaw（不经过表单 getter/setter）
+            // 这样表单中 jwsSecret/jweSecret 会显示 ****，用户看不到真实密文
+            // 如果用户没有修改密码字段，保存时直接把 _formRaw 中的原值送回后端
+_formRaw.jwsSecret = row.jwsSecret || null;   // JWS 对称签名密钥（密文）
+            _formRaw.jweSecret = row.jweSecret || null;   // JWE 对称加密密钥（密文）
+            _formRaw.jwsSecretKid = row.jwsSecretKid || null;  // JWS 密钥对应的 kid（用于标识使用的是哪个密钥）
+            _formRaw.jweSecretKid = row.jweSecretKid || null;  // JWE 密钥对应的 kid
+            // 后端返回的 clientSecret 是 "****"（脱敏），存下来让用户看到 ****
+            // 如果用户不修改，保存时不传 clientSecret；如果修改则重新加密发送
+            _formRaw.clientSecret = row.clientSecret || null;
+            _jwsSecretEdited.value = false;   // 重置编辑标记：用户还没改过 jwsSecret
+            _jweSecretEdited.value = false;   // 重置编辑标记：用户还没改过 jweSecret
+            _clientSecretEdited.value = false; // 重置编辑标记：用户还没改过 clientSecret
+
+            // 将后端返回的其余字段填充到表单（Object.assign 会触发 Vue 响应式更新）
+            Object.assign(form, {
+                clientId: row.clientId || '',
+                clientName: row.clientName || '',
+                // clientSecret 通过 _formRaw + getter/setter 处理，不在这里赋值
+                clientSecretExpiresAt: row.clientSecretExpiresAt,
+                authorizationGrantTypes: Array.isArray(row.authorizationGrantTypes) ? [...row.authorizationGrantTypes] : [],
+                scopes: Array.isArray(row.scopes) ? [...row.scopes] : [],
+                redirectUris: Array.isArray(row.redirectUris) ? [...row.redirectUris] : [],
+                postLogoutRedirectUris: Array.isArray(row.postLogoutRedirectUris) ? [...row.postLogoutRedirectUris] : [],
+                clientAuthenticationMethods: Array.isArray(row.clientAuthenticationMethods) ? [...row.clientAuthenticationMethods] : [],
+                requireProofKey: row.requireProofKey || false,
+                requireAuthorizationConsent: row.requireAuthorizationConsent || false,
+                accessTokenTimeToLive: row.accessTokenTimeToLive || 3600,
+                refreshTokenTimeToLive: row.refreshTokenTimeToLive || 86400,
+                jwtType: row.jwtType || 'JWS',
+                jweJwkUrl: row.jweJwkUrl || '',
+                jweKeyAlg: row.jweKeyAlg || 'RSA-OAEP-256',
+                jweEncMethod: row.jweEncMethod || 'A256GCM',
+                jwsSigAlg: row.jwsSigAlg || ''
+            });
+            dialogVisible.value = true;
+        }
+
+        // 重置表单：清空所有字段和密文相关状态（新建时调用，编辑前也调用）
+        function resetForm() {
+            // 先清空密文原始数据和 kid，防止上一次编辑的残留值污染下一次操作
+            _formRaw.jwsSecret = null;
+            _formRaw.jweSecret = null;
+            _formRaw.jwsSecretKid = null;
+            _formRaw.jweSecretKid = null;
+            _formRaw.clientSecret = null;
+            // 重置编辑标记：让用户重新输入时能正确触发加密流程
+            _jwsSecretEdited.value = false;
+            _jweSecretEdited.value = false;
+            _clientSecretEdited.value = false;
+
+            // 将表单所有字段恢复为默认值
+            Object.assign(form, {
+                clientId: '',
+                clientName: '',
+                // clientSecret 通过 _formRaw + getter/setter 处理，不在这里赋值
+                clientSecretExpiresAt: null,
+                authorizationGrantTypes: [],
+                scopes: [],
+                redirectUris: [],
+                postLogoutRedirectUris: [],
+                clientAuthenticationMethods: ['client_secret_basic'],
+                requireProofKey: true,
+                requireAuthorizationConsent: false, accessTokenTimeToLive: 3600,
+                refreshTokenTimeToLive: 86400,
+                jwtType: 'JWS',
+                jweJwkUrl: '',
+                jweKeyAlg: '',
+                jweEncMethod: 'A256GCM',
+                jwsSigAlg: ''
+            });
+        }
+
+       // 从服务端获取用于加密的公钥（JWK 格式）
+       // 这个密钥由 Spring Authorization Server 管理，用于对客户端输入的对称密钥做非对称加密
+       async function fetchEncryptionKey() {
+            const response = await axios.get("/oauth2/jwks");
+
+            // 筛选出用途为 encryption 的密钥（签名密钥 use=sign 不能用来加密）
+            const candidates = response.data.keys.filter(
+                k => k.use === 'enc'
+            );
+
+            if (!candidates.length) {
+                throw new Error('No suitable encryption key found');
+            }
+            // 取第一个可用的加密密钥返回
+            return candidates[0];
+        }
+
+        // 使用服务端的 JWK 公钥对明文做 JWE 加密
+        // plaintext: 用户输入的对称密钥明文（如 JWS 的 HS256 共享密钥）
+        // jwk: 从服务端获取的加密公钥
+        // 返回 { kid, jwe } 其中 jwe 是密文，kid 标识使用的是哪个密钥
+        async function encryptWithJWK(plaintext, jwk) {
+            // 将字符串转为 UTF-8 字节数组（jose 库需要 bytes 输入）
+            const encoder = new TextEncoder();
+
+            // 把 JWK 格式导入为浏览器可用的 CryptoKey 对象
+            const publicKey = await jose.importJWK(jwk, jwk.alg);
+
+            // 使用 CompactEncrypt 构建 JWE：传入明文、设置头部参数（算法/加密方式/kid）、用公钥加密
+            const jwe = await new jose.CompactEncrypt(encoder.encode(plaintext))
+                .setProtectedHeader({
+                    alg: jwk.alg,       // 密钥加密算法（如 RSA-OAEP-256）
+                    enc: 'A256GCM',     // 内容加密算法
+                    kid: jwk.kid        // 密钥标识，让服务端知道该用哪个私钥解密
+                })
+                .encrypt(publicKey);
+
+            console.log(jwe);
+            return {
+                kid: jwk.kid,           // 告诉后端用的是哪个密钥
+                jwe: jwe                // JWE 密文（格式：header.payload.iv.ciphertext.tag）
+            }
+        }
+
+        // 构建提交给后端的数据载荷（最核心的逻辑：处理密文加密和字段过滤）
+        async function buildPayload() {
+            // 第一步：从 form 对象中提取所有非空值到 data（空字符串/undefined/null 不传，但空数组要保留）
+            const data = {};
+            for (const k in form) {
+                const v = form[k];
+                if (v !== null && v !== undefined && v !== '') {
+                    data[k] = Array.isArray(v) && v.length === 0 ? [] : v;
+                }
+            }
+
+            // 第二步：处理 JWS/JWE 密钥字段——区分"用户编辑了新明文"和"未修改原密文"两种情况
+            // jwk: 服务端加密公钥（只在需要加密时才获取，避免不必要的网络请求）
+            let jwk = null;
+            const needsEncrypt = (_jwsSecretEdited.value && _formRaw.jwsSecret) ||
+                                 (_jweSecretEdited.value && _formRaw.jweSecret) ||
+                                 (_clientSecretEdited.value && _formRaw.clientSecret);
+            if (needsEncrypt) {
+                jwk = await fetchEncryptionKey();
+            }
+
+            // 删除第一步中可能过滤不掉的密文字段（防止 **** 值进入 payload）
+            delete data.jwsSecret;
+            delete data.jweSecret;
+            delete data.clientSecret;
+
+            // --- JWS 密钥处理 ---
+            if (_jwsSecretEdited.value) {
+                // 场景 A：用户在表单中修改了 jwsSecret → _formRaw.jwsSecret 是用户输入的新明文 → 需要加密
+                if (_formRaw.jwsSecret) {
+                    const fullJwk = await encryptWithJWK(_formRaw.jwsSecret, jwk);
+                    data.jwsSecret = fullJwk.jwe;        // JWE 密文
+                    data.jwsSecretKid = fullJwk.kid;      // 新密钥的 kid
+                } else {
+                    delete data.jwsSecret;                // 用户清空了字段，删除旧值让后端也清空
+                }
+            } else if (_formRaw.jwsSecret) {
+                // 场景 B：用户没有修改 jwsSecret → _formRaw.jwsSecret 是后端返回的原密文 → 直接复用
+                data.jwsSecret = _formRaw.jwsSecret;
+                data.jwsSecretKid = _formRaw.jwsSecretKid || '';
+            }
+
+            // --- JWE 密钥处理（逻辑与 JWS 完全对称）---
+            if (_jweSecretEdited.value) {
+                if (_formRaw.jweSecret) {
+                    const fullJwk = await encryptWithJWK(_formRaw.jweSecret, jwk);
+                    data.jweSecret = fullJwk.jwe;
+                    data.jweSecretKid = fullJwk.kid;
+                } else {
+                    delete data.jweSecret;
+                }
+            } else if (_formRaw.jweSecret) {
+                // 用户未修改，复用后端返回的原密文
+                data.jweSecret = _formRaw.jweSecret;
+                data.jweSecretKid = _formRaw.jweSecretKid || '';
+            }
+
+            // --- Client Secret 处理 ---
+            if (_clientSecretEdited.value) {
+                if (_formRaw.clientSecret) {
+                    const fullJwk = await encryptWithJWK(_formRaw.clientSecret, jwk);
+                    data.clientSecret = fullJwk.jwe;
+                    data.clientSecretKid = fullJwk.kid;
+                } else {
+                    delete data.clientSecret;
+                }
+            } else if (_formRaw.clientSecret && _formRaw.clientSecret !== '****') {
+                // 用户未修改且是原始密文，复用（后端返回的 "****" 不传，让后端保留原值）
+            } else {
+                // "****" 或 null → 不传，后端保留原值
+            }
+
+            // 第三步：根据选择的 jwtType 过滤字段——JWS 只传 JWS 相关字段，JWE 只传 JWE 相关字段
+            // 避免把另一种类型的配置残留在后端数据库中
+            const jwtFields = ['jwsSigAlg', 'jwsSecret', 'jwsSecretKid', 'jweJwkUrl', 'jweKeyAlg', 'jweEncMethod', 'jweSecret', 'jweSecretKid'];
+            if (data.jwtType === 'JWS') {
+                jwtFields.forEach(k => { if (!['jwtType', 'jwsSigAlg', 'jwsSecret', 'jwsSecretKid'].includes(k)) delete data[k]; });
+            } else if (data.jwtType === 'JWE') {
+                jwtFields.forEach(k => { if (!['jwtType', 'jweJwkUrl', 'jweKeyAlg', 'jweEncMethod', 'jweSecret', 'jweSecretKid'].includes(k)) delete data[k]; });
+            }
+
+            // 第四步：强制写入数组字段——确保空数组也能传给后端（第一步会过滤掉空值，但空数组需要保留）
+            ['authorizationGrantTypes', 'scopes', 'redirectUris', 'postLogoutRedirectUris', 'clientAuthenticationMethods'].forEach(k => {
+                data[k] = Array.isArray(form[k]) ? form[k] : [];
+            });
+
+            // 第五步：附加 id（用于更新操作，创建时 id 为空字符串后端会忽略）
+            data.id = currentId.value;
+            return data;
+        }
+
+        // 计算字符串 UTF-8 编码后的字节数（用于密钥长度校验）
+        function getByteLength(str) {
+            return new TextEncoder().encode(str).length;
+        }
+
+        function validateForm() {
+            const errors = [];
+            const grantTypes = form.authorizationGrantTypes || [];
+            const hasAuthCode = grantTypes.includes('authorization_code');
+            const authMethods = form.clientAuthenticationMethods || [];
+
+            // 1. 授权码模式校验（更新时 Secret 可不填，保留原值）
+            if (hasAuthCode) {
+                if (!isEdit.value && (!form.clientSecret || !form.clientSecret.trim())) {
+                    errors.push('授权码模式下必须填写 Client Secret');
+                }
+                if (!form.redirectUris || form.redirectUris.length === 0) {
+                    errors.push('授权码模式下必须填写授权回调地址');
+                }
+            }
+
+            // 2. 认证方式校验（仅设备码模式可不填，更新时不强制）
+            if (!isEdit.value && !grantTypes.includes('device_code') && authMethods.length === 0) {
+                errors.push('认证方式为必填项（仅设备码模式可留空）');
+            }
+
+            // 3. JWT 校验
+            if (form.jwtType === 'JWS') {
+                if (!form.jwsSigAlg) {
+                    errors.push('选择 JWS 时签名算法为必填项');
+                } else if (['HS256', 'HS384', 'HS512'].includes(form.jwsSigAlg)) {
+                    const secret = form.jwsSecret;
+                    // "****" 表示未编辑的密文（编辑模式保留原值），空字符串表示未填写
+                    const isMasked = secret === '****';
+                    if (!isEdit.value && !secret && !isMasked) {
+                        errors.push('JWS 对称签名算法必须填写签名密钥');
+                    } else if (!isMasked && secret && secret.trim()) {
+                        // 用户输入了明文密钥，校验字节长度
+                        const bytes = getByteLength(secret.trim());
+                        if (form.jwsSigAlg === 'HS256' && bytes < 32) {
+                            errors.push('HS256 要求密钥长度至少 32 字节（256 bit），当前 ' + bytes + ' 字节');
+                        }
+                        if (form.jwsSigAlg === 'HS384' && bytes < 48) {
+                            errors.push('HS384 要求密钥长度至少 48 字节（384 bit），当前 ' + bytes + ' 字节');
+                        }
+                        if (form.jwsSigAlg === 'HS512' && bytes < 64) {
+                            errors.push('HS512 要求密钥长度至少 64 字节（512 bit），当前 ' + bytes + ' 字节');
+                        }
+                    }
+                }
+            }
+
+            if (form.jwtType === 'JWE') {
+                if (!form.jweKeyAlg) {
+                    errors.push('选择 JWE 时密钥加密算法为必填项');
+                } else {
+                    const isAsym = form.jweKeyAlg.startsWith('RSA') || form.jweKeyAlg.startsWith('ECDH');
+                    const isSym = ['A128KW', 'A192KW', 'A256KW', 'A128GCMKW', 'A192GCMKW', 'A256GCMKW', 'dir'].includes(form.jweKeyAlg);
+                    if (isAsym && (!form.jweJwkUrl || !form.jweJwkUrl.trim())) {
+                        errors.push('JWE 非对称加密必须填写公钥地址');
+                    }
+                    const jweSecret = form.jweSecret;
+                    const jweIsMasked = jweSecret === '****';
+                    if (isSym && !isEdit.value && !jweSecret && !jweIsMasked) {
+                        errors.push('JWE 对称加密算法必须填写对称密钥');
+                    } else if (isSym && !jweIsMasked && jweSecret && jweSecret.trim()) {
+                        // 用户输入了明文密钥，校验字节长度
+                        const bytes = getByteLength(jweSecret.trim());
+                        const alg = form.jweKeyAlg;
+                        if (['A128KW', 'A128GCMKW'].includes(alg) && bytes !== 16) {
+                            errors.push('A128KW/A128GCMKW 要求密钥长度固定 16 字节（128 bit），当前 ' + bytes + ' 字节');
+                        }
+                        if (['A192KW', 'A192GCMKW'].includes(alg) && bytes !== 24) {
+                            errors.push('A192KW/A192GCMKW 要求密钥长度固定 24 字节（192 bit），当前 ' + bytes + ' 字节');
+                        }
+                        if (['A256KW', 'A256GCMKW'].includes(alg) && bytes !== 32) {
+                            errors.push('A256KW/A256GCMKW 要求密钥长度固定 32 字节（256 bit），当前 ' + bytes + ' 字节');
+                        }
+                        // dir 模式：密钥长度由内容加密算法决定
+                        if (alg === 'dir') {
+                            const enc = form.jweEncMethod;
+                            if (enc === 'A128GCM' && bytes !== 16) {
+                                errors.push('dir + A128GCM 要求密钥长度固定 16 字节（128 bit），当前 ' + bytes + ' 字节');
+                            }
+                            if (enc === 'A256GCM' && bytes !== 32) {
+                                errors.push('dir + A256GCM 要求密钥长度固定 32 字节（256 bit），当前 ' + bytes + ' 字节');
+                            }
+                        }
+                    }
+                }
+            }
+
+            return errors;
+        }
+
+        // 表单提交入口：校验 → 构建数据 → 调用 API → 刷新列表
+        async function handleSubmit() {
+            // 1. 前端校验，不通过则弹出错误提示并中断
+            const errors = validateForm();
+            if (errors.length > 0) {
+                ElMessage.error(errors.join('\n'));
+                return;
+            }
+            submitting.value = true;
+            try {
+                // 2. 构建提交数据（包含密文加密逻辑）
+                const payload = await buildPayload();
+                // 3. 格式化时间字段为后端需要的字符串格式
+                if (payload.clientSecretExpiresAt) {
+                    payload.clientSecretExpiresAt = formatDate(payload.clientSecretExpiresAt, "YYYY-MM-DD HH:mm:ss")
+                }
+                console.log(payload)
+                // 4. 根据编辑/新建模式调用不同接口
+                if (isEdit.value) {
+                    await api.post('/clients/update', payload);
+                    ElMessage.success('更新成功');
+                } else {
+                    await api.post('/clients/create', payload);
+                    ElMessage.success('创建成功');
+                }
+                // 5. 关闭弹窗并刷新列表
+                dialogVisible.value = false;
+                fetchList();
+            } catch (e) {
+            } finally {
+                submitting.value = false;
+            }
+        }
+
+        // 删除客户端：确认后调用删除接口并刷新列表
+        async function handleDelete(id) {
+            try {
+                await api.delete('/clients/delete?id=' + id);
+                ElMessage.success('删除成功');
+                fetchList();
+            } catch (e) {
+            }
+        }
+
+        // ==================== 表格 Chip（标签）渲染器 ====================
+        // 将授权类型/权限范围/认证方式等数组字段渲染为彩色小标签，方便在表格中直观展示
+        // grantChipClass: 授权类型缩写映射（用于 CSS class 控制颜色）
+        const grantChipClass = {
+            authorization_code: 'ac',
+            client_credentials: 'cc',
+            refresh_token: 'rc',
+            device_code: 'dc',
+            'urn:ietf:params:oauth:grant-type:token-exchange': 'te',
+            password: 'pt'
+        };
+        // grantLabel: 授权类型英文 → 中文显示名称映射
+        const grantLabel = {
+            authorization_code: '授权码模式',
+            client_credentials: '客户端凭证',
+            refresh_token: '刷新令牌',
+            device_code: '设备码模式',
+            'urn:ietf:params:oauth:grant-type:token-exchange': 'Token交换',
+            password: '密码模式'
+        };
+
+        // 渲染授权类型标签：每项显示 "英文名（中文名）"，用 CSS class 区分颜色
+        function renderGrantChips(arr) {
+            if (!Array.isArray(arr)) return '';
+            return arr.map(t => `<span class="chip ${(grantChipClass[t] || '')}">${t}（${(grantLabel[t] || '')})</span>`).join('');
+        }
+
+        // 渲染权限范围标签：直接显示 scope 名称
+        function renderScopeChips(arr) {
+            if (!Array.isArray(arr)) return '';
+            return arr.map(s => `<span class="chip scope">${s}</span>`).join('');
+        }
+
+        // 渲染认证方式标签：直接显示方法名
+        function renderAuthChips(arr) {
+            if (!Array.isArray(arr)) return '';
+            return arr.map(m => `<span class="chip auth">${m}</span>`).join('');
+        }
+
+        // ==================== 组件生命周期 ====================
+        // 组件挂载时执行：加载客户端列表和可选权限范围列表
+        onMounted(() => {
+            fetchList();
+            loadScopeOptions();
+        });
+
+        // Element Plus 消息提示组件（用于弹出成功/失败消息）
+        const ElMessage = ElementPlus.ElMessage;
+        // 向模板暴露所有需要使用的变量和函数（Vue Composition API 要求 return 对象）
+        return {
+            // ---- 状态变量 ----
+            clientList,             // 客户端列表数据
+            searchText,             // 搜索框绑定值
+            loading,                // 加载状态（控制表格 loading  spinner）
+            filteredList,           // 过滤后的列表（根据 searchText 筛选）
+            dialogVisible,          // 弹窗显示/隐藏
+            detailVisible,          // 详情弹窗显示/隐藏
+            submitting,             // 提交按钮防重标记
+            isEdit,                 // 是否为编辑模式（false = 新建，true = 编辑）
+            formRef,                // 表单元素引用（用于校验）
+            currentClient,          // 当前选中的客户端详情
+            currentId,              // 当前操作的客户端 ID
+            form,                   // 表单数据对象（响应式）
+
+            // ---- 下拉选项 ----
+            grantTypeOptions,       // 授权类型可选值列表
+            authMethodOptions,      // 认证方式可选值列表
+            scopeOptions,           // 权限范围可选值列表
+            signatureAlgorithms,    // JWS 签名算法可选值列表
+            keyAlgorithms,          // JWE 密钥加密算法可选值列表
+            encAlgorithms,          // JWE 内容加密算法可选值列表
+
+            // ---- 计算属性（用于模板条件渲染）----
+            redirectUrisText,       // textarea ↔ redirectUris 双向绑定桥接
+            postLogoutUrisText,     // textarea ↔ postLogoutRedirectUris 双向绑定桥接
+            hasAuthCode,            // 是否选中授权码模式
+            isDeviceCode,           // 是否选中设备码模式
+            isJwsSymmetric,         // JWS 是否为对称签名算法
+            isJweSymmetric,         // JWE 密钥加密是否为对称算法
+            isJweAsymmetric,        // JWE 密钥加密是否为非对称算法
+
+            // ---- 工具函数 ----
+            formatDate,             // 日期格式化函数
+            openCreate,             // 打开新建弹窗
+            openEdit,               // 打开编辑弹窗
+            handleSubmit,           // 表单提交处理
+            handleDelete,           // 删除客户端处理
+            renderGrantChips,       // 渲染授权类型标签
+            renderScopeChips,       // 渲染权限范围标签
+            renderAuthChips         // 渲染认证方式标签
+        };
+    }
+    // Vue Composition API 的 return 对象结束
+}).use(ElementPlus).mount('#app');  // 注册 Element Plus 插件并挂载到 id="app" 的 DOM 节点上
+</script>
+</body>
+</html>

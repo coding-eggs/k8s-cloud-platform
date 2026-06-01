@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.auth.Oauth2RegisteredClientMapper">
+  <resultMap id="BaseResultMap" type="com.coding.data.models.auth.Oauth2RegisteredClient">
+    <id column="id" jdbcType="VARCHAR" property="id" />
+    <result column="client_id" jdbcType="VARCHAR" property="clientId" />
+    <result column="client_id_issued_at" jdbcType="TIMESTAMP" property="clientIdIssuedAt" />
+    <result column="client_secret" jdbcType="VARCHAR" property="clientSecret" />
+    <result column="client_secret_expires_at" jdbcType="TIMESTAMP" property="clientSecretExpiresAt" />
+    <result column="client_name" jdbcType="VARCHAR" property="clientName" />
+    <result column="client_authentication_methods" jdbcType="VARCHAR" property="clientAuthenticationMethods" />
+    <result column="authorization_grant_types" jdbcType="VARCHAR" property="authorizationGrantTypes" />
+    <result column="redirect_uris" jdbcType="VARCHAR" property="redirectUris" />
+    <result column="post_logout_redirect_uris" jdbcType="VARCHAR" property="postLogoutRedirectUris" />
+    <result column="scopes" jdbcType="VARCHAR" property="scopes" />
+    <result column="client_settings" jdbcType="VARCHAR" property="clientSettings" />
+    <result column="token_settings" jdbcType="VARCHAR" property="tokenSettings" />
+  </resultMap>
+  <sql id="Base_Column_List">
+    id, client_id, client_id_issued_at, client_secret, client_secret_expires_at, client_name, 
+    client_authentication_methods, authorization_grant_types, redirect_uris, post_logout_redirect_uris, 
+    scopes, client_settings, token_settings
+  </sql>
+  <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from oauth2_registered_client
+    where id = #{id,jdbcType=VARCHAR}
+  </select>
+  <select id="selectList" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from oauth2_registered_client
+  </select>
+  <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
+    delete from oauth2_registered_client
+    where id = #{id,jdbcType=VARCHAR}
+  </delete>
+  <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.Oauth2RegisteredClient" useGeneratedKeys="true">
+    insert into oauth2_registered_client (client_id, client_id_issued_at, client_secret, 
+      client_secret_expires_at, client_name, client_authentication_methods, 
+      authorization_grant_types, redirect_uris, 
+      post_logout_redirect_uris, scopes, client_settings, 
+      token_settings)
+    values (#{clientId,jdbcType=VARCHAR}, #{clientIdIssuedAt,jdbcType=TIMESTAMP}, #{clientSecret,jdbcType=VARCHAR}, 
+      #{clientSecretExpiresAt,jdbcType=TIMESTAMP}, #{clientName,jdbcType=VARCHAR}, #{clientAuthenticationMethods,jdbcType=VARCHAR}, 
+      #{authorizationGrantTypes,jdbcType=VARCHAR}, #{redirectUris,jdbcType=VARCHAR}, 
+      #{postLogoutRedirectUris,jdbcType=VARCHAR}, #{scopes,jdbcType=VARCHAR}, #{clientSettings,jdbcType=VARCHAR}, 
+      #{tokenSettings,jdbcType=VARCHAR})
+  </insert>
+  <insert id="insertSelective" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.Oauth2RegisteredClient" useGeneratedKeys="true">
+    insert into oauth2_registered_client
+    <trim prefix="(" suffix=")" suffixOverrides=",">
+      <if test="clientId != null">
+        client_id,
+      </if>
+      <if test="clientIdIssuedAt != null">
+        client_id_issued_at,
+      </if>
+      <if test="clientSecret != null">
+        client_secret,
+      </if>
+      <if test="clientSecretExpiresAt != null">
+        client_secret_expires_at,
+      </if>
+      <if test="clientName != null">
+        client_name,
+      </if>
+      <if test="clientAuthenticationMethods != null">
+        client_authentication_methods,
+      </if>
+      <if test="authorizationGrantTypes != null">
+        authorization_grant_types,
+      </if>
+      <if test="redirectUris != null">
+        redirect_uris,
+      </if>
+      <if test="postLogoutRedirectUris != null">
+        post_logout_redirect_uris,
+      </if>
+      <if test="scopes != null">
+        scopes,
+      </if>
+      <if test="clientSettings != null">
+        client_settings,
+      </if>
+      <if test="tokenSettings != null">
+        token_settings,
+      </if>
+    </trim>
+    <trim prefix="values (" suffix=")" suffixOverrides=",">
+      <if test="clientId != null">
+        #{clientId,jdbcType=VARCHAR},
+      </if>
+      <if test="clientIdIssuedAt != null">
+        #{clientIdIssuedAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="clientSecret != null">
+        #{clientSecret,jdbcType=VARCHAR},
+      </if>
+      <if test="clientSecretExpiresAt != null">
+        #{clientSecretExpiresAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="clientName != null">
+        #{clientName,jdbcType=VARCHAR},
+      </if>
+      <if test="clientAuthenticationMethods != null">
+        #{clientAuthenticationMethods,jdbcType=VARCHAR},
+      </if>
+      <if test="authorizationGrantTypes != null">
+        #{authorizationGrantTypes,jdbcType=VARCHAR},
+      </if>
+      <if test="redirectUris != null">
+        #{redirectUris,jdbcType=VARCHAR},
+      </if>
+      <if test="postLogoutRedirectUris != null">
+        #{postLogoutRedirectUris,jdbcType=VARCHAR},
+      </if>
+      <if test="scopes != null">
+        #{scopes,jdbcType=VARCHAR},
+      </if>
+      <if test="clientSettings != null">
+        #{clientSettings,jdbcType=VARCHAR},
+      </if>
+      <if test="tokenSettings != null">
+        #{tokenSettings,jdbcType=VARCHAR},
+      </if>
+    </trim>
+  </insert>
+  <update id="updateByPrimaryKeySelective" parameterType="com.coding.data.models.auth.Oauth2RegisteredClient">
+    update oauth2_registered_client
+    <set>
+      <if test="clientId != null">
+        client_id = #{clientId,jdbcType=VARCHAR},
+      </if>
+      <if test="clientIdIssuedAt != null">
+        client_id_issued_at = #{clientIdIssuedAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="clientSecret != null">
+        client_secret = #{clientSecret,jdbcType=VARCHAR},
+      </if>
+      <if test="clientSecretExpiresAt != null">
+        client_secret_expires_at = #{clientSecretExpiresAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="clientName != null">
+        client_name = #{clientName,jdbcType=VARCHAR},
+      </if>
+      <if test="clientAuthenticationMethods != null">
+        client_authentication_methods = #{clientAuthenticationMethods,jdbcType=VARCHAR},
+      </if>
+      <if test="authorizationGrantTypes != null">
+        authorization_grant_types = #{authorizationGrantTypes,jdbcType=VARCHAR},
+      </if>
+      <if test="redirectUris != null">
+        redirect_uris = #{redirectUris,jdbcType=VARCHAR},
+      </if>
+      <if test="postLogoutRedirectUris != null">
+        post_logout_redirect_uris = #{postLogoutRedirectUris,jdbcType=VARCHAR},
+      </if>
+      <if test="scopes != null">
+        scopes = #{scopes,jdbcType=VARCHAR},
+      </if>
+      <if test="clientSettings != null">
+        client_settings = #{clientSettings,jdbcType=VARCHAR},
+      </if>
+      <if test="tokenSettings != null">
+        token_settings = #{tokenSettings,jdbcType=VARCHAR},
+      </if>
+    </set>
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+  <update id="updateByPrimaryKey" parameterType="com.coding.data.models.auth.Oauth2RegisteredClient">
+    update oauth2_registered_client
+    set client_id = #{clientId,jdbcType=VARCHAR},
+      client_id_issued_at = #{clientIdIssuedAt,jdbcType=TIMESTAMP},
+      client_secret = #{clientSecret,jdbcType=VARCHAR},
+      client_secret_expires_at = #{clientSecretExpiresAt,jdbcType=TIMESTAMP},
+      client_name = #{clientName,jdbcType=VARCHAR},
+      client_authentication_methods = #{clientAuthenticationMethods,jdbcType=VARCHAR},
+      authorization_grant_types = #{authorizationGrantTypes,jdbcType=VARCHAR},
+      redirect_uris = #{redirectUris,jdbcType=VARCHAR},
+      post_logout_redirect_uris = #{postLogoutRedirectUris,jdbcType=VARCHAR},
+      scopes = #{scopes,jdbcType=VARCHAR},
+      client_settings = #{clientSettings,jdbcType=VARCHAR},
+      token_settings = #{tokenSettings,jdbcType=VARCHAR}
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+</mapper>

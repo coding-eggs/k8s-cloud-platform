@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>授权确认 - 云平台统一认证</title>
+    <link rel="stylesheet" href="./assets/index.css">
+    <script src="./assets/vue.global.prod.js"></script>
+    <script src="./assets/index.full.min.js"></script>
+    <script src="./assets/axios.min.js"></script>
+    <script src="./assets/app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .consent-container {
+            width: 480px;
+            max-width: 100%;
+            animation: fadeInDown .5s ease-out;
+        }
+
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-30px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .consent-card {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, .15);
+            padding: 40px;
+        }
+
+        /* Header */
+        .consent-header { text-align: center; margin-bottom: 32px; }
+
+        .consent-icon {
+            width: 56px; height: 56px; border-radius: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 auto 16px; box-shadow: 0 8px 24px rgba(102, 126, 234, .4);
+        }
+
+        .consent-header h1 { font-size: 20px; color: #303133; font-weight: 700; margin-bottom: 6px; }
+        .consent-header p  { font-size: 14px; color: #909399; }
+
+        /* App info banner */
+        .app-info {
+            background: #f4f4f5; border-radius: 10px; padding: 16px; margin-bottom: 24px; text-align: center;
+        }
+        .app-info .app-name   { font-size: 15px; font-weight: 600; color: #303133; word-break: break-all; }
+        .app-info .app-label  { font-size: 13px; color: #909399; margin-top: 4px; }
+
+        /* User code verification banner */
+        .usercode-banner {
+            background: #fdf6ec; border: 1px solid #faecd8; border-radius: 8px; padding: 12px 14px;
+            margin-bottom: 20px; font-size: 13px; color: #b58135; text-align: center; line-height: 1.6;
+        }
+        .usercode-banner code { background: rgba(0,0,0,.06); padding: 2px 6px; border-radius: 4px; font-weight: 700; letter-spacing: .5px; }
+
+        /* Scope list */
+        .scope-section-title { font-size: 13px; color: #909399; margin-bottom: 12px; text-align: center; }
+
+        .scope-list { margin-bottom: 8px; }
+
+        .scope-item { display: flex; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+        .scope-item:last-child { border-bottom: none; }
+
+        /* Custom checkbox */
+        .custom-checkbox { position: relative; flex-shrink: 0; width: 20px; height: 20px; margin-right: 12px; margin-top: 2px; cursor: pointer; }
+        .custom-checkbox input[type="checkbox"] { position: absolute; opacity: 0; width: 20px; height: 20px; cursor: pointer; z-index: 1; }
+        .checkmark { display: block; width: 20px; height: 20px; border: 2px solid #dcdfe6; border-radius: 4px; transition: all .15s ease; background: #fff; }
+        .custom-checkbox input:checked + .checkmark { background: linear-gradient(135deg, #667eea, #764ba2); border-color: transparent; }
+        .custom-checkbox input:checked + .checkmark::after {
+            content: ''; display: block; position: absolute; left: 5px; top: 2px; width: 5px; height: 10px;
+            border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+        }
+        .custom-checkbox input:disabled + .checkmark { background: #f0f0f0; cursor: not-allowed; }
+        .custom-checkbox input:checked:disabled + .checkmark { background: linear-gradient(135deg, #667eea, #764ba2); opacity: .6; cursor: not-allowed; }
+
+        .scope-name { font-size: 14px; font-weight: 600; color: #303133; margin-bottom: 2px; word-break: break-all; }
+        .scope-desc { font-size: 12px; color: #909399; line-height: 1.5; }
+
+        /* Previously approved section */
+        .approved-section { margin-top: 16px; padding-top: 16px; border-top: 1px dashed #e4e7ed; }
+        .approved-label { font-size: 12px; color: #67c23a; margin-bottom: 8px; text-align: center; display: flex; align-items: center; justify-content: center; gap: 4px; }
+
+        /* Select all */
+        .select-all-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; margin-bottom: 4px; }
+        .select-all-bar label { font-size: 13px; color: #606266; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+
+        /* Buttons */
+        .btn-group { margin-top: 28px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+        .btn-confirm { width: 100%; height: 46px; border-radius: 8px; border: none; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; transition: all .2s ease; box-shadow: 0 4px 12px rgba(102, 126, 234, .4); }
+        .btn-confirm:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(102, 126, 234, .5); }
+        .btn-confirm:active { transform: translateY(0); }
+
+        .btn-cancel { width: 100%; height: 42px; border-radius: 8px; border: none; background: transparent; color: #909399; font-size: 14px; cursor: pointer; transition: all .15s ease; }
+        .btn-cancel:hover { color: #606266; background: #f5f7fa; }
+
+        /* Footer */
+        .consent-footer { text-align: center; margin-top: 24px; font-size: 12px; color: #c0c4cc; line-height: 1.6; }
+
+        /* Loading overlay */
+        .loading-overlay { display: none; position: fixed; inset: 0; background: rgba(255,255,255,.6); align-items: center; justify-content: center; z-index: 999; }
+        .loading-overlay.active { display: flex; }
+        .spinner { width: 36px; height: 36px; border: 3px solid #e4e7ed; border-top-color: #667eea; border-radius: 50%; animation: spin .6s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Error banner */
+        .error-banner { background: #fef0f0; border: 1px solid #fbc4c4; color: #f56c6c; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div class="consent-container">
+        <div class="consent-card">
+            <!-- Header -->
+            <div class="consent-header">
+                <div class="consent-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                </div>
+                <h1>授权确认</h1>
+                <p>请确认以下应用获取的权限范围</p>
+            </div>
+
+            <!-- Error Banner -->
+            <div class="error-banner" v-if="errorMsg">{{ errorMsg }}</div>
+
+            <!-- App Info -->
+            <div class="app-info">
+                <div class="app-name">{{ clientId }}</div>
+                <div class="app-label">正在请求访问您的账号 <strong>{{ username }}</strong></div>
+            </div>
+
+            <!-- User Code Banner (Device Flow) -->
+            <div class="usercode-banner" v-if="userCode">
+                请确认设备屏幕上显示的代码与以下一致：<br>
+                <code>{{ userCode }}</code>
+            </div>
+
+            <!-- Scopes to Approve -->
+            <template v-if="unChoseScopeList.length > 0">
+                <div class="scope-section-title">该应用请求以下权限：</div>
+
+                <div class="select-all-bar">
+                    <span></span>
+                    <label @click="toggleAll">
+                        全选
+                        <span class="custom-checkbox" style="display:inline-block;margin:0;width:18px;height:18px;">
+                            <input type="checkbox" :checked="allChecked" :indeterminate.prop="indeterminate && !allChecked">
+                            <span class="checkmark" style="width:18px;height:18px;"></span>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="scope-list">
+                    <div class="scope-item" v-for="(s, i) in unChoseScopeList" :key="'u-'+s.name">
+                        <label class="custom-checkbox">
+                            <input type="checkbox" v-model="unChoseScopeList[i].checked">
+                            <span class="checkmark"></span>
+                        </label>
+                        <div class="scope-details">
+                            <div class="scope-name">{{ s.name }}</div>
+                            <div class="scope-desc">{{ s.description }}</div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <!-- Previously Approved -->
+            <div class="approved-section" v-if="choseScopeList.length > 0">
+                <div class="approved-label">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="#67c23a">
+                        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                    </svg>
+                    已授权的权限：
+                </div>
+                <div class="scope-list">
+                    <div class="scope-item" v-for="s in choseScopeList" :key="'c-'+s.name">
+                        <label class="custom-checkbox">
+                            <input type="checkbox" checked disabled>
+                            <span class="checkmark"></span>
+                        </label>
+                        <div class="scope-details">
+                            <div class="scope-name">{{ s.name }}</div>
+                            <div class="scope-desc">{{ s.description }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Buttons -->
+            <div class="btn-group">
+                <button type="button" class="btn-confirm" @click="handleConfirm" :disabled="loading">确认授权</button>
+                <button type="button" class="btn-cancel" @click="handleCancel">取消</button>
+            </div>
+
+            <!-- Footer -->
+            <div class="consent-footer">
+                您需要批准该应用的访问请求。<br>
+                如果拒绝，请点击取消，不会向该应用共享任何信息。
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Overlay -->
+<div class="loading-overlay" v-if="submitting">
+    <div class="spinner"></div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+
+createApp({
+    setup() {
+        // URL 参数
+        const params     = new URLSearchParams(window.location.search);
+        const clientId   = params.get('client_id') || '';
+        const state      = params.get('state') || '';
+        const scopeParam = params.get('scope') || '';
+        const username   = ref(params.get('username') || '用户');
+        const userCode   = ref(params.get('user_code') || null);
+        const errorMsg   = ref('');
+
+        // Scope 数据（从 API 加载）
+        const unChoseScopeList  = ref([]);  // 未授权过的 scope，需勾选
+        const choseScopeList    = ref([]);   // 已授权过的 scope，只读
+        const loading           = ref(false);
+        const submitting        = ref(false);
+
+        // 全选状态
+        const allChecked = computed(() => unChoseScopeList.value.length > 0 && unChoseScopeList.value.every(s => s.checked));
+        const indeterminate = computed(() => {
+            const checkedCount = unChoseScopeList.value.filter(s => s.checked).length;
+            return checkedCount > 0 && checkedCount < unChoseScopeList.value.length;
+        });
+
+        function toggleAll() {
+            const next = !allChecked.value;
+            unChoseScopeList.value.forEach(s => s.checked = next);
+        }
+
+        // 加载 scope 详情（区分已授权/未授权）
+        async function loadDetails() {
+            try {
+                loading.value = true;
+                const qs = new URLSearchParams();
+                qs.append('principalName', username.value);
+                qs.append('client_id', clientId);
+                qs.append('scope', scopeParam);
+
+                const data = await api({ method: 'get', url: '/consent/details?' + qs.toString() });
+
+                // API 返回 { unChoseScopeList: [{name,description}], choseScopeList: [...] }
+                if (data.unChoseScopeList) {
+                    unChoseScopeList.value = data.unChoseScopeList.map(s => ({ ...s, checked: true }));
+                }
+                if (data.choseScopeList) {
+                    choseScopeList.value = data.choseScopeList;
+                }
+            } catch (e) {
+                errorMsg.value = '加载授权信息失败，请重试';
+                console.error(e);
+            } finally {
+                loading.value = false;
+            }
+        }
+
+        // 确认授权 — 提交表单到 OAuth2 端点
+        function handleConfirm() {
+            const checkedScopes = unChoseScopeList.value.filter(s => s.checked).map(s => s.name);
+
+            // 已授权的 scope 也一并带上（后端会自动合并，但显式传递更清晰）
+            const allApproved = [...checkedScopes, ...choseScopeList.value.map(s => s.name)];
+
+            submitPayload(allApproved);
+        }
+
+        function handleCancel() {
+            submitPayload([]);
+        }
+
+        function submitPayload(scopes) {
+            submitting.value = true;
+
+            const form = document.createElement('form');
+            form.method  = 'POST';
+            form.action  = userCode.value ? '/oauth2/device_verification' : '/oauth2/authorize';
+            form.style.display = 'none';
+
+            addHidden(form, 'client_id', clientId);
+            // 每个 scope 单独 append 一个 input（多值参数）
+            scopes.forEach(s => addHidden(form, 'scope', s));
+            addHidden(form, 'state', state);
+            if (userCode.value) {
+                addHidden(form, 'user_code', userCode.value);
+            }
+
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        function addHidden(form, name, value) {
+            const input = document.createElement('input');
+            input.type  = 'hidden';
+            input.name  = name;
+            input.value = value;
+            form.appendChild(input);
+        }
+
+        onMounted(() => {
+            // URL 带 error 参数说明被 OAuth2 Server 拒绝
+            const err = params.get('error');
+            if (err) {
+                errorMsg.value = decodeURIComponent(err);
+                return;
+            }
+            loadDetails();
+        });
+
+        return { clientId, state, username, userCode, errorMsg, unChoseScopeList, choseScopeList, loading, submitting, allChecked, indeterminate, toggleAll, handleConfirm, handleCancel };
+    }
+}).use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>

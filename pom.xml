@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.coding</groupId>
+    <artifactId>k8s-cloud-platform</artifactId>
+    <version>1.0.0</version>
+    <name>K8s Cloud Platform Parent</name>
+    <description>Parent for multi-module K8s management platform</description>
+    <packaging>pom</packaging>
+
+    <properties>
+        <parent.project.version>1.0.0</parent.project.version>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <spring.boot.version>4.0.6</spring.boot.version>
+        <knife4j.version>4.6.0</knife4j.version>
+        <mybatis.version>4.0.1</mybatis.version>
+        <pageHelper.version>2.1.1</pageHelper.version>
+        <fabric8.kubernetes-client.version>7.6.1</fabric8.kubernetes-client.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring.aop.version>3.5.13</spring.aop.version>
+        <nimbus.version>10.9</nimbus.version>
+        <spring-cloud.version>2025.1.1</spring-cloud.version>
+        <crypto.tink.version>1.21.0</crypto.tink.version>
+    </properties>
+
+    <modules>
+        <module>k8s-server</module>
+        <module>platform-common</module>
+        <module>k8s-core</module>
+        <module>platform-data</module>
+        <module>platform-auth</module>
+    </modules>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Spring Boot 依赖管理（推荐方式） -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring.boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-aop</artifactId>
+                <version>${spring.aop.version}</version>
+            </dependency>
+
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-devtools</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.xingfudeshi</groupId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+            <version>${knife4j.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>tools.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!-- 父项目统一管理插件版本和公共配置 -->
+        <pluginManagement>
+            <plugins>
+                <!-- 1. Maven 编译插件（所有模块继承） -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.13.0</version>
+                    <configuration>
+                        <source>21</source>
+                        <target>21</target>
+                        <encoding>UTF-8</encoding>
+                        <!-- Lombok 注解处理器（保留你原来的配置） -->
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+
+                <!-- 2. Spring Boot 插件（只声明版本和公共配置） -->
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring.boot.version}</version>   <!-- ← 请改成你项目实际的 Spring Boot 版本 -->
+                    <configuration>
+                        <!-- Lombok 不打包进 fat jar（保留你原来的配置） -->
+                        <excludes>
+                            <exclude>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+</project>
