@@ -21,10 +21,10 @@ public interface JwtStrategy<T> {
      */
     T parseToken(String token, Class<T> clazz) throws  ParseException, JOSEException, NoSuchAlgorithmException, InvalidKeySpecException;
 
-    JWT getJWT(String token, JWK jwk) throws ParseException, JOSEException, NoSuchAlgorithmException, InvalidKeySpecException;
 
+    String getData(String token) throws ParseException, NoSuchAlgorithmException, JOSEException;
 
-    JWK getJWK() throws ParseException, JOSEException;
+    JWT getJWT(String token) throws ParseException, JOSEException, NoSuchAlgorithmException, InvalidKeySpecException;
 
     /**
      * 验证令牌是否有效

@@ -31,6 +31,18 @@ public enum EnumResponseType {
     TOKEN_TENANT_MISSING(10007, "Token中未找到租户信息"),
     NAMESPACE_NOT_ACCESSIBLE(10008, "无权访问该命名空间"),
 
+    CLUSTER_NOT_EXIST(10009, "集群不存在"),
+    TENANT_DISABLED(10010, "租户已被禁用"),
+    SERVICE_ACCOUNT_NAME_EXIST(10011, "租户标识(serviceAccount)已被占用"),
+    NAMESPACE_ALREADY_ALLOCATED(10012, "该命名空间已分配给此租户"),
+    ALLOCATION_NOT_EXIST(10013, "命名空间分配不存在"),
+    RBAC_TEMPLATE_NOT_EXIST(10014, "RBAC 模板不存在"),
+    RBAC_TEMPLATE_BUILTIN_PROTECTED(10015, "内置模板不可修改或删除"),
+    RBAC_TEMPLATE_IN_USE(10016, "模板正被命名空间分配引用，无法删除"),
+    K8S_CONNECT_FAILED(10017, "集群连接失败: "),
+    INVALID_K8S_NAME(10018, "不符合 K8s 命名规范: "),
+    OPERATION_NOT_SUPPORTED(10019, "该资源不支持此操作"),
+
     ERROR(5000,"服务端异常"),
 
 

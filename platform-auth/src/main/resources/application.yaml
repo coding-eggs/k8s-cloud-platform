@@ -23,7 +23,29 @@ spring:
     oauth2:
       authorizationserver:
         issuer: ${OAUTH2_SERVER:http://127.0.0.1:9527}
-
+    ignore-urls:
+      - "/actuator/**"
+      - "/doc.html"
+      - "/assets/**"
+      - "/login.html"
+      - "/user/login"
+      - "/user/logout"
+      - "/register.html"
+      - "/forgot-password.html"
+      - "/404"
+      - "/500"
+      - "/v3/api-docs/**"
+      - "/v2/api-docs"
+      - "/swagger-ui/**"
+      - "/swagger-ui.html"
+      - "/swagger-resources/**"
+      - "/webjars/**"
+      - "/test/**"
+      - "/favicon.ico"
+      - "/favicon-dark.svg"
+      - "/favicon-light.svg"
+      - "/.well-known/**"
+      - "/manifest.json"
 
   servlet:
     multipart:

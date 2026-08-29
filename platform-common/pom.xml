@@ -28,6 +28,24 @@
             <version>${crypto.tink.version}</version>
         </dependency>
 
+        <!-- claim→authority 转换器（PlatformJwtAuthenticationConverter）需要 resource-server 的转换器接口；
+             Spring Security 7 中 Jwt/JwtDecoder 在 jose 模块，需显式引入 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-resource-server</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
+        </dependency>
+
+        <!-- BearerTokenResolver 接口签名带 HttpServletRequest；运行时由 web 容器提供 -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <dependency>
             <groupId>com.coding</groupId>
             <artifactId>platform-data</artifactId>

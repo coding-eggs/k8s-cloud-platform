@@ -37,12 +37,13 @@ public class PlatformUser implements Serializable {
 
     private Date lastLoginAt;
 
-    private Long createdBy;
-
-    private Long updatedBy;
-
     private Date createdAt;
 
     private Date updatedAt;
+
+    /**
+     * 软删除时间，NULL = 未删除
+     */
+    private Date deletedAt;
 
 }

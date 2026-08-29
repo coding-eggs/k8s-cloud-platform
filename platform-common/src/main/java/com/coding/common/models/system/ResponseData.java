@@ -28,7 +28,8 @@ public class ResponseData<T> {
     private T data;
 
     public ResponseData(){
-
+        this.code = EnumResponseType.SUCCESS.getCode();
+        this.msg = EnumResponseType.SUCCESS.getMsg();
     }
 
 

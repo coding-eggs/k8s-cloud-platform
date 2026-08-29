@@ -25,5 +25,10 @@ public class TokenUserInfo {
 
     private UserTenantInfo tenantInfo;
 
+    /**
+     * 平台域角色 code 列表（如 admin），与租户域 tenantInfo 并列、互不推导
+     */
+    private List<String> platformRoles;
+
 
 }

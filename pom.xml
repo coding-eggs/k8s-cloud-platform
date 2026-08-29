@@ -17,13 +17,14 @@
         <spring.boot.version>4.0.6</spring.boot.version>
         <knife4j.version>4.6.0</knife4j.version>
         <mybatis.version>4.0.1</mybatis.version>
-        <pageHelper.version>2.1.1</pageHelper.version>
+        <pageHelper.version>4.1.0</pageHelper.version>
         <fabric8.kubernetes-client.version>7.6.1</fabric8.kubernetes-client.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring.aop.version>3.5.13</spring.aop.version>
-        <nimbus.version>10.9</nimbus.version>
+        <nimbus.version>10.4</nimbus.version>
         <spring-cloud.version>2025.1.1</spring-cloud.version>
         <crypto.tink.version>1.21.0</crypto.tink.version>
+        <swagger.version>2.2.25</swagger.version>
     </properties>
 
     <modules>
@@ -32,6 +33,7 @@
         <module>k8s-core</module>
         <module>platform-data</module>
         <module>platform-auth</module>
+        <module>platform-api</module>
     </modules>
 
     <dependencyManagement>
@@ -56,22 +58,15 @@
 
     <dependencies>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-devtools</artifactId>
-            <scope>runtime</scope>
-            <optional>true</optional>
-        </dependency>
-
-        <dependency>
-            <groupId>com.github.xingfudeshi</groupId>
-            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
-            <version>${knife4j.version}</version>
-        </dependency>
-
-        <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations-jakarta</artifactId>
+            <version>${swagger.version}</version>
         </dependency>
 
         <dependency>
@@ -93,6 +88,8 @@
                         <source>21</source>
                         <target>21</target>
                         <encoding>UTF-8</encoding>
+                        <!-- 参数名编入字节码：Spring @RequestParam 等按名绑定依赖此项（Spring 7 无字节码兜底发现） -->
+                        <parameters>true</parameters>
                         <!-- Lombok 注解处理器（保留你原来的配置） -->
                         <annotationProcessorPaths>
                             <path>

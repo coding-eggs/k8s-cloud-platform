@@ -1,10 +1,12 @@
 package com.coding.common.components.jwt.impl;
 
-import com.coding.common.components.JwkService;
+
 import com.coding.common.components.jwt.JwtProperties;
 import com.coding.common.components.jwt.JwtStrategy;
-
-import com.nimbusds.jose.*;
+import com.nimbusds.jose.EncryptionMethod;
+import com.nimbusds.jose.JOSEException;
+import com.nimbusds.jose.JWEAlgorithm;
+import com.nimbusds.jose.JWEHeader;
 import com.nimbusds.jose.crypto.*;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.jwk.source.JWKSource;
@@ -14,14 +16,15 @@ import com.nimbusds.jwt.JWT;
 import com.nimbusds.jwt.JWTClaimsSet;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.security.*;
-import java.security.spec.InvalidKeySpecException;
+import java.security.NoSuchAlgorithmException;
 import java.text.ParseException;
 import java.time.Instant;
-import java.util.*;
+import java.util.Date;
+import java.util.UUID;
 
 /**
  * jwe 实现jwt 保证机密性、完整性、真实性
@@ -29,6 +32,7 @@ import java.util.*;
  */
 @Slf4j
 @Component
+@ConditionalOnBean(JwtProperties.class)
 @RequiredArgsConstructor
 public class JweTokenStrategy<T> implements JwtStrategy<T> {
 
@@ -38,8 +42,7 @@ public class JweTokenStrategy<T> implements JwtStrategy<T> {
     private final JwtProperties jwtProperties;
     private final JsonMapper jsonMapper;
 
-    private final JwkService jwkService;
-
+    private final JWKSource<SecurityContext> jwkSource;
 
     @Override
     public String generateToken(T t, String tokenType, long expirationSeconds, String subject) throws NoSuchAlgorithmException,
@@ -59,7 +62,12 @@ public class JweTokenStrategy<T> implements JwtStrategy<T> {
                 .claim("iat", Instant.now().getEpochSecond())
                 .build();
 
-        return encrypt(claimsSet, encryption.getContentAlgorithm(), getJWK());
+        JWK jwk = jwkSource.get(new JWKSelector(new JWKMatcher.Builder()
+                .keyUse(KeyUse.ENCRYPTION)
+                .build()
+        ), null).getFirst();
+
+        return encrypt(claimsSet, encryption.getContentAlgorithm(), jwk);
     }
 
     /**
@@ -110,17 +118,27 @@ public class JweTokenStrategy<T> implements JwtStrategy<T> {
 
     @Override
     public T parseToken(String token, Class<T> clazz) throws ParseException, NoSuchAlgorithmException, JOSEException {
-
-        JWTClaimsSet claimsFromToken = getJWT(token, getJWK()).getJWTClaimsSet();
+        JWTClaimsSet claimsFromToken = getJWT(token).getJWTClaimsSet();
         return jsonMapper.convertValue(claimsFromToken.getClaim(jwtProperties.getDataKey()), clazz);
     }
 
     @Override
-    public JWT getJWT(String token, JWK jwk) throws ParseException, JOSEException, NoSuchAlgorithmException {
-        //管理密钥的
-        JWEAlgorithm jweKeyAlgorithm = JWEAlgorithm.parse(jwk.getAlgorithm().getName());
+    public String getData(String token) throws ParseException, NoSuchAlgorithmException, JOSEException {
+        JWTClaimsSet claimsFromToken = getJWT(token).getJWTClaimsSet();
+        return claimsFromToken.getClaimAsString(jwtProperties.getDataKey());
+    }
+
+    @Override
+    public JWT getJWT(String token) throws ParseException, JOSEException, NoSuchAlgorithmException {
 
         EncryptedJWT encryptedJWT = EncryptedJWT.parse(token);
+        JWEHeader header = encryptedJWT.getHeader();
+        String keyID = header.getKeyID();
+        JWEAlgorithm jweKeyAlgorithm = header.getAlgorithm();
+        JWK jwk = jwkSource.get(new JWKSelector(new JWKMatcher.Builder()
+                .keyID(keyID)
+                .algorithm(jweKeyAlgorithm)
+                .build()), null).getFirst();
 
         if (JWEAlgorithm.Family.AES_KW.contains(jweKeyAlgorithm) || JWEAlgorithm.Family.AES_GCM_KW.contains(jweKeyAlgorithm)) {
 
@@ -158,30 +176,11 @@ public class JweTokenStrategy<T> implements JwtStrategy<T> {
     }
 
 
-    public String getJWT(String token, String keyId, JWKSource<SecurityContext> jwkSource) throws JOSEException, ParseException, NoSuchAlgorithmException {
-        List<JWK> jwks = jwkSource.get(new JWKSelector(new JWKMatcher.Builder()
-                .keyID(keyId)
-                .build()
-        ), null);
-
-        EncryptedJWT jwt = (EncryptedJWT) getJWT(token, jwks.getFirst());
-
-        return jwt.getPayload().toString();
-    }
-
-    @Override
-    public JWK getJWK(){
-        List<JWK> oauth2Jwks = jwkService.loadAllJwkFromDb()
-                .stream().filter(jwk -> jwk.getKeyUse().equals(KeyUse.ENCRYPTION))
-                .toList();
-        return oauth2Jwks.getFirst();
-    }
-
 
     @Override
     public boolean validateToken(String token) {
         try {
-            getJWT(token, getJWK());
+            getJWT(token);
             return true;
         } catch (Exception e) {
             return false;
@@ -191,7 +190,7 @@ public class JweTokenStrategy<T> implements JwtStrategy<T> {
     @Override
     public long getRemainingSeconds(String token) {
         try {
-            JWTClaimsSet claims = getJWT(token, getJWK()).getJWTClaimsSet();
+            JWTClaimsSet claims = getJWT(token).getJWTClaimsSet();
             Date expiration = claims.getExpirationTime();
             return (expiration.getTime() - System.currentTimeMillis()) / 1000;
         } catch (Exception e) {
@@ -202,7 +201,7 @@ public class JweTokenStrategy<T> implements JwtStrategy<T> {
     @Override
     public String getTokenId(String token) {
         try {
-            JWTClaimsSet claims = getJWT(token, getJWK()).getJWTClaimsSet();
+            JWTClaimsSet claims = getJWT(token).getJWTClaimsSet();
             return claims.getClaim(CLAIM_KEY_TOKEN_ID).toString();
         } catch (Exception e) {
             return null;

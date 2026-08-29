@@ -1,0 +1,80 @@
+server:
+  port: 8081
+
+k8s:
+  # k8s-server（唯一 K8s 适配器）管理域地址，/admin/** 端点
+  server:
+    url: ${K8S_SERVER_URL:http://127.0.0.1:8080}
+  cloud:
+    kubeconfig:
+      aes-key: ${KUBECONFIG_AES_KEY:daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=}
+
+# MyBatis 配置
+mybatis:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.coding.data.models
+  configuration:
+    map-underscore-to-camel-case: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+
+spring:
+  application:
+    name: platform-api
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${MYSQL_URL:jdbc:mysql://192.168.31.80:1234/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:coding}
+    hikari:
+      minimum-idle: 3
+      maximum-pool-size: 10
+      max-lifetime: 0
+      connection-test-query: SELECT 1
+  security:
+    ignore-urls:
+      - "/actuator/**"
+      - "/doc.html"
+      - "/assets/**"
+      - "/404"
+      - "/500"
+      - "/v3/api-docs/**"
+      - "/v2/api-docs"
+      - "/swagger-ui/**"
+      - "/swagger-ui.html"
+      - "/swagger-resources/**"
+      - "/webjars/**"
+      - "/test/**"
+      - "/.well-known/**"
+      - "/manifest.json"
+    oauth2:
+      resourceserver:
+        jwt:
+
+          # 不校验 audience：平台管理端接受 auth server 签发的任意客户端 token
+          jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/oauth2/jwks}
+          type: JWS
+          # 若 auth server 使用对称签名，可改为：
+          #   jws:
+          #     secret: <与客户端一致的密钥>
+          #     secret-alg: HS256
+jwt:
+  enabled: false
+  data-key: data
+
+logging:
+  level:
+    root: info

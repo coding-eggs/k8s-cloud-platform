@@ -71,8 +71,6 @@ public class ResourceCapabilityFactory {
 
     /**
      * 获取集群能力
-     * @param client
-     * @return
      */
     public ResourceCapability buildCapability(KubernetesClient client) {
         ResourceCapability cap = new ResourceCapability();
@@ -89,6 +87,11 @@ public class ResourceCapabilityFactory {
         cap.setCronJobV1(support(client,"batch", "v1", "cronjobs"));
         cap.setCronJobV1Beta1(support(client,"batch", "v1beta1", "cronjobs"));
 
+        // ===== RBAC =====
+        cap.setClusterRoleV1(support(client,"rbac.authorization.k8s.io", "v1", "clusterroles"));
+        cap.setRoleBindingV1(support(client,"rbac.authorization.k8s.io", "v1", "rolebindings"));
+        cap.setServiceAccountV1(support(client,"","v1", "serviceaccounts"));
+
         // ===== 扩展能力 =====
         cap.setSupportHPA(support(client,"autoscaling", "v2", "horizontalpodautoscalers"));
 
@@ -97,7 +100,10 @@ public class ResourceCapabilityFactory {
 
     public boolean support(KubernetesClient client, String group, String version, String resource) {
         try {
-            APIResourceList list = client.getApiResources(group + "/" + version);
+            // 核心组（core）group 为空，直接传 version；否则传 group/version
+            String groupVersion = (group == null || group.isEmpty()) ? version : group + "/" + version;
+
+            APIResourceList list = client.getApiResources(groupVersion);
             if (list == null || list.getResources() == null) {
                 return false;
             }

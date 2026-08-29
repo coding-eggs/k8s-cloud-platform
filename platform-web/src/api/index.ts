@@ -1,0 +1,135 @@
+import http from './http'
+import type {
+  K8sCluster,
+  K8sConfigMap,
+  K8sPvc,
+  K8sPod,
+  K8sSecret,
+  K8sService,
+  K8sServiceMonitor,
+  K8sWorkload,
+  NamespaceAllocation,
+  NamespaceView,
+  PlatformTenant,
+  RbacTemplate,
+  ResourceContext,
+} from '@/types'
+
+/** 集群管理 /cluster */
+export const clusterApi = {
+  list: () => http.post<never, K8sCluster[]>('/cluster/list'),
+  get: (clusterId: string) => http.post<never, K8sCluster>('/cluster/get', { clusterId }),
+  create: (payload: { clusterName: string; kubeconfig: string; description?: string }) =>
+    http.post<never, K8sCluster>('/cluster/create', payload),
+  update: (payload: { clusterId: string; clusterName?: string; description?: string }) =>
+    http.post<never, K8sCluster>('/cluster/update', payload),
+  toggleEnabled: (clusterId: string, enabled: number) =>
+    http.post<never, K8sCluster>('/cluster/toggleEnabled', { clusterId, enabled }),
+  delete: (clusterId: string) => http.post<never, void>('/cluster/delete', { clusterId }),
+  provision: (clusterId: string) => http.post<never, K8sCluster>('/cluster/provision', { clusterId }),
+}
+
+/** 租户管理 /tenant（含命名空间分配：给租户分配命名空间） */
+export const tenantApi = {
+  list: () => http.post<never, PlatformTenant[]>('/tenant/list'),
+  get: (id: string) => http.post<never, PlatformTenant>('/tenant/get', { id }),
+  create: (payload: { name: string; serviceAccount: string; status?: number }) =>
+    http.post<never, PlatformTenant>('/tenant/create', payload),
+  update: (payload: { id: string; name?: string; status?: number }) =>
+    http.post<never, PlatformTenant>('/tenant/update', payload),
+  delete: (id: string) => http.post<never, void>('/tenant/delete', { id }),
+  provision: (id: string) => http.post<never, PlatformTenant>('/tenant/provision', { id }),
+
+  // ---- 命名空间分配 ----
+  namespaceAllocate: (payload: {
+    tenantId: string
+    clusterId: string
+    namespace: string
+    roleTemplateId?: string
+  }) => http.post<never, NamespaceAllocation>('/tenant/namespace/allocate', payload),
+  namespaceList: (payload?: { tenantId?: string; clusterId?: string }) =>
+    http.post<never, NamespaceAllocation[]>('/tenant/namespace/list', payload ?? {}),
+  namespaceDeallocate: (payload: { tenantId: string; clusterId: string; namespace: string }) =>
+    http.post<never, void>('/tenant/namespace/deallocate', payload),
+}
+
+/** 命名空间管理 /namespace（K8s 命名空间视图 + 删除未分配） */
+export const namespaceApi = {
+  list: (clusterId: string) => http.post<never, NamespaceView[]>('/namespace/list', { clusterId }),
+  delete: (payload: { clusterId: string; namespace: string }) =>
+    http.post<never, void>('/namespace/delete', payload),
+}
+
+/** RBAC 模板 /rbacTemplate */
+export const templateApi = {
+  list: () => http.post<never, RbacTemplate[]>('/rbacTemplate/list'),
+  get: (id: string) => http.post<never, RbacTemplate>('/rbacTemplate/get', { id }),
+  create: (payload: { name: string; description?: string; rules: RbacTemplate['rules'] }) =>
+    http.post<never, RbacTemplate>('/rbacTemplate/create', payload),
+  update: (payload: { id: string; description?: string; rules: RbacTemplate['rules'] }) =>
+    http.post<never, RbacTemplate>('/rbacTemplate/update', payload),
+  delete: (id: string) => http.post<never, void>('/rbacTemplate/delete', { id }),
+}
+
+/** 资源管理上下文（顶栏 chip：租户 → 集群 → 命名空间，DB 级联） */
+export const resourceContextApi = {
+  get: () => http.get<never, ResourceContext>('/resource/context'),
+}
+
+/** 资源管理 - ConfigMap /resource/configmaps（参考实现；list/create/update 上下文走 body，get/yaml/delete 走 query） */
+export const configMapApi = {
+  list: (ctx: { tenantId: string; clusterId: string; namespace: string; labelSelector?: string }) =>
+    http.post<never, K8sConfigMap[]>('/resource/configmaps/list', ctx),
+  get: (name: string, ctx: { tenantId: string; clusterId: string; namespace: string }) =>
+    http.get<never, K8sConfigMap>(`/resource/configmaps/${encodeURIComponent(name)}`, { params: ctx }),
+  getYaml: (name: string, ctx: { tenantId: string; clusterId: string; namespace: string }) =>
+    http.get<never, string>(`/resource/configmaps/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+  create: (ctx: { tenantId: string; clusterId: string }, body: K8sConfigMap) =>
+    http.post<never, K8sConfigMap>('/resource/configmaps', { ...body, ...ctx }),
+  update: (name: string, ctx: { tenantId: string; clusterId: string }, body: K8sConfigMap) =>
+    http.put<never, K8sConfigMap>(`/resource/configmaps/${encodeURIComponent(name)}`, { ...body, ...ctx }),
+  delete: (name: string, ctx: { tenantId: string; clusterId: string; namespace: string }) =>
+    http.delete<never, void>(`/resource/configmaps/${encodeURIComponent(name)}`, { params: ctx }),
+}
+
+// ==================== 其余资源：与 ConfigMap 同构（list/get/yaml/create/update/delete） ====================
+
+type Ctx3 = { tenantId: string; clusterId: string; namespace: string }
+type Ctx2 = { tenantId: string; clusterId: string }
+/** list 专用上下文：labelSelector 可选（K8s 原生选择器语法，原样透传；不传 = 全量） */
+type ListCtx = Ctx3 & { labelSelector?: string }
+
+/**标准 CRUD + yaml 透传工厂：base = /resource/{base}（list/create/update 上下文走 body，get/yaml/delete 走 query） */
+function makeResourceApi<T>(base: string) {
+  return {
+    list: (ctx: ListCtx) => http.post<never, T[]>(`/resource/${base}/list`, ctx),
+    get: (name: string, ctx: Ctx3) => http.get<never, T>(`/resource/${base}/${encodeURIComponent(name)}`, { params: ctx }),
+    getYaml: (name: string, ctx: Ctx3) => http.get<never, string>(`/resource/${base}/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+    create: (ctx: Ctx2, body: T) => http.post<never, T>(`/resource/${base}`, { ...body, ...ctx }),
+    update: (name: string, ctx: Ctx2, body: T) => http.put<never, T>(`/resource/${base}/${encodeURIComponent(name)}`, { ...body, ...ctx }),
+    delete: (name: string, ctx: Ctx3) => http.delete<never, void>(`/resource/${base}/${encodeURIComponent(name)}`, { params: ctx }),
+  }
+}
+
+/** Secret /resource/secrets */
+export const secretApi = makeResourceApi<K8sSecret>('secrets')
+
+/** Service /resource/services */
+export const serviceApi = makeResourceApi<K8sService>('services')
+
+/** PVC /resource/pvcs（spec 不可变，update 仅同步标签） */
+export const pvcApi = makeResourceApi<K8sPvc>('pvcs')
+
+/** 工作负载 /resource/workloads（kind 在 body；get/delete/yaml 跨 kind 查找） */
+export const workloadApi = makeResourceApi<K8sWorkload>('workloads')
+
+/** ServiceMonitor /resource/servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
+export const serviceMonitorApi = makeResourceApi<K8sServiceMonitor>('servicemonitors')
+
+/** Pod /resource/pods（只读 + 删除：由工作负载控制器管理，无 create/update） */
+export const podApi = {
+  list: (ctx: ListCtx) => http.post<never, K8sPod[]>('/resource/pods/list', ctx),
+  get: (name: string, ctx: Ctx3) => http.get<never, K8sPod>(`/resource/pods/${encodeURIComponent(name)}`, { params: ctx }),
+  getYaml: (name: string, ctx: Ctx3) => http.get<never, string>(`/resource/pods/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+  delete: (name: string, ctx: Ctx3) => http.delete<never, void>(`/resource/pods/${encodeURIComponent(name)}`, { params: ctx }),
+}

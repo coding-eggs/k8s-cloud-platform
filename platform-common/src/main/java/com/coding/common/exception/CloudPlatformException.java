@@ -28,4 +28,13 @@ public class CloudPlatformException extends RuntimeException {
         this.msg = msg;
     }
 
+    /**
+     * 透传下游服务（如 k8s-server）返回的错误码与消息
+     */
+    public CloudPlatformException(Integer code, String msg){
+        super(msg);
+        this.code = code;
+        this.msg = msg;
+    }
+
 }

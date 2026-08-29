@@ -1,0 +1,106 @@
+package com.coding.platformapi.controllers.resource;
+
+import com.coding.common.models.k8s.dto.PodDTO;
+import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sServerGateway;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 资源管理 - Pod（只读 + 删除，无 create/update）。透传约定同 ConfigMapController。
+ * 日志走 HTTP 流式透传（k8s-server text/plain → 原样写到响应流，不整体缓冲），属特殊端点直连 gateway。
+ */
+@Tag(name = "资源管理-Pod", description = "查看/删除命名空间内 Pod（只读）")
+@RestController
+@RequestMapping("/resource/pods")
+@RequiredArgsConstructor
+public class PodController {
+
+    private final K8sResourceClient k8s;
+    private final K8sServerGateway gateway;
+
+    @PostMapping("/list")
+    @Operation(summary = "列出 Pod")
+    public ResponseData<List<PodDTO>> list(@RequestBody PodDTO body) {
+        return new ResponseData<>(k8s.list(body));
+    }
+
+    @GetMapping("/{name}")
+    @Operation(summary = "查询 Pod")
+    public ResponseData<PodDTO> get(@PathVariable String name,
+                                    @RequestParam String tenantId,
+                                    @RequestParam String clusterId,
+                                    @RequestParam String namespace) {
+        return new ResponseData<>(k8s.get(dto(name, tenantId, clusterId, namespace)));
+    }
+
+    @GetMapping("/{name}/yaml")
+    @Operation(summary = "查询 Pod YAML（只读展示）")
+    public ResponseData<String> yaml(@PathVariable String name,
+                                     @RequestParam String tenantId,
+                                     @RequestParam String clusterId,
+                                     @RequestParam String namespace) {
+        return new ResponseData<>(k8s.yaml(dto(name, tenantId, clusterId, namespace)));
+    }
+
+    @DeleteMapping("/{name}")
+    @Operation(summary = "删除 Pod（由控制器重建）")
+    public ResponseData<Void> delete(@PathVariable String name,
+                                     @RequestParam String tenantId,
+                                     @RequestParam String clusterId,
+                                     @RequestParam String namespace) {
+        k8s.delete(dto(name, tenantId, clusterId, namespace));
+        return new ResponseData<>();
+    }
+
+    @GetMapping(value = "/{name}/logs", produces = MediaType.TEXT_PLAIN_VALUE)
+    @Operation(summary = "流式获取 Pod 日志（follow=true 保持连接）")
+    public void logs(@PathVariable String name,
+                     @RequestParam String tenantId,
+                     @RequestParam String clusterId,
+                     @RequestParam String namespace,
+                     @RequestParam(required = false) String container,
+                     @RequestParam(defaultValue = "500") int tailLines,
+                     @RequestParam(defaultValue = "false") boolean follow,
+                     HttpServletResponse response) throws IOException {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("tenantId", tenantId);
+        params.put("clusterId", clusterId);
+        params.put("namespace", namespace);
+        if (StringUtils.hasText(container)) {
+            params.put("container", container);
+        }
+        params.put("tailLines", String.valueOf(tailLines));
+        params.put("follow", String.valueOf(follow));
+        gateway.streamGet("/resources/pods/" + name + "/logs", params, response.getOutputStream());
+    }
+
+    /**查询 DTO：apiPath 内置于 DTO */
+    private PodDTO dto(String name, String tenantId, String clusterId, String namespace) {
+        PodDTO d = new PodDTO();
+        d.setName(name);
+        d.setTenantId(tenantId);
+        d.setClusterId(clusterId);
+        d.setNamespace(namespace);
+        return d;
+    }
+
+}

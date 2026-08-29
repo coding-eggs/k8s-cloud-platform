@@ -9,15 +9,16 @@
     <result column="status" jdbcType="TINYINT" property="status" />
     <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
+    <result column="deleted_at" jdbcType="TIMESTAMP" property="deletedAt" />
   </resultMap>
   <sql id="Base_Column_List">
-    id, `name`, code, description, `status`, created_at, updated_at
+    id, `name`, code, description, `status`, created_at, updated_at, deleted_at
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
     <include refid="Base_Column_List" />
     from platform_role
-    where id = #{id,jdbcType=VARCHAR}
+    where id = #{id,jdbcType=VARCHAR} and deleted_at is null
   </select>
     <select id="selectTenantRole" resultType="com.coding.data.models.system.SecurityRole">
       SELECT
@@ -31,6 +32,7 @@
           INNER JOIN platform_tenant t ON utr.tenant_id = t.id
       WHERE
         user_id = #{userId}
+        AND r.deleted_at IS NULL AND t.deleted_at IS NULL
     </select>
     <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
     delete from platform_role

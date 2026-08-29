@@ -1,0 +1,85 @@
+/* ============================================================
+ * 设计 token + Element Plus 变量映射
+ * 深色 = html.dark（默认主题）；浅色 = 无 .dark class
+ * 导入顺序：element-plus index.css → ep dark css-vars → 本文件 → main.css
+ * ============================================================ */
+
+/* ---------- 浅色（默认值，无 .dark 时生效） ---------- */
+:root {
+  --bg: #f5f7fb;            /* 应用底色 */
+  --bg-elevated: #ffffff;   /* 侧边栏 / 顶栏 */
+  --panel: #ffffff;         /* 卡片 / 表格面板 */
+  --panel-hover: #f6f8fc;
+  --border: #e6eaf2;
+  --border-strong: #d5dce8;
+  --text-1: #1e293b;        /* 主文本 */
+  --text-2: #475569;        /* 次文本 */
+  --text-3: #94a3b8;        /* 弱文本 / 提示 */
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, .08);
+  --accent-grad: linear-gradient(135deg, #2563eb, #7c3aed);
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --info: #2563eb;
+  --shadow-panel: 0 1px 3px rgba(15, 23, 42, .06);
+
+  /* EP 变量对齐（浅色） */
+  --el-color-primary: #2563eb;
+  --el-bg-color-page: var(--bg);
+  --el-border-radius-base: 8px;
+  color-scheme: light;
+}
+
+/* ---------- 深色（默认主题） ----------
+ * 选择器必须是 html.dark：EP 官方 dark 变量集同样挂在 html.dark（特异性 0-1-1），
+ * 若写 .dark（0-1-0），下方所有 --el-* 覆盖都会被 EP 的纯黑/灰系 token 压掉
+ * （典型症状：表格斑马行 #1d1d1d、fill-blank #141414，与面板格格不入） */
+html.dark {
+  --bg: #0a0f1c;
+  --bg-elevated: #0d1526;
+  --panel: #111a2e;
+  --panel-hover: #182342;
+  --border: #1e293b;
+  --border-strong: #2c3d63;
+  --text-1: #e2e8f0;
+  --text-2: #94a3b8;
+  --text-3: #64748b;
+  --accent: #22d3ee;
+  --accent-soft: rgba(34, 211, 238, .1);
+  --accent-grad: linear-gradient(135deg, #22d3ee, #8b5cf6);
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --info: #60a5fa;
+  --shadow-panel: 0 1px 3px rgba(0, 0, 0, .35);
+
+  /* EP 变量覆盖（叠加在 element-plus dark css-vars 之上） */
+  --el-color-primary: #3b82f6;
+  --el-bg-color-page: var(--bg);
+  --el-bg-color: var(--panel);
+  --el-bg-color-overlay: #16203a;
+  --el-text-color-primary: var(--text-1);
+  --el-text-color-regular: var(--text-2);
+  --el-text-color-secondary: var(--text-3);
+  --el-text-color-placeholder: #4b5c7d;
+  --el-border-color: var(--border-strong);
+  --el-border-color-light: var(--border);
+  --el-border-color-lighter: var(--border);
+  --el-border-color-extra-light: #16203a;
+  --el-fill-color: #182342;
+  --el-fill-color-light: #131d33;
+  --el-fill-color-lighter: #101a2e;
+  --el-fill-color-blank: var(--panel);
+
+  /* 表格：融入面板 */
+  --el-table-bg-color: var(--panel);
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: #0f1830;
+  --el-table-row-hover-bg-color: var(--panel-hover);
+  --el-table-border-color: var(--border);
+  --el-table-text-color: var(--text-2);
+  --el-table-header-text-color: var(--text-3);
+
+  color-scheme: dark;
+}

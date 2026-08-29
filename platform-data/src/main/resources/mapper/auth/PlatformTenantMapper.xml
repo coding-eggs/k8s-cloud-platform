@@ -5,25 +5,36 @@
     <id column="id" jdbcType="VARCHAR" property="id" />
     <result column="name" jdbcType="VARCHAR" property="name" />
     <result column="service_account" jdbcType="VARCHAR" property="serviceAccount" />
-    <result column="cluster_id" jdbcType="VARCHAR" property="clusterId" />
     <result column="status" jdbcType="TINYINT" property="status" />
     <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
+    <result column="deleted_at" jdbcType="TIMESTAMP" property="deletedAt" />
   </resultMap>
   <sql id="Base_Column_List">
-    id, `name`, service_account, cluster_id, `status`, created_at, updated_at
+    id, `name`, service_account, `status`, created_at, updated_at, deleted_at
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
     <include refid="Base_Column_List" />
     from platform_tenant
-    where id = #{id,jdbcType=VARCHAR}
+    where id = #{id,jdbcType=VARCHAR} and deleted_at is null
   </select>
-    <select id="selectByTenantId" resultType="com.coding.data.models.auth.PlatformTenant">
-      select * from platform_tenant where cluster_id = #{clusterId} and id = #{tenantId}
+  <select id="selectByServiceAccount" parameterType="java.lang.String" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant
+    where service_account = #{serviceAccount,jdbcType=VARCHAR} and deleted_at is null
+  </select>
+    <select id="hasClusterAccess" resultType="boolean">
+      select count(1) > 0 from platform_tenant_namespace
+      where tenant_id = #{tenantId} and cluster_id = #{clusterId}
+    </select>
+    <select id="listClusterIdsByTenant" resultType="java.lang.String">
+      select distinct cluster_id from platform_tenant_namespace
+      where tenant_id = #{tenantId}
     </select>
   <select id="listAll" resultType="com.coding.data.models.auth.PlatformTenant">
-    select * from platform_tenant
+    select * from platform_tenant where deleted_at is null
   </select>
     <select id="hasNamespaceAccess" resultType="boolean">
       select count(1) > 0 from platform_tenant_namespace
@@ -32,33 +43,37 @@
         and namespace = #{namespace}
     </select>
     <select id="selectTenantByUser" resultType="com.coding.data.models.system.UserTenantInfo">
-      select ut.user_id, ut.tenant_id, t.name tenant_name, t.cluster_id, t.service_account from platform_user_tenant ut
-          inner join platform_tenant t on ut.tenant_id = t.id and ut.tenant_id = #{tenantId}
-          inner join platform_user u on ut.user_id = u.id and u.username = #{username}
+      select ut.user_id,
+             ut.tenant_id,
+             t.name tenant_name,
+             t.service_account
+      from platform_user_tenant ut
+          inner join platform_tenant t on ut.tenant_id = t.id and t.deleted_at is null
+          inner join platform_user u on ut.user_id = u.id and u.deleted_at is null
+      where ut.tenant_id = #{tenantId} and u.username = #{username}
+        and u.status = 1 and t.status = 1
     </select>
     <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
     delete from platform_tenant
     where id = #{id,jdbcType=VARCHAR}
   </delete>
   <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.PlatformTenant" useGeneratedKeys="true">
-    insert into platform_tenant (`name`, service_account,
-      cluster_id, `status`, created_at, 
+    insert into platform_tenant (id,`name`, service_account,
+      `status`, created_at,
       updated_at)
-    values (#{name,jdbcType=VARCHAR}, #{serviceAccount,jdbcType=VARCHAR},
-      #{clusterId,jdbcType=VARCHAR}, #{status,jdbcType=TINYINT}, #{createdAt,jdbcType=TIMESTAMP}, 
+    values (#{id,jdbcType=VARCHAR}, #{name,jdbcType=VARCHAR}, #{serviceAccount,jdbcType=VARCHAR},
+      #{status,jdbcType=TINYINT}, #{createdAt,jdbcType=TIMESTAMP},
       #{updatedAt,jdbcType=TIMESTAMP})
   </insert>
   <insert id="insertSelective" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.PlatformTenant" useGeneratedKeys="true">
     insert into platform_tenant
     <trim prefix="(" suffix=")" suffixOverrides=",">
+        id,
       <if test="name != null">
         `name`,
       </if>
       <if test="serviceAccount != null">
         service_account,
-      </if>
-      <if test="clusterId != null">
-        cluster_id,
       </if>
       <if test="status != null">
         `status`,
@@ -71,14 +86,12 @@
       </if>
     </trim>
     <trim prefix="values (" suffix=")" suffixOverrides=",">
+        #{id,jdbcType=VARCHAR},
       <if test="name != null">
         #{name,jdbcType=VARCHAR},
       </if>
       <if test="serviceAccount != null">
         #{serviceAccount,jdbcType=VARCHAR},
-      </if>
-      <if test="clusterId != null">
-        #{clusterId,jdbcType=VARCHAR},
       </if>
       <if test="status != null">
         #{status,jdbcType=TINYINT},
@@ -100,9 +113,6 @@
       <if test="serviceAccount != null">
         service_account = #{serviceAccount,jdbcType=VARCHAR},
       </if>
-      <if test="clusterId != null">
-        cluster_id = #{clusterId,jdbcType=VARCHAR},
-      </if>
       <if test="status != null">
         `status` = #{status,jdbcType=TINYINT},
       </if>
@@ -119,7 +129,6 @@
     update platform_tenant
     set `name` = #{name,jdbcType=VARCHAR},
       service_account = #{serviceAccount,jdbcType=VARCHAR},
-      cluster_id = #{clusterId,jdbcType=VARCHAR},
       `status` = #{status,jdbcType=TINYINT},
       created_at = #{createdAt,jdbcType=TIMESTAMP},
       updated_at = #{updatedAt,jdbcType=TIMESTAMP}

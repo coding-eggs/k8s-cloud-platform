@@ -36,5 +36,10 @@ public class PlatformPermission implements Serializable {
 
     private Date createdAt;
 
+    /**
+     * 软删除时间，NULL = 未删除
+     */
+    private Date deletedAt;
+
     private static final long serialVersionUID = 1L;
 }

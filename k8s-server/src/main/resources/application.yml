@@ -16,12 +16,15 @@ mybatis:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
   api-docs:
     path: /v3/api-docs
 knife4j:
   enable: true
   setting:
     language: zh_cn
+
 spring:
   servlet:
     multipart:
@@ -29,7 +32,7 @@ spring:
       max-request-size: 5120MB
       enabled: true
   application:
-    name: k8s-cloud-platform
+    name: k8s-server
   mvc:
     pathmatch:
       matching-strategy: ant_path_matcher
@@ -44,16 +47,27 @@ spring:
       max-lifetime: 0
       connection-test-query: SELECT 1
   security:
+    ignore-urls:
+      - "/actuator/**"
+      - "/doc.html"
+      - "/assets/**"
+      - "/404"
+      - "/500"
+      - "/v3/api-docs/**"
+      - "/v2/api-docs"
+      - "/swagger-ui/**"
+      - "/swagger-ui.html"
+      - "/swagger-resources/**"
+      - "/webjars/**"
+      - "/test/**"
+      - "/.well-known/**"
+      - "/manifest.json"
     oauth2:
       resourceserver:
         jwt:
           audiences: gateway-code-client
           jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/oauth2/jwks}
           type: JWS
-          jws:
-            secret: 1232131321312323123sdaAAAasss2AA
-            secret-alg: HS256
-
 #          jwe:
 #            secret: 123231sdsadweasdasdsaqA23vvssa22
 #            secret-alg: A256KW
@@ -61,7 +75,7 @@ spring:
 
 
 jwt:
-  enabled: true
+  enabled: false
   data-key: data
 
 logging:

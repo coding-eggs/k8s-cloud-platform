@@ -1,5 +1,6 @@
 package com.coding.auth.config;
 
+import com.coding.common.components.jwt.JwtProperties;
 import com.coding.common.components.jwt.impl.JweTokenStrategy;
 import com.nimbusds.jose.*;
 import com.nimbusds.jose.crypto.AESEncrypter;
@@ -35,8 +36,6 @@ public class CustomJweEncoder {
     // 可自行实现带缓存的远程 JWK 获取
     private final RemoteJwkSetCache remoteJwkSetCache;
 
-    private final JWKSource<SecurityContext> jwkSource;
-
     private final JweTokenStrategy<Object> jweTokenStrategy;
 
     public JWEData encode(String signedJwt,  CustomClientSetting clientSetting) {
@@ -48,8 +47,6 @@ public class CustomJweEncoder {
         String encMethodStr = clientSetting.getJweEncMethod();
         //对称密钥
         String symmetricSecret = clientSetting.getJweSecret();
-        //对称密钥加密的密钥id
-        String jweSecretKeyId = clientSetting.getJweSecretKeyId();
 
         JWEAlgorithm keyAlg = StringUtils.hasText(keyAlgStr)
                 ? JWEAlgorithm.parse(keyAlgStr)
@@ -99,7 +96,7 @@ public class CustomJweEncoder {
             }
             else if (JWEAlgorithm.Family.SYMMETRIC.contains(keyAlg) && StringUtils.hasText(symmetricSecret)) {
                 //对称加密
-                String secret = jweTokenStrategy.getJWT(symmetricSecret,jweSecretKeyId, jwkSource);
+                String secret = jweTokenStrategy.getData(symmetricSecret);
                 JWEHeader jweHeader = jweHeaderBuilder.build();
                 JWEObject jweObject = new JWEObject(jweHeader, new Payload(signedJwt));
                 if (JWEAlgorithm.DIR.equals(keyAlg)) {

@@ -7,7 +7,6 @@ import com.coding.common.components.jwt.impl.JweTokenStrategy;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.nimbusds.jose.*;
-import com.nimbusds.jose.crypto.DirectDecrypter;
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKMatcher;
 import com.nimbusds.jose.jwk.JWKSelector;
@@ -58,6 +57,7 @@ public class ClientService {
 
     @Autowired
     private JWKSource<SecurityContext> jwkSource;
+
 
     // ==================== CRUD ====================
     @Transactional
@@ -193,7 +193,7 @@ public class ClientService {
 
         // 1. 授权码模式校验
         if (hasAuthCode) {
-            if (isCreate && !StringUtils.hasText(req.getClientSecret())) {
+            if (isCreate && !StringUtils.hasText(req.getClientSecret()) && !req.getRequireProofKey()) {
                 throw new CloudPlatformException(EnumResponseType.OAUTH2_CLIENT_AUTH_CODE_NEED_SECRET);
             }
             if (req.getRedirectUris() == null || req.getRedirectUris().isEmpty()) {
@@ -230,7 +230,7 @@ public class ClientService {
             if (isSymmetricSignature(req.getJwsSigAlg()) && StringUtils.hasText(req.getJwsSecret())) {
                 //先对JwsSecret进行解密
                 try {
-                    int bytes = jweTokenStrategy.getJWT(req.getJwsSecret(), req.getJwsSecretKid(), jwkSource).getBytes(StandardCharsets.UTF_8).length;
+                    int bytes = jweTokenStrategy.getData(req.getJwsSecret()).getBytes(StandardCharsets.UTF_8).length;
                     String alg = req.getJwsSigAlg();
                     if ("HS256".equals(alg) && bytes < 32) {
                         throw new CloudPlatformException(EnumResponseType.OAUTH2_JWS_KEY_LENGTH_INSUFFICIENT,
@@ -267,7 +267,7 @@ public class ClientService {
 
                 //先对JweSecret进行解密
                 try {
-                    int bytes = jweTokenStrategy.getJWT(req.getJweSecret(), req.getJweSecretKid(), jwkSource).getBytes(StandardCharsets.UTF_8).length;
+                    int bytes = jweTokenStrategy.getData(req.getJweSecret()).getBytes(StandardCharsets.UTF_8).length;
                     String alg = req.getJweKeyAlg();
                     if (("A128KW".equals(alg) || "A128GCMKW".equals(alg)) && bytes != 16) {
                         throw new CloudPlatformException(EnumResponseType.OAUTH2_JWE_KEY_LENGTH_MISMATCH,
@@ -291,8 +291,8 @@ public class ClientService {
             if (isDirectEncryption(req.getJweKeyAlg()) && StringUtils.hasText(req.getJweSecret())) {
                 try {
 
-                    int bytes = jweTokenStrategy.getJWT(req.getJweSecret(), req.getJweSecretKid(), jwkSource)
-                            .getBytes(StandardCharsets.UTF_8).length;
+                    int bytes = jweTokenStrategy.getData(req.getJweSecret()).getBytes(StandardCharsets.UTF_8).length;
+
                     String enc = req.getJweEncMethod();
                     if ("A128GCM".equals(enc) && bytes != 16) {
                         throw new CloudPlatformException(EnumResponseType.OAUTH2_JWE_KEY_LENGTH_MISMATCH,
@@ -549,7 +549,7 @@ public class ClientService {
                         .build()
                 ), null);
                 if (jwks != null && !jwks.isEmpty()) {
-                    EncryptedJWT encJwt = (EncryptedJWT) jweTokenStrategy.getJWT(secret, jwks.get(0));
+                    EncryptedJWT encJwt = (EncryptedJWT) jweTokenStrategy.getJWT(secret);
                     return encJwt.getPayload().toString();
                 }
             }

@@ -26,12 +26,6 @@
             <artifactId>platform-common</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-
-        <dependency>
-            <groupId>com.coding</groupId>
-            <artifactId>platform-data</artifactId>
-            <version>${project.parent.version}</version>
-        </dependency>
         
     </dependencies>
 

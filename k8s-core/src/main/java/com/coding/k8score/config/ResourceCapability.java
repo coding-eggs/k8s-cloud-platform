@@ -18,6 +18,11 @@ public class ResourceCapability {
     private boolean cronJobV1;
     private boolean cronJobV1Beta1;
 
+    // ===== RBAC =====
+    private boolean clusterRoleV1;
+    private boolean roleBindingV1;
+    private boolean serviceAccountV1;
+
     // ===== 扩展能力（建议）=====
     private boolean supportHPA;
     private boolean supportVPA;

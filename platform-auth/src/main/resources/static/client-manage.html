@@ -175,7 +175,7 @@
                 <el-form-item label="显示名称"><el-input v-model="form.clientName" placeholder="客户端名称" /></el-form-item>
 
                 <!-- Secret fields: hidden for device_code -->
-                <template v-if="!isDeviceCode">
+                <template v-if="!isDeviceCode && !requireProofKey">
                     <el-form-item label="Client Secret" :required="hasAuthCode && !isEdit">
                         <el-input v-model="form.clientSecret" placeholder="客户端密钥" show-password style="width:100%" />
                         <span v-if="hasAuthCode && !isEdit" style="font-size:12px;color:#909399;margin-top:4px;display:block">授权码模式下必填</span>
@@ -393,6 +393,7 @@ createApp({
             {label: 'Client Secret Basic', value: 'client_secret_basic'},
             {label: 'Client Secret Post', value: 'client_secret_post'},
             {label: 'Private Key JWT', value: 'private_key_jwt'},
+            {label: 'none', value: 'none'},
         ];
 
         // ==================== 表单模型 ====================
@@ -473,6 +474,9 @@ createApp({
         const hasAuthCode = computed(() => form.authorizationGrantTypes.includes('authorization_code'));
         // 判断当前是否选择了设备码模式（设备码不需要 client_secret、回调地址等）
         const isDeviceCode = computed(() => form.authorizationGrantTypes.includes('device_code'));
+
+        const requireProofKey = computed(() => form.requireProofKey);
+
         // JWS 签名算法是否为对称加密（HS256/384/512 需要密钥，非对称的 RS/ES 不需要）
         const isJwsSymmetric = computed(() => ['HS256', 'HS384', 'HS512'].includes(form.jwsSigAlg));
         // JWE 密钥加密算法是否为对称加密（dir/A*KW 需要客户端提供密钥）
@@ -773,7 +777,7 @@ _formRaw.jwsSecret = row.jwsSecret || null;   // JWS 对称签名密钥（密文
 
             // 1. 授权码模式校验（更新时 Secret 可不填，保留原值）
             if (hasAuthCode) {
-                if (!isEdit.value && (!form.clientSecret || !form.clientSecret.trim())) {
+                if (!isEdit.value && (!form.clientSecret || !form.clientSecret.trim()) && !form.requireProofKey) {
                     errors.push('授权码模式下必须填写 Client Secret');
                 }
                 if (!form.redirectUris || form.redirectUris.length === 0) {
@@ -976,6 +980,7 @@ _formRaw.jwsSecret = row.jwsSecret || null;   // JWS 对称签名密钥（密文
             postLogoutUrisText,     // textarea ↔ postLogoutRedirectUris 双向绑定桥接
             hasAuthCode,            // 是否选中授权码模式
             isDeviceCode,           // 是否选中设备码模式
+            requireProofKey,
             isJwsSymmetric,         // JWS 是否为对称签名算法
             isJweSymmetric,         // JWE 密钥加密是否为对称算法
             isJweAsymmetric,        // JWE 密钥加密是否为非对称算法

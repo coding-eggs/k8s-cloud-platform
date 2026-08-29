@@ -12,6 +12,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.data.mapper.auth.PlatformTenantMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
+import com.coding.data.mapper.auth.PlatformUserRoleMapper;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.system.SecurityUser;
 import com.coding.data.models.system.TokenUserInfo;
@@ -87,10 +88,6 @@ public class AuthorizationServerConfig {
 
     @Autowired
     private JwsTokenStrategy<SecurityUser> jwsTokenStrategy;
-
-    @Autowired
-    private JwkService jwkService;
-
 
     @Autowired
     private JweTokenStrategy<Object> jweTokenStrategy;
@@ -191,7 +188,7 @@ public class AuthorizationServerConfig {
      5. this.jwtEncoder.encode(JwtEncoderParameters.from(header, claims))  ← 签名+编码
      */
     @Bean
-    public OAuth2TokenCustomizer<JwtEncodingContext> jwtTokenExchangeCustomizer(PlatformUserMapper userMapper, PlatformTenantMapper tenantMapper) {
+    public OAuth2TokenCustomizer<JwtEncodingContext> jwtTokenExchangeCustomizer(PlatformUserMapper userMapper, PlatformTenantMapper tenantMapper, PlatformUserRoleMapper userRoleMapper) {
 
         return context -> {
             //通过username 查询用户信息
@@ -205,6 +202,9 @@ public class AuthorizationServerConfig {
                     .displayName(platformUser.getDisplayName())
                     .status(platformUser.getStatus())
                     .build();
+
+            //平台域角色（所有 grant 类型都写入，管理端据此校验 PLATFORM:admin）
+            tokenUserInfo.setPlatformRoles(userRoleMapper.selectRoleCodesByUser(platformUser.getId()));
 
             //仅对 token exchange grant 生效
             if (context.getAuthorizationGrantType().equals(AuthorizationGrantType.TOKEN_EXCHANGE)) {
@@ -281,11 +281,13 @@ public class AuthorizationServerConfig {
                 //对称算法签名
                 if (JWSAlgorithm.Family.HMAC_SHA.contains(JWSAlgorithm.parse(customClientSetting.getJwsSigAlg())) &&
                         StringUtils.hasText(customClientSetting.getJwsSecret())) {
+                    //对称算法的密钥（对称密钥是使用非对称加密的方式存储在数据库的，所以下面需要解密）
                     String jwsSecret = customClientSetting.getJwsSecret();
-                    String keyId= customClientSetting.getJwsSecretKeyId();
+
+                    //明文密钥
+                    String realSecret =  jweTokenStrategy.getData(jwsSecret);
 
                     //对称密钥jwk
-                    String realSecret =  jweTokenStrategy.getJWT(jwsSecret, keyId, jwkSource);
                     jwk = new OctetSequenceKey.Builder(realSecret.getBytes(StandardCharsets.UTF_8))
                             .algorithm(JWSAlgorithm.parse(customClientSetting.getJwsSigAlg()))
                             .keyUse(KeyUse.SIGNATURE)
@@ -336,15 +338,7 @@ public class AuthorizationServerConfig {
     }
 
 
-    //暴漏给JWK Endpoint 或者给JwtEncoder 、 JwtDecoder 使用， 目前jwkSource是从配置文件里读取的
-    @Bean
-    public JWKSource<SecurityContext> jwkSource() {
-        return (jwkSelector, securityContext) -> {
-            List<JWK> jwkList = jwkService.loadAllJwkFromDb();
-            JWKSet jwkSet = new JWKSet(jwkList);
-            return jwkSelector.select(jwkSet);
-        };
-    }
+
 
     @Bean
     public ClientSecretAuthenticationProvider clientSecretAuthenticationProvider(RegisteredClientRepository registeredClientRepository ,

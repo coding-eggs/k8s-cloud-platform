@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.auth.PlatformTenantNamespaceMapper">
+  <resultMap id="BaseResultMap" type="com.coding.data.models.auth.PlatformTenantNamespace">
+    <id column="id" jdbcType="VARCHAR" property="id" />
+    <result column="tenant_id" jdbcType="VARCHAR" property="tenantId" />
+    <result column="cluster_id" jdbcType="VARCHAR" property="clusterId" />
+    <result column="namespace" jdbcType="VARCHAR" property="namespace" />
+    <result column="role_template_id" jdbcType="VARCHAR" property="roleTemplateId" />
+    <result column="create_time" jdbcType="TIMESTAMP" property="createTime" />
+  </resultMap>
+  <sql id="Base_Column_List">
+    id, tenant_id, cluster_id, `namespace`, role_template_id, create_time
+  </sql>
+  <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant_namespace
+    where id = #{id,jdbcType=VARCHAR}
+  </select>
+  <select id="selectByTenantClusterNs" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant_namespace
+    where tenant_id = #{tenantId,jdbcType=VARCHAR}
+      and cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and `namespace` = #{namespace,jdbcType=VARCHAR}
+  </select>
+  <select id="listByTenant" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant_namespace
+    where tenant_id = #{tenantId,jdbcType=VARCHAR}
+    order by cluster_id, `namespace`
+  </select>
+  <select id="listByCluster" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant_namespace
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+    order by tenant_id, `namespace`
+  </select>
+  <select id="listAll" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant_namespace
+    order by tenant_id, cluster_id, `namespace`
+  </select>
+  <insert id="insert" parameterType="com.coding.data.models.auth.PlatformTenantNamespace">
+    insert into platform_tenant_namespace (id, tenant_id, cluster_id, `namespace`, role_template_id)
+    values (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},
+      #{namespace,jdbcType=VARCHAR}, #{roleTemplateId,jdbcType=VARCHAR})
+  </insert>
+  <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
+    delete from platform_tenant_namespace
+    where id = #{id,jdbcType=VARCHAR}
+  </delete>
+  <select id="countByRoleTemplate" resultType="int">
+    select count(1) from platform_tenant_namespace
+    where role_template_id = #{roleTemplateId,jdbcType=VARCHAR}
+  </select>
+</mapper>

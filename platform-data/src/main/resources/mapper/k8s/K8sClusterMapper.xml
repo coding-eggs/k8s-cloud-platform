@@ -16,19 +16,20 @@
     <result column="last_heartbeat_time" jdbcType="TIMESTAMP" property="lastHeartbeatTime" />
     <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
+    <result column="deleted_at" jdbcType="TIMESTAMP" property="deletedAt" />
   </resultMap>
   <sql id="Base_Column_List">
-    cluster_id, cluster_name, kubeconfig, version, istio_version, calico_version, container_runtime, 
-    description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at
+    cluster_id, cluster_name, kubeconfig, version, istio_version, calico_version, container_runtime,
+    description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
     <include refid="Base_Column_List" />
     from k8s_cluster
-    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+    where cluster_id = #{clusterId,jdbcType=VARCHAR} and deleted_at is null
   </select>
     <select id="listAll" resultType="com.coding.data.models.k8s.K8sCluster">
-      select * from k8s_cluster
+      select * from k8s_cluster where deleted_at is null
     </select>
     <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
     delete from k8s_cluster

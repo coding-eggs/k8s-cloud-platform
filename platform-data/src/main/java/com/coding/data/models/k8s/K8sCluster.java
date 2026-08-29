@@ -1,6 +1,5 @@
 package com.coding.data.models.k8s;
 
-import java.io.Serializable;
 import java.sql.Date;
 
 import lombok.Data;
@@ -57,7 +56,7 @@ public class K8sCluster {
     private IPStack ipStack;
 
     /**
-     * 状态：CONNECTED/DISCONNECTED/CONNECTING/DELETED/ERROR
+     * 状态：CONNECTED/DISCONNECTED/CONNECTING/ERROR
      */
     private ClusterStatus status;
 
@@ -81,6 +80,11 @@ public class K8sCluster {
      */
     private Date updatedAt;
 
+    /**
+     * 软删除时间，NULL = 未删除
+     */
+    private Date deletedAt;
+
 
     public enum IPStack {
         IPV4, IPV6 ,IPV4_AND_IPV6
@@ -90,7 +94,6 @@ public class K8sCluster {
         CONNECTED,          // 正常连接
         DISCONNECTED,       // 连接失败
         CONNECTING,         // 正在连接中
-        DELETED,            // 已标记删除
         ERROR               // 其他错误
     }
 }

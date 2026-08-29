@@ -11,8 +11,6 @@ public class UserTenantInfo {
 
     private String tenantName;
 
-    private String clusterId;
-
     private String serviceAccount;
 
 }

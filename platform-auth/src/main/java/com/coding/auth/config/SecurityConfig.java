@@ -13,12 +13,16 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -56,14 +60,25 @@ public class SecurityConfig {
 
     @Autowired
     private LoginSuccessHandler loginSuccessHandler;
+
+
+    @Data
+    @Configuration
+    @ConfigurationProperties(prefix = "spring.security")
+    public static class Properties {
+        private String[] ignoreUrls;
+    }
+
+
+
+
     // @formatter:off
     @Bean
-    public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http, Properties properties) throws Exception {
         http
                 .authorizeHttpRequests(authorize ->
                         authorize
-                                .requestMatchers( "/login.html", "/assets/**",
-                                        "/webjars/**", "/callback","/error",  "/test").permitAll()
+                                .requestMatchers(properties.getIgnoreUrls()).permitAll()
                                 .anyRequest().authenticated()
                 )
                 .csrf(AbstractHttpConfigurer::disable)
@@ -177,7 +192,8 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.addAllowedHeader("*");
         config.addAllowedMethod("*");
-        config.addAllowedOrigin("*");
+        // allowCredentials=true 时 allowedOrigins 不能含字面量 "*"，用 pattern 回显请求 Origin
+        config.addAllowedOriginPattern("*");
         config.setAllowCredentials(true);
         source.registerCorsConfiguration("/**", config);
         return source;
@@ -187,15 +203,18 @@ public class SecurityConfig {
     public UserDetailsService userDetailsService() {
         return username-> {
             PlatformUser user = userMapper.selectByUsername(username);
-            if (user != null) {
-                List<SecurityRole> securityRoles = roleMapper.selectTenantRole(user.getId());
-
-                return new SecurityUser(user.getUsername(), user.getPassword() ,
-                        true, true, true, true,
-                        securityRoles, user.getId(), user.getDisplayName(), user.getEmail(), user.getStatus(),
-                        user.getType(), user.getSource());
+            if (user == null) {
+                throw new UsernameNotFoundException("未找到用户");
             }
-            throw new UsernameNotFoundException("未找到用户");
+            if (user.getStatus() == null || user.getStatus() != 1) {
+                throw new DisabledException("用户已被禁用");
+            }
+            List<SecurityRole> securityRoles = roleMapper.selectTenantRole(user.getId());
+
+            return new SecurityUser(user.getUsername(), user.getPassword() ,
+                    true, true, true, true,
+                    securityRoles, user.getId(), user.getDisplayName(), user.getEmail(), user.getStatus(),
+                    user.getType(), user.getSource());
         };
     }
 }

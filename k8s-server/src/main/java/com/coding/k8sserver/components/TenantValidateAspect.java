@@ -1,6 +1,5 @@
 package com.coding.k8sserver.components;
 
-import com.coding.common.components.jwt.JwtComponent;
 import com.coding.common.components.jwt.JwtProperties;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
@@ -16,11 +15,9 @@ import org.aspectj.lang.annotation.Aspect;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
-import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.lang.reflect.Method;
 
@@ -30,16 +27,17 @@ import java.lang.reflect.Method;
 @RequiredArgsConstructor
 public class TenantValidateAspect {
 
-    private final JwtComponent<TokenUserInfo> jwtComponent;
     private final PlatformTenantMapper platformTenantMapper;
-    private final JwtProperties jwtProperties;
+
+    private final JsonMapper jsonMapper;
 
     @Around("@annotation(tenantValidate)")
     public Object around(ProceedingJoinPoint joinPoint, TenantValidate tenantValidate) throws Throwable {
 
         Jwt jwt = (Jwt) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
 
-        TokenUserInfo userInfo = jwt.getClaim(jwtProperties.getDataKey());
+        //获取用户-租户信息
+        TokenUserInfo userInfo = jsonMapper.convertValue(jwt.getClaim("data"), new TypeReference<>() {});
 
         UserTenantInfo tenantInfo = userInfo.getTenantInfo();
         if (tenantInfo == null || tenantInfo.getTenantId() == null) {
@@ -75,18 +73,6 @@ public class TenantValidateAspect {
         return joinPoint.proceed();
     }
 
-    private String extractToken() {
-        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
-        if (attrs == null) {
-            throw new CloudPlatformException(EnumResponseType.NON_AUTH_ENTRY_POINT);
-        }
-        HttpServletRequest request = attrs.getRequest();
-        String token = request.getHeader("Authorization");
-        if (!StringUtils.hasText(token)) {
-            throw new CloudPlatformException(EnumResponseType.NON_AUTH_ENTRY_POINT);
-        }
-        return token;
-    }
 
     private boolean isSimpleType(Class<?> clazz) {
         return clazz.isPrimitive() || clazz.isEnum()

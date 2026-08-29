@@ -1,27 +1,30 @@
 package com.coding.common.components.jwt.impl;
 
-import com.coding.common.components.JwkService;
+
 import com.coding.common.components.jwt.JwtProperties;
 import com.coding.common.components.jwt.JwtStrategy;
-import com.nimbusds.jose.*;
+import com.nimbusds.jose.JOSEException;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.*;
 import com.nimbusds.jose.jwk.*;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
 import com.nimbusds.jwt.JWT;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.nio.charset.StandardCharsets;
-import java.security.*;
+import java.security.NoSuchAlgorithmException;
 import java.security.spec.InvalidKeySpecException;
 import java.text.ParseException;
 import java.time.Instant;
-import java.util.*;
-
+import java.util.Date;
+import java.util.UUID;
 
 
 /**
@@ -29,6 +32,7 @@ import java.util.*;
  */
 @Slf4j
 @Component
+@ConditionalOnBean(JwtProperties.class)
 @RequiredArgsConstructor
 public class JwsTokenStrategy<T> implements JwtStrategy<T> {
 
@@ -38,13 +42,11 @@ public class JwsTokenStrategy<T> implements JwtStrategy<T> {
     private static final String CLAIM_KEY_TOKEN_ID = "jti";
     private static final String CLAIM_KEY_TYPE = "type";
 
-    private final JwkService jwkService;
-
-
+    private final JWKSource<SecurityContext> jwkSource;
 
     @Override
     public String generateToken(T t, String tokenType, long expirationSeconds, String subject)
-            throws NoSuchAlgorithmException, InvalidKeySpecException, JOSEException, ParseException {
+            throws NoSuchAlgorithmException, InvalidKeySpecException, JOSEException {
 
         JWTClaimsSet claimsSet = new JWTClaimsSet.Builder()
                 .subject(subject)
@@ -55,8 +57,11 @@ public class JwsTokenStrategy<T> implements JwtStrategy<T> {
                 .claim(CLAIM_KEY_TOKEN_ID, UUID.randomUUID().toString())
                 .claim("iat", Instant.now().getEpochSecond())
                 .build();
+        JWK jwk = jwkSource.get(new JWKSelector(new JWKMatcher.Builder()
+                .keyUse(KeyUse.SIGNATURE)
+                .build()), null).getFirst();
 
-        return sign(claimsSet, getJWK());
+        return sign(claimsSet, jwk);
     }
 
     public String sign(JWTClaimsSet claimsSet, JWK jwk) throws NoSuchAlgorithmException, InvalidKeySpecException, JOSEException {
@@ -98,28 +103,29 @@ public class JwsTokenStrategy<T> implements JwtStrategy<T> {
 
 
     @Override
-    public T parseToken(String token, Class<T> clazz) throws ParseException, JOSEException, NoSuchAlgorithmException, InvalidKeySpecException {
-        JWTClaimsSet claimsFromToken = getJWT(token, getJWK()).getJWTClaimsSet();
+    public T parseToken(String token, Class<T> clazz) throws ParseException, JOSEException, NoSuchAlgorithmException {
+        JWTClaimsSet claimsFromToken = getJWT(token).getJWTClaimsSet();
         return jsonMapper.convertValue(claimsFromToken.getClaim(jwtProperties.getDataKey()), clazz);
     }
 
-
-
     @Override
-    public JWK getJWK() {
-        List<JWK> oauth2Jwks = jwkService.loadAllJwkFromDb()
-                .stream().filter(jwk -> jwk.getKeyUse().equals(KeyUse.SIGNATURE))
-                .toList();
-        return oauth2Jwks.getFirst();
+    public String getData(String token) throws ParseException, NoSuchAlgorithmException, JOSEException {
+        JWTClaimsSet claimsFromToken = getJWT(token).getJWTClaimsSet();
+        return claimsFromToken.getClaimAsString(jwtProperties.getDataKey());
     }
 
 
     @Override
-    public JWT getJWT(String token, JWK jwk) throws ParseException, JOSEException, NoSuchAlgorithmException {
+    public JWT getJWT(String token) throws ParseException, JOSEException, NoSuchAlgorithmException {
 
-        String algorithm = jwk.getAlgorithm().getName();
-        JWSAlgorithm jwsAlgorithm = JWSAlgorithm.parse(algorithm);
         SignedJWT signedJWT = SignedJWT.parse(token);
+        String keyID = signedJWT.getHeader().getKeyID();
+        JWSAlgorithm jwsAlgorithm = signedJWT.getHeader().getAlgorithm();
+        JWK jwk = jwkSource.get(new JWKSelector(new JWKMatcher.Builder()
+                .keyID(keyID)
+                .algorithm(jwsAlgorithm)
+                .build()), null).getFirst();
+
         //对称加密
         if (JWSAlgorithm.Family.HMAC_SHA.contains(jwsAlgorithm)) {
 
@@ -152,18 +158,17 @@ public class JwsTokenStrategy<T> implements JwtStrategy<T> {
             }
 
         } else {
-            throw new NoSuchAlgorithmException("不支持的算法：" + algorithm);
+            throw new NoSuchAlgorithmException("不支持的算法：" + jwsAlgorithm.getName());
         }
 
         return signedJWT;
     }
 
 
-
     @Override
     public boolean validateToken(String token) {
         try {
-            getJWT(token, getJWK());
+            getJWT(token);
             return true;
         } catch (Exception e) {
             return false;
@@ -173,7 +178,7 @@ public class JwsTokenStrategy<T> implements JwtStrategy<T> {
     @Override
     public long getRemainingSeconds(String token) {
         try {
-            JWTClaimsSet claims = getJWT(token, getJWK()).getJWTClaimsSet();
+            JWTClaimsSet claims = getJWT(token).getJWTClaimsSet();
             Date expiration = claims.getExpirationTime();
             return (expiration.getTime() - System.currentTimeMillis()) / 1000;
         } catch (Exception e) {
@@ -184,7 +189,7 @@ public class JwsTokenStrategy<T> implements JwtStrategy<T> {
     @Override
     public String getTokenId(String token) {
         try {
-            JWTClaimsSet claims = getJWT(token, getJWK()).getJWTClaimsSet();
+            JWTClaimsSet claims = getJWT(token).getJWTClaimsSet();
             return claims.getClaim(CLAIM_KEY_TOKEN_ID).toString();
         } catch (Exception e) {
             return null;
