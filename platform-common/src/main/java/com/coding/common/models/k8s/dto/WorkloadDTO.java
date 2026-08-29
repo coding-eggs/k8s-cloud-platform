@@ -1,6 +1,7 @@
 package com.coding.common.models.k8s.dto;
 
 import com.coding.common.models.k8s.BaseResources;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -28,6 +29,26 @@ public class WorkloadDTO extends BaseResources {
 
     /** 创建时间（仅查询返回，ISO-8601 字符串） */
     private String creationTime;
+
+    /** 描述 → metadata.annotations["description"] */
+    @Schema(description = "描述")
+    private String description;
+
+    /** STS 专属 headless service 名，默认 = name */
+    @Schema(description = "serviceName（StatefulSet 专属）")
+    private String serviceName;
+
+    /** 更新策略（kind 感知） */
+    @Schema(description = "更新策略")
+    private StrategyDTO strategy;
+
+    /** STS 专属卷声明模板 */
+    @Schema(description = "volumeClaimTemplates（StatefulSet 专属）")
+    private List<PvcTemplateDTO> volumeClaimTemplates;
+
+    /** 完整 PodSpec（三种 kind 共享）★核心 */
+    @Schema(description = "Pod 模板（完整 PodSpec）")
+    private PodTemplateDTO podTemplate;
 
     @Override
     public String getApiPath() {
