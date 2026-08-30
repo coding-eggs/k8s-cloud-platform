@@ -157,6 +157,9 @@ public class WorkloadValidator {
         // C3 volumeMounts[].name 必须引用已定义 volumes[].name
         Set<String> volNames = new HashSet<>();
         if (spec.getVolumes() != null) for (VolumeDTO v : spec.getVolumes()) if (v.getName() != null) volNames.add(v.getName());
+        // R12: STS volumeClaimTemplate 名称也是合法挂载引用（K8s 控制器注入，不能同时进 spec.volumes）
+        if (KIND_STATEFULSET.equals(kind) && dto.getVolumeClaimTemplates() != null)
+            for (PvcTemplateDTO t : dto.getVolumeClaimTemplates()) if (t.getName() != null) volNames.add(t.getName());
         for (ContainerDTO c : allContainers(spec)) {
             if (c.getVolumeMounts() == null) continue;
             for (VolumeMountDTO m : c.getVolumeMounts()) {
