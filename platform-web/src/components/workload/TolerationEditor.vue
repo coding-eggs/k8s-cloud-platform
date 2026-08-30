@@ -15,9 +15,12 @@ function remove(i: number): void {
   model.value?.splice(i, 1)
 }
 
-/** B6：key 为空时强制 operator=Exists（空 key 只有 Exists 有意义，即容忍全部污点） */
+/** B6：key 为空时强制 operator=Exists（空 key 只有 Exists 有意义，即容忍全部污点），同时清掉 value（K8s 要求 Exists 时 value 为空；el-select 对程序化改值不触发 change，须在此处一并清理） */
 function onKeyInput(t: Toleration): void {
-  if (!t.key) t.operator = 'Exists'
+  if (!t.key) {
+    t.operator = 'Exists'
+    t.value = ''
+  }
 }
 
 /** B6：切到 Exists 时清掉 value（K8s 要求 Exists 时 value 必须为空），避免提交非法对象 */
