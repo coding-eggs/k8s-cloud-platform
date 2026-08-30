@@ -84,7 +84,7 @@ defineExpose({ isValid })
           <span v-if="nameInvalid(c)" class="c2-hint">{{ nameHint(c) }}</span>
           <el-button link type="danger" :disabled="(main ?? []).length <= 1" @click="removeMain(i)">删除</el-button>
         </div>
-        <ContainerEditor ref="mainRefs" v-model="c" :is-init="false" :volume-names="props.volumeNames" />
+        <ContainerEditor ref="mainRefs" v-model="main![i]" :is-init="false" :volume-names="props.volumeNames" />
       </div>
       <el-empty v-if="(main ?? []).length === 0" description="暂无容器，请至少添加一个" :image-size="64" />
     </div>
@@ -101,7 +101,7 @@ defineExpose({ isValid })
           <span v-if="nameInvalid(c)" class="c2-hint">{{ nameHint(c) }}</span>
           <el-button link type="danger" @click="removeInit(i)">删除</el-button>
         </div>
-        <ContainerEditor ref="initRefs" v-model="c" :is-init="true" :volume-names="props.volumeNames" />
+        <ContainerEditor ref="initRefs" v-model="init![i]" :is-init="true" :volume-names="props.volumeNames" />
       </div>
     </div>
   </div>
