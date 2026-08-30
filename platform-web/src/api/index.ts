@@ -7,13 +7,13 @@ import type {
   K8sSecret,
   K8sService,
   K8sServiceMonitor,
-  K8sWorkload,
   NamespaceAllocation,
   NamespaceView,
   PlatformTenant,
   RbacTemplate,
   ResourceContext,
 } from '@/types'
+import type { WorkloadDetail } from '@/types/workload'
 
 /** 集群管理 /cluster */
 export const clusterApi = {
@@ -121,7 +121,7 @@ export const serviceApi = makeResourceApi<K8sService>('services')
 export const pvcApi = makeResourceApi<K8sPvc>('pvcs')
 
 /** 工作负载 /resource/workloads（kind 在 body；get/delete/yaml 跨 kind 查找） */
-export const workloadApi = makeResourceApi<K8sWorkload>('workloads')
+export const workloadApi = makeResourceApi<WorkloadDetail>('workloads')
 
 /** ServiceMonitor /resource/servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
 export const serviceMonitorApi = makeResourceApi<K8sServiceMonitor>('servicemonitors')

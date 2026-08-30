@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { workloadApi } from '@/api'
 import type { K8sWorkload } from '@/types'
+import type { WorkloadKind } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -117,7 +118,7 @@ async function submit(): Promise<void> {
   saving.value = true
   try {
     await workloadApi.create({ tenantId: state.tenantId!, clusterId: state.clusterId! }, {
-      kind: form.kind,
+      kind: form.kind as WorkloadKind,
       name,
       namespace: state.namespace!,
       images,
@@ -155,7 +156,7 @@ async function submitScale(): Promise<void> {
   saving.value = scaling.value = true
   try {
     await workloadApi.update(row.name, { tenantId: state.tenantId!, clusterId: state.clusterId! }, {
-      kind: row.kind,
+      kind: row.kind as WorkloadKind,
       name: row.name,
       namespace: state.namespace!,
       replicas: scaleForm.replicas,
