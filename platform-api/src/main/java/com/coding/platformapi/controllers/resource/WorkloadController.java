@@ -3,6 +3,7 @@ package com.coding.platformapi.controllers.resource;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.services.WorkloadService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ import java.util.List;
 public class WorkloadController {
 
     private final K8sResourceClient k8s;
+    private final WorkloadService workloadService;
 
     @PostMapping("/list")
     @Operation(summary = "列出工作负载（三种 kind 合并）")
@@ -57,14 +59,14 @@ public class WorkloadController {
     @Operation(summary = "创建工作负载（kind 在 body）")
     public ResponseData<WorkloadDTO> create(@RequestBody WorkloadDTO body) {
         //body 携带 tenantId/clusterId/namespace/kind；K8sResourceClient 将前两者提取进 query（k8s-server 以 query 为准）
-        return new ResponseData<>(k8s.create(body));
+        return new ResponseData<>(workloadService.create(body));
     }
 
     @PutMapping("/{name}")
-    @Operation(summary = "更新工作负载（基础表单仅伸缩副本数）")
+    @Operation(summary = "更新工作负载（整 spec 替换，保留 selector/name）")
     public ResponseData<WorkloadDTO> update(@PathVariable String name, @RequestBody WorkloadDTO body) {
         body.setName(name);
-        return new ResponseData<>(k8s.update(body));
+        return new ResponseData<>(workloadService.update(body));
     }
 
     @DeleteMapping("/{name}")
