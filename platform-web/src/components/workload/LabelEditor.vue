@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 
 const model = defineModel<Record<string, string>>()
 const rows = ref<[string, string][]>([])
 
+let selfUpdate = false
 watch(model, (obj) => {
+  if (selfUpdate) return
   rows.value = Object.entries(obj ?? {})
 }, { immediate: true })
 
@@ -13,7 +15,9 @@ function emitUpdate(): void {
   for (const [k, v] of rows.value) {
     if (k.trim() !== '') obj[k] = v
   }
+  selfUpdate = true
   model.value = obj
+  nextTick(() => { selfUpdate = false })
 }
 
 function add(): void {
