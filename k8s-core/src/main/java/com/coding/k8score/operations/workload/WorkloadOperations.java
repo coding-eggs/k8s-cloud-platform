@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.k8score.converter.impl.workload.WorkloadConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.apps.DaemonSet;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
@@ -108,7 +109,8 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
     }
 
     /**
-     * 更新工作负载：基础表单仅支持副本数伸缩（DaemonSet 无副本概念，忽略）；标签保持原值
+     * 更新工作负载：converter 重建完整 spec 后整体替换，保留不可变身份（name/namespace + spec.selector；
+     * StatefulSet 另保留 serviceName）。DaemonSet 无副本概念，忽略 replicas。
      */
     @Override
     public WorkloadDTO update(WorkloadDTO workload) {
@@ -121,28 +123,49 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
                 if (existing == null) {
                     throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
                 }
-                if (workload.getReplicas() != null) {
-                    existing.getSpec().setReplicas(workload.getReplicas());
+                Deployment updated = converter.convertDeployment(workload);
+                LabelSelector existingSelector = existing.getSpec() != null ? existing.getSpec().getSelector() : null;
+                //selector 创建后不可变，沿用 existing 的 name/namespace/selector
+                updated.getMetadata().setName(existing.getMetadata().getName());
+                updated.getMetadata().setNamespace(existing.getMetadata().getNamespace());
+                if (existingSelector != null) {
+                    updated.getSpec().setSelector(existingSelector);
                 }
-                return converter.revert(client.apps().deployments().inNamespace(namespace).resource(existing).update());
+                return converter.revert(client.apps().deployments().inNamespace(namespace).resource(updated).update());
             }
             case WorkloadConverter.KIND_STATEFULSET -> {
                 StatefulSet existing = client.apps().statefulSets().inNamespace(namespace).withName(name).get();
                 if (existing == null) {
                     throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
                 }
-                if (workload.getReplicas() != null) {
-                    existing.getSpec().setReplicas(workload.getReplicas());
+                StatefulSet updated = converter.convertStatefulSet(workload);
+                LabelSelector existingSelector = existing.getSpec() != null ? existing.getSpec().getSelector() : null;
+                //selector 创建后不可变，沿用 existing 的 name/namespace/selector
+                updated.getMetadata().setName(existing.getMetadata().getName());
+                updated.getMetadata().setNamespace(existing.getMetadata().getNamespace());
+                if (existingSelector != null) {
+                    updated.getSpec().setSelector(existingSelector);
                 }
-                return converter.revert(client.apps().statefulSets().inNamespace(namespace).resource(existing).update());
+                //serviceName 不可变：existing 有则沿用，避免用户未改时被重置为 name
+                if (existing.getSpec() != null && StringUtils.hasText(existing.getSpec().getServiceName())) {
+                    updated.getSpec().setServiceName(existing.getSpec().getServiceName());
+                }
+                return converter.revert(client.apps().statefulSets().inNamespace(namespace).resource(updated).update());
             }
             default -> {
                 DaemonSet existing = client.apps().daemonSets().inNamespace(namespace).withName(name).get();
                 if (existing == null) {
                     throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
                 }
-                //DaemonSet 无可变副本数，原样返回
-                return converter.revert(existing);
+                DaemonSet updated = converter.convertDaemonSet(workload);
+                LabelSelector existingSelector = existing.getSpec() != null ? existing.getSpec().getSelector() : null;
+                //沿用 existing 的 name/namespace/selector（DaemonSet selector 同样不可变）
+                updated.getMetadata().setName(existing.getMetadata().getName());
+                updated.getMetadata().setNamespace(existing.getMetadata().getNamespace());
+                if (existingSelector != null) {
+                    updated.getSpec().setSelector(existingSelector);
+                }
+                return converter.revert(client.apps().daemonSets().inNamespace(namespace).resource(updated).update());
             }
         }
     }
