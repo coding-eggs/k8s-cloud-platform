@@ -195,7 +195,8 @@ public class WorkloadConverter {
 
     private NodeAffinityDTO fromNodeAffinity(NodeAffinity n) {
         NodeAffinityDTO d = new NodeAffinityDTO();
-        if (n.getRequiredDuringSchedulingIgnoredDuringExecution() != null) {
+        if (n.getRequiredDuringSchedulingIgnoredDuringExecution() != null
+                && notEmpty(n.getRequiredDuringSchedulingIgnoredDuringExecution().getNodeSelectorTerms())) {
             NodeSelectorDTO req = new NodeSelectorDTO();
             req.setNodeSelectorTerms(n.getRequiredDuringSchedulingIgnoredDuringExecution().getNodeSelectorTerms()
                 .stream().map(this::fromNodeSelectorTerm).toList());
@@ -320,7 +321,7 @@ public class WorkloadConverter {
     public Deployment convertDeployment(WorkloadDTO dto) {
         return new DeploymentBuilder()
             .withNewMetadata().withName(dto.getName()).withNamespace(dto.getNamespace())
-                .withLabels(effectiveLabels(dto)).endMetadata()
+                .withLabels(effectiveLabels(dto)).withAnnotations(effectiveAnnotations(dto)).endMetadata()
             .withNewSpec()
                 .withReplicas(dto.getReplicas() != null ? dto.getReplicas() : 1)
                 .withSelector(new LabelSelectorBuilder().withMatchLabels(selectorLabels(dto)).build())
@@ -332,7 +333,7 @@ public class WorkloadConverter {
     public StatefulSet convertStatefulSet(WorkloadDTO dto) {
         return new StatefulSetBuilder()
             .withNewMetadata().withName(dto.getName()).withNamespace(dto.getNamespace())
-                .withLabels(effectiveLabels(dto)).endMetadata()
+                .withLabels(effectiveLabels(dto)).withAnnotations(effectiveAnnotations(dto)).endMetadata()
             .withNewSpec()
                 .withReplicas(dto.getReplicas() != null ? dto.getReplicas() : 1)
                 .withServiceName(hasText(dto.getServiceName()) ? dto.getServiceName() : dto.getName())
@@ -346,7 +347,7 @@ public class WorkloadConverter {
     public DaemonSet convertDaemonSet(WorkloadDTO dto) {
         return new DaemonSetBuilder()
             .withNewMetadata().withName(dto.getName()).withNamespace(dto.getNamespace())
-                .withLabels(effectiveLabels(dto)).endMetadata()
+                .withLabels(effectiveLabels(dto)).withAnnotations(effectiveAnnotations(dto)).endMetadata()
             .withNewSpec()
                 .withSelector(new LabelSelectorBuilder().withMatchLabels(selectorLabels(dto)).build())
                 .withUpdateStrategy(toDaemonSetUpdateStrategy(dto.getStrategy()))
@@ -359,9 +360,18 @@ public class WorkloadConverter {
         Map<String, String> tplLabels = effectiveLabels(dto); // app=name + 用户 labels
         if (pt.getLabels() != null) tplLabels.putAll(pt.getLabels());
         return new PodTemplateSpecBuilder()
-            .withNewMetadata().withLabels(tplLabels).endMetadata()
+            .withNewMetadata().withLabels(tplLabels).withAnnotations(toAnnotations(pt.getAnnotations())).endMetadata()
             .withSpec(buildPodSpec(pt.getSpec() != null ? pt.getSpec() : new PodSpecDTO()))
             .build();
+    }
+
+    /**PodTemplateDTO.annotations 为 Map<String,Object>，fabric8 为 Map<String,String>（泛型不变性），逐值转 String */
+    private Map<String, String> toAnnotations(Map<String, Object> m) {
+        if (m == null || m.isEmpty()) return null;
+        Map<String, String> r = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : m.entrySet())
+            r.put(e.getKey(), e.getValue() != null ? String.valueOf(e.getValue()) : null);
+        return r;
     }
 
     private PodSpec buildPodSpec(PodSpecDTO s) {
@@ -677,6 +687,14 @@ public class WorkloadConverter {
         }
         labels.put("app", dto.getName());
         return labels;
+    }
+
+    /**description → metadata.annotations["description"]（spec D6）；无描述时返回 null 不写空块 */
+    private Map<String, String> effectiveAnnotations(WorkloadDTO dto) {
+        if (!hasText(dto.getDescription())) return null;
+        Map<String, String> annotations = new LinkedHashMap<>();
+        annotations.put("description", dto.getDescription());
+        return annotations;
     }
 
     // ==================== 判空工具 ====================
