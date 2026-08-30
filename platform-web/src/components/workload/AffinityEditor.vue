@@ -80,6 +80,7 @@ function addExpr(term: NodeSelectorTerm, kind: NodeListKey): void {
 
 function removeExpr(term: NodeSelectorTerm, kind: NodeListKey, i: number): void {
   term[kind]?.splice(i, 1)
+  prune()
 }
 
 /** 切到 Exists/DoesNotExist 时清空 values（k8s 校验要求这两种 operator 不带 values） */
@@ -88,14 +89,28 @@ function setOperator(r: NodeSelectorRequirement, op: string): void {
   if (op === 'Exists' || op === 'DoesNotExist') r.values = []
 }
 
+/** NodeSelectorTerm 是否有实际内容（空 term 在 k8s OR 语义下匹配所有节点，会令整个 required 失效，必须剔除） */
+function nodeTermHasContent(t: NodeSelectorTerm): boolean {
+  return (t.matchExpressions?.length ?? 0) > 0 || (t.matchFields?.length ?? 0) > 0
+}
+
 /** 删除后逐层清掉空壳：空结构 = 未配置（同 ProbeEditor「子对象存在才算配置」） */
 function prune(): void {
   const m = model.value
   if (!m) return
   const na = m.nodeAffinity
   if (na) {
-    if (na.required && na.required.nodeSelectorTerms.length === 0) na.required = null
-    if (na.preferred && na.preferred.length === 0) na.preferred = null
+    if (na.required) {
+      // k8s 对 nodeSelectorTerms 做 OR：先剔掉无内容 term，再判空壳
+      const kept = na.required.nodeSelectorTerms.filter(nodeTermHasContent)
+      if (kept.length === 0) na.required = null
+      else if (kept.length !== na.required.nodeSelectorTerms.length) na.required.nodeSelectorTerms = kept
+    }
+    if (na.preferred) {
+      const keptPref = na.preferred.filter((p) => nodeTermHasContent(p.preference))
+      if (keptPref.length === 0) na.preferred = null
+      else if (keptPref.length !== na.preferred.length) na.preferred = keptPref
+    }
     if (!na.required && !na.preferred) m.nodeAffinity = null
   }
   const pa = m.podAntiAffinity
