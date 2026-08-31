@@ -216,10 +216,16 @@ public class WorkloadValidator {
         return m;
     }
 
-    private boolean isZero(String quantity) {
-        if (!StringUtils.hasText(quantity)) return false; // 未填不算 0（K8s 有默认值）
-        try { return K8sQuantity.parse(quantity).signum() == 0; }
-        catch (CloudPlatformException ex) { throw err("无法解析数量: " + quantity); }
+    /**maxSurge/maxUnavailable 是 IntOrString（整数或百分比如 "25%"），非 Quantity；判断是否为 0*/
+    private boolean isZero(String intOrString) {
+        if (!StringUtils.hasText(intOrString)) return false; // 未填不算 0（K8s 有默认值）
+        String s = intOrString.trim();
+        try {
+            if (s.endsWith("%")) return new java.math.BigDecimal(s.substring(0, s.length() - 1)).signum() == 0;
+            return new java.math.BigDecimal(s).signum() == 0;
+        } catch (NumberFormatException e) {
+            throw err("无法解析 maxSurge/maxUnavailable: " + intOrString);
+        }
     }
 
     private CloudPlatformException err(String msg) {

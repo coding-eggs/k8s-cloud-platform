@@ -7,10 +7,10 @@ import lombok.Data;
 @Schema(description = "滚动更新参数")
 public class RollingUpdateDTO {
 
-    @Schema(description = "最大超出副本数（quantity，仅 Deployment）")
+    @Schema(description = "最大超出副本数（IntOrString：整数或百分比如 25%，仅 Deployment）")
     private String maxSurge;
 
-    @Schema(description = "最大不可用副本数（quantity）")
+    @Schema(description = "最大不可用副本数（IntOrString：整数或百分比如 25%）")
     private String maxUnavailable;
 
     @Schema(description = "分区值（仅 StatefulSet）")

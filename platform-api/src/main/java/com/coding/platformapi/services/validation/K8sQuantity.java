@@ -30,7 +30,10 @@ public final class K8sQuantity {
         String suffix = s.substring(i).trim();
         BigDecimal factor;
         if (suffix.isEmpty()) factor = BigDecimal.ONE;
-        else if (SI.containsKey(suffix)) factor = BigDecimal.TEN.pow(SI.get(suffix));
+        else if (SI.containsKey(suffix)) {
+            int exp = SI.get(suffix); // "m" 为 -3，BigDecimal.pow 不接受负指数
+            factor = exp >= 0 ? BigDecimal.TEN.pow(exp) : BigDecimal.ONE.divide(BigDecimal.TEN.pow(-exp));
+        }
         else if (BIN.containsKey(suffix)) factor = BigDecimal.valueOf(2).pow(BIN.get(suffix));
         else throw new CloudPlatformException(EnumResponseType.ERROR, "无法解析资源量: " + raw);
         return neg ? base.multiply(factor).negate() : base.multiply(factor);

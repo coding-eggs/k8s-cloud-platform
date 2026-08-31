@@ -496,7 +496,7 @@ public class WorkloadConverter {
     private Probe toProbe(ProbeDTO p) {
         ProbeBuilder b = new ProbeBuilder();
         if (p.getHttpGet() != null) b.withHttpGet(toHttpGet(p.getHttpGet()));
-        if (p.getTcpSocket() != null) b.withTcpSocket(new TCPSocketActionBuilder().withPort(new IntOrString(p.getTcpSocket().getPort())).build());
+        if (p.getTcpSocket() != null) b.withTcpSocket(new TCPSocketActionBuilder().withPort(toIntOrString(p.getTcpSocket().getPort())).build());
         if (p.getExec() != null) b.withExec(new ExecActionBuilder().withCommand(p.getExec().getCommand()).build());
         if (p.getInitialDelaySeconds() != null) b.withInitialDelaySeconds(p.getInitialDelaySeconds());
         if (p.getPeriodSeconds() != null) b.withPeriodSeconds(p.getPeriodSeconds());
@@ -508,7 +508,7 @@ public class WorkloadConverter {
 
     private HTTPGetAction toHttpGet(HttpGetActionDTO h) {
         HTTPGetActionBuilder b = new HTTPGetActionBuilder();
-        if (hasText(h.getPort())) b.withPort(new IntOrString(h.getPort()));
+        if (hasText(h.getPort())) b.withPort(toIntOrString(h.getPort()));
         if (hasText(h.getPath())) b.withPath(h.getPath());
         if (hasText(h.getScheme())) b.withScheme(h.getScheme());
         return b.build();
@@ -626,8 +626,8 @@ public class WorkloadConverter {
         RollingUpdateDTO ru = s.getRollingUpdate();
         if (ru != null && (hasText(ru.getMaxSurge()) || hasText(ru.getMaxUnavailable()))) {
             RollingUpdateDeploymentBuilder r = new RollingUpdateDeploymentBuilder();
-            if (hasText(ru.getMaxSurge())) r.withMaxSurge(new IntOrString(ru.getMaxSurge()));
-            if (hasText(ru.getMaxUnavailable())) r.withMaxUnavailable(new IntOrString(ru.getMaxUnavailable()));
+            if (hasText(ru.getMaxSurge())) r.withMaxSurge(toIntOrString(ru.getMaxSurge()));
+            if (hasText(ru.getMaxUnavailable())) r.withMaxUnavailable(toIntOrString(ru.getMaxUnavailable()));
             b.withRollingUpdate(r.build());
         }
         return b.build();
@@ -650,7 +650,7 @@ public class WorkloadConverter {
         RollingUpdateDTO ru = s.getRollingUpdate();
         if (ru != null && hasText(ru.getMaxUnavailable()))
             b.withRollingUpdate(new RollingUpdateDaemonSetBuilder()
-                .withMaxUnavailable(new IntOrString(ru.getMaxUnavailable())).build());
+                .withMaxUnavailable(toIntOrString(ru.getMaxUnavailable())).build());
         return b.build();
     }
 
@@ -701,6 +701,18 @@ public class WorkloadConverter {
 
     private static boolean hasText(String s) {
         return s != null && !s.trim().isEmpty();
+    }
+
+    /**DTO 里的 IntOrString 以字符串承载。纯整数必须序列化为 JSON number（K8s 端口/副本数按数值校验），
+     * 否则按 string（命名端口如 "http"、百分比如 "25%"）。用 String 构造器会把 "8080" 变成字符串，被 API server 当命名端口拒绝。*/
+    private static IntOrString toIntOrString(String value) {
+        if (value == null) return null;
+        String s = value.trim();
+        if (s.matches("-?\\d+")) {
+            try { return new IntOrString(Integer.parseInt(s)); }
+            catch (NumberFormatException ignored) { /* 超出 int 范围，退回 string */ }
+        }
+        return new IntOrString(s);
     }
 
     private static boolean notEmpty(java.util.Collection<?> c) {
