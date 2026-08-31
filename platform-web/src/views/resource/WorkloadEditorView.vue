@@ -6,6 +6,7 @@ import { workloadApi } from '@/api'
 import type {
   Affinity,
   ContainerDef,
+  ContainerPort,
   NodeSelectorTerm,
   PodSpec,
   PvcTemplate,
@@ -21,10 +22,12 @@ import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
 import StrategyEditor from '@/components/workload/StrategyEditor.vue'
 import ContainerListEditor from '@/components/workload/ContainerListEditor.vue'
+import PortEditor from '@/components/workload/PortEditor.vue'
 import AffinityEditor from '@/components/workload/AffinityEditor.vue'
 import TolerationEditor from '@/components/workload/TolerationEditor.vue'
 import VolumeEditor from '@/components/workload/VolumeEditor.vue'
 import PvcTemplateEditor from '@/components/workload/PvcTemplateEditor.vue'
+import FieldHelp from '@/components/workload/FieldHelp.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -45,7 +48,7 @@ function defaultForm(): WorkloadDetail {
     serviceName: null,
     strategy: { type: 'RollingUpdate' },
     volumeClaimTemplates: null,
-    podTemplate: { spec: { containers: [{ name: '', image: '' }], restartPolicy: 'Always' } },
+    podTemplate: { spec: { containers: [{ name: '', image: '', imagePullPolicy: 'IfNotPresent' }], restartPolicy: 'Always' } },
   }
 }
 
@@ -57,7 +60,32 @@ function ensureSpec(): PodSpec {
   return form.podTemplate.spec
 }
 
-const containerListRef = ref<InstanceType<typeof ContainerListEditor> | null>(null)
+/** 两个容器 tab 列表的 ref（v-show 常驻 → B4 校验覆盖全部容器，与当前激活模块无关） */
+const mainTabsRef = ref<InstanceType<typeof ContainerListEditor> | null>(null)
+const initTabsRef = ref<InstanceType<typeof ContainerListEditor> | null>(null)
+
+/** 右侧导航：当前显示的模块。用 v-show 切换（全部常驻 DOM）→ 子编辑器 ref / B4 校验不受切模块影响 */
+const activeModule = ref<'basic' | 'containers' | 'init' | 'strategy' | 'scheduling' | 'storage'>('basic')
+
+// ---------- 主容器（containers[0]）常用字段：与「Pod 容器」模块的 ContainerEditor 绑同一对象，自动同步 ----------
+function ensurePrimary(): ContainerDef {
+  if (!form.podTemplate) form.podTemplate = { spec: { containers: [] } }
+  const spec = form.podTemplate.spec
+  if (!spec.containers || spec.containers.length === 0) spec.containers = [{ name: '', image: '' }]
+  return spec.containers[0]! // guard 已保证非空
+}
+const pName = computed<string>({ get: () => ensurePrimary().name, set: (v) => { ensurePrimary().name = v } })
+const pImage = computed<string>({ get: () => ensurePrimary().image ?? '', set: (v) => { ensurePrimary().image = v } })
+const pWorkingDir = computed<string>({ get: () => ensurePrimary().workingDir ?? '', set: (v) => { ensurePrimary().workingDir = v || null } })
+const pPullPolicy = computed<string | undefined>({ get: () => ensurePrimary().imagePullPolicy ?? undefined, set: (v) => { ensurePrimary().imagePullPolicy = v } })
+const pPorts = computed<ContainerPort[] | undefined>({ get: () => ensurePrimary().ports ?? undefined, set: (v) => { ensurePrimary().ports = v } })
+/** command/args 多值：textarea 按行/逗号切分（与 ContainerEditor 同一做法） */
+const pCommandText = computed<string>({ get: () => ensurePrimary().command?.join('\n') ?? '', set: (t) => { ensurePrimary().command = t.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) } })
+const pArgsText = computed<string>({ get: () => ensurePrimary().args?.join('\n') ?? '', set: (t) => { ensurePrimary().args = t.split(/[\n,]/).map((s) => s.trim()).filter(Boolean) } })
+
+/** C2 跨列表重名检测：把另一侧容器名传入各自 tab 组件 */
+const mainNames = computed<string[]>(() => (form.podTemplate?.spec.containers ?? []).map((c) => c.name))
+const initNames = computed<string[]>(() => (form.podTemplate?.spec.initContainers ?? []).map((c) => c.name))
 
 // ---------- null↔undefined 桥接：WorkloadDetail 字段为 X|null，子编辑器 defineModel 为 X|undefined ----------
 const kind = computed<WorkloadKind>({
@@ -228,6 +256,11 @@ function normalizeForSubmit(): void {
       const p = c[k]
       if (p && !p.httpGet && !p.tcpSocket && !p.exec) c[k] = null
     }
+    // 端口默认补的一行可能没填 containerPort → 剔除空端口，全空则置 null（避免提交 {containerPort:null}）
+    if (c.ports && c.ports.length > 0) {
+      const kept = c.ports.filter((p) => p.containerPort != null)
+      c.ports = kept.length > 0 ? kept : null
+    }
   }
   const aff = spec.affinity
   if (!aff) return
@@ -308,8 +341,8 @@ async function submit(): Promise<void> {
     }
   }
 
-  // 6) B4：requests ≤ limits（ContainerListEditor → ResourcesEditor.isValid）
-  if (!containerListRef.value?.isValid()) {
+  // 6) B4：requests ≤ limits（主容器 + init 容器 tab 列表 → ResourcesEditor.isValid）
+  if (!(mainTabsRef.value?.isValid() ?? true) || !(initTabsRef.value?.isValid() ?? true)) {
     ElMessage.warning('资源 requests 不能大于 limits')
     return
   }
@@ -352,7 +385,16 @@ const contextDesc = computed(() => {
 <template>
   <div>
     <PageHeader :title="pageTitle" :description="contextDesc">
-      <el-button @click="goBack">返回</el-button>
+      <!-- 类型 kind：与标题同行、靠右，但不顶到最右（与「返回」之间留间距） -->
+      <div class="ph-kind">
+        <span class="ph-kind-label">类型 <FieldHelp tip="工作负载类型：Deployment（无状态）、StatefulSet（有状态，稳定网络标识+独立存储）、DaemonSet（每个节点一个副本）。创建后不可修改。" /></span>
+        <el-select v-model="kind" :disabled="!!editing" style="width: 180px">
+          <el-option label="Deployment" value="deployment" />
+          <el-option label="StatefulSet" value="statefulset" />
+          <el-option label="DaemonSet" value="daemonset" />
+        </el-select>
+      </div>
+      <el-button class="ph-back" @click="goBack">返回</el-button>
     </PageHeader>
 
     <!-- 上下文未选齐 -->
@@ -363,105 +405,185 @@ const contextDesc = computed(() => {
     />
 
     <template v-else>
-      <div v-if="formVisible" class="editor-form">
-        <!-- 1. 基础信息 -->
-        <el-card shadow="never" class="sec-card">
-          <template #header><span class="sec-title">基础信息</span></template>
-          <el-form label-width="120px">
-            <el-form-item label="类型 kind" required>
-              <el-select v-model="kind" :disabled="!!editing" style="width: 200px">
-                <el-option label="Deployment" value="deployment" />
-                <el-option label="StatefulSet" value="statefulset" />
-                <el-option label="DaemonSet" value="daemonset" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="名称 name" required>
-              <el-input v-model="form.name" :disabled="!!editing" placeholder="小写字母/数字/-，例如 web-app" style="width: 320px" />
-              <div class="form-tip">RFC1123：小写字母/数字/-，以字母或数字开头结尾；创建后不可修改</div>
-            </el-form-item>
-            <el-form-item label="描述 description">
-              <el-input v-model="description" type="textarea" :rows="2" placeholder="可选" style="width: 480px" />
-            </el-form-item>
-            <el-form-item label="标签 labels">
-              <LabelEditor v-model="labels" class="sub-editor" />
-            </el-form-item>
-            <el-form-item v-if="form.kind !== 'daemonset'" label="副本数 replicas">
-              <el-input-number v-model="replicas" :min="0" :max="64" controls-position="right" />
-            </el-form-item>
-            <el-form-item v-if="form.kind === 'statefulset'" label="serviceName">
-              <el-input v-model="serviceName" :disabled="!!editing" placeholder="Headless Service 名称（留空默认 = 工作负载名）" style="width: 360px" />
-              <div class="form-tip">创建后不可修改</div>
-            </el-form-item>
-          </el-form>
-        </el-card>
+      <div v-if="formVisible" class="editor-layout">
+        <!-- 主内容区：模块用 v-show 切换，全部常驻 DOM（子编辑器 ref / B4 校验不受切模块影响） -->
+        <div class="editor-main">
+          <!-- 模块①：基础信息（含更新策略、主容器常用字段、镜像拉取/账号） -->
+          <div v-show="activeModule === 'basic'" class="module-block">
+            <el-card shadow="never" class="sec-card">
+              <template #header><span class="sec-title">基础信息</span></template>
+              <el-form label-width="140px" label-position="left">
+                <el-form-item required>
+                  <template #label>名称 <FieldHelp tip="工作负载名称，须符合 RFC1123（小写字母/数字/-，以字母或数字开头结尾）。创建后不可修改。" /></template>
+                  <el-input v-model="form.name" :disabled="!!editing" placeholder="例如 web-app" style="width: 360px" />
+                </el-form-item>
+                <el-form-item>
+                  <template #label>描述 <FieldHelp tip="可选的描述信息，会存到 K8s 注解里，便于识别用途。" /></template>
+                  <el-input v-model="description" type="textarea" :rows="2" placeholder="可选" style="width: 360px" />
+                </el-form-item>
 
-        <!-- 2. 更新策略 -->
-        <el-card shadow="never" class="sec-card">
-          <template #header><span class="sec-title">更新策略</span></template>
-          <StrategyEditor v-model="strategy" :kind="form.kind" />
-        </el-card>
+                  <!-- #3 名称在最上 -->
+                  <el-form-item>
+                    <template #label>容器名称 <FieldHelp tip="主容器的名字，须为 DNS_LABEL（小写字母/数字/连字符，≤63 位）。同一 Pod 内唯一。" /></template>
+                    <el-input v-model="pName" placeholder="如 web" style="width: 360px" />
+                  </el-form-item>
+                  <!-- #3 镜像在名称下；#5 拉取策略与镜像同行、在右侧 -->
 
-        <!-- 3. 容器 / 初始化容器 -->
-        <el-card shadow="never" class="sec-card">
-          <template #header><span class="sec-title">容器 / 初始化容器</span></template>
-          <ContainerListEditor
-            ref="containerListRef"
-            v-model:main="mainContainers"
-            v-model:init="initContainers"
-            :volume-names="volumeNames"
-          />
-        </el-card>
+                    <el-form-item>
+                      <template #label>镜像 <FieldHelp tip="主容器运行的容器镜像，如 nginx:1.27。" /></template>
+                      <el-input v-model="pImage" placeholder="如 nginx:1.27" style="width: 360px" />
+                    </el-form-item>
+                    <el-form-item>
+                      <template #label>拉取策略 <FieldHelp tip="imagePullPolicy：Always=每次拉取 / IfNotPresent=本地有则用 / Never=仅本地。留空由 K8s 按 tag 决定。" /></template>
+                      <el-select v-model="pPullPolicy" clearable placeholder="默认" style="width: 360px">
+                        <el-option v-for="p in ['IfNotPresent', 'Always', 'Never']" :key="p" :label="p" :value="p" />
+                      </el-select>
+                    </el-form-item>
 
-        <!-- 4. Pod 高级 -->
-        <el-card shadow="never" class="sec-card">
-          <template #header><span class="sec-title">Pod 高级</span></template>
-          <el-form label-width="150px">
-            <el-form-item label="restartPolicy">
-              <el-tag size="small" effect="plain" type="info">Always（固定）</el-tag>
-              <span class="inline-tip">工作负载 Pod 的重启策略固定为 Always，不可修改</span>
-            </el-form-item>
-            <el-form-item label="serviceAccountName">
-              <el-input v-model="serviceAccountName" placeholder="可选，默认 default" style="width: 280px" />
-            </el-form-item>
-            <el-form-item label="nodeName">
-              <el-input v-model="nodeName" placeholder="指定调度到某节点（可选）" style="width: 280px" />
-              <div v-if="nodeName" class="form-tip warn">设置 nodeName 后，nodeSelector / 亲和的节点选择将被忽略</div>
-            </el-form-item>
-            <el-form-item label="nodeSelector">
-              <LabelEditor v-model="nodeSelector" class="sub-editor" />
-            </el-form-item>
-            <el-form-item label="affinity">
-              <AffinityEditor v-model="affinity" />
-            </el-form-item>
-            <el-form-item label="tolerations">
-              <TolerationEditor v-model="tolerations" />
-            </el-form-item>
-            <el-form-item label="volumes">
-              <VolumeEditor v-model="volumes" />
-            </el-form-item>
-            <el-form-item label="imagePullSecrets">
-              <div class="kv-editor">
-                <div v-for="(s, i) in imagePullSecretsList" :key="i" class="kv-row">
-                  <el-input v-model="s.name" placeholder="镜像仓库 Secret 名称（如 regcred）" style="width: 280px" />
-                  <el-button link type="danger" @click="removeImagePullSecret(i)">删除</el-button>
+
+                  <!-- #6 端口在镜像和命令中间 -->
+                  <el-form-item>
+                    <template #label>端口 <FieldHelp tip="容器监听的端口，供 Service / 探针按名或按号引用。" /></template>
+                    <PortEditor v-model="pPorts" />
+                  </el-form-item>
+                  <!-- #4 命令在镜像下；参数与命令同行、在命令左侧 -->
+                  <div class="field-pair">
+                    <el-form-item>
+                      <template #label>Command <FieldHelp tip="覆盖镜像默认的启动命令，每行一个或用逗号分隔。" /></template>
+                      <el-input v-model="pCommandText" type="textarea" :rows="2" placeholder="每行一个（或逗号分隔）" style="width: 360px" />
+                    </el-form-item>
+                    <el-form-item label-width="60px">
+                      <template #label>Args <FieldHelp tip="传给启动命令的参数，每行一个或用逗号分隔。" /></template>
+                      <el-input v-model="pArgsText" type="textarea" :rows="2" placeholder="每行一个（或逗号分隔）" style="width: 360px" />
+                    </el-form-item>
+                  </div>
+                  <!-- #7 工作目录在命令 / 参数下面 -->
+                  <el-form-item>
+                    <template #label>工作目录 <FieldHelp tip="workingDir：容器内进程的工作目录（可选）。" /></template>
+                    <el-input v-model="pWorkingDir" placeholder="可选，如 /app" style="width: 360px" />
+                  </el-form-item>
+                <el-form-item>
+                  <template #label>标签<FieldHelp tip="键值标签，用于筛选与分组（kubectl -l、Service selector 等）。" /></template>
+                  <LabelEditor v-model="labels" class="sub-editor" style="max-width: 520px" />
+                </el-form-item>
+                <el-form-item v-if="form.kind !== 'daemonset'">
+                  <template #label>副本 <FieldHelp tip="期望的副本数量。DaemonSet 由节点数决定，不设置此项。" /></template>
+                  <el-input-number v-model="replicas" :min="0" :max="64" controls-position="right" />
+                </el-form-item>
+                <el-form-item v-if="form.kind === 'statefulset'">
+                  <template #label>Headless Service<FieldHelp tip="StatefulSet 关联的 Headless Service 名称，提供稳定网络标识；留空默认等于工作负载名。创建后不可修改。" /></template>
+                  <el-input v-model="serviceName" :disabled="!!editing" placeholder="留空默认 = 工作负载名" style="width: 360px" />
+                </el-form-item>
+
+                <el-form-item>
+                  <template #label>ServiceAccount <FieldHelp tip="Pod 使用的 ServiceAccount，决定其访问 K8s API 的权限；留空默认 default。" /></template>
+                  <el-input v-model="serviceAccountName" placeholder="可选，默认 default" style="width: 360px" />
+                </el-form-item>
+              </el-form>
+            </el-card>
+
+          </div>
+
+          <!-- 模块②：Pod 容器（主容器 tab） -->
+          <div v-show="activeModule === 'containers'" class="module-block">
+            <el-card shadow="never" class="sec-card">
+              <template #header>
+                <div class="sec-head">
+                  <span class="sec-title">容器 containers</span>
+                  <el-button plain size="medium" @click="mainTabsRef?.add()">+ 添加容器</el-button>
                 </div>
-                <el-button class="add-row-btn" plain @click="addImagePullSecret">+ 添加 imagePullSecret</el-button>
-              </div>
-            </el-form-item>
-          </el-form>
-        </el-card>
+              </template>
+              <ContainerListEditor
+                ref="mainTabsRef"
+                v-model="mainContainers"
+                :is-init="false"
+                :volume-names="volumeNames"
+                :external-names="initNames"
+              />
+            </el-card>
+          </div>
 
-        <!-- 5. 存储卷模板（仅 statefulset） -->
-        <el-card v-if="form.kind === 'statefulset'" shadow="never" class="sec-card">
-          <template #header><span class="sec-title">存储卷模板 volumeClaimTemplates</span></template>
-          <PvcTemplateEditor v-model="volumeClaimTemplates" />
-        </el-card>
+          <!-- 模块③：初始化容器（init 容器 tab） -->
+          <div v-show="activeModule === 'init'" class="module-block">
+            <el-card shadow="never" class="sec-card">
+              <template #header>
+                <div class="sec-head">
+                  <span class="sec-title">Init 容器 initContainers（可选）</span>
+                  <el-button plain size="medium" @click="initTabsRef?.add()">+ 添加容器</el-button>
+                </div>
+              </template>
+              <ContainerListEditor
+                ref="initTabsRef"
+                v-model="initContainers"
+                :is-init="true"
+                :volume-names="volumeNames"
+                :external-names="mainNames"
+              />
+            </el-card>
+          </div>
 
-        <!-- 操作 -->
-        <div class="form-actions">
-          <el-button @click="goBack">取消 / 返回</el-button>
-          <el-button type="primary" :loading="saving" @click="submit">{{ editing ? '保存' : '创建' }}</el-button>
+          <!-- 模块：更新策略（不常用，单独一屏；放在初始化容器之后） -->
+          <div v-show="activeModule === 'strategy'" class="module-block">
+            <el-card shadow="never" class="sec-card">
+              <template #header><span class="sec-title">更新策略</span></template>
+              <StrategyEditor v-model="strategy" :kind="form.kind" />
+            </el-card>
+          </div>
+
+          <!-- 模块④：调度策略 -->
+          <div v-show="activeModule === 'scheduling'" class="module-block">
+            <el-card shadow="never" class="sec-card">
+              <template #header><span class="sec-title">调度策略</span></template>
+              <el-form label-width="150px" label-position="left">
+                <el-form-item>
+                  <template #label>nodeName <FieldHelp tip="把 Pod 固定调度到指定节点（一般不用）。设置后会忽略 nodeSelector / 亲和。" /></template>
+                  <el-input v-model="nodeName" placeholder="可选，指定某节点名" style="width: 280px" />
+                  <div v-if="nodeName" class="form-tip warn">设置 nodeName 后，nodeSelector / 亲和的节点选择将被忽略</div>
+                </el-form-item>
+                <el-form-item>
+                  <template #label>nodeSelector <FieldHelp tip="按节点标签筛选可调度节点（所有键值须全部匹配）。" /></template>
+                  <LabelEditor v-model="nodeSelector" class="sub-editor" />
+                </el-form-item>
+                <el-form-item>
+                  <template #label>affinity <FieldHelp tip="更灵活的节点 / Pod 亲和与反亲和规则（required 必须满足，preferred 尽量满足）。" /></template>
+                  <AffinityEditor v-model="affinity" />
+                </el-form-item>
+                <el-form-item>
+                  <template #label>tolerations <FieldHelp tip="容忍度：让 Pod 可调度到带有对应污点（taint）的节点。" /></template>
+                  <TolerationEditor v-model="tolerations" />
+                </el-form-item>
+              </el-form>
+            </el-card>
+          </div>
+
+          <!-- 模块⑤：存储（volumes 全 kind；pvc 模板仅 statefulset） -->
+          <div v-show="activeModule === 'storage'" class="module-block">
+            <el-card shadow="never" class="sec-card">
+              <template #header><span class="sec-title">卷 volumes <FieldHelp tip="Pod 级卷定义，供容器按名挂载（emptyDir / configMap / secret / PVC 等）。" /></span></template>
+              <VolumeEditor v-model="volumes" />
+            </el-card>
+            <el-card v-if="form.kind === 'statefulset'" shadow="never" class="sec-card">
+              <template #header><span class="sec-title">存储卷模板 volumeClaimTemplates <FieldHelp tip="StatefulSet 专属：为每个副本自动创建独立 PVC 的模板。" /></span></template>
+              <PvcTemplateEditor v-model="volumeClaimTemplates" />
+            </el-card>
+          </div>
+
+          <!-- 操作 -->
+          <div class="form-actions">
+            <el-button @click="goBack">取消 / 返回</el-button>
+            <el-button type="primary" :loading="saving" @click="submit">{{ editing ? '保存' : '创建' }}</el-button>
+          </div>
         </div>
+
+        <!-- 右侧导航 -->
+        <nav class="editor-nav">
+          <button type="button" class="nav-item" :class="{ active: activeModule === 'basic' }" @click="activeModule = 'basic'">基础信息</button>
+          <button type="button" class="nav-item" :class="{ active: activeModule === 'containers' }" @click="activeModule = 'containers'">Pod 容器</button>
+          <button type="button" class="nav-item" :class="{ active: activeModule === 'init' }" @click="activeModule = 'init'">初始化容器</button>
+          <button type="button" class="nav-item" :class="{ active: activeModule === 'strategy' }" @click="activeModule = 'strategy'">更新策略</button>
+          <button type="button" class="nav-item" :class="{ active: activeModule === 'scheduling' }" @click="activeModule = 'scheduling'">调度策略</button>
+          <button type="button" class="nav-item" :class="{ active: activeModule === 'storage' }" @click="activeModule = 'storage'">存储</button>
+        </nav>
       </div>
 
       <!-- 编辑加载失败：不渲染可编辑表单 -->
@@ -479,10 +601,81 @@ const contextDesc = computed(() => {
 </template>
 
 <style scoped>
-.editor-form {
+.editor-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+
+.editor-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.module-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* 一行内多字段：按内容宽度顺位排列（不平分整行） */
+.field-pair {
+  display: flex;
+  gap: 5rem;
+  align-items: flex-start;
+}
+/* 类型选择器：与标题同行、靠右（不顶到最右） */
+.ph-kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ph-kind-label {
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+/* 「返回」与 kind 之间留间距，让 kind 靠右但不贴最右边缘 */
+.ph-back {
+  margin-left: 40px;
+}
+/* 卡片头：标题左、操作按钮右 */
+.sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.editor-nav {
+  width: 180px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nav-item {
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--el-border-color);
+  background: var(--el-bg-color, #fff);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.nav-item:hover {
+  border-color: var(--el-color-primary-light-5);
+  color: var(--el-color-primary);
+}
+.nav-item.active {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
+  font-weight: 600;
 }
 .sec-card :deep(.el-card__header) {
   padding: 10px 16px;
@@ -494,11 +687,6 @@ const contextDesc = computed(() => {
 }
 .sub-editor {
   width: 100%;
-}
-.inline-tip {
-  margin-left: 8px;
-  font-size: 12px;
-  color: var(--text-3);
 }
 .form-tip {
   width: 100%;
@@ -518,8 +706,9 @@ const contextDesc = computed(() => {
   margin-bottom: 8px;
   align-items: center;
 }
+/* add 按钮按内容自适应宽度，不再铺满整行 */
 .add-row-btn {
-  width: 100%;
+  width: auto;
 }
 .form-actions {
   display: flex;

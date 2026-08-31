@@ -1,8 +1,14 @@
 <script setup lang="ts">
+import { watch } from 'vue'
 import type { ContainerPort } from '@/types/workload'
 const model = defineModel<ContainerPort[]>()
 const PROTOCOLS = ['TCP', 'UDP', 'SCTP']
-function add(): void { model.value ??= []; model.value.push({ containerPort: null, protocol: 'TCP', name: '' }) }
+
+/** 端口必填：默认至少一行，不用点添加就有；编辑已有负载且原无端口时也补一行 */
+function blankPort(): ContainerPort { return { containerPort: null, protocol: 'TCP', name: '' } }
+watch(model, (v) => { if (!v || v.length === 0) model.value = [blankPort()] }, { immediate: true })
+
+function add(): void { model.value ??= []; model.value.push(blankPort()) }
 function remove(i: number): void { model.value?.splice(i, 1) }
 </script>
 
@@ -23,5 +29,5 @@ function remove(i: number): void { model.value?.splice(i, 1) }
 <style scoped>
 .kv-editor { width: 100% }
 .kv-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center }
-.add-row-btn { width: 100% }
+.add-row-btn { width: auto }
 </style>
