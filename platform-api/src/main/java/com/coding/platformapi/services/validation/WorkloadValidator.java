@@ -81,9 +81,6 @@ public class WorkloadValidator {
 
     // ---------- B 取值约束 ----------
     private void validateB(PodSpecDTO spec, String kind, WorkloadDTO dto) {
-        // B1 restartPolicy 仅 Always
-        if (StringUtils.hasText(spec.getRestartPolicy()) && !"Always".equals(spec.getRestartPolicy()))
-            throw err("工作负载 restartPolicy 仅支持 Always");
         // B2/B3 探针取值约束 —— 仅主容器
         for (ContainerDTO c : mainContainers(spec)) {
             String ctx = "容器「" + c.getName() + "」";

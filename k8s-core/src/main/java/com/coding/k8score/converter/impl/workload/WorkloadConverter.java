@@ -82,7 +82,6 @@ public class WorkloadConverter {
         PodSpecDTO d = new PodSpecDTO();
         if (s.getContainers() != null) d.setContainers(s.getContainers().stream().map(this::fromContainer).toList());
         if (s.getInitContainers() != null) d.setInitContainers(s.getInitContainers().stream().map(this::fromContainer).toList());
-        d.setRestartPolicy(s.getRestartPolicy());
         d.setServiceAccountName(s.getServiceAccountName());
         d.setNodeName(s.getNodeName());
         d.setNodeSelector(s.getNodeSelector());
@@ -378,7 +377,6 @@ public class WorkloadConverter {
         PodSpecBuilder b = new PodSpecBuilder();
         if (notEmpty(s.getContainers())) b.withContainers(s.getContainers().stream().map(this::toContainer).toList());
         if (notEmpty(s.getInitContainers())) b.withInitContainers(s.getInitContainers().stream().map(this::toContainer).toList());
-        if (hasText(s.getRestartPolicy())) b.withRestartPolicy(s.getRestartPolicy());
         if (hasText(s.getServiceAccountName())) b.withServiceAccountName(s.getServiceAccountName());
         if (hasText(s.getNodeName())) b.withNodeName(s.getNodeName());
         if (s.getNodeSelector() != null && !s.getNodeSelector().isEmpty()) b.withNodeSelector(s.getNodeSelector());
