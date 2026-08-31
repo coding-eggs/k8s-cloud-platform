@@ -218,12 +218,16 @@ function termHasContent(t: NodeSelectorTerm): boolean {
   return (t.matchExpressions?.length ?? 0) > 0 || (t.matchFields?.length ?? 0) > 0
 }
 
-/** 提交前归一化：imagePullPolicy '' → null；affinity 剔除空 term（空 nodeSelectorTerm 序列化为 {}，OR 语义下静默废掉整个 required） */
+/** 提交前归一化：imagePullPolicy '' → null；无 handler（httpGet/tcpSocket/exec）的 probe 壳 → null（A2 兜底）；affinity 剔除空 term（空 nodeSelectorTerm 序列化为 {}，OR 语义下静默废掉整个 required） */
 function normalizeForSubmit(): void {
   const spec = form.podTemplate?.spec
   if (!spec) return
   for (const c of [...spec.containers, ...(spec.initContainers ?? [])]) {
     if (c.imagePullPolicy === '') c.imagePullPolicy = null
+    for (const k of ['livenessProbe', 'readinessProbe', 'startupProbe'] as const) {
+      const p = c[k]
+      if (p && !p.httpGet && !p.tcpSocket && !p.exec) c[k] = null
+    }
   }
   const aff = spec.affinity
   if (!aff) return
@@ -385,7 +389,8 @@ const contextDesc = computed(() => {
               <el-input-number v-model="replicas" :min="0" :max="64" controls-position="right" />
             </el-form-item>
             <el-form-item v-if="form.kind === 'statefulset'" label="serviceName">
-              <el-input v-model="serviceName" placeholder="Headless Service 名称（留空默认 = 工作负载名）" style="width: 360px" />
+              <el-input v-model="serviceName" :disabled="!!editing" placeholder="Headless Service 名称（留空默认 = 工作负载名）" style="width: 360px" />
+              <div class="form-tip">创建后不可修改</div>
             </el-form-item>
           </el-form>
         </el-card>

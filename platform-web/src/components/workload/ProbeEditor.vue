@@ -5,10 +5,10 @@ import type { Probe } from '@/types/workload'
 type HandlerKind = 'none' | 'httpGet' | 'tcpSocket' | 'exec'
 
 const props = defineProps<{ kind: string }>()
-const model = defineModel<Probe>()
+const model = defineModel<Probe | null>()
 
-/** A2：以「哪个子对象存在」判定当前 handler（空 Probe 无 handler = 未配置） */
-function handlerOf(p?: Probe): HandlerKind {
+/** A2：以「哪个子对象存在」判定当前 handler（null/空 Probe 无 handler = 未配置） */
+function handlerOf(p?: Probe | null): HandlerKind {
   if (p?.httpGet) return 'httpGet'
   if (p?.tcpSocket) return 'tcpSocket'
   if (p?.exec) return 'exec'
@@ -22,10 +22,11 @@ function write(partial: Partial<Probe>): void {
   model.value = next
 }
 
-/** 切换 handler：清空其它子对象，只保留选中项（A2 互斥） */
+/** 切换 handler：清空其它子对象，只保留选中项（A2 互斥）；选「无」= 整个探测未配置 → model=null */
 const handler = computed<HandlerKind>({
   get: () => handlerOf(model.value),
   set: (k) => {
+    if (k === 'none') { model.value = null; return }
     const partial: Partial<Probe> = { httpGet: null, tcpSocket: null, exec: null }
     if (k === 'httpGet') partial.httpGet = { port: '', path: '', scheme: 'HTTP' }
     else if (k === 'tcpSocket') partial.tcpSocket = { port: '' }
