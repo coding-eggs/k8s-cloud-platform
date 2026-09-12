@@ -119,6 +119,10 @@ function handleLogout(): void {
           <el-icon><Monitor /></el-icon>
           <template #title>集群管理</template>
         </el-menu-item>
+        <el-menu-item index="/nodes">
+          <el-icon><Cpu /></el-icon>
+          <template #title>节点管理</template>
+        </el-menu-item>
         <el-menu-item index="/tenants">
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>租户管理</template>
@@ -160,6 +164,10 @@ function handleLogout(): void {
         <el-menu-item index="/resources/servicemonitors">
           <el-icon><DataLine /></el-icon>
           <template #title>ServiceMonitor</template>
+        </el-menu-item>
+        <el-menu-item index="/resources/hpas">
+          <el-icon><TrendCharts /></el-icon>
+          <template #title>HPA</template>
         </el-menu-item>
 
         <div class="menu-group">集群运维</div>
@@ -213,7 +221,7 @@ function handleLogout(): void {
         </div>
       </header>
 
-      <main class="content">
+      <main class="content px-4 py-2.5">
         <router-view />
       </main>
     </el-container>
@@ -491,7 +499,6 @@ function handleLogout(): void {
   flex: 1;
   min-height: 0; /* 允许内部滚动而非撑破布局 */
   background: var(--bg);
-  padding: 20px;
   overflow-y: auto;
 }
 </style>
