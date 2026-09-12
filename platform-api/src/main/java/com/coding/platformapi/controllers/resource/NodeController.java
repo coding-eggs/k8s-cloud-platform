@@ -9,6 +9,11 @@ import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.k8s.K8sResourceClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
+import com.coding.platformapi.metrics.MetricsService;
+import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
+import com.coding.platformapi.metrics.dto.NodeCurrentMetric;
+import com.coding.platformapi.metrics.dto.NodeCurrentRequest;
+import com.coding.platformapi.metrics.dto.NodeMetricsRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +42,7 @@ public class NodeController {
 
     private final K8sResourceClient k8s;
     private final K8sServerGateway gateway;
+    private final MetricsService metricsService;
 
     @PostMapping("/list")
     @Operation(summary = "列出节点")
@@ -101,6 +107,38 @@ public class NodeController {
     public ResponseData<List<NodeEventDTO>> events(@PathVariable String name, @RequestParam String clusterId) {
         return new ResponseData<>(gateway.exchange(HttpMethod.GET, "/resources/nodes/" + name + "/events",
                 Map.of("clusterId", clusterId), null, gateway.listResponseType(NodeEventDTO.class)));
+    }
+
+    // ===== 监控指标（委托 MetricsService；instance = <internalIp>:9100，由前端拼）=====
+
+    @PostMapping("/metrics/current")
+    @Operation(summary = "节点当前 CPU%/内存%（列表页批量）")
+    public ResponseData<Map<String, NodeCurrentMetric>> currentMetrics(@RequestBody NodeCurrentRequest req) {
+        return new ResponseData<>(metricsService.nodeCurrents(req.getClusterId(), req.getInstances()));
+    }
+
+    @PostMapping("/{name}/metrics/cpu")
+    @Operation(summary = "节点 CPU 使用率（%）")
+    public ResponseData<MetricSeriesResponse> cpuMetrics(@PathVariable String name, @RequestBody NodeMetricsRequest req) {
+        return new ResponseData<>(metricsService.nodeCpu(req));
+    }
+
+    @PostMapping("/{name}/metrics/memory")
+    @Operation(summary = "节点内存（字节，Used/Cached/Buffers/Free）")
+    public ResponseData<MetricSeriesResponse> memoryMetrics(@PathVariable String name, @RequestBody NodeMetricsRequest req) {
+        return new ResponseData<>(metricsService.nodeMemory(req));
+    }
+
+    @PostMapping("/{name}/metrics/disk")
+    @Operation(summary = "节点磁盘 IO（字节/秒，按设备 读/写）")
+    public ResponseData<MetricSeriesResponse> diskMetrics(@PathVariable String name, @RequestBody NodeMetricsRequest req) {
+        return new ResponseData<>(metricsService.nodeDisk(req));
+    }
+
+    @PostMapping("/{name}/metrics/network")
+    @Operation(summary = "节点网络 IO（字节/秒，RX/TX 聚合）")
+    public ResponseData<MetricSeriesResponse> networkMetrics(@PathVariable String name, @RequestBody NodeMetricsRequest req) {
+        return new ResponseData<>(metricsService.nodeNetwork(req));
     }
 
     private NodeDTO dto(String name, String clusterId) {
