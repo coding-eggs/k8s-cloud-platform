@@ -8,6 +8,7 @@ import { nodeMetrics } from '@/api/metrics'
 import type { K8sCluster, K8sNode, NodeCurrentMetric, NodePodStat } from '@/types'
 import { fmtDate } from '@/utils/format'
 import { humanizeBytes, parseCpuCores, parseMemBytes } from '@/utils/metrics'
+import {MoreFilled} from "@element-plus/icons-vue";
 
 const router = useRouter()
 
@@ -66,22 +67,16 @@ function statOf(n: K8sNode): NodePodStat | undefined {
 }
 
 function cpuText(n: K8sNode): string {
-  const inst = instanceOf(n)
-  const pct = inst ? currents.value.get(inst)?.cpuPercent : null
   const alloc = parseCpuCores(n.cpuAllocatable)
   const req = (statOf(n)?.cpuRequestMillicores ?? 0) / 1000
-  const pctS = pct != null ? `${pct.toFixed(0)}%` : '-'
   const allocS = alloc != null ? alloc.toFixed(1) : '-'
-  return `${pctS} · ${req.toFixed(1)}/${allocS}`
+  return `${req.toFixed(1)} / ${allocS}`
 }
 
 function memText(n: K8sNode): string {
-  const inst = instanceOf(n)
-  const pct = inst ? currents.value.get(inst)?.memPercent : null
   const alloc = parseMemBytes(n.memoryAllocatable)
   const req = statOf(n)?.memRequestBytes ?? 0
-  const pctS = pct != null ? `${pct.toFixed(0)}%` : '-'
-  return `${pctS} · ${humanizeBytes(req)}/${alloc != null ? humanizeBytes(alloc) : '-'}`
+  return `${humanizeBytes(req)}/${alloc != null ? humanizeBytes(alloc) : '-'}`
 }
 
 function podCountText(n: K8sNode): string {
@@ -180,12 +175,12 @@ const drainSummary = computed(() => {
     </PageHeader>
 
     <el-table v-loading="loading" :data="nodes" stripe>
-      <el-table-column label="名称" min-width="180">
+      <el-table-column label="名称" width="180">
         <template #default="{ row }">
           <el-link type="primary" @click="onDetail(row)">{{ row.name }}</el-link>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="150">
+      <el-table-column label="状态" min-width="100">
         <template #default="{ row }">
           <el-tag :type="row.status === 'True' ? 'success' : 'danger'" size="small">
             {{ row.status === 'True' ? 'Ready' : 'NotReady' }}
@@ -193,30 +188,41 @@ const drainSummary = computed(() => {
           <el-tag v-if="row.unschedulable" type="warning" size="small" class="ml-1">SchedulingDisabled</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="角色" width="120">
+      <el-table-column label="角色" min-width="120">
         <template #default="{ row }">{{ roleText(row) }}</template>
       </el-table-column>
-      <el-table-column prop="kubeletVersion" label="版本" width="120" />
-      <el-table-column label="CPU（% · req/alloc 核）" width="180">
+      <el-table-column prop="kubeletVersion" label="版本" min-width="120" />
+      <el-table-column label="CPU（req/alloc）" min-width="180">
         <template #default="{ row }">{{ cpuText(row) }}</template>
       </el-table-column>
-      <el-table-column label="内存（% · req/alloc）" width="200">
+      <el-table-column label="内存（req/alloc）" min-width="200">
         <template #default="{ row }">{{ memText(row) }}</template>
       </el-table-column>
-      <el-table-column prop="internalIp" label="IP" width="140" />
-      <el-table-column label="Pod 数（实际/上限）" width="150">
+      <el-table-column prop="internalIp" label="IP" min-width="140" />
+      <el-table-column label="Pod 数（实际/上限）" min-width="150">
         <template #default="{ row }">{{ podCountText(row) }}</template>
       </el-table-column>
-      <el-table-column label="加入时间" width="160">
+      <el-table-column label="加入时间" min-width="160">
         <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+
+
+      <el-table-column width="64" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="onDetail(row)">详情</el-button>
-          <el-button link :type="row.unschedulable ? 'success' : 'warning'" :loading="cordonBusy === row.name" @click="onCordon(row)">
-            {{ row.unschedulable ? 'Uncordon' : 'Cordon' }}
-          </el-button>
-          <el-button link type="danger" @click="openDrain(row)">Drain</el-button>
+          <el-dropdown trigger="click">
+            <el-button link type="primary" :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="onCordon(row)">
+                  <el-button link :type="row.unschedulable ? 'success' : 'warning'" :loading="cordonBusy === row.name">
+                  {{ row.unschedulable ? 'Uncordon' : 'Cordon' }}
+                </el-button></el-dropdown-item>
+                <el-dropdown-item divided style="color: var(--el-color-danger)" @click="openDrain(row)">
+                  <el-button link type="danger">Drain</el-button>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </template>
       </el-table-column>
     </el-table>
