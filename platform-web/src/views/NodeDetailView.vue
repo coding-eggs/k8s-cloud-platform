@@ -224,11 +224,9 @@ watch(name, () => { if (clusterId.value) void refresh() })
         </section>
       </aside>
 
-      <!-- 右：监控（上）+ Tab（下） -->
+      <!-- 右：Tab（上）+ 监控（下） -->
       <main class="col col-main">
         <div class="main-board panel">
-          <NodeMetricsPanel ref="metricsRef" :name="node.name" :cluster-id="clusterId" :instance="instance" :cpu-limit="cpuLimit" :memory-limit="memoryLimit" />
-
           <el-tabs v-model="activeTab">
             <!-- Conditions -->
             <el-tab-pane label="Conditions" name="conditions">
@@ -330,6 +328,8 @@ watch(name, () => { if (clusterId.value) void refresh() })
               <div v-else class="muted">加载中…</div>
             </el-tab-pane>
           </el-tabs>
+
+          <NodeMetricsPanel ref="metricsRef" :name="node.name" :cluster-id="clusterId" :instance="instance" :cpu-limit="cpuLimit" :memory-limit="memoryLimit" />
         </div>
       </main>
     </div>
