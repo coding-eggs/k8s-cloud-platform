@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.common.models.k8s.dto.RoleBindingDTO;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.rbac.RoleBinding;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -33,11 +34,14 @@ public class RbacV1RoleBindingOperations implements NamespacedOperations<RoleBin
      * 查询 RoleBinding 列表，支持 namespace、labelSelector（原样透传）过滤（namespace 为空则查询所有）
      */
     @Override
-    public List<RoleBindingDTO> list(String namespace, String labelSelector) {
+    public List<RoleBindingDTO> list(String namespace, String labelSelector,  String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
         List<RoleBinding> roleBindings = client.rbac().roleBindings()
                 .inNamespace(ns).list(options).getItems();
@@ -85,7 +89,7 @@ public class RbacV1RoleBindingOperations implements NamespacedOperations<RoleBin
         RoleBinding updated = client.rbac().roleBindings()
                 .inNamespace(namespace)
                 .resource(in)
-                .update();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -114,6 +118,9 @@ public class RbacV1RoleBindingOperations implements NamespacedOperations<RoleBin
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
+        if (roleBinding != null && roleBinding.getMetadata() != null) {
+            roleBinding.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(roleBinding);
     }
 

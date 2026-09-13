@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.k8score.converter.impl.workload.WorkloadConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.apps.DaemonSet;
@@ -39,11 +40,14 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
     }
 
     @Override
-    public List<WorkloadDTO> list(String namespace, String labelSelector) {
+    public List<WorkloadDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
 
         List<WorkloadDTO> result = new ArrayList<>();
@@ -131,7 +135,7 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
                 if (existingSelector != null) {
                     updated.getSpec().setSelector(existingSelector);
                 }
-                return converter.revert(client.apps().deployments().inNamespace(namespace).resource(updated).update());
+                return converter.revert(client.apps().deployments().inNamespace(namespace).resource(updated).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply());
             }
             case WorkloadConverter.KIND_STATEFULSET -> {
                 StatefulSet existing = client.apps().statefulSets().inNamespace(namespace).withName(name).get();
@@ -150,7 +154,7 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
                 if (existing.getSpec() != null && StringUtils.hasText(existing.getSpec().getServiceName())) {
                     updated.getSpec().setServiceName(existing.getSpec().getServiceName());
                 }
-                return converter.revert(client.apps().statefulSets().inNamespace(namespace).resource(updated).update());
+                return converter.revert(client.apps().statefulSets().inNamespace(namespace).resource(updated).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply());
             }
             default -> {
                 DaemonSet existing = client.apps().daemonSets().inNamespace(namespace).withName(name).get();
@@ -165,7 +169,7 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
                 if (existingSelector != null) {
                     updated.getSpec().setSelector(existingSelector);
                 }
-                return converter.revert(client.apps().daemonSets().inNamespace(namespace).resource(updated).update());
+                return converter.revert(client.apps().daemonSets().inNamespace(namespace).resource(updated).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply());
             }
         }
     }
@@ -188,6 +192,9 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
         if (!StringUtils.hasText(namespace) || !StringUtils.hasText(name)) {
             throw new CloudPlatformException(EnumResponseType.SEARCH_K8S_REQUIRE_NAME_AND_NAMESPACE);
         }
+        Resolved resolve = resolve(namespace, name);
+
+
         return Serialization.asYaml(resolve(namespace, name).object());
     }
 
@@ -195,14 +202,23 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
     private Resolved resolve(String namespace, String name) {
         Deployment d = client.apps().deployments().inNamespace(namespace).withName(name).get();
         if (d != null) {
+            if ( d.getMetadata() != null) {
+                d.getMetadata().setManagedFields(null);
+            }
             return new Resolved(WorkloadConverter.KIND_DEPLOYMENT, d);
         }
         StatefulSet s = client.apps().statefulSets().inNamespace(namespace).withName(name).get();
         if (s != null) {
+            if ( s.getMetadata() != null) {
+                s.getMetadata().setManagedFields(null);
+            }
             return new Resolved(WorkloadConverter.KIND_STATEFULSET, s);
         }
         DaemonSet ds = client.apps().daemonSets().inNamespace(namespace).withName(name).get();
         if (ds != null) {
+            if ( ds.getMetadata() != null) {
+                ds.getMetadata().setManagedFields(null);
+            }
             return new Resolved(WorkloadConverter.KIND_DAEMONSET, ds);
         }
         throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);

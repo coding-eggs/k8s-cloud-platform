@@ -51,6 +51,23 @@
             <version>3.2.3</version>
         </dependency>
 
+        <!-- Redis 连接（Lettuce，Spring Boot 自动装配 LettuceConnectionFactory） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
+        <!-- Spring Session Redis：把 HttpSession 存到 Redis（支持多实例 / 重启不丢会话） -->
+        <dependency>
+            <groupId>org.springframework.session</groupId>
+            <artifactId>spring-session-data-redis</artifactId>
+        </dependency>
+
 
     </dependencies>
 

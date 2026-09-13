@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.common.models.k8s.dto.ClusterRoleDTO;
 import com.coding.k8score.operations.ClusterOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRole;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -33,11 +34,15 @@ public class RbacV1ClusterRoleOperations implements ClusterOperations<ClusterRol
      * 查询 ClusterRole 列表（集群级资源，不支持 namespace 过滤）；labelSelector 原样透传
      */
     @Override
-    public List<ClusterRoleDTO> list(String labelSelector) {
+    public List<ClusterRoleDTO> list(String labelSelector, String fieldSelector) {
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
         }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
+        }
+
         List<ClusterRole> clusterRoles = client.rbac().clusterRoles().list(options).getItems();
         return clusterRoles.stream().map(converter::revert).toList();
     }
@@ -72,7 +77,8 @@ public class RbacV1ClusterRoleOperations implements ClusterOperations<ClusterRol
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
         }
         ClusterRole in = converter.convert(dto);
-        ClusterRole updated = client.rbac().clusterRoles().resource(in).update();
+        ClusterRole updated = client.rbac().clusterRoles().resource(in)
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -90,6 +96,9 @@ public class RbacV1ClusterRoleOperations implements ClusterOperations<ClusterRol
             throw new CloudPlatformException(EnumResponseType.SEARCH_K8S_REQUIRE_NAME_AND_NAMESPACE);
         }
         ClusterRole clusterRole = client.rbac().clusterRoles().withName(name).get();
+        if (clusterRole != null && clusterRole.getMetadata() != null) {
+            clusterRole.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(clusterRole);
     }
 

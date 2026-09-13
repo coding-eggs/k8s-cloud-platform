@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.Service;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -34,11 +35,14 @@ public class CoreV1ServiceOperations implements NamespacedOperations<ServiceDTO>
     }
 
     @Override
-    public List<ServiceDTO> list(String namespace, String labelSelector) {
+    public List<ServiceDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
         List<Service> items = client.services().inNamespace(ns).list(options).getItems();
         return items.stream().map(converter::revert).toList();
@@ -83,7 +87,7 @@ public class CoreV1ServiceOperations implements NamespacedOperations<ServiceDTO>
         Service updated = client.services()
                 .inNamespace(namespace)
                 .resource(in)
-                .update();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -111,6 +115,9 @@ public class CoreV1ServiceOperations implements NamespacedOperations<ServiceDTO>
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
+        if (service != null && service.getMetadata() != null) {
+            service.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(service);
     }
 

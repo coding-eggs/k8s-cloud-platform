@@ -10,7 +10,7 @@ public interface ClusterOperations<T> extends ResourceOperations<T> {
     /**
      * 查询列表；labelSelector 为 K8s 原生标签选择器语法，原样透传，空则不加过滤
      */
-    List<T> list(String labelSelector);
+    List<T> list(String labelSelector, String fieldSelector);
 
     T get(String name);
 

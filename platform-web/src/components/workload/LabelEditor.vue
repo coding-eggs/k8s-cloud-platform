@@ -2,6 +2,7 @@
 import { nextTick, ref, watch } from 'vue'
 
 const model = defineModel<Record<string, string>>()
+const props = defineProps<{ disabled?: boolean }>()
 const rows = ref<[string, string][]>([])
 
 let selfUpdate = false
@@ -33,11 +34,11 @@ function remove(i: number): void {
 <template>
   <div class="kv-editor">
     <div v-for="(row, i) in rows" :key="i" class="kv-row">
-      <el-input v-model="row[0]" placeholder="键" style="width: 160px" @input="emitUpdate" />
-      <el-input v-model="row[1]" placeholder="值" style="flex: 1" @input="emitUpdate" />
-      <el-button link type="danger" @click="remove(i)">删除</el-button>
+      <el-input v-model="row[0]" placeholder="键" style="width: 160px" :disabled="props.disabled" @input="emitUpdate" />
+      <el-input v-model="row[1]" placeholder="值" style="flex: 1" :disabled="props.disabled" @input="emitUpdate" />
+      <el-button link type="danger" :disabled="props.disabled" @click="remove(i)">删除</el-button>
     </div>
-    <el-button class="add-row-btn" plain @click="add">+ 添加标签</el-button>
+    <el-button class="add-row-btn" plain :disabled="props.disabled" @click="add">+ 添加标签</el-button>
   </div>
 </template>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import type { RollingUpdate, Strategy, WorkloadKind } from '@/types/workload'
 import FieldHelp from './FieldHelp.vue'
 
@@ -16,16 +16,46 @@ const TYPE_OPTIONS: Record<WorkloadKind, string[]> = {
 /** A4：type≠RollingUpdate → 隐藏滚动参数 */
 const showRolling = computed(() => (model.value?.type ?? 'RollingUpdate') === 'RollingUpdate')
 
+/** 本地暂存：切到非 RollingUpdate 时 model 丢弃 rollingUpdate（A4，保证提交正确），但把已填的滚动参数
+ *  缓存起来；切回 RollingUpdate 时恢复 —— 避免「切走再切回」丢失 maxSurge/maxUnavailable/partition。
+ *  model 始终只保留当前 type 下合法的字段（A4 不变式，提交/转换器不变） */
+let rollingStash: RollingUpdate | null = null
+/** 防回环：外部加载（loadDetail/重置）时据此重建 stash，避免上一个工作负载的残留串数据 */
+let lastEmitted: string | null = null
+
+watch(
+  () => model.value,
+  (s) => {
+    const snap = JSON.stringify(s ?? null)
+    if (snap === lastEmitted) return   // 自己 write 的回声 → 跳过
+    // 外部加载：RollingUpdate 且有 rollingUpdate 则记入 stash；否则清空（避免残留）
+    const ru = s?.rollingUpdate
+    if ((s?.type ?? 'RollingUpdate') === 'RollingUpdate' && ru) {
+      rollingStash = ru
+    } else {
+      rollingStash = null
+    }
+  },
+  { immediate: true },
+)
+
 function write(partial: Partial<Strategy>): void {
-  model.value = { ...(model.value ?? {}), ...partial }
+  const next: Strategy = { ...(model.value ?? {}), ...partial }
+  lastEmitted = JSON.stringify(next)
+  model.value = next
 }
 
-/** 切到非 RollingUpdate 时丢弃 rollingUpdate（A4）；切回 RollingUpdate 保留已有值 */
+/** 切到非 RollingUpdate 时丢弃 rollingUpdate（A4）；切回 RollingUpdate 从暂存恢复已填值 */
 const type = computed<string>({
   get: () => model.value?.type ?? 'RollingUpdate',
   set: (t) => {
-    if (t === 'RollingUpdate') write({ type: t })
-    else write({ type: t, rollingUpdate: null })
+    if (t === 'RollingUpdate') {
+      const ru = rollingStash ?? model.value?.rollingUpdate ?? null
+      write({ type: t, rollingUpdate: ru })
+    } else {
+      rollingStash = model.value?.rollingUpdate ?? null
+      write({ type: t, rollingUpdate: null })
+    }
   },
 })
 
@@ -97,8 +127,15 @@ const b5Hint = computed(() => {
       </el-form-item>
     </template>
 
-    <!-- statefulset：仅更新分区 -->
+    <!-- statefulset：最大不可用 + 更新分区 -->
     <template v-else-if="showRolling && kind === 'statefulset'">
+      <el-form-item>
+        <template #label>最大不可用 <FieldHelp tip="maxUnavailable：滚动更新期间允许不可用的副本数百分比（K8s 默认 25%）。" /></template>
+        <span class="se-num">
+          <el-input-number v-model="maxUnavailable" :min="0" :max="100" controls-position="right" placeholder="默认 25" style="width: 160px" />
+          <span class="se-pct">%</span>
+        </span>
+      </el-form-item>
       <el-form-item>
         <template #label>更新分区 <FieldHelp tip="partition：StatefulSet 分区更新，序号 ≤ partition 的 Pod 才会被更新（默认 0 = 全部）。" /></template>
         <el-input-number v-model="partition" :min="0" controls-position="right" placeholder="默认 0" style="width: 160px" />

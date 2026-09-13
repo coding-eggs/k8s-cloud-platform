@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { workloadApi } from '@/api'
@@ -66,6 +66,32 @@ const initTabsRef = ref<InstanceType<typeof ContainerListEditor> | null>(null)
 
 /** 右侧导航：当前显示的模块。用 v-show 切换（全部常驻 DOM）→ 子编辑器 ref / B4 校验不受切模块影响 */
 const activeModule = ref<'basic' | 'containers' | 'init' | 'strategy' | 'scheduling' | 'storage'>('basic')
+
+/** 模块导航项：icon + 文字；收起态只显示 icon，展开态显示 icon + 文字 */
+const modules = [
+  { key: 'basic', label: '基础信息', icon: 'Document' },
+  { key: 'containers', label: 'Pod 容器', icon: 'Box' },
+  { key: 'init', label: '初始化容器', icon: 'SetUp' },
+  { key: 'strategy', label: '更新策略', icon: 'Refresh' },
+  { key: 'scheduling', label: '调度策略', icon: 'Compass' },
+  { key: 'storage', label: '存储', icon: 'Files' },
+] as const
+
+/**
+ * 侧栏收敛态：默认展开。窄屏（≤1024px）自动收起成图标窄栏；跨阈值时重置为自动状态；
+ * 手动点边界按钮可随时翻转（覆盖自动状态，直到下次跨阈值）。
+ */
+const collapsed = ref(false)
+const mql = window.matchMedia('(max-width: 1024px)')
+collapsed.value = mql.matches
+function onBreakpointChange(e: MediaQueryListEvent): void {
+  collapsed.value = e.matches
+}
+
+/** el-menu 选中 → 切模块（index 即模块 key） */
+function onModuleSelect(index: string): void {
+  activeModule.value = index as typeof activeModule.value
+}
 
 // ---------- 主容器（containers[0]）常用字段：与「Pod 容器」模块的 ContainerEditor 绑同一对象，自动同步 ----------
 function ensurePrimary(): ContainerDef {
@@ -200,8 +226,32 @@ watch(
 // ---------- 编辑回填（deep-merge 到骨架，缺省字段落回默认） ----------
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
+/**
+ * platform-api 的 JsonMapper 全局约定：null 对象/数组序列化为 {} / []。编辑器按真值判断互斥子结构
+ * （卷类型、投影来源种类、probe handler 等），空壳会被误判为「已选」——如 configMap 投影来源因
+ * serviceAccountToken:{} 恒真而渲染成空的 serviceAccountToken。回填前把空对象/数组归一化为 null；
+ * "" / 0 / false 是合法值（如 emptyDir.medium=""），不动。
+ */
+function normalizeEmpty(v: unknown): unknown {
+  if (Array.isArray(v)) {
+    const arr = v.map(normalizeEmpty)
+    return arr.length > 0 ? arr : null
+  }
+  if (v !== null && typeof v === 'object') {
+    const obj: Record<string, unknown> = {}
+    let empty = true
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      const nx = normalizeEmpty(x)
+      obj[k] = nx
+      if (nx !== null) empty = false
+    }
+    return empty ? null : obj
+  }
+  return v
+}
+
 function applyDetail(d: WorkloadDetail): void {
-  Object.assign(form, d)
+  Object.assign(form, normalizeEmpty(d) as WorkloadDetail)
   const spec = form.podTemplate?.spec
   // 保证 podTemplate.spec + 非空 containers；B1：restartPolicy 固定 Always
   if (!form.podTemplate || !spec || (spec.containers?.length ?? 0) === 0) {
@@ -230,6 +280,10 @@ async function loadDetail(): Promise<void> {
 onMounted(() => {
   void load()
   if (editing.value && ready.value) void loadDetail()
+  mql.addEventListener('change', onBreakpointChange)
+})
+onBeforeUnmount(() => {
+  mql.removeEventListener('change', onBreakpointChange)
 })
 // 上下文晚于挂载才选齐（未持久化上次选择）时补拉详情
 watch(ready, (r) => {
@@ -282,7 +336,13 @@ function normalizeForSubmit(): void {
     if (pa.preferred && pa.preferred.length === 0) pa.preferred = null
     if (!pa.required && !pa.preferred) aff.podAntiAffinity = null
   }
-  if (!aff.nodeAffinity && !aff.podAntiAffinity) spec.affinity = null
+  const pf = aff.podAffinity
+  if (pf) {
+    if (pf.required && pf.required.length === 0) pf.required = null
+    if (pf.preferred && pf.preferred.length === 0) pf.preferred = null
+    if (!pf.required && !pf.preferred) aff.podAffinity = null
+  }
+  if (!aff.nodeAffinity && !aff.podAffinity && !aff.podAntiAffinity) spec.affinity = null
 }
 
 const saving = ref(false)
@@ -374,7 +434,7 @@ function goBack(): void {
 }
 
 // ---------- 页面元信息 ----------
-const pageTitle = computed(() => (editing.value ? `编辑工作负载 · ${editing.value}` : '创建工作负载'))
+const pageTitle = computed(() => (editing.value ? `编辑工作负载` : '创建工作负载'))
 
 const contextDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择租户 / 集群 / 命名空间'
@@ -384,16 +444,9 @@ const contextDesc = computed(() => {
 
 <template>
   <div>
-    <PageHeader :title="pageTitle" :description="contextDesc">
+    <PageHeader :title="pageTitle">
       <!-- 类型 kind：与标题同行、靠右，但不顶到最右（与「返回」之间留间距） -->
-      <div class="ph-kind">
-        <span class="ph-kind-label">类型 <FieldHelp tip="工作负载类型：Deployment（无状态）、StatefulSet（有状态，稳定网络标识+独立存储）、DaemonSet（每个节点一个副本）。创建后不可修改。" /></span>
-        <el-select v-model="kind" :disabled="!!editing" style="width: 180px">
-          <el-option label="Deployment" value="deployment" />
-          <el-option label="StatefulSet" value="statefulset" />
-          <el-option label="DaemonSet" value="daemonset" />
-        </el-select>
-      </div>
+
       <el-button class="ph-back" @click="goBack">返回</el-button>
     </PageHeader>
 
@@ -413,6 +466,15 @@ const contextDesc = computed(() => {
             <el-card shadow="never" class="sec-card">
               <template #header><span class="sec-title">基础信息</span></template>
               <el-form label-width="140px" label-position="left">
+                <el-form-item>
+                  <template #label>类型 <FieldHelp tip="工作负载类型：Deployment（无状态）、StatefulSet（有状态，稳定网络标识+独立存储）、DaemonSet（每个节点一个副本）。创建后不可修改。" /></template>
+                    <el-select v-model="kind" :disabled="!!editing" style="width: 180px">
+                      <el-option label="Deployment" value="deployment" />
+                      <el-option label="StatefulSet" value="statefulset" />
+                      <el-option label="DaemonSet" value="daemonset" />
+                    </el-select>
+                </el-form-item>
+
                 <el-form-item required>
                   <template #label>名称 <FieldHelp tip="工作负载名称，须符合 RFC1123（小写字母/数字/-，以字母或数字开头结尾）。创建后不可修改。" /></template>
                   <el-input v-model="form.name" :disabled="!!editing" placeholder="例如 web-app" style="width: 360px" />
@@ -423,13 +485,13 @@ const contextDesc = computed(() => {
                 </el-form-item>
 
                   <!-- #3 名称在最上 -->
-                  <el-form-item>
+                  <el-form-item required>
                     <template #label>容器名称 <FieldHelp tip="主容器的名字，须为 DNS_LABEL（小写字母/数字/连字符，≤63 位）。同一 Pod 内唯一。" /></template>
                     <el-input v-model="pName" placeholder="如 web" style="width: 360px" />
                   </el-form-item>
                   <!-- #3 镜像在名称下；#5 拉取策略与镜像同行、在右侧 -->
 
-                    <el-form-item>
+                    <el-form-item required>
                       <template #label>镜像 <FieldHelp tip="主容器运行的容器镜像，如 nginx:1.27。" /></template>
                       <el-input v-model="pImage" placeholder="如 nginx:1.27" style="width: 360px" />
                     </el-form-item>
@@ -442,7 +504,7 @@ const contextDesc = computed(() => {
 
 
                   <!-- #6 端口在镜像和命令中间 -->
-                  <el-form-item>
+                  <el-form-item required>
                     <template #label>端口 <FieldHelp tip="容器监听的端口，供 Service / 探针按名或按号引用。" /></template>
                     <PortEditor v-model="pPorts" />
                   </el-form-item>
@@ -509,7 +571,7 @@ const contextDesc = computed(() => {
               <template #header>
                 <div class="sec-head">
                   <span class="sec-title">Init 容器 initContainers（可选）</span>
-                  <el-button plain size="medium" @click="initTabsRef?.add()">+ 添加容器</el-button>
+                  <el-button plain  @click="initTabsRef?.add()">+ 添加容器</el-button>
                 </div>
               </template>
               <ContainerListEditor
@@ -534,22 +596,22 @@ const contextDesc = computed(() => {
           <div v-show="activeModule === 'scheduling'" class="module-block">
             <el-card shadow="never" class="sec-card">
               <template #header><span class="sec-title">调度策略</span></template>
-              <el-form label-width="150px" label-position="left">
+              <el-form label-width="220px" label-position="left">
                 <el-form-item>
-                  <template #label>nodeName <FieldHelp tip="把 Pod 固定调度到指定节点（一般不用）。设置后会忽略 nodeSelector / 亲和。" /></template>
+                  <template #label>节点名称（nodeName） <FieldHelp tip="把 Pod 固定调度到指定节点（一般不用）。设置后会忽略 nodeSelector / 亲和。" /></template>
                   <el-input v-model="nodeName" placeholder="可选，指定某节点名" style="width: 280px" />
                   <div v-if="nodeName" class="form-tip warn">设置 nodeName 后，nodeSelector / 亲和的节点选择将被忽略</div>
                 </el-form-item>
                 <el-form-item>
-                  <template #label>nodeSelector <FieldHelp tip="按节点标签筛选可调度节点（所有键值须全部匹配）。" /></template>
+                  <template #label>节点选择器（nodeSelector） <FieldHelp tip="按节点标签筛选可调度节点（所有键值须全部匹配）。" /></template>
                   <LabelEditor v-model="nodeSelector" class="sub-editor" />
                 </el-form-item>
                 <el-form-item>
-                  <template #label>affinity <FieldHelp tip="更灵活的节点 / Pod 亲和与反亲和规则（required 必须满足，preferred 尽量满足）。" /></template>
+                  <template #label>亲和性（affinity） <FieldHelp tip="更灵活的节点 / Pod 亲和与反亲和规则（required 必须满足，preferred 尽量满足）。" /></template>
                   <AffinityEditor v-model="affinity" />
                 </el-form-item>
                 <el-form-item>
-                  <template #label>tolerations <FieldHelp tip="容忍度：让 Pod 可调度到带有对应污点（taint）的节点。" /></template>
+                  <template #label>容忍（tolerations） <FieldHelp tip="容忍度：让 Pod 可调度到带有对应污点（taint）的节点。" /></template>
                   <TolerationEditor v-model="tolerations" />
                 </el-form-item>
               </el-form>
@@ -575,14 +637,23 @@ const contextDesc = computed(() => {
           </div>
         </div>
 
-        <!-- 右侧导航 -->
-        <nav class="editor-nav">
-          <button type="button" class="nav-item" :class="{ active: activeModule === 'basic' }" @click="activeModule = 'basic'">基础信息</button>
-          <button type="button" class="nav-item" :class="{ active: activeModule === 'containers' }" @click="activeModule = 'containers'">Pod 容器</button>
-          <button type="button" class="nav-item" :class="{ active: activeModule === 'init' }" @click="activeModule = 'init'">初始化容器</button>
-          <button type="button" class="nav-item" :class="{ active: activeModule === 'strategy' }" @click="activeModule = 'strategy'">更新策略</button>
-          <button type="button" class="nav-item" :class="{ active: activeModule === 'scheduling' }" @click="activeModule = 'scheduling'">调度策略</button>
-          <button type="button" class="nav-item" :class="{ active: activeModule === 'storage' }" @click="activeModule = 'storage'">存储</button>
+        <!-- 右侧模块导航：一整块面板 + el-menu（:collapse 驱动 icon 轨 / 完整两态，与左侧主菜单同机制） -->
+        <nav class="editor-nav" :class="{ 'is-collapsed': collapsed }">
+          <el-menu
+            class="module-menu"
+            :collapse="collapsed"
+            :default-active="activeModule"
+            @select="onModuleSelect"
+          >
+            <el-menu-item v-for="m in modules" :key="m.key" :index="m.key">
+              <el-icon><component :is="m.icon" /></el-icon>
+              <template #title>{{ m.label }}</template>
+            </el-menu-item>
+          </el-menu>
+          <!-- 展开/收起：贴在面板左缘垂直中间（= 内容区右边缘正中） -->
+          <button type="button" class="nav-toggle" :aria-label="collapsed ? '展开' : '收起'" @click="collapsed = !collapsed">
+            <el-icon><ArrowLeft v-if="!collapsed" /><ArrowRight v-else /></el-icon>
+          </button>
         </nav>
       </div>
 
@@ -605,6 +676,7 @@ const contextDesc = computed(() => {
   display: flex;
   gap: 16px;
   align-items: flex-start;
+  position: relative;
 }
 
 
@@ -631,6 +703,7 @@ const contextDesc = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding-right: 5.5rem;
 }
 .ph-kind-label {
   font-size: 13px;
@@ -648,34 +721,72 @@ const contextDesc = computed(() => {
   justify-content: space-between;
   gap: 8px;
 }
+/* ---------- 右侧模块导航：一整块面板 + el-menu（与左侧主菜单同一套视觉语言） ---------- */
 .editor-nav {
-  width: 180px;
   flex-shrink: 0;
   position: sticky;
   top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  transition: width .2s ease;
 }
-.nav-item {
-  text-align: left;
-  padding: 10px 14px;
-  border: 1px solid var(--el-border-color);
-  background: var(--el-bg-color, #fff);
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--text-2);
+/* 收起态：EP el-menu collapse 的 icon 轨（64px）+ 面板留白 → 65px */
+.editor-nav.is-collapsed {
+  width: 65px;
 }
-.nav-item:hover {
-  border-color: var(--el-color-primary-light-5);
-  color: var(--el-color-primary);
+.module-menu {
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--text-2);
+  --el-menu-active-color: var(--accent);
+  --el-menu-hover-bg-color: var(--panel-hover);
+  border-right: none;
+
 }
-.nav-item.active {
-  background: var(--el-color-primary-light-9);
-  border-color: var(--el-color-primary);
-  color: var(--el-color-primary);
+
+.module-menu :deep(.el-menu-item) {
+  height: 40px;
+  line-height: 40px;
+  border-radius: 8px;
+  margin: 2px 0;
+}
+.module-menu :deep(.el-menu-item.is-active) {
+  background: var(--accent-soft);
+  color: var(--accent);
   font-weight: 600;
+}
+/* 展开/收起切换按钮：贴在面板左缘垂直中间（= 内容区右边缘正中） */
+.nav-toggle {
+  position: absolute;
+  left: -13px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: all .15s;
+}
+.nav-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* 窄分辨率（≤1024px）：展开态悬浮覆盖在内容右缘（不挤开内容）；收起态留在流内。
+   只锚定 top（不设 bottom）→ 高度 = 自身菜单内容，恒定，不随内容区高度拉伸 */
+@media (max-width: 1024px) {
+  .editor-nav:not(.is-collapsed) {
+    right: 0;
+    top: 0px;
+    box-shadow: -8px 0 24px -8px rgba(0, 0, 0, .35);
+    z-index: 20;
+  }
 }
 .sec-card :deep(.el-card__header) {
   padding: 10px 16px;

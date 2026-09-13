@@ -9,6 +9,8 @@
     <result column="istio_version" jdbcType="VARCHAR" property="istioVersion" />
     <result column="calico_version" jdbcType="VARCHAR" property="calicoVersion" />
     <result column="container_runtime" jdbcType="VARCHAR" property="containerRuntime" />
+    <result column="prometheus_url" jdbcType="VARCHAR" property="prometheusUrl" />
+    <result column="grafana_url" jdbcType="VARCHAR" property="grafanaUrl" />
     <result column="description" jdbcType="VARCHAR" property="description" />
     <result column="ip_stack" jdbcType="VARCHAR" property="ipStack" />
     <result column="status" jdbcType="VARCHAR" property="status" />
@@ -17,10 +19,11 @@
     <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
     <result column="deleted_at" jdbcType="TIMESTAMP" property="deletedAt" />
+    <result column="capability" jdbcType="VARCHAR" property="capability" />
   </resultMap>
   <sql id="Base_Column_List">
     cluster_id, cluster_name, kubeconfig, version, istio_version, calico_version, container_runtime,
-    description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at
+    prometheus_url, grafana_url, description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at, capability
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
@@ -36,16 +39,17 @@
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
   </delete>
   <insert id="insert" keyColumn="cluster_id" keyProperty="clusterId" parameterType="com.coding.data.models.k8s.K8sCluster" useGeneratedKeys="true">
-    insert into k8s_cluster (cluster_name, kubeconfig, version, 
-      istio_version, calico_version, container_runtime, 
-      description, ip_stack, `status`, 
-      enabled, last_heartbeat_time, created_at, 
-      updated_at)
-    values (#{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR}, 
-      #{istioVersion,jdbcType=VARCHAR}, #{calicoVersion,jdbcType=VARCHAR}, #{containerRuntime,jdbcType=VARCHAR}, 
-      #{description,jdbcType=VARCHAR}, #{ipStack,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR}, 
-      #{enabled,jdbcType=BOOLEAN}, #{lastHeartbeatTime,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP}, 
-      #{updatedAt,jdbcType=TIMESTAMP})
+    insert into k8s_cluster (cluster_name, kubeconfig, version,
+      istio_version, calico_version, container_runtime, prometheus_url, grafana_url,
+      description, ip_stack, `status`,
+      enabled, last_heartbeat_time, created_at,
+      updated_at, capability)
+    values (#{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR},
+      #{istioVersion,jdbcType=VARCHAR}, #{calicoVersion,jdbcType=VARCHAR}, #{containerRuntime,jdbcType=VARCHAR},
+      #{prometheusUrl,jdbcType=VARCHAR}, #{grafanaUrl,jdbcType=VARCHAR},
+      #{description,jdbcType=VARCHAR}, #{ipStack,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
+      #{enabled,jdbcType=BOOLEAN}, #{lastHeartbeatTime,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP},
+      #{updatedAt,jdbcType=TIMESTAMP}, #{capability,jdbcType=VARCHAR})
   </insert>
   <insert id="insertSelective" keyColumn="cluster_id" keyProperty="clusterId" parameterType="com.coding.data.models.k8s.K8sCluster" useGeneratedKeys="true">
     insert into k8s_cluster
@@ -68,6 +72,12 @@
       <if test="containerRuntime != null">
         container_runtime,
       </if>
+      <if test="prometheusUrl != null">
+        prometheus_url,
+      </if>
+      <if test="grafanaUrl != null">
+        grafana_url,
+      </if>
       <if test="description != null">
         description,
       </if>
@@ -89,6 +99,9 @@
       <if test="updatedAt != null">
         updated_at,
       </if>
+      <if test="capability != null">
+        capability,
+      </if>
     </trim>
     <trim prefix="values (" suffix=")" suffixOverrides=",">
       <if test="clusterName != null">
@@ -108,6 +121,12 @@
       </if>
       <if test="containerRuntime != null">
         #{containerRuntime,jdbcType=VARCHAR},
+      </if>
+      <if test="prometheusUrl != null">
+        #{prometheusUrl,jdbcType=VARCHAR},
+      </if>
+      <if test="grafanaUrl != null">
+        #{grafanaUrl,jdbcType=VARCHAR},
       </if>
       <if test="description != null">
         #{description,jdbcType=VARCHAR},
@@ -129,6 +148,9 @@
       </if>
       <if test="updatedAt != null">
         #{updatedAt,jdbcType=TIMESTAMP},
+      </if>
+      <if test="capability != null">
+        #{capability,jdbcType=VARCHAR},
       </if>
     </trim>
   </insert>
@@ -153,6 +175,12 @@
       <if test="containerRuntime != null">
         container_runtime = #{containerRuntime,jdbcType=VARCHAR},
       </if>
+      <if test="prometheusUrl != null">
+        prometheus_url = #{prometheusUrl,jdbcType=VARCHAR},
+      </if>
+      <if test="grafanaUrl != null">
+        grafana_url = #{grafanaUrl,jdbcType=VARCHAR},
+      </if>
       <if test="description != null">
         description = #{description,jdbcType=VARCHAR},
       </if>
@@ -174,6 +202,9 @@
       <if test="updatedAt != null">
         updated_at = #{updatedAt,jdbcType=TIMESTAMP},
       </if>
+      <if test="capability != null">
+        capability = #{capability,jdbcType=VARCHAR},
+      </if>
     </set>
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
   </update>
@@ -185,13 +216,16 @@
       istio_version = #{istioVersion,jdbcType=VARCHAR},
       calico_version = #{calicoVersion,jdbcType=VARCHAR},
       container_runtime = #{containerRuntime,jdbcType=VARCHAR},
+      prometheus_url = #{prometheusUrl,jdbcType=VARCHAR},
+      grafana_url = #{grafanaUrl,jdbcType=VARCHAR},
       description = #{description,jdbcType=VARCHAR},
       ip_stack = #{ipStack,jdbcType=VARCHAR},
       `status` = #{status,jdbcType=VARCHAR},
       enabled = #{enabled,jdbcType=BOOLEAN},
       last_heartbeat_time = #{lastHeartbeatTime,jdbcType=TIMESTAMP},
       created_at = #{createdAt,jdbcType=TIMESTAMP},
-      updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+      updated_at = #{updatedAt,jdbcType=TIMESTAMP},
+      capability = #{capability,jdbcType=VARCHAR}
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
   </update>
 </mapper>

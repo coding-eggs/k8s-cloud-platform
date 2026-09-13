@@ -18,8 +18,11 @@ public class SecretDTO extends BaseResources {
     /** Secret 类型（Opaque / tls / kubernetes.io/dockerconfigjson …），缺省 Opaque；创建后不可变 */
     private String type = "Opaque";
 
-    /** key-value 数据（明文） */
+    /** key-value 数据（明文）。写入映射到 K8s stringData（write-only，apiserver 编码进 data）；读取时由 base64 的 data 解码回明文 */
     private Map<String, String> data = new LinkedHashMap<>();
+
+    /** 不可变：true 后 data 不可再修改（仅可改标签等 metadata）；一旦为 true 无法改回 false */
+    private Boolean immutable;
 
     /** 创建时间（仅查询返回，ISO-8601 字符串） */
     private String creationTime;

@@ -9,10 +9,21 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
+import java.math.BigInteger;
 
 @RestController
 public class TestController {
 
+    public static void main(String[] args) {
+
+        BigInteger a = BigInteger.valueOf(1L <<31);
+        BigInteger b = BigInteger.valueOf((long) Math.pow(3, 21));
+
+        System.out.println(a.toString());
+        System.out.println(b.toString());
+        System.out.println(a.compareTo(b));
+
+    }
 
     @GetMapping("/test")
     public String test() {

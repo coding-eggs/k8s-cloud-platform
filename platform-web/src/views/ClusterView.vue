@@ -21,24 +21,70 @@ async function load(): Promise<void> {
 const dialogVisible = ref(false)
 const saving = ref(false)
 const isEdit = ref(false)
-const form = reactive({ clusterId: '', clusterName: '', description: '', kubeconfig: '' })
+const IP_STACKS: K8sCluster['ipStack'][] = ['IPV4', 'IPV6', 'IPV4_AND_IPV6']
+const form = reactive({
+  clusterId: '',
+  clusterName: '',
+  description: '',
+  kubeconfig: '',
+  version: '',
+  istioVersion: '',
+  calicoVersion: '',
+  containerRuntime: '',
+  ipStack: 'IPV4' as K8sCluster['ipStack'],
+  prometheusUrl: '',
+  grafanaUrl: '',
+})
 
-function openCreate(): void {
-  isEdit.value = false
+function resetForm(): void {
   form.clusterId = ''
   form.clusterName = ''
   form.description = ''
   form.kubeconfig = ''
+  form.version = ''
+  form.istioVersion = ''
+  form.calicoVersion = ''
+  form.containerRuntime = ''
+  form.ipStack = 'IPV4'
+  form.prometheusUrl = ''
+  form.grafanaUrl = ''
+}
+
+function openCreate(): void {
+  isEdit.value = false
+  resetForm()
   dialogVisible.value = true
 }
 
 function openEdit(row: K8sCluster): void {
   isEdit.value = true
+  resetForm()
   form.clusterId = row.clusterId
   form.clusterName = row.clusterName
   form.description = row.description ?? ''
-  form.kubeconfig = ''
+  form.version = row.version ?? ''
+  form.istioVersion = row.istioVersion ?? ''
+  form.calicoVersion = row.calicoVersion ?? ''
+  form.containerRuntime = row.containerRuntime ?? ''
+  form.ipStack = row.ipStack ?? 'IPV4'
+  form.prometheusUrl = row.prometheusUrl ?? ''
+  form.grafanaUrl = row.grafanaUrl ?? ''
+  // kubeconfig 留空 = 保留原值
   dialogVisible.value = true
+}
+
+function commonPayload() {
+  return {
+    clusterName: form.clusterName.trim(),
+    description: form.description || undefined,
+    version: form.version || undefined,
+    istioVersion: form.istioVersion || undefined,
+    calicoVersion: form.calicoVersion || undefined,
+    containerRuntime: form.containerRuntime || undefined,
+    ipStack: form.ipStack,
+    prometheusUrl: form.prometheusUrl || undefined,
+    grafanaUrl: form.grafanaUrl || undefined,
+  }
 }
 
 async function submit(): Promise<void> {
@@ -50,20 +96,31 @@ async function submit(): Promise<void> {
     ElMessage.warning('请粘贴 kubeconfig 内容')
     return
   }
+  // 编辑模式下填写了 kubeconfig → 重新探测 + 加密，需确认
+  if (isEdit.value && form.kubeconfig.trim()) {
+    try {
+      await ElMessageBox.confirm(
+        '已填写新的 kubeconfig，将重新探测连通性并覆盖加密存储，继续？',
+        '修改 kubeconfig',
+        { type: 'warning' },
+      )
+    } catch {
+      return
+    }
+  }
   saving.value = true
   try {
     if (isEdit.value) {
       await clusterApi.update({
         clusterId: form.clusterId,
-        clusterName: form.clusterName.trim(),
-        description: form.description || undefined,
+        ...commonPayload(),
+        kubeconfig: form.kubeconfig.trim() || undefined, // 留空 = 保留原值
       })
       ElMessage.success('已更新')
     } else {
       await clusterApi.create({
-        clusterName: form.clusterName.trim(),
+        ...commonPayload(),
         kubeconfig: form.kubeconfig,
-        description: form.description || undefined,
       })
       ElMessage.success('创建成功，K8s 侧开通完成')
     }
@@ -95,6 +152,19 @@ async function onProvision(row: K8sCluster): Promise<void> {
     await load()
   } catch {
     /* 拦截器提示 */
+  }
+}
+
+const refreshingId = ref('')
+async function onRefreshCapability(row: K8sCluster): Promise<void> {
+  refreshingId.value = row.clusterId
+  try {
+    await clusterApi.refreshCapability(row.clusterId)
+    ElMessage.success('集群 API 能力已刷新')
+  } catch {
+    /* 拦截器提示 */
+  } finally {
+    refreshingId.value = ''
   }
 }
 
@@ -153,31 +223,74 @@ onMounted(load)
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ fmtDate(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link type="warning" @click="onProvision(row)">重新开通</el-button>
+          <el-button link type="success" :loading="refreshingId === row.clusterId" @click="onRefreshCapability(row)">刷新能力</el-button>
           <el-button link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑集群' : '新增集群'" width="640px">
-      <el-form label-width="90px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑集群' : '新增集群'" width="680px">
+      <el-form label-width="100px">
+        <el-divider content-position="left">基本信息</el-divider>
         <el-form-item label="集群名称" required>
           <el-input v-model="form.clusterName" placeholder="例如 prod-cluster-1" />
         </el-form-item>
-        <el-form-item v-if="!isEdit" label="kubeconfig" required>
+        <el-form-item label="kubeconfig" :required="!isEdit">
           <el-input
             v-model="form.kubeconfig"
             type="textarea"
-            :rows="8"
-            placeholder="粘贴 .kube/config 文件全部内容（将加密存储）"
+            :rows="6"
+            :placeholder="isEdit ? '留空 = 保留原值；填写新内容将重新探测并覆盖加密存储' : '粘贴 .kube/config 文件全部内容（将加密存储）'"
             class="kubeconfig-input"
           />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
+        </el-form-item>
+
+        <el-divider content-position="left">组件版本</el-divider>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="集群版本">
+              <el-input v-model="form.version" placeholder="例如 v1.29.0" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="容器运行时">
+              <el-input v-model="form.containerRuntime" placeholder="例如 containerd" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="Istio 版本">
+              <el-input v-model="form.istioVersion" placeholder="例如 1.21.0" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="Calico 版本">
+              <el-input v-model="form.calicoVersion" placeholder="例如 3.27.0" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-divider content-position="left">网络</el-divider>
+        <el-form-item label="IP 栈">
+          <el-select v-model="form.ipStack" style="width: 200px">
+            <el-option v-for="s in IP_STACKS" :key="s" :label="s" :value="s" />
+          </el-select>
+        </el-form-item>
+
+        <el-divider content-position="left">监控接入（仅记录，本监控功能不用）</el-divider>
+        <el-form-item label="Prometheus">
+          <el-input v-model="form.prometheusUrl" placeholder="例如 http://prometheus.monitor:9090" />
+        </el-form-item>
+        <el-form-item label="Grafana">
+          <el-input v-model="form.grafanaUrl" placeholder="例如 http://grafana.monitor:3000" />
         </el-form-item>
       </el-form>
       <template #footer>

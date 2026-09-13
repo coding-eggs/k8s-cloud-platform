@@ -64,6 +64,7 @@ public class ResourceContextService {
                             ResourceContextDTO.ClusterNode node = new ResourceContextDTO.ClusterNode();
                             node.setClusterId(cluster.getClusterId());
                             node.setClusterName(cluster.getClusterName());
+                            node.setIpStack(cluster.getIpStack() != null ? cluster.getIpStack().name() : null);
                             tenantNode.getClusters().add(node);
                             return node;
                         });

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Toleration } from '@/types/workload'
+import { ensureModelList } from './modelList'
 
 const model = defineModel<Toleration[]>()
 
@@ -7,8 +8,7 @@ const OPERATORS = ['Equal', 'Exists'] as const
 const EFFECTS = ['NoSchedule', 'PreferNoSchedule', 'NoExecute'] as const
 
 function add(): void {
-  model.value ??= []
-  model.value.push({ key: '', operator: 'Exists', value: '', effect: 'NoSchedule', tolerationSeconds: null })
+  ensureModelList(model).push({ key: '', operator: 'Exists', value: '', effect: 'NoSchedule', tolerationSeconds: null })
 }
 
 function remove(i: number): void {
@@ -58,7 +58,6 @@ function secondsIgnored(t: Toleration): boolean {
         style="width: 120px"
         :disabled="secondsIgnored(t)"
       />
-      <span v-if="secondsIgnored(t)" class="b7-hint">将被忽略</span>
       <el-button link type="danger" @click="remove(i)">删除</el-button>
     </div>
     <el-button class="add-row-btn" plain @click="add">+ 添加容忍</el-button>

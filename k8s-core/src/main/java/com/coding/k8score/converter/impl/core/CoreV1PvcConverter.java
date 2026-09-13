@@ -16,19 +16,27 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
     @Override
     public PersistentVolumeClaim convert(PersistentVolumeClaimDTO in) {
         String storage = StringUtils.hasText(in.getStorage()) ? in.getStorage() : "1Gi";
+        var specBuilder = new io.fabric8.kubernetes.api.model.PersistentVolumeClaimSpecBuilder()
+                .withStorageClassName(in.getStorageClassName())
+                .withAccessModes(in.getAccessModes())
+                .withNewResources()
+                    .addToRequests("storage", new Quantity(storage))
+                .endResources();
+        if (in.getDataSourceRef() != null) {
+            specBuilder.withDataSourceRef(new io.fabric8.kubernetes.api.model.TypedObjectReferenceBuilder()
+                    .withApiGroup(in.getDataSourceRef().getApiGroup())
+                    .withKind(in.getDataSourceRef().getKind())
+                    .withName(in.getDataSourceRef().getName())
+                    .withNamespace(in.getDataSourceRef().getNamespace())
+                    .build());
+        }
         return new PersistentVolumeClaimBuilder()
                 .withNewMetadata()
                     .withName(in.getName())
                     .withNamespace(in.getNamespace())
                     .withLabels(in.getLabels())
                 .endMetadata()
-                .withNewSpec()
-                    .withStorageClassName(in.getStorageClassName())
-                    .withAccessModes(in.getAccessModes())
-                    .withNewResources()
-                        .addToRequests("storage", new Quantity(storage))
-                    .endResources()
-                .endSpec()
+                .withSpec(specBuilder.build())
                 .build();
     }
 
@@ -40,7 +48,7 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
             dto.setNamespace(pvc.getMetadata().getNamespace());
             dto.setLabels(pvc.getMetadata().getLabels());
             if (pvc.getMetadata().getCreationTimestamp() != null) {
-                dto.setCreationTime(pvc.getMetadata().getCreationTimestamp().toString());
+                dto.setCreationTime(pvc.getMetadata().getCreationTimestamp());
             }
         }
         if (pvc.getSpec() != null) {
@@ -51,6 +59,15 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
                 if (storage != null) {
                     dto.setStorage(storage.toString());
                 }
+            }
+            io.fabric8.kubernetes.api.model.TypedObjectReference ref = pvc.getSpec().getDataSourceRef();
+            if (ref != null) {
+                PersistentVolumeClaimDTO.DataSourceRef dsr = new PersistentVolumeClaimDTO.DataSourceRef();
+                dsr.setApiGroup(ref.getApiGroup());
+                dsr.setKind(ref.getKind());
+                dsr.setName(ref.getName());
+                dsr.setNamespace(ref.getNamespace());
+                dto.setDataSourceRef(dsr);
             }
         }
         if (pvc.getStatus() != null) {

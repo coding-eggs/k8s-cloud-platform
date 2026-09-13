@@ -2,19 +2,126 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.k8s.ServiceType;
+import com.coding.common.models.k8s.dto.PodDTO;
+import com.coding.common.models.k8s.dto.ServiceDTO;
+import com.coding.common.models.k8s.dto.ServicePortDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.platformapi.k8s.K8sResourceClient;
 import com.coding.platformapi.services.validation.WorkloadValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.StringUtils;
 
-/**工作负载业务层：create/update 先跑 §5 硬约束，通过再透传 k8s-server（list/get/yaml/delete 无业务规则，直连 client） */
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+/**工作负载业务层：create/update 先跑 §5 硬约束，通过再透传 k8s-server；list/get 额外 join 同命名空间 Service，算出对外暴露端口 */
 @Service
 @RequiredArgsConstructor
 public class WorkloadService {
 
     private final K8sResourceClient k8s;
     private final WorkloadValidator validator;
+
+    /**列出工作负载（三种 kind 合并）并填充各自对外暴露的 NodePort/LB Service 端口 */
+    public List<WorkloadDTO> list(WorkloadDTO query) {
+        List<WorkloadDTO> workloads = k8s.list(query);
+
+        //查询nodePort 和 loadbalancer 的svc列表
+        ServiceDTO svc = new ServiceDTO();
+        svc.setTenantId(query.getTenantId());
+        svc.setClusterId(query.getClusterId());
+        svc.setNamespace(query.getNamespace());
+        svc.setFieldSelector("spec.type="+ ServiceType.NodePort.getType());
+
+        List<ServiceDTO> nodePortList = k8s.list(svc);
+        svc.setFieldSelector("spec.type="+ ServiceType.LoadBalancer.getType());
+        List<ServiceDTO> loadBalancerList = k8s.list(svc);
+
+        //svcList
+        List<ServiceDTO> serviceList = Stream.concat(nodePortList.stream(), loadBalancerList.stream())
+                .toList();
+
+        for (WorkloadDTO w : workloads) {
+            w.setExposedServices(exposeFor(w, serviceList));
+        }
+        return workloads;
+    }
+
+    /**查询单个工作负载（跨 kind）并填充对外暴露端口 */
+    public WorkloadDTO get(WorkloadDTO query) {
+        WorkloadDTO w = k8s.get(query);
+        if (w == null) {
+            return null;
+        }
+        ServiceDTO q = new ServiceDTO();
+        q.setTenantId(query.getTenantId());
+        q.setClusterId(query.getClusterId());
+        q.setNamespace(query.getNamespace());
+
+        w.setExposedServices(exposeFor(w, k8s.list(q)));
+        return w;
+    }
+
+    /**
+     * 计算某工作负载对外暴露的 Service：类型须为 NodePort/LB，且 service.selector 命中该工作负载的任一真实 Pod。
+     * Pod 归属 = 工作负载 matchLabels ⊆ pod.labels（等价于按 matchLabels 做 labelSelector 查询），取 Pod 实际 labels 匹配，
+     * 而非读 podTemplate。只保留已分配 nodePort 的端口。
+     */
+    private List<WorkloadDTO.ExposedService> exposeFor(WorkloadDTO w, List<ServiceDTO> services) {
+        Map<String, String> matchLabels = w.getSelector();
+        if (matchLabels == null || matchLabels.isEmpty() || services == null) {
+            return Collections.emptyList();
+        }
+
+        List<WorkloadDTO.ExposedService> out = new ArrayList<>();
+        for (ServiceDTO s : services) {
+            if (!selectorMatches(s.getSelector(), w.getSelector())) {
+                continue;
+            }
+            List<WorkloadDTO.ExposedPort> ports = new ArrayList<>();
+            if (s.getPorts() != null) {
+                for (ServicePortDTO p : s.getPorts()) {
+                    if (p.getPort() != null ) {
+                        WorkloadDTO.ExposedPort ep = new WorkloadDTO.ExposedPort();
+                        ep.setPort(p.getPort());
+                        ep.setNodePort(p.getNodePort());
+                        ports.add(ep);
+                    }
+                }
+            }
+            if (ports.isEmpty()) {
+                continue;
+            }
+            WorkloadDTO.ExposedService es = new WorkloadDTO.ExposedService();
+            es.setName(s.getName());
+            es.setType(s.getType());
+            es.setPorts(ports);
+            out.add(es);
+        }
+        return out;
+    }
+
+    /** required ⊆ actual（每个 k=v 都相等）；空 required 视为不匹配 */
+    private boolean selectorMatches(Map<String, String> required, Map<String, String> actual) {
+        if (required == null || required.isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, String> e : required.entrySet()) {
+            if (!e.getValue().equals(actual.get(e.getKey()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+
 
     public WorkloadDTO create(WorkloadDTO dto) {
         validator.validate(dto);

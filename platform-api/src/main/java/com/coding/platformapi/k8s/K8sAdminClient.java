@@ -13,6 +13,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * k8s-server /admin/** 特殊端点 client：非六端点形态的生命周期接口，一个方法一个端点，纯传输零业务。
@@ -38,6 +39,21 @@ public class K8sAdminClient {
         AdminProvisionRequest req = new AdminProvisionRequest();
         req.setClusterId(clusterId);
         gateway.exchange(HttpMethod.POST, "/admin/cluster/provision", null, req, gateway.responseType(Void.class));
+    }
+
+    /**刷新集群 API 能力（运行时 discovery 快照）→ group→versions */
+    public Map<String, List<String>> refreshCapability(String clusterId) {
+        AdminClusterKeyRequest req = new AdminClusterKeyRequest();
+        req.setClusterId(clusterId);
+        return gateway.exchange(HttpMethod.POST, "/admin/cluster/capability/refresh", null, req,
+                gateway.capabilityResponseType());
+    }
+
+    /**失效集群 client 缓存（kubeconfig 变更 / 禁用 / 删除后）：admin + 派生 tenant client */
+    public void evictClusterClient(String clusterId) {
+        AdminClusterKeyRequest req = new AdminClusterKeyRequest();
+        req.setClusterId(clusterId);
+        gateway.exchange(HttpMethod.POST, "/admin/cluster/client/evict", null, req, gateway.responseType(Void.class));
     }
 
     /**补建单租户 SA（幂等）；serviceAccount 为裸名（K8s 对象名 = tn- + 该值） */

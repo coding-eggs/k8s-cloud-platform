@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import type { VolumeMount } from '@/types/workload'
+import { ensureModelList } from './modelList'
 
 const props = defineProps<{ volumeNames: string[] }>()
 const model = defineModel<VolumeMount[]>()
 
 function add(): void {
-  model.value ??= []
-  model.value.push({ name: '', mountPath: '', readOnly: false, subPath: '' })
+  ensureModelList(model).push({ name: '', mountPath: '', readOnly: false, subPath: '' })
 }
 
 function remove(i: number): void {

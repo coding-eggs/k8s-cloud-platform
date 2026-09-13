@@ -3,6 +3,9 @@ package com.coding.platformapi.controllers.resource;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.metrics.MetricsService;
+import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
+import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
 import com.coding.platformapi.services.WorkloadService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,11 +33,12 @@ public class WorkloadController {
 
     private final K8sResourceClient k8s;
     private final WorkloadService workloadService;
+    private final MetricsService metricsService;
 
     @PostMapping("/list")
     @Operation(summary = "列出工作负载（三种 kind 合并）")
     public ResponseData<List<WorkloadDTO>> list(@RequestBody WorkloadDTO body) {
-        return new ResponseData<>(k8s.list(body));
+        return new ResponseData<>(workloadService.list(body));
     }
 
     @GetMapping("/{name}")
@@ -43,7 +47,7 @@ public class WorkloadController {
                                          @RequestParam String tenantId,
                                          @RequestParam String clusterId,
                                          @RequestParam String namespace) {
-        return new ResponseData<>(k8s.get(dto(name, tenantId, clusterId, namespace)));
+        return new ResponseData<>(workloadService.get(dto(name, tenantId, clusterId, namespace)));
     }
 
     @GetMapping("/{name}/yaml")
@@ -77,6 +81,36 @@ public class WorkloadController {
                                      @RequestParam String namespace) {
         k8s.delete(dto(name, tenantId, clusterId, namespace));
         return new ResponseData<>();
+    }
+
+    // ===== 监控指标（4 个，委托 MetricsService；clusterName 由 clusterId 查库解析）=====
+
+    @PostMapping("/{name}/metrics/cpu")
+    @Operation(summary = "工作负载 CPU 用量（核）")
+    public ResponseData<MetricSeriesResponse> cpuMetrics(@PathVariable String name, @RequestBody WorkloadMetricsRequest req) {
+        req.setName(name);
+        return new ResponseData<>(metricsService.workloadCpu(req));
+    }
+
+    @PostMapping("/{name}/metrics/memory")
+    @Operation(summary = "工作负载内存用量（字节）")
+    public ResponseData<MetricSeriesResponse> memoryMetrics(@PathVariable String name, @RequestBody WorkloadMetricsRequest req) {
+        req.setName(name);
+        return new ResponseData<>(metricsService.workloadMemory(req));
+    }
+
+    @PostMapping("/{name}/metrics/network")
+    @Operation(summary = "工作负载网络 IO（字节/秒，RX/TX 两条线）")
+    public ResponseData<MetricSeriesResponse> networkMetrics(@PathVariable String name, @RequestBody WorkloadMetricsRequest req) {
+        req.setName(name);
+        return new ResponseData<>(metricsService.workloadNetwork(req));
+    }
+
+    @PostMapping("/{name}/metrics/disk")
+    @Operation(summary = "工作负载磁盘 IO（字节/秒，读/写 两条线）")
+    public ResponseData<MetricSeriesResponse> diskMetrics(@PathVariable String name, @RequestBody WorkloadMetricsRequest req) {
+        req.setName(name);
+        return new ResponseData<>(metricsService.workloadDisk(req));
     }
 
     /**查询 DTO：apiPath 内置于 DTO */

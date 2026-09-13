@@ -27,6 +27,7 @@ public class CoreV1SecretConverter implements CommonConverter<Secret, SecretDTO>
                 .withType(in.getType())
                 //明文交给 apiserver 做 base64，避免平台侧重复编码
                 .withStringData(in.getData())
+                .withImmutable(in.getImmutable())
                 .build();
     }
 
@@ -42,6 +43,7 @@ public class CoreV1SecretConverter implements CommonConverter<Secret, SecretDTO>
             }
         }
         dto.setType(secret.getType());
+        dto.setImmutable(secret.getImmutable());
         Map<String, String> data = new LinkedHashMap<>();
         if (secret.getData() != null) {
             secret.getData().forEach((key, value) ->

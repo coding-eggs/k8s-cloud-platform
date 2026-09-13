@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-@Tag(name = "集群管理", description = "集群新增 / 列表 / 详情 / 更新 / 启停 / 删除 / 重新开通")
+@Tag(name = "集群管理", description = "集群新增 / 列表 / 详情 / 更新 / 启停 / 删除 / 重新开通 / 刷新 API 能力")
 @RestController
 @RequestMapping("/cluster")
 public class ClusterController {
@@ -66,5 +66,12 @@ public class ClusterController {
     @Operation(summary = "重新开通", description = "幂等重跑 K8s 侧开通：创建失败重试、集群数据面重建后恢复")
     public ResponseData<K8sCluster> provision(@RequestBody ClusterKeyRequest request) {
         return new ResponseData<>(clusterService.provision(request));
+    }
+
+    @PostMapping("/capability/refresh")
+    @Operation(summary = "刷新集群 API 能力", description = "运行时 discovery 探测（getApiGroups）并持久化到 k8s_cluster.capability；失败透出错误")
+    public ResponseData<Void> refreshCapability(@RequestBody ClusterKeyRequest request) {
+        clusterService.refreshCapabilityStrict(request.getClusterId());
+        return new ResponseData<>();
     }
 }

@@ -46,6 +46,16 @@ public class K8sCluster {
     private String containerRuntime;
 
     /**
+     * Prometheus 地址（仅记录，本监控功能不用）
+     */
+    private String prometheusUrl;
+
+    /**
+     * Grafana 地址（仅记录）
+     */
+    private String grafanaUrl;
+
+    /**
      * 集群描述
      */
     private String description;
@@ -63,7 +73,7 @@ public class K8sCluster {
     /**
      * 是否开启, 0 关闭，1 开启
      */
-    private int enabled;
+    private Integer enabled;
 
     /**
      * 最后一次心跳时间
@@ -84,6 +94,11 @@ public class K8sCluster {
      * 软删除时间，NULL = 未删除
      */
     private Date deletedAt;
+
+    /**
+     * 集群 API 能力（JSON：group → versions[]），运行时 discovery 探测后持久化
+     */
+    private String capability;
 
 
     public enum IPStack {

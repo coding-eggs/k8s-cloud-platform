@@ -3,7 +3,6 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
-
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -16,8 +15,9 @@ export default defineConfig({
     },
   },
   server: {
+    host: true,
     //PORT 由启动环境注入（预览/CI），缺省 5173
-    port: Number(process.env.PORT) || 5173,
+    port:  5173,
     proxy: {
       // /api/** → platform-api :8081（去掉 /api 前缀；ws: true 支持 Pod exec 的 WS 升级）
       '/api': {

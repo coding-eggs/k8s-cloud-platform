@@ -21,6 +21,8 @@ import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8score.operations.ClusterOperations;
 import com.coding.k8score.operations.NamespacedOperations;
+import io.fabric8.kubernetes.api.model.APIGroup;
+import io.fabric8.kubernetes.api.model.GroupVersionForDiscovery;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.client.Config;
@@ -33,6 +35,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,8 +50,6 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class K8sProvisioningService {
 
-    public static final String MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
-    public static final String MANAGED_BY_VALUE = "k8s-cloud-platform";
 
     private final KubernetesClientFactory clientFactory;
     private final KubernetesOperationsFactory operationsFactory;
@@ -78,17 +79,44 @@ public class K8sProvisioningService {
     }
 
     /**
+     * 刷新集群 API 能力（运行时 discovery 快照）：先 evict admin client（保证用最新 kubeconfig 重建连接），
+     * 再 getApiGroups() 探测 → {group: [version, ...]}。仅探测并返回，持久化在 platform-api 侧。
+     */
+    public Map<String, List<String>> refreshCapability(String clusterId) {
+        clientFactory.evictAdminClient(clusterId);
+        KubernetesClient client = clientFactory.getAdminClient(clusterId);
+        Map<String, List<String>> capability = new LinkedHashMap<>();
+        for (APIGroup group : client.getApiGroups().getGroups()) {
+            List<GroupVersionForDiscovery> versions = group.getVersions();
+            capability.put(group.getName(),
+                    versions == null ? List.of() : versions.stream().map(GroupVersionForDiscovery::getVersion).toList());
+        }
+        return capability;
+    }
+
+    /**
+     * 失效某集群的 admin client + 派生的全部 tenant client（kubeconfig 变更 / 禁用 / 删除后由 platform-api 调用）。
+     * 清缓存不重建：下次 getAdminClient/getTenantClient 会用最新 DB 状态惰性重建。
+     */
+    public void evictClient(String clusterId) {
+        clientFactory.evictAdminClient(clusterId);
+    }
+
+    /**
      * 集群纳管 / 数据面重建后的完整开通（幂等）：
      * platform-system + 全部启用租户 SA + 全部模板 ClusterRole
      */
     public void provisionCluster(String clusterId) {
+        //创建集群管理所需的命名空间
         ensureNamespace(clusterId, SystemConstant.SYSTEM_NAMESPACE);
         for (PlatformTenant tenant : tenantMapper.listAll()) {
             if (tenant.getStatus() != null && tenant.getStatus() == 1) {
+                //创建平台已有的sa
                 ensureTenantSa(clusterId, tenant.getServiceAccount());
             }
         }
         for (PlatformRbacTemplate template : templateMapper.listAll()) {
+            //创建平台有的clusterrole
             syncTemplateClusterRole(clusterId, template.getName(), parseRules(template.getRules()));
         }
         log.info("集群 {} K8s 侧开通完成", clusterId);
@@ -104,7 +132,7 @@ public class K8sProvisioningService {
             client.namespaces().resource(new NamespaceBuilder()
                     .withNewMetadata()
                         .withName(namespace)
-                        .withLabels(Map.of(MANAGED_BY_LABEL, MANAGED_BY_VALUE))
+                        .withLabels(Map.of(KubernetesClientFactory.MANAGED_BY_LABEL, KubernetesClientFactory.MANAGED_BY_VALUE))
                     .endMetadata()
                     .build()).create();
             log.info("集群 {} 创建命名空间 {}", clusterId, namespace);
@@ -145,7 +173,7 @@ public class K8sProvisioningService {
      */
     public void ensureTenantSa(String clusterId, String serviceAccount) {
         NamespacedOperations<ServiceAccountDTO> ops = operationsFactory.getAdminNamespacedOperation(
-                ResourceType.SERVICE_ACCOUNT, clusterId, null);
+                ResourceType.SERVICE_ACCOUNT, clusterId);
         String saName = K8sNaming.tenantServiceAccount(serviceAccount);
         if (ops.get(SystemConstant.SYSTEM_NAMESPACE, saName) == null) {
             ServiceAccountDTO sa = new ServiceAccountDTO();
@@ -163,7 +191,7 @@ public class K8sProvisioningService {
      */
     private void syncTemplateClusterRole(String clusterId, String templateName, List<PolicyRuleDTO> rules) {
         ClusterOperations<ClusterRoleDTO> ops = operationsFactory.getClusterOperation(
-                ResourceType.CLUSTER_ROLE, clusterId, null);
+                ResourceType.CLUSTER_ROLE, clusterId);
         String crName = K8sNaming.templateClusterRole(templateName);
         ClusterRoleDTO dto = new ClusterRoleDTO();
         dto.setClusterId(clusterId);
@@ -183,7 +211,7 @@ public class K8sProvisioningService {
      */
     private void deallocateNamespace(String clusterId, String namespace, String serviceAccount) {
         NamespacedOperations<RoleBindingDTO> ops = operationsFactory.getAdminNamespacedOperation(
-                ResourceType.ROLE_BINDING, clusterId, null);
+                ResourceType.ROLE_BINDING, clusterId);
         ops.delete(namespace, K8sNaming.tenantServiceAccount(serviceAccount));
     }
 
@@ -229,7 +257,7 @@ public class K8sProvisioningService {
 
     private void deleteTenantSa(String clusterId, String serviceAccount) {
         NamespacedOperations<ServiceAccountDTO> ops = operationsFactory.getAdminNamespacedOperation(
-                ResourceType.SERVICE_ACCOUNT, clusterId, null);
+                ResourceType.SERVICE_ACCOUNT, clusterId);
         ops.delete(SystemConstant.SYSTEM_NAMESPACE, K8sNaming.tenantServiceAccount(serviceAccount));
     }
 

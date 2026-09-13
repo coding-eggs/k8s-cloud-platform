@@ -11,8 +11,8 @@ import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.ResourceAccessResolver.AccessContext;
 import com.coding.k8sserver.controllers.base.AbstractNamespacedResourceController;
 import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.dsl.LogWatch;
-import io.fabric8.kubernetes.client.dsl.PodResource;
+import io.fabric8.kubernetes.client.dsl.*;
+import io.fabric8.kubernetes.client.dsl.internal.core.v1.PodOperationsImpl;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletResponse;
@@ -24,9 +24,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
-import java.io.IOException;
-import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
 /**
  * 命名空间域 - Pod 查看（双模访问，边界=分配表）。
@@ -65,43 +65,53 @@ public class PodController extends AbstractNamespacedResourceController<PodDTO> 
         throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED);
     }
 
-    @GetMapping(value = "/{name}/logs", produces = MediaType.TEXT_PLAIN_VALUE)
-    @Operation(summary = "流式获取 Pod 日志（follow=true 保持连接）")
-    public void logs(@PathVariable String name,
-                     @RequestParam(required = false) String tenantId,
-                     @RequestParam String clusterId,
-                     @RequestParam String namespace,
-                     @RequestParam(required = false) String container,
-                     @RequestParam(defaultValue = "500") int tailLines,
-                     @RequestParam(defaultValue = "false") boolean follow,
-                     HttpServletResponse response) throws IOException {
+    @GetMapping(value = "/{name}/logs")
+    @Operation(summary = "获取 Pod 日志（增量轮询 sinceTime；初始化回看 tailLines/sinceSeconds + timestamps）")
+    public StreamingResponseBody logs(@PathVariable String name,
+                                      @RequestParam(required = false) String tenantId,
+                                      @RequestParam String clusterId,
+                                      @RequestParam String namespace,
+                                      @RequestParam(required = false) String container,
+                                      @RequestParam(required = false) Integer sinceSeconds,
+                                      @RequestParam(required = false) String sinceTime,
+                                      @RequestParam(required = false) Integer tailLines) {
         AccessContext ctx = accessResolver.resolveNamespacedAccess(tenantId, clusterId, namespace);
 
         KubernetesClient client = getClient(ctx, clusterId);
-        PodResource pod = client.pods().inNamespace(namespace).withName(name);
-        if (StringUtils.hasText(container)) {
-            pod.inContainer(container);
-        }
-        if (tailLines > 0) {
-            pod.tailingLines(tailLines);
-        }
+        // 转具体类才能链式调用 usingTimestamps()/sinceTime()/tailingLines()（公开接口类型够不到这些方法）
+        BytesLimitTerminateTimeTailPrettyLoggable prettyLoggable = client.pods()
+                .inNamespace(namespace)
+                .withName(name)
+                .inContainer(container)
+                .usingTimestamps();
 
-        response.setContentType(MediaType.TEXT_PLAIN_VALUE + ";charset=UTF-8");
-        response.setHeader("Cache-Control", "no-cache");
-        try (OutputStream out = response.getOutputStream()) {
-            if (follow) {
-                //watchLog = follow 语义：流式输出直到 Pod 日志结束或连接关闭
-                try (LogWatch watch = pod.watchLog()) {
-                    watch.getOutput().transferTo(out);
-                }
+        // 恒带 timestamps：每行加 RFC3339Nano 前缀，前端据此做增量游标、展示时剥掉前缀还原原始日志。
+        // sinceTime=增量轮询（取上次之后所有新行，不丢行）；tailLines=初始化回看最近 N 行（首选，安静容器也不空）；
+        // sinceSeconds=按时间窗回看（旧方式，保留兼容）；都不给=全量。
+
+        return outputStream -> {
+
+            if (StringUtils.hasText(sinceTime)) {
+                prettyLoggable.sinceTime(sinceTime)
+                        .withPrettyOutput()
+                        .getLogInputStream()
+                        .transferTo(outputStream);
+            } else if (tailLines != null) {
+                prettyLoggable.tailingLines(tailLines)
+                        .withPrettyOutput()
+                        .getLogInputStream()
+                        .transferTo(outputStream);
+            } else if (sinceSeconds != null) {
+                prettyLoggable.sinceSeconds(sinceSeconds)
+                        .withPrettyOutput()
+                        .getLogInputStream()
+                        .transferTo(outputStream);
             } else {
-                out.write(pod.getLog().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                prettyLoggable.withPrettyOutput()
+                        .getLogInputStream()
+                        .transferTo(outputStream);
             }
-            out.flush();
-        } catch (IOException e) {
-            //客户端断开/网络中断：连接已不可用，仅记录
-            log.debug("Pod 日志流中断 {}/{}/{}: {}", namespace, name, container, e.getMessage());
-        }
+        };
     }
 
     /**租户模式→tenant client（最小权限）；admin 模式→admin client */

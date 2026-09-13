@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { secretApi } from '@/api'
 import type { K8sSecret } from '@/types'
@@ -7,11 +8,20 @@ import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
+import {MoreFilled, Search} from "@element-plus/icons-vue";
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const router = useRouter()
 
 const loading = ref(false)
 const list = ref<K8sSecret[]>([])
+/** 名称模糊搜索（前端过滤） */
+const keyword = ref('')
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return list.value
+  return list.value.filter((r) => (r.name ?? '').toLowerCase().includes(kw))
+})
 
 const ctxParams = computed(() => ({
   tenantId: state.tenantId!,
@@ -29,87 +39,22 @@ async function refresh(): Promise<void> {
   }
 }
 
-const SECRET_TYPES = ['Opaque', 'kubernetes.io/tls', 'kubernetes.io/basic-auth', 'kubernetes.io/dockerconfigjson']
-
-// ---------- 创建 / 编辑对话框（类型 + key-value 行，值为明文） ----------
-const dialogVisible = ref(false)
-const saving = ref(false)
-const isEdit = ref(false)
-const form = reactive({
-  name: '',
-  type: 'Opaque',
-  rows: [] as { key: string; value: string }[],
-})
-
-function newRows(): { key: string; value: string }[] {
-  return [{ key: '', value: '' }]
+// ---------- 跳转编辑器（新建 / 编辑独立页） ----------
+function goEditor(name: string | null): void {
+  router.push(name ? `/resources/secrets/editor?name=${encodeURIComponent(name)}` : '/resources/secrets/editor')
 }
 
-function openCreate(): void {
-  isEdit.value = false
-  form.name = ''
-  form.type = 'Opaque'
-  form.rows = newRows()
-  dialogVisible.value = true
-}
-
-function openEdit(row: K8sSecret): void {
-  isEdit.value = true
-  form.name = row.name
-  form.type = row.type || 'Opaque'
-  const entries = Object.entries(row.data ?? {})
-  form.rows = entries.length ? entries.map(([key, value]) => ({ key, value })) : newRows()
-  dialogVisible.value = true
-}
-
-function addRow(): void {
-  form.rows.push({ key: '', value: '' })
-}
-
-function removeRow(index: number): void {
-  form.rows.splice(index, 1)
-}
-
-async function submit(): Promise<void> {
-  const name = form.name.trim()
-  if (!name) {
-    ElMessage.warning('请输入名称')
-    return
-  }
-  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) {
-    ElMessage.warning('名称需符合 RFC1123：小写字母/数字/-，且以字母或数字开头结尾')
-    return
-  }
-  const data: Record<string, string> = {}
-  for (const row of form.rows) {
-    const key = row.key.trim()
-    if (!key) {
-      ElMessage.warning('存在空的 Key')
-      return
-    }
-    if (data[key] !== undefined) {
-      ElMessage.warning(`Key「${key}」重复`)
-      return
-    }
-    data[key] = row.value
-  }
-
-  saving.value = true
-  try {
-    const payload = { name, namespace: state.namespace!, type: form.type, data }
-    if (isEdit.value) {
-      await secretApi.update(name, { tenantId: state.tenantId!, clusterId: state.clusterId! }, payload)
-      ElMessage.success('已更新')
-    } else {
-      await secretApi.create({ tenantId: state.tenantId!, clusterId: state.clusterId! }, payload)
-      ElMessage.success('创建成功')
-    }
-    dialogVisible.value = false
-    await refresh()
-  } catch {
-    /* 拦截器已提示 */
-  } finally {
-    saving.value = false
+/** Secret 类型 → tag 颜色 */
+function typeTag(type?: string | null): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
+  switch (type) {
+    case 'kubernetes.io/tls': return 'success'
+    case 'kubernetes.io/dockerconfigjson':
+    case 'kubernetes.io/dockercfg': return 'warning'
+    case 'kubernetes.io/ssh-auth': return 'danger'
+    case 'kubernetes.io/basic-auth':
+    case 'kubernetes.io/service-account-token':
+    case 'bootstrap.kubernetes.io/token': return 'primary'
+    default: return 'info' // Opaque / 其它
   }
 }
 
@@ -174,9 +119,9 @@ const contextDesc = computed(() => {
 
 <template>
   <div>
-    <PageHeader title="Secret" :description="contextDesc">
+    <PageHeader title="Secret" >
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="openCreate">创建 Secret</el-button>
+      <el-button type="primary" :disabled="!ready" @click="goEditor(null)">创建 Secret</el-button>
     </PageHeader>
 
     <EmptyState
@@ -186,59 +131,48 @@ const contextDesc = computed(() => {
     />
 
     <div v-else class="panel table-panel">
-      <el-table v-loading="loading || !ready" :data="list" stripe>
-        <el-table-column label="名称" min-width="200">
-          <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
-        </el-table-column>
-        <el-table-column label="类型" width="190">
+      <div class="search-bar">
+        <el-input v-model="keyword" placeholder="按名称搜索…" clearable :prefix-icon="Search" class="search-input" />
+      </div>
+      <el-table v-loading="loading || !ready" :data="filtered" stripe>
+        <el-table-column label="名称" width="500">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.type || 'Opaque' }}</el-tag>
+            <code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="数据项" width="100">
+        <el-table-column label="类型" min-width="190">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain" :type="typeTag(row.type)">{{ row.type || 'Opaque' }}</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="可编辑" min-width="150">
+          <template #default="{ row }"><el-tag :type="row.immutable? 'warning' : 'success' ">{{ !row.immutable }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="数据项" min-width="100">
           <template #default="{ row }">{{ Object.keys(row.data ?? {}).length }} 项</template>
         </el-table-column>
-        <el-table-column label="创建时间" width="170">
+        <el-table-column label="创建时间" min-width="170">
           <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+
+
+        <el-table-column width="64" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">查看</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-dropdown trigger="click">
+              <el-button link type="primary" :icon="MoreFilled" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="goEditor(row.name)">编辑</el-dropdown-item>
+                  <el-dropdown-item divided style="color: var(--el-color-danger)" @click="onDelete(row)">删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
+
       </el-table>
     </div>
-
-    <!-- 创建 / 编辑 -->
-    <el-dialog v-model="dialogVisible" :title="isEdit ? `编辑 Secret · ${form.name}` : '创建 Secret'" width="640px" top="8vh">
-      <el-form label-width="80px">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" :disabled="isEdit" placeholder="小写字母/数字/-，例如 db-credentials" />
-          <div class="form-tip">K8s 资源名创建后不可修改；命名空间 = 当前上下文</div>
-        </el-form-item>
-        <el-form-item label="类型">
-          <el-select v-model="form.type" style="width: 260px">
-            <el-option v-for="t in SECRET_TYPES" :key="t" :label="t" :value="t" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="数据">
-          <div class="kv-editor">
-            <div v-for="(row, idx) in form.rows" :key="idx" class="kv-row">
-              <el-input v-model="row.key" placeholder="Key（如 username）" class="kv-key" />
-              <el-input v-model="row.value" type="password" show-password placeholder="Value（明文提交，由 apiserver 加密存储）" />
-              <el-button link type="danger" :disabled="form.rows.length <= 1" @click="removeRow(idx)">删除</el-button>
-            </div>
-            <el-button class="add-row-btn" plain @click="addRow">+ 添加键值对</el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submit">确定</el-button>
-      </template>
-    </el-dialog>
 
     <!-- 详情 -->
     <el-drawer v-model="drawerVisible" :title="`Secret · ${detail?.name ?? ''}`" size="640px">
@@ -271,6 +205,12 @@ const contextDesc = computed(() => {
 .table-panel {
   padding: 8px;
 }
+.search-bar {
+  margin-bottom: 10px;
+}
+.search-input {
+  width: 260px;
+}
 .res-name {
   font-family: Consolas, 'JetBrains Mono', monospace;
   font-size: 13px;
@@ -279,29 +219,15 @@ const contextDesc = computed(() => {
 .muted {
   color: var(--text-3);
 }
-.form-tip {
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.kv-editor {
-  width: 100%;
-}
-.kv-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  align-items: center;
-}
-.kv-key {
-  width: 40%;
-  flex-shrink: 0;
-}
-.add-row-btn {
-  width: 100%;
-}
 .mask-bar {
   margin-bottom: 10px;
+}
+.name-link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.name-link:hover {
+  text-decoration: underline;
 }
 .kv-value {
   font-family: Consolas, 'JetBrains Mono', monospace;

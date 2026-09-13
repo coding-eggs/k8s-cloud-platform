@@ -1,10 +1,11 @@
 package com.coding.platformapi.models;
 
+import com.coding.data.models.k8s.K8sCluster;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 @Data
-@Schema(description = "集群更新请求（仅名称/描述）")
+@Schema(description = "集群更新请求")
 public class ClusterUpdateRequest {
 
     @Schema(description = "集群id", requiredMode = Schema.RequiredMode.REQUIRED)
@@ -15,4 +16,28 @@ public class ClusterUpdateRequest {
 
     @Schema(description = "集群描述")
     private String description;
+
+    @Schema(description = "kubeconfig 明文（留空 = 保留原值；填写 = 重新探测 + 重新加密）")
+    private String kubeconfig;
+
+    @Schema(description = "集群版本", example = "v1.29.0")
+    private String version;
+
+    @Schema(description = "Istio 版本", example = "1.21.0")
+    private String istioVersion;
+
+    @Schema(description = "Calico 版本", example = "3.27.0")
+    private String calicoVersion;
+
+    @Schema(description = "容器运行时", example = "containerd")
+    private String containerRuntime;
+
+    @Schema(description = "IP栈类型：IPV4/IPV6/IPV4_AND_IPV6", example = "IPV4")
+    private K8sCluster.IPStack ipStack;
+
+    @Schema(description = "Prometheus 地址（仅记录，本监控功能不用）")
+    private String prometheusUrl;
+
+    @Schema(description = "Grafana 地址（仅记录）")
+    private String grafanaUrl;
 }

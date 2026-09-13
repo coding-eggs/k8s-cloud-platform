@@ -5,7 +5,9 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.SecretDTO;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
+import io.fabric8.kubernetes.api.model.PartialObjectMetadataList;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.utils.Serialization;
@@ -34,12 +36,16 @@ public class CoreV1SecretOperations implements NamespacedOperations<SecretDTO> {
     }
 
     @Override
-    public List<SecretDTO> list(String namespace, String labelSelector) {
+    public List<SecretDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
         }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
+        }
+        client.secrets().inNamespace(ns).list(options);
         List<Secret> items = client.secrets().inNamespace(ns).list(options).getItems();
         return items.stream().map(converter::revert).toList();
     }
@@ -83,7 +89,7 @@ public class CoreV1SecretOperations implements NamespacedOperations<SecretDTO> {
         Secret updated = client.secrets()
                 .inNamespace(namespace)
                 .resource(in)
-                .update();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -111,6 +117,9 @@ public class CoreV1SecretOperations implements NamespacedOperations<SecretDTO> {
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
+        if (secret != null && secret.getMetadata() != null) {
+            secret.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(secret);
     }
 

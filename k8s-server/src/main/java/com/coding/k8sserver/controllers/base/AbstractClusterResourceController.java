@@ -43,7 +43,7 @@ public abstract class AbstractClusterResourceController<T extends BaseResources>
     public ResponseData<List<T>> list(@RequestBody T body) {
         String clusterId = body.getClusterId();
         accessResolver.assertClusterAccess(clusterId);
-        List<T> items = ops(clusterId).list(body.getLabelSelector());
+        List<T> items = ops(clusterId).list(body.getLabelSelector(), body.getFieldSelector());
         items.forEach(item -> stamp(item, clusterId));
         return new ResponseData<>(items);
     }
@@ -97,7 +97,7 @@ public abstract class AbstractClusterResourceController<T extends BaseResources>
     }
 
     protected ClusterOperations<T> ops(String clusterId) {
-        return operationsFactory.getClusterOperation(resourceType(), clusterId, null);
+        return operationsFactory.getClusterOperation(resourceType(), clusterId);
     }
 
     /**D5 回填：请求上下文回写 item，使返回对象可原样发回后续 update/delete */

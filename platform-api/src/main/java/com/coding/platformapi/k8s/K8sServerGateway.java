@@ -16,8 +16,10 @@ import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.util.UriComponentsBuilder;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JavaType;
 import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.type.TypeFactory;
 
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -37,9 +39,16 @@ import java.util.Map;
 public class K8sServerGateway {
 
     private final RestClient restClient;
+
+    /**流式透传专用（Pod 日志 follow）：读超时放宽，避免安静容器 >120s 无输出时被掐断 */
+    private final RestClient streamRestClient;
+
+    /**
+     * api↔k8s-server 内部通信专用 mapper（反序列化 k8s-server 响应用），与共享 {@code JsonMapperConfig} 解耦。
+     */
     private final JsonMapper jsonMapper;
 
-    public K8sServerGateway(@Value("${k8s.server.url:http://127.0.0.1:8080}") String baseUrl, JsonMapper jsonMapper) {
+    public K8sServerGateway(@Value("${k8s.server.url:http://127.0.0.1:8080}") String baseUrl) {
         SimpleClientHttpRequestFactory factory =
                 new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
@@ -49,7 +58,24 @@ public class K8sServerGateway {
                 .baseUrl(baseUrl)
                 .requestFactory(factory)
                 .build();
-        this.jsonMapper = jsonMapper;
+
+        //流式专用：连接超时同常规；读超时放宽到 30 分钟（= 每 30 分钟内只要有日志输出即续命），
+        //与 k8s-server 侧异步超时长一致，避免安静容器在 120s 无输出时被本层掐断。
+        SimpleClientHttpRequestFactory streamFactory = new SimpleClientHttpRequestFactory();
+        streamFactory.setConnectTimeout(10_000);
+        streamFactory.setReadTimeout(30 * 60 * 1000);
+        this.streamRestClient = RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(streamFactory)
+                .build();
+
+        //专用 mapper：只做标准反序列化，null 保持 null。刻意不套用共享配置的 null 值改写
+        //（对象→{}、数组→[]、字符串/数字→""、布尔→false），避免 k8s-server 的空对象字段被读成"非空的空对象"。
+        //保留 ACCEPT_EMPTY_STRING_AS_NULL_OBJECT：k8s-server 把 null 数字序列化成 ""，需容忍并还原为 null。
+        this.jsonMapper = JsonMapper.builder()
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .configure(DeserializationFeature.ACCEPT_EMPTY_STRING_AS_NULL_OBJECT, true)
+                .build();
     }
 
     /**ResponseData&lt;T&gt; 类型（T 为运行时类，供类型化反序列化） */
@@ -61,6 +87,15 @@ public class K8sServerGateway {
     public JavaType listResponseType(Class<?> itemClass) {
         return jsonMapper.getTypeFactory().constructParametricType(ResponseData.class,
                 jsonMapper.getTypeFactory().constructCollectionType(List.class, itemClass));
+    }
+
+    /**ResponseData&lt;Map&lt;String, List&lt;String&gt;&gt;&gt; 类型（集群 API 能力：group→versions） */
+    public JavaType capabilityResponseType() {
+        TypeFactory tf = jsonMapper.getTypeFactory();
+        JavaType mapType = tf.constructMapType(Map.class,
+                tf.constructType(String.class),
+                tf.constructCollectionType(List.class, String.class));
+        return tf.constructParametricType(ResponseData.class, mapType);
     }
 
     /**
@@ -91,6 +126,7 @@ public class K8sServerGateway {
             log.error("k8s-server {} 返回空响应，HTTP {}", path, sb.status());
             throw new CloudPlatformException(EnumResponseType.ERROR, "k8s-server 返回空响应 (HTTP " + sb.status() + ")");
         }
+
         ResponseData<T> resp;
         try {
             resp = jsonMapper.readValue(sb.body(), respType);
@@ -113,7 +149,7 @@ public class K8sServerGateway {
     public void streamGet(String path, Map<String, String> params, OutputStream out) {
         String uri = buildUri(path, params);
         try {
-            restClient.method(HttpMethod.GET)
+            streamRestClient.method(HttpMethod.GET)
                     .uri(uri)
                     .headers(this::passThroughAuthorization)
                     .exchange((request, response) -> {

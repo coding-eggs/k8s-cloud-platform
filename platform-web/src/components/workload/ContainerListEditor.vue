@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import type { ContainerDef } from '@/types/workload'
 import ContainerEditor from './ContainerEditor.vue'
+import { ensureModelList } from './modelList'
 
 const props = defineProps<{ isInit: boolean; volumeNames: string[]; externalNames?: string[] }>()
 
@@ -15,13 +16,9 @@ function blankContainer(): ContainerDef {
   return { name: '', image: '', command: [], args: [], workingDir: '', imagePullPolicy: 'IfNotPresent', envs: [], envFrom: [], ports: [], volumeMounts: [] }
 }
 
-function ensure(): ContainerDef[] {
-  if (model.value === undefined) model.value = []
-  return model.value
-}
 /** 添加容器 = 末尾加一个 tab，并切到新 tab */
 function add(): void {
-  const arr = ensure()
+  const arr = ensureModelList(model)
   arr.push(blankContainer())
   activeTab.value = String(arr.length - 1)
 }

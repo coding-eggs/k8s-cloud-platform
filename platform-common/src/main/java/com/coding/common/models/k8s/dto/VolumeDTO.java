@@ -10,7 +10,7 @@ public class VolumeDTO {
     @Schema(description = "卷名称")
     private String name;
 
-    @Schema(description = "卷类型（emptyDir/configMap/secret/persistentVolumeClaim/hostPath）")
+    @Schema(description = "卷类型（emptyDir/configMap/secret/persistentVolumeClaim/hostPath/projected/downwardAPI/csi/nfs）")
     private String type;
 
     @Schema(description = "emptyDir 卷配置")
@@ -27,5 +27,17 @@ public class VolumeDTO {
 
     @Schema(description = "hostPath 卷配置")
     private HostPathVolumeDTO hostPath;
+
+    @Schema(description = "projected 卷配置")
+    private ProjectedVolumeDTO projected;
+
+    @Schema(description = "downwardAPI 卷配置")
+    private DownwardAPIVolumeDTO downwardAPI;
+
+    @Schema(description = "csi 卷配置")
+    private CsiVolumeDTO csi;
+
+    @Schema(description = "nfs 卷配置")
+    private NfsVolumeDTO nfs;
 
 }

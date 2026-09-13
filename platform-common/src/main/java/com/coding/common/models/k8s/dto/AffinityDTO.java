@@ -10,6 +10,9 @@ public class AffinityDTO {
     @Schema(description = "节点亲和性")
     private NodeAffinityDTO nodeAffinity;
 
+    @Schema(description = "Pod 亲和性")
+    private PodAffinityDTO podAffinity;
+
     @Schema(description = "Pod 反亲和性")
     private PodAntiAffinityDTO podAntiAffinity;
 

@@ -8,6 +8,7 @@ import ResourcesEditor from './ResourcesEditor.vue'
 import LifecycleEditor from './LifecycleEditor.vue'
 import ProbeEditor from './ProbeEditor.vue'
 import VolumeMountEditor from './VolumeMountEditor.vue'
+import FieldHelp from './FieldHelp.vue'
 
 const props = defineProps<{ isInit: boolean; volumeNames: string[] }>()
 
@@ -85,8 +86,12 @@ const latestHint = computed(() => (model.value?.image ?? '').includes(':latest')
 
 const PULL_POLICIES = ['IfNotPresent', 'Always', 'Never']
 
-/** 默认展开基础信息分区 */
-const activeSections = ref<string[]>(['base'])
+/** 默认全部分区展开（init 容器无 lifecycle / probes，自动排除这几项） */
+const activeSections = ref<string[]>(
+  props.isInit
+    ? ['base', 'envs', 'envFrom', 'ports', 'resources', 'mounts']
+    : ['base', 'envs', 'envFrom', 'ports', 'resources', 'lifecycle', 'liveness', 'readiness', 'startup', 'mounts'],
+)
 
 /** B4：向父页面暴露 isValid()，委托给 ResourcesEditor（ref 缺失时默认 true） */
 const resourcesRef = ref<InstanceType<typeof ResourcesEditor> | null>(null)
@@ -102,32 +107,33 @@ defineExpose({ isValid })
       <!-- 基础信息 -->
       <el-collapse-item title="基础信息" name="base">
         <div class="ce-row">
-          <span class="ce-label">name</span>
+          <span class="ce-label">容器名称 <FieldHelp tip="主容器的名字，须为 DNS_LABEL（小写字母/数字/连字符，≤63 位）。同一 Pod 内所有容器名必须唯一。" /></span>
           <el-input v-model="name" placeholder="容器名（DNS_LABEL）" style="width: 200px" />
         </div>
         <div class="ce-row">
-          <span class="ce-label">image</span>
+          <span class="ce-label">镜像 <FieldHelp tip="容器运行的镜像地址及 tag，如 nginx:1.27。Pod 启动时按拉取策略从镜像仓库拉取该镜像。" /></span>
           <el-input v-model="image" placeholder="镜像（如 nginx:1.27）" style="width: 320px" />
         </div>
-        <div v-if="latestHint" class="d2-hint">镜像 tag 为 :latest 且未设置 imagePullPolicy，将默认按 Always 拉取</div>
         <div class="ce-row">
-          <span class="ce-label">command</span>
-          <el-input v-model="commandText" type="textarea" :rows="2" placeholder="启动命令，每行一个（或逗号分隔）" style="flex: 1; min-width: 260px" />
-        </div>
-        <div class="ce-row">
-          <span class="ce-label">args</span>
-          <el-input v-model="argsText" type="textarea" :rows="2" placeholder="启动参数，每行一个（或逗号分隔）" style="flex: 1; min-width: 260px" />
-        </div>
-        <div class="ce-row">
-          <span class="ce-label">workingDir</span>
-          <el-input v-model="workingDir" placeholder="工作目录（可选）" style="width: 240px" />
-        </div>
-        <div class="ce-row">
-          <span class="ce-label">imagePullPolicy</span>
+          <span class="ce-label">镜像拉取策略 <FieldHelp tip="imagePullPolicy：Always=每次启动都拉取 / IfNotPresent=本地已有则用、否则拉取 / Never=仅用本地镜像。留空由 K8s 按 tag 决定（:latest 视为 Always）。" /></span>
           <el-select v-model="imagePullPolicy" clearable placeholder="默认" style="width: 160px">
             <el-option v-for="p in PULL_POLICIES" :key="p" :label="p" :value="p" />
           </el-select>
         </div>
+        <div v-if="latestHint" class="d2-hint">镜像 tag 为 :latest 且未设置 imagePullPolicy，将默认按 Always 拉取</div>
+        <div class="ce-row">
+          <span class="ce-label">Command <FieldHelp tip="覆盖镜像默认的启动命令（entrypoint），每行一个或用逗号分隔。不填则沿用镜像自带入口。" /></span>
+          <el-input v-model="commandText" type="textarea" :rows="2" placeholder="启动命令，每行一个（或逗号分隔）" style="flex: 1; min-width: 260px" />
+        </div>
+        <div class="ce-row">
+          <span class="ce-label">Args <FieldHelp tip="传给启动命令的参数（args），每行一个或用逗号分隔；不覆盖 entrypoint，只作为参数追加。" /></span>
+          <el-input v-model="argsText" type="textarea" :rows="2" placeholder="启动参数，每行一个（或逗号分隔）" style="flex: 1; min-width: 260px" />
+        </div>
+        <div class="ce-row">
+          <span class="ce-label">工作目录 <FieldHelp tip="workingDir：容器内进程的工作目录（可选），须为容器镜像中已存在的路径。" /></span>
+          <el-input v-model="workingDir" placeholder="工作目录（可选）" style="width: 240px" />
+        </div>
+
       </el-collapse-item>
 
       <!-- 环境变量 -->
@@ -176,6 +182,6 @@ defineExpose({ isValid })
 <style scoped>
 .container-editor { width: 100% }
 .ce-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap }
-.ce-label { width: 130px; flex-shrink: 0; font-size: 12px; color: var(--el-text-color-secondary) }
-.d2-hint { margin: -4px 0 8px; padding-left: 138px; font-size: 12px; color: var(--el-color-warning) }
+.ce-label { width: 150px; flex-shrink: 0; font-size: 12px; color: var(--el-text-color-secondary); white-space: nowrap }
+.d2-hint { margin: -4px 0 8px; padding-left: 158px; font-size: 12px; color: var(--el-color-warning) }
 </style>

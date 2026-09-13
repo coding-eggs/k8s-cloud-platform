@@ -19,6 +19,8 @@ public class CoreV1ConfigMapConverter implements CommonConverter<ConfigMap, Conf
                     .withLabels(in.getLabels())
                 .endMetadata()
                 .withData(in.getData())
+                .withBinaryData(in.getBinaryData())
+                .withImmutable(in.getImmutable())
                 .build();
     }
 
@@ -30,10 +32,12 @@ public class CoreV1ConfigMapConverter implements CommonConverter<ConfigMap, Conf
             dto.setNamespace(cm.getMetadata().getNamespace());
             dto.setLabels(cm.getMetadata().getLabels());
             if (cm.getMetadata().getCreationTimestamp() != null) {
-                dto.setCreationTime(cm.getMetadata().getCreationTimestamp().toString());
+                dto.setCreationTime(cm.getMetadata().getCreationTimestamp());
             }
         }
         dto.setData(cm.getData());
+        dto.setBinaryData(cm.getBinaryData());
+        dto.setImmutable(cm.getImmutable());
         return dto;
     }
 

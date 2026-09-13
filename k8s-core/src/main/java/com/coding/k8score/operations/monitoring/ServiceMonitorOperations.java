@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ServiceMonitorDTO;
 import com.coding.k8score.converter.impl.monitoring.ServiceMonitorConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -44,11 +45,14 @@ public class ServiceMonitorOperations implements NamespacedOperations<ServiceMon
     }
 
     @Override
-    public List<ServiceMonitorDTO> list(String namespace, String labelSelector) {
+    public List<ServiceMonitorDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
         List<GenericKubernetesResource> items = client.genericKubernetesResources(CRD)
                 .inNamespace(ns).list(options).getItems();
@@ -87,14 +91,19 @@ public class ServiceMonitorOperations implements NamespacedOperations<ServiceMon
     public ServiceMonitorDTO update(ServiceMonitorDTO sm) {
         String namespace = sm.getNamespace();
         String name = sm.getName();
-        if (!checkExist(namespace, name)) {
+        // fetch-overlay：先取线上对象，converter 以它为底覆盖建模字段，保留 endpoints 未建模的外部字段
+        GenericKubernetesResource live = client.genericKubernetesResources(CRD)
+                .inNamespace(namespace)
+                .withName(name)
+                .get();
+        if (live == null) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
         }
-        GenericKubernetesResource in = converter.convert(sm);
+        GenericKubernetesResource in = converter.convertForUpdate(sm, live);
         GenericKubernetesResource updated = client.genericKubernetesResources(CRD)
                 .inNamespace(namespace)
                 .resource(in)
-                .update();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -125,6 +134,9 @@ public class ServiceMonitorOperations implements NamespacedOperations<ServiceMon
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
+        if (res != null && res.getMetadata() != null) {
+            res.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(res);
     }
 

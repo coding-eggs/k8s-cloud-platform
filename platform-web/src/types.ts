@@ -114,6 +114,8 @@ export interface K8sServicePort {
   targetPort?: string | null
   nodePort?: number | null
   protocol?: string | null
+  /** 应用层协议（如 http/grpc）：透传保留，UI 不编辑 */
+  appProtocol?: string | null
 }
 
 /** Service */
@@ -293,9 +295,19 @@ export interface K8sSmEndpoint {
   params?: Record<string, string[]> | null
   basicAuth?: { username?: K8sSmSecretRef | null; password?: K8sSmSecretRef | null } | null
   bearerTokenSecret?: K8sSmSecretRef | null
+  /** Bearer Token 文件路径（容器内挂载）；平台 UI 不编辑，仅透传保留 */
+  bearerTokenFile?: string | null
   tlsConfig?: { insecureSkipVerify?: boolean | null; serverName?: string | null } | null
   relabelings?: K8sSmRelabeling[] | null
   metricRelabelings?: K8sSmRelabeling[] | null
+}
+
+/** ServiceMonitor selector 表达式（spec.selector.matchExpressions[] 项） */
+export interface K8sSmMatchExpression {
+  key?: string | null
+  /** In / NotIn / Exists / DoesNotExist */
+  operator?: string | null
+  values?: string[] | null
 }
 
 /** ServiceMonitor（monitoring.coreos.com/v1 CRD） */
@@ -305,6 +317,8 @@ export interface K8sServiceMonitor {
   labels?: Record<string, string> | null
   /** spec.selector.matchLabels（必填）：由后端据 serviceRef 解析填充；查询时原样返回 */
   matchLabels?: Record<string, string> | null
+  /** spec.selector.matchExpressions：与 matchLabels 并存，ANDed；支持按表达式选 Service */
+  matchExpressions?: K8sSmMatchExpression[] | null
   /** 绑定的目标 Service（平台侧）：选择后据此反查 labels 生成 matchLabels；非 K8s 字段、不落库 */
   serviceRef?: { name: string; namespace: string } | null
   namespaceSelector?: { any?: boolean | null; matchNames?: string[] | null } | null

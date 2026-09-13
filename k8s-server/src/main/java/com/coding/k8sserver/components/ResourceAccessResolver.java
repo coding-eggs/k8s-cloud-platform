@@ -49,10 +49,19 @@ public class ResourceAccessResolver {
     }
 
     /**
-     * 命名空间域访问解析：身份解析 + 分配表边界校验，返回生效上下文
+     * 命名空间域访问解析（REST）：身份取自当前 SecurityContext + 分配表边界校验，返回生效上下文
      */
     public AccessContext resolveNamespacedAccess(String explicitTenantId, String clusterId, String namespace) {
-        String tokenTenantId = currentTokenTenantId();
+        return resolveNamespacedAccess(SecurityContextHolder.getContext().getAuthentication(),
+                explicitTenantId, clusterId, namespace);
+    }
+
+    /**
+     * 命名空间域访问解析（显式身份）：WS 握手跑在 Tomcat worker 线程、thread-local SecurityContext 为空，
+     * 由 {@code HandshakeInterceptor} 在握手期捕获的 Authentication 显式传入。逻辑与 REST 版完全一致。
+     */
+    public AccessContext resolveNamespacedAccess(Authentication auth, String explicitTenantId, String clusterId, String namespace) {
+        String tokenTenantId = tokenTenantIdFrom(auth);
         String tenantId;
         boolean adminMode;
         if (tokenTenantId != null) {
@@ -93,10 +102,10 @@ public class ResourceAccessResolver {
         }
     }
 
-    /**从当前请求 JWT 的 data claim 提取租户身份；admin token / 无 claim → null（走 admin 模式） */
-    private String currentTokenTenantId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (!(auth.getPrincipal() instanceof Jwt jwt)) {
+    /**从给定 Authentication 的 JWT data claim 提取租户身份；admin token / 无 claim → null（走 admin 模式）。
+     * auth 为 null（如 WS worker 线程未捕获到握手身份）→ USER_UN_LOGIN，而非 NPE。 */
+    private String tokenTenantIdFrom(Authentication auth) {
+        if (auth == null || !(auth.getPrincipal() instanceof Jwt jwt)) {
             throw new CloudPlatformException(EnumResponseType.USER_UN_LOGIN);
         }
         try {

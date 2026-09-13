@@ -3,6 +3,7 @@ package com.coding.auth.service;
 import com.coding.auth.client.RegisteredClientReq;
 import com.coding.auth.client.RegisteredClientRes;
 import com.coding.auth.config.CustomClientSetting;
+import com.coding.auth.config.RedisSessionConfig;
 import com.coding.common.components.jwt.impl.JweTokenStrategy;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
@@ -97,7 +98,7 @@ public class ClientService {
         addAuthMethods(builder, authMethods);
 
         //grant type
-        addGrantTypes(builder, req.getAuthorizationGrantTypes());
+        addGrantTypes(builder, req.getAuthorizationGrantTypes(), req.getRequireProofKey());
         //redirect uri
         addUris(builder, req.getRedirectUris());
         //登出后 重定向 uri
@@ -145,7 +146,7 @@ public class ClientService {
             authMethods.add(ClientAuthenticationMethod.NONE.getValue());
         }
 
-        addGrantTypes(builder, grantTypes);
+        addGrantTypes(builder, grantTypes, req.getRequireProofKey());
         addUris(builder, uris);
         addPostLogoutUris(builder, postLogoutUris);
         addAuthMethods(builder, authMethods);
@@ -213,6 +214,16 @@ public class ClientService {
 
         // 3. JWT 自定义配置校验
         validateJwtConfig(req);
+
+        // 4. Access Token 有效期必须严格小于会话空闲超时（根凭证）。
+        //    否则 token 比 session 活得久：session 先死、token 变孤儿 → 用户活跃时反而被踢、被迫重登。
+        //    （req 未填时后端默认 1h，天然满足约束，无需校验。）
+        if (req.getAccessTokenTimeToLive() != null
+                && req.getAccessTokenTimeToLive() >= RedisSessionConfig.SESSION_MAX_INACTIVE_SECONDS) {
+            throw new CloudPlatformException(EnumResponseType.OAUTH2_CLIENT_TOKEN_TTL_EXCEEDS_SESSION,
+                    "上限 " + RedisSessionConfig.SESSION_MAX_INACTIVE_SECONDS + "s，当前 "
+                            + req.getAccessTokenTimeToLive() + "s");
+        }
     }
 
     private void validateJwtConfig(RegisteredClientReq req) {
@@ -454,13 +465,13 @@ public class ClientService {
 
     // ==================== Builder helpers ====================
 
-    private void addGrantTypes(RegisteredClient.Builder b, Set<String> vals) {
+    private void addGrantTypes(RegisteredClient.Builder b, Set<String> vals, boolean pkce) {
         if (vals == null || vals.isEmpty()) return;
         for (String v : vals) {
             b.authorizationGrantType(new AuthorizationGrantType(v));
         }
         // authorization_code 模式自动添加 REFRESH_TOKEN
-        if (vals.contains(AuthorizationGrantType.AUTHORIZATION_CODE.getValue())) {
+        if (vals.contains(AuthorizationGrantType.AUTHORIZATION_CODE.getValue()) && !pkce) {
             b.authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN);
         }
     }

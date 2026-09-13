@@ -16,4 +16,10 @@ public class ValueFromDTO {
     @Schema(description = "Pod 字段引用")
     private ObjectFieldSelectorDTO fieldRef;
 
+    @Schema(description = "文件 引用")
+    private FileKeySelectorDTO fileKeyRef;
+
+    @Schema(description = "资源 引用")
+    private ResourceFieldSelectorDTO resourceFieldRef;
+
 }

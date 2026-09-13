@@ -33,6 +33,9 @@ public abstract class BaseResources implements NamespacedResourceDTO {
     @Schema(name = "labels")
     private Map<String, String> labels;
 
+    @Schema(name = "通过字段筛选")
+    private String fieldSelector;
+
     /** list 查询条件（仅 list 生效，其余操作忽略）：K8s 原生标签选择器语法，原样透传 */
     @Schema(name = "标签选择器（仅 list）")
     private String labelSelector;

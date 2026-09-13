@@ -13,7 +13,7 @@ public class EnvDTO {
     @Schema(description = "环境变量值", example = "prod")
     private String value;
 
-    @Schema(description = "值来源（configMapKeyRef/secretKeyRef/fieldRef）")
+    @Schema(description = "值来源（configMapKeyRef/secretKeyRef/fieldRef/fileKeyRef/resourceFieldRef）")
     private ValueFromDTO valueFrom;
 
 }

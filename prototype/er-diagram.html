@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K8s 云平台 · 全表字段与关系图（ER）</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif; background:#f5f6f8; color:#333; }
+  .wrap { max-width:1520px; margin:0 auto; padding:24px 20px 48px; }
+  h1 { font-size:20px; font-weight:600; }
+  .sub { font-size:13px; color:#888; margin-top:6px; line-height:1.7; }
+  .sub code { background:#eceef1; padding:1px 6px; border-radius:4px; font-size:12px; color:#555; }
+  .card { background:#fff; border:1px solid #e3e5e8; border-radius:10px; margin-top:16px; padding:18px; overflow-x:auto; }
+  svg { display:block; min-width:1240px; width:100%; height:auto; }
+  .ttl-en { font:700 11.5px Consolas,"SFMono-Regular",monospace; fill:#fff; }
+  .ttl-cn { font:600 11.5px "PingFang SC","Microsoft YaHei",sans-serif; fill:#fff; }
+  .fld { font:11.5px Consolas,"SFMono-Regular",monospace; fill:#333; }
+  .typ { font:9.5px Consolas,monospace; fill:#999; }
+  .uqr { font:italic 10.5px Consolas,monospace; fill:#aaa; }
+  .tagpk { font:700 10px Consolas,monospace; fill:#b8860b; }
+  .tagfk { font:700 10px Consolas,monospace; fill:#2f6fb2; }
+  .taguq { font:700 10px Consolas,monospace; fill:#2e8b57; }
+  .edge { stroke:#9aa0a6; stroke-width:1.4; fill:none; }
+  .edge.dash { stroke-dasharray:5 4; stroke:#8a9bb8; }
+  .elbl { font:600 10.5px "PingFang SC",sans-serif; fill:#666; }
+  .sect { font:700 13px "PingFang SC",sans-serif; fill:#667; }
+  .note-t { font:600 12.5px "PingFang SC",sans-serif; fill:#444; }
+  .note { font:12px "PingFang SC",sans-serif; fill:#666; }
+  details { margin-top:16px; background:#fff; border:1px solid #e3e5e8; border-radius:10px; padding:14px 18px; }
+  summary { cursor:pointer; font-size:14px; font-weight:600; color:#555; }
+  pre { margin-top:12px; background:#f7f8fa; border:1px solid #eceef1; border-radius:8px; padding:14px; font-size:12.5px; line-height:1.6; overflow-x:auto; font-family:Consolas,"SFMono-Regular",monospace; }
+  .foot { margin-top:14px; font-size:12px; color:#aaa; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>K8s 云平台 · 全表字段与关系图（ER）</h1>
+  <div class="sub">
+    数据来源：<code>k8s_cloud_platform.sql</code>，共 13 张表：platform-auth 授权服务器 4 张 · 平台核心 7 张（含 3 张多对多关联表）· 集群/命名空间 2 张。
+    字段与 SQL 完全一致；外键均为<b>逻辑引用</b>（库中未建物理约束）。悬停任意字段行可查看注释。
+  </div>
+
+  <div class="card">
+    <svg id="er" viewBox="0 0 1460 1660" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+
+  <details>
+    <summary>Mermaid erDiagram 源码（可复制到文档 / README）</summary>
+<pre>erDiagram
+  %% ---- 平台核心：用户 / 租户 / 角色 / 权限 ----
+  platform_user   ||--o{ platform_user_tenant        : "user_id"
+  platform_tenant ||--o{ platform_user_tenant        : "tenant_id"
+  platform_user   ||--o{ platform_user_tenant_role   : "user_id（按租户授权）"
+  platform_tenant ||--o{ platform_user_tenant_role   : "tenant_id"
+  platform_role   ||--o{ platform_user_tenant_role   : "role_id"
+  platform_role   ||--o{ platform_role_permission    : "role_id"
+  platform_permission ||--o{ platform_role_permission : "permission_id"
+  %% ---- 集群 / 命名空间 ----
+  platform_tenant }o--|| k8s_cluster                 : "cluster_id（绑定集群）"
+  platform_tenant ||--o{ platform_tenant_namespace   : "tenant_id（命名空间分配）"
+  k8s_cluster    ||--o{ platform_tenant_namespace    : "cluster_id"
+  %% ---- platform-auth（OAuth2/OIDC）----
+  oauth2_registered_client ||--o{ oauth2_authorization           : "client_id = registered_client_id"
+  oauth2_registered_client ||--o{ oauth2_authorization_consent   : "client_id = registered_client_id"
+  platform_user      ||--o{ oauth2_authorization           : "username = principal_name（逻辑）"
+  platform_user      ||--o{ oauth2_authorization_consent   : "username = principal_name（逻辑）"
+
+  platform_user {
+    varchar id PK
+    varchar username UQ
+    varchar password "BCrypt"
+    varchar display_name
+    varchar email
+    tinyint status "1正常 0禁用"
+    varchar type "TENANT_USER…"
+    varchar source "LOCAL/LDAP/OIDC"
+    datetime last_login_at
+    bigint created_by
+    bigint updated_by
+    datetime created_at
+    datetime updated_at
+  }
+  platform_user_tenant {
+    varchar id PK
+    varchar user_id FK
+    varchar tenant_id FK
+    tinyint status
+    datetime created_at
+    "" UQ "UQ(user_id, tenant_id)"
+  }
+  platform_user_tenant_role {
+    varchar id PK
+    varchar user_id FK
+    varchar tenant_id FK
+    varchar role_id FK
+    datetime created_at
+    "" UQ "UQ(user_id, tenant_id, role_id)"
+  }
+  platform_tenant {
+    varchar id PK
+    varchar name
+    varchar service_account UQ "租户标识（令牌 tenant 声明）"
+    varchar cluster_id FK
+    tinyint status
+    datetime created_at
+    datetime updated_at
+  }
+  platform_role {
+    varchar id PK
+    varchar name
+    varchar code UQ
+    varchar description
+    tinyint status
+    datetime created_at
+    datetime updated_at
+  }
+  platform_role_permission {
+    varchar id PK
+    varchar role_id FK
+    varchar permission_id FK
+    datetime created_at
+    "" UQ "UQ(role_id, permission_id)"
+  }
+  platform_permission {
+    varchar id PK
+    varchar domain "K8S/Page/API"
+    varchar resource
+    varchar action "create/update/delete/view/execute"
+    varchar code UQ
+    varchar description
+    datetime created_at
+    "" UQ "UQ(domain, resource, action)"
+  }
+  k8s_cluster {
+    varchar cluster_id PK
+    varchar cluster_name
+    text kubeconfig ".kube/config（加密存储）"
+    varchar version
+    varchar istio_version
+    varchar calico_version
+    varchar container_runtime
+    text description
+    varchar ip_stack "IPV4/IPV6/IPV4_AND_IPV6"
+    varchar status "CONNECTED/…"
+    tinyint enabled
+    datetime last_heartbeat_time
+    datetime created_at
+    datetime updated_at
+  }
+  platform_tenant_namespace {
+    varchar id PK
+    varchar tenant_id FK
+    varchar namespace
+    varchar cluster_id FK
+    datetime create_time
+  }
+  oauth2_registered_client {
+    varchar id PK
+    varchar client_id
+    timestamp client_id_issued_at
+    varchar client_secret
+    timestamp client_secret_expires_at
+    varchar client_name
+    varchar client_authentication_methods
+    varchar authorization_grant_types
+    varchar redirect_uris
+    varchar post_logout_redirect_uris
+    varchar scopes
+    varchar client_settings
+    varchar token_settings
+  }
+  oauth2_authorization {
+    varchar id PK
+    varchar registered_client_id FK
+    varchar principal_name "逻辑引用 username"
+    varchar authorization_grant_type
+    varchar authorized_scopes
+    blob attributes
+    varchar state
+    blob authorization_code_value
+    timestamp authorization_code_issued_at
+    timestamp authorization_code_expires_at
+    blob authorization_code_metadata
+    blob access_token_value
+    timestamp access_token_issued_at
+    timestamp access_token_expires_at
+    blob access_token_metadata
+    varchar access_token_type
+    varchar access_token_scopes
+    blob oidc_id_token_value
+    timestamp oidc_id_token_issued_at
+    timestamp oidc_id_token_expires_at
+    blob oidc_id_token_metadata
+    blob refresh_token_value
+    timestamp refresh_token_issued_at
+    timestamp refresh_token_expires_at
+    blob refresh_token_metadata
+    blob user_code_value
+    timestamp user_code_issued_at
+    timestamp user_code_expires_at
+    blob user_code_metadata
+  }
+  oauth2_authorization_consent {
+    varchar registered_client_id PK
+    varchar principal_name PK
+    varchar authorities
+  }
+  oauth2_jwk {
+    varchar id PK
+    varchar kid UQ
+    varchar kty "RSA/EC/OKP"
+    varchar use "sig/enc"
+    varchar alg
+    varchar crv
+    longtext jwk_json "私钥（加密存储）"
+    varchar status "ENABLED/DISABLED/EXPIRED"
+    datetime valid_from
+    datetime valid_until
+    int priority
+    datetime created_at
+    datetime updated_at
+  }</pre>
+  </details>
+
+  <div class="foot">来源：k8s_cloud_platform.sql · 生成于 2026-08-25</div>
+</div>
+
+<script>
+const ROW=19, TITLE=34, PAD=6;
+// rows: [tag, name, type, comment?]  tag: PK/UQ/FK/'' ; 特殊行 ['uq','文本']
+const T=[
+ {x:40,y:80,w:310,name:'oauth2_registered_client',cn:'OAuth2 客户端',color:'#6b7f9e',rows:[
+  ['PK','id','varchar(100)'],
+  ['','client_id','varchar(100)','被 authorization / consent 的 registered_client_id 引用'],
+  ['','client_id_issued_at','timestamp'],
+  ['','client_secret','varchar(200)'],
+  ['','client_secret_expires_at','timestamp'],
+  ['','client_name','varchar(200)'],
+  ['','client_authentication_methods','varchar(1000)','client_secret_basic 等'],
+  ['','authorization_grant_types','varchar(1000)','authorization_code / refresh_token …'],
+  ['','redirect_uris','varchar(1000)'],
+  ['','post_logout_redirect_uris','varchar(1000)'],
+  ['','scopes','varchar(1000)','openid profile …'],
+  ['','client_settings','varchar(2000)','JSON 设置'],
+  ['','token_settings','varchar(2000)','令牌有效期等 JSON']
+ ]},
+ {x:40,y:425,w:310,name:'oauth2_authorization_consent',cn:'授权同意记录',color:'#6b7f9e',rows:[
+  ['PK','registered_client_id','varchar(100)','联合主键 → registered_client.client_id'],
+  ['PK','principal_name','varchar(200)','联合主键 = 用户名（逻辑引用 platform_user.username）'],
+  ['','authorities','varchar(1000)','已同意 scope，如 SCOPE_openid,SCOPE_message.read']
+ ]},
+ {x:40,y:580,w:310,name:'oauth2_authorization',cn:'授权 / 令牌记录',color:'#6b7f9e',rows:[
+  ['PK','id','varchar(100)','授权记录 ID'],
+  ['FK','registered_client_id','varchar(100)','→ registered_client.client_id'],
+  ['','principal_name','varchar(200)','= 用户名（逻辑引用 platform_user.username）'],
+  ['','authorization_grant_type','varchar(100)','authorization_code …'],
+  ['','authorized_scopes','varchar(1000)'],
+  ['','attributes','blob','JSON 属性'],
+  ['','state','varchar(500)','authorize 请求 state'],
+  ['','authorization_code_value','blob'],
+  ['','authorization_code_issued_at','timestamp'],
+  ['','authorization_code_expires_at','timestamp'],
+  ['','authorization_code_metadata','blob'],
+  ['','access_token_value','blob','JWT（含 user + tenant 声明）'],
+  ['','access_token_issued_at','timestamp'],
+  ['','access_token_expires_at','timestamp'],
+  ['','access_token_metadata','blob'],
+  ['','access_token_type','varchar(100)'],
+  ['','access_token_scopes','varchar(1000)'],
+  ['','oidc_id_token_value','blob'],
+  ['','oidc_id_token_issued_at','timestamp'],
+  ['','oidc_id_token_expires_at','timestamp'],
+  ['','oidc_id_token_metadata','blob'],
+  ['','refresh_token_value','blob'],
+  ['','refresh_token_issued_at','timestamp'],
+  ['','refresh_token_expires_at','timestamp'],
+  ['','refresh_token_metadata','blob'],
+  ['','user_code_value','blob'],
+  ['','user_code_issued_at','timestamp'],
+  ['','user_code_expires_at','timestamp'],
+  ['','user_code_metadata','blob']
+ ]},
+ {x:40,y:1231,w:310,name:'oauth2_jwk',cn:'签名密钥（JWKS）',color:'#6b7f9e',rows:[
+  ['PK','id','varchar(64)'],
+  ['UQ','kid','varchar(128)','Key ID（与 JWK 内 kid 一致）'],
+  ['','kty','varchar(20)','RSA / EC / OKP'],
+  ['','use','varchar(10)','sig / enc'],
+  ['','alg','varchar(50)','RS256 / ES256 …'],
+  ['','crv','varchar(20)','曲线（EC/OKP）'],
+  ['','jwk_json','longtext','完整 JWK JSON（私钥需加密存储）'],
+  ['','status','varchar(20)','ENABLED / DISABLED / EXPIRED'],
+  ['','valid_from','datetime'],
+  ['','valid_until','datetime'],
+  ['','priority','int','越小越优先'],
+  ['','created_at','datetime'],
+  ['','updated_at','datetime']
+ ]},
+ {x:560,y:80,w:310,name:'platform_user',cn:'用户',color:'#2f6fb2',rows:[
+  ['PK','id','varchar(64)'],
+  ['UQ','username','varchar(64)','登录名（= OAuth2 principal_name）'],
+  ['','password','varchar(255)','BCrypt 加密'],
+  ['','display_name','varchar(64)'],
+  ['','email','varchar(128)'],
+  ['','status','tinyint','1正常 0禁用'],
+  ['','type','varchar(32)','TENANT_USER …'],
+  ['','source','varchar(32)','LOCAL / LDAP / OIDC'],
+  ['','last_login_at','datetime'],
+  ['','created_by','bigint'],
+  ['','updated_by','bigint'],
+  ['','created_at','datetime'],
+  ['','updated_at','datetime']
+ ]},
+ {x:560,y:455,w:310,name:'platform_user_tenant',cn:'用户-租户关联',color:'#8a919c',rows:[
+  ['PK','id','varchar(64)'],
+  ['FK','user_id','varchar(64)','→ platform_user.id'],
+  ['FK','tenant_id','varchar(64)','→ platform_tenant.id'],
+  ['','status','tinyint','1有效 0无效'],
+  ['','created_at','datetime'],
+  ['uq','UQ(user_id, tenant_id)']
+ ]},
+ {x:560,y:697,w:310,name:'platform_user_tenant_role',cn:'角色授予（按租户）',color:'#8a919c',rows:[
+  ['PK','id','varchar(64)'],
+  ['FK','user_id','varchar(64)','→ platform_user.id'],
+  ['FK','tenant_id','varchar(64)','→ platform_tenant.id'],
+  ['FK','role_id','varchar(64)','→ platform_role.id'],
+  ['','created_at','datetime'],
+  ['uq','UQ(user_id, tenant_id, role_id)']
+ ]},
+ {x:560,y:939,w:310,name:'platform_role',cn:'角色',color:'#7d5ba6',rows:[
+  ['PK','id','varchar(64)'],
+  ['','name','varchar(64)','角色名称'],
+  ['UQ','code','varchar(64)','角色标识'],
+  ['','description','varchar(255)'],
+  ['','status','tinyint','1启用 0停用'],
+  ['','created_at','datetime'],
+  ['','updated_at','datetime']
+ ]},
+ {x:560,y:1200,w:310,name:'platform_role_permission',cn:'角色-权限关联',color:'#8a919c',rows:[
+  ['PK','id','varchar(64)'],
+  ['FK','role_id','varchar(64)','→ platform_role.id'],
+  ['FK','permission_id','varchar(64)','→ platform_permission.id'],
+  ['','created_at','datetime'],
+  ['uq','UQ(role_id, permission_id)']
+ ]},
+ {x:560,y:1423,w:310,name:'platform_permission',cn:'权限',color:'#b3475d',rows:[
+  ['PK','id','varchar(64)'],
+  ['','domain','varchar(32)','权限域：K8S / Page / API'],
+  ['','resource','varchar(64)','资源：Deployment… / Page / API'],
+  ['','action','varchar(32)','create/update/delete/view/execute'],
+  ['UQ','code','varchar(128)','唯一标识'],
+  ['','description','varchar(255)'],
+  ['','created_at','datetime'],
+  ['uq','UQ(domain, resource, action)']
+ ]},
+ {x:1080,y:80,w:310,name:'k8s_cluster',cn:'K8s 集群',color:'#d08c2e',rows:[
+  ['PK','cluster_id','varchar(64)'],
+  ['','cluster_name','varchar(128)'],
+  ['','kubeconfig','text','.kube/config（AES 加密存储）'],
+  ['','version','varchar(64)','集群版本'],
+  ['','istio_version','varchar(64)'],
+  ['','calico_version','varchar(64)'],
+  ['','container_runtime','varchar(64)'],
+  ['','description','text'],
+  ['','ip_stack','varchar(32)','IPV4 / IPV6 / IPV4_AND_IPV6'],
+  ['','status','varchar(32)','CONNECTED/DISCONNECTED/… 默认 DISCONNECTED'],
+  ['','enabled','tinyint(1)','1开启 0关闭'],
+  ['','last_heartbeat_time','datetime'],
+  ['','created_at','datetime'],
+  ['','updated_at','datetime']
+ ]},
+ {x:1080,y:455,w:310,name:'platform_tenant',cn:'租户',color:'#2e8b57',rows:[
+  ['PK','id','varchar(64)'],
+  ['','name','varchar(128)','租户名称'],
+  ['UQ','service_account','varchar(64)','租户标识（= 令牌 tenant 声明）'],
+  ['FK','cluster_id','varchar(64)','→ k8s_cluster.cluster_id（绑定集群）'],
+  ['','status','tinyint','1启用 0停用'],
+  ['','created_at','datetime'],
+  ['','updated_at','datetime']
+ ]},
+ {x:1080,y:716,w:310,name:'platform_tenant_namespace',cn:'命名空间分配',color:'#4a9aa5',rows:[
+  ['PK','id','varchar(64)'],
+  ['FK','tenant_id','varchar(64)','→ platform_tenant.id'],
+  ['','namespace','varchar(128)','K8s 命名空间名'],
+  ['FK','cluster_id','varchar(64)','→ k8s_cluster.cluster_id'],
+  ['','create_time','datetime']
+ ]}
+];
+
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const H=t=>48+t.rows.length*ROW;
+let s='';
+
+// 分区标题
+s+='<text class="sect" x="40" y="58">platform-auth · OAuth2/OIDC 授权服务器（登录唯一入口）</text>';
+s+='<text class="sect" x="560" y="58">平台核心 · 用户 / 租户 / 角色 / 权限</text>';
+s+='<text class="sect" x="1080" y="58">集群与命名空间（k8s-server 代理目标）</text>';
+
+// 连线（先画，实体框盖在上层）
+function edge(pts,o){
+  s+='<polyline class="edge'+(o.dash?' dash':'')+'" points="'+pts.map(p=>p.join(',')).join(' ')+'"/>';
+  if(o.label) s+='<text class="elbl" x="'+o.label[0]+'" y="'+o.label[1]+'"'+(o.label[2]?' text-anchor="'+o.label[2]+'"':'')+(o.rot?' transform="rotate(-90 '+o.rot+' '+o.label[0]+' '+o.label[1]+')" text-anchor="middle"':'')+'>'+esc(o.labelTxt)+'</text>';
+  (o.marks||[]).forEach(m=>{ s+='<text class="elbl" x="'+m[0]+'" y="'+m[1]+'">'+m[2]+'</text>'; });
+}
+// user → user_tenant (user_id)
+edge([[650,375],[650,455]],{label:[660,420],labelTxt:'user_id',marks:[[641,392,'1'],[641,444,'N']]});
+// user → user_tenant_role (user_id) 左侧折线
+edge([[560,300],[520,300],[520,778],[560,778]],{label:[512,515,'end'],labelTxt:'user_id',marks:[[546,294,'1'],[534,772,'N']]});
+// tenant → user_tenant (tenant_id)
+edge([[1080,536],[870,536]],{label:[955,528],labelTxt:'tenant_id',marks:[[1068,528,'1'],[882,528,'N']]});
+// tenant → user_tenant_role (tenant_id) 折线
+edge([[1080,570],[975,570],[975,797],[870,797]],{label:[912,662],labelTxt:'tenant_id',marks:[[1068,562,'1'],[882,789,'N']]});
+// user_tenant_role → role (role_id)
+edge([[715,859],[715,939]],{label:[725,880],labelTxt:'role_id',marks:[[706,872,'N'],[706,928,'1']]});
+// role → role_permission (role_id)
+edge([[715,1120],[715,1200]],{label:[725,1164],labelTxt:'role_id',marks:[[706,1136,'1'],[706,1188,'N']]});
+// role_permission → permission (permission_id)
+edge([[715,1343],[715,1423]],{label:[725,1386],labelTxt:'permission_id',marks:[[706,1359,'N'],[706,1410,'1']]});
+// tenant → cluster (cluster_id)
+edge([[1235,455],[1235,394]],{label:[1245,428],labelTxt:'cluster_id',marks:[[1226,447,'N'],[1226,406,'1']]});
+// tenant → namespace (tenant_id)
+edge([[1235,636],[1235,716]],{label:[1245,680],labelTxt:'tenant_id',marks:[[1226,652,'1'],[1226,704,'N']]});
+// namespace → cluster (cluster_id) 右侧折线
+edge([[1390,787],[1425,787],[1425,196],[1390,196]],{label:[1392,777],labelTxt:'cluster_id',marks:[[1430,781,'N'],[1398,208,'1']]});
+// registered_client → consent (client_id)
+edge([[195,375],[195,425]],{label:[205,404],labelTxt:'client_id',marks:[[186,392,'1'],[186,418,'N']]});
+// authorization → registered_client (registered_client_id) 左缘折线
+edge([[40,650],[18,650],[18,300],[40,300]],{label:[27,480],labelTxt:'registered_client_id → client_id',rot:1});
+// 逻辑引用（虚线）：principal_name = username
+edge([[350,700],[445,700],[445,180],[560,180]],{dash:1,label:[453,440],labelTxt:'principal_name = username（逻辑引用）',rot:1});
+edge([[350,477],[410,477],[410,205],[560,205]],{dash:1,label:[418,350],labelTxt:'principal_name = username（逻辑引用）',rot:1});
+
+// 实体表
+T.forEach(t=>{
+  const h=H(t);
+  s+='<g>';
+  s+='<rect x="'+t.x+'" y="'+t.y+'" width="'+t.w+'" height="'+h+'" rx="8" fill="#fff" stroke="#c9ced4"/>';
+  s+='<path d="M '+t.x+' '+(t.y+TITLE)+' v-'+(TITLE-8)+' a8 8 0 0 1 8 -8 h'+(t.w-16)+' a8 8 0 0 1 8 8 v'+(TITLE-8)+' z" fill="'+t.color+'"/>';
+  s+='<text x="'+(t.x+12)+'" y="'+(t.y+22)+'"><tspan class="ttl-en">'+esc(t.name)+'</tspan><tspan class="ttl-cn" dx="6">· '+esc(t.cn)+'</tspan></text>';
+  t.rows.forEach((r,i)=>{
+    const by=t.y+52+i*ROW;
+    if(i>0) s+='<line x1="'+(t.x+1)+'" y1="'+(t.y+40+i*ROW)+'" x2="'+(t.x+t.w-1)+'" y2="'+(t.y+40+i*ROW)+'" stroke="#eee"/>';
+    if(r[0]==='uq'){ s+='<text class="uqr" x="'+(t.x+14)+'" y="'+by+'">'+esc(r[1])+'</text>'; return; }
+    const tag=r[0]?'<tspan class="tag'+r[0].toLowerCase()+'">'+r[0]+' </tspan>':'';
+    const tip=esc((r[3]? r[1]+' '+r[2]+' — '+r[3] : r[1]+' '+r[2]));
+    s+='<text class="fld" x="'+(t.x+14)+'" y="'+by+'"><title>'+tip+'</title>'+tag+esc(r[1])+'</text>';
+    s+='<text class="typ" x="'+(t.x+t.w-10)+'" y="'+by+'" text-anchor="end">'+esc(r[2])+'</text>';
+  });
+  s+='</g>';
+});
+
+// 注释框：运行时鉴权链路
+s+='<g><rect x="1080" y="910" width="310" height="200" rx="8" fill="#fbfcfd" stroke="#d5d9de"/>';
+s+='<text class="note-t" x="1096" y="936">运行时鉴权链路（platform-auth → k8s-server）</text>';
+['① 用户经 platform-auth 登录，换取 JWT',
+ '② JWT 含 user + tenant 声明；切换租户 = 重新换票',
+ '③ k8s-server 按 tenant 声明查租户命名空间',
+ '→ 仅允许访问该租户名下的 namespace（隔离边界）',
+ '④ 权限 code（domain/resource/action）',
+ '用于页面按钮与 API 鉴权'].forEach((l,i)=>{
+  s+='<text class="note" x="1096" y="'+(962+i*24)+'">'+esc(l)+'</text>';
+});
+s+='</g>';
+
+// 注释框：示例数据链
+s+='<g><rect x="1080" y="1140" width="310" height="128" rx="8" fill="#fbfcfd" stroke="#d5d9de"/>';
+s+='<text class="note-t" x="1096" y="1166">示例数据链（来自 SQL）</text>';
+['用户 coding (cffddfff0dff88a6)','→ 租户 coding-test (51fdf3fc…)',
+ '→ namespace milvus','@ 集群 31dddb93d5ba5d00'].forEach((l,i)=>{
+  s+='<text class="note" x="1096" y="'+(1192+i*22)+'">'+esc(l)+'</text>';
+});
+s+='</g>';
+
+// 图例
+s+='<g><rect x="1080" y="1298" width="310" height="176" rx="8" fill="#fbfcfd" stroke="#d5d9de"/>';
+s+='<text class="note-t" x="1096" y="1324">图例</text>';
+s+='<text class="note" x="1096" y="1350"><tspan class="tagpk">PK</tspan> 主键 / <tspan class="taguq">UQ</tspan> 唯一 / <tspan class="tagfk">FK</tspan> 外键（逻辑引用）</text>';
+s+='<text class="note" x="1096" y="1374">灰色标题栏 = 多对多关联表</text>';
+s+='<text class="note" x="1096" y="1398">虚线 = 逻辑引用（非外键字段）</text>';
+s+='<text class="note" x="1096" y="1422">1 / N = 连线两端基数（一 / 多）</text>';
+s+='<text class="note" x="1096" y="1446">悬停字段行可查看注释</text>';
+s+='</g>';
+
+document.getElementById('er').innerHTML=s;
+</script>
+</body>
+</html>

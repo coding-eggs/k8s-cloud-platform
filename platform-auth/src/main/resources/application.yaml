@@ -67,6 +67,27 @@ spring:
       maximum-pool-size: 10
       max-lifetime: 0
       connection-test-query: SELECT 1
+
+  # Redis（Spring Session 会话存储）连接参数。
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.31.80}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
+      database: 1
+      timeout: 5s
+      connect-timeout: 5s
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3000ms
+          time-between-eviction-runs: 30000ms
+
+# 注：Spring Boot 4.x 已移除 spring.session.* 自动装配，Redis 会话改由 @EnableRedisHttpSession
+#     显式启用（见 com.coding.auth.config.RedisSessionConfig），8h 空闲超时也在那里配置。
 jwt:
   enabled: true
   issuer: ${OAUTH2_SERVER:http://127.0.0.1:9527}

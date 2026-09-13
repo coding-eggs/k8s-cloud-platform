@@ -50,7 +50,7 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
         String clusterId = body.getClusterId();
         String namespace = body.getNamespace();
         AccessContext ctx = accessResolver.resolveNamespacedAccess(body.getTenantId(), clusterId, namespace);
-        List<T> items = ops(ctx, clusterId).list(namespace, body.getLabelSelector());
+        List<T> items = ops(ctx, clusterId).list(namespace, body.getLabelSelector(), body.getFieldSelector());
         items.forEach(item -> stamp(item, clusterId, namespace, ctx.tenantId()));
         return new ResponseData<>(items);
     }
@@ -114,8 +114,8 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
     /**租户模式→tenant client（最小权限）；admin 模式→admin client */
     protected NamespacedOperations<T> ops(AccessContext ctx, String clusterId) {
         return ctx.adminMode()
-                ? operationsFactory.getAdminNamespacedOperation(resourceType(), clusterId, null)
-                : operationsFactory.getNamespacedOperation(resourceType(), clusterId, ctx.tenantId(), null);
+                ? operationsFactory.getAdminNamespacedOperation(resourceType(), clusterId)
+                : operationsFactory.getNamespacedOperation(resourceType(), clusterId, ctx.tenantId());
     }
 
     /**D5 回填：请求上下文回写 item，使列表/查询拿到的对象可原样发回后续 update/delete */

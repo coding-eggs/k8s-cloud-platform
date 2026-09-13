@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.common.models.k8s.dto.ServiceAccountDTO;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.ServiceAccount;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -33,11 +34,14 @@ public class CoreV1ServiceAccountOperations implements NamespacedOperations<Serv
      * 查询 ServiceAccount 列表，支持 namespace、labelSelector（原样透传）过滤（namespace 为空则查询所有）
      */
     @Override
-    public List<ServiceAccountDTO> list(String namespace, String labelSelector) {
+    public List<ServiceAccountDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
         List<ServiceAccount> sas = client.serviceAccounts().inNamespace(ns).list(options).getItems();
         return sas.stream().map(converter::revert).toList();
@@ -84,7 +88,7 @@ public class CoreV1ServiceAccountOperations implements NamespacedOperations<Serv
         ServiceAccount updated = client.serviceAccounts()
                 .inNamespace(namespace)
                 .resource(in)
-                .update();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -113,6 +117,9 @@ public class CoreV1ServiceAccountOperations implements NamespacedOperations<Serv
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
+        if (sa != null && sa.getMetadata() != null) {
+            sa.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(sa);
     }
 

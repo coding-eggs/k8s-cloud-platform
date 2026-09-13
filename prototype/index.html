@@ -1,0 +1,1889 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K8s 云平台 · 产品原型 v2</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"Segoe UI","Microsoft YaHei",sans-serif; background:#eef0f2; color:#333; font-size:13px; }
+  .mono { font-family:Consolas,monospace; }
+  a { color:inherit; text-decoration:none; }
+
+  /* ---------- 通用组件 ---------- */
+  .page { display:none; }
+  .page.active { display:block; }
+  .panel { background:#fff; border:1px solid #d9dde1; border-radius:4px; }
+  .panel + .panel { margin-top:14px; }
+  .panel-h { padding:10px 14px; border-bottom:1px solid #e4e7ea; font-weight:600; display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .panel-b { padding:14px; }
+  .crumb { font-size:12px; color:#999; margin:14px 2px 8px; }
+  .crumb b { color:#333; font-weight:600; }
+  h1.pt { font-size:16px; margin:2px 2px 12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .sp { flex:1; }
+
+  .btn { display:inline-block; padding:5px 14px; border:1px solid #b9bec4; background:#fff; border-radius:3px; cursor:pointer; font-size:12px; color:#333; user-select:none; }
+  .btn:hover { background:#f2f4f5; }
+  .btn.dark { background:#4a5058; color:#fff; border-color:#4a5058; }
+  .btn.dark:hover { background:#3a4047; }
+  .btn.sm { padding:2px 8px; font-size:11px; }
+  .btn.link { border:none; background:none; color:#555; padding:2px 4px; }
+  .btn.link:hover { background:none; text-decoration:underline; }
+  .btn.danger { color:#8a3b3b; border-color:#c9a3a3; }
+  .btn:disabled, .btn.dis { color:#bbb; border-color:#ddd; background:#f5f5f5; cursor:not-allowed; }
+
+  .input, select.input, textarea.input { border:1px solid #c5cad0; border-radius:3px; padding:5px 8px; font-size:12px; background:#fff; color:#666; outline:none; }
+  textarea.input { width:100%; min-height:110px; font-family:Consolas,monospace; }
+  .input.dis { background:#f2f3f4; color:#aaa; }
+  .lbl { color:#666; font-size:12px; margin-right:4px; }
+  .muted { color:#999; font-size:12px; }
+  .req::before { content:"* "; color:#a05050; }
+
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-weight:600; color:#666; background:#f5f6f8; padding:8px 12px; border-bottom:1px solid #e4e7ea; font-size:12px; white-space:nowrap; }
+  td { padding:9px 12px; border-bottom:1px solid #eef0f2; vertical-align:middle; }
+  tr:hover td { background:#f9fafb; }
+
+  .tag { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px; border:1px solid #c5cad0; background:#f2f4f5; color:#555; white-space:nowrap; }
+  .tag.on { background:#e8efe8; border-color:#a8c2a8; color:#3d6b3d; }
+  .tag.off { background:#efe9e9; border-color:#c7abab; color:#7c4a4a; }
+  .tag.warn { background:#f3efe4; border-color:#d3c69a; color:#7a6a2f; }
+  .tag.blue { background:#e9eff5; border-color:#a9bfD4; color:#3c5a78; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#9aa; margin-right:5px; }
+  .dot.on { background:#6a9c6a; } .dot.off { background:#b07070; } .dot.warn { background:#c2a54a; }
+
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; padding:12px 14px; border-bottom:1px solid #e4e7ea; }
+
+  .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px 20px; }
+  .form-item { display:flex; flex-direction:column; gap:5px; }
+  .form-item.full { grid-column:1 / -1; }
+  .form-item .lbl { font-size:12px; color:#555; }
+
+  .modal-mask { display:none; position:fixed; inset:0; background:rgba(60,64,70,.35); z-index:50; }
+  .modal-mask.show { display:flex; align-items:flex-start; justify-content:center; padding-top:7vh; }
+  .modal { background:#fff; border:1px solid #b9bec4; border-radius:4px; width:640px; max-height:84vh; overflow:auto; box-shadow:0 8px 30px rgba(0,0,0,.18); }
+  .modal.wide { width:840px; }
+  .modal-h { padding:11px 16px; border-bottom:1px solid #e4e7ea; font-weight:600; display:flex; justify-content:space-between; }
+  .modal-h .x { cursor:pointer; color:#999; padding:0 4px; }
+  .modal-b { padding:16px; }
+  .modal-f { padding:12px 16px; border-top:1px solid #e4e7ea; text-align:right; }
+  .modal-f .btn { margin-left:8px; }
+
+  .steps { display:flex; margin-bottom:16px; }
+  .step { flex:1; text-align:center; position:relative; padding-top:26px; color:#999; }
+  .step::before { content:attr(data-n); position:absolute; top:0; left:50%; transform:translateX(-50%); width:22px; height:22px; line-height:22px; border-radius:50%; border:1px solid #b9bec4; background:#fff; font-size:12px; }
+  .step::after { content:""; position:absolute; top:10px; left:calc(50% + 15px); right:calc(-50% + 15px); height:1px; background:#c5cad0; }
+  .step:last-child::after { display:none; }
+  .step.cur { color:#333; font-weight:600; }
+  .step.cur::before { background:#4a5058; color:#fff; border-color:#4a5058; }
+
+  .meter { height:8px; background:#e8eaed; border-radius:4px; overflow:hidden; min-width:90px; }
+  .meter i { display:block; height:100%; background:#8a9199; border-radius:4px; }
+  .meter.warn i { background:#c2a54a; }
+
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+  .stat { padding:14px 16px; }
+  .stat .t { color:#888; font-size:12px; }
+  .stat .v { font-size:24px; font-weight:600; margin-top:6px; }
+  .stat .s { color:#aaa; font-size:11px; margin-top:4px; }
+
+  .ph-img { background:repeating-linear-gradient(45deg,#f0f1f3,#f0f1f3 8px,#e9ebee 8px,#e9ebee 16px); border:1px dashed #c5cad0; display:flex; align-items:center; justify-content:center; color:#aaa; font-size:12px; }
+  .code { background:#f5f6f8; border:1px solid #e4e7ea; border-radius:3px; padding:12px; font-family:Consolas,monospace; font-size:12px; line-height:1.7; color:#555; white-space:pre; overflow-x:auto; }
+  .code.darkc { background:#2e3238; color:#c9cdd3; border-color:#2e3238; white-space:pre-wrap; }
+
+  .tabs { display:flex; border-bottom:1px solid #e4e7ea; flex-wrap:wrap; }
+  .tabs .tab { padding:9px 16px; cursor:pointer; color:#777; border-bottom:2px solid transparent; }
+  .tabs .tab.cur { color:#333; font-weight:600; border-bottom-color:#4a5058; }
+  .tabpane { display:none; } .tabpane.cur { display:block; }
+
+  .tree { list-style:none; }
+  .tree li { padding:6px 8px; border-bottom:1px dashed #eef0f2; display:flex; align-items:center; gap:8px; }
+  .tw { width:14px; height:14px; border:1px solid #b9bec4; border-radius:2px; display:inline-block; position:relative; cursor:pointer; flex-shrink:0; }
+  .tw.on::after { content:"✓"; position:absolute; top:-3px; left:2px; font-size:11px; color:#333; }
+  .tw.half::after { content:""; position:absolute; top:3px; left:3px; right:3px; height:2px; background:#888; }
+
+  .note { background:#f6f7f8; border:1px dashed #c5cad0; border-radius:3px; padding:8px 12px; color:#777; font-size:12px; margin-bottom:12px; }
+  .note.warnn { background:#f8f4e8; border-color:#d8c98f; color:#7a6a2f; }
+  .kv { display:grid; grid-template-columns:130px 1fr; }
+  .kv div { padding:8px 12px; border-bottom:1px dashed #eef0f2; }
+  .kv div:nth-child(odd) { color:#888; background:#fafbfc; }
+  .kv div:nth-child(even) { color:#444; }
+
+  .pager { display:flex; justify-content:flex-end; gap:4px; padding:12px 14px; align-items:center; }
+  .pg { min-width:26px; text-align:center; padding:3px 6px; border:1px solid #d5d9dd; border-radius:3px; cursor:pointer; color:#666; }
+  .pg.cur { background:#4a5058; color:#fff; border-color:#4a5058; }
+
+  /* 柱状图 */
+  .chart { display:flex; align-items:flex-end; gap:4px; height:74px; padding:0 2px; }
+  .chart .bar { flex:1; background:#a7aeb8; border-radius:2px 2px 0 0; min-height:3px; position:relative; }
+  .chart .bar.hi { background:#5b6570; }
+  .chart-x { display:flex; justify-content:space-between; font-size:10px; color:#aaa; margin-top:4px; }
+
+  .legend { position:fixed; bottom:12px; left:50%; transform:translateX(-50%); background:#3b4048; color:#cfd3d9; font-size:11px; padding:5px 14px; border-radius:14px; z-index:99; opacity:.92; }
+
+  /* ================= 认证页（platform-auth） ================= */
+  .auth-wrap { display:none; min-height:100vh; align-items:center; justify-content:center; background:radial-gradient(circle at 25% 15%, #f5f6f8 0%, transparent 55%), #eef0f2; padding:24px; }
+  .auth-wrap.active { display:flex; }
+  .auth-box { width:400px; }
+  .auth-logo { text-align:center; margin-bottom:20px; }
+  .auth-logo .mark { width:52px; height:52px; margin:0 auto 10px; border:2px solid #4a5058; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:700; color:#4a5058; }
+  .ssr { text-align:center; color:#aaa; font-size:12px; margin:16px 0 10px; }
+  .sso-row { display:flex; gap:10px; }
+  .sso { flex:1; border:1px solid #c5cad0; border-radius:3px; padding:9px 6px; text-align:center; color:#555; cursor:pointer; font-size:12px; }
+  .sso:hover { background:#f2f4f5; }
+
+  /* 租户选择卡片 */
+  .tcard { border:1px solid #c5cad0; border-radius:4px; padding:14px; margin-bottom:12px; cursor:pointer; display:flex; gap:12px; align-items:center; }
+  .tcard:hover { border-color:#4a5058; background:#fafbfc; }
+  .tcard .tic { width:40px; height:40px; border:1.5px solid #8a9199; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; color:#5b6570; flex-shrink:0; }
+  .tcard .grow { flex:1; }
+
+  /* ================= 主框架 ================= */
+  #frame { display:none; }
+  #frame.active { display:flex; min-height:100vh; }
+  .sidebar { width:216px; background:#3b4048; color:#c9cdd3; flex-shrink:0; display:flex; flex-direction:column; position:sticky; top:0; height:100vh; }
+  .sidebar .logo { height:52px; display:flex; align-items:center; gap:9px; padding:0 16px; color:#fff; font-weight:700; font-size:14px; border-bottom:1px solid #4a5058; }
+  .sidebar .logo .m { width:26px; height:26px; border:1.5px solid #fff; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .nav { flex:1; overflow-y:auto; padding:10px 0 20px; }
+  .nav .grp { padding:12px 16px 4px; font-size:11px; color:#7c838c; letter-spacing:1px; }
+  .nav .grp small { float:right; letter-spacing:0; }
+  .nav .item { display:flex; align-items:center; gap:8px; padding:8px 16px; cursor:pointer; color:#c9cdd3; font-size:13px; }
+  .nav .item:hover { background:#454b54; color:#fff; }
+  .nav .item.cur { background:#2f343b; color:#fff; border-left:3px solid #b9c2cc; padding-left:13px; }
+  .nav .ico { width:16px; text-align:center; opacity:.75; }
+  .topbar { flex:1; display:flex; flex-direction:column; min-width:0; }
+  .top { height:52px; background:#fff; border-bottom:1px solid #d9dde1; display:flex; align-items:center; padding:0 16px; gap:12px; position:sticky; top:0; z-index:10; }
+  .sel { border:1px solid #c5cad0; border-radius:3px; padding:4px 8px; font-size:12px; color:#444; background:#fff; }
+  .bell { position:relative; cursor:pointer; font-size:15px; color:#666; }
+  .bell::after { content:"3"; position:absolute; top:-6px; right:-8px; background:#8a3b3b; color:#fff; font-size:9px; border-radius:8px; padding:0 4px; }
+  .userchip { display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .avatar { width:28px; height:28px; border-radius:50%; background:#c9cdd3; color:#4a5058; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; }
+  .main { padding:0 18px 30px; flex:1; }
+  .hide { display:none !important; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════ 1. 登录页（platform-auth） ═══════════ -->
+<div id="page-login" class="auth-wrap active">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <div class="mark">K</div>
+      <div style="font-size:17px;font-weight:700;color:#3b4048;">K8s 云平台 · 登录</div>
+      <div class="muted" style="margin-top:4px;">统一认证服务 platform-auth（OAuth2 / OIDC 授权服务器）</div>
+    </div>
+    <div class="panel">
+      <div class="panel-b" style="padding:22px;">
+        <div class="row" style="margin-bottom:14px;"><span class="lbl">账号</span><input class="input" style="flex:1;padding:9px 10px;" placeholder="用户名 / 邮箱"></div>
+        <div class="row" style="margin-bottom:14px;"><span class="lbl">密码</span><input class="input" type="password" style="flex:1;padding:9px 10px;" placeholder="密码"></div>
+        <div class="row" style="justify-content:space-between;margin-bottom:14px;">
+          <label class="row"><span class="tw"></span><span class="muted">记住我</span></label>
+          <a class="muted" href="javascript:void 0">忘记密码？</a>
+        </div>
+        <button class="btn dark" style="width:100%;padding:9px;" onclick="toTenantSelect()">登 录</button>
+        <div class="ssr">── 或使用单点登录（跳转 OAuth2 授权码流程）──</div>
+        <div class="sso-row">
+          <div class="sso" onclick="toTenantSelect()">OAuth2<br><span class="muted">授权码模式</span></div>
+          <div class="sso" onclick="toTenantSelect()">OIDC<br><span class="muted">企业 SSO</span></div>
+          <div class="sso" onclick="toTenantSelect()">LDAP<br><span class="muted">域账号</span></div>
+        </div>
+        <div class="muted" style="margin-top:14px;text-align:center;line-height:1.6;">登录后平台将向 platform-auth 换取含<b>租户声明（tenant claim）</b>的访问令牌，<br>后续所有 k8s-server 请求凭此令牌做租户隔离。</div>
+      </div>
+    </div>
+    <div class="muted" style="text-align:center;margin-top:14px;">登录即代表同意《服务条款》与《隐私政策》</div>
+  </div>
+</div>
+
+<!-- ═══════════ 2. 租户选择页（换取租户令牌） ═══════════ -->
+<div id="page-tenant-select" class="auth-wrap">
+  <div class="auth-box" style="width:460px;">
+    <div class="auth-logo">
+      <div class="mark">✓</div>
+      <div style="font-size:16px;font-weight:700;">登录成功，请选择进入的租户</div>
+      <div class="muted" style="margin-top:4px;">当前账号：zhang.wei · 属于 3 个租户</div>
+    </div>
+    <div class="note">选择后，平台将调用 platform-auth 换取该租户的访问令牌（含 tenant 声明，有效期 60 分钟，自动续期）。进入后仍可在顶栏切换租户（重新换票）。</div>
+    <div class="tcard" onclick="enterPlatform('platform')">
+      <div class="tic">平</div>
+      <div class="grow">
+        <b>平台管理</b> <span class="tag blue">平台管理员</span>
+        <div class="muted" style="margin-top:4px;">管理集群接入、租户、用户与权限 · 3 集群 / 3 租户</div>
+      </div>
+      <span class="muted">→</span>
+    </div>
+    <div class="tcard" onclick="enterPlatform('prod')">
+      <div class="tic">生</div>
+      <div class="grow">
+        <b>生产租户（prod）</b> <span class="tag on">租户管理员</span>
+        <div class="muted" style="margin-top:4px;">prod-cluster-01 · 关联命名空间：api, payment, middleware</div>
+      </div>
+      <span class="muted">→</span>
+    </div>
+    <div class="tcard" onclick="enterPlatform('test')">
+      <div class="tic">测</div>
+      <div class="grow">
+        <b>测试租户（test）</b> <span class="tag">开发者</span>
+        <div class="muted" style="margin-top:4px;">test-cluster-01 · 关联命名空间：ns-test-a, ns-test-b</div>
+      </div>
+      <span class="muted">→</span>
+    </div>
+    <div class="muted" style="text-align:center;margin-top:8px;"><a class="btn link" onclick="backLogin()">← 退出登录</a></div>
+  </div>
+</div>
+
+<!-- ═══════════ 主框架 ═══════════ -->
+<div id="frame">
+  <div class="sidebar">
+    <div class="logo"><div class="m">K</div>K8s 云平台</div>
+    <div class="nav" id="nav">
+      <div class="grp">总览</div>
+      <div class="item np" data-p="platform-dashboard"><span class="ico">▦</span>平台总览</div>
+      <div class="item" data-p="tenant-dashboard"><span class="ico">◫</span>租户总览</div>
+
+      <div class="grp np">集群 <small>平台</small></div>
+      <div class="item np" data-p="clusters"><span class="ico">▣</span>集群接入</div>
+      <div class="item np" data-p="cluster-add"><span class="ico">✚</span>接入向导（3 步）</div>
+      <div class="item np" data-p="cluster-detail"><span class="ico">⌗</span>集群详情（能力/节点）</div>
+
+      <div class="grp np">平台管理 <small>平台</small></div>
+      <div class="item np" data-p="tenants"><span class="ico">⬢</span>租户管理</div>
+      <div class="item np" data-p="tenant-detail"><span class="ico">◈</span>租户详情</div>
+      <div class="item np" data-p="users"><span class="ico">👤</span>用户管理</div>
+      <div class="item np" data-p="user-detail"><span class="ico">◉</span>用户详情</div>
+      <div class="item np" data-p="roles"><span class="ico">🛡</span>角色与权限</div>
+      <div class="item np" data-p="oauth2"><span class="ico">🔑</span>OAuth2 应用</div>
+      <div class="item np" data-p="audit-global"><span class="ico">📜</span>全局审计</div>
+
+      <div class="grp">租户工作区 <small id="grp-scope">prod</small></div>
+      <div class="item" data-p="namespaces"><span class="ico">▤</span>命名空间与配额</div>
+      <div class="item" data-p="deployments"><span class="ico">☰</span>Deployment</div>
+      <div class="item" data-p="deployment-new"><span class="ico">✚</span>创建 Deployment</div>
+      <div class="item" data-p="deployment-detail"><span class="ico">⌘</span>Deployment 详情</div>
+      <div class="item" data-p="services"><span class="ico">⇄</span>Service</div>
+      <div class="item" data-p="ingresses"><span class="ico">⇆</span>Ingress</div>
+      <div class="item" data-p="configmaps"><span class="ico">✎</span>配置与密钥</div>
+      <div class="item" data-p="storage"><span class="ico">▤</span>存储</div>
+      <div class="item" data-p="rbac"><span class="ico">♛</span>RBAC 管理</div>
+      <div class="item" data-p="monitoring"><span class="ico">∿</span>监控告警</div>
+      <div class="item" data-p="events"><span class="ico">⚑</span>集群事件</div>
+      <div class="item" data-p="audit"><span class="ico">📜</span>租户审计</div>
+
+      <div class="grp">系统</div>
+      <div class="item" data-p="profile"><span class="ico">⚙</span>个人中心（令牌）</div>
+    </div>
+    <div style="padding:10px 16px;font-size:11px;color:#7c838c;border-top:1px solid #4a5058;line-height:1.7;">v2.0 · 原型<br>认证：platform-auth<br>代理：k8s-server（多版本适配）</div>
+  </div>
+
+  <div class="topbar">
+    <div class="top">
+      <span class="muted" style="font-size:12px;">租户</span>
+      <select class="sel" id="tenantSel" onchange="switchTenant()">
+        <option value="prod">生产租户（prod）· 租户管理员</option>
+        <option value="test">测试租户（test）· 开发者</option>
+      </select>
+      <span class="muted" style="font-size:12px;">命名空间</span>
+      <select class="sel"><option>api</option><option>payment</option><option>middleware</option></select>
+      <div class="sp"></div>
+      <input class="input" style="width:170px;" placeholder="🔍 搜索资源…">
+      <span class="muted" style="font-size:11px;">演示身份</span>
+      <select class="sel" id="roleSel" onchange="switchRole(this.value)">
+        <option value="admin">平台管理员</option>
+        <option value="dev">开发者（prod）</option>
+      </select>
+      <span class="bell">🔔</span>
+      <div class="userchip" onclick="go('profile')"><div class="avatar">张</div><span>zhang.wei</span><span class="muted">▾</span></div>
+    </div>
+    <div class="main">
+
+    <!-- ═══ 平台总览 ═══ -->
+    <div class="page" id="page-platform-dashboard">
+      <div class="crumb">总览 / <b>平台总览</b> <span class="tag blue">仅平台管理员可见</span></div>
+      <h1 class="pt">平台总览</h1>
+      <div class="cards">
+        <div class="panel stat"><div class="t">纳管集群</div><div class="v">3 <span style="font-size:12px;color:#999;font-weight:400;">/ 2 正常</span></div><div class="s">K8s v1.24 ~ v1.29 · 最近心跳 1 分钟</div></div>
+        <div class="panel stat"><div class="t">租户 / 用户</div><div class="v">3 <span style="font-size:14px;color:#999;">/ 36</span></div><div class="s">启用租户 2 · 禁用 1</div></div>
+        <div class="panel stat"><div class="t">OAuth2 应用</div><div class="v">3</div><div class="s">今日 Token 签发 1,204 次</div></div>
+        <div class="panel stat"><div class="t">平台告警</div><div class="v" style="color:#8a3b3b;">2</div><div class="s">集群心跳丢失 1 · 认证失败激增 1</div></div>
+      </div>
+      <div class="panel" style="margin-top:14px;">
+        <div class="panel-h">集群健康与版本适配
+          <button class="btn sm" onclick="go('clusters')">集群接入</button></div>
+        <div class="panel-b" style="padding:0;">
+          <table>
+            <tr><th>集群</th><th>K8s 版本</th><th>Istio / Calico / 运行时</th><th>适配能力</th><th>关联租户（命名空间）</th><th>状态</th><th>最后心跳</th></tr>
+            <tr><td class="mono">prod-cluster-01</td><td>v1.29.4</td><td class="mono" style="font-size:11px;">1.21.3 / v3.26.1 / containerd</td><td><span class="tag on">全特性</span></td><td><span class="tag">prod</span> <span class="muted" style="font-size:11px;">api, payment, middleware</span></td><td><span class="dot on"></span>CONNECTED</td><td class="mono">10:35</td></tr>
+            <tr><td class="mono">prod-cluster-02</td><td>v1.29.4</td><td class="mono" style="font-size:11px;">1.21.3 / v3.26.1 / containerd</td><td><span class="tag on">全特性</span></td><td class="muted">未关联（可新建租户）</td><td><span class="dot on"></span>CONNECTED</td><td class="mono">10:35</td></tr>
+            <tr><td class="mono">test-cluster-01</td><td>v1.28.9</td><td class="mono" style="font-size:11px;">1.20.6 / v3.25.0 / docker</td><td><span class="tag warn">部分特性</span> <span class="muted">2 项不可用</span></td><td><span class="tag">test</span><span class="tag">dev</span> <span class="muted" style="font-size:11px;">同集群共享，按命名空间隔离</span></td><td><span class="dot on"></span>CONNECTED</td><td class="mono">10:34</td></tr>
+            <tr><td class="mono">legacy-cluster</td><td>v1.24.17</td><td class="mono" style="font-size:11px;">- / v3.21.2 / docker</td><td><span class="tag off">受限</span> <span class="muted">9 项不可用</span></td><td class="muted">未关联</td><td><span class="dot off"></span>DISCONNECTED</td><td class="mono">08-23 22:01</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-h">最近平台级审计 <button class="btn sm" onclick="go('audit-global')">查看全部</button></div>
+        <div class="panel-b" style="padding:0;">
+          <table>
+            <tr><th>时间</th><th>用户</th><th>租户</th><th>来源 IP</th><th>资源 / 对象</th><th>动作</th><th>结果</th></tr>
+            <tr><td class="mono">10:31:02</td><td class="mono">admin</td><td>-（平台）</td><td class="mono">198.51.100.4</td><td class="mono">Cluster / test-cluster-01</td><td>RECONNECT</td><td><span class="tag on">成功</span></td></tr>
+            <tr><td class="mono">10:22:15</td><td class="mono">admin</td><td>-（平台）</td><td class="mono">198.51.100.4</td><td class="mono">User / guest.ops</td><td>UPDATE(禁用)</td><td><span class="tag on">成功</span></td></tr>
+            <tr><td class="mono">10:19:50</td><td class="mono">guest.ops</td><td>prod</td><td class="mono">203.0.113.99</td><td class="mono">Deployment / api/api-gateway</td><td>DELETE</td><td><span class="tag off">拒绝（租户角色无权限）</span></td></tr>
+            <tr><td class="mono">09:12:03</td><td class="mono">zhang.wei</td><td>prod</td><td class="mono">203.0.113.8</td><td class="mono">Session / LOGIN</td><td>LOGIN（token 换取）</td><td><span class="tag on">成功</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 租户总览 ═══ -->
+    <div class="page" id="page-tenant-dashboard">
+      <div class="crumb">总览 / <b>租户总览</b> <span class="tag">租户：prod</span></div>
+      <h1 class="pt">租户总览（生产租户）</h1>
+      <div class="cards">
+        <div class="panel stat"><div class="t">所属集群</div><div class="v mono" style="font-size:15px;padding-top:9px;">prod-cluster-01</div><div class="s">v1.29.4 · CONNECTED · 关联命名空间 3</div></div>
+        <div class="panel stat"><div class="t">命名空间</div><div class="v">9</div><div class="s">跨 2 集群 · 3 个配额预警</div></div>
+        <div class="panel stat"><div class="t">Deployment</div><div class="v">46</div><div class="s">副本 132 · 异常 2</div></div>
+        <div class="panel stat"><div class="t">未处理告警</div><div class="v" style="color:#8a3b3b;">3</div><div class="s">严重 1 · 一般 2</div></div>
+      </div>
+      <div class="panel" style="margin-top:14px;">
+        <div class="panel-h">命名空间资源用量（集群：prod-cluster-01） <span class="muted">仅可见本租户关联的命名空间</span></div>
+        <div class="panel-b" style="padding:0;">
+          <table>
+            <tr><th>命名空间</th><th style="width:240px;">CPU（已用/配额）</th><th style="width:240px;">内存（已用/配额）</th><th>Pod（数/配额）</th><th>Deployment</th></tr>
+            <tr><td class="mono">api</td><td><div class="meter"><i style="width:51%"></i></div> 8.2 / 16 核</td><td><div class="meter"><i style="width:44%"></i></div> 14 / 32 GiB</td><td>18 / 150</td><td>6</td></tr>
+            <tr><td class="mono">payment</td><td><div class="meter warn"><i style="width:86%"></i></div> 6.9 / 8 核</td><td><div class="meter warn"><i style="width:84%"></i></div> 13.5 / 16 GiB</td><td>9 / 100</td><td>3</td></tr>
+            <tr><td class="mono">middleware</td><td><div class="meter"><i style="width:39%"></i></div> 4.7 / 12 核</td><td><div class="meter"><i style="width:38%"></i></div> 9.2 / 24 GiB</td><td>14 / 120</td><td>5</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-h">集群资源水位
+          <div class="row"><span class="muted">近 24h</span>
+            <div class="chart" style="width:220px;height:44px;"><div class="bar" style="height:38%"></div><div class="bar" style="height:44%"></div><div class="bar" style="height:52%"></div><div class="bar" style="height:47%"></div><div class="bar" style="height:61%"></div><div class="bar" style="height:66%"></div><div class="bar hi" style="height:72%"></div><div class="bar" style="height:64%"></div><div class="bar" style="height:58%"></div><div class="bar" style="height:62%"></div><div class="bar hi" style="height:69%"></div><div class="bar" style="height:63%"></div></div>
+          </div></div>
+        <div class="panel-b" style="padding:0;">
+          <table>
+            <tr><th>集群</th><th style="width:280px;">CPU</th><th style="width:280px;">内存</th><th>Pod</th><th>状态</th></tr>
+            <tr><td class="mono">prod-cluster-01</td><td><div class="meter"><i style="width:62%"></i></div> 248 / 400 核</td><td><div class="meter"><i style="width:71%"></i></div> 926 / 1296 GiB</td><td>74 / 配额 300</td><td><span class="dot on"></span>CONNECTED</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-h">最近事件 / 告警 <button class="btn sm" onclick="go('monitoring')">监控告警</button></div>
+        <div class="panel-b" style="padding:0;">
+          <table>
+            <tr><th style="padding-left:14px;">时间</th><th>级别</th><th>事件</th><th>集群 / 命名空间</th><th>对象</th></tr>
+            <tr><td class="mono">10:32:05</td><td><span class="tag off">严重</span></td><td>Pod 副本不足：期望 3，实际 1</td><td class="mono">prod-01 / payment</td><td class="mono">payment-service</td></tr>
+            <tr><td class="mono">09:58:41</td><td><span class="tag warn">一般</span></td><td>节点内存使用率 &gt; 80%</td><td class="mono">prod-02 / -</td><td class="mono">worker-07</td></tr>
+            <tr><td class="mono">09:12:17</td><td><span class="tag">信息</span></td><td>Deployment 滚动更新完成</td><td class="mono">prod-01 / api</td><td class="mono">api-gateway-2.4.1</td></tr>
+            <tr><td class="mono">08:47:03</td><td><span class="tag">信息</span></td><td>命名空间 payment 内存配额使用达 80%</td><td class="mono">prod-01 / payment</td><td class="mono">ResourceQuota</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 集群接入 ═══ -->
+    <div class="page" id="page-clusters">
+      <div class="crumb">集群 / <b>集群接入</b></div>
+      <h1 class="pt">集群接入管理</h1>
+      <div class="panel">
+        <div class="toolbar">
+          <input class="input" style="width:170px;" placeholder="集群名称">
+          <select class="input"><option>全部状态</option><option>CONNECTED</option><option>DISCONNECTED</option><option>CONNECTING</option><option>ERROR</option></select>
+          <select class="input"><option>全部版本</option><option>v1.29.x</option><option>v1.28.x</option><option>v1.24.x</option></select>
+          <select class="input"><option>全部 IP 栈</option><option>IPV4</option><option>IPV6</option><option>双栈</option></select>
+          <div class="sp"></div>
+          <button class="btn dark" onclick="go('cluster-add')">＋ 接入集群</button>
+        </div>
+        <table>
+          <tr><th>集群名称</th><th>K8s 版本</th><th>Istio</th><th>Calico</th><th>运行时</th><th>IP 栈</th><th>关联租户（命名空间）</th><th>状态</th><th>最后心跳</th><th>启用</th><th style="width:180px;">操作</th></tr>
+          <tr>
+            <td class="mono">prod-cluster-01</td><td>v1.29.4</td><td>1.21.3</td><td>v3.26.1</td><td>containerd 1.7</td><td>IPV4</td>
+            <td><span class="tag">prod</span> <span class="muted" style="font-size:11px;">api, payment, middleware</span></td>
+            <td><span class="dot on"></span>CONNECTED</td><td class="mono">10:35:22</td><td><span class="tag on">开启</span></td>
+            <td><a class="btn link" onclick="go('cluster-detail')">详情</a><a class="btn link" onclick="go('cluster-add')">编辑</a><a class="btn link" onclick="go('tenants')">租户</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td>
+          </tr>
+          <tr>
+            <td class="mono">prod-cluster-02</td><td>v1.29.4</td><td>1.21.3</td><td>v3.26.1</td><td>containerd 1.7</td><td>双栈</td>
+            <td class="muted">未关联</td>
+            <td><span class="dot on"></span>CONNECTED</td><td class="mono">10:35:18</td><td><span class="tag on">开启</span></td>
+            <td><a class="btn link" onclick="go('cluster-detail')">详情</a><a class="btn link" onclick="go('cluster-add')">编辑</a><a class="btn link" onclick="go('tenants')">租户</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td>
+          </tr>
+          <tr>
+            <td class="mono">test-cluster-01</td><td>v1.28.9</td><td>1.20.6</td><td>v3.25.0</td><td>docker 24.0</td><td>IPV4</td>
+            <td><span class="tag">test</span><span class="tag">dev</span> <span class="muted" style="font-size:11px;">共享集群</span></td>
+            <td><span class="dot on"></span>CONNECTED</td><td class="mono">10:34:50</td><td><span class="tag on">开启</span></td>
+            <td><a class="btn link" onclick="go('cluster-detail')">详情</a><a class="btn link" onclick="go('cluster-add')">编辑</a><a class="btn link" onclick="go('tenants')">租户</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td>
+          </tr>
+          <tr>
+            <td class="mono">legacy-cluster</td><td>v1.24.17</td><td>-</td><td>v3.21.2</td><td>docker 20.10</td><td>IPV4</td>
+            <td class="muted">未关联</td>
+            <td><span class="dot off"></span>DISCONNECTED</td><td class="mono">08-23 22:01</td><td><span class="tag off">关闭</span></td>
+            <td><a class="btn link" onclick="go('cluster-detail')">详情</a><a class="btn link" onclick="go('cluster-add')">编辑</a><a class="btn link" onclick="go('tenants')">租户</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td>
+          </tr>
+        </table>
+        <div class="pager"><span class="pg cur">1</span><span class="pg">2</span><span class="pg">›</span><span class="muted">共 4 条</span></div>
+      </div>
+      <div class="note" style="margin-top:12px;">📌 k8s-server 作为 K8s 代理层，接入时自动探测集群版本与组件版本并生成<b>能力矩阵</b>；租户侧 UI 会按能力矩阵自动隐藏 / 置灰不支持的特性，实现多版本 K8s 的无感适配。kubeconfig 以 AES-256-GCM 加密存储。</div>
+    </div>
+
+    <!-- ═══ 接入向导 ═══ -->
+    <div class="page" id="page-cluster-add">
+      <div class="crumb">集群 / 集群接入 / <b>接入向导</b></div>
+      <h1 class="pt">接入集群（3 步）</h1>
+      <div class="panel">
+        <div class="panel-b">
+          <div class="steps">
+            <div class="step" data-n="1">基本信息</div>
+            <div class="step cur" data-n="2">kubeconfig 与连通性</div>
+            <div class="step" data-n="3">能力探测结果</div>
+          </div>
+
+          <div class="form-grid" style="margin-bottom:16px;">
+            <div class="form-item"><span class="lbl req">集群名称</span><input class="input" value="test-cluster-01"></div>
+            <div class="form-item"><span class="lbl req">IP 栈类型</span>
+              <select class="input"><option>IPV4</option><option>IPV6</option><option>IPV4_AND_IPV6</option></select></div>
+            <div class="form-item full"><span class="lbl">描述</span><input class="input" value="测试环境集群，供 test / dev 租户联调"></div>
+          </div>
+
+          <div class="lbl" style="font-weight:600;margin-bottom:6px;">kubeconfig（.kube/config 全文）</div>
+          <textarea class="input" style="min-height:150px;" readonly>apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0t...
+    server: https://10.20.0.1:6443
+  name: test-cluster-01
+contexts:
+- context:
+    cluster: test-cluster-01
+    user: platform-agent
+  name: test-cluster-01
+users:
+- name: platform-agent
+  user:
+    client-certificate-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0t...
+    client-key-data: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0t...
+</textarea>
+          <div class="row" style="margin:10px 0 4px;">
+            <button class="btn">重新粘贴</button>
+            <button class="btn dark" onclick="go('cluster-detail')">测试连接并探测能力</button>
+            <span class="tag on">✓ 连接成功（1.2s）</span>
+          </div>
+          <div class="note" style="margin-top:10px;">平台使用独立代理身份（platform-agent）与集群通信；kubeconfig 校验通过后 AES 加密落库，仅在 k8s-server 内存中解密使用。</div>
+
+          <div style="border-top:1px dashed #e4e7ea;margin:18px 0 14px;"></div>
+          <div class="lbl" style="font-weight:600;">第 3 步 · 能力探测结果（示例）</div>
+          <table style="margin-top:8px;">
+            <tr><th>探测项</th><th>结果</th><th>说明</th></tr>
+            <tr><td>K8s 版本</td><td class="mono">v1.28.9</td><td class="muted">支持范围 v1.22 ~ v1.31</td></tr>
+            <tr><td>Istio 版本</td><td class="mono">1.20.6</td><td class="muted">Sidecar 注入可用</td></tr>
+            <tr><td>Calico 版本</td><td class="mono">v3.25.0</td><td class="muted">NetworkPolicy 可用</td></tr>
+            <tr><td>容器运行时</td><td class="mono">docker 24.0</td><td class="muted">-</td></tr>
+            <tr><td>特性：Job TTL 自动清理</td><td><span class="tag on">✓ 支持</span></td><td class="muted">v1.12+</td></tr>
+            <tr><td>特性：Pod 资源原地扩缩</td><td><span class="tag off">✗ 不支持</span></td><td class="muted">需 v1.27+ 且开启 InPlacePodVerticalScaling</td></tr>
+            <tr><td>特性：DynamicResourceAllocation</td><td><span class="tag off">✗ 不支持</span></td><td class="muted">需 v1.31+，UI 将隐藏该入口</td></tr>
+          </table>
+          <div class="note warnn" style="margin-top:10px;">探测到 2 项特性不支持（集群版本限制）。保存后这些特性在租户侧 UI 将自动置灰并显示「当前集群版本不支持」，k8s-server 亦会拦截对应 API 调用。</div>
+        </div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px;">
+        <button class="btn" onclick="go('clusters')">取消</button>
+        <button class="btn dark" onclick="go('clusters')">保存并启用</button>
+      </div>
+    </div>
+
+    <!-- ═══ 集群详情 ═══ -->
+    <div class="page" id="page-cluster-detail">
+      <div class="crumb">集群 / 集群接入 / <b>test-cluster-01 详情</b></div>
+      <h1 class="pt"><span class="mono">test-cluster-01</span> <span class="tag on" style="vertical-align:2px;">CONNECTED</span> <span class="muted" style="font-size:12px;font-weight:400;margin-left:6px;">v1.28.9 · 关联租户：test（ns-test-a）/ dev（ns-dev-a），共享集群按命名空间隔离</span></h1>
+      <div class="panel">
+        <div class="panel-h">基本信息 <div class="row"><button class="btn sm">编辑</button><button class="btn sm">重新探测能力</button><button class="btn sm">轮换 kubeconfig</button></div></div>
+        <div class="panel-b">
+          <div class="kv">
+            <div>集群 ID</div><div class="mono">cls-01J9XK2M4P7Q</div>
+            <div>K8s / Istio / Calico</div><div class="mono">v1.28.9 / 1.20.6 / v3.25.0</div>
+            <div>容器运行时</div><div>docker 24.0.5</div>
+            <div>IP 栈类型</div><div>IPV4</div>
+            <div>kubeconfig</div><div class="mono" style="color:#999;">••••••••（AES-256-GCM 加密存储，<a class="btn link">下载解密副本（审计）</a> <a class="btn link">轮换</a>）</div>
+            <div>心跳 / 创建时间</div><div class="mono">10:34:50 / 2026-03-11 09:02:00</div>
+            <div>描述</div><div>测试环境集群，供 test / dev 租户联调</div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-h">能力矩阵（k8s-server 版本适配依据）<span class="muted">2026-08-24 09:00 探测</span></div>
+        <div class="panel-b" style="padding:0;">
+          <table>
+            <tr><th>特性</th><th>最低版本要求</th><th>本集群（v1.28.9）</th><th>平台 UI 行为</th></tr>
+            <tr><td>HPA 水平扩缩</td><td class="mono">v1.8+</td><td><span class="tag on">✓ 可用</span></td><td class="muted">正常展示</td></tr>
+            <tr><td>Job / CronJob</td><td class="mono">v1.21+（内置组）</td><td><span class="tag on">✓ 可用</span></td><td class="muted">正常展示</td></tr>
+            <tr><td>Sidecar 注入（Istio）</td><td class="mono">Istio 1.x</td><td><span class="tag on">✓ 可用</span></td><td class="muted">正常展示（1.20.6）</td></tr>
+            <tr><td>Gateway API</td><td class="mono">v1.7+（实验）</td><td><span class="tag warn">⚠ 实验性</span></td><td class="muted">展示并标记「实验特性」</td></tr>
+            <tr><td>Pod 资源原地扩缩</td><td class="mono">v1.27+（Beta）</td><td><span class="tag off">✗ 不支持</span></td><td class="muted">入口置灰 + 提示版本不足</td></tr>
+            <tr><td>DynamicResourceAllocation</td><td class="mono">v1.31+</td><td><span class="tag off">✗ 不支持</span></td><td class="muted">入口隐藏</td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-h">节点列表（6）
+          <div class="row"><input class="input" style="width:140px;" placeholder="节点名称"><select class="input"><option>全部角色</option><option>master</option><option>worker</option></select></div></div>
+        <table>
+          <tr><th>节点名称</th><th>角色</th><th>版本</th><th>CPU（已用/总量）</th><th>内存（已用/总量）</th><th>Pod 数</th><th>状态</th><th>操作</th></tr>
+          <tr><td class="mono">master-01</td><td>master</td><td>v1.28.9</td><td><div class="meter"><i style="width:31%"></i></div> 4.7/16</td><td><div class="meter"><i style="width:44%"></i></div> 7.0/16 GiB</td><td>12 / 110</td><td><span class="dot on"></span>Ready</td><td><a class="btn link">详情</a><a class="btn link">驱逐</a></td></tr>
+          <tr><td class="mono">worker-01</td><td>worker</td><td>v1.28.9</td><td><div class="meter warn"><i style="width:86%"></i></div> 21.5/25</td><td><div class="meter"><i style="width:58%"></i></div> 46/80 GiB</td><td>38 / 250</td><td><span class="dot on"></span>Ready</td><td><a class="btn link">详情</a><a class="btn link">驱逐</a></td></tr>
+          <tr><td class="mono">worker-02</td><td>worker</td><td>v1.28.9</td><td><div class="meter"><i style="width:44%"></i></div> 11/25</td><td><div class="meter warn"><i style="width:83%"></i></div> 66/80 GiB</td><td>41 / 250</td><td><span class="dot warn"></span>MemoryPressure</td><td><a class="btn link">详情</a><a class="btn link">驱逐</a></td></tr>
+          <tr><td class="muted" colspan="8" style="text-align:center;">… 其余 3 个节点 …</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══ 租户管理 ═══ -->
+    <div class="page" id="page-tenants">
+      <div class="crumb">平台管理 / <b>租户管理</b></div>
+      <h1 class="pt">租户管理</h1>
+      <div class="panel">
+        <div class="toolbar">
+          <input class="input" style="width:170px;" placeholder="租户编码 / 名称">
+          <select class="input"><option>全部状态</option><option>启用</option><option>停用</option></select>
+          <div class="sp"></div>
+          <button class="btn dark" onclick="openModal('m-tenant')">＋ 创建租户</button>
+        </div>
+        <table>
+          <tr><th>名称</th><th>ID</th><th>所属集群（唯一）</th><th>租户标识（SA）</th><th>关联命名空间</th><th>管理员</th><th>成员数</th><th>状态</th><th style="width:190px;">操作</th></tr>
+          <tr><td>生产租户</td><td class="mono">t-01</td><td class="mono">prod-cluster-01</td><td class="mono" style="font-size:11px;">tenant-prod</td><td><span class="tag">api</span><span class="tag">payment</span><span class="tag">middleware</span></td><td class="mono">zhang.wei</td><td>23</td><td><span class="tag on">启用</span></td>
+            <td><a class="btn link" onclick="go('tenant-detail')">详情</a><a class="btn link" onclick="openModal('m-tenant')">编辑</a><a class="btn link" onclick="openModal('m-ns-bind')">命名空间</a><a class="btn link danger" onclick="openModal('m-confirm')">停用</a></td></tr>
+          <tr><td>测试租户</td><td class="mono">t-02</td><td class="mono">test-cluster-01</td><td class="mono" style="font-size:11px;">tenant-test</td><td><span class="tag">ns-test-a</span><span class="tag">ns-test-b</span></td><td class="mono">li.na</td><td>8</td><td><span class="tag on">启用</span></td>
+            <td><a class="btn link" onclick="go('tenant-detail')">详情</a><a class="btn link" onclick="openModal('m-tenant')">编辑</a><a class="btn link" onclick="openModal('m-ns-bind')">命名空间</a><a class="btn link danger" onclick="openModal('m-confirm')">停用</a></td></tr>
+          <tr><td>开发租户</td><td class="mono">t-03</td><td class="mono">test-cluster-01 <span class="tag warn" style="font-size:10px;">共享</span></td><td class="mono" style="font-size:11px;">tenant-dev</td><td><span class="tag">ns-dev-a</span></td><td class="mono">chen.j</td><td>5</td><td><span class="tag off">停用</span></td>
+            <td><a class="btn link" onclick="go('tenant-detail')">详情</a><a class="btn link" onclick="openModal('m-tenant')">编辑</a><a class="btn link" onclick="openModal('m-ns-bind')">命名空间</a><a class="btn link">启用</a></td></tr>
+        </table>
+      </div>
+      <div class="note" style="margin-top:12px;">📌 租户模型：一个租户归属<b>唯一集群</b>（platform_tenant.cluster_id），以集群内 ServiceAccount 作为租户标识（service_account），并通过 platform_tenant_namespace 关联若干命名空间。k8s-server 对每个请求校验目标命名空间是否已关联令牌所属租户（hasNamespaceAccess）；租户停用后其令牌立即吊销。</div>
+    </div>
+
+    <!-- ═══ 租户详情 ═══ -->
+    <div class="page" id="page-tenant-detail">
+      <div class="crumb">平台管理 / 租户管理 / <b>prod</b></div>
+      <h1 class="pt">租户详情：<span class="mono">prod</span> <span class="tag on" style="vertical-align:2px;">启用</span></h1>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">概览</div><div class="tab">成员（23）</div><div class="tab">命名空间关联</div><div class="tab">令牌与登录</div>
+        </div>
+        <div class="tabpane cur">
+          <div class="panel-b">
+            <div class="kv">
+              <div>租户名称 / ID</div><div>生产租户 <span class="mono muted">（id: t-01）</span></div>
+              <div>所属集群</div><div class="mono">prod-cluster-01（v1.29.4）· 一个租户仅归属一个集群（platform_tenant.cluster_id）</div>
+              <div>租户标识</div><div class="mono">ServiceAccount: tenant-prod（platform_tenant.service_account，写入 token 声明并作为集群内身份）</div>
+              <div>关联命名空间</div><div><span class="tag">api</span><span class="tag">payment</span><span class="tag">middleware</span> <a class="btn link" onclick="go('namespaces')">管理 →</a></div>
+              <div>管理员 / 成员</div><div class="mono">zhang.wei · 23 人（platform_user_tenant）</div>
+              <div>创建时间</div><div class="mono">2025-11-01 10:00:00</div>
+              <div>令牌策略</div><div>Access Token 60min（含 tenant + serviceAccount 声明）· 切换租户重新换票 · 停用即吊销</div>
+            </div>
+            <div class="cards" style="margin-top:14px;grid-template-columns:repeat(3,1fr);">
+              <div class="panel stat"><div class="t">关联命名空间</div><div class="v" style="font-size:18px;">3</div><div class="s">api · payment · middleware</div></div>
+              <div class="panel stat"><div class="t">Deployment / Pod</div><div class="v" style="font-size:18px;">46 <span style="font-size:13px;color:#999;">/ 132</span></div><div class="s">异常 2（payment）</div></div>
+              <div class="panel stat"><div class="t">今日 API 调用</div><div class="v" style="font-size:18px;">3,412</div><div class="s">经 k8s-server 代理</div></div>
+            </div>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div style="padding:0;">
+            <table>
+              <tr><th style="padding-left:14px;">用户</th><th>邮箱</th><th>租户内角色</th><th>状态</th><th>加入时间</th><th>操作</th></tr>
+              <tr><td class="mono">zhang.wei</td><td>zhang.wei@example.com</td><td><span class="tag blue">租户管理员</span></td><td><span class="tag on">正常</span></td><td class="mono">2025-11-01</td><td><a class="btn link" onclick="go('user-detail')">详情</a><a class="btn link danger">移出</a></td></tr>
+              <tr><td class="mono">wang.fang</td><td>wang.fang@example.com</td><td><span class="tag">开发者</span></td><td><span class="tag on">正常</span></td><td class="mono">2025-11-03</td><td><a class="btn link" onclick="go('user-detail')">详情</a><a class="btn link danger">移出</a></td></tr>
+              <tr><td class="mono">guest.ops</td><td>guest.ops@example.com</td><td><span class="tag">只读</span></td><td><span class="tag off">已禁用</span></td><td class="mono">2025-12-01</td><td><a class="btn link" onclick="go('user-detail')">详情</a><a class="btn link">移出</a></td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div style="padding:14px;">
+            <div class="note">租户隔离依据 <b>platform_tenant_namespace</b> 关联表：k8s-server 对每个请求校验目标命名空间是否已关联本租户（hasNamespaceAccess）。取消关联后该命名空间的访问立即失效并写入审计。一个命名空间同一时间只能关联一个租户。</div>
+            <table>
+              <tr><th>命名空间</th><th>集群</th><th>关联时间</th><th>命名空间内资源</th><th style="width:120px;">操作</th></tr>
+              <tr><td class="mono">api</td><td class="mono">prod-cluster-01</td><td class="mono">2025-11-02</td><td class="muted">6 Deployment · 7 Service · 3 ConfigMap</td><td><a class="btn link danger" onclick="openModal('m-confirm')">取消关联</a></td></tr>
+              <tr><td class="mono">payment</td><td class="mono">prod-cluster-01</td><td class="mono">2025-11-05</td><td class="muted">3 Deployment · 4 Service</td><td><a class="btn link danger" onclick="openModal('m-confirm')">取消关联</a></td></tr>
+              <tr><td class="mono">middleware</td><td class="mono">prod-cluster-01</td><td class="mono">2025-11-02</td><td class="muted">5 Deployment · 6 Service</td><td><a class="btn link danger" onclick="openModal('m-confirm')">取消关联</a></td></tr>
+            </table>
+            <div style="text-align:right;margin-top:10px;"><button class="btn dark sm" onclick="openModal('m-ns-bind')">＋ 关联命名空间</button></div>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div style="padding:0;">
+            <table>
+              <tr><th style="padding-left:14px;">时间</th><th>用户</th><th>方式</th><th>来源 IP</th><th>结果</th><th>令牌</th></tr>
+              <tr><td class="mono">08-24 09:12:03</td><td class="mono">zhang.wei</td><td>密码登录</td><td class="mono">203.0.113.8</td><td><span class="tag on">成功</span></td><td class="mono">at_9f2c…（tenant=prod，60min）</td></tr>
+              <tr><td class="mono">08-24 08:55:41</td><td class="mono">wang.fang</td><td>OIDC（企业 SSO）</td><td class="mono">203.0.113.21</td><td><span class="tag on">成功</span></td><td class="mono">at_77b1…（tenant=prod，60min）</td></tr>
+              <tr><td class="mono">08-23 23:14:09</td><td class="mono">guest.ops</td><td>密码登录</td><td class="mono">203.0.113.99</td><td><span class="tag off">失败（用户已禁用）</span></td><td class="muted">-</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 用户管理 ═══ -->
+    <div class="page" id="page-users">
+      <div class="crumb">平台管理 / <b>用户管理</b></div>
+      <h1 class="pt">用户管理</h1>
+      <div class="panel">
+        <div class="toolbar">
+          <input class="input" style="width:160px;" placeholder="用户名 / 邮箱">
+          <select class="input"><option>全部租户</option><option>prod</option><option>test</option><option>dev</option></select>
+          <select class="input"><option>全部角色</option><option>平台管理员</option><option>租户管理员</option><option>开发者</option><option>审计员</option><option>只读</option></select>
+          <select class="input"><option>全部状态</option><option>正常</option><option>已禁用</option></select>
+          <div class="sp"></div>
+          <button class="btn">导入</button><button class="btn">导出</button>
+          <button class="btn dark" onclick="openModal('m-user')">＋ 创建用户</button>
+        </div>
+        <table>
+          <tr><th>用户名</th><th>邮箱</th><th>所属租户</th><th>角色</th><th>状态</th><th>最近登录</th><th style="width:210px;">操作</th></tr>
+          <tr><td class="mono">zhang.wei</td><td>zhang.wei@example.com</td><td><span class="tag">prod</span><span class="tag">test</span><span class="tag">平台</span></td><td><span class="tag blue">平台管理员</span><span class="tag">租户管理员</span></td><td><span class="tag on">正常</span></td><td class="mono">08-24 09:12</td>
+            <td><a class="btn link" onclick="go('user-detail')">详情</a><a class="btn link" onclick="openModal('m-user-roles')">角色</a><a class="btn link">重置密码</a><a class="btn link danger" onclick="openModal('m-confirm')">禁用</a></td></tr>
+          <tr><td class="mono">wang.fang</td><td>wang.fang@example.com</td><td><span class="tag">prod</span></td><td><span class="tag">开发者</span></td><td><span class="tag on">正常</span></td><td class="mono">08-24 08:55</td>
+            <td><a class="btn link" onclick="go('user-detail')">详情</a><a class="btn link" onclick="openModal('m-user-roles')">角色</a><a class="btn link">重置密码</a><a class="btn link danger" onclick="openModal('m-confirm')">禁用</a></td></tr>
+          <tr><td class="mono">li.na</td><td>li.na@example.com</td><td><span class="tag">test</span><span class="tag">dev</span></td><td><span class="tag">租户管理员</span></td><td><span class="tag on">正常</span></td><td class="mono">08-23 18:40</td>
+            <td><a class="btn link" onclick="go('user-detail')">详情</a><a class="btn link" onclick="openModal('m-user-roles')">角色</a><a class="btn link">重置密码</a><a class="btn link danger" onclick="openModal('m-confirm')">禁用</a></td></tr>
+          <tr><td class="mono">guest.ops</td><td>guest.ops@example.com</td><td><span class="tag">prod</span></td><td><span class="tag">只读</span></td><td><span class="tag off">已禁用</span></td><td class="mono">07-30 10:02</td>
+            <td><a class="btn link" onclick="go('user-detail')">详情</a><a class="btn link" onclick="openModal('m-user-roles')">角色</a><a class="btn link">重置密码</a><a class="btn link">启用</a></td></tr>
+        </table>
+        <div class="pager"><span class="pg cur">1</span><span class="pg">2</span><span class="pg">›</span><span class="muted">共 36 条</span></div>
+      </div>
+    </div>
+
+    <!-- ═══ 用户详情 ═══ -->
+    <div class="page" id="page-user-detail">
+      <div class="crumb">平台管理 / 用户管理 / <b>zhang.wei</b></div>
+      <h1 class="pt">用户详情：<span class="mono">zhang.wei</span> <span class="tag on" style="vertical-align:2px;">正常</span></h1>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">基本信息</div><div class="tab">租户与角色</div><div class="tab">登录与令牌</div><div class="tab">操作记录</div>
+        </div>
+        <div class="tabpane cur">
+          <div class="panel-b">
+            <div class="kv">
+              <div>用户 ID</div><div class="mono">usr-01JC8T4Q9W2E</div>
+              <div>用户名 / 邮箱</div><div class="mono">zhang.wei / zhang.wei@example.com</div>
+              <div>认证方式</div><div>密码 · OIDC（企业 SSO）已绑定</div>
+              <div>状态</div><div><span class="tag on">正常</span></div>
+              <div>创建时间</div><div class="mono">2025-11-01 10:00:00</div>
+              <div>密码策略</div><div>上次修改 42 天前 · 90 天后强制更换</div>
+            </div>
+            <div class="row" style="margin-top:12px;"><button class="btn sm">重置密码</button><button class="btn sm">强制下线</button><button class="btn sm danger" onclick="openModal('m-confirm')">禁用用户</button></div>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div style="padding:0;">
+            <table>
+              <tr><th style="padding-left:14px;">范围</th><th>租户</th><th>角色</th><th>授权人 / 时间</th><th>操作</th></tr>
+              <tr><td>平台</td><td>-</td><td><span class="tag blue">平台管理员</span></td><td class="mono">admin / 2025-11-01</td><td><a class="btn link danger">移除</a></td></tr>
+              <tr><td>租户内</td><td class="mono">prod</td><td><span class="tag">租户管理员</span></td><td class="mono">admin / 2025-11-01</td><td><a class="btn link danger">移除</a></td></tr>
+              <tr><td>租户内</td><td class="mono">test</td><td><span class="tag">开发者</span></td><td class="mono">li.na / 2025-11-10</td><td><a class="btn link danger">移除</a></td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div style="padding:0;">
+            <table>
+              <tr><th style="padding-left:14px;">时间</th><th>方式</th><th>来源 IP</th><th>进入租户</th><th>结果</th></tr>
+              <tr><td class="mono">08-24 09:12:03</td><td>密码登录</td><td class="mono">203.0.113.8</td><td class="mono">prod</td><td><span class="tag on">成功</span></td></tr>
+              <tr><td class="mono">08-23 21:40:11</td><td>OIDC（企业 SSO）</td><td class="mono">203.0.113.8</td><td class="mono">test</td><td><span class="tag on">成功</span></td></tr>
+              <tr><td class="mono">08-23 14:02:55</td><td>密码登录</td><td class="mono">198.51.100.77</td><td class="mono">prod</td><td><span class="tag on">成功</span></td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div style="padding:0;">
+            <table>
+              <tr><th style="padding-left:14px;">时间</th><th>租户</th><th>资源 / 对象</th><th>动作</th><th>结果</th></tr>
+              <tr><td class="mono">10:34:02</td><td class="mono">prod</td><td class="mono">Deployment / payment/payment-service</td><td>SCALE 2→3</td><td><span class="tag on">成功</span></td></tr>
+              <tr><td class="mono">10:22:15</td><td>平台</td><td class="mono">User / guest.ops</td><td>UPDATE（禁用）</td><td><span class="tag on">成功</span></td></tr>
+              <tr><td class="mono">09:58:30</td><td class="mono">prod</td><td class="mono">ClusterRole / app-readonly</td><td>READ</td><td><span class="tag on">成功</span></td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 角色与权限 ═══ -->
+    <div class="page" id="page-roles">
+      <div class="crumb">平台管理 / <b>角色与权限</b></div>
+      <h1 class="pt">角色与权限 <span class="muted" style="font-size:12px;font-weight:400;">平台级角色（决定菜单/页面/接口权限）；K8s 资源权限在租户工作区「RBAC 管理」中配置</span></h1>
+      <div class="panel">
+        <div class="panel-b" style="padding:0;display:flex;min-height:460px;">
+          <div style="width:250px;border-right:1px solid #e4e7ea;">
+            <div style="padding:10px;border-bottom:1px solid #e4e7ea;display:flex;gap:8px;">
+              <input class="input" style="flex:1;" placeholder="搜索角色">
+              <button class="btn sm" onclick="openModal('m-role')">＋</button>
+            </div>
+            <div style="padding:10px 14px;background:#f2f4f5;border-left:3px solid #4a5058;cursor:pointer;">平台管理员 <span class="tag blue" style="float:right;">内置</span></div>
+            <div style="padding:10px 14px;cursor:pointer;">租户管理员 <span class="tag" style="float:right;">内置</span></div>
+            <div style="padding:10px 14px;cursor:pointer;">开发者 <span class="tag" style="float:right;">内置</span></div>
+            <div style="padding:10px 14px;cursor:pointer;">审计员 <span class="tag" style="float:right;">内置</span></div>
+            <div style="padding:10px 14px;cursor:pointer;">只读 <span class="tag" style="float:right;">内置</span></div>
+            <div style="padding:10px 14px;cursor:pointer;color:#8a6d3b;">发布值班 <span class="tag warn" style="float:right;">自定义</span></div>
+          </div>
+          <div style="flex:1;padding:14px;">
+            <div class="row" style="justify-content:space-between;margin-bottom:10px;">
+              <b>角色「租户管理员」权限配置</b>
+              <div class="row"><span class="muted">持有人 3 · 上次修改 admin 08-20</span><button class="btn sm dark" onclick="openModal('m-role-save')">保存</button></div>
+            </div>
+            <ul class="tree">
+              <li><span class="tw on"></span><b>总览</b><span class="muted">（2 项）</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>查看租户总览 <span class="muted">dashboard:tenant:read</span></li>
+              <li><span class="tw"></span><span class="muted">查看平台总览 · 仅平台管理员 dashboard:platform:read</span></li>
+              <li><span class="tw on"></span><b>集群</b><span class="muted">（4 项）</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>查看本租户集群与节点 <span class="muted">cluster:read</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>节点详情 / 驱逐 <span class="muted">node:cordon</span></li>
+              <li style="padding-left:26px;"><span class="tw"></span>接入 / 编辑 / 删除集群 · 仅平台管理员 <span class="muted">cluster:manage</span></li>
+              <li><span class="tw on"></span><b>租户与工作区</b><span class="muted">（10 项）</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>命名空间：创建 / 配额调整 / 删除 <span class="muted">namespace:manage</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>Deployment：创建 / 编辑 / 删除 / 扩缩 / 重启 <span class="muted">deployment:write</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>Service / Ingress / 配置 / 存储管理 <span class="muted">network:write, config:write, storage:write</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>K8s RBAC（SA / ClusterRole / RoleBinding）管理 <span class="muted">k8srbac:write</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>查看 Pod 日志 / 进入终端 <span class="muted">pod:exec</span></li>
+              <li><span class="tw on"></span><b>运维</b><span class="muted">（3 项）</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>监控告警查看 / 规则维护 <span class="muted">alert:manage</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>查看本租户审计日志 <span class="muted">audit:tenant:read</span></li>
+              <li><span class="tw on"></span><b>租户成员（租户管理员专属）</b><span class="muted">（3 项）</span></li>
+              <li style="padding-left:26px;"><span class="tw on"></span>邀请成员 / 分配租户内角色 / 移出 <span class="muted">tenant.member:write</span></li>
+              <li><span class="tw"></span><b>平台管理（租户 / 用户 / 平台角色 / OAuth2 / 全局审计）</b><span class="muted">· 未勾选（仅平台管理员）</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ OAuth2 应用 ═══ -->
+    <div class="page" id="page-oauth2">
+      <div class="crumb">平台管理 / <b>OAuth2 应用</b></div>
+      <h1 class="pt">OAuth2 应用管理 <span class="muted" style="font-size:12px;font-weight:400;">platform-auth · Registered Clients</span></h1>
+      <div class="panel">
+        <div class="toolbar">
+          <input class="input" style="width:180px;" placeholder="应用名称 / Client ID">
+          <select class="input"><option>全部状态</option></select>
+          <div class="sp"></div>
+          <button class="btn" onclick="go('consent')">预览授权同意页</button>
+          <button class="btn dark" onclick="openModal('m-oauth')">＋ 注册应用</button>
+        </div>
+        <table>
+          <tr><th>应用名称</th><th>Client ID</th><th>授权模式</th><th>重定向 URI</th><th>Secret</th><th>状态</th><th style="width:200px;">操作</th></tr>
+          <tr><td>Web 控制台</td><td class="mono">web-console</td>
+            <td><span class="tag">Authorization Code</span><span class="tag">Refresh Token</span></td>
+            <td class="mono" style="font-size:11px;">https://console.example.com/login/oauth2/code/idp</td>
+            <td class="mono">••••••••</td><td><span class="tag on">启用</span></td>
+            <td><a class="btn link" onclick="openModal('m-oauth')">编辑</a><a class="btn link">显示 Secret</a><a class="btn link">轮换 Secret</a><a class="btn link danger" onclick="openModal('m-confirm')">禁用</a></td></tr>
+          <tr><td>OpenAPI 网关</td><td class="mono">openapi-client</td>
+            <td><span class="tag">Client Credentials</span></td><td class="muted">-</td>
+            <td class="mono">••••••••</td><td><span class="tag on">启用</span></td>
+            <td><a class="btn link" onclick="openModal('m-oauth')">编辑</a><a class="btn link">显示 Secret</a><a class="btn link">轮换 Secret</a><a class="btn link danger" onclick="openModal('m-confirm')">禁用</a></td></tr>
+          <tr><td>移动端 App</td><td class="mono">mobile-app</td>
+            <td><span class="tag">Authorization Code + PKCE</span></td>
+            <td class="mono" style="font-size:11px;">com.example.app://oauth-callback</td>
+            <td class="mono">••••••••</td><td><span class="tag off">禁用</span></td>
+            <td><a class="btn link" onclick="openModal('m-oauth')">编辑</a><a class="btn link">显示 Secret</a><a class="btn link">轮换 Secret</a><a class="btn link">启用</a></td></tr>
+        </table>
+      </div>
+      <div class="panel">
+        <div class="panel-h">认证端点（供接入方配置）</div>
+        <div class="panel-b"><div class="code" style="white-space:pre-wrap;">issuer:     https://auth.example.com        （platform-auth）
+authorize:  https://auth.example.com/oauth2/authorize
+token:      https://auth.example.com/oauth2/token      ← 换票（access token 含 tenant / roles 声明）
+jwks:       https://auth.example.com/oauth2/jwks       ← k8s-server 校验 JWT 签名
+userinfo:   https://auth.example.com/userinfo
+scopes:     openid profile email tenant.read
+token 策略: access 60min · refresh 7d · 切换租户重新 authorize 换票 · 用户禁用/租户停用即时吊销</div></div>
+      </div>
+    </div>
+
+    <!-- ═══ OAuth2 授权同意页（demo） ═══ -->
+    <div class="page" id="page-consent">
+      <div class="auth-wrap" style="display:flex;min-height:70vh;">
+        <div class="auth-box" style="width:420px;">
+          <div class="auth-logo"><div class="mark">🔐</div><div style="font-size:15px;font-weight:700;">授权请求</div>
+            <div class="muted" style="margin-top:4px;">platform-auth 授权服务器</div></div>
+          <div class="panel"><div class="panel-b">
+            <div style="text-align:center;margin-bottom:12px;"><b>Web 控制台</b><div class="muted">client_id: web-console</div></div>
+            <div class="note">请求访问您在 <b>K8s 云平台</b> 的以下信息：</div>
+            <ul style="list-style:none;margin:0 0 12px;color:#555;line-height:2;">
+              <li>✓ openid — 唯一用户标识</li>
+              <li>✓ profile — 基本资料（用户名、邮箱）</li>
+              <li>✓ tenant.read — 所属租户列表（用于进入租户选择）</li>
+            </ul>
+            <div class="muted" style="margin-bottom:12px;">当前登录：zhang.wei@zhang.wei@example.com</div>
+            <div class="row" style="justify-content:flex-end;">
+              <button class="btn" onclick="go('oauth2')">拒绝</button>
+              <button class="btn dark" onclick="go('oauth2')">同意授权</button>
+            </div>
+          </div></div>
+          <div class="muted" style="text-align:center;margin-top:10px;"><a class="btn link" onclick="go('oauth2')">← 返回 OAuth2 应用管理</a></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 全局审计 ═══ -->
+    <div class="page" id="page-audit-global">
+      <div class="crumb">平台管理 / <b>全局审计</b></div>
+      <h1 class="pt">全局审计日志 <span class="tag blue">仅平台管理员 / 审计员</span></h1>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">操作审计</div><div class="tab">登录日志</div><div class="tab">令牌事件</div>
+        </div>
+        <div class="tabpane cur">
+          <div class="toolbar">
+            <input class="input" style="width:130px;" placeholder="用户">
+            <select class="input"><option>全部租户</option><option>平台</option><option>prod</option><option>test</option></select>
+            <select class="input"><option>全部资源</option><option>Deployment</option><option>Cluster</option><option>Tenant</option><option>User</option><option>Role</option><option>OAuth2Client</option></select>
+            <select class="input"><option>全部动作</option><option>CREATE</option><option>UPDATE</option><option>DELETE</option><option>READ</option></select>
+            <input class="input" type="date" value="2026-08-01"><span class="muted">至</span><input class="input" type="date" value="2026-08-24">
+            <div class="sp"></div><button class="btn">导出 CSV</button>
+          </div>
+          <table>
+            <tr><th>时间</th><th>用户</th><th>租户</th><th>来源 IP</th><th>资源 / 对象</th><th>动作</th><th>结果</th></tr>
+            <tr><td class="mono">10:34:02</td><td class="mono">zhang.wei</td><td>prod</td><td class="mono">203.0.113.8</td><td class="mono">Deployment / payment/payment-service</td><td>SCALE 2→3</td><td><span class="tag on">成功</span></td></tr>
+            <tr><td class="mono">10:31:02</td><td class="mono">admin</td><td>平台</td><td class="mono">198.51.100.4</td><td class="mono">Cluster / test-cluster-01</td><td>RECONNECT</td><td><span class="tag on">成功</span></td></tr>
+            <tr><td class="mono">10:22:15</td><td class="mono">admin</td><td>平台</td><td class="mono">198.51.100.4</td><td class="mono">User / guest.ops</td><td>UPDATE（禁用）</td><td><span class="tag on">成功</span></td></tr>
+            <tr><td class="mono">10:19:50</td><td class="mono">guest.ops</td><td>prod</td><td class="mono">203.0.113.99</td><td class="mono">Deployment / api/api-gateway</td><td>DELETE</td><td><span class="tag off">拒绝（无权限）</span></td></tr>
+            <tr><td class="mono">09:40:12</td><td class="mono">li.na</td><td>test</td><td class="mono">203.0.113.30</td><td class="mono">ClusterRole / app-readonly</td><td>UPDATE</td><td><span class="tag on">成功</span></td></tr>
+          </table>
+          <div class="pager"><span class="pg cur">1</span><span class="pg">2</span><span class="pg">3</span><span class="pg">›</span><span class="muted">共 12,840 条</span></div>
+        </div>
+        <div class="tabpane">
+          <table>
+            <tr><th style="padding-left:14px;">时间</th><th>用户</th><th>方式</th><th>来源 IP</th><th>进入租户</th><th>结果</th></tr>
+            <tr><td class="mono">10:32:41</td><td class="mono">zhang.wei</td><td>密码</td><td class="mono">203.0.113.8</td><td class="mono">prod</td><td><span class="tag on">成功</span></td></tr>
+            <tr><td class="mono">10:11:09</td><td class="mono">wang.fang</td><td>OIDC</td><td class="mono">203.0.113.21</td><td class="mono">prod</td><td><span class="tag on">成功</span></td></tr>
+            <tr><td class="mono">09:47:33</td><td class="mono">unknown</td><td>密码</td><td class="mono">198.51.100.201</td><td class="muted">-</td><td><span class="tag off">失败（密码错误 ×5，已临时锁定 15 分钟）</span></td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <table>
+            <tr><th style="padding-left:14px;">时间</th><th>用户</th><th>事件</th><th>租户</th><th>详情</th></tr>
+            <tr><td class="mono">10:12:03</td><td class="mono">zhang.wei</td><td>令牌签发</td><td class="mono">prod</td><td class="mono">at_9f2c…（60min，roles: 平台管理员,租户管理员）</td></tr>
+            <tr><td class="mono">09:58:10</td><td class="mono">li.na</td><td>租户切换换票</td><td class="mono">test → dev</td><td class="mono">旧令牌 at_55aa… 立即吊销</td></tr>
+            <tr><td class="mono">10:22:20</td><td class="mono">guest.ops</td><td>令牌吊销（用户禁用）</td><td class="mono">prod</td><td class="mono">2 个活跃令牌失效</td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 命名空间与配额 ═══ -->
+    <div class="page" id="page-namespaces">
+      <div class="crumb">租户工作区 / <b>命名空间与配额</b></div>
+      <h1 class="pt">命名空间管理 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="toolbar">
+          <span class="tag blue">所属集群：prod-cluster-01（由租户固定，不可切换）</span>
+          <input class="input" style="width:160px;" placeholder="命名空间">
+          <div class="sp"></div>
+          <button class="btn dark" onclick="openModal('m-ns')">＋ 创建并关联命名空间</button>
+        </div>
+        <table>
+          <tr><th>名称</th><th>状态</th><th>Pod 数</th><th>Deployment</th><th>Service</th><th>配额（CPU/内存/Pod）</th><th>使用率</th><th>创建时间</th><th style="width:170px;">操作</th></tr>
+          <tr><td class="mono">api</td><td><span class="tag on">Active</span></td><td>18</td><td>6</td><td>7</td><td class="mono" style="font-size:11px;">16 核 / 32 GiB / 150</td><td><div class="meter" style="width:70px;"></div> 46%</td><td class="mono">2025-11-02</td>
+            <td><a class="btn link">编辑配额</a><a class="btn link">标签</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">payment</td><td><span class="tag on">Active</span></td><td>9</td><td>3</td><td>4</td><td class="mono" style="font-size:11px;">8 核 / 16 GiB / 100</td><td><div class="meter warn" style="width:70px;"><i style="width:84%;display:block;height:100%;"></i></div> <span class="tag warn">84%</span></td><td class="mono">2025-11-05</td>
+            <td><a class="btn link">编辑配额</a><a class="btn link">标签</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">middleware</td><td><span class="tag on">Active</span></td><td>14</td><td>5</td><td>6</td><td class="mono" style="font-size:11px;">12 核 / 24 GiB / 120</td><td><div class="meter" style="width:70px;"><i style="width:39%;display:block;height:100%;"></i></div> 39%</td><td class="mono">2025-11-02</td>
+            <td><a class="btn link">编辑配额</a><a class="btn link">标签</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+        </table>
+      </div>
+      <div class="note" style="margin-top:12px;">📌 本页仅列出当前租户关联的命名空间（platform_tenant_namespace）；k8s-server 对每个请求校验目标命名空间是否已关联该租户，未关联即拒绝并记录审计。配额通过 K8s ResourceQuota + LimitRange 管理；删除命名空间将级联删除其内全部资源，需二次确认。</div>
+    </div>
+
+    <!-- ═══ Deployment 列表 ═══ -->
+    <div class="page" id="page-deployments">
+      <div class="crumb">租户工作区 / <b>Deployment</b></div>
+      <h1 class="pt">Deployment 管理 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="toolbar">
+          <select class="input"><option>集群：prod-cluster-01</option></select>
+          <select class="input"><option>全部命名空间</option><option>api</option><option>payment</option><option>middleware</option></select>
+          <input class="input" style="width:160px;" placeholder="名称">
+          <select class="input"><option>全部状态</option><option>Running</option><option>Updating</option><option>Unavailable</option></select>
+          <div class="sp"></div>
+          <button class="btn dis" title="当前集群版本不支持">批量操作</button>
+          <button class="btn dark" onclick="go('deployment-new')">＋ 创建</button>
+        </div>
+        <table>
+          <tr><th>名称</th><th>命名空间</th><th>副本（就绪/期望）</th><th>镜像</th><th>SA</th><th>状态</th><th>创建时间</th><th style="width:230px;">操作</th></tr>
+          <tr><td class="mono">api-gateway</td><td class="mono">api</td><td>3 / 3</td><td class="mono" style="font-size:11px;">reg.local/gateway:2.4.1</td><td class="mono" style="font-size:11px;">app-runner</td><td><span class="dot on"></span>Running</td><td class="mono">2025-11-10</td>
+            <td><a class="btn link" onclick="go('deployment-detail')">详情</a><a class="btn link" onclick="openModal('m-scale')">扩缩容</a><a class="btn link">重启</a><a class="btn link">日志</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">user-service</td><td class="mono">api</td><td>4 / 4</td><td class="mono" style="font-size:11px;">reg.local/user-svc:3.0.2</td><td class="mono" style="font-size:11px;">app-runner</td><td><span class="dot on"></span>Running</td><td class="mono">2025-11-10</td>
+            <td><a class="btn link" onclick="go('deployment-detail')">详情</a><a class="btn link" onclick="openModal('m-scale')">扩缩容</a><a class="btn link">重启</a><a class="btn link">日志</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">payment-service</td><td class="mono">payment</td><td>1 / 3</td><td class="mono" style="font-size:11px;">reg.local/pay-svc:1.9.0</td><td class="mono" style="font-size:11px;">app-runner</td><td><span class="dot off"></span>Unavailable</td><td class="mono">2025-11-12</td>
+            <td><a class="btn link" onclick="go('deployment-detail')">详情</a><a class="btn link" onclick="openModal('m-scale')">扩缩容</a><a class="btn link">重启</a><a class="btn link">日志</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">order-service</td><td class="mono">payment</td><td>2 / 2</td><td class="mono" style="font-size:11px;">reg.local/order-svc:2.2.4</td><td class="mono" style="font-size:11px;">app-runner</td><td><span class="dot on"></span>Running</td><td class="mono">2025-11-12</td>
+            <td><a class="btn link" onclick="go('deployment-detail')">详情</a><a class="btn link" onclick="openModal('m-scale')">扩缩容</a><a class="btn link">重启</a><a class="btn link">日志</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">redis-proxy</td><td class="mono">middleware</td><td>2 / 2</td><td class="mono" style="font-size:11px;">reg.local/redis-proxy:0.8.1</td><td class="mono" style="font-size:11px;">app-readonly</td><td><span class="dot warn"></span>Updating</td><td class="mono">2026-01-03</td>
+            <td><a class="btn link" onclick="go('deployment-detail')">详情</a><a class="btn link" onclick="openModal('m-scale')">扩缩容</a><a class="btn link">重启</a><a class="btn link">日志</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+        </table>
+        <div class="pager"><span class="pg cur">1</span><span class="pg">2</span><span class="pg">3</span><span class="pg">›</span><span class="muted">共 46 条 · 每页 20</span></div>
+      </div>
+    </div>
+
+    <!-- ═══ 创建 Deployment ═══ -->
+    <div class="page" id="page-deployment-new">
+      <div class="crumb">租户工作区 / Deployment / <b>创建</b></div>
+      <h1 class="pt">创建 Deployment <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="panel-b">
+          <div class="steps">
+            <div class="step cur" data-n="1">基本信息</div>
+            <div class="step" data-n="2">容器配置</div>
+            <div class="step" data-n="3">高级设置</div>
+          </div>
+          <div class="form-grid">
+            <div class="form-item"><span class="lbl req">集群（由租户固定）</span>
+              <input class="input dis" value="prod-cluster-01（v1.29.4）" disabled></div>
+            <div class="form-item"><span class="lbl req">命名空间（仅本租户关联）</span>
+              <select class="input"><option>api</option><option>payment</option><option>middleware</option></select></div>
+            <div class="form-item"><span class="lbl req">Deployment 名称</span><input class="input" placeholder="小写字母、数字和 -，如 order-service"></div>
+            <div class="form-item"><span class="lbl req">副本数</span><input class="input" value="2" style="width:100px;"><span class="muted">配额剩余：payment 还可创建 86 个 Pod</span></div>
+            <div class="form-item full"><span class="lbl">标签（Label）</span>
+              <table><tr><th style="width:30%;">Key</th><th style="width:40%;">Value</th><th></th></tr>
+              <tr><td class="mono">app</td><td class="mono">order-service</td><td><a class="btn link danger">删除</a></td></tr>
+              <tr><td class="mono">team</td><td class="mono">pay</td><td><a class="btn link danger">删除</a></td></tr>
+              <tr><td colspan="3"><a class="btn link">＋ 添加标签</a></td></tr></table></div>
+            <div class="form-item full"><span class="lbl">描述</span><textarea class="input" style="min-height:56px;"></textarea></div>
+          </div>
+          <div style="border-top:1px dashed #e4e7ea;margin:18px 0;"></div>
+          <div class="row" style="margin-bottom:10px;"><b>容器配置（第 2 步）</b><div class="sp"></div><span class="tag">容器 1</span><a class="btn link">＋ 添加容器</a></div>
+          <div class="form-grid">
+            <div class="form-item"><span class="lbl req">容器名称</span><input class="input" value="order-service"></div>
+            <div class="form-item"><span class="lbl req">镜像</span><input class="input" placeholder="reg.local/order-svc:2.2.4"></div>
+            <div class="form-item"><span class="lbl req">端口</span><input class="input" value="8080" style="width:90px;"><span class="muted">协议 <select class="input"><option>TCP</option><option>UDP</option></select></span></div>
+            <div class="form-item"><span class="lbl">拉取策略</span><select class="input"><option>Always</option><option>IfNotPresent</option><option>Never</option></select></div>
+            <div class="form-item"><span class="lbl">资源请求（CPU/内存）</span><input class="input" value="500m / 512Mi" style="width:100%;"></div>
+            <div class="form-item"><span class="lbl">资源限制（CPU/内存）</span><input class="input" value="1000m / 1Gi" style="width:100%;"></div>
+            <div class="form-item full"><span class="lbl">环境变量</span>
+              <table><tr><th style="width:24%;">KEY</th><th style="width:34%;">VALUE</th><th style="width:26%;">来源</th><th></th></tr>
+              <tr><td class="mono">SPRING_PROFILE</td><td class="mono">prod</td><td><span class="tag">字面量</span></td><td><a class="btn link danger">删除</a></td></tr>
+              <tr><td class="mono">DB_URL</td><td class="mono">-</td><td><span class="tag blue">ConfigMap / pay-db</span></td><td><a class="btn link danger">删除</a></td></tr>
+              <tr><td class="mono">DB_PASSWORD</td><td class="mono">••••••••</td><td><span class="tag warn">Secret / pay-secret</span></td><td><a class="btn link danger">删除</a></td></tr>
+              <tr><td colspan="4"><a class="btn link">＋ 添加环境变量</a></td></tr></table></div>
+          </div>
+          <div style="border-top:1px dashed #e4e7ea;margin:18px 0;"></div>
+          <div class="row" style="margin-bottom:10px;"><b>高级设置（第 3 步）</b></div>
+          <div class="form-grid">
+            <div class="form-item"><span class="lbl">ServiceAccount（集群内身份）</span>
+              <select class="input"><option>&lt;default&gt;</option><option>app-runner</option><option>app-readonly</option></select></div>
+            <div class="form-item"><span class="lbl">更新策略</span>
+              <select class="input"><option>RollingUpdate</option><option>Recreate</option></select>
+              <span class="muted">maxUnavailable 10% · maxSurge 25%</span></div>
+            <div class="form-item"><span class="lbl">存活探针</span><input class="input" placeholder="HTTP GET /healthz :8080 · 周期 10s"></div>
+            <div class="form-item"><span class="lbl">就绪探针</span><input class="input" placeholder="HTTP GET /ready :8080 · 周期 5s"></div>
+            <div class="form-item"><span class="lbl">Sidecar 注入（Istio）</span>
+              <label class="row"><span class="tw on"></span><span class="muted">为命名空间开启后自动注入</span></label></div>
+            <div class="form-item"><span class="lbl">Pod 资源原地扩缩 <span class="tag off">版本受限</span></span>
+              <input class="input dis" disabled placeholder="当前集群 v1.24 不支持（需 v1.27+）">
+              <span class="muted">若选择 test-cluster（v1.24）将被置灰</span></div>
+            <div class="form-item full"><span class="lbl">YAML 预览（只读，由表单生成）</span>
+              <div class="code">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: payment
+  labels: { app: order-service, team: pay }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: order-service }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 25%, maxUnavailable: 10% }
+  template:
+    spec:
+      serviceAccountName: app-runner
+      containers:
+      - name: order-service
+        image: reg.local/order-svc:2.2.4
+        ports: [ { containerPort: 8080, protocol: TCP } ]
+        env:
+        - { name: SPRING_PROFILE, value: prod }
+        - name: DB_URL
+          valueFrom: { configMapKeyRef: { name: pay-db, key: url } }
+        - name: DB_PASSWORD
+          valueFrom: { secretKeyRef: { name: pay-secret, key: password } }
+        resources:
+          requests: { cpu: 500m, memory: 512Mi }
+          limits:   { cpu: "1",   memory: 1Gi }</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px;">
+        <button class="btn">取消</button>
+        <button class="btn dark" onclick="go('deployments')">创建</button>
+      </div>
+    </div>
+
+    <!-- ═══ Deployment 详情 ═══ -->
+    <div class="page" id="page-deployment-detail">
+      <div class="crumb">租户工作区 / Deployment / <b>payment-service</b></div>
+      <h1 class="pt"><span class="mono">payment-service</span>
+        <span class="tag off" style="vertical-align:2px;">Unavailable 1/3</span>
+        <span class="muted" style="font-size:12px;font-weight:400;margin-left:8px;">prod-cluster-01 / payment · 租户 prod</span></h1>
+      <div class="row" style="margin-bottom:12px;">
+        <button class="btn dark">编辑</button><button class="btn" onclick="openModal('m-scale')">扩缩容</button><button class="btn">滚动重启</button><button class="btn">复制</button><button class="btn danger" onclick="openModal('m-confirm')">删除</button>
+        <div class="sp"></div><span class="muted">最近更新：1.9.0 · 08-24 09:12</span>
+      </div>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">概览</div><div class="tab">容器</div><div class="tab">Pod 列表</div><div class="tab">日志</div><div class="tab">事件</div><div class="tab">YAML</div>
+        </div>
+        <div class="tabpane cur">
+          <div class="panel-b">
+            <div class="cards" style="grid-template-columns:repeat(4,1fr);">
+              <div class="panel stat"><div class="t">镜像</div><div class="v mono" style="font-size:13px;padding-top:8px;">pay-svc:1.9.0</div><div class="s">reg.local/pay-svc</div></div>
+              <div class="panel stat"><div class="t">副本</div><div class="v">1<span style="font-size:13px;color:#999;"> / 3</span></div><div class="s">回滚记录 2 次</div></div>
+              <div class="panel stat"><div class="t">24h 重启</div><div class="v">3 次</div><div class="s">OOMKilled ×2</div></div>
+              <div class="panel stat"><div class="t">ServiceAccount</div><div class="v mono" style="font-size:13px;padding-top:8px;">app-runner</div><div class="s">→ ClusterRole/app-readonly</div></div>
+            </div>
+            <div class="note warnn" style="margin-top:14px;">⚠ Pod payment-service-7d9f-x2k1p 处于 CrashLoopBackOff（OOMKilled），当前内存限制 2Gi，建议上调或排查内存泄漏。</div>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div class="panel-b">
+            <b>容器 1：payment-service</b>
+            <div class="kv" style="margin-top:8px;">
+              <div>镜像 / 拉取策略</div><div class="mono">reg.local/pay-svc:1.9.0 · IfNotPresent</div>
+              <div>端口</div><div class="mono">8080/TCP</div>
+              <div>资源</div><div class="mono">请求 500m/1Gi · 限制 1000m/2Gi</div>
+              <div>环境变量</div><div class="mono">SPRING_PROFILE=prod · DB_URL←ConfigMap/pay-db · DB_PASSWORD←Secret/pay-secret</div>
+              <div>探针</div><div class="mono">存活 GET /healthz 10s · 就绪 GET /ready 5s · 启动 30s</div>
+              <div>Sidecar</div><div class="mono">istio-proxy 已注入（1.21.3）</div>
+            </div>
+          </div>
+        </div>
+        <div class="tabpane">
+          <table>
+            <tr><th style="padding-left:14px;">Pod</th><th>节点</th><th>IP</th><th>状态</th><th>重启</th><th>运行时长</th><th>操作</th></tr>
+            <tr><td class="mono">payment-service-7d9f-9ab2c</td><td class="mono">worker-03</td><td class="mono">10.244.3.51</td><td><span class="dot on"></span>Running</td><td>0</td><td>2 天 4 小时</td><td><a class="btn link">日志</a><a class="btn link">终端</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">payment-service-7d9f-x2k1p</td><td class="mono">worker-07</td><td class="mono">10.244.7.22</td><td><span class="dot off"></span>CrashLoopBackOff</td><td>14</td><td>6 分钟</td><td><a class="btn link">日志</a><a class="btn link">终端</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">payment-service-7d9f-m0q4z</td><td class="muted">-</td><td class="muted">-</td><td><span class="dot warn"></span>Pending</td><td>0</td><td>-</td><td class="muted">-</td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <div class="panel-b">
+            <div class="row" style="margin-bottom:10px;">
+              <select class="input"><option>Pod：payment-service-7d9f-9ab2c</option></select>
+              <select class="input"><option>容器：全部</option></select>
+              <select class="input"><option>最近 1 小时</option></select>
+              <label class="row"><span class="tw on"></span><span class="muted">自动滚动</span></label>
+              <div class="sp"></div><button class="btn sm">下载</button>
+            </div>
+            <div class="code darkc">2026-08-24 10:31:02.114 [http-nio-8080-exec-3] INFO  c.p.c.OrderController - create order, id=20260824103102114, amount=129.00
+2026-08-24 10:31:02.130 [http-nio-8080-exec-3] INFO  c.p.d.PayGateway   - call bank api /charge, reqId=a1b2c3
+2026-08-24 10:31:02.488 [http-nio-8080-exec-3] INFO  c.p.d.PayGateway   - bank resp ok, cost=358ms
+2026-08-24 10:31:05.001 [scheduling-1]     INFO  c.p.t.ReconcileJob  - reconcile started, pending=3
+2026-08-24 10:31:05.090 [scheduling-1]     ERROR c.p.t.ReconcileJob  - reconcile failed: connection refused to 10.96.0.12:6379</div>
+          </div>
+        </div>
+        <div class="tabpane">
+          <table>
+            <tr><th style="padding-left:14px;">时间</th><th>类型</th><th>原因</th><th>消息</th><th>次数</th></tr>
+            <tr><td class="mono">10:33:40</td><td><span class="tag off">Warning</span></td><td>BackOff</td><td>back-off restarting failed container</td><td>14</td></tr>
+            <tr><td class="mono">10:30:12</td><td><span class="tag off">Warning</span></td><td>Failed</td><td>container exceeded memory limit (2Gi)</td><td>3</td></tr>
+            <tr><td class="mono">09:12:17</td><td><span class="tag on">Normal</span></td><td>Pulled</td><td>successfully pulled image reg.local/pay-svc:1.9.0</td><td>1</td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <div class="panel-b">
+            <div class="row" style="margin-bottom:8px;"><button class="btn sm">复制</button><button class="btn sm">下载</button><span class="muted">只读；变更请通过「编辑」</span></div>
+            <div class="code">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: payment
+  labels: { app: payment-service, team: pay }
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 25%, maxUnavailable: 10% }
+  template:
+    spec:
+      serviceAccountName: app-runner
+      containers:
+      - name: payment-service
+        image: reg.local/pay-svc:1.9.0
+        …（省略）</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Service ═══ -->
+    <div class="page" id="page-services">
+      <div class="crumb">租户工作区 / <b>Service</b></div>
+      <h1 class="pt">Service 管理 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="toolbar">
+          <select class="input"><option>集群：prod-cluster-01</option></select>
+          <select class="input"><option>全部命名空间（租户已关联）</option></select>
+          <select class="input"><option>全部类型</option><option>ClusterIP</option><option>NodePort</option><option>LoadBalancer</option></select>
+          <div class="sp"></div><button class="btn dark" onclick="openModal('m-svc')">＋ 创建</button>
+        </div>
+        <table>
+          <tr><th>名称</th><th>命名空间</th><th>类型</th><th>Cluster IP / 端口</th><th>选择器</th><th>状态</th><th>创建时间</th><th style="width:150px;">操作</th></tr>
+          <tr><td class="mono">api-gateway-svc</td><td class="mono">api</td><td>ClusterIP</td><td class="mono">10.96.21.4 / 80,443</td><td class="mono" style="font-size:11px;">app=api-gateway</td><td><span class="tag on">正常</span></td><td class="mono">2025-11-10</td><td><a class="btn link">编辑</a><a class="btn link">端点</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">payment-svc</td><td class="mono">payment</td><td>ClusterIP</td><td class="mono">10.96.33.9 / 8080</td><td class="mono" style="font-size:11px;">app=payment-service</td><td><span class="tag off">2/3 端点</span></td><td class="mono">2025-11-12</td><td><a class="btn link">编辑</a><a class="btn link">端点</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">ingress-nginx</td><td class="mono">middleware</td><td>LoadBalancer</td><td class="mono">10.96.8.1 / 30080,30443</td><td class="mono" style="font-size:11px;">app.kubernetes.io=ingress-nginx</td><td><span class="tag on">正常</span></td><td class="mono">2025-11-02</td><td><a class="btn link">编辑</a><a class="btn link">端点</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══ Ingress ═══ -->
+    <div class="page" id="page-ingresses">
+      <div class="crumb">租户工作区 / <b>Ingress</b></div>
+      <h1 class="pt">Ingress 管理 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="toolbar">
+          <select class="input"><option>集群：prod-cluster-01</option></select>
+          <select class="input"><option>全部命名空间（租户已关联）</option></select>
+          <div class="sp"></div><button class="btn dark" onclick="openModal('m-ing')">＋ 创建</button>
+        </div>
+        <table>
+          <tr><th>名称</th><th>命名空间</th><th>IngressClass</th><th>主机 / 路径</th><th>TLS</th><th>后端 Service</th><th>创建时间</th><th style="width:150px;">操作</th></tr>
+          <tr><td class="mono">api-ingress</td><td class="mono">api</td><td class="mono">nginx</td><td class="mono" style="font-size:11px;">api.example.com /</td><td><span class="tag on">✓</span></td><td class="mono" style="font-size:11px;">api-gateway-svc:80</td><td class="mono">2025-11-10</td><td><a class="btn link">编辑</a><a class="btn link">规则</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          <tr><td class="mono">pay-ingress</td><td class="mono">payment</td><td class="mono">nginx</td><td class="mono" style="font-size:11px;">pay.example.com /api</td><td><span class="tag on">✓</span></td><td class="mono" style="font-size:11px;">payment-svc:8080</td><td class="mono">2025-11-12</td><td><a class="btn link">编辑</a><a class="btn link">规则</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══ 配置与密钥 ═══ -->
+    <div class="page" id="page-configmaps">
+      <div class="crumb">租户工作区 / <b>配置与密钥</b></div>
+      <h1 class="pt">配置与密钥 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">ConfigMap</div><div class="tab">Secret</div>
+        </div>
+        <div class="tabpane cur">
+          <div class="toolbar">
+            <select class="input"><option>集群：prod-cluster-01</option></select>
+            <select class="input"><option>全部命名空间（租户已关联）</option></select>
+            <input class="input" style="width:150px;" placeholder="名称">
+            <div class="sp"></div><button class="btn dark" onclick="openModal('m-cm')">＋ 创建 ConfigMap</button>
+          </div>
+          <table>
+            <tr><th style="padding-left:14px;">名称</th><th>命名空间</th><th>数据项</th><th>被引用（Deployment）</th><th>更新时间</th><th style="width:140px;">操作</th></tr>
+            <tr><td class="mono">pay-db</td><td class="mono">payment</td><td class="mono" style="font-size:11px;">url, pool-size, timeout</td><td>2</td><td class="mono">08-20 15:30</td><td><a class="btn link">查看</a><a class="btn link">编辑</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">gateway-config</td><td class="mono">api</td><td class="mono" style="font-size:11px;">rate-limit.json, cors.txt</td><td>1</td><td class="mono">08-18 11:02</td><td><a class="btn link">查看</a><a class="btn link">编辑</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <div class="toolbar">
+            <select class="input"><option>集群：prod-cluster-01</option></select>
+            <select class="input"><option>全部命名空间（租户已关联）</option></select>
+            <div class="sp"></div><button class="btn dark" onclick="openModal('m-cm')">＋ 创建 Secret</button>
+          </div>
+          <table>
+            <tr><th style="padding-left:14px;">名称</th><th>命名空间</th><th>类型</th><th>键（值已脱敏）</th><th>被引用</th><th>更新时间</th><th style="width:140px;">操作</th></tr>
+            <tr><td class="mono">pay-secret</td><td class="mono">payment</td><td>Opaque</td><td class="mono" style="font-size:11px;">password ••••••••</td><td>2</td><td class="mono">08-15 09:00</td><td><a class="btn link">查看（审计）</a><a class="btn link">轮换</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">tls-wildcard</td><td class="mono">middleware</td><td>kubernetes.io/tls</td><td class="mono" style="font-size:11px;">tls.crt ••• · tls.key •••</td><td>2</td><td class="mono">07-01 10:12</td><td><a class="btn link">查看（审计）</a><a class="btn link">轮换</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          </table>
+          <div class="note" style="margin:0 14px 14px;">📌 Secret 值列表页永不回显明文；「查看」需具备 config:secret:read 权限且每次访问写入审计日志。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 存储 ═══ -->
+    <div class="page" id="page-storage">
+      <div class="crumb">租户工作区 / <b>存储</b></div>
+      <h1 class="pt">存储管理 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">PVC</div><div class="tab">PV</div>
+        </div>
+        <div class="tabpane cur">
+          <table>
+            <tr><th style="padding-left:14px;">名称</th><th>命名空间</th><th>存储类</th><th>容量</th><th>访问模式</th><th>绑定 PV</th><th>状态</th><th style="width:120px;">操作</th></tr>
+            <tr><td class="mono">logs-data</td><td class="mono">middleware</td><td class="mono">local-ssd</td><td class="mono">100Gi</td><td>RWO</td><td class="mono">pv-8842</td><td><span class="tag on">Bound</span></td><td><a class="btn link">详情</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">upload-data</td><td class="mono">api</td><td class="mono">nfs-backup</td><td class="mono">500Gi</td><td>RWX</td><td class="mono">pv-1207</td><td><span class="tag on">Bound</span></td><td><a class="btn link">详情</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">tmp-cache</td><td class="mono">payment</td><td class="mono">standard</td><td class="mono">20Gi</td><td>RWO</td><td class="muted">未绑定</td><td><span class="tag warn">Pending</span></td><td><a class="btn link">详情</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <table>
+            <tr><th style="padding-left:14px;">名称</th><th>容量</th><th>存储类</th><th>回收策略</th><th>绑定</th><th>状态</th></tr>
+            <tr><td class="mono">pv-8842</td><td class="mono">100Gi</td><td class="mono">local-ssd</td><td>Delete</td><td class="mono">middleware/logs-data</td><td><span class="tag on">Bound</span></td></tr>
+            <tr><td class="mono">pv-1207</td><td class="mono">500Gi</td><td class="mono">nfs-backup</td><td>Retain</td><td class="mono">api/upload-data</td><td><span class="tag on">Bound</span></td></tr>
+            <tr><td class="mono">pv-9031</td><td class="mono">2Ti</td><td class="mono">standard</td><td>Retain</td><td class="muted">-</td><td><span class="tag">Available</span></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ RBAC 管理 ═══ -->
+    <div class="page" id="page-rbac">
+      <div class="crumb">租户工作区 / <b>RBAC 管理</b></div>
+      <h1 class="pt">K8s RBAC <span class="muted" style="font-size:12px;font-weight:400;">管理集群内工作负载身份（ServiceAccount）与其权限，与平台用户权限相互独立</span></h1>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">ServiceAccount</div><div class="tab">ClusterRole</div><div class="tab">RoleBinding</div><div class="tab">权限检查（can-i）</div>
+        </div>
+        <div class="tabpane cur">
+          <div class="toolbar">
+            <select class="input"><option>集群：prod-cluster-01</option></select>
+            <select class="input"><option>全部命名空间（租户已关联）</option></select>
+            <div class="sp"></div><button class="btn dark" onclick="openModal('m-sa')">＋ 创建</button>
+          </div>
+          <div class="note" style="margin:0 14px 12px;">📌 <b>tenant-prod</b> 是本租户的标识 ServiceAccount（platform_tenant.service_account），用于令牌声明与集群内身份，不可删除或改名。</div>
+          <table>
+            <tr><th style="padding-left:14px;">名称</th><th>命名空间</th><th>Secret</th><th>被引用（RoleBinding）</th><th>创建时间</th><th style="width:200px;">操作</th></tr>
+            <tr><td class="mono">tenant-prod</td><td class="muted">租户标识</td><td>1</td><td>-</td><td class="mono">2025-11-01</td><td><span class="tag blue">租户标识</span> <span class="muted">不可删除</span></td></tr>
+            <tr><td class="mono">app-runner</td><td class="mono">payment</td><td>1</td><td>2</td><td class="mono">2025-11-12</td><td><a class="btn link">详情</a><a class="btn link" onclick="openModal('m-sa')">编辑</a><a class="btn link">生成 Token</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">app-readonly</td><td class="mono">api</td><td>1</td><td>1</td><td class="mono">2025-11-10</td><td><a class="btn link">详情</a><a class="btn link" onclick="openModal('m-sa')">编辑</a><a class="btn link">生成 Token</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">default</td><td class="mono">api</td><td>1</td><td>0</td><td class="mono">2025-11-02</td><td class="muted">系统默认</td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <div class="toolbar">
+            <select class="input"><option>集群：prod-cluster-01</option></select>
+            <input class="input" style="width:150px;" placeholder="名称">
+            <div class="sp"></div><button class="btn dark" onclick="openModal('m-cr')">＋ 创建</button>
+          </div>
+          <table>
+            <tr><th style="padding-left:14px;">名称</th><th>规则数</th><th>涉及资源</th><th>被绑定</th><th>创建时间</th><th style="width:150px;">操作</th></tr>
+            <tr><td class="mono">app-readonly</td><td>3</td><td class="mono" style="font-size:11px;">pods, configmaps(get/list/watch) · deployments(get/list)</td><td>2</td><td class="mono">2025-11-10</td><td><a class="btn link">YAML</a><a class="btn link" onclick="openModal('m-cr')">编辑</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">app-admin</td><td>5</td><td class="mono" style="font-size:11px;">pods, deployments, services, configmaps, secrets</td><td>3</td><td class="mono">2025-11-10</td><td><a class="btn link">YAML</a><a class="btn link" onclick="openModal('m-cr')">编辑</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">view</td><td>12</td><td class="muted">K8s 内置</td><td>5</td><td class="mono">2025-11-02</td><td><a class="btn link">YAML</a><span class="muted">内置只读</span></td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <div class="toolbar">
+            <select class="input"><option>集群：prod-cluster-01</option></select>
+            <select class="input"><option>全部命名空间（租户已关联）</option></select>
+            <div class="sp"></div><button class="btn dark" onclick="openModal('m-rb')">＋ 创建</button>
+          </div>
+          <table>
+            <tr><th style="padding-left:14px;">名称</th><th>命名空间</th><th>RoleRef</th><th>主体（Subject）</th><th>创建时间</th><th style="width:130px;">操作</th></tr>
+            <tr><td class="mono">pay-runner-binding</td><td class="mono">payment</td><td class="mono" style="font-size:11px;">ClusterRole/app-readonly</td><td><span class="tag">SA: payment/app-runner</span></td><td class="mono">2025-11-12</td><td><a class="btn link">YAML</a><a class="btn link" onclick="openModal('m-rb')">编辑</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+            <tr><td class="mono">api-readonly-binding</td><td class="mono">api</td><td class="mono" style="font-size:11px;">ClusterRole/app-readonly</td><td><span class="tag">SA: api/app-readonly</span><span class="tag">SA: api/default</span></td><td class="mono">2025-11-10</td><td><a class="btn link">YAML</a><a class="btn link" onclick="openModal('m-rb')">编辑</a><a class="btn link danger" onclick="openModal('m-confirm')">删除</a></td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <div class="panel-b">
+            <div class="note">模拟 K8s RBAC 鉴权（等价 kubectl auth can-i），用于排查「工作负载访问集群 API 被拒」类问题。</div>
+            <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr 1fr auto;">
+              <div class="form-item"><span class="lbl req">命名空间</span><select class="input"><option>payment</option></select></div>
+              <div class="form-item"><span class="lbl req">主体</span>
+                <div class="row" style="gap:6px;"><select class="input" style="width:90px;"><option>ServiceAccount</option></select><input class="input" value="app-runner" style="flex:1;"></div></div>
+              <div class="form-item"><span class="lbl req">动作（verb）</span><select class="input"><option>list</option><option>get</option><option>create</option><option>delete</option></select></div>
+              <div class="form-item"><span class="lbl req">资源</span><select class="input"><option>pods</option><option>configmaps</option><option>secrets</option><option>deployments</option></select></div>
+              <div class="form-item"><span class="lbl">&nbsp;</span><button class="btn dark">检查</button></div>
+            </div>
+            <div class="note" style="background:#e8efe8;border-color:#a8c2a8;color:#3d6b3d;margin-top:12px;">
+              ✓ <b>允许</b>：ServiceAccount payment/app-runner 在命名空间 payment 中可对 pods 执行 list。<br>
+              <span class="mono" style="font-size:11px;">依据：RoleBinding pay-runner-binding → ClusterRole app-readonly（rules: pods get/list/watch）</span>
+            </div>
+            <div class="note" style="background:#efe9e9;border-color:#c7abab;color:#7c4a4a;margin-top:0;">
+              ✗ 对照：将动作改为 secrets/get 时结果为「拒绝」——app-readonly 未包含 secrets 资源。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 监控告警 ═══ -->
+    <div class="page" id="page-monitoring">
+      <div class="crumb">租户工作区 / <b>监控告警</b></div>
+      <h1 class="pt">监控与告警 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab cur">指标</div><div class="tab">告警规则</div><div class="tab">告警事件</div>
+        </div>
+        <div class="tabpane cur">
+          <div class="panel-b">
+            <div class="row" style="margin-bottom:12px;">
+              <select class="input"><option>集群：prod-cluster-01</option></select>
+              <select class="input"><option>范围：集群</option><option>节点</option><option>命名空间</option><option>Pod</option></select>
+              <select class="input"><option>最近 24 小时</option></select>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+              <div>
+                <div class="lbl" style="font-weight:600;">CPU 使用率（集群平均）</div>
+                <div class="chart" style="margin-top:8px;"><div class="bar" style="height:42%"></div><div class="bar" style="height:45%"></div><div class="bar" style="height:51%"></div><div class="bar" style="height:48%"></div><div class="bar" style="height:55%"></div><div class="bar" style="height:62%"></div><div class="bar" style="height:58%"></div><div class="bar" style="height:64%"></div><div class="bar hi" style="height:72%"></div><div class="bar" style="height:66%"></div><div class="bar" style="height:61%"></div><div class="bar" style="height:63%"></div></div>
+                <div class="chart-x"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>现在</span></div>
+              </div>
+              <div>
+                <div class="lbl" style="font-weight:600;">内存使用率（集群平均）</div>
+                <div class="chart" style="margin-top:8px;"><div class="bar" style="height:60%"></div><div class="bar" style="height:62%"></div><div class="bar" style="height:65%"></div><div class="bar" style="height:64%"></div><div class="bar" style="height:68%"></div><div class="bar" style="height:70%"></div><div class="bar" style="height:73%"></div><div class="bar" style="height:71%"></div><div class="bar hi" style="height:78%"></div><div class="bar hi" style="height:82%"></div><div class="bar hi" style="height:84%"></div><div class="bar hi" style="height:83%"></div></div>
+                <div class="chart-x"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>现在</span></div>
+              </div>
+            </div>
+            <div class="lbl" style="font-weight:600;margin:16px 0 6px;">Top Pod（CPU）</div>
+            <table>
+              <tr><th style="padding-left:14px;">Pod</th><th>命名空间</th><th>CPU</th><th>内存</th><th>网络 RX/TX</th></tr>
+              <tr><td class="mono">api-gateway-6c4d-x1</td><td class="mono">api</td><td class="mono">1.82 核</td><td class="mono">2.4 GiB</td><td class="mono">42 MB/s / 38 MB/s</td></tr>
+              <tr><td class="mono">payment-service-7d9f-9ab2c</td><td class="mono">payment</td><td class="mono">1.21 核</td><td class="mono">1.9 GiB</td><td class="mono">18 MB/s / 16 MB/s</td></tr>
+              <tr><td class="mono">redis-proxy-5b8f-q2</td><td class="mono">middleware</td><td class="mono">0.64 核</td><td class="mono">3.1 GiB</td><td class="mono">22 MB/s / 20 MB/s</td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="tabpane">
+          <div class="toolbar"><div class="sp"></div><button class="btn dark" onclick="openModal('m-rule')">＋ 新建规则</button></div>
+          <table>
+            <tr><th style="padding-left:14px;">规则名</th><th>指标 / 条件</th><th>级别</th><th>通知渠道</th><th>生效范围</th><th>状态</th><th style="width:120px;">操作</th></tr>
+            <tr><td>Pod 副本不足</td><td class="mono" style="font-size:11px;">ready_replicas &lt; spec.replicas 持续 3m</td><td><span class="tag off">严重</span></td><td>站内信 + 邮件</td><td>全部集群</td><td><span class="tag on">启用</span></td><td><a class="btn link" onclick="openModal('m-rule')">编辑</a><a class="btn link danger">停用</a></td></tr>
+            <tr><td>节点内存高水位</td><td class="mono" style="font-size:11px;">node_memory_util &gt; 80% 持续 10m</td><td><span class="tag warn">一般</span></td><td>站内信</td><td>全部集群</td><td><span class="tag on">启用</span></td><td><a class="btn link" onclick="openModal('m-rule')">编辑</a><a class="btn link danger">停用</a></td></tr>
+            <tr><td>命名空间配额预警</td><td class="mono" style="font-size:11px;">quota_util &gt; 80% 持续 1h</td><td><span class="tag warn">一般</span></td><td>站内信</td><td>本租户</td><td><span class="tag on">启用</span></td><td><a class="btn link" onclick="openModal('m-rule')">编辑</a><a class="btn link danger">停用</a></td></tr>
+            <tr><td>集群心跳丢失</td><td class="mono" style="font-size:11px;">last_heartbeat &gt; 5m</td><td><span class="tag off">严重</span></td><td>站内信 + 邮件 + Webhook</td><td>平台级（平台管理员维护）</td><td><span class="tag on">启用</span></td><td class="muted">只读</td></tr>
+          </table>
+        </div>
+        <div class="tabpane">
+          <table>
+            <tr><th style="padding-left:14px;">时间</th><th>级别</th><th>告警内容</th><th>来源</th><th>状态</th><th style="width:130px;">操作</th></tr>
+            <tr><td class="mono">10:32</td><td><span class="tag off">严重</span></td><td>payment-service 副本不足（1/3）</td><td class="mono">prod-01 / payment</td><td><span class="tag off">未处理</span></td><td><a class="btn link">处理</a><a class="btn link">屏蔽</a></td></tr>
+            <tr><td class="mono">09:58</td><td><span class="tag warn">一般</span></td><td>节点 worker-07 内存 &gt; 80%</td><td class="mono">prod-02 / -</td><td><span class="tag warn">处理中</span></td><td><a class="btn link">处理</a><a class="btn link">屏蔽</a></td></tr>
+            <tr><td class="mono">08:47</td><td><span class="tag warn">一般</span></td><td>命名空间 payment 内存配额 84%</td><td class="mono">prod-01 / payment</td><td><span class="tag on">已恢复</span></td><td><a class="btn link">详情</a></td></tr>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ 集群事件 ═══ -->
+    <div class="page" id="page-events">
+      <div class="crumb">租户工作区 / <b>集群事件</b></div>
+      <h1 class="pt">集群事件 <span class="tag">租户 prod</span></h1>
+      <div class="panel">
+        <div class="toolbar">
+          <select class="input"><option>集群：prod-cluster-01</option></select>
+          <select class="input"><option>全部类型</option><option>Normal</option><option>Warning</option></select>
+          <select class="input"><option>全部组件</option><option>kubelet</option><option>scheduler</option><option>controller-manager</option></select>
+          <select class="input"><option>最近 1 小时</option><option>最近 24 小时</option></select>
+          <div class="sp"></div><button class="btn">导出</button>
+        </div>
+        <table>
+          <tr><th style="padding-left:14px;">时间</th><th>类型</th><th>原因</th><th>对象</th><th>组件</th><th>消息</th><th>次数</th></tr>
+          <tr><td class="mono">10:33:40</td><td><span class="tag off">Warning</span></td><td>BackOff</td><td class="mono">Pod/payment-service-7d9f-x2k1p</td><td>kubelet</td><td class="muted">back-off restarting failed container</td><td>14</td></tr>
+          <tr><td class="mono">10:30:12</td><td><span class="tag off">Warning</span></td><td>Failed</td><td class="mono">Pod/payment-service-7d9f-x2k1p</td><td>kubelet</td><td class="muted">OOMKilled（超出 2Gi）</td><td>3</td></tr>
+          <tr><td class="mono">10:28:03</td><td><span class="tag on">Normal</span></td><td>Scheduled</td><td class="mono">Pod/payment-service-7d9f-m0q4z</td><td>default-scheduler</td><td class="muted">successfully assigned to worker-05</td><td>1</td></tr>
+          <tr><td class="mono">09:12:17</td><td><span class="tag on">Normal</span></td><td>ScalingReplicaSet</td><td class="mono">Deployment/api-gateway</td><td>replicaset-controller</td><td class="muted;">Scaled up replica set api-gateway-6c4d to 3</td><td>1</td></tr>
+        </table>
+        <div class="pager"><span class="pg cur">1</span><span class="pg">2</span><span class="pg">›</span><span class="muted">共 342 条（仅保留 24h 内事件）</span></div>
+      </div>
+    </div>
+
+    <!-- ═══ 租户审计 ═══ -->
+    <div class="page" id="page-audit">
+      <div class="crumb">租户工作区 / <b>租户审计</b></div>
+      <h1 class="pt">租户审计日志 <span class="tag">租户 prod</span> <span class="muted" style="font-size:12px;">仅本租户内操作；平台级审计由平台管理员在「全局审计」查看</span></h1>
+      <div class="panel">
+        <div class="toolbar">
+          <input class="input" style="width:130px;" placeholder="用户">
+          <select class="input"><option>全部资源</option><option>Deployment</option><option>Namespace</option><option>ServiceAccount</option><option>ClusterRole</option><option>RoleBinding</option></select>
+          <select class="input"><option>全部动作</option><option>CREATE</option><option>UPDATE</option><option>DELETE</option></select>
+          <input class="input" type="date" value="2026-08-01"><span class="muted">至</span><input class="input" type="date" value="2026-08-24">
+          <div class="sp"></div><button class="btn">导出 CSV</button>
+        </div>
+        <table>
+          <tr><th>时间</th><th>用户</th><th>来源 IP</th><th>资源 / 对象</th><th>动作</th><th>结果</th></tr>
+          <tr><td class="mono">10:34:02</td><td class="mono">zhang.wei</td><td class="mono">203.0.113.8</td><td class="mono">Deployment / payment/payment-service</td><td>SCALE 2→3</td><td><span class="tag on">成功</span></td></tr>
+          <tr><td class="mono">10:19:50</td><td class="mono">guest.ops</td><td class="mono">203.0.113.99</td><td class="mono">Deployment / api/api-gateway</td><td>DELETE</td><td><span class="tag off">拒绝（无权限）</span></td></tr>
+          <tr><td class="mono">09:58:30</td><td class="mono">zhang.wei</td><td class="mono">203.0.113.8</td><td class="mono">ClusterRole / app-readonly</td><td>READ</td><td><span class="tag on">成功</span></td></tr>
+          <tr><td class="mono">09:41:22</td><td class="mono">wang.fang</td><td class="mono">203.0.113.21</td><td class="mono">ConfigMap / payment/pay-db</td><td>UPDATE</td><td><span class="tag on">成功</span></td></tr>
+        </table>
+        <div class="pager"><span class="pg cur">1</span><span class="pg">2</span><span class="pg">3</span><span class="pg">›</span><span class="muted">共 1,204 条</span></div>
+      </div>
+    </div>
+
+    <!-- ═══ 个人中心 ═══ -->
+    <div class="page" id="page-profile">
+      <div class="crumb">系统 / <b>个人中心</b></div>
+      <h1 class="pt">个人中心</h1>
+      <div class="panel">
+        <div class="panel-h">基本资料</div>
+        <div class="panel-b">
+          <div class="row" style="gap:16px;margin-bottom:12px;"><div class="avatar" style="width:52px;height:52px;font-size:18px;">张</div>
+            <div><b>zhang.wei</b> <span class="tag blue">平台管理员</span><span class="tag">prod 租户管理员</span><span class="tag">test 开发者</span>
+            <div class="muted" style="margin-top:4px;">zhang.wei@example.com · 加入平台 2025-11-01</div></div></div>
+          <div class="form-grid" style="max-width:640px;">
+            <div class="form-item"><span class="lbl">显示名</span><input class="input" value="张伟"></div>
+            <div class="form-item"><span class="lbl">邮箱</span><input class="input" value="zhang.wei@example.com" disabled></div>
+          </div>
+          <div style="text-align:right;margin-top:12px;"><button class="btn dark sm">保存</button></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-h">当前访问令牌（platform-auth 签发）</div>
+        <div class="panel-b">
+          <div class="kv">
+            <div>令牌（脱敏）</div><div class="mono">eyJhbGciOiJSUzI1NiJ9.eyJ0ZW5hbnQiOi…••••••••</div>
+            <div>租户声明</div><div class="mono">tenant = prod · serviceAccount = tenant-prod</div>
+            <div>角色声明</div><div class="mono">roles = [平台管理员, 租户管理员]</div>
+            <div>有效期</div><div>38 分钟后过期（60min 自动续期）· 签发于 09:12:03</div>
+            <div>校验方</div><div class="mono">k8s-server 通过 /oauth2/jwks 校验签名，并按 tenant 声明做隔离</div>
+          </div>
+          <div class="row" style="margin-top:12px;">
+            <button class="btn sm" onclick="openModal('m-tenant-switch')">切换租户（重新换票）</button>
+            <button class="btn sm" onclick="openModal('m-confirm')">吊销当前令牌</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-h">安全设置</div>
+        <div class="panel-b">
+          <div class="form-grid" style="max-width:640px;">
+            <div class="form-item"><span class="lbl">修改密码</span>
+              <div class="row"><input class="input" type="password" style="flex:1;" placeholder="新密码"><button class="btn sm">修改</button></div>
+              <span class="muted">上次修改 42 天前 · 90 天后强制更换</span></div>
+            <div class="form-item"><span class="lbl">双因素认证（2FA）</span>
+              <label class="row"><span class="tw"></span><span class="muted">未启用（TOTP 应用）</span></label></div>
+            <div class="form-item"><span class="lbl">登录通知</span>
+              <label class="row"><span class="tw on"></span><span class="muted">异常登录（新 IP）时发送邮箱通知</span></label></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    </div><!-- /main -->
+  </div><!-- /topbar -->
+</div><!-- /frame -->
+
+<!-- ═══════════════════════ 模态框 ═══════════════════════ -->
+
+<!-- 危险操作二次确认 -->
+<div class="modal-mask" id="m-confirm"><div class="modal" style="width:460px;">
+  <div class="modal-h">⚠ 危险操作确认 <span class="x" onclick="closeModal('m-confirm')">✕</span></div>
+  <div class="modal-b">
+    <div class="note warnn">该操作将产生不可逆影响（级联删除 / 权限立即失效），操作人与原因将写入审计日志。请输入密码二次确认：</div>
+    <div class="form-item"><span class="lbl req">密码</span><input class="input" type="password" placeholder="输入当前密码"></div>
+    <div class="form-item" style="margin-top:10px;"><span class="lbl req">操作原因</span><input class="input" placeholder="如：下线 legacy 集群"></div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-confirm')">取消</button><button class="btn dark" onclick="closeModal('m-confirm')">确认执行</button></div>
+</div></div>
+
+<!-- 租户切换（重新换票） -->
+<div class="modal-mask" id="m-tenant-switch"><div class="modal" style="width:460px;">
+  <div class="modal-h">切换租户 <span class="x" onclick="closeModal('m-tenant-switch')">✕</span></div>
+  <div class="modal-b">
+    <div class="note">即将切换到 <b>测试租户（test）</b>。系统会调用 platform-auth 重新授权并换取新令牌（tenant=test），当前 prod 令牌立即吊销，页面将刷新。</div>
+    <div class="kv">
+      <div>当前租户</div><div class="mono">prod · 角色：租户管理员</div>
+      <div>目标租户</div><div class="mono">test · 角色：开发者</div>
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-tenant-switch')">取消</button><button class="btn dark" onclick="closeModal('m-tenant-switch')">确认切换并换票</button></div>
+</div></div>
+
+<!-- 创建/编辑租户 -->
+<div class="modal-mask" id="m-tenant"><div class="modal">
+  <div class="modal-h">创建租户 <span class="x" onclick="closeModal('m-tenant')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">租户名称</span><input class="input" placeholder="如 计费租户"></div>
+      <div class="form-item"><span class="lbl req">所属集群（唯一）</span><select class="input"><option>prod-cluster-01（v1.29.4）</option><option>test-cluster-01（v1.28.9，已有 2 租户共享）</option></select></div>
+      <div class="form-item"><span class="lbl req">租户标识（ServiceAccount）</span><input class="input" value="tenant-billing"><span class="muted">自动生成可修改；写入 token 声明并作为集群内身份</span></div>
+      <div class="form-item"><span class="lbl req">管理员账号</span><input class="input" placeholder="已存在的平台用户名"></div>
+      <div class="form-item full"><span class="lbl req">关联命名空间（platform_tenant_namespace）</span>
+        <label class="row" style="margin-bottom:6px;"><span class="tw on"></span> 自动创建同名命名空间 billing 并关联（推荐）</label>
+        <div class="muted">或勾选该集群中已有且未被其他租户关联的命名空间：</div>
+        <div class="row" style="gap:14px;color:#555;">
+          <label><span class="tw"></span> api（已被 prod 关联，不可选）</label>
+          <label><span class="tw"></span> payment（已被 prod 关联，不可选）</label>
+          <label><span class="tw"></span> scratch（空闲）</label>
+        </div></div>
+      <div class="form-item"><span class="lbl">初始状态</span><select class="input"><option>启用</option><option>停用</option></select></div>
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-tenant')">取消</button><button class="btn dark" onclick="closeModal('m-tenant')">创建</button></div>
+</div></div>
+
+<!-- 租户配额 -->
+<div class="modal-mask" id="m-tenant-quota"><div class="modal" style="width:480px;">
+  <div class="modal-h">编辑租户配额（prod） <span class="x" onclick="closeModal('m-tenant-quota')">✕</span></div>
+  <div class="modal-b">
+    <table>
+      <tr><th>配额项</th><th>当前</th><th>调整为</th></tr>
+      <tr><td>CPU（核）</td><td class="mono">64（已用 34）</td><td><input class="input" value="64" style="width:90px;"></td></tr>
+      <tr><td>内存（GiB）</td><td class="mono">640（已用 512）</td><td><input class="input" value="800" style="width:90px;"></td></tr>
+      <tr><td>Pod 总数</td><td class="mono">600（已用 132）</td><td><input class="input" value="600" style="width:90px;"></td></tr>
+      <tr><td>Service 总数</td><td class="mono">250（已用 38）</td><td><input class="input" value="250" style="width:90px;"></td></tr>
+    </table>
+    <div class="note" style="margin-top:10px;">调小不得超过已用量；调整即时生效并记录审计。</div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-tenant-quota')">取消</button><button class="btn dark" onclick="closeModal('m-tenant-quota')">保存</button></div>
+</div></div>
+
+<!-- 关联命名空间 -->
+<div class="modal-mask" id="m-ns-bind"><div class="modal" style="width:500px;">
+  <div class="modal-h">关联命名空间（租户 prod） <span class="x" onclick="closeModal('m-ns-bind')">✕</span></div>
+  <div class="modal-b">
+    <div class="note">集群固定为租户所属集群：<b>prod-cluster-01</b>。关联后本租户全部成员可访问该命名空间内资源，k8s-server 按请求校验（hasNamespaceAccess）。</div>
+    <div class="form-item" style="margin-bottom:12px;"><span class="lbl">方式</span>
+      <select class="input"><option>新建命名空间并关联</option><option>关联已有命名空间</option></select></div>
+    <div class="form-item" style="margin-bottom:12px;"><span class="lbl req">命名空间名称</span><input class="input" placeholder="如 billing（新建）或从下拉选择已有"></div>
+    <div class="note warnn">关联已有命名空间时，需确认其未被其他租户关联——一个命名空间同一时间只能属于一个租户。</div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-ns-bind')">取消</button><button class="btn dark" onclick="closeModal('m-ns-bind')">关联</button></div>
+</div></div>
+
+<!-- 创建用户 -->
+<div class="modal-mask" id="m-user"><div class="modal">
+  <div class="modal-h">创建用户 <span class="x" onclick="closeModal('m-user')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">用户名</span><input class="input" placeholder="如 li.wei"></div>
+      <div class="form-item"><span class="lbl req">邮箱</span><input class="input" placeholder="li.wei@example.com"></div>
+      <div class="form-item"><span class="lbl req">所属租户</span>
+        <div class="row" style="gap:12px;color:#555;">
+          <label><span class="tw on"></span> prod</label>
+          <label><span class="tw"></span> test</label>
+          <label><span class="tw"></span> dev</label>
+        </div></div>
+      <div class="form-item"><span class="lbl req">初始密码</span><input class="input" type="password" placeholder="首次登录强制修改"><span class="muted">8 位以上，含大小写与数字</span></div>
+      <div class="form-item full"><span class="lbl req">平台角色</span>
+        <div class="row" style="gap:12px;color:#555;">
+          <label><span class="tw"></span> 平台管理员</label>
+          <label><span class="tw"></span> 租户管理员</label>
+          <label><span class="tw on"></span> 开发者</label>
+          <label><span class="tw"></span> 审计员</label>
+          <label><span class="tw"></span> 只读</label>
+        </div>
+        <span class="muted">租户管理员/开发者角色在「租户详情 → 成员」中按租户分配</span></div>
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-user')">取消</button><button class="btn dark" onclick="closeModal('m-user')">创建</button></div>
+</div></div>
+
+<!-- 分配角色 -->
+<div class="modal-mask" id="m-user-roles"><div class="modal" style="width:460px;">
+  <div class="modal-h">为用户 <span class="mono">zhang.wei</span> 分配角色 <span class="x" onclick="closeModal('m-user-roles')">✕</span></div>
+  <div class="modal-b">
+    <div class="lbl" style="font-weight:600;margin-bottom:6px;">平台角色</div>
+    <table>
+      <tr><th style="width:36px;"></th><th>角色</th><th>说明</th></tr>
+      <tr><td><span class="tw on"></span></td><td>平台管理员</td><td class="muted">平台管理全部菜单与接口</td></tr>
+      <tr><td><span class="tw on"></span></td><td>租户管理员</td><td class="muted">租户内成员 + 资源全权</td></tr>
+      <tr><td><span class="tw"></span></td><td>审计员</td><td class="muted">仅审计/日志只读</td></tr>
+    </table>
+    <div class="lbl" style="font-weight:600;margin:12px 0 6px;">租户内角色（按租户）</div>
+    <table>
+      <tr><th>租户</th><th>角色</th></tr>
+      <tr><td class="mono">prod</td><td><select class="input"><option>租户管理员</option><option>开发者</option><option>只读</option></select></td></tr>
+      <tr><td class="mono">test</td><td><select class="input"><option>开发者</option><option>租户管理员</option><option>只读</option></select></td></tr>
+    </table>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-user-roles')">取消</button><button class="btn dark" onclick="closeModal('m-user-roles')">保存（即时生效）</button></div>
+</div></div>
+
+<!-- 新建角色 -->
+<div class="modal-mask" id="m-role"><div class="modal" style="width:440px;">
+  <div class="modal-h">新建自定义角色 <span class="x" onclick="closeModal('m-role')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-item" style="margin-bottom:12px;"><span class="lbl req">角色名称</span><input class="input" placeholder="如 发布值班"></div>
+    <div class="form-item"><span class="lbl">描述</span><textarea class="input" style="min-height:60px;"></textarea></div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-role')">取消</button><button class="btn dark" onclick="closeModal('m-role')">创建并配置权限</button></div>
+</div></div>
+
+<!-- 保存角色权限确认 -->
+<div class="modal-mask" id="m-role-save"><div class="modal" style="width:440px;">
+  <div class="modal-h">确认修改角色权限 <span class="x" onclick="closeModal('m-role-save')">✕</span></div>
+  <div class="modal-b"><div class="note">本次共变更 3 项权限（新增 2、移除 1）。保存后对 3 名持有者即时生效（其令牌 roles 声明下次换票更新；已签发令牌按宽限策略 5 分钟内生效），变更写入审计日志。</div>
+    <table>
+      <tr><th>权限</th><th>变更</th></tr>
+      <tr><td class="mono">cluster:read</td><td><span class="tag on">新增</span></td></tr>
+      <tr><td class="mono">alert:manage</td><td><span class="tag on">新增</span></td></tr>
+      <tr><td class="mono">storage:write</td><td><span class="tag off">移除</span></td></tr>
+    </table>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-role-save')">取消</button><button class="btn dark" onclick="closeModal('m-role-save')">确认保存</button></div>
+</div></div>
+
+<!-- 注册 OAuth2 应用 -->
+<div class="modal-mask" id="m-oauth"><div class="modal wide">
+  <div class="modal-h">注册 OAuth2 应用 <span class="x" onclick="closeModal('m-oauth')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">应用名称</span><input class="input" placeholder="如 Web 控制台"></div>
+      <div class="form-item"><span class="lbl req">Client ID</span><input class="input" placeholder="如 web-console"></div>
+      <div class="form-item full"><span class="lbl req">授权模式（Grant Types）</span>
+        <div class="row" style="gap:14px;color:#555;">
+          <label><span class="tw on"></span> Authorization Code</label>
+          <label><span class="tw"></span> Client Credentials</label>
+          <label><span class="tw"></span> PKCE</label>
+          <label><span class="tw on"></span> Refresh Token</label>
+        </div></div>
+      <div class="form-item full"><span class="lbl req">重定向 URI（每行一个，精确匹配）</span>
+        <textarea class="input" style="min-height:70px;" placeholder="https://console.example.com/login/oauth2/code/idp"></textarea></div>
+      <div class="form-item"><span class="lbl">Scopes</span>
+        <select class="input" multiple size="3" style="height:auto;"><option selected>openid</option><option selected>profile</option><option selected>tenant.read</option><option>email</option></select></div>
+      <div class="form-item"><span class="lbl">状态</span><select class="input"><option>启用</option><option>禁用</option></select></div>
+    </div>
+    <div class="note" style="margin-top:12px;">保存后生成 Client Secret，仅展示一次；支持随时「轮换 Secret」。令牌默认包含 tenant / roles 声明。</div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-oauth')">取消</button><button class="btn dark" onclick="closeModal('m-oauth')">注册</button></div>
+</div></div>
+
+<!-- 创建命名空间 -->
+<div class="modal-mask" id="m-ns"><div class="modal" style="width:500px;">
+  <div class="modal-h">创建命名空间 <span class="x" onclick="closeModal('m-ns')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-item" style="margin-bottom:12px;"><span class="lbl req">所属集群（由租户固定）</span><input class="input dis" value="prod-cluster-01" disabled></div>
+    <div class="form-item" style="margin-bottom:12px;"><span class="lbl req">名称</span><input class="input" placeholder="如 billing"></div>
+    <div class="lbl" style="font-weight:600;margin-bottom:8px;">配额（ResourceQuota，创建后自动写入关联表）</div>
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl">CPU（核）</span><input class="input" value="8"><span class="muted">不得超过集群可用容量</span></div>
+      <div class="form-item"><span class="lbl">内存（GiB）</span><input class="input" value="16"><span class="muted">不得超过集群可用容量</span></div>
+      <div class="form-item"><span class="lbl">Pod 数</span><input class="input" value="100"></div>
+      <div class="form-item"><span class="lbl">默认限制（LimitRange）</span><input class="input" value="单 Pod 最大 4 核 / 8Gi"><span class="muted">防止单 Pod 独占配额</span></div>
+    </div>
+    <div class="form-item" style="margin-top:12px;"><span class="lbl">标签</span>
+      <table><tr><th style="width:35%;">Key</th><th>Value</th><th></th></tr>
+      <tr><td class="mono">env</td><td class="mono">prod</td><td><a class="btn link danger">删除</a></td></tr>
+      <tr><td colspan="3"><a class="btn link">＋ 添加标签</a></td></tr></table></div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-ns')">取消</button><button class="btn dark" onclick="closeModal('m-ns')">创建</button></div>
+</div></div>
+
+<!-- 扩缩容 -->
+<div class="modal-mask" id="m-scale"><div class="modal" style="width:420px;">
+  <div class="modal-h">扩缩容 <span class="mono">payment-service</span> <span class="x" onclick="closeModal('m-scale')">✕</span></div>
+  <div class="modal-b">
+    <div class="note">当前副本 1 / 期望 3。滚动策略 maxSurge 25% / maxUnavailable 10%。</div>
+    <div class="form-item"><span class="lbl req">目标副本数</span>
+      <div class="row"><input class="input" value="3" style="width:90px;">
+        <button class="btn sm">− 1</button><button class="btn sm">＋ 1</button>
+        <button class="btn sm">× 2</button></div>
+      <span class="muted">范围 0 ~ 配额允许（本命名空间最多 100 Pod）</span></div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-scale')">取消</button><button class="btn dark" onclick="closeModal('m-scale')">应用</button></div>
+</div></div>
+
+<!-- 创建 Service -->
+<div class="modal-mask" id="m-svc"><div class="modal wide">
+  <div class="modal-h">创建 Service <span class="x" onclick="closeModal('m-svc')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">集群</span><select class="input"><option>prod-cluster-01</option></select></div>
+      <div class="form-item"><span class="lbl req">命名空间</span><select class="input"><option>payment</option></select></div>
+      <div class="form-item"><span class="lbl req">名称</span><input class="input" placeholder="如 payment-svc"></div>
+      <div class="form-item"><span class="lbl req">类型</span>
+        <select class="input"><option>ClusterIP</option><option>NodePort</option><option>LoadBalancer</option></select></div>
+    </div>
+    <div class="lbl" style="font-weight:600;margin:14px 0 8px;">端口映射</div>
+    <table>
+      <tr><th>服务端口</th><th>协议</th><th>目标端口</th><th>NodePort</th><th></th></tr>
+      <tr><td><input class="input" value="8080" style="width:90px;"></td>
+        <td><select class="input"><option>TCP</option><option>UDP</option></select></td>
+        <td><input class="input" value="8080" style="width:90px;"></td>
+        <td class="muted">（NodePort 类型时分配）</td><td><a class="btn link danger">删除</a></td></tr>
+      <tr><td colspan="5"><a class="btn link">＋ 添加端口</a></td></tr>
+    </table>
+    <div class="lbl" style="font-weight:600;margin:14px 0 8px;">选择器（Selector）</div>
+    <table>
+      <tr><th style="width:35%;">Key</th><th>Value</th><th></th></tr>
+      <tr><td class="mono">app</td><td class="mono">payment-service</td><td><a class="btn link danger">删除</a></td></tr>
+      <tr><td colspan="3"><a class="btn link">＋ 添加</a></td></tr>
+    </table>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-svc')">取消</button><button class="btn dark" onclick="closeModal('m-svc')">创建</button></div>
+</div></div>
+
+<!-- 创建 Ingress -->
+<div class="modal-mask" id="m-ing"><div class="modal wide">
+  <div class="modal-h">创建 Ingress <span class="x" onclick="closeModal('m-ing')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">集群 / 命名空间</span>
+        <div class="row"><select class="input" style="flex:1;"><option>prod-cluster-01</option></select><select class="input" style="flex:1;"><option>api</option></select></div></div>
+      <div class="form-item"><span class="lbl req">名称</span><input class="input" placeholder="如 api-ingress"></div>
+      <div class="form-item"><span class="lbl req">IngressClass</span><select class="input"><option>nginx</option></select></div>
+      <div class="form-item"><span class="lbl">TLS</span>
+        <label class="row"><span class="tw"></span><span class="muted">启用后选择证书 Secret</span></label></div>
+    </div>
+    <div class="lbl" style="font-weight:600;margin:14px 0 8px;">路由规则</div>
+    <table>
+      <tr><th>主机</th><th>路径</th><th>后端 Service</th><th>端口</th><th></th></tr>
+      <tr><td><input class="input" placeholder="api.example.com" style="width:170px;"></td>
+        <td><input class="input" value="/" style="width:90px;"></td>
+        <td><select class="input"><option>api-gateway-svc</option></select></td>
+        <td><input class="input" value="80" style="width:70px;"></td>
+        <td><a class="btn link danger">删除</a></td></tr>
+      <tr><td colspan="5"><a class="btn link">＋ 添加规则</a></td></tr>
+    </table>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-ing')">取消</button><button class="btn dark" onclick="closeModal('m-ing')">创建</button></div>
+</div></div>
+
+<!-- 创建 ConfigMap / Secret -->
+<div class="modal-mask" id="m-cm"><div class="modal wide">
+  <div class="modal-h">创建 ConfigMap <span class="x" onclick="closeModal('m-cm')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">集群</span><select class="input"><option>prod-cluster-01</option></select></div>
+      <div class="form-item"><span class="lbl req">命名空间</span><select class="input"><option>payment</option></select></div>
+      <div class="form-item"><span class="lbl req">名称</span><input class="input" placeholder="如 pay-db"></div>
+      <div class="form-item"><span class="lbl">类型</span><select class="input"><option>ConfigMap</option><option>Secret（Opaque / tls / docker-registry）</option></select></div>
+    </div>
+    <div class="lbl" style="font-weight:600;margin:14px 0 8px;">键值对（Key-Value）</div>
+    <table>
+      <tr><th>Key</th><th>Value</th><th></th></tr>
+      <tr><td><input class="input" value="url" style="width:160px;"></td><td><input class="input" value="jdbc:mysql://10.10.0.5:3306/pay" style="flex:1;"></td><td><a class="btn link danger">删除</a></td></tr>
+      <tr><td><input class="input" value="pool-size" style="width:160px;"></td><td><input class="input" value="20" style="flex:1;"></td><td><a class="btn link danger">删除</a></td></tr>
+      <tr><td colspan="3"><a class="btn link">＋ 添加</a></td></tr>
+    </table>
+    <div class="note" style="margin-top:10px;">也可切换「从 YAML 导入」模式。</div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-cm')">取消</button><button class="btn dark" onclick="closeModal('m-cm')">创建</button></div>
+</div></div>
+
+<!-- 创建 ServiceAccount -->
+<div class="modal-mask" id="m-sa"><div class="modal">
+  <div class="modal-h">创建 ServiceAccount <span class="x" onclick="closeModal('m-sa')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">集群</span><select class="input"><option>prod-cluster-01</option></select></div>
+      <div class="form-item"><span class="lbl req">命名空间</span><select class="input"><option>payment</option></select></div>
+      <div class="form-item"><span class="lbl req">名称</span><input class="input" placeholder="如 app-runner"></div>
+      <div class="form-item"><span class="lbl">创建后自动绑定</span>
+        <select class="input"><option>&lt;暂不绑定&gt;</option><option>ClusterRole / app-readonly</option><option>ClusterRole / app-admin</option></select></div>
+    </div>
+    <div class="note" style="margin-top:12px;">创建后可「生成 Token」用于本地调试（等价 kubectl create token，默认 1 小时有效）。</div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-sa')">取消</button><button class="btn dark" onclick="closeModal('m-sa')">创建</button></div>
+</div></div>
+
+<!-- 创建 ClusterRole -->
+<div class="modal-mask" id="m-cr"><div class="modal wide">
+  <div class="modal-h">创建 ClusterRole <span class="x" onclick="closeModal('m-cr')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid" style="grid-template-columns:1fr 2fr;">
+      <div class="form-item"><span class="lbl req">集群</span><select class="input"><option>prod-cluster-01</option></select></div>
+      <div class="form-item"><span class="lbl req">名称</span><input class="input" placeholder="如 app-readonly"></div>
+    </div>
+    <div class="lbl" style="margin:14px 0 8px;font-weight:600;">权限规则（Rules）</div>
+    <table>
+      <tr><th>API 组</th><th>资源</th><th>verbs</th><th></th></tr>
+      <tr>
+        <td><select class="input"><option>""（核心）</option><option>apps</option><option>networking.k8s.io</option></select></td>
+        <td><input class="input" style="width:180px;" value="pods, configmaps"></td>
+        <td><span class="tag on">get</span><span class="tag on">list</span><span class="tag on">watch</span> <span class="muted">＋ verb</span></td>
+        <td><a class="btn link danger">删除</a></td>
+      </tr>
+      <tr>
+        <td><select class="input"><option>""（核心）</option><option>apps</option></select></td>
+        <td><input class="input" style="width:180px;" value="deployments"></td>
+        <td><span class="tag on">get</span><span class="tag on">list</span> <span class="muted">＋ verb</span></td>
+        <td><a class="btn link danger">删除</a></td>
+      </tr>
+      <tr><td colspan="4"><a class="btn link">＋ 添加规则</a></td></tr>
+    </table>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-cr')">取消</button><button class="btn dark" onclick="closeModal('m-cr')">创建</button></div>
+</div></div>
+
+<!-- 创建 RoleBinding -->
+<div class="modal-mask" id="m-rb"><div class="modal wide">
+  <div class="modal-h">创建 RoleBinding <span class="x" onclick="closeModal('m-rb')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">集群</span><select class="input"><option>prod-cluster-01</option></select></div>
+      <div class="form-item"><span class="lbl req">命名空间</span><select class="input"><option>payment</option></select></div>
+      <div class="form-item"><span class="lbl req">名称</span><input class="input" placeholder="如 pay-runner-binding"></div>
+      <div class="form-item"><span class="lbl req">RoleRef</span>
+        <select class="input"><option>ClusterRole / app-readonly</option><option>ClusterRole / app-admin</option><option>ClusterRole / view</option></select></div>
+    </div>
+    <div class="lbl" style="margin:14px 0 8px;font-weight:600;">主体（Subjects）</div>
+    <table>
+      <tr><th>类型</th><th>名称</th><th>命名空间</th><th></th></tr>
+      <tr>
+        <td><select class="input"><option>ServiceAccount</option></select></td>
+        <td><input class="input" style="width:180px;" value="app-runner"></td>
+        <td><input class="input" style="width:140px;" value="payment"></td>
+        <td><a class="btn link danger">删除</a></td>
+      </tr>
+      <tr><td colspan="4"><a class="btn link">＋ 添加主体</a></td></tr>
+    </table>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-rb')">取消</button><button class="btn dark" onclick="closeModal('m-rb')">创建</button></div>
+</div></div>
+
+<!-- 新建告警规则 -->
+<div class="modal-mask" id="m-rule"><div class="modal wide">
+  <div class="modal-h">新建告警规则 <span class="x" onclick="closeModal('m-rule')">✕</span></div>
+  <div class="modal-b">
+    <div class="form-grid">
+      <div class="form-item"><span class="lbl req">规则名称</span><input class="input" placeholder="如 Pod 副本不足"></div>
+      <div class="form-item"><span class="lbl req">级别</span><select class="input"><option>严重</option><option>一般</option><option>提示</option></select></div>
+      <div class="form-item"><span class="lbl req">指标</span><select class="input"><option>ready_replicas</option><option>node_memory_util</option><option>quota_util</option></select></div>
+      <div class="form-item"><span class="lbl req">条件</span>
+        <div class="row"><select class="input" style="width:80px;"><option>&lt;</option><option>&gt;</option></select><input class="input" value="1" style="width:70px;"><span class="muted">持续</span><input class="input" value="3" style="width:60px;"><span class="muted">分钟</span></div></div>
+      <div class="form-item full"><span class="lbl req">通知渠道</span>
+        <div class="row" style="gap:14px;color:#555;">
+          <label><span class="tw on"></span> 站内信</label>
+          <label><span class="tw on"></span> 邮件</label>
+          <label><span class="tw"></span> Webhook</label>
+        </div></div>
+      <div class="form-item full"><span class="lbl">生效范围</span><select class="input" style="width:240px;"><option>本租户全部集群</option><option>prod-cluster-01</option><option>prod-cluster-02</option></select></div>
+    </div>
+  </div>
+  <div class="modal-f"><button class="btn" onclick="closeModal('m-rule')">取消</button><button class="btn dark" onclick="closeModal('m-rule')">保存</button></div>
+</div></div>
+
+<div class="legend">📐 K8s 云平台 · 产品原型 v2 · 登录入口 platform-auth（token 含 tenant 声明）· k8s-server 多版本代理 · 点击左侧导航切换页面</div>
+
+<script>
+  var framePages = ['platform-dashboard','tenant-dashboard','clusters','cluster-add','cluster-detail','tenants','tenant-detail','users','user-detail','roles','oauth2','audit-global','namespaces','deployments','deployment-new','deployment-detail','services','ingresses','configmaps','storage','rbac','monitoring','events','audit','profile','consent'];
+  function go(p){
+    document.getElementById('page-login').classList.remove('active');
+    document.getElementById('page-tenant-select').classList.remove('active');
+    document.getElementById('frame').classList.add('active');
+    document.querySelectorAll('#frame .page').forEach(function(e){e.classList.remove('active');});
+    var el = document.getElementById('page-'+p);
+    if(el) el.classList.add('active');
+    document.querySelectorAll('#nav .item').forEach(function(e){e.classList.toggle('cur', e.dataset.p===p);});
+    window.scrollTo(0,0);
+  }
+  function toTenantSelect(){
+    document.getElementById('page-login').classList.remove('active');
+    document.getElementById('page-tenant-select').classList.add('active');
+  }
+  function backLogin(){
+    document.getElementById('page-tenant-select').classList.remove('active');
+    document.getElementById('page-login').classList.add('active');
+  }
+  function enterPlatform(which){
+    document.getElementById('page-tenant-select').classList.remove('active');
+    document.getElementById('frame').classList.add('active');
+    if(which==='platform'){ document.getElementById('roleSel').value='admin'; switchRole('admin'); go('platform-dashboard'); }
+    else { document.getElementById('roleSel').value='dev'; switchRole('dev'); go('tenant-dashboard'); }
+  }
+  function switchRole(r){
+    var isPlat = r==='admin';
+    document.querySelectorAll('.np').forEach(function(e){ e.classList.toggle('hide', !isPlat); });
+    // 开发者进入时若当前页是平台页，跳到租户总览
+    if(!isPlat){
+      var cur = document.querySelector('#nav .item.cur');
+      if(cur && cur.classList.contains('np')) go('tenant-dashboard');
+    }
+  }
+  function switchTenant(){ openModal('m-tenant-switch'); }
+  function openModal(id){ document.getElementById(id).classList.add('show'); }
+  function closeModal(id){ document.getElementById(id).classList.remove('show'); }
+  document.querySelectorAll('.modal-mask').forEach(function(m){
+    m.addEventListener('click', function(e){ if(e.target===m) m.classList.remove('show'); });
+  });
+  function tab(el){
+    var bar = el.parentElement;
+    bar.querySelectorAll('.tab').forEach(function(t){t.classList.remove('cur');});
+    el.classList.add('cur');
+    var idx = Array.prototype.indexOf.call(bar.children, el);
+    bar.parentElement.querySelectorAll(':scope > .tabpane').forEach(function(p,i){p.classList.toggle('cur', i===idx);});
+  }
+  document.querySelectorAll('.tabs').forEach(function(bar){
+    bar.addEventListener('click', function(e){
+      var t = e.target.closest('.tab');
+      if(t) tab(t);
+    });
+  });
+  document.getElementById('nav').addEventListener('click', function(ev){
+    var item = ev.target.closest('.item');
+    if(item) go(item.dataset.p);
+  });
+  // 初始：平台管理员视角
+  switchRole('admin');
+</script>
+</body>
+</html>

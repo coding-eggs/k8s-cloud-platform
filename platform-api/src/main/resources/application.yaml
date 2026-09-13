@@ -9,6 +9,11 @@ k8s:
     kubeconfig:
       aes-key: ${KUBECONFIG_AES_KEY:daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=}
 
+thanos:
+  # Thanos Query（全局单端点、无鉴权）；各集群 Prometheus remote_write 汇入并统一打 cluster_name 标签
+  query:
+    url: ${THANOS_QUERY_URL:http://192.168.31.80:19090}
+
 # MyBatis 配置
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml

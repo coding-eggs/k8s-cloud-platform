@@ -20,11 +20,22 @@ public class PodDTO extends BaseResources {
 
     private String podIp;
 
+    /** ServiceAccount 名称（spec.serviceAccountName，缺省 default） */
+    private String serviceAccountName;
+
+    private String hostIp;
+
     /** 容器重启次数合计 */
     private Integer restarts;
 
     /** 容器名列表 */
     private List<String> containers;
+
+    /** 容器详情（spec + status 合并，供详情页展示；常规容器在前、初始化容器在后） */
+    private List<PodContainerDTO> containerDetails;
+
+    /** 状态原因（非就绪/失败时的说明，来自 pod.status.conditions + 容器 waiting/terminated；健康时为空） */
+    private String statusReason;
 
     /** 创建时间（仅查询返回，ISO-8601 字符串） */
     private String creationTime;

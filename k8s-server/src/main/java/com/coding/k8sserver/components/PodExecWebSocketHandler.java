@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.client.dsl.ExecWatch;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.socket.CloseStatus;
@@ -19,15 +20,12 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.PipedInputStream;
-import java.io.PipedOutputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -46,18 +44,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class PodExecWebSocketHandler extends TextWebSocketHandler {
 
+    /**握手期由 {@code HandshakeInterceptor} 存入 session attributes 的认证身份。
+     * afterConnectionEstablished 跑在 WS worker 线程、thread-local SecurityContext 为空，只能从这里取。 */
+    public static final String ATTR_AUTH = "k8s.exec.auth";
+
     private final KubernetesClientFactory clientFactory;
     private final ResourceAccessResolver accessResolver;
     private final JsonMapper jsonMapper;
 
-    /**stdin 写入独立线程池：管道缓冲满时不阻塞 WS 消息线程 */
-    private final ExecutorService stdinExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "pod-exec-stdin");
-        t.setDaemon(true);
-        return t;
-    });
-
-    private record ExecState(ExecWatch watch, PipedOutputStream stdin, AtomicBoolean closed) {
+    private record ExecState(ExecWatch watch, StdinStream stdin, AtomicBoolean closed) {
     }
 
     private final Map<String, ExecState> states = new HashMap<>();
@@ -82,28 +77,31 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler {
             cols = parseInt(q.get("cols"), 80);
             rows = parseInt(q.get("rows"), 24);
 
-            AccessContext ctx = accessResolver.resolveNamespacedAccess(tenantId, clusterId, namespace);
+            Authentication auth = (Authentication) session.getAttributes().get(ATTR_AUTH);
+            AccessContext ctx = accessResolver.resolveNamespacedAccess(auth, tenantId, clusterId, namespace);
 
             KubernetesClient client = ctx.adminMode()
                     ? clientFactory.getAdminClient(clusterId)
                     : clientFactory.getTenantClient(clusterId, ctx.tenantId());
-            var pod = client.pods().inNamespace(namespace).withName(name);
-            if (StringUtils.hasText(container)) {
-                pod.inContainer(container);
-            }
+            var pod = client.pods().inNamespace(namespace).withName(name)
+                    .inContainer(container);
 
-            PipedInputStream stdinIn = new PipedInputStream(8192);
-            PipedOutputStream stdinOut = new PipedOutputStream(stdinIn);
+            StdinStream stdin = new StdinStream();
             AtomicBoolean closed = new AtomicBoolean(false);
             OutputStream sink = new WsSink(session, closed);
 
-            ExecWatch watch = pod.readingInput(stdinIn)
+            //优先 bash（交互体验更好、常读 .bashrc 落到应用目录），容器没有则退回 sh。
+            //用 sh -c 探测后 exec 替换成目标 shell：exec 使目标 shell 成为前台进程，
+            //TTY/信号/退出码照常透传；落地目录仍由容器 shell rc 决定（与 kubectl 直接进 bash 一致）。
+            String shellCmd = "if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi";
+
+            ExecWatch watch = pod.readingInput(stdin)
                     .writingOutput(sink)
                     .writingError(sink)
                     .withTTY()
-                    .exec("sh");
+                    .exec("sh", "-c", shellCmd);
 
-            states.put(session.getId(), new ExecState(watch, stdinOut, closed));
+            states.put(session.getId(), new ExecState(watch, stdin, closed));
             if (cols > 0 && rows > 0) {
                 watch.resize(cols, rows);
             }
@@ -135,16 +133,8 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler {
                 case "input" -> {
                     byte[] bytes = node.path("data").asText("").getBytes(StandardCharsets.UTF_8);
                     if (bytes.length > 0) {
-                        PipedOutputStream stdin = state.stdin();
-                        stdinExecutor.submit(() -> {
-                            try {
-                                synchronized (stdin) {
-                                    stdin.write(bytes);
-                                }
-                            } catch (IOException e) {
-                                //进程已退出/管道关闭：忽略
-                            }
-                        });
+                        //StdinStream.writeBytes 非阻塞（内部加锁追加缓冲），直接在 WS 消息线程写即可
+                        state.stdin().writeBytes(bytes);
                     }
                 }
                 case "resize" -> {
@@ -179,10 +169,6 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler {
         }
         state.closed().set(true);
         try {
-            state.stdin().close();
-        } catch (IOException ignored) {
-        }
-        try {
             state.watch().close();
         } catch (Exception e) {
             log.debug("exec 关闭异常: {}", e.getMessage());
@@ -192,7 +178,6 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler {
     @PreDestroy
     public void shutdown() {
         states.keySet().forEach(this::cleanup);
-        stdinExecutor.shutdownNow();
     }
 
     // ==================== 消息发送（WebSocketSession 非线程安全，统一加锁） ====================
@@ -223,6 +208,67 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler {
 
         @Override
         public void close() {
+        }
+    }
+
+    /**exec stdin 输入流。fabric8 的 {@code InputStreamPumper} 靠 {@code available()} 每 50ms 轮询取数，
+     * exec 关闭时靠中断 pumper 线程停止（不依赖 EOF）。故只需 {@code available()} 准确返回当前缓冲字节数（非阻塞）、
+     * {@code read} 在 available()>0 时读出缓冲即可。写来自 WS 消息线程、读来自 fabric8 单线程 pumper，用一把锁串行化；
+     * writeBytes 非阻塞，无需独立写入线程。刻意不用 PipedInputStream（fabric8 checkForPiped 会拒绝）。 */
+    private static final class StdinStream extends InputStream {
+        private final Object lock = new Object();
+        private byte[] buf = new byte[8192];
+        private int len;
+
+        /**WS 消息线程追加 stdin 数据（非阻塞） */
+        void writeBytes(byte[] data) {
+            synchronized (lock) {
+                if (len + data.length > buf.length) {
+                    int cap = buf.length;
+                    while (cap < len + data.length) {
+                        cap <<= 1;
+                    }
+                    byte[] grown = new byte[cap];
+                    System.arraycopy(buf, 0, grown, 0, len);
+                    buf = grown;
+                }
+                System.arraycopy(data, 0, buf, len, data.length);
+                len += data.length;
+            }
+        }
+
+        @Override
+        public int available() {
+            synchronized (lock) {
+                return len;
+            }
+        }
+
+        @Override
+        public int read(byte[] b, int off, int length) {
+            synchronized (lock) {
+                if (len == 0) {
+                    return -1; //fabric8 仅在 available()>0 时调用；兜底
+                }
+                int n = Math.min(length, len);
+                System.arraycopy(buf, 0, b, off, n);
+                System.arraycopy(buf, n, buf, 0, len - n);
+                len -= n;
+                return n;
+            }
+        }
+
+        @Override
+        public int read() {
+            synchronized (lock) {
+                if (len == 0) {
+                    return -1;
+                }
+                int b = buf[0] & 0xff;
+                System.arraycopy(buf, 1, buf, 0, len - 1);
+                len -= 1;
+                return b;
+            }
         }
     }
 

@@ -24,7 +24,12 @@ const defaultTemplate = computed(() => templates.value.find((t) => t.builtIn ===
 // 命名空间下拉：集群内已有命名空间（选中集群后拉取）；新名字经 allow-create 手填，提交时仍走命名规范校验
 const nsOptions = ref<string[]>([])
 const nsLoading = ref(false)
-const SYSTEM_NAMESPACES = ['kube-system', 'kube-public', 'kube-node-lease']
+// const SYSTEM_NAMESPACES = [
+//     'kube-system', 'kube-public', 'kube-node-lease'
+// ]
+const SYSTEM_NAMESPACES = [
+    ""
+]
 
 async function loadNsOptions(): Promise<void> {
   if (!form.clusterId) {

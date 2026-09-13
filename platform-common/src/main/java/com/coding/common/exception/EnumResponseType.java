@@ -42,6 +42,8 @@ public enum EnumResponseType {
     K8S_CONNECT_FAILED(10017, "集群连接失败: "),
     INVALID_K8S_NAME(10018, "不符合 K8s 命名规范: "),
     OPERATION_NOT_SUPPORTED(10019, "该资源不支持此操作"),
+    HPA_VERSION_UNSUPPORTED(10020, "该集群不支持 HPA（autoscaling）资源"),
+    HPA_V1_ONLY_CPU(10021, "该集群 HPA 为 autoscaling/v1，仅支持 CPU 利用率指标（不支持内存/其他指标或 behavior）"),
 
     ERROR(5000,"服务端异常"),
 
@@ -65,7 +67,9 @@ public enum EnumResponseType {
 
     OAUTH2_JWS_KEY_LENGTH_INSUFFICIENT(90013, "JWS 对称签名密钥长度不足: "),
 
-    OAUTH2_JWE_KEY_LENGTH_MISMATCH(90014, "JWE 对称加密密钥长度不匹配: ")
+    OAUTH2_JWE_KEY_LENGTH_MISMATCH(90014, "JWE 对称加密密钥长度不匹配: "),
+
+    OAUTH2_CLIENT_TOKEN_TTL_EXCEEDS_SESSION(90015, "Access Token 有效期必须小于会话空闲超时: ")
 
     ;
 

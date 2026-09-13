@@ -1,17 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { serviceApi } from '@/api'
-import type { K8sService, K8sServicePort } from '@/types'
+import type { K8sService } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
+import {MoreFilled, Search} from "@element-plus/icons-vue";
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const router = useRouter()
+const route = useRoute()
+/** 从工作负载详情跳来（?open=）时，首次加载后自动打开对应抽屉 */
+let autoOpened = false
 
 const loading = ref(false)
 const list = ref<K8sService[]>([])
+/** 名称模糊搜索（前端过滤） */
+const keyword = ref('')
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  if (!kw) return list.value
+  return list.value.filter((r) => (r.name ?? '').toLowerCase().includes(kw))
+})
 
 const ctxParams = computed(() => ({
   tenantId: state.tenantId!,
@@ -24,111 +37,23 @@ async function refresh(): Promise<void> {
   loading.value = true
   try {
     list.value = await serviceApi.list(ctxParams.value)
+    // 首次加载后，若带 ?open= 则自动打开对应详情抽屉，并清掉该参数（避免后续刷新重复触发）
+    if (!autoOpened && route.query.open) {
+      autoOpened = true
+      const target = list.value.find((s) => s.name === route.query.open)
+      if (target) await openDetail(target)
+      const q = { ...route.query }
+      delete q.open
+      router.replace({ query: q })
+    }
   } finally {
     loading.value = false
   }
 }
 
-const SERVICE_TYPES = ['ClusterIP', 'NodePort', 'LoadBalancer']
-const PROTOCOLS = ['TCP', 'UDP', 'SCTP']
-
-// ---------- 创建 / 编辑对话框（类型 + 端口行） ----------
-const dialogVisible = ref(false)
-const saving = ref(false)
-const isEdit = ref(false)
-const form = reactive({
-  name: '',
-  type: 'ClusterIP',
-  ports: [] as { name: string; port: number | null; targetPort: string; nodePort: number | null; protocol: string }[],
-})
-
-function newPortRow(): { name: string; port: number | null; targetPort: string; nodePort: number | null; protocol: string } {
-  return { name: '', port: null, targetPort: '', nodePort: null, protocol: 'TCP' }
-}
-
-function openCreate(): void {
-  isEdit.value = false
-  form.name = ''
-  form.type = 'ClusterIP'
-  form.ports = [newPortRow()]
-  dialogVisible.value = true
-}
-
-function openEdit(row: K8sService): void {
-  isEdit.value = true
-  form.name = row.name
-  form.type = row.type || 'ClusterIP'
-  const ports = (row.ports ?? []).map((p) => ({
-    name: p.name ?? '',
-    port: p.port ?? null,
-    targetPort: p.targetPort ?? '',
-    nodePort: p.nodePort ?? null,
-    protocol: p.protocol ?? 'TCP',
-  }))
-  form.ports = ports.length ? ports : [newPortRow()]
-  dialogVisible.value = true
-}
-
-function addPort(): void {
-  form.ports.push(newPortRow())
-}
-
-function removePort(index: number): void {
-  form.ports.splice(index, 1)
-}
-
-const showNodePort = computed(() => form.type === 'NodePort')
-
-async function submit(): Promise<void> {
-  const name = form.name.trim()
-  if (!name) {
-    ElMessage.warning('请输入名称')
-    return
-  }
-  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) {
-    ElMessage.warning('名称需符合 RFC1123：小写字母/数字/-，且以字母或数字开头结尾')
-    return
-  }
-  if (form.ports.length === 0) {
-    ElMessage.warning('至少需要一个端口')
-    return
-  }
-  const ports: K8sServicePort[] = []
-  for (const p of form.ports) {
-    if (!p.port || p.port < 1 || p.port > 65535) {
-      ElMessage.warning('存在非法的 Service 端口（1-65535）')
-      return
-    }
-    if (!p.targetPort.trim()) {
-      ElMessage.warning('每个端口需填写 targetPort（数字或命名端口）')
-      return
-    }
-    ports.push({
-      name: p.name.trim() || null,
-      port: p.port,
-      targetPort: p.targetPort.trim(),
-      nodePort: showNodePort.value ? p.nodePort : null,
-      protocol: p.protocol,
-    })
-  }
-
-  saving.value = true
-  try {
-    const payload = { name, namespace: state.namespace!, type: form.type, ports }
-    if (isEdit.value) {
-      await serviceApi.update(name, { tenantId: state.tenantId!, clusterId: state.clusterId! }, payload)
-      ElMessage.success('已更新')
-    } else {
-      await serviceApi.create({ tenantId: state.tenantId!, clusterId: state.clusterId! }, payload)
-      ElMessage.success('创建成功')
-    }
-    dialogVisible.value = false
-    await refresh()
-  } catch {
-    /* 拦截器已提示 */
-  } finally {
-    saving.value = false
-  }
+// ---------- 跳转编辑器（新建 / 编辑独立页） ----------
+function goEditor(name: string | null): void {
+  router.push(name ? `/resources/services/editor?name=${encodeURIComponent(name)}` : '/resources/services/editor')
 }
 
 // ---------- 删除 ----------
@@ -176,6 +101,48 @@ function portSummary(row: K8sService): string {
     .join('，') || '—'
 }
 
+/** Cluster IP 展示：None=headless（无虚拟 IP）；空=— */
+function clusterIpDisplay(row: K8sService | null): string {
+  if (!row) return '—'
+  if (row.clusterIp === 'None') return 'headless（无虚拟 IP）'
+  return row.clusterIp ?? '—'
+}
+
+/** Service 类型 → tag 颜色 */
+function typeTag(type?: string | null): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
+  switch (type) {
+    case 'NodePort': return 'warning'
+    case 'LoadBalancer': return 'success'
+    case 'ExternalName': return 'danger'
+    default: return 'info' // ClusterIP / 其它
+  }
+}
+
+/** 字符串列表展示：空=—，否则中文逗号连接 */
+function joinList(arr?: string[] | null): string {
+  if (!arr || arr.length === 0) return '—'
+  return arr.join('，')
+}
+
+/** selector → "k=v" chips；无选择器返回空数组 */
+function selectorChips(row: K8sService | null): string[] {
+  const sel = row?.selector
+  if (!sel) return []
+  return Object.entries(sel).map(([k, v]) => `${k}=${v}`)
+}
+
+/** 会话保持展示：ClientIP 时附超时秒数 */
+function sessionAffinityDisplay(row: K8sService | null): string {
+  const a = row?.sessionAffinity || 'None'
+  if (a === 'ClientIP') return `ClientIP（${row?.sessionAffinityTimeoutSeconds ?? 10800}s）`
+  return a
+}
+
+/** 布尔展示：null/undefined 视为否 */
+function yesNo(v?: boolean | null): string {
+  return v ? '是' : '否'
+}
+
 // ---------- 上下文联动：顶栏 chip 变化时刷新 ----------
 onMounted(() => {
   void load()
@@ -196,9 +163,9 @@ const contextDesc = computed(() => {
 
 <template>
   <div>
-    <PageHeader title="Service" :description="contextDesc">
+    <PageHeader title="Service" >
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="openCreate">创建 Service</el-button>
+      <el-button type="primary" :disabled="!ready" @click="goEditor(null)">创建 Service</el-button>
     </PageHeader>
 
     <EmptyState
@@ -208,17 +175,26 @@ const contextDesc = computed(() => {
     />
 
     <div v-else class="panel table-panel">
-      <el-table v-loading="loading || !ready" :data="list" stripe>
-        <el-table-column label="名称" min-width="180">
-          <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
-        </el-table-column>
-        <el-table-column label="类型" width="120">
+      <div class="search-bar">
+        <el-input v-model="keyword" placeholder="按名称搜索…" clearable :prefix-icon="Search" class="search-input" />
+      </div>
+      <el-table v-loading="loading || !ready" :data="filtered" stripe>
+        <el-table-column label="名称" width="300">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ row.type || 'ClusterIP' }}</el-tag>
+            <code class="res-name name-link"  @click="openDetail(row)">{{ row.name }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="Cluster IP" width="140">
-          <template #default="{ row }"><span class="muted">{{ row.clusterIp ?? '—' }}</span></template>
+        <el-table-column label="类型" width="150">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain" :type="typeTag(row.type)">{{ row.type || 'ClusterIP' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Cluster IP" width="200">
+          <template #default="{ row }">
+            <el-tag v-if="row.type === 'ExternalName'" size="small" type="info" effect="plain">{{ row.externalName || '—' }}</el-tag>
+            <el-tag v-else-if="row.clusterIp === 'None'" size="small" type="info" effect="plain">headless</el-tag>
+            <span v-else class="muted">{{ clusterIpDisplay(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="端口" min-width="200">
           <template #default="{ row }"><span class="port-text">{{ portSummary(row) }}</span></template>
@@ -226,57 +202,21 @@ const contextDesc = computed(() => {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column width="64" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">查看</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-dropdown trigger="click">
+              <el-button link type="primary" :icon="MoreFilled" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="goEditor(row.name)">编辑</el-dropdown-item>
+                  <el-dropdown-item divided style="color: var(--el-color-danger)" @click="onDelete(row)">删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
     </div>
-
-    <!-- 创建 / 编辑 -->
-    <el-dialog v-model="dialogVisible" :title="isEdit ? `编辑 Service · ${form.name}` : '创建 Service'" width="720px" top="8vh">
-      <el-form label-width="80px">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" :disabled="isEdit" placeholder="小写字母/数字/-，例如 app-svc" />
-          <div class="form-tip">K8s 资源名创建后不可修改；命名空间 = 当前上下文</div>
-        </el-form-item>
-        <el-form-item label="类型">
-          <el-select v-model="form.type" style="width: 200px">
-            <el-option v-for="t in SERVICE_TYPES" :key="t" :label="t" :value="t" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="端口">
-          <div class="port-editor">
-            <div v-for="(p, idx) in form.ports" :key="idx" class="port-row">
-              <el-input v-model="p.name" placeholder="名称（可空）" class="port-name" />
-              <el-input-number v-model="p.port" :min="1" :max="65535" controls-position="right" placeholder="Port" class="port-num" />
-              <el-input v-model="p.targetPort" placeholder="TargetPort（数字/命名）" class="port-target" />
-              <el-input-number
-                v-if="showNodePort"
-                v-model="p.nodePort"
-                :min="30000"
-                :max="32767"
-                controls-position="right"
-                placeholder="NodePort（可空）"
-                class="port-num"
-              />
-              <el-select v-model="p.protocol" class="port-proto">
-                <el-option v-for="pr in PROTOCOLS" :key="pr" :label="pr" :value="pr" />
-              </el-select>
-              <el-button link type="danger" :disabled="form.ports.length <= 1" @click="removePort(idx)">删除</el-button>
-            </div>
-            <el-button class="add-row-btn" plain @click="addPort">+ 添加端口</el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submit">确定</el-button>
-      </template>
-    </el-dialog>
 
     <!-- 详情 -->
     <el-drawer v-model="drawerVisible" :title="`Service · ${detail?.name ?? ''}`" size="640px">
@@ -284,9 +224,40 @@ const contextDesc = computed(() => {
         <el-tab-pane label="概览" name="info">
           <el-descriptions :column="1" border>
             <el-descriptions-item label="类型">{{ detail?.type || 'ClusterIP' }}</el-descriptions-item>
-            <el-descriptions-item label="Cluster IP">{{ detail?.clusterIp ?? '—' }}</el-descriptions-item>
+            <el-descriptions-item v-if="detail?.type === 'ExternalName'" label="externalName">{{ detail?.externalName || '—' }}</el-descriptions-item>
+            <el-descriptions-item v-else label="Cluster IP">{{ clusterIpDisplay(detail) }}</el-descriptions-item>
             <el-descriptions-item label="创建时间">{{ fmtDate(detail?.creationTime) }}</el-descriptions-item>
           </el-descriptions>
+
+          <!-- selector + 网络 / 流量（非 ExternalName） -->
+          <template v-if="detail?.type !== 'ExternalName'">
+            <div class="section-title">selector</div>
+            <div v-if="selectorChips(detail).length" class="sel-chips">
+              <el-tag v-for="c in selectorChips(detail)" :key="c" size="small" effect="plain" class="sel-chip">{{ c }}</el-tag>
+            </div>
+            <div v-else class="muted">—（端点由外部管理）</div>
+
+            <el-descriptions :column="1" border class="sub-desc">
+              <el-descriptions-item label="externalIPs">{{ joinList(detail?.externalIps) }}</el-descriptions-item>
+              <el-descriptions-item v-if="detail?.ipFamilies?.length" label="ipFamilies / 策略">{{ joinList(detail?.ipFamilies) }} · {{ detail?.ipFamilyPolicy || 'SingleStack' }}</el-descriptions-item>
+              <el-descriptions-item label="internalTrafficPolicy">{{ detail?.internalTrafficPolicy || 'Cluster' }}</el-descriptions-item>
+              <el-descriptions-item v-if="detail?.type === 'NodePort' || detail?.type === 'LoadBalancer'" label="externalTrafficPolicy">{{ detail?.externalTrafficPolicy || 'Cluster' }}</el-descriptions-item>
+              <el-descriptions-item label="sessionAffinity">{{ sessionAffinityDisplay(detail) }}</el-descriptions-item>
+              <el-descriptions-item label="publishNotReadyAddresses">{{ yesNo(detail?.publishNotReadyAddresses) }}</el-descriptions-item>
+            </el-descriptions>
+
+            <!-- LoadBalancer 专属 -->
+            <template v-if="detail?.type === 'LoadBalancer'">
+              <div class="section-title">LoadBalancer</div>
+              <el-descriptions :column="1" border class="sub-desc">
+                <el-descriptions-item label="自动分配 NodePort">{{ yesNo(detail?.allocateLoadBalancerNodePorts ?? true) }}</el-descriptions-item>
+                <el-descriptions-item v-if="detail?.healthCheckNodePort != null" label="healthCheckNodePort">{{ detail?.healthCheckNodePort }}</el-descriptions-item>
+                <el-descriptions-item v-if="detail?.loadBalancerClass" label="loadBalancerClass">{{ detail?.loadBalancerClass }}</el-descriptions-item>
+                <el-descriptions-item v-if="detail?.loadBalancerSourceRanges?.length" label="LB 源 IP 限制">{{ joinList(detail?.loadBalancerSourceRanges) }}</el-descriptions-item>
+              </el-descriptions>
+            </template>
+          </template>
+
           <div class="section-title">端口</div>
           <el-table :data="detail?.ports ?? []" stripe size="small">
             <el-table-column prop="name" label="名称" width="100">
@@ -315,6 +286,12 @@ const contextDesc = computed(() => {
 .table-panel {
   padding: 8px;
 }
+.search-bar {
+  margin-bottom: 10px;
+}
+.search-input {
+  width: 260px;
+}
 .res-name {
   font-family: Consolas, 'JetBrains Mono', monospace;
   font-size: 13px;
@@ -328,44 +305,29 @@ const contextDesc = computed(() => {
 .muted {
   color: var(--text-3);
 }
-.form-tip {
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.port-editor {
-  width: 100%;
-}
-.port-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  align-items: center;
-}
-.port-name {
-  width: 24%;
-  flex-shrink: 0;
-}
-.port-num {
-  width: 130px;
-  flex-shrink: 0;
-}
-.port-target {
-  width: 26%;
-  flex-shrink: 0;
-}
-.port-proto {
-  width: 90px;
-  flex-shrink: 0;
-}
-.add-row-btn {
-  width: 100%;
-}
 .section-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-2);
   margin: 14px 0 8px;
+}
+.sub-desc {
+  margin-top: 8px;
+}
+.sel-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sel-chip {
+  font-family: Consolas, 'JetBrains Mono', monospace;
+}
+.name-link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.name-link:hover {
+  text-decoration: underline;
 }
 .yaml-block {
   margin: 0;

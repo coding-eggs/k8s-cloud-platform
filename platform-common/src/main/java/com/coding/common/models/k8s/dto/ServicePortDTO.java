@@ -23,4 +23,7 @@ public class ServicePortDTO {
     /** 协议，缺省 TCP */
     private String protocol = "TCP";
 
+    /** 应用层协议（如 http/grpc）：spec.ports 为 atomic list，须建模透传否则外部设的值在保存时被抹掉；UI 不编辑 */
+    private String appProtocol;
+
 }

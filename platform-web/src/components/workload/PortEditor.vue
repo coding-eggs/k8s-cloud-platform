@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { watch } from 'vue'
 import type { ContainerPort } from '@/types/workload'
+import { ensureModelList } from './modelList'
 const model = defineModel<ContainerPort[]>()
 const PROTOCOLS = ['TCP', 'UDP', 'SCTP']
 
@@ -8,7 +9,7 @@ const PROTOCOLS = ['TCP', 'UDP', 'SCTP']
 function blankPort(): ContainerPort { return { containerPort: null, protocol: 'TCP', name: '' } }
 watch(model, (v) => { if (!v || v.length === 0) model.value = [blankPort()] }, { immediate: true })
 
-function add(): void { model.value ??= []; model.value.push(blankPort()) }
+function add(): void { ensureModelList(model).push(blankPort()) }
 function remove(i: number): void { model.value?.splice(i, 1) }
 </script>
 

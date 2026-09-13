@@ -35,11 +35,14 @@ public class CoreV1PodOperations implements NamespacedOperations<PodDTO> {
     }
 
     @Override
-    public List<PodDTO> list(String namespace, String labelSelector) {
+    public List<PodDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
         List<Pod> items = client.pods().inNamespace(ns).list(options).getItems();
         return items.stream().map(converter::revert).toList();
@@ -91,6 +94,9 @@ public class CoreV1PodOperations implements NamespacedOperations<PodDTO> {
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
+        if (pod != null && pod.getMetadata() != null) {
+            pod.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(pod);
     }
 

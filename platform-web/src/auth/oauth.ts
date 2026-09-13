@@ -14,6 +14,13 @@ const USER_KEY = 'platform_user'
 const STATE_KEY = 'oauth2_state'
 const VERIFIER_KEY = 'oauth2_code_verifier'
 
+// 会话续期 grant（自定义）：用 HttpOnly 会话 Cookie 作根凭证重新签发 access_token，不重走授权码
+const RENEW_GRANT = 'urn:coding:grant-type:session-renewal'
+// 会话保活间隔：每 10min 滑动一次根凭证（远小于 8h session TTL，留足容错）
+const KEEPALIVE_INTERVAL_MS = 10 * 60 * 1000
+// access_token 到期前多久主动续期（秒）
+const RENEW_BEFORE_EXPIRY_S = 60
+
 export interface UserInfo {
   name?: string
   email?: string
@@ -133,6 +140,8 @@ export async function handleCallback(code: string, state: string): Promise<boole
     if (data.id_token) {
       localStorage.setItem(USER_KEY, JSON.stringify(decodeIdToken(data.id_token)))
     }
+    // 登录成功 → 启动会话保活 + access_token 到期前自动续期（幂等，重复调用无副作用）
+    startSessionMaintenance()
     return true
   } catch {
     return false
@@ -152,8 +161,136 @@ export function getUserInfo(): UserInfo {
   }
 }
 
-/** 退出：清本地 token（服务端 refresh/会话由 auth server 管理） */
+/** 退出：停掉保活定时器并清本地 token（服务端会话由 auth server 管理，登出后自然过期/可主动失效） */
 export function logout(): void {
+  stopSessionMaintenance()
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
+}
+
+// ==================== 会话保活 + access_token 自动续期 ====================
+//
+// 根凭证 = platform-auth 的 HttpOnly 会话 Cookie（8h 滑动）；access_token 只是它的短期派生物。
+//   - keepalive：定期写一个会话属性 → Redis 重置 TTL，让「能登录多久」跟随活跃时长而非固定 8h。
+//   - renew    ：token 到期前用 session-renewal grant 重新签发，用户全程无感、不重登。
+//   - visibilitychange：后台标签页的定时器会被浏览器节流/冻结，回到前台立即补跑一次，兜底后台空窗。
+//
+// 接入点：登录成功（handleCallback）自动 start；页面刷新后恢复已有会话时也应各调一次 startSessionMaintenance()。
+
+let keepaliveTimer: number | null = null
+let renewTimer: number | null = null
+
+/** 解出 JWT 的 exp（unix 秒）；解析失败返回 0 */
+function tokenExpSeconds(token: string): number {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return 0
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
+    return (JSON.parse(json) as { exp?: number }).exp ?? 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * 用会话 Cookie（根凭证）续期 access_token，不重走授权码。
+ * 成功写回 localStorage 并返回 true；会话已失效则返回 false（调用方应引导重新登录）。
+ */
+export async function renewAccessToken(): Promise<boolean> {
+  const body = new URLSearchParams({
+    grant_type: RENEW_GRANT,
+    client_id: CLIENT_ID,
+  })
+  try {
+    // credentials:'include' → 跨域携带 platform-auth 的会话 Cookie（服务端 CORS 已 allowCredentials）
+    const resp = await fetch(`${ISSUER}/oauth2/token`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    })
+    if (!resp.ok) return false
+    const data = (await resp.json()) as { access_token?: string }
+    if (!data.access_token) return false
+    localStorage.setItem(TOKEN_KEY, data.access_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 会话滑动续期。返回会话是否仍有效（false = 根凭证已失效，应重登） */
+async function keepalive(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${ISSUER}/session/keepalive`, { credentials: 'include' })
+    if (!resp.ok) return false
+    const data = (await resp.json()) as { code?: number }
+    // 会话失效时后端返回 USER_UN_LOGIN（非 200 code），HTTP 仍是 200 → 必须看 body.code
+    return data.code === 200
+  } catch {
+    return false
+  }
+}
+
+/** token 到期前主动续期；续成功后按新 token 的 exp 重新排程 */
+async function renewIfDue(): Promise<void> {
+  const token = getAccessToken()
+  if (!token) return
+  const exp = tokenExpSeconds(token)
+  const now = Math.floor(Date.now() / 1000)
+  // exp - now <= buffer 同时覆盖「快到期」与「已过期」（后台冻结导致 renewTimer 没跑）两种情况
+  if (exp > 0 && exp - now <= RENEW_BEFORE_EXPIRY_S) {
+    if (await renewAccessToken()) scheduleRenew()
+  }
+}
+
+/** 按当前 token 的 exp 排一个「到期前」的一次性续期定时器 */
+function scheduleRenew(): void {
+  if (renewTimer != null) {
+    clearTimeout(renewTimer)
+    renewTimer = null
+  }
+  const token = getAccessToken()
+  const exp = token ? tokenExpSeconds(token) : 0
+  if (!exp) return
+  const delay = Math.max(1000, (exp - RENEW_BEFORE_EXPIRY_S) * 1000 - Date.now())
+  renewTimer = window.setTimeout(renewIfDue, delay)
+}
+
+/** 一次保活 tick：滑会话；token 快到期就续（兜底 renewTimer 被冻结的情况） */
+function tick(): void {
+  void keepalive().then((alive) => {
+    if (alive) void renewIfDue()
+  })
+}
+
+/** 回到前台立即补跑（后台期间定时器可能被浏览器节流/冻结） */
+function onVisibility(): void {
+  if (document.visibilityState === 'visible') tick()
+}
+
+/**
+ * 启动会话维护（keepalive 定时 + token 到期前续期 + 回前台补跑）。幂等，可重复调用。
+ * @returns 停止函数
+ */
+export function startSessionMaintenance(): () => void {
+  stopSessionMaintenance()
+  scheduleRenew() // 按当前 token 排首次「到期前」续期
+  tick() // 立即滑一次会话
+  keepaliveTimer = window.setInterval(tick, KEEPALIVE_INTERVAL_MS)
+  document.addEventListener('visibilitychange', onVisibility)
+  return stopSessionMaintenance
+}
+
+/** 停止会话维护（登出时调用） */
+export function stopSessionMaintenance(): void {
+  if (keepaliveTimer != null) {
+    clearInterval(keepaliveTimer)
+    keepaliveTimer = null
+  }
+  if (renewTimer != null) {
+    clearTimeout(renewTimer)
+    renewTimer = null
+  }
+  document.removeEventListener('visibilitychange', onVisibility)
 }

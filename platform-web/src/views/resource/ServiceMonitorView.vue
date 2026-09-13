@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { serviceMonitorApi } from '@/api'
-import type { K8sServiceMonitor, K8sSmEndpoint } from '@/types'
+import type { K8sServiceMonitor } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
+import {MoreFilled} from "@element-plus/icons-vue";
 
+const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 
 const loading = ref(false)
@@ -32,99 +35,12 @@ async function refresh(): Promise<void> {
   }
 }
 
-// ---------- 创建 / 编辑对话框（matchLabels kv + endpoint 行） ----------
-const dialogVisible = ref(false)
-const saving = ref(false)
-const isEdit = ref(false)
-const form = reactive({
-  name: '',
-  matchRows: [] as { key: string; value: string }[],
-  endpoints: [] as { port: string; path: string; interval: string }[],
-})
-
-function newForm(): void {
-  form.name = ''
-  form.matchRows = [{ key: 'app', value: '' }]
-  form.endpoints = [{ port: '', path: '/metrics', interval: '30s' }]
+// ---------- 创建 / 编辑：跳独立编辑页 ----------
+function goCreate(): void {
+  router.push({ name: 'servicemonitor-editor' })
 }
-
-function openCreate(): void {
-  isEdit.value = false
-  newForm()
-  dialogVisible.value = true
-}
-
-function openEdit(row: K8sServiceMonitor): void {
-  isEdit.value = true
-  form.name = row.name
-  const entries = Object.entries(row.matchLabels ?? {})
-  form.matchRows = entries.length ? entries.map(([key, value]) => ({ key, value })) : [{ key: '', value: '' }]
-  const eps = (row.endpoints ?? []).map((e) => ({ port: e.port ?? '', path: e.path ?? '', interval: e.interval ?? '' }))
-  form.endpoints = eps.length ? eps : [{ port: '', path: '/metrics', interval: '30s' }]
-  dialogVisible.value = true
-}
-
-function addMatchRow(): void {
-  form.matchRows.push({ key: '', value: '' })
-}
-
-function removeMatchRow(index: number): void {
-  form.matchRows.splice(index, 1)
-}
-
-function addEndpoint(): void {
-  form.endpoints.push({ port: '', path: '/metrics', interval: '30s' })
-}
-
-function removeEndpoint(index: number): void {
-  form.endpoints.splice(index, 1)
-}
-
-async function submit(): Promise<void> {
-  const name = form.name.trim()
-  if (!name) {
-    ElMessage.warning('请输入名称')
-    return
-  }
-  if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) {
-    ElMessage.warning('名称需符合 RFC1123：小写字母/数字/-，且以字母或数字开头结尾')
-    return
-  }
-  const matchLabels: Record<string, string> = {}
-  for (const row of form.matchRows) {
-    const key = row.key.trim()
-    if (!key || !row.value.trim()) continue
-    matchLabels[key] = row.value.trim()
-  }
-  if (!Object.keys(matchLabels).length) {
-    ElMessage.warning('至少需要一条有效的 matchLabels（用于选中目标 Service）')
-    return
-  }
-  const endpoints: K8sSmEndpoint[] = form.endpoints
-    .filter((e) => e.port.trim())
-    .map((e) => ({ port: e.port.trim(), path: e.path.trim() || null, interval: e.interval.trim() || null }))
-  if (!endpoints.length) {
-    ElMessage.warning('至少需要一个端点（port 必填）')
-    return
-  }
-
-  saving.value = true
-  try {
-    const payload = { name, namespace: state.namespace!, matchLabels, endpoints }
-    if (isEdit.value) {
-      await serviceMonitorApi.update(name, { tenantId: state.tenantId!, clusterId: state.clusterId! }, payload)
-      ElMessage.success('已更新')
-    } else {
-      await serviceMonitorApi.create({ tenantId: state.tenantId!, clusterId: state.clusterId! }, payload)
-      ElMessage.success('创建成功')
-    }
-    dialogVisible.value = false
-    await refresh()
-  } catch {
-    /* 拦截器已提示 */
-  } finally {
-    saving.value = false
-  }
+function goEdit(row: K8sServiceMonitor): void {
+  router.push({ name: 'servicemonitor-editor', query: { name: row.name } })
 }
 
 // ---------- 删除 ----------
@@ -188,7 +104,7 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="ServiceMonitor" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="openCreate">创建 ServiceMonitor</el-button>
+      <el-button type="primary" :disabled="!ready" @click="goCreate">创建 ServiceMonitor</el-button>
     </PageHeader>
 
     <EmptyState
@@ -200,21 +116,7 @@ const contextDesc = computed(() => {
     <div v-else class="panel table-panel">
       <el-table v-loading="loading || !ready" :data="list" stripe>
         <el-table-column label="名称" min-width="200">
-          <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
-        </el-table-column>
-        <el-table-column label="选择标签（matchLabels）" min-width="240">
-          <template #default="{ row }">
-            <template v-if="row.matchLabels && Object.keys(row.matchLabels).length">
-              <el-tag
-                v-for="(v, k) in row.matchLabels"
-                :key="k"
-                size="small"
-                effect="plain"
-                class="label-tag"
-              >{{ k }}={{ v }}</el-tag>
-            </template>
-            <span v-else class="muted">—</span>
-          </template>
+          <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code></template>
         </el-table-column>
         <el-table-column label="端点" width="90">
           <template #default="{ row }">{{ (row.endpoints ?? []).length }} 个</template>
@@ -222,50 +124,23 @@ const contextDesc = computed(() => {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+
+        <el-table-column width="64" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">查看</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <el-dropdown trigger="click">
+              <el-button link type="primary" :icon="MoreFilled" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="goEdit(row)">编辑</el-dropdown-item>
+                  <el-dropdown-item divided style="color: var(--el-color-danger)" @click="onDelete(row)">删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
+
       </el-table>
     </div>
-
-    <!-- 创建 / 编辑 -->
-    <el-dialog v-model="dialogVisible" :title="isEdit ? `编辑 ServiceMonitor · ${form.name}` : '创建 ServiceMonitor'" width="720px" top="8vh">
-      <el-form label-width="110px">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.name" :disabled="isEdit" placeholder="小写字母/数字/-，例如 app-monitor" />
-          <div class="form-tip">K8s 资源名创建后不可修改；命名空间 = 当前上下文</div>
-        </el-form-item>
-        <el-form-item label="选择标签">
-          <div class="kv-editor">
-            <div v-for="(row, idx) in form.matchRows" :key="idx" class="kv-row">
-              <el-input v-model="row.key" placeholder="Key（如 app）" class="kv-key" />
-              <el-input v-model="row.value" placeholder="Value（需匹配目标 Service 的标签）" />
-              <el-button link type="danger" :disabled="form.matchRows.length <= 1" @click="removeMatchRow(idx)">删除</el-button>
-            </div>
-            <el-button class="add-row-btn" plain @click="addMatchRow">+ 添加标签</el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="抓取端点">
-          <div class="kv-editor">
-            <div v-for="(ep, idx) in form.endpoints" :key="idx" class="kv-row">
-              <el-input v-model="ep.port" placeholder="Port（必填）" style="width: 30%" />
-              <el-input v-model="ep.path" placeholder="Path（如 /metrics）" style="width: 34%" />
-              <el-input v-model="ep.interval" placeholder="Interval（如 30s）" style="width: 26%" />
-              <el-button link type="danger" :disabled="form.endpoints.length <= 1" @click="removeEndpoint(idx)">删除</el-button>
-            </div>
-            <el-button class="add-row-btn" plain @click="addEndpoint">+ 添加端点</el-button>
-          </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="submit">确定</el-button>
-      </template>
-    </el-dialog>
 
     <!-- 详情 -->
     <el-drawer v-model="drawerVisible" :title="`ServiceMonitor · ${detail?.name ?? ''}`" size="640px">
@@ -319,32 +194,18 @@ const contextDesc = computed(() => {
 .muted {
   color: var(--text-3);
 }
-.form-tip {
-  color: var(--text-3);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.kv-editor {
-  width: 100%;
-}
-.kv-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  align-items: center;
-}
-.kv-key {
-  width: 40%;
-  flex-shrink: 0;
-}
-.add-row-btn {
-  width: 100%;
-}
 .section-title {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-2);
   margin: 14px 0 8px;
+}
+.name-link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.name-link:hover {
+  text-decoration: underline;
 }
 .yaml-block {
   margin: 0;

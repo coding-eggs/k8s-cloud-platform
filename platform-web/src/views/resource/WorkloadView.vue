@@ -8,7 +8,9 @@ import type { WorkloadKind } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { fmtDate } from '@/utils/format'
+import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
+import { fmtAge, fmtDate, workloadStatus } from '@/utils/format'
+import { Refresh, MoreFilled, Search } from '@element-plus/icons-vue'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
@@ -17,6 +19,8 @@ const loading = ref(false)
 const list = ref<K8sWorkload[]>([])
 /**客户端类型过滤：all / deployment / statefulset / daemonset */
 const kindFilter = ref('all')
+/** 名称模糊搜索（前端过滤） */
+const keyword = ref('')
 
 const ctxParams = computed(() => ({
   tenantId: state.tenantId!,
@@ -41,9 +45,14 @@ const KINDS = [
   { value: 'daemonset', label: 'DaemonSet' },
 ]
 
-const filtered = computed(() =>
-  kindFilter.value === 'all' ? list.value : list.value.filter((w) => w.kind === kindFilter.value),
-)
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return list.value.filter(
+    (w) =>
+      (kindFilter.value === 'all' || w.kind === kindFilter.value) &&
+      (!kw || (w.name ?? '').toLowerCase().includes(kw)),
+  )
+})
 
 function kindLabel(kind?: string | null): string {
   switch (kind) {
@@ -51,6 +60,15 @@ function kindLabel(kind?: string | null): string {
     case 'statefulset': return 'StatefulSet'
     case 'daemonset': return 'DaemonSet'
     default: return kind ?? '—'
+  }
+}
+
+function tagLabel(kind?: string | null): string {
+  switch (kind) {
+    case 'deployment': return 'plain'
+    case 'statefulset': return 'success'
+    case 'daemonset': return 'warning'
+    default: return kind ?? 'plain'
   }
 }
 
@@ -63,9 +81,29 @@ function replicasText(row: K8sWorkload): string {
   return `${readyCount}/${total}`
 }
 
-// ---------- 跳转编辑器（新建 / 编辑） ----------
+/** 是否由 Operator/控制器管理（ownerReferences 非空）→ 禁用编辑 */
+function isOpManaged(row: K8sWorkload): boolean {
+  return (row.ownerReferences?.length ?? 0) > 0
+}
+
+/** 对外暴露端口行：port:nodePort（跨所有绑定的 NodePort/LB Service 拍平）；无则空数组 */
+function exposeLines(row: K8sWorkload) {
+  const out = []
+  for (const svc of row.exposedServices ?? []) {
+    for (const p of svc.ports ?? []) {
+      out.push({"port": p.port, "nodePort": p.nodePort})
+    }
+  }
+  return out
+}
+
+// ---------- 跳转：编辑器（新建 / 编辑） / 详情页 ----------
 function goEditor(name: string | null): void {
   router.push(name ? `/resources/workloads/editor?name=${encodeURIComponent(name)}` : '/resources/workloads/editor')
+}
+
+function goDetail(name: string): void {
+  router.push(`/resources/workloads/detail?name=${encodeURIComponent(name)}`)
 }
 
 // ---------- 伸缩：基础表单仅伸缩副本数（DaemonSet 无副本概念） ----------
@@ -120,28 +158,31 @@ async function onDelete(row: K8sWorkload): Promise<void> {
   }
 }
 
-// ---------- 详情抽屉（概览 / YAML 只读） ----------
-const drawerVisible = ref(false)
-const detail = ref<K8sWorkload | null>(null)
+// ---------- YAML 只读抽屉（替代原「查看」概览） ----------
+const yamlVisible = ref(false)
+const yamlRow = ref<K8sWorkload | null>(null)
 const yamlText = ref('')
-const detailTab = ref('info')
 
-async function openDetail(row: K8sWorkload): Promise<void> {
-  detail.value = row
+async function openYaml(row: K8sWorkload): Promise<void> {
+  yamlRow.value = row
   yamlText.value = ''
-  detailTab.value = 'info'
-  drawerVisible.value = true
+  yamlVisible.value = true
+  try {
+    yamlText.value = await workloadApi.getYaml(row.name, ctxParams.value)
+  } catch {
+    /* 拦截器已提示 */
+  }
 }
 
-watch(detailTab, async (tab) => {
-  if (tab === 'yaml' && detail.value && !yamlText.value) {
-    try {
-      yamlText.value = await workloadApi.getYaml(detail.value.name, ctxParams.value)
-    } catch {
-      /* 拦截器已提示 */
-    }
+// ---------- 行操作下拉：YAML / 编辑 / 伸缩 / 删除 ----------
+function onRowCommand(cmd: string, row: K8sWorkload): void {
+  switch (cmd) {
+    case 'yaml': openYaml(row); break
+    case 'edit': if (!isOpManaged(row)) goEditor(row.name); break
+    case 'scale': openScale(row); break
+    case 'delete': onDelete(row); break
   }
-})
+}
 
 // ---------- 上下文联动：顶栏 chip 变化时刷新 ----------
 onMounted(() => {
@@ -163,16 +204,21 @@ const contextDesc = computed(() => {
 
 <template>
   <div>
-    <PageHeader title="工作负载" :description="contextDesc">
-      <el-button @click="refresh" :disabled="!ready">刷新</el-button>
+    <PageHeader title="工作负载" >
       <el-button type="primary" :disabled="!ready" @click="goEditor(null)">创建工作负载</el-button>
     </PageHeader>
 
     <div v-if="ready" class="panel table-panel">
-      <div class="kind-filter">
-        <el-radio-group v-model="kindFilter" size="small">
-          <el-radio-button v-for="k in KINDS" :key="k.value" :value="k.value">{{ k.label }}</el-radio-button>
-        </el-radio-group>
+      <div class="field-pair">
+        <div class="kind-filter ">
+          <el-radio-group v-model="kindFilter" >
+            <el-radio-button size="small" v-for="k in KINDS" :key="k.value" :value="k.value">{{ k.label }}</el-radio-button>
+          </el-radio-group>
+        </div>
+        <div class="toolbar-right">
+          <el-input v-model="keyword" placeholder="按名称搜索…" clearable :prefix-icon="Search" class="search-input" />
+          <el-button :icon="Refresh" circle :disabled="!ready" @click="refresh" />
+        </div>
       </div>
 
       <EmptyState
@@ -183,29 +229,60 @@ const contextDesc = computed(() => {
       <el-table v-else v-loading="loading || !ready" :data="filtered" stripe>
         <el-table-column label="类型" width="130">
           <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ kindLabel(row.kind) }}</el-tag>
+            <el-tag  :effect="tagLabel(row.kind)">{{ kindLabel(row.kind) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="名称" min-width="200">
-          <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
+        <el-table-column label="名称" width="350">
+          <template #default="{ row }">
+            <code class="res-name name-link" @click="goDetail(row.name)">{{ row.name }}</code>
+            <el-tooltip v-if="isOpManaged(row)" content="由 Operator 管理，不可编辑" placement="top">
+              <el-tag type="warning" size="small" effect="plain" class="op-tag">op</el-tag>
+            </el-tooltip>
+            <div v-if="row.exposedServices.length" class="expose-ports">
+              <div class="expose-line">
+                <span v-for="(line, i) in exposeLines(row)" :key="i">
+                  {{ line.port }}:<span class="name-link">{{line.nodePort}}</span>
+                </span>
+              </div>
+            </div>
+          </template>
         </el-table-column>
-        <el-table-column label="副本（就绪/总数）" width="150">
-          <template #default="{ row }">{{ replicasText(row) }}</template>
-        </el-table-column>
-        <el-table-column label="镜像" min-width="220">
+        <el-table-column label="镜像" min-width="500">
           <template #default="{ row }">
             <code v-for="(img, i) in row.images ?? []" :key="i" class="res-name img-cell">{{ img }}</code>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="170">
-          <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
+        <el-table-column label="副本" width="100">
+          <template #default="{ row }">{{ replicasText(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+
+        <el-table-column label="状态" width="120">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">查看</el-button>
-            <el-button link type="primary" @click="goEditor(row.name)">编辑</el-button>
-            <el-button link type="primary" @click="openScale(row)">伸缩</el-button>
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <StatusBadgeTip :label="workloadStatus(row.kind, row.replicas, row.readyReplicas).label" :type="workloadStatus(row.kind, row.replicas, row.readyReplicas).type" :reason="row.statusReason" />
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="160">
+          <template #default="{ row }">
+            <div class="age-cell">
+              <div>{{ fmtDate(row.creationTime) }}</div>
+              <div class="muted">{{ fmtAge(row.creationTime) }}</div>
+            </div>
+
+          </template>
+        </el-table-column>
+        <el-table-column  width="64" fixed="right">
+          <template #default="{ row }">
+            <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
+              <el-button link type="primary" :icon="MoreFilled" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="edit" :disabled="isOpManaged(row)">编辑</el-dropdown-item>
+                  <el-dropdown-item command="scale">伸缩</el-dropdown-item>
+                  <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
+                  <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -224,27 +301,10 @@ const contextDesc = computed(() => {
       </template>
     </el-dialog>
 
-    <!-- 详情 -->
-    <el-drawer v-model="drawerVisible" :title="`${kindLabel(detail?.kind)} · ${detail?.name ?? ''}`" size="640px">
-      <el-tabs v-model="detailTab">
-        <el-tab-pane label="概览" name="info">
-          <el-descriptions :column="1" border>
-            <el-descriptions-item label="类型">{{ kindLabel(detail?.kind) }}</el-descriptions-item>
-            <el-descriptions-item label="副本">{{ replicasText(detail!) }}</el-descriptions-item>
-            <el-descriptions-item label="镜像">
-              <code v-for="(img, i) in detail?.images ?? []" :key="i" class="res-name img-cell">{{ img }}</code>
-            </el-descriptions-item>
-            <el-descriptions-item label="端口">
-              <span class="muted">{{ (detail?.ports ?? []).map((p) => p.containerPort).filter(Boolean).join('，') || '—' }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="创建时间">{{ fmtDate(detail?.creationTime) }}</el-descriptions-item>
-          </el-descriptions>
-        </el-tab-pane>
-        <el-tab-pane label="YAML（只读）" name="yaml">
-          <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
-          <div v-else class="muted">加载中…</div>
-        </el-tab-pane>
-      </el-tabs>
+    <!-- YAML 只读 -->
+    <el-drawer v-model="yamlVisible" :title="`YAML · ${yamlRow?.name ?? ''}`" size="640px">
+      <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+      <div v-else class="muted">加载中…</div>
     </el-drawer>
   </div>
 </template>
@@ -254,20 +314,63 @@ const contextDesc = computed(() => {
   padding: 8px;
 }
 .kind-filter {
-  margin-bottom: 10px;
+  padding: 0.25rem;
+  padding-top: 0;
+  min-width: 300px;
+}
+.row-caret {
+  margin-left: 2px;
+  vertical-align: -2px;
 }
 .res-name {
   font-family: Consolas, 'JetBrains Mono', monospace;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-1);
+}
+.name-link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.name-link:hover {
+  text-decoration: underline;
+}
+.op-tag {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.expose-ports {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.expose-line {
+  font-family: Consolas, 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.4;
 }
 .img-cell {
   display: inline-block;
-  margin-right: 8px;
-  font-size: 12.5px;
 }
 .muted {
   color: var(--text-3);
+}
+.age-cell {
+  line-height: 1.5;
+}
+.field-pair {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-input {
+  width: 240px;
 }
 .yaml-block {
   margin: 0;

@@ -27,6 +27,8 @@ public class ResourceContextDTO {
     public static class ClusterNode {
         private String clusterId;
         private String clusterName;
+        /** 集群 IP 栈：IPV4 / IPV6 / IPV4_AND_IPV6（决定 Service 编辑器是否展示双栈表单） */
+        private String ipStack;
         private List<String> namespaces = new ArrayList<>();
     }
 

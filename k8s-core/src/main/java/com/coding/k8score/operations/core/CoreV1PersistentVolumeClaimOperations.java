@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -35,11 +36,14 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
     }
 
     @Override
-    public List<PersistentVolumeClaimDTO> list(String namespace, String labelSelector) {
+    public List<PersistentVolumeClaimDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
         List<PersistentVolumeClaim> items = client.persistentVolumeClaims()
                 .inNamespace(ns).list(options).getItems();
@@ -92,7 +96,7 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
         PersistentVolumeClaim updated = client.persistentVolumeClaims()
                 .inNamespace(namespace)
                 .resource(existing)
-                .update();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -120,6 +124,9 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
+        if (pvc != null && pvc.getMetadata() != null) {
+            pvc.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(pvc);
     }
 

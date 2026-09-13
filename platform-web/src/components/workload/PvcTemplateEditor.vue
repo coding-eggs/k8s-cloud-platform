@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import type { PvcTemplate } from '@/types/workload'
+import { ensureModelList } from './modelList'
+import { useResourceOptions } from '@/composables/useResourceOptions'
+
+const { options } = useResourceOptions()
 
 const model = defineModel<PvcTemplate[]>()
 
@@ -7,8 +11,7 @@ const ACCESS_MODES = ['ReadWriteOnce', 'ReadOnlyMany', 'ReadWriteMany', 'ReadWri
 const VOLUME_MODES = ['Filesystem', 'Block'] as const
 
 function add(): void {
-  model.value ??= []
-  model.value.push({ name: '', accessModes: ['ReadWriteOnce'], storage: '', storageClassName: null, volumeMode: 'Filesystem' })
+  ensureModelList(model).push({ name: '', accessModes: ['ReadWriteOnce'], storage: '', storageClassName: null, volumeMode: 'Filesystem' })
 }
 
 function remove(i: number): void {
@@ -24,7 +27,9 @@ function remove(i: number): void {
         <el-option v-for="m in ACCESS_MODES" :key="m" :label="m" :value="m" />
       </el-select>
       <el-input v-model="p.storage" placeholder="storage（如 1Gi）" style="width: 130px" />
-      <el-input v-model="p.storageClassName" placeholder="storageClassName（可选）" style="width: 170px" />
+      <el-select v-model="p.storageClassName" filterable allow-create default-first-option clearable placeholder="storageClassName（可选）" style="width: 170px">
+        <el-option v-for="n in options.storageClasses" :key="n" :label="n" :value="n" />
+      </el-select>
       <el-select v-model="p.volumeMode" placeholder="volumeMode" style="width: 130px">
         <el-option v-for="m in VOLUME_MODES" :key="m" :label="m" :value="m" />
       </el-select>

@@ -4,12 +4,11 @@ package com.coding.auth.config;
 
 
 
-import com.coding.common.components.JwkService;
 import com.coding.common.components.jwt.JwtProperties;
 import com.coding.common.components.jwt.impl.JweTokenStrategy;
 import com.coding.common.components.jwt.impl.JwsTokenStrategy;
-import com.coding.common.exception.CloudPlatformException;
-import com.coding.common.exception.EnumResponseType;
+import com.coding.auth.grant.SessionRenewalAuthenticationConverter;
+import com.coding.auth.grant.SessionRenewalAuthenticationProvider;
 import com.coding.data.mapper.auth.PlatformTenantMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.mapper.auth.PlatformUserRoleMapper;
@@ -22,8 +21,6 @@ import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 
-import com.nimbusds.jwt.EncryptedJWT;
-import com.nimbusds.jwt.JWT;
 import com.nimbusds.jwt.JWTClaimsSet;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -52,8 +49,15 @@ import org.springframework.security.oauth2.server.authorization.client.JdbcRegis
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.security.oauth2.core.OAuth2Token;
+import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
+import org.springframework.security.oauth2.server.authorization.token.JwtGenerator;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2AccessTokenGenerator;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2RefreshTokenGenerator;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.util.matcher.MediaTypeRequestMatcher;
@@ -65,8 +69,6 @@ import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 
 
-import javax.crypto.SecretKey;
-import javax.crypto.spec.SecretKeySpec;
 import javax.sql.DataSource;
 import java.nio.charset.StandardCharsets;
 import java.security.*;
@@ -96,7 +98,7 @@ public class AuthorizationServerConfig {
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
     public SecurityFilterChain authorizationServerSecurityFilterChain(
-            HttpSecurity http) {
+            HttpSecurity http, SessionRenewalAuthenticationProvider sessionRenewalAuthenticationProvider) {
         OAuth2AuthorizationServerConfigurer configurer = new OAuth2AuthorizationServerConfigurer();
         http
                 .securityMatcher(configurer.getEndpointsMatcher())
@@ -105,6 +107,11 @@ public class AuthorizationServerConfig {
                                 //授权页面端点
                                 .authorizationEndpoint(authorizationEndpoint ->
                                         authorizationEndpoint.consentPage(CUSTOM_CONSENT_PAGE_URI)
+                                )
+                                //token 端点：追加会话续期 grant（converter + provider），不影响默认 grant
+                                .tokenEndpoint(tokenEndpoint -> tokenEndpoint
+                                        .accessTokenRequestConverter(new SessionRenewalAuthenticationConverter())
+                                        .authenticationProvider(sessionRenewalAuthenticationProvider)
                                 )
                                 //oidc配置
                                 .oidc(Customizer.withDefaults())
@@ -164,6 +171,31 @@ public class AuthorizationServerConfig {
         return oAuth2AuthorizationService;
     }
 
+
+    /**
+     * 会话续期 grant 的认证提供者。
+     *
+     * <p>仅为本 grant 内联构建等价的 token generator（复用自定义 {@link JwtEncoder} + 现有
+     * {@code OAuth2TokenCustomizer<JwtEncodingContext>} bean），不注册为全局 bean ——
+     * 因此 authorization_code / refresh_token / token_exchange 等其他 grant 仍使用 SAS 内部默认生成器，行为不变。
+     */
+    @Bean
+    public SessionRenewalAuthenticationProvider sessionRenewalAuthenticationProvider(
+            OAuth2AuthorizationService authorizationService,
+            JwtEncoder jwtEncoder,
+            ObjectProvider<OAuth2TokenCustomizer<JwtEncodingContext>> jwtCustomizers) {
+        // 标准 claims（iss/sub/aud/scope/iat/exp/jti）由 JwtGenerator 核心生成；
+        // 自定义 claims（data / custom.client.setting）由现有 token customizer bean 补充。
+        JwtGenerator jwtGenerator = new JwtGenerator(jwtEncoder);
+        List<OAuth2TokenCustomizer<JwtEncodingContext>> customizers = new ArrayList<>();
+        jwtCustomizers.orderedStream().forEach(customizers::add);
+        if (!customizers.isEmpty()) {
+            jwtGenerator.setJwtCustomizer(context -> customizers.forEach(c -> c.customize(context)));
+        }
+        OAuth2TokenGenerator<? extends OAuth2Token> tokenGenerator = new DelegatingOAuth2TokenGenerator(
+                jwtGenerator, new OAuth2AccessTokenGenerator(), new OAuth2RefreshTokenGenerator());
+        return new SessionRenewalAuthenticationProvider(authorizationService, tokenGenerator);
+    }
 
 
     /**

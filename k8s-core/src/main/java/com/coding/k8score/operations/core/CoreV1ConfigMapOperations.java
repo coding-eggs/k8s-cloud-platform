@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ConfigMapDTO;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -37,11 +38,14 @@ public class CoreV1ConfigMapOperations implements NamespacedOperations<ConfigMap
      * 查询 configmap 列表，支持 namespace、labelSelector（原样透传）过滤
      */
     @Override
-    public List<ConfigMapDTO> list(String namespace, String labelSelector) {
+    public List<ConfigMapDTO> list(String namespace, String labelSelector, String fieldSelector) {
         String ns = StringUtils.hasText(namespace) ? namespace : "";
         ListOptions options = new ListOptions();
         if (StringUtils.hasText(labelSelector)) {
             options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
         }
         List<ConfigMap> items = client.configMaps().inNamespace(ns).list(options).getItems();
         return items.stream().map(converter::revert).toList();
@@ -92,7 +96,7 @@ public class CoreV1ConfigMapOperations implements NamespacedOperations<ConfigMap
         ConfigMap updated = client.configMaps()
                 .inNamespace(namespace)
                 .resource(in)
-                .update();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
 
@@ -120,7 +124,9 @@ public class CoreV1ConfigMapOperations implements NamespacedOperations<ConfigMap
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
-
+        if (configMap != null && configMap.getMetadata() != null) {
+            configMap.getMetadata().setManagedFields(null);
+        }
         return Serialization.asYaml(configMap);
     }
 

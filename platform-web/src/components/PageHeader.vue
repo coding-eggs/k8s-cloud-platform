@@ -6,7 +6,7 @@ defineProps<{
 </script>
 
 <template>
-  <div class="page-header">
+  <div class="page-header px-2.5 pt-1">
     <div class="ph-left">
       <h2 class="ph-title">{{ title }}</h2>
       <p v-if="description" class="ph-desc">{{ description }}</p>
@@ -30,6 +30,7 @@ defineProps<{
   font-size: 18px;
   font-weight: 700;
   color: var(--text-1);
+  min-width: 108px;
 }
 .ph-desc {
   margin: 4px 0 0;
@@ -39,7 +40,6 @@ defineProps<{
 .ph-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
   flex-shrink: 0;
 }
 </style>

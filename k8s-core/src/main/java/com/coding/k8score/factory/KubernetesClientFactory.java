@@ -39,6 +39,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class KubernetesClientFactory {
 
+    public static final String MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
+    public static final String MANAGED_BY_VALUE = "k8s-cloud-platform";
+
+
     @Autowired
     private K8sClusterMapper k8sClusterMapper;
 
@@ -60,6 +64,9 @@ public class KubernetesClientFactory {
     private final Map<ClientKey, KubernetesClient> tenantClientCache = new ConcurrentHashMap<>();
 
 
+    /**
+     * 初始化管理员client和租户client
+     */
     @PostConstruct
     public void init () {
         List<K8sCluster> k8sClusterList = k8sClusterMapper.listAll();
@@ -68,9 +75,13 @@ public class KubernetesClientFactory {
                 KubernetesClient adminClient = createAdminClient(k8sCluster);
                 adminClientCache.put(k8sCluster.getClusterId(), adminClient);
 
+                //补全集群专属命名空间，不存在则创建
                 if (!adminClient.namespaces().withName(SystemConstant.SYSTEM_NAMESPACE).isReady()) {
                     adminClient.namespaces().resource(new NamespaceBuilder()
-                                    .withNewMetadata().withName(SystemConstant.SYSTEM_NAMESPACE).endMetadata()
+                                    .withNewMetadata()
+                                    .withName(SystemConstant.SYSTEM_NAMESPACE)
+                                    .withLabels(Map.of(MANAGED_BY_LABEL, MANAGED_BY_VALUE))
+                                    .endMetadata()
                             .build())
                             .create();
                 }
@@ -89,7 +100,13 @@ public class KubernetesClientFactory {
                         log.debug("跳过租户客户端初始化：集群 {} 未启用，租户 {}", clusterId, platformTenant.getId());
                         continue;
                     }
-                    createTenantClient(adminClient, new ClientKey(clusterId, platformTenant.getId()));
+
+                    //添加到本地缓存
+                    ClientKey clientKey = new ClientKey(clusterId, platformTenant.getId());
+                    KubernetesClient tenantClient = createTenantClient(adminClient, clientKey);
+                    if (tenantClient != null) {
+                        tenantClientCache.put(clientKey, tenantClient);
+                    }
                 }
             }
         }
@@ -136,13 +153,13 @@ public class KubernetesClientFactory {
 
         PlatformTenant tenant = tenantMapper.selectByPrimaryKey(tenantId);
         if (tenant == null || tenant.getStatus() != 1) {
-            throw new CloudPlatformException(EnumResponseType.TENANT_NOT_EXIST);
-        }
-        if (!tenantMapper.hasClusterAccess(tenantId, clusterId)) {
-            throw new CloudPlatformException(EnumResponseType.NAMESPACE_NOT_ACCESSIBLE);
+            log.warn("租户不存在或已被禁用。集群：{}，租户：{}", clusterId, tenantId);
+            return null;
         }
 
-        if(!adminClient.serviceAccounts().inNamespace(SystemConstant.SYSTEM_NAMESPACE)
+        //如果这个租户的sa不存在系统命名空间则创建一个，保证租户必有sa对应在各个集群
+        if(!adminClient.serviceAccounts()
+                .inNamespace(SystemConstant.SYSTEM_NAMESPACE)
                 .withName(K8sNaming.tenantServiceAccount(tenant.getServiceAccount()))
                 .isReady()) {
             adminClient.serviceAccounts().resource(new ServiceAccountBuilder()
@@ -154,9 +171,10 @@ public class KubernetesClientFactory {
                     .create();
         }
 
-        // 自愈：该租户在本集群各分配命名空间的 RoleBinding 缺失则补建（best-effort）
+        //补全rolebinding，分配命名空间其实就是创建对应权限模板的rolebingding
         ensureRoleBindings(adminClient, clusterId, tenant);
 
+        //通过token request 创建 client
         TokenRequest tokenRequest = adminClient.serviceAccounts()
                 .inNamespace(SystemConstant.SYSTEM_NAMESPACE)
                 .withName(K8sNaming.tenantServiceAccount(tenant.getServiceAccount()))
@@ -181,22 +199,34 @@ public class KubernetesClientFactory {
      * subject → platform-system 下的租户 SA。该集群无分配的租户直接跳过（SA 惰性存在即可）。
      */
     private void ensureRoleBindings(KubernetesClient adminClient, String clusterId, PlatformTenant tenant) {
+        //获取这个租户的命名空间列表
         List<PlatformTenantNamespace> allocations = tenantNamespaceMapper.listByTenant(tenant.getId()).stream()
                 .filter(a -> clusterId.equals(a.getClusterId()))
                 .toList();
         if (allocations.isEmpty()) {
             return;
         }
+        //sa name 和 rolebinding同名
         String rbName = K8sNaming.tenantServiceAccount(tenant.getServiceAccount());
         for (PlatformTenantNamespace allocation : allocations) {
             String namespace = allocation.getNamespace();
             try {
-                RoleBinding existing = adminClient.rbac().roleBindings()
-                        .inNamespace(namespace).withName(rbName).get();
+                RoleBinding existing = adminClient.rbac()
+                        .roleBindings()
+                        .inNamespace(namespace)
+                        .withName(rbName).get();
                 if (existing != null) {
                     continue;
                 }
-                String templateName = resolveTemplateName(allocation.getRoleTemplateId());
+
+                //查询这个权限绑定的模板
+                PlatformRbacTemplate template = templateMapper.selectByPrimaryKey(allocation.getRoleTemplateId());
+                if (template == null) {
+                    log.warn("权限模板为空。集群：{}，租户：{}，命名空间：{}", allocation.getClusterId(), allocation.getTenantId(), allocation.getNamespace());
+                    return;
+                }
+
+                //创建rolebinding
                 RoleBinding roleBinding = new RoleBindingBuilder()
                         .withNewMetadata()
                             .withName(rbName)
@@ -205,7 +235,7 @@ public class KubernetesClientFactory {
                         .withNewRoleRef()
                             .withApiGroup("rbac.authorization.k8s.io")
                             .withKind("ClusterRole")
-                            .withName(K8sNaming.templateClusterRole(templateName))
+                            .withName(K8sNaming.templateClusterRole(template.getName()))
                         .endRoleRef()
                         .addNewSubject()
                             .withApiGroup("")
@@ -222,23 +252,6 @@ public class KubernetesClientFactory {
         }
     }
 
-    /**
-     * 分配行 → 模板名：roleTemplateId 有值取对应模板；缺省 / 引用失效回退内置模板
-     * （与 platform-api 分配侧 resolveTemplate 同语义）
-     */
-    private String resolveTemplateName(String roleTemplateId) {
-        if (StringUtils.hasText(roleTemplateId)) {
-            PlatformRbacTemplate template = templateMapper.selectByPrimaryKey(roleTemplateId);
-            if (template != null) {
-                return template.getName();
-            }
-        }
-        return templateMapper.listAll().stream()
-                .filter(t -> t.getBuiltIn() == 1)
-                .findFirst()
-                .map(PlatformRbacTemplate::getName)
-                .orElseThrow(() -> new CloudPlatformException(EnumResponseType.RBAC_TEMPLATE_NOT_EXIST));
-    }
 
     /**
      * 创建管理员client
@@ -252,11 +265,9 @@ public class KubernetesClientFactory {
     }
 
     private void check (K8sCluster k8sCluster) {
-
         if (k8sCluster == null || !StringUtils.hasText(k8sCluster.getKubeconfig())) {
             throw new CloudPlatformException(EnumResponseType.NON_KUBE_CONFIG);
         }
-
         if (k8sCluster.getEnabled() != 1) {
             throw new CloudPlatformException(EnumResponseType.CLUSTER_DISABLED);
         }
@@ -277,6 +288,33 @@ public class KubernetesClientFactory {
             client.close();
             log.info("Closed client: cluster={}, tenant={}", clusterId, tenantId);
         }
+    }
+
+
+    /**
+     * 失效某集群的 admin client，以及由它派生的全部 tenant client。
+     * kubeconfig 变更后旧连接作废：admin + 该集群所有租户 client 都指向旧连接，须一并清除，
+     * 下次 getAdminClient/getTenantClient 会用新 kubeconfig 重建。
+     */
+    public void evictAdminClient(String clusterId) {
+        KubernetesClient admin = adminClientCache.remove(clusterId);
+        if (admin != null) {
+            try {
+                admin.close();
+            } catch (Exception ignored) {}
+        }
+        List<ClientKey> staleTenantKeys = tenantClientCache.keySet().stream()
+                .filter(k -> clusterId.equals(k.clusterId()))
+                .toList();
+        for (ClientKey key : staleTenantKeys) {
+            KubernetesClient client = tenantClientCache.remove(key);
+            if (client != null) {
+                try {
+                    client.close();
+                } catch (Exception ignored) {}
+            }
+        }
+        log.info("已失效集群 {} 的 admin/tenant client 缓存", clusterId);
     }
 
 
