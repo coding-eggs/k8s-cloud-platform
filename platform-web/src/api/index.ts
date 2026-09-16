@@ -7,6 +7,7 @@ import type {
   K8sPvc,
   K8sPersistentVolume,
   K8sPod,
+  K8sPodMonitor,
   K8sSecret,
   K8sService,
   K8sServiceMonitor,
@@ -166,6 +167,21 @@ export const serviceMonitorRelabelApi = {
   /** MetricRelabeling regex 的 __name__（指标名）候选：scoped 到本 SM 活跃 target；无 target/不可达返回空 */
   metricNames: (ctx: SmDiscoveryCtx) =>
     http.post<never, string[]>('/resource/servicemonitors/metric-names', ctx),
+}
+
+/** PodMonitor /resource/podmonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
+export const podMonitorApi = makeResourceApi<K8sPodMonitor>('podmonitors')
+
+/** PodMonitor Prometheus discovery 定位（对应后端 PodMonitorKeyRequest：clusterId + namespace + name） */
+type PmDiscoveryCtx = { clusterId: string; namespace: string; name: string }
+
+/** PodMonitor Relabeling/MetricRelabeling 的 sourceLabels 候选（编辑态；pool 前缀 podMonitor/{ns}/{name}/，不可达返回空） */
+export const podMonitorRelabelApi = {
+  labels: (ctx: PmDiscoveryCtx) =>
+    http.post<never, { relabeling: string[]; metricRelabeling: string[] }>('/resource/podmonitors/relabel-labels', ctx),
+  /** MetricRelabeling regex 的 __name__ 候选：scoped 到本 PM 活跃 target；无 target/不可达返回空 */
+  metricNames: (ctx: PmDiscoveryCtx) =>
+    http.post<never, string[]>('/resource/podmonitors/metric-names', ctx),
 }
 
 /** HPA /resource/hpas（发散资源：autoscaling v1/v2 由后端按集群 capability 分派） */

@@ -334,6 +334,71 @@ export interface K8sServiceMonitor {
   creationTime?: string | null
 }
 
+/** PodMonitor endpoint Secret 引用（与后端 PodMonitorEndpointDTO.SecretRef 同构） */
+export interface K8sPmSecretRef { name?: string | null; key?: string | null }
+
+/** PodMonitor Relabeling/MetricRelabeling 单条规则（与后端 PodMonitorEndpointDTO.Relabeling 同构） */
+export interface K8sPmRelabeling {
+  sourceLabels?: string[] | null
+  targetLabel?: string | null
+  regex?: string | null
+  replacement?: string | null
+  separator?: string | null
+  modulus?: number | null
+  /** replace / keep / drop / hashmod / labelmap / labeldrop / labelkeep */
+  action?: string | null
+}
+
+/** PodMonitor 抓取端点（spec.podMetricsEndpoints[] 项；port 数字/名字由后端拆 portNumber） */
+export interface K8sPmEndpoint {
+  /** 端口名或端口号（单一字段） */
+  port?: string | null
+  path?: string | null
+  interval?: string | null
+  scrapeTimeout?: string | null
+  /** http / https */
+  scheme?: string | null
+  params?: Record<string, string[]> | null
+  basicAuth?: { username?: K8sPmSecretRef | null; password?: K8sPmSecretRef | null } | null
+  bearerTokenSecret?: K8sPmSecretRef | null
+  tlsConfig?: { insecureSkipVerify?: boolean | null; serverName?: string | null } | null
+  /** 标签冲突时以指标自带标签为准（PodMonitor 特有建模） */
+  honorLabels?: boolean | null
+  relabelings?: K8sPmRelabeling[] | null
+  metricRelabelings?: K8sPmRelabeling[] | null
+}
+
+/** PodMonitor selector 表达式（spec.selector.matchExpressions[] 项） */
+export interface K8sPmMatchExpression {
+  key?: string | null
+  /** In / NotIn / Exists / DoesNotExist */
+  operator?: string | null
+  values?: string[] | null
+}
+
+/** PodMonitor（monitoring.coreos.com/v1 CRD） */
+export interface K8sPodMonitor {
+  name: string
+  namespace: string
+  labels?: Record<string, string> | null
+  /** spec.selector.matchLabels（必填）：由后端据 podRef 解析填充；查询时原样返回 */
+  matchLabels?: Record<string, string> | null
+  matchExpressions?: K8sPmMatchExpression[] | null
+  /** 绑定的目标 Pod（平台侧）：选择后据此反查 labels 生成 matchLabels；非 K8s 字段、不落库 */
+  podRef?: { name: string; namespace: string } | null
+  namespaceSelector?: { any?: boolean | null; matchNames?: string[] | null } | null
+  jobLabel?: string | null
+  podTargetLabels?: string[] | null
+  sampleLimit?: number | null
+  targetLimit?: number | null
+  labelLimit?: number | null
+  bodySizeLimit?: string | null
+  attachMetadata?: { node?: boolean | null } | null
+  /** spec.podMetricsEndpoints（必填；注意非 ServiceMonitor 的 endpoints） */
+  podMetricsEndpoints?: K8sPmEndpoint[] | null
+  creationTime?: string | null
+}
+
 /** HPA 指标目标（对应后端 HpaMetricTargetDTO） */
 export interface K8sHpaMetricTarget {
   type?: 'Utilization' | 'AverageValue' | 'Value' | null
