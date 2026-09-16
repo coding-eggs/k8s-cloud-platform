@@ -8,6 +8,7 @@ import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.PersistentVolumeDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
+import com.coding.common.models.k8s.dto.PodMonitorDTO;
 import com.coding.common.models.k8s.dto.ReplicaSetDTO;
 import com.coding.common.models.k8s.dto.RoleBindingDTO;
 import com.coding.common.models.k8s.dto.SecretDTO;
@@ -34,6 +35,7 @@ public enum ResourceType {
     STORAGE_CLASS(StorageClassDTO.class),
     POD(PodDTO.class),
     SERVICE_MONITOR(ServiceMonitorDTO.class),
+    POD_MONITOR(PodMonitorDTO.class),
     WORKLOAD(WorkloadDTO.class),
     HPA(HpaDTO.class),
     NODE(NodeDTO.class)
