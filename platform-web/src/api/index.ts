@@ -15,7 +15,6 @@ import type {
   NamespaceView,
   NodeDrainResult,
   NodeEvent,
-  NodePodStat,
   NodeTaint,
   PlatformTenant,
   RbacTemplate,
@@ -150,7 +149,12 @@ export const persistentVolumeApi = {
 }
 
 /** 工作负载 /resource/workloads（kind 在 body；get/delete/yaml 跨 kind 查找） */
-export const workloadApi = makeResourceApi<WorkloadDetail>('workloads')
+export const workloadApi = {
+  ...makeResourceApi<WorkloadDetail>('workloads'),
+  /** 暂停/恢复 Deployment 更新（body.paused=true 暂停 / false 恢复） */
+  pause: (name: string, ctx: Ctx3, paused: boolean) =>
+    http.post<never, WorkloadDetail>(`/resource/workloads/${encodeURIComponent(name)}/pause`, { ...ctx, name, paused }),
+}
 
 /** ServiceMonitor /resource/servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
 export const serviceMonitorApi = makeResourceApi<K8sServiceMonitor>('servicemonitors')
@@ -195,10 +199,14 @@ export const nodeApi = {
     http.put<never, K8sNode>(`/resource/nodes/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
   drain: (payload: { clusterId: string; name: string; force?: boolean; deleteEmptyDir?: boolean }) =>
     http.post<never, NodeDrainResult>('/resource/nodes/drain', payload),
-  podstats: (clusterId: string) =>
-    http.get<never, NodePodStat[]>('/resource/nodes/podstats', { params: { clusterId } }),
   pods: (name: string, clusterId: string) =>
     http.get<never, K8sPod[]>(`/resource/nodes/${encodeURIComponent(name)}/pods`, { params: { clusterId } }),
+  /** 节点上某 Pod 的 YAML（只读；集群域 admin，无需 tenantId） */
+  podYaml: (nodeName: string, clusterId: string, namespace: string, podName: string) =>
+    http.get<never, string>(
+      `/resource/nodes/${encodeURIComponent(nodeName)}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(podName)}/yaml`,
+      { params: { clusterId } },
+    ),
   events: (name: string, clusterId: string) =>
     http.get<never, NodeEvent[]>(`/resource/nodes/${encodeURIComponent(name)}/events`, { params: { clusterId } }),
 }

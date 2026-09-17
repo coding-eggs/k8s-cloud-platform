@@ -41,5 +41,6 @@ defineProps<{
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  gap: 8px;
 }
 </style>

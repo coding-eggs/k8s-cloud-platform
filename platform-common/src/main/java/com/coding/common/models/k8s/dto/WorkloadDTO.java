@@ -46,6 +46,26 @@ public class WorkloadDTO extends BaseResources {
     @Schema(description = "serviceName（StatefulSet 专属）")
     private String serviceName;
 
+    /** 新建 Pod 就绪且无容器崩溃后被视为可用的最短秒数（deployment + statefulset；默认 0） */
+    @Schema(description = "minReadySeconds（Deployment/StatefulSet，默认 0）")
+    private Integer minReadySeconds;
+
+    /** Deployment 专属：是否暂停更新 */
+    @Schema(description = "paused（Deployment 专属）")
+    private Boolean paused;
+
+    /** StatefulSet 专属 Pod 管理策略：OrderedReady / Parallel */
+    @Schema(description = "podManagementPolicy（StatefulSet 专属，OrderedReady/Parallel）")
+    private String podManagementPolicy;
+
+    /** StatefulSet 专属 PVC 保留策略 */
+    @Schema(description = "persistentVolumeClaimRetentionPolicy（StatefulSet 专属）")
+    private PersistentVolumeClaimRetentionPolicyDTO persistentVolumeClaimRetentionPolicy;
+
+    /** StatefulSet 专属编号起始值 */
+    @Schema(description = "ordinals（StatefulSet 专属）")
+    private OrdinalsDTO ordinals;
+
     /** 更新策略（kind 感知） */
     @Schema(description = "更新策略")
     private StrategyDTO strategy;

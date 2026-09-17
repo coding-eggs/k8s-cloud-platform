@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.dto.*;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -129,12 +130,13 @@ public class WorkloadValidator {
 
     private void checkResources(String ctx, ResourcesDTO r) {
         if (r == null || r.getRequests() == null || r.getRequests().isEmpty()) return;
-        Map<String, String> lim = r.getLimits();
-        for (Map.Entry<String, String> e : r.getRequests().entrySet()) {
-            if (lim == null || !lim.containsKey(e.getKey())) continue; // 仅两者都有才比较
-            if (K8sQuantity.compare(e.getValue(), lim.get(e.getKey())) > 0)
+        Map<String, BigDecimal> lim = r.getLimits();
+        for (Map.Entry<String, BigDecimal> e : r.getRequests().entrySet()) {
+            BigDecimal limit = lim != null ? lim.get(e.getKey()) : null;
+            if (e.getValue() == null || limit == null) continue; // 仅两者都有才比较
+            if (e.getValue().compareTo(limit) > 0)
                 throw err(ctx + " 资源「" + e.getKey() + "」的 requests(" + e.getValue()
-                        + ") 不能大于 limits(" + lim.get(e.getKey()) + ")");
+                        + ") 不能大于 limits(" + limit + ")");
         }
     }
 

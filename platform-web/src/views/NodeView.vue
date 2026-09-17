@@ -5,10 +5,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import { clusterApi, nodeApi } from '@/api'
 import { nodeMetrics } from '@/api/metrics'
-import type { K8sCluster, K8sNode, NodeCurrentMetric, NodePodStat } from '@/types'
+import type { K8sCluster, K8sNode, NodeCurrentMetric } from '@/types'
 import { fmtDate } from '@/utils/format'
 import { humanizeBytes, parseCpuCores, parseMemBytes } from '@/utils/metrics'
-import {MoreFilled} from "@element-plus/icons-vue";
+import {MoreFilled, Refresh} from "@element-plus/icons-vue";
 
 const router = useRouter()
 
@@ -25,7 +25,6 @@ async function loadClusters(): Promise<void> {
 // ---- 节点列表 + Pod 聚合 + 当前用量 ----
 const loading = ref(false)
 const nodes = ref<K8sNode[]>([])
-const stats = ref<Map<string, NodePodStat>>(new Map())
 const currents = ref<Map<string, NodeCurrentMetric>>(new Map())
 
 async function load(): Promise<void> {
@@ -35,8 +34,6 @@ async function load(): Promise<void> {
     const list = await nodeApi.list({ clusterId: clusterId.value })
     nodes.value = list
     // Pod 聚合（按 nodeName）
-    const statsList = await nodeApi.podstats(clusterId.value)
-    stats.value = new Map(statsList.map((s) => [s.nodeName, s]))
     // 当前用量：instance = <internalIp>:9100
     const instances: string[] = []
     for (const n of list) {
@@ -62,25 +59,23 @@ onMounted(async () => {
 function instanceOf(n: K8sNode): string | null {
   return n.internalIp ? n.internalIp + ':9100' : null
 }
-function statOf(n: K8sNode): NodePodStat | undefined {
-  return stats.value.get(n.name)
-}
+
 
 function cpuText(n: K8sNode): string {
   const alloc = parseCpuCores(n.cpuAllocatable)
-  const req = (statOf(n)?.cpuRequestMillicores ?? 0) / 1000
+  const req = (n?.cpuRequestMillicores ?? 0) / 1000
   const allocS = alloc != null ? alloc.toFixed(1) : '-'
   return `${req.toFixed(1)} / ${allocS}`
 }
 
 function memText(n: K8sNode): string {
   const alloc = parseMemBytes(n.memoryAllocatable)
-  const req = statOf(n)?.memRequestBytes ?? 0
+  const req = n?.memRequestBytes ?? 0
   return `${humanizeBytes(req)}/${alloc != null ? humanizeBytes(alloc) : '-'}`
 }
 
 function podCountText(n: K8sNode): string {
-  const actual = statOf(n)?.podCount ?? 0
+  const actual = n?.podCount ?? 0
   const limit = n.podsLimit ?? '-'
   return `${actual} / ${limit}`
 }
@@ -91,7 +86,7 @@ function roleText(n: K8sNode): string {
 
 // ---- 行操作 ----
 async function onDetail(row: K8sNode): Promise<void> {
-  router.push({ path: '/nodes/detail', query: { clusterId: clusterId.value, name: row.name } })
+  await router.push({path: '/nodes/detail', query: {clusterId: clusterId.value, name: row.name}})
 }
 
 const cordonBusy = ref('')
@@ -171,7 +166,7 @@ const drainSummary = computed(() => {
       <el-select v-model="clusterId" placeholder="选择集群" style="width: 220px">
         <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
       </el-select>
-      <el-button @click="load">刷新</el-button>
+      <el-button :icon="Refresh" circle  @click="load" />
     </PageHeader>
 
     <el-table v-loading="loading" :data="nodes" stripe>
@@ -271,6 +266,11 @@ const drainSummary = computed(() => {
   border-radius: 6px;
   padding: 8px 10px;
   background: var(--panel-hover);
+}
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .drain-error-line {
   font-family: 'Consolas', 'Monaco', monospace;

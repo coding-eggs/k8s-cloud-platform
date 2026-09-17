@@ -17,9 +17,11 @@ import type {
   WorkloadKind,
 } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
+import { useNodeCatalog } from '@/stores/nodeCatalog'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
+import NodeLabelEditor from '@/components/workload/NodeLabelEditor.vue'
 import StrategyEditor from '@/components/workload/StrategyEditor.vue'
 import ContainerListEditor from '@/components/workload/ContainerListEditor.vue'
 import PortEditor from '@/components/workload/PortEditor.vue'
@@ -32,6 +34,11 @@ import FieldHelp from '@/components/workload/FieldHelp.vue'
 const route = useRoute()
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+
+/** 节点目录：调度策略里 nodeName / nodeSelector / 亲和的下拉数据源（按当前集群拉取，切换集群自动刷新） */
+const nodeCatalog = useNodeCatalog()
+function refreshNodes(): void { void nodeCatalog.load(state.clusterId) }
+watch(() => state.clusterId, refreshNodes)
 
 /** ?name= → 编辑回填；无 name → 创建 */
 const editing = ref<string | null>(route.query.name as string | null)
@@ -46,6 +53,11 @@ function defaultForm(): WorkloadDetail {
     description: null,
     replicas: 1,
     serviceName: null,
+    minReadySeconds: null,
+    paused: null,
+    podManagementPolicy: null,
+    persistentVolumeClaimRetentionPolicy: null,
+    ordinals: null,
     strategy: { type: 'RollingUpdate' },
     volumeClaimTemplates: null,
     podTemplate: { spec: { containers: [{ name: '', image: '', imagePullPolicy: 'IfNotPresent' }], restartPolicy: 'Always' } },
@@ -145,6 +157,43 @@ const serviceName = computed<string>({
   set: (v) => { form.serviceName = v || null },
 })
 
+/** minReadySeconds（deployment + statefulset）：可清空 → null */
+const minReadySeconds = computed<number | undefined>({
+  get: () => form.minReadySeconds ?? undefined,
+  set: (v) => { form.minReadySeconds = v ?? null },
+})
+
+/** paused（deployment）：switch 恒显式布尔（避免取消勾选时因 null 被 SSA 省略而「无法恢复」） */
+const paused = computed<boolean>({
+  get: () => form.paused === true,
+  set: (v) => { form.paused = v },
+})
+
+/** podManagementPolicy（statefulset）：OrderedReady / Parallel */
+const podManagementPolicy = computed<string | undefined>({
+  get: () => form.podManagementPolicy ?? undefined,
+  set: (v) => { form.podManagementPolicy = (v || null) as WorkloadDetail['podManagementPolicy'] },
+})
+
+function ensurePvcPol(): NonNullable<WorkloadDetail['persistentVolumeClaimRetentionPolicy']> {
+  if (!form.persistentVolumeClaimRetentionPolicy) form.persistentVolumeClaimRetentionPolicy = {}
+  return form.persistentVolumeClaimRetentionPolicy
+}
+const whenDeleted = computed<string | undefined>({
+  get: () => form.persistentVolumeClaimRetentionPolicy?.whenDeleted ?? undefined,
+  set: (v) => { ensurePvcPol().whenDeleted = v || null },
+})
+const whenScaled = computed<string | undefined>({
+  get: () => form.persistentVolumeClaimRetentionPolicy?.whenScaled ?? undefined,
+  set: (v) => { ensurePvcPol().whenScaled = v || null },
+})
+
+/** ordinals.start（statefulset，默认 0） */
+const ordinalsStart = computed<number | undefined>({
+  get: () => form.ordinals?.start ?? undefined,
+  set: (v) => { if (!form.ordinals) form.ordinals = {}; form.ordinals.start = v ?? null },
+})
+
 const mainContainers = computed<ContainerDef[] | undefined>({
   get: () => form.podTemplate?.spec.containers,
   set: (v) => { ensureSpec().containers = v ?? [] },
@@ -212,13 +261,19 @@ const volumeNames = computed(() => [
   ...(form.kind === 'statefulset' ? (form.volumeClaimTemplates ?? []).map((t) => t.name) : []),
 ])
 
-// ---------- kind 切换：清掉 statefulset 专属字段，避免提交不一致 body ----------
+// ---------- kind 切换：清掉各 kind 专属字段，避免提交不一致 body ----------
 watch(
   () => form.kind,
   (k) => {
     if (k !== 'statefulset') {
       form.serviceName = null
       form.volumeClaimTemplates = null
+      form.podManagementPolicy = null
+      form.persistentVolumeClaimRetentionPolicy = null
+      form.ordinals = null
+    }
+    if (k !== 'deployment') {
+      form.paused = null
     }
   },
 )
@@ -279,6 +334,7 @@ async function loadDetail(): Promise<void> {
 
 onMounted(() => {
   void load()
+  refreshNodes()
   if (editing.value && ready.value) void loadDetail()
   mql.addEventListener('change', onBreakpointChange)
 })
@@ -302,6 +358,11 @@ function termHasContent(t: NodeSelectorTerm): boolean {
 
 /** 提交前归一化：imagePullPolicy '' → null；无 handler（httpGet/tcpSocket/exec）的 probe 壳 → null（A2 兜底）；affinity 剔除空 term（空 nodeSelectorTerm 序列化为 {}，OR 语义下静默废掉整个 required） */
 function normalizeForSubmit(): void {
+  // STS：空壳的保留策略 / ordinals 归一化为 null（避免提交 {} 被 SSA 建出空对象）
+  const pol = form.persistentVolumeClaimRetentionPolicy
+  if (pol && !pol.whenDeleted && !pol.whenScaled) form.persistentVolumeClaimRetentionPolicy = null
+  if (form.ordinals && form.ordinals.start == null) form.ordinals = null
+
   const spec = form.podTemplate?.spec
   if (!spec) return
   for (const c of [...spec.containers, ...(spec.initContainers ?? [])]) {
@@ -532,9 +593,47 @@ const contextDesc = computed(() => {
                   <template #label>副本 <FieldHelp tip="期望的副本数量。DaemonSet 由节点数决定，不设置此项。" /></template>
                   <el-input-number v-model="replicas" :min="0" :max="64" controls-position="right" />
                 </el-form-item>
+                <el-form-item v-if="form.kind !== 'daemonset'">
+                  <template #label>就绪最短秒数 <FieldHelp tip="minReadySeconds：控制 Pod 被标记为“可用（Available）”之前，必须保持 Ready 状态的最短时间。" /></template>
+                  <el-input-number v-model="minReadySeconds" :min="0" controls-position="right" placeholder="默认 0" />
+                </el-form-item>
+                <el-form-item v-if="form.kind === 'deployment'">
+                  <template #label>暂停更新 <FieldHelp tip="paused：暂停 Deployment 滚动更新。暂停后修改不会触发新 rollout；取消勾选即恢复。" /></template>
+                  <el-switch v-model="paused" />
+                </el-form-item>
                 <el-form-item v-if="form.kind === 'statefulset'">
                   <template #label>Headless Service<FieldHelp tip="StatefulSet 关联的 Headless Service 名称，提供稳定网络标识；留空默认等于工作负载名。创建后不可修改。" /></template>
                   <el-input v-model="serviceName" :disabled="!!editing" placeholder="留空默认 = 工作负载名" style="width: 360px" />
+                </el-form-item>
+                <el-form-item v-if="form.kind === 'statefulset'">
+                  <template #label>Pod 管理策略 <FieldHelp tip="podManagementPolicy：OrderedReady=按序号依次就绪；Parallel=并行创建/销毁（缩容从最大序号开始）。默认 OrderedReady。" /></template>
+                  <el-select v-model="podManagementPolicy" clearable placeholder="默认 OrderedReady" style="width: 240px">
+                    <el-option label="OrderedReady（默认）" value="OrderedReady" />
+                    <el-option label="Parallel" value="Parallel" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item v-if="form.kind === 'statefulset'">
+                  <template #label>PVC 保留策略 <FieldHelp tip="persistentVolumeClaimRetentionPolicy：StatefulSet 删除（whenDeleted）或缩容（whenScaled）时对应 PVC 的处理。Retain=保留，Delete=删除。默认均 Retain。" /></template>
+                  <div class="retention-row">
+                    <div class="retention-field">
+                      <span class="retention-label">whenDeleted:</span>
+                      <el-select v-model="whenDeleted" clearable placeholder="默认 Retain" style="width: 180px">
+                        <el-option label="Retain（默认）" value="Retain" />
+                        <el-option label="Delete" value="Delete" />
+                      </el-select>
+                    </div>
+                    <div class="retention-field">
+                      <span class="retention-label">whenScaled:</span>
+                      <el-select v-model="whenScaled" clearable placeholder="默认 Retain" style="width: 180px">
+                        <el-option label="Retain（默认）" value="Retain" />
+                        <el-option label="Delete" value="Delete" />
+                      </el-select>
+                    </div>
+                  </div>
+                </el-form-item>
+                <el-form-item v-if="form.kind === 'statefulset'">
+                  <template #label>编号起始值 <FieldHelp tip="ordinals.start：StatefulSet 副本编号的起始值（Pod 名 -0、-1…）。默认 0。" /></template>
+                  <el-input-number v-model="ordinalsStart" :min="0" controls-position="right" placeholder="默认 0" />
                 </el-form-item>
 
                 <el-form-item>
@@ -599,12 +698,17 @@ const contextDesc = computed(() => {
               <el-form label-width="220px" label-position="left">
                 <el-form-item>
                   <template #label>节点名称（nodeName） <FieldHelp tip="把 Pod 固定调度到指定节点（一般不用）。设置后会忽略 nodeSelector / 亲和。" /></template>
-                  <el-input v-model="nodeName" placeholder="可选，指定某节点名" style="width: 280px" />
+                  <el-select
+                    v-model="nodeName" filterable allow-create default-first-option clearable
+                    :loading="nodeCatalog.loading" placeholder="可选，选择或输入某节点名" style="width: 280px"
+                  >
+                    <el-option v-for="n in nodeCatalog.nodeNames" :key="n" :label="n" :value="n" />
+                  </el-select>
                   <div v-if="nodeName" class="form-tip warn">设置 nodeName 后，nodeSelector / 亲和的节点选择将被忽略</div>
                 </el-form-item>
                 <el-form-item>
-                  <template #label>节点选择器（nodeSelector） <FieldHelp tip="按节点标签筛选可调度节点（所有键值须全部匹配）。" /></template>
-                  <LabelEditor v-model="nodeSelector" class="sub-editor" />
+                  <template #label>节点选择器（nodeSelector） <FieldHelp tip="按节点标签筛选可调度节点（所有键值须全部匹配）。键 / 值可从集群现有节点标签中选择，也可自行输入。" /></template>
+                  <NodeLabelEditor v-model="nodeSelector" class="sub-editor" />
                 </el-form-item>
                 <el-form-item>
                   <template #label>亲和性（affinity） <FieldHelp tip="更灵活的节点 / Pod 亲和与反亲和规则（required 必须满足，preferred 尽量满足）。" /></template>
@@ -626,7 +730,7 @@ const contextDesc = computed(() => {
             </el-card>
             <el-card v-if="form.kind === 'statefulset'" shadow="never" class="sec-card">
               <template #header><span class="sec-title">存储卷模板 volumeClaimTemplates <FieldHelp tip="StatefulSet 专属：为每个副本自动创建独立 PVC 的模板。" /></span></template>
-              <PvcTemplateEditor v-model="volumeClaimTemplates" />
+              <PvcTemplateEditor v-model="volumeClaimTemplates" :disabled="!!editing" />
             </el-card>
           </div>
 
@@ -697,6 +801,22 @@ const contextDesc = computed(() => {
   display: flex;
   gap: 5rem;
   align-items: flex-start;
+}
+/* PVC 保留策略：whenDeleted / whenScaled 各带 label + 下拉 */
+.retention-row {
+  display: flex;
+  gap: 2rem;
+  align-items: center;
+}
+.retention-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.retention-label {
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
 }
 /* 类型选择器：与标题同行、靠右（不顶到最右） */
 .ph-kind {

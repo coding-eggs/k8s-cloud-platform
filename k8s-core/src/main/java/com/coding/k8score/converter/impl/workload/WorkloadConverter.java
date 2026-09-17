@@ -1,9 +1,11 @@
 package com.coding.k8score.converter.impl.workload;
 
 import com.coding.common.models.k8s.dto.*;
+import com.coding.k8score.util.QuantityUtil;
 import io.fabric8.kubernetes.api.model.*;
 import io.fabric8.kubernetes.api.model.apps.*;
 
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.function.Function;
 
@@ -24,6 +26,8 @@ public class WorkloadConverter {
         WorkloadDTO dto = base(d.getMetadata(), KIND_DEPLOYMENT, d.getSpec() != null ? d.getSpec().getTemplate() : null);
         if (d.getSpec() != null) {
             dto.setReplicas(d.getSpec().getReplicas());
+            dto.setMinReadySeconds(d.getSpec().getMinReadySeconds());
+            dto.setPaused(d.getSpec().getPaused());
             dto.setStrategy(fromDeploymentStrategy(d.getSpec().getStrategy()));
             dto.setSelector(matchLabels(d.getSpec().getSelector()));
         }
@@ -41,6 +45,10 @@ public class WorkloadConverter {
         if (s.getSpec() != null) {
             dto.setReplicas(s.getSpec().getReplicas());
             dto.setServiceName(s.getSpec().getServiceName());
+            dto.setMinReadySeconds(s.getSpec().getMinReadySeconds());
+            dto.setPodManagementPolicy(s.getSpec().getPodManagementPolicy());
+            dto.setPersistentVolumeClaimRetentionPolicy(fromPvcRetentionPolicy(s.getSpec().getPersistentVolumeClaimRetentionPolicy()));
+            dto.setOrdinals(fromOrdinals(s.getSpec().getOrdinals()));
             dto.setStrategy(fromStatefulSetUpdateStrategy(s.getSpec().getUpdateStrategy()));
             dto.setVolumeClaimTemplates(fromPvcTemplates(s.getSpec().getVolumeClaimTemplates()));
             dto.setSelector(matchLabels(s.getSpec().getSelector()));
@@ -278,7 +286,7 @@ public class WorkloadConverter {
         }
         if (h.getHttpGet() != null) {
             HttpGetActionDTO x = new HttpGetActionDTO();
-            x.setPort(h.getHttpGet().getPort() != null ? h.getHttpGet().getPort().toString() : null);
+            x.setPort(h.getHttpGet().getPort() != null ? h.getHttpGet().getPort().getIntVal() : null);
             x.setPath(h.getHttpGet().getPath());
             x.setScheme(h.getHttpGet().getScheme());
             d.setHttpGet(x);
@@ -295,14 +303,14 @@ public class WorkloadConverter {
         ProbeDTO d = new ProbeDTO();
         if (p.getHttpGet() != null) {
             HttpGetActionDTO x = new HttpGetActionDTO();
-            x.setPort(p.getHttpGet().getPort() != null ? p.getHttpGet().getPort().toString() : null);
+            x.setPort(p.getHttpGet().getPort() != null ? p.getHttpGet().getPort().getIntVal() : null);
             x.setPath(p.getHttpGet().getPath());
             x.setScheme(p.getHttpGet().getScheme());
             d.setHttpGet(x);
         }
         if (p.getTcpSocket() != null) {
             TCPSocketActionDTO x = new TCPSocketActionDTO();
-            x.setPort(p.getTcpSocket().getPort() != null ? p.getTcpSocket().getPort().toString() : null);
+            x.setPort(p.getTcpSocket().getPort() != null ? p.getTcpSocket().getPort().getIntVal() : null);
             d.setTcpSocket(x);
         }
         if (p.getExec() != null) {
@@ -439,7 +447,7 @@ public class WorkloadConverter {
         if (v.getEmptyDir() != null) {
             EmptyDirVolumeDTO x = new EmptyDirVolumeDTO();
             x.setMedium(v.getEmptyDir().getMedium());
-            x.setSizeLimit(v.getEmptyDir().getSizeLimit() != null ? v.getEmptyDir().getSizeLimit().toString() : null);
+            x.setSizeLimit(QuantityUtil.toBase(v.getEmptyDir().getSizeLimit()));
             d.setType("emptyDir");
             d.setEmptyDir(x);
         } else if (v.getConfigMap() != null) {
@@ -589,7 +597,7 @@ public class WorkloadConverter {
         if (f.getResourceFieldRef() != null) {
             ResourceFieldSelectorDTO x = new ResourceFieldSelectorDTO();
             x.setContainerName(f.getResourceFieldRef().getContainerName());
-            x.setDivisor(f.getResourceFieldRef().getDivisor() != null ? f.getResourceFieldRef().getDivisor().toString() : null);
+            x.setDivisor(QuantityUtil.toBase(f.getResourceFieldRef().getDivisor()));
             x.setResource(f.getResourceFieldRef().getResource());
             d.setResourceFieldRef(x);
         }
@@ -676,12 +684,27 @@ public class WorkloadConverter {
                 d.setVolumeMode(t.getSpec().getVolumeMode());
                 if (t.getSpec().getResources() != null && t.getSpec().getResources().getRequests() != null
                         && t.getSpec().getResources().getRequests().get("storage") != null) {
-                    d.setStorage(t.getSpec().getResources().getRequests().get("storage").toString());
+                    d.setStorage(QuantityUtil.toBase(t.getSpec().getResources().getRequests().get("storage")));
 
                 }
             }
             return d;
         }).toList();
+    }
+
+    private PersistentVolumeClaimRetentionPolicyDTO fromPvcRetentionPolicy(StatefulSetPersistentVolumeClaimRetentionPolicy in) {
+        if (in == null) return null;
+        PersistentVolumeClaimRetentionPolicyDTO d = new PersistentVolumeClaimRetentionPolicyDTO();
+        d.setWhenDeleted(in.getWhenDeleted());
+        d.setWhenScaled(in.getWhenScaled());
+        return d;
+    }
+
+    private OrdinalsDTO fromOrdinals(StatefulSetOrdinals in) {
+        if (in == null) return null;
+        OrdinalsDTO d = new OrdinalsDTO();
+        d.setStart(in.getStart());
+        return d;
     }
 
     // ==================== convert（DTO → K8s 对象，按 kind 分发） ====================
@@ -694,6 +717,8 @@ public class WorkloadConverter {
                 .endMetadata()
                 .withNewSpec()
                 .withReplicas(dto.getReplicas() != null ? dto.getReplicas() : 1)
+                .withMinReadySeconds(dto.getMinReadySeconds())
+                .withPaused(dto.getPaused())
                 .withSelector(new LabelSelectorBuilder().withMatchLabels(selectorLabels(dto)).build())
                 .withStrategy(toDeploymentStrategy(dto.getStrategy()))
                 .withTemplate(buildTemplate(dto))
@@ -712,6 +737,10 @@ public class WorkloadConverter {
                 .withNewSpec()
                 .withReplicas(dto.getReplicas() != null ? dto.getReplicas() : 1)
                 .withServiceName(hasText(dto.getServiceName()) ? dto.getServiceName() : dto.getName())
+                .withMinReadySeconds(dto.getMinReadySeconds())
+                .withPodManagementPolicy(dto.getPodManagementPolicy())
+                .withPersistentVolumeClaimRetentionPolicy(toPvcRetentionPolicy(dto.getPersistentVolumeClaimRetentionPolicy()))
+                .withOrdinals(toOrdinals(dto.getOrdinals()))
                 .withSelector(new LabelSelectorBuilder().withMatchLabels(selectorLabels(dto)).build())
                 .withUpdateStrategy(toStatefulSetUpdateStrategy(dto.getStrategy()))
                 .withTemplate(buildTemplate(dto))
@@ -935,28 +964,17 @@ public class WorkloadConverter {
     }
 
     /**
-     * DTO 资源值为 String，fabric8 7.x 为 Quantity，逐值转换
+     * DTO 资源值为基础单位 BigDecimal，fabric8 7.x 为 Quantity，逐值转换
      */
-    private Map<String, Quantity> toQuantities(Map<String, String> m) {
-        Map<String, Quantity> q = new LinkedHashMap<>();
-        if (m != null) {
-            for (Map.Entry<String, String> e : m.entrySet()) {
-                q.put(e.getKey(), new Quantity(e.getValue()));
-            }
-        }
-        return q;
+    private Map<String, Quantity> toQuantities(Map<String, BigDecimal> m) {
+        return QuantityUtil.fromBaseMap(m);
     }
 
     /**
-     * fabric8 7.x Quantity → DTO String（amount+format 原样回写）
+     * fabric8 7.x Quantity → DTO 基础单位 BigDecimal
      */
-    private Map<String, String> fromQuantities(Map<String, Quantity> m) {
-        if (m == null) return null;
-        Map<String, String> r = new LinkedHashMap<>();
-        for (Map.Entry<String, Quantity> e : m.entrySet()) {
-            r.put(e.getKey(), e.getValue() != null ? e.getValue().toString() : null);
-        }
-        return r;
+    private Map<String, BigDecimal> fromQuantities(Map<String, Quantity> m) {
+        return QuantityUtil.toBaseMap(m);
     }
 
     private Lifecycle toLifecycle(LifecycleDTO l) {
@@ -990,7 +1008,9 @@ public class WorkloadConverter {
             b.withHttpGet(toHttpGet(p.getHttpGet()));
         }
         if (p.getTcpSocket() != null) {
-            b.withTcpSocket(new TCPSocketActionBuilder().withPort(toIntOrString(p.getTcpSocket().getPort())).build());
+            b.withTcpSocket(new TCPSocketActionBuilder()
+                    .withPort(new IntOrString(p.getTcpSocket().getPort()))
+                    .build());
         }
         if (p.getExec() != null) {
             b.withExec(new ExecActionBuilder().withCommand(p.getExec().getCommand()).build());
@@ -1015,8 +1035,8 @@ public class WorkloadConverter {
 
     private HTTPGetAction toHttpGet(HttpGetActionDTO h) {
         HTTPGetActionBuilder b = new HTTPGetActionBuilder();
-        if (hasText(h.getPort())) {
-            b.withPort(toIntOrString(h.getPort()));
+        if (h.getPort() != null) {
+            b.withPort(new  IntOrString(h.getPort()));
         }
         if (hasText(h.getPath())) {
             b.withPath(h.getPath());
@@ -1172,8 +1192,8 @@ public class WorkloadConverter {
             if (hasText(v.getEmptyDir().getMedium())) {
                 e.withMedium(v.getEmptyDir().getMedium());
             }
-            if (hasText(v.getEmptyDir().getSizeLimit())) {
-                e.withSizeLimit(new Quantity(v.getEmptyDir().getSizeLimit()));
+            if (v.getEmptyDir().getSizeLimit() != null) {
+                e.withSizeLimit(QuantityUtil.fromBase(v.getEmptyDir().getSizeLimit()));
             }
             b.withEmptyDir(e.build());
         } else if (v.getConfigMap() != null) {
@@ -1329,8 +1349,8 @@ public class WorkloadConverter {
             ResourceFieldSelectorBuilder r = new ResourceFieldSelectorBuilder();
             if (hasText(d.getResourceFieldRef().getContainerName()))
                 r.withContainerName(d.getResourceFieldRef().getContainerName());
-            if (hasText(d.getResourceFieldRef().getDivisor()))
-                r.withDivisor(new Quantity(d.getResourceFieldRef().getDivisor()));
+            if (d.getResourceFieldRef().getDivisor() != null)
+                r.withDivisor(QuantityUtil.fromBase(d.getResourceFieldRef().getDivisor()));
             if (hasText(d.getResourceFieldRef().getResource())) r.withResource(d.getResourceFieldRef().getResource());
             b.withResourceFieldRef(r.build());
         }
@@ -1416,9 +1436,9 @@ public class WorkloadConverter {
         if (list == null || list.isEmpty()) return null;
         return list.stream().map(t -> {
             // storage 缺省时不挂 resources（Map.of 不容忍 null 值）
-            VolumeResourceRequirements res = hasText(t.getStorage())
+            VolumeResourceRequirements res = t.getStorage() != null
                     ? new VolumeResourceRequirementsBuilder()
-                    .withRequests(Map.of("storage", new Quantity(t.getStorage()))).build()
+                    .withRequests(Map.of("storage", QuantityUtil.fromBase(t.getStorage()))).build()
                     : null;
             return new PersistentVolumeClaimBuilder()
                     .withNewMetadata().withName(t.getName()).endMetadata()
@@ -1429,6 +1449,16 @@ public class WorkloadConverter {
                     .withResources(res)
                     .endSpec().build();
         }).toList();
+    }
+
+    private StatefulSetPersistentVolumeClaimRetentionPolicy toPvcRetentionPolicy(PersistentVolumeClaimRetentionPolicyDTO in) {
+        if (in == null) return null;
+        return new StatefulSetPersistentVolumeClaimRetentionPolicy(in.getWhenDeleted(), in.getWhenScaled());
+    }
+
+    private StatefulSetOrdinals toOrdinals(OrdinalsDTO in) {
+        if (in == null || in.getStart() == null) return null;
+        return new StatefulSetOrdinals(in.getStart());
     }
 
     // ==================== selector/labels 约定（适配器正确性，非业务） ====================

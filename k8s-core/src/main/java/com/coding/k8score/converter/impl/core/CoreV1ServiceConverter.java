@@ -66,7 +66,7 @@ public class CoreV1ServiceConverter implements CommonConverter<Service, ServiceD
         List<String> clusterIps = in.getClusterIps();
         if (clusterIps != null && !clusterIps.isEmpty()) {
             spec.setClusterIPs(clusterIps);
-            spec.setClusterIP(clusterIps.get(0));
+            spec.setClusterIP(clusterIps.getFirst());
         } else {
             spec.setClusterIP(in.getClusterIp());
         }
@@ -91,6 +91,7 @@ public class CoreV1ServiceConverter implements CommonConverter<Service, ServiceD
 
     @Override
     public ServiceDTO revert(Service service) {
+        if (service == null) return null;
         ServiceDTO dto = new ServiceDTO();
         if (service.getMetadata() != null) {
             dto.setName(service.getMetadata().getName());

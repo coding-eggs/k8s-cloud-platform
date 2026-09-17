@@ -76,7 +76,7 @@ function newRelabeling(): RelabelingRow {
 }
 function newEndpoint(): EndpointRow {
   return {
-    port: '', path: '/metrics', interval: '30', scrapeTimeout: '', scheme: '',
+    port: '', path: '', interval: '', scrapeTimeout: '', scheme: '',
     paramsRows: [],
     basicAuthEnabled: false, basicUsernameName: '', basicUsernameKey: '', basicPasswordName: '', basicPasswordKey: '',
     bearerEnabled: false, bearerName: '', bearerKey: '', bearerTokenFile: '',

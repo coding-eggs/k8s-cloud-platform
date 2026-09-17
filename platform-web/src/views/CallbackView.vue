@@ -16,7 +16,7 @@ onMounted(async () => {
   }
   const ok = await handleCallback(code, state)
   if (ok) {
-    router.replace('/')
+    await router.replace('/')
   } else {
     status.value = 'error'
   }

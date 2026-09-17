@@ -26,6 +26,7 @@ public class CoreV1ConfigMapConverter implements CommonConverter<ConfigMap, Conf
 
     @Override
     public ConfigMapDTO revert(ConfigMap cm) {
+        if (cm == null) return null;
         ConfigMapDTO dto = new ConfigMapDTO();
         if (cm.getMetadata() != null) {
             dto.setName(cm.getMetadata().getName());

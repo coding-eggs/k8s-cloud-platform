@@ -19,7 +19,10 @@ import { getAccessToken } from '@/auth/oauth'
 const props = defineProps<{
   modelValue: boolean
   pod: K8sPod | null
-  tenantId: string
+  /** scope=cluster（节点详情等集群域）时无需 tenantId，走 /resource/nodes/{node}/pods/... 端点 */
+  scope?: 'namespace' | 'cluster'
+  nodeName?: string
+  tenantId?: string
   clusterId: string
   namespace: string
 }>()
@@ -112,16 +115,20 @@ function ensureTerm(): void {
 
 /** 拉取日志：sinceTime（增量）或 tailLines（首次回看最近 N 行）二选一；返回原始文本 */
 async function fetchLogs(sinceTime?: string, tailLinesParam?: number): Promise<string> {
-  const q = new URLSearchParams({
-    tenantId: props.tenantId,
-    clusterId: props.clusterId,
-    namespace: props.namespace,
-  })
+  const clusterScoped = props.scope === 'cluster'
+  const podName = encodeURIComponent(props.pod!.name)
+  const basePath = clusterScoped
+    ? `/api/resource/nodes/${encodeURIComponent(props.nodeName ?? '')}/pods/${encodeURIComponent(props.namespace)}/${podName}/logs`
+    : `/api/resource/pods/${podName}/logs`
+  const q = new URLSearchParams()
+  if (!clusterScoped && props.tenantId) q.set('tenantId', props.tenantId)
+  q.set('clusterId', props.clusterId)
+  q.set('namespace', props.namespace)
   if (logContainer.value) q.set('container', logContainer.value)
   if (sinceTime) q.set('sinceTime', sinceTime)
   else if (tailLinesParam != null) q.set('tailLines', String(tailLinesParam))
   const resp = await fetch(
-    `/api/resource/pods/${encodeURIComponent(props.pod!.name)}/logs?${q.toString()}`,
+    `${basePath}?${q.toString()}`,
     { headers: { Authorization: `Bearer ${getAccessToken() ?? ''}` }, signal: logAbort!.signal },
   )
   const ctype = resp.headers.get('content-type') ?? ''

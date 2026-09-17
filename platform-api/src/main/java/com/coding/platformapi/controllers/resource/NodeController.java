@@ -14,10 +14,17 @@ import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.NodeCurrentMetric;
 import com.coding.platformapi.metrics.dto.NodeCurrentRequest;
 import com.coding.platformapi.metrics.dto.NodeMetricsRequest;
+import com.coding.platformapi.services.NodeService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.Data;
+import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import lombok.Setter;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,6 +34,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -43,23 +52,24 @@ public class NodeController {
     private final K8sResourceClient k8s;
     private final K8sServerGateway gateway;
     private final MetricsService metricsService;
+    private final NodeService nodeService;
 
     @PostMapping("/list")
     @Operation(summary = "列出节点")
     public ResponseData<List<NodeDTO>> list(@RequestBody NodeDTO body) {
-        return new ResponseData<>(k8s.list(body));
+        return new ResponseData<>(nodeService.list(body));
     }
 
     @GetMapping("/{name}")
     @Operation(summary = "查询节点")
     public ResponseData<NodeDTO> get(@PathVariable String name, @RequestParam String clusterId) {
-        return new ResponseData<>(k8s.get(dto(name, clusterId)));
+        return new ResponseData<>(nodeService.get(name, clusterId));
     }
 
     @GetMapping("/{name}/yaml")
     @Operation(summary = "查询节点 YAML（只读）")
     public ResponseData<String> yaml(@PathVariable String name, @RequestParam String clusterId) {
-        return new ResponseData<>(k8s.yaml(dto(name, clusterId)));
+        return new ResponseData<>(k8s.yaml(nodeService.dto(name, clusterId)));
     }
 
     @PostMapping("/cordon")
@@ -102,6 +112,41 @@ public class NodeController {
                 Map.of("clusterId", clusterId), null, gateway.listResponseType(PodDTO.class)));
     }
 
+    @GetMapping("/{name}/pods/{namespace}/{podName}/yaml")
+    @Operation(summary = "节点上某 Pod 的 YAML（只读）")
+    public ResponseData<String> podYaml(@PathVariable String name, @PathVariable String namespace,
+                                        @PathVariable String podName, @RequestParam String clusterId) {
+        return new ResponseData<>(gateway.exchange(HttpMethod.GET,
+                "/resources/nodes/" + name + "/pods/" + namespace + "/" + podName + "/yaml",
+                Map.of("clusterId", clusterId), null, gateway.responseType(String.class)));
+    }
+
+    @GetMapping(value = "/{name}/pods/{namespace}/{podName}/logs", produces = MediaType.TEXT_PLAIN_VALUE)
+    @Operation(summary = "节点上某 Pod 的日志（增量轮询 sinceTime；初始化回看 tailLines/sinceSeconds）")
+    public void podLogs(@PathVariable String name, @PathVariable String namespace, @PathVariable String podName,
+                        @RequestParam String clusterId,
+                        @RequestParam(required = false) String container,
+                        @RequestParam(required = false) Integer sinceSeconds,
+                        @RequestParam(required = false) String sinceTime,
+                        @RequestParam(required = false) Integer tailLines,
+                        HttpServletResponse response) throws IOException {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("clusterId", clusterId);
+        if (StringUtils.hasText(container)) {
+            params.put("container", container);
+        }
+        // sinceTime（增量轮询）> tailLines（初始化回看最近 N 行）> sinceSeconds（旧时间窗），三选一透传
+        if (sinceTime != null) {
+            params.put("sinceTime", sinceTime);
+        } else if (tailLines != null) {
+            params.put("tailLines", String.valueOf(tailLines));
+        } else if (sinceSeconds != null) {
+            params.put("sinceSeconds", String.valueOf(sinceSeconds));
+        }
+        gateway.streamGet("/resources/nodes/" + name + "/pods/" + namespace + "/" + podName + "/logs",
+                params, response.getOutputStream());
+    }
+
     @GetMapping("/{name}/events")
     @Operation(summary = "节点事件")
     public ResponseData<List<NodeEventDTO>> events(@PathVariable String name, @RequestParam String clusterId) {
@@ -141,38 +186,23 @@ public class NodeController {
         return new ResponseData<>(metricsService.nodeNetwork(req));
     }
 
-    private NodeDTO dto(String name, String clusterId) {
-        NodeDTO d = new NodeDTO();
-        d.setName(name);
-        d.setClusterId(clusterId);
-        return d;
-    }
+
 
     /** 标签 + Taint 更新请求体。 */
+
+    @Data
     public static class NodeLabelTaintReq {
         private Map<String, String> labels;
         private List<NodeTaintDTO> taints;
 
-        public Map<String, String> getLabels() { return labels; }
-        public void setLabels(Map<String, String> labels) { this.labels = labels; }
-        public List<NodeTaintDTO> getTaints() { return taints; }
-        public void setTaints(List<NodeTaintDTO> taints) { this.taints = taints; }
     }
 
     /** Drain 请求体。 */
+    @Data
     public static class NodeDrainReq {
         private String clusterId;
         private String name;
         private Boolean force;
         private Boolean deleteEmptyDir;
-
-        public String getClusterId() { return clusterId; }
-        public void setClusterId(String clusterId) { this.clusterId = clusterId; }
-        public String getName() { return name; }
-        public void setName(String name) { this.name = name; }
-        public Boolean getForce() { return force; }
-        public void setForce(Boolean force) { this.force = force; }
-        public Boolean getDeleteEmptyDir() { return deleteEmptyDir; }
-        public void setDeleteEmptyDir(Boolean deleteEmptyDir) { this.deleteEmptyDir = deleteEmptyDir; }
     }
 }

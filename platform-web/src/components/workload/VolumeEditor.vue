@@ -7,7 +7,6 @@ import StringMapEditor from './StringMapEditor.vue'
 import FieldHelp from "@/components/workload/FieldHelp.vue";
 import { ensureModelList } from './modelList'
 import { useResourceOptions } from '@/composables/useResourceOptions'
-import { parseQuantity } from '@/utils/quantity'
 import { configMapApi, secretApi } from '@/api'
 import { useResourceContext } from '@/stores/context'
 
@@ -49,18 +48,16 @@ const T_READONLY = '是否以只读方式挂载该卷。'
 const T_NFS_SERVER = 'NFS 服务器的地址（IP 或域名）。'
 const T_NFS_PATH = '要挂载的 NFS 共享目录路径（如 /export）。'
 
-/** emptyDir.sizeLimit：数字 + 固定单位 Gi（与 ResourcesEditor 同一做法，只能填数字） */
-function sizeLimitToGi(raw?: string | null): number | null {
-  const s = (raw ?? '').trim()
-  if (s === '') return null
-  const base = parseQuantity(s)
-  if (Number.isNaN(base)) return null
-  return base / 2 ** 30
+/** emptyDir.sizeLimit：数字 + 固定单位 Gi（与 ResourcesEditor 同一做法，只能填数字）。
+ *  model 存字节（number|null）；显示换算成 Gi，输入换算回字节。 */
+function sizeLimitToGi(bytes?: number | null): number | null {
+  if (bytes == null || Number.isNaN(bytes)) return null
+  return bytes / 2 ** 30
 }
 function setGiLimit(v: VolumeDef, n: number | string | null | undefined): void {
   if (!v.emptyDir) return
   const s = (n == null ? '' : String(n)).trim()
-  v.emptyDir.sizeLimit = s === '' ? '' : `${s}Gi`
+  v.emptyDir.sizeLimit = (s === '' || Number.isNaN(Number(s))) ? null : Number(s) * 2 ** 30
 }
 
 /** items.key 下拉：按「命名空间/资源名」缓存各 ConfigMap / Secret 的 key 列表，惰性拉取。
@@ -147,7 +144,7 @@ function setType(v: VolumeDef, t: VolumeType): void {
   v.type = t
   v.emptyDir = null; v.configMap = null; v.secret = null; v.persistentVolumeClaim = null
   v.hostPath = null; v.projected = null; v.downwardAPI = null; v.csi = null; v.nfs = null
-  if (t === 'emptyDir') v.emptyDir = m.emptyDir ?? { medium: '', sizeLimit: '' }
+  if (t === 'emptyDir') v.emptyDir = m.emptyDir ?? { medium: '', sizeLimit: null }
   else if (t === 'configMap') v.configMap = m.configMap ?? { name: '' }
   else if (t === 'secret') v.secret = m.secret ?? { secretName: '' }
   else if (t === 'persistentVolumeClaim') v.persistentVolumeClaim = m.persistentVolumeClaim ?? { claimName: '' }

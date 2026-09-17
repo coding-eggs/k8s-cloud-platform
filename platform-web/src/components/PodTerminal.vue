@@ -12,7 +12,9 @@ import '@xterm/xterm/css/xterm.css'
 import { getAccessToken } from '@/auth/oauth'
 
 const props = defineProps<{
-  tenantId: string
+  /** scope=cluster（节点详情等集群域）：走 admin client，无需 tenantId */
+  scope?: 'namespace' | 'cluster'
+  tenantId?: string
   clusterId: string
   namespace: string
   name: string
@@ -36,11 +38,15 @@ function buildUrl(): string {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   const q = new URLSearchParams({
     access_token: getAccessToken() ?? '',
-    tenantId: props.tenantId,
     clusterId: props.clusterId,
     namespace: props.namespace,
     name: props.name,
   })
+  if (props.scope === 'cluster') {
+    q.set('scope', 'cluster')
+  } else if (props.tenantId) {
+    q.set('tenantId', props.tenantId)
+  }
   if (props.container) q.set('container', props.container)
   return `${proto}://${location.host}/api/ws/pod/exec?${q.toString()}`
 }

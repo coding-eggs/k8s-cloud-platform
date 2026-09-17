@@ -36,6 +36,13 @@ function setSource(f: DownwardAPIVolumeFile, src: 'fieldRef' | 'resourceFieldRef
   if (src === 'fieldRef') f.fieldRef = m.fieldRef ?? { apiVersion: null, fieldPath: '' }
   else f.resourceFieldRef = m.resourceFieldRef ?? { containerName: null, divisor: null, resource: 'limits.cpu' }
 }
+
+/** divisor：model 存基础单位数字（number|null）；输入解析成数字，空/非法 → null。 */
+function setDivisor(f: DownwardAPIVolumeFile, raw: string): void {
+  if (!f.resourceFieldRef) return
+  const s = raw.replace(/[^\d.eE+-]/g, '')
+  f.resourceFieldRef.divisor = (s === '' || Number.isNaN(Number(s))) ? null : Number(s)
+}
 </script>
 
 <template>
@@ -56,7 +63,7 @@ function setSource(f: DownwardAPIVolumeFile, src: 'fieldRef' | 'resourceFieldRef
       </div>
       <div v-else-if="f.resourceFieldRef" class="kv-row sub">
         <el-input v-model="f.resourceFieldRef.containerName" placeholder="containerName（可选）" style="width: 150px" />
-        <el-input v-model="f.resourceFieldRef.divisor" placeholder="divisor（如 1m，可选）" style="width: 130px" />
+        <el-input :model-value="f.resourceFieldRef.divisor ?? ''" @input="(v: string) => setDivisor(f, v)" placeholder="divisor（基础单位，如 0.001=毫核、1=整值，可选）" style="width: 200px" />
         <el-select v-model="f.resourceFieldRef.resource" style="width: 190px">
           <el-option v-for="r in RESOURCES" :key="r" :label="r" :value="r" />
         </el-select>

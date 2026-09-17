@@ -50,13 +50,14 @@ public class HpaV1Converter implements CommonConverter<HorizontalPodAutoscaler, 
 
     @Override
     public HpaDTO revert(HorizontalPodAutoscaler hpa) {
+        if (hpa == null) return null;
         HpaDTO dto = new HpaDTO();
         if (hpa.getMetadata() != null) {
             dto.setName(hpa.getMetadata().getName());
             dto.setNamespace(hpa.getMetadata().getNamespace());
             dto.setLabels(hpa.getMetadata().getLabels());
             if (hpa.getMetadata().getCreationTimestamp() != null) {
-                dto.setCreationTime(hpa.getMetadata().getCreationTimestamp().toString());
+                dto.setCreationTime(hpa.getMetadata().getCreationTimestamp());
             }
         }
         HorizontalPodAutoscalerSpec spec = hpa.getSpec();

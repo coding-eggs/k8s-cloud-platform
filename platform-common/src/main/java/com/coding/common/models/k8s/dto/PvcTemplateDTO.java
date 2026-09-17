@@ -3,6 +3,7 @@ package com.coding.common.models.k8s.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 @Data
@@ -15,8 +16,8 @@ public class PvcTemplateDTO {
     @Schema(description = "访问模式（ReadWriteOnce/ReadOnlyMany/ReadWriteMany/ReadWriteOncePod）")
     private List<String> accessModes;
 
-    @Schema(description = "存储容量（quantity）")
-    private String storage;
+    @Schema(description = "存储容量（基础单位：字节）")
+    private BigDecimal storage;
 
     @Schema(description = "存储类名称")
     private String storageClassName;

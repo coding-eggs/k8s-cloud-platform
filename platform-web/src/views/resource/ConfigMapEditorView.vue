@@ -165,7 +165,7 @@ async function submit(): Promise<void> {
       await configMapApi.create(ctx2, body)
       ElMessage.success('创建成功')
     }
-    router.push('/resources/configmaps')
+    await router.push('/resources/configmaps')
   } catch {
     /* 拦截器已提示 */
   } finally {

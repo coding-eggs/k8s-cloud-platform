@@ -7,7 +7,7 @@ import lombok.Data;
 @Schema(description = "TCP Socket 动作")
 public class TCPSocketActionDTO {
 
-    @Schema(description = "端口（IntOrString，命名端口用 String）")
-    private String port;
+    @Schema(description = "端口（IntOrString，命名端口用 Integer）")
+    private Integer port;
 
 }

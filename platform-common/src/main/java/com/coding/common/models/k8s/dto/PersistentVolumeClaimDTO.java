@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.BaseResources;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -19,8 +20,8 @@ public class PersistentVolumeClaimDTO extends BaseResources {
     /** ReadWriteOnce / ReadWriteMany / ReadOnlyMany / ReadWriteMany */
     private List<String> accessModes;
 
-    /** 请求容量（如 1Gi、100Mi） */
-    private String storage;
+    /** 请求容量（基础单位：字节） */
+    private BigDecimal storage;
 
     /** 数据来源（可选）：从已有对象填充新卷，如 VolumeSnapshot / PersistentVolumeClaim。对应 spec.dataSourceRef */
     private DataSourceRef dataSourceRef;

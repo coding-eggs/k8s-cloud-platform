@@ -16,6 +16,7 @@ import PodTerminal from '@/components/PodTerminal.vue'
 import PodLogDialog from '@/components/PodLogDialog.vue'
 import { fmtAge, fmtDate, podPhaseType, workloadStatus } from '@/utils/format'
 import { sumCpuCores, sumMemBytes } from '@/utils/metrics'
+import { formatBytes } from '@/utils/quantity'
 import FieldHelp from "@/components/workload/FieldHelp.vue";
 
 const route = useRoute()
@@ -82,6 +83,19 @@ function goEditor(): void {
 }
 function goPod(podName: string): void {
   router.push(`/resources/pods/detail?name=${encodeURIComponent(podName)}`)
+}
+
+/** 暂停/恢复更新（仅 Deployment）：翻转当前 paused，走独立端点 */
+async function togglePause(): Promise<void> {
+  const d = detail.value
+  if (!d || d.kind !== 'deployment') return
+  try {
+    await workloadApi.pause(d.name, ctxParams.value, !d.paused)
+    ElMessage.success(d.paused ? '已恢复更新' : '已暂停更新')
+    await refresh()
+  } catch {
+    /* 拦截器已提示 */
+  }
 }
 
 /** 查看绑定的 Service 详情（跳 Service 列表并自动打开对应抽屉） */
@@ -324,6 +338,9 @@ const contextDesc = computed(() => {
         </el-select>
       </span>
       <el-button size="small" @click="goBack">返回</el-button>
+      <el-tooltip v-if="detail?.kind === 'deployment'" :content="isOpManaged ? '由 Operator 管理，不可操作' : ''" :disabled="!isOpManaged" placement="bottom">
+        <el-button size="small" :disabled="!detail || isOpManaged" @click="togglePause">{{ detail?.paused ? '恢复更新' : '暂停更新' }}</el-button>
+      </el-tooltip>
       <el-tooltip :content="isOpManaged ? '由 Operator 管理，不可编辑' : ''" :disabled="!isOpManaged" placement="bottom">
         <el-button size="small" type="primary" :disabled="!detail || isOpManaged" @click="goEditor">编辑</el-button>
       </el-tooltip>
@@ -358,6 +375,12 @@ const contextDesc = computed(() => {
 
             <div class="info-row"><span class="k">状态</span><StatusBadgeTip :label="status.label" :type="status.type" :reason="detail.statusReason" /></div>
             <div class="info-row"><span class="k">副本数</span><span class="v">{{ replicasText }}</span></div>
+            <div v-if="detail.kind !== 'daemonset'" class="info-row"><span class="k">就绪最短秒数</span><span class="v">{{ detail.minReadySeconds ?? 0 }}</span></div>
+            <div v-if="detail.kind === 'deployment'" class="info-row">
+              <span class="k">更新状态</span>
+              <el-tag v-if="detail.paused" type="warning" size="small" effect="plain">已暂停</el-tag>
+              <span v-else class="v">正常</span>
+            </div>
             <div class="info-row col-row">
               <span class="k">镜像</span>
               <code v-for="(c, i) in detail.podTemplate?.spec.containers" :key="i" class="res-name img-cell">
@@ -367,6 +390,12 @@ const contextDesc = computed(() => {
 
             <div class="info-row"><span class="k">ServiceAccount</span><code class="mono v">{{ serviceAccount }}</code></div>
             <div v-if="detail.kind === 'statefulset'" class="info-row"><span class="k">Headless Service</span><code class="mono v">{{ detail.serviceName || detail.name }}</code></div>
+            <div v-if="detail.kind === 'statefulset'" class="info-row"><span class="k">Pod 管理策略</span><span class="v">{{ detail.podManagementPolicy || 'OrderedReady' }}</span></div>
+            <div v-if="detail.kind === 'statefulset'" class="info-row">
+              <span class="k">PVC 保留策略</span>
+              <span class="v mono">删除: {{ detail.persistentVolumeClaimRetentionPolicy?.whenDeleted || 'Retain' }} · 缩容: {{ detail.persistentVolumeClaimRetentionPolicy?.whenScaled || 'Retain' }}</span>
+            </div>
+            <div v-if="detail.kind === 'statefulset'" class="info-row"><span class="k">编号起始值</span><span class="v">{{ detail.ordinals?.start ?? 0 }}</span></div>
             <div class="info-row col-row"><span class="k">描述</span><span class="v desc">{{ detail.description || '—' }}</span></div>
             <div class="info-row"><span class="k">创建时间</span><span class="v">{{ fmtDate(detail.creationTime) }}</span></div>
             <div class="info-row"><span class="k">存活时长</span><span class="v">{{ fmtAge(detail.creationTime) }}</span></div>
@@ -511,7 +540,7 @@ const contextDesc = computed(() => {
               <span class="v stack">
                 <div v-for="t in pvcTemplates" :key="t.name" class="stack-line vol-line">
                   <code class="mono">{{ t.name }}</code>
-                  <span class="muted">{{ t.storage }} · {{ (t.accessModes ?? []).join('/') }}<template v-if="t.storageClassName"> · {{ t.storageClassName }}</template></span>
+                  <span class="muted">{{ formatBytes(t.storage) }} · {{ (t.accessModes ?? []).join('/') }}<template v-if="t.storageClassName"> · {{ t.storageClassName }}</template></span>
                 </div>
                 <span v-if="!pvcTemplates.length" class="muted">无</span>
               </span>

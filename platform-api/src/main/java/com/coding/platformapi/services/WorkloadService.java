@@ -134,6 +134,19 @@ public class WorkloadService {
         return k8s.update(dto);
     }
 
+    /**暂停/恢复 Deployment 更新（spec.paused）。编排在本层：取完整对象 → 翻 paused → 走 update（保留 replicas/minReadySeconds 等，不误缩放）。仅 Deployment 支持。 */
+    public WorkloadDTO pause(WorkloadDTO query) {
+        WorkloadDTO existing = k8s.get(query);
+        if (existing == null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "工作负载不存在: " + query.getName());
+        }
+        if (!"deployment".equalsIgnoreCase(existing.getKind())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "仅 Deployment 支持暂停/恢复更新");
+        }
+        existing.setPaused(Boolean.TRUE.equals(query.getPaused()));
+        return update(existing);
+    }
+
     /**仅伸缩请求（列表页伸缩快捷：只带 kind/name/namespace/replicas）：取现有资源并把完整规格嫁接到请求上，
      * 保留请求的身份字段与所请求的 replicas；资源不存在则抛 not-found。serviceName 由 k8s-server 侧沿用 existing，无需嫁接 */
     private void graftExistingSpec(WorkloadDTO dto) {

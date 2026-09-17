@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.BaseResources;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -14,8 +15,8 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = true)
 public class PersistentVolumeDTO extends BaseResources {
 
-    /** 容量（如 10Gi，来自 spec.capacity.storage） */
-    private String capacity;
+    /** 容量（基础单位：字节，来自 spec.capacity.storage） */
+    private BigDecimal capacity;
 
     /** ReadWriteOnce / ReadWriteMany / ReadOnlyMany / ReadWriteOncePod */
     private List<String> accessModes;

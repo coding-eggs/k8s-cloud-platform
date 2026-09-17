@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { MoreFilled, Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { clusterApi, nodeApi } from '@/api'
 import type { K8sCluster, K8sNode, K8sPod, NodeEvent, NodeTaint } from '@/types'
@@ -10,7 +10,9 @@ import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import KvTags from '@/components/KvTags.vue'
 import NodeMetricsPanel from '@/components/node/NodeMetricsPanel.vue'
-import { fmtDate, podPhaseType } from '@/utils/format'
+import PodTerminal from '@/components/PodTerminal.vue'
+import PodLogDialog from '@/components/PodLogDialog.vue'
+import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { parseCpuCores, parseMemBytes, humanizeBytes } from '@/utils/metrics'
 
 const route = useRoute()
@@ -83,7 +85,7 @@ async function refreshAll(): Promise<void> {
 }
 
 // ---- Tab 状态 + 懒加载（Pod / 事件 / YAML）----
-const activeTab = ref('conditions')
+const activeTab = ref('overview')
 const pods = ref<K8sPod[]>([])
 const podsLoaded = ref(false)
 const events = ref<NodeEvent[]>([])
@@ -113,19 +115,76 @@ watch(activeTab, (tab) => {
   else if (tab === 'yaml' && !yamlLoaded.value) void loadYaml()
 })
 
+// ---- Pod tab：名称搜索（前端过滤）+ 行操作（日志 / Exec / Yaml；集群域，无删除）----
+const podKeyword = ref('')
+const filteredPods = computed(() => {
+  const kw = podKeyword.value.trim().toLowerCase()
+  if (!kw) return pods.value
+  return pods.value.filter((p) => (p.name ?? '').toLowerCase().includes(kw))
+})
+
+/** 就绪（容器）：非 init 容器的 ready/total */
+function readyCount(pod: K8sPod): string {
+  const cs = (pod.containerDetails ?? []).filter((c) => !c.init)
+  return `${cs.filter((c) => c.ready).length}/${cs.length}`
+}
+
+// 日志（PodLogDialog：集群域 scope=cluster，无需 tenantId）
+const logVisible = ref(false)
+const logPod = ref<K8sPod | null>(null)
+function openLogs(row: K8sPod): void {
+  logPod.value = row
+  logVisible.value = true
+}
+
+// Exec（xterm 完整终端，WS 经 platform-api 中继；scope=cluster）
+const execVisible = ref(false)
+const execPod = ref<K8sPod | null>(null)
+const execContainer = ref('')
+function openExec(row: K8sPod): void {
+  execPod.value = row
+  execContainer.value = (row.containers ?? [])[0] ?? ''
+  execVisible.value = true
+}
+
+// Yaml（只读）
+const yamlVisible = ref(false)
+const yamlPod = ref<K8sPod | null>(null)
+const podYamlText = ref('')
+async function openYaml(row: K8sPod): Promise<void> {
+  if (!clusterId.value || !name.value || !row.namespace) return
+  yamlPod.value = row
+  podYamlText.value = ''
+  yamlVisible.value = true
+  try {
+    podYamlText.value = await nodeApi.podYaml(name.value, clusterId.value, row.namespace, row.name)
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+function onPodCommand(cmd: string, row: K8sPod): void {
+  switch (cmd) {
+    case 'logs': openLogs(row); break
+    case 'exec': openExec(row); break
+    case 'yaml': void openYaml(row); break
+  }
+}
+
+function goPod(podName: string, namespace?: string): void {
+  const ns = namespace ? `&namespace=${encodeURIComponent(namespace)}` : ''
+  router.push(`/resources/pods/detail?name=${encodeURIComponent(podName)}${ns}`)
+}
+
 // ---- 概览派生（监控配额）----
 const instance = computed(() => (node.value?.internalIp ? node.value.internalIp + ':9100' : ''))
 const cpuLimit = computed(() => parseCpuCores(node.value?.cpuAllocatable))
 const memoryLimit = computed(() => parseMemBytes(node.value?.memoryAllocatable))
 
 function capacityText(n: K8sNode, kind: 'cpu' | 'mem'): string {
-  const cap = kind === 'cpu' ? n.cpuCapacity : n.memoryCapacity
   const alloc = kind === 'cpu' ? n.cpuAllocatable : n.memoryAllocatable
-  const fmt = (v?: string | null) => {
-    if (!v) return '—'
-    return kind === 'cpu' ? `${parseCpuCores(v) ?? v} 核` : humanizeBytes(parseMemBytes(v) ?? 0)
-  }
-  return `容量 ${fmt(cap)} / 可分配 ${fmt(alloc)}`
+  if (alloc == null) return '—'
+  return kind === 'cpu' ? `${parseCpuCores(alloc) ?? alloc} 核` : humanizeBytes(parseMemBytes(alloc) ?? 0)
 }
 
 // ---- 标签 & Taint 编辑（整体替换）----
@@ -178,7 +237,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
 
 <template>
   <div v-loading="loading" class="node-page">
-    <PageHeader :title="`节点详情 · ${name || '—'}`">
+    <PageHeader :title="`节点详情`">
       <el-select v-model="clusterId" placeholder="选择集群" size="small" style="width: 200px">
         <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
       </el-select>
@@ -197,141 +256,215 @@ watch(name, () => { if (clusterId.value) void refresh() })
       <el-button type="primary" @click="goBack">返回列表</el-button>
     </EmptyState>
 
-    <div v-else-if="node" class="node-detail">
-      <!-- 左：基本信息（窄栏） -->
-      <aside class="col col-side">
-        <section class="panel info-card">
-          <h3 class="info-title">基本信息</h3>
-          <div class="info-name">{{ node.name }}</div>
-          <div class="info-rows">
-            <div class="info-row"><span class="k">状态</span><StatusBadgeTip :label="node.status === 'True' ? 'Ready' : 'NotReady'" :type="node.status === 'True' ? 'success' : 'danger'" /></div>
-            <div class="info-row"><span class="k">可调度</span><el-tag size="small" :type="node.unschedulable ? 'warning' : 'success'">{{ node.unschedulable ? '不可调度（Cordon）' : '可调度' }}</el-tag></div>
-            <div class="info-row"><span class="k">角色</span><span class="v">{{ (node.roles && node.roles.length) ? node.roles.join(', ') : 'worker' }}</span></div>
-            <div class="info-row"><span class="k">Kubelet 版本</span><code class="mono v">{{ node.kubeletVersion ?? '—' }}</code></div>
-            <div class="info-row"><span class="k">OS / 架构</span><span class="v">{{ [node.os, node.arch].filter(Boolean).join(' / ') || '—' }}</span></div>
-            <div class="info-row"><span class="k">内核版本</span><code class="mono v">{{ node.kernelVersion ?? '—' }}</code></div>
-            <div class="info-row"><span class="k">容器运行时</span><code class="mono v">{{ node.containerRuntimeVersion ?? '—' }}</code></div>
-            <div class="info-row"><span class="k">OS 镜像</span><span class="v">{{ node.osImage ?? '—' }}</span></div>
-            <div class="info-row"><span class="k">Pod CIDR</span><code class="mono v">{{ node.podCidr ?? '—' }}</code></div>
-            <div class="info-row"><span class="k">内网 IP</span><code class="mono v">{{ node.internalIp ?? '—' }}</code></div>
-            <div class="info-row"><span class="k">外网 IP</span><code class="mono v">{{ node.externalIp ?? '—' }}</code></div>
-            <div class="info-row"><span class="k">CPU</span><span class="v">{{ capacityText(node, 'cpu') }}</span></div>
-            <div class="info-row"><span class="k">内存</span><span class="v">{{ capacityText(node, 'mem') }}</span></div>
-            <div class="info-row"><span class="k">Pod 上限</span><span class="v">{{ node.podsLimit ?? '—' }}</span></div>
-            <div class="info-row"><span class="k">加入时间</span><span class="v">{{ fmtDate(node.creationTime) }}</span></div>
-            <div class="info-row col-row"><span class="k">标签</span><KvTags title="标签" :data="node.labels ?? {}" /></div>
+    <div v-else-if="node" class="node-detail panel">
+      <el-tabs v-model="activeTab">
+        <!-- 概览：基本信息（左）+ 监控（右） -->
+        <el-tab-pane label="概览" name="overview">
+          <div class="overview-grid">
+            <aside class="ov-side">
+              <section class="info-card">
+                <h3 class="info-title">基本信息</h3>
+                <div class="info-name">{{ node.name }}</div>
+                <div class="info-rows">
+                  <div class="info-row"><span class="k">状态</span><StatusBadgeTip :label="node.status === 'True' ? 'Ready' : 'NotReady'" :type="node.status === 'True' ? 'success' : 'danger'" /></div>
+                  <div class="info-row"><span class="k">可调度</span><el-tag size="small" :type="node.unschedulable ? 'warning' : 'success'">{{ node.unschedulable ? '不可调度（Cordon）' : '可调度' }}</el-tag></div>
+                  <div class="info-row"><span class="k">角色</span><span class="v">{{ (node.roles && node.roles.length) ? node.roles.join(', ') : 'worker' }}</span></div>
+                  <div class="info-row"><span class="k">Kubelet 版本</span><code class="mono v">{{ node.kubeletVersion ?? '—' }}</code></div>
+                  <div class="info-row"><span class="k">OS / 架构</span><span class="v">{{ [node.os, node.arch].filter(Boolean).join(' / ') || '—' }}</span></div>
+                  <div class="info-row"><span class="k">内核版本</span><code class="mono v">{{ node.kernelVersion ?? '—' }}</code></div>
+                  <div class="info-row"><span class="k">容器运行时</span><code class="mono v">{{ node.containerRuntimeVersion ?? '—' }}</code></div>
+                  <div class="info-row"><span class="k">OS 镜像</span><span class="v">{{ node.osImage ?? '—' }}</span></div>
+                  <div class="info-row"><span class="k">Pod CIDR</span><code class="mono v">{{ node.podCidr ?? '—' }}</code></div>
+                  <div class="info-row"><span class="k">内网 IP</span><code class="mono v">{{ node.internalIp ?? '—' }}</code></div>
+                  <div class="info-row"><span class="k">CPU</span><span class="v">{{ capacityText(node, 'cpu') }}</span></div>
+                  <div class="info-row"><span class="k">内存</span><span class="v">{{ capacityText(node, 'mem') }}</span></div>
+                  <div class="info-row"><span class="k">Pod 上限</span><span class="v">{{ node.podsLimit ?? '—' }}</span></div>
+                  <div class="info-row"><span class="k">加入时间</span><span class="v">{{ fmtDate(node.creationTime) }}</span></div>
+                  <div class="info-row col-row"><span class="k">标签</span><KvTags title="标签" :data="node.labels ?? {}" /></div>
+                </div>
+              </section>
+            </aside>
+
+            <main class="ov-main">
+              <NodeMetricsPanel ref="metricsRef" :name="node.name" :cluster-id="clusterId" :instance="instance" :cpu-limit="cpuLimit" :memory-limit="memoryLimit" />
+            </main>
           </div>
-        </section>
-      </aside>
+        </el-tab-pane>
 
-      <!-- 右：Tab（上）+ 监控（下） -->
-      <main class="col col-main">
-        <div class="main-board panel">
-          <el-tabs v-model="activeTab">
-            <!-- Conditions -->
-            <el-tab-pane label="Conditions" name="conditions">
-              <el-table :data="node.conditions ?? []" stripe size="small">
-                <el-table-column prop="type" label="类型" width="200" />
-                <el-table-column label="状态" width="120">
-                  <template #default="{ row }">
-                    <el-tag size="small" :type="row.status === 'True' ? 'success' : row.status === 'False' ? 'info' : 'danger'">{{ row.status }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="reason" label="原因" width="180" />
-                <el-table-column prop="message" label="说明" min-width="240" show-overflow-tooltip />
-                <el-table-column label="最近心跳" width="160">
-                  <template #default="{ row }">{{ fmtDate(row.lastHeartbeatTime) }}</template>
-                </el-table-column>
-                <el-table-column label="最近变更" width="160">
-                  <template #default="{ row }">{{ fmtDate(row.lastTransitionTime) }}</template>
-                </el-table-column>
-              </el-table>
-            </el-tab-pane>
 
-            <!-- Pod -->
-            <el-tab-pane label="Pod" name="pods">
-              <div class="list-head">
-                <h3 class="info-title">节点上的 Pod</h3>
-                <span class="muted count">{{ pods.length }} 个（上限 {{ node.podsLimit ?? '—' }}）</span>
-              </div>
-              <el-table v-if="podsLoaded" :data="pods" stripe size="small">
-                <el-table-column prop="name" label="名称" min-width="240" show-overflow-tooltip />
-                <el-table-column prop="namespace" label="命名空间" width="160" />
-                <el-table-column label="状态" width="110">
-                  <template #default="{ row }"><StatusBadgeTip :label="row.phase ?? 'Unknown'" :type="podPhaseType(row.phase)" :reason="row.statusReason" /></template>
-                </el-table-column>
-                <el-table-column prop="podIp" label="IP" width="140">
-                  <template #default="{ row }"><span class="muted">{{ row.podIp ?? '—' }}</span></template>
-                </el-table-column>
-                <el-table-column prop="restarts" label="重启" width="70" />
-                <el-table-column label="创建时间（存活时长）" width="150">
-                  <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
-                </el-table-column>
-              </el-table>
-            </el-tab-pane>
 
-            <!-- 标签 & Taint -->
-            <el-tab-pane label="标签 & Taint" name="labels">
-              <div class="lt-block">
-                <div class="list-head">
-                  <h3 class="info-title">标签（Labels）</h3>
-                  <el-button size="small" @click="addLabelRow">添加</el-button>
-                </div>
-                <div v-if="!labelRows.length" class="muted empty-line">无标签</div>
-                <div v-for="(r, i) in labelRows" :key="'l' + i" class="lt-row">
-                  <el-input v-model="r.key" placeholder="key" style="width: 260px" />
-                  <el-input v-model="r.value" placeholder="value" style="flex: 1" />
-                  <el-button link type="danger" @click="removeLabelRow(i)">删除</el-button>
-                </div>
+        <!-- Pod -->
+        <el-tab-pane label="Pod" name="pods">
+          <div v-if="podsLoaded" class="pod-panel">
+            <div class="search-bar">
+              <el-input v-model="podKeyword" placeholder="按名称搜索…" clearable :prefix-icon="Search" class="search-input" />
+            </div>
+            <el-table :data="filteredPods" stripe >
+              <el-table-column label="名称" width="350" show-overflow-tooltip>
+                <template #default="{ row }"><code class="res-name name-link" @click="goPod(row.name, row.namespace)">{{ row.name }}</code></template>
+              </el-table-column>
+              <el-table-column label="命名空间" min-width="120">
+                <template #default="{ row }"><span class="muted">{{ row.namespace ?? '—' }}</span></template>
+              </el-table-column>
+              <el-table-column label="镜像" min-width="500">
+                <template #default="{ row }">
+                  <code v-for="(c, i) in row.containerDetails ?? []" :key="i" class="res-name img-cell">
+                    <span class="muted">{{ c.name }}:</span> {{ c.image }}</code>
+                </template>
+              </el-table-column>
+              <el-table-column label="容器" min-width="60">
+                <template #default="{ row }">{{ readyCount(row) }}</template>
+              </el-table-column>
+              <el-table-column label="IP" min-width="130">
+                <template #default="{ row }"><span class="muted">{{ row.podIp ?? '—' }}</span></template>
+              </el-table-column>
+              <el-table-column prop="restarts" label="重启" min-width="80" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }"><StatusBadgeTip :label="row.phase ?? 'Unknown'" :type="podPhaseType(row.phase)" :reason="row.statusReason" /></template>
+              </el-table-column>
+              <el-table-column label="创建时间（存活时长）" min-width="170">
+                <template #default="{ row }">
+                  <div class="age-cell"><div>{{ fmtDate(row.creationTime) }}</div><div class="muted">{{ fmtAge(row.creationTime) }}</div></div>
+                </template>
+              </el-table-column>
+              <el-table-column width="64" fixed="right">
+                <template #default="{ row }">
+                  <el-dropdown trigger="click" @command="(cmd: string) => onPodCommand(cmd, row)">
+                    <el-button link type="primary" :icon="MoreFilled" />
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="logs">日志</el-dropdown-item>
+                        <el-dropdown-item command="exec" :disabled="row.phase !== 'Running'">Exec</el-dropdown-item>
+                        <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
 
-                <div class="list-head mt-4">
-                  <h3 class="info-title">污点（Taints）</h3>
-                  <el-button size="small" @click="addTaintRow">添加</el-button>
-                </div>
-                <div v-if="!taintRows.length" class="muted empty-line">无污点</div>
-                <div v-for="(r, i) in taintRows" :key="'t' + i" class="lt-row">
-                  <el-input v-model="r.key" placeholder="key" style="width: 200px" />
-                  <el-input v-model="r.value" placeholder="value" style="flex: 1" />
-                  <el-select v-model="r.effect" style="width: 170px">
-                    <el-option v-for="e in TAINT_EFFECTS" :key="e" :label="e" :value="e" />
-                  </el-select>
-                  <el-button link type="danger" @click="removeTaintRow(i)">删除</el-button>
-                </div>
+        <!-- 标签 & Taint -->
+        <el-tab-pane label="标签 & Taint" name="labels">
+          <div class="lt-block">
+            <div class="list-head">
+              <h3 class="info-title">标签（Labels）</h3>
+              <el-button size="small" @click="addLabelRow">添加</el-button>
+            </div>
+            <div v-if="!labelRows.length" class="muted empty-line">无标签</div>
+            <div v-for="(r, i) in labelRows" :key="'l' + i" class="lt-row">
+              <el-input v-model="r.key" placeholder="key" style="width: 260px" />
+              <el-input v-model="r.value" placeholder="value" style="flex: 1" />
+              <el-button link type="danger" @click="removeLabelRow(i)">删除</el-button>
+            </div>
 
-                <div class="lt-actions">
-                  <el-button type="primary" :loading="savingLabels" @click="saveLabelsTaints">保存（整体替换）</el-button>
-                </div>
-              </div>
-            </el-tab-pane>
+            <div class="list-head mt-4">
+              <h3 class="info-title">污点（Taints）</h3>
+              <el-button size="small" @click="addTaintRow">添加</el-button>
+            </div>
+            <div v-if="!taintRows.length" class="muted empty-line">无污点</div>
+            <div v-for="(r, i) in taintRows" :key="'t' + i" class="lt-row">
+              <el-input v-model="r.key" placeholder="key" style="width: 200px" />
+              <el-input v-model="r.value" placeholder="value" style="flex: 1" />
+              <el-select v-model="r.effect" style="width: 170px">
+                <el-option v-for="e in TAINT_EFFECTS" :key="e" :label="e" :value="e" />
+              </el-select>
+              <el-button link type="danger" @click="removeTaintRow(i)">删除</el-button>
+            </div>
 
-            <!-- 事件 -->
-            <el-tab-pane label="事件" name="events">
-              <el-table v-if="eventsLoaded" :data="events" stripe size="small">
-                <el-table-column prop="reason" label="原因" width="180" />
-                <el-table-column label="类型" width="100">
-                  <template #default="{ row }"><el-tag size="small" :type="row.type === 'Warning' ? 'danger' : 'info'">{{ row.type ?? 'Normal' }}</el-tag></template>
-                </el-table-column>
-                <el-table-column prop="message" label="说明" min-width="300" show-overflow-tooltip />
-                <el-table-column prop="count" label="次数" width="70" />
-                <el-table-column label="首次" width="160">
-                  <template #default="{ row }">{{ fmtDate(row.firstTimestamp) }}</template>
-                </el-table-column>
-                <el-table-column label="最近" width="160">
-                  <template #default="{ row }">{{ fmtDate(row.lastTimestamp) }}</template>
-                </el-table-column>
-              </el-table>
-            </el-tab-pane>
+            <div class="lt-actions">
+              <el-button type="primary" :loading="savingLabels" @click="saveLabelsTaints">保存（整体替换）</el-button>
+            </div>
+          </div>
+        </el-tab-pane>
 
-            <!-- YAML -->
-            <el-tab-pane label="YAML" name="yaml">
-              <pre v-if="yamlLoaded && yamlText" class="yaml-block">{{ yamlText }}</pre>
-              <div v-else class="muted">加载中…</div>
-            </el-tab-pane>
-          </el-tabs>
+        <!-- Conditions -->
+        <el-tab-pane label="Conditions" name="conditions">
+          <el-table :data="node.conditions ?? []" stripe size="small">
+            <el-table-column prop="type" label="类型" width="200" />
+            <el-table-column label="状态" width="120">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.status === 'True' ? 'success' : row.status === 'False' ? 'info' : 'danger'">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="原因" width="180" />
+            <el-table-column prop="message" label="说明" min-width="240" show-overflow-tooltip />
+            <el-table-column label="最近心跳" width="160">
+              <template #default="{ row }">{{ fmtDate(row.lastHeartbeatTime) }}</template>
+            </el-table-column>
+            <el-table-column label="最近变更" width="160">
+              <template #default="{ row }">{{ fmtDate(row.lastTransitionTime) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
 
-          <NodeMetricsPanel ref="metricsRef" :name="node.name" :cluster-id="clusterId" :instance="instance" :cpu-limit="cpuLimit" :memory-limit="memoryLimit" />
+        <!-- 事件 -->
+        <el-tab-pane label="事件" name="events">
+          <el-table v-if="eventsLoaded" :data="events" stripe size="small">
+            <el-table-column label="涉及对象" min-width="210">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.kind === 'Node' ? 'primary' : 'info'" effect="light">{{ row.kind ?? '—' }}</el-tag>
+                <code class="mono" style="margin-left:6px">{{ row.objectName ?? '—' }}</code>
+                <span v-if="row.namespace" class="muted" style="margin-left:4px;font-size:12px">（{{ row.namespace }}）</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="原因" width="180" />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }"><el-tag size="small" :type="row.type === 'Warning' ? 'danger' : 'info'">{{ row.type ?? 'Normal' }}</el-tag></template>
+            </el-table-column>
+            <el-table-column prop="message" label="说明" min-width="300" show-overflow-tooltip />
+            <el-table-column prop="count" label="次数" width="70" />
+            <el-table-column label="首次" width="160">
+              <template #default="{ row }">{{ fmtDate(row.firstTimestamp) }}</template>
+            </el-table-column>
+            <el-table-column label="最近" width="160">
+              <template #default="{ row }">{{ fmtDate(row.lastTimestamp) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+
+        <!-- YAML -->
+        <el-tab-pane label="YAML" name="yaml">
+          <pre v-if="yamlLoaded && yamlText" class="yaml-block">{{ yamlText }}</pre>
+          <div v-else class="muted">加载中…</div>
+        </el-tab-pane>
+      </el-tabs>
+
+      <!-- Pod 日志（集群域 scope=cluster，无需 tenantId） -->
+      <PodLogDialog
+        v-model="logVisible"
+        :pod="logPod"
+        scope="cluster"
+        :node-name="name"
+        :cluster-id="clusterId"
+        :namespace="logPod?.namespace ?? ''"
+      />
+
+      <!-- Pod Exec 终端（集群域） -->
+      <el-dialog v-model="execVisible" :title="`Exec · ${execPod?.name ?? ''}`" width="960px" destroy-on-close>
+        <div class="log-toolbar">
+          <el-select v-model="execContainer" size="small" style="width: 200px">
+            <el-option v-for="c in execPod?.containers ?? []" :key="c" :label="c" :value="c" />
+          </el-select>
+          <span class="muted">切换容器会断开当前会话并重连；关闭弹窗即断开</span>
         </div>
-      </main>
+        <PodTerminal
+          v-if="execVisible && execPod"
+          :key="execContainer"
+          scope="cluster"
+          :cluster-id="clusterId"
+          :namespace="execPod.namespace ?? ''"
+          :name="execPod.name"
+          :container="execContainer || undefined"
+        />
+      </el-dialog>
+
+      <!-- Pod Yaml（只读） -->
+      <el-dialog v-model="yamlVisible" :title="`Yaml · ${yamlPod?.name ?? ''}`" width="760px">
+        <pre v-if="podYamlText" class="yaml-block">{{ podYamlText }}</pre>
+        <div v-else class="muted">加载中…</div>
+      </el-dialog>
     </div>
 
     <div v-else class="loading-tip">加载中…</div>
@@ -339,49 +472,32 @@ watch(name, () => { if (clusterId.value) void refresh() })
 </template>
 
 <style scoped>
-/* 页面占满一屏：PageHeader 固定 + grid 撑满剩余，各列各自内部滚动（宽屏） */
 .node-page { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-
 .node-detail {
-  flex: 1 1 auto;
-  min-height: 0;                 /* 允许收缩 → 各列可内部滚动 */
-  display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: 16px;
-  align-items: stretch;          /* 两列等高填满 */
-}
-
-.col { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 16px; }
-
-/* 侧栏：固定高度，内容多则内部滚动 */
-.col-side { overflow-y: auto; }
-
-/* 右侧：一个大背板囊括监控 + Tab，整体内部滚动 */
-.col-main { overflow: hidden; }
-.main-board {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  padding: 8px 16px 16px;
 }
-
-/* 窄屏：恢复单列堆叠 + 整页滚动（不固定一屏高） */
-@media (max-width: 960px) {
-  .node-page { height: auto; overflow: visible; }
-  .node-detail { flex: none; grid-template-columns: 1fr; align-items: start; }
-  .col, .col-side, .col-main { overflow: visible; }
-  .main-board { flex: none; overflow: visible; }
-}
-
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 
+/* 概览 tab：基本信息（左，窄）+ 监控（右）；小分辨率上下堆叠 */
+.overview-grid {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.ov-side, .ov-main { min-width: 0; }
+@media (max-width: 960px) {
+  .overview-grid { grid-template-columns: 1fr; }
+}
+.name-link { cursor: pointer; color: var(--accent); }
+.name-link:hover { text-decoration: underline; }
 .info-card { padding: 16px; }
 .info-title { margin: 0 0 12px; font-size: 13px; font-weight: 700; letter-spacing: .04em; color: var(--text-2); }
 .info-name { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 16px; font-weight: 600; color: var(--text-1); word-break: break-all; margin-bottom: 14px; }
-.info-rows { display: flex; flex-direction: column; gap: 12px; }
+.info-rows { display: flex; flex-direction: column; gap: 12px; max-width: 720px; }
 .info-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
 .info-row.col-row { flex-direction: column; align-items: flex-start; gap: 6px; }
 .info-row .k { color: var(--text-3); flex-shrink: 0; }
@@ -394,6 +510,15 @@ watch(name, () => { if (clusterId.value) void refresh() })
 .list-head .info-title { margin: 0; }
 .count { font-size: 12px; }
 .muted { color: var(--text-3); }
+
+/* Pod tab（对齐资源管理 Pod 菜单） */
+.pod-panel { padding: 4px 0; }
+.search-bar { margin-bottom: 10px; }
+.search-input { width: 260px; }
+.res-name { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 13px;  }
+.img-cell { display: inline-block; }
+.age-cell { line-height: 1.5; }
+.log-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 
 /* 标签 & Taint 编辑 */
 .lt-block { padding: 4px 0; }

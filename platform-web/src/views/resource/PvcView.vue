@@ -9,6 +9,12 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtDate } from '@/utils/format'
+import { formatBytes } from '@/utils/quantity'
+
+/** 容量展示：基础单位字节 → 人性化（16Gi…）；null → — */
+function fmtStorage(v?: number | null): string {
+  return v == null ? '—' : formatBytes(v)
+}
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const { options } = useResourceOptions()
@@ -142,7 +148,7 @@ async function submit(): Promise<void> {
       namespace: state.namespace!,
       storageClassName: form.storageClassName.trim() || null,
       accessModes: form.accessModes,
-      storage: `${num}Gi`,
+      storage: Number(num) * 2 ** 30,
       dataSourceRef,
     })
     ElMessage.success('创建成功')
@@ -273,7 +279,7 @@ const contextDesc = computed(() => {
           </template>
         </el-table-column>
         <el-table-column label="容量" width="100">
-          <template #default="{ row }">{{ row.storage ?? '—' }}</template>
+          <template #default="{ row }">{{ fmtStorage(row.storage) }}</template>
         </el-table-column>
         <el-table-column label="访问模式" min-width="160">
           <template #default="{ row }">
@@ -295,7 +301,7 @@ const contextDesc = computed(() => {
     </div>
 
     <!-- 创建 -->
-    <el-dialog v-model="dialogVisible" title="创建 PVC" width="600px" top="8vh">
+    <el-dialog v-model="dialogVisible" title="创建 PVC" width="960px" top="8vh">
       <el-form label-width="120px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" placeholder="小写字母/数字/-，例如 data-pvc" />
@@ -360,7 +366,7 @@ const contextDesc = computed(() => {
             <el-descriptions-item label="状态">
               <StatusBadge :label="detail?.phase ?? 'Unknown'" :type="phaseType(detail?.phase)" />
             </el-descriptions-item>
-            <el-descriptions-item label="容量">{{ detail?.storage ?? '—' }}</el-descriptions-item>
+            <el-descriptions-item label="容量">{{ fmtStorage(detail?.storage) }}</el-descriptions-item>
             <el-descriptions-item label="访问模式">{{ (detail?.accessModes ?? []).join('，') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="StorageClass">{{ detail?.storageClassName ?? '（默认）' }}</el-descriptions-item>
             <el-descriptions-item v-if="detail?.dataSourceRef" label="数据来源">
@@ -388,7 +394,7 @@ const contextDesc = computed(() => {
           <el-tab-pane label="概览" name="info">
             <el-descriptions :column="1" border>
               <el-descriptions-item label="状态">{{ pvDetail.phase ?? '—' }}</el-descriptions-item>
-              <el-descriptions-item label="容量">{{ pvDetail.capacity ?? '—' }}</el-descriptions-item>
+              <el-descriptions-item label="容量">{{ fmtStorage(pvDetail.capacity) }}</el-descriptions-item>
               <el-descriptions-item label="访问模式">{{ (pvDetail.accessModes ?? []).join('，') || '—' }}</el-descriptions-item>
               <el-descriptions-item label="StorageClass">{{ pvDetail.storageClassName ?? '（默认）' }}</el-descriptions-item>
               <el-descriptions-item label="回收策略">{{ pvDetail.reclaimPolicy ?? '—' }}</el-descriptions-item>

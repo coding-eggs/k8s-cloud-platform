@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { NodeSelectorRequirement, NodeSelectorTerm } from '@/types/workload'
 import FieldHelp from './FieldHelp.vue'
+import { useNodeCatalog } from '@/stores/nodeCatalog'
 
 const model = defineModel<NodeSelectorTerm>()
+/** 节点目录：为 key / values 下拉提供集群节点的真实标签与字段候选 */
+const cat = useNodeCatalog()
 
 const OPERATORS = ['In', 'NotIn', 'Exists', 'DoesNotExist', 'Gt', 'Lt']
 
@@ -40,7 +43,12 @@ function setOperator(r: NodeSelectorRequirement, op: string): void {
       </div>
       <div v-for="(req, j) in model?.matchExpressions ?? []" :key="j" class="nt-row">
         <span class="nt-fl">key<FieldHelp :tip="T_KEY_LABEL" /></span>
-        <el-input v-model="req.key" placeholder="如 zone" style="width: 130px" />
+        <el-select
+          v-model="req.key" filterable allow-create default-first-option clearable
+          placeholder="标签键（可搜索 / 输入）" style="width: 180px"
+        >
+          <el-option v-for="k in cat.labelKeyOptions" :key="k" :label="k" :value="k" />
+        </el-select>
         <span class="nt-fl">operator<FieldHelp :tip="T_OPERATOR" /></span>
         <el-select :model-value="req.operator" @update:model-value="(op: string) => setOperator(req, op)" style="width: 120px">
           <el-option v-for="op in OPERATORS" :key="op" :label="op" :value="op" />
@@ -52,7 +60,9 @@ function setOperator(r: NodeSelectorRequirement, op: string): void {
             multiple filterable allow-create default-first-option :reserve-keyword="false"
             :placeholder="req.operator === 'Gt' || req.operator === 'Lt' ? 'value（单个，如 1）' : '输入后回车'"
             style="flex: 1; min-width: 160px"
-          />
+          >
+            <el-option v-for="v in cat.labelValueOptions(req.key)" :key="v" :label="v" :value="v" />
+          </el-select>
         </template>
         <el-button link type="danger" @click="removeExpr('matchExpressions', j)">删除</el-button>
       </div>
@@ -66,7 +76,12 @@ function setOperator(r: NodeSelectorRequirement, op: string): void {
       </div>
       <div v-for="(req, j) in model?.matchFields ?? []" :key="j" class="nt-row">
         <span class="nt-fl">key<FieldHelp :tip="T_KEY_FIELD" /></span>
-        <el-input v-model="req.key" placeholder="如 kubernetes.io/arch" style="width: 170px" />
+        <el-select
+          v-model="req.key" filterable allow-create default-first-option clearable
+          placeholder="字段键（可搜索 / 输入）" style="width: 200px"
+        >
+          <el-option v-for="k in cat.fieldKeyOptions" :key="k" :label="k" :value="k" />
+        </el-select>
         <span class="nt-fl">operator<FieldHelp :tip="T_OPERATOR" /></span>
         <el-select :model-value="req.operator" @update:model-value="(op: string) => setOperator(req, op)" style="width: 120px">
           <el-option v-for="op in OPERATORS" :key="op" :label="op" :value="op" />
@@ -78,7 +93,9 @@ function setOperator(r: NodeSelectorRequirement, op: string): void {
             multiple filterable allow-create default-first-option :reserve-keyword="false"
             :placeholder="req.operator === 'Gt' || req.operator === 'Lt' ? 'value（单个，如 1）' : '输入后回车'"
             style="flex: 1; min-width: 160px"
-          />
+          >
+            <el-option v-for="v in cat.fieldValueOptions(req.key)" :key="v" :label="v" :value="v" />
+          </el-select>
         </template>
         <el-button link type="danger" @click="removeExpr('matchFields', j)">删除</el-button>
       </div>

@@ -33,13 +33,14 @@ public class CoreV1SecretConverter implements CommonConverter<Secret, SecretDTO>
 
     @Override
     public SecretDTO revert(Secret secret) {
+        if (secret == null) return null;
         SecretDTO dto = new SecretDTO();
         if (secret.getMetadata() != null) {
             dto.setName(secret.getMetadata().getName());
             dto.setNamespace(secret.getMetadata().getNamespace());
             dto.setLabels(secret.getMetadata().getLabels());
             if (secret.getMetadata().getCreationTimestamp() != null) {
-                dto.setCreationTime(secret.getMetadata().getCreationTimestamp().toString());
+                dto.setCreationTime(secret.getMetadata().getCreationTimestamp());
             }
         }
         dto.setType(secret.getType());

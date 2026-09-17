@@ -44,7 +44,7 @@ async function refresh(): Promise<void> {
       if (target) await openDetail(target)
       const q = { ...route.query }
       delete q.open
-      router.replace({ query: q })
+      await router.replace({query: q})
     }
   } finally {
     loading.value = false

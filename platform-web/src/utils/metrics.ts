@@ -1,10 +1,12 @@
 /** 监控指标前端本地计算：K8s 数量解析（CPU/内存 limit）+ 数值人性化。
  * 百分比由前端控制（D9）：接口只回原始序列，limit 来自 pod spec，% = value / limit。 */
 
-/** CPU limit → 核。支持 "500m"（毫核）、"2"/"1.5"（核）。无法解析返回 null。 */
-export function parseCpuCores(s?: string | null): number | null {
-  if (!s) return null
-  const t = s.trim()
+/** CPU limit → 核。后端已回基础单位数字（核）；兼容旧的带单位字符串（"500m"/"2"）。无法解析返回 null。 */
+export function parseCpuCores(v?: number | string | null): number | null {
+  if (v == null) return null
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  const t = v.trim()
+  if (!t) return null
   if (t.endsWith('m')) {
     const n = Number(t.slice(0, -1))
     return Number.isFinite(n) ? n / 1000 : null
@@ -13,10 +15,12 @@ export function parseCpuCores(s?: string | null): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-/** 内存 limit → 字节。支持 Ki/Mi/Gi/Ti（二进制）与 K/M/G/T（十进制）、纯数字（字节）。 */
-export function parseMemBytes(s?: string | null): number | null {
-  if (!s) return null
-  const t = s.trim()
+/** 内存 limit → 字节。后端已回基础单位数字（字节）；兼容旧的带单位字符串（"16Gi"/"512Mi"/纯数字）。 */
+export function parseMemBytes(v?: number | string | null): number | null {
+  if (v == null) return null
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null
+  const t = v.trim()
+  if (!t) return null
   const m = t.match(/^([0-9]*\.?[0-9]+)\s*([A-Za-z]{0,2})$/)
   if (!m) return null
   const n = Number(m[1])
@@ -99,8 +103,8 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100
 }
 
-/** 容器结构里带 resources.limits 的最小形状（workload ContainerDef / pod PodContainerDetail 均满足） */
-type HasLimits = { resources?: { limits?: Record<string, string> } | null }
+/** 容器结构里带 resources.limits 的最小形状（workload ContainerDef / pod PodContainerDetail 均满足）；limits 值为基础单位数字 */
+type HasLimits = { resources?: { limits?: Record<string, number | string> } | null }
 
 /** 汇总一组容器的 CPU limit（核）；无任何 limit 返回 null（不显示 % 切换）。 */
 export function sumCpuCores(list: HasLimits[]): number | null {

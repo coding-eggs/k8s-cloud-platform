@@ -13,6 +13,7 @@ import com.coding.common.models.k8s.dto.HpaResourceMetricDTO;
 import com.coding.common.models.k8s.dto.HpaScalingPolicyDTO;
 import com.coding.common.models.k8s.dto.HpaScalingRulesDTO;
 import com.coding.k8score.converter.CommonConverter;
+import com.coding.k8score.util.QuantityUtil;
 import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.LabelSelectorBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
@@ -33,6 +34,7 @@ import io.fabric8.kubernetes.api.model.autoscaling.v2.PodsMetricSource;
 import io.fabric8.kubernetes.api.model.autoscaling.v2.ResourceMetricSource;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -64,6 +66,7 @@ public class HpaV2Converter implements CommonConverter<HorizontalPodAutoscaler, 
 
     @Override
     public HpaDTO revert(HorizontalPodAutoscaler hpa) {
+        if (hpa == null) return null;
         HpaDTO dto = new HpaDTO();
         if (hpa.getMetadata() != null) {
             dto.setName(hpa.getMetadata().getName());
@@ -160,11 +163,11 @@ public class HpaV2Converter implements CommonConverter<HorizontalPodAutoscaler, 
         MetricTarget mt = new MetricTarget();
         mt.setType(t.getType());
         mt.setAverageUtilization(t.getAverageUtilization());
-        if (StringUtils.hasText(t.getValue())) {
-            mt.setValue(new Quantity(t.getValue()));
+        if (t.getValue() != null) {
+            mt.setValue(QuantityUtil.fromBase(t.getValue()));
         }
-        if (StringUtils.hasText(t.getAverageValue())) {
-            mt.setAverageValue(new Quantity(t.getAverageValue()));
+        if (t.getAverageValue() != null) {
+            mt.setAverageValue(QuantityUtil.fromBase(t.getAverageValue()));
         }
         return mt;
     }
@@ -277,10 +280,10 @@ public class HpaV2Converter implements CommonConverter<HorizontalPodAutoscaler, 
         d.setType(mt.getType());
         d.setAverageUtilization(mt.getAverageUtilization());
         if (mt.getValue() != null) {
-            d.setValue(mt.getValue().toString());
+            d.setValue(QuantityUtil.toBase(mt.getValue()));
         }
         if (mt.getAverageValue() != null) {
-            d.setAverageValue(mt.getAverageValue().toString());
+            d.setAverageValue(QuantityUtil.toBase(mt.getAverageValue()));
         }
         return d;
     }

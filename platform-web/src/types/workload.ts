@@ -16,13 +16,13 @@ export interface ValueFrom {
   secretKeyRef?: { name: string; key: string; optional?: boolean } | null
   fieldRef?: { apiVersion?: string; fieldPath: string } | null
   fileKeyRef?: {key: string; optional?: boolean ;path : string; volumeName: string} | null
-  resourceKeyRef?: {containerName: string; divisor: string ; resource: string}
+  resourceKeyRef?: {containerName: string; divisor: number | string ; resource: string}
 }
 export interface EnvFrom { prefix?: string; configMapRef?: { name: string; optional?: boolean } | null; secretRef?: { name: string; optional?: boolean } | null }
 export interface ContainerPort { containerPort?: number | null; protocol?: string | null; name?: string | null }
-export interface Resources { limits?: Record<string, string>; requests?: Record<string, string> }
-export interface HttpGetAction { port?: string; path?: string; scheme?: string }
-export interface TCPSocketAction { port?: string }
+export interface Resources { limits?: Record<string, number>; requests?: Record<string, number> }
+export interface HttpGetAction { port?: number; path?: string; scheme?: string }
+export interface TCPSocketAction { port?: number }
 export interface ExecAction { command: string[] }
 export interface SleepAction { seconds?: number | null }
 export interface Probe { httpGet?: HttpGetAction | null; tcpSocket?: TCPSocketAction | null; exec?: ExecAction | null; initialDelaySeconds?: number | null; periodSeconds?: number | null; timeoutSeconds?: number | null; successThreshold?: number | null; failureThreshold?: number | null }
@@ -53,7 +53,7 @@ export interface KeyToPath { key: string; path: string; mode?: number | null }
 
 // ---- 卷：downwardAPI / projected 共享的字段选择器与文件结构（镜像后端同名 DTO）----
 export interface ObjectFieldSelector { apiVersion?: string | null; fieldPath?: string | null }
-export interface ResourceFieldSelector { containerName?: string | null; divisor?: string | null; resource?: string | null }
+export interface ResourceFieldSelector { containerName?: string | null; divisor?: number | null; resource?: string | null }
 export interface DownwardAPIVolumeFile { path?: string | null; mode?: number | null; fieldRef?: ObjectFieldSelector | null; resourceFieldRef?: ResourceFieldSelector | null }
 
 // ---- projected 卷的投影来源子结构（官方六种，六选一）----
@@ -75,7 +75,7 @@ export interface NfsVolume { server?: string | null; path?: string | null; readO
 
 export interface VolumeDef {
   name: string; type: 'emptyDir' | 'configMap' | 'secret' | 'persistentVolumeClaim' | 'hostPath' | 'projected' | 'downwardAPI' | 'csi' | 'nfs'
-  emptyDir?: { medium?: string | null; sizeLimit?: string | null } | null
+  emptyDir?: { medium?: string | null; sizeLimit?: number | null } | null
   configMap?: { name: string; items?: KeyToPath[] | null } | null
   secret?: { secretName: string; items?: KeyToPath[] | null } | null
   persistentVolumeClaim?: { claimName: string } | null
@@ -88,7 +88,7 @@ export interface VolumeDef {
 
 export interface RollingUpdate { maxSurge?: string | null; maxUnavailable?: string | null; partition?: number | null }
 export interface Strategy { type?: string | null; rollingUpdate?: RollingUpdate | null }
-export interface PvcTemplate { name: string; accessModes: string[]; storage: string; storageClassName?: string | null; volumeMode?: string | null }
+export interface PvcTemplate { name: string; accessModes: string[]; storage: number | null; storageClassName?: string | null; volumeMode?: string | null }
 
 export interface PodSpec {
   containers: ContainerDef[]
@@ -116,6 +116,16 @@ export interface WorkloadDetail {
   /** 状态原因（未完全就绪时的说明；正常时为空） */
   statusReason?: string | null
   serviceName?: string | null
+  /** 新建 Pod 就绪且无容器崩溃后被视为可用的最短秒数（deployment + statefulset；默认 0） */
+  minReadySeconds?: number | null
+  /** Deployment 专属：是否暂停更新 */
+  paused?: boolean | null
+  /** StatefulSet 专属 Pod 管理策略 */
+  podManagementPolicy?: 'OrderedReady' | 'Parallel' | null
+  /** StatefulSet 专属 PVC 保留策略 */
+  persistentVolumeClaimRetentionPolicy?: { whenDeleted?: string | null; whenScaled?: string | null } | null
+  /** StatefulSet 专属编号起始值（默认 0） */
+  ordinals?: { start?: number | null } | null
   strategy?: Strategy | null
   /** Pod 选择器 = spec.selector.matchLabels（反查该工作负载的 Pod 用） */
   selector?: Record<string, string> | null

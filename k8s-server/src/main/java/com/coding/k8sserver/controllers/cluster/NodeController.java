@@ -8,12 +8,16 @@ import com.coding.common.models.k8s.dto.NodePodStatDTO;
 import com.coding.common.models.k8s.dto.NodeTaintDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.operations.core.CoreV1NodeOperations;
 import com.coding.k8sserver.components.ResourceAccessResolver;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.BytesLimitTerminateTimeTailPrettyLoggable;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,6 +26,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.util.List;
 import java.util.Map;
@@ -38,10 +43,13 @@ public class NodeController {
 
     private final KubernetesOperationsFactory operationsFactory;
     private final ResourceAccessResolver accessResolver;
+    private final KubernetesClientFactory clientFactory;
 
-    public NodeController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {
+    public NodeController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver,
+                          KubernetesClientFactory clientFactory) {
         this.operationsFactory = operationsFactory;
         this.accessResolver = accessResolver;
+        this.clientFactory = clientFactory;
     }
 
     @PostMapping("/list")
@@ -115,6 +123,46 @@ public class NodeController {
         accessResolver.assertClusterAccess(clusterId);
         NamespacedOperations<PodDTO> podOps = operationsFactory.getAdminNamespacedOperation(ResourceType.POD, clusterId);
         return new ResponseData<>(podOps.list(null, null, "spec.nodeName=" + name));
+    }
+
+    @GetMapping("/{name}/pods/{namespace}/{podName}/yaml")
+    @Operation(summary = "节点上某 Pod 的 YAML（只读；集群域 admin，边界=集群注册表）")
+    public ResponseData<String> podYaml(@PathVariable String name, @PathVariable String namespace,
+                                        @PathVariable String podName, @RequestParam String clusterId) {
+        accessResolver.assertClusterAccess(clusterId);
+        NamespacedOperations<PodDTO> podOps = operationsFactory.getAdminNamespacedOperation(ResourceType.POD, clusterId);
+        return new ResponseData<>(podOps.yaml(namespace, podName));
+    }
+
+    @GetMapping(value = "/{name}/pods/{namespace}/{podName}/logs")
+    @Operation(summary = "节点上某 Pod 的日志（增量轮询 sinceTime；初始化回看 tailLines/sinceSeconds + timestamps）")
+    public StreamingResponseBody podLogs(@PathVariable String name, @PathVariable String namespace,
+                                         @PathVariable String podName, @RequestParam String clusterId,
+                                         @RequestParam(required = false) String container,
+                                         @RequestParam(required = false) Integer sinceSeconds,
+                                         @RequestParam(required = false) String sinceTime,
+                                         @RequestParam(required = false) Integer tailLines) {
+        accessResolver.assertClusterAccess(clusterId);
+        KubernetesClient client = clientFactory.getAdminClient(clusterId);
+        // 转具体类才能链式调用 usingTimestamps()/sinceTime()/tailingLines()（公开接口类型够不到这些方法）
+        BytesLimitTerminateTimeTailPrettyLoggable prettyLoggable = client.pods()
+                .inNamespace(namespace)
+                .withName(podName)
+                .inContainer(container)
+                .usingTimestamps();
+
+        return outputStream -> {
+            // 恒带 timestamps：每行加 RFC3339Nano 前缀，前端据此做增量游标、展示时剥掉前缀还原原始日志。
+            if (StringUtils.hasText(sinceTime)) {
+                prettyLoggable.sinceTime(sinceTime).withPrettyOutput().getLogInputStream().transferTo(outputStream);
+            } else if (tailLines != null) {
+                prettyLoggable.tailingLines(tailLines).withPrettyOutput().getLogInputStream().transferTo(outputStream);
+            } else if (sinceSeconds != null) {
+                prettyLoggable.sinceSeconds(sinceSeconds).withPrettyOutput().getLogInputStream().transferTo(outputStream);
+            } else {
+                prettyLoggable.withPrettyOutput().getLogInputStream().transferTo(outputStream);
+            }
+        };
     }
 
     @GetMapping("/{name}/events")

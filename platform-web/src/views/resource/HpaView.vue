@@ -93,6 +93,14 @@ function openCreate(): void {
   dialogVisible.value = true
 }
 
+/** 表单字符串 → 基础单位数字（后端 value/averageValue 现为 number）；空/非法 → undefined */
+function toNum(s: string): number | undefined {
+  const t = s.trim()
+  if (t === '') return undefined
+  const n = Number(t)
+  return Number.isNaN(n) ? undefined : n
+}
+
 function k8sToRow(m: K8sHpaMetric): MetricRow {
   const row = newMetricRow()
   row.type = m.type
@@ -105,8 +113,8 @@ function k8sToRow(m: K8sHpaMetric): MetricRow {
   if (t) {
     row.targetUtilizationType = (t.type as MetricRow['targetUtilizationType']) ?? 'Utilization'
     row.targetAverageUtilization = t.averageUtilization ?? null
-    row.targetValue = t.value ?? ''
-    row.targetAverageValue = t.averageValue ?? ''
+    row.targetValue = t.value != null ? String(t.value) : ''
+    row.targetAverageValue = t.averageValue != null ? String(t.averageValue) : ''
   }
   if (m.resource) row.name = m.resource.name ?? ''
   if (m.containerResource) { row.container = m.containerResource.container ?? ''; row.name = m.containerResource.name ?? '' }
@@ -162,11 +170,11 @@ function rowToK8s(row: MetricRow): K8sHpaMetric {
     target.averageUtilization = row.targetAverageUtilization ?? undefined
   } else if (row.targetUtilizationType === 'AverageValue') {
     target.type = 'AverageValue'
-    target.value = row.targetValue.trim() || undefined
+    target.value = toNum(row.targetValue)
   } else {
     target.type = 'Value'
-    target.value = row.targetValue.trim() || undefined
-    target.averageValue = row.targetAverageValue.trim() || undefined
+    target.value = toNum(row.targetValue)
+    target.averageValue = toNum(row.targetAverageValue)
   }
   switch (row.type) {
     case 'Resource':
@@ -292,7 +300,8 @@ watch(detailTab, async (tab) => {
 function targetText(t?: K8sHpaMetricTarget | null): string {
   if (!t) return ''
   if (t.type === 'Utilization') return `${t.averageUtilization}%`
-  return t.value ?? t.averageValue ?? ''
+  const v = t.value ?? t.averageValue
+  return v == null ? '' : String(v)
 }
 
 function metricSummary(row: K8sHpa): string {

@@ -61,9 +61,9 @@ class CoreV1NodeConverterTest {
         assertThat(d.getOs()).isEqualTo("linux");
         assertThat(d.getInternalIp()).isEqualTo("192.168.85.162");
         assertThat(d.getExternalIp()).isEqualTo("1.2.3.4");
-        assertThat(d.getCpuCapacity()).isEqualTo("8");
-        assertThat(d.getMemoryAllocatable()).isEqualTo("15Gi");
-        assertThat(d.getCpuAllocatable()).isEqualTo("7920m");
+        assertThat(d.getCpuCapacity()).isEqualByComparingTo("8");
+        assertThat(d.getMemoryAllocatable()).isEqualByComparingTo("16106127360"); // 15Gi → 字节
+        assertThat(d.getCpuAllocatable()).isEqualByComparingTo("7.92");            // 7920m → 核数
         assertThat(d.getPodsLimit()).isEqualTo(110L);
         assertThat(d.getConditions()).hasSize(1);
         assertThat(d.getTaints()).hasSize(1).first().extracting("key").isEqualTo("dedicated");

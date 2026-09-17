@@ -83,6 +83,13 @@ public class WorkloadController {
         return new ResponseData<>();
     }
 
+    @PostMapping("/{name}/pause")
+    @Operation(summary = "暂停/恢复 Deployment 更新（body.paused）")
+    public ResponseData<WorkloadDTO> pause(@PathVariable String name, @RequestBody WorkloadDTO body) {
+        body.setName(name);
+        return new ResponseData<>(workloadService.pause(body));
+    }
+
     // ===== 监控指标（4 个，委托 MetricsService；clusterName 由 clusterId 查库解析）=====
 
     @PostMapping("/{name}/metrics/cpu")

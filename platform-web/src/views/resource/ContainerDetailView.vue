@@ -9,6 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import { fmtAge, fmtDate, containerStateType } from '@/utils/format'
+import { formatQuantity, parseQuantity } from '@/utils/quantity'
 
 const route = useRoute()
 const router = useRouter()
@@ -16,11 +17,13 @@ const { state, ready, currentTenant, currentCluster, load } = useResourceContext
 
 const podName = computed(() => (route.query.pod as string) || '')
 const containerName = computed(() => (route.query.container as string) || '')
+// 命名空间：优先取路由 query（从 Pod 详情跨命名空间跳转携带），否则用顶栏选中的命名空间
+const ns = computed(() => (route.query.namespace as string) || state.namespace!)
 
 const ctxParams = computed(() => ({
   tenantId: state.tenantId!,
   clusterId: state.clusterId!,
-  namespace: state.namespace!,
+  namespace: ns.value,
 }))
 
 const pod = ref<Awaited<ReturnType<typeof podApi.get>> | null>(null)
@@ -45,7 +48,7 @@ const container = computed<PodContainerDetail | null>(() =>
 )
 
 function goBack(): void {
-  router.push(`/resources/pods/detail?name=${encodeURIComponent(podName.value)}`)
+  router.push(`/resources/pods/detail?name=${encodeURIComponent(podName.value)}&namespace=${encodeURIComponent(ns.value)}`)
 }
 
 // ---------- 展示辅助 ----------
@@ -101,8 +104,16 @@ function envFromText(f: EnvFrom): string {
   return parts.join(' · ') || '—'
 }
 
-const limits = computed<Record<string, string>>(() => container.value?.resources?.limits ?? {})
-const requests = computed<Record<string, string>>(() => container.value?.resources?.requests ?? {})
+const limits = computed<Record<string, number | string>>(() => container.value?.resources?.limits ?? {})
+const requests = computed<Record<string, number | string>>(() => container.value?.resources?.requests ?? {})
+
+/** 资源值展示：基础单位数字 → cpu 核 / memory 人性化字节 / 其它原值；兼容旧字符串。 */
+function fmtRes(key: string, v: number | string): string {
+  const n = typeof v === 'number' ? v : parseQuantity(v)
+  if (Number.isNaN(n)) return String(v)
+  const kind = key === 'cpu' ? 'cpu' : key === 'memory' ? 'memory' : 'count'
+  return formatQuantity(n, kind)
+}
 
 function handlerText(h?: LifecycleHandler | null): string {
   if (!h) return ''
@@ -142,7 +153,7 @@ watch([podName, containerName], () => { if (ready.value) void refresh() })
 
 const contextDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择租户 / 集群 / 命名空间'
-  return `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''} / ${state.namespace}`
+  return `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''} / ${ns.value}`
 })
 </script>
 
@@ -243,12 +254,12 @@ const contextDesc = computed(() => {
         <div v-if="Object.keys(limits).length || Object.keys(requests).length" class="res-cols">
           <div class="res-block">
             <div class="res-sub">Limits（上限）</div>
-            <div v-for="(val, key) in limits" :key="'l' + key" class="res-row"><span class="mono k">{{ key }}</span><code class="mono v">{{ val }}</code></div>
+            <div v-for="(val, key) in limits" :key="'l' + key" class="res-row"><span class="mono k">{{ key }}</span><code class="mono v">{{ fmtRes(key, val) }}</code></div>
             <div v-if="!Object.keys(limits).length" class="cd-empty">未设置</div>
           </div>
           <div class="res-block">
             <div class="res-sub">Requests（请求）</div>
-            <div v-for="(val, key) in requests" :key="'r' + key" class="res-row"><span class="mono k">{{ key }}</span><code class="mono v">{{ val }}</code></div>
+            <div v-for="(val, key) in requests" :key="'r' + key" class="res-row"><span class="mono k">{{ key }}</span><code class="mono v">{{ fmtRes(key, val) }}</code></div>
             <div v-if="!Object.keys(requests).length" class="cd-empty">未设置</div>
           </div>
         </div>

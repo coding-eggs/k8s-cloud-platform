@@ -18,11 +18,13 @@ const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 
 const name = computed(() => (route.query.name as string) || '')
+// 命名空间：优先取路由 query（如从节点详情跨命名空间跳转携带），否则用顶栏选中的命名空间
+const ns = computed(() => (route.query.namespace as string) || state.namespace!)
 
 const ctxParams = computed(() => ({
   tenantId: state.tenantId!,
   clusterId: state.clusterId!,
-  namespace: state.namespace!,
+  namespace: ns.value,
 }))
 
 const pod = ref<K8sPod | null>(null)
@@ -49,7 +51,7 @@ function goBack(): void {
 }
 function goContainer(c: PodContainerDetail): void {
   if (!c.name) return
-  router.push(`/resources/pods/container?pod=${encodeURIComponent(name.value)}&container=${encodeURIComponent(c.name)}`)
+  router.push(`/resources/pods/container?pod=${encodeURIComponent(name.value)}&container=${encodeURIComponent(c.name)}&namespace=${encodeURIComponent(ns.value)}`)
 }
 
 /** 容器运行态悬浮提示：waiting/terminated 的 reason + message（Running 时两者皆空 → null，不显示） */
@@ -113,11 +115,11 @@ onMounted(() => {
   if (ready.value) void refresh()
 })
 watch(ready, (r) => { if (r && !pod.value) void refresh() })
-watch(name, () => { if (ready.value) void refresh() })
+watch([name, ns], () => { if (ready.value) void refresh() })
 
 const contextDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择租户 / 集群 / 命名空间'
-  return `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''} / ${state.namespace}`
+  return `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''} / ${ns.value}`
 })
 </script>
 
@@ -261,7 +263,7 @@ const contextDesc = computed(() => {
           </section>
         </template>
 
-        <MetricsPanel ref="metricsRef" dimension="pod" :name="pod.name" :tenant-id="state.tenantId!" :cluster-id="state.clusterId!" :namespace="state.namespace!" :cpu-limit="cpuLimit" :memory-limit="memoryLimit" />
+        <MetricsPanel ref="metricsRef" dimension="pod" :name="pod.name" :tenant-id="state.tenantId!" :cluster-id="state.clusterId!" :namespace="ns" :cpu-limit="cpuLimit" :memory-limit="memoryLimit" />
         </div>
       </main>
     </div>

@@ -2,10 +2,12 @@ package com.coding.k8score.converter.impl.core;
 
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.k8score.converter.CommonConverter;
+import com.coding.k8score.util.QuantityUtil;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
-import org.springframework.util.StringUtils;
+
+import java.math.BigDecimal;
 
 /**
  * PersistentVolumeClaim ⇄ PVC DTO（基础表单字段）。
@@ -15,12 +17,12 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
 
     @Override
     public PersistentVolumeClaim convert(PersistentVolumeClaimDTO in) {
-        String storage = StringUtils.hasText(in.getStorage()) ? in.getStorage() : "1Gi";
+        BigDecimal storageBytes = in.getStorage() != null ? in.getStorage() : new BigDecimal("1073741824"); // 缺省 1Gi
         var specBuilder = new io.fabric8.kubernetes.api.model.PersistentVolumeClaimSpecBuilder()
                 .withStorageClassName(in.getStorageClassName())
                 .withAccessModes(in.getAccessModes())
                 .withNewResources()
-                    .addToRequests("storage", new Quantity(storage))
+                    .addToRequests("storage", QuantityUtil.fromBase(storageBytes))
                 .endResources();
         if (in.getDataSourceRef() != null) {
             specBuilder.withDataSourceRef(new io.fabric8.kubernetes.api.model.TypedObjectReferenceBuilder()
@@ -42,6 +44,7 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
 
     @Override
     public PersistentVolumeClaimDTO revert(PersistentVolumeClaim pvc) {
+        if (pvc == null) return null;
         PersistentVolumeClaimDTO dto = new PersistentVolumeClaimDTO();
         if (pvc.getMetadata() != null) {
             dto.setName(pvc.getMetadata().getName());
@@ -57,7 +60,7 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
             if (pvc.getSpec().getResources() != null && pvc.getSpec().getResources().getRequests() != null) {
                 Quantity storage = pvc.getSpec().getResources().getRequests().get("storage");
                 if (storage != null) {
-                    dto.setStorage(storage.toString());
+                    dto.setStorage(QuantityUtil.toBase(storage));
                 }
             }
             io.fabric8.kubernetes.api.model.TypedObjectReference ref = pvc.getSpec().getDataSourceRef();

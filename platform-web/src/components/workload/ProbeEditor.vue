@@ -53,8 +53,8 @@ const handler = computed<HandlerKind>({
     else if (cur === 'exec') stash.exec = model.value?.exec ?? null
     if (k === 'none') { lastEmitted = 'null'; model.value = null; return }
     const partial: Partial<Probe> = { httpGet: null, tcpSocket: null, exec: null }
-    if (k === 'httpGet') partial.httpGet = stash.httpGet ?? { port: '', path: '', scheme: 'HTTP' }
-    else if (k === 'tcpSocket') partial.tcpSocket = stash.tcpSocket ?? { port: '' }
+    if (k === 'httpGet') partial.httpGet = stash.httpGet ?? { path: '', scheme: 'HTTP' }
+    else if (k === 'tcpSocket') partial.tcpSocket = stash.tcpSocket ?? {}
     else partial.exec = stash.exec ?? { command: [] }
     write(partial)
   },
@@ -75,6 +75,16 @@ const execCommandText = computed<string>({
     const command = text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
     write({ exec: { command } })
   },
+})
+
+/** httpGet / tcpSocket 端口：仅数字（本平台限制探针端口为数字，不支持命名端口） */
+const httpPort = computed<number | undefined>({
+  get: () => model.value?.httpGet?.port,
+  set: (v) => { if (model.value?.httpGet) model.value.httpGet.port = v == null ? undefined : v },
+})
+const tcpPort = computed<number | undefined>({
+  get: () => model.value?.tcpSocket?.port,
+  set: (v) => { if (model.value?.tcpSocket) model.value.tcpSocket.port = v == null ? undefined : v },
 })
 </script>
 
@@ -99,8 +109,8 @@ const execCommandText = computed<string>({
         </el-select>
       </div>
       <div class="sub-field">
-        <span class="sub-label">端口 <FieldHelp tip="要访问的容器端口，可填数字或命名端口（须与容器声明的 ports 对应）。" /></span>
-        <el-input v-model="model.httpGet.port" placeholder="数字或命名端口" style="width: 200px" />
+        <span class="sub-label">端口 <FieldHelp tip="要访问的容器端口（数字，1-65535），须与容器声明的 ports 对应。" /></span>
+        <el-input-number v-model="httpPort" :min="1" :max="65535" controls-position="right" style="width: 200px" />
       </div>
       <div class="sub-field">
         <span class="sub-label">路径 <FieldHelp tip="请求的 URL 路径，如 /healthz；留空为根路径 /。返回 2xx/3xx 视为探测成功。" /></span>
@@ -110,8 +120,8 @@ const execCommandText = computed<string>({
 
     <div v-else-if="handler === 'tcpSocket' && model?.tcpSocket" class="pe-fields">
       <div class="sub-field">
-        <span class="sub-label">端口 <FieldHelp tip="要尝试建立 TCP 连接的容器端口，可填数字或命名端口；能连上即视为成功。" /></span>
-        <el-input v-model="model.tcpSocket.port" placeholder="数字或命名端口" style="width: 200px" />
+        <span class="sub-label">端口 <FieldHelp tip="要尝试建立 TCP 连接的容器端口（数字，1-65535）；能连上即视为成功。" /></span>
+        <el-input-number v-model="tcpPort" :min="1" :max="65535" controls-position="right" style="width: 200px" />
       </div>
     </div>
 

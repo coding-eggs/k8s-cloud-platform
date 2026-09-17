@@ -142,6 +142,17 @@ async function submitScale(): Promise<void> {
   }
 }
 
+// ---------- 暂停/恢复更新（仅 Deployment） ----------
+async function togglePause(row: K8sWorkload, paused: boolean): Promise<void> {
+  try {
+    await workloadApi.pause(row.name, ctxParams.value, paused)
+    ElMessage.success(paused ? '已暂停更新' : '已恢复更新')
+    await refresh()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
 // ---------- 删除（跨 kind 查找） ----------
 async function onDelete(row: K8sWorkload): Promise<void> {
   try {
@@ -180,6 +191,8 @@ function onRowCommand(cmd: string, row: K8sWorkload): void {
     case 'yaml': openYaml(row); break
     case 'edit': if (!isOpManaged(row)) goEditor(row.name); break
     case 'scale': openScale(row); break
+    case 'pause': togglePause(row, true); break
+    case 'resume': togglePause(row, false); break
     case 'delete': onDelete(row); break
   }
 }
@@ -238,6 +251,7 @@ const contextDesc = computed(() => {
             <el-tooltip v-if="isOpManaged(row)" content="由 Operator 管理，不可编辑" placement="top">
               <el-tag type="warning" size="small" effect="plain" class="op-tag">op</el-tag>
             </el-tooltip>
+            <el-tag v-if="row.kind === 'deployment' && row.paused" type="info" size="small" effect="plain" class="op-tag">已暂停</el-tag>
             <div v-if="row.exposedServices.length" class="expose-ports">
               <div class="expose-line">
                 <span v-for="(line, i) in exposeLines(row)" :key="i">
@@ -277,6 +291,9 @@ const contextDesc = computed(() => {
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="edit" :disabled="isOpManaged(row)">编辑</el-dropdown-item>
+                  <el-dropdown-item v-if="row.kind === 'deployment'" :command="row.paused ? 'resume' : 'pause'">
+                    {{ row.paused ? '恢复更新' : '暂停更新' }}
+                  </el-dropdown-item>
                   <el-dropdown-item command="scale">伸缩</el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
                   <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>

@@ -11,7 +11,7 @@ const T_EXEC = '在容器内执行命令，每行一个或用逗号分隔；退�
 const T_HTTPGET = '向容器发起 HTTP GET 请求，返回 2xx/3xx 状态码视为成功。'
 const T_SLEEP = '休眠指定秒数后继续（常用于 preStop 优雅下线前等待）。'
 const T_SCHEME = '请求使用的协议：HTTP（明文，默认）或 HTTPS（加密）。'
-const T_PORT = '要访问的容器端口，可填数字或命名端口。'
+const T_PORT = '要访问的容器端口（数字，1-65535）。'
 const T_PATH = '请求的 URL 路径，如 /healthz；留空为根路径 /。'
 const T_SECONDS = '休眠的秒数。'
 
@@ -61,7 +61,7 @@ function setAction(slot: Slot, a: LifeAction): void {
   let nextHandler: LifecycleHandler | null
   if (a === 'none') nextHandler = null
   else if (a === 'exec') nextHandler = { exec: stash[slot].exec ?? { command: [] }, httpGet: null, sleep: null }
-  else if (a === 'httpGet') nextHandler = { exec: null, httpGet: stash[slot].httpGet ?? { port: '', path: '', scheme: 'HTTP' }, sleep: null }
+  else if (a === 'httpGet') nextHandler = { exec: null, httpGet: stash[slot].httpGet ?? { path: '', scheme: 'HTTP' }, sleep: null }
   else nextHandler = { exec: null, httpGet: null, sleep: stash[slot].sleep ?? { seconds: null } }
   const next: Lifecycle = { ...(model.value ?? {}) }
   next[slot] = nextHandler
@@ -78,6 +78,15 @@ function setCmd(slot: Slot, text: string): void {
   const next: Lifecycle = { ...(model.value ?? {}) }
   next[slot] = { exec: { command }, httpGet: null, sleep: null }
   commit(next)
+}
+
+/** httpGet 端口：仅数字（本平台限制探针端口为数字，不支持命名端口） */
+function httpPort(slot: Slot): number | undefined {
+  return model.value?.[slot]?.httpGet?.port
+}
+function setHttpPort(slot: Slot, v: number | null | undefined): void {
+  const h = model.value?.[slot]
+  if (h?.httpGet) h.httpGet.port = v == null ? undefined : v
 }
 </script>
 
@@ -109,7 +118,7 @@ function setCmd(slot: Slot, text: string): void {
         </div>
         <div class="sub-field">
           <span class="sub-label">端口 <FieldHelp :tip="T_PORT" /></span>
-          <el-input v-model="model.postStart.httpGet.port" placeholder="数字或命名端口" style="width: 200px" />
+          <el-input-number :model-value="httpPort('postStart')" :min="1" :max="65535" controls-position="right" style="width: 200px" @update:model-value="(v: number | undefined) => setHttpPort('postStart', v)" />
         </div>
         <div class="sub-field">
           <span class="sub-label">路径 <FieldHelp :tip="T_PATH" /></span>
@@ -150,7 +159,7 @@ function setCmd(slot: Slot, text: string): void {
         </div>
         <div class="sub-field">
           <span class="sub-label">端口 <FieldHelp :tip="T_PORT" /></span>
-          <el-input v-model="model.preStop.httpGet.port" placeholder="数字或命名端口" style="width: 200px" />
+          <el-input-number :model-value="httpPort('preStop')" :min="1" :max="65535" controls-position="right" style="width: 200px" @update:model-value="(v: number | undefined) => setHttpPort('preStop', v)" />
         </div>
         <div class="sub-field">
           <span class="sub-label">路径 <FieldHelp :tip="T_PATH" /></span>

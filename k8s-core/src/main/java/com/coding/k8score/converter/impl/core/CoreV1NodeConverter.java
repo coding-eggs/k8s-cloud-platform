@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.dto.NodeConditionDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.NodeTaintDTO;
 import com.coding.k8score.converter.CommonConverter;
+import com.coding.k8score.util.QuantityUtil;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.NodeBuilder;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
@@ -51,6 +52,7 @@ public class CoreV1NodeConverter implements CommonConverter<Node, NodeDTO> {
         var spec = n.getSpec();
         if (spec != null) {
             d.setUnschedulable(spec.getUnschedulable());
+            d.setPodCidr(String.join(",", spec.getPodCIDRs()));
             if (spec.getTaints() != null) {
                 List<NodeTaintDTO> ts = new ArrayList<>();
                 for (var t : spec.getTaints()) {
@@ -73,7 +75,6 @@ public class CoreV1NodeConverter implements CommonConverter<Node, NodeDTO> {
                 d.setContainerRuntimeVersion(info.getContainerRuntimeVersion());
                 d.setOsImage(info.getOsImage());
             }
-            d.setPodCidr(additionalString(st, "podCIDR"));
             if (st.getAddresses() != null) {
                 for (var a : st.getAddresses()) {
                     if ("InternalIP".equals(a.getType())) {
@@ -85,10 +86,10 @@ public class CoreV1NodeConverter implements CommonConverter<Node, NodeDTO> {
             }
             Map<String, Quantity> cap = st.getCapacity() != null ? st.getCapacity() : Map.of();
             Map<String, Quantity> alloc = st.getAllocatable() != null ? st.getAllocatable() : Map.of();
-            d.setCpuCapacity(q(cap.get("cpu")));
-            d.setMemoryCapacity(q(cap.get("memory")));
-            d.setCpuAllocatable(q(alloc.get("cpu")));
-            d.setMemoryAllocatable(q(alloc.get("memory")));
+            d.setCpuCapacity(QuantityUtil.toBase(cap.get("cpu")));
+            d.setMemoryCapacity(QuantityUtil.toBase(cap.get("memory")));
+            d.setCpuAllocatable(QuantityUtil.toBase(alloc.get("cpu")));
+            d.setMemoryAllocatable(QuantityUtil.toBase(alloc.get("memory")));
             if (alloc.get("pods") != null) {
                 d.setPodsLimit(Long.parseLong(alloc.get("pods").getAmount()));
             }
@@ -127,17 +128,4 @@ public class CoreV1NodeConverter implements CommonConverter<Node, NodeDTO> {
         return roles;
     }
 
-    /** 读未建模字段（如 podCIDR）：fabric8 把 JSON 里无对应 Java 属性的字段放进 additionalProperties。 */
-    private String additionalString(io.fabric8.kubernetes.api.model.NodeStatus st, String key) {
-        Map<String, Object> extra = st.getAdditionalProperties();
-        if (extra == null) {
-            return null;
-        }
-        Object v = extra.get(key);
-        return v != null ? v.toString() : null;
-    }
-
-    private String q(Quantity quantity) {
-        return quantity == null ? null : quantity.toString();
-    }
 }

@@ -2,10 +2,12 @@ package com.coding.k8score.converter.impl.core;
 
 import com.coding.common.models.k8s.dto.PersistentVolumeDTO;
 import com.coding.k8score.converter.CommonConverter;
+import com.coding.k8score.util.QuantityUtil;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.api.model.PersistentVolume;
 import io.fabric8.kubernetes.api.model.Quantity;
 
+import java.math.BigDecimal;
 import java.util.Map;
 
 /**
@@ -22,7 +24,7 @@ public class CoreV1PersistentVolumeConverter implements CommonConverter<Persiste
         spec.setPersistentVolumeReclaimPolicy(dto.getReclaimPolicy());
         if (dto.getCapacity() != null) {
             Map<String, Quantity> capacity = new java.util.LinkedHashMap<>();
-            capacity.put("storage", new Quantity(dto.getCapacity()));
+            capacity.put("storage", QuantityUtil.fromBase(dto.getCapacity()));
             spec.setCapacity(capacity);
         }
         PersistentVolume pv = new PersistentVolume();
@@ -48,7 +50,7 @@ public class CoreV1PersistentVolumeConverter implements CommonConverter<Persiste
         var spec = pv.getSpec();
         if (spec != null) {
             if (spec.getCapacity() != null && spec.getCapacity().get("storage") != null) {
-                dto.setCapacity(spec.getCapacity().get("storage").toString());
+                dto.setCapacity(QuantityUtil.toBase(spec.getCapacity().get("storage")));
             }
             dto.setAccessModes(spec.getAccessModes());
             dto.setStorageClassName(spec.getStorageClassName());

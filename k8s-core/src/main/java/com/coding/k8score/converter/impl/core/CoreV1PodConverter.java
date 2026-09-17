@@ -2,8 +2,10 @@ package com.coding.k8score.converter.impl.core;
 
 import com.coding.common.models.k8s.dto.*;
 import com.coding.k8score.converter.CommonConverter;
+import com.coding.k8score.util.QuantityUtil;
 import io.fabric8.kubernetes.api.model.*;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -23,6 +25,7 @@ public class CoreV1PodConverter implements CommonConverter<Pod, PodDTO> {
 
     @Override
     public PodDTO revert(Pod pod) {
+        if (pod == null) return null;
         PodDTO dto = new PodDTO();
         if (pod.getMetadata() != null) {
             dto.setName(pod.getMetadata().getName());
@@ -217,7 +220,7 @@ public class CoreV1PodConverter implements CommonConverter<Pod, PodDTO> {
             ResourceFieldSelectorDTO x = new ResourceFieldSelectorDTO();
             x.setContainerName(v.getResourceFieldRef().getContainerName());
             x.setResource(v.getResourceFieldRef().getResource());
-            x.setDivisor(v.getResourceFieldRef().getDivisor().toString());
+            x.setDivisor(QuantityUtil.toBase(v.getResourceFieldRef().getDivisor()));
             d.setResourceFieldRef(x);
         }
 
@@ -257,12 +260,8 @@ public class CoreV1PodConverter implements CommonConverter<Pod, PodDTO> {
         return d;
     }
 
-    private Map<String, String> fromQuantities(Map<String, Quantity> m) {
-        if (m == null) return null;
-        Map<String, String> r = new LinkedHashMap<>();
-        for (Map.Entry<String, Quantity> e : m.entrySet())
-            r.put(e.getKey(), e.getValue() != null ? e.getValue().toString() : null);
-        return r;
+    private Map<String, BigDecimal> fromQuantities(Map<String, Quantity> m) {
+        return QuantityUtil.toBaseMap(m);
     }
 
     private LifecycleDTO fromLifecycle(Lifecycle l) {
@@ -281,7 +280,7 @@ public class CoreV1PodConverter implements CommonConverter<Pod, PodDTO> {
         }
         if (h.getHttpGet() != null) {
             HttpGetActionDTO x = new HttpGetActionDTO();
-            x.setPort(h.getHttpGet().getPort() != null ? h.getHttpGet().getPort().getStrVal() : null);
+            x.setPort(h.getHttpGet().getPort() != null ? h.getHttpGet().getPort().getIntVal() : null);
             x.setPath(h.getHttpGet().getPath());
             x.setScheme(h.getHttpGet().getScheme());
             d.setHttpGet(x);
@@ -298,14 +297,14 @@ public class CoreV1PodConverter implements CommonConverter<Pod, PodDTO> {
         ProbeDTO d = new ProbeDTO();
         if (p.getHttpGet() != null) {
             HttpGetActionDTO x = new HttpGetActionDTO();
-            x.setPort(p.getHttpGet().getPort() != null ? p.getHttpGet().getPort().getStrVal(): null);
+            x.setPort(p.getHttpGet().getPort() != null ? p.getHttpGet().getPort().getIntVal(): null);
             x.setPath(p.getHttpGet().getPath());
             x.setScheme(p.getHttpGet().getScheme());
             d.setHttpGet(x);
         }
         if (p.getTcpSocket() != null) {
             TCPSocketActionDTO x = new TCPSocketActionDTO();
-            x.setPort(p.getTcpSocket().getPort() != null ? p.getTcpSocket().getPort().getStrVal() : null);
+            x.setPort(p.getTcpSocket().getPort() != null ? p.getTcpSocket().getPort().getIntVal() : null);
             d.setTcpSocket(x);
         }
         if (p.getExec() != null) {

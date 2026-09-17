@@ -13,7 +13,7 @@ public enum MetricQuery {
 
     // ===== Pod 详情（%s = clusterName, namespace, pod[, 方向]）=====
     POD_CPU_USED(MetricLabels.class,
-        "sum(rate(container_cpu_usage_seconds_total{cluster_name=\"%s\",namespace=\"%s\",pod=\"%s\",container!=\"POD\"}[2m]))"),
+        "sum(rate(container_cpu_usage_seconds_total{cluster_name=\"%s\",namespace=\"%s\",pod=\"%s\",container!=\"POD\", pod!=\"\"}[2m]))"),
     POD_MEMORY_USED(MetricLabels.class,
         "sum(container_memory_working_set_bytes{cluster_name=\"%s\",namespace=\"%s\",pod=\"%s\",container!=\"POD\"})"),
     // 方向  RX / TX（netns 在 pod 级，container="POD"）

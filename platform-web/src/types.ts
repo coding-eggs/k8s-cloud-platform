@@ -163,7 +163,7 @@ export interface K8sPvc {
   labels?: Record<string, string> | null
   storageClassName?: string | null
   accessModes?: string[] | null
-  storage?: string | null
+  storage?: number | null
   /** 数据来源（可选，spec.dataSourceRef）：从已有对象填充新卷 */
   dataSourceRef?: { apiGroup?: string | null; kind?: string | null; name?: string | null; namespace?: string | null } | null
   phase?: string | null
@@ -183,7 +183,7 @@ export interface K8sStorageClass {
 export interface K8sPersistentVolume {
   name: string
   labels?: Record<string, string> | null
-  capacity?: string | null
+  capacity?: number | null
   accessModes?: string[] | null
   storageClassName?: string | null
   reclaimPolicy?: string | null
@@ -254,6 +254,8 @@ export interface K8sWorkload {
   labels?: Record<string, string> | null
   replicas?: number | null
   readyReplicas?: number | null
+  /** Deployment 是否暂停更新（仅 deployment 有意义） */
+  paused?: boolean | null
   /** 状态原因（未完全就绪时的说明；正常时为空） */
   statusReason?: string | null
   images?: string[] | null
@@ -338,8 +340,8 @@ export interface K8sServiceMonitor {
 export interface K8sHpaMetricTarget {
   type?: 'Utilization' | 'AverageValue' | 'Value' | null
   averageUtilization?: number | null
-  value?: string | null
-  averageValue?: string | null
+  value?: number | null
+  averageValue?: number | null
 }
 
 /** HPA 跨版本对象引用（scaleTargetRef / object.describedObject） */
@@ -451,22 +453,17 @@ export interface K8sNode {
   podCidr?: string | null
   internalIp?: string | null
   externalIp?: string | null
-  cpuCapacity?: string | null
-  memoryCapacity?: string | null
-  cpuAllocatable?: string | null
-  memoryAllocatable?: string | null
+  cpuCapacity?: number | null
+  memoryCapacity?: number | null
+  cpuAllocatable?: number | null
+  memoryAllocatable?: number | null
   podsLimit?: number | null
   conditions?: NodeCondition[] | null
   taints?: NodeTaint[] | null
   creationTime?: string | null
-}
-
-/** 节点 Pod 聚合统计（列表页：实际数 + requests 之和） */
-export interface NodePodStat {
-  nodeName: string
-  podCount: number
-  cpuRequestMillicores: number
-  memRequestBytes: number
+  cpuRequestMillicores?: number | null
+  memRequestBytes?: number | null
+  podCount?: number | null
 }
 
 /** 节点 Drain 结果 */
@@ -476,7 +473,7 @@ export interface NodeDrainResult {
   errors?: string[] | null
 }
 
-/** 节点事件（involvedObject.kind=Node） */
+/** 节点相关事件（节点自身 + 该节点 kubelet 上报，含 Pod 级） */
 export interface NodeEvent {
   reason?: string | null
   message?: string | null
@@ -484,6 +481,12 @@ export interface NodeEvent {
   count?: number | null
   firstTimestamp?: string | null
   lastTimestamp?: string | null
+  /** 涉及对象类型（involvedObject.kind）：Node / Pod / … */
+  kind?: string | null
+  /** 涉及对象名（involvedObject.name） */
+  objectName?: string | null
+  /** 涉及对象命名空间 */
+  namespace?: string | null
 }
 
 /** 节点当前用量（列表页 CPU%/内存%） */

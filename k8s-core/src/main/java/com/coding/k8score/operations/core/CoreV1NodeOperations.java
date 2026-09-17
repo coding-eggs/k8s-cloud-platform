@@ -25,9 +25,11 @@ import io.fabric8.kubernetes.client.utils.Serialization;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -239,19 +241,39 @@ public class CoreV1NodeOperations {
         };
     }
 
-    /** 节点事件：查 involvedObject.name=&lt;name&gt;（跨命名空间），过滤 kind=Node。 */
+    /** 节点相关事件（跨命名空间全量拉取后内存过滤）：
+     *  ① 节点自身：involvedObject.kind=Node && name=&lt;name&gt;；
+     *  ② 该节点 kubelet 上报：reportingInstance / source.host ∈ {node.name, kubernetes.io/hostname label}。
+     *  v1.Event 的 fieldSelector 不支持 source.host，无法服务端过滤，只能全量（事件有 ~1h TTL，量可控）。 */
     public List<NodeEventDTO> listEvents(String name) {
         requireName(name);
-        var op = client.v1().events().inAnyNamespace();
+        // 节点身份集合：node.name + hostname label（source.host/reportingInstance 常为主机名而非 FQDN）
+        Set<String> identities = new HashSet<>();
+        identities.add(name);
+        Node node = client.nodes().withName(name).get();
+        if (node != null && node.getMetadata() != null && node.getMetadata().getLabels() != null) {
+            String hostname = node.getMetadata().getLabels().get("kubernetes.io/hostname");
+            if (StringUtils.hasText(hostname)) {
+                identities.add(hostname);
+            }
+        }
+
         List<Event> events;
         try {
-            events = op.withField("involvedObject.name", name).list().getItems();
+            events = client.v1().events().inAnyNamespace().list().getItems();
         } catch (Exception e) {
-            events = op.list().getItems(); // 老集群不支持该 fieldSelector 时退回全量再过滤
+            return new ArrayList<>();
         }
+
         List<NodeEventDTO> out = new ArrayList<>();
         for (Event e : events) {
-            if (e.getInvolvedObject() == null || !"Node".equals(e.getInvolvedObject().getKind())) {
+            var io = e.getInvolvedObject();
+            boolean nodeSelf = io != null && "Node".equals(io.getKind()) && name.equals(io.getName());
+            String reportingInstance = e.getReportingInstance();
+            String sourceHost = e.getSource() != null ? e.getSource().getHost() : null;
+            boolean onThisNode = (reportingInstance != null && identities.contains(reportingInstance))
+                    || (sourceHost != null && identities.contains(sourceHost));
+            if (!nodeSelf && !onThisNode) {
                 continue;
             }
             NodeEventDTO d = new NodeEventDTO();
@@ -264,6 +286,11 @@ public class CoreV1NodeOperations {
             }
             if (e.getLastTimestamp() != null) {
                 d.setLastTimestamp(e.getLastTimestamp());
+            }
+            if (io != null) {
+                d.setKind(io.getKind());
+                d.setObjectName(io.getName());
+                d.setNamespace(io.getNamespace());
             }
             out.add(d);
         }

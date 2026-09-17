@@ -1,65 +1,65 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import type { Resources } from '@/types/workload'
-import { parseQuantity } from '@/utils/quantity'
 import FieldHelp from './FieldHelp.vue'
 
-interface ResRow { name: string; request: string; limit: string }
+/** 行内值为「基础单位」数字：cpu=核数、memory=字节、其它资源=整数计数；null=未设置 */
+interface ResRow { name: string; request: number | null; limit: number | null }
 
 const model = defineModel<Resources>()
 const rows = ref<ResRow[]>([])
 
-/** cpu/memory 用「数字 + 固定单位」编辑：cpu→毫核 m，memory→Mi；其它资源仍自由文本 */
+/** cpu/memory 用「数字 + 固定单位」编辑：cpu→毫核 m，memory→Mi；其它资源为整数计数（无单位） */
 function unitOf(name: string): 'm' | 'Mi' | null {
   if (name === 'cpu') return 'm'
   if (name === 'memory') return 'Mi'
   return null
 }
 
-/** 现有 quantity → 目标单位数值（parseQuantity 返回基础单位：核 / 字节）；空或无法解析 → null */
-function toUnitNum(raw: string, name: string): number | null {
+/** 基础单位（核/字节/计数）→ 输入框显示值（毫核/Mi/原值）；null → null */
+function toDisplayNum(value: number | null, name: string): number | null {
+  if (value == null) return null
   const u = unitOf(name)
-  if (!u) return null
-  const s = raw.trim()
-  if (s === '') return null
-  const base = parseQuantity(s)
-  if (Number.isNaN(base)) return null
-  return u === 'm' ? base * 1000 : base / 2 ** 20
+  if (!u) return value
+  return u === 'm' ? value * 1000 : value / 2 ** 20
 }
 
-/** 数字（或清空）→ 回写为 `${n}m` / `${n}Mi`；null/undefined/NaN → 空串（未设置） */
-function setUnitNum(row: ResRow, side: 'request' | 'limit', n: number | null | undefined): void {
+/** cpu/memory：输入框值（毫核/Mi，只取数字）→ 基础单位写回；空 → null（未设置） */
+function setUnitNum(row: ResRow, side: 'request' | 'limit', n: number | string | null | undefined): void {
   const u = unitOf(row.name)
   if (!u) return
-  row[side] = (n == null || Number.isNaN(n)) ? '' : `${n}${u}`
+  const s = String(n ?? '').replace(/\D/g, '')
+  row[side] = s === '' ? null : (u === 'm' ? Number(s) / 1000 : Number(s) * 2 ** 20)
   emitUpdate()
 }
 
-/** 非空但解析失败 → 该格无效（空值合法，表示未设置） */
-function cellInvalid(raw: string): boolean {
-  const s = raw.trim()
-  return s !== '' && Number.isNaN(parseQuantity(s))
+/** 其它资源：整数计数输入 → 基础单位写回；空/非法 → null */
+function setCount(row: ResRow, side: 'request' | 'limit', n: number | string | null | undefined): void {
+  const s = String(n ?? '').replace(/[^\d.-]/g, '')
+  row[side] = (s === '' || Number.isNaN(Number(s))) ? null : Number(s)
+  emitUpdate()
 }
 
-/** B4：requests 与 limits 均存在且均可解析为有限数值时，requests > limits */
+/** 非法格（负数/NaN）；null=未设置，合法 */
+function cellInvalid(value: number | null): boolean {
+  return value != null && (Number.isNaN(value) || value < 0)
+}
+
+/** B4：requests 与 limits 均存在且 requests > limits */
 function rowB4(row: ResRow): boolean {
-  const r = row.request.trim()
-  const l = row.limit.trim()
-  if (r === '' || l === '') return false
-  const rn = parseQuantity(r)
-  const ln = parseQuantity(l)
-  if (Number.isNaN(rn) || Number.isNaN(ln)) return false
-  return rn > ln
+  const r = row.request, l = row.limit
+  if (r == null || l == null) return false
+  return r > l
 }
 
-/** 聚合所有无效格（NaN）与 B4 违例行 */
+/** 聚合所有无效格（负数/NaN）与 B4 违例行 */
 const bad = computed(() => rows.value.some(row => cellInvalid(row.request) || cellInvalid(row.limit) || rowB4(row)))
 
 function buildRows(obj?: Resources): ResRow[] {
   const keys: string[] = ['cpu', 'memory']
   for (const k of Object.keys(obj?.requests ?? {})) if (!keys.includes(k)) keys.push(k)
   for (const k of Object.keys(obj?.limits ?? {})) if (!keys.includes(k)) keys.push(k)
-  return keys.map(name => ({ name, request: obj?.requests?.[name] ?? '', limit: obj?.limits?.[name] ?? '' }))
+  return keys.map(name => ({ name, request: obj?.requests?.[name] ?? null, limit: obj?.limits?.[name] ?? null }))
 }
 
 let selfUpdate = false
@@ -69,15 +69,13 @@ watch(model, (obj) => {
 }, { immediate: true })
 
 function emitUpdate(): void {
-  const requests: Record<string, string> = {}
-  const limits: Record<string, string> = {}
+  const requests: Record<string, number> = {}
+  const limits: Record<string, number> = {}
   for (const row of rows.value) {
     const name = row.name.trim()
     if (!name) continue
-    const r = row.request.trim()
-    const l = row.limit.trim()
-    if (r !== '') requests[name] = r
-    if (l !== '') limits[name] = l
+    if (row.request != null) requests[name] = row.request
+    if (row.limit != null) limits[name] = row.limit
   }
   selfUpdate = true
   model.value = { requests, limits }
@@ -86,9 +84,9 @@ function emitUpdate(): void {
 
 function remove(i: number): void { rows.value.splice(i, 1); emitUpdate() }
 
-function ph(name: string, side: 'request' | 'limit'): string {
-  if (name === 'cpu') return side === 'request' ? '100m' : '0.5'
-  if (name === 'memory') return side === 'request' ? '128Mi' : '1Gi'
+function ph(name: string): string {
+  if (name === 'cpu') return '500'          // 毫核：500 = 0.5 核
+  if (name === 'memory') return '128'       // Mi：128Mi
   return '数量（可选）'
 }
 
@@ -105,18 +103,14 @@ defineExpose({ isValid: () => !bad.value })
 
         <div class="cell" :class="{ 'is-error': cellInvalid(row.request) }">
           <span v-if="unitOf(row.name)" class="unit-num">
-
-            <el-input :model-value="toUnitNum(row.request, row.name)"
-                      @update:model-value="(v: number | null | undefined) => setUnitNum(row, 'request', v)"
-                      :min="0" controls-position="right" placeholder="可选" style="width: 150px"
-                      :formatter="(v: string) => v.replace(/\D/g, '')"
-                      :parser="(v: string) => v.replace(/\D/g, '')">
-
+            <el-input :model-value="toDisplayNum(row.request, row.name)"
+                      @update:model-value="(v: number | string | null | undefined) => setUnitNum(row, 'request', v)"
+                      :placeholder="ph(row.name)" style="width: 150px">
               <template #append>{{ unitOf(row.name) }}</template>
             </el-input>
           </span>
-          <el-input v-else v-model="row.request" :placeholder="ph(row.name, 'request')" @input="emitUpdate" />
-          <div v-if="cellInvalid(row.request)" class="error-hint">无法解析该数量</div>
+          <el-input v-else :model-value="row.request ?? ''" @input="(v: string) => setCount(row, 'request', v)" :placeholder="ph(row.name)" />
+          <div v-if="cellInvalid(row.request)" class="error-hint">数量需为非负数</div>
         </div>
 
         <span v-if="row.name === 'cpu'" class="res-name">cpu.limits <FieldHelp tip="CPU（核）。单位 m = 毫核，十进制换算：1 核 = 1000m，故填 500 = 0.5 核。requests 为申请量，limits 为上限。" /></span>
@@ -124,16 +118,14 @@ defineExpose({ isValid: () => !bad.value })
 
         <div class="cell" :class="{ 'is-error': cellInvalid(row.limit) }">
           <span v-if="unitOf(row.name)" class="unit-num">
-            <el-input :model-value="toUnitNum(row.limit, row.name)"
-                             @update:model-value="(v: number | null | undefined) => setUnitNum(row, 'limit', v)"
-                             :min="0" controls-position="right" placeholder="可选" style="width: 150px"
-                             :formatter="(v: string) => v.replace(/\D/g, '')"
-                             :parser="(v: string) => v.replace(/\D/g, '')">
+            <el-input :model-value="toDisplayNum(row.limit, row.name)"
+                             @update:model-value="(v: number | string | null | undefined) => setUnitNum(row, 'limit', v)"
+                             :placeholder="ph(row.name)" style="width: 150px">
               <template #append>{{ unitOf(row.name) }}</template>
             </el-input>
           </span>
-          <el-input v-else v-model="row.limit" :placeholder="ph(row.name, 'limit')" @input="emitUpdate" />
-          <div v-if="cellInvalid(row.limit)" class="error-hint">无法解析该数量</div>
+          <el-input v-else :model-value="row.limit ?? ''" @input="(v: string) => setCount(row, 'limit', v)" :placeholder="ph(row.name)" />
+          <div v-if="cellInvalid(row.limit)" class="error-hint">数量需为非负数</div>
         </div>
       </div>
       <div v-if="rowB4(row)" class="b4-hint">requests 不能大于 limits</div>

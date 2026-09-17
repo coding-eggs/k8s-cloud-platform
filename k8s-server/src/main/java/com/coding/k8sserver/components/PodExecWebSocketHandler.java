@@ -78,11 +78,19 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler {
             rows = parseInt(q.get("rows"), 24);
 
             Authentication auth = (Authentication) session.getAttributes().get(ATTR_AUTH);
-            AccessContext ctx = accessResolver.resolveNamespacedAccess(auth, tenantId, clusterId, namespace);
+            //scope=cluster：节点详情等集群域场景（admin-only，边界=集群注册表），直接走 admin client；
+            //否则命名空间域双模解析（租户 token→tenant client，admin 代操作→admin client）。
+            KubernetesClient client;
+            if ("cluster".equalsIgnoreCase(q.get("scope"))) {
+                accessResolver.assertClusterAccess(clusterId);
+                client = clientFactory.getAdminClient(clusterId);
+            } else {
+                AccessContext ctx = accessResolver.resolveNamespacedAccess(auth, tenantId, clusterId, namespace);
+                client = ctx.adminMode()
+                        ? clientFactory.getAdminClient(clusterId)
+                        : clientFactory.getTenantClient(clusterId, ctx.tenantId());
+            }
 
-            KubernetesClient client = ctx.adminMode()
-                    ? clientFactory.getAdminClient(clusterId)
-                    : clientFactory.getTenantClient(clusterId, ctx.tenantId());
             var pod = client.pods().inNamespace(namespace).withName(name)
                     .inContainer(container);
 

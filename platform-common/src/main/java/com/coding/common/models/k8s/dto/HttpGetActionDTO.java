@@ -7,8 +7,8 @@ import lombok.Data;
 @Schema(description = "HTTP GET 动作")
 public class HttpGetActionDTO {
 
-    @Schema(description = "端口（IntOrString，命名端口用 String）")
-    private String port;
+    @Schema(description = "端口（IntOrString，命名端口用 integer）")
+    private Integer port;
 
     @Schema(description = "请求路径")
     private String path;
