@@ -389,7 +389,6 @@ class PodMonitorConverterTest {
     @SuppressWarnings("unchecked")
     void convert_honorLabels_emitted_only_when_true() {
         PodMonitorDTO dto = dtoWithEndpoint("metrics");
-        assertThat(specOf(c.convert(dto)).get("podMetricsEndpoints") instanceof List).isTrue();
         List<Map<String, Object>> eps =
                 (List<Map<String, Object>>) specOf(c.convert(dto)).get("podMetricsEndpoints");
         assertThat(eps.get(0)).doesNotContainKey("honorLabels");
@@ -788,7 +787,7 @@ class PodMonitorServiceTest {
 
         ArgumentCaptor<PodMonitorDTO> cap = ArgumentCaptor.forClass(PodMonitorDTO.class);
         verify(k8s).create(cap.capture());
-        assertThat(cap.getValue().getMatchLabels()).containsExactly(Map.entry("app", "demo"));
+        assertThat(cap.getValue().getMatchLabels()).containsOnly(Map.entry("app", "demo"));
         assertThat(cap.getValue().getPodRef()).isNull();
     }
 

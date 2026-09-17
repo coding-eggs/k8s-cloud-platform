@@ -165,6 +165,10 @@ function handleLogout(): void {
           <el-icon><DataLine /></el-icon>
           <template #title>ServiceMonitor</template>
         </el-menu-item>
+        <el-menu-item index="/resources/podmonitors">
+          <el-icon><DataLine /></el-icon>
+          <template #title>PodMonitor</template>
+        </el-menu-item>
         <el-menu-item index="/resources/hpas">
           <el-icon><TrendCharts /></el-icon>
           <template #title>HPA</template>
