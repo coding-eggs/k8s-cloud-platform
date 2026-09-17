@@ -139,7 +139,7 @@ public class PodMonitorConverter {
 
     /**
      * update 专用：CRD 的 spec.podMetricsEndpoints 是 atomic list，SSA/PUT 重声明元素会丢弃未建模子字段
-     * （authorization/oauth2/proxyUrl/honorLabels/tlsConfig.ca/cert 等）。故以线上对象为底、
+     * （authorization/oauth2/proxyUrl/honorTimestamps/tlsConfig.ca/cert 等）。故以线上对象为底、
      * 按 index 对齐（UI 无排序）逐 endpoint 覆盖建模字段；dto 多出的 endpoint 全新构建，少的视为删除。
      */
     @SuppressWarnings("unchecked")
