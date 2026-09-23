@@ -47,7 +47,7 @@
 ## 4. capability 读取端点（条目 6 + 7 共用）
 
 ### 4.1 后端
-- **platform-api `ClusterController`** 新增：`GET /resource/clusters/{clusterId}/capability`。
+- **platform-api `ClusterController`** 新增：`POST /cluster/capability/get`（body `{clusterId}`，复用现成 `ClusterKeyRequest`；与既有 `POST /cluster/capability/refresh` 成对）。〔勘误 2026-09-24：原文写 `GET /resource/clusters/{clusterId}/capability`，与 ClusterController 实际 `@RequestMapping("/cluster")` 全 POST 约定不符〕
   - 从 `K8sCluster.capability` 列读 JSON，解析为 `Map<String, List<String>>`（group→versions）返回；列为空/无行 → 返回空 map `{}`（前端据此判定「未探测」）。
   - **零业务**：只读列 + 反序列化，不做任何推导（推导放前端，见 §4.2），符合「platform-api 薄 / k8s-server 零逻辑」。
 - **k8s-server**：无需改（capability 已存 DB 列，不经 k8s-server）。
@@ -63,7 +63,7 @@
 | `hpaSupportsBehavior` | `(cap['autoscaling'] ?? []).includes('v2')`，**capability 为空时视为 true**（对齐 factory 默认 V2） | behavior 区块启用/禁用（条目 7） |
 | `probed` | map 非空 | 未探测时展示软提示而非硬阻断 |
 
-> **api client**：`platform-web/src/api/index.ts` 增 `clusterCapabilityApi = { get: (clusterId) => client.get('/resource/clusters/' + clusterId + '/capability') }`（普通 GET，不走 `makeResourceApi`）。
+> **api client**：`platform-web/src/api/index.ts` 在 `clusterApi` 增 `getCapability: (clusterId) => http.post('/cluster/capability/get', { clusterId })`（不走 `makeResourceApi`）。〔勘误 2026-09-24：原文的独立 `clusterCapabilityApi` + GET 路径按实现修正〕
 > **types**：`K8sClusterCapability = Record<string, string[]>`。
 
 ## 5. 后端业务改动
@@ -187,7 +187,7 @@
 
 ## 10. 待确认 / 风险
 
-- **capability 探测时效**：门禁依赖 `k8s_cluster.capability` 列的新鲜度。若集群刚装/卸 metrics-server 而能力未刷新，门禁会滞后——靠现有「刷新能力」按钮 + create/enable 时自动刷新缓解；是否要在 HPA 页加一个「刷新能力」快捷入口（调现有 refresh 端点）待实现时定。
+- **capability 探测时效**：门禁依赖 `k8s_cluster.capability` 列的新鲜度。若集群刚装/卸 metrics-server 而能力未刷新，门禁会滞后——靠现有「刷新能力」按钮 + create/enable 时自动刷新缓解；是否要在 HPA 页加一个「刷新能力」快捷入口（调现有 refresh 端点）待实现时定。〔裁决 2026-09-24：**做**——HPA 列表页门禁 banner 内置「刷新能力」按钮（调 `/cluster/capability/refresh` 成功后重读 capability 并刷新列表）〕
 - **`EnumResponseType.HPA_TARGET_ALREADY_BOUND`**：新增错误码，需按现有枚举规范补 message。
-- **预选是否锁定**：条目 5 现定为「预填、可切换」；若希望「锁定不可改」更贴合动作意图，实现时可再议（不影响后端）。
+- **预选是否锁定**：条目 5 现定为「预填、可切换」；若希望「锁定不可改」更贴合动作意图，实现时可再议（不影响后端）。〔裁决 2026-09-24：**维持「预填、可切换」**〕
 - **DaemonSet 排除依据**：以「无 Scale 子资源 / 不适合 HPA」为由排除，与现有 `TARGET_KINDS=['Deployment','StatefulSet']` 一致；如未来支持其他可伸缩 kind 需同步放开。
