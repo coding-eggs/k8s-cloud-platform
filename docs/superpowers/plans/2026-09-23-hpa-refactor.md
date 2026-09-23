@@ -20,7 +20,7 @@
 
 ---
 
-### 任务 1 · platform-common：错误码
+### Task 1 ·  platform-common：错误码
 
 **文件：**
 - 修改: `platform-common/src/main/java/com/coding/common/exception/EnumResponseType.java:46`
@@ -43,7 +43,7 @@
 
 ---
 
-### 任务 2 · capability 读取端点（后端）
+### Task 2 ·  capability 读取端点（后端）
 
 **文件：**
 - 修改: `platform-api/src/main/java/com/coding/platformapi/services/ClusterService.java`（`refreshCapabilityStrict` 之后加方法）
@@ -94,7 +94,7 @@
 
 ---
 
-### 任务 3 · HpaService + 单测 [TDD]
+### Task 3 ·  HpaService + 单测 [TDD]
 
 **文件：**
 - 创建: `platform-api/src/main/java/com/coding/platformapi/services/HpaService.java`
@@ -262,7 +262,7 @@ public class HpaService {
 
 ---
 
-### 任务 4 · HpaController 改接线
+### Task 4 ·  HpaController 改接线
 
 **文件：**
 - 修改: `platform-api/src/main/java/com/coding/platformapi/controllers/resource/HpaController.java`
@@ -273,7 +273,7 @@ public class HpaService {
 
 ---
 
-### 任务 5 · 前端 api client + types
+### Task 5 ·  前端 api client + types
 
 **文件：**
 - 修改: `platform-web/src/types.ts`（K8sHpa 块 L404 前）
@@ -300,7 +300,7 @@ export type K8sClusterCapability = Record<string, string[]>
 
 ---
 
-### 任务 6 · useClusterCapability composable
+### Task 6 ·  useClusterCapability composable
 
 **文件：**
 - 创建: `platform-web/src/composables/useClusterCapability.ts`（目录先例 `useResourceOptions.ts`）
@@ -364,7 +364,7 @@ export function useClusterCapability(clusterId: Ref<string | undefined>) {
 
 ---
 
-### 任务 7 · HpaEditorView.vue（独立编辑页；条目 2/6/7）
+### Task 7 ·  HpaEditorView.vue（独立编辑页；条目 2/6/7）
 
 **文件：**
 - 创建: `platform-web/src/views/resource/HpaEditorView.vue`
@@ -429,7 +429,7 @@ const typeAvailable = (t: MetricType) =>
 
 ---
 
-### 任务 8 · HpaView.vue 重构为纯列表页
+### Task 8 ·  HpaView.vue 重构为纯列表页
 
 **文件：**
 - 修改: `platform-web/src/views/resource/HpaView.vue`
@@ -457,7 +457,7 @@ PageHeader 下、表格上：`v-if="cap.probed.value && !cap.metricsAvailable.va
 
 ---
 
-### 任务 9 · WorkloadView.vue 联动（条目 4/5）
+### Task 9 ·  WorkloadView.vue 联动（条目 4/5）
 
 **文件：**
 - 修改: `platform-web/src/views/resource/WorkloadView.vue`
@@ -490,7 +490,7 @@ const hpaNameOf = (row: K8sWorkload) => hpaBound.value.get(`${row.kind.toLowerCa
 
 ---
 
-### 任务 10 · 路由 + 全量验证 + spec 勘误
+### Task 10 ·  路由 + 全量验证 + spec 勘误
 
 **文件：**
 - 修改: `platform-web/src/router/index.ts:43`
