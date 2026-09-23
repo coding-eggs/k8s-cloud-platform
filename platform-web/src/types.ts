@@ -401,6 +401,9 @@ export interface K8sPodMonitor {
   creationTime?: string | null
 }
 
+/** 集群 API 能力快照（group → versions[]）；空对象 = 未探测。后端 POST /cluster/capability/get */
+export type K8sClusterCapability = Record<string, string[]>
+
 /** HPA 指标目标（对应后端 HpaMetricTargetDTO） */
 export interface K8sHpaMetricTarget {
   type?: 'Utilization' | 'AverageValue' | 'Value' | null
