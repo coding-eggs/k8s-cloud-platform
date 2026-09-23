@@ -44,6 +44,7 @@ public enum EnumResponseType {
     OPERATION_NOT_SUPPORTED(10019, "该资源不支持此操作"),
     HPA_VERSION_UNSUPPORTED(10020, "该集群不支持 HPA（autoscaling）资源"),
     HPA_V1_ONLY_CPU(10021, "该集群 HPA 为 autoscaling/v1，仅支持 CPU 利用率指标（不支持内存/其他指标或 behavior）"),
+    HPA_TARGET_ALREADY_BOUND(10022, "该工作负载已绑定 HPA，一个工作负载只能绑定一个 HPA"),
 
     ERROR(5000,"服务端异常"),
 
