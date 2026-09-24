@@ -16,6 +16,7 @@ import java.util.Set;
 /**
  * claim → authentication 转换器（platform-api / k8s-server 共用，避免两服务映射漂移）：
  * - dataKey claim（TokenUserInfo）中的 platformRoles → {@code PLATFORM:<code>}
+ * - dataKey claim（TokenUserInfo）中的 permissions → {@code PERM:<code>}
  * - 标准 scope/roles claim 维持默认 JwtGrantedAuthoritiesConverter 行为
  * <p>
  * Spring Security 7 中资源服务器要求 {@code Converter<Jwt, AbstractAuthenticationToken>}。
@@ -45,6 +46,14 @@ public class PlatformJwtAuthenticationConverter implements Converter<Jwt, Abstra
                 for (Object role : list) {
                     if (role != null && !role.toString().isBlank()) {
                         authorities.add(new SimpleGrantedAuthority(PLATFORM_AUTHORITY_PREFIX + role));
+                    }
+                }
+            }
+            Object perms = map.get("permissions");
+            if (perms instanceof List<?> plist) {
+                for (Object p : plist) {
+                    if (p != null && !p.toString().isBlank()) {
+                        authorities.add(new SimpleGrantedAuthority(PermissionAuthorityNames.perm(p.toString())));
                     }
                 }
             }
