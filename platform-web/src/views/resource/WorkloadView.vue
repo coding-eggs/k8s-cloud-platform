@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { workloadApi, hpaApi } from '@/api'
-import type { K8sWorkload } from '@/types'
+import type { K8sWorkload, K8sHpa } from '@/types'
 import type { WorkloadKind } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
@@ -44,7 +44,12 @@ async function refresh(): Promise<void> {
   if (!ready.value) return
   loading.value = true
   try {
-    const [ws, hs] = await Promise.all([workloadApi.list(ctxParams.value), hpaApi.list(ctxParams.value)])
+    // 终审 Important#2：badge 是次要数据——hpaApi.list 失败不得拖垮主列表（.catch 降级为空集，
+    // 仅失去 HPA 标记与「添加 HPA」显隐，工作负载照常渲染）
+    const [ws, hs] = await Promise.all([
+      workloadApi.list(ctxParams.value),
+      hpaApi.list(ctxParams.value).catch(() => [] as K8sHpa[]),
+    ])
     list.value = ws
     hpaBound.value = new Map(hs.map((h) => [canonicalKey(h.scaleTargetRef?.kind, h.scaleTargetRef?.name), h.name] as const))
   } finally {

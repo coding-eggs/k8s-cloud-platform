@@ -307,8 +307,11 @@ watch(ready, (r) => {
   if (editing.value && detailState.value === 'idle') void loadDetail()
 })
 // 新建态换集群/命名空间 → 目标与已绑定集失效，清空重选（编辑态目标恒等于自身，不受影响）
+// 终审 Important#1：ready 全程为 true 的批量切换不会触发 watch(ready) → 此处必须重拉选项，
+// 否则下拉/已绑定集停留在旧命名空间，提交会造出指向错误 ns 的 HPA
 watch([() => state.clusterId, () => state.namespace], () => {
   if (!editing.value) { form.targetKey = ''; ownKey.value = '' }
+  if (ready.value) void loadOptions()
 })
 
 const formVisible = computed(() => !editing.value || detailState.value === 'loaded')
