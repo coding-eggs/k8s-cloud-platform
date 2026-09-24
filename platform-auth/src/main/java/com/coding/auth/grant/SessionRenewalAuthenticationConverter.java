@@ -55,6 +55,10 @@ public class SessionRenewalAuthenticationConverter implements AuthenticationConv
             }
         }
 
-        return new SessionRenewalAuthenticationToken(sessionId, endUserPrincipal, clientPrincipal);
+        // 目标租户上下文（可选参数）。空/空白 → null，签发 base token 不带租户；
+        // 非法租户的校验放在签发 customizer 内（需要查库确认成员资格）。
+        String tenantId = request.getParameter("tenant_id");
+        return new SessionRenewalAuthenticationToken(sessionId, endUserPrincipal, clientPrincipal,
+                (tenantId == null || tenantId.isBlank()) ? null : tenantId);
     }
 }

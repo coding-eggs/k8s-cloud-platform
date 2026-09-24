@@ -9,9 +9,8 @@ import com.coding.common.components.jwt.impl.JweTokenStrategy;
 import com.coding.common.components.jwt.impl.JwsTokenStrategy;
 import com.coding.auth.grant.SessionRenewalAuthenticationConverter;
 import com.coding.auth.grant.SessionRenewalAuthenticationProvider;
-import com.coding.data.mapper.auth.PlatformTenantMapper;
+import com.coding.auth.service.TokenExtrasService;
 import com.coding.data.mapper.auth.PlatformUserMapper;
-import com.coding.data.mapper.auth.PlatformUserRoleMapper;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.system.SecurityUser;
 import com.coding.data.models.system.TokenUserInfo;
@@ -40,11 +39,9 @@ import org.springframework.security.core.userdetails.User;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.jackson.SecurityJacksonModules;
-import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.oauth2.server.authorization.*;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
-import org.springframework.security.oauth2.server.authorization.authentication.OAuth2TokenExchangeAuthenticationToken;
 import org.springframework.security.oauth2.server.authorization.client.JdbcRegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
@@ -220,7 +217,7 @@ public class AuthorizationServerConfig {
      5. this.jwtEncoder.encode(JwtEncoderParameters.from(header, claims))  ← 签名+编码
      */
     @Bean
-    public OAuth2TokenCustomizer<JwtEncodingContext> jwtTokenExchangeCustomizer(PlatformUserMapper userMapper, PlatformTenantMapper tenantMapper, PlatformUserRoleMapper userRoleMapper) {
+    public OAuth2TokenCustomizer<JwtEncodingContext> jwtTokenCustomizer(PlatformUserMapper userMapper, TokenExtrasService extras) {
 
         return context -> {
             //通过username 查询用户信息
@@ -236,25 +233,24 @@ public class AuthorizationServerConfig {
                     .build();
 
             //平台域角色（所有 grant 类型都写入，管理端据此校验 PLATFORM:admin）
-            tokenUserInfo.setPlatformRoles(userRoleMapper.selectRoleCodesByUser(platformUser.getId()));
+            tokenUserInfo.setPlatformRoles(extras.platformRoleCodes(platformUser.getId()));
 
-            //仅对 token exchange grant 生效
-            if (context.getAuthorizationGrantType().equals(AuthorizationGrantType.TOKEN_EXCHANGE)) {
-                OAuth2TokenExchangeAuthenticationToken exchangeToken =
-                        context.getAuthorizationGrant();
-                if (exchangeToken != null) {
-                    //从请求参数中提取租户信息
-                    Map<String, Object> additionalParameters = exchangeToken.getAdditionalParameters();
-                    //租户id
-                    String tenantId = (String) additionalParameters.get("tenant_id");
-                    //查询租户信息
-                    UserTenantInfo userTenantInfo = tenantMapper.selectTenantByUser(username, tenantId);
-                    if (userTenantInfo != null) {
-                        tokenUserInfo.setTenantInfo(userTenantInfo);
-                        //添加租户信息
-                    }
+            //session-renewal grant 可选携带的租户上下文（其它 grant 恒为 null）
+            String tenantId = extractTenantId(context);
+            if (tenantId != null) {
+                UserTenantInfo userTenantInfo = extras.resolveTenant(username, tenantId);
+                if (userTenantInfo == null) {
+                    //用户不属于该租户 → invalid_grant（SPA 据此清理租户上下文并回到 base）
+                    throw new org.springframework.security.oauth2.core.OAuth2AuthenticationException(
+                            new org.springframework.security.oauth2.core.OAuth2Error(
+                                    org.springframework.security.oauth2.core.OAuth2ErrorCodes.INVALID_GRANT,
+                                    "用户不属于该租户", "https://datatracker.ietf.org/doc/html/rfc6749#section-5.2"));
                 }
+                tokenUserInfo.setTenantInfo(userTenantInfo);
             }
+            //权限闭包：tenantId 为空时内部自动只算平台族
+            tokenUserInfo.setPermissions(extras.permissions(platformUser.getId(), tenantId));
+
             context.getClaims().claim(jwtProperties.getDataKey(), tokenUserInfo);
             ClientSettings clientSettings = context.getRegisteredClient().getClientSettings();
 
@@ -262,6 +258,15 @@ public class AuthorizationServerConfig {
             setCustomClientSettings(context, clientSettings);
         };
 
+    }
+
+    /** 从授权 grant 中提取 session-renewal 携带的 tenant_id；其它 grant（exchange 已退役）恒为 null */
+    private static String extractTenantId(JwtEncodingContext context) {
+        Object grant = context.getAuthorizationGrant();
+        if (grant instanceof com.coding.auth.grant.SessionRenewalAuthenticationToken t) {
+            return t.getTenantId();
+        }
+        return null;
     }
 
     public void setCustomClientSettings (JwtEncodingContext context, ClientSettings clientSettings) {

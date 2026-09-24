@@ -27,12 +27,18 @@ public class SessionRenewalAuthenticationToken extends OAuth2AuthorizationGrantA
     @Nullable
     private final Authentication endUserPrincipal;
 
+    /** 目标租户上下文 id；可空（空=base token 无租户） */
+    @Nullable
+    private final String tenantId;
+
     public SessionRenewalAuthenticationToken(String sessionId,
                                              @Nullable Authentication endUserPrincipal,
-                                             Authentication clientPrincipal) {
+                                             Authentication clientPrincipal,
+                                             @Nullable String tenantId) {
         super(SessionRenewalGrantType.INSTANCE, clientPrincipal, Collections.emptyMap());
         this.sessionId = sessionId;
         this.endUserPrincipal = endUserPrincipal;
+        this.tenantId = (tenantId == null || tenantId.isBlank()) ? null : tenantId;
     }
 
     public String getSessionId() {
@@ -42,5 +48,10 @@ public class SessionRenewalAuthenticationToken extends OAuth2AuthorizationGrantA
     @Nullable
     public Authentication getEndUserPrincipal() {
         return this.endUserPrincipal;
+    }
+
+    @Nullable
+    public String getTenantId() {
+        return this.tenantId;
     }
 }
