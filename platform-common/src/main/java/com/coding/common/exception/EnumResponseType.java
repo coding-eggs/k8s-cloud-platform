@@ -46,6 +46,12 @@ public enum EnumResponseType {
     HPA_V1_ONLY_CPU(10021, "该集群 HPA 为 autoscaling/v1，仅支持 CPU 利用率指标（不支持内存/其他指标或 behavior）"),
     HPA_TARGET_ALREADY_BOUND(10022, "该工作负载已绑定 HPA，一个工作负载只能绑定一个 HPA"),
 
+    ROLE_BUILTIN_READONLY(10023, "内置角色不可修改或删除"),
+    ROLE_SCOPE_MISMATCH(10024, "角色族与权限点族不一致"),
+    TENANT_ADMIN_REQUIRED(10025, "租户至少需保留一名管理员"),
+    TENANT_MEMBER_NOT_FOUND(10026, "用户不是该租户成员"),
+    PERMISSION_NOT_FOUND(10027, "权限点不存在"),
+
     ERROR(5000,"服务端异常"),
 
 

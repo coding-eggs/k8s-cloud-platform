@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.auth.PlatformUserTenantMapper">
+    <resultMap id="Base" type="com.coding.data.models.auth.PlatformUserTenant">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="tenant_id" property="tenantId"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+    <insert id="insert">
+        insert into platform_user_tenant (id, user_id, tenant_id, created_at)
+        values (#{id}, #{userId}, #{tenantId}, #{createdAt})
+    </insert>
+    <delete id="deleteByUserAndTenant">
+        delete from platform_user_tenant
+        where user_id = #{userId} and tenant_id = #{tenantId}
+    </delete>
+    <select id="exists" resultType="boolean">
+        select count(1) > 0 from platform_user_tenant
+        where user_id = #{userId} and tenant_id = #{tenantId}
+    </select>
+    <select id="selectTenantIdsByUser" resultType="java.lang.String">
+        select ut.tenant_id
+        from platform_user_tenant ut
+        inner join platform_tenant t on t.id = ut.tenant_id and t.deleted_at is null
+        where ut.user_id = #{userId}
+    </select>
+    <select id="selectByTenantId" resultMap="Base">
+        select id, user_id, tenant_id, created_at from platform_user_tenant where tenant_id = #{tenantId}
+    </select>
+</mapper>
