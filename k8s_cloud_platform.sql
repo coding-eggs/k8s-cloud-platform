@@ -387,6 +387,8 @@ CREATE TABLE `platform_role`  (
   `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted_at` datetime NULL DEFAULT NULL COMMENT '软删除时间，NULL = 未删除',
+  `scope` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'PLATFORM' COMMENT '角色族：PLATFORM/TENANT',
+  `built_in` tinyint NOT NULL DEFAULT 0 COMMENT '内置角色：不可删除、code/scope 不可改',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE INDEX `uk_code`(`code` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = DYNAMIC;
@@ -394,7 +396,7 @@ CREATE TABLE `platform_role`  (
 -- ----------------------------
 -- Records of platform_role
 -- ----------------------------
-INSERT INTO `platform_role` VALUES ('builtin_role_admin', '平台管理员', 'admin', '平台管理员：管理集群/租户/命名空间分配/RBAC 模板', 1, '2026-08-26 22:12:45', '2026-08-26 22:12:45', NULL);
+INSERT INTO `platform_role` VALUES ('builtin_role_admin', '平台管理员', 'admin', '平台管理员：管理集群/租户/命名空间分配/RBAC 模板', 1, '2026-08-26 22:12:45', '2026-08-26 22:12:45', NULL, 'PLATFORM', 1);
 
 -- ----------------------------
 -- Table structure for platform_role_permission

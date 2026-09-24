@@ -17,6 +17,12 @@ public class PlatformRole implements Serializable {
 
     private String description;
 
+    /** 角色族：PLATFORM / TENANT（RoleScope.name()） */
+    private String scope;
+
+    /** 内置角色：1 不可删、code/scope 不可改；0 可编辑 */
+    private Byte builtIn;
+
     private Byte status;
 
     private Date createdAt;
