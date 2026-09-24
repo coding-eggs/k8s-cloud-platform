@@ -56,24 +56,6 @@ function onMenuSelect(): void {
   if (narrow.value) drawerOpen.value = false
 }
 
-// ---------- 资源分组子菜单：路由变化时自动展开所在组 ----------
-// EP 的 expose 类型不含 open/close（运行时已 expose，见 menu.mjs），按最小形状声明
-const menuRef = ref<{ open: (index: string) => void } | null>(null)
-const GROUP_OF_PATH: Record<string, string> = {
-  workloads: 'g-workload', pods: 'g-workload', hpas: 'g-workload',
-  services: 'g-discovery',
-  configmaps: 'g-config', secrets: 'g-config',
-  pvcs: 'g-storage',
-  servicemonitors: 'g-monitor', podmonitors: 'g-monitor',
-}
-function openGroupForPath(p: string): void {
-  const seg = p.match(/^\/resources\/([^/]+)/)?.[1]
-  const g = seg ? GROUP_OF_PATH[seg] : undefined
-  if (g) menuRef.value?.open(g)
-}
-onMounted(() => openGroupForPath(route.path))
-watch(() => route.path, openGroupForPath)
-
 const sidebarTitle = computed(() =>
   narrow.value
     ? drawerOpen.value
@@ -126,7 +108,7 @@ function handleLogout(): void {
         <span class="logo-text">K8s 云平台</span>
       </button>
 
-      <el-menu ref="menuRef" :default-active="route.path" router class="menu" :collapse="collapsed" @select="onMenuSelect">
+      <el-menu :default-active="route.path" router class="menu" :collapse="collapsed" @select="onMenuSelect">
         <el-menu-item index="/overview">
           <el-icon><Odometer /></el-icon>
           <template #title>总览</template>
@@ -154,73 +136,51 @@ function handleLogout(): void {
           <template #title>RBAC 模板</template>
         </el-menu-item>
 
-        <div class="menu-group">资源管理</div>
-        <el-sub-menu index="g-workload">
-          <template #title>
-            <el-icon><Box /></el-icon>
-            <span>工作负载</span>
-          </template>
-          <el-menu-item index="/resources/workloads">
-            <el-icon><Box /></el-icon>
-            <template #title>工作负载</template>
-          </el-menu-item>
-          <el-menu-item index="/resources/pods">
-            <el-icon><Cpu /></el-icon>
-            <template #title>Pod</template>
-          </el-menu-item>
-          <el-menu-item index="/resources/hpas">
-            <el-icon><TrendCharts /></el-icon>
-            <template #title>HPA</template>
-          </el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="g-discovery">
-          <template #title>
-            <el-icon><Connection /></el-icon>
-            <span>服务发现</span>
-          </template>
-          <el-menu-item index="/resources/services">
-            <el-icon><Link /></el-icon>
-            <template #title>Service</template>
-          </el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="g-config">
-          <template #title>
-            <el-icon><Files /></el-icon>
-            <span>配置管理</span>
-          </template>
-          <el-menu-item index="/resources/configmaps">
-            <el-icon><Document /></el-icon>
-            <template #title>ConfigMap</template>
-          </el-menu-item>
-          <el-menu-item index="/resources/secrets">
-            <el-icon><Key /></el-icon>
-            <template #title>Secret</template>
-          </el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="g-storage">
-          <template #title>
-            <el-icon><Coin /></el-icon>
-            <span>存储</span>
-          </template>
-          <el-menu-item index="/resources/pvcs">
-            <el-icon><Coin /></el-icon>
-            <template #title>PVC</template>
-          </el-menu-item>
-        </el-sub-menu>
-        <el-sub-menu index="g-monitor">
-          <template #title>
-            <el-icon><DataLine /></el-icon>
-            <span>监控告警</span>
-          </template>
-          <el-menu-item index="/resources/servicemonitors">
-            <el-icon><DataLine /></el-icon>
-            <template #title>ServiceMonitor</template>
-          </el-menu-item>
-          <el-menu-item index="/resources/podmonitors">
-            <el-icon><DataLine /></el-icon>
-            <template #title>PodMonitor</template>
-          </el-menu-item>
-        </el-sub-menu>
+        <div class="menu-group">工作负载</div>
+        <el-menu-item index="/resources/workloads">
+          <el-icon><Box /></el-icon>
+          <template #title>工作负载</template>
+        </el-menu-item>
+        <el-menu-item index="/resources/pods">
+          <el-icon><Cpu /></el-icon>
+          <template #title>Pod</template>
+        </el-menu-item>
+        <el-menu-item index="/resources/hpas">
+          <el-icon><TrendCharts /></el-icon>
+          <template #title>HPA</template>
+        </el-menu-item>
+
+        <div class="menu-group">服务发现</div>
+        <el-menu-item index="/resources/services">
+          <el-icon><Link /></el-icon>
+          <template #title>Service</template>
+        </el-menu-item>
+
+        <div class="menu-group">配置管理</div>
+        <el-menu-item index="/resources/configmaps">
+          <el-icon><Document /></el-icon>
+          <template #title>ConfigMap</template>
+        </el-menu-item>
+        <el-menu-item index="/resources/secrets">
+          <el-icon><Key /></el-icon>
+          <template #title>Secret</template>
+        </el-menu-item>
+
+        <div class="menu-group">存储</div>
+        <el-menu-item index="/resources/pvcs">
+          <el-icon><Coin /></el-icon>
+          <template #title>PVC</template>
+        </el-menu-item>
+
+        <div class="menu-group">监控告警</div>
+        <el-menu-item index="/resources/servicemonitors">
+          <el-icon><DataLine /></el-icon>
+          <template #title>ServiceMonitor</template>
+        </el-menu-item>
+        <el-menu-item index="/resources/podmonitors">
+          <el-icon><DataLine /></el-icon>
+          <template #title>PodMonitor</template>
+        </el-menu-item>
 
         <div class="menu-group">集群运维</div>
         <el-menu-item index="/ops/ippools">

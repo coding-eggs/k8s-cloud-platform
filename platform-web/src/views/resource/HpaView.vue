@@ -174,7 +174,7 @@ const contextDesc = computed(() => {
     <div v-else class="panel table-panel">
       <el-table v-loading="loading || !ready" :data="list" stripe>
         <el-table-column label="名称" min-width="160">
-          <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
+          <template #default="{ row }"><code class="res-name name-link" @click="onRowCommand('view', row)">{{ row.name }}</code></template>
         </el-table-column>
         <el-table-column label="目标工作负载" min-width="180">
           <template #default="{ row }">
@@ -199,7 +199,6 @@ const contextDesc = computed(() => {
               <el-button link type="primary" :icon="MoreFilled" />
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item command="view">查看</el-dropdown-item>
                   <el-dropdown-item command="edit">编辑</el-dropdown-item>
                   <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>
                 </el-dropdown-menu>
@@ -244,5 +243,12 @@ const contextDesc = computed(() => {
   margin: 0; padding: 14px; border-radius: 8px; background: var(--panel-hover);
   border: 1px solid var(--border); font-family: Consolas, 'JetBrains Mono', monospace;
   font-size: 12.5px; line-height: 1.6; color: var(--text-2); max-height: 60vh; overflow: auto; white-space: pre-wrap;
+}
+.name-link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.name-link:hover {
+  text-decoration: underline;
 }
 </style>

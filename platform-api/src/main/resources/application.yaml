@@ -68,7 +68,6 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-
           # 不校验 audience：平台管理端接受 auth server 签发的任意客户端 token
           jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/oauth2/jwks}
           type: JWS
