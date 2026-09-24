@@ -3,6 +3,7 @@ package com.coding.platformapi.controllers.resource;
 import com.coding.common.models.k8s.dto.HpaDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.services.HpaService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ import java.util.List;
 public class HpaController {
 
     private final K8sResourceClient k8s;
+    private final HpaService hpaService;
 
     @PostMapping("/list")
     @Operation(summary = "列出 HPA")
@@ -58,14 +60,15 @@ public class HpaController {
     @Operation(summary = "创建 HPA")
     public ResponseData<HpaDTO> create(@RequestBody HpaDTO body) {
         //body 携带 tenantId/clusterId/namespace；K8sResourceClient 将前两者提取进 query（k8s-server 以 query 为准）
-        return new ResponseData<>(k8s.create(body));
+        //scaleTargetRef 重复绑定（一负载一 HPA）由 HpaService 校验
+        return new ResponseData<>(hpaService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 HPA")
     public ResponseData<HpaDTO> update(@PathVariable String name, @RequestBody HpaDTO body) {
         body.setName(name);
-        return new ResponseData<>(k8s.update(body));
+        return new ResponseData<>(hpaService.update(body));
     }
 
     @DeleteMapping("/{name}")

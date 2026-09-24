@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 @Tag(name = "集群管理", description = "集群新增 / 列表 / 详情 / 更新 / 启停 / 删除 / 重新开通 / 刷新 API 能力")
 @RestController
@@ -73,5 +74,11 @@ public class ClusterController {
     public ResponseData<Void> refreshCapability(@RequestBody ClusterKeyRequest request) {
         clusterService.refreshCapabilityStrict(request.getClusterId());
         return new ResponseData<>();
+    }
+
+    @PostMapping("/capability/get")
+    @Operation(summary = "读取集群 API 能力", description = "返回 k8s_cluster.capability 持久化的 group→versions 快照；未探测返回空对象")
+    public ResponseData<Map<String, List<String>>> getCapability(@RequestBody ClusterKeyRequest request) {
+        return new ResponseData<>(clusterService.getCapability(request.getClusterId()));
     }
 }

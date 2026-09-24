@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Date;
@@ -198,6 +199,25 @@ public class ClusterService {
     /**严格：异常透出给调用方（手动「刷新集群能力」按钮用） */
     public void refreshCapabilityStrict(String clusterId) {
         doRefresh(clusterId);
+    }
+
+    /**
+     * 读集群 API 能力（k8s_cluster.capability 列，JSON：group→versions[]）。
+     * 无行/空列/解析失败 → 空 map（前端据此判「未探测」，不硬阻断）。零推导：只读+反序列化。
+     * 语义对齐 KubernetesOperationsFactory.readApiVersions。
+     */
+    public Map<String, List<String>> getCapability(String clusterId) {
+        K8sCluster cluster = clusterMapper.selectByPrimaryKey(clusterId);
+        if (cluster == null || !StringUtils.hasText(cluster.getCapability())) {
+            return Map.of();
+        }
+        try {
+            return jsonMapper.readValue(cluster.getCapability(),
+                    new TypeReference<Map<String, List<String>>>() {});
+        } catch (Exception e) {
+            log.warn("解析集群 {} capability 失败（按未探测处理）: {}", clusterId, e.getMessage());
+            return Map.of();
+        }
     }
 
     /**best-effort 失效 k8s-server 侧 client 缓存：失败仅告警、不阻塞主流程（缓存惰性，下次访问/重启后自愈） */

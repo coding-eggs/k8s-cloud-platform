@@ -2,8 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { workloadApi } from '@/api'
-import type { K8sWorkload } from '@/types'
+import { workloadApi, hpaApi } from '@/api'
+import type { K8sWorkload, K8sHpa } from '@/types'
 import type { WorkloadKind } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
@@ -17,6 +17,8 @@ const router = useRouter()
 
 const loading = ref(false)
 const list = ref<K8sWorkload[]>([])
+/** canonical 键（小写 kind/name）→ 绑定的 HPA 名 */
+const hpaBound = ref<Map<string, string>>(new Map())
 /**客户端类型过滤：all / deployment / statefulset / daemonset */
 const kindFilter = ref('all')
 /** 名称模糊搜索（前端过滤） */
@@ -28,11 +30,28 @@ const ctxParams = computed(() => ({
   namespace: state.namespace!,
 }))
 
+/** canonical 键：小写 kind/name —— 与 HpaEditorView 同一全局约定 */
+function canonicalKey(kind: string | null | undefined, name: string | null | undefined): string {
+  return `${(kind ?? '').toLowerCase()}/${name ?? ''}`
+}
+
+/** 该行工作负载绑定的 HPA 名（未绑定 → undefined） */
+function hpaNameOf(row: K8sWorkload): string | undefined {
+  return hpaBound.value.get(canonicalKey(row.kind, row.name))
+}
+
 async function refresh(): Promise<void> {
   if (!ready.value) return
   loading.value = true
   try {
-    list.value = await workloadApi.list(ctxParams.value)
+    // 终审 Important#2：badge 是次要数据——hpaApi.list 失败不得拖垮主列表（.catch 降级为空集，
+    // 仅失去 HPA 标记与「添加 HPA」显隐，工作负载照常渲染）
+    const [ws, hs] = await Promise.all([
+      workloadApi.list(ctxParams.value),
+      hpaApi.list(ctxParams.value).catch(() => [] as K8sHpa[]),
+    ])
+    list.value = ws
+    hpaBound.value = new Map(hs.map((h) => [canonicalKey(h.scaleTargetRef?.kind, h.scaleTargetRef?.name), h.name] as const))
   } finally {
     loading.value = false
   }
@@ -191,6 +210,10 @@ function onRowCommand(cmd: string, row: K8sWorkload): void {
     case 'yaml': openYaml(row); break
     case 'edit': if (!isOpManaged(row)) goEditor(row.name); break
     case 'scale': openScale(row); break
+    case 'addHpa':
+      // 传小写原值 kind，编辑器 canonicalKey 统一小写 + KIND_CAP 还原大写
+      router.push({ name: 'hpa-editor', query: { targetKind: row.kind, targetName: row.name } })
+      break
     case 'pause': togglePause(row, true); break
     case 'resume': togglePause(row, false); break
     case 'delete': onDelete(row); break
@@ -252,6 +275,9 @@ const contextDesc = computed(() => {
               <el-tag type="warning" size="small" effect="plain" class="op-tag">op</el-tag>
             </el-tooltip>
             <el-tag v-if="row.kind === 'deployment' && row.paused" type="info" size="small" effect="plain" class="op-tag">已暂停</el-tag>
+            <el-tooltip v-if="hpaNameOf(row)" :content="`已绑定 HPA「${hpaNameOf(row)}」`" placement="top">
+              <el-tag type="success" size="small" effect="plain" class="op-tag">HPA</el-tag>
+            </el-tooltip>
             <div v-if="row.exposedServices.length" class="expose-ports">
               <div class="expose-line">
                 <span v-for="(line, i) in exposeLines(row)" :key="i">
@@ -295,6 +321,7 @@ const contextDesc = computed(() => {
                     {{ row.paused ? '恢复更新' : '暂停更新' }}
                   </el-dropdown-item>
                   <el-dropdown-item command="scale">伸缩</el-dropdown-item>
+                  <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
                   <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>
                 </el-dropdown-menu>

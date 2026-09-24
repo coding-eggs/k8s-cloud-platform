@@ -1,6 +1,7 @@
 import http from './http'
 import type {
   K8sCluster,
+  K8sClusterCapability,
   K8sConfigMap,
   K8sHpa,
   K8sNode,
@@ -42,6 +43,8 @@ export const clusterApi = {
   delete: (clusterId: string) => http.post<never, void>('/cluster/delete', { clusterId }),
   provision: (clusterId: string) => http.post<never, K8sCluster>('/cluster/provision', { clusterId }),
   refreshCapability: (clusterId: string) => http.post<never, void>('/cluster/capability/refresh', { clusterId }),
+  getCapability: (clusterId: string) =>
+    http.post<never, K8sClusterCapability>('/cluster/capability/get', { clusterId }),
 }
 
 /** 租户管理 /tenant（含命名空间分配：给租户分配命名空间） */
