@@ -30,5 +30,7 @@ public class TokenUserInfo {
      */
     private List<String> platformRoles;
 
+    /** 当前上下文权限点 code 闭包（平台族角色 + 若有租户上下文再并租户族角色） */
+    private java.util.List<String> permissions;
 
 }
