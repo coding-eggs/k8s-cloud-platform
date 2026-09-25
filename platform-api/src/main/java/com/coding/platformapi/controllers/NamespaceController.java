@@ -1,9 +1,13 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.models.k8s.dto.LimitRangeDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
+import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.models.ClusterKeyRequest;
 import com.coding.platformapi.models.NamespaceKeyRequest;
+import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
+import com.coding.platformapi.models.NamespaceQuotaUpsertRequest;
 import com.coding.platformapi.models.NamespaceUpsertRequest;
 import com.coding.platformapi.models.NamespaceView;
 import com.coding.platformapi.services.NamespaceService;
@@ -59,6 +63,44 @@ public class NamespaceController {
     @Operation(summary = "删除命名空间", description = "仅当平台管理且未分配给任何租户时允许")
     public ResponseData<Void> delete(@RequestBody NamespaceKeyRequest request) {
         namespaceService.delete(request.getClusterId(), request.getNamespace());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/quota/get")
+    @Operation(summary = "查询命名空间配额", description = "未配置返回 null；存在多份时置 multiple=true（平台只管理名为 default 的那份）")
+    public ResponseData<ResourceQuotaDTO> quotaGet(@RequestBody NamespaceKeyRequest request) {
+        return new ResponseData<>(namespaceService.quotaGet(request.getClusterId(), request.getNamespace()));
+    }
+
+    @PostMapping("/quota/upsert")
+    @Operation(summary = "创建/更新命名空间配额", description = "对象名固定 default；已存在则更新，否则创建（重复提交安全）；仅平台创建的命名空间可操作")
+    public ResponseData<ResourceQuotaDTO> quotaUpsert(@RequestBody NamespaceQuotaUpsertRequest request) {
+        return new ResponseData<>(namespaceService.quotaUpsert(request));
+    }
+
+    @PostMapping("/quota/delete")
+    @Operation(summary = "删除命名空间配额", description = "不存在时为幂等 no-op；仅平台创建的命名空间可操作")
+    public ResponseData<Void> quotaDelete(@RequestBody NamespaceKeyRequest request) {
+        namespaceService.quotaDelete(request.getClusterId(), request.getNamespace());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/limitrange/get")
+    @Operation(summary = "查询命名空间限制范围", description = "未配置返回 null；存在多份时置 multiple=true（平台只管理名为 default 的那份）")
+    public ResponseData<LimitRangeDTO> limitRangeGet(@RequestBody NamespaceKeyRequest request) {
+        return new ResponseData<>(namespaceService.limitRangeGet(request.getClusterId(), request.getNamespace()));
+    }
+
+    @PostMapping("/limitrange/upsert")
+    @Operation(summary = "创建/更新命名空间限制范围", description = "对象名固定 default；类型仅支持 Container / Pod / PersistentVolumeClaim，且校验 max≥min、default≥defaultRequest、maxLimitRequestRatio≥1；仅平台创建的命名空间可操作")
+    public ResponseData<LimitRangeDTO> limitRangeUpsert(@RequestBody NamespaceLimitRangeUpsertRequest request) {
+        return new ResponseData<>(namespaceService.limitRangeUpsert(request));
+    }
+
+    @PostMapping("/limitrange/delete")
+    @Operation(summary = "删除命名空间限制范围", description = "不存在时为幂等 no-op；仅平台创建的命名空间可操作")
+    public ResponseData<Void> limitRangeDelete(@RequestBody NamespaceKeyRequest request) {
+        namespaceService.limitRangeDelete(request.getClusterId(), request.getNamespace());
         return new ResponseData<>();
     }
 }

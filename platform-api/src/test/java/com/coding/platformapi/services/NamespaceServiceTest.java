@@ -1,7 +1,12 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.k8s.dto.LimitRangeDTO;
+import com.coding.common.models.k8s.dto.LimitRangeItemDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
+import com.coding.common.models.k8s.dto.ResourcePairDTO;
+import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.data.mapper.auth.PlatformTenantMapper;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
@@ -9,10 +14,14 @@ import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
+import com.coding.platformapi.models.NamespaceQuotaUpsertRequest;
 import com.coding.platformapi.models.NamespaceUpsertRequest;
 import com.coding.platformapi.models.NamespaceView;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -120,5 +129,299 @@ class NamespaceServiceTest {
         assertThat(va.getDescription()).isEqualTo("订单域");
         assertThat(views.get(1).isManagedBy()).isFalse();
         assertThat(views.get(1).getAllocatedTenantName()).isNull();
+    }
+
+    // ---------- Task 8：quota / limitrange ----------
+
+    private void managedNamespaceExists() {
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("ns1", true));
+    }
+
+    @Test
+    void quota_upsert_creates_with_forced_default_name_when_absent() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(null);
+        when(k8s.create(any(ResourceQuotaDTO.class))).thenAnswer(i -> i.getArgument(0));
+        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        ResourceQuotaDTO q = new ResourceQuotaDTO();
+        // 空白名 → 静默改写为 default（非空且非 default 的入参名由 quota_upsert_rejects_non_default_incoming_name 锁定为拒绝）
+        q.setName("");
+        q.setCpu(new BigDecimal("2"));
+        req.setQuota(q);
+        svc.quotaUpsert(req);
+        ArgumentCaptor<ResourceQuotaDTO> cap = ArgumentCaptor.forClass(ResourceQuotaDTO.class);
+        verify(k8s).create(cap.capture());
+        assertThat(cap.getValue().getName()).isEqualTo("default");
+        assertThat(cap.getValue().getNamespace()).isEqualTo("ns1");
+        assertThat(cap.getValue().getClusterId()).isEqualTo("c1");
+        assertThat(cap.getValue().getCpu()).isEqualByComparingTo("2");
+    }
+
+    @Test
+    void quota_upsert_updates_when_present() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(new ResourceQuotaDTO());
+        when(k8s.update(any(ResourceQuotaDTO.class))).thenAnswer(i -> i.getArgument(0));
+        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        req.setQuota(new ResourceQuotaDTO());
+        svc.quotaUpsert(req);
+        verify(k8s).update(any(ResourceQuotaDTO.class));
+        verify(k8s, never()).create(any(ResourceQuotaDTO.class));
+    }
+
+    @Test
+    void quota_upsert_rejects_non_default_incoming_name() {
+        clusterExists();
+        managedNamespaceExists();
+        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        ResourceQuotaDTO q = new ResourceQuotaDTO();
+        q.setName("other");
+        req.setQuota(q);
+        assertThatThrownBy(() -> svc.quotaUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.QUOTA_NAME_NOT_DEFAULT.getCode())
+                .hasMessageContaining("default");
+        verify(k8s, never()).create(any(ResourceQuotaDTO.class));
+        verify(k8s, never()).update(any(ResourceQuotaDTO.class));
+    }
+
+    @Test
+    void quota_get_null_when_absent_and_multiple_flag_when_extra_objects() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(null);
+        assertThat(svc.quotaGet("c1", "ns1")).isNull();
+
+        ResourceQuotaDTO one = new ResourceQuotaDTO();
+        one.setName("default");
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(one);
+        when(k8s.list(any(ResourceQuotaDTO.class))).thenReturn(List.of(one, new ResourceQuotaDTO(), new ResourceQuotaDTO()));
+        ResourceQuotaDTO got = svc.quotaGet("c1", "ns1");
+        assertThat(got).isNotNull();
+        assertThat(got.getMultiple()).isTrue();
+    }
+
+    @Test
+    void quota_get_single_object_not_flagged_multiple() {
+        clusterExists();
+        managedNamespaceExists();
+        ResourceQuotaDTO one = new ResourceQuotaDTO();
+        one.setName("default");
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(one);
+        when(k8s.list(any(ResourceQuotaDTO.class))).thenReturn(List.of(one));
+        ResourceQuotaDTO got = svc.quotaGet("c1", "ns1");
+        assertThat(got).isNotNull();
+        assertThat(got.getMultiple()).isNotEqualTo(Boolean.TRUE);
+    }
+
+    @Test
+    void quota_delete_is_noop_when_absent() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(null);
+        svc.quotaDelete("c1", "ns1");
+        verify(k8s, never()).delete(any(ResourceQuotaDTO.class));
+    }
+
+    @Test
+    void quota_delete_removes_when_present() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(new ResourceQuotaDTO());
+        svc.quotaDelete("c1", "ns1");
+        verify(k8s).delete(any(ResourceQuotaDTO.class));
+    }
+
+    @Test
+    void limitrange_upsert_rejects_unsupported_type() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        when(k8s.create(any(LimitRangeDTO.class))).thenAnswer(i -> i.getArgument(0));
+        NamespaceLimitRangeUpsertRequest req = new NamespaceLimitRangeUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        LimitRangeDTO lr = new LimitRangeDTO();
+        LimitRangeItemDTO it = new LimitRangeItemDTO();
+        it.setType("ContainerFixed");     // 未建模类型不得经 API 写入
+        lr.setLimits(List.of(it));
+        req.setLimitRange(lr);
+        assertThatThrownBy(() -> svc.limitRangeUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.LIMIT_RANGE_TYPE_UNSUPPORTED.getCode())
+                .hasMessageContaining("Container / Pod / PersistentVolumeClaim")
+                .hasMessageContaining("ContainerFixed");
+        verify(k8s, never()).create(any(LimitRangeDTO.class));
+    }
+
+    @Test
+    void limitrange_upsert_rejects_max_less_than_min() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        when(k8s.create(any(LimitRangeDTO.class))).thenAnswer(i -> i.getArgument(0));
+        NamespaceLimitRangeUpsertRequest req = new NamespaceLimitRangeUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        LimitRangeDTO lr = new LimitRangeDTO();
+        LimitRangeItemDTO it = new LimitRangeItemDTO();
+        it.setType("Container");
+        ResourcePairDTO max = new ResourcePairDTO();
+        max.setCpu(new BigDecimal("1"));
+        ResourcePairDTO min = new ResourcePairDTO();
+        min.setCpu(new BigDecimal("2"));      // min > max → 非法
+        it.setMax(max);
+        it.setMin(min);
+        lr.setLimits(List.of(it));
+        req.setLimitRange(lr);
+        assertThatThrownBy(() -> svc.limitRangeUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.LIMIT_RANGE_VALUE_INVALID.getCode())
+                .hasMessageContaining("Container cpu max 不得小于 min");
+        verify(k8s, never()).create(any(LimitRangeDTO.class));
+    }
+
+    @Test
+    void limitrange_upsert_rejects_defaultRequest_greater_than_default() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        NamespaceLimitRangeUpsertRequest req = new NamespaceLimitRangeUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        LimitRangeDTO lr = new LimitRangeDTO();
+        LimitRangeItemDTO it = new LimitRangeItemDTO();
+        it.setType("Container");
+        ResourcePairDTO def = new ResourcePairDTO();
+        def.setMemory(new BigDecimal("100"));
+        ResourcePairDTO defReq = new ResourcePairDTO();
+        defReq.setMemory(new BigDecimal("200"));   // defaultRequest > default → 非法
+        it.setDefaultValue(def);
+        it.setDefaultRequest(defReq);
+        lr.setLimits(List.of(it));
+        req.setLimitRange(lr);
+        assertThatThrownBy(() -> svc.limitRangeUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.LIMIT_RANGE_VALUE_INVALID.getCode())
+                .hasMessageContaining("Container memory defaultRequest 不得大于 default");
+        verify(k8s, never()).create(any(LimitRangeDTO.class));
+    }
+
+    @Test
+    void limitrange_upsert_rejects_ratio_below_one() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        NamespaceLimitRangeUpsertRequest req = new NamespaceLimitRangeUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        LimitRangeDTO lr = new LimitRangeDTO();
+        LimitRangeItemDTO it = new LimitRangeItemDTO();
+        it.setType("Container");
+        ResourcePairDTO ratio = new ResourcePairDTO();
+        ratio.setCpu(new BigDecimal("0.5"));   // < 1 → 非法
+        it.setMaxLimitRequestRatio(ratio);
+        lr.setLimits(List.of(it));
+        req.setLimitRange(lr);
+        assertThatThrownBy(() -> svc.limitRangeUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.LIMIT_RANGE_VALUE_INVALID.getCode())
+                .hasMessageContaining("Container cpu maxLimitRequestRatio 不得小于 1");
+        verify(k8s, never()).create(any(LimitRangeDTO.class));
+    }
+
+    @Test
+    void limitrange_upsert_forces_default_name_and_creates_when_absent() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        when(k8s.create(any(LimitRangeDTO.class))).thenAnswer(i -> i.getArgument(0));
+        NamespaceLimitRangeUpsertRequest req = new NamespaceLimitRangeUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ns1");
+        LimitRangeDTO lr = new LimitRangeDTO();
+        lr.setName("");   // 空白名 → 静默改写为 default
+        LimitRangeItemDTO it = new LimitRangeItemDTO();
+        it.setType("Pod");
+        lr.setLimits(List.of(it));
+        req.setLimitRange(lr);
+        svc.limitRangeUpsert(req);
+        ArgumentCaptor<LimitRangeDTO> cap = ArgumentCaptor.forClass(LimitRangeDTO.class);
+        verify(k8s).create(cap.capture());
+        assertThat(cap.getValue().getName()).isEqualTo("default");
+        assertThat(cap.getValue().getNamespace()).isEqualTo("ns1");
+    }
+
+    @Test
+    void limitrange_get_null_when_absent_and_multiple_flag() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        assertThat(svc.limitRangeGet("c1", "ns1")).isNull();
+
+        LimitRangeDTO one = new LimitRangeDTO();
+        one.setName("default");
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(one);
+        when(k8s.list(any(LimitRangeDTO.class))).thenReturn(List.of(one, new LimitRangeDTO()));
+        LimitRangeDTO got = svc.limitRangeGet("c1", "ns1");
+        assertThat(got).isNotNull();
+        assertThat(got.getMultiple()).isTrue();
+    }
+
+    @Test
+    void limitrange_delete_is_noop_when_absent() {
+        clusterExists();
+        managedNamespaceExists();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        svc.limitRangeDelete("c1", "ns1");
+        verify(k8s, never()).delete(any(LimitRangeDTO.class));
+    }
+
+    @Test
+    void constraint_ops_reject_foreign_namespace() {
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("foreign", false));
+        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("foreign");
+        req.setQuota(new ResourceQuotaDTO());
+        assertThatThrownBy(() -> svc.quotaUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("平台");
+        verify(k8s, never()).create(any(ResourceQuotaDTO.class));
+
+        assertThatThrownBy(() -> svc.quotaGet("c1", "foreign"))
+                .isInstanceOf(CloudPlatformException.class);
+        assertThatThrownBy(() -> svc.quotaDelete("c1", "foreign"))
+                .isInstanceOf(CloudPlatformException.class);
+        assertThatThrownBy(() -> svc.limitRangeGet("c1", "foreign"))
+                .isInstanceOf(CloudPlatformException.class);
+        assertThatThrownBy(() -> svc.limitRangeDelete("c1", "foreign"))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(k8s, never()).delete(any(ResourceQuotaDTO.class));
+        verify(k8s, never()).delete(any(LimitRangeDTO.class));
+    }
+
+    @Test
+    void constraint_ops_reject_missing_namespace() {
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(null);   // ns 不存在
+        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ghost");
+        req.setQuota(new ResourceQuotaDTO());
+        assertThatThrownBy(() -> svc.quotaUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.RESOURCE_NOT_EXIST.getCode())
+                .hasMessageContaining("命名空间不存在");
+        verify(k8s, never()).create(any(ResourceQuotaDTO.class));
     }
 }
