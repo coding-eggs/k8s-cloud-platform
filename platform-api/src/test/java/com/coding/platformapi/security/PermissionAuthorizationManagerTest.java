@@ -49,6 +49,19 @@ class PermissionAuthorizationManagerTest {
     }
 
     @Test
+    void granted_when_multi_code_anyof_matches_second() {
+        // spec §5.4 自管理/委托契约：/tenant/member/add 接受多 code ANY-of，
+        // 仅持有第二个 code 也必须放行
+        PermissionRegistry reg = mock(PermissionRegistry.class);
+        when(reg.requiredCodes("POST", "/tenant/member/add"))
+                .thenReturn(Optional.of(Set.of("tenant:member:manage", "platform:member:manage")));
+        var mgr = new PermissionAuthorizationManager(reg);
+        AuthorizationResult d = mgr.authorize(() -> auth("PERM:platform:member:manage"),
+                ctx("POST", "/tenant/member/add"));
+        assertThat(d.isGranted()).isTrue();
+    }
+
+    @Test
     void denied_when_no_required_perm() {
         var mgr = new PermissionAuthorizationManager(registryWithTenantCreate());
         AuthorizationResult d = mgr.authorize(() -> auth("PERM:tenant:overview:view"),

@@ -9,7 +9,7 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 
 /**
  * WebSocket 端点注册。安全由既有 SecurityFilterChain 承担：
- * /ws/** 命中 anyRequest().hasAuthority(PLATFORM:admin)，JWT token 走 query access_token；
+ * /ws/** 列入 ExemptPaths（豁免权限码、仅要求已登录，匿名拒绝），JWT token 走 query access_token；
  * 命名空间边界校验在上游 k8s-server 执行（ResourceAccessResolver）。
  */
 @Configuration
