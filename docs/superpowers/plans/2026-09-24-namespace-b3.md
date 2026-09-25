@@ -1775,9 +1775,6 @@ commit body 注明:**部署顺序 k8s-server(先,含新边界)→ platform-api(�
                 .hasMessageContaining("max 不得小于 min");
         verify(k8s, never()).create(any(LimitRangeDTO.class));
     }
-```
-
-> **已验证事实**:`platform-api/pom.xml` 只依赖 `platform-common` + `platform-data`,**不依赖 k8s-core**(全库 `import com.coding.k8score` 在 platform-api 下零命中)。故 T8 的类型白名单必须是本地常量,不能引用 `CoreV1LimitRangeConverter.MODELED_TYPES`。
 
     @Test
     void quota_delete_is_noop_when_absent() {
