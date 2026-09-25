@@ -12,9 +12,9 @@
         select permission_id from platform_role_permission where role_id = #{roleId}
     </select>
     <select id="selectPermissionCodesByRoleId" resultType="java.lang.String">
-        select p.`code`
+        select distinct p.`code`
         from platform_role_permission rp
-        inner join platform_permission p on p.id = rp.permission_id
+        inner join platform_permission p on p.id = rp.permission_id and p.deleted_at is null
         where rp.role_id = #{roleId}
     </select>
     <select id="selectRoleIdsByPermissionId" resultType="java.lang.String">

@@ -24,4 +24,9 @@ public interface PlatformRoleMapper {
     List<SecurityRole> selectTenantRole(String userId);
 
     PlatformRole selectByCode(@Param("code") String code);
+
+    /**
+     * 全部未删除角色（配置页角色列表）
+     */
+    List<PlatformRole> listAllActive();
 }

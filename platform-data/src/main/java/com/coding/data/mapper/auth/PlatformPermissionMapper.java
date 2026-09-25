@@ -23,7 +23,12 @@ public interface PlatformPermissionMapper {
 
     List<PlatformPermission> selectAllActive();
 
-    PlatformPermission selectByCode(@Param("code") String code);
+    /**
+     * 按 code 查询全部有效权限点行。
+     * 注意：code 不再唯一（Task 4 起 ANY-of 语义，同一 code 可对应多个 URL 行），
+     * 故返回列表而非单条；调用方须对该 code 的全部行一并处理。
+     */
+    List<PlatformPermission> selectAllByCode(@Param("code") String code);
 
     List<String> selectPermissionCodesByRoleIds(@Param("roleIds") Collection<String> roleIds);
 }

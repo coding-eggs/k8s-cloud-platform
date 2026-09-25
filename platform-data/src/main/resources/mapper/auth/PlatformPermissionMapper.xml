@@ -27,7 +27,7 @@
     where deleted_at is null
     order by `domain`, code
   </select>
-  <select id="selectByCode" resultMap="BaseResultMap">
+  <select id="selectAllByCode" resultMap="BaseResultMap">
     select
     <include refid="Base_Column_List" />
     from platform_permission

@@ -28,6 +28,13 @@
     from platform_role
     where code = #{code,jdbcType=VARCHAR} and deleted_at is null
   </select>
+  <select id="listAllActive" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_role
+    where deleted_at is null
+    order by `scope`, code
+  </select>
     <select id="selectTenantRole" resultType="com.coding.data.models.system.SecurityRole">
       SELECT
         r.`name` role_name,
