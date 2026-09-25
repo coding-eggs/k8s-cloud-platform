@@ -3,6 +3,7 @@ package com.coding.platformapi.configs;
 import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.platformapi.security.PermissionAuthorizationManager;
 import com.nimbusds.jose.*;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.proc.*;
@@ -53,6 +54,7 @@ public class ResourceServerConfig {
 
 	@Bean
 	SecurityFilterChain securityFilterChain(HttpSecurity http, Properties properties,
+										   PermissionAuthorizationManager permMgr,
 										   @Value("${jwt.data-key:data}") String dataKey) {
 
 		http
@@ -62,8 +64,8 @@ public class ResourceServerConfig {
 				.csrf(AbstractHttpConfigurer::disable)
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(properties.getIgnoreUrls()).permitAll()
-						//平台管理端：全部业务端点要求平台管理员（非管理员 token → 403）
-						.anyRequest().hasAuthority(PlatformJwtAuthenticationConverter.PLATFORM_AUTHORITY_PREFIX + "admin"))
+						//表驱动：命中权限行→PERM 校验；豁免→authenticated；其余拒绝（见 spec §5.1）
+						.anyRequest().access(permMgr))
 				//过滤器链层的认证/授权异常不会进 @ControllerAdvice，这里统一返回 ResponseData JSON
 				.exceptionHandling(ex -> ex
 						.authenticationEntryPoint((request, response, authException) ->

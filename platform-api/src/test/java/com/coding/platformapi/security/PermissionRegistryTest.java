@@ -34,4 +34,15 @@ class PermissionRegistryTest {
         assertThat(reg().requiredCodes("post", "/tenant/create"))
                 .contains(Set.of("platform:tenant:provision"));
     }
+
+    @Test
+    void ant_wildcard_pattern_matches_deeper_paths() {
+        var reg = new PermissionRegistry(List.of(
+                new PermissionRegistry.Rule("POST", "/tenant/**", "tenant:any")));
+        assertThat(reg.requiredCodes("POST", "/tenant/member/add"))
+                .contains(Set.of("tenant:any"));
+        assertThat(reg.requiredCodes("POST", "/tenant/create"))
+                .contains(Set.of("tenant:any"));
+        assertThat(reg.requiredCodes("POST", "/role/list")).isEmpty();
+    }
 }
