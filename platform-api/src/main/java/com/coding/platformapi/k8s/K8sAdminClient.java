@@ -1,6 +1,5 @@
 package com.coding.platformapi.k8s;
 
-import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.admin.AdminClusterKeyRequest;
 import com.coding.common.models.k8s.dto.admin.AdminCleanupRequest;
 import com.coding.common.models.k8s.dto.admin.AdminNamespaceKeyRequest;
@@ -70,22 +69,6 @@ public class K8sAdminClient {
         req.setClusterId(clusterId);
         req.setNamespace(namespace);
         gateway.exchange(HttpMethod.POST, "/admin/namespace/create", null, req, gateway.responseType(Void.class));
-    }
-
-    /**列出集群内全部命名空间（全字段对象；展示裁剪由调用方业务决定） */
-    public List<NamespaceDTO> listNamespaces(String clusterId) {
-        AdminClusterKeyRequest req = new AdminClusterKeyRequest();
-        req.setClusterId(clusterId);
-        return gateway.exchange(HttpMethod.POST, "/admin/namespace/list", null, req,
-                gateway.listResponseType(NamespaceDTO.class));
-    }
-
-    /**删除命名空间（能否删除由调用方业务规则判定） */
-    public void deleteNamespace(String clusterId, String namespace) {
-        AdminNamespaceKeyRequest req = new AdminNamespaceKeyRequest();
-        req.setClusterId(clusterId);
-        req.setNamespace(namespace);
-        gateway.exchange(HttpMethod.POST, "/admin/namespace/delete", null, req, gateway.responseType(Void.class));
     }
 
     /**租户 K8s 侧批量清理（k8s-server 内部 best-effort + 清租户 client 缓存） */

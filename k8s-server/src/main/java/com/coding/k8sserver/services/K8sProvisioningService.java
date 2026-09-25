@@ -5,7 +5,6 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.constants.SystemConstant;
 import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.ClusterRoleDTO;
-import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.PolicyRuleDTO;
 import com.coding.common.models.k8s.dto.RoleBindingDTO;
 import com.coding.common.models.k8s.dto.RulesPayload;
@@ -33,7 +32,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -137,35 +135,6 @@ public class K8sProvisioningService {
                     .build()).create();
             log.info("集群 {} 创建命名空间 {}", clusterId, namespace);
         }
-    }
-
-    /**
-     * 列出集群内全部命名空间（admin client，按名字升序；返回全字段对象，展示裁剪由 platform-api 侧决定）
-     */
-    public List<NamespaceDTO> listNamespaces(String clusterId) {
-        KubernetesClient client = clientFactory.getAdminClient(clusterId);
-        return client.namespaces().list().getItems().stream()
-                .map(this::toNamespaceDTO)
-                .sorted(Comparator.comparing(NamespaceDTO::getName))
-                .toList();
-    }
-
-    /**
-     * 删除命名空间（admin client；能否删除由 platform-api 侧业务规则判定）
-     */
-    public void deleteNamespace(String clusterId, String namespace) {
-        KubernetesClient client = clientFactory.getAdminClient(clusterId);
-        client.namespaces().withName(namespace).delete();
-        log.info("集群 {} 删除命名空间 {}", clusterId, namespace);
-    }
-
-    private NamespaceDTO toNamespaceDTO(Namespace ns) {
-        NamespaceDTO dto = new NamespaceDTO();
-        dto.setName(ns.getMetadata().getName());
-        dto.setPhase(ns.getStatus() != null ? ns.getStatus().getPhase() : null);
-        dto.setCreationTimestamp(ns.getMetadata().getCreationTimestamp());
-        dto.setLabels(ns.getMetadata().getLabels());
-        return dto;
     }
 
     /**
