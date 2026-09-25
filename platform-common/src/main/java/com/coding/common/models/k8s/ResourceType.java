@@ -4,12 +4,15 @@ import com.coding.common.models.k8s.dto.ClusterRoleDTO;
 import com.coding.common.models.k8s.dto.ConfigMapDTO;
 import com.coding.common.models.k8s.dto.DeploymentDTO;
 import com.coding.common.models.k8s.dto.HpaDTO;
+import com.coding.common.models.k8s.dto.LimitRangeDTO;
+import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.PersistentVolumeDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodMonitorDTO;
 import com.coding.common.models.k8s.dto.ReplicaSetDTO;
+import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.common.models.k8s.dto.RoleBindingDTO;
 import com.coding.common.models.k8s.dto.SecretDTO;
 import com.coding.common.models.k8s.dto.ServiceAccountDTO;
@@ -38,7 +41,10 @@ public enum ResourceType {
     POD_MONITOR(PodMonitorDTO.class),
     WORKLOAD(WorkloadDTO.class),
     HPA(HpaDTO.class),
-    NODE(NodeDTO.class)
+    NODE(NodeDTO.class),
+    NAMESPACE(NamespaceDTO.class),
+    RESOURCE_QUOTA(ResourceQuotaDTO.class),
+    LIMIT_RANGE(LimitRangeDTO.class)
     ;
 
     private final Class<?> clazz;
