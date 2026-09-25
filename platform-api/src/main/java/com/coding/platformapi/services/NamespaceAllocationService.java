@@ -16,6 +16,7 @@ import com.coding.platformapi.k8s.K8sAdminClient;
 import com.coding.platformapi.models.AllocationCreateRequest;
 import com.coding.platformapi.models.AllocationDeleteRequest;
 import com.coding.platformapi.models.AllocationQueryRequest;
+import com.coding.platformapi.security.AuthContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,7 @@ public class NamespaceAllocationService {
     private final PlatformRbacTemplateMapper templateMapper;
     private final K8sProvisioningService provisioning;
     private final K8sAdminClient adminClient;
+    private final AuthContext authContext;
 
     public PlatformTenantNamespace create(AllocationCreateRequest req) {
         PlatformTenant tenant = requireEnabledTenant(req.getTenantId());
@@ -75,7 +77,17 @@ public class NamespaceAllocationService {
         return row;
     }
 
+    /**
+     * 分配列表。租户边界（不变量 5）：token 带 tenantInfo（自管身份，含仅持 tenant:overview:view
+     * 经 perm_alloc_list_self 进入本端点的成员）时，强制查询 token 租户——入参 tenantId 一律被覆盖，
+     * 不得列其他租户。无租户 claim 的 admin/base token（代管）保持原过滤语义。
+     */
     public List<PlatformTenantNamespace> list(AllocationQueryRequest req) {
+        var info = authContext.current();
+        String tokenTenantId = (info != null && info.getTenantInfo() != null) ? info.getTenantInfo().getTenantId() : null;
+        if (StringUtils.hasText(tokenTenantId)) {
+            return allocationMapper.listByTenant(tokenTenantId);
+        }
         if (StringUtils.hasText(req.getTenantId())) {
             return allocationMapper.listByTenant(req.getTenantId());
         }
