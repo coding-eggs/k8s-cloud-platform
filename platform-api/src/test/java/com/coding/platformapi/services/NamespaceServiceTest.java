@@ -87,7 +87,7 @@ class NamespaceServiceTest {
         req.setDescription("想改别人的");
         assertThatThrownBy(() -> svc.update(req))
                 .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("平台");
+                .hasMessageContaining("仅平台创建的命名空间（带 managed-by 标签）可编辑");
         verify(k8s, never()).update(any(NamespaceDTO.class));
     }
 
@@ -101,6 +101,16 @@ class NamespaceServiceTest {
         assertThatThrownBy(() -> svc.delete("c1", "app"))
                 .isInstanceOf(CloudPlatformException.class)
                 .hasMessageContaining("取消分配");
+        verify(k8s, never()).delete(any(NamespaceDTO.class));
+    }
+
+    @Test
+    void delete_rejects_foreign_namespace_not_managed_by_platform() {
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("foreign", false));
+        assertThatThrownBy(() -> svc.delete("c1", "foreign"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("仅平台创建的命名空间（带 managed-by 标签）可删除");
         verify(k8s, never()).delete(any(NamespaceDTO.class));
     }
 
