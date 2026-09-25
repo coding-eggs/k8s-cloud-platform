@@ -95,7 +95,8 @@ public class AuthorizationServerConfig {
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
     public SecurityFilterChain authorizationServerSecurityFilterChain(
-            HttpSecurity http, SessionRenewalAuthenticationProvider sessionRenewalAuthenticationProvider) {
+            HttpSecurity http, SessionRenewalAuthenticationProvider sessionRenewalAuthenticationProvider,
+            RegisteredClientRepository registeredClientRepository) {
         OAuth2AuthorizationServerConfigurer configurer = new OAuth2AuthorizationServerConfigurer();
         http
                 .securityMatcher(configurer.getEndpointsMatcher())
@@ -105,9 +106,10 @@ public class AuthorizationServerConfig {
                                 .authorizationEndpoint(authorizationEndpoint ->
                                         authorizationEndpoint.consentPage(CUSTOM_CONSENT_PAGE_URI)
                                 )
-                                //token 端点：追加会话续期 grant（converter + provider），不影响默认 grant
+                                //token 端点：追加会话续期 grant（converter + provider），不影响默认 grant。
+                                //converter 需自行解析公共客户端 principal（SAS 客户端认证 filter 不覆盖本 grant 形状）
                                 .tokenEndpoint(tokenEndpoint -> tokenEndpoint
-                                        .accessTokenRequestConverter(new SessionRenewalAuthenticationConverter())
+                                        .accessTokenRequestConverter(new SessionRenewalAuthenticationConverter(registeredClientRepository))
                                         .authenticationProvider(sessionRenewalAuthenticationProvider)
                                 )
                                 //oidc配置
