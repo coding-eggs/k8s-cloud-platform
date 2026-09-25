@@ -5,12 +5,18 @@ import org.springframework.util.AntPathMatcher;
 /**
  * 豁免权限校验的路径清单（Ant 风格）。
  * /ws/** 为 pod-exec WebSocket 转发路径（handler 注册在 RequestMapping 之外），有意豁免。
+ * springdoc 文档端点：knife4j 引入的 springdoc 是真实 @RestController，会出现在
+ * RequestMappingHandlerMapping 里被 Task 11 交叉校验枚举；/v3/api-docs.yaml、
+ * /v3/api-docs.yaml/{group}、/swagger-ui.html 是字面路径/独立 pattern，
+ * 不被 /v3/api-docs/** 、/swagger-ui/** 匹配（AntPathMatcher 实测），不补则启动必 brick。
  */
 public final class ExemptPaths {
 
     private static final String[] PREFIXES = {
             "/resource/**", "/user/me", "/user/my-tenants", "/callback", "/error",
-            "/actuator/**", "/doc.html", "/swagger-ui/**", "/v3/api-docs/**", "/favicon.ico",
+            "/actuator/**", "/doc.html", "/swagger-ui/**", "/swagger-ui.html",
+            "/v3/api-docs/**", "/v3/api-docs.yaml", "/v3/api-docs.yaml/**",
+            "/favicon.ico",
             "/ws/**"
     };
 
