@@ -57,7 +57,7 @@ powershell -NoProfile -Command "(Get-Item -LiteralPath '.claude\worktrees\namesp
 
 ---
 
-### 任务 1 · platform-common:三个 DTO + ResourceType + 错误码
+### Task 1 ·  platform-common:三个 DTO + ResourceType + 错误码
 
 **文件:**
 - 创建: `platform-common/src/main/java/com/coding/common/models/k8s/dto/ResourceQuotaDTO.java`
@@ -363,7 +363,7 @@ public class NamespaceDTO extends BaseResources {
 
 ---
 
-### 任务 2 · k8s-core:Namespace converter + operations + factory [TDD]
+### Task 2 ·  k8s-core:Namespace converter + operations + factory [TDD]
 
 **文件:**
 - 创建: `k8s-core/src/main/java/com/coding/k8score/converter/impl/core/CoreV1NamespaceConverter.java`
@@ -760,7 +760,7 @@ class CoreV1NamespaceOperationsTest {
 
 ---
 
-### 任务 3 · k8s-server:`/admin/namespaces` 边界(只增)
+### Task 3 ·  k8s-server:`/admin/namespaces` 边界(只增)
 
 **文件:**
 - 创建: `k8s-server/src/main/java/com/coding/k8sserver/controllers/cluster/NamespaceController.java`
@@ -807,7 +807,7 @@ public class NamespaceController extends AbstractClusterResourceController<Names
 
 ---
 
-### 任务 4 · k8s-server:`AbstractAdminNamespacedResourceController` 基类
+### Task 4 ·  k8s-server:`AbstractAdminNamespacedResourceController` 基类
 
 **文件:**
 - 创建: `k8s-server/src/main/java/com/coding/k8sserver/controllers/base/AbstractAdminNamespacedResourceController.java`
@@ -959,7 +959,7 @@ public abstract class AbstractAdminNamespacedResourceController<T extends BaseRe
 
 ---
 
-### 任务 5 · ResourceQuota 建模 [TDD]
+### Task 5 ·  ResourceQuota 建模 [TDD]
 
 **文件:**
 - 创建: `k8s-core/src/main/java/com/coding/k8score/converter/impl/core/CoreV1ResourceQuotaConverter.java`(+ Test)
@@ -1284,7 +1284,7 @@ list/get/delete/yaml/checkExist/apiVersion(`"v1"`)全部照 PVC 版逐条搬。
 
 ---
 
-### 任务 6 · LimitRange 建模 [TDD] —— 按 type 对齐的 overlay
+### Task 6 ·  LimitRange 建模 [TDD] —— 按 type 对齐的 overlay
 
 **文件:** 同任务 5 形状,换 `CoreV1LimitRangeConverter` / `CoreV1LimitRangeOperations` / `LimitRangeController`(`/admin/limitranges`)+ factory `case LIMIT_RANGE`。
 
@@ -1469,7 +1469,7 @@ public class CoreV1LimitRangeConverter implements CommonConverter<LimitRange, Li
 
 ---
 
-### 任务 7 · platform-api:Namespace 一等公民切换(跨两模块的迁移对)
+### Task 7 ·  platform-api:Namespace 一等公民切换(跨两模块的迁移对)
 
 **文件:**
 - 修改: `platform-api/.../k8s/K8sAdminClient.java`(删 `listNamespaces:76-81`、`deleteNamespace:84-89`;留 `ensureNamespace`)
@@ -1675,7 +1675,7 @@ commit body 注明:**部署顺序 k8s-server(先,含新边界)→ platform-api(�
 
 ---
 
-### 任务 8 · platform-api:quota/limitrange 端点 [TDD]
+### Task 8 ·  platform-api:quota/limitrange 端点 [TDD]
 
 **文件:**
 - 创建: `platform-api/.../models/NamespaceQuotaUpsertRequest.java`、`NamespaceLimitRangeUpsertRequest.java`
@@ -1869,7 +1869,7 @@ public class NamespaceQuotaUpsertRequest {
 
 ---
 
-### 任务 9 · 前端基础设施:types + namespaceApi + quantityUnits
+### Task 9 ·  前端基础设施:types + namespaceApi + quantityUnits
 
 **文件:**
 - 修改: `platform-web/src/types.ts`
@@ -2025,7 +2025,7 @@ export function intOrNull(v: number | string | null | undefined): number | null 
 
 ---
 
-### 任务 10 · NamespaceEditorView.vue 骨架 + 基础信息区块
+### Task 10 ·  NamespaceEditorView.vue 骨架 + 基础信息区块
 
 **文件:**
 - 创建: `platform-web/src/views/NamespaceEditorView.vue`
@@ -2173,7 +2173,7 @@ async function submit(): Promise<void> {
 
 ---
 
-### 任务 11 · 编辑器:配额区块 + 限制范围区块
+### Task 11 ·  编辑器:配额区块 + 限制范围区块
 
 **文件:**
 - 创建: `platform-web/src/components/namespace/QuotaSection.vue`
@@ -2267,7 +2267,7 @@ async function saveConstraints(cid: string, name: string): Promise<boolean> {
 
 ---
 
-### 任务 12 · NamespaceDetailView.vue 四 tab
+### Task 12 ·  NamespaceDetailView.vue 四 tab
 
 **文件:**
 - 创建: `platform-web/src/views/NamespaceDetailView.vue`
@@ -2306,7 +2306,7 @@ lazy-load 与 `watch(clusterId)` 联动:切集群 → 清空三块数据 + `refr
 
 ---
 
-### 任务 13 · NamespaceView.vue 列表改造
+### Task 13 ·  NamespaceView.vue 列表改造
 
 **文件:** 修改 `platform-web/src/views/NamespaceView.vue`
 
@@ -2339,7 +2339,7 @@ function goEdit(row: NamespaceView): void { router.push({ name: 'namespace-edito
 
 ---
 
-### 任务 14 · 路由 + 前端全量门控
+### Task 14 ·  路由 + 前端全量门控
 
 **文件:** 修改 `platform-web/src/router/index.ts`
 
@@ -2355,7 +2355,7 @@ function goEdit(row: NamespaceView): void { router.push({ name: 'namespace-edito
 
 ---
 
-### 任务 15 · 后端全量回归 + 审计
+### Task 15 ·  后端全量回归 + 审计
 
 - [ ] **步骤 1:** `mvn -q -T1C compile` → BUILD SUCCESS
 - [ ] **步骤 2:** `mvn -q -pl k8s-core,platform-api -am test -Dsurefire.failIfNoSpecifiedTests=false` → 新测试(CoreV1NamespaceConverterTest 6 / CoreV1ResourceQuotaConverterTest 8 / CoreV1LimitRangeConverterTest 7 / 两个冒烟 / NamespaceServiceTest 全量)+ 既有(QuantityUtilTest 8 / CoreV1NodeConverterTest 2 / PodMonitor* / HpaServiceTest 5)全绿零回归。报告每模块总数。
@@ -2366,7 +2366,7 @@ function goEdit(row: NamespaceView): void { router.push({ name: 'namespace-edito
 
 ---
 
-### 任务 16 · 浏览器预览 + spec 勘误
+### Task 16 ·  浏览器预览 + spec 勘误
 
 - [ ] **步骤 1:起对 server(必做,勿跳)**
 用 Bash 在 **worktree 的 platform-web** 起 vite 到专属端口(`--strictPort`),然后**先探测 serve 的是哪棵树**再截图 —— B2 曾因连到主检出旧代码误判回归:
