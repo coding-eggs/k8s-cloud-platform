@@ -9,6 +9,8 @@ import type {
   K8sPersistentVolume,
   K8sPod,
   K8sPodMonitor,
+  K8sLimitRange,
+  K8sResourceQuota,
   K8sSecret,
   K8sService,
   K8sServiceMonitor,
@@ -71,11 +73,34 @@ export const tenantApi = {
     http.post<never, void>('/tenant/namespace/deallocate', payload),
 }
 
-/** 命名空间管理 /namespace（K8s 命名空间视图 + 删除未分配） */
+/** 命名空间管理 /namespace（K8s 命名空间视图 + 创建/编辑/删除 + 配额/限制范围） */
 export const namespaceApi = {
   list: (clusterId: string) => http.post<never, NamespaceView[]>('/namespace/list', { clusterId }),
   delete: (payload: { clusterId: string; namespace: string }) =>
     http.post<never, void>('/namespace/delete', payload),
+  /** 单个命名空间视图（含 description/labels/分配信息）；不存在返回 null */
+  get: (clusterId: string, namespace: string) =>
+    http.post<never, NamespaceView | null>('/namespace/get', { clusterId, namespace }),
+  /** 命名空间原始 YAML（只读展示） */
+  yaml: (clusterId: string, namespace: string) =>
+    http.post<never, string>('/namespace/yaml', { clusterId, namespace }),
+  create: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string> }) =>
+    http.post<never, void>('/namespace/create', payload),
+  update: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string> }) =>
+    http.post<never, void>('/namespace/update', payload),
+  /** 配额：get 为 null = 未配置；upsert 幂等（对象名固定 default）；delete 缺失时 no-op */
+  quotaGet: (clusterId: string, namespace: string) =>
+    http.post<never, K8sResourceQuota | null>('/namespace/quota/get', { clusterId, namespace }),
+  quotaUpsert: (clusterId: string, namespace: string, quota: K8sResourceQuota) =>
+    http.post<never, void>('/namespace/quota/upsert', { clusterId, namespace, quota }),
+  quotaDelete: (clusterId: string, namespace: string) =>
+    http.post<never, void>('/namespace/quota/delete', { clusterId, namespace }),
+  limitrangeGet: (clusterId: string, namespace: string) =>
+    http.post<never, K8sLimitRange | null>('/namespace/limitrange/get', { clusterId, namespace }),
+  limitrangeUpsert: (clusterId: string, namespace: string, limitRange: K8sLimitRange) =>
+    http.post<never, void>('/namespace/limitrange/upsert', { clusterId, namespace, limitRange }),
+  limitrangeDelete: (clusterId: string, namespace: string) =>
+    http.post<never, void>('/namespace/limitrange/delete', { clusterId, namespace }),
 }
 
 /** RBAC 模板 /rbacTemplate */

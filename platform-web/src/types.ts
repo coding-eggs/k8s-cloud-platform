@@ -68,6 +68,68 @@ export interface NamespaceView {
   creationTimestamp?: string | null
   managedBy: boolean
   allocatedTenantName?: string | null
+  /** 描述（metadata.annotations["description"]） */
+  description?: string | null
+  labels?: Record<string, string> | null
+}
+
+/** 资源量对（cpu 核 / memory 字节，基础单位）—— 与后端 ResourcePairDTO 对齐（D7 冻结契约） */
+export interface ResourcePair {
+  cpu?: number | null
+  memory?: number | null
+}
+
+/** LimitRange 单条限制项；defaultValue ⇄ K8s spec.limits[].default */
+export interface K8sLimitRangeItem {
+  type: 'Container' | 'Pod' | 'PersistentVolumeClaim'
+  max?: ResourcePair | null
+  min?: ResourcePair | null
+  defaultValue?: ResourcePair | null
+  defaultRequest?: ResourcePair | null
+  maxLimitRequestRatio?: ResourcePair | null
+}
+
+/** LimitRange（平台单份，对象名固定 default） */
+export interface K8sLimitRange {
+  name?: string | null
+  namespace?: string | null
+  limits?: K8sLimitRangeItem[] | null
+  /** 该 ns 存在多份 LimitRange（只读告警旗标） */
+  multiple?: boolean | null
+  resourceVersion?: string | null
+  creationTime?: string | null
+}
+
+/** 配额已用量（只读，来自 status.used），字段与约束项一一对应 */
+export interface K8sResourceQuotaUsed {
+  cpu?: number | null
+  memory?: number | null
+  pods?: number | null
+  services?: number | null
+  limitsCpu?: number | null
+  limitsMemory?: number | null
+  requestsCpu?: number | null
+  requestsMemory?: number | null
+  persistentVolumeClaims?: number | null
+}
+
+/** ResourceQuota（平台单份，对象名固定 default）。值为基础单位：cpu=核、memory=字节 */
+export interface K8sResourceQuota {
+  name?: string | null
+  namespace?: string | null
+  cpu?: number | null
+  memory?: number | null
+  pods?: number | null
+  services?: number | null
+  limitsCpu?: number | null
+  limitsMemory?: number | null
+  requestsCpu?: number | null
+  requestsMemory?: number | null
+  persistentVolumeClaims?: number | null
+  used?: K8sResourceQuotaUsed | null
+  multiple?: boolean | null
+  resourceVersion?: string | null
+  creationTime?: string | null
 }
 
 /** RBAC 模板视图（rules 已解析为结构化规则） */
