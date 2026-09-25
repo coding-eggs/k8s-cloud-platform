@@ -103,6 +103,7 @@ public class SessionRenewalAuthenticationProvider implements AuthenticationProvi
 
         OAuth2Authorization.Builder authorizationBuilder = OAuth2Authorization.withRegisteredClient(registeredClient)
                 .principalName(principalName)
+                .authorizationGrantType(SessionRenewalGrantType.INSTANCE)
                 .authorizedScopes(authorizedScopes)
                 .attribute(Principal.class.getName(), endUserPrincipal);
 
