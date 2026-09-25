@@ -13,6 +13,8 @@ const TOKEN_KEY = 'platform_access_token'
 const USER_KEY = 'platform_user'
 const STATE_KEY = 'oauth2_state'
 const VERIFIER_KEY = 'oauth2_code_verifier'
+// 当前租户上下文：仅记录「下次续期带谁」，非凭证（spec §4.3）。token 与它必须在同一函数内成对写。
+const CURRENT_TENANT_KEY = 'platform_current_tenant'
 
 // 会话续期 grant（自定义）：用 HttpOnly 会话 Cookie 作根凭证重新签发 access_token，不重走授权码
 const RENEW_GRANT = 'urn:coding:grant-type:session-renewal'
@@ -25,6 +27,12 @@ export interface UserInfo {
   name?: string
   email?: string
   sub?: string
+}
+
+/** 当前租户上下文（localStorage 里的 platform_current_tenant） */
+export interface TenantContext {
+  tenantId: string
+  tenantName?: string
 }
 
 /** token 原始 claims（本平台：显示名/邮箱在 data 里） */
@@ -140,6 +148,9 @@ export async function handleCallback(code: string, state: string): Promise<boole
     if (data.id_token) {
       localStorage.setItem(USER_KEY, JSON.stringify(decodeIdToken(data.id_token)))
     }
+    // 授权码登录只产 base token（无租户上下文，spec §4.1）：成对清掉 current_tenant，
+    // 否则残留的旧租户会在下次续期时被 renewAccessToken 自动带上，静默把用户切进未选的租户。
+    setCurrentTenant(null)
     // 登录成功 → 启动会话保活 + access_token 到期前自动续期（幂等，重复调用无副作用）
     startSessionMaintenance()
     return true
@@ -161,11 +172,31 @@ export function getUserInfo(): UserInfo {
   }
 }
 
+/** 当前租户上下文；null = 平台视图（base token，无租户）。仅用于「下次续期带谁」。 */
+export function getCurrentTenant(): TenantContext | null {
+  try {
+    const raw = localStorage.getItem(CURRENT_TENANT_KEY)
+    return raw ? (JSON.parse(raw) as TenantContext) : null
+  } catch {
+    return null
+  }
+}
+
+/** 设置/清空当前租户上下文。只在 switchTenant 内调用（与 token 成对写，见 spec §4.3）。 */
+function setCurrentTenant(t: TenantContext | null): void {
+  if (t) {
+    localStorage.setItem(CURRENT_TENANT_KEY, JSON.stringify(t))
+  } else {
+    localStorage.removeItem(CURRENT_TENANT_KEY)
+  }
+}
+
 /** 退出：停掉保活定时器并清本地 token（服务端会话由 auth server 管理，登出后自然过期/可主动失效） */
 export function logout(): void {
   stopSessionMaintenance()
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
+  localStorage.removeItem(CURRENT_TENANT_KEY)
 }
 
 // ==================== 会话保活 + access_token 自动续期 ====================
@@ -195,12 +226,16 @@ function tokenExpSeconds(token: string): number {
 /**
  * 用会话 Cookie（根凭证）续期 access_token，不重走授权码。
  * 成功写回 localStorage 并返回 true；会话已失效则返回 false（调用方应引导重新登录）。
+ * 必须携带当前租户 tenant_id：不带 = auth server 签发无租户上下文的 base token，
+ * 到期静默把用户踢出当前租户（spec §4.3 的头号静默坑）。
  */
 export async function renewAccessToken(): Promise<boolean> {
   const body = new URLSearchParams({
     grant_type: RENEW_GRANT,
     client_id: CLIENT_ID,
   })
+  const t = getCurrentTenant()
+  if (t?.tenantId) body.set('tenant_id', t.tenantId)
   try {
     // credentials:'include' → 跨域携带 platform-auth 的会话 Cookie（服务端 CORS 已 allowCredentials）
     const resp = await fetch(`${ISSUER}/oauth2/token`, {
@@ -213,6 +248,33 @@ export async function renewAccessToken(): Promise<boolean> {
     const data = (await resp.json()) as { access_token?: string }
     if (!data.access_token) return false
     localStorage.setItem(TOKEN_KEY, data.access_token)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 切换/进入租户：用会话 Cookie 重新签发含租户上下文的 token。null=退回平台视图(base)。
+ * 成功→在同一函数内成对写 TOKEN_KEY 与 current_tenant（spec §4.3「禁止分开读写」）。
+ * @returns 是否切换成功（失败=无权进入该租户/会话失效，由调用方提示并回落；不跳登录页）
+ */
+export async function switchTenant(tenantId: string | null, tenantName?: string): Promise<boolean> {
+  const body = new URLSearchParams({ grant_type: RENEW_GRANT, client_id: CLIENT_ID })
+  if (tenantId) body.set('tenant_id', tenantId)
+  try {
+    const resp = await fetch(`${ISSUER}/oauth2/token`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    })
+    if (!resp.ok) return false
+    const data = (await resp.json()) as { access_token?: string }
+    if (!data.access_token) return false
+    localStorage.setItem(TOKEN_KEY, data.access_token) // 单 token：覆盖
+    setCurrentTenant(tenantId ? { tenantId, tenantName } : null)
+    scheduleRenew() // 用新 token 的 exp 重排续期
     return true
   } catch {
     return false
