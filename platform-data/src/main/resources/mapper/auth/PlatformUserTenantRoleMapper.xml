@@ -25,12 +25,22 @@
         from platform_user_tenant_role
         where tenant_id = #{tenantId} and user_id = #{userId}
     </select>
+    <!-- 签发闭包专用：过滤已删/停用/错族角色，防悬挂授予行把不该有的权限带进 token（scope 锁定 TENANT，
+         即使授予表被旁路写入 PLATFORM 角色行也不进租户上下文闭包） -->
     <select id="selectRoleIdsByUserAndTenant" resultType="java.lang.String">
-        select role_id from platform_user_tenant_role
-        where user_id = #{userId} and tenant_id = #{tenantId}
+        select utr.role_id from platform_user_tenant_role utr
+        inner join platform_role r on r.id = utr.role_id
+            and r.deleted_at is null and r.status = 1 and r.scope = 'TENANT'
+        where utr.user_id = #{userId} and utr.tenant_id = #{tenantId}
     </select>
     <select id="countByTenantAndRole" resultType="int">
         select count(1) from platform_user_tenant_role
         where tenant_id = #{tenantId} and role_id = #{roleId}
+    </select>
+    <!-- 不变量 3 守卫：count + FOR UPDATE 串行化"最后一个 tenant-admin"的 count-then-delete -->
+    <select id="countByTenantAndRoleForUpdate" resultType="int">
+        select count(1) from platform_user_tenant_role
+        where tenant_id = #{tenantId} and role_id = #{roleId}
+        for update
     </select>
 </mapper>

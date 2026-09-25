@@ -16,6 +16,8 @@
           AND r.deleted_at IS NULL
           AND r.`status` = 1
     </select>
+    <!-- 签发闭包专用（TokenExtrasService）：过滤已删/停用 + 锁定 PLATFORM 族，
+         防旁路写入的 TENANT 角色行进入平台上下文闭包 -->
     <select id="selectRoleIdsByUser" resultType="java.lang.String">
         SELECT r.id
         FROM platform_user_role ur
@@ -23,5 +25,6 @@
         WHERE ur.user_id = #{userId}
           AND r.deleted_at IS NULL
           AND r.`status` = 1
+          AND r.`scope` = 'PLATFORM'
     </select>
 </mapper>

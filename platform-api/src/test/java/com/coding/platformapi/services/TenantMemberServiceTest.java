@@ -46,7 +46,7 @@ class TenantMemberServiceTest {
     @Test void cannot_revoke_last_admin() {
         var svc = memberSvc();
         when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
-        when(utr.countByTenantAndRole("t1", "adminRole")).thenReturn(1);
+        when(utr.countByTenantAndRoleForUpdate("t1", "adminRole")).thenReturn(1);
         assertThatThrownBy(() -> svc.revokeRole("t1", "u1", "adminRole"))
             .isInstanceOf(CloudPlatformException.class)
             .extracting(e -> ((CloudPlatformException) e).getCode())
@@ -56,7 +56,7 @@ class TenantMemberServiceTest {
     @Test void revoke_admin_with_second_admin_proceeds() {
         var svc = memberSvc();
         when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
-        when(utr.countByTenantAndRole("t1", "adminRole")).thenReturn(2);
+        when(utr.countByTenantAndRoleForUpdate("t1", "adminRole")).thenReturn(2);
         assertThatCode(() -> svc.revokeRole("t1", "u1", "adminRole")).doesNotThrowAnyException();
         verify(utr).delete("u1", "t1", "adminRole");
     }
@@ -65,7 +65,7 @@ class TenantMemberServiceTest {
         var svc = memberSvc();
         when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
         assertThatCode(() -> svc.revokeRole("t1", "u1", "roleX")).doesNotThrowAnyException();
-        verify(utr, never()).countByTenantAndRole(any(), any());
+        verify(utr, never()).countByTenantAndRoleForUpdate(any(), any());
         verify(utr).delete("u1", "t1", "roleX");
     }
 
@@ -83,8 +83,42 @@ class TenantMemberServiceTest {
 
     @Test void grant_duplicate_role_is_idempotent() {
         when(utm.exists("u1", "t1")).thenReturn(true);
+        when(roleMapper.selectByPrimaryKey("roleX")).thenReturn(tenantRole("roleX"));
         when(utr.selectByTenantAndUser("t1", "u1")).thenReturn(List.of(utrRow("u1", "roleX")));
         assertThatCode(() -> memberSvc().grantRole("t1", "u1", "roleX")).doesNotThrowAnyException();
+        verify(utr, never()).insert(any());
+    }
+
+    // ---- CRITICAL 1(a)：grantRole 角色域/存在性/启用校验，阻断租户提权到平台角色 ----
+
+    @Test void grant_platform_scoped_role_rejected() {
+        when(utm.exists("u1", "t1")).thenReturn(true);
+        PlatformRole plat = new PlatformRole();
+        plat.setId("builtin_role_admin");
+        plat.setCode("admin");
+        plat.setScope("PLATFORM");
+        plat.setStatus((byte) 1);
+        when(roleMapper.selectByPrimaryKey("builtin_role_admin")).thenReturn(plat);
+        assertThatThrownBy(() -> memberSvc().grantRole("t1", "u1", "builtin_role_admin"))
+            .isInstanceOf(CloudPlatformException.class);
+        verify(utr, never()).insert(any());
+    }
+
+    @Test void grant_nonexistent_role_rejected() {
+        when(utm.exists("u1", "t1")).thenReturn(true);
+        when(roleMapper.selectByPrimaryKey("ghost")).thenReturn(null);
+        assertThatThrownBy(() -> memberSvc().grantRole("t1", "u1", "ghost"))
+            .isInstanceOf(CloudPlatformException.class);
+        verify(utr, never()).insert(any());
+    }
+
+    @Test void grant_disabled_role_rejected() {
+        when(utm.exists("u1", "t1")).thenReturn(true);
+        PlatformRole off = tenantRole("roleOff");
+        off.setStatus((byte) 0);
+        when(roleMapper.selectByPrimaryKey("roleOff")).thenReturn(off);
+        assertThatThrownBy(() -> memberSvc().grantRole("t1", "u1", "roleOff"))
+            .isInstanceOf(CloudPlatformException.class);
         verify(utr, never()).insert(any());
     }
 
@@ -92,7 +126,7 @@ class TenantMemberServiceTest {
         var svc = memberSvc();
         when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
         when(utr.selectByTenantAndUser("t1", "u1")).thenReturn(List.of(utrRow("u1", "adminRole")));
-        when(utr.countByTenantAndRole("t1", "adminRole")).thenReturn(1);
+        when(utr.countByTenantAndRoleForUpdate("t1", "adminRole")).thenReturn(1);
         assertThatThrownBy(() -> svc.removeMember("t1", "u1"))
             .isInstanceOf(CloudPlatformException.class)
             .extracting(e -> ((CloudPlatformException) e).getCode())
@@ -148,6 +182,15 @@ class TenantMemberServiceTest {
         r.setCode("tenant-admin");
         r.setScope("TENANT");
         r.setBuiltIn((byte) 1);
+        return r;
+    }
+
+    private static PlatformRole tenantRole(String id) {
+        var r = new PlatformRole();
+        r.setId(id);
+        r.setCode("custom-" + id);
+        r.setScope("TENANT");
+        r.setStatus((byte) 1);
         return r;
     }
 

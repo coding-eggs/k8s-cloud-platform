@@ -57,12 +57,14 @@ public class TenantMemberService {
         }
     }
 
-    /** 授予租户角色：不变量 2 前置校验；重复授予幂等。 */
+    /** 授予租户角色：不变量 2 前置校验 + 角色域校验（CRITICAL 1：仅可授存在的、启用的 TENANT 族角色，
+     *  阻断租户管理员把 builtin_role_admin 等平台角色授给自己提权）；重复授予幂等。 */
     @Transactional
     public void grantRole(String tenantId, String userId, String roleId) {
         if (!utMapper.exists(userId, tenantId)) {
             throw new CloudPlatformException(EnumResponseType.TENANT_MEMBER_NOT_FOUND);
         }
+        requireTenantScopeRole(roleId);
         boolean already = utrMapper.selectByTenantAndUser(tenantId, userId).stream()
                 .anyMatch(x -> x.getRoleId().equals(roleId));
         if (already) {
@@ -81,23 +83,37 @@ public class TenantMemberService {
         }
     }
 
-    /** 回收租户角色：回收 tenant-admin 时守不变量 3。 */
+    /** 校验 roleId 是存在、启用、TENANT 族的角色；selectByPrimaryKey 已过滤软删（返回 null 即缺失）。 */
+    private void requireTenantScopeRole(String roleId) {
+        PlatformRole role = roleMapper.selectByPrimaryKey(roleId);
+        if (role == null) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "角色不存在：" + roleId);
+        }
+        if (!"TENANT".equals(role.getScope())) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "只能授予租户域（TENANT）角色");
+        }
+        if (role.getStatus() == null || role.getStatus() != 1) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "角色已停用：" + roleId);
+        }
+    }
+
+    /** 回收租户角色：回收 tenant-admin 时守不变量 3（FOR UPDATE count，事务内串行化防竞态）。回收本身宽松（按键删）。 */
     @Transactional
     public void revokeRole(String tenantId, String userId, String roleId) {
         String adminRoleId = requireAdminRoleId();
-        if (roleId.equals(adminRoleId) && utrMapper.countByTenantAndRole(tenantId, adminRoleId) <= 1) {
+        if (roleId.equals(adminRoleId) && utrMapper.countByTenantAndRoleForUpdate(tenantId, adminRoleId) <= 1) {
             throw new CloudPlatformException(EnumResponseType.TENANT_ADMIN_REQUIRED);
         }
         utrMapper.delete(userId, tenantId, roleId);
     }
 
-    /** 移除成员：级联删其租户角色；被移者持 tenant-admin 时守不变量 3。 */
+    /** 移除成员：级联删其租户角色；被移者持 tenant-admin 时守不变量 3（FOR UPDATE count 防竞态）。 */
     @Transactional
     public void removeMember(String tenantId, String userId) {
         String adminRoleId = requireAdminRoleId();
         boolean isAdmin = utrMapper.selectByTenantAndUser(tenantId, userId).stream()
                 .anyMatch(x -> x.getRoleId().equals(adminRoleId));
-        if (isAdmin && utrMapper.countByTenantAndRole(tenantId, adminRoleId) <= 1) {
+        if (isAdmin && utrMapper.countByTenantAndRoleForUpdate(tenantId, adminRoleId) <= 1) {
             throw new CloudPlatformException(EnumResponseType.TENANT_ADMIN_REQUIRED);
         }
         utrMapper.deleteByUserAndTenant(userId, tenantId);
