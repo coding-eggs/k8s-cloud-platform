@@ -28,16 +28,19 @@
     <select id="selectByUsername" resultType="com.coding.data.models.auth.PlatformUser">
       select * from platform_user where username = #{username} and deleted_at is null
     </select>
+    <select id="listAllActive" resultType="com.coding.data.models.auth.PlatformUser">
+      select * from platform_user where deleted_at is null
+    </select>
     <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
     delete from platform_user
     where id = #{id,jdbcType=VARCHAR}
   </delete>
   <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.PlatformUser" useGeneratedKeys="true">
-    insert into platform_user (username, `password`, display_name,
+    insert into platform_user (id, username, `password`, display_name,
       email, `status`, `type`,
       `source`, last_login_at, created_at, updated_at
       )
-    values (#{username,jdbcType=VARCHAR}, #{password,jdbcType=VARCHAR}, #{displayName,jdbcType=VARCHAR},
+    values (#{id,jdbcType=VARCHAR}, #{username,jdbcType=VARCHAR}, #{password,jdbcType=VARCHAR}, #{displayName,jdbcType=VARCHAR},
       #{email,jdbcType=VARCHAR}, #{status,jdbcType=TINYINT}, #{type,jdbcType=VARCHAR},
       #{source,jdbcType=VARCHAR}, #{lastLoginAt,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP}
       )

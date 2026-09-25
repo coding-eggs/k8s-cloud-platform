@@ -5,6 +5,7 @@ import org.apache.ibatis.annotations.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Repository
 public interface PlatformUserMapper {
@@ -21,6 +22,11 @@ public interface PlatformUserMapper {
     int updateByPrimaryKey(PlatformUser record);
 
     PlatformUser selectByUsername(String username);
+
+    /**
+     * 全部未删除用户
+     */
+    List<PlatformUser> listAllActive();
 
     int updateLastLoginTime(@Param("id") String id,@Param("dateTime") LocalDateTime dateTime);
 }
