@@ -1,8 +1,8 @@
 # B3 · 命名空间管理增强（ResourceQuota / LimitRange / 描述 / 概览）
 
 - **日期**：2026-09-14
-- **状态**：草稿，待评审
-- **覆盖条目**：原始清单 8
+- **状态**：已实现（B3，2026-09-26 合并）；实现期勘误见各节〔勘误〕标注与文末「实现裁决记录」
+- **覆盖条目**：原始清单 8（§11 能力开关经用户裁决延期至 B6/B7，非本批范围）
 - **范围**：本阶段只交付规格；实现另开
 - **CRD/资源**：`v1 Namespace`、`v1 ResourceQuota`（plural `resourcequotas`）、`v1 LimitRange`（plural `limitranges`）——均为 core/v1，fabric8 有类型化模型
 
@@ -60,7 +60,7 @@
 | `used` | ResourceQuotaUsedDTO（只读，查询返回） | 来自 `status.used`，同构字段（cpu/memory/pods/…），基础单位 |
 | `creationTime` | String | 仅查询返回 |
 
-- `getApiPath()` → `"/resources/resourcequotas"`。
+- `getApiPath()` → `"/admin/resourcequotas"`。〔勘误：按 D1 走 admin 域〕平台单份约定：对象名固定 **`default`**（见文末裁决 D4）。
 - **overlay**：update 时未建模的 hard key（如 `count/deployments`、`services.nodeports`）原样保留（fetch-overlay，同 ServiceMonitor）。
 
 ### 4.2 `LimitRangeDTO extends BaseResources`
@@ -71,9 +71,10 @@
 
 **内部类**：
 - `LimitRangeItemDTO { type, max, min, default, defaultRequest, maxLimitRequestRatio }`
+  〔勘误 2026-09-26〕`default` 为 Java 关键字，DTO 字段实作为 **`defaultValue`**，由 converter 显式映射 ⇄ K8s `LimitRangeItem.default`；**未用** `@JsonProperty`（DTO 从不直接序列化给 K8s，platform-common 亦不引 Jackson）。TS 侧同名 `defaultValue`。
   - `type` ∈ `Container` / `Pod` / `PersistentVolumeClaim`（v1 建模这三类；`ContainerFixed` 靠 overlay 保留）
   - `max/min/default/defaultRequest/maxLimitRequestRatio` 均为 `ResourcePairDTO { cpu: BigDecimal, memory: BigDecimal }`（可空，未设即不写）
-- `getApiPath()` → `"/resources/limitranges"`。
+- `getApiPath()` → `"/admin/limitranges"`。〔勘误：路径按 D1 走 admin 域，非 /resources〕
 
 ## 5. 后端各层改动
 
@@ -95,14 +96,18 @@
 |---|---|
 | `POST /namespace/create` | 建命名空间（name + description + labels），打 managed-by 标签；幂等 |
 | `POST /namespace/update` | 改 description + labels（name 不可变） |
-| `POST /namespace/quota/get` | `{clusterId, namespace}` → ResourceQuotaDTO（含 used）；无则空 |
-| `POST /namespace/quota/upsert` | 创建或更新该 ns 的 ResourceQuota（SSA） |
-| `POST /namespace/limitrange/get` | `{clusterId, namespace}` → LimitRangeDTO；无则空 |
-| `POST /namespace/limitrange/upsert` | 创建或更新该 ns 的 LimitRange（SSA） |
+| `POST /namespace/quota/get` | `{clusterId, namespace}` → ResourceQuotaDTO（含 used）；**无则 data=null**（前端「未配置」）|
+| `POST /namespace/quota/upsert` | 创建或更新该 ns 的 ResourceQuota（SSA，对象名强制 `default`）|
+| `POST /namespace/quota/delete` | 删除该 ns 的 default 配额；缺失 = no-op（幂等）|
+| `POST /namespace/limitrange/get` | `{clusterId, namespace}` → LimitRangeDTO；无则 null |
+| `POST /namespace/limitrange/upsert` | 创建或更新该 ns 的 LimitRange（SSA，对象名强制 `default`）|
+| `POST /namespace/limitrange/delete` | 同上，no-op 幂等 |
 - 现有 `/list`、`/delete` 不变。
+- 〔勘误 2026-09-26，D5〕原表缺 `/namespace/get`、`/namespace/yaml`、两个 `*/delete` —— 概览页回填、YAML tab、编辑器「清空区块」语义都需要，实现时已补。六个约束端点均先过 `requireManagedNamespace`（集群存在 → ns 存在 → managed-by），破坏性 delete 也在闸内。
 
 ### 5.4 k8s-server（边界，零业务逻辑）
 - ResourceQuota/LimitRange 为 core/v1 namespaced 资源：按既有**资源 client 机制**暴露（ResourceType + boundary controller），或经 admin 路径（因命名空间管理属平台级、非租户上下文）。**访问路径二选一，实现时定**（见 §10 风险）；无论哪条，k8s-server 只透传、零业务。
+- 〔勘误 2026-09-26，D1〕定论 = **admin 路径**：`ResourceAccessResolver.resolveNamespacedAccess` 无 tenantId 直接抛「管理员代操作需显式指定 tenantId」且分配表校验不可跳过 → 租户边界机制对平台级流程结构性不可用。落地：三边界 `/admin/namespaces`（复用 `AbstractClusterResourceController`，Namespace 系集群级）、`/admin/resourcequotas`、`/admin/limitranges`（新建 `AbstractAdminNamespacedResourceController` 基类：`assertClusterAccess` + namespace 透传不校验 + 一律 admin client；刻意不与双模基类合并——安全语义不同）。同时把原内联在 `K8sProvisioningService.toNamespaceDTO` 的命名空间映射（违零业务铁律）迁入 k8s-core `CoreV1NamespaceConverter` + `CoreV1NamespaceOperations`，list/delete 一并迁移（T3 只增、T7 成对切换退役）。
 
 ## 6. 前端改动汇总
 
@@ -114,7 +119,7 @@
 ### 6.2 `NamespaceEditorView.vue`（新增独立编辑页）★唯一编辑面
 路由 `/namespaces/editor`（创建）/ `?name=<n>`（编辑）。区块：
 1. **基础信息**：名称（RFC1123，编辑态禁用）、描述（FieldHelp：存于 annotation，展示在列表与概览）、标签（LabelEditor）。
-2. **资源配额（ResourceQuota）**：cpu / memory / pods / services / limits.cpu / limits.memory / requests.cpu / requests.memory / PVC 上限。每字段 FieldHelp（作用 + 单位）。值用 quantity 输入（用户输 `8Gi`/`500m`，提交转基础单位；留空=不设该项）。
+2. **资源配额（ResourceQuota）**：cpu / memory / pods / services / limits.cpu / limits.memory / requests.cpu / requests.memory / PVC 上限。每字段 FieldHelp（作用 + 单位）。值用 quantity 输入（用户输 `8Gi`/`500m`，提交转基础单位；留空=不设该项）。〔勘误 2026-09-26，D2〕输入实作 = **数字框 + 固定单位 `#append` 后缀**（cpu→`m` 毫核、memory→`Mi`、计数→无后缀），仿 `ResourcesEditor.vue:105-110` 仓库唯一资源量编辑先例；**不用**自由文本后缀解析（`el-input-number` 无 #append 插槽，且引入第二套输入范式）。线路仍为基础单位 BigDecimal。清空字段=省略键（overlay 删除该键），绝不发 0。
 3. **限制范围（LimitRange）**：按 type（Container / Pod / PersistentVolumeClaim）分组，每组 max/min/default/defaultRequest × (cpu, memory)。每字段 FieldHelp。留空=不设。
 - **提交**：创建 → 依次 `namespace/create` → `quota/upsert`（若填了配额项）→ `limitrange/upsert`（若填了限制项）；编辑 → `namespace/update` + 两个 upsert。至少一个约束项或描述/标签有值才提交对应对象。
 - **校验**：名称必填+RFC1123（创建）；quota 各值合法 Quantity；limitrange 同 type 内 max≥min、defaultRequest≤default（若都填）。
@@ -127,10 +132,10 @@
 4. **YAML**：namespace 原始 YAML（只读）。
 
 ### 6.4 quantity 工具 + 注册点
-- **前端 quantity 工具**（新增 `utils/quantity.ts`）：K8s 后缀解析/格式化（`m/k/M/Gi/Mi/Ti` ↔ 基础单位 number），供配额表单输入转换与用量展示复用。
+- **前端 quantity 工具**（新增 `utils/quantity.ts`）：K8s 后缀解析/格式化（`m/k/M/Gi/Mi/Ti` ↔ 基础单位 number），供配额表单输入转换与用量展示复用。〔勘误 2026-09-26〕`utils/quantity.ts` **已存在**（B 系列早前落地，parseQuantity/formatBytes/formatQuantity，3 消费方）→ 复用之，不重建；另新增 `utils/quantityUnits.ts`（纯显示单位 ⇄ 基础单位：coresToMilli/milliToCores/bytesToMi/miToBytes/intOrNull，null/''/NaN→null）。`utils/metrics.ts` 里另有一套近重复的 parse/humanize——本批刻意不再引入第三套约定。
 - **router**：`/namespaces/editor`(name `namespace-editor`)、`/namespaces/detail`(name `namespace-detail`)，meta group=平台管理；现有 `/namespaces` 保留。
-- **api/index.ts**：`namespaceApi` 增 `create/update/quotaGet/quotaUpsert/limitrangeGet/limitrangeUpsert`。
-- **types.ts**：`K8sResourceQuota`、`K8sLimitRange`（+内部类型）；`NamespaceView` 增 `description`。
+- **api/index.ts**：`namespaceApi` 增 `create/update/quotaGet/quotaUpsert/limitrangeGet/limitrangeUpsert`。〔勘误：实补 11 方法，含 get/yaml/limitrangeDelete/quotaDelete，见 §5.3 勘误〕
+- **types.ts**：`K8sResourceQuota`、`K8sLimitRange`（+内部类型）；`NamespaceView` 增 `description`。〔勘误：还须增 `labels`——编辑器标签区块与概览标签行都要；且 platform-api 的 `models/NamespaceView.java` + `NamespaceService.toView` 同步补两字段（原 service 把 labels 折叠成 managedBy 布尔后丢弃）〕
 
 ## 7. 逐子项设计要点
 
@@ -168,13 +173,15 @@
 
 ## 10. 待确认 / 风险
 
-- **k8s-server 访问路径**（§5.4）：quota/limitrange 走「资源 client（ResourceType+boundary controller）」还是「admin 路径」——取决于 K8sResourceClient 是否支持无租户上下文的 cluster+namespace 访问。实现时确认；两条都满足 k8s-server 零逻辑。
-- **创建非原子**：三对象顺序创建，中途失败不回滚（v1 取舍）；如需强一致可后续加 best-effort 回滚。
-- **前端 quantity 工具**：需覆盖 K8s 全部常用后缀 + 二进制/十进制；实现时确认是否已有可复用工具。
-- **单份收敛**：平台假定每 ns 一份 quota/limitrange（upsert）；若集群已有多个，编辑器取第一个、概览提示存在多份。
-- **描述列宽度/截断**：列表加描述列可能挤占空间，实现时定列宽与 tooltip 全文。
+- **k8s-server 访问路径**（§5.4）：quota/limitrange 走「资源 client（ResourceType+boundary controller）」还是「admin 路径」——取决于 K8sResourceClient 是否支持无租户上下文的 cluster+namespace 访问。实现时确认；两条都满足 k8s-server 零逻辑。〔裁决 2026-09-26：**admin 路径**，见 §5.4 勘误 D1〕
+- **创建非原子**：三对象顺序创建，中途失败不回滚（v1 取舍）；如需强一致可后续加 best-effort 回滚。〔实现落地：失败 → warning「命名空间已保存，但配额/限制范围设置失败，可重试编辑」+ 自动 router.replace 切编辑态（名锁定），upsert 幂等使重试安全〕
+- **前端 quantity 工具**：需覆盖 K8s 全部常用后缀 + 二进制/十进制；实现时确认是否已有可复用工具。〔裁决：既有 `utils/quantity.ts` 复用；输入改固定单位后无需后缀解析扩展〕
+- **单份收敛**：平台假定每 ns 一份 quota/limitrange（upsert）；若集群已有多个，编辑器取第一个、概览提示存在多份。〔裁决 2026-09-26，D4：**固定对象名 `default`**（非「取第一个」）；get 时 list 计数 >1 → `multiple=true` 只读旗标 → 详情页琥珀告警「平台仅管理名为 default 的这份，建议自行收敛」；平台不接管、不并建〕
+- **描述列宽度/截断**：列表加描述列可能挤占空间，实现时定列宽与 tooltip 全文。〔落地：min-width 180 + show-overflow-tooltip〕
 
 ## 11. 命名空间级能力开关 + 工作负载级 ambient（评审后追加）★
+
+> 〔裁决 2026-09-26，D10：**本节整体延期至 B6/B7 实现，非 B3 范围。** 依赖的 calico IPPool 后端、istio ambient 探测（hasCalico/hasIstioAmbient）、`/workload/mesh-toggle` 端点均不存在（grep 证实）；B3 只交付 §1–10。NamespaceDTO 的 4 个保留 metadata 字段（ipv4/6Pools、dataplaneMode、useWaypoint）亦**不**在本批建模——避免造无消费方的死字段，留待 B6/B7 一并落。〕
 
 > **来源**：B7（Calico）评审后用户追加——把「命名空间编辑」做成**命名空间级能力聚合点**，并把 Istio ambient mesh 下沉到工作负载。本节约束引用 B6（Istio / Gateway API）与 B7（Calico）已定能力，不新增独立子系统。**平台只读写 namespace / pod template 的保留 metadata，不部署任何对象。**
 
