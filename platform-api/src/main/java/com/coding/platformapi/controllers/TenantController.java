@@ -6,10 +6,17 @@ import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.platformapi.models.AllocationCreateRequest;
 import com.coding.platformapi.models.AllocationDeleteRequest;
 import com.coding.platformapi.models.AllocationQueryRequest;
+import com.coding.platformapi.models.MemberAddRequest;
+import com.coding.platformapi.models.MemberRemoveRequest;
+import com.coding.platformapi.models.MemberRoleRequest;
 import com.coding.platformapi.models.TenantCreateRequest;
 import com.coding.platformapi.models.TenantKeyRequest;
+import com.coding.platformapi.models.TenantMemberView;
 import com.coding.platformapi.models.TenantUpdateRequest;
+import com.coding.platformapi.security.AuthContext;
+import com.coding.platformapi.security.TenantContextResolver;
 import com.coding.platformapi.services.NamespaceAllocationService;
+import com.coding.platformapi.services.TenantMemberService;
 import com.coding.platformapi.services.TenantService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-@Tag(name = "租户管理", description = "租户 CRUD + 命名空间分配（给租户分配命名空间）")
+@Tag(name = "租户管理", description = "租户 CRUD + 命名空间分配（给租户分配命名空间）+ 租户成员/角色管理")
 @RestController
 @RequestMapping("/tenant")
 public class TenantController {
@@ -31,6 +38,15 @@ public class TenantController {
 
     @Autowired
     private NamespaceAllocationService allocationService;
+
+    @Autowired
+    private TenantMemberService memberSvc;
+
+    @Autowired
+    private TenantContextResolver ctx;
+
+    @Autowired
+    private AuthContext auth;
 
     @PostMapping("/create")
     @Operation(summary = "创建租户", description = "校验 serviceAccount 命名规范与唯一性，入库后在各启用集群创建 SA（tn-<serviceAccount>）")
@@ -91,5 +107,54 @@ public class TenantController {
     public ResponseData<Void> deallocateNamespace(@RequestBody AllocationDeleteRequest request) {
         allocationService.delete(request);
         return new ResponseData<>();
+    }
+
+    // ==================== 租户成员/角色管理（自管/代管一致收口） ====================
+    // 端点权限已由 seed 行 ANY-of（tenant:member:manage / platform:member:manage、tenant:overview:view）放行；
+    // 生效租户统一由 TenantContextResolver 裁决：自管锁定 token 租户，代管必须显式传 tenantId。
+
+    @PostMapping("/member/add")
+    @Operation(summary = "加入租户成员", description = "已存在则幂等；不变量：授予角色前必须先是成员")
+    public ResponseData<Void> memberAdd(@RequestBody MemberAddRequest request) {
+        String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
+        memberSvc.addMember(tid, request.getUserId());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/member/remove")
+    @Operation(summary = "移除租户成员", description = "级联删该成员在本租户的角色；不能移除最后一个 tenant-admin")
+    public ResponseData<Void> memberRemove(@RequestBody MemberRemoveRequest request) {
+        String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
+        memberSvc.removeMember(tid, request.getUserId());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/member/role/grant")
+    @Operation(summary = "授予租户角色", description = "要求目标已是该租户成员（不变量 2）")
+    public ResponseData<Void> memberRoleGrant(@RequestBody MemberRoleRequest request) {
+        String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
+        memberSvc.grantRole(tid, request.getUserId(), request.getRoleId());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/member/role/revoke")
+    @Operation(summary = "回收租户角色", description = "回收 tenant-admin 时校验租户至少保留一名管理员（不变量 3）")
+    public ResponseData<Void> memberRoleRevoke(@RequestBody MemberRoleRequest request) {
+        String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
+        memberSvc.revokeRole(tid, request.getUserId(), request.getRoleId());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/member/list")
+    @Operation(summary = "租户成员列表", description = "含每个成员的角色 id 与 owner 标记（持有 tenant-admin）")
+    public ResponseData<List<TenantMemberView>> memberList(@RequestBody MemberAddRequest request) {
+        String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
+        return new ResponseData<>(memberSvc.listMembers(tid));
+    }
+
+    /** token 内租户身份（自管用户）；admin/base token 无 tenantInfo → null（代管）。 */
+    private String tokenTenantId() {
+        var info = auth.current();
+        return (info != null && info.getTenantInfo() != null) ? info.getTenantInfo().getTenantId() : null;
     }
 }

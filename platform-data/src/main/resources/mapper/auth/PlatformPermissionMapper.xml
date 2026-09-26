@@ -20,6 +20,26 @@
     from platform_permission
     where id = #{id,jdbcType=VARCHAR} and deleted_at is null
   </select>
+  <select id="selectAllActive" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_permission
+    where deleted_at is null
+    order by `domain`, code
+  </select>
+  <select id="selectAllByCode" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_permission
+    where code = #{code,jdbcType=VARCHAR} and deleted_at is null
+  </select>
+  <select id="selectPermissionCodesByRoleIds" resultType="java.lang.String">
+    select distinct p.`code`
+    from platform_role_permission rp
+    inner join platform_permission p on p.id = rp.permission_id and p.deleted_at is null
+    where rp.role_id in
+    <foreach collection="roleIds" item="rid" open="(" separator="," close=")">#{rid}</foreach>
+  </select>
   <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
     delete from platform_permission
     where id = #{id,jdbcType=VARCHAR}

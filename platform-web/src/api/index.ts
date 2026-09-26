@@ -20,9 +20,14 @@ import type {
   NodeDrainResult,
   NodeEvent,
   NodeTaint,
+  PlatformPermission,
+  PlatformRole,
   PlatformTenant,
+  PlatformUser,
   RbacTemplate,
   ResourceContext,
+  TenantMemberView,
+  TokenUserInfo,
 } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
 
@@ -53,7 +58,7 @@ export const clusterApi = {
 export const tenantApi = {
   list: () => http.post<never, PlatformTenant[]>('/tenant/list'),
   get: (id: string) => http.post<never, PlatformTenant>('/tenant/get', { id }),
-  create: (payload: { name: string; serviceAccount: string; status?: number }) =>
+  create: (payload: { name: string; serviceAccount: string; status?: number; ownerUserId?: string }) =>
     http.post<never, PlatformTenant>('/tenant/create', payload),
   update: (payload: { id: string; name?: string; status?: number }) =>
     http.post<never, PlatformTenant>('/tenant/update', payload),
@@ -71,6 +76,18 @@ export const tenantApi = {
     http.post<never, NamespaceAllocation[]>('/tenant/namespace/list', payload ?? {}),
   namespaceDeallocate: (payload: { tenantId: string; clusterId: string; namespace: string }) =>
     http.post<never, void>('/tenant/namespace/deallocate', payload),
+
+  // ---- 租户成员/角色（自管/代管一致收口：自管须携带与 token 一致的 tenantId，代管必传；后端 TenantContextResolver 裁决） ----
+  memberList: (tenantId: string) =>
+    http.post<never, TenantMemberView[]>('/tenant/member/list', { tenantId }),
+  memberAdd: (payload: { tenantId: string; userId: string }) =>
+    http.post<never, void>('/tenant/member/add', payload),
+  memberRemove: (payload: { tenantId: string; userId: string }) =>
+    http.post<never, void>('/tenant/member/remove', payload),
+  memberRoleGrant: (payload: { tenantId: string; userId: string; roleId: string }) =>
+    http.post<never, void>('/tenant/member/role/grant', payload),
+  memberRoleRevoke: (payload: { tenantId: string; userId: string; roleId: string }) =>
+    http.post<never, void>('/tenant/member/role/revoke', payload),
 }
 
 /** 命名空间管理 /namespace（K8s 命名空间视图 + 创建/编辑/删除 + 配额/限制范围） */
@@ -117,6 +134,41 @@ export const templateApi = {
 /** 资源管理上下文（顶栏 chip：租户 → 集群 → 命名空间，DB 级联） */
 export const resourceContextApi = {
   get: () => http.get<never, ResourceContext>('/resource/context'),
+}
+
+/** 当前用户上下文 /user（/me 与 /my-tenants 为「登录即」端点：ExemptPaths 豁免权限点，仅需认证） */
+export const userApi = {
+  me: () => http.post<never, TokenUserInfo>('/user/me'),
+  myTenants: () => http.post<never, PlatformTenant[]>('/user/my-tenants'),
+}
+
+/** 用户管理 /user（表驱动鉴权 platform:user:manage）。
+ * ⚠️ 无「查某用户已有平台角色」端点（/user/me 只含自己）→ 授予/回收是盲操作，UI 不假装有当前态。 */
+export const platformUserApi = {
+  list: () => http.post<never, PlatformUser[]>('/user/list'),
+  create: (payload: { username: string; password: string; displayName?: string; email?: string; status?: number }) =>
+    http.post<never, PlatformUser>('/user/create', payload),
+  get: (id: string) => http.post<never, PlatformUser>('/user/get', { id }),
+  platformRoleGrant: (payload: { userId: string; roleId: string }) =>
+    http.post<never, void>('/user/platformRole/grant', payload),
+  platformRoleRevoke: (payload: { userId: string; roleId: string }) =>
+    http.post<never, void>('/user/platformRole/revoke', payload),
+}
+
+/** 角色管理 /role（读 platform:role:read / 写 platform:role:manage；permission/save 全量重存，codes 非 ids） */
+export const roleApi = {
+  list: () => http.post<never, PlatformRole[]>('/role/list'),
+  create: (payload: { name: string; code: string; description?: string; scope: string }) =>
+    http.post<never, PlatformRole>('/role/create', payload),
+  delete: (id: string) => http.post<never, void>('/role/delete', { id }),
+  permissionSave: (payload: { roleId: string; permissionCodes: string[] }) =>
+    http.post<never, void>('/role/permission/save', payload),
+  permissionList: (roleId: string) => http.post<never, string[]>('/role/permission/list', { id: roleId }),
+}
+
+/** 权限目录 /permission（platform:role:read；code 不唯一 —— 一行 = 一个 URL 规则，前端按 code 聚合） */
+export const permissionApi = {
+  list: () => http.post<never, PlatformPermission[]>('/permission/list'),
 }
 
 /** 资源管理 - ConfigMap /resource/configmaps（参考实现；list/create/update 上下文走 body，get/yaml/delete 走 query） */

@@ -15,4 +15,7 @@ public class TenantCreateRequest {
 
     @Schema(description = "状态：1 启用（默认），0 禁用")
     private Integer status;
+
+    @Schema(description = "owner 用户id：非空时同租户创建即把该用户加入成员并授予内置 tenant-admin 角色")
+    private String ownerUserId;
 }

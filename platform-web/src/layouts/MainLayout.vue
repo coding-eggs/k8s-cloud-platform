@@ -1,12 +1,31 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { getUserInfo, logout } from '@/auth/oauth'
+import { getAccessToken, getUserInfo, logout, startSessionMaintenance } from '@/auth/oauth'
 import { getTheme, toggleTheme } from '@/utils/theme'
 import ContextSelector from '@/components/ContextSelector.vue'
+import TenantSwitcher from '@/components/TenantSwitcher.vue'
+import { usePermission } from '@/stores/permission'
 
 const route = useRoute()
 const theme = ref(getTheme())
+const perm = usePermission()
+
+/** 菜单项显隐：管理页按权限点过滤（与路由 meta.requiresPerm 同码；体验层，权威在后端） */
+function can(code: string): boolean {
+  return perm.has(code)
+}
+
+onMounted(() => {
+  // 会话恢复接线（Task 17 carry）：刷新页面时 handleCallback 不会重跑，
+  // 续期/保活定时器随之休眠 —— 在「已登录且进入 shell」的唯一收口点补拉起（幂等）。
+  // 登录页路径由 oauth.handleCallback 自行 start，二者互不重复。
+  // 权限/租户引导（bootstrap）在 router.beforeEach 首个非 public 导航里 await——
+  // 早于本组件与页面 mount，自动进入唯一租户后页面首拉即用新 token。
+  if (getAccessToken()) {
+    startSessionMaintenance()
+  }
+})
 
 function onToggleTheme(): void {
   theme.value = toggleTheme()
@@ -76,6 +95,12 @@ const showContextSelector = computed(() => route.meta.context === 'full')
 const userInfo = getUserInfo()
 const userName = userInfo.name || 'admin'
 const userInitial = (userName.trim()[0] ?? 'A').toUpperCase()
+// 角色行：原写死「平台管理员」，现按 token 上下文显示（admin 帽子 / 当前租户成员 / 平台视图）
+const userRoleLabel = computed(() => {
+  if (perm.isAdmin) return '平台管理员'
+  const t = perm.currentTenant
+  return t ? `租户成员 · ${t.tenantName ?? t.tenantId}` : '平台视图'
+})
 
 function onUserCommand(cmd: string): void {
   if (cmd === 'theme') onToggleTheme()
@@ -114,26 +139,39 @@ function handleLogout(): void {
           <template #title>总览</template>
         </el-menu-item>
 
-        <div class="menu-group">平台管理</div>
-        <el-menu-item index="/clusters">
+        <div v-if="can('platform:tenant:read') || can('tenant:overview:view') || can('platform:cluster:manage') || can('platform:allocation:list') || can('platform:template:manage') || can('platform:user:manage') || can('platform:role:manage')" class="menu-group">平台管理</div>
+        <el-menu-item v-if="can('platform:cluster:manage')" index="/clusters">
           <el-icon><Monitor /></el-icon>
           <template #title>集群管理</template>
         </el-menu-item>
-        <el-menu-item index="/nodes">
+        <el-menu-item v-if="can('platform:cluster:manage')" index="/nodes">
           <el-icon><Cpu /></el-icon>
           <template #title>节点管理</template>
         </el-menu-item>
-        <el-menu-item index="/tenants">
+        <el-menu-item v-if="can('platform:tenant:read')" index="/tenants">
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>租户管理</template>
         </el-menu-item>
-        <el-menu-item index="/namespaces">
+        <!-- Task 18 裁定 #3：租户 hat 内、无代管权的成员 → 「我的租户」入口（不做路由自动跳转） -->
+        <el-menu-item v-if="perm.currentTenant && !can('platform:tenant:read')" index="/tenants/detail">
+          <el-icon><OfficeBuilding /></el-icon>
+          <template #title>我的租户</template>
+        </el-menu-item>
+        <el-menu-item v-if="can('platform:allocation:list')" index="/namespaces">
           <el-icon><FolderOpened /></el-icon>
           <template #title>命名空间管理</template>
         </el-menu-item>
-        <el-menu-item index="/templates">
+        <el-menu-item v-if="can('platform:template:manage')" index="/templates">
           <el-icon><CollectionTag /></el-icon>
           <template #title>RBAC 模板</template>
+        </el-menu-item>
+        <el-menu-item v-if="can('platform:user:manage')" index="/users">
+          <el-icon><User /></el-icon>
+          <template #title>用户管理</template>
+        </el-menu-item>
+        <el-menu-item v-if="can('platform:role:manage')" index="/roles">
+          <el-icon><Lock /></el-icon>
+          <template #title>角色与权限</template>
         </el-menu-item>
 
         <div class="menu-group">工作负载</div>
@@ -182,8 +220,10 @@ function handleLogout(): void {
           <template #title>PodMonitor</template>
         </el-menu-item>
 
-        <div class="menu-group">集群运维</div>
-        <el-menu-item index="/ops/ippools">
+        <!-- 集群运维：地址池走 k8s-server /admin/**（PLATFORM:admin 纵深防御），非管理员隐藏入口。
+             路由本身不加 requiresPerm——占位页无 API 调用，无越权面；正式接入时随端点补权限码 -->
+        <div v-if="perm.isAdmin" class="menu-group">集群运维</div>
+        <el-menu-item v-if="perm.isAdmin" index="/ops/ippools">
           <el-icon><Grid /></el-icon>
           <template #title>地址池</template>
         </el-menu-item>
@@ -205,6 +245,8 @@ function handleLogout(): void {
         <ContextSelector v-if="showContextSelector" />
 
         <div class="topbar-right">
+          <!-- 租户切换器（自管轨）：my-tenants 非空即显示；admin 代管用 ContextSelector 筛选器（spec §4.4） -->
+          <TenantSwitcher />
           <!-- 主题按钮：宽屏独立展示；窄屏收进用户下拉，给级联让位 -->
           <el-tooltip v-if="!narrow" content="切换主题" placement="bottom">
             <button class="icon-btn" @click="onToggleTheme">
@@ -220,7 +262,7 @@ function handleLogout(): void {
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item disabled>平台管理员</el-dropdown-item>
+                <el-dropdown-item disabled>{{ userRoleLabel }}</el-dropdown-item>
                 <el-dropdown-item v-if="narrow" divided command="theme">
                   <span class="logout-item"><el-icon><Sunny v-if="theme === 'dark'" /><Moon v-else /></el-icon>切换主题</span>
                 </el-dropdown-item>

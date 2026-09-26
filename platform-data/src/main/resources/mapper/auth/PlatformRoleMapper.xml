@@ -6,19 +6,34 @@
     <result column="name" jdbcType="VARCHAR" property="name" />
     <result column="code" jdbcType="VARCHAR" property="code" />
     <result column="description" jdbcType="VARCHAR" property="description" />
+    <result column="scope" jdbcType="VARCHAR" property="scope" />
+    <result column="built_in" jdbcType="TINYINT" property="builtIn" />
     <result column="status" jdbcType="TINYINT" property="status" />
     <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
     <result column="deleted_at" jdbcType="TIMESTAMP" property="deletedAt" />
   </resultMap>
   <sql id="Base_Column_List">
-    id, `name`, code, description, `status`, created_at, updated_at, deleted_at
+    id, `name`, code, description, scope, built_in, `status`, created_at, updated_at, deleted_at
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
     <include refid="Base_Column_List" />
     from platform_role
     where id = #{id,jdbcType=VARCHAR} and deleted_at is null
+  </select>
+  <select id="selectByCode" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_role
+    where code = #{code,jdbcType=VARCHAR} and deleted_at is null
+  </select>
+  <select id="listAllActive" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_role
+    where deleted_at is null
+    order by `scope`, code
   </select>
     <select id="selectTenantRole" resultType="com.coding.data.models.system.SecurityRole">
       SELECT
@@ -39,10 +54,10 @@
     where id = #{id,jdbcType=VARCHAR}
   </delete>
   <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.PlatformRole" useGeneratedKeys="true">
-    insert into platform_role (`name`, code, description, 
+    insert into platform_role (`name`, code, description, scope, built_in,
       `status`, created_at, updated_at
       )
-    values (#{name,jdbcType=VARCHAR}, #{code,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR}, 
+    values (#{name,jdbcType=VARCHAR}, #{code,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR}, #{scope,jdbcType=VARCHAR}, #{builtIn,jdbcType=TINYINT},
       #{status,jdbcType=TINYINT}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP}
       )
   </insert>

@@ -49,6 +49,12 @@ public enum EnumResponseType {
     LIMIT_RANGE_TYPE_UNSUPPORTED(10024, "限制范围类型仅支持 Container / Pod / PersistentVolumeClaim"),
     LIMIT_RANGE_VALUE_INVALID(10025, "限制范围取值非法：max 不得小于 min，defaultRequest 不得大于 default，maxLimitRequestRatio 不得小于 1"),
 
+    ROLE_BUILTIN_READONLY(10023, "内置角色不可修改或删除"),
+    ROLE_SCOPE_MISMATCH(10024, "角色族与权限点族不一致"),
+    TENANT_ADMIN_REQUIRED(10025, "租户至少需保留一名管理员"),
+    TENANT_MEMBER_NOT_FOUND(10026, "用户不是该租户成员"),
+    PERMISSION_NOT_FOUND(10027, "权限点不存在"),
+
     ERROR(5000,"服务端异常"),
 
 
