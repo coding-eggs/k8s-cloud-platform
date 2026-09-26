@@ -11,22 +11,22 @@
 SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'code');
 SET @ddl := IF(@ix > 0, 'ALTER TABLE platform_permission DROP INDEX `code`', 'SET @rbac_v2_skip = 1');
-PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE PREPARE st;
 
 SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'uk_domain_resource_action');
 SET @ddl := IF(@ix > 0, 'ALTER TABLE platform_permission DROP INDEX `uk_domain_resource_action`', 'SET @rbac_v2_skip = 1');
-PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE PREPARE st;
 
 SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'idx_code');
 SET @ddl := IF(@ix = 0, 'ALTER TABLE platform_permission ADD INDEX `idx_code`(`code`)', 'SET @rbac_v2_skip = 1');
-PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE PREPARE st;
 
 SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'idx_domain_resource_action');
 SET @ddl := IF(@ix = 0, 'ALTER TABLE platform_permission ADD INDEX `idx_domain_resource_action`(`domain`,`resource`,`action`)', 'SET @rbac_v2_skip = 1');
-PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE PREPARE st;
 
 -- ===== 权限点（API 域，resource=URL 模式，action=HTTP 方法，本平台全 POST）=====
 INSERT INTO platform_permission (id,domain,resource,action,code,description) VALUES
