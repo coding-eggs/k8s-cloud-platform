@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { clusterApi, namespaceApi } from '@/api'
@@ -8,6 +8,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
+import QuotaSection from '@/components/namespace/QuotaSection.vue'
+import LimitRangeSection from '@/components/namespace/LimitRangeSection.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,12 +41,29 @@ function resetForm(): void {
   form.name = ''
   form.description = ''
   form.labels = {}
+  // 约束区块随表单一起回到「未启用 + 空值」：load() 在 namespace 为空时即重置
+  void reloadConstraints()
 }
 
 // ---- 编辑回填 ----
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 const saving = ref(false)
 const formVisible = computed(() => !editing.value || detailState.value === 'loaded')
+
+// ---- 约束区块（配额 / 限制范围）----
+const quotaRef = ref<InstanceType<typeof QuotaSection> | null>(null)
+const lrRef = ref<InstanceType<typeof LimitRangeSection> | null>(null)
+
+/**
+ * 让两区块按当前 clusterId + 命名空间名重新回填。
+ * 必须先 nextTick：区块挂在 v-if="formVisible" 内（编辑态渲染前 ref 为 null），
+ * 且 :namespace 要等父级重渲染才落到子组件 props，否则 load() 会读到上一个命名空间名。
+ */
+async function reloadConstraints(): Promise<void> {
+  await nextTick()
+  await quotaRef.value?.load()
+  await lrRef.value?.load()
+}
 
 async function loadDetail(): Promise<void> {
   if (!editing.value || !ready.value) return
@@ -58,7 +77,9 @@ async function loadDetail(): Promise<void> {
     detailState.value = 'loaded'
   } catch {
     detailState.value = 'error'
+    return
   }
+  await reloadConstraints()
 }
 
 onMounted(() => {
@@ -73,11 +94,28 @@ watch(clusterId, () => {
 })
 
 /**
- * 约束链（配额 / 限制范围）落库 —— T11 替换为真实约束链（quota/limitrange upsert/delete）。
+ * 约束链（配额 / 限制范围）落库 —— 幂等 upsert / 删除。
  * 返回 false 表示命名空间已存但约束部分失败，提交链据此走「可重试」分支（spec §8 非原子）。
+ * ⚠️ 本函数在 submit 的 try/catch 之外被 await，故内部必须吞掉异常并返回 false —— 任何外抛都会
+ *      让 saving 永远停在 true 并产生未处理拒绝。具体错误文案由 http 拦截器 toast。
+ * 关闭开关 → 删除对象（区分「未配置」与「主动清空」，D6）：创建态两区块都关且无值 → 完全不发约束调用。
  */
-async function saveConstraints(_cid: string, _name: string): Promise<boolean> {
-  return true
+async function saveConstraints(cid: string, name: string): Promise<boolean> {
+  try {
+    const quota = quotaRef.value
+    if (quota) {
+      if (quota.enabled) await namespaceApi.quotaUpsert(cid, name, quota.toPayload())
+      else if (quota.hasAnyValue() || editing.value) await namespaceApi.quotaDelete(cid, name)
+    }
+    const lr = lrRef.value
+    if (lr) {
+      if (lr.enabled) await namespaceApi.limitrangeUpsert(cid, name, lr.toPayload())
+      else if (lr.hasAnyValue() || editing.value) await namespaceApi.limitrangeDelete(cid, name)
+    }
+    return true
+  } catch {
+    return false
+  }
 }
 
 // ---- 提交：本地校验 → 命名空间 create/update → 约束链（非原子，失败可重试）----
@@ -89,7 +127,12 @@ async function submit(): Promise<void> {
   if (!name) { ElMessage.warning('请输入命名空间名'); return }
   if (!RFC1123_RE.test(name)) { ElMessage.warning('名称需符合 RFC1123：小写字母/数字/-，且以字母或数字开头结尾'); return }
   if (name.length > 63) { ElMessage.warning('名称长度不得超过 63 字符'); return }
-  // T11 在此追加约束校验：quotaSectionRef.value?.isValid() / limitRangeSectionRef…
+  // 约束区块校验：限制范围数值序（max≥min、default≥defaultRequest、ratio≥1）违规即阻断，
+  // 区块内已标红 + 行内提示；配额无跨字段约束，故不校验。
+  if (lrRef.value && !lrRef.value.isValid()) {
+    ElMessage.warning('限制范围数值序有误（max≥min、default≥defaultRequest、ratio≥1），请修正标红项')
+    return
+  }
 
   saving.value = true
   const payload = { clusterId: clusterId.value, name, description: form.description.trim(), labels: form.labels }
@@ -162,7 +205,9 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
           </el-form>
         </el-card>
 
-        <!-- T11 挂载点：QuotaSection / LimitRangeSection -->
+        <!-- 约束区块：命名空间名 = form.name（创建态即待建名；区块内部对空名不发起请求） -->
+        <QuotaSection ref="quotaRef" :cluster-id="clusterId" :namespace="form.name" />
+        <LimitRangeSection ref="lrRef" :cluster-id="clusterId" :namespace="form.name" />
 
         <div class="form-actions">
           <el-button @click="goBack">{{ editing ? '取消' : '返回' }}</el-button>
