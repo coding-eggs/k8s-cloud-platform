@@ -11,10 +11,10 @@ export function coresToMilli(v: number | null | undefined): number | null {
   return v == null || Number.isNaN(v) ? null : Math.round(v * 1000)
 }
 
-/** 毫核 → 核（提交值）；先剥非数字字符，与 ResourcesEditor 一致 */
+/** 毫核 → 核（提交值）；先剥非数字字符再判空（剥后为空 = 未填/垃圾 → null，不可落 0 造出「上限 0」配额） */
 export function milliToCores(v: number | string | null | undefined): number | null {
-  const n = Number(String(v ?? '').replace(/\D/g, ''))
-  return Number.isFinite(n) && String(v ?? '').trim() !== '' ? n / 1000 : null
+  const s = String(v ?? '').replace(/\D/g, '')
+  return s === '' ? null : Number(s) / 1000
 }
 
 /** 字节 → MiB（显示值，取整） */
@@ -22,14 +22,16 @@ export function bytesToMi(v: number | null | undefined): number | null {
   return v == null || Number.isNaN(v) ? null : Math.round(v / 2 ** 20)
 }
 
-/** MiB → 字节（提交值） */
+/** MiB → 字节（提交值）；同 milliToCores：剥后判空 */
 export function miToBytes(v: number | string | null | undefined): number | null {
-  const n = Number(String(v ?? '').replace(/\D/g, ''))
-  return Number.isFinite(n) && String(v ?? '').trim() !== '' ? n * 2 ** 20 : null
+  const s = String(v ?? '').replace(/\D/g, '')
+  return s === '' ? null : Number(s) * 2 ** 20
 }
 
-/** 计数：整数或 null */
+/** 计数：整数或 null（''/null/NaN/非数字 → null；合法 0 保留） */
 export function intOrNull(v: number | string | null | undefined): number | null {
-  const n = Number(v)
+  const s = String(v ?? '').trim()
+  if (s === '') return null
+  const n = Number(s)
   return Number.isFinite(n) ? Math.trunc(n) : null
 }
