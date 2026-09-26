@@ -175,7 +175,7 @@ const QUOTA_ROWS: QuotaRowDef[] = [
   { key: 'limitsMemory', label: 'limits.memory', kind: 'memory' },
   { key: 'requestsCpu', label: 'requests.cpu', kind: 'cpu' },
   { key: 'requestsMemory', label: 'requests.memory', kind: 'memory' },
-  { key: 'persistentVolumeClaims', label: 'persistentVolumeClaims', kind: 'count' },
+  { key: 'persistentVolumeClaims', label: 'persistentvolumeclaims', kind: 'count' },
 ]
 
 interface QuotaRow {
@@ -241,7 +241,13 @@ const limitSections = computed<LimitSection[]>(() => {
     for (const def of LIMIT_FIELDS) {
       const pair = item?.[def.field]
       if (pair?.cpu == null && pair?.memory == null) continue // 整行无值 → 不展示
-      rows.push({ label: def.label, cpu: pairText(pair, 'cpu'), memory: pairText(pair, 'memory') })
+      // maxLimitRequestRatio 是无量纲比值（后端仅校验 ≥1），两列均按纯数字展示，勿套字节/核数单位
+      const ratio = def.field === 'maxLimitRequestRatio'
+      rows.push({
+        label: def.label,
+        cpu: ratio ? numText(pair?.cpu, 'count') : pairText(pair, 'cpu'),
+        memory: ratio ? numText(pair?.memory, 'count') : pairText(pair, 'memory'),
+      })
     }
     return { type, rows }
   })
