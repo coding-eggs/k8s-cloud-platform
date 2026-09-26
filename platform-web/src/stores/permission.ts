@@ -13,6 +13,7 @@ import { computed, reactive } from 'vue'
 import {
   getAccessToken,
   getCurrentTenant,
+  hasPlatformViewChoice,
   onTokenChanged,
   switchTenant,
   type TenantContext,
@@ -109,8 +110,10 @@ let bootstrapped = false
  *   恰好 1 个启用租户 → 自动 switchTenant 进入（失败=invalid_grant，容忍，留在平台视图）；
  *   多个 → 留在平台视图，由顶栏切换器自选。
  * 已在租户上下文（刷新恢复 / 手动切换后）不重复自动切，避免覆盖用户显式选择。
- * 调用点：router.beforeEach 首次进 shell 时 await —— 早于页面 mount，
- * 自动切换后各页 onMounted 首拉即新上下文，无需再刷新页面。
+ * 本标签页曾显式选过「平台视图」（sessionStorage 标记，切换器落）→ 同样跳过自动切，
+ * 否则单租户成员 reload 后会被静默弹回唯一租户（标记在重新登录/登出/显式选租户时清除）。
+ * 调用点：router.beforeEach 首次非 public 导航里 await —— 早于页面 mount，
+ * 自动切换后页面数据即用新上下文，无需额外刷新。
  */
 async function bootstrap(): Promise<void> {
   if (bootstrapped || state.bootstrapping) return
@@ -118,7 +121,11 @@ async function bootstrap(): Promise<void> {
   try {
     await load()
     if (getAccessToken()) {
-      if (!state.platformRoles.includes(ADMIN_ROLE) && !getCurrentTenant()) {
+      if (
+        !state.platformRoles.includes(ADMIN_ROLE) &&
+        !getCurrentTenant() &&
+        !hasPlatformViewChoice()
+      ) {
         try {
           const tenants = await userApi.myTenants()
           const enabled = tenants.filter((t) => t.status === TENANT_ENABLED)

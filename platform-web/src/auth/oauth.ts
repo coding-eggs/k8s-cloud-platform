@@ -15,6 +15,9 @@ const STATE_KEY = 'oauth2_state'
 const VERIFIER_KEY = 'oauth2_code_verifier'
 // 当前租户上下文：仅记录「下次续期带谁」，非凭证（spec §4.3）。token 与它必须在同一函数内成对写。
 const CURRENT_TENANT_KEY = 'platform_current_tenant'
+// 用户在本标签页显式选了「平台视图」的标记：刷新/重载后 bootstrap 不再自动切回唯一租户
+// （否则单租户成员切平台视图会被静默弹回）。sessionStorage=按标签页隔离，新标签恢复 §4.5 自动进入。
+const PLATFORM_VIEW_CHOICE_KEY = 'platform_view_choice'
 
 // 会话续期 grant（自定义）：用 HttpOnly 会话 Cookie 作根凭证重新签发 access_token，不重走授权码
 const RENEW_GRANT = 'urn:coding:grant-type:session-renewal'
@@ -151,6 +154,8 @@ export async function handleCallback(code: string, state: string): Promise<boole
     // 授权码登录只产 base token（无租户上下文，spec §4.1）：成对清掉 current_tenant，
     // 否则残留的旧租户会在下次续期时被 renewAccessToken 自动带上，静默把用户切进未选的租户。
     setCurrentTenant(null)
+    // 新登录 = 新会话：撤销旧标签页可能留下的「显式平台视图」选择，让 §4.5 时序重新生效
+    clearPlatformViewChoice()
     notifyTokenChanged()
     // 登录成功 → 启动会话保活 + access_token 到期前自动续期（幂等，重复调用无副作用）
     startSessionMaintenance()
@@ -217,12 +222,35 @@ function setCurrentTenant(t: TenantContext | null): void {
   }
 }
 
+// ---------- 「显式平台视图」标记（按标签页，sessionStorage） ----------
+//
+// 单租户成员在切换器里主动选「平台视图」→ 落标记；刷新/重载后 permission bootstrap 见标记
+// 跳过 §4.5 自动进入，否则用户会被静默切回唯一租户。清除时机：显式选进某租户 / 重新登录 / 登出。
+// 注意：续期 invalid_grant 的自动回落（dropTenantContextOnInvalidGrant）不是用户选择，不置标记——
+// 那属于「上下文丢了」，下次 bootstrap 自动切回其唯一可用租户是期望行为。
+
+/** 用户显式选择平台视图（切换器调用，须在触发 reload 之前） */
+export function markPlatformViewChoice(): void {
+  sessionStorage.setItem(PLATFORM_VIEW_CHOICE_KEY, '1')
+}
+
+/** 用户显式选择进入某租户 → 撤销此前的平台视图选择 */
+export function clearPlatformViewChoice(): void {
+  sessionStorage.removeItem(PLATFORM_VIEW_CHOICE_KEY)
+}
+
+/** 本标签页是否被用户显式定于平台视图 */
+export function hasPlatformViewChoice(): boolean {
+  return sessionStorage.getItem(PLATFORM_VIEW_CHOICE_KEY) === '1'
+}
+
 /** 退出：停掉保活定时器并清本地 token（服务端会话由 auth server 管理，登出后自然过期/可主动失效） */
 export function logout(): void {
   stopSessionMaintenance()
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
   localStorage.removeItem(CURRENT_TENANT_KEY)
+  clearPlatformViewChoice() // 会话终结：显式平台视图选择随会话作废（handleCallback 亦有兜底清除）
   notifyTokenChanged()
 }
 
@@ -358,6 +386,8 @@ export async function switchTenant(tenantId: string | null, tenantName?: string)
   }
   if (!r.ok) return false
   switchEpoch++ // 作废所有在途后台续期（它们拿的是旧上下文 token）
+  // 成功进入某租户 = 用户显式收回了平台视图选择（失败零写入，不动标记；平台方向置标记归切换器管）
+  if (tenantId) clearPlatformViewChoice()
   commitRenewedToken(r.token, tenantId ? { tenantId, tenantName } : null)
   scheduleRenew() // 用新 token 的 exp 重排续期
   return true

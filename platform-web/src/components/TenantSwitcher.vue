@@ -10,7 +10,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { switchTenant } from '@/auth/oauth'
+import { markPlatformViewChoice, switchTenant } from '@/auth/oauth'
 import { userApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import type { PlatformTenant } from '@/types'
@@ -49,13 +49,18 @@ async function onSwitch(value: string): Promise<void> {
   try {
     if (value === '') {
       if (await switchTenant(null)) {
+        // 显式选择平台视图（非失败回落）→ 先落标记再 reload，防 bootstrap 自动切回唯一租户
+        markPlatformViewChoice()
         reloadIntoContext('已切换到平台视图')
       } else {
         ElMessage.error('切换失败，请稍后重试')
       }
       return
     }
-    if (!target) return
+    if (!target) {
+      ElMessage.warning('无效的租户选项，请刷新后重试')
+      return
+    }
     const ok = await switchTenant(target.id, target.name)
     if (ok && perm.currentTenant?.tenantId === target.id && target.status === 1) {
       reloadIntoContext(`已进入租户「${target.name}」`)
