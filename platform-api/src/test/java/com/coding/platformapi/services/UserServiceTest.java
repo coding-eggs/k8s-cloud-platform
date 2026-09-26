@@ -1,8 +1,10 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.data.mapper.auth.PlatformRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.mapper.auth.PlatformUserRoleMapper;
+import com.coding.data.models.auth.PlatformRole;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.platformapi.models.UserCreateRequest;
 import org.junit.jupiter.api.Test;
@@ -14,14 +16,16 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class UserServiceTest {
     PlatformUserMapper userMapper = mock(PlatformUserMapper.class);
     PlatformUserRoleMapper urMapper = mock(PlatformUserRoleMapper.class);
+    PlatformRoleMapper roleMapper = mock(PlatformRoleMapper.class);
     PasswordEncoder encoder = mock(PasswordEncoder.class);
-    UserService svc = new UserService(userMapper, urMapper, encoder);
+    UserService svc = new UserService(userMapper, urMapper, roleMapper, encoder);
 
     @Test void duplicate_username_rejected() {
         when(userMapper.selectByUsername("bob")).thenReturn(new PlatformUser());
@@ -38,8 +42,44 @@ class UserServiceTest {
     }
 
     @Test void grant_is_idempotent_on_duplicate() {
+        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(platformRole("r1"));
         when(urMapper.insert(any())).thenThrow(new DuplicateKeyException("uk_user_role"));
         assertThatCode(() -> svc.grantPlatformRole("u1", "r1")).doesNotThrowAnyException();
+    }
+
+    // ---- carry from Task 16 review：grantPlatformRole 角色域校验（与租户侧对称） ----
+
+    @Test void grant_platform_scoped_role_accepted() {
+        when(roleMapper.selectByPrimaryKey("platAdmin")).thenReturn(platformRole("platAdmin"));
+        assertThatCode(() -> svc.grantPlatformRole("u1", "platAdmin")).doesNotThrowAnyException();
+        verify(urMapper).insert(any());
+    }
+
+    @Test void grant_tenant_scoped_role_rejected() {
+        PlatformRole tenant = new PlatformRole();
+        tenant.setId("tenantRole");
+        tenant.setScope("TENANT");
+        tenant.setStatus((byte) 1);
+        when(roleMapper.selectByPrimaryKey("tenantRole")).thenReturn(tenant);
+        assertThatThrownBy(() -> svc.grantPlatformRole("u1", "tenantRole"))
+            .isInstanceOf(CloudPlatformException.class);
+        verify(urMapper, never()).insert(any());
+    }
+
+    @Test void grant_nonexistent_role_rejected() {
+        when(roleMapper.selectByPrimaryKey("ghost")).thenReturn(null);
+        assertThatThrownBy(() -> svc.grantPlatformRole("u1", "ghost"))
+            .isInstanceOf(CloudPlatformException.class);
+        verify(urMapper, never()).insert(any());
+    }
+
+    private static PlatformRole platformRole(String id) {
+        var r = new PlatformRole();
+        r.setId(id);
+        r.setCode("admin");
+        r.setScope("PLATFORM");
+        r.setStatus((byte) 1);
+        return r;
     }
 
     private UserCreateRequest req(String n) {

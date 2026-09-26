@@ -42,6 +42,14 @@
         and cluster_id = #{clusterId}
         and namespace = #{namespace}
     </select>
+    <!-- 用户所属未删除租户简表（/user/my-tenants）；snake→camel 由 map-underscore-to-camel-case 处理 -->
+    <select id="listTenantsByUser" resultType="com.coding.data.models.auth.PlatformTenant">
+      select t.id, t.`name`, t.service_account, t.`status`, t.created_at, t.updated_at
+      from platform_user_tenant ut
+          inner join platform_tenant t on ut.tenant_id = t.id and t.deleted_at is null
+      where ut.user_id = #{userId}
+      order by t.created_at
+    </select>
     <select id="selectTenantByUser" resultType="com.coding.data.models.system.UserTenantInfo">
       select ut.user_id,
              ut.tenant_id,

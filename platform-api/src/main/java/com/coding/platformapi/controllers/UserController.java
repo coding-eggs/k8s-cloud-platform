@@ -1,10 +1,13 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
+import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformUser;
+import com.coding.data.models.system.TokenUserInfo;
 import com.coding.platformapi.models.UserCreateRequest;
 import com.coding.platformapi.models.UserKeyRequest;
 import com.coding.platformapi.models.UserRoleGrantRequest;
+import com.coding.platformapi.services.CurrentUserQuery;
 import com.coding.platformapi.services.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,15 +20,29 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 用户管理（鉴权走表驱动 PermissionAuthorizationManager，platform:user:manage）
+ * 用户管理（鉴权走表驱动 PermissionAuthorizationManager，platform:user:manage）。
+ * /me 与 /my-tenants 为登录即接口（ExemptPaths 豁免权限点，仅需 authenticated），供 SPA 引导权限与租户切换器。
  */
-@Tag(name = "用户管理", description = "平台用户创建/查询 + 平台域角色授予/回收")
+@Tag(name = "用户管理", description = "平台用户创建/查询 + 平台域角色授予/回收 + 当前用户上下文")
 @RestController
 @RequestMapping("/user")
 @RequiredArgsConstructor
 public class UserController {
 
     private final UserService userService;
+    private final CurrentUserQuery currentUserQuery;
+
+    @PostMapping("/me")
+    @Operation(summary = "当前用户信息", description = "登录即可，无需权限点；返回 token 上下文（含 permissions/platformRoles/tenantInfo），供前端引导")
+    public ResponseData<TokenUserInfo> me() {
+        return new ResponseData<>(currentUserQuery.me());
+    }
+
+    @PostMapping("/my-tenants")
+    @Operation(summary = "我所属的租户", description = "登录即可，无需权限点；返回未删除租户简表，供租户切换器")
+    public ResponseData<List<PlatformTenant>> myTenants() {
+        return new ResponseData<>(currentUserQuery.myTenants());
+    }
 
     @PostMapping("/create")
     @Operation(summary = "创建用户", description = "用户名唯一，密码 BCrypt 加密存储；type=TENANT_USER、source=LOCAL")

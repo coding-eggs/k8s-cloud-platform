@@ -11,6 +11,7 @@ import com.coding.data.models.auth.PlatformRole;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.auth.PlatformUserTenant;
 import com.coding.data.models.auth.PlatformUserTenantRole;
+import com.coding.data.models.auth.RoleScope;
 import com.coding.platformapi.models.TenantMemberView;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -83,18 +84,9 @@ public class TenantMemberService {
         }
     }
 
-    /** 校验 roleId 是存在、启用、TENANT 族的角色；selectByPrimaryKey 已过滤软删（返回 null 即缺失）。 */
+    /** 校验 roleId 是存在、启用、TENANT 族的角色；与平台侧授予共用 {@link RoleValidations}（口径对称）。 */
     private void requireTenantScopeRole(String roleId) {
-        PlatformRole role = roleMapper.selectByPrimaryKey(roleId);
-        if (role == null) {
-            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "角色不存在：" + roleId);
-        }
-        if (!"TENANT".equals(role.getScope())) {
-            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "只能授予租户域（TENANT）角色");
-        }
-        if (role.getStatus() == null || role.getStatus() != 1) {
-            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "角色已停用：" + roleId);
-        }
+        RoleValidations.requireRoleOfScope(roleMapper, roleId, RoleScope.TENANT);
     }
 
     /** 回收租户角色：回收 tenant-admin 时守不变量 3（FOR UPDATE count，事务内串行化防竞态）。回收本身宽松（按键删）。 */

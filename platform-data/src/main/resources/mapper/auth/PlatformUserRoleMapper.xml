@@ -8,6 +8,9 @@
     <delete id="deleteByUserAndRole">
         delete from platform_user_role where user_id = #{userId} and role_id = #{roleId}
     </delete>
+    <!-- 平台域角色 code（JWT platformRoles claim）：与 selectRoleIdsByUser（闭包）同形过滤，
+         补 scope='PLATFORM'，防旁路写入的 TENANT 角色行进 claim 却不进闭包（口径不对称）；
+         遗留的指向 TENANT 角色的死授予行在 claim 中一并隐身（预期行为） -->
     <select id="selectRoleCodesByUser" resultType="java.lang.String">
         SELECT r.`code`
         FROM platform_user_role ur
@@ -15,6 +18,7 @@
         WHERE ur.user_id = #{userId}
           AND r.deleted_at IS NULL
           AND r.`status` = 1
+          AND r.`scope` = 'PLATFORM'
     </select>
     <!-- 签发闭包专用（TokenExtrasService）：过滤已删/停用 + 锁定 PLATFORM 族，
          防旁路写入的 TENANT 角色行进入平台上下文闭包 -->

@@ -3,10 +3,12 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.utils.ULIDGenerator;
+import com.coding.data.mapper.auth.PlatformRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.mapper.auth.PlatformUserRoleMapper;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.auth.PlatformUserRole;
+import com.coding.data.models.auth.RoleScope;
 import com.coding.platformapi.models.UserCreateRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -25,6 +27,7 @@ import java.util.List;
 public class UserService {
     private final PlatformUserMapper userMapper;
     private final PlatformUserRoleMapper userRoleMapper;
+    private final PlatformRoleMapper roleMapper;
     private final PasswordEncoder passwordEncoder;
 
     public PlatformUser create(UserCreateRequest req) {
@@ -63,9 +66,11 @@ public class UserService {
     }
 
     /**
-     * 授予平台角色：uk_user_role 唯一索引兜幂等，重复授予视为已存在（不报错）
+     * 授予平台角色：先校验角色域（与租户侧对称：仅存在、启用、PLATFORM 族，阻断误授/旁路授 TENANT 角色），
+     * uk_user_role 唯一索引兜幂等，重复授予视为已存在（不报错）
      */
     public void grantPlatformRole(String userId, String roleId) {
+        RoleValidations.requireRoleOfScope(roleMapper, roleId, RoleScope.PLATFORM);
         PlatformUserRole r = new PlatformUserRole();
         r.setId(ULIDGenerator.generateULID());
         r.setUserId(userId);

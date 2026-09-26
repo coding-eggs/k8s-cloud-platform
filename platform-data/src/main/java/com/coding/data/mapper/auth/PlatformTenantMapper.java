@@ -38,6 +38,11 @@ public interface PlatformTenantMapper {
 
     UserTenantInfo selectTenantByUser(@Param("username") String username, @Param("tenantId") String tenantId);
 
+    /**
+     * 用户所属的未删除租户列表（前端租户切换器数据源，/user/my-tenants）
+     */
+    List<PlatformTenant> listTenantsByUser(@Param("userId") String userId);
+
     List<PlatformTenant> listAll();
 
     /**
