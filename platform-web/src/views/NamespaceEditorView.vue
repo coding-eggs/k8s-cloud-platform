@@ -99,16 +99,23 @@ watch(clusterId, () => {
  * ⚠️ 本函数在 submit 的 try/catch 之外被 await，故内部必须吞掉异常并返回 false —— 任何外抛都会
  *      让 saving 永远停在 true 并产生未处理拒绝。具体错误文案由 http 拦截器 toast。
  * 关闭开关 → 删除对象（区分「未配置」与「主动清空」，D6）：创建态两区块都关且无值 → 完全不发约束调用。
+ *
+ * ⚠️ 盲写防护：区块 load() 失败 ⇒ 集群现状未知，此时该区块的任何写都是盲写，两种破坏路径都存在：
+ *   A) 开关关着走 delete 分支（editing 为真即触发）→ 误删仍存在的对象；
+ *   B) 用户看到区块是关的、手动开回开关但不填任何值（他从没见过原值）→ upsert 全 null 载荷 →
+ *      后端 overlay 删光所有建模键（配额 9 项 / 限制范围全部类型），同样毁掉现状。
+ *   故 loadFailed 的区块整段跳过（既不 upsert 也不 delete）：现状存活，命名空间自身字段照常落库；
+ *   区块内有行内告警说明被跳过。创建态不受影响（命名空间尚不存在 → get 返回 null 而非报错）。
  */
 async function saveConstraints(cid: string, name: string): Promise<boolean> {
   try {
     const quota = quotaRef.value
-    if (quota) {
+    if (quota && !quota.loadFailed) {
       if (quota.enabled) await namespaceApi.quotaUpsert(cid, name, quota.toPayload())
       else if (quota.hasAnyValue() || editing.value) await namespaceApi.quotaDelete(cid, name)
     }
     const lr = lrRef.value
-    if (lr) {
+    if (lr && !lr.loadFailed) {
       if (lr.enabled) await namespaceApi.limitrangeUpsert(cid, name, lr.toPayload())
       else if (lr.hasAnyValue() || editing.value) await namespaceApi.limitrangeDelete(cid, name)
     }

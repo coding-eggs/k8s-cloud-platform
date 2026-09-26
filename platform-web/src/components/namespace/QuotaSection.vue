@@ -78,6 +78,12 @@ const QUOTA_FIELDS: QuotaField[] = [
 ]
 
 const enabled = ref(false)
+/**
+ * load() 是否失败（状态未知）。失败后 UI 与「未配置」无法区分，父级 saveConstraints
+ * 必须整段跳过本区块（既不 upsert 也不 delete）——任何写都是盲写：
+ * delete 分支会误删仍存在的对象；开回开关再空保存会 wipe 全部 hard 键。
+ */
+const loadFailed = ref(false)
 
 /** 基础单位模型：null = 未设置（该项不约束） */
 const q = reactive<Record<QuotaKey, number | null>>({
@@ -107,8 +113,12 @@ function onCell(f: QuotaField, raw: number | string | null | undefined): void {
   else q[f.key] = intOrNull(raw)
 }
 
-/** 回填：null（未配置）→ 关闭开关；失败（拦截器已提示）同样回落为「未配置」，不锁死编辑 */
+/**
+ * 回填：null（未配置）→ 关闭开关；失败（拦截器已提示）同样回落为「未配置」，不锁死编辑，
+ * 但置 loadFailed=true —— 父级据此跳过本区块的保存写操作（盲写防护，见 loadFailed 注释）。
+ */
 async function load(): Promise<void> {
+  loadFailed.value = false
   if (!props.namespace) { reset(); return }
   try {
     const cur = await namespaceApi.quotaGet(props.clusterId, props.namespace)
@@ -118,6 +128,7 @@ async function load(): Promise<void> {
     for (const f of QUOTA_FIELDS) q[f.key] = cur[f.key] ?? null
   } catch {
     reset()
+    loadFailed.value = true
   }
 }
 
@@ -141,7 +152,7 @@ function hasAnyValue(): boolean {
   return QUOTA_FIELDS.some((f) => q[f.key] != null)
 }
 
-defineExpose({ load, toPayload, hasAnyValue, enabled })
+defineExpose({ load, toPayload, hasAnyValue, enabled, loadFailed })
 </script>
 
 <template>
@@ -155,6 +166,15 @@ defineExpose({ load, toPayload, hasAnyValue, enabled })
         </span>
       </div>
     </template>
+
+    <el-alert
+      v-if="loadFailed"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="qs-loadfail"
+      title="未能读取该命名空间的现有配额——保存将跳过本区块，不会修改或删除集群中已存在的配额对象。请刷新页面（或重新选择集群）后再修改。"
+    />
 
     <div v-if="!enabled" class="qs-off">
       未启用 —— 保存时不会创建配额；若该命名空间已有配额，将被整体删除。
@@ -178,6 +198,9 @@ defineExpose({ load, toPayload, hasAnyValue, enabled })
 </template>
 
 <style scoped>
+.qs-loadfail {
+  margin-bottom: 10px;
+}
 .qs-head {
   display: flex;
   align-items: center;

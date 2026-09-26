@@ -90,6 +90,12 @@ function emptyType(): TypeState {
 }
 
 const enabled = ref(false)
+/**
+ * load() 是否失败（状态未知）。失败后 UI 与「未配置」无法区分，父级 saveConstraints
+ * 必须整段跳过本区块（既不 upsert 也不 delete）——任何写都是盲写：
+ * delete 分支会误删仍存在的对象；开回开关再空保存会删光所有建模类型限制项。
+ */
+const loadFailed = ref(false)
 const state = reactive<Record<LrType, TypeState>>({
   Container: emptyType(),
   Pod: emptyType(),
@@ -237,8 +243,12 @@ function hasAnyValue(): boolean {
   )
 }
 
-/** 回填：null（未配置）→ 关闭开关；取不到（拦截器已提示）回落「未配置」，不锁死编辑 */
+/**
+ * 回填：null（未配置）→ 关闭开关；取不到（拦截器已提示）回落「未配置」，不锁死编辑，
+ * 但置 loadFailed=true —— 父级据此跳过本区块的保存写操作（盲写防护，见 loadFailed 注释）。
+ */
 async function load(): Promise<void> {
+  loadFailed.value = false
   if (!props.namespace) { reset(); return }
   try {
     const cur = await namespaceApi.limitrangeGet(props.clusterId, props.namespace)
@@ -257,10 +267,11 @@ async function load(): Promise<void> {
     }
   } catch {
     reset()
+    loadFailed.value = true
   }
 }
 
-defineExpose({ load, toPayload, hasAnyValue, isValid, enabled })
+defineExpose({ load, toPayload, hasAnyValue, isValid, enabled, loadFailed })
 </script>
 
 <template>
@@ -274,6 +285,15 @@ defineExpose({ load, toPayload, hasAnyValue, isValid, enabled })
         </span>
       </div>
     </template>
+
+    <el-alert
+      v-if="loadFailed"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="ls-loadfail"
+      title="未能读取该命名空间的现有限制范围——保存将跳过本区块，不会修改或删除集群中已存在的 LimitRange 对象。请刷新页面（或重新选择集群）后再修改。"
+    />
 
     <div v-if="!enabled" class="ls-off">
       未启用 —— 保存时不会创建限制范围；若该命名空间已有 LimitRange，将被整体删除。
@@ -325,6 +345,9 @@ defineExpose({ load, toPayload, hasAnyValue, isValid, enabled })
 </template>
 
 <style scoped>
+.ls-loadfail {
+  margin-bottom: 10px;
+}
 .ls-head {
   display: flex;
   align-items: center;
