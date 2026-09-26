@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { clusterApi, templateApi, tenantApi } from '@/api'
-import type { K8sCluster, NamespaceAllocation, PlatformTenant, RbacTemplate } from '@/types'
+import { platformUserApi, tenantApi } from '@/api'
+import type { PlatformTenant, PlatformUser } from '@/types'
 import { fmtDate } from '@/utils/format'
-import AllocateNamespaceDialog from '@/components/AllocateNamespaceDialog.vue'
+import TenantDetailPanel from '@/components/TenantDetailPanel.vue'
 
 const loading = ref(false)
 const list = ref<PlatformTenant[]>([])
@@ -22,7 +22,21 @@ async function load(): Promise<void> {
 const dialogVisible = ref(false)
 const saving = ref(false)
 const isEdit = ref(false)
-const form = reactive({ id: '', name: '', serviceAccount: '', status: 1 })
+const form = reactive({ id: '', name: '', serviceAccount: '', status: 1, ownerUserId: '' })
+
+// owner 选择器（数据源 /user/list，同权限 platform:user:manage；admin 代管轨可用）
+const ownerCandidates = ref<PlatformUser[]>([])
+const ownerLoading = ref(false)
+async function loadOwnerCandidates(): Promise<void> {
+  ownerLoading.value = true
+  try {
+    ownerCandidates.value = await platformUserApi.list()
+  } catch {
+    ownerCandidates.value = []
+  } finally {
+    ownerLoading.value = false
+  }
+}
 
 function openCreate(): void {
   isEdit.value = false
@@ -30,7 +44,9 @@ function openCreate(): void {
   form.name = ''
   form.serviceAccount = ''
   form.status = 1
+  form.ownerUserId = ''
   dialogVisible.value = true
+  void loadOwnerCandidates()
 }
 
 function openEdit(row: PlatformTenant): void {
@@ -39,6 +55,7 @@ function openEdit(row: PlatformTenant): void {
   form.name = row.name
   form.serviceAccount = row.serviceAccount
   form.status = row.status
+  form.ownerUserId = ''
   dialogVisible.value = true
 }
 
@@ -65,7 +82,12 @@ async function submit(): Promise<void> {
       await tenantApi.update({ id: form.id, name: form.name.trim(), status: form.status })
       ElMessage.success('已更新')
     } else {
-      await tenantApi.create({ name: form.name.trim(), serviceAccount: form.serviceAccount.trim(), status: form.status })
+      await tenantApi.create({
+        name: form.name.trim(),
+        serviceAccount: form.serviceAccount.trim(),
+        status: form.status,
+        ownerUserId: form.ownerUserId || undefined, // 非空：建租即加成员并授内置 tenant-admin（后端 TenantService）
+      })
       ElMessage.success('创建成功，已在各启用集群创建 SA')
     }
     dialogVisible.value = false
@@ -117,52 +139,13 @@ async function onDelete(row: PlatformTenant): Promise<void> {
   }
 }
 
-// ---- 命名空间抽屉（该租户的分配列表 + 分配 / 取消分配） ----
+// ---- 详情抽屉（Task 20：el-tabs 命名空间分配 / 成员与角色，委托 TenantDetailPanel，admin 代管轨） ----
 const drawerVisible = ref(false)
 const currentTenant = ref<PlatformTenant | null>(null)
-const allocLoading = ref(false)
-const allocations = ref<NamespaceAllocation[]>([])
-const clusters = ref<K8sCluster[]>([])
-const templates = ref<RbacTemplate[]>([])
-const allocDialogVisible = ref(false)
 
-const clusterNameMap = computed(() => new Map(clusters.value.map((c) => [c.clusterId, c.clusterName])))
-const templateNameMap = computed(() => new Map(templates.value.map((t) => [t.id, t.name])))
-
-async function openNamespaces(row: PlatformTenant): Promise<void> {
+function openDetail(row: PlatformTenant): void {
   currentTenant.value = row
   drawerVisible.value = true
-  ;[clusters.value, templates.value] = await Promise.all([clusterApi.list(), templateApi.list()])
-  await loadAllocations()
-}
-
-async function loadAllocations(): Promise<void> {
-  if (!currentTenant.value) return
-  allocLoading.value = true
-  try {
-    allocations.value = await tenantApi.namespaceList({ tenantId: currentTenant.value.id })
-  } finally {
-    allocLoading.value = false
-  }
-}
-
-async function onDeallocate(row: NamespaceAllocation): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      `确认取消租户「${currentTenant.value?.name ?? ''}」在集群「${clusterNameMap.value.get(row.clusterId) ?? row.clusterId}」的命名空间 ${row.namespace} 分配？（删 RoleBinding，不删命名空间）`,
-      '提示',
-      { type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await tenantApi.namespaceDeallocate({ tenantId: row.tenantId, clusterId: row.clusterId, namespace: row.namespace })
-    ElMessage.success('已取消分配')
-    await loadAllocations()
-  } catch {
-    /* 拦截器提示 */
-  }
 }
 
 onMounted(load)
@@ -191,9 +174,9 @@ onMounted(load)
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ fmtDate(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="260" fixed="right">
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openNamespaces(row)">命名空间</el-button>
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link type="warning" @click="onProvision(row)">重新开通</el-button>
           <el-button link type="danger" @click="onDelete(row)">删除</el-button>
@@ -210,6 +193,23 @@ onMounted(load)
           <el-input v-model="form.serviceAccount" placeholder="小写字母/数字/-，例如 coding-test" />
           <div class="form-tip">K8s 中 ServiceAccount 名 = tn- + 该值（platform-system 命名空间下）</div>
         </el-form-item>
+        <el-form-item v-if="!isEdit" label="租户管理员(owner)">
+          <el-select
+            v-model="form.ownerUserId"
+            filterable
+            clearable
+            :loading="ownerLoading"
+            placeholder="可不选；选择后建租户即加成员并授 tenant-admin"
+            class="owner-select"
+          >
+            <el-option
+              v-for="u in ownerCandidates"
+              :key="u.id"
+              :label="`${u.username}${u.displayName ? ' · ' + u.displayName : ''}`"
+              :value="u.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="状态">
           <el-radio-group v-model="form.status">
             <el-radio :value="1">启用</el-radio>
@@ -223,35 +223,15 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <!-- 租户命名空间抽屉：该租户的分配列表 + 分配 / 取消分配 -->
-    <el-drawer v-model="drawerVisible" :title="`命名空间 · ${currentTenant?.name ?? ''}`" size="680px">
-      <div class="toolbar">
-        <el-button type="primary" @click="allocDialogVisible = true">分配命名空间</el-button>
-        <el-button @click="loadAllocations">刷新</el-button>
-      </div>
-
-      <el-table v-loading="allocLoading" :data="allocations" stripe>
-        <el-table-column label="集群" min-width="140">
-          <template #default="{ row }">{{ clusterNameMap.get(row.clusterId) ?? row.clusterId }}</template>
-        </el-table-column>
-        <el-table-column prop="namespace" label="命名空间" min-width="140" />
-        <el-table-column label="RBAC 模板" min-width="160">
-          <template #default="{ row }">
-            <el-tag size="small" type="info">{{ templateNameMap.get(row.roleTemplateId ?? '') ?? row.roleTemplateId ?? '-' }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="分配时间" width="160">
-          <template #default="{ row }">{{ fmtDate(row.createTime) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="110" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="danger" @click="onDeallocate(row)">取消分配</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+    <!-- 租户详情抽屉：命名空间分配 / 成员与角色（TenantDetailPanel 复用，代管轨传 delegate） -->
+    <el-drawer v-model="drawerVisible" :title="`租户详情 · ${currentTenant?.name ?? ''}`" size="760px">
+      <TenantDetailPanel
+        v-if="currentTenant"
+        :tenant-id="currentTenant.id"
+        :tenant-name="currentTenant.name"
+        delegate
+      />
     </el-drawer>
-
-    <AllocateNamespaceDialog v-model="allocDialogVisible" :tenant-id="currentTenant?.id" @success="loadAllocations" />
   </div>
 </template>
 
@@ -266,5 +246,8 @@ onMounted(load)
   color: var(--text-3);
   font-size: 12px;
   line-height: 1.4;
+}
+.owner-select {
+  width: 100%;
 }
 </style>

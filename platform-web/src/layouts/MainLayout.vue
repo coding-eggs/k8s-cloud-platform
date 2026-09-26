@@ -139,7 +139,7 @@ function handleLogout(): void {
           <template #title>总览</template>
         </el-menu-item>
 
-        <div v-if="can('platform:tenant:read') || can('platform:cluster:manage') || can('platform:allocation:list') || can('platform:template:manage')" class="menu-group">平台管理</div>
+        <div v-if="can('platform:tenant:read') || can('tenant:overview:view') || can('platform:cluster:manage') || can('platform:allocation:list') || can('platform:template:manage') || can('platform:user:manage') || can('platform:role:manage')" class="menu-group">平台管理</div>
         <el-menu-item v-if="can('platform:cluster:manage')" index="/clusters">
           <el-icon><Monitor /></el-icon>
           <template #title>集群管理</template>
@@ -152,6 +152,11 @@ function handleLogout(): void {
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>租户管理</template>
         </el-menu-item>
+        <!-- Task 18 裁定 #3：租户 hat 内、无代管权的成员 → 「我的租户」入口（不做路由自动跳转） -->
+        <el-menu-item v-if="perm.currentTenant && !can('platform:tenant:read')" index="/tenants/detail">
+          <el-icon><OfficeBuilding /></el-icon>
+          <template #title>我的租户</template>
+        </el-menu-item>
         <el-menu-item v-if="can('platform:allocation:list')" index="/namespaces">
           <el-icon><FolderOpened /></el-icon>
           <template #title>命名空间管理</template>
@@ -160,8 +165,14 @@ function handleLogout(): void {
           <el-icon><CollectionTag /></el-icon>
           <template #title>RBAC 模板</template>
         </el-menu-item>
-        <!-- Task 20 预留（路由/页面未建，模式同下；勿在此提前挂入口）：
-             /users → platform:user:manage · /roles → platform:role:read -->
+        <el-menu-item v-if="can('platform:user:manage')" index="/users">
+          <el-icon><User /></el-icon>
+          <template #title>用户管理</template>
+        </el-menu-item>
+        <el-menu-item v-if="can('platform:role:manage')" index="/roles">
+          <el-icon><Lock /></el-icon>
+          <template #title>角色与权限</template>
+        </el-menu-item>
 
         <div class="menu-group">工作负载</div>
         <el-menu-item index="/resources/workloads">

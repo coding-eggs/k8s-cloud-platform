@@ -11,8 +11,9 @@ declare module 'vue-router' {
     group?: string
     /** 顶栏上下文控件：'full' = 租户→集群→命名空间级联 */
     context?: string
-    /** 进入该页所需的权限点 code（token data.permissions；缺则守卫跳总览、菜单隐藏） */
-    requiresPerm?: string
+    /** 进入该页所需的权限点 code，ANY-of（命中任一即放行，镜像后端 seed 端点多行 ANY-of 语义）；
+     *  缺则守卫跳总览、菜单隐藏（Task 18 裁定：升级为数组建模） */
+    requiresPerm?: string[]
   }
 }
 
@@ -28,15 +29,18 @@ const router = createRouter({
       children: [
         { path: 'overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: '总览' } },
 
-        // 平台管理（requiresPerm 与 platform_permission seed 的 code 对齐；/permission/list 同归 platform:role:read）
-        { path: 'clusters', name: 'clusters', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群管理', group: '平台管理', requiresPerm: 'platform:cluster:manage' } },
-        { path: 'nodes', name: 'nodes', component: () => import('@/views/NodeView.vue'), meta: { title: '节点管理', group: '平台管理', requiresPerm: 'platform:cluster:manage' } },
-        { path: 'nodes/detail', name: 'node-detail', component: () => import('@/views/NodeDetailView.vue'), meta: { title: '节点详情', group: '平台管理', requiresPerm: 'platform:cluster:manage' } },
-        { path: 'tenants', name: 'tenants', component: () => import('@/views/TenantView.vue'), meta: { title: '租户管理', group: '平台管理', requiresPerm: 'platform:tenant:read' } },
-        { path: 'namespaces', name: 'namespaces', component: () => import('@/views/NamespaceView.vue'), meta: { title: '命名空间管理', group: '平台管理', requiresPerm: 'platform:allocation:list' } },
-        { path: 'templates', name: 'templates', component: () => import('@/views/TemplateView.vue'), meta: { title: 'RBAC 模板', group: '平台管理', requiresPerm: 'platform:template:manage' } },
-        // Task 20 待建页的权限点预留（路由先不加，模式已就绪）：
-        //   /users  → 'platform:user:manage'（用户管理），/roles → 'platform:role:read'（角色与权限）
+        // 平台管理（requiresPerm 与 platform_permission seed 的 code 对齐，ANY-of 语义）
+        { path: 'clusters', name: 'clusters', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群管理', group: '平台管理', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'nodes', name: 'nodes', component: () => import('@/views/NodeView.vue'), meta: { title: '节点管理', group: '平台管理', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'nodes/detail', name: 'node-detail', component: () => import('@/views/NodeDetailView.vue'), meta: { title: '节点详情', group: '平台管理', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'tenants', name: 'tenants', component: () => import('@/views/TenantView.vue'), meta: { title: '租户管理', group: '平台管理', requiresPerm: ['platform:tenant:read'] } },
+        // Task 18 裁定 #2：租户成员（无 platform:tenant:read）经租户 hat 可达的自管详情；
+        // tenantId 不进 path，页面取当前租户上下文（TenantDetailView）
+        { path: 'tenants/detail', name: 'tenant-detail', component: () => import('@/views/TenantDetailView.vue'), meta: { title: '我的租户', group: '平台管理', requiresPerm: ['platform:tenant:read', 'tenant:overview:view'] } },
+        { path: 'namespaces', name: 'namespaces', component: () => import('@/views/NamespaceView.vue'), meta: { title: '命名空间管理', group: '平台管理', requiresPerm: ['platform:allocation:list'] } },
+        { path: 'templates', name: 'templates', component: () => import('@/views/TemplateView.vue'), meta: { title: 'RBAC 模板', group: '平台管理', requiresPerm: ['platform:template:manage'] } },
+        { path: 'users', name: 'users', component: () => import('@/views/UserView.vue'), meta: { title: '用户管理', group: '平台管理', requiresPerm: ['platform:user:manage'] } },
+        { path: 'roles', name: 'roles', component: () => import('@/views/RoleView.vue'), meta: { title: '角色与权限', group: '平台管理', requiresPerm: ['platform:role:manage'] } },
         // 集群运维（/ops/ippools 前端占位页，后端端点在 k8s-server 无权限行 → 不加门，见 report）
 
         // 资源管理（context: full = 顶栏展示 租户→集群→命名空间 chip）
@@ -78,7 +82,7 @@ router.beforeEach(async (to) => {
   await perm.bootstrap()
   if (!perm.ready) await perm.load() // JWE/损坏 token：等 /user/me 兜底再判定
   const need = to.meta.requiresPerm
-  if (need && !perm.has(need)) {
+  if (need && !perm.hasAny(need)) {
     // 无权直达管理页 → 回落总览（菜单本已隐藏，此处防手输 URL / 权限回收后的旧页停留）。
     // to 本身就是 /overview 时放行，避免重定向死循环。
     if (to.name === 'overview') return true

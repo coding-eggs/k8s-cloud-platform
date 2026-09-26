@@ -73,6 +73,63 @@ export interface TokenUserInfo {
   permissions?: string[] | null
 }
 
+/** RBAC 角色（platform_role；内置角色 builtIn=1 不可删/不可改 code+scope，权限集仍可重存） */
+export interface PlatformRole {
+  id: string
+  name: string
+  code: string
+  description?: string | null
+  /** 角色族：PLATFORM / TENANT */
+  scope: 'PLATFORM' | 'TENANT' | string
+  /** 内置角色：1 不可删、code/scope 不可改；0 可编辑（后端为 Byte → JSON number） */
+  builtIn?: number | null
+  /** 1 启用 0 禁用 */
+  status?: number | null
+  createdAt?: string | number | null
+  updatedAt?: string | number | null
+}
+
+/** RBAC 权限点行（platform_permission；⚠️ code 不唯一 —— 一行 = 一个 URL 规则，ANY-of 种子按行落库） */
+export interface PlatformPermission {
+  id: string
+  /** 权限域：API / K8S / Page */
+  domain?: string | null
+  /** 资源：API 域 = URL 模式 */
+  resource?: string | null
+  /** 动作：API 域 = HTTP 方法（本平台全 POST） */
+  action?: string | null
+  /** 权限点 code（同 code 可覆盖多个 URL → 前端按 code 聚合渲染） */
+  code: string
+  description?: string | null
+  createdAt?: string | number | null
+}
+
+/** 平台用户（/user/list|get 响应 password 已置 null，不外泄 hash） */
+export interface PlatformUser {
+  id: string
+  username: string
+  displayName?: string | null
+  email?: string | null
+  /** 1正常 0禁用 */
+  status?: number | null
+  type?: string | null
+  /** LOCAL/LDAP/OIDC */
+  source?: string | null
+  lastLoginAt?: string | number | null
+  createdAt?: string | number | null
+  updatedAt?: string | number | null
+}
+
+/** 租户成员行（/tenant/member/list；owner = 持有内置 tenant-admin） */
+export interface TenantMemberView {
+  userId: string
+  username?: string | null
+  displayName?: string | null
+  /** 该成员在本租户内被授予的角色 id 列表 */
+  roleIds?: string[] | null
+  owner: boolean
+}
+
 /** 命名空间分配 */
 export interface NamespaceAllocation {
   id: string

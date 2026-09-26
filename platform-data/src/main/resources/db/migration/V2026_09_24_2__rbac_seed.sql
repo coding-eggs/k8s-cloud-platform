@@ -85,6 +85,14 @@ INSERT INTO platform_permission (id,domain,resource,action,code,description) VAL
  ('perm_role_perm_list','API','/role/permission/list','POST','platform:role:read','查看角色已授予权限码')
 ON DUPLICATE KEY UPDATE description=VALUES(description), resource=VALUES(resource), action=VALUES(action);
 
+-- Task 20 补漏：/tenant/member/list 原只有 tenant:overview:view 单行（自管轨），
+-- admin 代管轨（租户管理页「成员与角色」tab 查看任意租户成员）会 403 ——
+-- 与 add/remove/grant/revoke 各自的 platform:member:manage 行不对称（Task 16 report 即按 ANY-of 声明）。
+-- 补 ANY-of 行对齐；迁移为人工/重放应用（ON DUPLICATE KEY by 显式 id，幂等）。
+INSERT INTO platform_permission (id,domain,resource,action,code,description) VALUES
+ ('perm_member_list_delegate','API','/tenant/member/list','POST','platform:member:manage','代管查看租户成员')
+ON DUPLICATE KEY UPDATE description=VALUES(description), resource=VALUES(resource), action=VALUES(action);
+
 -- Task 16 forward：/tenant/namespace/list 对租户 ANY-of tenant:overview:view（限本租户；服务层用 token 租户覆盖入参）
 -- （同 plan 指定文本；与 perm_alloc_list 同 URL 不同 code → 依赖上方已放宽的 uk_domain_resource_action）
 INSERT INTO platform_permission (id,domain,resource,action,code,description)

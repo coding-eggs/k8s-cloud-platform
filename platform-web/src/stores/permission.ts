@@ -154,6 +154,8 @@ export function usePermission() {
     /** 当前租户上下文；null = 平台视图（base token） */
     currentTenant: computed(() => state.tenant),
     has: (code: string) => state.permissions.includes(code),
+    /** ANY-of：命中任一权限点即通过（与后端 seed 的端点多行 ANY-of 语义对齐，Task 18 裁定） */
+    hasAny: (codes: string[]) => codes.some((c) => state.permissions.includes(c)),
     load,
     bootstrap,
   })
