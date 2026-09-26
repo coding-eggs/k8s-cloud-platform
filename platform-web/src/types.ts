@@ -51,6 +51,28 @@ export interface PlatformTenant {
   updatedAt?: string | null
 }
 
+/** token 内租户上下文（与后端 UserTenantInfo 对应；base token 无此对象） */
+export interface UserTenantInfo {
+  userId?: string
+  tenantId: string
+  tenantName?: string | null
+  serviceAccount?: string | null
+}
+
+/** token 的 data claim / /user/me 返回体（与后端 TokenUserInfo 对应） */
+export interface TokenUserInfo {
+  username?: string
+  displayName?: string | null
+  email?: string | null
+  /** 1正常 0禁用 */
+  status?: number
+  tenantInfo?: UserTenantInfo | null
+  /** 平台域角色 code（如 admin） */
+  platformRoles?: string[] | null
+  /** 当前上下文权限点闭包 */
+  permissions?: string[] | null
+}
+
 /** 命名空间分配 */
 export interface NamespaceAllocation {
   id: string

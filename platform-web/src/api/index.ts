@@ -21,6 +21,7 @@ import type {
   PlatformTenant,
   RbacTemplate,
   ResourceContext,
+  TokenUserInfo,
 } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
 
@@ -92,6 +93,12 @@ export const templateApi = {
 /** 资源管理上下文（顶栏 chip：租户 → 集群 → 命名空间，DB 级联） */
 export const resourceContextApi = {
   get: () => http.get<never, ResourceContext>('/resource/context'),
+}
+
+/** 当前用户上下文 /user（/me 与 /my-tenants 为「登录即」端点：ExemptPaths 豁免权限点，仅需认证） */
+export const userApi = {
+  me: () => http.post<never, TokenUserInfo>('/user/me'),
+  myTenants: () => http.post<never, PlatformTenant[]>('/user/my-tenants'),
 }
 
 /** 资源管理 - ConfigMap /resource/configmaps（参考实现；list/create/update 上下文走 body，get/yaml/delete 走 query） */

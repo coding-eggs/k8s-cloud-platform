@@ -151,6 +151,7 @@ export async function handleCallback(code: string, state: string): Promise<boole
     // 授权码登录只产 base token（无租户上下文，spec §4.1）：成对清掉 current_tenant，
     // 否则残留的旧租户会在下次续期时被 renewAccessToken 自动带上，静默把用户切进未选的租户。
     setCurrentTenant(null)
+    notifyTokenChanged()
     // 登录成功 → 启动会话保活 + access_token 到期前自动续期（幂等，重复调用无副作用）
     startSessionMaintenance()
     return true
@@ -161,6 +162,31 @@ export async function handleCallback(code: string, state: string): Promise<boole
 
 export function getAccessToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
+}
+
+// ==================== token 变更广播 ====================
+//
+// TOKEN_KEY 与 current_tenant 只在下方四个收口点成对写（spec §4.3「禁止分开读写」的延伸）：
+// handleCallback（登录）、switchTenant（切租户）、renewAccessToken（到期续期）、logout。
+// 权限 store（stores/permission.ts）订阅本事件同步 decode —— 各处不必手动 import refreshPermission，
+// 避免 auth 层反向依赖 store 层造成循环。
+
+const tokenListeners = new Set<() => void>()
+
+/** 订阅 token/租户上下文变更；返回取消订阅函数 */
+export function onTokenChanged(fn: () => void): () => void {
+  tokenListeners.add(fn)
+  return () => tokenListeners.delete(fn)
+}
+
+function notifyTokenChanged(): void {
+  for (const fn of tokenListeners) {
+    try {
+      fn()
+    } catch {
+      /* 订阅者异常不影响其余 */
+    }
+  }
 }
 
 export function getUserInfo(): UserInfo {
@@ -197,6 +223,7 @@ export function logout(): void {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
   localStorage.removeItem(CURRENT_TENANT_KEY)
+  notifyTokenChanged()
 }
 
 // ==================== 会话保活 + access_token 自动续期 ====================
@@ -223,19 +250,13 @@ function tokenExpSeconds(token: string): number {
   }
 }
 
-/**
- * 用会话 Cookie（根凭证）续期 access_token，不重走授权码。
- * 成功写回 localStorage 并返回 true；会话已失效则返回 false（调用方应引导重新登录）。
- * 必须携带当前租户 tenant_id：不带 = auth server 签发无租户上下文的 base token，
- * 到期静默把用户踢出当前租户（spec §4.3 的头号静默坑）。
- */
-export async function renewAccessToken(): Promise<boolean> {
-  const body = new URLSearchParams({
-    grant_type: RENEW_GRANT,
-    client_id: CLIENT_ID,
-  })
-  const t = getCurrentTenant()
-  if (t?.tenantId) body.set('tenant_id', t.tenantId)
+/** session-renewal 请求结果：拿到新 token，或失败（并区分 invalid_grant——租户上下文已不可用） */
+type RenewalOutcome = { ok: true; token: string } | { ok: false; invalidGrant: boolean }
+
+/** POST /oauth2/token（grant=session-renewal）。tenantId 非空则带 tenant_id。 */
+async function requestRenewalToken(tenantId?: string | null): Promise<RenewalOutcome> {
+  const body = new URLSearchParams({ grant_type: RENEW_GRANT, client_id: CLIENT_ID })
+  if (tenantId) body.set('tenant_id', tenantId)
   try {
     // credentials:'include' → 跨域携带 platform-auth 的会话 Cookie（服务端 CORS 已 allowCredentials）
     const resp = await fetch(`${ISSUER}/oauth2/token`, {
@@ -244,41 +265,102 @@ export async function renewAccessToken(): Promise<boolean> {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
     })
-    if (!resp.ok) return false
-    const data = (await resp.json()) as { access_token?: string }
-    if (!data.access_token) return false
-    localStorage.setItem(TOKEN_KEY, data.access_token)
-    return true
+    const data = (await resp.json().catch(() => ({}))) as { access_token?: string; error?: string }
+    if (resp.ok && data.access_token) return { ok: true, token: data.access_token }
+    return { ok: false, invalidGrant: data.error === 'invalid_grant' }
   } catch {
-    return false
+    return { ok: false, invalidGrant: false }
   }
 }
 
 /**
+ * token 与租户上下文的唯一写入收口（spec §4.3「成对写、禁止分开读写」）：
+ * 两处都写完再广播，权限 store 同步读到的必是一对自洽的新值。
+ */
+function commitRenewedToken(token: string, tenant: TenantContext | null): void {
+  localStorage.setItem(TOKEN_KEY, token) // 单 token：覆盖
+  setCurrentTenant(tenant)
+  notifyTokenChanged()
+}
+
+/**
+ * 手动切换的「代数」：switchTenant 每成功一次 +1。
+ * 后台续期（renewIfDue / invalid_grant 补签）在 POST 前记下代数、commit 时比对——
+ * await 期间若发生过用户主动切换，这次续期拿的是旧上下文的 token，直接丢弃
+ * （切换结果权威，续期下个 tick 自然重来）。没有它，「续期在途 + 用户切租户」
+ * 会出现旧租户 token 覆盖新租户 token 的静默串号。
+ */
+let switchEpoch = 0
+
+/** 后台续期专用提交：代数未变才写（见 switchEpoch 注释）；手动切换走 commitRenewedToken 并推进代数 */
+function commitRenewedTokenIfUnchanged(token: string, tenant: TenantContext | null, epoch: number): void {
+  if (epoch !== switchEpoch) return
+  commitRenewedToken(token, tenant)
+}
+
+/**
+ * 续期遇 invalid_grant ⇒ 当前租户上下文已不可续签（被移出 / 租户禁用 / 租户被禁用）。
+ * 按 spec §4.3 清 current_tenant 回落平台视图，并立即补签一个 base token：
+ * 失败时旧 token 仍在原处（本就是租户 token），不重签就会让 UI 停在
+ * 「旧租户权限 + 平台视图」的中间态最长 10min（下个 keepalive tick 才纠正）。
+ * 已进入 null 上下文时不再进入本函数（getCurrentTenant() 为假），无递归风险。
+ */
+function dropTenantContextOnInvalidGrant(outcome: Extract<RenewalOutcome, { ok: false }>): void {
+  if (!outcome.invalidGrant || !getCurrentTenant()) return
+  const epoch = switchEpoch
+  setCurrentTenant(null)
+  notifyTokenChanged() // 切换器先反映「平台视图」（权限暂仍是旧租户闭包，base token 落地即收敛）
+  void requestRenewalToken(null).then((r) => {
+    if (r.ok) {
+      commitRenewedTokenIfUnchanged(r.token, null, epoch) // 期间用户手动切换过 → 不覆盖
+      scheduleRenew()
+    }
+  })
+}
+
+/**
+ * 用会话 Cookie（根凭证）续期 access_token，不重走授权码。
+ * 成功写回 localStorage 并返回 true；会话已失效则返回 false（调用方应引导重新登录）。
+ * 必须携带当前租户 tenant_id：不带 = auth server 签发无租户上下文的 base token，
+ * 到期静默把用户踢出当前租户（spec §4.3 的头号静默坑）。
+ */
+export async function renewAccessToken(): Promise<boolean> {
+  const epoch = switchEpoch
+  const tenant = getCurrentTenant()
+  const r = await requestRenewalToken(tenant?.tenantId)
+  if (!r.ok) {
+    // 期间用户已手动切换成功 → 这次失败基于旧视角，忽略即可（新上下文下个 tick 自然续）
+    if (epoch === switchEpoch) dropTenantContextOnInvalidGrant(r)
+    return false
+  }
+  commitRenewedTokenIfUnchanged(r.token, tenant, epoch)
+  return true
+}
+
+/** switchTenant 在途计数：renewIfDue 期间跳过自动续期，防止「带旧/空上下文的重续」覆盖切换结果
+ *  （两者都是 session-renewal POST；并发时序不确定，切租户必须独占 token 写入） */
+let switchInFlight = 0
+
+/**
  * 切换/进入租户：用会话 Cookie 重新签发含租户上下文的 token。null=退回平台视图(base)。
  * 成功→在同一函数内成对写 TOKEN_KEY 与 current_tenant（spec §4.3「禁止分开读写」）。
+ * 失败→零写入（旧 token/旧上下文原样保留）：回落由调用方显式 switchTenant(null) 完成，
+ * 从而保证「平台视图」拿到的必是无租户的 base token，而非残留旧租户上下文的旧 token。
  * @returns 是否切换成功（失败=无权进入该租户/会话失效，由调用方提示并回落；不跳登录页）
  */
 export async function switchTenant(tenantId: string | null, tenantName?: string): Promise<boolean> {
-  const body = new URLSearchParams({ grant_type: RENEW_GRANT, client_id: CLIENT_ID })
-  if (tenantId) body.set('tenant_id', tenantId)
+  switchInFlight++
+  let r: RenewalOutcome
   try {
-    const resp = await fetch(`${ISSUER}/oauth2/token`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    })
-    if (!resp.ok) return false
-    const data = (await resp.json()) as { access_token?: string }
-    if (!data.access_token) return false
-    localStorage.setItem(TOKEN_KEY, data.access_token) // 单 token：覆盖
-    setCurrentTenant(tenantId ? { tenantId, tenantName } : null)
-    scheduleRenew() // 用新 token 的 exp 重排续期
-    return true
-  } catch {
-    return false
+    r = await requestRenewalToken(tenantId)
+  } finally {
+    switchInFlight--
   }
+  if (!r.ok) return false
+  switchEpoch++ // 作废所有在途后台续期（它们拿的是旧上下文 token）
+  commitRenewedToken(r.token, tenantId ? { tenantId, tenantName } : null)
+  scheduleRenew() // 用新 token 的 exp 重排续期
+  return true
 }
 
 /** 会话滑动续期。返回会话是否仍有效（false = 根凭证已失效，应重登） */
@@ -296,6 +378,7 @@ async function keepalive(): Promise<boolean> {
 
 /** token 到期前主动续期；续成功后按新 token 的 exp 重新排程 */
 async function renewIfDue(): Promise<void> {
+  if (switchInFlight > 0) return // 手动切租户在途 → 让 switchTenant 独占 token 写入
   const token = getAccessToken()
   if (!token) return
   const exp = tokenExpSeconds(token)
