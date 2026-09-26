@@ -66,7 +66,8 @@ public class ResourceServerConfig {
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers("/callback").permitAll()
 						.requestMatchers( properties.getIgnoreUrls()).permitAll()
-						//管理域：平台管理员专属（租户 API 维持 authenticated + @TenantValidate，一行不改）
+						//管理域：平台管理员专属（纵深防御，非主鉴权——主授权在 platform-api 的 PermissionAuthorizationManager；
+						//租户资源边界由 ResourceAccessResolver + 各集群 RoleBinding 负责）
 						.requestMatchers("/admin/**")
 							.hasAuthority(PlatformJwtAuthenticationConverter.PLATFORM_AUTHORITY_PREFIX + "admin")
 						.anyRequest().authenticated())

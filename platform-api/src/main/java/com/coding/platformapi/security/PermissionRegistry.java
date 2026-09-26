@@ -24,6 +24,17 @@ public final class PermissionRegistry {
         this.rules = List.copyOf(rules);
     }
 
+    /** 全部规则（不可变视图）—— 供 §5.3 反向核账（幽灵规则扫描）；鉴权路径勿依赖此 getter。 */
+    public List<Rule> rules() {
+        return rules;
+    }
+
+    /** pattern 是否 ant-match 给定实际路径（反向核账复用同一匹配语义）。 */
+    public boolean matches(Rule rule, String method, String path) {
+        return (rule.method().equalsIgnoreCase(method) || rule.method().equals("*") || method.equals("*"))
+                && matcher.match(rule.pattern(), path);
+    }
+
     /**
      * 返回匹配该 (method,path) 的权限 code 集合（多行 ANY-of）；无匹配返回 empty。
      * method 比较忽略大小写。

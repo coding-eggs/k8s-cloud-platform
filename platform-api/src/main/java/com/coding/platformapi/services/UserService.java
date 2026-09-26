@@ -70,6 +70,8 @@ public class UserService {
      * uk_user_role 唯一索引兜幂等，重复授予视为已存在（不报错）
      */
     public void grantPlatformRole(String userId, String roleId) {
+        if (userMapper.selectByPrimaryKey(userId) == null)
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "用户不存在");
         RoleValidations.requireRoleOfScope(roleMapper, roleId, RoleScope.PLATFORM);
         PlatformUserRole r = new PlatformUserRole();
         r.setId(ULIDGenerator.generateULID());

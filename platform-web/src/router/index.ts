@@ -36,7 +36,7 @@ const router = createRouter({
         { path: 'tenants', name: 'tenants', component: () => import('@/views/TenantView.vue'), meta: { title: '租户管理', group: '平台管理', requiresPerm: ['platform:tenant:read'] } },
         // Task 18 裁定 #2：租户成员（无 platform:tenant:read）经租户 hat 可达的自管详情；
         // tenantId 不进 path，页面取当前租户上下文（TenantDetailView）
-        { path: 'tenants/detail', name: 'tenant-detail', component: () => import('@/views/TenantDetailView.vue'), meta: { title: '我的租户', group: '平台管理', requiresPerm: ['platform:tenant:read', 'tenant:overview:view'] } },
+        { path: 'tenants/detail', name: 'tenant-detail', component: () => import('@/views/TenantDetailView.vue'), meta: { title: '我的租户', group: '平台管理', requiresPerm: ['platform:tenant:read', 'tenant:overview:view', 'tenant:member:manage'] } },
         { path: 'namespaces', name: 'namespaces', component: () => import('@/views/NamespaceView.vue'), meta: { title: '命名空间管理', group: '平台管理', requiresPerm: ['platform:allocation:list'] } },
         { path: 'templates', name: 'templates', component: () => import('@/views/TemplateView.vue'), meta: { title: 'RBAC 模板', group: '平台管理', requiresPerm: ['platform:template:manage'] } },
         { path: 'users', name: 'users', component: () => import('@/views/UserView.vue'), meta: { title: '用户管理', group: '平台管理', requiresPerm: ['platform:user:manage'] } },

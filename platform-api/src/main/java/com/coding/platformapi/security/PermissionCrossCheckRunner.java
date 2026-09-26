@@ -60,6 +60,13 @@ public class PermissionCrossCheckRunner implements SmartInitializingSingleton {
             log.error(msg);
             throw new IllegalStateException(msg);
         }
+        // §5.3 反向核账：规则匹配不到任何真实端点 = 幽灵行。只 WARN（v1 有意保留三条
+        // "计划端点"行：/tenant/update、/user/update、/role/update，其 warn 即"未交付"标记）。
+        var ghosts = PermissionCrossCheck.ghostRules(eps, registry);
+        if (!ghosts.isEmpty()) {
+            log.warn("[RBAC] 以下权限行匹配不到任何已注册 endpoint（幽灵行，不影响启动；"
+                    + "计划端点可暂时保留，已删除/改名的须清理 seed）: {}", ghosts);
+        }
         log.info("[RBAC] 交叉校验通过：{} 个 endpoint 全部有权限声明或豁免", eps.size());
     }
 }

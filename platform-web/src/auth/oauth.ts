@@ -213,7 +213,7 @@ export function getCurrentTenant(): TenantContext | null {
   }
 }
 
-/** 设置/清空当前租户上下文。只在 switchTenant 内调用（与 token 成对写，见 spec §4.3）。 */
+/** 设置/清空当前租户上下文。仅经配对写点（switchTenant / handleCallback / commitRenewedToken / 回落路径）调用（与 token 成对写，见 spec §4.3）。 */
 function setCurrentTenant(t: TenantContext | null): void {
   if (t) {
     localStorage.setItem(CURRENT_TENANT_KEY, JSON.stringify(t))

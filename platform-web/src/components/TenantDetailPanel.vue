@@ -13,7 +13,10 @@
  * ⚠️ 自管轨能力缺口（后端 seed/端点未覆盖，前端如实降级，不假装可用）：
  * - 角色目录 /role/list 仅 platform:role:read → 租户管理员拿不到 TENANT 角色列表 ⇒ 授予/回收禁用；
  * - 用户搜索 /user/list 仅 platform:user:manage ⇒ 「添加成员」在自管轨禁用。
- *   roadmap：/role/list、/user/list 补 tenant:member:manage ANY-of 行，或自管专用端点。
+ *   roadmap：自管轨解禁须新建服务端按租户过滤的用户搜索端点（限返回字段：username/displayName 级）；
+ *   ⚠️ 严禁直接给 /user/list 加 tenant ANY-of 行 —— 那是全平台用户表（含 email 等 PII），
+ *   任一租户成员即可拖库 = 跨租户 PII 泄露。/role/list 放宽（补 tenant:member:manage ANY-of）
+ *   风险面小得多（角色目录非 PII）但同样是鉴权面变更，需显式安全决策后再动 seed。
  */
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'

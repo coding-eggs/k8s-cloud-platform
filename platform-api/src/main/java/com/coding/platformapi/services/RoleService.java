@@ -63,6 +63,7 @@ public class RoleService {
         return r;
     }
 
+    @Transactional
     public void delete(String roleId) {
         PlatformRole r = require(roleId);
         if (isBuiltIn(r))

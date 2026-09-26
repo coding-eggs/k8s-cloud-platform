@@ -42,6 +42,7 @@ class UserServiceTest {
     }
 
     @Test void grant_is_idempotent_on_duplicate() {
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(new PlatformUser());
         when(roleMapper.selectByPrimaryKey("r1")).thenReturn(platformRole("r1"));
         when(urMapper.insert(any())).thenThrow(new DuplicateKeyException("uk_user_role"));
         assertThatCode(() -> svc.grantPlatformRole("u1", "r1")).doesNotThrowAnyException();
@@ -50,12 +51,14 @@ class UserServiceTest {
     // ---- carry from Task 16 review：grantPlatformRole 角色域校验（与租户侧对称） ----
 
     @Test void grant_platform_scoped_role_accepted() {
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(new PlatformUser());
         when(roleMapper.selectByPrimaryKey("platAdmin")).thenReturn(platformRole("platAdmin"));
         assertThatCode(() -> svc.grantPlatformRole("u1", "platAdmin")).doesNotThrowAnyException();
         verify(urMapper).insert(any());
     }
 
     @Test void grant_tenant_scoped_role_rejected() {
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(new PlatformUser());
         PlatformRole tenant = new PlatformRole();
         tenant.setId("tenantRole");
         tenant.setScope("TENANT");
@@ -67,8 +70,18 @@ class UserServiceTest {
     }
 
     @Test void grant_nonexistent_role_rejected() {
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(new PlatformUser());
         when(roleMapper.selectByPrimaryKey("ghost")).thenReturn(null);
         assertThatThrownBy(() -> svc.grantPlatformRole("u1", "ghost"))
+            .isInstanceOf(CloudPlatformException.class);
+        verify(urMapper, never()).insert(any());
+    }
+
+    // ---- 终审 M5：grantPlatformRole 用户存在性校验（防悬挂 user_role 行） ----
+
+    @Test void grant_nonexistent_user_rejected() {
+        when(userMapper.selectByPrimaryKey("ghostUser")).thenReturn(null);
+        assertThatThrownBy(() -> svc.grantPlatformRole("ghostUser", "r1"))
             .isInstanceOf(CloudPlatformException.class);
         verify(urMapper, never()).insert(any());
     }
