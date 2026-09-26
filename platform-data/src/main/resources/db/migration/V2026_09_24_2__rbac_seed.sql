@@ -7,10 +7,26 @@
 --   (b) 同一 (domain,resource,action) 挂多个 code（/tenant/member/add 同时是 tenant:member:manage 与 platform:member:manage）——与 UNIQUE(uk_domain_resource_action) 冲突。
 -- 保留这两个唯一索引会让下面的 seed 在 ON DUPLICATE KEY UPDATE 下静默塌行、丢失端点覆盖，Task 11 交叉校验必失败。
 -- 该表为本特性新建、dump 内无既有记录（见 k8s_cloud_platform.sql），删索引安全。降级为普通索引以保留查询性能（selectByCode / Registry 扫描）。
-ALTER TABLE platform_permission DROP INDEX `code`;
-ALTER TABLE platform_permission DROP INDEX `uk_domain_resource_action`;
-ALTER TABLE platform_permission ADD INDEX `idx_code`(`code`);
-ALTER TABLE platform_permission ADD INDEX `idx_domain_resource_action`(`domain`,`resource`,`action`);
+-- 可重放：条件式 DROP/ADD INDEX（information_schema 判索引存在）——dev 库/重放环境安全跳过，全新库正常降级。
+SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'code');
+SET @ddl := IF(@ix > 0, 'ALTER TABLE platform_permission DROP INDEX `code`', 'SET @rbac_v2_skip = 1');
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
+
+SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'uk_domain_resource_action');
+SET @ddl := IF(@ix > 0, 'ALTER TABLE platform_permission DROP INDEX `uk_domain_resource_action`', 'SET @rbac_v2_skip = 1');
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
+
+SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'idx_code');
+SET @ddl := IF(@ix = 0, 'ALTER TABLE platform_permission ADD INDEX `idx_code`(`code`)', 'SET @rbac_v2_skip = 1');
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
+
+SET @ix := (SELECT COUNT(*) FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_permission' AND INDEX_NAME = 'idx_domain_resource_action');
+SET @ddl := IF(@ix = 0, 'ALTER TABLE platform_permission ADD INDEX `idx_domain_resource_action`(`domain`,`resource`,`action`)', 'SET @rbac_v2_skip = 1');
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE st;
 
 -- ===== 权限点（API 域，resource=URL 模式，action=HTTP 方法，本平台全 POST）=====
 INSERT INTO platform_permission (id,domain,resource,action,code,description) VALUES
