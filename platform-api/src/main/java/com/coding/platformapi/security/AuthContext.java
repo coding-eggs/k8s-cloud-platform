@@ -52,4 +52,12 @@ public class AuthContext {
             return null;
         }
     }
+
+    /**
+     * 当前 token 的租户帽（tenantInfo.tenantId）；base token（管理员代管态）/ 未认证 → null。
+     */
+    public String hatTenantId() {
+        TokenUserInfo info = current();
+        return info != null && info.getTenantInfo() != null ? info.getTenantInfo().getTenantId() : null;
+    }
 }

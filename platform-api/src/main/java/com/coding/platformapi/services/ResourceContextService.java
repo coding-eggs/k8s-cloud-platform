@@ -23,6 +23,10 @@ import java.util.stream.Collectors;
  *   <li>命名空间：分配表 platform_tenant_namespace</li>
  * </ul>
  * 无任何 K8s 调用；没有分配的租户不出现在级联里（其资源无从操作）。
+ *
+ * <p>帽过滤：带租户上下文（session-renewal+tenant_id 签发的帽子 token）时只输出该租户的节点——
+ * 端点虽在 /resource/** 豁免下（登录即可），目录也不该让成员枚举他人租户的集群/命名空间布局。
+ * base token（管理员未切换/代管）返回全量。
  */
 @Service
 @RequiredArgsConstructor
@@ -32,7 +36,7 @@ public class ResourceContextService {
     private final K8sClusterMapper clusterMapper;
     private final PlatformTenantNamespaceMapper allocationMapper;
 
-    public ResourceContextDTO build() {
+    public ResourceContextDTO build(String hatTenantId) {
         Map<String, K8sCluster> enabledClusters = clusterMapper.listAll().stream()
                 .filter(c -> c.getEnabled() == 1)
                 .collect(Collectors.toMap(K8sCluster::getClusterId, Function.identity()));
@@ -43,6 +47,9 @@ public class ResourceContextService {
         for (PlatformTenant tenant : tenantMapper.listAll()) {
             if (tenant.getStatus() == null || tenant.getStatus() != 1) {
                 continue; //停用租户不进入资源管理上下文
+            }
+            if (hatTenantId != null && !hatTenantId.equals(tenant.getId())) {
+                continue; //帽态：仅本租户（边界由服务端守，前端不可见即不可选）
             }
             ResourceContextDTO.TenantNode tenantNode = new ResourceContextDTO.TenantNode();
             tenantNode.setTenantId(tenant.getId());
