@@ -64,6 +64,13 @@ export function useResourceContext() {
       state.tenantId = null
       state.clusterId = null
       state.namespace = null
+      // 帽态下服务端只返回本租户；若持久化选择是切换前的旧租户被清空，则自动落到唯一租户，
+      // 使顶栏级联随切租户自动跟随（否则切完租户树变空选，用户以为没生效）
+      const only = state.tenants.length === 1 ? state.tenants[0] : undefined
+      if (only) {
+        state.tenantId = only.tenantId
+        persist()
+      }
     } else if (!currentCluster.value) {
       state.clusterId = null
       state.namespace = null

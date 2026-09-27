@@ -2,6 +2,7 @@ package com.coding.platformapi.controllers.resource;
 
 import com.coding.common.models.k8s.dto.admin.ResourceContextDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.security.AuthContext;
 import com.coding.platformapi.services.ResourceContextService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,10 +22,12 @@ public class ResourceContextController {
 
     private final ResourceContextService contextService;
 
+    private final AuthContext auth;
+
     @GetMapping("/context")
-    @Operation(summary = "资源管理上下文", description = "租户 → 集群 → 命名空间级联数据（顶栏 chip 用）")
+    @Operation(summary = "资源管理上下文", description = "租户 → 集群 → 命名空间级联数据（顶栏 chip 用）；租户帽态仅返回本租户")
     public ResponseData<ResourceContextDTO> context() {
-        return new ResponseData<>(contextService.build());
+        return new ResponseData<>(contextService.build(auth.hatTenantId()));
     }
 
 }

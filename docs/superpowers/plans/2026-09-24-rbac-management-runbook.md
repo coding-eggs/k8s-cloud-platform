@@ -21,19 +21,25 @@
 按序执行：
 
 ```sql
-source V2026_09_24_1__rbac_schema.sql;      -- platform_role 加 scope/built_in 两列 + 索引调整
-source V2026_09_24_2__rbac_seed.sql;          -- 权限点目录 + 内置角色 + role_permission 关联（DELETE-then-INSERT 幂等）
+source V2026_09_24_1__rbac_schema.sql;      -- platform_role 加 scope/built_in 两列（条件式 ADD COLUMN）
+source V2026_09_24_2__rbac_seed.sql;          -- 权限点目录 + 内置角色 + role_permission 关联（条件式索引降级 + 显式 id 幂等 INSERT）
 source V2026_09_26_1__b3_namespace_permissions.sql;  -- B3：10 个 /namespace/** 端点权限行（漏跑则交叉校验拒启动）
 ```
 
 注意：
+- **V1/V2 均已改为可重放**（DDL 走 information_schema 条件判断：列/索引已存在即跳过；
+  seed 行靠显式主键 id 命中 `ON DUPLICATE KEY UPDATE`）。因此**同一条序列适用于所有环境**——
+  全新库、跑过一半的 dev 库、导完 dump 的库——跑一遍即收敛到终态，无需先查"做过没有"。
+  改前版本是裸 `ADD COLUMN`/`DROP INDEX`，重放即 `ERROR 1060/1091` 中断，故本条对 dev 尤其重要（见下）。
 - **V2 含 T20 修复行** `perm_member_list_delegate`（/tenant/member/list 的 platform:member:manage
-  代管 ANY-of 行）——若你手上是旧版 V2 文件，admin 的成员 tab 会 403，必须用分支内最新文件。
+  代管 ANY-of 行）——**dev 库当前还缺这一行，admin 的「成员与角色」tab 会 403**。
+  下次部署 dev 时对 dev 库**重放 V2** 即可补上（现已可重放，不会在 ALTER 段中断）。
 - gateway client 的 grant_types UPDATE（移除 token-exchange）**dev 库已执行**；增量环境补一句
   （与 dump 终态一致）：
   `UPDATE oauth2_registered_client SET authorization_grant_types = 'refresh_token,authorization_code' WHERE client_id='gateway-code-client';`
-- **全新环境** = 导入 `k8s_cloud_platform.sql` dump + V1 + V2 + V2026_09_26_1（dump 已是含两列与 seed 的终态，
-  此时 V2 重放幂等无副作用）。
+- **全新环境** = 导入 `k8s_cloud_platform.sql` dump → 然后**照跑 V1 + V2 + V2026_09_26_1**（V1 对 dump 库是 no-op）。
+  dump 只含结构 + `builtin_role_admin` 一行，`platform_permission` / `platform_role_permission`
+  **没有任何 seed 行**——所以 **V2（及 B3 的 V2026_09_26_1）不可省**，省了就是空权限表 → 启动被交叉校验拒绝。
 
 ### Step 3 — 起服
 先起 **platform-auth**（auth-server），确认健康后再起 **platform-api**。
