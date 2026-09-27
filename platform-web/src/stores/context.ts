@@ -50,12 +50,19 @@ export function useResourceContext() {
     () => clustersOfTenant.value.find((c) => c.clusterId === state.clusterId) ?? null,
   )
   const namespacesOfCluster = computed<string[]>(() => currentCluster.value?.namespaces ?? [])
-  /** 三级选齐才可操作资源 */
-  const ready = computed(() => !!(state.tenantId && state.clusterId && state.namespace))
+  /** 三级选齐且级联树已加载校验过才可操作资源。
+   *  loaded 门槛是防串号关键：localStorage 恢复的旧选择可能在 /resource/context 返回前就让三级齐全，
+   *  若此时放行，切租户后的首屏会用「旧租户 + 新帽 token」发请求 → k8s-server TENANT_MISMATCH */
+  const ready = computed(() => !!(state.loaded && state.tenantId && state.clusterId && state.namespace))
 
   async function load(): Promise<void> {
     if (state.loaded) return
-    const data = await resourceContextApi.get()
+    let data: Awaited<ReturnType<typeof resourceContextApi.get>>
+    try {
+      data = await resourceContextApi.get()
+    } catch {
+      return // 拉取失败：loaded 保持 false，下次进页面可重试；ready 维持 false，页面停在「请选择」占位
+    }
     state.tenants = data?.tenants ?? []
     state.loaded = true
 
@@ -69,7 +76,6 @@ export function useResourceContext() {
       const only = state.tenants.length === 1 ? state.tenants[0] : undefined
       if (only) {
         state.tenantId = only.tenantId
-        persist()
       }
     } else if (!currentCluster.value) {
       state.clusterId = null
@@ -77,6 +83,19 @@ export function useResourceContext() {
     } else if (!namespacesOfCluster.value.includes(state.namespace ?? '')) {
       state.namespace = null
     }
+
+    // 缺级默认补到第一个可用节点：进入页面 / 切换租户后无需手动点级联，资源页直接加载首个命名空间的数据。
+    // 树里能出现的集群必有 ≥1 个已分配 ns（ResourceContextService 按分配行建节点），故补到集群必能补到 ns。
+    const tenant = currentTenant.value
+    if (tenant && !currentCluster.value) {
+      const firstCluster = tenant.clusters[0]
+      if (firstCluster) state.clusterId = firstCluster.clusterId
+    }
+    if (currentCluster.value && !state.namespace) {
+      const firstNs = namespacesOfCluster.value[0]
+      if (firstNs) state.namespace = firstNs
+    }
+    persist()
   }
 
   function setTenant(tenantId: string | null): void {
