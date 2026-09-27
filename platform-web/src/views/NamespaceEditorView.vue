@@ -161,6 +161,9 @@ async function submit(): Promise<void> {
     if (!editing.value) {
       // 关键：切到编辑态（名字锁定），使重试能 upsert 三区块
       editing.value = name
+      // 手动置 detailState='loaded' 使 formVisible 保持 true（否则 v-if 卸载表单、丢失用户输入）
+      // 不调 loadDetail() —— 它会 reloadConstraints() 从服务端重读并覆盖用户已填的约束值
+      detailState.value = 'loaded'
       await router.replace({ name: 'namespace-editor', query: { clusterId: clusterId.value, name } })
     }
     return

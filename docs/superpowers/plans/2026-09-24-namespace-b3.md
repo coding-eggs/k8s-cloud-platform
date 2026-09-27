@@ -25,6 +25,8 @@
 | D9 | RBAC 细粒度(`PermissionAuthorizationManager`)是并行工作未实现;新端点继承双闸(platform-api 全量 `PLATFORM:admin` + k8s-server `/admin/**`),本批不播种 | `platform-api/configs/ResourceServerConfig.java:65-67` |
 | D10 | **§11(能力开关)整体延期至 B6/B7** | 依赖 calico/istio 地基,`grep` 证实全部不存在 |
 
+> **合并后勘误(2026-09-27,RBAC 已合入 main)**:D9 前提被推翻——RBAC(`PermissionAuthorizationManager` + `PermissionCrossCheckRunner`)已落地,启动期交叉校验要求每个端点都有权限行或豁免,否则 platform-api 拒启动。故新增迁移 `V2026_09_26_1__b3_namespace_permissions.sql`,为 10 个 `/namespace/**` 端点播种(读→`platform:allocation:list`、写→`platform:allocation:manage`;复用既有 code,admin 已经 `perm_ns_list/perm_ns_delete` 持有,manager 按 code 判权故无需新增 role 绑定)。连带 D4 错误码 `10023/10024/10025` 与 RBAC 的 `ROLE_BUILTIN_READONLY(10023)/ROLE_SCOPE_MISMATCH(10024)/TENANT_ADMIN_REQUIRED(10025)` 撞号 → **改号 `10028/10029/10030`**(见 `EnumResponseType`;新增 `EnumResponseTypeTest` 锁业务码唯一)。
+
 ## 对上游设计稿的两处技术纠正(写代码前必读)
 
 1. **K8s 配额资源键是全小写 `persistentvolumeclaims`**(不是驼峰 `persistentVolumeClaims`)。Java/TS 字段名用驼峰,但 converter 写入 `spec.hard` 的 **key 必须是小写形式**。`MODELED_HARD_KEYS` 常量以此为准。

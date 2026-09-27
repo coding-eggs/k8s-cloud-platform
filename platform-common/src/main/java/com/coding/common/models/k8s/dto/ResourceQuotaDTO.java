@@ -12,7 +12,7 @@ import java.math.BigDecimal;
  * <p>
  * 平台单份约定：对象名固定 {@code default}（见 EnumResponseType.QUOTA_NAME_NOT_DEFAULT）。
  * 值为基础单位（cpu=核、memory=字节），Quantity↔BigDecimal 换算在 k8s-core QuantityUtil。
- * 字段为 null = 不约束该项；{@link #convertForUpdate} 的 overlay 语义据此删除 hard 中对应 key，
+ * 字段为 null = 不约束该项；{@code convertForUpdate} 的 overlay 语义据此删除 hard 中对应 key，
  * 未建模 key（count/deployments、services.nodeports 等）原样保留。
  */
 @Data

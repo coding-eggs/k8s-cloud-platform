@@ -23,6 +23,7 @@
 ```sql
 source V2026_09_24_1__rbac_schema.sql;      -- platform_role 加 scope/built_in 两列 + 索引调整
 source V2026_09_24_2__rbac_seed.sql;          -- 权限点目录 + 内置角色 + role_permission 关联（DELETE-then-INSERT 幂等）
+source V2026_09_26_1__b3_namespace_permissions.sql;  -- B3：10 个 /namespace/** 端点权限行（漏跑则交叉校验拒启动）
 ```
 
 注意：
@@ -31,7 +32,7 @@ source V2026_09_24_2__rbac_seed.sql;          -- 权限点目录 + 内置角色 
 - gateway client 的 grant_types UPDATE（移除 token-exchange）**dev 库已执行**；增量环境补一句
   （与 dump 终态一致）：
   `UPDATE oauth2_registered_client SET authorization_grant_types = 'refresh_token,authorization_code' WHERE client_id='gateway-code-client';`
-- **全新环境** = 导入 `k8s_cloud_platform.sql` dump + V1 + V2（dump 已是含两列与 seed 的终态，
+- **全新环境** = 导入 `k8s_cloud_platform.sql` dump + V1 + V2 + V2026_09_26_1（dump 已是含两列与 seed 的终态，
   此时 V2 重放幂等无副作用）。
 
 ### Step 3 — 起服

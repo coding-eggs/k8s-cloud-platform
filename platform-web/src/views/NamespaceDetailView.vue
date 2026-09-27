@@ -41,6 +41,7 @@ const activeTab = ref('overview')
 const quotaLoaded = ref(false)
 const lrLoaded = ref(false)
 const yamlLoaded = ref(false)
+const notManaged = ref(false)
 
 const lrItems = computed<K8sLimitRangeItem[]>(() => lr.value?.limits ?? [])
 const lrMultiple = computed(() => lr.value?.multiple === true)
@@ -62,6 +63,13 @@ async function refresh(): Promise<void> {
     lr.value = null
     yamlText.value = ''
     quotaLoaded.value = lrLoaded.value = yamlLoaded.value = false
+    // 非平台管理的命名空间：配额/限制范围端点会拒（requireManagedNamespace），直接降级为「不适用」
+    notManaged.value = ns.value?.managedBy !== true
+    if (notManaged.value) {
+      // 跳过 quota/limitrange 加载，直接标记完成 → 模板渲染「不适用」空态而非永远「加载中…」
+      quotaLoaded.value = true
+      lrLoaded.value = true
+    }
     loadError.value = ns.value == null
     if (!loadError.value) await loadActiveTab()
   } catch {
@@ -73,6 +81,8 @@ async function refresh(): Promise<void> {
 
 async function loadQuota(): Promise<void> {
   if (!ready.value) return
+  // 非平台管理的命名空间：后端会拒（requireManagedNamespace），直接跳过
+  if (notManaged.value) { quotaLoaded.value = true; return }
   const cid = clusterId.value
   const target = name.value
   tabLoading.value = true
@@ -83,7 +93,8 @@ async function loadQuota(): Promise<void> {
       quotaLoaded.value = true
     }
   } catch {
-    /* 拦截器已提示 */
+    // 兜底：任何未来失败都降级为「读取失败」空态，而非永远「加载中…」
+    quotaLoaded.value = true
   } finally {
     tabLoading.value = false
   }
@@ -91,6 +102,8 @@ async function loadQuota(): Promise<void> {
 
 async function loadLimitRange(): Promise<void> {
   if (!ready.value) return
+  // 非平台管理的命名空间：后端会拒（requireManagedNamespace），直接跳过
+  if (notManaged.value) { lrLoaded.value = true; return }
   const cid = clusterId.value
   const target = name.value
   tabLoading.value = true
@@ -101,7 +114,8 @@ async function loadLimitRange(): Promise<void> {
       lrLoaded.value = true
     }
   } catch {
-    /* 拦截器已提示 */
+    // 兜底：任何未来失败都降级为「读取失败」空态，而非永远「加载中…」
+    lrLoaded.value = true
   } finally {
     tabLoading.value = false
   }
@@ -320,7 +334,8 @@ watch(name, () => { if (clusterId.value) void refresh() })
             <main v-loading="tabLoading && !quotaLoaded" class="ov-main">
               <section class="info-card">
                 <h3 class="info-title">用量摘要</h3>
-                <div v-if="quotaLoaded && quota" class="info-rows">
+                <div v-if="notManaged" class="muted ov-na">非平台管理的命名空间，配额不适用</div>
+                <div v-else-if="quotaLoaded && quota" class="info-rows">
                   <div v-for="r in usageSummary" :key="r.key" class="info-row">
                     <span class="k">{{ r.label }}</span>
                     <span class="v">
@@ -342,8 +357,9 @@ watch(name, () => { if (clusterId.value) void refresh() })
         <!-- 资源配额 -->
         <el-tab-pane label="资源配额" name="quota">
           <div v-loading="tabLoading" class="tab-body">
-            <el-alert v-if="quota?.multiple === true" :title="MULTIPLE_QUOTA_TIP" type="warning" :closable="false" show-icon class="mb-3" />
-            <template v-if="quota">
+            <EmptyState v-if="notManaged" title="不适用" description="非平台管理的命名空间，配额不适用。" />
+            <template v-else-if="quota">
+              <el-alert v-if="quota?.multiple === true" :title="MULTIPLE_QUOTA_TIP" type="warning" :closable="false" show-icon class="mb-3" />
               <div class="list-head">
                 <h3 class="info-title">资源配额（default）</h3>
                 <el-button size="small" @click="goEditor('quota')">编辑配额</el-button>
@@ -380,8 +396,10 @@ watch(name, () => { if (clusterId.value) void refresh() })
         <!-- 限制范围 -->
         <el-tab-pane label="限制范围" name="limitrange">
           <div v-loading="tabLoading" class="tab-body">
-            <el-alert v-if="lrMultiple" :title="MULTIPLE_LR_TIP" type="warning" :closable="false" show-icon class="mb-3" />
-            <template v-if="lrLoaded && lr">
+            <EmptyState v-if="notManaged" title="不适用" description="非平台管理的命名空间，限制范围不适用。" />
+            <template v-else>
+              <el-alert v-if="lrMultiple" :title="MULTIPLE_LR_TIP" type="warning" :closable="false" show-icon class="mb-3" />
+              <template v-if="lrLoaded && lr">
               <div class="list-head">
                 <h3 class="info-title">限制范围（default）</h3>
                 <el-button size="small" @click="goEditor('limitrange')">编辑限制范围</el-button>
@@ -411,6 +429,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
               <el-button type="primary" @click="goEditor('limitrange')">设置限制范围</el-button>
             </EmptyState>
             <div v-else class="muted">加载中…</div>
+            </template>
           </div>
         </el-tab-pane>
 
@@ -479,4 +498,5 @@ watch(name, () => { if (clusterId.value) void refresh() })
   max-height: 70vh; overflow: auto; white-space: pre-wrap;
 }
 .loading-tip { padding: 48px; text-align: center; font-size: 13px; color: var(--text-3); }
+.ov-na { padding: 24px 0; font-size: 13px; }
 </style>

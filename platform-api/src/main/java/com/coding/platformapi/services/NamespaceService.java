@@ -258,7 +258,7 @@ public class NamespaceService {
         }
     }
 
-    /** 入参名字非 default 且非空白 → 拒（10023）；空白 / null → 交由调用方静默改写为 default */
+    /** 入参名字非 default 且非空白 → 拒（10028）；空白 / null → 交由调用方静默改写为 default */
     private void forceSingleName(String incomingName) {
         if (StringUtils.hasText(incomingName) && !SINGLE_NAME.equals(incomingName)) {
             throw new CloudPlatformException(EnumResponseType.QUOTA_NAME_NOT_DEFAULT,

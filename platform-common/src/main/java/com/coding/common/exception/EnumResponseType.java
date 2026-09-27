@@ -45,15 +45,15 @@ public enum EnumResponseType {
     HPA_VERSION_UNSUPPORTED(10020, "该集群不支持 HPA（autoscaling）资源"),
     HPA_V1_ONLY_CPU(10021, "该集群 HPA 为 autoscaling/v1，仅支持 CPU 利用率指标（不支持内存/其他指标或 behavior）"),
     HPA_TARGET_ALREADY_BOUND(10022, "该工作负载已绑定 HPA，一个工作负载只能绑定一个 HPA"),
-    QUOTA_NAME_NOT_DEFAULT(10023, "命名空间内平台管理的配额/限制范围对象名必须为 default（平台单份约定）"),
-    LIMIT_RANGE_TYPE_UNSUPPORTED(10024, "限制范围类型仅支持 Container / Pod / PersistentVolumeClaim"),
-    LIMIT_RANGE_VALUE_INVALID(10025, "限制范围取值非法：max 不得小于 min，defaultRequest 不得大于 default，maxLimitRequestRatio 不得小于 1"),
 
     ROLE_BUILTIN_READONLY(10023, "内置角色不可修改或删除"),
     ROLE_SCOPE_MISMATCH(10024, "角色族与权限点族不一致"),
     TENANT_ADMIN_REQUIRED(10025, "租户至少需保留一名管理员"),
     TENANT_MEMBER_NOT_FOUND(10026, "用户不是该租户成员"),
     PERMISSION_NOT_FOUND(10027, "权限点不存在"),
+    QUOTA_NAME_NOT_DEFAULT(10028, "命名空间内平台管理的配额/限制范围对象名必须为 default（平台单份约定）"),
+    LIMIT_RANGE_TYPE_UNSUPPORTED(10029, "限制范围类型仅支持 Container / Pod / PersistentVolumeClaim"),
+    LIMIT_RANGE_VALUE_INVALID(10030, "限制范围取值非法：max 不得小于 min，defaultRequest 不得大于 default，maxLimitRequestRatio 不得小于 1"),
 
     ERROR(5000,"服务端异常"),
 
