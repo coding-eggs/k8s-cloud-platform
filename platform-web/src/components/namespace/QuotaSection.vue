@@ -22,9 +22,9 @@ const props = defineProps<{ clusterId: string; namespace: string }>()
 /** 平台单份约定的对象名（后端 forceSingleName 亦会覆写） */
 const SINGLE_NAME = 'default'
 
-/** 9 个建模 hard 键（顺序 = 后端 CoreV1ResourceQuotaConverter.MODELED_HARD_KEYS） */
+/** 6 个建模 hard 键（顺序 = 后端 CoreV1ResourceQuotaConverter.MODELED_HARD_KEYS） */
 type QuotaKey =
-  | 'cpu' | 'memory' | 'pods' | 'services'
+  | 'pods'
   | 'limitsCpu' | 'limitsMemory' | 'requestsCpu' | 'requestsMemory'
   | 'persistentVolumeClaims'
 
@@ -40,20 +40,8 @@ interface QuotaField {
 
 const QUOTA_FIELDS: QuotaField[] = [
   {
-    key: 'cpu', hard: 'cpu', unit: 'm', ph: '2000',
-    tip: 'CPU 上限（核）。单位 m = 毫核，1 核 = 1000m，填 2000 = 2 核。K8s 按命名空间内各容器 CPU request 之和计量，语义同 requests.cpu（二者任选其一，同时设且不等会互相冲突）。留空 = 不设该项。',
-  },
-  {
-    key: 'memory', hard: 'memory', unit: 'Mi', ph: '4096',
-    tip: '内存上限（字节）。单位 Mi = Mebibyte，1 Mi = 1048576 字节，填 4096 = 4 GiB。K8s 按各容器 memory request 之和计量，语义同 requests.memory。留空 = 不设该项。',
-  },
-  {
     key: 'pods', hard: 'pods', unit: null, ph: '20',
     tip: 'Pod 数量上限（个，含未终止的 Pod；已 Succeeded/Failed 的不计入）。无单位，填整数。',
-  },
-  {
-    key: 'services', hard: 'services', unit: null, ph: '10',
-    tip: 'Service 数量上限（个）。无单位，填整数。仅统计 Service 对象数；端口/IP 类子配额（如 services.loadbalancerips）平台未建模、原样保留不受本区块影响。',
   },
   {
     key: 'limitsCpu', hard: 'limits.cpu', unit: 'm', ph: '4000',
@@ -87,7 +75,7 @@ const loadFailed = ref(false)
 
 /** 基础单位模型：null = 未设置（该项不约束） */
 const q = reactive<Record<QuotaKey, number | null>>({
-  cpu: null, memory: null, pods: null, services: null,
+  pods: null,
   limitsCpu: null, limitsMemory: null, requestsCpu: null, requestsMemory: null,
   persistentVolumeClaims: null,
 })

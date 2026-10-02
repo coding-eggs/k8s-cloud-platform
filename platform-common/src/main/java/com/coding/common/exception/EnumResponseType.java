@@ -52,7 +52,7 @@ public enum EnumResponseType {
     TENANT_MEMBER_NOT_FOUND(10026, "用户不是该租户成员"),
     PERMISSION_NOT_FOUND(10027, "权限点不存在"),
     QUOTA_NAME_NOT_DEFAULT(10028, "命名空间内平台管理的配额/限制范围对象名必须为 default（平台单份约定）"),
-    LIMIT_RANGE_TYPE_UNSUPPORTED(10029, "限制范围类型仅支持 Container / Pod / PersistentVolumeClaim"),
+    LIMIT_RANGE_TYPE_UNSUPPORTED(10029, "限制范围类型仅支持 Container / PersistentVolumeClaim"),
     LIMIT_RANGE_VALUE_INVALID(10030, "限制范围取值非法：max 不得小于 min，defaultRequest 不得大于 default，maxLimitRequestRatio 不得小于 1"),
 
     ERROR(5000,"服务端异常"),

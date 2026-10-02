@@ -160,12 +160,11 @@ export interface ResourcePair {
 
 /** LimitRange 单条限制项；defaultValue ⇄ K8s spec.limits[].default */
 export interface K8sLimitRangeItem {
-  type: 'Container' | 'Pod' | 'PersistentVolumeClaim'
+  type: 'Container' | 'PersistentVolumeClaim'
   max?: ResourcePair | null
   min?: ResourcePair | null
   defaultValue?: ResourcePair | null
   defaultRequest?: ResourcePair | null
-  maxLimitRequestRatio?: ResourcePair | null
 }
 
 /** LimitRange（平台单份，对象名固定 default） */
@@ -181,10 +180,7 @@ export interface K8sLimitRange {
 
 /** 配额已用量（只读，来自 status.used），字段与约束项一一对应 */
 export interface K8sResourceQuotaUsed {
-  cpu?: number | null
-  memory?: number | null
   pods?: number | null
-  services?: number | null
   limitsCpu?: number | null
   limitsMemory?: number | null
   requestsCpu?: number | null
@@ -196,10 +192,7 @@ export interface K8sResourceQuotaUsed {
 export interface K8sResourceQuota {
   name?: string | null
   namespace?: string | null
-  cpu?: number | null
-  memory?: number | null
   pods?: number | null
-  services?: number | null
   limitsCpu?: number | null
   limitsMemory?: number | null
   requestsCpu?: number | null

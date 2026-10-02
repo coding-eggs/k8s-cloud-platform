@@ -9,23 +9,23 @@ import FieldHelp from '@/components/workload/FieldHelp.vue'
 /**
  * 限制范围编辑区块（core/v1 LimitRange，平台单份：对象名固定 default）。
  *
- * 三类型（Container / Pod / PersistentVolumeClaim）× 五字段（max/min/default/defaultRequest/
- * maxLimitRequestRatio）× 两维度（cpu / memory）。模型值 = 基础单位（cpu=核、memory=字节；
- * ratio 无量纲），显示经 utils/quantityUnits 换算为固定单位（cpu→m、memory→Mi），
- * 单位一律 `el-input` + `<template #append>`（el-input-number 无 #append 插槽）。
+ * 两类型（Container / PersistentVolumeClaim）× 四字段（max/min/default/defaultRequest）
+ * × 两维度（cpu / memory）。模型值 = 基础单位（cpu=核、memory=字节），显示经 utils/quantityUnits
+ * 换算为固定单位（cpu→m、memory→Mi），单位一律 `el-input` + `<template #append>`
+ * （el-input-number 无 #append 插槽）。
  *
  * 线路语义（overlay，见 CoreV1LimitRangeConverter）：
  *  - 关掉的类型不进 payload → 后端「建模类型未提及即删除」；
  *  - 类型内清空的字段（pair 两维度皆 null）省略 → 删除该字段；只填一个维度 → 只写该维度键。
- * 跨字段校验同 platform-api NamespaceService.validateLimitRange（max≥min、default≥defaultRequest、
- * ratio≥1，未填项跳过）：违规单元格红框 + 行内提示，isValid() 为 false 时父级阻断提交。
+ * 跨字段校验同 platform-api NamespaceService.validateLimitRange（max≥min、default≥defaultRequest，
+ * 未填项跳过）：违规单元格红框 + 行内提示，isValid() 为 false 时父级阻断提交。
  */
 const props = defineProps<{ clusterId: string; namespace: string }>()
 
 const SINGLE_NAME = 'default'
 
-type LrType = 'Container' | 'Pod' | 'PersistentVolumeClaim'
-type LrField = 'max' | 'min' | 'defaultValue' | 'defaultRequest' | 'maxLimitRequestRatio'
+type LrType = 'Container' | 'PersistentVolumeClaim'
+type LrField = 'max' | 'min' | 'defaultValue' | 'defaultRequest'
 type LrDim = 'cpu' | 'memory'
 
 /** 三类型的展示文案：scope = 数值作用对象（写进各字段 tip），hint = 类型级说明 */
@@ -35,16 +35,12 @@ const LR_TYPES: { type: LrType; label: string; scope: string; hint: string }[] =
     hint: '约束 Pod 内的单个容器：K8s 为未写 limit/request 的容器注入 default/defaultRequest，并拒绝超出 max、低于 min 的取值。',
   },
   {
-    type: 'Pod', label: 'Pod（Pod）', scope: '单个 Pod',
-    hint: '约束整个 Pod：其值按 Pod 内所有容器之和计算（max/min 为该总和的上下限）。default/defaultRequest 对 Pod 级不生效（K8s 只在容器级注入）。',
-  },
-  {
     type: 'PersistentVolumeClaim', label: '存储声明（PersistentVolumeClaim）', scope: '单个 PVC',
     hint: '约束 PVC。注意 K8s 此处作用于存储容量（storage 维度），平台契约仅建模 cpu/memory 两项，故该组一般留空；PVC 的存储总量请用资源配额。',
   },
 ]
 
-const LR_FIELDS: { key: LrField; label: string; kind: 'bound' | 'injected' | 'ratio'; tip: string }[] = [
+const LR_FIELDS: { key: LrField; label: string; kind: 'bound' | 'injected'; tip: string }[] = [
   {
     key: 'max', label: 'max（上限）', kind: 'bound',
     tip: '{scope}可设置的最大值（spec.limits[].max）。低于该值的取值被拒绝。留空 = 不设。',
@@ -61,10 +57,6 @@ const LR_FIELDS: { key: LrField; label: string; kind: 'bound' | 'injected' | 'ra
     key: 'defaultRequest', label: 'defaultRequest（缺省 request）', kind: 'injected',
     tip: '{scope}未显式写 requests 时，K8s 自动注入的 request 默认值（spec.limits[].defaultRequest）。不得大于 default。',
   },
-  {
-    key: 'maxLimitRequestRatio', label: 'maxLimitRequestRatio', kind: 'ratio',
-    tip: '{scope}的 limits ÷ requests 允许的最大倍数（spec.limits[].maxLimitRequestRatio），需 ≥ 1，无量纲（填 2 = limit 最多为 request 的 2 倍）。',
-  },
 ]
 
 const LR_DIMS: { key: LrDim; label: string; unit: string }[] = [
@@ -78,7 +70,6 @@ const PLACEHOLDER: Record<string, string> = {
   'min|cpu': '100', 'min|memory': '128',
   'defaultValue|cpu': '1000', 'defaultValue|memory': '2048',
   'defaultRequest|cpu': '200', 'defaultRequest|memory': '512',
-  'maxLimitRequestRatio|cpu': '2', 'maxLimitRequestRatio|memory': '2',
 }
 
 interface TypeState { enabled: boolean; cells: Record<string, number | null> }
@@ -98,7 +89,6 @@ const enabled = ref(false)
 const loadFailed = ref(false)
 const state = reactive<Record<LrType, TypeState>>({
   Container: emptyType(),
-  Pod: emptyType(),
   PersistentVolumeClaim: emptyType(),
 })
 
@@ -106,33 +96,21 @@ function cellKey(field: LrField, dim: LrDim): string {
   return `${field}|${dim}`
 }
 
-/** ratio 无量纲（可含小数，如 1.5）；其余维度值经固定单位换算 */
-function unitOf(field: LrField, dim: LrDim): 'm' | 'Mi' | null {
-  if (field === 'maxLimitRequestRatio') return null
+/** 维度值经固定单位换算：cpu→m、memory→Mi */
+function unitOf(dim: LrDim): 'm' | 'Mi' {
   return dim === 'cpu' ? 'm' : 'Mi'
-}
-
-/** 无量纲数值：剥非数字字符（保留一个小数点）→ number；空/非法 → null */
-function decimalOrNull(raw: number | string | null | undefined): number | null {
-  const s = String(raw ?? '').replace(/[^\d.]/g, '')
-  if (s === '') return null
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
 }
 
 function displayOf(type: LrType, field: LrField, dim: LrDim): number | null {
   const v = state[type].cells[cellKey(field, dim)]
   if (v == null) return null
-  const unit = unitOf(field, dim)
-  if (unit === 'm') return coresToMilli(v)
-  if (unit === 'Mi') return bytesToMi(v)
-  return v
+  const unit = unitOf(dim)
+  return unit === 'm' ? coresToMilli(v) : bytesToMi(v)
 }
 
 function onCell(type: LrType, field: LrField, dim: LrDim, raw: number | string | null | undefined): void {
-  const unit = unitOf(field, dim)
-  state[type].cells[cellKey(field, dim)] =
-    unit === 'm' ? milliToCores(raw) : unit === 'Mi' ? miToBytes(raw) : decimalOrNull(raw)
+  const unit = unitOf(dim)
+  state[type].cells[cellKey(field, dim)] = unit === 'm' ? milliToCores(raw) : miToBytes(raw)
 }
 
 function fieldTip(f: (typeof LR_FIELDS)[number], scope: string): string {
@@ -166,10 +144,6 @@ function typeIssues(type: LrType): Issue[] {
         keys: [issueKey(type, 'defaultValue', d.key), issueKey(type, 'defaultRequest', d.key)],
         msg: `${label} ${d.label}：defaultRequest 不得大于 default`,
       })
-    }
-    const ratio = st.cells[cellKey('maxLimitRequestRatio', d.key)]
-    if (ratio != null && ratio < 1) {
-      out.push({ keys: [issueKey(type, 'maxLimitRequestRatio', d.key)], msg: `${label} ${d.label}：maxLimitRequestRatio 不得小于 1` })
     }
   }
   return out
@@ -306,7 +280,7 @@ defineExpose({ load, toPayload, hasAnyValue, isValid, enabled, loadFailed })
           <span class="ls-type-switch">
             <span class="ls-switch-text">启用该类型</span>
             <el-switch v-model="state[t.type].enabled" @change="(v: boolean | string | number) => onToggleType(t.type, v)" />
-            <FieldHelp tip="关闭该类型并保存 = 从 LimitRange 中删除该类型的限制项（平台仅建模 Container / Pod / PersistentVolumeClaim 三类，其余类型原样保留）。" />
+            <FieldHelp tip="关闭该类型并保存 = 从 LimitRange 中删除该类型的限制项（平台仅建模 Container / PersistentVolumeClaim 两类，其余类型原样保留）。" />
           </span>
         </div>
 
@@ -319,7 +293,6 @@ defineExpose({ load, toPayload, hasAnyValue, isValid, enabled, loadFailed })
             v-for="f in LR_FIELDS"
             :key="f.key"
             class="ls-row"
-            :class="{ 'ls-row-ratio': f.kind === 'ratio' }"
           >
             <span class="ls-cell-label">
               {{ f.label }}
@@ -331,7 +304,7 @@ defineExpose({ load, toPayload, hasAnyValue, isValid, enabled, loadFailed })
                 :placeholder="PLACEHOLDER[`${f.key}|${d.key}`] ?? ''"
                 @update:model-value="(v: number | string | null | undefined) => onCell(t.type, f.key, d.key, v)"
               >
-                <template v-if="unitOf(f.key, d.key)" #append>{{ unitOf(f.key, d.key) }}</template>
+                <template v-if="unitOf(d.key)" #append>{{ unitOf(d.key) }}</template>
               </el-input>
             </span>
           </div>
@@ -339,7 +312,7 @@ defineExpose({ load, toPayload, hasAnyValue, isValid, enabled, loadFailed })
         </div>
         <div v-else class="ls-type-off">已关闭 —— 保存后该类型的限制项将被删除。</div>
       </div>
-      <div class="ls-foot">留空 = 该项不设约束；清空的项保存后会从该类型中删除。数值序约束：max ≥ min、default ≥ defaultRequest、ratio ≥ 1。</div>
+      <div class="ls-foot">留空 = 该项不设约束；清空的项保存后会从该类型中删除。数值序约束：max ≥ min、default ≥ defaultRequest。</div>
     </div>
   </el-card>
 </template>

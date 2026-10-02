@@ -22,14 +22,14 @@ import java.util.Map;
  * core/v1 LimitRange ⇄ LimitRangeDTO。
  * <p>
  * spec.limits 是 {@code List<LimitRangeItem>} 且 K8s 侧无 patchMergeKey，属 SSA 下的 atomic list：
- * 省略某项 = 删除该项。故 update 必须 fetch-overlay，且<b>按 type 判别式对齐</b>（Container/Pod/
+ * 省略某项 = 删除该项。故 update 必须 fetch-overlay，且<b>按 type 判别式对齐</b>（Container/
  * PersistentVolumeClaim），而非 ServiceMonitor 端点那样的按 index 对齐——LimitRange 的语义身份是 type，
  * 与列表位置无关，index 对齐会在用户增删行时错位覆写错误的类型。
  * <p>
- * 字段级（5 个 map）语义与 ResourceQuota.hard 对称：DTO present→覆写、DTO null（或空 map）→删除；
+ * 字段级（4 个 map）语义与 ResourceQuota.hard 对称：DTO present→覆写、DTO null（或空 map）→删除；
  * 一个建模类型不在 DTO 列表内即被删除。⚠️ fabric8 7.6.1 坑：LimitRangeItem 的 max/min/_default/
- * defaultRequest/maxLimitRequestRatio 字段初始化为<b>空 LinkedHashMap 而非 null</b>，
- * 故 revert 必须把空 map 当 null（见 {@link #pairFrom}），否则每个 item 都带 5 对幽灵空值。
+ * defaultRequest 字段初始化为<b>空 LinkedHashMap 而非 null</b>，
+ * 故 revert 必须把空 map 当 null（见 {@link #pairFrom}），否则每个 item 都带 4 对幽灵空值。
  * <p>
  * 顺序契约（测试钉死）：建模类型按 DTO 顺序在前，未建模类型（如 ContainerFixed）按 live 顺序追加在后，
  * 且未建模类型恒原样存活。
@@ -37,11 +37,11 @@ import java.util.Map;
 public class CoreV1LimitRangeConverter implements CommonConverter<LimitRange, LimitRangeDTO> {
 
     /** 建模类型；其余（ContainerFixed 等）由 overlay 原样保留 */
-    public static final List<String> MODELED_TYPES = List.of("Container", "Pod", "PersistentVolumeClaim");
+    public static final List<String> MODELED_TYPES = List.of("Container", "PersistentVolumeClaim");
 
     /** 每个 item 内建模的字段（present→覆写、absent→删除） */
     public static final List<String> MODELED_ITEM_FIELDS =
-            List.of("max", "min", "default", "defaultRequest", "maxLimitRequestRatio");
+            List.of("max", "min", "default", "defaultRequest");
 
     @Override
     public LimitRange convert(LimitRangeDTO dto) {
@@ -86,7 +86,7 @@ public class CoreV1LimitRangeConverter implements CommonConverter<LimitRange, Li
     /**
      * update 专用 fetch-overlay：以线上对象为底，按 type 对齐做字段级覆写/删除（统一删除语义）。
      * <p>DTO 的 limits 即「用户想要的建模类型全集」。结果 = [DTO 顺序的建模类型（每个以 live 同 type item 为底做
-     * 5 字段 present→覆写/absent→删除，live 无同 type 则全新构建）] ++ [live 中的未建模类型，按 live 顺序原样追加]。
+     * 4 字段 present→覆写/absent→删除，live 无同 type 则全新构建）] ++ [live 中的未建模类型，按 live 顺序原样追加]。
      * <ul>
      *   <li>DTO 出现但 live 没有的建模类型 → 新增。</li>
      *   <li><b>live 有而 DTO 未提及的建模类型 → 删除</b>（不保留：步骤 2 只发射 DTO 里的项，未提及者不入结果）。
@@ -136,7 +136,8 @@ public class CoreV1LimitRangeConverter implements CommonConverter<LimitRange, Li
 
     /**
      * DTO item → fabric8 item。base 非空时以线上 item 为底（保留 additionalProperties 等），
-     * 5 个建模字段一律按 DTO 覆写：present→withXxx(map)、null→withXxx(null)（删除）。
+     * 4 个建模字段一律按 DTO 覆写：present→withXxx(map)、null→withXxx(null)（删除）。
+     * 未建模字段（如 maxLimitRequestRatio）不在 DTO 内，base 非空时随 toBuilder() 原样保留。
      */
     private LimitRangeItem toItem(LimitRangeItemDTO d, LimitRangeItem base) {
         LimitRangeItemBuilder b = base != null ? base.toBuilder() : new LimitRangeItemBuilder();
@@ -145,7 +146,6 @@ public class CoreV1LimitRangeConverter implements CommonConverter<LimitRange, Li
         b.withMin(pairToMap(d.getMin()));
         b.withDefault(pairToMap(d.getDefaultValue()));
         b.withDefaultRequest(pairToMap(d.getDefaultRequest()));
-        b.withMaxLimitRequestRatio(pairToMap(d.getMaxLimitRequestRatio()));
         return b.build();
     }
 
@@ -156,7 +156,6 @@ public class CoreV1LimitRangeConverter implements CommonConverter<LimitRange, Li
         dto.setMin(pairFrom(item.getMin()));
         dto.setDefaultValue(pairFrom(item.getDefault()));
         dto.setDefaultRequest(pairFrom(item.getDefaultRequest()));
-        dto.setMaxLimitRequestRatio(pairFrom(item.getMaxLimitRequestRatio()));
         return dto;
     }
 
@@ -179,7 +178,7 @@ public class CoreV1LimitRangeConverter implements CommonConverter<LimitRange, Li
 
     /**
      * map → ResourcePairDTO。<b>空 map 视为 null</b>（fabric8 7.6.1 坑：字段默认是空 LinkedHashMap 而非 null），
-     * 否则每个 item 反序列化都带 5 对幽灵空值。
+     * 否则每个 item 反序列化都带 4 对幽灵空值。
      */
     private ResourcePairDTO pairFrom(Map<String, Quantity> m) {
         if (m == null || m.isEmpty()) {

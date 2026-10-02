@@ -20,17 +20,8 @@ import java.math.BigDecimal;
 @Schema(description = "命名空间资源配额")
 public class ResourceQuotaDTO extends BaseResources {
 
-    @Schema(description = "CPU 上限（核）→ hard.cpu")
-    private BigDecimal cpu;
-
-    @Schema(description = "内存上限（字节）→ hard.memory")
-    private BigDecimal memory;
-
     @Schema(description = "Pod 数上限 → hard.pods")
     private Integer pods;
-
-    @Schema(description = "Service 数上限 → hard.services")
-    private Integer services;
 
     @Schema(description = "容器 limit CPU 总和上限（核）→ hard.\"limits.cpu\"")
     private BigDecimal limitsCpu;

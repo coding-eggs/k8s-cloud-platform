@@ -48,7 +48,7 @@ public class NamespaceService {
     private static final String SINGLE_NAME = "default";
 
     /** 与 k8s-core {@code CoreV1LimitRangeConverter.MODELED_TYPES} 同值（platform-api 不依赖 k8s-core，故本地重复声明，改一处需同步） */
-    private static final List<String> MODELED_LIMIT_TYPES = List.of("Container", "Pod", "PersistentVolumeClaim");
+    private static final List<String> MODELED_LIMIT_TYPES = List.of("Container", "PersistentVolumeClaim");
 
     private final K8sResourceClient k8s;
 
@@ -283,8 +283,6 @@ public class NamespaceService {
                     ResourcePairDTO::getCpu, "defaultRequest 不得大于 default");
             requireOrder(it.getDefaultValue(), it.getDefaultRequest(), it.getType(), "memory",
                     ResourcePairDTO::getMemory, "defaultRequest 不得大于 default");
-            requireRatioAtLeastOne(it.getMaxLimitRequestRatio(), it.getType(), "cpu", ResourcePairDTO::getCpu);
-            requireRatioAtLeastOne(it.getMaxLimitRequestRatio(), it.getType(), "memory", ResourcePairDTO::getMemory);
         }
     }
 
@@ -301,20 +299,6 @@ public class NamespaceService {
         }
         throw new CloudPlatformException(EnumResponseType.LIMIT_RANGE_VALUE_INVALID,
                 EnumResponseType.LIMIT_RANGE_VALUE_INVALID.getMsg() + "（" + type + " " + resource + " " + reason + "）");
-    }
-
-    /** maxLimitRequestRatio 该资源项不得 < 1 */
-    private void requireRatioAtLeastOne(ResourcePairDTO ratio, String type, String resource,
-                                        Function<ResourcePairDTO, BigDecimal> field) {
-        if (ratio == null) {
-            return;
-        }
-        BigDecimal value = field.apply(ratio);
-        if (value != null && value.compareTo(BigDecimal.ONE) < 0) {
-            throw new CloudPlatformException(EnumResponseType.LIMIT_RANGE_VALUE_INVALID,
-                    EnumResponseType.LIMIT_RANGE_VALUE_INVALID.getMsg() + "（" + type + " " + resource
-                            + " maxLimitRequestRatio 不得小于 1）");
-        }
     }
 
     private ResourceQuotaDTO quotaDto(String clusterId, String namespace) {

@@ -52,7 +52,7 @@ class CoreV1LimitRangeConverterTest {
     void revert_treats_empty_maps_as_null_not_empty_pairs() {
         // fabric8 坑：LimitRangeItem.getMax()/getDefault() 返回空可变 map 而非 null
         LimitRangeItem item = new io.fabric8.kubernetes.api.model.LimitRangeItemBuilder()
-                .withType("Pod").withMax(Map.of()).build();
+                .withType("Container").withMax(Map.of()).build();
         LimitRangeItemDTO it = c.revert(live(item)).getLimits().get(0);
         assertThat(it.getMax()).isNull();
         assertThat(it.getDefaultValue()).isNull();
@@ -86,30 +86,30 @@ class CoreV1LimitRangeConverterTest {
         LimitRange live = live(
                 containerItem("4", "1"),                                                   // Container（旧值；DTO 也给 → 按 type 匹配覆写）
                 new io.fabric8.kubernetes.api.model.LimitRangeItemBuilder()
-                        .withType("Pod").withMax(Map.of("cpu", Quantity.parse("8"))).build(),
+                        .withType("PersistentVolumeClaim").withMax(Map.of("cpu", Quantity.parse("8"))).build(),
                 new io.fabric8.kubernetes.api.model.LimitRangeItemBuilder()
                         .withType("ContainerFixed").withMin(Map.of("cpu", Quantity.parse("100m"))).build()); // 未建模
 
         LimitRangeDTO d = new LimitRangeDTO();
         d.setName("default");
         d.setNamespace("ns1");
-        // 两个建模类型都给，且 DTO 顺序 Pod 在前（≠ live 的 Container 在前）→ 证明按 type 对齐、非按 index
-        LimitRangeItemDTO pod = new LimitRangeItemDTO();
-        pod.setType("Pod");
-        ResourcePairDTO podMax = new ResourcePairDTO();
-        podMax.setCpu(new BigDecimal("16"));
-        pod.setMax(podMax);
+        // 两个建模类型都给，且 DTO 顺序 PVC 在前（≠ live 的 Container 在前）→ 证明按 type 对齐、非按 index
+        LimitRangeItemDTO pvc = new LimitRangeItemDTO();
+        pvc.setType("PersistentVolumeClaim");
+        ResourcePairDTO pvcMax = new ResourcePairDTO();
+        pvcMax.setCpu(new BigDecimal("16"));
+        pvc.setMax(pvcMax);
         LimitRangeItemDTO container = new LimitRangeItemDTO();
         container.setType("Container");
         ResourcePairDTO cMax = new ResourcePairDTO();
         cMax.setCpu(new BigDecimal("2"));
         container.setMax(cMax);            // 只给 max → live 的 min 应被字段级删除
-        d.setLimits(List.of(pod, container));
+        d.setLimits(List.of(pvc, container));
 
         List<LimitRangeItem> out = c.convertForUpdate(d, live).getSpec().getLimits();
-        // 规则：建模类型按 DTO 顺序（Pod, Container）→ 未建模类型按 live 顺序追加（ContainerFixed）
-        assertThat(out).extracting(LimitRangeItem::getType).containsExactly("Pod", "Container", "ContainerFixed");
-        assertThat(out.get(0).getMax()).containsEntry("cpu", Quantity.parse("16"));           // Pod 按 type 匹配覆写（live[0] 本是 Container，index 对齐会错拿它）
+        // 规则：建模类型按 DTO 顺序（PVC, Container）→ 未建模类型按 live 顺序追加（ContainerFixed）
+        assertThat(out).extracting(LimitRangeItem::getType).containsExactly("PersistentVolumeClaim", "Container", "ContainerFixed");
+        assertThat(out.get(0).getMax()).containsEntry("cpu", Quantity.parse("16"));           // PVC 按 type 匹配覆写（live[0] 本是 Container，index 对齐会错拿它）
         assertThat(out.get(1).getMax()).containsEntry("cpu", Quantity.parse("2"));            // Container 覆写
         assertThat(out.get(1).getMin()).isNullOrEmpty();                                      // Container.min DTO 未给 → 字段级删除
         assertThat(out.get(2).getMin()).containsEntry("cpu", Quantity.parse("100m"));         // ContainerFixed 整体存活
@@ -117,21 +117,21 @@ class CoreV1LimitRangeConverterTest {
 
     @Test
     void convert_for_update_drops_modeled_type_not_mentioned_in_dto() {
-        // T11 场景：用户关掉 Container、保留 Pod → DTO 只含 Pod → Container 必须删（统一删除语义，非「保留未提及」）
+        // 场景：用户关掉 Container、保留 PVC → DTO 只含 PVC → Container 必须删（统一删除语义，非「保留未提及」）
         LimitRange live = live(containerItem("4", "1"),
-                new io.fabric8.kubernetes.api.model.LimitRangeItemBuilder().withType("Pod")
+                new io.fabric8.kubernetes.api.model.LimitRangeItemBuilder().withType("PersistentVolumeClaim")
                         .withMax(Map.of("cpu", Quantity.parse("8"))).build());
         LimitRangeDTO d = new LimitRangeDTO();
         d.setName("default");
         d.setNamespace("ns1");
-        LimitRangeItemDTO pod = new LimitRangeItemDTO();
-        pod.setType("Pod");
+        LimitRangeItemDTO pvc = new LimitRangeItemDTO();
+        pvc.setType("PersistentVolumeClaim");
         ResourcePairDTO m = new ResourcePairDTO();
         m.setCpu(new BigDecimal("8"));
-        pod.setMax(m);
-        d.setLimits(List.of(pod));   // Container 未提及
+        pvc.setMax(m);
+        d.setLimits(List.of(pvc));   // Container 未提及
         List<LimitRangeItem> out = c.convertForUpdate(d, live).getSpec().getLimits();
-        assertThat(out).extracting(LimitRangeItem::getType).containsExactly("Pod");   // Container 删除
+        assertThat(out).extracting(LimitRangeItem::getType).containsExactly("PersistentVolumeClaim");   // Container 删除
     }
 
     @Test
@@ -154,12 +154,12 @@ class CoreV1LimitRangeConverterTest {
     @Test
     void convert_for_update_drops_modeled_type_absent_from_dto() {
         LimitRange live = live(containerItem("4", "1"),
-                new io.fabric8.kubernetes.api.model.LimitRangeItemBuilder().withType("Pod")
+                new io.fabric8.kubernetes.api.model.LimitRangeItemBuilder().withType("PersistentVolumeClaim")
                         .withMax(Map.of("cpu", Quantity.parse("8"))).build());
         LimitRangeDTO d = new LimitRangeDTO();
         d.setName("default");
         d.setLimits(List.of());   // 用户清空全部建模类型
         List<LimitRangeItem> out = c.convertForUpdate(d, live).getSpec().getLimits();
-        assertThat(out).extracting(LimitRangeItem::getType).doesNotContain("Container", "Pod");
+        assertThat(out).extracting(LimitRangeItem::getType).doesNotContain("Container", "PersistentVolumeClaim");
     }
 }

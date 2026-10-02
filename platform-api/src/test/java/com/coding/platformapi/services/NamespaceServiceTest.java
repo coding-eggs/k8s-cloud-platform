@@ -159,7 +159,7 @@ class NamespaceServiceTest {
         ResourceQuotaDTO q = new ResourceQuotaDTO();
         // 空白名 → 静默改写为 default（非空且非 default 的入参名由 quota_upsert_rejects_non_default_incoming_name 锁定为拒绝）
         q.setName("");
-        q.setCpu(new BigDecimal("2"));
+        q.setRequestsCpu(new BigDecimal("2"));
         req.setQuota(q);
         svc.quotaUpsert(req);
         ArgumentCaptor<ResourceQuotaDTO> cap = ArgumentCaptor.forClass(ResourceQuotaDTO.class);
@@ -167,7 +167,7 @@ class NamespaceServiceTest {
         assertThat(cap.getValue().getName()).isEqualTo("default");
         assertThat(cap.getValue().getNamespace()).isEqualTo("ns1");
         assertThat(cap.getValue().getClusterId()).isEqualTo("c1");
-        assertThat(cap.getValue().getCpu()).isEqualByComparingTo("2");
+        assertThat(cap.getValue().getRequestsCpu()).isEqualByComparingTo("2");
     }
 
     @Test
@@ -267,7 +267,7 @@ class NamespaceServiceTest {
         assertThatThrownBy(() -> svc.limitRangeUpsert(req))
                 .isInstanceOf(CloudPlatformException.class)
                 .hasFieldOrPropertyWithValue("code", EnumResponseType.LIMIT_RANGE_TYPE_UNSUPPORTED.getCode())
-                .hasMessageContaining("Container / Pod / PersistentVolumeClaim")
+                .hasMessageContaining("Container / PersistentVolumeClaim")
                 .hasMessageContaining("ContainerFixed");
         verify(k8s, never()).create(any(LimitRangeDTO.class));
     }
@@ -326,29 +326,6 @@ class NamespaceServiceTest {
     }
 
     @Test
-    void limitrange_upsert_rejects_ratio_below_one() {
-        clusterExists();
-        managedNamespaceExists();
-        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
-        NamespaceLimitRangeUpsertRequest req = new NamespaceLimitRangeUpsertRequest();
-        req.setClusterId("c1");
-        req.setNamespace("ns1");
-        LimitRangeDTO lr = new LimitRangeDTO();
-        LimitRangeItemDTO it = new LimitRangeItemDTO();
-        it.setType("Container");
-        ResourcePairDTO ratio = new ResourcePairDTO();
-        ratio.setCpu(new BigDecimal("0.5"));   // < 1 → 非法
-        it.setMaxLimitRequestRatio(ratio);
-        lr.setLimits(List.of(it));
-        req.setLimitRange(lr);
-        assertThatThrownBy(() -> svc.limitRangeUpsert(req))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasFieldOrPropertyWithValue("code", EnumResponseType.LIMIT_RANGE_VALUE_INVALID.getCode())
-                .hasMessageContaining("Container cpu maxLimitRequestRatio 不得小于 1");
-        verify(k8s, never()).create(any(LimitRangeDTO.class));
-    }
-
-    @Test
     void limitrange_upsert_forces_default_name_and_creates_when_absent() {
         clusterExists();
         managedNamespaceExists();
@@ -360,7 +337,7 @@ class NamespaceServiceTest {
         LimitRangeDTO lr = new LimitRangeDTO();
         lr.setName("");   // 空白名 → 静默改写为 default
         LimitRangeItemDTO it = new LimitRangeItemDTO();
-        it.setType("Pod");
+        it.setType("Container");
         lr.setLimits(List.of(it));
         req.setLimitRange(lr);
         svc.limitRangeUpsert(req);

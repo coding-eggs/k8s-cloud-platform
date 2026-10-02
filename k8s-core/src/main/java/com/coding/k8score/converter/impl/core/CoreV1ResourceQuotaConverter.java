@@ -17,7 +17,7 @@ import java.util.Map;
  * core/v1 ResourceQuota ⇄ ResourceQuotaDTO。
  * <p>
  * hard 是普通 Map&lt;String,Quantity&gt;，故 overlay 比 ServiceMonitor 的 atomic list 简单（无需索引对齐）：
- * 以线上 hard 为底 → 9 个建模键 present→覆写 / absent→删除 → 未建模键（count/*、limits.ephemeral-storage 等）存活。
+ * 以线上 hard 为底 → 6 个建模键 present→覆写 / absent→删除 → 未建模键（cpu/memory/services、count/*、limits.ephemeral-storage 等）存活。
  * 这一步是<b>必需</b>的：SSA 下 platform-system 拥有整个 hard map，省略一个已拥有的键 = 删除该键。
  * <p>
  * K8s 资源名一律全小写（persistentvolumeclaims 不是 persistentVolumeClaims）；带点号的是合法 key，无需转义。
@@ -26,7 +26,7 @@ public class CoreV1ResourceQuotaConverter implements CommonConverter<ResourceQuo
 
     /** 建模的 hard 键（权威清单；测试逐条断言其语义）。值 = DTO 字段名映射目标 */
     public static final List<String> MODELED_HARD_KEYS = List.of(
-            "cpu", "memory", "pods", "services",
+            "pods",
             "limits.cpu", "limits.memory", "requests.cpu", "requests.memory",
             "persistentvolumeclaims");
 
@@ -86,10 +86,7 @@ public class CoreV1ResourceQuotaConverter implements CommonConverter<ResourceQuo
     /** DTO → hard（只写非 null 项；顺序与 MODELED_HARD_KEYS 一致便于比对） */
     private Map<String, Quantity> toHard(ResourceQuotaDTO dto) {
         Map<String, Quantity> hard = new LinkedHashMap<>();
-        putDecimal(hard, "cpu", dto.getCpu());
-        putDecimal(hard, "memory", dto.getMemory());
         putCount(hard, "pods", dto.getPods());
-        putCount(hard, "services", dto.getServices());
         putDecimal(hard, "limits.cpu", dto.getLimitsCpu());
         putDecimal(hard, "limits.memory", dto.getLimitsMemory());
         putDecimal(hard, "requests.cpu", dto.getRequestsCpu());
@@ -104,14 +101,11 @@ public class CoreV1ResourceQuotaConverter implements CommonConverter<ResourceQuo
         if (base == null) {
             return;
         }
-        dto.setCpu(base.get("cpu"));
-        dto.setMemory(base.get("memory"));
         dto.setLimitsCpu(base.get("limits.cpu"));
         dto.setLimitsMemory(base.get("limits.memory"));
         dto.setRequestsCpu(base.get("requests.cpu"));
         dto.setRequestsMemory(base.get("requests.memory"));
         dto.setPods(count(base, "pods"));
-        dto.setServices(count(base, "services"));
         dto.setPersistentVolumeClaims(count(base, "persistentvolumeclaims"));
     }
 
@@ -121,14 +115,11 @@ public class CoreV1ResourceQuotaConverter implements CommonConverter<ResourceQuo
             return null;
         }
         ResourceQuotaUsedDTO u = new ResourceQuotaUsedDTO();
-        u.setCpu(base.get("cpu"));
-        u.setMemory(base.get("memory"));
         u.setLimitsCpu(base.get("limits.cpu"));
         u.setLimitsMemory(base.get("limits.memory"));
         u.setRequestsCpu(base.get("requests.cpu"));
         u.setRequestsMemory(base.get("requests.memory"));
         u.setPods(count(base, "pods"));
-        u.setServices(count(base, "services"));
         u.setPersistentVolumeClaims(count(base, "persistentvolumeclaims"));
         return u;
     }

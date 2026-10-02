@@ -92,7 +92,7 @@ public class NamespaceController {
     }
 
     @PostMapping("/limitrange/upsert")
-    @Operation(summary = "创建/更新命名空间限制范围", description = "对象名固定 default；类型仅支持 Container / Pod / PersistentVolumeClaim，且校验 max≥min、default≥defaultRequest、maxLimitRequestRatio≥1；仅平台创建的命名空间可操作")
+    @Operation(summary = "创建/更新命名空间限制范围", description = "对象名固定 default；类型仅支持 Container / PersistentVolumeClaim，且校验 max≥min、default≥defaultRequest；仅平台创建的命名空间可操作")
     public ResponseData<LimitRangeDTO> limitRangeUpsert(@RequestBody NamespaceLimitRangeUpsertRequest request) {
         return new ResponseData<>(namespaceService.limitRangeUpsert(request));
     }

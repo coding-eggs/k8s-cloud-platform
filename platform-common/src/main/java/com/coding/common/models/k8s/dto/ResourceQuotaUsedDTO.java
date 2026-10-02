@@ -14,17 +14,8 @@ import java.math.BigDecimal;
 @Schema(description = "命名空间资源配额已用量（只读）")
 public class ResourceQuotaUsedDTO {
 
-    @Schema(description = "已用 CPU（核）")
-    private BigDecimal cpu;
-
-    @Schema(description = "已用内存（字节）")
-    private BigDecimal memory;
-
     @Schema(description = "已用 Pod 数")
     private Integer pods;
-
-    @Schema(description = "已用 Service 数")
-    private Integer services;
 
     @Schema(description = "已用容器 limit CPU 总和（核）")
     private BigDecimal limitsCpu;

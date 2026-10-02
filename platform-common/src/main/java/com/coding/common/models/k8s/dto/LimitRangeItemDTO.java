@@ -27,7 +27,4 @@ public class LimitRangeItemDTO {
 
     @Schema(description = "默认请求量 → defaultRequest")
     private ResourcePairDTO defaultRequest;
-
-    @Schema(description = "limit/request 最大比值 → maxLimitRequestRatio")
-    private ResourcePairDTO maxLimitRequestRatio;
 }

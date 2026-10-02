@@ -177,14 +177,11 @@ function phaseType(phase?: string | null): 'success' | 'warning' | 'info' {
   return 'info'
 }
 
-// ---- 资源配额表格：9 行，顺序 = 后端 MODELED_HARD_KEYS ----
+// ---- 资源配额表格：6 行，顺序 = 后端 MODELED_HARD_KEYS ----
 type QuotaKind = 'cpu' | 'memory' | 'count'
 interface QuotaRowDef { key: keyof K8sResourceQuota & keyof K8sResourceQuotaUsed; label: string; kind: QuotaKind }
 const QUOTA_ROWS: QuotaRowDef[] = [
-  { key: 'cpu', label: 'cpu', kind: 'cpu' },
-  { key: 'memory', label: 'memory', kind: 'memory' },
   { key: 'pods', label: 'pods', kind: 'count' },
-  { key: 'services', label: 'services', kind: 'count' },
   { key: 'limitsCpu', label: 'limits.cpu', kind: 'cpu' },
   { key: 'limitsMemory', label: 'limits.memory', kind: 'memory' },
   { key: 'requestsCpu', label: 'requests.cpu', kind: 'cpu' },
@@ -226,42 +223,36 @@ const quotaRows = computed<QuotaRow[]>(() => {
   })
 })
 
-/** 概览用量摘要：cpu / memory / pods 的 used / hard 三行 */
+/** 概览用量摘要：requests.cpu / requests.memory / pods 的 used / hard 三行 */
 const usageSummary = computed<QuotaRow[]>(() =>
-  (['cpu', 'memory', 'pods'] as const)
+  (['requestsCpu', 'requestsMemory', 'pods'] as const)
     .map((k) => quotaRows.value.find((r) => r.key === k))
     .filter((r): r is QuotaRow => r != null),
 )
 
-// ---- 限制范围：按类型分组（行 = max/min/default/defaultRequest/maxLimitRequestRatio，列 = cpu/memory）----
+// ---- 限制范围：按类型分组（行 = max/min/default/defaultRequest，列 = cpu/memory）----
 const LIMIT_FIELDS: { field: keyof Omit<K8sLimitRangeItem, 'type'>; label: string }[] = [
   { field: 'max', label: 'max' },
   { field: 'min', label: 'min' },
   { field: 'defaultValue', label: 'default' },
   { field: 'defaultRequest', label: 'defaultRequest' },
-  { field: 'maxLimitRequestRatio', label: 'maxLimitRequestRatio' },
 ]
-const LIMIT_TYPES = ['Container', 'Pod', 'PersistentVolumeClaim']
+const LIMIT_TYPES = ['Container', 'PersistentVolumeClaim']
 
 interface LimitRow { label: string; cpu: string; memory: string }
 interface LimitSection { type: string; rows: LimitRow[] }
 
 const limitSections = computed<LimitSection[]>(() => {
   const items = lrItems.value
-  const types = [...new Set([...LIMIT_TYPES, ...items.map((i) => i.type)])]
-  return types.map((type) => {
+  // 只展示平台建模的两类（Container / PersistentVolumeClaim）；集群里其它类型（Pod/ContainerFixed 等）
+  // 由 overlay 原样保留，不在结构化表格呈现（完整内容见 YAML tab）
+  return LIMIT_TYPES.map((type) => {
     const item = items.find((i) => i.type === type)
     const rows: LimitRow[] = []
     for (const def of LIMIT_FIELDS) {
       const pair = item?.[def.field]
       if (pair?.cpu == null && pair?.memory == null) continue // 整行无值 → 不展示
-      // maxLimitRequestRatio 是无量纲比值（后端仅校验 ≥1），两列均按纯数字展示，勿套字节/核数单位
-      const ratio = def.field === 'maxLimitRequestRatio'
-      rows.push({
-        label: def.label,
-        cpu: ratio ? numText(pair?.cpu, 'count') : pairText(pair, 'cpu'),
-        memory: ratio ? numText(pair?.memory, 'count') : pairText(pair, 'memory'),
-      })
+      rows.push({ label: def.label, cpu: pairText(pair, 'cpu'), memory: pairText(pair, 'memory') })
     }
     return { type, rows }
   })
