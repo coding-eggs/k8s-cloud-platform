@@ -146,6 +146,8 @@ export interface NamespaceView {
   phase?: string | null
   creationTimestamp?: string | null
   managedBy: boolean
+  /** 是否可编辑/删除/设配额（false = 命中受保护系统命名空间名单） */
+  editable: boolean
   allocatedTenantName?: string | null
   /** 描述（metadata.annotations["description"]） */
   description?: string | null

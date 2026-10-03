@@ -220,13 +220,13 @@ function onRowCommand(cmd: string, row: K8sWorkload): void {
   }
 }
 
-// ---------- 上下文联动：顶栏 chip 变化时刷新 ----------
+// ---------- 上下文联动：顶栏 chip 变化或 ready false→true 时刷新（恢复的持久化选择字段不变、只有 ready 翻真，必须 watch） ----------
 onMounted(() => {
   void load()
   void refresh()
 })
 watch(
-  () => [state.tenantId, state.clusterId, state.namespace],
+  [() => [state.tenantId, state.clusterId, state.namespace], ready],
   () => {
     if (ready.value) void refresh()
   },

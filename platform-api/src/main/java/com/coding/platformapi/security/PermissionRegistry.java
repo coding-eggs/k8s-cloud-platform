@@ -11,16 +11,24 @@ import java.util.Set;
 /**
  * URL → 权限 code 注册表（表驱动，ANY-of 语义）。
  * 启动时由 {@link PermissionRegistryFactory} 从 platform_permission（API 域）加载。
+ *
+ * <p>热加载：{@link #replaceRules} 原子换整表 —— 读方（每请求调 {@link #requiredCodes}）
+ * 只看到整旧或整新快照，不会新旧混合；AntPathMatcher 线程安全，无需加锁。
  */
 public final class PermissionRegistry {
 
     /** 一条规则：HTTP 方法 + Ant 风格路径 + 权限 code。 */
     public record Rule(String method, String pattern, String code) {}
 
-    private final List<Rule> rules;
+    private volatile List<Rule> rules;
     private final AntPathMatcher matcher = new AntPathMatcher();
 
     public PermissionRegistry(Collection<Rule> rules) {
+        this.rules = List.copyOf(rules);
+    }
+
+    /** 热加载：原子替换整表（不可变快照）。权限点 CRUD/重载在 DB 提交后调用。 */
+    public void replaceRules(Collection<Rule> rules) {
         this.rules = List.copyOf(rules);
     }
 

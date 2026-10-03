@@ -1,7 +1,11 @@
 package com.coding.platformapi.security;
 
+import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
+import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 交叉核账：endpoint × 权限表（Task 11）。表驱动授权（Task 10）默认拒绝，
@@ -20,6 +24,29 @@ public final class PermissionCrossCheck {
     public record Endpoint(String method, String pattern) {}
 
     private PermissionCrossCheck() {}
+
+    /**
+     * 枚举主 MVC 映射的全部活端点（无 method 条件 → {@code "*"}）。
+     * 启动交叉校验（PermissionCrossCheckRunner）与权限点管理写前校验共用同一语义。
+     */
+    public static List<Endpoint> liveEndpoints(RequestMappingHandlerMapping handlerMapping) {
+        List<Endpoint> eps = new ArrayList<>();
+        for (RequestMappingInfo info : handlerMapping.getHandlerMethods().keySet()) {
+            Set<String> patterns = info.getPatternValues();
+            var methods = info.getMethodsCondition().getMethods();
+            if (patterns.isEmpty()) {
+                continue;
+            }
+            for (String p : patterns) {
+                if (methods.isEmpty()) {
+                    eps.add(new Endpoint("*", p));
+                } else {
+                    methods.forEach(m -> eps.add(new Endpoint(m.name(), p)));
+                }
+            }
+        }
+        return eps;
+    }
 
     /** 返回未被任何权限行、且非豁免的 endpoint（启动应失败）。 */
     public static List<Endpoint> uncoveredEndpoints(List<Endpoint> endpoints, PermissionRegistry reg) {

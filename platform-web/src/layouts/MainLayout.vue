@@ -6,6 +6,7 @@ import { getTheme, toggleTheme } from '@/utils/theme'
 import ContextSelector from '@/components/ContextSelector.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
 import { usePermission } from '@/stores/permission'
+import { resCodes } from '@/permCodes'
 
 const route = useRoute()
 const theme = ref(getTheme())
@@ -139,7 +140,7 @@ function handleLogout(): void {
           <template #title>总览</template>
         </el-menu-item>
 
-        <div v-if="can('platform:tenant:read') || can('tenant:overview:view') || can('platform:cluster:manage') || can('platform:allocation:list') || can('platform:template:manage') || can('platform:user:manage') || can('platform:role:manage')" class="menu-group">平台管理</div>
+        <div v-if="can('platform:cluster:manage') || can('platform:allocation:list') || can('platform:template:manage')" class="menu-group">平台管理</div>
         <el-menu-item v-if="can('platform:cluster:manage')" index="/clusters">
           <el-icon><Monitor /></el-icon>
           <template #title>集群管理</template>
@@ -147,15 +148,6 @@ function handleLogout(): void {
         <el-menu-item v-if="can('platform:cluster:manage')" index="/nodes">
           <el-icon><Cpu /></el-icon>
           <template #title>节点管理</template>
-        </el-menu-item>
-        <el-menu-item v-if="can('platform:tenant:read')" index="/tenants">
-          <el-icon><OfficeBuilding /></el-icon>
-          <template #title>租户管理</template>
-        </el-menu-item>
-        <!-- Task 18 裁定 #3：租户 hat 内、无代管权的成员 → 「我的租户」入口（不做路由自动跳转） -->
-        <el-menu-item v-if="perm.currentTenant && !can('platform:tenant:read')" index="/tenants/detail">
-          <el-icon><OfficeBuilding /></el-icon>
-          <template #title>我的租户</template>
         </el-menu-item>
         <el-menu-item v-if="can('platform:allocation:list')" index="/namespaces">
           <el-icon><FolderOpened /></el-icon>
@@ -165,6 +157,18 @@ function handleLogout(): void {
           <el-icon><CollectionTag /></el-icon>
           <template #title>RBAC 模板</template>
         </el-menu-item>
+
+        <!-- 用户与权限：租户/用户/角色/权限点收口一组（原散在平台管理，菜单过长） -->
+        <div v-if="can('platform:tenant:read') || (perm.currentTenant && !can('platform:tenant:read')) || can('platform:user:manage') || can('platform:role:manage')" class="menu-group">用户与权限</div>
+        <el-menu-item v-if="can('platform:tenant:read')" index="/tenants">
+          <el-icon><OfficeBuilding /></el-icon>
+          <template #title>租户管理</template>
+        </el-menu-item>
+        <!-- Task 18 裁定 #3：租户 hat 内、无代管权的成员 → 「我的租户」入口（不做路由自动跳转） -->
+        <el-menu-item v-if="perm.currentTenant && !can('platform:tenant:read')" index="/tenants/detail">
+          <el-icon><OfficeBuilding /></el-icon>
+          <template #title>我的租户</template>
+        </el-menu-item>
         <el-menu-item v-if="can('platform:user:manage')" index="/users">
           <el-icon><User /></el-icon>
           <template #title>用户管理</template>
@@ -173,49 +177,53 @@ function handleLogout(): void {
           <el-icon><Lock /></el-icon>
           <template #title>角色与权限</template>
         </el-menu-item>
+        <el-menu-item v-if="can('platform:role:manage')" index="/permissions">
+          <el-icon><Key /></el-icon>
+          <template #title>权限点</template>
+        </el-menu-item>
 
-        <div class="menu-group">工作负载</div>
-        <el-menu-item index="/resources/workloads">
+        <div v-if="can(resCodes.workload.list) || can(resCodes.pod.list) || can(resCodes.hpa.list)" class="menu-group">工作负载</div>
+        <el-menu-item v-if="can(resCodes.workload.list)" index="/resources/workloads">
           <el-icon><Box /></el-icon>
           <template #title>工作负载</template>
         </el-menu-item>
-        <el-menu-item index="/resources/pods">
+        <el-menu-item v-if="can(resCodes.pod.list)" index="/resources/pods">
           <el-icon><Cpu /></el-icon>
           <template #title>Pod</template>
         </el-menu-item>
-        <el-menu-item index="/resources/hpas">
+        <el-menu-item v-if="can(resCodes.hpa.list)" index="/resources/hpas">
           <el-icon><TrendCharts /></el-icon>
           <template #title>HPA</template>
         </el-menu-item>
 
-        <div class="menu-group">服务发现</div>
-        <el-menu-item index="/resources/services">
+        <div v-if="can(resCodes.service.list)" class="menu-group">服务发现</div>
+        <el-menu-item v-if="can(resCodes.service.list)" index="/resources/services">
           <el-icon><Link /></el-icon>
           <template #title>Service</template>
         </el-menu-item>
 
-        <div class="menu-group">配置管理</div>
-        <el-menu-item index="/resources/configmaps">
+        <div v-if="can(resCodes.configmap.list) || can(resCodes.secret.list)" class="menu-group">配置管理</div>
+        <el-menu-item v-if="can(resCodes.configmap.list)" index="/resources/configmaps">
           <el-icon><Document /></el-icon>
           <template #title>ConfigMap</template>
         </el-menu-item>
-        <el-menu-item index="/resources/secrets">
+        <el-menu-item v-if="can(resCodes.secret.list)" index="/resources/secrets">
           <el-icon><Key /></el-icon>
           <template #title>Secret</template>
         </el-menu-item>
 
-        <div class="menu-group">存储</div>
-        <el-menu-item index="/resources/pvcs">
+        <div v-if="can(resCodes.pvc.list)" class="menu-group">存储</div>
+        <el-menu-item v-if="can(resCodes.pvc.list)" index="/resources/pvcs">
           <el-icon><Coin /></el-icon>
           <template #title>PVC</template>
         </el-menu-item>
 
-        <div class="menu-group">监控告警</div>
-        <el-menu-item index="/resources/servicemonitors">
+        <div v-if="can(resCodes.servicemonitor.list) || can(resCodes.podmonitor.list)" class="menu-group">监控告警</div>
+        <el-menu-item v-if="can(resCodes.servicemonitor.list)" index="/resources/servicemonitors">
           <el-icon><DataLine /></el-icon>
           <template #title>ServiceMonitor</template>
         </el-menu-item>
-        <el-menu-item index="/resources/podmonitors">
+        <el-menu-item v-if="can(resCodes.podmonitor.list)" index="/resources/podmonitors">
           <el-icon><DataLine /></el-icon>
           <template #title>PodMonitor</template>
         </el-menu-item>

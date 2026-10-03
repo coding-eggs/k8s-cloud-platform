@@ -8,6 +8,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import KvTags from '@/components/KvTags.vue'
+import NamespaceMetricsPanel from '@/components/namespace/NamespaceMetricsPanel.vue'
 import { fmtDate } from '@/utils/format'
 import { formatQuantity } from '@/utils/quantity'
 
@@ -41,7 +42,11 @@ const activeTab = ref('overview')
 const quotaLoaded = ref(false)
 const lrLoaded = ref(false)
 const yamlLoaded = ref(false)
-const notManaged = ref(false)
+/** 受保护系统命名空间：写操作被后端拒，配额/限制范围降级为「不可修改」空态 */
+const isProtected = computed(() => ns.value != null && ns.value.editable === false)
+
+/** 概览页监控指标面板（4 图）；随「立即刷新」一起重取 */
+const metricsRef = ref<InstanceType<typeof NamespaceMetricsPanel> | null>(null)
 
 const lrItems = computed<K8sLimitRangeItem[]>(() => lr.value?.limits ?? [])
 const lrMultiple = computed(() => lr.value?.multiple === true)
@@ -63,10 +68,8 @@ async function refresh(): Promise<void> {
     lr.value = null
     yamlText.value = ''
     quotaLoaded.value = lrLoaded.value = yamlLoaded.value = false
-    // 非平台管理的命名空间：配额/限制范围端点会拒（requireManagedNamespace），直接降级为「不适用」
-    notManaged.value = ns.value?.managedBy !== true
-    if (notManaged.value) {
-      // 跳过 quota/limitrange 加载，直接标记完成 → 模板渲染「不适用」空态而非永远「加载中…」
+    // 受保护系统命名空间：写操作端点会拒，跳过 quota/limitrange 加载 → 模板渲染「不可修改」空态而非永远「加载中…」
+    if (isProtected.value) {
       quotaLoaded.value = true
       lrLoaded.value = true
     }
@@ -81,8 +84,8 @@ async function refresh(): Promise<void> {
 
 async function loadQuota(): Promise<void> {
   if (!ready.value) return
-  // 非平台管理的命名空间：后端会拒（requireManagedNamespace），直接跳过
-  if (notManaged.value) { quotaLoaded.value = true; return }
+  // 受保护系统命名空间：后端会拒，直接跳过
+  if (isProtected.value) { quotaLoaded.value = true; return }
   const cid = clusterId.value
   const target = name.value
   tabLoading.value = true
@@ -102,8 +105,8 @@ async function loadQuota(): Promise<void> {
 
 async function loadLimitRange(): Promise<void> {
   if (!ready.value) return
-  // 非平台管理的命名空间：后端会拒（requireManagedNamespace），直接跳过
-  if (notManaged.value) { lrLoaded.value = true; return }
+  // 受保护系统命名空间：后端会拒，直接跳过
+  if (isProtected.value) { lrLoaded.value = true; return }
   const cid = clusterId.value
   const target = name.value
   tabLoading.value = true
@@ -153,6 +156,12 @@ watch(activeTab, () => { void loadActiveTab() })
 
 function goBack(): void {
   router.push('/namespaces')
+}
+
+/** 「立即刷新」：本体 + 懒加载 tab + 概览监控指标一起重取 */
+function refreshAll(): void {
+  void refresh()
+  void metricsRef.value?.refresh()
 }
 
 function goEditor(tab: 'overview' | 'quota' | 'limitrange'): void {
@@ -274,9 +283,9 @@ watch(name, () => { if (clusterId.value) void refresh() })
         <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
       </el-select>
       <el-tooltip content="立即刷新" placement="bottom" :show-after="100">
-        <el-button :icon="Refresh" circle size="small" :disabled="!ready" @click="refresh" />
+        <el-button :icon="Refresh" circle size="small" :disabled="!ready" @click="refreshAll" />
       </el-tooltip>
-      <el-button :disabled="!ns" @click="goEditor('overview')">编辑</el-button>
+      <el-button :disabled="!ns || !ns.editable" @click="goEditor('overview')">编辑</el-button>
       <el-button @click="goBack">返回</el-button>
     </PageHeader>
 
@@ -304,10 +313,10 @@ watch(name, () => { if (clusterId.value) void refresh() })
                   <div class="info-row"><span class="k">描述</span><span class="v">{{ ns.description || '—' }}</span></div>
                   <div class="info-row col-row"><span class="k">标签</span><KvTags title="标签" :data="ns.labels ?? {}" /></div>
                   <div class="info-row">
-                    <span class="k">管理方式</span>
+                    <span class="k">来源</span>
                     <span class="v">
-                      <el-tag v-if="ns.managedBy" size="small" type="primary" effect="light">平台管理</el-tag>
-                      <span v-else>集群内命名空间</span>
+                      <el-tag v-if="ns.managedBy" size="small" type="primary" effect="light">平台创建</el-tag>
+                      <span v-else>集群既有</span>
                     </span>
                   </div>
                   <div class="info-row">
@@ -320,12 +329,11 @@ watch(name, () => { if (clusterId.value) void refresh() })
                   <div class="info-row"><span class="k">创建时间</span><span class="v">{{ fmtDate(ns.creationTimestamp) }}</span></div>
                 </div>
               </section>
-            </aside>
 
-            <main v-loading="tabLoading && !quotaLoaded" class="ov-main">
-              <section class="info-card">
+              <!-- 用量摘要：与基本信息同列（左）；随配额懒加载 -->
+              <section v-loading="tabLoading && !quotaLoaded" class="info-card ov-usage">
                 <h3 class="info-title">用量摘要</h3>
-                <div v-if="notManaged" class="muted ov-na">非平台管理的命名空间，配额不适用</div>
+                <div v-if="isProtected" class="muted ov-na">受保护的系统命名空间，不可修改</div>
                 <div v-else-if="quotaLoaded && quota" class="info-rows">
                   <div v-for="r in usageSummary" :key="r.key" class="info-row">
                     <span class="k">{{ r.label }}</span>
@@ -341,6 +349,11 @@ watch(name, () => { if (clusterId.value) void refresh() })
                 </EmptyState>
                 <div v-else class="muted">加载中…</div>
               </section>
+            </aside>
+
+            <main class="ov-main">
+              <!-- 监控指标：跨该命名空间全部 pod 聚合（只读，受保护 ns 同样开放） -->
+              <NamespaceMetricsPanel ref="metricsRef" :cluster-id="clusterId" :namespace="name" />
             </main>
           </div>
         </el-tab-pane>
@@ -348,7 +361,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
         <!-- 资源配额 -->
         <el-tab-pane label="资源配额" name="quota">
           <div v-loading="tabLoading" class="tab-body">
-            <EmptyState v-if="notManaged" title="不适用" description="非平台管理的命名空间，配额不适用。" />
+            <EmptyState v-if="isProtected" title="不可修改" description="受保护的系统命名空间，不可设置配额。" />
             <template v-else-if="quota">
               <el-alert v-if="quota?.multiple === true" :title="MULTIPLE_QUOTA_TIP" type="warning" :closable="false" show-icon class="mb-3" />
               <div class="list-head">
@@ -387,7 +400,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
         <!-- 限制范围 -->
         <el-tab-pane label="限制范围" name="limitrange">
           <div v-loading="tabLoading" class="tab-body">
-            <EmptyState v-if="notManaged" title="不适用" description="非平台管理的命名空间，限制范围不适用。" />
+            <EmptyState v-if="isProtected" title="不可修改" description="受保护的系统命名空间，不可设置限制范围。" />
             <template v-else>
               <el-alert v-if="lrMultiple" :title="MULTIPLE_LR_TIP" type="warning" :closable="false" show-icon class="mb-3" />
               <template v-if="lrLoaded && lr">
@@ -456,6 +469,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
   align-items: start;
 }
 .ov-side, .ov-main { min-width: 0; }
+.ov-usage { margin-top: 16px; }
 @media (max-width: 960px) {
   .overview-grid { grid-template-columns: 1fr; }
 }

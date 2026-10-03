@@ -13,6 +13,7 @@ import com.coding.platformapi.metrics.dto.MetricSeries;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.NodeCurrentMetric;
 import com.coding.platformapi.metrics.dto.NodeMetricsRequest;
+import com.coding.platformapi.metrics.dto.NamespaceMetricsRequest;
 import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
 import com.coding.platformapi.metrics.labels.DeviceLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
@@ -178,10 +179,41 @@ public class MetricsService {
         return out;
     }
 
+    // ===== 命名空间维度（占位符 = clusterName, namespace；跨该 ns 全部 pod 聚合）=====
+
+    public MetricSeriesResponse namespaceCpu(NamespaceMetricsRequest req) {
+        String sql = String.format(MetricQuery.NAMESPACE_CPU_USED.sql(), clusterName(req.getClusterId()), req.getNamespace());
+        return new MetricSeriesResponse("核", List.of(toSeries("用量", queryNamespace(sql, req))));
+    }
+
+    public MetricSeriesResponse namespaceMemory(NamespaceMetricsRequest req) {
+        String sql = String.format(MetricQuery.NAMESPACE_MEMORY_USED.sql(), clusterName(req.getClusterId()), req.getNamespace());
+        return new MetricSeriesResponse("字节", List.of(toSeries("用量", queryNamespace(sql, req))));
+    }
+
+    public MetricSeriesResponse namespaceNetwork(NamespaceMetricsRequest req) {
+        String c = clusterName(req.getClusterId());
+        return new MetricSeriesResponse("字节/秒", List.of(
+                toSeries("RX", queryNamespace(String.format(MetricQuery.NAMESPACE_NETWORK_RECEIVE.sql(), c, req.getNamespace()), req)),
+                toSeries("TX", queryNamespace(String.format(MetricQuery.NAMESPACE_NETWORK_TRANSMIT.sql(), c, req.getNamespace()), req))));
+    }
+
+    public MetricSeriesResponse namespaceDisk(NamespaceMetricsRequest req) {
+        String c = clusterName(req.getClusterId());
+        return new MetricSeriesResponse("字节/秒", List.of(
+                toSeries("读", queryNamespace(String.format(MetricQuery.NAMESPACE_DISK_READ.sql(), c, req.getNamespace()), req)),
+                toSeries("写", queryNamespace(String.format(MetricQuery.NAMESPACE_DISK_WRITE.sql(), c, req.getNamespace()), req))));
+    }
+
     // ===== 节点底层调用 / 转换 =====
 
     /** 节点区间查询（固定 step）。 */
     private List<PromResult<MetricLabels>> queryNode(String sql, NodeMetricsRequest req) {
+        return client.queryRange(sql, req.getStart(), req.getEnd(), STEP, MetricLabels.class);
+    }
+
+    /** 命名空间区间查询（固定 step）。 */
+    private List<PromResult<MetricLabels>> queryNamespace(String sql, NamespaceMetricsRequest req) {
         return client.queryRange(sql, req.getStart(), req.getEnd(), STEP, MetricLabels.class);
     }
 

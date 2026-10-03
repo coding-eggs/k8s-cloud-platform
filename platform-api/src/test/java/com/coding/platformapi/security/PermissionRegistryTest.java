@@ -45,4 +45,24 @@ class PermissionRegistryTest {
                 .contains(Set.of("tenant:any"));
         assertThat(reg.requiredCodes("POST", "/role/list")).isEmpty();
     }
+
+    @Test
+    void replace_rules_atomically_swaps_snapshot() {
+        var reg = reg();
+        List<PermissionRegistry.Rule> before = reg.rules(); // 换表前拿到的引用
+        reg.replaceRules(List.of(new PermissionRegistry.Rule("GET", "/new/**", "platform:new")));
+        // 新快照整体生效：新规则命中、旧规则消失（读方只看到整旧或整新，不混合）
+        assertThat(reg.requiredCodes("GET", "/new/x")).contains(Set.of("platform:new"));
+        assertThat(reg.requiredCodes("POST", "/tenant/create")).isEmpty();
+        // 换表前的不可变引用不受影响
+        assertThat(before).hasSize(3);
+    }
+
+    @Test
+    void replace_rules_accepts_empty_collection() {
+        var reg = reg();
+        reg.replaceRules(List.of());
+        assertThat(reg.rules()).isEmpty();
+        assertThat(reg.requiredCodes("POST", "/tenant/member/add")).isEmpty();
+    }
 }

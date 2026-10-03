@@ -112,4 +112,24 @@ class CoreV1NamespaceConverterTest {
                 .doesNotContainKey("description")
                 .containsEntry("keep", "me");
     }
+
+    @Test
+    void convert_for_update_does_not_stamp_managed_by_on_foreign_namespace() {
+        // 非平台 ns（线上无 managed-by）编辑后不得被补盖——provenance 保持诚实
+        Map<String, String> liveLabels = new LinkedHashMap<>();
+        liveLabels.put("team", "sre");   // 外部标签，无 managed-by
+        Namespace live = live("ns7", liveLabels, new LinkedHashMap<>(), "Active");
+
+        NamespaceDTO dto = new NamespaceDTO();
+        dto.setName("ns7");
+        dto.setDescription("新描述");
+        dto.setLabels(new LinkedHashMap<>(Map.of("env", "prod")));
+
+        Namespace out = c.convertForUpdate(dto, live);
+        assertThat(out.getMetadata().getLabels())
+                .doesNotContainKey(CoreV1NamespaceConverter.MANAGED_BY_LABEL)   // 未被补盖
+                .containsEntry("team", "sre")                                   // 外部标签存活
+                .containsEntry("env", "prod");                                   // DTO 新增
+        assertThat(out.getMetadata().getAnnotations()).containsEntry("description", "新描述");
+    }
 }

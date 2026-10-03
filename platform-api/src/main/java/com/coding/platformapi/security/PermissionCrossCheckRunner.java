@@ -5,12 +5,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.stereotype.Component;
-import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 /**
  * 启动期交叉校验：枚举真实 RequestMappingHandlerMapping 的全部端点，
@@ -39,21 +36,7 @@ public class PermissionCrossCheckRunner implements SmartInitializingSingleton {
 
     @Override
     public void afterSingletonsInstantiated() {
-        List<Endpoint> eps = new ArrayList<>();
-        for (RequestMappingInfo info : requestMappingHandlerMapping.getHandlerMethods().keySet()) {
-            Set<String> patterns = info.getPatternValues();
-            var methods = info.getMethodsCondition().getMethods();
-            if (patterns.isEmpty()) {
-                continue;
-            }
-            for (String p : patterns) {
-                if (methods.isEmpty()) {
-                    eps.add(new Endpoint("*", p));
-                } else {
-                    methods.forEach(m -> eps.add(new Endpoint(m.name(), p)));
-                }
-            }
-        }
+        List<Endpoint> eps = PermissionCrossCheck.liveEndpoints(requestMappingHandlerMapping);
         var gaps = PermissionCrossCheck.uncoveredEndpoints(eps, registry);
         if (!gaps.isEmpty()) {
             String msg = "[RBAC] 以下 endpoint 既无权限行也不在豁免清单，启动失败: " + gaps;

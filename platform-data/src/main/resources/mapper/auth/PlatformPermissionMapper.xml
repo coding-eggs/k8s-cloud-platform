@@ -44,11 +44,11 @@
     delete from platform_permission
     where id = #{id,jdbcType=VARCHAR}
   </delete>
-  <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.PlatformPermission" useGeneratedKeys="true">
-    insert into platform_permission (`domain`, `resource`, `action`, 
+  <insert id="insert" parameterType="com.coding.data.models.auth.PlatformPermission">
+    insert into platform_permission (id, `domain`, `resource`, `action`,
       code, description, created_at
       )
-    values (#{domain,jdbcType=VARCHAR}, #{resource,jdbcType=VARCHAR}, #{action,jdbcType=VARCHAR}, 
+    values (#{id,jdbcType=VARCHAR}, #{domain,jdbcType=VARCHAR}, #{resource,jdbcType=VARCHAR}, #{action,jdbcType=VARCHAR},
       #{code,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP}
       )
   </insert>
@@ -118,6 +118,9 @@
       </if>
     </set>
     where id = #{id,jdbcType=VARCHAR}
+  </update>
+  <update id="softDeleteById" parameterType="java.lang.String">
+    update platform_permission set deleted_at = now() where id = #{id,jdbcType=VARCHAR} and deleted_at is null
   </update>
   <update id="updateByPrimaryKey" parameterType="com.coding.data.models.auth.PlatformPermission">
     update platform_permission

@@ -86,6 +86,30 @@ class UserServiceTest {
         verify(urMapper, never()).insert(any());
     }
 
+    // ---- 平台角色回显：/user/platformRole/list（UserView 对话框从盲操作改为回显） ----
+
+    @Test void platform_roles_of_returns_linked_roles() {
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(new PlatformUser());
+        when(urMapper.selectRoleIdsByUser("u1")).thenReturn(java.util.List.of("r1", "r2"));
+        when(roleMapper.selectByIds(java.util.List.of("r1", "r2"))).thenReturn(java.util.List.of(platformRole("r1"), platformRole("r2")));
+        var roles = svc.platformRolesOf("u1");
+        assertThat(roles).extracting(PlatformRole::getId).containsExactly("r1", "r2");
+    }
+
+    @Test void platform_roles_of_empty_links_skips_role_query() {
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(new PlatformUser());
+        when(urMapper.selectRoleIdsByUser("u1")).thenReturn(java.util.List.of());
+        assertThat(svc.platformRolesOf("u1")).isEmpty();
+        verify(roleMapper, never()).selectByIds(any());
+    }
+
+    @Test void platform_roles_of_nonexistent_user_rejected() {
+        when(userMapper.selectByPrimaryKey("ghostUser")).thenReturn(null);
+        assertThatThrownBy(() -> svc.platformRolesOf("ghostUser"))
+            .isInstanceOf(CloudPlatformException.class);
+        verify(urMapper, never()).selectRoleIdsByUser(any());
+    }
+
     private static PlatformRole platformRole(String id) {
         var r = new PlatformRole();
         r.setId(id);

@@ -9,7 +9,8 @@
  * - /permission/list 返回 platform_permission 行，⚠️ code 不唯一（ANY-of：同 code 覆盖多个 URL 行）
  *   → 按 code 聚合为单个勾选项；保存提交 codes（非 ids），后端把 code 的全部行落关联。
  * - scope 不变量：TENANT 角色只能勾 tenant: code，PLATFORM 角色只能勾 platform: code
- *   → 勾选树按所选角色的 scope 过滤顶层 code 族（后端 assertScopeMatches 兜底）。
+ *   → 勾选树按所选角色的 scope 过滤顶层 code 族（后端 assertScopeMatches 兜底）；
+ *   豁免内置超管 admin——V2026_09_29_2 起它持有资源域 tenant:* code，需可见可重存。
  * - 内置角色（builtIn=1）：不可删、code/scope 不可改（后端无改名端点）；权限集允许 manage 重存 → 仍可勾选保存。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -42,7 +43,10 @@ interface PermNode {
 }
 const grouped = computed(() => {
   const scope = selectedRole.value?.scope
-  const prefix = scope === 'TENANT' ? 'tenant:' : scope === 'PLATFORM' ? 'platform:' : null
+  // scope 不变量：TENANT 角色只见 tenant: code，PLATFORM 角色只见 platform: code；
+  // 豁免内置超管 admin（V2026_09_29_2 起同时持有资源域 tenant:* code，后端 assertScopeMatches 同步豁免）
+  const isAdmin = selectedRole.value?.code === 'admin'
+  const prefix = isAdmin ? null : scope === 'TENANT' ? 'tenant:' : scope === 'PLATFORM' ? 'platform:' : null
   // domain → resource（API 域 resource=URL 模式）→ codes
   const byDomain = new Map<string, Map<string, PermNode[]>>()
   const seen = new Map<string, PermNode>()
@@ -257,7 +261,9 @@ onMounted(async () => {
         </div>
         <div class="perm-hint">
           勾选=权限点 code（同 code 覆盖多个 URL 规则，保存时后端按 code 展开全部行）；
-          {{ selectedRole.scope === 'TENANT' ? '租户角色仅可选 tenant: 权限族' : '平台角色仅可选 platform: 权限族' }}（后端不变量校验）。
+          {{ selectedRole.code === 'admin'
+            ? '平台管理员可见全部权限族（platform: + tenant:）'
+            : selectedRole.scope === 'TENANT' ? '租户角色仅可选 tenant: 权限族' : '平台角色仅可选 platform: 权限族' }}（后端不变量校验）。
         </div>
         <div v-loading="permsLoading" class="perm-body">
           <div v-for="g in grouped" :key="g.domain" class="perm-domain">

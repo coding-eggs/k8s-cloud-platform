@@ -1,6 +1,7 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
+import com.coding.data.models.auth.PlatformRole;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.system.TokenUserInfo;
@@ -74,5 +75,11 @@ public class UserController {
     public ResponseData<Void> revoke(@RequestBody UserRoleGrantRequest request) {
         userService.revokePlatformRole(request.getUserId(), request.getRoleId());
         return new ResponseData<>();
+    }
+
+    @PostMapping("/platformRole/list")
+    @Operation(summary = "用户已持平台角色", description = "回显：仅启用 + 未删除 + PLATFORM 族；供用户管理对话框展示当前持有与授予/回收操作")
+    public ResponseData<List<PlatformRole>> platformRoleList(@RequestBody UserKeyRequest request) {
+        return new ResponseData<>(userService.platformRolesOf(request.getId()));
     }
 }

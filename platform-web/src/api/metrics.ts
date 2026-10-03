@@ -33,6 +33,26 @@ export const workloadMetrics = makeMetricsApi('workloads')
 /** Pod 维度（4 图） */
 export const podMetrics = makeMetricsApi('pods')
 
+/** 命名空间指标查询上下文：clusterId + namespace（集群级，无租户）+ start/end */
+export interface NamespaceMetricsReq {
+  clusterId: string
+  namespace: string
+  start: number
+  end: number
+}
+
+/** 命名空间维度（4 图，跨该 ns 全部 pod 聚合） */
+export const namespaceMetrics = {
+  cpu: (req: NamespaceMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/namespace/metrics/cpu', req),
+  memory: (req: NamespaceMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/namespace/metrics/memory', req),
+  network: (req: NamespaceMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/namespace/metrics/network', req),
+  disk: (req: NamespaceMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/namespace/metrics/disk', req),
+}
+
 /** 节点指标查询上下文：clusterId + instance（<internalIp>:9100，前端从 node.internalIp 拼）+ start/end */
 export interface NodeMetricsReq {
   clusterId: string

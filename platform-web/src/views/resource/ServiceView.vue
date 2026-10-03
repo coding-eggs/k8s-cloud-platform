@@ -149,7 +149,7 @@ onMounted(() => {
   void refresh()
 })
 watch(
-  () => [state.tenantId, state.clusterId, state.namespace],
+  [() => [state.tenantId, state.clusterId, state.namespace], ready],
   () => {
     if (ready.value) void refresh()
   },

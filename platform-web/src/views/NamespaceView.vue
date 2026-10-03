@@ -53,10 +53,10 @@ function goEdit(row: NamespaceView): void {
 
 // ---------- 行操作约束（禁用 + tooltip 说明原因） ----------
 function canDelete(row: NamespaceView): boolean {
-  return row.managedBy && !row.allocatedTenantName
+  return row.editable && !row.allocatedTenantName
 }
 function deleteHint(row: NamespaceView): string {
-  if (!row.managedBy) return '仅平台创建的命名空间可删除'
+  if (!row.editable) return '受保护的系统命名空间不可删除'
   if (row.allocatedTenantName) return `该命名空间已分配给租户「${row.allocatedTenantName}」，请先取消分配`
   return ''
 }
@@ -64,7 +64,7 @@ function deleteHint(row: NamespaceView): string {
 async function onDelete(row: NamespaceView): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `确认删除命名空间「${row.name}」？仅平台创建（带 managed-by 标签）且未分配给任何租户的命名空间可删除。`,
+      `确认删除命名空间「${row.name}」？非受保护系统命名空间且未分配给任何租户的可删除。`,
       '提示',
       { type: 'warning' },
     )
@@ -132,10 +132,10 @@ onMounted(async () => {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ fmtDate(row.creationTimestamp) }}</template>
         </el-table-column>
-        <el-table-column label="管理方式" width="110">
+        <el-table-column label="来源" width="110">
           <template #default="{ row }">
-            <el-tag v-if="row.managedBy" size="small">平台管理</el-tag>
-            <span v-else>-</span>
+            <el-tag v-if="row.managedBy" size="small">平台创建</el-tag>
+            <span v-else>集群既有</span>
           </template>
         </el-table-column>
         <el-table-column label="已分配租户" min-width="140">
@@ -151,9 +151,9 @@ onMounted(async () => {
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="view">查看</el-dropdown-item>
-                  <el-tooltip :disabled="row.managedBy" content="仅平台创建的命名空间可编辑" placement="left">
+                  <el-tooltip :disabled="row.editable" content="受保护的系统命名空间不可编辑" placement="left">
                     <span>
-                      <el-dropdown-item command="edit" :disabled="!row.managedBy">编辑</el-dropdown-item>
+                      <el-dropdown-item command="edit" :disabled="!row.editable">编辑</el-dropdown-item>
                     </span>
                   </el-tooltip>
                   <el-tooltip :disabled="canDelete(row)" :content="deleteHint(row)" placement="left">

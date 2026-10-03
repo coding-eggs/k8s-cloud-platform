@@ -14,7 +14,8 @@ import java.util.Map;
  * <p>
  * 两个不变量：
  * <ul>
- *   <li>managed-by 标签只在此盖章（D3）；provisioning 侧 ensureNamespace 自成一路，不经本类。</li>
+ *   <li>managed-by 标签：create 时盖章（平台创建标记）；update 只在线上已带该标签时保留、不强行补盖——
+ *       编辑非平台 ns 不谎称"平台创建"（provenance 保持诚实）。provisioning 侧 ensureNamespace 自成一路，不经本类。</li>
  *   <li>description ⇄ annotations["description"]，且 <b>update 走 merge 而非替换</b> ——
  *       WorkloadConverter 的 effectiveAnnotations 是替换式（只写 description 一个键），
  *       对命名空间不安全：集群里常有第三方工具打的 annotation（field.cattle.io/* 等），
@@ -71,7 +72,8 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
 
     /**
      * update 专用：以线上对象为底合并 metadata（label/annotation 的键级 overlay）。
-     * 建模键（description、managed-by）present→覆写、absent→删除；其余键一律存活。
+     * description：present→覆写、absent→删除；managed-by：仅当线上已带则保留（不补盖，provenance 诚实）；
+     * 其余 label / annotation 键一律存活。
      */
     public Namespace convertForUpdate(NamespaceDTO dto, Namespace live) {
         Map<String, String> labels = new LinkedHashMap<>();
@@ -84,7 +86,9 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
                 annotations.putAll(live.getMetadata().getAnnotations());
             }
         }
-        // labels：DTO 全量覆盖建模域，但 managed-by 由本类独占
+        // labels：DTO 全量覆盖建模域；managed-by 归本类独占、只反映"线上是否已纳管"——
+        // 平台创建的 ns 编辑后保留标签；非平台 ns 编辑不补盖（provenance 保持诚实）
+        boolean liveManaged = labels.containsKey(MANAGED_BY_LABEL);
         labels.remove(MANAGED_BY_LABEL);
         if (dto.getLabels() != null) {
             dto.getLabels().forEach((k, v) -> {
@@ -93,7 +97,9 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
                 }
             });
         }
-        labels.put(MANAGED_BY_LABEL, MANAGED_BY_VALUE);
+        if (liveManaged) {
+            labels.put(MANAGED_BY_LABEL, MANAGED_BY_VALUE);
+        }
         // annotation：description 有值→覆写；无值→删除（清空描述）
         if (StringUtils.hasText(dto.getDescription())) {
             annotations.put(DESCRIPTION_ANNOTATION, dto.getDescription());

@@ -107,6 +107,9 @@ Page 域（后端不消费，仅供前端菜单/按钮显隐）：`page:tenant`,
 
 1. **scope 隔离**：TENANT 角色只能关联 TENANT 族的权限点；PLATFORM 角色反之。
    种子加载与 `role/permission/save` 均校验（否则"租户管理员"可被勾出建租户权限）。
+   **豁免内置超管 admin**（2026-09-30 修订）：资源域细粒度权限（V2026_09_29_1/2）的 code 全为
+   `tenant:*` 族，而 admin 必须能访问全部资源页 → admin 同时持有两族 code，
+   `assertScopeMatches` 对 code=admin 放开 PLATFORM-only 限制（其余角色不变量不变）。
 2. **成员资格先行**：写 `user_tenant_role` 前必须已有同 (user, tenant) 的 `user_tenant` 行。
    反之允许"已加入未定角色"中间态；删 `user_tenant` 行时级联删其 `user_tenant_role` 行。
 3. **租户不能失去最后一个 admin**：移除/降级某租户最后一个 `tenant-admin` 必须同请求指定继任者。

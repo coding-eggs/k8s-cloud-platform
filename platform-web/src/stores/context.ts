@@ -84,8 +84,15 @@ export function useResourceContext() {
       state.namespace = null
     }
 
-    // 缺级默认补到第一个可用节点：进入页面 / 切换租户后无需手动点级联，资源页直接加载首个命名空间的数据。
-    // 树里能出现的集群必有 ≥1 个已分配 ns（ResourceContextService 按分配行建节点），故补到集群必能补到 ns。
+    // 缺级默认补到第一个可用节点（见 ensureDefaults）；load 刚完成校验，loaded 必为 true
+    ensureDefaults()
+  }
+
+  /** 缺级默认补到第一个可用节点（仅树已加载后有效）：进入页面 / 切换租户后无需手动点级联，资源页直接加载首个命名空间的数据。
+   *  树里能出现的集群必有 ≥1 个已分配 ns（ResourceContextService 按分配行建节点），故补到集群必能补到 ns。
+   *  load() 末尾与 ContextSelector 每次挂载都会调用——选择器每次进资源页重新挂载，等价于每次进页面自动补齐。 */
+  function ensureDefaults(): void {
+    if (!state.loaded) return
     const tenant = currentTenant.value
     if (tenant && !currentCluster.value) {
       const firstCluster = tenant.clusters[0]
@@ -124,6 +131,7 @@ export function useResourceContext() {
     namespacesOfCluster,
     ready,
     load,
+    ensureDefaults,
     setTenant,
     setCluster,
     setNamespace,

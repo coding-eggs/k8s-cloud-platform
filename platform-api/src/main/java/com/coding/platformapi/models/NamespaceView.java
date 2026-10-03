@@ -18,8 +18,11 @@ public class NamespaceView {
     @Schema(description = "创建时间（ISO-8601）")
     private String creationTimestamp;
 
-    @Schema(description = "是否平台管理（带 managed-by 标签）")
+    @Schema(description = "是否平台创建（带 managed-by 标签，纯来源展示）")
     private boolean managedBy;
+
+    @Schema(description = "是否可编辑/删除/设配额/限制范围（false = 命中受保护系统命名空间名单）")
+    private boolean editable;
 
     @Schema(description = "已分配租户名；null = 未分配")
     private String allocatedTenantName;

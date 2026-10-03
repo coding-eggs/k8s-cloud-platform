@@ -39,22 +39,23 @@ public class PermissionAuthorizationManager implements AuthorizationManager<Requ
         }
         String method = ctx.getRequest().getMethod();
         String path = pathOf(ctx);
+        // 权限行命中优先于豁免（spec §5.1）：行可收紧豁免路径；命中行但无 code → 直接拒，不回落豁免
+        Set<String> required = registry.requiredCodes(method, path).orElse(null);
+        if (required != null) {
+            for (String code : required) {
+                String authority = PermissionAuthorityNames.perm(code);
+                boolean ok = auth.getAuthorities().stream()
+                        .anyMatch(g -> g.getAuthority().equals(authority));
+                if (ok) {
+                    return new AuthorizationDecision(true);
+                }
+            }
+            return new AuthorizationDecision(false);
+        }
         if (ExemptPaths.isExempt(path)) {
             return new AuthorizationDecision(true);
         }
-        Set<String> required = registry.requiredCodes(method, path).orElse(null);
-        if (required == null) {
-            return new AuthorizationDecision(false); // 默认拒绝（§5.3 交叉校验本不应让这发生）
-        }
-        for (String code : required) {
-            String authority = PermissionAuthorityNames.perm(code);
-            boolean ok = auth.getAuthorities().stream()
-                    .anyMatch(g -> g.getAuthority().equals(authority));
-            if (ok) {
-                return new AuthorizationDecision(true);
-            }
-        }
-        return new AuthorizationDecision(false);
+        return new AuthorizationDecision(false); // 默认拒绝（§5.3 交叉校验本不应让这发生）
     }
 
     private String pathOf(RequestAuthorizationContext ctx) {

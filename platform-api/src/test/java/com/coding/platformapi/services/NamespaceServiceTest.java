@@ -13,6 +13,7 @@ import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import com.coding.platformapi.k8s.K8sResourceClient;
 import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
 import com.coding.platformapi.models.NamespaceQuotaUpsertRequest;
@@ -39,8 +40,9 @@ class NamespaceServiceTest {
     private final K8sClusterMapper clusterMapper = mock(K8sClusterMapper.class);
     private final PlatformTenantNamespaceMapper allocationMapper = mock(PlatformTenantNamespaceMapper.class);
     private final PlatformTenantMapper tenantMapper = mock(PlatformTenantMapper.class);
+    private final NamespaceProtectionProperties protection = new NamespaceProtectionProperties();
     private final NamespaceService svc = new NamespaceService(
-            k8s, clusterMapper, allocationMapper, tenantMapper);
+            k8s, clusterMapper, allocationMapper, tenantMapper, protection);
 
     private void clusterExists() {
         K8sCluster c = new K8sCluster();
@@ -78,17 +80,16 @@ class NamespaceServiceTest {
     }
 
     @Test
-    void update_rejects_foreign_namespace_not_managed_by_platform() {
+    void update_allows_foreign_namespace_not_in_protected_list() {
         clusterExists();
         when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("foreign", false));
+        when(k8s.update(any(NamespaceDTO.class))).thenAnswer(i -> i.getArgument(0));
         NamespaceUpsertRequest req = new NamespaceUpsertRequest();
         req.setClusterId("c1");
         req.setName("foreign");
         req.setDescription("想改别人的");
-        assertThatThrownBy(() -> svc.update(req))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("仅平台创建的命名空间（带 managed-by 标签）可编辑");
-        verify(k8s, never()).update(any(NamespaceDTO.class));
+        svc.update(req);   // 默认全纳管：非受保护 foreign ns 可编辑，不再拒绝
+        verify(k8s).update(any(NamespaceDTO.class));
     }
 
     @Test
@@ -105,13 +106,55 @@ class NamespaceServiceTest {
     }
 
     @Test
-    void delete_rejects_foreign_namespace_not_managed_by_platform() {
+    void delete_allows_foreign_namespace_not_in_protected_list() {
         clusterExists();
         when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("foreign", false));
-        assertThatThrownBy(() -> svc.delete("c1", "foreign"))
+        when(allocationMapper.listByCluster("c1")).thenReturn(List.of());   // 未分配
+        svc.delete("c1", "foreign");   // 默认全纳管 + 未分配 → 可删，不再拒绝
+        verify(k8s).delete(any(NamespaceDTO.class));
+    }
+
+    @Test
+    void protected_namespace_blocks_all_writes_but_reads_stay_open() {
+        protection.setProtectedNamespaces(List.of("kube-system"));
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("kube-system", false));
+
+        // 读仍开放（详情可见）
+        assertThat(svc.get("c1", "kube-system")).isNotNull();
+
+        // 编辑拒
+        NamespaceUpsertRequest up = new NamespaceUpsertRequest();
+        up.setClusterId("c1");
+        up.setName("kube-system");
+        up.setDescription("x");
+        assertThatThrownBy(() -> svc.update(up))
                 .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("仅平台创建的命名空间（带 managed-by 标签）可删除");
+                .hasMessageContaining("受保护的系统命名空间");
+        verify(k8s, never()).update(any(NamespaceDTO.class));
+
+        // 删除拒
+        assertThatThrownBy(() -> svc.delete("c1", "kube-system"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("受保护的系统命名空间");
         verify(k8s, never()).delete(any(NamespaceDTO.class));
+
+        // 配额 / 限制范围拒
+        NamespaceQuotaUpsertRequest qr = new NamespaceQuotaUpsertRequest();
+        qr.setClusterId("c1");
+        qr.setNamespace("kube-system");
+        qr.setQuota(new ResourceQuotaDTO());
+        assertThatThrownBy(() -> svc.quotaUpsert(qr))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("受保护的系统命名空间");
+
+        NamespaceLimitRangeUpsertRequest lrr = new NamespaceLimitRangeUpsertRequest();
+        lrr.setClusterId("c1");
+        lrr.setNamespace("kube-system");
+        lrr.setLimitRange(new LimitRangeDTO());
+        assertThatThrownBy(() -> svc.limitRangeUpsert(lrr))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("受保护的系统命名空间");
     }
 
     @Test
@@ -373,28 +416,14 @@ class NamespaceServiceTest {
     }
 
     @Test
-    void constraint_ops_reject_foreign_namespace() {
+    void constraint_ops_allow_foreign_namespace_not_in_protected_list() {
         clusterExists();
         when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("foreign", false));
-        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
-        req.setClusterId("c1");
-        req.setNamespace("foreign");
-        req.setQuota(new ResourceQuotaDTO());
-        assertThatThrownBy(() -> svc.quotaUpsert(req))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("平台");
-        verify(k8s, never()).create(any(ResourceQuotaDTO.class));
-
-        assertThatThrownBy(() -> svc.quotaGet("c1", "foreign"))
-                .isInstanceOf(CloudPlatformException.class);
-        assertThatThrownBy(() -> svc.quotaDelete("c1", "foreign"))
-                .isInstanceOf(CloudPlatformException.class);
-        assertThatThrownBy(() -> svc.limitRangeGet("c1", "foreign"))
-                .isInstanceOf(CloudPlatformException.class);
-        assertThatThrownBy(() -> svc.limitRangeDelete("c1", "foreign"))
-                .isInstanceOf(CloudPlatformException.class);
-        verify(k8s, never()).delete(any(ResourceQuotaDTO.class));
-        verify(k8s, never()).delete(any(LimitRangeDTO.class));
+        // 非受保护 foreign ns：配额/限制范围不再因"非平台管理"被拒，走到取对象（未配置 → null）
+        when(k8s.get(any(ResourceQuotaDTO.class))).thenReturn(null);
+        assertThat(svc.quotaGet("c1", "foreign")).isNull();
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        assertThat(svc.limitRangeGet("c1", "foreign")).isNull();
     }
 
     @Test

@@ -35,6 +35,13 @@
     where deleted_at is null
     order by `scope`, code
   </select>
+  <select id="selectByIds" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_role
+    where deleted_at is null and id in
+    <foreach collection="ids" item="rid" open="(" separator="," close=")">#{rid}</foreach>
+  </select>
     <select id="selectTenantRole" resultType="com.coding.data.models.system.SecurityRole">
       SELECT
         r.`name` role_name,
@@ -53,11 +60,11 @@
     delete from platform_role
     where id = #{id,jdbcType=VARCHAR}
   </delete>
-  <insert id="insert" keyColumn="id" keyProperty="id" parameterType="com.coding.data.models.auth.PlatformRole" useGeneratedKeys="true">
-    insert into platform_role (`name`, code, description, scope, built_in,
+  <insert id="insert" parameterType="com.coding.data.models.auth.PlatformRole">
+    insert into platform_role (id, `name`, code, description, scope, built_in,
       `status`, created_at, updated_at
       )
-    values (#{name,jdbcType=VARCHAR}, #{code,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR}, #{scope,jdbcType=VARCHAR}, #{builtIn,jdbcType=TINYINT},
+    values (#{id,jdbcType=VARCHAR}, #{name,jdbcType=VARCHAR}, #{code,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR}, #{scope,jdbcType=VARCHAR}, #{builtIn,jdbcType=TINYINT},
       #{status,jdbcType=TINYINT}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP}
       )
   </insert>

@@ -153,6 +153,9 @@ export const platformUserApi = {
     http.post<never, void>('/user/platformRole/grant', payload),
   platformRoleRevoke: (payload: { userId: string; roleId: string }) =>
     http.post<never, void>('/user/platformRole/revoke', payload),
+  /** 用户已持平台角色回显（仅启用 + 未删除 + PLATFORM 族） */
+  platformRoleList: (userId: string) =>
+    http.post<never, PlatformRole[]>('/user/platformRole/list', { id: userId }),
 }
 
 /** 角色管理 /role（读 platform:role:read / 写 platform:role:manage；permission/save 全量重存，codes 非 ids） */
@@ -166,9 +169,16 @@ export const roleApi = {
   permissionList: (roleId: string) => http.post<never, string[]>('/role/permission/list', { id: roleId }),
 }
 
-/** 权限目录 /permission（platform:role:read；code 不唯一 —— 一行 = 一个 URL 规则，前端按 code 聚合） */
+/** 权限点管理 /permission（list = platform:role:read；写操作 = platform:role:manage。
+ * code 不唯一 —— 一行 = 一个 URL 规则，前端按 code 聚合；后端写前裸端点校验 + 提交后热加载即时生效） */
 export const permissionApi = {
   list: () => http.post<never, PlatformPermission[]>('/permission/list'),
+  create: (payload: { domain: string; resource: string; action: string; code: string; description?: string }) =>
+    http.post<never, PlatformPermission>('/permission/create', payload),
+  update: (payload: { id: string; domain: string; resource: string; action: string; code: string; description?: string }) =>
+    http.post<never, void>('/permission/update', payload),
+  delete: (id: string) => http.post<never, void>('/permission/delete', { id }),
+  reload: () => http.post<never, void>('/permission/reload'),
 }
 
 /** 资源管理 - ConfigMap /resource/configmaps（参考实现；list/create/update 上下文走 body，get/yaml/delete 走 query） */

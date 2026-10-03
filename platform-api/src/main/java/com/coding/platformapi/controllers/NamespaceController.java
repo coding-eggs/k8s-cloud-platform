@@ -4,6 +4,9 @@ import com.coding.common.models.k8s.dto.LimitRangeDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.metrics.MetricsService;
+import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
+import com.coding.platformapi.metrics.dto.NamespaceMetricsRequest;
 import com.coding.platformapi.models.ClusterKeyRequest;
 import com.coding.platformapi.models.NamespaceKeyRequest;
 import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
@@ -28,6 +31,9 @@ public class NamespaceController {
 
     @Autowired
     private NamespaceService namespaceService;
+
+    @Autowired
+    private MetricsService metricsService;
 
     @PostMapping("/list")
     @Operation(summary = "集群命名空间列表", description = "K8s 命名空间 + 分配信息合并视图（名字/状态/创建时间/管理方式/已分配租户/描述/标签）")
@@ -102,5 +108,31 @@ public class NamespaceController {
     public ResponseData<Void> limitRangeDelete(@RequestBody NamespaceKeyRequest request) {
         namespaceService.limitRangeDelete(request.getClusterId(), request.getNamespace());
         return new ResponseData<>();
+    }
+
+    // ===== 监控指标（委托 MetricsService；跨该 ns 全部 pod 聚合，集群级无租户）=====
+
+    @PostMapping("/metrics/cpu")
+    @Operation(summary = "命名空间 CPU 用量（核）", description = "跨该命名空间全部容器聚合")
+    public ResponseData<MetricSeriesResponse> cpuMetrics(@RequestBody NamespaceMetricsRequest request) {
+        return new ResponseData<>(metricsService.namespaceCpu(request));
+    }
+
+    @PostMapping("/metrics/memory")
+    @Operation(summary = "命名空间内存用量（字节）", description = "跨该命名空间全部容器聚合")
+    public ResponseData<MetricSeriesResponse> memoryMetrics(@RequestBody NamespaceMetricsRequest request) {
+        return new ResponseData<>(metricsService.namespaceMemory(request));
+    }
+
+    @PostMapping("/metrics/network")
+    @Operation(summary = "命名空间网络 IO（字节/秒，RX/TX）", description = "跨该命名空间全部 pod 聚合")
+    public ResponseData<MetricSeriesResponse> networkMetrics(@RequestBody NamespaceMetricsRequest request) {
+        return new ResponseData<>(metricsService.namespaceNetwork(request));
+    }
+
+    @PostMapping("/metrics/disk")
+    @Operation(summary = "命名空间磁盘 IO（字节/秒，读/写）", description = "跨该命名空间全部容器聚合")
+    public ResponseData<MetricSeriesResponse> diskMetrics(@RequestBody NamespaceMetricsRequest request) {
+        return new ResponseData<>(metricsService.namespaceDisk(request));
     }
 }

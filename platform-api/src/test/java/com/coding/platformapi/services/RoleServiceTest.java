@@ -60,12 +60,30 @@ class RoleServiceTest {
 
     @Test
     void platform_role_rejects_tenant_perm() {
-        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("admin", "PLATFORM", (byte) 1));
+        // 非 admin 的 PLATFORM 角色仍受 scope 不变量约束（admin 豁免见下条）
+        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("platform-ops", "PLATFORM", (byte) 0));
         when(permMapper.selectAllByCode("tenant:member:manage"))
                 .thenReturn(List.of(perm("p1", "tenant:member:manage")));
         assertThatThrownBy(() -> svc.savePermissions("r1", List.of("tenant:member:manage")))
                 .isInstanceOf(CloudPlatformException.class);
         verify(rpMapper, never()).deleteByRoleId(any());
+    }
+
+    @Test
+    void admin_exempt_from_scope_invariant_saves_both_families() {
+        // V2026_09_29_2 后内置超管 admin 同时持有 platform:* 与资源域 tenant:* code，
+        // 全量重存不得被 scope 不变量拒绝（否则角色管理页对 admin 保存必报错）
+        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("admin", "PLATFORM", (byte) 1));
+        when(permMapper.selectAllByCode("tenant:workload:list"))
+                .thenReturn(List.of(perm("p_res", "tenant:workload:list")));
+        when(permMapper.selectAllByCode("platform:user:manage"))
+                .thenReturn(List.of(perm("p_plat", "platform:user:manage")));
+        svc.savePermissions("r1", List.of("tenant:workload:list", "platform:user:manage"));
+        verify(rpMapper).deleteByRoleId("r1");
+        ArgumentCaptor<PlatformRolePermission> cap = ArgumentCaptor.forClass(PlatformRolePermission.class);
+        verify(rpMapper, times(2)).insert(cap.capture());
+        assertThat(cap.getAllValues()).extracting(PlatformRolePermission::getPermissionId)
+                .containsExactlyInAnyOrder("p_res", "p_plat");
     }
 
     @Test

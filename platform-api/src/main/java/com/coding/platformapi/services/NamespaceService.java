@@ -14,6 +14,7 @@ import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import com.coding.platformapi.k8s.K8sResourceClient;
 import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
 import com.coding.platformapi.models.NamespaceQuotaUpsertRequest;
@@ -57,6 +58,9 @@ public class NamespaceService {
     private final PlatformTenantNamespaceMapper allocationMapper;
 
     private final PlatformTenantMapper tenantMapper;
+
+    /** 受保护（系统）命名空间名单：命中者拒绝一切写操作，读仍开放 */
+    private final NamespaceProtectionProperties protection;
 
     /**
      * 集群命名空间视图：K8s 列表 + 分配信息叠加（哪个租户占用了该 ns），按名字升序。
@@ -107,19 +111,10 @@ public class NamespaceService {
     }
 
     /**
-     * 更新命名空间（描述/标签）：仅平台管理（managed-by 标签）可编辑。
+     * 更新命名空间（描述/标签）：默认全纳管，仅受保护系统 ns 不可改。
      */
     public NamespaceDTO update(NamespaceUpsertRequest req) {
-        requireCluster(req.getClusterId());
-        NamespaceDTO live = k8s.get(dto(req.getClusterId(), req.getName()));
-        if (live == null) {
-            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST,
-                    "命名空间不存在: " + req.getName());
-        }
-        if (!isManaged(live.getLabels())) {
-            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "仅平台创建的命名空间（带 managed-by 标签）可编辑");
-        }
+        requireEditable(req.getClusterId(), req.getName());
         NamespaceDTO dto = toDto(req);
         NamespaceDTO updated = k8s.update(dto);
         log.info("集群 {} 更新命名空间 {}", req.getClusterId(), req.getName());
@@ -127,17 +122,10 @@ public class NamespaceService {
     }
 
     /**
-     * 删除命名空间：仅当平台管理（managed-by 标签）且未分配给任何租户。
+     * 删除命名空间：非受保护系统 ns 且未分配给任何租户。
      */
     public void delete(String clusterId, String namespace) {
-        requireCluster(clusterId);
-        NamespaceDTO ns = k8s.get(dto(clusterId, namespace));
-        if (ns == null) {
-            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "命名空间不存在: " + namespace);
-        }
-        if (!isManaged(ns.getLabels())) {
-            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "仅平台创建的命名空间（带 managed-by 标签）可删除");
-        }
+        requireEditable(clusterId, namespace);
         boolean allocated = allocationMapper.listByCluster(clusterId).stream()
                 .anyMatch(a -> a.getNamespace().equals(namespace));
         if (allocated) {
@@ -151,7 +139,7 @@ public class NamespaceService {
      * 查询命名空间配额：未配置返回 null（前端「未配置」）；存在则叠加多份告警旗标（D4，平台只管理 default 那份）。
      */
     public ResourceQuotaDTO quotaGet(String clusterId, String namespace) {
-        requireManagedNamespace(clusterId, namespace);
+        requireEditable(clusterId, namespace);
         ResourceQuotaDTO found = k8s.get(quotaDto(clusterId, namespace));
         if (found == null) {
             return null;
@@ -169,7 +157,7 @@ public class NamespaceService {
      * get 命中则 update，否则 create（重试幂等 —— 前端错误恢复流程依赖重复提交安全）。
      */
     public ResourceQuotaDTO quotaUpsert(NamespaceQuotaUpsertRequest req) {
-        requireManagedNamespace(req.getClusterId(), req.getNamespace());
+        requireEditable(req.getClusterId(), req.getNamespace());
         ResourceQuotaDTO quota = req.getQuota();
         forceSingleName(quota == null ? null : quota.getName());
         if (quota == null) {
@@ -187,7 +175,7 @@ public class NamespaceService {
 
     /** 删除配额：不存在为 no-op（幂等）。 */
     public void quotaDelete(String clusterId, String namespace) {
-        requireManagedNamespace(clusterId, namespace);
+        requireEditable(clusterId, namespace);
         ResourceQuotaDTO live = k8s.get(quotaDto(clusterId, namespace));
         if (live == null) {
             return;
@@ -200,7 +188,7 @@ public class NamespaceService {
      * 查询命名空间限制范围：未配置返回 null；存在则叠加多份告警旗标（同 {@link #quotaGet}）。
      */
     public LimitRangeDTO limitRangeGet(String clusterId, String namespace) {
-        requireManagedNamespace(clusterId, namespace);
+        requireEditable(clusterId, namespace);
         LimitRangeDTO found = k8s.get(limitRangeDto(clusterId, namespace));
         if (found == null) {
             return null;
@@ -217,7 +205,7 @@ public class NamespaceService {
      * （类型集 + 同类型内数值序），业务规则归 platform-api，k8s-server 零逻辑。
      */
     public LimitRangeDTO limitRangeUpsert(NamespaceLimitRangeUpsertRequest req) {
-        requireManagedNamespace(req.getClusterId(), req.getNamespace());
+        requireEditable(req.getClusterId(), req.getNamespace());
         LimitRangeDTO lr = req.getLimitRange();
         forceSingleName(lr == null ? null : lr.getName());
         if (lr == null) {
@@ -236,7 +224,7 @@ public class NamespaceService {
 
     /** 删除限制范围：不存在为 no-op（幂等）。 */
     public void limitRangeDelete(String clusterId, String namespace) {
-        requireManagedNamespace(clusterId, namespace);
+        requireEditable(clusterId, namespace);
         LimitRangeDTO live = k8s.get(limitRangeDto(clusterId, namespace));
         if (live == null) {
             return;
@@ -245,17 +233,23 @@ public class NamespaceService {
         log.info("集群 {} 命名空间 {} 删除限制范围", clusterId, namespace);
     }
 
-    /** 平台级约束操作前置：集群存在 + 命名空间存在 + 平台拥有（D3 同源策略） */
-    private void requireManagedNamespace(String clusterId, String namespace) {
+    /** 平台级写操作前置：集群存在 + 命名空间存在 + 非受保护系统 ns（默认全纳管，黑名单挡写） */
+    private void requireEditable(String clusterId, String namespace) {
         requireCluster(clusterId);
         NamespaceDTO ns = k8s.get(dto(clusterId, namespace));
         if (ns == null) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "命名空间不存在: " + namespace);
         }
-        if (!isManaged(ns.getLabels())) {
+        if (isProtected(namespace)) {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "仅平台创建的命名空间可设置配额/限制范围");
+                    "受保护的系统命名空间「" + namespace + "」不可修改");
         }
+    }
+
+    /** 是否命中受保护系统命名空间名单（精确匹配，须与集群内真实 ns 名一致） */
+    private boolean isProtected(String namespace) {
+        List<String> protectedNs = protection.getProtectedNamespaces();
+        return protectedNs != null && protectedNs.contains(namespace);
     }
 
     /** 入参名字非 default 且非空白 → 拒（10028）；空白 / null → 交由调用方静默改写为 default */
@@ -333,6 +327,7 @@ public class NamespaceService {
         v.setPhase(ns.getPhase());
         v.setCreationTimestamp(ns.getCreationTimestamp());
         v.setManagedBy(isManaged(ns.getLabels()));
+        v.setEditable(!isProtected(ns.getName()));
         v.setAllocatedTenantName(allocatedTenant.get(ns.getName()));
         v.setDescription(ns.getDescription());
         v.setLabels(ns.getLabels());

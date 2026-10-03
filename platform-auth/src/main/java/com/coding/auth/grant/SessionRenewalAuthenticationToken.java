@@ -1,6 +1,7 @@
 package com.coding.auth.grant;
 
 
+import lombok.Getter;
 import org.jspecify.annotations.Nullable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.server.authorization.authentication.OAuth2AuthorizationGrantAuthenticationToken;
@@ -18,6 +19,7 @@ import java.util.Collections;
  * provider 校验通过后返回的是另一个已认证的 {@code OAuth2AccessTokenAuthenticationToken}，
  * 本载体保持未认证状态即可。
  */
+@Getter
 public class SessionRenewalAuthenticationToken extends OAuth2AuthorizationGrantAuthenticationToken {
 
     /** 会话 ID（用于日志与滑动续期关联）；无有效会话时为空 */
@@ -39,19 +41,5 @@ public class SessionRenewalAuthenticationToken extends OAuth2AuthorizationGrantA
         this.sessionId = sessionId;
         this.endUserPrincipal = endUserPrincipal;
         this.tenantId = (tenantId == null || tenantId.isBlank()) ? null : tenantId;
-    }
-
-    public String getSessionId() {
-        return this.sessionId;
-    }
-
-    @Nullable
-    public Authentication getEndUserPrincipal() {
-        return this.endUserPrincipal;
-    }
-
-    @Nullable
-    public String getTenantId() {
-        return this.tenantId;
     }
 }

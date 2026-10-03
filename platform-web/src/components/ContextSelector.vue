@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useResourceContext } from '@/stores/context'
 
-const { state, load, setTenant, setCluster, setNamespace } = useResourceContext()
+const { state, load, ensureDefaults, setTenant, setCluster, setNamespace } = useResourceContext()
 
 // 三级级联选项：store 一次加载全量树（租户→集群→命名空间），直接映射，无额外请求
 const options = computed(() =>
@@ -38,7 +38,12 @@ function onChange(value: unknown): void {
 }
 
 onMounted(() => {
-  void load().then(syncFromStore)
+  // 选择器每次进资源页都会重新挂载：load（或已加载）后补默认缺级，
+  // 顶栏自动落到首个可用 租户/集群/命名空间，无需手动选择
+  void load().then(() => {
+    ensureDefaults()
+    syncFromStore()
+  })
 })
 </script>
 

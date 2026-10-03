@@ -6,6 +6,7 @@ import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.auth.PlatformRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.mapper.auth.PlatformUserRoleMapper;
+import com.coding.data.models.auth.PlatformRole;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.auth.PlatformUserRole;
 import com.coding.data.models.auth.RoleScope;
@@ -87,5 +88,18 @@ public class UserService {
 
     public void revokePlatformRole(String userId, String roleId) {
         userRoleMapper.deleteByUserAndRole(userId, roleId);
+    }
+
+    /**
+     * 用户已持平台角色回显（/user/platformRole/list）：复用 selectRoleIdsByUser 的口径
+     * （仅启用 + 未删除 + PLATFORM 族），空关联短路不查角色表。
+     */
+    public List<PlatformRole> platformRolesOf(String userId) {
+        if (userMapper.selectByPrimaryKey(userId) == null)
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "用户不存在");
+        List<String> roleIds = userRoleMapper.selectRoleIdsByUser(userId);
+        if (roleIds.isEmpty())
+            return List.of();
+        return roleMapper.selectByIds(roleIds);
     }
 }

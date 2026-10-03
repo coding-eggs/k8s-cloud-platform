@@ -29,4 +29,9 @@ public interface PlatformRoleMapper {
      * 全部未删除角色（配置页角色列表）
      */
     List<PlatformRole> listAllActive();
+
+    /**
+     * 按 id 批量查未删除角色（用户平台角色回显 /user/platformRole/list）
+     */
+    List<PlatformRole> selectByIds(@Param("ids") List<String> ids);
 }

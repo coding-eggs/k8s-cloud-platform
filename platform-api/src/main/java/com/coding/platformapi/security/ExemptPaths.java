@@ -9,11 +9,21 @@ import org.springframework.util.AntPathMatcher;
  * RequestMappingHandlerMapping 里被 Task 11 交叉校验枚举；/v3/api-docs.yaml、
  * /v3/api-docs.yaml/{group}、/swagger-ui.html 是字面路径/独立 pattern，
  * 不被 /v3/api-docs/** 、/swagger-ui/** 匹配（AntPathMatcher 实测），不补则启动必 brick。
+ * /resource/** 整体豁免已于 2026-09-29 移除（资源域细粒度权限，V2026_09_29_1）：
+ * 仅保留 /resource/context 与 SM/PM 的 prom discovery 四端点。
  */
 public final class ExemptPaths {
 
     private static final String[] PREFIXES = {
-            "/resource/**", "/user/me", "/user/my-tenants", "/callback", "/error",
+            "/resource/context",
+            "/resource/servicemonitors/relabel-labels",
+            "/resource/servicemonitors/metric-names",
+            "/resource/podmonitors/relabel-labels",
+            "/resource/podmonitors/metric-names",
+            // 命名空间概览的 4 个只读 metrics 端点（cpu/memory/network/disk）：集群级、跨该 ns 全部 pod 聚合，
+            // 纯只读展示，任意已登录用户可看（与「命名空间读全开放」一致），故豁免权限行；其余 /namespace/** 仍走权限表。
+            "/namespace/metrics/**",
+            "/user/me", "/user/my-tenants", "/callback", "/error",
             "/actuator/**", "/doc.html", "/swagger-ui/**", "/swagger-ui.html",
             "/v3/api-docs/**", "/v3/api-docs.yaml", "/v3/api-docs.yaml/**",
             "/favicon.ico",

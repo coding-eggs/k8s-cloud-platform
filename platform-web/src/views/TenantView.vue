@@ -5,6 +5,7 @@ import { platformUserApi, tenantApi } from '@/api'
 import type { PlatformTenant, PlatformUser } from '@/types'
 import { fmtDate } from '@/utils/format'
 import TenantDetailPanel from '@/components/TenantDetailPanel.vue'
+import {MoreFilled} from "@element-plus/icons-vue";
 
 const loading = ref(false)
 const list = ref<PlatformTenant[]>([])
@@ -159,7 +160,11 @@ onMounted(load)
     </div>
 
     <el-table v-loading="loading" :data="list" stripe>
-      <el-table-column prop="name" label="租户名称" min-width="140" />
+      <el-table-column prop="name"  label="租户名称" min-width="140" >
+        <template #default="{ row }">
+          <span class="name-link" @click="openDetail(row)">{{ row.name }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="租户标识 (serviceAccount)" min-width="200">
         <template #default="{ row }">
           <span>{{ row.serviceAccount }}</span>
@@ -174,14 +179,29 @@ onMounted(load)
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ fmtDate(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="280" fixed="right">
+
+
+      <el-table-column width="64" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="warning" @click="onProvision(row)">重新开通</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-dropdown trigger="click">
+            <el-button link type="primary" :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="openEdit(row)">
+                  <el-button link type="primary">编辑</el-button>
+                </el-dropdown-item>
+                <el-dropdown-item @click="onProvision(row)">
+                  <el-button link type="warning">重新开通</el-button>
+                </el-dropdown-item>
+                <el-dropdown-item divided style="color: var(--el-color-danger)" @click="onDelete(row)">
+                  <el-button link type="danger">删除</el-button>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </template>
       </el-table-column>
+
     </el-table>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑租户' : '创建租户'" width="520px">
@@ -249,5 +269,12 @@ onMounted(load)
 }
 .owner-select {
   width: 100%;
+}
+.name-link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.name-link:hover {
+  text-decoration: underline;
 }
 </style>

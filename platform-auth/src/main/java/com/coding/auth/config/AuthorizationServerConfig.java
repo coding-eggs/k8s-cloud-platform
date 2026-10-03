@@ -4,6 +4,7 @@ package com.coding.auth.config;
 
 
 
+import com.coding.auth.grant.SessionRenewalAuthenticationToken;
 import com.coding.common.components.jwt.JwtProperties;
 import com.coding.common.components.jwt.impl.JweTokenStrategy;
 import com.coding.common.components.jwt.impl.JwsTokenStrategy;
@@ -39,6 +40,9 @@ import org.springframework.security.core.userdetails.User;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.jackson.SecurityJacksonModules;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.core.OAuth2ErrorCodes;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.oauth2.server.authorization.*;
 import org.springframework.security.oauth2.server.authorization.authentication.ClientSecretAuthenticationProvider;
@@ -162,7 +166,7 @@ public class AuthorizationServerConfig {
      * 认证持久化
      */
     @Bean
-    public OAuth2AuthorizationService authorizationService(JdbcTemplate jdbcTemplate, RegisteredClientRepository registeredClientRepository ) throws Exception {
+    public OAuth2AuthorizationService authorizationService(JdbcTemplate jdbcTemplate, RegisteredClientRepository registeredClientRepository ) {
         JdbcOAuth2AuthorizationService oAuth2AuthorizationService = new JdbcOAuth2AuthorizationService(jdbcTemplate, registeredClientRepository);
         oAuth2AuthorizationService.setAuthorizationRowMapper(new JdbcOAuth2AuthorizationService.JsonMapperOAuth2AuthorizationRowMapper(registeredClientRepository, createCustomJsonMapper()));
         oAuth2AuthorizationService.setAuthorizationParametersMapper(new JdbcOAuth2AuthorizationService.JsonMapperOAuth2AuthorizationParametersMapper(createCustomJsonMapper()));
@@ -243,9 +247,7 @@ public class AuthorizationServerConfig {
                 UserTenantInfo userTenantInfo = extras.resolveTenant(username, tenantId);
                 if (userTenantInfo == null) {
                     //用户不属于该租户 → invalid_grant（SPA 据此清理租户上下文并回到 base）
-                    throw new org.springframework.security.oauth2.core.OAuth2AuthenticationException(
-                            new org.springframework.security.oauth2.core.OAuth2Error(
-                                    org.springframework.security.oauth2.core.OAuth2ErrorCodes.INVALID_GRANT,
+                    throw new OAuth2AuthenticationException(new OAuth2Error(OAuth2ErrorCodes.INVALID_GRANT,
                                     "用户不属于该租户", "https://datatracker.ietf.org/doc/html/rfc6749#section-5.2"));
                 }
                 tokenUserInfo.setTenantInfo(userTenantInfo);
@@ -265,7 +267,7 @@ public class AuthorizationServerConfig {
     /** 从授权 grant 中提取 session-renewal 携带的 tenant_id；其它 grant（exchange 已退役）恒为 null */
     private static String extractTenantId(JwtEncodingContext context) {
         Object grant = context.getAuthorizationGrant();
-        if (grant instanceof com.coding.auth.grant.SessionRenewalAuthenticationToken t) {
+        if (grant instanceof SessionRenewalAuthenticationToken t) {
             return t.getTenantId();
         }
         return null;

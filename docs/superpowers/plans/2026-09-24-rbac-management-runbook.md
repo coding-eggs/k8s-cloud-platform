@@ -24,6 +24,10 @@
 source V2026_09_24_1__rbac_schema.sql;      -- platform_role 加 scope/built_in 两列（条件式 ADD COLUMN）
 source V2026_09_24_2__rbac_seed.sql;          -- 权限点目录 + 内置角色 + role_permission 关联（条件式索引降级 + 显式 id 幂等 INSERT）
 source V2026_09_26_1__b3_namespace_permissions.sql;  -- B3：10 个 /namespace/** 端点权限行（漏跑则交叉校验拒启动）
+source V2026_09_27_1__permission_manage.sql;          -- 权限点管理：4 个 /permission/** 端点权限行（先于新构建，漏跑则交叉校验拒启动）
+source V2026_09_29_1__resource_fine_grained.sql;      -- 资源域细粒度权限：85 个 /resource/** 端点行 + tenant-admin/tenant-member 关联（先于新构建，漏跑则交叉校验拒启动）
+source V2026_09_29_2__admin_resource_linkage.sql;     -- admin 补挂全部 85 个资源域端点行（V2026_09_24_2 只给了 admin platform:%，漏跑则 admin 失去全部资源页）
+source V2026_10_01_1__user_platform_role_list.sql;    -- 用户平台角色回显：/user/platformRole/list 权限行（先于新构建，漏跑则交叉校验拒启动）
 ```
 
 注意：
@@ -37,9 +41,9 @@ source V2026_09_26_1__b3_namespace_permissions.sql;  -- B3：10 个 /namespace/*
 - gateway client 的 grant_types UPDATE（移除 token-exchange）**dev 库已执行**；增量环境补一句
   （与 dump 终态一致）：
   `UPDATE oauth2_registered_client SET authorization_grant_types = 'refresh_token,authorization_code' WHERE client_id='gateway-code-client';`
-- **全新环境** = 导入 `k8s_cloud_platform.sql` dump → 然后**照跑 V1 + V2 + V2026_09_26_1**（V1 对 dump 库是 no-op）。
+- **全新环境** = 导入 `k8s_cloud_platform.sql` dump → 然后**照跑 V1 + V2 + V2026_09_26_1 + V2026_09_27_1 + V2026_09_29_1 + V2026_09_29_2 + V2026_10_01_1**（V1 对 dump 库是 no-op）。
   dump 只含结构 + `builtin_role_admin` 一行，`platform_permission` / `platform_role_permission`
-  **没有任何 seed 行**——所以 **V2（及 B3 的 V2026_09_26_1）不可省**，省了就是空权限表 → 启动被交叉校验拒绝。
+  **没有任何 seed 行**——所以 **V2（及 B3 的 V2026_09_26_1、权限点管理的 V2026_09_27_1、资源域细粒度的 V2026_09_29_1 + admin 补挂的 V2026_09_29_2、用户角色回显的 V2026_10_01_1）不可省**，省了就是空权限表 → 启动被交叉校验拒绝（或 admin 缺资源页）。
 
 ### Step 3 — 起服
 先起 **platform-auth**（auth-server），确认健康后再起 **platform-api**。
@@ -112,6 +116,7 @@ curl -s -X POST "$ISSUER/oauth2/token" -H "Accept: application/json" -H "Cookie:
 | gateway→k8s-server 透传长票 | 未做 exchange 缩权短票（spec §10.3）。**发布前建议核查**：是否存在调度器驱动、经 gateway 无用户上下文调 k8s-server 的路径——若有，需要服务身份，属 §10.3 领域 |
 | 用户来源仅 LOCAL | LDAP/OIDC JIT 未做（spec §10.4） |
 | 平台族角色粗交付 | admin 一把梭；拆分"开通专员"等为纯 seed 操作（spec §10.5） |
+| 存量 token 缺新 code | 资源域 59 个新 code 只在签发时进 permissions 闭包；部署后旧 JWT 无新 code → 资源页暂时 403/菜单隐藏，session-renewal 续期或重登后自愈（无需人工干预） |
 
 ## 4. 回滚
 

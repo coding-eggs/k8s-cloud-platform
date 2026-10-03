@@ -120,7 +120,7 @@ function metricSummary(row: K8sHpa): string {
 // ---------- 上下文联动：顶栏 chip 变化时刷新 ----------
 onMounted(() => { void load(); void refresh() })
 watch(
-  () => [state.tenantId, state.clusterId, state.namespace],
+  [() => [state.tenantId, state.clusterId, state.namespace], ready],
   () => { if (ready.value) void refresh() },
 )
 

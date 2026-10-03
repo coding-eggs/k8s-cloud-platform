@@ -19,6 +19,9 @@ public interface PlatformPermissionMapper {
 
     int updateByPrimaryKeySelective(PlatformPermission record);
 
+    /** 软删（deleted_at = now()）；仅对未删行生效。deleteByPrimaryKey 是硬删，管理面勿用。 */
+    int softDeleteById(String id);
+
     int updateByPrimaryKey(PlatformPermission record);
 
     List<PlatformPermission> selectAllActive();

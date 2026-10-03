@@ -77,6 +77,21 @@ public enum MetricQuery {
     NODE_DISK_WRITE(DeviceLabels.class,
             "sum by(device) (rate(node_disk_written_bytes_total{instance=\"%s\",device!~\"sr.*|loop.*\"}[5m]))"),
 
+    // ===== 命名空间（%s = clusterName, namespace；跨该 ns 全部 pod 聚合 = pod 级查询去掉 pod= 过滤）=====
+    NAMESPACE_CPU_USED(MetricLabels.class,
+            "sum(rate(container_cpu_usage_seconds_total{cluster_name=\"%s\",namespace=\"%s\",container!=\"POD\",pod!=\"\"}[2m]))"),
+    NAMESPACE_MEMORY_USED(MetricLabels.class,
+            "sum(container_memory_working_set_bytes{cluster_name=\"%s\",namespace=\"%s\",container!=\"POD\"})"),
+    // 方向 RX / TX（netns 在 pod 级）；与 pod 级查询同口径（transmit 沿用 device=~"/dev/dm-.*"）
+    NAMESPACE_NETWORK_RECEIVE(MetricLabels.class,
+            "sum(rate(container_network_receive_bytes_total{cluster_name=\"%s\",namespace=\"%s\"}[2m]))"),
+    NAMESPACE_NETWORK_TRANSMIT(MetricLabels.class,
+            "sum(rate(container_network_transmit_bytes_total{cluster_name=\"%s\",namespace=\"%s\", device=~\"/dev/dm-.*\"}[2m]))"),
+    NAMESPACE_DISK_READ(MetricLabels.class,
+            "sum(rate(container_fs_reads_bytes_total{cluster_name=\"%s\",namespace=\"%s\",container!=\"POD\", device=~\"/dev/dm-.*\"}[2m]))"),
+    NAMESPACE_DISK_WRITE(MetricLabels.class,
+            "sum(rate(container_fs_writes_bytes_total{cluster_name=\"%s\",namespace=\"%s\",container!=\"POD\", device=~\"/dev/dm-.*\"}[2m]))"),
+
     ;
 
     private final Class<?> labelType;

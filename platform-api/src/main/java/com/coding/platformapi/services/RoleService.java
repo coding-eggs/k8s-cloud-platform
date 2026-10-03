@@ -89,7 +89,7 @@ public class RoleService {
             List<PlatformPermission> perms = permMapper.selectAllByCode(code);
             if (perms == null || perms.isEmpty())
                 throw new CloudPlatformException(EnumResponseType.PERMISSION_NOT_FOUND, "权限点不存在: " + code);
-            assertScopeMatches(r.getScope(), code); // 按 code 前缀校验，一族 code 只需一次
+            assertScopeMatches(r, code); // 按 code 前缀校验，一族 code 只需一次
             resolved.put(code, perms);
         }
         rpMapper.deleteByRoleId(roleId);
@@ -111,12 +111,16 @@ public class RoleService {
         return rpMapper.selectPermissionCodesByRoleId(roleId);
     }
 
-    private void assertScopeMatches(String roleScope, String permCode) {
+    /** scope 不变量：TENANT 角色只 tenant: 族，PLATFORM 角色只 platform: 族。
+     *  豁免内置超管 admin（code=admin）：V2026_09_29_2 起它同时持有资源域 tenant:* code，
+     *  全量重存若按不变量拒绝，角色管理页对 admin 的保存会必错。 */
+    private void assertScopeMatches(PlatformRole r, String permCode) {
         boolean isTenantPerm = permCode.startsWith("tenant:");
         boolean isPlatformPerm = permCode.startsWith("platform:");
-        if (RoleScope.TENANT.name().equals(roleScope) && !isTenantPerm)
+        if (RoleScope.TENANT.name().equals(r.getScope()) && !isTenantPerm)
             throw new CloudPlatformException(EnumResponseType.ROLE_SCOPE_MISMATCH, "租户角色只能勾选 tenant: 权限: " + permCode);
-        if (RoleScope.PLATFORM.name().equals(roleScope) && !isPlatformPerm)
+        boolean isAdminSuperuser = "admin".equals(r.getCode());
+        if (RoleScope.PLATFORM.name().equals(r.getScope()) && !isAdminSuperuser && !isPlatformPerm)
             throw new CloudPlatformException(EnumResponseType.ROLE_SCOPE_MISMATCH, "平台角色只能勾选 platform: 权限: " + permCode);
     }
 

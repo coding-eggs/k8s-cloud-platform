@@ -241,7 +241,7 @@ watch(activeTab, (t) => {
 </script>
 
 <template>
-  <div class="panel">
+  <div class="panel px-2.5">
     <el-tabs v-model="activeTab">
       <el-tab-pane label="命名空间分配" name="ns">
         <div class="toolbar">
