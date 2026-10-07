@@ -5,6 +5,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.util.List;
+
 /**
  * 命名空间（core/v1，集群级资源）。
  * name/labels 继承自 {@link BaseResources}；namespace 恒为 null（集群级）。
@@ -23,6 +25,12 @@ public class NamespaceDTO extends BaseResources {
 
     @Schema(description = "描述 → metadata.annotations[\"description\"]")
     private String description;
+
+    @Schema(description = "Calico 绑定 IPv4 地址池 → metadata.annotations[\"cni.projectcalico.org/ipv4pools\"]（JSON 数组字符串；空=默认分配）")
+    private List<String> ipv4Pools;
+
+    @Schema(description = "Calico 绑定 IPv6 地址池 → metadata.annotations[\"cni.projectcalico.org/ipv6pools\"]（JSON 数组字符串；空=默认分配）")
+    private List<String> ipv6Pools;
 
     @Schema(description = "资源版本（只读回传）")
     private String resourceVersion;

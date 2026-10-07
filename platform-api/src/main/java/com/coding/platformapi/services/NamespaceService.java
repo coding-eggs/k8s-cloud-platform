@@ -331,6 +331,8 @@ public class NamespaceService {
         v.setAllocatedTenantName(allocatedTenant.get(ns.getName()));
         v.setDescription(ns.getDescription());
         v.setLabels(ns.getLabels());
+        v.setIpv4Pools(ns.getIpv4Pools());
+        v.setIpv6Pools(ns.getIpv6Pools());
         return v;
     }
 
@@ -353,6 +355,8 @@ public class NamespaceService {
         dto.setName(req.getName());
         dto.setDescription(req.getDescription());
         dto.setLabels(req.getLabels());
+        dto.setIpv4Pools(req.getIpv4Pools());
+        dto.setIpv6Pools(req.getIpv6Pools());
         return dto;
     }
 

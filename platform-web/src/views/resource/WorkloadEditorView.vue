@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { workloadApi } from '@/api'
+import { workloadApi, calicoApi, namespaceApi, clusterApi } from '@/api'
 import type {
   Affinity,
   ContainerDef,
@@ -17,7 +17,9 @@ import type {
   WorkloadKind,
 } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
+import type { K8sIpReservation } from '@/types'
 import { useNodeCatalog } from '@/stores/nodeCatalog'
+import { usePermission } from '@/stores/permission'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
@@ -30,6 +32,9 @@ import TolerationEditor from '@/components/workload/TolerationEditor.vue'
 import VolumeEditor from '@/components/workload/VolumeEditor.vue'
 import PvcTemplateEditor from '@/components/workload/PvcTemplateEditor.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
+import { useClusterCapability } from '@/composables/useClusterCapability'
+import { containsInCidr, expandCidrToIps, isIp } from '@/utils/ipUtil'
+import { CALICO_POOL_LABEL, DEFAULT_IPV4_POOL, DEFAULT_IPV6_POOL } from '@/utils/calico'
 
 const route = useRoute()
 const router = useRouter()
@@ -150,6 +155,155 @@ const description = computed<string>({
 const replicas = computed<number | undefined>({
   get: () => form.replicas ?? undefined,
   set: (v) => { form.replicas = v ?? null },
+})
+
+// ---------- 固定 IP（Calico ipAddrs 注解；双栈 v4+v6） ----------
+/** capability 门禁：集群无 projectcalico.org → 整字段隐藏 */
+const { hasCalico } = useClusterCapability(computed(() => state.clusterId ?? null))
+/** 启用门禁：kind ∈ {deploy, sts} && replicas==1（未填按 K8s 默认 1）；不满足则禁用 + 说明 */
+const staticIpAllowed = computed(() => form.kind !== 'daemonset' && (form.replicas ?? 1) === 1)
+
+function ensurePt(): NonNullable<WorkloadDetail['podTemplate']> {
+  if (!form.podTemplate) form.podTemplate = { spec: { containers: [] } }
+  return form.podTemplate
+}
+const staticIps = computed<string[]>({
+  get: () => form.podTemplate?.staticIps ?? [],
+  set: (v) => { ensurePt().staticIps = v.length > 0 ? v : null },
+})
+
+/** 候选 = 本命名空间可用池（ns 绑定池，未绑定→默认池）内的保留 IP 展开；超大段截断防下拉爆炸。同集群+命名空间只查一次 */
+const RESERVED_IP_CAP_PER_CIDR = 1024
+interface ReservedIpOption { ip: string; pool: string }
+const reservedIpOptions = ref<ReservedIpOption[]>([])
+/** 当前生效的可用池名（v4+v6；展示用） */
+const allowedPoolNames = ref<string[]>([])
+const reservedIpsTruncated = ref(false)
+/** 被「不在本 ns 可用池」过滤掉的保留 IP 所属池（去重；空候选提示用） */
+const filteredOutPoolNames = ref<string[]>([])
+let reservedIpsLoadedFor: string | null = null
+const perm = usePermission()
+
+async function loadReservedIpOptions(): Promise<void> {
+  const clusterId = state.clusterId
+  const nsName = state.namespace
+  if (!clusterId || !perm.has('platform:cluster:manage')) return
+  const cacheKey = `${clusterId}/${nsName ?? ''}`
+  if (reservedIpsLoadedFor === cacheKey) return
+  try {
+    // 本命名空间绑定池（B3 §11：ns annotation cni.projectcalico.org/ipv{4,6}pools）；查询失败 → null → 按未绑定处理
+    const ns = nsName
+      ? await namespaceApi.get(clusterId, nsName).catch(() => null)
+      : null
+    const [reservations, pools, cluster] = await Promise.all([
+      calicoApi.ipreservation.list({ clusterId }),
+      calicoApi.ippool.list({ clusterId }),
+      clusterApi.get(clusterId).catch(() => null), // IP 栈门禁用；失败 → null → 不限制（降级）
+    ])
+    if (state.clusterId !== clusterId) return // 加载期间已切换集群 → 丢弃过期结果
+    // 可用池：绑定 → 精确集合；未绑定 → Calico 默认池（default-ipv4-ippool / default-ipv6-ippool）
+    const allowedV4 = ns?.ipv4Pools?.length ? new Set(ns.ipv4Pools) : new Set<string>([DEFAULT_IPV4_POOL])
+    const allowedV6 = ns?.ipv6Pools?.length ? new Set(ns.ipv6Pools) : new Set<string>([DEFAULT_IPV6_POOL])
+    // IP 栈门禁（k8s_cluster.ip_stack）：非双栈集群不给另一族的候选；栈未知 → 不限制
+    const ipStack = cluster?.ipStack ?? null
+    if (ipStack && ipStack !== 'IPV4' && ipStack !== 'IPV4_AND_IPV6') allowedV4.clear()
+    if (ipStack && ipStack !== 'IPV6' && ipStack !== 'IPV4_AND_IPV6') allowedV6.clear()
+    const seen = new Set<string>()
+    const opts: ReservedIpOption[] = []
+    let truncated = false
+    const filteredOutPools = new Set<string>()
+    for (const r of reservations ?? []) {
+      // 池归属：label 优先（创建时写入）；缺失才反查（CIDR 包含，Calico 禁池重叠→无歧义），反查后反写防下次再查
+      let pool = r.labels?.[CALICO_POOL_LABEL] ?? null
+      if (!pool) {
+        const first = (r.reservedCidrs ?? [])[0]
+        const ip = first ? (first.includes('/') ? first.split('/')[0]! : first) : ''
+        pool = pools.find((pl) => pl.cidr && ip && containsInCidr(pl.cidr, ip))?.name ?? null
+        if (pool) void writeBackPoolLabel(r, clusterId, pool)
+      }
+      if (!pool) continue // 无池归属 → 无法判定是否属于本命名空间可用范围
+      const poolObj = pools.find((pl) => pl.name === pool)
+      if (!poolObj?.cidr) continue
+      const allowed = poolObj.cidr.includes(':') ? allowedV6 : allowedV4
+      if (!allowed.has(pool)) { filteredOutPools.add(pool); continue } // 不在本 ns 可用池内 → 不可选
+      for (const cidr of r.reservedCidrs ?? []) {
+        const exp = expandCidrToIps(cidr, RESERVED_IP_CAP_PER_CIDR)
+        if (!exp) continue
+        truncated ||= exp.truncated
+        for (const ip of exp.ips) if (!seen.has(ip)) { seen.add(ip); opts.push({ ip, pool }) }
+      }
+    }
+    reservedIpOptions.value = opts.sort((a, b) => a.ip.localeCompare(b.ip))
+    allowedPoolNames.value = [...allowedV4, ...allowedV6]
+    reservedIpsTruncated.value = truncated
+    filteredOutPoolNames.value = [...filteredOutPools]
+    reservedIpsLoadedFor = cacheKey
+  } catch {
+    /* 无权限/查询失败 → 空候选（已有值仍可回显），不阻断 */
+  }
+}
+
+/** 反查后反写：补池归属 label（fire-and-forget；失败=下次再反查，不影响本次展示） */
+async function writeBackPoolLabel(r: K8sIpReservation, clusterId: string, pool: string): Promise<void> {
+  try {
+    await calicoApi.ipreservation.update(r.name, clusterId, {
+      ...r,
+      labels: { ...(r.labels ?? {}), [CALICO_POOL_LABEL]: pool },
+    })
+  } catch { /* 无权限/对象已删 → 忽略 */ }
+}
+
+watch(() => state.clusterId, () => { reservedIpsLoadedFor = null })
+watch([() => state.clusterId, () => state.namespace, staticIpAllowed, hasCalico], () => { void loadReservedIpOptions() }, { immediate: true })
+
+/** 软校验（不阻断提交）：对照地址池 / 保留 IP / 空闲点查给提示；无权限（403）或查询失败 → 不提示 */
+interface StaticIpWarning { ip: string; level: 'warning' | 'info'; text: string }
+const staticIpWarnings = ref<StaticIpWarning[]>([])
+let staticIpCheckTimer: number | undefined
+
+async function runStaticIpChecks(): Promise<void> {
+  const clusterId = state.clusterId
+  const ips = staticIps.value.map((s) => s.trim()).filter(Boolean)
+  // 候选查询走 /calico/**（platform:cluster:manage）；无此权限不发请求，避免 403 弹提示
+  if (!clusterId || !staticIpAllowed.value || ips.length === 0 || !perm.has('platform:cluster:manage')) {
+    staticIpWarnings.value = []
+    return
+  }
+  try {
+    const [pools, reservations] = await Promise.all([
+      calicoApi.ippool.list({ clusterId }),
+      calicoApi.ipreservation.list({ clusterId }),
+    ])
+    const reservedCidrs = (reservations ?? []).flatMap((r) => r.reservedCidrs ?? [])
+    const warnings: StaticIpWarning[] = []
+    for (const ip of ips) {
+      const inPool = (pools ?? []).some((p) => p.cidr && containsInCidr(p.cidr, ip))
+      if (!inPool) {
+        warnings.push({ ip, level: 'warning', text: `${ip} 不在任何地址池内（Calico 仍会按注解生效，请确认该 IP 可用）` })
+        continue
+      }
+      if (reservedCidrs.some((c) => containsInCidr(c, ip))) {
+        warnings.push({ ip, level: 'info', text: `${ip} 已保留` })
+        continue
+      }
+      let free = true
+      try { free = await calicoApi.ipam.isFree(clusterId, ip) } catch { /* 点查失败按未知处理，不断言占用 */ }
+      if (!free) warnings.push({ ip, level: 'warning', text: `${ip} 已被分配或保留` })
+      else warnings.push({ ip, level: 'info', text: `${ip} 空闲但未保留——建议在「保留 IP」页先保留，防止被他人抢占` })
+    }
+    staticIpWarnings.value = warnings
+  } catch {
+    staticIpWarnings.value = [] // 拦截器已提示；不阻断提交
+  }
+}
+
+watch(staticIps, () => {
+  window.clearTimeout(staticIpCheckTimer)
+  staticIpCheckTimer = window.setTimeout(() => { void runStaticIpChecks() }, 500)
+}, { deep: true })
+watch(() => state.clusterId, () => {
+  window.clearTimeout(staticIpCheckTimer)
+  staticIpWarnings.value = []
 })
 
 const serviceName = computed<string>({
@@ -363,6 +517,13 @@ function normalizeForSubmit(): void {
   if (pol && !pol.whenDeleted && !pol.whenScaled) form.persistentVolumeClaimRetentionPolicy = null
   if (form.ordinals && form.ordinals.start == null) form.ordinals = null
 
+  // 固定 IP：trim 去空；门控不满足（daemonset/多副本）强制置 null，防旧值随行提交
+  const pt0 = form.podTemplate
+  if (pt0?.staticIps) {
+    const kept = pt0.staticIps.map((s) => s.trim()).filter(Boolean)
+    pt0.staticIps = staticIpAllowed.value && kept.length > 0 ? kept : null
+  }
+
   const spec = form.podTemplate?.spec
   if (!spec) return
   for (const c of [...spec.containers, ...(spec.initContainers ?? [])]) {
@@ -466,6 +627,15 @@ async function submit(): Promise<void> {
   if (!(mainTabsRef.value?.isValid() ?? true) || !(initTabsRef.value?.isValid() ?? true)) {
     ElMessage.warning('资源 requests 不能大于 limits')
     return
+  }
+
+  // 6.5) 固定 IP 格式（v4/v6）；单副本门控后端 A6 再兜底
+  for (const raw of form.podTemplate?.staticIps ?? []) {
+    const t = raw.trim()
+    if (t && !isIp(t)) {
+      ElMessage.warning(`固定 IP 格式不正确：${t}`)
+      return
+    }
   }
 
   normalizeForSubmit()
@@ -592,6 +762,22 @@ const contextDesc = computed(() => {
                 <el-form-item v-if="form.kind !== 'daemonset'">
                   <template #label>副本 <FieldHelp tip="期望的副本数量。DaemonSet 由节点数决定，不设置此项。" /></template>
                   <el-input-number v-model="replicas" :min="0" :max="64" controls-position="right" />
+                </el-form-item>
+                <el-form-item v-if="hasCalico">
+                  <template #label>固定 IP<FieldHelp tip="从本命名空间绑定地址池（未绑定则 Calico 默认池）的保留 IP 中为 Pod 指定固定 IP（Calico ipAddrs 注解，支持 IPv4/IPv6 双栈）。仅单副本（replicas=1）的 Deployment/StatefulSet 支持；IPv6 候选仅双栈集群（IPV4_AND_IPV6）提供。请先在「保留 IP」页保留目标 IP。" /></template>
+                  <el-select
+                    v-model="staticIps" multiple filterable clearable :disabled="!staticIpAllowed"
+                    placeholder="从保留 IP 中选择（可搜索）" style="width: 420px"
+                  >
+                    <el-option v-for="o in reservedIpOptions" :key="o.ip" :label="`${o.ip}（${o.pool}）`" :value="o.ip" />
+                  </el-select>
+                  <div v-if="!staticIpAllowed" class="form-tip warn">仅单副本（replicas=1）的 Deployment/StatefulSet 可配置固定 IP（当前：{{ form.kind === 'daemonset' ? 'DaemonSet 不支持' : `replicas=${form.replicas ?? 1}` }}）</div>
+                  <template v-else>
+                    <div v-if="perm.has('platform:cluster:manage') && allowedPoolNames.length > 0" class="form-tip">本命名空间可用池：{{ allowedPoolNames.join('、') }}<template v-if="reservedIpOptions.length === 0"><template v-if="filteredOutPoolNames.length">——集群已有保留 IP，但都不在以上池内（当前涉及：{{ filteredOutPoolNames.join('、') }}），请在「保留 IP」页把目标 IP 保留到上述池</template><template v-else>——暂无保留 IP 候选，请先在「保留 IP」页从这些池保留目标 IP</template></template></div>
+                    <div v-else-if="!perm.has('platform:cluster:manage')" class="form-tip">无集群管理权限，取不到保留 IP 候选（已有值仍可回显提交）</div>
+                    <div v-if="reservedIpsTruncated" class="form-tip">部分保留段超过 {{ RESERVED_IP_CAP_PER_CIDR }} 个 IP，未全部展开</div>
+                  </template>
+                  <el-alert v-for="w in staticIpWarnings" :key="w.ip" :title="w.text" :type="w.level" :closable="false" class="static-ip-warn" />
                 </el-form-item>
                 <el-form-item v-if="form.kind !== 'daemonset'">
                   <template #label>就绪最短秒数 <FieldHelp tip="minReadySeconds：控制 Pod 被标记为“可用（Available）”之前，必须保持 Ready 状态的最短时间。" /></template>
@@ -927,6 +1113,10 @@ const contextDesc = computed(() => {
 }
 .form-tip.warn {
   color: var(--el-color-warning);
+}
+.static-ip-warn {
+  margin-top: 6px;
+  max-width: 560px;
 }
 .kv-editor {
   width: 100%;

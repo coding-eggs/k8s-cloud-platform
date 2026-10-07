@@ -132,4 +132,68 @@ class CoreV1NamespaceConverterTest {
                 .containsEntry("env", "prod");                                   // DTO 新增
         assertThat(out.getMetadata().getAnnotations()).containsEntry("description", "新描述");
     }
+
+    // ---------- Calico 绑定池（cni.projectcalico.org/ipv{4,6}pools） ----------
+
+    @Test
+    void convert_writes_pool_annotations_as_json_array_when_present() {
+        NamespaceDTO dto = new NamespaceDTO();
+        dto.setName("ns8");
+        dto.setIpv4Pools(java.util.List.of("default-ipv4-pool", "biz-pool"));
+        Namespace out = c.convert(dto);
+        assertThat(out.getMetadata().getAnnotations())
+                .containsEntry(CoreV1NamespaceConverter.ANNOTATION_IPV4_POOLS, "[\"default-ipv4-pool\",\"biz-pool\"]")
+                .doesNotContainKey(CoreV1NamespaceConverter.ANNOTATION_IPV6_POOLS);
+    }
+
+    @Test
+    void revert_parses_pool_annotations_json_and_comma_fallback() {
+        Map<String, String> ann = new LinkedHashMap<>();
+        ann.put(CoreV1NamespaceConverter.ANNOTATION_IPV4_POOLS, "[\"p1\",\"p2\"]");
+        ann.put(CoreV1NamespaceConverter.ANNOTATION_IPV6_POOLS, "v6a,v6b"); // 旧逗号写法兼容
+        NamespaceDTO d = c.revert(live("ns9", new LinkedHashMap<>(), ann, "Active"));
+        assertThat(d.getIpv4Pools()).containsExactly("p1", "p2");
+        assertThat(d.getIpv6Pools()).containsExactly("v6a", "v6b");
+    }
+
+    @Test
+    void revert_no_pool_annotations_yields_null_lists() {
+        NamespaceDTO d = c.revert(live("ns10", new LinkedHashMap<>(), new LinkedHashMap<>(), "Active"));
+        assertThat(d.getIpv4Pools()).isNull();
+        assertThat(d.getIpv6Pools()).isNull();
+    }
+
+    @Test
+    void convert_for_update_overwrites_pools_and_empty_clears_binding() {
+        Map<String, String> liveAnn = new LinkedHashMap<>();
+        liveAnn.put(CoreV1NamespaceConverter.ANNOTATION_IPV4_POOLS, "[\"old-pool\"]");
+        Namespace live = live("ns11", new LinkedHashMap<>(), liveAnn, "Active");
+
+        // 非空 → 覆写
+        NamespaceDTO dto = new NamespaceDTO();
+        dto.setName("ns11");
+        dto.setIpv4Pools(java.util.List.of("new-pool"));
+        Namespace out = c.convertForUpdate(dto, live);
+        assertThat(out.getMetadata().getAnnotations())
+                .containsEntry(CoreV1NamespaceConverter.ANNOTATION_IPV4_POOLS, "[\"new-pool\"]");
+
+        // 显式空列表 → 删除（恢复默认分配）；第三方 annotation 存活
+        Map<String, String> liveAnn2 = new LinkedHashMap<>();
+        liveAnn2.put(CoreV1NamespaceConverter.ANNOTATION_IPV6_POOLS, "[\"v6-old\"]");
+        liveAnn2.put("keep", "me");
+        NamespaceDTO dto2 = new NamespaceDTO();
+        dto2.setName("ns11");
+        dto2.setIpv6Pools(java.util.List.of()); // 显式空 = 主动清空
+        Namespace out2 = c.convertForUpdate(dto2, live("ns11", new LinkedHashMap<>(), liveAnn2, "Active"));
+        assertThat(out2.getMetadata().getAnnotations())
+                .doesNotContainKey(CoreV1NamespaceConverter.ANNOTATION_IPV6_POOLS)
+                .containsEntry("keep", "me");
+
+        // null = 未传 → 保持现状（capability 未探测的客户端不能误清绑定）
+        NamespaceDTO dto3 = new NamespaceDTO();
+        dto3.setName("ns11");
+        Namespace out3 = c.convertForUpdate(dto3, live("ns11", new LinkedHashMap<>(), liveAnn2, "Active"));
+        assertThat(out3.getMetadata().getAnnotations())
+                .containsEntry(CoreV1NamespaceConverter.ANNOTATION_IPV6_POOLS, "[\"v6-old\"]");
+    }
 }

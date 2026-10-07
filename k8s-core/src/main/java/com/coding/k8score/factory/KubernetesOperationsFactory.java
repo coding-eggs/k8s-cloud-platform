@@ -7,6 +7,11 @@ import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.k8score.converter.impl.autoscaling.HpaV1Converter;
 import com.coding.k8score.converter.impl.autoscaling.HpaV2Converter;
+import com.coding.k8score.converter.impl.calico.BgpConfigurationConverter;
+import com.coding.k8score.converter.impl.calico.BgpFilterConverter;
+import com.coding.k8score.converter.impl.calico.BgpPeerConverter;
+import com.coding.k8score.converter.impl.calico.IppoolConverter;
+import com.coding.k8score.converter.impl.calico.IpReservationConverter;
 import com.coding.k8score.converter.impl.core.CoreV1ConfigMapConverter;
 import com.coding.k8score.converter.impl.core.CoreV1NamespaceConverter;
 import com.coding.k8score.converter.impl.core.CoreV1NodeConverter;
@@ -27,6 +32,13 @@ import com.coding.k8score.converter.impl.workload.AppsV1ReplicaSetConverter;
 import com.coding.k8score.converter.impl.workload.WorkloadConverter;
 import com.coding.k8score.operations.ClusterOperations;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.calico.BgpConfigurationOperations;
+import com.coding.k8score.operations.calico.BgpFilterOperations;
+import com.coding.k8score.operations.calico.BgpPeerOperations;
+import com.coding.k8score.operations.calico.CalicoFormOptionOperations;
+import com.coding.k8score.operations.calico.CalicoIpamOperations;
+import com.coding.k8score.operations.calico.IppoolOperations;
+import com.coding.k8score.operations.calico.IpReservationOperations;
 import com.coding.k8score.operations.autoscaling.HpaV1Operations;
 import com.coding.k8score.operations.autoscaling.HpaV2Operations;
 import com.coding.k8score.operations.core.CoreV1ConfigMapOperations;
@@ -104,6 +116,18 @@ public class KubernetesOperationsFactory {
         return new CoreV1NodeOperations(client, new CoreV1NodeConverter());
     }
 
+    /** Calico IPAM 派生视图操作（集群级，admin client）。非标准 CRUD，独立返回具体类型。 */
+    public CalicoIpamOperations getCalicoIpamOperation(String clusterId) {
+        KubernetesClient client = clientFactory.getAdminClient(clusterId);
+        return new CalicoIpamOperations(client, new IppoolConverter());
+    }
+
+    /** BGP 编辑器下拉候选（集群级，admin client，只读）。非标准 CRUD，独立返回具体类型。 */
+    public CalicoFormOptionOperations getCalicoFormOptionOperation(String clusterId) {
+        KubernetesClient client = clientFactory.getAdminClient(clusterId);
+        return new CalicoFormOptionOperations(client);
+    }
+
     /** 按资源类型构造 operation。单版本资源直接 new；HPA 等跨版本发散资源在此按集群 capability 分派 converter。 */
     private Object build(ResourceType type, KubernetesClient client, String clusterId) {
         return switch (type) {
@@ -124,6 +148,11 @@ public class KubernetesOperationsFactory {
             case CLUSTER_ROLE -> new RbacV1ClusterRoleOperations(client, new RbacV1ClusterRoleConverter());
             case SERVICE_MONITOR -> new ServiceMonitorOperations(client, new ServiceMonitorConverter());
             case POD_MONITOR -> new PodMonitorOperations(client, new PodMonitorConverter());
+            case IP_POOL -> new IppoolOperations(client, new IppoolConverter());
+            case IP_RESERVATION -> new IpReservationOperations(client, new IpReservationConverter());
+            case BGP_CONFIGURATION -> new BgpConfigurationOperations(client, new BgpConfigurationConverter());
+            case BGP_PEER -> new BgpPeerOperations(client, new BgpPeerConverter());
+            case BGP_FILTER -> new BgpFilterOperations(client, new BgpFilterConverter());
             case HPA -> buildHpa(client, clusterId);
             default -> throw new CloudPlatformException(EnumResponseType.NON_RESOURCE);
         };

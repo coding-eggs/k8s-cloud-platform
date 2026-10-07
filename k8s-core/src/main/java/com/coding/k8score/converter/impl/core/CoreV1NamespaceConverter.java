@@ -2,11 +2,14 @@ package com.coding.k8score.converter.impl.core;
 
 import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.k8score.converter.CommonConverter;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -29,6 +32,12 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
     public static final String MANAGED_BY_VALUE = "k8s-cloud-platform";
     public static final String DESCRIPTION_ANNOTATION = "description";
 
+    /** Calico 命名空间绑定池（CNI 读 ns annotation 圈定自动分配的 pool，分地址族；值=JSON 数组字符串） */
+    public static final String ANNOTATION_IPV4_POOLS = "cni.projectcalico.org/ipv4pools";
+    public static final String ANNOTATION_IPV6_POOLS = "cni.projectcalico.org/ipv6pools";
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     @Override
     public Namespace convert(NamespaceDTO dto) {
         Map<String, String> labels = new LinkedHashMap<>();
@@ -44,6 +53,12 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
                 .endMetadata();
         if (StringUtils.hasText(dto.getDescription())) {
             b.editMetadata().addToAnnotations(DESCRIPTION_ANNOTATION, dto.getDescription()).endMetadata();
+        }
+        if (dto.getIpv4Pools() != null && !dto.getIpv4Pools().isEmpty()) {
+            b.editMetadata().addToAnnotations(ANNOTATION_IPV4_POOLS, poolListToJson(dto.getIpv4Pools())).endMetadata();
+        }
+        if (dto.getIpv6Pools() != null && !dto.getIpv6Pools().isEmpty()) {
+            b.editMetadata().addToAnnotations(ANNOTATION_IPV6_POOLS, poolListToJson(dto.getIpv6Pools())).endMetadata();
         }
         return b.build();
     }
@@ -62,6 +77,8 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
             Map<String, String> ann = ns.getMetadata().getAnnotations();
             if (ann != null) {
                 dto.setDescription(ann.get(DESCRIPTION_ANNOTATION));
+                dto.setIpv4Pools(parsePoolList(ann.get(ANNOTATION_IPV4_POOLS)));
+                dto.setIpv6Pools(parsePoolList(ann.get(ANNOTATION_IPV6_POOLS)));
             }
         }
         if (ns.getStatus() != null) {
@@ -106,6 +123,9 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
         } else {
             annotations.remove(DESCRIPTION_ANNOTATION);
         }
+        // Calico 绑定池：非空→覆写；空→删除（恢复默认分配）
+        overlayPools(annotations, ANNOTATION_IPV4_POOLS, dto.getIpv4Pools());
+        overlayPools(annotations, ANNOTATION_IPV6_POOLS, dto.getIpv6Pools());
         return new NamespaceBuilder()
                 .withNewMetadata()
                     .withName(dto.getName())
@@ -113,5 +133,45 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
                     .withAnnotations(annotations.isEmpty() ? null : annotations)
                 .endMetadata()
                 .build();
+    }
+
+    // ---------- Calico 绑定池注解辅助 ----------
+
+    /** 非空→覆写 JSON 数组；显式空列表→删除该键（恢复 Calico 默认分配）；null=未传→保持现状（防 capability 未探测时误清绑定） */
+    private static void overlayPools(Map<String, String> annotations, String key, List<String> pools) {
+        if (pools == null) return;
+        if (!pools.isEmpty()) {
+            annotations.put(key, poolListToJson(pools));
+        } else {
+            annotations.remove(key);
+        }
+    }
+
+    private static String poolListToJson(List<String> pools) {
+        try {
+            return MAPPER.writeValueAsString(pools);
+        } catch (Exception e) {
+            throw new IllegalStateException("绑定池序列化失败: " + pools, e);
+        }
+    }
+
+    /** 绑定池注解 → 列表：JSON 数组（官方格式）；解析失败按逗号分隔兼容旧写法；空/非法 → null */
+    private static List<String> parsePoolList(String raw) {
+        if (!StringUtils.hasText(raw)) return null;
+        String s = raw.trim();
+        try {
+            List<?> arr = MAPPER.readValue(s, List.class);
+            List<String> out = new ArrayList<>();
+            for (Object o : arr) {
+                if (o != null && StringUtils.hasText(String.valueOf(o))) out.add(String.valueOf(o).trim());
+            }
+            return out.isEmpty() ? null : out;
+        } catch (Exception notJson) {
+            List<String> out = new ArrayList<>();
+            for (String p : s.split(",")) {
+                if (StringUtils.hasText(p.trim())) out.add(p.trim());
+            }
+            return out.isEmpty() ? null : out;
+        }
     }
 }

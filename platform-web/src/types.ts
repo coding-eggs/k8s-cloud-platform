@@ -152,6 +152,10 @@ export interface NamespaceView {
   /** 描述（metadata.annotations["description"]） */
   description?: string | null
   labels?: Record<string, string> | null
+  /** Calico 绑定 IPv4 地址池（ns annotation；null/空=默认分配） */
+  ipv4Pools?: string[] | null
+  /** Calico 绑定 IPv6 地址池（ns annotation；null/空=默认分配） */
+  ipv6Pools?: string[] | null
 }
 
 /** 资源量对（cpu 核 / memory 字节，基础单位）—— 与后端 ResourcePairDTO 对齐（D7 冻结契约） */
@@ -697,6 +701,229 @@ export interface NodeEvent {
 export interface NodeCurrentMetric {
   cpuPercent?: number | null
   memPercent?: number | null
+}
+
+// ===== 网络 Calico（集群级，admin；/calico/**）=====
+
+/** K8s condition（Calico CRD status.conditions 项） */
+export interface K8sCondition {
+  type?: string | null
+  status?: string | null
+  reason?: string | null
+  message?: string | null
+  lastTransitionTime?: string | null
+}
+
+/** IPPool（projectcalico.org/v3 CRD，集群级；无租户/命名空间维度） */
+export interface K8sIpool {
+  name: string
+  clusterId?: string | null
+  labels?: Record<string, string> | null
+  /** CIDR（必填），如 10.48.0.0/16 */
+  cidr?: string | null
+  /** 块前缀长度（null=Calico 默认，v4 通常 26 / v6 122） */
+  blockSize?: number | null
+  /** 节点选择器（如 projectcalico.org/node==worker） */
+  nodeSelector?: string[] | null
+  natOutgoing?: boolean | null
+  disabled?: boolean | null
+  ipv4hierarchicalPortAllocation?: boolean | null
+  blocks?: string[] | null
+  /** 只读：status.conditions */
+  conditions?: K8sCondition[] | null
+  creationTime?: string | null
+}
+
+/** IPPool IPAM 派生汇总（非 CRD，后端算）。计数为 number（后端 long；IPv6 饱和值展示时按量级格式化） */
+export interface PoolIpamSummary {
+  poolName?: string | null
+  cidr?: string | null
+  blockSize?: number | null
+  capacity?: number | null
+  allocated?: number | null
+  free?: number | null
+  reserved?: number | null
+  blockCount?: number | null
+}
+
+/** 单个已物化 IPAM 块统计（三态划分 free+reserved+allocated=totalIps） */
+export interface IpamBlockStat {
+  cidr: string
+  node?: string | null
+  totalIps?: number | null
+  allocated?: number | null
+  free?: number | null
+  reserved?: number | null
+}
+
+/** 单块 per-IP 明细（status 三态；allocated 由 pod.status.podIP 反查） */
+export interface IpamIpDetail {
+  ip: string
+  status: 'free' | 'reserved' | 'allocated'
+  podName?: string | null
+  podNamespace?: string | null
+  node?: string | null
+}
+
+/** IPReservation（projectcalico.org/v3 CRD，集群级；spec.reservedCIDRs = CIDR 列表，单 IP = "ip/32"、范围 = "cidr"） */
+export interface K8sIpReservation {
+  name: string
+  clusterId?: string | null
+  labels?: Record<string, string> | null
+  /** spec.reservedCIDRs：保留 CIDR 列表（单 IP = "ip/32"，范围 = "cidr"） */
+  reservedCidrs?: string[] | null
+  creationTime?: string | null
+}
+
+// ===== BGP* 只读（projectcalico.org/v3 CRD，集群级；view-only，无写入口）=====
+
+/** Secret 引用（BGP 密码；只存引用不存密文） */
+export interface BgpSecretKeyRef {
+  name?: string | null
+  namespace?: string | null
+  key?: string | null
+}
+
+/** BGPConfiguration spec.service*IPs 单项 */
+export interface BgpServiceBlock {
+  cidr?: string | null
+}
+
+/** BGP community 名称↔值映射项 */
+export interface BgpCommunity {
+  name?: string | null
+  value?: string | null
+}
+
+/** 按前缀的宣告配置项 */
+export interface BgpPrefixAdvertisement {
+  cidr?: string | null
+  communities?: string[] | null
+}
+
+/** BGPConfiguration（只读；asNumber 为 numorstring → string） */
+export interface BgpConfiguration {
+  name: string
+  clusterId?: string | null
+  labels?: Record<string, string> | null
+  logSeverityScreen?: string | null
+  nodeToNodeMeshEnabled?: boolean | null
+  /** numorstring：64512 或 "AS64512" */
+  asNumber?: string | null
+  listenPort?: number | null
+  serviceClusterIPs?: BgpServiceBlock[] | null
+  serviceExternalIPs?: BgpServiceBlock[] | null
+  serviceLoadBalancerIPs?: BgpServiceBlock[] | null
+  communities?: BgpCommunity[] | null
+  prefixAdvertisements?: BgpPrefixAdvertisement[] | null
+  /** spec.nodeMeshPassword.secretKeyRef */
+  nodeMeshPassword?: BgpSecretKeyRef | null
+  /** None / NodeIP */
+  bindMode?: string | null
+  ignoredInterfaces?: string[] | null
+  // 新版字段（旧版 Calico 缺席 → null）
+  serviceLoadBalancerAggregation?: string | null
+  localWorkloadPeeringIPV4?: string | null
+  localWorkloadPeeringIPV6?: string | null
+  programClusterRoutes?: string | null
+  ipv4NormalRoutePriority?: number | null
+  ipv6NormalRoutePriority?: number | null
+  conditions?: K8sCondition[] | null
+  creationTime?: string | null
+}
+
+/** BGPPeer（只读；真实 schema：peerIP、nodeSelector 为字符串） */
+export interface BgpPeer {
+  name: string
+  clusterId?: string | null
+  labels?: Record<string, string> | null
+  node?: string | null
+  /** 节点选择器表达式（字符串，非列表） */
+  nodeSelector?: string | null
+  /** 对端地址，可带端口：10.0.0.1:179 */
+  peerIp?: string | null
+  asNumber?: string | null
+  localAsNumber?: string | null
+  peerSelector?: string | null
+  keepOriginalNextHop?: boolean | null
+  /** Auto / Self / Keep（新版） */
+  nextHopMode?: string | null
+  /** spec.password.secretKeyRef */
+  password?: BgpSecretKeyRef | null
+  /** UseNodeIP / None */
+  sourceAddress?: string | null
+  maxRestartTime?: string | null
+  keepaliveTime?: string | null
+  numAllowedLocalASNumbers?: number | null
+  ttlSecurity?: number | null
+  reachableBy?: string | null
+  filters?: string[] | null
+  localWorkloadSelector?: string | null
+  /** Auto / Manual（新版） */
+  reversePeering?: string | null
+  conditions?: K8sCondition[] | null
+  creationTime?: string | null
+}
+
+/** BGPFilter 规则单项（v4/v6 共用；展示向扁平化：prefixLength→min/max、communities.values、operations 判别联合） */
+export interface BgpFilterRule {
+  cidr?: string | null
+  prefixLengthMin?: number | null
+  prefixLengthMax?: number | null
+  /** RemotePeers */
+  source?: string | null
+  /** 出接口匹配（真实 JSON key = "interface"，Java 保留字故后端字段名 iface） */
+  iface?: string | null
+  /** Equal / NotEqual / In / NotIn */
+  matchOperator?: string | null
+  /** eBGP / iBGP */
+  peerType?: string | null
+  communityValues?: string[] | null
+  asPathPrefix?: string[] | null
+  priority?: number | null
+  /** Accept / Reject */
+  action?: string | null
+  operations?: BgpFilterOperation[] | null
+}
+
+/** BGPFilter 规则操作（判别联合 → 三个互斥字段） */
+export interface BgpFilterOperation {
+  addCommunity?: string | null
+  prependAsPath?: string[] | null
+  setPriority?: number | null
+}
+
+/** BGPFilter（spec = exportV4/importV4/exportV6/importV6 四条规则列表） */
+export interface BgpFilter {
+  name: string
+  clusterId?: string | null
+  labels?: Record<string, string> | null
+  exportV4?: BgpFilterRule[] | null
+  importV4?: BgpFilterRule[] | null
+  exportV6?: BgpFilterRule[] | null
+  importV6?: BgpFilterRule[] | null
+  conditions?: K8sCondition[] | null
+  creationTime?: string | null
+}
+
+/** BGP 编辑器下拉候选（/calico/form-options，只读）；Secret 引用按命名空间另走级联接口 */
+export interface CalicoFormOption {
+  namespaces: string[]
+  workloads: WorkloadOption[]
+}
+
+/** Secret 引用候选：命名空间 + 名称 + data keys */
+export interface SecretRefOption {
+  namespace: string
+  name: string
+  keys: string[]
+}
+
+/** 工作负载候选：Deployment / StatefulSet */
+export interface WorkloadOption {
+  namespace: string
+  kind: string
+  name: string
 }
 
 

@@ -1,5 +1,9 @@
 import http from './http'
 import type {
+  BgpConfiguration,
+  BgpFilter,
+  BgpPeer,
+  CalicoFormOption,
   K8sCluster,
   K8sClusterCapability,
   K8sConfigMap,
@@ -15,6 +19,11 @@ import type {
   K8sService,
   K8sServiceMonitor,
   K8sStorageClass,
+  K8sIpool,
+  K8sIpReservation,
+  PoolIpamSummary,
+  IpamBlockStat,
+  IpamIpDetail,
   NamespaceAllocation,
   NamespaceView,
   NodeDrainResult,
@@ -26,6 +35,7 @@ import type {
   PlatformUser,
   RbacTemplate,
   ResourceContext,
+  SecretRefOption,
   TenantMemberView,
   TokenUserInfo,
 } from '@/types'
@@ -101,9 +111,9 @@ export const namespaceApi = {
   /** 命名空间原始 YAML（只读展示） */
   yaml: (clusterId: string, namespace: string) =>
     http.post<never, string>('/namespace/yaml', { clusterId, namespace }),
-  create: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string> }) =>
+  create: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string>; ipv4Pools?: string[]; ipv6Pools?: string[] }) =>
     http.post<never, void>('/namespace/create', payload),
-  update: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string> }) =>
+  update: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string>; ipv4Pools?: string[]; ipv6Pools?: string[] }) =>
     http.post<never, void>('/namespace/update', payload),
   /** 配额：get 为 null = 未配置；upsert 幂等（对象名固定 default）；delete 缺失时 no-op */
   quotaGet: (clusterId: string, namespace: string) =>
@@ -315,4 +325,105 @@ export const nodeApi = {
     ),
   events: (name: string, clusterId: string) =>
     http.get<never, NodeEvent[]>(`/resource/nodes/${encodeURIComponent(name)}/events`, { params: { clusterId } }),
+}
+
+// ==================== 网络 Calico（集群级，admin；/calico/**）====================
+
+/** Calico IPPool /calico/ippool（list 走 body；get/yaml/create/update/delete 的 clusterId 走 query）。
+ * 集群级 CRD：无租户/命名空间维度，只有集群选择。 */
+export const calicoApi = {
+  ippool: {
+    list: (ctx: { clusterId: string; labelSelector?: string }) =>
+      http.post<never, K8sIpool[]>('/calico/ippool/list', ctx),
+    get: (name: string, clusterId: string) =>
+      http.get<never, K8sIpool>(`/calico/ippool/${encodeURIComponent(name)}`, { params: { clusterId } }),
+    getYaml: (name: string, clusterId: string) =>
+      http.get<never, string>(`/calico/ippool/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
+    create: (clusterId: string, body: K8sIpool) =>
+      http.post<never, K8sIpool>('/calico/ippool', body, { params: { clusterId } }),
+    update: (name: string, clusterId: string, body: K8sIpool) =>
+      http.put<never, K8sIpool>(`/calico/ippool/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
+    delete: (name: string, clusterId: string) =>
+      http.delete<never, void>(`/calico/ippool/${encodeURIComponent(name)}`, { params: { clusterId } }),
+  },
+  ipreservation: {
+    list: (ctx: { clusterId: string; labelSelector?: string }) =>
+      http.post<never, K8sIpReservation[]>('/calico/ipreservation/list', ctx),
+    get: (name: string, clusterId: string) =>
+      http.get<never, K8sIpReservation>(`/calico/ipreservation/${encodeURIComponent(name)}`, { params: { clusterId } }),
+    getYaml: (name: string, clusterId: string) =>
+      http.get<never, string>(`/calico/ipreservation/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
+    create: (clusterId: string, body: K8sIpReservation) =>
+      http.post<never, K8sIpReservation>('/calico/ipreservation', body, { params: { clusterId } }),
+    update: (name: string, clusterId: string, body: K8sIpReservation) =>
+      http.put<never, K8sIpReservation>(`/calico/ipreservation/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
+    delete: (name: string, clusterId: string) =>
+      http.delete<never, void>(`/calico/ipreservation/${encodeURIComponent(name)}`, { params: { clusterId } }),
+  },
+  // ---- BGP*（CRUD；Configuration 写仅平台管理员——后端 code platform:bgp:config:manage 收敛）----
+  bgpConfiguration: {
+    list: (ctx: { clusterId: string; labelSelector?: string }) =>
+      http.post<never, BgpConfiguration[]>('/calico/bgpconfiguration/list', ctx),
+    get: (name: string, clusterId: string) =>
+      http.get<never, BgpConfiguration>(`/calico/bgpconfiguration/${encodeURIComponent(name)}`, { params: { clusterId } }),
+    getYaml: (name: string, clusterId: string) =>
+      http.get<never, string>(`/calico/bgpconfiguration/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
+    create: (clusterId: string, body: BgpConfiguration) =>
+      http.post<never, BgpConfiguration>('/calico/bgpconfiguration', body, { params: { clusterId } }),
+    update: (name: string, clusterId: string, body: BgpConfiguration) =>
+      http.put<never, BgpConfiguration>(`/calico/bgpconfiguration/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
+    delete: (name: string, clusterId: string) =>
+      http.delete<never, void>(`/calico/bgpconfiguration/${encodeURIComponent(name)}`, { params: { clusterId } }),
+  },
+  bgpPeer: {
+    list: (ctx: { clusterId: string; labelSelector?: string }) =>
+      http.post<never, BgpPeer[]>('/calico/bgppeer/list', ctx),
+    get: (name: string, clusterId: string) =>
+      http.get<never, BgpPeer>(`/calico/bgppeer/${encodeURIComponent(name)}`, { params: { clusterId } }),
+    getYaml: (name: string, clusterId: string) =>
+      http.get<never, string>(`/calico/bgppeer/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
+    create: (clusterId: string, body: BgpPeer) =>
+      http.post<never, BgpPeer>('/calico/bgppeer', body, { params: { clusterId } }),
+    update: (name: string, clusterId: string, body: BgpPeer) =>
+      http.put<never, BgpPeer>(`/calico/bgppeer/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
+    delete: (name: string, clusterId: string) =>
+      http.delete<never, void>(`/calico/bgppeer/${encodeURIComponent(name)}`, { params: { clusterId } }),
+  },
+  bgpFilter: {
+    list: (ctx: { clusterId: string; labelSelector?: string }) =>
+      http.post<never, BgpFilter[]>('/calico/bgpfilter/list', ctx),
+    get: (name: string, clusterId: string) =>
+      http.get<never, BgpFilter>(`/calico/bgpfilter/${encodeURIComponent(name)}`, { params: { clusterId } }),
+    getYaml: (name: string, clusterId: string) =>
+      http.get<never, string>(`/calico/bgpfilter/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
+    create: (clusterId: string, body: BgpFilter) =>
+      http.post<never, BgpFilter>('/calico/bgpfilter', body, { params: { clusterId } }),
+    update: (name: string, clusterId: string, body: BgpFilter) =>
+      http.put<never, BgpFilter>(`/calico/bgpfilter/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
+    delete: (name: string, clusterId: string) =>
+      http.delete<never, void>(`/calico/bgpfilter/${encodeURIComponent(name)}`, { params: { clusterId } }),
+  },
+  /** BGP 编辑器下拉候选（命名空间 / 工作负载；只读，失败后端降级空候选） */
+  formOptions: (clusterId: string) =>
+    http.post<never, CalicoFormOption>('/calico/form-options', null, { params: { clusterId } }),
+  /** 某命名空间下的 Secret 引用候选（级联第二级；name + data keys） */
+  secretOptions: (clusterId: string, namespace: string) =>
+    http.get<never, SecretRefOption[]>('/calico/form-options/secrets', { params: { clusterId, namespace } }),
+  ipam: {
+    /** 池 IPAM 汇总（含 allocated，供删除守卫） */
+    summary: (clusterId: string, poolName: string) =>
+      http.get<never, PoolIpamSummary>('/calico/ipam/summary', { params: { clusterId, poolName } }),
+    /** 已物化块表（可选按池 / 关键字过滤） */
+    blocks: (clusterId: string, poolName?: string, search?: string) =>
+      http.get<never, IpamBlockStat[]>('/calico/ipam/blocks', { params: { clusterId, poolName, search } }),
+    /** 点查某 IP/块当前是否空闲（jump-to 定位） */
+    isFree: (clusterId: string, cidrOrIp: string) =>
+      http.get<never, boolean>('/calico/ipam/is-free', { params: { clusterId, cidrOrIp } }),
+    /** 下一批空闲块 CIDR（分页；offset/limit） */
+    nextFreeBlocks: (clusterId: string, poolName: string, offset = 0, limit = 20) =>
+      http.get<never, string[]>('/calico/ipam/next-free-blocks', { params: { clusterId, poolName, offset, limit } }),
+    /** 单块 per-IP（未物化合成全 free） */
+    blockIps: (clusterId: string, cidr: string) =>
+      http.get<never, IpamIpDetail[]>('/calico/ipam/block-ips', { params: { clusterId, cidr } }),
+  },
 }

@@ -27,13 +27,17 @@ public class CoreV1ResourceQuotaConverter implements CommonConverter<ResourceQuo
     /** 建模的 hard 键（权威清单；测试逐条断言其语义）。值 = DTO 字段名映射目标 */
     public static final List<String> MODELED_HARD_KEYS = List.of(
             "pods",
-            "limits.cpu", "limits.memory", "requests.cpu", "requests.memory",
+            "limits.cpu", "limits.memory",
+            "requests.cpu", "requests.memory",
             "persistentvolumeclaims");
 
     @Override
     public ResourceQuota convert(ResourceQuotaDTO dto) {
         ResourceQuotaBuilder b = new ResourceQuotaBuilder()
-                .withNewMetadata().withName(dto.getName()).withNamespace(dto.getNamespace()).endMetadata()
+                .withNewMetadata()
+                    .withName(dto.getName())
+                    .withNamespace(dto.getNamespace())
+                .endMetadata()
                 .withNewSpec().endSpec();
         Map<String, Quantity> hard = toHard(dto);
         if (!hard.isEmpty()) {

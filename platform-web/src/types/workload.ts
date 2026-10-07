@@ -130,7 +130,7 @@ export interface WorkloadDetail {
   /** Pod 选择器 = spec.selector.matchLabels（反查该工作负载的 Pod 用） */
   selector?: Record<string, string> | null
   volumeClaimTemplates?: PvcTemplate[] | null
-  podTemplate?: { labels?: Record<string, string> | null; annotations?: Record<string, any> | null; spec: PodSpec } | null
+  podTemplate?: { labels?: Record<string, string> | null; annotations?: Record<string, any> | null; /** 固定 IP（Calico ipAddrs 注解，双栈）；仅单副本 deploy/sts */ staticIps?: string[] | null; spec: PodSpec } | null
   images?: string[] | null
   ports?: ContainerPort[] | null
   creationTime?: string | null

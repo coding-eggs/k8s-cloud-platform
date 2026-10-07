@@ -55,7 +55,13 @@ export function useClusterCapability(clusterId: Ref<string | null | undefined>) 
   const metricsAvailable = computed(() =>
     !probed.value || hasMetricsServer.value || hasCustomMetrics.value || hasExternalMetrics.value)
 
+  // ---- Calico（网络）能力门禁：纯 discovery，无活探测。未探测（cap 空）→ false（保守，可点「刷新能力」补探）----
+  /** IPPool/BGP* 等 projectcalico.org 资源可用 → 允许创建；缺失则禁创建 + 横幅 */
+  const hasCalico = computed(() => 'projectcalico.org' in cap.value)
+  /** IPAM 派生视图另需 crd.projectcalico.org（ipamblocks）；缺失则派生段降级「—」 */
+  const hasCalicoCrd = computed(() => 'crd.projectcalico.org' in cap.value)
+
   watch(clusterId, () => { void load() }, { immediate: true })
 
-  return { cap, loading, probed, hasMetricsServer, hasCustomMetrics, hasExternalMetrics, hpaSupportsBehavior, metricsAvailable, load, refresh }
+  return { cap, loading, probed, hasMetricsServer, hasCustomMetrics, hasExternalMetrics, hpaSupportsBehavior, metricsAvailable, hasCalico, hasCalicoCrd, load, refresh }
 }

@@ -2,6 +2,7 @@ package com.coding.k8score.converter.impl.workload;
 
 import com.coding.common.models.k8s.dto.*;
 import com.coding.k8score.util.QuantityUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.fabric8.kubernetes.api.model.*;
 import io.fabric8.kubernetes.api.model.apps.*;
 
@@ -19,6 +20,11 @@ public class WorkloadConverter {
     public static final String KIND_DEPLOYMENT = "deployment";
     public static final String KIND_STATEFULSET = "statefulset";
     public static final String KIND_DAEMONSET = "daemonset";
+
+    /** Calico 固定 IP 注解（pod template 级）：JSON 数组，如 ["10.48.0.5","fd00::5"] */
+    public static final String ANNOTATION_IP_ADDRS = "cni.projectcalico.org/ipAddrs";
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     // ==================== revert（K8s 对象 → DTO） ====================
 
@@ -110,6 +116,22 @@ public class WorkloadConverter {
                 // DTO annotations 为 Map<String,Object>，fabric8 为 Map<String,String>（泛型不变性），拷贝适配
                 if (template.getMetadata().getAnnotations() != null) {
                     pt.setAnnotations(new HashMap<>(template.getMetadata().getAnnotations()));
+                }
+            }
+            // Calico 固定 IP：ipAddrs 注解提为专用字段，不再留在 annotations map（否则清空 staticIps 后重存会残留旧值）
+            if (template.getMetadata() != null && template.getMetadata().getAnnotations() != null) {
+                String raw = template.getMetadata().getAnnotations().get(ANNOTATION_IP_ADDRS);
+                if (raw != null && !raw.isBlank()) {
+                    List<String> ips = parseIpAddrs(raw);
+                    if (ips != null) {
+                        pt.setStaticIps(ips);
+                        Map<String, Object> ann = pt.getAnnotations();
+                        if (ann != null) {
+                            ann.remove(ANNOTATION_IP_ADDRS);
+                            if (ann.isEmpty()) pt.setAnnotations(null);
+                        }
+                    }
+                    // 解析失败：保留原注解、staticIps 留空（降级不阻断编辑）
                 }
             }
             pt.setSpec(fromPodSpec(template.getSpec()));
@@ -768,13 +790,46 @@ public class WorkloadConverter {
         if (pt.getLabels() != null) {
             tplLabels.putAll(pt.getLabels());
         }
+        // Calico 固定 IP → ipAddrs 注解（JSON 数组 1:1）；空则主动移除旧值，保证「清空」生效
+        Map<String, String> tplAnn = withIpAddrs(toAnnotations(pt.getAnnotations()), pt.getStaticIps());
         return new PodTemplateSpecBuilder()
                 .withNewMetadata()
                 .withLabels(tplLabels)
-                .withAnnotations(toAnnotations(pt.getAnnotations()))
+                .withAnnotations(tplAnn)
                 .endMetadata()
                 .withSpec(buildPodSpec(pt.getSpec() != null ? pt.getSpec() : new PodSpecDTO()))
                 .build();
+    }
+
+    /** staticIps 非空 → 写 ipAddrs 注解；为空 → 移除该 key（其余注解 key 不动） */
+    private Map<String, String> withIpAddrs(Map<String, String> ann, List<String> staticIps) {
+        boolean has = staticIps != null && !staticIps.isEmpty();
+        if (ann == null && !has) return null;
+        if (ann == null) ann = new LinkedHashMap<>();
+        if (has) {
+            try {
+                ann.put(ANNOTATION_IP_ADDRS, MAPPER.writeValueAsString(staticIps));
+            } catch (Exception e) {
+                throw new IllegalStateException("staticIps 序列化失败: " + staticIps, e);
+            }
+        } else {
+            ann.remove(ANNOTATION_IP_ADDRS);
+        }
+        return ann.isEmpty() ? null : ann;
+    }
+
+    /** ipAddrs 注解 JSON 数组 → List<String>；格式非法返回 null（调用方保留原注解） */
+    private List<String> parseIpAddrs(String raw) {
+        try {
+            List<?> arr = MAPPER.readValue(raw, List.class);
+            List<String> out = new ArrayList<>();
+            for (Object o : arr) {
+                if (o != null) out.add(String.valueOf(o));
+            }
+            return out;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

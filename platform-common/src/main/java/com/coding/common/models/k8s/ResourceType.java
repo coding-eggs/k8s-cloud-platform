@@ -1,9 +1,14 @@
 package com.coding.common.models.k8s;
 
+import com.coding.common.models.k8s.dto.BgpConfigurationDTO;
+import com.coding.common.models.k8s.dto.BgpFilterDTO;
+import com.coding.common.models.k8s.dto.BgpPeerDTO;
 import com.coding.common.models.k8s.dto.ClusterRoleDTO;
 import com.coding.common.models.k8s.dto.ConfigMapDTO;
 import com.coding.common.models.k8s.dto.DeploymentDTO;
 import com.coding.common.models.k8s.dto.HpaDTO;
+import com.coding.common.models.k8s.dto.IpoolDTO;
+import com.coding.common.models.k8s.dto.IpReservationDTO;
 import com.coding.common.models.k8s.dto.LimitRangeDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
@@ -44,7 +49,12 @@ public enum ResourceType {
     NODE(NodeDTO.class),
     NAMESPACE(NamespaceDTO.class),
     RESOURCE_QUOTA(ResourceQuotaDTO.class),
-    LIMIT_RANGE(LimitRangeDTO.class)
+    LIMIT_RANGE(LimitRangeDTO.class),
+    IP_POOL(IpoolDTO.class),
+    IP_RESERVATION(IpReservationDTO.class),
+    BGP_CONFIGURATION(BgpConfigurationDTO.class),
+    BGP_PEER(BgpPeerDTO.class),
+    BGP_FILTER(BgpFilterDTO.class)
     ;
 
     private final Class<?> clazz;

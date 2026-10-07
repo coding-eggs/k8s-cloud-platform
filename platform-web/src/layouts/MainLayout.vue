@@ -235,6 +235,22 @@ function handleLogout(): void {
           <el-icon><Grid /></el-icon>
           <template #title>地址池</template>
         </el-menu-item>
+        <el-menu-item v-if="perm.isAdmin" index="/ops/ipreservations">
+          <el-icon><Lock /></el-icon>
+          <template #title>保留 IP</template>
+        </el-menu-item>
+        <el-menu-item v-if="perm.isAdmin" index="/ops/bgpconfigurations">
+          <el-icon><Connection /></el-icon>
+          <template #title>BGP 配置</template>
+        </el-menu-item>
+        <el-menu-item v-if="perm.isAdmin" index="/ops/bgppeers">
+          <el-icon><Share /></el-icon>
+          <template #title>BGP 对等体</template>
+        </el-menu-item>
+        <el-menu-item v-if="perm.isAdmin" index="/ops/bgpfilters">
+          <el-icon><Filter /></el-icon>
+          <template #title>BGP 过滤器</template>
+        </el-menu-item>
       </el-menu>
     </aside>
 

@@ -45,7 +45,7 @@ const router = createRouter({
         { path: 'users', name: 'users', component: () => import('@/views/UserView.vue'), meta: { title: '用户管理', group: '用户与权限', requiresPerm: ['platform:user:manage'] } },
         { path: 'roles', name: 'roles', component: () => import('@/views/RoleView.vue'), meta: { title: '角色与权限', group: '用户与权限', requiresPerm: ['platform:role:manage'] } },
         { path: 'permissions', name: 'permissions', component: () => import('@/views/PermissionView.vue'), meta: { title: '权限点', group: '用户与权限', requiresPerm: ['platform:role:manage'] } },
-        // 集群运维（/ops/ippools 前端占位页，后端端点在 k8s-server 无权限行 → 不加门，见 report）
+        // 集群运维（Calico；正式路由在下方「集群运维」段，requiresPerm=platform:cluster:manage）
 
         // 资源管理（context: full = 顶栏展示 租户→集群→命名空间 chip；requiresPerm 与 V2026_09_29_1 seed 对齐，ANY-of）
         { path: 'resources/workloads', name: 'workloads', component: () => import('@/views/resource/WorkloadView.vue'), meta: { title: '工作负载', group: '资源管理', context: 'full', requiresPerm: [resCodes.workload.list] } },
@@ -68,8 +68,21 @@ const router = createRouter({
         { path: 'resources/hpas', name: 'hpas', component: () => import('@/views/resource/HpaView.vue'), meta: { title: 'HPA', group: '资源管理', context: 'full', requiresPerm: [resCodes.hpa.list] } },
         { path: 'resources/hpas/editor', name: 'hpa-editor', component: () => import('@/views/resource/HpaEditorView.vue'), meta: { title: 'HPA 编辑', group: '资源管理', context: 'full', requiresPerm: [resCodes.hpa.create, resCodes.hpa.update] } },
 
-        // 集群运维
-        { path: 'ops/ippools', name: 'ippools', component: () => import('@/views/ops/IppoolView.vue'), meta: { title: '地址池', group: '集群运维' } },
+        // 集群运维（Calico；PLATFORM:admin 纵深防御，requiresPerm=platform:cluster:manage）
+        { path: 'ops/ippools', name: 'ippools', component: () => import('@/views/ops/IppoolView.vue'), meta: { title: '地址池', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/ippools/detail', name: 'ippool-detail', component: () => import('@/views/ops/IppoolDetailView.vue'), meta: { title: '地址池详情', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/ippools/editor', name: 'ippool-editor', component: () => import('@/views/ops/IppoolEditorView.vue'), meta: { title: '地址池编辑', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/ipreservations', name: 'ipreservations', component: () => import('@/views/ops/IpReservationView.vue'), meta: { title: '保留 IP', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/ipreservations/editor', name: 'ipreservation-editor', component: () => import('@/views/ops/IpReservationEditorView.vue'), meta: { title: '保留 IP 编辑', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgpconfigurations', name: 'bgpconfigurations', component: () => import('@/views/ops/BgpConfigurationView.vue'), meta: { title: 'BGP 配置', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgpconfigurations/detail', name: 'bgpconfiguration-detail', component: () => import('@/views/ops/BgpConfigurationDetailView.vue'), meta: { title: 'BGP 配置详情', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgpconfigurations/editor', name: 'bgpconfiguration-editor', component: () => import('@/views/ops/BgpConfigurationEditorView.vue'), meta: { title: 'BGP 配置编辑', group: '集群运维', requiresPerm: ['platform:bgp:config:manage'] } },
+        { path: 'ops/bgppeers', name: 'bgppeers', component: () => import('@/views/ops/BgpPeerView.vue'), meta: { title: 'BGP 对等体', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgppeers/detail', name: 'bgppeer-detail', component: () => import('@/views/ops/BgpPeerDetailView.vue'), meta: { title: 'BGP 对等体详情', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgppeers/editor', name: 'bgppeer-editor', component: () => import('@/views/ops/BgpPeerEditorView.vue'), meta: { title: 'BGP 对等体编辑', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgpfilters', name: 'bgpfilters', component: () => import('@/views/ops/BgpFilterView.vue'), meta: { title: 'BGP 过滤器', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgpfilters/detail', name: 'bgpfilter-detail', component: () => import('@/views/ops/BgpFilterDetailView.vue'), meta: { title: 'BGP 过滤器详情', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
+        { path: 'ops/bgpfilters/editor', name: 'bgpfilter-editor', component: () => import('@/views/ops/BgpFilterEditorView.vue'), meta: { title: 'BGP 过滤器编辑', group: '集群运维', requiresPerm: ['platform:cluster:manage'] } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

@@ -3,10 +3,11 @@ package com.coding.platformapi.models;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import java.util.List;
 import java.util.Map;
 
 @Data
-@Schema(description = "命名空间创建/更新：集群 + 名称 + 描述 + 标签")
+@Schema(description = "命名空间创建/更新：集群 + 名称 + 描述 + 标签 + Calico 绑定池")
 public class NamespaceUpsertRequest {
 
     @Schema(description = "集群id", requiredMode = Schema.RequiredMode.REQUIRED)
@@ -20,4 +21,10 @@ public class NamespaceUpsertRequest {
 
     @Schema(description = "标签")
     private Map<String, String> labels;
+
+    @Schema(description = "Calico 绑定 IPv4 地址池名列表（空/不传=默认分配）")
+    private List<String> ipv4Pools;
+
+    @Schema(description = "Calico 绑定 IPv6 地址池名列表（空/不传=默认分配）")
+    private List<String> ipv6Pools;
 }

@@ -66,6 +66,14 @@ public class WorkloadValidator {
             if (nonRolling) { st.setRollingUpdate(null); return; }
             if (KIND_DAEMONSET.equals(kind)) st.getRollingUpdate().setMaxSurge(null);
         }
+        // A6 固定 IP（Calico ipAddrs）：仅单副本 deployment/statefulset；replicas 未填按 K8s 默认 1
+        List<String> staticIps = dto.getPodTemplate() != null ? dto.getPodTemplate().getStaticIps() : null;
+        if (staticIps != null && !staticIps.isEmpty()) {
+            boolean kindOk = KIND_DEPLOYMENT.equals(kind) || KIND_STATEFULSET.equals(kind);
+            int replicas = dto.getReplicas() != null ? dto.getReplicas() : 1;
+            if (!kindOk || replicas != 1)
+                throw err("固定 IP（staticIps）仅支持单副本（replicas=1）的 Deployment/StatefulSet");
+        }
     }
 
     private void checkExactlyOneHandler(ProbeDTO p, String ctx) {

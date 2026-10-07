@@ -2,14 +2,15 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { clusterApi, namespaceApi } from '@/api'
-import type { K8sCluster } from '@/types'
+import { clusterApi, namespaceApi, calicoApi } from '@/api'
+import type { K8sCluster, K8sIpool } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
 import QuotaSection from '@/components/namespace/QuotaSection.vue'
 import LimitRangeSection from '@/components/namespace/LimitRangeSection.vue'
+import { useClusterCapability } from '@/composables/useClusterCapability'
 
 const route = useRoute()
 const router = useRouter()
@@ -35,15 +36,39 @@ const form = reactive({
   name: '',
   description: '',
   labels: {} as Record<string, string>,
+  ipv4Pools: [] as string[],
+  ipv6Pools: [] as string[],
 })
 
 function resetForm(): void {
   form.name = ''
   form.description = ''
   form.labels = {}
+  form.ipv4Pools = []
+  form.ipv6Pools = []
   // 约束区块随表单一起回到「未启用 + 空值」：load() 在 namespace 为空时即重置
   void reloadConstraints()
 }
+
+// ---- Calico 绑定池（B3 §11；ns annotation cni.projectcalico.org/ipv{4,6}pools）----
+const { hasCalico } = useClusterCapability(clusterId)
+const ippools = ref<K8sIpool[]>([])
+watch([clusterId, hasCalico], async () => {
+  if (!clusterId.value || !hasCalico.value) { ippools.value = []; return }
+  try {
+    ippools.value = (await calicoApi.ippool.list({ clusterId: clusterId.value })) ?? []
+  } catch {
+    ippools.value = [] // 拦截器已提示；下拉降级为空（仍可保存其余字段）
+  }
+}, { immediate: true })
+/** 按 CIDR 族过滤候选（含 ':' → v6） */
+const v4PoolOptions = computed(() => ippools.value.filter((p) => p.cidr && !p.cidr.includes(':')))
+const v6PoolOptions = computed(() => ippools.value.filter((p) => !!p.cidr?.includes(':')))
+
+// IP 栈门禁（k8s_cluster.ip_stack）：IPv6 池仅双栈集群可选；栈未知 → 不限制
+const ipStack = computed(() => clusters.value.find((c) => c.clusterId === clusterId.value)?.ipStack ?? null)
+const v4PoolAllowed = computed(() => !ipStack.value || ipStack.value === 'IPV4' || ipStack.value === 'IPV4_AND_IPV6')
+const v6PoolAllowed = computed(() => !ipStack.value || ipStack.value === 'IPV6' || ipStack.value === 'IPV4_AND_IPV6')
 
 // ---- 编辑回填 ----
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
@@ -74,6 +99,8 @@ async function loadDetail(): Promise<void> {
     form.name = ns.name
     form.description = ns.description ?? ''
     form.labels = { ...(ns.labels ?? {}) }
+    form.ipv4Pools = [...(ns.ipv4Pools ?? [])]
+    form.ipv6Pools = [...(ns.ipv6Pools ?? [])]
     detailState.value = 'loaded'
   } catch {
     detailState.value = 'error'
@@ -142,7 +169,15 @@ async function submit(): Promise<void> {
   }
 
   saving.value = true
-  const payload = { clusterId: clusterId.value, name, description: form.description.trim(), labels: form.labels }
+  // 绑定池仅在 capability 已探测到 Calico 时显式提交（空数组=主动清空）；未探测→不传字段，后端保持现状防误清。
+  // IP 栈不允许的族同样不传（选择器已隐藏，避免把不可见族的残留值写进去/清掉既有绑定）
+  const payload = {
+    clusterId: clusterId.value, name, description: form.description.trim(), labels: form.labels,
+    ...(hasCalico.value ? {
+      ...(v4PoolAllowed.value ? { ipv4Pools: form.ipv4Pools } : {}),
+      ...(v6PoolAllowed.value ? { ipv6Pools: form.ipv6Pools } : {}),
+    } : {}),
+  }
   try {
     if (editing.value) {
       await namespaceApi.update(payload)
@@ -212,6 +247,17 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
               <template #label>标签 <FieldHelp tip="K8s 标签（metadata.labels），供选择器与第三方工具使用。平台保留标签 app.kubernetes.io/managed-by 由系统维护、不可编辑；编辑时其余既有标签自动保留。" /></template>
               <LabelEditor v-model="form.labels" class="sub-editor" style="max-width: 520px" />
             </el-form-item>
+            <el-form-item v-if="hasCalico">
+              <template #label>绑定地址池（Calico）<FieldHelp tip="圈定该命名空间 Pod 自动分配 IP 使用的地址池（ns annotation cni.projectcalico.org/ipv{4,6}pools）。留空 = Calico 默认分配；引用的池须已存在。IPv6 池仅双栈集群（IPV4_AND_IPV6）可选，单栈集群隐藏对应族。工作负载「固定 IP」只能选本命名空间绑定池（未绑定则默认池）中的保留 IP。" /></template>
+              <div class="pool-selects">
+                <el-select v-if="v4PoolAllowed" v-model="form.ipv4Pools" multiple filterable clearable placeholder="IPv4 池（留空 = 默认分配）" style="width: 100%">
+                  <el-option v-for="p in v4PoolOptions" :key="p.name" :label="`${p.name}（${p.cidr}）`" :value="p.name" />
+                </el-select>
+                <el-select v-if="v6PoolAllowed" v-model="form.ipv6Pools" multiple filterable clearable placeholder="IPv6 池（留空 = 默认分配）" style="width: 100%">
+                  <el-option v-for="p in v6PoolOptions" :key="p.name" :label="`${p.name}（${p.cidr}）`" :value="p.name" />
+                </el-select>
+              </div>
+            </el-form-item>
           </el-form>
         </el-card>
 
@@ -247,6 +293,12 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
 }
 .sub-editor {
   width: 100%;
+}
+.pool-selects {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 520px;
 }
 .form-actions {
   display: flex;
