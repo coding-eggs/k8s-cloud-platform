@@ -13,7 +13,6 @@ import { computed, reactive } from 'vue'
 import {
   getAccessToken,
   getCurrentTenant,
-  hasPlatformViewChoice,
   onTokenChanged,
   switchTenant,
   type TenantContext,
@@ -104,14 +103,12 @@ async function load(): Promise<void> {
 let bootstrapped = false
 
 /**
- * 登录成功 / 会话恢复后的引导（spec §4.5 产品时序）：
- *   admin → 平台视图（看具体租户用筛选器，代管轨 §4.4，不自动切）；
- *   非 admin 且当前无租户上下文 → /user/my-tenants：0 个平台视图；
- *   恰好 1 个启用租户 → 自动 switchTenant 进入（失败=invalid_grant，容忍，留在平台视图）；
- *   多个 → 留在平台视图，由顶栏切换器自选。
+ * 登录成功 / 会话恢复后的引导（spec §4.5 产品时序；2026-10-08 起「平台视图」收敛为管理员专属）：
+ *   admin → 平台视图（看具体租户用代管筛选器 §4.4，不自动切 token）；
+ *   非 admin 且当前无租户上下文 → /user/my-tenants，取**第一个启用**的租户自动进入
+ *     （0 个 → 无可进入；多个 → 同样取第一个，进来后由顶栏切换器换到别的租户）。
+ *   非 admin 没有「平台视图」这个选项，落点必须确定 —— 停在 base token 下权限闭包为空、菜单与页面全空。
  * 已在租户上下文（刷新恢复 / 手动切换后）不重复自动切，避免覆盖用户显式选择。
- * 本标签页曾显式选过「平台视图」（sessionStorage 标记，切换器落）→ 同样跳过自动切，
- * 否则单租户成员 reload 后会被静默弹回唯一租户（标记在重新登录/登出/显式选租户时清除）。
  * 调用点：router.beforeEach 首次非 public 导航里 await —— 早于页面 mount，
  * 自动切换后页面数据即用新上下文，无需额外刷新。
  */
@@ -121,17 +118,12 @@ async function bootstrap(): Promise<void> {
   try {
     await load()
     if (getAccessToken()) {
-      if (
-        !state.platformRoles.includes(ADMIN_ROLE) &&
-        !getCurrentTenant() &&
-        !hasPlatformViewChoice()
-      ) {
+      if (!state.platformRoles.includes(ADMIN_ROLE) && !getCurrentTenant()) {
         try {
           const tenants = await userApi.myTenants()
-          const enabled = tenants.filter((t) => t.status === TENANT_ENABLED)
-          const only = enabled.length === 1 ? enabled[0] : undefined
-          // 失败（invalid_grant/网络）→ 留在平台视图，切换器仍可手动重试
-          if (only) await switchTenant(only.id, only.name)
+          const first = tenants.find((t) => t.status === TENANT_ENABLED)
+          // 失败（invalid_grant/网络）→ 不自动切，后续 401 流程兜底
+          if (first) await switchTenant(first.id, first.name)
         } catch {
           /* 拉不到（会话失效等）→ 不自动切，后续 401 流程兜底 */
         }

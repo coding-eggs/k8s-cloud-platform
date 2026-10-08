@@ -29,12 +29,22 @@ tenant:page:workload.list                /resources/workloads
 tenant:page:persistentvolume.list        /resources/persistentvolumes
 ```
 
-scope 前缀**必须与角色族一致**：后端 `RoleService.assertScopeMatches` 只允许 TENANT 角色持 `tenant:` 码、
-PLATFORM 角色持 `platform:` 码（内置 admin 豁免，可同时持两族）。所以：
+scope 前缀与角色族是**单向**约束（2026-10-08 起）：后端 `RoleService.assertScopeMatches` 只禁止
+TENANT 角色持非 `tenant:` 码；**PLATFORM 角色两族都可持**（此前是双向互斥 + 硬编码 `code=admin` 豁免，
+已删）。理由：平台族在运行时本就是租户族的超集 —— `TokenExtrasService.permissions()` 把平台族角色的码
+**无条件**并入，租户角色的码只在带 `tenantInfo` 时并入。据此：
 
 - 平台管理页 → `platform:page:*`
 - 租户可达页（资源管理、自管租户） → `tenant:page:*`
-- 同一个页面只有一个码。需要"平台角色也要能进"的场景，用 admin 这一条路径覆盖，不要给一个页面挂两个码。
+- 同一个页面只有一个码。需要"平台角色也要能进"的场景 → 给该平台角色勾上那个 `tenant:page:*` 码，
+  **不要**给一个页面挂两个码。
+- ⚠️ 给 PLATFORM 角色勾租户码 = 授权它对**任何**租户做那件事（无 `tenantInfo` 的 token 走代管路径，
+  边界只剩命名空间分配表），不是"只在某个租户里"。租户族相对平台族的"低"只体现在**不能被租户角色反向持有**。
+
+**可分配范围由后端下发，前端不得自行过滤**（同 2026-10-08 变更）：角色管理页的勾选列表数据来自
+`POST /role/permission/assignable`（`RoleService.assignablePermissions`）。此前前端按"角色 scope → code 前缀"
+自己过滤、并硬编码 `code === 'admin'` 豁免，与后端校验各写一份 —— 改一处忘另一处就会造出"能勾但存不了"
+或"存得下但看不见"的错配。判据属于授权策略，只有后端能给。
 
 ### 1.2 单一来源
 
@@ -48,15 +58,44 @@ PLATFORM 角色持 `platform:` 码（内置 admin 豁免，可同时持两族）
 - 理由：三个域的 `resource` 语义完全不同（API=URL 模式 / K8S=资源名 / Page=前端路由 path），
   混在一张表里读不出重点，且「域」列占宽度却零信息量。分 tab 后该列可以去掉，宽度让给 resource。
 - **呈现口径**：Page 域下 `resource` 是**前端路由 path**，列标题必须写「路由 path」而不是「URL 模式」；
-  同时 Page 域的勾选项**不要**再按 resource 分组（每个页面码的 route path 各不相同，
-  分组只会刷出 N 个「单条分组」），应扁平列出并把 route path 作为行内次要信息。
+  两个管理页的勾选项都**按 code 平铺，不要按 resource 分组** —— 勾选单元是 code，而一个 code 可覆盖多条 URL
+  （ANY-of，如 `platform:cluster:manage` 占 60 条），按 URL 分组等于把它随机挂在"排序第一条 URL"的标题下，
+  用户既找不到也想不到；且每条 route path 各不相同，分组只会刷出 N 个「单条分组」。
+  把 route path / URL 作为**行内次要信息**展示（只覆盖一条时显示那条，多条时显示条数）。
 - **勾选状态跨 tab 保留**：`checkedCodes` 不随 tab 变化，保存提交的始终是所有域的并集 ——
   切 tab 只是换视图，不是换数据集。tab 角标显示「本域已勾 / 本域可选」。
+- **「说明」列不按 code 合并**：`platform_permission.description` 是**行级**字段（一条 URL 规则 / 一个页面码
+  各有一值），只有 code 列做纵向合并。合并说明会只显示组内第一行的值，把同 code 其余行的说明全吞掉
+  （例：`platform:role:read` 的两行 `/permission/list`「权限目录」与 `/role/list`「角色列表」，
+  合并后只看得到前者）。2026-10-08 修正；`PermissionView.vue` 的 `span-method` 是唯一判据。
 
 ### 1.4 `/overview` 有意没有 page code
 
 它是路由守卫的回落目标（无权时 `return { name: 'overview' }`）。给它加码会形成重定向死循环。
 同理，守卫里判 `to.name === 'overview'` 时直接放行。
+
+### 1.5 视图只有两种，且只有平台管理员能切
+
+前端有且只有两种"视图"，由 token 里的租户上下文决定：
+
+| 视图 | 判定 | 内容 |
+|---|---|---|
+| **平台视图** | `perm.currentTenant == null`（base token） | 租户管理 / 集群管理等平台页 |
+| **租户视图** | `perm.currentTenant != null`（token 带 `tenantInfo`） | 该租户的资源页 |
+
+规则（2026-10-08 收敛；改动落在 `components/TenantSwitcher.vue` 与 `stores/permission.ts` 的 `bootstrap`）：
+
+- **只有平台管理员（`perm.isAdmin`）能在两者间切换** —— 切换器里的「平台视图」选项对他渲染。
+- **非管理员没有平台视图**：切换器只列他所属的租户（数据源 `POST /user/my-tenants`，只返回"我所属"的租户）；
+  **多租户成员仍可自由在这些租户之间互相切换** —— 被限制的只是"切到平台视图"这一件事，不是"切租户"。
+  且 `bootstrap` 保证他进来就落在某个租户里 —— 不在租户上下文时取 `my-tenants` 里**第一个启用**的租户自动进入
+  （只是初始落点，进来后随时可换）。
+- **别在非管理员路径上把上下文清成 `null`**：base token 的权限闭包是空的（`permissions` = 平台族 ∪
+  有租户上下文时的租户族），菜单与页面会全空，而他既没有"平台视图"这个去处、也没有切换器能点回来。
+  切换失败时的兜底 `switchTenant(null)` 之所以还行，是因为紧随其后的整页重载会重跑 `bootstrap` 把他放回租户。
+- 曾经有一个 sessionStorage 标记「本标签页用户显式选了平台视图」（用于防止单租户成员被 `bootstrap` 静默弹回）。
+  它只服务那个已不成立的前提，**已随本次收敛整体删除**（`markPlatformViewChoice` / `hasPlatformViewChoice` /
+  `clearPlatformViewChoice`）。代码注释里引用的 spec §4.4/§4.5 旧时序，以本节为准。
 
 ---
 

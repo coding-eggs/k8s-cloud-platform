@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
  * 顶栏租户切换器（自管轨，spec §4.4/§4.5）：
- * 数据源 POST /user/my-tenants（登录即端点）；选择 → switchTenant 重签含租户上下文的 token。
- * - 「平台视图」= base token（tenantId null），恒为第一项；
+ * 数据源 POST /user/my-tenants（登录即端点，只返回**我所属**的租户）；选择 → switchTenant 重签含租户上下文的 token。
+ * - 「平台视图」= base token（tenantId null），**仅平台管理员可见**（2026-10-08 起）：非管理员没有平台视图，
+ *   只在自己所属的租户之间切换（bootstrap 已保证他们进来就落在某个租户里）；
  * - status≠1 的禁用租户置灰不可选（强切服务端会 invalid_grant，前端先挡住）；
- * - 切换失败（invalid_grant=无权进入/会话失效等）→ ElMessage.warning + switchTenant(null) 回落平台视图。
+ * - 切换失败（invalid_grant=无权进入/会话失效等）→ 回落 base token 这一确定态；非管理员那一刻没有上下文，
+ *   但随后的整页重载会重跑 bootstrap，把他放回第一个可用租户。
  * admin 代管轨用 ContextSelector 筛选器（不碰 token），与本组件并存互不干扰；
- * 我的租户为 0 个时整组隐藏（平台视图即其常态，spec §4.5「0 个→平台视图」）。
+ * 我的租户为 0 个时整组隐藏（管理员常态停在平台视图；非管理员则确实无处可去）。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { markPlatformViewChoice, switchTenant } from '@/auth/oauth'
+import { switchTenant } from '@/auth/oauth'
 import { userApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import type { PlatformTenant } from '@/types'
@@ -26,7 +28,9 @@ const visible = computed(() => tenants.value.length > 0)
 
 /** 当前选中项：平台视图用空串当 el-select 的 value。
  *  EP 默认把 '' 也算「空值」（emptyValues 含 ''/null/undefined）→ 会显示 placeholder 而非「平台视图」，
- *  故下方显式 :empty-values="[null, undefined]" 让 '' 成为一个正常可显示的选项值 */
+ *  故下方显式 :empty-values="[null, undefined]" 让 '' 成为一个正常可显示的选项值。
+ *  非管理员没有 '' 这个选项，极短的无上下文瞬间（base token，bootstrap 尚未落进租户）会显示
+ *  placeholder「选择租户」，而不是一片空白。 */
 const modelValue = computed(() => perm.currentTenant?.tenantId ?? '')
 
 async function loadTenants(): Promise<void> {
@@ -48,9 +52,8 @@ async function onSwitch(value: string): Promise<void> {
   switching.value = true
   try {
     if (value === '') {
+      // 只有平台管理员能走到这里（模板里该选项对非管理员不渲染）
       if (await switchTenant(null)) {
-        // 显式选择平台视图（非失败回落）→ 先落标记再 reload，防 bootstrap 自动切回唯一租户
-        markPlatformViewChoice()
         reloadIntoContext('已切换到平台视图')
       } else {
         ElMessage.error('切换失败，请稍后重试')
@@ -109,13 +112,15 @@ onMounted(() => {
     :loading="loading"
     :disabled="switching"
     :empty-values="[null, undefined]"
+    :placeholder="perm.isAdmin ? '' : '选择租户'"
     size="small"
     @update:model-value="onSwitch(String($event))"
   >
     <template #prefix>
       <el-icon><OfficeBuilding /></el-icon>
     </template>
-    <el-option label="平台视图" value="">
+    <!-- 平台视图只属于平台管理员：非管理员没有这个选项，只能在自己所属的租户之间切换 -->
+    <el-option v-if="perm.isAdmin" label="平台视图" value="">
       <span class="opt-platform">平台视图</span>
       <span class="opt-hint">（租户管理 / 集群管理）</span>
     </el-option>

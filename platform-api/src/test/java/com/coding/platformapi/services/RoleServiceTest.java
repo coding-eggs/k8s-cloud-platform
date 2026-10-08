@@ -59,31 +59,41 @@ class RoleServiceTest {
     }
 
     @Test
-    void platform_role_rejects_tenant_perm() {
-        // 非 admin 的 PLATFORM 角色仍受 scope 不变量约束（admin 豁免见下条）
+    void platform_role_may_hold_tenant_perm() {
+        // 2026-10-08 起 PLATFORM 角色不限码族（平台族在运行时本就是租户族的超集），
+        // 原先的「PLATFORM 只能 platform:」+「豁免 code=admin」两条已一并删除。
         when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("platform-ops", "PLATFORM", (byte) 0));
         when(permMapper.selectAllByCode("tenant:member:manage"))
                 .thenReturn(List.of(perm("p1", "tenant:member:manage")));
-        assertThatThrownBy(() -> svc.savePermissions("r1", List.of("tenant:member:manage")))
-                .isInstanceOf(CloudPlatformException.class);
-        verify(rpMapper, never()).deleteByRoleId(any());
+        svc.savePermissions("r1", List.of("tenant:member:manage"));
+        verify(rpMapper).deleteByRoleId("r1");
+        verify(rpMapper).insert(any());
     }
 
     @Test
-    void admin_exempt_from_scope_invariant_saves_both_families() {
-        // V2026_09_29_2 后内置超管 admin 同时持有 platform:* 与资源域 tenant:* code，
-        // 全量重存不得被 scope 不变量拒绝（否则角色管理页对 admin 保存必报错）
+    void assignable_for_tenant_role_is_tenant_family_only() {
+        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("tenant-admin", "TENANT", (byte) 1));
+        when(permMapper.selectAllActive()).thenReturn(List.of(
+                perm("p_t1", "tenant:workload:list"),
+                perm("p_t2", "tenant:page:workload.list"),
+                perm("p_p1", "platform:user:manage"),
+                perm("p_p2", "platform:page:user")));
+        assertThat(svc.assignablePermissions("r1")).extracting(PlatformPermission::getCode)
+                .containsExactly("tenant:workload:list", "tenant:page:workload.list");
+    }
+
+    @Test
+    void assignable_for_platform_role_is_everything() {
+        // 内置 admin 不再需要特例：PLATFORM 族一律全量（含资源域 tenant:* 码）
         when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("admin", "PLATFORM", (byte) 1));
-        when(permMapper.selectAllByCode("tenant:workload:list"))
-                .thenReturn(List.of(perm("p_res", "tenant:workload:list")));
-        when(permMapper.selectAllByCode("platform:user:manage"))
-                .thenReturn(List.of(perm("p_plat", "platform:user:manage")));
-        svc.savePermissions("r1", List.of("tenant:workload:list", "platform:user:manage"));
-        verify(rpMapper).deleteByRoleId("r1");
-        ArgumentCaptor<PlatformRolePermission> cap = ArgumentCaptor.forClass(PlatformRolePermission.class);
-        verify(rpMapper, times(2)).insert(cap.capture());
-        assertThat(cap.getAllValues()).extracting(PlatformRolePermission::getPermissionId)
-                .containsExactlyInAnyOrder("p_res", "p_plat");
+        when(roleMapper.selectByPrimaryKey("r2")).thenReturn(role("platform-audit", "PLATFORM", (byte) 0));
+        when(permMapper.selectAllActive()).thenReturn(List.of(
+                perm("p_t1", "tenant:workload:list"),
+                perm("p_p1", "platform:user:manage")));
+        assertThat(svc.assignablePermissions("r1")).extracting(PlatformPermission::getCode)
+                .containsExactly("tenant:workload:list", "platform:user:manage");
+        assertThat(svc.assignablePermissions("r2")).extracting(PlatformPermission::getCode)
+                .containsExactly("tenant:workload:list", "platform:user:manage");
     }
 
     @Test

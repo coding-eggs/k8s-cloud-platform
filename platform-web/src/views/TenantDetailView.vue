@@ -17,7 +17,8 @@ import TenantDetailPanel from '@/components/TenantDetailPanel.vue'
 
 const perm = usePermission()
 
-/** 当前租户上下文；null = 平台视图（无 hat，本页无事可做） */
+/** 当前租户上下文（token hat）。管理员在平台视图下为 null（本页无事可做）；
+ *  非管理员不会停在无租户态（bootstrap 会把成员放进其租户），为 null 即「一个租户都没被分配」 */
 const tenant = computed(() => perm.currentTenant)
 </script>
 
@@ -30,7 +31,12 @@ const tenant = computed(() => perm.currentTenant)
       </div>
       <TenantDetailPanel :tenant-id="tenant.tenantId" :tenant-name="tenant.tenantName ?? tenant.tenantId" />
     </template>
-    <ElEmpty v-else description="当前处于平台视图：先用顶栏租户切换器进入一个租户" />
+    <ElEmpty
+      v-else
+      :description="perm.isAdmin
+        ? '当前处于平台视图：先用顶栏租户切换器进入一个租户'
+        : '你还未被分配到任何租户，请联系平台管理员'"
+    />
   </div>
 </template>
 

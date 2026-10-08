@@ -25,6 +25,10 @@ import java.util.Map;
 /**
  * 角色管理：自定义角色 CRUD + 权限勾选全量重存（spec §3.4.1 scope 不变量）。
  *
+ * <p>不变量自 2026-10-08 起是**单向**的：TENANT 角色只能持 tenant: 族；PLATFORM 角色不限
+ * （理由与后果见 {@link #assertScopeMatches}）。「该角色可分配哪些权限点」由
+ * {@link #assignablePermissions} 统一给出，前端不再自行按前缀过滤。
+ *
  * <p>权限点 code 自 Task 4 起不再唯一（ANY-of：同一 code 对应多个 URL 行），
  * 故勾选一个 code 必须把该 code 的<b>全部</b>行都落 platform_role_permission 关联，
  * 否则运行时按行 id 闭包查询会漏掉未关联的 URL。
@@ -111,17 +115,40 @@ public class RoleService {
         return rpMapper.selectPermissionCodesByRoleId(roleId);
     }
 
-    /** scope 不变量：TENANT 角色只 tenant: 族，PLATFORM 角色只 platform: 族。
-     *  豁免内置超管 admin（code=admin）：V2026_09_29_2 起它同时持有资源域 tenant:* code，
-     *  全量重存若按不变量拒绝，角色管理页对 admin 的保存会必错。 */
+    /**
+     * 该角色**可分配**的权限点行（角色管理页的勾选列表数据源，判据只此一处）。
+     *
+     * <p>TENANT 角色只给 tenant: 族；PLATFORM 角色给全部。判据放后端而非前端：可分配范围是
+     * 授权策略，前端再写一遍必然会与本类的 savePermissions 校验漂移（此前正是如此 ——
+     * 前端按 scope 前缀过滤 + 硬编码 admin 豁免，与后端 assertScopeMatches 各写一份）。
+     */
+    public List<PlatformPermission> assignablePermissions(String roleId) {
+        PlatformRole r = require(roleId);
+        List<PlatformPermission> all = permMapper.selectAllActive();
+        if (!RoleScope.TENANT.name().equals(r.getScope())) return all; // PLATFORM：两族都可
+        return all.stream()
+                .filter(p -> p.getCode() != null && p.getCode().startsWith("tenant:"))
+                .toList();
+    }
+
+    /**
+     * scope 不变量：**TENANT 角色只能持 tenant: 族**。
+     * 原始动机是防"租户管理员"被勾出建租户权限（spec §3.4 不变量 1），方向只有一个：
+     * 租户族不能向上够。
+     *
+     * <p>PLATFORM 侧**不设反向限制**（2026-10-08 起）。平台族在运行时本就是租户族的超集 ——
+     * TokenExtrasService.permissions() 把平台族角色的码无条件并入、租户角色的码只在带 tenantInfo
+     * 时并入；k8s-server 的平台侧身份判据（PLATFORM_SCOPE）取自 platformRoles 非空，与码族无关。
+     * 原先的反向限制只是对称，代价是造不出"平台运维/审计"这类只管一部分的平台角色，且为救内置
+     * admin（持有全部资源域 tenant:* 码，见 V2026_09_29_2）必须硬编码 `code=admin` 特例 —— 该特例随本次删除。
+     *
+     * <p>⚠️ 后果（已接受，见 docs/superpowers/plans/2026-10-08-role-assignable-permissions.md）：
+     * 持 platform:role:manage 的角色可给自己勾满两族 ⇒ 事实上的全权；给 PLATFORM 角色勾租户码
+     * = 授权它对**任何**租户做那件事（无 tenantInfo 的 token 走 admin 代操作分支，边界只剩分配表）。
+     */
     private void assertScopeMatches(PlatformRole r, String permCode) {
-        boolean isTenantPerm = permCode.startsWith("tenant:");
-        boolean isPlatformPerm = permCode.startsWith("platform:");
-        if (RoleScope.TENANT.name().equals(r.getScope()) && !isTenantPerm)
+        if (RoleScope.TENANT.name().equals(r.getScope()) && !permCode.startsWith("tenant:"))
             throw new CloudPlatformException(EnumResponseType.ROLE_SCOPE_MISMATCH, "租户角色只能勾选 tenant: 权限: " + permCode);
-        boolean isAdminSuperuser = "admin".equals(r.getCode());
-        if (RoleScope.PLATFORM.name().equals(r.getScope()) && !isAdminSuperuser && !isPlatformPerm)
-            throw new CloudPlatformException(EnumResponseType.ROLE_SCOPE_MISMATCH, "平台角色只能勾选 platform: 权限: " + permCode);
     }
 
     private boolean isBuiltIn(PlatformRole r) {

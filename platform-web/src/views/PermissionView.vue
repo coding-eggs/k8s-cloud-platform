@@ -7,7 +7,9 @@
  * 前端路由 path），混在一张表里既读不出重点、也让「域」列占了宽度却零信息量。tab 一次只看一个域，
  * 表格里就不再需要「域」列，URL 模式那一列得以放宽。
  *
- * <p>表格把相邻同 code 行的「权限点/说明」两列纵向合并 —— 一眼看出"哪个权限码覆盖哪些 URL"。
+ * <p>表格只把相邻同 code 行的「权限点」列纵向合并 —— 一眼看出"哪个权限码覆盖哪些 URL"。
+ * <b>「说明」列不合并</b>：它是**行级**字段（`platform_permission.description`，每条 URL 规则/页面码各一值），
+ * 合并后只会显示组内第一行的值、其余行的说明被吞掉（2026-10-08 修正）。
  * 后端写前裸端点校验（会删空活端点覆盖即拒绝，错误经 http 拦截器统一弹错）+ 提交后热加载即时生效。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
@@ -54,6 +56,21 @@ const resourceColumnLabel = computed(() =>
   activeDomain.value === 'Page' ? '路由 path (resource)' : 'URL 模式 (resource)',
 )
 
+/** 动作列的 tag 配色：按语义分色（读=绿 / 写=蓝 / 改=橙 / 删=红 / 通配=灰），
+ *  Page 域的 VIEW 与 GET 同为只读，也走绿。未知值兜底 info（不隐藏，脏数据要看得见）。 */
+const ACTION_TAG_TYPE: Record<string, 'primary' | 'success' | 'warning' | 'danger' | 'info'> = {
+  GET: 'success',
+  VIEW: 'success',
+  POST: 'primary',
+  PUT: 'warning',
+  PATCH: 'warning',
+  DELETE: 'danger',
+  '*': 'info',
+}
+function actionTagType(action?: string | null): 'primary' | 'success' | 'warning' | 'danger' | 'info' {
+  return ACTION_TAG_TYPE[(action ?? '').toUpperCase()] ?? 'info'
+}
+
 async function load(): Promise<void> {
   loading.value = true
   try {
@@ -83,9 +100,10 @@ const codeGroups = computed(() => {
   return groups
 })
 
-/** 仅合并第 0/1 列（权限点、说明）：组首行 rowspan=组大小，其余行隐藏 */
+/** 仅合并第 0 列（权限点）：组首行 rowspan=组大小，其余行隐藏。
+ *  第 1 列（说明）**不合并** —— 它是行级字段，同 code 的各行说明本就不同，合并会吞掉除首行外的全部值 */
 function spanMethod({ row, rowIndex, columnIndex }: { row: PlatformPermission; rowIndex: number; columnIndex: number }): [number, number] {
-  if (columnIndex !== 0 && columnIndex !== 1) return [1, 1]
+  if (columnIndex !== 0) return [1, 1]
   const g = codeGroups.value.get(row.code)
   if (!g) return [1, 1]
   return rowIndex === g.index ? [g.size, 1] : [0, 1]
@@ -242,20 +260,26 @@ onMounted(load)
           <span class="mono">{{ row.code }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="description" label="说明" min-width="160">
-        <template #default="{ row }">
-          <span>{{ row.description || '-' }}</span>
-        </template>
-      </el-table-column>
+
       <!-- 「域」列已由上方 tab 表达，去掉后把宽度让给 resource -->
-      <el-table-column :label="resourceColumnLabel" min-width="300">
+      <el-table-column :label="resourceColumnLabel" min-width="200">
         <template #default="{ row }">
           <span class="mono">{{ row.resource ?? '-' }}</span>
         </template>
       </el-table-column>
       <el-table-column label="方法 (action)" width="110">
         <template #default="{ row }">
-          <span class="mono">{{ row.action ?? '-' }}</span>
+          <el-tag size="small" effect="plain" :type="actionTagType(row.action)" class="mono">
+            {{ row.action ?? '-' }}
+          </el-tag>
+        </template>
+      </el-table-column>
+
+      <!-- 说明是**行级**的（每条 URL 规则/页面码一个值），故不参与 code 合并：
+     同 code 的多行各自显示自己的说明，而不是只露组内第一行 -->
+      <el-table-column prop="description" label="说明" min-width="260">
+        <template #default="{ row }">
+          <span>{{ row.description || '-' }}</span>
         </template>
       </el-table-column>
 
@@ -313,6 +337,9 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.description" placeholder="例如 新建权限点" />
+          <div class="form-tip">
+            说明属于这一行（该 URL 规则 / 页面码），与 code 无关：同 code 的多行各写各的，列表逐行显示、不合并。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>

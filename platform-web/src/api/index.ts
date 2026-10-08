@@ -184,6 +184,10 @@ export const roleApi = {
   permissionSave: (payload: { roleId: string; permissionCodes: string[] }) =>
     http.post<never, void>('/role/permission/save', payload),
   permissionList: (roleId: string) => http.post<never, string[]>('/role/permission/list', { id: roleId }),
+  /** 该角色**可分配**的权限点行。可分配范围是授权策略，判据在后端（RoleService.assignablePermissions）：
+   *  TENANT 角色只有 tenant: 族，PLATFORM 角色两族都可 —— 前端不自行按 code 前缀过滤，否则会与后端漂移。 */
+  permissionAssignable: (roleId: string) =>
+    http.post<never, PlatformPermission[]>('/role/permission/assignable', { id: roleId }),
 }
 
 /** 权限点管理 /permission（list = platform:role:read；写操作 = platform:role:manage。

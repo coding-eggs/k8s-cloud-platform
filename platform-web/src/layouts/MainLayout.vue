@@ -97,11 +97,12 @@ const showContextSelector = computed(() => route.meta.context === 'full')
 const userInfo = getUserInfo()
 const userName = userInfo.name || 'admin'
 const userInitial = (userName.trim()[0] ?? 'A').toUpperCase()
-// 角色行：原写死「平台管理员」，现按 token 上下文显示（admin 帽子 / 当前租户成员 / 平台视图）
+// 角色行：admin 帽子 / 当前租户成员；非管理员不会停在「平台视图」（2026-10-08 起平台视图为管理员专属），
+// 故没有租户上下文只可能是「一个租户都没被分配」
 const userRoleLabel = computed(() => {
   if (perm.isAdmin) return '平台管理员'
   const t = perm.currentTenant
-  return t ? `租户成员 · ${t.tenantName ?? t.tenantId}` : '平台视图'
+  return t ? `租户成员 · ${t.tenantName ?? t.tenantId}` : '未加入租户'
 })
 
 function onUserCommand(cmd: string): void {

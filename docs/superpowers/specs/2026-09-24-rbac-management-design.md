@@ -110,6 +110,12 @@ Page 域（后端不消费，仅供前端菜单/按钮显隐）：`page:tenant`,
    **豁免内置超管 admin**（2026-09-30 修订）：资源域细粒度权限（V2026_09_29_1/2）的 code 全为
    `tenant:*` 族，而 admin 必须能访问全部资源页 → admin 同时持有两族 code，
    `assertScopeMatches` 对 code=admin 放开 PLATFORM-only 限制（其余角色不变量不变）。
+   **改为单向（2026-10-08 修订，取代上一条豁免）**：只保留「TENANT 角色不能持非 `tenant:` 码」，
+   **PLATFORM 角色两族都可持**；`code=admin` 硬编码特例已删除。理由：平台族在运行时本就是租户族的超集
+   （`TokenExtrasService.permissions()` 无条件并入平台族角色的码），反向限制无安全动机却导致
+   "平台运维/审计"这类角色无法细分。同时新增 `POST /role/permission/assignable`
+   由后端下发可分配集合，前端不再自行按前缀过滤。
+   详见 `docs/superpowers/plans/2026-10-08-role-assignable-permissions.md`（含显式接受的后果）。
 2. **成员资格先行**：写 `user_tenant_role` 前必须已有同 (user, tenant) 的 `user_tenant` 行。
    反之允许"已加入未定角色"中间态；删 `user_tenant` 行时级联删其 `user_tenant_role` 行。
 3. **租户不能失去最后一个 admin**：移除/降级某租户最后一个 `tenant-admin` 必须同请求指定继任者。
