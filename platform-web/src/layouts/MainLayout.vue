@@ -6,13 +6,14 @@ import { getTheme, toggleTheme } from '@/utils/theme'
 import ContextSelector from '@/components/ContextSelector.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
 import { usePermission } from '@/stores/permission'
-import { resCodes } from '@/permCodes'
+import { pageCodes } from '@/pageCodes'
 
 const route = useRoute()
 const theme = ref(getTheme())
 const perm = usePermission()
 
-/** 菜单项显隐：管理页按权限点过滤（与路由 meta.requiresPerm 同码；体验层，权威在后端） */
+/** 菜单项显隐：按 **Page 域** 权限点过滤（与路由 meta.requiresPerm 同码，唯一来源 pageCodes.ts）。
+ *  这里决定"菜单露不露"，不是"接口能不能调"——后者是 API 域码，权威判定在后端。 */
 function can(code: string): boolean {
   return perm.has(code)
 }
@@ -105,11 +106,13 @@ const userRoleLabel = computed(() => {
 
 function onUserCommand(cmd: string): void {
   if (cmd === 'theme') onToggleTheme()
-  else if (cmd === 'logout') handleLogout()
+  else if (cmd === 'logout') void handleLogout()
 }
 
-function handleLogout(): void {
-  logout()
+async function handleLogout(): Promise<void> {
+  // 必须 await：logout 会先打 platform-auth 的 /session/logout 失效服务端会话（根凭证），
+  // 再清本地。只清本地会让 HttpOnly 会话继续存活 → 再点登录被静默 SSO 回原用户，换不了账号。
+  await logout()
   window.location.href = '/login'
 }
 </script>
@@ -140,114 +143,125 @@ function handleLogout(): void {
           <template #title>总览</template>
         </el-menu-item>
 
-        <div v-if="can('platform:cluster:manage') || can('platform:allocation:list') || can('platform:template:manage')" class="menu-group">平台管理</div>
-        <el-menu-item v-if="can('platform:cluster:manage')" index="/clusters">
+        <!-- 菜单显隐一律用 Page 域码（pageCodes.ts）。分组标题的 v-if 与其下菜单项同源，
+             避免出现"有标题没条目"的空分组。 -->
+        <div v-if="can(pageCodes.cluster) || can(pageCodes.node.list) || can(pageCodes.namespace.list) || can(pageCodes.template)" class="menu-group">平台管理</div>
+        <el-menu-item v-if="can(pageCodes.cluster)" index="/clusters">
           <el-icon><Monitor /></el-icon>
           <template #title>集群管理</template>
         </el-menu-item>
-        <el-menu-item v-if="can('platform:cluster:manage')" index="/nodes">
+        <el-menu-item v-if="can(pageCodes.node.list)" index="/nodes">
           <el-icon><Cpu /></el-icon>
           <template #title>节点管理</template>
         </el-menu-item>
-        <el-menu-item v-if="can('platform:allocation:list')" index="/namespaces">
+        <el-menu-item v-if="can(pageCodes.namespace.list)" index="/namespaces">
           <el-icon><FolderOpened /></el-icon>
           <template #title>命名空间管理</template>
         </el-menu-item>
-        <el-menu-item v-if="can('platform:template:manage')" index="/templates">
+        <el-menu-item v-if="can(pageCodes.template)" index="/templates">
           <el-icon><CollectionTag /></el-icon>
           <template #title>RBAC 模板</template>
         </el-menu-item>
 
-        <!-- 用户与权限：租户/用户/角色/权限点收口一组（原散在平台管理，菜单过长） -->
-        <div v-if="can('platform:tenant:read') || (perm.currentTenant && !can('platform:tenant:read')) || can('platform:user:manage') || can('platform:role:manage')" class="menu-group">用户与权限</div>
-        <el-menu-item v-if="can('platform:tenant:read')" index="/tenants">
+        <div v-if="can(pageCodes.tenant.list) || can(pageCodes.tenant.self) || can(pageCodes.user) || can(pageCodes.role)" class="menu-group">用户与权限</div>
+        <el-menu-item v-if="can(pageCodes.tenant.list)" index="/tenants">
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>租户管理</template>
         </el-menu-item>
-        <!-- Task 18 裁定 #3：租户 hat 内、无代管权的成员 → 「我的租户」入口（不做路由自动跳转） -->
-        <el-menu-item v-if="perm.currentTenant && !can('platform:tenant:read')" index="/tenants/detail">
+        <!-- 自管轨：租户 hat 内、无代管权的成员 → 「我的租户」入口 -->
+        <el-menu-item v-if="can(pageCodes.tenant.self)" index="/tenants/detail">
           <el-icon><OfficeBuilding /></el-icon>
           <template #title>我的租户</template>
         </el-menu-item>
-        <el-menu-item v-if="can('platform:user:manage')" index="/users">
+        <el-menu-item v-if="can(pageCodes.user)" index="/users">
           <el-icon><User /></el-icon>
           <template #title>用户管理</template>
         </el-menu-item>
-        <el-menu-item v-if="can('platform:role:manage')" index="/roles">
+        <el-menu-item v-if="can(pageCodes.role)" index="/roles">
           <el-icon><Lock /></el-icon>
           <template #title>角色与权限</template>
         </el-menu-item>
-        <el-menu-item v-if="can('platform:role:manage')" index="/permissions">
+        <el-menu-item v-if="can(pageCodes.permission)" index="/permissions">
           <el-icon><Key /></el-icon>
           <template #title>权限点</template>
         </el-menu-item>
 
-        <div v-if="can(resCodes.workload.list) || can(resCodes.pod.list) || can(resCodes.hpa.list)" class="menu-group">工作负载</div>
-        <el-menu-item v-if="can(resCodes.workload.list)" index="/resources/workloads">
+        <div v-if="can(pageCodes.workload.list) || can(pageCodes.pod.list) || can(pageCodes.hpa.list)" class="menu-group">工作负载</div>
+        <el-menu-item v-if="can(pageCodes.workload.list)" index="/resources/workloads">
           <el-icon><Box /></el-icon>
           <template #title>工作负载</template>
         </el-menu-item>
-        <el-menu-item v-if="can(resCodes.pod.list)" index="/resources/pods">
+        <el-menu-item v-if="can(pageCodes.pod.list)" index="/resources/pods">
           <el-icon><Cpu /></el-icon>
           <template #title>Pod</template>
         </el-menu-item>
-        <el-menu-item v-if="can(resCodes.hpa.list)" index="/resources/hpas">
+        <el-menu-item v-if="can(pageCodes.hpa.list)" index="/resources/hpas">
           <el-icon><TrendCharts /></el-icon>
           <template #title>HPA</template>
         </el-menu-item>
 
-        <div v-if="can(resCodes.service.list)" class="menu-group">服务发现</div>
-        <el-menu-item v-if="can(resCodes.service.list)" index="/resources/services">
+        <div v-if="can(pageCodes.service.list)" class="menu-group">服务发现</div>
+        <el-menu-item v-if="can(pageCodes.service.list)" index="/resources/services">
           <el-icon><Link /></el-icon>
           <template #title>Service</template>
         </el-menu-item>
 
-        <div v-if="can(resCodes.configmap.list) || can(resCodes.secret.list)" class="menu-group">配置管理</div>
-        <el-menu-item v-if="can(resCodes.configmap.list)" index="/resources/configmaps">
+        <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list)" class="menu-group">配置管理</div>
+        <el-menu-item v-if="can(pageCodes.configmap.list)" index="/resources/configmaps">
           <el-icon><Document /></el-icon>
           <template #title>ConfigMap</template>
         </el-menu-item>
-        <el-menu-item v-if="can(resCodes.secret.list)" index="/resources/secrets">
+        <el-menu-item v-if="can(pageCodes.secret.list)" index="/resources/secrets">
           <el-icon><Key /></el-icon>
           <template #title>Secret</template>
         </el-menu-item>
 
-        <div v-if="can(resCodes.pvc.list)" class="menu-group">存储</div>
-        <el-menu-item v-if="can(resCodes.pvc.list)" index="/resources/pvcs">
+        <div v-if="can(pageCodes.pvc.list) || can(pageCodes.persistentVolume.list) || can(pageCodes.storageClass.list)" class="menu-group">存储</div>
+        <el-menu-item v-if="can(pageCodes.pvc.list)" index="/resources/pvcs">
           <el-icon><Coin /></el-icon>
           <template #title>PVC</template>
         </el-menu-item>
+        <!-- 持久卷：租户只见绑定到本租户已分配命名空间的 PV（后端按 claimRef.namespace 收窄） -->
+        <el-menu-item v-if="can(pageCodes.persistentVolume.list)" index="/resources/persistentvolumes">
+          <el-icon><Box /></el-icon>
+          <template #title>持久卷</template>
+        </el-menu-item>
+        <!-- 存储类：集群级、无命名空间维度，仅平台管理员 -->
+        <el-menu-item v-if="can(pageCodes.storageClass.list)" index="/resources/storageclasses">
+          <el-icon><Files /></el-icon>
+          <template #title>存储类</template>
+        </el-menu-item>
 
-        <div v-if="can(resCodes.servicemonitor.list) || can(resCodes.podmonitor.list)" class="menu-group">监控告警</div>
-        <el-menu-item v-if="can(resCodes.servicemonitor.list)" index="/resources/servicemonitors">
+        <div v-if="can(pageCodes.serviceMonitor.list) || can(pageCodes.podMonitor.list)" class="menu-group">监控告警</div>
+        <el-menu-item v-if="can(pageCodes.serviceMonitor.list)" index="/resources/servicemonitors">
           <el-icon><DataLine /></el-icon>
           <template #title>ServiceMonitor</template>
         </el-menu-item>
-        <el-menu-item v-if="can(resCodes.podmonitor.list)" index="/resources/podmonitors">
+        <el-menu-item v-if="can(pageCodes.podMonitor.list)" index="/resources/podmonitors">
           <el-icon><DataLine /></el-icon>
           <template #title>PodMonitor</template>
         </el-menu-item>
 
-        <!-- 集群运维：地址池走 k8s-server /admin/**（PLATFORM:admin 纵深防御），非管理员隐藏入口。
-             路由本身不加 requiresPerm——占位页无 API 调用，无越权面；正式接入时随端点补权限码 -->
-        <div v-if="perm.isAdmin" class="menu-group">集群运维</div>
-        <el-menu-item v-if="perm.isAdmin" index="/ops/ippools">
+        <!-- 集群运维（Calico）。入口按 Page 域码收敛（原先写死 perm.isAdmin）：
+             页面可见性从此可分配——内置 admin 由 seed 兜底持有全部 Page 码，行为不变。 -->
+        <div v-if="can(pageCodes.ops.ippool.list) || can(pageCodes.ops.bgpConfiguration.list)" class="menu-group">集群运维</div>
+        <el-menu-item v-if="can(pageCodes.ops.ippool.list)" index="/ops/ippools">
           <el-icon><Grid /></el-icon>
           <template #title>地址池</template>
         </el-menu-item>
-        <el-menu-item v-if="perm.isAdmin" index="/ops/ipreservations">
+        <el-menu-item v-if="can(pageCodes.ops.ipReservation.list)" index="/ops/ipreservations">
           <el-icon><Lock /></el-icon>
           <template #title>保留 IP</template>
         </el-menu-item>
-        <el-menu-item v-if="perm.isAdmin" index="/ops/bgpconfigurations">
+        <el-menu-item v-if="can(pageCodes.ops.bgpConfiguration.list)" index="/ops/bgpconfigurations">
           <el-icon><Connection /></el-icon>
           <template #title>BGP 配置</template>
         </el-menu-item>
-        <el-menu-item v-if="perm.isAdmin" index="/ops/bgppeers">
+        <el-menu-item v-if="can(pageCodes.ops.bgpPeer.list)" index="/ops/bgppeers">
           <el-icon><Share /></el-icon>
           <template #title>BGP 对等体</template>
         </el-menu-item>
-        <el-menu-item v-if="perm.isAdmin" index="/ops/bgpfilters">
+        <el-menu-item v-if="can(pageCodes.ops.bgpFilter.list)" index="/ops/bgpfilters">
           <el-icon><Filter /></el-icon>
           <template #title>BGP 过滤器</template>
         </el-menu-item>

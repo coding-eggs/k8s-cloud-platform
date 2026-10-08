@@ -34,7 +34,7 @@ public class PersistentVolumeClaimDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/persistentvolumeclaims";
+        return "/pvcs";
     }
 
     /** spec.dataSourceRef：TypedObjectReference（apiGroup/kind/name 定位来源对象，namespace 可选）。 */

@@ -20,7 +20,7 @@ public class RoleBindingDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/rolebindings";
+        return "/rolebindings";
     }
 
 }

@@ -28,7 +28,7 @@ public class ConfigMapDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/configmaps";
+        return "/configmaps";
     }
 
 }

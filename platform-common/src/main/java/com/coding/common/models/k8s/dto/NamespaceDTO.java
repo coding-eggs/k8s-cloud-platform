@@ -38,6 +38,6 @@ public class NamespaceDTO extends BaseResources {
     /** 平台级命名空间管理，走 admin 边界（无租户上下文） */
     @Override
     public String getApiPath() {
-        return "/admin/namespaces";
+        return "/namespaces";
     }
 }

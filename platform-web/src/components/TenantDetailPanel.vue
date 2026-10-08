@@ -25,6 +25,7 @@ import type { K8sCluster, NamespaceAllocation, PlatformRole, PlatformUser, RbacT
 import { fmtDate } from '@/utils/format'
 import AllocateNamespaceDialog from '@/components/AllocateNamespaceDialog.vue'
 import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 
 const props = defineProps<{
   tenantId: string
@@ -37,7 +38,8 @@ const perm = usePermission()
 const activeTab = ref('ns')
 
 const can = (c: string) => perm.has(c)
-const canManageMembers = computed(() => perm.hasAny(['tenant:member:manage', 'platform:member:manage']))
+const canManageMembers = computed(() =>
+  perm.hasAny([apiCodes.memberManage, apiCodes.platformMemberManage]))
 
 // ==================== 命名空间分配 tab ====================
 const allocLoading = ref(false)
@@ -120,16 +122,29 @@ async function loadMembers(): Promise<void> {
 }
 
 async function loadRoleCatalog(): Promise<void> {
+  // 权限位短路：/role/list 只有 platform:role:read（平台管理面）。自管轨租户管理员没有它，
+  // 不短路就会在进本页时弹一条与自己操作无关的"无权访问"红条（越权清单第 1 项）。
+  if (!can(apiCodes.roleRead)) {
+    tenantRoles.value = null // 无权 = 不可用，沿用既有降级：授予角色禁用（见文件头缺口说明）
+    return
+  }
   try {
     const all = await roleApi.list()
     tenantRoles.value = all.filter((r) => r.scope === 'TENANT' && r.status !== 0)
   } catch {
-    tenantRoles.value = null // 无权/失败 → 降级：授予角色禁用（见文件头缺口说明）
+    tenantRoles.value = null
   }
 }
 
 /** 搜索平台用户（后端 /user/list 全量返回，客户端按 用户名/邮箱/显示名 过滤） */
 async function searchUsers(): Promise<void> {
+  // 权限位短路：/user/list 需 platform:user:manage（按钮已 disabled，这里兜住"从别处调用"的情况）。
+  // ⚠️ 严禁给 /user/list 加 tenant ANY-of 行 —— 那是全平台用户表（含 email 等 PII），
+  // 任一租户成员即可拖库 = 跨租户 PII 泄露。自管轨要解禁须另建按租户过滤、限返回字段的搜索端点。
+  if (!can('platform:user:manage')) {
+    userCandidates.value = []
+    return
+  }
   userLoading.value = true
   try {
     const k = userKeyword.value.trim().toLowerCase()

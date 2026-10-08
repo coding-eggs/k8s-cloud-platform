@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-工作负载", description = "命名空间内工作负载 Deployment/StatefulSet/DaemonSet（双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/workloads")
+@RequestMapping("/workloads")
 public class WorkloadController extends AbstractNamespacedResourceController<WorkloadDTO> {
 
     public WorkloadController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

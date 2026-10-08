@@ -106,7 +106,7 @@ public class WorkloadDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/workloads";
+        return "/workloads";
     }
 
 }

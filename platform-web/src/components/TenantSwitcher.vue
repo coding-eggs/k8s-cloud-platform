@@ -84,7 +84,7 @@ async function onSwitch(value: string): Promise<void> {
 }
 
 /**
- * 上下文变更（切换成功 / 回落）→ 整页重载：token 变了，但资源上下文 store（/resource/context 的
+ * 上下文变更（切换成功 / 回落）→ 整页重载：token 变了，但资源上下文 store（/context 的
  * 租户→集群→ns 树）与各页已加载数据仍是旧 token 视角（base/admin 全量 vs 成员限定）。
  * 整页重载是最小且正确的复位方式——守卫会 await bootstrap（O(1) 空转）后各页用新 token 重拉。
  * toast 先打出来，300ms 后重载（reload 会清掉消息，留一瞬让用户看清切换落点）。

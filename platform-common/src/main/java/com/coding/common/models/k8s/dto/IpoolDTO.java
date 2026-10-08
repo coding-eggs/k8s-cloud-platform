@@ -6,7 +6,7 @@ import lombok.EqualsAndHashCode;
 
 /**
  * Calico IPPool DTO（projectcalico.org/v3，集群级 CRD，无命名空间）。
- * <p>全 cluster-scoped、admin client、PLATFORM:admin 纵深防御；端点走 k8s-server {@code /admin/calico/ippool}。
+ * <p>全 cluster-scoped、admin client、平台侧（PLATFORM_SCOPE）纵深防御；端点走 k8s-server {@code /calico/ippool}。
  * name = RFC1123，创建后不可改（K8s 对象名）。字段为建模核心集，精确字段名以 tigera 文档为准。
  */
 @Data
@@ -42,7 +42,7 @@ public class IpoolDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/admin/calico/ippool";
+        return "/calico/ippool";
     }
 
 }

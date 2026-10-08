@@ -12,7 +12,7 @@ import com.coding.common.models.k8s.dto.IpoolDTO;
 import com.coding.common.models.k8s.dto.IpReservationDTO;
 import com.coding.common.models.k8s.dto.PoolIpamSummaryDTO;
 import com.coding.common.models.k8s.dto.SecretRefOptionDTO;
-import com.coding.platformapi.k8s.K8sAdminClient;
+import com.coding.platformapi.k8s.K8sCalicoClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -32,7 +32,7 @@ import java.util.function.Supplier;
 @RequiredArgsConstructor
 public class CalicoService {
 
-    private final K8sAdminClient k8s;
+    private final K8sCalicoClient k8s;
 
     /** IPAM 派生结果 TTL（秒）：同 B4，短缓存吸收高频刷新，过期重算。 */
     private static final long CACHE_TTL_SECONDS = 45;

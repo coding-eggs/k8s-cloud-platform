@@ -5,7 +5,7 @@ import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodMonitorDTO;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.metrics.PromDiscoveryClient;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -27,7 +27,7 @@ import static org.mockito.Mockito.when;
 
 class PodMonitorServiceTest {
 
-    private final K8sResourceClient k8s = mock(K8sResourceClient.class);
+    private final K8sClient k8s = mock(K8sClient.class);
     private final K8sClusterMapper clusterMapper = mock(K8sClusterMapper.class);
     private final PromDiscoveryClient prom = mock(PromDiscoveryClient.class);
     private final PodMonitorService svc = new PodMonitorService(k8s, clusterMapper, prom);

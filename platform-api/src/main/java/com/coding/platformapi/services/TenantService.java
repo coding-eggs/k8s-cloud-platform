@@ -11,7 +11,7 @@ import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.k8s.K8sAdminClient;
+import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.TenantCreateRequest;
 import com.coding.platformapi.models.TenantKeyRequest;
 import com.coding.platformapi.models.TenantUpdateRequest;
@@ -36,7 +36,7 @@ public class TenantService {
     private final PlatformTenantMapper tenantMapper;
     private final PlatformTenantNamespaceMapper allocationMapper;
     private final K8sProvisioningService provisioning;
-    private final K8sAdminClient adminClient;
+    private final K8sLifecycleClient adminClient;
     private final TenantMemberService memberSvc;
 
     public PlatformTenant create(TenantCreateRequest req) {

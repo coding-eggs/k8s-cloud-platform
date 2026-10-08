@@ -4,21 +4,40 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.HpaDTO;
 import com.coding.common.models.k8s.dto.HpaCrossVersionObjectReferenceDTO;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
+
 /**
- * HPA 业务层：create/update 前做「一负载一 HPA」硬校验（条目 3 后端半；前端禁选是 UX 半，双保险）。
- * list/get/yaml/delete 无业务规则，controller 直连 client。
+ * HPA 业务层：create/update 前做「一负载一 HPA」硬校验（条目 3 后端半；前端禁选是 UX 半，双保险）；
+ * list/get/yaml/delete 无业务规则，纯组装 DTO 后透传。
  * scaleTargetRef.namespace 不经 converter round-trip，比较只按 kind+name（HPA 自身 ns 内，list 已按 ns 圈定）。
+ * 分层约定见 docs/development/backend-layering.md。
  */
 @Service
 @RequiredArgsConstructor
 public class HpaService {
 
-    private final K8sResourceClient k8s;
+    private final K8sClient k8s;
+
+    public List<HpaDTO> list(HpaDTO query) {
+        return k8s.list(query);
+    }
+
+    public HpaDTO get(String name, String tenantId, String clusterId, String namespace) {
+        return k8s.get(dto(name, tenantId, clusterId, namespace));
+    }
+
+    public String yaml(String name, String tenantId, String clusterId, String namespace) {
+        return k8s.yaml(dto(name, tenantId, clusterId, namespace));
+    }
+
+    public void delete(String name, String tenantId, String clusterId, String namespace) {
+        k8s.delete(dto(name, tenantId, clusterId, namespace));
+    }
 
     public HpaDTO create(HpaDTO body) {
         validateSingleBinding(body, null);
@@ -28,6 +47,16 @@ public class HpaService {
     public HpaDTO update(HpaDTO body) {
         validateSingleBinding(body, body.getName());
         return k8s.update(body);
+    }
+
+    /**查询 DTO：apiPath 内置于 DTO */
+    private HpaDTO dto(String name, String tenantId, String clusterId, String namespace) {
+        HpaDTO d = new HpaDTO();
+        d.setName(name);
+        d.setTenantId(tenantId);
+        d.setClusterId(clusterId);
+        d.setNamespace(namespace);
+        return d;
     }
 
     /** 目标 ref 缺失 → 放行（真非法由 apiserver 拒；本校验只管重复绑定） */

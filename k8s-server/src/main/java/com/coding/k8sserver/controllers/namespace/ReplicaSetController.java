@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-ReplicaSet", description = "查看命名空间内 ReplicaSet（只读，双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/replicasets")
+@RequestMapping("/replicasets")
 public class ReplicaSetController extends AbstractNamespacedResourceController<ReplicaSetDTO> {
 
     public ReplicaSetController(KubernetesOperationsFactory operationsFactory,

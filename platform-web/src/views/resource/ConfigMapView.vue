@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { configMapApi } from '@/api'
 import type { K8sConfigMap } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
@@ -30,14 +32,27 @@ const ctxParams = computed(() => ({
   namespace: state.namespace!,
 }))
 
+const perm = usePermission()
+/** 平台侧全局视图开关（默认关）。只有持 platform:configmap:list-all 的人看得见这个开关。 */
+const allNs = ref(false)
+const canListAll = computed(() => perm.has(apiCodes.configmapListAll))
+
 async function refresh(): Promise<void> {
   if (!ready.value) return
   loading.value = true
   try {
-    list.value = await configMapApi.list(ctxParams.value)
+    // 全局视图走 /list-all（不带 namespace，含不属于任何租户的命名空间）；此时本页是**只读**的
+    list.value = allNs.value && canListAll.value
+      ? await configMapApi.listAll({ tenantId: state.tenantId!, clusterId: state.clusterId! })
+      : await configMapApi.list(ctxParams.value)
   } finally {
     loading.value = false
   }
+}
+
+/** 全局视图下名称不可点：详情页/编辑器按顶栏上下文解析 namespace，会落到别的对象上 */
+function onNameClick(row: K8sConfigMap): void {
+  if (!allNs.value) void openDetail(row)
 }
 
 // ---------- 数据项计数：data + binaryData（有二进制时标注） ----------
@@ -123,18 +138,31 @@ const contextDesc = computed(() => {
 
     <EmptyState
       v-if="ready && list.length === 0 && !loading"
-      title="该命名空间下暂无 ConfigMap"
-      description="点击右上「创建 ConfigMap」新建，或到顶栏切换上下文查看其他命名空间。"
+      :title="allNs ? '该集群下暂无 ConfigMap' : '该命名空间下暂无 ConfigMap'"
+      :description="allNs
+        ? '全局视图列出该集群全部命名空间（含不属于任何租户的）的 ConfigMap。'
+        : '点击右上「创建 ConfigMap」新建，或到顶栏切换上下文查看其他命名空间。'"
     />
 
     <div v-else class="panel table-panel">
       <div class="search-bar">
         <el-input v-model="keyword" placeholder="按名称搜索…" clearable :prefix-icon="Search" class="search-input" />
+        <!-- 平台侧全局视图：跨全部命名空间。仅持 platform:configmap:list-all 可见，且为只读 -->
+        <el-checkbox v-if="canListAll" v-model="allNs" :disabled="!ready" @change="refresh">
+          全部命名空间
+        </el-checkbox>
+      </div>
+      <div v-if="allNs" class="allns-hint">
+        全局视图：列出该集群<b>全部命名空间</b>的 ConfigMap（含不属于任何租户的命名空间，如 kube-system）。
+        此模式为<b>只读</b> —— 编辑 / 删除请先在顶栏切到目标命名空间。
       </div>
       <el-table v-loading="loading || !ready" :data="filtered" stripe>
+        <el-table-column v-if="allNs" label="命名空间" width="200">
+          <template #default="{ row }"><code class="res-name">{{ row.namespace ?? '-' }}</code></template>
+        </el-table-column>
         <el-table-column label="名称" width="500" >
           <template #default="{ row }" >
-            <code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code>
+            <code class="res-name" :class="{ 'name-link': !allNs }" @click="onNameClick(row)">{{ row.name }}</code>
           </template>
         </el-table-column>
 
@@ -151,7 +179,8 @@ const contextDesc = computed(() => {
         </el-table-column>
 
 
-        <el-table-column width="64" fixed="right">
+        <!-- 全局视图下整列隐藏：编辑/删除按顶栏 namespace 解析，会作用到别的命名空间里的同名对象 -->
+        <el-table-column v-if="!allNs" width="64" fixed="right">
           <template #default="{ row }">
             <el-dropdown trigger="click">
               <el-button link type="primary" :icon="MoreFilled" />
@@ -210,9 +239,23 @@ const contextDesc = computed(() => {
 }
 .search-bar {
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .search-input {
   width: 260px;
+}
+/* 全局视图（/list-all）的只读说明条 */
+.allns-hint {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel-hover);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 .res-name {
   font-family: Consolas, 'JetBrains Mono', monospace;

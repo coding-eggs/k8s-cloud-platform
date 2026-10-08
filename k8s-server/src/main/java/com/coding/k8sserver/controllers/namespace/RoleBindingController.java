@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-RoleBinding", description = "命名空间内 RoleBinding（双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/rolebindings")
+@RequestMapping("/rolebindings")
 public class RoleBindingController extends AbstractNamespacedResourceController<RoleBindingDTO> {
 
     public RoleBindingController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

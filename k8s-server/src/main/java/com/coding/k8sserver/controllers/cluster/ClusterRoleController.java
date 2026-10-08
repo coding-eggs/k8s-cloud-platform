@@ -10,14 +10,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 集群域 - ClusterRole（PLATFORM:admin，边界=平台已注册该集群）。
+ * 集群域 - ClusterRole（平台侧，边界=平台已注册该集群）。
  * <p>
  * 通用单点 CRUD；租户侧的模板 ClusterRole（tn-tpl-*）同样走本端点，
  * 命名 / upsert 等业务规则由 platform-api 侧编排。
  */
-@Tag(name = "集群域-ClusterRole", description = "集群级 RBAC 角色（PLATFORM:admin，边界=集群注册表）")
+@Tag(name = "集群域-ClusterRole", description = "集群级 RBAC 角色（平台侧，边界=集群注册表）")
 @RestController
-@RequestMapping("/admin/clusterroles")
+@RequestMapping("/clusterroles")
 public class ClusterRoleController extends AbstractClusterResourceController<ClusterRoleDTO> {
 
     public ClusterRoleController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

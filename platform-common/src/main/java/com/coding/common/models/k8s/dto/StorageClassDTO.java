@@ -26,7 +26,7 @@ public class StorageClassDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/storageclasses";
+        return "/storageclasses";
     }
 
 }

@@ -19,7 +19,7 @@ import { getAccessToken } from '@/auth/oauth'
 const props = defineProps<{
   modelValue: boolean
   pod: K8sPod | null
-  /** scope=cluster（节点详情等集群域）时无需 tenantId，走 /resource/nodes/{node}/pods/... 端点 */
+  /** scope=cluster（节点详情等集群域）时无需 tenantId，走 /nodes/{node}/pods/... 端点 */
   scope?: 'namespace' | 'cluster'
   nodeName?: string
   tenantId?: string
@@ -118,8 +118,8 @@ async function fetchLogs(sinceTime?: string, tailLinesParam?: number): Promise<s
   const clusterScoped = props.scope === 'cluster'
   const podName = encodeURIComponent(props.pod!.name)
   const basePath = clusterScoped
-    ? `/api/resource/nodes/${encodeURIComponent(props.nodeName ?? '')}/pods/${encodeURIComponent(props.namespace)}/${podName}/logs`
-    : `/api/resource/pods/${podName}/logs`
+    ? `/api/nodes/${encodeURIComponent(props.nodeName ?? '')}/pods/${encodeURIComponent(props.namespace)}/${podName}/logs`
+    : `/api/pods/${podName}/logs`
   const q = new URLSearchParams()
   if (!clusterScoped && props.tenantId) q.set('tenantId', props.tenantId)
   q.set('clusterId', props.clusterId)

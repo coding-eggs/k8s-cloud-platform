@@ -53,6 +53,6 @@ public class ResourceQuotaDTO extends BaseResources {
     /** 走 k8s-server admin 命名空间域边界（平台级流程，无租户上下文） */
     @Override
     public String getApiPath() {
-        return "/admin/resourcequotas";
+        return "/resourcequotas";
     }
 }

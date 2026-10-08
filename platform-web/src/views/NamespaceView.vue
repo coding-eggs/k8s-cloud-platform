@@ -4,13 +4,13 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MoreFilled, Refresh } from '@element-plus/icons-vue'
 import { clusterApi, namespaceApi } from '@/api'
-import type { K8sCluster, NamespaceView } from '@/types'
+import type { K8sClusterOption, NamespaceView } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
 
 const router = useRouter()
-const clusters = ref<K8sCluster[]>([])
+const clusters = ref<K8sClusterOption[]>([])
 const clusterId = ref('')
 const loading = ref(false)
 const list = ref<NamespaceView[]>([])
@@ -90,7 +90,7 @@ function onRowCommand(cmd: string, row: NamespaceView): void {
 }
 
 onMounted(async () => {
-  clusters.value = await clusterApi.list()
+  clusters.value = await clusterApi.options()
   const first = enabledClusters.value[0]
   if (first) {
     clusterId.value = first.clusterId // watch 触发 load

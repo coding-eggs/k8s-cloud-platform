@@ -38,6 +38,14 @@ public class ClusterController {
         return new ResponseData<>(clusterService.list());
     }
 
+    @PostMapping("/options")
+    @Operation(summary = "集群下拉选项（窄投影）",
+            description = "只返回 clusterId/clusterName/enabled，供命名空间管理等页面做集群选择框；"
+                    + "鉴权 platform:allocation:list（与 /cluster/list 的 platform:cluster:manage 区分粒度）")
+    public ResponseData<List<ClusterService.ClusterOption>> options() {
+        return new ResponseData<>(clusterService.options());
+    }
+
     @PostMapping("/get")
     @Operation(summary = "集群详情")
     public ResponseData<K8sCluster> get(@RequestBody ClusterKeyRequest request) {

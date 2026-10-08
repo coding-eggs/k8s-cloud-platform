@@ -47,6 +47,14 @@
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
+        <!-- 2026-10-08 引入：本模块原先零测试。BoundaryAuthorizationManager 现为 k8s-server 侧唯一的
+             授权判定点（AccessBoundary 三态 + fail-closed），必须有单元测试钉住决策表。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 
     <build>

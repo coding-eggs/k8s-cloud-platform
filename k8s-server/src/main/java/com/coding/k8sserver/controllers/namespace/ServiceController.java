@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-Service", description = "命名空间内 Service（双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/services")
+@RequestMapping("/services")
 public class ServiceController extends AbstractNamespacedResourceController<ServiceDTO> {
 
     public ServiceController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

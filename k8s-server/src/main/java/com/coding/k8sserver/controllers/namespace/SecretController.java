@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-Secret", description = "命名空间内 Secret（双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/secrets")
+@RequestMapping("/secrets")
 public class SecretController extends AbstractNamespacedResourceController<SecretDTO> {
 
     public SecretController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

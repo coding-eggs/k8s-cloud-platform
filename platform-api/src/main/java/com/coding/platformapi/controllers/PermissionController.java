@@ -1,7 +1,6 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
-import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.models.auth.PlatformPermission;
 import com.coding.platformapi.models.PermissionKeyRequest;
 import com.coding.platformapi.models.PermissionPointRequest;
@@ -19,6 +18,7 @@ import java.util.List;
 /**
  * 权限点目录 + CRUD 与热加载（list 鉴权 platform:role:read；写操作 platform:role:manage，
  * 见 V2026_09_27_1__permission_manage.sql 端点行）。
+ * 本层只做 HTTP 绑定；读/写/热加载全在 {@link PermissionService}（分层约定见 docs/development/backend-layering.md）。
  */
 @Tag(name = "权限点管理", description = "权限点目录 + CRUD（写前裸端点校验）+ 运行时规则热加载")
 @RestController
@@ -26,13 +26,12 @@ import java.util.List;
 @RequiredArgsConstructor
 public class PermissionController {
 
-    private final PlatformPermissionMapper permissionMapper;
     private final PermissionService permissionService;
 
     @Operation(summary = "权限点目录")
     @PostMapping("/list")
     public ResponseData<List<PlatformPermission>> list() {
-        return new ResponseData<>(permissionMapper.selectAllActive());
+        return new ResponseData<>(permissionService.list());
     }
 
     @Operation(summary = "新建权限点（写前裸端点校验，提交后热加载即时生效）")

@@ -7,7 +7,7 @@ import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServicePortDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.services.validation.WorkloadValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,13 +21,34 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-/**工作负载业务层：create/update 先跑 §5 硬约束，通过再透传 k8s-server；list/get 额外 join 同命名空间 Service，算出对外暴露端口 */
+/**工作负载业务层：create/update 先跑 §5 硬约束，通过再透传 k8s-server；list/get 额外 join 同命名空间 Service，算出对外暴露端口。
+ *  分层约定见 docs/development/backend-layering.md。 */
 @Service
 @RequiredArgsConstructor
 public class WorkloadService {
 
-    private final K8sResourceClient k8s;
+    private final K8sClient k8s;
     private final WorkloadValidator validator;
+
+    /**查询 YAML（只读展示）：跨 kind 由 k8s-server 按 name 解析，本层纯组装 DTO */
+    public String yaml(String name, String tenantId, String clusterId, String namespace) {
+        return k8s.yaml(dto(name, tenantId, clusterId, namespace));
+    }
+
+    /**删除（跨 kind 查找）：无业务规则，纯组装 DTO 后透传 */
+    public void delete(String name, String tenantId, String clusterId, String namespace) {
+        k8s.delete(dto(name, tenantId, clusterId, namespace));
+    }
+
+    /**查询 DTO：apiPath 内置于 DTO */
+    private WorkloadDTO dto(String name, String tenantId, String clusterId, String namespace) {
+        WorkloadDTO d = new WorkloadDTO();
+        d.setName(name);
+        d.setTenantId(tenantId);
+        d.setClusterId(clusterId);
+        d.setNamespace(namespace);
+        return d;
+    }
 
     /**列出工作负载（三种 kind 合并）并填充各自对外暴露的 NodePort/LB Service 端口 */
     public List<WorkloadDTO> list(WorkloadDTO query) {

@@ -85,7 +85,7 @@ public class PodMonitorDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/podmonitors";
+        return "/podmonitors";
     }
 
 }

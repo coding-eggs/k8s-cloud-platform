@@ -17,7 +17,7 @@ public class ClusterRoleDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/admin/clusterroles";
+        return "/clusterroles";
     }
 
 }

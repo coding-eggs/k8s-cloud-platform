@@ -11,7 +11,7 @@ import com.coding.common.utils.K8sNaming;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.data.models.k8s.PlatformRbacTemplate;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,20 +21,20 @@ import java.util.List;
 
 /**
  * K8s 侧开通编排：业务规则在本侧（upsert 判断、best-effort 遍历启用集群、命名/规则构造），
- * 传输全部走 k8s client——通用资源 CRUD 经 {@link K8sResourceClient}，
- * /admin/** 特殊端点由调用方直连 {@link com.coding.platformapi.k8s.K8sAdminClient}。
+ * 传输全部走 k8s client——通用资源 CRUD 经 {@link K8sClient}，
+ * 生命周期等专用端点由调用方直连 {@link com.coding.platformapi.k8s.K8sLifecycleClient}。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class K8sProvisioningService {
 
-    private final K8sResourceClient resourceClient;
+    private final K8sClient resourceClient;
     private final K8sClusterMapper clusterMapper;
     private final JsonMapper jsonMapper;
 
     /**
-     * 确保分配对应的 RoleBinding 存在（命名空间内，名 = 租户 SA 名；经 /resources/rolebindings 通用端点）。
+     * 确保分配对应的 RoleBinding 存在（命名空间内，名 = 租户 SA 名；经 /rolebindings 通用端点）。
      * 边界前提：分配表三元组已存在（调用方先写 DB）。
      */
     public void ensureRoleBinding(String clusterId, String tenantId, String namespace, String serviceAccount, String templateName) {
@@ -46,7 +46,7 @@ public class K8sProvisioningService {
     }
 
     /**
-     * 删分配对应的 RoleBinding（不存在则跳过；经 /resources/rolebindings 通用端点）
+     * 删分配对应的 RoleBinding（不存在则跳过；经 /rolebindings 通用端点）
      */
     public void deleteRoleBindingIfExists(String clusterId, String tenantId, String namespace, String serviceAccount) {
         RoleBindingDTO dto = new RoleBindingDTO();
@@ -105,7 +105,7 @@ public class K8sProvisioningService {
     }
 
     /**
-     * 单集群 upsert 一个 ClusterRole（/admin/clusterroles 通用端点）；模板同步 / 命名空间分配共用
+     * 单集群 upsert 一个 ClusterRole（/clusterroles 通用端点）；模板同步 / 命名空间分配共用
      */
     public void syncClusterRole(String clusterId, String name, List<PolicyRuleDTO> rules) {
         ClusterRoleDTO dto = new ClusterRoleDTO();

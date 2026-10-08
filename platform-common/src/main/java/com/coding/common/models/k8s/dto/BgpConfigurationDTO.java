@@ -9,7 +9,7 @@ import java.util.List;
 /**
  * Calico BGPConfiguration DTO（projectcalico.org/v3，集群级 CRD，<b>只读</b>）。
  * <p>字段按 projectcalico/api v3.28→master 并集建模（view-only：revert 读到什么展示什么，缺席=null）。
- * asNumber 为 numorstring（数字或 "AS64512" 串）→ 统一 String。端点走 k8s-server {@code /admin/calico/bgpconfiguration}，仅 list/get/yaml。
+ * asNumber 为 numorstring（数字或 "AS64512" 串）→ 统一 String。端点走 k8s-server {@code /calico/bgpconfiguration}，仅 list/get/yaml。
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -79,7 +79,7 @@ public class BgpConfigurationDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/admin/calico/bgpconfiguration";
+        return "/calico/bgpconfiguration";
     }
 
 }

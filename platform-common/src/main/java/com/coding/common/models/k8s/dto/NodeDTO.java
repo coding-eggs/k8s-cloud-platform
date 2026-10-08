@@ -49,6 +49,6 @@ public class NodeDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/nodes";
+        return "/nodes";
     }
 }

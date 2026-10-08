@@ -25,7 +25,7 @@ public class DeploymentDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return null; // 无独立 HTTP 端点（走 /resources/workloads / k8s-core 内部）
+        return null; // 无独立 HTTP 端点（走 /workloads / k8s-core 内部）
     }
 
 }

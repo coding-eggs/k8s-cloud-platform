@@ -40,7 +40,7 @@ import java.util.Set;
 
 /**
  * K8s 侧开通/清理（全部走 admin client，幂等）。
- * k8s-server 是唯一接触 K8s 的组件，platform-api 通过 /admin/** HTTP 端点调用本服务；
+ * k8s-server 是唯一接触 K8s 的组件，platform-api 通过 HTTP 端点（/cluster/**、/tenant/**、/namespace/**）调用本服务；
  * 租户/模板/kubeconfig 数据一律自查库（kubeconfig 解密收敛在 KubernetesClientFactory）。
  */
 @Slf4j
@@ -156,7 +156,7 @@ public class K8sProvisioningService {
 
     /**
      * 同步模板对应的 ClusterRole（不存在则创建，存在则整体覆盖为传入规则）。
-     * 仅供开通 / 分配流程内部使用；单点 CRUD 走 /admin/clusterroles 通用端点。
+     * 仅供开通 / 分配流程内部使用；单点 CRUD 走 /clusterroles 通用端点。
      */
     private void syncTemplateClusterRole(String clusterId, String templateName, List<PolicyRuleDTO> rules) {
         ClusterOperations<ClusterRoleDTO> ops = operationsFactory.getClusterOperation(
@@ -176,7 +176,7 @@ public class K8sProvisioningService {
 
     /**
      * 删除分配对应的 RoleBinding（不删 ns）。仅供租户清理流程内部使用；
-     * 单点 CRUD 走 /resources/rolebindings 通用端点。
+     * 单点 CRUD 走 /rolebindings 通用端点。
      */
     private void deallocateNamespace(String clusterId, String namespace, String serviceAccount) {
         NamespacedOperations<RoleBindingDTO> ops = operationsFactory.getAdminNamespacedOperation(

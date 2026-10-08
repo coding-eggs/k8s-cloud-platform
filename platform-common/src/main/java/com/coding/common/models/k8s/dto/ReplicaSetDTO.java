@@ -16,7 +16,7 @@ public class ReplicaSetDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/replicasets";
+        return "/replicasets";
     }
 
 }

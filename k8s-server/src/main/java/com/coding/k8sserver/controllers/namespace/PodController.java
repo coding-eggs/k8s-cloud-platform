@@ -32,11 +32,15 @@ import java.nio.charset.StandardCharsets;
  * 命名空间域 - Pod 查看（双模访问，边界=分配表）。
  * Pod 由工作负载控制器管理：只读 list/get/yaml + delete，无 create/update（基类端点覆写为拒绝）；
  * 日志走 HTTP 流式透传（follow=true 时连接保持到客户端断开/Pod 终止）。
+ * <p>
+ * <b>本资源支持跨命名空间列举</b>（{@code /list-all}）：这是 Pod 唯一的全局视图入口 —— 单命名空间 list
+ * 给不出"集群里现在有哪些 Pod"，而按节点看（{@code /nodes/{name}/pods}）要求先知道落在哪个节点。
+ * 能力在 {@code CoreV1PodOperations#listAll}，授权码在 platform-api 侧独立为 {@code platform:pod:list-all}。
  */
 @Slf4j
 @Tag(name = "资源管理-Pod", description = "查看/删除命名空间内 Pod（只读，双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/pods")
+@RequestMapping("/pods")
 public class PodController extends AbstractNamespacedResourceController<PodDTO> {
 
     private final KubernetesClientFactory clientFactory;

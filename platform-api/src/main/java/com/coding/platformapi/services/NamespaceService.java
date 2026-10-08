@@ -15,7 +15,7 @@ import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.platformapi.configs.NamespaceProtectionProperties;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
 import com.coding.platformapi.models.NamespaceQuotaUpsertRequest;
 import com.coding.platformapi.models.NamespaceUpsertRequest;
@@ -33,7 +33,7 @@ import java.util.Map;
 import java.util.function.Function;
 
 /**
- * 命名空间管理：K8s 命名空间（一等公民资源 {@code /admin/namespaces}）× 分配表合并视图 + 增删改查。
+ * 命名空间管理：K8s 命名空间（一等公民资源 {@code /namespaces}）× 分配表合并视图 + 增删改查。
  * 数据处理 / 业务规则全在本层；k8s-server 只执行 K8s 动作（列 / 取 / 建 / 改 / 删 / yaml）。
  */
 @Slf4j
@@ -51,7 +51,7 @@ public class NamespaceService {
     /** 与 k8s-core {@code CoreV1LimitRangeConverter.MODELED_TYPES} 同值（platform-api 不依赖 k8s-core，故本地重复声明，改一处需同步） */
     private static final List<String> MODELED_LIMIT_TYPES = List.of("Container", "PersistentVolumeClaim");
 
-    private final K8sResourceClient k8s;
+    private final K8sClient k8s;
 
     private final K8sClusterMapper clusterMapper;
 

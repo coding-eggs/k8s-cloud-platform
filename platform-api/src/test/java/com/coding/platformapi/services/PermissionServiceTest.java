@@ -147,11 +147,46 @@ class PermissionServiceTest {
 
     @Test
     void create_non_api_domain_persists_but_stays_out_of_runtime_rules() {
-        // seed 现仅 API 行；K8S/Page 域为占位（不进运行时规则），action 同走 HTTP 方法枚举（B5）
+        // seed 现仅 API 行；K8S 域为占位（不进运行时规则），动作仍走 HTTP 方法枚举
         svc.create(req("K8S", "Deployment", "GET", "tenant:workload:manage"));
         verify(mapper).insert(any());
         // 与 PermissionRegistryFactory 同口径：仅 API 域行进规则
         assertThat(registry.rules()).noneMatch(rule -> rule.pattern().equals("Deployment"));
+    }
+
+    // ---------- Page 域：动作集合与 API/K8S 域不同（view），且不入 URL 规则表 ----------
+
+    @Test
+    void create_page_domain_accepts_view_action_and_stays_out_of_runtime_rules() {
+        PlatformPermission created = svc.create(
+                req("Page", "/resources/workloads", "VIEW", "tenant:page:workload.list"));
+        verify(mapper).insert(created);
+        assertThat(created.getAction()).isEqualTo("VIEW"); // toRow 统一大写
+        // 关键：Page 的 resource 是前端路由 path，绝不能变成 URL 授权规则
+        assertThat(registry.rules()).noneMatch(rule -> "/resources/workloads".equals(rule.pattern()));
+    }
+
+    @Test
+    void create_page_domain_rejects_http_verb_action() {
+        // HTTP 动词在 Page 域是无意义的：页面可见性跟请求方法无关，混用会让目录里出现读不懂的行
+        assertThatThrownBy(() -> svc.create(req("Page", "/resources/workloads", "POST", "tenant:page:workload.list")))
+                .isInstanceOfSatisfying(CloudPlatformException.class, e -> assertThat(e.getCode()).isEqualTo(1004));
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void create_page_domain_rejects_resource_without_leading_slash() {
+        assertThatThrownBy(() -> svc.create(req("Page", "resources/workloads", "view", "tenant:page:workload.list")))
+                .isInstanceOfSatisfying(CloudPlatformException.class, e -> assertThat(e.getCode()).isEqualTo(1004));
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void create_api_domain_still_rejects_view_action() {
+        // 反向守卫：放开 Page 的 view 不能顺手把 API 域也放开（表驱动授权会把 action 当 HTTP method 匹配）
+        assertThatThrownBy(() -> svc.create(req("API", "/resources/workloads", "view", "tenant:workload:list")))
+                .isInstanceOfSatisfying(CloudPlatformException.class, e -> assertThat(e.getCode()).isEqualTo(1004));
+        verify(mapper, never()).insert(any());
     }
 
     @Test

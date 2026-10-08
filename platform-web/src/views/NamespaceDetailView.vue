@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { clusterApi, namespaceApi } from '@/api'
-import type { K8sCluster, K8sLimitRange, K8sLimitRangeItem, K8sResourceQuota, K8sResourceQuotaUsed, NamespaceView, ResourcePair } from '@/types'
+import type { K8sClusterOption, K8sLimitRange, K8sLimitRangeItem, K8sResourceQuota, K8sResourceQuotaUsed, NamespaceView, ResourcePair } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
@@ -16,13 +16,13 @@ const route = useRoute()
 const router = useRouter()
 
 // ---- 平台上下文：集群级，无租户（刻意不用 stores/context.ts 的租户优先单例）----
-const clusters = ref<K8sCluster[]>([])
+const clusters = ref<K8sClusterOption[]>([])
 const clusterId = ref((route.query.clusterId as string) || '')
 const name = computed(() => (route.query.name as string) || '')
 const ready = computed(() => !!clusterId.value && !!name.value)
 
 async function loadClusters(): Promise<void> {
-  clusters.value = await clusterApi.list()
+  clusters.value = await clusterApi.options()
   if (!clusterId.value) {
     const first = clusters.value.find((c) => c.enabled === 1) ?? clusters.value[0]
     if (first) clusterId.value = first.clusterId

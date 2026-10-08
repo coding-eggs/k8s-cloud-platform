@@ -6,7 +6,7 @@ import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodMonitorDTO;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.metrics.PromDiscoveryClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,19 +22,36 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * PodMonitor 业务层：create/update 先解析目标 Pod 绑定（podRef → matchLabels），通过再透传 k8s-server。
- * list/get/yaml/delete 无业务规则，controller 直连 client。
+ * PodMonitor 业务层：create/update 先解析目标 Pod 绑定（podRef → matchLabels），通过再透传 k8s-server；
+ * list/get/yaml/delete 无业务规则，纯组装 DTO 后透传。
  * 另提供 {@link #relabelLabels} —— 编辑态从集群 Prometheus discovery 拉取 Relabeling/MetricRelabeling 的 sourceLabels 候选；
  * {@link #metricNames} —— 编辑态 scoped 到本 PM 活跃 target 的 {@code __name__}（指标名）候选，供 MetricRelabeling regex 选值。
+ * 分层约定见 docs/development/backend-layering.md。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PodMonitorService {
 
-    private final K8sResourceClient k8s;
+    private final K8sClient k8s;
     private final K8sClusterMapper clusterMapper;
     private final PromDiscoveryClient promDiscovery;
+
+    public List<PodMonitorDTO> list(PodMonitorDTO query) {
+        return k8s.list(query);
+    }
+
+    public PodMonitorDTO get(String name, String tenantId, String clusterId, String namespace) {
+        return k8s.get(dto(name, tenantId, clusterId, namespace));
+    }
+
+    public String yaml(String name, String tenantId, String clusterId, String namespace) {
+        return k8s.yaml(dto(name, tenantId, clusterId, namespace));
+    }
+
+    public void delete(String name, String tenantId, String clusterId, String namespace) {
+        k8s.delete(dto(name, tenantId, clusterId, namespace));
+    }
 
     public PodMonitorDTO create(PodMonitorDTO body) {
         resolveSelector(body);
@@ -44,6 +61,16 @@ public class PodMonitorService {
     public PodMonitorDTO update(PodMonitorDTO body) {
         resolveSelector(body);
         return k8s.update(body);
+    }
+
+    /**查询 DTO：apiPath 内置于 DTO */
+    private PodMonitorDTO dto(String name, String tenantId, String clusterId, String namespace) {
+        PodMonitorDTO d = new PodMonitorDTO();
+        d.setName(name);
+        d.setTenantId(tenantId);
+        d.setClusterId(clusterId);
+        d.setNamespace(namespace);
+        return d;
     }
 
     /**

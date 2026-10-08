@@ -10,12 +10,12 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 集群域 - Calico BGPFilter（PLATFORM:admin，边界=平台已注册该集群）。CRUD 6 标准端点。
+ * 集群域 - Calico BGPFilter（平台侧，边界=平台已注册该集群）。CRUD 6 标准端点。
  * <p>K8s/Calico 语义全在 {@code BgpFilterOperations}，本类只做边界校验 + 委托。
  */
-@Tag(name = "集群域-Calico BGPFilter", description = "Calico BGPFilter CRUD（PLATFORM:admin，边界=集群注册表）")
+@Tag(name = "集群域-Calico BGPFilter", description = "Calico BGPFilter CRUD（平台侧，边界=集群注册表）")
 @RestController
-@RequestMapping("/admin/calico/bgpfilter")
+@RequestMapping("/calico/bgpfilter")
 public class BgpFilterController extends AbstractClusterResourceController<BgpFilterDTO> {
 
     public BgpFilterController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

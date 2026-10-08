@@ -40,15 +40,16 @@ class ExemptPathsTest {
     @Test
     void resource_api_paths_no_longer_exempt() {
         // /resource/** 整体豁免已移除（V2026_09_29_1）：仅 context + prom discovery 四端点保留豁免
-        assertThat(ExemptPaths.isExempt("/resource/context")).isTrue();
-        assertThat(ExemptPaths.isExempt("/resource/servicemonitors/relabel-labels")).isTrue();
-        assertThat(ExemptPaths.isExempt("/resource/servicemonitors/metric-names")).isTrue();
-        assertThat(ExemptPaths.isExempt("/resource/podmonitors/relabel-labels")).isTrue();
-        assertThat(ExemptPaths.isExempt("/resource/podmonitors/metric-names")).isTrue();
-        assertThat(ExemptPaths.isExempt("/resource/workloads/list")).isFalse();
-        assertThat(ExemptPaths.isExempt("/resource/pods/nginx-1/logs")).isFalse();
-        assertThat(ExemptPaths.isExempt("/resource/nodes/cordon")).isFalse();
-        assertThat(ExemptPaths.isExempt("/resource/secrets/{name}")).isFalse();
+        // 2026-10-08：api 侧 /resource 前缀整体去掉，豁免清单同步改为无前缀路径
+        assertThat(ExemptPaths.isExempt("/context")).isTrue();
+        assertThat(ExemptPaths.isExempt("/servicemonitors/relabel-labels")).isTrue();
+        assertThat(ExemptPaths.isExempt("/servicemonitors/metric-names")).isTrue();
+        assertThat(ExemptPaths.isExempt("/podmonitors/relabel-labels")).isTrue();
+        assertThat(ExemptPaths.isExempt("/podmonitors/metric-names")).isTrue();
+        assertThat(ExemptPaths.isExempt("/workloads/list")).isFalse();
+        assertThat(ExemptPaths.isExempt("/pods/nginx-1/logs")).isFalse();
+        assertThat(ExemptPaths.isExempt("/nodes/cordon")).isFalse();
+        assertThat(ExemptPaths.isExempt("/secrets/{name}")).isFalse();
     }
 
     @Test

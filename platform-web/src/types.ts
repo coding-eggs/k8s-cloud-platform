@@ -41,9 +41,22 @@ export interface K8sCluster {
   capability?: string | null
 }
 
+/**
+ * 集群下拉选项（窄投影，POST /cluster/options）：只含定位、启停与 IP 栈。
+ *
+ * 供「只需要一个集群选择框」的页面（命名空间管理/编辑/概览）使用，权限码 platform:allocation:list；
+ * 与 /cluster/list（platform:cluster:manage，含版本/描述/内网地址等登记信息）区分粒度，
+ * 避免这些页面为了一个下拉框去要平台管理权限。
+ */
+export interface K8sClusterOption {
+  clusterId: string
+  clusterName: string
+  enabled: number
+  ipStack?: 'IPV4' | 'IPV6' | 'IPV4_AND_IPV6' | null
+}
+
 /** 租户 */
-export interface PlatformTenant {
-  id: string
+export interface PlatformTenant {  id: string
   name: string
   serviceAccount: string
   status: number
@@ -604,7 +617,7 @@ export interface K8sHpa {
   creationTime?: string | null
 }
 
-/** 资源管理上下文级联（/resource/context） */
+/** 资源管理上下文级联（/context） */
 export interface ResourceContextCluster {
   clusterId: string
   clusterName: string

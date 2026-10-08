@@ -42,7 +42,7 @@ public class PodDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/pods";
+        return "/pods";
     }
 
 }

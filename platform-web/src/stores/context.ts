@@ -51,7 +51,7 @@ export function useResourceContext() {
   )
   const namespacesOfCluster = computed<string[]>(() => currentCluster.value?.namespaces ?? [])
   /** 三级选齐且级联树已加载校验过才可操作资源。
-   *  loaded 门槛是防串号关键：localStorage 恢复的旧选择可能在 /resource/context 返回前就让三级齐全，
+   *  loaded 门槛是防串号关键：localStorage 恢复的旧选择可能在 /context 返回前就让三级齐全，
    *  若此时放行，切租户后的首屏会用「旧租户 + 新帽 token」发请求 → k8s-server TENANT_MISMATCH */
   const ready = computed(() => !!(state.loaded && state.tenantId && state.clusterId && state.namespace))
 

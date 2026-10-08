@@ -34,6 +34,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
+import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
 import org.springframework.security.web.session.InvalidSessionStrategy;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -115,7 +116,7 @@ public class SecurityConfig {
                             response.getWriter().write(jsonMapper.writeValueAsString(responseData));
                         }))
                 .sessionManagement(session ->
-                                session.invalidSessionStrategy((request,response)-> {
+                        session.invalidSessionStrategy((request,response)-> {
                                     log.info("session 过期，跳转登录。。。");
                                     String acceptHeader = request.getHeader("Accept");
                                     String contentType = request.getContentType();
@@ -162,9 +163,22 @@ public class SecurityConfig {
                                     }
                                 })
 
-                );
-
-
+                )
+                // 登出：SPA 侧「退出登录」必须打到这里，否则根凭证（HttpOnly 会话）仍在，
+                // 再点登录会被 /oauth2/authorize 静默 SSO 回原用户 —— 表现为「换不了用户」。
+                // LogoutFilter 排在授权过滤器之前，会话已过期时重复调用是幂等 no-op（不报错）。
+                .logout(logout -> logout
+                        .logoutUrl("/session/logout")
+                        // SecurityContextLogoutHandler（默认）invalidate 掉 Redis 会话；Spring Session 会在
+                        // 响应提交时把 SESSION cookie 置为过期。这里再显式清一次同名 cookie 兜底——
+                        // 默认的 CookieClearingLogoutHandler 清的是 JSESSIONID，而本应用的会话 cookie 名是 SESSION。
+                        .addLogoutHandler(new CookieClearingLogoutHandler("SESSION"))
+                        .logoutSuccessHandler((request, response, authentication) -> {
+                            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                            response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+                            response.setHeader("Cache-Control", "no-cache");
+                            response.getWriter().write(jsonMapper.writeValueAsString(new ResponseData<>()));
+                        }));
 
         http.cors(Customizer.withDefaults());
 

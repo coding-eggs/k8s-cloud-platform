@@ -15,11 +15,11 @@ import org.springframework.util.AntPathMatcher;
 public final class ExemptPaths {
 
     private static final String[] PREFIXES = {
-            "/resource/context",
-            "/resource/servicemonitors/relabel-labels",
-            "/resource/servicemonitors/metric-names",
-            "/resource/podmonitors/relabel-labels",
-            "/resource/podmonitors/metric-names",
+            "/context",
+            "/servicemonitors/relabel-labels",
+            "/servicemonitors/metric-names",
+            "/podmonitors/relabel-labels",
+            "/podmonitors/metric-names",
             // 命名空间概览的 4 个只读 metrics 端点（cpu/memory/network/disk）：集群级、跨该 ns 全部 pod 聚合，
             // 纯只读展示，任意已登录用户可看（与「命名空间读全开放」一致），故豁免权限行；其余 /namespace/** 仍走权限表。
             "/namespace/metrics/**",

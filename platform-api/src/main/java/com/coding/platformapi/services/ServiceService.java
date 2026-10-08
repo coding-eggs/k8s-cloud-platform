@@ -6,7 +6,7 @@ import com.coding.common.models.k8s.BaseResources;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -16,14 +16,30 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Service 业务层：create/update 先解析 selector 绑定（selectorRef → label map），通过再透传 k8s-server。
- * list/get/yaml/delete 无业务规则，controller 直连 client。
+ * Service 业务层：create/update 先解析 selector 绑定（selectorRef → label map），通过再透传 k8s-server；
+ * list/get/yaml/delete 无业务规则，纯组装 DTO 后透传。分层约定见 docs/development/backend-layering.md。
  */
 @Service
 @RequiredArgsConstructor
 public class ServiceService {
 
-    private final K8sResourceClient k8s;
+    private final K8sClient k8s;
+
+    public List<ServiceDTO> list(ServiceDTO query) {
+        return k8s.list(query);
+    }
+
+    public ServiceDTO get(String name, String tenantId, String clusterId, String namespace) {
+        return k8s.get(dto(name, tenantId, clusterId, namespace));
+    }
+
+    public String yaml(String name, String tenantId, String clusterId, String namespace) {
+        return k8s.yaml(dto(name, tenantId, clusterId, namespace));
+    }
+
+    public void delete(String name, String tenantId, String clusterId, String namespace) {
+        k8s.delete(dto(name, tenantId, clusterId, namespace));
+    }
 
     public ServiceDTO create(ServiceDTO body) {
         resolveSelector(body);
@@ -33,6 +49,16 @@ public class ServiceService {
     public ServiceDTO update(ServiceDTO body) {
         resolveSelector(body);
         return k8s.update(body);
+    }
+
+    /**查询 DTO：apiPath 内置于 DTO */
+    private ServiceDTO dto(String name, String tenantId, String clusterId, String namespace) {
+        ServiceDTO d = new ServiceDTO();
+        d.setName(name);
+        d.setTenantId(tenantId);
+        d.setClusterId(clusterId);
+        d.setNamespace(namespace);
+        return d;
     }
 
     /**

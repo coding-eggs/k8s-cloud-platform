@@ -11,12 +11,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 集群域 - 命名空间（core/v1，平台级管理，边界=集群注册表）。
- * 六个标准端点由基类提供；仅 PLATFORM:admin 可访问（SecurityFilterChain 对 /admin/** 统一要求）。
+ * 六个标准端点由基类提供；仅平台侧可调用（继承 {@code AbstractClusterResourceController}，其默认
+ * {@code AccessBoundary.PLATFORM} 由 BoundaryAuthorizationManager 要求 PLATFORM_SCOPE）。
  * 业务规则（managed-by / 分配表守卫 / 视图叠加）全在 platform-api 侧，本层零业务逻辑。
  */
 @Tag(name = "资源管理-Namespace", description = "集群级命名空间（平台管理，边界=集群注册表）")
 @RestController
-@RequestMapping("/admin/namespaces")
+@RequestMapping("/namespaces")
 public class NamespaceController extends AbstractClusterResourceController<NamespaceDTO> {
 
     public NamespaceController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

@@ -6,6 +6,7 @@ import type {
   CalicoFormOption,
   K8sCluster,
   K8sClusterCapability,
+  K8sClusterOption,
   K8sConfigMap,
   K8sHpa,
   K8sNode,
@@ -44,6 +45,12 @@ import type { WorkloadDetail } from '@/types/workload'
 /** 集群管理 /cluster */
 export const clusterApi = {
   list: () => http.post<never, K8sCluster[]>('/cluster/list'),
+  /**
+   * 集群下拉选项（窄投影，鉴权 platform:allocation:list）：只返回 clusterId/clusterName/enabled/ipStack。
+   * 命名空间管理/编辑/概览等「只需要一个集群选择框」的页面用这个，不要调 list()
+   * ——list() 属平台管理面（platform:cluster:manage），会让这些页面必然 403。
+   */
+  options: () => http.post<never, K8sClusterOption[]>('/cluster/options'),
   get: (clusterId: string) => http.post<never, K8sCluster>('/cluster/get', { clusterId }),
   create: (payload: {
     clusterName: string; kubeconfig: string; description?: string
@@ -143,7 +150,7 @@ export const templateApi = {
 
 /** 资源管理上下文（顶栏 chip：租户 → 集群 → 命名空间，DB 级联） */
 export const resourceContextApi = {
-  get: () => http.get<never, ResourceContext>('/resource/context'),
+  get: () => http.get<never, ResourceContext>('/context'),
 }
 
 /** 当前用户上下文 /user（/me 与 /my-tenants 为「登录即」端点：ExemptPaths 豁免权限点，仅需认证） */
@@ -191,20 +198,22 @@ export const permissionApi = {
   reload: () => http.post<never, void>('/permission/reload'),
 }
 
-/** 资源管理 - ConfigMap /resource/configmaps（参考实现；list/create/update 上下文走 body，get/yaml/delete 走 query） */
+/** 资源管理 - ConfigMap /configmaps（参考实现；list/create/update 上下文走 body，get/yaml/delete 走 query） */
 export const configMapApi = {
   list: (ctx: { tenantId: string; clusterId: string; namespace: string; labelSelector?: string }) =>
-    http.post<never, K8sConfigMap[]>('/resource/configmaps/list', ctx),
+    http.post<never, K8sConfigMap[]>('/configmaps/list', ctx),
+  /** 跨全部命名空间（平台侧全局视图；需 platform:configmap:list-all） */
+  listAll: (ctx: ListAllCtx) => http.post<never, K8sConfigMap[]>('/configmaps/list-all', ctx),
   get: (name: string, ctx: { tenantId: string; clusterId: string; namespace: string }) =>
-    http.get<never, K8sConfigMap>(`/resource/configmaps/${encodeURIComponent(name)}`, { params: ctx }),
+    http.get<never, K8sConfigMap>(`/configmaps/${encodeURIComponent(name)}`, { params: ctx }),
   getYaml: (name: string, ctx: { tenantId: string; clusterId: string; namespace: string }) =>
-    http.get<never, string>(`/resource/configmaps/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+    http.get<never, string>(`/configmaps/${encodeURIComponent(name)}/yaml`, { params: ctx }),
   create: (ctx: { tenantId: string; clusterId: string }, body: K8sConfigMap) =>
-    http.post<never, K8sConfigMap>('/resource/configmaps', { ...body, ...ctx }),
+    http.post<never, K8sConfigMap>('/configmaps', { ...body, ...ctx }),
   update: (name: string, ctx: { tenantId: string; clusterId: string }, body: K8sConfigMap) =>
-    http.put<never, K8sConfigMap>(`/resource/configmaps/${encodeURIComponent(name)}`, { ...body, ...ctx }),
+    http.put<never, K8sConfigMap>(`/configmaps/${encodeURIComponent(name)}`, { ...body, ...ctx }),
   delete: (name: string, ctx: { tenantId: string; clusterId: string; namespace: string }) =>
-    http.delete<never, void>(`/resource/configmaps/${encodeURIComponent(name)}`, { params: ctx }),
+    http.delete<never, void>(`/configmaps/${encodeURIComponent(name)}`, { params: ctx }),
 }
 
 // ==================== 其余资源：与 ConfigMap 同构（list/get/yaml/create/update/delete） ====================
@@ -213,51 +222,54 @@ type Ctx3 = { tenantId: string; clusterId: string; namespace: string }
 type Ctx2 = { tenantId: string; clusterId: string }
 /** list 专用上下文：labelSelector 可选（K8s 原生选择器语法，原样透传；不传 = 全量） */
 type ListCtx = Ctx3 & { labelSelector?: string }
+/** 跨命名空间 list 上下文（平台侧 /list-all）：**不带 namespace** —— 返回项各自带自己的 namespace。
+ *  授权码独立于 list（platform:xxx:list-all vs tenant:xxx:list），见 apiCodes.ts。 */
+type ListAllCtx = Ctx2 & { labelSelector?: string }
 
-/**标准 CRUD + yaml 透传工厂：base = /resource/{base}（list/create/update 上下文走 body，get/yaml/delete 走 query） */
+/**标准 CRUD + yaml 透传工厂：base = /{base}（list/create/update 上下文走 body，get/yaml/delete 走 query） */
 function makeResourceApi<T>(base: string) {
   return {
-    list: (ctx: ListCtx) => http.post<never, T[]>(`/resource/${base}/list`, ctx),
-    get: (name: string, ctx: Ctx3) => http.get<never, T>(`/resource/${base}/${encodeURIComponent(name)}`, { params: ctx }),
-    getYaml: (name: string, ctx: Ctx3) => http.get<never, string>(`/resource/${base}/${encodeURIComponent(name)}/yaml`, { params: ctx }),
-    create: (ctx: Ctx2, body: T) => http.post<never, T>(`/resource/${base}`, { ...body, ...ctx }),
-    update: (name: string, ctx: Ctx2, body: T) => http.put<never, T>(`/resource/${base}/${encodeURIComponent(name)}`, { ...body, ...ctx }),
-    delete: (name: string, ctx: Ctx3) => http.delete<never, void>(`/resource/${base}/${encodeURIComponent(name)}`, { params: ctx }),
+    list: (ctx: ListCtx) => http.post<never, T[]>(`/${base}/list`, ctx),
+    get: (name: string, ctx: Ctx3) => http.get<never, T>(`/${base}/${encodeURIComponent(name)}`, { params: ctx }),
+    getYaml: (name: string, ctx: Ctx3) => http.get<never, string>(`/${base}/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+    create: (ctx: Ctx2, body: T) => http.post<never, T>(`/${base}`, { ...body, ...ctx }),
+    update: (name: string, ctx: Ctx2, body: T) => http.put<never, T>(`/${base}/${encodeURIComponent(name)}`, { ...body, ...ctx }),
+    delete: (name: string, ctx: Ctx3) => http.delete<never, void>(`/${base}/${encodeURIComponent(name)}`, { params: ctx }),
   }
 }
 
-/** Secret /resource/secrets */
+/** Secret /secrets */
 export const secretApi = makeResourceApi<K8sSecret>('secrets')
 
-/** Service /resource/services */
+/** Service /services */
 export const serviceApi = makeResourceApi<K8sService>('services')
 
-/** PVC /resource/pvcs（spec 不可变，update 仅同步标签） */
+/** PVC /pvcs（spec 不可变，update 仅同步标签） */
 export const pvcApi = makeResourceApi<K8sPvc>('pvcs')
 
-/** StorageClass /resource/storageclasses（集群级，只读：供下拉选择 storageClassName；无 namespace） */
+/** StorageClass /storageclasses（集群级，只读：供下拉选择 storageClassName；无 namespace） */
 export const storageClassApi = {
-  list: (ctx: Ctx2) => http.post<never, K8sStorageClass[]>('/resource/storageclasses/list', ctx),
-  get: (name: string, ctx: Ctx2) => http.get<never, K8sStorageClass>(`/resource/storageclasses/${encodeURIComponent(name)}`, { params: ctx }),
-  getYaml: (name: string, ctx: Ctx2) => http.get<never, string>(`/resource/storageclasses/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+  list: (ctx: Ctx2) => http.post<never, K8sStorageClass[]>('/storageclasses/list', ctx),
+  get: (name: string, ctx: Ctx2) => http.get<never, K8sStorageClass>(`/storageclasses/${encodeURIComponent(name)}`, { params: ctx }),
+  getYaml: (name: string, ctx: Ctx2) => http.get<never, string>(`/storageclasses/${encodeURIComponent(name)}/yaml`, { params: ctx }),
 }
 
-/** PersistentVolume /resource/persistentvolumes（集群级，只读：供 PVC 详情查看绑定的 PV；无 namespace） */
+/** PersistentVolume /persistentvolumes（集群级，只读：供 PVC 详情查看绑定的 PV；无 namespace） */
 export const persistentVolumeApi = {
-  list: (ctx: Ctx2) => http.post<never, K8sPersistentVolume[]>('/resource/persistentvolumes/list', ctx),
-  get: (name: string, ctx: Ctx2) => http.get<never, K8sPersistentVolume>(`/resource/persistentvolumes/${encodeURIComponent(name)}`, { params: ctx }),
-  getYaml: (name: string, ctx: Ctx2) => http.get<never, string>(`/resource/persistentvolumes/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+  list: (ctx: Ctx2) => http.post<never, K8sPersistentVolume[]>('/persistentvolumes/list', ctx),
+  get: (name: string, ctx: Ctx2) => http.get<never, K8sPersistentVolume>(`/persistentvolumes/${encodeURIComponent(name)}`, { params: ctx }),
+  getYaml: (name: string, ctx: Ctx2) => http.get<never, string>(`/persistentvolumes/${encodeURIComponent(name)}/yaml`, { params: ctx }),
 }
 
-/** 工作负载 /resource/workloads（kind 在 body；get/delete/yaml 跨 kind 查找） */
+/** 工作负载 /workloads（kind 在 body；get/delete/yaml 跨 kind 查找） */
 export const workloadApi = {
   ...makeResourceApi<WorkloadDetail>('workloads'),
   /** 暂停/恢复 Deployment 更新（body.paused=true 暂停 / false 恢复） */
   pause: (name: string, ctx: Ctx3, paused: boolean) =>
-    http.post<never, WorkloadDetail>(`/resource/workloads/${encodeURIComponent(name)}/pause`, { ...ctx, name, paused }),
+    http.post<never, WorkloadDetail>(`/workloads/${encodeURIComponent(name)}/pause`, { ...ctx, name, paused }),
 }
 
-/** ServiceMonitor /resource/servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
+/** ServiceMonitor /servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
 export const serviceMonitorApi = makeResourceApi<K8sServiceMonitor>('servicemonitors')
 
 /** ServiceMonitor Prometheus discovery 定位（对应后端 ServiceMonitorKeyRequest：clusterId + namespace + name） */
@@ -267,13 +279,13 @@ type SmDiscoveryCtx = { clusterId: string; namespace: string; name: string }
  * relabeling=服务发现原始标签(discoveredLabels)；metricRelabeling=最终目标标签(labels)，前端另补 __name__ */
 export const serviceMonitorRelabelApi = {
   labels: (ctx: SmDiscoveryCtx) =>
-    http.post<never, { relabeling: string[]; metricRelabeling: string[] }>('/resource/servicemonitors/relabel-labels', ctx),
+    http.post<never, { relabeling: string[]; metricRelabeling: string[] }>('/servicemonitors/relabel-labels', ctx),
   /** MetricRelabeling regex 的 __name__（指标名）候选：scoped 到本 SM 活跃 target；无 target/不可达返回空 */
   metricNames: (ctx: SmDiscoveryCtx) =>
-    http.post<never, string[]>('/resource/servicemonitors/metric-names', ctx),
+    http.post<never, string[]>('/servicemonitors/metric-names', ctx),
 }
 
-/** PodMonitor /resource/podmonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
+/** PodMonitor /podmonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
 export const podMonitorApi = makeResourceApi<K8sPodMonitor>('podmonitors')
 
 /** PodMonitor Prometheus discovery 定位（对应后端 PodMonitorKeyRequest：clusterId + namespace + name） */
@@ -282,49 +294,51 @@ type PmDiscoveryCtx = { clusterId: string; namespace: string; name: string }
 /** PodMonitor Relabeling/MetricRelabeling 的 sourceLabels 候选（编辑态；pool 前缀 podMonitor/{ns}/{name}/，不可达返回空） */
 export const podMonitorRelabelApi = {
   labels: (ctx: PmDiscoveryCtx) =>
-    http.post<never, { relabeling: string[]; metricRelabeling: string[] }>('/resource/podmonitors/relabel-labels', ctx),
+    http.post<never, { relabeling: string[]; metricRelabeling: string[] }>('/podmonitors/relabel-labels', ctx),
   /** MetricRelabeling regex 的 __name__ 候选：scoped 到本 PM 活跃 target；无 target/不可达返回空 */
   metricNames: (ctx: PmDiscoveryCtx) =>
-    http.post<never, string[]>('/resource/podmonitors/metric-names', ctx),
+    http.post<never, string[]>('/podmonitors/metric-names', ctx),
 }
 
-/** HPA /resource/hpas（发散资源：autoscaling v1/v2 由后端按集群 capability 分派） */
+/** HPA /hpas（发散资源：autoscaling v1/v2 由后端按集群 capability 分派） */
 export const hpaApi = makeResourceApi<K8sHpa>('hpas')
 
-/** Pod /resource/pods（只读 + 删除：由工作负载控制器管理，无 create/update） */
+/** Pod /pods（只读 + 删除：由工作负载控制器管理，无 create/update） */
 export const podApi = {
-  list: (ctx: ListCtx) => http.post<never, K8sPod[]>('/resource/pods/list', ctx),
-  get: (name: string, ctx: Ctx3) => http.get<never, K8sPod>(`/resource/pods/${encodeURIComponent(name)}`, { params: ctx }),
-  getYaml: (name: string, ctx: Ctx3) => http.get<never, string>(`/resource/pods/${encodeURIComponent(name)}/yaml`, { params: ctx }),
-  delete: (name: string, ctx: Ctx3) => http.delete<never, void>(`/resource/pods/${encodeURIComponent(name)}`, { params: ctx }),
+  list: (ctx: ListCtx) => http.post<never, K8sPod[]>('/pods/list', ctx),
+  /** 跨全部命名空间（平台侧全局视图；需 platform:pod:list-all） */
+  listAll: (ctx: ListAllCtx) => http.post<never, K8sPod[]>('/pods/list-all', ctx),
+  get: (name: string, ctx: Ctx3) => http.get<never, K8sPod>(`/pods/${encodeURIComponent(name)}`, { params: ctx }),
+  getYaml: (name: string, ctx: Ctx3) => http.get<never, string>(`/pods/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+  delete: (name: string, ctx: Ctx3) => http.delete<never, void>(`/pods/${encodeURIComponent(name)}`, { params: ctx }),
 }
 
-/** Node /resource/nodes（集群级，admin；无 create/delete，节点专属动作走独立端点） */
+/** Node /nodes（集群级，admin；无 create/delete，节点专属动作走独立端点） */
 export const nodeApi = {
   list: (ctx: { clusterId: string; labelSelector?: string }) =>
-    http.post<never, K8sNode[]>('/resource/nodes/list', ctx),
+    http.post<never, K8sNode[]>('/nodes/list', ctx),
   get: (name: string, clusterId: string) =>
-    http.get<never, K8sNode>(`/resource/nodes/${encodeURIComponent(name)}`, { params: { clusterId } }),
+    http.get<never, K8sNode>(`/nodes/${encodeURIComponent(name)}`, { params: { clusterId } }),
   getYaml: (name: string, clusterId: string) =>
-    http.get<never, string>(`/resource/nodes/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
+    http.get<never, string>(`/nodes/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
   cordon: (clusterId: string, name: string) =>
-    http.post<never, K8sNode>('/resource/nodes/cordon', { clusterId, name }),
+    http.post<never, K8sNode>('/nodes/cordon', { clusterId, name }),
   uncordon: (clusterId: string, name: string) =>
-    http.post<never, K8sNode>('/resource/nodes/uncordon', { clusterId, name }),
+    http.post<never, K8sNode>('/nodes/uncordon', { clusterId, name }),
   updateLabelsTaints: (name: string, clusterId: string, body: { labels: Record<string, string>; taints: NodeTaint[] }) =>
-    http.put<never, K8sNode>(`/resource/nodes/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
+    http.put<never, K8sNode>(`/nodes/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
   drain: (payload: { clusterId: string; name: string; force?: boolean; deleteEmptyDir?: boolean }) =>
-    http.post<never, NodeDrainResult>('/resource/nodes/drain', payload),
+    http.post<never, NodeDrainResult>('/nodes/drain', payload),
   pods: (name: string, clusterId: string) =>
-    http.get<never, K8sPod[]>(`/resource/nodes/${encodeURIComponent(name)}/pods`, { params: { clusterId } }),
+    http.get<never, K8sPod[]>(`/nodes/${encodeURIComponent(name)}/pods`, { params: { clusterId } }),
   /** 节点上某 Pod 的 YAML（只读；集群域 admin，无需 tenantId） */
   podYaml: (nodeName: string, clusterId: string, namespace: string, podName: string) =>
     http.get<never, string>(
-      `/resource/nodes/${encodeURIComponent(nodeName)}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(podName)}/yaml`,
+      `/nodes/${encodeURIComponent(nodeName)}/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(podName)}/yaml`,
       { params: { clusterId } },
     ),
   events: (name: string, clusterId: string) =>
-    http.get<never, NodeEvent[]>(`/resource/nodes/${encodeURIComponent(name)}/events`, { params: { clusterId } }),
+    http.get<never, NodeEvent[]>(`/nodes/${encodeURIComponent(name)}/events`, { params: { clusterId } }),
 }
 
 // ==================== 网络 Calico（集群级，admin；/calico/**）====================

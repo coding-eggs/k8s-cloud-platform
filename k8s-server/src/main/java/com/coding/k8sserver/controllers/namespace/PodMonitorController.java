@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-PodMonitor", description = "命名空间内 PodMonitor（双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/podmonitors")
+@RequestMapping("/podmonitors")
 public class PodMonitorController extends AbstractNamespacedResourceController<PodMonitorDTO> {
 
     public PodMonitorController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

@@ -3,7 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.IpoolDTO;
 import com.coding.common.models.k8s.dto.PoolIpamSummaryDTO;
-import com.coding.platformapi.k8s.K8sAdminClient;
+import com.coding.platformapi.k8s.K8sCalicoClient;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,12 +15,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * CalicoService 删除守卫 + IPAM 降级单测（mock K8sAdminClient，不触网）。
+ * CalicoService 删除守卫 + IPAM 降级单测（mock K8sCalicoClient，不触网）。
  * <p>守卫铁律（spec §5.3）：allocated&gt;0 拒删；汇总不可用（null/异常）→ 无法确认占用 → 保守拒删。
  */
 class CalicoServiceTest {
 
-    private final K8sAdminClient k8s = mock(K8sAdminClient.class);
+    private final K8sCalicoClient k8s = mock(K8sCalicoClient.class);
     private final CalicoService svc = new CalicoService(k8s);
 
     private static PoolIpamSummaryDTO summary(long allocated) {

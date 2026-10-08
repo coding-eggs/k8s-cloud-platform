@@ -3,7 +3,9 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { clusterApi, namespaceApi, calicoApi } from '@/api'
-import type { K8sCluster, K8sIpool } from '@/types'
+import { apiCodes } from '@/apiCodes'
+import { usePermission } from '@/stores/permission'
+import type { K8sClusterOption, K8sIpool } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
@@ -18,13 +20,13 @@ const router = useRouter()
 // ---- 平台上下文：集群级，无租户/命名空间级联（刻意不用 stores/context.ts 的租户优先单例，本页无租户）----
 /** ?name= → 编辑回填；无 name → 创建 */
 const editing = ref<string | null>((route.query.name as string) || null)
-const clusters = ref<K8sCluster[]>([])
+const clusters = ref<K8sClusterOption[]>([])
 const clusterId = ref((route.query.clusterId as string) || '')
 /** 平台级页面：ready = 集群已选 */
 const ready = computed(() => !!clusterId.value)
 
 async function loadClusters(): Promise<void> {
-  clusters.value = await clusterApi.list()
+  clusters.value = await clusterApi.options()
   if (!clusterId.value) {
     const first = clusters.value.find((c) => c.enabled === 1) ?? clusters.value[0]
     if (first) clusterId.value = first.clusterId
@@ -52,9 +54,13 @@ function resetForm(): void {
 
 // ---- Calico 绑定池（B3 §11；ns annotation cni.projectcalico.org/ipv{4,6}pools）----
 const { hasCalico } = useClusterCapability(clusterId)
+const perm = usePermission()
 const ippools = ref<K8sIpool[]>([])
 watch([clusterId, hasCalico], async () => {
-  if (!clusterId.value || !hasCalico.value) { ippools.value = []; return }
+  // 地址池候选走 /calico/**（platform:cluster:manage）。显式判权限位：
+  // 此前只靠 hasCalico 间接挡住，而那依赖"PLATFORM 角色不可能持 tenant:cluster:capability:view"
+  // 这条不变量 —— 一旦能力快照的码调整，本页就会对"只做命名空间运维"的角色静默漏出 403。
+  if (!clusterId.value || !hasCalico.value || !perm.has(apiCodes.clusterManage)) { ippools.value = []; return }
   try {
     ippools.value = (await calicoApi.ippool.list({ clusterId: clusterId.value })) ?? []
   } catch {

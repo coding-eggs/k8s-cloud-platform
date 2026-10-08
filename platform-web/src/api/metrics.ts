@@ -15,7 +15,7 @@ export interface MetricsRangeReq {
 
 /** 单维度指标 API：cpu / memory / network / disk 各一 POST（复用 http.ts，自动解 ResponseData.data） */
 function makeMetricsApi(dim: 'workloads' | 'pods') {
-  const base = `/resource/${dim}`
+  const base = `/${dim}`
   return {
     cpu: (name: string, req: MetricsRangeReq) =>
       http.post<never, MetricSeriesResponse>(`${base}/${encodeURIComponent(name)}/metrics/cpu`, req),
@@ -64,14 +64,14 @@ export interface NodeMetricsReq {
 /** 节点维度（4 图 + 列表页当前值批量） */
 export const nodeMetrics = {
   cpu: (name: string, req: NodeMetricsReq) =>
-    http.post<never, MetricSeriesResponse>(`/resource/nodes/${encodeURIComponent(name)}/metrics/cpu`, req),
+    http.post<never, MetricSeriesResponse>(`/nodes/${encodeURIComponent(name)}/metrics/cpu`, req),
   memory: (name: string, req: NodeMetricsReq) =>
-    http.post<never, MetricSeriesResponse>(`/resource/nodes/${encodeURIComponent(name)}/metrics/memory`, req),
+    http.post<never, MetricSeriesResponse>(`/nodes/${encodeURIComponent(name)}/metrics/memory`, req),
   network: (name: string, req: NodeMetricsReq) =>
-    http.post<never, MetricSeriesResponse>(`/resource/nodes/${encodeURIComponent(name)}/metrics/network`, req),
+    http.post<never, MetricSeriesResponse>(`/nodes/${encodeURIComponent(name)}/metrics/network`, req),
   disk: (name: string, req: NodeMetricsReq) =>
-    http.post<never, MetricSeriesResponse>(`/resource/nodes/${encodeURIComponent(name)}/metrics/disk`, req),
+    http.post<never, MetricSeriesResponse>(`/nodes/${encodeURIComponent(name)}/metrics/disk`, req),
   /** 列表页批量当前值：返回 instance → {cpuPercent, memPercent} */
   current: (clusterId: string, instances: string[]) =>
-    http.post<never, Record<string, NodeCurrentMetric>>('/resource/nodes/metrics/current', { clusterId, instances }),
+    http.post<never, Record<string, NodeCurrentMetric>>('/nodes/metrics/current', { clusterId, instances }),
 }

@@ -27,7 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * k8s-server HTTP 内核（{@link K8sResourceClient} / {@link K8sAdminClient} 共用底座）：
+ * k8s-server HTTP 内核（{@link K8sClient} / Calico、节点、Pod、生命周期各专用 client 共用底座）：
  * <ul>
  *   <li>认证：透传当前请求的管理员 token（Authorization 头原样转发）</li>
  *   <li>错误：k8s-server 返回 code≠200 时原样转 CloudPlatformException（共用 EnumResponseType）；

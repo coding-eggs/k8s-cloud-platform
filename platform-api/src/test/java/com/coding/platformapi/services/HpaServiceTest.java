@@ -3,7 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.HpaDTO;
 import com.coding.common.models.k8s.dto.HpaCrossVersionObjectReferenceDTO;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -18,7 +18,7 @@ import static org.mockito.Mockito.when;
 
 class HpaServiceTest {
 
-    private final K8sResourceClient k8s = mock(K8sResourceClient.class);
+    private final K8sClient k8s = mock(K8sClient.class);
     private final HpaService svc = new HpaService(k8s);
 
     private HpaDTO hpa(String name, String kind, String targetName) {

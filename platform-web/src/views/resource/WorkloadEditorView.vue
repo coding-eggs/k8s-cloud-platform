@@ -20,6 +20,7 @@ import { useResourceContext } from '@/stores/context'
 import type { K8sIpReservation } from '@/types'
 import { useNodeCatalog } from '@/stores/nodeCatalog'
 import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
@@ -187,7 +188,7 @@ const perm = usePermission()
 async function loadReservedIpOptions(): Promise<void> {
   const clusterId = state.clusterId
   const nsName = state.namespace
-  if (!clusterId || !perm.has('platform:cluster:manage')) return
+  if (!clusterId || !perm.has(apiCodes.clusterManage)) return
   const cacheKey = `${clusterId}/${nsName ?? ''}`
   if (reservedIpsLoadedFor === cacheKey) return
   try {
@@ -265,7 +266,7 @@ async function runStaticIpChecks(): Promise<void> {
   const clusterId = state.clusterId
   const ips = staticIps.value.map((s) => s.trim()).filter(Boolean)
   // 候选查询走 /calico/**（platform:cluster:manage）；无此权限不发请求，避免 403 弹提示
-  if (!clusterId || !staticIpAllowed.value || ips.length === 0 || !perm.has('platform:cluster:manage')) {
+  if (!clusterId || !staticIpAllowed.value || ips.length === 0 || !perm.has(apiCodes.clusterManage)) {
     staticIpWarnings.value = []
     return
   }
@@ -773,8 +774,8 @@ const contextDesc = computed(() => {
                   </el-select>
                   <div v-if="!staticIpAllowed" class="form-tip warn">仅单副本（replicas=1）的 Deployment/StatefulSet 可配置固定 IP（当前：{{ form.kind === 'daemonset' ? 'DaemonSet 不支持' : `replicas=${form.replicas ?? 1}` }}）</div>
                   <template v-else>
-                    <div v-if="perm.has('platform:cluster:manage') && allowedPoolNames.length > 0" class="form-tip">本命名空间可用池：{{ allowedPoolNames.join('、') }}<template v-if="reservedIpOptions.length === 0"><template v-if="filteredOutPoolNames.length">——集群已有保留 IP，但都不在以上池内（当前涉及：{{ filteredOutPoolNames.join('、') }}），请在「保留 IP」页把目标 IP 保留到上述池</template><template v-else>——暂无保留 IP 候选，请先在「保留 IP」页从这些池保留目标 IP</template></template></div>
-                    <div v-else-if="!perm.has('platform:cluster:manage')" class="form-tip">无集群管理权限，取不到保留 IP 候选（已有值仍可回显提交）</div>
+                    <div v-if="perm.has(apiCodes.clusterManage) && allowedPoolNames.length > 0" class="form-tip">本命名空间可用池：{{ allowedPoolNames.join('、') }}<template v-if="reservedIpOptions.length === 0"><template v-if="filteredOutPoolNames.length">——集群已有保留 IP，但都不在以上池内（当前涉及：{{ filteredOutPoolNames.join('、') }}），请在「保留 IP」页把目标 IP 保留到上述池</template><template v-else>——暂无保留 IP 候选，请先在「保留 IP」页从这些池保留目标 IP</template></template></div>
+                    <div v-else-if="!perm.has(apiCodes.clusterManage)" class="form-tip">无集群管理权限，取不到保留 IP 候选（已有值仍可回显提交）</div>
                     <div v-if="reservedIpsTruncated" class="form-tip">部分保留段超过 {{ RESERVED_IP_CAP_PER_CIDR }} 个 IP，未全部展开</div>
                   </template>
                   <el-alert v-for="w in staticIpWarnings" :key="w.ip" :title="w.text" :type="w.level" :closable="false" class="static-ip-warn" />

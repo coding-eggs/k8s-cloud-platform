@@ -16,6 +16,7 @@ import java.util.Set;
 /**
  * claim → authentication 转换器（platform-api / k8s-server 共用，避免两服务映射漂移）：
  * - dataKey claim（TokenUserInfo）中的 platformRoles → {@code PLATFORM:<code>}
+ * - dataKey claim（TokenUserInfo）中的 platformRoles 非空 → {@link #PLATFORM_SCOPE_AUTHORITY}（「平台侧」标记）
  * - dataKey claim（TokenUserInfo）中的 permissions → {@code PERM:<code>}
  * - 标准 scope/roles claim 维持默认 JwtGrantedAuthoritiesConverter 行为
  * <p>
@@ -27,6 +28,19 @@ public class PlatformJwtAuthenticationConverter implements Converter<Jwt, Abstra
      * 平台域 authority 前缀，与租户域 {@code <tenant>:<code>} 区分
      */
     public static final String PLATFORM_AUTHORITY_PREFIX = "PLATFORM:";
+
+    /**
+     * 「调用方属于平台侧」的合成 authority：{@code platformRoles} 非空（= 持有任意 PLATFORM-scope 角色）时追加。
+     * <p>
+     * 判据在签发期就已收敛：{@code PlatformUserRoleMapper.selectRoleCodesByUser} 已 INNER JOIN
+     * {@code platform_role} 并按 {@code scope='PLATFORM'} 过滤（见该 mapper XML 的注释），所以
+     * <b>租户成员的 {@code platformRoles} 必为空</b> —— 本 authority 是精确的"平台侧"标记，不是近似。
+     * k8s-server 侧据此替代原先硬编码角色名的 {@code PLATFORM:admin}。
+     * <p>
+     * 刻意<b>不带冒号</b>：{@code PLATFORM:<roleCode>} 恒含冒号，而 role code 是用户在角色管理页自建的
+     * varchar(64)，因此两者构造上不可能相撞。
+     */
+    public static final String PLATFORM_SCOPE_AUTHORITY = "PLATFORM_SCOPE";
 
     private final String dataKey;
 
@@ -41,13 +55,18 @@ public class PlatformJwtAuthenticationConverter implements Converter<Jwt, Abstra
         Set<GrantedAuthority> authorities = new HashSet<>(defaultConverter.convert(jwt));
         Object data = jwt.getClaim(dataKey);
         if (data instanceof Map<?, ?> map) {
+            boolean platformSide = false;
             Object roles = map.get("platformRoles");
             if (roles instanceof List<?> list) {
                 for (Object role : list) {
                     if (role != null && !role.toString().isBlank()) {
                         authorities.add(new SimpleGrantedAuthority(PLATFORM_AUTHORITY_PREFIX + role));
+                        platformSide = true;
                     }
                 }
+            }
+            if (platformSide) {
+                authorities.add(new SimpleGrantedAuthority(PLATFORM_SCOPE_AUTHORITY));
             }
             Object perms = map.get("permissions");
             if (perms instanceof List<?> plist) {

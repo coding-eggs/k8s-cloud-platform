@@ -38,7 +38,7 @@ public class HpaDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/hpas";
+        return "/hpas";
     }
 
 }

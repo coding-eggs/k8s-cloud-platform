@@ -12,7 +12,7 @@ import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.data.models.k8s.PlatformRbacTemplate;
-import com.coding.platformapi.k8s.K8sAdminClient;
+import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.AllocationCreateRequest;
 import com.coding.platformapi.models.AllocationDeleteRequest;
 import com.coding.platformapi.models.AllocationQueryRequest;
@@ -25,7 +25,7 @@ import org.springframework.util.StringUtils;
 import java.util.List;
 
 /**
- * 命名空间分配：DB 先行（/resources/rolebindings 的分配表边界前提），随后 K8s 侧四步
+ * 命名空间分配：DB 先行（/rolebindings 的分配表边界前提），随后 K8s 侧四步
  * （ensure ns → sync 模板 ClusterRole → ensure SA → 建 RoleBinding，全部经 k8s-server 通用端点），
  * 任一步失败回滚分配行。失败方向安全：回滚后无记录也无绑定，不会出现"有记录但没边界"的状态。
  */
@@ -39,7 +39,7 @@ public class NamespaceAllocationService {
     private final K8sClusterMapper clusterMapper;
     private final PlatformRbacTemplateMapper templateMapper;
     private final K8sProvisioningService provisioning;
-    private final K8sAdminClient adminClient;
+    private final K8sLifecycleClient adminClient;
     private final AuthContext authContext;
 
     public PlatformTenantNamespace create(AllocationCreateRequest req) {

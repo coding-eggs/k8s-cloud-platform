@@ -33,21 +33,35 @@ const selectedRole = computed(() => roles.value.find((r) => r.id === selectedRol
 const platformRoles = computed(() => roles.value.filter((r) => r.scope === 'PLATFORM'))
 const tenantRoles = computed(() => roles.value.filter((r) => r.scope === 'TENANT'))
 
-/** 权限目录按 code 聚合：一行 = 一个 URL 规则；勾选项 = code（保存时 codes → 后端展开全部行）。
+/** 权限目录按 code 聚合：一行 = 一个 URL 规则/页面码；勾选项 = code（保存时 codes → 后端展开全部行）。
  *  族过滤 = 所选角色 scope 不变量（PLATFORM 角色只见 platform: code，反之亦然）。 */
 interface PermNode {
   code: string
   description: string
   ruleCount: number
+  /** 首个 resource：API/K8S 域是 URL 模式，Page 域是前端路由 path */
   sample: string
 }
-const grouped = computed(() => {
+interface PermResourceGroup {
+  resource: string
+  nodes: PermNode[]
+}
+
+/** tab 顺序即此数组顺序；与 PermissionView、创建对话框的域下拉同源 */
+const DOMAINS = [
+  'API'
+  // , 'K8S'
+  , 'Page']
+/** 当前域 tab */
+const activeDomain = ref('API')
+
+/** 域 → 按 resource 分组的勾选项。Page 域的 resource 是路由 path，分组维度与 API 不同（见模板）。 */
+const groupedByDomain = computed(() => {
   const scope = selectedRole.value?.scope
   // scope 不变量：TENANT 角色只见 tenant: code，PLATFORM 角色只见 platform: code；
   // 豁免内置超管 admin（V2026_09_29_2 起同时持有资源域 tenant:* code，后端 assertScopeMatches 同步豁免）
   const isAdmin = selectedRole.value?.code === 'admin'
   const prefix = isAdmin ? null : scope === 'TENANT' ? 'tenant:' : scope === 'PLATFORM' ? 'platform:' : null
-  // domain → resource（API 域 resource=URL 模式）→ codes
   const byDomain = new Map<string, Map<string, PermNode[]>>()
   const seen = new Map<string, PermNode>()
   for (const p of allPerms.value) {
@@ -56,22 +70,45 @@ const grouped = computed(() => {
     if (!node) {
       node = { code: p.code, description: p.description ?? '', ruleCount: 0, sample: p.resource ?? '' }
       seen.set(p.code, node)
-      const res = byDomain.get(p.domain ?? 'API') ?? new Map<string, PermNode[]>()
-      byDomain.set(p.domain ?? 'API', res)
+      const domain = p.domain ?? 'API'
+      const res = byDomain.get(domain) ?? new Map<string, PermNode[]>()
+      byDomain.set(domain, res)
       ;(res.get(p.resource ?? '-') ?? push(res, p.resource ?? '-')).push(node)
     }
     node.ruleCount += 1
   }
-  return [...byDomain.entries()].map(([domain, resMap]) => ({
-    domain,
-    resources: [...resMap.entries()].map(([resource, nodes]) => ({ resource, nodes })),
-  }))
+  const out = new Map<string, PermResourceGroup[]>()
+  for (const [domain, resMap] of byDomain) {
+    out.set(domain, [...resMap.entries()].map(([resource, nodes]) => ({ resource, nodes })))
+  }
+  return out
   function push(m: Map<string, PermNode[]>, k: string): PermNode[] {
     const arr: PermNode[] = []
     m.set(k, arr)
     return arr
   }
 })
+
+/** 当前 tab 的分组与扁平项 */
+const activeResources = computed(() => groupedByDomain.value.get(activeDomain.value) ?? [])
+const activeNodes = computed(() => activeResources.value.flatMap((g) => g.nodes))
+
+/** tab 角标：该域下「已勾/可选」。已勾是跨 tab 的全局状态（checkedCodes 不随 tab 变化），
+ *  所以切 tab 不会丢勾选，保存时提交的仍是全部域的并集。 */
+const domainTabs = computed(() =>
+  DOMAINS.map((d) => {
+    const nodes = (groupedByDomain.value.get(d) ?? []).flatMap((g) => g.nodes)
+    return { domain: d, total: nodes.length, checked: nodes.filter((n) => isChecked(n.code)).length }
+  }),
+)
+
+/** 换角色后若当前 tab 空（例如从只有 Page 码的角色切到只有 API 码的角色），自动落到第一个有内容的域，
+ *  否则会看到一片空白、误以为角色没有权限。 */
+function ensureTabHasContent(): void {
+  if (activeNodes.value.length) return
+  const first = domainTabs.value.find((t) => t.total > 0)
+  if (first) activeDomain.value = first.domain
+}
 
 const totalChecked = computed(() => checkedCodes.value.length)
 
@@ -107,6 +144,7 @@ async function loadCheckedFor(roleId: string): Promise<void> {
     /* 拦截器提示 */
   } finally {
     permsLoading.value = false
+    ensureTabHasContent()
   }
 }
 
@@ -260,15 +298,40 @@ onMounted(async () => {
           </div>
         </div>
         <div class="perm-hint">
-          勾选=权限点 code（同 code 覆盖多个 URL 规则，保存时后端按 code 展开全部行）；
+          勾选=权限点 code（同 code 覆盖多个规则，保存时后端按 code 展开全部行）；
           {{ selectedRole.code === 'admin'
             ? '平台管理员可见全部权限族（platform: + tenant:）'
             : selectedRole.scope === 'TENANT' ? '租户角色仅可选 tenant: 权限族' : '平台角色仅可选 platform: 权限族' }}（后端不变量校验）。
+          <br />
+          上方 tab 按<b>域</b>切换，角标是「本域已勾 / 本域可选」；<b>勾选跨 tab 保留</b>，保存提交的是所有域的并集。
+          <b>域：Page</b> 是<b>页面可见性</b>（resource = 前端路由 path），与 <b>域：API</b> 的「接口授权」相互独立：
+          取消 Page 只会让侧边栏入口消失，取消 API 会让页面能进但操作被拒。页面清单与命名规则见 src/pageCodes.ts。
         </div>
+        <el-tabs v-model="activeDomain" class="perm-tabs">
+          <el-tab-pane v-for="t in domainTabs" :key="t.domain" :name="t.domain">
+            <template #label>
+              <span class="perm-tab-label">
+                {{ t.domain }}
+                <span class="perm-tab-count" :class="{ 'is-zero': !t.total }">{{ t.checked }}/{{ t.total }}</span>
+              </span>
+            </template>
+          </el-tab-pane>
+        </el-tabs>
         <div v-loading="permsLoading" class="perm-body">
-          <div v-for="g in grouped" :key="g.domain" class="perm-domain">
-            <div class="perm-domain-title">域：{{ g.domain }}</div>
-            <div v-for="rs in g.resources" :key="rs.resource" class="perm-resource">
+          <!-- Page：扁平列表。页面码自带页面语义，再按 route path 分组只会刷出 47 个「单条分组」；
+               把 route path 作为行内次要信息展示更好读。 -->
+          <template v-if="activeDomain === 'Page'">
+            <div v-for="n in activeNodes" :key="n.code" class="perm-leaf">
+              <el-checkbox :model-value="isChecked(n.code)" @update:model-value="(v: unknown) => toggleCode(n.code, !!v)">
+                <span class="perm-leaf-code">{{ n.code }}</span>
+                <span v-if="n.description" class="perm-leaf-desc">{{ n.description }}</span>
+                <span v-if="n.sample" class="perm-leaf-route">{{ n.sample }}</span>
+              </el-checkbox>
+            </div>
+          </template>
+          <!-- API / K8S：按 resource（URL 模式）分组 —— resource 是这两个域的主要阅读维度 -->
+          <template v-else>
+            <div v-for="rs in activeResources" :key="rs.resource" class="perm-resource">
               <div class="perm-resource-title">{{ rs.resource }}</div>
               <div v-for="n in rs.nodes" :key="n.code" class="perm-leaf">
                 <el-checkbox :model-value="isChecked(n.code)" @update:model-value="(v: unknown) => toggleCode(n.code, !!v)">
@@ -278,8 +341,8 @@ onMounted(async () => {
                 </el-checkbox>
               </div>
             </div>
-          </div>
-          <div v-if="!grouped.length && !permsLoading" class="perm-empty">该角色族下暂无可勾权限点</div>
+          </template>
+          <div v-if="!activeNodes.length && !permsLoading" class="perm-empty">该域下暂无可勾权限点</div>
         </div>
       </template>
       <el-empty v-else description="选择左侧角色以编辑权限" />
@@ -431,20 +494,37 @@ onMounted(async () => {
   line-height: 1.5;
 }
 .perm-body {
-  margin-top: 12px;
+  margin-top: 4px;
   flex: 1;
   overflow-y: auto;
 }
-.perm-domain {
-  margin-bottom: 14px;
+/* 域 tab：紧贴勾选区上方，与 .perm-body 共享剩余高度 */
+.perm-tabs {
+  margin-top: 10px;
 }
-.perm-domain-title {
-  font-size: 12px;
-  letter-spacing: .1em;
+.perm-tabs :deep(.el-tabs__header) {
+  margin: 0;
+}
+.perm-tabs :deep(.el-tabs__item) {
+  height: 34px;
+  line-height: 34px;
+  font-size: 13px;
+}
+.perm-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.perm-tab-count {
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 9px;
+  background: var(--panel-hover);
   color: var(--text-3);
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 4px;
-  margin-bottom: 6px;
+}
+.perm-tab-count.is-zero {
+  opacity: .45;
 }
 .perm-resource-title {
   font-size: 12px;
@@ -462,6 +542,14 @@ onMounted(async () => {
   margin-left: 8px;
   font-size: 12px;
   color: var(--text-3);
+}
+/* Page 域的 route path：作为行内次要信息，比再分一层「只含一条」的分组好读 */
+.perm-leaf-route {
+  margin-left: 8px;
+  font-size: 11.5px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-3);
+  opacity: .8;
 }
 .perm-leaf-count {
   margin-left: 8px;

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { clusterApi, tenantApi } from '@/api'
+import { apiCodes } from '@/apiCodes'
+import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
 import type { K8sCluster, NamespaceAllocation, PlatformTenant } from '@/types'
 
@@ -16,11 +18,11 @@ async function load(): Promise<void> {
   try {
     // 总览三块统计各对应一个管理端点（/cluster/list、/tenant/list、/tenant/namespace/list）：
     // 无权限点则传 null 跳过，避免租户成员进总览被后端 403 连弹三条「权限不足」。
-    // 后端权威不变，这里只是别去敲没门的锁。
+    // 后端权威不变，这里只是别去敲没门的锁。★门控用的是 **API 域** 码（拉数据的能力）。
     ;[clusters.value, tenants.value, allocations.value] = await Promise.all([
-      perm.has('platform:cluster:manage') ? clusterApi.list() : Promise.resolve([] as K8sCluster[]),
-      perm.has('platform:tenant:read') ? tenantApi.list() : Promise.resolve([] as PlatformTenant[]),
-      perm.has('platform:allocation:list') ? tenantApi.namespaceList() : Promise.resolve([] as NamespaceAllocation[]),
+      perm.has(apiCodes.clusterManage) ? clusterApi.list() : Promise.resolve([] as K8sCluster[]),
+      perm.has(apiCodes.tenantRead) ? tenantApi.list() : Promise.resolve([] as PlatformTenant[]),
+      perm.has(apiCodes.allocationList) ? tenantApi.namespaceList() : Promise.resolve([] as NamespaceAllocation[]),
     ])
   } finally {
     loading.value = false
@@ -44,13 +46,14 @@ const stats = computed<StatCard[]>(() => [
   { label: '命名空间分配', value: allocations.value.length, sub: '跨集群总计', icon: 'Connection', tone: 'green' },
 ])
 
-// 快捷入口：管理域三张卡按权限点过滤（与菜单/路由守卫同码）；工作负载是边界层资源页不设门槛
+// 快捷入口：卡片是**页面入口**，故按 Page 域码过滤（与菜单/路由守卫同源 pageCodes.ts），
+// 不是按 API 码 —— 否则会出现"菜单已隐藏但这个卡片还露着"的不一致。
 const shortcuts = computed(() =>
   [
-    { title: '集群管理', desc: '接入 / 开通 / 停用 K8s 集群', path: '/clusters', icon: 'Monitor', perm: 'platform:cluster:manage' },
-    { title: '命名空间管理', desc: '查看集群内命名空间，删除未分配命名空间', path: '/namespaces', icon: 'FolderOpened', perm: 'platform:allocation:list' },
-    { title: '工作负载', desc: 'Deployment / StatefulSet / DaemonSet', path: '/resources/workloads', icon: 'Box', perm: null },
-    { title: 'RBAC 模板', desc: '维护租户权限规则模板', path: '/templates', icon: 'CollectionTag', perm: 'platform:template:manage' },
+    { title: '集群管理', desc: '接入 / 开通 / 停用 K8s 集群', path: '/clusters', icon: 'Monitor', perm: pageCodes.cluster },
+    { title: '命名空间管理', desc: '查看集群内命名空间，删除未分配命名空间', path: '/namespaces', icon: 'FolderOpened', perm: pageCodes.namespace.list },
+    { title: '工作负载', desc: 'Deployment / StatefulSet / DaemonSet', path: '/resources/workloads', icon: 'Box', perm: pageCodes.workload.list },
+    { title: 'RBAC 模板', desc: '维护租户权限规则模板', path: '/templates', icon: 'CollectionTag', perm: pageCodes.template },
   ].filter((s) => s.perm === null || perm.has(s.perm)),
 )
 

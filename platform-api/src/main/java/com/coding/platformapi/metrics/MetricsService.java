@@ -7,7 +7,7 @@ import com.coding.common.models.k8s.dto.ReplicaSetDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.metrics.dto.MetricPoint;
 import com.coding.platformapi.metrics.dto.MetricSeries;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
@@ -45,7 +45,7 @@ public class MetricsService {
     private final K8sClusterMapper clusterMapper;
     private final ThanosQueryClient client;
     /** 通用 k8s-server 资源 client：Deployment 指标需先列出其名下 ReplicaSet（见 {@link #resolveOwner}）。 */
-    private final K8sResourceClient resourceClient;
+    private final K8sClient resourceClient;
 
     // ===== Pod 维度（占位符：cluster, ns, pod[, 方向]）=====
 

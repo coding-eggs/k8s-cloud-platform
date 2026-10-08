@@ -38,11 +38,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li>C→S: {"type":"input","data":"..."} / {"type":"resize","cols":N,"rows":M}</li>
  *   <li>S→C: {"type":"output","data":"..."} / {"type":"exit","code":N} / {"type":"error","message":"..."}</li>
  * </ul>
+ * <p>
+ * 实现 {@link AccessBoundaryAware} 声明 {@code TENANT}：握手请求也会过
+ * {@code BoundaryAuthorizationManager}，而它的 handler 是
+ * {@code WebSocketHttpRequestHandler}（包装本对象）——该管理器会拆包后读本声明。
+ * 不声明则握手被 403（fail-closed）。边界本身仍在 handler 内做（见
+ * {@link ResourceAccessResolver#resolveNamespacedAccess} 的显式身份重载）。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class PodExecWebSocketHandler extends TextWebSocketHandler {
+public class PodExecWebSocketHandler extends TextWebSocketHandler implements AccessBoundaryAware {
 
     /**握手期由 {@code HandshakeInterceptor} 存入 session attributes 的认证身份。
      * afterConnectionEstablished 跑在 WS worker 线程、thread-local SecurityContext 为空，只能从这里取。 */
@@ -56,6 +62,12 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler {
     }
 
     private final Map<String, ExecState> states = new HashMap<>();
+
+    /**租户边界：exec 的目标命名空间在公司表三元组校验之内（见类注释）。 */
+    @Override
+    public AccessBoundary accessBoundary() {
+        return AccessBoundary.TENANT;
+    }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {

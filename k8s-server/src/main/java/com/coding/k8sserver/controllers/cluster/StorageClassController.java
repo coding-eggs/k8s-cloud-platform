@@ -10,13 +10,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 集群域 - StorageClass（PLATFORM:admin，边界=平台已注册该集群）。
+ * 集群域 - StorageClass（边界=平台已注册该集群；继承集群基类，故仅平台侧可调用）。
  * <p>
- * 通用单点 CRUD；平台侧主要用 list/get/yaml 供工作负载编辑器下拉选择 storageClassName。
+ * 通用单点 CRUD；平台侧主要用 list/get/yaml 供工作负载编辑器下拉选择 storageClassName。StorageClass 无命名空间维度、无法按租户收窄，故其权限码收归 platform:cluster:manage（仅平台管理员，见 V2026_10_07_3）。
  */
-@Tag(name = "集群域-StorageClass", description = "集群级存储类（PLATFORM:admin，边界=集群注册表）")
+@Tag(name = "集群域-StorageClass", description = "集群级存储类（边界=集群注册表）")
 @RestController
-@RequestMapping("/resources/storageclasses")
+@RequestMapping("/storageclasses")
 public class StorageClassController extends AbstractClusterResourceController<StorageClassDTO> {
 
     public StorageClassController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

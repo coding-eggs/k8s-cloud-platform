@@ -34,7 +34,7 @@ class PermissionCrossCheckTest {
         when(reg.requiredCodes(anyString(), anyString())).thenReturn(Optional.empty());
 
         var gaps = PermissionCrossCheck.uncoveredEndpoints(
-                List.of(new PermissionCrossCheck.Endpoint("GET", "/resource/context")), reg);
+                List.of(new PermissionCrossCheck.Endpoint("GET", "/context")), reg);
 
         assertThat(gaps).isEmpty();
     }

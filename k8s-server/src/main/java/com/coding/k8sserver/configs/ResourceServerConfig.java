@@ -4,6 +4,7 @@ package com.coding.k8sserver.configs;
 import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.k8sserver.components.BoundaryAuthorizationManager;
 import com.nimbusds.jose.*;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.proc.*;
@@ -56,6 +57,7 @@ public class ResourceServerConfig {
 
 	@Bean
 	SecurityFilterChain securityFilterChain(HttpSecurity http, Properties properties,
+										   BoundaryAuthorizationManager boundaryAuthorizationManager,
 										   @Value("${jwt.data-key:data}") String dataKey) {
 
 		http
@@ -66,11 +68,13 @@ public class ResourceServerConfig {
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers("/callback").permitAll()
 						.requestMatchers( properties.getIgnoreUrls()).permitAll()
-						//管理域：平台管理员专属（纵深防御，非主鉴权——主授权在 platform-api 的 PermissionAuthorizationManager；
-						//租户资源边界由 ResourceAccessResolver + 各集群 RoleBinding 负责）
-						.requestMatchers("/admin/**")
-							.hasAuthority(PlatformJwtAuthenticationConverter.PLATFORM_AUTHORITY_PREFIX + "admin")
-						.anyRequest().authenticated())
+						//边界判定：读目标 handler 自己声明的 AccessBoundary（BoundaryAuthorizationManager）。
+						//PLATFORM 端点要求 PLATFORM_SCOPE（= data.platformRoles 非空）；TENANT/UPSTREAM 放行 ——
+						//前者的边界在 handler 内由 ResourceAccessResolver 做，后者的收窄在上游 platform-api。
+						//历史：此处原为 `/admin/** → PLATFORM:admin`。那条规则把传输寻址当授权概念、硬编码 "admin"
+						//角色名（与 platform-api 权限表不同源），且只覆盖 14 个路由 —— 挂在 /resources/** 下的集群级
+						//端点（nodes / persistentvolumes / storageclasses / clusterroles）因而不受任何校验。
+						.anyRequest().access(boundaryAuthorizationManager))
 				//过滤器链层的认证/授权异常不会进 @ControllerAdvice，这里统一返回 ResponseData JSON
 				.exceptionHandling(ex -> ex
 						.authenticationEntryPoint((request, response, authException) ->

@@ -33,7 +33,11 @@ import java.util.Set;
 public class PermissionService {
 
     private static final Set<String> DOMAINS = Set.of("API", "K8S", "Page");
-    private static final Set<String> ACTIONS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH", "*");
+    /**API 域动作 = HTTP 方法（表驱动授权把 action 直接当 method 匹配，故只能是动词） */
+    private static final Set<String> API_ACTIONS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH", "*");
+    /**Page 域动作 = 前端路由的可见性动词 VIEW，与 HTTP 无关（不进 URL 规则表，见 rulesOf 的 domain 过滤）。
+     // ⚠️ 必须大写：validateFields 先 toUpperCase 再比对；DB 里也统一大写（与 API 域行一致） */
+    private static final Set<String> PAGE_ACTIONS = Set.of("VIEW");
 
     private final PlatformPermissionMapper permMapper;
     private final PermissionRowWriter writer;
@@ -132,16 +136,20 @@ public class PermissionService {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
                     "权限域须为 API / K8S / Page");
         String action = trimToEmpty(req.getAction()).toUpperCase();
-        if (!ACTIONS.contains(action))
+        Set<String> allowed = "Page".equals(req.getDomain()) ? PAGE_ACTIONS : API_ACTIONS;
+        if (!allowed.contains(action))
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "动作须为 GET / POST / PUT / DELETE / PATCH / *");
+                    "Page 域动作须为 view；API/K8S 域动作须为 GET / POST / PUT / DELETE / PATCH / *");
         String resource = trimToEmpty(req.getResource());
         if (resource.isEmpty())
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "资源（API 域为 URL 模式）必填");
+                    "资源（API 域为 URL 模式 / Page 域为前端路由 path）必填");
         if ("API".equals(req.getDomain()) && !resource.startsWith("/"))
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
                     "API 域 URL 模式须以 / 开头（支持 Ant 通配，如 /xxx/**）");
+        if ("Page".equals(req.getDomain()) && !resource.startsWith("/"))
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "Page 域 resource 须为前端路由 path（以 / 开头，如 /resources/workloads）");
     }
 
     private PlatformPermission requireActive(String id) {

@@ -74,7 +74,7 @@ class PermissionAuthorizationManagerTest {
         PermissionRegistry reg = mock(PermissionRegistry.class);
         var mgr = new PermissionAuthorizationManager(reg);
         var anonymous = new UsernamePasswordAuthenticationToken("u", "p"); // authenticated=false
-        AuthorizationResult d = mgr.authorize(() -> anonymous, ctx("GET", "/resource/pods"));
+        AuthorizationResult d = mgr.authorize(() -> anonymous, ctx("GET", "/pods"));
         assertThat(d.isGranted()).isFalse();
     }
 
@@ -93,7 +93,7 @@ class PermissionAuthorizationManagerTest {
     void exempt_path_granted_for_authenticated_without_any_rule() {
         PermissionRegistry reg = mock(PermissionRegistry.class); // requiredCodes 默认返回 empty
         var mgr = new PermissionAuthorizationManager(reg);
-        AuthorizationResult d = mgr.authorize(() -> auth("ROLE_USER"), ctx("GET", "/resource/context"));
+        AuthorizationResult d = mgr.authorize(() -> auth("ROLE_USER"), ctx("GET", "/context"));
         assertThat(d.isGranted()).isTrue();
     }
 
@@ -109,22 +109,22 @@ class PermissionAuthorizationManagerTest {
     void row_on_exempt_path_denied_when_code_not_held() {
         // spec §5.1：权限行命中 > 豁免 —— 行可收紧豁免路径；命中行但无 code → 拒，不回落豁免
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("GET", "/resource/context"))
+        when(reg.requiredCodes("GET", "/context"))
                 .thenReturn(Optional.of(Set.of("tenant:workload:list")));
         var mgr = new PermissionAuthorizationManager(reg);
         AuthorizationResult d = mgr.authorize(() -> auth("PERM:platform:cluster:manage"),
-                ctx("GET", "/resource/context"));
+                ctx("GET", "/context"));
         assertThat(d.isGranted()).isFalse();
     }
 
     @Test
     void row_on_exempt_path_granted_when_code_held() {
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("GET", "/resource/context"))
+        when(reg.requiredCodes("GET", "/context"))
                 .thenReturn(Optional.of(Set.of("tenant:workload:list")));
         var mgr = new PermissionAuthorizationManager(reg);
         AuthorizationResult d = mgr.authorize(() -> auth("PERM:tenant:workload:list"),
-                ctx("GET", "/resource/context"));
+                ctx("GET", "/context"));
         assertThat(d.isGranted()).isTrue();
     }
 }

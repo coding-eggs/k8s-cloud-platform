@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-HPA", description = "命名空间内 HorizontalPodAutoscaler（双模访问，边界=分配表；autoscaling v1/v2 按集群能力分派）")
 @RestController
-@RequestMapping("/resources/hpas")
+@RequestMapping("/hpas")
 public class HpaController extends AbstractNamespacedResourceController<HpaDTO> {
 
     public HpaController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

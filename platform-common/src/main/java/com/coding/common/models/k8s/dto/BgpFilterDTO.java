@@ -10,7 +10,7 @@ import java.util.List;
  * Calico BGPFilter DTO（projectcalico.org/v3，集群级 CRD，<b>只读</b>）。
  * <p>真实 schema（v3.28 起）：spec 为四条规则列表 {@code exportV4/importV4/exportV6/importV6}
  * （早期 spec 稿里的 acceptPolicies/nodeSelector 设计不存在于 v3 API，勿用）。
- * 端点走 k8s-server {@code /admin/calico/bgpfilter}，仅 list/get/yaml。
+ * 端点走 k8s-server {@code /calico/bgpfilter}，仅 list/get/yaml。
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -36,7 +36,7 @@ public class BgpFilterDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/admin/calico/bgpfilter";
+        return "/calico/bgpfilter";
     }
 
 }

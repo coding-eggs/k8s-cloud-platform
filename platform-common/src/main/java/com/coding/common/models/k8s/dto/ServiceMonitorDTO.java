@@ -85,7 +85,7 @@ public class ServiceMonitorDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/servicemonitors";
+        return "/servicemonitors";
     }
 
 }

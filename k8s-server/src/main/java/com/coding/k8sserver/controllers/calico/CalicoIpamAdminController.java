@@ -6,6 +6,8 @@ import com.coding.common.models.k8s.dto.PoolIpamSummaryDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8score.operations.calico.CalicoIpamOperations;
+import com.coding.k8sserver.components.AccessBoundary;
+import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,14 +19,21 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 集群域 - Calico IPAM 派生查询（PLATFORM:admin，边界=平台已注册该集群）。全只读、admin client。
+ * 集群域 - Calico IPAM 派生查询（平台侧，边界=平台已注册该集群）。全只读、admin client。
  * <p>非六端点形态的自定义 query-param 端点，不套 {@code AbstractClusterResourceController}；
  * K8s/Calico 语义全在 {@link CalicoIpamOperations}，本类只做边界校验 + 委托。
  */
-@Tag(name = "集群域-Calico IPAM", description = "IPPool 派生块视图 / 空闲点查 / 下一批空闲块（PLATFORM:admin）")
+@Tag(name = "集群域-Calico IPAM", description = "IPPool 派生块视图 / 空闲点查 / 下一批空闲块（平台侧）")
 @RestController
-@RequestMapping("/admin/calico/ipam")
-public class CalicoIpamAdminController {
+@RequestMapping("/calico/ipam")
+public class CalicoIpamAdminController implements AccessBoundaryAware {
+
+    /**平台侧端点：{@code BoundaryAuthorizationManager} 要求调用方持有 PLATFORM_SCOPE，与挂载路径无关。 */
+    @Override
+    public AccessBoundary accessBoundary() {
+        return AccessBoundary.PLATFORM;
+    }
+
 
     private final KubernetesOperationsFactory operationsFactory;
     private final ResourceAccessResolver accessResolver;

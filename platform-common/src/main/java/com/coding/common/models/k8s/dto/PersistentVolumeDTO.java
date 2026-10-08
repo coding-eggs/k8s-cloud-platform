@@ -41,7 +41,7 @@ public class PersistentVolumeDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/persistentvolumes";
+        return "/persistentvolumes";
     }
 
 }

@@ -28,12 +28,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 网络 Calico（集群级，PLATFORM:admin）：IPPool CRUD + IPAM 派生块视图。
+ * 网络 Calico（集群级，平台侧）：IPPool CRUD + IPAM 派生块视图。
  * <p>面向前端的顶层前缀 {@code /calico/**}；委托 {@link CalicoService}（降级 + TTL 缓存 + 删除守卫），
- * 再经 K8sAdminClient 打 k8s-server {@code /admin/calico/**}。每个端点须有权限行（platform:cluster:manage）或豁免，
+ * 再经 K8sCalicoClient 打 k8s-server {@code /calico/**}。每个端点须有权限行（platform:cluster:manage）或豁免，
  * 否则 PermissionCrossCheckRunner 启动 brick（见 Flyway V2026_10_03_1）。
  */
-@Tag(name = "网络-Calico", description = "IPPool CRUD + IPAM 派生块视图（集群级，PLATFORM:admin）")
+@Tag(name = "网络-Calico", description = "IPPool CRUD + IPAM 派生块视图（集群级，平台侧）")
 @RestController
 @RequestMapping("/calico")
 @RequiredArgsConstructor

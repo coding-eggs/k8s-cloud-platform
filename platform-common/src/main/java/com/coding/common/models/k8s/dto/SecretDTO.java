@@ -29,7 +29,7 @@ public class SecretDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/secrets";
+        return "/secrets";
     }
 
 }

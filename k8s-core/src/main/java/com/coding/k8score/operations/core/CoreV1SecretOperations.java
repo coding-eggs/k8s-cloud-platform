@@ -7,7 +7,6 @@ import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
-import io.fabric8.kubernetes.api.model.PartialObjectMetadataList;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.utils.Serialization;

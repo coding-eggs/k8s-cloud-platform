@@ -11,7 +11,7 @@ import java.util.List;
  * <p>字段按 projectcalico/api v3.28→master 并集建模（view-only：revert 读到什么展示什么，缺席=null）。
  * 注意真实 schema：对端地址是 {@code spec.peerIP}（可带端口）、{@code nodeSelector} 是<b>字符串</b>（非列表）、
  * asNumber 为 numorstring → String、sourceAddress 为枚举 UseNodeIP/None。
- * 端点走 k8s-server {@code /admin/calico/bgppeer}，仅 list/get/yaml。
+ * 端点走 k8s-server {@code /calico/bgppeer}，仅 list/get/yaml。
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -79,7 +79,7 @@ public class BgpPeerDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/admin/calico/bgppeer";
+        return "/calico/bgppeer";
     }
 
 }

@@ -29,7 +29,9 @@ spring:
       - "/assets/**"
       - "/login.html"
       - "/user/login"
-      - "/user/logout"
+      # 登出端点：由 SecurityFilterChain 的 LogoutFilter 处理（排在授权过滤器之前），
+      # 此处登记只为显式化；留着早先的死条目 /user/logout（无任何 handler）只会误导排查。
+      - "/session/logout"
       - "/register.html"
       - "/forgot-password.html"
       - "/404"

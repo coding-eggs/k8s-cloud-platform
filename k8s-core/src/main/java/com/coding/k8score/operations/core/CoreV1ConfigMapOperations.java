@@ -52,6 +52,23 @@ public class CoreV1ConfigMapOperations implements NamespacedOperations<ConfigMap
     }
 
     /**
+     * 跨全部命名空间列举（平台侧；本实例必须是 admin client，见 {@link NamespacedOperations#listAll}）。
+     * <p>返回的每个 item 自带其所在 namespace —— converter 从 metadata 取，本方法<b>不做</b>统一回填。
+     */
+    @Override
+    public List<ConfigMapDTO> listAll(String labelSelector, String fieldSelector) {
+        ListOptions options = new ListOptions();
+        if (StringUtils.hasText(labelSelector)) {
+            options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
+        }
+        List<ConfigMap> items = client.configMaps().inAnyNamespace().list(options).getItems();
+        return items.stream().map(converter::revert).toList();
+    }
+
+    /**
      * 查询 configmap
      */
     @Override

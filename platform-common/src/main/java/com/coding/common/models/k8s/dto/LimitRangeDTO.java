@@ -32,6 +32,6 @@ public class LimitRangeDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/admin/limitranges";
+        return "/limitranges";
     }
 }

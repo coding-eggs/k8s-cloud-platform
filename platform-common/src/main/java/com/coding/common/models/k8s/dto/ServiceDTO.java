@@ -77,7 +77,7 @@ public class ServiceDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/services";
+        return "/services";
     }
 
 }

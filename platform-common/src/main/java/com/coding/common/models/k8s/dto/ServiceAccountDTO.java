@@ -12,7 +12,7 @@ public class ServiceAccountDTO extends BaseResources {
 
     @Override
     public String getApiPath() {
-        return "/resources/serviceaccounts";
+        return "/serviceaccounts";
     }
 
 }

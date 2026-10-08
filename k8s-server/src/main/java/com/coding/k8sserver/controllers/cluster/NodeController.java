@@ -12,6 +12,8 @@ import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.operations.core.CoreV1NodeOperations;
+import com.coding.k8sserver.components.AccessBoundary;
+import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.BytesLimitTerminateTimeTailPrettyLoggable;
@@ -32,14 +34,22 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 集群域 - Node（PLATFORM:admin，边界=平台已注册该集群）。
+ * 集群域 - Node（平台侧，边界=平台已注册该集群）。
  * <p>节点非标准 CRUD（无 create/delete）：list/get/yaml + cordon/uncordon/drain/label-taint/podstats/pods/events。
  * K8s 语义全在 {@link CoreV1NodeOperations}，本类只做边界校验 + 委托。
  */
-@Tag(name = "集群域-Node", description = "节点管理（PLATFORM:admin，边界=集群注册表）")
+@Tag(name = "集群域-Node", description = "节点管理（平台侧，边界=集群注册表）")
 @RestController
-@RequestMapping("/resources/nodes")
-public class NodeController {
+@RequestMapping("/nodes")
+public class NodeController implements AccessBoundaryAware {
+
+    /**平台侧端点：{@code BoundaryAuthorizationManager} 要求调用方持有 PLATFORM_SCOPE，与挂载路径无关。
+     *  本类是集群级的，"有 tenantInfo 就走租户逻辑"对节点不成立（节点没有租户维度）。 */
+    @Override
+    public AccessBoundary accessBoundary() {
+        return AccessBoundary.PLATFORM;
+    }
+
 
     private final KubernetesOperationsFactory operationsFactory;
     private final ResourceAccessResolver accessResolver;

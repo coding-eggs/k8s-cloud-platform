@@ -5,6 +5,8 @@ import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8score.operations.ClusterOperations;
+import com.coding.k8sserver.components.AccessBoundary;
+import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -20,10 +22,27 @@ import java.util.List;
 /**
  * 集群域资源 controller 统一基类：6 个标准端点 + 集群边界（平台已注册该集群）校验。
  * <p>
- * 仅 PLATFORM:admin 可访问（SecurityFilterChain 对 /admin/** 统一要求），不透传租户上下文，
- * 一律 admin client；具体 controller 只提供 URL 前缀与 {@link #resourceType()}。
+ * 不透传租户上下文，一律 admin client —— <b>本基类没有租户维度</b>，返回的是该集群的全量对象。
+ *
+ * <h2>访问控制：默认声明 {@link AccessBoundary#PLATFORM}（务必读完再新增子类）</h2>
+ * 本基类声明 {@code PLATFORM}，由 {@code BoundaryAuthorizationManager} 在请求期要求 token 持有
+ * {@code PLATFORM_SCOPE}（= {@code data.platformRoles} 非空，即持有任意 PLATFORM-scope 角色）——
+ * <b>与挂载路径无关</b>，也因此不再硬编码 "admin" 这个角色名。
+ *
+ * <h2>历史坑（本批修掉，勿回归）</h2>
+ * 本基类的闸门曾经取决于 {@code @RequestMapping} 挂在哪个前缀下：挂 {@code /admin/**} 的由
+ * SecurityFilterChain 要求 {@code PLATFORM:admin}；挂 {@code /resources/**} 的
+ * <b>只要求 {@code authenticated()}，任何已登录用户（含租户成员）直连即可读写</b>。
+ * 于是 {@code NodeController}(/nodes)、{@code PersistentVolumeController}、
+ * {@code StorageClassController}、{@code ClusterRoleController} 这些集群级端点全都裸奔，
+ * 而它们的 javadoc 却写着"PLATFORM:admin，平台管理员专属"。现在边界是 controller 自己的声明。
+ *
+ * <p><b>新增子类的唯一要求</b>：确认它确实只给平台侧用。若某个集群级资源必须对租户可见
+ * （如 PersistentVolume —— 跨租户收窄在上游 platform-api 的 {@code PersistentVolumeService} 里按
+ * {@code claimRef.namespace} 做），<b>覆写 {@link #accessBoundary()} 为 {@link AccessBoundary#UPSTREAM}</b>
+ * 并在类注释写明理由：让例外可被一眼搜出，而不是靠"挂在某个前缀下"隐式豁免。
  */
-public abstract class AbstractClusterResourceController<T extends BaseResources> {
+public abstract class AbstractClusterResourceController<T extends BaseResources> implements AccessBoundaryAware {
 
     protected final KubernetesOperationsFactory operationsFactory;
 
@@ -37,6 +56,12 @@ public abstract class AbstractClusterResourceController<T extends BaseResources>
 
     /**本 controller 管理的集群级资源类型 */
     protected abstract ResourceType resourceType();
+
+    /**集群级资源默认只给平台侧；租户可见的集群级资源（当前仅 PV）覆写为 {@link AccessBoundary#UPSTREAM}。 */
+    @Override
+    public AccessBoundary accessBoundary() {
+        return AccessBoundary.PLATFORM;
+    }
 
     @PostMapping("/list")
     @Operation(summary = "列出集群级资源（body 传 clusterId/labelSelector）")

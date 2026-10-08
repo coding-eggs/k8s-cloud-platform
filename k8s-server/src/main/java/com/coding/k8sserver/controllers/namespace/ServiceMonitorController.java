@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @Tag(name = "资源管理-ServiceMonitor", description = "命名空间内 ServiceMonitor（双模访问，边界=分配表）")
 @RestController
-@RequestMapping("/resources/servicemonitors")
+@RequestMapping("/servicemonitors")
 public class ServiceMonitorController extends AbstractNamespacedResourceController<ServiceMonitorDTO> {
 
     public ServiceMonitorController(KubernetesOperationsFactory operationsFactory, ResourceAccessResolver accessResolver) {

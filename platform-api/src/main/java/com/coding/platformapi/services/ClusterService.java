@@ -6,7 +6,7 @@ import com.coding.common.utils.AESUtils;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.k8s.K8sAdminClient;
+import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.ClusterCreateRequest;
 import com.coding.platformapi.models.ClusterKeyRequest;
 import com.coding.platformapi.models.ClusterToggleRequest;
@@ -32,7 +32,7 @@ import java.util.Map;
 public class ClusterService {
 
     private final K8sClusterMapper clusterMapper;
-    private final K8sAdminClient adminClient;
+    private final K8sLifecycleClient adminClient;
     private final JsonMapper jsonMapper;
 
     @Value("${k8s.cloud.kubeconfig.aes-key:daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=}")
@@ -90,6 +90,31 @@ public class ClusterService {
 
     public List<K8sCluster> list() {
         return clusterMapper.listAll().stream().map(this::sanitize).toList();
+    }
+
+    /**
+     * 集群下拉选项（仅 id/名称/启停）：<b>轻量只读投影</b>，供「只需要一个集群选择框」的页面使用
+     * （命名空间管理/编辑/概览等）。
+     * <p>
+     * 为什么不让它们直接调 {@link #list()}：{@code /cluster/list} 属平台管理面（含版本、描述、
+     * 运行时间等集群登记信息），权限码 {@code platform:cluster:manage}；而这些页面只需要"有哪些集群"，
+     * 权限码是 {@code platform:allocation:list}。让它们调 {@code /cluster/list} 会逼着把平台管理面
+     * 下放给只做命名空间运维的角色 —— 那是「前端主动越权」的根因之一，加权限位门控只是掩盖它。
+     * 正确做法是暴露一个与需求同粒度的窄端点。
+     */
+    public List<ClusterOption> options() {
+        return clusterMapper.listAll().stream()
+                .map(c -> new ClusterOption(c.getClusterId(), c.getClusterName(), c.getEnabled(), c.getIpStack()))
+                .toList();
+    }
+
+    /**
+     * 集群下拉选项（窄投影）：定位与渲染所必需的最小字段集 ——
+     * id/名称/启停（选择框）+ ipStack（命名空间编辑器的 IP 池候选门禁要用）。
+     * 刻意<b>不含</b> version/描述/prometheusUrl/grafanaUrl 等集群登记信息与内网拓扑。
+     */
+    public record ClusterOption(String clusterId, String clusterName, Integer enabled,
+                                K8sCluster.IPStack ipStack) {
     }
 
     public K8sCluster get(ClusterKeyRequest req) {

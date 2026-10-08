@@ -96,6 +96,9 @@ export async function login(): Promise<void> {
     code_challenge: challenge,
     code_challenge_method: 'S256',
   })
+  // 注：曾考虑加 prompt=login 作"换用户"的兜底。本平台 SAS 7.0.5 只校验该参数值、
+  // 并未用它强制重新认证（整份 jar 无 requireReauthentication），加了也不会生效——
+  // 「换用户」的正确解法是登出时失效服务端会话（见 logout），不在此处。
   window.location.href = `${ISSUER}/oauth2/authorize?${params.toString()}`
 }
 
@@ -244,14 +247,42 @@ export function hasPlatformViewChoice(): boolean {
   return sessionStorage.getItem(PLATFORM_VIEW_CHOICE_KEY) === '1'
 }
 
-/** 退出：停掉保活定时器并清本地 token（服务端会话由 auth server 管理，登出后自然过期/可主动失效） */
-export function logout(): void {
+/**
+ * 本标签页的会话清理（同步、无网络）。
+ *
+ * ⚠️ 单独暴露的原因：登出必须先打服务端（见 {@link logout}），但会话失效兜底路径（401/4003）与
+ * 「token 已不可用」场景下清理仍要保证发生，故把"清本地"做成不会失败的一步。
+ */
+export function clearLocalSession(): void {
   stopSessionMaintenance()
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(USER_KEY)
   localStorage.removeItem(CURRENT_TENANT_KEY)
-  clearPlatformViewChoice() // 会话终结：显式平台视图选择随会话作废（handleCallback 亦有兜底清除）
+  // 资源上下文（stores/context.ts 的 STORAGE_KEY）：属上一个用户的上次操作位置，
+  // 跨用户残留会让下一个用户进场即落在别人的租户/命名空间上。字面量内联以避免
+  // oauth → stores → api → http → oauth 的循环依赖。
+  localStorage.removeItem('platform_resource_context')
+  sessionStorage.clear() // OAUTH2 state / code_verifier / 显式平台视图标记，随会话一并作废
+  clearPlatformViewChoice()
   notifyTokenChanged()
+}
+
+/**
+ * 退出登录。
+ *
+ * <p><b>必须先失效服务端根凭证</b>：access_token 只是 platform-auth 那个 HttpOnly 会话 Cookie 的
+ * 短期派生物。只清 localStorage 的话会话原样活着，再点「登录」时 /oauth2/authorize 见会话有效直接发码
+ * ——表现为静默 SSO 回原用户，<b>换不了用户</b>。这正是本函数早期版本的问题。
+ *
+ * <p>顺序：服务端失效（网络失败不阻断，本地一定要清干净）→ 本地清理。调用方负责跳转登录页。
+ */
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${ISSUER}/session/logout`, { method: 'POST', credentials: 'include' })
+  } catch {
+    /* 网络不可达/后端拒绝：仍继续本地清理，避免"退不出去" */
+  }
+  clearLocalSession()
 }
 
 // ==================== 会话保活 + access_token 自动续期 ====================

@@ -14,7 +14,7 @@ import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.platformapi.configs.NamespaceProtectionProperties;
-import com.coding.platformapi.k8s.K8sResourceClient;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
 import com.coding.platformapi.models.NamespaceQuotaUpsertRequest;
 import com.coding.platformapi.models.NamespaceUpsertRequest;
@@ -36,7 +36,7 @@ import static org.mockito.Mockito.when;
 
 class NamespaceServiceTest {
 
-    private final K8sResourceClient k8s = mock(K8sResourceClient.class);
+    private final K8sClient k8s = mock(K8sClient.class);
     private final K8sClusterMapper clusterMapper = mock(K8sClusterMapper.class);
     private final PlatformTenantNamespaceMapper allocationMapper = mock(PlatformTenantNamespaceMapper.class);
     private final PlatformTenantMapper tenantMapper = mock(PlatformTenantMapper.class);

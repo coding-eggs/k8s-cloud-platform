@@ -40,7 +40,7 @@ public abstract class BaseResources implements NamespacedResourceDTO {
     @Schema(name = "标签选择器（仅 list）")
     private String labelSelector;
 
-    /**k8s-server 固定端点路径（如 /resources/pods）；无独立 HTTP 端点返回 null */
+    /**k8s-server 固定端点路径（如 /pods）；无独立 HTTP 端点返回 null */
     public abstract String getApiPath();
 
 }
