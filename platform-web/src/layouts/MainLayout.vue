@@ -266,6 +266,39 @@ async function handleLogout(): Promise<void> {
           <el-icon><Filter /></el-icon>
           <template #title>BGP 过滤器</template>
         </el-menu-item>
+
+        <!-- 服务网格（Gateway API）。跨两上下文：GatewayClass = 集群级平台管理（storageClass 先例），
+             Gateway / HTTPRoute = 租户资源面（命名空间来自顶栏级联，同 ServiceMonitor）。 -->
+        <div v-if="can(pageCodes.mesh.gatewayClass.list) || can(pageCodes.mesh.gateway.list) || can(pageCodes.mesh.httpRoute.list)
+          || can(pageCodes.mesh.grpcRoute.list) || can(pageCodes.mesh.tcpRoute.list) || can(pageCodes.mesh.tlsRoute.list) || can(pageCodes.mesh.udpRoute.list)" class="menu-group">服务网格</div>
+        <el-menu-item v-if="can(pageCodes.mesh.gatewayClass.list)" index="/mesh/gatewayclasses">
+          <el-icon><Guide /></el-icon>
+          <template #title>GatewayClass</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.mesh.gateway.list)" index="/resources/gateways">
+          <el-icon><Promotion /></el-icon>
+          <template #title>Gateway</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.mesh.httpRoute.list)" index="/resources/httproutes">
+          <el-icon><Share /></el-icon>
+          <template #title>HTTPRoute</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.mesh.grpcRoute.list)" index="/resources/grpcroutes">
+          <el-icon><Connection /></el-icon>
+          <template #title>GRPCRoute</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.mesh.tcpRoute.list)" index="/resources/tcproutes">
+          <el-icon><Position /></el-icon>
+          <template #title>TCPRoute</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.mesh.tlsRoute.list)" index="/resources/tlsroutes">
+          <el-icon><Lock /></el-icon>
+          <template #title>TLSRoute</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.mesh.udpRoute.list)" index="/resources/udproutes">
+          <el-icon><Aim /></el-icon>
+          <template #title>UDPRoute</template>
+        </el-menu-item>
       </el-menu>
     </aside>
 

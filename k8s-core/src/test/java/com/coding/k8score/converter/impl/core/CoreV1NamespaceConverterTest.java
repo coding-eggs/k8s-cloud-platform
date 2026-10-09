@@ -196,4 +196,98 @@ class CoreV1NamespaceConverterTest {
         assertThat(out3.getMetadata().getAnnotations())
                 .containsEntry(CoreV1NamespaceConverter.ANNOTATION_IPV6_POOLS, "[\"v6-old\"]");
     }
+
+    // ---------- Istio ambient 保留 label（dataplane-mode / use-waypoint） ----------
+
+    @Test
+    void convert_writes_mesh_labels_and_blanks_are_null() {
+        NamespaceDTO dto = new NamespaceDTO();
+        dto.setName("ns20");
+        dto.setDataplaneMode(" ambient ");   // 去空格
+        dto.setUseWaypoint("waypoint");
+        Namespace out = c.convert(dto);
+        assertThat(out.getMetadata().getLabels())
+                .containsEntry(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE, "ambient")
+                .containsEntry(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT, "waypoint");
+
+        // 空串 = 不设标签（跟随集群默认）
+        NamespaceDTO blank = new NamespaceDTO();
+        blank.setName("ns21");
+        blank.setDataplaneMode("");
+        blank.setUseWaypoint("   ");
+        Namespace out2 = c.convert(blank);
+        assertThat(out2.getMetadata().getLabels())
+                .doesNotContainKey(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE)
+                .doesNotContainKey(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT);
+    }
+
+    @Test
+    void revert_reads_mesh_labels_and_absent_yields_null() {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE, "ambient");
+        labels.put(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT, "none");
+        NamespaceDTO d = c.revert(live("ns22", labels, new LinkedHashMap<>(), "Active"));
+        assertThat(d.getDataplaneMode()).isEqualTo("ambient");
+        assertThat(d.getUseWaypoint()).isEqualTo("none");
+
+        NamespaceDTO empty = c.revert(live("ns23", new LinkedHashMap<>(), new LinkedHashMap<>(), "Active"));
+        assertThat(empty.getDataplaneMode()).isNull();
+        assertThat(empty.getUseWaypoint()).isNull();
+    }
+
+    @Test
+    void convert_for_update_mesh_labels_are_three_state() {
+        Map<String, String> liveLabels = new LinkedHashMap<>();
+        liveLabels.put(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE, "ambient");
+        liveLabels.put(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT, "waypoint");
+        liveLabels.put("team", "sre");
+        Namespace live = live("ns24", liveLabels, new LinkedHashMap<>(), "Active");
+
+        // null = 未传 → 两个都保持现状
+        NamespaceDTO untouched = new NamespaceDTO();
+        untouched.setName("ns24");
+        Namespace out = c.convertForUpdate(untouched, live);
+        assertThat(out.getMetadata().getLabels())
+                .containsEntry(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE, "ambient")
+                .containsEntry(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT, "waypoint")
+                .containsEntry("team", "sre");
+
+        // 有值 = 覆写；空串 = 删除（「跟随集群默认」/「不使用 waypoint」）
+        NamespaceDTO changed = new NamespaceDTO();
+        changed.setName("ns24");
+        changed.setDataplaneMode("none");
+        changed.setUseWaypoint("");
+        Namespace out2 = c.convertForUpdate(changed, live);
+        assertThat(out2.getMetadata().getLabels())
+                .containsEntry(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE, "none")
+                .doesNotContainKey(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT)
+                .containsEntry("team", "sre");
+    }
+
+    @Test
+    void generic_labels_map_cannot_touch_reserved_mesh_labels() {
+        // 通用标签地图里出现保留键时必须被忽略：否则「清空 use-waypoint」会被通用地图里的旧值又贴回来
+        Map<String, String> liveLabels = new LinkedHashMap<>();
+        liveLabels.put(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT, "waypoint");
+        NamespaceDTO dto = new NamespaceDTO();
+        dto.setName("ns25");
+        dto.setLabels(new LinkedHashMap<>(Map.of(
+                "env", "prod",
+                CoreV1NamespaceConverter.LABEL_USE_WAYPOINT, "waypoint",   // 通用地图里的旧值
+                CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE, "ambient")));
+        dto.setUseWaypoint("");   // 专用字段：移除
+
+        Namespace out = c.convertForUpdate(dto, live("ns25", liveLabels, new LinkedHashMap<>(), "Active"));
+        assertThat(out.getMetadata().getLabels())
+                .containsEntry("env", "prod")
+                .doesNotContainKey(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT)   // 未被通用地图复活
+                .doesNotContainKey(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE);
+
+        // 创建路径同理：只认专用字段
+        Namespace created = c.convert(dto);
+        assertThat(created.getMetadata().getLabels())
+                .containsEntry("env", "prod")
+                .doesNotContainKey(CoreV1NamespaceConverter.LABEL_USE_WAYPOINT)
+                .doesNotContainKey(CoreV1NamespaceConverter.LABEL_DATAPLANE_MODE);
+    }
 }

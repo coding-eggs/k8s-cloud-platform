@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { workloadApi, calicoApi, namespaceApi, clusterApi } from '@/api'
+import { workloadApi, calicoApi, namespaceApi, clusterApi, gatewayApi } from '@/api'
 import type {
   Affinity,
   ContainerDef,
@@ -34,8 +34,18 @@ import VolumeEditor from '@/components/workload/VolumeEditor.vue'
 import PvcTemplateEditor from '@/components/workload/PvcTemplateEditor.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
 import { useClusterCapability } from '@/composables/useClusterCapability'
+import { useMeshStatus } from '@/composables/useMeshStatus'
 import { containsInCidr, expandCidrToIps, isIp } from '@/utils/ipUtil'
 import { CALICO_POOL_LABEL, DEFAULT_IPV4_POOL, DEFAULT_IPV6_POOL } from '@/utils/calico'
+import {
+  DATAPLANE_MODES,
+  isWaypointGateway,
+  LABEL_DATAPLANE_MODE,
+  LABEL_USE_WAYPOINT,
+  RESERVED_MESH_LABELS,
+  USE_WAYPOINT_NONE,
+} from '@/utils/waypoint'
+import type { K8sGateway } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -306,6 +316,61 @@ watch(() => state.clusterId, () => {
   window.clearTimeout(staticIpCheckTimer)
   staticIpWarnings.value = []
 })
+
+// ---------- 服务网格 Ambient（B3 §11；pod template 的 istio 两个保留 label） ----------
+/**
+ * 门禁：租户侧只能从集群能力快照知道「装没装 Istio」（`istio.io` / `networking.istio.io`），
+ * **ambient 是否真的在跑只有平台侧的 ztunnel 活探测知道**（见 useMeshStatus）。故这里以 hasIstio 为准，
+ * 不拿 ambient 当硬门禁 —— 写这两个标签本身无害（没装 ambient 时 istio 直接忽略），
+ * 而"完全不显示开关"会让租户连表达意图的机会都没有。
+ */
+const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
+const meshAvailable = computed(() => mesh.hasIstio.value)
+
+/** 本命名空间的 waypoint 候选（租户域 /gateways，前端按 -waypoint 类名筛；判定规则同后端） */
+const waypointOptions = ref<string[]>([])
+const waypointLoaded = ref(false)
+async function loadWaypointOptions(): Promise<void> {
+  waypointOptions.value = []
+  waypointLoaded.value = false
+  const { tenantId, clusterId, namespace } = state
+  if (!tenantId || !clusterId || !namespace || !meshAvailable.value) return
+  // 无 tenant:gateway:list → 不发注定 403 的请求（下拉降级为空，仍可手输）
+  if (!perm.has(apiCodes.gatewayList)) { waypointLoaded.value = true; return }
+  try {
+    const list = await gatewayApi.list({ tenantId, clusterId, namespace })
+    waypointOptions.value = (list ?? []).filter((g: K8sGateway) => isWaypointGateway(g)).map((g) => g.name).sort()
+  } catch {
+    waypointOptions.value = [] // 集群未装 Gateway API（CRD 404）等：拦截器已提示，这里降级为空
+  } finally {
+    waypointLoaded.value = true
+  }
+}
+watch([() => state.clusterId, () => state.namespace, () => state.tenantId, meshAvailable],
+  () => { void loadWaypointOptions() }, { immediate: true })
+
+/** 写一个 istio 保留 label（空串 / 未选 → 删除该键，回到"跟随命名空间"） */
+function setMeshLabel(key: string, value: string): void {
+  const next: Record<string, string> = { ...(form.labels ?? {}) }
+  if (value) next[key] = value
+  else delete next[key]
+  form.labels = Object.keys(next).length ? next : undefined
+}
+
+const dataplaneMode = computed<string>({
+  get: () => form.labels?.[LABEL_DATAPLANE_MODE] ?? '',
+  set: (v) => setMeshLabel(LABEL_DATAPLANE_MODE, v),
+})
+const useWaypoint = computed<string>({
+  get: () => form.labels?.[LABEL_USE_WAYPOINT] ?? '',
+  set: (v) => setMeshLabel(LABEL_USE_WAYPOINT, v),
+})
+
+/** 选中的 waypoint 不在候选里 → 软提示（Istio 对不存在的 waypoint 静默放行，不报错，故必须自己提示） */
+const waypointMissing = computed(() =>
+  waypointLoaded.value
+  && !!useWaypoint.value && useWaypoint.value !== USE_WAYPOINT_NONE
+  && !waypointOptions.value.includes(useWaypoint.value))
 
 const serviceName = computed<string>({
   get: () => form.serviceName ?? '',
@@ -758,7 +823,7 @@ const contextDesc = computed(() => {
                   </el-form-item>
                 <el-form-item>
                   <template #label>标签<FieldHelp tip="键值标签，用于筛选与分组（kubectl -l、Service selector 等）。" /></template>
-                  <LabelEditor v-model="labels" class="sub-editor" style="max-width: 520px" />
+                  <LabelEditor v-model="labels" :exclude-keys="RESERVED_MESH_LABELS" class="sub-editor" style="max-width: 520px" />
                 </el-form-item>
                 <el-form-item v-if="form.kind !== 'daemonset'">
                   <template #label>副本 <FieldHelp tip="期望的副本数量。DaemonSet 由节点数决定，不设置此项。" /></template>
@@ -779,6 +844,27 @@ const contextDesc = computed(() => {
                     <div v-if="reservedIpsTruncated" class="form-tip">部分保留段超过 {{ RESERVED_IP_CAP_PER_CIDR }} 个 IP，未全部展开</div>
                   </template>
                   <el-alert v-for="w in staticIpWarnings" :key="w.ip" :title="w.text" :type="w.level" :closable="false" class="static-ip-warn" />
+                </el-form-item>
+                <!-- 服务网格 Ambient（B3 §11）：写 pod template 的两个 istio 保留 label -->
+                <el-form-item v-if="meshAvailable">
+                  <template #label>服务网格（Ambient）<FieldHelp tip="pod template 标签 istio.io/dataplane-mode（纳入 / 排除 ambient）与 istio.io/use-waypoint（本工作负载的七层流量走哪个 waypoint）。都留空 = 跟随命名空间设置 —— Pod 上的标签优先于命名空间。⚠️ 改的是 pod template，保存后会触发一次滚动更新，存量 Pod 需重建才带新标签。" /></template>
+                  <div class="pool-selects">
+                    <el-select v-model="dataplaneMode" style="width: 100%" placeholder="跟随命名空间（不设标签）">
+                      <el-option label="跟随命名空间（不设标签）" value="" />
+                      <el-option v-for="m in DATAPLANE_MODES" :key="m.value" :label="m.label" :value="m.value" />
+                    </el-select>
+                    <el-select v-model="useWaypoint" style="width: 100%" placeholder="跟随命名空间（不设标签）">
+                      <el-option label="跟随命名空间（不设标签）" value="" />
+                      <el-option label="不使用 waypoint（none）" :value="USE_WAYPOINT_NONE" />
+                      <el-option v-for="w in waypointOptions" :key="w" :label="w" :value="w" />
+                    </el-select>
+                  </div>
+                  <div v-if="!perm.has(apiCodes.gatewayList)" class="form-tip">无 Gateway 列表读权限，候选取不到（已有值仍可回显提交）。</div>
+                  <div v-else-if="!waypointLoaded" class="form-tip">正在加载本命名空间的 waypoint 候选…</div>
+                  <div v-else-if="!waypointOptions.length" class="form-tip">
+                    本命名空间还没有 waypoint Gateway——L7 需要先有 waypoint（「Gateway」页 →「创建 Waypoint」，每命名空间至多一个）；此处仍可手输名字，但名字不存在时 istio 会静默放行、L7 策略不生效。
+                  </div>
+                  <div v-if="waypointMissing" class="form-tip warn">「{{ useWaypoint }}」不在本命名空间的 waypoint 候选里（可能已被删除）——istio 对不存在的 waypoint 静默放行，L7 策略不会生效。</div>
                 </el-form-item>
                 <el-form-item v-if="form.kind !== 'daemonset'">
                   <template #label>就绪最短秒数 <FieldHelp tip="minReadySeconds：控制 Pod 被标记为“可用（Available）”之前，必须保持 Ready 状态的最短时间。" /></template>
@@ -1105,6 +1191,13 @@ const contextDesc = computed(() => {
 }
 .sub-editor {
   width: 100%;
+}
+/* 与 NamespaceEditorView 的绑定池选择器同款（仓库无共享编辑器样式表，各页复制为既有惯例） */
+.pool-selects {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 420px;
 }
 .form-tip {
   width: 100%;

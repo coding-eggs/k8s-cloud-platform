@@ -169,6 +169,10 @@ export interface NamespaceView {
   ipv4Pools?: string[] | null
   /** Calico 绑定 IPv6 地址池（ns annotation；null/空=默认分配） */
   ipv6Pools?: string[] | null
+  /** Istio ambient 数据面模式（ns label istio.io/dataplane-mode；ambient / none；null/空=未设，跟随集群默认） */
+  dataplaneMode?: string | null
+  /** Istio L7 waypoint（ns label istio.io/use-waypoint；= waypoint Gateway 名 或 none；null/空=未设） */
+  useWaypoint?: string | null
 }
 
 /** 资源量对（cpu 核 / memory 字节，基础单位）—— 与后端 ResourcePairDTO 对齐（D7 冻结契约） */
@@ -418,6 +422,9 @@ export interface K8sWorkload {
   ownerReferences?: OwnerRef[] | null
   /** 对外暴露的 Service（仅 list/get 返回，api 侧 join 计算）：绑定到本工作负载的 NodePort/LB Service */
   exposedServices?: K8sExposedService[] | null
+  /** Pod 模板（列表也回带 —— 后端 DTO 全量）；此处只声明列表用到的部分：网格标签回显
+   *  （istio.io/dataplane-mode / istio.io/use-waypoint）。编辑面用 types/workload 的 WorkloadDetail。 */
+  podTemplate?: { labels?: Record<string, string> | null } | null
 }
 
 /** ServiceMonitor 端点鉴权 Secret 引用（name + key） */
@@ -937,6 +944,352 @@ export interface WorkloadOption {
   namespace: string
   kind: string
   name: string
+}
+
+// ==================== 服务网格 Gateway API（B6） ====================
+// 字段名与后端 DTO 一一对应（Jackson 直接序列化），也与 Gateway API v1 的 CRD 字段同名。
+// ⚠️ 与 spec（2026-09-15）不同、按 v1.6 CRD 实测修正过的几处：
+//   · allowedRoutes 是 { namespaces: { from, selector }, kinds[] }，不是 namespacesFrom/namespaceSelector
+//   · listener tls.mode 只有 Terminate / Passthrough
+//   · route 的父引用叫 parentRefs，元素是 group/kind/namespace/name/sectionName/port
+//   · backendRef 的权重字段是 weight（0–1000000，缺省 1），不是百分比
+
+/** 标签选择器（allowedRoutes.namespaces.selector，结构同 metav1.LabelSelector） */
+export interface K8sLabelSelector {
+  matchLabels?: Record<string, string> | null
+  matchExpressions?: { key?: string | null; operator?: string | null; values?: string[] | null }[] | null
+}
+
+/** spec.parametersRef：group/kind/name 必填；namespace 仅在目标为命名空间级资源时给 */
+export interface K8sGatewayClassParametersRef {
+  group?: string | null
+  kind?: string | null
+  name?: string | null
+  namespace?: string | null
+}
+
+/** GatewayClass（gateway.networking.k8s.io/v1，集群级；平台管理面） */
+export interface K8sGatewayClass {
+  name: string
+  controllerName?: string | null
+  parametersRef?: K8sGatewayClassParametersRef | null
+  description?: string | null
+  conditions?: K8sCondition[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+}
+
+/** listener.tls.certificateRefs[]：缺省 group=core、kind=Secret、namespace=Gateway 所在命名空间 */
+export interface K8sGatewayCertRef {
+  group?: string | null
+  kind?: string | null
+  name?: string | null
+  namespace?: string | null
+}
+
+/** listener.tls：mode 只有 Terminate / Passthrough（HTTPS 固定 Terminate） */
+export interface K8sGatewayTls {
+  mode?: string | null
+  certificateRefs?: K8sGatewayCertRef[] | null
+}
+
+/** allowedRoutes.kinds[] */
+export interface K8sGatewayRouteGroupKind {
+  group?: string | null
+  kind?: string | null
+}
+
+/** allowedRoutes.namespaces：from ∈ All / Same / Selector / None；from=Selector 时 selector 生效 */
+export interface K8sGatewayRouteNamespaces {
+  from?: string | null
+  selector?: K8sLabelSelector | null
+}
+
+/** listener.allowedRoutes：限制哪些 Route 能挂到本 listener */
+export interface K8sGatewayAllowedRoutes {
+  namespaces?: K8sGatewayRouteNamespaces | null
+  kinds?: K8sGatewayRouteGroupKind[] | null
+}
+
+/** spec.listeners[] 项 */
+export interface K8sGatewayListener {
+  name?: string | null
+  hostname?: string | null
+  port?: number | null
+  /** HTTP / HTTPS / TLS / TCP / UDP */
+  protocol?: string | null
+  tls?: K8sGatewayTls | null
+  allowedRoutes?: K8sGatewayAllowedRoutes | null
+}
+
+/** spec.infrastructure（parametersRef 未建模，只在 YAML tab 可见） */
+export interface K8sGatewayInfrastructure {
+  labels?: Record<string, string> | null
+  annotations?: Record<string, string> | null
+}
+
+/** spec.addresses[] / status.addresses[] */
+export interface K8sGatewayAddress {
+  type?: string | null
+  value?: string | null
+}
+
+/** status.listeners[] */
+export interface K8sGatewayListenerStatus {
+  name?: string | null
+  attachedRoutes?: number | null
+  supportedKinds?: K8sGatewayRouteGroupKind[] | null
+  conditions?: K8sCondition[] | null
+}
+
+/** Gateway（gateway.networking.k8s.io/v1，命名空间级、租户域） */
+export interface K8sGateway {
+  name: string
+  namespace?: string | null
+  gatewayClassName?: string | null
+  listeners?: K8sGatewayListener[] | null
+  infrastructure?: K8sGatewayInfrastructure | null
+  addresses?: K8sGatewayAddress[] | null
+  conditions?: K8sCondition[] | null
+  listenerStatuses?: K8sGatewayListenerStatus[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+}
+
+/** Route → 父资源引用（spec.parentRefs[]；HTTP/GRPC/TCP/TLS/UDP 共用） */
+export interface K8sRouteParentRef {
+  group?: string | null
+  kind?: string | null
+  namespace?: string | null
+  name?: string | null
+  /** 目标 Gateway 的 listener 名 */
+  sectionName?: string | null
+  port?: number | null
+}
+
+/** Route → 后端引用（rule.backendRefs[]；weight 0–1000000，缺省 1） */
+export interface K8sRouteBackendRef {
+  group?: string | null
+  kind?: string | null
+  name?: string | null
+  namespace?: string | null
+  port?: number | null
+  weight?: number | null
+}
+
+/** rule.matches[].path：type ∈ Exact / PathPrefix / RegularExpression */
+export interface K8sHrPathMatch {
+  type?: string | null
+  value?: string | null
+}
+
+/** rule.matches[].headers[] / queryParams[]：type ∈ Exact（缺省）/ RegularExpression */
+export interface K8sHrValueMatch {
+  type?: string | null
+  name?: string | null
+  value?: string | null
+}
+
+/** rule.matches[] 项（四维 AND） */
+export interface K8sHrMatch {
+  path?: K8sHrPathMatch | null
+  method?: string | null
+  headers?: K8sHrValueMatch[] | null
+  queryParams?: K8sHrValueMatch[] | null
+}
+
+/** 头操作：set / add / remove */
+export interface K8sHrHeaderFilter {
+  set?: { name?: string | null; value?: string | null }[] | null
+  add?: { name?: string | null; value?: string | null }[] | null
+  remove?: string[] | null
+}
+
+/** 路径重写：type=ReplaceFullPath 配 replaceFullPath；ReplacePrefixMatch 配 replacePrefixMatch */
+export interface K8sHrPathModifier {
+  type?: string | null
+  replaceFullPath?: string | null
+  replacePrefixMatch?: string | null
+}
+
+/** RequestRedirect（statusCode 仅 301/302，缺省 302） */
+export interface K8sHrRequestRedirect {
+  scheme?: string | null
+  hostname?: string | null
+  path?: K8sHrPathModifier | null
+  port?: number | null
+  statusCode?: number | null
+}
+
+/** URLRewrite（hostname 与 path 至少给一个） */
+export interface K8sHrUrlRewrite {
+  hostname?: string | null
+  path?: K8sHrPathModifier | null
+}
+
+/** RequestMirror（backendRef 无 weight —— 这里是 BackendObjectReference） */
+export interface K8sHrRequestMirror {
+  backendRef?: K8sRouteBackendRef | null
+  percent?: number | null
+}
+
+/** filter.extensionRef（group/kind/name 三者都必填） */
+export interface K8sHrExtensionRef {
+  group?: string | null
+  kind?: string | null
+  name?: string | null
+}
+
+/**
+ * rule.filters[] 项。已建模 6 种 type；`CORS` / `ExternalAuth` 未建模 —— 后端 fetch-overlay
+ * 会按 type 保留整个元素，前端只在 YAML tab 里看得到它们。
+ */
+export interface K8sHrFilter {
+  type?: string | null
+  requestHeaderModifier?: K8sHrHeaderFilter | null
+  responseHeaderModifier?: K8sHrHeaderFilter | null
+  requestRedirect?: K8sHrRequestRedirect | null
+  urlRewrite?: K8sHrUrlRewrite | null
+  requestMirror?: K8sHrRequestMirror | null
+  extensionRef?: K8sHrExtensionRef | null
+}
+
+/**
+ * rule。name/matches/filters/backendRefs 已建模；
+ * timeouts / retry / sessionPersistence 未建模 → 后端 fetch-overlay 原样保留（YAML tab 可见）。
+ */
+export interface K8sHrRule {
+  name?: string | null
+  matches?: K8sHrMatch[] | null
+  filters?: K8sHrFilter[] | null
+  backendRefs?: K8sRouteBackendRef[] | null
+}
+
+/** status.parents[] 项（5 类 Route 共用：HTTP/GRPC/TCP/TLS/UDP） */
+export interface K8sRouteParentStatus {
+  parentRef?: K8sRouteParentRef | null
+  controllerName?: string | null
+  conditions?: K8sCondition[] | null
+}
+
+/** HTTPRoute（gateway.networking.k8s.io/v1，命名空间级、租户域） */
+export interface K8sHttpRoute {
+  name: string
+  namespace?: string | null
+  parentRefs?: K8sRouteParentRef[] | null
+  hostnames?: string[] | null
+  rules?: K8sHrRule[] | null
+  parentStatuses?: K8sRouteParentStatus[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+}
+
+// ---------- GRPCRoute（骨架同 HTTPRoute，差异在 matches 与 filters）----------
+
+/** gRPC 方法匹配：service/method 是服务名与方法名，不含斜杠前缀 */
+export interface K8sGrpcMethodMatch {
+  type?: string | null
+  service?: string | null
+  method?: string | null
+}
+
+/** gRPC 请求头（metadata）匹配 */
+export interface K8sGrpcHeaderMatch {
+  type?: string | null
+  name?: string | null
+  value?: string | null
+}
+
+/** rule.matches[] 项：只有 method 与 headers（无 path、无 queryParams） */
+export interface K8sGrpcMatch {
+  method?: K8sGrpcMethodMatch | null
+  headers?: K8sGrpcHeaderMatch[] | null
+}
+
+/** rule.filters[] 项：只有 4 种 type（无 RequestRedirect / URLRewrite） */
+export interface K8sGrpcFilter {
+  type?: string | null
+  requestHeaderModifier?: K8sHrHeaderFilter | null
+  responseHeaderModifier?: K8sHrHeaderFilter | null
+  requestMirror?: K8sHrRequestMirror | null
+  extensionRef?: K8sHrExtensionRef | null
+}
+
+export interface K8sGrpcRule {
+  name?: string | null
+  matches?: K8sGrpcMatch[] | null
+  filters?: K8sGrpcFilter[] | null
+  backendRefs?: K8sRouteBackendRef[] | null
+}
+
+/** GRPCRoute（自 Gateway API v1.1 GA，单挂 v1） */
+export interface K8sGrpcRoute {
+  name: string
+  namespace?: string | null
+  parentRefs?: K8sRouteParentRef[] | null
+  hostnames?: string[] | null
+  rules?: K8sGrpcRule[] | null
+  parentStatuses?: K8sRouteParentStatus[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+}
+
+// ---------- L4 路由（TCP / TLS / UDP）----------
+
+/**
+ * L4 路由的一条规则：只有 name + backendRefs。
+ * ⚠️ 没有 matches —— L4 不做七层匹配；TLSRoute 的 SNI 匹配在 spec.hostnames（见 K8sTlsRoute），
+ * 不是旧实验 API 的 rules[].matches[].sniHostname（Gateway API 所有 v1.x 版本都没有它）。
+ */
+export interface K8sL4RouteRule {
+  name?: string | null
+  backendRefs?: K8sRouteBackendRef[] | null
+}
+
+/** TCPRoute（CRD 版本 v1 / v1alpha2 由后端按集群 capability 分派；rules 在 CRD 里 maxItems=1） */
+export interface K8sTcpRoute {
+  name: string
+  namespace?: string | null
+  parentRefs?: K8sRouteParentRef[] | null
+  rules?: K8sL4RouteRule[] | null
+  parentStatuses?: K8sRouteParentStatus[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+}
+
+/** UDPRoute（与 TCPRoute 同构） */
+export interface K8sUdpRoute {
+  name: string
+  namespace?: string | null
+  parentRefs?: K8sRouteParentRef[] | null
+  rules?: K8sL4RouteRule[] | null
+  parentStatuses?: K8sRouteParentStatus[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+}
+
+/** TLSRoute（比 TCP/UDP 多 hostnames，即 SNI 匹配） */
+export interface K8sTlsRoute {
+  name: string
+  namespace?: string | null
+  parentRefs?: K8sRouteParentRef[] | null
+  /** SNI 名（空 = 匹配全部 SNI） */
+  hostnames?: string[] | null
+  rules?: K8sL4RouteRule[] | null
+  parentStatuses?: K8sRouteParentStatus[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+}
+
+/**
+ * 服务网格探测结果（/mesh/status）。hasGatewayApi=false 是模块的硬门禁（create 禁用 + 横幅提示）；
+ * hasIstio / istioAmbient 是信息性展示。
+ */
+export interface MeshStatus {
+  hasIstio: boolean
+  istioAmbient: boolean
+  hasGatewayApi: boolean
+  gatewayApiVersions: string[]
 }
 
 

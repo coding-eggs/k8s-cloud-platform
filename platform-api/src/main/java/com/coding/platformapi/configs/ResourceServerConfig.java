@@ -1,5 +1,6 @@
 package com.coding.platformapi.configs;
 
+import com.coding.common.components.jwt.JwtPermissionResolver;
 import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
@@ -55,6 +56,7 @@ public class ResourceServerConfig {
 	@Bean
 	SecurityFilterChain securityFilterChain(HttpSecurity http, Properties properties,
 										   PermissionAuthorizationManager authorizationManager,
+										   JwtPermissionResolver permissionResolver,
 										   @Value("${jwt.data-key:data}") String dataKey) {
 
 		http
@@ -75,8 +77,9 @@ public class ResourceServerConfig {
 				.oauth2ResourceServer(ors -> {
 					//WS 握手无法带 Authorization 头，允许 token 走 query（access_token）
 					ors.bearerTokenResolver(new QueryParameterBearerTokenResolver());
+					//权限码不再随 token 下发（全量码表太大且有保鲜期），由 PermissionClosureResolver 按需解析
 					ors.jwt(jwt -> jwt.jwtAuthenticationConverter(
-							new PlatformJwtAuthenticationConverter(dataKey)));
+							new PlatformJwtAuthenticationConverter(dataKey, permissionResolver)));
 				});
 
 		return http.build();

@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { clusterApi, namespaceApi, calicoApi } from '@/api'
+import { clusterApi, namespaceApi, calicoApi, meshApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
 import { usePermission } from '@/stores/permission'
 import type { K8sClusterOption, K8sIpool } from '@/types'
@@ -13,6 +13,8 @@ import FieldHelp from '@/components/workload/FieldHelp.vue'
 import QuotaSection from '@/components/namespace/QuotaSection.vue'
 import LimitRangeSection from '@/components/namespace/LimitRangeSection.vue'
 import { useClusterCapability } from '@/composables/useClusterCapability'
+import { useMeshStatus } from '@/composables/useMeshStatus'
+import { DATAPLANE_MODES, RESERVED_MESH_LABELS, USE_WAYPOINT_NONE } from '@/utils/waypoint'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,6 +42,10 @@ const form = reactive({
   labels: {} as Record<string, string>,
   ipv4Pools: [] as string[],
   ipv6Pools: [] as string[],
+  /** '' = 不设该标签（跟随集群默认）；ambient / none */
+  dataplaneMode: '',
+  /** '' = 不设该标签；none = 显式不使用（压过命名空间继承）；否则 = waypoint Gateway 名 */
+  useWaypoint: '',
 })
 
 function resetForm(): void {
@@ -48,6 +54,8 @@ function resetForm(): void {
   form.labels = {}
   form.ipv4Pools = []
   form.ipv6Pools = []
+  form.dataplaneMode = ''
+  form.useWaypoint = ''
   // 约束区块随表单一起回到「未启用 + 空值」：load() 在 namespace 为空时即重置
   void reloadConstraints()
 }
@@ -75,6 +83,42 @@ const v6PoolOptions = computed(() => ippools.value.filter((p) => !!p.cidr?.inclu
 const ipStack = computed(() => clusters.value.find((c) => c.clusterId === clusterId.value)?.ipStack ?? null)
 const v4PoolAllowed = computed(() => !ipStack.value || ipStack.value === 'IPV4' || ipStack.value === 'IPV4_AND_IPV6')
 const v6PoolAllowed = computed(() => !ipStack.value || ipStack.value === 'IPV6' || ipStack.value === 'IPV4_AND_IPV6')
+
+// ---- 服务网格 Ambient（B3 §11；ns label istio.io/dataplane-mode + istio.io/use-waypoint）----
+// 本页正是平台页，/mesh/status 可用（platform:cluster:manage）→ 能拿到 ambient 的**活探测**结论
+// （ztunnel DaemonSet 是否存在）。租户侧拿不到这个信息，见 useMeshStatus 的降级说明。
+const mesh = useMeshStatus(clusterId)
+/** 是否已知 ambient 的真相：未探测（集群断开 / 无 platform:cluster:manage）→ 字段禁用且不提交，防误清既有标签 */
+const ambientKnown = computed(() => mesh.ambientKnown.value)
+/** 集群确实装了 ambient（ztunnel 在跑） */
+const ambientAvailable = computed(() => mesh.istioAmbient.value)
+
+/** 该命名空间的 waypoint 候选（平台侧 /mesh/gateways）。Gateway 是租户域资源而本页无租户上下文，故不能走 /gateways */
+const waypointOptions = ref<string[]>([])
+const waypointLoaded = ref(false)
+watch([clusterId, () => form.name, () => ambientKnown.value], async () => {
+  waypointOptions.value = []
+  waypointLoaded.value = false
+  const ns = form.name?.trim()
+  if (!editing.value || !clusterId.value || !ns || !ambientKnown.value || !perm.has(apiCodes.clusterManage)) return
+  try {
+    waypointOptions.value = (await meshApi.namespaceWaypoints(clusterId.value, ns)) ?? []
+  } catch {
+    waypointOptions.value = [] // 拦截器已提示；下拉降级为空（用户仍可手输或稍后重试）
+  } finally {
+    waypointLoaded.value = true
+  }
+}, { immediate: true })
+
+/**
+ * 选中的 waypoint 已不在候选里（被删了 / 名字写错）→ 标红提示。
+ * 不阻断提交：Istio 对不存在的 waypoint 是**静默放行**（流量照走、L7 策略不生效），
+ * 平台这边报错反而挡住用户改别的字段。提示由用户决定改或清。
+ */
+const waypointMissing = computed(() =>
+  waypointLoaded.value
+  && !!form.useWaypoint && form.useWaypoint !== USE_WAYPOINT_NONE
+  && !waypointOptions.value.includes(form.useWaypoint))
 
 // ---- 编辑回填 ----
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
@@ -107,6 +151,8 @@ async function loadDetail(): Promise<void> {
     form.labels = { ...(ns.labels ?? {}) }
     form.ipv4Pools = [...(ns.ipv4Pools ?? [])]
     form.ipv6Pools = [...(ns.ipv6Pools ?? [])]
+    form.dataplaneMode = ns.dataplaneMode ?? ''
+    form.useWaypoint = ns.useWaypoint ?? ''
     detailState.value = 'loaded'
   } catch {
     detailState.value = 'error'
@@ -177,12 +223,15 @@ async function submit(): Promise<void> {
   saving.value = true
   // 绑定池仅在 capability 已探测到 Calico 时显式提交（空数组=主动清空）；未探测→不传字段，后端保持现状防误清。
   // IP 栈不允许的族同样不传（选择器已隐藏，避免把不可见族的残留值写进去/清掉既有绑定）
+  // istio 两个标签同理：只有 ambient 状态**已知**时才提交，否则（未探测 / 集群断开）字段禁用且不传。
+  // 空串 = 主动移除该标签（「跟随集群默认」/「不使用 waypoint」），与后端的 null=不动、''=移除 三态对齐。
   const payload = {
     clusterId: clusterId.value, name, description: form.description.trim(), labels: form.labels,
     ...(hasCalico.value ? {
       ...(v4PoolAllowed.value ? { ipv4Pools: form.ipv4Pools } : {}),
       ...(v6PoolAllowed.value ? { ipv6Pools: form.ipv6Pools } : {}),
     } : {}),
+    ...(ambientKnown.value ? { dataplaneMode: form.dataplaneMode, useWaypoint: form.useWaypoint } : {}),
   }
   try {
     if (editing.value) {
@@ -250,8 +299,8 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
               <el-input v-model="form.description" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="这个命名空间放什么服务、归哪个团队" style="width: 520px" />
             </el-form-item>
             <el-form-item>
-              <template #label>标签 <FieldHelp tip="K8s 标签（metadata.labels），供选择器与第三方工具使用。平台保留标签 app.kubernetes.io/managed-by 由系统维护、不可编辑；编辑时其余既有标签自动保留。" /></template>
-              <LabelEditor v-model="form.labels" class="sub-editor" style="max-width: 520px" />
+              <template #label>标签 <FieldHelp tip="K8s 标签（metadata.labels），供选择器与第三方工具使用。平台保留标签 app.kubernetes.io/managed-by 由系统维护、不可编辑；编辑时其余既有标签自动保留。istio.io/dataplane-mode 与 istio.io/use-waypoint 由下方「服务网格」区块独占管理，此处不显示（也不改动）。" /></template>
+              <LabelEditor v-model="form.labels" :exclude-keys="RESERVED_MESH_LABELS" class="sub-editor" style="max-width: 520px" />
             </el-form-item>
             <el-form-item v-if="hasCalico">
               <template #label>绑定地址池（Calico）<FieldHelp tip="圈定该命名空间 Pod 自动分配 IP 使用的地址池（ns annotation cni.projectcalico.org/ipv{4,6}pools）。留空 = Calico 默认分配；引用的池须已存在。IPv6 池仅双栈集群（IPV4_AND_IPV6）可选，单栈集群隐藏对应族。工作负载「固定 IP」只能选本命名空间绑定池（未绑定则默认池）中的保留 IP。" /></template>
@@ -264,6 +313,46 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
                 </el-select>
               </div>
             </el-form-item>
+          </el-form>
+        </el-card>
+
+        <!-- 服务网格（B3 §11.4「能力开关」区块）：本页正是平台页，ambient 的活探测只有这里有 -->
+        <el-card v-if="ambientKnown || editing" shadow="never" class="sec-card">
+          <template #header><span class="sec-title">服务网格（Istio Ambient）</span></template>
+          <el-form label-width="200px" label-position="left">
+            <template v-if="ambientKnown">
+              <el-form-item>
+                <template #label>数据面模式 <FieldHelp tip="命名空间标签 istio.io/dataplane-mode。纳入 ambient 后，本命名空间内的工作负载由节点级 ztunnel 接管四层流量；排除（none）则显式退出网格。不设标签 = 跟随集群默认（多数安装的默认是「未纳入」）。Pod 上的同名标签优先级高于命名空间。" /></template>
+                <el-select v-model="form.dataplaneMode" :disabled="!ambientAvailable" style="width: 320px" placeholder="跟随集群默认（不设标签）">
+                  <el-option label="跟随集群默认（不设标签）" value="" />
+                  <el-option v-for="m in DATAPLANE_MODES" :key="m.value" :label="m.label" :value="m.value" />
+                </el-select>
+              </el-form-item>
+              <el-form-item>
+                <template #label>使用 waypoint <FieldHelp tip="命名空间标签 istio.io/use-waypoint。取值 = 本命名空间 waypoint Gateway 的名字，本命名空间内所有工作负载的七层流量都会经过它（L7 路由/鉴权/遥测）；选 none 表示显式不使用 —— 用来压过从上层继承的 waypoint。不设标签 = 跟随默认（无人使用）。⚠️ 这个标签只表达意图，不保证流量真的经过：waypoint 不存在时 ztunnel 会直接放行，L7 策略静默失效。" /></template>
+                <el-select v-model="form.useWaypoint" :disabled="!ambientAvailable" style="width: 320px" placeholder="不使用 waypoint（不设标签）">
+                  <el-option label="不使用 waypoint（不设标签）" value="" />
+                  <el-option label="显式不使用（none）" :value="USE_WAYPOINT_NONE" />
+                  <el-option v-for="w in waypointOptions" :key="w" :label="w" :value="w" />
+                </el-select>
+                <div v-if="!ambientAvailable" class="form-tip warn">该集群未探测到 ambient（istio-system/ztunnel DaemonSet 不存在）—— 这两个标签暂不生效，字段已禁用以免误配。</div>
+                <div v-else-if="!editing" class="form-tip">waypoint Gateway 需建在一个已存在的命名空间里，故创建阶段没有候选；先创建命名空间，再回来选。</div>
+                <div v-else-if="waypointLoaded && !waypointOptions.length" class="form-tip">该命名空间还没有 waypoint Gateway——要在「Gateway」页用「创建 Waypoint」建一个（每个命名空间至多一个）。</div>
+                <div v-if="waypointMissing" class="form-tip warn">「{{ form.useWaypoint }}」不在本命名空间的 waypoint 候选里（可能已被删除）。istio 对不存在的 waypoint 会静默放行，L7 策略不会生效——请改选或清空。</div>
+              </el-form-item>
+              <div v-if="!ambientAvailable || (editing && waypointLoaded && !waypointOptions.length)" class="mesh-precond">
+                <el-alert
+                  type="info" :closable="false" show-icon
+                  title="前置条件清单"
+                  description="① 目标命名空间需带 istio.io/dataplane-mode: ambient（上面第一项）；② 消费方（命名空间 / 服务 / Pod）需带 istio.io/use-waypoint=<waypoint 名> 才会走它；③ waypoint Gateway 本身要在「Gateway」页建好。三者缺一，流量都照常直连，不会有报错。"
+                />
+              </div>
+            </template>
+            <el-alert
+              v-else type="warning" :closable="false" show-icon
+              title="未探测到网格状态，本次不改动 istio 标签"
+              description="要么集群连不上，要么当前身份没有 platform:cluster:manage（网格状态是平台侧端点）。为避免把已有的 ambient 配置误清掉，本区块不提交这两个字段；命名空间的其它字段照常保存。"
+            />
           </el-form>
         </el-card>
 
@@ -305,6 +394,20 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
   flex-direction: column;
   gap: 8px;
   width: 520px;
+}
+.mesh-precond {
+  margin: 0 0 8px 200px;
+  max-width: 620px;
+}
+/* 与 WorkloadEditorView 同名同款（仓库无共享编辑器样式表，各页复制为既有惯例） */
+.form-tip {
+  width: 100%;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.form-tip.warn {
+  color: var(--el-color-warning);
 }
 .form-actions {
   display: flex;

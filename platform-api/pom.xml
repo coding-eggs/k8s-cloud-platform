@@ -27,6 +27,12 @@
             <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
+
         <!--Pod exec 中继：对前端暴露 WS，向 k8s-server 建客户端 WS（不引 fabric8）-->
         <dependency>
             <groupId>org.springframework.boot</groupId>

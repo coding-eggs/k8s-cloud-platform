@@ -31,8 +31,9 @@ tenant:page:persistentvolume.list        /resources/persistentvolumes
 
 scope 前缀与角色族是**单向**约束（2026-10-08 起）：后端 `RoleService.assertScopeMatches` 只禁止
 TENANT 角色持非 `tenant:` 码；**PLATFORM 角色两族都可持**（此前是双向互斥 + 硬编码 `code=admin` 豁免，
-已删）。理由：平台族在运行时本就是租户族的超集 —— `TokenExtrasService.permissions()` 把平台族角色的码
-**无条件**并入，租户角色的码只在带 `tenantInfo` 时并入。据此：
+已删）。理由：平台族在运行时本就是租户族的超集 —— `PermissionClosureService.permissions()` 把平台族角色的码
+**无条件**并入，租户角色的码只在带 `tenantInfo` 时并入（原 `TokenExtrasService.permissions()`，2026-10-09 起
+该逻辑搬进 platform-common 由两处共用）。据此：
 
 - 平台管理页 → `platform:page:*`
 - 租户可达页（资源管理、自管租户） → `tenant:page:*`
@@ -90,12 +91,29 @@ TENANT 角色持非 `tenant:` 码；**PLATFORM 角色两族都可持**（此前�
   **多租户成员仍可自由在这些租户之间互相切换** —— 被限制的只是"切到平台视图"这一件事，不是"切租户"。
   且 `bootstrap` 保证他进来就落在某个租户里 —— 不在租户上下文时取 `my-tenants` 里**第一个启用**的租户自动进入
   （只是初始落点，进来后随时可换）。
-- **别在非管理员路径上把上下文清成 `null`**：base token 的权限闭包是空的（`permissions` = 平台族 ∪
-  有租户上下文时的租户族），菜单与页面会全空，而他既没有"平台视图"这个去处、也没有切换器能点回来。
+- **别在非管理员路径上把上下文清成 `null`**：无租户上下文时权限闭包只有平台族（=对租户成员是空的），
+  菜单与页面会全空，而他既没有"平台视图"这个去处、也没有切换器能点回来。
   切换失败时的兜底 `switchTenant(null)` 之所以还行，是因为紧随其后的整页重载会重跑 `bootstrap` 把他放回租户。
+  （闭包自 2026-10-09 起由 `POST /user/me` 现算，**不再来自 token** —— 见 §1.6。）
 - 曾经有一个 sessionStorage 标记「本标签页用户显式选了平台视图」（用于防止单租户成员被 `bootstrap` 静默弹回）。
   它只服务那个已不成立的前提，**已随本次收敛整体删除**（`markPlatformViewChoice` / `hasPlatformViewChoice` /
   `clearPlatformViewChoice`）。代码注释里引用的 spec §4.4/§4.5 旧时序，以本节为准。
+
+### 1.6 权限闭包来自 `POST /user/me`，**不在 token 里**
+
+`perm.permissions` 的数据源自 2026-10-09 起是 **`POST /user/me`**（后端按当前角色现算）；
+token 的 `data` claim 只提供小而稳的部分：`platformRoles` / `tenantInfo`。
+
+- **为什么搬出去**：那份闭包的长度 = 产品权限点总数（当时 176 个码 ≈ 4.7KB JSON），却要塞进有硬上限的容器
+  （WS 握手 query **4KB**、HTTP 头 8KB），而且带 1 小时保鲜期 —— 规则是热加载的，**主体不热**。
+  搬出去后 token 回到 ~300 字节，改角色/收权限也**不必等 token 过期**。
+- **判定必须看"claim 里有没有 `permissions` 字段"，不是"token 能不能 decode"**：token 现在照样能 decode，
+  只是没这个字段。写成 `claims.permissions ?? []` 会把空数组当结果 → **菜单全空、守卫把人赶回总览**，
+  看起来像"权限被收回"（改动前这是个静默坑，见 `stores/permission.ts` 的注释）。
+- **回滚开关** `platform.jwt.permissions-in-token=true` 打开时 claim 会重新带上它，前端照旧零异步直用
+  （`refreshPermission()` 的 claim 分支就是为它留的）。
+- **其余前端代码不受影响**：16 个文件里的 `perm.has(...)` / `perm.isAdmin` 只走 store 的公开面，
+  数据源怎么来的它们不关心。
 
 ---
 

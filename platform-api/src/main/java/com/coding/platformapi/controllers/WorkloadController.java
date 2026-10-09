@@ -5,6 +5,7 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
+import com.coding.platformapi.models.WorkloadMeshToggleRequest;
 import com.coding.platformapi.services.WorkloadService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -87,6 +88,15 @@ public class WorkloadController {
     public ResponseData<WorkloadDTO> pause(@PathVariable String name, @RequestBody WorkloadDTO body) {
         body.setName(name);
         return new ResponseData<>(workloadService.pause(body));
+    }
+
+    @PostMapping("/{name}/mesh-toggle")
+    @Operation(summary = "切换工作负载 ambient 开关（pod template 的 istio.io/dataplane-mode / istio.io/use-waypoint）",
+            description = "只改这两个保留 label，其余字段取线上现值回写；两个字段各自独立三态：不传=不动、空串=移除、有值=覆写。"
+                    + "改的是 pod template → 触发滚动更新，存量 Pod 需重建才带新 label。")
+    public ResponseData<WorkloadDTO> meshToggle(@PathVariable String name, @RequestBody WorkloadMeshToggleRequest body) {
+        body.setName(name);
+        return new ResponseData<>(workloadService.meshToggle(body));
     }
 
     // ===== 监控指标（4 个，委托 MetricsService；clusterName 由 clusterId 查库解析）=====

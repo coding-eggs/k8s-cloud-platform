@@ -1,7 +1,13 @@
 /**
  * 权限 store（模块级单例，与 context.ts / nodeCatalog.ts 同套路）。
  *
- * 数据源：access_token 的 `data` claim（= 后端 TokenUserInfo：permissions/platformRoles/tenantInfo）。
+ * 数据源：**主要是 `POST /user/me`**（后端按当前角色现算的权限闭包），token 的 `data` claim
+ * （= 后端 TokenUserInfo）只提供小而稳的部分：platformRoles / tenantInfo。
+ * 2026-10-09 起后端不再把权限码全表写进 token（那份列表随产品权限点总数增长，却要塞进有硬上限的
+ * 容器，还带 1 小时保鲜期），所以 `data.permissions` 通常**不存在** —— 只有回滚开关
+ * `platform.jwt.permissions-in-token=true` 时才会出现，出现则照旧零异步直用。
+ * 由此改角色/收权限**无需等 token 过期**即生效（多一次 /user/me 的代价）。
+ *
  * 本平台 platform-web-client 的 jwtType=JWS，payload 可 base64 解码；解码只用于 UI 显隐，
  * **权威鉴权永远在后端**（PermissionAuthorizationManager + k8s-server 边界）。
  * 若 token 解不出（JWE/损坏），走 `POST /user/me` 的权威兜底（Task 19 登录即端点）。
@@ -62,18 +68,29 @@ function refreshPermission(): void {
   }
   const claims = decodeDataClaim(token)
   if (claims) {
-    state.permissions = claims.permissions ?? []
+    //角色/租户上下文仍在小而稳的 claim 里，可同步就绪
     state.platformRoles = claims.platformRoles ?? []
     state.tenant = getCurrentTenant()
-    state.ready = true
-  } else {
-    state.ready = false // JWE/损坏 → 交给 load() 的 /user/me 权威兜底
   }
+  const perms = claims?.permissions
+  if (Array.isArray(perms)) {
+    state.permissions = perms // 回滚开关打开时 token 仍带闭包 → 零异步
+    state.ready = true
+    return
+  }
+  // JWE／claim 损坏，**或 token 已不携带 permissions**（2026-10-09 起为常态：全量码表不再下发）
+  // → 交给 load() 的 /user/me 权威兜底。
+  // ⚠️ 这里绝不能 ready=true 并把 permissions 置空：那会让菜单瞬间全空、守卫把人赶回总览，
+  //    看起来像"权限被收回"。必须等 load() 拿到真值。
+  state.ready = false
 }
 
 /**
- * 确保权限就绪：优先同步 decode；解不出（JWE 等）→ `POST /user/me` 拉权威数据（一次 await）。
- * /user/me 失败（会话已失效由 http.ts 统一跳登录）→ 空权限 + ready，菜单收敛到无权限态。
+ * 确保权限就绪：token 自带闭包（回滚期）→ 同步 decode，零异步；
+ * 否则 `POST /user/me` 拉权威闭包（一次 await）—— 权限码自 2026-10-09 起不再随 token 下发，
+ * 所以这是**常态路径**，好处是改角色后无需等 token 过期即生效。
+ * /user/me 失败（会话已失效由 http.ts 统一跳登录）→ 权限码收敛为空（fail-closed），
+ * 但平台角色/租户上下文仍以 token 为准，别把身份也一起清掉（否则管理员会掉出平台视图）。
  */
 async function load(): Promise<void> {
   const token = getAccessToken()
@@ -81,7 +98,7 @@ async function load(): Promise<void> {
     refreshPermission()
     return
   }
-  if (decodeDataClaim(token)) {
+  if (Array.isArray(decodeDataClaim(token)?.permissions)) {
     refreshPermission()
     return
   }
@@ -91,8 +108,9 @@ async function load(): Promise<void> {
     state.platformRoles = me.platformRoles ?? []
     state.tenant = getCurrentTenant()
   } catch {
+    const claims = decodeDataClaim(getAccessToken() ?? '')
     state.permissions = []
-    state.platformRoles = []
+    state.platformRoles = claims?.platformRoles ?? []
     state.tenant = getCurrentTenant()
   } finally {
     state.ready = true

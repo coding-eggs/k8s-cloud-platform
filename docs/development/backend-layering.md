@@ -132,6 +132,14 @@ Service 负责 query 组装与转发，controller 负责响应流。
 - **本批有意没做**：k8s-server 侧的启动期交叉校验。它的失败模式是"授权不足"（未分类即 403，连平台
   管理员一起 403，不显眼但**不静默放行**），与 ① 那个 fail-closed 校验（失败模式是**静默放行**）性质相反，
   故不需要。
+- **权限码不在 token 里**（2026-10-09 起）：`data.permissions` 不再签发。platform-api 于认证期按
+  `(username, tenantId)` 现算（`PermissionClosureService` + 30s TTL 缓存，见 `PermissionClosureResolver`），
+  k8s-server 显式传 `JwtPermissionResolver.noop()` —— **本层没有权限码语义**，判权只用 `PLATFORM_SCOPE`
+  + 分配表，也不该为此去查业务库（与"k8s-server 零业务逻辑"一致）。
+  旧做法把全量码表塞进 token：长度随**产品权限点总数**增长，却要过 WS 握手 query 4KB / HTTP 头 8KB
+  两道硬上限（2026-10-08 就以 `BufferOverflowException` 炸过 exec），且带 1 小时保鲜期 ——
+  规则热加载而主体不热。搬出后 token 回到 ~300 字节，改角色**即时生效**（陈旧上界 = 缓存 TTL）。
+  回滚开关：`platform.jwt.permissions-in-token=true`（转换器 claim 优先，行为与改动前一致）。
 
 ---
 

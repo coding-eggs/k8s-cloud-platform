@@ -99,6 +99,25 @@ const router = createRouter({
         { path: 'ops/bgpfilters', name: 'bgpfilters', component: () => import('@/views/ops/BgpFilterView.vue'), meta: { title: 'BGP 过滤器', group: '集群运维', requiresPerm: [pageCodes.ops.bgpFilter.list] } },
         { path: 'ops/bgpfilters/detail', name: 'bgpfilter-detail', component: () => import('@/views/ops/BgpFilterDetailView.vue'), meta: { title: 'BGP 过滤器详情', group: '集群运维', requiresPerm: [pageCodes.ops.bgpFilter.detail] } },
         { path: 'ops/bgpfilters/editor', name: 'bgpfilter-editor', component: () => import('@/views/ops/BgpFilterEditorView.vue'), meta: { title: 'BGP 过滤器编辑', group: '集群运维', requiresPerm: [pageCodes.ops.bgpFilter.edit] } },
+
+        // 服务网格（Gateway API）。跨两上下文：GatewayClass = 集群级平台管理（页内选集群，无顶栏级联）；
+        // Gateway / HTTPRoute = 租户资源面（context: 'full'，命名空间来自分配上下文，同 ServiceMonitor）。
+        { path: 'mesh/gatewayclasses', name: 'gatewayclasses', component: () => import('@/views/mesh/GatewayClassView.vue'), meta: { title: 'GatewayClass', group: '服务网格', requiresPerm: [pageCodes.mesh.gatewayClass.list] } },
+        { path: 'mesh/gatewayclasses/editor', name: 'gatewayclass-editor', component: () => import('@/views/mesh/GatewayClassEditorView.vue'), meta: { title: 'GatewayClass 编辑', group: '服务网格', requiresPerm: [pageCodes.mesh.gatewayClass.edit] } },
+        { path: 'resources/gateways', name: 'gateways', component: () => import('@/views/resource/GatewayView.vue'), meta: { title: 'Gateway', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.gateway.list] } },
+        { path: 'resources/gateways/editor', name: 'gateway-editor', component: () => import('@/views/resource/GatewayEditorView.vue'), meta: { title: 'Gateway 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.gateway.edit] } },
+        { path: 'resources/httproutes', name: 'httproutes', component: () => import('@/views/resource/HttpRouteView.vue'), meta: { title: 'HTTPRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.list] } },
+        { path: 'resources/httproutes/editor', name: 'httproute-editor', component: () => import('@/views/resource/HttpRouteEditorView.vue'), meta: { title: 'HTTPRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.edit] } },
+        // Phase 2：GRPCRoute + L4 三类（TCP/TLS/UDP）。L4 的 CRD 版本（v1 / v1alpha2）由后端按集群
+        // capability 分派，前端不感知；TLSRoute 多一个 SNI hostnames 字段。
+        { path: 'resources/grpcroutes', name: 'grpcroutes', component: () => import('@/views/resource/GrpcRouteView.vue'), meta: { title: 'GRPCRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.grpcRoute.list] } },
+        { path: 'resources/grpcroutes/editor', name: 'grpcroute-editor', component: () => import('@/views/resource/GrpcRouteEditorView.vue'), meta: { title: 'GRPCRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.grpcRoute.edit] } },
+        { path: 'resources/tcproutes', name: 'tcproutes', component: () => import('@/views/resource/TcpRouteView.vue'), meta: { title: 'TCPRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tcpRoute.list] } },
+        { path: 'resources/tcproutes/editor', name: 'tcproute-editor', component: () => import('@/views/resource/TcpRouteEditorView.vue'), meta: { title: 'TCPRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tcpRoute.edit] } },
+        { path: 'resources/tlsroutes', name: 'tlsroutes', component: () => import('@/views/resource/TlsRouteView.vue'), meta: { title: 'TLSRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tlsRoute.list] } },
+        { path: 'resources/tlsroutes/editor', name: 'tlsroute-editor', component: () => import('@/views/resource/TlsRouteEditorView.vue'), meta: { title: 'TLSRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tlsRoute.edit] } },
+        { path: 'resources/udproutes', name: 'udproutes', component: () => import('@/views/resource/UdpRouteView.vue'), meta: { title: 'UDPRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.udpRoute.list] } },
+        { path: 'resources/udproutes/editor', name: 'udproute-editor', component: () => import('@/views/resource/UdpRouteEditorView.vue'), meta: { title: 'UDPRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.udpRoute.edit] } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

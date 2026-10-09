@@ -40,4 +40,10 @@ public class NamespaceView {
     @Schema(description = "Calico 绑定 IPv6 地址池（ns annotation cni.projectcalico.org/ipv6pools；null=默认分配）")
     private List<String> ipv6Pools;
 
+    @Schema(description = "Istio ambient 数据面模式（ns label istio.io/dataplane-mode；ambient / none；null=未设，跟随集群默认）")
+    private String dataplaneMode;
+
+    @Schema(description = "Istio L7 waypoint（ns label istio.io/use-waypoint；= waypoint Gateway 名 或 none；null=未设）")
+    private String useWaypoint;
+
 }

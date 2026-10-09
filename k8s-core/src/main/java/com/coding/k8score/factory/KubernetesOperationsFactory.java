@@ -23,6 +23,13 @@ import com.coding.k8score.converter.impl.core.CoreV1PersistentVolumeConverter;
 import com.coding.k8score.converter.impl.core.CoreV1SecretConverter;
 import com.coding.k8score.converter.impl.core.CoreV1ServiceConverter;
 import com.coding.k8score.converter.impl.core.CoreV1StorageClassConverter;
+import com.coding.k8score.converter.impl.gateway.GatewayClassConverter;
+import com.coding.k8score.converter.impl.gateway.GatewayConverter;
+import com.coding.k8score.converter.impl.gateway.GrpcRouteConverter;
+import com.coding.k8score.converter.impl.gateway.HttpRouteConverter;
+import com.coding.k8score.converter.impl.gateway.TcpRouteConverter;
+import com.coding.k8score.converter.impl.gateway.TlsRouteConverter;
+import com.coding.k8score.converter.impl.gateway.UdpRouteConverter;
 import com.coding.k8score.converter.impl.monitoring.PodMonitorConverter;
 import com.coding.k8score.converter.impl.monitoring.ServiceMonitorConverter;
 import com.coding.k8score.converter.impl.rbac.CoreV1ServiceAccountConverter;
@@ -52,6 +59,14 @@ import com.coding.k8score.operations.core.CoreV1SecretOperations;
 import com.coding.k8score.operations.core.CoreV1ServiceOperations;
 import com.coding.k8score.operations.core.CoreV1ResourceQuotaOperations;
 import com.coding.k8score.operations.core.CoreV1StorageClassOperations;
+import com.coding.k8score.operations.gateway.GatewayClassOperations;
+import com.coding.k8score.operations.gateway.GatewayOperations;
+import com.coding.k8score.operations.gateway.GrpcRouteOperations;
+import com.coding.k8score.operations.gateway.HttpRouteOperations;
+import com.coding.k8score.operations.gateway.MeshOperations;
+import com.coding.k8score.operations.gateway.TcpRouteOperations;
+import com.coding.k8score.operations.gateway.TlsRouteOperations;
+import com.coding.k8score.operations.gateway.UdpRouteOperations;
 import com.coding.k8score.operations.monitoring.PodMonitorOperations;
 import com.coding.k8score.operations.monitoring.ServiceMonitorOperations;
 import com.coding.k8score.operations.rbac.CoreV1ServiceAccountOperations;
@@ -80,6 +95,9 @@ import java.util.Map;
 @Slf4j
 @Component
 public class KubernetesOperationsFactory {
+
+    /** Gateway API 的 API group（capability 分派用；L4 路由版本 + GRPCRoute v1 门禁） */
+    private static final String GATEWAY_API_GROUP = "gateway.networking.k8s.io";
 
     private final KubernetesClientFactory clientFactory;
     private final K8sClusterMapper k8sClusterMapper;
@@ -128,6 +146,16 @@ public class KubernetesOperationsFactory {
         return new CalicoFormOptionOperations(client);
     }
 
+    /**
+     * 服务网格探测操作（集群级，admin client；只读）。非标准 CRUD，独立返回具体类型。
+     * <p>capability 快照在这里读一次后传给操作对象（{@link MeshOperations} 自己不再碰 DB）——
+     * 与 {@link #buildHpa} 的分派读同一份数据源，口径一致。
+     */
+    public MeshOperations getMeshOperation(String clusterId) {
+        KubernetesClient client = clientFactory.getAdminClient(clusterId);
+        return new MeshOperations(client, readCapability(clusterId));
+    }
+
     /** 按资源类型构造 operation。单版本资源直接 new；HPA 等跨版本发散资源在此按集群 capability 分派 converter。 */
     private Object build(ResourceType type, KubernetesClient client, String clusterId) {
         return switch (type) {
@@ -153,6 +181,16 @@ public class KubernetesOperationsFactory {
             case BGP_CONFIGURATION -> new BgpConfigurationOperations(client, new BgpConfigurationConverter());
             case BGP_PEER -> new BgpPeerOperations(client, new BgpPeerConverter());
             case BGP_FILTER -> new BgpFilterOperations(client, new BgpFilterConverter());
+            // Gateway API（B6）：GatewayClass / Gateway / HTTPRoute 三类都自 v1 起 GA → 单版本。
+            case GATEWAY_CLASS -> new GatewayClassOperations(client, new GatewayClassConverter());
+            case GATEWAY -> new GatewayOperations(client, new GatewayConverter());
+            case HTTP_ROUTE -> new HttpRouteOperations(client, new HttpRouteConverter());
+            // GRPCRoute 自 v1.1 GA（单挂 v1，不回退 v1alpha2 —— pre-v1.1 的 v1alpha2 结构不同）；
+            // TCP/TLS/UDPRoute 自 v1.6 起 GA 于 v1，更早的集群只有 v1alpha2 → 按 capability 分派版本。
+            case GRPC_ROUTE -> buildGrpcRoute(client, clusterId);
+            case TCP_ROUTE -> new TcpRouteOperations(client, new TcpRouteConverter(resolveL4Version(clusterId)));
+            case TLS_ROUTE -> new TlsRouteOperations(client, new TlsRouteConverter(resolveL4Version(clusterId)));
+            case UDP_ROUTE -> new UdpRouteOperations(client, new UdpRouteConverter(resolveL4Version(clusterId)));
             case HPA -> buildHpa(client, clusterId);
             default -> throw new CloudPlatformException(EnumResponseType.NON_RESOURCE);
         };
@@ -177,20 +215,60 @@ public class KubernetesOperationsFactory {
         throw new CloudPlatformException(EnumResponseType.HPA_VERSION_UNSUPPORTED);
     }
 
-    /** 读 {@code k8s_cluster.capability}（JSON：group→versions[]）取某 group 的 versions；无行/空列/解析失败返回 null。 */
+    /**
+     * GRPCRoute 单挂 v1（自 Gateway API v1.1 GA）。capability <b>已知</b>且没有 v1 时显式报错，
+     * 不静默回退到 v1alpha2 —— pre-v1.1 的 v1alpha2 GRPCRoute 结构与 v1 不同（有 queryParams、
+     * filter 类型也不同），悄悄切过去会写出结构错误的对象。capability 未探测（null/空）时按 v1 试，
+     * 不存在的 CRD 由 apiserver 404、经上层异常体系透出。
+     */
+    private Object buildGrpcRoute(KubernetesClient client, String clusterId) {
+        List<String> versions = readApiVersions(clusterId, GATEWAY_API_GROUP);
+        if (versions != null && !versions.isEmpty() && !versions.contains("v1")) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "该集群的 Gateway API 未提供 v1 版本（GRPCRoute 自 Gateway API v1.1 起 GA），无法管理 GRPCRoute");
+        }
+        return new GrpcRouteOperations(client, new GrpcRouteConverter());
+    }
+
+    /**
+     * L4 路由（TCP / TLS / UDP）的 CRD 版本：Gateway API v1.6 起 GA 到 {@code v1}，更早的集群只有
+     * {@code v1alpha2}（v1.2+ 的 v1alpha2 与 v1 是同一结构，只是版本名不同 —— 见 {@code TcpRouteConverter}）。
+     * <p>capability 未探测（null/空）→ 默认 {@code v1}，让 apiserver 用 404 说话而不是猜；
+     * capability <b>已知</b>但两个版本都没有 → 显式报错（绝不静默返回一个注定失败的版本）。
+     */
+    private String resolveL4Version(String clusterId) {
+        List<String> versions = readApiVersions(clusterId, GATEWAY_API_GROUP);
+        if (versions == null || versions.isEmpty()) {
+            return "v1";
+        }
+        if (versions.contains("v1")) {
+            return "v1";
+        }
+        if (versions.contains("v1alpha2")) {
+            return "v1alpha2";
+        }
+        throw new CloudPlatformException(EnumResponseType.ERROR,
+                "该集群的 Gateway API（" + GATEWAY_API_GROUP + "）既无 v1 也无 v1alpha2，无法管理 L4 路由；现有版本：" + versions);
+    }
+
+    /** 读 {@code k8s_cluster.capability}（JSON：group→versions[]）取某 group 的 versions；无行/空列/解析失败/无该 group 返回 null。 */
     private List<String> readApiVersions(String clusterId, String group) {
+        return readCapability(clusterId).get(group);
+    }
+
+    /** 读整个 {@code k8s_cluster.capability} 快照（group → versions[]）；无行/空列/解析失败返回空 Map（"未探测"语义）。 */
+    private Map<String, List<String>> readCapability(String clusterId) {
         K8sCluster cluster = k8sClusterMapper.selectByPrimaryKey(clusterId);
         if (cluster == null || !StringUtils.hasText(cluster.getCapability())) {
-            return null;
+            return Map.of();
         }
         try {
-            Map<String, List<String>> capability = Serialization.jsonMapper()
+            return Serialization.jsonMapper()
                     .readValue(cluster.getCapability(), new TypeReference<Map<String, List<String>>>() {
                     });
-            return capability.get(group);
         } catch (Exception e) {
-            log.warn("解析集群 {} capability 失败，按默认版本处理：{}", clusterId, e.getMessage());
-            return null;
+            log.warn("解析集群 {} capability 失败，按未探测处理：{}", clusterId, e.getMessage());
+            return Map.of();
         }
     }
 

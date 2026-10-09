@@ -76,9 +76,9 @@ public class SessionRenewalAuthenticationProvider implements AuthenticationProvi
         }
 
         // 2. 客户端必须被授权本 grant 类型
-        if (!registeredClient.getAuthorizationGrantTypes().contains(SessionRenewalGrantType.INSTANCE)) {
+        if (registeredClient == null || !registeredClient.getAuthorizationGrantTypes().contains(SessionRenewalGrantType.INSTANCE)) {
             log.debug("Invalid request: grant_type '{}' not allowed for client '{}'",
-                    SessionRenewalGrantType.VALUE, registeredClient.getClientId());
+                    SessionRenewalGrantType.VALUE, registeredClient == null ? "null" : registeredClient.getClientId());
             throw new OAuth2AuthenticationException(OAuth2ErrorCodes.UNAUTHORIZED_CLIENT);
         }
 

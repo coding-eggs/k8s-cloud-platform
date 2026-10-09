@@ -1,5 +1,6 @@
 package com.coding.common.components.jwt;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
@@ -11,17 +12,25 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtGra
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
  * claim → authentication 转换器（platform-api / k8s-server 共用，避免两服务映射漂移）：
  * - dataKey claim（TokenUserInfo）中的 platformRoles → {@code PLATFORM:<code>}
  * - dataKey claim（TokenUserInfo）中的 platformRoles 非空 → {@link #PLATFORM_SCOPE_AUTHORITY}（「平台侧」标记）
- * - dataKey claim（TokenUserInfo）中的 permissions → {@code PERM:<code>}
+ * - 权限 code → {@code PERM:<code>}：优先用 claim 自带的 {@code permissions}（兼容/回滚期），
+ *   否则交给 {@link JwtPermissionResolver} 按需解析（2026-10-09 起为常态）
  * - 标准 scope/roles claim 维持默认 JwtGrantedAuthoritiesConverter 行为
- * <p>
- * Spring Security 7 中资源服务器要求 {@code Converter<Jwt, AbstractAuthenticationToken>}。
+ *
+ * <p><b>为什么不再默认把权限闭包塞进 token</b>：那是把"无上限的列表"（长度 = 产品权限点总数）
+ * 放进"有硬上限的容器"（WS 握手 query 4KB、HTTP 头 8KB），并且带 1 小时保鲜期 ——
+ * 规则是热加载的而主体不热。改为请求期解析后，token 只留身份/角色/租户上下文，
+ * 陈旧上界由解析侧的 TTL 缓存决定（见 platform-api 的 PermissionClosureResolver）。
+ *
+ * <p>Spring Security 7 中资源服务器要求 {@code Converter<Jwt, AbstractAuthenticationToken>}。
  */
+@Slf4j
 public class PlatformJwtAuthenticationConverter implements Converter<Jwt, AbstractAuthenticationToken> {
 
     /**
@@ -42,12 +51,19 @@ public class PlatformJwtAuthenticationConverter implements Converter<Jwt, Abstra
      */
     public static final String PLATFORM_SCOPE_AUTHORITY = "PLATFORM_SCOPE";
 
+    /** claim 里权限闭包的字段名（TokenUserInfo.permissions） */
+    private static final String PERMISSIONS_CLAIM = "permissions";
+
     private final String dataKey;
+
+    /** null = 不解析（等价于 {@link JwtPermissionResolver#noop()}；仅测试与老构造场景用） */
+    private final JwtPermissionResolver permissionResolver;
 
     private final JwtGrantedAuthoritiesConverter defaultConverter = new JwtGrantedAuthoritiesConverter();
 
-    public PlatformJwtAuthenticationConverter(String dataKey) {
+    public PlatformJwtAuthenticationConverter(String dataKey, JwtPermissionResolver permissionResolver) {
         this.dataKey = dataKey;
+        this.permissionResolver = permissionResolver;
     }
 
     @Override
@@ -68,16 +84,48 @@ public class PlatformJwtAuthenticationConverter implements Converter<Jwt, Abstra
             if (platformSide) {
                 authorities.add(new SimpleGrantedAuthority(PLATFORM_SCOPE_AUTHORITY));
             }
-            Object perms = map.get("permissions");
-            if (perms instanceof List<?> plist) {
-                for (Object p : plist) {
-                    if (p != null && !p.toString().isBlank()) {
-                        authorities.add(new SimpleGrantedAuthority(PermissionAuthorityNames.perm(p.toString())));
-                    }
-                }
+            String username = text(map.get("username"));
+            for (String code : permissionCodes(jwt, map, username, tenantIdOf(map))) {
+                authorities.add(new SimpleGrantedAuthority(PermissionAuthorityNames.perm(code)));
             }
         }
         return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject());
     }
 
+    /**
+     * 权限 code 的来源：<b>claim 有就用 claim</b>（部署过渡期与回滚场景，老 token 仍带闭包），
+     * 否则按需解析。解析失败按"没有权限码"处理（fail-closed），绝不抛 ——
+     * 见 {@link JwtPermissionResolver} 的失败语义说明。
+     */
+    private List<String> permissionCodes(Jwt jwt, Map<?, ?> map, String username, String tenantId) {
+        Object claim = map.get(PERMISSIONS_CLAIM);
+        if (claim instanceof List<?> list) {
+            return list.stream()
+                    .filter(Objects::nonNull)
+                    .map(Object::toString)
+                    .filter(s -> !s.isBlank())
+                    .toList();
+        }
+        if (permissionResolver == null) {
+            return List.of();
+        }
+        String subject = username != null ? username : jwt.getSubject();
+        try {
+            List<String> resolved = permissionResolver.resolve(subject, tenantId);
+            return resolved == null ? List.of() : resolved;
+        } catch (Exception e) {
+            log.error("权限闭包解析失败，按无权限码处理（fail-closed）: user={}, tenant={}", subject, tenantId, e);
+            return List.of();
+        }
+    }
+
+    /** data.tenantInfo.tenantId；平台视图的 base token 没有它 → null（= 只算平台族） */
+    private static String tenantIdOf(Map<?, ?> map) {
+        Object tenantInfo = map.get("tenantInfo");
+        return tenantInfo instanceof Map<?, ?> t ? text(t.get("tenantId")) : null;
+    }
+
+    private static String text(Object o) {
+        return o == null ? null : o.toString();
+    }
 }

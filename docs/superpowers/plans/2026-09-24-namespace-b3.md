@@ -8,7 +8,7 @@
 
 **技术栈:** Java 21 / Maven 多模块 / fabric8 7.9.0 类型化模型 + SSA;Vue 3 + TS + Element Plus(无前端测试 runner)。
 
-**Spec:** `docs/superpowers/specs/2026-09-14-namespace-enhancement-design.md` §1–10(§11 延期,见 D10)。
+**Spec:** `docs/superpowers/specs/2026-09-14-namespace-enhancement-design.md` §1–10(§11 曾按 D10 延期,**已于 2026-10-09 随 B6/B7 补齐** —— 见本文件末尾「§11 落地记录」)。
 
 ## 用户裁决(2026-09-24,覆盖 spec 原文)
 
@@ -26,6 +26,46 @@
 | D10 | **§11(能力开关)整体延期至 B6/B7** | 依赖 calico/istio 地基,`grep` 证实全部不存在 |
 
 > **合并后勘误(2026-09-27,RBAC 已合入 main)**:D9 前提被推翻——RBAC(`PermissionAuthorizationManager` + `PermissionCrossCheckRunner`)已落地,启动期交叉校验要求每个端点都有权限行或豁免,否则 platform-api 拒启动。故新增迁移 `V2026_09_26_1__b3_namespace_permissions.sql`,为 10 个 `/namespace/**` 端点播种(读→`platform:allocation:list`、写→`platform:allocation:manage`;复用既有 code,admin 已经 `perm_ns_list/perm_ns_delete` 持有,manager 按 code 判权故无需新增 role 绑定)。连带 D4 错误码 `10023/10024/10025` 与 RBAC 的 `ROLE_BUILTIN_READONLY(10023)/ROLE_SCOPE_MISMATCH(10024)/TENANT_ADMIN_REQUIRED(10025)` 撞号 → **改号 `10028/10029/10030`**(见 `EnumResponseType`;新增 `EnumResponseTypeTest` 锁业务码唯一)。
+
+## §11 落地记录(2026-10-09,B6 服务网格 / B7 Calico 之后)
+
+D10 说的"延期至 B6/B7"已兑现。§11 分两次交付:**Calico 部分随 B7 落地**(ns annotation `cni.projectcalico.org/ipv{4,6}pools` 双向映射 + 编辑器「绑定地址池」区块 + 工作负载「固定 IP」候选按同 ns 绑定池过滤),**Istio ambient 部分为本批**。
+
+### 本批交付(全部已实施待部署)
+
+| 层 | 改动 |
+|---|---|
+| platform-common | `NamespaceDTO` +`dataplaneMode` / `useWaypoint`(⇄ ns label `istio.io/dataplane-mode` / `istio.io/use-waypoint`) |
+| k8s-core | `CoreV1NamespaceConverter` 双向映射这 2 个保留 label;`convertForUpdate` **三态**语义(见下) |
+| k8s-server | `MeshController` +`POST /mesh/gateways`(PLATFORM,admin client,按命名空间列 Gateway) |
+| platform-api | `NamespaceUpsertRequest`/`NamespaceView`/`NamespaceService` 携带 2 字段;`WorkloadService.meshToggle` + `POST /workloads/{name}/mesh-toggle`;`MeshService.waypointCandidates` + `POST /mesh/gateways`;`GatewayService.waypointNamesOf`/`waypointNames`(waypoint 判定与投影的唯一实现,平台侧与租户侧两条数据源共用) |
+| platform-data | `V2026_10_09_1__namespace_mesh_permissions.sql`(2 行 + 3 条角色关联) |
+| platform-web | 命名空间编辑器新增「服务网格(Istio Ambient)」区块;工作负载列表的网格管理进**行操作下拉菜单**(带当前态的分组标题 + 目标态菜单项);工作负载编辑器新增「服务网格(Ambient)」表单项;命名空间概览新增「服务网格」行;`LabelEditor` 新增 `excludeKeys`;`utils/waypoint.ts` 收口判定与保留键常量 |
+
+### 实现期定下的口径(与 spec §11 的偏离,都在代码注释里写了理由)
+
+1. **三态语义**:`null`=**不动**该 label(不是"清除")、`""`(空串)=**移除**(回到跟随)、有值=覆写。spec 只写了取值,没定"清空"怎么表达;不区分的话"capability 未探测时前端不传字段"这条防护就没法实现(同 B7 绑定池的 `overlayPools` 口径)。
+2. **端点形状**:spec §11.3 写 `POST /workload/mesh-toggle` + body 带 name/kind。实际落 `POST /workloads/{name}/mesh-toggle`(name 走路径变量,kind 可省)—— 对齐前缀重构后的现行约定与同资源的 `pause` 先例;`tenantId/clusterId/namespace/kind` 仍在 body。
+3. **不跑 §5 校验**:spec 说的"不受 A/B/C 校验拦截"落实为 `meshToggle` **有意跳过 `WorkloadValidator`**(只加/删两个 label,不改规格)。代价明确:外部 kubectl 建的、不合平台规格的工作负载仍不能在本平台编辑,但能把 ambient 打开。
+4. **`use-waypoint` 候选的平台侧通路**:命名空间是平台侧资源、Gateway 是**租户域**资源,平台管理员没有租户上下文、走不了租户的 `/gateways/list` → 新增 `POST /mesh/gateways`(`platform:cluster:manage`)。租户侧(工作负载页)仍走 `/gateways/list` + 前端按 `-waypoint` 类名筛。**两侧筛选都收敛到同一份规则**。
+5. **ambient 门禁分两面**:命名空间编辑器是平台页,用 `/mesh/status` 的 **ztunnel 活探测**(`istioAmbient`)作门禁;工作负载页是租户页,租户拿不到 ambient 结论 → 以能力快照派生的 `hasIstio` 为准,不拿 ambient 当硬门禁(写这两个 label 本身无害,没装 ambient 时 istio 直接忽略)。
+6. **waypoint 名存在性校验**(工作负载侧):指定了具体 waypoint 名时先确认它在本命名空间存在 —— 不存在的名字 istio 会**静默放行**(L7 策略不生效却无任何报错)。查询本身失败(集群断开 / 租户 SA 的 K8s RBAC 未覆盖 gateway group)→ **放行并记 warn**:这是一次可回退的 label 写入,不该因为查不到候选而卡死。
+7. **列表侧的网格管理放在行操作下拉菜单里**(用户 2026-10-09 指定)。两态开关表达不了三态(跟随 / 纳入 / 排除),故不用开关,改用**带当前态的菜单项**:每个分组一条禁用的"标题"项写明当前是什么(`ambient 流量 · 已纳入` / `L7 流量 · waypoint「x」`),下面只列**可切换到的目标态**(当前态不出现)。"排除(none)"与"回到跟随"是两个独立项 —— 两者的区别对使用者是有意义的("关"不再含糊地同时表示这两件事)。菜单项随行内状态增减(同已有的「暂停更新/恢复更新」写法)。候选为空且当前无标签时,不提供"瞎写一个名字"的口子,只给「创建 waypoint Gateway…」引导(指到不存在的 waypoint 会被 istio 静默放行、L7 策略不生效)。
+8. **保留键隔离 = 隐藏 + 保留**(`LabelEditor.excludeKeys`)。只隐藏不够:emitUpdate 用可见行重建整个 map,会把保留键从 model 里抹掉,于是"改个普通标签"顺带删了 ambient 配置。标注:ns 侧 2 个 label,工作负载侧同 2 个(固定 IP 早已用专用字段隔离了 `cni.projectcalico.org/ipAddrs`)。
+9. **权限行**:`/mesh/gateways` → `platform:cluster:manage`(同 `/mesh/**` 其余行);`/workloads/{name}/mesh-toggle` → **复用** `tenant:workload:update`(它本质就是一次工作负载更新,与 `pause` 同性质;不造 `tenant:mesh:*` 免得多出一个要单独授予的开关)。**新行仍须显式绑角色** —— 授权按 `platform_role_permission` 行关联,不是按 code 继承。
+10. **Element Plus 坑**:`value=""` 的选项会被 EP 当成"空值"显示 placeholder,故两处下拉都补了与"跟随"选项同文案的 `placeholder`,否则用户看到的是一个无意义的 `Select`。
+
+### 验证(2026-10-09)
+
+- `mvn -pl platform-common,k8s-core,k8s-server,platform-api -am test` 全绿(唯一红点是既有的 `WorkloadConverterStaticIpTest.revert_ipAddrs_annotation_maps_to_staticIps_and_is_removed_from_annotations`,见 §4 既有问题,与本批无关);新增用例:`CoreV1NamespaceConverterTest` +4(保留 label 三态 / 通用地图不得触碰保留键)、`WorkloadServiceMeshToggleTest` 10 例、`GatewayServiceTest.waypoint_names_projection_*`。
+- `npm --prefix platform-web run build`(含 `vue-tsc --build`)通过。
+- 浏览器实测(假 token + XHR stub 挂真实页面):命名空间编辑器回填 `纳入 ambient` / `waypoint`,提交体 `{"dataplaneMode":"ambient","useWaypoint":"waypoint","labels":{"env":"dev"}}`(保留键不在通用 labels 里);改选「跟随」后提交 `"dataplaneMode":""`;工作负载行操作菜单三行分别为 `ambient 流量 · 跟随命名空间` / `· 已纳入` / `· 已排除（none）`,可选项只列非当前态;点「纳入 ambient」→ 请求体 `{"dataplaneMode":"ambient"}`(无 useWaypoint = 不动),点 L7 组「回到跟随命名空间」→ 请求体 `{"useWaypoint":""}`(无 dataplaneMode)。
+
+### 仍未做(有意)
+
+- `istio.io/ingress-use-waypoint`(Istio 1.25+,服务/命名空间级):依赖控制面 flag `ENABLE_INGRESS_WAYPOINT_ROUTING`(默认 false),spec §11.1 明写 v1 不做。
+- 金丝雀 waypoint(`use-waypoint-canary*`):与 B6 的「每 ns 至多一个 waypoint」直接冲突,用户 2026-10-09 决定不做,详见 B6 计划文档「未覆盖(有意不做 · 记档)」。
+- 工作负载**详情页**的 ambient/L7 展示:列表操作菜单已有入口 + 编辑器已有区块,详情页暂未单列(§11.4 说的是"可以加")。
 
 ## 对上游设计稿的两处技术纠正(写代码前必读)
 

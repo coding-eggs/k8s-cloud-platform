@@ -6,12 +6,16 @@ package com.coding.auth.config;
 
 import com.coding.auth.grant.SessionRenewalAuthenticationToken;
 import com.coding.common.components.jwt.JwtProperties;
+import com.coding.common.components.jwt.PermissionClosureService;
 import com.coding.common.components.jwt.impl.JweTokenStrategy;
 import com.coding.common.components.jwt.impl.JwsTokenStrategy;
 import com.coding.auth.grant.SessionRenewalAuthenticationConverter;
 import com.coding.auth.grant.SessionRenewalAuthenticationProvider;
 import com.coding.auth.service.TokenExtrasService;
+import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
+import com.coding.data.mapper.auth.PlatformUserRoleMapper;
+import com.coding.data.mapper.auth.PlatformUserTenantRoleMapper;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.system.SecurityUser;
 import com.coding.data.models.system.TokenUserInfo;
@@ -23,6 +27,7 @@ import com.nimbusds.jose.proc.SecurityContext;
 
 import com.nimbusds.jwt.JWTClaimsSet;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -216,6 +221,21 @@ public class AuthorizationServerConfig {
     }
 
     /**
+     * 权限闭包计算（唯一实现，见该类 javadoc）。刻意在此注册而不是在 platform-common 打 {@code @Service}：
+     * 三个应用都扫 {@code com.coding.common}，打注解会让 k8s-server 也拿到一个"能查业务权限表"的 bean，
+     * 与它零业务逻辑的定位相悖。同样的注册见 platform-api。
+     *
+     * <p>本应用只在回滚开关打开时用它（默认 token 不带权限闭包）。
+     */
+    @Bean
+    public PermissionClosureService permissionClosureService(PlatformUserMapper userMapper,
+                                                             PlatformUserRoleMapper userRoleMapper,
+                                                             PlatformUserTenantRoleMapper userTenantRoleMapper,
+                                                             PlatformPermissionMapper permissionMapper) {
+        return new PermissionClosureService(userMapper, userRoleMapper, userTenantRoleMapper, permissionMapper);
+    }
+
+    /**
      1. JwtGenerator 构建初始 claims（issuer, sub, aud, iat, exp...）
      2. jwtCustomizer.customize(jwtEncodingContext)      ← 你改 claims/header
      3. JwsHeader header = jwsHeaderBuilder.build()       ← 固化 header
@@ -223,7 +243,9 @@ public class AuthorizationServerConfig {
      5. this.jwtEncoder.encode(JwtEncoderParameters.from(header, claims))  ← 签名+编码
      */
     @Bean
-    public OAuth2TokenCustomizer<JwtEncodingContext> jwtTokenCustomizer(PlatformUserMapper userMapper, TokenExtrasService extras) {
+    public OAuth2TokenCustomizer<JwtEncodingContext> jwtTokenCustomizer(PlatformUserMapper userMapper, TokenExtrasService extras,
+                                                                       PermissionClosureService closureService,
+                                                                       @Value("${platform.jwt.permissions-in-token:false}") boolean permissionsInToken) {
 
         return context -> {
             //通过username 查询用户信息
@@ -252,8 +274,13 @@ public class AuthorizationServerConfig {
                 }
                 tokenUserInfo.setTenantInfo(userTenantInfo);
             }
-            //权限闭包：tenantId 为空时内部自动只算平台族
-            tokenUserInfo.setPermissions(extras.permissions(platformUser.getId(), tenantId));
+            //权限闭包：**默认不写进 token**（2026-10-09 起）。它是"无上限的列表装进有硬上限的容器"
+            //（WS 握手 query 4KB / HTTP 头 8KB），且带 1 小时保鲜期（规则热加载而主体不热）。
+            //改由资源服务器按需解析（PermissionClosureService + platform-api 的 TTL 缓存）。
+            //开关只作回滚用：置 true 即恢复旧行为（转换器 claim 优先，会照旧消费它）。
+            if (permissionsInToken) {
+                tokenUserInfo.setPermissions(closureService.permissions(username, tenantId));
+            }
 
             context.getClaims().claim(jwtProperties.getDataKey(), tokenUserInfo);
             ClientSettings clientSettings = context.getRegisteredClient().getClientSettings();

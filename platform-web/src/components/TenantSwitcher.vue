@@ -15,6 +15,7 @@ import { ElMessage } from 'element-plus'
 import { switchTenant } from '@/auth/oauth'
 import { userApi } from '@/api'
 import { usePermission } from '@/stores/permission'
+import { sortTenantsDefaultFirst } from '@/utils/tenantOrder'
 import type { PlatformTenant } from '@/types'
 
 const perm = usePermission()
@@ -36,7 +37,7 @@ const modelValue = computed(() => perm.currentTenant?.tenantId ?? '')
 async function loadTenants(): Promise<void> {
   loading.value = true
   try {
-    tenants.value = await userApi.myTenants()
+    tenants.value = sortTenantsDefaultFirst(await userApi.myTenants())
   } catch {
     // 拉不到（会话失效由 http.ts 统一跳登录）→ 保持隐藏，不打扰
   } finally {

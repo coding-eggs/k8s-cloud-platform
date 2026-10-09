@@ -182,6 +182,8 @@
 ## 11. 命名空间级能力开关 + 工作负载级 ambient（评审后追加）★
 
 > 〔裁决 2026-09-26，D10：**本节整体延期至 B6/B7 实现，非 B3 范围。** 依赖的 calico IPPool 后端、istio ambient 探测（hasCalico/hasIstioAmbient）、`/workload/mesh-toggle` 端点均不存在（grep 证实）；B3 只交付 §1–10。NamespaceDTO 的 4 个保留 metadata 字段（ipv4/6Pools、dataplaneMode、useWaypoint）亦**不**在本批建模——避免造无消费方的死字段，留待 B6/B7 一并落。〕
+>
+> 〔落地 2026-10-09：**本节已全部实现**。Calico 绑定池部分随 B7 落地；Istio ambient 部分（ns 两个保留 label + 工作负载 ambient 开关 + 端点 + 前端区块/开关）见 `plans/2026-09-24-namespace-b3.md` 的「§11 落地记录」——那里记了与本文的 10 处口径偏离（三态语义、端点形状、平台侧 waypoint 候选通路、ambient 门禁分两面等）。本节的字段名/端点为设计原稿，以落地记录为准。〕
 
 > **来源**：B7（Calico）评审后用户追加——把「命名空间编辑」做成**命名空间级能力聚合点**，并把 Istio ambient mesh 下沉到工作负载。本节约束引用 B6（Istio / Gateway API）与 B7（Calico）已定能力，不新增独立子系统。**平台只读写 namespace / pod template 的保留 metadata，不部署任何对象。**
 

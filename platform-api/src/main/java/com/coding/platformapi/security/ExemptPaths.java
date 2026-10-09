@@ -23,6 +23,12 @@ public final class ExemptPaths {
             // 命名空间概览的 4 个只读 metrics 端点（cpu/memory/network/disk）：集群级、跨该 ns 全部 pod 聚合，
             // 纯只读展示，任意已登录用户可看（与「命名空间读全开放」一致），故豁免权限行；其余 /namespace/** 仍走权限表。
             "/namespace/metrics/**",
+            // Gateway 编辑器的 gatewayClassName 候选：窄投影（只回 name/controllerName/description，
+            // 剥掉 parametersRef/conditions/metadata）的纯候选值查询，与上面 SM/PM 的 discovery 四端点同性质。
+            // 有意不建权限行：gatewayClassName 是创建 Gateway 的必填项，若给它挂一个租户角色默认不持有的码，
+            // 租户的 Gateway 编辑器下拉会恒空 —— 那不是"降级"而是"用不了"（本端点回带的是"装了哪些
+            // gateway controller"，与 /cluster/capability/get 已对租户开放的 RESTMapper 信息同级）。
+            "/mesh/gatewayclass-refs",
             "/user/me", "/user/my-tenants", "/callback", "/error",
             "/actuator/**", "/doc.html", "/swagger-ui/**", "/swagger-ui.html",
             "/v3/api-docs/**", "/v3/api-docs.yaml", "/v3/api-docs.yaml/**",

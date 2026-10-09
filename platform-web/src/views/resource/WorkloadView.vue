@@ -2,10 +2,14 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { workloadApi, hpaApi } from '@/api'
-import type { K8sWorkload, K8sHpa } from '@/types'
+import { workloadApi, hpaApi, gatewayApi } from '@/api'
+import type { K8sGateway, K8sWorkload, K8sHpa } from '@/types'
 import type { WorkloadKind } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
+import { useMeshStatus } from '@/composables/useMeshStatus'
+import { isWaypointGateway, LABEL_DATAPLANE_MODE, LABEL_USE_WAYPOINT, USE_WAYPOINT_NONE } from '@/utils/waypoint'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
@@ -14,6 +18,7 @@ import { Refresh, MoreFilled, Search } from '@element-plus/icons-vue'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
+const perm = usePermission()
 
 const loading = ref(false)
 const list = ref<K8sWorkload[]>([])
@@ -204,8 +209,133 @@ async function openYaml(row: K8sWorkload): Promise<void> {
   }
 }
 
-// ---------- 行操作下拉：YAML / 编辑 / 伸缩 / 删除 ----------
+// ---------- 服务网格开关（B3 §11.4：行内两个显式开关，不入下拉菜单） ----------
+/**
+ * 三态 label 与两态开关的对应（回显）：
+ * - `ambient` → 开关开，文字「纳入」
+ * - `none` → 开关关，文字「排除」
+ * - 无标签 → 开关关，文字「跟随」（跟随命名空间/集群默认）
+ * 开=写 ambient；关=写 none（<b>显式排除</b>，不是"跟随"）——回到「跟随」要在编辑器里选，
+ * 这样列表上的"关"只有一个含义，不会因为命名空间后来开了 ambient 又被悄悄纳管。
+ */
+const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
+const meshAvailable = computed(() => mesh.hasIstio.value)
+const canToggleMesh = computed(() => perm.has(apiCodes.workloadUpdate))
+
+/** 本命名空间的 waypoint 候选（per-ns 至多一个，故常态 0/1 个） */
+const waypointOptions = ref<string[]>([])
+async function loadWaypoints(): Promise<void> {
+  waypointOptions.value = []
+  const { tenantId, clusterId, namespace } = state
+  if (!tenantId || !clusterId || !namespace || !meshAvailable.value) return
+  if (!perm.has(apiCodes.gatewayList)) return
+  try {
+    waypointOptions.value = ((await gatewayApi.list({ tenantId, clusterId, namespace })) ?? [])
+      .filter((g: K8sGateway) => isWaypointGateway(g)).map((g) => g.name).sort()
+  } catch {
+    waypointOptions.value = [] // 未装 Gateway API（CRD 404）等：拦截器已提示，降级为空
+  }
+}
+watch([() => state.clusterId, () => state.namespace, () => state.tenantId, meshAvailable],
+  () => { void loadWaypoints() }, { immediate: true })
+
+function ambientLabel(row: K8sWorkload): string {
+  return row.podTemplate?.labels?.[LABEL_DATAPLANE_MODE] ?? ''
+}
+function waypointLabel(row: K8sWorkload): string {
+  return row.podTemplate?.labels?.[LABEL_USE_WAYPOINT] ?? ''
+}
+
+/** 菜单分组标题里的「当前是什么」：两态开关表达不了三态，改由标题把三态说全 */
+function ambientStateText(row: K8sWorkload): string {
+  const a = ambientLabel(row)
+  return a === 'ambient' ? '已纳入' : a === 'none' ? '已排除（none）' : '跟随命名空间'
+}
+function l7StateText(row: K8sWorkload): string {
+  const w = waypointLabel(row)
+  if (!w) return '跟随命名空间'
+  return w === USE_WAYPOINT_NONE ? '不使用（none）' : `waypoint「${w}」`
+}
+
+/**
+ * 可切换到的 waypoint（当前值不出现在列表里 —— 已经是它了）。
+ * 当前值可能是平台外建的、不在候选里，故并进候选，否则"当前是什么"在菜单里就看不出来了。
+ */
+function waypointAlternatives(row: K8sWorkload): string[] {
+  const cur = waypointLabel(row)
+  const list = [...waypointOptions.value]
+  if (cur && cur !== USE_WAYPOINT_NONE && !list.includes(cur)) list.push(cur)
+  return list.filter((w) => w !== cur).sort()
+}
+
+/** 发一次 mesh-toggle：两个字段各自独立三态（不传=不动、空串=移除、有值=覆写），故只带被选的那一个 */
+async function meshToggle(row: K8sWorkload, body: { dataplaneMode?: string; useWaypoint?: string }, tip: string): Promise<void> {
+  try {
+    await workloadApi.meshToggle(row.name, { ...ctxParams.value, kind: row.kind, ...body })
+    ElMessage.success(tip)
+    await refresh()
+  } catch { /* 拦截器已提示 */ }
+}
+
+/** 三个目标态各自的确认文案（都会改 pod template → 触发滚动更新，所以都要问一次） */
+const AMBIENT_CONFIRM: Record<string, string> = {
+  ambient: '纳入 ambient 网格？（写 istio.io/dataplane-mode: ambient）',
+  none: '排除出 mesh？（写 istio.io/dataplane-mode: none —— 显式排除，不是"跟随"）',
+  '': '删除该标签、回到跟随命名空间？（移除 istio.io/dataplane-mode）',
+}
+
+async function setAmbient(row: K8sWorkload, value: string): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `把「${row.name}」${AMBIENT_CONFIRM[value] ?? value}`,
+      '提示',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  await meshToggle(row, { dataplaneMode: value }, '已提交，工作负载将滚动更新')
+}
+
+async function setL7(row: K8sWorkload, value: string): Promise<void> {
+  const ask = value === ''
+    ? `删除「${row.name}」的 use-waypoint 标签、回到跟随命名空间？`
+    : value === USE_WAYPOINT_NONE
+      ? `让「${row.name}」显式不使用 waypoint？（写 istio.io/use-waypoint: none，压过命名空间级设置）`
+      : `让「${row.name}」的七层流量经过 waypoint「${value}」？（写 istio.io/use-waypoint: ${value}）`
+  try {
+    await ElMessageBox.confirm(ask, '提示', { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' })
+  } catch { return }
+  await meshToggle(row, { useWaypoint: value }, '已提交，工作负载将滚动更新')
+}
+
+/**
+ * 该命名空间还没有 waypoint Gateway 时，不在菜单里瞎写一个名字 ——
+ * 指到不存在的 waypoint，istio 会**静默放行**（L7 策略不生效却没有任何报错）。故引导去创建。
+ */
+async function goCreateWaypoint(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `命名空间「${state.namespace}」还没有 waypoint Gateway。L7 策略需要一个 waypoint 才有地方执行；`
+      + `没有它，istio 会直接放行流量、策略静默不生效。是否现在去创建？`,
+      '先创建 waypoint Gateway',
+      { type: 'warning', confirmButtonText: '去创建', cancelButtonText: '取消' },
+    )
+  } catch { return }
+  router.push({ name: 'gateway-editor', query: { waypoint: '1' } })
+}
+
+// ---------- 行操作下拉：YAML / 编辑 / 伸缩 / 删除 / 服务网格 ----------
 function onRowCommand(cmd: string, row: K8sWorkload): void {
+  if (cmd.startsWith('ambient-')) {
+    void setAmbient(row, cmd === 'ambient-on' ? 'ambient' : cmd === 'ambient-none' ? 'none' : '')
+    return
+  }
+  if (cmd.startsWith('l7-')) {
+    if (cmd === 'l7-create') { void goCreateWaypoint(); return }
+    if (cmd === 'l7-none') { void setL7(row, USE_WAYPOINT_NONE); return }
+    if (cmd === 'l7-follow') { void setL7(row, ''); return }
+    void setL7(row, cmd.slice('l7-use:'.length))   // l7-use:<waypoint 名>
+    return
+  }
   switch (cmd) {
     case 'yaml': openYaml(row); break
     case 'edit': if (!isOpManaged(row)) goEditor(row.name); break
@@ -310,7 +440,10 @@ const contextDesc = computed(() => {
 
           </template>
         </el-table-column>
-        <el-table-column  width="64" fixed="right">
+        <!-- 服务网格（B3 §11.4）：两个显式开关，放在行操作栏（与「⋯」并列），**不入**行操作下拉。
+             「关」写的是 none（显式排除），不是"跟随" —— 回去跟随要在编辑器里选，这样列表上的关只有一个含义。
+             三态（跟随 / 纳入 / 排除、L7 的 waypoint 名）挤在一列里放不下完整措辞，故把完整状态挂 tooltip。 -->
+        <el-table-column label="操作" width="64" fixed="right">
           <template #default="{ row }">
             <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
               <el-button link type="primary" :icon="MoreFilled" />
@@ -323,6 +456,27 @@ const contextDesc = computed(() => {
                   <el-dropdown-item command="scale">伸缩</el-dropdown-item>
                   <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
+
+                  <!-- 服务网格（B3 §11.4）：两态开关表达不了三态（跟随 / 纳入 / 排除），故用带当前态的菜单项。
+                       禁用项只作分组标题，把"当前是什么"写在标题里；下面是可点的目标态（当前态不出现在列表里）。
+                       「关」一律写 none（显式排除），回到跟随是单独一项 —— 两者的区别对使用者是有意义的。 -->
+                  <template v-if="meshAvailable">
+                    <el-dropdown-item divided disabled>ambient 流量 · {{ ambientStateText(row) }}</el-dropdown-item>
+                    <el-dropdown-item v-if="ambientLabel(row) !== 'ambient'" command="ambient-on" :disabled="!canToggleMesh">纳入 ambient</el-dropdown-item>
+                    <el-dropdown-item v-if="ambientLabel(row) !== 'none'" command="ambient-none" :disabled="!canToggleMesh">排除出 mesh（none）</el-dropdown-item>
+                    <el-dropdown-item v-if="ambientLabel(row)" command="ambient-follow" :disabled="!canToggleMesh">回到跟随命名空间</el-dropdown-item>
+
+                    <el-dropdown-item divided disabled>L7 流量 · {{ l7StateText(row) }}</el-dropdown-item>
+                    <el-dropdown-item
+                      v-for="w in waypointAlternatives(row)" :key="w"
+                      :command="`l7-use:${w}`" :disabled="!canToggleMesh"
+                    >经过 waypoint「{{ w }}」</el-dropdown-item>
+                    <el-dropdown-item v-if="!waypointOptions.length && !waypointLabel(row)" command="l7-create" :disabled="!canToggleMesh">创建 waypoint Gateway…</el-dropdown-item>
+                    <el-dropdown-item v-if="!waypointOptions.length && waypointLabel(row)" disabled>该命名空间暂无 waypoint Gateway（当前值可能已被删除）</el-dropdown-item>
+                    <el-dropdown-item v-if="waypointLabel(row) && waypointLabel(row) !== USE_WAYPOINT_NONE" command="l7-none" :disabled="!canToggleMesh">不使用 waypoint（none）</el-dropdown-item>
+                    <el-dropdown-item v-if="waypointLabel(row)" command="l7-follow" :disabled="!canToggleMesh">回到跟随命名空间</el-dropdown-item>
+                  </template>
+
                   <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>

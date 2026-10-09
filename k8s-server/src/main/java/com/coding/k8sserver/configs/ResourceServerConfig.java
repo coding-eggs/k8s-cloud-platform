@@ -1,6 +1,7 @@
 
 package com.coding.k8sserver.configs;
 
+import com.coding.common.components.jwt.JwtPermissionResolver;
 import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
@@ -84,8 +85,11 @@ public class ResourceServerConfig {
 				.oauth2ResourceServer(ors -> {
 					//WS 握手无法带 Authorization 头，允许 token 走 query（access_token）
 					ors.bearerTokenResolver(new QueryParameterBearerTokenResolver());
+					//权限码解析器传 noop：本层判权只用 PLATFORM_SCOPE（见上方 boundaryAuthorizationManager）
+					//+ 命名空间分配表，**不消费 PERM:**，也不该为此去查业务库（k8s-server 零业务逻辑）。
+					//显式写在这里而不是靠默认值 —— 契约要看得见：本服务没有权限码语义。
 					ors.jwt(jwt -> jwt.jwtAuthenticationConverter(
-							new PlatformJwtAuthenticationConverter(dataKey)));
+							new PlatformJwtAuthenticationConverter(dataKey, JwtPermissionResolver.noop())));
 				});
 
 		return http.build();

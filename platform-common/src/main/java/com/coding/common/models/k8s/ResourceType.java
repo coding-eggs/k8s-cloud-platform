@@ -6,7 +6,11 @@ import com.coding.common.models.k8s.dto.BgpPeerDTO;
 import com.coding.common.models.k8s.dto.ClusterRoleDTO;
 import com.coding.common.models.k8s.dto.ConfigMapDTO;
 import com.coding.common.models.k8s.dto.DeploymentDTO;
+import com.coding.common.models.k8s.dto.GatewayClassDTO;
+import com.coding.common.models.k8s.dto.GatewayDTO;
+import com.coding.common.models.k8s.dto.GrpcRouteDTO;
 import com.coding.common.models.k8s.dto.HpaDTO;
+import com.coding.common.models.k8s.dto.HttpRouteDTO;
 import com.coding.common.models.k8s.dto.IpoolDTO;
 import com.coding.common.models.k8s.dto.IpReservationDTO;
 import com.coding.common.models.k8s.dto.LimitRangeDTO;
@@ -24,6 +28,9 @@ import com.coding.common.models.k8s.dto.ServiceAccountDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServiceMonitorDTO;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.k8s.dto.TcpRouteDTO;
+import com.coding.common.models.k8s.dto.TlsRouteDTO;
+import com.coding.common.models.k8s.dto.UdpRouteDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import lombok.AllArgsConstructor;
 
@@ -54,7 +61,18 @@ public enum ResourceType {
     IP_RESERVATION(IpReservationDTO.class),
     BGP_CONFIGURATION(BgpConfigurationDTO.class),
     BGP_PEER(BgpPeerDTO.class),
-    BGP_FILTER(BgpFilterDTO.class)
+    BGP_FILTER(BgpFilterDTO.class),
+    // —— 服务网格 Gateway API（B6）。全部命名空间级、租户域。
+    // 归属：GATEWAY_CLASS 集群级（admin client、PLATFORM 边界）；其余 6 类命名空间级（分配表边界）。
+    GATEWAY_CLASS(GatewayClassDTO.class),
+    GATEWAY(GatewayDTO.class),
+    HTTP_ROUTE(HttpRouteDTO.class),
+    // GRPCRoute 自 Gateway API v1.1 GA；TCP/TLS/UDPRoute 自 v1.6 起 GA 于 v1（更早的集群只有 v1alpha2）。
+    // 后三者的 CRD 版本由 KubernetesOperationsFactory.resolveL4Version 按集群 capability 分派。
+    GRPC_ROUTE(GrpcRouteDTO.class),
+    TCP_ROUTE(TcpRouteDTO.class),
+    TLS_ROUTE(TlsRouteDTO.class),
+    UDP_ROUTE(UdpRouteDTO.class)
     ;
 
     private final Class<?> clazz;

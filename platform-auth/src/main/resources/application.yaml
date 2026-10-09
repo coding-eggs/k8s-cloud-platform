@@ -94,6 +94,13 @@ jwt:
   enabled: true
   issuer: ${OAUTH2_SERVER:http://127.0.0.1:9527}
   data-key: data
+platform:
+  jwt:
+    # 是否把权限点 code 全闭包写进 token 的 data.permissions（默认 false，2026-10-09 起不再写）。
+    # 那份列表随产品权限点总数增长，却要塞进有硬上限的容器（WS 握手 query 4KB / HTTP 头 8KB），
+    # 且带 1 小时保鲜期；改由 platform-api 按需解析（见 PermissionClosureResolver）。
+    # ⚠️ 仅作回滚开关：置 true 即恢复旧行为（转换器 claim 优先，会照旧消费它），代价是 token 重新变大。
+    permissions-in-token: false
 logging:
   level:
     root: info

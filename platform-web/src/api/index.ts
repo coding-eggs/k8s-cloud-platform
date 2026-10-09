@@ -8,7 +8,11 @@ import type {
   K8sClusterCapability,
   K8sClusterOption,
   K8sConfigMap,
+  K8sGateway,
+  K8sGatewayClass,
+  K8sGrpcRoute,
   K8sHpa,
+  K8sHttpRoute,
   K8sNode,
   K8sPvc,
   K8sPersistentVolume,
@@ -20,11 +24,15 @@ import type {
   K8sService,
   K8sServiceMonitor,
   K8sStorageClass,
+  K8sTcpRoute,
+  K8sTlsRoute,
+  K8sUdpRoute,
   K8sIpool,
   K8sIpReservation,
   PoolIpamSummary,
   IpamBlockStat,
   IpamIpDetail,
+  MeshStatus,
   NamespaceAllocation,
   NamespaceView,
   NodeDrainResult,
@@ -108,6 +116,25 @@ export const tenantApi = {
 }
 
 /** 命名空间管理 /namespace（K8s 命名空间视图 + 创建/编辑/删除 + 配额/限制范围） */
+
+/**
+ * 命名空间创建/编辑载荷。两个 istio 字段各自 **三态**：不传 = 不动该标签、空串 = 移除、有值 = 覆写
+ * ——「跟随集群默认」要发空串而不是省略字段，否则后端按"未传"处理、旧值会留在 ns 上。
+ * 同理：capability 未探测到 Calico / Istio 时前端不传对应字段（防误清既有配置）。
+ */
+type NamespaceUpsertPayload = {
+  clusterId: string
+  name: string
+  description?: string
+  labels?: Record<string, string>
+  ipv4Pools?: string[]
+  ipv6Pools?: string[]
+  /** istio.io/dataplane-mode：ambient / none / ''（移除） */
+  dataplaneMode?: string
+  /** istio.io/use-waypoint：waypoint 名 / none / ''（移除） */
+  useWaypoint?: string
+}
+
 export const namespaceApi = {
   list: (clusterId: string) => http.post<never, NamespaceView[]>('/namespace/list', { clusterId }),
   delete: (payload: { clusterId: string; namespace: string }) =>
@@ -118,9 +145,9 @@ export const namespaceApi = {
   /** 命名空间原始 YAML（只读展示） */
   yaml: (clusterId: string, namespace: string) =>
     http.post<never, string>('/namespace/yaml', { clusterId, namespace }),
-  create: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string>; ipv4Pools?: string[]; ipv6Pools?: string[] }) =>
+  create: (payload: NamespaceUpsertPayload) =>
     http.post<never, void>('/namespace/create', payload),
-  update: (payload: { clusterId: string; name: string; description?: string; labels?: Record<string, string>; ipv4Pools?: string[]; ipv6Pools?: string[] }) =>
+  update: (payload: NamespaceUpsertPayload) =>
     http.post<never, void>('/namespace/update', payload),
   /** 配额：get 为 null = 未配置；upsert 幂等（对象名固定 default）；delete 缺失时 no-op */
   quotaGet: (clusterId: string, namespace: string) =>
@@ -271,6 +298,13 @@ export const workloadApi = {
   /** 暂停/恢复 Deployment 更新（body.paused=true 暂停 / false 恢复） */
   pause: (name: string, ctx: Ctx3, paused: boolean) =>
     http.post<never, WorkloadDetail>(`/workloads/${encodeURIComponent(name)}/pause`, { ...ctx, name, paused }),
+  /**
+   * ambient 开关（B3 §11）：只改 pod template 的两个 istio 保留 label，其余字段取线上现值回写。
+   * 两个字段各自独立三态：**不传 = 不动、空串 = 移除该 label、有值 = 覆写** ——
+   * 列表页两个开关各发各的，不会互相踩。改 pod template → 触发滚动更新。
+   */
+  meshToggle: (name: string, ctx: Ctx3 & { kind?: string; dataplaneMode?: string; useWaypoint?: string }) =>
+    http.post<never, WorkloadDetail>(`/workloads/${encodeURIComponent(name)}/mesh-toggle`, { ...ctx, name }),
 }
 
 /** ServiceMonitor /servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
@@ -303,6 +337,55 @@ export const podMonitorRelabelApi = {
   metricNames: (ctx: PmDiscoveryCtx) =>
     http.post<never, string[]>('/podmonitors/metric-names', ctx),
 }
+
+// ==================== 服务网格 Gateway API（B6）====================
+
+/** 服务网格 /mesh（GatewayClass = 平台管理面；网关状态与引用候选单列） */
+export const meshApi = {
+  /** GatewayClass CRUD（集群级，平台管理面：platform:cluster:manage） */
+  gatewayClass: {
+    list: (ctx: { clusterId: string; labelSelector?: string }) =>
+      http.post<never, K8sGatewayClass[]>('/mesh/gatewayclasses/list', ctx),
+    get: (name: string, clusterId: string) =>
+      http.get<never, K8sGatewayClass>(`/mesh/gatewayclasses/${encodeURIComponent(name)}`, { params: { clusterId } }),
+    getYaml: (name: string, clusterId: string) =>
+      http.get<never, string>(`/mesh/gatewayclasses/${encodeURIComponent(name)}/yaml`, { params: { clusterId } }),
+    create: (clusterId: string, body: K8sGatewayClass) =>
+      http.post<never, K8sGatewayClass>('/mesh/gatewayclasses', body, { params: { clusterId } }),
+    update: (name: string, clusterId: string, body: K8sGatewayClass) =>
+      http.put<never, K8sGatewayClass>(`/mesh/gatewayclasses/${encodeURIComponent(name)}`, body, { params: { clusterId } }),
+    delete: (name: string, clusterId: string) =>
+      http.delete<never, void>(`/mesh/gatewayclasses/${encodeURIComponent(name)}`, { params: { clusterId } }),
+  },
+  /** GatewayClass 引用候选（窄投影 name/controllerName/description，任何登录用户可读）——供 Gateway 编辑器选 gatewayClassName */
+  gatewayClassRefs: (clusterId: string) =>
+    http.post<never, K8sGatewayClass[]>('/mesh/gatewayclass-refs', null, { params: { clusterId } }),
+  /** 网格状态（hasIstio / istioAmbient / hasGatewayApi / versions）。失败上抛 → 调用方退化「未探测」 */
+  status: (clusterId: string) =>
+    http.post<never, MeshStatus>('/mesh/status', null, { params: { clusterId } }),
+  /** 命名空间内的 waypoint Gateway 名（平台侧读）——供命名空间编辑器的 istio.io/use-waypoint 下拉。
+   *  命名空间是平台侧资源、Gateway 是租户域资源，平台管理员没有租户上下文，故不能走 gatewayApi.list。 */
+  namespaceWaypoints: (clusterId: string, namespace: string) =>
+    http.post<never, string[]>('/mesh/gateways', null, { params: { clusterId, namespace } }),
+}
+
+/** Gateway /gateways（CRD，集群未装 Gateway API 时透传 404；租户域） */
+export const gatewayApi = makeResourceApi<K8sGateway>('gateways')
+
+/** HTTPRoute /httproutes（CRD，集群未装 Gateway API 时透传 404；租户域） */
+export const httpRouteApi = makeResourceApi<K8sHttpRoute>('httproutes')
+
+/** GRPCRoute /grpcroutes（CRD；GRPCRoute 自 Gateway API v1.1 GA，后端单挂 v1，租户域） */
+export const grpcRouteApi = makeResourceApi<K8sGrpcRoute>('grpcroutes')
+
+/** TCPRoute /tcproutes（CRD；CRD 版本 v1/v1alpha2 由后端按集群 capability 分派，租户域） */
+export const tcpRouteApi = makeResourceApi<K8sTcpRoute>('tcproutes')
+
+/** TLSRoute /tlsroutes（CRD；比 TCP/UDP 多 hostnames = SNI 匹配；版本分派同 TCP，租户域） */
+export const tlsRouteApi = makeResourceApi<K8sTlsRoute>('tlsroutes')
+
+/** UDPRoute /udproutes（CRD；与 TCPRoute 同构；版本分派同 TCP，租户域） */
+export const udpRouteApi = makeResourceApi<K8sUdpRoute>('udproutes')
 
 /** HPA /hpas（发散资源：autoscaling v1/v2 由后端按集群 capability 分派） */
 export const hpaApi = makeResourceApi<K8sHpa>('hpas')

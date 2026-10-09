@@ -27,4 +27,10 @@ public class NamespaceUpsertRequest {
 
     @Schema(description = "Calico 绑定 IPv6 地址池名列表（空/不传=默认分配）")
     private List<String> ipv6Pools;
+
+    @Schema(description = "Istio ambient 数据面模式 → label istio.io/dataplane-mode；ambient / none；空串=移除该标签（跟随集群默认）；不传=不改动")
+    private String dataplaneMode;
+
+    @Schema(description = "Istio L7 waypoint → label istio.io/use-waypoint；值 = 本命名空间 waypoint Gateway 名 或 none；空串=移除该标签；不传=不改动")
+    private String useWaypoint;
 }

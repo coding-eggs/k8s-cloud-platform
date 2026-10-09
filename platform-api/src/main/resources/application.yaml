@@ -64,6 +64,27 @@ spring:
       maximum-pool-size: 10
       max-lifetime: 0
       connection-test-query: SELECT 1
+
+  # Redis：**跨实例共享的 TTL 缓存**（权限闭包 / Calico IPAM 派生查询）。
+  # 多实例部署时各实例各存一份本地缓存 = 各查各的库、且同一用户在两个实例上可能拿到不同授权结果，
+  # 故这两处缓存统一放这里。键统一带 platform:cache: 前缀，与同库里 auth 的会话键（spring:session:*）区分。
+  # ⚠️ Redis 只优化负载，不是依赖：读失败即退化为"直接查源"（见 RedisJsonCache），不会因它挂掉而不可用。
+  # ⚠️ 与 auth 会话共用一个 database：运维时**不要 FLUSHDB**（会连带踢掉所有登录会话）。
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.31.80}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
+      database: ${REDIS_CACHE_DATABASE:1}
+      timeout: 2s                # 卡住时不要拖慢请求路径（超时即直查源）
+      connect-timeout: 2s
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: 1000ms
   security:
     ignore-urls:
       - "/actuator/**"

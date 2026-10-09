@@ -23,6 +23,9 @@ import java.util.Map;
  *       WorkloadConverter 的 effectiveAnnotations 是替换式（只写 description 一个键），
  *       对命名空间不安全：集群里常有第三方工具打的 annotation（field.cattle.io/* 等），
  *       替换会静默清掉它们。故 convertForUpdate 以线上 metadata 为底、只增删本类建模的键。</li>
+ *   <li>保留 label 独占：{@code istio.io/dataplane-mode} / {@code istio.io/use-waypoint} 由 DTO 专用字段
+ *       （dataplaneMode / useWaypoint）管理，通用 labels 地图里的同名键一律忽略（防两处输入互相覆盖）；
+ *       update 的语义与绑定池注解一致 —— null=不动、空串=删键、有值=覆写。</li>
  * </ul>
  */
 public class CoreV1NamespaceConverter implements CommonConverter<Namespace, NamespaceDTO> {
@@ -36,13 +39,25 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
     public static final String ANNOTATION_IPV4_POOLS = "cni.projectcalico.org/ipv4pools";
     public static final String ANNOTATION_IPV6_POOLS = "cni.projectcalico.org/ipv6pools";
 
+    /** Istio ambient 数据面模式（label；ztunnel 据此决定是否拦截该 ns 的 Pod 流量） */
+    public static final String LABEL_DATAPLANE_MODE = "istio.io/dataplane-mode";
+    /** Istio L7 waypoint（label；值为该 ns 的 waypoint Gateway 名，或 none=显式不使用） */
+    public static final String LABEL_USE_WAYPOINT = "istio.io/use-waypoint";
+
+    /** 平台保留 label：由专用字段（{@link NamespaceDTO#getDataplaneMode()} 等）独占管理，通用 labels 地图不得覆盖 */
+    private static final List<String> RESERVED_LABELS = List.of(LABEL_DATAPLANE_MODE, LABEL_USE_WAYPOINT);
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Override
     public Namespace convert(NamespaceDTO dto) {
         Map<String, String> labels = new LinkedHashMap<>();
         if (dto.getLabels() != null) {
-            labels.putAll(dto.getLabels());
+            dto.getLabels().forEach((k, v) -> {
+                if (!RESERVED_LABELS.contains(k)) {
+                    labels.put(k, v);
+                }
+            });
         }
         labels.put(MANAGED_BY_LABEL, MANAGED_BY_VALUE);   // 平台拥有标记
 
@@ -60,7 +75,17 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
         if (dto.getIpv6Pools() != null && !dto.getIpv6Pools().isEmpty()) {
             b.editMetadata().addToAnnotations(ANNOTATION_IPV6_POOLS, poolListToJson(dto.getIpv6Pools())).endMetadata();
         }
+        // Istio ambient：创建时只写非空值（空串/null = 不设标签，即跟随集群默认）
+        putIfPresent(b, LABEL_DATAPLANE_MODE, dto.getDataplaneMode());
+        putIfPresent(b, LABEL_USE_WAYPOINT, dto.getUseWaypoint());
         return b.build();
+    }
+
+    /** 非空 → 打 label；空/null → 不打（创建路径用；更新路径另见 overlayMeshLabels） */
+    private static void putIfPresent(NamespaceBuilder b, String key, String value) {
+        if (StringUtils.hasText(value)) {
+            b.editMetadata().addToLabels(key, value.trim()).endMetadata();
+        }
     }
 
     @Override
@@ -79,6 +104,10 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
                 dto.setDescription(ann.get(DESCRIPTION_ANNOTATION));
                 dto.setIpv4Pools(parsePoolList(ann.get(ANNOTATION_IPV4_POOLS)));
                 dto.setIpv6Pools(parsePoolList(ann.get(ANNOTATION_IPV6_POOLS)));
+            }
+            if (ns.getMetadata().getLabels() != null) {
+                dto.setDataplaneMode(ns.getMetadata().getLabels().get(LABEL_DATAPLANE_MODE));
+                dto.setUseWaypoint(ns.getMetadata().getLabels().get(LABEL_USE_WAYPOINT));
             }
         }
         if (ns.getStatus() != null) {
@@ -109,7 +138,9 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
         labels.remove(MANAGED_BY_LABEL);
         if (dto.getLabels() != null) {
             dto.getLabels().forEach((k, v) -> {
-                if (!MANAGED_BY_LABEL.equals(k)) {
+                // managed-by 归本类独占；istio 两个保留 label 归专用字段（下方 overlayMeshLabels），
+                // 否则「跟随集群默认」时通用地图会把刚被删掉的旧值又贴回去
+                if (!MANAGED_BY_LABEL.equals(k) && !RESERVED_LABELS.contains(k)) {
                     labels.put(k, v);
                 }
             });
@@ -117,6 +148,10 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
         if (liveManaged) {
             labels.put(MANAGED_BY_LABEL, MANAGED_BY_VALUE);
         }
+        // Istio ambient 两个保留 label：非空→覆写；空串→删除（显式「不使用 / 跟随集群默认」）；
+        // null=未传→保持现状（与绑定池同一口径：capability 未探测时前端不传字段，防误清）
+        overlayMeshLabel(labels, LABEL_DATAPLANE_MODE, dto.getDataplaneMode());
+        overlayMeshLabel(labels, LABEL_USE_WAYPOINT, dto.getUseWaypoint());
         // annotation：description 有值→覆写；无值→删除（清空描述）
         if (StringUtils.hasText(dto.getDescription())) {
             annotations.put(DESCRIPTION_ANNOTATION, dto.getDescription());
@@ -144,6 +179,18 @@ public class CoreV1NamespaceConverter implements CommonConverter<Namespace, Name
             annotations.put(key, poolListToJson(pools));
         } else {
             annotations.remove(key);
+        }
+    }
+
+    // ---------- Istio ambient 保留 label 辅助 ----------
+
+    /** 有值→覆写；空串→删除该键（显式「不使用 / 跟随集群默认」）；null=未传→保持现状 */
+    private static void overlayMeshLabel(Map<String, String> labels, String key, String value) {
+        if (value == null) return;
+        if (StringUtils.hasText(value)) {
+            labels.put(key, value.trim());
+        } else {
+            labels.remove(key);
         }
     }
 

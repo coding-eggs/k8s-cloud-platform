@@ -32,6 +32,12 @@ public class NamespaceDTO extends BaseResources {
     @Schema(description = "Calico 绑定 IPv6 地址池 → metadata.annotations[\"cni.projectcalico.org/ipv6pools\"]（JSON 数组字符串；空=默认分配）")
     private List<String> ipv6Pools;
 
+    @Schema(description = "Istio ambient 数据面模式 → metadata.labels[\"istio.io/dataplane-mode\"]；取值 ambient / none，null 或空串 = 不设该标签（跟随集群默认）")
+    private String dataplaneMode;
+
+    @Schema(description = "Istio L7 waypoint → metadata.labels[\"istio.io/use-waypoint\"]；取值 = 本命名空间 waypoint Gateway 名 或 none（显式不使用），null 或空串 = 不设该标签")
+    private String useWaypoint;
+
     @Schema(description = "资源版本（只读回传）")
     private String resourceVersion;
 

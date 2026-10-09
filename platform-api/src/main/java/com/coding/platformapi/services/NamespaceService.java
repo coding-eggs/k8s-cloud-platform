@@ -333,6 +333,8 @@ public class NamespaceService {
         v.setLabels(ns.getLabels());
         v.setIpv4Pools(ns.getIpv4Pools());
         v.setIpv6Pools(ns.getIpv6Pools());
+        v.setDataplaneMode(ns.getDataplaneMode());
+        v.setUseWaypoint(ns.getUseWaypoint());
         return v;
     }
 
@@ -357,6 +359,8 @@ public class NamespaceService {
         dto.setLabels(req.getLabels());
         dto.setIpv4Pools(req.getIpv4Pools());
         dto.setIpv6Pools(req.getIpv6Pools());
+        dto.setDataplaneMode(req.getDataplaneMode());
+        dto.setUseWaypoint(req.getUseWaypoint());
         return dto;
     }
 

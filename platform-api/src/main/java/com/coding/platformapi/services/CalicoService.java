@@ -12,15 +12,17 @@ import com.coding.common.models.k8s.dto.IpoolDTO;
 import com.coding.common.models.k8s.dto.IpReservationDTO;
 import com.coding.common.models.k8s.dto.PoolIpamSummaryDTO;
 import com.coding.common.models.k8s.dto.SecretRefOptionDTO;
+import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sCalicoClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import tools.jackson.core.type.TypeReference;
 
 /**
  * Calico 业务层：IPPool CRUD 透传 + IPAM 派生查询编排（降级 + TTL 缓存）+ IPPool 删除守卫。
@@ -33,12 +35,17 @@ import java.util.function.Supplier;
 public class CalicoService {
 
     private final K8sCalicoClient k8s;
+    private final RedisJsonCache cache;
 
-    /** IPAM 派生结果 TTL（秒）：同 B4，短缓存吸收高频刷新，过期重算。 */
-    private static final long CACHE_TTL_SECONDS = 45;
-    private static final int CACHE_MAX_ENTRIES = 1024;
+    /** IPAM 派生结果 TTL：同 B4，短缓存吸收高频刷新，过期重算。 */
+    private static final Duration CACHE_TTL = Duration.ofSeconds(45);
 
-    private final TtlCache cache = new TtlCache(CACHE_TTL_SECONDS, CACHE_MAX_ENTRIES);
+    /** 各查询的反序列化类型（Redis 里存 JSON） */
+    private static final TypeReference<PoolIpamSummaryDTO> SUMMARY_TYPE = new TypeReference<>() {};
+    private static final TypeReference<List<IpamBlockStatDTO>> BLOCKS_TYPE = new TypeReference<>() {};
+    private static final TypeReference<Boolean> BOOL_TYPE = new TypeReference<>() {};
+    private static final TypeReference<List<String>> STRING_LIST_TYPE = new TypeReference<>() {};
+    private static final TypeReference<List<IpamIpDetailDTO>> IP_DETAIL_TYPE = new TypeReference<>() {};
 
     // ==================== IPPool CRUD（透传；delete 带守卫） ====================
 
@@ -197,27 +204,28 @@ public class CalicoService {
     // ==================== IPAM 派生查询（降级 + TTL 缓存） ====================
 
     public PoolIpamSummaryDTO ipamSummary(String clusterId, String poolName) {
-        return cache.get("summary:" + clusterId + ":" + poolName, () -> safe(
+        return cache.get("calico:summary:" + clusterId + ":" + poolName, CACHE_TTL, SUMMARY_TYPE, () -> safe(
                 () -> k8s.ipamSummary(clusterId, poolName)));
     }
 
     public List<IpamBlockStatDTO> ipamBlocks(String clusterId, String poolName, String search) {
-        return cache.get("blocks:" + clusterId + ":" + poolName + ":" + (search == null ? "" : search), () -> safe(
-                () -> k8s.ipamBlocks(clusterId, poolName, search)));
+        return cache.get("calico:blocks:" + clusterId + ":" + poolName + ":" + (search == null ? "" : search),
+                CACHE_TTL, BLOCKS_TYPE, () -> safe(() -> k8s.ipamBlocks(clusterId, poolName, search)));
     }
 
     public Boolean ipamIsFree(String clusterId, String cidrOrIp) {
-        return cache.get("isfree:" + clusterId + ":" + cidrOrIp, () -> safe(
+        return cache.get("calico:isfree:" + clusterId + ":" + cidrOrIp, CACHE_TTL, BOOL_TYPE, () -> safe(
                 () -> k8s.ipamIsFree(clusterId, cidrOrIp)));
     }
 
     public List<String> ipamNextFreeBlocks(String clusterId, String poolName, int offset, int limit) {
-        return cache.get("nextfree:" + clusterId + ":" + poolName + ":" + offset + ":" + limit, () -> safe(
-                () -> k8s.ipamNextFreeBlocks(clusterId, poolName, offset, limit)));
+        return cache.get("calico:nextfree:" + clusterId + ":" + poolName + ":" + offset + ":" + limit,
+                CACHE_TTL, STRING_LIST_TYPE, () -> safe(
+                        () -> k8s.ipamNextFreeBlocks(clusterId, poolName, offset, limit)));
     }
 
     public List<IpamIpDetailDTO> ipamBlockIps(String clusterId, String cidr) {
-        return cache.get("blockips:" + clusterId + ":" + cidr, () -> safe(
+        return cache.get("calico:blockips:" + clusterId + ":" + cidr, CACHE_TTL, IP_DETAIL_TYPE, () -> safe(
                 () -> k8s.ipamBlockIps(clusterId, cidr)));
     }
 
@@ -235,40 +243,4 @@ public class CalicoService {
             return null;
         }
     }
-
-    /** 极简时间 TTL 缓存：仅缓存非空成功结果；超容量先清过期再兜底清空。 */
-    private static final class TtlCache {
-        private final long ttlMillis;
-        private final int maxEntries;
-        private final Map<String, Entry> map = new ConcurrentHashMap<>();
-
-        TtlCache(long ttlSeconds, int maxEntries) {
-            this.ttlMillis = ttlSeconds * 1000L;
-            this.maxEntries = maxEntries;
-        }
-
-        @SuppressWarnings("unchecked")
-        <T> T get(String key, Supplier<T> loader) {
-            Entry e = map.get(key);
-            long now = System.currentTimeMillis();
-            if (e != null && e.expiresAt > now) {
-                return (T) e.value;
-            }
-            Object value = loader.get();
-            if (value == null) {
-                return null; // 失败/降级不缓存
-            }
-            if (map.size() >= maxEntries) {
-                map.entrySet().removeIf(en -> en.getValue().expiresAt <= now);
-                if (map.size() >= maxEntries) {
-                    map.clear();
-                }
-            }
-            map.put(key, new Entry(value, now + ttlMillis));
-            return (T) value;
-        }
-
-        private record Entry(Object value, long expiresAt) {}
-    }
-
 }

@@ -222,6 +222,15 @@ permissions = ∪(用户平台族角色的权限点)
 
 角色↔权限变更的生效时机 = 下次签发（自动续期 ≈ 分钟级），与既有 token 时效模型一致。
 
+> **2026-10-09 修订（本条上半段已不成立，保留作设计记录）**：权限闭包**不再写进 token**。
+> 它被搬去请求期解析：唯一算法 `com.coding.common.components.jwt.PermissionClosureService`（语义与
+> 上面两行逐字一致，未改），platform-api 认证期调用并加 30s TTL 缓存，k8s-server 显式 no-op。
+> 原因：闭包长度 = 产品权限点总数，却要过 WS 握手 query 4KB / HTTP 头 8KB 两道硬上限
+> （2026-10-08 exec 即以 `BufferOverflowException` 炸过），且 1 小时保鲜期与"规则热加载"自相矛盾。
+> 变更后角色变更**即时生效**（陈旧上界 = 缓存 TTL）。回滚开关
+> `platform.jwt.permissions-in-token=true` 可恢复旧行为。
+> 详见 `docs/superpowers/plans/2026-10-09-permissions-out-of-token.md`。
+
 ### 5.3 启动期交叉校验（表驱动方案的地基）
 
 `SmartInitializingSingleton`：遍历 `RequestMappingHandlerMapping` 全部 endpoint ×权限表×豁免前缀：
@@ -280,7 +289,9 @@ permissions = ∪(用户平台族角色的权限点)
 ```
 
 - 顶栏租户上下文控件按 §4.4 双轨渲染（admin=筛选器 / 成员=切换器）。
-- 菜单与按钮显隐由前端 decode JWT `data.permissions`（仅体验；权威在后端）。
+- 菜单与按钮显隐由前端取权限闭包决定（仅体验；权威在后端）。**2026-10-09 起来源是 `POST /user/me`
+  而非 decode JWT**（`data.permissions` 不再签发；见 §5.2 的修订注与
+  `docs/development/frontend-permission-conventions.md` §1.6）。
 - v1 交付裁剪：页面 ③ 成员 tab 与页面 ① 即可支撑代管主流程，②可后置——
   但**接口与表全部按本 spec 建齐**（按 A 设计、按 B 交付）。
 

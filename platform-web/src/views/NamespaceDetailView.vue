@@ -312,6 +312,23 @@ watch(name, () => { if (clusterId.value) void refresh() })
                   </div>
                   <div class="info-row"><span class="k">描述</span><span class="v">{{ ns.description || '—' }}</span></div>
                   <div class="info-row col-row"><span class="k">标签</span><KvTags title="标签" :data="ns.labels ?? {}" /></div>
+                  <!-- 服务网格（B3 §11.7）：把 istio 两个保留标签单列出来读 —— 它们在「标签」行里也有，
+                       但裸键值看不出"纳入/排除/跟随"这层意思；此处与命名空间编辑器同一套措辞 -->
+                  <div class="info-row">
+                    <span class="k">服务网格</span>
+                    <span class="v">
+                      <template v-if="ns.dataplaneMode === 'ambient'">
+                        <el-tag size="small" type="success" effect="light">已纳入 ambient</el-tag>
+                      </template>
+                      <template v-else-if="ns.dataplaneMode === 'none'">
+                        <el-tag size="small" type="info" effect="light">显式排除（none）</el-tag>
+                      </template>
+                      <span v-else class="muted">未设（跟随集群默认）</span>
+                      <el-tag v-if="ns.useWaypoint" size="small" effect="plain" class="mesh-tag">
+                        L7 · {{ ns.useWaypoint === 'none' ? '不使用 waypoint（none）' : `waypoint: ${ns.useWaypoint}` }}
+                      </el-tag>
+                    </span>
+                  </div>
                   <div class="info-row">
                     <span class="k">来源</span>
                     <span class="v">
@@ -483,6 +500,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
 .info-row .v { color: var(--text-1); text-align: right; word-break: break-all; }
 .col-row .v { text-align: left; width: 100%; }
 .mono { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12.5px; }
+.mesh-tag { margin-left: 6px; }
 .muted { color: var(--text-3); }
 /* 超量（>100%）标红 */
 .over { color: var(--danger); font-weight: 600; }

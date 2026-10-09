@@ -33,12 +33,13 @@ K8s 云平台的**统一身份认证与授权服务**：基于 Spring Authorizat
 ## 核心能力
 
 1. **用户认证**：DB 账号 + BCrypt 密码的表单登录；用户/角色/租户来自 `platform-data`。
-2. **OAuth2 / OIDC 授权服务器**：标准 `authorization_code`（含 PKCE）、`refresh_token`、`token_exchange`，OIDC 发现文档与 `/userinfo`。
-3. **会话续期 grant（自定义）**：`urn:coding:grant-type:session-renewal` —— 解决 PKCE 公共客户端拿不到 refresh_token 的续期问题（详见下文「关键设计」）。
-4. **按客户端自定义 JWT 编码**：每个客户端可独立配置 JWS 签名算法（对称/非对称）与可选的 JWE 加密。
-5. **JWK 密钥管理**：生成签名 / 加密密钥对并入库，供 SAS 的 `/oauth2/jwks` 使用。
-6. **客户端注册管理**：`RegisteredClient` 的增删改查（页面 + REST），含 scope 目录与「token TTL < session TTL」注册约束。
-7. **Redis 会话存储**：登录态（根凭证）存 Redis，支持多实例 / 重启不丢；8h 空闲超时 + keepalive 滑动续期。
+2. **OAuth2 / OIDC 授权服务器**：标准 `authorization_code`（含 PKCE）、`refresh_token`，OIDC 发现文档与 `/userinfo`。（SAS 默认仍支持 `token_exchange`，但平台已不再对其做任何定制。）
+3. **self-contained JWT**：`data` claim 内联用户信息、平台域角色、租户上下文与**权限点闭包**——下游资源服务器只需验签 + 读 claim，无需回查。
+4. **会话续期 grant（自定义）**：`urn:coding:grant-type:session-renewal` —— 解决 PKCE 公共客户端拿不到 refresh_token 的续期问题（详见下文「关键设计」）。
+5. **按客户端自定义 JWT 编码**：每个客户端可独立配置 JWS 签名算法（对称/非对称）与可选的 JWE 加密。
+6. **JWK 密钥管理**：生成签名 / 加密密钥对并入库，供 SAS 的 `/oauth2/jwks` 使用。
+7. **客户端注册管理**：`RegisteredClient` 的增删改查（页面 + REST），含 scope 目录与「token TTL < session TTL」注册约束。
+8. **Redis 会话存储**：登录态（根凭证）存 Redis，支持多实例 / 重启不丢；8h 空闲超时 + keepalive 滑动续期。
 
 ---
 
@@ -51,6 +52,7 @@ src/main/java/com/coding/auth/
 │   ├── SecurityConfig.java             # 默认安全链：表单登录、DB 用户、会话过期处理、CORS
 │   ├── AuthorizationServerConfig.java  # OAuth2 AS 链（最高优先级）、客户端/授权持久化、自定义 JwtEncoder
 │   ├── RedisSessionConfig.java         # 显式启用 Redis HTTP 会话（Boot 4.x 必须手写，见下文）
+│   ├── RedisConnectionKeepalive.java   # 定时 PING Redis，避免共享连接被中间设备静默断开（见下文）
 │   ├── LoginSuccessHandler.java        # 登录成功：返回 JSON（用户信息 + 回跳地址），更新最后登录时间
 │   ├── CustomClientSetting.java        # 客户端自定义 JWT 配置（JWS/JWE 算法、密钥、kid）的载体与常量
 │   ├── CustomJweEncoder.java           # 客户端要求 JWE 时，对已签名 JWT 再加密
@@ -70,7 +72,8 @@ src/main/java/com/coding/auth/
 │   ├── CallbackController.java         # /callback —— 测试用回调（打印 code）
 │   └── TestController.java             # /test —— 调试端点（空实现）
 ├── service/
-│   └── ClientService.java              # 客户端 CRUD + 校验（含 token TTL < session TTL 约束）
+│   ├── ClientService.java              # 客户端 CRUD + 校验（含 token TTL < session TTL 约束）
+│   └── TokenExtrasService.java         # 签发时的附加查库：平台角色 code / 租户上下文 / 权限闭包
 └── client/
     ├── RegisteredClientReq.java        # 客户端注册请求 DTO
     ├── RegisteredClientRes.java        # 客户端响应 DTO（secret 脱敏为 ****）
@@ -148,9 +151,22 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 
 标准 SAS 流程；`AuthorizationServerConfig` 里配置了自定义同意页 `/oauth2/consent`。客户端 `requireProofKey=true` 时自动追加 `none` 认证方式（PKCE 公共客户端）。
 
-### token_exchange（携带租户上下文）
+### 自定义 claim：`data`（下游鉴权的唯一依据）
 
-`jwtTokenExchangeCustomizer` 对 `token_exchange` grant 额外从请求参数取 `tenant_id`，查询并写入租户信息到 claim——供跨租户场景使用。
+签发时由 `OAuth2TokenCustomizer`（`AuthorizationServerConfig#jwtCustomizer`）写入一个 `data` claim，其内容是 `TokenUserInfo`：
+
+| 字段 | 含义 | 谁在用 |
+|------|------|--------|
+| `username` / `displayName` / `email` / `status` | 用户基本信息 | 前端展示、`/user/me` |
+| `platformRoles` | **平台域角色 code 列表**（如 `admin`）。签发期按 `platform_role.scope='PLATFORM'` 过滤，**租户成员恒为空** | `platform-api` / `k8s-server` 据此判定"平台侧身份"（`PLATFORM_SCOPE`） |
+| `tenantInfo` | **租户上下文**（仅 session-renewal 携带 `tenant_id` 时非 null，其它 grant 恒为 null） | 决定走租户模式还是管理员代管模式 |
+| `permissions` | **当前上下文的权限点 code 闭包** = 平台族角色权限 ∪（有租户上下文时）该租户内角色权限 | `platform-api` 的表驱动授权按 code 匹配 authority |
+
+查库逻辑集中在 `TokenExtrasService`（平台角色 code / 租户成员资格校验 / 权限闭包），避免把多个 mapper 塞进 customizer。
+
+> **`token_exchange` 的平台侧定制已退役**：曾经对 `token_exchange` grant 额外从请求参数取 `tenant_id` 并注入租户 claim，该逻辑已随"租户上下文只由 session-renewal 表达"的收敛而移除。当前租户上下文的**唯一来源**是 session-renewal grant 的 `tenant_id` 参数；`token_exchange` 若仍被客户端注册，走的是 SAS 默认行为、不带平台租户语义。
+
+> **权限闭包是"签发时刻"的快照**：改角色/权限后，**已签发的 token 不会自动更新** —— 要么等 token 过期，要么靠 session-renewal 重签（这也是"access_token TTL 要设小"的另一条理由）。
 
 ---
 
@@ -159,7 +175,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 `AuthorizationServerConfig#jwtEncoder` 是一个自定义 `JwtEncoder`，**按客户端配置**决定如何签名/加密：
 
 1. **标准 claims**（iss/sub/aud/scope/iat/exp/jti）由 `JwtGenerator` 生成；
-2. **自定义 claim**：`jwtTokenExchangeCustomizer` 写入 `data`（用户信息 + 平台域角色，token_exchange 时再加租户）与 `custom.client.setting`（客户端 JWT 配置，编码前会被剔除、不透传）；
+2. **自定义 claim**：`jwtCustomizer` 写入 `data`（见上）与 `custom.client.setting`（客户端 JWT 配置，编码前会被剔除、不透传）；
 3. **JWS 签名**：
    - 对称算法（HS*）——密钥以密文存库，用 `jweTokenStrategy.getData()` 解密后构造 `OctetSequenceKey`；
    - 非对称算法——从 `JWKSource` 按算法 + `sig` 用途匹配密钥。
@@ -175,6 +191,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 - `spring.session.*` 属性在 4.x 无效（IDE 标红属正常）；`spring.data.redis.*` 前缀不变、仍有效。
 - Redis 会话用 **JDK 序列化**存属性（含 `SPRING_SECURITY_CONTEXT`）。整条图里只有自定义的 `SecurityRole` 不可序列化 → 已让其 `implements GrantedAuthority, Serializable`（在 `platform-data`）。注意「实现继承 Serializable 的接口」不等于类可序列化，必须类自己声明。
 - **滑动语义**：Redis 会话 TTL 只在「会话被修改并保存」时重置，光读不刷新。所以 `/session/keepalive` 会 `setAttribute(...)` 触发一次保存来滑动 TTL——这是 SPA 侧唯一的续命手段。
+- **连接保活（`RedisConnectionKeepalive`）**：Lettuce 对同步命令使用一条**常驻共享连接**（`shareNativeConnection` 默认开启）。应用长时间无会话读写时，Redis 服务端或中间网络设备会因空闲而 RST 关闭这条 TCP 连接；下一次续期在**已被对端关闭的僵尸连接**上发的首个命令（`hGetAll` 读 session）即抛 `SocketException: Connection reset`，表现为「偶发跳登录、重试一次就好」。该类定时 PING 这条共享连接，既让设备的空闲超时不会触发，也在被断开时于 `fixedDelay` 内触发 Lettuce 自动重连，使用户到达时连接已恢复健康。
 
 ---
 
@@ -185,7 +202,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET/POST | `/oauth2/authorize` | 授权端点（含自定义同意页跳转） |
-| POST | `/oauth2/token` | 令牌端点 —— 支持 authorization_code / refresh_token / token_exchange / **session-renewal** |
+| POST | `/oauth2/token` | 令牌端点 —— 支持 authorization_code / refresh_token / **session-renewal**（平台侧租户上下文的唯一来源） |
 | GET | `/oauth2/jwks` | JWK Set（供资源服务器验签） |
 | GET | `/.well-known/oauth-authorization-server` | OAuth2 发现文档 |
 | GET | `/oauth2/.well-known/openid-configuration` | OIDC 发现文档 |
@@ -196,7 +213,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/user/login` | 表单登录（白名单放行） |
-| POST/GET | `/user/logout` | 登出（白名单放行） |
+| POST | `/session/logout` | 登出 —— **无 controller**，由 `SecurityFilterChain` 的 `LogoutFilter` 处理（排在授权过滤器之前，会话已过期时重复调用是幂等 no-op） |
 | GET | `/session/keepalive` | 会话滑动续期（需已登录） |
 | POST | `/clients/create` | 创建客户端 |
 | POST | `/clients/update` | 更新客户端 |

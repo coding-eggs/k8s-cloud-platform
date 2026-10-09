@@ -88,4 +88,20 @@ export const pageCodes = {
       edit: 'platform:page:ops.bgpfilter.edit',
     },
   },
+
+  // ---- 服务网格（B6）。跨两上下文：GatewayClass 平台管理面，Gateway/HTTPRoute 租户资源面 ----
+  mesh: {
+    /** 平台管理面：集群级 GatewayClass（无命名空间维度，同 storageClass 先例） */
+    gatewayClass: {
+      list: 'platform:page:mesh.gatewayclass',
+      edit: 'platform:page:mesh.gatewayclass.edit',
+    },
+    /** 租户资源面：命名空间来自分配上下文，同 serviceMonitor */
+    gateway: { list: 'tenant:page:gateway.list', edit: 'tenant:page:gateway.edit' },
+    httpRoute: { list: 'tenant:page:httproute.list', edit: 'tenant:page:httproute.edit' },
+    grpcRoute: { list: 'tenant:page:grpcroute.list', edit: 'tenant:page:grpcroute.edit' },
+    tcpRoute: { list: 'tenant:page:tcproute.list', edit: 'tenant:page:tcproute.edit' },
+    tlsRoute: { list: 'tenant:page:tlsroute.list', edit: 'tenant:page:tlsroute.edit' },
+    udpRoute: { list: 'tenant:page:udproute.list', edit: 'tenant:page:udproute.edit' },
+  },
 } as const
