@@ -26,7 +26,7 @@
 
 **Out of scope（v1 不做）**
 - Istio **sidecar 系对象**（VirtualService/DestinationRule/VirtualService 等 `networking.istio.io` CRD）——本批只做 Gateway API（标准 K8s CRD，任意 controller 可实现），Istio 专有对象后续按需。
-- **ambient workload/namespace 的 label 注入**（`istio.io/dataplane-mode` / `istio.io/use-waypoint`）——归 **B3 §11**（命名空间编辑「能力开关」+ 工作负载编辑器模块 + 列表快捷开关），不在本批；ztunnel DaemonSet 只**检测**不代管。本批额外承担：**waypoint Gateway per-ns 唯一性校验**（创建/编辑 Gateway 时该 ns 已存在 waypoint GW → 拒绝，供 B3 `use-waypoint` 下拉的「0/1」约束）。
+- **ambient workload/namespace 的 label 注入**（`istio.io/dataplane-mode` / `istio.io/use-waypoint`）——归 **B3 §11**（命名空间编辑「能力开关」+ 工作负载编辑器模块 + 列表快捷开关），不在本批；ztunnel DaemonSet 只**检测**不代管。本批额外承担：**waypoint Gateway per-ns 唯一性校验**（创建/编辑 Gateway 时该 ns 已存在 waypoint GW → 拒绝，供 B3 `use-waypoint` 下拉的「0/1」约束）。〔修订 2026-10-09：**该唯一性校验已撤销**（选择器改为按名字列候选，0/1 前提不成立），改为不设数量上限 + 候选按 `waypoint-for` 过滤；见 plans/2026-10-08-b6-service-mesh-gateway-api.md 的「Phase 3 修订」。〕
 - Route 的跨命名空间 parent/backend 可视化拓扑图——v1 只做对象 CRUD + YAML。
 - Gateway API v1beta1/v1alpha2 兼容——只建模 **v1**（GA）。
 

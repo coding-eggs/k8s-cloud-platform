@@ -153,6 +153,13 @@ export interface NamespaceAllocation {
   createTime?: string | null
 }
 
+/** waypoint 引用候选（= 后端 WaypointRefDTO 的窄投影：名字 + 处理哪类流量） */
+export interface WaypointRef {
+  name: string
+  /** istio.io/waypoint-for：service（缺省）/ workload / all / none */
+  waypointFor?: string | null
+}
+
 /** 命名空间视图（K8s 命名空间 + 分配信息合并，api 侧加工） */
 export interface NamespaceView {
   name: string
@@ -169,7 +176,7 @@ export interface NamespaceView {
   ipv4Pools?: string[] | null
   /** Calico 绑定 IPv6 地址池（ns annotation；null/空=默认分配） */
   ipv6Pools?: string[] | null
-  /** Istio ambient 数据面模式（ns label istio.io/dataplane-mode；ambient / none；null/空=未设，跟随集群默认） */
+  /** Istio ambient 数据面模式（ns label istio.io/dataplane-mode；ambient / none；null/空=未设，即不纳入网格） */
   dataplaneMode?: string | null
   /** Istio L7 waypoint（ns label istio.io/use-waypoint；= waypoint Gateway 名 或 none；null/空=未设） */
   useWaypoint?: string | null

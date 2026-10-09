@@ -3,13 +3,20 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { workloadApi, hpaApi, gatewayApi } from '@/api'
-import type { K8sGateway, K8sWorkload, K8sHpa } from '@/types'
+import type { K8sGateway, K8sWorkload, K8sHpa, WaypointRef } from '@/types'
 import type { WorkloadKind } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useMeshStatus } from '@/composables/useMeshStatus'
-import { isWaypointGateway, LABEL_DATAPLANE_MODE, LABEL_USE_WAYPOINT, USE_WAYPOINT_NONE } from '@/utils/waypoint'
+import {
+  canHandleWorkload,
+  isWaypointGateway,
+  LABEL_DATAPLANE_MODE,
+  LABEL_USE_WAYPOINT,
+  toWaypointRef,
+  USE_WAYPOINT_NONE,
+} from '@/utils/waypoint'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
@@ -222,8 +229,17 @@ const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
 const meshAvailable = computed(() => mesh.hasIstio.value)
 const canToggleMesh = computed(() => perm.has(apiCodes.workloadUpdate))
 
-/** 本命名空间的 waypoint 候选（per-ns 至多一个，故常态 0/1 个） */
-const waypointOptions = ref<string[]>([])
+/**
+ * 网格菜单项是否可点：**与「编辑」同口径** —— 由 Operator/Helm 管理的对象（有 ownerReferences）不写。
+ * 改它的 pod template 标签，上游下一次 reconcile 就会改回去（用户看到"开了又自己关了"），
+ * 中间还可能因字段所有权打架白滚一次 Pod。
+ */
+function meshEditable(row: K8sWorkload): boolean {
+  return canToggleMesh.value && !isOpManaged(row)
+}
+
+/** 本命名空间的 waypoint 候选（名字 + 处理哪类流量；数量不设上限） */
+const waypointOptions = ref<WaypointRef[]>([])
 async function loadWaypoints(): Promise<void> {
   waypointOptions.value = []
   const { tenantId, clusterId, namespace } = state
@@ -231,13 +247,20 @@ async function loadWaypoints(): Promise<void> {
   if (!perm.has(apiCodes.gatewayList)) return
   try {
     waypointOptions.value = ((await gatewayApi.list({ tenantId, clusterId, namespace })) ?? [])
-      .filter((g: K8sGateway) => isWaypointGateway(g)).map((g) => g.name).sort()
+      .filter((g: K8sGateway) => isWaypointGateway(g))
+      .map((g) => toWaypointRef(g))
+      .sort((a, b) => a.name.localeCompare(b.name))
   } catch {
     waypointOptions.value = [] // 未装 Gateway API（CRD 404）等：拦截器已提示，降级为空
   }
 }
 watch([() => state.clusterId, () => state.namespace, () => state.tenantId, meshAvailable],
   () => { void loadWaypoints() }, { immediate: true })
+
+/** 能承接 Pod/VM 直连流量的候选（workload / all）。Pod 上的 use-waypoint 只对这个方向有效 */
+const workloadWaypoints = computed(() => waypointOptions.value.filter((r) => canHandleWorkload(r.waypointFor)))
+/** 有没有任何可用候选 —— 用来在"一个都不能选"时给一句说明，而不是让 L7 分组空着 */
+const hasUsableWaypoint = computed(() => workloadWaypoints.value.length > 0)
 
 function ambientLabel(row: K8sWorkload): string {
   return row.podTemplate?.labels?.[LABEL_DATAPLANE_MODE] ?? ''
@@ -251,21 +274,22 @@ function ambientStateText(row: K8sWorkload): string {
   const a = ambientLabel(row)
   return a === 'ambient' ? '已纳入' : a === 'none' ? '已排除（none）' : '跟随命名空间'
 }
+/** L7 当前态；顺带把"当前值不会生效"（类型不匹配 / 已删除）直接写在标题里 —— 这是最容易被漏看的一格 */
 function l7StateText(row: K8sWorkload): string {
   const w = waypointLabel(row)
   if (!w) return '跟随命名空间'
-  return w === USE_WAYPOINT_NONE ? '不使用（none）' : `waypoint「${w}」`
+  if (w === USE_WAYPOINT_NONE) return '不使用（none）'
+  const ref = waypointOptions.value.find((r) => r.name === w)
+  if (!ref) return `waypoint「${w}」· 已不存在，不会生效`
+  return canHandleWorkload(ref.waypointFor)
+    ? `waypoint「${w}」`
+    : `waypoint「${w}」· ${ref.waypointFor} 型不处理 Pod 流量，不会生效`
 }
 
-/**
- * 可切换到的 waypoint（当前值不出现在列表里 —— 已经是它了）。
- * 当前值可能是平台外建的、不在候选里，故并进候选，否则"当前是什么"在菜单里就看不出来了。
- */
-function waypointAlternatives(row: K8sWorkload): string[] {
+/** 可切换到的 waypoint：只剩能处理 Pod 流量的，且排除当前值（已经是它了） */
+function waypointAlternatives(row: K8sWorkload): WaypointRef[] {
   const cur = waypointLabel(row)
-  const list = [...waypointOptions.value]
-  if (cur && cur !== USE_WAYPOINT_NONE && !list.includes(cur)) list.push(cur)
-  return list.filter((w) => w !== cur).sort()
+  return workloadWaypoints.value.filter((r) => r.name !== cur)
 }
 
 /** 发一次 mesh-toggle：两个字段各自独立三态（不传=不动、空串=移除、有值=覆写），故只带被选的那一个 */
@@ -462,19 +486,20 @@ const contextDesc = computed(() => {
                        「关」一律写 none（显式排除），回到跟随是单独一项 —— 两者的区别对使用者是有意义的。 -->
                   <template v-if="meshAvailable">
                     <el-dropdown-item divided disabled>ambient 流量 · {{ ambientStateText(row) }}</el-dropdown-item>
-                    <el-dropdown-item v-if="ambientLabel(row) !== 'ambient'" command="ambient-on" :disabled="!canToggleMesh">纳入 ambient</el-dropdown-item>
-                    <el-dropdown-item v-if="ambientLabel(row) !== 'none'" command="ambient-none" :disabled="!canToggleMesh">排除出 mesh（none）</el-dropdown-item>
-                    <el-dropdown-item v-if="ambientLabel(row)" command="ambient-follow" :disabled="!canToggleMesh">回到跟随命名空间</el-dropdown-item>
+                    <el-dropdown-item v-if="ambientLabel(row) !== 'ambient'" command="ambient-on" :disabled="!meshEditable(row)">纳入 ambient</el-dropdown-item>
+                    <el-dropdown-item v-if="ambientLabel(row) !== 'none'" command="ambient-none" :disabled="!meshEditable(row)">排除出 mesh（none）</el-dropdown-item>
+                    <el-dropdown-item v-if="ambientLabel(row)" command="ambient-follow" :disabled="!meshEditable(row)">回到跟随命名空间</el-dropdown-item>
 
                     <el-dropdown-item divided disabled>L7 流量 · {{ l7StateText(row) }}</el-dropdown-item>
+                    <!-- 只列能承接 Pod 流量的候选：不匹配的既不可选、也不作为条目出现（只在"一个都不能选"时给一句说明） -->
                     <el-dropdown-item
-                      v-for="w in waypointAlternatives(row)" :key="w"
-                      :command="`l7-use:${w}`" :disabled="!canToggleMesh"
-                    >经过 waypoint「{{ w }}」</el-dropdown-item>
-                    <el-dropdown-item v-if="!waypointOptions.length && !waypointLabel(row)" command="l7-create" :disabled="!canToggleMesh">创建 waypoint Gateway…</el-dropdown-item>
-                    <el-dropdown-item v-if="!waypointOptions.length && waypointLabel(row)" disabled>该命名空间暂无 waypoint Gateway（当前值可能已被删除）</el-dropdown-item>
-                    <el-dropdown-item v-if="waypointLabel(row) && waypointLabel(row) !== USE_WAYPOINT_NONE" command="l7-none" :disabled="!canToggleMesh">不使用 waypoint（none）</el-dropdown-item>
-                    <el-dropdown-item v-if="waypointLabel(row)" command="l7-follow" :disabled="!canToggleMesh">回到跟随命名空间</el-dropdown-item>
+                      v-for="r in waypointAlternatives(row)" :key="r.name"
+                      :command="`l7-use:${r.name}`" :disabled="!meshEditable(row)"
+                    >经过 waypoint「{{ r.name }}」（{{ r.waypointFor }}）</el-dropdown-item>
+                    <el-dropdown-item v-if="waypointOptions.length && !hasUsableWaypoint" disabled>本命名空间的 waypoint 都不处理 Pod 流量（waypoint-for 需为 workload 或 all）</el-dropdown-item>
+                    <el-dropdown-item v-if="!waypointOptions.length && !waypointLabel(row)" command="l7-create" :disabled="!meshEditable(row)">创建 waypoint Gateway…</el-dropdown-item>
+                    <el-dropdown-item v-if="waypointLabel(row) && waypointLabel(row) !== USE_WAYPOINT_NONE" command="l7-none" :disabled="!meshEditable(row)">不使用 waypoint（none）</el-dropdown-item>
+                    <el-dropdown-item v-if="waypointLabel(row)" command="l7-follow" :disabled="!meshEditable(row)">回到跟随命名空间</el-dropdown-item>
                   </template>
 
                   <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>

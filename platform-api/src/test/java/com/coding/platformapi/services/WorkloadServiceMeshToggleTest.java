@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.PodTemplateDTO;
+import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
@@ -29,7 +30,8 @@ import static org.mockito.Mockito.when;
  *   <li><b>三态</b>：null=不动、空串=移除、有值=覆写 —— 列表页两个开关各发各的，不得互相踩。</li>
  *   <li><b>只动这两个 label</b>：其余 pod template label / 其它字段原样带回。</li>
  *   <li><b>不跑 §5 校验</b>：规格不改，不该因为"这工作负载不合平台规格"而挡住 ambient 开关。</li>
- *   <li><b>waypoint 名要存在</b>：不存在的名字 istio 会静默放行（L7 策略悄悄失效）→ 拒绝；
+ *   <li><b>waypoint 名要存在、且类型要匹配</b>：不存在的名字、或 {@code waypoint-for} 不是
+ *       {@code workload}/{@code all} 的 waypoint，istio 都会静默放行（L7 策略悄悄失效）→ 拒绝；
  *       但校验自身的查询失败 → 放行（非破坏性写入，不因查不到候选而卡死）。</li>
  * </ol>
  */
@@ -54,6 +56,14 @@ class WorkloadServiceMeshToggleTest {
         pt.setLabels(podLabels == null ? null : new LinkedHashMap<>(podLabels));
         w.setPodTemplate(pt);
         return w;
+    }
+
+    /** waypoint 引用候选（名字 + 处理哪类流量）——与 GatewayService.waypointRefsOf 的产出同形 */
+    private static WaypointRefDTO ref(String name, String waypointFor) {
+        WaypointRefDTO r = new WaypointRefDTO();
+        r.setName(name);
+        r.setWaypointFor(waypointFor);
+        return r;
     }
 
     private static WorkloadMeshToggleRequest req(String dataplaneMode, String useWaypoint) {
@@ -99,7 +109,7 @@ class WorkloadServiceMeshToggleTest {
 
     @Test
     void blank_pod_labels_are_pruned_before_write() {
-        when(gatewayService.waypointNames("t1", "c1", "team-a")).thenReturn(List.of("waypoint"));
+        when(gatewayService.waypointRefs("t1", "c1", "team-a")).thenReturn(List.of(ref("waypoint", "workload")));
         Map<String, String> out = updatedPodLabels(
                 req(null, "waypoint"), workload(new LinkedHashMap<>(Map.of("empty", ""))));
         assertThat(out)
@@ -109,7 +119,7 @@ class WorkloadServiceMeshToggleTest {
 
     @Test
     void validator_is_not_invoked() {
-        when(gatewayService.waypointNames(any(), any(), any())).thenReturn(List.of("waypoint"));
+        when(gatewayService.waypointRefs(any(), any(), any())).thenReturn(List.of(ref("waypoint", "all")));
         when(k8s.get(any(WorkloadDTO.class))).thenReturn(workload(Map.of()));
         when(k8s.update(any(WorkloadDTO.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -120,12 +130,44 @@ class WorkloadServiceMeshToggleTest {
 
     @Test
     void unknown_waypoint_is_rejected_with_existing_candidates_in_message() {
-        when(gatewayService.waypointNames("t1", "c1", "team-a")).thenReturn(List.of("waypoint-a"));
+        when(gatewayService.waypointRefs("t1", "c1", "team-a")).thenReturn(List.of(ref("waypoint-a", "workload")));
         assertThatThrownBy(() -> svc.meshToggle(req(null, "typo")))
                 .isInstanceOf(CloudPlatformException.class)
                 .hasMessageContaining("typo")
                 .hasMessageContaining("waypoint-a");
         verify(k8s, never()).update(any());
+    }
+
+    @Test
+    void service_type_waypoint_is_rejected_for_a_pod_level_label() {
+        // Pod 上的 use-waypoint 只影响"最初目标是 Pod/VM IP"的流量 → waypoint 必须是 workload/all。
+        // 平台建 waypoint 的默认值就是 service，所以这个组合是最容易踩、且 istio 侧完全静默的那个。
+        when(gatewayService.waypointRefs("t1", "c1", "team-a"))
+                .thenReturn(List.of(ref("waypoint", "service")));   // 也代表"没打标签"（缺省即 service）
+
+        assertThatThrownBy(() -> svc.meshToggle(req(null, "waypoint")))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("istio.io/waypoint-for")
+                .hasMessageContaining("service")
+                .hasMessageContaining("workload 或 all");
+        verify(k8s, never()).update(any());
+    }
+
+    @Test
+    void all_type_waypoint_is_accepted_for_a_pod_level_label() {
+        // all = 服务 + 工作负载都处理 —— 一个 all 型 waypoint 覆盖整个命名空间，必须可选
+        when(gatewayService.waypointRefs("t1", "c1", "team-a")).thenReturn(List.of(ref("waypoint", "all")));
+        Map<String, String> out = updatedPodLabels(req(null, "waypoint"), workload(Map.of()));
+        assertThat(out).containsEntry(USE_WAYPOINT, "waypoint");
+    }
+
+    @Test
+    void none_type_waypoint_is_rejected_too() {
+        // waypoint-for: none = 不处理任何流量（用于测试）→ 指向它必然不生效
+        when(gatewayService.waypointRefs("t1", "c1", "team-a")).thenReturn(List.of(ref("waypoint", "none")));
+        assertThatThrownBy(() -> svc.meshToggle(req(null, "waypoint")))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("workload 或 all");
     }
 
     @Test
@@ -136,13 +178,13 @@ class WorkloadServiceMeshToggleTest {
         svc.meshToggle(req(null, "none"));
         svc.meshToggle(req(null, ""));
 
-        verify(gatewayService, never()).waypointNames(any(), any(), any());
+        verify(gatewayService, never()).waypointRefs(any(), any(), any());
     }
 
     @Test
     void waypoint_lookup_failure_is_fail_open() {
         // 查不到候选（集群断开 / 租户 SA 的 K8s RBAC 未覆盖 gateway group）不该卡住一次可回退的 label 写入
-        when(gatewayService.waypointNames(any(), any(), any())).thenThrow(new RuntimeException("cluster unreachable"));
+        when(gatewayService.waypointRefs(any(), any(), any())).thenThrow(new RuntimeException("cluster unreachable"));
         when(k8s.get(any(WorkloadDTO.class))).thenReturn(workload(Map.of()));
         when(k8s.update(any(WorkloadDTO.class))).thenAnswer(inv -> inv.getArgument(0));
 

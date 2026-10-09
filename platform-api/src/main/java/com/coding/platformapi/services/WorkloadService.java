@@ -7,6 +7,7 @@ import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodTemplateDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServicePortDTO;
+import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
@@ -214,7 +215,7 @@ public class WorkloadService {
                     "dataplaneMode 与 useWaypoint 至少要传一个（null = 不动，空串 = 移除该 label）");
         }
         requireDataplaneMode(req.getDataplaneMode());
-        requireWaypointExists(req);
+        requireWaypointTargetable(req);
 
         WorkloadDTO query = dto(req.getName(), req.getTenantId(), req.getClusterId(), req.getNamespace());
         query.setKind(req.getKind()); // 可不传：k8s-server 按 name 跨 kind 查找
@@ -256,28 +257,44 @@ public class WorkloadService {
     }
 
     /**
-     * use-waypoint 指定了具体 waypoint 名时，确认该 waypoint Gateway 确实存在于本命名空间 ——
-     * 否则标签会被 Istio <b>静默忽略</b>（waypoint 不存在时 ztunnel 直接放行），用户以为 L7 生效了其实没有。
+     * use-waypoint 指定了具体 waypoint 名时，确认它<b>存在</b>且<b>能处理 Pod 直连流量</b> —— 两条都是
+     * istio 静默失败的来源，用户以为 L7 生效了其实没有：
+     * <ul>
+     *   <li><b>不存在</b>：ztunnel 直接放行（官方：「指定的 waypoint 不存在或没有地址」→ 直接路由到目的地）</li>
+     *   <li><b>类型不匹配</b>：Pod 上的 {@code use-waypoint} 只影响「最初目标是 Pod/VM IP」的流量，
+     *       要求 waypoint 的 {@code istio.io/waypoint-for} 是 {@code workload} 或 {@code all}；
+     *       平台建 waypoint 时的默认值恰是 {@code service}（官方默认），所以这个组合最容易踩</li>
+     * </ul>
      * <p>{@code none} / 空 / null 不校验。查询本身失败（集群断开、租户 SA 的 K8s RBAC 未覆盖 gateway group）
      * 则<b>放行并记日志</b>：这是一次可随时改回的 label 写入，非破坏性操作，不该因为"查不到候选"而卡死；
-     * 前端本就从下拉里选，写错的空间很小。
+     * 前端本就从下拉里选，写错的空间很小。<b>但查得到就必须拦住</b> —— 这两条错误用户从界面上看不出来。
      */
-    private void requireWaypointExists(WorkloadMeshToggleRequest req) {
+    private void requireWaypointTargetable(WorkloadMeshToggleRequest req) {
         String waypoint = req.getUseWaypoint();
         if (waypoint == null || waypoint.isBlank() || USE_WAYPOINT_NONE.equals(waypoint.trim())) {
             return;
         }
-        List<String> candidates;
+        String name = waypoint.trim();
+        List<WaypointRefDTO> candidates;
         try {
-            candidates = gatewayService.waypointNames(req.getTenantId(), req.getClusterId(), req.getNamespace());
+            candidates = gatewayService.waypointRefs(req.getTenantId(), req.getClusterId(), req.getNamespace());
         } catch (Exception e) {
-            log.warn("校验 waypoint「{}」存在性失败（放行）：{}", waypoint, e.getMessage());
+            log.warn("校验 waypoint「{}」失败（放行）：{}", name, e.getMessage());
             return;
         }
-        if (!candidates.contains(waypoint.trim())) {
+        WaypointRefDTO hit = candidates.stream().filter(r -> name.equals(r.getName())).findFirst().orElse(null);
+        if (hit == null) {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "命名空间「" + req.getNamespace() + "」下不存在 waypoint Gateway「" + waypoint
-                            + "」" + (candidates.isEmpty() ? "（该命名空间还没有 waypoint Gateway）" : "，现有：" + String.join("、", candidates)));
+                    "命名空间「" + req.getNamespace() + "」下不存在 waypoint Gateway「" + name + "」"
+                            + (candidates.isEmpty() ? "（该命名空间还没有 waypoint Gateway）"
+                            : "，现有：" + candidates.stream().map(WaypointRefDTO::getName).collect(Collectors.joining("、"))));
+        }
+        if (!GatewayService.canHandleWorkload(hit.getWaypointFor())) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "waypoint「" + name + "」的 " + GatewayService.WAYPOINT_FOR_LABEL + " 是「" + hit.getWaypointFor()
+                            + "」—— 它只处理发往服务的流量，Pod 上的 use-waypoint 不会生效（istio 会静默放行、"
+                            + "L7 策略不执行）。要让工作负载级 L7 生效，该 waypoint 的类型必须是 workload 或 all；"
+                            + "若目标是让整个命名空间的服务流量走 L7，请在「命名空间」页设置 use-waypoint。");
         }
     }
 

@@ -323,7 +323,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
                       <template v-else-if="ns.dataplaneMode === 'none'">
                         <el-tag size="small" type="info" effect="light">显式排除（none）</el-tag>
                       </template>
-                      <span v-else class="muted">未设（跟随集群默认）</span>
+                      <span v-else class="muted">未设（不纳入网格）</span>
                       <el-tag v-if="ns.useWaypoint" size="small" effect="plain" class="mesh-tag">
                         L7 · {{ ns.useWaypoint === 'none' ? '不使用 waypoint（none）' : `waypoint: ${ns.useWaypoint}` }}
                       </el-tag>

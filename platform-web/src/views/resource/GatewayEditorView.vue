@@ -8,8 +8,15 @@ import FieldHelp from '@/components/workload/FieldHelp.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
 import { gatewayApi, meshApi } from '@/api'
 import { useResourceContext } from '@/stores/context'
-import { isWaypointClassName, LABEL_WAYPOINT_FOR as WAYPOINT_FOR_LABEL } from '@/utils/waypoint'
-import type { K8sGateway, K8sGatewayClass, K8sGatewayListener, K8sLabelSelector } from '@/types'
+import {
+  isWaypointClassName,
+  LABEL_WAYPOINT_FOR as WAYPOINT_FOR_LABEL,
+  toWaypointRef,
+  WAYPOINT_FOR_LABELS,
+  WAYPOINT_FOR_VALUES,
+  waypointOptionLabel,
+} from '@/utils/waypoint'
+import type { K8sGateway, K8sGatewayClass, K8sGatewayListener, K8sLabelSelector, WaypointRef } from '@/types'
 
 /**
  * Gateway 独立编辑页（命名空间级、租户域）。
@@ -65,14 +72,6 @@ const WAYPOINT_LISTENER_PROTOCOL = 'HBONE'
  * <p>注意它**不是**"是不是 waypoint"的判据 —— 那看 gatewayClassName（见 looksLikeWaypointClass）；
  * 一个 waypoint 完全可以不带这个 label。
  */
-const WAYPOINT_FOR_VALUES = ['service', 'workload', 'all', 'none'] as const
-/** 下拉里的取值说明（判据是流量**最初**发往的目标类型，见 FieldHelp） */
-const WAYPOINT_FOR_LABELS: Record<string, string> = {
-  service: 'service（Kubernetes 服务，默认）',
-  workload: 'workload（Pod / VM IP）',
-  all: 'all（服务 + 工作负载）',
-  none: 'none（不处理，用于测试）',
-}
 
 /** 「创建 Waypoint」入口带来的标记（?waypoint=1） */
 const waypointPreset = ref(route.query.waypoint === '1')
@@ -197,33 +196,43 @@ const waypointListenerDeviates = computed(() => {
 })
 
 /**
- * 命名空间唯一性的**前端预检**：权威判定在后端 `GatewayService.assertWaypointUniqueInNamespace`
- * （挡在 create/update 上）。这里只为了让用户在填表前就知道会被拒，而不是提交后才吃一个错误。
- * <p>拉列表失败（集群断开 / RBAC 未覆盖）→ 标 `unknown`：**不阻断**提交，交回后端权威判定。
+ * 该命名空间**已有**的 waypoint（名字 + 处理哪类流量）。
+ * <p>平台 2026-10-09 起**不再限制数量**（早先的「每 ns 至多一个」是为了迁就"下拉只能表达 0/1"，
+ * 而选择器现在按名字列候选，前提已不成立；istio 本身也允许同 ns 多个 waypoint，按名字寻址）。
+ * 这里拉列表只为两件事：让用户看见已有的是什么、以及**同类型重复时提个醒**（不阻断 —— 灰度/蓝绿
+ * 场景下同类型两个是正当用法）。
+ * <p>拉列表失败（集群断开 / RBAC 未覆盖）→ 什么都不显示，不阻断提交。
  */
-const existingWaypoint = ref<string | null>(null)
-const waypointCheck = ref<'idle' | 'checking' | 'ok' | 'conflict' | 'unknown'>('idle')
+const existingWaypoints = ref<WaypointRef[]>([])
+const waypointCheck = ref<'idle' | 'checking' | 'done' | 'unknown'>('idle')
 
-async function checkNamespaceWaypoint(): Promise<void> {
-  if (!waypointMode.value || editing.value || !ready.value) {
+async function loadNamespaceWaypoints(): Promise<void> {
+  if (!waypointMode.value || !ready.value) {
     waypointCheck.value = 'idle'
     return
   }
   waypointCheck.value = 'checking'
   try {
     const list = await gatewayApi.list({ ...ctx3.value })
-    const hit = list.find((g) => looksLikeWaypointClass(g.gatewayClassName))
-    existingWaypoint.value = hit?.name ?? null
-    waypointCheck.value = hit ? 'conflict' : 'ok'
+    existingWaypoints.value = list
+      .filter((g) => looksLikeWaypointClass(g.gatewayClassName))
+      .filter((g) => editing.value !== g.name)      // 编辑自己不算"已有"
+      .map((g) => toWaypointRef(g))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    waypointCheck.value = 'done'
   } catch {
     waypointCheck.value = 'unknown'
   }
 }
 
-watch([waypointMode, () => ready.value], () => { void checkNamespaceWaypoint() }, { immediate: true })
+watch([waypointMode, () => ready.value], () => { void loadNamespaceWaypoints() }, { immediate: true })
 
-/** 预检到冲突 → 禁用提交（后端仍会再判一次；这里是体验层，不是授权层） */
-const waypointBlocked = computed(() => waypointMode.value && waypointCheck.value === 'conflict')
+/** 已有同名（同类型）waypoint → 提示（不阻断）：两者都会被 istio 当成可选项，注意别选错 */
+const sameTypeWarning = computed(() => {
+  if (!waypointMode.value) return null
+  const hit = existingWaypoints.value.find((r) => r.waypointFor === form.waypointFor)
+  return hit ? `该命名空间已有一个 ${form.waypointFor} 型 waypoint「${hit.name}」——同类两个都能被选中，建之前先确认这是你要的（灰度/蓝绿是正当用法，误建则会多跑一套 Envoy）。` : null
+})
 
 /** 按 waypoint 标准形状预填表单（名字取 Istio 的默认名 `waypoint`；流量类型取 istioctl 的默认 `service`） */
 function applyWaypointPreset(): void {
@@ -386,10 +395,6 @@ const listenersToSubmit = computed<K8sGatewayListener[]>(() =>
 const saving = ref(false)
 async function submit(): Promise<void> {
   if (saving.value || !ready.value) return
-  if (waypointBlocked.value) {
-    ElMessage.warning(`该命名空间已有 waypoint「${existingWaypoint.value}」，每个命名空间至多一个`)
-    return
-  }
   const err = validate()
   if (err) { ElMessage.warning(err); return }
 
@@ -451,15 +456,15 @@ onMounted(() => {
     </EmptyState>
 
     <div v-else class="panel editor-panel">
-      <!-- waypoint 模式的三条提示：命名空间冲突（阻断）/ 线上 listener 偏离标准形状（会规范化）/ 常规说明 -->
+      <!-- waypoint 模式的三条提示：同类重复（仅提醒，不阻断）/ 线上 listener 偏离标准形状（会规范化）/ 常规说明 -->
       <el-alert
-        v-if="waypointMode && waypointBlocked"
-        type="error"
+        v-if="waypointMode && sameTypeWarning"
+        type="warning"
         show-icon
         :closable="false"
         class="waypoint-alert"
-        title="该命名空间已有 waypoint，本次创建会被拒绝"
-        :description="`已有：${existingWaypoint}。平台限制每个命名空间至多一个 waypoint —— 挂载方 istio.io/use-waypoint 是按名字指向它的，多个会让那个选择失去意义。请先删除它，或改装那个 Gateway。`"
+        title="该命名空间已有同类型的 waypoint"
+        :description="sameTypeWarning"
       />
       <el-alert
         v-else-if="waypointMode && waypointListenerDeviates"
@@ -477,7 +482,17 @@ onMounted(() => {
         :closable="false"
         class="waypoint-alert"
         :title="editing ? 'waypoint（形状固定，不可编辑）' : '正在创建 waypoint（ambient 数据面的七层代理网关）'"
-        description="waypoint 的形状固定：GatewayClass 为 istio-waypoint、单个 listener { name: mesh, port: 15008, protocol: HBONE }，都不可编辑；可填的只有名称、处理的流量类型、允许的 Route 命名空间。两个前置条件：所在命名空间需先打 istio.io/dataplane-mode: ambient 标签，消费方（命名空间 / 服务 / Pod）需打 istio.io/use-waypoint=<本 Gateway 名> 才会走它。⚠️ use-waypoint 只表达意图、不保证流量真过（waypoint 不存在或流量类型不匹配时 ztunnel 直接放行）—— 要强制走，需另配只放行本 waypoint 身份的 AuthorizationPolicy，其身份就是与本 Gateway 同名的 ServiceAccount。"
+        description="waypoint 的形状固定：GatewayClass 为 istio-waypoint、单个 listener { name: mesh, port: 15008, protocol: HBONE }，都不可编辑；可填的只有名称、处理的流量类型、允许的 Route 命名空间。两个前置条件：所在命名空间需先打 istio.io/dataplane-mode: ambient 标签，消费方（命名空间 / 服务 / Pod）需打 istio.io/use-waypoint=<本 Gateway 名> 才会走它。⚠️ use-waypoint 只表达意图、不保证流量真过（waypoint 不存在、或流量类型与 waypoint-for 不匹配时 ztunnel 直接放行）—— 要强制走，需另配只放行本 waypoint 身份的 AuthorizationPolicy，其身份就是与本 Gateway 同名的 ServiceAccount。"
+      />
+      <!-- 已有 waypoint 一览：不阻断创建，只为让用户看清"这个命名空间里已经有什么类型的 waypoint" -->
+      <el-alert
+        v-if="waypointMode && waypointCheck === 'done' && existingWaypoints.length"
+        type="info"
+        :closable="false"
+        show-icon
+        class="waypoint-alert"
+        :title="`本命名空间已有 ${existingWaypoints.length} 个 waypoint`"
+        :description="`${existingWaypoints.map(waypointOptionLabel).join('、')}。平台不限制数量，但同一类流量（service / workload）通常只需要一个 —— 多个都可能被 istio 选中，注意别选错；每个 waypoint 会由 istiod 起一套独立的 Deployment + Service。`"
       />
       <el-form v-if="formVisible" label-position="left" label-width="200px" class="editor-form">
         <el-form-item label="名称" required>
@@ -500,7 +515,7 @@ onMounted(() => {
             <el-select v-model="form.waypointFor" style="width: 320px">
               <el-option v-for="v in WAYPOINT_FOR_VALUES" :key="v" :label="WAYPOINT_FOR_LABELS[v]" :value="v" />
             </el-select>
-            <FieldHelp tip="对应 Gateway 上的 istio.io/waypoint-for 标签，决定这个 waypoint 处理哪类流量。判据是流量**最初**发往的目标类型 —— 即使最终解析到 Pod IP，发往服务的流量仍算 service，所以不会绕两次 waypoint。选错不会报错，只是那份 L7 策略静默不生效（例：只处理 service 时，直接打到 Pod IP 的请求会绕过它）。" />
+            <FieldHelp tip="对应 Gateway 上的 istio.io/waypoint-for 标签，决定这个 waypoint 处理哪类流量。判据是流量**最初**发往的目标类型 —— 即使最终解析到 Pod IP，发往服务的流量仍算 service，所以不会绕两次 waypoint。选错不会报错，只是那份 L7 策略静默不生效（例：只处理 service 时，直接打到 Pod IP 的请求会绕过它）。这也决定它出现在哪些选择器里：service / all 型才能被命名空间级 use-waypoint 选中，workload / all 型才能被工作负载（pod template）级选中。" />
           </el-form-item>
 
           <el-form-item label="允许的 Route 命名空间">
@@ -534,7 +549,7 @@ onMounted(() => {
               <span class="opt-sub">{{ g.controllerName }}</span>
             </el-option>
           </el-select>
-          <FieldHelp tip="决定由哪个控制器接管本 Gateway（cluster-scoped 资源，由平台管理员维护）。候选为空时可直接输入 —— 但也意味着该集群可能还没装 Gateway API 控制器。⚠️ 若选的是 waypoint 类别（类名含 -waypoint，如 istio-waypoint）：平台限制每个命名空间至多一个 waypoint Gateway，该命名空间已有时本次会被拒绝 —— 挂载方 istio.io/use-waypoint 是按名字指向它的，多个会让那个选择失去意义。" />
+          <FieldHelp tip="决定由哪个控制器接管本 Gateway（cluster-scoped 资源，由平台管理员维护）。候选为空时可直接输入 —— 但也意味着该集群可能还没装 Gateway API 控制器。⚠️ 若选的是 waypoint 类别（类名含 -waypoint，如 istio-waypoint）：平台不再限制一个命名空间里的 waypoint 数量，但请注意「处理的流量类型」要与消费方匹配 —— 命名空间级 use-waypoint 只能用 service / all 型，Pod 级（pod template）只能用 workload / all 型，对不上时 istio 静默放行、L7 策略不生效。" />
         </el-form-item>
 
         <el-divider content-position="left">监听器（listeners）</el-divider>
@@ -616,7 +631,7 @@ onMounted(() => {
         </template>
 
         <el-form-item class="submit-row">
-          <el-button type="primary" :loading="saving" :disabled="waypointBlocked" @click="submit">{{ editing ? '保存' : '创建' }}</el-button>
+          <el-button type="primary" :loading="saving" @click="submit">{{ editing ? '保存' : '创建' }}</el-button>
           <el-button @click="goBack">取消</el-button>
           <!-- 仅创建态：误点「创建 Waypoint」后能改回普通 Gateway（编辑态不给 —— 不允许把 waypoint 改成入口网关） -->
           <el-button v-if="waypointMode && !editing" link type="primary" @click="unlockWaypoint">改为普通 Gateway</el-button>

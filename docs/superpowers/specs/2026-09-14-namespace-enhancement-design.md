@@ -215,14 +215,14 @@
   - *服务网格（Ambient）*：`dataplane-mode` 三态选择器（跟随集群默认 / 纳入 ambient / 排除 none）+ `use-waypoint` 下拉（该 ns 的 waypoint Gateway，0/1；无则禁用 +「先创建 waypoint Gateway」跳 B6）。门禁 `hasIstioAmbient`。
 - **工作负载列表操作栏**（`WorkloadView.vue`，现有 `el-dropdown` 旁加两个**显式** el-switch，不入下拉）：
   - *Ambient 流量*：on→写 `ambient` / off→写 `none`；回显 ambient=开 / none=关 / 无=跟随（灰）。
-  - *L7 流量*：**on 时弹该 ns 的 waypoint Gateway 选择**（0/1，per-ns 唯一；0 个→阻止 +「先创建」跳 B6）→ 写 name / off→写 `none`。
+  - *L7 流量*：**on 时弹该 ns 的 waypoint Gateway 选择**（0/1，per-ns 唯一；0 个→阻止 +「先创建」跳 B6）→ 写 name / off→写 `none`。〔修订 2026-10-09：per-ns 唯一与 0/1 均已作废 —— waypoint 数量不设上限，候选按 `waypoint-for` 过滤（Pod 级只给 workload/all），且入口是行操作下拉菜单而非开关；见 plans/2026-09-24-namespace-b3.md「修订」小节。〕
   - 调 `POST /workload/mesh-toggle`；开关旁提示「切换将触发工作负载滚动更新」（改 pod template label → 控制器滚新 RS，存量 pod 需重建才带新 label）。门禁 `hasIstioAmbient`（L7 另需该 ns 有 waypoint GW）。
 - **工作负载编辑器**（`WorkloadEditorView.vue`）：新增「服务网格（Ambient）」`el-collapse` 模块（与 B7 item13「固定 IP」并列）+ 右侧导航项；字段同列表开关（dataplane-mode 三态 + use-waypoint 下拉，默认不填=跟随 ns）。
 - **保留 key 隔离**：通用 LabelEditor / annotation 编辑**排除** `istio.io/dataplane-mode`、`istio.io/use-waypoint`、`cni.projectcalico.org/ipv4pools`、`cni.projectcalico.org/ipv6pools`，由专用区块管理（防用户自定义 label/annotation 覆盖 mesh/pool 配置）。
 - **概览页**：命名空间概览显示绑定的 v4/v6 pool + mesh 状态；工作负载详情显示 ambient/L7 状态。列表页可加「网格」列（ambient / L7:gw / —）。
 
 ### 11.5 waypoint Gateway 约束（→ B6 交叉引用）
-- waypoint Gateway = B6 的 Gateway API `Gateway`（带 `istio.io/waypoint-for`）。**per-ns 唯一**：B6 创建/编辑 Gateway 时，该 ns 已存在 waypoint GW → 拒绝再建。
+- waypoint Gateway = B6 的 Gateway API `Gateway`（带 `istio.io/waypoint-for`）。~~**per-ns 唯一**：B6 创建/编辑 Gateway 时，该 ns 已存在 waypoint GW → 拒绝再建。~~ 〔修订 2026-10-09：**撤销**。改为不设数量上限 + 候选按类型过滤；`waypoint-for` 缺省即 `service`（官方默认值），故命名空间级（service/all）与 Pod 级（workload/all）的候选集不同。〕
 - `use-waypoint` 下拉数据源 = 该 ns 的 waypoint GW（0/1）；0 个 → use-waypoint 禁用 + 跳 B6 创建入口。
 
 ### 11.6 边界与门禁
@@ -230,7 +230,7 @@
 |---|---|
 | `hasCalico=false` / `hasIstioAmbient=false` | 对应区块/开关禁用 + 说明（未装 Calico / ambient mesh） |
 | L7 开启但该 ns 无 waypoint GW | 阻止 +「先在该命名空间创建 waypoint Gateway」跳 B6 |
-| per-ns 已有 waypoint GW 再建 | B6 拒绝（唯一性约束） |
+| per-ns 已有 waypoint GW 再建 | ~~B6 拒绝（唯一性约束）~~ 〔修订 2026-10-09：允许，同类型重复只警告〕 |
 | 选中的 pool 已删 / waypoint GW 已删 | 编辑回显标红提示，提交前须修正或清空 |
 | 切换 ambient/L7 | 改 pod template label → 自动滚动更新；开关旁提示生效需重建 pod |
 | 用户自定义 label/annotation 撞保留 key | 通用编辑器排除保留 key，专用区块独占管理 |

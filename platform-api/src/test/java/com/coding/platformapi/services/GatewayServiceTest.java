@@ -1,14 +1,14 @@
 package com.coding.platformapi.services;
 
-import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.GatewayDTO;
+import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.platformapi.k8s.K8sClient;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -16,13 +16,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * GatewayService 的 waypoint per-ns 唯一性校验（Phase 3，mock K8sClient，不触网）。
+ * GatewayService 的 waypoint 判定与类型投影（mock K8sClient，不触网）。
  *
- * <p>铁律三条：
+ * <p>铁律四条：
  * <ol>
- *   <li>普通 Gateway 不占名额 —— 连 list 都不发（否则每个 Gateway 创建都多一次无谓调用）。</li>
- *   <li>同命名空间已有一个 waypoint → 第二个被拒（创建与"改成 waypoint"都拒）；编辑它自己不拒。</li>
- *   <li>判定所需的 list 失败 → <b>保守拒绝</b>（无法确认就不能放行一个可能破坏不变式的写入）。</li>
+ *   <li><b>没有数量上限</b> —— 2026-10-09 起取消「每 ns 至多一个」：create/update 是纯透传，
+ *       <b>不查兄弟列表</b>（既省一次调用，也去掉了"list 失败就保守拒绝"那条拖累可用性的路径）。</li>
+ *   <li><b>判定口径 = gatewayClassName 含 {@code -waypoint}</b>，与 {@code istio.io/waypoint-for} 无关。</li>
+ *   <li><b>类型缺省即 {@code service}</b>（官方默认值）—— 外部建的、不带 label 的 waypoint 必须按
+ *       service 处理，否则会把"只处理服务流量"的 waypoint 当成能给 Pod 级用的。</li>
+ *   <li><b>能力判定用白名单</b>：不认识的取值一律"不能"（宁可少给候选，也不给一个必然静默不生效的选项）。</li>
  * </ol>
  */
 class GatewayServiceTest {
@@ -39,115 +42,38 @@ class GatewayServiceTest {
         return g;
     }
 
-    @Test
-    void create_plain_gateway_does_not_even_query_siblings() {
-        GatewayDTO body = gateway("web-gw", "istio");
-        when(k8s.create(any(GatewayDTO.class))).thenReturn(body);
-
-        assertThat(svc.create(body)).isSameAs(body);
-
-        verify(k8s, never()).list(any(GatewayDTO.class)); // 普通 Gateway 不占名额 → 零额外开销
+    private static GatewayDTO waypoint(String name, String waypointFor) {
+        GatewayDTO g = gateway(name, "istio-waypoint");
+        if (waypointFor != null) {
+            g.setLabels(Map.of(GatewayService.WAYPOINT_FOR_LABEL, waypointFor));
+        }
+        return g;
     }
 
+    // ---------- 没有数量上限：create/update 纯透传 ----------
+
     @Test
-    void create_first_waypoint_in_namespace_is_allowed() {
-        GatewayDTO body = gateway("waypoint", "istio-waypoint");
-        when(k8s.list(any(GatewayDTO.class))).thenReturn(List.of());
+    void create_is_a_pure_passthrough_without_querying_siblings() {
+        // 同名空间已有 waypoint 也照建（不设上限）；无论如何都不该多发一次 list
+        GatewayDTO body = gateway("waypoint-2", "istio-waypoint");
         when(k8s.create(any(GatewayDTO.class))).thenReturn(body);
 
         assertThat(svc.create(body)).isSameAs(body);
 
         verify(k8s).create(body);
-    }
-
-    @Test
-    void create_waypoint_allowed_when_only_plain_gateways_exist() {
-        GatewayDTO body = gateway("waypoint", "istio-waypoint");
-        when(k8s.list(any(GatewayDTO.class))).thenReturn(List.of(gateway("web-gw", "istio"), gateway("api-gw", "istio")));
-        when(k8s.create(any(GatewayDTO.class))).thenReturn(body);
-
-        assertThat(svc.create(body)).isSameAs(body);
-    }
-
-    @Test
-    void create_second_waypoint_is_rejected() {
-        GatewayDTO body = gateway("waypoint-2", "istio-waypoint");
-        when(k8s.list(any(GatewayDTO.class))).thenReturn(List.of(gateway("waypoint", "istio-waypoint")));
-
-        assertThatThrownBy(() -> svc.create(body))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("waypoint")
-                .hasMessageContaining("已存在 waypoint Gateway「waypoint」")
-                .hasMessageContaining("team-a");
-
-        verify(k8s, never()).create(any(GatewayDTO.class));
-    }
-
-    @Test
-    void update_waypoint_itself_is_not_blocked_by_itself() {
-        GatewayDTO body = gateway("waypoint", "istio-waypoint");
-        // 同命名空间列表里含自己 —— 自我排除后无冲突
-        when(k8s.list(any(GatewayDTO.class))).thenReturn(List.of(body));
-        when(k8s.update(any(GatewayDTO.class))).thenReturn(body);
-
-        assertThat(svc.update(body)).isSameAs(body);
-    }
-
-    @Test
-    void update_plain_gateway_into_waypoint_is_rejected_when_another_exists() {
-        GatewayDTO body = gateway("web-gw", "istio-waypoint"); // 把普通网关改成 waypoint
-        when(k8s.list(any(GatewayDTO.class))).thenReturn(List.of(gateway("waypoint", "istio-waypoint"), body));
-
-        assertThatThrownBy(() -> svc.update(body))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("已存在 waypoint Gateway「waypoint」");
-
-        verify(k8s, never()).update(any(GatewayDTO.class));
-    }
-
-    @Test
-    void update_plain_gateway_skips_the_check_entirely() {
-        GatewayDTO body = gateway("web-gw", "istio");
-        when(k8s.update(any(GatewayDTO.class))).thenReturn(body);
-
-        assertThat(svc.update(body)).isSameAs(body);
-
         verify(k8s, never()).list(any(GatewayDTO.class));
     }
 
     @Test
-    void create_is_refused_when_the_check_cannot_be_resolved() {
-        GatewayDTO body = gateway("waypoint", "istio-waypoint");
-        when(k8s.list(any(GatewayDTO.class))).thenThrow(new CloudPlatformException(500, "k8s-server 调用失败: 连接被拒绝"));
+    void update_is_a_pure_passthrough_for_waypoint_and_plain_alike() {
+        GatewayDTO wp = gateway("waypoint", "istio-waypoint");
+        GatewayDTO plain = gateway("web-gw", "istio");
+        when(k8s.update(any(GatewayDTO.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        // 保守拒绝：无法确认是否已有 waypoint，就不放行
-        assertThatThrownBy(() -> svc.create(body))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("无法确认命名空间「team-a」是否已有 waypoint Gateway")
-                .hasMessageContaining("已拒绝");
+        assertThat(svc.update(wp)).isSameAs(wp);
+        assertThat(svc.update(plain)).isSameAs(plain);
 
-        verify(k8s, never()).create(any(GatewayDTO.class));
-    }
-
-    @Test
-    void the_check_only_sends_the_boundary_triple_as_list_query() {
-        GatewayDTO body = gateway("waypoint", "istio-waypoint");
-        body.setTenantId("t1");
-        body.setLabels(java.util.Map.of("keep", "me"));
-        when(k8s.list(any(GatewayDTO.class))).thenReturn(List.of());
-        when(k8s.create(any(GatewayDTO.class))).thenReturn(body);
-
-        svc.create(body);
-
-        var captor = org.mockito.ArgumentCaptor.forClass(GatewayDTO.class);
-        verify(k8s).list(captor.capture());
-        GatewayDTO query = captor.getValue();
-        assertThat(query.getClusterId()).isEqualTo("c1");
-        assertThat(query.getNamespace()).isEqualTo("team-a");
-        assertThat(query.getTenantId()).isEqualTo("t1");
-        // 表单里其余字段不该被当成查询条件发出去
-        assertThat(query.getGatewayClassName()).isNull();
-        assertThat(query.getLabels()).isNull();
+        verify(k8s, never()).list(any(GatewayDTO.class));
     }
 
     // ---------- 类别判定（口径见 GatewayService 类注释）----------
@@ -175,27 +101,80 @@ class GatewayServiceTest {
         // istio.io/waypoint-for 声明"处理哪类流量"，不是"是不是 waypoint" ——
         // 带这个 label 但类名是普通网关的，不算 waypoint；不带 label 的 istio-waypoint 才算。
         GatewayDTO labelledButPlain = gateway("w", "istio");
-        labelledButPlain.setLabels(java.util.Map.of("istio.io/waypoint-for", "service"));
+        labelledButPlain.setLabels(Map.of(GatewayService.WAYPOINT_FOR_LABEL, "service"));
         assertThat(GatewayService.isWaypointGateway(labelledButPlain)).isFalse();
 
         GatewayDTO unlabelledWaypoint = gateway("w", "istio-waypoint");
         assertThat(GatewayService.isWaypointGateway(unlabelledWaypoint)).isTrue();
     }
 
+    // ---------- 类型投影 ----------
+
     @Test
-    void waypoint_names_projection_filters_drops_blanks_and_sorts() {
-        // 判定与投影的唯一实现（tenant 侧 /gateways 与平台侧 /mesh/gateways 两条数据源共用）：
-        // 只留 waypoint、按名升序、空名剔除 —— 否则两侧会各自漂移
+    void waypoint_for_defaults_to_service_and_normalizes_blanks() {
+        // 官方："This label is optional and the default value is service."
+        assertThat(GatewayService.waypointForOf(waypoint("w", null))).isEqualTo("service");
+        assertThat(GatewayService.waypointForOf(waypoint("w", "  "))).isEqualTo("service");
+        assertThat(GatewayService.waypointForOf(waypoint("w", " workload "))).isEqualTo("workload");
+        assertThat(GatewayService.waypointForOf(waypoint("w", "all"))).isEqualTo("all");
+        assertThat(GatewayService.waypointForOf(waypoint("w", "none"))).isEqualTo("none");
+        assertThat(GatewayService.waypointForOf(gateway("w", "istio"))).isEqualTo("service"); // 无 label
+        assertThat(GatewayService.waypointForOf(null)).isEqualTo("service");
+    }
+
+    @Test
+    void capability_whitelists_only_accept_known_combinations() {
+        assertThat(GatewayService.canHandleService("service")).isTrue();
+        assertThat(GatewayService.canHandleService("all")).isTrue();
+        assertThat(GatewayService.canHandleService("workload")).isFalse();
+        assertThat(GatewayService.canHandleService("none")).isFalse();
+        assertThat(GatewayService.canHandleService("sidecar")).isFalse(); // 不认识的值 → 不能
+        assertThat(GatewayService.canHandleService(null)).isFalse();
+
+        assertThat(GatewayService.canHandleWorkload("workload")).isTrue();
+        assertThat(GatewayService.canHandleWorkload("all")).isTrue();
+        assertThat(GatewayService.canHandleWorkload("service")).isFalse();
+        assertThat(GatewayService.canHandleWorkload("none")).isFalse();
+        assertThat(GatewayService.canHandleWorkload(null)).isFalse();
+    }
+
+    @Test
+    void waypoint_refs_projection_filters_drops_blanks_sorts_and_carries_the_type() {
+        // 判定与投影的唯一实现（租户侧 /gateways 与平台侧 /mesh/gateways 两条数据源共用）：
+        // 只留 waypoint、按名升序、空名剔除、名字与类型成对
         GatewayDTO plain = gateway("web-gw", "istio");
         GatewayDTO blankName = gateway("  ", "istio-waypoint");
-        assertThat(GatewayService.waypointNamesOf(List.of(
-                gateway("wp-b", "istio-waypoint"),
+
+        List<WaypointRefDTO> refs = GatewayService.waypointRefsOf(List.of(
+                waypoint("wp-b", "workload"),
                 plain,
-                gateway("wp-a", "istio-agentgateway-waypoint"),
-                blankName)))
-                .containsExactly("wp-a", "wp-b");
-        assertThat(GatewayService.waypointNamesOf(null)).isEmpty();
-        assertThat(GatewayService.waypointNamesOf(List.of(plain))).isEmpty();
+                waypoint("wp-a", null),            // 缺省 → service
+                blankName));
+
+        assertThat(refs).hasSize(2);
+        assertThat(refs.get(0).getName()).isEqualTo("wp-a");
+        assertThat(refs.get(0).getWaypointFor()).isEqualTo("service");
+        assertThat(refs.get(1).getName()).isEqualTo("wp-b");
+        assertThat(refs.get(1).getWaypointFor()).isEqualTo("workload");
+
+        assertThat(GatewayService.waypointRefsOf(null)).isEmpty();
+        assertThat(GatewayService.waypointRefsOf(List.of(plain))).isEmpty();
+        // 不设上限：三个 waypoint 全部保留
+        assertThat(GatewayService.waypointRefsOf(List.of(
+                waypoint("w1", "service"), waypoint("w2", "service"), waypoint("w3", "workload")))).hasSize(3);
+    }
+
+    @Test
+    void waypoint_refs_queries_the_boundary_triple() {
+        when(k8s.list(any(GatewayDTO.class))).thenReturn(List.of(waypoint("wp", "all")));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(GatewayDTO.class);
+        assertThat(svc.waypointRefs("t1", "c1", "team-a")).hasSize(1);
+        verify(k8s).list(captor.capture());
+        assertThat(captor.getValue().getTenantId()).isEqualTo("t1");
+        assertThat(captor.getValue().getClusterId()).isEqualTo("c1");
+        assertThat(captor.getValue().getNamespace()).isEqualTo("team-a");
+        assertThat(captor.getValue().getGatewayClassName()).isNull(); // 表单字段不得混进查询条件
     }
 
 }

@@ -14,7 +14,14 @@ import QuotaSection from '@/components/namespace/QuotaSection.vue'
 import LimitRangeSection from '@/components/namespace/LimitRangeSection.vue'
 import { useClusterCapability } from '@/composables/useClusterCapability'
 import { useMeshStatus } from '@/composables/useMeshStatus'
-import { DATAPLANE_MODES, RESERVED_MESH_LABELS, USE_WAYPOINT_NONE } from '@/utils/waypoint'
+import {
+  canHandleService,
+  DATAPLANE_MODES,
+  RESERVED_MESH_LABELS,
+  USE_WAYPOINT_NONE,
+  waypointOptionLabel,
+} from '@/utils/waypoint'
+import type { WaypointRef } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,7 +49,7 @@ const form = reactive({
   labels: {} as Record<string, string>,
   ipv4Pools: [] as string[],
   ipv6Pools: [] as string[],
-  /** '' = 不设该标签（跟随集群默认）；ambient / none */
+  /** '' = 不设该标签（本命名空间不纳入网格）；ambient / none */
   dataplaneMode: '',
   /** '' = 不设该标签；none = 显式不使用（压过命名空间继承）；否则 = waypoint Gateway 名 */
   useWaypoint: '',
@@ -94,7 +101,7 @@ const ambientKnown = computed(() => mesh.ambientKnown.value)
 const ambientAvailable = computed(() => mesh.istioAmbient.value)
 
 /** 该命名空间的 waypoint 候选（平台侧 /mesh/gateways）。Gateway 是租户域资源而本页无租户上下文，故不能走 /gateways */
-const waypointOptions = ref<string[]>([])
+const waypointOptions = ref<WaypointRef[]>([])
 const waypointLoaded = ref(false)
 watch([clusterId, () => form.name, () => ambientKnown.value], async () => {
   waypointOptions.value = []
@@ -111,6 +118,25 @@ watch([clusterId, () => form.name, () => ambientKnown.value], async () => {
 }, { immediate: true })
 
 /**
+ * 按类型拆候选：命名空间级 use-waypoint 只影响「最初目标是服务」的流量，所以只有 service / all 型的
+ * waypoint 有意义（官方："By default waypoints accept traffic for services."）。
+ * **不匹配的候选不进下拉**（连禁用项都不列）—— 选项里只该出现"能选的"。
+ */
+const waypointUsable = computed(() => waypointOptions.value.filter((r) => canHandleService(r.waypointFor)))
+
+/**
+ * 当前值不可用（类型不匹配 / 已被删）时为**回显**保留的那一条：不可选（disabled），
+ * 只为避免选择器显示空白 —— 那会让人以为"从未设置过"，而值其实还在命名空间上。
+ */
+const currentUnusableWaypoint = computed<WaypointRef | null>(() => {
+  const cur = form.useWaypoint
+  if (!cur || cur === USE_WAYPOINT_NONE) return null
+  if (waypointUsable.value.some((r) => r.name === cur)) return null
+  const known = waypointOptions.value.find((r) => r.name === cur)
+  return { name: cur, waypointFor: known?.waypointFor ?? '已不存在' }
+})
+
+/**
  * 选中的 waypoint 已不在候选里（被删了 / 名字写错）→ 标红提示。
  * 不阻断提交：Istio 对不存在的 waypoint 是**静默放行**（流量照走、L7 策略不生效），
  * 平台这边报错反而挡住用户改别的字段。提示由用户决定改或清。
@@ -118,7 +144,13 @@ watch([clusterId, () => form.name, () => ambientKnown.value], async () => {
 const waypointMissing = computed(() =>
   waypointLoaded.value
   && !!form.useWaypoint && form.useWaypoint !== USE_WAYPOINT_NONE
-  && !waypointOptions.value.includes(form.useWaypoint))
+  && !waypointOptions.value.some((r) => r.name === form.useWaypoint))
+
+/** 选中项是能处理服务流量的（含"没打标签=默认 service"）—— 当前值不满足时给出与提交等价的告警 */
+const waypointTypeMismatch = computed(() => {
+  const hit = waypointOptions.value.find((r) => r.name === form.useWaypoint)
+  return !!hit && !canHandleService(hit.waypointFor)
+})
 
 // ---- 编辑回填 ----
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
@@ -224,7 +256,7 @@ async function submit(): Promise<void> {
   // 绑定池仅在 capability 已探测到 Calico 时显式提交（空数组=主动清空）；未探测→不传字段，后端保持现状防误清。
   // IP 栈不允许的族同样不传（选择器已隐藏，避免把不可见族的残留值写进去/清掉既有绑定）
   // istio 两个标签同理：只有 ambient 状态**已知**时才提交，否则（未探测 / 集群断开）字段禁用且不传。
-  // 空串 = 主动移除该标签（「跟随集群默认」/「不使用 waypoint」），与后端的 null=不动、''=移除 三态对齐。
+  // 空串 = 主动移除该标签（「不纳入网格」/「不使用 waypoint」），与后端的 null=不动、''=移除 三态对齐。
   const payload = {
     clusterId: clusterId.value, name, description: form.description.trim(), labels: form.labels,
     ...(hasCalico.value ? {
@@ -322,23 +354,31 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
           <el-form label-width="200px" label-position="left">
             <template v-if="ambientKnown">
               <el-form-item>
-                <template #label>数据面模式 <FieldHelp tip="命名空间标签 istio.io/dataplane-mode。纳入 ambient 后，本命名空间内的工作负载由节点级 ztunnel 接管四层流量；排除（none）则显式退出网格。不设标签 = 跟随集群默认（多数安装的默认是「未纳入」）。Pod 上的同名标签优先级高于命名空间。" /></template>
-                <el-select v-model="form.dataplaneMode" :disabled="!ambientAvailable" style="width: 320px" placeholder="跟随集群默认（不设标签）">
-                  <el-option label="跟随集群默认（不设标签）" value="" />
+                <template #label>数据面模式 <FieldHelp tip="命名空间标签 istio.io/dataplane-mode。纳入 ambient 后，本命名空间内的工作负载由节点级 ztunnel 接管四层流量；排除（none）则显式退出网格。不设标签 = 不纳入网格 —— Istio 没有集群级默认，是否纳入只看命名空间 / Pod 上的这个标签（取值只有 ambient / none）。Pod 上的同名标签优先于命名空间。" /></template>
+                <el-select v-model="form.dataplaneMode" :disabled="!ambientAvailable" style="width: 320px" placeholder="不设标签（不纳入网格）">
+                  <el-option label="不设标签（不纳入网格）" value="" />
                   <el-option v-for="m in DATAPLANE_MODES" :key="m.value" :label="m.label" :value="m.value" />
                 </el-select>
               </el-form-item>
               <el-form-item>
-                <template #label>使用 waypoint <FieldHelp tip="命名空间标签 istio.io/use-waypoint。取值 = 本命名空间 waypoint Gateway 的名字，本命名空间内所有工作负载的七层流量都会经过它（L7 路由/鉴权/遥测）；选 none 表示显式不使用 —— 用来压过从上层继承的 waypoint。不设标签 = 跟随默认（无人使用）。⚠️ 这个标签只表达意图，不保证流量真的经过：waypoint 不存在时 ztunnel 会直接放行，L7 策略静默失效。" /></template>
+                <template #label>使用 waypoint <FieldHelp tip="命名空间标签 istio.io/use-waypoint。取值 = 本命名空间 waypoint Gateway 的名字，本命名空间内所有工作负载的七层流量都会经过它（L7 路由/鉴权/遥测）；选 none 表示显式不使用 —— 用来压过从上层继承的 waypoint。不设标签 = 不使用。⚠️ 两条静默失败：①waypoint 不存在 → ztunnel 直接放行；②类型不匹配 → 命名空间级只影响「目标是服务」的流量，故 waypoint 的 istio.io/waypoint-for 必须是 service 或 all（默认值就是 service，故不带标签的 waypoint 可用；标成 workload 的则不行）。两种情况都不报错、L7 策略悄悄不生效。" /></template>
                 <el-select v-model="form.useWaypoint" :disabled="!ambientAvailable" style="width: 320px" placeholder="不使用 waypoint（不设标签）">
                   <el-option label="不使用 waypoint（不设标签）" value="" />
                   <el-option label="显式不使用（none）" :value="USE_WAYPOINT_NONE" />
-                  <el-option v-for="w in waypointOptions" :key="w" :label="w" :value="w" />
+                  <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name" />
+                  <!-- 当前值不可选时的回显项（disabled，见 currentUnusableWaypoint 说明） -->
+                  <el-option
+                    v-if="currentUnusableWaypoint" :key="`current-${currentUnusableWaypoint.name}`"
+                    :label="`${waypointOptionLabel(currentUnusableWaypoint)}｜不处理服务流量，不会生效`"
+                    :value="currentUnusableWaypoint.name" disabled
+                  />
                 </el-select>
                 <div v-if="!ambientAvailable" class="form-tip warn">该集群未探测到 ambient（istio-system/ztunnel DaemonSet 不存在）—— 这两个标签暂不生效，字段已禁用以免误配。</div>
                 <div v-else-if="!editing" class="form-tip">waypoint Gateway 需建在一个已存在的命名空间里，故创建阶段没有候选；先创建命名空间，再回来选。</div>
-                <div v-else-if="waypointLoaded && !waypointOptions.length" class="form-tip">该命名空间还没有 waypoint Gateway——要在「Gateway」页用「创建 Waypoint」建一个（每个命名空间至多一个）。</div>
+                <div v-else-if="waypointLoaded && !waypointOptions.length" class="form-tip">该命名空间还没有 waypoint Gateway——要在「Gateway」页用「创建 Waypoint」建一个（可以建多个，按类型各管一类流量）。</div>
+                <div v-else-if="waypointLoaded && !waypointUsable.length" class="form-tip warn">本命名空间的 waypoint 都不处理服务流量（waypoint-for 是 workload / none）——命名空间级只作用于发往服务的流量，选它们不会生效。要服务流量的 L7，需把目标 waypoint 的类型改成 service 或 all。</div>
                 <div v-if="waypointMissing" class="form-tip warn">「{{ form.useWaypoint }}」不在本命名空间的 waypoint 候选里（可能已被删除）。istio 对不存在的 waypoint 会静默放行，L7 策略不会生效——请改选或清空。</div>
+                <div v-if="waypointTypeMismatch" class="form-tip warn">「{{ form.useWaypoint }}」的类型不处理服务流量——命名空间级只作用于发往服务的流量，选它不会生效（istio 静默放行）。保存时会原样保留该值（要清掉请选「不使用 waypoint」）。</div>
               </el-form-item>
               <div v-if="!ambientAvailable || (editing && waypointLoaded && !waypointOptions.length)" class="mesh-precond">
                 <el-alert

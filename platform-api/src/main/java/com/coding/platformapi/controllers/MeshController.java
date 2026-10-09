@@ -2,6 +2,7 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
+import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.MeshService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -99,10 +100,11 @@ public class MeshController {
     // ==================== waypoint 候选（供命名空间编辑器） ====================
 
     @PostMapping("/gateways")
-    @Operation(summary = "命名空间内 waypoint Gateway 名列表",
-            description = "供「命名空间编辑」的 istio.io/use-waypoint 下拉。平台限制每命名空间至多一个 waypoint，"
-                    + "故常态 0 或 1 个。走本端点而非租户域 /gateways：命名空间是平台侧资源，平台管理员无租户上下文。")
-    public ResponseData<List<String>> waypointCandidates(@RequestParam String clusterId, @RequestParam String namespace) {
+    @Operation(summary = "命名空间内 waypoint 引用候选（名字 + 处理哪类流量）",
+            description = "供「命名空间编辑」的 istio.io/use-waypoint 下拉。数量不设上限；必须带 waypoint-for —— "
+                    + "命名空间级只能指向能处理服务流量的（service / all），否则 istio 静默放行、L7 策略不生效。"
+                    + "走本端点而非租户域 /gateways：命名空间是平台侧资源，平台管理员无租户上下文。")
+    public ResponseData<List<WaypointRefDTO>> waypointCandidates(@RequestParam String clusterId, @RequestParam String namespace) {
         return new ResponseData<>(mesh.waypointCandidates(clusterId, namespace));
     }
 

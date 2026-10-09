@@ -38,14 +38,17 @@ import { useMeshStatus } from '@/composables/useMeshStatus'
 import { containsInCidr, expandCidrToIps, isIp } from '@/utils/ipUtil'
 import { CALICO_POOL_LABEL, DEFAULT_IPV4_POOL, DEFAULT_IPV6_POOL } from '@/utils/calico'
 import {
+  canHandleWorkload,
   DATAPLANE_MODES,
   isWaypointGateway,
   LABEL_DATAPLANE_MODE,
   LABEL_USE_WAYPOINT,
   RESERVED_MESH_LABELS,
+  toWaypointRef,
   USE_WAYPOINT_NONE,
+  waypointOptionLabel,
 } from '@/utils/waypoint'
-import type { K8sGateway } from '@/types'
+import type { K8sGateway, WaypointRef } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -327,8 +330,8 @@ watch(() => state.clusterId, () => {
 const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
 const meshAvailable = computed(() => mesh.hasIstio.value)
 
-/** 本命名空间的 waypoint 候选（租户域 /gateways，前端按 -waypoint 类名筛；判定规则同后端） */
-const waypointOptions = ref<string[]>([])
+/** 本命名空间的 waypoint 候选（租户域 /gateways，名字 + 类型；判定规则同后端） */
+const waypointOptions = ref<WaypointRef[]>([])
 const waypointLoaded = ref(false)
 async function loadWaypointOptions(): Promise<void> {
   waypointOptions.value = []
@@ -339,7 +342,10 @@ async function loadWaypointOptions(): Promise<void> {
   if (!perm.has(apiCodes.gatewayList)) { waypointLoaded.value = true; return }
   try {
     const list = await gatewayApi.list({ tenantId, clusterId, namespace })
-    waypointOptions.value = (list ?? []).filter((g: K8sGateway) => isWaypointGateway(g)).map((g) => g.name).sort()
+    waypointOptions.value = (list ?? [])
+      .filter((g: K8sGateway) => isWaypointGateway(g))
+      .map((g) => toWaypointRef(g))
+      .sort((a, b) => a.name.localeCompare(b.name))
   } catch {
     waypointOptions.value = [] // 集群未装 Gateway API（CRD 404）等：拦截器已提示，这里降级为空
   } finally {
@@ -348,6 +354,26 @@ async function loadWaypointOptions(): Promise<void> {
 }
 watch([() => state.clusterId, () => state.namespace, () => state.tenantId, meshAvailable],
   () => { void loadWaypointOptions() }, { immediate: true })
+
+/**
+ * Pod 上的 use-waypoint 只影响「最初目标是 Pod/VM IP」的流量 → 只有 workload / all 型的 waypoint 有意义
+ * （官方："the waypoint should be labeled istio.io/waypoint-for with the value workload or all"）。
+ * **不匹配的候选不进下拉**（连禁用项都不列）—— 选项里只该出现"能选的"。
+ */
+const waypointUsable = computed(() => waypointOptions.value.filter((r) => canHandleWorkload(r.waypointFor)))
+
+/**
+ * 当前值不可用（类型不匹配 / 已被删）时为**回显**保留的那一条。
+ * 它不是候选、不可选（disabled），存在的唯一理由是：否则选择器会显示空白，看起来像"从未设置过"，
+ * 而实际值还在 pod template 上 —— 那会让人误以为保存一下没有副作用。
+ */
+const currentUnusableWaypoint = computed<WaypointRef | null>(() => {
+  const cur = useWaypoint.value
+  if (!cur || cur === USE_WAYPOINT_NONE) return null
+  if (waypointUsable.value.some((r) => r.name === cur)) return null
+  const known = waypointOptions.value.find((r) => r.name === cur)
+  return { name: cur, waypointFor: known?.waypointFor ?? '已不存在' }
+})
 
 /** 写一个 istio 保留 label（空串 / 未选 → 删除该键，回到"跟随命名空间"） */
 function setMeshLabel(key: string, value: string): void {
@@ -370,7 +396,13 @@ const useWaypoint = computed<string>({
 const waypointMissing = computed(() =>
   waypointLoaded.value
   && !!useWaypoint.value && useWaypoint.value !== USE_WAYPOINT_NONE
-  && !waypointOptions.value.includes(useWaypoint.value))
+  && !waypointOptions.value.some((r) => r.name === useWaypoint.value))
+
+/** 选中项的 waypoint-for 不是 workload/all —— 这条同样静默失效，必须提示（后端也会拒，这里提前告知） */
+const waypointTypeMismatch = computed(() => {
+  const hit = waypointOptions.value.find((r) => r.name === useWaypoint.value)
+  return !!hit && !canHandleWorkload(hit.waypointFor)
+})
 
 const serviceName = computed<string>({
   get: () => form.serviceName ?? '',
@@ -847,7 +879,7 @@ const contextDesc = computed(() => {
                 </el-form-item>
                 <!-- 服务网格 Ambient（B3 §11）：写 pod template 的两个 istio 保留 label -->
                 <el-form-item v-if="meshAvailable">
-                  <template #label>服务网格（Ambient）<FieldHelp tip="pod template 标签 istio.io/dataplane-mode（纳入 / 排除 ambient）与 istio.io/use-waypoint（本工作负载的七层流量走哪个 waypoint）。都留空 = 跟随命名空间设置 —— Pod 上的标签优先于命名空间。⚠️ 改的是 pod template，保存后会触发一次滚动更新，存量 Pod 需重建才带新标签。" /></template>
+                  <template #label>服务网格（Ambient）<FieldHelp tip="pod template 标签 istio.io/dataplane-mode（纳入 / 排除 ambient）与 istio.io/use-waypoint（本工作负载的七层流量走哪个 waypoint）。都留空 = 跟随命名空间设置 —— Pod 上的标签优先于命名空间。⚠️ 两条静默失败：①waypoint 不存在 → ztunnel 直接放行；②Pod 级 use-waypoint 只影响「目标是 Pod / VM IP」的流量，所以 waypoint 的 istio.io/waypoint-for 必须是 workload 或 all（默认值 service 不行）。两种情况都不报错、L7 策略悄悄不生效。⚠️ 改的是 pod template，保存后会触发一次滚动更新，存量 Pod 需重建才带新标签。" /></template>
                   <div class="pool-selects">
                     <el-select v-model="dataplaneMode" style="width: 100%" placeholder="跟随命名空间（不设标签）">
                       <el-option label="跟随命名空间（不设标签）" value="" />
@@ -856,15 +888,26 @@ const contextDesc = computed(() => {
                     <el-select v-model="useWaypoint" style="width: 100%" placeholder="跟随命名空间（不设标签）">
                       <el-option label="跟随命名空间（不设标签）" value="" />
                       <el-option label="不使用 waypoint（none）" :value="USE_WAYPOINT_NONE" />
-                      <el-option v-for="w in waypointOptions" :key="w" :label="w" :value="w" />
+                      <!-- 只列能承接 Pod 流量的候选；不匹配的连条目都不出现 -->
+                      <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name" />
+                      <!-- 当前值不可选时的回显项（disabled，见 currentUnusableWaypoint 说明） -->
+                      <el-option
+                        v-if="currentUnusableWaypoint" :key="`current-${currentUnusableWaypoint.name}`"
+                        :label="`${waypointOptionLabel(currentUnusableWaypoint)}｜不处理 Pod 流量，不会生效`"
+                        :value="currentUnusableWaypoint.name" disabled
+                      />
                     </el-select>
                   </div>
                   <div v-if="!perm.has(apiCodes.gatewayList)" class="form-tip">无 Gateway 列表读权限，候选取不到（已有值仍可回显提交）。</div>
                   <div v-else-if="!waypointLoaded" class="form-tip">正在加载本命名空间的 waypoint 候选…</div>
                   <div v-else-if="!waypointOptions.length" class="form-tip">
-                    本命名空间还没有 waypoint Gateway——L7 需要先有 waypoint（「Gateway」页 →「创建 Waypoint」，每命名空间至多一个）；此处仍可手输名字，但名字不存在时 istio 会静默放行、L7 策略不生效。
+                    本命名空间还没有 waypoint Gateway——L7 需要先有 waypoint（「Gateway」页 →「创建 Waypoint」）；此处仍可手输名字，但名字不存在时 istio 会静默放行、L7 策略不生效。
+                  </div>
+                  <div v-else-if="!waypointUsable.length" class="form-tip warn">
+                    本命名空间的 waypoint 都不处理 Pod 流量（waypoint-for 是 service / none）——要让这里生效，需把目标 waypoint 的类型改成 workload 或 all；只做服务流量的 L7 请在「命名空间」页设置 use-waypoint。
                   </div>
                   <div v-if="waypointMissing" class="form-tip warn">「{{ useWaypoint }}」不在本命名空间的 waypoint 候选里（可能已被删除）——istio 对不存在的 waypoint 静默放行，L7 策略不会生效。</div>
+                  <div v-if="waypointTypeMismatch" class="form-tip warn">「{{ useWaypoint }}」的类型不处理 Pod 流量——Pod 上的 use-waypoint 只对「目标是 Pod / VM IP」的流量有效，选它不会生效（istio 静默放行）。保存时会原样保留该值（要清掉请选「跟随命名空间」）。</div>
                 </el-form-item>
                 <el-form-item v-if="form.kind !== 'daemonset'">
                   <template #label>就绪最短秒数 <FieldHelp tip="minReadySeconds：控制 Pod 被标记为“可用（Available）”之前，必须保持 Ready 状态的最短时间。" /></template>

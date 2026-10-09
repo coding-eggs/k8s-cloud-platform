@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
+import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.platformapi.k8s.K8sMeshClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -98,20 +99,23 @@ public class MeshService {
     // ==================== waypoint 候选（平台侧读，供命名空间编辑器） ====================
 
     /**
-     * 某命名空间内的 waypoint Gateway 名列表（升序），供「命名空间编辑」的 {@code istio.io/use-waypoint}
-     * 下拉。平台限制每命名空间至多一个 waypoint（{@link GatewayService} 的创建守卫），故常态是 0 或 1 个。
+     * 某命名空间内的 waypoint 引用（名字 + 处理哪类流量，升序），供「命名空间编辑」的
+     * {@code istio.io/use-waypoint} 下拉。数量不设上限（2026-10-09 起取消「每 ns 至多一个」）。
      *
-     * <p>两点刻意的取舍：
+     * <p>三点刻意的取舍：
      * <ul>
      *   <li><b>走平台侧端点</b>：命名空间是平台侧资源，而 Gateway 是租户域资源 —— 平台管理员没有租户
      *       上下文，走不了租户的 {@code /gateways/list}。故经 {@code /mesh/gateways}（PLATFORM 边界、
      *       admin client）读。</li>
-     *   <li><b>判定留在本层</b>：k8s-server 只回该命名空间的全部 Gateway，"是不是 waypoint" 用
-     *       {@link GatewayService#isWaypointGateway} —— 判定口径只能有一处，否则两跳迟早漂移。</li>
+     *   <li><b>判定与投影留在本层</b>：k8s-server 只回该命名空间的全部 Gateway，"是不是 waypoint""处理
+     *       哪类流量"都用 {@link GatewayService#waypointRefsOf} —— 判定口径只能有一处，否则两跳迟早漂移。</li>
+     *   <li><b>必须带类型</b>：命名空间级 {@code use-waypoint} 只能指向能处理服务流量的 waypoint
+     *       （{@code service} / {@code all}），否则 istio 静默放行、L7 策略不生效。选择器要按类型过滤，
+     *       所以这里回的不只是名字（见 {@link WaypointRefDTO}）。</li>
      * </ul>
      */
-    public List<String> waypointCandidates(String clusterId, String namespace) {
-        return GatewayService.waypointNamesOf(k8s.namespaceGateways(clusterId, namespace));
+    public List<WaypointRefDTO> waypointCandidates(String clusterId, String namespace) {
+        return GatewayService.waypointRefsOf(k8s.namespaceGateways(clusterId, namespace));
     }
 
 }

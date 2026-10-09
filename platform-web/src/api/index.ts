@@ -9,6 +9,7 @@ import type {
   K8sClusterOption,
   K8sConfigMap,
   K8sGateway,
+  WaypointRef,
   K8sGatewayClass,
   K8sGrpcRoute,
   K8sHpa,
@@ -119,7 +120,7 @@ export const tenantApi = {
 
 /**
  * 命名空间创建/编辑载荷。两个 istio 字段各自 **三态**：不传 = 不动该标签、空串 = 移除、有值 = 覆写
- * ——「跟随集群默认」要发空串而不是省略字段，否则后端按"未传"处理、旧值会留在 ns 上。
+ * ——「不设标签」要发空串而不是省略字段，否则后端按"未传"处理、旧值会留在 ns 上。
  * 同理：capability 未探测到 Calico / Istio 时前端不传对应字段（防误清既有配置）。
  */
 type NamespaceUpsertPayload = {
@@ -363,10 +364,11 @@ export const meshApi = {
   /** 网格状态（hasIstio / istioAmbient / hasGatewayApi / versions）。失败上抛 → 调用方退化「未探测」 */
   status: (clusterId: string) =>
     http.post<never, MeshStatus>('/mesh/status', null, { params: { clusterId } }),
-  /** 命名空间内的 waypoint Gateway 名（平台侧读）——供命名空间编辑器的 istio.io/use-waypoint 下拉。
-   *  命名空间是平台侧资源、Gateway 是租户域资源，平台管理员没有租户上下文，故不能走 gatewayApi.list。 */
+  /** 命名空间内的 waypoint 引用候选（名字 + 处理哪类流量；平台侧读）——供命名空间编辑器的
+   *  istio.io/use-waypoint 下拉。命名空间是平台侧资源、Gateway 是租户域资源，平台管理员没有租户上下文，
+   *  故不能走 gatewayApi.list。必须带 waypoint-for：命名空间级只能指向能处理服务流量的（service/all）。 */
   namespaceWaypoints: (clusterId: string, namespace: string) =>
-    http.post<never, string[]>('/mesh/gateways', null, { params: { clusterId, namespace } }),
+    http.post<never, WaypointRef[]>('/mesh/gateways', null, { params: { clusterId, namespace } }),
 }
 
 /** Gateway /gateways（CRD，集群未装 Gateway API 时透传 404；租户域） */

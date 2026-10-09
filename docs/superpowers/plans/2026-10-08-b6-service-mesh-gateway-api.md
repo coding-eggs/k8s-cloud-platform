@@ -2,7 +2,7 @@
 
 - **日期**：2026-10-08
 - **规格**：[2026-09-15-service-mesh-gateway-api-design.md](../specs/2026-09-15-service-mesh-gateway-api-design.md)（完整设计/字段/边界在那里；本文件是「怎么落地」的执行清单）
-- **当前状态**：**Phase 1 + 2 + 3 全部完成（2026-10-08/09），未提交**。7 类 Gateway API 对象全栈落地（列表/创建/编辑/YAML/删除）+ mesh-status 横幅 + waypoint per-ns 唯一性。测试与 `npm run build` 全绿。**未覆盖项见下方「未覆盖（有意不做 · 记档）」**。
+- **当前状态**：**Phase 1 + 2 完成，Phase 3 已被取代（2026-10-09 撤销「每 ns 至多一个」）**，未提交。7 类 Gateway API 对象全栈落地（列表/创建/编辑/YAML/删除）+ mesh-status 横幅；waypoint 数量改为**不设上限**，改用「按 `waypoint-for` 过滤候选 + 类型写进选择器」保障不选错（见 Phase 3 节的修订说明）。测试与 `npm run build` 全绿。**未覆盖项见下方「未覆盖（有意不做 · 记档）」**。
 - **下一步**：无（本批收尾）。部署前先重放 `V2026_10_08_4` + `V2026_10_08_5` 两条 Flyway 迁移再起构建。
 
 > ⚠️ **spec 写于 2026-09-15，之后 k8s-server 做了一次「鉴权收敛 + 路径去前缀」重构（2026-10-08，见 `plans/2026-10-08-prefix-and-boundary.md`）。spec 里的 `/admin/mesh/**`、`/resources/**` 路径全部作废。本计划按重构后的现行约定写——以 B7 Calico 的落地代码为准（它就是重构后落的最新范例）。三处关键修正：**
@@ -143,13 +143,37 @@ npm --prefix platform-web run build
 - platform-api：4 个 controller（照 ServiceMonitor platform-api 侧，`K8sResourceClient`）+ RBAC 行。
 - 前端：列表页 ×4 + 编辑页 ×4（TCP/TLS/UDP 简单：parentRefs + rules{backendRefs}，TLS 加 sniHostname；GRPC 同 HTTPRoute 无 path）+ YAML tab；MainLayout 补 4 个入口；router/api/types。
 
-## Phase 3 · waypoint Gateway per-ns 唯一性校验
+## Phase 3 · waypoint Gateway per-ns 唯一性校验 —— ⚠️ 本条已于 2026-10-09 撤销，见下方修订
 - 背景（spec §2/§9）：B3 §11 的 ambient `use-waypoint` 下拉约束「每 ns 至多一个 waypoint Gateway」。本批承担该校验。
 - **实现**：创建/编辑 Gateway 时，若该 ns 已存在 waypoint Gateway（判定：Gateway 带 waypoint 语义标识，如 `gateway.istio.io/...` 注解/label——**实现前先与用户确认判定口径**），再建第二个 → 拒绝（中文错）。
 - 落点：`GatewayService`（platform-api）在 create/update 前查同 ns Gateway 列表做校验；gateway-api 侧无此约束，是平台附加规则。
 - 单测：`GatewayServiceTest` 覆盖「已有一个 waypoint → 拒绝第二个」。
 
 ### Phase 3 落地实况（2026-10-08/09 已完成）
+### Phase 3 修订（2026-10-09）：撤销数量上限，改用「按类型过滤候选」
+
+**为什么撤销**：加这条规则的理由是「B3 的 `use-waypoint` 下拉只能表达 0/1」，是**拿数据约束将就 UI**。
+现在两处选择器都按**名字**列候选（N 个也表达得出），前提不成立；istio 本身也允许同 ns 多个 waypoint
+（按名字寻址，且按「流量的原始目标类型」分流以避免双重处理）。硬上限还挡住三类合法用法：
+按工作负载划分安全边界的多个同类型 waypoint、waypoint 自身的版本灰度、控制面 revision 并存。
+
+**改成了什么**：
+- `GatewayService` 删掉 `assertWaypointUniqueInNamespace`，create/update 变纯透传（顺带去掉"list 失败 → 保守拒绝"那条拖累可用性的路径）
+- 新增 `WaypointRefDTO`（名字 + 类型）与 `waypointForOf` / `canHandleService` / `canHandleWorkload` 投影：
+  **候选一律带类型**，`/mesh/gateways` 与租户 `/gateways/list` 两侧共用同一份投影
+- 选择器按类型过滤：命名空间级只给 `service`/`all`，Pod 级（pod template）只给 `workload`/`all`；
+  **不匹配的候选不进下拉**（用户 2026-10-09 明确：不可选的就不该出现在选项里）。两处例外，都是"说明"而非"候选"：
+  ①当前值本身不可用（类型不匹配 / 已被删）时为**回显**保留一条 disabled 项，否则选择器显示空白、看起来像从未设置过；
+  ②候选存在但一个都不能用时给一句 disabled 说明（避免分组空着让人以为坏了）
+- 后端兜底：`WorkloadService.meshToggle` 在"waypoint 存在性"之外，再校验类型必须是 `workload`/`all` —— 这是**修死配置**的关键一条（见下）
+- Gateway 编辑器：原来的"已有 waypoint → 阻断创建"改成"列出已有的（名字+类型）"，同类型重复只**警告**不阻断
+
+**顺带修掉的一个真问题**：平台建 waypoint 时默认写 `istio.io/waypoint-for: service`（与 `istioctl` 一致），
+而 Pod 上的 `use-waypoint` 只对「最初目标是 Pod/VM IP」的流量有效 —— 官方原文：
+"when you label a pod to use a specific waypoint … the waypoint should be labeled istio.io/waypoint-for with
+the value workload or all"。也就是说改之前，**工作负载级的 L7 在平台默认配置下是个死配置**
+（标签写进去了、istio 静默放行、L7 策略不生效且无任何报错）。现在：候选过滤 + 后端校验 + 列表/编辑器把类型写进状态文案。
+
 - **判定口径定案**：`Gateway.spec.gatewayClassName` **包含** `-waypoint`（不是 `istio.io/waypoint-for` label，也不是 `gateway.istio.io/*` 注解）。用 `contains` 而非 `endsWith`——`istio-waypoint-1-20-0` 这类带版本后缀的类名也要算，宁可多拦。
 - 落点 `GatewayService.create/update` → `assertWaypointUniqueInNamespace`（update 传自身名排除自己）；**列表查询失败时保守拒绝**（无法确认即拒绝，不放过）。
 - **waypoint 固定形状**（前端 `GatewayEditorView.vue` 的 `waypointMode`）：listener 由代码生成，固定 `{name: mesh, port: 15008, protocol: HBONE}`，不可增删改；可编辑项只有三项——**名称**、**`istio.io/waypoint-for`**（`service`/`workload`/`all`/`none`，默认 `service`）、**`allowedRoutes.namespaces`**（`from` + 可选 `selector.matchLabels`，跨 ns waypoint 用，Istio 1.23+）。
@@ -163,7 +187,7 @@ npm --prefix platform-web run build
 
 1. **金丝雀 waypoint —— 暂不做**（Istio 1.31 Alpha）。`istio.io/use-waypoint-canary`（label，金丝雀 Gateway 名）+ `istio.io/use-waypoint-canary-namespace`（label）+ `istio.io/use-waypoint-canary-weight`（annotation，0–100，默认 0），用于在升级期间把服务流量按比例分流到**第二个** waypoint；支持对象为 Service / ServiceEntry / Namespace。
    - **与 Phase 3 直接冲突**：金丝雀的官方做法就是「在主 waypoint **旁边**同名空间再起一个」，而 Phase 3 用户明确要求「一个命名空间只能有一个 waypoint」——该校验会把金丝雀挡掉。
-   - **决定**：保持「每 ns 一个」不变，金丝雀不做。将来若要做，唯一性规则需改成「**至多一个非金丝雀 waypoint**」。
+   - **决定**：金丝雀不做（Istio 1.31 Alpha）。~~唯一性规则需放宽~~ —— 该冲突已随 2026-10-09 撤销数量上限而消失，将来要做不必再动这条规则。
 2. **消费方侧标签注入 → 归 B3 §11**（本 spec §2 已明确排除在 B6 之外）：`istio.io/use-waypoint`（Namespace / Service / Pod）、`istio.io/use-waypoint-namespace`（跨 ns 消费方）、`istio.io/ingress-use-waypoint`（Istio 1.25+，Service / Namespace，且需 istiod 开 `ENABLE_INGRESS_WAYPOINT_ROUTING`，默认 false）。
    - ⚠️ **后果**：B3 §11 落地前，本批建出来的 waypoint **不会被任何流量使用**（istiod 会照常给它起 Deployment/Service，但没有消费方引用它）。用户已确认属「先做 B6、回头补 B3 §11」的排列，不是缺陷。
 3. **命名空间 `istio.io/dataplane-mode: ambient` 前置条件**：编辑器仅文案提示，不做活校验（读 Namespace 对象属 B3 域）。
@@ -193,7 +217,7 @@ npm --prefix platform-web run build
 3. complex 路由（HTTP/GRPC）编辑后未建模 filter/match 子字段不丢失（fetch-overlay）；YAML tab 全保真。
 4. 编辑页每字段有 FieldHelp；backendRef/parentRef 下拉正确引用（GatewayClass/Gateway）。
 5. context（集群/命名空间）切换刷新正确；集群断开优雅降级。
-6. waypoint per-ns 唯一性校验生效（Phase 3）。
+6. ~~waypoint per-ns 唯一性校验生效（Phase 3）~~ → 改为：**waypoint 数量不设上限**；候选按 `waypoint-for` 过滤（ns 级 service/all、Pod 级 workload/all），不匹配的以禁用项+原因列出；Pod 级指向非 workload/all 型时后端拒绝（2026-10-09 修订）。
 
 ## 建议推进节奏（已执行完毕）
 Phase 1（mesh-status + GatewayClass + Gateway + HTTPRoute）→ Phase 2（GRPC + L4 四路由）→ Phase 3（waypoint 唯一性），三段均已落地，每段末跑上面验证命令。**开工前需确认的两条**：(a) Gateway 归属 = **租户域** ；(b) L4 路由版本 = **按集群 capability 分派** —— 均已于 2026-10-08 确认并落地。

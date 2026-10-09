@@ -61,6 +61,21 @@ D10 说的"延期至 B6/B7"已兑现。§11 分两次交付:**Calico 部分随 B
 - `npm --prefix platform-web run build`(含 `vue-tsc --build`)通过。
 - 浏览器实测(假 token + XHR stub 挂真实页面):命名空间编辑器回填 `纳入 ambient` / `waypoint`,提交体 `{"dataplaneMode":"ambient","useWaypoint":"waypoint","labels":{"env":"dev"}}`(保留键不在通用 labels 里);改选「跟随」后提交 `"dataplaneMode":""`;工作负载行操作菜单三行分别为 `ambient 流量 · 跟随命名空间` / `· 已纳入` / `· 已排除（none）`,可选项只列非当前态;点「纳入 ambient」→ 请求体 `{"dataplaneMode":"ambient"}`(无 useWaypoint = 不动),点 L7 组「回到跟随命名空间」→ 请求体 `{"useWaypoint":""}`(无 dataplaneMode)。
 
+### 修订(2026-10-09):waypoint 数量不设上限 + 候选按类型过滤
+
+**撤销了 B6 Phase 3 的「每 ns 至多一个 waypoint」**(理由见 B6 计划文档的 Phase 3 修订小节:该规则是为了迁就"下拉只能表达 0/1",而选择器现在按名字列候选,前提不成立)。
+
+**新增的才是关键**:`istio.io/use-waypoint` 指向的 waypoint 必须能处理该处流量**最初的目标类型**,否则 istio 静默放行、L7 策略不生效且没有任何报错。官方原文:"By default waypoints accept traffic for services. For example, when you label a pod to use a specific waypoint … the waypoint should be labeled istio.io/waypoint-for with the value workload or all."
+
+于是:
+- 候选一律带类型(后端 `WaypointRefDTO` + `GatewayService.waypointForOf/canHandleService/canHandleWorkload`,两侧数据源共用一份投影)
+- **命名空间级**只给 `service` / `all`;**Pod 级(pod template)**只给 `workload` / `all`;`none` 型两边都不给
+- **不匹配的候选不进下拉**(不可选的就不该出现在选项里)。只有两处 disabled 项,且都不是候选:①当前值本身不可用时为**回显**保留一条(否则选择器显示空白、像从未设置过);②候选存在但一个都不能用时给一句说明(避免分组空着)
+- 后端兜底:工作负载的 mesh-toggle 除"waypoint 存在"外,再校验类型必须是 workload/all
+- Gateway 编辑器:「已有 waypoint → 阻断创建」改成「列出已有的(名字+类型)」,同类型重复只警告
+
+**另外两处同批修正**:①工作负载列表的网格菜单项此前没跟「编辑」的门禁,Op-managed(有 ownerReferences)对象也能改 pod template 标签 → 已按同口径禁用;②命名空间侧的「跟随集群默认」措辞不成立(Istio 没有集群级数据面模式默认值,不设标签就是不纳入网格)→ 改为「不设标签(不纳入网格)」。
+
 ### 仍未做(有意)
 
 - `istio.io/ingress-use-waypoint`(Istio 1.25+,服务/命名空间级):依赖控制面 flag `ENABLE_INGRESS_WAYPOINT_ROUTING`(默认 false),spec §11.1 明写 v1 不做。
