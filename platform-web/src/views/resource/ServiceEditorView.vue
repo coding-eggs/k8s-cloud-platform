@@ -2,10 +2,21 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { serviceApi, workloadApi, podApi } from '@/api'
-import type { K8sService, K8sServicePort } from '@/types'
+import { serviceApi, workloadApi, podApi, gatewayApi } from '@/api'
+import type { K8sGateway, K8sService, K8sServicePort, WaypointRef } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
+import { useMeshStatus } from '@/composables/useMeshStatus'
+import {
+  canHandleService,
+  isWaypointGateway,
+  LABEL_USE_WAYPOINT,
+  toWaypointRef,
+  USE_WAYPOINT_NONE,
+  waypointOptionLabel,
+} from '@/utils/waypoint'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
@@ -14,6 +25,7 @@ import FieldHelp from "@/components/workload/FieldHelp.vue";
 const route = useRoute()
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const perm = usePermission()
 
 /** ?name= → 编辑回填；无 name → 创建 */
 const editing = ref<string | null>(route.query.name as string | null)
@@ -109,6 +121,76 @@ const healthCheckLocked = computed(() => !!editing.value && originalHealthCheckN
 const lbClassLocked = computed(() => !!editing.value && !!originalLoadBalancerClass.value)
 /** clusterIP：编辑态只读（K8s 禁改，除非切 ExternalName） */
 const ipLocked = computed(() => !!editing.value)
+
+// ---------- 服务网格（Service 级 istio.io/use-waypoint） ----------
+/**
+ * `istio.io/use-waypoint` 官方支持的资源是 **Namespace / Service / Pod**，优先级 **Pod > Service > Namespace**。
+ * 平台此前只有命名空间级与 Pod 级（工作负载），缺的正是 **Service 级** —— 而 service 型 waypoint 最贴切的
+ * 粒度就是"某个服务"（例如只让 reviews 走 L7，同命名空间其它服务不走）。
+ *
+ * <p>门禁同工作负载侧：租户只知道装没装 Istio（能力快照），ambient 是否真在跑只有平台侧知道，故以
+ * hasIstio 为准、不作硬门禁（写这个 label 本身无害）。
+ */
+const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
+const meshAvailable = computed(() => mesh.hasIstio.value)
+
+/** 本命名空间的 waypoint 候选（租户域 /gateways；名字 + 类型） */
+const waypointOptions = ref<WaypointRef[]>([])
+const waypointLoaded = ref(false)
+async function loadWaypointOptions(): Promise<void> {
+  waypointOptions.value = []
+  waypointLoaded.value = false
+  const { tenantId, clusterId, namespace } = state
+  if (!tenantId || !clusterId || !namespace || !meshAvailable.value) return
+  if (!perm.has(apiCodes.gatewayList)) { waypointLoaded.value = true; return } // 不发注定 403 的请求
+  try {
+    waypointOptions.value = ((await gatewayApi.list({ tenantId, clusterId, namespace })) ?? [])
+      .filter((g: K8sGateway) => isWaypointGateway(g))
+      .map((g) => toWaypointRef(g))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    waypointOptions.value = [] // 未装 Gateway API（CRD 404）等：拦截器已提示，降级为空
+  } finally {
+    waypointLoaded.value = true
+  }
+}
+watch([() => state.clusterId, () => state.namespace, () => state.tenantId, meshAvailable],
+  () => { void loadWaypointOptions() }, { immediate: true })
+
+/** 服务流量方向：只有 service / all 型的 waypoint 有意义（官方："By default waypoints accept traffic for services."） */
+const waypointUsable = computed(() => waypointOptions.value.filter((r) => canHandleService(r.waypointFor)))
+
+const useWaypoint = computed<string>({
+  get: () => form.labels?.[LABEL_USE_WAYPOINT] ?? '',
+  set: (v) => {
+    const next: Record<string, string> = { ...(form.labels ?? {}) }
+    if (v) next[LABEL_USE_WAYPOINT] = v
+    else delete next[LABEL_USE_WAYPOINT]
+    form.labels = next
+  },
+})
+
+/** 当前值不可用（类型不匹配 / 已被删）时为回显保留的那一条（disabled，不可选） */
+const currentUnusableWaypoint = computed<WaypointRef | null>(() => {
+  const cur = useWaypoint.value
+  if (!cur || cur === USE_WAYPOINT_NONE) return null
+  if (waypointUsable.value.some((r) => r.name === cur)) return null
+  const known = waypointOptions.value.find((r) => r.name === cur)
+  return { name: cur, waypointFor: known?.waypointFor ?? '已不存在' }
+})
+
+const waypointMissing = computed(() =>
+  waypointLoaded.value
+  && !!useWaypoint.value && useWaypoint.value !== USE_WAYPOINT_NONE
+  && !waypointOptions.value.some((r) => r.name === useWaypoint.value))
+
+const waypointTypeMismatch = computed(() => {
+  const hit = waypointOptions.value.find((r) => r.name === useWaypoint.value)
+  return !!hit && !canHandleService(hit.waypointFor)
+})
+
+/** 通用「标签」区排除本页独占管理的 key（否则两个输入源会互相覆盖） */
+const SERVICE_RESERVED_LABELS = [LABEL_USE_WAYPOINT]
 
 async function loadDetail(): Promise<void> {
   if (!editing.value || !ready.value) return
@@ -322,7 +404,31 @@ const contextDesc = computed(() => {
               <div class="form-tip">{{ TYPE_DESC[form.type] }}</div>
             </el-form-item>
             <el-form-item label="标签">
-              <LabelEditor v-model="form.labels" class="sub-editor" style="max-width: 520px" />
+              <LabelEditor v-model="form.labels" :exclude-keys="SERVICE_RESERVED_LABELS" class="sub-editor" style="max-width: 520px" />
+            </el-form-item>
+            <!-- 服务网格（Service 级 use-waypoint）：pod template 那一套的 Service 版 -->
+            <el-form-item v-if="meshAvailable" label="服务网格">
+              <div class="mesh-block">
+                <el-select v-model="useWaypoint" style="width: 360px" placeholder="跟随命名空间（不设标签）">
+                  <el-option label="跟随命名空间（不设标签）" value="" />
+                  <el-option label="显式不使用（none）" :value="USE_WAYPOINT_NONE" />
+                  <!-- 只列能承接服务流量的候选；不匹配的连条目都不出现 -->
+                  <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name" />
+                  <!-- 当前值不可选时的回显项（disabled） -->
+                  <el-option
+                    v-if="currentUnusableWaypoint" :key="`current-${currentUnusableWaypoint.name}`"
+                    :label="`${waypointOptionLabel(currentUnusableWaypoint)}｜不处理服务流量，不会生效`"
+                    :value="currentUnusableWaypoint.name" disabled
+                  />
+                </el-select>
+                <FieldHelp tip="Service 标签 istio.io/use-waypoint：本服务的七层流量走哪个 waypoint。优先级是 Pod > Service > Namespace —— 设了就压过命名空间级的设置。⚠️ 两条静默失败：①waypoint 不存在 → ztunnel 直接放行；②类型不匹配 → 这里只影响「目标是服务」的流量，waypoint 的 istio.io/waypoint-for 必须是 service 或 all。该标签由本字段独占管理，故不在上方通用「标签」区显示。" />
+                <div v-if="!perm.has(apiCodes.gatewayList)" class="form-tip">无 Gateway 列表读权限，候选取不到（已有值仍可回显提交）。</div>
+                <div v-else-if="!waypointLoaded" class="form-tip">正在加载本命名空间的 waypoint 候选…</div>
+                <div v-else-if="!waypointOptions.length" class="form-tip">本命名空间还没有 waypoint Gateway——要在「Gateway」页用「创建 Waypoint」建一个。</div>
+                <div v-else-if="!waypointUsable.length" class="form-tip warn">本命名空间的 waypoint 都不处理服务流量（waypoint-for 是 workload / none）——要服务流量的 L7，需把目标 waypoint 的类型改成 service 或 all。</div>
+                <div v-if="waypointMissing" class="form-tip warn">「{{ useWaypoint }}」不在本命名空间的 waypoint 候选里（可能已被删除）——istio 对不存在的 waypoint 静默放行，L7 策略不会生效。</div>
+                <div v-if="waypointTypeMismatch" class="form-tip warn">「{{ useWaypoint }}」的类型不处理服务流量——选它不会生效（istio 静默放行）。保存时会原样保留该值（要清掉请选「跟随命名空间」）。</div>
+              </div>
             </el-form-item>
             <el-form-item v-if="!isExternalName" label="端口">
               <div class="port-editor">
@@ -562,6 +668,17 @@ const contextDesc = computed(() => {
   color: var(--text-3);
   font-size: 12px;
   line-height: 1.5;
+}
+.form-tip.warn {
+  color: var(--el-color-warning);
+}
+/* 服务网格区块：选择器 + FieldHelp 换行 + 提示文字（与 WorkloadEditorView 同款） */
+.mesh-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
 }
 .sub-editor {
   width: 100%;

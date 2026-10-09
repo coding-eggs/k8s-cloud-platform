@@ -40,7 +40,7 @@ D10 说的"延期至 B6/B7"已兑现。§11 分两次交付:**Calico 部分随 B
 | k8s-server | `MeshController` +`POST /mesh/gateways`(PLATFORM,admin client,按命名空间列 Gateway) |
 | platform-api | `NamespaceUpsertRequest`/`NamespaceView`/`NamespaceService` 携带 2 字段;`WorkloadService.meshToggle` + `POST /workloads/{name}/mesh-toggle`;`MeshService.waypointCandidates` + `POST /mesh/gateways`;`GatewayService.waypointNamesOf`/`waypointNames`(waypoint 判定与投影的唯一实现,平台侧与租户侧两条数据源共用) |
 | platform-data | `V2026_10_09_1__namespace_mesh_permissions.sql`(2 行 + 3 条角色关联) |
-| platform-web | 命名空间编辑器新增「服务网格(Istio Ambient)」区块;工作负载列表的网格管理进**行操作下拉菜单**(带当前态的分组标题 + 目标态菜单项);工作负载编辑器新增「服务网格(Ambient)」表单项;命名空间概览新增「服务网格」行;`LabelEditor` 新增 `excludeKeys`;`utils/waypoint.ts` 收口判定与保留键常量 |
+| platform-web | 命名空间编辑器新增「服务网格(Istio Ambient)」区块;工作负载列表的网格管理进**行操作下拉菜单**(带当前态的分组标题 + 目标态菜单项);工作负载编辑器新增「服务网格(Ambient)」表单项;**Service 编辑器新增「服务网格」字段(Service 级 use-waypoint,2026-10-09 补)**;命名空间概览 + **工作负载详情页(2026-10-09 补)** 新增「服务网格」行;`LabelEditor` 新增 `excludeKeys`;`utils/waypoint.ts` 收口判定与保留键常量 |
 
 ### 实现期定下的口径(与 spec §11 的偏离,都在代码注释里写了理由)
 
@@ -74,13 +74,15 @@ D10 说的"延期至 B6/B7"已兑现。§11 分两次交付:**Calico 部分随 B
 - 后端兜底:工作负载的 mesh-toggle 除"waypoint 存在"外,再校验类型必须是 workload/all
 - Gateway 编辑器:「已有 waypoint → 阻断创建」改成「列出已有的(名字+类型)」,同类型重复只警告
 
+**同批收尾(2026-10-09)**:补上官方三个消费方层级里缺的那一层 —— **Service 级 `use-waypoint`**(Service 编辑器新增「服务网格」字段,候选按 `service`/`all` 过滤,该 key 从通用标签区排除;优先级 Pod > Service > Namespace),以及**工作负载详情页**的网格行。至此 `istio.io/use-waypoint` 的 Namespace / Service / Pod 三个层级都有入口。仍未做的是 `use-waypoint-namespace`(跨 ns)与 `ingress-use-waypoint`(需 istiod flag);`waypoint-for` 的 GatewayClass 级用法记在 B6 计划文档的「后续规划」里。
+
 **另外两处同批修正**:①工作负载列表的网格菜单项此前没跟「编辑」的门禁,Op-managed(有 ownerReferences)对象也能改 pod template 标签 → 已按同口径禁用;②命名空间侧的「跟随集群默认」措辞不成立(Istio 没有集群级数据面模式默认值,不设标签就是不纳入网格)→ 改为「不设标签(不纳入网格)」。
 
 ### 仍未做(有意)
 
 - `istio.io/ingress-use-waypoint`(Istio 1.25+,服务/命名空间级):依赖控制面 flag `ENABLE_INGRESS_WAYPOINT_ROUTING`(默认 false),spec §11.1 明写 v1 不做。
 - 金丝雀 waypoint(`use-waypoint-canary*`):与 B6 的「每 ns 至多一个 waypoint」直接冲突,用户 2026-10-09 决定不做,详见 B6 计划文档「未覆盖(有意不做 · 记档)」。
-- 工作负载**详情页**的 ambient/L7 展示:列表操作菜单已有入口 + 编辑器已有区块,详情页暂未单列(§11.4 说的是"可以加")。
+- ~~工作负载详情页的 ambient/L7 展示~~ —— **2026-10-09 已补**(详情页新增「服务网格」行,与命名空间详情页同款文案)。
 
 ## 对上游设计稿的两处技术纠正(写代码前必读)
 

@@ -186,12 +186,25 @@ the value workload or all"。也就是说改之前，**工作负载级的 L7 在
 > 结论日期 2026-10-09，用户确认。以下均为**已知缺口**，不是遗漏。
 
 1. **金丝雀 waypoint —— 暂不做**（Istio 1.31 Alpha）。`istio.io/use-waypoint-canary`（label，金丝雀 Gateway 名）+ `istio.io/use-waypoint-canary-namespace`（label）+ `istio.io/use-waypoint-canary-weight`（annotation，0–100，默认 0），用于在升级期间把服务流量按比例分流到**第二个** waypoint；支持对象为 Service / ServiceEntry / Namespace。
-   - **与 Phase 3 直接冲突**：金丝雀的官方做法就是「在主 waypoint **旁边**同名空间再起一个」，而 Phase 3 用户明确要求「一个命名空间只能有一个 waypoint」——该校验会把金丝雀挡掉。
-   - **决定**：金丝雀不做（Istio 1.31 Alpha）。~~唯一性规则需放宽~~ —— 该冲突已随 2026-10-09 撤销数量上限而消失，将来要做不必再动这条规则。
-2. **消费方侧标签注入 → 归 B3 §11**（本 spec §2 已明确排除在 B6 之外）：`istio.io/use-waypoint`（Namespace / Service / Pod）、`istio.io/use-waypoint-namespace`（跨 ns 消费方）、`istio.io/ingress-use-waypoint`（Istio 1.25+，Service / Namespace，且需 istiod 开 `ENABLE_INGRESS_WAYPOINT_ROUTING`，默认 false）。
-   - ⚠️ **后果**：B3 §11 落地前，本批建出来的 waypoint **不会被任何流量使用**（istiod 会照常给它起 Deployment/Service，但没有消费方引用它）。用户已确认属「先做 B6、回头补 B3 §11」的排列，不是缺陷。
-3. **命名空间 `istio.io/dataplane-mode: ambient` 前置条件**：编辑器仅文案提示，不做活校验（读 Namespace 对象属 B3 域）。
+   - 它的官方做法是「在主 waypoint **旁边**同名空间再起一个」—— 当年与 Phase 3 的「每 ns 至多一个」冲突；该冲突已随 2026-10-09 撤销数量上限而消失，**将来要做不必再动规则**。
+   - **决定**：仍然不做 —— 理由只剩"Istio 1.31 Alpha"这一条（标签/注解/行为都可能变），不再是平台规则挡着。
+2. **消费方侧标签注入**（本 spec §2 明确排除在 B6 之外，归 B3 §11）：`istio.io/use-waypoint`（Namespace / Service / Pod）**已于 2026-10-09 随 B3 §11 落地**（命名空间编辑 + 工作负载 pod template），本批建出的 waypoint 因此有了消费方。
+   - **Service 级 `use-waypoint` 也已落地（2026-10-09）**：Service 编辑器新增「服务网格」字段（候选按 `service`/`all` 过滤、当前值不可用时的回显项、类型/已删提示；该 key 从通用标签区排除）。至此官方支持的三个层级（Namespace / Service / Pod）都有了入口。
+   - **仍未做**：`istio.io/use-waypoint-namespace`（跨 ns 消费方）、`istio.io/ingress-use-waypoint`（Istio 1.25+，Service / ServiceEntry / Namespace，且需 istiod 开 `ENABLE_INGRESS_WAYPOINT_ROUTING`，默认 false）。
+3. **命名空间 `istio.io/dataplane-mode: ambient` 前置条件**：命名空间编辑侧已可见（B3 §11 的平台页有 ztunnel 活探测 + 提示）；**工作负载页无法校验**（租户读不到 ns 标签），仍只有文案提示。
 4. **强制流量经 waypoint**（AuthorizationPolicy 只放行 waypoint 的 SA；**SA 名 = Gateway 名**）属 Istio 专有 CRD `security.istio.io`，spec 明确 out of scope。
+   - ⚠️ **这是本清单里唯一有安全含义的一条**：不做它，ambient 的 L7 就是**尽力而为** —— 客户端绕过 waypoint 直连 Pod 依然能通，而界面看起来"L7 已生效"。若把 waypoint 上的鉴权当访问控制用，必须补；若只用于路由/可观测性，可以不做。
+   - 要补的话是**一整批活**（DTO/converter/ops/controller/权限行/页面 + YAML），量级与 B6 相当。**建议不收窄成通用 AuthorizationPolicy 编辑器**，而做「为某工作负载一键生成/管理那条 require-waypoint 策略」的单一用途功能（principals 由平台按 Gateway 名推导，用户不会写错）。
+
+## 后续规划（已定要做，尚未排期）
+
+1. **`waypoint-for` 支持 GatewayClass 级**（2026-10-09 记档）。
+   - **背景**：官方该 label 的资源类型是 **GatewayClass / Gateway**（"either by its specific Gateway, or for the entire collection on the GatewayClass"）。平台只在 waypoint 的 **Gateway** 上读写它，GatewayClass 编辑器连标签字段都没有 → 类级的只能 kubectl 设。
+   - **风险（为什么值得排期）**：类型判定只读 Gateway 自身的 label。若集群把类型设在 GatewayClass 上（Gateway 上没有），我们会按默认的 `service` 处理 → **一个实际是 `all`、能用的 waypoint 会被从工作负载级候选里过滤掉**（2026-10-09 起候选是硬过滤，不匹配的不列出），只剩一句"都不处理 Pod 流量"。反向（类上是 `workload`、我们读成 `service`）同样误过滤。
+   - **两个层次的修法**：
+     - **最小**：候选被过滤掉时补一句"另有 N 个 waypoint 因类型不匹配未列出"（不是候选、不可选，但不会让人以为平台里就这一个）。
+     - **完整**：类型判定把 GatewayClass 的 label 也读进来。平台侧能读（GatewayClass 已走平台端点）；租户侧要给 `/mesh/gatewayclass-refs` 那个窄投影加 `waypointFor`（或 `labels`）字段 —— 该端点进 `ExemptPaths`（纯候选值），加字段不改变授权面。
+
 
 ---
 

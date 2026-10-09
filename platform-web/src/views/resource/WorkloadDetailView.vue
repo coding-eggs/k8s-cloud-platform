@@ -6,6 +6,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { workloadApi, podApi } from '@/api'
 import type { K8sPod, PodContainerDetail } from '@/types'
 import type { WorkloadDetail, Affinity, Toleration, VolumeDef, PvcTemplate } from '@/types/workload'
+import { LABEL_DATAPLANE_MODE, LABEL_USE_WAYPOINT } from '@/utils/waypoint'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -203,6 +204,10 @@ const kindLabel = computed(() => {
   }
 })
 const status = computed(() => workloadStatus(detail.value?.kind, detail.value?.replicas, detail.value?.readyReplicas))
+
+/** 服务网格两个保留 label（pod template 上；缺省 = 跟随命名空间，不是"未纳入"） */
+const meshDataplaneMode = computed(() => detail.value?.podTemplate?.labels?.[LABEL_DATAPLANE_MODE] ?? '')
+const meshUseWaypoint = computed(() => detail.value?.podTemplate?.labels?.[LABEL_USE_WAYPOINT] ?? '')
 const replicasText = computed(() => {
   const d = detail.value
   if (!d) return '—'
@@ -397,6 +402,23 @@ const contextDesc = computed(() => {
             </div>
             <div v-if="detail.kind === 'statefulset'" class="info-row"><span class="k">编号起始值</span><span class="v">{{ detail.ordinals?.start ?? 0 }}</span></div>
             <div class="info-row col-row"><span class="k">描述</span><span class="v desc">{{ detail.description || '—' }}</span></div>
+            <!-- 服务网格（B3 §11）：pod template 上的两个 istio 保留 label。
+                 未设 = 跟随命名空间（Pod 级标签优先于命名空间级），故这里不显示成"未纳入"。 -->
+            <div class="info-row">
+              <span class="k">服务网格</span>
+              <span class="v">
+                <template v-if="meshDataplaneMode === 'ambient'">
+                  <el-tag size="small" type="success" effect="light">已纳入 ambient</el-tag>
+                </template>
+                <template v-else-if="meshDataplaneMode === 'none'">
+                  <el-tag size="small" type="info" effect="light">显式排除（none）</el-tag>
+                </template>
+                <span v-else class="muted">未设（跟随命名空间）</span>
+                <el-tag v-if="meshUseWaypoint" size="small" effect="plain" class="mesh-tag">
+                  L7 · {{ meshUseWaypoint === 'none' ? '不使用 waypoint（none）' : `waypoint: ${meshUseWaypoint}` }}
+                </el-tag>
+              </span>
+            </div>
             <div class="info-row"><span class="k">创建时间</span><span class="v">{{ fmtDate(detail.creationTime) }}</span></div>
             <div class="info-row"><span class="k">存活时长</span><span class="v">{{ fmtAge(detail.creationTime) }}</span></div>
             <div class="info-row col-row">
@@ -674,6 +696,7 @@ const contextDesc = computed(() => {
 .name-link:hover { text-decoration: underline; }
 .img-cell { display: inline-block; margin-right: 6px; word-break: break-all; }
 .muted { color: var(--text-3); }
+.mesh-tag { margin-left: 6px; }
 .age-cell { line-height: 1.5; }
 .empty-line { font-size: 13px; }
 .svc-expose { gap: 4px; }
