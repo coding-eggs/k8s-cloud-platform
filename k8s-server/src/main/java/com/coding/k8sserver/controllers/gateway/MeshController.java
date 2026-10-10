@@ -2,7 +2,7 @@ package com.coding.k8sserver.controllers.gateway;
 
 import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.GatewayDTO;
-import com.coding.common.models.k8s.dto.MeshStatusDTO;
+import com.coding.common.models.k8s.dto.admin.AdminMeshProbeResult;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8score.operations.NamespacedOperations;
@@ -23,6 +23,10 @@ import java.util.List;
  * 集群域 - 服务网格探测（平台侧，边界=平台已注册该集群）。只读、admin client。
  * <p>非六端点形态，不套 {@code AbstractClusterResourceController}；k8s 语义全在 {@link MeshOperations}，
  * 本类只做边界校验 + 委托。
+ * <p><b>{@code /mesh/status} 自 2026-10-10 起只回活探测那一半</b>（{@link AdminMeshProbeResult}）——
+ * discovery 那半（hasGatewayApi / hasIstio / gatewayApiVersions）改由 platform-api 从
+ * {@code k8s_cluster.capability} 派生（适配器不读 DB 列做业务判断）。platform-api 对外的
+ * {@code /mesh/status} 形状不变，仍由 api 侧组装成完整的 {@code MeshStatusDTO}。
  * <p>用 {@code POST} 而非 {@code GET}：本项目既有惯例是非资源派生查询走 POST + query 参数
  * （见 {@code CalicoFormOptionController}），且结果不进任何 HTTP 缓存 —— 它在 api 侧有短 TTL 缓存，
  * 缓存策略只应有一处。
@@ -47,10 +51,10 @@ public class MeshController implements AccessBoundaryAware {
     }
 
     @PostMapping("/status")
-    @Operation(summary = "服务网格状态（hasIstio / istioAmbient / hasGatewayApi / gatewayApiVersions）")
-    public ResponseData<MeshStatusDTO> status(@RequestParam String clusterId) {
+    @Operation(summary = "服务网格活探测（istioAmbient = 是否探测到 ztunnel DaemonSet）")
+    public ResponseData<AdminMeshProbeResult> status(@RequestParam String clusterId) {
         accessResolver.assertClusterAccess(clusterId);
-        return new ResponseData<>(ops(clusterId).status());
+        return new ResponseData<>(ops(clusterId).ambient());
     }
 
     /**

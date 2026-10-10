@@ -70,11 +70,26 @@ public class GatewayOperations implements NamespacedOperations<GatewayDTO> {
     }
 
     /**
-     * <b>有意不覆写 {@link NamespacedOperations#listAll}</b>：Gateway 归租户域（2026-10-08 决策），
-     * 不提供平台侧跨命名空间全局视图 —— 不覆写即声明"不支持"，调用方拿到的是明确的
-     * {@code OPERATION_NOT_SUPPORTED}，而不是一份看起来完整、实则只有一个命名空间的数据。
-     * 若将来要加全局视图，覆写本方法 + 在 platform-api 侧另开路径与独立权限码（{@code platform:gateway:list-all}）。
+     * 跨全部命名空间列举（平台侧）。
+     * <p><b>2026-10-08 曾"有意不覆写"</b>（理由：Gateway 属租户域，租户要"我全部命名空间的 Gateway"
+     * 应由 platform-api 扇出）。<b>2026-10-10 推翻</b>：能力与暴露是两个闸门（backend-layering.md §5.2），
+     * 覆写只是补能力 —— 没有权限行就没有可达路径，租户侧的扇出语义不受影响；而平台侧确有"全集群网关视图"
+     * 的需求（B6 的平台页）。故与其它命名空间级资源保持一致。
+     * <p>返回的每个 item 自带其所在 namespace —— converter 从 metadata 取，本方法<b>不做</b>统一回填。
      */
+    @Override
+    public List<GatewayDTO> listAll(String labelSelector, String fieldSelector) {
+        ListOptions options = new ListOptions();
+        if (StringUtils.hasText(labelSelector)) {
+            options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
+        }
+        List<GenericKubernetesResource> items = client.genericKubernetesResources(CRD)
+                .inAnyNamespace().list(options).getItems();
+        return items.stream().map(converter::revert).toList();
+    }
 
     @Override
     public GatewayDTO get(String namespace, String name) {

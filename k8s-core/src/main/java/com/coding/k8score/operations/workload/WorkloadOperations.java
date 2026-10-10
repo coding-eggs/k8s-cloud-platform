@@ -60,6 +60,31 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
         return result;
     }
 
+    /**
+     * 跨全部命名空间列举（平台侧；本实例必须是 admin client，见 {@link NamespacedOperations#listAll}）。
+     * <p>三族（Deployment / StatefulSet / DaemonSet）一次列全，合并成一个 List —— 与 {@link #list} 同形，
+     * 只是把 inNamespace(ns) 换成 inAnyNamespace()。
+     * <p>返回的每个 item 自带其所在 namespace —— converter 从 metadata 取，本方法<b>不做</b>统一回填。
+     */
+    @Override
+    public List<WorkloadDTO> listAll(String labelSelector, String fieldSelector) {
+        ListOptions options = new ListOptions();
+        if (StringUtils.hasText(labelSelector)) {
+            options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
+        }
+        List<WorkloadDTO> result = new ArrayList<>();
+        client.apps().deployments().inAnyNamespace().list(options).getItems()
+                .forEach(d -> result.add(converter.revert(d)));
+        client.apps().statefulSets().inAnyNamespace().list(options).getItems()
+                .forEach(s -> result.add(converter.revert(s)));
+        client.apps().daemonSets().inAnyNamespace().list(options).getItems()
+                .forEach(ds -> result.add(converter.revert(ds)));
+        return result;
+    }
+
     @Override
     public WorkloadDTO get(String namespace, String name) {
         if (!StringUtils.hasText(namespace) || !StringUtils.hasText(name)) {

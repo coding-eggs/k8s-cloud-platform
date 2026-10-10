@@ -21,6 +21,10 @@ import tools.jackson.databind.JavaType;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.type.TypeFactory;
 
+import java.io.ByteArrayOutputStream;
+import java.io.FilterInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -101,45 +105,50 @@ public class K8sServerGateway {
     /**
      * 调 k8s-server（任意动词）：透传 Authorization，code≠200 原样转 CloudPlatformException。
      * respType 为 ResponseData&lt;T&gt; 完整类型；返回 data。
+     *
+     * <p><b>流式（2026-10-10 方案 A）</b>：响应体从 {@code InputStream} 直接反序列化，<b>不再</b>先读成 String
+     * —— 旧实现的峰值是「byte[] + String(≈2×) + 对象图」，大响应（跨命名空间列举）上就是几百 MB。
+     * 报错上下文由 {@link ResponsePreviewStream} 限在前 8KB，避免"解析失败时把整包 body 写进日志"。
      */
-    @SuppressWarnings("unchecked")
     public <T> T exchange(HttpMethod method, String path, Map<String, String> params, Object body, JavaType respType) {
         String uri = buildUri(path, params);
-        StatusBody sb;
         try {
-            //不用 retrieve()：401/403 也带 ResponseData JSON，统一按 body.code 判定
             var spec = restClient.method(method)
                     .uri(uri)
                     .headers(this::passThroughAuthorization);
             if (body != null) {
                 spec = spec.contentType(MediaType.APPLICATION_JSON).body(body);
             }
-            sb = spec.exchange((request, response) -> new StatusBody(
-                    response.getStatusCode().value(), response.bodyTo(String.class)));
+            //不用 retrieve()：401/403 也带 ResponseData JSON，统一按 body.code 判定
+            return spec.exchange((request, response) -> {
+                int status = response.getStatusCode().value();
+                ResponsePreviewStream in = new ResponsePreviewStream(response.getBody());
+                ResponseData<T> resp;
+                try {
+                    resp = jsonMapper.readValue(in, respType);
+                } catch (Exception e) {
+                    if (in.totalBytes() == 0) {
+                        log.error("k8s-server {} 返回空响应，HTTP {}", path, status);
+                        throw new CloudPlatformException(EnumResponseType.ERROR,
+                                "k8s-server 返回空响应 (HTTP " + status + ")");
+                    }
+                    log.error("解析 k8s-server {} 响应失败（HTTP {}，共 {} 字节，前 8KB：{}）",
+                            path, status, in.totalBytes(), in.previewText(), e);
+                    throw new CloudPlatformException(EnumResponseType.ERROR, "k8s-server 响应解析失败");
+                }
+                if (resp == null || resp.getCode() == null || !resp.getCode().equals(EnumResponseType.SUCCESS.getCode())) {
+                    Integer code = resp != null && resp.getCode() != null ? resp.getCode() : EnumResponseType.ERROR.getCode();
+                    String msg = resp != null && resp.getMsg() != null ? resp.getMsg() : "k8s-server 调用失败";
+                    throw new CloudPlatformException(code, msg);
+                }
+                return resp.getData();
+            });
         } catch (CloudPlatformException e) {
             throw e;
         } catch (Exception e) {
             log.error("调用 k8s-server {} {} 失败", method, path, e);
             throw new CloudPlatformException(EnumResponseType.ERROR, "调用 k8s-server 失败: " + e.getMessage());
         }
-        if (sb.body() == null || sb.body().isBlank()) {
-            log.error("k8s-server {} 返回空响应，HTTP {}", path, sb.status());
-            throw new CloudPlatformException(EnumResponseType.ERROR, "k8s-server 返回空响应 (HTTP " + sb.status() + ")");
-        }
-
-        ResponseData<T> resp;
-        try {
-            resp = jsonMapper.readValue(sb.body(), respType);
-        } catch (Exception e) {
-            log.error("解析 k8s-server {} 响应失败：{}", path, sb.body(), e);
-            throw new CloudPlatformException(EnumResponseType.ERROR, "k8s-server 响应解析失败");
-        }
-        if (resp == null || resp.getCode() == null || !resp.getCode().equals(EnumResponseType.SUCCESS.getCode())) {
-            Integer code = resp != null && resp.getCode() != null ? resp.getCode() : EnumResponseType.ERROR.getCode();
-            String msg = resp != null && resp.getMsg() != null ? resp.getMsg() : "k8s-server 调用失败";
-            throw new CloudPlatformException(code, msg);
-        }
-        return resp.getData();
     }
 
     /**
@@ -215,7 +224,65 @@ public class K8sServerGateway {
     private record ErrorInfo(int code, String msg) {
     }
 
-    /**HTTP 状态码 + 原始响应体 */
-    private record StatusBody(int status, String body) {
+    /**
+     * 记录「前 {@value #PREVIEW_BYTES} 字节 + 累计字节数」的包装流。
+     * <p>存在的唯一理由：流式解析后 body 已被消费、拿不回来，而报错时**需要**一点上下文 ——
+     * 旧实现是 "整包读成 String"，于是解析失败时能把整个 body 写进日志（大响应 = 日志盘 + 堆双爆）。
+     * 这里把上下文限制在前 8KB，既够定位（k8s-server 的错误信封很短），又不会把大 body 拖进日志。
+     * <p>本仓没引 commons-io，故手写（等价于 TeeInputStream + CountingInputStream 的组合）。
+     */
+    private static final class ResponsePreviewStream extends FilterInputStream {
+
+        private static final int PREVIEW_BYTES = 8 * 1024;
+
+        private final ByteArrayOutputStream preview = new ByteArrayOutputStream();
+        private long total;
+
+        private ResponsePreviewStream(InputStream in) {
+            super(in);
+        }
+
+        @Override
+        public int read() throws IOException {
+            int b = super.read();
+            if (b >= 0) {
+                recordByte(b);
+            }
+            return b;
+        }
+
+        @Override
+        public int read(byte[] buf, int off, int len) throws IOException {
+            int n = super.read(buf, off, len);
+            if (n > 0) {
+                recordBytes(buf, off, n);
+            }
+            return n;
+        }
+
+        private void recordByte(int b) {
+            total++;
+            if (preview.size() < PREVIEW_BYTES) {
+                preview.write(b);
+            }
+        }
+
+        private void recordBytes(byte[] buf, int off, int len) {
+            total += len;
+            int room = PREVIEW_BYTES - preview.size();
+            if (room > 0) {
+                preview.write(buf, off, Math.min(room, len));
+            }
+        }
+
+        /** 已读总字节数（== 0 即"空响应"）。 */
+        private long totalBytes() {
+            return total;
+        }
+
+        /** 前 8KB 的文本（仅用于日志，可能截断在字符中间 —— 无所谓，它是给人看的）。 */
+        private String previewText() {
+            return preview.toString(StandardCharsets.UTF_8);
+        }
     }
 }

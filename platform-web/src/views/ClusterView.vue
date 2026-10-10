@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { MoreFilled } from '@element-plus/icons-vue'
+import { useRouter } from 'vue-router'
 import { clusterApi } from '@/api'
 import type { K8sCluster } from '@/types'
 import { fmtDate } from '@/utils/format'
 
+const router = useRouter()
 const loading = ref(false)
 const list = ref<K8sCluster[]>([])
 
@@ -133,7 +136,6 @@ async function submit(): Promise<void> {
   }
 }
 
-// ---- 行操作 ----
 async function onToggle(row: K8sCluster, enabled: boolean): Promise<void> {
   const value = enabled ? 1 : 0
   try {
@@ -187,6 +189,22 @@ async function onDelete(row: K8sCluster): Promise<void> {
   }
 }
 
+// ---- 行操作下拉（查看 / 编辑 / 重新开通 / 刷新能力 / 删除）----
+// 启用 switch 有意保留内联：它是列表页最常用的开关，收进下拉反而多一次点击。
+function goDetail(row: K8sCluster): void {
+  router.push(`/clusters/detail?clusterId=${encodeURIComponent(row.clusterId)}`)
+}
+
+function onCommand(cmd: string, row: K8sCluster): void {
+  switch (cmd) {
+    case 'view': goDetail(row); break
+    case 'edit': openEdit(row); break
+    case 'provision': void onProvision(row); break
+    case 'refresh': void onRefreshCapability(row); break
+    case 'delete': void onDelete(row); break
+  }
+}
+
 function statusTag(status?: K8sCluster['status']): { type: 'success' | 'danger' | 'info' | 'warning'; text: string } {
   switch (status) {
     case 'CONNECTED': return { type: 'success', text: '已连接' }
@@ -207,7 +225,11 @@ onMounted(load)
     </div>
 
     <el-table v-loading="loading" :data="list" stripe>
-      <el-table-column prop="clusterName" label="集群名称" min-width="140" />
+      <el-table-column label="集群名称" min-width="140">
+        <template #default="{ row }">
+          <code class="res-name name-link" @click="goDetail(row)">{{ row.clusterName }}</code>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status).type">{{ statusTag(row.status).text }}</el-tag>
@@ -223,12 +245,30 @@ onMounted(load)
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ fmtDate(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="300" fixed="right">
+      <el-table-column width="64" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="warning" @click="onProvision(row)">重新开通</el-button>
-          <el-button link type="success" :loading="refreshingId === row.clusterId" @click="onRefreshCapability(row)">刷新能力</el-button>
-          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+          <el-dropdown trigger="click" @command="(cmd: string) => onCommand(cmd, row)">
+            <el-button link type="primary" :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="view">
+                  <el-button link type="primary">查看</el-button>
+                </el-dropdown-item>
+                <el-dropdown-item command="edit">
+                  <el-button link type="primary">编辑</el-button>
+                </el-dropdown-item>
+                <el-dropdown-item command="provision">
+                  <el-button link type="warning">重新开通</el-button>
+                </el-dropdown-item>
+                <el-dropdown-item command="refresh">
+                  <el-button link type="success" :loading="refreshingId === row.clusterId">刷新能力</el-button>
+                </el-dropdown-item>
+                <el-dropdown-item divided command="delete">
+                  <el-button link type="danger">删除</el-button>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </template>
       </el-table-column>
     </el-table>
@@ -309,4 +349,8 @@ onMounted(load)
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 12px;
 }
+/* 集群名称可点进概览 */
+.res-name { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 13px; }
+.name-link { cursor: pointer; color: var(--accent); }
+.name-link:hover { text-decoration: underline; }
 </style>

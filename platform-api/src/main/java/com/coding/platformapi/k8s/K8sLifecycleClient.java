@@ -1,5 +1,6 @@
 package com.coding.platformapi.k8s;
 
+import com.coding.common.models.k8s.dto.ClusterAggregateDTO;
 import com.coding.common.models.k8s.dto.admin.AdminCleanupRequest;
 import com.coding.common.models.k8s.dto.admin.AdminClusterKeyRequest;
 import com.coding.common.models.k8s.dto.admin.AdminNamespaceKeyRequest;
@@ -42,6 +43,17 @@ public class K8sLifecycleClient {
         AdminProvisionRequest req = new AdminProvisionRequest();
         req.setClusterId(clusterId);
         gateway.exchange(HttpMethod.POST, "/cluster/provision", null, req, gateway.responseType(Void.class));
+    }
+
+    /**
+     * 集群资源聚合快照（集群概览的数据面）：跨命名空间一次 pass 出总量 + per-ns 明细 + 异常 Pod +
+     * 节点健康 + 存储统计。较慢（9 次全量 list）→ 调用方 {@code ClusterService} 加短 TTL 缓存。
+     */
+    public ClusterAggregateDTO resourceAggregate(String clusterId) {
+        AdminClusterKeyRequest req = new AdminClusterKeyRequest();
+        req.setClusterId(clusterId);
+        return gateway.exchange(HttpMethod.POST, "/cluster/resource-aggregate", null, req,
+                gateway.responseType(ClusterAggregateDTO.class));
     }
 
     /**刷新集群 API 能力（运行时 discovery 快照）→ group→versions */

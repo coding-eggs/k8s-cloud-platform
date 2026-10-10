@@ -61,6 +61,32 @@ export interface NodeMetricsReq {
   end: number
 }
 
+/** 集群指标查询上下文：clusterId + start/end（无 namespace —— 按 cluster_name 过滤、跨全集群聚合） */
+export interface ClusterMetricsReq {
+  clusterId: string
+  start: number
+  end: number
+}
+
+/**
+ * 集群维度（「资源用量」tab 两条曲线 + by-namespace 变体喂「资源明细」表的 used 列）。
+ * by-namespace 返回一条序列 = 一个命名空间（legend = 命名空间名），与明细表按名字对齐。
+ */
+export const clusterMetrics = {
+  cpu: (req: ClusterMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/cluster/metrics/cpu', req),
+  memory: (req: ClusterMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/cluster/metrics/memory', req),
+  network: (req: ClusterMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/cluster/metrics/network', req),
+  disk: (req: ClusterMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/cluster/metrics/disk', req),
+  cpuByNamespace: (req: ClusterMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/cluster/metrics/cpu/by-namespace', req),
+  memoryByNamespace: (req: ClusterMetricsReq) =>
+    http.post<never, MetricSeriesResponse>('/cluster/metrics/memory/by-namespace', req),
+}
+
 /** 节点维度（4 图 + 列表页当前值批量） */
 export const nodeMetrics = {
   cpu: (name: string, req: NodeMetricsReq) =>

@@ -47,6 +47,23 @@ public class AppsV1ReplicaSetOperations implements NamespacedOperations<ReplicaS
         return items.stream().map(converter::revert).toList();
     }
 
+    /**
+     * 跨全部命名空间列举（平台侧；本实例必须是 admin client，见 {@link NamespacedOperations#listAll}）。
+     * <p>返回的每个 item 自带其所在 namespace —— converter 从 metadata 取，本方法<b>不做</b>统一回填。
+     */
+    @Override
+    public List<ReplicaSetDTO> listAll(String labelSelector, String fieldSelector) {
+        ListOptions options = new ListOptions();
+        if (StringUtils.hasText(labelSelector)) {
+            options.setLabelSelector(labelSelector);
+        }
+        if (StringUtils.hasText(fieldSelector)) {
+            options.setFieldSelector(fieldSelector);
+        }
+        List<ReplicaSet> items = client.resources(ReplicaSet.class).inAnyNamespace().list(options).getItems();
+        return items.stream().map(converter::revert).toList();
+    }
+
     @Override
     public ReplicaSetDTO get(String namespace, String name) {
         if (!StringUtils.hasText(namespace) || !StringUtils.hasText(name)) {

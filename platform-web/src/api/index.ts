@@ -7,6 +7,8 @@ import type {
   K8sCluster,
   K8sClusterCapability,
   K8sClusterOption,
+  K8sClusterOverview,
+  K8sNamespaceResourceStat,
   K8sConfigMap,
   K8sGateway,
   WaypointRef,
@@ -78,6 +80,17 @@ export const clusterApi = {
   refreshCapability: (clusterId: string) => http.post<never, void>('/cluster/capability/refresh', { clusterId }),
   getCapability: (clusterId: string) =>
     http.post<never, K8sClusterCapability>('/cluster/capability/get', { clusterId }),
+
+  /**
+   * 集群概览快照（集群概览页首屏）：总量 + 节点健康/异常 Pod + 存储 + 能力摘要。
+   * 聚合来源不可用时，聚合派生段为 null（前端显示「—」，不是 0）。
+   */
+  overview: (clusterId: string) =>
+    http.post<never, K8sClusterOverview>('/cluster/overview', { clusterId }),
+
+  /** 资源明细 per-namespace（「资源明细」tab 懒加载）；与 overview 同源同一份聚合快照。不可用返回 null */
+  resourceBreakdown: (clusterId: string) =>
+    http.post<never, K8sNamespaceResourceStat[] | null>('/cluster/resource-breakdown', { clusterId }),
 }
 
 /** 租户管理 /tenant（含命名空间分配：给租户分配命名空间） */

@@ -2,10 +2,16 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.k8s.dto.ClusterAggregateDTO;
+import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatDTO;
+import com.coding.common.models.k8s.dto.NodeHealthDTO;
+import com.coding.common.models.k8s.dto.NodeSummaryDTO;
 import com.coding.common.utils.AESUtils;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.ClusterCreateRequest;
 import com.coding.platformapi.models.ClusterKeyRequest;
@@ -20,6 +26,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Date;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +41,17 @@ public class ClusterService {
     private final K8sClusterMapper clusterMapper;
     private final K8sLifecycleClient adminClient;
     private final JsonMapper jsonMapper;
+    private final RedisJsonCache cache;
+    /** capability 列的派生判据（唯一出处，2026-10-10 从本类搬出） */
+    private final ClusterCapabilityService capabilityService;
+
+    /** 集群资源聚合快照的 TTL：概览首屏 / 资源明细 / Top-N 共享同一次聚合，短缓存吸收刷新与切 tab 的连带调用。
+     *  45s 同 B7 CalicoService（那里的注释也写着「同 B4」）。<b>刻意不挂手工失效点</b>：
+     *  聚合内容是集群实时状态，没有"某个写路径让它在语义上过期"这一说，TTL 就是它的新鲜度上界。 */
+    private static final Duration AGGREGATE_TTL = Duration.ofSeconds(45);
+
+    private static final TypeReference<ClusterAggregateDTO> AGGREGATE_TYPE = new TypeReference<>() {
+    };
 
     @Value("${k8s.cloud.kubeconfig.aes-key:daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=}")
     private String AES_KEY;
@@ -228,21 +246,88 @@ public class ClusterService {
 
     /**
      * 读集群 API 能力（k8s_cluster.capability 列，JSON：group→versions[]）。
-     * 无行/空列/解析失败 → 空 map（前端据此判「未探测」，不硬阻断）。零推导：只读+反序列化。
-     * 语义对齐 KubernetesOperationsFactory.readApiVersions。
+     * <p>判据（含「空列 = 未探测」的口径）在 {@link ClusterCapabilityService}，本方法只是本服务对外的转发口。
      */
     public Map<String, List<String>> getCapability(String clusterId) {
-        K8sCluster cluster = clusterMapper.selectByPrimaryKey(clusterId);
-        if (cluster == null || !StringUtils.hasText(cluster.getCapability())) {
-            return Map.of();
+        return capabilityService.groups(clusterId);
+    }
+
+    // ==================== 集群概览（B4） ====================
+
+    /**
+     * 概览首屏：一次返回「总量 + 健康/异常 + 存储 + 能力」，<b>不灌 per-ns 全量</b>
+     * （那是 {@link #resourceBreakdown} 懒加载的事）。
+     *
+     * <p><b>降级</b>：聚合来源（k8s-server → admin client → 集群）不可用时，聚合派生段整体为 null
+     * （{@link ClusterOverviewDTO} 的字段语义），前端显示「—」；<b>基本信息与能力摘要不受影响</b> ——
+     * 前者读 DB（{@code /cluster/get}），后者读 capability 列，两者都与集群当前是否连得上无关。
+     * 这也是 spec §7「集群断开时基本信息可见」的落点。
+     */
+    public ClusterOverviewDTO overview(String clusterId) {
+        K8sCluster cluster = require(clusterId);
+        ClusterAggregateDTO agg = aggregateCached(clusterId);
+
+        ClusterOverviewDTO out = new ClusterOverviewDTO();
+        out.setCapabilitySummary(capabilityService.summary(clusterId));
+        if (agg != null) {
+            out.setResourceTotal(agg.getTotal());
+            out.setResourceCapacity(agg.getNodeCapacity());
+            out.setStorage(agg.getStorage());
+            out.setAbnormalPods(agg.getAbnormalPods());
+            out.setAbnormalPodTotal(agg.getAbnormalPodTotal());
+            out.setAbnormalPodReasonCounts(agg.getAbnormalPodReasonCounts());
+            out.setUnhealthyWorkloads(agg.getUnhealthyWorkloads());
+            out.setUnhealthyWorkloadTotal(agg.getUnhealthyWorkloadTotal());
+            out.setNodeSummary(nodeSummary(agg.getNodeHealth()));
+            out.setUnhealthyNodes(unhealthyNodes(agg.getNodeHealth()));
         }
+        return out;
+    }
+
+    /**
+     * 资源明细：per-namespace 行（「资源明细」tab 打开时才拉，懒加载）。
+     * <p>与 overview 同源（同一份被缓存的聚合），所以两个 tab 的数字天然一致，也不会因为两次查询之间
+     * 的集群变化而互相矛盾。聚合不可用 → null（前端「—」）。
+     */
+    public List<NamespaceStatDTO> resourceBreakdown(String clusterId) {
+        require(clusterId);
+        ClusterAggregateDTO agg = aggregateCached(clusterId);
+        return agg == null ? null : agg.getNamespaces();
+    }
+
+    /**
+     * 聚合快照（Redis 短 TTL 缓存包住 k8s-server 调用）。失败 → null + warn，不抛：
+     * 概览页是只读展示，一段数据拿不到不该让整页报错（同 B7 CalicoService 的降级原则）。
+     * <p>只缓存成功结果（{@link RedisJsonCache} 的既有语义）—— 失败下次重试，不会被 TTL 钉住。
+     */
+    private ClusterAggregateDTO aggregateCached(String clusterId) {
         try {
-            return jsonMapper.readValue(cluster.getCapability(),
-                    new TypeReference<Map<String, List<String>>>() {});
+            return cache.get("cluster:aggregate:" + clusterId, AGGREGATE_TTL, AGGREGATE_TYPE,
+                    () -> adminClient.resourceAggregate(clusterId));
         } catch (Exception e) {
-            log.warn("解析集群 {} capability 失败（按未探测处理）: {}", clusterId, e.getMessage());
-            return Map.of();
+            log.warn("集群 {} 资源聚合不可用（概览聚合段降级为「—」）：{}", clusterId, e.getMessage());
+            return null;
         }
+    }
+
+    private static NodeSummaryDTO nodeSummary(List<NodeHealthDTO> nodes) {
+        List<NodeHealthDTO> list = nodes == null ? List.of() : nodes;
+        int ready = (int) list.stream().filter(NodeHealthDTO::isReady).count();
+        NodeSummaryDTO s = new NodeSummaryDTO();
+        s.setTotal(list.size());
+        s.setReady(ready);
+        s.setNotReady(list.size() - ready);
+        return s;
+    }
+
+    /** 首屏「该看哪里」：未 Ready <b>或</b> 有 pressure 的节点（Ready 但有 DiskPressure 同样在丢调度）。 */
+    private static List<NodeHealthDTO> unhealthyNodes(List<NodeHealthDTO> nodes) {
+        if (nodes == null) {
+            return null;
+        }
+        return nodes.stream()
+                .filter(n -> !n.isReady() || (n.getPressures() != null && !n.getPressures().isEmpty()))
+                .toList();
     }
 
     /**best-effort 失效 k8s-server 侧 client 缓存：失败仅告警、不阻塞主流程（缓存惰性，下次访问/重启后自愈） */

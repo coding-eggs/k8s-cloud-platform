@@ -2,7 +2,7 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.GatewayDTO;
-import com.coding.common.models.k8s.dto.MeshStatusDTO;
+import com.coding.common.models.k8s.dto.admin.AdminMeshProbeResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
@@ -63,12 +63,19 @@ public class K8sMeshClient {
                 gateway.responseType(Void.class));
     }
 
-    // ==================== 服务网格探测（/mesh/status，只读） ====================
+    // ==================== 服务网格活探测（/mesh/status，只读） ====================
 
-    /**服务网格状态：POST /mesh/status?clusterId */
-    public MeshStatusDTO meshStatus(String clusterId) {
-        return gateway.exchange(HttpMethod.POST, "/mesh/status", queryOf(clusterId), null,
-                gateway.responseType(MeshStatusDTO.class));
+    /**
+     * 网格**活探测**（ambient = 集群上有没有 ztunnel DaemonSet）：POST /mesh/status?clusterId。
+     * <p>本端点自 2026-10-10 起只回"资源 probe"那一半 —— discovery（hasGatewayApi / hasIstio /
+     * gatewayApiVersions）是 {@code k8s_cluster.capability} 列的派生，留在 platform-api
+     * （{@code ClusterCapabilityService}），不再经这一跳。组装成完整 {@code MeshStatusDTO} 是
+     * {@code MeshService} 的事。
+     */
+    public boolean meshAmbient(String clusterId) {
+        AdminMeshProbeResult probe = gateway.exchange(HttpMethod.POST, "/mesh/status", queryOf(clusterId), null,
+                gateway.responseType(AdminMeshProbeResult.class));
+        return probe != null && probe.isIstioAmbient();
     }
 
     /**

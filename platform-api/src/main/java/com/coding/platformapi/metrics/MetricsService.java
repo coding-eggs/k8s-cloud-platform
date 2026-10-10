@@ -8,6 +8,7 @@ import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.metrics.dto.ClusterMetricsRequest;
 import com.coding.platformapi.metrics.dto.MetricPoint;
 import com.coding.platformapi.metrics.dto.MetricSeries;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
@@ -17,6 +18,7 @@ import com.coding.platformapi.metrics.dto.NamespaceMetricsRequest;
 import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
 import com.coding.platformapi.metrics.labels.DeviceLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
+import com.coding.platformapi.metrics.labels.NamespaceLabels;
 import com.coding.platformapi.metrics.model.PromResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -205,6 +207,48 @@ public class MetricsService {
                 toSeries("写", queryNamespace(String.format(MetricQuery.NAMESPACE_DISK_WRITE.sql(), c, req.getNamespace()), req))));
     }
 
+    // ===== 集群维度（占位符 = clusterName；无 ns 过滤 = 全集群聚合）=====
+    // 集群概览的「实时 used」口径。used 不碰 K8s 列表 —— 集群概览的 allocatable/allocated 来自
+    // k8s-core 聚合快照，used 来自 Thanos，两个平面在展示层拼成三口径（spec §5.4）。
+
+    public MetricSeriesResponse clusterCpu(ClusterMetricsRequest req) {
+        String sql = String.format(MetricQuery.CLUSTER_CPU_USED.sql(), clusterName(req.getClusterId()));
+        return new MetricSeriesResponse("核", List.of(toSeries("用量", queryCluster(sql, req))));
+    }
+
+    public MetricSeriesResponse clusterMemory(ClusterMetricsRequest req) {
+        String sql = String.format(MetricQuery.CLUSTER_MEMORY_USED.sql(), clusterName(req.getClusterId()));
+        return new MetricSeriesResponse("字节", List.of(toSeries("用量", queryCluster(sql, req))));
+    }
+
+    /** 各命名空间的 CPU 用量：一条序列 = 一个命名空间，图例 = 命名空间名（与明细表行对齐）。 */
+    public MetricSeriesResponse clusterCpuByNamespace(ClusterMetricsRequest req) {
+        String sql = String.format(MetricQuery.CLUSTER_CPU_USED_BY_NS.sql(), clusterName(req.getClusterId()));
+        return new MetricSeriesResponse("核", seriesByNamespace(queryClusterByNs(sql, req)));
+    }
+
+    /** 各命名空间的内存用量（字节）：同 {@link #clusterCpuByNamespace}。 */
+    public MetricSeriesResponse clusterMemoryByNamespace(ClusterMetricsRequest req) {
+        String sql = String.format(MetricQuery.CLUSTER_MEMORY_USED_BY_NS.sql(), clusterName(req.getClusterId()));
+        return new MetricSeriesResponse("字节", seriesByNamespace(queryClusterByNs(sql, req)));
+    }
+
+    /** 集群网络 IO（字节/秒，RX/TX）。与命名空间级同形，只是去掉了 namespace 过滤（netns 在 pod 级）。 */
+    public MetricSeriesResponse clusterNetwork(ClusterMetricsRequest req) {
+        String c = clusterName(req.getClusterId());
+        return new MetricSeriesResponse("字节/秒", List.of(
+                toSeries("RX", queryCluster(String.format(MetricQuery.CLUSTER_NETWORK_RECEIVE.sql(), c), req)),
+                toSeries("TX", queryCluster(String.format(MetricQuery.CLUSTER_NETWORK_TRANSMIT.sql(), c), req))));
+    }
+
+    /** 集群磁盘 IO（字节/秒，读/写）。与命名空间级同形，设备过滤沿用 `device=~"/dev/dm-.*"`。 */
+    public MetricSeriesResponse clusterDisk(ClusterMetricsRequest req) {
+        String c = clusterName(req.getClusterId());
+        return new MetricSeriesResponse("字节/秒", List.of(
+                toSeries("读", queryCluster(String.format(MetricQuery.CLUSTER_DISK_READ.sql(), c), req)),
+                toSeries("写", queryCluster(String.format(MetricQuery.CLUSTER_DISK_WRITE.sql(), c), req))));
+    }
+
     // ===== 节点底层调用 / 转换 =====
 
     /** 节点区间查询（固定 step）。 */
@@ -215,6 +259,33 @@ public class MetricsService {
     /** 命名空间区间查询（固定 step）。 */
     private List<PromResult<MetricLabels>> queryNamespace(String sql, NamespaceMetricsRequest req) {
         return client.queryRange(sql, req.getStart(), req.getEnd(), STEP, MetricLabels.class);
+    }
+
+    /** 集群区间查询（固定 step）。 */
+    private List<PromResult<MetricLabels>> queryCluster(String sql, ClusterMetricsRequest req) {
+        return client.queryRange(sql, req.getStart(), req.getEnd(), STEP, MetricLabels.class);
+    }
+
+    /** 集群 by(namespace) 区间查询（读 namespace 标签作图例）。 */
+    private List<PromResult<NamespaceLabels>> queryClusterByNs(String sql, ClusterMetricsRequest req) {
+        return client.queryRange(sql, req.getStart(), req.getEnd(), STEP, NamespaceLabels.class);
+    }
+
+    /** by(namespace) 行 → 一序列一行（图例 = 命名空间名，与明细表行对齐）；缺标签落 "unknown"（同 groupByDevice）。 */
+    private List<MetricSeries> seriesByNamespace(List<PromResult<NamespaceLabels>> rows) {
+        List<MetricSeries> out = new ArrayList<>();
+        if (rows == null) {
+            return out;
+        }
+        for (PromResult<NamespaceLabels> r : rows) {
+            String ns = (r.getMetric() != null && StringUtils.hasText(r.getMetric().getNamespace()))
+                    ? r.getMetric().getNamespace() : "unknown";
+            MetricSeries s = new MetricSeries();
+            s.setLegend(ns);
+            s.setPoints(pointsOf(r));
+            out.add(s);
+        }
+        return out;
     }
 
     /** 按 device label 归并（disk by(device)）；无 device 的落 "unknown"。 */

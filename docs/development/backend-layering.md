@@ -199,18 +199,35 @@ Service 负责 query 组装与转发，controller 负责响应流。
 2. **是否需要跨命名空间的视野**（kube-system 等非租户命名空间、按 `spec.nodeName` 全局统计）？
    → k8s-server 提供能力（它有 admin client），api 侧做业务过滤。
 3. **是否涉及数据库**（分配表、模板、集群注册表）？ → 一律 platform-api。
-4. **是不是多对象聚合 / join / 派生计算**？ → platform-api。
+4. **是不是多对象聚合 / join / 派生计算**？ → platform-api（**但见 §5.1 的规模例外**）。
 5. 冲突时以 **"k8s-server 只暴露 K8s 能直接回答的问题"** 为准。
 
-### 5.1 两个实例裁定
+> **立场（2026-10-10 用户明确）**：k8s-server 是**适配器**，一般不参与业务，唯一的业务是 RBAC 边界隔离。
+> 判断某段代码越界，用一条可机械检查的判据：**它是否引用「平台侧才有的概念」** ——
+> 租户、分配表、权限模板、产品命名约定（`tn-` / `tn-tpl-*` / `platform-system`）、平台所有权
+> （`managed-by`）、产品动作白名单、产品阈值。引用了 → 该在 platform-api。
+
+### 5.1 规模例外：跨全命名空间的"读 + 汇总"留在 k8s-server
+
+**判据（2026-10-10 修正）**：不是"api 拿不到跨命名空间视野"（`/list-all` 已经有了），而是
+**消费者的形态** —— **要汇总，就不要把全量对象搬过 api↔k8s-server 那一跳**。
+
+原因很具体：这一跳是 `K8sServerGateway` 的 `bodyTo(String.class)`（**整包缓冲成 String**）+ k8s-server 侧
+**逐对象跑 converter**。把 7 族全量对象搬过去（大集群几十万对象）峰值是几百 MB 级，而适配器内联聚合
+直接读 fabric8 对象、回一个几 KB 的汇总 DTO。
+**归属仍要守住**：留在适配器侧的只有"读 + 算"，**任何产品判据（谁看、看什么、阈值、降级、缓存）都在 api**。
+
+三个实例：
 
 - `/nodes/{name}/pods`（按 `spec.nodeName` 列 Pod，跨命名空间）：
   是 K8s 用 fieldSelector 能直接回答的（§5.1）→ 留在 k8s-server。api 侧原样透传，
   **不因为"api 是唯一鉴权点"就把它下沉** —— 下沉反而要多一跳。
-- `/nodes/podstats`（按节点聚合 Pod 数与 requests）：
-  形式上属 §5.4（聚合计算），但它需要"跨全部命名空间 list pods"，而 platform-api 侧只有命名空间域
-  的 `/pods/list`（namespace 必填）。放 api 侧会退化成 N×M 次请求。
-  → **明示例外**：留在 k8s-server 作为"K8s 对象聚合"，api 侧的 `NodeService` 只做 join。
+- `/nodes/podstats`（按节点聚合 Pod 数与 requests）：形式上属 §5.4（聚合计算），
+  但它要跨全部命名空间 list pods —— 按上面的规模例外留在 k8s-server，api 侧的 `NodeService` 只做 join。
+- `/cluster/resource-aggregate`（集群概览：7 族全量对象 → 总量 + per-ns + 异常 Pod + 节点健康 + 存储，
+  见 `ClusterAggregationOperations`）：同上，是本条例外的**最大实例**（7 族、固定 9 次 `list`）。
+  改判条件写在那个类的 javadoc 里：目标集群规模回落到几千 Pod 量级时，搬回 api 更划算
+  （需为 workloads / services / resourcequotas / PVC 各补一个 `listAll` 覆写 + 各自权限行）。
 
 ### 5.2 跨命名空间列举（`/list-all`）为什么这么切
 
@@ -222,6 +239,24 @@ Service 负责 query 组装与转发，controller 负责响应流。
 |---|---|---|
 | 租户边界 | ✅ `/list`（分配表三元组） | ❌ 不该有 —— "我的全部命名空间"是业务，属 platform-api 扇出 |
 | 平台边界 | ✅ `/list` + 显式 tenantId 代操作 | ✅ **`/list-all`**（本批补的；含无租户的命名空间） |
+
+**2026-10-10 补齐记录**：上表「平台边界 × 跨命名空间」那格此前只有 ConfigMap / Pod 两个 ops 覆写了 `listAll`，
+本批把其余 **18 个**命名空间级 ops 全部补齐 —— 含 istio 族（Gateway + HttpRoute / GRPCRoute / TCP|TLS|UDPRoute），
+**推翻了 `GatewayOperations` 里 2026-10-08 的「有意不覆写」**（当时的理由「Gateway 属租户域」混淆了能力与暴露两个闸门：
+覆写只是补能力，没有权限行就没有可达路径，租户侧的扇出语义不受影响）。**`Secret` 有意保留不补**：
+平台管理员现在读 Secret 必须带已分配的 (tenantId, ns) 三元组，补了 `list-all` 就变成读全集群（含 kube-system 的 SA token），
+那是敏感面扩张，理由写在 `CoreV1SecretOperations` 的类注释里。
+**「租户边界 × 跨命名空间」那格没有变**：`listAll` 仍要求 `PLATFORM_SCOPE`（`resolvePlatformNamespacedAccess`），
+租户要"我全部命名空间"依旧由 platform-api 扇出。**能力补齐 ≠ 暴露**：本批**没有**新增任何权限行 ——
+`/xxx/list-all` 端点本来就都在（基类给的），没配码就不可达。
+
+**同日另一件：`hasGatewayApi` / `hasIstio` / `gatewayApiVersions` 从适配器上移到 api。**
+这三个判据读的是 `k8s_cluster.capability`（**平台侧 DB 列**），却被 k8s-core 的 `MeshOperations` 派生了一份，
+与 platform-api 的 `ClusterService` 里的另一份并存 —— 同一判据两处实现。按 §5 那条机械判据（是否引用平台侧才有的概念），
+它属 platform-api：现在判据只在 `ClusterCapabilityService` 一处，`MeshOperations` 只剩"探测 ztunnel 是否存在"
+（那才是 K8s API 能直接回答的），`KubernetesOperationsFactory.getMeshOperation` 不再读 DB。
+**留在适配器侧读 capability 的只剩 HPA / L4 路由的版本分派** —— 那是"该用哪个 API 版本"的 K8s 语义，正当。
+注意 `k8s_cluster.capability` 与 `MeshStatusDTO` 的形状都没变，前端零改动。
 
 三条归属判据：
 

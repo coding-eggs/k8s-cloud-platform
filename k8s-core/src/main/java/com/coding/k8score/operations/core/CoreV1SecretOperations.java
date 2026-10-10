@@ -18,6 +18,10 @@ import java.util.List;
 
 /**
  * corev1 Secret 操作（模式同 CoreV1ConfigMapOperations）
+ * <p><b>有意不覆写 {@link NamespacedOperations#listAll}（2026-10-10 决定）</b>：其它命名空间级资源本批都补齐了
+ * 跨命名空间列举，Secret 单独保留 —— 现在平台管理员读 Secret 必须显式带<b>已分配的</b> (tenantId, ns) 三元组；
+ * 一旦支持 list-all，就变成"读全集群每个命名空间的 Secret"，含 kube-system 里 SA token 那类。那不是能力补齐，
+ * 是敏感面扩张，须单独评估后再放开（届时同时要配 {@code platform:secret:list-all} 权限行的显式角色绑定）。
  */
 @Slf4j
 @RequiredArgsConstructor

@@ -55,8 +55,136 @@ export interface K8sClusterOption {
   ipStack?: 'IPV4' | 'IPV6' | 'IPV4_AND_IPV6' | null
 }
 
+/**
+ * 集群概览（镜像后端 ClusterOverviewDTO）。
+ *
+ * ⚠️ **聚合段为 null 表示「读不到」而不是「为 0」**（集群未连接 / 聚合超时）：UI 必须显示「—」，
+ * 不能把 null 当 0 渲染 —— 「一个异常 Pod 都没有」与「不知道有没有」是相反结论。
+ * 只有 capabilitySummary 始终有值（读 DB 的 capability 列，与连通性无关，全 false = 未探测）。
+ */
+export interface K8sClusterOverview {
+  nodeSummary?: K8sNodeSummary | null
+  /** 需要关注的节点：未 Ready **或** 有 pressure（不是字面上的 notReady 列表） */
+  unhealthyNodes?: K8sNodeHealth[] | null
+  resourceCapacity?: K8sResourceCapacity | null
+  resourceTotal?: K8sClusterResourceTotal | null
+  capabilitySummary: K8sCapabilitySummary
+  storage?: K8sStorageStat | null
+  abnormalPods?: K8sAbnormalPod[] | null
+  /** 异常 Pod 总数（未封顶）；null = 聚合不可用 */
+  abnormalPodTotal?: number | null
+  /** 异常 Pod 按 reason 分组计数（**全量**，不受明细 200 条封顶影响），按严重度降序；null = 聚合不可用 */
+  abnormalPodReasonCounts?: Record<string, number> | null
+  unhealthyWorkloads?: K8sUnhealthyWorkload[] | null
+  /** 不健康工作负载总数（未封顶）；null = 聚合不可用 */
+  unhealthyWorkloadTotal?: number | null
+}
+
+/** 节点健康合计（total / ready / notReady） */
+export interface K8sNodeSummary {
+  total: number
+  ready: number
+  notReady: number
+}
+
+/** 节点健康投影；ready 的节点也可能带 pressure（它是调度提示，不是 NotReady） */
+export interface K8sNodeHealth {
+  name?: string | null
+  ready: boolean
+  /** MemoryPressure / DiskPressure / PIDPressure 中命中的那些 */
+  pressures?: string[] | null
+  version?: string | null
+}
+
+/** Σ node.status.allocatable —— 「allocatable / allocated / used」三口径里的 allocatable（核 / 字节） */
+export interface K8sResourceCapacity {
+  cpuAllocatable?: number | null
+  memoryAllocatable?: number | null
+}
+
+/** 集群资源总量：allocated 口径（= Σ pod requests）+ 对象计数 */
+export interface K8sClusterResourceTotal {
+  cpuRequest?: number | null
+  memRequest?: number | null
+  cpuLimit?: number | null
+  memLimit?: number | null
+  podCount: number
+  deploymentCount: number
+  statefulsetCount: number
+  daemonsetCount: number
+  serviceCount: number
+  namespaceCount: number
+  pvcCount: number
+  pvCount: number
+}
+
+/** 单命名空间资源明细行（「资源明细」tab，懒加载 /cluster/resource-breakdown） */
+export interface K8sNamespaceResourceStat {
+  namespace: string
+  podCount: number
+  deployCount: number
+  stsCount: number
+  dsCount: number
+  svcCount: number
+  pvcCount: number
+  cpuRequest?: number | null
+  memRequest?: number | null
+  cpuLimit?: number | null
+  memLimit?: number | null
+  /** 该 ns 的 ResourceQuota（requests.cpu/memory）；无配额时 null（≠ 0） */
+  quotaCpuHard?: number | null
+  quotaMemHard?: number | null
+  quotaCpuUsed?: number | null
+  quotaMemUsed?: number | null
+}
+
+/** 异常 Pod 明细行；reason 是归组用的最严重原因（CrashLoopBackOff > OOMKilled > … > Pending） */
+export interface K8sAbnormalPod {
+  namespace?: string | null
+  name?: string | null
+  phase?: string | null
+  reason?: string | null
+  restarts: number
+  node?: string | null
+  ageSeconds?: number | null
+}
+
+/** 不健康工作负载（readyReplicas < replicas 的 Deployment / StatefulSet） */
+export interface K8sUnhealthyWorkload {
+  namespace?: string | null
+  name?: string | null
+  /** Deployment / StatefulSet */
+  kind?: string | null
+  readyReplicas: number
+  replicas: number
+}
+
+/** 存储统计：PV 容量（total vs bound）+ PVC 状态计数 */
+export interface K8sStorageStat {
+  pvCount: number
+  pvcBound: number
+  pvcPending: number
+  pvcLost: number
+  /** Σ PV spec.capacity.storage（字节） */
+  pvCapacityBytes?: number | null
+  /** Σ 已 Bound PV 的容量（字节） */
+  pvBoundBytes?: number | null
+}
+
+/** 集群 API 能力摘要（七个 flag，全由 k8s_cluster.capability 派生；全 false = 未探测） */
+export interface K8sCapabilitySummary {
+  hasMetricsServer: boolean
+  hasCustomMetrics: boolean
+  hasExternalMetrics: boolean
+  hasMonitoringOperator: boolean
+  hasGatewayApi: boolean
+  hasIstio: boolean
+  hasCalico: boolean
+}
+
 /** 租户 */
-export interface PlatformTenant {  id: string
+export interface PlatformTenant {
+  id: string
   name: string
   serviceAccount: string
   status: number

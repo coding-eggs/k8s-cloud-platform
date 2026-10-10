@@ -1,5 +1,6 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.models.k8s.dto.CapabilitySummaryDTO;
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
@@ -24,11 +25,20 @@ import java.util.List;
  *       不要"先借一个权限更高的端点再用前端门控兜住"。</li>
  * </ul>
  *
- * <h2>mesh-status 为什么不在本层吞异常</h2>
- * 探测失败有三种成因（集群断开 / 未刷新能力 / admin RBAC 未覆盖），本层无法区分，吞掉后一律
- * 变成 {@code hasGatewayApi=false} —— 横幅会显示成"未安装 Gateway API"，把"不知道"伪装成"没有"。
- * 故异常照常上抛，由调用方（前端）退化为中性的「未探测」态 —— 与 {@code useClusterCapability}
- * 对 {@code /cluster/capability/get} 的处理口径一致（catch → cap={} → 未探测）。
+ * <h2>mesh-status 的两半，两个来源（2026-10-10 起）</h2>
+ * <ul>
+ *   <li><b>discovery</b>（{@code hasGatewayApi} / {@code gatewayApiVersions} / {@code hasIstio}）——
+ *       读 {@code k8s_cluster.capability} 列，走 {@link ClusterCapabilityService}。判据只有这一处
+ *       （以前 k8s-core 的 {@code MeshOperations} 里还有一份，已删）。</li>
+ *   <li><b>资源 probe</b>（{@code istioAmbient}）—— 走 k8s-server 的活探测（查 ztunnel DaemonSet）。
+ *       探测失败按 {@code false}，<b>不</b>上抛：它只是横幅上的一个信息位，不是门禁。
+ *       这也是本层唯一吞异常的地方 —— discovery 那半读 DB，与集群当前是否连得上无关。</li>
+ * </ul>
+ * 为什么 ambient 必须上抛原样、而 discovery 不是：{@code hasGatewayApi=false} 才是硬门禁（前端整组 create
+ * 禁用）。若把它也建立在"探测失败"之上，一次集群断开就会被显示成"未安装 Gateway API" —— 把"不知道"伪装成"没有"。
+ * 现在这个风险消失了：capability 读的是 DB 列，集群断开也照常返回最后探测到的快照。
+ * <p><b>对外 shape 不变</b>：{@code MeshStatusDTO} 仍是四个字段，前端零改动；变的只是这四个字段在
+ * 后端由谁拼起来（以前 k8s-core 造，现在本层造）。
  * <p><b>有意不加 TTL 缓存</b>（计划里列了"短 TTL 缓存"）：本端点的成本是 1 次 DB 读 + 1–2 次
  * 已被 client 缓存的下游 get；而相邻的「刷新能力」动作（{@code /cluster/capability/refresh}）
  * 用户期望立即在横幅生效，加 TTL 会造出一个"刚刷新完但横幅还是旧的"窗口 —— 省下的开销换不来这个
@@ -40,6 +50,8 @@ import java.util.List;
 public class MeshService {
 
     private final K8sMeshClient k8s;
+    /** capability 列的派生判据（唯一出处） */
+    private final ClusterCapabilityService capabilityService;
 
     // ==================== GatewayClass CRUD（平台管理面） ====================
 
@@ -91,9 +103,40 @@ public class MeshService {
 
     // ==================== 网格状态 ====================
 
-    /** 服务网格状态（istio / ambient / Gateway API + versions）。失败上抛，由调用方退化为「未探测」。 */
+    /**
+     * 服务网格状态（istio / ambient / Gateway API + versions）—— 四个字段两个来源，见类注释。
+     *
+     * <p>组装口径（照抄 k8s-core {@code MeshOperations} 搬到 api 前的判定，逐条对齐）：
+     * <ul>
+     *   <li>{@code hasGatewayApi} = capability 含 {@code gateway.networking.k8s.io} —— 本模块硬门禁</li>
+     *   <li>{@code gatewayApiVersions} = 该 group 的 versions；未探测 → 空列表</li>
+     *   <li>{@code hasIstio} = capability 含 {@code istio.io} <b>或</b> {@code networking.istio.io}</li>
+     *   <li>{@code istioAmbient} = k8s-server 活探测；<b>失败按 false，不上抛</b>（信息性降级）</li>
+     * </ul>
+     * 未探测（capability 空列）的语义是"未探测"而非"没装"：三个 flag 全 false，前端提示「未探测/未安装」
+     * 并给「刷新能力」按钮，与 {@code useClusterCapability} 的口径一致。
+     */
     public MeshStatusDTO meshStatus(String clusterId) {
-        return k8s.meshStatus(clusterId);
+        //两个 flag 一次取（summary 内部读一次 capability 列），versions 单取；判定逻辑全在 ClusterCapabilityService，
+        //本层不自己 containsKey（"Gateway API 是哪个 group""Istio 在哪两个 group"只有那一处定义）
+        CapabilitySummaryDTO cap = capabilityService.summary(clusterId);
+        MeshStatusDTO dto = new MeshStatusDTO();
+        dto.setHasGatewayApi(cap.isHasGatewayApi());
+        dto.setHasIstio(cap.isHasIstio());
+        dto.setGatewayApiVersions(
+                capabilityService.versionsOf(clusterId, ClusterCapabilityService.GATEWAY_API_GROUP));
+        dto.setIstioAmbient(probeAmbientQuietly(clusterId));
+        return dto;
+    }
+
+    /** ambient 活探测：失败按 false 并告警 —— 它是信息位不是门禁（判据见类注释）。 */
+    private boolean probeAmbientQuietly(String clusterId) {
+        try {
+            return k8s.meshAmbient(clusterId);
+        } catch (Exception e) {
+            log.warn("集群 {} ambient 活探测失败（按未安装 ambient 处理）：{}", clusterId, e.getMessage());
+            return false;
+        }
     }
 
     // ==================== waypoint 候选（平台侧读，供命名空间编辑器） ====================

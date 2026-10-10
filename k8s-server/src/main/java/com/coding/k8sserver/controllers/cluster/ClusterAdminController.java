@@ -1,12 +1,15 @@
 package com.coding.k8sserver.controllers.cluster;
 
+import com.coding.common.models.k8s.dto.ClusterAggregateDTO;
 import com.coding.common.models.k8s.dto.admin.AdminClusterKeyRequest;
 import com.coding.common.models.k8s.dto.admin.AdminProbeRequest;
 import com.coding.common.models.k8s.dto.admin.AdminProbeResult;
 import com.coding.common.models.k8s.dto.admin.AdminProvisionRequest;
 import com.coding.common.models.system.ResponseData;
+import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
+import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.services.K8sProvisioningService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,6 +40,8 @@ public class ClusterAdminController implements AccessBoundaryAware {
 
 
     private final K8sProvisioningService provisioning;
+    private final KubernetesOperationsFactory operationsFactory;
+    private final ResourceAccessResolver accessResolver;
 
     @PostMapping("/probe")
     @Operation(summary = "集群连通性探测", description = "纳管前一次性探测，明文 kubeconfig，临时 client 测完即关")
@@ -44,6 +49,15 @@ public class ClusterAdminController implements AccessBoundaryAware {
         AdminProbeResult result = new AdminProbeResult();
         result.setVersion(provisioning.probeKubeconfig(req.getKubeconfig()));
         return new ResponseData<>(result);
+    }
+
+    @PostMapping("/resource-aggregate")
+    @Operation(summary = "集群资源聚合快照",
+            description = "跨命名空间一次 pass（固定 9 次 list，与命名空间数量无关）产出：总量 + per-namespace 明细 + "
+                    + "异常 Pod + 节点健康 + 存储统计。K8s 语义全在 ClusterAggregationOperations，本端点只做边界校验 + 透传")
+    public ResponseData<ClusterAggregateDTO> resourceAggregate(@RequestBody AdminClusterKeyRequest req) {
+        accessResolver.assertClusterAccess(req.getClusterId());
+        return new ResponseData<>(operationsFactory.getClusterAggregationOperation(req.getClusterId()).aggregate());
     }
 
     @PostMapping("/provision")

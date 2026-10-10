@@ -86,7 +86,7 @@ platform-api ──HTTP（原样透传用户的 Authorization 头）──► k8
 | `TenantAdminController` | `/tenant/**` | `sa/ensure`（确保租户 SA）、`cleanup`（租户 K8s 侧批量清理，best-effort） |
 | `CalicoIpamAdminController` | `/calico/ipam/**` | `summary` / `blocks` / `is-free` / `next-free-blocks` / `block-ips`（IPAM 派生查询） |
 | `CalicoFormOptionController` | `/calico/form-options`、`/calico/form-options/secrets` | 编辑器候选值 |
-| `MeshController` | `/mesh/status` | 网格状态总览 |
+| `MeshController` | `/mesh/status` | 网格**活探测**（ambient：ztunnel DaemonSet 是否存在；discovery 那半归 platform-api） |
 | `PodExecWebSocketHandler` | `/ws/pod/exec` | Pod exec 终端（WebSocket） |
 
 ### 2.4 集群 / 租户生命周期（`K8sProvisioningService`）

@@ -48,6 +48,7 @@ import com.coding.k8score.operations.calico.IppoolOperations;
 import com.coding.k8score.operations.calico.IpReservationOperations;
 import com.coding.k8score.operations.autoscaling.HpaV1Operations;
 import com.coding.k8score.operations.autoscaling.HpaV2Operations;
+import com.coding.k8score.operations.core.ClusterAggregationOperations;
 import com.coding.k8score.operations.core.CoreV1ConfigMapOperations;
 import com.coding.k8score.operations.core.CoreV1LimitRangeOperations;
 import com.coding.k8score.operations.core.CoreV1NamespaceOperations;
@@ -134,6 +135,14 @@ public class KubernetesOperationsFactory {
         return new CoreV1NodeOperations(client, new CoreV1NodeConverter());
     }
 
+    /**
+     * 集群概览的资源聚合操作（集群级，admin client）：跨命名空间一次 pass 出总量 + per-ns 明细 + 健康/存储。
+     * 非资源 CRUD，独立返回具体类型（同 {@link #getNodeOperation}）。
+     */
+    public ClusterAggregationOperations getClusterAggregationOperation(String clusterId) {
+        return new ClusterAggregationOperations(clientFactory.getAdminClient(clusterId));
+    }
+
     /** Calico IPAM 派生视图操作（集群级，admin client）。非标准 CRUD，独立返回具体类型。 */
     public CalicoIpamOperations getCalicoIpamOperation(String clusterId) {
         KubernetesClient client = clientFactory.getAdminClient(clusterId);
@@ -148,12 +157,13 @@ public class KubernetesOperationsFactory {
 
     /**
      * 服务网格探测操作（集群级，admin client；只读）。非标准 CRUD，独立返回具体类型。
-     * <p>capability 快照在这里读一次后传给操作对象（{@link MeshOperations} 自己不再碰 DB）——
-     * 与 {@link #buildHpa} 的分派读同一份数据源，口径一致。
+     * <p><b>不再读 DB</b>（2026-10-10）：capability 快照的派生已上移 platform-api 的
+     * {@code ClusterCapabilityService}，本方法只构造"探测 ztunnel"这一半 —— 适配器不派生业务 flag。
+     * 仍在用 {@link #readCapability} 的只剩 HPA / L4 路由的版本分派，那是 K8s 语义，正当。
      */
     public MeshOperations getMeshOperation(String clusterId) {
         KubernetesClient client = clientFactory.getAdminClient(clusterId);
-        return new MeshOperations(client, readCapability(clusterId));
+        return new MeshOperations(client);
     }
 
     /** 按资源类型构造 operation。单版本资源直接 new；HPA 等跨版本发散资源在此按集群 capability 分派 converter。 */
