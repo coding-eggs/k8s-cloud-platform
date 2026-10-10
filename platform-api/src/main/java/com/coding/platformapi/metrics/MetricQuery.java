@@ -114,9 +114,9 @@ public enum MetricQuery {
             "sum(rate(container_network_transmit_bytes_total{cluster_name=\"%s\",container!=\"POD\", pod!=\"\"}[2m]))"),
     // 磁盘的 device 过滤是**正当的**（container_fs_* 确实带 device），照抄 ns 级
     CLUSTER_DISK_READ(MetricLabels.class,
-            "sum(rate(container_fs_reads_bytes_total{cluster_name=\"%s\",container!=\"POD\",pod!=\"\" device=~\"/dev/dm-.*\"}[2m]))"),
+            "sum(rate(container_fs_reads_bytes_total{cluster_name=\"%s\",container!=\"POD\",pod!=\"\",device=~\"/dev/dm-.*\"}[2m]))"),
     CLUSTER_DISK_WRITE(MetricLabels.class,
-            "sum(rate(container_fs_writes_bytes_total{cluster_name=\"%s\",container!=\"POD\",pod!=\"\"device=~\"/dev/dm-.*\"}[2m]))"),
+            "sum(rate(container_fs_writes_bytes_total{cluster_name=\"%s\",container!=\"POD\",pod!=\"\",device=~\"/dev/dm-.*\"}[2m]))"),
 
     ;
 
