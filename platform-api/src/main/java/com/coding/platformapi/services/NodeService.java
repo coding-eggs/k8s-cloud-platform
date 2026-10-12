@@ -1,5 +1,6 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.models.k8s.dto.NodeAddressDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.NodeDrainResultDTO;
 import com.coding.common.models.k8s.dto.NodeEventDTO;
@@ -52,13 +53,24 @@ public class NodeService {
         return nodes;
     }
 
+    /**
+     * 节点地址窄投影（NodePort 直连用）：只要 name + 内网/外网 IP + Ready。
+     *
+     * <p>与 {@link #list} 的区别是<b>刻意不 join 任何东西、也不回容量/标签/污点</b>：它的消费方是
+     * 租户可达的工作负载列表页（点 nodePort 拼 {@code http://<节点IP>:<nodePort>}），
+     * 只需要"哪台机器能连"；这份数据面越小，给租户就越没有顾虑（授权见权限码
+     * {@code tenant:cluster:capability:view}）。
+     */
+    public List<NodeAddressDTO> addresses(String clusterId) {
+        return nodeClient.addresses(clusterId);
+    }
+
     /**单节点详情 + Pod 统计（同样 2 次请求：节点 get + podstats 全量） */
     public NodeDTO get(String nodeName, String clusterId) {
         NodeDTO node = k8s.get(dto(nodeName, clusterId));
         if (node == null) {
             return null;
-        }
-        fillPodStatus(node, podStatsByName(clusterId));
+        }        fillPodStatus(node, podStatsByName(clusterId));
         return node;
     }
 

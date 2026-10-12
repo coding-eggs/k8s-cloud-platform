@@ -17,11 +17,42 @@ async function load(): Promise<void> {
   }
 }
 
+const syncing = ref(false)
+
+/**
+ * 重下发全部模板到所有启用集群：DB 是唯一真相，覆盖各集群已有的 tn-tpl-* ClusterRole。
+ * 保存单个模板时也会同步；本动作用于「库里的规则被迁移或手工改过」后一次性推平
+ * —— 例如迁移给租户 SA 补了 controllerrevisions 读权限（工作负载回滚要用）。
+ */
+async function onSyncAll(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '把当前全部模板的规则重新下发到所有启用集群（覆盖各集群已有的 tn-tpl-* ClusterRole）。'
+      + '用于「库里的规则被迁移或手工改过」后推平 —— 例如给租户 SA 补 controllerrevisions 读权限之后。是否继续？',
+      '重下发全部模板',
+      { type: 'warning', confirmButtonText: '重下发', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  syncing.value = true
+  try {
+    const n = await templateApi.syncAll()
+    ElMessage.success(`已下发 ${n} 个模板到所有启用集群`)
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    syncing.value = false
+  }
+}
+
 // ---- 候选项（可自定义输入） ----
 const API_GROUP_OPTIONS = ['', 'apps', 'batch', 'networking.k8s.io', 'rbac.authorization.k8s.io', 'autoscaling', 'policy', 'extensions']
 const RESOURCE_OPTIONS = [
   'pods', 'pods/log', 'pods/exec', 'services', 'serviceaccounts', 'configmaps', 'secrets',
   'persistentvolumeclaims', 'endpoints', 'deployments', 'replicasets', 'statefulsets', 'daemonsets',
+  // controllerrevisions 是 StatefulSet/DaemonSet 的版本历史（回滚要读），平台迁移会补进既有模板
+  'controllerrevisions',
   'jobs', 'cronjobs', 'ingresses', 'namespaces',
 ]
 const VERB_OPTIONS = ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete', 'deletecollection', '*']
@@ -157,6 +188,7 @@ onMounted(load)
   <div>
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">创建模板</el-button>
+      <el-button :loading="syncing" @click="onSyncAll">重下发全部模板</el-button>
       <el-button @click="load">刷新</el-button>
     </div>
 

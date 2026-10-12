@@ -127,8 +127,11 @@ Service 负责 query 组装与转发，controller 负责响应流。
 - **仍然成立的前提**：k8s-server 假定"内网可达、主要被 platform-api 调用"。它**不是**纵深防御的第二道
   细粒度授权 —— 若 platform-api 自身有漏洞（漏配权限行、SSRF），k8s-server 不会拦住。
 - **已知残留（显式记录，勿当新问题上报）**：`/persistentvolumes/**` 声明 `UPSTREAM`（集群级但租户必须
-  能看），持租户 token 直连 k8s-server 可读全集群 PV（含他人 `claimRef`）。闭合它需要"只接受 platform-api
-  调用"的内部凭证（gateway 侧签名 + k8s-server filter），属下一步。
+  能看），持租户 token 直连 k8s-server 可读全集群 PV（含他人 `claimRef`）。`GET /nodes/addresses`
+  （2026-10-12，工作负载页点 nodePort 直连用）同性质：持任意已认证 token 直连 k8s-server 可读节点
+  IP（窄投影，不回容量/标签/污点；租户角色的默认权限里本就有这份数据，且节点 IP 不随租户/命名空间
+  变化，没有"越权看到别人对象"的语义）。闭合它们需要"只接受 platform-api 调用"的内部凭证
+  （gateway 侧签名 + k8s-server filter），属下一步。
 - **本批有意没做**：k8s-server 侧的启动期交叉校验。它的失败模式是"授权不足"（未分类即 403，连平台
   管理员一起 403，不显眼但**不静默放行**），与 ① 那个 fail-closed 校验（失败模式是**静默放行**）性质相反，
   故不需要。
@@ -153,6 +156,7 @@ Service 负责 query 组装与转发，controller 负责响应流。
 | `AbstractClusterResourceController<T>` | 集群级资源（无 namespace） | `PLATFORM`（默认） |
 | `AbstractNamespacedResourceController<T>` | 命名空间级资源（有 namespace） | `TENANT`（默认） |
 | `ResourceQuotaController` / `LimitRangeController` | 命名空间级，但平台级开通流程用 | 覆写为 `PLATFORM` |
+| `NodeAddressController` | 集群级，但租户必须能读（工作负载页点 nodePort 直连） | 覆写为 `UPSTREAM`（见 §3.1） |
 | 无基类者：`NodeController`、Calico 派生查询、生命周期动作、`PodExecWebSocketHandler` | 非六端点形态 | 各自显式实现（HTTP 全 `PLATFORM`，WS 为 `TENANT`） |
 
 `AccessBoundary` 三个取值：
@@ -164,8 +168,10 @@ Service 负责 query 组装与转发，controller 负责响应流。
 - **`TENANT`**：租户边界。租户 token 的 tenantId 以 JWT claim 为唯一来源；无 tenantInfo 的 token
   必须显式传 tenantId 代操作**且必须是平台侧身份**；两者都过分配表三元组校验。client 按模式选
   tenant/admin。
-- **`UPSTREAM`**：本层不做边界判定，收窄在上游服务层。**当前仅 `PersistentVolumeController`** 用它。
-  选它等于显式承认"这一族对象的隔离不归本层"，便于一眼搜出全部例外 —— 不要靠"挂在某个前缀下"隐式豁免。
+- **`UPSTREAM`**：本层不做边界判定，收窄在上游服务层。当前两个：`PersistentVolumeController`（按
+  `claimRef.namespace` 收窄）与 `NodeAddressController`（`GET /nodes/addresses`，上游是 platform-api 的
+  权限码 `tenant:cluster:capability:view`）。选它等于显式承认"这一族对象的隔离不归本层"，
+  便于一眼搜出全部例外 —— 不要靠"挂在某个前缀下"隐式豁免。
 
 **跨命名空间列举（`/list-all`）：能力由 ops 实现声明，没有第二个闸门**
 

@@ -168,8 +168,9 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
     }
 
     /**D5 回填：请求上下文回写 item，使列表/查询拿到的对象可原样发回后续 update/delete。
-     *  PLATFORM 边界下 tenantId 为 null（无租户身份），等价于不回填。 */
-    private void stamp(T item, String clusterId, String namespace, String tenantId) {
+     *  PLATFORM 边界下 tenantId 为 null（无租户身份），等价于不回填。
+     *  子类扩展的非标准端点（同一套身份解析）复用它，避免各写一遍三字段回填。 */
+    protected void stamp(T item, String clusterId, String namespace, String tenantId) {
         if (item != null) {
             item.setClusterId(clusterId);
             item.setNamespace(namespace);

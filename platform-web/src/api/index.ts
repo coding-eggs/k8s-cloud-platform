@@ -38,6 +38,7 @@ import type {
   MeshStatus,
   NamespaceAllocation,
   NamespaceView,
+  NodeAddress,
   NodeDrainResult,
   NodeEvent,
   NodeTaint,
@@ -51,7 +52,7 @@ import type {
   TenantMemberView,
   TokenUserInfo,
 } from '@/types'
-import type { WorkloadDetail } from '@/types/workload'
+import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
 
 /** 集群管理 /cluster */
 export const clusterApi = {
@@ -187,6 +188,12 @@ export const templateApi = {
   update: (payload: { id: string; description?: string; rules: RbacTemplate['rules'] }) =>
     http.post<never, RbacTemplate>('/rbacTemplate/update', payload),
   delete: (id: string) => http.post<never, void>('/rbacTemplate/delete', { id }),
+  /**
+   * 重下发全部模板到所有启用集群（DB 是唯一真相）：保存单个模板时也会同步，
+   * 本动作用于「库里的 rules 被迁移/手工改过」后一次性推平 —— 例如迁移给租户 SA 补了
+   * controllerrevisions 读权限，不重下发的话各集群已有的 tn-tpl-* ClusterRole 还是旧 rules。
+   */
+  syncAll: () => http.post<never, number>('/rbacTemplate/sync-all'),
 }
 
 /** 资源管理上下文（顶栏 chip：租户 → 集群 → 命名空间，DB 级联） */
@@ -319,6 +326,19 @@ export const workloadApi = {
    */
   meshToggle: (name: string, ctx: Ctx3 & { kind?: string; dataplaneMode?: string; useWaypoint?: string }) =>
     http.post<never, WorkloadDetail>(`/workloads/${encodeURIComponent(name)}/mesh-toggle`, { ...ctx, name }),
+  /**
+   * 改一个容器的镜像（列表页「镜像」列的行内编辑 = 直接发版）：只改该容器的 image，
+   * 其余字段取线上现值回写（未建模字段不丢）→ 改的是 pod template，触发滚动更新。
+   * 注意只收 name/containerName/image，不把 name 塞进 body（路径里已经有了）。
+   */
+  updateImage: (name: string, ctx: Ctx3 & { containerName: string; image: string }) =>
+    http.post<never, WorkloadDetail>(`/workloads/${encodeURIComponent(name)}/image`, { ...ctx, containerName: ctx.containerName, image: ctx.image }),
+  /** 历史版本列表（新→旧）：Deployment 取名下 ReplicaSet、STS/DS 取 ControllerRevision */
+  revisions: (name: string, ctx: Ctx3) =>
+    http.get<never, WorkloadRevision[]>(`/workloads/${encodeURIComponent(name)}/revisions`, { params: ctx }),
+  /** 回滚到指定版本（取该版本的 pod template 覆盖到工作负载本身，与 kubectl rollout undo 同语义）→ 触发滚动更新 */
+  rollback: (name: string, ctx: Ctx3 & { revision: number }) =>
+    http.post<never, WorkloadDetail>(`/workloads/${encodeURIComponent(name)}/rollback`, { ...ctx, revision: ctx.revision }),
 }
 
 /** ServiceMonitor /servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
@@ -419,6 +439,13 @@ export const podApi = {
 export const nodeApi = {
   list: (ctx: { clusterId: string; labelSelector?: string }) =>
     http.post<never, K8sNode[]>('/nodes/list', ctx),
+  /**
+   * 节点地址窄投影（NodePort 直连用）：只回 name + 内网/外网 IP + Ready，
+   * 不含容量/标签/污点。授权码 tenant:cluster:capability:view（租户可读的集群只读快照），
+   * 与 /cluster/capability/get 同码 —— 能在工作负载列表页点 nodePort 的人就能拿这份数据。
+   */
+  addresses: (clusterId: string) =>
+    http.get<never, NodeAddress[]>('/nodes/addresses', { params: { clusterId } }),
   get: (name: string, clusterId: string) =>
     http.get<never, K8sNode>(`/nodes/${encodeURIComponent(name)}`, { params: { clusterId } }),
   getYaml: (name: string, clusterId: string) =>

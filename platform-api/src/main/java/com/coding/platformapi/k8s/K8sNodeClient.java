@@ -1,5 +1,6 @@
 package com.coding.platformapi.k8s;
 
+import com.coding.common.models.k8s.dto.NodeAddressDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.NodeEventDTO;
 import com.coding.common.models.k8s.dto.NodePodStatDTO;
@@ -58,6 +59,16 @@ public class K8sNodeClient {
     public List<NodePodStatDTO> podStats(String clusterId) {
         return gateway.exchange(HttpMethod.GET, "/nodes/podstats", Map.of("clusterId", clusterId), null,
                 gateway.listResponseType(NodePodStatDTO.class));
+    }
+
+    /**
+     * 节点地址窄投影：GET /nodes/addresses?clusterId（只回 name + 内网/外网 IP + Ready）。
+     * k8s-server 侧该端点是 UPSTREAM 边界（租户可达，租户 SA 没有 nodes 读权限，故用 admin 凭据），
+     * 授权在 platform-api 侧按权限码判。
+     */
+    public List<NodeAddressDTO> addresses(String clusterId) {
+        return gateway.exchange(HttpMethod.GET, "/nodes/addresses", Map.of("clusterId", clusterId), null,
+                gateway.listResponseType(NodeAddressDTO.class));
     }
 
     /**列出节点上的 Pod（按 spec.nodeName，跨命名空间）：GET /nodes/{name}/pods?clusterId */

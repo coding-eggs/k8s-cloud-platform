@@ -5,6 +5,7 @@ import com.coding.common.models.k8s.dto.PodTemplateDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.k8s.K8sWorkloadClient;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
 import com.coding.platformapi.services.validation.WorkloadValidator;
 import org.junit.jupiter.api.Test;
@@ -43,7 +44,7 @@ class WorkloadServiceMeshToggleTest {
     private final K8sClient k8s = mock(K8sClient.class);
     private final WorkloadValidator validator = mock(WorkloadValidator.class);
     private final GatewayService gatewayService = mock(GatewayService.class);
-    private final WorkloadService svc = new WorkloadService(k8s, validator, gatewayService);
+    private final WorkloadService svc = new WorkloadService(k8s, mock(K8sWorkloadClient.class), validator, gatewayService);
 
     private static WorkloadDTO workload(Map<String, String> podLabels) {
         WorkloadDTO w = new WorkloadDTO();

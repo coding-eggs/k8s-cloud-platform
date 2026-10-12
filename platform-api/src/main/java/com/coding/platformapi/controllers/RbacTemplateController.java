@@ -54,4 +54,12 @@ public class RbacTemplateController {
         templateService.delete(request);
         return new ResponseData<>();
     }
+
+    @PostMapping("/sync-all")
+    @Operation(summary = "重下发全部模板到所有集群",
+            description = "DB 是唯一真相：把每个模板的 rules 逐个 upsert 成各集群的 tn-tpl-* ClusterRole（返回处理的模板数）。"
+                    + "保存单个模板时也会同步；本端点用于「库里的 rules 被迁移/手工改过」后一次性推平（best-effort，失败只告警）。")
+    public ResponseData<Integer> syncAll() {
+        return new ResponseData<>(templateService.syncAll());
+    }
 }

@@ -136,6 +136,19 @@ public class KubernetesOperationsFactory {
     }
 
     /**
+     * 工作负载专用操作（列表页行内动作：改镜像 / 历史版本 / 回滚）。
+     * 非六端点 CRUD，故独立返回具体类型（同 {@link #getNodeOperation}）。
+     * client 按访问模式选，与 {@link #getNamespacedOperation} / {@link #getAdminNamespacedOperation} 同一口径 ——
+     * 这三个动作是租户可达的，不能一律用 admin client。
+     */
+    public WorkloadOperations getWorkloadOperation(String clusterId, String tenantId, boolean adminMode) {
+        KubernetesClient client = adminMode
+                ? clientFactory.getAdminClient(clusterId)
+                : clientFactory.getTenantClient(clusterId, tenantId);
+        return new WorkloadOperations(client, new WorkloadConverter());
+    }
+
+    /**
      * 集群概览的资源聚合操作（集群级，admin client）：跨命名空间一次 pass 出总量 + per-ns 明细 + 健康/存储。
      * 非资源 CRUD，独立返回具体类型（同 {@link #getNodeOperation}）。
      */

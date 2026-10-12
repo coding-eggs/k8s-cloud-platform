@@ -558,8 +558,12 @@ export interface K8sWorkload {
   /** 对外暴露的 Service（仅 list/get 返回，api 侧 join 计算）：绑定到本工作负载的 NodePort/LB Service */
   exposedServices?: K8sExposedService[] | null
   /** Pod 模板（列表也回带 —— 后端 DTO 全量）；此处只声明列表用到的部分：网格标签回显
-   *  （istio.io/dataplane-mode / istio.io/use-waypoint）。编辑面用 types/workload 的 WorkloadDetail。 */
-  podTemplate?: { labels?: Record<string, string> | null } | null
+   *  （istio.io/dataplane-mode / istio.io/use-waypoint）与「镜像」列的容器名+镜像。
+   *  编辑面用 types/workload 的 WorkloadDetail。 */
+  podTemplate?: {
+    labels?: Record<string, string> | null
+    spec?: { containers?: { name: string; image?: string | null }[] | null } | null
+  } | null
 }
 
 /** ServiceMonitor 端点鉴权 Secret 引用（name + key） */
@@ -799,6 +803,20 @@ export interface NodeCondition {
 }
 
 /** K8s 节点（集群级；capacity/allocatable 为原始字符串如 "8" / "16Gi"） */
+/**
+ * 节点地址窄投影（/nodes/addresses）：只回 name + 两个 IP + Ready。
+ * 供工作负载列表页点击 nodePort 直连用 —— 只需要"哪台机器能连"，
+ * 容量/标签/污点这些集群拓扑不在这份数据里。
+ */
+export interface NodeAddress {
+  name?: string | null
+  /** 内网 IP（status.addresses[type=InternalIP]） */
+  internalIp?: string | null
+  /** 外网 IP（未设置则为空） */
+  externalIp?: string | null
+  ready?: boolean | null
+}
+
 export interface K8sNode {
   name: string
   clusterId?: string | null

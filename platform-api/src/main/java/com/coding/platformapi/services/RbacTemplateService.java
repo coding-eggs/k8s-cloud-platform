@@ -61,6 +61,25 @@ public class RbacTemplateService {
         return templateMapper.listAll().stream().map(this::toVO).toList();
     }
 
+    /**
+     * 把 DB 里的全部模板重下发到所有启用集群（best-effort，同保存模板时的 sync）。
+     *
+     * <p>为什么需要它：平台只在「保存模板」时同步。迁移直接改库里的 rules（本批给租户 SA 补
+     * {@code controllerrevisions} 读权限）不会自动落到各集群已有的 {@code tn-tpl-*} ClusterRole 上 ——
+     * 没有这一步，租户回滚 StatefulSet/DaemonSet 会因缺权限 403。
+     * <p>方向是单向的：DB 是唯一真相，集群侧的手工改动会被覆盖（与保存模板同一语义）。
+     *
+     * @return 处理过的模板数（下发失败只告警，见 {@link K8sProvisioningService#syncTemplateToAllEnabledClusters}）
+     */
+    public int syncAll() {
+        List<PlatformRbacTemplate> templates = templateMapper.listAll();
+        for (PlatformRbacTemplate t : templates) {
+            provisioning.syncTemplateToAllEnabledClusters(t);
+        }
+        log.info("RBAC 模板重下发：{} 个模板", templates.size());
+        return templates.size();
+    }
+
     public RbacTemplateVO get(TemplateKeyRequest req) {
         return toVO(require(req.getId()));
     }

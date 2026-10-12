@@ -9,6 +9,7 @@ import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useMeshStatus } from '@/composables/useMeshStatus'
+import { nodeHost, useNodeAddresses } from '@/composables/useNodeAddresses'
 import {
   canHandleWorkload,
   isWaypointGateway,
@@ -20,8 +21,9 @@ import {
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
+import WorkloadRollbackDialog from '@/components/workload/WorkloadRollbackDialog.vue'
 import { fmtAge, fmtDate, workloadStatus } from '@/utils/format'
-import { Refresh, MoreFilled, Search } from '@element-plus/icons-vue'
+import { Refresh, MoreFilled, Search, EditPen, TopRight } from '@element-plus/icons-vue'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
@@ -64,6 +66,7 @@ async function refresh(): Promise<void> {
     ])
     list.value = ws
     hpaBound.value = new Map(hs.map((h) => [canonicalKey(h.scaleTargetRef?.kind, h.scaleTargetRef?.name), h.name] as const))
+    void addr.load(state.clusterId)   // 节点地址（NodePort 直连用）：并行拉，不 await（拿不到就是没有链接）
   } finally {
     loading.value = false
   }
@@ -128,6 +131,28 @@ function exposeLines(row: K8sWorkload) {
   return out
 }
 
+// ---------- 点 nodePort 直开：host = 集群里任一台可用节点的 IP ----------
+/**
+ * 节点地址（窄投影：name + 内网/外网 IP + Ready），按集群缓存。拿不到（无权限/集群不可达）时
+ * `defaultHost` 为空 → nodePort 退化成今天的纯文本，不做"点了没反应"的假链接。
+ */
+const addr = useNodeAddresses()
+/** 被选作直连 host 的那个节点（tooltip 上写清楚"从哪台机器进"，用户排障时第一眼要看的就是它） */
+const hostNode = computed(() => addr.nodes.find((n) => nodeHost(n) === addr.defaultHost) ?? null)
+/** 这个 nodePort 能不能变成链接 */
+function linkable(nodePort?: number | null): boolean {
+  return !!nodePort && addr.canUse && !!addr.defaultHost
+}
+
+/**
+ * 打开 http://<节点IP>:<nodePort>。host 取第一个 Ready 且有 IP 的节点（外网 IP 优先）——
+ * NodePort 在每台节点上都生效，随便挑一台即可；挑的是 Ready 的，避免默认落到一台已经挂了的机器上。
+ */
+function openNodePort(nodePort?: number | null): void {
+  if (!linkable(nodePort)) return
+  window.open(`http://${addr.defaultHost}:${nodePort}`, '_blank', 'noopener')
+}
+
 // ---------- 跳转：编辑器（新建 / 编辑） / 详情页 ----------
 function goEditor(name: string | null): void {
   router.push(name ? `/resources/workloads/editor?name=${encodeURIComponent(name)}` : '/resources/workloads/editor')
@@ -184,6 +209,59 @@ async function togglePause(row: K8sWorkload, paused: boolean): Promise<void> {
   }
 }
 
+// ---------- 镜像就地改（直接发版） ----------
+/** 镜像列的容器行：容器名 + 镜像。podTemplate 缺失时退化成扁平的 images（只有值，不可编辑） */
+function containerRows(row: K8sWorkload): { name: string | null; image: string }[] {
+  const cs = row.podTemplate?.spec?.containers ?? []
+  if (cs.length) return cs.map((c) => ({ name: c.name, image: c.image ?? '' }))
+  return (row.images ?? []).map((img) => ({ name: null, image: img }))
+}
+
+const imgVisible = ref(false)
+const imgSaving = ref(false)
+const imgForm = reactive({ row: null as K8sWorkload | null, containerName: '', image: '' })
+
+function openImageEdit(row: K8sWorkload, containerName: string, image: string): void {
+  imgForm.row = row
+  imgForm.containerName = containerName
+  imgForm.image = image
+  imgVisible.value = true
+}
+
+/**
+ * 提交镜像：只改这一个容器的 image（后端读回线上对象改完再写回，未建模字段不会因此丢），
+ * 因为改的是 pod template → 控制器会滚一次新版本。
+ */
+async function submitImage(): Promise<void> {
+  const row = imgForm.row
+  const image = imgForm.image.trim()
+  if (!row || !imgForm.containerName) return
+  if (!image) {
+    ElMessage.warning('镜像不能为空')
+    return
+  }
+  imgSaving.value = true
+  try {
+    await workloadApi.updateImage(row.name, { ...ctxParams.value, containerName: imgForm.containerName, image })
+    ElMessage.success(`已提交 ${imgForm.containerName} → ${image}，工作负载将滚动更新`)
+    imgVisible.value = false
+    await refresh()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    imgSaving.value = false
+  }
+}
+
+// ---------- 回滚（历史版本由后端按 kind 归一：Deployment→ReplicaSet、STS/DS→ControllerRevision） ----------
+const rollbackVisible = ref(false)
+const rollbackRow = ref<K8sWorkload | null>(null)
+
+function openRollback(row: K8sWorkload): void {
+  rollbackRow.value = row
+  rollbackVisible.value = true
+}
+
 // ---------- 删除（跨 kind 查找） ----------
 async function onDelete(row: K8sWorkload): Promise<void> {
   try {
@@ -227,7 +305,8 @@ async function openYaml(row: K8sWorkload): Promise<void> {
  */
 const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
 const meshAvailable = computed(() => mesh.hasIstio.value)
-const canToggleMesh = computed(() => perm.has(apiCodes.workloadUpdate))
+/** 工作负载写权限：编辑/伸缩/网格开关/改镜像/回滚共用同一个动词码 */
+const canWrite = computed(() => perm.has(apiCodes.workloadUpdate))
 
 /**
  * 网格菜单项是否可点：**与「编辑」同口径** —— 由 Operator/Helm 管理的对象（有 ownerReferences）不写。
@@ -235,7 +314,7 @@ const canToggleMesh = computed(() => perm.has(apiCodes.workloadUpdate))
  * 中间还可能因字段所有权打架白滚一次 Pod。
  */
 function meshEditable(row: K8sWorkload): boolean {
-  return canToggleMesh.value && !isOpManaged(row)
+  return canWrite.value && !isOpManaged(row)
 }
 
 /** 本命名空间的 waypoint 候选（名字 + 处理哪类流量；数量不设上限） */
@@ -364,6 +443,7 @@ function onRowCommand(cmd: string, row: K8sWorkload): void {
     case 'yaml': openYaml(row); break
     case 'edit': if (!isOpManaged(row)) goEditor(row.name); break
     case 'scale': openScale(row); break
+    case 'rollback': openRollback(row); break
     case 'addHpa':
       // 传小写原值 kind，编辑器 canonicalKey 统一小写 + KIND_CAP 还原大写
       router.push({ name: 'hpa-editor', query: { targetKind: row.kind, targetName: row.name } })
@@ -417,12 +497,12 @@ const contextDesc = computed(() => {
         description="点击右上「创建工作负载」新建 Deployment / StatefulSet / DaemonSet。"
       />
       <el-table v-else v-loading="loading || !ready" :data="filtered" stripe>
-        <el-table-column label="类型" width="130">
+        <el-table-column label="类型" width="110">
           <template #default="{ row }">
             <el-tag  :effect="tagLabel(row.kind)">{{ kindLabel(row.kind) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="名称" width="350">
+        <el-table-column label="名称" width="320">
           <template #default="{ row }">
             <code class="res-name name-link" @click="goDetail(row.name)">{{ row.name }}</code>
             <el-tooltip v-if="isOpManaged(row)" content="由 Operator 管理，不可编辑" placement="top">
@@ -435,7 +515,17 @@ const contextDesc = computed(() => {
             <div v-if="row.exposedServices.length" class="expose-ports">
               <div class="expose-line">
                 <span v-for="(line, i) in exposeLines(row)" :key="i">
-                  {{ line.port }}:<span class="name-link">{{line.nodePort}}</span>
+                  {{ line.port }}:
+                  <!-- 点 nodePort 直连：host = 集群里第一个 Ready 且有 IP 的节点（NodePort 每台节点都生效）。
+                       拿不到节点地址（无权限/集群不可达）时保持纯文本，不做"点了没反应"的假链接。 -->
+                  <el-tooltip v-if="linkable(line.nodePort)"
+                              :content="`在新窗口打开 http://${addr.defaultHost}:${line.nodePort}（节点 ${hostNode?.name ?? ''}）`"
+                              placement="top">
+                    <span class="name-link np-link" @click="openNodePort(line.nodePort)">
+                      {{ line.nodePort }}<el-icon class="np-icon"><TopRight /></el-icon>
+                    </span>
+                  </el-tooltip>
+                  <span v-else>{{ line.nodePort }}</span>
                 </span>
               </div>
             </div>
@@ -443,10 +533,20 @@ const contextDesc = computed(() => {
         </el-table-column>
         <el-table-column label="镜像" min-width="500">
           <template #default="{ row }">
-            <code v-for="(img, i) in row.images ?? []" :key="i" class="res-name img-cell">{{ img }}</code>
+            <div v-for="(c, i) in containerRows(row)" :key="i" class="img-row">
+              <span v-if="c.name" class="img-container">{{ c.name }}</span>
+              <code class="res-name img-cell">{{ c.image }}</code>
+              <!-- 改这一个容器的镜像（直接发版）。op 管理的不给点：改了上游下一次 reconcile 就改回去 -->
+              <el-tooltip v-if="c.name" content="改这个容器的镜像（触发滚动更新）" placement="top">
+                <el-icon class="img-edit" :class="{ disabled: !canWrite || isOpManaged(row) }"
+                         @click="canWrite && !isOpManaged(row) && openImageEdit(row, c.name!, c.image)">
+                  <EditPen />
+                </el-icon>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="副本" width="100">
+        <el-table-column label="副本" width="70">
           <template #default="{ row }">{{ replicasText(row) }}</template>
         </el-table-column>
 
@@ -478,6 +578,8 @@ const contextDesc = computed(() => {
                     {{ row.paused ? '恢复更新' : '暂停更新' }}
                   </el-dropdown-item>
                   <el-dropdown-item command="scale">伸缩</el-dropdown-item>
+                  <!-- 回滚：选一个历史版本，把它的 pod template 覆盖回工作负载本身。op 管理的不给（同上） -->
+                  <el-dropdown-item command="rollback" :disabled="!canWrite || isOpManaged(row)">回滚</el-dropdown-item>
                   <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
 
@@ -529,6 +631,31 @@ const contextDesc = computed(() => {
       <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
       <div v-else class="muted">加载中…</div>
     </el-drawer>
+
+    <!-- 改镜像（直接发版：只改这一个容器的 image） -->
+    <el-dialog v-model="imgVisible" :title="`改镜像 · ${imgForm.row?.name ?? ''}`" width="560px">
+      <el-form label-width="72px">
+        <el-form-item label="容器">
+          <code class="res-name">{{ imgForm.containerName }}</code>
+        </el-form-item>
+        <el-form-item label="镜像">
+          <el-input v-model="imgForm.image"
+                    placeholder="如 nginx:1.27 或 registry.example.com/app@sha256:…"
+                    @keyup.enter="submitImage" />
+        </el-form-item>
+      </el-form>
+      <div class="dialog-hint">
+        只改这一个容器的镜像，其余字段取线上现值回写。改的是 pod template → 控制器会滚一次新版本
+        （存量 Pod 逐步替换）。
+      </div>
+      <template #footer>
+        <el-button @click="imgVisible = false">取消</el-button>
+        <el-button type="primary" :loading="imgSaving" @click="submitImage">提交</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 回滚（选历史版本） -->
+    <WorkloadRollbackDialog v-model="rollbackVisible" :row="rollbackRow" :ctx="ctxParams" @done="refresh" />
   </div>
 </template>
 
@@ -572,6 +699,45 @@ const contextDesc = computed(() => {
   font-size: 12px;
   color: var(--text-3);
   line-height: 1.4;
+}
+/* nodePort 直连链接：与名称同为可点样式，另带一个「新窗口」小图标 */
+.np-link {
+  white-space: nowrap;
+}
+.np-icon {
+  margin-left: 2px;
+  vertical-align: -2px;
+  font-size: 11px;
+}
+.img-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.9;
+}
+.img-container {
+  color: var(--text-3);
+  font-size: 12px;
+  min-width: 64px;
+}
+.img-edit {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+}
+.img-edit.disabled {
+  cursor: not-allowed;
+  color: var(--text-3);
+  opacity: 0.6;
+}
+.dialog-hint {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--panel-hover);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
 }
 .img-cell {
   display: inline-block;

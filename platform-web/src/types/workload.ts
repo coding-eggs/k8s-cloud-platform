@@ -140,6 +140,26 @@ export interface WorkloadDetail {
   exposedServices?: K8sExposedService[] | null
 }
 
+/**
+ * 工作负载历史版本（回滚候选）。来源按 kind 分两条（K8s 自身机制）：
+ * Deployment → 名下 ReplicaSet 的 deployment.kubernetes.io/revision 注解；
+ * StatefulSet/DaemonSet → ControllerRevision 的 revision 字段与 data 里的 pod 模板。
+ * 两条路都归一到本类型，前端只按 revision 选。
+ */
+export interface WorkloadRevision {
+  revision: number
+  /** 承载该版本的对象名（ReplicaSet / ControllerRevision，排障用） */
+  name?: string | null
+  /** 该版本创建时间（ISO-8601） */
+  createdAt?: string | null
+  /** kubernetes.io/change-cause 注解。平台不写它，故通常为空（只展示集群里已有的） */
+  changeCause?: string | null
+  /** 该版本各容器的镜像，顺序与容器一致 */
+  images?: string[] | null
+  /** 是否当前生效版本 */
+  current?: boolean | null
+}
+
 /** 工作负载对外暴露的 Service（名称 + 类型 + port:nodePort），仅 list/get 返回，api 侧 join 计算 */
 export interface K8sExposedService {
   name: string

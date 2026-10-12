@@ -2,6 +2,7 @@ package com.coding.k8score.operations.core;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.k8s.dto.NodeAddressDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.NodeDrainResultDTO;
 import com.coding.common.models.k8s.dto.NodeEventDTO;
@@ -14,6 +15,7 @@ import io.fabric8.kubernetes.api.model.ListOptionsBuilder;
 import io.fabric8.kubernetes.api.model.Event;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.NodeSpec;
+import io.fabric8.kubernetes.api.model.NodeStatus;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.Taint;
@@ -60,6 +62,52 @@ public class CoreV1NodeOperations {
     public NodeDTO get(String name) {
         requireName(name);
         return converter.revert(client.nodes().withName(name).get());
+    }
+
+    /**
+     * 节点地址窄投影（NodePort 直连用）：全部节点的 name + InternalIP/ExternalIP + Ready。
+     * <p>与 {@link #list} 的区别是<b>刻意不回</b>容量/可分配量/标签/污点/Pod 数 —— 消费者是租户可达的
+     * 工作负载列表页，只需要"哪台机器能连"。要完整节点信息走 list（平台侧）。
+     */
+    public List<NodeAddressDTO> addresses() {
+        return projectAddresses(client.nodes().list().getItems());
+    }
+
+    /**
+     * 窄投影的纯函数部分（供单测）。无 status 的节点（刚注册）不抛异常：两个 IP 为 null、ready=false，
+     * 由前端跳过 —— 它有 IP 才可能被选为直连 host。
+     */
+    public List<NodeAddressDTO> projectAddresses(List<Node> nodes) {
+        List<NodeAddressDTO> out = new ArrayList<>();
+        if (nodes == null) {
+            return out;
+        }
+        for (Node n : nodes) {
+            NodeAddressDTO dto = new NodeAddressDTO();
+            dto.setName(n.getMetadata() != null ? n.getMetadata().getName() : null);
+            dto.setReady(false);
+            NodeStatus st = n.getStatus();
+            if (st != null) {
+                if (st.getAddresses() != null) {
+                    for (var a : st.getAddresses()) {
+                        if ("InternalIP".equals(a.getType())) {
+                            dto.setInternalIp(a.getAddress());
+                        } else if ("ExternalIP".equals(a.getType())) {
+                            dto.setExternalIp(a.getAddress());
+                        }
+                    }
+                }
+                if (st.getConditions() != null) {
+                    for (var c : st.getConditions()) {
+                        if ("Ready".equals(c.getType())) {
+                            dto.setReady("True".equals(c.getStatus()));
+                        }
+                    }
+                }
+            }
+            out.add(dto);
+        }
+        return out;
     }
 
     public String yaml(String name) {

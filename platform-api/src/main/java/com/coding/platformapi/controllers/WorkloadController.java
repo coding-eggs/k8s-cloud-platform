@@ -1,11 +1,14 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.WorkloadDTO;
+import com.coding.common.models.k8s.dto.WorkloadRevisionDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
+import com.coding.platformapi.models.WorkloadImageRequest;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
+import com.coding.platformapi.models.WorkloadRollbackRequest;
 import com.coding.platformapi.services.WorkloadService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -97,6 +100,34 @@ public class WorkloadController {
     public ResponseData<WorkloadDTO> meshToggle(@PathVariable String name, @RequestBody WorkloadMeshToggleRequest body) {
         body.setName(name);
         return new ResponseData<>(workloadService.meshToggle(body));
+    }
+
+    // ===== 列表页行内动作（改镜像 / 历史版本 / 回滚）=====
+
+    @PostMapping("/{name}/image")
+    @Operation(summary = "改一个容器的镜像（直接发版）",
+            description = "只改该容器的 image，其余字段取线上现值回写（未建模字段不丢）；改的是 pod template → 触发滚动更新。"
+                    + "op 管理（ownerReferences 非空）的工作负载由前端禁用入口，与「编辑」「ambient 开关」同口径。")
+    public ResponseData<WorkloadDTO> updateImage(@PathVariable String name, @RequestBody WorkloadImageRequest body) {
+        return new ResponseData<>(workloadService.updateImage(name, body));
+    }
+
+    @GetMapping("/{name}/revisions")
+    @Operation(summary = "历史版本列表（新→旧）",
+            description = "Deployment 取名下 ReplicaSet 的 revision 注解；StatefulSet/DaemonSet 取 ControllerRevision。"
+                    + "current = 当前生效版本。历史里可能没有平台记录的变更说明（平台不写 change-cause 注解）。")
+    public ResponseData<List<WorkloadRevisionDTO>> revisions(@PathVariable String name,
+                                                             @RequestParam(required = false) String tenantId,
+                                                             @RequestParam String clusterId,
+                                                             @RequestParam String namespace) {
+        return new ResponseData<>(workloadService.revisions(name, tenantId, clusterId, namespace));
+    }
+
+    @PostMapping("/{name}/rollback")
+    @Operation(summary = "回滚到指定版本",
+            description = "取该版本的 pod 模板覆盖到工作负载本身（与 kubectl rollout undo 同语义，新版本号由控制器继续往下发）→ 触发滚动更新。")
+    public ResponseData<WorkloadDTO> rollback(@PathVariable String name, @RequestBody WorkloadRollbackRequest body) {
+        return new ResponseData<>(workloadService.rollback(name, body));
     }
 
     // ===== 监控指标（4 个，委托 MetricsService；clusterName 由 clusterId 查库解析）=====

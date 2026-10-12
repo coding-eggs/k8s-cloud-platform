@@ -9,8 +9,12 @@ import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServicePortDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
+import com.coding.common.models.k8s.dto.WorkloadRevisionDTO;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.k8s.K8sWorkloadClient;
+import com.coding.platformapi.models.WorkloadImageRequest;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
+import com.coding.platformapi.models.WorkloadRollbackRequest;
 import com.coding.platformapi.services.validation.WorkloadValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,8 +52,43 @@ public class WorkloadService {
     private static final List<String> DATAPLANE_MODES = List.of("ambient", "none");
 
     private final K8sClient k8s;
+    private final K8sWorkloadClient workloadClient;
     private final WorkloadValidator validator;
     private final GatewayService gatewayService;
+
+    // ==================== 列表页行内动作（改镜像 / 历史版本 / 回滚）====================
+    //
+    // 三个动作的 K8s 语义都在 k8s-core（改一个字段 / 归一版本 / 覆盖 pod 模板），本层只做请求形态校验。
+    // 容器是否真的存在由 k8s-server 侧判（它读的是线上对象，才是权威）—— 同一规则不在两处各写一份。
+
+    /**
+     * 改一个容器的镜像（直接发版：改的是 pod template，控制器会滚一次）。
+     * <p>空白校验在本层：这些请求发出去必然失败（K8s 会拒或拉不到镜像），且都改的是别人的工作负载。
+     * <p>有意<b>不</b>跑 §5 校验，理由同 {@link #meshToggle}：这不是规格提交，只改一个字段。
+     */
+    public WorkloadDTO updateImage(String name, WorkloadImageRequest req) {
+        if (!StringUtils.hasText(req.getContainerName())) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "容器名不能为空");
+        }
+        if (!StringUtils.hasText(req.getImage())) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "镜像不能为空");
+        }
+        return workloadClient.updateImage(name, req.getTenantId(), req.getClusterId(), req.getNamespace(),
+                req.getContainerName().trim(), req.getImage().trim());
+    }
+
+    /**历史版本列表（新→旧），纯透传：Deployment 取 ReplicaSet、STS/DS 取 ControllerRevision 的归一在 k8s-core */
+    public List<WorkloadRevisionDTO> revisions(String name, String tenantId, String clusterId, String namespace) {
+        return workloadClient.revisions(name, tenantId, clusterId, namespace);
+    }
+
+    /**回滚到指定版本，纯透传（版本是否存在由 k8s-server 判，它才看得到集群里的历史） */
+    public WorkloadDTO rollback(String name, WorkloadRollbackRequest req) {
+        if (req.getRevision() == null) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "必须指定要回滚到的版本号");
+        }
+        return workloadClient.rollback(name, req.getTenantId(), req.getClusterId(), req.getNamespace(), req.getRevision());
+    }
 
     /**查询 YAML（只读展示）：跨 kind 由 k8s-server 按 name 解析，本层纯组装 DTO */
     public String yaml(String name, String tenantId, String clusterId, String namespace) {

@@ -1,5 +1,6 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.models.k8s.dto.NodeAddressDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.NodeDrainResultDTO;
 import com.coding.common.models.k8s.dto.NodeEventDTO;
@@ -50,6 +51,14 @@ public class NodeController {
     @Operation(summary = "列出节点", description = "含按节点聚合的 Pod 数/requests（2 次请求：节点 list + podstats 全量）")
     public ResponseData<List<NodeDTO>> list(@RequestBody NodeDTO body) {
         return new ResponseData<>(nodeService.list(body));
+    }
+
+    @GetMapping("/addresses")
+    @Operation(summary = "节点地址窄投影（NodePort 直连用）",
+            description = "只回 name + InternalIP/ExternalIP + Ready，不含容量/标签/污点/ Pod 数；"
+                    + "授权码 tenant:cluster:capability:view（租户可读的集群只读快照），供工作负载列表页点击 nodePort 直连。")
+    public ResponseData<List<NodeAddressDTO>> addresses(@RequestParam String clusterId) {
+        return new ResponseData<>(nodeService.addresses(clusterId));
     }
 
     @GetMapping("/{name}")
