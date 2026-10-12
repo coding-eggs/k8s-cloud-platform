@@ -56,6 +56,7 @@ import com.coding.k8score.operations.core.CoreV1PersistentVolumeClaimOperations;
 import com.coding.k8score.operations.core.CoreV1PersistentVolumeOperations;
 import com.coding.k8score.operations.core.CoreV1NodeOperations;
 import com.coding.k8score.operations.core.CoreV1PodOperations;
+import com.coding.k8score.operations.core.NamespaceStatOperations;
 import com.coding.k8score.operations.core.CoreV1SecretOperations;
 import com.coding.k8score.operations.core.CoreV1ServiceOperations;
 import com.coding.k8score.operations.core.CoreV1ResourceQuotaOperations;
@@ -146,6 +147,17 @@ public class KubernetesOperationsFactory {
                 ? clientFactory.getAdminClient(clusterId)
                 : clientFactory.getTenantClient(clusterId, tenantId);
         return new WorkloadOperations(client, new WorkloadConverter());
+    }
+
+    /**
+     * 单命名空间采样（租户可达）：client 按访问模式选，同 {@link #getWorkloadOperation} ——
+     * 租户概览要能看到自己命名空间的行，不能一律用 admin client。
+     */
+    public NamespaceStatOperations getNamespaceStatOperation(String clusterId, String tenantId, boolean adminMode) {
+        KubernetesClient client = adminMode
+                ? clientFactory.getAdminClient(clusterId)
+                : clientFactory.getTenantClient(clusterId, tenantId);
+        return new NamespaceStatOperations(client);
     }
 
     /**
