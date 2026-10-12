@@ -2,11 +2,17 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.k8s.dto.AbnormalPodDTO;
 import com.coding.common.models.k8s.dto.ClusterAggregateDTO;
 import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
+import com.coding.common.models.k8s.dto.ClusterSnapshotDTO;
+import com.coding.common.models.k8s.dto.ClusterTotalDTO;
+import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.k8s.dto.NodeHealthDTO;
 import com.coding.common.models.k8s.dto.NodeSummaryDTO;
+import com.coding.common.models.k8s.dto.UnhealthyWorkloadDTO;
 import com.coding.common.utils.AESUtils;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
@@ -27,6 +33,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.sql.Date;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -44,13 +52,18 @@ public class ClusterService {
     private final RedisJsonCache cache;
     /** capability 列的派生判据（唯一出处，2026-10-10 从本类搬出） */
     private final ClusterCapabilityService capabilityService;
+    /** ns 切片（{@code ns:<clusterId>:<namespace>}）的唯一读写入口 —— 集群这次聚合的切片经它落地，明细/合计经它读回。 */
+    private final NamespaceStatService statService;
 
     /** 集群资源聚合快照的 TTL：概览首屏 / 资源明细 / Top-N 共享同一次聚合，短缓存吸收刷新与切 tab 的连带调用。
      *  45s 同 B7 CalicoService（那里的注释也写着「同 B4」）。<b>刻意不挂手工失效点</b>：
      *  聚合内容是集群实时状态，没有"某个写路径让它在语义上过期"这一说，TTL 就是它的新鲜度上界。 */
     private static final Duration AGGREGATE_TTL = Duration.ofSeconds(45);
 
-    private static final TypeReference<ClusterAggregateDTO> AGGREGATE_TYPE = new TypeReference<>() {
+    /** 集群键前缀。值只放集群级事实（{@link ClusterSnapshotDTO}）；per-ns 数值在 {@code ns:} 键里。 */
+    private static final String CLUSTER_KEY_PREFIX = "cluster:agg:";
+
+    private static final TypeReference<ClusterSnapshotDTO> SNAPSHOT_TYPE = new TypeReference<>() {
     };
 
     @Value("${k8s.cloud.kubeconfig.aes-key:daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=}")
@@ -255,8 +268,52 @@ public class ClusterService {
     // ==================== 集群概览（B4） ====================
 
     /**
+     * 集群快照（{@code cluster:agg:<id>} 的值）：<b>只放集群级事实</b>（节点健康/容量、存储、命名空间名索引、
+     * {@code sampledAt}）。缓存优先；未命中 → 调一次聚合 → 写集群键 + 把这批切片写 N 个 ns 键
+     * （同一 {@code sampledAt}，一次采样）。聚合不可用 → null（降级，不抛）。
+     * <p>对外的只读复用口：租户概览借它拿到"集群是否可用 + 要不要读哪些 ns 键"，语义同
+     * {@code WorkloadService} 借 {@code GatewayService} 的先例（只读、不改状态）。
+     */
+    public ClusterSnapshotDTO snapshot(String clusterId) {
+        try {
+            return cache.get(CLUSTER_KEY_PREFIX + clusterId, AGGREGATE_TTL, SNAPSHOT_TYPE,
+                    () -> loadSnapshot(clusterId));
+        } catch (Exception e) {
+            log.warn("集群 {} 资源快照不可用（概览聚合段降级为「—」）：{}", clusterId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 未命中时的装配：一次聚合 → 集群键 + 切片写 ns 键（同一 sampledAt）。
+     * <p>切片来源是<b>该次聚合的响应</b>（per-ns 行 + 按 ns 归位的异常/不健康清单）—— 一次采样填 N 个键，
+     * 窄读永远不必为此再扫全集群。
+     */
+    private ClusterSnapshotDTO loadSnapshot(String clusterId) {
+        ClusterAggregateDTO agg = adminClient.resourceAggregate(clusterId);
+        if (agg == null) {
+            return null;   // 失败/降级不缓存（RedisJsonCache 既有语义），下次重试
+        }
+        long sampledAt = System.currentTimeMillis();
+        List<NamespaceSnapshotDTO> slices = slicesOf(agg, sampledAt);
+        statService.putClusterSlices(clusterId, slices);
+
+        ClusterSnapshotDTO snap = new ClusterSnapshotDTO();
+        snap.setNodeHealth(agg.getNodeHealth());
+        snap.setNodeCapacity(agg.getNodeCapacity());
+        snap.setStorage(agg.getStorage());
+        snap.setNamespaceNames(slices.stream().map(s -> s.getStat().getNamespace()).sorted().toList());
+        snap.setSampledAt(sampledAt);
+        return snap;
+    }
+
+    /**
      * 概览首屏：一次返回「总量 + 健康/异常 + 存储 + 能力」，<b>不灌 per-ns 全量</b>
      * （那是 {@link #resourceBreakdown} 懒加载的事）。
+     *
+     * <p><b>口径</b>：per-ns 与合计（总量行、异常/不健康名单与计数、reason 分组）都由本次拿到的
+     * <b>ns 切片现算</b>（{@link NamespaceStatMerge}）—— 同一屏上「合计 = Σ明细」恒成立；只有节点/存储/能力
+     * 这些集群级事实取自集群键。
      *
      * <p><b>降级</b>：聚合来源（k8s-server → admin client → 集群）不可用时，聚合派生段整体为 null
      * （{@link ClusterOverviewDTO} 的字段语义），前端显示「—」；<b>基本信息与能力摘要不受影响</b> ——
@@ -265,59 +322,91 @@ public class ClusterService {
      */
     public ClusterOverviewDTO overview(String clusterId) {
         K8sCluster cluster = require(clusterId);
-        ClusterAggregateDTO agg = aggregateCached(clusterId);
+        ClusterSnapshotDTO snap = snapshot(clusterId);
 
         ClusterOverviewDTO out = new ClusterOverviewDTO();
         out.setCapabilitySummary(capabilityService.summary(clusterId));
-        if (agg != null) {
-            out.setResourceTotal(agg.getTotal());
-            out.setResourceCapacity(agg.getNodeCapacity());
-            out.setStorage(agg.getStorage());
-            out.setAbnormalPods(agg.getAbnormalPods());
-            out.setAbnormalPodTotal(agg.getAbnormalPodTotal());
-            out.setAbnormalPodReasonCounts(agg.getAbnormalPodReasonCounts());
-            out.setUnhealthyWorkloads(agg.getUnhealthyWorkloads());
-            out.setUnhealthyWorkloadTotal(agg.getUnhealthyWorkloadTotal());
-            out.setNodeSummary(nodeSummary(agg.getNodeHealth()));
-            out.setUnhealthyNodes(unhealthyNodes(agg.getNodeHealth()));
+        if (snap != null) {
+            List<NamespaceSnapshotDTO> slices = statService.rows(null, clusterId, snap.getNamespaceNames());
+            ClusterTotalDTO total = NamespaceStatMerge.total(slices);
+            // PV 是 cluster-scoped：任何单个 ns 切片里都没有它，从集群键的 storage 补
+            total.setPvCount(snap.getStorage() == null ? 0 : snap.getStorage().getPvCount());
+            out.setResourceTotal(total);
+            out.setResourceCapacity(snap.getNodeCapacity());
+            out.setStorage(snap.getStorage());
+            out.setAbnormalPods(NamespaceStatMerge.abnormalPods(slices, NamespaceStatMerge.ABNORMAL_POD_CAP));
+            out.setAbnormalPodTotal(NamespaceStatMerge.abnormalTotal(slices));
+            out.setAbnormalPodReasonCounts(NamespaceStatMerge.abnormalReasonCounts(slices));
+            out.setUnhealthyWorkloads(NamespaceStatMerge.unhealthyWorkloads(slices, NamespaceStatMerge.UNHEALTHY_WORKLOAD_CAP));
+            out.setUnhealthyWorkloadTotal(NamespaceStatMerge.unhealthyTotal(slices));
+            out.setNodeSummary(nodeSummary(snap.getNodeHealth()));
+            out.setUnhealthyNodes(unhealthyNodes(snap.getNodeHealth()));
         }
         return out;
     }
 
     /**
-     * 资源明细：per-namespace 行（「资源明细」tab 打开时才拉，懒加载）。
-     * <p>与 overview 同源（同一份被缓存的聚合），所以两个 tab 的数字天然一致，也不会因为两次查询之间
-     * 的集群变化而互相矛盾。聚合不可用 → null（前端「—」）。
+     * 资源明细：per-namespace 行（「资源明细」tab 打开时才拉，懒加载），每行回带 {@code quotaState}。
+     * <p>与 overview 同源（同一份被缓存的集群键 + 同一批 ns 切片），所以两个 tab 的数字天然一致，
+     * 也不会因为两次查询之间的集群变化而互相矛盾。集群快照不可用 → null（前端「—」）。
+     * <p>{@code quotaState} 的判定只在 {@link QuotaClassifier} 一处，前端不再自己按前缀判。
      */
-    public List<NamespaceStatDTO> resourceBreakdown(String clusterId) {
+    public List<NamespaceStatEntry> resourceBreakdown(String clusterId) {
         require(clusterId);
-        ClusterAggregateDTO agg = aggregateCached(clusterId);
-        return agg == null ? null : agg.getNamespaces();
+        ClusterSnapshotDTO snap = snapshot(clusterId);
+        if (snap == null) {
+            return null;
+        }
+        return statService.rows(null, clusterId, snap.getNamespaceNames()).stream()
+                .map(s -> new NamespaceStatEntry(clusterId, s, QuotaClassifier.state(s.getStat())))
+                .toList();
     }
 
     /**
-     * 聚合快照（Redis 短 TTL 缓存包住 k8s-server 调用）。失败 → null + warn，不抛：
-     * 概览页是只读展示，一段数据拿不到不该让整页报错（同 B7 CalicoService 的降级原则）。
-     * <p>只缓存成功结果（{@link RedisJsonCache} 的既有语义）—— 失败下次重试，不会被 TTL 钉住。
+     * 把一次聚合的响应切片成 per-ns 快照（每个 ns 一份：行 + 该 ns 的异常/不健康清单）。
+     * <p>异常/不健康清单在聚合响应里是全局的（各带 namespace），这里按 namespace 归位到各自的切片。
+     * 排序/封顶沿用既有规则（本方法只负责"归位"，全局名单的排序封顶由 {@link NamespaceStatMerge} 在合并时做）。
      */
-    private ClusterAggregateDTO aggregateCached(String clusterId) {
-        try {
-            return cache.get("cluster:aggregate:" + clusterId, AGGREGATE_TTL, AGGREGATE_TYPE,
-                    () -> adminClient.resourceAggregate(clusterId));
-        } catch (Exception e) {
-            log.warn("集群 {} 资源聚合不可用（概览聚合段降级为「—」）：{}", clusterId, e.getMessage());
-            return null;
+    private static List<NamespaceSnapshotDTO> slicesOf(ClusterAggregateDTO agg, long sampledAt) {
+        List<AbnormalPodDTO> abnormal = orEmpty(agg.getAbnormalPods());
+        List<UnhealthyWorkloadDTO> unhealthy = orEmpty(agg.getUnhealthyWorkloads());
+        List<NamespaceSnapshotDTO> out = new ArrayList<>();
+        for (NamespaceStatDTO row : orEmpty(agg.getNamespaces())) {
+            String ns = row.getNamespace();
+            NamespaceSnapshotDTO s = new NamespaceSnapshotDTO();
+            s.setStat(row);
+
+            List<AbnormalPodDTO> ab = abnormal.stream().filter(p -> ns.equals(p.getNamespace())).toList();
+            s.setAbnormalPods(ab);
+            s.setAbnormalPodCount(ab.size());
+            Map<String, Integer> reasonCounts = new LinkedHashMap<>();
+            for (AbnormalPodDTO p : ab) {
+                reasonCounts.merge(p.getReason() == null ? "Unknown" : p.getReason(), 1, Integer::sum);
+            }
+            s.setAbnormalPodReasonCounts(NamespaceStatMerge.orderReasonCounts(reasonCounts));
+
+            List<UnhealthyWorkloadDTO> uw = unhealthy.stream().filter(w -> ns.equals(w.getNamespace())).toList();
+            s.setUnhealthyWorkloads(uw);
+            s.setUnhealthyWorkloadCount(uw.size());
+
+            s.setSampledAt(sampledAt);
+            out.add(s);
         }
+        return out;
     }
 
     private static NodeSummaryDTO nodeSummary(List<NodeHealthDTO> nodes) {
-        List<NodeHealthDTO> list = nodes == null ? List.of() : nodes;
+        List<NodeHealthDTO> list = orEmpty(nodes);
         int ready = (int) list.stream().filter(NodeHealthDTO::isReady).count();
         NodeSummaryDTO s = new NodeSummaryDTO();
         s.setTotal(list.size());
         s.setReady(ready);
         s.setNotReady(list.size() - ready);
         return s;
+    }
+
+    private static <T> List<T> orEmpty(List<T> list) {
+        return list == null ? List.of() : list;
     }
 
     /** 首屏「该看哪里」：未 Ready <b>或</b> 有 pressure 的节点（Ready 但有 DiskPressure 同样在丢调度）。 */

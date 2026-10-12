@@ -4,9 +4,13 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.AbnormalPodDTO;
 import com.coding.common.models.k8s.dto.ClusterAggregateDTO;
 import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
+import com.coding.common.models.k8s.dto.ClusterSnapshotDTO;
 import com.coding.common.models.k8s.dto.ClusterTotalDTO;
+import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.k8s.dto.NodeHealthDTO;
+import com.coding.common.models.k8s.dto.QuotaState;
 import com.coding.common.models.k8s.dto.ResourceCapacityDTO;
 import com.coding.common.models.k8s.dto.StorageStatDTO;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
@@ -20,6 +24,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -50,21 +55,31 @@ class ClusterServiceTest {
 
     private final K8sClusterMapper clusterMapper = mock(K8sClusterMapper.class);
     private final K8sLifecycleClient adminClient = mock(K8sLifecycleClient.class);
+    /** ns 切片的读写入口（T5）——概览/明细的 per-ns 与合计都由它现算。 */
+    private final NamespaceStatService statService = mock(NamespaceStatService.class);
+    /** 内存假 Redis 的底层 store：新用例直接塞集群键，模拟"集群键命中、不触聚合"。 */
+    private final Map<String, String> cacheStore = new HashMap<>();
     private final ClusterService svc = new ClusterService(clusterMapper, adminClient,
-            JsonMapper.builder().build(), inMemoryCache(),
+            JsonMapper.builder().build(), inMemoryCache(cacheStore),
             // capability 派生已搬到 ClusterCapabilityService（本类的 3 条 flag 用例仍是它的回归网）
-            new ClusterCapabilityService(clusterMapper, JsonMapper.builder().build()));
+            new ClusterCapabilityService(clusterMapper, JsonMapper.builder().build()),
+            statService);
 
-    private static RedisJsonCache inMemoryCache() {
+    private static RedisJsonCache inMemoryCache(Map<String, String> store) {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         @SuppressWarnings("unchecked")
         ValueOperations<String, String> ops = mock(ValueOperations.class);
-        Map<String, String> store = new HashMap<>();
         when(redis.opsForValue()).thenReturn(ops);
         when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0, String.class)));
         doAnswer(inv -> store.put(inv.getArgument(0), inv.getArgument(1)))
                 .when(ops).set(anyString(), anyString(), any(Duration.class));
         return new RedisJsonCache(redis, JsonMapper.builder().build());
+    }
+
+    /** 预置集群键（`cluster:agg:<id>`），使后续调用直接命中、不触聚合 —— 等价于"上次采样刚写过"。 */
+    private void seedClusterSnapshot(String clusterId, ClusterSnapshotDTO snap) {
+        cacheStore.put("platform:cache:cluster:agg:" + clusterId,
+                JsonMapper.builder().build().writeValueAsString(snap));
     }
 
     // ==================== capability 派生 ====================
@@ -147,6 +162,8 @@ class ClusterServiceTest {
     void overview_derives_node_summary_and_lists_unready_or_pressured_nodes() {
         stubCluster(null);
         when(adminClient.resourceAggregate("c1")).thenReturn(aggregateWithNodes());
+        // per-ns 与合计改由 ns 切片现算：夹具仍让它等于旧聚合里的数字（合计=Σ明细）
+        when(statService.rows(null, "c1", List.of("kube-system"))).thenReturn(List.of(kubeSystemSlice()));
 
         ClusterOverviewDTO out = svc.overview("c1");
 
@@ -164,14 +181,39 @@ class ClusterServiceTest {
     void overview_and_breakdown_share_one_aggregate_call() {
         stubCluster(null);
         when(adminClient.resourceAggregate("c1")).thenReturn(aggregateWithNodes());
+        when(statService.rows(null, "c1", List.of("kube-system"))).thenReturn(List.of(kubeSystemSlice()));
 
         ClusterOverviewDTO overview = svc.overview("c1");
-        List<NamespaceStatDTO> rows = svc.resourceBreakdown("c1");
+        List<NamespaceStatEntry> rows = svc.resourceBreakdown("c1");
 
         // 同一份被缓存的聚合：两次调用只打一次 k8s-server
         verify(adminClient, times(1)).resourceAggregate("c1");
         assertThat(overview.getResourceTotal().getPodCount()).isEqualTo(42);
-        assertThat(rows).extracting(NamespaceStatDTO::getNamespace).containsExactly("kube-system");
+        assertThat(rows).extracting(e -> e.getSnapshot().getStat().getNamespace()).containsExactly("kube-system");
+    }
+
+    // ==================== T6：按作用域拆键 ====================
+
+    @Test
+    void resource_breakdown_comes_from_namespace_slices() {
+        stubCluster(null);
+        // 集群键命中（不触聚合）→ 由 ns 切片现算明细，回带 quotaState
+        seedClusterSnapshot("c1", snapshot("c1", List.of("team-a"), 1_000L));
+        when(statService.rows(null, "c1", List.of("team-a"))).thenReturn(List.of(snap("team-a")));
+
+        assertThat(svc.resourceBreakdown("c1"))
+                .extracting(e -> e.getSnapshot().getStat().getNamespace())
+                .containsExactly("team-a");
+        assertThat(svc.resourceBreakdown("c1")).extracting(NamespaceStatEntry::getQuotaState)
+                .containsExactly(QuotaState.MISSING);
+    }
+
+    @Test
+    void breakdown_is_null_when_cluster_snapshot_unavailable() {
+        stubCluster(null);
+        when(adminClient.resourceAggregate("c1")).thenThrow(new CloudPlatformException(500, "集群不可达"));
+
+        assertThat(svc.resourceBreakdown("c1")).isNull();   // 前端「—」的既有降级
     }
 
     // ==================== 造数据 ====================
@@ -223,5 +265,50 @@ class ClusterServiceTest {
         n.setReady(ready);
         n.setPressures(pressure == null ? List.of() : List.of(pressure));
         return n;
+    }
+
+    /** 集群键的值（只放集群级事实）：节点/容量/存储 + ns 名索引 + sampledAt。 */
+    private static ClusterSnapshotDTO snapshot(String clusterId, List<String> namespaceNames, long sampledAt) {
+        ClusterSnapshotDTO s = new ClusterSnapshotDTO();
+        s.setNodeHealth(List.of());
+        s.setNodeCapacity(new ResourceCapacityDTO());
+        s.setStorage(new StorageStatDTO());
+        s.setNamespaceNames(namespaceNames);
+        s.setSampledAt(sampledAt);
+        return s;
+    }
+
+    /** ns 切片夹具（无 quota → MISSING）。 */
+    private static NamespaceSnapshotDTO snap(String ns) {
+        NamespaceSnapshotDTO s = new NamespaceSnapshotDTO();
+        NamespaceStatDTO stat = new NamespaceStatDTO();
+        stat.setNamespace(ns);
+        s.setStat(stat);
+        s.setAbnormalPodReasonCounts(new LinkedHashMap<>());
+        s.setAbnormalPods(List.of());
+        s.setUnhealthyWorkloads(List.of());
+        s.setSampledAt(1_000L);
+        return s;
+    }
+
+    /** kube-system 切片：podCount 42 + 异常数 7（合计=Σ明细；与旧聚合里的数字对齐）。 */
+    private static NamespaceSnapshotDTO kubeSystemSlice() {
+        NamespaceSnapshotDTO s = new NamespaceSnapshotDTO();
+        NamespaceStatDTO stat = new NamespaceStatDTO();
+        stat.setNamespace("kube-system");
+        stat.setPodCount(42);
+        s.setStat(stat);
+        AbnormalPodDTO ab = new AbnormalPodDTO();
+        ab.setNamespace("kube-system");
+        ab.setName("crash");
+        ab.setReason("CrashLoopBackOff");
+        s.setAbnormalPods(List.of(ab));
+        s.setAbnormalPodCount(7);
+        Map<String, Integer> reasons = new LinkedHashMap<>();
+        reasons.put("CrashLoopBackOff", 7);
+        s.setAbnormalPodReasonCounts(reasons);
+        s.setUnhealthyWorkloads(List.of());
+        s.setSampledAt(2_000L);
+        return s;
     }
 }

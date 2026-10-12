@@ -1,7 +1,7 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
-import com.coding.common.models.k8s.dto.NamespaceStatDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.platformapi.metrics.MetricsService;
@@ -110,8 +110,9 @@ public class ClusterController {
 
     @PostMapping("/resource-breakdown")
     @Operation(summary = "集群资源明细（per-namespace）",
-            description = "「资源明细」tab 懒加载用；与 /overview 同源同一份聚合快照，两边数字一致。不可用返回 null")
-    public ResponseData<List<NamespaceStatDTO>> resourceBreakdown(@RequestBody ClusterKeyRequest request) {
+            description = "「资源明细」tab 懒加载用；与 /overview 同源同一份集群快照 + 同一批 ns 切片，两边数字一致。"
+                    + "每行回带 quotaState（配额三档，判定在后端一处）。不可用返回 null")
+    public ResponseData<List<NamespaceStatEntry>> resourceBreakdown(@RequestBody ClusterKeyRequest request) {
         return new ResponseData<>(clusterService.resourceBreakdown(request.getClusterId()));
     }
 

@@ -72,4 +72,19 @@ public class NamespaceStatService {
         cache.setMany(toWrite, TTL);
         return out;
     }
+
+    /**
+     * 一次采样填 N 个键（同一个 {@code sampledAt}）—— 由集群那次聚合的切片来，
+     * 窄读（租户概览 / 命名空间页）永远不必为此再扫全集群。
+     * <p><b>ns 键的拼法只在这里出现一次</b>：调用方（{@code ClusterService}）只管给切片，
+     * 键由本方法拼 —— 不许在别处再写一遍 {@code "ns:" + clusterId + ":" + ns}。
+     */
+    public void putClusterSlices(String clusterId, List<NamespaceSnapshotDTO> slices) {
+        if (slices == null || slices.isEmpty()) {
+            return;
+        }
+        Map<String, NamespaceSnapshotDTO> values = new LinkedHashMap<>();
+        slices.forEach(s -> values.put(key(clusterId, s.getStat().getNamespace()), s));
+        cache.setMany(values, TTL);
+    }
 }
