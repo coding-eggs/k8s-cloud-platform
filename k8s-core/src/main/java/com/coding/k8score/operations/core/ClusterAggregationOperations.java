@@ -3,6 +3,7 @@ package com.coding.k8score.operations.core;
 import com.coding.common.models.k8s.dto.AbnormalPodDTO;
 import com.coding.common.models.k8s.dto.ClusterAggregateDTO;
 import com.coding.common.models.k8s.dto.ClusterTotalDTO;
+import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatDTO;
 import com.coding.common.models.k8s.dto.NodeHealthDTO;
 import com.coding.common.models.k8s.dto.ResourceCapacityDTO;
@@ -30,11 +31,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * 集群级资源聚合（集群概览页的数据面）。{@link CoreV1NodeOperations#listPodStats()} 的兄弟，同一条范式：
@@ -170,60 +173,16 @@ public class ClusterAggregationOperations {
         return aggregate(objects, Instant.now().getEpochSecond());
     }
 
-    ClusterAggregateDTO aggregate(ClusterObjects objects, long nowEpochSecond) {
-        // TreeMap：per-ns 行按 namespace 升序输出（前端表格的稳定初序，且与 Thanos by(namespace) 结果对齐）
-        Map<String, NsAcc> byNs = new TreeMap<>();
-
-        // ---- pods：requests/limits + 异常清单（同一 pass，不额外查一次）----
-        List<AbnormalPodDTO> abnormal = new ArrayList<>();
-        for (Pod pod : orEmpty(objects.pods())) {
-            String ns = namespaceOf(pod);
-            if (ns == null) {
-                continue;
-            }
-            NsAcc acc = byNs.computeIfAbsent(ns, k -> new NsAcc());
-            acc.podCount++;
-            addPodResources(acc, pod);
-            AbnormalPodDTO ab = abnormalOf(pod, nowEpochSecond);
-            if (ab != null) {
-                abnormal.add(ab);
-            }
-        }
-
-        // ---- workloads / services：per-ns 计数（Deployment/Sts 顺带归出不健康项）----
-        List<UnhealthyWorkloadDTO> unhealthy = new ArrayList<>();
-        countWorkloads(objects.deployments(), byNs, unhealthy, KIND_DEPLOYMENT);
-        countWorkloads(objects.statefulSets(), byNs, unhealthy, KIND_STATEFULSET);
-        countByNamespace(objects.daemonSets()).forEach((ns, n) -> byNs.computeIfAbsent(ns, k -> new NsAcc()).dsCount = n);
-        countByNamespace(objects.services()).forEach((ns, n) -> byNs.computeIfAbsent(ns, k -> new NsAcc()).svcCount = n);
-
-        // ---- PVC：per-ns 计数 + 状态归类 ----
-        int pvcBound = 0;
-        int pvcPending = 0;
-        int pvcLost = 0;
-        for (PersistentVolumeClaim pvc : orEmpty(objects.pvcs())) {
-            String ns = namespaceOf(pvc);
-            if (ns != null) {
-                byNs.computeIfAbsent(ns, k -> new NsAcc()).pvcCount++;
-            }
-            String phase = phaseOf(pvc);
-            if ("Bound".equalsIgnoreCase(phase)) {
-                pvcBound++;
-            } else if ("Pending".equalsIgnoreCase(phase)) {
-                pvcPending++;
-            } else if ("Lost".equalsIgnoreCase(phase)) {
-                pvcLost++;
-            }
-        }
-
-        // ---- ResourceQuota：per-ns 配额（hard/used）----
-        for (ResourceQuota rq : orEmpty(objects.quotas())) {
-            String ns = namespaceOf(rq);
-            if (ns == null) {
-                continue;
-            }
-            applyQuota(byNs.computeIfAbsent(ns, k -> new NsAcc()), rq);
-        }
+    /**
+     * 全集群聚合。**由 {@link #namespaceSnapshots} 派生** —— 全局的 per-ns 行 / 异常 / 不健康
+     * 就是各切片的合并（排序 + 封顶沿用同一套：union 后重排再封顶，等价于对全量重排封顶），
+     * 计数与 reason 分组是切片求和。
+     * <p>为什么派生而不是各算一遍：这样「全局聚合」与「单命名空间采样」永远是同一份口径 ——
+     * 两条采样路径不会各自漂移（这是<b>机制保证</b>，不是靠人工对齐）。
+     */
+    static ClusterAggregateDTO aggregate(ClusterObjects objects, long nowEpochSecond) {
+        Map<String, NamespaceSnapshotDTO> byNs = namespaceSnapshots(objects, nowEpochSecond);
+        List<NamespaceStatDTO> rows = byNs.values().stream().map(NamespaceSnapshotDTO::getStat).toList();
 
         // ---- nodes：健康投影 + allocatable 合计（cluster-scoped，1 次 list）----
         List<NodeHealthDTO> nodeHealth = new ArrayList<>();
@@ -240,7 +199,7 @@ public class ClusterAggregationOperations {
         nodeCapacity.setCpuAllocatable(cpuAllocatable);
         nodeCapacity.setMemoryAllocatable(memAllocatable);
 
-        // ---- PV：容量（total vs bound）----
+        // ---- PV：容量（total vs bound）+ PVC 状态归类 ----
         StorageStatDTO storage = new StorageStatDTO();
         BigDecimal pvCapacity = BigDecimal.ZERO;
         BigDecimal pvBound = BigDecimal.ZERO;
@@ -252,50 +211,131 @@ public class ClusterAggregationOperations {
                 pvBound = add(pvBound, cap);
             }
         }
+        int pvcBound = 0;
+        int pvcPending = 0;
+        int pvcLost = 0;
+        for (PersistentVolumeClaim pvc : orEmpty(objects.pvcs())) {
+            String phase = phaseOf(pvc);
+            if ("Bound".equalsIgnoreCase(phase)) {
+                pvcBound++;
+            } else if ("Pending".equalsIgnoreCase(phase)) {
+                pvcPending++;
+            } else if ("Lost".equalsIgnoreCase(phase)) {
+                pvcLost++;
+            }
+        }
         storage.setPvCapacityBytes(pvCapacity);
         storage.setPvBoundBytes(pvBound);
         storage.setPvcBound(pvcBound);
         storage.setPvcPending(pvcPending);
         storage.setPvcLost(pvcLost);
 
+        // ---- 全局异常/不健康 = 各切片合并后沿用既有排序 + 封顶（计数/分组则切片求和）----
+        List<AbnormalPodDTO> abnormal =
+                byNs.values().stream().flatMap(s -> s.getAbnormalPods().stream()).toList();
+        List<UnhealthyWorkloadDTO> unhealthy =
+                byNs.values().stream().flatMap(s -> s.getUnhealthyWorkloads().stream()).toList();
+
         ClusterAggregateDTO out = new ClusterAggregateDTO();
-        out.setNamespaces(byNs.entrySet().stream().map(e -> e.getValue().toDTO(e.getKey())).toList());
-        out.setTotal(totalOf(byNs, storage));
+        out.setNamespaces(rows);
+        out.setTotal(totalOf(rows, storage));
         out.setAbnormalPods(sortAndCap(abnormal));
-        out.setAbnormalPodTotal(abnormal.size());
-        out.setAbnormalPodReasonCounts(reasonCounts(abnormal));
+        out.setAbnormalPodTotal(byNs.values().stream().mapToInt(NamespaceSnapshotDTO::getAbnormalPodCount).sum());
+        out.setAbnormalPodReasonCounts(mergeReasonCounts(byNs.values()));
         out.setUnhealthyWorkloads(sortAndCapWorkloads(unhealthy));
-        out.setUnhealthyWorkloadTotal(unhealthy.size());
+        out.setUnhealthyWorkloadTotal(byNs.values().stream().mapToInt(NamespaceSnapshotDTO::getUnhealthyWorkloadCount).sum());
         out.setNodeHealth(nodeHealth);
         out.setNodeCapacity(nodeCapacity);
         out.setStorage(storage);
         return out;
     }
 
-    // ==================== workloads ====================
-
     /**
-     * 一批工作负载（Deployment / StatefulSet）：per-ns 计数 + 顺带归出「副本不足」的。
-     * <p>与 pods 同一思路 —— 对象已经列在手上了，判定不该另开一遍扫描。
+     * 按命名空间切片：一个 ns 一份，含它自己的行/异常/不健康（{@link TreeMap} = 按 ns 升序）。
+     * <p>这是「由 K8s 对象算出一行」的<b>唯一装配处</b>：全局聚合（{@link #aggregate}）与单命名空间采样
+     * 都走这里，故两条采样路径不会漂移。空对象集 → 空 Map（无 ns 键，不凭空造 ns）。
      */
-    private static void countWorkloads(List<? extends HasMetadata> items, Map<String, NsAcc> byNs,
-                                       List<UnhealthyWorkloadDTO> unhealthy, String kind) {
-        for (HasMetadata item : orEmpty(items)) {
-            String ns = namespaceOf(item);
-            if (ns != null) {
-                NsAcc acc = byNs.computeIfAbsent(ns, k -> new NsAcc());
-                if (KIND_DEPLOYMENT.equals(kind)) {
-                    acc.deployCount++;
-                } else {
-                    acc.stsCount++;
+    public static Map<String, NamespaceSnapshotDTO> namespaceSnapshots(ClusterObjects objects, long nowEpochSecond) {
+        Map<String, List<Pod>> podsByNs = groupByNamespace(objects.pods());
+        Map<String, List<Deployment>> depByNs = groupByNamespace(objects.deployments());
+        Map<String, List<StatefulSet>> stsByNs = groupByNamespace(objects.statefulSets());
+        Map<String, List<DaemonSet>> dsByNs = groupByNamespace(objects.daemonSets());
+        Map<String, List<Service>> svcByNs = groupByNamespace(objects.services());
+        Map<String, List<ResourceQuota>> quotaByNs = groupByNamespace(objects.quotas());
+        Map<String, List<PersistentVolumeClaim>> pvcByNs = groupByNamespace(objects.pvcs());
+
+        Map<String, List<UnhealthyWorkloadDTO>> unhealthyByNs = new TreeMap<>();
+        collectUnhealthy(depByNs, KIND_DEPLOYMENT, unhealthyByNs);
+        collectUnhealthy(stsByNs, KIND_STATEFULSET, unhealthyByNs);
+
+        Map<String, NamespaceSnapshotDTO> out = new TreeMap<>();
+        for (String ns : unionKeys(podsByNs, depByNs, stsByNs, dsByNs, svcByNs, quotaByNs, pvcByNs)) {
+            NamespaceSnapshotDTO s = new NamespaceSnapshotDTO();
+            s.setStat(rowOf(ns, podsByNs, depByNs, stsByNs, dsByNs, svcByNs, quotaByNs, pvcByNs));
+            // 异常名单：排序 + 每 ns 封顶；但计数与 reason 分组必须取**全量**（在封顶之前算）
+            List<AbnormalPodDTO> abnormal = abnormalOf(podsByNs.get(ns), nowEpochSecond);
+            s.setAbnormalPods(sortAndCap(abnormal));
+            s.setAbnormalPodCount(abnormal.size());
+            s.setAbnormalPodReasonCounts(reasonCounts(abnormal));
+            List<UnhealthyWorkloadDTO> unhealthy = unhealthyByNs.getOrDefault(ns, List.of());
+            s.setUnhealthyWorkloads(sortAndCapWorkloads(unhealthy));
+            s.setUnhealthyWorkloadCount(unhealthy.size());
+            s.setSampledAt(nowEpochSecond * 1000L);
+            out.put(ns, s);
+        }
+        return out;
+    }
+
+    /** 单个 ns 的 per-ns 行：把原先散在 {@code aggregate} 里的 {@link NsAcc} 累加逻辑收进「一个 ns 的全部输入」这一个函数。 */
+    private static NamespaceStatDTO rowOf(String ns,
+                                          Map<String, List<Pod>> podsByNs,
+                                          Map<String, List<Deployment>> depByNs,
+                                          Map<String, List<StatefulSet>> stsByNs,
+                                          Map<String, List<DaemonSet>> dsByNs,
+                                          Map<String, List<Service>> svcByNs,
+                                          Map<String, List<ResourceQuota>> quotaByNs,
+                                          Map<String, List<PersistentVolumeClaim>> pvcByNs) {
+        NsAcc acc = new NsAcc();
+        List<Pod> pods = orEmpty(podsByNs.get(ns));
+        acc.podCount = pods.size();
+        for (Pod pod : pods) {
+            addPodResources(acc, pod);
+        }
+        acc.deployCount = orEmpty(depByNs.get(ns)).size();
+        acc.stsCount = orEmpty(stsByNs.get(ns)).size();
+        acc.dsCount = orEmpty(dsByNs.get(ns)).size();
+        acc.svcCount = orEmpty(svcByNs.get(ns)).size();
+        acc.pvcCount = orEmpty(pvcByNs.get(ns)).size();
+        for (ResourceQuota rq : orEmpty(quotaByNs.get(ns))) {
+            applyQuota(acc, rq);
+        }
+        return acc.toDTO(ns);
+    }
+
+    /** 出现过的全部 ns（各族键的并集），按升序 —— 保证「只有 DaemonSet / 只有 quota 的 ns」也出一行。 */
+    @SafeVarargs
+    private static List<String> unionKeys(Map<String, ?>... maps) {
+        TreeSet<String> keys = new TreeSet<>();
+        for (Map<String, ?> m : maps) {
+            keys.addAll(m.keySet());
+        }
+        return new ArrayList<>(keys);
+    }
+
+    /** 一批 workload 的 per-ns 分桶里归出不健康项，落到 unhealthyByNs（顺带判定的口径见 {@link #unhealthyOf}）。 */
+    private static <T extends HasMetadata> void collectUnhealthy(Map<String, List<T>> byNs, String kind,
+                                                                 Map<String, List<UnhealthyWorkloadDTO>> out) {
+        byNs.forEach((ns, items) -> {
+            for (T item : items) {
+                UnhealthyWorkloadDTO bad = unhealthyOf(item, kind);
+                if (bad != null) {
+                    out.computeIfAbsent(ns, k -> new ArrayList<>()).add(bad);
                 }
             }
-            UnhealthyWorkloadDTO bad = unhealthyOf(item, kind);
-            if (bad != null) {
-                unhealthy.add(bad);
-            }
-        }
+        });
     }
+
+    // ==================== workloads ====================
 
     /**
      * 不健康工作负载投影（口径 §3：{@code status.readyReplicas < spec.replicas}）；健康返回 null。
@@ -377,6 +417,21 @@ public class ClusterAggregationOperations {
         dto.setNode(pod.getSpec() != null ? pod.getSpec().getNodeName() : null);
         dto.setAgeSeconds(ageSecondsOf(pod, nowEpochSecond));
         return dto;
+    }
+
+    /**
+     * 一批 pod 的异常投影（逐 pod 复用 {@link #abnormalOf(Pod, long)}，丢弃健康项）；<b>不封顶</b> ——
+     * 调用方据此同时得到「全量计数 / reason 分组」与「排序封顶后的名单」。
+     */
+    private static List<AbnormalPodDTO> abnormalOf(List<Pod> pods, long nowEpochSecond) {
+        List<AbnormalPodDTO> out = new ArrayList<>();
+        for (Pod pod : orEmpty(pods)) {
+            AbnormalPodDTO ab = abnormalOf(pod, nowEpochSecond);
+            if (ab != null) {
+                out.add(ab);
+            }
+        }
+        return out;
     }
 
     /**
@@ -476,6 +531,25 @@ public class ClusterAggregationOperations {
         for (AbnormalPodDTO p : abnormal) {
             counts.merge(p.getReason() == null ? "Unknown" : p.getReason(), 1, Integer::sum);
         }
+        return orderReasonCounts(counts);
+    }
+
+    /**
+     * 各切片的 reason 分组求和（全量计数之和）—— 全局的计数由此合并，顺序同样走
+     * {@link #orderReasonCounts}，故全局 chip 顺序与单 ns 一致。
+     */
+    private static Map<String, Integer> mergeReasonCounts(Collection<NamespaceSnapshotDTO> snapshots) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (NamespaceSnapshotDTO s : snapshots) {
+            if (s.getAbnormalPodReasonCounts() != null) {
+                s.getAbnormalPodReasonCounts().forEach((reason, n) -> counts.merge(reason, n, Integer::sum));
+            }
+        }
+        return orderReasonCounts(counts);
+    }
+
+    /** reason 计数的稳定顺序：严重度降序 → 计数降序（单份统计与切片求和共用这一处排序）。 */
+    private static Map<String, Integer> orderReasonCounts(Map<String, Integer> counts) {
         Map<String, Integer> out = new LinkedHashMap<>();
         counts.entrySet().stream()
                 .sorted(Comparator.comparingInt((Map.Entry<String, Integer> e) -> severity(e.getKey())).reversed()
@@ -597,13 +671,13 @@ public class ClusterAggregationOperations {
 
     // ==================== 通用小工具 ====================
 
-    /** 按 metadata.namespace 计数（无 namespace 的条目忽略）。 */
-    private static Map<String, Integer> countByNamespace(List<? extends HasMetadata> items) {
-        Map<String, Integer> out = new LinkedHashMap<>();
-        for (HasMetadata item : orEmpty(items)) {
+    /** 按 metadata.namespace 分桶（无 namespace 的条目忽略）；TreeMap = 按 ns 升序。 */
+    private static <T extends HasMetadata> Map<String, List<T>> groupByNamespace(List<T> items) {
+        Map<String, List<T>> out = new TreeMap<>();
+        for (T item : orEmpty(items)) {
             String ns = namespaceOf(item);
             if (ns != null) {
-                out.merge(ns, 1, Integer::sum);
+                out.computeIfAbsent(ns, k -> new ArrayList<>()).add(item);
             }
         }
         return out;
@@ -634,25 +708,25 @@ public class ClusterAggregationOperations {
     }
 
     /** 总量行 = 各 per-ns 行之和 + 集群级的 PV 计数/命名空间数。 */
-    private static ClusterTotalDTO totalOf(Map<String, NsAcc> byNs, StorageStatDTO storage) {
+    private static ClusterTotalDTO totalOf(Collection<NamespaceStatDTO> rows, StorageStatDTO storage) {
         ClusterTotalDTO t = new ClusterTotalDTO();
         t.setCpuRequest(BigDecimal.ZERO);
         t.setMemRequest(BigDecimal.ZERO);
         t.setCpuLimit(BigDecimal.ZERO);
         t.setMemLimit(BigDecimal.ZERO);
-        for (NsAcc a : byNs.values()) {
-            t.setCpuRequest(add(t.getCpuRequest(), a.cpuRequest));
-            t.setMemRequest(add(t.getMemRequest(), a.memRequest));
-            t.setCpuLimit(add(t.getCpuLimit(), a.cpuLimit));
-            t.setMemLimit(add(t.getMemLimit(), a.memLimit));
-            t.setPodCount(t.getPodCount() + a.podCount);
-            t.setDeploymentCount(t.getDeploymentCount() + a.deployCount);
-            t.setStatefulsetCount(t.getStatefulsetCount() + a.stsCount);
-            t.setDaemonsetCount(t.getDaemonsetCount() + a.dsCount);
-            t.setServiceCount(t.getServiceCount() + a.svcCount);
-            t.setPvcCount(t.getPvcCount() + a.pvcCount);
+        for (NamespaceStatDTO r : rows) {
+            t.setCpuRequest(add(t.getCpuRequest(), r.getCpuRequest()));
+            t.setMemRequest(add(t.getMemRequest(), r.getMemRequest()));
+            t.setCpuLimit(add(t.getCpuLimit(), r.getCpuLimit()));
+            t.setMemLimit(add(t.getMemLimit(), r.getMemLimit()));
+            t.setPodCount(t.getPodCount() + r.getPodCount());
+            t.setDeploymentCount(t.getDeploymentCount() + r.getDeployCount());
+            t.setStatefulsetCount(t.getStatefulsetCount() + r.getStsCount());
+            t.setDaemonsetCount(t.getDaemonsetCount() + r.getDsCount());
+            t.setServiceCount(t.getServiceCount() + r.getSvcCount());
+            t.setPvcCount(t.getPvcCount() + r.getPvcCount());
         }
-        t.setNamespaceCount(byNs.size());
+        t.setNamespaceCount(rows.size());
         t.setPvCount(storage.getPvCount());
         return t;
     }
