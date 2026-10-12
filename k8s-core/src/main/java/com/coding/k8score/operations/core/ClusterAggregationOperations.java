@@ -238,6 +238,8 @@ public class ClusterAggregationOperations {
 
         ClusterAggregateDTO out = new ClusterAggregateDTO();
         out.setNamespaces(rows);
+        // per-ns 真值（计数全量、名单各自封顶）挂上 wire —— 平台侧据此写 ns: 键；TreeMap 已按 ns 升序
+        out.setNamespaceSnapshots(new ArrayList<>(byNs.values()));
         out.setTotal(totalOf(rows, storage));
         out.setAbnormalPods(sortAndCap(abnormal));
         out.setAbnormalPodTotal(byNs.values().stream().mapToInt(NamespaceSnapshotDTO::getAbnormalPodCount).sum());

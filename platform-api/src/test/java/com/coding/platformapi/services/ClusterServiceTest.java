@@ -247,6 +247,8 @@ class ClusterServiceTest {
         ClusterAggregateDTO agg = new ClusterAggregateDTO();
         agg.setTotal(total);
         agg.setNamespaces(List.of(ns));
+        // 集群键的 ns 索引与 ns 键都改由 namespaceSnapshots（per-ns 真值）来
+        agg.setNamespaceSnapshots(List.of(kubeSystemSlice()));
         agg.setNodeCapacity(capacity);
         agg.setStorage(storage);
         agg.setAbnormalPods(List.of(ab));

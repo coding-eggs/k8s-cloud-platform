@@ -11,6 +11,7 @@ import io.fabric8.kubernetes.api.model.PodBuilder;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -79,5 +80,35 @@ class NamespaceSnapshotsTest {
         assertThat(agg.getNamespaces()).extracting(NamespaceStatDTO::getNamespace)
                 .containsExactly("team-a", "team-b");
         assertThat(agg.getTotal().getNamespaceCount()).isEqualTo(2);
+    }
+
+    /**
+     * 封顶只封「名单」，不封「计数」；且线上必须携带 per-ns 真值（{@code namespaceSnapshots}），
+     * 否则平台侧无法精确回填 {@code ns:} 键。
+     * <p>一个 ns 里放 201 个 CrashLoopBackOff 的 Pod（&gt; {@code ABNORMAL_POD_CAP=200}）：
+     * 切片里 {@code abnormalPodCount} 必须是 201（全量），而 {@code abnormalPods} 名单封顶到 200；
+     * 全局 {@code getAbnormalPods()} 也封顶 200，但 {@code getAbnormalPodTotal()} 仍是全量 201。
+     * 这条钉死了「集群键切片不能被别人的对象挤掉」—— 也就是 platform-api 写 {@code ns:} 键必须
+     * 用 {@code namespaceSnapshots} 而不是把全局封顶名单分桶的依据。
+     */
+    @Test
+    void per_namespace_counts_stay_exact_while_lists_are_capped() {
+        List<Pod> pods = new ArrayList<>();
+        for (int i = 0; i < 201; i++) {
+            pods.add(crashing("team-a", "p" + i));
+        }
+        ClusterAggregateDTO agg = ClusterAggregationOperations.aggregate(objects(pods, List.of()), 1_700_000_000L);
+
+        NamespaceSnapshotDTO slice = agg.getNamespaceSnapshots().stream()
+                .filter(s -> "team-a".equals(s.getStat().getNamespace()))
+                .findFirst().orElseThrow();
+
+        // per-ns 真值：计数全量（201）、名单封顶（200）
+        assertThat(slice.getAbnormalPodCount()).isEqualTo(201);
+        assertThat(slice.getAbnormalPods()).hasSize(200);
+        assertThat(slice.getAbnormalPodReasonCounts()).containsEntry("CrashLoopBackOff", 201);
+        // 全局：名单同样封顶，但计数仍是全量
+        assertThat(agg.getAbnormalPods()).hasSize(200);
+        assertThat(agg.getAbnormalPodTotal()).isEqualTo(201);
     }
 }

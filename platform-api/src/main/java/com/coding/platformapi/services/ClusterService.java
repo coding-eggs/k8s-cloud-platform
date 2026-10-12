@@ -2,17 +2,14 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
-import com.coding.common.models.k8s.dto.AbnormalPodDTO;
 import com.coding.common.models.k8s.dto.ClusterAggregateDTO;
 import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
 import com.coding.common.models.k8s.dto.ClusterSnapshotDTO;
 import com.coding.common.models.k8s.dto.ClusterTotalDTO;
 import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
-import com.coding.common.models.k8s.dto.NamespaceStatDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.k8s.dto.NodeHealthDTO;
 import com.coding.common.models.k8s.dto.NodeSummaryDTO;
-import com.coding.common.models.k8s.dto.UnhealthyWorkloadDTO;
 import com.coding.common.utils.AESUtils;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
@@ -34,7 +31,6 @@ import tools.jackson.databind.json.JsonMapper;
 import java.sql.Date;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -286,8 +282,8 @@ public class ClusterService {
 
     /**
      * 未命中时的装配：一次聚合 → 集群键 + 切片写 ns 键（同一 sampledAt）。
-     * <p>切片来源是<b>该次聚合的响应</b>（per-ns 行 + 按 ns 归位的异常/不健康清单）—— 一次采样填 N 个键，
-     * 窄读永远不必为此再扫全集群。
+     * <p>切片来源是聚合响应里携带的 {@code namespaceSnapshots}（k8s-core 按 ns 切片、**每 ns 计数全量、
+     * 名单各自封顶**）—— <b>不是</b>把全局封顶的那两个名单分桶（那样会把大 ns 的计数挤掉）。
      */
     private ClusterSnapshotDTO loadSnapshot(String clusterId) {
         ClusterAggregateDTO agg = adminClient.resourceAggregate(clusterId);
@@ -295,7 +291,9 @@ public class ClusterService {
             return null;   // 失败/降级不缓存（RedisJsonCache 既有语义），下次重试
         }
         long sampledAt = System.currentTimeMillis();
-        List<NamespaceSnapshotDTO> slices = slicesOf(agg, sampledAt);
+        List<NamespaceSnapshotDTO> slices = new ArrayList<>(orEmpty(agg.getNamespaceSnapshots()));
+        // 集群键与这次写入的 N 个 ns 键共享同一采样时刻（一次采样）
+        slices.forEach(s -> s.setSampledAt(sampledAt));
         statService.putClusterSlices(clusterId, slices);
 
         ClusterSnapshotDTO snap = new ClusterSnapshotDTO();
@@ -360,39 +358,6 @@ public class ClusterService {
         return statService.rows(null, clusterId, snap.getNamespaceNames()).stream()
                 .map(s -> new NamespaceStatEntry(clusterId, s, QuotaClassifier.state(s.getStat())))
                 .toList();
-    }
-
-    /**
-     * 把一次聚合的响应切片成 per-ns 快照（每个 ns 一份：行 + 该 ns 的异常/不健康清单）。
-     * <p>异常/不健康清单在聚合响应里是全局的（各带 namespace），这里按 namespace 归位到各自的切片。
-     * 排序/封顶沿用既有规则（本方法只负责"归位"，全局名单的排序封顶由 {@link NamespaceStatMerge} 在合并时做）。
-     */
-    private static List<NamespaceSnapshotDTO> slicesOf(ClusterAggregateDTO agg, long sampledAt) {
-        List<AbnormalPodDTO> abnormal = orEmpty(agg.getAbnormalPods());
-        List<UnhealthyWorkloadDTO> unhealthy = orEmpty(agg.getUnhealthyWorkloads());
-        List<NamespaceSnapshotDTO> out = new ArrayList<>();
-        for (NamespaceStatDTO row : orEmpty(agg.getNamespaces())) {
-            String ns = row.getNamespace();
-            NamespaceSnapshotDTO s = new NamespaceSnapshotDTO();
-            s.setStat(row);
-
-            List<AbnormalPodDTO> ab = abnormal.stream().filter(p -> ns.equals(p.getNamespace())).toList();
-            s.setAbnormalPods(ab);
-            s.setAbnormalPodCount(ab.size());
-            Map<String, Integer> reasonCounts = new LinkedHashMap<>();
-            for (AbnormalPodDTO p : ab) {
-                reasonCounts.merge(p.getReason() == null ? "Unknown" : p.getReason(), 1, Integer::sum);
-            }
-            s.setAbnormalPodReasonCounts(NamespaceStatMerge.orderReasonCounts(reasonCounts));
-
-            List<UnhealthyWorkloadDTO> uw = unhealthy.stream().filter(w -> ns.equals(w.getNamespace())).toList();
-            s.setUnhealthyWorkloads(uw);
-            s.setUnhealthyWorkloadCount(uw.size());
-
-            s.setSampledAt(sampledAt);
-            out.add(s);
-        }
-        return out;
     }
 
     private static NodeSummaryDTO nodeSummary(List<NodeHealthDTO> nodes) {

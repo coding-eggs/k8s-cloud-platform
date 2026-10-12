@@ -21,8 +21,22 @@ public class ClusterAggregateDTO {
     /** 集群总量行（Σ 出来的那一行） */
     private ClusterTotalDTO total;
 
-    /** per-namespace 明细行，按 namespace 升序 */
+    /**
+     * per-namespace 明细行，按 namespace 升序。
+     * <p><b>注意</b>：这些行的异常/不健康计数不在本行里 —— 那是 {@link #namespaceSnapshots} 的职责。
+     * 本字段为冻结 B4 既有读法（{@code ClusterService} 的历史 overview 断言 / 既有 24 例）而保留，
+     * 与 {@code namespaceSnapshots} 是<b>有意的 wire 冗余</b>。
+     */
     private List<NamespaceStatDTO> namespaces;
+
+    /**
+     * <b>per-ns 的真值来源</b>：一个命名空间一份切片，含该 ns 的行 + 异常 Pod（全量计数 + reason 分组 +
+     * 各自封顶的名单）+ 不健康工作负载（全量计数 + 各自封顶的名单）。
+     * <p>平台侧据此写 {@code ns:} 键、并据其命名空间名建集群键的索引。为什么必须携带它而不是让平台侧
+     * 把全局的 {@link #abnormalPods} 分桶：那两个全局名单是<b>封顶 200</b>的，分桶会让某个大 ns 的计数
+     * 被别的 ns 挤掉 —— 而这里的每个切片是<b>各自</b>封顶、计数全量（见 {@code namespaceSnapshots}）。
+     */
+    private List<NamespaceSnapshotDTO> namespaceSnapshots;
 
     /** 异常 Pod 清单（按严重度降序，封顶 {@code ABNORMAL_POD_CAP} 条）；完整条数看 abnormalPodTotal */
     private List<AbnormalPodDTO> abnormalPods;
