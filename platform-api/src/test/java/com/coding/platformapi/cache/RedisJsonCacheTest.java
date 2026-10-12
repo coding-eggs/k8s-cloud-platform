@@ -7,7 +7,9 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -104,5 +106,25 @@ class RedisJsonCacheTest {
 
         assertThat(cache.get("k1", Duration.ofSeconds(30), STRING_LIST, () -> List.of("a")))
                 .containsExactly("a");
+    }
+
+    /** 批量读（MGET）：只回命中项，未命中的键不出现在结果里。 */
+    @Test
+    void getMany_returns_only_hits_in_one_round_trip() {
+        when(valueOps.multiGet(List.of("platform:cache:a", "platform:cache:b")))
+                .thenReturn(Arrays.asList("[\"x\"]", null));
+
+        Map<String, List<String>> got = cache.getMany(List.of("a", "b"), STRING_LIST);
+
+        assertThat(got).containsOnlyKeys("a");
+        assertThat(got.get("a")).containsExactly("x");
+    }
+
+    /** Redis 批量读失败 → 不抛，当作全未命中（调用方自行走采样器）。 */
+    @Test
+    void getMany_degrades_on_redis_failure() {
+        when(valueOps.multiGet(any())).thenThrow(new RuntimeException("redis down"));
+
+        assertThat(cache.getMany(List.of("a"), STRING_LIST)).isEmpty();   // 不抛：调用方当作全未命中
     }
 }

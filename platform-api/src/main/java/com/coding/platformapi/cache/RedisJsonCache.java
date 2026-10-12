@@ -2,12 +2,21 @@ package com.coding.platformapi.cache;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.connection.RedisStringCommands;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.types.Expiration;
 import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Supplier;
 
 /**
@@ -66,5 +75,57 @@ public class RedisJsonCache {
             log.warn("Redis 缓存写入失败（不影响本次结果）: {} ({})", fullKey, e.getMessage());
         }
         return value;
+    }
+
+    /** 批量读（MGET，一次往返）。**只回命中项**：未命中由调用方决定怎么补（本仓的补法是走采样器）。 */
+    public <T> Map<String, T> getMany(Collection<String> keys, TypeReference<T> type) {
+        if (keys == null || keys.isEmpty()) {
+            return Map.of();
+        }
+        List<String> fullKeys = keys.stream().map(k -> PREFIX + k).toList();
+        List<String> raw;
+        try {
+            raw = redis.opsForValue().multiGet(fullKeys);
+        } catch (Exception e) {
+            log.warn("Redis 批量读失败，按全未命中处理（{} 个键）：{}", fullKeys.size(), e.getMessage());
+            return Map.of();
+        }
+        if (raw == null) {
+            return Map.of();
+        }
+        Map<String, T> out = new LinkedHashMap<>();
+        Iterator<String> ks = keys.iterator();
+        for (String value : raw) {
+            String key = ks.next();
+            if (value == null) {
+                continue;
+            }
+            try {
+                out.put(key, jsonMapper.readValue(value, type));
+            } catch (Exception e) {
+                log.warn("Redis 缓存反序列化失败，按未命中处理: {} ({})", PREFIX + key, e.getMessage());
+            }
+        }
+        return out;
+    }
+
+    /** 批量写（pipeline，每键同 TTL）。写失败只记日志 —— 与 get 的降级立场一致。 */
+    public <T> void setMany(Map<String, T> values, Duration ttl) {
+        if (values == null || values.isEmpty()) {
+            return;
+        }
+        try {
+            Map<String, String> payload = new LinkedHashMap<>();
+            values.forEach((k, v) -> payload.put(PREFIX + k, jsonMapper.writeValueAsString(v)));
+            redis.executePipelined((RedisCallback<Object>) connection -> {
+                RedisStringCommands commands = connection.stringCommands();
+                payload.forEach((k, v) -> commands.set(k.getBytes(StandardCharsets.UTF_8),
+                        v.getBytes(StandardCharsets.UTF_8),
+                        Expiration.milliseconds(ttl.toMillis()), RedisStringCommands.SetOption.UPSERT));
+                return null;
+            });
+        } catch (Exception e) {
+            log.warn("Redis 批量写失败（不影响本次结果，{} 个键）：{}", values.size(), e.getMessage());
+        }
     }
 }
