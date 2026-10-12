@@ -239,36 +239,41 @@ public class MetricsService {
 
     // ===== 租户维度（占位符 = clusterName；复用集群的 by(namespace) 语句，用租户的 ns 集合在内存里过滤）=====
     // R10：曲线**不**放 TenantOverviewService —— 它只编排快照/明细；曲线归指标层（同 ClusterController 对集群指标）。
-    // 口径：按集群取 per-ns 序列 → 只留租户拥有的 ns → 逐时间点求和成**一条**「租户合计」；跨集群再把同名 ns 的值相加。
-    // 有意**不改** clusterCpuByNamespace：那是集群页的 per-ns 多线图，这里是租户页的单线。
+    // R12：作用域是**成对**的 (clusterId → 该集群下本租户的命名空间)，不是两个扁平列表 —— 否则同名 ns 归属别的租户时
+    //      会把别人的序列静默并进来。逐集群各查各的、按**该集群自己的 ns 集合**过滤 legend，再把跨集群**同名** ns 的值相加
+    //      （同名且都在本租户名下才是对的相加）。有意**不改** clusterCpuByNamespace：那是集群页的 per-ns 多线图。
 
-    /** 租户 CPU 用量曲线（核）：一条「租户合计」。 */
-    public MetricSeriesResponse tenantCpu(String tenantId, List<String> clusterIds, List<String> namespaces, long start, long end) {
+    /** 租户 CPU 用量曲线（核）：一条「租户合计」；作用域成对给出（clusterId → 该集群下本租户的命名空间）。 */
+    public MetricSeriesResponse tenantCpu(String tenantId, Map<String, List<String>> namespacesByCluster, long start, long end) {
         return new MetricSeriesResponse("核",
-                List.of(tenantAggregate(tenantId, clusterIds, namespaces, start, end, MetricQuery.CLUSTER_CPU_USED_BY_NS)));
+                List.of(tenantAggregate(tenantId, namespacesByCluster, start, end, MetricQuery.CLUSTER_CPU_USED_BY_NS)));
     }
 
     /** 租户内存用量曲线（字节）：同 {@link #tenantCpu}。 */
-    public MetricSeriesResponse tenantMemory(String tenantId, List<String> clusterIds, List<String> namespaces, long start, long end) {
+    public MetricSeriesResponse tenantMemory(String tenantId, Map<String, List<String>> namespacesByCluster, long start, long end) {
         return new MetricSeriesResponse("字节",
-                List.of(tenantAggregate(tenantId, clusterIds, namespaces, start, end, MetricQuery.CLUSTER_MEMORY_USED_BY_NS)));
+                List.of(tenantAggregate(tenantId, namespacesByCluster, start, end, MetricQuery.CLUSTER_MEMORY_USED_BY_NS)));
     }
 
-    /** 逐集群取 by(namespace) 序列 → 只留租户的 ns（过滤 legend）→ 逐时间点求和（跨集群同名 ns 相加）成一条「租户合计」。 */
-    private MetricSeries tenantAggregate(String tenantId, List<String> clusterIds, List<String> namespaces,
+    /**
+     * 逐集群取 by(namespace) 序列 → 只留**该集群**下本租户的 ns（过滤 legend）→ 逐时间点求和成一条「租户合计」。
+     * <p>按集群各自的 ns 集合过滤（成对作用域）：同名 ns 只有在**各集群都属于本租户**时才会相加，
+     * 别的租户在同一集群里占用的同名 ns 不会被并进来。
+     */
+    private MetricSeries tenantAggregate(String tenantId, Map<String, List<String>> namespacesByCluster,
                                          long start, long end, MetricQuery query) {
-        Set<String> wanted = namespaces == null ? Set.of() : new HashSet<>(namespaces);
-        // TreeMap：以时间戳升序收敛（同一 ts 跨序列/跨集群 merge 成一个值）
+        // TreeMap：以时间戳升序收敛（同一 ts 跨集群 merge 成一个值）
         Map<Long, Double> sums = new TreeMap<>();
         int clusters = 0;
-        if (clusterIds != null) {
-            for (String clusterId : clusterIds) {
-                String sql = String.format(query.sql(), clusterName(clusterId));
+        if (namespacesByCluster != null) {
+            for (Map.Entry<String, List<String>> entry : namespacesByCluster.entrySet()) {
+                Set<String> wanted = entry.getValue() == null ? Set.of() : new HashSet<>(entry.getValue());
+                String sql = String.format(query.sql(), clusterName(entry.getKey()));
                 for (PromResult<NamespaceLabels> r : client.queryRange(sql, start, end, STEP, NamespaceLabels.class)) {
                     String ns = (r.getMetric() != null && StringUtils.hasText(r.getMetric().getNamespace()))
                             ? r.getMetric().getNamespace() : "unknown";
                     if (!wanted.contains(ns)) {
-                        continue;   // 不属于租户的序列（别的 ns 即使同集群返回也滤掉）
+                        continue;   // 不属于本集群下本租户的序列（别的同名 ns 即使同集群返回也滤掉）
                     }
                     for (MetricPoint p : pointsOf(r)) {
                         sums.merge(p.getTs(), p.getValue(), Double::sum);
@@ -277,7 +282,7 @@ public class MetricsService {
                 clusters++;
             }
         }
-        log.debug("租户 {} 用量曲线：聚合 {} 个集群、{} 个命名空间", tenantId, clusters, wanted.size());
+        log.debug("租户 {} 用量曲线：聚合 {} 个集群", tenantId, clusters);
 
         MetricSeries s = new MetricSeries();
         s.setLegend("租户合计");

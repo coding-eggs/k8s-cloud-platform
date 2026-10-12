@@ -18,7 +18,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -64,8 +63,7 @@ public class TenantOverviewController {
             description = "按租户命名空间集合聚合的**一条**「租户合计」曲线；clusterId 缺省=租户全部集群，传则限定到该集群")
     public ResponseData<MetricSeriesResponse> cpuMetrics(@RequestBody TenantOverviewRequest req) {
         String tid = ctx.requireContext(tokenTenantId(), req.getTenantId());
-        TenantScope scope = scope(tid, req.getClusterId());
-        return new ResponseData<>(metricsService.tenantCpu(tid, scope.clusterIds(), scope.namespaces(), req.getStart(), req.getEnd()));
+        return new ResponseData<>(metricsService.tenantCpu(tid, scope(tid, req.getClusterId()), req.getStart(), req.getEnd()));
     }
 
     @PostMapping("/metrics/memory")
@@ -73,22 +71,20 @@ public class TenantOverviewController {
             description = "同 /metrics/cpu，单位为字节")
     public ResponseData<MetricSeriesResponse> memoryMetrics(@RequestBody TenantOverviewRequest req) {
         String tid = ctx.requireContext(tokenTenantId(), req.getTenantId());
-        TenantScope scope = scope(tid, req.getClusterId());
-        return new ResponseData<>(metricsService.tenantMemory(tid, scope.clusterIds(), scope.namespaces(), req.getStart(), req.getEnd()));
+        return new ResponseData<>(metricsService.tenantMemory(tid, scope(tid, req.getClusterId()), req.getStart(), req.getEnd()));
     }
 
     /**
-     * 曲线的取数范围：租户的 (集群 → 命名空间集合) 只在这里查一次（走 {@link TenantOverviewService} 的分配表读法，
-     * 与快照/明细同源，不在两处各查一次）。{@code clusterId} 非空 → 只取该集群（及其命名空间）。
+     * 曲线的取数作用域：租户的 (集群 → 该集群下本租户的命名空间)，只在这里查一次（走 {@link TenantOverviewService}
+     * 的分配表读法，与快照/明细同源，不在两处各查一次）。**成对**给出而非两个扁平列表 —— 逐集群按各自的 ns 集合过滤，
+     * 避免同名 ns 归属别的租户时被并进来（R12）。{@code clusterId} 非空 → 只取该集群。
      */
-    private TenantScope scope(String tenantId, String clusterId) {
+    private Map<String, List<String>> scope(String tenantId, String clusterId) {
         Map<String, List<String>> byCluster = overviewService.allocationsByCluster(tenantId);
         if (StringUtils.hasText(clusterId)) {
-            return new TenantScope(List.of(clusterId), byCluster.getOrDefault(clusterId, List.of()));
+            return Map.of(clusterId, byCluster.getOrDefault(clusterId, List.of()));
         }
-        List<String> clusterIds = new ArrayList<>(byCluster.keySet());
-        List<String> namespaces = byCluster.values().stream().flatMap(List::stream).distinct().toList();
-        return new TenantScope(clusterIds, namespaces);
+        return byCluster;
     }
 
     /** token 内租户身份（自管用户）；admin/base token 无 tenantInfo → null（代管）。写法同 {@code TenantController}。 */
@@ -96,7 +92,4 @@ public class TenantOverviewController {
         var info = auth.current();
         return (info != null && info.getTenantInfo() != null) ? info.getTenantInfo().getTenantId() : null;
     }
-
-    /** 曲线取数范围：集群 id 列表 + 命名空间名集合。 */
-    private record TenantScope(List<String> clusterIds, List<String> namespaces) { }
 }

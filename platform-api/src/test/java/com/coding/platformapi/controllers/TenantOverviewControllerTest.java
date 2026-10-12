@@ -121,28 +121,28 @@ class TenantOverviewControllerTest {
     void routes_metrics_cpu() throws Exception {
         when(auth.current()).thenReturn(selfTenant("t1"));
         when(overviewService.allocationsByCluster("t1")).thenReturn(Map.of("c1", List.of("a")));
-        when(metricsService.tenantCpu("t1", List.of("c1"), List.of("a"), 10L, 20L))
+        when(metricsService.tenantCpu("t1", Map.of("c1", List.of("a")), 10L, 20L))
                 .thenReturn(new MetricSeriesResponse("核", List.of()));
 
         mvc().perform(post("/tenant/overview/metrics/cpu").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"tenantId\":\"t1\",\"start\":10,\"end\":20}"))
                 .andExpect(status().isOk());
 
-        verify(metricsService).tenantCpu("t1", List.of("c1"), List.of("a"), 10L, 20L);
+        verify(metricsService).tenantCpu("t1", Map.of("c1", List.of("a")), 10L, 20L);
     }
 
     @Test
     void routes_metrics_memory() throws Exception {
         when(auth.current()).thenReturn(selfTenant("t1"));
         when(overviewService.allocationsByCluster("t1")).thenReturn(Map.of("c1", List.of("a")));
-        when(metricsService.tenantMemory("t1", List.of("c1"), List.of("a"), 10L, 20L))
+        when(metricsService.tenantMemory("t1", Map.of("c1", List.of("a")), 10L, 20L))
                 .thenReturn(new MetricSeriesResponse("字节", List.of()));
 
         mvc().perform(post("/tenant/overview/metrics/memory").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"tenantId\":\"t1\",\"start\":10,\"end\":20}"))
                 .andExpect(status().isOk());
 
-        verify(metricsService).tenantMemory("t1", List.of("c1"), List.of("a"), 10L, 20L);
+        verify(metricsService).tenantMemory("t1", Map.of("c1", List.of("a")), 10L, 20L);
     }
 
     // ===== 夹具 =====
