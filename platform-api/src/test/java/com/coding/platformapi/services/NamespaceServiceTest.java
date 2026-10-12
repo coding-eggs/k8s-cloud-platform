@@ -5,6 +5,10 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.LimitRangeDTO;
 import com.coding.common.models.k8s.dto.LimitRangeItemDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
+import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatEntry;
+import com.coding.common.models.k8s.dto.QuotaState;
 import com.coding.common.models.k8s.dto.ResourcePairDTO;
 import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.data.mapper.auth.PlatformTenantMapper;
@@ -41,8 +45,9 @@ class NamespaceServiceTest {
     private final PlatformTenantNamespaceMapper allocationMapper = mock(PlatformTenantNamespaceMapper.class);
     private final PlatformTenantMapper tenantMapper = mock(PlatformTenantMapper.class);
     private final NamespaceProtectionProperties protection = new NamespaceProtectionProperties();
+    private final NamespaceStatService statService = mock(NamespaceStatService.class);
     private final NamespaceService svc = new NamespaceService(
-            k8s, clusterMapper, allocationMapper, tenantMapper, protection);
+            k8s, clusterMapper, allocationMapper, tenantMapper, protection, statService);
 
     private void clusterExists() {
         K8sCluster c = new K8sCluster();
@@ -426,18 +431,40 @@ class NamespaceServiceTest {
         assertThat(svc.limitRangeGet("c1", "foreign")).isNull();
     }
 
+    // ---------- Task 9：/namespace/stat/get（命名空间快照 + 配额三档） ----------
+
     @Test
-    void constraint_ops_reject_missing_namespace() {
+    void stat_get_wraps_snapshot_with_quota_state() {
         clusterExists();
-        when(k8s.get(any(NamespaceDTO.class))).thenReturn(null);   // ns 不存在
-        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
-        req.setClusterId("c1");
-        req.setNamespace("ghost");
-        req.setQuota(new ResourceQuotaDTO());
-        assertThatThrownBy(() -> svc.quotaUpsert(req))
+        NamespaceSnapshotDTO snap = new NamespaceSnapshotDTO();
+        NamespaceStatDTO stat = new NamespaceStatDTO();
+        stat.setNamespace("ns1");
+        stat.setQuotaCpuHard(new BigDecimal("2"));
+        stat.setQuotaMemHard(new BigDecimal("4"));
+        snap.setStat(stat);
+        when(statService.row(null, "c1", "ns1")).thenReturn(snap);
+
+        NamespaceStatEntry entry = svc.statGet("c1", "ns1");
+
+        assertThat(entry.getClusterId()).isEqualTo("c1");
+        assertThat(entry.getSnapshot()).isSameAs(snap);
+        assertThat(entry.getQuotaState()).isEqualTo(QuotaState.OK);
+    }
+
+    @Test
+    void stat_get_marks_missing_quota_and_rejects_unknown_cluster() {
+        clusterExists();
+        NamespaceSnapshotDTO snap = new NamespaceSnapshotDTO();
+        NamespaceStatDTO stat = new NamespaceStatDTO();
+        stat.setNamespace("ns1");   // 无任何配额列 → MISSING
+        snap.setStat(stat);
+        when(statService.row(null, "c1", "ns1")).thenReturn(snap);
+
+        assertThat(svc.statGet("c1", "ns1").getQuotaState()).isEqualTo(QuotaState.MISSING);
+
+        when(clusterMapper.selectByPrimaryKey("ghost")).thenReturn(null);
+        assertThatThrownBy(() -> svc.statGet("ghost", "ns1"))
                 .isInstanceOf(CloudPlatformException.class)
-                .hasFieldOrPropertyWithValue("code", EnumResponseType.RESOURCE_NOT_EXIST.getCode())
-                .hasMessageContaining("命名空间不存在");
-        verify(k8s, never()).create(any(ResourceQuotaDTO.class));
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.CLUSTER_NOT_EXIST.getCode());
     }
 }

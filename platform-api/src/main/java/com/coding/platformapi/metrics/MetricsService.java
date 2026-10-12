@@ -21,15 +21,18 @@ import com.coding.platformapi.metrics.labels.MetricLabels;
 import com.coding.platformapi.metrics.labels.NamespaceLabels;
 import com.coding.platformapi.metrics.model.PromResult;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +40,7 @@ import java.util.stream.Collectors;
  * 各自调 {@code client.queryRange}、各自组响应。不抽统一的"拼 SQL + 填参"层——不同查询占位符不同，统一抽象反而写不动。
  * <p>仅保留纯机械转换：{@link #clusterName}（clusterId→名）、{@link #toSeries}（Thanos 行→点序列）。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class MetricsService {
@@ -231,6 +235,61 @@ public class MetricsService {
     public MetricSeriesResponse clusterMemoryByNamespace(ClusterMetricsRequest req) {
         String sql = String.format(MetricQuery.CLUSTER_MEMORY_USED_BY_NS.sql(), clusterName(req.getClusterId()));
         return new MetricSeriesResponse("字节", seriesByNamespace(queryClusterByNs(sql, req)));
+    }
+
+    // ===== 租户维度（占位符 = clusterName；复用集群的 by(namespace) 语句，用租户的 ns 集合在内存里过滤）=====
+    // R10：曲线**不**放 TenantOverviewService —— 它只编排快照/明细；曲线归指标层（同 ClusterController 对集群指标）。
+    // 口径：按集群取 per-ns 序列 → 只留租户拥有的 ns → 逐时间点求和成**一条**「租户合计」；跨集群再把同名 ns 的值相加。
+    // 有意**不改** clusterCpuByNamespace：那是集群页的 per-ns 多线图，这里是租户页的单线。
+
+    /** 租户 CPU 用量曲线（核）：一条「租户合计」。 */
+    public MetricSeriesResponse tenantCpu(String tenantId, List<String> clusterIds, List<String> namespaces, long start, long end) {
+        return new MetricSeriesResponse("核",
+                List.of(tenantAggregate(tenantId, clusterIds, namespaces, start, end, MetricQuery.CLUSTER_CPU_USED_BY_NS)));
+    }
+
+    /** 租户内存用量曲线（字节）：同 {@link #tenantCpu}。 */
+    public MetricSeriesResponse tenantMemory(String tenantId, List<String> clusterIds, List<String> namespaces, long start, long end) {
+        return new MetricSeriesResponse("字节",
+                List.of(tenantAggregate(tenantId, clusterIds, namespaces, start, end, MetricQuery.CLUSTER_MEMORY_USED_BY_NS)));
+    }
+
+    /** 逐集群取 by(namespace) 序列 → 只留租户的 ns（过滤 legend）→ 逐时间点求和（跨集群同名 ns 相加）成一条「租户合计」。 */
+    private MetricSeries tenantAggregate(String tenantId, List<String> clusterIds, List<String> namespaces,
+                                         long start, long end, MetricQuery query) {
+        Set<String> wanted = namespaces == null ? Set.of() : new HashSet<>(namespaces);
+        // TreeMap：以时间戳升序收敛（同一 ts 跨序列/跨集群 merge 成一个值）
+        Map<Long, Double> sums = new TreeMap<>();
+        int clusters = 0;
+        if (clusterIds != null) {
+            for (String clusterId : clusterIds) {
+                String sql = String.format(query.sql(), clusterName(clusterId));
+                for (PromResult<NamespaceLabels> r : client.queryRange(sql, start, end, STEP, NamespaceLabels.class)) {
+                    String ns = (r.getMetric() != null && StringUtils.hasText(r.getMetric().getNamespace()))
+                            ? r.getMetric().getNamespace() : "unknown";
+                    if (!wanted.contains(ns)) {
+                        continue;   // 不属于租户的序列（别的 ns 即使同集群返回也滤掉）
+                    }
+                    for (MetricPoint p : pointsOf(r)) {
+                        sums.merge(p.getTs(), p.getValue(), Double::sum);
+                    }
+                }
+                clusters++;
+            }
+        }
+        log.debug("租户 {} 用量曲线：聚合 {} 个集群、{} 个命名空间", tenantId, clusters, wanted.size());
+
+        MetricSeries s = new MetricSeries();
+        s.setLegend("租户合计");
+        List<MetricPoint> points = new ArrayList<>();
+        sums.forEach((ts, v) -> {
+            MetricPoint p = new MetricPoint();
+            p.setTs(ts);
+            p.setValue(v);
+            points.add(p);
+        });
+        s.setPoints(points);
+        return s;
     }
 
     /** 集群网络 IO（字节/秒，RX/TX）。与命名空间级同形，只是去掉了 namespace 过滤（netns 在 pod 级）。 */

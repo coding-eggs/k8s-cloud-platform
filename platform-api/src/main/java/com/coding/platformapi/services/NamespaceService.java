@@ -5,6 +5,8 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.LimitRangeDTO;
 import com.coding.common.models.k8s.dto.LimitRangeItemDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
+import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.k8s.dto.ResourcePairDTO;
 import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.common.utils.K8sNaming;
@@ -62,6 +64,9 @@ public class NamespaceService {
     /** 受保护（系统）命名空间名单：命中者拒绝一切写操作，读仍开放 */
     private final NamespaceProtectionProperties protection;
 
+    /** ns 切片的唯一读写入口（缓存优先）；本层的 {@link #statGet} 用它取一行快照。 */
+    private final NamespaceStatService statService;
+
     /**
      * 集群命名空间视图：K8s 列表 + 分配信息叠加（哪个租户占用了该 ns），按名字升序。
      */
@@ -92,6 +97,18 @@ public class NamespaceService {
     public String yaml(String clusterId, String namespace) {
         requireCluster(clusterId);
         return k8s.yaml(dto(clusterId, namespace));
+    }
+
+    /**
+     * 命名空间快照（含配额三档状态）：{@code platform:allocation:list}。
+     * <p><b>刻意不并入 {@code /namespace/get}</b>：那条是分配页/编辑器的读取面（K8s 视图 + 分配叠加，须便宜、
+     * 语义稳定）；本端点回的是**采样切片**（{@link NamespaceSnapshotDTO}）+ 配额三档，是租户概览/命名空间详情页的读取面。
+     * 配额判定只在 {@link QuotaClassifier} 一处，前端不再自己按前缀判。
+     */
+    public NamespaceStatEntry statGet(String clusterId, String namespace) {
+        requireCluster(clusterId);
+        NamespaceSnapshotDTO snap = statService.row(null, clusterId, namespace);
+        return new NamespaceStatEntry(clusterId, snap, QuotaClassifier.state(snap == null ? null : snap.getStat()));
     }
 
     /**

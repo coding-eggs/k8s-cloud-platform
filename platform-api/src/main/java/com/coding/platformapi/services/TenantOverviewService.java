@@ -98,8 +98,10 @@ public class TenantOverviewService {
         return out;
     }
 
-    /** 范围：分配表 → (clusterId → [namespace])；集群按 id 定序，同一请求内的多次调用顺序一致。 */
-    private Map<String, List<String>> allocationsByCluster(String tenantId) {
+    /** 范围：分配表 → (clusterId → [namespace])；集群按 id 定序，同一请求内的多次调用顺序一致。
+     *  <p>public：曲线（{@code TenantOverviewController}）也要拿租户的 ns 集合，从这里取 ——
+     *  与快照/明细同源，别在别处再查一次分配表。 */
+    public Map<String, List<String>> allocationsByCluster(String tenantId) {
         List<PlatformTenantNamespace> allocations = allocationMapper.listByTenant(tenantId);
         if (allocations == null || allocations.isEmpty()) {
             return Map.of();

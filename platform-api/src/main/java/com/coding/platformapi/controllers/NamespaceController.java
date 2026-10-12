@@ -2,6 +2,7 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.LimitRangeDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
+import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.metrics.MetricsService;
@@ -51,6 +52,14 @@ public class NamespaceController {
     @Operation(summary = "查询命名空间 YAML（只读展示）")
     public ResponseData<String> yaml(@RequestBody NamespaceKeyRequest request) {
         return new ResponseData<>(namespaceService.yaml(request.getClusterId(), request.getNamespace()));
+    }
+
+    @PostMapping("/stat/get")
+    @Operation(summary = "命名空间快照（含配额三档状态）",
+            description = "返回采样切片 + quotaState（配额三档判定在后端一处）。刻意与 /namespace/get 分离："
+                    + "后者是分配页/编辑器的读取面（K8s 视图 + 分配叠加），本端点是租户概览/命名空间详情页的读取面。授权 platform:allocation:list")
+    public ResponseData<NamespaceStatEntry> statGet(@RequestBody NamespaceKeyRequest request) {
+        return new ResponseData<>(namespaceService.statGet(request.getClusterId(), request.getNamespace()));
     }
 
     @PostMapping("/create")
