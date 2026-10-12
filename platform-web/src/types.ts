@@ -159,6 +159,95 @@ export interface K8sUnhealthyWorkload {
   replicas: number
 }
 
+// ===== 租户概览（Phase 4；字段与后端 TenantOverviewDTO / NamespaceStatEntry 等 DTO 逐字一致）=====
+
+/**
+ * 命名空间配额三档（后端 QuotaState，判定集中在 platform-api 的 QuotaClassifier）。
+ * OK=有 ResourceQuota 且含 requests.cpu + requests.memory；MISSING=无任何 ResourceQuota；
+ * PARTIAL=有 quota 但缺 requests.cpu / requests.memory 任一 key。前端只消费该结果，不自行按 key 判。
+ */
+export type K8sQuotaState = 'OK' | 'MISSING' | 'PARTIAL'
+
+/**
+ * 一个命名空间的事实切片（后端 NamespaceSnapshotDTO）—— 租户概览明细 / 命名空间详情共用一行。
+ * 作用域：凡带 namespace 的都归这里（异常 Pod、不健康工作负载都带 ns）；集群键里不放这些。
+ */
+export interface K8sNamespaceSnapshot {
+  /** 资源明细行（复用 K8sNamespaceResourceStat，与后端 NamespaceStatDTO 逐字段一致） */
+  stat: K8sNamespaceResourceStat
+  /** 该 ns 异常 Pod 总数（**全量**计数，不是名单条数） */
+  abnormalPodCount: number
+  /** 该 ns 的 reason 分组计数（同样全量） */
+  abnormalPodReasonCounts: Record<string, number>
+  /** 异常 Pod 名单（severity 排序 + 每 ns 封顶） */
+  abnormalPods: K8sAbnormalPod[]
+  unhealthyWorkloadCount: number
+  unhealthyWorkloads: K8sUnhealthyWorkload[]
+  /** 采样时刻：epoch 毫秒 */
+  sampledAt: number
+}
+
+/** 明细行（后端 NamespaceStatEntry）= 命名空间切片 + 所属集群 + 配额三档状态 */
+export interface K8sNamespaceStatEntry {
+  clusterId: string
+  snapshot: K8sNamespaceSnapshot
+  quotaState: K8sQuotaState
+}
+
+/**
+ * 租户概览里「一个集群」的小计行（后端 TenantClusterSummaryDTO）。
+ * namespaceCount 是**范围**（分配表里该集群下属于本租户的命名空间数），不因取不到数而变；
+ * available=false 时 total 为 null（本页少算这一块，并已显式标记）。
+ */
+export interface K8sTenantClusterSummary {
+  clusterId: string
+  /** 集群名（取自 k8s_cluster）；集群已不存在时为 null */
+  clusterName?: string | null
+  /** 该集群下属于本租户的命名空间数（=范围，来自分配表） */
+  namespaceCount: number
+  /** 本次请求是否取到该集群的切片 */
+  available: boolean
+  /** 该集群的切片小计（复用 K8sClusterResourceTotal）；available=false 时为 null */
+  total?: K8sClusterResourceTotal | null
+}
+
+/**
+ * 租户概览首屏（后端 TenantOverviewDTO）。合计恒等于明细逐行相加（spec §6.1）。
+ * 逐集群降级：某集群取不到数时它的行不进合计，但 id 出现在 unavailableClusters、
+ * 该集群小计 available=false —— 首屏显式提示，不整页失败。
+ */
+export interface K8sTenantOverview {
+  tenantId: string
+  /** 各行（= 各命名空间切片）中**最旧**的采样时刻（epoch 毫秒）；无数据 → 0 */
+  sampledAt: number
+  /** Σ 各行（复用 K8sClusterResourceTotal，与后端 ClusterTotalDTO 逐字段一致） */
+  total: K8sClusterResourceTotal
+  /** Σ 有配额的行的 hard；无任何配额行 → null（前端据此不给占用百分比） */
+  quotaCpuHard?: number | null
+  quotaMemHard?: number | null
+  /** Σ 有配额的行的 used */
+  quotaCpuUsed?: number | null
+  quotaMemUsed?: number | null
+  /** 没有任何 ResourceQuota 的命名空间名（QuotaState.MISSING） */
+  namespacesWithoutQuota: string[]
+  /** 有配额但缺 requests.cpu / requests.memory 任一 key 的命名空间名（QuotaState.PARTIAL） */
+  namespacesPartialQuota: string[]
+  /** 异常 Pod 总数（全量，未封顶） */
+  abnormalPodTotal: number
+  /** reason 分组计数（全量求和，严重度降序） */
+  abnormalPodReasonCounts: Record<string, number>
+  /** 异常 Pod 名单（跨集群合并后按 severity 排序 + 封顶 50） */
+  abnormalPods: K8sAbnormalPod[]
+  /** 不健康工作负载总数（全量，未封顶） */
+  unhealthyWorkloadTotal: number
+  /** 不健康工作负载名单（跨集群合并后排序 + 封顶） */
+  unhealthyWorkloads: K8sUnhealthyWorkload[]
+  /** 逐集群小计（含不可用集群，其 available=false、total=null） */
+  clusters: K8sTenantClusterSummary[]
+  /** 取数时节不可用的集群 id 列表（其余集群照常出数） */
+  unavailableClusters: string[]
+}
+
 /** 存储统计：PV 容量（total vs bound）+ PVC 状态计数 */
 export interface K8sStorageStat {
   pvCount: number

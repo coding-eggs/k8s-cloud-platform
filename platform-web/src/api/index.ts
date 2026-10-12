@@ -9,6 +9,8 @@ import type {
   K8sClusterOption,
   K8sClusterOverview,
   K8sNamespaceResourceStat,
+  K8sNamespaceStatEntry,
+  K8sTenantOverview,
   K8sConfigMap,
   K8sGateway,
   WaypointRef,
@@ -52,6 +54,7 @@ import type {
   TenantMemberView,
   TokenUserInfo,
 } from '@/types'
+import type { MetricSeriesResponse } from '@/types/metrics'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
 
 /** 集群管理 /cluster */
@@ -94,6 +97,19 @@ export const clusterApi = {
     http.post<never, K8sNamespaceResourceStat[] | null>('/cluster/resource-breakdown', { clusterId }),
 }
 
+/**
+ * 租户概览请求体（快照 / 明细 / 两条曲线共用，对应后端 TenantOverviewRequest）。
+ * tenantId 为**生效租户** id：自管轨可不传（由 token 锁定，传别人的直接 TENANT_MISMATCH），代管轨（平台管理员）必须显式传。
+ * clusterId 只对曲线有意义（可选，限定到单集群；缺省=租户全部集群 —— 快照/明细恒为租户全部集群）。
+ * start/end 只对曲线有意义（unix 秒）。
+ */
+type TenantOverviewReq = {
+  tenantId?: string
+  clusterId?: string
+  start?: number
+  end?: number
+}
+
 /** 租户管理 /tenant（含命名空间分配：给租户分配命名空间） */
 export const tenantApi = {
   list: () => http.post<never, PlatformTenant[]>('/tenant/list'),
@@ -128,6 +144,20 @@ export const tenantApi = {
     http.post<never, void>('/tenant/member/role/grant', payload),
   memberRoleRevoke: (payload: { tenantId: string; userId: string; roleId: string }) =>
     http.post<never, void>('/tenant/member/role/revoke', payload),
+
+  // ---- 租户概览（Phase 4；快照/明细与两条曲线同源=分配表范围）----
+  /** 租户概览首屏快照：合计 + 逐集群小计 + 异常 Pod / 不健康工作负载名单 + 配额三档（逐集群降级） */
+  overview: (body: TenantOverviewReq) =>
+    http.post<never, K8sTenantOverview>('/tenant/overview', body),
+  /** 资源明细（per-namespace，懒加载）：每行回带 clusterId + quotaState（判定在后端） */
+  overviewBreakdown: (body: TenantOverviewReq) =>
+    http.post<never, K8sNamespaceStatEntry[]>('/tenant/overview/breakdown', body),
+  /** 租户 CPU 用量曲线（核）：按租户命名空间集合聚合的**一条**「租户合计」曲线；clusterId 传则限定单集群 */
+  tenantMetricsCpu: (body: TenantOverviewReq) =>
+    http.post<never, MetricSeriesResponse>('/tenant/overview/metrics/cpu', body),
+  /** 租户内存用量曲线（字节）：同 cpu，单位为字节 */
+  tenantMetricsMemory: (body: TenantOverviewReq) =>
+    http.post<never, MetricSeriesResponse>('/tenant/overview/metrics/memory', body),
 }
 
 /** 命名空间管理 /namespace（K8s 命名空间视图 + 创建/编辑/删除 + 配额/限制范围） */
@@ -157,6 +187,10 @@ export const namespaceApi = {
   /** 单个命名空间视图（含 description/labels/分配信息）；不存在返回 null */
   get: (clusterId: string, namespace: string) =>
     http.post<never, NamespaceView | null>('/namespace/get', { clusterId, namespace }),
+  /** 命名空间快照（采样切片 + 配额三档状态 quotaState）：租户概览/命名空间详情页的读取面。
+   *  刻意与 /namespace/get 分离（后者是分配页/编辑器的读取面）。授权 platform:allocation:list */
+  statGet: (clusterId: string, namespace: string) =>
+    http.post<never, K8sNamespaceStatEntry>('/namespace/stat/get', { clusterId, namespace }),
   /** 命名空间原始 YAML（只读展示） */
   yaml: (clusterId: string, namespace: string) =>
     http.post<never, string>('/namespace/yaml', { clusterId, namespace }),
