@@ -3178,12 +3178,17 @@ git commit -m "feat(credential): 凭据管理页（列表 + 抽屉表单 + 测�
 
 ```vue
         <el-menu-item v-if="can(pageCodes.credential)" index="/credentials">
-          <el-icon><Key /></el-icon>
+          <el-icon><Tickets /></el-icon>
           <template #title>凭据管理</template>
         </el-menu-item>
 ```
 
-③ 在 `<script setup>` 里从 `@element-plus/icons-vue` 导入 `Key`（**按既有 import 的字母序插入**）。
+③ **不需要任何 import** —— MainLayout.vue 里一个图标 import 都没有：图标在
+`platform-web/src/main.ts` 里靠 `import * as Icons` + `app.component(name, component)` **全局注册**，
+模板里按名字直接用（`<Monitor />`、`<Document />` …）。
+
+⚠️ 图标选 `Tickets` 而不是 `Key`：`Key` 已被「权限点」（第 190 行）与「Secret」（第 220 行）
+占用两次，第三次复用会和 Secret 撞车。`Tickets` 当前 0 次占用且在 `@element-plus/icons-vue` 中存在。
 
 - [ ] **Step 3: 类型检查**
 

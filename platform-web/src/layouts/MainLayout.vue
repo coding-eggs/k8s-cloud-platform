@@ -146,7 +146,7 @@ async function handleLogout(): Promise<void> {
 
         <!-- 菜单显隐一律用 Page 域码（pageCodes.ts）。分组标题的 v-if 与其下菜单项同源，
              避免出现"有标题没条目"的空分组。 -->
-        <div v-if="can(pageCodes.cluster) || can(pageCodes.node.list) || can(pageCodes.namespace.list) || can(pageCodes.template) || can(pageCodes.audit)" class="menu-group">平台管理</div>
+        <div v-if="can(pageCodes.cluster) || can(pageCodes.node.list) || can(pageCodes.namespace.list) || can(pageCodes.template) || can(pageCodes.audit) || can(pageCodes.credential)" class="menu-group">平台管理</div>
         <el-menu-item v-if="can(pageCodes.cluster)" index="/clusters">
           <el-icon><Monitor /></el-icon>
           <template #title>集群管理</template>
@@ -166,6 +166,10 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.audit)" index="/audit">
           <el-icon><Document /></el-icon>
           <template #title>审计日志</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.credential)" index="/credentials">
+          <el-icon><Tickets /></el-icon>
+          <template #title>凭据管理</template>
         </el-menu-item>
 
         <div v-if="can(pageCodes.tenant.list) || can(pageCodes.tenant.self) || can(pageCodes.user) || can(pageCodes.role)" class="menu-group">用户与权限</div>
