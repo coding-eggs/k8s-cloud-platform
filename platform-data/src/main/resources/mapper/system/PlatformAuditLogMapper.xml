@@ -73,4 +73,12 @@
     </where>
   </delete>
 
+  <select id="listActions" resultType="java.lang.String">
+    select `action` from platform_audit_log
+    where `action` is not null and `action` &lt;&gt; ''
+    group by `action`
+    order by count(*) desc, `action` asc
+    limit #{limit}
+  </select>
+
 </mapper>

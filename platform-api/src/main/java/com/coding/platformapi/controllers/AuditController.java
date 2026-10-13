@@ -20,8 +20,9 @@ import java.util.List;
  * 审计日志（平台管理面，仅 admin）。本层只做 HTTP 绑定与 {@link ResponseData} 包装；
  * 查询与删除都在 {@link AuditService}（分层约定见 docs/development/backend-layering.md）。
  *
- * <p>权限行见 V2026_10_13_1：{@code /audit/list} → {@code platform:audit:read}，
- * {@code /audit/purge} → {@code platform:audit:purge}。两条都必须有行，否则启动期交叉校验拒启。
+ * <p>权限行见 V2026_10_13_1 / V2026_10_13_2：{@code /audit/list} 与 {@code /audit/actions} →
+ * {@code platform:audit:read}，{@code /audit/purge} → {@code platform:audit:purge}。
+ * 三条都必须有行，否则启动期交叉校验拒启。
  *
  * <p>没有单条详情端点：列表就返回全部 18 个字段，前端行展开即可（spec §6 偏离记录）。
  */
@@ -43,6 +44,14 @@ public class AuditController {
     @PostMapping("/purge")
     public ResponseData<Integer> purge(@RequestBody AuditPurgeRequest req) {
         return new ResponseData<>(auditService.purge(req.getFrom(), req.getTo()));
+    }
+
+    @Operation(summary = "动作码候选值",
+            description = "distinct 自平台审计表（实际出现过的码，含 DENIED 记录的权限码），按出现频次倒序；"
+                    + "供筛选 autocomplete。不从写死的码表来 —— 那会与 AuditAction 漂移。")
+    @PostMapping("/actions")
+    public ResponseData<List<String>> actions() {
+        return new ResponseData<>(auditService.listActions());
     }
 
     private PlatformAuditLogQuery toQuery(AuditQueryRequest req) {
