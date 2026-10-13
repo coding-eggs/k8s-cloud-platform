@@ -11,6 +11,9 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.lang.reflect.Method;
 
@@ -24,6 +27,9 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link AuditAspect}：成功 / 失败的字段与结果、异常原样抛回、信息不全时仍落记录。
+ *
+ * <p>切面切的是 **Controller** 方法，所以下面那些「被切的方法」按 controller 的真实签名造
+ * （路径参数 + DTO 混合），用来钉住 SpEL 与按名探测在那一层照样成立。
  *
  * <p>用**真实**的 {@link AuditTargetResolver}（它是纯函数、无 Spring 依赖），
  * 只把 {@link AuditService} 与 {@link AuthContext} 换成替身 —— 这样「目标/上下文从哪来」
@@ -192,6 +198,27 @@ class AuditAspectTest {
         // 单测里没有 request 上下文 → RequestContextHolder 取不到，这两项为空且不抛（spec §5.2）
         assertThat(r.getClientIp()).isNull();
         assertThat(r.getUserAgent()).isNull();
+    }
+
+    @Test
+    void writeRecordCarriesRequestContext() throws Throwable {
+        // 切在 Controller 层 → 请求上下文照例存在，写操作记录也能带 URL / IP / UA
+        when(authContext.current()).thenReturn(user("alice"));
+        MockHttpServletRequest request = new MockHttpServletRequest("PUT", "/workloads/web-a");
+        request.setRemoteAddr("10.0.0.7");
+        request.addHeader("User-Agent", "Mozilla/5.0");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+        try {
+            aspect.around(deletePjp("ok", null), ann(""));
+
+            PlatformAuditLog r = capture();
+            assertThat(r.getRequestPath()).isEqualTo("/workloads/web-a");
+            assertThat(r.getHttpMethod()).isEqualTo("PUT");
+            assertThat(r.getClientIp()).isEqualTo("10.0.0.7");
+            assertThat(r.getUserAgent()).isEqualTo("Mozilla/5.0");
+        } finally {
+            RequestContextHolder.resetRequestAttributes();
+        }
     }
 
     private PlatformAuditLog capture() {

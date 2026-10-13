@@ -11,40 +11,59 @@
 
 ## 已定决策（brainstorming 结论，2026-10-13）
 
+> ### ⚠️ 修订记录（2026-10-13，用户评审后）
+>
+> **拦截点从 Service 层上移到 Controller 层** —— 本文档相关段落已同步订正。
+>
+> **为什么改**（用户评审指出「审计应该在 controller 层」，核对后确认**用户是对的**）：
+> - 审计的单元是「**一次用户请求**」，不是「一次内部方法调用」。Controller 端点与用户动作 1:1；
+>   Service 方法可能被多个入口复用、或被内部编排调用 —— `TenantService.create` 内部会调
+>   `TenantMemberService.add`，标在 Service 上会让一次「创建租户」**记两条**。
+> - 与 403 记录（已在 HTTP 边界）**同层同粒度**，整条审计轨统一在「请求边界」。
+> - 写端点集合就在权限表里，覆盖面是可枚举的；标在 Service 上这份清单根本不存在。
+> - **顺带消掉了本设计最容易写错的一整块**：Controller 不带事务，切面记录时内层事务都已提交/回滚，
+>   原先 §5.1 那套「`@Order` 必须排事务外侧」的必要性不复存在。
+>
+> **同时订正一条错误论据**：原文称「只有 Service 方法抛的 `CloudPlatformException` 才是真正的业务失败」——
+> **不成立**。本仓 controller 里一个 `try` 都没有，异常原样穿过 Controller，切在这一层一样看得到业务失败。
+>
+> **动作覆盖一并补齐**：原先只标了 5 个高危动作，且「覆盖不全是本批有意为之」只写在 §10 里 ——
+> 看代码像是漏了。现在把**已引入审计的四个 Controller 的写端点全部标上**，共 **23 处**：
+> 工作负载 7 · 命名空间 7 · 节点 4 · 集群 5。**其余族未动**（不做全平台横扫，按用户要求也不维护写端点清单）。
+
 | 决策点 | 结论 | 理由 |
 |---|---|---|
 | **审计范围** | **写操作 + 被拒请求（403）** | 不含变更前后值、不含读操作、不存请求体全文。被拒请求是安全审计最常查的东西 |
 | **可见范围** | **只有平台管理员** | 一个页面、一套权限点；租户看不到。**表结构与查询接口不预留租户维度**（YAGNI，将来要开时再说） |
-| **写操作判据** | **注解声明**（`@Auditable`） | 用户明确否决「权限表加 `is_mutation` 列」。⚠️ 背景：本平台的查询也走 POST（`/pods/list`、`/cluster/list`），所以**按 HTTP method 判断写操作在此平台直接不成立** |
-| **拦截机制** | **注解 + AOP** 管写操作；**复用已有的 Security 钩子**管 403 | AOP 切方法调用，**被拒请求进不了方法**，所以拒绝那一半必须靠钩子 —— 好在 `ResourceServerConfig` 已有 `authenticationEntryPoint` / `accessDeniedHandler` 两个现成扩展点 |
+| **写操作判据** | **注解声明**（`@Auditable`），标在 **Controller 端点**上 | 用户明确否决「权限表加 `is_mutation` 列」。⚠️ 背景：本平台的查询也走 POST（`/pods/list`、`/cluster/list`），所以**按 HTTP method 判断写操作在此平台直接不成立** |
+| **拦截机制** | **注解 + AOP** 管写操作（切 Controller）；**复用已有的 Security 钩子**管 403 | AOP 切方法调用，**被拒请求进不了方法**，所以拒绝那一半必须靠钩子 —— 好在 `ResourceServerConfig` 已有 `authenticationEntryPoint` / `accessDeniedHandler` 两个现成扩展点 |
 | **写入契约** | **同步写 + fail-open** | 审计的可用性不应低于业务；写操作频率远低于读，多一跳 DB 可接受。DB 挂掉期间无记录，这是显式接受的代价 |
 | **401** | **不记** | token 过期是常态，噪声大，且那时没有身份可记 |
-| **覆盖护栏** | **不做** | 用户明确不要「反射断言注解覆盖」这类测试。代价显式接受：**漏标不会被发现** |
+| **覆盖护栏 / 写端点清单** | **都不做** | 用户明确不要「断言写端点覆盖率」这类测试，也明确不要枚举/维护一份写端点清单。代价显式接受：**漏标不会被发现** |
 | **保留策略** | **不分区、不自动清理** | 量级估算一年约 10 万条，远不需要分区。只提供一个按时间范围删除的管理端点 |
-| **事务** | 审计写走 `REQUIRES_NEW`；Aspect 显式 `@Order` 排在外层 | 见 §5.1，这是本设计最容易写错的一处 |
+| **事务** | 切面在 Controller 层，**天然不需要 `@Order`**；审计写仍保留 `REQUIRES_NEW` 作保险 | 见 §5.1 |
 
 ---
 
 ## 1. 拦截拓扑
 
-```
-请求 ─► [Spring Security 过滤器链]
-          ├─ 401 ─► authenticationEntryPoint        （不记）
-          ├─ 403 ─► accessDeniedHandler ───────────┐
-          └─ 通过 ─► DispatcherServlet             │
-                       └─► Controller               │
-                            └─► Service             │
-                                 │                  │
-                    @Auditable 方法 ┴─► AuditAspect │
-                                            │       │
-                                            ▼       ▼
-                                    AuditService.record()   ← 同步写 + fail-open
-                                            │
-                                            ▼
-                                     platform_audit_log
-```
+两条独立路径，**共用一张表**，靠 `result` 区分（写操作 `SUCCESS` / `FAILED`，被拒 `DENIED`）。
 
-两条路径**共用一张表**，靠 `result` 区分：写操作落 `SUCCESS` / `FAILED`，被拒落 `DENIED`。
+```
+写操作（切 Controller 端点）
+  请求 ─► Security 链（通过）─► [AuditAspect  @Around @Auditable] ─► Controller ─► Service（各自事务）
+                                        │                                   ▲
+                                        │ 记录时机：内层事务已提交/回滚 ────┘
+                                        ▼
+                                 AuditService.record()  ← 同步写 + fail-open
+                                        │
+                                        ▼
+                                 platform_audit_log
+
+被拒请求（切 Security 钩子，与 403 是同一条路）
+  请求 ─┬─ 401 ─► authenticationEntryPoint                              （不记）
+        └─ 403 ─► accessDeniedHandler ─► AuditService.recordDenied() ─► platform_audit_log
+```
 
 ---
 
@@ -54,11 +73,11 @@
 
 | 组件 | 路径 | 职责 |
 |---|---|---|
-| `@Auditable` | `platform-api/.../audit/Auditable.java` | 方法级注解，标在 **Service 的写方法**上 |
-| `AuditAction` | `platform-api/.../audit/AuditAction.java` | 动作码常量（`<resource>:<verb>`） |
+| `@Auditable` | `platform-api/.../audit/Auditable.java` | 方法级注解，标在 **Controller 的写端点上** |
+| `AuditAction` | `platform-api/.../audit/AuditAction.java` | 动作码常量（`<resource>:<verb>`，动词在前）。**只是词汇表，不承担覆盖率校验** |
 | `AuditResult` | `platform-api/.../audit/AuditResult.java` | 枚举 `SUCCESS` / `FAILED` / `DENIED` |
-| `AuditAspect` | `platform-api/.../audit/AuditAspect.java` | `@Around` + 显式 `@Order`（见 §5.1） |
-| `AuditWriter` | `platform-api/.../audit/AuditWriter.java` | **独立 bean**，只放 `@Transactional(REQUIRES_NEW)` 的写方法 —— 与 `PermissionRowWriter` 同构；若把写方法塞进 `AuditService` 并由同类方法自调用，代理会被绕过、`REQUIRES_NEW` 静默失效（见 §5.1） |
+| `AuditAspect` | `platform-api/.../audit/AuditAspect.java` | `@Around("@annotation(auditable)")`，**不需要 `@Order`**（见 §5.1） |
+| `AuditWriter` | `platform-api/.../audit/AuditWriter.java` | **独立 bean**，只放 `@Transactional(REQUIRES_NEW)` 的写方法。见 §5.1：切 Controller 后 `REQUIRES_NEW` 已不是承重件，留作保险；拆成独立 bean 的另一半原因（fail-open 的 try/catch 必须在事务边界之外）仍然成立 |
 | `AuditService` | `platform-api/.../services/AuditService.java` | fail-open 包一层写（try/catch → `AuditWriter`）+ 查询 + `recordDenied`。**记录组装在 Aspect**（它才有 join point） |
 | `AuditDenied` | `platform-api/.../audit/AuditDenied.java` | request attribute 名 + 读写帮助方法（deny 时塞权限码） |
 | `AuditController` | `platform-api/.../controllers/AuditController.java` | 薄 controller：绑定 + `ResponseData` 包装 |
@@ -111,14 +130,24 @@ public @interface Auditable {
 }
 ```
 
-用法（显式优先、隐式兜底）：
+用法（显式优先、隐式兜底）—— 都是 Controller 上的真实形态：
 
 ```java
-@Auditable(action = AuditAction.WORKLOAD_DELETE, target = "#name")
-public void delete(String name, String tenantId, String clusterId, String namespace) { ... }
+// 零配置：路径参数就叫 name，clusterId/tenantId/namespace 在 DTO 一级字段里
+@Auditable(action = AuditAction.WORKLOAD_DELETE)
+public ResponseData<Void> delete(@PathVariable String name,
+                                 @RequestParam String tenantId,
+                                 @RequestParam String clusterId,
+                                 @RequestParam String namespace) { ... }
 
-@Auditable(action = AuditAction.TENANT_NAMESPACE_ALLOCATE)   // 零配置
-public NamespaceAllocation create(AllocationCreateRequest req) { ... }
+// 显式 target：被操作对象是「命名空间」，参数里没有 name 可探
+@Auditable(action = AuditAction.NAMESPACE_DELETE, target = "#request.namespace")
+public ResponseData<Void> delete(@RequestBody NamespaceKeyRequest request) { ... }
+
+// 显式 target + DTO 一级字段供 scope 探测（NodeDrainRequest 上有 clusterId）
+@Auditable(action = AuditAction.NODE_DRAIN, target = "#req.name")
+public ResponseData<NodeDrainResultDTO> drain(@RequestBody NodeDrainRequest req) { ... }
+```
 ```
 
 ### 3.2 隐式探测的约定
@@ -156,8 +185,8 @@ public NamespaceAllocation create(AllocationCreateRequest req) { ... }
 | `result` | VARCHAR(16) | `SUCCESS` / `FAILED` / `DENIED` |
 | `error_code` | VARCHAR(32) NULL | `FAILED` 的业务码 |
 | `error_msg` | VARCHAR(512) NULL | `FAILED` 的业务 msg |
-| `http_method` | VARCHAR(8) NULL | 仅 `DENIED` 有值 |
-| `request_path` | VARCHAR(512) NULL | 仅 `DENIED` 有值 |
+| `http_method` | VARCHAR(8) NULL | 请求方法 —— `DENIED` 与写操作都有；非 HTTP 线程为空 |
+| `request_path` | VARCHAR(512) NULL | 请求路径 —— 同上；写操作记录下来是 `PUT /workloads/web-a` 这样，自描述 |
 | `client_ip` | VARCHAR(45) NULL | 兼容 IPv6 |
 | `user_agent` | VARCHAR(256) NULL | 安全排查用 |
 | `duration_ms` | INT NULL | 耗时；`DENIED` 为 NULL |
@@ -185,21 +214,29 @@ KEY idx_result      (result, occurred_at)                -- 查 DENIED / FAILED
 
 ## 5. 边界情况
 
-### 5.1 ⚠️ 事务 —— 本设计最容易写错的一处
+### 5.1 事务 —— 切 Controller 后已不是坑（原先最容易写错的一处）
 
-本仓 `PlatformApiApplication` 有 `@EnableTransactionManagement`，且 Service 方法级 `@Transactional` 真在用（`RoleService` / `TenantMemberService` / `PermissionRowWriter`）。由此产生两个问题：
+本仓 `PlatformApiApplication` 有 `@EnableTransactionManagement`，且 Service 方法级 `@Transactional` 真在用
+（`RoleService` / `TenantMemberService` / `PermissionRowWriter`）。
 
-- **业务回滚会把审计记录一起回滚掉** —— 恰好丢掉最想留的那条 `FAILED`；
-- **审计写失败若污染业务事务**（标记 rollback-only）→ 破坏 fail-open。
+**当初标在 Service 层时**，切面与事务通知会在同一个方法上竞争，需要两道处理：`@Order` 把切面排到事务外侧 +
+审计写走 `REQUIRES_NEW`。**那是最容易写错的一块**。
 
-**两道处理，都要做**：
+**切到 Controller 层后，这一整块复杂度消失**：Controller 不带 `@Transactional`，它调用的 Service 事务
+都在方法内部完成 —— **切面记录时所有内层事务都已提交或回滚**，看到的天然是真实结果，
+**不需要 `@Order`**。
 
-1. `AuditService.record()` 标 **`@Transactional(propagation = Propagation.REQUIRES_NEW)`** —— 独立事务提交：不随业务回滚，失败也不牵连业务；
-2. `AuditAspect` **显式 `@Order`**，值小于事务通知的默认 `Ordered.LOWEST_PRECEDENCE`（例如 `@Order(0)`）—— 保证记录时机在业务提交/回滚**之后**，看到的是真实结果。
+**仍然保留 `REQUIRES_NEW`**（`AuditWriter`），但要说清它现在的地位：
 
-> 同族先例：`PermissionRowWriter` 的类注释记着「独立 bean 让 `@Transactional` 走代理」的坑 —— 同一个代理/事务家族的另一个面。
-> 本设计天然规避了那个坑：**`AuditAspect` → `AuditService` 是跨 bean 调用**，`REQUIRES_NEW` 的代理生效。
-> 若日后有人把记录逻辑挪进 Aspect 内部的自调用，`REQUIRES_NEW` 会静默失效 —— 那正是这个坑的复现形态。
+- **不再是承重件** —— 记录时已无外层事务，普通传播级别同样能正确写入；
+- 留作**保险**：若将来有人给某个 controller 加 `@Transactional`，审计记录仍不会随业务回滚被带走；
+- `AuditWriter` 拆成独立 bean 的**另一半原因仍然成立**：fail-open 的 `try/catch` 必须在事务边界**之外**。
+  若把 `write` 放回 `AuditService` 由同类方法自调用，代理被绕过（`PermissionRowWriter` 的类注释记着同一个坑）。
+  当前是 `AuditAspect → AuditService.record()`（try/catch）`→ AuditWriter.write()`（REQUIRES_NEW），跨 bean，代理生效。
+
+> **已知限制（两层都一样）**：审计记的是「这次请求的成败」，**不等于内部所有改动都回滚了** ——
+> 复合操作里各 Service 方法有各自独立的事务，第 2 个失败时第 1 个可能已提交。
+> 例如 `TenantService.create` 内部调 `TenantMemberService.add`，两者各自 `@Transactional`。
 
 ### 5.2 非 HTTP 线程
 
@@ -274,22 +311,52 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
 
 ## 8. 测试
 
-**`AuditAspectTest`**
+**`AuditAspectTest`**（切面切 Controller，假 join point 按 controller 的真实签名造 —— 路径参数 + DTO 混合）
+
 - 正常返回 → `SUCCESS`，字段齐全（动作码 / 目标 / 身份 / 耗时）
-- 抛 `CloudPlatformException` → `FAILED`，带 `error_code` / `error_msg`
-- **业务事务回滚时仍留一条 `FAILED`**（验证 `REQUIRES_NEW`）—— 最容易写错的一条
+- 抛 `CloudPlatformException` → `FAILED`，带 `error_code` / `error_msg`；异常**原样抛回**
+- **写记录带请求上下文**（`requestPath` / `clientIp` / `userAgent`）—— 切 Controller 层才有的收益
 - **写库抛异常 → 业务照常返回**（fail-open 断言）
 - SpEL 求值失败 → `target` 为 NULL，其余照记
+- 身份与上下文全取不到时仍落一条（非 HTTP 线程）
 
-**拒绝路径**
-- 403 → 记 `DENIED` 且**带权限码**（验证 §2 的 deny 分支改动）
-- **401 → 无记录**（断言）
+**`AuditServiceTest`**
 
-**其余**
-- 迁移重放后 platform-api 启动通过（`PermissionCrossCheckRunner` 交叉校验）
-- 前端：列表筛选 + 游标分页 + 结果徽章渲染
+- fail-open（`record` / `recordDenied` 都不抛，后者尤其：一抛就把 403 变成 500）
+- `recordDenied` 的字段来源（权限码 / 身份 / `X-Forwarded-For` 首段）；无权限码仍记录
+- limit 钳制（默认 50 / 上限 200）
+- **`writerUsesRequiresNewIndependentTransaction`** —— 一条**反射钉子**。`REQUIRES_NEW` 的行为
+  用单测隔离不出来（切面在事务外层时业务事务已回滚完，普通 REQUIRED 同样能写进去），故钉住注解本身。
+  它**能**挡住「有人删掉注解或改小传播级别」，**挡不住**「有人把 write 挪进自调用位置」。
+  切 Controller 后它已不是承重件（见 §5.1），留着是防将来有人给 controller 加 `@Transactional`。
 
-**按用户要求不做**：反射断言注解覆盖率的护栏测试。
+**拒绝路径**（`PermissionAuthorizationManagerTest`）
+
+- deny 时把被判的权限码写进 request attribute；allow 与匿名都不写
+- **401 → 无记录**：由「不改 `authenticationEntryPoint`」保证，**没有代码路径**（不是靠测试拦）
+
+**启动期**
+
+- 迁移重放后 platform-api 启动通过（`PermissionCrossCheckRunner` 交叉校验；本批端点总数 +2）
+
+**端到端（临时探针，验完即删，不入库）**
+
+- 切 Controller 后最需要证明的是「**切点仍然命中**」—— Spring MVC 的 handler 映射 + CGLIB 代理之下
+  `@Around("@annotation(auditable)")` 是否照常生效。单测直接 `new AuditAspect(...)` 证明不了这一点。
+- 已用一次临时 `@SpringBootTest` + `WebApplicationContext` 起的探针跑通：
+  带 `@Auditable` 的 controller 端点正常返回 → 表里 1 行 `SUCCESS`（`target` 由 `@RequestParam` 的 SpEL 解出、
+  `requestPath` 正确、自增 id 回填）；抛 `CloudPlatformException` → 1 行 `FAILED`，带业务码与 msg。
+- 探针两个坑（下次别重踩）：
+  1. **嵌套 `@RestController` 会被组件扫描直接注册**，不能再 `@Bean` 注册一次 —— 否则同一路径映射两次，
+     报 `Ambiguous mapping`；
+  2. 路径要落在 `ExemptPaths` 的豁免前缀下（如 `/actuator/**`），否则 `PermissionCrossCheckRunner` 拒启。
+     注意 `spring.security.ignore-urls`（Security 的 permitAll）**不等于** `ExemptPaths`（交叉校验豁免），
+     两者是**不同**的列表 —— 放 `/test/**` 只在前者里，交叉校验照样拒。
+
+**按用户要求不做**
+
+- 反射断言写端点覆盖率的护栏测试；
+- 枚举 / 维护一份写端点清单 —— 覆盖靠人工加注解，**漏标不会被发现**（代价显式接受）。
 
 ---
 
@@ -304,6 +371,7 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
 | 不存请求体全文 | 用户明确否决（改存「提交内容摘要」的选项也未采纳） |
 | 不做租户可见视图 | 可见范围 = 只有平台管理员 |
 | 不做覆盖护栏 | 用户明确不要。**代价显式接受：漏标不会被发现** |
+| 不枚举 / 不维护写端点清单 | 用户明确不要（「不要枚举接口」）。覆盖靠人工在 Controller 上加注解；本批已标的 23 处是**手工过了一遍那四个 controller 的写端点**，不是一份被维护的清单，也不是全平台横扫 |
 | 不做分区 / 不自动清理 | 量级估算一年约 10 万条 |
 | 不做「高危动作富化说明」列 | 本条从段 2 的表里**删掉了**（原预留 `detail`）—— 注解方案下它没有写入方，属 YAGNI。将来真需要补充说明时，`@Auditable` 加一个 `detail` SpEL 字段 + 一条 ALTER 即可，成本远低于现在留一个空列 |
 | 不记 401、不给 `audit` 加租户维度、`resource_type` 不单存列 | 见 §4.2 与上表 |

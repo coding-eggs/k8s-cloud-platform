@@ -14,8 +14,6 @@ import com.coding.common.utils.AESUtils;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.audit.Auditable;
-import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.ClusterCreateRequest;
@@ -208,7 +206,6 @@ public class ClusterService {
     /**
      * 软删除（K8s 侧对象保留，如需彻底清理后续由运维处理）
      */
-    @Auditable(action = AuditAction.CLUSTER_DELETE, target = "#req.clusterId")
     public void delete(ClusterKeyRequest req) {
         require(req.getClusterId());
         K8sCluster upd = new K8sCluster();

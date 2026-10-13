@@ -7,6 +7,8 @@ import com.coding.common.models.k8s.dto.NodeEventDTO;
 import com.coding.common.models.k8s.dto.NodePodStatDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.audit.AuditAction;
+import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.NodeCurrentMetric;
@@ -75,18 +77,21 @@ public class NodeController {
 
     @PostMapping("/cordon")
     @Operation(summary = "标记节点不可调度")
+    @Auditable(action = AuditAction.NODE_CORDON)
     public ResponseData<NodeDTO> cordon(@RequestBody NodeDTO body) {
         return new ResponseData<>(nodeService.cordon(body));
     }
 
     @PostMapping("/uncordon")
     @Operation(summary = "标记节点可调度")
+    @Auditable(action = AuditAction.NODE_UNCORDON)
     public ResponseData<NodeDTO> uncordon(@RequestBody NodeDTO body) {
         return new ResponseData<>(nodeService.uncordon(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新节点标签 + Taint（整体替换）")
+    @Auditable(action = AuditAction.NODE_UPDATE_LABELS_TAINTS)
     public ResponseData<NodeDTO> updateLabelsTaints(@PathVariable String name, @RequestParam String clusterId,
                                                     @RequestBody NodeLabelTaintRequest req) {
         return new ResponseData<>(nodeService.updateLabelsTaints(name, clusterId, req));
@@ -94,6 +99,7 @@ public class NodeController {
 
     @PostMapping("/drain")
     @Operation(summary = "驱逐节点 Pod")
+    @Auditable(action = AuditAction.NODE_DRAIN, target = "#req.name")
     public ResponseData<NodeDrainResultDTO> drain(@RequestBody NodeDrainRequest req) {
         return new ResponseData<>(nodeService.drain(req));
     }

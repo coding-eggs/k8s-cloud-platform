@@ -3,6 +3,8 @@ package com.coding.platformapi.controllers;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.common.models.k8s.dto.WorkloadRevisionDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.audit.AuditAction;
+import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
@@ -65,12 +67,14 @@ public class WorkloadController {
 
     @PostMapping
     @Operation(summary = "创建工作负载（kind 在 body）")
+    @Auditable(action = AuditAction.WORKLOAD_CREATE)
     public ResponseData<WorkloadDTO> create(@RequestBody WorkloadDTO body) {
         return new ResponseData<>(workloadService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新工作负载（整 spec 替换，保留 selector/name）")
+    @Auditable(action = AuditAction.WORKLOAD_UPDATE)
     public ResponseData<WorkloadDTO> update(@PathVariable String name, @RequestBody WorkloadDTO body) {
         body.setName(name);
         return new ResponseData<>(workloadService.update(body));
@@ -78,6 +82,7 @@ public class WorkloadController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除工作负载（跨 kind 查找）")
+    @Auditable(action = AuditAction.WORKLOAD_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,
@@ -88,6 +93,7 @@ public class WorkloadController {
 
     @PostMapping("/{name}/pause")
     @Operation(summary = "暂停/恢复 Deployment 更新（body.paused）")
+    @Auditable(action = AuditAction.WORKLOAD_PAUSE)
     public ResponseData<WorkloadDTO> pause(@PathVariable String name, @RequestBody WorkloadDTO body) {
         body.setName(name);
         return new ResponseData<>(workloadService.pause(body));
@@ -97,6 +103,7 @@ public class WorkloadController {
     @Operation(summary = "切换工作负载 ambient 开关（pod template 的 istio.io/dataplane-mode / istio.io/use-waypoint）",
             description = "只改这两个保留 label，其余字段取线上现值回写；两个字段各自独立三态：不传=不动、空串=移除、有值=覆写。"
                     + "改的是 pod template → 触发滚动更新，存量 Pod 需重建才带新 label。")
+    @Auditable(action = AuditAction.WORKLOAD_TOGGLE_MESH)
     public ResponseData<WorkloadDTO> meshToggle(@PathVariable String name, @RequestBody WorkloadMeshToggleRequest body) {
         body.setName(name);
         return new ResponseData<>(workloadService.meshToggle(body));
@@ -108,6 +115,7 @@ public class WorkloadController {
     @Operation(summary = "改一个容器的镜像（直接发版）",
             description = "只改该容器的 image，其余字段取线上现值回写（未建模字段不丢）；改的是 pod template → 触发滚动更新。"
                     + "op 管理（ownerReferences 非空）的工作负载由前端禁用入口，与「编辑」「ambient 开关」同口径。")
+    @Auditable(action = AuditAction.WORKLOAD_UPDATE_IMAGE)
     public ResponseData<WorkloadDTO> updateImage(@PathVariable String name, @RequestBody WorkloadImageRequest body) {
         return new ResponseData<>(workloadService.updateImage(name, body));
     }
@@ -126,6 +134,7 @@ public class WorkloadController {
     @PostMapping("/{name}/rollback")
     @Operation(summary = "回滚到指定版本",
             description = "取该版本的 pod 模板覆盖到工作负载本身（与 kubectl rollout undo 同语义，新版本号由控制器继续往下发）→ 触发滚动更新。")
+    @Auditable(action = AuditAction.WORKLOAD_ROLLBACK)
     public ResponseData<WorkloadDTO> rollback(@PathVariable String name, @RequestBody WorkloadRollbackRequest body) {
         return new ResponseData<>(workloadService.rollback(name, body));
     }

@@ -4,6 +4,8 @@ import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.audit.AuditAction;
+import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.ClusterMetricsRequest;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
@@ -36,6 +38,7 @@ public class ClusterController {
 
     @PostMapping("/create")
     @Operation(summary = "新增集群", description = "校验 kubeconfig 连通性后加密入库，并执行 K8s 侧开通（platform-system、租户 SA、模板 ClusterRole）")
+    @Auditable(action = AuditAction.CLUSTER_CREATE, target = "#request.clusterName")
     public ResponseData<K8sCluster> create(@RequestBody ClusterCreateRequest request) {
         return new ResponseData<>(clusterService.create(request));
     }
@@ -62,18 +65,21 @@ public class ClusterController {
 
     @PostMapping("/update")
     @Operation(summary = "更新集群", description = "仅名称/描述")
+    @Auditable(action = AuditAction.CLUSTER_UPDATE, target = "#request.clusterId")
     public ResponseData<K8sCluster> update(@RequestBody ClusterUpdateRequest request) {
         return new ResponseData<>(clusterService.update(request));
     }
 
     @PostMapping("/toggleEnabled")
     @Operation(summary = "启用/禁用集群")
+    @Auditable(action = AuditAction.CLUSTER_TOGGLE_ENABLED, target = "#request.clusterId")
     public ResponseData<K8sCluster> toggleEnabled(@RequestBody ClusterToggleRequest request) {
         return new ResponseData<>(clusterService.toggleEnabled(request));
     }
 
     @PostMapping("/delete")
     @Operation(summary = "删除集群", description = "软删除；K8s 侧对象保留，彻底清理由运维处理")
+    @Auditable(action = AuditAction.CLUSTER_DELETE, target = "#request.clusterId")
     public ResponseData<Void> delete(@RequestBody ClusterKeyRequest request) {
         clusterService.delete(request);
         return new ResponseData<>();
@@ -81,6 +87,7 @@ public class ClusterController {
 
     @PostMapping("/provision")
     @Operation(summary = "重新开通", description = "幂等重跑 K8s 侧开通：创建失败重试、集群数据面重建后恢复")
+    @Auditable(action = AuditAction.CLUSTER_PROVISION, target = "#request.clusterId")
     public ResponseData<K8sCluster> provision(@RequestBody ClusterKeyRequest request) {
         return new ResponseData<>(clusterService.provision(request));
     }

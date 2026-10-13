@@ -5,6 +5,8 @@ import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.audit.AuditAction;
+import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.NamespaceMetricsRequest;
@@ -64,18 +66,21 @@ public class NamespaceController {
 
     @PostMapping("/create")
     @Operation(summary = "创建命名空间", description = "名字合法且集群内不存在；managed-by 标签由 k8s-server 侧盖章")
+    @Auditable(action = AuditAction.NAMESPACE_CREATE)
     public ResponseData<NamespaceDTO> create(@RequestBody NamespaceUpsertRequest request) {
         return new ResponseData<>(namespaceService.create(request));
     }
 
     @PostMapping("/update")
     @Operation(summary = "编辑命名空间", description = "仅平台创建（带 managed-by 标签）可编辑描述与标签")
+    @Auditable(action = AuditAction.NAMESPACE_UPDATE)
     public ResponseData<NamespaceDTO> update(@RequestBody NamespaceUpsertRequest request) {
         return new ResponseData<>(namespaceService.update(request));
     }
 
     @PostMapping("/delete")
     @Operation(summary = "删除命名空间", description = "仅当平台管理且未分配给任何租户时允许")
+    @Auditable(action = AuditAction.NAMESPACE_DELETE, target = "#request.namespace")
     public ResponseData<Void> delete(@RequestBody NamespaceKeyRequest request) {
         namespaceService.delete(request.getClusterId(), request.getNamespace());
         return new ResponseData<>();
@@ -89,12 +94,14 @@ public class NamespaceController {
 
     @PostMapping("/quota/upsert")
     @Operation(summary = "创建/更新命名空间配额", description = "对象名固定 default；已存在则更新，否则创建（重复提交安全）；仅平台创建的命名空间可操作")
+    @Auditable(action = AuditAction.NAMESPACE_QUOTA_UPSERT, target = "#request.namespace")
     public ResponseData<ResourceQuotaDTO> quotaUpsert(@RequestBody NamespaceQuotaUpsertRequest request) {
         return new ResponseData<>(namespaceService.quotaUpsert(request));
     }
 
     @PostMapping("/quota/delete")
     @Operation(summary = "删除命名空间配额", description = "不存在时为幂等 no-op；仅平台创建的命名空间可操作")
+    @Auditable(action = AuditAction.NAMESPACE_QUOTA_DELETE, target = "#request.namespace")
     public ResponseData<Void> quotaDelete(@RequestBody NamespaceKeyRequest request) {
         namespaceService.quotaDelete(request.getClusterId(), request.getNamespace());
         return new ResponseData<>();
@@ -108,12 +115,14 @@ public class NamespaceController {
 
     @PostMapping("/limitrange/upsert")
     @Operation(summary = "创建/更新命名空间限制范围", description = "对象名固定 default；类型仅支持 Container / PersistentVolumeClaim，且校验 max≥min、default≥defaultRequest；仅平台创建的命名空间可操作")
+    @Auditable(action = AuditAction.NAMESPACE_LIMITRANGE_UPSERT, target = "#request.namespace")
     public ResponseData<LimitRangeDTO> limitRangeUpsert(@RequestBody NamespaceLimitRangeUpsertRequest request) {
         return new ResponseData<>(namespaceService.limitRangeUpsert(request));
     }
 
     @PostMapping("/limitrange/delete")
     @Operation(summary = "删除命名空间限制范围", description = "不存在时为幂等 no-op；仅平台创建的命名空间可操作")
+    @Auditable(action = AuditAction.NAMESPACE_LIMITRANGE_DELETE, target = "#request.namespace")
     public ResponseData<Void> limitRangeDelete(@RequestBody NamespaceKeyRequest request) {
         namespaceService.limitRangeDelete(request.getClusterId(), request.getNamespace());
         return new ResponseData<>();
