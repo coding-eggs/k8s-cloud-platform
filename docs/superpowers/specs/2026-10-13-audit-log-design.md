@@ -273,8 +273,14 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
 | # | domain | resource | action | code | 用途 |
 |---|---|---|---|---|---|
 | 1 | `API` | `/audit/list` | `POST` | `platform:audit:read` | 审计列表（筛选 + 游标分页；**返回全部字段**） |
-| 2 | `API` | `/audit/purge` | `POST` | `platform:audit:purge` | 按时间范围删除 |
-| 3 | `Page` | `/audit` | `view` | `platform:page:audit` | 前端页面可见性 |
+| 2 | `API` | `/audit/actions` | `POST` | `platform:audit:read` | 动作码候选值（`distinct` 自审计表）—— 供筛选 autocomplete，见 §7 |
+| 3 | `API` | `/audit/purge` | `POST` | `platform:audit:purge` | 按时间范围删除 |
+| 4 | `Page` | `/audit` | `view` | `platform:page:audit` | 前端页面可见性 |
+
+> 第 2 行（`/audit/actions`）后来补入，见 `V2026_10_13_2`。**不造新码**，复用 `platform:audit:read`
+> （同族只读、同一数据面）—— 与 `V2026_10_10_1` 复用 `platform:cluster:manage` 同做法。
+> 它属于本仓既有的「**候选值端点**」一族：`/servicemonitors/relabel-labels`、`/podmonitors/metric-names`、
+> `/calico/form-options` —— 都是纯候选值查询而非业务数据，独立成窄端点。
 
 > **偏离记录（写 plan 时发现）**：本表原列了第 4 行 `/audit/get`，与 §7 的「详情 = 行展开」自相矛盾 ——
 > **列表本来就返回全部 18 个字段**，单条详情端点纯属冗余。已去掉：少一个端点、少一条权限行、少一份维护面。
@@ -302,6 +308,19 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
   列：时间 · 操作者（账号 + 显示名）· 租户 · 集群 · 命名空间 · 动作码 · 目标对象 · 结果徽章。
   `DENIED` 行的「动作码/目标」列显示 `action`（权限码）+ `request_path` + `http_method`。
 - **筛选**：时间范围 · 操作者 · 集群 · 命名空间 · 结果 · 动作码。均在单次查询条件里下推（配合 §4.1 的四个索引）。
+  - **集群 / 命名空间是下拉**（原先是手输 id）：集群来自 `/cluster/options`；命名空间来自 `/namespace/list(clusterId)`，
+    **未选集群时禁用**，换集群自动清空已选命名空间（否则留着一条永不命中的条件）。
+  - **动作码是 autocomplete**：候选值取自 `/audit/actions`（审计表里实际出现过的码），
+    **不在前端写死一份** —— 写死会与后端 `AuditAction` 漂移。取一次后本地过滤；
+    **候选拉不到时静默降级为自由文本**（不弹错、不阻塞手输，同 Docker Hub tag 候选的处理原则）。
+- **租户 / 集群列显示名字**：表里存的是 id（§4.2 自包含原则），名字由一次 lookups 拉取
+  （`/tenant/list` + `/cluster/options`）建 `id → 名字` 映射 —— **同一份数据同时喂下拉选项与列渲染**。
+  映射未命中（对象已删除、或无读权限）**回退显示原始 id**，单元格 `title` 始终挂着 id。
+  ⚠️ 取舍：这样显示的是**现在的名字**，不是**记录发生时的名字**。要"当时那个名字"得像 `actor_display_name`
+  那样在**写入时冗余存名字**（后端 +2 列 + 写时解析）—— 未做，属可选升级。
+- ⚠️ **清空筛选项给的是空串**：`el-input` / `el-select` 的 `clearable` 清空后 `v-model` 是 `''` 而非 `null`，
+  而后端条件是 `if (xxx != null)` —— 空串不为 null，会变成 `and cluster_id = ''` **静默返回 0 行**。
+  故前端发请求前统一归一化（空串 / null / undefined 一律不发）。
 - **详情**：行展开，看 `error_msg` / `request_path` / `user_agent` / `client_ip` / `duration_ms`。
 - **删除**：`POST /audit/purge`，入参 `{ from, to }`（时间范围，闭开区间由实现定但要在响应里回显实际删除区间），
   二次确认写明**影响条数**；返回实际删除行数。`platform:audit:purge`。

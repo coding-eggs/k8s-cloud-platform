@@ -71,4 +71,14 @@ class AuditControllerTest {
 
         verify(auditService).purge(any(), any());
     }
+
+    @Test
+    void actionsReturnsCodes() throws Exception {
+        when(auditService.listActions()).thenReturn(List.of("workload:delete", "platform:cluster:manage"));
+
+        mvc.perform(post("/audit/actions"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data[0]").value("workload:delete"))
+                .andExpect(jsonPath("$.data[1]").value("platform:cluster:manage"));
+    }
 }

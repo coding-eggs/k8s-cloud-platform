@@ -19,6 +19,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -161,6 +162,15 @@ class AuditServiceTest {
         when(mapper.deleteByTimeRange(any(), any())).thenReturn(7);
 
         assertThat(svc.purge(null, null)).isEqualTo(7);
+    }
+
+    @Test
+    void listActionsDelegatesWithCappedLimit() {
+        when(mapper.listActions(anyInt())).thenReturn(List.of("workload:delete"));
+
+        assertThat(svc.listActions()).containsExactly("workload:delete");
+        // 上限由本层定死，调用方无从放大
+        verify(mapper).listActions(500);
     }
 
     /**

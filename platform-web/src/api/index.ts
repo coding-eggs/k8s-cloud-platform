@@ -615,4 +615,6 @@ export const calicoApi = {
 export const auditApi = {
   list: (q: AuditQuery) => http.post<never, AuditLog[]>('/audit/list', q),
   purge: (from: string, to: string) => http.post<never, number>('/audit/purge', { from, to }),
+  /** 动作码候选值：distinct 自平台审计表（含 DENIED 记录的权限码），按出现频次倒序 */
+  actions: () => http.post<never, string[]>('/audit/actions'),
 }

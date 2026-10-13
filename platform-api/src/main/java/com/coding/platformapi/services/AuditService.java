@@ -43,6 +43,9 @@ public class AuditService {
 
     private static final int MAX_LIMIT = 200;
 
+    /** 候选动作码上限：distinct 的码通常几十个，500 足够且防呆 */
+    private static final int MAX_ACTION_OPTIONS = 500;
+
     private final AuditWriter writer;
 
     private final PlatformAuditLogMapper mapper;
@@ -97,6 +100,15 @@ public class AuditService {
     /** 删除：闭开区间 [from, to)；返回实际删除行数 */
     public int purge(Date from, Date to) {
         return mapper.deleteByTimeRange(from, to);
+    }
+
+    /**
+     * 动作码候选值：审计表里**实际出现过**的码，按出现频次倒序 —— 供筛选 autocomplete。
+     *
+     * <p>不从一份写死的码表来：那会与 {@code AuditAction} 漂移，而且"哪些码还在用"只有数据知道。
+     */
+    public List<String> listActions() {
+        return mapper.listActions(MAX_ACTION_OPTIONS);
     }
 
     private void clamp(PlatformAuditLogQuery q) {

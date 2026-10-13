@@ -123,6 +123,34 @@ function onClusterChange(): void {
   void loadNamespaces()
 }
 
+// ---- 动作码候选值（autocomplete） ----
+
+const actionOptions = ref<string[]>([])
+let actionsLoaded = false
+
+/**
+ * 候选值来自后端 `/audit/actions`（审计表里实际出现过的码），**不在前端写死一份** ——
+ * 写死会与后端 AuditAction 漂移。取一次后本地过滤（表里 distinct 的码通常几十个）。
+ */
+async function fetchActionSuggestions(
+  query: string,
+  cb: (items: { value: string }[]) => void,
+): Promise<void> {
+  try {
+    if (!actionsLoaded) {
+      actionOptions.value = await auditApi.actions()
+      actionsLoaded = true
+    }
+  } catch {
+    // 候选值拉不到不该挡住手输 —— 静默降级为自由文本（同 Docker Hub tag 候选的处理原则）
+    cb([])
+    return
+  }
+  const q = query.trim().toLowerCase()
+  const hit = q ? actionOptions.value.filter((a) => a.toLowerCase().includes(q)) : actionOptions.value
+  cb(hit.map((a) => ({ value: a })))
+}
+
 async function load(reset = false): Promise<void> {
   if (reset) {
     cursor.value = null
@@ -204,7 +232,13 @@ onMounted(async () => {
       <el-select v-model="filters.result" placeholder="结果" clearable>
         <el-option v-for="o in RESULT_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
       </el-select>
-      <el-input v-model="filters.action" placeholder="动作码 / 权限码" clearable />
+      <el-autocomplete
+        v-model="filters.action"
+        :fetch-suggestions="fetchActionSuggestions"
+        :debounce="200"
+        placeholder="动作码 / 权限码"
+        clearable
+      />
       <el-button type="primary" @click="load(true)">查询</el-button>
     </div>
 
@@ -243,12 +277,12 @@ onMounted(async () => {
           <el-tag size="small" :type="resultType(row.result)" effect="plain">{{ row.result }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="动作码" width="170" show-overflow-tooltip>
+      <el-table-column label="动作码" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
           <code class="mono">{{ row.action ?? '—' }}</code>
         </template>
       </el-table-column>
-      <el-table-column label="目标对象" width="140" show-overflow-tooltip>
+      <el-table-column label="目标对象" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">{{ targetText(row) }}</template>
       </el-table-column>
       <el-table-column label="租户" width="140" show-overflow-tooltip>
@@ -297,7 +331,8 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 .filters :deep(.el-input),
-.filters :deep(.el-select) {
+.filters :deep(.el-select),
+.filters :deep(.el-autocomplete) {
   width: 180px;
 }
 .detail {
