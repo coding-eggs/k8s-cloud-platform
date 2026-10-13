@@ -33,6 +33,17 @@ class CredentialProbeTest {
     }
 
     @Test
+    void gitProbeUrlAddsSchemeWhenMissing() {
+        // 「不加工」指的是不猜 .git 后缀，不是拒绝补 scheme。用户手输 host 是常态，
+        // 缺 scheme 会让 URI.create 抛 IllegalArgumentException → 被 catch-all 误报成「网络不可达」。
+        assertThat(CredentialProbe.gitProbeUrl("gitlab.example.com/g/r.git"))
+                .isEqualTo("https://gitlab.example.com/g/r.git/info/refs?service=git-upload-pack");
+        // host:port 这种写法（自建 GitLab / 本地 Harbor 常见）也要能补
+        assertThat(CredentialProbe.gitProbeUrl("gitlab.example.com:8080/g/r.git"))
+                .isEqualTo("https://gitlab.example.com:8080/g/r.git/info/refs?service=git-upload-pack");
+    }
+
+    @Test
     void registryProbeUrlAddsSchemeAndStripsTrailingSlash() {
         assertThat(CredentialProbe.registryProbeUrl("harbor.example.com"))
                 .isEqualTo("https://harbor.example.com/v2/");

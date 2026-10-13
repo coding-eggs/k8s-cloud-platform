@@ -415,7 +415,7 @@ CREDENTIAL_TEST   = "credential:test";
 | **脱敏 DTO** | **反射断言**：响应 DTO 上不存在名字含 `secret` / `password` / `username` 的字段 —— 防止将来有人加字段时静默泄露。**这是结构性钉子，不是行为测试** |
 | 探测分派 | `RestClient` mock：200 + 合法 pkt-line 头 → 通过；200 + HTML → 非 git 协议；401 → 二义文案（断言**不含「密码」字样**）；3xx → 带 Location；超时 → 网络不可达 |
 | URL 规范化 | 去尾斜杠 / 补 `.git` / 已带 `.git` 不重复补 |
-| 审计 | `credential:test` 落一条；**审计记录里不含 endpoint 与凭据内容**（抓 captor 断言） |
+| 审计 | `credential:test` 落一条；**审计记录里不含 endpoint 与凭据内容**。⚠️ **实现期改成了结构性的形式**：原计划写的是「抓 captor 断言一条记录的内容」，实际换成 `CredentialControllerTest` 的反射钉子（断言每个 `@Auditable` 的 `target` SpEL **只允许** `#request.id` / `#request.name`）。**这个替换更强**：它钉的是「敏感字段够不着」这条**原因**，而不是对某一次观测结果的断言；captor 只能证明那一次没泄露。**这是有意的替换，不是缺口**（终审评审专门确认过）。 |
 | 权限 | 启动期交叉校验通过（5 个 API 端点都有行） |
 | 迁移 | 按本仓惯例**手工重放**；`platform_permission` 的 `UNIQUE(domain,resource,action)` 不冲突 |
 

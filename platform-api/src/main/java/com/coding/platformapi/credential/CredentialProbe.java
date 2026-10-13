@@ -21,22 +21,24 @@ public final class CredentialProbe {
     }
 
     /**
-     * 规范化 git 探测 URL：去尾部斜杠 + 拼 {@code /info/refs?service=git-upload-pack}。
+     * 规范化 git 探测 URL：去尾部斜杠 + 补 scheme（缺省 https）+ 拼
+     * {@code /info/refs?service=git-upload-pack}。
      *
      * <p><b>不猜 {@code .git} 后缀</b>（spec §5.2）：实测 GitLab 省略它是 301、gitee 是 200，
      * 各 host 不一致。补后缀是一种猜测，猜错在别的 host 上就是假阴性，且用户看不出为什么。
+     *
+     * <p><b>但补 scheme 是另一回事</b>：用户手输 host（`gitlab.example.com/g/r.git`）是常态，
+     * 缺 scheme 会让 {@code URI.create} 抛 {@code IllegalArgumentException}，被出站层的
+     * catch-all 误报成「网络不可达」——把纯格式问题说成网络问题。REGISTRY 那条一直补，
+     * 这里对称处理。`host:port/...` 这种写法（自建 GitLab / 本地 Harbor 常见）也能一并救回。
      */
     public static String gitProbeUrl(String repoUrl) {
-        return stripTrailingSlashes(repoUrl) + "/info/refs?service=git-upload-pack";
+        return withScheme(stripTrailingSlashes(repoUrl)) + "/info/refs?service=git-upload-pack";
     }
 
     /** 规范化 registry 探测 URL：补 scheme（缺省 https）+ 去尾斜杠 + {@code /v2/}。 */
     public static String registryProbeUrl(String endpoint) {
-        String base = stripTrailingSlashes(endpoint);
-        if (!base.startsWith("http://") && !base.startsWith("https://")) {
-            base = "https://" + base;
-        }
-        return base + "/v2/";
+        return withScheme(stripTrailingSlashes(endpoint)) + "/v2/";
     }
 
     /**
@@ -99,6 +101,14 @@ public final class CredentialProbe {
         String base = s == null ? "" : s.trim();
         while (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
+        }
+        return base;
+    }
+
+    /** 缺 scheme 就补 https。两类探测统一走这里，避免只有一边补、另一边被误报成网络问题。 */
+    private static String withScheme(String base) {
+        if (!base.startsWith("http://") && !base.startsWith("https://")) {
+            return "https://" + base;
         }
         return base;
     }
