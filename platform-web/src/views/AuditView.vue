@@ -3,15 +3,21 @@
  * 审计日志页（S0.1，平台管理面，仅 admin）。
  *
  * - 游标分页：审计表持续追加，offset 会漏读/重读，所以用「上一页最后一条的 (occurredAt, id)」做游标。
- *   游标语义下没有「上一页」——首查替换、加载更多追加，往前翻靠重新查询。
+ *   游标语义下没有「上一页」—— 首查替换、加载更多追加，往前翻靠重新查询。
  * - 详情 = 行展开，不额外开后端端点（列表已返回全部字段）。
- * - 动作列语义随 result 变：写操作看动作码 + 目标对象；DENIED 看被拒权限码 + 请求路径。
- * - 页面门控走 pageCodes（菜单/路由/守卫同源），不写字面量。
+ * - **租户 / 集群列显示名字**：表里存的是 id（审计记录自包含），名字由 lookups 映射；
+ *   映射未命中（对象已删除 / 无读权限）回退显示原始 id，鼠标悬停始终能看到 id。
+ * - **动作码与目标对象是两列，且排在前面**：它们是最常看的两列，放最右边会因表格横向滚动而看不见。
+ * - 页面门控走 pageCodes；接口能力门控走 apiCodes（避免发出注定被拒的请求，与总览页同做法）。
  */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { auditApi } from '@/api'
-import type { AuditLog, AuditQuery } from '@/types'
+import { auditApi, clusterApi, namespaceApi, tenantApi } from '@/api'
+import { apiCodes } from '@/apiCodes'
+import { usePermission } from '@/stores/permission'
+import type { AuditLog, AuditQuery, K8sClusterOption, NamespaceView, PlatformTenant } from '@/types'
+
+const perm = usePermission()
 
 const rows = ref<AuditLog[]>([])
 const loading = ref(false)
@@ -31,6 +37,25 @@ const filters = reactive<AuditQuery>({
   action: null,
 })
 
+// ---- 下拉选项与 id→名字 映射：同一次拉取同时喂这两件事 ----
+
+const clusters = ref<K8sClusterOption[]>([])
+const tenants = ref<PlatformTenant[]>([])
+const namespaces = ref<NamespaceView[]>([])
+
+const clusterNames = computed(() => new Map(clusters.value.map((c) => [c.clusterId, c.clusterName])))
+const tenantNames = computed(() => new Map(tenants.value.map((t) => [t.id, t.name])))
+
+function clusterLabel(id?: string | null): string {
+  if (!id) return '—'
+  return clusterNames.value.get(id) ?? id
+}
+
+function tenantLabel(id?: string | null): string {
+  if (!id) return '—'
+  return tenantNames.value.get(id) ?? id
+}
+
 const RESULT_OPTIONS = [
   { value: 'SUCCESS', label: '成功' },
   { value: 'FAILED', label: '失败' },
@@ -48,12 +73,54 @@ function fmtDate(v?: string | null): string {
   return new Date(v).toLocaleString('zh-CN')
 }
 
-/** 动作列：写操作 = 动作码 → 目标对象；DENIED = 被拒权限码 + 方法 + 路径 */
-function actionText(row: AuditLog): string {
-  if (row.result === 'DENIED') {
-    return `${row.action ?? '（无权限码）'} ${row.httpMethod ?? ''} ${row.requestPath ?? ''}`.trim()
+/** 目标对象：写操作取 targetName；被拒记录没有目标（拒绝发生在方法调用前），退而显示请求路径 */
+function targetText(row: AuditLog): string {
+  if (row.targetName) return row.targetName
+  if (row.result === 'DENIED' && row.requestPath) return row.requestPath
+  return '—'
+}
+
+/**
+ * 去掉空串与空值再发请求。
+ *
+ * ⚠️ 这不是洁癖：`el-input` / `el-select` 的 `clearable` 清空后给的是**空串 `''`**，
+ * 而后端过滤条件是 `if (xxx != null)` —— 空串不为 null，于是变成 `and cluster_id = ''`，
+ * **静默返回 0 行**。必须在这里归一化。
+ */
+function pruned(q: AuditQuery): AuditQuery {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(q)) {
+    if (v === '' || v === null || v === undefined) continue
+    out[k] = v
   }
-  return `${row.action ?? '—'}${row.targetName ? ' → ' + row.targetName : ''}`
+  return out as AuditQuery
+}
+
+// ---- 加载 ----
+
+/** 下拉选项 + 名字映射。各按自己的能力码门控，缺权限就静默跳过（后端权威不变）。 */
+async function loadLookups(): Promise<void> {
+  if (perm.has(apiCodes.allocationList)) {
+    clusters.value = await clusterApi.options()
+  }
+  if (perm.has(apiCodes.tenantRead)) {
+    tenants.value = await tenantApi.list()
+  }
+}
+
+async function loadNamespaces(): Promise<void> {
+  const clusterId = filters.clusterId
+  if (!clusterId || !perm.has(apiCodes.allocationList)) {
+    namespaces.value = []
+    return
+  }
+  namespaces.value = await namespaceApi.list(clusterId)
+}
+
+/** 换集群 → 清掉已选命名空间（它属于旧集群，留着会是一条永不命中的过滤条件） */
+function onClusterChange(): void {
+  filters.namespace = null
+  void loadNamespaces()
 }
 
 async function load(reset = false): Promise<void> {
@@ -63,7 +130,7 @@ async function load(reset = false): Promise<void> {
   }
   loading.value = true
   try {
-    const q: AuditQuery = { ...filters, limit: PAGE_SIZE }
+    const q: AuditQuery = pruned({ ...filters, limit: PAGE_SIZE })
     if (cursor.value) {
       q.cursorOccurredAt = cursor.value.occurredAt
       q.cursorId = cursor.value.id
@@ -93,7 +160,10 @@ async function purge(): Promise<void> {
   void load(true)
 }
 
-onMounted(() => void load(true))
+onMounted(async () => {
+  await loadLookups()
+  await load(true)
+})
 </script>
 
 <template>
@@ -120,8 +190,17 @@ onMounted(() => void load(true))
         placeholder="结束时间"
       />
       <el-input v-model="filters.actorUsername" placeholder="操作者账号" clearable />
-      <el-input v-model="filters.clusterId" placeholder="集群 ID" clearable />
-      <el-input v-model="filters.namespace" placeholder="命名空间" clearable />
+      <el-select v-model="filters.clusterId" placeholder="集群" clearable @change="onClusterChange">
+        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
+      </el-select>
+      <el-select
+        v-model="filters.namespace"
+        placeholder="命名空间"
+        clearable
+        :disabled="!filters.clusterId"
+      >
+        <el-option v-for="n in namespaces" :key="n.name" :label="n.name" :value="n.name" />
+      </el-select>
       <el-select v-model="filters.result" placeholder="结果" clearable>
         <el-option v-for="o in RESULT_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
       </el-select>
@@ -133,37 +212,56 @@ onMounted(() => void load(true))
       <el-table-column type="expand">
         <template #default="{ row }">
           <div class="detail">
+            <div><span class="k">动作码</span>{{ row.action ?? '—' }}</div>
+            <div><span class="k">目标对象</span>{{ row.targetName ?? '—' }}</div>
             <div><span class="k">错误码</span>{{ row.errorCode ?? '—' }}</div>
             <div><span class="k">错误信息</span>{{ row.errorMsg ?? '—' }}</div>
-            <div><span class="k">请求路径</span>{{ row.requestPath ?? '—' }}</div>
+            <div><span class="k">请求</span>{{ row.httpMethod }} {{ row.requestPath }}</div>
+            <div><span class="k">租户 ID</span>{{ row.tenantId ?? '—' }}</div>
+            <div><span class="k">集群 ID</span>{{ row.clusterId ?? '—' }}</div>
             <div><span class="k">User-Agent</span>{{ row.userAgent ?? '—' }}</div>
             <div><span class="k">来源 IP</span>{{ row.clientIp ?? '—' }}</div>
             <div><span class="k">耗时</span>{{ row.durationMs != null ? row.durationMs + ' ms' : '—' }}</div>
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="时间" width="180">
+      <el-table-column label="时间" width="170">
         <template #default="{ row }">{{ fmtDate(row.occurredAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作者" width="190">
+      <el-table-column label="操作者" width="150">
         <template #default="{ row }">
           {{ row.actorDisplayName || row.actorUsername }}
-          <span v-if="row.actorDisplayName" class="sub">{{ row.actorUsername }}</span>
+          <span v-if="row.actorDisplayName && row.actorDisplayName !== row.actorUsername" class="sub">
+            {{ row.actorUsername }}
+          </span>
         </template>
       </el-table-column>
-      <el-table-column label="结果" width="90">
+      <!-- ⚠️ 宽度不得低于 110：SUCCESS tag 实宽约 74px，加左右各 12px padding 需 ≥98px，
+           窄了 tag 会溢出单元格（曾在 width=90 时被压在 padding 边界上） -->
+      <el-table-column label="结果" width="110">
         <template #default="{ row }">
           <el-tag size="small" :type="resultType(row.result)" effect="plain">{{ row.result }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="tenantId" label="租户" width="120" show-overflow-tooltip />
-      <el-table-column prop="clusterId" label="集群" width="120" show-overflow-tooltip />
-      <el-table-column prop="namespace" label="命名空间" width="140" show-overflow-tooltip />
-      <el-table-column label="动作 / 目标" min-width="280" show-overflow-tooltip>
+      <el-table-column label="动作码" width="170" show-overflow-tooltip>
         <template #default="{ row }">
-          <code class="mono">{{ actionText(row) }}</code>
+          <code class="mono">{{ row.action ?? '—' }}</code>
         </template>
       </el-table-column>
+      <el-table-column label="目标对象" width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ targetText(row) }}</template>
+      </el-table-column>
+      <el-table-column label="租户" width="140" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span :title="row.tenantId ?? ''">{{ tenantLabel(row.tenantId) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="集群" width="140" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span :title="row.clusterId ?? ''">{{ clusterLabel(row.clusterId) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="namespace" label="命名空间" width="130" show-overflow-tooltip />
     </el-table>
 
     <div class="pager">
@@ -204,13 +302,13 @@ onMounted(() => void load(true))
 }
 .detail {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px 16px;
   padding: 4px 8px;
 }
 .detail .k {
   display: inline-block;
-  width: 96px;
+  width: 86px;
   color: var(--text-3);
 }
 .sub {
