@@ -40,7 +40,7 @@ public class NamespaceStatService {
     }
 
     public NamespaceSnapshotDTO row(String tenantId, String clusterId, String namespace) {
-        return cache.get(key(clusterId, namespace), TTL, TYPE, () -> client.row(tenantId, clusterId, namespace));
+        return cache.get(key(clusterId, namespace), TTL, TYPE, () -> sample(tenantId, clusterId, namespace));
     }
 
     public List<NamespaceSnapshotDTO> rows(String tenantId, String clusterId, Collection<String> namespaces) {
@@ -64,13 +64,26 @@ public class NamespaceStatService {
             NamespaceSnapshotDTO s = byNs.get(ns);
             boolean stale = s != null && newest - s.getSampledAt() > SKEW_TOLERANCE_MILLIS;
             if (s == null || stale) {
-                s = client.row(tenantId, clusterId, ns);   // 未命中 或 过旧 → 本次请求内补齐
+                s = sample(tenantId, clusterId, ns);   // 未命中 或 过旧 → 本次请求内补齐
                 toWrite.put(key(clusterId, ns), s);
             }
             out.add(s);
         }
         cache.setMany(toWrite, TTL);
         return out;
+    }
+
+    /**
+     * 按"有没有租户上下文"选 k8s-server 入口：{@code tenantId != null} → 租户边界（{@code GET /namespacestats/{namespace}}）；
+     * {@code tenantId == null} → 平台模式（{@code POST /namespacestats/platform/get}，PLATFORM + admin client）。
+     * <p><b>{@code tenantId == null} 的语义就是"平台模式"</b>，不是"忘了传"：平台侧页面（集群概览明细、命名空间详情页）
+     * 读的是不含租户维度的行。两个入口写的是**同一个** {@code ns:<clusterId>:<namespace>} 键（本类的 {@link #key}），
+     * 故"一个事实一个键"不受影响。
+     */
+    private NamespaceSnapshotDTO sample(String tenantId, String clusterId, String namespace) {
+        return tenantId == null
+                ? client.platformRow(clusterId, namespace)
+                : client.row(tenantId, clusterId, namespace);
     }
 
     /**

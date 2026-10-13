@@ -325,20 +325,27 @@ public class ClusterService {
         ClusterOverviewDTO out = new ClusterOverviewDTO();
         out.setCapabilitySummary(capabilityService.summary(clusterId));
         if (snap != null) {
-            List<NamespaceSnapshotDTO> slices = statService.rows(null, clusterId, snap.getNamespaceNames());
-            ClusterTotalDTO total = NamespaceStatMerge.total(slices);
-            // PV 是 cluster-scoped：任何单个 ns 切片里都没有它，从集群键的 storage 补
-            total.setPvCount(snap.getStorage() == null ? 0 : snap.getStorage().getPvCount());
-            out.setResourceTotal(total);
-            out.setResourceCapacity(snap.getNodeCapacity());
-            out.setStorage(snap.getStorage());
-            out.setAbnormalPods(NamespaceStatMerge.abnormalPods(slices, NamespaceStatMerge.ABNORMAL_POD_CAP));
-            out.setAbnormalPodTotal(NamespaceStatMerge.abnormalTotal(slices));
-            out.setAbnormalPodReasonCounts(NamespaceStatMerge.abnormalReasonCounts(slices));
-            out.setUnhealthyWorkloads(NamespaceStatMerge.unhealthyWorkloads(slices, NamespaceStatMerge.UNHEALTHY_WORKLOAD_CAP));
-            out.setUnhealthyWorkloadTotal(NamespaceStatMerge.unhealthyTotal(slices));
-            out.setNodeSummary(nodeSummary(snap.getNodeHealth()));
-            out.setUnhealthyNodes(unhealthyNodes(snap.getNodeHealth()));
+            try {
+                //先滤掉 null 切片（rows 的网关异常路径可能 append 进 null；合并函数会直接解引用）
+                List<NamespaceSnapshotDTO> slices = nonNull(statService.rows(null, clusterId, snap.getNamespaceNames()));
+                ClusterTotalDTO total = NamespaceStatMerge.total(slices);
+                // PV 是 cluster-scoped：任何单个 ns 切片里都没有它，从集群键的 storage 补
+                total.setPvCount(snap.getStorage() == null ? 0 : snap.getStorage().getPvCount());
+                out.setResourceTotal(total);
+                out.setResourceCapacity(snap.getNodeCapacity());
+                out.setStorage(snap.getStorage());
+                out.setAbnormalPods(NamespaceStatMerge.abnormalPods(slices, NamespaceStatMerge.ABNORMAL_POD_CAP));
+                out.setAbnormalPodTotal(NamespaceStatMerge.abnormalTotal(slices));
+                out.setAbnormalPodReasonCounts(NamespaceStatMerge.abnormalReasonCounts(slices));
+                out.setUnhealthyWorkloads(NamespaceStatMerge.unhealthyWorkloads(slices, NamespaceStatMerge.UNHEALTHY_WORKLOAD_CAP));
+                out.setUnhealthyWorkloadTotal(NamespaceStatMerge.unhealthyTotal(slices));
+                out.setNodeSummary(nodeSummary(snap.getNodeHealth()));
+                out.setUnhealthyNodes(unhealthyNodes(snap.getNodeHealth()));
+            } catch (Exception e) {
+                //ns 切片不可用（采样失败 / 网关异常）→ 聚合派生段整体降级为 null（前端「—」），
+                // 与 snap == null 同语义；绝不因此让 /cluster/overview 500（基本信息与能力摘要不受影响）。
+                log.warn("集群 {} 的 ns 切片不可用（聚合派生段降级为「—」）：{}", clusterId, e.getMessage());
+            }
         }
         return out;
     }
@@ -355,9 +362,24 @@ public class ClusterService {
         if (snap == null) {
             return null;
         }
-        return statService.rows(null, clusterId, snap.getNamespaceNames()).stream()
-                .map(s -> new NamespaceStatEntry(clusterId, s, QuotaClassifier.state(s.getStat())))
-                .toList();
+        try {
+            return nonNull(statService.rows(null, clusterId, snap.getNamespaceNames())).stream()
+                    .map(s -> new NamespaceStatEntry(clusterId, s, QuotaClassifier.state(s.getStat())))
+                    .toList();
+        } catch (Exception e) {
+            //ns 切片不可用 → 明细整体降级为 null（前端「—」），绝不让 /cluster/resource-breakdown 500。
+            log.warn("集群 {} 的 ns 切片不可用（资源明细降级为「—」）：{}", clusterId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 滤掉 null 切片（{@link NamespaceStatService#rows} 的网关异常路径可能 append 进 null；
+     *  {@link NamespaceStatMerge} 的各方法与这里的映射会直接解引用切片）。与 {@code TenantOverviewService} 同一立场。 */
+    private static List<NamespaceSnapshotDTO> nonNull(List<NamespaceSnapshotDTO> slices) {
+        if (slices == null || slices.isEmpty()) {
+            return List.of();
+        }
+        return slices.stream().filter(java.util.Objects::nonNull).toList();
     }
 
     private static NodeSummaryDTO nodeSummary(List<NodeHealthDTO> nodes) {

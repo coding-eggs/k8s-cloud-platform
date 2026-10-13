@@ -216,6 +216,53 @@ class ClusterServiceTest {
         assertThat(svc.resourceBreakdown("c1")).isNull();   // 前端「—」的既有降级
     }
 
+    // ==================== 防守：切片不可用 / 含 null 不 500 ====================
+
+    /** statService.rows 抛异常（网关异常 / 边界被拒）→ overview 不抛，聚合派生段整体降级为 null。 */
+    @Test
+    void overview_degrades_when_namespace_slices_throw() {
+        stubCluster("{\"crd.projectcalico.org\":[\"v1\"]}");
+        seedClusterSnapshot("c1", snapshot("c1", List.of("team-a"), 1_000L));
+        when(statService.rows(null, "c1", List.of("team-a")))
+                .thenThrow(new CloudPlatformException(500, "切片不可用"));
+
+        ClusterOverviewDTO out = svc.overview("c1");
+
+        assertThat(out.getResourceTotal()).isNull();
+        assertThat(out.getResourceCapacity()).isNull();
+        assertThat(out.getNodeSummary()).isNull();
+        assertThat(out.getUnhealthyNodes()).isNull();
+        assertThat(out.getStorage()).isNull();
+        assertThat(out.getAbnormalPods()).isNull();
+        assertThat(out.getAbnormalPodTotal()).isNull();
+        // 能力摘要读 DB，不受切片可用性影响
+        assertThat(out.getCapabilitySummary().isHasCalico()).isTrue();
+    }
+
+    /** 同上：resourceBreakdown 遇 rows 抛异常 → 返回 null（前端「—」），不抛。 */
+    @Test
+    void resource_breakdown_returns_null_when_namespace_slices_throw() {
+        stubCluster(null);
+        seedClusterSnapshot("c1", snapshot("c1", List.of("team-a"), 1_000L));
+        when(statService.rows(null, "c1", List.of("team-a")))
+                .thenThrow(new CloudPlatformException(500, "切片不可用"));
+
+        assertThat(svc.resourceBreakdown("c1")).isNull();
+    }
+
+    /** rows 返回含 null 的列表（网关异常路径可能 append 进 null）→ 滤掉 null 行、不过 NPE。 */
+    @Test
+    void breakdown_filters_null_slices_without_npe() {
+        stubCluster(null);
+        seedClusterSnapshot("c1", snapshot("c1", List.of("team-a"), 1_000L));
+        when(statService.rows(null, "c1", List.of("team-a")))
+                .thenReturn(java.util.Arrays.asList(null, snap("team-a")));
+
+        assertThat(svc.resourceBreakdown("c1"))
+                .extracting(e -> e.getSnapshot().getStat().getNamespace())
+                .containsExactly("team-a");
+    }
+
     // ==================== 造数据 ====================
 
     private void stubCluster(String capabilityJson) {

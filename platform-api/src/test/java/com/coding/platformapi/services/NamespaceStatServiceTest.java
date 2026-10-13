@@ -29,6 +29,9 @@ import static org.mockito.Mockito.when;
  *
  * <p>用**真实** {@link RedisJsonCache}（配 mock 的 template），而不是 mock 缓存本身：阈值逻辑挂在校验
  * "取回来的 sampledAt 与最新一条差多少"，mock 掉缓存就把被测逻辑架空了。
+ *
+ * <p>另一组是**端点选择**：tenantId 为空走平台模式、非空走租户轨 —— 这条正是"平台侧消费者拿不到单 ns 行"
+ * 那个缺口（C1/I1）的回归网：没有它，平台侧传 null 会一路打到 TENANT 边界被拒。
  */
 class NamespaceStatServiceTest {
 
@@ -65,10 +68,38 @@ class NamespaceStatServiceTest {
         return JsonMapper.builder().build().writeValueAsString(s);
     }
 
+    // ==================== 端点选择：平台模式 vs 租户轨 ====================
+
+    /** tenantId == null ⇒ 平台模式：调 client.platformRow（POST /namespacestats/platform/get），绝不碰租户端点。 */
+    @Test
+    void null_tenant_uses_platform_mode_sampler() {
+        when(valueOps.get("platform:cache:ns:c1:team-a")).thenReturn(null);
+        when(client.platformRow("c1", "team-a")).thenReturn(snap("team-a", 1_000L));
+
+        assertThat(svc.row(null, "c1", "team-a").getStat().getNamespace()).isEqualTo("team-a");
+        verify(client).platformRow("c1", "team-a");
+        verify(client, never()).row(any(), anyString(), anyString());
+    }
+
+    /** tenantId != null ⇒ 租户轨：调 client.row（GET /namespacestats/{namespace}），绝不碰平台端点。 */
+    @Test
+    void tenant_scoped_uses_tenant_sampler() {
+        long now = System.currentTimeMillis();
+        when(valueOps.multiGet(any())).thenReturn(List.of(json(snap("a", now)), json(snap("b", now - 60_000))));
+        when(client.row("t1", "c1", "b")).thenReturn(snap("b", now));
+
+        svc.rows("t1", "c1", List.of("a", "b"));
+
+        verify(client).row("t1", "c1", "b");
+        verify(client, never()).platformRow(anyString(), anyString());
+    }
+
+    // ==================== 缓存优先 / 未命中采样 / 过旧补采（平台模式路径） ====================
+
     @Test
     void row_fills_from_sampler_on_miss_and_writes_back() {
         when(valueOps.get("platform:cache:ns:c1:team-a")).thenReturn(null);
-        when(client.row(null, "c1", "team-a")).thenReturn(snap("team-a", 1_000L));
+        when(client.platformRow("c1", "team-a")).thenReturn(snap("team-a", 1_000L));
 
         assertThat(svc.row(null, "c1", "team-a").getStat().getNamespace()).isEqualTo("team-a");
         verify(valueOps).set(eq("platform:cache:ns:c1:team-a"), anyString(), eq(Duration.ofSeconds(45)));
@@ -80,13 +111,13 @@ class NamespaceStatServiceTest {
         when(valueOps.multiGet(any())).thenReturn(List.of(
                 json(snap("a", now)),          // 新鲜
                 json(snap("b", now - 60_000))));  // 超过 15s 阈值 → 必须重采
-        when(client.row(null, "c1", "b")).thenReturn(snap("b", now));
+        when(client.platformRow("c1", "b")).thenReturn(snap("b", now));
 
         List<NamespaceSnapshotDTO> out = svc.rows(null, "c1", List.of("a", "b"));
 
         assertThat(out).extracting(s -> s.getStat().getNamespace()).containsExactly("a", "b");
-        verify(client, never()).row(any(), anyString(), eq("a"));
-        verify(client).row(null, "c1", "b");
+        verify(client, never()).platformRow(anyString(), eq("a"));
+        verify(client).platformRow("c1", "b");
     }
 
     @Test
@@ -96,20 +127,20 @@ class NamespaceStatServiceTest {
 
         svc.rows(null, "c1", List.of("a", "b"));
 
-        verify(client, never()).row(any(), anyString(), anyString());
+        verify(client, never()).platformRow(anyString(), anyString());
     }
 
     /** 全未命中：每个 ns 都走采样器，输出按 ns 名排序（键批在 service 内排序，与传入顺序无关）。 */
     @Test
     void rows_sample_all_on_full_cache_miss_in_sorted_order() {
         when(valueOps.multiGet(any())).thenReturn(Arrays.asList(null, null));
-        when(client.row(null, "c1", "a")).thenReturn(snap("a", 2L));
-        when(client.row(null, "c1", "b")).thenReturn(snap("b", 1L));
+        when(client.platformRow("c1", "a")).thenReturn(snap("a", 2L));
+        when(client.platformRow("c1", "b")).thenReturn(snap("b", 1L));
 
         List<NamespaceSnapshotDTO> out = svc.rows(null, "c1", List.of("b", "a"));
 
         assertThat(out).extracting(s -> s.getStat().getNamespace()).containsExactly("a", "b");
-        verify(client).row(null, "c1", "a");
-        verify(client).row(null, "c1", "b");
+        verify(client).platformRow("c1", "a");
+        verify(client).platformRow("c1", "b");
     }
 }
