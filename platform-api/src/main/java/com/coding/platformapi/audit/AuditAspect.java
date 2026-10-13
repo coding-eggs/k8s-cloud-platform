@@ -10,7 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
-import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -19,18 +18,31 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import java.util.Date;
 
 /**
- * 写操作的审计切面：包住带 {@link Auditable} 的 Service 方法。
+ * 写操作的审计切面：包住带 {@link Auditable} 的 **Controller** 方法。
  *
- * <h3>⚠️ 为什么 {@code @Order(0)} 是必须的</h3>
- * 本仓 {@code @EnableTransactionManagement} + Service 方法级 {@code @Transactional} 真在用
- * （RoleService / TenantMemberService / PermissionRowWriter）。事务通知的默认 order 是
- * {@code Ordered.LOWEST_PRECEDENCE}，而**值越小越靠外** —— {@code @Order(0)} 让本切面排在
- * 事务通知**外面**，于是记录时机在业务**提交/回滚之后**，看到的是真实结果。
- * 若排在里面，会记下一条随后被回滚的 SUCCESS（spec §5.1）。
+ * <h3>为什么切 Controller 而不是 Service</h3>
+ * 审计的单元是「**一次用户请求**」，不是「一次内部方法调用」——拦截点就该是定义这条边界的层：
+ * <ul>
+ *   <li><b>粒度天然正确</b>：端点与用户动作 1:1；Service 方法可能被多个入口复用、或被内部编排调用
+ *       （例如 {@code TenantService.create} 内部调 {@code TenantMemberService.add}，
+ *       标在 Service 上会让一次「创建租户」记两条）。</li>
+ *   <li><b>与 403 记录同层同粒度</b>：那条已在 HTTP 边界（{@code accessDeniedHandler}），
+ *       整条审计轨统一在「请求边界」，心智模型一致。</li>
+ *   <li><b>覆盖面可枚举</b>：写端点集合就在权限表里；标在 Service 上这份清单根本不存在。</li>
+ *   <li>直接拿得到 URL / 来源 IP / User-Agent，写操作记录也能带 {@code requestPath}。</li>
+ * </ul>
+ *
+ * <p><b>不需要 {@code @Order}</b>：Controller 不带 {@code @Transactional}，而它调用的 Service 事务
+ * 都在方法内部完成 —— 切面记录时所有内层事务都已提交或回滚，看到的是真实结果。
+ * （若将来有人给 controller 加 {@code @Transactional}，这里就要重新考虑顺序。）
  *
  * <h3>结果语义</h3>
  * 方法正常返回 = {@code SUCCESS}；抛异常 = {@code FAILED}（典型是 {@link CloudPlatformException}，
  * 带上它的业务码与 msg）。异常**原样抛回**，切面不改业务语义。
+ * Controller 不吞异常（本仓一个 {@code try} 都没有），所以业务失败在这里看得到。
+ *
+ * <p><b>已知限制</b>：审计记的是「这次请求的成败」，**不等于内部所有改动都回滚了** ——
+ * 复合操作里各 Service 方法有各自独立的事务，第 2 个失败时第 1 个可能已提交。
  *
  * <h3>为什么用 @Around 而不是 @AfterThrowing</h3>
  * 成功与失败必须是**同一条记录**里的不同 result，而不是两条互不相干的记录 ——
@@ -39,7 +51,6 @@ import java.util.Date;
 @Slf4j
 @Aspect
 @Component
-@Order(0)
 @RequiredArgsConstructor
 public class AuditAspect {
 
@@ -108,11 +119,13 @@ public class AuditAspect {
             r.setErrorMsg(truncate(error.getClass().getSimpleName() + ": " + error.getMessage(), 512));
         }
 
-        // 非 HTTP 线程（将来的定时任务）取不到请求上下文 → 这两项留空，绝不抛（spec §5.2）
+        // 切在本层，请求上下文照例存在；但非 HTTP 线程（将来的定时任务）取不到时留空，绝不抛（spec §5.2）
         var attrs = RequestContextHolder.getRequestAttributes();
         if (attrs instanceof ServletRequestAttributes sra) {
             r.setClientIp(sra.getRequest().getRemoteAddr());
             r.setUserAgent(sra.getRequest().getHeader("User-Agent"));
+            r.setRequestPath(sra.getRequest().getRequestURI());
+            r.setHttpMethod(sra.getRequest().getMethod());
         }
         return r;
     }

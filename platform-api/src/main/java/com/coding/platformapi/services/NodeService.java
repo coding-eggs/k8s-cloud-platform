@@ -6,8 +6,6 @@ import com.coding.common.models.k8s.dto.NodeDrainResultDTO;
 import com.coding.common.models.k8s.dto.NodeEventDTO;
 import com.coding.common.models.k8s.dto.NodePodStatDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
-import com.coding.platformapi.audit.Auditable;
-import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sNodeClient;
 import com.coding.platformapi.models.NodeDrainRequest;
@@ -95,7 +93,6 @@ public class NodeService {
         return nodeClient.updateLabelsTaints(name, clusterId, req);
     }
 
-    @Auditable(action = AuditAction.NODE_DRAIN, target = "#req.name")
     public NodeDrainResultDTO drain(NodeDrainRequest req) {
         return nodeClient.drain(req);
     }
