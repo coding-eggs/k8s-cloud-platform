@@ -1604,6 +1604,7 @@ import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -1616,7 +1617,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link CredentialService}：脱敏契约、留空=保持不变、写回测试结果、审计目标可解析。
+ * {@link CredentialService}：脱敏契约、留空=保持不变、写回测试结果。
  *
  * <p>外加一条**结构性钉子**（{@link #viewDtoHasNoCredentialField()}）—— 见其 javadoc。
  */
@@ -1911,9 +1912,9 @@ class CredentialServiceTest {
 
         List<String> offenders = Arrays.stream(CredentialView.class.getDeclaredFields())
                 .filter(f -> !Modifier.isStatic(f.getModifiers()))
+                .filter(f -> banned.stream().anyMatch(f.getName().toLowerCase(Locale.ROOT)::contains))
+                .filter(f -> !("hasSecret".equalsIgnoreCase(f.getName()) && f.getType() == Boolean.class))
                 .map(Field::getName)
-                .map(String::toLowerCase)
-                .filter(name -> banned.stream().anyMatch(name::contains))
                 .toList();
 
         assertThat(offenders)

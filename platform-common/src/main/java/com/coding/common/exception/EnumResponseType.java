@@ -57,6 +57,9 @@ public enum EnumResponseType {
     PERMISSION_ENDPOINT_UNCOVERED(10031, "操作会使端点失去权限覆盖"),
     CREDENTIAL_KEY_MISSING(10032, "凭据加密主密钥未配置"),
     CREDENTIAL_CIPHERTEXT_INVALID(10033, "凭据密文格式无法识别"),
+    CREDENTIAL_NOT_EXIST(10034, "凭据不存在"),
+    CREDENTIAL_NAME_EXIST(10035, "凭据名称已存在"),
+    CREDENTIAL_INVALID(10036, "凭据参数非法"),
 
     ERROR(5000,"服务端异常"),
 
