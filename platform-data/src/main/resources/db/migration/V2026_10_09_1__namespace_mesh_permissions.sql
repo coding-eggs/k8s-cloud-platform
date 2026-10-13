@@ -34,7 +34,7 @@ ON DUPLICATE KEY UPDATE description=VALUES(description), resource=VALUES(resourc
 
 -- ===== 2) 角色关联 =====
 -- admin → 两行全给。第二行的码是 tenant:*，但 admin 要在租户上下文里代管资源页
---（同 V2026_09_29_2 的结论：admin 只持 platform:% 会失去全部资源页）
+-- （同 V2026_09_29_2 的结论：admin 只持 platform:% 会失去全部资源页）
 INSERT INTO platform_role_permission (id,role_id,permission_id) VALUES
  ('rp_admin_nsmesh_wp','builtin_role_admin','perm_nsmesh_wp_candidates'),
  ('rp_admin_nsmesh_toggle','builtin_role_admin','perm_nsmesh_wl_toggle'),
