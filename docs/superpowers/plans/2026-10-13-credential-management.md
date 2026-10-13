@@ -2884,21 +2884,24 @@ const probeUrl = ref('')
 const testing = ref(false)
 const testResult = ref<CredentialTestResult | null>(null)
 
+/** GIT 需要用户给一个探测仓库地址；REGISTRY 直接打 /v2/，不需要额外输入 */
+const needsProbeUrl = computed(() => testRow.value?.type === 'GIT')
+
 function openTest(row: Credential): void {
   testRow.value = row
   probeUrl.value = ''
   testResult.value = null
-  if (row.type === 'GIT') {
-    // GIT 需要探测仓库地址；REGISTRY 直接打，不需要弹窗
-    testVisible.value = true
-  } else {
+  // ⚠️ 两种类型都要开弹窗 —— 结果 alert 只在这个弹窗里，不开就等于点了没反应。
+  // （GIT 是「先填地址再点测试」，REGISTRY 是「开了就直接打」。）
+  testVisible.value = true
+  if (!needsProbeUrl.value) {
     void runTest()
   }
 }
 
 async function runTest(): Promise<void> {
   if (!testRow.value) return
-  if (testRow.value.type === 'GIT' && !probeUrl.value.trim()) {
+  if (needsProbeUrl.value && !probeUrl.value.trim()) {
     ElMessage.warning('请填写一个用于测试的仓库地址')
     return
   }
@@ -3026,16 +3029,20 @@ onMounted(load)
       </template>
     </el-drawer>
 
-    <!-- 测试连接（仅 GIT 需要弹窗填探测地址） -->
-    <el-dialog v-model="testVisible" title="测试 Git 凭据" width="560px">
-      <el-form label-width="120px">
+    <!-- 测试连接：GIT 要先填探测地址，REGISTRY 打开即测 -->
+    <el-dialog
+      v-model="testVisible"
+      :title="needsProbeUrl ? '测试 Git 凭据' : '测试镜像仓库连接'"
+      width="560px"
+    >
+      <el-form v-if="needsProbeUrl" label-width="120px">
         <el-form-item label="探测仓库地址" required>
           <el-input
             v-model="probeUrl"
             placeholder="https://gitlab.example.com/group/repo.git"
           />
           <div class="tip">
-            凭据是按 host 配的，能不能用取决于具体仓库的权限 —— 请填一个**完整**地址（带上 .git）
+            凭据是按 host 配的，能不能用取决于具体仓库的权限 —— 请填完整地址（带上 .git）
           </div>
         </el-form-item>
       </el-form>
