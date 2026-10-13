@@ -11,6 +11,7 @@ import KvTags from '@/components/KvTags.vue'
 import NamespaceMetricsPanel from '@/components/namespace/NamespaceMetricsPanel.vue'
 import { fmtDate } from '@/utils/format'
 import { formatQuantity } from '@/utils/quantity'
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -556,7 +557,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
         <!-- YAML -->
         <el-tab-pane label="YAML" name="yaml">
           <div v-loading="tabLoading">
-            <pre v-if="yamlLoaded && yamlText" class="yaml-block">{{ yamlText }}</pre>
+            <YamlBlock v-if="yamlLoaded && yamlText" :yaml="yamlText" />
             <div v-else class="muted">加载中…</div>
           </div>
         </el-tab-pane>
@@ -614,11 +615,6 @@ watch(name, () => { if (clusterId.value) void refresh() })
 .lr-title { margin: 0 0 8px; font-size: 12.5px; font-weight: 700; color: var(--text-2); }
 .empty-line { font-size: 13px; }
 
-.yaml-block {
-  margin: 0; padding: 14px; border-radius: 8px; background: var(--panel-hover); border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: var(--text-2);
-  max-height: 70vh; overflow: auto; white-space: pre-wrap;
-}
 .loading-tip { padding: 48px; text-align: center; font-size: 13px; color: var(--text-3); }
 .ov-na { padding: 24px 0; font-size: 13px; }
 .quota-badge { margin-left: 6px; vertical-align: middle; }

@@ -10,6 +10,7 @@ import { useClusterCapability } from '@/composables/useClusterCapability'
 import type { K8sCluster, K8sIpool, K8sIpReservation } from '@/types'
 import { containsInCidr } from '@/utils/ipUtil'
 import { fmtDate } from '@/utils/format'
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const router = useRouter()
 
@@ -158,7 +159,7 @@ async function onDelete(row: K8sIpReservation): Promise<void> {
     <EmptyState v-if="!loading && !reservations.length" title="暂无保留 IP" description="该集群下没有 IPReservation，或尚未探测到 Calico 能力。" />
 
     <el-dialog v-model="yamlVisible" :title="`YAML · ${yamlName}`" width="760px">
-      <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+      <YamlBlock v-if="yamlText" :yaml="yamlText" max-height="70vh" />
       <div v-else class="muted">加载中…</div>
     </el-dialog>
   </div>
@@ -180,9 +181,4 @@ async function onDelete(row: K8sIpReservation): Promise<void> {
 .resv-table { margin-top: 4px; }
 .mono { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12.5px; }
 .muted { color: var(--text-3); }
-.yaml-block {
-  margin: 0; padding: 14px; border-radius: 8px; background: var(--panel-hover); border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: var(--text-2);
-  max-height: 70vh; overflow: auto; white-space: pre-wrap;
-}
 </style>

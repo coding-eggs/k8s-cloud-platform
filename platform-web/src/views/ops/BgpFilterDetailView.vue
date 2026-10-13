@@ -9,6 +9,7 @@ import BgpFilterRuleTable from './BgpFilterRuleTable.vue'
 import { clusterApi, calicoApi } from '@/api'
 import type { K8sCluster, BgpFilter } from '@/types'
 import { fmtDate } from '@/utils/format'
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -114,7 +115,7 @@ onMounted(async () => {
         </el-tab-pane>
 
         <el-tab-pane label="YAML" name="yaml">
-          <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+          <YamlBlock v-if="yamlText" :yaml="yamlText" max-height="70vh" />
           <div v-else class="muted">加载中…</div>
         </el-tab-pane>
       </el-tabs>
@@ -139,10 +140,5 @@ onMounted(async () => {
 .muted { color: var(--text-3); }
 .rule-empty { padding: 4px 0 8px; font-size: 13px; }
 .cond-title { margin: 20px 0 10px; font-size: 13px; font-weight: 700; color: var(--text-2); }
-.yaml-block {
-  margin: 0; padding: 14px; border-radius: 8px; background: var(--panel-hover); border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: var(--text-2);
-  max-height: 70vh; overflow: auto; white-space: pre-wrap;
-}
 .loading-tip { padding: 48px; text-align: center; font-size: 13px; color: var(--text-3); }
 </style>

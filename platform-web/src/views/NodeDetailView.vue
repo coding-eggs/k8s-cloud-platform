@@ -14,6 +14,7 @@ import PodTerminal from '@/components/PodTerminal.vue'
 import PodLogDialog from '@/components/PodLogDialog.vue'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { parseCpuCores, parseMemBytes, humanizeBytes } from '@/utils/metrics'
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -426,7 +427,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
 
         <!-- YAML -->
         <el-tab-pane label="YAML" name="yaml">
-          <pre v-if="yamlLoaded && yamlText" class="yaml-block">{{ yamlText }}</pre>
+          <YamlBlock v-if="yamlLoaded && yamlText" :yaml="yamlText" />
           <div v-else class="muted">加载中…</div>
         </el-tab-pane>
       </el-tabs>
@@ -462,7 +463,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
 
       <!-- Pod Yaml（只读） -->
       <el-dialog v-model="yamlVisible" :title="`Yaml · ${yamlPod?.name ?? ''}`" width="760px">
-        <pre v-if="podYamlText" class="yaml-block">{{ podYamlText }}</pre>
+        <YamlBlock v-if="podYamlText" :yaml="podYamlText" />
         <div v-else class="muted">加载中…</div>
       </el-dialog>
     </div>
@@ -527,10 +528,5 @@ watch(name, () => { if (clusterId.value) void refresh() })
 .empty-line { font-size: 13px; margin-bottom: 8px; }
 .mt-4 { margin-top: 24px; }
 
-.yaml-block {
-  margin: 0; padding: 14px; border-radius: 8px; background: var(--panel-hover); border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: var(--text-2);
-  max-height: 70vh; overflow: auto; white-space: pre-wrap;
-}
 .loading-tip { padding: 48px; text-align: center; font-size: 13px; color: var(--text-3); }
 </style>

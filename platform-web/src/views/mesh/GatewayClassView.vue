@@ -10,6 +10,7 @@ import { clusterApi, meshApi } from '@/api'
 import { useMeshStatus } from '@/composables/useMeshStatus'
 import type { K8sCluster, K8sCondition, K8sGatewayClass } from '@/types'
 import { fmtDate } from '@/utils/format'
+import YamlBlock from '@/components/YamlBlock.vue'
 
 /**
  * GatewayClass 列表（集群级，平台管理面）。
@@ -217,7 +218,7 @@ watch(detailTab, async (tab) => {
           </el-table>
         </el-tab-pane>
         <el-tab-pane label="YAML（只读）" name="yaml">
-          <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+          <YamlBlock v-if="yamlText" :yaml="yamlText" />
           <div v-else class="muted">加载中…</div>
         </el-tab-pane>
       </el-tabs>
@@ -233,19 +234,5 @@ watch(detailTab, async (tab) => {
   font-weight: 600;
   color: var(--text-2);
   margin: 14px 0 8px;
-}
-.yaml-block {
-  margin: 0;
-  padding: 14px;
-  border-radius: 8px;
-  background: var(--panel-hover);
-  border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-2);
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
 }
 </style>

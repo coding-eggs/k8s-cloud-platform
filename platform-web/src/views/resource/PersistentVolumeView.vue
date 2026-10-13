@@ -18,6 +18,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtDate } from '@/utils/format'
 import { formatBytes } from '@/utils/quantity'
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 
@@ -190,7 +191,7 @@ const contextDesc = computed(() => {
           </el-descriptions>
         </el-tab-pane>
         <el-tab-pane label="YAML（只读）" name="yaml">
-          <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+          <YamlBlock v-if="yamlText" :yaml="yamlText" />
           <div v-else class="muted">加载中…</div>
         </el-tab-pane>
       </el-tabs>
@@ -231,19 +232,5 @@ const contextDesc = computed(() => {
 }
 .muted {
   color: var(--text-3);
-}
-.yaml-block {
-  margin: 0;
-  padding: 14px;
-  border-radius: 8px;
-  background: var(--panel-hover);
-  border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-2);
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
 }
 </style>

@@ -24,6 +24,7 @@ import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import WorkloadRollbackDialog from '@/components/workload/WorkloadRollbackDialog.vue'
 import { fmtAge, fmtDate, workloadStatus } from '@/utils/format'
 import { Refresh, MoreFilled, Search, EditPen, TopRight } from '@element-plus/icons-vue'
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
@@ -628,12 +629,12 @@ const contextDesc = computed(() => {
 
     <!-- YAML 只读 -->
     <el-drawer v-model="yamlVisible" :title="`YAML · ${yamlRow?.name ?? ''}`" size="640px">
-      <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+      <YamlBlock v-if="yamlText" :yaml="yamlText" />
       <div v-else class="muted">加载中…</div>
     </el-drawer>
 
     <!-- 改镜像（直接发版：只改这一个容器的 image） -->
-    <el-dialog v-model="imgVisible" :title="`改镜像 · ${imgForm.row?.name ?? ''}`" width="560px">
+    <el-dialog v-model="imgVisible" :title="`改镜像 · ${imgForm.row?.name ?? ''}`" width="760px">
       <el-form label-width="72px">
         <el-form-item label="容器">
           <code class="res-name">{{ imgForm.containerName }}</code>
@@ -760,19 +761,5 @@ const contextDesc = computed(() => {
 }
 .search-input {
   width: 240px;
-}
-.yaml-block {
-  margin: 0;
-  padding: 14px;
-  border-radius: 8px;
-  background: var(--panel-hover);
-  border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-2);
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
 }
 </style>

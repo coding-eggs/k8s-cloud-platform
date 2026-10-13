@@ -9,6 +9,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
 import {MoreFilled, Search} from "@element-plus/icons-vue";
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
@@ -274,7 +275,7 @@ const contextDesc = computed(() => {
           </el-table>
         </el-tab-pane>
         <el-tab-pane label="YAML（只读）" name="yaml">
-          <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+          <YamlBlock v-if="yamlText" :yaml="yamlText" />
           <div v-else class="muted">加载中…</div>
         </el-tab-pane>
       </el-tabs>
@@ -328,19 +329,5 @@ const contextDesc = computed(() => {
 }
 .name-link:hover {
   text-decoration: underline;
-}
-.yaml-block {
-  margin: 0;
-  padding: 14px;
-  border-radius: 8px;
-  background: var(--panel-hover);
-  border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-2);
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
 }
 </style>

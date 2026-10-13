@@ -83,3 +83,43 @@ html.dark {
 
   color-scheme: dark;
 }
+
+/* ============================================================
+ * YAML 只读展示的语法着色（components/YamlBlock.vue 产出的 hljs class）
+ *
+ * 三件事决定了它写在这里而不是组件里：
+ *   1. hljs 的 class 来自 v-html，scoped 样式选不到（没有 data-v-*），
+ *   2. 颜色必须是 token 而不是硬编码 hex —— 亮/暗两套变量都在本文件上方，
+ *   3. 将来调主题色时，YAML 的配色应该跟着一起被看到，而不是散在某个组件里。
+ *
+ * 语义分工（不引入任何新颜色）：
+ *   键 = --info（蓝，出现最多、是扫描骨架）；刻意不用 --accent —— 本产品里 accent 表示「可点」，
+ *   而 YAML 文本不可点。字符串 = --success，裸值（数字/布尔/null）= --warning，
+ *   注释 = --text-3 斜体，YAML 自己的元语法（---、&锚点、*别名、!标签）= --accent（出现少，不吵）。
+ * ============================================================ */
+.yaml-view .hljs-attr,
+.yaml-view .hljs-attr > .hljs-string {
+  color: var(--info);
+}
+.yaml-view .hljs-string {
+  color: var(--success);
+}
+.yaml-view .hljs-number,
+.yaml-view .hljs-literal {
+  color: var(--warning);
+}
+.yaml-view .hljs-comment {
+  color: var(--text-3);
+  font-style: italic;
+}
+.yaml-view .hljs-meta,
+.yaml-view .hljs-type {
+  color: var(--accent);
+}
+/* 列表项 - 与缩进同属结构，不与元语法抢强调色 */
+.yaml-view .hljs-bullet {
+  color: var(--text-3);
+}
+.yaml-view .hljs-template-variable {
+  color: var(--danger);
+}

@@ -19,6 +19,7 @@ import { fmtAge, fmtDate, podPhaseType, workloadStatus } from '@/utils/format'
 import { sumCpuCores, sumMemBytes } from '@/utils/metrics'
 import { formatBytes } from '@/utils/quantity'
 import FieldHelp from "@/components/workload/FieldHelp.vue";
+import YamlBlock from '@/components/YamlBlock.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -604,7 +605,7 @@ const contextDesc = computed(() => {
 
     <!-- Pod Yaml（只读） -->
     <el-dialog v-model="yamlVisible" :title="`Yaml · ${yamlPod?.name ?? ''}`" width="760px">
-      <pre v-if="yamlText" class="yaml-block">{{ yamlText }}</pre>
+      <YamlBlock v-if="yamlText" :yaml="yamlText" />
       <div v-else class="muted">加载中…</div>
     </el-dialog>
   </div>
@@ -703,9 +704,4 @@ const contextDesc = computed(() => {
 .loading-tip { padding: 48px; text-align: center; font-size: 13px; color: var(--text-3); }
 
 .log-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.yaml-block {
-  margin: 0; padding: 14px; border-radius: 8px; background: var(--panel-hover); border: 1px solid var(--border);
-  font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; color: var(--text-2);
-  max-height: 60vh; overflow: auto; white-space: pre-wrap;
-}
 </style>
