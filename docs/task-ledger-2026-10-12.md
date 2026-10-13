@@ -52,6 +52,24 @@
 - [ ] S0.1.4 查询页（平台管理员）+ 权限点 `platform:page:audit` / `platform:audit:read` + **显式绑角色**（不按 code 继承 —— 踩过的坑）
 - [ ] S0.1.5 保留策略（多久、谁清理、是否分区）
 
+> **✅ 实施完成（2026-10-13，10 个提交）**：机制=注解 + AOP 管写操作、复用已有 `accessDeniedHandler` 管 403；
+> 表 `platform_audit_log`（17 列 4 索引）+ 3 条权限行（只绑 admin）。
+> 首批已标注 5 个高危动作：`workload:delete` · `workload:rollback` · `namespace:delete` · `node:drain` · `cluster:delete`。
+> 其余动作按 spec §10 后续批次补（**加注解不需要动迁移、不需要动权限表**）。
+>
+> **执行期发现并订正的既有事实错误**（spec 与 plan 已同步）：
+> 1. **本仓没有引入 Flyway** —— `db/migration/*.sql` 一直是**手工重放**的，应用不会自动执行它；
+>    原「看 Migrating schema 日志」的验收判据不成立。
+> 2. 计划里测试命令的 `-DfailIfNoTests=false` 无效（`-am` 连带跑兄弟模块时要用
+>    `-Dsurefire.failIfNoSpecifiedTests=false`）。
+> 3. 计划原稿的 `AuditAspect` 把成功路径的 `record` 放在业务 `try` 内，会让「审计失败不影响业务」
+>    完全寄存在 `AuditService` 的 try/catch 里 —— TDD 已抓出并改为 `recordQuietly()` 本地兜底。
+>
+> **未验证（留给部署后）**：真集群端到端（删工作负载 / 触发 403 后查审计）、审计页的筛选与 purge、
+> 以及「`REQUIRES_NEW` 抗业务回滚」—— 后者目前只由一条反射钉子守着（详见 spec §5.1 与 plan Task 9）。
+>
+> **既有失败（非本批引入）**：`k8s-core` 的 `WorkloadConverterStaticIpTest` 在 @HEAD 即 NPE，与本批无关。
+
 #### S0.2 凭据与连接管理 ｜ 规模 M（原估 L，2026-10-12 复审下调）
 > **实际消费方只有两个：CI（git 凭据）与镜像仓库 / Helm 商店（同一条 registry/chart-repo 连接）。**
 > 应用级交付与告警**不需要**（kubeconfig 已加密存在 `k8s_cluster`；告警是入站 webhook，只要校验密钥）。
@@ -213,7 +231,7 @@
 
 | 批 | 模块 | 前置 | 规模 | 状态 | Spec |
 |---|---|---|---|---|---|
-| **S0.1** | 审计日志 | — | L | ✅ spec 已写（待评审） | [2026-10-13-audit-log-design.md](superpowers/specs/2026-10-13-audit-log-design.md) |
+| **S0.1** | 审计日志 | — | L | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-audit-log-design.md) · [plan](superpowers/plans/2026-10-13-audit-log.md) |
 | **S0.2** | 凭据与连接管理 | — | M | ⬜ 未开始 | — |
 | **S1.1** | 用户自助 | — | S | ⬜ 未开始 | — |
 | **S1.2** | 集群组件展示 | — | M | ⬜ 未开始 | — |
