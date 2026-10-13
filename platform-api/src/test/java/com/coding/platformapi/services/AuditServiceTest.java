@@ -1,9 +1,12 @@
 package com.coding.platformapi.services;
 
 import com.coding.data.mapper.system.PlatformAuditLogMapper;
+import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.models.system.PlatformAuditLog;
+import com.coding.data.models.auth.PlatformPermission;
 import com.coding.data.models.system.PlatformAuditLogQuery;
 import com.coding.data.models.system.TokenUserInfo;
+import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.AuditDenied;
 import com.coding.platformapi.audit.AuditResult;
 import com.coding.platformapi.audit.AuditWriter;
@@ -36,8 +39,9 @@ class AuditServiceTest {
 
     AuditWriter writer = mock(AuditWriter.class);
     PlatformAuditLogMapper mapper = mock(PlatformAuditLogMapper.class);
+    PlatformPermissionMapper permMapper = mock(PlatformPermissionMapper.class);
     AuthContext authContext = mock(AuthContext.class);
-    AuditService svc = new AuditService(writer, mapper, authContext);
+    AuditService svc = new AuditService(writer, mapper, permMapper, authContext);
 
     private TokenUserInfo user(String username, String displayName) {
         TokenUserInfo u = new TokenUserInfo();
@@ -166,21 +170,44 @@ class AuditServiceTest {
     }
 
     @Test
-    void listActionsDelegatesWithCappedLimit() {
-        when(mapper.listActions(anyInt())).thenReturn(List.of("workload:delete"));
+    void listActionsMergesActionCodesThenApiPermissionCodes() {
+        when(permMapper.selectAllActive()).thenReturn(List.of(
+                perm("API", "platform:audit:read"),
+                perm("API", "tenant:workload:update"),
+                perm("Page", "platform:page:audit"),   // 非 API 域应被排除
+                perm("K8S", "k8s:pod:get")));
 
-        assertThat(svc.listActions()).containsExactly("workload:delete");
-        // 上限由本层定死，调用方无从放大；多取一条用于判断是否被截断
-        verify(mapper).listActions(2001);
+        List<String> got = svc.listActions();
+
+        assertThat(got).contains("workload:delete", "workload:update", "platform:audit:read");
+        assertThat(got).doesNotContain("platform:page:audit", "k8s:pod:get");
+        // 动作码在前、权限码在后（空查询时的顺序可预期）
+        int firstPerm = got.indexOf("platform:audit:read");
+        assertThat(firstPerm).isGreaterThan(got.indexOf("workload:update"));
     }
 
     @Test
     void listActionsTruncatesToCapWhenOverLimit() {
-        // mapper 按 MAX+1 取、返回满额 → 说明 distinct 的码已超上限，本层截到 MAX（并会打 WARN，不静默）
-        List<String> overCap = IntStream.range(0, 2001).mapToObj((i) -> "code:" + i).toList();
-        when(mapper.listActions(2001)).thenReturn(overCap);
+        // 权限行异常膨胀 → 本层截到 MAX 并打 WARN（不静默返回一份看起来完整的候选）
+        when(permMapper.selectAllActive()).thenReturn(
+                IntStream.range(0, 2100).mapToObj((i) -> perm("API", "code:" + i)).toList());
 
         assertThat(svc.listActions()).hasSize(2000);
+    }
+
+    @Test
+    void actionCodesAreExposedByReflectionAndSorted() {
+        assertThat(AuditAction.all())
+                .contains(AuditAction.WORKLOAD_DELETE, AuditAction.CLUSTER_PROVISION)
+                .isSorted()
+                .hasSizeGreaterThanOrEqualTo(20);
+    }
+
+    private PlatformPermission perm(String domain, String code) {
+        PlatformPermission p = new PlatformPermission();
+        p.setDomain(domain);
+        p.setCode(code);
+        return p;
     }
 
     /**

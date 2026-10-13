@@ -273,7 +273,7 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
 | # | domain | resource | action | code | 用途 |
 |---|---|---|---|---|---|
 | 1 | `API` | `/audit/list` | `POST` | `platform:audit:read` | 审计列表（筛选 + 游标分页；**返回全部字段**） |
-| 2 | `API` | `/audit/actions` | `POST` | `platform:audit:read` | 动作码候选值（`distinct` 自审计表）—— 供筛选 autocomplete，见 §7 |
+| 2 | `API` | `/audit/actions` | `POST` | `platform:audit:read` | 动作码候选值（`AuditAction` 全集 ∪ API 权限码）—— 供筛选 autocomplete，见 §7 |
 | 3 | `API` | `/audit/purge` | `POST` | `platform:audit:purge` | 按时间范围删除 |
 | 4 | `Page` | `/audit` | `view` | `platform:page:audit` | 前端页面可见性 |
 
@@ -310,16 +310,22 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
 - **筛选**：时间范围 · 操作者 · 集群 · 命名空间 · 结果 · 动作码。均在单次查询条件里下推（配合 §4.1 的四个索引）。
   - **集群 / 命名空间是下拉**（原先是手输 id）：集群来自 `/cluster/options`；命名空间来自 `/namespace/list(clusterId)`，
     **未选集群时禁用**，换集群自动清空已选命名空间（否则留着一条永不命中的条件）。
-  - **动作码是 autocomplete**：候选值取自 `/audit/actions`（审计表里实际出现过的码），
-    **不在前端写死一份** —— 写死会与后端 `AuditAction` 漂移。取一次后本地过滤；
-    **候选拉不到时静默降级为自由文本**（不弹错、不阻塞手输，同 Docker Hub tag 候选的处理原则）。
+  - **动作码是 autocomplete**，候选值取自 `/audit/actions`，**不在前端写死一份**（会与后端 `AuditAction` 漂移）。
+    取一次后本地过滤；**候选拉不到时静默降级为自由文本**（不弹错、不阻塞手输，同 Docker Hub tag 候选的处理原则）。
+    - **候选 = 「可能值全集」，不是审计表里的观测值**：`AuditAction.all()`（反射读常量，永远与常量同步）
+      ∪ API 域权限码（DENIED 记录的 `action` 存的是权限码；与 `PermissionRegistryFactory` 同一读法）。
+      ⚠️ **这条是实施后按用户反馈改的**：最初取的是「审计表里实际出现过的值」，后果是**新装 / 刚上线时
+      下拉几乎是空的**（表里只有一两条记录 → 候选只剩一两个），筛选根本用不了。
+      「可能值」与数据量无关、开箱即用；代价是下拉会包含**从未被使用过**的码，选中后查不到数据 —— 显式接受。
+      顺序：动作码在前、权限码在后，各组内部字母序（空查询时顺序可预期）。
     - **过滤留在前端（不下推）**：`action` 列**没有索引**（只有 occurred_at / actor / cluster_ns / result），
       `where action like '%q%' group by action` 会退化成**每次按键一次全表扫描 + 分组**（表按年级别增长）；
-      而候选**上界 ≈ 写端点数 + API 域权限行数 ≈ 530**（2026-10-13 实测权限行 262）——
+      而候选上界 ≈ 动作码常量（23）+ API 权限**行**数（262）≈ 285，2026-10-13 **实测 137**
+      （262 是行数、多行共享同码，去重后为 114 个权限码）——
       几百条短字符串的内存 `includes` 是微秒级。**下推不是优化，是劣化。**
-    - **上限 2000 + 截断留痕**：查询按 `MAX+1` 取，触顶则 `WARN` 并截断到 `MAX` ——
+    - **上限 2000 + 截断留痕**：合并后超过上限则 `WARN` 并截断 ——
       不静默返回一份「看起来完整却不完整」的候选（同 `backend-layering.md` 的「绝不静默降级」原则）。
-      上界推导与"何时该重新评估"写在 `AuditService.MAX_ACTION_OPTIONS` 的注释里。
+      上界推导与「何时该重新评估」写在 `AuditService.MAX_ACTION_OPTIONS` 的注释里。
 - **租户 / 集群列显示名字**：表里存的是 id（§4.2 自包含原则），名字由一次 lookups 拉取
   （`/tenant/list` + `/cluster/options`）建 `id → 名字` 映射 —— **同一份数据同时喂下拉选项与列渲染**。
   映射未命中（对象已删除、或无读权限）**回退显示原始 id**，单元格 `title` 始终挂着 id。

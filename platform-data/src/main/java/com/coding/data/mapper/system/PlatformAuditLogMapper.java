@@ -24,11 +24,4 @@ public interface PlatformAuditLogMapper {
     /** 闭开区间 [from, to)，任一为 null 则该侧不限；返回删除行数 */
     int deleteByTimeRange(@Param("from") Date from, @Param("to") Date to);
 
-    /**
-     * 审计表里**实际出现过**的动作码（distinct），按出现次数倒序 —— 供筛选 autocomplete 做候选值。
-     *
-     * <p>为什么从数据里取而不是维护一份码表：码表会与 {@code AuditAction} 漂移，且"哪些码还在用"
-     * 只有数据知道。同族先例：{@code /servicemonitors/relabel-labels} 等候选值端点。
-     */
-    List<String> listActions(@Param("limit") int limit);
 }

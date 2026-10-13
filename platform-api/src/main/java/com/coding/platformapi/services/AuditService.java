@@ -1,9 +1,12 @@
 package com.coding.platformapi.services;
 
+import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.mapper.system.PlatformAuditLogMapper;
+import com.coding.data.models.auth.PlatformPermission;
 import com.coding.data.models.system.PlatformAuditLog;
 import com.coding.data.models.system.PlatformAuditLogQuery;
 import com.coding.data.models.system.TokenUserInfo;
+import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.AuditDenied;
 import com.coding.platformapi.audit.AuditResult;
 import com.coding.platformapi.audit.AuditWriter;
@@ -14,6 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.util.Set;
+import java.util.LinkedHashSet;
 import java.util.Date;
 import java.util.List;
 
@@ -46,20 +51,29 @@ public class AuditService {
     /**
      * 候选动作码上限。
      *
-     * <p><b>上界的推导</b>（决定这个数够不够）：候选 = 写操作的动作码 ∪ 曾出现在 DENIED 记录里的权限码，所以
-     * 上界 ≈ 平台写端点数（≤ 全部端点 267）+ API 域权限行数（2026-10-13 实测 262）≈ **530**。
-     * 取 2000 是留 4 倍余量，避免后续"标注更多写端点 / 权限行增长"后悄悄触顶。
+     * <p><b>上界的推导</b>（决定这个数够不够）：候选 = {@code AuditAction} 常量（今天 23 个）
+     * ∪ API 域**权限码去重后**的集合（DENIED 记录的 {@code action} 存的是权限码）。
+     * API 权限**行**有 262 行，但多行共享同一个码（如 `/audit/list` 与 `/audit/actions` 都是
+     * `platform:audit:read`），所以码数远少于行数 —— 2026-10-13 **实测 137**（23 动作码 + 114 权限码）。
+     * 上界 ≈ 23 + 262 ≈ 285（去重后必 ≤ 行数），取 2000 是留 7 倍余量，避免后续增长后悄悄触顶。
+     *
+     * <p><b>为什么取「可能值全集」而不是「审计表里的观测值」</b>：观测值在新装 / 刚上线时几乎是空的
+     * （表里只有一两条记录 → 下拉只剩一两个候选），筛选根本用不了。可能值全集与数据量无关、开箱即用；
+     * 代价是下拉里会包含**从未被使用过**的码，选中后查不到数据 —— 这是显式接受的。
      *
      * <p><b>为什么不做成「过滤下推」</b>：{@code action} 列**没有索引**（索引只有 occurred_at / actor /
      * cluster_ns / result），{@code where action like '%q%' group by action} 会退化成每次按键一次
      * 全表扫描 + 分组（表按年级别增长）。而前端在几百条短字符串上做 includes 是微秒级 ——
-     * **下推不是优化，是劣化**（除非先给 action 建索引，为一个几百条的候选值付索引维护成本不值）。
+     * **下推不是优化，是劣化**。
      */
     private static final int MAX_ACTION_OPTIONS = 2000;
 
     private final AuditWriter writer;
 
     private final PlatformAuditLogMapper mapper;
+
+    /** 动作码候选里的权限码来自权限表（与 PermissionRegistryFactory 同一读法） */
+    private final PlatformPermissionMapper permissionMapper;
 
     private final AuthContext authContext;
 
@@ -118,16 +132,27 @@ public class AuditService {
      *
      * <p>不从一份写死的码表来：那会与 {@code AuditAction} 漂移，而且"哪些码还在用"只有数据知道。
      */
+    /**
+     * 动作码候选值 = {@code AuditAction} 的全部动作码 ∪ API 域权限码，供筛选 autocomplete。
+     *
+     * <p>顺序：动作码在前（筛选的主目标），权限码在后；各组内部字母序 —— 空查询时的顺序可预期。
+     * 两者理论上不重叠，仍用 {@code Set} 去重防呆。
+     */
     public List<String> listActions() {
-        // 多取一条用来判断「是否被截断」—— 截断了必须留痕，不能静默返回一份看起来完整的候选
-        List<String> all = mapper.listActions(MAX_ACTION_OPTIONS + 1);
-        if (all.size() > MAX_ACTION_OPTIONS) {
+        Set<String> merged = new LinkedHashSet<>(AuditAction.all());
+        // 与 PermissionRegistryFactory 同一口径：DENIED 记录的 action 是被判的权限码，只可能是 API 域
+        permissionMapper.selectAllActive().stream()
+                .filter(p -> "API".equals(p.getDomain()))
+                .map(PlatformPermission::getCode)
+                .sorted()
+                .forEach(merged::add);
+        if (merged.size() > MAX_ACTION_OPTIONS) {
             log.warn("审计动作码候选已达上限 {}，本次返回的候选不完整；"
-                    + "说明 distinct 的动作码/权限码超出预期，需重新评估（加大上限或改为下推过滤）",
+                    + "说明动作码常量或权限行超出预期，需重新评估（加大上限或改为下推过滤）",
                     MAX_ACTION_OPTIONS);
-            return all.subList(0, MAX_ACTION_OPTIONS);
+            return merged.stream().limit(MAX_ACTION_OPTIONS).toList();
         }
-        return all;
+        return List.copyOf(merged);
     }
 
     private void clamp(PlatformAuditLogQuery q) {
