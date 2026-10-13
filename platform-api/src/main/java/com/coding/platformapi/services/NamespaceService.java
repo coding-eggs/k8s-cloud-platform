@@ -16,6 +16,8 @@ import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.audit.Auditable;
+import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.NamespaceLimitRangeUpsertRequest;
@@ -141,6 +143,7 @@ public class NamespaceService {
     /**
      * 删除命名空间：非受保护系统 ns 且未分配给任何租户。
      */
+    @Auditable(action = AuditAction.NAMESPACE_DELETE, target = "#namespace")
     public void delete(String clusterId, String namespace) {
         requireEditable(clusterId, namespace);
         boolean allocated = allocationMapper.listByCluster(clusterId).stream()
