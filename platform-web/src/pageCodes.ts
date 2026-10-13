@@ -41,6 +41,8 @@ export const pageCodes = {
   permission: 'platform:page:permission',
   /** S0.1 审计日志页（平台管理面，仅 admin） */
   audit: 'platform:page:audit',
+  /** S0.2 凭据管理页（平台管理面，仅 admin） */
+  credential: 'platform:page:credential',
 
   // ---- 资源管理（租户可达；storageClass 因无命名空间维度归平台管理员）----
   workload: {

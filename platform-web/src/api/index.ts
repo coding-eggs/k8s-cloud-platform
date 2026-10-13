@@ -6,6 +6,10 @@ import type {
   BgpFilter,
   BgpPeer,
   CalicoFormOption,
+  CredentialCreateBody,
+  CredentialTestResult,
+  CredentialUpdateBody,
+  CredentialView,
   K8sCluster,
   K8sClusterCapability,
   K8sClusterOption,
@@ -615,6 +619,16 @@ export const calicoApi = {
 export const auditApi = {
   list: (q: AuditQuery) => http.post<never, AuditLog[]>('/audit/list', q),
   purge: (from: string, to: string) => http.post<never, number>('/audit/purge', { from, to }),
-  /** 动作码候选值：distinct 自平台审计表（含 DENIED 记录的权限码），按出现频次倒序 */
+  /** 动作码候选值 = AuditAction 常量（动作码）∪ API 域权限码；取全集而非审计表观测值 */
   actions: () => http.post<never, string[]>('/audit/actions'),
+}
+
+export const credentialApi = {
+  list: () => http.post<never, CredentialView[]>('/credential/list'),
+  /** GIT 类型必须给 probeUrl：凭据是按 host 配的，能不能用取决于具体仓库的权限 */
+  test: (id: string, probeUrl?: string) =>
+    http.post<never, CredentialTestResult>('/credential/test', { id, probeUrl }),
+  create: (body: CredentialCreateBody) => http.post<never, CredentialView>('/credential/create', body),
+  update: (body: CredentialUpdateBody) => http.post<never, CredentialView>('/credential/update', body),
+  remove: (id: string) => http.post<never, void>('/credential/delete', { id }),
 }

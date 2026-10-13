@@ -1577,5 +1577,63 @@ export interface AuditQuery {
   limit?: number
 }
 
+/**
+ * 凭据（S0.2）。**本类型不含凭据内容** —— 后端永不回显，只有 hasSecret（有没有配）
+ * 与 fingerprint（哪一份）两种派生形态。加字段前先读后端 spec 的「永不回显」一节。
+ */
+export interface CredentialView {
+  id: string
+  name: string
+  /** GIT / REGISTRY */
+  type: 'GIT' | 'REGISTRY'
+  /** host 基址 */
+  endpoint: string
+  /** BASIC */
+  authType: string
+  hasSecret: boolean
+  /** 明文认证字段 JSON 的 SHA-256 前 16 位 */
+  fingerprint?: string | null
+  description?: string | null
+  enabled: boolean
+  /** 上次测试通过的时刻；测失败不改它 */
+  lastVerifiedAt?: string | null
+  /** 上次测试的失败原因；成功则 null */
+  lastVerifyError?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+/** 新建凭据。username / secret 必填。 */
+export interface CredentialCreateBody {
+  name: string
+  type: 'GIT' | 'REGISTRY'
+  endpoint: string
+  authType: string
+  username: string
+  secret: string
+  description?: string | null
+  enabled?: boolean
+}
+
+/** 更新凭据。username / secret **留空 = 保持不变**；authType 变更时必须重填。 */
+export interface CredentialUpdateBody {
+  id: string
+  name: string
+  type: 'GIT' | 'REGISTRY'
+  endpoint: string
+  authType: string
+  username?: string | null
+  secret?: string | null
+  description?: string | null
+  enabled?: boolean
+}
+
+/** 测试连接结果。suggestedUrl 非空 = 「对端要求改用这个地址」，要提供一键填入。 */
+export interface CredentialTestResult {
+  ok: boolean
+  message: string
+  suggestedUrl?: string | null
+}
+
 
 
