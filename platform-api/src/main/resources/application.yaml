@@ -15,6 +15,12 @@ thanos:
     url: ${THANOS_QUERY_URL:http://192.168.31.80:19090}
 
 platform:
+  credential:
+    # 凭据库（platform_credential）的 AES 主密钥。**独立于 k8s.cloud.kubeconfig.aes-key**：
+    # 轮换边界独立，且不扩散后者把默认密钥硬编码在配置里的坏味道。
+    # ⚠️ 没有默认值：留空应用会拒绝启动（CredentialCipher 的启动校验）。
+    # 生成方式：调用 AESUtils.generateStrongKey()，把结果填进环境变量。
+    aes-key: ${CREDENTIAL_AES_KEY:}
   namespace:
     # 受保护（系统）命名空间：命中者不可编辑 / 删除 / 设配额 / 设限制范围，读仍开放。
     # 精确匹配，须与集群内真实 ns 名一致；按部署环境增删。
