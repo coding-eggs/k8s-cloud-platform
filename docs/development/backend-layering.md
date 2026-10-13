@@ -157,7 +157,7 @@ Service 负责 query 组装与转发，controller 负责响应流。
 | `AbstractNamespacedResourceController<T>` | 命名空间级资源（有 namespace） | `TENANT`（默认） |
 | `ResourceQuotaController` / `LimitRangeController` | 命名空间级，但平台级开通流程用 | 覆写为 `PLATFORM` |
 | `NodeAddressController` | 集群级，但租户必须能读（工作负载页点 nodePort 直连） | 覆写为 `UPSTREAM`（见 §3.1） |
-| 无基类者：`NodeController`、Calico 派生查询、生命周期动作、`PodExecWebSocketHandler` | 非六端点形态 | 各自显式实现（HTTP 全 `PLATFORM`，WS 为 `TENANT`） |
+| 无基类者：`NodeController`、Calico 派生查询、生命周期动作、`PodExecWebSocketHandler`、`NamespaceStatController` / `NamespaceStatPlatformController` | 非六端点形态 | 各自显式实现（HTTP 多为 `PLATFORM`，WS 为 `TENANT`）；两处 `NamespaceStat*` 是例外：都无基类，却分别为 `TENANT`（`NamespaceStatController`）与 `PLATFORM`（`NamespaceStatPlatformController`）—— 边界是**类属性**，故两条路由只能分属两类 |
 
 `AccessBoundary` 三个取值：
 
@@ -234,6 +234,9 @@ Service 负责 query 组装与转发，controller 负责响应流。
   见 `ClusterAggregationOperations`）：同上，是本条例外的**最大实例**（7 族、固定 9 次 `list`）。
   改判条件写在那个类的 javadoc 里：目标集群规模回落到几千 Pod 量级时，搬回 api 更划算
   （需为 workloads / services / resourcequotas / PVC 各补一个 `listAll` 覆写 + 各自权限行）。
+  **per-ns 的真值来源是响应里的 `namespaceSnapshots`**（每 ns 计数全量、名单各自封顶）—— api 侧的 `ClusterService`
+  据此写 `ns:<clusterId>:<namespace>` 键；响应里的 `namespaces` / `total` / 两个名单是**有意的 wire 冗余**
+  （B4 的断言冻结了它们的形状），api 侧不据此装填，避免"两份 per-ns 数据源"漂移。
 
 ### 5.2 跨命名空间列举（`/list-all`）为什么这么切
 
@@ -244,7 +247,7 @@ Service 负责 query 组装与转发，controller 负责响应流。
 | | 单个命名空间 | 跨命名空间 |
 |---|---|---|
 | 租户边界 | ✅ `/list`（分配表三元组） | ❌ 不该有 —— "我的全部命名空间"是业务，属 platform-api 扇出 |
-| 平台边界 | ✅ `/list` + 显式 tenantId 代操作 | ✅ **`/list-all`**（本批补的；含无租户的命名空间） |
+| 平台边界 | ✅ `/list` + 显式 tenantId 代操作；单 ns **行**（快照采样）走 `POST /namespacestats/platform/get`（PLATFORM + admin client，供跨命名空间汇总/命名空间详情页，**不查分配表** —— 行本身不含租户维度） | ✅ **`/list-all`**（本批补的；含无租户的命名空间） |
 
 **2026-10-10 补齐记录**：上表「平台边界 × 跨命名空间」那格此前只有 ConfigMap / Pod 两个 ops 覆写了 `listAll`，
 本批把其余 **18 个**命名空间级 ops 全部补齐 —— 含 istio 族（Gateway + HttpRoute / GRPCRoute / TCP|TLS|UDPRoute），

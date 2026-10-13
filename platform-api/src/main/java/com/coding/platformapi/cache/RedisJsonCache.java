@@ -109,14 +109,26 @@ public class RedisJsonCache {
         return out;
     }
 
-    /** 批量写（pipeline，每键同 TTL）。写失败只记日志 —— 与 get 的降级立场一致。 */
+    /**
+     * 批量写（pipeline，每键同 TTL）。写失败只记日志 —— 与 get 的降级立场一致。
+     * <p><b>null 值不写</b>（与 {@link #get} 的"只缓存非 null"同立场）：值是 null 表示这次没取到
+     * （如 {@code NamespaceStatService.rows} 里某个 ns 采样失败）—— 写了"null"下次会被读成"命中却为空"的假象，
+     * 而且拖累同批其它键。null 键直接跳过，其余键照常写（一个键没取到不影响其它键）。
+     */
     public <T> void setMany(Map<String, T> values, Duration ttl) {
         if (values == null || values.isEmpty()) {
             return;
         }
         try {
             Map<String, String> payload = new LinkedHashMap<>();
-            values.forEach((k, v) -> payload.put(PREFIX + k, jsonMapper.writeValueAsString(v)));
+            values.forEach((k, v) -> {
+                if (v != null) {
+                    payload.put(PREFIX + k, jsonMapper.writeValueAsString(v));
+                }
+            });
+            if (payload.isEmpty()) {
+                return;
+            }
             redis.executePipelined((RedisCallback<Object>) connection -> {
                 RedisStringCommands commands = connection.stringCommands();
                 payload.forEach((k, v) -> commands.set(k.getBytes(StandardCharsets.UTF_8),

@@ -1,13 +1,19 @@
 package com.coding.platformapi.cache;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisStringCommands;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.types.Expiration;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -126,5 +132,37 @@ class RedisJsonCacheTest {
         when(valueOps.multiGet(any())).thenThrow(new RuntimeException("redis down"));
 
         assertThat(cache.getMany(List.of("a"), STRING_LIST)).isEmpty();   // 不抛：调用方当作全未命中
+    }
+
+    /**
+     * setMany：<b>null 值不写</b>（一个键没取到不该拖累同批其它键、也绝不写 "null"）、且整批不抛。
+     * 场景即 {@code NamespaceStatService.rows}：某个 ns 采样失败 → 值为 null，其余 ns 照常写。
+     */
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void setMany_skips_null_values_and_writes_the_rest() {
+        RedisConnection connection = mock(RedisConnection.class);
+        RedisStringCommands commands = mock(RedisStringCommands.class);
+        when(connection.stringCommands()).thenReturn(commands);
+        when(redis.executePipelined(any(RedisCallback.class))).thenAnswer(inv -> {
+            ((RedisCallback) inv.getArgument(0)).doInRedis(connection);
+            return List.of();
+        });
+
+        Map<String, List<String>> values = new LinkedHashMap<>();
+        values.put("a", List.of("x"));
+        values.put("b", null);            // 该键没取到 → 不写
+        values.put("c", List.of("y"));
+        cache.setMany(values, Duration.ofSeconds(30));   // 不抛
+
+        byte[] keyA = "platform:cache:a".getBytes(StandardCharsets.UTF_8);
+        byte[] keyB = "platform:cache:b".getBytes(StandardCharsets.UTF_8);
+        byte[] keyC = "platform:cache:c".getBytes(StandardCharsets.UTF_8);
+        //set 有两个重载（Expiration+SetOption / SetCondition+Expiration），匹配器须带类型消歧
+        verify(commands).set(eq(keyA), eq("[\"x\"]".getBytes(StandardCharsets.UTF_8)),
+                any(Expiration.class), any(RedisStringCommands.SetOption.class));
+        verify(commands, never()).set(eq(keyB), any(), any(Expiration.class), any(RedisStringCommands.SetOption.class));
+        verify(commands).set(eq(keyC), eq("[\"y\"]".getBytes(StandardCharsets.UTF_8)),
+                any(Expiration.class), any(RedisStringCommands.SetOption.class));
     }
 }
