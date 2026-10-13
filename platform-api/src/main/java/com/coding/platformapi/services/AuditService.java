@@ -43,8 +43,19 @@ public class AuditService {
 
     private static final int MAX_LIMIT = 200;
 
-    /** 候选动作码上限：distinct 的码通常几十个，500 足够且防呆 */
-    private static final int MAX_ACTION_OPTIONS = 500;
+    /**
+     * 候选动作码上限。
+     *
+     * <p><b>上界的推导</b>（决定这个数够不够）：候选 = 写操作的动作码 ∪ 曾出现在 DENIED 记录里的权限码，所以
+     * 上界 ≈ 平台写端点数（≤ 全部端点 267）+ API 域权限行数（2026-10-13 实测 262）≈ **530**。
+     * 取 2000 是留 4 倍余量，避免后续"标注更多写端点 / 权限行增长"后悄悄触顶。
+     *
+     * <p><b>为什么不做成「过滤下推」</b>：{@code action} 列**没有索引**（索引只有 occurred_at / actor /
+     * cluster_ns / result），{@code where action like '%q%' group by action} 会退化成每次按键一次
+     * 全表扫描 + 分组（表按年级别增长）。而前端在几百条短字符串上做 includes 是微秒级 ——
+     * **下推不是优化，是劣化**（除非先给 action 建索引，为一个几百条的候选值付索引维护成本不值）。
+     */
+    private static final int MAX_ACTION_OPTIONS = 2000;
 
     private final AuditWriter writer;
 
@@ -108,7 +119,15 @@ public class AuditService {
      * <p>不从一份写死的码表来：那会与 {@code AuditAction} 漂移，而且"哪些码还在用"只有数据知道。
      */
     public List<String> listActions() {
-        return mapper.listActions(MAX_ACTION_OPTIONS);
+        // 多取一条用来判断「是否被截断」—— 截断了必须留痕，不能静默返回一份看起来完整的候选
+        List<String> all = mapper.listActions(MAX_ACTION_OPTIONS + 1);
+        if (all.size() > MAX_ACTION_OPTIONS) {
+            log.warn("审计动作码候选已达上限 {}，本次返回的候选不完整；"
+                    + "说明 distinct 的动作码/权限码超出预期，需重新评估（加大上限或改为下推过滤）",
+                    MAX_ACTION_OPTIONS);
+            return all.subList(0, MAX_ACTION_OPTIONS);
+        }
+        return all;
     }
 
     private void clamp(PlatformAuditLogQuery q) {

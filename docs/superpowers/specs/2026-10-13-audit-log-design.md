@@ -313,6 +313,13 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
   - **动作码是 autocomplete**：候选值取自 `/audit/actions`（审计表里实际出现过的码），
     **不在前端写死一份** —— 写死会与后端 `AuditAction` 漂移。取一次后本地过滤；
     **候选拉不到时静默降级为自由文本**（不弹错、不阻塞手输，同 Docker Hub tag 候选的处理原则）。
+    - **过滤留在前端（不下推）**：`action` 列**没有索引**（只有 occurred_at / actor / cluster_ns / result），
+      `where action like '%q%' group by action` 会退化成**每次按键一次全表扫描 + 分组**（表按年级别增长）；
+      而候选**上界 ≈ 写端点数 + API 域权限行数 ≈ 530**（2026-10-13 实测权限行 262）——
+      几百条短字符串的内存 `includes` 是微秒级。**下推不是优化，是劣化。**
+    - **上限 2000 + 截断留痕**：查询按 `MAX+1` 取，触顶则 `WARN` 并截断到 `MAX` ——
+      不静默返回一份「看起来完整却不完整」的候选（同 `backend-layering.md` 的「绝不静默降级」原则）。
+      上界推导与"何时该重新评估"写在 `AuditService.MAX_ACTION_OPTIONS` 的注释里。
 - **租户 / 集群列显示名字**：表里存的是 id（§4.2 自包含原则），名字由一次 lookups 拉取
   （`/tenant/list` + `/cluster/options`）建 `id → 名字` 映射 —— **同一份数据同时喂下拉选项与列渲染**。
   映射未命中（对象已删除、或无读权限）**回退显示原始 id**，单元格 `title` 始终挂着 id。

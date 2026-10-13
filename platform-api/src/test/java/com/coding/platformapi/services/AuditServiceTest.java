@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -169,8 +170,17 @@ class AuditServiceTest {
         when(mapper.listActions(anyInt())).thenReturn(List.of("workload:delete"));
 
         assertThat(svc.listActions()).containsExactly("workload:delete");
-        // 上限由本层定死，调用方无从放大
-        verify(mapper).listActions(500);
+        // 上限由本层定死，调用方无从放大；多取一条用于判断是否被截断
+        verify(mapper).listActions(2001);
+    }
+
+    @Test
+    void listActionsTruncatesToCapWhenOverLimit() {
+        // mapper 按 MAX+1 取、返回满额 → 说明 distinct 的码已超上限，本层截到 MAX（并会打 WARN，不静默）
+        List<String> overCap = IntStream.range(0, 2001).mapToObj((i) -> "code:" + i).toList();
+        when(mapper.listActions(2001)).thenReturn(overCap);
+
+        assertThat(svc.listActions()).hasSize(2000);
     }
 
     /**
