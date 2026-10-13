@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformAuditLogMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformAuditLog">
+    <id     column="id"                 jdbcType="BIGINT"    property="id" />
+    <result column="occurred_at"        jdbcType="TIMESTAMP" property="occurredAt" />
+    <result column="actor_username"     jdbcType="VARCHAR"   property="actorUsername" />
+    <result column="actor_display_name" jdbcType="VARCHAR"   property="actorDisplayName" />
+    <result column="tenant_id"          jdbcType="VARCHAR"   property="tenantId" />
+    <result column="cluster_id"         jdbcType="VARCHAR"   property="clusterId" />
+    <result column="namespace"          jdbcType="VARCHAR"   property="namespace" />
+    <result column="action"             jdbcType="VARCHAR"   property="action" />
+    <result column="target_name"        jdbcType="VARCHAR"   property="targetName" />
+    <result column="result"             jdbcType="VARCHAR"   property="result" />
+    <result column="error_code"         jdbcType="VARCHAR"   property="errorCode" />
+    <result column="error_msg"          jdbcType="VARCHAR"   property="errorMsg" />
+    <result column="http_method"        jdbcType="VARCHAR"   property="httpMethod" />
+    <result column="request_path"       jdbcType="VARCHAR"   property="requestPath" />
+    <result column="client_ip"          jdbcType="VARCHAR"   property="clientIp" />
+    <result column="user_agent"         jdbcType="VARCHAR"   property="userAgent" />
+    <result column="duration_ms"        jdbcType="INTEGER"   property="durationMs" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, occurred_at, actor_username, actor_display_name, tenant_id, cluster_id, `namespace`,
+    `action`, target_name, `result`, error_code, error_msg, http_method, request_path,
+    client_ip, user_agent, duration_ms
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformAuditLog"
+          useGeneratedKeys="true" keyProperty="id">
+    insert into platform_audit_log (occurred_at, actor_username, actor_display_name, tenant_id,
+      cluster_id, `namespace`, `action`, target_name, `result`, error_code, error_msg,
+      http_method, request_path, client_ip, user_agent, duration_ms)
+    values (#{occurredAt,jdbcType=TIMESTAMP}, #{actorUsername,jdbcType=VARCHAR},
+      #{actorDisplayName,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR},
+      #{clusterId,jdbcType=VARCHAR}, #{namespace,jdbcType=VARCHAR},
+      #{action,jdbcType=VARCHAR}, #{targetName,jdbcType=VARCHAR}, #{result,jdbcType=VARCHAR},
+      #{errorCode,jdbcType=VARCHAR}, #{errorMsg,jdbcType=VARCHAR},
+      #{httpMethod,jdbcType=VARCHAR}, #{requestPath,jdbcType=VARCHAR},
+      #{clientIp,jdbcType=VARCHAR}, #{userAgent,jdbcType=VARCHAR},
+      #{durationMs,jdbcType=INTEGER})
+  </insert>
+
+  <select id="query" parameterType="com.coding.data.models.system.PlatformAuditLogQuery"
+          resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_audit_log
+    <where>
+      <if test="from != null">and occurred_at &gt;= #{from,jdbcType=TIMESTAMP}</if>
+      <if test="to != null">and occurred_at &lt; #{to,jdbcType=TIMESTAMP}</if>
+      <if test="actorUsername != null">and actor_username = #{actorUsername,jdbcType=VARCHAR}</if>
+      <if test="clusterId != null">and cluster_id = #{clusterId,jdbcType=VARCHAR}</if>
+      <if test="namespace != null">and `namespace` = #{namespace,jdbcType=VARCHAR}</if>
+      <if test="result != null">and `result` = #{result,jdbcType=VARCHAR}</if>
+      <if test="action != null">and `action` = #{action,jdbcType=VARCHAR}</if>
+      <if test="cursorOccurredAt != null">
+        and (occurred_at &lt; #{cursorOccurredAt,jdbcType=TIMESTAMP}
+             or (occurred_at = #{cursorOccurredAt,jdbcType=TIMESTAMP} and id &lt; #{cursorId,jdbcType=BIGINT}))
+      </if>
+    </where>
+    order by occurred_at desc, id desc
+    limit #{limit,jdbcType=INTEGER}
+  </select>
+
+  <delete id="deleteByTimeRange">
+    delete from platform_audit_log
+    <where>
+      <if test="from != null">and occurred_at &gt;= #{from,jdbcType=TIMESTAMP}</if>
+      <if test="to != null">and occurred_at &lt; #{to,jdbcType=TIMESTAMP}</if>
+    </where>
+  </delete>
+
+</mapper>
