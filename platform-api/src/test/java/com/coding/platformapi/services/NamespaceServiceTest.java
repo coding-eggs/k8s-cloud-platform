@@ -431,6 +431,21 @@ class NamespaceServiceTest {
         assertThat(svc.limitRangeGet("c1", "foreign")).isNull();
     }
 
+    @Test
+    void constraint_ops_reject_missing_namespace() {
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(null);   // ns 不存在
+        NamespaceQuotaUpsertRequest req = new NamespaceQuotaUpsertRequest();
+        req.setClusterId("c1");
+        req.setNamespace("ghost");
+        req.setQuota(new ResourceQuotaDTO());
+        assertThatThrownBy(() -> svc.quotaUpsert(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.RESOURCE_NOT_EXIST.getCode())
+                .hasMessageContaining("命名空间不存在");
+        verify(k8s, never()).create(any(ResourceQuotaDTO.class));
+    }
+
     // ---------- Task 9：/namespace/stat/get（命名空间快照 + 配额三档） ----------
 
     @Test
