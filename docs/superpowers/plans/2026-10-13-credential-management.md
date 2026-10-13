@@ -339,7 +339,10 @@ public interface PlatformCredentialMapper {
 
     int insert(PlatformCredential c);
 
-    /** 只写用户可改列（name/type/endpoint/auth_type/secret*/description/enabled），**不碰 last_*** */
+    /**
+     * 只写用户可改列（name、type、endpoint、auth_type、secret 的两个列、description、enabled），
+     * <b>不碰 last_verified_at / last_verify_error</b>。
+     */
     int update(PlatformCredential c);
 
     int deleteById(@Param("id") String id);
