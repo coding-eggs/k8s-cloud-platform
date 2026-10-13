@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import { clusterApi, namespaceApi } from '@/api'
-import type { K8sClusterOption, K8sLimitRange, K8sLimitRangeItem, K8sResourceQuota, K8sResourceQuotaUsed, NamespaceView, ResourcePair } from '@/types'
+import type { K8sClusterOption, K8sLimitRange, K8sLimitRangeItem, K8sNamespaceStatEntry, K8sQuotaState, K8sResourceQuota, K8sResourceQuotaUsed, NamespaceView, ResourcePair } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
@@ -32,14 +32,23 @@ async function loadClusters(): Promise<void> {
 // ---- 数据（quota / limitrange / yaml 均为懒加载 tab）----
 const ns = ref<NamespaceView | null>(null)
 const quota = ref<K8sResourceQuota | null>(null)
+/**
+ * 命名空间快照切片（/namespace/stat/get）：概览 tab 的 requests.cpu / requests.memory 两行与配额三态徽标。
+ * 与租户概览面板、集群「资源明细」同源（同一份后端采样切片）——这三处这两个 key 与状态从此一致。
+ * 与 quota（完整 ResourceQuota 对象）**分开**：quota 是编辑器读取面（配额 tab 逐字仍读它），stat 只是展示面。
+ */
+const stat = ref<K8sNamespaceStatEntry | null>(null)
 const lr = ref<K8sLimitRange | null>(null)
 const yamlText = ref('')
 const loading = ref(false)
 const tabLoading = ref(false)
+const statLoading = ref(false)
 const loadError = ref(false)
 
 const activeTab = ref('overview')
 const quotaLoaded = ref(false)
+const statLoaded = ref(false)
+const statError = ref(false)
 const lrLoaded = ref(false)
 const yamlLoaded = ref(false)
 /** 受保护系统命名空间：写操作被后端拒，配额/限制范围降级为「不可修改」空态 */
@@ -65,12 +74,15 @@ async function refresh(): Promise<void> {
     if (cid !== clusterId.value || target !== name.value) return
     // 命名空间本体或上下文变化 → 清空并重置全部懒加载 tab
     quota.value = null
+    stat.value = null
     lr.value = null
     yamlText.value = ''
-    quotaLoaded.value = lrLoaded.value = yamlLoaded.value = false
-    // 受保护系统命名空间：写操作端点会拒，跳过 quota/limitrange 加载 → 模板渲染「不可修改」空态而非永远「加载中…」
+    quotaLoaded.value = statLoaded.value = lrLoaded.value = yamlLoaded.value = false
+    statError.value = false
+    // 受保护系统命名空间：写操作端点会拒，跳过 quota/limitrange（及只需展示的 stat）加载 → 模板渲染「不可修改」空态而非永远「加载中…」
     if (isProtected.value) {
       quotaLoaded.value = true
+      statLoaded.value = true
       lrLoaded.value = true
     }
     loadError.value = ns.value == null
@@ -100,6 +112,37 @@ async function loadQuota(): Promise<void> {
     quotaLoaded.value = true
   } finally {
     tabLoading.value = false
+  }
+}
+
+/**
+ * 命名空间快照切片（概览 tab 的 cpu/mem 两行 + 配额三态徽标）。
+ * 只读端点（须 platform:allocation:list），与配额/限制范围不同 —— 受保护 ns 也开放（同监控面板），
+ * 但模板在 isProtected 分支整段替换为「不可修改」，故这里对受保护 ns 直接短路，省一次无意义的调用。
+ * 失败降级独立：只影响 cpu/mem 两行与徽标，**不影响** pods 行（来自 quota 完整对象）与配额 tab。
+ */
+async function loadStat(): Promise<void> {
+  if (!ready.value) return
+  if (isProtected.value) { statLoaded.value = true; return }
+  const cid = clusterId.value
+  const target = name.value
+  statLoading.value = true
+  try {
+    const res = await namespaceApi.statGet(cid, target)
+    if (cid === clusterId.value && target === name.value) {
+      stat.value = res
+      statError.value = false
+      statLoaded.value = true
+    }
+  } catch {
+    // 兜底：降级为「—」+ 可重试提示，而非永远「加载中…」
+    if (cid === clusterId.value && target === name.value) {
+      stat.value = null
+      statError.value = true
+      statLoaded.value = true
+    }
+  } finally {
+    statLoading.value = false
   }
 }
 
@@ -142,13 +185,18 @@ async function loadYaml(): Promise<void> {
   }
 }
 
-/** 进入 / 重拉当前 tab 的数据（概览依赖配额，故也拉 quota） */
+/** 进入 / 重拉当前 tab 的数据。概览 = 快照切片（cpu/mem 两行 + 徽标）+ 配额完整对象（pods 行，R16：不丢这一行） */
 function loadActiveTab(): Promise<void> {
   const tab = activeTab.value
   if (tab === 'quota' && !quotaLoaded.value) return loadQuota()
   if (tab === 'limitrange' && !lrLoaded.value) return loadLimitRange()
   if (tab === 'yaml' && !yamlLoaded.value) return loadYaml()
-  if (tab === 'overview' && !quotaLoaded.value) return loadQuota()
+  if (tab === 'overview') {
+    const tasks: Promise<void>[] = []
+    if (!statLoaded.value) tasks.push(loadStat())
+    if (!quotaLoaded.value) tasks.push(loadQuota())
+    return Promise.all(tasks).then(() => undefined)
+  }
   return Promise.resolve()
 }
 
@@ -232,12 +280,50 @@ const quotaRows = computed<QuotaRow[]>(() => {
   })
 })
 
-/** 概览用量摘要：requests.cpu / requests.memory / pods 的 used / hard 三行 */
-const usageSummary = computed<QuotaRow[]>(() =>
-  (['requestsCpu', 'requestsMemory', 'pods'] as const)
-    .map((k) => quotaRows.value.find((r) => r.key === k))
-    .filter((r): r is QuotaRow => r != null),
-)
+/**
+ * 概览用量摘要：requests.cpu / requests.memory 两行的 used/hard 读**命名空间快照切片** stat（同源三处之一：
+ * 租户概览面板 / 集群「资源明细」/ 本页 —— 这两个 key 与配额状态从此一致）；
+ * pods 行仍读完整 ResourceQuota 对象 quota（R16：不为少一次调用丢掉这一行）。
+ * stat 请求失败时 cpu/mem 仍占位（值「—」），pods 行不受影响（分开降级）。
+ */
+const statUsageRows = computed<QuotaRow[]>(() => {
+  const s = stat.value?.snapshot.stat
+  return [
+    { key: 'requestsCpu', label: 'requests.cpu', kind: 'cpu' as const, used: s?.quotaCpuUsed, hard: s?.quotaCpuHard },
+    { key: 'requestsMemory', label: 'requests.memory', kind: 'memory' as const, used: s?.quotaMemUsed, hard: s?.quotaMemHard },
+  ].map((d) => {
+    const used = d.used ?? null
+    const hard = d.hard ?? null
+    const percent = usagePercent(used, hard)
+    return {
+      key: d.key,
+      label: d.label,
+      usedText: numText(used, d.kind),
+      hardText: numText(hard, d.kind),
+      percent,
+      over: percent != null && percent > 100,
+    }
+  })
+})
+
+/** 概览用量摘要三行（顺序）：requests.cpu、requests.memory（切片）→ pods（完整对象，可能因无配额而缺席）。 */
+const overviewUsageRows = computed<QuotaRow[]>(() => {
+  const pods = quotaRows.value.find((r) => r.key === 'pods')
+  return pods ? [...statUsageRows.value, pods] : statUsageRows.value
+})
+
+/** 概览用量摘要的加载态：切片或配额任一仍在首拉中都显示转圈（已加载过就不再转）。 */
+const usageLoading = computed(() => (!statLoaded.value && statLoading.value) || (!quotaLoaded.value && tabLoading.value))
+
+/**
+ * 配额三档徽标的展示映射（**与租户概览面板 TenantOverviewPanel.quotaBadge 同一套措辞/标签类型**）：
+ * OK 不显示（只标异常两档）；判定读后端 quotaState，前端不自行按 hard 是否为空判定。
+ */
+function quotaBadge(state?: K8sQuotaState | null): { text: string; type: 'danger' | 'warning' } | null {
+  if (state === 'MISSING') return { text: '⚠ 无配额', type: 'danger' }
+  if (state === 'PARTIAL') return { text: '⚠ 配额未覆盖 requests', type: 'warning' }
+  return null
+}
 
 // ---- 限制范围：按类型分组（行 = max/min/default/defaultRequest，列 = cpu/memory）----
 const LIMIT_FIELDS: { field: keyof Omit<K8sLimitRangeItem, 'type'>; label: string }[] = [
@@ -347,23 +433,36 @@ watch(name, () => { if (clusterId.value) void refresh() })
                 </div>
               </section>
 
-              <!-- 用量摘要：与基本信息同列（左）；随配额懒加载 -->
-              <section v-loading="tabLoading && !quotaLoaded" class="info-card ov-usage">
-                <h3 class="info-title">用量摘要</h3>
+              <!-- 用量摘要：与基本信息同列（左）。cpu/mem 两行 + 徽标来自快照切片（stat），pods 行来自完整配额对象（quota）—— 两者分开降级 -->
+              <section v-loading="usageLoading" class="info-card ov-usage">
+                <h3 class="info-title">
+                  用量摘要
+                  <!-- 配额三档徽标：OK 不显示（只标异常两档）；判定读后端 quotaState -->
+                  <el-tag v-if="quotaBadge(stat?.quotaState)" size="small" :type="quotaBadge(stat?.quotaState)!.type" class="quota-badge">
+                    {{ quotaBadge(stat?.quotaState)!.text }}
+                  </el-tag>
+                </h3>
                 <div v-if="isProtected" class="muted ov-na">受保护的系统命名空间，不可修改</div>
-                <div v-else-if="quotaLoaded && quota" class="info-rows">
-                  <div v-for="r in usageSummary" :key="r.key" class="info-row">
-                    <span class="k">{{ r.label }}</span>
-                    <span class="v">
-                      <span :class="{ over: r.over }">{{ r.usedText }}</span>
-                      <span class="muted"> / </span>{{ r.hardText }}
-                      <span v-if="r.percent != null" class="muted" :class="{ over: r.over }">（{{ r.percent }}%）</span>
-                    </span>
+                <template v-else-if="statLoaded">
+                  <div v-if="statError" class="muted usage-err">
+                    requests 用量读取失败（cpu / 内存显示「—」）——pods 与配额编辑不受影响。
+                    <el-button link type="primary" :icon="Refresh" @click="loadStat">重试</el-button>
                   </div>
-                </div>
-                <EmptyState v-else-if="quotaLoaded" title="未设置配额" description="该命名空间未配置 ResourceQuota，用量不受约束。">
-                  <el-button type="primary" @click="goEditor('quota')">设置配额</el-button>
-                </EmptyState>
+                  <div class="info-rows">
+                    <div v-for="r in overviewUsageRows" :key="r.key" class="info-row">
+                      <span class="k">{{ r.label }}</span>
+                      <span class="v">
+                        <span :class="{ over: r.over }">{{ r.usedText }}</span>
+                        <span class="muted"> / </span>{{ r.hardText }}
+                        <span v-if="r.percent != null" class="muted" :class="{ over: r.over }">（{{ r.percent }}%）</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div v-if="quotaLoaded && !quota" class="muted usage-hint">
+                    该命名空间未配置 ResourceQuota（用量不受约束）。
+                    <el-button link type="primary" @click="goEditor('quota')">设置配额</el-button>
+                  </div>
+                </template>
                 <div v-else class="muted">加载中…</div>
               </section>
             </aside>
@@ -522,4 +621,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
 }
 .loading-tip { padding: 48px; text-align: center; font-size: 13px; color: var(--text-3); }
 .ov-na { padding: 24px 0; font-size: 13px; }
+.quota-badge { margin-left: 6px; vertical-align: middle; }
+.usage-err { font-size: 12.5px; margin-bottom: 8px; }
+.usage-hint { font-size: 12.5px; margin-top: 10px; }
 </style>
