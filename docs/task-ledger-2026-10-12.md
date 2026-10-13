@@ -96,6 +96,40 @@
       并定清「谁能读明文、投递到哪」
 - [ ] S0.2.6 使用审计（→ S0.1.3）
 
+> **✅ 实施完成（2026-10-13）**：表 `platform_credential`（13 列，硬删除）+ 6 行权限（3 个码，
+> 只绑 admin）。范围 = **凭据库内核 + 测试连接**；投递（命名空间 Secret / imagePullSecret /
+> 构建 Pod 注入）留给 S3.1.3 / S3.5.13。设计见 `docs/superpowers/specs/2026-10-13-credential-management-design.md`，
+> 实施计划见 `docs/superpowers/plans/2026-10-13-credential-management.md`（13 任务）。
+>
+> **两条口径在实现期被实测改掉**（spec §0 有完整实测表）：
+> 1. 「公开仓库会忽略错凭据 → `info/refs` 探针假阳性」的假设**被推翻**：实测 gitee / gitlab
+>    带错密码对公共仓库返回 **401**。所以不引入 `provider` 字段、不做按 host 分派。
+> 2. 但发现两类**新的**假阳性/假阴性：`200 + HTML`（代理登录页）会骗过只看状态码的判定
+>    → 改为**校验响应体以 git pkt-line 头开头**；GitLab 少 `.git` 是 301
+>    → **不猜后缀、不跟随重定向**，3xx 时把 `Location` 给用户一键回填。
+>
+> **401 是二义的**（实测：不存在的仓库与错密码同码）→ 文案一律「凭据不通过或无权访问此仓库」，
+> **不得写「密码错误」**。
+>
+> **有意不做**：SSH、按租户授权、匿名连接、主密钥轮换、删除保护、凭据版本历史、其它 `type`。
+>
+> **未验证（留给部署后）**：github.com 的 git 端点（实测机器连不上那个 IP）、
+> 有效凭据 + 需认证仓库的成功路径、Harbor `/v2/` 的 401 行为。
+> 「真实服务器出站可达性」见 spec §0.1 的环境提醒。
+>
+> **执行期发现的三处「计划本身有错」**（已在实施计划文件里就地订正，非代码问题）：
+> ① 我误读一次命令输出，把前端常量文件路径写成 `src/constants/`（实际在 `src/`）；
+> ② Task 2 的 javadoc 里 `secret*/description` 的 `*/` **提前闭合注释块**，直接编译失败；
+> ③ Task 6 的反射钉子 banned 列表含 `"secret"`，而 `CredentialView.hasSecret` 正好含它 → 钉子会
+> 把自己钉死（改为「`Boolean` 类型的 `hasSecret` 是唯一例外」）。
+> 另有三处实现层面的缺陷靠 TDD/实测抓出：Task 3 的错密钥用例会 **1/256 概率假红**（flaky）、
+> Task 11 的 `REGISTRY` 测试连接**结果无处显示**（点了没反应）、Task 12 让从 `@element-plus/icons-vue`
+> 导入图标（实际图标是 `main.ts` 全局注册的）。
+>
+> **⚠️ 全量测试 583 绿的一个前提**：`k8s-core` 报 210 绿，是因为
+> `WorkloadConverterStaticIpTest.java` **正被有意删在工作区**（@HEAD 它会 NPE，S0.1 时就记为既有失败）。
+> 该删除**不在本批提交内**。
+
 ---
 
 ### S1 · 平台侧小项（无前置，适合先跑通节奏）
