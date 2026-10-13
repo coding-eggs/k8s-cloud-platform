@@ -8,7 +8,6 @@ import type {
   K8sClusterCapability,
   K8sClusterOption,
   K8sClusterOverview,
-  K8sNamespaceResourceStat,
   K8sNamespaceStatEntry,
   K8sTenantOverview,
   K8sConfigMap,
@@ -92,9 +91,10 @@ export const clusterApi = {
   overview: (clusterId: string) =>
     http.post<never, K8sClusterOverview>('/cluster/overview', { clusterId }),
 
-  /** 资源明细 per-namespace（「资源明细」tab 懒加载）；与 overview 同源同一份聚合快照。不可用返回 null */
+  /** 资源明细 per-namespace（「资源明细」tab 懒加载）；与 overview 同源同一份聚合快照。不可用返回 null。
+   *  形状为命名空间切片（NamespaceStatEntry：clusterId + snapshot + quotaState），行数据在 snapshot.stat。 */
   resourceBreakdown: (clusterId: string) =>
-    http.post<never, K8sNamespaceResourceStat[] | null>('/cluster/resource-breakdown', { clusterId }),
+    http.post<never, K8sNamespaceStatEntry[] | null>('/cluster/resource-breakdown', { clusterId }),
 }
 
 /**

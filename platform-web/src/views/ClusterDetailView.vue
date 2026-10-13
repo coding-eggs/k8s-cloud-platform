@@ -13,7 +13,7 @@ import { Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { clusterApi } from '@/api'
 import { clusterMetrics, type ClusterMetricsReq } from '@/api/metrics'
-import type { K8sAbnormalPod, K8sCluster, K8sClusterOverview, K8sNamespaceResourceStat, K8sNodeHealth } from '@/types'
+import type { K8sAbnormalPod, K8sCluster, K8sClusterOverview, K8sNamespaceStatEntry, K8sNodeHealth, K8sQuotaState } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -133,7 +133,7 @@ function ageText(seconds?: number | null): string {
 
 // ---- Tab 3：资源明细（懒加载）----
 const activeTab = ref('overview')
-const breakdown = ref<K8sNamespaceResourceStat[] | null>(null)
+const breakdown = ref<K8sNamespaceStatEntry[] | null>(null)
 const breakdownLoading = ref(false)
 const breakdownLoaded = ref(false)
 /**
@@ -180,7 +180,7 @@ async function loadBreakdown(): Promise<void> {
 const filteredBreakdown = computed(() => {
   const rows = breakdown.value ?? []
   const kw = nsKeyword.value.trim().toLowerCase()
-  return kw ? rows.filter((r) => r.namespace.toLowerCase().includes(kw)) : rows
+  return kw ? rows.filter((r) => r.snapshot.stat.namespace.toLowerCase().includes(kw)) : rows
 })
 
 /**
@@ -192,8 +192,8 @@ const filteredBreakdown = computed(() => {
  */
 const topNamespaces = computed(() => {
   const rows = (breakdown.value ?? []).map((r) => ({
-    namespace: r.namespace,
-    value: usedByNsMem.value[r.namespace] ?? null,
+    namespace: r.snapshot.stat.namespace,
+    value: usedByNsMem.value[r.snapshot.stat.namespace] ?? null,
   }))
   const sorted = [...rows]
     .sort((a, b) => {
@@ -244,8 +244,19 @@ function fmtCount(v?: number | null): string {
  * 刻意不回退 requests：那一列已经不显示了，用一个看不见的字段排序会让人看不懂顺序。
  * （无实测值的行记 -1 → 降序沉底；Top-10 同口径，见 `topNamespaces`。）
  */
-function usageSortKey(row: K8sNamespaceResourceStat, usedMap: Record<string, number>): number {
-  return usedMap[row.namespace] ?? -1
+function usageSortKey(row: K8sNamespaceStatEntry, usedMap: Record<string, number>): number {
+  return usedMap[row.snapshot.stat.namespace] ?? -1
+}
+
+/**
+ * 配额三档徽标的展示映射（**与租户概览面板 TenantOverviewPanel.quotaBadge 同一套措辞/标签类型**）：
+ * OK 不显示（信息由占用条承载）；MISSING / PARTIAL 两档标异常。
+ * 判定**读后端 quotaState**（判定集中在 platform-api 的 QuotaClassifier），前端不自行按 hard 是否为空判定。
+ */
+function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'warning' } | null {
+  if (state === 'MISSING') return { text: '⚠ 无配额', type: 'danger' }
+  if (state === 'PARTIAL') return { text: '⚠ 配额未覆盖 requests', type: 'warning' }
+  return null
 }
 </script>
 
@@ -489,36 +500,44 @@ function usageSortKey(row: K8sNamespaceResourceStat, usedMap: Record<string, num
                 <el-input v-model="nsKeyword" placeholder="按命名空间搜索…" clearable :prefix-icon="Search" class="search-input" size="small" />
               </div>
               <el-table :data="filteredBreakdown" stripe max-height="460">
-                <el-table-column label="命名空间" width="350" sortable :sort-method="(a: K8sNamespaceResourceStat, b: K8sNamespaceResourceStat) => a.namespace.localeCompare(b.namespace)">
+                <el-table-column label="命名空间" width="350" sortable :sort-method="(a: K8sNamespaceStatEntry, b: K8sNamespaceStatEntry) => a.snapshot.stat.namespace.localeCompare(b.snapshot.stat.namespace)">
                   <template #default="{ row }">
-                    <code class="res-name name-link" @click="goNamespace(row.namespace)">{{ row.namespace }}</code>
+                    <code class="res-name name-link" @click="goNamespace(row.snapshot.stat.namespace)">{{ row.snapshot.stat.namespace }}</code>
                   </template>
                 </el-table-column>
-                <el-table-column prop="podCount" label="Pod" min-width="100" sortable />
-                <el-table-column prop="deployCount" label="Deploy" min-width="100" sortable />
-                <el-table-column prop="stsCount" label="Sts" min-width="100" sortable />
-                <el-table-column prop="dsCount" label="Ds" min-width="100" sortable />
-                <el-table-column prop="svcCount" label="Svc" min-width="100" sortable />
+                <el-table-column prop="snapshot.stat.podCount" label="Pod" min-width="100" sortable />
+                <el-table-column prop="snapshot.stat.deployCount" label="Deploy" min-width="100" sortable />
+                <el-table-column prop="snapshot.stat.stsCount" label="Sts" min-width="100" sortable />
+                <el-table-column prop="snapshot.stat.dsCount" label="Ds" min-width="100" sortable />
+                <el-table-column prop="snapshot.stat.svcCount" label="Svc" min-width="100" sortable />
                 <el-table-column
                   label="内存用量"
                   min-width="170"
                   sortable
-                  :sort-method="(a: K8sNamespaceResourceStat, b: K8sNamespaceResourceStat) => usageSortKey(a, usedByNsMem) - usageSortKey(b, usedByNsMem)"
+                  :sort-method="(a: K8sNamespaceStatEntry, b: K8sNamespaceStatEntry) => usageSortKey(a, usedByNsMem) - usageSortKey(b, usedByNsMem)"
                 >
                   <template #default="{ row }">
-                    <span class="mono">{{ fmtMem(usedByNsMem[row.namespace]) }}</span>
+                    <span class="mono">{{ fmtMem(usedByNsMem[row.snapshot.stat.namespace]) }}</span>
                   </template>
                 </el-table-column>
                 <el-table-column label="配额 CPU（used / hard）" min-width="200">
                   <template #default="{ row }">
-                    <span v-if="row.quotaCpuHard == null && row.quotaCpuUsed == null" class="muted">—</span>
-                    <span v-else class="mono">{{ fmtCpu(row.quotaCpuUsed) }} / {{ fmtCpu(row.quotaCpuHard) }}</span>
+                    <span v-if="row.snapshot.stat.quotaCpuHard == null && row.snapshot.stat.quotaCpuUsed == null" class="muted">—</span>
+                    <span v-else class="mono">{{ fmtCpu(row.snapshot.stat.quotaCpuUsed) }} / {{ fmtCpu(row.snapshot.stat.quotaCpuHard) }}</span>
                   </template>
                 </el-table-column>
                 <el-table-column label="配额内存（used / hard）" min-width="200">
                   <template #default="{ row }">
-                    <span v-if="row.quotaMemHard == null && row.quotaMemUsed == null" class="muted">—</span>
-                    <span v-else class="mono">{{ fmtMem(row.quotaMemUsed) }} / {{ fmtMem(row.quotaMemHard) }}</span>
+                    <span v-if="row.snapshot.stat.quotaMemHard == null && row.snapshot.stat.quotaMemUsed == null" class="muted">—</span>
+                    <span v-else class="mono">{{ fmtMem(row.snapshot.stat.quotaMemUsed) }} / {{ fmtMem(row.snapshot.stat.quotaMemHard) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="配额状态" min-width="180">
+                  <template #default="{ row }">
+                    <!-- OK 不显示（只标异常两档）；判定读后端 row.quotaState，前端不自行按 hard 是否为空判定 -->
+                    <el-tag v-if="quotaBadge(row.quotaState)" size="small" :type="quotaBadge(row.quotaState)!.type">
+                      {{ quotaBadge(row.quotaState)!.text }}
+                    </el-tag>
                   </template>
                 </el-table-column>
               </el-table>
@@ -526,6 +545,7 @@ function usageSortKey(row: K8sNamespaceResourceStat, usedMap: Record<string, num
                 内存用量列来自 Thanos（cAdvisor <code>container_memory_working_set_bytes</code>，<code>sum by (namespace)</code> 的最近采样点）= <b>实际运行用量</b>，无指标时显示「—」。
                 <b>CPU 有意不给点值</b>：尖峰型指标，单点没有代表性（实时形状看「资源用量」tab 的曲线）。
                 配额列来自该命名空间的 ResourceQuota：占用 = 按 <b>requests</b> 记账的配额消耗，上限 = <code>spec.hard</code>；没有配额（或配额只限 <code>limits.*</code> / <code>pods</code>）时显示「—」。
+                「配额状态」列读后端三档判定（OK 不显示 / ⚠ 无配额 / ⚠ 配额未覆盖 requests），与租户概览面板同一套措辞。
               </div>
             </section>
           </template>
