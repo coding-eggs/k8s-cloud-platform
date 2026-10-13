@@ -248,6 +248,9 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
 - **tenant-admin / tenant-member 有意不给**：审计是平台管理面，无对应租户页面。
 - ⚠️ **部署顺序：先重放本迁移，再起新构建。** `PermissionCrossCheckRunner` 是 fail-closed ——
   无权限行的新端点会让 platform-api **拒绝启动**。
+- ⚠️ **本仓没有引入 Flyway**（任何 pom 无依赖、无配置）——`db/migration/V*.sql` **不会由应用自动执行**，
+  一直是由人**手工重放**的（既有 memory 里「先重放 `V2026_10_12_1` 再起构建」即此意）。
+  所以启动日志里**不会**有 "Migrating schema"；别把它当作重放成功的判据，要直接查库确认。
 - ⚠️ 重放后需等权限缓存 TTL（30s）或重新登录（token 里已无权限码，闭包在请求期现算）。
 
 ---
@@ -310,7 +313,7 @@ admin 用 base token 代租户操作时，token 的租户帽是 NULL、参数里
 ## 10. 部署与回滚
 
 **部署顺序**
-1. 重放 `V2026_10_13_1__audit_log.sql`（建表 + 4 条权限行 + admin 角色关联）
+1. 重放 `V2026_10_13_1__audit_log.sql`（建表 + 3 条权限行 + admin 角色关联）—— **手工执行，本仓无 Flyway**
 2. 起新构建（platform-api；`spring-boot-starter-aop` 随之生效）
 3. 等权限缓存 TTL（30s）或重新登录
 

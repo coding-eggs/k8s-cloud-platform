@@ -1534,4 +1534,48 @@ export interface MeshStatus {
   gatewayApiVersions: string[]
 }
 
+/**
+ * 审计日志行（S0.1）。没有单条详情端点：列表即返回全部字段，详情为行展开。
+ */
+export interface AuditLog {
+  id: number
+  occurredAt: string
+  actorUsername: string
+  actorDisplayName?: string | null
+  tenantId?: string | null
+  clusterId?: string | null
+  namespace?: string | null
+  /** 写操作 = 动作码（<resource>:<verb>）；DENIED = 被拒的权限码 */
+  action?: string | null
+  targetName?: string | null
+  result: 'SUCCESS' | 'FAILED' | 'DENIED'
+  errorCode?: string | null
+  errorMsg?: string | null
+  /** 仅 DENIED 有值 */
+  httpMethod?: string | null
+  /** 仅 DENIED 有值 */
+  requestPath?: string | null
+  clientIp?: string | null
+  userAgent?: string | null
+  /** 仅写操作有值 */
+  durationMs?: number | null
+}
+
+/**
+ * 审计列表查询：筛选 + 游标分页（游标 = 上一页最后一条的 occurredAt + id）。
+ */
+export interface AuditQuery {
+  from?: string | null
+  to?: string | null
+  actorUsername?: string | null
+  clusterId?: string | null
+  namespace?: string | null
+  result?: string | null
+  action?: string | null
+  cursorOccurredAt?: string | null
+  cursorId?: number | null
+  limit?: number
+}
+
+
 

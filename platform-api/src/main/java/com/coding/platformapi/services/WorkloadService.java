@@ -10,6 +10,8 @@ import com.coding.common.models.k8s.dto.ServicePortDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.common.models.k8s.dto.WorkloadRevisionDTO;
+import com.coding.platformapi.audit.Auditable;
+import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sWorkloadClient;
 import com.coding.platformapi.models.WorkloadImageRequest;
@@ -83,6 +85,7 @@ public class WorkloadService {
     }
 
     /**回滚到指定版本，纯透传（版本是否存在由 k8s-server 判，它才看得到集群里的历史） */
+    @Auditable(action = AuditAction.WORKLOAD_ROLLBACK)
     public WorkloadDTO rollback(String name, WorkloadRollbackRequest req) {
         if (req.getRevision() == null) {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "必须指定要回滚到的版本号");
@@ -96,6 +99,7 @@ public class WorkloadService {
     }
 
     /**删除（跨 kind 查找）：无业务规则，纯组装 DTO 后透传 */
+    @Auditable(action = AuditAction.WORKLOAD_DELETE)
     public void delete(String name, String tenantId, String clusterId, String namespace) {
         k8s.delete(dto(name, tenantId, clusterId, namespace));
     }

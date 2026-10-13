@@ -50,6 +50,12 @@
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
 
+        <!-- S0.1 审计日志：@Auditable + AuditAspect 需要 Spring AOP -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
         <!-- 业务/DB 模块；K8s 侧动作全部经 k8s-server HTTP（/admin/**），本服务不依赖 k8s-core/fabric8 -->
         <dependency>
             <groupId>com.coding</groupId>

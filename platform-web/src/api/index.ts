@@ -1,5 +1,7 @@
 import http from './http'
 import type {
+  AuditLog,
+  AuditQuery,
   BgpConfiguration,
   BgpFilter,
   BgpPeer,
@@ -603,4 +605,14 @@ export const calicoApi = {
     blockIps: (clusterId: string, cidr: string) =>
       http.get<never, IpamIpDetail[]>('/calico/ipam/block-ips', { params: { clusterId, cidr } }),
   },
+}
+
+/**
+ * 审计日志（S0.1，平台管理面）。
+ * list 用游标分页：审计表持续追加，offset 翻页会漏读/重读。
+ * purge 闭开区间 [from, to)，返回实际删除行数。
+ */
+export const auditApi = {
+  list: (q: AuditQuery) => http.post<never, AuditLog[]>('/audit/list', q),
+  purge: (from: string, to: string) => http.post<never, number>('/audit/purge', { from, to }),
 }
