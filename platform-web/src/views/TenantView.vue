@@ -244,7 +244,7 @@ onMounted(load)
     </el-dialog>
 
     <!-- 租户详情抽屉：命名空间分配 / 成员与角色（TenantDetailPanel 复用，代管轨传 delegate） -->
-    <el-drawer v-model="drawerVisible" :title="`租户详情 · ${currentTenant?.name ?? ''}`" size="760px">
+    <el-drawer v-model="drawerVisible" :title="`租户详情 · ${currentTenant?.name ?? ''}`" size="1040px">
       <TenantDetailPanel
         v-if="currentTenant"
         :tenant-id="currentTenant.id"

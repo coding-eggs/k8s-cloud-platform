@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 租户详情面板（Task 20）：命名空间分配 + 成员与角色 两个 tab。
+ * 租户详情面板（Task 20）：概览 + 命名空间分配 + 成员与角色 三个 tab。
  * 复用于两处（组件复用，靠 props + 权限位区分能力面）：
  *   1. TenantView（/tenants，代管轨）：admin 从列表选租户，drawer 内使用，delegate=true；
  *   2. /tenants/detail（自管轨，Task 18 裁定）：tenantId 强制取当前租户上下文，delegate=false。
@@ -24,6 +24,7 @@ import { clusterApi, platformUserApi, roleApi, templateApi, tenantApi } from '@/
 import type { K8sCluster, NamespaceAllocation, PlatformRole, PlatformUser, RbacTemplate, TenantMemberView } from '@/types'
 import { fmtDate } from '@/utils/format'
 import AllocateNamespaceDialog from '@/components/AllocateNamespaceDialog.vue'
+import TenantOverviewPanel from '@/components/tenant/TenantOverviewPanel.vue'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 
@@ -35,7 +36,7 @@ const props = defineProps<{
 }>()
 
 const perm = usePermission()
-const activeTab = ref('ns')
+const activeTab = ref('overview')
 
 const can = (c: string) => perm.has(c)
 const canManageMembers = computed(() =>
@@ -258,6 +259,11 @@ watch(activeTab, (t) => {
 <template>
   <div class="panel px-2.5">
     <el-tabs v-model="activeTab">
+      <!-- 概览（首个 tab，lazy）：进面板即拉快照/明细/曲线；tenantId 变化自动重拉 -->
+      <el-tab-pane label="概览" name="overview" lazy>
+        <TenantOverviewPanel :tenant-id="tenantId" />
+      </el-tab-pane>
+
       <el-tab-pane label="命名空间分配" name="ns">
         <div class="toolbar">
           <el-button v-if="can('platform:allocation:manage')" type="primary" @click="allocDialogVisible = true">
