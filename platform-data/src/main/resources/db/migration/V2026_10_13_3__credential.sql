@@ -66,13 +66,18 @@ INSERT INTO platform_permission (id, domain, resource, action, code, description
 ON DUPLICATE KEY UPDATE description=VALUES(description), resource=VALUES(resource), action=VALUES(action);
 
 -- ===== 角色关联：admin 全给（显式 id 列表） =====
+-- ⚠️ 这里的 permission_id 必须与上面 platform_permission 的 id **逐字一致**。
+-- 本仓**不加外键**，写错了不会报任何错，只会留下一条**悬空关联**（指向不存在的权限），
+-- 症状是「码在库里、角色却没有它」→ 菜单不显示、路由守卫跳回总览，且日志里一片安静。
+-- 已踩过一次：`perm_page_credential`（Page 行）曾被误写成 `perm_credential_page`。
+-- 重放后的验收必须做 **join 对账**，不能只数行数。
 INSERT INTO platform_role_permission (id, role_id, permission_id) VALUES
  ('rp_admin_credential_list',   'builtin_role_admin','perm_credential_list'),
  ('rp_admin_credential_test',   'builtin_role_admin','perm_credential_test'),
  ('rp_admin_credential_create', 'builtin_role_admin','perm_credential_create'),
  ('rp_admin_credential_update', 'builtin_role_admin','perm_credential_update'),
  ('rp_admin_credential_delete', 'builtin_role_admin','perm_credential_delete'),
- ('rp_admin_credential_page',   'builtin_role_admin','perm_credential_page')
+ ('rp_admin_credential_page',   'builtin_role_admin','perm_page_credential')
 ON DUPLICATE KEY UPDATE permission_id=VALUES(permission_id);
 
 -- tenant-admin / tenant-member 有意不给：纯平台级凭据，无租户对应页面。
