@@ -83,6 +83,23 @@ public final class AuditAction {
     /** K8s 侧重新开通（幂等重试） */
     public static final String CLUSTER_PROVISION = "cluster:provision";
 
+    // ---- 凭据（S0.2，4 个写端点全量）----
+
+    public static final String CREDENTIAL_CREATE = "credential:create";
+
+    public static final String CREDENTIAL_UPDATE = "credential:update";
+
+    /** 硬删除。审计里不记 endpoint 与凭据内容 —— 见 spec §7.1 */
+    public static final String CREDENTIAL_DELETE = "credential:delete";
+
+    /**
+     * 测试连接。这是 S0.2 里**唯一的「使用」路径** —— 它真的解密凭据并出站打对端。
+     *
+     * <p>CI 触发、镜像拉取等其它使用动作的审计归各自的批次（S3.5 / S3.1），
+     * 因为那些动作发生在它们自己的端点里。
+     */
+    public static final String CREDENTIAL_TEST = "credential:test";
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *
