@@ -128,11 +128,6 @@ public class AuditService {
     }
 
     /**
-     * 动作码候选值：审计表里**实际出现过**的码，按出现频次倒序 —— 供筛选 autocomplete。
-     *
-     * <p>不从一份写死的码表来：那会与 {@code AuditAction} 漂移，而且"哪些码还在用"只有数据知道。
-     */
-    /**
      * 动作码候选值 = {@code AuditAction} 的全部动作码 ∪ API 域权限码，供筛选 autocomplete。
      *
      * <p>顺序：动作码在前（筛选的主目标），权限码在后；各组内部字母序 —— 空查询时的顺序可预期。

@@ -47,8 +47,9 @@ public class AuditController {
     }
 
     @Operation(summary = "动作码候选值",
-            description = "distinct 自平台审计表（实际出现过的码，含 DENIED 记录的权限码），按出现频次倒序；"
-                    + "供筛选 autocomplete。不从写死的码表来 —— 那会与 AuditAction 漂移。")
+            description = "可能值全集 = AuditAction 常量（动作码）∪ API 域权限码（DENIED 记录的 action 存的是权限码）；"
+                    + "动作码在前、各组内部字母序。取全集而非审计表里的观测值 —— 观测值在新装/刚上线时几乎是空的，"
+                    + "下拉会只剩一两条，筛选就用不了。")
     @PostMapping("/actions")
     public ResponseData<List<String>> actions() {
         return new ResponseData<>(auditService.listActions());
