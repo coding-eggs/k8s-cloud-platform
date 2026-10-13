@@ -591,11 +591,19 @@ class CredentialCipherTest {
     }
 
     @Test
-    void decryptWithWrongKeyFails() {
-        String stored = cipher.encrypt("{\"secret\":\"x\"}");
+    void decryptWithWrongKeyNeverYieldsThePlaintext() {
+        String plain = "{\"secret\":\"x\"}";
+        String stored = cipher.encrypt(plain);
+        CredentialCipher other = new CredentialCipher("a-totally-different-master-key");
 
-        assertThatThrownBy(() -> new CredentialCipher("a-totally-different-master-key").decrypt(stored))
-                .isInstanceOf(CloudPlatformException.class);
+        // 不能写成 assertThatThrownBy：AES-CBC + PKCS5 下，错密钥解出的填充**有约 1/256 的概率碰巧合法**，
+        // 那时 decrypt 会返回垃圾而不抛 —— 断言「必抛」就是一条约 0.4% 概率假红的 flaky 测试。
+        // 真正要钉的不变量是「错密钥绝不静默地解出原文」，这条对两种分支都成立、且完全确定。
+        try {
+            assertThat(other.decrypt(stored)).isNotEqualTo(plain);
+        } catch (CloudPlatformException expected) {
+            // 常见分支：填充校验失败 → 转成业务码。这里吞掉是**刻意的**，见上面的注释。
+        }
     }
 
     @Test

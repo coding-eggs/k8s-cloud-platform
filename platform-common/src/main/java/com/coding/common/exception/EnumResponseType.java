@@ -55,6 +55,8 @@ public enum EnumResponseType {
     LIMIT_RANGE_TYPE_UNSUPPORTED(10029, "限制范围类型仅支持 Container / PersistentVolumeClaim"),
     LIMIT_RANGE_VALUE_INVALID(10030, "限制范围取值非法：max 不得小于 min，defaultRequest 不得大于 default，maxLimitRequestRatio 不得小于 1"),
     PERMISSION_ENDPOINT_UNCOVERED(10031, "操作会使端点失去权限覆盖"),
+    CREDENTIAL_KEY_MISSING(10032, "凭据加密主密钥未配置"),
+    CREDENTIAL_CIPHERTEXT_INVALID(10033, "凭据密文格式无法识别"),
 
     ERROR(5000,"服务端异常"),
 
