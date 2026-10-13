@@ -5,6 +5,7 @@ import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.platformapi.security.PermissionAuthorizationManager;
+import com.coding.platformapi.services.AuditService;
 import com.nimbusds.jose.*;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.proc.*;
@@ -57,6 +58,7 @@ public class ResourceServerConfig {
 	SecurityFilterChain securityFilterChain(HttpSecurity http, Properties properties,
 										   PermissionAuthorizationManager authorizationManager,
 										   JwtPermissionResolver permissionResolver,
+										   AuditService auditService,
 										   @Value("${jwt.data-key:data}") String dataKey) {
 
 		http
@@ -72,8 +74,12 @@ public class ResourceServerConfig {
 				.exceptionHandling(ex -> ex
 						.authenticationEntryPoint((request, response, authException) ->
 								writeAuthJson(response, 401, EnumResponseType.USER_UN_LOGIN))
-						.accessDeniedHandler((request, response, accessDeniedException) ->
-								writeAuthJson(response, 403, EnumResponseType.NON_AUTH_ENTRY_POINT)))
+						.accessDeniedHandler((request, response, accessDeniedException) -> {
+							// S0.1 审计：403 = 已认证但无权。recordDenied 内部 fail-open，
+							// 它绝不能抛 —— 否则 403 会变成 500（spec §5.4）。
+							auditService.recordDenied(request);
+							writeAuthJson(response, 403, EnumResponseType.NON_AUTH_ENTRY_POINT);
+						}))
 				.oauth2ResourceServer(ors -> {
 					//WS 握手无法带 Authorization 头，允许 token 走 query（access_token）
 					ors.bearerTokenResolver(new QueryParameterBearerTokenResolver());

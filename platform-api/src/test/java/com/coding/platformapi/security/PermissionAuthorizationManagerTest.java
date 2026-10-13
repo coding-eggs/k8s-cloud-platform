@@ -1,5 +1,6 @@
 package com.coding.platformapi.security;
 
+import com.coding.platformapi.audit.AuditDenied;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -126,5 +127,51 @@ class PermissionAuthorizationManagerTest {
         AuthorizationResult d = mgr.authorize(() -> auth("PERM:tenant:workload:list"),
                 ctx("GET", "/context"));
         assertThat(d.isGranted()).isTrue();
+    }
+
+    // ---- S0.1 审计：403 时把被判的权限码写进 request attribute，供 accessDeniedHandler 落审计 ----
+
+    @Test
+    void deny_marks_request_with_required_codes() {
+        PermissionRegistry reg = mock(PermissionRegistry.class);
+        when(reg.requiredCodes("POST", "/tenant/create"))
+                .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
+        var mgr = new PermissionAuthorizationManager(reg);
+
+        // 持有别的码 → 命中权限行但没有一个匹配 → 拒绝
+        RequestAuthorizationContext c = ctx("POST", "/tenant/create");
+        AuthorizationResult d = mgr.authorize(() -> auth("PERM:tenant:overview:view"), c);
+
+        assertThat(d.isGranted()).isFalse();
+        assertThat(AuditDenied.codesOf(c.getRequest())).isEqualTo("platform:tenant:provision");
+    }
+
+    @Test
+    void allow_does_not_mark_request() {
+        PermissionRegistry reg = mock(PermissionRegistry.class);
+        when(reg.requiredCodes("POST", "/tenant/create"))
+                .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
+        var mgr = new PermissionAuthorizationManager(reg);
+
+        RequestAuthorizationContext c = ctx("POST", "/tenant/create");
+        AuthorizationResult d = mgr.authorize(() -> auth("PERM:platform:tenant:provision"), c);
+
+        assertThat(d.isGranted()).isTrue();
+        assertThat(AuditDenied.codesOf(c.getRequest())).isNull();
+    }
+
+    @Test
+    void anonymous_does_not_mark_request() {
+        // 未认证走的是 401 那条路（authenticationEntryPoint），有意不记；这里确认它不留下权限码标记
+        PermissionRegistry reg = mock(PermissionRegistry.class);
+        when(reg.requiredCodes("POST", "/tenant/create"))
+                .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
+        var mgr = new PermissionAuthorizationManager(reg);
+
+        RequestAuthorizationContext c = ctx("POST", "/tenant/create");
+        AuthorizationResult d = mgr.authorize(() -> null, c);
+
+        assertThat(d.isGranted()).isFalse();
+        assertThat(AuditDenied.codesOf(c.getRequest())).isNull();
     }
 }

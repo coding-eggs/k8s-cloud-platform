@@ -1,6 +1,7 @@
 package com.coding.platformapi.security;
 
 import com.coding.common.components.jwt.PermissionAuthorityNames;
+import com.coding.platformapi.audit.AuditDenied;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;
@@ -50,6 +51,11 @@ public class PermissionAuthorizationManager implements AuthorizationManager<Requ
                     return new AuthorizationDecision(true);
                 }
             }
+            // 审计：AccessDeniedException 不带权限码，这里把被判的码放进请求，
+            // 由 ResourceServerConfig 的 accessDeniedHandler 读出来落一条 DENIED 记录（S0.1 spec §2）。
+            // 另外两条拒绝路径都不标记：未认证（上面匿名分支）走 401 有意不记；
+            // 「无权限行且不豁免」按 §5.3 的启动期交叉校验本不该发生，没有码可记。
+            AuditDenied.mark(ctx.getRequest(), required);
             return new AuthorizationDecision(false);
         }
         if (ExemptPaths.isExempt(path)) {
