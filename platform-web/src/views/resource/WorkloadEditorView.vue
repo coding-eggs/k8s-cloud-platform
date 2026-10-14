@@ -17,6 +17,7 @@ import type {
   WorkloadKind,
 } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
+import { useImageSuggest } from '@/composables/useImageSuggest'
 import type { K8sIpReservation } from '@/types'
 import { useNodeCatalog } from '@/stores/nodeCatalog'
 import { usePermission } from '@/stores/permission'
@@ -53,6 +54,9 @@ import type { K8sGateway, WaypointRef } from '@/types'
 const route = useRoute()
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+
+/** 主容器镜像的候选补全（与「更新镜像」弹窗、容器编辑器同一个 composable）。 */
+const { fetchImageSuggestions } = useImageSuggest()
 
 /** 节点目录：调度策略里 nodeName / nodeSelector / 亲和的下拉数据源（按当前集群拉取，切换集群自动刷新） */
 const nodeCatalog = useNodeCatalog()
@@ -822,7 +826,17 @@ const contextDesc = computed(() => {
 
                     <el-form-item required>
                       <template #label>镜像 <FieldHelp tip="主容器运行的容器镜像，如 nginx:1.27。" /></template>
-                      <el-input v-model="pImage" placeholder="如 nginx:1.27" style="width: 360px" />
+                      <el-autocomplete v-model="pImage" :fetch-suggestions="fetchImageSuggestions"
+                                       placeholder="如 nginx:1.27" style="width: 360px">
+                        <!-- 候选项由 el-autocomplete 自己渲染（按 index 建 key），
+                             这里只把 value 与来源连接名摆出来 -->
+                        <template #default="{ item }">
+                          <div class="suggest-row">
+                            <span class="suggest-value">{{ item.value }}</span>
+                            <span class="suggest-source">{{ item.connectionName }}</span>
+                          </div>
+                        </template>
+                      </el-autocomplete>
                     </el-form-item>
                     <el-form-item>
                       <template #label>拉取策略 <FieldHelp tip="imagePullPolicy：Always=每次拉取 / IfNotPresent=本地有则用 / Never=仅本地。留空由 K8s 按 tag 决定。" /></template>
@@ -1279,5 +1293,29 @@ const contextDesc = computed(() => {
   text-align: center;
   font-size: 13px;
   color: var(--text-3);
+}
+
+/* 镜像补全下拉：左侧完整镜像串（长了省略号截断），右侧来源连接名。
+   这些元素写在 el-autocomplete 的 #default 插槽里 —— 插槽内容在**本组件**作用域编译、
+   带着本组件的 data-v-*，所以即使下拉被 teleport 到 body 也命中，不需要 :deep()。 */
+.suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.suggest-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-source {
+  flex: none;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 </style>
