@@ -1,0 +1,378 @@
+# CI（Tekton）设计 —— 第 ① 片：定义 · 运行 · 日志
+
+> 任务台账 **S3.5**（前置 S0.2 已完成）。需求依据见 `docs/gap-analysis-2026-10-12.md` §7.4。
+> 调研结论（fabric8 tekton-client / 部署方案 / 日志复用）见台账 S3.5 条目的 2026-10-14 补记。
+
+**目标**：让租户在平台里**连出一条自由的 DAG 流水线**，**手动触发**它跑在自己的命名空间里，
+跑完能看到每一步的状态与日志。典型：`git 克隆 → 构建 → 打镜像并推送`。
+
+---
+
+## 0. 本批在 S3.5 里的位置
+
+S3.5 在台账里是 **XL / 13 个子任务** —— 一批 spec + 一个实施计划装不下。拆成三片，各自 spec → 计划 → 执行：
+
+| 片 | 内容 | 为什么切在这 |
+|---|---|---|
+| **① 定义 · 运行 · 日志**（本文件） | 三个内置节点 + 画布 + 渲染器 + 隐式 workspace + 手动触发 + 运行历史/日志 + 权限 + 凭据 | **单独就能用**：能连、能跑、能看日志 |
+| ② 条件与收尾 | 条件分支 `when` 三段式 + 跳过传播可视化 + `finally` | 在已有画布上加一个维度 |
+| ③ 自定义节点 + 运行时参数 | 自定义节点（级联删除）+ 运行表单（运行时参数 vs 固定配置）+ 并发策略 | 要求 ① 的节点 schema 已稳定；顺序反了会返工 |
+
+---
+
+## 已定决策（brainstorming 结论，2026-10-14/15）
+
+| 决策点 | 结论 | 理由 |
+|---|---|---|
+| **节点怎么实现** | **一个内置节点 = 一个类**，类里同时给 `formSchema()` 与 `render()` | 表单由 schema 驱动（加字段不用写 Vue）；「字段 → taskSpec」用 Java 写（不发明 DSL）。加节点 = 加一个类 |
+| **语言差异放哪** | **预设（数据），且只是默认值** | 用户原话：「预设节点只是预设，用户组建流水线的时候可以更改，如镜像、命令等」。所以没有预设的语言改两个字段就能用，**平台不用加代码** |
+| **节点有几个** | **三个**（git 克隆 / 命令 / 构建并推镜像） | 台账原话：「内置节点（git/build/test/image/push，**其实质是 task，由用户填写具体配置**）」—— build 与 test 既然是同一个形状，就合并成一个「命令」节点，跑测试只是它的一个预设 |
+| **镜像怎么构建** | **每个 Pod 带一个 Buildah** | 共享构建服务会**跨租户串味**（缓存、凭据、逃逸面）。per-Pod 隔离最好；除 Tekton 外不用装别的东西 |
+| **部署节点** | **不做** | 通用部署节点会让**构建 Pod 拿到集群写权限** —— 与「构建 Pod 能跑任意代码」叠加后，能定义流水线就等于能改集群 |
+| **流水线归属** | **命名空间级** | 跟 Deployment / Service 一样。权限、配额、级联清理与现有资源模型一致，「跑在哪个命名空间」这个问题直接消失 |
+| **流水线对象** | **不在集群里留 `Pipeline` 对象**，每次运行把画布渲染成 `PipelineSpec` **内联进 `PipelineRun`** | 见 §3.2 —— 零漂移、历史运行天然带当时那一版、命名空间里少一类要清理的对象 |
+| **隐式 workspace** | **PVC**（`volumeClaimTemplate`），平台注入，用户无感 | Tekton 里 `emptyDir` workspace **不跨 TaskRun 共享**，而我们要的正是「git 克隆的源码给下游所有节点用」 |
+| **拉取凭据** | **不做 imagePullSecret**，但流水线上给「Pod 拉取凭据」设置 | 用户裁定。⚠️ 后果写进 §10 |
+| **git 凭据** | **平台连接逐条显式授权**（新列，默认关） | 台账 S3.5.12 的安全边界；S0.2 特意留着「租户侧没有凭据码」，CI 正面撞上了它 |
+| **构建 Pod 的权限** | **零集群写权限** | 它只往 registry 推镜像；集群里的写入全由平台侧（有权限控制与审计）做 |
+| **运行历史** | **不落库**，直接读集群里的 `PipelineRun` | 与「画布 JSON 是唯一真相源」同一条判断：多存一份就要同步、就会有漂移 |
+
+---
+
+## 1. 交付边界
+
+**做**：三个内置节点 + 节点 schema 与语言预设 + 画布（自由连线、环检测、并发语义提示）+ 渲染器 +
+隐式共享 workspace + 手动触发与取消 + 运行历史与日志 + 权限（5 个码）+ git 连接逐条授权 +
+推送凭据 + capability 门控 + 审计。
+
+**不做**：条件分支与 `finally`（片②）· 自定义节点 · 运行时参数 vs 固定配置分离 · 流水线级并发策略 ·
+部署节点 · 触发器 / Webhook / 定时 · 平台级流水线模板 · 运行历史的保留策略（靠 Tekton 侧）·
+`imagePullSecret`（用户自理）。
+
+---
+
+## 2. 节点模型
+
+### 2.1 接口
+
+```java
+public interface PipelineNode {
+
+    /** 节点的 type 标识，如 "git" / "shell" / "image"。 */
+    String type();
+
+    /**
+     * 表单 schema。**前端据此渲染节点属性面板** —— 加一个字段不用写一行 Vue。
+     * 同时供渲染器做校验（必填、类型）。
+     */
+    NodeSchema formSchema();
+
+    /**
+     * 把节点上填的值合成 Tekton 的 {@code TaskSpec}。
+     * **纯函数**：入参是节点配置 + 上下文（workspace 名、节点名…），无 IO，可单测。
+     */
+    TaskSpec render(NodeContext ctx);
+}
+```
+
+`NodeSchema` 是一串字段描述：`{key, label, type(TEXT|TEXTAREA|SELECT|IMAGE), required, placeholder, help, defaultValue, options?}`。
+
+⚠️ **`IMAGE` 类型**：前端的镜像输入框要挂 **S3.1 的候选补全**（`useImageSuggest`）——
+「不用背镜像名」正是 S3.1 存在的理由，在这里兑现。
+
+### 2.2 三个内置节点
+
+| 节点 | 特殊在哪 | 主要字段 |
+|---|---|---|
+| **git 克隆** | **真特殊**：引用一条**被授权**的平台 git 连接、注入凭据、把源码写进共享 workspace | 连接（下拉）· 仓库地址 · 分支 / commit · 目标目录（默认 = workspace 根） |
+| **命令** | 通用，**所有字段都可改** | **预设**（下拉）· 镜像（`IMAGE` 类型，**带 S3.1 的候选补全**）· 命令 · 工作目录（默认 `.`） |
+| **构建并推送镜像** | **真特殊**：Buildah、推送凭据、产出 digest | 目标仓库（**引用一条被授权的 registry 连接**，决定 endpoint 与推送凭据）· 仓库路径（如 `proj/app`）· tag 来源（**三选一**：`git 短 sha` / `本次运行序号` / 自定义固定值）· Dockerfile 路径 · 构建上下文 |
+
+⚠️ **镜像地址不用模板语法**。目标镜像 = `<被授权连接的 endpoint>/<仓库路径>:<tag>`，
+`tag` 由**一个下拉三选一**决定 —— 不发明 `${...}` 那套小 DSL（本仓没有这个习惯，出错面也大）。
+
+### 2.3 语言预设是**数据**，且**只是默认值**
+
+```java
+public record BuildPreset(String key, String label,
+                          String image, String command, String workDir) { }
+```
+
+**扁平的一份列表**（不是"语言 × 动作"两段式 —— 那会让字段随选择变化，而我们要的正是"字段固定、只换默认值"）：
+
+| 预设 | 镜像 | 命令 |
+|---|---|---|
+| `java-build` | `maven:3.9-eclipse-temurin-21` | `mvn -B -DskipTests package` |
+| `java-test` | `maven:3.9-eclipse-temurin-21` | `mvn -B test` |
+| `go-build` | `golang:1.22` | `go build ./...` |
+| `go-test` | `golang:1.22` | `go test ./...` |
+| `node-build` | `node:20` | `npm ci && npm run build` |
+| `node-test` | `node:20` | `npm test` |
+| `custom` | 空 | 空 |
+
+`workDir` 默认 `.`（相对共享 workspace 根目录）。
+
+⚠️ **预设只预填默认值，不锁死任何字段**（用户明确要求）。所以：
+
+- 没有预设的语言（Rust / PHP / Scala…）→ 选 `custom` 或任意预设、改掉镜像与命令即可，**零代码改动**
+- 「加一种语言」= 加**一行**预设 = **加一份便利默认值**，不是加一份能力
+- **字段集合不随预设切换** —— 选预设只换默认值。表单因此**不需要动态字段**，加语言也真的是纯数据
+
+**「跳过测试」= 不连那个测试节点** —— 自由 DAG 天然支持，不做开关。
+
+### 2.4 护栏测试
+
+一条测试遍历所有注册的 `PipelineNode`，断言：
+
+1. `type()` 唯一且非空
+2. `formSchema()` 非空、字段 key 不重复
+3. `render()` 对**最小合法配置**能产出一个非空 `TaskSpec` 且不抛
+
+—— 与 S3.1 那条「每个 `TYPES` 值都有 dialect 实现」同形：**忘了实现立刻红**。
+
+---
+
+## 3. 渲染器
+
+### 3.1 纯函数
+
+```
+画布 JSON（节点 + 连线） + 节点 schema  →  Tekton PipelineSpec
+```
+
+无 IO、可单测。与本仓既有的做法一致（`CredentialProbe`、`HarborDialect` 的纯函数、`RegistryTargetResolver`）。
+
+**连线语义**：
+
+- **有向无环**；检测到环 → 保存时拒绝（前端也实时提示）
+- **入度为 0 的节点 = 起点**（Tekton 里就是没写 `runAfter` 的 task）
+- **没连线的两个节点 = 并发** —— 这是 Tekton 的默认语义，UI 要**显式提示**，否则用户以为"没连上"是错的
+- 连线 → `runAfter`
+
+### 3.2 **不在集群里留 `Pipeline` 对象**
+
+每次运行即时把画布渲染成 `PipelineSpec`，**直接内联进 `PipelineRun.spec.pipelineSpec`**。
+
+三个好处：
+
+1. **零漂移** —— 集群里没有一份可以被别人改、也可以被 `kubectl delete` 的副本。
+   S3.2 台账里专门列了「漂移处理」要设计，这条路绕开了它。
+2. **历史运行天然带当时那一版** —— 每个 `PipelineRun` 自己携带着"跑的时候那张画布长什么样"，
+   **审计与复现免费得到**。这也顺带解决了台账 S3.5.1 说的「版本化」——**不需要另做版本表**。
+3. **命名空间里少一类要清理的对象** —— 流水线删了就删了，没有孤儿 `Pipeline`。
+
+**代价**：`kubectl get pipeline` 看不到东西。接受 —— 平台是真相源，而运行态
+（`PipelineRun` / `TaskRun` / `Pod`）在集群里全都在。
+
+### 3.3 隐式共享 workspace
+
+平台在渲染时把**同一条 workspace 注入到所有节点**，用户不感知。
+
+⚠️ **必须是 PVC**：Tekton 里 `emptyDir` workspace **不跨 TaskRun 共享**（每个 Task 各拿一个空的）。
+
+**用 `volumeClaimTemplate`**（PipelineRun 自建临时 PVC，用完删）：每次运行干净、互不干扰。
+代价是需要一个**能动态供应的 StorageClass**（见 §11）以及每次运行多一次绑定等待。
+
+---
+
+## 4. 运行与日志
+
+### 4.1 触发与取消
+
+- **触发** = 创建 `PipelineRun`（内联 pipelineSpec）→ platform-api → k8s-server（命名空间级）
+- **取消 = patch `spec.status`，不是删对象** —— 删了历史就没了。
+  删除单独作为一个「清理历史」动作。
+  ⚠️ v1 的确切取值要查实（v1beta1 是 `PipelineRunCancelled`），见 §11
+- **平台不装控制器** —— Tekton 自己的 controller 干所有活
+
+### 4.2 观察运行
+
+读 `PipelineRun.status`：`conditions`（Succeeded True/False/Unknown + reason）/ `startTime` /
+`completionTime` / `pipelineResults`，再加上 `childReferences` 对应的 TaskRun 状态，映射到画布上的节点（按节点名）。
+
+### 4.3 日志 —— **几乎白捡**
+
+**`PipelineRun` 不起 Pod，`TaskRun` 才起。** 而 Tekton 的**每个 step 就是 Pod 里的一个容器**。
+
+所以：**直接用现有的 `GET /{podName}/logs?clusterId&namespace&container=…`** ——
+它已经支持选容器、`sinceTime` 增量游标、`tailLines` 回看、剥时间戳前缀。前端**复用 `PodLogDialog`** 的那套逻辑。
+
+**找 Pod 不需要新端点**：Tekton 给 Pod 打了 `tekton.dev/pipelineRun` / `tekton.dev/taskRun` 标签，
+用现有的 Pod 列表按 label 过滤即可（标签名待核实，§11）。
+
+---
+
+## 5. 权限
+
+### 5.1 五个码
+
+| 码 | 域 | 管什么 |
+|---|---|---|
+| `tenant:pipeline:manage` | API | 定义（新建 / 改 / 删） |
+| `tenant:pipeline:run` | API | 触发 + 取消 |
+| `tenant:pipeline:read` | API | 看定义与运行历史（元数据） |
+| `tenant:pipeline:logs` | API | **看运行日志**（单独成码：日志是容器输出，可能含敏感内容） |
+| `tenant:page:pipeline` | Page | 页面可见性 |
+
+⚠️ 必须是 `tenant:` 前缀（`RoleService.assertScopeMatches`：TENANT 角色只能持 `tenant:` 码）。
+
+**角色关联**（我定的，可改）：
+
+| 角色 | 码 |
+|---|---|
+| `builtin_role_tenant_admin` | 全部 5 个 |
+| `builtin_role_tenant_member` | `read` + `logs` + **`run`** |
+| `builtin_role_admin` | 全部 5 个（平台管理员兜底） |
+
+**为什么 member 给 `run`**：`run` 只能跑**别人定义好的**流水线；要往流水线里塞任意命令需要 `manage`。
+所以「能触发」在 member 这一档是安全的 —— 这一条把「构建 Pod 能跑任意代码」的实际风险面收敛到了 `manage` 上。
+
+### 5.2 命名空间边界：零新机制
+
+走既有的「租户 × 集群 × 命名空间」分配表，与 workload / namespace 资源完全一致。
+
+### 5.3 git 连接的**逐条显式授权**（本批新增一列）
+
+S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credential:use` 只绑 admin）。CI 正面撞上了它。
+
+**做法**：`platform_credential` 加一列 `usable_by_pipelines tinyint NOT NULL DEFAULT 0`；
+凭据页加一个开关「允许在流水线里使用」（**默认关**）。
+
+- 只有被标记的 git 连接才出现在流水线 git 节点的连接下拉里
+- 新增一个**窄投影**端点（**不复用 `/credential/list`** —— 那个要 `platform:credential:read`，租户一进就 403），
+  只回 `{id, name, endpoint}` 三个字段，与 S3.1 的 `/registry/connections` 同一形状
+- 管理员在凭据页能看见「谁在用」—— 因为流水线的 git 节点引用的是连接 id
+
+⚠️ **推送凭据**同理但更窄：`构建并推送镜像` 节点引用的 registry 连接**也必须被标记为可用**
+（否则租户能拿平台凭据往任意仓库推）。用**同一列**。
+
+---
+
+## 6. 前端
+
+**画布库：Vue Flow**（备选 LogicFlow）。理由：原生 Vue 3、TS 优先、**自定义节点就是一个 Vue 组件**
+（与「一个节点一个类」的形态天然对齐）、社区与文档体量大。
+
+| 界面 | 内容 |
+|---|---|
+| **流水线列表** | 命名空间级列表（沿用本仓既有列表页形态） |
+| **画布页** | 左：节点面板（拖入）· 中：画布（自由连线、环检测、**并发语义提示**）· 右：属性面板（**由 `formSchema()` 渲染**，零手写） |
+| **运行历史** | 列表：状态 / 触发人 / 耗时 / 起止 |
+| **运行详情** | 按 TaskRun 状态着色的 DAG + 点节点看该 step 的日志（复用 `PodLogDialog`）+ **看渲染出来的 PipelineRun YAML**（复用 `YamlBlock`） |
+
+第 4 条的 YAML 是**排查利器**，也几乎零成本；平台渲染出来的东西用户能看见，
+这同时是对「纯函数渲染器」最好的自证。
+
+---
+
+## 7. 后端分层与端点
+
+**平台侧不碰 fabric8** —— 沿用既有边界：`platform-api` → HTTP → `k8s-server` → fabric8（`tekton-client`）。
+
+| 层 | 落点 |
+|---|---|
+| `k8s-core` | `PipelineRunOperations`（用 `io.fabric8:tekton-client:7.9.0`）+ 渲染器 + 三个 `PipelineNode` 实现 + `BuildPreset` |
+| `k8s-server` | 命名空间级 `PipelineRunController`（create / get / list / delete / patch-status） |
+| `platform-api` | `PipelineService` + `PipelineController` + `PipelineRunService` + 迁移 |
+| `platform-data` | `platform_pipeline` 表 + `platform_credential.usable_by_pipelines` 列 + 5 个权限码 + 角色关联 |
+
+**端点**（platform-api，全部 `POST`，与本仓惯例一致）：
+
+```
+/pipeline/list | get | create | update | delete      ← manage / read
+/pipeline/node-types                                 ← read（内置节点的 formSchema + 预设）
+/pipeline/git-connections                            ← read（窄投影：只回 id/name/endpoint）
+/pipeline/run | run/cancel                           ← run
+/pipeline/run/list | run/get                         ← read
+/pipeline/preview                                    ← read（画布 → 渲染出的 YAML，给前端预览）
+```
+
+**数据模型**：`platform_pipeline`（id / cluster_id / namespace / name / description /
+`canvas_json` / created_by / created_at / updated_at）。
+
+⚠️ **运行历史不落库** —— 直接读集群里的 `PipelineRun`。与「画布 JSON 是唯一真相源」同一条判断：
+多存一份就要同步、就会有漂移。
+
+---
+
+## 8. 审计
+
+**写操作要记**（台账 S0.1.3 点名了「CI 触发」）：`create` / `update` / `delete` / `run` / `cancel`
+标 `@Auditable`。`list` / `get` / `preview` / `node-types` 是纯读，不标。
+
+⚠️ 审计的 `target` 用**流水线名**（run 用 `pipelineName`），与 `ClusterController` 取 name 的做法一致。
+
+---
+
+## 9. 测试
+
+| 层 | 测什么 |
+|---|---|
+| **渲染器（纯函数）** | 表驱动：单节点 / 链 / 分叉再汇合 / 入度 0 / 环检测拒绝 / `runAfter` 的生成；**同一份画布渲染两次结果一致**（这是「历史运行带当时那一版」的前提） |
+| **节点实现** | 三个节点各自：`formSchema()` 非空且 key 唯一；`render()` 对最小合法配置产出非空 TaskSpec；**预设只预填、字段可覆盖**（改掉镜像后渲染出来的是改后的值） |
+| **护栏** | 所有注册节点两个方法都给全（§2.4） |
+| **权限** | 五个码各自的端点；member 有 `run` 无 `manage`（**反面断言**：member 不能 create）；`tenant:` 前缀不变量 |
+| **凭据授权** | 未被标记的连接**不出现**在 `/pipeline/git-connections` 里；强行引用未授权连接 id → 拒绝（**不静默降级**） |
+| **迁移** | 手工重放 + **join 对账**（5 个码 × 3 个角色的关联逐条命中真实权限行，全表悬空扫描 = 0）—— S0.2/S3.1 的教训 |
+| **capability 门控** | 没有 `tekton.dev/v1` 时端点/页面整块不可用，不是 500 |
+
+---
+
+## 10. 有意不做 / 已知缺口（**显式记录，勿当新问题上报**）
+
+| 项 | 为什么不做 |
+|---|---|
+| **条件分支 / `finally`** | 片② |
+| **自定义节点 / 运行时参数 / 并发策略** | 片③ |
+| **部署节点** | 会让构建 Pod 拿到集群写权限（§0）。部署归 S3.2 |
+| **触发器 / Webhook / 定时** | 台账已定「仅手动触发」，**不引入 Tekton Triggers** |
+| **`imagePullSecret`** | 用户裁定。⚠️ **后果**：构建 Pod 的基础镜像必须来自**免认证仓库**，或用户自己在命名空间建 Secret 并在流水线的「Pod 拉取凭据」里指定。**而 kubelet 不走平台的出站代理** —— 集群节点拉不到 Docker Hub 时，基础镜像只能来自私有 Harbor |
+| **平台级流水线模板** | 台账没有；第一批做会引出模板/实例的同步与版本问题 |
+| **运行历史的保留策略** | 靠 Tekton 侧（`PipelineRun` 默认不自动清理） |
+| **构建缓存** | per-Pod Buildah 每次从零构建。加缓存要么挂 PVC（vfs 会吃掉大量空间），要么上共享构建服务（跨租户串味）—— 两条都比本批重 |
+| **运行历史落库** | §7 的理由 |
+
+### 10.1 已知风险（接受）
+
+1. **`manage` 码 = 能让集群跑任意代码**。这不是漏洞（有权限码、有审计），但它是本平台**权限面最大**的一个码，
+   与 S3.5.12 的定性一致。`run` 之所以能给 member，正是因为 `manage` 是那条真正的线。
+2. **租户可以看到自己命名空间里构建 Pod 的日志** —— 日志里可能有被误打印的凭据。这也是 `logs` 单独成码的原因。
+3. **基础镜像的供应链不加限制** —— 用户能填任意镜像地址。限制来源（比如只允许已配的 registry）
+   在"构建 Pod 本来就要跑用户代码"的前提下收益有限，且会让 Docker Hub 公开镜像用不了。
+
+---
+
+## 11. 待实测 / 待查实
+
+与代理那条一样：**纸上推不出来的，必须真跑一遍**。
+
+- [ ] **Buildah per-Pod 的确切 `securityContext`** —— vfs 还是 fuse-overlayfs、要不要 `seccompProfile: Unconfined`、
+      能不能做到**不用 privileged**。这决定 §0 那条「零集群写权限」之外还要放宽什么
+- [ ] **Tekton `v1` 的取消取值** —— v1beta1 是 `spec.status: PipelineRunCancelled`，**v1 改成了什么**（查实，不猜）
+- [ ] **Tekton 给 Pod 打的标签名** —— `tekton.dev/pipelineRun` / `tekton.dev/taskRun` 是否就是要用的那两个
+- [ ] **`volumeClaimTemplate` 在目标集群的 StorageClass 上能否绑定**（集群有没有可动态供应的默认 SC）
+- [ ] **基础镜像能不能拉到** —— kubelet 不走平台的出站代理；确认集群节点拉 `maven:3.9-eclipse-temurin-21` 之类的路径
+- [ ] **`tekton-client:7.9.0` 加进 `k8s-core` 后能否与本仓的 fabric8 7.9.0 干净共存**（同版本、应无冲突，但要跑一次构建）
+
+---
+
+## 12. 部署
+
+**本批有 SQL**（与 S3.1 那批不同）。
+
+1. **先重放** `V2026_10_15_1__pipeline.sql`（手工，本仓没有 Flyway）：
+   `platform_pipeline` 表 + `platform_credential.usable_by_pipelines` 列 + 5 个权限行 + 角色关联
+2. **集群侧**：装 Tekton Pipelines（`profile: lite` 或 vanilla release.yaml）；
+   **租户 SA 的 K8s RBAC 模板要加 `tekton.dev` 组**（与当年 Gateway 那个坑同形）；确认有可动态供应的 StorageClass
+3. **再起新构建**
+4. 重放后重新登录，或等权限闭包缓存的 30s TTL
+
+### 12.1 部署后待验清单
+
+- [ ] 集群没装 Tekton 时，**CI 菜单与页面整块消失**（不是报错、不是空白页）
+- [ ] 租户成员建一条流水线（`git 克隆 → 命令 → 构建并推送镜像`）→ 保存 → **画布能重新打开并还原**
+- [ ] 点运行 → 运行详情里 DAG 按状态着色、每步日志出得来、能看渲染出的 YAML
+- [ ] 取消一个正在跑的运行 → 状态变 Cancelled，**对象还在**（历史没丢）
+- [ ] **member 账号**：能跑、能看日志，**不能改流水线定义**（按钮不出现，且绕过前端直接调 `update` 也被拒）
+- [ ] **未被标记为「允许在流水线里使用」的 git 连接，不出现在下拉里**；强行引用它的 id → 明确报错
+- [ ] 审计页能看到 `create` / `update` / `delete` / `run` / `cancel` 的记录，**看不到** list / get
