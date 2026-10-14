@@ -18,6 +18,7 @@ import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.NodeDTO;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.PersistentVolumeDTO;
+import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodMonitorDTO;
 import com.coding.common.models.k8s.dto.ReplicaSetDTO;
@@ -72,7 +73,10 @@ public enum ResourceType {
     GRPC_ROUTE(GrpcRouteDTO.class),
     TCP_ROUTE(TcpRouteDTO.class),
     TLS_ROUTE(TlsRouteDTO.class),
-    UDP_ROUTE(UdpRouteDTO.class)
+    UDP_ROUTE(UdpRouteDTO.class),
+    // —— CI（Tekton）。命名空间级、租户域（分配表边界）；PipelineRun 是集群对象，
+    // 平台自己的流水线定义不在集群里（spec §3.2）。
+    PIPELINE_RUN(PipelineRunDTO.class)
     ;
 
     private final Class<?> clazz;
