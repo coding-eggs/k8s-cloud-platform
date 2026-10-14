@@ -9,6 +9,7 @@ import com.coding.platformapi.models.RegistryBrowseRequest;
 import com.coding.platformapi.models.RegistryConnectionView;
 import com.coding.platformapi.registry.BrowseResult;
 import com.coding.platformapi.registry.CredentialRef;
+import com.coding.platformapi.registry.ProbeSpec;
 import com.coding.platformapi.registry.RegistryDialect;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,9 @@ class RegistryServiceTest {
     RegistryDialect spyDialect = new RegistryDialect() {
         @Override public String type() { return "HARBOR"; }
         @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
+        @Override public ProbeSpec probeSpec(CredentialRef c) {
+            return new ProbeSpec("https://harbor.example.com/v2/", "该地址不是 registry");
+        }
         @Override public List<String> suggest(CredentialRef c, String p) {
             calls.add("suggest:" + p);
             return List.of("harbor.example.com/proj/app");
@@ -127,6 +131,9 @@ class RegistryServiceTest {
         RegistryDialect gitea = new RegistryDialect() {
             @Override public String type() { return "GITEA"; }
             @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
+            @Override public ProbeSpec probeSpec(CredentialRef c) {
+                return new ProbeSpec("https://gitea.example.com/v2/", "该地址不是 registry");
+            }
             @Override public List<String> suggest(CredentialRef c, String p) {
                 calls.add("suggest:" + p);
                 return List.of();

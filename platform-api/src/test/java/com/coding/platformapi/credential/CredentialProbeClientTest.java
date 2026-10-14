@@ -61,10 +61,11 @@ class CredentialProbeClientTest {
 
     @Test
     void registryHitsV2() {
+        // URL 由调用方给（各档的 probeSpec），本层不再自己拼 <endpoint>/v2/
         server.expect(requestTo("https://harbor.example.com/v2/"))
                 .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
 
-        assertThat(client.probeRegistry("harbor.example.com", "u", "p").ok()).isTrue();
+        assertThat(client.probeRegistry("https://harbor.example.com/v2/", "u", "p").ok()).isTrue();
     }
 
     @Test

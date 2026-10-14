@@ -1,5 +1,8 @@
 package com.coding.platformapi.credential;
 
+import com.coding.platformapi.registry.CredentialRef;
+import com.coding.platformapi.registry.HarborDialect;
+import com.coding.platformapi.registry.ProbeSpec;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,16 +46,33 @@ class CredentialProbeTest {
                 .isEqualTo("https://gitlab.example.com:8080/g/r.git/info/refs?service=git-upload-pack");
     }
 
+    /**
+     * registry 探测 URL 的拼法**属于方言**，所以它住在 {@code HarborDialect} 里 ——
+     * Docker Hub 的 API 站点是 {@code hub.docker.com} 而不是它的 endpoint，
+     * 「所有 registry 都响应 {@code <endpoint>/v2/}」这个假设对第二档就不成立了（spec §4）。
+     */
+    private static ProbeSpec harborProbe(String endpoint) {
+        return new HarborDialect(null).probeSpec(
+                new CredentialRef("c1", "h", "HARBOR", endpoint, null, null));
+    }
+
     @Test
-    void registryProbeUrlAddsSchemeAndStripsTrailingSlash() {
-        assertThat(CredentialProbe.registryProbeUrl("harbor.example.com"))
+    void harborProbeUrlAddsSchemeAndStripsTrailingSlash() {
+        assertThat(harborProbe("harbor.example.com").url())
                 .isEqualTo("https://harbor.example.com/v2/");
-        assertThat(CredentialProbe.registryProbeUrl("harbor.example.com/"))
+        assertThat(harborProbe("harbor.example.com/").url())
                 .isEqualTo("https://harbor.example.com/v2/");
-        assertThat(CredentialProbe.registryProbeUrl("https://harbor.example.com/"))
+        assertThat(harborProbe("https://harbor.example.com/").url())
                 .isEqualTo("https://harbor.example.com/v2/");
-        assertThat(CredentialProbe.registryProbeUrl("http://harbor.internal:5000"))
+        assertThat(harborProbe("http://harbor.internal:5000").url())
                 .isEqualTo("http://harbor.internal:5000/v2/");
+    }
+
+    @Test
+    void harborProbe404SaysTheAddressIsNotARegistry() {
+        // 404 的含义是方言相关的：对 Harbor 是「这不是个 registry」，
+        // 对 Docker Hub 是另一回事（Task 6）。写死一句会把管理员引去查一个没问题的地址。
+        assertThat(harborProbe("harbor.example.com").notFoundMessage()).contains("不是 registry");
     }
 
     @Test

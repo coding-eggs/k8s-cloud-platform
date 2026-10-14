@@ -67,8 +67,13 @@ public class CredentialProbeClient {
         return probe(CredentialProbe.gitProbeUrl(repoUrl), username, secret, true);
     }
 
-    public ProbeResult probeRegistry(String endpoint, String username, String secret) {
-        return probe(CredentialProbe.registryProbeUrl(endpoint), username, secret, false);
+    /**
+     * 探测 registry。**URL 由调用方（各档的 {@code probeSpec}）给** ——
+     * 不同档的 API 站点不一样，{@code <endpoint>/v2/} 只对 Harbor 成立
+     * （Docker Hub 的 API 站在 {@code hub.docker.com}，不是它的 endpoint {@code docker.io}）。
+     */
+    public ProbeResult probeRegistry(String url, String username, String secret) {
+        return probe(url, username, secret, false);
     }
 
     private ProbeResult probe(String url, String username, String secret, boolean git) {

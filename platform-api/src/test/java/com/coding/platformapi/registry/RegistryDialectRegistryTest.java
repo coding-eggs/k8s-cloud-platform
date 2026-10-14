@@ -25,6 +25,9 @@ class RegistryDialectRegistryTest {
     static class FakeDialect implements RegistryDialect {
         @Override public String type() { return "FAKE"; }
         @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
+        @Override public ProbeSpec probeSpec(CredentialRef c) {
+            return new ProbeSpec("https://fake.example.com/v2/", "该地址不是 registry");
+        }
         @Override public List<String> suggest(CredentialRef c, String p) { return List.of(); }
         @Override public BrowseResult browse(CredentialRef c, List<String> p) {
             return new BrowseResult(List.of(), List.of());

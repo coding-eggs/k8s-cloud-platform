@@ -46,6 +46,14 @@ public class HarborDialect implements RegistryDialect {
         return Set.of("BASIC", "NONE");
     }
 
+    @Override
+    public ProbeSpec probeSpec(CredentialRef cred) {
+        // `/v2/` 是 OCI 规范的一部分，所有 registry 都实现 —— 从 CredentialProbe.registryProbeUrl 原样搬过来。
+        // 404 的文案对 Harbor 是「这不是个 registry」（spec §4）
+        return new ProbeSpec(base(cred) + "/v2/",
+                "地址不对：该地址不是 registry（/v2/ 不存在）");
+    }
+
     // ==================== 两个动作 ====================
 
     @Override

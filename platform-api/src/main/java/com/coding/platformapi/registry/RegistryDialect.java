@@ -48,4 +48,12 @@ public interface RegistryDialect {
      * <p>至少要有一个值，由 {@code RegistryDialectRegistryTest} 的护栏测试钉住。
      */
     Set<String> authTypes();
+
+    /**
+     * 「测试连接」的规格。见 {@link ProbeSpec}。
+     *
+     * <p>⚠️ 出站那一半（超时、{@code Redirect.NEVER}、错误归因）**仍在
+     * {@code CredentialProbeClient} 一处**，各档只给 URL 与文案 —— 那几条安全要求散到各档会漏。
+     */
+    ProbeSpec probeSpec(CredentialRef cred);
 }

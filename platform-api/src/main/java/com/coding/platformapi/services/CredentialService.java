@@ -14,6 +14,7 @@ import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialTestResult;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
+import com.coding.platformapi.registry.CredentialRef;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -171,7 +172,12 @@ public class CredentialService {
             }
             result = probeClient.probeGit(req.getProbeUrl(), s.getUsername(), s.getSecret());
         } else {
-            result = probeClient.probeRegistry(c.getEndpoint(), s.getUsername(), s.getSecret());
+            // ⚠️ 走分派表而不是自己判 type —— 手写的「哪些档的探测地址不是 <endpoint>/v2/」清单
+            // 就是第二个真相源（S3.1 终审删掉 RegistryService.REGISTRY_TYPES 时反对的那个）
+            CredentialRef ref = new CredentialRef(c.getId(), c.getName(), c.getType(),
+                    c.getEndpoint(), s.getUsername(), s.getSecret());
+            result = probeClient.probeRegistry(
+                    dialects.of(c.getType()).probeSpec(ref).url(), s.getUsername(), s.getSecret());
         }
 
         mapper.updateVerifyResult(c.getId(), result.ok(),

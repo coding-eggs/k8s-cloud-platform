@@ -36,11 +36,6 @@ public final class CredentialProbe {
         return withScheme(stripTrailingSlashes(repoUrl)) + "/info/refs?service=git-upload-pack";
     }
 
-    /** 规范化 registry 探测 URL：补 scheme（缺省 https）+ 去尾斜杠 + {@code /v2/}。 */
-    public static String registryProbeUrl(String endpoint) {
-        return withScheme(stripTrailingSlashes(endpoint)) + "/v2/";
-    }
-
     /**
      * 把 3xx 的 {@code Location} 还原成仓库地址（剥掉 {@code /info/refs…} 之后的全部内容），
      * 供「对端要求地址为 X」的提示与一键回填。

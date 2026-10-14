@@ -11,6 +11,7 @@ import com.coding.platformapi.models.CredentialCreateRequest;
 import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
+import com.coding.platformapi.registry.CredentialRef;
 import com.coding.platformapi.registry.HarborDialect;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import com.coding.platformapi.registry.RegistryHttpClient;
@@ -211,8 +212,26 @@ class CredentialServiceTest {
         verify(mapper, never()).insert(any());
     }
 
-    // ---- 匿名（authType=NONE） ----
+    // ---- 测试连接走方言 ----
 
+    @Test
+    void registryProbeUrlComesFromTheDialectNotFromTheRawEndpoint() {
+        // 传进去的必须是**拼好的 URL**，不是 endpoint —— 否则「哪些档的探测地址不是 <endpoint>/v2/」
+        // 这件事就只能由 CredentialService 自己判 type 才知道，那是第二个真相源（spec §4）
+        PlatformCredential c = stored("c1", "h", "HARBOR", "harbor.example.com", "u", "p");
+        when(mapper.selectById("c1")).thenReturn(c);
+        when(probeClient.probeRegistry(anyString(), any(), any())).thenReturn(ProbeResult.pass());
+
+        CredentialTestRequest req = new CredentialTestRequest();
+        req.setId("c1");
+        svc.test(req);
+
+        var url = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(probeClient).probeRegistry(url.capture(), any(), any());
+        assertThat(url.getValue()).isEqualTo("https://harbor.example.com/v2/");
+    }
+
+    // ---- 匿名（authType=NONE） ----
     @Test
     void anonymousCredentialStoresNoCiphertext() {
         when(mapper.selectByName(anyString())).thenReturn(null);
@@ -393,7 +412,8 @@ class CredentialServiceTest {
     void testRegistryDoesNotNeedProbeUrl() {
         when(mapper.selectById("c1")).thenReturn(
                 stored("c1", "harbor", "HARBOR", "harbor.example.com", "robot", "pw"));
-        when(probeClient.probeRegistry("harbor.example.com", "robot", "pw"))
+        // 收到的已经是**拼好的 URL**（由 HarborDialect.probeSpec 给），不再是裸 endpoint
+        when(probeClient.probeRegistry("https://harbor.example.com/v2/", "robot", "pw"))
                 .thenReturn(ProbeResult.fail("凭据不通过，或该凭据无权访问此 registry"));
 
         CredentialTestRequest req = new CredentialTestRequest();
