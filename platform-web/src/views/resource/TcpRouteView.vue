@@ -89,10 +89,12 @@ watch(detailTab, async (tab) => {
 })
 
 // ---------- 展示辅助 ----------
+/** 父引用摘要：kind namespace/name[:sectionName 或 :port]。kind 缺省即 Gateway（Gateway API 的 CRD 默认值）。 */
 function parentText(p: K8sRouteParentRef): string {
+  const kind = p.kind || 'Gateway'
   const ns = p.namespace ? `${p.namespace}/` : ''
-  const sec = p.sectionName ? `:${p.sectionName}` : ''
-  return `${ns}${p.name ?? '?'}${sec}`
+  const qual = p.sectionName || (p.port != null ? String(p.port) : '')
+  return `${kind} ${ns}${p.name ?? '?'}${qual ? `:${qual}` : ''}`
 }
 
 /** 一条规则的后端摘要：name:port(w=weight) */
@@ -155,7 +157,7 @@ const contextDesc = computed(() => {
         <el-table-column label="名称" min-width="160">
           <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code></template>
         </el-table-column>
-        <el-table-column label="父 Gateway" min-width="180">
+        <el-table-column label="父资源" min-width="200">
           <template #default="{ row }">
             <el-tag v-for="(p, i) in (row.parentRefs ?? [])" :key="i" size="small" type="info" effect="plain" class="tag-inline">
               {{ parentText(p) }}
@@ -203,7 +205,7 @@ const contextDesc = computed(() => {
       <el-tabs v-model="detailTab">
         <el-tab-pane label="概览" name="info">
           <el-descriptions :column="1" border>
-            <el-descriptions-item label="父 Gateway">{{ (detail?.parentRefs ?? []).map(parentText).join(', ') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="父资源">{{ (detail?.parentRefs ?? []).map(parentText).join(', ') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="创建时间">{{ fmtDate(detail?.creationTime) }}</el-descriptions-item>
           </el-descriptions>
 
