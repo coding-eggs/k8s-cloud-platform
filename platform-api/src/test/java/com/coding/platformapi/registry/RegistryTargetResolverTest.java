@@ -119,4 +119,38 @@ class RegistryTargetResolverTest {
         assertThat(RegistryTargetResolver.match("harbor.example.com.evil.com/proj",
                 List.of(cred("x", "https://harbor.example.com/")))).isNull();
     }
+
+    // ---- Docker Hub 的三个等效域名 ----
+
+    @Test
+    void allThreeDockerHubAliasesMatchTheSameConnection() {
+        // 配了 Docker Hub 却因为写法不同补不出来，而补全是静默降级 —— 用户没有任何线索
+        CredentialRef hub = cred("hub", "docker.io");
+        List<CredentialRef> only = List.of(hub);
+
+        assertThat(RegistryTargetResolver.match("docker.io/ng", only)).isEqualTo(hub);
+        assertThat(RegistryTargetResolver.match("index.docker.io/ng", only)).isEqualTo(hub);
+        assertThat(RegistryTargetResolver.match("registry-1.docker.io/ng", only)).isEqualTo(hub);
+    }
+
+    @Test
+    void theAliasesAlsoWorkWhenTheConnectionIsConfiguredWithANonCanonicalOne() {
+        CredentialRef hub = cred("hub", "registry-1.docker.io");
+        assertThat(RegistryTargetResolver.match("docker.io/ng", List.of(hub))).isEqualTo(hub);
+    }
+
+    @Test
+    void canonicalizingAliasesDoesNotBreakThePrefixBoundary() {
+        // `docker.io.evil.com` 不能被当作 `docker.io`
+        CredentialRef hub = cred("hub", "docker.io");
+        assertThat(RegistryTargetResolver.match("docker.io.evil.com/ng", List.of(hub))).isNull();
+        assertThat(RegistryTargetResolver.match("mydocker.io/ng", List.of(hub))).isNull();
+    }
+
+    @Test
+    void canonicalizingAliasesDoesNotAffectOtherHosts() {
+        // 别名表只该动那三个域名，别的一律按原样比
+        assertThat(RegistryTargetResolver.match("reg.internal/app", candidates))
+                .isEqualTo(cred("h3", "reg.internal"));
+    }
 }

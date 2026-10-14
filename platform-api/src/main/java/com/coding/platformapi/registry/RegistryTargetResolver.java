@@ -2,6 +2,7 @@ package com.coding.platformapi.registry;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 
 /**
@@ -66,14 +67,37 @@ public final class RegistryTargetResolver {
      * @param candidates 已启用、且 type 属于镜像仓库的连接
      */
     public static CredentialRef match(String imagePrefix, List<CredentialRef> candidates) {
-        String host = hostOf(imagePrefix).toLowerCase(Locale.ROOT);
+        String host = canonical(hostOf(imagePrefix).toLowerCase(Locale.ROOT));
         if (host.isEmpty() || candidates == null || candidates.isEmpty()) {
             return null;
         }
         return candidates.stream()
-                .filter(c -> boundaryMatches(host, normalizeEndpoint(c.endpoint())))
-                .max(Comparator.comparingInt(c -> normalizeEndpoint(c.endpoint()).length()))
+                .filter(c -> boundaryMatches(host, canonicalEndpoint(c)))
+                .max(Comparator.comparingInt(c -> canonicalEndpoint(c).length()))
                 .orElse(null);
+    }
+
+    /**
+     * 指向同一个 registry 的等价写法，统一成一个规范名再比较。
+     *
+     * <p>Docker Hub 有三个都在用的域名。不归一化的话，用户打 {@code registry-1.docker.io/ng}
+     * 而连接配的是 {@code docker.io} 就匹配不上 —— 现象是「明明配了 Docker Hub 却补不出来」，
+     * 而补全是静默降级，用户没有任何线索。
+     *
+     * <p>⚠️ <b>顺序要紧</b>：先 {@link #normalizeEndpoint}（去 scheme / 尾斜杠 / 小写）
+     * <b>再</b>查本表。反过来 {@code https://docker.io} 会因为带着 scheme 而查不到。
+     */
+    private static final Map<String, String> ALIASES = Map.of(
+            "index.docker.io", "docker.io",
+            "registry-1.docker.io", "docker.io");
+
+    /** 连接的 endpoint 归一到可比较的形态。 */
+    private static String canonicalEndpoint(CredentialRef c) {
+        return canonical(normalizeEndpoint(c.endpoint()));
+    }
+
+    private static String canonical(String hostOrEndpoint) {
+        return ALIASES.getOrDefault(hostOrEndpoint, hostOrEndpoint);
     }
 
     /**
