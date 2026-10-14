@@ -1139,3 +1139,18 @@ git commit -m "docs(plan): route 父引用跨 kind 支持落地记录"
   （`kind=Service` 由选择器给出、`group` 原样透传为 `""`），后端那一半由 Task 1 的 `convertForUpdate_keeps_service_parent_group_at_empty_string` 单测覆盖（该测试在改前是红的）。**"平台的这一版构建 + 真实集群"下的 YAML tab 复核仍未做。**
 - **Istio 运行时语义**：Service 父引用下 `sectionName` 是否被按"端口名"解释、是否要求 `port` —— 无集群可验，FieldHelp 里也没有承诺（与 spec §8 一致）。
 - 前端 4 个编辑器（Grpc/Tls/Udp 之外的交互）只做了 build + TCP 冒烟；交互断言集中在 HTTPRoute 上跑（5 个文件代码逐字相同，由脚本保证一致）。
+
+## 整支复审与修复轮（2026-10-14，fresh reviewer / opus）
+
+复审范围＝本批 15 个文件（区间里混有别的会话的 docs 提交，已剔除）。结论：**需修复后合并**，1 Important + 3 Minor + 一组注释不一致；并**专项确认"断言 5/6 的降级没有掩盖 `group` 路径的缺陷，但掩盖了『真实数据形态』这一类风险"**。
+
+**已修（提交 `52a2c80`）**
+
+- **A（我上调为 Critical，复审判 Important）**：显式 `kind: Gateway`（合法值、语义等同 CRD 默认）被 `hasUnmodeledKind` 当成"未建模" → 候选不列、行名写成「段名（sectionName）」、挂一条"本页不改它"的假提示；用户为"修好它"在类型下拉里选回「Gateway（缺省）」时，清空逻辑连带清掉名称，保存时该行被 `filter(p => p.name.trim())` 丢掉 → **父引用静默消失，界面还提示"保存成功"**。这是本批引入的路径。修法：`fromParent` 用 `normalizeParentKind` 归一（空/显式 `Gateway` → `''`），单一闸门；写盘仍是 CRD 默认 Gateway（`kind: null`），语义不变。
+- **B（spec §5.2 未落实，属未登记偏差）**：端口候选要沿用 `ServiceMonitorEditorView` 的 `http（80/TCP）` 格式，原先只显示裸端口名、`ParentCandidate.ports` 成了死字段。改为 `namedPorts`（name + label），`ports` 用于区分"有端口但都没命名"与"根本没有端口"；**option 的 value 仍是端口名**（label 只影响展示，已单独断言）。
+
+两条都在浏览器里以 RED→GREEN 走完（A 的 RED 抓到了载荷只剩一条父引用的那一帧）。修复后复跑：platform-common 19/19、k8s-core **215/215**、前端 `npm run build` ✔。
+
+**留待后续（未修）**：C 候选拉取未按权限位短路（先例同形，属仓级既有偏差）；D `validate()` 的 sectionName 循环会拦住"本就要被丢弃的无名行"；E `ParentRefDTO.sectionName`/`types.ts` 的注释与 Tcp/Udp 编辑器类注释仍只写 Gateway 语义。
+
+**上线后建议补一次 5 分钟活体抽查**（复审建议，采纳）：每种父引用形态各一条 —— 隐式 kind 的 Gateway / 显式 `kind: Gateway` / Service（看 YAML tab 里 `group: ""`）/ `ServiceImport` + `group: multicluster.x-k8s.io` / 带 `port` —— 逐条"打开 → 保存 → YAML 一字不变"。
