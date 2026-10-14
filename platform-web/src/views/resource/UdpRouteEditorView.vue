@@ -5,9 +5,11 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
-import { gatewayApi, udpRouteApi } from '@/api'
+import { udpRouteApi } from '@/api'
+import { useParentCandidates } from '@/composables/useParentCandidates'
 import { useResourceContext } from '@/stores/context'
-import type { K8sGateway, K8sL4RouteRule, K8sRouteBackendRef, K8sRouteParentRef, K8sUdpRoute } from '@/types'
+import type { K8sL4RouteRule, K8sRouteBackendRef, K8sRouteParentRef, K8sUdpRoute } from '@/types'
+import type { CandidateBucket } from '@/composables/useParentCandidates'
 
 /**
  * UDPRoute 独立编辑页（命名空间级、租户域）。
@@ -23,7 +25,7 @@ import type { K8sGateway, K8sL4RouteRule, K8sRouteBackendRef, K8sRouteParentRef,
  */
 const route = useRoute()
 const router = useRouter()
-const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const { state, ready, currentTenant, currentCluster, load, namespacesOfCluster } = useResourceContext()
 
 const editing = ref<string | null>((route.query.name as string) || null)
 
@@ -37,30 +39,97 @@ const ctx2 = computed(() => ({
   clusterId: state.clusterId!,
 }))
 
-/** 本命名空间的 Gateway 候选（parentRefs 下拉） */
-const gatewayOptions = ref<K8sGateway[]>([])
-const gatewayLoading = ref(false)
+/** 父引用名称候选（按 kind + 命名空间缓存；见 composables/useParentCandidates.ts） */
+const { bucket, ensure } = useParentCandidates()
 
-async function loadGateways(): Promise<void> {
-  if (!ready.value) return
-  gatewayLoading.value = true
-  try {
-    gatewayOptions.value = await gatewayApi.list({ ...ctx3.value })
-  } catch {
-    gatewayOptions.value = [] // 候选拉取失败 → 退化为手填
-  } finally {
-    gatewayLoading.value = false
-  }
+/** 父引用的生效命名空间：'' = 本命名空间 */
+function effectiveNs(p: ParentRow): string {
+  return p.namespace.trim() || state.namespace!
+}
+
+/** kind 不在 {缺省, Service} → 未建模：只读展示、无候选、名称与段名手输 */
+function hasUnmodeledKind(p: ParentRow): boolean {
+  return !!p.parentKind && p.parentKind !== 'Service'
+}
+
+function bucketOf(p: ParentRow): CandidateBucket {
+  return bucket(p.parentKind, effectiveNs(p))
+}
+
+/**
+ * 用户改了父资源类型：候选与段名语义都换了 → 清掉名称与段名；
+ * group 属于旧 kind 的透传值（如 ServiceImport 的 multicluster.x-k8s.io），一并归位。
+ * 必须挂 @change：回填也会改 modelValue，写成 watch 会把刚加载的值抹掉。
+ */
+function onParentKindChange(p: ParentRow): void {
+  p.name = ''
+  p.sectionName = ''
+  p.group = null
+}
+
+/** 用户改了命名空间：候选取自新命名空间，旧名字/段名必然失效 → 清掉（同样只挂 @change） */
+function onParentNamespaceChange(p: ParentRow): void {
+  p.name = ''
+  p.sectionName = ''
+}
+
+function noDataText(p: ParentRow): string {
+  if (!ready.value) return '上下文未就绪'
+  if (hasUnmodeledKind(p)) return `「${p.parentKind}」类型的父资源不支持候选，请直接输入名称`
+  const b = bucketOf(p)
+  if (b.failed) return '候选拉取失败（权限或 CRD 未装），可直接输入名称'
+  return p.parentKind === 'Service'
+    ? '该命名空间暂无 Service（可直接输入名称）'
+    : '该命名空间暂无 Gateway（可直接输入名称）'
+}
+
+function namePlaceholder(p: ParentRow): string {
+  if (hasUnmodeledKind(p)) return `输入 ${p.parentKind} 名称`
+  return p.parentKind === 'Service'
+    ? '选择或输入该命名空间的 Service 名'
+    : '选择或输入该命名空间的 Gateway 名'
+}
+
+/** 段名候选取自**所选中的那个**父资源（不是整个命名空间） */
+function sectionOptions(p: ParentRow): string[] {
+  const name = p.name.trim()
+  if (!name) return []
+  const c = bucketOf(p).list.find((x) => x.name === name)
+  if (!c) return []
+  return p.parentKind === 'Service' ? c.portNames : c.listeners
+}
+
+function sectionNoDataText(p: ParentRow): string {
+  if (!ready.value) return '上下文未就绪'
+  if (hasUnmodeledKind(p)) return `「${p.parentKind}」类型的父资源不支持候选，请直接输入`
+  const name = p.name.trim()
+  if (!name) return '请先选择父资源'
+  const c = bucketOf(p).list.find((x) => x.name === name)
+  if (!c) return '该名称不在候选里（手输的无法列出它的段），可自行输入'
+  if (p.parentKind === 'Service' && !c.portNames.length) return '该服务的端口没有命名，留空即作用于全部端口'
+  return p.parentKind === 'Service' ? '该服务没有可选的命名端口' : '该 Gateway 没有监听器'
+}
+
+/** 名称行的行名：未建模 kind 显示它自己的值 —— 别把 ServiceImport 之类的父引用标成 Gateway */
+function nameRowLabel(p: ParentRow): string {
+  return p.parentKind === 'Service' ? 'Service' : p.parentKind || 'Gateway'
+}
+
+/** 段名行的行名：未建模 kind 用 spec 的通用说法（它怎么解释 sectionName 由实现自定） */
+function sectionRowLabel(p: ParentRow): string {
+  if (p.parentKind === 'Service') return '端口名（sectionName）'
+  return hasUnmodeledKind(p) ? '段名（sectionName）' : '监听器（sectionName）'
 }
 
 // ---------- 表单模型 ----------
 interface ParentRow {
+  /** '' = 缺省 Gateway；'Service'；其他值 = 未建模 kind（原样透传，本页不改） */
+  parentKind: string
   name: string
   namespace: string
   sectionName: string
   /** UI 不编辑，仅回填透传 */
   group?: string | null
-  kind?: string | null
   port?: number | null
 }
 interface BackendRow {
@@ -73,7 +142,7 @@ interface BackendRow {
   kind?: string | null
 }
 
-function newParent(): ParentRow { return { name: '', namespace: '', sectionName: '' } }
+function newParent(): ParentRow { return { parentKind: '', name: '', namespace: '', sectionName: '' } }
 function newBackend(): BackendRow { return { name: '', namespace: '', port: null, weight: null } }
 
 const form = reactive({
@@ -92,7 +161,14 @@ function removeBackend(i: number): void { form.backendRefs.splice(i, 1) }
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
 function fromParent(p: K8sRouteParentRef): ParentRow {
-  return { name: p.name ?? '', namespace: p.namespace ?? '', sectionName: p.sectionName ?? '', group: p.group, kind: p.kind, port: p.port }
+  return {
+    parentKind: p.kind ?? '',
+    name: p.name ?? '',
+    namespace: p.namespace ?? '',
+    sectionName: p.sectionName ?? '',
+    group: p.group,
+    port: p.port,
+  }
 }
 function fromBackend(b: K8sRouteBackendRef): BackendRow {
   return { name: b.name ?? '', namespace: b.namespace ?? '', port: b.port ?? null, weight: b.weight ?? null, group: b.group, kind: b.kind }
@@ -118,18 +194,38 @@ async function loadDetail(): Promise<void> {
 
 watch([() => ready.value, () => state.namespace], ([r]) => {
   if (!r) return
-  void loadGateways()
   if (editing.value) void loadDetail()
 }, { immediate: true })
 
+/** 父引用候选预热：kind / 命名空间任一变化即按需拉取（命中缓存则不发请求）。
+ *  串进 form.parentRefs 的 key 是为了回填之后也预热到加载进来的那些行。 */
+watch(
+  () => `${ready.value}|${state.namespace ?? ''}|${form.parentRefs.map((p) => `${p.parentKind}|${p.namespace}`).join('|')}`,
+  () => {
+    if (!ready.value) return
+    for (const p of form.parentRefs) ensure(p.parentKind, effectiveNs(p))
+  },
+  { immediate: true },
+)
+
 // ---------- 提交 ----------
 const RFC1123_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+/** SectionName 的 CRD pattern（≤253，见 Gateway API shared_types） */
+const SECTION_NAME_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$/
 
 function validate(): string | null {
   const name = (editing.value ?? form.name).trim()
   if (!name) return '请输入名称'
   if (!RFC1123_RE.test(name)) return '名称须为 RFC-1123（小写字母/数字/-，字母或数字开头结尾）'
-  if (!form.parentRefs.some((p) => p.name.trim())) return '至少需要一个父 Gateway（parentRefs）'
+  if (!form.parentRefs.some((p) => p.name.trim())) return '至少需要一个父资源（parentRefs）'
+  for (const [pi, p] of form.parentRefs.entries()) {
+    const sec = p.sectionName.trim()
+    if (!sec) continue
+    // spec 的 SectionName：pattern + MaxLength 253（填错监听器名/端口名是"静默不挂载"，故提交前拦一道）
+    if (sec.length > 253 || !SECTION_NAME_RE.test(sec)) {
+      return `父引用 #${pi + 1}：sectionName 须为合法段名（小写字母/数字/'-'/'.'，≤253）：「${sec}」`
+    }
+  }
   const backends = form.backendRefs.filter((b) => b.name.trim())
   if (!backends.length) return '至少需要一个后端（backendRefs）'
   for (const b of backends) {
@@ -162,6 +258,8 @@ async function submit(): Promise<void> {
     name: (editing.value ?? form.name).trim(),
     // tenantId / clusterId 由 makeResourceApi 的 ctx 参数合并进请求体；namespace 必须来自 body（Create 的边界判据）
     namespace: state.namespace!,
+    // kind 由「父资源类型」选择器决定（'' → null = 缺省 Gateway）；group 仍是透传
+    // （只有未建模 kind 才带值），kind=Service 时的显式空串由后端写盘侧归一
     parentRefs: form.parentRefs
       .filter((p) => p.name.trim())
       .map((p) => ({
@@ -169,7 +267,7 @@ async function submit(): Promise<void> {
         namespace: p.namespace.trim() || null,
         sectionName: p.sectionName.trim() || null,
         group: p.group ?? null,
-        kind: p.kind ?? null,
+        kind: p.parentKind.trim() || null,
         port: p.port ?? null,
       })),
     rules: [rule],
@@ -223,35 +321,96 @@ onMounted(() => { void load() })
           <FieldHelp tip="UDPRoute 名（本命名空间内唯一）。创建后不可改。" />
         </el-form-item>
 
-        <el-divider content-position="left">父 Gateway（parentRefs）</el-divider>
+        <el-divider content-position="left">父资源（parentRefs）</el-divider>
 
         <div v-for="(p, i) in form.parentRefs" :key="i" class="sub-block">
           <div class="sub-head">
             <span class="sub-title">父引用 #{{ i + 1 }}</span>
+            <span v-if="p.port != null" class="parent-hint">port={{ p.port }}（本页不改，可在 YAML 里改）</span>
             <el-button v-if="form.parentRefs.length > 1" link type="danger" @click="removeParent(i)">删除</el-button>
           </div>
-          <el-form-item label="Gateway" required>
+
+          <el-form-item label="父资源类型" required>
+            <el-select
+              v-model="p.parentKind"
+              placeholder="Gateway（缺省）"
+              style="max-width: 240px"
+              @change="onParentKindChange(p)"
+            >
+              <el-option label="Gateway（缺省）" value="" />
+              <el-option label="Service" value="Service" />
+            </el-select>
+            <span v-if="hasUnmodeledKind(p)" class="parent-hint">
+              kind={{ p.parentKind }} 未建模，本页不改它（可在 YAML 里改）
+            </span>
+            <FieldHelp tip="父资源可以是 Gateway，也可以是 Service（Istio mesh：把本路由的规则挂到该服务上）。缺省 Gateway；指向 Service 时 group 必须显式为空串，由平台自动写入。" />
+          </el-form-item>
+
+          <el-form-item label="命名空间">
+            <el-select
+              v-model="p.namespace"
+              filterable
+              allow-create
+              default-first-option
+              placeholder="本命名空间（留空）"
+              style="max-width: 300px"
+              @change="onParentNamespaceChange(p)"
+            >
+              <el-option label="本命名空间（留空）" value="" />
+              <el-option v-for="ns in namespacesOfCluster" :key="ns" :label="ns" :value="ns" />
+            </el-select>
+            <FieldHelp tip="父资源所在命名空间。候选取本租户在当前集群的命名空间；留空 = 本命名空间。跨命名空间引用需目标侧放行（Gateway 的 allowedRoutes + ReferenceGrant），否则引用不会被接受。" />
+          </el-form-item>
+
+          <el-form-item :label="nameRowLabel(p)" required>
             <el-select
               v-model="p.name"
               filterable
               allow-create
               default-first-option
-              :loading="gatewayLoading"
-              :no-data-text="ready ? '本命名空间暂无 Gateway（可直接输入名称）' : '上下文未就绪'"
-              placeholder="选择或输入本命名空间的 Gateway 名"
+              :loading="bucketOf(p).loading"
+              :no-data-text="noDataText(p)"
+              :placeholder="namePlaceholder(p)"
               style="max-width: 360px"
             >
-              <el-option v-for="g in gatewayOptions" :key="g.name" :label="g.name" :value="g.name" />
+              <el-option
+                v-for="c in bucketOf(p).list"
+                :key="c.name"
+                :label="c.waypointFor ? `${c.name} · waypoint` : c.name"
+                :value="c.name"
+              />
             </el-select>
-            <FieldHelp tip="要挂载到的 Gateway。该 Gateway 必须有一个 UDP 协议的监听器，否则规则不会被接受（父资源状态里会出现 Accepted=False）。" />
+            <FieldHelp
+              v-if="p.parentKind === 'Service'"
+              tip="把本路由的规则挂到该 Service 上（Istio mesh）。跨命名空间同样需要目标命名空间放行。"
+            />
+            <FieldHelp v-else-if="!hasUnmodeledKind(p)" tip="要挂载到的 Gateway。该 Gateway 必须有一个 UDP 协议的监听器，否则规则不会被接受（父资源状态里会出现 Accepted=False）。" />
           </el-form-item>
-          <el-form-item label="命名空间">
-            <el-input v-model="p.namespace" placeholder="留空 = 本命名空间" style="max-width: 300px" />
-            <FieldHelp tip="父 Gateway 所在命名空间。留空表示同命名空间。" />
-          </el-form-item>
-          <el-form-item label="监听器（sectionName）">
-            <el-input v-model="p.sectionName" placeholder="留空 = 该 Gateway 上全部匹配的监听器" style="max-width: 300px" />
-            <FieldHelp tip="只挂到指定的那一个监听器（填监听器名）。留空表示挂到所有匹配的监听器。" />
+
+          <el-form-item :label="sectionRowLabel(p)">
+            <el-select
+              v-model="p.sectionName"
+              filterable
+              allow-create
+              default-first-option
+              :no-data-text="sectionNoDataText(p)"
+              :placeholder="
+                p.parentKind === 'Service'
+                  ? '留空 = 该服务全部端口'
+                  : '留空 = 该 Gateway 上全部匹配的监听器'
+              "
+              style="max-width: 300px"
+            >
+              <el-option v-for="s in sectionOptions(p)" :key="s" :label="s" :value="s" />
+            </el-select>
+            <FieldHelp
+              v-if="p.parentKind === 'Service'"
+              tip="只作用于该 Service 的指定端口（填端口名）。留空 = 作用于该服务全部端口。"
+            />
+            <FieldHelp
+              v-else-if="!hasUnmodeledKind(p)"
+              tip="只挂到指定的那一个监听器（填监听器名）。留空表示挂到所有匹配的监听器。"
+            />
           </el-form-item>
         </div>
         <el-button size="small" @click="addParent">添加父引用</el-button>
@@ -310,6 +469,7 @@ onMounted(() => { void load() })
   margin-bottom: 10px;
 }
 .sub-title { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.parent-hint { margin-left: 8px; font-size: 12px; color: var(--text-3); }
 .list-rows { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 760px; }
 .list-row { display: flex; align-items: center; gap: 10px; }
 .submit-row { margin-top: 18px; }
