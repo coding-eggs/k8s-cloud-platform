@@ -31,6 +31,7 @@ import com.coding.k8score.converter.impl.gateway.TcpRouteConverter;
 import com.coding.k8score.converter.impl.gateway.TlsRouteConverter;
 import com.coding.k8score.converter.impl.gateway.UdpRouteConverter;
 import com.coding.k8score.converter.impl.monitoring.PodMonitorConverter;
+import com.coding.k8score.converter.impl.pipeline.PipelineRunConverter;
 import com.coding.k8score.converter.impl.monitoring.ServiceMonitorConverter;
 import com.coding.k8score.converter.impl.rbac.CoreV1ServiceAccountConverter;
 import com.coding.k8score.converter.impl.rbac.RbacV1ClusterRoleConverter;
@@ -71,6 +72,7 @@ import com.coding.k8score.operations.gateway.TlsRouteOperations;
 import com.coding.k8score.operations.gateway.UdpRouteOperations;
 import com.coding.k8score.operations.monitoring.PodMonitorOperations;
 import com.coding.k8score.operations.monitoring.ServiceMonitorOperations;
+import com.coding.k8score.operations.pipelinerun.PipelineRunOperations;
 import com.coding.k8score.operations.rbac.CoreV1ServiceAccountOperations;
 import com.coding.k8score.operations.rbac.RbacV1ClusterRoleOperations;
 import com.coding.k8score.operations.rbac.RbacV1RoleBindingOperations;
@@ -227,6 +229,8 @@ public class KubernetesOperationsFactory {
             case TLS_ROUTE -> new TlsRouteOperations(client, new TlsRouteConverter(resolveL4Version(clusterId)));
             case UDP_ROUTE -> new UdpRouteOperations(client, new UdpRouteConverter(resolveL4Version(clusterId)));
             case HPA -> buildHpa(client, clusterId);
+            // CI（Tekton）：单版本（tekton.dev/v1 GA），命名空间级、租户域。
+            case PIPELINE_RUN -> new PipelineRunOperations(client, new PipelineRunConverter());
             default -> throw new CloudPlatformException(EnumResponseType.NON_RESOURCE);
         };
     }
