@@ -1,0 +1,101 @@
+package com.coding.platformapi.registry;
+
+import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Base64;
+
+/**
+ * 镜像仓库的只读出站。设计见 spec §2.4。
+ *
+ * <p>与 S0.2 的 {@code CredentialProbeClient} **同一条路径与同一套规矩**：显式超时、
+ * <b>重定向 NEVER</b>、Basic 认证、失败转业务码。
+ *
+ * <p>⚠️ <b>重定向必须真正关掉</b>：{@code SimpleClientHttpRequestFactory} 基于
+ * {@code HttpURLConnection}，**没有**关重定向的 API 且默认跟随 —— S0.2 终审抓到过一个 Critical
+ * 就是「javadoc 声称 NEVER、代码却在跟随」。这里直接用 {@link JdkClientHttpRequestFactory} +
+ * 显式 {@code HttpClient.Redirect.NEVER}。
+ *
+ * <p>⚠️ <b>URL 由调用方给，且必须由凭据的 endpoint 拼出来</b> —— 本类不做任何拼接，
+ * 也就不可能拿用户输入里的 host 去发请求（spec §4.2 的硬边界 1）。
+ */
+@Slf4j
+@Component
+public class RegistryHttpClient {
+
+    private static final int CONNECT_TIMEOUT_MS = 5_000;
+
+    private static final int READ_TIMEOUT_MS = 10_000;
+
+    private final RestClient restClient;
+
+    public RegistryHttpClient() {
+        HttpClient http = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS))
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(http);
+        factory.setReadTimeout(Duration.ofMillis(READ_TIMEOUT_MS));
+        this.restClient = RestClient.builder().requestFactory(factory).build();
+    }
+
+    /** 测试用：注入一个绑定了 {@code MockRestServiceServer} 的 RestClient。 */
+    RegistryHttpClient(RestClient restClient) {
+        this.restClient = restClient;
+    }
+
+    /**
+     * GET 一个绝对 URL，返回响应体。
+     *
+     * <p>非 2xx 一律抛 {@link CloudPlatformException}：调用方（suggest / browse）各自决定
+     * 是**静默吞掉**（补全）还是**往上抛**（浏览）—— 见 spec §5.3 的姿态差异。
+     */
+    public String get(CredentialRef cred, String url) {
+        try {
+            return restClient.get()
+                    .uri(URI.create(url))
+                    .header(HttpHeaders.AUTHORIZATION, basic(cred))
+                    .retrieve()
+                    // ⚠️ 注册顺序要紧：RestClient 按**注册顺序**取第一个匹配的 handler。
+                    // 所以**窄的（401/403）必须先注册**，宽的（非 2xx）后注册 ——
+                    // 反过来的话 401 会拿到「返回 401」而不是那句二义文案，
+                    // 而二义文案正是本模块最要防的误判（spec §5.4）。实测确认过。
+                    .onStatus(status -> status.value() == 401 || status.value() == 403, (req, res) -> {
+                        throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                                "凭据不通过，或该凭据无权访问此仓库");
+                    })
+                    .onStatus(status -> !status.is2xxSuccessful(), (req, res) -> {
+                        throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                                "镜像仓库返回 " + res.getStatusCode().value());
+                    })
+                    .body(String.class);
+        } catch (CloudPlatformException e) {
+            throw e;
+        } catch (IllegalArgumentException e) {
+            // URI.create 对「不是绝对地址 / 含非法字符」抛这个 —— 那是**地址格式**问题，不是网络问题。
+            // S0.2 的教训：把它报成「网络不可达」会把管理员引去查平台出站策略。
+            log.warn("镜像仓库地址格式非法 url={}", url, e);
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "镜像仓库地址格式不对：请检查该连接配置的 endpoint");
+        } catch (Exception e) {
+            log.warn("镜像仓库请求失败 url={}", url, e);
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "无法连接镜像仓库：" + e.getMessage());
+        }
+    }
+
+    private static String basic(CredentialRef cred) {
+        String raw = (cred.username() == null ? "" : cred.username())
+                + ":" + (cred.secret() == null ? "" : cred.secret());
+        return "Basic " + Base64.getEncoder().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
+    }
+}
