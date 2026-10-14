@@ -38,22 +38,23 @@ import java.util.stream.Collectors;
 @Component
 public class OutboundProxy {
 
-    private final String host;
+    private final String server;
 
     private final int port;
 
-    private final Set<String> hosts;
+    private final Set<String> targets;
 
     /**
-     * @param hostsCsv 逗号分隔的 host 白名单（用字符串而不是 YAML list，
-     *                 是为了让 {@code @Value} 的行为毫无歧义）
+     * @param targetsCsv 逗号分隔的**目标**白名单（哪些 host 走这个代理）。
+     *                   ⚠️ 名字刻意与 {@code server} 拉开：{@code host} / {@code hosts}
+     *                   只差一个字母，一个指代理服务器、一个指要走它的目标，最容易看反。
      */
-    public OutboundProxy(@Value("${platform.outbound.proxy.host:}") String host,
+    public OutboundProxy(@Value("${platform.outbound.proxy.server:}") String server,
                          @Value("${platform.outbound.proxy.port:0}") int port,
-                         @Value("${platform.outbound.proxy.hosts:}") String hostsCsv) {
-        this.host = host == null ? "" : host.trim();
+                         @Value("${platform.outbound.proxy.targets:}") String targetsCsv) {
+        this.server = server == null ? "" : server.trim();
         this.port = port;
-        this.hosts = parse(hostsCsv);
+        this.targets = parse(targetsCsv);
     }
 
     /** 没配代理的形态 —— 测试用，也是「白名单为空」的正常表达。 */
@@ -62,17 +63,17 @@ public class OutboundProxy {
     }
 
     public ProxySelector selector() {
-        InetSocketAddress addr = (StringUtils.hasText(host) && port > 0)
-                ? InetSocketAddress.createUnresolved(host, port)
+        InetSocketAddress addr = (StringUtils.hasText(server) && port > 0)
+                ? InetSocketAddress.createUnresolved(server, port)
                 : null;
-        if (addr == null && !hosts.isEmpty()) {
-            log.warn("配了走代理的 host 白名单，但 proxy.host/port 不完整 —— 一律直连。hosts={}", hosts);
+        if (addr == null && !targets.isEmpty()) {
+            log.warn("配了走代理的目标白名单，但 proxy.server/port 不完整 —— 一律直连。targets={}", targets);
         }
         return new ProxySelector() {
             @Override
             public List<Proxy> select(URI uri) {
                 if (addr != null && uri != null && uri.getHost() != null
-                        && hosts.contains(uri.getHost().toLowerCase(Locale.ROOT))) {
+                        && targets.contains(uri.getHost().toLowerCase(Locale.ROOT))) {
                     return List.of(new Proxy(Proxy.Type.HTTP, addr));
                 }
                 return List.of(Proxy.NO_PROXY);

@@ -29,26 +29,23 @@ platform:
       enabled: ${DOCKERHUB_ENABLED:true}
   outbound:
     proxy:
-      # 出站代理：**只有 hosts 里列出的目标走代理，其余一律直连**。
+      # 出站代理：**只有 targets 里列出的目标走代理，其余一律直连**。
+      #
+      # ⚠️ 键名刻意不叫 host / hosts —— 那两个只差一个字母，一个指**代理服务器**、
+      # 一个指**要走它的目标**，最容易看反。所以是 server（代理服务器）/ targets（走它的目标）。
       #
       # ⚠️ 为什么是白名单而不是「一个全局代理」：平台只有两类出站是朝公网的
       # （Docker Hub、外网 git host），其余全是内网（k8s-server 127.0.0.1:8080、
       # Thanos、Prometheus、自建 Harbor / gitlab）。配一个"替所有出站"的代理意味着
       # **代理填错时内网流量也被导出去** —— 那是最难查的一类故障。
       #
-      # ⚠️ 精确匹配 host，不做后缀：github.com 不会命中 raw.githubusercontent.com。
+      # ⚠️ 精确匹配，不做后缀：github.com 不会命中 raw.githubusercontent.com。
       # 宁可多写一行，也不要"以为配了一个域名、其实整个子域都被导出去了"。
       #
-      # ⚠️ hosts 留空 = **全直连**（不给"替所有出站"留口子）。这是默认值 ——
-      # 一个写错的内网代理地址会让外部拉取全线失败，所以默认必须fail-safe。
-      #
-      # 用法示例（把下面三行填上你自己的）：
-      #   host: 192.168.85.1
-      #   port: 7890
-      #   hosts: hub.docker.com,github.com
-      host: ${OUTBOUND_PROXY_HOST:192.168.85.1}
-      port: ${OUTBOUND_PROXY_PORT:7890}
-      hosts: ${OUTBOUND_PROXY_HOSTS:}
+      # ⚠️ targets 留空 = **全直连**，代理形同不存在。
+      server: ${OUTBOUND_PROXY_SERVER:}     # 代理服务器地址（不是"要走代理的域名"）
+      port: ${OUTBOUND_PROXY_PORT:0}
+      targets: ${OUTBOUND_PROXY_TARGETS:hub.docker.com,github.com}   # 逗号分隔；只有这些走代理
   namespace:
     # 受保护（系统）命名空间：命中者不可编辑 / 删除 / 设配额 / 设限制范围，读仍开放。
     # 精确匹配，须与集群内真实 ns 名一致；按部署环境增删。

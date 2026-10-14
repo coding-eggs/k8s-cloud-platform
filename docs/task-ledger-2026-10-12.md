@@ -378,7 +378,7 @@
 > **连带回退**：`CredentialService.TYPES` 去掉 `DOCKERHUB`，凭据页不再提供这个类型 ——
 > 上面那批刚交付的两处前端（类型选项、endpoint 预填只读联动）随之回退。
 >
-> **同批做的第二件事：出站代理按 host 白名单分流**（`platform.outbound.proxy.*`），
+> **同批做的第二件事：出站代理按目标白名单分流**（`platform.outbound.proxy.{server,port,targets}` —— **刻意不叫 host/hosts**，那对只差一个字母、一个指代理服务器一个指要走它的目标，最容易看反），
 > `RegistryHttpClient` 与 `CredentialProbeClient` 共用一个 `ProxySelector`。
 > 只有白名单里的目标走代理，内网（自建 Harbor / gitlab、k8s-server、Thanos、Prometheus）
 > 一律直连；白名单为空 = 全直连（默认，fail-safe）。这补上了原先「补全通、测试连接不通」

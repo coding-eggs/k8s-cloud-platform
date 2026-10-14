@@ -541,10 +541,14 @@ platform:
       enabled: true      # 关掉就不内置这一档（隔离内网里免得每次按键都朝一个不可达的地址打一发）
   outbound:
     proxy:
-      host: 192.168.85.1 # 留空 = 不使用代理
+      server: 192.168.85.1  # 代理服务器地址
       port: 7890
-      hosts: hub.docker.com,github.com   # **只有列在这里的目标走代理**，其余一律直连
+      targets: hub.docker.com,github.com   # **只有列在这里的目标走代理**，其余一律直连
 ```
+
+⚠️ **键名刻意不叫 `host` / `hosts`** —— 那两个只差一个字母，一个指**代理服务器**、
+一个指**要走它的目标**，最容易看反。所以是 `server` / `targets`。
+（第一版就叫 `host` / `hosts`，用户当场指出这个歧义。）
 
 **出站代理为什么是白名单而不是「一个全局代理」**：平台只有两类出站是朝公网的
 （Docker Hub、外网 git host），其余全是内网（k8s-server `127.0.0.1:8080`、Thanos、
