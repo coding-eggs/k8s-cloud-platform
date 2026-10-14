@@ -13,6 +13,7 @@ import com.coding.platformapi.registry.CredentialRef;
 import com.coding.platformapi.registry.ProbeSpec;
 import com.coding.platformapi.registry.RegistryDialect;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
+import com.coding.platformapi.registry.RegistrySuggestExecutor;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
@@ -77,7 +78,32 @@ class RegistryServiceTest {
     };
 
     RegistryService svc = new RegistryService(mapper, cipher,
-            new RegistryDialectRegistry(List.of(spyDialect)), cache);
+            new RegistryDialectRegistry(List.of(spyDialect)), cache, new RegistrySuggestExecutor());
+
+    /**
+     * 回显自己 endpoint 的方言 —— 聚合测试要能分辨「这条候选是哪条连接给的」。
+     * {@link #spyDialect} 对所有连接返回同一个串，分辨不出来。
+     */
+    private RegistryDialect echoDialectFor(String type) {
+        return new RegistryDialect() {
+        @Override public String type() { return type; }
+        @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
+        @Override public ProbeSpec probeSpec(CredentialRef c) {
+            return new ProbeSpec("https://harbor.example.com/v2/", "该地址不是 registry");
+        }
+        @Override public List<String> suggest(CredentialRef c, String p) {
+            calls.add("suggest:" + c.id() + ":" + p);
+            return List.of(c.endpoint() + "/x");
+        }
+        @Override public BrowseResult browse(CredentialRef c, List<String> p) {
+            return new BrowseResult(List.of(), List.of());
+        }
+        };
+    }
+
+    RegistryService echoSvc = new RegistryService(mapper, cipher,
+            new RegistryDialectRegistry(List.of(echoDialectFor("HARBOR"), echoDialectFor("DOCKERHUB"))),
+            cache, new RegistrySuggestExecutor());
 
     private PlatformCredential row(String id, String name, String type, String endpoint, int enabled) {
         PlatformCredential c = new PlatformCredential();
@@ -144,7 +170,7 @@ class RegistryServiceTest {
             }
         };
         RegistryService svc2 = new RegistryService(mapper, cipher,
-                new RegistryDialectRegistry(List.of(spyDialect, gitea)), cache);
+                new RegistryDialectRegistry(List.of(spyDialect, gitea)), cache, new RegistrySuggestExecutor());
         when(mapper.selectAll()).thenReturn(List.of(row("c9", "gitea-a", "GITEA", "gitea.example.com", 1)));
 
         assertThat(svc2.connections()).extracting(RegistryConnectionView::id).containsExactly("c9");
@@ -174,7 +200,9 @@ class RegistryServiceTest {
         // ⚠️ Review Focus 3
         when(mapper.selectAll()).thenReturn(List.of(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
 
-        assertThat(svc.suggest("nginx:1.27").items()).isEmpty();
+        // ⚠️ 契约在 2026-10-14 变了：**无 host 的输入现在要问全部连接**（聚合），
+        // 所以「匹配不上」只能用**带 host** 的输入来表达。断言本身（零请求）没变。
+        assertThat(svc.suggest("other.example.com/nginx:1.27").items()).isEmpty();
         assertThat(svc.suggest("unknown.example.com/x").items()).isEmpty();
         assertThat(calls).as("匹配不到连接时不得调用方言（即不得发请求）").isEmpty();
     }
@@ -214,8 +242,75 @@ class RegistryServiceTest {
                 .containsExactly("harbor.example.com/proj/app");
     }
 
-    // ---- 浏览 ----
+    // ---- 跨连接聚合（S3.1 的「无 host 一律空候选」在这里被反转） ----
 
+    @Test
+    void inputWithAHostOnlyAsksTheMatchingConnection() {
+        when(mapper.selectAll()).thenReturn(List.of(
+                row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1),
+                row("c2", "hub", "DOCKERHUB", "docker.io", 1)));
+
+        echoSvc.suggest("harbor.example.com/proj/ap");
+
+        assertThat(calls).containsExactly("suggest:c1:harbor.example.com/proj/ap");   // c2 一次都没被问
+    }
+
+    @Test
+    void inputWithAHostThatMatchesNothingMakesZeroRequests() {
+        when(mapper.selectAll()).thenReturn(List.of(
+                row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
+
+        assertThat(echoSvc.suggest("other.example.com/ng").items()).isEmpty();
+        assertThat(calls).as("零请求，不是「发了但返回空」").isEmpty();
+    }
+
+    @Test
+    void inputWithoutAHostAsksEveryConnection() {
+        when(mapper.selectAll()).thenReturn(List.of(
+                row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1),
+                row("c2", "hub", "DOCKERHUB", "docker.io", 1)));
+
+        echoSvc.suggest("ng");
+
+        assertThat(calls).containsExactlyInAnyOrder("suggest:c1:ng", "suggest:c2:ng");
+    }
+
+    @Test
+    void inputWithoutAHostWithNoConnectionsMakesZeroRequests() {
+        when(mapper.selectAll()).thenReturn(List.of());
+
+        assertThat(svc.suggest("ng").items()).isEmpty();
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
+    void resultsAreMergedAndSortedByConnectionName() {
+        when(mapper.selectAll()).thenReturn(List.of(
+                row("c2", "zeta", "HARBOR", "zeta.example.com", 1),
+                row("c1", "alpha", "HARBOR", "alpha.example.com", 1)));
+
+        assertThat(echoSvc.suggest("ng").items())
+                .extracting(RegistrySuggestResponse.Item::connectionName)
+                .containsExactly("alpha", "zeta");     // 按连接名，不按 mapper 的返回顺序
+    }
+
+    @Test
+    void oneFailingConnectionDoesNotSuppressTheOthers() {
+        // ⭐ Review Focus #1：一条连接的密文解不开（例如主密钥换过），其余候选必须照常返回。
+        // S3.1 终审修过一次放大效应 —— 那时是「解不开就让所有人的补全全挂」，
+        // 改成「只解密命中的那一条」之后，要保证「只影响它自己」在聚合下仍然成立。
+        PlatformCredential broken = row("bad", "broken", "HARBOR", "broken.example.com", 1);
+        broken.setSecretEncrypted("v1:bm90LWEtcmVhbC1jaXBoZXJ0ZXh0");   // 本测试的 cipher 解不开
+        PlatformCredential good = row("ok", "good", "HARBOR", "good.example.com", 1);
+        good.setSecretEncrypted(cipher.encrypt("{\"username\":\"u\",\"secret\":\"p\"}"));
+        when(mapper.selectAll()).thenReturn(List.of(broken, good));
+
+        assertThat(echoSvc.suggest("ng").items())
+                .extracting(RegistrySuggestResponse.Item::value)
+                .containsExactly("good.example.com/x");
+    }
+
+    // ---- 浏览 ----
     @Test
     void browseDispatchesToTheNamedConnection() {
         when(mapper.selectById("c1")).thenReturn(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1));
