@@ -40,6 +40,25 @@ const editing = ref<string | null>((route.query.name as string) || null)
 const kind = ref<RouteKind>(parseRouteKind(route.query.kind) ?? 'httproute')
 /** 合法 `?kind=` 或编辑既有对象时锁定类型；非法/缺失时放开（用户自己选） */
 const kindLocked = computed(() => !!editing.value || parseRouteKind(route.query.kind) !== null)
+/** 类型选择器只列**有 create 码**的 kind（编辑态额外保留当前 kind 以便显示），别给做不到的选项 */
+const selectableKinds = computed(() => ROUTE_KINDS.filter((k) => k.key === kind.value || perm.has(k.createCode)))
+
+/** 新建态若默认 kind 不在**可创建**范围（例：只有 tcproute:create 却默认落在 httproute），落到第一个能建的 */
+watch([() => perm.ready, selectableKinds], () => {
+  if (editing.value) return
+  if (perm.has(kindMeta(kind.value).createCode)) return
+  const first = ROUTE_KINDS.find((k) => perm.has(k.createCode))
+  if (first) kind.value = first.key
+}, { immediate: true })
+
+/**
+ * 用户切了类型：rules 由子组件 `v-if` 重建自然清空，但 `hostnames` 归外壳、会跨 kind 存活 ——
+ * 必须在这里清（spec §5.3），否则新建 HTTPRoute 时填的主机名会跟着跑到 TLSRoute 上。
+ * 与父引用块同理：只挂 `@change`（回填也会改 kind 的初值，写成 watch 会误清）。
+ */
+function onKindChange(): void {
+  form.hostnames = []
+}
 
 const ctx3 = computed(() => ({
   tenantId: state.tenantId!,
@@ -364,8 +383,8 @@ onMounted(() => { void load() })
     <div v-else class="panel editor-panel">
       <el-form v-if="formVisible" label-position="left" label-width="200px" class="editor-form">
         <el-form-item label="类型" required>
-          <el-select v-model="kind" :disabled="kindLocked" style="width: 220px">
-            <el-option v-for="k in ROUTE_KINDS" :key="k.key" :label="k.label" :value="k.key" />
+          <el-select v-model="kind" :disabled="kindLocked" style="width: 220px" @change="onKindChange">
+            <el-option v-for="k in selectableKinds" :key="k.key" :label="k.label" :value="k.key" />
           </el-select>
           <FieldHelp tip="路由类型决定下面能配什么：HTTPRoute / GRPCRoute 有方法/路径/头的匹配与过滤器；TLSRoute 按 SNI 匹配；TCPRoute / UDPRoute 只做端口转发。创建后不可改。" />
         </el-form-item>

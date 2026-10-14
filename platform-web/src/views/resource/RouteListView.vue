@@ -55,6 +55,18 @@ const creatable = computed(() =>
   permitted.value.filter((k) => perm.has(k.createCode) && !unavailable.value.includes(k.key)),
 )
 
+/** 空态文案：三种情形分开说清（没有任何读权限 / 该类型被筛空 / 该命名空间真的没有） */
+const emptyTitle = computed(() => {
+  if (!permitted.value.length) return '无可用路由类型'
+  if (kindFilter.value === 'all') return '该命名空间下暂无路由策略'
+  return `该命名空间下没有 ${kindMeta(kindFilter.value).label}`
+})
+const emptyDescription = computed(() => {
+  if (!permitted.value.length) return '当前账号没有任何一种路由类型的读取权限，请联系管理员。'
+  if (kindFilter.value === 'all') return '路由策略含 HTTPRoute / GRPCRoute / TCPRoute / TLSRoute / UDPRoute 五种（gateway.networking.k8s.io CRD）。'
+  return '切回「全部」可查看其它类型。'
+})
+
 async function refresh(): Promise<void> {
   if (!ready.value) return
   loading.value = true
@@ -88,9 +100,12 @@ async function refreshAll(): Promise<void> {
 
 watch([() => ready.value, () => state.clusterId, () => state.namespace], ([r]) => {
   if (!r) return
-  unavailable.value = [] // 换了集群/命名空间：CRD 与可见范围都可能变
   void refresh()
 }, { immediate: true })
+
+/** 某个 CRD 装没装是**集群**属性，与命名空间无关：只有换集群（或用户点刷新）才重置「不可用」，
+ *  否则每切一次命名空间就重发那几个注定失败的 list、重炸一串与用户操作无关的红条。 */
+watch(() => state.clusterId, () => { unavailable.value = [] })
 
 // ---------- 导航 ----------
 function goCreate(key: RouteKind): void { router.push({ name: 'route-editor', query: { kind: key } }) }
@@ -121,6 +136,11 @@ async function openDetail(row: RouteRow, tab: 'info' | 'yaml' = 'info'): Promise
   drawerVisible.value = true
   if (tab === 'yaml') await loadYaml(row)
 }
+
+/** 抽屉里切到 YAML 标签才懒加载（5 份旧列表页都有这个 watch，合并时漏了它 → 点 tab 永远停在「加载中…」） */
+watch(detailTab, (tab) => {
+  if (tab === 'yaml' && detail.value && !yamlText.value) void loadYaml(detail.value)
+})
 
 async function loadYaml(row: RouteRow): Promise<void> {
   try {
@@ -184,7 +204,7 @@ onLoad()
         </template>
       </el-dropdown>
       <el-button
-        v-else-if="kindFilter !== 'all'"
+        v-else-if="kindFilter !== 'all' && perm.has(kindMeta(kindFilter).createCode)"
         type="primary"
         :disabled="!ready || !canCreate"
         @click="goCreate(kindFilter)"
@@ -214,22 +234,25 @@ onLoad()
       :title="`以下类型当前不可用（CRD 未安装或读取失败）：${unavailable.map((k) => kindMeta(k).label).join('、')}`"
     />
 
-    <EmptyState
-      v-if="ready && !filtered.length && !loading"
-      title="该命名空间下暂无路由策略"
-      description="路由策略含 HTTPRoute / GRPCRoute / TCPRoute / TLSRoute / UDPRoute 五种（gateway.networking.k8s.io CRD）。"
-    />
-
-    <div v-else class="panel table-panel">
+    <!-- 筛选行必须在空态之外：否则筛到「该类型 0 行」时整块被空态顶掉，筛选器跟着消失、用户回不到「全部」 -->
+    <div v-if="ready" class="panel table-panel">
       <div class="filter-row">
         <span class="muted">类型</span>
-        <el-select v-model="kindFilter" style="width: 180px">
+        <el-select v-model="kindFilter" style="width: 200px">
           <el-option label="全部" value="all" />
-          <el-option v-for="k in permitted" :key="k.key" :label="k.label" :value="k.key" />
+          <el-option
+            v-for="k in permitted"
+            :key="k.key"
+            :label="unavailable.includes(k.key) ? `${k.label}（未安装）` : k.label"
+            :value="k.key"
+            :disabled="unavailable.includes(k.key)"
+          />
         </el-select>
       </div>
 
-      <el-table v-loading="loading || !ready" :data="filtered" stripe>
+      <EmptyState v-if="!filtered.length && !loading" :title="emptyTitle" :description="emptyDescription" />
+
+      <el-table v-else v-loading="loading || !ready" :data="filtered" stripe>
         <el-table-column label="类型" width="130">
           <template #default="{ row }"><el-tag size="small" effect="plain">{{ kindMeta(row._kind).label }}</el-tag></template>
         </el-table-column>
