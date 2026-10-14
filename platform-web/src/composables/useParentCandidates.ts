@@ -38,10 +38,19 @@ export interface CandidateBucket {
 /** 未加载 / 未建模 kind 的统一空桶（共享只读对象，不要往里写） */
 const EMPTY: CandidateBucket = { list: [], loading: false, failed: false }
 
+/**
+ * 候选的保鲜期：超过它再 `ensure` 会**重新拉取**（旧的列表继续可见，直到新数据回来）。
+ * <p>没有它就会出现一个回退：改造前每次进编辑器都会重新拉，改完变成"整个 SPA 会话只拉一次"，
+ * 于是"刚创建的 Gateway/Service 不出现在下拉里，直到刷新页面"。取值与 platform-api 的权限闭包缓存同口径（TTL-only 30s）。
+ */
+const TTL_MILLIS = 30_000
+
 const KIND_GATEWAY = ''
 const KIND_SERVICE = 'Service'
 
 const buckets = reactive(new Map<string, CandidateBucket>())
+/** 每个 key 上次**发起**拉取的时刻（拉取失败会清掉，让下一次 ensure 立刻重试） */
+const fetchedAt = new Map<string, number>()
 const { state } = useResourceContext()
 
 function keyOf(kind: string, namespace: string): string {
@@ -82,27 +91,38 @@ export function useParentCandidates() {
     return buckets.get(keyOf(kind, namespace)) ?? EMPTY
   }
 
-  /** 触发加载：同一个 (kind, 命名空间) 只发一次；未建模 kind 与空命名空间直接返回 */
+  /** 触发加载：同一个 (kind, 命名空间) 在 TTL 内只发一次；未建模 kind 与空命名空间直接返回 */
   function ensure(kind: string, namespace: string): void {
     if (!namespace) return
     if (kind !== KIND_GATEWAY && kind !== KIND_SERVICE) return
     const key = keyOf(kind, namespace)
-    if (buckets.has(key)) return
+    const at = fetchedAt.get(key)
+    if (at != null && Date.now() - at < TTL_MILLIS) return // 命中且未过期
+    const known = buckets.get(key)
+    if (known?.loading) return // 正在拉取，别叠请求
 
-    buckets.set(key, { list: [], loading: true, failed: false })
+    if (known) {
+      known.loading = true // 过期重拉：保留旧列表（SWR），只翻 loading
+    } else {
+      buckets.set(key, { list: [], loading: true, failed: false })
+    }
     // 必须从 map 里取回来再用（reactive Map 的 get 返回响应式代理）：
     // 直接改 set 进去的那个裸对象不保证模板收到通知
     const b = buckets.get(key)!
+    fetchedAt.set(key, Date.now())
     const ctx = { tenantId: state.tenantId!, clusterId: state.clusterId!, namespace }
+    const onFail = () => {
+      b.failed = true
+      fetchedAt.delete(key) // 失败不留 TTL：下一次 ensure 立刻重试（与改造前"每次进页面都重拉"一致）
+    }
     if (kind === KIND_SERVICE) {
       serviceApi
         .list(ctx)
         .then((items) => {
           b.list = items.filter(isClusterIpService).map(serviceCandidate)
+          b.failed = false
         })
-        .catch(() => {
-          b.failed = true
-        })
+        .catch(onFail)
         .finally(() => {
           b.loading = false
         })
@@ -111,10 +131,9 @@ export function useParentCandidates() {
         .list(ctx)
         .then((items) => {
           b.list = items.map(gatewayCandidate)
+          b.failed = false
         })
-        .catch(() => {
-          b.failed = true
-        })
+        .catch(onFail)
         .finally(() => {
           b.loading = false
         })
