@@ -291,25 +291,13 @@ async function handleLogout(): Promise<void> {
           <el-icon><Promotion /></el-icon>
           <template #title>Gateway</template>
         </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.mesh.httpRoute.list)" index="/resources/httproutes">
+        <!-- 路由策略（Route 五合一）：5 种 route 一个页面。requiresPerm/菜单同源：5 个 list 码任一 -->
+        <el-menu-item
+          v-if="can(pageCodes.mesh.httpRoute.list) || can(pageCodes.mesh.grpcRoute.list) || can(pageCodes.mesh.tcpRoute.list) || can(pageCodes.mesh.tlsRoute.list) || can(pageCodes.mesh.udpRoute.list)"
+          index="/routes"
+        >
           <el-icon><Share /></el-icon>
-          <template #title>HTTPRoute</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.mesh.grpcRoute.list)" index="/resources/grpcroutes">
-          <el-icon><Connection /></el-icon>
-          <template #title>GRPCRoute</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.mesh.tcpRoute.list)" index="/resources/tcproutes">
-          <el-icon><Position /></el-icon>
-          <template #title>TCPRoute</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.mesh.tlsRoute.list)" index="/resources/tlsroutes">
-          <el-icon><Lock /></el-icon>
-          <template #title>TLSRoute</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.mesh.udpRoute.list)" index="/resources/udproutes">
-          <el-icon><Aim /></el-icon>
-          <template #title>UDPRoute</template>
+          <template #title>路由策略</template>
         </el-menu-item>
       </el-menu>
     </aside>
