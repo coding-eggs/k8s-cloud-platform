@@ -100,6 +100,22 @@ public final class AuditAction {
      */
     public static final String CREDENTIAL_TEST = "credential:test";
 
+    // ---- 流水线（S3.5 第 ① 片，5 个写端点全量）----
+
+    public static final String PIPELINE_CREATE = "pipeline:create";
+
+    public static final String PIPELINE_UPDATE = "pipeline:update";
+
+    public static final String PIPELINE_DELETE = "pipeline:delete";
+
+    /**
+     * 触发一次运行。台账 S0.1.3 点名了「CI 触发」要进审计 ——
+     * 它是本平台「让集群跑任意代码」的那条路径（spec §10.1）。
+     */
+    public static final String PIPELINE_RUN = "pipeline:run";
+
+    public static final String PIPELINE_CANCEL = "pipeline:cancel";
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *

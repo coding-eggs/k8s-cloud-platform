@@ -32,6 +32,7 @@ import com.coding.k8score.converter.impl.gateway.TlsRouteConverter;
 import com.coding.k8score.converter.impl.gateway.UdpRouteConverter;
 import com.coding.k8score.converter.impl.monitoring.PodMonitorConverter;
 import com.coding.k8score.converter.impl.pipeline.PipelineRunConverter;
+import com.coding.k8score.pipeline.PipelineCanvasOperations;
 import com.coding.k8score.converter.impl.monitoring.ServiceMonitorConverter;
 import com.coding.k8score.converter.impl.rbac.CoreV1ServiceAccountConverter;
 import com.coding.k8score.converter.impl.rbac.RbacV1ClusterRoleConverter;
@@ -105,10 +106,15 @@ public class KubernetesOperationsFactory {
 
     private final KubernetesClientFactory clientFactory;
     private final K8sClusterMapper k8sClusterMapper;
+    /** 画布渲染（pipeline 专用）。platform-api 不依赖 k8s-core，所以渲染必须在这里被接上。 */
+    private final PipelineCanvasOperations canvasOps;
 
-    public KubernetesOperationsFactory(KubernetesClientFactory clientFactory, K8sClusterMapper k8sClusterMapper) {
+    public KubernetesOperationsFactory(KubernetesClientFactory clientFactory,
+                                       K8sClusterMapper k8sClusterMapper,
+                                       PipelineCanvasOperations canvasOps) {
         this.clientFactory = clientFactory;
         this.k8sClusterMapper = k8sClusterMapper;
+        this.canvasOps = canvasOps;
     }
 
     /** 命名空间级资源 operation（Deployment、RoleBinding、ServiceAccount 等），用 tenant client 实现租户隔离。 */
@@ -230,7 +236,8 @@ public class KubernetesOperationsFactory {
             case UDP_ROUTE -> new UdpRouteOperations(client, new UdpRouteConverter(resolveL4Version(clusterId)));
             case HPA -> buildHpa(client, clusterId);
             // CI（Tekton）：单版本（tekton.dev/v1 GA），命名空间级、租户域。
-            case PIPELINE_RUN -> new PipelineRunOperations(client, new PipelineRunConverter());
+            // 画布渲染也在 k8s-server 侧（platform-api 不依赖 k8s-core/fabric8），所以这里带上 canvasOps。
+            case PIPELINE_RUN -> new PipelineRunOperations(client, new PipelineRunConverter(), canvasOps);
             default -> throw new CloudPlatformException(EnumResponseType.NON_RESOURCE);
         };
     }

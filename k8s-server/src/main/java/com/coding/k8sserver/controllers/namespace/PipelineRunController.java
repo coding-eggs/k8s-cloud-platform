@@ -2,8 +2,11 @@ package com.coding.k8sserver.controllers.namespace;
 
 import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
+import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
+import com.coding.k8score.pipeline.PipelineCanvasOperations;
+import com.coding.k8score.pipeline.PipelineNodeTypeView;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.ResourceAccessResolver.AccessContext;
 import com.coding.k8sserver.controllers.base.AbstractNamespacedResourceController;
@@ -11,9 +14,12 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 命名空间域 —— Tekton {@code PipelineRun}（{@code tekton.dev/v1}，租户域，边界=分配表三元组）。
@@ -30,14 +36,42 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/pipelineruns")
 public class PipelineRunController extends AbstractNamespacedResourceController<PipelineRunDTO> {
 
+    /** 画布相关的两个纯函数动作（节点元数据 / 渲染）。**没有集群上下文**，所以不走 ops 那条路。 */
+    private final PipelineCanvasOperations canvasOps;
+
     public PipelineRunController(KubernetesOperationsFactory operationsFactory,
-                                 ResourceAccessResolver accessResolver) {
+                                 ResourceAccessResolver accessResolver,
+                                 PipelineCanvasOperations canvasOps) {
         super(operationsFactory, accessResolver);
+        this.canvasOps = canvasOps;
     }
 
     @Override
     protected ResourceType resourceType() {
         return ResourceType.PIPELINE_RUN;
+    }
+
+    /**
+     * 内置节点的元数据（表单 schema + 语言预设）。
+     *
+     * <p>⚠️ 端点在**这里**而不是 platform-api：节点 schema 的真相源是 {@code PipelineNodeRegistry}，
+     * 而它住在 k8s-core —— platform-api 不依赖 k8s-core（spec §7 的改定块）。
+     * 它不碰集群，只是把编译期就在内存里的东西原样发出去。
+     */
+    @PostMapping("/node-types")
+    @Operation(summary = "内置流水线节点的元数据（表单 schema + 语言预设）")
+    public ResponseData<List<PipelineNodeTypeView>> nodeTypes() {
+        return new ResponseData<>(canvasOps.nodeTypes());
+    }
+
+    /**
+     * 画布 → Tekton YAML。两个用途：前端预览，以及 platform-api 保存流水线时的**画布校验**
+     * （带环、未知节点类型都会在这里抛业务异常 —— 规则只有一份，不重复实现）。
+     */
+    @PostMapping("/render")
+    @Operation(summary = "把画布渲染成 Tekton YAML（预览；同时是保存时的画布校验入口）")
+    public ResponseData<String> render(@RequestBody PipelineCanvasRequest request) {
+        return new ResponseData<>(canvasOps.renderYaml(request.canvasJson()));
     }
 
     /**

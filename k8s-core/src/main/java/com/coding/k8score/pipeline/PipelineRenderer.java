@@ -8,6 +8,7 @@ import io.fabric8.tekton.v1.PipelineTask;
 import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
 import io.fabric8.tekton.v1.TaskSpec;
 import io.fabric8.tekton.v1.WorkspaceDeclaration;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -30,8 +31,9 @@ import java.util.Set;
  * 消掉跨命名空间引用与 ClusterTask 废弃那一堆问题。
  *
  * <p>它是实例方法（要拿 {@link PipelineNodeRegistry}），但**仍然无 IO、无状态**：
- * 同一份画布渲染两次结果字节等价。
+ * 同一份画布渲染两次结果字节等价。`@Component` 只是让它能被 {@link PipelineCanvasOperations} 注入。
  */
+@Component
 public final class PipelineRenderer {
 
     private final PipelineNodeRegistry nodes;

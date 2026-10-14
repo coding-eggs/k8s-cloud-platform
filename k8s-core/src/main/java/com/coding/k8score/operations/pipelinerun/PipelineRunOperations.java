@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.k8score.converter.impl.pipeline.PipelineRunConverter;
 import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.pipeline.PipelineCanvasOperations;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -44,6 +45,8 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
 
     private final KubernetesClient client;
     private final PipelineRunConverter converter;
+    /** 画布渲染 —— platform-api 不碰 fabric8，所以创建时收到的是画布、渲染在这里做（spec §7 的改定块）。 */
+    private final PipelineCanvasOperations canvasOps;
 
     @Override
     public String apiVersion() {
@@ -131,17 +134,21 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
     }
 
     /**
-     * 创建。**内联 {@code pipelineSpec}**（集群里不留 {@code Pipeline} 对象，spec §3.2）
-     * 并**打上平台标签**（{@link #managedLabels}）。
+     * 创建。**接收画布、在这里渲染**成内联的 {@code pipelineSpec}（集群里不留 {@code Pipeline} 对象，
+     * spec §3.2）并**打上平台标签**（{@link #managedLabels}）。
      *
-     * @param dto 用 {@code pipelineSpecJson} 传渲染器产出的 {@code PipelineSpec} 的 JSON
+     * <p>⚠️ 渲染放在这一步而不是 platform-api：那边不依赖 k8s-core/fabric8（spec §7 的改定块）。
+     *
+     * @param dto 用 {@code pipelineCanvasJson} 传平台自己的画布 JSON
      */
     @Override
     public PipelineRunDTO create(PipelineRunDTO dto) {
-        if (!StringUtils.hasText(dto.getPipelineSpecJson())) {
+        if (!StringUtils.hasText(dto.getPipelineCanvasJson())) {
             throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
-                    "创建流水线运行必须带内联的 PipelineSpec");
+                    "创建流水线运行必须带画布");
         }
+        PipelineSpec spec = canvasOps.render(dto.getPipelineCanvasJson());
+
         PipelineRun pr = new PipelineRun();
         // ⚠️ tekton-model 不初始化 metadata —— 不先 setMetadata 就 NPE
         pr.setMetadata(new ObjectMeta());
@@ -149,13 +156,6 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         pr.getMetadata().setNamespace(dto.getNamespace());
         pr.getMetadata().setLabels(managedLabels(dto.getLabels()));
 
-        PipelineSpec spec;
-        try {
-            spec = Serialization.unmarshal(dto.getPipelineSpecJson(), PipelineSpec.class);
-        } catch (Exception e) {
-            throw new CloudPlatformException(EnumResponseType.PIPELINE_CANVAS_INVALID,
-                    "内联的 PipelineSpec 无法解析");
-        }
         PipelineRunSpec runSpec = new PipelineRunSpec();
         runSpec.setPipelineSpec(spec);
         // ⚠️ 有意**不设** spec.timeouts —— 超时由平台判定（spec §4.2）。让 Tekton 自己超时
