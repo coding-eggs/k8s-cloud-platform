@@ -150,7 +150,10 @@ POST /registry/suggest
 
 ### 4.1 解析与分派
 
-1. 从 `imagePrefix` 里取出 **host 部分**（第一个 `/` 之前；没有 `/` 则整串去掉 `:tag` 之后的部分）
+1. 从 `imagePrefix` 里取出 **host 部分** —— 判据用 **Docker 自己的规则**：第一个 `/` 之前那一段含 `.` 或 `:`，
+   或恰为 `localhost`，才算 registry host（否则它是 Docker Hub 的**命名空间**，如 `myteam/app`）。
+   ⚠️ **不能用朴素的「第一个 `/` 之前」** —— 那会把 `myteam/app` 判成 host `myteam`，
+   于是一条恰叫 `myteam` 的连接会被一个纯 Docker Hub 引用匹配上。
 2. **host 必须在已配置且 `enabled` 的 registry 类连接里匹配到**（取 `endpoint` 的最长前缀匹配）
 3. 匹配不到 → 返回 `{"items": []}`，**不发任何请求**
 4. 匹配到 → 交给该连接的 dialect，由它决定补哪一段
@@ -334,7 +337,9 @@ S0.2 的「使用凭据要留痕」在这里**有意不执行**。「使用」�
 ### 12.1 部署后待验清单
 
 - [ ] 凭据页能建出 `Harbor 镜像仓库` 类型的连接（旧库里的 `GIT` 行不受影响）
-- [ ] 「更新镜像」输入框里打 `harbor.example.com/` → 出仓库候选；打 `…:1` → 出 tag 候选
+- [ ] 「更新镜像」输入框里打 `harbor.example.com/pro` → 出仓库候选；打 `harbor.example.com/proj/app:1` → 出 tag 候选
+      （⚠️ **只打 host 或 host 加一个斜杠是不给候选的** —— `searchTermOf` 要求 host 之后**正好一段**，
+      因为把整个 registry 的仓库一次拉出来既慢又没意义；见 §4.1 的解析规则）
 - [ ] 输入一个**没配过的** host → **无候选、无报错**，且能自由输入
 - [ ] 浏览页：选连接 → 点进 project → 点进仓库 → 看到 tag 的推送时间/大小/digest → 复制镜像地址
 - [ ] 浏览页在 registry 不可达时**要报错**（不是空列表）
