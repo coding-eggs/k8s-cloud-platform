@@ -37,7 +37,7 @@ S3.5 在台账里是 **XL / 13 个子任务** —— 一批 spec + 一个实施�
 | **构建 Pod 的权限** | **零集群写权限** | 它只往 registry 推镜像；集群里的写入全由平台侧（有权限控制与审计）做 |
 | **运行历史与日志** | **落库**；集群里的 `PipelineRun` 归档后**删掉**（级联删 TaskRun 与 **Pod**） | 用户 2026-10-15：Tekton 跑完会留 `Completed` 的 Pod 占资源，期望「**k8s 不保留**，执行记录与日志**进数据库**」。详见 §4 |
 | **运行终结的事件从哪来** | **k8s-server 侧「按需 watch」** —— 只在有运行在跑时开，运行结束就关；空闲时零连接 | 用户 2026-10-15 两次追问后的结论。不用轮询；**不用 Tekton CloudEvents sink**（要集群→平台的入站连通，且漏了不补）；**也不用常驻 informer**（空闲时每集群占一条连接、且要管生命周期）。见 §4.1 |
-| **取消与超时** | **都收进平台**（先抓日志、再取消）；**不设** Tekton 的 `spec.timeouts`；超时由 k8s-server 侧一个**只看 informer 本地缓存**的定时器判定 | Tekton 在超时/取消时会自己删 Pod → 日志丢失。收进平台才能保证「所有终结路径上都抓过日志」（§4.2） |
+| **取消与超时** | **都收进平台**（先抓日志、再取消）；**不设** Tekton 的 `spec.timeouts`；超时由 k8s-server 侧一个**只看**活动 watch 的台账**（哪些 run 在跑 + 它们的 startTime）**的定时器判定 | Tekton 在超时/取消时会自己删 Pod → 日志丢失。收进平台才能保证「所有终结路径上都抓过日志」（§4.2） |
 
 ---
 
@@ -246,7 +246,7 @@ Tekton 在**超时**和**取消**两种情况会自己把 Pod 删掉 —— 那�
 - **超时** = **不设** Tekton 的 `spec.timeouts`，改由 **k8s-server 侧一个轻量定时器**判定「跑太久了」
   → 通知平台走与取消同一条路（先抓后取消），结束时标成 `TIMEOUT` 而不是 `CANCELLED`
 
-  ⚠️ 它**只看 informer 的本地缓存**（里面本来就有"哪些 run 在跑 + `startTime`"），**不打集群**；
+  ⚠️ 它**只看活动 watch 的台账**（k8s-server 侧记着哪些 run 在跑 + 它们的 `startTime`），**不打集群**；
   而且**只在真有运行中的 run 时才有事可做**，没有在跑的 run 时它是空转。
   所以它不是「轮询集群」，是**同一份 watch 缓存的二次利用** —— 唯一的替代是让 Tekton 自己超时，
   那会删掉 Pod、**那批运行的日志必然丢失**，与"日志进库"直接冲突。
@@ -283,7 +283,7 @@ platform:
       internal-token: ${PIPELINE_INTERNAL_TOKEN:}     # k8s-server → platform-api 的内部回调密钥；留空则内部端点拒绝一切请求（fail-closed）
     run:
       timeout: ${PIPELINE_RUN_TIMEOUT:30m}            # 平台自己判定的超时
-      timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}    # 判定节拍 —— 只看 informer 本地缓存，不打集群
+      timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}    # 判定节拍 —— 只看**活动 watch 的台账**（哪些 run 在跑 + 它们的 startTime），不打集群
     log:
       max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}    # 单步 1 MB，超出截断
       retention-days: ${PIPELINE_LOG_RETENTION_DAYS:90}
@@ -432,7 +432,7 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **内部端点** | 密钥不对 → 拒绝；**密钥未配置 → 拒绝一切**（fail-closed）；未终结的 run 名 → 不归档 |
 | **截断** | 超过 1 MB 的单步日志 → `truncated=true` 且内容确实被截断；未超的 `truncated=false` |
 | **取消的顺序** | **先抓日志、再 patch 取消** —— 断言两次调用的先后（这是「日志拿得到」的全部依据） |
-| **超时判定** | 只读 informer 本地缓存、**不打集群**（断言没有出站调用）；未达时限不动；已达 → 走取消那条路且状态记 `TIMEOUT` |
+| **超时判定** | 只读活动 watch 的台账、**不打集群**（断言没有出站调用）；未达时限不动；已达 → 走取消那条路且状态记 `TIMEOUT` |
 | **保留** | 90 天前的 run 与其日志行**一起**被删；89 天的两条都还在 |
 
 ---
