@@ -74,23 +74,27 @@ public class RegistryService {
             return new RegistrySuggestResponse(List.of());
         }
         // 只解密命中的那一条
-        CredentialRef cred = rows.stream()
+        PlatformCredential row = rows.stream()
                 .filter(r -> r.getId().equals(hit.id()))
                 .findFirst()
-                .map(this::toRef)
                 .orElse(null);
-        if (cred == null) {
+        if (row == null) {
             return new RegistrySuggestResponse(List.of());
         }
+        CredentialRef cred = toRef(row);
         // ⚠️ 只包住**方言调用**，不包住匹配 —— 匹配是纯内存、每次都要按**最新**连接列表算；
         // 把它也塞进缓存会让「刚停用的连接还能补出候选」（spec §5.4）。
         // ⚠️ key 传的是**逻辑键**：RedisJsonCache 自己会加 `platform:cache:` 前缀，
         // 这里再带一次就会变成双前缀 —— 缓存永不命中，而且没人看得出来。
-        return new RegistrySuggestResponse(cache.get(
+        List<String> values = cache.get(
                 "registry:suggest:" + cred.id() + ":" + imagePrefix.trim(),
                 Duration.ofMinutes(2),
                 new TypeReference<>() { },
-                () -> dialects.of(cred.type()).suggest(cred, imagePrefix.trim())));
+                () -> dialects.of(cred.type()).suggest(cred, imagePrefix.trim()));
+        // 每条候选带上来源连接名 —— 聚合之后一次输入会问多条连接，这是唯一推不出来的那部分信息
+        return new RegistrySuggestResponse(values.stream()
+                .map(v -> new RegistrySuggestResponse.Item(v, row.getName()))
+                .toList());
     }
 
     /** 浏览。**不吞错** —— 用户在页面上主动点了一层，失败要说（spec §5.3）。 */

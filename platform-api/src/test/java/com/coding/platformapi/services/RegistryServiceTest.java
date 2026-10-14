@@ -7,6 +7,7 @@ import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.credential.CredentialCipher;
 import com.coding.platformapi.models.RegistryBrowseRequest;
 import com.coding.platformapi.models.RegistryConnectionView;
+import com.coding.platformapi.models.RegistrySuggestResponse;
 import com.coding.platformapi.registry.BrowseResult;
 import com.coding.platformapi.registry.CredentialRef;
 import com.coding.platformapi.registry.ProbeSpec;
@@ -154,11 +155,17 @@ class RegistryServiceTest {
     // ---- 补全 ----
 
     @Test
-    void suggestDispatchesToTheMatchedConnection() {
+    void suggestDispatchesToTheMatchedConnectionAndTagsEachCandidateWithItsSource() {
         when(mapper.selectAll()).thenReturn(List.of(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
 
         assertThat(svc.suggest("harbor.example.com/pro").items())
-                .containsExactly("harbor.example.com/proj/app");
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.value()).isEqualTo("harbor.example.com/proj/app");
+                    // 来源连接名是唯一无法从候选串里推出来的信息：
+                    // Harbor 的候选串自带 host，但「是哪个连接」推不出来。聚合之后必须有。
+                    assertThat(i.connectionName()).isEqualTo("harbor-prod");
+                });
         assertThat(calls).containsExactly("suggest:harbor.example.com/pro");
     }
 
@@ -203,6 +210,7 @@ class RegistryServiceTest {
                 row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
 
         assertThat(svc.suggest("harbor.example.com/pro").items())
+                .extracting(RegistrySuggestResponse.Item::value)
                 .containsExactly("harbor.example.com/proj/app");
     }
 
