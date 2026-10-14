@@ -1079,3 +1079,63 @@ git commit -m "docs(plan): route 父引用跨 kind 支持落地记录"
 - **无占位**：所有步骤都带可粘贴代码或精确锚点。
 - **命名一致**：`parentKind` / `bucketOf` / `effectiveNs` / `hasUnmodeledKind` / `sectionOptions` / `noDataText` / `sectionNoDataText` / `onParentKindChange` / `onParentNamespaceChange` / `useParentCandidates` / `bucket` / `ensure` / `ParentCandidate` / `CandidateBucket` 全文一致。
 - **Review Focus 逐条有落点**：见文首六条各自的任务指向。
+
+---
+
+## 落地记录（2026-10-14）
+
+**提交**（main 上顺序落地）：`61d7082` 后端写盘归一 → `9d8d612` 候选 composable → `bed79ed` HTTPRoute 编辑器 → `2679837` 其余 4 个编辑器 → `85aba48` 列表/详情展示 → `66fa062` 候选 TTL 修复。
+
+**实际改动文件**
+
+| 文件 | 改动 |
+|---|---|
+| `k8s-core/.../gateway/GatewaySpecUtil.java` | 新增 `parentGroup`/`putStrAllowEmpty`；`toParentRefMaps` 的 group 改走归一；`sameParent` 按归一值比较；`toBackendRefMap` 加防误改注释 |
+| `k8s-core/.../gateway/HttpRouteConverterTest.java` | +4 条（Service 显式空串 / 显式空串原样 / 未建模 kind 的 group 不被抹 / update 不损坏存量） |
+| `k8s-core/.../gateway/TcpRouteConverterTest.java` | +1 条（共享路径对照） |
+| `platform-common/.../dto/ParentRefDTO.java` | `group` 的 null 与 `""` 语义注释 |
+| `platform-web/src/composables/useParentCandidates.ts` | 新增（含 30s TTL，见偏差 4） |
+| `platform-web/.../{Http,Grpc,Tcp,Tls,Udp}RouteEditorView.vue` | 父引用块四行联动 + 只读提示 + 段名软校验 + 提交载荷 |
+| `platform-web/.../{Http,Grpc,Tcp,Tls,Udp}RouteView.vue` | `parentText` 带 kind、字段名改「父资源」 |
+
+**与计划的偏差（逐条，含原因）**
+
+1. **计划未规定"未建模 kind 时名称行/段名行叫什么"**：原写法会把 `ServiceImport` 的父引用标成「Gateway」、`sectionName` 标成「监听器」。补 `nameRowLabel`（未建模显示原 kind）/`sectionRowLabel`（未建模显示「段名（sectionName）」），并把对应 FieldHelp 改成 `v-else-if="!hasUnmodeledKind(p)"`（未建模时不显示 Gateway 文案）。
+2. **计划 Step 1 只说"加 import"**：删 `loadGateways` 后 `gatewayApi` 与 `K8sGateway` 在本文件失效，一并从 import 删掉。
+3. **Task 4 未手抄 4 遍**：改用带断言的 Node 脚本机械应用（`task4-apply.mjs`，13 处/文件，锚点不命中即中止），以保证 5 个文件逐字一致。过程中踩到两个脚本 bug 并修掉：锚点 regex 误写 `ref<K8sGateway[]>()`（漏了参数里的 `[]`）；"插入型"替换（`SECTION_NAME_RE`、`.parent-hint`）二次运行不幂等 → Grpc 出现重复声明（构建报 `Identifier 'SECTION_NAME_RE' has already been declared`）已去重。Task 5 同理用脚本，并处理了列表页是 **CRLF**（编辑器页是 LF）、Tcp/Tls/Udp 的 `parentText` 上方无文档注释这两个差异。
+4. **浏览器验证时新发现的行为回退（已修，不在原计划内）**：候选改成 composable 缓存后，**整个 SPA 会话只拉一次**，于是"刚创建的 Gateway/Service 不出现在下拉里，直到刷新页面"—— 改造前每次进编辑器都会重拉。加 **30s TTL**（与 platform-api 权限闭包缓存同口径）：过期后 `ensure` 重拉且保留旧列表（SWR）；拉取失败**不**留 TTL，下一次 `ensure` 立刻重试。提交 `66fa062`。
+
+**验证证据**
+
+后端：`mvn -o -pl k8s-core -am test` → **215/215 通过**（5 个 route converter 37/37，含 5 条新增断言）。
+前端：`npm run build`（vue-tsc + vite）每次改动后均通过。
+
+浏览器（dev server 5199，`preview_eval` 直挂 SFC + 桩掉 api 模块，逐条实跑）：
+
+| # | 结果 |
+|---|---|
+| 1 | ✅ 新建时父资源类型显示「Gateway（缺省）」；名称候选来自该命名空间的 Gateway（calls: `gw:team-a`） |
+| 2 | ✅ 切 kind → Service：第四行变「端口名（sectionName）」、候选换成 Service 且 ExternalName/headless 不在内、**旧 name/sectionName 被清空**（显示 placeholder） |
+| 3 | ✅ 命名空间切 team-b → 重新拉候选（calls: `gw:team-b`）+ 名称/段名清空；手输的本租户范围外命名空间 `infra` 值保住、候选拉取失败时提示「候选拉取失败（权限或 CRD 未装），可直接输入名称」，不阻断保存 |
+| 4 | ✅ Gateway 下段名候选=该 Gateway 的监听器名（去重：http/https）；非法 sectionName `Bad_Listener` 被拦：「父引用 #1：sectionName 须为合法段名（小写字母/数字/'-'/'.'，≤253）」且**未发请求** |
+| 5 | ⚠️ **降级**（见下） |
+| 6 | ⚠️ **降级**（见下） |
+| 7 | ✅ `kind=ServiceImport` 显示原 kind + 「段名（sectionName）」+ 只读小字「kind=ServiceImport 未建模，本页不改它」；名称/段名手输 |
+| 8 | ✅ 带 port 的父引用显示只读小字「port=80（本页不改，可在 YAML 里改）」 |
+| 9 | ✅ 列表页列头为「父资源」（无「父 Gateway」）；摘要 `Gateway infra/gw:http`、`Service api`、`Service x:9090`（sectionName 缺省时回落到 port） |
+| 10 | ✅ waypoint Gateway 的候选项文案为 `wp-a · waypoint` |
+| 11 | ✅ 回填不被清空逻辑误伤：Gateway 父引用（gw-a + http）与 Service 父引用（api + mysql）均原样显示，kind 正确 |
+
+候选目录额外单测（`preview_eval` 直取模块）：Service 侧过滤 ExternalName/headless ✅、`portNames` 只含有名字的端口且去重 ✅、Gateway 侧 `listeners` 去重保序 + `waypointFor` 读 label ✅、同一 key TTL 内只拉一次 ✅、超 30s 重拉并换新数据 ✅、失败立刻可重试 ✅、未建模 kind 与空命名空间不发请求 ✅。
+
+**未验证（如实列出）**
+
+- **断言 5/6 的"落盘"那一半没有端到端验证**：环境里虽有活后端（platform-api `:8081`、auth `:9527`、k8s-server `:8080`），但**跑的是本次改动之前的构建**（旧二进制正是带 bug 的那版），用它能证明的只是旧行为；要真验落盘得重新构建并重启这几个服务（属于本工作区之外的副作用，未擅自动），且还需要一个装了 Gateway API 的集群与一次登录。已做的是**降级验证**：抓编辑器实际发出的保存载荷 →
+
+  ```json
+  parentRefs: [{ "name": "api", "namespace": null, "sectionName": "http", "group": "", "kind": "Service", "port": null }]
+  ```
+
+  （`kind=Service` 由选择器给出、`group` 原样透传为 `""`），后端那一半由 Task 1 的 `convertForUpdate_keeps_service_parent_group_at_empty_string` 单测覆盖（该测试在改前是红的）。**"平台的这一版构建 + 真实集群"下的 YAML tab 复核仍未做。**
+- **Istio 运行时语义**：Service 父引用下 `sectionName` 是否被按"端口名"解释、是否要求 `port` —— 无集群可验，FieldHelp 里也没有承诺（与 spec §8 一致）。
+- 前端 4 个编辑器（Grpc/Tls/Udp 之外的交互）只做了 build + TCP 冒烟；交互断言集中在 HTTPRoute 上跑（5 个文件代码逐字相同，由脚本保证一致）。
