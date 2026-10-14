@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 
@@ -218,13 +219,21 @@ public class HarborDialect implements RegistryDialect {
 
     // ==================== 输入切分（纯） ====================
 
-    /** 去掉 host 之后按 {@code /} 切的段。{@code harbor.example.com/proj/app} → {@code [proj, app]}。 */
+    /**
+     * 去掉 host 之后按 {@code /} 切的段。{@code harbor.example.com/proj/app} → {@code [proj, app]}。
+     *
+     * <p>⚠️ <b>两边都要归一化</b>：endpoint 是自由文本、无格式校验，而 GIT 档的 placeholder 正是
+     * {@code https://gitlab.example.com} —— 切类型时极易把 {@code https://}、尾斜杠、大写带进来。
+     * 不归一化的话，连接照样匹配得上（{@link RegistryTargetResolver} 那边归一化了），
+     * 但这里取不到段 → <b>补全静默返回空</b>，用户看不出任何线索。
+     */
     public static List<String> segmentsOf(String imagePrefix, String endpoint) {
         String s = imagePrefix == null ? "" : imagePrefix.trim();
-        if (!s.startsWith(endpoint)) {
+        String host = RegistryTargetResolver.normalizeEndpoint(endpoint);
+        if (host.isEmpty() || !s.toLowerCase(Locale.ROOT).startsWith(host)) {
             return List.of();
         }
-        String rest = s.substring(endpoint.length());
+        String rest = s.substring(host.length());
         while (rest.startsWith("/") || rest.startsWith(":")) {
             rest = rest.substring(1);
         }
@@ -294,8 +303,9 @@ public class HarborDialect implements RegistryDialect {
         return tags.stream().map(t -> host(c) + "/" + project + "/" + repo + ":" + t).toList();
     }
 
+    /** 候选串里的 host —— 与匹配层**同一个口径**（去 scheme、去尾斜杠、小写）。 */
     private static String host(CredentialRef c) {
-        return c.endpoint().replaceFirst("^https?://", "").replaceAll("/+$", "");
+        return RegistryTargetResolver.normalizeEndpoint(c.endpoint());
     }
 
     // ==================== 浏览映射（纯） ====================

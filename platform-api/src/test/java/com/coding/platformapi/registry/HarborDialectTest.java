@@ -317,4 +317,43 @@ class HarborDialectTest {
         assertThatThrownBy(() -> dialect.browse(CRED, List.of()))
                 .isInstanceOf(CloudPlatformException.class);
     }
+
+    // ---- endpoint 归一化（回归：配了却补不出来，且无声） ----
+    //
+    // 匹配层（RegistryTargetResolver）早就归一化了，段切分这一层没有 ——
+    // 于是 endpoint 填成 https://harbor.example.com 时，连接照样匹配得上、这里却取不到段，
+    // 补全静默返回空，而浏览页一切正常。GIT 的 placeholder 正是 https://gitlab.example.com，
+    // 切类型时极易残留。
+
+    @Test
+    void segmentsWorkWhenEndpointCarriesAScheme() {
+        assertThat(HarborDialect.segmentsOf("harbor.example.com/proj/app", "https://harbor.example.com"))
+                .containsExactly("proj", "app");
+    }
+
+    @Test
+    void segmentsWorkWhenEndpointHasATrailingSlash() {
+        assertThat(HarborDialect.segmentsOf("harbor.example.com/proj/app", "harbor.example.com/"))
+                .containsExactly("proj", "app");
+    }
+
+    @Test
+    void segmentsWorkWhenEndpointIsUpperCase() {
+        assertThat(HarborDialect.segmentsOf("harbor.example.com/proj/app", "HARBOR.example.com"))
+                .containsExactly("proj", "app");
+    }
+
+    @Test
+    void segmentsWorkWhenTheUserTypedTheHostInUpperCase() {
+        assertThat(HarborDialect.segmentsOf("HARBOR.example.com/proj/app", "harbor.example.com"))
+                .containsExactly("proj", "app");
+    }
+
+    @Test
+    void searchTermStillRejectsTheWrongHost() {
+        // 归一化不能把「别人的 host」也放进来
+        assertThat(HarborDialect.searchTermOf("other.example.com/ng", "harbor.example.com")).isNull();
+        assertThat(HarborDialect.searchTermOf("harbor.example.com.evil.com/ng", "harbor.example.com"))
+                .isNull();
+    }
 }
