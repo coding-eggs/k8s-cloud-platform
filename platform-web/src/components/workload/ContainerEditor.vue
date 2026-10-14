@@ -117,7 +117,16 @@ defineExpose({ isValid })
         <div class="ce-row">
           <span class="ce-label">镜像 <FieldHelp tip="容器运行的镜像地址及 tag，如 nginx:1.27。Pod 启动时按拉取策略从镜像仓库拉取该镜像。" /></span>
           <el-autocomplete v-model="image" :fetch-suggestions="fetchImageSuggestions"
-                           placeholder="镜像（如 nginx:1.27）" style="width: 320px" />
+                           placeholder="镜像（如 nginx:1.27）" style="width: 320px">
+            <!-- ⚠️ key 不能只取 value：两条连接返回同一个串是可能的（同 endpoint 的两条连接），
+                 只用它当 key 会出重复 key 并丢行 -->
+            <template #default="{ item }">
+              <div class="suggest-row">
+                <span class="suggest-value">{{ item.value }}</span>
+                <span class="suggest-source">{{ item.connectionName }}</span>
+              </div>
+            </template>
+          </el-autocomplete>
         </div>
         <div class="ce-row">
           <span class="ce-label">镜像拉取策略 <FieldHelp tip="imagePullPolicy：Always=每次启动都拉取 / IfNotPresent=本地已有则用、否则拉取 / Never=仅用本地镜像。留空由 K8s 按 tag 决定（:latest 视为 Always）。" /></span>
@@ -189,4 +198,26 @@ defineExpose({ isValid })
 .ce-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap }
 .ce-label { width: 150px; flex-shrink: 0; font-size: 12px; color: var(--el-text-color-secondary); white-space: nowrap }
 .d2-hint { margin: -4px 0 8px; padding-left: 158px; font-size: 12px; color: var(--el-color-warning) }
+
+/* 镜像补全下拉：左侧完整镜像串（长了省略号截断），右侧来源连接名 */
+.suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.suggest-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-source {
+  flex: none;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
 </style>

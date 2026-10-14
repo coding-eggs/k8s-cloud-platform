@@ -647,7 +647,16 @@ const contextDesc = computed(() => {
                            :fetch-suggestions="fetchImageSuggestions"
                            placeholder="如 nginx:1.27 或 registry.example.com/app"
                            style="width: 100%"
-                           @keyup.enter="submitImage" />
+                           @keyup.enter="submitImage">
+            <!-- ⚠️ key 不能只取 value：两条连接返回同一个串是可能的（同 endpoint 的两条连接），
+                 只用它当 key 会出重复 key 并丢行 -->
+            <template #default="{ item }">
+              <div class="suggest-row">
+                <span class="suggest-value">{{ item.value }}</span>
+                <span class="suggest-source">{{ item.connectionName }}</span>
+              </div>
+            </template>
+          </el-autocomplete>
         </el-form-item>
       </el-form>
       <div class="dialog-hint">
@@ -766,5 +775,27 @@ const contextDesc = computed(() => {
 }
 .search-input {
   width: 240px;
+}
+
+/* 镜像补全下拉：左侧完整镜像串（长了省略号截断），右侧来源连接名 */
+.suggest-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.suggest-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suggest-source {
+  flex: none;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 </style>
