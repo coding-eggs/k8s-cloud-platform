@@ -36,7 +36,8 @@ S3.5 在台账里是 **XL / 13 个子任务** —— 一批 spec + 一个实施�
 | **git 凭据** | **平台连接逐条显式授权**（新列，默认关） | 台账 S3.5.12 的安全边界；S0.2 特意留着「租户侧没有凭据码」，CI 正面撞上了它 |
 | **构建 Pod 的权限** | **零集群写权限** | 它只往 registry 推镜像；集群里的写入全由平台侧（有权限控制与审计）做 |
 | **运行历史与日志** | **落库**；集群里的 `PipelineRun` 归档后**删掉**（级联删 TaskRun 与 **Pod**） | 用户 2026-10-15：Tekton 跑完会留 `Completed` 的 Pod 占资源，期望「**k8s 不保留**，执行记录与日志**进数据库**」。详见 §4 |
-| **取消与超时** | **都收进平台**（先抓日志、再取消）；**不设** Tekton 的 `spec.timeouts` | Tekton 在超时/取消时会自己删 Pod → 日志丢失。收进平台才能保证「所有终结路径上都抓过日志」（§4.2） |
+| **运行终结的事件从哪来** | **k8s-server 侧对 PipelineRun 起 watch/informer**，终结时回调 platform-api | 用户 2026-10-15：不要轮询。**不用 Tekton 的 CloudEvents sink**（要集群→平台的入站连通，且**漏了不补** —— 平台每次部署重启期间完成的运行都不会被归档）。watch 用既有的平台→集群方向，且**断线重连会自动 relist、天然补齐**（§4.1） |
+| **取消与超时** | **都收进平台**（先抓日志、再取消）；**不设** Tekton 的 `spec.timeouts`；超时由 k8s-server 侧一个**只看 informer 本地缓存**的定时器判定 | Tekton 在超时/取消时会自己删 Pod → 日志丢失。收进平台才能保证「所有终结路径上都抓过日志」（§4.2） |
 
 ---
 
@@ -190,25 +191,39 @@ public record BuildPreset(String key, String label,
 >
 > 堆积的兜底是 kubelet 的 `--terminated-pod-gc-threshold`，**默认 12500** —— 到那个数之前没人清理。
 
-### 4.1 归档与删除由平台**一个动作**完成（先抓后删）
+### 4.1 归档由**watch 驱动**，零轮询
+
+> **本节 2026-10-15 二次改写**：用户明确指出不要轮询。核实后 Tekton **确实**有事件机制
+> （`tekton-events-controller` + `config-events` 的 sink），但那条路要**集群 → 平台的入站连通**，
+> 且**漏了不补** —— 平台每次部署重启期间完成的运行都不会被归档、Pod 永远留着。
+> 所以改用 **k8s-server 侧 watch**：方向不变、且自愈。
 
 ```
-@Scheduled 轮询（默认 60s，可配）
-  → 枚举「租户 × 集群 × 命名空间」分配表里的命名空间
-  → 找**已终结**的 PipelineRun（成功 / 失败 / 被平台取消 / 平台判定超时）
+k8s-server：每个纳管集群一个 PipelineRun informer
+  （resync 周期默认 5 分钟，见 §4bis）
+  → handler 只看**已终结**的 run（Succeeded / Failed）
+  → POST 到 platform-api 的内部端点（服务间密钥鉴权）
+platform-api：幂等归档
+  → 按 run_name 查库：已有 → **直接跳过**（幂等）
   → 抓 status + 每个 TaskRun 的每个 step 容器的日志（复用 /{pod}/logs?container=）
-  → 落库（按 run_name 唯一 → **幂等**，重复扫到不会写两条）
+  → 落库
   → 删掉 PipelineRun（ownerReference 级联删 TaskRun 与 **Pod**）
 ```
 
-**为什么不配合 `tektoncd/pruner`**（独立项目、能按 TTL/条数清 `PipelineRun`/`TaskRun`）：
-它删的时候平台还没抓日志 —— **两个组件各干各的，归档与清理的先后无法保证**。
-让平台一个动作做完，时序天然正确。代价是平台停摆期间 Pod 会堆 —— 但那比
-「pruner 先把日志删了、平台**永远**归档不到」好得多。
+**为什么这条路自愈、不需要任何兜底扫描**：
 
-⚠️ **归档走 k8s-server 的「平台侧」通道**（`AccessBoundary` / `PLATFORM_SCOPE`），
-不是用户上下文 —— 系统任务没有用户。所以 k8s-server 要暴露平台侧的
-「列某命名空间的 PipelineRun / 读某 Pod 的日志 / 删某 PipelineRun」三个动作。
+| 场景 | 怎么补上 |
+|---|---|
+| k8s-server 重启 | informer 重新 **relist**，集群里还在的对象会**再投递一遍** → 幂等键挡住重复，漏掉的补上 |
+| watch 断开重连 | 同上（resourceVersion 续传或 relist） |
+| platform-api 短暂不可达（回调失败） | **下一次 resync 会重投** —— fabric8 informer 的 resync 会定期把缓存对象重新交给 handler |
+| 重复投递 | `run_name` 唯一 → 幂等，不会写两条、也不会重复删 |
+
+⚠️ **架构变化要说清**：k8s-server 从"纯请求驱动"变成**持有 watch 与本地缓存**
+（每个纳管集群一份）。这不是全新的形态 —— 它已经在 Pod exec 那条路上持有长连接，
+但这是第一次**为业务逻辑长期持有集群状态**，值得记一笔。
+
+⚠️ **不需要 Tekton 的 `config-events` sink**，也不用装任何新组件。
 
 ### 4.2 取消与超时**也收进平台** —— 这是让日志拿得到的关键
 
@@ -216,8 +231,13 @@ Tekton 在**超时**和**取消**两种情况会自己把 Pod 删掉 —— 那�
 所以平台不能让 Tekton 去终结：
 
 - **取消** = 平台**先抓一次日志**，再 patch `spec.status` 取消
-- **超时** = 平台**不设** Tekton 的 `spec.timeouts`，改由轮询判定「跑太久了」→ 走与取消同一条路
-  （先抓后取消），结束时标成 `TIMEOUT` 而不是 `CANCELLED`
+- **超时** = **不设** Tekton 的 `spec.timeouts`，改由 **k8s-server 侧一个轻量定时器**判定「跑太久了」
+  → 通知平台走与取消同一条路（先抓后取消），结束时标成 `TIMEOUT` 而不是 `CANCELLED`
+
+  ⚠️ 它**只看 informer 的本地缓存**（里面本来就有"哪些 run 在跑 + `startTime`"），**不打集群**；
+  而且**只在真有运行中的 run 时才有事可做**，没有在跑的 run 时它是空转。
+  所以它不是「轮询集群」，是**同一份 watch 缓存的二次利用** —— 唯一的替代是让 Tekton 自己超时，
+  那会删掉 Pod、**那批运行的日志必然丢失**，与"日志进库"直接冲突。
 
 于是**所有终结路径上，平台都在 Pod 还在时抓过日志** ✓
 
@@ -248,9 +268,11 @@ platform:
   pipeline:
     archive:
       enabled: ${PIPELINE_ARCHIVE_ENABLED:true}
-      interval: ${PIPELINE_ARCHIVE_INTERVAL:60s}      # 轮询间隔
+      resync: ${PIPELINE_WATCH_RESYNC:5m}             # informer 的重投周期（兜底靠它，不是轮询集群）
+      internal-token: ${PIPELINE_INTERNAL_TOKEN:}     # k8s-server → platform-api 的内部回调密钥；留空则内部端点拒绝一切请求（fail-closed）
     run:
       timeout: ${PIPELINE_RUN_TIMEOUT:30m}            # 平台自己判定的超时
+      timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}    # 判定节拍 —— 只看 informer 本地缓存，不打集群
     log:
       max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}    # 单步 1 MB，超出截断
       retention-days: ${PIPELINE_LOG_RETENTION_DAYS:90}
@@ -359,6 +381,16 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 
 ⚠️ 运行与日志**落库**（§4）—— 集群里的对象归档后被删掉，所以**库是运行历史的唯一来源**。
 
+**平台侧**：
+
+```
+/internal/pipeline-run/finished        ← k8s-server → platform-api 的内部回调（密钥鉴权，不在用户权限体系里）
+```
+
+⚠️ 内部端点**必须在 `ExemptPaths` 之外自己校验密钥**（它与用户 JWT 是两套东西）：
+密钥留空则**拒绝一切请求**（fail-closed），与凭据主密钥同一条判断。
+调用方是 k8s-server（与 platform-api 同机，`127.0.0.1`），不经用户上下文。
+
 **归档 / 删除 / 保留清理是平台自己的动作，不标审计**（不是用户请求）。但 `/pipeline/run` 仍标 ——
 台账 S0.1.3 点名了「CI 触发」。
 
@@ -384,9 +416,11 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **凭据授权** | 未被标记的连接**不出现**在 `/pipeline/git-connections` 里；强行引用未授权连接 id → 拒绝（**不静默降级**） |
 | **迁移** | 手工重放 + **join 对账**（5 个码 × 3 个角色的关联逐条命中真实权限行，全表悬空扫描 = 0）—— S0.2/S3.1 的教训 |
 | **capability 门控** | 没有 `tekton.dev/v1` 时端点/页面整块不可用，不是 500 |
-| **归档** | 一个已终结的 run 归档后：`run_name` 落库、集群对象被删、**重复扫到不写第二条**（幂等钉死）；**抓日志中途 Pod 没了 → 抓到多少存多少、不静默丢** |
+| **归档** | 一个已终结的 run 归档后：`run_name` 落库、集群对象被删；**同一个 run 投递两次只写一条、只删一次**（幂等钉死）；**抓日志中途 Pod 没了 → 抓到多少存多少、不静默丢**；**未终结的 run 不被归档**（不能把 Running 的当完成的） |
+| **内部端点** | 密钥不对 → 拒绝；**密钥未配置 → 拒绝一切**（fail-closed）；未终结的 run 名 → 不归档 |
 | **截断** | 超过 1 MB 的单步日志 → `truncated=true` 且内容确实被截断；未超的 `truncated=false` |
 | **取消的顺序** | **先抓日志、再 patch 取消** —— 断言两次调用的先后（这是「日志拿得到」的全部依据） |
+| **超时判定** | 只读 informer 本地缓存、**不打集群**（断言没有出站调用）；未达时限不动；已达 → 走取消那条路且状态记 `TIMEOUT` |
 | **保留** | 90 天前的 run 与其日志行**一起**被删；89 天的两条都还在 |
 
 ---
@@ -427,6 +461,8 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
       feature flag（我记得默认 60 分钟）兜底删 Pod。**若是，必须把集群侧的 `default-timeout` 设为 0（禁用）
       或设成远大于平台超时** —— 否则「超时收进平台」这条设计会静默失效、那批运行的日志照样丢
 - [ ] **归档与 kubelet GC / 他方删除的竞态** —— 抓日志中途 Pod 消失时的行为（要「抓到多少存多少」，不是整条丢）
+- [ ] **fabric8 informer 在 k8s-server 侧的代价** —— 每个纳管集群一份 watch 与本地缓存的内存/连接占用；
+      以及它的 **resync 周期到底怎么配**（是否就是要用的那个兜底）
 - [ ] **1 MB 截断的实际体验** —— 拿一次真实的 `mvn` 构建日志量一下（决定这个默认值要不要调）
 - [ ] **`volumeClaimTemplate` 在目标集群的 StorageClass 上能否绑定**（集群有没有可动态供应的默认 SC）
 - [ ] **基础镜像能不能拉到** —— kubelet 不走平台的出站代理；确认集群节点拉 `maven:3.9-eclipse-temurin-21` 之类的路径
@@ -443,9 +479,11 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
    `platform_credential.usable_by_pipelines` 列 + 5 个权限行 + 角色关联
 2. **集群侧**：装 Tekton Pipelines（`profile: lite` 或 vanilla release.yaml）；
    **租户 SA 的 K8s RBAC 模板要加 `tekton.dev` 组**（与当年 Gateway 那个坑同形）；确认有可动态供应的 StorageClass；
-   ⚠️ **若 Tekton 有默认超时，把 `default-timeout` 设为 0**（否则超时仍由 Tekton 终结 → 那批运行日志丢失，见 §11）
-3. **归档任务需要的配置**（§4bis）：`platform.pipeline.archive.{enabled,interval}` ·
-   `platform.pipeline.run.timeout` · `platform.pipeline.log.{max-bytes,retention-days}` —— 都有默认值，不配也能跑
+   ⚠️ **若 Tekton 有默认超时，把 `default-timeout` 设为 0**（否则超时仍由 Tekton 终结 → 那批运行日志丢失，见 §11）。
+   **不需要配 `config-events` 的 sink**（§4.1）
+3. **归档需要的配置**（§4bis）：`platform.pipeline.archive.{enabled,resync,internal-token}` ·
+   `platform.pipeline.run.timeout` · `platform.pipeline.log.{max-bytes,retention-days}`。
+   ⚠️ 除 `internal-token` 外都有默认值；**`internal-token` 必须配**，否则内部回调端点拒绝一切请求（fail-closed）
 4. **再起新构建**
 5. 重放后重新登录，或等权限闭包缓存的 30s TTL
 
