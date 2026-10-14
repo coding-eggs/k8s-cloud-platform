@@ -1,6 +1,7 @@
 package com.coding.platformapi.registry;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.platformapi.registry.BrowseFormat.TagInfo;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -140,7 +141,7 @@ class HarborDialectTest {
 
     @Test
     void thirdLevelListsTagsWithCopyTextAndDetails() {
-        HarborDialect.TagInfo t = new HarborDialect.TagInfo(
+        TagInfo t = new TagInfo(
                 "1.2.3", "2026-10-13T21:04:00Z", 86_400_000L, "sha256:abc");
         BrowseResult r = HarborDialect.mapArtifacts(CRED, List.of("myproj", "team/app"), List.of(t));
 
@@ -157,13 +158,6 @@ class HarborDialectTest {
         assertThat(r.breadcrumb().get(1).path()).containsExactly("myproj", "team/app");
     }
 
-    @Test
-    void formatSizeIsHumanReadable() {
-        assertThat(HarborDialect.formatSize(512)).isEqualTo("512 B");
-        assertThat(HarborDialect.formatSize(86_400_000L)).isEqualTo("82.4 MB");
-        assertThat(HarborDialect.formatSize(0)).isEqualTo("—");
-        assertThat(HarborDialect.formatSize(-1)).isEqualTo("—");
-    }
 
     @Test
     void artifactTagNameIsReadFromTheTagsArrayNotTheArtifactName() {
@@ -203,7 +197,7 @@ class HarborDialectTest {
         String json = "[{\"name\":\"sha256:abc\",\"digest\":\"sha256:abc\",\"tags\":[{\"name\":\"1.2.3\"}],"
                 + "\"push_time\":\"2026-10-13T21:04:00Z\",\"size\":86400000}]";
         assertThat(HarborDialect.parseArtifacts(json)).containsExactly(
-                new HarborDialect.TagInfo("1.2.3", "2026-10-13T21:04:00Z", 86_400_000L, "sha256:abc"));
+                new TagInfo("1.2.3", "2026-10-13T21:04:00Z", 86_400_000L, "sha256:abc"));
     }
 
     @Test

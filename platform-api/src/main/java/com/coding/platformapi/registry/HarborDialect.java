@@ -1,5 +1,6 @@
 package com.coding.platformapi.registry;
 
+import com.coding.platformapi.registry.BrowseFormat.TagInfo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriUtils;
@@ -84,7 +85,7 @@ public class HarborDialect implements RegistryDialect {
                 List<TagInfo> tags = parseArtifacts(http.get(cred, artifactsUrl(cred, project, repo)));
                 String prefix = tagPrefix.toLowerCase();
                 return tagCandidates(cred, project, repo,
-                        tags.stream().map(TagInfo::tag)
+                        tags.stream().map(TagInfo::name)
                             .filter(t -> t.toLowerCase().startsWith(prefix)).toList());
             }
 
@@ -329,11 +330,11 @@ public class HarborDialect implements RegistryDialect {
         String project = path.get(0);
         String repo = path.get(1);
         List<BrowseResult.Node> nodes = tags.stream().map(t -> new BrowseResult.Node(
-                t.tag(),
+                t.name(),
                 false,
-                host(c) + "/" + project + "/" + repo + ":" + t.tag(),
+                host(c) + "/" + project + "/" + repo + ":" + t.name(),
                 List.of(new BrowseResult.Detail("推送时间", t.pushedAt() == null ? "—" : t.pushedAt()),
-                        new BrowseResult.Detail("大小", formatSize(t.size())),
+                        new BrowseResult.Detail("大小", BrowseFormat.formatSize(t.size())),
                         new BrowseResult.Detail("digest", t.digest() == null ? "—" : t.digest())))).toList();
         return new BrowseResult(List.of(
                 new BrowseResult.Crumb(project, List.of(project)),
@@ -345,21 +346,5 @@ public class HarborDialect implements RegistryDialect {
         return tags != null && tags.length > 0 ? tags[0] : fallback;
     }
 
-    public static String formatSize(long bytes) {
-        if (bytes <= 0) {
-            return "—";
-        }
-        if (bytes < 1024) {
-            return bytes + " B";
-        }
-        double kb = bytes / 1024.0;
-        if (kb < 1024) {
-            return String.format("%.1f KB", kb);
-        }
-        return String.format("%.1f MB", kb / 1024.0);
-    }
 
-    /** 从 Harbor artifact 里挑出来的一行（响应映射的中间形态，便于单测） */
-    public record TagInfo(String tag, String pushedAt, long size, String digest) {
-    }
 }
