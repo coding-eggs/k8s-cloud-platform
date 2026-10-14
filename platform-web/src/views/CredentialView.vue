@@ -16,7 +16,7 @@ const form = reactive({
   visible: false,
   id: '',
   name: '',
-  type: 'GIT' as 'GIT' | 'REGISTRY',
+  type: 'GIT' as 'GIT' | 'HARBOR',
   endpoint: '',
   username: '',
   secret: '',
@@ -30,7 +30,7 @@ const isEdit = computed(() => !!form.id)
 
 const TYPE_OPTIONS = [
   { value: 'GIT', label: 'Git 仓库' },
-  { value: 'REGISTRY', label: '镜像仓库' },
+  { value: 'HARBOR', label: 'Harbor 镜像仓库' },
 ]
 
 function typeLabel(t: string): string {

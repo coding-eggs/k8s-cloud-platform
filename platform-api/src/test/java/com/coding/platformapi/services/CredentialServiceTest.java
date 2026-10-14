@@ -64,7 +64,7 @@ class CredentialServiceTest {
     @Test
     void listNeverExposesSecretOrUsername() {
         when(mapper.selectAll()).thenReturn(List.of(
-                stored("c1", "harbor-prod", "REGISTRY", "harbor.example.com", "robot$platform+ci", "s3cr3t")));
+                stored("c1", "harbor-prod", "HARBOR", "harbor.example.com", "robot$platform+ci", "s3cr3t")));
 
         CredentialView v = svc.list().get(0);
 
@@ -126,6 +126,37 @@ class CredentialServiceTest {
         req.setName("x");
         req.setType("SFTP");
         req.setEndpoint("h");
+        req.setAuthType("BASIC");
+        req.setUsername("u");
+        req.setSecret("s");
+
+        assertThatThrownBy(() -> svc.create(req)).isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void createAcceptsHarborType() {
+        when(mapper.selectByName(anyString())).thenReturn(null);
+        when(mapper.insert(any())).thenReturn(1);
+
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("harbor-prod");
+        req.setType("HARBOR");
+        req.setEndpoint("harbor.example.com");
+        req.setAuthType("BASIC");
+        req.setUsername("robot$platform+ci");
+        req.setSecret("pw");
+
+        assertThat(svc.create(req).getType()).isEqualTo("HARBOR");
+    }
+
+    @Test
+    void createRejectsTheRetiredRegistryType() {
+        // REGISTRY 在 S3.1 里被拆成具体的方言值（本批只落 HARBOR）。
+        // 旧库里若真有 REGISTRY 行，它会变成非法类型 —— 这是有意为之，不是漏了兼容。
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("x");
+        req.setType("REGISTRY");
+        req.setEndpoint("harbor.example.com");
         req.setAuthType("BASIC");
         req.setUsername("u");
         req.setSecret("s");
@@ -262,7 +293,7 @@ class CredentialServiceTest {
     @Test
     void testRegistryDoesNotNeedProbeUrl() {
         when(mapper.selectById("c1")).thenReturn(
-                stored("c1", "harbor", "REGISTRY", "harbor.example.com", "robot", "pw"));
+                stored("c1", "harbor", "HARBOR", "harbor.example.com", "robot", "pw"));
         when(probeClient.probeRegistry("harbor.example.com", "robot", "pw"))
                 .thenReturn(ProbeResult.fail("凭据不通过，或该凭据无权访问此 registry"));
 
@@ -278,7 +309,7 @@ class CredentialServiceTest {
 
     @Test
     void testFailureKeepsLastVerifiedAt() {
-        PlatformCredential row = stored("c1", "harbor", "REGISTRY", "harbor.example.com", "r", "pw");
+        PlatformCredential row = stored("c1", "harbor", "HARBOR", "harbor.example.com", "r", "pw");
         row.setLastVerifiedAt(new Date(1_700_000_000_000L));
         when(mapper.selectById("c1")).thenReturn(row);
         when(probeClient.probeRegistry(anyString(), anyString(), anyString()))

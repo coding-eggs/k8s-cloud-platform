@@ -1585,7 +1585,7 @@ export interface CredentialView {
   id: string
   name: string
   /** GIT / REGISTRY */
-  type: 'GIT' | 'REGISTRY'
+  type: 'GIT' | 'HARBOR'
   /** host 基址 */
   endpoint: string
   /** BASIC */
@@ -1606,7 +1606,7 @@ export interface CredentialView {
 /** 新建凭据。username / secret 必填。 */
 export interface CredentialCreateBody {
   name: string
-  type: 'GIT' | 'REGISTRY'
+  type: 'GIT' | 'HARBOR'
   endpoint: string
   authType: string
   username: string
@@ -1619,7 +1619,7 @@ export interface CredentialCreateBody {
 export interface CredentialUpdateBody {
   id: string
   name: string
-  type: 'GIT' | 'REGISTRY'
+  type: 'GIT' | 'HARBOR'
   endpoint: string
   authType: string
   username?: string | null

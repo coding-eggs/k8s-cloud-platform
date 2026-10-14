@@ -41,7 +41,18 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class CredentialService {
 
-    private static final Set<String> TYPES = Set.of("GIT", "REGISTRY");
+    /**
+     * 合法的连接类型。
+     *
+     * <p><b>本批只放已实现的方言值</b>：{@code REGISTRY} 在 S3.1 里被拆成具体的方言
+     * （Harbor / 通用 v2 / Docker Hub），本批只落 {@code HARBOR}。**有意不预放空值** ——
+     * 留一个「能选中但没实现」的类型，管理员会建出一条建了也没用的连接，比不做更糟
+     * （与 S0.2 拒掉那个恒为空的 scope 列同一判断）。
+     *
+     * <p>扩展位由 {@code RegistryDialect} 接口 + {@code RegistryDialectRegistry} + 一条护栏测试提供：
+     * 加一档 = 加一个枚举值 + 一个实现类 + 一个 UI 选项，其余零改动。
+     */
+    private static final Set<String> TYPES = Set.of("GIT", "HARBOR");
 
     private static final String AUTH_BASIC = "BASIC";
 
