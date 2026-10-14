@@ -45,7 +45,8 @@ class RegistryServiceTest {
      * 所以调用方带了前缀就会被记成「带了前缀的逻辑键」，那条断言正是用来钉这个的。
      */
     static class PassthroughCache extends RedisJsonCache {
-        final List<String> keys = new ArrayList<>();
+        /** 同上：loader 在虚拟线程里跑，这个列表也要线程安全。 */
+        final List<String> keys = java.util.Collections.synchronizedList(new ArrayList<>());
         PassthroughCache() { super(null, null); }
         @Override public <T> T get(String key, Duration ttl,
                                    tools.jackson.core.type.TypeReference<T> type,
@@ -60,8 +61,17 @@ class RegistryServiceTest {
     PlatformCredentialMapper mapper = mock(PlatformCredentialMapper.class);
     CredentialCipher cipher = new CredentialCipher(KEY);
 
-    /** 记录被调用了几次 —— 用来钉「匹配不到时零调用」 */
-    final List<String> calls = new ArrayList<>();
+    /**
+     * 记录被调用了几次 —— 用来钉「匹配不到时零调用」。
+     *
+     * <p>⚠️ **必须是线程安全的**：{@code RegistrySuggestExecutor} 是**并发**跑各连接的
+     * （虚拟线程），而普通 {@code ArrayList.add} 的 {@code size++} 不是原子操作 ——
+     * 两条线程同时加会互相覆盖，于是「两条连接都被问了」偶发地只记下一条。
+     * 表现是这一类的用例随机挂在 `inputWithoutAHostAsksEveryConnection` /
+     * `resultsAreMergedAndSortedByConnectionName`（都是两条连接），而且日志里**一条 warn 都没有**
+     * （任务确实跑了，丢的是记录）。2026-10-15 全量跑时抓到。
+     */
+    final List<String> calls = java.util.Collections.synchronizedList(new ArrayList<>());
 
     RegistryDialect spyDialect = new RegistryDialect() {
         @Override public String type() { return "HARBOR"; }
