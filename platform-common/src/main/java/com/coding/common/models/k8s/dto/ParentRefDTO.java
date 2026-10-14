@@ -11,7 +11,10 @@ import lombok.Data;
 @Data
 public class ParentRefDTO {
 
-    /** 被引用资源的 group；缺省 gateway.networking.k8s.io（指向 Service 时须显式空串 ""） */
+    /** 被引用资源的 group。
+     *  <p><b>null 与空串不是一回事</b>：{@code null} = 缺省（CRD 默认 {@code gateway.networking.k8s.io}）；
+     *  {@code ""} = 显式 core 组（指向 Service 必须用这个）。写盘由 {@code GatewaySpecUtil.parentGroup} 归一：
+     *  {@code null} 且 {@code kind = "Service"} 时自动补 {@code ""}。 */
     private String group;
 
     /** 被引用资源的 kind；缺省 Gateway */

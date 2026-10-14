@@ -151,4 +151,22 @@ class TcpRouteConverterTest {
         assertThat((List<Map<String, Object>>) rulesOf(spec).get(0).get("backendRefs")).hasSize(2);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void convert_writes_explicit_empty_group_for_service_parent() {
+        TcpRouteDTO dto = sample();
+        ParentRefDTO svc = new ParentRefDTO();
+        svc.setKind("Service");
+        svc.setName("mysql");
+        dto.setParentRefs(List.of(svc));
+
+        List<Map<String, Object>> parents = (List<Map<String, Object>>) specOf(v1.convert(dto)).get("parentRefs");
+
+        assertThat(parents).hasSize(1);
+        assertThat(parents.get(0))
+                .containsEntry("group", "")
+                .containsEntry("kind", "Service")
+                .containsEntry("name", "mysql");
+    }
+
 }

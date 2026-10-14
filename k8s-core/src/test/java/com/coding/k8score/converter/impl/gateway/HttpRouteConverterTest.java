@@ -304,4 +304,83 @@ class HttpRouteConverterTest {
         assertThat(rules.get(1)).doesNotContainKey("timeouts");
     }
 
+    // ==================== parentRefs 的 group 写盘规则（2026-10-14）====================
+    // ParentReference.group 省略时 CRD 默认成 gateway.networking.k8s.io，故「指向 core 组的 Service」
+    // 必须显式写 group:""。丢了它，父引用就指向一个不存在的资源 —— 路由静默脱挂、界面不报错。
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void convert_writes_explicit_empty_group_for_service_parent() {
+        HttpRouteDTO dto = sample();
+        ParentRefDTO svc = new ParentRefDTO();
+        svc.setKind("Service");
+        svc.setName("reviews");
+        dto.setParentRefs(List.of(svc));
+
+        List<Map<String, Object>> parents = (List<Map<String, Object>>) specOf(c.convert(dto)).get("parentRefs");
+
+        assertThat(parents).hasSize(1);
+        assertThat(parents.get(0))
+                .containsEntry("group", "")
+                .containsEntry("kind", "Service")
+                .containsEntry("name", "reviews");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void convert_keeps_explicit_empty_group_as_is() {
+        HttpRouteDTO dto = sample();
+        ParentRefDTO svc = new ParentRefDTO();
+        svc.setKind("Service");
+        svc.setGroup(""); // 显式空串（revert 读出来就是这个值）
+        svc.setName("reviews");
+        dto.setParentRefs(List.of(svc));
+
+        List<Map<String, Object>> parents = (List<Map<String, Object>>) specOf(c.convert(dto)).get("parentRefs");
+
+        assertThat(parents.get(0)).containsEntry("group", "");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void convert_keeps_group_of_unmodeled_kind() {
+        HttpRouteDTO dto = sample();
+        ParentRefDTO imp = new ParentRefDTO();
+        imp.setKind("ServiceImport");
+        imp.setGroup("multicluster.x-k8s.io");
+        imp.setName("reviews");
+        dto.setParentRefs(List.of(imp));
+
+        List<Map<String, Object>> parents = (List<Map<String, Object>>) specOf(c.convert(dto)).get("parentRefs");
+
+        // 归一规则只对 kind=Service 生效：未建模 kind 的 group 原样写出（不得被抹成 ""）
+        assertThat(parents.get(0))
+                .containsEntry("group", "multicluster.x-k8s.io")
+                .containsEntry("kind", "ServiceImport");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void convertForUpdate_keeps_service_parent_group_at_empty_string() {
+        // live：一条已存在的 Service 父引用（group 为空串）
+        Map<String, Object> liveSpec = new LinkedHashMap<>();
+        liveSpec.put(
+                "parentRefs",
+                List.of(new LinkedHashMap<>(Map.of("group", "", "kind", "Service", "name", "reviews"))));
+
+        HttpRouteDTO dto = sample();
+        ParentRefDTO svc = new ParentRefDTO();
+        svc.setKind("Service");
+        svc.setGroup(""); // 前端回填原值后提交
+        svc.setName("reviews");
+        dto.setParentRefs(List.of(svc));
+
+        List<Map<String, Object>> parents =
+                (List<Map<String, Object>>) specOf(c.convertForUpdate(dto, live(liveSpec))).get("parentRefs");
+
+        assertThat(parents).hasSize(1);
+        // 「打开存量 Service 父引用路由 → 保存」不得改变父引用（今天这里会把 group 抹掉）
+        assertThat(parents.get(0)).containsEntry("group", "").containsEntry("kind", "Service");
+    }
+
 }

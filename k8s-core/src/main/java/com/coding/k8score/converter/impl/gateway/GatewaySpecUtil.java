@@ -116,9 +116,17 @@ final class GatewaySpecUtil {
     }
 
     // ---------- 写（DTO → Map；null/空白不写，交还 CRD 默认） ----------
+    // 例外见 putStrAllowEmpty：parentRefs 的 group 需要**显式的空串**（core 组），不能被"空白不写"吃掉。
 
     static void putStr(Map<String, Object> m, String key, String val) {
         if (val != null && !val.isBlank()) {
+            m.put(key, val);
+        }
+    }
+
+    /** 与 {@link #putStr} 的区别：**空串照写**（parentRefs 的 group 需要显式的 ""）。 */
+    static void putStrAllowEmpty(Map<String, Object> m, String key, String val) {
+        if (val != null) {
             m.put(key, val);
         }
     }
@@ -171,6 +179,24 @@ final class GatewaySpecUtil {
         return out.isEmpty() ? null : out;
     }
 
+    /**
+     * 父引用的 group 写盘值：
+     * <ul>
+     *   <li>{@code null} 且 {@code kind = "Service"} → {@code ""}（core 组，<b>必须显式写</b>：
+     *       ParentReference.group 省略时 CRD 默认成 {@code gateway.networking.k8s.io}，
+     *       父引用就成了"gateway 组里的 Service"＝不存在的资源 → 路由静默脱挂、界面不报错）</li>
+     *   <li>非 null（含空串）→ 原样</li>
+     *   <li>其余 {@code null} → 保持 {@code null}（省略，交 CRD 默认 Gateway）</li>
+     * </ul>
+     * 规则<b>只对 Service 生效</b>：其他 core 组 kind（ConfigMap 等）本平台未建模，将来若建模须一并扩。
+     */
+    static String parentGroup(ParentRefDTO p) {
+        if (p.getGroup() != null) {
+            return p.getGroup();
+        }
+        return "Service".equals(p.getKind()) ? "" : null;
+    }
+
     /** DTO 列表 → {@code spec.parentRefs}（空 → 空列表，交由调用方决定是否 put）。 */
     static List<Map<String, Object>> toParentRefMaps(List<ParentRefDTO> refs) {
         List<Map<String, Object>> out = new ArrayList<>();
@@ -179,7 +205,10 @@ final class GatewaySpecUtil {
         }
         for (ParentRefDTO p : refs) {
             Map<String, Object> m = new LinkedHashMap<>();
-            putStr(m, "group", p.getGroup());
+            // 注意 group 的默认值两处相反：ParentReference.group 省略 = gateway.networking.k8s.io
+            // （要 core 组必须显式 ""），而 BackendObjectReference.group 省略/空串本身就是 core 组。
+            // **别照这里"统一" backendRefs**（见 toBackendRefMap 处注释）。
+            putStrAllowEmpty(m, "group", parentGroup(p));
             putStr(m, "kind", p.getKind());
             putStr(m, "namespace", p.getNamespace());
             putStr(m, "name", p.getName());
@@ -190,11 +219,13 @@ final class GatewaySpecUtil {
         return out;
     }
 
-    /** overlay 用：命名空间内已有的 parentRef 元素 → 是否为"同一目标"（group/kind/namespace/name 四元组）。 */
+    /** overlay 用：命名空间内已有的 parentRef 元素 → 是否为"同一目标"（group/kind/namespace/name 四元组）。
+     *  <p>group 按 {@link #parentGroup} 归一后比较 —— 否则「线上 group="" + 表单 group=null」会被判成不同目标。
+     *  <p>当前零调用方（2026-10-14 核实）；留着是为了将来有人用它时它是对的。**不要**改回裸值比较。 */
     static boolean sameParent(Map<String, Object> live, ParentRefDTO dto) {
         return eq(asStr(live.get("name")), dto.getName())
                 && eq(asStr(live.get("namespace")), dto.getNamespace())
-                && eq(asStr(live.get("group")), dto.getGroup())
+                && eq(asStr(live.get("group")), parentGroup(dto))
                 && eq(asStr(live.get("kind")), dto.getKind());
     }
 
@@ -238,6 +269,9 @@ final class GatewaySpecUtil {
      */
     static Map<String, Object> toBackendRefMap(BackendRefDTO b) {
         Map<String, Object> m = new LinkedHashMap<>();
+        // 注意：BackendObjectReference.group 省略/空串**本身就是 core 组**（Service），
+        // 与 parentRefs 的 group 默认值（gateway.networking.k8s.io）相反 —— 故这里维持 putStr
+        // （省略即正确），**不要**按 parentGroup 归一。
         putStr(m, "group", b.getGroup());
         putStr(m, "kind", b.getKind());
         putStr(m, "name", b.getName());
