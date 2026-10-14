@@ -9,6 +9,7 @@ import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useMeshStatus } from '@/composables/useMeshStatus'
+import { useImageSuggest } from '@/composables/useImageSuggest'
 import { nodeHost, useNodeAddresses } from '@/composables/useNodeAddresses'
 import {
   canHandleWorkload,
@@ -29,6 +30,8 @@ import YamlBlock from '@/components/YamlBlock.vue'
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
 const perm = usePermission()
+/** 镜像候选补全（「更新镜像」弹窗的输入框） */
+const { fetchImageSuggestions } = useImageSuggest()
 
 const loading = ref(false)
 const list = ref<K8sWorkload[]>([])
@@ -640,9 +643,11 @@ const contextDesc = computed(() => {
           <code class="res-name">{{ imgForm.containerName }}</code>
         </el-form-item>
         <el-form-item label="镜像">
-          <el-input v-model="imgForm.image"
-                    placeholder="如 nginx:1.27 或 registry.example.com/app@sha256:…"
-                    @keyup.enter="submitImage" />
+          <el-autocomplete v-model="imgForm.image"
+                           :fetch-suggestions="fetchImageSuggestions"
+                           placeholder="如 nginx:1.27 或 registry.example.com/app"
+                           style="width: 100%"
+                           @keyup.enter="submitImage" />
         </el-form-item>
       </el-form>
       <div class="dialog-hint">

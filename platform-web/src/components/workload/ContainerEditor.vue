@@ -9,10 +9,14 @@ import LifecycleEditor from './LifecycleEditor.vue'
 import ProbeEditor from './ProbeEditor.vue'
 import VolumeMountEditor from './VolumeMountEditor.vue'
 import FieldHelp from './FieldHelp.vue'
+import { useImageSuggest } from '@/composables/useImageSuggest'
 
 const props = defineProps<{ isInit: boolean; volumeNames: string[] }>()
 
 const model = defineModel<ContainerDef>()
+
+/** 镜像候选补全（S3.1） */
+const { fetchImageSuggestions } = useImageSuggest()
 
 /**
  * ContainerDef 各子字段的空安全可写访问器：
@@ -112,7 +116,8 @@ defineExpose({ isValid })
         </div>
         <div class="ce-row">
           <span class="ce-label">镜像 <FieldHelp tip="容器运行的镜像地址及 tag，如 nginx:1.27。Pod 启动时按拉取策略从镜像仓库拉取该镜像。" /></span>
-          <el-input v-model="image" placeholder="镜像（如 nginx:1.27）" style="width: 320px" />
+          <el-autocomplete v-model="image" :fetch-suggestions="fetchImageSuggestions"
+                           placeholder="镜像（如 nginx:1.27）" style="width: 320px" />
         </div>
         <div class="ce-row">
           <span class="ce-label">镜像拉取策略 <FieldHelp tip="imagePullPolicy：Always=每次启动都拉取 / IfNotPresent=本地已有则用、否则拉取 / Never=仅用本地镜像。留空由 K8s 按 tag 决定（:latest 视为 Always）。" /></span>
