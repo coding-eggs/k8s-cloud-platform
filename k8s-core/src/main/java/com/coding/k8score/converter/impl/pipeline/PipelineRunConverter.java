@@ -59,8 +59,17 @@ public class PipelineRunConverter {
     }
 
     static String mapStatus(PipelineRunStatus st) {
-        String reason = reasonOf(st);
-        String cond = conditionStatus(st);
+        return mapConditions(st == null ? null : st.getConditions());
+    }
+
+    /**
+     * conditions → 平台状态。**PipelineRun 与 TaskRun 共用这一份** ——
+     * 两者用的是同一个 Knative Condition 结构、同一套 reason 约定，
+     * 分成两份只会有一次改一处忘一处。
+     */
+    public static String mapConditions(List<Condition> conditions) {
+        String reason = reasonOf(conditions);
+        String cond = conditionStatus(conditions);
         if (cond == null) {
             return "RUNNING";
         }
@@ -76,21 +85,32 @@ public class PipelineRunConverter {
         return "FAILED";
     }
 
-    private static String conditionStatus(PipelineRunStatus st) {
-        Condition c = succeededCondition(st);
+    private static String conditionStatus(List<Condition> conditions) {
+        Condition c = succeededCondition(conditions);
         return c == null ? null : c.getStatus();
     }
 
-    private static String reasonOf(PipelineRunStatus st) {
-        Condition c = succeededCondition(st);
+    private static String reasonOf(List<Condition> conditions) {
+        Condition c = succeededCondition(conditions);
         return c == null ? null : c.getReason();
     }
 
+    private static String reasonOf(PipelineRunStatus st) {
+        return reasonOf(st == null ? null : st.getConditions());
+    }
+
+    private static String conditionStatus(PipelineRunStatus st) {
+        return conditionStatus(st == null ? null : st.getConditions());
+    }
+
     private static Condition succeededCondition(PipelineRunStatus st) {
-        if (st == null || st.getConditions() == null) {
+        return succeededCondition(st == null ? null : st.getConditions());
+    }
+
+    private static Condition succeededCondition(List<Condition> conditions) {
+        if (conditions == null) {
             return null;
         }
-        List<Condition> cs = st.getConditions();
-        return cs.stream().filter(c -> "Succeeded".equals(c.getType())).findFirst().orElse(null);
+        return conditions.stream().filter(c -> "Succeeded".equals(c.getType())).findFirst().orElse(null);
     }
 }

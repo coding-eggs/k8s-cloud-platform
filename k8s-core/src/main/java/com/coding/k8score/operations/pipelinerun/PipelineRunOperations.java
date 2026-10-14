@@ -12,6 +12,10 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.tekton.v1.PipelineRun;
 import io.fabric8.tekton.v1.PipelineRunSpec;
+import io.fabric8.tekton.v1.StepState;
+import io.fabric8.tekton.v1.TaskRun;
+import io.fabric8.tekton.v1.TaskRunStatus;
+import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import io.fabric8.tekton.v1.PipelineSpec;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -207,6 +211,50 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
             }
         });
         return out;
+    }
+
+    /**
+     * 一条运行里每个节点在集群上的落点（Pod + 容器）。
+     *
+     * <p>⚠️ <b>「run → TaskRun → Pod → 容器」这套解析放在这里</b>，不放在 platform-api：
+     * 那是 Tekton 的结构知识，而 platform-api 不依赖 k8s-core（spec §7 的改定块）。
+     * 回的是**已经解析好的落点**，调用方拿着 podName + containers 去走既有的 Pod 日志通道。
+     */
+    public List<PipelineStepRefDTO> steps(String namespace, String runName) {
+        PipelineRun pr = fetch(namespace, runName);
+        if (pr == null) {
+            return List.of();
+        }
+        assertManaged(pr.getMetadata().getLabels(), runName);
+
+        List<PipelineStepRefDTO> out = new ArrayList<>();
+        for (String taskRunName : childTaskRunNames(namespace, runName)) {
+            TaskRun tr = client.resources(TaskRun.class).inNamespace(namespace)
+                    .withName(taskRunName).get();
+            if (tr != null) {
+                out.add(toStepRef(taskRunName, tr));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * TaskRun → 落点。**纯函数**（不碰 client），所以可单测。
+     *
+     * <p>节点名取 TaskRun 名：平台的 PipelineTask 名就是画布节点 id，Tekton 给子对象起名时
+     * 用的是那个名字（可能带后缀），所以 {@code childReferences} 里的名字才是准的 ——
+     * 这里直接用它。
+     */
+    static PipelineStepRefDTO toStepRef(String nodeName, TaskRun tr) {
+        TaskRunStatus st = tr.getStatus();
+        String status = PipelineRunConverter.mapConditions(st == null ? null : st.getConditions());
+        String podName = st == null ? null : st.getPodName();
+        List<String> containers = (st == null || st.getSteps() == null) ? List.of()
+                : st.getSteps().stream()
+                        .map(StepState::getContainer)
+                        .filter(c -> c != null && !c.isBlank())
+                        .toList();
+        return new PipelineStepRefDTO(nodeName, status, podName, containers);
     }
 
     private PipelineRun fetch(String namespace, String name) {

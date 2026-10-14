@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformPipelineRunMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformPipelineRun">
+    <id     column="id"              jdbcType="VARCHAR"     property="id" />
+    <result column="pipeline_id"     jdbcType="VARCHAR"     property="pipelineId" />
+    <result column="cluster_id"      jdbcType="VARCHAR"     property="clusterId" />
+    <result column="namespace"       jdbcType="VARCHAR"     property="namespace" />
+    <result column="run_name"        jdbcType="VARCHAR"     property="runName" />
+    <result column="status"          jdbcType="VARCHAR"     property="status" />
+    <result column="reason"          jdbcType="VARCHAR"     property="reason" />
+    <result column="triggered_by"    jdbcType="VARCHAR"     property="triggeredBy" />
+    <result column="start_time"      jdbcType="VARCHAR"     property="startTime" />
+    <result column="completion_time" jdbcType="VARCHAR"     property="completionTime" />
+    <result column="steps_json"      jdbcType="LONGVARCHAR" property="stepsJson" />
+    <result column="created_at"      jdbcType="TIMESTAMP"   property="createdAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, pipeline_id, cluster_id, namespace, run_name, status, reason, triggered_by,
+    start_time, completion_time, steps_json, created_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformPipelineRun">
+    insert into platform_pipeline_run
+      (id, pipeline_id, cluster_id, namespace, run_name, status, reason, triggered_by)
+    values (#{id,jdbcType=VARCHAR}, #{pipelineId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},
+      #{namespace,jdbcType=VARCHAR}, #{runName,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
+      #{reason,jdbcType=VARCHAR}, #{triggeredBy,jdbcType=VARCHAR})
+  </insert>
+
+  <!-- 归档回写：只写结果列。run_name / pipeline_id / cluster_id / namespace 是身份，不在这里改 -->
+  <update id="update" parameterType="com.coding.data.models.system.PlatformPipelineRun">
+    update platform_pipeline_run
+    set status = #{status,jdbcType=VARCHAR},
+        reason = #{reason,jdbcType=VARCHAR},
+        start_time = #{startTime,jdbcType=VARCHAR},
+        completion_time = #{completionTime,jdbcType=VARCHAR},
+        steps_json = #{stepsJson,jdbcType=LONGVARCHAR}
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <delete id="deleteById">
+    delete from platform_pipeline_run where id = #{id,jdbcType=VARCHAR}
+  </delete>
+
+  <select id="selectById" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline_run
+    where id = #{id,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectByRunName" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline_run
+    where run_name = #{runName,jdbcType=VARCHAR}
+  </select>
+
+  <select id="listByPipeline" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline_run
+    where pipeline_id = #{pipelineId,jdbcType=VARCHAR}
+      and cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and namespace = #{namespace,jdbcType=VARCHAR}
+    order by created_at desc
+  </select>
+
+  <select id="listAll" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline_run
+  </select>
+
+</mapper>

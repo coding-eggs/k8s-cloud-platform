@@ -1,10 +1,15 @@
 package com.coding.k8sserver.controllers.namespace;
 
+import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
+import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
+import com.coding.k8score.operations.NamespacedOperations;
+import com.coding.k8score.operations.pipelinerun.PipelineRunOperations;
 import com.coding.k8score.pipeline.PipelineCanvasOperations;
 import com.coding.k8score.pipeline.PipelineNodeTypeView;
 import com.coding.k8sserver.components.ResourceAccessResolver;
@@ -12,6 +17,7 @@ import com.coding.k8sserver.components.ResourceAccessResolver.AccessContext;
 import com.coding.k8sserver.controllers.base.AbstractNamespacedResourceController;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -72,6 +78,31 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
     @Operation(summary = "把画布渲染成 Tekton YAML（预览；同时是保存时的画布校验入口）")
     public ResponseData<String> render(@RequestBody PipelineCanvasRequest request) {
         return new ResponseData<>(canvasOps.renderYaml(request.canvasJson()));
+    }
+
+    /**
+     * 一次运行里每个节点在集群上的落点（Pod + 容器）。
+     *
+     * <p>⚠️ 端点在**这里**而不是 platform-api：「run → TaskRun → Pod → 容器」是 Tekton 的结构知识，
+     * 而 platform-api 不依赖 k8s-core（spec §7 的改定块）。归档与实时看日志都拿它，
+     * 然后走**既有的** Pod 日志通道 —— 不新写日志通道（spec §4.4）。
+     *
+     * <p>⚠️ 用 `instanceof` 而不是裸转型：`NamespacedOperations` 上没有这个方法
+     * （它是 Tekton 专有的，加进通用接口更糟），所以这里留一道**响亮**的兜底。
+     */
+    @GetMapping("/{name}/steps")
+    @Operation(summary = "一次运行的每个节点在集群上的落点（Pod 与容器）")
+    public ResponseData<List<PipelineStepRefDTO>> steps(@PathVariable String name,
+                                                        @RequestParam(required = false) String tenantId,
+                                                        @RequestParam String clusterId,
+                                                        @RequestParam String namespace) {
+        AccessContext ctx = resolve(tenantId, clusterId, namespace);
+        NamespacedOperations<PipelineRunDTO> ops = ops(ctx, clusterId);
+        if (!(ops instanceof PipelineRunOperations runOps)) {
+            throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED,
+                    "本资源不支持按节点列举：" + ops.getClass().getSimpleName());
+        }
+        return new ResponseData<>(runOps.steps(namespace, name));
     }
 
     /**

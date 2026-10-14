@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformPipelineRunLogMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformPipelineRunLog">
+    <id     column="id"         jdbcType="VARCHAR"     property="id" />
+    <result column="run_id"     jdbcType="VARCHAR"     property="runId" />
+    <result column="node_name"  jdbcType="VARCHAR"     property="nodeName" />
+    <result column="content"    jdbcType="LONGVARCHAR" property="content" />
+    <result column="truncated"  jdbcType="TINYINT"     property="truncated" />
+    <result column="size_bytes" jdbcType="INTEGER"     property="sizeBytes" />
+    <result column="created_at" jdbcType="TIMESTAMP"   property="createdAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, run_id, node_name, content, truncated, size_bytes, created_at
+  </sql>
+
+  <!-- ⚠️ 唯一索引 (run_id, node_name)：归档重投时靠它挡住重复写。用 ON DUPLICATE KEY 而不是
+       先查再插，是为了让「同一行只写一次」这件事由库保证，不依赖调用方的时序。 -->
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformPipelineRunLog">
+    insert into platform_pipeline_run_log (id, run_id, node_name, content, truncated, size_bytes)
+    values (#{id,jdbcType=VARCHAR}, #{runId,jdbcType=VARCHAR}, #{nodeName,jdbcType=VARCHAR},
+      #{content,jdbcType=LONGVARCHAR}, #{truncated,jdbcType=TINYINT}, #{sizeBytes,jdbcType=INTEGER})
+    on duplicate key update
+      content = values(content),
+      truncated = values(truncated),
+      size_bytes = values(size_bytes)
+  </insert>
+
+  <select id="listByRunId" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline_run_log
+    where run_id = #{runId,jdbcType=VARCHAR}
+    order by node_name
+  </select>
+
+  <select id="selectByRunIdAndNode" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline_run_log
+    where run_id = #{runId,jdbcType=VARCHAR} and node_name = #{nodeName,jdbcType=VARCHAR}
+  </select>
+
+  <delete id="deleteByRunId">
+    delete from platform_pipeline_run_log where run_id = #{runId,jdbcType=VARCHAR}
+  </delete>
+
+</mapper>
