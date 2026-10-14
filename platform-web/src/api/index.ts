@@ -54,6 +54,8 @@ import type {
   PlatformTenant,
   PlatformUser,
   RbacTemplate,
+  RegistryBrowseResult,
+  RegistryConnectionView,
   ResourceContext,
   SecretRefOption,
   TenantMemberView,
@@ -631,4 +633,15 @@ export const credentialApi = {
   create: (body: CredentialCreateBody) => http.post<never, CredentialView>('/credential/create', body),
   update: (body: CredentialUpdateBody) => http.post<never, CredentialView>('/credential/update', body),
   remove: (id: string) => http.post<never, void>('/credential/delete', { id }),
+}
+
+export const registryApi = {
+  /** 窄投影，浏览页的连接下拉 */
+  connections: () => http.post<never, RegistryConnectionView[]>('/registry/connections'),
+  /** path 为空 = 第一层 */
+  browse: (credentialId: string, path: string[]) =>
+    http.post<never, RegistryBrowseResult>('/registry/browse', { credentialId, path }),
+  /** 入参是输入框里的整串；返回**要填进去的完整字符串**，前端整段替换 */
+  suggest: (imagePrefix: string) =>
+    http.post<never, { items: string[] }>('/registry/suggest', { imagePrefix }),
 }

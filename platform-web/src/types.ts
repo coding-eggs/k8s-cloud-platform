@@ -1635,5 +1635,36 @@ export interface CredentialTestResult {
   suggestedUrl?: string | null
 }
 
+/**
+ * 浏览页「连接下拉」的窄投影（S3.1）。**只有四个字段** —— 不是 `/credential/list` 的复用，
+ * 那个要平台管理员的码，租户进页面就会 403。
+ */
+export interface RegistryConnectionView {
+  id: string
+  name: string
+  type: string
+  endpoint: string
+}
+
+/** 浏览结果的一节面包屑。path 是累积路径，点击即回到该层。 */
+export interface RegistryCrumb {
+  label: string
+  path: string[]
+}
+
+/** 一个节点。details 的标签**就是表格的列头** —— 列由后端决定，前端不写死。 */
+export interface RegistryNode {
+  name: string
+  hasChildren: boolean
+  /** 非空 = 这一行可「复制镜像地址」 */
+  copyText?: string | null
+  details: { label: string; value: string }[]
+}
+
+export interface RegistryBrowseResult {
+  breadcrumb: RegistryCrumb[]
+  children: RegistryNode[]
+}
+
 
 
