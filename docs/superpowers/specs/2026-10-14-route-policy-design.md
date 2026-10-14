@@ -6,7 +6,7 @@
 
 ## 0. 一句话
 
-前端把 HTTPRoute / GRPCRoute / TCPRoute / TLSRoute / UDPRoute 五种 route 收敛成**一个功能「路由策略」**：一个列表页（类型列 + 类型筛选）与一个编辑器（外壳 + 5 个 kind 子组件），菜单 5 项并为 1 项，旧路径全部重定向到新页。**后端零改动**（端点 / 权限行 / DTO 都不动）。
+前端把 HTTPRoute / GRPCRoute / TCPRoute / TLSRoute / UDPRoute 五种 route 收敛成**一个功能「路由策略」**：一个列表页（类型列 + 类型筛选）与一个编辑器（外壳 + 5 个 kind 子组件），菜单 5 项并为 1 项，**旧的 10 条路径与 10 个旧视图文件全部删除**（不保留重定向）。**后端零改动**（端点 / 权限行 / DTO 都不动）。
 
 ## 1. 目标 / 非目标
 
@@ -14,7 +14,7 @@
 
 1. 一个列表页看全部 5 种 route：类型列 + 类型筛选（默认「全部」），按 kind 隔离失败。
 2. 一个编辑器按 kind 编辑/新建 5 种 route：同形部分（路由名、父资源、hostnames 开关、保存编排）只写一份。
-3. 入口收敛：菜单「服务网格」组内 5 项 → 1 项；旧 10 条路径重定向到新页且**保留原 query**。
+3. 入口收敛：菜单「服务网格」组内 5 项 → 1 项；**旧的 10 条路由记录与 10 个旧视图文件直接删除**（不做兼容重定向）。
 4. 权限语义不退化：能进页面 ≠ 能操作每个 kind —— 无权限的 kind 不出现、不发请求、保存按钮置灰。
 5. 零迁移、零角色绑定变更、零后端改动（存量自定义角色不受影响）。
 
@@ -51,26 +51,23 @@
 
 `requiresPerm` 的判定是**任一命中**（`perm.hasAny`，见 `router/index.ts` 的 guard 与 `docs/development/frontend-permission-conventions.md` §1），所以"5 个码传进一个数组"就是"能看其中任意一种 route 就能进这一页"。
 
-### 3.2 旧路径 → 重定向（保留 query）
+### 3.2 旧路径与旧视图：**全删**
 
-10 条旧记录全部改成**函数式 redirect**（仓库现有静态 redirect 先例：`/overview`、`/:pathMatch(.*)*`），把原 query 原样带走并注入 `kind`：
+删除 `router/index.ts` 里这 10 条记录与对应的 10 个视图文件：
 
-| 旧 path | 新位置 |
+| 删除的 path | 删除的文件 |
 |---|---|
-| `/resources/httproutes` | `/routes?kind=httproute`（其余 query 保留） |
-| `/resources/httproutes/editor` | `/routes/editor?kind=httproute`（`name` 等 query 保留） |
-| `/resources/grpcroutes[/editor]` | `/routes[/editor]?kind=grpcroute` |
-| `/resources/tcproutes[/editor]` | `/routes[/editor]?kind=tcproute` |
-| `/resources/tlsroutes[/editor]` | `/routes[/editor]?kind=tlsroute` |
-| `/resources/udproutes[/editor]` | `/routes[/editor]?kind=udproute` |
+| `/resources/httproutes`、`/resources/httproutes/editor` | `views/resource/HttpRouteView.vue`、`HttpRouteEditorView.vue` |
+| `/resources/grpcroutes[/editor]` | `GrpcRouteView.vue`、`GrpcRouteEditorView.vue` |
+| `/resources/tcproutes[/editor]` | `TcpRouteView.vue`、`TcpRouteEditorView.vue` |
+| `/resources/tlsroutes[/editor]` | `TlsRouteView.vue`、`TlsRouteEditorView.vue` |
+| `/resources/udproutes[/editor]` | `UdpRouteView.vue`、`UdpRouteEditorView.vue` |
 
-写法：
+**不做重定向**：访问旧路径会落到仓库既有的 catch-all（`{ path: '/:pathMatch(.*)*', redirect: '/' }` → 总览）。理由：这批改动之后旧路径没有任何独有内容，重定向只是把一份死代码留在 router 里。
 
-```ts
-{ path: 'resources/httproutes', redirect: (to) => ({ path: '/routes', query: { ...to.query, kind: 'httproute' } }) }
-```
+**但 10 个 Page 码必须保留**（`tenant:page:<kind>.list/.edit` 的 DB 行、内置角色绑定、`pageCodes.ts` 常量）：它们是**新页面的门票** —— §3.1 的 `requiresPerm` 与菜单 `v-if` 正是用这 5 个 list 码（任一）判定准入，删掉行或绑定，新页面就会对所有人关闭（权限闭包取不到这些码）。同理 5 个 edit 码是编辑器页的门票。它们指向旧路径的文字描述（Page 行的 `resource` / `name` 列）本批**不改**（改它要迁移，且这属于"码还在用、只是描述过时"，见 §12）。
 
-`kind` 的取值就是 5 个 kind 的小写名（`httproute` / `grpcroute` / `tcproute` / `tlsroute` / `udproute`），是本批新增的**前端路由参数约定**（见 §4.6）。
+`?kind=` 的取值是 5 个 kind 的小写名（`httproute` / `grpcroute` / `tcproute` / `tlsroute` / `udproute`），是本批新增的**前端路由参数约定**（类型定义见 §4.6）；非法值一律回落（§8）。
 
 ### 3.3 菜单
 
@@ -190,8 +187,8 @@ hostnames **不在契约里**：它由外壳持有并渲染（是否显示看 `r
 
 ### 5.6 旧文件的处置
 
-- 5 个 `*RouteEditorView.vue` 与 5 个 `*RouteView.vue` **删除**（内容分别并入外壳/子组件与列表页；git 历史留有原样）。
-- `pageCodes.ts` 的 10 个页面码**保留不动**（旧路径重定向后不再被路由引用，但 DB Page 行、角色绑定、`pageCodes` 常量都留着 —— 删它们需要迁移且会破坏存量自定义角色，违背 §1 目标 5）。
+- 5 个 `*RouteEditorView.vue` 与 5 个 `*RouteView.vue` **删除**（内容分别并入外壳/子组件与列表页；git 历史留有原样）。它们的表单一节整体搬进 `components/route/*RouteForm.vue`，因此"搬"不是重写：字段、FieldHelp、校验规则、未建模字段的透传清单一并保留。
+- `pageCodes.ts` 的 10 个页面码**保留不动**（理由见 §3.2：它们是新页面的门票）。
 
 ## 6. 权限与前端能力位
 
@@ -250,19 +247,19 @@ hostnames **不在契约里**：它由外壳持有并渲染（是否显示看 `r
 3. **失败隔离**：让其中一个 kind 的 list 抛 404 → 该 kind 标"未安装"，其余 kind 正常显示。
 4. 编辑器：`?kind=tcproute` 落到 TCP 表单（无 hostnames 行、无 matches）；切到 `grpcroute` 后出现 hostnames 行与 matches/filters、rules 清空为空白规则。
 5. 保存载荷按 kind 正确（HTTP 带 `rules[].matches[].path`、TCP 只有 `rules[].backendRefs`；父引用块与父引用跨 kind 那批一致，含 `kind=Service` 时 `group: null`）。
-6. 旧 URL `/resources/httproutes/editor?name=foo` → 落到 `/routes/editor?kind=httproute&name=foo` 且正常回填。
+6. **旧路径已不存在**：访问 `/resources/httproutes` 落到 catch-all → 总览（不报错、不白屏）；`/routes?kind=非法值` 回落「全部」。
 7. 菜单「服务网格」组内只剩 1 个路由条目；无任何 list 权限时不出现该条目。
 8. 抽屉概览与 YAML 按 kind 取数正确（HTTP 显示规则表、TCP 不显示过滤器列）。
 
 ## 10. 部署与回滚
 
 - **无迁移、无权限行、无后端改动**：只发前端构建。
-- 回滚 = 回滚前端静态资源（旧路径仍在新构建里重定向；若要退回旧构建，旧路径重新生效 ✔ 两边都不冲突）。
+- 回滚 = 回滚前端静态资源：旧构建把 10 条旧路径带回来（旧页面恢复可用）；新路径 `/routes` 在旧构建里不存在 → 落 catch-all 到总览（不会白屏）。**注意**：回滚期间用户若把 `/routes` 存成书签，回滚后会失效 —— 这是"不保留重定向"的代价，已确认接受。
 - 风险点：菜单入口消失（5 → 1）会让用户一时找不到 —— 上线时在「路由策略」页里保留类型筛选，并在页面描述里写明含 5 种类型。
 
 ## 11. 实施分期（建议，供 plan 采用）
 
-1. **T1** `utils/routeKinds.ts` + `apiCodes.ts` 15 个常量 + 列表页 `RouteListView.vue`（权限短路 / 失败隔离 / 筛选 / 表格 / 抽屉 / YAML / 创建入口）+ 路由与菜单收敛 + 旧路径重定向 + 删 5 个旧列表页。
+1. **T1** `utils/routeKinds.ts` + `apiCodes.ts` 15 个常量 + 列表页 `RouteListView.vue`（权限短路 / 失败隔离 / 筛选 / 表格 / 抽屉 / YAML / 创建入口）+ 路由与菜单收敛（加新路径、**删 10 条旧路径**）+ 删 5 个旧列表页。
 2. **T2** 编辑器外壳 `RouteEditorView.vue`（类型选择器 / 路由名 / 父资源块 / 校验编排 / 回填 / 提交）+ HTTP、GRPC 两个子组件（最复杂），路由指向外壳。
 3. **T3** TCP、TLS、UDP 三个子组件；删 5 个旧编辑器页。
 4. **T4** 端到端浏览器实测（§9）+ 落地记录。
@@ -273,6 +270,6 @@ hostnames **不在契约里**：它由外壳持有并渲染（是否显示看 `r
 
 1. 列表**摘要列**用单列 kind 相关文本（§4.3），而不是按 kind 条件渲染各自列。
 2. 类型筛选用 `el-select`（§4.3），不是顶部 `el-radio-group`。
-3. 页面/菜单名就叫**「路由策略」**；页面描述里点明含 5 种类型。
-4. 旧 10 条路径**全部保留**为重定向（含编辑器路径），不是只保留列表路径。
+3. 页面与菜单项名就叫**「路由策略」**；页面描述里点明含 5 种类型。
+4. 旧 10 条路径**直接删除**（已确认；访问落 catch-all → 总览）；随之 10 个 Page 码的 `resource`/`name` 文字仍写着旧路径 —— 本批**不改**（改要迁移；码本身还在用作新页面的门票），若要一并改文字，另开一条迁移。
 5. `parentRefs` 的 `parentText` 摘要继续用"完整 kind 前缀"（`Gateway ns/name:sec` / `Service ns/name:port`）—— 与上一批 spec §10 的默认一致。
