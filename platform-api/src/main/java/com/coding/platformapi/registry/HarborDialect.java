@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Harbor 方言。设计见 docs/superpowers/specs/2026-10-14-registry-design.md §2.3。
@@ -37,6 +38,12 @@ public class HarborDialect implements RegistryDialect {
     @Override
     public String type() {
         return "HARBOR";
+    }
+
+    @Override
+    public Set<String> authTypes() {
+        // 公共 Harbor project 是真实场景，所以匿名也允许（spec §3.7）
+        return Set.of("BASIC", "NONE");
     }
 
     // ==================== 两个动作 ====================

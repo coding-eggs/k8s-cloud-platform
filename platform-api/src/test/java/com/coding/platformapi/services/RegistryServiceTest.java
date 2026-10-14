@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,6 +60,7 @@ class RegistryServiceTest {
 
     RegistryDialect spyDialect = new RegistryDialect() {
         @Override public String type() { return "HARBOR"; }
+        @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
         @Override public List<String> suggest(CredentialRef c, String p) {
             calls.add("suggest:" + p);
             return List.of("harbor.example.com/proj/app");
@@ -124,6 +126,7 @@ class RegistryServiceTest {
     void aNewlyImplementedDialectIsRecognizedWithoutTouchingThisService() {
         RegistryDialect gitea = new RegistryDialect() {
             @Override public String type() { return "GITEA"; }
+            @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
             @Override public List<String> suggest(CredentialRef c, String p) {
                 calls.add("suggest:" + p);
                 return List.of();

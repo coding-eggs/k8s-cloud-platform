@@ -1,6 +1,7 @@
 package com.coding.platformapi.registry;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * 一种镜像仓库的「方言」。设计见 docs/superpowers/specs/2026-10-14-registry-design.md §2。
@@ -36,4 +37,15 @@ public interface RegistryDialect {
      * 什么都不说等于页面坏了（spec §5.3 的姿态差异）。
      */
     BrowseResult browse(CredentialRef cred, List<String> path);
+
+    /**
+     * 本档允许的认证方式。{@code NONE} = 匿名。
+     *
+     * <p>声明在**各档自己**这里，是为了守住「加一档只动一处」——
+     * 在 {@code CredentialService} 里维护一份「哪个类型能匿名」的手写清单就是第二个真相源，
+     * 那正是 S3.1 终审删掉 {@code RegistryService.REGISTRY_TYPES} 时反对的东西。
+     *
+     * <p>至少要有一个值，由 {@code RegistryDialectRegistryTest} 的护栏测试钉住。
+     */
+    Set<String> authTypes();
 }

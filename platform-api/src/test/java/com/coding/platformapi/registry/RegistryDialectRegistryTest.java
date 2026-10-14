@@ -24,6 +24,7 @@ class RegistryDialectRegistryTest {
     /** 一个只为测试存在的方言 */
     static class FakeDialect implements RegistryDialect {
         @Override public String type() { return "FAKE"; }
+        @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
         @Override public List<String> suggest(CredentialRef c, String p) { return List.of(); }
         @Override public BrowseResult browse(CredentialRef c, List<String> p) {
             return new BrowseResult(List.of(), List.of());
@@ -66,6 +67,18 @@ class RegistryDialectRegistryTest {
                 .as("CredentialService.TYPES 里出现了没有 RegistryDialect 实现的镜像仓库类型：%s", types)
                 .isNotEmpty()
                 .allSatisfy(t -> assertThat(registry.of(t)).isNotNull());
+    }
+
+    /**
+     * ⚠️ 护栏：每一档都要声明**至少一种**认证方式。
+     *
+     * <p>空集合会让 {@code CredentialService.requireAllowedAuthType} 拒绝该类型的所有请求 ——
+     * 症状是「这个类型一个连接都建不出来」，而原因藏在某个实现类里。
+     */
+    @Test
+    void everyDialectDeclaresAtLeastOneAuthType() {
+        assertThat(registry.of("FAKE").authTypes()).isNotEmpty();
+        assertThat(registry.of("HARBOR").authTypes()).isNotEmpty();
     }
 
     @SuppressWarnings("unchecked")

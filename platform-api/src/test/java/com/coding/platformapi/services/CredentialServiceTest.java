@@ -11,6 +11,9 @@ import com.coding.platformapi.models.CredentialCreateRequest;
 import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
+import com.coding.platformapi.registry.HarborDialect;
+import com.coding.platformapi.registry.RegistryDialectRegistry;
+import com.coding.platformapi.registry.RegistryHttpClient;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
@@ -42,7 +45,10 @@ class CredentialServiceTest {
     PlatformCredentialMapper mapper = mock(PlatformCredentialMapper.class);
     CredentialProbeClient probeClient = mock(CredentialProbeClient.class);
     CredentialCipher cipher = new CredentialCipher(KEY);
-    CredentialService svc = new CredentialService(mapper, cipher, probeClient);
+    /** 校验「该类型允许哪种认证方式」要问它 —— 见 CredentialService.allowedAuthTypes */
+    RegistryDialectRegistry dialects = new RegistryDialectRegistry(
+            List.of(new HarborDialect(mock(RegistryHttpClient.class))));
+    CredentialService svc = new CredentialService(mapper, cipher, probeClient, dialects);
 
     private PlatformCredential stored(String id, String name, String type, String endpoint,
                                      String username, String secret) {
@@ -55,6 +61,18 @@ class CredentialServiceTest {
         String json = "{\"username\":\"" + username + "\",\"secret\":\"" + secret + "\"}";
         c.setSecretEncrypted(cipher.encrypt(json));
         c.setSecretFingerprint(CredentialCipher.fingerprint(json));
+        c.setEnabled(1);
+        return c;
+    }
+
+    /** 匿名的行：{@code auth_type=NONE} 且**两列密文都是 null**（这正是表注释预留的形态）。 */
+    private PlatformCredential anonymousStored(String id, String name, String type, String endpoint) {
+        PlatformCredential c = new PlatformCredential();
+        c.setId(id);
+        c.setName(name);
+        c.setType(type);
+        c.setEndpoint(endpoint);
+        c.setAuthType("NONE");
         c.setEnabled(1);
         return c;
     }
@@ -191,6 +209,87 @@ class CredentialServiceTest {
 
         assertThatThrownBy(() -> svc.create(req)).isInstanceOf(CloudPlatformException.class);
         verify(mapper, never()).insert(any());
+    }
+
+    // ---- 匿名（authType=NONE） ----
+
+    @Test
+    void anonymousCredentialStoresNoCiphertext() {
+        when(mapper.selectByName(anyString())).thenReturn(null);
+        when(mapper.insert(any())).thenReturn(1);
+
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("public-harbor");
+        req.setType("HARBOR");
+        req.setEndpoint("harbor.example.com");
+        req.setAuthType("NONE");
+
+        CredentialView v = svc.create(req);
+
+        assertThat(v.getAuthType()).isEqualTo("NONE");
+        assertThat(v.getHasSecret()).isFalse();
+        assertThat(v.getFingerprint()).isNull();
+
+        var captor = org.mockito.ArgumentCaptor.forClass(PlatformCredential.class);
+        verify(mapper).insert(captor.capture());
+        // 不写密文，而不是写一份 username/secret 都是 null 的密文 ——
+        // hasSecret 由「secret_encrypted 是否为空」直接得出，不用解密就能判断
+        assertThat(captor.getValue().getSecretEncrypted()).isNull();
+    }
+
+    @Test
+    void anonymousCredentialRejectsUsername() {
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("public-harbor");
+        req.setType("HARBOR");
+        req.setEndpoint("harbor.example.com");
+        req.setAuthType("NONE");
+        req.setUsername("someone");
+
+        assertThatThrownBy(() -> svc.create(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("匿名");
+    }
+
+    @Test
+    void switchingToAnonymousClearsTheStoredCredential() {
+        // 钉住 S0.2 的死路：以前「留空 = 保持不变」让凭据一旦填了就再也清不掉
+        PlatformCredential old = stored("c1", "old-name", "HARBOR", "harbor.example.com", "u", "p");
+        when(mapper.selectById("c1")).thenReturn(old);
+        when(mapper.selectByName("old-name")).thenReturn(old);
+
+        CredentialUpdateRequest req = new CredentialUpdateRequest();
+        req.setId("c1");
+        req.setName("old-name");
+        req.setType("HARBOR");
+        req.setEndpoint("harbor.example.com");
+        req.setAuthType("NONE");
+
+        CredentialView v = svc.update(req);
+
+        assertThat(v.getHasSecret()).isFalse();
+        var captor = org.mockito.ArgumentCaptor.forClass(PlatformCredential.class);
+        verify(mapper).update(captor.capture());
+        assertThat(captor.getValue().getSecretEncrypted()).isNull();
+    }
+
+    @Test
+    void switchingFromAnonymousToBasicRequiresBothFields() {
+        PlatformCredential old = anonymousStored("c1", "n", "HARBOR", "harbor.example.com");
+        when(mapper.selectById("c1")).thenReturn(old);
+        when(mapper.selectByName("n")).thenReturn(old);
+
+        CredentialUpdateRequest req = new CredentialUpdateRequest();
+        req.setId("c1");
+        req.setName("n");
+        req.setType("HARBOR");
+        req.setEndpoint("harbor.example.com");
+        req.setAuthType("BASIC");
+        req.setSecret("tok");   // 只填了 secret，没填 username
+
+        assertThatThrownBy(() -> svc.update(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("重填");
     }
 
     // ---- 留空 = 保持不变 ----

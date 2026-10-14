@@ -14,6 +14,7 @@ import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialTestResult;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
+import com.coding.platformapi.registry.RegistryDialectRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -22,6 +23,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -56,11 +58,26 @@ public class CredentialService {
 
     private static final String AUTH_BASIC = "BASIC";
 
+    /** 匿名：没有凭据，出站请求不带 Authorization 头。 */
+    static final String AUTH_NONE = "NONE";
+
+    /**
+     * GIT 的认证方式。
+     *
+     * <p>⚠️ GIT <b>不是</b> {@code RegistryDialect}（它不是镜像仓库），所以没法通过接口声明 ——
+     * 这是全平台**唯一**一处「类型的认证方式不在 dialect 里」的例外。
+     * 再加类型时先问「它是不是一个镜像仓库」，是的话就去实现 dialect。
+     */
+    private static final Set<String> GIT_AUTH_TYPES = Set.of(AUTH_BASIC, AUTH_NONE);
+
     private final PlatformCredentialMapper mapper;
 
     private final CredentialCipher cipher;
 
     private final CredentialProbeClient probeClient;
+
+    /** 「该类型允许哪种认证方式」要问它 —— 见 {@link #allowedAuthTypes}。 */
+    private final RegistryDialectRegistry dialects;
 
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
@@ -69,24 +86,28 @@ public class CredentialService {
     }
 
     public CredentialView create(CredentialCreateRequest req) {
-        validateCommon(req.getName(), req.getType(), req.getEndpoint(), req.getAuthType());
-        if (!StringUtils.hasText(req.getUsername()) || !StringUtils.hasText(req.getSecret())) {
-            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                    "认证方式为 BASIC 时，用户名与密码/令牌都必须填写");
-        }
+        validateCommon(req.getName(), req.getType(), req.getEndpoint());
+        validateAuthOnCreate(req.getType(), req.getAuthType(), req.getUsername(), req.getSecret());
         if (mapper.selectByName(req.getName()) != null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NAME_EXIST);
         }
 
-        String json = toJson(new CredentialSecret(req.getUsername(), req.getSecret()));
         PlatformCredential c = new PlatformCredential();
         c.setId(ULIDGenerator.generateULID());
         c.setName(req.getName());
         c.setType(req.getType());
         c.setEndpoint(req.getEndpoint().trim());
-        c.setAuthType(AUTH_BASIC);
-        c.setSecretEncrypted(cipher.encrypt(json));
-        c.setSecretFingerprint(CredentialCipher.fingerprint(json));
+        c.setAuthType(req.getAuthType());
+        if (AUTH_NONE.equals(req.getAuthType())) {
+            // 匿名：**不写密文**，而不是写一份 username/secret 都是 null 的密文 ——
+            // hasSecret 由「secret_encrypted 是否为空」直接得出，不用解密就能判断
+            c.setSecretEncrypted(null);
+            c.setSecretFingerprint(null);
+        } else {
+            String json = toJson(new CredentialSecret(req.getUsername(), req.getSecret()));
+            c.setSecretEncrypted(cipher.encrypt(json));
+            c.setSecretFingerprint(CredentialCipher.fingerprint(json));
+        }
         c.setDescription(req.getDescription());
         c.setEnabled(req.getEnabled() == null || req.getEnabled() ? 1 : 0);
 
@@ -105,18 +126,11 @@ public class CredentialService {
         if (old == null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST);
         }
-        validateCommon(req.getName(), req.getType(), req.getEndpoint(), req.getAuthType());
+        validateCommon(req.getName(), req.getType(), req.getEndpoint());
 
         PlatformCredential byName = mapper.selectByName(req.getName());
         if (byName != null && !byName.getId().equals(old.getId())) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NAME_EXIST);
-        }
-
-        boolean authTypeChanged = !old.getAuthType().equals(req.getAuthType());
-        boolean newSecretGiven = StringUtils.hasText(req.getSecret());
-        if (authTypeChanged && !newSecretGiven) {
-            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                    "认证方式变更后必须重新填写凭据");
         }
 
         PlatformCredential c = new PlatformCredential();
@@ -124,22 +138,11 @@ public class CredentialService {
         c.setName(req.getName());
         c.setType(req.getType());
         c.setEndpoint(req.getEndpoint().trim());
-        c.setAuthType(AUTH_BASIC);
+        c.setAuthType(req.getAuthType());
         c.setDescription(req.getDescription());
         c.setEnabled(req.getEnabled() == null || req.getEnabled() ? 1 : 0);
 
-        if (newSecretGiven || StringUtils.hasText(req.getUsername())) {
-            // 逐字段合并：哪个字段空就沿用旧值（旧值要解密一次才拿得到）
-            CredentialSecret current = fromJson(cipher.decrypt(old.getSecretEncrypted()));
-            String username = StringUtils.hasText(req.getUsername()) ? req.getUsername() : current.getUsername();
-            String secret = newSecretGiven ? req.getSecret() : current.getSecret();
-            String json = toJson(new CredentialSecret(username, secret));
-            c.setSecretEncrypted(cipher.encrypt(json));
-            c.setSecretFingerprint(CredentialCipher.fingerprint(json));
-        } else {
-            c.setSecretEncrypted(old.getSecretEncrypted());
-            c.setSecretFingerprint(old.getSecretFingerprint());
-        }
+        applyAuth(old, c, req);
 
         mapper.update(c);
         return toView(c);
@@ -190,7 +193,7 @@ public class CredentialService {
         return fromJson(cipher.decrypt(c.getSecretEncrypted()));
     }
 
-    private void validateCommon(String name, String type, String endpoint, String authType) {
+    private void validateCommon(String name, String type, String endpoint) {
         if (!StringUtils.hasText(name)) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID, "名称必填");
         }
@@ -203,10 +206,92 @@ public class CredentialService {
         if (!StringUtils.hasText(endpoint)) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID, "地址必填");
         }
-        if (!AUTH_BASIC.equals(authType)) {
-            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                    "v1 仅支持 BASIC（HTTPS 用户名 + 密码/令牌）认证方式，收到：" + authType);
+        // authType 的合法性由 requireAllowedAuthType 判（它要知道 type 才问得出允许集合），
+        // 这里不再硬编码 BASIC
+    }
+
+    /** 该类型允许的认证方式。**问 dialect，不维护手写清单**（spec §3.7）。 */
+    private Set<String> allowedAuthTypes(String type) {
+        if ("GIT".equals(type)) {
+            return GIT_AUTH_TYPES;
         }
+        // validateCommon 已经拒过未知 type，所以走到这里要么是 GIT，要么是已实现的方言
+        return dialects.of(type).authTypes();
+    }
+
+    private void requireAllowedAuthType(String type, String authType) {
+        Set<String> allowed = allowedAuthTypes(type);
+        if (authType == null || !allowed.contains(authType)) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "该类型支持的认证方式为 " + String.join(" / ", allowed) + "，收到：" + authType);
+        }
+    }
+
+    private void validateAuthOnCreate(String type, String authType, String username, String secret) {
+        requireAllowedAuthType(type, authType);
+        if (AUTH_NONE.equals(authType)) {
+            if (StringUtils.hasText(username) || StringUtils.hasText(secret)) {
+                throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                        "认证方式为匿名时不能填写用户名与密码");
+            }
+            return;
+        }
+        if (!StringUtils.hasText(username) || !StringUtils.hasText(secret)) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "认证方式为用户名密码时，用户名与密码/令牌都必须填写");
+        }
+    }
+
+    /**
+     * 更新时的认证处理：**先合并出最终的用户名/密码，再校验合并结果**（而不是校验请求里的原始值）。
+     *
+     * <p>这样「只改了用户名、密码留空沿用旧的」与「从匿名改成 BASIC 必须重填」是同一条判据，
+     * 不会各写一套 —— S0.2 原来那条独立的「authType 变更必须重填」规则被它完整吸收
+     * （BASIC / NONE 之间只有两种切换，两种都在下面处理了）。
+     *
+     * <p>⚠️ 改成 {@code NONE} **即清空凭据** —— S0.2 原来的「留空 = 保持不变」是「永不回显」的
+     * 必然结果，但它同时意味着**凭据一旦填了就再也清不掉**：表单里拿不到旧值，"空"只能读作"不改"。
+     * 这条死路在本批被 {@code NONE} 打开（删了重建不再是唯一出路）。
+     */
+    private void applyAuth(PlatformCredential old, PlatformCredential target, CredentialUpdateRequest req) {
+        requireAllowedAuthType(req.getType(), req.getAuthType());
+
+        if (AUTH_NONE.equals(req.getAuthType())) {
+            if (StringUtils.hasText(req.getUsername()) || StringUtils.hasText(req.getSecret())) {
+                throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                        "认证方式为匿名时不能填写用户名与密码");
+            }
+            target.setSecretEncrypted(null);
+            target.setSecretFingerprint(null);
+            return;
+        }
+
+        // 逐字段合并：哪个字段空就沿用旧值（旧值要解密一次才拿得到）
+        boolean oldHadBasic = AUTH_BASIC.equals(old.getAuthType())
+                && StringUtils.hasText(old.getSecretEncrypted());
+        CredentialSecret current = oldHadBasic
+                ? fromJson(cipher.decrypt(old.getSecretEncrypted()))
+                : new CredentialSecret(null, null);
+        String username = StringUtils.hasText(req.getUsername()) ? req.getUsername() : current.getUsername();
+        String secret = StringUtils.hasText(req.getSecret()) ? req.getSecret() : current.getSecret();
+        if (!StringUtils.hasText(username) || !StringUtils.hasText(secret)) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "认证方式为用户名密码时，用户名与密码/令牌都必须填写"
+                  + (oldHadBasic ? "" : "（从匿名改过来时必须重填）"));
+        }
+        // 合并结果与旧值逐字段相同 → **原样沿用旧密文**，不重新加密。
+        // AESUtils 每次调用用随机 salt + IV，重加密会让密文字节变化 ——
+        // 而 S0.2 的契约是「留空 = 保持不变」：「只改了描述」不该顺带把凭据重写一遍。
+        if (oldHadBasic
+                && Objects.equals(username, current.getUsername())
+                && Objects.equals(secret, current.getSecret())) {
+            target.setSecretEncrypted(old.getSecretEncrypted());
+            target.setSecretFingerprint(old.getSecretFingerprint());
+            return;
+        }
+        String json = toJson(new CredentialSecret(username, secret));
+        target.setSecretEncrypted(cipher.encrypt(json));
+        target.setSecretFingerprint(CredentialCipher.fingerprint(json));
     }
 
     private String toJson(CredentialSecret s) {
