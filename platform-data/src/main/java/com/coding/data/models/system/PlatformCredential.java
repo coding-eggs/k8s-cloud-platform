@@ -45,6 +45,13 @@ public class PlatformCredential {
     /** 1 启用 / 0 停用 */
     private Integer enabled;
 
+    /**
+     * 1 = 允许租户在流水线的 git / 推送节点里引用这条连接；**默认 0（关）**。
+     * S0.2 特意留着「租户侧没有凭据码」这条边界，CI 正面撞上了它 —— 所以改成逐条显式授权
+     * （spec §5.3）。它是个**开关**，不是凭据内容，所以可以回显。
+     */
+    private Integer usableByPipelines;
+
     /** 上次测试通过的时刻 */
     private Date lastVerifiedAt;
 

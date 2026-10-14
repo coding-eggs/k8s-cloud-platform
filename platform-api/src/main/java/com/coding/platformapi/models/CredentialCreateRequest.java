@@ -26,4 +26,7 @@ public class CredentialCreateRequest {
 
     @Schema(description = "缺省 true")
     private Boolean enabled;
+
+    @Schema(description = "是否允许在流水线里使用这条连接。缺省 false（**默认关**，逐条显式授权）")
+    private Boolean usableByPipelines;
 }

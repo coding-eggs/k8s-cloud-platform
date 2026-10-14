@@ -509,4 +509,72 @@ class CredentialServiceTest {
                   + "确实需要新增派生字段时，改的是本条测试的 banned 列表，不是加字段了事")
                 .isEmpty();
     }
+
+    // ---- 流水线里的逐条授权（S3.5 第 ① 片）----
+
+    /** 带「允许在流水线里使用」开关的行。默认关 —— 与建表时的 DEFAULT 0 一致。 */
+    private PlatformCredential storedWithPipelineFlag(String id, String name, String type,
+                                                     String endpoint, boolean usableByPipelines) {
+        PlatformCredential c = stored(id, name, type, endpoint, "u", "s");
+        c.setUsableByPipelines(usableByPipelines ? 1 : 0);
+        return c;
+    }
+
+    @Test
+    void onlyConnectionsMarkedForPipelinesShowUp() {
+        // ⭐ Review Focus #4 的一半：没被授权的连接**不出现**在下拉里
+        when(mapper.selectAll()).thenReturn(List.of(
+                storedWithPipelineFlag("c1", "git-a", "GIT", "https://a.example.com", true),
+                storedWithPipelineFlag("c2", "git-b", "GIT", "https://b.example.com", false),
+                storedWithPipelineFlag("c3", "harbor", "HARBOR", "harbor.example.com", true)));
+
+        assertThat(svc.pipelineUsableConnections("GIT"))
+                .extracting(CredentialService.ConnectionView::id).containsExactly("c1");
+    }
+
+    @Test
+    void theProjectionCarriesOnlyThreeFields() {
+        when(mapper.selectAll()).thenReturn(List.of(
+                storedWithPipelineFlag("c1", "git-a", "GIT", "https://a.example.com", true)));
+        CredentialService.ConnectionView v = svc.pipelineUsableConnections("GIT").get(0);
+        // 只有 id/name/endpoint —— 与 S3.1 的 /registry/connections 同一形状
+        assertThat(v.getClass().getDeclaredFields()).hasSize(3);
+    }
+
+    @Test
+    void referencingAnUnauthorizedConnectionIsRefusedNotSilentlyAnonymous() {
+        // ⭐ Review Focus #4：绕过前端直接打接口，也**不能**静默降级成"匿名去拉"
+        when(mapper.selectById("c2")).thenReturn(
+                storedWithPipelineFlag("c2", "git-b", "GIT", "https://b.example.com", false));
+
+        assertThatThrownBy(() -> svc.assertUsableByPipelines("c2", "GIT"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("未授权");
+    }
+
+    @Test
+    void aWrongTypeIsAlsoRefused() {
+        when(mapper.selectById("c3")).thenReturn(
+                storedWithPipelineFlag("c3", "harbor", "HARBOR", "harbor.example.com", true));
+
+        assertThatThrownBy(() -> svc.assertUsableByPipelines("c3", "GIT"))
+                .isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void aMissingConnectionIsRefused() {
+        when(mapper.selectById("nope")).thenReturn(null);
+
+        assertThatThrownBy(() -> svc.assertUsableByPipelines("nope", "GIT"))
+                .isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void theFlagIsEchoedInTheViewBecauseItIsASwitchNotASecret() {
+        when(mapper.selectAll()).thenReturn(List.of(
+                storedWithPipelineFlag("c1", "git-a", "GIT", "https://a.example.com", true)));
+
+        assertThat(svc.list()).singleElement()
+                .satisfies(v -> assertThat(v.getUsableByPipelines()).isEqualTo(1));
+    }
 }

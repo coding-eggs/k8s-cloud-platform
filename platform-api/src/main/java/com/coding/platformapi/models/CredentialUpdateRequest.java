@@ -34,4 +34,14 @@ public class CredentialUpdateRequest {
     private String description;
 
     private Boolean enabled;
+
+    /**
+     * 是否允许在流水线里使用这条连接。
+     *
+     * <p>⚠️ **缺省 = 保持不变**（与上面的 username/secret 同一条约定）：它是个**授权开关**，
+     * 「没传」绝不能解读成「关掉」—— 那会让一次只改描述的保存悄悄撤销授权。
+     * 要关掉就显式传 false。
+     */
+    @Schema(description = "是否允许在流水线里使用这条连接。**留空 = 保持不变**")
+    private Boolean usableByPipelines;
 }

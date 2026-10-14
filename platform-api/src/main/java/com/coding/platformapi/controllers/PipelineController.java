@@ -5,6 +5,7 @@ import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.Auditable;
+import com.coding.platformapi.services.CredentialService;
 import com.coding.platformapi.services.PipelineService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -41,6 +42,9 @@ public class PipelineController {
 
     private final PipelineService pipelineService;
 
+    /** 只被 /git-connections 用 —— 那条读的是凭据表，不是流水线表。 */
+    private final CredentialService credentialService;
+
     @PostMapping("/list")
     @Operation(summary = "流水线列表", description = "命名空间级；租户帽态下必须持有该命名空间的分配行")
     public ResponseData<List<PipelineDTO>> list(@RequestBody PipelineDTO query) {
@@ -65,6 +69,22 @@ public class PipelineController {
             description = "**透传 k8s-server**。带环 / 未知节点类型会在这里被拒 —— 与保存时同一个入口")
     public ResponseData<String> preview(@RequestBody PipelineCanvasRequest request) {
         return new ResponseData<>(pipelineService.preview(request.canvasJson()));
+    }
+
+    /**
+     * 可以在流水线的 git / 推送节点里引用的连接（**窄投影**）。
+     *
+     * <p>⚠️ 不复用 {@code /credential/list}：那个端点要 {@code platform:credential:read}，
+     * 租户一进就 403。这里只回 id/name/endpoint —— 与 S3.1 的 {@code /registry/connections} 同一形状。
+     *
+     * <p>⚠️ 本端点**直接问 {@link CredentialService}**，不经 {@code PipelineService}：
+     * 读的是 {@code platform_credential}，为了一个透传让流水线服务依赖凭据模块不划算。
+     */
+    @PostMapping("/git-connections")
+    @Operation(summary = "可在流水线里使用的 git 连接（窄投影：只回 id/name/endpoint）",
+            description = "只含被管理员勾了「允许在流水线里使用」且已启用的连接")
+    public ResponseData<List<CredentialService.ConnectionView>> gitConnections() {
+        return new ResponseData<>(credentialService.pipelineUsableConnections("GIT"));
     }
 
     @PostMapping("/create")

@@ -43,6 +43,12 @@ public class CredentialView {
 
     private Boolean enabled;
 
+    /**
+     * 1 = 允许租户在流水线的 git / 推送节点里引用它，0 = 不允许（默认）。
+     * ⚠️ 它**不是凭据内容**，是个开关，所以可以回显（spec §5.3）。
+     */
+    private Integer usableByPipelines;
+
     @Schema(description = "上次测试通过的时刻；测失败不改它")
     private Date lastVerifiedAt;
 

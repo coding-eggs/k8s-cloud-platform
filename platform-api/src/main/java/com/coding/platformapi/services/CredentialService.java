@@ -24,6 +24,7 @@ import org.springframework.util.StringUtils;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Date;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -117,6 +118,8 @@ public class CredentialService {
         }
         c.setDescription(req.getDescription());
         c.setEnabled(req.getEnabled() == null || req.getEnabled() ? 1 : 0);
+        // **默认关**：逐条显式授权（spec §5.3）。不传就是不授权。
+        c.setUsableByPipelines(req.getUsableByPipelines() != null && req.getUsableByPipelines() ? 1 : 0);
 
         mapper.insert(c);
         return toView(c);
@@ -148,6 +151,11 @@ public class CredentialService {
         c.setAuthType(req.getAuthType());
         c.setDescription(req.getDescription());
         c.setEnabled(req.getEnabled() == null || req.getEnabled() ? 1 : 0);
+        // ⚠️ 授权开关「缺省 = 保持不变」（与下面的 username/secret 同一条约定）：
+        // 把"没传"当成"关掉"会让一次只改描述的保存悄悄撤销授权。
+        c.setUsableByPipelines(req.getUsableByPipelines() == null
+                ? (old.getUsableByPipelines() == null ? 0 : old.getUsableByPipelines())
+                : (req.getUsableByPipelines() ? 1 : 0));
 
         applyAuth(old, c, req);
 
@@ -346,10 +354,55 @@ public class CredentialService {
         v.setFingerprint(c.getSecretFingerprint());
         v.setDescription(c.getDescription());
         v.setEnabled(c.getEnabled() != null && c.getEnabled() == 1);
+        v.setUsableByPipelines(c.getUsableByPipelines() == null ? 0 : c.getUsableByPipelines());
         v.setLastVerifiedAt(c.getLastVerifiedAt());
         v.setLastVerifyError(c.getLastVerifyError());
         v.setCreatedAt(c.getCreatedAt());
         v.setUpdatedAt(c.getUpdatedAt());
         return v;
+    }
+
+    // ---- 流水线里的逐条授权（spec §5.3）----
+
+    /**
+     * 可以给流水的 git / 推送节点引用的连接。**窄投影，只回三个字段** ——
+     * 与 S3.1 的 {@code /registry/connections} 同一形状：租户进不去凭据页
+     * （那个端点要 {@code platform:credential:read}），所以不能复用 {@code /credential/list}。
+     */
+    public List<ConnectionView> pipelineUsableConnections(String type) {
+        return mapper.selectAll().stream()
+                .filter(c -> type.equals(c.getType()))
+                .filter(c -> c.getUsableByPipelines() != null && c.getUsableByPipelines() == 1)
+                .filter(c -> c.getEnabled() != null && c.getEnabled() == 1)
+                .sorted(Comparator.comparing(PlatformCredential::getName,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(c -> new ConnectionView(c.getId(), c.getName(), c.getEndpoint()))
+                .toList();
+    }
+
+    /**
+     * 引用一条连接前必须过这里。**明确拒绝，绝不静默降级成"匿名去拉"** ——
+     * 静默降级会让租户以为用的是自己的凭据，实际却是平台匿名出站（spec §5.3 的边界）。
+     *
+     * @param expectedType 这个节点要的是 GIT 还是 registry 连接；类型不符也算未授权
+     */
+    public void assertUsableByPipelines(String id, String expectedType) {
+        PlatformCredential c = id == null ? null : mapper.selectById(id);
+        if (c == null) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
+                    "连接不存在，未授权在流水线里使用：" + id);
+        }
+        if (!expectedType.equals(c.getType())) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "连接类型不符（需要 " + expectedType + "，实际 " + c.getType() + "），未授权在流水线里使用");
+        }
+        if (c.getUsableByPipelines() == null || c.getUsableByPipelines() != 1) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "该连接未授权在流水线里使用：" + c.getName());
+        }
+    }
+
+    /** 窄投影：只有身份与地址，**没有认证方式的任何痕迹**。 */
+    public record ConnectionView(String id, String name, String endpoint) {
     }
 }
