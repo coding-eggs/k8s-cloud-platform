@@ -433,7 +433,40 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 
 ## 7. 后端分层与端点
 
-**平台侧不碰 fabric8** —— 沿用既有边界：`platform-api` → HTTP → `k8s-server` → fabric8（`tekton-client`）。
+> ### ⚠️ 2026-10-15 执行中改定：**渲染搬进 k8s-server**
+>
+> 本文原先把渲染器放在 k8s-core，并让 platform-api 调它（`PipelineService.preview`、
+> `PipelineRunService.run` 里「渲染画布 → PipelineSpec」）。
+> **执行到第 10 个任务时发现这不成立**：`platform-api/pom.xml` 里明确写着
+> 「K8s 侧动作全部经 k8s-server HTTP，本服务**不依赖 k8s-core/fabric8**」——
+> platform-api 的依赖只有 platform-common + platform-data，`import com.coding.k8score.pipeline`
+> 直接编译不过。
+>
+> **用户裁定：走 k8s-server 渲染，platform-api 只发画布 JSON。**
+>
+> 于是职责改成：
+>
+> | 谁 | 做什么 |
+> |---|---|
+> | **k8s-server** | **画布 → PipelineSpec/YAML 的渲染**（`POST /pipelineruns/render`、`/node-types`），以及 `create` 时由它自己把 canvas 渲染成内联 `pipelineSpec` |
+> | **platform-api** | 只管自己的 `platform_pipeline` 表 + **透传** `/pipeline/node-types` 与 `/pipeline/preview`；触发时发的是**画布 JSON**，不是渲染结果 |
+>
+> 连带的两条：
+> - `PipelineRunDTO.pipelineSpecJson` → **`pipelineCanvasJson`**（原来是"平台渲染好的 spec"，
+>   现在是"平台自己的画布"）。
+> - **前端不用改**：`/pipeline/node-types` 与 `/pipeline/preview` 的路径、入参、出参形状都不变，
+>   只是 platform-api 从"自己算"变成"转发"。
+>
+> 代价（显式接受）：`k8s-server 零业务逻辑` 这条原则在**渲染**这一处被打破。
+> 理由是这个渲染是**纯函数**（无 IO、无集群状态），把它放在哪一层都不会让 k8s-server
+> 开始做业务决策；而放在 platform-api 就得把它整个 fabric8 客户端拖进来，那是更贵的一步。
+>
+> ⚠️ 顺带修掉的一个隐患：`/node-types` 与 `/preview` 现在**都在 k8s-server 侧做**，
+> 而这两个动作与「节点有哪些」的真相源（`PipelineNodeRegistry`）同处一层 ——
+> 原先的分法要跨模块同步同一份 schema 清单。
+
+**平台侧不碰 fabric8 的既有边界仍然成立**（且是本节改定的**原因**）：
+`platform-api` → HTTP → `k8s-server` → fabric8（`tekton-client`）。
 
 | 层 | 落点 |
 |---|---|

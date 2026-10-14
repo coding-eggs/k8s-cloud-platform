@@ -2576,6 +2576,21 @@ git commit -m "feat(pipeline): 迁移 —— 三张表 + usable_by_pipelines 列
 
 ### Task 10: 流水线 CRUD 与节点元数据
 
+> ### ⚠️ 本任务已按「渲染搬进 k8s-server」执行（2026-10-15 用户裁定，spec §7 的改定块）
+>
+> **下面 Step 1/3 里凡让 platform-api 碰 `PipelineNodeRegistry` / `PipelineRenderer` 的，一律作废。**
+> 实际交付形状：
+>
+> | 层 | 交付 |
+> |---|---|
+> | **k8s-core** | `PipelineCanvasOperations`（`@Component`：`nodeTypes()` / `renderYaml(canvasJson)` / `render(canvasJson)`）+ `PipelineNodeTypeView` |
+> | **k8s-server** | `PipelineRunController` 加 `POST /pipelineruns/node-types`、`POST /pipelineruns/render` |
+> | **platform-api** | `K8sPipelineClient`（转发这两个动作）+ `PipelineService`（只做自己那张表的 CRUD + **调 k8s-server 的 render 来做「保存时就拒掉带环画布」**）+ `PipelineController` |
+>
+> 于是 platform-api 里**没有** `import com.coding.k8score.*`，pom 不动。
+> Task 10 的测试相应改成「打桩 `K8sPipelineClient`」而不是「构造真渲染器」。
+> Task 12 的 `run` 同样：发**画布 JSON**，不发渲染结果。
+
 **Files:**
 - Create: `platform-api/src/main/java/com/coding/platformapi/services/PipelineService.java`
 - Create: `platform-api/src/main/java/com/coding/platformapi/controllers/PipelineController.java`
