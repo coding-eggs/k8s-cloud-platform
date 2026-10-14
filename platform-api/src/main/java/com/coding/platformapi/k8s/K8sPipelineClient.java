@@ -107,10 +107,11 @@ public class K8sPipelineClient {
      * 这里用一个**会丢弃超出部分**的输出流接住 —— 抓归档日志时不需要把 100 MB 都读进来，
      * 但也不必为此给 k8s-server 加参数。
      *
-     * @return 日志文本；对端不可达或容器不存在时**返回空串**（归档要「抓到多少存多少」，不整条丢）
+     * @return 日志内容 + **是否被截断**；对端不可达或容器不存在时是空内容
+     *         （归档要「抓到多少存多少」，不整条丢）
      */
-    public String podLog(String clusterId, String tenantId, String namespace,
-                         String podName, String container, int cap) {
+    public CappedLog podLog(String clusterId, String tenantId, String namespace,
+                            String podName, String container, int cap) {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("tenantId", tenantId);
         params.put("clusterId", clusterId);
@@ -123,15 +124,25 @@ public class K8sPipelineClient {
             gateway.streamGet("/pods/" + podName + "/logs", params, out);
         } catch (Exception e) {
             // ⚠️ 竞态：抓到一半 Pod 没了 / 容器还没起来 —— 返回已经抓到的部分，不整条丢
-            return out.text();
+            return out.result();
         }
-        return out.text();
+        return out.result();
     }
 
-    /** 一个上限之后**静默丢弃**的缓冲：内存有界，且不需要给别人加参数。 */
+    /** 抓到的一段日志：内容 + 有没有被上限截掉 + 实际看到过多少字节。 */
+    public record CappedLog(String content, boolean truncated, int sizeBytes) {
+    }
+
+    /**
+     * 一个上限之后**静默丢弃**的缓冲：内存有界，且不需要给 k8s-server 加参数。
+     *
+     * <p>⚠️ 它**同时记下看到过多少字节** —— 只截不留总数的话，「这条日志被截断了」这个事实
+     * 就丢了，UI 上用户会以为日志本来就这么短。
+     */
     static final class CappedBuffer extends OutputStream {
         private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
         private final int cap;
+        private long total;
 
         CappedBuffer(int cap) {
             this.cap = cap;
@@ -139,6 +150,7 @@ public class K8sPipelineClient {
 
         @Override
         public void write(int b) {
+            total++;
             if (buf.size() < cap) {
                 buf.write(b);
             }
@@ -146,14 +158,16 @@ public class K8sPipelineClient {
 
         @Override
         public void write(byte[] b, int off, int len) {
+            total += len;
             int room = cap - buf.size();
             if (room > 0) {
                 buf.write(b, off, Math.min(room, len));
             }
         }
 
-        String text() {
-            return buf.toString(StandardCharsets.UTF_8);
+        CappedLog result() {
+            String text = buf.toString(StandardCharsets.UTF_8);
+            return new CappedLog(text, total > cap, (int) Math.min(total, Integer.MAX_VALUE));
         }
     }
 }
