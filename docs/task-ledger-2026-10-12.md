@@ -224,6 +224,54 @@
 - [ ] S3.1.2 tags autocomplete（**缓存 + 静默降级**）接到工作负载「更新镜像」
 - [ ] S3.1.3 imagePullSecret 自动生成（→ S0.2.5）
 
+> **✅ 实施完成（2026-10-14）**：Harbor 一档 + 方言扩展点 + 两处输入框补全 + 只读浏览页。
+> 设计见 `docs/superpowers/specs/2026-10-14-registry-design.md`，实施计划见
+> `docs/superpowers/plans/2026-10-14-registry.md`（15 任务）。
+>
+> **⚠️ 与台账原稿的两处范围出入（均为用户裁定）**：
+> ① **S3.1.3 imagePullSecret 不做** —— 用户裁定「先不做，后续再说」。它把平台级凭据的可用范围
+> 落到租户命名空间里（租户对自己命名空间的 Secret 有读权限），是一次真实的数据面扩张，值得单独决策；
+> ② **S3.1.1 只落 Harbor 一档**，`REGISTRY_V2` / `DOCKERHUB` 不做（用户：「现在只支持 harbor，
+> 后续可能还要支持其他类型的仓库」）。
+>
+> **`type` 枚举由 `REGISTRY` 收敛为 `HARBOR`**（只放已实现的方言值，**有意不预放空值** ——
+> 留一个「能选中但没实现」的类型，管理员会建出一条建了也没用的连接）；
+> 扩展位由 `RegistryDialect` 接口 + `RegistryDialectRegistry` + **一条护栏测试**提供 ——
+> 加一档 = 加枚举值 + 实现类 + UI 选项，候选端点 / 缓存 / 权限 / 浏览页 / 前端**全不动**。
+> 护栏不只是写着：**实测过一次故意红**（给 `TYPES` 塞一个没人实现的 `GITEA`，测试立刻报
+> 「该镜像仓库类型尚未实现: GITEA」）。
+> **加档时要一并做的**：S0.2 的 `registryProbeUrl` 假定「所有 registry 都响应 `/v2/`」，
+> 对 Artifactory 不成立 —— 届时要把 probe 挪进 dialect（spec §11 的清单）。
+>
+> **权限**：`tenant:registry:catalog`（API，覆盖 suggest / browse / connections 三个只读端点）
+> + `tenant:page:registry`（Page）。必须是 `tenant:` 前缀 —— `assertScopeMatches` 规定
+> TENANT 角色只能持 `tenant:` 码。拆 API/Page 两码是为了让「能补全但进不了浏览页」可表达。
+> 三个端点**共用**一个 API 码（同一件事的三个入口、同一页面同一批人）。
+>
+> **三条设计取舍**（都是为了让「加档时前端不用改」，且**本身就比写死的版本更简单**）：
+> 路径驱动浏览（面包屑由后端给、层级深度由方言定，不写死三层）、候选返回**要填进输入框的完整串**
+> （拼接规则是方言相关的）、表格列由 `details` 的标签决定。
+>
+> **两种失败姿态有意不同**：`/registry/suggest` 静默降级（每按键一次的高频动作，弹错会掩盖真问题，
+> 也会让用户以为「填不了镜像」）；`/registry/browse` 报错（用户主动点的导航，什么都不说等于页面坏了）。
+>
+> **有意不做**：imagePullSecret、`REGISTRY_V2`/`DOCKERHUB` 两档、无 host 的镜像写法（隐式 Docker Hub，
+> 一律空候选）、镜像扫描/签名/清理/删除、**候选与浏览的审计**（高频只读，逐次记会淹掉审计表）。
+>
+> **已知风险（接受）**：租户能看到平台所有已配 registry 的目录（仓库名 + tag 名，**不含凭据**）——
+> 这是 S0.2「纯平台级 + 全局可用」那条决定的直接延伸，现在落到了具体数据上。
+>
+> **执行期发现并订正的「计划本身有错」共 9 处**（已在实施计划文件里就地订正，非代码问题）：
+> `hostOf` 用「第一个 `/` 之前」会把 Docker Hub 的 `myteam/app` 判成 host（改用 Docker 自己的规则）；
+> `HarborDialect` 少了两个接口方法（照抄编译不过）；`parseRepositoryNames` 缺 project 参数却要做剥离；
+> 两个 `onStatus` 的注册顺序（我一度改反，被测试抓回）；`RedisJsonCache` 的 import 缺两处；
+> **缓存键带了前缀而该类自己也会加前缀 → 双前缀、永不命中**（而原断言恰好把它钉成了期望行为）；
+> `connections.value[0].id` 在 `noUncheckedIndexedAccess` 下报 TS2532；
+> 以及测试数/行数的几处算术。
+> **其中一条最值得记**：`npx vue-tsc --noEmit -p tsconfig.json` **通过**，而 `npm run build`
+> 打出 `error TS2532` —— **两个检查不等价，构建期更严**；而计划里那条 build 断言
+> （`grep -E "built in|error"`）在两者同时打印时**仍会 echo BUILD_OK**。已在计划里注明「build 那步要人眼看」。
+
 #### S3.2 应用级交付（自研薄应用层）｜ 规模 L ｜ 前置：**D1**（**不需要** S0.2 —— kubeconfig 已在 `k8s_cluster` 表）
 > 已定：自研（分析文档 §6.4）。产品形态自研、渲染引擎内部用 Helm。
 
