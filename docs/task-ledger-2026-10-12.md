@@ -356,6 +356,43 @@
 > 浏览任意公共命名空间（需要浏览页有输入框）。
 >
 > **全量测试 474 绿**（platform-api，本批新增 68 条）+ 前端 `npm run build` 零 TS error。
+
+> ---
+>
+> **✅ 2026-10-14 再补：Docker Hub 改成平台内置档**（上线前的一次改动，推翻了上面那条增补的一部分）
+>
+> 用户裁定「内置隐式、不要记录」。它现在是 `BuiltinRegistry.DOCKER_HUB` 常量，
+> **不进 `platform_credential`** —— 没有行、没有 authType、没有密文、没有启停状态，
+> 重放迁移后开箱即用，不用任何人手动建。
+>
+> **起因是一次真实排查**：用户为 Docker Hub 配好了代理却仍然没有候选。查库发现
+> `platform_credential` 里**一条镜像仓库连接都没有**，于是 `suggest` 在第一个 guard
+> 就返回了、**一个出站请求都没发**，代理白配；而那个 guard 当时**是静默的**，日志里一片安静。
+>
+> **落地方式**（避免"内置"这个特例传染）：新增 `RegistryService.allSources()` 作为
+> **「有哪些来源」的唯一真相源**，内置与凭据的分叉只在那里发生一次，
+> 下游（聚合 / 并发 / 排序 / 候选带来源名 / 浏览）只认新引入的 `Source` 形状。
+> 浏览页下拉里会出现内置档（合成 id `builtin:dockerhub`），`browse` 认这个 id。
+> 开关 `platform.registry.dockerhub.enabled`（默认 true）。
+>
+> **连带回退**：`CredentialService.TYPES` 去掉 `DOCKERHUB`，凭据页不再提供这个类型 ——
+> 上面那批刚交付的两处前端（类型选项、endpoint 预填只读联动）随之回退。
+>
+> **同批做的第二件事：出站代理按 host 白名单分流**（`platform.outbound.proxy.*`），
+> `RegistryHttpClient` 与 `CredentialProbeClient` 共用一个 `ProxySelector`。
+> 只有白名单里的目标走代理，内网（自建 Harbor / gitlab、k8s-server、Thanos、Prometheus）
+> 一律直连；白名单为空 = 全直连（默认，fail-safe）。这补上了原先「补全通、测试连接不通」
+> 的不一致。用户原先写死在 `RegistryHttpClient` 里那段已撤掉。
+>
+> **踩到一个只有启动校验看得见的坑**：两个 client 各有第二个（包级私有、给测试用的）构造器，
+> Spring 在多个构造器且无无参构造器时**不会自己挑** —— 必须给生产的那个标 `@Autowired`，
+> 否则启动直接 `No default constructor found`。**全量测试全绿也照样过**，只有真启动拦得住。
+>
+> **全量测试 744/744 绿**（19 · 215 · 20 · 490）+ 前端 0 TS error + 启动校验 276 个 endpoint 不变。
+>
+> ⚠️ **两条改动尚未在真实环境验证**：内置档在**浏览器**里打出候选（本轮只到「单元测试 +
+> 启动校验」），以及代理白名单配上之后 `hub.docker.com` / `github.com` 的实际连通。
+
 > ⚠️ 本批再次复现 S3.1 记过的那条：**`npx vue-tsc --noEmit` 会零报错放过真错误，
 > `npm run build` 才报** —— 前端收口一律用后者。
 
