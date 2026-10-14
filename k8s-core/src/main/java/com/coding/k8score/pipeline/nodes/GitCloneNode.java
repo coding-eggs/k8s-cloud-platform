@@ -30,7 +30,11 @@ public class GitCloneNode implements PipelineNode {
 
     @Override
     public NodeSchema formSchema() {
+        // ⚠️ connectionId 的 key 名是**跨模块契约**：platform-api 会照它扫画布、
+        // 逐条问「这条连接被授权了吗」（spec §5.3、Review Focus #4）。
+        // 改名要同时改 PipelineRunService.CONNECTION_KEYS 与那条护栏测试。
         return new NodeSchema(List.of(
+                NodeField.text("connectionId", "git 连接（只列出被授权可用的）", false),
                 NodeField.text("repo", "仓库地址", true),
                 NodeField.text("revision", "分支 / commit", false),
                 NodeField.text("dir", "目标目录（相对 workspace）", false)));

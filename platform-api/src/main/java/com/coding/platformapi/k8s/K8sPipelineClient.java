@@ -56,6 +56,23 @@ public class K8sPipelineClient {
                 new PipelineCanvasRequest(canvasJson), gateway.responseType(String.class));
     }
 
+    /**
+     * 创建一次运行。**带的是画布** —— 渲染在 k8s-server 侧（spec §7 的改定块）。
+     *
+     * <p>⚠️ caller 必须**先落库再调它**（spec §4.5①）：run 名由平台先生成，
+     * 幂等键从源头就有，也不会出现「集群里有对象、库里没记录」的孤儿。
+     */
+    public PipelineRunDTO createRun(String clusterId, String tenantId, String namespace,
+                                   String runName, String canvasJson) {
+        PipelineRunDTO dto = new PipelineRunDTO();
+        dto.setClusterId(clusterId);
+        dto.setTenantId(tenantId);
+        dto.setNamespace(namespace);
+        dto.setName(runName);
+        dto.setPipelineCanvasJson(canvasJson);
+        return k8s.create(dto);
+    }
+
     /** 读一次运行的当前状态（归档时抓快照用）。不存在返回 null。 */
     public PipelineRunDTO getRun(String clusterId, String tenantId, String namespace, String name) {
         PipelineRunDTO dto = new PipelineRunDTO();

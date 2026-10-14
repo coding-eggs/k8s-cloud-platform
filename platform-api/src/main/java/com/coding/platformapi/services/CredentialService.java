@@ -384,7 +384,9 @@ public class CredentialService {
      * 引用一条连接前必须过这里。**明确拒绝，绝不静默降级成"匿名去拉"** ——
      * 静默降级会让租户以为用的是自己的凭据，实际却是平台匿名出站（spec §5.3 的边界）。
      *
-     * @param expectedType 这个节点要的是 GIT 还是 registry 连接；类型不符也算未授权
+     * @param expectedType 这个节点要的是 GIT 还是 registry 连接；类型不符也算未授权。
+     *                     **传 null = 不校验类型**（镜像节点只要求「是一条被授权的 registry 连接」，
+     *                     它不关心对方是 Harbor 还是别的方言）
      */
     public void assertUsableByPipelines(String id, String expectedType) {
         PlatformCredential c = id == null ? null : mapper.selectById(id);
@@ -392,7 +394,7 @@ public class CredentialService {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
                     "连接不存在，未授权在流水线里使用：" + id);
         }
-        if (!expectedType.equals(c.getType())) {
+        if (expectedType != null && !expectedType.equals(c.getType())) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                     "连接类型不符（需要 " + expectedType + "，实际 " + c.getType() + "），未授权在流水线里使用");
         }

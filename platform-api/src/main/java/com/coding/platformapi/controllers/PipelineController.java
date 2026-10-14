@@ -1,11 +1,17 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.PipelineDTO;
+import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.system.ResponseData;
+import com.coding.data.models.system.PlatformPipelineRun;
 import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.Auditable;
+import com.coding.platformapi.models.PipelineRunContext;
+import com.coding.platformapi.security.AuthContext;
+import com.coding.data.models.system.TokenUserInfo;
 import com.coding.platformapi.services.CredentialService;
+import com.coding.platformapi.services.PipelineRunService;
 import com.coding.platformapi.services.PipelineService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -44,6 +50,10 @@ public class PipelineController {
 
     /** 只被 /git-connections 用 —— 那条读的是凭据表，不是流水线表。 */
     private final CredentialService credentialService;
+
+    private final PipelineRunService runService;
+
+    private final AuthContext auth;
 
     @PostMapping("/list")
     @Operation(summary = "流水线列表", description = "命名空间级；租户帽态下必须持有该命名空间的分配行")
@@ -107,5 +117,48 @@ public class PipelineController {
     public ResponseData<Void> delete(@RequestBody PipelineDTO request) {
         pipelineService.delete(request.getId());
         return new ResponseData<>();
+    }
+
+    // ---- 运行 ----
+
+    @PostMapping("/run")
+    @Operation(summary = "触发一次运行",
+            description = "先生成 run 名并落库、再创建集群对象（幂等键从源头就有）。"
+                    + "画布引用的每条连接都必须已授权，否则当场拒（**不静默降级成匿名**）")
+    @Auditable(action = AuditAction.PIPELINE_RUN, target = "#request.id")
+    public ResponseData<String> run(@RequestBody PipelineDTO request) {
+        PipelineDTO pipeline = pipelineService.get(request.getId());   // 顺带校验归属
+        return new ResponseData<>(runService.run(pipeline, currentUser(),
+                new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(), auth.hatTenantId())));
+    }
+
+    @PostMapping("/run/cancel")
+    @Operation(summary = "取消一次运行",
+            description = "**先抓日志、再取消** —— Tekton 取消时会自己删 Pod，顺序反了那次运行的日志就没了")
+    @Auditable(action = AuditAction.PIPELINE_CANCEL, target = "#request.name")
+    public ResponseData<Void> cancelRun(@RequestBody PipelineRunDTO request) {
+        PlatformPipelineRun run = runService.get(request.getName());
+        runService.cancel(request.getName(),
+                new PipelineRunContext(run.getClusterId(), run.getNamespace(), auth.hatTenantId()));
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/run/list")
+    @Operation(summary = "运行历史", description = "**只读库** —— 集群里的对象归档后已经删了")
+    public ResponseData<List<PlatformPipelineRun>> runList(@RequestBody PipelineDTO request) {
+        PipelineDTO pipeline = pipelineService.get(request.getId());
+        return new ResponseData<>(runService.list(pipeline.getId(),
+                new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(), auth.hatTenantId())));
+    }
+
+    @PostMapping("/run/get")
+    @Operation(summary = "一次运行的详情", description = "含每个节点的状态与耗时；日志另走 /run/logs")
+    public ResponseData<PlatformPipelineRun> runGet(@RequestBody PipelineRunDTO request) {
+        return new ResponseData<>(runService.get(request.getName()));
+    }
+
+    private String currentUser() {
+        TokenUserInfo u = auth.current();
+        return u == null ? null : u.getUsername();
     }
 }

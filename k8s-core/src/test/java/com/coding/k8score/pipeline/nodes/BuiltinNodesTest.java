@@ -101,4 +101,17 @@ class BuiltinNodesTest {
         assertThat(step.steps().get(0).getImage()).contains("buildah");
         assertThat(step.steps().get(0).getScript()).contains("buildah");
     }
+
+    /**
+     * ⚠️ **跨模块契约的护栏**：platform-api 会照这两个字段名扫画布、逐条问「这条连接被授权了吗」
+     * （spec §5.3 / Review Focus #4）。它读不到 k8s-core 的类型，所以字段名就是契约 ——
+     * 改名必须同时改 {@code PipelineRunService.CONNECTION_KEYS}，这条测试是唯一的提醒。
+     */
+    @Test
+    void theConnectionReferenceFieldsPlatformApiScansForAreStillNamedThis() {
+        assertThat(new GitCloneNode().formSchema().fields())
+                .extracting(NodeField::key).contains("connectionId");
+        assertThat(new ImagePushNode().formSchema().fields())
+                .extracting(NodeField::key).contains("registryConnectionId");
+    }
 }
