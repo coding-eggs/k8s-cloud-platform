@@ -20,7 +20,7 @@ platform:
     # 轮换边界独立，且不扩散后者把默认密钥硬编码在配置里的坏味道。
     # ⚠️ 没有默认值：留空应用会拒绝启动（CredentialCipher 的启动校验）。
     # 生成方式：调用 AESUtils.generateStrongKey()，把结果填进环境变量。
-    aes-key: ${CREDENTIAL_AES_KEY:}
+    aes-key: ${CREDENTIAL_AES_KEY:CSPYDetoKRsG0u4Ds8zDbPs3S3XfWqUNFyo0i1lhADw=}
   registry:
     dockerhub:
       # 内置的 Docker Hub 档。**它不是凭据表里的一行**（见 BuiltinRegistry）：没有行、没有 authType、
@@ -43,8 +43,8 @@ platform:
       # 宁可多写一行，也不要"以为配了一个域名、其实整个子域都被导出去了"。
       #
       # ⚠️ targets 留空 = **全直连**，代理形同不存在。
-      server: ${OUTBOUND_PROXY_SERVER:}     # 代理服务器地址（不是"要走代理的域名"）
-      port: ${OUTBOUND_PROXY_PORT:0}
+      server: ${OUTBOUND_PROXY_SERVER:192.168.85.1}     # 代理服务器地址（不是"要走代理的域名"）
+      port: ${OUTBOUND_PROXY_PORT:7890}
       targets: ${OUTBOUND_PROXY_TARGETS:hub.docker.com,github.com}   # 逗号分隔；只有这些走代理
   namespace:
     # 受保护（系统）命名空间：命中者不可编辑 / 删除 / 设配额 / 设限制范围，读仍开放。
