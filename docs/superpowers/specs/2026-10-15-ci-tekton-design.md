@@ -35,18 +35,19 @@ S3.5 在台账里是 **XL / 13 个子任务** —— 一批 spec + 一个实施�
 | **拉取凭据** | **不做 imagePullSecret**，但流水线上给「Pod 拉取凭据」设置 | 用户裁定。⚠️ 后果写进 §10 |
 | **git 凭据** | **平台连接逐条显式授权**（新列，默认关） | 台账 S3.5.12 的安全边界；S0.2 特意留着「租户侧没有凭据码」，CI 正面撞上了它 |
 | **构建 Pod 的权限** | **零集群写权限** | 它只往 registry 推镜像；集群里的写入全由平台侧（有权限控制与审计）做 |
-| **运行历史** | **不落库**，直接读集群里的 `PipelineRun` | 与「画布 JSON 是唯一真相源」同一条判断：多存一份就要同步、就会有漂移 |
+| **运行历史与日志** | **落库**；集群里的 `PipelineRun` 归档后**删掉**（级联删 TaskRun 与 **Pod**） | 用户 2026-10-15：Tekton 跑完会留 `Completed` 的 Pod 占资源，期望「**k8s 不保留**，执行记录与日志**进数据库**」。详见 §4 |
+| **取消与超时** | **都收进平台**（先抓日志、再取消）；**不设** Tekton 的 `spec.timeouts` | Tekton 在超时/取消时会自己删 Pod → 日志丢失。收进平台才能保证「所有终结路径上都抓过日志」（§4.2） |
 
 ---
 
 ## 1. 交付边界
 
 **做**：三个内置节点 + 节点 schema 与语言预设 + 画布（自由连线、环检测、并发语义提示）+ 渲染器 +
-隐式共享 workspace + 手动触发与取消 + 运行历史与日志 + 权限（5 个码）+ git 连接逐条授权 +
-推送凭据 + capability 门控 + 审计。
+隐式共享 workspace + 手动触发与取消 + **运行归档任务（先抓后删）** + **运行记录与日志落库** +
+**保留策略** + 权限（5 个码）+ git 连接逐条授权 + 推送凭据 + capability 门控 + 审计。
 
 **不做**：条件分支与 `finally`（片②）· 自定义节点 · 运行时参数 vs 固定配置分离 · 流水线级并发策略 ·
-部署节点 · 触发器 / Webhook / 定时 · 平台级流水线模板 · 运行历史的保留策略（靠 Tekton 侧）·
+部署节点 · 触发器 / Webhook / 定时 · 平台级流水线模板 · **Tekton Pruner**（理由见 §4.1 / §10）·
 `imagePullSecret`（用户自理）。
 
 ---
@@ -175,30 +176,91 @@ public record BuildPreset(String key, String label,
 
 ---
 
-## 4. 运行与日志
+## 4. 运行 · 归档 · 日志
 
-### 4.1 触发与取消
+> **本节在 2026-10-15 被整体重写。** 用户提出：Tekton 跑完会留下 `Completed` 状态的 Pod 占资源，
+> 期望「**删掉、k8s 不保留**；执行记录与日志**写进数据库**」。核实后的三条事实（出自
+> `tektoncd/pipeline/docs/taskruns.md`）：
+>
+> | | 事实 |
+> |---|---|
+> | **正常完成** | Pod **保留为 `Completed`**（现在仍然如此，这就是堆积的来源） |
+> | **超时** | Pod **被删**、**日志丢失** |
+> | **取消** | Pod **被删**、**日志丢失**（有 `keep-pod-on-cancel` flag 可保留） |
+>
+> 堆积的兜底是 kubelet 的 `--terminated-pod-gc-threshold`，**默认 12500** —— 到那个数之前没人清理。
 
-- **触发** = 创建 `PipelineRun`（内联 pipelineSpec）→ platform-api → k8s-server（命名空间级）
-- **取消 = patch `spec.status`，不是删对象** —— 删了历史就没了。
-  删除单独作为一个「清理历史」动作。
-  ⚠️ v1 的确切取值要查实（v1beta1 是 `PipelineRunCancelled`），见 §11
-- **平台不装控制器** —— Tekton 自己的 controller 干所有活
+### 4.1 归档与删除由平台**一个动作**完成（先抓后删）
 
-### 4.2 观察运行
+```
+@Scheduled 轮询（默认 60s，可配）
+  → 枚举「租户 × 集群 × 命名空间」分配表里的命名空间
+  → 找**已终结**的 PipelineRun（成功 / 失败 / 被平台取消 / 平台判定超时）
+  → 抓 status + 每个 TaskRun 的每个 step 容器的日志（复用 /{pod}/logs?container=）
+  → 落库（按 run_name 唯一 → **幂等**，重复扫到不会写两条）
+  → 删掉 PipelineRun（ownerReference 级联删 TaskRun 与 **Pod**）
+```
 
-读 `PipelineRun.status`：`conditions`（Succeeded True/False/Unknown + reason）/ `startTime` /
-`completionTime` / `pipelineResults`，再加上 `childReferences` 对应的 TaskRun 状态，映射到画布上的节点（按节点名）。
+**为什么不配合 `tektoncd/pruner`**（独立项目、能按 TTL/条数清 `PipelineRun`/`TaskRun`）：
+它删的时候平台还没抓日志 —— **两个组件各干各的，归档与清理的先后无法保证**。
+让平台一个动作做完，时序天然正确。代价是平台停摆期间 Pod 会堆 —— 但那比
+「pruner 先把日志删了、平台**永远**归档不到」好得多。
 
-### 4.3 日志 —— **几乎白捡**
+⚠️ **归档走 k8s-server 的「平台侧」通道**（`AccessBoundary` / `PLATFORM_SCOPE`），
+不是用户上下文 —— 系统任务没有用户。所以 k8s-server 要暴露平台侧的
+「列某命名空间的 PipelineRun / 读某 Pod 的日志 / 删某 PipelineRun」三个动作。
 
-**`PipelineRun` 不起 Pod，`TaskRun` 才起。** 而 Tekton 的**每个 step 就是 Pod 里的一个容器**。
+### 4.2 取消与超时**也收进平台** —— 这是让日志拿得到的关键
 
-所以：**直接用现有的 `GET /{podName}/logs?clusterId&namespace&container=…`** ——
-它已经支持选容器、`sinceTime` 增量游标、`tailLines` 回看、剥时间戳前缀。前端**复用 `PodLogDialog`** 的那套逻辑。
+Tekton 在**超时**和**取消**两种情况会自己把 Pod 删掉 —— 那之后日志就没了。
+所以平台不能让 Tekton 去终结：
 
-**找 Pod 不需要新端点**：Tekton 给 Pod 打了 `tekton.dev/pipelineRun` / `tekton.dev/taskRun` 标签，
-用现有的 Pod 列表按 label 过滤即可（标签名待核实，§11）。
+- **取消** = 平台**先抓一次日志**，再 patch `spec.status` 取消
+- **超时** = 平台**不设** Tekton 的 `spec.timeouts`，改由轮询判定「跑太久了」→ 走与取消同一条路
+  （先抓后取消），结束时标成 `TIMEOUT` 而不是 `CANCELLED`
+
+于是**所有终结路径上，平台都在 Pod 还在时抓过日志** ✓
+
+⚠️ 这条约束是硬性的：**只要 dev 用 Tekton 自己的超时，那次运行的日志就必然丢失**。
+
+### 4.3 观察运行
+
+运行期间平台仍直接读集群（`PipelineRun.status` 的 `conditions` / `startTime` / `completionTime` /
+`childReferences` → TaskRun 状态），把状态映射到画布上的节点（按节点名）。
+**归档之后**才改读库 —— 两种数据源的分界就是「这个 run 归档了没有」。
+
+### 4.4 日志：抓取仍然白捡，只是**多一步落库**
+
+`PipelineRun` 不起 Pod，`TaskRun` 才起；而 Tekton 的**每个 step 就是 Pod 里的一个容器**。
+所以抓取仍用现有的 `GET /{podName}/logs?clusterId&namespace&container=…`（支持选容器、
+`tailLines` 回看、剥时间戳）—— **不用新写日志通道**。
+
+新增的只是：抓到之后写进 `platform_pipeline_run_log`，并且
+⚠️ **单步最多 1 MB**，超出**截断**并在 UI 上标注「已截断」。
+实时看日志（运行还在跑时）仍然走老路直接读 Pod —— 不落库、不落缓存。
+
+---
+
+## 4bis. 归档任务的配置
+
+```yaml
+platform:
+  pipeline:
+    archive:
+      enabled: ${PIPELINE_ARCHIVE_ENABLED:true}
+      interval: ${PIPELINE_ARCHIVE_INTERVAL:60s}      # 轮询间隔
+    run:
+      timeout: ${PIPELINE_RUN_TIMEOUT:30m}            # 平台自己判定的超时
+    log:
+      max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}    # 单步 1 MB，超出截断
+      retention-days: ${PIPELINE_LOG_RETENTION_DAYS:90}
+```
+
+**保留策略**：另有一个每日任务，删 `completion_time` 早于 90 天的 `platform_pipeline_run`
+及其日志行（连带，靠代码不靠外键 —— 本仓不加外键）。
+
+⚠️ **`enabled: false` 的后果要说清**：Pod 不会被删（回到 Tekton 默认行为），
+而且运行记录**只在集群里**、不落库。这个开关是给"我就是要用 pruner 自己管"的部署留的。
 
 ---
 
@@ -287,11 +349,18 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 /pipeline/preview                                    ← read（画布 → 渲染出的 YAML，给前端预览）
 ```
 
-**数据模型**：`platform_pipeline`（id / cluster_id / namespace / name / description /
-`canvas_json` / created_by / created_at / updated_at）。
+**数据模型**（三张表）：
 
-⚠️ **运行历史不落库** —— 直接读集群里的 `PipelineRun`。与「画布 JSON 是唯一真相源」同一条判断：
-多存一份就要同步、就会有漂移。
+| 表 | 关键列 |
+|---|---|
+| `platform_pipeline` | id · cluster_id · namespace · name · description · `canvas_json` · created_by · created_at · updated_at |
+| `platform_pipeline_run` | id · pipeline_id · cluster_id · namespace · **`run_name`**（集群里的 PipelineRun 名，**唯一 → 归档幂等**）· status(`SUCCEEDED`/`FAILED`/`CANCELLED`/`TIMEOUT`) · reason · triggered_by · start_time · completion_time · duration_ms · `steps_json`（每个节点的状态与耗时）· created_at |
+| `platform_pipeline_run_log` | id · run_id · node_name · `content`(MEDIUMTEXT) · truncated · size_bytes |
+
+⚠️ 运行与日志**落库**（§4）—— 集群里的对象归档后被删掉，所以**库是运行历史的唯一来源**。
+
+**归档 / 删除 / 保留清理是平台自己的动作，不标审计**（不是用户请求）。但 `/pipeline/run` 仍标 ——
+台账 S0.1.3 点名了「CI 触发」。
 
 ---
 
@@ -315,6 +384,10 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **凭据授权** | 未被标记的连接**不出现**在 `/pipeline/git-connections` 里；强行引用未授权连接 id → 拒绝（**不静默降级**） |
 | **迁移** | 手工重放 + **join 对账**（5 个码 × 3 个角色的关联逐条命中真实权限行，全表悬空扫描 = 0）—— S0.2/S3.1 的教训 |
 | **capability 门控** | 没有 `tekton.dev/v1` 时端点/页面整块不可用，不是 500 |
+| **归档** | 一个已终结的 run 归档后：`run_name` 落库、集群对象被删、**重复扫到不写第二条**（幂等钉死）；**抓日志中途 Pod 没了 → 抓到多少存多少、不静默丢** |
+| **截断** | 超过 1 MB 的单步日志 → `truncated=true` 且内容确实被截断；未超的 `truncated=false` |
+| **取消的顺序** | **先抓日志、再 patch 取消** —— 断言两次调用的先后（这是「日志拿得到」的全部依据） |
+| **保留** | 90 天前的 run 与其日志行**一起**被删；89 天的两条都还在 |
 
 ---
 
@@ -328,7 +401,7 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **触发器 / Webhook / 定时** | 台账已定「仅手动触发」，**不引入 Tekton Triggers** |
 | **`imagePullSecret`** | 用户裁定。⚠️ **后果**：构建 Pod 的基础镜像必须来自**免认证仓库**，或用户自己在命名空间建 Secret 并在流水线的「Pod 拉取凭据」里指定。**而 kubelet 不走平台的出站代理** —— 集群节点拉不到 Docker Hub 时，基础镜像只能来自私有 Harbor |
 | **平台级流水线模板** | 台账没有；第一批做会引出模板/实例的同步与版本问题 |
-| **运行历史的保留策略** | 靠 Tekton 侧（`PipelineRun` 默认不自动清理） |
+| **Tekton Pruner** | 独立项目（0.3.3）、要单独装。**不用它**：它删的时候平台还没抓日志 —— 两个组件各干各的，归档与清理的先后无法保证（§4.1）。平台一个动作做完，时序天然正确 |
 | **构建缓存** | per-Pod Buildah 每次从零构建。加缓存要么挂 PVC（vfs 会吃掉大量空间），要么上共享构建服务（跨租户串味）—— 两条都比本批重 |
 | **运行历史落库** | §7 的理由 |
 
@@ -350,6 +423,11 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
       能不能做到**不用 privileged**。这决定 §0 那条「零集群写权限」之外还要放宽什么
 - [ ] **Tekton `v1` 的取消取值** —— v1beta1 是 `spec.status: PipelineRunCancelled`，**v1 改成了什么**（查实，不猜）
 - [ ] **Tekton 给 Pod 打的标签名** —— `tekton.dev/pipelineRun` / `tekton.dev/taskRun` 是否就是要用的那两个
+- [ ] ⚠️ **Tekton 的默认超时** —— 平台不设 `spec.timeouts` 之后，Tekton 会不会用它的 `default-timeout`
+      feature flag（我记得默认 60 分钟）兜底删 Pod。**若是，必须把集群侧的 `default-timeout` 设为 0（禁用）
+      或设成远大于平台超时** —— 否则「超时收进平台」这条设计会静默失效、那批运行的日志照样丢
+- [ ] **归档与 kubelet GC / 他方删除的竞态** —— 抓日志中途 Pod 消失时的行为（要「抓到多少存多少」，不是整条丢）
+- [ ] **1 MB 截断的实际体验** —— 拿一次真实的 `mvn` 构建日志量一下（决定这个默认值要不要调）
 - [ ] **`volumeClaimTemplate` 在目标集群的 StorageClass 上能否绑定**（集群有没有可动态供应的默认 SC）
 - [ ] **基础镜像能不能拉到** —— kubelet 不走平台的出站代理；确认集群节点拉 `maven:3.9-eclipse-temurin-21` 之类的路径
 - [ ] **`tekton-client:7.9.0` 加进 `k8s-core` 后能否与本仓的 fabric8 7.9.0 干净共存**（同版本、应无冲突，但要跑一次构建）
@@ -361,11 +439,15 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 **本批有 SQL**（与 S3.1 那批不同）。
 
 1. **先重放** `V2026_10_15_1__pipeline.sql`（手工，本仓没有 Flyway）：
-   `platform_pipeline` 表 + `platform_credential.usable_by_pipelines` 列 + 5 个权限行 + 角色关联
+   `platform_pipeline` / `platform_pipeline_run` / `platform_pipeline_run_log` 三张表 +
+   `platform_credential.usable_by_pipelines` 列 + 5 个权限行 + 角色关联
 2. **集群侧**：装 Tekton Pipelines（`profile: lite` 或 vanilla release.yaml）；
-   **租户 SA 的 K8s RBAC 模板要加 `tekton.dev` 组**（与当年 Gateway 那个坑同形）；确认有可动态供应的 StorageClass
-3. **再起新构建**
-4. 重放后重新登录，或等权限闭包缓存的 30s TTL
+   **租户 SA 的 K8s RBAC 模板要加 `tekton.dev` 组**（与当年 Gateway 那个坑同形）；确认有可动态供应的 StorageClass；
+   ⚠️ **若 Tekton 有默认超时，把 `default-timeout` 设为 0**（否则超时仍由 Tekton 终结 → 那批运行日志丢失，见 §11）
+3. **归档任务需要的配置**（§4bis）：`platform.pipeline.archive.{enabled,interval}` ·
+   `platform.pipeline.run.timeout` · `platform.pipeline.log.{max-bytes,retention-days}` —— 都有默认值，不配也能跑
+4. **再起新构建**
+5. 重放后重新登录，或等权限闭包缓存的 30s TTL
 
 ### 12.1 部署后待验清单
 
@@ -376,3 +458,7 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 - [ ] **member 账号**：能跑、能看日志，**不能改流水线定义**（按钮不出现，且绕过前端直接调 `update` 也被拒）
 - [ ] **未被标记为「允许在流水线里使用」的 git 连接，不出现在下拉里**；强行引用它的 id → 明确报错
 - [ ] 审计页能看到 `create` / `update` / `delete` / `run` / `cancel` 的记录，**看不到** list / get
+- [ ] **跑完一次之后 `kubectl get pods` 里那个 `Completed` 的 Pod 消失了**，`kubectl get pipelinerun` 也没了 ——
+      而平台里的运行记录与日志都在
+- [ ] **取消一次正在跑的运行** → 取消之后**日志仍然看得到**（这条验的是「先抓后取消」的顺序）
+- [ ] 一条超 1 MB 的日志 → UI 上标了「已截断」
