@@ -1,6 +1,7 @@
 package com.coding.platformapi.registry;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.platformapi.outbound.OutboundProxy;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -34,7 +35,7 @@ class RegistryHttpClientTest {
     private final RestClient.Builder builder = RestClient.builder();
     private final MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
     private final RegistryHttpClient client = new RegistryHttpClient(builder.build());
-    private final RegistryHttpClient realClient = new RegistryHttpClient();
+    private final RegistryHttpClient realClient = new RegistryHttpClient(OutboundProxy.disabled());
 
     private static final String PROJECTS_URL =
             "https://harbor.example.com/api/v2.0/projects?page_size=100";

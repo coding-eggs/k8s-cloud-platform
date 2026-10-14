@@ -235,54 +235,19 @@ class CredentialServiceTest {
     }
 
     @Test
-    void dockerHubRejectsCredentialsBecauseItIsAnonymousOnly() {
-        // 用户裁定：这一档的角色是「公共镜像的来源」，私有镜像该放自建 Harbor。
-        // **报错而不是静默丢弃** —— 后者会让管理员以为自己配上了 PAT，
-        // 然后在发现搜不到私有仓库时找不到原因。
-        CredentialCreateRequest req = new CredentialCreateRequest();
-        req.setName("hub");
-        req.setType("DOCKERHUB");
-        req.setEndpoint("docker.io");
-        req.setAuthType("BASIC");
-        req.setUsername("u");
-        req.setSecret("p");
-
-        assertThatThrownBy(() -> svc.create(req))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("该类型支持的认证方式");
-    }
-
-    @Test
-    void dockerHubAcceptsAnonymous() {
-        when(mapper.selectByName(anyString())).thenReturn(null);
-        when(mapper.insert(any())).thenReturn(1);
-
+    void dockerHubIsNoLongerACredentialType() {
+        // 2026-10-14：Docker Hub 改成平台的**内置档**（BuiltinRegistry），不经凭据表 ——
+        // 没有行、没有 authType、没有密文、没有启停状态。所以凭据页也不再提供这个类型。
+        // 它的方言实现仍在（由 RegistryService.allSources() 直接产出来源）。
         CredentialCreateRequest req = new CredentialCreateRequest();
         req.setName("hub");
         req.setType("DOCKERHUB");
         req.setEndpoint("docker.io");
         req.setAuthType("NONE");
 
-        CredentialView v = svc.create(req);
-
-        assertThat(v.getType()).isEqualTo("DOCKERHUB");
-        assertThat(v.getHasSecret()).isFalse();
-    }
-
-    @Test
-    void anonymousCredentialCanBeProbed() {
-        // 匿名行没有密文 —— resolveSecret 必须容忍。不容忍的话「测试连接」对**每一条**
-        // 匿名连接都直接报「凭据密文为空」，而不是那句「匿名仍可拉取公开仓库」
-        PlatformCredential c = anonymousStored("c1", "hub", "HARBOR", "harbor.example.com");
-        when(mapper.selectById("c1")).thenReturn(c);
-        when(probeClient.probeRegistry(anyString(), any(), any(), any())).thenReturn(ProbeResult.pass());
-
-        CredentialTestRequest req = new CredentialTestRequest();
-        req.setId("c1");
-
-        assertThat(svc.test(req).getOk()).isTrue();
-        // 匿名必须**不带** Authorization 头 —— 传下去的两个字段都该是 null
-        verify(probeClient).probeRegistry(anyString(), isNull(), isNull(), any());
+        assertThatThrownBy(() -> svc.create(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("凭据类型仅支持");
     }
 
     // ---- 匿名（authType=NONE） ----

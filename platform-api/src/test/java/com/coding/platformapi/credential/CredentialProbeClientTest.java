@@ -1,5 +1,6 @@
 package com.coding.platformapi.credential;
 
+import com.coding.platformapi.outbound.OutboundProxy;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -37,7 +38,7 @@ class CredentialProbeClientTest {
     private final CredentialProbeClient client = new CredentialProbeClient(builder.build());
 
     /** 真工厂（JDK HttpClient）—— 传输层不变量只能用它验 */
-    private final CredentialProbeClient realClient = new CredentialProbeClient();
+    private final CredentialProbeClient realClient = new CredentialProbeClient(OutboundProxy.disabled());
 
     @Test
     void gitHitsInfoRefsWithBasicAuthAndReadsBody() {

@@ -55,8 +55,13 @@ public class CredentialService {
      *
      * <p>扩展位由 {@code RegistryDialect} 接口 + {@code RegistryDialectRegistry} + 一条护栏测试提供：
      * 加一档 = 加一个枚举值 + 一个实现类 + 一个 UI 选项，其余零改动。
+     *
+     * <p>⚠️ <b>{@code DOCKERHUB} 于 2026-10-14 从本集合移除</b> —— 它改成平台的**内置档**
+     * （{@code BuiltinRegistry}），不经凭据表：没有行、没有 authType、没有密文、没有启停状态。
+     * 所以凭据页的类型下拉里不再有它。它的方言实现仍在，由 {@code RegistryService.allSources()}
+     * 直接产出来源。
      */
-    private static final Set<String> TYPES = Set.of("GIT", "HARBOR", "DOCKERHUB");
+    private static final Set<String> TYPES = Set.of("GIT", "HARBOR");
 
     private static final String AUTH_BASIC = "BASIC";
 

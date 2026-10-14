@@ -2,6 +2,8 @@ package com.coding.platformapi.registry;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.platformapi.outbound.OutboundProxy;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -26,8 +28,12 @@ import java.util.Base64;
  * 就是「javadoc 声称 NEVER、代码却在跟随」。这里直接用 {@link JdkClientHttpRequestFactory} +
  * 显式 {@code HttpClient.Redirect.NEVER}。
  *
- * <p>⚠️ <b>URL 由调用方给，且必须由凭据的 endpoint 拼出来</b> —— 本类不做任何拼接，
+ * <p>⚠️ <b>URL 由调用方给，且必须由来源的 endpoint 拼出来</b> —— 本类不做任何拼接，
  * 也就不可能拿用户输入里的 host 去发请求（spec §4.2 的硬边界 1）。
+ *
+ * <p><b>代理</b>：由 {@link OutboundProxy} 注入的 {@code ProxySelector} 决定 ——
+ * **只有白名单里的目标走代理**（Docker Hub / 外网 git host），内网 Harbor 与其余出站一律直连。
+ * 配置见 {@code platform.outbound.proxy.*}。
  */
 @Slf4j
 @Component
@@ -39,8 +45,11 @@ public class RegistryHttpClient {
 
     private final RestClient restClient;
 
-    public RegistryHttpClient() {
+    /** ⚠️ 必须标 {@code @Autowired} —— 本类还有第二个（包级私有、给测试注入 RestClient 的）构造器。 */
+    @Autowired
+    public RegistryHttpClient(OutboundProxy proxy) {
         HttpClient http = HttpClient.newBuilder()
+                .proxy(proxy.selector())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS))
                 .build();

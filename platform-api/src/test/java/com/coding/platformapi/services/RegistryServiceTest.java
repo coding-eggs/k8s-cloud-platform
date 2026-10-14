@@ -26,6 +26,8 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -77,8 +79,12 @@ class RegistryServiceTest {
         }
     };
 
-    RegistryService svc = new RegistryService(mapper, cipher,
-            new RegistryDialectRegistry(List.of(spyDialect)), cache, new RegistrySuggestExecutor());
+    /** 显式带 builtin 开关 —— 「这条用例到底开没开内置 Docker Hub」必须一眼看得出来。 */
+    private RegistryService service(RegistryDialectRegistry d, boolean builtin) {
+        return new RegistryService(mapper, cipher, d, cache, new RegistrySuggestExecutor(), builtin);
+    }
+
+    RegistryService svc = service(new RegistryDialectRegistry(List.of(spyDialect)), false);
 
     /**
      * 回显自己 endpoint 的方言 —— 聚合测试要能分辨「这条候选是哪条连接给的」。
@@ -96,14 +102,20 @@ class RegistryServiceTest {
             return List.of(c.endpoint() + "/x");
         }
         @Override public BrowseResult browse(CredentialRef c, List<String> p) {
+            calls.add("browse:" + c.id());
             return new BrowseResult(List.of(), List.of());
         }
         };
     }
 
-    RegistryService echoSvc = new RegistryService(mapper, cipher,
+    RegistryService echoSvc = service(
             new RegistryDialectRegistry(List.of(echoDialectFor("HARBOR"), echoDialectFor("DOCKERHUB"))),
-            cache, new RegistrySuggestExecutor());
+            false);
+
+    /** 开着内置 Docker Hub 的那一个 —— 内置档的行为单独用几条用例钉。 */
+    RegistryService withBuiltin = service(
+            new RegistryDialectRegistry(List.of(echoDialectFor("HARBOR"), echoDialectFor("DOCKERHUB"))),
+            true);
 
     private PlatformCredential row(String id, String name, String type, String endpoint, int enabled) {
         PlatformCredential c = new PlatformCredential();
@@ -181,8 +193,7 @@ class RegistryServiceTest {
                 return new BrowseResult(List.of(), List.of());
             }
         };
-        RegistryService svc2 = new RegistryService(mapper, cipher,
-                new RegistryDialectRegistry(List.of(spyDialect, gitea)), cache, new RegistrySuggestExecutor());
+        RegistryService svc2 = service(new RegistryDialectRegistry(List.of(spyDialect, gitea)), false);
         when(mapper.selectAll()).thenReturn(List.of(row("c9", "gitea-a", "GITEA", "gitea.example.com", 1)));
 
         assertThat(svc2.connections()).extracting(RegistryConnectionView::id).containsExactly("c9");
@@ -260,7 +271,7 @@ class RegistryServiceTest {
     void inputWithAHostOnlyAsksTheMatchingConnection() {
         when(mapper.selectAll()).thenReturn(List.of(
                 row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1),
-                row("c2", "hub", "DOCKERHUB", "docker.io", 1)));
+                row("c2", "other", "HARBOR", "other.example.com", 1)));
 
         echoSvc.suggest("harbor.example.com/proj/ap");
 
@@ -280,7 +291,7 @@ class RegistryServiceTest {
     void inputWithoutAHostAsksEveryConnection() {
         when(mapper.selectAll()).thenReturn(List.of(
                 row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1),
-                row("c2", "hub", "DOCKERHUB", "docker.io", 1)));
+                row("c2", "other", "HARBOR", "other.example.com", 1)));
 
         echoSvc.suggest("ng");
 
@@ -328,18 +339,18 @@ class RegistryServiceTest {
         // toRef 必须容忍 null 密文。不容忍的话，Docker Hub 这一档（只允许匿名）在补全上
         // **整条死掉且是静默的**：异常被执行器吞成空列表，日志里一条 WARN。
         when(mapper.selectAll()).thenReturn(List.of(
-                anonymousRow("c1", "hub", "DOCKERHUB", "docker.io")));
+                anonymousRow("c1", "hub", "HARBOR", "harbor.example.com")));
 
         assertThat(echoSvc.suggest("ng").items())
                 .extracting(RegistrySuggestResponse.Item::value)
-                .containsExactly("docker.io/x");
+                .containsExactly("harbor.example.com/x");
     }
 
     @Test
     void anonymousConnectionCanBeBrowsed() {
         // 同上：browse 在调方言**之前**就 toRef，所以匿名连接连第一层都进不去
-        when(mapper.selectById("c1")).thenReturn(
-                anonymousRow("c1", "hub", "DOCKERHUB", "docker.io"));
+        when(mapper.selectAll()).thenReturn(
+                List.of(anonymousRow("c1", "hub", "HARBOR", "harbor.example.com")));
 
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("c1");
@@ -347,10 +358,97 @@ class RegistryServiceTest {
         assertThat(echoSvc.browse(req).children()).isEmpty();   // 方言桩返回空，但**不能抛**
     }
 
+    // ---- 内置档（Docker Hub，2026-10-14 改成不进凭据表） ----
+
+    @Test
+    void builtinDockerHubAppearsInConnectionsWithoutAnyCredentialRow() {
+        // 一条凭据都没有，下拉里也该有它 —— 这正是「不用建连接」的意思
+        when(mapper.selectAll()).thenReturn(List.of());
+
+        assertThat(withBuiltin.connections())
+                .extracting(RegistryConnectionView::id, RegistryConnectionView::name,
+                        RegistryConnectionView::type, RegistryConnectionView::endpoint)
+                .containsExactly(tuple("builtin:dockerhub", "Docker Hub", "DOCKERHUB", "docker.io"));
+    }
+
+    @Test
+    void builtinDockerHubParticipatesInHostlessSuggest() {
+        when(mapper.selectAll()).thenReturn(List.of());
+
+        // 无 host → 内置档也要被问到，候选的 connectionName 是它的显示名
+        assertThat(withBuiltin.suggest("ng").items())
+                .singleElement()
+                .satisfies(i -> {
+                    assertThat(i.connectionName()).isEqualTo("Docker Hub");
+                    assertThat(calls).containsExactly("suggest:builtin:dockerhub:ng");
+                });
+    }
+
+    @Test
+    void builtinDockerHubMatchesAnExplicitDockerIoHost() {
+        when(mapper.selectAll()).thenReturn(List.of());
+
+        // 带 host 的显式写法：`docker.io` 要命中内置档（三个等效域名的归一化在匹配层）
+        assertThat(withBuiltin.suggest("docker.io/ng").items())
+                .singleElement()
+                .satisfies(i -> assertThat(i.connectionName()).isEqualTo("Docker Hub"));
+        assertThat(calls).containsExactly("suggest:builtin:dockerhub:docker.io/ng");
+    }
+
+    @Test
+    void builtinDockerHubCanBeBrowsedByItsSyntheticId() {
+        when(mapper.selectAll()).thenReturn(List.of());
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("builtin:dockerhub");     // ← 合成 id，不是 platform_credential.id
+
+        // 走到方言即可 —— 用例的价值在「不抛」：以前这里走 mapper.selectById，必然 null → 抛
+        assertThat(withBuiltin.browse(req).children()).isEmpty();
+        assertThat(calls).containsExactly("browse:builtin:dockerhub");
+    }
+
+    @Test
+    void anUnknownSourceIdStillFailsLoudlyOnBrowse() {
+        when(mapper.selectAll()).thenReturn(List.of());
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("builtin:nope");
+        req.setPath(List.of());
+
+        assertThatThrownBy(() -> withBuiltin.browse(req))
+                .isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void disablingBuiltinDockerHubRemovesItFromEverywhere() {
+        when(mapper.selectAll()).thenReturn(List.of());
+
+        assertThat(echoSvc.connections()).isEmpty();
+        assertThat(echoSvc.suggest("ng").items()).isEmpty();
+        assertThat(calls).isEmpty();                   // 零来源 → 一次请求都不发
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("builtin:dockerhub");
+        assertThatThrownBy(() -> echoSvc.browse(req)).isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void aLeftoverDockerHubCredentialRowIsIgnoredWhenTheBuiltinIsOn() {
+        // 老库里可能残留一条同类型的凭据行（该 type 已从 CredentialService.TYPES 移除）。
+        // 不挡掉的话，同一个 Docker Hub 会在下拉里出现两次，而两条的候选还长得一模一样
+        when(mapper.selectAll()).thenReturn(List.of(
+                row("c9", "old-hub", "DOCKERHUB", "docker.io", 1)));
+
+        assertThat(withBuiltin.connections())
+                .extracting(RegistryConnectionView::id)
+                .containsExactly("builtin:dockerhub");
+    }
+
     // ---- 浏览 ----
     @Test
     void browseDispatchesToTheNamedConnection() {
-        when(mapper.selectById("c1")).thenReturn(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1));
+        when(mapper.selectAll()).thenReturn(
+                List.of(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
 
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("c1");
@@ -363,7 +461,8 @@ class RegistryServiceTest {
 
     @Test
     void browseTreatsNullPathAsTheFirstLevel() {
-        when(mapper.selectById("c1")).thenReturn(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1));
+        when(mapper.selectAll()).thenReturn(
+                List.of(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
 
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("c1");
@@ -376,7 +475,7 @@ class RegistryServiceTest {
 
     @Test
     void browseRejectsUnknownOrDisabledConnection() {
-        when(mapper.selectById("nope")).thenReturn(null);
+        when(mapper.selectAll()).thenReturn(List.of());
 
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("nope");
@@ -387,7 +486,8 @@ class RegistryServiceTest {
 
     @Test
     void browseRejectsAGitConnection() {
-        when(mapper.selectById("c3")).thenReturn(row("c3", "gitlab", "GIT", "https://gitlab.example.com", 1));
+        when(mapper.selectAll()).thenReturn(
+                List.of(row("c3", "gitlab", "GIT", "https://gitlab.example.com", 1)));
 
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("c3");
@@ -414,7 +514,8 @@ class RegistryServiceTest {
 
     @Test
     void browseDoesNotUseTheCache() {
-        when(mapper.selectById("c1")).thenReturn(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1));
+        when(mapper.selectAll()).thenReturn(
+                List.of(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
 
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("c1");

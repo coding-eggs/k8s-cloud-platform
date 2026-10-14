@@ -1,5 +1,7 @@
 package com.coding.platformapi.credential;
 
+import com.coding.platformapi.outbound.OutboundProxy;
+import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -40,7 +42,13 @@ public class CredentialProbeClient {
 
     private final RestClient restClient;
 
-    public CredentialProbeClient() {
+    /**
+     * ⚠️ <b>必须标 {@code @Autowired}</b>：本类还有第二个（包级私有、给测试注入
+     * {@code MockRestServiceServer} 用的）构造器。有多个构造器又没有无参构造器时，
+     * Spring **不会**自己挑一个 —— 不标它就报 {@code No default constructor found}，启动直接失败。
+     */
+    @Autowired
+    public CredentialProbeClient(OutboundProxy proxy) {
         // ⚠️ 重定向必须**真正**关掉 —— 这是 spec §5.2 的硬要求，而
         // SimpleClientHttpRequestFactory（HttpURLConnection）**根本没有**关重定向的 API，
         // 它的默认行为就是跟随。曾经因此出现过「javadoc 声称 NEVER、代码却在跟随」。
@@ -48,6 +56,9 @@ public class CredentialProbeClient {
         // 正是本模块最要防的那类误判），且「把 Location 给用户一键回填」那条路径永不触发。
         // JDK HttpClient 默认就是 NEVER，这里显式写出来让它有据可查。
         HttpClient http = HttpClient.newBuilder()
+                // 代理由 OutboundProxy 的白名单决定 —— 只有列进去的目标走代理
+                // （Docker Hub / 外网 git host），内网 gitlab / Harbor 一律直连
+                .proxy(proxy.selector())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .connectTimeout(Duration.ofMillis(CONNECT_TIMEOUT_MS))
                 .build();

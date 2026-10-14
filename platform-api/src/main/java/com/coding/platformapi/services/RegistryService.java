@@ -11,12 +11,13 @@ import com.coding.platformapi.models.RegistryBrowseRequest;
 import com.coding.platformapi.models.RegistryConnectionView;
 import com.coding.platformapi.models.RegistrySuggestResponse;
 import com.coding.platformapi.registry.BrowseResult;
+import com.coding.platformapi.registry.BuiltinRegistry;
 import com.coding.platformapi.registry.CredentialRef;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import com.coding.platformapi.registry.RegistrySuggestExecutor;
 import com.coding.platformapi.registry.RegistryTargetResolver;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import tools.jackson.core.type.TypeReference;
@@ -29,15 +30,17 @@ import java.util.List;
 import java.util.concurrent.Callable;
 
 /**
- * 镜像仓库的三个只读入口。设计见 docs/superpowers/specs/2026-10-14-registry-design.md。
+ * 镜像仓库的三个只读入口。设计见 docs/superpowers/specs/2026-10-14-registry-design.md
+ * 与 docs/superpowers/specs/2026-10-14-registry-dockerhub-design.md。
  *
- * <h3>本类守的两条边界</h3>
+ * <h3>本类守的三条边界</h3>
  * <ol>
- *   <li><b>出站地址只由凭据的 endpoint 拼</b>（或方言自己写死的官方地址）—— 用户输入只用于**匹配**连接
+ *   <li><b>出站地址只由来源的 endpoint 拼</b>（或方言自己写死的官方地址）—— 用户输入只用于**匹配**
  *       （{@link RegistryTargetResolver}），绝不参与构造目标地址。</li>
  *   <li><b>带 host 匹配不到就零请求</b> —— 直接返回空，不下沉到方言。
- *       ⚠️ <b>无 host 的输入不适用这条</b>：它要问**全部**启用的镜像仓库连接（聚合，见
- *       {@link #suggest} 的 javadoc）—— 那是 2026-10-14 有意反转 S3.1 的契约。</li>
+ *       ⚠️ <b>无 host 的输入不适用这条</b>：它要问**全部**来源（聚合，见 {@link #suggest} 的 javadoc）。</li>
+ *   <li><b>「有哪些来源」只有 {@link #allSources} 一个真相源</b> —— 内置档与凭据行的分叉只在那里
+ *       发生一次，下游只认 {@link Source} 这个形状。</li>
  * </ol>
  *
  * <p>本类**不标审计**：三个入口都是高频只读（补全甚至是每按键一次），逐次写审计等于淹掉审计表，
@@ -45,7 +48,6 @@ import java.util.concurrent.Callable;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class RegistryService {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
@@ -58,13 +60,39 @@ public class RegistryService {
 
     private final RedisJsonCache cache;
 
-    /** 补全的并发出口 —— 无 host 时一次输入要让 N 条连接各查一遍（spec §2.5）。 */
+    /** 补全的并发出口 —— 无 host 时一次输入要让 N 个来源各查一遍（spec §2.5）。 */
     private final RegistrySuggestExecutor suggestExecutor;
 
-    /** 浏览页的连接下拉：**只四个字段**，只列启用的镜像仓库类连接。 */
+    /**
+     * 内置的 Docker Hub 档开不开（{@code platform.registry.dockerhub.enabled}，默认 true）。
+     *
+     * <p>⚠️ <b>做成构造参数而不是 {@code @Value} 字段</b>：测试里直接 {@code new} 构造
+     * （没有 Spring），字段注入会拿到 {@code false} 而把内置档悄悄关掉，症状是「补全没候选」；
+     * 而反射塞值又让「这条用例到底开没开内置档」看不出来。写成参数就一目了然。
+     */
+    private final boolean dockerHubEnabled;
+
+    public RegistryService(PlatformCredentialMapper mapper,
+                           CredentialCipher cipher,
+                           RegistryDialectRegistry dialects,
+                           RedisJsonCache cache,
+                           RegistrySuggestExecutor suggestExecutor,
+                           @Value("${platform.registry.dockerhub.enabled:true}") boolean dockerHubEnabled) {
+        this.mapper = mapper;
+        this.cipher = cipher;
+        this.dialects = dialects;
+        this.cache = cache;
+        this.suggestExecutor = suggestExecutor;
+        this.dockerHubEnabled = dockerHubEnabled;
+    }
+
+    /**
+     * 浏览页的连接下拉：**只四个字段**。列的是「本次可用的镜像仓库来源」——
+     * 内置档（开关开着才有）+ 启用的镜像仓库凭据。
+     */
     public List<RegistryConnectionView> connections() {
-        return enabledRegistryRows().stream()
-                .map(c -> new RegistryConnectionView(c.getId(), c.getName(), c.getType(), c.getEndpoint()))
+        return allSources().stream()
+                .map(s -> new RegistryConnectionView(s.id(), s.name(), s.type(), s.endpoint()))
                 .toList();
     }
 
@@ -73,9 +101,9 @@ public class RegistryService {
      *
      * <h4>匹配模型（S3.1 的契约在这里被反转）</h4>
      * <ul>
-     *   <li><b>带 host</b> → 只问匹配上的那一条（匹配不上则零请求）；</li>
-     *   <li><b>不带 host</b>（{@code nginx} / {@code myteam/app}）→ <b>所有启用的镜像仓库连接都问</b>，
-     *       结果按连接名排序后合并。</li>
+     *   <li><b>带 host</b> → 只问匹配上的那一个来源（匹配不上则零请求）；</li>
+     *   <li><b>不带 host</b>（{@code nginx} / {@code myteam/app}）→ <b>所有来源都问</b>，
+     *       结果按来源名排序后合并。</li>
      * </ul>
      * S3.1 时无 host 一律返回空，因为当时只有 Harbor 一档、无法确定该归哪条连接 ——
      * 结论没错，但代价是 Docker Hub 档只能在用户手打 {@code docker.io/} 时生效，等于白做。
@@ -86,29 +114,35 @@ public class RegistryService {
             return new RegistrySuggestResponse(List.of());
         }
         String prefix = imagePrefix.trim();
-        List<PlatformCredential> rows = enabledRegistryRows();
-        if (rows.isEmpty()) {
+        List<Source> sources = allSources();
+        if (sources.isEmpty()) {
+            // ⚠️ 这条以前是**静默**的：「一个来源都没有」与「有来源但对端没回应」在日志里
+            // 长得一模一样（后者至少还有 WARN），排查时只能去查库 —— 2026-10-14 真发生过。
+            // 只在真的零来源时记：内置档默认开着，所以它只在被显式关掉且没有凭据时出现。
+            log.info("镜像补全：当前没有任何镜像仓库来源"
+                    + "（内置 Docker Hub 被 platform.registry.dockerhub.enabled 关掉，"
+                    + "且没有启用的镜像仓库凭据）");
             return new RegistrySuggestResponse(List.of());
         }
 
-        List<PlatformCredential> targets = pickTargets(prefix, rows);
+        List<Source> targets = pickTargets(prefix, sources);
         if (targets.isEmpty()) {
             return new RegistrySuggestResponse(List.of());
         }
         // 排序在**发请求之前**做好 —— 结果按同一顺序拼回来，不需要二次匹配
-        List<PlatformCredential> ordered = targets.stream()
-                .sorted(Comparator.comparing(PlatformCredential::getName,
+        List<Source> ordered = targets.stream()
+                .sorted(Comparator.comparing(Source::name,
                         Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
 
         List<Callable<List<String>>> tasks = ordered.stream()
-                .map(c -> (Callable<List<String>>) () -> cachedSuggest(c, prefix))
+                .map(s -> (Callable<List<String>>) () -> cachedSuggest(s, prefix))
                 .toList();
         List<List<String>> results = suggestExecutor.allOf(tasks);
 
         List<RegistrySuggestResponse.Item> items = new ArrayList<>();
         for (int i = 0; i < ordered.size(); i++) {
-            String name = ordered.get(i).getName();
+            String name = ordered.get(i).name();
             for (String value : results.get(i)) {
                 items.add(new RegistrySuggestResponse.Item(value, name));
             }
@@ -117,36 +151,37 @@ public class RegistryService {
     }
 
     /**
-     * 挑本次参与补全的连接。
+     * 挑本次参与补全的来源。
      *
      * <p>⚠️ <b>带 host 且匹配不上时返回空列表 = 零请求</b>，这是 spec §2.6 的硬边界：
      * 用户输入里的 host 只用于匹配，**绝不参与构造目标地址**。
      */
-    private List<PlatformCredential> pickTargets(String prefix, List<PlatformCredential> rows) {
+    private List<Source> pickTargets(String prefix, List<Source> sources) {
         if (RegistryTargetResolver.hostOf(prefix).isEmpty()) {
-            return rows;                                  // 无 host：全给（聚合的意义所在）
+            return sources;                               // 无 host：全给（聚合的意义所在）
         }
         CredentialRef hit = RegistryTargetResolver.match(prefix,
-                rows.stream().map(RegistryService::toPlainRef).toList());
+                sources.stream().map(Source::plainRef).toList());
         if (hit == null) {
             return List.of();
         }
-        return rows.stream().filter(r -> r.getId().equals(hit.id())).toList();
+        // 匹配层用 id 回报命中。内置档的 id 是合成值（builtin:dockerhub），与凭据 id 不会撞
+        return sources.stream().filter(s -> s.id().equals(hit.id())).toList();
     }
 
     /**
-     * 单条连接：解密 → 方言 → 缓存。
+     * 单个来源：解密 → 方言 → 缓存。
      *
-     * <p>⚠️ <b>只解密参与本次查询的那一条</b> —— S3.1 终审修过一次放大效应：
+     * <p>⚠️ <b>只解密参与本次查询的那一个</b> —— S3.1 终审修过一次放大效应：
      * 以前在每次 suggest（每按键一次）里解密**全部**凭据，任何一条密文解不开
-     * （例如主密钥换过）就让**所有人**的补全全挂。现在解不开只会让那一条没候选，
-     * 而聚合之后这一点更重要：一条坏连接不该拖垮别人的候选。
+     * （例如主密钥换过）就让**所有人**的补全全挂。现在解不开只会让那一个没候选，
+     * 而聚合之后这一点更重要：一个坏来源不该拖垮别人的候选。
      *
      * <p>⚠️ key 传的是**逻辑键**：{@code RedisJsonCache} 自己会加 {@code platform:cache:} 前缀，
      * 这里再带一次就会变成双前缀 —— 缓存永不命中，而且没人看得出来。
      */
-    private List<String> cachedSuggest(PlatformCredential row, String prefix) {
-        CredentialRef cred = toRef(row);
+    private List<String> cachedSuggest(Source source, String prefix) {
+        CredentialRef cred = toRef(source);
         return cache.get("registry:suggest:" + cred.id() + ":" + prefix,
                 Duration.ofMinutes(2),
                 new TypeReference<>() { },
@@ -155,53 +190,89 @@ public class RegistryService {
 
     /** 浏览。**不吞错** —— 用户在页面上主动点了一层，失败要说（spec §5.3）。 */
     public BrowseResult browse(RegistryBrowseRequest req) {
-        PlatformCredential row = mapper.selectById(req.getCredentialId());
-        if (row == null || !isRegistry(row) || !enabled(row)) {
-            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
-                    "镜像仓库连接不存在或已停用");
-        }
-        CredentialRef cred = toRef(row);
+        // ⚠️ 在 allSources() 里找，**不是** mapper.selectById —— 内置档没有凭据行，
+        // 它是用合成 id（builtin:dockerhub）从下拉里点进来的
+        Source source = allSources().stream()
+                .filter(s -> s.id().equals(req.getCredentialId()))
+                .findFirst()
+                .orElseThrow(() -> new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
+                        "镜像仓库连接不存在或已停用"));
         List<String> path = req.getPath() == null ? List.of() : req.getPath();
-        return dialects.of(cred.type()).browse(cred, path);
-    }
-
-    /** 启用中的镜像仓库类连接。**不解密** —— 明文只在真正要用时（{@link #toRef}）才解。 */
-    private List<PlatformCredential> enabledRegistryRows() {
-        return mapper.selectAll().stream()
-                .filter(c -> isRegistry(c) && enabled(c))
-                .toList();
-    }
-
-    /** 只带匹配需要的字段（id / name / type / endpoint）的轻量 ref，**不含明文**。 */
-    private static CredentialRef toPlainRef(PlatformCredential c) {
-        return new CredentialRef(c.getId(), c.getName(), c.getType(), c.getEndpoint(), null, null);
+        return dialects.of(source.type()).browse(toRef(source), path);
     }
 
     /**
-     * 实体 → 带明文的 ref。
+     * 本次补全 / 浏览要问的**全部来源**。
      *
-     * <p>⚠️ <b>匿名的行（{@code auth_type=NONE}）没有密文</b> —— {@code CredentialService.create}
-     * 有意不写（两列都是 null，表注释当初就留了这个位）。这里必须容忍它，
-     * 否则「只允许匿名」的 Docker Hub 档在补全与浏览上**整条死掉**，
-     * 而补全那条还是**静默**的（异常被执行器吞成空列表，只剩一条 WARN）。
+     * <p>⚠️ <b>这是「有哪些来源」的唯一真相源</b> —— 内置档与凭据行的分叉只在这里发生一次，
+     * 下游（聚合 / 并发 / 排序 / 候选带来源名 / 浏览）只认 {@link Source} 这个形状，
+     * 不需要知道有「内置」这回事。散成两处就是第二个真相源
+     * （S3.1 终审删掉 {@code REGISTRY_TYPES} 时反对的那个形状）。
      */
-    private CredentialRef toRef(PlatformCredential c) {
-        if (!StringUtils.hasText(c.getSecretEncrypted())) {
-            return new CredentialRef(c.getId(), c.getName(), c.getType(), c.getEndpoint(), null, null);
+    private List<Source> allSources() {
+        List<Source> out = new ArrayList<>();
+        if (dockerHubEnabled) {
+            out.add(Source.builtin(BuiltinRegistry.DOCKER_HUB));
         }
-        CredentialSecret s = fromJson(cipher.decrypt(c.getSecretEncrypted()));
-        return new CredentialRef(c.getId(), c.getName(), c.getType(), c.getEndpoint(),
+        // 凭据表里启用的镜像仓库行。**不解密** —— 明文只在真正要用时（toRef）才解
+        mapper.selectAll().stream()
+                .filter(c -> isRegistry(c) && enabled(c))
+                .map(Source::from)
+                .forEach(out::add);
+        return out;
+    }
+
+    /**
+     * 一个镜像仓库**来源** —— 内置档，或者一行凭据。
+     *
+     * @param ciphertext 凭据行的密文；**内置档恒为 null**（它没有凭据可言）
+     */
+    private record Source(String id, String name, String type, String endpoint, String ciphertext) {
+
+        static Source builtin(BuiltinRegistry b) {
+            return new Source(b.id(), b.displayName(), b.type(), b.endpoint(), null);
+        }
+
+        static Source from(PlatformCredential c) {
+            return new Source(c.getId(), c.getName(), c.getType(), c.getEndpoint(),
+                    c.getSecretEncrypted());
+        }
+
+        /** 只带匹配需要的字段（id / name / type / endpoint）的轻量 ref，**不含明文**。 */
+        CredentialRef plainRef() {
+            return new CredentialRef(id, name, type, endpoint, null, null);
+        }
+    }
+
+    /**
+     * 来源 → 带明文的 ref。
+     *
+     * <p>⚠️ <b>没有密文的来源有两个</b>：内置档，以及匿名的凭据行（{@code auth_type=NONE}）。
+     * 两者都必须容忍 —— 否则「只允许匿名」的 Docker Hub 在补全与浏览上**整条死掉**，
+     * 而补全那条还是**静默**的（异常被执行器吞成空列表，只剩一条 WARN）。2026-10-14 真发生过。
+     */
+    private CredentialRef toRef(Source source) {
+        if (!StringUtils.hasText(source.ciphertext())) {
+            return new CredentialRef(source.id(), source.name(), source.type(), source.endpoint(),
+                    null, null);
+        }
+        CredentialSecret s = fromJson(cipher.decrypt(source.ciphertext()));
+        return new CredentialRef(source.id(), source.name(), source.type(), source.endpoint(),
                 s.getUsername(), s.getSecret());
     }
 
     /**
-     * 是不是一个镜像仓库类的连接。
+     * 是不是一个镜像仓库类的凭据行。
      *
      * <p>⚠️ **问分派表，不自己维护一份 type 清单** —— 手写清单是第二个真相源，
      * 加一档时忘了改它会「全测绿但新档静默失效」。见 {@link RegistryDialectRegistry#supports}。
+     *
+     * <p>⚠️ 还要排掉**内置档的 type** —— 那个 type 已从 {@code CredentialService.TYPES} 移除，
+     * 不由凭据提供。老库里万一残留一行，忽略它：否则同一个 Docker Hub 会在下拉里出现两次
+     * （一次内置、一次凭据），而两条的候选还长得一模一样。
      */
     private boolean isRegistry(PlatformCredential c) {
-        return dialects.supports(c.getType());
+        return dialects.supports(c.getType()) && !BuiltinRegistry.isBuiltinType(c.getType());
     }
 
     private static boolean enabled(PlatformCredential c) {
