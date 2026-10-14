@@ -196,6 +196,50 @@
 - [ ] S1.2.3 集群详情页展示（现为 4 tab，新增一个 tab 或并入概览）
 - [ ] S1.2.4 顺带成为各功能**门控的统一数据源**（capability 判据单一出处）
 
+> **📌 2026-10-14 新增需求：平台能部署 / 升级 / 卸载集群组件**（用户提出；未实施、未出 spec）
+>
+> 用户原话：*「集群的组件其实影响着集群的性能。如 istio 服务网格，calico 地址池，tekton ci 组件，
+> metrics-server 影响 hpa，prometheus 影响监控告警。默认的 storageclass? opentelemetry 影响采集数据。
+> 所以我希望在集群管理页面…可以部署他们。卸载，升级他们。」*
+>
+> **这个需求拆开是「三件已规划的事 + 一层新的东西」**：
+>
+> | 用户要的 | 其实是 |
+> |---|---|
+> | 看见「装没装 / 什么版本 / 健不健康」 | **本批 S1.2 本体** |
+> | 装 / 升级 / 卸载的执行通道 | **S3.3 Helm 商店 + S3.4 Operator 管理**（istio / calico / tekton / prometheus 的官方装法都是 operator 或 helm，**逐个不同**） |
+> | **「缺这个 → 平台的哪些功能不可用 → 点这里补上」** | ← **这才是新的那一层** |
+>
+> **决定（2026-10-14）**：**不新开「集群组件管理」模块**。那会造出三条平行的「往集群写东西」的通道
+> （组件管理 / Helm 商店 / Operator 管理），各写一遍集群写入、各自一套权限与审计 —— 正是本仓一直在避免的形状。
+> 改成：把上面那层**组件↔平台功能依赖映射并进 S1.2**，执行**复用** S3.3 / S3.4。
+> 于是 S1.2 是**目录与门控的单一出处**，而执行只有一条路。
+>
+> **组件按「装错的后果」分两档，决定平台该管到多深**：
+>
+> | | 例子 | 装错的后果 | 平台该做到 |
+> |---|---|---|---|
+> | **只提供能力型** | metrics-server、Prometheus、Tekton、OTel Operator | **只是功能不可用**（HPA 灰 / 曲线空 / CI 不可用 / 没有采集数据） | 可以**很主动**：缺就标「缺」+ 一键补齐 |
+> | **改变集群行为型** | **Calico 地址池**、Istio、默认 StorageClass | **会真出事**（网络断 / 断流 / 影响所有新建 PVC） | **最多只给入口，不该自动改** |
+>
+> **纳管策略：既不做纳管硬标准，也不完全不干涉 —— 分级门控**：
+> 1. **关键档**（缺了大面积不可用）：metrics-server、默认 StorageClass、Tekton、Prometheus → 显眼标缺 + 补齐入口
+> 2. **可选档**（istio / otel / calico 地址池）：装了才显示对应功能，不装不影响别的
+> 3. **已经装的一律只探测、不接管**，除非用户明确点「交给平台管」（与 S3.4 的「已装 Operator 探测」是同一个问题）
+>
+> **三条必须写进设计的风险**：
+> 1. **「卸载」比「安装」危险一个量级** —— 卸载 Calico 是集群网络全断；卸载 Istio 而数据面还有 sidecar 是断流。
+>    倾向：**只允许卸载「平台自己装、且能证明没在被使用」的组件**，其余只给指引。
+> 2. **装组件 = 平台凭据的权限推到 cluster-admin** —— `k8s_cluster` 里存着 kubeconfig，
+>    「装组件」等于用它 apply 任意 manifest。**不是新增风险**（calico 页面已经在改地址池），
+>    但暴露面用宽了，值得显式记一条而不是默认不说。
+> 3. **版本与配置的长期账** —— 一旦平台宣称"能装"，用户就期望"能升级、出问题你能修"
+>    （Istio 升级有严格顺序：控制面 → 数据面）。建议平台只做**「装 + 提示版本落后」**，不承担升级编排。
+>
+> **顺序（2026-10-14 用户裁定）**：**先做 S3.5（CI），S1.2 排后** ——
+> 因此 S3.5 里只做一次**最小 capability 探测**，并在其 spec 里写明「将来 S1.2 接手这块门控」，
+> 免得探测逻辑写死在两处。
+
 #### S1.3 平台总览 ｜ 规模 M
 > 租户概览已在做；本项是**平台视角**的总览（分析文档 T4-2 对侧）。
 
@@ -438,6 +482,41 @@
 - [ ] S3.5.11 并发与重复触发策略（禁止 / 排队 / 允许并行）
 - [ ] S3.5.12 ⚠️ **权限与安全**：构建 Pod 能跑任意代码 —— 定义/触发/看日志分开授权、能跑在哪个命名空间、构建步骤镜像来源是否限制
 - [ ] S3.5.13 git 节点接 S0.2 的 git 连接（地址 + 凭据）
+
+> **📌 2026-10-14 调研结论**（用户指示先调研后再动；**未写 spec**）
+>
+> **Tekton 客户端**：`io.fabric8:tekton-client` 与 `kubernetes-client` **完全同步发版**
+> （本仓 fabric8 7.9.0 → tekton-client 7.9.0，另有 8.0.0）。`tekton-model` 建模了 **GA 的
+> `io.fabric8.tekton.v1.{Pipeline, PipelineRun, PipelineSpec, Task, TaskRun, TaskSpec}`**，
+> `tekton-client` 本体只有 15 KB（薄适配器，给 `TektonClient` DSL）。
+> **推荐用它（typed model）**，不走本仓的通用 CRD 范式 —— 决定性的是 `pipelineSpec` 的字段量
+> （`tasks[].taskSpec{steps[],workspaces,results,volumes}` + `finally[]` + `workspaces[]` + `when` 三段式）
+> 远大于本仓现有任何 CRD（HTTPRoute 的 `rules[].matches/filters/backendRefs`）。
+> ⚠️ 唯一没验的：**集群的 Tekton 版本** —— 若有只有 `v1beta1` 的老集群，
+> 通用路径的「按 capability 分派版本」更省事（本仓 Gateway 就是这么干的）。
+>
+> **部署方案**：本批**只需要 Tekton Pipelines**（台账已定「仅手动触发」+「不引入 Tekton Triggers」）。
+> 官方给的 profile：`lite` = 只有 Pipeline；`basic` = +Trigger/Chains；`all`(K8s) = +Dashboard。
+> 所以：**Operator + `profile: lite`**，或**不用 operator** 直接
+> `kubectl apply -f https://infra.tekton.dev/tekton-releases/pipeline/latest/release.yaml`。
+> ⚠️ **顺序反直觉**：官方 install 文档明说 operator 那一步**会连带装上 pipelines/triggers/chains/dashboard**，
+> `lite` 是之后再用 `TektonConfig` 收敛（「收敛时会不会把已装的多余组件卸干净」文档没写死，**要实测**）。
+> ⚠️ 官方对 vanilla 那条路的原话是 "not meant for the production use"，生产推荐用 operator。
+>
+> **一个顺带的好发现**：**PipelineRun 的日志就是它创建的 Pod 的日志**（每个 TaskRun 起一个 Pod）
+> → **S3.5.10 的运行历史 / 日志页可以直接复用现有的 Pod 日志通道**（含 WS 流式与 8KB 预览），不用另写一套。
+> 若先做 S2.1（工作负载日志），那批的成果在这里直接兑现。
+>
+> ⚠️ **待定（开工前必须定）**：S3.1 明确「**不做 imagePullSecret**」，而构建 Pod 要拉基础镜像
+> （`golang:1.22` / `maven:3.9` …）—— 走私有 Harbor 那条路现在是断的。三个选择：
+> **(a)** 这批顺带把 imagePullSecret 做了；**(b)** 只用公开基础镜像，私有镜像的用户自己建 Secret；
+> **(c)** 用 S0.2 的连接给构建 Pod 注入 docker config（等价于 a，但落在 Pod 层而非命名空间 Secret）。
+> **倾向 (a)** —— 它是「代码 → 构建 → 镜像 → 部署」这条链上唯一还断着的一环，CI 会把它从"可选"变成"必需"。
+>
+> ⚠️ **集群侧前提**（平台不负责装，但要有 capability 门控 —— 缺了整块隐藏，不是报错）：
+> 装 Tekton 要 `cluster-admin`、集群 ≥ 1.28；
+> **租户 SA 的 K8s RBAC 模板要覆盖 `tekton.dev` 组**（与当年 Gateway 那个坑同形）；
+> PipelineRun 在**租户命名空间**里起 Pod → 配额、PSA、拉取凭据都要通。
 
 ---
 
