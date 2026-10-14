@@ -468,7 +468,7 @@ CREDENTIAL_TEST   = "credential:test";
 |---|---|---|
 | S3.5（CI） | git 节点的 clone 地址与凭据；**按 host 基址 + 仓库路径拼接** | S3.5.13 |
 | S3.1（镜像仓库） | registry 的连接与凭据；生成 `imagePullSecret` | S3.1.3 |
-| S3.3（Helm 商店） | **复用 `REGISTRY` 类型的那条 Harbor 连接**，不另存一份 | S3.3 |
+| S3.3（Helm 商店） | **复用 `HARBOR` 类型的那条 Harbor 连接**，不另存一份 | S3.3 |
 | S2.3（日志采集） | ES 端点与凭据 —— 需要**新增一个 `type`**，不动表结构 | S2.3.2 |
 
 **取用一律经一个内部服务方法**（`CredentialService.resolveSecret(id)`），**不暴露成 HTTP 端点** ——
