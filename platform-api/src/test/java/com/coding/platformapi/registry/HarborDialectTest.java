@@ -157,4 +157,46 @@ class HarborDialectTest {
         assertThat(HarborDialect.tagNameOf(new String[]{}, "sha256:abc")).isEqualTo("sha256:abc");
         assertThat(HarborDialect.tagNameOf(null, "sha256:abc")).isEqualTo("sha256:abc");
     }
+
+    // ---- 响应映射（JSON → 中间形态），纯函数 ----
+
+    @Test
+    void parsesProjectNames() {
+        String json = "[{\"name\":\"myproj\",\"repo_count\":3},{\"name\":\"other\"}]";
+        assertThat(HarborDialect.parseProjectNames(json)).containsExactly("myproj", "other");
+    }
+
+    @Test
+    void parsesRepositoryNamesStrippingTheProjectPrefix() {
+        // ⚠️ Harbor 的 repositories[].name 回的是 **"project/repo" 全名**，不是裸 repo。
+        // 剥离放在解析器里（而不是让调用方再走一遍），免得两处各剥一次对不上。
+        String json = "[{\"name\":\"myproj/team/app\"},{\"name\":\"myproj/team/api\"}]";
+        assertThat(HarborDialect.parseRepositoryNames(json, "myproj"))
+                .containsExactly("team/app", "team/api");
+    }
+
+    @Test
+    void parsesSearchHitsIntoRepositoriesOnly() {
+        // /search 会同时回 projects 与 repositories；补仓库只取后者
+        String json = "{\"project\":[{\"name\":\"myproj\"}],"
+                + "\"repository\":[{\"repository_name\":\"team/app\"}]}";
+        assertThat(HarborDialect.parseSearchHits(json)).containsExactly("team/app");
+    }
+
+    @Test
+    void parsesArtifactsIntoTags() {
+        String json = "[{\"name\":\"sha256:abc\",\"tags\":[{\"name\":\"1.2.3\"}],"
+                + "\"push_time\":\"2026-10-13T21:04:00Z\",\"size\":86400000}]";
+        assertThat(HarborDialect.parseArtifacts(json))
+                .containsExactly(new HarborDialect.TagInfo("1.2.3", "2026-10-13T21:04:00Z", 86_400_000L));
+    }
+
+    @Test
+    void malformedJsonYieldsEmptyInsteadOfThrowing() {
+        // 对端返回不属于我们的东西时不该把整个页面打挂
+        assertThat(HarborDialect.parseProjectNames("<html>oops</html>")).isEmpty();
+        assertThat(HarborDialect.parseRepositoryNames("null", "myproj")).isEmpty();
+        assertThat(HarborDialect.parseArtifacts("{}")).isEmpty();
+        assertThat(HarborDialect.parseSearchHits("not json")).isEmpty();
+    }
 }

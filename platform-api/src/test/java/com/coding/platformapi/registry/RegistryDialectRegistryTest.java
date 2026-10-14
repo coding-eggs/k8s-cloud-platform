@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 
 /**
  * 分派表 + **护栏**。
@@ -29,8 +30,8 @@ class RegistryDialectRegistryTest {
         }
     }
 
-    RegistryDialectRegistry registry =
-            new RegistryDialectRegistry(List.of(new FakeDialect(), new HarborDialect()));
+    RegistryDialectRegistry registry = new RegistryDialectRegistry(
+            List.of(new FakeDialect(), new HarborDialect(mock(RegistryHttpClient.class))));
 
     /** 不是镜像仓库的类型，不需要方言 */
     private static final Set<String> NON_REGISTRY_TYPES = Set.of("GIT");

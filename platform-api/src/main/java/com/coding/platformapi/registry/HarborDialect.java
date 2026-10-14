@@ -3,11 +3,13 @@ package com.coding.platformapi.registry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriUtils;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Harbor 方言。设计见 docs/superpowers/specs/2026-10-14-registry-design.md §2.3。
@@ -24,21 +26,164 @@ public class HarborDialect implements RegistryDialect {
 
     static final int PAGE_SIZE = 100;
 
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    private final RegistryHttpClient http;
+
+    public HarborDialect(RegistryHttpClient http) {
+        this.http = http;
+    }
+
     @Override
     public String type() {
         return "HARBOR";
     }
 
-    // ==================== 两个动作（Task 7 接上出站后实现） ====================
+    // ==================== 两个动作 ====================
 
     @Override
     public List<String> suggest(CredentialRef cred, String imagePrefix) {
-        throw new UnsupportedOperationException("Task 7 接上 RegistryHttpClient 后实现");
+        // 补全**静默降级**：任何失败都退回空候选，绝不弹错、绝不阻塞输入（spec §5.3）
+        try {
+            String tagPrefix = tagPrefixOf(imagePrefix);
+            List<String> segs = segmentsOf(imagePrefix, cred.endpoint());
+
+            if (tagPrefix != null) {
+                // 已进入某仓库 → 补 tag。段不足 2（还没写全 project/repo）时给不出候选。
+                if (segs.size() < 2) {
+                    return List.of();
+                }
+                String project = segs.get(0);
+                String repo = String.join("/", segs.subList(1, segs.size()));
+                List<TagInfo> tags = parseArtifacts(http.get(cred, artifactsUrl(cred, project, repo)));
+                String prefix = tagPrefix.toLowerCase();
+                return tagCandidates(cred, project, repo,
+                        tags.stream().map(TagInfo::tag)
+                            .filter(t -> t.toLowerCase().startsWith(prefix)).toList());
+            }
+
+            // 还没进仓库 → 补仓库，只认「host 之后正好一段」的形态
+            String term = searchTermOf(imagePrefix, cred.endpoint());
+            if (term == null || term.isEmpty()) {
+                return List.of();
+            }
+            List<String> hits = parseSearchHits(http.get(cred, searchUrl(cred, term)));
+            // Harbor 的命中形如 proj/repo；投影成用户输入框里的完整串时，把 proj 提出来
+            return hits.stream()
+                    .filter(h -> h.contains("/"))
+                    .map(h -> host(cred) + "/" + h)
+                    .toList();
+        } catch (Exception e) {
+            log.warn("镜像候选查询失败（静默降级为空）prefix={}", imagePrefix, e);
+            return List.of();
+        }
     }
 
     @Override
     public BrowseResult browse(CredentialRef cred, List<String> path) {
-        throw new UnsupportedOperationException("Task 7 接上 RegistryHttpClient 后实现");
+        // 浏览**不吞错**：用户在页面上主动点了一层，什么都不说等于页面坏了（spec §5.3）
+        if (path == null || path.isEmpty()) {
+            return mapProjects(cred, parseProjectNames(http.get(cred, projectsUrl(cred))));
+        }
+        if (path.size() == 1) {
+            String project = path.get(0);
+            List<String> repos = parseRepositoryNames(
+                    http.get(cred, repositoriesUrl(cred, project)), project);
+            return mapRepositories(cred, path, repos);
+        }
+        if (path.size() == 2) {
+            return mapArtifacts(cred, path, parseArtifacts(
+                    http.get(cred, artifactsUrl(cred, path.get(0), path.get(1)))));
+        }
+        return new BrowseResult(List.of(), List.of());
+    }
+
+    // ==================== 响应映射（纯） ====================
+
+    public static List<String> parseProjectNames(String json) {
+        try {
+            HarborProject[] arr = JSON.readValue(json, HarborProject[].class);
+            return Arrays.stream(arr).map(p -> p.name).filter(Objects::nonNull).toList();
+        } catch (Exception e) {
+            log.warn("解析 Harbor projects 响应失败，按空处理", e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 解析 {@code repositories[].name} 并**剥掉 {@code project/} 前缀**。
+     *
+     * <p>Harbor 回的是全名（{@code myproj/team/app}），而第二层只该显示 {@code team/app}。
+     * 剥离放在这里而不是调用方，是为了只有一处做这件事 —— 两处各剥一次就容易对不上。
+     */
+    public static List<String> parseRepositoryNames(String json, String project) {
+        try {
+            HarborRepo[] arr = JSON.readValue(json, HarborRepo[].class);
+            String prefix = project + "/";
+            return Arrays.stream(arr)
+                    .map(r -> r.name)
+                    .filter(Objects::nonNull)
+                    .map(n -> n.startsWith(prefix) ? n.substring(prefix.length()) : n)
+                    .toList();
+        } catch (Exception e) {
+            log.warn("解析 Harbor repositories 响应失败，按空处理", e);
+            return List.of();
+        }
+    }
+
+    public static List<String> parseSearchHits(String json) {
+        try {
+            HarborSearch s = JSON.readValue(json, HarborSearch.class);
+            if (s.repository == null) {
+                return List.of();
+            }
+            return s.repository.stream().map(r -> r.repository_name).filter(Objects::nonNull).toList();
+        } catch (Exception e) {
+            log.warn("解析 Harbor search 响应失败，按空处理", e);
+            return List.of();
+        }
+    }
+
+    public static List<TagInfo> parseArtifacts(String json) {
+        try {
+            HarborArtifact[] arr = JSON.readValue(json, HarborArtifact[].class);
+            List<TagInfo> out = new ArrayList<>();
+            for (HarborArtifact a : arr) {
+                String tag = (a.tags != null && a.tags.length > 0) ? a.tags[0].name : a.name;
+                if (tag != null) {
+                    out.add(new TagInfo(tag, a.push_time, a.size));
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("解析 Harbor artifacts 响应失败，按空处理", e);
+            return List.of();
+        }
+    }
+
+    /** Harbor {@code /api/v2.0/projects} 的一行（只取用得到的字段） */
+    @lombok.Data static class HarborProject { private String name; }
+
+    /** Harbor {@code .../repositories} 的一行；{@code name} 是 {@code project/repo} 全名 */
+    @lombok.Data static class HarborRepo { private String name; }
+
+    @lombok.Data static class HarborSearch {
+        private List<SearchRepo> repository;
+        @lombok.Data static class SearchRepo { private String repository_name; }
+    }
+
+    /**
+     * Harbor {@code .../artifacts} 的一行。
+     *
+     * <p>⚠️ {@code name} 是 **digest**（{@code sha256:…}），人类可读的 tag 在 {@code tags[0].name} ——
+     * 见 {@link #tagNameOf}。
+     */
+    @lombok.Data static class HarborArtifact {
+        private String name;
+        private Tag[] tags;
+        private String push_time;
+        private long size;
+        @lombok.Data static class Tag { private String name; }
     }
 
     // ==================== 输入切分（纯） ====================
