@@ -21,6 +21,14 @@
             <version>${fabric8.kubernetes-client.version}</version>
         </dependency>
 
+        <!-- Tekton 的模型与客户端。**与 kubernetes-client 同步发版**，所以共用同一个版本属性
+             （Global Constraints 第 1 条：不要另写版本号）。 -->
+        <dependency>
+            <groupId>io.fabric8</groupId>
+            <artifactId>tekton-client</artifactId>
+            <version>${fabric8.kubernetes-client.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>com.coding</groupId>
             <artifactId>platform-common</artifactId>

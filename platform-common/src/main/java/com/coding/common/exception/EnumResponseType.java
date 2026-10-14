@@ -61,6 +61,9 @@ public enum EnumResponseType {
     CREDENTIAL_NAME_EXIST(10035, "凭据名称已存在"),
     CREDENTIAL_INVALID(10036, "凭据参数非法"),
     REGISTRY_DIALECT_UNSUPPORTED(10037, "该镜像仓库类型尚未实现"),
+    PIPELINE_CANVAS_INVALID(10038, "流水线画布非法"),
+    PIPELINE_NODE_UNSUPPORTED(10039, "不支持的流水线节点类型"),
+    PIPELINE_INVALID(10040, "流水线参数非法"),
 
     ERROR(5000,"服务端异常"),
 
