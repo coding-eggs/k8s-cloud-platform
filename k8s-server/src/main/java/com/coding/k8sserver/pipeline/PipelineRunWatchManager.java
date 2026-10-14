@@ -38,8 +38,8 @@ public class PipelineRunWatchManager {
     /** key = clusterId + "/" + namespace + "/" + runName */
     private final Map<String, ActiveRun> active = new ConcurrentHashMap<>();
     private final Map<String, Watch> watches = new ConcurrentHashMap<>();
-    /** 回调没被确认的（platform-api 重启/不可达）—— 节拍器会重投 */
-    private final Set<String> pending = ConcurrentHashMap.newKeySet();
+    /** 回调没被确认的（platform-api 重启/不可达）—— 节拍器会重投。值 = 是否「平台判超时」。 */
+    private final Map<String, Boolean> pending = new ConcurrentHashMap<>();
 
     public PipelineRunWatchManager(KubernetesOperationsFactory operationsFactory,
                                    PipelineRunCallbackClient callback) {
@@ -77,7 +77,7 @@ public class PipelineRunWatchManager {
     }
 
     public Set<String> pending() {
-        return new LinkedHashSet<>(pending);
+        return new LinkedHashSet<>(pending.keySet());
     }
 
     /**
@@ -85,25 +85,41 @@ public class PipelineRunWatchManager {
      * （platform-api 重启期间的回调会以这种方式补上）。
      */
     void onTerminated(String clusterId, String namespace, String runName) {
+        onTerminated(clusterId, namespace, runName, false);
+    }
+
+    /**
+     * **平台判定超时**而终结的。与 {@link #onTerminated} 走同一条回调 / 待补路径，
+     * 区别只在**语义** —— 而且这个语义**必须跟着请求走**：Tekton 侧看到的是平台 patch 的
+     * {@code spec.status: Cancelled}，光看对象的 condition 分不出「用户取消」与「平台判超时」，
+     * 而 spec §4.2 要求运行历史里两者不一样。
+     */
+    void onTerminatedAsTimeout(String clusterId, String namespace, String runName) {
+        onTerminated(clusterId, namespace, runName, true);
+    }
+
+    private void onTerminated(String clusterId, String namespace, String runName, boolean timedOut) {
         String k = key(clusterId, namespace, runName);
-        if (callback.finished(clusterId, namespace, runName)) {
+        if (callback.finished(clusterId, namespace, runName, timedOut)) {
             pending.remove(k);
             recordClosed(clusterId, namespace, runName);
         } else {
-            pending.add(k);
+            // ⚠️ 连 timedOut 一起记下来 —— 只记 key 的话，重投时这个标志就丢了，
+            // 那次运行会被归档成 CANCELLED
+            pending.put(k, timedOut);
         }
     }
 
     /** 节拍器重投待补的。 */
     void retryPending() {
-        for (String k : List.copyOf(pending)) {
-            String[] parts = k.split("/", 3);
+        for (Map.Entry<String, Boolean> e : Map.copyOf(pending).entrySet()) {
+            String[] parts = e.getKey().split("/", 3);
             if (parts.length != 3) {
-                pending.remove(k);
+                pending.remove(e.getKey());
                 continue;
             }
-            if (callback.finished(parts[0], parts[1], parts[2])) {
-                pending.remove(k);
+            if (callback.finished(parts[0], parts[1], parts[2], e.getValue())) {
+                pending.remove(e.getKey());
                 recordClosed(parts[0], parts[1], parts[2]);
             }
         }

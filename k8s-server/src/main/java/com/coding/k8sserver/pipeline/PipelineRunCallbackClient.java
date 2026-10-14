@@ -41,11 +41,23 @@ public class PipelineRunCallbackClient {
 
     /** @return 是否被确认（2xx）。**false 会进「待补」集合**，由节拍器重投。 */
     public boolean finished(String clusterId, String namespace, String runName) {
+        return finished(clusterId, namespace, runName, false);
+    }
+
+    /**
+     * @param timedOut 平台**判定超时**而终结的（节拍器发的）。
+     *                 ⚠️ 这个标志必须跟着请求走：Tekton 侧看到的是平台 patch 的
+     *                 {@code spec.status: Cancelled}，光看对象的 condition 区分不出
+     *                 「用户取消」与「平台判超时」—— 而 spec §4.2 要求运行历史里两者是不一样的。
+     * @return 是否被确认（2xx）。**false 会进「待补」集合**，由节拍器重投。
+     */
+    public boolean finished(String clusterId, String namespace, String runName, boolean timedOut) {
         try {
             http.post()
                     .uri(platformUrl + "/internal/pipeline-run/finished")
                     .header("X-Internal-Token", token == null ? "" : token)
-                    .body(Map.of("clusterId", clusterId, "namespace", namespace, "runName", runName))
+                    .body(Map.of("clusterId", clusterId, "namespace", namespace,
+                            "runName", runName, "timedOut", timedOut))
                     .retrieve()
                     .toBodilessEntity();
             return true;
