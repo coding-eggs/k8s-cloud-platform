@@ -206,8 +206,14 @@ Harbor 的 robot account 是 registry 级的 —— 一条连接一份凭据就�
 |---|---|---|
 | `GIT` | `GET <probeUrl>/info/refs?service=git-upload-pack` + basic auth | **`probeUrl` 必填**（完整仓库 URL），理由见 §1.1 |
 | `REGISTRY` | `GET <endpoint>/v2/` + basic auth | 无 |
+| `DOCKERHUB` | `GET hub.docker.com/v2/repositories/library/?page_size=1`（**匿名**） | 无 |
 
 `REGISTRY` 不需要额外入参：`/v2/` 是 OCI Distribution 规范的一部分，所有 registry 都实现。
+
+> ⚠️ **2026-10-14 订正**：**探测 URL 不再由本模块拼**，改成由各档的 `RegistryDialect.probeSpec` 给，连同「该档的 404 是什么意思」一起。原因就是 Docker Hub —— 它的 API 站点是 `hub.docker.com`，不是它的 endpoint `docker.io`，「所有 registry 都响应 `<endpoint>/v2/`」这句话从第二档起就不成立。
+> 出站那一半（超时、`Redirect.NEVER`、`URI.create` 的格式错归因）**仍只在 `CredentialProbeClient` 一处**，没动。
+>
+> 另：**匿名档的 401 判为通过**（OCI 规范下 registry 未认证时 `/v2/` 返 401 是正常行为，它是「这是个 registry 且它要认证」）。不这么判的话，每一条匿名连接一建出来就是红的。
 
 ### 5.2 git 探测 URL 的规范化（实测驱动，见 §0 的 F / F2 / F3）
 
@@ -387,6 +393,13 @@ CREDENTIAL_TEST   = "credential:test";
   跨类型沿用会让旧 JSON 的语义对不上。表单要在切换时清空敏感字段并给出提示
 - 新建态敏感字段必填（`BASIC` 类型）
 
+> ⚠️ **2026-10-14 订正：`authType` 的取值域从只有 `BASIC` 扩成 `BASIC | NONE`**（`NONE` = 匿名）。
+> - 「该类型允许哪种认证方式」**由各档自己声明**（`RegistryDialect.authTypes()`）：`HARBOR` → `{BASIC, NONE}`、`DOCKERHUB` → `{NONE}`。`GIT` 不是 dialect，它的集合是 `CredentialService` 里的常量
+> - `NONE` 时**不写密文**（两列都 null）—— `hasSecret` 由「`secret_encrypted` 是否为空」直接得出，不用解密。匿名行的 `hasSecret` 自然为 `false`（这个字段本文件当初就建好了，现在才真正用上）
+> - 出站时**不发 `Authorization` 头**（原来会发 `Basic Og==`，一个只有冒号的空 Basic）
+> - **顺带修掉一条死路**：原来「留空 = 保持不变」让**凭据一旦填了就再也清不掉**（表单拿不到旧值，"空"只能读作"不改"）。现在 `authType` 改成 `NONE` 即清空
+> - ⚠️ 这条改动**逆向了**建立列时的假设吗？没有 —— `V2026_10_13_3` 的列注释原文就是「可空是为将来 NONE 型（匿名）留位」
+
 ### 8.3 测试连接
 
 `GIT` 类型点「测试连接」时**弹出输入探测用仓库 URL**（§5.1 的额外入参），`REGISTRY` 类型直接打。
@@ -486,7 +499,7 @@ CREDENTIAL_TEST   = "credential:test";
 | **SSH / 私钥认证** | 成本大头（known_hosts、host key 策略、Tekton `ssh-directory` workspace 投递）属于还不存在的 S3.5。认证字段是 blob → 将来补是零迁移 |
 | **投递**（命名空间 Secret / imagePullSecret / 构建 Pod 注入） | 台账挂在 S3.1.3 / S3.5.13 |
 | **按租户授权** | 用户裁定「全局可用」。表里连 `scope` 列都没有 |
-| **匿名 / 无凭据连接**（`authType=NONE`） | 用户裁定 v1 只做 HTTPS basic auth。真出现「Docker Hub 公共镜像」场景时加一个枚举值即可 |
+| ~~**匿名 / 无凭据连接**（`authType=NONE`）~~ | **2026-10-14 已办** —— 「Docker Hub 公共镜像」那个场景真的来了，按本行原话「加一个枚举值即可」做了：`authType` 加 `NONE`，零迁移（列本来就可空），见 [dockerhub spec](2026-10-14-registry-dockerhub-design.md) |
 | **主密钥轮换 / 密文重加密工具** | 没有轮换流程就没有需求；主密钥独立配置已经让将来轮换成为可能 |
 | **凭据版本历史 / 审计「变更前后值」** | 指纹能回答「变没变」，回答不了「变成什么」—— 后者不该存 |
 | **删除保护**（被流水线引用时禁止删） | 不加外键是既定的架构原则；`enabled=0` 提供了比删除温和的选项 |

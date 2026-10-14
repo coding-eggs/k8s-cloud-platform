@@ -156,6 +156,28 @@
 > **同时订正一个数字**：本批最终全量测试是 **586 绿**（终端评审后又补了 3 条测试），
 > 上文正文里的 583 是终审修复之前的快照。
 
+> ---
+>
+> ### ⚠️ 2026-10-14 补记：`authType` 扩出 `NONE`（匿名）
+>
+> 由 **S3.1 的 Docker Hub 增补**带出来的改动（用户裁定「Docker Hub 只允许匿名」）。
+> 详设见 [dockerhub spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) §3.7。
+>
+> - **`authType` 从只有 `BASIC` 扩成 `BASIC | NONE`**。「该类型允许哪种认证方式」
+>   **由各档自己声明**（`RegistryDialect.authTypes()`）；`GIT` 不是 dialect，它的集合是
+>   `CredentialService` 里的常量 —— 全平台唯一一处例外，注释里写明
+> - `NONE` 时**不写密文**（两列都 null），`hasSecret` 由「`secret_encrypted` 是否为空」得出
+> - 出站时**不发 `Authorization` 头**（原来会发 `Basic Og==`）
+> - **匿名档的 `/v2/` 401 判为通过** —— OCI 规范下未认证返 401 是 registry 的正常行为，
+>   不这么判的话每一条匿名连接一建出来就是红的
+> - **顺带修掉本批的一条死路**：「留空 = 保持不变」让**凭据一旦填了就再也清不掉**
+>   （表单拿不到旧值，"空"只能读作"不改"）。现在 `authType` 改成 `NONE` 即清空
+>
+> **零迁移** —— `V2026_10_13_3` 的三列注释当初就写了「可空是为将来 NONE 型（匿名）留位」。
+> 本批的「有意不做」清单里也原话写着「真出现『Docker Hub 公共镜像』场景时加一个枚举值即可」。
+>
+> **全量测试 474 绿**（platform-api；本批新增 68 条）。
+
 ---
 
 ### S1 · 平台侧小项（无前置，适合先跑通节奏）
@@ -231,8 +253,16 @@
 > **⚠️ 与台账原稿的两处范围出入（均为用户裁定）**：
 > ① **S3.1.3 imagePullSecret 不做** —— 用户裁定「先不做，后续再说」。它把平台级凭据的可用范围
 > 落到租户命名空间里（租户对自己命名空间的 Secret 有读权限），是一次真实的数据面扩张，值得单独决策；
-> ② **S3.1.1 只落 Harbor 一档**，`REGISTRY_V2` / `DOCKERHUB` 不做（用户：「现在只支持 harbor，
-> 后续可能还要支持其他类型的仓库」）。
+> ② ~~**S3.1.1 只落 Harbor 一档**，`REGISTRY_V2` / `DOCKERHUB` 不做（用户：「现在只支持 harbor，
+> 后续可能还要支持其他类型的仓库」）。~~
+> **⚠️ 2026-10-14 订正：这一条是记账错误。** 2026-10-12 的裁定 ⑥ 原文是「**Docker Hub autocomplete 按本文建议接**
+> （PAT + 缓存 + 静默降级）」（分析文档 §7.5），本条目原稿写的也是「**三档实现**」，
+> 而 S3.1 brainstorming 里用户批准的那个选项原文就是 `GIT|HARBOR|REGISTRY_V2|DOCKERHUB`。
+> 唯一被当成「砍掉」依据的，是用户回答**「浏览页加不加」**那道题时附的一句「现在只支持 harbor…你考虑设计的问题」
+> —— 那是「现状如此、按可扩展来设计」，**不是砍掉已裁定要接的一档**。
+> 现已在 [dockerhub spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) 里补做：
+> Docker Hub 一档（**只允许匿名**，用户 2026-10-14 裁定）+ **候选跨连接聚合**。
+> **`REGISTRY_V2` 记为欠账** —— 它同样没有「按关键词搜仓库」的能力，补全做不出来。
 >
 > **`type` 枚举由 `REGISTRY` 收敛为 `HARBOR`**（只放已实现的方言值，**有意不预放空值** ——
 > 留一个「能选中但没实现」的类型，管理员会建出一条建了也没用的连接）；
@@ -255,8 +285,9 @@
 > **两种失败姿态有意不同**：`/registry/suggest` 静默降级（每按键一次的高频动作，弹错会掩盖真问题，
 > 也会让用户以为「填不了镜像」）；`/registry/browse` 报错（用户主动点的导航，什么都不说等于页面坏了）。
 >
-> **有意不做**：imagePullSecret、`REGISTRY_V2`/`DOCKERHUB` 两档、无 host 的镜像写法（隐式 Docker Hub，
-> 一律空候选）、镜像扫描/签名/清理/删除、**候选与浏览的审计**（高频只读，逐次记会淹掉审计表）。
+> **有意不做**：imagePullSecret、**`REGISTRY_V2` 档（Docker Hub 已于 2026-10-14 补做，见上）**、
+> ~~无 host 的镜像写法（隐式 Docker Hub，一律空候选）~~（**2026-10-14 契约已反转**：无 host 时问全部连接）、
+> 镜像扫描/签名/清理/删除、**候选与浏览的审计**（高频只读，逐次记会淹掉审计表）。
 >
 > **已知风险（接受）**：租户能看到平台所有已配 registry 的目录（仓库名 + tag 名，**不含凭据**）——
 > 这是 S0.2「纯平台级 + 全局可用」那条决定的直接延伸，现在落到了具体数据上。
@@ -291,6 +322,42 @@
 > 类型收敛后遗留的「仅支持 GIT / REGISTRY」错误文案（改成从 `TYPES` 动态取，不会再过时）。
 >
 > **修复后全量 656/656 绿**（platform-common 19 · k8s-core 210 · k8s-server 20 · platform-api 407）。
+
+> ---
+>
+> **✅ 2026-10-14 增补：Docker Hub 档 + 候选跨连接聚合**（设计见
+> [dockerhub spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md)，
+> 实施计划见 [plan](superpowers/plans/2026-10-14-registry-dockerhub.md)，15 任务）。
+>
+> 起因是**订正一条记账错误**（见上文 ② 那行的 2026-10-14 订正）：Docker Hub 是 2026-10-12
+> 就裁定要接的，被误记成「用户裁定不做」。补做的同时带出两件事：
+>
+> **1. 候选跨连接聚合**（反转了本批 §4.1 的「无 host 一律空候选」契约）。
+> 原来那么写是因为当时只有 Harbor 一档、只能猜该归哪条连接；代价是 Docker Hub 档
+> 只能在用户手打 `docker.io/` 时生效，等于白做。现在：**带 host 只问匹配上的那一条**
+> （匹配不上仍零请求）、**不带 host 问所有启用的镜像仓库连接**，结果按连接名排序后合并，
+> 每条候选带上来源连接名（前端下拉右侧显示）。那个「只能猜」的歧义由此消失。
+> 并发走虚拟线程 + **3 秒总预算** —— 刻意小于单条连接最坏耗时（5s+10s），
+> 一条黑洞连接被取消、按空算，**其余连接的候选照常返回**。
+>
+> **2. `authType` 扩出 `NONE`（匿名）** —— 见上文 **S0.2 的 2026-10-14 补记**。
+>
+> **Docker Hub 档的两条特性**：**只允许匿名**（用户裁定 —— 这一档的角色是「公共镜像的来源」，
+> 私有镜像该放自建 Harbor）；**出站地址写死 `hub.docker.com`**，不是它的 endpoint `docker.io`
+> （endpoint 只用于匹配）。走站点 API 而非 OCI 官方的 `registry-1.docker.io`，是因为后者
+> **没有搜索接口**，补全根本做不出来。
+>
+> **顺带修掉一个现存 bug**：`HarborDialect.segmentsOf` 拿**原始 endpoint** 做 `startsWith`，
+> 而终审那次只给 `RegistryTargetResolver` 加了归一化。于是 endpoint 填成
+> `https://harbor.example.com`（GIT 的 placeholder 正是 `https://gitlab.example.com`，切类型时极易残留）时，
+> 连接匹配得上、段切分取不到段 → **补全静默返回空，浏览页却一切正常**。与终审那条 Critical 同一形状。
+>
+> **有意不做**：`REGISTRY_V2` 档（记为欠账）、Docker Hub 的私有仓库（封死 PAT 的直接后果）、
+> 浏览任意公共命名空间（需要浏览页有输入框）。
+>
+> **全量测试 474 绿**（platform-api，本批新增 68 条）+ 前端 `npm run build` 零 TS error。
+> ⚠️ 本批再次复现 S3.1 记过的那条：**`npx vue-tsc --noEmit` 会零报错放过真错误，
+> `npm run build` 才报** —— 前端收口一律用后者。
 
 #### S3.2 应用级交付（自研薄应用层）｜ 规模 L ｜ 前置：**D1**（**不需要** S0.2 —— kubeconfig 已在 `k8s_cluster` 表）
 > 已定：自研（分析文档 §6.4）。产品形态自研、渲染引擎内部用 Helm。
@@ -365,7 +432,7 @@
 | 批 | 模块 | 前置 | 规模 | 状态 | Spec |
 |---|---|---|---|---|---|
 | **S0.1** | 审计日志 | — | L | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-audit-log-design.md) · [plan](superpowers/plans/2026-10-13-audit-log.md) |
-| **S0.2** | 凭据与连接管理 | — | M | ⬜ 未开始 | — |
+| **S0.2** | 凭据与连接管理 | — | M | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-credential-management-design.md) · [plan](superpowers/plans/2026-10-13-credential-management.md) |
 | **S1.1** | 用户自助 | — | S | ⬜ 未开始 | — |
 | **S1.2** | 集群组件展示 | — | M | ⬜ 未开始 | — |
 | **S1.3** | 平台总览 | — | M | ⬜ 未开始 | — |
@@ -373,7 +440,7 @@
 | **S2.2** | 告警 | — | L | ⬜ 未开始 | — |
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ⬜ 未开始 | — |
 | **S2.4** | 服务网格可视化 | — | M-L | ⬜ 未开始 | — |
-| **S3.1** | 镜像仓库 | S0.2 | M | ⬜ 未开始 | — |
+| **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
 | **S3.2** | 应用级交付 | D1 | L | ⬜ 未开始 | — |
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |

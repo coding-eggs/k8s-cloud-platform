@@ -4,7 +4,9 @@
 
 **目标**：让平台里填镜像这件事不再靠背。两处镜像输入框有 **repository / tag 补全**；另有一个**只读浏览页**，能选一个已配的仓库、沿层级往下钻、看到 tag 的推送时间/大小/digest，并一键复制完整镜像地址。
 
-**范围**：**Harbor 一档** + 一个为「后续加档」而做的方言扩展点。不含 imagePullSecret（用户裁定后续再说）。
+**范围**：**Harbor + Docker Hub 两档** + 一个为「后续加档」而做的方言扩展点。不含 imagePullSecret（用户裁定后续再说）。
+
+> ⚠️ **2026-10-14 增补**：Docker Hub 一档与**候选跨连接聚合**在本文件之后补做，设计与订正理由见 [2026-10-14-registry-dockerhub-design.md](2026-10-14-registry-dockerhub-design.md)。本文件里被那批**改掉的**地方已在下方就地标注「2026-10-14 订正」，逐条清单见那份 spec 的 §12。
 
 **与 S0.2 的关系**：S0.2 建好了「连接」（`platform_credential`，`type` 目前 `GIT | REGISTRY`）与「怎么验证凭据」（`/credential/test`）。本批是它的**第一个真实消费者** —— `resolveSecret` 第一次有人调。
 
@@ -65,6 +67,16 @@ public record CredentialRef(String id, String name, String type, String endpoint
                             String username, String secret) { }
 ```
 
+> **2026-10-14 补了两个方法**（本文件写作时有意不加，见 §11）：
+> 
+> ```java
+> /** 本档允许的认证方式。{@code NONE} = 匿名。 */
+> Set<String> authTypes();
+> /** 测试连接的规格（URL + 该档对 404 的解释）。 */
+> ProbeSpec probeSpec(CredentialRef cred);
+> ```
+> 出站那一半（超时、`Redirect.NEVER`、错误归因）**仍然只在 `CredentialProbeClient` 一处**，各档只给 URL 与文案 —— 那几条安全要求散到各档去实现迟早会漏掉一条。
+
 ⚠️ **`CredentialRef` 携带明文凭据**（`username` / `secret`，由 S0.2 的 `CredentialService.resolveSecret` 解出）。它是**进程内**的传参记录，**不得出现在任何响应体里**，也不得被日志打印。S0.2 已经有一条反射钉子守着响应 DTO；本批新增的 DTO 各自也要守（§9）。
 
 `BrowseResult`：
@@ -98,6 +110,8 @@ public class RegistryDialectRegistry {
 ```
 
 **护栏测试**：遍历 `CredentialService.TYPES` 里每一个值，断言 `RegistryDialectRegistry` 都能解析出实现。将来有人加了枚举值忘了实现，**测试立刻红** —— 这才是「留扩展位」，空枚举值不是。
+
+> 2026-10-14 又加了一条同款护栏：**每个 `authTypes()` 非空** —— 空集合会让该类型一个连接都建不出来，而原因藏在某个实现类里。
 
 ### 2.3 HarborDialect
 
@@ -143,34 +157,51 @@ public class RegistryDialectRegistry {
 ```
 POST /registry/suggest
   { "imagePrefix": "harbor.example.com/proj/ap" }
-→ { "items": ["harbor.example.com/proj/app", ...] }
+→ { "items": [ { "value": "harbor.example.com/proj/app", "connectionName": "harbor-prod" }, ... ] }
 ```
 
 **一个端点，后端解析整串** —— 判定「这是哪个连接、该补哪一段、拼出来是什么」是**方言知识，只属于后端**；前端不需要知道 Harbor 与将来任何方言的区别。
 
-### 4.1 解析与分派
+### 4.1 解析与分派（**2026-10-14 订正：契约被反转**）
 
 1. 从 `imagePrefix` 里取出 **host 部分** —— 判据用 **Docker 自己的规则**：第一个 `/` 之前那一段含 `.` 或 `:`，
    或恰为 `localhost`，才算 registry host（否则它是 Docker Hub 的**命名空间**，如 `myteam/app`）。
    ⚠️ **不能用朴素的「第一个 `/` 之前」** —— 那会把 `myteam/app` 判成 host `myteam`，
    于是一条恰叫 `myteam` 的连接会被一个纯 Docker Hub 引用匹配上。
-2. **host 必须在已配置且 `enabled` 的 registry 类连接里匹配到**（取 `endpoint` 的最长前缀匹配）
-3. 匹配不到 → 返回 `{"items": []}`，**不发任何请求**
-4. 匹配到 → 交给该连接的 dialect，由它决定补哪一段
+2. **带 host**：在已配置且 `enabled` 的 registry 类连接里做 `endpoint` 的**最长前缀匹配**
+   （Docker Hub 的三个等效域名 `docker.io` / `index.docker.io` / `registry-1.docker.io` 归一化后再比）
+3. **带 host 且匹配不到** → 返回 `{"items": []}`，**不发任何请求**
+4. **带 host 且匹配到一条** → **只问它**
+5. **不带 host**（`nginx`、`nginx:1.27`、`myteam/app` —— 隐式 Docker Hub 写法）→
+   **所有启用的镜像仓库连接都问**，并发查询，结果按连接名排序后合并
 
-**本批的一条明确行为**：不带 host 的写法（`nginx:1.27`、`myteam/app` —— 隐式 Docker Hub）**一律返回空候选**。因为 Docker Hub 那一档没实现，平台也无法确定它该归哪条连接。**这是有意的，不是漏了** —— 用户仍可自由输入（§7）。
+> ⚠️ **第 5 步反转了本文件原来的「无 host 一律返回空候选」。**
+> 原来那么写是因为当时只有 Harbor 一档、无法确定该归哪条连接 —— 结论没错，
+> 但代价是 Docker Hub 档只能在用户手打 `docker.io/` 时生效，等于白做。
+> 聚合把「猜哪条」换成「都给」，那个只能猜的歧义就没有了。
+> **带 host 时的第 3 步（零请求）一个字没变。**
+
+**每条候选都要带来源连接名**（`connectionName`）—— 无 host 时会同时问多条连接，
+而「这条候选是哪个连接来的」是唯一无法从候选串里推出来的信息。
+排序规则：**按连接名**，每条连接内部按对端返回顺序（完全可预测，无隐藏规则）。
 
 ### 4.2 两条硬边界
 
-1. **出站 URL 只由凭据的 `endpoint` 拼**，绝不拿用户输入里的 host 去发请求。用户输入只用于**匹配**连接和生成候选串，**不参与构造目标地址**。
-2. 匹配不到就**不发任何请求**（上面的第 3 步）。这条会有测试断言「零交互」。
+1. **出站 URL 只由凭据的 `endpoint` 拼**（或方言自己写死的官方地址，如 Docker Hub 的 `hub.docker.com`），
+   绝不拿用户输入里的 host 去发请求。用户输入只用于**匹配**连接和生成候选串，**不参与构造目标地址**。
+   ⚠️ 聚合之后更要守住 —— 一次输入会打出去 N 个请求，地址若可控，放大效应也一并放大。
+2. **带 host 匹配不到就零请求**（上面的第 3 步）。这条会有测试断言「零交互」。
+   ⚠️ **无 host 的输入不适用** —— 它要问全部连接（第 5 步）。
 
-### 4.3 缓存 + 静默降级
+### 4.3 缓存 + 静默降级 + 并发（**2026-10-14 补**）
 
-- 走已有的 `RedisJsonCache`（键带 `platform:cache:` 前缀，与既有约定一致），短 TTL（分钟级）
-- 取不到 / 对端报错 / 超时 → **返回空列表 + `WARN` 日志**，**不抛、不弹错、不阻塞输入**（§7.5 已定：autocomplete 不能成为「能不能填镜像」的硬依赖）
-
----
+- 走已有的 `RedisJsonCache`，键是 **`registry:suggest:<连接id>:<输入前缀>`**，短 TTL（2 分钟）
+  —— 天然是「每条连接一份」，聚合并行时正好复用，连接的增删也不会互相失效
+- 取不到 / 对端报错 / 超时 → **返回空列表 + `WARN` 日志**，**不抛、不弹错、不阻塞输入**
+- ⚠️ **并发是必须的**（2026-10-14 补）：N 条连接串行会把整条时间线拖到「最慢那条 × N」。
+  走 Java 21 虚拟线程，**总等待上限 3 秒** —— 它刻意小于单条连接的最坏耗时
+  （连接 5s + 读 10s = 15s），一条黑洞连接会被取消、按空算，**其余连接的结果照常返回**。
+  这就是静默降级的**逐连接**版本：一条坏连接不该拖垮别人的候选。
 
 ## 5. 浏览页的两个端点
 
@@ -204,9 +235,11 @@ POST /registry/suggest
 | | `/registry/suggest` | `/registry/browse` |
 |---|---|---|
 | 使用者 | 正在打字的用户，**每按键一次一次请求** | 在页面上主动点了一层 |
-| 失败姿态 | **静默降级**（空列表 + WARN） | **报错**（走统一异常出口） |
+| 失败姿态 | **静默降级**（空列表 + WARN），**逐连接适用** | **报错**（走统一异常出口） |
 
 理由：补全是锦上添花，弹错只会掩盖真正的问题；而浏览页是用户主动发起的导航，**什么都不说等于页面坏了**。两者用同一套错误文案规则（凭据类失败一律二义文案）。
+
+**「逐连接」是 2026-10-14 聚合之后补的**：无 host 的输入会同时问 N 条连接，任何一条超时/解不开密文，都只让**那一条**没候选，其余照常返回。
 
 ### 5.4 缓存
 
@@ -298,8 +331,9 @@ S0.2 的「使用凭据要留痕」在这里**有意不执行**。「使用」�
 | 项 | 为什么不做 |
 |---|---|
 | **imagePullSecret 自动生成** | 用户裁定「先不做，后续再说」。§7.5 的原意是「自然的延伸」，但它把平台凭据的可用范围落到租户命名空间里（租户对自己命名空间的 Secret 有读权限），那是一次真实的数据面扩张，值得单独决策 |
-| **`REGISTRY_V2` / `DOCKERHUB` 两档** | 用户裁定现在只 Harbor。扩展点已就位（§2.2 的护栏保证不会「加了枚举忘了实现」） |
-| **无 host 的镜像写法（隐式 Docker Hub）** | 本批一律返回空候选（§4.1）。用户仍可自由输入 |
+| ~~`REGISTRY_V2` / `DOCKERHUB` 两档~~ | **2026-10-14 订正**：Docker Hub 已补做（见 [dockerhub spec](2026-10-14-registry-dockerhub-design.md)）；**`REGISTRY_V2` 记为欠账** —— 它同样没有「按关键词搜仓库」的能力，补全做不出来 |
+| ~~无 host 的镜像写法（隐式 Docker Hub）~~ | **2026-10-14 订正**：**契约已反转**，无 host 时问全部连接（§4.1 第 5 步）。原判断「一律空候选」是当时只有一档时的权宜 |
+| **Docker Hub 的私有仓库（PAT）** | 2026-10-14 用户裁定：该档**只允许匿名**。私有镜像该放自建 Harbor |
 | **镜像扫描 / 签名 / 清理 / 删除** | 不在台账 S3.1 范围 |
 | **候选与浏览的审计** | §8 |
 | **`/registry/browse` 的缓存** | §5.4 |
@@ -318,8 +352,8 @@ S0.2 的「使用凭据要留痕」在这里**有意不执行**。「使用」�
 1. `platform_credential.type` 迁移里加一个枚举值
 2. 新增一个 `RegistryDialect` 实现类
 3. 凭据表单的 `TYPE_OPTIONS` 加一项
-4. **S0.2 的测试连接** —— `CredentialProbe.registryProbeUrl` 现在假定「所有 registry 都响应 `/v2/`」，对 Artifactory **不成立**（它的端点在 `/artifactory/api/docker/<repo>/v2/`）。届时要把 `probe` 也挪进 dialect 接口。
-   ⚠️ 本批**有意不预先加** `probe` 到接口里 —— 那会是直到那天都没人调的方法（YAGNI）。
+4. ~~**S0.2 的测试连接**~~ —— **2026-10-14 已办**：Docker Hub 就是那个「届时」（它的 API 站点是 `hub.docker.com`，不是它的 endpoint `docker.io`）。`probe` 已挪进 dialect 接口（`probeSpec`），Artifactory 那类情况一并解决。
+   ⚠️ 原文「有意不预先加」的判断**在写下时是对的** —— 它防的是「加一个直到那天都没人调的方法」。真的到了那天再加，成本是一条重载与两处实现，事实证明比预想的小。
 
 **不要动的**（这就是扩展位的价值）：
 `/registry/suggest`、`/registry/browse`、`/registry/connections`、缓存、权限码、浏览页与前端**全部**。
@@ -337,6 +371,9 @@ S0.2 的「使用凭据要留痕」在这里**有意不执行**。「使用」�
 ### 12.1 部署后待验清单
 
 - [ ] 凭据页能建出 `Harbor 镜像仓库` 类型的连接（旧库里的 `GIT` 行不受影响）
+- [ ] **2026-10-14 补**：凭据页认证方式可选「匿名」；Docker Hub 档除名称外一个字段都不用填
+- [ ] **2026-10-14 补**：打 `ng` 时 Harbor 与 Docker Hub 的候选**同时**出现、右侧是连接名、按连接名排序
+- [ ] **2026-10-14 补**：一条连接不可达时其余连接的候选照样出现
 - [ ] 「更新镜像」输入框里打 `harbor.example.com/pro` → 出仓库候选；打 `harbor.example.com/proj/app:1` → 出 tag 候选
       （⚠️ **只打 host 或 host 加一个斜杠是不给候选的** —— `searchTermOf` 要求 host 之后**正好一段**，
       因为把整个 registry 的仓库一次拉出来既慢又没意义；见 §4.1 的解析规则）

@@ -1,3 +1,4 @@
+
 # Docker Hub 档 + 候选跨连接聚合（platform-api + platform-web）
 
 > 任务台账 **S3.1 的增补**（2026-10-14）。S3.1 主体设计与交付见
