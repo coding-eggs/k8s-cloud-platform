@@ -22,6 +22,10 @@ import type {
   K8sGatewayClass,
   K8sGrpcRoute,
   K8sHpa,
+  Pipeline,
+  PipelineConnection,
+  PipelineNodeType,
+  PipelineRun,
   K8sHttpRoute,
   K8sNode,
   K8sPvc,
@@ -651,4 +655,30 @@ export const registryApi = {
    */
   suggest: (imagePrefix: string) =>
     http.post<never, RegistrySuggestResponse>('/registry/suggest', { imagePrefix }, { silent403: true }),
+}
+
+
+export const pipelineApi = {
+  list: (clusterId: string, namespace: string) =>
+    http.post<never, Pipeline[]>('/pipeline/list', { clusterId, namespace }),
+  get: (id: string) => http.post<never, Pipeline>('/pipeline/get', { id }),
+  create: (body: Pipeline) => http.post<never, Pipeline>('/pipeline/create', body),
+  update: (body: Pipeline) => http.post<never, Pipeline>('/pipeline/update', body),
+  remove: (id: string) => http.post<never, void>('/pipeline/delete', { id }),
+
+  /** 内置节点的表单 schema 与语言预设 —— **属性面板完全由它渲染**（透传自 k8s-server） */
+  nodeTypes: () => http.post<never, PipelineNodeType[]>('/pipeline/node-types'),
+  /** 画布 → Tekton YAML。**保存时也走它做画布校验**：带环 / 未知节点类型当场被拒 */
+  preview: (canvasJson: string) =>
+    http.post<never, string>('/pipeline/preview', { canvasJson }),
+  /** 可在流水线里引用的 git 连接（窄投影） */
+  gitConnections: () => http.post<never, PipelineConnection[]>('/pipeline/git-connections'),
+
+  run: (pipelineId: string) => http.post<never, string>('/pipeline/run', { id: pipelineId }),
+  cancelRun: (runName: string) => http.post<never, void>('/pipeline/run/cancel', { name: runName }),
+  runs: (pipelineId: string) => http.post<never, PipelineRun[]>('/pipeline/run/list', { id: pipelineId }),
+  runGet: (runName: string) => http.post<never, PipelineRun>('/pipeline/run/get', { name: runName }),
+  /** 已归档读库、还在跑现抓；nodeName 为空则把所有节点拼起来 */
+  runLogs: (runName: string, nodeName?: string) =>
+    http.post<never, string>('/pipeline/run/logs', { runName, nodeName }),
 }

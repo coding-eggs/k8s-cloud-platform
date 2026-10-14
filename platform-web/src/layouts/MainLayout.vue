@@ -228,6 +228,11 @@ async function handleLogout(): Promise<void> {
           <el-icon><Collection /></el-icon>
           <template #title>镜像仓库</template>
         </el-menu-item>
+        <!-- CI：列表/画布/运行历史三个路由共用**一个**页面码，菜单只露一条 -->
+        <el-menu-item v-if="can(pageCodes.pipeline)" index="/pipelines">
+          <el-icon><Operation /></el-icon>
+          <template #title>流水线</template>
+        </el-menu-item>
 
         <div v-if="can(pageCodes.pvc.list) || can(pageCodes.persistentVolume.list) || can(pageCodes.storageClass.list)" class="menu-group">存储</div>
         <el-menu-item v-if="can(pageCodes.pvc.list)" index="/resources/pvcs">

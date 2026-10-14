@@ -1690,3 +1690,88 @@ export interface RegistrySuggestResponse {
 
 
 
+
+
+// ===================== CI（流水线，S3.5 第 ① 片）=====================
+
+/** 一个节点的表单字段。**由后端 schema 驱动** —— 前端不写死任何节点的字段清单。 */
+export interface PipelineNodeField {
+  key: string
+  label: string
+  type: 'TEXT' | 'TEXTAREA' | 'SELECT' | 'IMAGE'
+  required: boolean
+  placeholder?: string | null
+  help?: string | null
+  defaultValue?: string | null
+  options?: { value: string; label: string }[] | null
+}
+
+/** 语言预设。**只是默认值** —— 选它只换下面几个框里的内容，不锁死任何字段。 */
+export interface BuildPreset {
+  key: string
+  label: string
+  image: string
+  command: string
+}
+
+/** `/pipeline/node-types` 的一项（透传自 k8s-server 的节点注册表）。 */
+export interface PipelineNodeType {
+  type: string
+  fields: PipelineNodeField[]
+  presets: BuildPreset[]
+}
+
+export interface PipelineCanvasNode {
+  id: string
+  type: string
+  config: Record<string, string>
+}
+
+export interface PipelineCanvasEdge {
+  from: string
+  to: string
+}
+
+export interface PipelineCanvas {
+  nodes: PipelineCanvasNode[]
+  edges: PipelineCanvasEdge[]
+}
+
+/** 流水线**定义**（平台自己的表；集群里不留 Pipeline 对象）。 */
+export interface Pipeline {
+  id?: string
+  clusterId?: string
+  namespace?: string
+  name: string
+  description?: string | null
+  /** 画布 JSON：`{nodes, edges}` —— 流水线的唯一真相源 */
+  canvasJson?: string | null
+  createdBy?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+/** 一次运行。**归档后集群对象就没了，库是运行历史的唯一来源**。 */
+export interface PipelineRun {
+  id: string
+  pipelineId: string
+  clusterId: string
+  namespace: string
+  /** 集群里的 PipelineRun 名，也是归档幂等键 */
+  runName: string
+  status: 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'TIMEOUT' | string
+  reason?: string | null
+  triggeredBy?: string | null
+  startTime?: string | null
+  completionTime?: string | null
+  /** 每个节点的状态与耗时快照（`节点=状态` 逗号分隔），归档时抓下来的 */
+  stepsJson?: string | null
+  createdAt?: string | null
+}
+
+/** 可在流水线里引用的连接（**窄投影**：只有身份与地址）。 */
+export interface PipelineConnection {
+  id: string
+  name: string
+  endpoint: string
+}

@@ -51,6 +51,17 @@ export const apiCodes = {
   /** Gateway 列表读（工作负载的 L7 开关要列本命名空间的 waypoint 候选） */
   gatewayList: 'tenant:gateway:list',
 
+  // ---- CI（流水线）----
+  /** 定义与运行历史（只读）—— 列表/详情/节点元数据/预览/运行历史共用一个码 */
+  pipelineRead: 'tenant:pipeline:read',
+  /** 定义（新建/改/删）—— 按钮置灰用。**它是本平台权限面最大的一个码**：
+   *  能改定义 = 能往构建 Pod 里塞任意命令（spec §10.1） */
+  pipelineManage: 'tenant:pipeline:manage',
+  /** 触发与取消。member 也有 —— run 只能跑别人定义好的流水线 */
+  pipelineRun: 'tenant:pipeline:run',
+  /** 看运行日志。单独成码：日志是容器输出，可能含敏感内容 */
+  pipelineLogs: 'tenant:pipeline:logs',
+
   // ---- 路由策略（Route 五合一）：逐 kind 的拉取短路 / 创建与保存的按钮置灰 ----
   // 页面可见性用 pageCodes.mesh.<x>Route.{list,edit}（本批不加页面码）；这里只放"发不发请求 / 按不按得动"的判断。
   httpRouteList: 'tenant:httproute:list',

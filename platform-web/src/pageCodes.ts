@@ -61,6 +61,9 @@ export const pageCodes = {
   secret: { list: 'tenant:page:secret.list', edit: 'tenant:page:secret.edit' },
   service: { list: 'tenant:page:service.list', edit: 'tenant:page:service.edit' },
   pvc: { list: 'tenant:page:pvc.list' },
+  /** CI：流水线（列表 / 画布编辑 / 运行历史）共用一个页面码 —— 三者是同一件事的三步，
+   *  而 DB 里也只有一行 `tenant:page:pipeline`（V2026_10_15_1）。 */
+  pipeline: 'tenant:page:pipeline',
   persistentVolume: { list: 'tenant:page:persistentvolume.list' },
   storageClass: { list: 'platform:page:storageclass.list' },
   serviceMonitor: { list: 'tenant:page:servicemonitor.list', edit: 'tenant:page:servicemonitor.edit' },
