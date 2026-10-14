@@ -60,6 +60,7 @@ public enum EnumResponseType {
     CREDENTIAL_NOT_EXIST(10034, "凭据不存在"),
     CREDENTIAL_NAME_EXIST(10035, "凭据名称已存在"),
     CREDENTIAL_INVALID(10036, "凭据参数非法"),
+    REGISTRY_DIALECT_UNSUPPORTED(10037, "该镜像仓库类型尚未实现"),
 
     ERROR(5000,"服务端异常"),
 
