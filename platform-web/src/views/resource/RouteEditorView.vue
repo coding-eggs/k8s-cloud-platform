@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
@@ -181,43 +181,50 @@ async function loadDetail(): Promise<void> {
   if (!editing.value || !ready.value) return
   detailState.value = 'loading'
   try {
+    // rules 由子组件持有：这里只取出来，等表单渲染出来后再交给它（见函数尾部）
+    let rules: unknown = []
     if (kind.value === 'httproute') {
       const d = await httpRouteApi.get(editing.value, ctx3.value)
       form.name = d.name
       form.parentRefs = (d.parentRefs ?? []).map(fromParent)
       if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
       form.hostnames = [...(d.hostnames ?? [])]
-      formEl.value?.setRules?.(d.rules ?? [])
+      rules = d.rules ?? []
     } else if (kind.value === 'grpcroute') {
       const d = await grpcRouteApi.get(editing.value, ctx3.value)
       form.name = d.name
       form.parentRefs = (d.parentRefs ?? []).map(fromParent)
       if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
       form.hostnames = [...(d.hostnames ?? [])]
-      formEl.value?.setRules?.(d.rules ?? [])
+      rules = d.rules ?? []
     } else if (kind.value === 'tcproute') {
       const d = await tcpRouteApi.get(editing.value, ctx3.value)
       form.name = d.name
       form.parentRefs = (d.parentRefs ?? []).map(fromParent)
       if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
       form.hostnames = []
-      formEl.value?.setRules?.(d.rules ?? [])
+      rules = d.rules ?? []
     } else if (kind.value === 'tlsroute') {
       const d = await tlsRouteApi.get(editing.value, ctx3.value)
       form.name = d.name
       form.parentRefs = (d.parentRefs ?? []).map(fromParent)
       if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
       form.hostnames = [...(d.hostnames ?? [])]
-      formEl.value?.setRules?.(d.rules ?? [])
+      rules = d.rules ?? []
     } else {
       const d = await udpRouteApi.get(editing.value, ctx3.value)
       form.name = d.name
       form.parentRefs = (d.parentRefs ?? []).map(fromParent)
       if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
       form.hostnames = []
-      formEl.value?.setRules?.(d.rules ?? [])
+      rules = d.rules ?? []
     }
     detailState.value = 'loaded'
+    // ⚠️ 规则表单在 `<el-form v-if="formVisible">` 里，而 formVisible 依赖 detailState==='loaded'：
+    // 这一帧之前子组件还没挂上，`formEl` 是 null —— 直接调 setRules 会被静默跳过（规则回填整条丢失）。
+    // 必须等表单渲染出来再回填。
+    await nextTick()
+    formEl.value?.setRules?.(rules)
   } catch {
     detailState.value = 'error'
   }
