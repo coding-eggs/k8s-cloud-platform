@@ -215,7 +215,7 @@ async function handleLogout(): Promise<void> {
           <template #title>Service</template>
         </el-menu-item>
 
-        <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list)" class="menu-group">配置管理</div>
+        <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list) || can(pageCodes.registry)" class="menu-group">配置管理</div>
         <el-menu-item v-if="can(pageCodes.configmap.list)" index="/resources/configmaps">
           <el-icon><Document /></el-icon>
           <template #title>ConfigMap</template>
@@ -223,6 +223,10 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.secret.list)" index="/resources/secrets">
           <el-icon><Key /></el-icon>
           <template #title>Secret</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.registry)" index="/registries">
+          <el-icon><Collection /></el-icon>
+          <template #title>镜像仓库</template>
         </el-menu-item>
 
         <div v-if="can(pageCodes.pvc.list) || can(pageCodes.persistentVolume.list) || can(pageCodes.storageClass.list)" class="menu-group">存储</div>
