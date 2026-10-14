@@ -1584,12 +1584,12 @@ export interface AuditQuery {
 export interface CredentialView {
   id: string
   name: string
-  /** GIT / REGISTRY */
-  type: 'GIT' | 'HARBOR'
+  /** GIT / HARBOR / DOCKERHUB */
+  type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   /** host 基址 */
   endpoint: string
-  /** BASIC */
-  authType: string
+  /** BASIC = 用户名+密码/令牌；NONE = 匿名（无凭据，出站不带 Authorization 头） */
+  authType: 'BASIC' | 'NONE'
   hasSecret: boolean
   /** 明文认证字段 JSON 的 SHA-256 前 16 位 */
   fingerprint?: string | null
@@ -1606,9 +1606,9 @@ export interface CredentialView {
 /** 新建凭据。username / secret 必填。 */
 export interface CredentialCreateBody {
   name: string
-  type: 'GIT' | 'HARBOR'
+  type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   endpoint: string
-  authType: string
+  authType: 'BASIC' | 'NONE'
   username: string
   secret: string
   description?: string | null
@@ -1619,9 +1619,9 @@ export interface CredentialCreateBody {
 export interface CredentialUpdateBody {
   id: string
   name: string
-  type: 'GIT' | 'HARBOR'
+  type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   endpoint: string
-  authType: string
+  authType: 'BASIC' | 'NONE'
   username?: string | null
   secret?: string | null
   description?: string | null
@@ -1664,6 +1664,24 @@ export interface RegistryNode {
 export interface RegistryBrowseResult {
   breadcrumb: RegistryCrumb[]
   children: RegistryNode[]
+}
+
+/**
+ * 一条镜像候选（S3.1 增补）。`value` = 要填进输入框的**完整串**，前端整段替换、不做拼接；
+ * `connectionName` = 它来自哪条连接，**只用于展示**。
+ *
+ * <p>一次输入可能同时问多条连接（无 host 时），所以必须能分辨来源 ——
+ * 而「是哪个连接」是唯一无法从候选串里推出来的信息。
+ * ⚠️ 它**不是唯一键**：两条连接返回同一个 value 是可能的，`v-for` 的 key 要用
+ * `value + '|' + connectionName`。
+ */
+export interface RegistrySuggestItem {
+  value: string
+  connectionName: string
+}
+
+export interface RegistrySuggestResponse {
+  items: RegistrySuggestItem[]
 }
 
 

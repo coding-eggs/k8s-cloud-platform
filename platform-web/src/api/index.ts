@@ -56,6 +56,7 @@ import type {
   RbacTemplate,
   RegistryBrowseResult,
   RegistryConnectionView,
+  RegistrySuggestResponse,
   ResourceContext,
   SecretRefOption,
   TenantMemberView,
@@ -649,5 +650,5 @@ export const registryApi = {
    * 正好把 spec §5.3 要的「补全失败静默降级」打穿。
    */
   suggest: (imagePrefix: string) =>
-    http.post<never, { items: string[] }>('/registry/suggest', { imagePrefix }, { silent403: true }),
+    http.post<never, RegistrySuggestResponse>('/registry/suggest', { imagePrefix }, { silent403: true }),
 }
