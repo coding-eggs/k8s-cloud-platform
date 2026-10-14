@@ -3,6 +3,7 @@ package com.coding.platformapi.registry;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.platformapi.registry.BrowseFormat.TagInfo;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -349,5 +350,45 @@ class HarborDialectTest {
         assertThat(HarborDialect.searchTermOf("other.example.com/ng", "harbor.example.com")).isNull();
         assertThat(HarborDialect.searchTermOf("harbor.example.com.evil.com/ng", "harbor.example.com"))
                 .isNull();
+    }
+
+    // ---- 无 host → 全局搜索（聚合之后 Harbor 也要参与无 host 的输入） ----
+
+    @Test
+    void globalSearchTermTakesTheLastSegment() {
+        // `myteam/app` 里的 `myteam` 是 Docker Hub 的命名空间不是 host（Docker 的规则）
+        assertThat(HarborDialect.globalSearchTermOf("myteam/app")).isEqualTo("app");
+        assertThat(HarborDialect.globalSearchTermOf("ng")).isEqualTo("ng");
+        assertThat(HarborDialect.globalSearchTermOf("myteam/app:1")).isEqualTo("app");
+        assertThat(HarborDialect.globalSearchTermOf("ng:1")).isEqualTo("ng");
+        assertThat(HarborDialect.globalSearchTermOf("")).isEmpty();
+    }
+
+    @Test
+    void noHostInputFallsBackToAGlobalKeywordSearch() {
+        server.expect(requestTo("https://harbor.example.com/api/v2.0/search?q=ng"))
+                .andRespond(withSuccess("""
+                        {"repository":[{"repository_name":"proj/nginx"},
+                                       {"repository_name":"base/nginx-web"}]}""",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(dialect.suggest(CRED, "ng"))
+                .containsExactly("harbor.example.com/proj/nginx", "harbor.example.com/base/nginx-web");
+    }
+
+    @Test
+    void globalSearchCandidatesAlwaysCarryTheHost() {
+        // Harbor 的镜像引用**必须带 host**，不带就没法拉 —— 所以候选串一律拼 host，与 Docker Hub 档相反
+        server.expect(requestTo("https://harbor.example.com/api/v2.0/search?q=ng"))
+                .andRespond(withSuccess("{\"repository\":[{\"repository_name\":\"proj/nginx\"}]}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(dialect.suggest(CRED, "ng")).containsExactly("harbor.example.com/proj/nginx");
+    }
+
+    @Test
+    void hostOnlyInputStillMakesNoSearchRequest() {
+        // 没有 server.expect：真发了请求这里就会报错
+        assertThat(dialect.suggest(CRED, "harbor.example.com/")).isEmpty();
     }
 }

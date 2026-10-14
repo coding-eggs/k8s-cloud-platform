@@ -62,6 +62,25 @@ public class HarborDialect implements RegistryDialect {
     public List<String> suggest(CredentialRef cred, String imagePrefix) {
         // 补全**静默降级**：任何失败都退回空候选，绝不弹错、绝不阻塞输入（spec §5.3）
         try {
+            String p = imagePrefix == null ? "" : imagePrefix.trim();
+
+            // ⚠️ 输入**不以本连接的 host 开头** = 用户没打 host（隐式 Docker Hub 写法）。
+            // 聚合之后这里只可能是「没打 host」：打了别家 host 时 RegistryService 根本不会轮到本连接
+            // （带 host 只问匹配上的那一条，见 spec §2.1）。所以这里走全局关键词搜索，
+            // 让用户在 Harbor 里也能补出候选 —— 这正是聚合要买的东西。
+            if (!p.toLowerCase(Locale.ROOT)
+                    .startsWith(RegistryTargetResolver.normalizeEndpoint(cred.endpoint()))) {
+                String term = globalSearchTermOf(p);
+                if (term.isEmpty()) {
+                    return List.of();
+                }
+                // 候选串**必须带 host**（Harbor 的镜像引用不带 host 没法拉），与 Docker Hub 档相反
+                return parseSearchHits(http.get(cred, searchUrl(cred, term))).stream()
+                        .filter(h -> h.contains("/"))
+                        .map(h -> host(cred) + "/" + h)
+                        .toList();
+            }
+
             String tagPrefix = tagPrefixOf(imagePrefix);
             List<String> segs = segmentsOf(imagePrefix, cred.endpoint());
 
@@ -256,6 +275,26 @@ public class HarborDialect implements RegistryDialect {
     public static String searchTermOf(String imagePrefix, String endpoint) {
         List<String> segs = segmentsOf(imagePrefix, endpoint);
         return segs.size() == 1 ? segs.get(0) : null;
+    }
+
+    /**
+     * 全局搜索的关键词：去掉 tag、取**最后一段**。
+     * {@code ng} → {@code ng}；{@code myteam/app} → {@code app}；{@code myteam/app:1} → {@code app}。
+     *
+     * <p>不取第一段：那一段在「有 host」时是 host、在「无 host」时是 Docker Hub 的命名空间，
+     * 语义不稳定；最后一段永远是仓库名。
+     */
+    public static String globalSearchTermOf(String imagePrefix) {
+        String p = imagePrefix == null ? "" : imagePrefix.trim();
+        if (p.isEmpty()) {
+            return "";
+        }
+        int colon = p.lastIndexOf(':');
+        if (colon >= 0 && p.indexOf('/', colon) < 0) {
+            p = p.substring(0, colon);
+        }
+        int slash = p.lastIndexOf('/');
+        return slash < 0 ? p : p.substring(slash + 1);
     }
 
     // ==================== URL 构造（纯） ====================
