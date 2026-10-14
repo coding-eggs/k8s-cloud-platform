@@ -18,8 +18,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.Duration;
 import java.util.List;
 
 /**
@@ -70,7 +72,15 @@ public class RegistryService {
         if (cred == null) {
             return new RegistrySuggestResponse(List.of());
         }
-        return new RegistrySuggestResponse(dialects.of(cred.type()).suggest(cred, imagePrefix.trim()));
+        // ⚠️ 只包住**方言调用**，不包住匹配 —— 匹配是纯内存、每次都要按**最新**连接列表算；
+        // 把它也塞进缓存会让「刚停用的连接还能补出候选」（spec §5.4）。
+        // ⚠️ key 传的是**逻辑键**：RedisJsonCache 自己会加 `platform:cache:` 前缀，
+        // 这里再带一次就会变成双前缀 —— 缓存永不命中，而且没人看得出来。
+        return new RegistrySuggestResponse(cache.get(
+                "registry:suggest:" + cred.id() + ":" + imagePrefix.trim(),
+                Duration.ofMinutes(2),
+                new TypeReference<>() { },
+                () -> dialects.of(cred.type()).suggest(cred, imagePrefix.trim())));
     }
 
     /** 浏览。**不吞错** —— 用户在页面上主动点了一层，失败要说（spec §5.3）。 */

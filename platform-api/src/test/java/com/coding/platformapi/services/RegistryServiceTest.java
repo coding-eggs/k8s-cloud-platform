@@ -14,9 +14,11 @@ import com.coding.platformapi.registry.RegistryDialectRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -24,11 +26,30 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link RegistryService}：窄投影、只挑启用的连接、**匹配不到时不调方言**。
+ * {@link RegistryService}：窄投影、只挑启用的连接、**匹配不到时不调方言**、suggest 走缓存。
  */
 class RegistryServiceTest {
 
     private static final String KEY = "test-only-master-key-0123456789abcdef";
+
+    /**
+     * 直通的缓存桩：不真的缓存，但**记录 RedisJsonCache 收到的逻辑键**，并保证 loader 被调。
+     *
+     * <p>记的是**逻辑键**（不含前缀）—— 前缀由 {@link RedisJsonCache#get} 自己加，
+     * 所以调用方带了前缀就会被记成「带了前缀的逻辑键」，那条断言正是用来钉这个的。
+     */
+    static class PassthroughCache extends RedisJsonCache {
+        final List<String> keys = new ArrayList<>();
+        PassthroughCache() { super(null, null); }
+        @Override public <T> T get(String key, Duration ttl,
+                                   tools.jackson.core.type.TypeReference<T> type,
+                                   Supplier<T> loader) {
+            keys.add(key);
+            return loader.get();
+        }
+    }
+
+    PassthroughCache cache = new PassthroughCache();
 
     PlatformCredentialMapper mapper = mock(PlatformCredentialMapper.class);
     CredentialCipher cipher = new CredentialCipher(KEY);
@@ -49,7 +70,7 @@ class RegistryServiceTest {
     };
 
     RegistryService svc = new RegistryService(mapper, cipher,
-            new RegistryDialectRegistry(List.of(spyDialect)), mock(RedisJsonCache.class));
+            new RegistryDialectRegistry(List.of(spyDialect)), cache);
 
     private PlatformCredential row(String id, String name, String type, String endpoint, int enabled) {
         PlatformCredential c = new PlatformCredential();
@@ -176,6 +197,33 @@ class RegistryServiceTest {
 
         assertThatThrownBy(() -> svc.browse(req)).isInstanceOf(CloudPlatformException.class);
         assertThat(calls).isEmpty();
+    }
+
+    // ---- 缓存（只包 suggest） ----
+
+    @Test
+    void suggestGoesThroughTheCacheKeyedByConnectionAndPrefix() {
+        when(mapper.selectAll()).thenReturn(List.of(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
+
+        svc.suggest("harbor.example.com/pro");
+
+        assertThat(cache.keys).hasSize(1);
+        // ⚠️ 断言的是 RedisJsonCache **收到的逻辑键**（它自己会加 `platform:cache:` 前缀）。
+        // 调用方**不能**自带前缀 —— 带了实际键会变成 platform:cache:platform:cache:…（双前缀），
+        // 缓存永不命中且没人看得出来。所以这里两件事一起钉：键的构成 + 不含前缀。
+        assertThat(cache.keys.get(0)).isEqualTo("registry:suggest:c1:harbor.example.com/pro");
+        assertThat(cache.keys.get(0)).doesNotContain("platform:cache:");
+    }
+
+    @Test
+    void browseDoesNotUseTheCache() {
+        when(mapper.selectById("c1")).thenReturn(row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1));
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("c1");
+        svc.browse(req);
+
+        assertThat(cache.keys).isEmpty();
     }
 
     private static List<String> connectionViewFields() {
