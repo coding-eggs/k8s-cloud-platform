@@ -23,9 +23,9 @@ export interface ParentCandidate {
   waypointFor: string | null
   /** Gateway：监听器名（去重保序）；Service 恒 [] */
   listeners: string[]
-  /** Service：**有名字的**端口名（去重保序）；Gateway 恒 [] */
-  portNames: string[]
-  /** Service：端口号（用于区分"有端口但都没命名"）；Gateway 恒 [] */
+  /** Service：**有名字的**端口（label 形如 `http（80/TCP）`，与 ServiceMonitorEditorView 同格式）；Gateway 恒 [] */
+  namedPorts: { name: string; label: string }[]
+  /** Service：端口号（用于区分"有端口但都没命名"与"根本没有端口"）；Gateway 恒 [] */
   ports: number[]
 }
 
@@ -48,6 +48,18 @@ const TTL_MILLIS = 30_000
 const KIND_GATEWAY = ''
 const KIND_SERVICE = 'Service'
 
+/**
+ * 父资源 kind 的归一：**空串与显式 `'Gateway'` 等价**（后者就是 CRD 的默认值）。
+ * <p>为什么要归一：一条"合法但显式写了 `kind: Gateway`"的父引用（用户可能在 YAML tab 或 kubectl 里写过）
+ * 若按原值进表单，就会被本模块当作"未建模 kind"——候选不列、行名变「段名」、还挂一条"本页不改它"的
+ * 只读提示；用户为"修好它"去类型下拉里选回默认值时，那段清空逻辑会连带清掉名称，
+ * 保存时该行被 `filter(p => p.name.trim())` 丢掉 → **父引用静默消失**。写法上归一成 `''` 后，写盘仍是
+ * CRD 默认 Gateway，语义完全不变（SSA 会移除显式 kind，apiserver 补默认值）。
+ */
+export function normalizeParentKind(kind: string | null | undefined): string {
+  return !kind || kind === 'Gateway' ? KIND_GATEWAY : kind
+}
+
 const buckets = reactive(new Map<string, CandidateBucket>())
 /** 每个 key 上次**发起**拉取的时刻（拉取失败会清掉，让下一次 ensure 立刻重试） */
 const fetchedAt = new Map<string, number>()
@@ -63,19 +75,24 @@ function gatewayCandidate(g: K8sGateway): ParentCandidate {
     name: g.name,
     waypointFor: g.labels?.['istio.io/waypoint-for'] ?? null,
     listeners: [...new Set(names)],
-    portNames: [],
+    namedPorts: [],
     ports: [],
   }
 }
 
 function serviceCandidate(s: K8sService): ParentCandidate {
   const ports = s.ports ?? []
-  const names = ports.map((p) => p.name?.trim() ?? '').filter(Boolean)
+  // 只有**有名字**的端口能作为 sectionName（spec 里 Service 父引用的 sectionName = 端口名）
+  const named = ports.filter((p) => (p.name ?? '').trim())
   return {
     name: s.name,
     waypointFor: null,
     listeners: [],
-    portNames: [...new Set(names)],
+    namedPorts: named.map((p) => ({
+      name: p.name!.trim(),
+      // 与 ServiceMonitorEditorView 的端口下拉同一展示格式
+      label: `${p.name!.trim()}（${p.port ?? '?'}/${p.protocol ?? 'TCP'}）`,
+    })),
     ports: [...new Set(ports.map((p) => p.port).filter((n): n is number => typeof n === 'number'))],
   }
 }

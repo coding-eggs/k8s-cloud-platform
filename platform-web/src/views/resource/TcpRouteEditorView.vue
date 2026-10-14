@@ -6,7 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
 import { tcpRouteApi } from '@/api'
-import { useParentCandidates } from '@/composables/useParentCandidates'
+import { normalizeParentKind, useParentCandidates } from '@/composables/useParentCandidates'
 import { useResourceContext } from '@/stores/context'
 import type { K8sL4RouteRule, K8sRouteBackendRef, K8sRouteParentRef, K8sTcpRoute } from '@/types'
 import type { CandidateBucket } from '@/composables/useParentCandidates'
@@ -90,13 +90,16 @@ function namePlaceholder(p: ParentRow): string {
     : '选择或输入该命名空间的 Gateway 名'
 }
 
-/** 段名候选取自**所选中的那个**父资源（不是整个命名空间） */
-function sectionOptions(p: ParentRow): string[] {
+/** 段名候选取自**所选中的那个**父资源（不是整个命名空间）：
+ *  Gateway=监听器名；Service=端口名（label 带端口/协议，与 ServiceMonitorEditorView 同格式） */
+function sectionOptions(p: ParentRow): { value: string; label: string }[] {
   const name = p.name.trim()
   if (!name) return []
   const c = bucketOf(p).list.find((x) => x.name === name)
   if (!c) return []
-  return p.parentKind === 'Service' ? c.portNames : c.listeners
+  return p.parentKind === 'Service'
+    ? c.namedPorts.map((np) => ({ value: np.name, label: np.label }))
+    : c.listeners.map((n) => ({ value: n, label: n }))
 }
 
 function sectionNoDataText(p: ParentRow): string {
@@ -106,8 +109,8 @@ function sectionNoDataText(p: ParentRow): string {
   if (!name) return '请先选择父资源'
   const c = bucketOf(p).list.find((x) => x.name === name)
   if (!c) return '该名称不在候选里（手输的无法列出它的段），可自行输入'
-  if (p.parentKind === 'Service' && !c.portNames.length) return '该服务的端口没有命名，留空即作用于全部端口'
-  return p.parentKind === 'Service' ? '该服务没有可选的命名端口' : '该 Gateway 没有监听器'
+  if (p.parentKind !== 'Service') return '该 Gateway 没有监听器'
+  return c.ports.length ? '该服务的端口没有命名，留空即作用于全部端口' : '该服务没有端口'
 }
 
 /** 名称行的行名：未建模 kind 显示它自己的值 —— 别把 ServiceImport 之类的父引用标成 Gateway */
@@ -162,7 +165,7 @@ const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
 function fromParent(p: K8sRouteParentRef): ParentRow {
   return {
-    parentKind: p.kind ?? '',
+    parentKind: normalizeParentKind(p.kind),
     name: p.name ?? '',
     namespace: p.namespace ?? '',
     sectionName: p.sectionName ?? '',
@@ -401,7 +404,7 @@ onMounted(() => { void load() })
               "
               style="max-width: 300px"
             >
-              <el-option v-for="s in sectionOptions(p)" :key="s" :label="s" :value="s" />
+              <el-option v-for="s in sectionOptions(p)" :key="s.value" :label="s.label" :value="s.value" />
             </el-select>
             <FieldHelp
               v-if="p.parentKind === 'Service'"
