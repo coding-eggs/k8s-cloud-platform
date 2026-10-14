@@ -97,4 +97,26 @@ class RegistryTargetResolverTest {
     void emptyCandidatesNeverMatches() {
         assertThat(RegistryTargetResolver.match("harbor.example.com/x", List.of())).isNull();
     }
+
+    @Test
+    void endpointIsNormalizedBeforeMatching() {
+        // ⚠️ 凭据表单的 endpoint 是**自由文本、无格式校验**，而 GIT 档的 placeholder 正是
+        // `https://gitlab.example.com` —— 切类型时极易残留。这些写法都合法，补全必须照样工作。
+        // （browse 走的是另一条路径、不受影响，所以这个坑的表现是「浏览正常、补全恒空且无声」。）
+        assertThat(RegistryTargetResolver.match("harbor.example.com/proj",
+                List.of(cred("x", "https://harbor.example.com"))).id()).isEqualTo("x");
+        assertThat(RegistryTargetResolver.match("harbor.example.com/proj",
+                List.of(cred("x", "https://harbor.example.com/"))).id()).isEqualTo("x");
+        assertThat(RegistryTargetResolver.match("harbor.example.com/proj",
+                List.of(cred("x", "HARBOR.example.com"))).id()).isEqualTo("x");
+        assertThat(RegistryTargetResolver.match("harbor.example.com:8443/proj",
+                List.of(cred("x", "http://HARBOR.example.com:8443/"))).id()).isEqualTo("x");
+    }
+
+    @Test
+    void normalizationDoesNotWidenTheHostBoundary() {
+        // 归一化只该去掉 scheme/尾斜杠/大小写，绝不能把 evil.com 放进来
+        assertThat(RegistryTargetResolver.match("harbor.example.com.evil.com/proj",
+                List.of(cred("x", "https://harbor.example.com/")))).isNull();
+    }
 }

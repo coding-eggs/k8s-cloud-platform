@@ -42,9 +42,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class RegistryService {
 
-    /** 镜像仓库类的连接类型。**与 {@code CredentialService.TYPES} 的交集由护栏测试保证。** */
-    private static final List<String> REGISTRY_TYPES = List.of("HARBOR");
-
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final PlatformCredentialMapper mapper;
@@ -57,8 +54,7 @@ public class RegistryService {
 
     /** 浏览页的连接下拉：**只四个字段**，只列启用的镜像仓库类连接。 */
     public List<RegistryConnectionView> connections() {
-        return mapper.selectAll().stream()
-                .filter(c -> isRegistry(c) && enabled(c))
+        return enabledRegistryRows().stream()
                 .map(c -> new RegistryConnectionView(c.getId(), c.getName(), c.getType(), c.getEndpoint()))
                 .toList();
     }
@@ -68,7 +64,21 @@ public class RegistryService {
         if (!StringUtils.hasText(imagePrefix)) {
             return new RegistrySuggestResponse(List.of());
         }
-        CredentialRef cred = RegistryTargetResolver.match(imagePrefix, enabledRegistryRefs());
+        List<PlatformCredential> rows = enabledRegistryRows();
+        // ⚠️ 先按 host 匹配 —— **这一步不需要明文**（spec 的硬边界 2：匹配不到就不发请求）。
+        // 顺带避掉一个放大效应：以前在**每次 suggest（每按键一次）**里解密**全部**凭据，
+        // 任何一条密文解不开（例如主密钥换过）就让**所有人**的补全全挂。
+        CredentialRef hit = RegistryTargetResolver.match(imagePrefix,
+                rows.stream().map(RegistryService::toPlainRef).toList());
+        if (hit == null) {
+            return new RegistrySuggestResponse(List.of());
+        }
+        // 只解密命中的那一条
+        CredentialRef cred = rows.stream()
+                .filter(r -> r.getId().equals(hit.id()))
+                .findFirst()
+                .map(this::toRef)
+                .orElse(null);
         if (cred == null) {
             return new RegistrySuggestResponse(List.of());
         }
@@ -95,15 +105,16 @@ public class RegistryService {
         return dialects.of(cred.type()).browse(cred, path);
     }
 
-    /**
-     * 可参与匹配的连接。**这里已经把凭据解出来了** —— 返回的 {@link CredentialRef} 含明文，
-     * 只在本进程内传给方言，绝不外泄。
-     */
-    private List<CredentialRef> enabledRegistryRefs() {
+    /** 启用中的镜像仓库类连接。**不解密** —— 明文只在真正要用时（{@link #toRef}）才解。 */
+    private List<PlatformCredential> enabledRegistryRows() {
         return mapper.selectAll().stream()
                 .filter(c -> isRegistry(c) && enabled(c))
-                .map(this::toRef)
                 .toList();
+    }
+
+    /** 只带匹配需要的字段（id / name / type / endpoint）的轻量 ref，**不含明文**。 */
+    private static CredentialRef toPlainRef(PlatformCredential c) {
+        return new CredentialRef(c.getId(), c.getName(), c.getType(), c.getEndpoint(), null, null);
     }
 
     private CredentialRef toRef(PlatformCredential c) {
@@ -112,8 +123,14 @@ public class RegistryService {
                 s.getUsername(), s.getSecret());
     }
 
-    private static boolean isRegistry(PlatformCredential c) {
-        return REGISTRY_TYPES.contains(c.getType());
+    /**
+     * 是不是一个镜像仓库类的连接。
+     *
+     * <p>⚠️ **问分派表，不自己维护一份 type 清单** —— 手写清单是第二个真相源，
+     * 加一档时忘了改它会「全测绿但新档静默失效」。见 {@link RegistryDialectRegistry#supports}。
+     */
+    private boolean isRegistry(PlatformCredential c) {
+        return dialects.supports(c.getType());
     }
 
     private static boolean enabled(PlatformCredential c) {

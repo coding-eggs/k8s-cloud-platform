@@ -2,6 +2,7 @@ package com.coding.platformapi.registry;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 把用户在输入框里打的整串，归到某一条已配的连接上。**纯函数、无 IO。**
@@ -57,30 +58,53 @@ public final class RegistryTargetResolver {
     /**
      * 挑出该归哪条连接。取 {@code endpoint} 的**最长前缀匹配**；匹配不到返回 {@code null}。
      *
+     * <p>比较前两边都**归一化**（见 {@link #normalizeEndpoint}）—— 凭据表单的 endpoint 是自由文本、
+     * 无格式校验，而 GIT 档的 placeholder 正是 {@code https://gitlab.example.com}，
+     * 切类型时极易残留 `https://` / 尾斜杠 / 大写。不归一化的话 browse 照常工作、**补全恒空且无声**
+     * （静默降级把它盖掉了），用户看不出任何线索。
+     *
      * @param candidates 已启用、且 type 属于镜像仓库的连接
      */
     public static CredentialRef match(String imagePrefix, List<CredentialRef> candidates) {
-        String host = hostOf(imagePrefix);
+        String host = hostOf(imagePrefix).toLowerCase(Locale.ROOT);
         if (host.isEmpty() || candidates == null || candidates.isEmpty()) {
             return null;
         }
-        String full = imagePrefix.trim();
         return candidates.stream()
-                .filter(c -> boundaryMatches(full, c.endpoint()))
-                .max(Comparator.comparingInt(c -> c.endpoint().length()))
+                .filter(c -> boundaryMatches(host, normalizeEndpoint(c.endpoint())))
+                .max(Comparator.comparingInt(c -> normalizeEndpoint(c.endpoint()).length()))
                 .orElse(null);
     }
 
-    /** {@code full} 以 {@code endpoint} 开头，且其后是 {@code /}、{@code :} 或串尾。 */
-    private static boolean boundaryMatches(String full, String endpoint) {
-        if (endpoint == null || endpoint.isEmpty() || !full.startsWith(endpoint)) {
+    /**
+     * 把 endpoint 归一成 {@code host[:port]}：去 scheme、去尾斜杠、转小写。
+     *
+     * <p>与 {@code HarborDialect.base()} 的拼 URL 逻辑**口径一致** —— 那边也主动处理了 scheme 与尾斜杠，
+     * 说明「带 scheme 的 endpoint」本来就是被当作合法输入接受、且确实能工作的（只是补全匹配不上）。
+     */
+    public static String normalizeEndpoint(String endpoint) {
+        if (endpoint == null) {
+            return "";
+        }
+        String e = endpoint.trim().replaceFirst("(?i)^https?://", "");
+        while (e.endsWith("/")) {
+            e = e.substring(0, e.length() - 1);
+        }
+        return e.toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * {@code host} 以 {@code endpoint} 开头，且**边界**是串尾或 {@code :}。
+     *
+     * <p>两边都已是 {@code host[:port]} 形态（无路径），所以边界只需认 {@code :} ——
+     * 「同 host 带端口/不带端口同时配上」由最长匹配挑更具体的那条。
+     * 这条同时挡住 {@code harbor.example.com.evil.com}（下一个字符是 {@code .}）。
+     */
+    private static boolean boundaryMatches(String host, String endpoint) {
+        if (endpoint.isEmpty() || !host.startsWith(endpoint)) {
             return false;
         }
-        if (full.length() == endpoint.length()) {
-            return true;
-        }
-        char next = full.charAt(endpoint.length());
-        return next == '/' || next == ':';
+        return host.length() == endpoint.length() || host.charAt(endpoint.length()) == ':';
     }
 
     /** Docker 的规则：含 {@code .} / {@code :}，或恰为 {@code localhost}。 */

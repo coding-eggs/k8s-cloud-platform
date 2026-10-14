@@ -113,6 +113,34 @@ class RegistryServiceTest {
         assertThat(svc.connections()).isEmpty();
     }
 
+    /**
+     * ⚠️ 护栏：**加一档 = 加枚举值 + 实现类 + UI 选项，不该还要改 RegistryService**。
+     *
+     * <p>本类曾经手写了一份 `REGISTRY_TYPES = List.of("HARBOR")` 作为第二个真相源 ——
+     * 加一档时忘了改它，**全测绿但新档静默失效**（连接不出现在下拉里、补全永不匹配、browse 判「不存在」）。
+     * 这条测试用「注册一个没人告诉过 RegistryService 的新方言」来钉住那条不变量。
+     */
+    @Test
+    void aNewlyImplementedDialectIsRecognizedWithoutTouchingThisService() {
+        RegistryDialect gitea = new RegistryDialect() {
+            @Override public String type() { return "GITEA"; }
+            @Override public List<String> suggest(CredentialRef c, String p) {
+                calls.add("suggest:" + p);
+                return List.of();
+            }
+            @Override public BrowseResult browse(CredentialRef c, List<String> p) {
+                return new BrowseResult(List.of(), List.of());
+            }
+        };
+        RegistryService svc2 = new RegistryService(mapper, cipher,
+                new RegistryDialectRegistry(List.of(spyDialect, gitea)), cache);
+        when(mapper.selectAll()).thenReturn(List.of(row("c9", "gitea-a", "GITEA", "gitea.example.com", 1)));
+
+        assertThat(svc2.connections()).extracting(RegistryConnectionView::id).containsExactly("c9");
+        assertThat(svc2.suggest("gitea.example.com/x").items()).isEmpty(); // 匹配得上，只是方言返回空
+        assertThat(calls).as("新方言必须被分派到（说明它被认成了镜像仓库类型）").containsExactly("suggest:gitea.example.com/x");
+    }
+
     // ---- 补全 ----
 
     @Test
@@ -147,6 +175,25 @@ class RegistryServiceTest {
         assertThat(svc.suggest("   ").items()).isEmpty();
         assertThat(svc.suggest(null).items()).isEmpty();
         assertThat(calls).isEmpty();
+    }
+
+    /**
+     * ⚠️ 一条解不开的密文（例如主密钥换过）**不该让所有人的补全全挂**。
+     *
+     * <p>本类曾经在每次 suggest（每按键一次）里解密**全部**启用的凭据 ——
+     * 任何一条坏密文都会让 `suggest` 整个抛错；配合前端把业务错弹成红条，就是每打一个字一条红条。
+     * 修法是**先按 host 匹配（不需要明文），只对命中的那条解密**。
+     */
+    @Test
+    void oneBrokenCiphertextDoesNotBreakCompletionForEveryoneElse() {
+        PlatformCredential broken = row("cb", "broken", "HARBOR", "broken.example.com", 1);
+        broken.setSecretEncrypted("v1:bm90LWEtcmVhbC1jaXBoZXJ0ZXh0");
+        when(mapper.selectAll()).thenReturn(List.of(
+                broken,
+                row("c1", "harbor-prod", "HARBOR", "harbor.example.com", 1)));
+
+        assertThat(svc.suggest("harbor.example.com/pro").items())
+                .containsExactly("harbor.example.com/proj/app");
     }
 
     // ---- 浏览 ----

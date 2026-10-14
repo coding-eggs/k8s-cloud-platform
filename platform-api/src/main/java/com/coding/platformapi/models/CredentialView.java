@@ -24,7 +24,7 @@ public class CredentialView {
 
     private String name;
 
-    /** GIT / REGISTRY */
+    /** GIT / HARBOR（本批只落已实现的方言值，见 CredentialService.TYPES） */
     private String type;
 
     @Schema(description = "host 基址")

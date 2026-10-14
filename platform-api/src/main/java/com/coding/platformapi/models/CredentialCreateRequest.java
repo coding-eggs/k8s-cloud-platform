@@ -9,7 +9,7 @@ public class CredentialCreateRequest {
 
     private String name;
 
-    /** GIT / REGISTRY */
+    /** GIT / HARBOR（本批只落已实现的方言值，见 CredentialService.TYPES） */
     private String type;
 
     private String endpoint;

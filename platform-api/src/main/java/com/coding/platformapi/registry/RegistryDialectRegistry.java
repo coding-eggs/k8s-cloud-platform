@@ -34,4 +34,15 @@ public class RegistryDialectRegistry {
         }
         return d;
     }
+
+    /**
+     * 这个 type 是不是一个已实现的镜像仓库方言。
+     *
+     * <p><b>本方法是「哪些 type 属于镜像仓库」的唯一真相源</b> —— 调用方**不要**再手写一份
+     * `List.of("HARBOR")` 之类的清单：那样加一档时忘了改它，会变成「全测绿但新档静默失效」
+     * （连接不出现在浏览页下拉里、补全永不匹配、browse 判「连接不存在」）。
+     */
+    public boolean supports(String type) {
+        return type != null && byType.containsKey(type);
+    }
 }

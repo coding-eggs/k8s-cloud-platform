@@ -53,7 +53,7 @@ public class CredentialController {
     }
 
     @Operation(summary = "测试连接",
-            description = "解密凭据并真打一次对端：GIT 探 info/refs（需传 probeUrl），REGISTRY 探 /v2/。"
+            description = "解密凭据并真打一次对端：GIT 探 info/refs（需传 probeUrl），registry 类探 /v2/。"
                     + "不改变业务状态，只写 last_verified_at / last_verify_error")
     @PostMapping("/test")
     @Auditable(action = AuditAction.CREDENTIAL_TEST, target = "#request.id")

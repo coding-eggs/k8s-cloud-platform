@@ -271,6 +271,26 @@
 > **其中一条最值得记**：`npx vue-tsc --noEmit -p tsconfig.json` **通过**，而 `npm run build`
 > 打出 `error TS2532` —— **两个检查不等价，构建期更严**；而计划里那条 build 断言
 > （`grep -E "built in|error"`）在两者同时打印时**仍会 echo BUILD_OK**。已在计划里注明「build 那步要人眼看」。
+>
+> ---
+>
+> **⚠️ 终审（独立评审者）抓到一个 Critical，已修**：**tag 补全恒不工作**。
+> `segmentsOf` 只按 `/` 切，`:tag` 原样留在最后一段 → 拼出的仓库名是 `app:1.2` →
+> 请求打到 `/repositories/app:1.2/artifacts` → 真实 Harbor 回 404 → 补全的静默降级把它吞掉 →
+> **在任何输入下都返回空候选，且无声**。也就是本批两件交付物之一（tag 补全）实际没工作。
+>
+> **它能一路绿灯的原因**：`HarborDialectTest` 的 21 条测试**全部**打在 static 纯函数上，
+> `suggest` / `browse` **零覆盖** —— 而 bug 恰恰在「拼出来的 URL 长什么样」这一步。
+> 计划 Review Focus 第 4 条声称「每条都有测试钉住」，这一条当时不成立。
+>
+> **同批修掉的另外 7 处**（都先写失败测试）：spec §9 要求的两条「姿态差异」测试缺失；
+> `RegistryService` 里手写的 `REGISTRY_TYPES` 是**第二个真相源**（加一档忘了改它会「全测绿但新档静默失效」，
+> 已删掉改问分派表）；`endpoint` 的四种合法写法（带 scheme / 尾斜杠 / 大写）会让补全静默死掉而 browse 正常；
+> 浏览页缺 spec 明确要求的 **digest 列**；前端「失败静默」被 axios 拦截器击穿（每按键一条红条，
+> 已加 `silent403`）；**每次按键解密全部凭据**（一条坏密文让所有人的补全全挂，已改成只解密命中的那条）；
+> 类型收敛后遗留的「仅支持 GIT / REGISTRY」错误文案（改成从 `TYPES` 动态取，不会再过时）。
+>
+> **修复后全量 656/656 绿**（platform-common 19 · k8s-core 210 · k8s-server 20 · platform-api 407）。
 
 #### S3.2 应用级交付（自研薄应用层）｜ 规模 L ｜ 前置：**D1**（**不需要** S0.2 —— kubeconfig 已在 `k8s_cluster` 表）
 > 已定：自研（分析文档 §6.4）。产品形态自研、渲染引擎内部用 Helm。

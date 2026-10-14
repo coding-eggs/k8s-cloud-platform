@@ -195,8 +195,10 @@ public class CredentialService {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID, "名称必填");
         }
         if (!TYPES.contains(type)) {
+            // 从 TYPES 动态取 —— 写死的话会像 `GIT / REGISTRY` 那样过时，
+            // 而那句文案恰好会把管理员引去用**已经被拒**的那个类型。
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                    "凭据类型仅支持 GIT / REGISTRY，收到：" + type);
+                    "凭据类型仅支持 " + String.join(" / ", TYPES) + "，收到：" + type);
         }
         if (!StringUtils.hasText(endpoint)) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID, "地址必填");

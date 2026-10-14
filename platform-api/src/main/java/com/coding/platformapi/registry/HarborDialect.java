@@ -54,7 +54,17 @@ public class HarborDialect implements RegistryDialect {
                     return List.of();
                 }
                 String project = segs.get(0);
-                String repo = String.join("/", segs.subList(1, segs.size()));
+                // ⚠️ 最后一段上还挂着 `:tag`（segmentsOf 只按 `/` 切），拼 repo 前必须剥掉 ——
+                // 否则请求会打到 `/repositories/app:1/artifacts`，真实 Harbor 回 404，
+                // 而补全是静默降级 → tag 补全**恒返回空且无声**。
+                List<String> rest = new ArrayList<>(segs.subList(1, segs.size()));
+                int last = rest.size() - 1;
+                String tail = rest.get(last);
+                int colon = tail.indexOf(':');
+                if (colon >= 0) {
+                    rest.set(last, tail.substring(0, colon));
+                }
+                String repo = String.join("/", rest);
                 List<TagInfo> tags = parseArtifacts(http.get(cred, artifactsUrl(cred, project, repo)));
                 String prefix = tagPrefix.toLowerCase();
                 return tagCandidates(cred, project, repo,
@@ -151,7 +161,10 @@ public class HarborDialect implements RegistryDialect {
             for (HarborArtifact a : arr) {
                 String tag = (a.tags != null && a.tags.length > 0) ? a.tags[0].name : a.name;
                 if (tag != null) {
-                    out.add(new TagInfo(tag, a.push_time, a.size));
+                    // 真实 Harbor 的字段是 `digest`；`name` 在带 tag 的 artifact 上通常也是同一个值。
+                    // 两者都没有时给 null（UI 显示「—」）—— 不造一个假 digest。
+                    out.add(new TagInfo(tag, a.push_time, a.size,
+                            a.digest != null ? a.digest : a.name));
                 }
             }
             return out;
@@ -180,6 +193,8 @@ public class HarborDialect implements RegistryDialect {
      */
     @lombok.Data static class HarborArtifact {
         private String name;
+        /** artifact 的摘要（Harbor 的真实字段名）；`name` 在带 tag 时通常同值 */
+        private String digest;
         private Tag[] tags;
         private String push_time;
         private long size;
@@ -293,7 +308,8 @@ public class HarborDialect implements RegistryDialect {
                 false,
                 host(c) + "/" + project + "/" + repo + ":" + t.tag(),
                 List.of(new BrowseResult.Detail("推送时间", t.pushedAt() == null ? "—" : t.pushedAt()),
-                        new BrowseResult.Detail("大小", formatSize(t.size()))))).toList();
+                        new BrowseResult.Detail("大小", formatSize(t.size())),
+                        new BrowseResult.Detail("digest", t.digest() == null ? "—" : t.digest())))).toList();
         return new BrowseResult(List.of(
                 new BrowseResult.Crumb(project, List.of(project)),
                 new BrowseResult.Crumb(repo, List.of(project, repo))), nodes);
@@ -319,6 +335,6 @@ public class HarborDialect implements RegistryDialect {
     }
 
     /** 从 Harbor artifact 里挑出来的一行（响应映射的中间形态，便于单测） */
-    public record TagInfo(String tag, String pushedAt, long size) {
+    public record TagInfo(String tag, String pushedAt, long size, String digest) {
     }
 }

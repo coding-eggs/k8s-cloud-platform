@@ -641,7 +641,13 @@ export const registryApi = {
   /** path 为空 = 第一层 */
   browse: (credentialId: string, path: string[]) =>
     http.post<never, RegistryBrowseResult>('/registry/browse', { credentialId, path }),
-  /** 入参是输入框里的整串；返回**要填进去的完整字符串**，前端整段替换 */
+  /**
+   * 入参是输入框里的整串；返回**要填进去的完整字符串**，前端整段替换。
+   *
+   * ⚠️ `silent403` 不能省：这是**每按键一次**的高频调用，而 axios 拦截器默认会把任何业务错弹成红条
+   * （`http.ts` 的三条错误路径都受这个 flag 管）。不置位的话，后端一有问题就是「每打一个字一条红条」，
+   * 正好把 spec §5.3 要的「补全失败静默降级」打穿。
+   */
   suggest: (imagePrefix: string) =>
-    http.post<never, { items: string[] }>('/registry/suggest', { imagePrefix }),
+    http.post<never, { items: string[] }>('/registry/suggest', { imagePrefix }, { silent403: true }),
 }

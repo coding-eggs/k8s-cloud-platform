@@ -1,14 +1,26 @@
 package com.coding.platformapi.registry;
 
+import com.coding.common.exception.CloudPlatformException;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
+import static org.springframework.http.MediaType.APPLICATION_JSON;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
  * {@link HarborDialect} 的**纯规则**：输入切分、URL 构造、响应映射、面包屑。
- * 不含 IO 的每一条都是确定性断言；出站那一半在 Task 7 的客户端。
+ *
+ * <p>后半段是**行为测试**（打 {@code MockRestServiceServer}）—— 它们才走得到
+ * {@code suggest} / {@code browse} 真正发请求那条路径。**纯函数测得再密也覆盖不到它**：
+ * 本类曾经 21 条全是纯函数，而 tag 补全把 tag 当成了仓库名、恒返回空，一条都没红。
  */
 class HarborDialectTest {
 
@@ -128,15 +140,18 @@ class HarborDialectTest {
 
     @Test
     void thirdLevelListsTagsWithCopyTextAndDetails() {
-        HarborDialect.TagInfo t = new HarborDialect.TagInfo("1.2.3", "2026-10-13T21:04:00Z", 86_400_000L);
+        HarborDialect.TagInfo t = new HarborDialect.TagInfo(
+                "1.2.3", "2026-10-13T21:04:00Z", 86_400_000L, "sha256:abc");
         BrowseResult r = HarborDialect.mapArtifacts(CRED, List.of("myproj", "team/app"), List.of(t));
 
         BrowseResult.Node leaf = r.children().get(0);
         assertThat(leaf.name()).isEqualTo("1.2.3");
         assertThat(leaf.hasChildren()).isFalse();
         assertThat(leaf.copyText()).isEqualTo("harbor.example.com/myproj/team/app:1.2.3");
+        // spec §5.2 / §12.1 要的是三列：推送时间 / 大小 / digest
         assertThat(leaf.details()).extracting(BrowseResult.Detail::label)
-                .containsExactly("推送时间", "大小");
+                .containsExactly("推送时间", "大小", "digest");
+        assertThat(leaf.details().get(2).value()).isEqualTo("sha256:abc");
         // 面包屑两节：project → repo，且 path 是**累积**的（点击能跳回该层）
         assertThat(r.breadcrumb()).hasSize(2);
         assertThat(r.breadcrumb().get(1).path()).containsExactly("myproj", "team/app");
@@ -185,10 +200,21 @@ class HarborDialectTest {
 
     @Test
     void parsesArtifactsIntoTags() {
-        String json = "[{\"name\":\"sha256:abc\",\"tags\":[{\"name\":\"1.2.3\"}],"
+        String json = "[{\"name\":\"sha256:abc\",\"digest\":\"sha256:abc\",\"tags\":[{\"name\":\"1.2.3\"}],"
                 + "\"push_time\":\"2026-10-13T21:04:00Z\",\"size\":86400000}]";
-        assertThat(HarborDialect.parseArtifacts(json))
-                .containsExactly(new HarborDialect.TagInfo("1.2.3", "2026-10-13T21:04:00Z", 86_400_000L));
+        assertThat(HarborDialect.parseArtifacts(json)).containsExactly(
+                new HarborDialect.TagInfo("1.2.3", "2026-10-13T21:04:00Z", 86_400_000L, "sha256:abc"));
+    }
+
+    @Test
+    void artifactDigestFallsBackToNameWhenAbsent() {
+        // 真实 Harbor 的 artifact 对象字段是 `digest`；`name` 也常是同一个值。
+        // 两者都没有时不该造出一个假 digest —— 用 null，UI 那边显示「—」。
+        String json = "[{\"name\":\"sha256:xyz\",\"tags\":[{\"name\":\"1.0\"}],\"size\":1}]";
+        assertThat(HarborDialect.parseArtifacts(json).get(0).digest()).isEqualTo("sha256:xyz");
+
+        String bare = "[{\"tags\":[{\"name\":\"1.0\"}],\"size\":1}]";
+        assertThat(HarborDialect.parseArtifacts(bare).get(0).digest()).isNull();
     }
 
     @Test
@@ -198,5 +224,97 @@ class HarborDialectTest {
         assertThat(HarborDialect.parseRepositoryNames("null", "myproj")).isEmpty();
         assertThat(HarborDialect.parseArtifacts("{}")).isEmpty();
         assertThat(HarborDialect.parseSearchHits("not json")).isEmpty();
+    }
+
+    // ==================== 行为测试：走真正发请求那条路径 ====================
+    //
+    // ⚠️ 这一节是补的。本类此前 21 条**全是纯函数测试**，而 suggest / browse 的实现在纯函数之外 ——
+    // 于是「tag 补全把 tag 当成仓库名、恒返回空」这个 bug 一条都没红（评审实测发现）。
+    // 纯函数测得再密也覆盖不到「拼出来的 URL 长什么样、失败往哪走」。
+
+    private final RestClient.Builder builder = RestClient.builder();
+    private final MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    private final HarborDialect dialect = new HarborDialect(new RegistryHttpClient(builder.build()));
+
+    @Test
+    void suggestForATagAsksForTheRepositoryNotTheTag() {
+        // ⚠️ 关键断言在 URL 上：仓库名必须是 `app`，不能是 `app:1`。
+        // 拼成 `app:1` 的话真实 Harbor 回 404 → 补全静默恒空。
+        server.expect(requestTo(
+                        "https://harbor.example.com/api/v2.0/projects/proj/repositories/app/artifacts?page_size=100"))
+                .andRespond(withSuccess(
+                        "[{\"name\":\"sha256:abc\",\"tags\":[{\"name\":\"1.2\"}]}]", APPLICATION_JSON));
+
+        assertThat(dialect.suggest(CRED, "harbor.example.com/proj/app:1"))
+                .containsExactly("harbor.example.com/proj/app:1.2");
+        server.verify();
+    }
+
+    @Test
+    void suggestForANestedRepositoryKeepsTheWholePath() {
+        // 仓库名里的 `/` 在路径上是 URL 编码的（Harbor 的惯例，同 artifactsUrlUsesProjectAndRepositoryPath）
+        server.expect(requestTo(
+                        "https://harbor.example.com/api/v2.0/projects/proj/repositories/team%2Fapp/artifacts?page_size=100"))
+                .andRespond(withSuccess(
+                        "[{\"name\":\"sha256:abc\",\"tags\":[{\"name\":\"2.0\"}]}]", APPLICATION_JSON));
+
+        assertThat(dialect.suggest(CRED, "harbor.example.com/proj/team/app:2"))
+                .containsExactly("harbor.example.com/proj/team/app:2.0");
+        server.verify();
+    }
+
+    @Test
+    void suggestForARepositorySearchesByTheSingleSegment() {
+        server.expect(requestTo("https://harbor.example.com/api/v2.0/search?q=pro"))
+                .andRespond(withSuccess(
+                        "{\"project\":[],\"repository\":[{\"repository_name\":\"proj/team/app\"}]}", APPLICATION_JSON));
+
+        assertThat(dialect.suggest(CRED, "harbor.example.com/pro"))
+                .containsExactly("harbor.example.com/proj/team/app");
+        server.verify();
+    }
+
+    @Test
+    void browseFirstLevelListsProjects() {
+        server.expect(requestTo("https://harbor.example.com/api/v2.0/projects?page_size=100"))
+                .andRespond(withSuccess("[{\"name\":\"myproj\"}]", APPLICATION_JSON));
+
+        assertThat(dialect.browse(CRED, List.of()).children())
+                .extracting(BrowseResult.Node::name).containsExactly("myproj");
+        server.verify();
+    }
+
+    @Test
+    void browseThirdLevelListsTagsWithCopyText() {
+        server.expect(requestTo(
+                        "https://harbor.example.com/api/v2.0/projects/proj/repositories/app/artifacts?page_size=100"))
+                .andRespond(withSuccess(
+                        "[{\"name\":\"sha256:abc\",\"digest\":\"sha256:abc\","
+                      + "\"tags\":[{\"name\":\"1.2\"}],\"push_time\":\"2026-10-13T21:04:00Z\",\"size\":1024}]",
+                        APPLICATION_JSON));
+
+        BrowseResult r = dialect.browse(CRED, List.of("proj", "app"));
+
+        assertThat(r.children().get(0).copyText()).isEqualTo("harbor.example.com/proj/app:1.2");
+        server.verify();
+    }
+
+    /** spec §5.3 的姿态差异：补全**静默降级** */
+    @Test
+    void suggestSwallowsUpstreamFailure() {
+        server.expect(requestTo("https://harbor.example.com/api/v2.0/search?q=pro"))
+                .andRespond(withStatus(INTERNAL_SERVER_ERROR));
+
+        assertThat(dialect.suggest(CRED, "harbor.example.com/pro")).isEmpty();
+    }
+
+    /** spec §5.3 的姿态差异：浏览**要报错** */
+    @Test
+    void browsePropagatesUpstreamFailure() {
+        server.expect(requestTo("https://harbor.example.com/api/v2.0/projects?page_size=100"))
+                .andRespond(withStatus(INTERNAL_SERVER_ERROR));
+
+        assertThatThrownBy(() -> dialect.browse(CRED, List.of()))
+                .isInstanceOf(CloudPlatformException.class);
     }
 }
