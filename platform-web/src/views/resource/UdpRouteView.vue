@@ -49,8 +49,8 @@ async function refreshAll(): Promise<void> {
   await refresh()
 }
 
-function goCreate(): void { router.push({ name: 'udproute-editor' }) }
-function goEdit(row: K8sUdpRoute): void { router.push({ name: 'udproute-editor', query: { name: row.name } }) }
+function goCreate(): void { router.push({ name: 'route-editor', query: { kind: 'udproute' } }) }
+function goEdit(row: K8sUdpRoute): void { router.push({ name: 'route-editor', query: { kind: 'udproute', name: row.name } }) }
 
 async function onDelete(row: K8sUdpRoute): Promise<void> {
   try {

@@ -7,13 +7,16 @@ import EmptyState from '@/components/EmptyState.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
 import HttpRouteForm from '@/components/route/HttpRouteForm.vue'
 import GrpcRouteForm from '@/components/route/GrpcRouteForm.vue'
-import { grpcRouteApi, httpRouteApi } from '@/api'
+import TcpRouteForm from '@/components/route/TcpRouteForm.vue'
+import TlsRouteForm from '@/components/route/TlsRouteForm.vue'
+import UdpRouteForm from '@/components/route/UdpRouteForm.vue'
+import { grpcRouteApi, httpRouteApi, tcpRouteApi, tlsRouteApi, udpRouteApi } from '@/api'
 import { normalizeParentKind, useParentCandidates } from '@/composables/useParentCandidates'
 import { usePermission } from '@/stores/permission'
 import { useResourceContext } from '@/stores/context'
 import { ROUTE_KINDS, kindMeta, parseRouteKind, type RouteKind } from '@/utils/routeKinds'
 import type { CandidateBucket } from '@/composables/useParentCandidates'
-import type { K8sGrpcRule, K8sHrRule, K8sRouteParentRef } from '@/types'
+import type { K8sGrpcRule, K8sHrRule, K8sL4RouteRule, K8sRouteParentRef } from '@/types'
 
 /**
  * 「路由策略」编辑器外壳（5 种 route 共用一个页面）。
@@ -34,13 +37,9 @@ const { state, ready, currentTenant, currentCluster, load, namespacesOfCluster }
 
 const editing = ref<string | null>((route.query.name as string) || null)
 
-/** 页面已接入的类型。T3 补齐 TCP/TLS/UDP 后改成直接用 ROUTE_KINDS（见计划） */
-const IMPLEMENTED: RouteKind[] = ['httproute', 'grpcroute']
 const kind = ref<RouteKind>(parseRouteKind(route.query.kind) ?? 'httproute')
-if (!IMPLEMENTED.includes(kind.value)) kind.value = 'httproute'
 /** 合法 `?kind=` 或编辑既有对象时锁定类型；非法/缺失时放开（用户自己选） */
 const kindLocked = computed(() => !!editing.value || parseRouteKind(route.query.kind) !== null)
-const selectableKinds = computed(() => ROUTE_KINDS.filter((k) => IMPLEMENTED.includes(k.key)))
 
 const ctx3 = computed(() => ({
   tenantId: state.tenantId!,
@@ -182,19 +181,40 @@ async function loadDetail(): Promise<void> {
   if (!editing.value || !ready.value) return
   detailState.value = 'loading'
   try {
-    if (kind.value === 'grpcroute') {
+    if (kind.value === 'httproute') {
+      const d = await httpRouteApi.get(editing.value, ctx3.value)
+      form.name = d.name
+      form.parentRefs = (d.parentRefs ?? []).map(fromParent)
+      if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
+      form.hostnames = [...(d.hostnames ?? [])]
+      formEl.value?.setRules?.(d.rules ?? [])
+    } else if (kind.value === 'grpcroute') {
       const d = await grpcRouteApi.get(editing.value, ctx3.value)
       form.name = d.name
       form.parentRefs = (d.parentRefs ?? []).map(fromParent)
       if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
       form.hostnames = [...(d.hostnames ?? [])]
       formEl.value?.setRules?.(d.rules ?? [])
-    } else {
-      const d = await httpRouteApi.get(editing.value, ctx3.value)
+    } else if (kind.value === 'tcproute') {
+      const d = await tcpRouteApi.get(editing.value, ctx3.value)
+      form.name = d.name
+      form.parentRefs = (d.parentRefs ?? []).map(fromParent)
+      if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
+      form.hostnames = []
+      formEl.value?.setRules?.(d.rules ?? [])
+    } else if (kind.value === 'tlsroute') {
+      const d = await tlsRouteApi.get(editing.value, ctx3.value)
       form.name = d.name
       form.parentRefs = (d.parentRefs ?? []).map(fromParent)
       if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
       form.hostnames = [...(d.hostnames ?? [])]
+      formEl.value?.setRules?.(d.rules ?? [])
+    } else {
+      const d = await udpRouteApi.get(editing.value, ctx3.value)
+      form.name = d.name
+      form.parentRefs = (d.parentRefs ?? []).map(fromParent)
+      if (!form.parentRefs.length) form.parentRefs = [{ parentKind: '', name: '', namespace: '', sectionName: '' }]
+      form.hostnames = []
       formEl.value?.setRules?.(d.rules ?? [])
     }
     detailState.value = 'loaded'
@@ -280,14 +300,26 @@ async function submit(): Promise<void> {
 
   saving.value = true
   try {
-    if (kind.value === 'grpcroute') {
-      const body = { name, namespace: state.namespace!, parentRefs, hostnames, rules: formEl.value?.toDto?.() as K8sGrpcRule[] }
-      if (editing.value) await grpcRouteApi.update(editing.value, ctx2.value, body)
-      else await grpcRouteApi.create(ctx2.value, body)
-    } else {
+    if (kind.value === 'httproute') {
       const body = { name, namespace: state.namespace!, parentRefs, hostnames, rules: formEl.value?.toDto?.() as K8sHrRule[] }
       if (editing.value) await httpRouteApi.update(editing.value, ctx2.value, body)
       else await httpRouteApi.create(ctx2.value, body)
+    } else if (kind.value === 'grpcroute') {
+      const body = { name, namespace: state.namespace!, parentRefs, hostnames, rules: formEl.value?.toDto?.() as K8sGrpcRule[] }
+      if (editing.value) await grpcRouteApi.update(editing.value, ctx2.value, body)
+      else await grpcRouteApi.create(ctx2.value, body)
+    } else if (kind.value === 'tcproute') {
+      const body = { name, namespace: state.namespace!, parentRefs, rules: formEl.value?.toDto?.() as K8sL4RouteRule[] }
+      if (editing.value) await tcpRouteApi.update(editing.value, ctx2.value, body)
+      else await tcpRouteApi.create(ctx2.value, body)
+    } else if (kind.value === 'tlsroute') {
+      const body = { name, namespace: state.namespace!, parentRefs, hostnames, rules: formEl.value?.toDto?.() as K8sL4RouteRule[] }
+      if (editing.value) await tlsRouteApi.update(editing.value, ctx2.value, body)
+      else await tlsRouteApi.create(ctx2.value, body)
+    } else {
+      const body = { name, namespace: state.namespace!, parentRefs, rules: formEl.value?.toDto?.() as K8sL4RouteRule[] }
+      if (editing.value) await udpRouteApi.update(editing.value, ctx2.value, body)
+      else await udpRouteApi.create(ctx2.value, body)
     }
     ElMessage.success(editing.value ? '保存成功' : '创建成功')
     router.push({ name: 'routes' })
@@ -326,7 +358,7 @@ onMounted(() => { void load() })
       <el-form v-if="formVisible" label-position="left" label-width="200px" class="editor-form">
         <el-form-item label="类型" required>
           <el-select v-model="kind" :disabled="kindLocked" style="width: 220px">
-            <el-option v-for="k in selectableKinds" :key="k.key" :label="k.label" :value="k.key" />
+            <el-option v-for="k in ROUTE_KINDS" :key="k.key" :label="k.label" :value="k.key" />
           </el-select>
           <FieldHelp tip="路由类型决定下面能配什么：HTTPRoute / GRPCRoute 有方法/路径/头的匹配与过滤器；TLSRoute 按 SNI 匹配；TCPRoute / UDPRoute 只做端口转发。创建后不可改。" />
         </el-form-item>
@@ -449,6 +481,9 @@ onMounted(() => { void load() })
 
         <HttpRouteForm v-if="kind === 'httproute'" ref="formEl" />
         <GrpcRouteForm v-else-if="kind === 'grpcroute'" ref="formEl" />
+        <TcpRouteForm v-else-if="kind === 'tcproute'" ref="formEl" />
+        <TlsRouteForm v-else-if="kind === 'tlsroute'" ref="formEl" />
+        <UdpRouteForm v-else-if="kind === 'udproute'" ref="formEl" />
 
         <el-form-item class="submit-row">
           <el-button type="primary" :loading="saving" :disabled="!canSave" @click="submit">

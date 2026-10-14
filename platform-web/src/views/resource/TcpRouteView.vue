@@ -49,8 +49,8 @@ async function refreshAll(): Promise<void> {
   await refresh()
 }
 
-function goCreate(): void { router.push({ name: 'tcproute-editor' }) }
-function goEdit(row: K8sTcpRoute): void { router.push({ name: 'tcproute-editor', query: { name: row.name } }) }
+function goCreate(): void { router.push({ name: 'route-editor', query: { kind: 'tcproute' } }) }
+function goEdit(row: K8sTcpRoute): void { router.push({ name: 'route-editor', query: { kind: 'tcproute', name: row.name } }) }
 
 async function onDelete(row: K8sTcpRoute): Promise<void> {
   try {

@@ -113,17 +113,12 @@ const router = createRouter({
         // 路由策略（Route 五合一）：一个页面管 5 种 route；requiresPerm 传 5 个码 = 任一命中即可进
         { path: 'routes/editor', name: 'route-editor', component: () => import('@/views/resource/RouteEditorView.vue'), meta: { title: '路由策略 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.edit, pageCodes.mesh.grpcRoute.edit, pageCodes.mesh.tcpRoute.edit, pageCodes.mesh.tlsRoute.edit, pageCodes.mesh.udpRoute.edit] } },
         { path: 'resources/httproutes', name: 'httproutes', component: () => import('@/views/resource/HttpRouteView.vue'), meta: { title: 'HTTPRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.list] } },
-        { path: 'resources/httproutes/editor', name: 'httproute-editor', component: () => import('@/views/resource/HttpRouteEditorView.vue'), meta: { title: 'HTTPRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.edit] } },
         // Phase 2：GRPCRoute + L4 三类（TCP/TLS/UDP）。L4 的 CRD 版本（v1 / v1alpha2）由后端按集群
         // capability 分派，前端不感知；TLSRoute 多一个 SNI hostnames 字段。
         { path: 'resources/grpcroutes', name: 'grpcroutes', component: () => import('@/views/resource/GrpcRouteView.vue'), meta: { title: 'GRPCRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.grpcRoute.list] } },
-        { path: 'resources/grpcroutes/editor', name: 'grpcroute-editor', component: () => import('@/views/resource/GrpcRouteEditorView.vue'), meta: { title: 'GRPCRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.grpcRoute.edit] } },
         { path: 'resources/tcproutes', name: 'tcproutes', component: () => import('@/views/resource/TcpRouteView.vue'), meta: { title: 'TCPRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tcpRoute.list] } },
-        { path: 'resources/tcproutes/editor', name: 'tcproute-editor', component: () => import('@/views/resource/TcpRouteEditorView.vue'), meta: { title: 'TCPRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tcpRoute.edit] } },
         { path: 'resources/tlsroutes', name: 'tlsroutes', component: () => import('@/views/resource/TlsRouteView.vue'), meta: { title: 'TLSRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tlsRoute.list] } },
-        { path: 'resources/tlsroutes/editor', name: 'tlsroute-editor', component: () => import('@/views/resource/TlsRouteEditorView.vue'), meta: { title: 'TLSRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.tlsRoute.edit] } },
         { path: 'resources/udproutes', name: 'udproutes', component: () => import('@/views/resource/UdpRouteView.vue'), meta: { title: 'UDPRoute', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.udpRoute.list] } },
-        { path: 'resources/udproutes/editor', name: 'udproute-editor', component: () => import('@/views/resource/UdpRouteEditorView.vue'), meta: { title: 'UDPRoute 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.udpRoute.edit] } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

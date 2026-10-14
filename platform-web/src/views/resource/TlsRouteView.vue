@@ -50,8 +50,8 @@ async function refreshAll(): Promise<void> {
   await refresh()
 }
 
-function goCreate(): void { router.push({ name: 'tlsroute-editor' }) }
-function goEdit(row: K8sTlsRoute): void { router.push({ name: 'tlsroute-editor', query: { name: row.name } }) }
+function goCreate(): void { router.push({ name: 'route-editor', query: { kind: 'tlsroute' } }) }
+function goEdit(row: K8sTlsRoute): void { router.push({ name: 'route-editor', query: { kind: 'tlsroute', name: row.name } }) }
 
 async function onDelete(row: K8sTlsRoute): Promise<void> {
   try {

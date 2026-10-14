@@ -48,8 +48,8 @@ async function refreshAll(): Promise<void> {
   await refresh()
 }
 
-function goCreate(): void { router.push({ name: 'httproute-editor' }) }
-function goEdit(row: K8sHttpRoute): void { router.push({ name: 'httproute-editor', query: { name: row.name } }) }
+function goCreate(): void { router.push({ name: 'route-editor', query: { kind: 'httproute' } }) }
+function goEdit(row: K8sHttpRoute): void { router.push({ name: 'route-editor', query: { kind: 'httproute', name: row.name } }) }
 
 async function onDelete(row: K8sHttpRoute): Promise<void> {
   try {
