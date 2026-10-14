@@ -273,7 +273,78 @@ Tekton 在**超时**和**取消**两种情况会自己把 Pod 删掉 —— 那�
 
 ---
 
-## 4bis. 归档任务的配置
+### 4.5 归档的调用时序
+
+⚠️ **它是回环调用**（k8s-server `127.0.0.1:8080` 与 platform-api `:8081` 同机），**不跨网络边界**。
+
+**① 触发时 —— 先落库，再创建**
+
+```
+前端 → platform-api   POST /pipeline/run {pipelineId}
+platform-api:
+   1. 读 platform_pipeline.canvas_json → 渲染器 → PipelineSpec
+   2. **先生成 run_name**（pipeline 名 + 时间戳/ULID）
+   3. **先落库** platform_pipeline_run(status=RUNNING, run_name=…)
+   4. 调 k8s-server 创建 PipelineRun（**用这个名字** + managed-by 标签 + **不设 timeouts**）
+k8s-server:
+   5. fabric8 创建 PipelineRun
+   6. **同一步里顺手开 watch**（namespace + fieldSelector metadata.name=<runName>）
+      → 记进「活动 watch 台账」（含 startTime —— 超时判定要用）
+```
+
+⚠️ **第 3 步必须在第 4 步之前**，这是刻意的：`run_name` 由平台先生成 → **幂等键从源头就有**，
+而且不会出现「集群里有对象、库里没记录」的孤儿。反过来做的话，创建成功而落库失败的那个窗口里，
+**那个运行就没人知道了**。
+
+**② 运行结束 —— watch handler 发回调**
+
+```
+k8s-server 的 watch handler（收到 MODIFIED）:
+   判断三件事：带 managed-by 标签？ condition 变成终结？ 台账里有它？
+   → HTTP POST http://127.0.0.1:8081/internal/pipeline-run/finished
+        X-Internal-Token: <配置的密钥>
+        {clusterId, namespace, runName}
+   → 2xx：关掉这条 watch、从台账移除
+   → 非 2xx / 超时：**不关 watch**，把 runName 放进「待补」集合（见 ④）
+```
+
+**③ platform-api 收到之后**
+
+```
+POST /internal/pipeline-run/finished
+  1. 校验 X-Internal-Token（留空 → 拒绝一切，fail-closed）
+  2. 查库：这个 run_name 归档过没有？
+       已归档 → **不能直接 return**（见下）→ 跳到第 5 步
+  3. 调 k8s-server 取快照：读 PipelineRun 状态 → 读它的 TaskRun 列表 →
+     对每个 TaskRun 的每个 step 容器读日志（现有的 /{pod}/logs?container=，1 MB 截断）
+  4. **一个事务里**写：日志行（按 (run_id, node_name) 唯一）+ 更新 run 的状态与耗时
+  5. 调 k8s-server **删 PipelineRun**（级联删 TaskRun 与 Pod）
+  6. 返回 200
+```
+
+⚠️ **第 2 步那个坑**：幂等分支**不能直接返回**。想象「库已经写好了，但第 5 步删对象失败」——
+若重投时直接 return 200，那条运行的对象就**永远留在集群里**了，正是本批要消掉的东西。
+所以：**归档幂等（不重写库），但删除每次都试**（删本身幂等）。
+
+**④ 失败与重试**
+
+| 情况 | 处理 |
+|---|---|
+| 回调失败（platform-api 重启/不可达） | 进 k8s-server 的「待补」集合 |
+| **谁重试** | **复用超时判定那个节拍器**（每 30s，只看台账、不打集群）—— 它每拍干两件事：① 有没有跑超时的 run ② 有没有待补的归档。**只多一个节拍器，不引入第二套定时机制** |
+| 归档中途失败 | 事务回滚 + 返回 5xx → k8s-server 重投 |
+| 重复投递 | `run_name` 唯一挡住重写，**但删除照做** |
+
+**⑤ 这个端点的安全性**
+
+- 它**不在用户 JWT 体系里**（k8s-server 没有用户身份），靠 `X-Internal-Token` 一个**共享密钥**
+- **密钥留空则拒绝一切请求**（fail-closed，与凭据主密钥同一条判断）
+- ⚠️ 边界要说清：platform-api 是单体，**没法只给这一个端点绑 `127.0.0.1`** ——
+  它跟着 8081 一起暴露在内网。所以**密钥是唯一防线**：必须是随机长串（32+ 字节），不能是 `platform` 这种
+
+---
+
+
 
 ```yaml
 platform:
@@ -430,6 +501,8 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **归档** | 一个已终结的 run 归档后：`run_name` 落库、集群对象被删；**同一个 run 投递两次只写一条、只删一次**（幂等钉死）；**抓日志中途 Pod 没了 → 抓到多少存多少、不静默丢**；**未终结的 run 不被归档**（不能把 Running 的当完成的） |
 | **不动别人的 run** | 一个**没有平台标签**的已终结 PipelineRun → watch 不理它、归档不碰它、**绝不删它**（这是最容易出事故的一处，要正面钉住）；`/pipeline/run/list` 里也不出现它 |
 | **内部端点** | 密钥不对 → 拒绝；**密钥未配置 → 拒绝一切**（fail-closed）；未终结的 run 名 → 不归档 |
+| **幂等分支仍要删** | 库已有该 run（模拟「归档成功但删除失败」）后重投 → **不重写库、但必须再试一次删除**（这是最容易漏的一条） |
+| **不留孤儿记录** | k8s-server 创建 PipelineRun 失败 → 库里**不能留一条 RUNNING 的孤儿**（先落库再创建的代价要在这里堵住） |
 | **截断** | 超过 1 MB 的单步日志 → `truncated=true` 且内容确实被截断；未超的 `truncated=false` |
 | **取消的顺序** | **先抓日志、再 patch 取消** —— 断言两次调用的先后（这是「日志拿得到」的全部依据） |
 | **超时判定** | 只读活动 watch 的台账、**不打集群**（断言没有出站调用）；未达时限不动；已达 → 走取消那条路且状态记 `TIMEOUT` |
