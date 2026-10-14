@@ -1073,3 +1073,23 @@ git commit -m "docs(plan): 路由策略落地记录"
 
 - `MainLayout.vue:283` 的注释仍写「Gateway / HTTPRoute = 租户资源面」（本批已收敛为「路由策略」）。
 - 未建模 kind 的段名行 placeholder 仍是 Gateway 措辞（「留空 = 该 Gateway 上全部匹配的监听器」），标签已正确显示「段名（sectionName）」。
+
+## 整支复审与修复轮（2026-10-14，fresh reviewer / opus）
+
+复审范围＝`fd8de2f..ca0eb1d` 的 6 个提交（`platform-web/src`）。结论：**需修复后合并** —— 2 个 Important + 8 个 Minor。Review Focus 六条：3（非法 `?kind=`）、5（未建模字段透传，搬迁后逐区域 diff 为空）、6（父引用四行，归一化后与旧文件 diff 为空）**查过没问题**；1/2/4 的主判据通过但各有一处不达标。
+
+**已修（提交 `c49f686`，7 处；每条都先拿到 RED 再验 GREEN）**
+
+| # | 问题 | RED 证据 | 修法 |
+|---|---|---|---|
+| F1 | 筛到「该类型 0 行」时空态顶掉筛选行 → 回不到「全部」，且文案误导 | `?kind=grpcroute` 且该 kind 0 行 → `.filter-row` 消失 | 筛选行移出空态；空态文案分三种（无读权限 / 该类型无行 / 该命名空间真没有） |
+| F2 | 抽屉里点 YAML 标签永不加载（合并时丢了旧 5 页都有的 `watch(detailTab)`） | `getYaml` 调用数 0、面板停在「加载中…」 | 补回该 watch（带 `!yamlText` 幂等守卫） |
+| F3 | 切 kind 不清 `hostnames`（spec §5.3 明文；rules 由子组件重建已清，hostnames 归外壳会跨 kind 存活） | 新建 HTTP 填 `a.com` → 切 TLSRoute 后 SNI 框仍是 `a.com` | 类型选择器挂 `@change` 清 `form.hostnames`（与父引用块同样只挂 `@change`） |
+| F4 | 类型选择器未按 create 码过滤（spec §5.1） | 只给 `tcproute:create` 时下拉仍 5 项 | 只列有 create 码的 kind；新建态默认落到第一个可创建的 |
+| F5 | 筛选态下的「创建 X」按钮不看 create 码 | 只给 `tcproute:list` 仍出现「创建 TCPRoute」 | 按钮与下拉同口径（无码则不出现） |
+| F6 | 失败 kind 在筛选器里仍可选、无标注（spec §4.2） | 提示条说不可用，但下拉里正常可选 | 标「（未安装）」+ `disabled` |
+| F7 | 换命名空间重置「不可用」→ 反复炸提示（spec §4.2「不反复报错」） | 切命名空间后重新发起失败的 kind 的 list | CRD 是否安装是**集群**属性：只在换集群/点刷新时重置 |
+
+**留待后续（未修）**：F8 抽屉规则表只剩摘要（旧页有「匹配 → 后端 / 过滤器数」明细，想看明细要去 YAML tab）；F9 `pageTitle` 成了死代码（页头用静态标题）；Cosmetic：未建模 filter 的告警块从表单顶部挪到了中部、`MainLayout.vue:283` 的注释仍写「Gateway / HTTPRoute = 租户资源面」。
+
+**验证方法上的补充经验**：手动 `remove()` EP 的 popper 节点会破坏其内部引用（之后该 select 打不开）；取下拉必须按"可见 + 项集合匹配目标下拉"来挑（本批用"项都在 5 个 kind 标签内"把类型下拉与列表页遗留的筛选下拉区分开）。修复后复跑 `npm --prefix platform-web run build` → 2586 modules、exit 0。
