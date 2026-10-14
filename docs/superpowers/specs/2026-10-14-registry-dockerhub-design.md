@@ -34,7 +34,9 @@ Harbor 里的 `nginx` 和 Docker Hub 的 `nginx` 同时出现在下拉里，右�
 | **合并后怎么排序** | **按连接名；每条连接内部按对端返回顺序** | 完全可预测，无隐藏规则（不搞"私有优先""官方优先"这类魔法） |
 | **Docker Hub 走哪个接口** | **`hub.docker.com/v2/…` 站点 API** | 见 §3.2：OCI 官方的 `registry-1.docker.io` 路径**没有搜索接口**，补全做不出来 |
 | **Docker Hub 的浏览层级** | **两层**，第一层是 `library` + 你的用户名两个**固定入口** | Docker Hub 没有"列出所有命名空间"的接口，见 §3.3 |
-| **Docker Hub 要不要凭据** | **必填用户名 + PAT** | 见 §3.6 —— 不给"某些类型可以不填凭据"的例外 |
+| **Docker Hub 要不要凭据** | **只允许匿名，封死 PAT** | 用户裁定：这一档的角色就是「公共镜像的来源」，私有镜像该放自建 Harbor。后果见 §3.6 与 §10 |
+| **「哪档允许哪种认证」由谁声明** | **由各档自己声明**（`RegistryDialect.authTypes()`） | 否则就是又一份手写的 type 清单 —— S3.1 终审刚为此删掉过一份。见 §3.7 |
+| **`authType` 的取值域** | **`BASIC` → `BASIC \| NONE`**（`NONE` = 匿名） | 匿名不是 Docker Hub 独有的（公共 Harbor project、公共 git 仓库都是）。⚠️ **这改的是 S0.2 已交付的东西** |
 | **`probe` 怎么处理** | **挪进 `RegistryDialect` 接口** | S3.1 spec §11 早就预告过这件事，现在就是"届时" |
 | **权限码 / 迁移** | **零新增** | 复用 `tenant:registry:catalog`；`TYPES` 是代码常量，不动表结构 |
 
@@ -43,10 +45,11 @@ Harbor 里的 `nginx` 和 Docker Hub 的 `nginx` 同时出现在下拉里，右�
 ## 1. 交付边界
 
 **做**：Docker Hub 一档（补全 / 两层浏览 / 测试连接）+ 候选跨连接聚合 + `probe` 挪进接口
-+ Harbor 档新增「无 host → 全局搜索」分支 + 前端下拉显示来源连接名。
++ Harbor 档新增「无 host → 全局搜索」分支 + 前端下拉显示来源连接名
++ **`authType` 支持 `NONE`（匿名）并修掉 S0.2 那条「填了凭据就清不掉」的死路**。
 
 **不做**：通用 registry v2 档；浏览**任意**公共命名空间（需要输入框，§10）；
-Docker Hub 匿名访问；镜像扫描 / 签名 / 清理 / 删除。
+**Docker Hub 的私有仓库**（封死 PAT 的直接后果，§3.6 / §10）；镜像扫描 / 签名 / 清理 / 删除。
 
 ---
 
@@ -151,6 +154,9 @@ N 条连接**必须并发**。串行的话一条对端黑洞（读超时 10s）�
 
 **endpoint 这一格**：切到该类型时表单**预填 `docker.io` 并置为只读**。
 
+**用户名 / 密码这两个框直接不显示**（不是"可选"，是隐藏）—— 该档只允许匿名（§3.6）。
+表单本来就有按类型变形的行为（endpoint 预填只读），这是同一条路上的一件事。
+
 - 不这么做，用户会填出 `https://registry-1.docker.io/` 之类的变体，解析层就要处理一堆别名
 - 解析层仍然**把 `docker.io` / `index.docker.io` / `registry-1.docker.io` 三个写法认作同一个** ——
   用户手打这三种带 host 的引用都能匹配上这条连接
@@ -166,7 +172,7 @@ N 条连接**必须并发**。串行的话一条对端黑洞（读超时 10s）�
 | 补全（按关键词搜仓库） | `GET https://hub.docker.com/v2/search/repositories/?query=<q>&page_size=25` |
 | 浏览第一层 | `GET https://hub.docker.com/v2/repositories/<ns>/?page_size=100` |
 | 浏览第二层（列 tag） | `GET https://hub.docker.com/v2/repositories/<ns>/<repo>/tags?page_size=100` |
-| 测试连接 | `GET https://hub.docker.com/v2/repositories/<username>/?page_size=1` 带 Basic |
+| 测试连接 | `GET https://hub.docker.com/v2/repositories/library/?page_size=1`（**匿名**） |
 
 **为什么不是 OCI 官方的 `registry-1.docker.io/v2/<name>/tags/list`**（那条路更"正统"）：
 
@@ -184,20 +190,23 @@ Docker Hub 没有「列出所有命名空间」的接口 —— Harbor 有三层
 path=[]  →
 ┌──────────────────────────────────────┐
 │ library       Docker 官方镜像库   ›  │   ← 固定常量入口
-│ <username>    你的命名空间        ›  │   ← 从凭据的 username 来
 └──────────────────────────────────────┘
 
 path=["library"]        →  nginx / redis / postgres / …        ›
 path=["library","nginx"] →  1.27 / 1.26 / latest …（带推送时间 / 大小 / digest）
 ```
 
-两个都是**已知的、可枚举的**命名空间，一层 `browse` 返回 node 就能表达。
+⚠️ **只有一个入口，不是两个。** 初稿写的是 `library` + 「你的用户名」，那是假定这一档会带
+username（用 PAT 登录时才有）。**封死 PAT 之后没有 username 可用了**，所以只剩 `library`
+—— 这也正好符合这一档的定位：它是公共镜像的来源。
+
+`library` 是**已知的、可枚举的**命名空间，一层 `browse` 返回 node 就能表达。
 ⚠️ **前端一行都不用改** —— 它只认 `hasChildren`（能不能点进去）和 `details`（表格列头），
 这正是 S3.1 spec §11 那张「不要动的」清单能兑现的地方。
 
 **叶子节点的 `copyText` 与 §3.4 同一条规则**：`library/nginx` 的 tag 复制出来是 `nginx:1.27`
-（剥掉 `library/`），`<username>/nginx` 的则是 `<username>/nginx:1.27`。
-不剥的话，同一层里 `library` 和用户名两个入口下的镜像会有两套写法，用户复制到 YAML 里就要想一下哪个能用。
+（剥掉 `library/`）—— 与用户在输入框里手打的写法一致，复制进 YAML 直接能用。
+不剥的话会变成 `library/nginx:1.27`，虽然也拉得动，但和平台其他地方的写法对不上。
 
 **做不到的**：浏览 `bitnami/` 底下有什么、或任意一个你知道名字的公共命名空间 ——
 那需要一个「输入命名空间」的框，而浏览页现在没有输入框；加它就得让前端知道
@@ -219,24 +228,71 @@ path=["library","nginx"] →  1.27 / 1.26 / latest …（带推送时间 / 大�
 2. **无 host 输入时剥掉 `library/`** —— `nginx` 与 `library/nginx` 是同一个镜像，
   填短的更常见；用户显式打了 `library/` 就保留
 
-### 3.5 tag 补全的单段歧义
+### 3.5 tag 补全的解析（封死 PAT 之后简化了）
 
-`nginx:1.` 里的 `nginx` 该算 `library/nginx`（Docker 的字面语义）还是 `<username>/nginx`？
+- 输入自带命名空间（`bitnami/nginx:1.`）→ 直接查 `bitnami/nginx` 的 tag
+- 输入是单段（`nginx:1.`）→ 按 Docker 的字面语义查 **`library/nginx`**
 
-**定**：**先按字面语义查 `library/nginx`，取不到再查 `<username>/nginx`。**
-第二次请求只在第一次真取不到时才发。输入自带命名空间时（`myteam/app:1.`）直接用那一段，不猜。
+⚠️ 初稿在这里写了个"取不到再回退到 `<username>/nginx`"的两跳规则，**那是给带 PAT 的场景设计的**。
+封死 PAT 之后没有 username 可回退，这条规则连同它的第二次请求一起消失。
+代价是**搜不到用户名下的私有镜像** —— 这正是 §10 记下的那条有意不做。
 
-理由：`nginx:1.27` 的字面语义就是官方库；但用户自己私有仓库里同名的镜像也确实常见，
-直接放弃会让这一档在"私有镜像打 tag"这个场景下失效。
+### 3.6 Docker Hub 档只允许匿名（用户裁定）
 
-### 3.6 我定的两条（本批不做例外）
+**这一档不接受任何凭据**：表单里没有用户名/密码框，`authType` 只能是 `NONE`。
+后端在 create / update 时校验这一点 —— 该类型带了凭据就**报错**，不静默丢弃
+（静默丢弃会让管理员以为自己配上了 PAT，然后在发现搜不到私有仓库时找不到原因）。
 
-1. **Docker Hub 档仍然必填用户名 + PAT**，不引入「某些类型可以不填凭据」的例外。
-   分析文档 §7.5 的前提 1 就是「匿名按 IP 限流、极易 429」，这一档的价值正来自配 PAT。
-   不给例外意味着**表单 / 校验 / `resolveSecret` / 出站层的 Basic 头，一处分支都不用加**。
-2. **零新增权限码、零新增迁移**。复用 `tenant:registry:catalog`（三个只读端点共用）；
-   `TYPES` 是代码常量，`platform_credential.type` 不动表结构
-   （S3.1 的迁移文件注释里已写过这件事）。
+**理由（用户的）**：Docker Hub 在这一平台里的角色就是**公共镜像的来源**；
+私有镜像该放自建 Harbor（S3.1 已经接好了）。补全只是让这件事用起来方便，不该先要求一个账号。
+
+⚠️ **我原来写的「必须填 PAT」的理由站不住，记在这里免得下次有人照抄**：
+分析文档 §7.5 的前提 1 说的是「匿名按 IP 限流、极易 429」——
+那个额度限制主要是**拉取（pull）**的，不是 API 搜索的；而且 §2.4 本来就有 2 分钟缓存。
+一个平台实例的搜索量，匿名额度远远够。
+
+**代价（写清楚，别当成 bug 上报）**：搜不到、也浏览不了自己账号下的私有 Docker Hub 仓库。
+
+### 3.7 `authType` 支持 `NONE`（匿名）—— **这动的是 S0.2**
+
+**匿名不是 Docker Hub 独有的**：公共 Harbor project、公共 git 仓库都是真实场景。
+所以**不**引入「哪些类型可以不填凭据」的分支，而是把 `authType` 的取值域
+从 `BASIC` 扩成 **`BASIC | NONE`**（`NONE` = 匿名）—— 与「加一档只动一处」是同一条判断。
+
+**「哪档允许哪种认证」由各档自己声明**：
+
+```java
+/** 本档允许的认证方式。NONE = 匿名。 */
+Set<String> authTypes();
+```
+
+| 档 | `authTypes()` |
+|---|---|
+| `HarborDialect` | `{BASIC, NONE}` |
+| `DockerHubDialect` | `{NONE}` |
+| **GIT** | `{BASIC, NONE}` —— 但 **GIT 不是 dialect**（它不是镜像仓库），这个集合是 `CredentialService` 里的一个常量 |
+
+GIT 是**全平台唯一一处「类型的特性不在 dialect 里」的例外**，会写在注释里。
+不这么放的话，`CredentialService` 里就会出现一份手写的「哪个类型能匿名」的清单 ——
+**那正是 S3.1 终审删掉 `RegistryService.REGISTRY_TYPES` 时反对的东西**。
+
+**要改的六处**（都在 S0.2 的交付面上）：
+
+| 位置 | 现在 | 改成 |
+|---|---|---|
+| `CredentialService.create` | 用户名与 secret 必填 | `authType=NONE` 时两者**必须为空**；`BASIC` 时仍必填 |
+| `CredentialService.update` | 「留空 = 保持不变」+「authType 变更必须重填」 | 同上；且 **`authType` 改成 `NONE` 即清空凭据** —— 修掉现在「填了就再也清不掉」的死路 |
+| `CredentialProbeClient` | 无条件发 `Authorization: Basic …` | 无凭据时**不发这个头**（现在会发 `Basic Og==`，一个只有冒号的空 Basic） |
+| `RegistryHttpClient` | 同上 | 同上 |
+| `CredentialView.hasSecret` | 恒为 true | 匿名行自然为 `false`（字段本来就有，S0.2 建它时应该就是这个用途） |
+| `CredentialService.test` | 无条件按 Basic 探测 | 见下面那条 401 规则 |
+
+**⚠️ 匿名时 401 该怎么读**：OCI 规范下，任何 registry 的 `GET /v2/` **未认证时返回 401 是正常行为**
+（Harbor 也一样 —— 它是「这是个 registry，且它要认证」，不是「你的凭据错了」）。
+所以**匿名的 registry 探测里，401 判为通过**；`BASIC` 档的 401 仍然是「凭据不通过」。
+这条若实测不符，按实测改（§11）。
+
+**零迁移**：`platform_credential.auth_type` 列已经存在。
 
 ---
 
@@ -251,6 +307,9 @@ S3.1 spec §11 预告过「将来若某一档的测试连接方式与 `/v2/` 不
 public record ProbeSpec(String url, String notFoundMessage) { }
 
 ProbeSpec probeSpec(CredentialRef cred);
+
+/** 本档允许的认证方式。NONE = 匿名。见 §3.7。 */
+Set<String> authTypes();
 ```
 
 配套三处：
@@ -260,9 +319,12 @@ ProbeSpec probeSpec(CredentialRef cred);
 2. **`CredentialProbeClient.probeRegistry(endpoint, …)` 签名改成 `probeRegistry(url, …)`** ——
    出站那四条安全要求（`Redirect.NEVER`、连接/读超时、`URI.create` 格式错归因、
    网络不可达文案）**一条不动**
-3. **`classifyRegistry(status)` 保持共用，但 404 那句文案改由 dialect 给** ——
-   对 Harbor 是「地址不对：该地址不是 registry（`/v2/` 不存在）」，
-   对 Docker Hub 是「该命名空间不存在或不可见」。同一句写死会把管理员**引去查一个没问题的地址**
+3. **`classifyRegistry(status)` 保持共用，但两处判读要改由 dialect / authType 给**：
+   - **404 的文案**：对 Harbor 是「地址不对：该地址不是 registry（`/v2/` 不存在）」，
+     对 Docker Hub 是「Docker Hub 公共 API 返回 404（请求可能被网络中间件改写了）」。
+     同一句写死会把管理员**引去查一个没问题的地址**
+   - **401 的读法按该连接的 `authType` 分（不是按档）**：`BASIC` 档仍是「凭据不通过」；
+     **`NONE` 档的 `/v2/` 返 401 是 OCI 规范的正常行为，判为通过**（§3.7）
 
 `CredentialService.test()` 的分支从 `if ("GIT") … else registry` 改成
 「GIT 走 git；否则**问分派表**要 `probeSpec`」—— 与 §3.1 一致，不再有第二份 type 清单。
@@ -286,10 +348,10 @@ ProbeSpec probeSpec(CredentialRef cred);
 
 | 位置 | 改动 |
 |---|---|
-| `types.ts` | `RegistrySuggestItem { value: string; connectionName: string }`；`RegistrySuggestResponse.items` 类型跟着改 |
+| `types.ts` | `RegistrySuggestItem { value: string; connectionName: string }`；`RegistrySuggestResponse.items` 类型跟着改；凭据的 `type` 加 `'DOCKERHUB'`、`authType` 从 `'BASIC'` 扩成 `'BASIC' \| 'NONE'` |
 | `composables/useImageSuggest.ts` | 从 `List<String>` 改成传对象数组；三条规矩（无权限不发请求 / 失败静默 / 选中整段替换）**不变** |
 | `WorkloadView.vue`「更新镜像」、`ContainerEditor.vue` | `el-autocomplete` 用 `#default` scoped slot 渲染右侧连接名；`v-for` 的 key 用 `value + "\|" + connectionName` |
-| `CredentialView.vue` | `TYPE_OPTIONS` 加「Docker Hub 镜像仓库」；切到该类型时 **endpoint 预填 `docker.io` 并置为只读** |
+| `CredentialView.vue` | ① `TYPE_OPTIONS` 加「Docker Hub 镜像仓库」；② 加一个「认证方式」下拉（`用户名密码` / `匿名`）—— **`authType` 这个字段本来就在 DTO 里**，前端此前只是从没发过非 BASIC 的值；③ 切到 Docker Hub 时 **endpoint 预填 `docker.io` 只读、认证方式与凭据框整组隐藏**（该档只有一个选项，给控件是噪音） |
 | 浏览页 `RegistryView.vue` | **零改动** |
 
 `usePermission` 短路、`silent403`、防抖、复制兜底（`writeClipboard` 的 `execCommand` 分支）全部沿用。
@@ -324,10 +386,13 @@ S3.1 spec §8 的决定原样有效：补全（现在每按键 N 个出站请求
 |---|---|
 | **聚合解析** | 带 host 命中一条 → 只问一条；带 host 匹配不上 → **零请求**（断言 mock 未被调用）；无 host → 问全部；无 host 且无连接 → 零请求；Docker Hub 三个别名都能匹配上同一条连接 |
 | **合并与排序** | 多条结果合并；按连接名排序；**某一条抛异常/超时时其余候选照样返回**；总等待上限生效（一条挂住不拖垮整体） |
-| **`DockerHubDialect` 纯函数** | 四个 URL 的拼法；候选串剥 `library/` 的规则（带 host 不剥、无 host 剥）；browse 第一层的两个固定入口；tag 歧义的两次查询顺序 |
-| **出站层** | `MockRestServiceServer` 钉 URL + `Authorization` 头；重定向 NEVER 沿用 S3.1 已有的本地 `HttpServer` 用例 |
-| **`probe` 挪接口** | Harbor 档的 `probeSpec.url` 仍是 `<endpoint>/v2/`；Docker Hub 的是 `hub.docker.com/.../<username>/`；**两档的 404 文案不同**；`CredentialService.test()` 对 DOCKERHUB 类型不再走 `/v2/` 分支 |
-| **护栏** | `CredentialService.TYPES` 里每个值都有 `RegistryDialect` 实现（S3.1 已有，**会自动覆盖 DOCKERHUB**）—— 这条是"加档忘实现"的兜底，本批应当看到它从绿变绿 |
+| **`DockerHubDialect` 纯函数** | 四个 URL 的拼法；候选串剥 `library/` 的规则（带 host 不剥、无 host 剥）；browse 第一层**只有 `library` 一个**入口；`authTypes()` 恰好是 `{NONE}` |
+| **`authType = NONE`（动 S0.2）** | create：`NONE` + 带凭据 → **报错**（不静默丢弃）；`BASIC` + 缺凭据 → 报错；update：`authType` 改成 `NONE` 能**清空**（钉住那条死路已修）；Docker Hub 类型带凭据 → 报错 |
+| **匿名的出站** | `MockRestServiceServer` 断言**请求里没有 `Authorization` 头**（现在会发 `Basic Og==`）；`BASIC` 档仍然有 |
+| **匿名的 401 判读** | `NONE` 档 `/v2/` 返 401 → **通过**；`BASIC` 档返 401 → **不通过**（两条各钉一次，§3.7 / §4） |
+| **出站层** | `MockRestServiceServer` 钉 URL；重定向 NEVER 沿用 S3.1 已有的本地 `HttpServer` 用例 |
+| **`probe` 挪接口** | Harbor 档的 `probeSpec.url` 仍是 `<endpoint>/v2/`；Docker Hub 的是 `hub.docker.com/v2/repositories/library/`；**两档的 404 文案不同**；`CredentialService.test()` 对 DOCKERHUB 类型不再走 `/v2/` 分支 |
+| **护栏** | ① `CredentialService.TYPES` 里每个值都有 `RegistryDialect` 实现（S3.1 已有，**会自动覆盖 DOCKERHUB**）—— "加档忘实现"的兜底；② 每个 `RegistryDialect.authTypes()` **非空** |
 | **窄投影** | `/registry/connections` 的响应仍**不含**凭据字段（S3.1 的反射钉子，不受本批影响） |
 
 ---
@@ -338,7 +403,7 @@ S3.1 spec §8 的决定原样有效：补全（现在每按键 N 个出站请求
 |---|---|
 | **浏览任意公共命名空间**（`bitnami/`、任意 `xxx/`） | 需要浏览页有输入框；加它就让前端知道「某些档需要输入」，打破「层级由方言定」。用补全搜替代（§3.3） |
 | **通用 registry v2 档（`REGISTRY_V2`）** | 台账三档里的第三个，但**没有单独裁定**，且它同样没有搜索接口 —— 补全做不出来。**记为欠账，本批不动** |
-| **Docker Hub 匿名访问** | §3.6：匿名按 IP 限流、极易 429 |
+| **Docker Hub 的私有仓库（PAT）** | 用户裁定：这一档只允许匿名（§3.6）。私有镜像该放自建 Harbor。**这是本批最大的一处能力削减，写在这里免得下次评审当缺口上报** |
 | **官方 OCI 路径（`registry-1.docker.io`）** | 无搜索接口 → 补全做不出来（§3.2） |
 | **镜像扫描 / 签名 / 清理 / 删除** | 不在台账 S3.1 范围 |
 | **候选结果的条数上限与分页** | 沿用 `page_size=100`（S3.1 的既有缺口，本批不扩大也不修） |
@@ -359,12 +424,13 @@ S3.1 的「匹配不到就不发请求」正是用来防这个放大的，改成
 
 按分析文档 §7.5 的结论设计，**以下三条没有实测过**：
 
-- [ ] `hub.docker.com/v2/…` 是否**直接接受 Basic 认证**，还是必须先
-      `POST /v2/users/login` 换 JWT、再用 `Authorization: JWT <token>`。
-      （只影响 `RegistryHttpClient` 的认证头构造，不影响任何 URL 与解析规则）
+- [ ] **匿名下 `hub.docker.com/v2/…` 的实际可达性与响应形状** ——
+      现在**全是匿名请求**，初稿那条「Basic 还是 JWT」随 §3.6 封死 PAT 一起作废
 - [ ] **匿名 429 的实际触发阈值** —— 决定 §2.4 的 TTL 是否够（现在是 2 分钟）
 - [ ] search 返回里 **`repo_name` 的确切形状**（带不带 `library/` 前缀）——
       §3.4 的剥前缀规则依赖它
+- [ ] **Harbor 的 `GET /v2/` 匿名时是否返 401** —— §3.7 与 §4 那条「匿名时 401 判为通过」
+      依赖它。若实测发现 Harbor 对匿名返 200，这条规则要改成「401 与 200 都算通过」
 
 ⚠️ **实测前不要改 §3.4 的规则** —— 它按"`repo_name` 是完整的 `ns/repo`" 设计，
 若实测发现不是，改的是解析函数，不是契约。
@@ -373,7 +439,7 @@ S3.1 的「匹配不到就不发请求」正是用来防这个放大的，改成
 
 ## 12. 对 S3.1 spec 的订正清单（**与本批同批提交**）
 
-不订正的话两份 spec 会互相矛盾。逐处：
+不订正的话**三份 spec 会互相矛盾**（本份 / S3.1 / S0.2）。逐处：
 
 | S3.1 spec 位置 | 订正 |
 |---|---|
@@ -387,7 +453,11 @@ S3.1 的「匹配不到就不发请求」正是用来防这个放大的，改成
 | §10 有意不做 | **删掉两行**：「`REGISTRY_V2` / `DOCKERHUB` 两档」与「无 host 的镜像写法」；`REGISTRY_V2` 单列成欠账 |
 | §11 加档清单 | `probe` 那条从「将来要挪」改成「**已挪进接口**（见本文件 §4）」；Docker Hub 作为已落档的实例 |
 | §12.1 部署后待验清单 | 补 Docker Hub 项：建连接 / 打 `ng` 出两类候选 / 右侧连接名 / 浏览页两个固定入口 / 未配 host 的写法仍可自由输入 |
-| 台账 `task-ledger-2026-10-12.md` S3.1 条目 | 「② S3.1.1 只落 Harbor 一档…（用户：…）」这行**是记账错误**，改为「Docker Hub 于 2026-10-14 补做（见 dockerhub spec）；`REGISTRY_V2` 记为欠账」 |
+| **S0.2 spec** 的认证方式（`authType`、v1 只有 BASIC） | 取值域扩成 `BASIC \| NONE`；补两段：「哪种认证由各类型的 `authTypes()` 声明」、「匿名时 `/v2/` 的 401 判为通过」 |
+| **S0.2 spec** 的测试连接（探测 URL 与结果判定） | 补匿名分支：**不发 `Authorization` 头**；匿名 401 判通过 |
+| **S0.2 spec** 的「永不回显」 | 补一句：匿名行的 `hasSecret = false`（字段本来就有，本批才真正用上） |
+| 台账 `task-ledger-2026-10-12.md` **S0.2 条目** | 补一句「2026-10-14 扩 `authType` 支持匿名；顺带修掉『填了凭据就再也清不掉』的死路」 |
+| 台账 `task-ledger-2026-10-12.md` **S3.1 条目** | 「② S3.1.1 只落 Harbor 一档…（用户：…）」这行**是记账错误**，改为「Docker Hub 于 2026-10-14 补做（见 dockerhub spec）；`REGISTRY_V2` 记为欠账」 |
 
 ---
 
@@ -396,20 +466,30 @@ S3.1 的「匹配不到就不发请求」正是用来防这个放大的，改成
 **本批没有 SQL、没有新增配置项。**
 
 1. 先起新构建（若 S3.1 尚未部署，**两批一起上**：先重放 `V2026_10_14_1__registry_permissions.sql`，再起构建）
-2. 凭据页建一条 `Docker Hub 镜像仓库` 类型的连接（endpoint 会自动预填 `docker.io` 且只读），
-   用户名填 Docker Hub 账号名，密码填 **PAT**
-3. 点「测试连接」—— 这一步同时验证 §11 的第一条待实测项
+2. 凭据页建一条 `Docker Hub 镜像仓库` 类型的连接 —— **一个字段都不用填**
+   （名称必填；endpoint 自动预填 `docker.io` 且只读；认证方式与凭据框整组不出现）
+3. 点「测试连接」—— 这一步同时验证 §11 的头两条待实测项（匿名可达性）
 4. 重放权限相关迁移后重新登录，或等权限闭包缓存的 30s TTL
 
 ### 13.1 部署后待验清单
 
-- [ ] 凭据页能建出 `Docker Hub 镜像仓库` 类型的连接，endpoint 框预填 `docker.io` 且**改不动**
+- [ ] 凭据页能建出 `Docker Hub 镜像仓库` 类型的连接，**除名称外一个字段都不用填** ——
+      endpoint 框预填 `docker.io` 且**改不动**，认证方式与用户名/密码**整组不出现**
 - [ ] 「更新镜像」输入框里打 `ng` → 下拉里**同时**出现 Docker Hub 的候选和已配 Harbor 的候选，
       每行右侧是**连接名**，整体**按连接名排序**
 - [ ] 打 `docker.io/ng` → **只有** Docker Hub 那条的候选（Harbor 不参与，因为 host 已明确）
 - [ ] 打 `test.harbor.com/proj/ap` → 只有 Harbor 那条，行为与 S3.1 交付时**完全一致**（回归）
 - [ ] 输入一个**没配过的** host（`other.example.com/ng`）→ 无候选、无报错，且能自由输入
-- [ ] 浏览页选中 Docker Hub 连接 → 第一层是 `library` 和你的用户名两个入口 → 点进去能列仓库 → 再点进去能列 tag（带推送时间/大小/digest）
+- [ ] 浏览页选中 Docker Hub 连接 → 第一层**只有 `library` 一个入口** → 点进去能列仓库 →
+      再点进去能列 tag（带推送时间/大小/digest）
 - [ ] 把 Docker Hub 连接**停用** → 它的候选和浏览入口都消失，Harbor 的候选不受影响
 - [ ] 一条连接不可达时，**其余连接的候选照样出现**（不是整个下拉空掉）
 - [ ] 审计页确认：补全与浏览**没有**产生记录（§8 的有意行为）
+
+**匿名的回归项**（这批动了 S0.2，所以单独列）：
+
+- [ ] 新建一条 **HARBOR** 连接、认证方式选「匿名」→ 保存后列表里 `hasSecret` 显示为「未配置」
+- [ ] 对它点「测试连接」→ `/v2/` 返 401 时**判为通过**（不是「凭据不通过」，§3.7）
+- [ ] 把一条**已有凭据**的连接改用「匿名」→ 凭据被清空（**钉住那条已修的死路**），
+      再改回「用户名密码」→ 提示必须重填
+- [ ] 建一条 Docker Hub 连接时**带上**用户名/密码（绕过前端直接打接口）→ **报错**，不静默丢弃
