@@ -136,16 +136,18 @@ class CredentialProbeTest {
     }
 
     // ---- registry 判定 ----
+    //
+    // ⚠️ 第二个参数是「这条连接是不是匿名的」：401 的读法随之不同（spec §3.7）。
 
     @Test
     void registry200Passes() {
-        assertThat(CredentialProbe.classifyRegistry(200).ok()).isTrue();
+        assertThat(CredentialProbe.classifyRegistry(200, false).ok()).isTrue();
     }
 
     @Test
     void registry401NeverSaysPassword() {
         for (int status : new int[] {401, 403}) {
-            ProbeResult r = CredentialProbe.classifyRegistry(status);
+            ProbeResult r = CredentialProbe.classifyRegistry(status, false);
             assertThat(r.ok()).isFalse();
             assertThat(r.message()).contains("凭据");
             assertThat(r.message()).doesNotContain("密码");
@@ -154,6 +156,29 @@ class CredentialProbeTest {
 
     @Test
     void registry404BlamesTheAddress() {
-        assertThat(CredentialProbe.classifyRegistry(404).message()).contains("registry");
+        assertThat(CredentialProbe.classifyRegistry(404, false).message()).contains("registry");
+    }
+
+    @Test
+    void basicRegistryProbeStillFailsOnUnauthorized() {
+        ProbeResult r = CredentialProbe.classifyRegistry(401, false);
+        assertThat(r.ok()).isFalse();
+        assertThat(r.message()).contains("凭据不通过");
+    }
+
+    @Test
+    void anonymousRegistryProbeTreatsUnauthorizedAsReachable() {
+        // OCI 规范：任何 registry 的 GET /v2/ 未认证时返 401 是**正常行为** ——
+        // 它是「这是个 registry 且它要认证」，不是「你的凭据错了」。
+        // 不这么判的话，每一条匿名连接一建出来就是红的。
+        ProbeResult r = CredentialProbe.classifyRegistry(401, true);
+        assertThat(r.ok()).isTrue();
+    }
+
+    @Test
+    void anonymousRegistryProbeStillFailsOnForbidden() {
+        // 403 是真实的拒绝（IP 被封等），匿名与 BASIC 一样要报 —— 别把「匿名宽松」放大成「什么码都过」
+        assertThat(CredentialProbe.classifyRegistry(403, true).ok()).isFalse();
+        assertThat(CredentialProbe.classifyRegistry(404, true).ok()).isFalse();
     }
 }

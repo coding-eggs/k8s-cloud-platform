@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
@@ -78,16 +79,20 @@ public class CredentialProbeClient {
 
     private ProbeResult probe(String url, String username, String secret, boolean git) {
         try {
-            ProbeResult response = restClient.get()
-                    .uri(java.net.URI.create(url))
-                    .header(HttpHeaders.AUTHORIZATION, basic(username, secret))
-                    .exchange((request, res) -> {
+            boolean anonymous = !StringUtils.hasText(username) && !StringUtils.hasText(secret);
+            RestClient.RequestHeadersSpec<?> spec = restClient.get().uri(java.net.URI.create(url));
+            if (!anonymous) {
+                // ⚠️ 匿名时**根本不发这个头**。发一个 `Basic Og==`（只有冒号的空 Basic）
+                // 会让有些对端判成「凭据错误」，于是匿名连接永远测不过，看起来却像地址不对。
+                spec.header(HttpHeaders.AUTHORIZATION, basic(username, secret));
+            }
+            ProbeResult response = spec.exchange((request, res) -> {
                         String body = new String(res.getBody().readAllBytes(), StandardCharsets.UTF_8);
                         String location = res.getHeaders().getFirst(HttpHeaders.LOCATION);
                         int status = res.getStatusCode().value();
                         return git
                                 ? CredentialProbe.classifyGit(status, body, location)
-                                : CredentialProbe.classifyRegistry(status);
+                                : CredentialProbe.classifyRegistry(status, anonymous);
                     });
             return response != null ? response : ProbeResult.fail("对端返回空响应");
         } catch (IllegalArgumentException e) {

@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
 import java.net.URI;
@@ -61,10 +62,11 @@ public class RegistryHttpClient {
      */
     public String get(CredentialRef cred, String url) {
         try {
-            return restClient.get()
-                    .uri(URI.create(url))
-                    .header(HttpHeaders.AUTHORIZATION, basic(cred))
-                    .retrieve()
+            RestClient.RequestHeadersSpec<?> spec = restClient.get().uri(URI.create(url));
+            if (hasCredential(cred)) {
+                spec.header(HttpHeaders.AUTHORIZATION, basic(cred));
+            }
+            return spec.retrieve()
                     // ⚠️ 注册顺序要紧：RestClient 按**注册顺序**取第一个匹配的 handler。
                     // 所以**窄的（401/403）必须先注册**，宽的（非 2xx）后注册 ——
                     // 反过来的话 401 会拿到「返回 401」而不是那句二义文案，
@@ -91,6 +93,14 @@ public class RegistryHttpClient {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                     "无法连接镜像仓库：" + e.getMessage());
         }
+    }
+
+    /**
+     * 匿名的 ref（username 与 secret 都空）**不带 Authorization 头** ——
+     * 否则会发出 `Basic Og==`，一个只有冒号的空 Basic，有些 registry 会把它判成「凭据错误」。
+     */
+    private static boolean hasCredential(CredentialRef cred) {
+        return StringUtils.hasText(cred.username()) || StringUtils.hasText(cred.secret());
     }
 
     private static String basic(CredentialRef cred) {

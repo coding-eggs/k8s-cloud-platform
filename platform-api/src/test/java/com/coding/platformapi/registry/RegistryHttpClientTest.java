@@ -17,6 +17,7 @@ import static org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR;
 import static org.springframework.http.HttpStatus.UNAUTHORIZED;
 import static org.springframework.http.MediaType.APPLICATION_JSON;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -49,6 +50,18 @@ class RegistryHttpClientTest {
                 .andRespond(withSuccess("[{\"name\":\"myproj\"}]", APPLICATION_JSON));
 
         assertThat(client.get(CRED, PROJECTS_URL)).isEqualTo("[{\"name\":\"myproj\"}]");
+    }
+
+    @Test
+    void anonymousRefSendsNoAuthorizationHeader() {
+        // 匿名（两字段都空）不能发出 `Basic Og==` —— 那是一个只有冒号的空 Basic，
+        // 有些 registry 会因此把匿名请求判成「凭据错误」。
+        server.expect(requestTo(PROJECTS_URL))
+                .andExpect(headerDoesNotExist(AUTHORIZATION))
+                .andRespond(withSuccess("[]", APPLICATION_JSON));
+
+        CredentialRef anon = new CredentialRef("c2", "public", "HARBOR", "harbor.example.com", null, null);
+        assertThat(client.get(anon, PROJECTS_URL)).isEqualTo("[]");
     }
 
     @Test

@@ -76,15 +76,27 @@ public final class CredentialProbe {
     }
 
     /**
-     * registry 探测的结果判定。{@code /v2/} 是 OCI Distribution 规范的一部分，所有 registry 都实现，
-     * 所以不需要额外的探测入参。
+     * registry 探测的结果判定。
+     *
+     * @param anonymous 该连接是不是匿名的。**401 的读法随之不同**：
+     *                  OCI 规范下任何 registry 的 {@code GET /v2/} 未认证时返 401 是**正常行为** ——
+     *                  它是「这是个 registry 且它要认证」，不是「你的凭据错了」。
+     *                  对匿名连接判失败的话，**每一条匿名连接一建出来就是红的**（spec §3.7）。
+     *                  403 是真实的拒绝（IP 被封等），两种都报。
      */
-    public static ProbeResult classifyRegistry(int status) {
+    public static ProbeResult classifyRegistry(int status, boolean anonymous) {
         if (status == 200) {
             return ProbeResult.pass();
         }
-        if (status == 401 || status == 403) {
-            return ProbeResult.fail("凭据不通过，或该凭据无权访问此 registry");
+        if (status == 401) {
+            return anonymous
+                    ? ProbeResult.pass("可访问（该 registry 要求认证，匿名仍可拉取公开仓库）")
+                    : ProbeResult.fail("凭据不通过，或该凭据无权访问此 registry");
+        }
+        if (status == 403) {
+            return ProbeResult.fail(anonymous
+                    ? "该 registry 拒绝了这个来源的匿名访问"
+                    : "凭据不通过，或该凭据无权访问此 registry");
         }
         if (status == 404) {
             return ProbeResult.fail("地址不对：该地址不是 registry（/v2/ 不存在）");

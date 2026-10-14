@@ -15,6 +15,7 @@ import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -63,6 +64,26 @@ class CredentialProbeClientTest {
     void registryHitsV2() {
         // URL 由调用方给（各档的 probeSpec），本层不再自己拼 <endpoint>/v2/
         server.expect(requestTo("https://harbor.example.com/v2/"))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        assertThat(client.probeRegistry("https://harbor.example.com/v2/", "u", "p").ok()).isTrue();
+    }
+
+    @Test
+    void anonymousProbeSendsNoAuthorizationHeader() {
+        // 不带凭据时不能发 `Basic Og==` —— 一个只有冒号的空 Basic。有些对端会因此报 401，
+        // 于是匿名连接永远测不过，而原因看起来像是"地址不对"。
+        server.expect(requestTo("https://harbor.example.com/v2/"))
+                .andExpect(headerDoesNotExist(HttpHeaders.AUTHORIZATION))
+                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+        assertThat(client.probeRegistry("https://harbor.example.com/v2/", null, null).ok()).isTrue();
+    }
+
+    @Test
+    void basicProbeStillSendsTheHeader() {
+        server.expect(requestTo("https://harbor.example.com/v2/"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Basic " + base64("u:p")))
                 .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
 
         assertThat(client.probeRegistry("https://harbor.example.com/v2/", "u", "p").ok()).isTrue();
