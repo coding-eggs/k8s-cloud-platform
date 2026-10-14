@@ -1011,3 +1011,65 @@ git commit -m "docs(plan): 路由策略落地记录"
 - **命名一致**：`ROUTE_KINDS` / `kindMeta` / `parseRouteKind` / `RouteKind` / `RouteRow` / `RouteCtx` / `RouteKindMeta` / `_kind` / `permitted` / `unavailable` / `creatable` / `filtered` / `kindFilter` / `formEl` / `setRules` / `canSave` / `kindLocked` / `resetKindModels` / `summaryText` / `parentText` / `ruleText` / `openDetail` / `loadYaml` / `refreshAll` 全文一致。
 - **Review Focus 逐条有落点**：见文首六条各自的任务指向。
 - **已知偏离 spec 的两处（理由已写在各处）**：①任务顺序（删旧文件挪到替换物完成之后，保持每个任务结束时应用可用）；②子组件契约不统一为 `rules: unknown[]`（HTTP/GRPC/TLS 用 `v-model:rules`、TCP/UDP 用 `v-model:rule`，理由是各分支静态 `v-if`、类型独立、搬迁改动最小），并为此新增 `setRules` 让外壳零 rules 知识。
+
+---
+
+## 落地记录（2026-10-14）
+
+**提交**（main 上顺序落地）：`93a7b82` 静态目录+能力码 → `15f95ff` 编辑器外壳+HTTP/GRPC 子组件 → `891fb57` TCP/TLS/UDP 子组件+删旧编辑器 → `df80f9b` 列表页+菜单/路由收敛+删旧列表 → `b297ee8` 回填修复（回归验证发现）。
+
+**实际改动**
+
+| 文件 | 改动 |
+|---|---|
+| `platform-web/src/utils/routeKinds.ts` | 新增：5 种 kind 的静态目录（码 / usesHostnames / api 函数 / 摘要 / 删除提示）+ `parseRouteKind` |
+| `platform-web/src/apiCodes.ts` | +15 个常量（5 kind × list/create/update） |
+| `platform-web/src/components/route/{Http,Grpc,Tcp,Tls,Udp}RouteForm.vue` | 新增：从 5 个旧编辑器**整体搬迁**的规则表单（脚本抽取，不重写） |
+| `platform-web/src/views/resource/RouteEditorView.vue` | 新增：编辑器外壳（类型选择器/路由名/父资源块/hostnames/校验编排/回填/提交） |
+| `platform-web/src/views/resource/RouteListView.vue` | 新增：路由策略列表（按权限逐 kind 拉 / 失败隔离 / 筛选 / 抽屉（概览+YAML）/ 创建下拉） |
+| `platform-web/src/router/index.ts` | +`/routes`、`/routes/editor`；删 10 条旧记录 |
+| `platform-web/src/layouts/MainLayout.vue` | 5 个菜单项 → 1 项「路由策略」 |
+| 删除 | 10 个旧页面：`views/resource/{Http,Grpc,Tcp,Tls,Udp}Route{View,EditorView}.vue` |
+
+**执行中的裁决（与计划的偏差，逐条含原因）**
+
+1. **T2 的计划缺陷**：计划的外壳写了 5 个 `v-if` 分支但 T2 只造 2 个子组件（build 必红）→ 改为 T2 只接 2 个分支并用局部 `IMPLEMENTED` 驱动选择器，T3 补齐后删除该常量。
+2. **子组件契约**：计划写 `v-model:rules` + `props.namespace`；实现改为**只有三个方法**（`setRules` / `toDto` / `validate`），外壳**不持有任何 rules 状态** —— 模型类型是各 kind 自己的 `Row` 类型，让它跨边界会逼外壳认识每种 kind 的模型；`namespace` 在规则里用不到。切 kind 靠 `v-if` 销毁重建，状态自然重置。
+3. **T3 过渡**：删掉旧编辑器后，5 个旧列表页（T4 才删）的创建/编辑会指向不存在的路由 → 同一任务里先把它们指到 `route-editor?kind=<kind>`，保证每个任务结束时应用可用。
+4. **TLS 的 hostnames 校验**：原用 `SNI_RE`（文案「SNI 名格式不合法」），收敛后 hostnames 归外壳统一用 `HOSTNAME_RE`（文案「主机名格式不合法」）—— 两个正则逐字相同，只是文案统一。
+5. **规则回填的时序 bug（本批自造、由回归验证逮到）**：规则表单在 `<el-form v-if="formVisible">` 里，而 `formVisible` 依赖 `detailState==='loaded'`；置 loaded 之前子组件还没挂上，`formEl` 是 null → `setRules` 被 `?.` 静默跳过 → **打开既有路由时规则整条为空**（父资源与主机名照常回填，肉眼不易察觉；T2/T3 的冒烟只读标签与选择器显示值，选择器为空时显示的是 placeholder，把问题掩盖了）。修法：先置 loaded，`await nextTick()` 让表单挂上，再回填（`b297ee8`）。
+
+**验证证据**
+
+`npm --prefix platform-web run build`：每步后均通过（最终 2586 modules，exit 0，vue-tsc 无错）。
+浏览器（dev server 5199，宿主页 `/__scratch.html?t=<ts>` 直挂 SFC + 桩掉 api/store，逐条实跑）：
+
+| # | 结果 |
+|---|---|
+| 1 | ✅ 列表页 5 个 kind 的 list 全被调用、4 行渲染（TCPRoute 桩抛错被隔离）、摘要按 kind 不同（`1 条规则 · a.com` / `SNI t.com` / `svc:80`）、类型筛选切到单 kind 只剩该 kind |
+| 2 | ✅ **权限短路**：me 只给 `tenant:tcproute:list` → `calls: ["tcproute"]`（只 1 个请求）、筛选器只有「全部/TCPRoute」、仅 1 行 |
+| 3 | ✅ **失败隔离**：TCPRoute 的 list 抛错 → 该 kind 进「以下类型当前不可用…」提示条，其余 4 种照常显示 |
+| 4 | ✅ **切 kind 清值**：新建态在 HTTP 的路径值填 `/tmp` → 切 TCP 后无残留 → 切回 HTTP 显示默认 `/` |
+| 5 | ✅ **保存载荷按 kind**：HTTP `rules[0].matches[0].path={PathPrefix,"/api"}` + backendRefs + hostnames；TCP `rules[0]={name,backendRefs}` 且**无 `matches` 键** |
+| 6 | ✅ **非法 kind**：`?kind=bogus` → 列表回落「全部」、编辑器回落 HTTPRoute 且类型选择器**不禁用**；`?kind=tcproute&name=tr` → 选择器**禁用**（`is-disabled` 探针命中） |
+| 7 | ✅ **父引用块**：Service 父引用（名称行「Service」/段名行「端口名（sectionName）」/端口候选项 `http（80/TCP）`）与未建模 `ServiceImport`（原 kind + 「段名（sectionName）」+ port 与未建模两条只读提示）；保存载荷 `group:""`+`kind:Service` / `group:"multicluster.x-k8s.io"`+`kind:ServiceImport`+`port:80` 全部保真 |
+| 8 | ⚠️ **源级核对**（未渲染）：菜单 `index="/routes"` 恰好 1 项、标题「路由策略」、旧 5 项 0 项；router 只剩 `routes`/`routes/editor`，旧 10 条 0 条 |
+
+**验证方法上的经验（写下来免得下次再踩）**
+
+- 必须先在 `localStorage` 写 `platform_access_token`（假的即可），否则 `permission.load()` 走 `refreshPermission()` 把权限置空 → 列表页不发请求、创建按钮消失，表现为"页面空但没报错"。
+- `usePermission()` **每次返回新对象**，改它身上的 `has` 无效；要桩 `userApi.me` 再走真实 `load()`（`has` 读的是模块级 `state.permissions`）。
+- `/context` 的桩必须返回真实租户树，否则 store 的级联校验会清空上下文（`ready=false`）。
+- **模块实例**：有 HMR 时 SFC 的 import 带 `?t=`，`fetch` 拿到的旧产物对不上 → 要么从 SFC 的转换产物里取 URL，要么重启 dev server 后用 plain import。
+- EP 的 `.el-select__selected-item` 在**未选中时显示的是 placeholder** —— 只读它会把"空的"看成"回填成功"（本批就是这么漏过一次）。
+
+**未验证**
+
+- 断言 8 是**源级**核对，没有真的渲染菜单（菜单需要完整 app 外壳 + 权限引导；本批 5 个旧页面已删、入口唯一）。
+- 列表/编辑器的数据全部来自桩：**没有对真实后端 + 真实集群**跑过一遍（本批纯前端改动，后端零改动；真实环境下的 5 种 CRD 是否齐全、YAML tab 的取数等仍需上线后抽查）。
+- 未做：真实渲染下的 `?kind=` 深链（如从浏览器地址栏直接进 `/routes/editor?kind=tlsroute`）——已验的是同一路径通过直挂 + query 进入。
+
+**留待后续（未修）**
+
+- `MainLayout.vue:283` 的注释仍写「Gateway / HTTPRoute = 租户资源面」（本批已收敛为「路由策略」）。
+- 未建模 kind 的段名行 placeholder 仍是 Gateway 措辞（「留空 = 该 Gateway 上全部匹配的监听器」），标签已正确显示「段名（sectionName）」。
