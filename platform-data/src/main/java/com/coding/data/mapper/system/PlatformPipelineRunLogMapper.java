@@ -22,6 +22,9 @@ public interface PlatformPipelineRunLogMapper {
     /** 删一条运行的日志（连带删除靠代码，本仓不加外键） */
     int deleteByRunId(@Param("runId") String runId);
 
+    /** 批量删：保留清理时先删日志行、再删运行行 */
+    int deleteByRunIds(@Param("runIds") List<String> runIds);
+
     /** 取某条运行的某个节点的日志行（**取消前抢抓**时用它判断是否已有） */
     PlatformPipelineRunLog selectByRunIdAndNode(@Param("runId") String runId,
                                                 @Param("nodeName") String nodeName);

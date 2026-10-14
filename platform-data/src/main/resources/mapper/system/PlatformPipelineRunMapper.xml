@@ -71,4 +71,19 @@
     from platform_pipeline_run
   </select>
 
+  <!-- ⚠️ 字符串比较，不是日期比较：该列存的是 Tekton 的 RFC3339 原文（见 mapper 接口的注释）。
+       未终结（completion_time 为 null）的行自然不在候选里。 -->
+  <select id="selectCompletedBefore" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline_run
+    where completion_time is not null
+      and completion_time &lt; #{cutoff,jdbcType=VARCHAR}
+  </select>
+
+  <delete id="deleteByIds">
+    delete from platform_pipeline_run
+    where id in
+    <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+  </delete>
+
 </mapper>

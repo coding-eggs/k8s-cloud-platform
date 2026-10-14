@@ -45,4 +45,10 @@
     delete from platform_pipeline_run_log where run_id = #{runId,jdbcType=VARCHAR}
   </delete>
 
+  <delete id="deleteByRunIds">
+    delete from platform_pipeline_run_log
+    where run_id in
+    <foreach collection="runIds" item="rid" open="(" separator="," close=")">#{rid}</foreach>
+  </delete>
+
 </mapper>

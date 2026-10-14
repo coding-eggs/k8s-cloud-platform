@@ -32,6 +32,20 @@ public interface PlatformPipelineRunMapper {
                                              @Param("clusterId") String clusterId,
                                              @Param("namespace") String namespace);
 
-    /** 保留清理：把候选行捞出来（**时间比较在 Java 侧做**，见 PipelineRetentionService） */
+    /** 全部（跨命名空间/流水线）。保留清理与启动对账用 */
     List<PlatformPipelineRun> listAll();
+
+    /**
+     * 保留清理的候选：{@code completion_time} 早于 cutoff 的。
+     *
+     * <p>⚠️ <b>这是字符串比较</b>（该列是 varchar，存 Tekton 的 RFC3339 原文）。
+     * 它成立的前提是「所有值都是 UTC、都是 {@code Z} 结尾、都不带小数秒」——
+     * Tekton 的 metav1.Time 正是这样序列化的。cutoff 也必须是同格式
+     * （{@code Instant.toString()} 就是），否则比出来的是字典序而不是时间序。
+     * 未终结（completion_time 为 null）的行**不在候选里** —— 它们还在跑。
+     */
+    List<PlatformPipelineRun> selectCompletedBefore(@Param("cutoff") String cutoff);
+
+    /** 批量删（连带删日志靠代码，本仓不加外键） */
+    int deleteByIds(@Param("ids") List<String> ids);
 }

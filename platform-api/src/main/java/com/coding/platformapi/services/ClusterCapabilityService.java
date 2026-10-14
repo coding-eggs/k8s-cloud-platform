@@ -32,6 +32,9 @@ public class ClusterCapabilityService {
     /** Gateway API group（能力摘要与 mesh 横幅共用） */
     public static final String GATEWAY_API_GROUP = "gateway.networking.k8s.io";
 
+    /** Tekton Pipelines 的 API group（CI 能力判据） */
+    public static final String TEKTON_GROUP = "tekton.dev";
+
     /** Istio 可能出现在两个 group 上：istio.io（IstioOperator 等）与 networking.istio.io（VirtualService 等） */
     public static final List<String> ISTIO_GROUPS = List.of("istio.io", "networking.istio.io");
 
@@ -77,6 +80,11 @@ public class ClusterCapabilityService {
             return List.of();
         }
         return groups(clusterId).getOrDefault(group, List.of());
+    }
+
+    /** CI（Tekton）：集群装了 Tekton Pipelines。判据与其它能力一样 —— 只看 capability 快照，不打集群。 */
+    public boolean hasTekton(String clusterId) {
+        return !versionsOf(clusterId, TEKTON_GROUP).isEmpty();
     }
 
     /** 集群装了 Istio（capability 含 {@code istio.io} 或 {@code networking.istio.io}）。单取形式。 */
