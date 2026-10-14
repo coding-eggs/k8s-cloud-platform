@@ -180,6 +180,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      * <p>⚠️ 具体取值（v1 里是 {@code "Cancelled"} 还是要用别的）**见 spec §11 待实测** ——
      * 全量测试绿不了这一条，只能在真集群上验。
      */
+    @Override
     public void cancel(String namespace, String name) {
         PipelineRun pr = fetch(namespace, name);
         if (pr == null) {

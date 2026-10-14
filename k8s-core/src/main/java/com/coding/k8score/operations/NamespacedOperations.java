@@ -38,4 +38,15 @@ public interface NamespacedOperations<T> extends ResourceOperations<T> {
 
     String yaml(String namespace, String name);
 
+    /**
+     * 取消一次运行（**不删对象** —— 删了历史就没了）。
+     *
+     * <p>默认不支持，与 {@link #listAll} 同一条判断：「不支持」必须**响亮**，
+     * 不能静默变成一个 no-op 让调用方以为取消成功了。
+     */
+    default void cancel(String namespace, String name) {
+        throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED,
+                "本资源不支持取消（" + getClass().getSimpleName() + " 未实现 cancel）");
+    }
+
 }
