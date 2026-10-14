@@ -473,8 +473,9 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
       feature flag（我记得默认 60 分钟）兜底删 Pod。**若是，必须把集群侧的 `default-timeout` 设为 0（禁用）
       或设成远大于平台超时** —— 否则「超时收进平台」这条设计会静默失效、那批运行的日志照样丢
 - [ ] **归档与 kubelet GC / 他方删除的竞态** —— 抓日志中途 Pod 消失时的行为（要「抓到多少存多少」，不是整条丢）
-- [ ] **fabric8 informer 在 k8s-server 侧的代价** —— 每个纳管集群一份 watch 与本地缓存的内存/连接占用；
-      以及它的 **resync 周期到底怎么配**（是否就是要用的那个兜底）
+- [ ] **按需 watch 的开与关** —— fabric8 的 `withField("metadata.name", …).watch(...)` 是否就是要用的形态、
+      `Watch.close()` 能否干净释放；以及**同时有多个运行在跑**时是每条一条 watch 还是合并
+      （合并更省，但要按 run 名分派事件）
 - [ ] **1 MB 截断的实际体验** —— 拿一次真实的 `mvn` 构建日志量一下（决定这个默认值要不要调）
 - [ ] **`volumeClaimTemplate` 在目标集群的 StorageClass 上能否绑定**（集群有没有可动态供应的默认 SC）
 - [ ] **基础镜像能不能拉到** —— kubelet 不走平台的出站代理；确认集群节点拉 `maven:3.9-eclipse-temurin-21` 之类的路径
@@ -494,7 +495,7 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
    ⚠️ **若 Tekton 有默认超时，把 `default-timeout` 设为 0**（否则超时仍由 Tekton 终结 → 那批运行日志丢失，见 §11）。
    **不需要配 `config-events` 的 sink**（§4.1）。
    ⚠️ k8s-server 的启动扫描要能**集群级 list PipelineRun**（平台侧凭据已有该权限）
-3. **归档需要的配置**（§4bis）：`platform.pipeline.archive.{enabled,resync,internal-token}` ·
+3. **归档需要的配置**（§4bis）：`platform.pipeline.archive.{enabled,internal-token}` ·
    `platform.pipeline.run.timeout` · `platform.pipeline.log.{max-bytes,retention-days}`。
    ⚠️ 除 `internal-token` 外都有默认值；**`internal-token` 必须配**，否则内部回调端点拒绝一切请求（fail-closed）
 4. **再起新构建**
