@@ -15,7 +15,7 @@ import com.coding.platformapi.services.PipelineRunService;
 import com.coding.platformapi.services.PipelineService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -43,7 +43,6 @@ import java.util.List;
 @Tag(name = "流水线", description = "租户域：流水线定义（画布）、运行历史与日志")
 @RestController
 @RequestMapping("/pipeline")
-@RequiredArgsConstructor
 public class PipelineController {
 
     private final PipelineService pipelineService;
@@ -54,6 +53,21 @@ public class PipelineController {
     private final PipelineRunService runService;
 
     private final AuthContext auth;
+
+    /** 单步日志上限（与归档那一侧同一份配置）—— 在线看日志也照它截断，免得一屏拉出几百 MB */
+    private final int maxLogBytes;
+
+    public PipelineController(PipelineService pipelineService,
+                              CredentialService credentialService,
+                              PipelineRunService runService,
+                              AuthContext auth,
+                              @Value("${platform.pipeline.log.max-bytes:1048576}") int maxLogBytes) {
+        this.pipelineService = pipelineService;
+        this.credentialService = credentialService;
+        this.runService = runService;
+        this.auth = auth;
+        this.maxLogBytes = maxLogBytes;
+    }
 
     @PostMapping("/list")
     @Operation(summary = "流水线列表", description = "命名空间级；租户帽态下必须持有该命名空间的分配行")
@@ -155,6 +169,27 @@ public class PipelineController {
     @Operation(summary = "一次运行的详情", description = "含每个节点的状态与耗时；日志另走 /run/logs")
     public ResponseData<PlatformPipelineRun> runGet(@RequestBody PipelineRunDTO request) {
         return new ResponseData<>(runService.get(request.getName()));
+    }
+
+    /**
+     * 看运行日志。**`tenant:pipeline:logs` 的唯一落点** —— 单独成码是因为
+     * 日志是容器输出，可能含敏感内容（spec §5.1）。
+     *
+     * <p>两种数据源，分界线是「归档了没有」：已归档读库（集群对象与 Pod 早删了），
+     * 还在跑则现抓（走既有的 Pod 日志通道，不落库也不落缓存）。
+     */
+    @PostMapping("/run/logs")
+    @Operation(summary = "看运行日志",
+            description = "已归档读库、还在跑现抓。nodeName 为空则把所有节点拼起来（每段标节点名）")
+    public ResponseData<String> runLogs(@RequestBody RunLogsRequest request) {
+        PlatformPipelineRun run = runService.get(request.runName());
+        return new ResponseData<>(runService.logs(request.runName(), request.nodeName(),
+                new PipelineRunContext(run.getClusterId(), run.getNamespace(), auth.hatTenantId()),
+                maxLogBytes));
+    }
+
+    /** 日志端点的入参：只看某个节点时给 nodeName。 */
+    public record RunLogsRequest(String runName, String nodeName) {
     }
 
     private String currentUser() {

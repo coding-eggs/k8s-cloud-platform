@@ -4,8 +4,10 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
+import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
+import com.coding.data.models.system.PlatformPipelineRunLog;
 import com.coding.platformapi.k8s.K8sPipelineClient;
 import com.coding.platformapi.models.PipelineRunContext;
 import org.junit.jupiter.api.Test;
@@ -33,8 +35,10 @@ class PipelineRunServiceTest {
     private final CredentialService credentials = mock(CredentialService.class);
     private final PipelineArchiveService archive = mock(PipelineArchiveService.class);
 
+    private final PlatformPipelineRunLogMapper logMapper = mock(PlatformPipelineRunLogMapper.class);
+
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, k8s, credentials, archive);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, archive);
 
     private final PipelineRunContext ctx = new PipelineRunContext("c1", "ns1", "t1");
 
@@ -194,5 +198,63 @@ class PipelineRunServiceTest {
         org.mockito.Mockito.doThrow(new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                         "该连接未授权在流水线里使用：conn-1"))
                 .when(credentials).assertUsableByPipelines(any(), any());
+    }
+
+    // ---- 日志（两种数据源，分界线是「归档了没有」）----
+
+    @Test
+    void anArchivedRunsLogsComeFromTheDatabaseNotTheCluster() {
+        // 归档之后集群里的对象与 Pod 都删了 —— 库是唯一存续形式（spec §4.3）
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+        PlatformPipelineRunLog line = new PlatformPipelineRunLog();
+        line.setRunId("run-1");
+        line.setNodeName("clone");
+        line.setContent("hello from the archive");
+        line.setTruncated(0);
+        when(logMapper.listByRunId("run-1")).thenReturn(List.of(line));
+
+        String logs = svc.logs("r1", null, ctx, 1024);
+
+        assertThat(logs).isEqualTo("hello from the archive");
+        verify(k8s, never()).steps(anyString(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void aRunningRunsLogsAreFetchedLiveThroughTheExistingPodChannel() {
+        when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
+        when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(
+                List.of(new com.coding.common.models.pipeline.PipelineStepRefDTO(
+                        "clone", "RUNNING", "clone-pod", List.of("step-run"))));
+        when(k8s.podLog("c1", "t1", "ns1", "clone-pod", "step-run", 1024))
+                .thenReturn(new K8sPipelineClient.CappedLog("live!", false, 5));
+
+        assertThat(svc.logs("r1", null, ctx, 1024)).isEqualTo("live!");
+        verify(logMapper, never()).listByRunId(anyString());   // 没落库
+    }
+
+    @Test
+    void aTruncatedArchivedLogSaysSoInTheOutput() {
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+        PlatformPipelineRunLog line = new PlatformPipelineRunLog();
+        line.setRunId("run-1");
+        line.setNodeName("build");
+        line.setContent("x");
+        line.setTruncated(1);
+        when(logMapper.listByRunId("run-1")).thenReturn(List.of(line));
+
+        assertThat(svc.logs("r1", null, ctx, 1024)).contains("已截断");
+    }
+
+    @Test
+    void logsOfAnUnknownRunAreRefused() {
+        when(runMapper.selectByRunName("nope")).thenReturn(null);
+        assertThatThrownBy(() -> svc.logs("nope", null, ctx, 1024))
+                .isInstanceOf(CloudPlatformException.class);
+    }
+
+    private static PlatformPipelineRun archived(String runName) {
+        PlatformPipelineRun r = running(runName);
+        r.setStatus("SUCCEEDED");
+        return r;
     }
 }

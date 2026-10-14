@@ -3,9 +3,12 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PipelineDTO;
+import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.utils.ULIDGenerator;
+import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
+import com.coding.data.models.system.PlatformPipelineRunLog;
 import com.coding.platformapi.k8s.K8sPipelineClient;
 import com.coding.platformapi.models.PipelineRunContext;
 import lombok.extern.slf4j.Slf4j;
@@ -59,15 +62,18 @@ public class PipelineRunService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final PlatformPipelineRunMapper runMapper;
+    private final PlatformPipelineRunLogMapper logMapper;
     private final K8sPipelineClient k8s;
     private final CredentialService credentials;
     private final PipelineArchiveService archive;
 
     public PipelineRunService(PlatformPipelineRunMapper runMapper,
+                              PlatformPipelineRunLogMapper logMapper,
                               K8sPipelineClient k8s,
                               CredentialService credentials,
                               PipelineArchiveService archive) {
         this.runMapper = runMapper;
+        this.logMapper = logMapper;
         this.k8s = k8s;
         this.credentials = credentials;
         this.archive = archive;
@@ -126,6 +132,67 @@ public class PipelineRunService {
     /** 运行历史。**只读库** —— 集群里的对象归档后已经删了（spec §4.3）。 */
     public List<PlatformPipelineRun> list(String pipelineId, PipelineRunContext ctx) {
         return runMapper.listByPipeline(pipelineId, ctx.clusterId(), ctx.namespace());
+    }
+
+    /**
+     * 看一次运行的日志。**两种数据源，分界线是「归档了没有」**（spec §4.3）。
+     *
+     * <ul>
+     *   <li>已归档 → 读库。集群里的对象与 Pod 早就删了，库是唯一存续形式。</li>
+     *   <li>还在跑 → 现抓。走既有的 Pod 日志通道（spec §4.4：不用新写日志通道），
+     *       **不落库也不落缓存** —— 落库只发生在归档那一刻。</li>
+     * </ul>
+     *
+     * @param nodeName 只看某个节点；为空则把所有节点拼起来（每段前面标节点名）
+     */
+    public String logs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes) {
+        PlatformPipelineRun row = runMapper.selectByRunName(runName);
+        if (row == null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "运行不存在：" + runName);
+        }
+        if (!"RUNNING".equals(row.getStatus())) {
+            return archivedLogs(row.getId(), nodeName);
+        }
+        return liveLogs(runName, nodeName, ctx, maxBytes);
+    }
+
+    private String archivedLogs(String runId, String nodeName) {
+        List<PlatformPipelineRunLog> lines = logMapper.listByRunId(runId);
+        if (nodeName != null && !nodeName.isBlank()) {
+            lines = lines.stream().filter(l -> nodeName.equals(l.getNodeName())).toList();
+        }
+        StringBuilder out = new StringBuilder();
+        for (PlatformPipelineRunLog l : lines) {
+            out.append(header(l.getNodeName(), lines.size() > 1));
+            out.append(l.getContent() == null ? "" : l.getContent());
+            if (l.getTruncated() != null && l.getTruncated() == 1) {
+                out.append("\n\n[日志超过单步上限，已截断]\n");
+            }
+        }
+        return out.toString();
+    }
+
+    private String liveLogs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes) {
+        List<PipelineStepRefDTO> steps = k8s.steps(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
+        if (nodeName != null && !nodeName.isBlank()) {
+            steps = steps.stream().filter(s -> nodeName.equals(s.nodeName())).toList();
+        }
+        StringBuilder out = new StringBuilder();
+        for (PipelineStepRefDTO step : steps) {
+            if (step.podName() == null || step.podName().isBlank()) {
+                continue;                                  // 还没起来，没日志可看
+            }
+            out.append(header(step.nodeName(), steps.size() > 1));
+            for (String container : step.containers()) {
+                out.append(k8s.podLog(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
+                        step.podName(), container, maxBytes).content());
+            }
+        }
+        return out.toString();
+    }
+
+    private static String header(String nodeName, boolean multi) {
+        return multi ? "===== " + nodeName + " =====\n" : "";
     }
 
     public PlatformPipelineRun get(String runName) {
