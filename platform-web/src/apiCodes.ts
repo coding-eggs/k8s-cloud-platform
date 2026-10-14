@@ -50,4 +50,22 @@ export const apiCodes = {
   workloadUpdate: 'tenant:workload:update',
   /** Gateway 列表读（工作负载的 L7 开关要列本命名空间的 waypoint 候选） */
   gatewayList: 'tenant:gateway:list',
+
+  // ---- 路由策略（Route 五合一）：逐 kind 的拉取短路 / 创建与保存的按钮置灰 ----
+  // 页面可见性用 pageCodes.mesh.<x>Route.{list,edit}（本批不加页面码）；这里只放"发不发请求 / 按不按得动"的判断。
+  httpRouteList: 'tenant:httproute:list',
+  httpRouteCreate: 'tenant:httproute:create',
+  httpRouteUpdate: 'tenant:httproute:update',
+  grpcRouteList: 'tenant:grpcroute:list',
+  grpcRouteCreate: 'tenant:grpcroute:create',
+  grpcRouteUpdate: 'tenant:grpcroute:update',
+  tcpRouteList: 'tenant:tcproute:list',
+  tcpRouteCreate: 'tenant:tcproute:create',
+  tcpRouteUpdate: 'tenant:tcproute:update',
+  tlsRouteList: 'tenant:tlsroute:list',
+  tlsRouteCreate: 'tenant:tlsroute:create',
+  tlsRouteUpdate: 'tenant:tlsroute:update',
+  udpRouteList: 'tenant:udproute:list',
+  udpRouteCreate: 'tenant:udproute:create',
+  udpRouteUpdate: 'tenant:udproute:update',
 } as const
