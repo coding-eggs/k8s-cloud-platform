@@ -15,6 +15,7 @@ import com.coding.platformapi.models.CredentialTestResult;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
 import com.coding.platformapi.registry.CredentialRef;
+import com.coding.platformapi.registry.ProbeSpec;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,7 +56,7 @@ public class CredentialService {
      * <p>扩展位由 {@code RegistryDialect} 接口 + {@code RegistryDialectRegistry} + 一条护栏测试提供：
      * 加一档 = 加一个枚举值 + 一个实现类 + 一个 UI 选项，其余零改动。
      */
-    private static final Set<String> TYPES = Set.of("GIT", "HARBOR");
+    private static final Set<String> TYPES = Set.of("GIT", "HARBOR", "DOCKERHUB");
 
     private static final String AUTH_BASIC = "BASIC";
 
@@ -176,8 +177,9 @@ public class CredentialService {
             // 就是第二个真相源（S3.1 终审删掉 RegistryService.REGISTRY_TYPES 时反对的那个）
             CredentialRef ref = new CredentialRef(c.getId(), c.getName(), c.getType(),
                     c.getEndpoint(), s.getUsername(), s.getSecret());
-            result = probeClient.probeRegistry(
-                    dialects.of(c.getType()).probeSpec(ref).url(), s.getUsername(), s.getSecret());
+            ProbeSpec spec = dialects.of(c.getType()).probeSpec(ref);
+            result = probeClient.probeRegistry(spec.url(), s.getUsername(), s.getSecret(),
+                    spec.notFoundMessage());
         }
 
         mapper.updateVerifyResult(c.getId(), result.ok(),

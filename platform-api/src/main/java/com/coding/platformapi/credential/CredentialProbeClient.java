@@ -74,10 +74,23 @@ public class CredentialProbeClient {
      * （Docker Hub 的 API 站在 {@code hub.docker.com}，不是它的 endpoint {@code docker.io}）。
      */
     public ProbeResult probeRegistry(String url, String username, String secret) {
-        return probe(url, username, secret, false);
+        return probeRegistry(url, username, secret, null);
+    }
+
+    /**
+     * @param notFoundMessage 该档对 404 的解释（{@code ProbeSpec#notFoundMessage()}）；null = 用通用文案。
+     *                        它来自调用方而不是本层，因为**同一句 404 文案对各档含义不同**。
+     */
+    public ProbeResult probeRegistry(String url, String username, String secret, String notFoundMessage) {
+        return probe(url, username, secret, false, notFoundMessage);
     }
 
     private ProbeResult probe(String url, String username, String secret, boolean git) {
+        return probe(url, username, secret, git, null);
+    }
+
+    private ProbeResult probe(String url, String username, String secret, boolean git,
+                              String notFoundMessage) {
         try {
             boolean anonymous = !StringUtils.hasText(username) && !StringUtils.hasText(secret);
             RestClient.RequestHeadersSpec<?> spec = restClient.get().uri(java.net.URI.create(url));
@@ -92,7 +105,10 @@ public class CredentialProbeClient {
                         int status = res.getStatusCode().value();
                         return git
                                 ? CredentialProbe.classifyGit(status, body, location)
-                                : CredentialProbe.classifyRegistry(status, anonymous);
+                                : CredentialProbe.classifyRegistry(status, anonymous,
+                                        notFoundMessage == null
+                                                ? "地址不对：该地址不是 registry（/v2/ 不存在）"
+                                                : notFoundMessage);
                     });
             return response != null ? response : ProbeResult.fail("对端返回空响应");
         } catch (IllegalArgumentException e) {

@@ -183,22 +183,106 @@ public class DockerHubDialect implements RegistryDialect {
         private String digest;
     }
 
-    // ==================== Task 6 替换成真实现 ====================
-    //
-    // 本任务只交付纯函数，这三个先占位让它能编译。
+    // ==================== 两个动作 + 探测 ====================
 
     @Override
     public List<String> suggest(CredentialRef cred, String imagePrefix) {
-        return List.of();
+        // 补全**静默降级**：任何失败都退回空候选（spec §2.5 / S3.1 spec §5.3）
+        try {
+            String p = imagePrefix == null ? "" : imagePrefix.trim();
+            String hostPrefix = hostPrefixOf(p);
+            String rest = p.substring(hostPrefix.length());
+            String tagPrefix = tagPrefixOf(p);
+
+            if (tagPrefix != null) {
+                // rest 上还挂着 `:<tag>`（hostPrefix 只切掉了 host）—— 先剥掉才拼得出 tags 的路径。
+                // ⚠️ **无论 tagPrefix 空不空都要剥那个冒号**：`nginx:` 是「刚打下冒号」，
+                // 此时 tagPrefix 是空串，不剥就会去请求 `library/nginx%3A`（404 → 静默空）。
+                if (rest.length() <= tagPrefix.length() + 1) {
+                    return List.of();
+                }
+                String repoPart = rest.substring(0, rest.length() - tagPrefix.length() - 1);
+                if (repoPart.isEmpty()) {
+                    return List.of();
+                }
+                List<TagInfo> tags = parseTags(http.get(cred,
+                        tagsUrl(namespaceOf(repoPart), repoOf(repoPart))));
+                String lower = tagPrefix.toLowerCase(Locale.ROOT);
+                return tags.stream()
+                        .map(TagInfo::name)
+                        .filter(t -> t.toLowerCase(Locale.ROOT).startsWith(lower))
+                        .map(t -> hostPrefix + repoPart + ":" + t)
+                        .toList();
+            }
+
+            // 只打了 host（`docker.io` / `docker.io/` / `registry-1.docker.io`）：
+            // 把整个 registry 的候选拉出来既慢又没意义
+            if (rest.isEmpty() || HOST_ALIASES.contains(p.toLowerCase(Locale.ROOT))) {
+                return List.of();
+            }
+            return parseSearchHits(http.get(cred, searchUrl(rest))).stream()
+                    .map(n -> hostPrefix + stripLibrary(n, hostPrefix))
+                    .distinct()
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Docker Hub 候选查询失败（静默降级为空）prefix={}", imagePrefix, e);
+            return List.of();
+        }
     }
 
     @Override
     public BrowseResult browse(CredentialRef cred, List<String> path) {
+        // 浏览**不吞错**：用户主动点了一层，什么都不说等于页面坏了（S3.1 spec §5.3）
+        if (path == null || path.isEmpty()) {
+            return new BrowseResult(List.of(), List.of(new BrowseResult.Node(
+                    LIBRARY, true, null,
+                    List.of(new BrowseResult.Detail("说明", "Docker 官方镜像库")))));
+        }
+        if (path.size() == 1) {
+            String ns = path.get(0);
+            List<String> repos = parseRepositoryNames(http.get(cred, repositoriesUrl(ns)));
+            return new BrowseResult(
+                    List.of(new BrowseResult.Crumb(ns, List.of(ns))),
+                    repos.stream().map(r -> new BrowseResult.Node(r, true, null, List.of())).toList());
+        }
+        if (path.size() == 2) {
+            String ns = path.get(0);
+            String repo = path.get(1);
+            List<TagInfo> tags = parseTags(http.get(cred, tagsUrl(ns, repo)));
+            // 叶子的 copyText 与补全同一条规则：library 下剥前缀（spec §3.3）
+            String copyName = (LIBRARY.equals(ns) ? "" : ns + "/") + repo;
+            return new BrowseResult(
+                    List.of(new BrowseResult.Crumb(ns, List.of(ns)),
+                            new BrowseResult.Crumb(repo, List.of(ns, repo))),
+                    tags.stream().map(t -> new BrowseResult.Node(
+                            t.name(), false, copyName + ":" + t.name(),
+                            List.of(new BrowseResult.Detail("推送时间",
+                                            t.pushedAt() == null ? "—" : t.pushedAt()),
+                                    new BrowseResult.Detail("大小", BrowseFormat.formatSize(t.size())),
+                                    new BrowseResult.Detail("digest",
+                                            t.digest() == null ? "—" : t.digest())))).toList());
+        }
         return new BrowseResult(List.of(), List.of());
     }
 
     @Override
     public ProbeSpec probeSpec(CredentialRef cred) {
-        return new ProbeSpec(API, "");
+        // 该档只允许匿名，所以探的是「平台能不能出站访问 Docker Hub 的公共 API」，
+        // 而不是「你的凭据有没有效」—— 没有凭据。用 library 因为它恒定存在。
+        return new ProbeSpec(repositoriesUrl(LIBRARY),
+                "Docker Hub 公共 API 返回 404：地址可能被网络中间件改写了");
+    }
+
+    /**
+     * 有 {@code :} 时返回 tag 前缀，否则 {@code null}。
+     *
+     * <p>与 {@code HarborDialect} 那份同款，但**有意各写一份** —— 两档对 {@code :} 的处理
+     * 将来可能分叉（Docker Hub 的引用不带 host 是常态，Harbor 的必须带 host）。
+     */
+    private static String tagPrefixOf(String imagePrefix) {
+        String s = imagePrefix == null ? "" : imagePrefix.trim();
+        int slash = s.lastIndexOf('/');
+        int colon = s.indexOf(':', slash + 1);
+        return colon >= 0 ? s.substring(colon + 1) : null;
     }
 }

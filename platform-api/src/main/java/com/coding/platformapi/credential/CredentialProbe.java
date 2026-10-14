@@ -85,6 +85,16 @@ public final class CredentialProbe {
      *                  403 是真实的拒绝（IP 被封等），两种都报。
      */
     public static ProbeResult classifyRegistry(int status, boolean anonymous) {
+        return classifyRegistry(status, anonymous, "地址不对：该地址不是 registry（/v2/ 不存在）");
+    }
+
+    /**
+     * @param notFoundMessage 该档对 404 的解释（{@code ProbeSpec#notFoundMessage()}）。
+     *                        **必须由各档给**：对 Harbor 是「这不是个 registry」，
+     *                        对 Docker Hub 是「公共 API 被中间件改写了」——
+     *                        同一句写死会把管理员引去查一个没问题的地址。
+     */
+    public static ProbeResult classifyRegistry(int status, boolean anonymous, String notFoundMessage) {
         if (status == 200) {
             return ProbeResult.pass();
         }
@@ -99,7 +109,7 @@ public final class CredentialProbe {
                     : "凭据不通过，或该凭据无权访问此 registry");
         }
         if (status == 404) {
-            return ProbeResult.fail("地址不对：该地址不是 registry（/v2/ 不存在）");
+            return ProbeResult.fail(notFoundMessage);
         }
         return ProbeResult.fail("对端返回 " + status);
     }

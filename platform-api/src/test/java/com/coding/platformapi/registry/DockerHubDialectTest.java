@@ -2,17 +2,33 @@ package com.coding.platformapi.registry;
 
 import com.coding.platformapi.registry.BrowseFormat.TagInfo;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
- * {@link DockerHubDialect} 的**纯规则**：输入切分、URL 构造、响应映射。
+ * {@link DockerHubDialect} 的**纯规则**（前半段）与**行为**（后半段，打 {@code MockRestServiceServer}）。
  *
- * <p>行为测试（出站那半）在 Task 6 补 —— 本类此刻只有不出站的部分。
+ * <p>两半分开的理由同 {@code HarborDialectTest}：纯函数测得再密也覆盖不到
+ * 「拼出来的 URL 长什么样、请求有没有发出去」——S3.1 的 tag 补全恒不工作就是从那条缝里漏掉的。
  */
 class DockerHubDialectTest {
+
+    private final RestClient.Builder builder = RestClient.builder();
+    private final MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+    private final DockerHubDialect dialect =
+            new DockerHubDialect(new RegistryHttpClient(builder.build()));
+
+    /** 该档只允许匿名 —— 两字段都空就是它的常态。 */
+    private static CredentialRef anonCred() {
+        return new CredentialRef("c1", "hub", "DOCKERHUB", "docker.io", null, null);
+    }
 
     // ---- 输入切分 ----
 
@@ -149,5 +165,123 @@ class DockerHubDialectTest {
         String json = """
                 {"results":[{"name":"nginx"},{"repo_name":null},{"name":null}]}""";
         assertThat(DockerHubDialect.parseRepositoryNames(json)).containsExactly("nginx");
+    }
+
+    // ==================== 行为（出站） ====================
+
+    @Test
+    void suggestOnASingleSegmentSearchesAndStripsTheLibraryPrefix() {
+        server.expect(requestTo("https://hub.docker.com/v2/search/repositories/?query=ng&page_size=25"))
+                .andRespond(withSuccess("""
+                        {"results":[{"repo_name":"library/nginx"},{"repo_name":"myteam/nginx-agent"}]}""",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(dialect.suggest(anonCred(), "ng")).containsExactly("nginx", "myteam/nginx-agent");
+        server.verify();
+    }
+
+    @Test
+    void suggestKeepsTheHostPrefixTheUserTyped() {
+        server.expect(requestTo("https://hub.docker.com/v2/search/repositories/?query=ng&page_size=25"))
+                .andRespond(withSuccess("""
+                        {"results":[{"repo_name":"library/nginx"}]}""", MediaType.APPLICATION_JSON));
+
+        assertThat(dialect.suggest(anonCred(), "docker.io/ng")).containsExactly("docker.io/library/nginx");
+    }
+
+    @Test
+    void suggestOnAHostOnlyInputMakesNoRequest() {
+        // 只打了 host：把整个 registry 的候选拉出来既慢又没意义。
+        // ⚠️ 没有 server.expect —— 真发了请求这里就会报错，这正是要钉的「零请求」。
+        assertThat(dialect.suggest(anonCred(), "docker.io")).isEmpty();
+        assertThat(dialect.suggest(anonCred(), "docker.io/")).isEmpty();
+        assertThat(dialect.suggest(anonCred(), "registry-1.docker.io")).isEmpty();
+    }
+
+    @Test
+    void tagCompletionParsesNamespaceAndRepoConsistentlyWithTheNonTagPath() {
+        // ⭐ Review Focus #2：`nginx:1` 要查 library/nginx，`bitnami/app:1` 要查 bitnami/app。
+        // 解析错就会把 tag 候选挂到别的仓库上，而现象只是「这个 tag 不存在」
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/library/nginx/tags?page_size=100"))
+                .andRespond(withSuccess("""
+                        {"results":[{"name":"1.27","last_updated":"2026-10-13T21:04:00Z",
+                                     "full_size":86400000,"digest":"sha256:9f2c"},
+                                    {"name":"1.26","full_size":1}]}""", MediaType.APPLICATION_JSON));
+        assertThat(dialect.suggest(anonCred(), "nginx:1")).containsExactly("nginx:1.27", "nginx:1.26");
+
+        server.reset();
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/bitnami/app/tags?page_size=100"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"1.0\",\"full_size\":1}]}",
+                        MediaType.APPLICATION_JSON));
+        assertThat(dialect.suggest(anonCred(), "bitnami/app:1")).containsExactly("bitnami/app:1.0");
+    }
+
+    @Test
+    void tagCompletionOnABareColonStillQueriesTheRepoNotTheRepoWithAColon() {
+        // `nginx:` 是「刚打下冒号」—— tagPrefix 是空串，但那个冒号必须先剥掉，
+        // 否则会去请求 library/nginx%3A（404 → 静默空）
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/library/nginx/tags?page_size=100"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"1.27\",\"full_size\":1}]}",
+                        MediaType.APPLICATION_JSON));
+        assertThat(dialect.suggest(anonCred(), "nginx:")).containsExactly("nginx:1.27");
+    }
+
+    @Test
+    void upstreamFailureDegradesSilently() {
+        // spec §2.5 / S3.1 spec §5.3：补全是每按键一次的高频动作，弹错会掩盖真正的问题
+        server.expect(requestTo("https://hub.docker.com/v2/search/repositories/?query=ng&page_size=25"))
+                .andRespond(withSuccess("<html>gateway</html>", MediaType.TEXT_HTML));
+
+        assertThat(dialect.suggest(anonCred(), "ng")).isEmpty();
+    }
+
+    @Test
+    void browseFirstLevelIsOnlyTheOfficialLibrary() {
+        // 该档只允许匿名 → 没有 username 可以列，所以第一层只有一个入口（spec §3.3）
+        BrowseResult r = dialect.browse(anonCred(), List.of());
+        assertThat(r.children()).extracting(BrowseResult.Node::name).containsExactly("library");
+        assertThat(r.children().get(0).hasChildren()).isTrue();
+    }
+
+    @Test
+    void browseSecondLevelListsRepositories() {
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/library/?page_size=100"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"nginx\"},{\"name\":\"redis\"}]}",
+                        MediaType.APPLICATION_JSON));
+
+        BrowseResult r = dialect.browse(anonCred(), List.of("library"));
+        assertThat(r.children()).extracting(BrowseResult.Node::name).containsExactly("nginx", "redis");
+        assertThat(r.breadcrumb()).extracting(BrowseResult.Crumb::label).containsExactly("library");
+    }
+
+    @Test
+    void browseTagLeafCopyTextStripsLibraryToo() {
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/library/nginx/tags?page_size=100"))
+                .andRespond(withSuccess("""
+                        {"results":[{"name":"1.27","full_size":86400000,"digest":"sha256:9f2c"}]}""",
+                        MediaType.APPLICATION_JSON));
+
+        BrowseResult r = dialect.browse(anonCred(), List.of("library", "nginx"));
+        assertThat(r.children().get(0).copyText()).isEqualTo("nginx:1.27");
+        assertThat(r.children().get(0).details()).extracting(BrowseResult.Detail::label)
+                .containsExactly("推送时间", "大小", "digest");
+    }
+
+    @Test
+    void browseTagLeafKeepsTheNamespaceWhenItIsNotTheLibrary() {
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/bitnami/nginx/tags?page_size=100"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"1.27\",\"full_size\":1}]}",
+                        MediaType.APPLICATION_JSON));
+
+        BrowseResult r = dialect.browse(anonCred(), List.of("bitnami", "nginx"));
+        assertThat(r.children().get(0).copyText()).isEqualTo("bitnami/nginx:1.27");
+    }
+
+    @Test
+    void probeTargetsThePublicApiNotTheEndpoint() {
+        // ⭐ 这条钉住「出站地址不来自 endpoint」：endpoint 是 docker.io，API 站是 hub.docker.com
+        ProbeSpec spec = dialect.probeSpec(anonCred());
+        assertThat(spec.url()).isEqualTo("https://hub.docker.com/v2/repositories/library/?page_size=100");
+        assertThat(spec.notFoundMessage()).contains("Docker Hub");
     }
 }

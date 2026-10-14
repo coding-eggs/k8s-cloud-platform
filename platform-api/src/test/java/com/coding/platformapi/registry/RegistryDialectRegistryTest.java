@@ -35,7 +35,8 @@ class RegistryDialectRegistryTest {
     }
 
     RegistryDialectRegistry registry = new RegistryDialectRegistry(
-            List.of(new FakeDialect(), new HarborDialect(mock(RegistryHttpClient.class))));
+            List.of(new FakeDialect(), new HarborDialect(mock(RegistryHttpClient.class)),
+                    new DockerHubDialect(mock(RegistryHttpClient.class))));
 
     /** 不是镜像仓库的类型，不需要方言 */
     private static final Set<String> NON_REGISTRY_TYPES = Set.of("GIT");

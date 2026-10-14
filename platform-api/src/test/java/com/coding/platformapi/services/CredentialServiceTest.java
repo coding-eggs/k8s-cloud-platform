@@ -12,6 +12,7 @@ import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
 import com.coding.platformapi.registry.CredentialRef;
+import com.coding.platformapi.registry.DockerHubDialect;
 import com.coding.platformapi.registry.HarborDialect;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import com.coding.platformapi.registry.RegistryHttpClient;
@@ -48,7 +49,8 @@ class CredentialServiceTest {
     CredentialCipher cipher = new CredentialCipher(KEY);
     /** 校验「该类型允许哪种认证方式」要问它 —— 见 CredentialService.allowedAuthTypes */
     RegistryDialectRegistry dialects = new RegistryDialectRegistry(
-            List.of(new HarborDialect(mock(RegistryHttpClient.class))));
+            List.of(new HarborDialect(mock(RegistryHttpClient.class)),
+                    new DockerHubDialect(mock(RegistryHttpClient.class))));
     CredentialService svc = new CredentialService(mapper, cipher, probeClient, dialects);
 
     private PlatformCredential stored(String id, String name, String type, String endpoint,
@@ -220,15 +222,50 @@ class CredentialServiceTest {
         // 这件事就只能由 CredentialService 自己判 type 才知道，那是第二个真相源（spec §4）
         PlatformCredential c = stored("c1", "h", "HARBOR", "harbor.example.com", "u", "p");
         when(mapper.selectById("c1")).thenReturn(c);
-        when(probeClient.probeRegistry(anyString(), any(), any())).thenReturn(ProbeResult.pass());
+        when(probeClient.probeRegistry(anyString(), any(), any(), any())).thenReturn(ProbeResult.pass());
 
         CredentialTestRequest req = new CredentialTestRequest();
         req.setId("c1");
         svc.test(req);
 
         var url = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(probeClient).probeRegistry(url.capture(), any(), any());
+        verify(probeClient).probeRegistry(url.capture(), any(), any(), any());
         assertThat(url.getValue()).isEqualTo("https://harbor.example.com/v2/");
+    }
+
+    @Test
+    void dockerHubRejectsCredentialsBecauseItIsAnonymousOnly() {
+        // 用户裁定：这一档的角色是「公共镜像的来源」，私有镜像该放自建 Harbor。
+        // **报错而不是静默丢弃** —— 后者会让管理员以为自己配上了 PAT，
+        // 然后在发现搜不到私有仓库时找不到原因。
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("hub");
+        req.setType("DOCKERHUB");
+        req.setEndpoint("docker.io");
+        req.setAuthType("BASIC");
+        req.setUsername("u");
+        req.setSecret("p");
+
+        assertThatThrownBy(() -> svc.create(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("该类型支持的认证方式");
+    }
+
+    @Test
+    void dockerHubAcceptsAnonymous() {
+        when(mapper.selectByName(anyString())).thenReturn(null);
+        when(mapper.insert(any())).thenReturn(1);
+
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("hub");
+        req.setType("DOCKERHUB");
+        req.setEndpoint("docker.io");
+        req.setAuthType("NONE");
+
+        CredentialView v = svc.create(req);
+
+        assertThat(v.getType()).isEqualTo("DOCKERHUB");
+        assertThat(v.getHasSecret()).isFalse();
     }
 
     // ---- 匿名（authType=NONE） ----
@@ -413,7 +450,7 @@ class CredentialServiceTest {
         when(mapper.selectById("c1")).thenReturn(
                 stored("c1", "harbor", "HARBOR", "harbor.example.com", "robot", "pw"));
         // 收到的已经是**拼好的 URL**（由 HarborDialect.probeSpec 给），不再是裸 endpoint
-        when(probeClient.probeRegistry("https://harbor.example.com/v2/", "robot", "pw"))
+        when(probeClient.probeRegistry(eq("https://harbor.example.com/v2/"), eq("robot"), eq("pw"), any()))
                 .thenReturn(ProbeResult.fail("凭据不通过，或该凭据无权访问此 registry"));
 
         CredentialTestRequest req = new CredentialTestRequest();
@@ -431,7 +468,7 @@ class CredentialServiceTest {
         PlatformCredential row = stored("c1", "harbor", "HARBOR", "harbor.example.com", "r", "pw");
         row.setLastVerifiedAt(new Date(1_700_000_000_000L));
         when(mapper.selectById("c1")).thenReturn(row);
-        when(probeClient.probeRegistry(anyString(), anyString(), anyString()))
+        when(probeClient.probeRegistry(anyString(), anyString(), anyString(), any()))
                 .thenReturn(ProbeResult.fail("凭据不通过"));
 
         CredentialTestRequest req = new CredentialTestRequest();
