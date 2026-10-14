@@ -219,6 +219,9 @@ Expected: **编译失败**（`authTypes()` 不存在 / `AUTH_NONE` 不存在）�
 
 - [ ] **Step 4: `CredentialService` 的校验与存储**
 
+⚠️ **本任务就要把 `RegistryDialectRegistry dialects` 注入 `CredentialService`**（`allowedAuthTypes` 要用它）——
+Task 2 复用它，不再重复注入。
+
 在 `AUTH_BASIC` 常量旁加：
 
 ```java
@@ -1019,8 +1022,14 @@ public final class BrowseFormat {
 }
 ```
 
-`HarborDialect` 里删掉 `formatSize` 与 `TagInfo`，改 import `BrowseFormat.TagInfo`（或全限定引用）。
-`HarborDialectTest` 里 `formatSize` 的用例删掉（已在 `BrowseFormatTest`）。
+`HarborDialect` 里删掉 `formatSize` 与 `TagInfo`，改 import `BrowseFormat.TagInfo`。
+
+⚠️ **顺带要把 HarborDialect 里两处 `TagInfo::tag` / `t.tag()` 改成 `::name` / `.name()`** ——
+`BrowseFormat.TagInfo` 的字段叫 `name`（两档共用，Docker Hub 的 JSON 字段本来就是 `name`），
+而 Harbor 原来那个 record 字段叫 `tag`。涉及 [`HarborDialect.java:71`](../../platform-api/src/main/java/com/coding/platformapi/registry/HarborDialect.java)
+与 [`mapArtifacts`](../../platform-api/src/main/java/com/coding/platformapi/registry/HarborDialect.java)。
+`HarborDialectTest` 里 `formatSize` 的用例删掉（已在 `BrowseFormatTest`），
+造 `TagInfo` 的地方跟着改字段名。
 
 - [ ] **Step 4: 建 `DockerHubDialect` 的纯函数部分**
 
@@ -1382,9 +1391,13 @@ Expected: FAIL —— `suggest` 返回空、`TYPES` 里还没有 `DOCKERHUB` 所
             String tagPrefix = tagPrefixOf(p);
 
             if (tagPrefix != null) {
-                String repoPart = tagPrefix.isEmpty()
-                        ? rest
-                        : rest.substring(0, rest.length() - tagPrefix.length() - 1);
+                // rest 上还挂着 `:<tag>`（hostPrefix 只切掉了 host）—— 先剥掉才拼得出 tags 的路径。
+                // ⚠️ **无论 tagPrefix 空不空都要剥那个冒号**：`nginx:` 是「刚打下冒号」，
+                // 此时 tagPrefix 是空串，不剥就会去请求 `library/nginx%3A`（404 → 静默空）。
+                if (rest.length() <= tagPrefix.length() + 1) {
+                    return List.of();
+                }
+                String repoPart = rest.substring(0, rest.length() - tagPrefix.length() - 1);
                 if (repoPart.isEmpty()) {
                     return List.of();
                 }
