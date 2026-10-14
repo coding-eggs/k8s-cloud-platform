@@ -52,6 +52,17 @@ const showsAuthFields = computed(() => !isDockerHub.value)
  * 编辑一条已存的连接时 `form.type` 也会「变化」（从初值变成行值），
  * 挂 watch 会把那条连接的凭据与地址冲掉。
  */
+/**
+ * 换认证方式时的联动：改成匿名就把已输入的凭据清掉 —— 那些输入框随即隐藏，
+ * 留着只会让「保存」报一个用户没法处理的错（见 save 里的 body 注释）。
+ */
+function onAuthTypeChange(v: 'BASIC' | 'NONE'): void {
+  if (v === 'NONE') {
+    form.username = ''
+    form.secret = ''
+  }
+}
+
 function onTypeChange(t: string): void {
   if (t === 'DOCKERHUB') {
     authType.value = 'NONE'
@@ -139,8 +150,11 @@ async function save(): Promise<void> {
     type: form.type,
     endpoint: form.endpoint.trim(),
     authType: authType.value,
-    username: form.username,
-    secret: form.secret,
+    // ⚠️ 匿名时**根本不发**这两个字段 —— 上面的 v-if 只卸载 DOM，用户此前输过的值仍留在
+    // reactive 里。带上去会被后端拒（这正是它要拒的），而那两个框此刻**用户看不到也删不掉**，
+    // 只能切回「用户名密码」手动清两次，或者关掉抽屉重来。
+    username: authType.value === 'NONE' ? undefined : form.username,
+    secret: authType.value === 'NONE' ? undefined : form.secret,
     description: form.description.trim() || null,
     enabled: form.enabled,
   }
@@ -298,7 +312,7 @@ onMounted(load)
           <div v-else class="tip">填 host 基址（站点级），不是具体仓库或 project</div>
         </el-form-item>
         <el-form-item v-if="showsAuthFields" label="认证方式">
-          <el-select v-model="authType" style="width: 100%">
+          <el-select v-model="authType" style="width: 100%" @change="onAuthTypeChange">
             <el-option v-for="o in AUTH_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
           <div v-if="authType === 'NONE'" class="tip">匿名连接不带凭据，只能访问对端公开的资源</div>

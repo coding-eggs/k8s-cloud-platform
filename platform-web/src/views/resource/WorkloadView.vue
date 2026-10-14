@@ -648,8 +648,9 @@ const contextDesc = computed(() => {
                            placeholder="如 nginx:1.27 或 registry.example.com/app"
                            style="width: 100%"
                            @keyup.enter="submitImage">
-            <!-- ⚠️ key 不能只取 value：两条连接返回同一个串是可能的（同 endpoint 的两条连接），
-                 只用它当 key 会出重复 key 并丢行 -->
+            <!-- 候选项由 el-autocomplete 自己渲染（它按 index 建 key），
+                 所以「两条连接返回同一个串」不会重复 key、也不会丢行。
+                 这里只负责把 value 与来源连接名摆出来。 -->
             <template #default="{ item }">
               <div class="suggest-row">
                 <span class="suggest-value">{{ item.value }}</span>

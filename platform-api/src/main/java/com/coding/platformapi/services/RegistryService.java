@@ -177,7 +177,18 @@ public class RegistryService {
         return new CredentialRef(c.getId(), c.getName(), c.getType(), c.getEndpoint(), null, null);
     }
 
+    /**
+     * 实体 → 带明文的 ref。
+     *
+     * <p>⚠️ <b>匿名的行（{@code auth_type=NONE}）没有密文</b> —— {@code CredentialService.create}
+     * 有意不写（两列都是 null，表注释当初就留了这个位）。这里必须容忍它，
+     * 否则「只允许匿名」的 Docker Hub 档在补全与浏览上**整条死掉**，
+     * 而补全那条还是**静默**的（异常被执行器吞成空列表，只剩一条 WARN）。
+     */
     private CredentialRef toRef(PlatformCredential c) {
+        if (!StringUtils.hasText(c.getSecretEncrypted())) {
+            return new CredentialRef(c.getId(), c.getName(), c.getType(), c.getEndpoint(), null, null);
+        }
         CredentialSecret s = fromJson(cipher.decrypt(c.getSecretEncrypted()));
         return new CredentialRef(c.getId(), c.getName(), c.getType(), c.getEndpoint(),
                 s.getUsername(), s.getSecret());

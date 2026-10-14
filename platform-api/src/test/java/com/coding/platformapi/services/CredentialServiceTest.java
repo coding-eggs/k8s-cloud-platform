@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -266,6 +267,22 @@ class CredentialServiceTest {
 
         assertThat(v.getType()).isEqualTo("DOCKERHUB");
         assertThat(v.getHasSecret()).isFalse();
+    }
+
+    @Test
+    void anonymousCredentialCanBeProbed() {
+        // 匿名行没有密文 —— resolveSecret 必须容忍。不容忍的话「测试连接」对**每一条**
+        // 匿名连接都直接报「凭据密文为空」，而不是那句「匿名仍可拉取公开仓库」
+        PlatformCredential c = anonymousStored("c1", "hub", "HARBOR", "harbor.example.com");
+        when(mapper.selectById("c1")).thenReturn(c);
+        when(probeClient.probeRegistry(anyString(), any(), any(), any())).thenReturn(ProbeResult.pass());
+
+        CredentialTestRequest req = new CredentialTestRequest();
+        req.setId("c1");
+
+        assertThat(svc.test(req).getOk()).isTrue();
+        // 匿名必须**不带** Authorization 头 —— 传下去的两个字段都该是 null
+        verify(probeClient).probeRegistry(anyString(), isNull(), isNull(), any());
     }
 
     // ---- 匿名（authType=NONE） ----

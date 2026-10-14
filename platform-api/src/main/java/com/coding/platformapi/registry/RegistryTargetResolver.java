@@ -47,11 +47,21 @@ public final class RegistryTargetResolver {
         String s = imagePrefix.trim();
         int slash = s.indexOf('/');
         String head = slash >= 0 ? s.substring(0, slash) : s;
-        // 不带斜杠的整串可能形如 host:1.2 —— 冒号后不是纯数字端口时才当 tag 剥。
-        // （host:8443 也是同形，那是端口，不能剥。）
+        // 不带斜杠的整串可能形如 host:port，也可能形如 repo:tag —— 两者同形，要分开：
+        //   · `harbor.example.com:8443` / `localhost:5000` → 冒号前是 host 且冒号后是**纯数字端口** → 留着
+        //   · `harbor.example.com:1.2`                    → 冒号前是 host 但冒号后不是端口 → 那是 tag，剥掉
+        //   · **`nginx:1`**                               → 冒号前**不是 host** → 那是 tag，剥掉
+        // ⚠️ 最后那条以前是错的：旧判据只看「冒号后是不是纯数字」，于是 `nginx:1` 的冒号被留下，
+        // 紧接着 isRegistryHost 的 `contains(":")` 就把它当成了 host →
+        // 上层判「带 host 且匹配不上」→ **零请求、零候选**。而 `nginx:1` 正是想看 1.x 的人
+        // 必然先打到的一串（`nginx:1.27` 反而正常），现象像「tag 补全时灵时不灵」。
         int colon = head.lastIndexOf(':');
-        if (colon > 0 && slash < 0 && !isPort(head.substring(colon + 1))) {
-            head = head.substring(0, colon);
+        if (colon > 0 && slash < 0) {
+            String beforeColon = head.substring(0, colon);
+            String afterColon = head.substring(colon + 1);
+            if (!isRegistryHost(beforeColon) || !isPort(afterColon)) {
+                head = beforeColon;
+            }
         }
         return isRegistryHost(head) ? head : "";
     }

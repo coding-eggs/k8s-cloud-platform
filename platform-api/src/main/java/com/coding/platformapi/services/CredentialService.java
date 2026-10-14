@@ -198,6 +198,12 @@ public class CredentialService {
         if (c == null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST);
         }
+        // ⚠️ 匿名的行没有密文（auth_type=NONE，两列都是 null）—— 返回两个 null 字段而不是抛。
+        // 抛的话「测试连接」对**每一条**匿名连接都报「凭据密文为空」，
+        // 而不是那句专门为匿名写的「匿名仍可拉取公开仓库」。
+        if (!StringUtils.hasText(c.getSecretEncrypted())) {
+            return new CredentialSecret(null, null);
+        }
         return fromJson(cipher.decrypt(c.getSecretEncrypted()));
     }
 

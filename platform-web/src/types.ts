@@ -1603,14 +1603,17 @@ export interface CredentialView {
   updatedAt?: string | null
 }
 
-/** 新建凭据。username / secret 必填。 */
+/**
+ * 新建凭据。`authType=BASIC` 时 username / secret 必填；
+ * **`NONE`（匿名）时两者都必须为空**（后端会拒掉「匿名 + 带凭据」）。
+ */
 export interface CredentialCreateBody {
   name: string
   type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   endpoint: string
   authType: 'BASIC' | 'NONE'
-  username: string
-  secret: string
+  username?: string
+  secret?: string
   description?: string | null
   enabled?: boolean
 }
@@ -1672,8 +1675,9 @@ export interface RegistryBrowseResult {
  *
  * <p>一次输入可能同时问多条连接（无 host 时），所以必须能分辨来源 ——
  * 而「是哪个连接」是唯一无法从候选串里推出来的信息。
- * ⚠️ 它**不是唯一键**：两条连接返回同一个 value 是可能的，`v-for` 的 key 要用
- * `value + '|' + connectionName`。
+ * 两条连接返回同一个 value 是可能的（同 endpoint 的两条连接），但下拉由 el-autocomplete
+ * 自己渲染、按 index 建 key，所以不会重复 key。若将来改成自己写 `v-for` 渲染候选，
+ * key 要用 `value + '|' + connectionName`。
  */
 export interface RegistrySuggestItem {
   value: string

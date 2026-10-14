@@ -119,6 +119,18 @@ class RegistryServiceTest {
         return c;
     }
 
+    /** 匿名的行：auth_type=NONE 且**两列密文都是 null** —— 这正是表注释预留的形态。 */
+    private PlatformCredential anonymousRow(String id, String name, String type, String endpoint) {
+        PlatformCredential c = new PlatformCredential();
+        c.setId(id);
+        c.setName(name);
+        c.setType(type);
+        c.setEndpoint(endpoint);
+        c.setAuthType("NONE");
+        c.setEnabled(1);
+        return c;
+    }
+
     // ---- 窄投影 ----
 
     @Test
@@ -308,6 +320,31 @@ class RegistryServiceTest {
         assertThat(echoSvc.suggest("ng").items())
                 .extracting(RegistrySuggestResponse.Item::value)
                 .containsExactly("good.example.com/x");
+    }
+
+    @Test
+    void anonymousConnectionStillProducesCandidates() {
+        // ⭐ 匿名行**不写密文**（CredentialService 有意为之，列注释当初就留了这个位）——
+        // toRef 必须容忍 null 密文。不容忍的话，Docker Hub 这一档（只允许匿名）在补全上
+        // **整条死掉且是静默的**：异常被执行器吞成空列表，日志里一条 WARN。
+        when(mapper.selectAll()).thenReturn(List.of(
+                anonymousRow("c1", "hub", "DOCKERHUB", "docker.io")));
+
+        assertThat(echoSvc.suggest("ng").items())
+                .extracting(RegistrySuggestResponse.Item::value)
+                .containsExactly("docker.io/x");
+    }
+
+    @Test
+    void anonymousConnectionCanBeBrowsed() {
+        // 同上：browse 在调方言**之前**就 toRef，所以匿名连接连第一层都进不去
+        when(mapper.selectById("c1")).thenReturn(
+                anonymousRow("c1", "hub", "DOCKERHUB", "docker.io"));
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("c1");
+
+        assertThat(echoSvc.browse(req).children()).isEmpty();   // 方言桩返回空，但**不能抛**
     }
 
     // ---- 浏览 ----

@@ -120,6 +120,25 @@ class RegistryTargetResolverTest {
                 List.of(cred("x", "https://harbor.example.com/")))).isNull();
     }
 
+    @Test
+    void aPureNumericTagIsNotAHost() {
+        // ⭐ `nginx:1` 是「想看 1.x 的人必然先打到的一串」。被当成 host 就会走
+        // 「带 host 且匹配不上」→ **零请求、零候选**，而 `nginx:1.27` 正常 ——
+        // 现象看起来像「tag 补全时灵时不灵」。
+        assertThat(RegistryTargetResolver.hostOf("nginx:1")).isEmpty();
+        assertThat(RegistryTargetResolver.hostOf("postgres:16")).isEmpty();
+        assertThat(RegistryTargetResolver.hostOf("redis:7")).isEmpty();
+        // 而真正的 host:port 不能剥
+        assertThat(RegistryTargetResolver.hostOf("harbor.example.com:8443"))
+                .isEqualTo("harbor.example.com:8443");
+        assertThat(RegistryTargetResolver.hostOf("localhost:5000")).isEqualTo("localhost:5000");
+        // host:tag 仍按 tag 剥（既有行为，别改坏）
+        assertThat(RegistryTargetResolver.hostOf("harbor.example.com:1.2"))
+                .isEqualTo("harbor.example.com");
+        // host:tag 且带路径
+        assertThat(RegistryTargetResolver.hostOf("myteam/app:1")).isEmpty();
+    }
+
     // ---- Docker Hub 的三个等效域名 ----
 
     @Test
