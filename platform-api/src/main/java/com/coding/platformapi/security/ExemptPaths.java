@@ -30,6 +30,11 @@ public final class ExemptPaths {
             // gateway controller"，与 /cluster/capability/get 已对租户开放的 RESTMapper 信息同级）。
             "/mesh/gatewayclass-refs",
             "/user/me", "/user/my-tenants", "/callback", "/error",
+            // 集群 → 平台的内部回调（k8s-server 发的归档通知）。它**不在用户 JWT 体系里**，
+            // 所以不可能有权限行；但**它自己校验一个共享密钥**（留空则拒绝一切，fail-closed）。
+            // ⚠️ 写**精确路径**而不是 /internal/**：通配会把将来任何 /internal/** 端点
+            // 一并豁免掉，而那种端点的鉴权方式可能与这里完全不同。
+            "/internal/pipeline-run/finished",
             "/actuator/**", "/doc.html", "/swagger-ui/**", "/swagger-ui.html",
             "/v3/api-docs/**", "/v3/api-docs.yaml", "/v3/api-docs.yaml/**",
             "/favicon.ico",
