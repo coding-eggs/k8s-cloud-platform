@@ -52,10 +52,22 @@ class PipelineNodeRegistryTest {
     @Test
     void canvasRoundTripsThroughJson() {
         PipelineCanvas c = new PipelineCanvas(
-                List.of(new CanvasNode("n1", "fake", Map.of("msg", "hi"))),
+                List.of(new CanvasNode("n1", "fake", "拉取代码", Map.of("msg", "hi"))),
                 List.of(new CanvasEdge("n1", "n2")));
         String json = PipelineCanvas.toJson(c);
         assertThat(PipelineCanvas.fromJson(json)).isEqualTo(c);
+    }
+
+    @Test
+    void anAlreadySavedCanvasWithoutNamesStillParses() {
+        // 显示名是这一版才加的字段：库里已存的画布没有它。**必须照常解析**（name = null，
+        // 各处退回显示 id），否则用户打开一条旧流水线就直接报「画布内容无法解析」
+        PipelineCanvas c = PipelineCanvas.fromJson(
+                "{\"nodes\":[{\"id\":\"clone\",\"type\":\"git\",\"config\":{\"repo\":\"x\"}}],\"edges\":[]}");
+
+        assertThat(c.nodes()).hasSize(1);
+        assertThat(c.nodes().get(0).id()).isEqualTo("clone");
+        assertThat(c.nodes().get(0).name()).isNull();
     }
 
     @Test

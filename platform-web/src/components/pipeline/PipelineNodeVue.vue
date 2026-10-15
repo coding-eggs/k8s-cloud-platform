@@ -2,12 +2,14 @@
 /**
  * 画布上的一个节点卡片。
  *
- * 三件事：
+ * 四件事：
  * 1. **长相由后端 schema 决定**（图标 / 配色语义名 / 副标题取哪几个字段）——
  *    加一个后端节点，它自带图标与配色，前端一行不改。
  * 2. **副标题是一句配置摘要**（git 节点显示仓库与分支、构建节点显示镜像名）——
  *    不点开也知道这个节点在干嘛。
- * 3. **配色只用语义名**（success / accent / warning…），落到 `var(--success)` 这类主题变量上 ——
+ * 3. **标题是用户起的名字**（属性面板里填的），留空就显示节点 id。
+ *    id 是 Tekton 的 task 名、也是日志与运行状态的键，**悬停卡片可见**（改名字不动它）。
+ * 4. **配色只用语义名**（success / accent / warning…），落到 `var(--success)` 这类主题变量上 ——
  *    写死 hex 会在浅色/暗色另一半里翻车（这一版最初就是栽在这上面：用了不存在的变量名，
  *    暗色主题下节点变成白底黑字浮在深色画布上）。
  */
@@ -21,7 +23,8 @@ const props = defineProps<{
   showAdd?: boolean
   data: {
     nodeType: string
-    label: string
+    /** 用户起的显示名（可空）—— 空就退回显示 id */
+    name?: string
     config?: Record<string, string>
     /** 运行视图里才有 */
     status?: string
@@ -34,7 +37,8 @@ const { types, byType, labelOf, iconOf, accentOf, summaryOf } = usePipelineNodeT
 
 const icon = computed(() => iconOf(props.data.nodeType))
 const accent = computed(() => accentOf(props.data.nodeType))
-const title = computed(() => props.data.label || props.id)
+/** 没起名就显示 id —— 总不能一片空白（id 也是 Tekton 的 task 名，悬停能看到） */
+const title = computed(() => (props.data.name ?? '').trim() || props.id)
 /** 类型名单独显示一行小字 —— 节点名是用户起的（clone），类型才是它是什么（git 克隆） */
 const typeLabel = computed(() => {
   const n = byType(props.data.nodeType)?.label
@@ -61,7 +65,7 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
 </script>
 
 <template>
-  <div class="pnode" :class="[`accent-${accent}`, statusClass]">
+  <div class="pnode" :class="[`accent-${accent}`, statusClass]" :title="id">
     <Handle type="target" :position="Position.Left" class="pnode-port" />
 
     <div class="pnode-icon">
@@ -90,7 +94,7 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
       <template #dropdown>
         <el-dropdown-menu>
           <el-dropdown-item v-for="t in types" :key="t.type" :command="t.type">
-            {{ t.label }}
+            {{ labelOf(t.type) }}
           </el-dropdown-item>
         </el-dropdown-menu>
       </template>

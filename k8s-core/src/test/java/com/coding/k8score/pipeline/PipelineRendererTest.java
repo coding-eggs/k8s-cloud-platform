@@ -44,7 +44,12 @@ class PipelineRendererTest {
     }
 
     private static PipelineCanvas.CanvasNode node(String id, String type) {
-        return new PipelineCanvas.CanvasNode(id, type, Map.of("repo", "x", "msg", "y"));
+        return new PipelineCanvas.CanvasNode(id, type, null, Map.of("repo", "x", "msg", "y"));
+    }
+
+    /** 起了显示名的节点（名字只给人看，不进 task 名） */
+    private static PipelineCanvas.CanvasNode named(String id, String type, String name) {
+        return new PipelineCanvas.CanvasNode(id, type, name, Map.of("repo", "x", "msg", "y"));
     }
 
     @Test
@@ -123,6 +128,33 @@ class PipelineRendererTest {
     void anEmptyCanvasIsRejected() {
         assertThatThrownBy(() -> renderer.render(canvas(List.of(), List.of()), "ws"))
                 .isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void aNodeNameBecomesTheDisplayNameNotTheTaskName() {
+        // ⭐ 名字是**给人看**的（可以中文），id 才是 Tekton 的 task 名：
+        // 日志、运行状态、历史键（stepsJson）全按 id 走，所以起个名字不动任何契约
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(named("git-l8x31", "git", "拉取代码")), List.of()), "ws");
+
+        PipelineTask task = spec.getTasks().get(0);
+        assertThat(task.getName()).isEqualTo("git-l8x31");
+        assertThat(task.getDisplayName()).isEqualTo("拉取代码");
+    }
+
+    @Test
+    void aNodeWithoutANameGetsNoDisplayName() {
+        // 没起名 = 不写 displayName（而不是写个空串），这样渲染结果和这一版之前一模一样
+        PipelineSpec spec = renderer.render(canvas(List.of(node("n1", "git")), List.of()), "ws");
+
+        assertThat(spec.getTasks().get(0).getDisplayName()).isNull();
+    }
+
+    @Test
+    void aWhitespaceOnlyNameCountsAsUnnamed() {
+        PipelineSpec spec = renderer.render(canvas(List.of(named("n1", "git", "   ")), List.of()), "ws");
+
+        assertThat(spec.getTasks().get(0).getDisplayName()).isNull();
     }
 
     @Test

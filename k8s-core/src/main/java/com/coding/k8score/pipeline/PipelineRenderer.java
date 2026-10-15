@@ -113,6 +113,12 @@ public final class PipelineRenderer {
 
             PipelineTask task = new PipelineTask();
             task.setName(n.id());                      // 节点 id 就是 task 名
+            // 用户起的名字**只给人看**：写成 Tekton 的 displayName（kubectl 里也认得出来），
+            // 绝不参与 task 名 —— 日志、运行状态、历史键（stepsJson）全按 id 走（见 CanvasNode 的 javadoc）
+            String displayName = displayNameOf(n);
+            if (displayName != null) {
+                task.setDisplayName(displayName);
+            }
             task.setTaskSpec(embedded);
             Set<String> after = runAfter.get(n.id());
             if (after != null && !after.isEmpty()) {
@@ -130,6 +136,15 @@ public final class PipelineRenderer {
         spec.setTasks(tasks);
         spec.setWorkspaces(declared);
         return spec;
+    }
+
+    /**
+     * 节点的显示名（用户起的，可中文）。没起名（null / 空 / 只有空白）返回 {@code null} ——
+     * 于是**不写 displayName**，渲染结果与加这个字段之前逐字节一致（老画布渲染出来不会变样）。
+     */
+    private static String displayNameOf(PipelineCanvas.CanvasNode n) {
+        String name = n.name();
+        return name == null || name.isBlank() ? null : name.trim();
     }
 
     private static WorkspaceDeclaration declaration(String name, String mountPath) {

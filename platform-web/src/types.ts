@@ -1733,8 +1733,12 @@ export interface PipelineNodeType {
 }
 
 export interface PipelineCanvasNode {
+  /** **身份**：进 Tekton 的 task 名，也是日志与运行状态的键（前端生成，形如 `git-l8x31`） */
   id: string
   type: string
+  /** **显示名**（用户起的，可中文、可空）。空 = 各处退回显示 `id`。
+   *  ⚠️ 它不参与任何键：改名字不动集群对象名，也不会让旧运行的日志对不上 */
+  name?: string | null
   config: Record<string, string>
 }
 

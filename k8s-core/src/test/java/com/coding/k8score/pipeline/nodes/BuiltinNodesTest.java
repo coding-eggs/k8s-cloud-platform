@@ -12,14 +12,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class BuiltinNodesTest {
 
     private static NodeContext ctx(String type, Map<String, String> config) {
-        return new NodeContext("n1", "n1", "ws", new PipelineCanvas.CanvasNode("n1", type, config));
+        return new NodeContext("n1", "n1", "ws", new PipelineCanvas.CanvasNode("n1", type, null, config));
     }
 
     /** 带一条已授权连接（渲染时才有 —— 预览路径不带凭据）。 */
     private static NodeContext ctxWithConnection(String type, Map<String, String> config,
                                                  String id, String endpoint) {
         return new NodeContext("n1", "n1", "ws",
-                new PipelineCanvas.CanvasNode("n1", type, config),
+                new PipelineCanvas.CanvasNode("n1", type, null, config),
                 Map.of(id, new com.coding.common.models.pipeline.PipelineConnectionRef(
                         id, endpoint, "u", "p")));
     }

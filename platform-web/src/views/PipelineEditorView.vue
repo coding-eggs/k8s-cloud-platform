@@ -22,7 +22,7 @@ import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@vue-flow/c
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
-import type { PipelineCanvas, PipelineConnection, PipelineNodeType } from '@/types'
+import type { PipelineCanvas, PipelineCanvasNode, PipelineConnection, PipelineNodeType } from '@/types'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
@@ -50,7 +50,8 @@ const form = ref<{ id?: string; clusterId: string; namespace: string; name: stri
 /** 画布节点的 data 形状（后端 type 在 nodeType 里 —— Vue Flow 的类型统一叫 `pipeline`） */
 interface PipelineNodeData {
   nodeType: string
-  label: string
+  /** 用户起的显示名（可空）；空则卡片上退回显示节点 id */
+  name: string
   config: Record<string, string>
   status?: string
 }
@@ -89,12 +90,17 @@ const canManage = computed(() => perm.has(apiCodes.pipelineManage))
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 
 /** 画布上的节点（后端形状），用于保存与预览 */
-function toCanvasNodes(): { id: string; type: string; config: Record<string, string> }[] {
-  return nodes.value.map((n) => ({
-    id: n.id,
-    type: n.data.nodeType,
-    config: { ...(n.data.config ?? {}) },
-  }))
+function toCanvasNodes(): PipelineCanvasNode[] {
+  return nodes.value.map((n) => {
+    const name = (n.data.name ?? '').trim()
+    return {
+      id: n.id,
+      type: n.data.nodeType,
+      // 没起名就**不写这个键**：存下来的画布干净，后端那边「没有 name」与「空 name」等价
+      ...(name ? { name } : {}),
+      config: { ...(n.data.config ?? {}) },
+    }
+  })
 }
 
 function canvasJson(): string {
@@ -109,7 +115,12 @@ function canvasJson(): string {
 const selectedNode = computed(() => {
   const n = nodes.value.find((x) => x.id === selected.value)
   if (!n) return null
-  return { id: n.id, type: n.data.nodeType, config: n.data.config ?? {} }
+  return {
+    id: n.id,
+    type: n.data.nodeType,
+    name: n.data.name ?? '',
+    config: n.data.config ?? {},
+  }
 })
 
 // ---- 载入 ----
@@ -135,7 +146,7 @@ function applyCanvas(json?: string | null) {
   if (!json) return
   try {
     const c = JSON.parse(json) as PipelineCanvas
-    nodes.value = (c.nodes ?? []).map((n, i) => flowNode(n.id, n.type, n.config, i))
+    nodes.value = (c.nodes ?? []).map((n, i) => flowNode(n.id, n.type, n.name ?? '', n.config, i))
     edges.value = (c.edges ?? []).map((e) => flowEdge(e.from, e.to))
   } catch {
     ElMessage.error('画布内容无法解析')
@@ -153,6 +164,7 @@ function nextId(type: string): string {
 function flowNode(
   id: string,
   type: string,
+  name: string,
   config: Record<string, string>,
   index: number,
 ): FlowNodeView {
@@ -160,7 +172,7 @@ function flowNode(
     id,
     type: 'pipeline',
     position: { x: 80 + (index % 3) * 200, y: 60 + Math.floor(index / 3) * 120 },
-    data: { nodeType: type, label: id, config: config ?? {} },
+    data: { nodeType: type, name: name ?? '', config: config ?? {} },
   }
 }
 
@@ -207,7 +219,7 @@ function onDrop(e: DragEvent) {
   if (!type) return
   const pos = screenToFlowCoordinate({ x: e.clientX, y: e.clientY })
   const id = nextId(type)
-  nodes.value = [...nodes.value, { ...flowNode(id, type, {}, 0), position: pos }]
+  nodes.value = [...nodes.value, { ...flowNode(id, type, '', {}, 0), position: pos }]
   selected.value = id
 }
 
@@ -251,7 +263,7 @@ function insertAfter(fromId: string, type: string) {
   const x = (from?.position.x ?? 0) + 250
   const y = (from?.position.y ?? 0) + 20
   const id = nextId(type)
-  nodes.value = [...nodes.value, { ...flowNode(id, type, {}, 0), position: { x, y } }]
+  nodes.value = [...nodes.value, { ...flowNode(id, type, '', {}, 0), position: { x, y } }]
   if (!wouldCycle(fromId, id)) {
     edges.value = [...edges.value, flowEdge(fromId, id)]
   }
@@ -267,6 +279,17 @@ async function removeSelected() {
 
 function onPropsChange() {
   // 属性面板直接改的是 data.config，这里只要触发一次重渲染让画布上的标题跟上
+  nodes.value = [...nodes.value]
+}
+
+/**
+ * 改名。**名字不是节点的"字段"**（它不在 `fields` 里 —— 那是节点类型自己的东西），
+ * 而是画布级的东西，所以走一条自己的事件，而不是混进 config。
+ */
+function onRename(name: string) {
+  const n = nodes.value.find((x) => x.id === selected.value)
+  if (!n) return
+  n.data.name = name
   nodes.value = [...nodes.value]
 }
 
@@ -399,6 +422,7 @@ async function removePipeline() {
         :git-connections="gitConnections"
         :registry-connections="registryConnections"
         @change="onPropsChange"
+        @rename="onRename"
       />
       <div v-else class="props-empty">点一个节点看它的属性</div>
     </div>

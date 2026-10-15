@@ -20,11 +20,14 @@ import { pipelineApi } from '@/api'
 import type { Pipeline, PipelineCanvas, PipelineRun } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
+import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
 
 const route = useRoute()
 const router = useRouter()
 const perm = usePermission()
+/** 节点清单（图标 / 类型名 / 配色）—— 运行详情里画的是同一套卡片 */
+const { load: loadNodeTypes } = usePipelineNodeTypes()
 
 const pipelineId = computed(() => (route.query.id as string) || '')
 const pipeline = ref<Pipeline | null>(null)
@@ -37,7 +40,7 @@ const loading = ref(false)
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 const canLogs = computed(() => perm.has(apiCodes.pipelineLogs))
 
-/** run 的 `stepsJson` 是 `节点=状态` 逗号分隔（归档时抓的快照） */
+/** run 的 `stepsJson` 是 `节点=状态` 逗号分隔（归档时抓的快照）—— 键是**节点 id** */
 function statusMap(run: PipelineRun | null): Record<string, string> {
   const out: Record<string, string> = {}
   for (const part of (run?.stepsJson ?? '').split(',')) {
@@ -47,25 +50,30 @@ function statusMap(run: PipelineRun | null): Record<string, string> {
   return out
 }
 
-/** 详情里的 DAG：画布 + 本次运行每个节点的状态 */
-const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
+/** 画布（解析一次，DAG 与日志按钮共用）。解析不了就当没有 —— 详情里不画图，但日志照样看 */
+const canvas = computed<PipelineCanvas | null>(() => {
   const c = pipeline.value?.canvasJson
-  if (!c) return { nodes: [], edges: [] }
-  let canvas: PipelineCanvas
+  if (!c) return null
   try {
-    canvas = JSON.parse(c) as PipelineCanvas
+    return JSON.parse(c) as PipelineCanvas
   } catch {
-    return { nodes: [], edges: [] }
+    return null
   }
+})
+
+/** 详情里的 DAG：画布 + 本次运行每个节点的状态（状态按节点 **id** 对） */
+const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
+  const c = canvas.value
+  if (!c) return { nodes: [], edges: [] }
   const st = statusMap(selected.value)
   return {
-    nodes: (canvas.nodes ?? []).map((n, i) => ({
+    nodes: (c.nodes ?? []).map((n, i) => ({
       id: n.id,
       type: 'pipeline',
       position: { x: 60 + (i % 3) * 200, y: 40 + Math.floor(i / 3) * 110 },
-      data: { nodeType: n.type, label: n.id, config: n.config, status: st[n.id] },
+      data: { nodeType: n.type, name: n.name ?? '', config: n.config, status: st[n.id] },
     })),
-    edges: (canvas.edges ?? []).map((e) => ({
+    edges: (c.edges ?? []).map((e) => ({
       id: `e-${e.from}-${e.to}`,
       source: e.from,
       target: e.to,
@@ -75,6 +83,11 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
     })),
   }
 })
+
+/** 日志按钮：**显示名字，过滤仍按 id**（日志在库里是按 id 存的，名字只是给人看的） */
+const logTargets = computed(() =>
+  (canvas.value?.nodes ?? []).map((n) => ({ id: n.id, label: (n.name ?? '').trim() || n.id })),
+)
 
 const STATUS_TAG: Record<string, string> = {
   SUCCEEDED: 'success',
@@ -107,7 +120,12 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  // ⚠️ 这里也要拉一次节点清单：直接打开运行页（没先进过编辑器）时那份单例缓存是空的，
+  // 卡片会退化成通用图标 + 原始 type（`git`），看着像"没名字"
+  loadNodeTypes()
+  await load()
+})
 
 async function openRun(r: PipelineRun) {
   selected.value = r
@@ -207,7 +225,7 @@ async function cancel(r: PipelineRun) {
         <div class="log-head">
           <span>日志</span>
           <el-button link @click="loadLogs()">全部</el-button>
-          <el-button v-for="n in dag.nodes" :key="n.id" link @click="loadLogs(n.id)">{{ n.id }}</el-button>
+          <el-button v-for="t in logTargets" :key="t.id" link @click="loadLogs(t.id)">{{ t.label }}</el-button>
           <span v-if="!canLogs" class="dim">（没有『看运行日志』权限）</span>
         </div>
         <pre class="log">{{ logs || '（没有日志）' }}</pre>

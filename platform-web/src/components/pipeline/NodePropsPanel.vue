@@ -2,7 +2,8 @@
 /**
  * 右侧属性面板。**完全由后端给的 schema 渲染** —— 加字段不用改这里一行。
  *
- * 三类受控行为：
+ * 三类受控行为（外加顶部那个**不来自 schema** 的「名称」输入 —— 它是画布级的东西，
+ * 见 `PipelineCanvasNode.name`；留空 = 显示节点 id）：
  * 1. `IMAGE` 字段挂**镜像候选补全**（S3.1 那套 `useImageSuggest`）——
  *    「不用背镜像名」正是 S3.1 存在的理由，在这里兑现。
  * 2. `SELECT` 用 `options` 渲染。
@@ -21,7 +22,11 @@ const props = defineProps<{
   /** 可引用的镜像仓库连接（同上；镜像节点的目标地址由它决定） */
   registryConnections: PipelineConnection[]
 }>()
-const emit = defineEmits<{ (e: 'change'): void }>()
+const emit = defineEmits<{
+  (e: 'change'): void
+  /** 改名：名字是**画布级**的东西，不在 `fields` 里，所以单独一条事件（见 editor 的 onRename） */
+  (e: 'rename', name: string): void
+}>()
 
 const { byType, optionsOf, presetOf } = usePipelineNodeTypes()
 const { fetchImageSuggestions } = useImageSuggest()
@@ -30,6 +35,8 @@ const schema = computed(() => byType(props.node.type))
 const fields = computed(() => schema.value?.fields ?? [])
 const isShell = computed(() => props.node.type === 'shell')
 const isGit = computed(() => props.node.type === 'git')
+/** 面板标题：起了名就是名，没起就还是 id（总是有东西可看） */
+const displayName = computed(() => (props.node.name ?? '').trim() || props.node.id)
 
 function valueOf(key: string): string {
   return props.node.config[key] ?? ''
@@ -65,7 +72,24 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
 
 <template>
   <div class="props">
-    <div class="props-title">{{ node.id }}</div>
+    <div class="props-title">{{ displayName }}</div>
+
+    <!-- 名称：**不在 fields 里** —— 它是画布级的东西，不是节点类型自己的字段。
+         填了就一路显示人话（画布卡片、运行详情、渲染出的 taskSpec.displayName） -->
+    <div class="props-field">
+      <label>名称</label>
+      <el-input
+        :model-value="node.name ?? ''"
+        maxlength="60"
+        :placeholder="node.id"
+        @update:model-value="(v: string) => emit('rename', v)"
+      />
+      <div class="props-help">
+        画布与运行详情显示它，留空 = 显示节点 id（<code>{{ node.id }}</code>）。
+        id 是 Tekton 的 task 名、也是日志与运行状态的键 —— 改名字不会动它。
+      </div>
+    </div>
+
     <el-empty v-if="!schema" description="未知节点类型" :image-size="60" />
 
     <template v-for="f in fields" :key="f.key">
