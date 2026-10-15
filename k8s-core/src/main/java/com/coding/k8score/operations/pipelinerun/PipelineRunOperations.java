@@ -397,7 +397,29 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                 });
     }
 
-    /** 一次运行的每个 TaskRun 名（归档时要按它去取 Pod 与日志）。 */
+    /**
+     * 删掉这次运行的凭据 Secret（{@link #credsSecretName}）。
+     *
+     * <p>⚠️ <b>它必须在归档之后、与运行对象同一处删</b>：Secret 里是 base64 的 git token /
+     * registry 认证（可解），而集群里每跑一次就留一份 —— 此前没有任何东西回收它，
+     * 真环境里攒了三个（2026-10-15）。
+     *
+     * <p>没引用过连接的运行**根本没有这个 Secret**，删不存在的对象按「已经达到目的」处理，
+     * 不往外抛（否则每次没凭据的运行都会记一条没意义的告警）。
+     */
+    public void deleteCredsSecret(String namespace, String runName) {
+        try {
+            client.secrets().inNamespace(namespace).withName(credsSecretName(runName)).delete();
+        } catch (KubernetesClientException e) {
+            if (e.getCode() != 404) {
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * 一次运行的每个 TaskRun 名（归档时要按它去取 Pod 与日志）。
+     */
     public List<String> childTaskRunNames(String namespace, String runName) {
         PipelineRun pr = fetch(namespace, runName);
         if (pr == null || pr.getStatus() == null || pr.getStatus().getChildReferences() == null) {

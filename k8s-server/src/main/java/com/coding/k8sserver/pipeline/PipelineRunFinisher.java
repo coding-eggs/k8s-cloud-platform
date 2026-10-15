@@ -73,6 +73,9 @@ public class PipelineRunFinisher {
         }
         // 落库成功（或本来就没这条运行）→ 才删。删本身幂等，重投再删一次也无妨
         deleteObject(clusterId, namespace, runName);
+        // 凭据 Secret 跟它一起走：里面是可解的 git token / registry 认证，
+        // 跑完了没有任何留着的理由（此前没人回收，每跑一次攒一份）
+        deleteCredsSecret(clusterId, namespace, runName);
         return true;
     }
 
@@ -109,6 +112,20 @@ public class PipelineRunFinisher {
                     .delete(namespace, runName);
         } catch (Exception e) {
             log.warn("删运行对象失败（下次重投再试）{}/{}", namespace, runName, e);
+        }
+    }
+
+    /**
+     * 删掉这次运行留下的凭据 Secret。
+     *
+     * <p>失败**不让整个归档算失败** —— 对象已经删了、库已经写了，重投也修不了它；
+     * 代价是那个 Secret 多留一会儿（与「对象永远删不掉」不是一个量级）。
+     */
+    private void deleteCredsSecret(String clusterId, String namespace, String runName) {
+        try {
+            runOps(clusterId).deleteCredsSecret(namespace, runName);
+        } catch (Exception e) {
+            log.warn("删凭据 Secret 失败（多留一会儿，不影响归档）{}/{}", namespace, runName, e);
         }
     }
 

@@ -179,6 +179,44 @@ class PipelineRunFinisherTest {
     }
 
     @Test
+    void theCredsSecretIsDeletedTogetherWithTheRunObject() {
+        // ⭐ 2026-10-15：那个 Secret 里是可解的 git token / registry 认证，而每跑一次就留一份、
+        //    没有任何东西回收它（真环境里攒了三个）。删除点就在**同一次终结事件**里 ——
+        //    它是这次运行的一部分，跟 PipelineRun 一起走。
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(snapshot("SUCCEEDED"));
+
+        assertThat(finisher.finish("c1", "ns1", "r1", false)).isTrue();
+
+        verify(ops).deleteCredsSecret("ns1", "r1");
+    }
+
+    @Test
+    void aFailedPersistAlsoLeavesTheCredsSecretAlone() {
+        // 与对象同理，而且更狠：Secret 一删，那条**还留在集群里**的运行就再也起不来了
+        // （重投时它的 Pod 要挂这个 Secret）。归档没成功就什么都别删
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(snapshot("FAILED"));
+        doThrow(new RuntimeException("db down")).when(archive).persist(any());
+
+        assertThat(finisher.finish("c1", "ns1", "r1", false)).isFalse();
+
+        verify(ops, never()).deleteCredsSecret(anyString(), anyString());
+    }
+
+    @Test
+    void cancellingDoesNotTouchTheCredsSecretBecauseTheRunIsStillGoing() {
+        // 取消之后那条运行**还在跑**（平台只抓日志、不删对象），它的 Pod 还挂着这个 Secret
+        opsAre(ops);
+        when(runMapper.selectByRunName("r1")).thenReturn(runningRow());
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(snapshot("RUNNING"));
+
+        finisherOverRealArchive.cancel("c1", "ns1", "r1");
+
+        verify(ops, never()).deleteCredsSecret(anyString(), anyString());
+    }
+
+    @Test
     void aFailedCaptureDoesNotBlockTheCancelTheUserAskedFor() {
         // 用户点的是「取消」，不能因为抢抓失败而卡住（代价是日志可能不全，spec §4.2 已写明）
         opsAre(ops);
