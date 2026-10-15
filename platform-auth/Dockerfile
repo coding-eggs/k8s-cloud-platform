@@ -1,11 +1,12 @@
-# 说明：**有意不写 `# syntax=docker/dockerfile:1.7`** —— 那会让构建器先去 Docker Hub 拉一个前端镜像，
-# 在只走内网/代理的构建机上会直接失败（实测：daemon 拉不到 docker/dockerfile）。
-# `RUN --mount=type=cache` 用 Docker 自带的 dockerfile 前端就支持，不需要它。
+# platform-auth（授权服务器，Spring Authorization Server / OIDC）的**运行镜像**。
 #
-# platform-auth（授权服务器，Spring Authorization Server / OIDC）的运行镜像。
+# ⚠️ 2026-10-16 改定：**编译不在这里做** —— 交给流水线的「Java 构建」节点（理由同 platform-api）。
 #
-# 构建 —— ⚠️ **上下文必须是仓库根**（Maven 反应堆要带上 platform-common）：
-#   docker build -f platform-auth/Dockerfile -t k8s-cloud-platform/platform-auth:latest .
+# 用法（**两步，与流水线的两个节点一一对应**）：
+#   1) 先在**仓库根**编译（产出 platform-auth/target/*.jar）：
+#        mvn -B -pl platform-auth -am -DskipTests package
+#   2) 再打包镜像，**上下文是模块目录**：
+#        docker build -f platform-auth/Dockerfile -t k8s-cloud-platform/platform-auth:latest platform-auth
 #
 # 运行（默认端口 9527）：
 #   docker run --rm -p 9527:9527 \
@@ -21,21 +22,12 @@
 #    三者必须同 host 字符串（同源铁律），否则会话 Cookie 不随 fetch 发、续期全 302。
 #    做法见 platform-web/nginx.conf（它把 /oauth2 与 /session 转发到这里）。
 
-# ---------- 构建 ----------
-FROM maven:3.9-eclipse-temurin-21 AS build
-WORKDIR /build
-COPY . .
-# 依赖缓存挂到 BuildKit 的 cache mount：第二次构建（含另外两个 Java 服务）不再重新下载
-RUN --mount=type=cache,target=/root/.m2/repository \
-    mvn -B -pl platform-auth -am -DskipTests package
-
-# ---------- 运行 ----------
-FROM eclipse-temurin:21-jre AS runtime
+FROM eclipse-temurin:21-jre
 
 # 非 root 跑
 RUN useradd -m -u 1001 app
 WORKDIR /app
-COPY --from=build --chown=app:app /build/platform-auth/target/*.jar /app/app.jar
+COPY --chown=app:app target/*.jar /app/app.jar
 USER app
 
 # 与宿主机/集群一致的时区（不设也能跑，但日志时间戳会漂）

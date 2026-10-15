@@ -1,11 +1,23 @@
-# 说明：**有意不写 `# syntax=docker/dockerfile:1.7`** —— 那会让构建器先去 Docker Hub 拉一个前端镜像，
-# 在只走内网/代理的构建机上会直接失败（实测：daemon 拉不到 docker/dockerfile）。
-# `RUN --mount=type=cache` 用 Docker 自带的 dockerfile 前端就支持，不需要它。
+# platform-api（租户域业务层 + HTTP 入口）的**运行镜像**。
 #
-# platform-api（租户域业务层 + HTTP 入口）的运行镜像。
+# ⚠️ 2026-10-16 改定：**编译不在这里做** —— 交给流水线的「Java 构建」节点。
+#   理由：编译写在 Dockerfile 里的话，「Java 构建」节点刚编译一遍、`buildah bud` 又编译一遍，
+#   而且第二遍**拿不到依赖缓存**（/cache 挂在构建节点上，不在 builder 里）——
+#   构建节点存在的意义就没了（用户 2026-10-16 的决定：打包阶段独立成节点）。
 #
-# 构建 —— ⚠️ **上下文必须是仓库根**（反应堆要带上 platform-common / platform-data）：
-#   docker build -f platform-api/Dockerfile -t k8s-cloud-platform/platform-api:latest .
+# 用法（**两步，与流水线的两个节点一一对应**）：
+#   1) 先在**仓库根**编译（产出 platform-api/target/*.jar）：
+#        mvn -B -pl platform-api -am -DskipTests package
+#   2) 再打包镜像，**上下文是模块目录**（不是仓库根 —— buildah/docker 会把整个上下文传给
+#      builder，模块目录小得多）：
+#        docker build -f platform-api/Dockerfile -t k8s-cloud-platform/platform-api:latest platform-api
+#
+# 流水线里对应：
+#   「Java 构建」节点：工作目录留空（仓库根）、命令 mvn -B -pl platform-api -am -DskipTests package
+#   「构建并推送镜像」节点：Dockerfile 路径 platform-api/Dockerfile、构建上下文 platform-api
+#
+# ⚠️ 本文件假定 `target/*.jar` **已经编译好了**（上面第 1 步）。单独 `docker build` 会失败在
+#    COPY 那一步 —— 那是设计如此，不是配置错误。
 #
 # 运行（默认端口 8081）：
 #   docker run --rm -p 8081:8081 \
@@ -25,19 +37,12 @@
 #    （Docker Hub / github 等），内网 Harbor 与集群一律直连。
 # ⚠️ 平台是**有状态**的：迁移要手工重放（本仓没有 Flyway），所以启动前先按 db/migration 顺序重放。
 
-# ---------- 构建 ----------
-FROM maven:3.9-eclipse-temurin-21 AS build
-WORKDIR /build
-COPY . .
-RUN --mount=type=cache,target=/root/.m2/repository \
-    mvn -B -pl platform-api -am -DskipTests package
-
-# ---------- 运行 ----------
-FROM eclipse-temurin:21-jre AS runtime
+FROM eclipse-temurin:21-jre
 
 RUN useradd -m -u 1001 app
 WORKDIR /app
-COPY --from=build --chown=app:app /build/platform-api/target/*.jar /app/app.jar
+# 相对**上下文**（= 模块目录）—— 那一个 jar 就是 spring-boot repackage 出来的可执行包
+COPY --chown=app:app target/*.jar /app/app.jar
 USER app
 
 ENV TZ=Asia/Shanghai

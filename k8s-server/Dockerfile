@@ -1,11 +1,12 @@
-# 说明：**有意不写 `# syntax=docker/dockerfile:1.7`** —— 那会让构建器先去 Docker Hub 拉一个前端镜像，
-# 在只走内网/代理的构建机上会直接失败（实测：daemon 拉不到 docker/dockerfile）。
-# `RUN --mount=type=cache` 用 Docker 自带的 dockerfile 前端就支持，不需要它。
+# k8s-server（适配器：唯一持有 fabric8 / kubeconfig 的一层）的**运行镜像**。
 #
-# k8s-server（适配器：唯一持有 fabric8 / kubeconfig 的一层）的运行镜像。
+# ⚠️ 2026-10-16 改定：**编译不在这里做** —— 交给流水线的「Java 构建」节点（理由同 platform-api）。
 #
-# 构建 —— ⚠️ **上下文必须是仓库根**（反应堆要带上 k8s-core / platform-common / platform-data）：
-#   docker build -f k8s-server/Dockerfile -t k8s-cloud-platform/k8s-server:latest .
+# 用法（**两步，与流水线的两个节点一一对应**）：
+#   1) 先在**仓库根**编译（产出 k8s-server/target/*.jar）：
+#        mvn -B -pl k8s-server -am -DskipTests package
+#   2) 再打包镜像，**上下文是模块目录**：
+#        docker build -f k8s-server/Dockerfile -t k8s-cloud-platform/k8s-server:latest k8s-server
 #
 # 运行（默认端口 8080）：
 #   docker run --rm -p 8080:8080 \
@@ -23,19 +24,11 @@
 # ⚠️ 流水线的归档/超时检查是**后台定时任务**，不要跑多副本（否则同一条运行会被归档两次；
 #    幂等挡住了重复写，但没必要）。
 
-# ---------- 构建 ----------
-FROM maven:3.9-eclipse-temurin-21 AS build
-WORKDIR /build
-COPY . .
-RUN --mount=type=cache,target=/root/.m2/repository \
-    mvn -B -pl k8s-server -am -DskipTests package
-
-# ---------- 运行 ----------
-FROM eclipse-temurin:21-jre AS runtime
+FROM eclipse-temurin:21-jre
 
 RUN useradd -m -u 1001 app
 WORKDIR /app
-COPY --from=build --chown=app:app /build/k8s-server/target/*.jar /app/app.jar
+COPY --chown=app:app target/*.jar /app/app.jar
 USER app
 
 ENV TZ=Asia/Shanghai

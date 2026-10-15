@@ -1,0 +1,4 @@
+# 上下文 = 本模块目录（见同目录 Dockerfile 的用法）。
+# node_modules 几百 MB，而 buildah/docker 会把**整个上下文**传给 builder —— 必须排除。
+# ⚠️ dist/ **不能**排除：它就是本镜像要托管的产物（由「Node 构建」节点产出）。
+node_modules/

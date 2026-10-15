@@ -1,14 +1,25 @@
-# 说明：**有意不写 `# syntax=docker/dockerfile:1.7`** —— 那会让构建器先去 Docker Hub 拉一个前端镜像，
-# 在只走内网/代理的构建机上会直接失败（实测：daemon 拉不到 docker/dockerfile）。
-# `RUN --mount=type=cache` 用 Docker 自带的 dockerfile 前端就支持，不需要它。
+# platform-web（Vue 3 SPA）的**运行镜像**：nginx 托管构建产物 + 反向代理。
 #
-# platform-web（Vue 3 SPA）的运行镜像：node 构建 → nginx 托管 + 反向代理。
+# ⚠️ 2026-10-16 改定：**npm 构建不在这里做** —— 交给流水线的「Node 构建」节点。
+#   理由同另外三个：写在 Dockerfile 里的话，构建节点刚 build 一遍、`buildah bud` 又 build 一遍，
+#   而第二遍拿不到依赖缓存（/cache 挂在构建节点上，不在 builder 里）。
 #
-# 构建 —— ⚠️ **上下文是仓库根**（与本仓另外三个 Dockerfile 一致，省得记两套）：
-#   docker build -f platform-web/Dockerfile \
-#     --build-arg VITE_OAUTH_ISSUER=http://your-host \
-#     --build-arg VITE_OAUTH_REDIRECT_URI=http://your-host/callback \
-#     -t k8s-cloud-platform/web:latest .
+# 用法（**两步，与流水线的两个节点一一对应**）：
+#   1) 先在 platform-web/ 里构建（产出 dist/）。⚠️ 那三个 VITE_* 是**构建期**被 Vite 内联进 JS 的，
+#      所以它们现在由**构建命令**给（不再是 --build-arg）：
+#        VITE_OAUTH_ISSUER=http://your-host \
+#        VITE_OAUTH_CLIENT_ID=platform-web-client \
+#        VITE_OAUTH_REDIRECT_URI=http://your-host/callback \
+#        npm ci && npm run build-only
+#      （也可以把这三行写进 platform-web/.env.production —— Vite 会读它，优先级高于仓库里的 .env）
+#   2) 再打包镜像，**上下文是模块目录**：
+#        docker build -f platform-web/Dockerfile -t k8s-cloud-platform/web:latest platform-web
+#
+# 流水线里对应：「Node 构建」节点（工作目录 platform-web、命令见上面第 1 步）
+#   → 「构建并推送镜像」节点（Dockerfile 路径 platform-web/Dockerfile、构建上下文 platform-web）
+#
+# ⚠️ 那三个 VITE_* 不是运行时读环境变量 —— 改域名/端口要**重新构建**（不是重启容器）。
+#    三者必须与 platform-auth 里 platform-web-client 注册的 redirect_uri 一字不差（同源铁律）。
 #
 # 运行 —— ⚠️ 本镜像**不能单独跑**：nginx 启动时就要解析 platform-api / platform-auth 这两个名字
 # （解析不到会直接起不来：host not found in upstream）。所以要跟它们一起部署：
@@ -18,36 +29,13 @@
 #     --add-host platform-api:host-gateway --add-host platform-auth:host-gateway \
 #     k8s-cloud-platform/web:latest
 #
-# ⚠️ 那三个 VITE_* 是**构建期**被 Vite 内联进 JS 的（不是运行时读环境变量）——
-#    改域名/端口要**重新 build 镜像**，`docker run -e` 给它们没有用。三者必须与
-#    platform-auth 里 platform-web-client 注册的 redirect_uri 一字不差（同源铁律）。
-#
-# 代理规则写在 platform-web/nginx.conf：/api/** → platform-api（去 /api 前缀），
+# 代理规则写在同一目录的 nginx.conf：/api/** → platform-api（去 /api 前缀），
 # /oauth2 与 /session → platform-auth。服务名不同就改那个文件（或挂载覆盖）。
 
-# ---------- 构建 ----------
-FROM node:20-alpine AS build
-WORKDIR /build
+FROM nginx:1.27-alpine
 
-# 先只装依赖：改业务代码时这一层能复用
-COPY platform-web/package.json platform-web/package-lock.json ./
-RUN npm ci
-
-COPY platform-web/ ./
-
-ARG VITE_OAUTH_ISSUER=http://localhost
-ARG VITE_OAUTH_CLIENT_ID=platform-web-client
-ARG VITE_OAUTH_REDIRECT_URI=http://localhost/callback
-# .env.production 的优先级高于仓库里那份开发用的 .env，所以这三个值稳定生效
-RUN printf 'VITE_OAUTH_ISSUER=%s\nVITE_OAUTH_CLIENT_ID=%s\nVITE_OAUTH_REDIRECT_URI=%s\n' \
-        "$VITE_OAUTH_ISSUER" "$VITE_OAUTH_CLIENT_ID" "$VITE_OAUTH_REDIRECT_URI" > .env.production \
- && npm run build-only
-
-# ---------- 运行 ----------
-FROM nginx:1.27-alpine AS runtime
-
-COPY platform-web/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /build/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY dist /usr/share/nginx/html
 
 EXPOSE 80
 
