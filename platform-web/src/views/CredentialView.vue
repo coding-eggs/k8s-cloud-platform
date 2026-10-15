@@ -22,6 +22,8 @@ const form = reactive({
   secret: '',
   description: '',
   enabled: true,
+  /** 允许在流水线里使用（默认关）—— 逐条显式授权，不是权限码 */
+  usableByPipelines: false,
 })
 /** 认证方式。NONE = 匿名（无凭据，出站不带 Authorization 头）—— 后端按类型校验可否 */
 const authType = ref<'BASIC' | 'NONE'>('BASIC')
@@ -100,6 +102,7 @@ function openEdit(row: Credential): void {
     secret: '',
     description: row.description ?? '',
     enabled: row.enabled,
+    usableByPipelines: row.usableByPipelines === 1,
   })
   authType.value = row.authType
 }
@@ -133,6 +136,8 @@ async function save(): Promise<void> {
     secret: authType.value === 'NONE' ? undefined : form.secret,
     description: form.description.trim() || null,
     enabled: form.enabled,
+    // 显式发 false/true：后端「留空 = 保持不变」，而这里用户看得见开关，就该以开关为准
+    usableByPipelines: form.usableByPipelines,
   }
 
   if (isEdit.value) {
@@ -252,6 +257,12 @@ onMounted(load)
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="流水线可用" width="110">
+        <template #default="{ row }">
+          <el-tag v-if="row.usableByPipelines === 1" type="warning" size="small">可用于流水线</el-tag>
+          <span v-else>—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openTest(row)">测试连接</el-button>
@@ -308,6 +319,16 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
+        </el-form-item>
+        <el-form-item label="允许在流水线里使用">
+          <el-switch v-model="form.usableByPipelines" />
+          <div class="tip">
+            开：租户的「{{ form.type === 'GIT' ? 'git 克隆' : '构建并推送镜像' }}」节点能从下拉里选到它。
+            关（默认）：它只在这张凭据页里存在，流水线看不见它。
+            <br />
+            ⚠️ 这个开关是平台级的：开了之后<b>任意租户</b>的流水线都能引用它（引用按连接 id 走，
+            不按租户收窄）—— 请只对「大家共用的出站凭据」这类连接开。
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>

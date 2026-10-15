@@ -1595,6 +1595,8 @@ export interface CredentialView {
   fingerprint?: string | null
   description?: string | null
   enabled: boolean
+  /** 1 = 允许在流水线里使用（**默认 0/关**）。它不是凭据内容，可以回显（就是个开关） */
+  usableByPipelines?: number | null
   /** 上次测试通过的时刻；测失败不改它 */
   lastVerifiedAt?: string | null
   /** 上次测试的失败原因；成功则 null */
@@ -1616,6 +1618,8 @@ export interface CredentialCreateBody {
   secret?: string
   description?: string | null
   enabled?: boolean
+  /** 允许在流水线里使用（默认关）。开了之后**任意租户**的流水线都能引用它 */
+  usableByPipelines?: boolean
 }
 
 /** 更新凭据。username / secret **留空 = 保持不变**；authType 变更时必须重填。 */
@@ -1629,6 +1633,8 @@ export interface CredentialUpdateBody {
   secret?: string | null
   description?: string | null
   enabled?: boolean
+  /** 留空 = 保持不变（后端把 undefined 当"不动"，避免只改描述的一次保存悄悄撤销授权）；要关掉就显式传 false */
+  usableByPipelines?: boolean
 }
 
 /** 测试连接结果。suggestedUrl 非空 = 「对端要求改用这个地址」，要提供一键填入。 */
