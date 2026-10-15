@@ -233,7 +233,8 @@ public class PipelineController {
      */
     @PostMapping("/run/logs")
     @Operation(summary = "看运行日志",
-            description = "已归档读库、还在跑现抓。nodeName 为空则把所有节点拼起来（每段标节点名）")
+            description = "已归档读库、还在跑现抓。nodeName 为空则把所有节点拼起来"
+                    + "（每段的段头用**节点显示名**，没起名则用 id；⚠️ 但 nodeName 入参给的是 **id**）")
     public ResponseData<String> runLogs(@RequestBody RunLogsRequest request) {
         PlatformPipelineRun run = runService.get(request.runName());
         return new ResponseData<>(runService.logs(request.runName(), request.nodeName(),

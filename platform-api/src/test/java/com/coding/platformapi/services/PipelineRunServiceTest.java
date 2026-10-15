@@ -20,6 +20,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
@@ -261,6 +262,96 @@ class PipelineRunServiceTest {
         PlatformPipelineRun r = running(runName);
         r.setStatus("SUCCEEDED");
         return r;
+    }
+
+    /** 带**触发时那份画布**的运行：段头显示名字就靠它（一个起了名、一个没起） */
+    private static PlatformPipelineRun archivedWithCanvas(String runName) {
+        PlatformPipelineRun r = archived(runName);
+        r.setCanvasJson(CANVAS_WITH_NAMES);
+        return r;
+    }
+
+    private static PlatformPipelineRun runningWithCanvas(String runName) {
+        PlatformPipelineRun r = running(runName);
+        r.setCanvasJson(CANVAS_WITH_NAMES);
+        return r;
+    }
+
+    private static final String CANVAS_WITH_NAMES =
+            "{\"nodes\":[{\"id\":\"git-l8x31\",\"type\":\"git\",\"name\":\"拉取代码\",\"config\":{}},"
+          + "{\"id\":\"image-m2k9\",\"type\":\"image\",\"config\":{}}],\"edges\":[]}";
+
+    private static PlatformPipelineRunLog logLine(String nodeName, String content) {
+        PlatformPipelineRunLog l = new PlatformPipelineRunLog();
+        l.setRunId("run-1");
+        l.setNodeName(nodeName);
+        l.setContent(content);
+        l.setTruncated(0);
+        return l;
+    }
+
+    // ---- 「全部」日志的段头：给人看的那一行用**名字**，id 不是给人看的 ----
+
+    @Test
+    void theAllNodesLogHeaderShowsTheNodesNameNotItsId() {
+        when(runMapper.selectByRunName("r1")).thenReturn(archivedWithCanvas("r1"));
+        when(logMapper.listByRunId("run-1")).thenReturn(List.of(
+                logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
+
+        String out = svc.logs("r1", null, ctx, 1024);
+
+        assertThat(out).contains("===== 拉取代码 =====");
+        assertThat(out).doesNotContain("===== git-l8x31 =====");
+    }
+
+    @Test
+    void aNodeWithoutANameKeepsShowingItsIdInTheHeader() {
+        // 没起名的节点**不能出现空段头** —— 退回 id
+        when(runMapper.selectByRunName("r1")).thenReturn(archivedWithCanvas("r1"));
+        when(logMapper.listByRunId("run-1")).thenReturn(List.of(
+                logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
+
+        assertThat(svc.logs("r1", null, ctx, 1024)).contains("===== image-m2k9 =====");
+    }
+
+    @Test
+    void anOldRunWithoutACanvasFallsBackToIdsInTheHeader() {
+        // 本功能上线前触发的运行没留画布（也没有名字）—— 段头退回 id，不是空白
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+        when(logMapper.listByRunId("run-1")).thenReturn(List.of(
+                logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
+
+        assertThat(svc.logs("r1", null, ctx, 1024)).contains("===== git-l8x31 =====");
+    }
+
+    @Test
+    void aRunningRunsAllNodesHeaderAlsoUsesTheName() {
+        // 还在跑的那条路（现抓）也要一样 —— 两条路的段头不能长得不一样
+        when(runMapper.selectByRunName("r1")).thenReturn(runningWithCanvas("r1"));
+        when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(List.of(
+                new com.coding.common.models.pipeline.PipelineStepRefDTO(
+                        "git-l8x31", "RUNNING", "git-pod", List.of("step-run")),
+                new com.coding.common.models.pipeline.PipelineStepRefDTO(
+                        "image-m2k9", "RUNNING", "image-pod", List.of("step-build"))));
+        when(k8s.podLog(anyString(), any(), anyString(), anyString(), anyString(), anyInt()))
+                .thenReturn(new K8sPipelineClient.CappedLog("x\n", false, 2));
+
+        String out = svc.logs("r1", null, ctx, 1024);
+
+        assertThat(out).contains("===== 拉取代码 =====");
+        assertThat(out).contains("===== image-m2k9 =====");
+    }
+
+    @Test
+    void filteringByOneNodeStillUsesTheIdNotTheName() {
+        // ⚠️ 段头是给人看的，**过滤键仍是 id**（库里的 node_name 就是 id）——
+        //    拿名字去过滤会一条都匹配不上（前端传的也是 id）
+        when(runMapper.selectByRunName("r1")).thenReturn(archivedWithCanvas("r1"));
+        when(logMapper.listByRunId("run-1")).thenReturn(List.of(
+                logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
+
+        assertThat(svc.logs("r1", "git-l8x31", ctx, 1024)).isEqualTo("cloning\n");
+        assertThat(svc.logs("r1", "拉取代码", ctx, 1024)).isEmpty();
     }
 
     // ---- 归属边界（run 名是调用方给的，不带边界）----

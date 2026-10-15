@@ -21,6 +21,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.List;
 
@@ -155,10 +157,12 @@ public class PipelineRunService {
      */
     public String logs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes) {
         PlatformPipelineRun row = requireRun(runName);
+        // 段头是**给人看**的那一行 —— 用用户起的名字（见 displayNames）。⚠️ 过滤键仍是 id
+        Map<String, String> names = displayNames(row.getCanvasJson());
         if (!"RUNNING".equals(row.getStatus())) {
-            return archivedLogs(row.getId(), nodeName);
+            return archivedLogs(row.getId(), nodeName, names);
         }
-        return liveLogs(runName, nodeName, ctx, maxBytes);
+        return liveLogs(runName, nodeName, ctx, maxBytes, names);
     }
 
     /**
@@ -198,14 +202,14 @@ public class PipelineRunService {
         return row.getRunYaml();
     }
 
-    private String archivedLogs(String runId, String nodeName) {
+    private String archivedLogs(String runId, String nodeName, Map<String, String> names) {
         List<PlatformPipelineRunLog> lines = logMapper.listByRunId(runId);
         if (nodeName != null && !nodeName.isBlank()) {
             lines = lines.stream().filter(l -> nodeName.equals(l.getNodeName())).toList();
         }
         StringBuilder out = new StringBuilder();
         for (PlatformPipelineRunLog l : lines) {
-            out.append(header(l.getNodeName(), lines.size() > 1));
+            out.append(header(names, l.getNodeName(), lines.size() > 1));
             out.append(l.getContent() == null ? "" : l.getContent());
             if (l.getTruncated() != null && l.getTruncated() == 1) {
                 out.append("\n\n[日志超过单步上限，已截断]\n");
@@ -214,7 +218,8 @@ public class PipelineRunService {
         return out.toString();
     }
 
-    private String liveLogs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes) {
+    private String liveLogs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes,
+                            Map<String, String> names) {
         List<PipelineStepRefDTO> steps = k8s.steps(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
         if (nodeName != null && !nodeName.isBlank()) {
             steps = steps.stream().filter(s -> nodeName.equals(s.nodeName())).toList();
@@ -224,7 +229,7 @@ public class PipelineRunService {
             if (step.podName() == null || step.podName().isBlank()) {
                 continue;                                  // 还没起来，没日志可看
             }
-            out.append(header(step.nodeName(), steps.size() > 1));
+            out.append(header(names, step.nodeName(), steps.size() > 1));
             for (String container : step.containers()) {
                 out.append(k8s.podLog(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
                         step.podName(), container, maxBytes).content());
@@ -233,8 +238,49 @@ public class PipelineRunService {
         return out.toString();
     }
 
-    private static String header(String nodeName, boolean multi) {
-        return multi ? "===== " + nodeName + " =====\n" : "";
+    /**
+     * 「全部」视图里每一段的段头。**只在拼多个节点时才加**（只看一个节点时加段头是噪声）。
+     *
+     * <p>⚠️ 段头用**名字**（用户起的那个），过滤与归档键仍然全按 id。
+     */
+    private static String header(Map<String, String> names, String nodeName, boolean multi) {
+        if (!multi) {
+            return "";
+        }
+        String name = names.get(nodeName);
+        return "===== " + (name == null || name.isBlank() ? nodeName : name.trim()) + " =====\n";
+    }
+
+    /**
+     * 画布上的 {@code 节点 id → 显示名}（用户起的那个名字）。
+     *
+     * <p>只给**段头**这类给人看的地方用：id 是 Tekton 的 task 名，读它的人得先知道
+     * 那条流水线长什么样；名字是用户自己起的，一眼就知道这段在跑什么。
+     *
+     * <p>没起名的节点不在 map 里（调用方退回显示 id）；老运行没留画布 → 空 map → 段头全是 id。
+     */
+    private static Map<String, String> displayNames(String canvasJson) {
+        if (canvasJson == null || canvasJson.isBlank()) {
+            return Map.of();
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        try {
+            JsonNode nodes = JSON.readTree(canvasJson).path("nodes");
+            if (!nodes.isArray()) {
+                return Map.of();
+            }
+            for (JsonNode node : nodes) {
+                String id = node.path("id").asString(null);
+                String name = node.path("name").asString(null);
+                if (id != null && !id.isBlank() && name != null && !name.isBlank()) {
+                    out.put(id, name.trim());
+                }
+            }
+        } catch (Exception e) {
+            // 画布解析不了不该让日志看不成 —— 段头退回 id
+            log.debug("解析画布取显示名失败（段头退回 id）: {}", e.getMessage());
+        }
+        return out;
     }
 
     public PlatformPipelineRun get(String runName) {
