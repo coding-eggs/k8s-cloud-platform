@@ -18,7 +18,7 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/minimap/dist/style.css'
-import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@vue-flow/core'
+import type { Connection, Edge, EdgeChange, MouseTouchEvent, Node, NodeChange } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
@@ -247,7 +247,7 @@ function onEdgesChange(changes: EdgeChange[]) {
 function onDrop(e: DragEvent) {
   const type = e.dataTransfer?.getData('application/x-pipeline-node')
   if (!type) return
-  const pos = screenToFlowCoordinate({ x: e.clientX, y: e.clientY })
+  const pos = screenToFlowCoordinate(eventPoint(e))
   const id = nextId(type)
   nodes.value = [...nodes.value, { ...flowNode(id, type, '', {}, 0), position: pos }]
   selected.value = id
@@ -333,6 +333,99 @@ function onRename(name: string) {
   if (!n) return
   n.data.name = name
   nodes.value = [...nodes.value]
+}
+
+/**
+ * 画布上的**右键菜单**。
+ *
+ * <p>为什么要有它：删节点 / 删连线 / 加节点原先是「先选中、再去工具栏点按钮」或「从左边拖进来」——
+ * 都得先跑一趟别的地方，而这三件事的对象**就在你鼠标底下**（用户 2026-10-16 反馈）。
+ *
+ * <p>定位贴画布容器（所以要减掉容器偏移），并做一次边界收口：靠右/靠下时不至于跑出画布。
+ */
+interface MenuItem {
+  label: string
+  danger?: boolean
+  run?: () => void
+  /** 有子项 = 悬停展开的二级菜单（「接一个下游节点 ▸」） */
+  children?: MenuItem[]
+}
+
+const canvasEl = ref<HTMLElement | null>(null)
+const menu = ref<{ x: number; y: number; title: string; items: MenuItem[] } | null>(null)
+
+/**
+ * Vue Flow 的事件类型是 MouseEvent | TouchEvent（触屏没有 clientX）——
+ * 右键菜单本来就来自鼠标；触屏那条路退回容器左上角，至少菜单出得来。
+ */
+function eventPoint(e: MouseTouchEvent): { x: number; y: number } {
+  return 'clientX' in e ? { x: e.clientX, y: e.clientY } : { x: 0, y: 0 }
+}
+
+function openMenu(evt: MouseTouchEvent, title: string, items: MenuItem[]): void {
+  evt.preventDefault()                      // Vue Flow **不**替我们挡浏览器原生的右键菜单
+  const el = canvasEl.value
+  if (!el) return
+  const at = eventPoint(evt)
+  const r = el.getBoundingClientRect()
+  menu.value = {
+    x: Math.max(4, Math.min(at.x - r.left, r.width - 190)),
+    y: Math.max(4, Math.min(at.y - r.top, r.height - 40 * items.length - 40)),
+    title,
+    items,
+  }
+}
+
+/** 点菜单项：**先关菜单再执行** —— 动作里多半会改动 nodes/edges，菜单不该悬在旧位置上 */
+function runItem(item: MenuItem): void {
+  menu.value = null
+  item.run?.()
+}
+
+/** 在指定画布坐标上落一个新节点（右键空白处用）。 */
+function insertNodeAt(type: string, pos: { x: number; y: number }): void {
+  const id = nextId(type)
+  nodes.value = [...nodes.value, { ...flowNode(id, type, '', {}, 0), position: pos }]
+  selected.value = id
+  selectedEdge.value = ''
+}
+
+function onPaneMenu(e: MouseTouchEvent): void {
+  const pos = screenToFlowCoordinate(eventPoint(e))
+  openMenu(e, '添加节点',
+    nodeTypeList.value.map((t) => ({ label: t.label, run: () => insertNodeAt(t.type, pos) })))
+}
+
+function onNodeMenu(e: { event: MouseTouchEvent; node: { id: string } }): void {
+  openMenu(e.event, e.node.id, [
+    {
+      label: '接一个下游节点',
+      children: nodeTypeList.value.map((t) => ({ label: t.label, run: () => insertAfter(e.node.id, t.type) })),
+    },
+    {
+      label: '删除节点',
+      danger: true,
+      run: () => {
+        selected.value = e.node.id
+        selectedEdge.value = ''
+        void removeSelected()
+      },
+    },
+  ])
+}
+
+function onEdgeMenu(e: { event: MouseTouchEvent; edge: { id: string } }): void {
+  openMenu(e.event, '连线', [
+    {
+      label: '删除连线',
+      danger: true,
+      run: () => {
+        selectedEdge.value = e.edge.id
+        selected.value = ''
+        void removeSelected()
+      },
+    },
+  ])
 }
 
 /** 没连线的两个节点 = 并发。显式提示，否则用户以为"没连上"是错的。 */
@@ -434,7 +527,7 @@ async function removePipeline() {
 
     <div class="canvas-wrap">
       <NodePalette />
-      <div class="canvas" style="position: relative" @drop="onDrop" @dragover.prevent>
+      <div ref="canvasEl" class="canvas" style="position: relative" @drop="onDrop" @dragover.prevent>
         <!-- 自定义节点用**插槽**而不是 node-types 属性：插槽的 props 是 Vue Flow 自己的类型，
              属性那条路要把组件断言成内部 NodeComponent，纯粹是类型摩擦。 -->
         <VueFlow
@@ -451,6 +544,9 @@ async function removePipeline() {
           @connect="onConnect"
           @node-click="onNodeClick"
           @edge-click="onEdgeClick"
+          @node-context-menu="onNodeMenu"
+          @edge-context-menu="onEdgeMenu"
+          @pane-context-menu="onPaneMenu"
         >
           <template #node-pipeline="nodeProps">
             <PipelineNodeVue
@@ -465,6 +561,26 @@ async function removePipeline() {
           <Controls position="bottom-right" />
           <MiniMap v-if="nodes.length > 4" pannable zoomable :node-color="() => '#2563eb'" />
         </VueFlow>
+
+        <!-- 右键菜单：一层透明背板先接住外面的点击（点一下就关），菜单本身在它上面 -->
+        <div v-if="menu" class="ctx-backdrop"
+             @click="menu = null" @contextmenu.prevent="menu = null" />
+        <div v-if="menu" class="ctx-menu" :style="{ left: menu.x + 'px', top: menu.y + 'px' }">
+          <div class="ctx-title">{{ menu.title }}</div>
+          <template v-for="it in menu.items" :key="it.label">
+            <div v-if="it.children?.length" class="ctx-item ctx-has-sub">
+              <span>{{ it.label }}</span><span class="ctx-arrow">▸</span>
+              <div class="ctx-sub">
+                <div v-for="c in it.children" :key="c.label" class="ctx-item" @click="runItem(c)">
+                  {{ c.label }}
+                </div>
+              </div>
+            </div>
+            <div v-else class="ctx-item" :class="{ danger: it.danger }" @click="runItem(it)">
+              {{ it.label }}
+            </div>
+          </template>
+        </div>
 
         <div v-if="!nodes.length" class="canvas-empty">
           <div class="canvas-empty-title">还是一条空流水线</div>
@@ -537,6 +653,65 @@ async function removePipeline() {
 .canvas {
   flex: 1;
   min-width: 0;
+}
+/* ---- 右键菜单（贴画布容器定位；二级菜单悬停展开）---- */
+.ctx-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+}
+.ctx-menu {
+  position: absolute;
+  z-index: 6;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #ebeef5);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  font-size: 13px;
+}
+.ctx-title {
+  padding: 4px 8px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border, #ebeef5);
+  color: var(--text-3);
+  font-size: 12px;
+  word-break: break-all;
+}
+.ctx-item {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 4px;
+  color: var(--text-1);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ctx-item:hover {
+  background: var(--accent-soft, rgb(64 158 255 / 12%));
+}
+.ctx-item.danger {
+  color: var(--danger, #f56c6c);
+}
+.ctx-arrow {
+  color: var(--text-3);
+}
+.ctx-sub {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -5px;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #ebeef5);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}
+.ctx-has-sub:hover > .ctx-sub {
+  display: block;
 }
 .canvas-empty {
   position: absolute;
