@@ -149,8 +149,8 @@ public class PipelineArchiveService {
         }
     }
 
-    /** reason 列是 varchar(255)。 */
-    private static final int REASON_MAX = 255;
+    /** reason 列宽（varchar(1024)，见 V2026_10_15_4）。改这里必须同时改那个迁移。 */
+    private static final int REASON_MAX = 1024;
 
     /** 超长就截断并留个省略号 —— 宁可少几个字，也不要因为落库失败把对象永远留在集群里。 */
     private static String clip(String s) {

@@ -73,9 +73,43 @@ class PipelineArchiveServiceTest {
         assertThat(cap.getValue().getCompletionTime()).isEqualTo("2026-10-15T10:03:00Z");
     }
 
+    /** 只换 reason 的快照。 */
+    private static PipelineRunSnapshotDTO snapshotWithReason(String reason) {
+        return new PipelineRunSnapshotDTO("c1", "ns1", "r1", "FAILED", reason,
+                "2026-10-15T10:00:00Z", "2026-10-15T10:03:00Z", List.of(), RUN_YAML);
+    }
+
     @Test
-    void theYamlOfWhatActuallyRanIsStoredWithTheRun() {
-        // ⭐ 运行详情的 YAML 面板读的就是它。**必须在这一刻写** ——
+    void aFailureReasonLongerThanTheOld255IsStoredWhole() {
+        // ⭐ 2026-10-15：reason 现在是**失败节点的原话**（Tekton 的 message 可以很长，
+        //    例如 "must specify limits.cpu for: place-scripts,prepare,step-clone; ..." 四段重复），
+        //    列的宽度已放大。截断线要跟着列走 —— 否则用户看到的报错又断在半句话上
+        //    （真撞到过：结尾是 `limits.memor…`）。
+        when(runMapper.selectByRunName("r1")).thenReturn(running());
+        String longReason = "failed to create task run pod \"x\": ".repeat(10) + "结尾";
+
+        svc.persist(snapshotWithReason(longReason));
+
+        ArgumentCaptor<PlatformPipelineRun> cap = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).update(cap.capture());
+        assertThat(cap.getValue().getReason()).isEqualTo(longReason);
+    }
+
+    @Test
+    void aReasonLongerThanTheColumnIsClippedSoTheArchiveStillLands() {
+        // ⚠️ 列不是无限的：超长在 MySQL 严格模式下是 SQLException，而「落库失败 = 对象不删」——
+        //    那会让台账一直重试、集群里那条运行永远留着。所以宁可截断。
+        when(runMapper.selectByRunName("r1")).thenReturn(running());
+
+        svc.persist(snapshotWithReason("x".repeat(2000)));
+
+        ArgumentCaptor<PlatformPipelineRun> cap = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).update(cap.capture());
+        assertThat(cap.getValue().getReason()).hasSize(1024).endsWith("…");
+    }
+
+    @Test
+    void theYamlOfWhatActuallyRanIsStoredWithTheRun() {        // ⭐ 运行详情的 YAML 面板读的就是它。**必须在这一刻写** ——
         // 紧跟着对象就被删了，之后拿画布重渲染只会得到一份当年没跑过的东西
         when(runMapper.selectByRunName("r1")).thenReturn(running());
 
