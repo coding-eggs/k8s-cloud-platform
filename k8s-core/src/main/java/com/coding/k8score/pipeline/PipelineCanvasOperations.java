@@ -36,7 +36,9 @@ public class PipelineCanvasOperations {
     public List<PipelineNodeTypeView> nodeTypes() {
         return nodes.all().stream()
                 .sorted(Comparator.comparing(PipelineNode::type))
-                .map(n -> new PipelineNodeTypeView(n.type(), n.formSchema().fields(), BuildPreset.all()))
+                .map(n -> new PipelineNodeTypeView(n.type(), n.label(), n.description(),
+                        n.formSchema().fields(), BuildPreset.all(),
+                        n.icon(), n.accent(), n.summaryFields()))
                 .toList();
     }
 

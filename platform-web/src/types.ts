@@ -1717,8 +1717,19 @@ export interface BuildPreset {
 /** `/pipeline/node-types` 的一项（透传自 k8s-server 的节点注册表）。 */
 export interface PipelineNodeType {
   type: string
+  /** 画布与面板上的显示名（后端节点自己声明的） */
+  label: string
+  /** 一句话说明「这个节点是干嘛的」，节点面板上显示 */
+  description: string
   fields: PipelineNodeField[]
   presets: BuildPreset[]
+  /** Element Plus 图标名 */
+  icon: string
+  /** 配色**语义名**（success / accent / warning / info / danger）—— 到 CSS 才落成具体色值，
+   *  这样浅色与暗色两套主题各自取自己的色 */
+  accent: string
+  /** 卡片副标题取哪几个字段的值（按顺序用 ` · ` 连） */
+  summaryFields: string[]
 }
 
 export interface PipelineCanvasNode {

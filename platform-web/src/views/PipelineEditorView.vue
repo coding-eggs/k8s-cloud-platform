@@ -11,7 +11,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { VueFlow, useVueFlow } from '@vue-flow/core'
+import { MarkerType, VueFlow, useVueFlow } from '@vue-flow/core'
+// 这三个是官方拆出去的兄弟包（core 里没有）
+import { Background } from '@vue-flow/background'
+import { Controls } from '@vue-flow/controls'
+import { MiniMap } from '@vue-flow/minimap'
+import '@vue-flow/controls/dist/style.css'
+import '@vue-flow/minimap/dist/style.css'
 import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
@@ -28,7 +34,7 @@ import NodePropsPanel from '@/components/pipeline/NodePropsPanel.vue'
 const route = useRoute()
 const router = useRouter()
 const perm = usePermission()
-const { load: loadNodeTypes, labelOf } = usePipelineNodeTypes()
+const { types: nodeTypeList, load: loadNodeTypes, labelOf } = usePipelineNodeTypes()
 const { screenToFlowCoordinate } = useVueFlow()
 
 const pipelineId = computed(() => (route.query.id as string) || '')
@@ -239,6 +245,19 @@ function onNodeClick(e: { node: { id: string } }) {
   selected.value = e.node.id
 }
 
+/** 从一个节点的 "+" 接一个下游节点：新节点落在它右边，并自动连一条边。 */
+function insertAfter(fromId: string, type: string) {
+  const from = nodes.value.find((n) => n.id === fromId)
+  const x = (from?.position.x ?? 0) + 250
+  const y = (from?.position.y ?? 0) + 20
+  const id = nextId(type)
+  nodes.value = [...nodes.value, { ...flowNode(id, type, {}, 0), position: { x, y } }]
+  if (!wouldCycle(fromId, id)) {
+    edges.value = [...edges.value, flowEdge(fromId, id)]
+  }
+  selected.value = id
+}
+
 async function removeSelected() {
   if (!selected.value) return
   nodes.value = nodes.value.filter((n) => n.id !== selected.value)
@@ -252,6 +271,8 @@ function onPropsChange() {
 }
 
 /** 没连线的两个节点 = 并发。显式提示，否则用户以为"没连上"是错的。 */
+const _unusedLabel = labelOf
+
 const concurrentHint = computed(() => {
   if (nodes.value.length < 2) return ''
   const hasIncoming = new Set(edges.value.map((e) => e.target))
@@ -334,12 +355,17 @@ async function removePipeline() {
 
     <div class="canvas-wrap">
       <NodePalette />
-      <div class="canvas" @drop="onDrop" @dragover.prevent>
+      <div class="canvas" style="position: relative" @drop="onDrop" @dragover.prevent>
         <!-- 自定义节点用**插槽**而不是 node-types 属性：插槽的 props 是 Vue Flow 自己的类型，
              属性那条路要把组件断言成内部 NodeComponent，纯粹是类型摩擦。 -->
         <VueFlow
           :nodes="flowNodes"
           :edges="flowEdgesBound"
+          :default-edge-options="{
+            type: 'smoothstep',
+            markerEnd: MarkerType.ArrowClosed,
+            style: { stroke: 'var(--border-strong)', strokeWidth: 1.5 },
+          }"
           fit-view-on-init
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
@@ -347,9 +373,25 @@ async function removePipeline() {
           @node-click="onNodeClick"
         >
           <template #node-pipeline="nodeProps">
-            <PipelineNodeVue :id="nodeProps.id" :data="nodeProps.data" />
+            <PipelineNodeVue
+              :id="nodeProps.id"
+              :data="nodeProps.data"
+              show-add
+              @add="(t: string) => insertAfter(nodeProps.id, t)"
+            />
           </template>
+
+          <Background :gap="18" :size="1.4" pattern-color="var(--border-strong)" />
+          <Controls position="bottom-right" />
+          <MiniMap v-if="nodes.length > 4" pannable zoomable :node-color="() => '#2563eb'" />
         </VueFlow>
+
+        <div v-if="!nodes.length" class="canvas-empty">
+          <div class="canvas-empty-title">还是一条空流水线</div>
+          <div class="canvas-empty-hint">
+            把左边的节点拖进来 · 连线的顺序就是执行顺序 · <b>没连线的两个节点会并发开始</b>
+          </div>
+        </div>
       </div>
       <NodePropsPanel
         v-if="selectedNode"
@@ -381,7 +423,7 @@ async function removePipeline() {
 }
 .loc {
   font-size: 12px;
-  color: var(--text-dim, #909399);
+  color: var(--text-3);
 }
 .spacer {
   flex: 1;
@@ -403,12 +445,29 @@ async function removePipeline() {
   flex: 1;
   min-width: 0;
 }
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+  color: var(--text-3);
+}
+.canvas-empty-title {
+  font-size: 14px;
+}
+.canvas-empty-hint {
+  font-size: 12px;
+}
 .props-empty {
   width: 300px;
   flex: 0 0 300px;
   border-left: 1px solid var(--border, #ebeef5);
   padding: 16px;
   font-size: 12px;
-  color: var(--text-dim, #909399);
+  color: var(--text-3);
 }
 </style>

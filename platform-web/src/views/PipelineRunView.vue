@@ -12,7 +12,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { VueFlow } from '@vue-flow/core'
+import { MarkerType, VueFlow } from '@vue-flow/core'
 import type { Edge, Node } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
@@ -63,9 +63,16 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
       id: n.id,
       type: 'pipeline',
       position: { x: 60 + (i % 3) * 200, y: 40 + Math.floor(i / 3) * 110 },
-      data: { nodeType: n.type, label: n.id, status: st[n.id] },
+      data: { nodeType: n.type, label: n.id, config: n.config, status: st[n.id] },
     })),
-    edges: (canvas.edges ?? []).map((e) => ({ id: `e-${e.from}-${e.to}`, source: e.from, target: e.to })),
+    edges: (canvas.edges ?? []).map((e) => ({
+      id: `e-${e.from}-${e.to}`,
+      source: e.from,
+      target: e.to,
+      type: 'smoothstep',
+      markerEnd: MarkerType.ArrowClosed,
+      style: { stroke: 'var(--border-strong)', strokeWidth: 1.5 },
+    })),
   }
 })
 
@@ -250,7 +257,7 @@ async function cancel(r: PipelineRun) {
   overflow: auto;
 }
 .detail.empty {
-  color: var(--text-dim, #909399);
+  color: var(--text-3);
   font-size: 12px;
 }
 .detail-head {
@@ -260,7 +267,7 @@ async function cancel(r: PipelineRun) {
   font-size: 12px;
 }
 .dim {
-  color: var(--text-dim, #909399);
+  color: var(--text-3);
 }
 .dag {
   height: 220px;
@@ -280,8 +287,8 @@ async function cancel(r: PipelineRun) {
   min-height: 160px;
   max-height: 40vh;
   overflow: auto;
-  background: var(--bg-code, #1e1e1e);
-  color: #d4d4d4;
+  background: var(--bg);
+  color: var(--text-1);
   font-size: 12px;
   padding: 8px;
   border-radius: 4px;

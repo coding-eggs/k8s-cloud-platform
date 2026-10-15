@@ -29,6 +29,31 @@ public class GitCloneNode implements PipelineNode {
     }
 
     @Override
+    public String label() {
+        return "git 克隆";
+    }
+
+    @Override
+    public String description() {
+        return "把仓库拉进所有节点共用的工作区";
+    }
+
+    @Override
+    public String icon() {
+        return "FolderOpened";
+    }
+
+    @Override
+    public String accent() {
+        return "success";
+    }
+
+    @Override
+    public List<String> summaryFields() {
+        return List.of("repo", "revision");
+    }
+
+    @Override
     public NodeSchema formSchema() {
         // ⚠️ connectionId 的 key 名是**跨模块契约**：platform-api 会照它扫画布、
         // 逐条问「这条连接被授权了吗」（spec §5.3、Review Focus #4）。

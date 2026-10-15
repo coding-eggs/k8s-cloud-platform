@@ -29,6 +29,31 @@ public class ImagePushNode implements PipelineNode {
     }
 
     @Override
+    public String label() {
+        return "构建并推送镜像";
+    }
+
+    @Override
+    public String description() {
+        return "用 Buildah 构建并推到你选的仓库";
+    }
+
+    @Override
+    public String icon() {
+        return "Upload";
+    }
+
+    @Override
+    public String accent() {
+        return "warning";
+    }
+
+    @Override
+    public List<String> summaryFields() {
+        return List.of("imageName", "tagSource");
+    }
+
+    @Override
     public NodeSchema formSchema() {
         return new NodeSchema(List.of(
                 NodeField.text("registryConnectionId", "目标仓库（被授权的 registry 连接）", true),

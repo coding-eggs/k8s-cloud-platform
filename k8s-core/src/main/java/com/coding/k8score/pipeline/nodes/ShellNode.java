@@ -25,6 +25,31 @@ public class ShellNode implements PipelineNode {
     }
 
     @Override
+    public String label() {
+        return "命令";
+    }
+
+    @Override
+    public String description() {
+        return "在任意镜像里跑一段命令（跑测试就是它的一个预设）";
+    }
+
+    @Override
+    public String icon() {
+        return "Tools";
+    }
+
+    @Override
+    public String accent() {
+        return "accent";
+    }
+
+    @Override
+    public List<String> summaryFields() {
+        return List.of("image");
+    }
+
+    @Override
     public NodeSchema formSchema() {
         return new NodeSchema(List.of(
                 NodeField.select("preset", "预设（只是默认值，下面都能改）", BuildPreset.options(), "custom"),

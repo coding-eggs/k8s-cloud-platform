@@ -177,7 +177,7 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
   display: block;
   font-size: 12px;
   margin-bottom: 4px;
-  color: var(--text-dim, #606266);
+  color: var(--text-2);
 }
 .req {
   color: var(--danger, #f56c6c);
@@ -189,12 +189,12 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
   gap: 12px;
 }
 .suggest-source {
-  color: var(--text-dim, #909399);
+  color: var(--text-3);
   font-size: 12px;
 }
 .props-help {
   font-size: 12px;
-  color: var(--text-dim, #909399);
+  color: var(--text-3);
   margin-top: 4px;
   line-height: 1.5;
 }

@@ -9,5 +9,7 @@ import java.util.List;
  * {@link BuildPreset} 本身，重新声明一份等价的传输类型只会多出一处要同步的形状。
  * 端点在 k8s-server（`POST /pipelineruns/node-types`），platform-api 只做透传。
  */
-public record PipelineNodeTypeView(String type, List<NodeField> fields, List<BuildPreset> presets) {
+public record PipelineNodeTypeView(String type, String label, String description,
+                                   List<NodeField> fields, List<BuildPreset> presets,
+                                   String icon, String accent, List<String> summaryFields) {
 }
