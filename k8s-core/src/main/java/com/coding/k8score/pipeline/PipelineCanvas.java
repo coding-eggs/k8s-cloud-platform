@@ -26,8 +26,23 @@ public record PipelineCanvas(List<CanvasNode> nodes, List<CanvasEdge> edges) {
      *               空 = 没起名，各处一律退回显示 {@code id}。
      *               ⚠️ 它**不参与任何键**：改个名字不会动集群对象名，也不会让旧运行的日志/状态对不上。
      * @param config 字段 key → 用户填的值（**全是字符串**，与表单一致）
+     * @param position 画布上的**显示坐标**（前端拖出来的）。纯展示：渲染器不看它，
+     *                 集群里跑出来的东西与它无关。可空 —— 加这个字段之前存下来的画布没有坐标，
+     *                 前端会退回自动排布。
+     *                 ⚠️ 必须存下来：不存就等于「每次打开都换一张图」，用户手摆的布局白摆
+     *                 （2026-10-15 用户报「保存后再编辑，节点叠在一起了」）。
      */
-    public record CanvasNode(String id, String type, String name, Map<String, String> config) { }
+    public record CanvasNode(String id, String type, String name, Map<String, String> config,
+                             Position position) {
+
+        /** 没有布局信息（老画布 / 只关心「跑什么」的地方）—— 前端会退回自动排布。 */
+        public CanvasNode(String id, String type, String name, Map<String, String> config) {
+            this(id, type, name, config, null);
+        }
+    }
+
+    /** 画布坐标。整数像素，前端 Vue Flow 的坐标系。 */
+    public record Position(double x, double y) { }
 
     public record CanvasEdge(String from, String to) { }
 

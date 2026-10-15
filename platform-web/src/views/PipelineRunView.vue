@@ -106,7 +106,11 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
     nodes: (c.nodes ?? []).map((n, i) => ({
       id: n.id,
       type: 'pipeline',
-      position: { x: 60 + (i % 3) * 200, y: 40 + Math.floor(i / 3) * 110 },
+      // 用**当时那张画布**里的坐标 —— 用户在编辑器里怎么摆的，这里就怎么画；
+      // 老画布没存坐标才退回网格
+      position: n.position
+        ? { x: n.position.x, y: n.position.y }
+        : { x: 60 + (i % 3) * 200, y: 40 + Math.floor(i / 3) * 110 },
       data: { nodeType: n.type, name: n.name ?? '', config: n.config, status: st[n.id] },
     })),
     edges: (c.edges ?? []).map((e) => ({

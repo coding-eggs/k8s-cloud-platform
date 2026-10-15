@@ -108,6 +108,10 @@ function toCanvasNodes(): PipelineCanvasNode[] {
       // 没起名就**不写这个键**：存下来的画布干净，后端那边「没有 name」与「空 name」等价
       ...(name ? { name } : {}),
       config: { ...(n.data.config ?? {}) },
+      // ⚠️ 坐标必须存：不存的话重开时按序号重排，用户手拖的布局全丢
+      //    （2026-10-15 用户报「保存后再编辑，节点叠在一起了」）。
+      //    取整只是让 JSON 干净 —— Vue Flow 拖动会给出小数
+      position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
     }
   })
 }
@@ -155,7 +159,7 @@ function applyCanvas(json?: string | null) {
   if (!json) return
   try {
     const c = JSON.parse(json) as PipelineCanvas
-    nodes.value = (c.nodes ?? []).map((n, i) => flowNode(n.id, n.type, n.name ?? '', n.config, i))
+    nodes.value = (c.nodes ?? []).map((n, i) => flowNode(n.id, n.type, n.name ?? '', n.config, i, n.position))
     edges.value = (c.edges ?? []).map((e) => flowEdge(e.from, e.to))
   } catch {
     ElMessage.error('画布内容无法解析')
@@ -170,17 +174,24 @@ function nextId(type: string): string {
 }
 
 
+/** 没有存过坐标时的退回排布：3 列网格（老画布、以及刚拖进来的新节点） */
+function autoPosition(index: number): { x: number; y: number } {
+  return { x: 80 + (index % 3) * 200, y: 60 + Math.floor(index / 3) * 120 }
+}
+
 function flowNode(
   id: string,
   type: string,
   name: string,
   config: Record<string, string>,
   index: number,
+  position?: { x: number; y: number } | null,
 ): FlowNodeView {
   return {
     id,
     type: 'pipeline',
-    position: { x: 80 + (index % 3) * 200, y: 60 + Math.floor(index / 3) * 120 },
+    // 存过坐标就用存的（用户手拖出来的布局）；没有才退回网格
+    position: position ? { x: position.x, y: position.y } : autoPosition(index),
     data: { nodeType: type, name: name ?? '', config: config ?? {} },
   }
 }

@@ -86,6 +86,24 @@ class PipelineCanvasOperationsTest {
     }
 
     @Test
+    void theLayoutCoordinatesDoNotChangeWhatRuns() {
+        // ⭐ 坐标是**纯展示**：同一份画布，带不带 position 必须渲染出逐字节相同的 YAML。
+        //    这条是「往画布里加布局字段」的安全带 —— 哪天有人把坐标喂进渲染，它会红。
+        String plain = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}},
+                          {"id":"build","type":"shell","config":{"image":"alpine:3.20","command":"echo hi"}}],
+                 "edges":[{"from":"clone","to":"build"}]}""";
+        String withPositions = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"},
+                             "position":{"x":123,"y":45}},
+                          {"id":"build","type":"shell","config":{"image":"alpine:3.20","command":"echo hi"},
+                             "position":{"x":400,"y":300}}],
+                 "edges":[{"from":"clone","to":"build"}]}""";
+
+        assertThat(ops.renderYaml(withPositions)).isEqualTo(ops.renderYaml(plain));
+    }
+
+    @Test
     void theSharedWorkspaceIsMountedAtSlashWorkspaceNotAtItsDefault() {
         // ⭐ 第三次真跑（2026-10-15）：git 节点报
         //    fatal: destination path '.' already exists and is not an empty directory.

@@ -1749,6 +1749,10 @@ export interface PipelineCanvasNode {
    *  ⚠️ 它不参与任何键：改名字不动集群对象名，也不会让旧运行的日志对不上 */
   name?: string | null
   config: Record<string, string>
+  /** 画布上的**显示坐标**（纯展示，渲染器不看它）。
+   *  ⚠️ 必须存下来：不存就等于「每次打开都换一张图」，用户手摆的布局白摆。
+   *  老画布没有它 → 退回自动排布 */
+  position?: { x: number; y: number } | null
 }
 
 export interface PipelineCanvasEdge {
