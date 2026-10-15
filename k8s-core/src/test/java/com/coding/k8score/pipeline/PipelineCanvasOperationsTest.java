@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PipelineCanvasOperationsTest {
 
     private final PipelineNodeRegistry registry =
-            new PipelineNodeRegistry(List.of(new GitCloneNode(), new ShellNode(), new ImagePushNode()));
+            com.coding.k8score.pipeline.nodes.AllNodes.registry();
     private final PipelineCanvasOperations ops =
             new PipelineCanvasOperations(registry, new PipelineRenderer(registry));
 
@@ -27,7 +27,8 @@ class PipelineCanvasOperationsTest {
         // 前端靠它渲染属性面板 —— 加字段不用改前端，就是靠这条
         List<PipelineNodeTypeView> types = ops.nodeTypes();
         assertThat(types).extracting(PipelineNodeTypeView::type)
-                .containsExactlyInAnyOrder("git", "shell", "image");
+                .containsExactlyInAnyOrder("git", "shell", "image",
+                        "java", "node", "go", "python");
 
         PipelineNodeTypeView shell = types.stream()
                 .filter(t -> t.type().equals("shell")).findFirst().orElseThrow();

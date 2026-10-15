@@ -54,7 +54,7 @@ public class ShellNode implements PipelineNode {
         return new NodeSchema(List.of(
                 NodeField.select("preset", "预设（只是默认值，下面都能改）", BuildPreset.options(), "custom"),
                 NodeField.image("image", "镜像"),
-                NodeField.text("command", "命令（可多行）", true,
+                NodeField.textareaRequired("command", "命令（可多行）",
                         "在共享 workspace 里按顺序执行；任一行失败就中止（Tekton 默认 set -e）。\n"
                                 + "前面 git 克隆放下的代码就在工作目录里。\n"
                                 + "例：mvn -B -DskipTests package"),
@@ -86,7 +86,7 @@ public class ShellNode implements PipelineNode {
         Step step = new Step();
         step.setName("run");
         step.setImage(image);
-        step.setWorkingDir(resolveWorkDir(ctx.value("workDir")));
+        step.setWorkingDir(BuildStep.workDir(ctx.value("workDir")));
         step.setScript(script);
         // 依赖缓存（可选）：环境变量 + 一个 cache workspace，挂载与卷的来源由渲染/绑定层决定
         if ("true".equals(ctx.value("cache"))) {
@@ -97,20 +97,4 @@ public class ShellNode implements PipelineNode {
         return new RenderedStep(List.of(step));
     }
 
-    /**
-     * 把用户填的工作目录解析成绝对路径。
-     *
-     * <p>空 / {@code .} / {@code ./} 都归到 workspace 根 —— 不然会渲染出 {@code /workspace/.}
-     * 这种路径：Tekton 收得下，但日志里看一眼就让人怀疑是不是配错了。
-     */
-    private static String resolveWorkDir(String raw) {
-        String dir = raw == null ? "" : raw.trim();
-        while (dir.startsWith("./")) {
-            dir = dir.substring(2);
-        }
-        while (dir.endsWith("/")) {
-            dir = dir.substring(0, dir.length() - 1);
-        }
-        return dir.isEmpty() || ".".equals(dir) ? WS : WS + "/" + dir;
-    }
 }

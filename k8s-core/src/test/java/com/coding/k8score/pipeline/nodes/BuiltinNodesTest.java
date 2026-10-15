@@ -27,8 +27,9 @@ class BuiltinNodesTest {
     @Test
     void allThreeNodeTypesAreRegisteredAndTheirSchemasAreWellFormed() {
         // 护栏（spec §2.4）：type 非空、schema 非空、字段 key 不重复
-        List<PipelineNode> all = List.of(new GitCloneNode(), new ShellNode(), new ImagePushNode());
-        assertThat(all).extracting(PipelineNode::type).containsExactlyInAnyOrder("git", "shell", "image");
+        List<PipelineNode> all = AllNodes.list();
+        assertThat(all).extracting(PipelineNode::type)
+                .containsExactlyInAnyOrder("git", "shell", "image", "java", "node", "go", "python");
         for (PipelineNode n : all) {
             assertThat(n.formSchema().fields()).as(n.type() + " 的 schema").isNotEmpty();
             assertThat(n.formSchema().fields()).extracting(NodeField::key).doesNotHaveDuplicates();
@@ -255,6 +256,75 @@ class BuiltinNodesTest {
 
         assertThat(step.workspaces()).isEmpty();
         assertThat(step.steps().get(0).getEnv()).isEmpty();
+    }
+
+    // ---- 预设构建节点（java / node / go / python，2026-10-15）----
+
+    @Test
+    void everyBuildNodeWorksOutOfTheBoxAndCarriesTheCache() {
+        // 预设节点的意义就是「开箱能用」：镜像与命令都留空也要渲染出能跑的东西，
+        // 而且**默认带依赖缓存** —— 用户不需要知道 /cache 的存在，这就是相对「命令」节点的价值
+        for (PipelineNode node : List.of(new JavaBuildNode(), new NodeBuildNode(),
+                new GoBuildNode(), new PythonBuildNode())) {
+            RenderedStep step = node.render(ctx(node.type(), Map.of()));
+
+            assertThat(step.steps().get(0).getImage()).as(node.type() + " 的默认镜像").isNotBlank();
+            assertThat(step.steps().get(0).getScript()).as(node.type() + " 的默认命令").isNotBlank();
+            assertThat(step.steps().get(0).getWorkingDir()).as(node.type() + " 的工作目录")
+                    .isEqualTo("/workspace");
+            // 一次给全套缓存变量：节点不知道用户会怎么改命令，没跑到的工具会忽略自己那几个
+            assertThat(envOf(step)).as(node.type() + " 的缓存变量")
+                    .containsKeys("MAVEN_OPTS", "npm_config_cache", "GOMODCACHE", "PIP_CACHE_DIR");
+            assertThat(step.workspaces()).as(node.type() + " 的缓存 workspace").singleElement()
+                    .satisfies(w -> {
+                        assertThat(w.name()).isEqualTo("cache");
+                        assertThat(w.mountPath()).isEqualTo("/cache");
+                    });
+        }
+    }
+
+    @Test
+    void aFilledFieldWinsOverTheBuildNodesDefault() {
+        // 与 shell 节点的预设同一条规矩：默认值只是默认值
+        RenderedStep step = new JavaBuildNode().render(ctx("java", Map.of(
+                "image", "harbor.example.com/base/maven:3.9",
+                "command", "mvn -B clean verify",
+                "workDir", "backend")));
+
+        assertThat(step.steps().get(0).getImage()).isEqualTo("harbor.example.com/base/maven:3.9");
+        assertThat(step.steps().get(0).getScript()).isEqualTo("mvn -B clean verify");
+        assertThat(step.steps().get(0).getWorkingDir()).isEqualTo("/workspace/backend");
+    }
+
+    @Test
+    void theGoNodeDefaultsToAReachableModuleProxy() {
+        // ⭐ 这个默认值不是美化：proxy.golang.org 从 Pod 里连不通（2026-10-15 实测，
+        //    解析到 Google 的 IP 后连不上），而 Maven Central / npm / PyPI 都通 ——
+        //    所以 Go 是唯一一个"默认值决定能不能拉到依赖"的节点
+        assertThat(envOf(new GoBuildNode().render(ctx("go", Map.of()))))
+                .containsEntry("GOPROXY", GoBuildNode.DEFAULT_GOPROXY);
+
+        assertThat(envOf(new GoBuildNode().render(ctx("go", Map.of("goproxy", "http://athens.internal")))))
+                .containsEntry("GOPROXY", "http://athens.internal");
+    }
+
+    @Test
+    void theBuildNodesCarryTheProxyToo() {
+        // 代理是三个联网节点的公共能力（git / 镜像 / 构建），键名都叫 proxy
+        assertThat(envOf(new JavaBuildNode().render(ctx("java", Map.of("proxy", "http://p:7890")))))
+                .containsEntry("HTTPS_PROXY", "http://p:7890");
+    }
+
+    @Test
+    void everyBuildNodeKeepsTheProxyAndToolSpecificKnobsInTheAdvancedSection() {
+        // 摊在面板上的只该是"每次都要想一下"的字段；代理、GOPROXY、pip 源都收进「高级」
+        for (PipelineNode node : List.of(new JavaBuildNode(), new NodeBuildNode(),
+                new GoBuildNode(), new PythonBuildNode())) {
+            assertThat(node.formSchema().fields()).as(node.type())
+                    .filteredOn(NodeField::advanced).extracting(NodeField::key).contains("proxy");
+        }
+        assertThat(new GoBuildNode().formSchema().fields())
+                .filteredOn(NodeField::advanced).extracting(NodeField::key).contains("goproxy");
     }
 
     /** 一个 step 的环境变量（key → value）—— 断言代理这类东西比逐个 find 清楚。 */

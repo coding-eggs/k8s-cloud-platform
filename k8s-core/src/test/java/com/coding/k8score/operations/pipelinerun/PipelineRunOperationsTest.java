@@ -208,10 +208,7 @@ class PipelineRunOperationsTest {
     // ---- 创建出来的 PipelineRun 的形状 ----
 
     private static PipelineRunOperations opsForBuild() {
-        PipelineNodeRegistry registry = new PipelineNodeRegistry(
-                List.of(new com.coding.k8score.pipeline.nodes.GitCloneNode(),
-                        new com.coding.k8score.pipeline.nodes.ShellNode(),
-                        new com.coding.k8score.pipeline.nodes.ImagePushNode()));
+        PipelineNodeRegistry registry = com.coding.k8score.pipeline.nodes.AllNodes.registry();
         return new PipelineRunOperations(null, new PipelineRunConverter(),
                 new com.coding.k8score.pipeline.PipelineCanvasOperations(
                         registry, new com.coding.k8score.pipeline.PipelineRenderer(registry)));

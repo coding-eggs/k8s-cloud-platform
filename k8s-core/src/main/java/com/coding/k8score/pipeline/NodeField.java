@@ -57,6 +57,28 @@ public record NodeField(String key, String label, FieldType type,
                 "基础镜像。带候选补全 —— 从已配的镜像仓库里挑", null, List.of());
     }
 
+    /**
+     * **可留空**的镜像字段：留空 = 用节点自带的默认镜像（默认值写在 placeholder 上，一眼看得到）。
+     *
+     * <p>与 {@link #image} 的区别就在这里：预设构建节点必须**开箱能用**，而内网/离线集群
+     * 又要能换成自己 Harbor 里的镜像 —— 候选补全正是为后者准备的。
+     */
+    public static NodeField imageOptional(String key, String label, String defaultImage) {
+        return new NodeField(key, label, FieldType.IMAGE, false, "留空 = " + defaultImage,
+                "留空 = 用节点自带的默认镜像 " + defaultImage + "。\n"
+                        + "要换成自己仓库里的（内网/离线集群）在这里填，带候选补全", null, List.of());
+    }
+
+    /** 多行文本（构建命令这类）。与 {@link #text} 只差 FieldType。 */
+    public static NodeField textarea(String key, String label, String help) {
+        return new NodeField(key, label, FieldType.TEXTAREA, false, null, help, null, List.of());
+    }
+
+    /** 必填的多行文本（如「命令」节点的命令 —— 没有命令这个节点就没有意义）。 */
+    public static NodeField textareaRequired(String key, String label, String help) {
+        return new NodeField(key, label, FieldType.TEXTAREA, true, null, help, null, List.of());
+    }
+
     public static NodeField select(String key, String label, List<Option> options, String def) {
         return new NodeField(key, label, FieldType.SELECT, true, null, null, def, options);
     }
