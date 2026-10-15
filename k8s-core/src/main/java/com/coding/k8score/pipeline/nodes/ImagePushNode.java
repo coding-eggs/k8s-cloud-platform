@@ -110,8 +110,11 @@ public class ImagePushNode implements PipelineNode {
         // ⚠️ 两处 Tekton 的坑都在这段里：
         //   1. shell 的命令替换要写成 $$(...)，否则 Tekton 会当成自己的变量替换并因解析不到而报错；
         //   2. $(context.pipelineRun.name) 是 Tekton 内建变量，**要它替换**，所以不转义。
+        // ⚠️ 而且 tag 表达式**直接拼在冒号后面**，别再套一层 $( )：那种写法只对第 2 条成立，
+        //    套在字面量（固定 tag）上会渲染成 `$('v1')` —— Tekton 替换不了就留给 shell，
+        //    shell 当命令替换去执行命令 `v1`，tag 变空。
         String script = "set -e\n"
-                + "IMAGE=" + image + ":$(" + tag + ")\n"
+                + "IMAGE=" + image + ":" + tag + "\n"
                 + "echo \"目标镜像：$IMAGE\"\n"
                 + "buildah bud -f " + GitCloneNode.shellQuote(dockerfile) + " -t \"$IMAGE\" " + GitCloneNode.shellQuote(context) + "\n"
                 + "buildah push --digestfile " + GitCloneNode.shellQuote(GitCloneNode.WS + "/.image-digest") + " \"$IMAGE\"\n";
@@ -131,6 +134,9 @@ public class ImagePushNode implements PipelineNode {
     /**
      * tag 的三种来源 —— 都用**运行时**能算出来的形式表达，因为渲染发生在保存/预览那一刻，
      * 那时还不知道 git sha、也不知道这次的运行名。
+     *
+     * <p>每个分支返回的都是**完整的** shell 表达式（含引号），调用点直接拼在冒号后面 ——
+     * 别在外面再包一层 {@code $( )}（那是 Tekton 的变量替换语法，只对第二个分支成立）。
      */
     private static String tagExpression(String tagSource, String fixedTag) {
         return switch (tagSource) {

@@ -7,7 +7,6 @@ import io.fabric8.tekton.v1.EmbeddedTask;
 import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.PipelineTask;
 import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
-import io.fabric8.tekton.v1.TaskSpec;
 import io.fabric8.tekton.v1.WorkspaceDeclaration;
 import org.springframework.stereotype.Component;
 
@@ -95,7 +94,12 @@ public final class PipelineRenderer {
             RenderedStep rendered = impl.render(ctx);
             extraWorkspaces.addAll(rendered.extraWorkspaces());
 
-            TaskSpec taskSpec = new TaskSpec();
+            // ⚠️ 内联 TaskSpec 的字段是**平铺**在 taskSpec 上的，**不是**装在它的 `spec` 里。
+            // Tekton v1 的 EmbeddedTask 把 TaskSpec 内联在自己身上
+            // （pipeline_types.go：`TaskSpec `json:",inline,omitempty"``），它自己那个 `spec`
+            // 字段是给**自定义任务**留的 RawExtension。塞进 `spec` 的后果是内联的那一份为空 ——
+            // 集群的 admission webhook 会拒：missing field(s): ...taskSpec.steps（2026-10-15 线上回归）。
+            EmbeddedTask taskSpec = new EmbeddedTask();
             taskSpec.setSteps(rendered.steps());
             // 隐式共享 workspace：每个 task 都挂上，用户不用管
             List<WorkspaceDeclaration> ws = new ArrayList<>();
@@ -105,12 +109,6 @@ public final class PipelineRenderer {
             }
             taskSpec.setWorkspaces(ws);
 
-            // ⚠️ PipelineTask.taskSpec 的类型是 **EmbeddedTask** 而不是 TaskSpec ——
-            // fabric8 的模型里 EmbeddedTask 是「内联任务」的外壳（它还有 apiVersion/kind/metadata
-            // 三个字段用于引用式写法），真正的 TaskSpec 装在它的 spec 里。
-            EmbeddedTask embedded = new EmbeddedTask();
-            embedded.setSpec(taskSpec);
-
             PipelineTask task = new PipelineTask();
             task.setName(n.id());                      // 节点 id 就是 task 名
             // 用户起的名字**只给人看**：写成 Tekton 的 displayName（kubectl 里也认得出来），
@@ -119,7 +117,7 @@ public final class PipelineRenderer {
             if (displayName != null) {
                 task.setDisplayName(displayName);
             }
-            task.setTaskSpec(embedded);
+            task.setTaskSpec(taskSpec);
             Set<String> after = runAfter.get(n.id());
             if (after != null && !after.isEmpty()) {
                 task.setRunAfter(new ArrayList<>(after));

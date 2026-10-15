@@ -5,6 +5,8 @@ import com.coding.k8score.pipeline.nodes.GitCloneNode;
 import com.coding.k8score.pipeline.nodes.ImagePushNode;
 import com.coding.k8score.pipeline.nodes.ShellNode;
 import com.coding.common.models.pipeline.PipelineConnectionRef;
+import com.fasterxml.jackson.core.type.TypeReference;
+import io.fabric8.kubernetes.client.utils.Serialization;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -51,6 +53,59 @@ class PipelineCanvasOperationsTest {
                  "edges":[{"from":"clone","to":"build"}]}""";
         String yaml = ops.renderYaml(canvas);
         assertThat(yaml).contains("clone").contains("build").contains("runAfter");
+    }
+
+    // ---- 内联 taskSpec 的**形状**（2026-10-15 线上回归：第一次真跑流水线被集群拒）----
+
+    @Test
+    void theInlineTaskSpecIsFlatSoTektonCanSeeTheSteps() {
+        // ⭐ 真跑第一次的报错是 Tekton 的 admission webhook 给的：
+        //    missing field(s): spec.pipelineSpec.tasks[0].taskSpec.steps
+        //    原因：Tekton v1 的 EmbeddedTask 把 TaskSpec **内联**在自己身上
+        //    （`TaskSpec `json:",inline"``），它自己那个 `spec` 字段是给**自定义任务**留的
+        //    RawExtension（见 tektoncd/pipeline pkg/apis/pipeline/v1/pipeline_types.go）。
+        //    我们把 TaskSpec 塞进了那个 spec → 内联的那一份是空的 → 校验器看不见 steps。
+        //
+        //    这条测试盯的是**序列化出来的形状**（yaml 再解析回 map，与集群看到的同一份），
+        //    不是 Java 对象图：老测试只断言 YAML 里出现过 "clone"/"build"，
+        //    对象摆错位置也照样绿 —— 这正是这个 bug 能活到线上的原因。
+        String canvas = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}}],"edges":[]}""";
+
+        String yaml = ops.renderYaml(canvas);
+        Map<String, Object> taskSpec = taskSpecOfFirstTask(yaml);
+
+        assertThat(taskSpec).as("渲染出来的 YAML：\n%s", yaml).containsKey("steps");
+        assertThat(taskSpec).as("那个壳是「自定义任务」的东西，不是我们").doesNotContainKey("spec");
+        assertThat(maps(taskSpec.get("steps")))
+                .singleElement()
+                .satisfies(step -> assertThat(step).containsKey("script"));
+        // 隐式共享 workspace 的声明也要一起被内联（否则 task 里的 workspace 挂不上）
+        assertThat(maps(taskSpec.get("workspaces")))
+                .extracting(w -> w.get("name"))
+                .containsExactly(PipelineCanvasOperations.WORKSPACE);
+    }
+
+    /** 渲染出的 YAML → 第一条 task 的 taskSpec 子树（**重新解析**，与集群看到的同一份形状）。 */
+    private static Map<String, Object> taskSpecOfFirstTask(String yaml) {
+        try {
+            Map<String, Object> spec =
+                    Serialization.yamlMapper().readValue(yaml, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> task = maps(spec.get("tasks")).get(0);
+            return task.get("taskSpec") == null ? Map.of() : asMap(task.get("taskSpec"));
+        } catch (Exception e) {
+            throw new AssertionError("渲染出来的 YAML 解析不了：\n" + yaml, e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object o) {
+        return (Map<String, Object>) o;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> maps(Object o) {
+        return o == null ? List.of() : (List<Map<String, Object>>) o;
     }
 
     @Test

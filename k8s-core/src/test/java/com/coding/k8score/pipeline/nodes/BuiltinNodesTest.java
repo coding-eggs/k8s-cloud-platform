@@ -135,6 +135,33 @@ class BuiltinNodesTest {
     }
 
     @Test
+    void theTagExpressionGoesStraightAfterTheColonWithNoExtraWrapper() {
+        // ⭐ 2026-10-15 第一次真跑之前核形状时抓到：固定 tag 渲染成了
+        //    IMAGE='harbor.example.com/proj/app':$('v1')
+        //    —— `$(...)` 是 Tekton 的**变量替换**语法（要字面量得写 `$$(`）。
+        //    包一个不是变量名的东西，Tekton 替换不了就原样留给 shell，
+        //    而 shell 把 `$('v1')` 当成命令替换去执行命令 `v1` —— tag 变空，
+        //    buildah 收到 `harbor.example.com/proj/app:` 直接报非法镜像引用。
+        //    三种 tag 来源**自己**就是完整的 shell 表达式，冒号后直接拼即可。
+        assertThat(scriptOfTag("fixed", "v1"))
+                .contains("IMAGE='harbor.example.com/proj/app':'v1'");
+        assertThat(scriptOfTag("run-id", ""))
+                .contains("IMAGE='harbor.example.com/proj/app':\"$(context.pipelineRun.name)\"");
+        assertThat(scriptOfTag("git-sha", ""))
+                .contains("IMAGE='harbor.example.com/proj/app':"
+                        + "\"$$(cat '/workspace/.git-sha' 2>/dev/null || echo manual)\"");
+    }
+
+    /** 同一个镜像节点，只换 tag 来源。 */
+    private static String scriptOfTag(String tagSource, String fixedTag) {
+        return new ImagePushNode().render(ctxWithConnection("image",
+                        Map.of("registryConnectionId", "reg-1", "imageName", "proj/app",
+                                "tagSource", tagSource, "fixedTag", fixedTag),
+                        "reg-1", "harbor.example.com"))
+                .steps().get(0).getScript();
+    }
+
+    @Test
     void theRunIdTagUsesTektonsBuiltInVariableUnescaped() {
         RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
                 Map.of("registryConnectionId", "reg-1", "imageName", "app", "tagSource", "run-id"),
