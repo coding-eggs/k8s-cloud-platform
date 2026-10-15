@@ -70,6 +70,11 @@ class PipelineRunOperationsTest {
     // ---- 节点落点（归档要按它去取日志）----
 
     private static TaskRun taskRun(String podName, String container, String condStatus, String reason) {
+        return taskRun(podName, container, condStatus, reason, null);
+    }
+
+    private static TaskRun taskRun(String podName, String container, String condStatus, String reason,
+                                   String message) {
         TaskRun tr = new TaskRun();
         tr.setStatus(new TaskRunStatus());
         tr.getStatus().setPodName(podName);
@@ -82,6 +87,7 @@ class PipelineRunOperationsTest {
             c.setType("Succeeded");
             c.setStatus(condStatus);
             c.setReason(reason);
+            c.setMessage(message);
             tr.getStatus().setConditions(List.of(c));
         }
         return tr;
@@ -106,6 +112,44 @@ class PipelineRunOperationsTest {
         assertThat(ref.status()).isEqualTo("RUNNING");
         assertThat(ref.podName()).isNull();
         assertThat(ref.containers()).isEmpty();
+    }
+
+    // ---- 「为什么失败」得跟着快照一起落库（2026-10-15：真跑失败后历史里只有一句 Failed）----
+
+    @Test
+    void aFailedStepCarriesTektonsOwnWords() {
+        // ⭐ 那次真跑失败后，运行历史里只有 Tekton 顶层 condition 的 reason（`Failed`）——
+        //    真因在**失败那个节点**的 TaskRun condition message 上：
+        //    [User error] declared workspace "ws" is required but has not been bound
+        //    对象一归档就被删，所以这句话只有抓快照这一刻能拿到，必须带下来。
+        PipelineStepRefDTO ref = PipelineRunOperations.toStepRef("clone",
+                taskRun("clone-pod", "step-clone", "False", "Failed",
+                        "[User error] declared workspace \"ws\" is required but has not been bound"));
+
+        assertThat(ref.status()).isEqualTo("FAILED");
+        assertThat(ref.message())
+                .contains("declared workspace \"ws\" is required but has not been bound");
+    }
+
+    @Test
+    void theRunsReasonIsTheFailingNodesOwnWordsNotTheGenericFailed() {
+        // 顶层 reason（"Failed"）是统计口径，对排障没有信息量；能拿到具体报错就用具体的
+        List<PipelineStepRefDTO> steps = List.of(
+                new PipelineStepRefDTO("clone", "FAILED", "p", List.of(), "boom：具体报错"),
+                new PipelineStepRefDTO("build", "SUCCEEDED", "p2", List.of(), null));
+
+        assertThat(PipelineRunOperations.failureReasonOf(steps, "Failed")).isEqualTo("boom：具体报错");
+    }
+
+    @Test
+    void theRunsReasonFallsBackToTektonsWordWhenNoNodeExplainedItself() {
+        // 节点没给出原因（比如 Pod 都没起、或运行是被取消的）→ 退回 Tekton 的 reason，
+        // 绝不编一个出来
+        assertThat(PipelineRunOperations.failureReasonOf(
+                List.of(new PipelineStepRefDTO("clone", "FAILED", null, List.of(), null)), "Failed"))
+                .isEqualTo("Failed");
+        assertThat(PipelineRunOperations.failureReasonOf(List.of(), "Succeeded"))
+                .isEqualTo("Succeeded");
     }
 
     // ---- 创建出来的 PipelineRun 的形状 ----

@@ -14,7 +14,10 @@ import java.util.List;
  * @param status     RUNNING / SUCCEEDED / FAILED / CANCELLED / TIMEOUT
  * @param podName    跑这个节点的 Pod；**还没起来时为 null**（那就没有日志可抓）
  * @param containers Pod 里属于这个节点的容器名（每个 step 一个容器）
+ * @param message    Tekton 对这个节点失败的解释（TaskRun condition 的 message）——
+ *                   没失败 / Tekton 没给就是 null（2026-10-15 加：真跑失败后运行历史里
+ *                   只有顶层那句 {@code Failed}，对排障毫无信息量，真因就在这一层）
  */
 public record PipelineStepRefDTO(String nodeName, String status, String podName,
-                                 List<String> containers) {
+                                 List<String> containers, String message) {
 }

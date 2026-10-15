@@ -112,7 +112,10 @@ public class PipelineArchiveService {
         writeLogs(row.getId(), steps);
 
         row.setStatus(snapshot.status());
-        row.setReason(snapshot.reason());
+        // ⚠️ 这里现在是**失败节点的原话**（可能是个长句子），而列是 varchar(255)：
+        // 必须截断 —— 超长在 MySQL 严格模式下是 SQLException，而「落库失败 = 对象不删」，
+        // 于是台账会一直重试、集群里那个对象永远留着
+        row.setReason(clip(snapshot.reason()));
         row.setStartTime(snapshot.startTime());
         row.setCompletionTime(snapshot.completionTime());
         row.setStepsJson(stepsJson(steps));
@@ -146,8 +149,18 @@ public class PipelineArchiveService {
         }
     }
 
-    private static String stepsJson(List<PipelineRunSnapshotDTO.StepLog> steps) {
-        return steps.stream()
+    /** reason 列是 varchar(255)。 */
+    private static final int REASON_MAX = 255;
+
+    /** 超长就截断并留个省略号 —— 宁可少几个字，也不要因为落库失败把对象永远留在集群里。 */
+    private static String clip(String s) {
+        if (s == null || s.length() <= REASON_MAX) {
+            return s;
+        }
+        return s.substring(0, REASON_MAX - 1) + "…";
+    }
+
+    private static String stepsJson(List<PipelineRunSnapshotDTO.StepLog> steps) {        return steps.stream()
                 .map(s -> s.nodeName() + "=" + s.status())
                 .reduce((a, b) -> a + "," + b)
                 .orElse(null);

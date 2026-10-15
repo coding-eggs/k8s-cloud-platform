@@ -1812,6 +1812,8 @@ export interface PipelineStepRef {
   status: string
   podName?: string | null
   containers?: string[]
+  /** Tekton 对这个节点失败的解释；没失败 / Tekton 没给就是 null */
+  message?: string | null
 }
 
 /** 可在流水线里引用的连接（**窄投影**：只有身份与地址）。 */

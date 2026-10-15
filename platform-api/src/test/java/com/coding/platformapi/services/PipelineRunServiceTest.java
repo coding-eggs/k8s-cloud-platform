@@ -230,7 +230,7 @@ class PipelineRunServiceTest {
         when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
         when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(
                 List.of(new com.coding.common.models.pipeline.PipelineStepRefDTO(
-                        "clone", "RUNNING", "clone-pod", List.of("step-run"))));
+                        "clone", "RUNNING", "clone-pod", List.of("step-run"), null)));
         when(k8s.podLog("c1", "t1", "ns1", "clone-pod", "step-run", 1024))
                 .thenReturn(new K8sPipelineClient.CappedLog("live!", false, 5));
 
@@ -330,9 +330,9 @@ class PipelineRunServiceTest {
         when(runMapper.selectByRunName("r1")).thenReturn(runningWithCanvas("r1"));
         when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(List.of(
                 new com.coding.common.models.pipeline.PipelineStepRefDTO(
-                        "git-l8x31", "RUNNING", "git-pod", List.of("step-run")),
+                        "git-l8x31", "RUNNING", "git-pod", List.of("step-run"), null),
                 new com.coding.common.models.pipeline.PipelineStepRefDTO(
-                        "image-m2k9", "RUNNING", "image-pod", List.of("step-build"))));
+                        "image-m2k9", "RUNNING", "image-pod", List.of("step-build"), null)));
         when(k8s.podLog(anyString(), any(), anyString(), anyString(), anyString(), anyInt()))
                 .thenReturn(new K8sPipelineClient.CappedLog("x\n", false, 2));
 
@@ -388,7 +388,7 @@ class PipelineRunServiceTest {
         when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
         when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(List.of(
                 new com.coding.common.models.pipeline.PipelineStepRefDTO(
-                        "clone", "SUCCEEDED", "clone-pod", List.of("step-run"))));
+                        "clone", "SUCCEEDED", "clone-pod", List.of("step-run"), null)));
 
         assertThat(svc.steps("r1", ctx))
                 .extracting(com.coding.common.models.pipeline.PipelineStepRefDTO::nodeName)

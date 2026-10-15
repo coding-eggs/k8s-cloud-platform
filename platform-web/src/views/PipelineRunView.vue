@@ -52,6 +52,11 @@ const yamlLoading = ref(false)
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 const canLogs = computed(() => perm.has(apiCodes.pipelineLogs))
 
+/** 失败/超时才把 reason 当报错显示（取消是用户自己点的，Succeeded 更不是报错） */
+const failed = computed(
+  () => selected.value?.status === 'FAILED' || selected.value?.status === 'TIMEOUT',
+)
+
 /** run 的 `stepsJson` 是 `节点=状态` 逗号分隔（归档时抓的快照）—— 键是**节点 id** */
 function statusMap(run: PipelineRun | null): Record<string, string> {
   const out: Record<string, string> = {}
@@ -319,10 +324,20 @@ async function cancel(r: PipelineRun) {
         <div class="detail-head">
           <el-tag :type="tagType(selected.status)" size="small">{{ selected.status }}</el-tag>
           <span class="dim">{{ selected.startTime ?? '—' }} → {{ selected.completionTime ?? '（未完）' }}</span>
-          <span v-if="selected.reason" class="dim">{{ selected.reason }}</span>
+          <span v-if="selected.reason && !failed" class="dim">{{ selected.reason }}</span>
           <div class="spacer" />
           <el-button link type="primary" @click="openYaml">渲染出的 YAML</el-button>
         </div>
+
+        <!-- ⚠️ 失败原因必须显眼：Tekton 顶层只会给一句 Failed（统计口径），
+             真正的报错是后端的快照从**失败那个节点**的 TaskRun 上带下来的原话 -->
+        <el-alert
+          v-if="failed && selected.reason"
+          type="error"
+          :closable="false"
+          show-icon
+          :title="selected.reason"
+        />
 
         <div v-if="selected.status === 'RUNNING'" class="dim">
           正在跑 —— 每 5 秒自动刷新节点状态。归档后集群对象会被删，历史从这里读。

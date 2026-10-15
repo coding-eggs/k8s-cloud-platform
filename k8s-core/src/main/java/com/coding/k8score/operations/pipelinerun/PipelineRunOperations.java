@@ -469,8 +469,9 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         PipelineRunStatus st = pr.getStatus();
         String status = PipelineRunConverter.mapConditions(st == null ? null : st.getConditions());
 
+        List<PipelineStepRefDTO> refs = steps(namespace, runName);
         List<PipelineRunSnapshotDTO.StepLog> steps = new ArrayList<>();
-        for (PipelineStepRefDTO step : steps(namespace, runName)) {
+        for (PipelineStepRefDTO step : refs) {
             StringBuilder log = new StringBuilder();
             boolean truncated = false;
             int size = 0;
@@ -489,7 +490,9 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
 
         return new PipelineRunSnapshotDTO(
                 clusterId, namespace, runName, status,
-                reasonOf(st), st == null ? null : st.getStartTime(),
+                // 「为什么失败」优先用失败那个节点的原话 —— 顶层那句 `Failed` 排障时等于没有信息
+                failureReasonOf(refs, reasonOf(st)),
+                st == null ? null : st.getStartTime(),
                 st == null ? null : st.getCompletionTime(), steps,
                 // 对象马上就会被删 —— 「当年跑的是什么」只有这一刻能抓下来
                 Serialization.asYaml(pr));
@@ -517,6 +520,41 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         return st.getConditions().stream()
                 .filter(c -> "Succeeded".equals(c.getType()))
                 .map(io.fabric8.knative.pkg.apis.Condition::getReason)
+                .findFirst().orElse(null);
+    }
+
+    /**
+     * 运行「为什么是这个结果」—— **能拿到具体报错就用具体的**。
+     *
+     * <p>⚠️ PipelineRun 自己的 condition reason 是**统计口径**：失败时就是一句 {@code Failed}
+     * （message 也只是 {@code Tasks Completed: 1 (Failed: 1, ...)}），排障时等于没有信息。
+     * 真因写在**失败那个节点**的 TaskRun condition message 上，例如
+     * {@code [User error] declared workspace "ws" is required but has not been bound}。
+     * 而对象一归档就被删，所以这句话只有抓快照这一刻能拿到（2026-10-15 真跑撞到：
+     * 用户在运行历史里只看到一句 Failed）。
+     *
+     * @param fallback Tekton 自己给的 reason（没有更具体的就用它，绝不编一个）
+     */
+    static String failureReasonOf(List<PipelineStepRefDTO> steps, String fallback) {
+        if (steps == null) {
+            return fallback;
+        }
+        return steps.stream()
+                .filter(s -> !"SUCCEEDED".equals(s.status()) && !"RUNNING".equals(s.status()))
+                .map(PipelineStepRefDTO::message)
+                .filter(m -> m != null && !m.isBlank())
+                .findFirst().orElse(fallback);
+    }
+
+    /** TaskRun 的 Succeeded condition 上的 message —— Tekton 把「为什么失败」写在这里。 */
+    private static String messageOf(TaskRunStatus st) {
+        if (st == null || st.getConditions() == null) {
+            return null;
+        }
+        return st.getConditions().stream()
+                .filter(c -> "Succeeded".equals(c.getType()))
+                .map(io.fabric8.knative.pkg.apis.Condition::getMessage)
+                .filter(m -> m != null && !m.isBlank())
                 .findFirst().orElse(null);
     }
 
@@ -561,7 +599,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                         .map(StepState::getContainer)
                         .filter(c -> c != null && !c.isBlank())
                         .toList();
-        return new PipelineStepRefDTO(nodeName, status, podName, containers);
+        return new PipelineStepRefDTO(nodeName, status, podName, containers, messageOf(st));
     }
 
     private PipelineRun fetch(String namespace, String name) {
