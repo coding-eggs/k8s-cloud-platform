@@ -383,6 +383,8 @@ async function removePipeline() {
 <template>
   <div class="page">
     <div class="bar">
+      <!-- 回列表：以前只能靠浏览器后退（运行详情页有，编辑页漏了） -->
+      <el-button link type="primary" @click="router.push('/pipelines')">← 流水线</el-button>
       <el-input v-model="form.name" placeholder="流水线名（小写字母/数字/连字符）" style="width: 220px" />
       <el-input v-model="form.description" placeholder="描述（可选）" style="width: 260px" />
       <span class="loc">{{ form.clusterId }} / {{ form.namespace }}</span>
