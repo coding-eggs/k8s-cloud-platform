@@ -63,8 +63,13 @@ public class ImagePushNode implements PipelineNode {
                                 new NodeField.Option("run-id", "本次运行序号"),
                                 new NodeField.Option("fixed", "自定义固定值")), "git-sha"),
                 NodeField.text("fixedTag", "固定 tag（仅「自定义固定值」时用）", false),
-                NodeField.text("dockerfile", "Dockerfile 路径", false),
-                NodeField.text("context", "构建上下文", false)));
+                NodeField.text("dockerfile", "Dockerfile 路径", false,
+                        "留空 = 用 Dockerfile。相对共享 workspace 的根目录 —— "
+                                + "Dockerfile 在子目录里就写全，如 frontend/Dockerfile"),
+                NodeField.text("context", "构建上下文", false,
+                        "构建工具能看到的那一个目录，决定 COPY/ADD 能从哪拿文件"
+                                + "（与 Dockerfile 在哪无关）。留空 = workspace 根（.）；"
+                                + "代码在子目录里就填它，如 frontend")));
     }
 
     @Override
