@@ -89,6 +89,8 @@ public class PipelineArchiveService {
         row.setStartTime(snapshot.startTime());
         row.setCompletionTime(snapshot.completionTime());
         row.setStepsJson(stepsJson(steps));
+        // YAML 是**归档这一刻**才拿得到的东西（对象马上就被删了），所以它跟着这次回写一起进去
+        row.setRunYaml(snapshot.runYaml());
         runMapper.update(row);
     }
 

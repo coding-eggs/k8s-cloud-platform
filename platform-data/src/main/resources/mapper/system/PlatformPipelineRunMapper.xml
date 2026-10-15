@@ -7,6 +7,7 @@
     <result column="pipeline_id"     jdbcType="VARCHAR"     property="pipelineId" />
     <result column="cluster_id"      jdbcType="VARCHAR"     property="clusterId" />
     <result column="namespace"       jdbcType="VARCHAR"     property="namespace" />
+    <result column="canvas_json"     jdbcType="LONGVARCHAR" property="canvasJson" />
     <result column="run_name"        jdbcType="VARCHAR"     property="runName" />
     <result column="status"          jdbcType="VARCHAR"     property="status" />
     <result column="reason"          jdbcType="VARCHAR"     property="reason" />
@@ -14,30 +15,40 @@
     <result column="start_time"      jdbcType="VARCHAR"     property="startTime" />
     <result column="completion_time" jdbcType="VARCHAR"     property="completionTime" />
     <result column="steps_json"      jdbcType="LONGVARCHAR" property="stepsJson" />
+    <result column="run_yaml"        jdbcType="LONGVARCHAR" property="runYaml" />
     <result column="created_at"      jdbcType="TIMESTAMP"   property="createdAt" />
   </resultMap>
 
   <sql id="Base_Column_List">
+    id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by,
+    start_time, completion_time, steps_json, run_yaml, created_at
+  </sql>
+
+  <!-- 列表用：**不带 canvas_json / run_yaml 两个大字段** —— 一次历史几十条，
+       每条都背着画布与 YAML 只是白白撑大响应。详情走 selectByRunName（那是全列）。 -->
+  <sql id="List_Column_List">
     id, pipeline_id, cluster_id, namespace, run_name, status, reason, triggered_by,
     start_time, completion_time, steps_json, created_at
   </sql>
 
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformPipelineRun">
     insert into platform_pipeline_run
-      (id, pipeline_id, cluster_id, namespace, run_name, status, reason, triggered_by)
+      (id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by)
     values (#{id,jdbcType=VARCHAR}, #{pipelineId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},
-      #{namespace,jdbcType=VARCHAR}, #{runName,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
-      #{reason,jdbcType=VARCHAR}, #{triggeredBy,jdbcType=VARCHAR})
+      #{namespace,jdbcType=VARCHAR}, #{canvasJson,jdbcType=LONGVARCHAR}, #{runName,jdbcType=VARCHAR},
+      #{status,jdbcType=VARCHAR}, #{reason,jdbcType=VARCHAR}, #{triggeredBy,jdbcType=VARCHAR})
   </insert>
 
-  <!-- 归档回写：只写结果列。run_name / pipeline_id / cluster_id / namespace 是身份，不在这里改 -->
+  <!-- 归档回写：只写结果列。run_name / pipeline_id / cluster_id / namespace / canvas_json
+       是身份与历史，不在这里改。run_yaml 是**归档那一刻**抓的，也只有这一次能写 -->
   <update id="update" parameterType="com.coding.data.models.system.PlatformPipelineRun">
     update platform_pipeline_run
     set status = #{status,jdbcType=VARCHAR},
         reason = #{reason,jdbcType=VARCHAR},
         start_time = #{startTime,jdbcType=VARCHAR},
         completion_time = #{completionTime,jdbcType=VARCHAR},
-        steps_json = #{stepsJson,jdbcType=LONGVARCHAR}
+        steps_json = #{stepsJson,jdbcType=LONGVARCHAR},
+        run_yaml = #{runYaml,jdbcType=LONGVARCHAR}
     where id = #{id,jdbcType=VARCHAR}
   </update>
 
@@ -58,7 +69,7 @@
   </select>
 
   <select id="listByPipeline" resultMap="BaseResultMap">
-    select <include refid="Base_Column_List" />
+    select <include refid="List_Column_List" />
     from platform_pipeline_run
     where pipeline_id = #{pipelineId,jdbcType=VARCHAR}
       and cluster_id = #{clusterId,jdbcType=VARCHAR}
@@ -67,14 +78,14 @@
   </select>
 
   <select id="listAll" resultMap="BaseResultMap">
-    select <include refid="Base_Column_List" />
+    select <include refid="List_Column_List" />
     from platform_pipeline_run
   </select>
 
   <!-- ⚠️ 字符串比较，不是日期比较：该列存的是 Tekton 的 RFC3339 原文（见 mapper 接口的注释）。
        未终结（completion_time 为 null）的行自然不在候选里。 -->
   <select id="selectCompletedBefore" resultMap="BaseResultMap">
-    select <include refid="Base_Column_List" />
+    select <include refid="List_Column_List" />
     from platform_pipeline_run
     where completion_time is not null
       and completion_time &lt; #{cutoff,jdbcType=VARCHAR}

@@ -24,6 +24,7 @@ import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
 import type { PipelineCanvas, PipelineCanvasNode, PipelineConnection, PipelineNodeType } from '@/types'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
+import { usePipelineCapability } from '@/composables/usePipelineCapability'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import YamlBlock from '@/components/YamlBlock.vue'
@@ -88,6 +89,11 @@ const saving = ref(false)
 /** 一个自定义节点组件服务所有后端 type（后端 type 在 data.nodeType 里）——「加节点不用改前端」 */
 const canManage = computed(() => perm.has(apiCodes.pipelineManage))
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
+
+/** 集群来自创建流水线时带过来的上下文（编辑器不进顶栏级联） */
+const capClusterId = computed(() => form.value.clusterId || '')
+/** 页面级门控（三态：`false` 才禁用 —— `null` = 不知道，不拦；真正的拦截在后端） */
+const { available: capAvailable, reason: capReason } = usePipelineCapability(capClusterId)
 
 /** 画布上的节点（后端形状），用于保存与预览 */
 function toCanvasNodes(): PipelineCanvasNode[] {
@@ -370,8 +376,15 @@ async function removePipeline() {
       <el-button :disabled="!selected" @click="removeSelected">删除节点</el-button>
       <el-button @click="doPreview">预览 YAML</el-button>
       <el-button v-if="canManage" :loading="saving" @click="save()">保存</el-button>
-      <el-button v-if="canRun" type="primary" @click="run">保存并运行</el-button>
+      <el-button v-if="canRun" type="primary" :disabled="capAvailable === false" @click="run">
+        保存并运行
+      </el-button>
       <el-button v-if="canManage && form.id" type="danger" plain @click="removePipeline">删除</el-button>
+    </div>
+
+    <!-- 门控只挡「保存并运行」：画布照常编辑与保存（渲染是纯函数，不需要集群装 Tekton） -->
+    <div v-if="capAvailable === false" class="cap-banner">
+      <span>这个集群现在跑不了 CI：{{ capReason }}。流水线可以照常编辑保存，但「运行」已禁用。</span>
     </div>
 
     <div v-if="concurrentHint" class="hint">{{ concurrentHint }}</div>
@@ -456,6 +469,18 @@ async function removePipeline() {
   font-size: 12px;
   color: var(--warning, #e6a23c);
   padding: 4px 0;
+}
+/* capability 门控横幅：与列表页、Calico 那几个页面同一形状 */
+.cap-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--el-color-warning-light-5);
+  border-radius: 8px;
+  background: var(--el-color-warning-light-9);
+  color: var(--text-2);
+  font-size: 13px;
 }
 .canvas-wrap {
   display: flex;

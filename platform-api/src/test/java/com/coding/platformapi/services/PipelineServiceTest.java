@@ -40,8 +40,32 @@ class PipelineServiceTest {
     private final K8sPipelineClient k8s = mock(K8sPipelineClient.class);
     private final AuthContext auth = mock(AuthContext.class);
     private final NamespaceAccessGuard access = mock(NamespaceAccessGuard.class);
+    private final PipelineCapabilityService capability = mock(PipelineCapabilityService.class);
 
-    private final PipelineService svc = new PipelineService(mapper, access, k8s, auth);
+    private final PipelineService svc = new PipelineService(mapper, access, k8s, auth, capability);
+
+    @Test
+    void theCapabilityProbeIsAnsweredForTheClusterItWasAskedAbout() {
+        // ⭐ 在接上这个端点之前，PipelineCapabilityService 是**死代码**：算得出「这个集群能不能跑 CI」，
+        //    却没有任何人问它 —— 于是页面照旧让用户点「运行」，然后收一个 500
+        when(capability.available("c1")).thenReturn(new PipelineCapabilityService.Capability(
+                false, "该集群未安装 Tekton（没有 tekton.dev 资源）"));
+
+        var c = svc.capability("c1");
+
+        assertThat(c.available()).isFalse();
+        assertThat(c.reason()).contains("Tekton");
+    }
+
+    @Test
+    void theCapabilityProbeIsNotNamespaceScopedOnPurpose() {
+        // 它回答的是**集群能力**（有没有 Tekton、有没有可动态供应的 StorageClass），
+        // 不含任何资源数据 —— 同 /cluster/capability/get 那条判断。
+        // ⚠️ 加上命名空间归属校验反而会把页面级门控弄坏：门控要在**没有**命名空间上下文时也答得出来
+        svc.capability("c1");
+
+        verify(access, never()).assertAccessible(any(), any());
+    }
 
     private static PipelineDTO req(String name, String namespace) {
         PipelineDTO d = new PipelineDTO();

@@ -27,7 +27,9 @@ public interface PlatformPipelineRunMapper {
     /** 归档幂等键。空结果 = 还没归档过 */
     PlatformPipelineRun selectByRunName(@Param("runName") String runName);
 
-    /** 运行历史（新→旧）。**只读库** —— 集群里的对象归档后已经删了 */
+    /** 运行历史（新→旧）。**只读库** —— 集群里的对象归档后已经删了。
+     *  ⚠️ **不带 {@code canvas_json} / {@code run_yaml} 两个大字段**（列表几十条，不该每条都背着
+     *  画布与 YAML）；要看它们走 {@link #selectByRunName}。 */
     List<PlatformPipelineRun> listByPipeline(@Param("pipelineId") String pipelineId,
                                              @Param("clusterId") String clusterId,
                                              @Param("namespace") String namespace);

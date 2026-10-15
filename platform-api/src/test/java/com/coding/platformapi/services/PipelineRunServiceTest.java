@@ -136,6 +136,9 @@ class PipelineRunServiceTest {
         assertThat(cap.getValue().getPipelineId()).isEqualTo("p1");
         assertThat(cap.getValue().getClusterId()).isEqualTo("c1");
         assertThat(cap.getValue().getNamespace()).isEqualTo("ns1");
+        // 触发那一刻的画布也要留在这一行上：集群对象归档后就被删了，而流水线**之后还会被改** ——
+        // 没有它，历史运行详情画的是今天的流水线（节点名、镜像、甚至已删的节点全对不上）
+        assertThat(cap.getValue().getCanvasJson()).isEqualTo(canvas("conn-1"));
     }
 
     // ---- 取消 ----
@@ -285,5 +288,89 @@ class PipelineRunServiceTest {
         svc.get("r1");
 
         verify(access).assertAccessible("c1", "ns1");
+    }
+
+    // ---- 每个节点「现在」的落点（运行详情的 DAG 着色）----
+
+    @Test
+    void theStepsOfARunningRunAreFetchedLive() {
+        when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
+        when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(List.of(
+                new com.coding.common.models.pipeline.PipelineStepRefDTO(
+                        "clone", "SUCCEEDED", "clone-pod", List.of("step-run"))));
+
+        assertThat(svc.steps("r1", ctx))
+                .extracting(com.coding.common.models.pipeline.PipelineStepRefDTO::nodeName)
+                .containsExactly("clone");
+    }
+
+    @Test
+    void anArchivedRunHasNoLiveSteps() {
+        // 归档之后 TaskRun 与 Pod 早被删了 —— 那时节点状态在 run 行的 stepsJson 里（归档那一刻的快照）。
+        // 本方法只回答「现在」，**不去把两种来源拼成同一个形状**：前端按 run 的状态选一个来源
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+
+        assertThat(svc.steps("r1", ctx)).isEmpty();
+        verify(k8s, never()).steps(anyString(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void theStepsOfAnUnknownRunAreRefused() {
+        when(runMapper.selectByRunName("nope")).thenReturn(null);
+
+        assertThatThrownBy(() -> svc.steps("nope", ctx))
+                .isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void theStepsOfAnotherTenantsRunAreRefused() {
+        when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
+        org.mockito.Mockito.doThrow(new CloudPlatformException(
+                        EnumResponseType.NAMESPACE_NOT_ACCESSIBLE, "无权访问该命名空间：ns1"))
+                .when(access).assertAccessible(any(), any());
+
+        assertThatThrownBy(() -> svc.steps("r1", ctx)).isInstanceOf(CloudPlatformException.class);
+        verify(k8s, never()).steps(anyString(), any(), anyString(), anyString());
+    }
+
+    // ---- YAML（还是那条「归档了没有」的分界线）----
+
+    @Test
+    void theYamlOfARunningRunComesFromTheClusterObject() {
+        when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
+        when(k8s.runYaml("c1", "t1", "ns1", "r1")).thenReturn("kind: PipelineRun\n");
+
+        assertThat(svc.runYaml("r1", ctx)).isEqualTo("kind: PipelineRun\n");
+    }
+
+    @Test
+    void anArchivedRunsYamlIsTheOneCapturedAtArchiveTime() {
+        // ⭐ 归档后集群对象已经删了。用**归档那一刻抓下来的**那一份 ——
+        // 拿今天的画布重渲染会画出一份当年没跑过的东西（而且对引用了连接的流水线根本渲染不出来）
+        PlatformPipelineRun row = archived("r1");
+        row.setRunYaml("kind: PipelineRun   # 当年那一份\n");
+        when(runMapper.selectByRunName("r1")).thenReturn(row);
+
+        assertThat(svc.runYaml("r1", ctx)).contains("当年那一份");
+        verify(k8s, never()).runYaml(anyString(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void anArchivedRunWithoutACapturedYamlReturnsNothingInsteadOfMakingOneUp() {
+        // 早于本功能上线的运行没留下 YAML —— 返回空，由前端说「没有留下」，
+        // **绝不**拿今天的画布编一份出来冒充。
+        // ⚠️ 这里要把集群那一路**桩上**：不桩的话「走错了分支」也会返回 null，测试就白写了
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+        when(k8s.runYaml(anyString(), any(), anyString(), anyString()))
+                .thenReturn("今天重新渲染出来的一份\n");
+
+        assertThat(svc.runYaml("r1", ctx)).isNull();
+    }
+
+    @Test
+    void theYamlOfAnUnknownRunIsRefused() {
+        when(runMapper.selectByRunName("nope")).thenReturn(null);
+
+        assertThatThrownBy(() -> svc.runYaml("nope", ctx)).isInstanceOf(CloudPlatformException.class);
     }
 }

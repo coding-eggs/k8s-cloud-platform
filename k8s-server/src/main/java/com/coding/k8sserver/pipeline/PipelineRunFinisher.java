@@ -55,7 +55,8 @@ public class PipelineRunFinisher {
             if (snapshot != null && timedOut) {
                 snapshot = new PipelineRunSnapshotDTO(snapshot.clusterId(), snapshot.namespace(),
                         snapshot.runName(), "TIMEOUT", snapshot.reason(),
-                        snapshot.startTime(), snapshot.completionTime(), snapshot.steps());
+                        snapshot.startTime(), snapshot.completionTime(), snapshot.steps(),
+                        snapshot.runYaml());
             }
         } catch (Exception e) {
             log.warn("抓运行快照失败（对象先留着，等重试）{}/{}", namespace, runName, e);

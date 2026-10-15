@@ -43,7 +43,7 @@ class PipelineRunFinisherTest {
     }
 
     private static PipelineRunSnapshotDTO snapshot(String status) {
-        return new PipelineRunSnapshotDTO("c1", "ns1", "r1", status, null, null, null, List.of());
+        return new PipelineRunSnapshotDTO("c1", "ns1", "r1", status, null, null, null, List.of(), null);
     }
 
     @Test

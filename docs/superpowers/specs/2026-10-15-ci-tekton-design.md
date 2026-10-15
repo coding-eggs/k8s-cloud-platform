@@ -580,6 +580,7 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **Tekton Pruner** | 独立项目（0.3.3）、要单独装。**不用它**：它删的时候平台还没抓日志 —— 两个组件各干各的，归档与清理的先后无法保证（§4.1）。平台一个动作做完，时序天然正确 |
 | **构建缓存** | per-Pod Buildah 每次从零构建。加缓存要么挂 PVC（vfs 会吃掉大量空间），要么上共享构建服务（跨租户串味）—— 两条都比本批重 |
 | **运行历史落库** | §7 的理由 |
+| **取消时抢抓的日志会被丢弃**（2026-10-15 发现，**未修**） | `PipelineRunFinisher.cancel` 按「先抓后取消」抓了快照并调 `archive.persist(...)`，但**取消那一刻对象还在跑**，而 `PipelineArchiveService.persist` 有一条「快照状态还是 RUNNING 就拒写」的守卫 → **每次都抛**，被 `cancel` 的 catch 吞掉（只留一句 warn），抢抓的日志一个字都没落库；等 Tekton 取消完把 Pod 删了，终结事件再归档时已经抓不到日志。**§4.2「取消之后日志仍然看得到」目前不成立。** 单测 `cancelCapturesBeforeCancellingAndNeverDeletes` 把 archive 打了桩，所以只验证了「调用发生过」。修法：把「存日志」与「结案（写状态/时间/YAML）」拆开，cancel 只存日志 |
 
 ### 10.1 已知风险（接受）
 
@@ -625,15 +626,24 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
    ⚠️ **若 Tekton 有默认超时，把 `default-timeout` 设为 0**（否则超时仍由 Tekton 终结 → 那批运行日志丢失，见 §11）。
    **不需要配 `config-events` 的 sink**（§4.1）。
    ⚠️ k8s-server 的启动扫描要能**集群级 list PipelineRun**（平台侧凭据已有该权限）
-3. **归档需要的配置**（§4bis）：`platform.pipeline.archive.{enabled,internal-token}` ·
-   `platform.pipeline.run.timeout` · `platform.pipeline.log.{max-bytes,retention-days}`。
-   ⚠️ 除 `internal-token` 外都有默认值；**`internal-token` 必须配**，否则内部回调端点拒绝一切请求（fail-closed）
+3. **归档需要的配置**（§4bis）：`platform.pipeline.archive.enabled` ·
+   `platform.pipeline.run.{timeout,timeout-check}` · `platform.pipeline.log.{max-bytes,retention-days}`。
+   全部有默认值。⚠️ **k8s-server 与 platform-api 各自配自己读的那几个键**（`log.max-bytes` 两侧都要有，
+   必须一致）。**入站端点与共享密钥已在 2026-10-15 删掉**（归档整条链收进 k8s-server，见 §4bis），
+   所以没有 `internal-token` 这个配置项了 —— 环境变量 `PIPELINE_INTERNAL_TOKEN` 一并作废。
 4. **再起新构建**
 5. 重放后重新登录，或等权限闭包缓存的 30s TTL
 
 ### 12.1 部署后待验清单
 
-- [ ] 集群没装 Tekton 时，**CI 菜单与页面整块消失**（不是报错、不是空白页）
+- [ ] 集群没装 Tekton 时，**CI 页面给出「为什么用不了」并把「运行」按下去**（不是报错、不是空白页）。
+      > ⚠️ **2026-10-15 执行中改口**：本条原来写的是「菜单与页面整块消失」。改成**横幅 + 禁用运行**，
+      > 三条理由：①capability 是**按集群**算的，而菜单是全局的，按它藏菜单会连能跑的集群一起藏起来；
+      > ②**定义本身不需要 Tekton**（渲染是纯函数），用户完全可以先把流水线配好、等集群装完再运行；
+      > ③本仓既有先例（S4.3 那批 Calico 页面）就是这个形状：`cap-banner` + `:disabled` + 「重新探测」。
+      > 落点：`usePipelineCapability` + `PipelineListView` / `PipelineEditorView`，
+      > 端点 `/pipeline/capability`（`tenant:pipeline:read`；**未知态不拦** —— 没权限/拉失败时不禁用，
+      > 真正的拦截永远在后端）。
 - [ ] 租户成员建一条流水线（`git 克隆 → 命令 → 构建并推送镜像`）→ 保存 → **画布能重新打开并还原**
 - [ ] 点运行 → 运行详情里 DAG 按状态着色、每步日志出得来、能看渲染出的 YAML
 - [ ] 取消一个正在跑的运行 → 状态变 Cancelled，**对象还在**（历史没丢）
@@ -643,4 +653,5 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 - [ ] **跑完一次之后 `kubectl get pods` 里那个 `Completed` 的 Pod 消失了**，`kubectl get pipelinerun` 也没了 ——
       而平台里的运行记录与日志都在
 - [ ] **取消一次正在跑的运行** → 取消之后**日志仍然看得到**（这条验的是「先抓后取消」的顺序）
+      > ⚠️ **2026-10-15 发现：这条目前不成立**，见 §10「取消时抢抓的日志会被丢弃」。修完再勾。
 - [ ] 一条超 1 MB 的日志 → UI 上标了「已截断」

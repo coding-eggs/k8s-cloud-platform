@@ -1781,7 +1781,28 @@ export interface PipelineRun {
   completionTime?: string | null
   /** 每个节点的状态与耗时快照（`节点=状态` 逗号分隔），归档时抓下来的 */
   stepsJson?: string | null
+  /** 触发那一刻的画布 JSON —— 历史运行详情画**它**，不是画今天的流水线。
+   *  ⚠️ 列表接口（run/list）**不带**这个字段（几十条记录不该每条都背着画布），详情走 run/get */
+  canvasJson?: string | null
+  /** 归档那一刻抓下来的 PipelineRun YAML（对象随后被删，这是「当年跑的是什么」的唯一存续形式）。
+   *  同样只在 run/get 里带 */
+  runYaml?: string | null
   createdAt?: string | null
+}
+
+/** 「这个集群能不能跑 CI」—— Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。 */
+export interface PipelineCapability {
+  available: boolean
+  /** 不可用时**一定有**原因：不然用户只看到「功能没了」 */
+  reason?: string | null
+}
+
+/** 一次运行里一个节点**现在**的落点（k8s-server 解析的 Tekton run → TaskRun → Pod）。 */
+export interface PipelineStepRef {
+  nodeName: string
+  status: string
+  podName?: string | null
+  containers?: string[]
 }
 
 /** 可在流水线里引用的连接（**窄投影**：只有身份与地址）。 */

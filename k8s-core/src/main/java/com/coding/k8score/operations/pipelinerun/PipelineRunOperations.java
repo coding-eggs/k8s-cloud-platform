@@ -465,7 +465,9 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         return new PipelineRunSnapshotDTO(
                 clusterId, namespace, runName, status,
                 reasonOf(st), st == null ? null : st.getStartTime(),
-                st == null ? null : st.getCompletionTime(), steps);
+                st == null ? null : st.getCompletionTime(), steps,
+                // 对象马上就会被删 —— 「当年跑的是什么」只有这一刻能抓下来
+                Serialization.asYaml(pr));
     }
 
     /** 读一个容器的日志并**在 API 侧截断**（一次构建的日志可能是几百 MB，不能全读进内存）。 */

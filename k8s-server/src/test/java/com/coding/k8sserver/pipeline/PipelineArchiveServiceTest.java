@@ -44,9 +44,12 @@ class PipelineArchiveServiceTest {
         return r;
     }
 
+    /** 归档那一刻抓到的对象 YAML —— 它只在那一刻存在（抓完对象就删了） */
+    private static final String RUN_YAML = "apiVersion: tekton.dev/v1\nkind: PipelineRun\nmetadata:\n  name: r1\n";
+
     private static PipelineRunSnapshotDTO snapshot(String status, PipelineRunSnapshotDTO.StepLog... steps) {
         return new PipelineRunSnapshotDTO("c1", "ns1", "r1", status, "reason-x",
-                "2026-10-15T10:00:00Z", "2026-10-15T10:03:00Z", List.of(steps));
+                "2026-10-15T10:00:00Z", "2026-10-15T10:03:00Z", List.of(steps), RUN_YAML);
     }
 
     private static PipelineRunSnapshotDTO.StepLog step(String node, String log, boolean truncated, int size) {
@@ -68,6 +71,19 @@ class PipelineArchiveServiceTest {
         assertThat(cap.getValue().getStatus()).isEqualTo("SUCCEEDED");
         assertThat(cap.getValue().getStepsJson()).isEqualTo("clone=SUCCEEDED,build=SUCCEEDED");
         assertThat(cap.getValue().getCompletionTime()).isEqualTo("2026-10-15T10:03:00Z");
+    }
+
+    @Test
+    void theYamlOfWhatActuallyRanIsStoredWithTheRun() {
+        // ⭐ 运行详情的 YAML 面板读的就是它。**必须在这一刻写** ——
+        // 紧跟着对象就被删了，之后拿画布重渲染只会得到一份当年没跑过的东西
+        when(runMapper.selectByRunName("r1")).thenReturn(running());
+
+        svc.persist(snapshot("SUCCEEDED", step("clone", "hello", false, 5)));
+
+        ArgumentCaptor<PlatformPipelineRun> cap = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).update(cap.capture());
+        assertThat(cap.getValue().getRunYaml()).isEqualTo(RUN_YAML);
     }
 
     @Test

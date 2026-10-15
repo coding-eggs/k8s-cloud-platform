@@ -3,6 +3,7 @@ package com.coding.platformapi.controllers;
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
+import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformPipelineRun;
 import com.coding.platformapi.audit.AuditAction;
@@ -11,6 +12,7 @@ import com.coding.platformapi.models.PipelineRunContext;
 import com.coding.platformapi.security.AuthContext;
 import com.coding.data.models.system.TokenUserInfo;
 import com.coding.platformapi.services.CredentialService;
+import com.coding.platformapi.services.PipelineCapabilityService;
 import com.coding.platformapi.services.PipelineRunService;
 import com.coding.platformapi.services.PipelineService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -96,6 +98,19 @@ public class PipelineController {
     }
 
     /**
+     * 这个集群能不能跑 CI。**页面级门控的唯一判据**（spec §9）。
+     *
+     * <p>不可用时回一句原因，前端在页面顶部显示并把「运行」按下去 ——
+     * 而不是让用户配完一条流水线、点运行，才收一个 500。
+     */
+    @PostMapping("/capability")
+    @Operation(summary = "这个集群能不能跑 CI",
+            description = "Tekton 与可动态供应的 StorageClass 缺一不可；不可用时带原因")
+    public ResponseData<PipelineCapabilityService.Capability> capability(@RequestBody PipelineDTO request) {
+        return new ResponseData<>(pipelineService.capability(request.getClusterId()));
+    }
+
+    /**
      * 可以在流水线的 git / 推送节点里引用的连接（**窄投影**）。
      *
      * <p>⚠️ 不复用 {@code /credential/list}：那个端点要 {@code platform:credential:read}，
@@ -164,8 +179,7 @@ public class PipelineController {
     @Auditable(action = AuditAction.PIPELINE_CANCEL, target = "#request.name")
     public ResponseData<Void> cancelRun(@RequestBody PipelineRunDTO request) {
         PlatformPipelineRun run = runService.get(request.getName());
-        runService.cancel(request.getName(),
-                new PipelineRunContext(run.getClusterId(), run.getNamespace(), auth.hatTenantId()));
+        runService.cancel(request.getName(), contextOf(run));
         return new ResponseData<>();
     }
 
@@ -184,6 +198,33 @@ public class PipelineController {
     }
 
     /**
+     * 每个节点**现在**的落点 —— 运行详情的 DAG 着色用。
+     *
+     * <p>⚠️ 还在跑才有：归档之后 TaskRun 与 Pod 都删了，那时的状态在 `run/get` 的
+     * `stepsJson` 里（归档那一刻抓的快照）。前端按 run 的状态选一个来源。
+     */
+    @PostMapping("/run/steps")
+    @Operation(summary = "一次运行里每个节点现在的落点（Pod 与容器）",
+            description = "还在跑时现抓 k8s-server；已归档返回空 —— 状态看 run/get 的 stepsJson")
+    public ResponseData<List<PipelineStepRefDTO>> runSteps(@RequestBody PipelineRunDTO request) {
+        PlatformPipelineRun run = runService.get(request.getName());
+        return new ResponseData<>(runService.steps(request.getName(), contextOf(run)));
+    }
+
+    /**
+     * 一次运行**渲染出来的 YAML** —— 排查利器（spec §6）。
+     *
+     * <p>还在跑 → 集群里那个真实对象；已归档 → 归档那一刻抓下来的那一份。
+     */
+    @PostMapping("/run/yaml")
+    @Operation(summary = "一次运行渲染出来的 YAML",
+            description = "还在跑抓集群对象；归档后读归档时抓下来的那一份。老运行没留下则回空")
+    public ResponseData<String> runYaml(@RequestBody PipelineRunDTO request) {
+        PlatformPipelineRun run = runService.get(request.getName());
+        return new ResponseData<>(runService.runYaml(request.getName(), contextOf(run)));
+    }
+
+    /**
      * 看运行日志。**`tenant:pipeline:logs` 的唯一落点** —— 单独成码是因为
      * 日志是容器输出，可能含敏感内容（spec §5.1）。
      *
@@ -196,12 +237,19 @@ public class PipelineController {
     public ResponseData<String> runLogs(@RequestBody RunLogsRequest request) {
         PlatformPipelineRun run = runService.get(request.runName());
         return new ResponseData<>(runService.logs(request.runName(), request.nodeName(),
-                new PipelineRunContext(run.getClusterId(), run.getNamespace(), auth.hatTenantId()),
-                maxLogBytes));
+                contextOf(run), maxLogBytes));
     }
 
     /** 日志端点的入参：只看某个节点时给 nodeName。 */
     public record RunLogsRequest(String runName, String nodeName) {
+    }
+
+    /**
+     * 库里的那行 → 调 k8s-server 用的上下文。
+     * **cluster/namespace 取库里存的**（run 名是调用方给的，不带边界），租户帽取当前请求的。
+     */
+    private PipelineRunContext contextOf(PlatformPipelineRun run) {
+        return new PipelineRunContext(run.getClusterId(), run.getNamespace(), auth.hatTenantId());
     }
 
     private String currentUser() {

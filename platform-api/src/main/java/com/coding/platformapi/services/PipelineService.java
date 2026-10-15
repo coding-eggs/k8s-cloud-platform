@@ -48,6 +48,21 @@ public class PipelineService {
     private final NamespaceAccessGuard access;
     private final K8sPipelineClient k8s;
     private final AuthContext auth;
+    private final PipelineCapabilityService capability;
+
+    /**
+     * 这个集群**能不能跑 CI**：Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。
+     *
+     * <p>前端拿它做**页面级门控** —— 不可用时在页面顶部给一句原因、把「运行」按下去，
+     * 而不是让用户点了才收一个 500。所以它是「能不能用 + 为什么不能」，不是一个布尔。
+     *
+     * <p>⚠️ <b>有意不按命名空间校验归属</b>：它回答的是集群能力（装了没有），
+     * 不含任何资源数据 —— 与 {@code /cluster/capability/get}（码是 cluster 域的只读快照）同一条判断。
+     * 加上归属校验反而会把门控弄坏：那要求调用方手里已经有一个能用的命名空间上下文。
+     */
+    public PipelineCapabilityService.Capability capability(String clusterId) {
+        return capability.available(clusterId);
+    }
 
     public void validateName(String name) {
         if (name == null || !NAME.matcher(name).matches()) {

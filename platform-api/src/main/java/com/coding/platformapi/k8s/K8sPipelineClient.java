@@ -85,6 +85,21 @@ public class K8sPipelineClient {
         return k8s.get(dto);
     }
 
+    /**
+     * 一次运行渲染出来的 YAML —— **集群里那个真实对象**。
+     *
+     * <p>⚠️ 只有**还活着**的运行才给得出来：归档那一刻对象就被删了（spec §4.1）。
+     * 归档之后要看 YAML 就读库里的 {@code run_yaml}（那是归档那一刻抓下来的同一份东西）。
+     */
+    public String runYaml(String clusterId, String tenantId, String namespace, String name) {
+        PipelineRunDTO dto = new PipelineRunDTO();
+        dto.setClusterId(clusterId);
+        dto.setTenantId(tenantId);
+        dto.setNamespace(namespace);
+        dto.setName(name);
+        return k8s.yaml(dto);
+    }
+
     /** 删除一次运行（**级联删 TaskRun 与 Pod** —— 这正是「k8s 不留 Pod」的那一步）。 */
     public void deleteRun(String clusterId, String tenantId, String namespace, String name) {
         PipelineRunDTO dto = new PipelineRunDTO();

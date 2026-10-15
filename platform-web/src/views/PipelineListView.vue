@@ -2,8 +2,10 @@
 /**
  * 流水线列表（**命名空间级** —— 跟 Deployment/Service 一样，集群与命名空间来自顶栏级联）。
  *
- * ⚠️ 页面按 capability 门控：集群没装 Tekton / 没有可动态供应的 StorageClass 时，
- * 这里给一句「为什么用不了」，而不是让用户点了保存再收一个 500。
+ * ⚠️ 页面按 capability 门控（`/pipeline/capability`）：集群没装 Tekton / 没有可动态供应的
+ * StorageClass 时，这里给一句「为什么用不了」并把「运行」按下去，而不是让用户点了才收一个 500。
+ * **只挡运行** —— 定义照常可编辑保存：渲染是纯函数，不需要集群有 Tekton，
+ * 用户完全可以先把流水线配好，等集群装完再点运行。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -13,6 +15,7 @@ import type { Pipeline } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
+import { usePipelineCapability } from '@/composables/usePipelineCapability'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +31,10 @@ const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 
 const clusterId = computed(() => state.clusterId ?? '')
 const namespace = computed(() => state.namespace ?? '')
+
+/** 页面级门控（三态：`false` 才禁用 —— 「不知道」不禁，真正的拦截在后端） */
+const { available: capAvailable, reason: capReason, load: reloadCapability } =
+  usePipelineCapability(clusterId)
 
 const filtered = computed(() => {
   const k = keyword.value.trim().toLowerCase()
@@ -104,7 +111,22 @@ const focusId = computed(() => (route.query.id as string) || '')
       title="先在顶栏选一个集群与命名空间 —— 流水线是命名空间级的"
     />
 
-    <el-table v-else v-loading="loading" :data="filtered" row-key="id" size="default">
+    <!-- 门控只挡「运行」：定义照常可编辑保存（渲染是纯函数，不需要集群装 Tekton）——
+         用户可以先在平台里把流水线配好，等集群装完 Tekton 再点运行 -->
+    <div v-if="clusterId && namespace && capAvailable === false" class="cap-banner">
+      <span>
+        这个集群现在跑不了 CI：{{ capReason }}。流水线可以照常编辑保存，但「运行」已禁用。
+      </span>
+      <el-button size="small" @click="reloadCapability">重新探测</el-button>
+    </div>
+
+    <el-table
+      v-if="clusterId && namespace"
+      v-loading="loading"
+      :data="filtered"
+      row-key="id"
+      size="default"
+    >
       <el-table-column label="名称" min-width="200">
         <template #default="{ row }">
           <a class="name" :class="{ focus: row.id === focusId }" @click="toEditor(row.id)">{{ row.name }}</a>
@@ -119,7 +141,9 @@ const focusId = computed(() => (route.query.id as string) || '')
         <template #default="{ row }">
           <el-button link type="primary" @click="toEditor(row.id)">编辑</el-button>
           <el-button link type="primary" @click="toRuns(row.id)">运行历史</el-button>
-          <el-button v-if="canRun" link type="primary" @click="run(row)">运行</el-button>
+          <el-button v-if="canRun" link type="primary" :disabled="capAvailable === false" @click="run(row)">
+            运行
+          </el-button>
           <el-button v-if="canManage" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -140,6 +164,18 @@ const focusId = computed(() => (route.query.id as string) || '')
 }
 .spacer {
   flex: 1;
+}
+/* capability 门控横幅：与 Calico 那几个页面同一形状 */
+.cap-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--el-color-warning-light-5);
+  border-radius: 8px;
+  background: var(--el-color-warning-light-9);
+  color: var(--text-2);
+  font-size: 13px;
 }
 .name {
   color: var(--el-color-primary);

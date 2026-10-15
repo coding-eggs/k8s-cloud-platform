@@ -97,12 +97,14 @@ public class PipelineRunService {
         // ② 先生成名字：**幂等键从源头就有**
         String runName = generateRunName(pipeline.getName());
 
-        // ③ 先落库
+        // ③ 先落库。画布一并留在这行上：集群对象归档后就被删，而流水线**之后还会被改** ——
+        //    没有这一份，历史运行详情画的是今天的流水线
         PlatformPipelineRun row = new PlatformPipelineRun();
         row.setId(ULIDGenerator.generateULID());
         row.setPipelineId(pipeline.getId());
         row.setClusterId(ctx.clusterId());
         row.setNamespace(ctx.namespace());
+        row.setCanvasJson(pipeline.getCanvasJson());
         row.setRunName(runName);
         row.setStatus("RUNNING");
         row.setTriggeredBy(user);
@@ -129,12 +131,7 @@ public class PipelineRunService {
      * （它开 watch，收到终结事件时快照就在手上），平台不需要为后台调用另造身份。
      */
     public void cancel(String runName, PipelineRunContext ctx) {
-        PlatformPipelineRun row = runMapper.selectByRunName(runName);
-        if (row == null) {
-            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST,
-                    "运行不存在：" + runName);
-        }
-        access.assertAccessible(row.getClusterId(), row.getNamespace());
+        requireRun(runName);
         // ⚠️ 编排（**先抓日志、再取消**）在 k8s-server 侧：Tekton 取消时会自己删 Pod，
         //    顺序反了那次运行的日志就没了。本方法只做归属校验与转发。
         k8s.cancelRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
@@ -157,15 +154,48 @@ public class PipelineRunService {
      * @param nodeName 只看某个节点；为空则把所有节点拼起来（每段前面标节点名）
      */
     public String logs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes) {
-        PlatformPipelineRun row = runMapper.selectByRunName(runName);
-        if (row == null) {
-            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "运行不存在：" + runName);
-        }
-        access.assertAccessible(row.getClusterId(), row.getNamespace());
+        PlatformPipelineRun row = requireRun(runName);
         if (!"RUNNING".equals(row.getStatus())) {
             return archivedLogs(row.getId(), nodeName);
         }
         return liveLogs(runName, nodeName, ctx, maxBytes);
+    }
+
+    /**
+     * 一次运行里每个节点**现在**的落点（Pod 与容器）—— 运行详情的 DAG 着色用它。
+     *
+     * <p>⚠️ 它只回答「现在」：归档之后 TaskRun 与 Pod 早被删了，那时的节点状态在 run 行的
+     * {@code stepsJson} 里（归档那一刻的快照）。**不把两种来源拼成同一个形状** ——
+     * 前端按 run 的状态选一个（这正是 spec §4.3 那条分界线，混起来只会让人分不清看到的是什么时候的事）。
+     */
+    public List<PipelineStepRefDTO> steps(String runName, PipelineRunContext ctx) {
+        PlatformPipelineRun row = requireRun(runName);
+        if (!"RUNNING".equals(row.getStatus())) {
+            return List.of();
+        }
+        return k8s.steps(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
+    }
+
+    /**
+     * 一次运行**渲染出来的 YAML**（spec §6 的排查利器）。
+     *
+     * <p>两种来源，还是那条「归档了没有」的分界线：
+     * <ul>
+     *   <li>还在跑 → 抓集群里那个**真实对象**（含 workspace 绑定与凭据 Secret 名）；</li>
+     *   <li>已归档 → 对象已被删，读**归档那一刻抓下来的那一份**（{@code run_yaml}）。
+     *       ⚠️ 刻意**不拿今天的画布重渲染**：那会画出一份当年没跑过的东西，
+     *       而且对引用了连接的流水线根本渲染不出来（节点拒绝在没有凭据的情况下渲染）。</li>
+     * </ul>
+     *
+     * @return 没有留下时返回 {@code null}（早于本功能上线的老运行）—— 由前端说「没有留下」，
+     *         而不是编一份出来冒充
+     */
+    public String runYaml(String runName, PipelineRunContext ctx) {
+        PlatformPipelineRun row = requireRun(runName);
+        if ("RUNNING".equals(row.getStatus())) {
+            return k8s.runYaml(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
+        }
+        return row.getRunYaml();
     }
 
     private String archivedLogs(String runId, String nodeName) {
@@ -208,18 +238,27 @@ public class PipelineRunService {
     }
 
     public PlatformPipelineRun get(String runName) {
+        return requireRun(runName);
+    }
+
+    // ---- 内部 ----
+
+    /**
+     * 取一行运行 + 校验归属。**本类里每个按 run 名进来的口子都必须过这里。**
+     *
+     * <p>⚠️ 边界用**库里那行**的 cluster/namespace，不是请求里的 —— run 名是调用方给的，
+     * 不带边界；拿它直接查库就等于「知道名字就能读（甚至取消）别人的运行」。
+     */
+    private PlatformPipelineRun requireRun(String runName) {
         PlatformPipelineRun row = runMapper.selectByRunName(runName);
         if (row == null) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST,
                     "运行不存在：" + runName);
         }
-        // ⚠️ 归属校验用**库里那行**的 cluster/namespace，不是请求里的 —— run 名是调用方给的，
-        // 不带边界；拿它直接查库就等于「知道名字就能读别人的运行」。
         access.assertAccessible(row.getClusterId(), row.getNamespace());
         return row;
     }
 
-    // ---- 内部 ----
 
     /**
      * 解析画布引用到的每一条连接。**明确拒绝，绝不静默降级成"匿名去拉"**（spec §5.3）。

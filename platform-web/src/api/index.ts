@@ -23,9 +23,11 @@ import type {
   K8sGrpcRoute,
   K8sHpa,
   Pipeline,
+  PipelineCapability,
   PipelineConnection,
   PipelineNodeType,
   PipelineRun,
+  PipelineStepRef,
   K8sHttpRoute,
   K8sNode,
   K8sPvc,
@@ -679,8 +681,19 @@ export const pipelineApi = {
   run: (pipelineId: string) => http.post<never, string>('/pipeline/run', { id: pipelineId }),
   cancelRun: (runName: string) => http.post<never, void>('/pipeline/run/cancel', { name: runName }),
   runs: (pipelineId: string) => http.post<never, PipelineRun[]>('/pipeline/run/list', { id: pipelineId }),
+  /** 详情（含**触发那一刻的画布**与**归档时抓的 YAML**）—— 列表行不带这两个大字段 */
   runGet: (runName: string) => http.post<never, PipelineRun>('/pipeline/run/get', { name: runName }),
+  /** 每个节点**现在**的落点（运行详情的 DAG 着色）。⚠️ 只有还在跑才有：归档后返回空 */
+  runSteps: (runName: string) =>
+    http.post<never, PipelineStepRef[]>('/pipeline/run/steps', { name: runName }),
+  /** 一次运行渲染出来的 YAML（还在跑抓集群对象；归档后读归档时抓下来的那一份） */
+  runYaml: (runName: string) =>
+    http.post<never, string | null>('/pipeline/run/yaml', { name: runName }),
   /** 已归档读库、还在跑现抓；nodeName 为空则把所有节点拼起来 */
   runLogs: (runName: string, nodeName?: string) =>
     http.post<never, string>('/pipeline/run/logs', { runName, nodeName }),
+
+  /** 这个集群能不能跑 CI —— **页面级门控的唯一判据**（不可用时带原因，前端据此提示并禁用「运行」） */
+  capability: (clusterId: string) =>
+    http.post<never, PipelineCapability>('/pipeline/capability', { clusterId }),
 }

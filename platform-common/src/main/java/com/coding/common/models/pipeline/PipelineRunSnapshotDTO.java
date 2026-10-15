@@ -19,6 +19,9 @@ import java.util.List;
  * 而那是个安全边界问题，能绕开就绕开。
  *
  * @param status 终结状态（SUCCEEDED / FAILED / CANCELLED / TIMEOUT）—— 由 k8s-server 判定
+ * @param runYaml 集群里那个对象的 YAML 原文。**必须在归档这一刻抓** ——
+ *                同一时刻对象就被删了，之后「当年跑的到底是什么」再也拿不到
+ *                （拿画布重渲染会得到一份当年没跑过的东西）。运行详情的 YAML 面板读它
  */
 public record PipelineRunSnapshotDTO(String clusterId,
                                      String namespace,
@@ -27,7 +30,8 @@ public record PipelineRunSnapshotDTO(String clusterId,
                                      String reason,
                                      String startTime,
                                      String completionTime,
-                                     List<StepLog> steps) {
+                                     List<StepLog> steps,
+                                     String runYaml) {
 
     /**
      * 一个节点的状态与日志。
