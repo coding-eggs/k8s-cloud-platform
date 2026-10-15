@@ -1,0 +1,21 @@
+# 构建上下文 = 仓库根（四个 Dockerfile 都用它 —— Maven 反应堆要带上 platform-common / platform-data / k8s-core）。
+# 这里排除的是「不该进上下文」的东西：构建产物、依赖、IDE 与 git 元数据。
+# ⚠️ target/ 必须排除：里面有上一次的 class，进上下文既撑大传输，也可能让增量构建拿到旧产物。
+
+**/target/
+platform-web/node_modules/
+platform-web/dist/
+platform-web/.vite/
+
+**/.git/
+**/.idea/
+**/.vscode/
+**/.claude/
+**/.superpowers/
+**/*.iml
+
+docs/
+prototype/
+*.log
+etcd-browser.exe
+k8s_cloud_platform.sql
