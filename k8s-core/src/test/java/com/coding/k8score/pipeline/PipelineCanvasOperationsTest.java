@@ -56,7 +56,6 @@ class PipelineCanvasOperationsTest {
     }
 
     // ---- 内联 taskSpec 的**形状**（2026-10-15 线上回归：第一次真跑流水线被集群拒）----
-
     @Test
     void theInlineTaskSpecIsFlatSoTektonCanSeeTheSteps() {
         // ⭐ 真跑第一次的报错是 Tekton 的 admission webhook 给的：
@@ -86,16 +85,53 @@ class PipelineCanvasOperationsTest {
                 .containsExactly(PipelineCanvasOperations.WORKSPACE);
     }
 
-    /** 渲染出的 YAML → 第一条 task 的 taskSpec 子树（**重新解析**，与集群看到的同一份形状）。 */
-    private static Map<String, Object> taskSpecOfFirstTask(String yaml) {
+    @Test
+    void everyTaskBindsItsWorkspacesNotJustDeclaresThem() {
+        // ⭐ 第二次真跑的失败（集群 events 里抓到的原话）：
+        //    Warning Failed taskrun/…-git-quo31
+        //    [User error] declared workspace "ws" is required but has not been bound
+        //    Tekton 只会把**脚本里用 $(workspaces.X.path) 引用过**的 workspace 自动传播给 TaskRun
+        //    —— pkg/workspace/apply.go 的 FindWorkspacesUsedByTask 是照着替换变量扫脚本的。
+        //    我们的节点脚本用的是字面量 /workspace、/creds，一个都不会被传播 → TaskRun 拿到
+        //    0 个绑定 → pkg/workspace/validate.go 直接拒（1 秒内失败，Pod 都没起来，
+        //    所以连日志都没有）。
+        //
+        //    「声明」（taskSpec.workspaces：这个 task 需要哪些 workspace）与
+        //    「绑定」（tasks[].workspaces：这些 workspace 接到 pipeline 的哪一个上）是两件事。
+        String canvas = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git",
+                   "connectionId":"git-1"}}],"edges":[]}""";
+
+        String yaml = ops.renderYaml(canvas, Map.of(
+                "git-1", new PipelineConnectionRef("git-1", "https://g", null, null)));
+
+        // 同名绑定：只写 name，Tekton 就把它接到 pipeline 里同名的那个 workspace
+        // （pipelinerun.go 的 getTaskrunWorkspaces：workspace 字段为空时用 name）
+        assertThat(maps(firstTaskOf(yaml).get("workspaces")))
+                .as("渲染出来的 YAML：\n%s", yaml)
+                .extracting(w -> w.get("name"))
+                .containsExactly(PipelineCanvasOperations.WORKSPACE, "creds");
+        // 声明那一半也还在（两者缺一不可）
+        assertThat(maps(taskSpecOfFirstTask(yaml).get("workspaces")))
+                .extracting(w -> w.get("name"))
+                .containsExactly(PipelineCanvasOperations.WORKSPACE, "creds");
+    }
+
+    /** 渲染出的 YAML → 第一条 task 子树（**重新解析**，与集群看到的同一份形状）。 */
+    private static Map<String, Object> firstTaskOf(String yaml) {
         try {
             Map<String, Object> spec =
                     Serialization.yamlMapper().readValue(yaml, new TypeReference<Map<String, Object>>() {});
-            Map<String, Object> task = maps(spec.get("tasks")).get(0);
-            return task.get("taskSpec") == null ? Map.of() : asMap(task.get("taskSpec"));
+            return maps(spec.get("tasks")).get(0);
         } catch (Exception e) {
             throw new AssertionError("渲染出来的 YAML 解析不了：\n" + yaml, e);
         }
+    }
+
+    /** 渲染出的 YAML → 第一条 task 的 taskSpec 子树。 */
+    private static Map<String, Object> taskSpecOfFirstTask(String yaml) {
+        Map<String, Object> task = firstTaskOf(yaml);
+        return task.get("taskSpec") == null ? Map.of() : asMap(task.get("taskSpec"));
     }
 
     @SuppressWarnings("unchecked")

@@ -8,6 +8,7 @@ import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.PipelineTask;
 import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
 import io.fabric8.tekton.v1.WorkspaceDeclaration;
+import io.fabric8.tekton.v1.WorkspacePipelineTaskBinding;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -118,6 +119,16 @@ public final class PipelineRenderer {
                 task.setDisplayName(displayName);
             }
             task.setTaskSpec(taskSpec);
+            // ⚠️ 上面是**声明**（这个 task 需要哪些 workspace），这里是**绑定**（它们各接到
+            // pipeline 的哪一个上）—— 两件事，缺一不可。
+            // Tekton 只会把**脚本里用 $(workspaces.X.path) 引用过**的 workspace 自动传播给
+            // TaskRun（pkg/workspace/apply.go 的 FindWorkspacesUsedByTask 是扫替换变量的），
+            // 而我们的节点脚本写的是字面量 /workspace、/creds —— 一个都不会被传播。
+            // 不显式绑，TaskRun 就拿到 0 个绑定，校验直接拒：
+            //   declared workspace "ws" is required but has not been bound
+            // 一秒内失败、Pod 都没起来（所以连日志都没有）——2026-10-15 第二次真跑撞到。
+            // 只写 name：Tekton 会把它接到 pipeline 里同名的那个 workspace 上。
+            task.setWorkspaces(ws.stream().map(PipelineRenderer::taskWorkspaceBinding).toList());
             Set<String> after = runAfter.get(n.id());
             if (after != null && !after.isEmpty()) {
                 task.setRunAfter(new ArrayList<>(after));
@@ -143,6 +154,17 @@ public final class PipelineRenderer {
     private static String displayNameOf(PipelineCanvas.CanvasNode n) {
         String name = n.name();
         return name == null || name.isBlank() ? null : name.trim();
+    }
+
+    /**
+     * task 的 workspace **绑定**：只写 {@code name} —— Tekton 的
+     * {@code getTaskrunWorkspaces} 在 {@code workspace} 字段为空时就用这个名字去 pipeline 的
+     * workspace 里找同名的那个。声明里的挂载点（{@code mountPath}）只影响 Pod 里的挂载路径。
+     */
+    private static WorkspacePipelineTaskBinding taskWorkspaceBinding(WorkspaceDeclaration decl) {
+        WorkspacePipelineTaskBinding binding = new WorkspacePipelineTaskBinding();
+        binding.setName(decl.getName());
+        return binding;
     }
 
     private static WorkspaceDeclaration declaration(String name, String mountPath) {
