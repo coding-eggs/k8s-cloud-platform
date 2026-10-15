@@ -43,9 +43,9 @@ public class PipelineRunFinisher {
     /**
      * 归档一条终结了的运行。
      *
-     * @param timedOut 平台判定超时而终结的。⚠️ Tekton 那边它**还在跑**（平台是「先抓日志、再取消」），
-     *                 所以快照状态要在这里改写成 {@code TIMEOUT} —— 光看对象的 condition
-     *                 分不出「用户取消」与「平台判超时」，而运行历史里两者必须不一样。
+     * @param timedOut 平台判定超时而终结的。⚠️ 走这条路时 Tekton 那边**还在跑**
+     *                 （平台抢在删对象之前先把日志抓了），所以快照状态要在这里改写成 {@code TIMEOUT} ——
+     *                 光看对象的 condition 分不出「用户取消」与「平台判超时」，而运行历史里两者必须不一样。
      * @return true = 全部做完（可以从台账里摘掉了）；false = 中途失败，**对象没删**，等重试
      */
     public boolean finish(String clusterId, String namespace, String runName, boolean timedOut) {
@@ -82,13 +82,18 @@ public class PipelineRunFinisher {
      *
      * <p>与归档的区别很清楚：这里**只抓快照落库、不删对象** ——
      * 取消之后对象还在（历史不能丢），它由后续的终止事件走 {@link #finish} 归档掉。
+     *
+     * <p>⚠️ 落库走 {@link PipelineArchiveService#persistLogs}（**只存日志**）而**不是** {@code persist}：
+     * 取消的这一刻对象还在跑，快照状态就是 {@code RUNNING}，而 {@code persist} 的守卫
+     * （「尚未终结不能归档」）对归档路径是对的 —— 拿它来存抢抓的日志，会每次都把日志整条扔掉。
+     * 而这里**也不能替它结案**：运行还没终结，状态/时间/steps_json/YAML 都归后续的终止事件写。
      */
     public void cancel(String clusterId, String namespace, String runName) {
         try {
             PipelineRunSnapshotDTO snapshot = runOps(clusterId)
                     .snapshot(clusterId, namespace, runName, maxLogBytes);
             if (snapshot != null) {
-                archive.persist(snapshot);
+                archive.persistLogs(snapshot);
             }
         } catch (Exception e) {
             // 抓不到就照常取消 —— 用户点的是「取消」，不能因为抢抓失败而卡住；

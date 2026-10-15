@@ -11,7 +11,8 @@ import java.time.Instant;
 /**
  * 节拍器。每一拍干两件事：
  * <ol>
- *   <li><b>超时判定</b> —— 看台账里有没有跑太久的，有就让平台去取消（先抓日志再取消，见 platform-api 侧）</li>
+ *   <li><b>超时判定</b> —— 看台账里有没有跑太久的，有就交给 {@link PipelineRunFinisher#finish}
+ *       按超时终结（**先抓日志、再删对象** —— 见 {@link #terminateAsTimeout}）</li>
  *   <li><b>重投待补</b> —— 上一拍回调没被确认的</li>
  * </ol>
  *
@@ -48,16 +49,28 @@ public class PipelineRunTicker {
     /** 可单测的入口。 */
     void tick(Instant now) {
         for (PipelineRunWatchManager.ActiveRun run : watch.overdue(now, timeout)) {
-            cancelOverdue(run);
+            terminateAsTimeout(run);
         }
         retryPending();
     }
 
     /**
-     * 平台判定超时 → 走与取消同一条路（**先抓日志、再取消**）。
-     * 真正的顺序在 platform-api 侧；这里只负责**把「这是超时」这件事说出去**。
+     * 平台判定超时 → 交给 {@code PipelineRunFinisher.finish(..., timedOut = true)} 终结。
+     *
+     * <p>⚠️ <b>它和「用户取消」不是同一条路</b>，别看混了：
+     * <ul>
+     *   <li><b>取消</b>（{@code PipelineRunFinisher.cancel}）：抓日志 → <b>patch {@code spec.status}</b>，
+     *       对象留着（历史不能丢），由后续的终止事件归档</li>
+     *   <li><b>超时</b>（这里）：抓日志 → 状态改写成 {@code TIMEOUT} → 落库 → <b>删对象</b></li>
+     * </ul>
+     * 两条路**共有的只有那个顺序**：抢在 Tekton 把 Pod 删掉之前先抓一份日志。
+     * 超时这条也留得住日志，是因为删对象排在落库**之后**（删 PipelineRun 会级联带走 TaskRun 与 Pod）。
+     *
+     * <p>顺序本身在 k8s-server 的 {@code PipelineRunFinisher} 里 —— 不在 platform-api，那里已经不在归档链上了。
+     *
+     * <p>这里只负责**把「这是超时」这件事说出去**（{@code watch.onTerminatedAsTimeout}）。
      */
-    void cancelOverdue(PipelineRunWatchManager.ActiveRun run) {
+    void terminateAsTimeout(PipelineRunWatchManager.ActiveRun run) {
         log.warn("流水线运行超过 {} 未结束，交由平台按超时终结：{}/{}",
                 timeout, run.namespace(), run.runName());
         watch.onTerminatedAsTimeout(run.clusterId(), run.namespace(), run.runName());
