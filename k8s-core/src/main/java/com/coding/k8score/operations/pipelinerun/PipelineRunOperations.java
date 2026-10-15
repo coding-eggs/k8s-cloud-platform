@@ -473,9 +473,10 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
     /**
      * 一次终结的运行的**完整快照**：状态 + 每个节点的状态与日志。**抓完就能删对象了。**
      *
-     * <p>⚠️ 它由 k8s-server 调（watch 是它开的，收到终结事件时集群对象、TaskRun、Pod 都还在），
-     * 抓完随回调一起发给 platform-api。这样 platform-api 在归档链里**一次都不用回打 k8s-server**，
-     * 也就不需要为「没有用户 token 的后台调用」另造一套机器身份。
+     * <p>⚠️ 它由 k8s-server 调（watch 是它开的，收到终结事件时集群对象、TaskRun、Pod 都还在）。
+     * 快照**不出进程**：k8s-server 自己把它写进平台库（{@code PipelineArchiveService}，
+     * 它本来就有 platform-data 与事务）—— 见那个类的 javadoc：这条改定让「免认证入站端点 +
+     * 共享密钥 + ack/待补/重投」整条消失，入站攻击面归零。
      *
      * @param maxLogBytes 单步日志上限。**交给 API 侧截**（{@code limitBytes}）而不是全读进来再切 ——
      *                    一次构建的日志可以是几百 MB。代价是「有没有被截断」只能靠长度推断

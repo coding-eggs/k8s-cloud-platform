@@ -30,12 +30,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * <h2>终结时它做四件事</h2>
  * <ol>
  *   <li>**抓快照**（状态 + 每个节点的状态与日志）—— 集群对象、TaskRun、Pod 都还在，快照就在手上；</li>
- *   <li>把快照 POST 给 platform-api（带共享密钥）；</li>
- *   <li>**被确认了才删对象** —— 删 PipelineRun 会级联带走 TaskRun 与 **Pod**，
- *       这就是「k8s 不留 Completed Pod」那一步；</li>
+ *   <li>**自己落库**（{@link PipelineArchiveService}，k8s-server 本来就有 platform-data 与事务）；</li>
+ *   <li>**落库成功了才删对象** —— 删 PipelineRun 会级联带走 TaskRun 与 **Pod**，
+ *       这就是「k8s 不留 Completed Pod」那一步；随后删掉这次运行的凭据 Secret；</li>
  *   <li>关掉这条 watch（空闲时零连接）。</li>
  * </ol>
- * 没被确认就进「待补」集合：**对象与 Pod 都留着**（那份日志还在），由节拍器重投。
+ * 落库没成功就不删：**对象与 Pod 都留着**（那份日志还在），由节拍器重投。
  * 这个取舍是刻意的 —— 宁可多留一会儿，也不要「日志还没落库就把唯一副本删了」。
  */
 @Slf4j
