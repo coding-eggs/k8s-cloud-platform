@@ -54,8 +54,20 @@ public class K8sPipelineClient {
      * 抛业务异常，platform-api 原样冒给用户。规则只有一份，不在这里重写。
      */
     public String render(String canvasJson) {
+        return render(canvasJson, null);
+    }
+
+    /**
+     * 画布 → YAML，**带上本次可用的连接**（预览 / 保存校验走这条）。
+     *
+     * <p>⚠️ 带镜像节点的画布离开连接就渲染不出来（目标镜像地址 = 连接 endpoint + 仓库路径 + tag），
+     * 所以这两条路径也得把连接交上去。⚠️ 交的是 **endpoint-only** 的 ref
+     * （{@code CredentialService.endpointOnlyRef}，不解密）—— 这条路径的产物会给用户看。
+     */
+    public String render(String canvasJson,
+                         List<com.coding.common.models.pipeline.PipelineConnectionRef> connections) {
         return gateway.exchange(HttpMethod.POST, "/pipelineruns/render", null,
-                new PipelineCanvasRequest(canvasJson), gateway.responseType(String.class));
+                new PipelineCanvasRequest(canvasJson, connections), gateway.responseType(String.class));
     }
 
     /**

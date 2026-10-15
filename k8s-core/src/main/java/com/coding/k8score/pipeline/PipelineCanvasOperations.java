@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -55,8 +56,12 @@ public class PipelineCanvasOperations {
     /**
      * 渲染，并带上本次运行可用的连接（**已授权、已解密**）。
      *
-     * <p>⚠️ 只有**创建运行**那条路径调这个重载 —— 预览与保存校验用上面那个不带连接的：
-     * 那两种路径产出的东西会给用户看（预览页），不该让凭据参与其中。
+     * <p>⚠️ <b>2026-10-15 收窄</b>：原来只有创建运行那条路带连接，预览与保存校验用不带连接的重载 ——
+     * 理由写的是「那两种路径产出的东西会给用户看，不该让凭据参与其中」。但**带镜像节点的画布
+     * 离开连接就渲染不出来**（目标镜像地址 = 连接 endpoint + 仓库路径 + tag），于是「保存一条
+     * 含构建节点的流水线」必然报「目标仓库连接不存在或未授权在流水线里使用」。
+     * 所以那条边界收窄成「**不带凭据内容**」：这两条路径也带连接，但只带 endpoint
+     * （platform-api 侧的 {@code CredentialService.endpointOnlyRef}，不解密）。
      */
     public PipelineSpec render(String canvasJson, Map<String, PipelineConnectionRef> connections) {
         return renderer.render(PipelineCanvas.fromJson(canvasJson), WORKSPACE,
@@ -69,5 +74,34 @@ public class PipelineCanvasOperations {
      */
     public String renderYaml(String canvasJson) {
         return Serialization.asYaml(render(canvasJson));
+    }
+
+    /**
+     * 画布 JSON → YAML，**带上本次可用的连接**（预览 / 保存校验走这条）。
+     *
+     * <p>⚠️ 为什么预览与保存也要给连接：**带镜像节点的画布离开连接就渲染不出来** ——
+     * 目标镜像地址 = 连接的 endpoint + 仓库路径 + tag，没有连接就没有地址，那个节点
+     * 有意拒绝产出一个必然失败的镜像引用。所以「预览路径不给凭据」这条边界要收窄成
+     * 「**不给凭据内容**」：连接以 endpoint 形式参与渲染（明文仍然只走运行那条路）。
+     */
+    public String renderYaml(String canvasJson, Map<String, PipelineConnectionRef> connections) {
+        return Serialization.asYaml(render(canvasJson, connections));
+    }
+
+    /**
+     * 连接列表 → 按 id 索引的 map（{@link PipelineRenderer} 要的形状）。
+     * 同一个 id 出现多次只留一份；null / 空列表 → 空 map。
+     */
+    public static Map<String, PipelineConnectionRef> byId(List<PipelineConnectionRef> connections) {
+        if (connections == null || connections.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, PipelineConnectionRef> out = new LinkedHashMap<>();
+        for (PipelineConnectionRef c : connections) {
+            if (c != null && c.id() != null) {
+                out.put(c.id(), c);
+            }
+        }
+        return out;
     }
 }

@@ -437,6 +437,22 @@ public class CredentialService {
      * <p>⚠️ 返回值里带明文凭据，调用方只许把它交给 k8s-server 去建 Secret ——
      * 绝不进渲染结果（预览页会把渲染结果原样给用户看），也不进日志。
      */
+    /**
+     * 只校授权 + 取 endpoint，**不解密** —— 给「预览 / 保存校验」那条路径用。
+     *
+     * <p>为什么要有它：带镜像节点的画布**离开连接就渲染不出来**（目标镜像地址 = 连接 endpoint +
+     * 仓库路径 + tag），所以预览与保存也得把连接交给渲染器；但那条路径产出的东西**会给用户看**
+     * （预览页原样显示 YAML），所以「预览路径不给凭据」这条边界收窄成「**不给凭据内容**」——
+     * 这里返回的 ref 两个凭据字段都是 null，渲染只用得到 endpoint。
+     */
+    public com.coding.common.models.pipeline.PipelineConnectionRef endpointOnlyRef(String id,
+                                                                                  String expectedType) {
+        assertUsableByPipelines(id, expectedType);
+        PlatformCredential c = mapper.selectById(id);
+        return new com.coding.common.models.pipeline.PipelineConnectionRef(
+                c.getId(), c.getEndpoint(), null, null);
+    }
+
     public com.coding.common.models.pipeline.PipelineConnectionRef resolveForPipeline(String id,
                                                                                        String expectedType) {
         assertUsableByPipelines(id, expectedType);

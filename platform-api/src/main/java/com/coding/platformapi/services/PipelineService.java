@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -48,6 +49,8 @@ public class PipelineService {
     private final NamespaceAccessGuard access;
     private final K8sPipelineClient k8s;
     private final AuthContext auth;
+    /** 预览/保存校验要拿连接的 endpoint（**不解密**，见 previewConnections） */
+    private final CredentialService credentials;
     private final PipelineCapabilityService capability;
 
     /**
@@ -76,9 +79,14 @@ public class PipelineService {
         return k8s.nodeTypes();
     }
 
-    /** 画布 → YAML。**透传 k8s-server**；它同时是画布校验的入口。 */
+    /**
+     * 画布 → YAML。**透传 k8s-server**；它同时是画布校验的入口。
+     *
+     * <p>⚠️ 要把连接一起交上去：带镜像节点的画布**离开连接就渲染不出来**（目标镜像地址 =
+     * 连接 endpoint + 仓库路径 + tag）。交的是 endpoint-only 的 ref，不含凭据内容。
+     */
     public String preview(String canvasJson) {
-        return k8s.render(canvasJson);
+        return k8s.render(canvasJson, previewConnections(canvasJson));
     }
 
     public List<PipelineDTO> list(PipelineDTO query) {
@@ -152,7 +160,23 @@ public class PipelineService {
      * <p>保存这一步就拦下来，用户不必等到点了运行才发现画布连不起来。
      */
     private void assertCanvasUsable(String canvasJson) {
-        k8s.render(canvasJson);
+        // 与预览同一条路径：**带上 endpoint-only 的连接**，否则带镜像节点的画布根本存不下来
+        k8s.render(canvasJson, previewConnections(canvasJson));
+    }
+
+    /**
+     * 画布引用的连接，**只校授权 + 取 endpoint，不解密** —— 预览与保存校验用。
+     *
+     * <p>两个副作用都是想要的：①镜像节点渲染得出来；②**未授权的连接在保存时就被拒**，
+     * 不用等用户点了运行才发现（运行那条路仍然会自己再校一次，那是另一道闸门）。
+     */
+    private List<com.coding.common.models.pipeline.PipelineConnectionRef> previewConnections(
+            String canvasJson) {
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> out = new ArrayList<>();
+        for (PipelineCanvasRefs.Ref ref : PipelineCanvasRefs.scan(canvasJson)) {
+            out.add(credentials.endpointOnlyRef(ref.id(), ref.expectedType()));
+        }
+        return out;
     }
 
     private PlatformPipeline require(String id) {

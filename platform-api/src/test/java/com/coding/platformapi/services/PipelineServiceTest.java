@@ -8,6 +8,7 @@ import com.coding.data.models.system.PlatformPipeline;
 import com.coding.platformapi.k8s.K8sPipelineClient;
 import com.coding.platformapi.security.AuthContext;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -16,6 +17,8 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -41,8 +44,20 @@ class PipelineServiceTest {
     private final AuthContext auth = mock(AuthContext.class);
     private final NamespaceAccessGuard access = mock(NamespaceAccessGuard.class);
     private final PipelineCapabilityService capability = mock(PipelineCapabilityService.class);
+    private final CredentialService credentials = mock(CredentialService.class);
 
-    private final PipelineService svc = new PipelineService(mapper, access, k8s, auth, capability);
+    private final PipelineService svc =
+            new PipelineService(mapper, access, k8s, auth, credentials, capability);
+
+    /** 带镜像节点的画布：渲染它**必须有连接**（目标镜像地址 = 连接 endpoint + 仓库路径 + tag） */
+    private static final String CANVAS_WITH_IMAGE_NODE = """
+            {"nodes":[{"id":"build","type":"image",
+              "config":{"registryConnectionId":"reg-1","imageName":"proj/app"}}],"edges":[]}""";
+
+    private static com.coding.common.models.pipeline.PipelineConnectionRef endpointOnly(String id,
+                                                                                         String endpoint) {
+        return new com.coding.common.models.pipeline.PipelineConnectionRef(id, endpoint, null, null);
+    }
 
     @Test
     void theCapabilityProbeIsAnsweredForTheClusterItWasAskedAbout() {
@@ -93,7 +108,7 @@ class PipelineServiceTest {
 
     @Test
     void previewIsDelegatedToK8sServer() {
-        when(k8s.render(CANVAS)).thenReturn("kind: PipelineSpec\n");
+        when(k8s.render(CANVAS, List.of())).thenReturn("kind: PipelineSpec\n");
 
         assertThat(svc.preview(CANVAS)).isEqualTo("kind: PipelineSpec\n");
     }
@@ -102,7 +117,7 @@ class PipelineServiceTest {
     void aBadCanvasIsRejectedByK8sServerAndNeverStored() {
         // ⭐ Review Focus #1：带环的画布必须在**保存时**就被拒 —— 规则只有一份，在 k8s-server 那边
         asPlatformAdmin();
-        when(k8s.render(CANVAS)).thenThrow(new CloudPlatformException(10040, "流水线里有一个环"));
+        when(k8s.render(CANVAS, List.of())).thenThrow(new CloudPlatformException(10040, "流水线里有一个环"));
 
         assertThatThrownBy(() -> svc.create(req("good-name", "ns1")))
                 .isInstanceOf(CloudPlatformException.class)
@@ -130,7 +145,7 @@ class PipelineServiceTest {
 
         assertThat(out.getId()).isNotBlank();
         assertThat(out.getName()).isEqualTo("good-name");
-        verify(k8s).render(CANVAS);                       // 先校验
+        verify(k8s).render(eq(CANVAS), anyList());        // 先校验
         verify(mapper).insert(any(PlatformPipeline.class));
     }
 
@@ -224,5 +239,43 @@ class PipelineServiceTest {
 
         assertThat(out.getNamespace()).isEqualTo("ns1");     // 存的，不是请求里的
         verify(mapper).update(any(PlatformPipeline.class));
+    }
+
+    // ---- 预览 / 保存校验也要把连接带上（否则带镜像节点的画布根本存不下来）----
+
+    @Test
+    void previewSendsTheReferencedConnectionAsEndpointOnly() {
+        // ⭐ 这一条钉住两件事：①镜像节点渲染要连接；②交上去的 ref **不带凭据内容**
+        //（预览页会把渲染结果原样给用户看）
+        when(credentials.endpointOnlyRef("reg-1", null))
+                .thenReturn(endpointOnly("reg-1", "harbor.example.com"));
+        when(k8s.render(eq(CANVAS_WITH_IMAGE_NODE), anyList())).thenReturn("kind: PipelineSpec\n");
+
+        assertThat(svc.preview(CANVAS_WITH_IMAGE_NODE)).isEqualTo("kind: PipelineSpec\n");
+
+        ArgumentCaptor<List<com.coding.common.models.pipeline.PipelineConnectionRef>> cap =
+                ArgumentCaptor.forClass(List.class);
+        verify(k8s).render(eq(CANVAS_WITH_IMAGE_NODE), cap.capture());
+        assertThat(cap.getValue()).singleElement()
+                .satisfies(c -> {
+                    assertThat(c.endpoint()).isEqualTo("harbor.example.com");
+                    assertThat(c.username()).isNull();
+                    assertThat(c.secret()).isNull();
+                });
+    }
+
+    @Test
+    void savingRejectsAnUnauthorizedConnectionBeforeItEverReachesTheCluster() {
+        // 未授权的连接**保存时就被拒** —— 不用等用户点了运行才发现（运行那条路还会再校一次）
+        when(credentials.endpointOnlyRef("reg-1", null)).thenThrow(
+                new CloudPlatformException(10030, "该连接未授权在流水线里使用：reg-1"));
+
+        PipelineDTO withImageNode = req("good-name", "ns1");
+        withImageNode.setCanvasJson(CANVAS_WITH_IMAGE_NODE);
+
+        assertThatThrownBy(() -> svc.create(withImageNode))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("未授权");
+        verify(k8s, never()).render(anyString(), anyList());
     }
 }

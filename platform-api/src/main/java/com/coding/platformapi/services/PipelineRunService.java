@@ -47,19 +47,6 @@ import java.util.List;
 @Service
 public class PipelineRunService {
 
-    /**
-     * 画布里「引用了一条平台连接」的字段名。
-     *
-     * <p>⚠️ **这是跨模块契约**：定义在 k8s-core 的节点类里（{@code GitCloneNode} /
-     * {@code ImagePushNode}），而本模块读不到那些类型。改名必须同时改两边 ——
-     * `BuiltinNodesTest.theConnectionReferenceFieldsPlatformApiScansForAreStillNamedThis`
-     * 是唯一会提醒你的地方。
-     */
-    static final List<String> CONNECTION_KEYS = List.of("connectionId", "registryConnectionId");
-
-    /** git 节点引用的必须是 git 连接；镜像节点只要求「是一条被授权的 registry 连接」（expectedType=null） */
-    private static final List<String> GIT_KEYS = List.of("connectionId");
-
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final String ALNUM = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -314,32 +301,9 @@ public class PipelineRunService {
      */
     private List<com.coding.common.models.pipeline.PipelineConnectionRef> resolveConnections(
             String canvasJson) {
-        if (canvasJson == null || canvasJson.isBlank()) {
-            return List.of();
-        }
-        JsonNode canvas;
-        try {
-            canvas = JSON.readTree(canvasJson);
-        } catch (Exception e) {
-            throw new CloudPlatformException(EnumResponseType.PIPELINE_CANVAS_INVALID,
-                    "画布内容无法解析");
-        }
-        JsonNode nodes = canvas.path("nodes");
-        if (!nodes.isArray()) {
-            return List.of();
-        }
         List<com.coding.common.models.pipeline.PipelineConnectionRef> out = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        for (JsonNode node : nodes) {
-            JsonNode config = node.path("config");
-            for (String key : CONNECTION_KEYS) {
-                String id = config.path(key).asString(null);
-                if (id == null || id.isBlank() || !seen.add(id.trim())) {
-                    continue;
-                }
-                out.add(credentials.resolveForPipeline(id.trim(),
-                        GIT_KEYS.contains(key) ? "GIT" : null));
-            }
+        for (PipelineCanvasRefs.Ref ref : PipelineCanvasRefs.scan(canvasJson)) {
+            out.add(credentials.resolveForPipeline(ref.id(), ref.expectedType()));
         }
         return out;
     }
@@ -359,8 +323,8 @@ public class PipelineRunService {
         return pipelineName + "-" + LocalDateTime.now().format(STAMP) + "-" + suffix;
     }
 
-    /** 只为测试/排查暴露：画布引用扫描用到的 key（与 k8s-core 的护栏测试对齐）。 */
+    /** 只为测试/排查暴露：画布引用扫描用到的 key（真正的定义在 {@link PipelineCanvasRefs}）。 */
     static List<String> connectionKeys() {
-        return new ArrayList<>(CONNECTION_KEYS);
+        return new ArrayList<>(PipelineCanvasRefs.CONNECTION_KEYS);
     }
 }

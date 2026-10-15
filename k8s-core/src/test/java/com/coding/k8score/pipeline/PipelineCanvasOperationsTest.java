@@ -4,9 +4,11 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.k8score.pipeline.nodes.GitCloneNode;
 import com.coding.k8score.pipeline.nodes.ImagePushNode;
 import com.coding.k8score.pipeline.nodes.ShellNode;
+import com.coding.common.models.pipeline.PipelineConnectionRef;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -70,5 +72,36 @@ class PipelineCanvasOperationsTest {
         assertThatThrownBy(() -> ops.render(canvas))
                 .isInstanceOf(CloudPlatformException.class)
                 .hasMessageContaining("nope");
+    }
+
+    // ---- 带镜像节点的画布：连接是渲染的必需品（2026-10-15 的回归）----
+
+    @Test
+    void anImageNodeRendersOnceItsConnectionIsSupplied() {
+        // ⭐ 回归：目标镜像地址 = 连接 endpoint + 仓库路径 + tag —— 没有连接就没有地址。
+        //    预览/保存那条路径当初**不带连接**，于是「保存一条含构建节点的流水线」必然报
+        //    「目标仓库连接不存在或未授权在流水线里使用」。修法就是这条路径也把连接交上去
+        //    （endpoint-only，不含凭据内容）。
+        String canvas = """
+                {"nodes":[{"id":"build","type":"image","config":{"registryConnectionId":"reg-1",
+                  "imageName":"proj/app","tagSource":"fixed","fixedTag":"v1"}}],"edges":[]}""";
+
+        String yaml = ops.renderYaml(canvas,
+                Map.of("reg-1", new PipelineConnectionRef("reg-1", "harbor.example.com", null, null)));
+
+        // 断言到「地址拼出来了」为止：tag 那一段被 shellQuote 成了 'v1'（引号是为了防注入）
+        assertThat(yaml).contains("harbor.example.com/proj/app").contains("buildah push");
+    }
+
+    @Test
+    void anImageNodeStillRefusesToRenderWithoutItsConnection() {
+        // 没连接就**拒渲染**这条行为没变：宁可不出来，也不产出一个必然失败的镜像引用
+        String canvas = """
+                {"nodes":[{"id":"build","type":"image","config":{"registryConnectionId":"reg-1",
+                  "imageName":"proj/app"}}],"edges":[]}""";
+
+        assertThatThrownBy(() -> ops.renderYaml(canvas))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("未授权");
     }
 }

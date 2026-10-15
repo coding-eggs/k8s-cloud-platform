@@ -105,9 +105,12 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
      * （带环、未知节点类型都会在这里抛业务异常 —— 规则只有一份，不重复实现）。
      */
     @PostMapping("/render")
-    @Operation(summary = "把画布渲染成 Tekton YAML（预览；同时是保存时的画布校验入口）")
+    @Operation(summary = "把画布渲染成 Tekton YAML（预览；同时是保存时的画布校验入口）",
+            description = "可以带上本次可用的连接 —— **带镜像节点的画布离开连接就渲染不出来**"
+                    + "（目标地址 = 连接 endpoint + 仓库路径 + tag）。连接以 endpoint 参与，不含凭据内容")
     public ResponseData<String> render(@RequestBody PipelineCanvasRequest request) {
-        return new ResponseData<>(canvasOps.renderYaml(request.canvasJson()));
+        return new ResponseData<>(
+                canvasOps.renderYaml(request.canvasJson(), PipelineCanvasOperations.byId(request.connections())));
     }
 
     /**
