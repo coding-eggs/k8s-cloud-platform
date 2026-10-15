@@ -81,12 +81,10 @@ const flowNodes = computed(() => nodes.value as unknown as Node[])
 const flowEdgesBound = computed(() => edges.value as unknown as Edge[])
 const selected = ref<string>('')
 /**
- * 选中的**连线**。与节点选中互斥 —— 工具栏那个按钮只删"当前选中的那个东西"，
- * 两边都算选中只会让人猜它要删谁。
+ * 选中的**连线**。与节点选中互斥（节点选中归属性面板用）。
  *
- * ⚠️ 为什么需要它：Vue Flow 内置的删除是「选中 + Backspace/Delete」，界面上**没有任何地方
- * 说过这件事**；而看得见的「删除节点」按钮当时只认节点选中 → 用户点线、再点按钮 = 什么也没发生，
- * 看起来就像"连线不能删"（2026-10-16 用户报的）。
+ * <p>留它的理由**不是**给某个按钮用（删节点/删连线已经收进右键菜单了），而是：选中本身是可见反馈，
+ * 且 Vue Flow 内置的「选中 + Delete」那条键盘路需要它 —— 界面上靠下面那句提示说出来。
  */
 const selectedEdge = ref('')
 const gitConnections = ref<PipelineConnection[]>([])
@@ -504,9 +502,6 @@ async function removePipeline() {
       <el-input v-model="form.description" placeholder="描述（可选）" style="width: 260px" />
       <span class="loc">{{ form.clusterId }} / {{ form.namespace }}</span>
       <div class="spacer" />
-      <el-button :disabled="!selected && !selectedEdge" @click="removeSelected">
-        {{ selectedEdge ? '删除连线' : '删除节点' }}
-      </el-button>
       <el-button @click="doPreview">预览 YAML</el-button>
       <el-button v-if="canManage" :loading="saving" @click="save()">保存</el-button>
       <el-button v-if="canRun" type="primary" :disabled="capAvailable === false" @click="run">
@@ -521,7 +516,7 @@ async function removePipeline() {
     </div>
 
     <div v-if="selectedEdge" class="hint">
-      已选中一条连线 —— 按 <b>Delete</b> 或点上面的「删除连线」把它删掉
+      已选中一条连线 —— 按 <b>Delete</b> 删掉它，或在它上面右键
     </div>
     <div v-if="concurrentHint" class="hint">{{ concurrentHint }}</div>
 
@@ -549,12 +544,7 @@ async function removePipeline() {
           @pane-context-menu="onPaneMenu"
         >
           <template #node-pipeline="nodeProps">
-            <PipelineNodeVue
-              :id="nodeProps.id"
-              :data="nodeProps.data"
-              show-add
-              @add="(t: string) => insertAfter(nodeProps.id, t)"
-            />
+            <PipelineNodeVue :id="nodeProps.id" :data="nodeProps.data" />
           </template>
 
           <Background :gap="18" :size="1.4" pattern-color="var(--border-strong)" />

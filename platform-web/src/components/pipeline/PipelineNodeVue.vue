@@ -19,8 +19,6 @@ import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 
 const props = defineProps<{
   id: string
-  /** 编辑态才显示「从这里接下一个节点」的 + 按钮（运行视图是只读的） */
-  showAdd?: boolean
   data: {
     nodeType: string
     /** 用户起的显示名（可空）—— 空就退回显示 id */
@@ -31,9 +29,7 @@ const props = defineProps<{
   }
 }>()
 
-const emit = defineEmits<{ (e: 'add', type: string): void }>()
-
-const { types, byType, labelOf, iconOf, accentOf, summaryOf } = usePipelineNodeTypes()
+const { byType, labelOf, iconOf, accentOf, summaryOf } = usePipelineNodeTypes()
 
 const icon = computed(() => iconOf(props.data.nodeType))
 const accent = computed(() => accentOf(props.data.nodeType))
@@ -81,24 +77,6 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
     <div v-if="statusText" class="pnode-status">{{ statusText }}</div>
 
     <Handle type="source" :position="Position.Right" class="pnode-port" />
-
-    <!-- 编辑态：悬停时在右侧露出一个 +，从这里接下一个节点（不用回左边面板再拖一次） -->
-    <el-dropdown
-      v-if="showAdd"
-      trigger="click"
-      placement="right-start"
-      @command="(t: string) => emit('add', t)"
-      @click.stop
-    >
-      <button class="pnode-add" title="接一个下游节点" @click.stop>+</button>
-      <template #dropdown>
-        <el-dropdown-menu>
-          <el-dropdown-item v-for="t in types" :key="t.type" :command="t.type">
-            {{ labelOf(t.type) }}
-          </el-dropdown-item>
-        </el-dropdown-menu>
-      </template>
-    </el-dropdown>
   </div>
 </template>
 
@@ -221,32 +199,6 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
 .pnode.running .pnode-status {
   color: var(--info);
   border-color: var(--info);
-}
-
-.pnode-add {
-  position: absolute;
-  right: -11px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text-2);
-  font-size: 14px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, border-color 0.15s, color 0.15s;
-}
-.pnode:hover .pnode-add {
-  opacity: 1;
-}
-.pnode-add:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* 连接点：小圆点，悬停时放大 */
