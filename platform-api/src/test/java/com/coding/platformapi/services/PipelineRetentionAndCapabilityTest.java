@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
 import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
+import com.coding.common.models.pipeline.TektonSchedulingDTO;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
@@ -126,6 +127,7 @@ class PipelineRetentionAndCapabilityTest {
         //    页面本来就为后者发一次请求 —— 分成两个端点只是多一次往返、多一条权限行
         when(clusterCapability.hasTekton("c1")).thenReturn(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
+        when(k8s.tektonScheduling("c1")).thenReturn(new TektonSchedulingDTO("pipelineruns", true));
         when(k8s.cacheStatus("c1", "t1", "ns1")).thenReturn(new PipelineCacheStatusDTO(
                 true, true, "platform-pipeline-cache", "10Gi", null));
 
@@ -134,6 +136,27 @@ class PipelineRetentionAndCapabilityTest {
         assertThat(c.available()).isTrue();
         assertThat(c.cache().ready()).isTrue();
         assertThat(c.cache().capacity()).isEqualTo("10Gi");
+        assertThat(c.cache().prerequisiteOk()).as("集群前提那一行也要回").isTrue();
+        assertThat(c.cache().prerequisite()).contains("pipelineruns");
+    }
+
+    @Test
+    void aClusterWithoutCoschedulePipelinerunsReportsTheCacheAsUnusable() {
+        // ⭐ 「卷好好地在那儿却用不了」—— 最容易让人以为平台坏了的那种形态。
+        //    所以 exists 照实回 true、ready 为 false、并在前提那一行说清是配置的问题
+        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
+        when(k8s.tektonScheduling("c1")).thenReturn(new TektonSchedulingDTO("workspaces", false));
+        when(k8s.cacheStatus("c1", "t1", "ns1")).thenReturn(new PipelineCacheStatusDTO(
+                true, true, "platform-pipeline-cache", "10Gi", null));
+
+        var c = capability.available("c1", "t1", "ns1");
+
+        assertThat(c.available()).as("CI 照样能跑").isTrue();
+        assertThat(c.cache().ready()).as("缓存用不了").isFalse();
+        assertThat(c.cache().exists()).as("但卷是在的 —— 别谎报成没有").isTrue();
+        assertThat(c.cache().prerequisiteOk()).isFalse();
+        assertThat(c.cache().reason()).contains("pipelineruns");
     }
 
     @Test
@@ -142,6 +165,7 @@ class PipelineRetentionAndCapabilityTest {
         //    所以探不到只是不回那一段（前端显示「—」），绝不把 available 按下去
         when(clusterCapability.hasTekton("c1")).thenReturn(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
+        when(k8s.tektonScheduling(anyString())).thenReturn(new TektonSchedulingDTO("pipelineruns", true));
         when(k8s.cacheStatus(anyString(), any(), anyString()))
                 .thenThrow(new RuntimeException("cluster down"));
 

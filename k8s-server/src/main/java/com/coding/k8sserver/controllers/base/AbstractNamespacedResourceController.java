@@ -125,6 +125,7 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
                                   @RequestParam String clusterId,
                                   @RequestBody T body) {
         AccessContext ctx = resolve(tenantId, clusterId, body.getNamespace());
+        beforeCreate(body, clusterId);
         T item = ops(ctx, clusterId).create(body);
         stamp(item, clusterId, body.getNamespace(), ctx.tenantId());
         afterCreate(item, clusterId);
@@ -140,6 +141,18 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
      * 所以给一个显式的钩子比让子类去覆写带注解的方法干净。
      */
     protected void afterCreate(T item, String clusterId) {
+    }
+
+    /**
+     * 创建**之前**的钩子，默认什么都不做。
+     *
+     * <p>为什么是钩子而不是让子类覆写 {@code create}：{@link #afterCreate} 上面那条同理 ——
+     * 覆写带注解的方法会形成两个候选映射。
+     *
+     * <p>用途：把**集群级事实**先补进请求体。那种读只能用 admin 凭据，而租户自管轨创建时
+     * 用的是租户 SA（读了也是 Forbidden）—— 所以在入口问清楚，再交给 ops 用。
+     */
+    protected void beforeCreate(T body, String clusterId) {
     }
 
     @PutMapping("/{name}")

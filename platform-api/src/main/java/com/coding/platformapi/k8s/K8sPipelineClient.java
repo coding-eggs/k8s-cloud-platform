@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
+import com.coding.common.models.pipeline.TektonSchedulingDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
@@ -152,6 +153,19 @@ public class K8sPipelineClient {
         params.put("namespace", namespace);
         gateway.exchange(HttpMethod.POST, "/pipelineruns/" + name + "/cancel", params, null,
                 gateway.responseType(Void.class));
+    }
+
+    /**
+     * 这个集群的 Tekton 调度配置（{@code coschedule}）—— 构建缓存的**前提**。
+     *
+     * <p>⚠️ 与 StorageClass 那条同类：**租户 SA 读不到** {@code tekton-pipelines} 里的配置，
+     * 所以走 k8s-server 的 UPSTREAM 窄投影（它用 admin 凭据读，并缓存 60s）。
+     */
+    public TektonSchedulingDTO tektonScheduling(String clusterId) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("clusterId", clusterId);
+        return gateway.exchange(HttpMethod.POST, "/tekton/coschedule", params, null,
+                gateway.responseType(TektonSchedulingDTO.class));
     }
 
     /**

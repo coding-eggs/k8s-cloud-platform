@@ -1,6 +1,7 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
+import com.coding.common.models.pipeline.TektonSchedulingDTO;
 import com.coding.platformapi.k8s.K8sPipelineClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -74,11 +75,42 @@ public class PipelineCapabilityService {
             return null;
         }
         try {
-            return k8s.cacheStatus(clusterId, tenantId, namespace);
+            // 两件事分开问：卷的状态在 k8s-server 里（它是卷的主人），集群前提是另一个窄投影
+            return withPrerequisite(k8s.cacheStatus(clusterId, tenantId, namespace),
+                    k8s.tektonScheduling(clusterId));
         } catch (Exception e) {
             log.warn("探测集群 {} 的命名空间 {} 的构建缓存失败（只影响缓存那一行）", clusterId, namespace, e);
             return null;
         }
+    }
+
+    /**
+     * 把「集群前提」那一段拼上。
+     *
+     * <p>⚠️ 前提不满足时**缓存一定用不了，哪怕那块卷好好地在那儿** —— 这种"卷没问题却用不了"的
+     * 形态最容易让人以为平台坏了，所以两件事分开报（{@code exists} 照实回 true，{@code ready} 为 false）。
+     */
+    static PipelineCacheStatusDTO withPrerequisite(PipelineCacheStatusDTO pvc, TektonSchedulingDTO sched) {
+        if (sched == null) {
+            // 没探到 ≠ 探到了"没开" —— 前者是我们这边没拿到事实，别编一个值出来
+            return new PipelineCacheStatusDTO(false, pvc.exists(), pvc.claimName(), pvc.capacity(),
+                    "没探到集群的 Tekton 调度配置，按不支持处理（构建缓存不会启用）",
+                    "Tekton coschedule = 未知", false);
+        }
+        boolean ok = sched.multiPvcWorkspacesAllowed();
+        String value = sched.coschedule();
+        String prerequisite = ok
+                ? "Tekton coschedule = " + value
+                : "Tekton coschedule = " + value + " —— 一个 TaskRun 挂不了两块 PVC workspace";
+        if (!ok) {
+            return new PipelineCacheStatusDTO(false, pvc.exists(), pvc.claimName(), pvc.capacity(),
+                    "集群的 Tekton 没开 coschedule=pipelineruns，所以构建缓存启用不了"
+                            + "（运行会自动退化成不共享，照样能跑）。这是集群侧配置，"
+                            + "要让集群属主改 feature-flags",
+                    prerequisite, false);
+        }
+        return new PipelineCacheStatusDTO(pvc.ready(), pvc.exists(), pvc.claimName(), pvc.capacity(),
+                pvc.reason(), prerequisite, true);
     }
 
     /**

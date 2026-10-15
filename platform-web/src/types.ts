@@ -1824,6 +1824,10 @@ export interface PipelineCacheStatus {
   capacity: string
   /** ready=false 时的一句人话 */
   reason?: string | null
+  /** 集群前提那句话说清实际值，例如「Tekton coschedule = pipelineruns」 */
+  prerequisite?: string | null
+  /** 前提满足吗。不满足时 ready 一定为 false，但卷可能好好地在那儿 —— 两件事分开显示 */
+  prerequisiteOk?: boolean
 }
 
 /** 一次运行里一个节点**现在**的落点（k8s-server 解析的 Tekton run → TaskRun → Pod）。 */

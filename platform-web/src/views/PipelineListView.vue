@@ -231,6 +231,13 @@ function onCommand(cmd: string, row: Pipeline): void {
       <div v-if="cacheStatus" class="cache-row">
         <span class="cache-key">卷名</span><span class="mono">{{ cacheStatus.claimName }}</span>
       </div>
+      <!-- 集群前提与卷的状态**分开显示**：「卷没问题却用不了」最容易让人以为平台坏了 -->
+      <div v-if="cacheStatus?.prerequisite" class="cache-row">
+        <span class="cache-key">集群前提</span>
+        <el-tag :type="cacheStatus.prerequisiteOk ? 'success' : 'warning'" size="small">
+          {{ cacheStatus.prerequisite }}
+        </el-tag>
+      </div>
       <div v-if="cacheStatus && !cacheStatus.ready && cacheStatus.reason" class="cache-why">
         {{ cacheStatus.reason }}
       </div>

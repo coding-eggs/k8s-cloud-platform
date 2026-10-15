@@ -55,6 +55,9 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
     /** 终结/取消时「抓快照 → 落库 → 删对象」的唯一编排点。 */
     private final PipelineRunFinisher finisher;
 
+    /** 构建缓存的前提（Tekton 的 coschedule）——**只能用 admin 凭据读**，所以在这个入口问。 */
+    private final com.coding.k8sserver.pipeline.TektonSchedulingProbe scheduling;
+
     @org.springframework.beans.factory.annotation.Value("${platform.pipeline.log.max-bytes:1048576}")
     private int maxLogBytes;
 
@@ -62,11 +65,13 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
                                  ResourceAccessResolver accessResolver,
                                  PipelineCanvasOperations canvasOps,
                                  PipelineRunWatchManager watch,
-                                 PipelineRunFinisher finisher) {
+                                 PipelineRunFinisher finisher,
+                                 com.coding.k8sserver.pipeline.TektonSchedulingProbe scheduling) {
         super(operationsFactory, accessResolver);
         this.canvasOps = canvasOps;
         this.watch = watch;
         this.finisher = finisher;
+        this.scheduling = scheduling;
     }
 
     /**
@@ -75,6 +80,21 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
      * <p>那一刻起集群里有一个在跑的对象，而这个对象结束时必须被归档并删掉；
      * 没人盯着的话它就会一直留着（连同跑完的 Completed Pod）。
      */
+    /**
+     * 建之前把**集群级事实**补进请求体：这个集群的 Tekton 允不允许一个 TaskRun 挂两块
+     * PVC 类 workspace。不允许时不挂缓存卷（退化成这次运行自己的空目录）——
+     * 因为真挂两块会让 Tekton 直接判运行失败，而"没有缓存"只是慢。
+     *
+     * <p>⚠️ 只能在这里问：那个配置在 {@code tekton-pipelines} 命名空间，**租户 SA 读不到**，
+     * 而租户自管轨创建时用的正是租户 SA。探针用 admin 凭据并缓存 60s。
+     */
+    @Override
+    protected void beforeCreate(PipelineRunDTO body, String clusterId) {
+        if (body != null) {
+            body.setCacheWorkspaceAllowed(scheduling.allowsMultiplePvcWorkspaces(clusterId));
+        }
+    }
+
     @Override
     protected void afterCreate(PipelineRunDTO item, String clusterId) {
         if (item == null || item.getName() == null) {

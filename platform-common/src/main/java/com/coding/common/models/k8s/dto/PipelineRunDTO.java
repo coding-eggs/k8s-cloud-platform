@@ -33,6 +33,20 @@ public class PipelineRunDTO extends BaseResources {
     @Schema(description = "画布里引用到的连接（含凭据）。仅 create 时传")
     private java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections;
 
+    /**
+     * 这个集群的 Tekton 允不允许一个 TaskRun 挂两块 PVC 类 workspace
+     * （{@code coschedule=pipelineruns}；见 {@code docs/development/cluster-prerequisites.md}）。
+     *
+     * <p>⚠️ <b>由 k8s-server 的创建入口填</b>（{@code PipelineRunController.beforeCreate} 里探）：
+     * 读那个配置要 admin 凭据（配置在 {@code tekton-pipelines} 命名空间，租户 SA 读不到），
+     * 而租户自管轨创建用的是租户 SA。
+     *
+     * <p>⚠️ 默认 false = **fail-closed**：拿不到这个事实就不给缓存挂 PVC（退化成这次运行自己的
+     * 空目录，照样能跑），因为在真的不支持多 workspace 的集群上挂两块会让**运行直接判失败**。
+     */
+    @Schema(description = "是否允许给构建缓存挂 PVC（k8s-server 创建入口填；false = 退化空目录）")
+    private boolean cacheWorkspaceAllowed;
+
     /** 平台的流水线 id —— 用于运行历史列表按流水线过滤 */
     @Schema(description = "平台侧流水线 id")
     private String pipelineId;

@@ -353,7 +353,10 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         //    确认真用到了缓存 workspace 才去碰集群里那块卷 —— 不用的运行连一次 GET 都不发。
         PipelineRun pr = buildRun(dto, null);
         if (declaresCache(pr)) {
-            pr = buildRun(dto, ensureCachePvc(dto.getNamespace()));
+            // ⚠️ 先看**集群前提**：coschedule 不是 pipelineruns 时，一个 TaskRun 挂不了两块
+            //    PVC workspace（Tekton 会直接判失败）—— 那时只能退化成空目录。
+            //    这个事实由入口（controller）用 admin 凭据探好放进 dto，见 beforeCreate。
+            pr = buildRun(dto, dto.isCacheWorkspaceAllowed() ? ensureCachePvc(dto.getNamespace()) : null);
         }
         PipelineRun created;
         try {
