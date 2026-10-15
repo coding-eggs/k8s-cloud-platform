@@ -243,7 +243,7 @@ onMounted(load)
           <span v-else class="dim">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="上次验证" min-width="200">
+      <el-table-column label="上次验证" min-width="150">
         <template #default="{ row }">
           <span v-if="row.lastVerifyError" class="err">{{ row.lastVerifyError }}</span>
           <span v-else-if="row.lastVerifiedAt">通过（{{ fmtDate(row.lastVerifiedAt) }}）</span>
@@ -257,7 +257,7 @@ onMounted(load)
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="流水线可用" width="110">
+      <el-table-column label="流水线可用" width="140">
         <template #default="{ row }">
           <el-tag v-if="row.usableByPipelines === 1" type="warning" size="small">可用于流水线</el-tag>
           <span v-else>—</span>
