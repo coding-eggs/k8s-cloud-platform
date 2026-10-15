@@ -19,6 +19,11 @@ import org.springframework.stereotype.Service;
  * <p>⚠️ 门控的意义是**整块不可用而不是报 500**：前端拿这个结果把「运行」按下去并说明原因
  * （部署后待验清单第一条）。所以它回的是「能不能用 + 为什么不能」，不是一个布尔。
  *
+ * <p>⚠️ <b>这里探的只是「有没有」；集群侧还有两类**探不到**的前提</b>（Tekton 的
+ * {@code coschedule} 是否为 {@code pipelineruns}、配额要求的默认容器资源）——
+ * 它们在纳管集群时由人核对，清单见 {@code docs/development/cluster-prerequisites.md}。
+ * 缺了不会让整块 CI 不可用，而是让**构建缓存失效**或让运行一秒内失败且没有日志。
+ *
  * <p>⚠️ 两个前提的**数据来源不同**：Tekton 那个读平台侧的 capability 快照（不打集群）；
  * StorageClass 那个是**活探测**，走 k8s-server 的窄投影端点 —— 通用端点的边界是平台管理员专属，
  * 而流水线是租户在用的（原因见 {@link #hasDynamicStorageClass}）。

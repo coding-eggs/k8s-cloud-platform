@@ -565,6 +565,12 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **超时判定** | 只读活动 watch 的台账、**不打集群**（断言没有出站调用）；未达时限不动；已达 → 走取消那条路且状态记 `TIMEOUT` |
 | **保留** | 90 天前的 run 与其日志行**一起**被删；89 天的两条都还在 |
 
+> ⚠️ **集群侧还有两类前提，代码探不到、验收时要人核**：Tekton 的 `coschedule` 是否为
+> `pipelineruns`（构建缓存的硬前提：`workspaces` 下一个 TaskRun 不允许挂两个 PVC workspace）、
+> 以及配额要求 requests/limits 时 Tekton 的 `default-container-resource-requirements`。
+> 清单与核对命令见 [`docs/development/cluster-prerequisites.md`](../../development/cluster-prerequisites.md)。
+> 缺了不会让 CI 整块不可用，而是让**缓存静默失效**或让运行**一秒内失败且没有日志**。
+
 ---
 
 ## 10. 有意不做 / 已知缺口（**显式记录，勿当新问题上报**）
