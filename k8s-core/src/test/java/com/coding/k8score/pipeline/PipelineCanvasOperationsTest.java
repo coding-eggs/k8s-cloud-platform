@@ -86,6 +86,30 @@ class PipelineCanvasOperationsTest {
     }
 
     @Test
+    void theSharedWorkspaceIsMountedAtSlashWorkspaceNotAtItsDefault() {
+        // ⭐ 第三次真跑（2026-10-15）：git 节点报
+        //    fatal: destination path '.' already exists and is not an empty directory.
+        //    真因不在 git —— Pod 的 volumeMounts 是：
+        //      /workspace/ws   ← 我们的共享 workspace（**没写 mountPath 时 Tekton 的默认值**）
+        //      /workspace      ← Tekton 自己的空目录（tekton-internal-workspace）
+        //    三个后果：① /workspace 不为空 → clone 拒；② 克隆与 .git-sha 全落进那个空目录，
+        //    **根本没进 PVC** → 节点之间零共享（「共享 workspace」整个没生效）；
+        //    ③ 下游构建节点读 /workspace/.git-sha 必然扑空。
+        //    所以这个挂载点必须**显式**写出来，不能依赖默认值。
+        String canvas = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git",
+                   "connectionId":"git-1"}}],"edges":[]}""";
+
+        String yaml = ops.renderYaml(canvas, Map.of(
+                "git-1", new PipelineConnectionRef("git-1", "https://g", null, null)));
+
+        assertThat(maps(taskSpecOfFirstTask(yaml).get("workspaces")))
+                .as("渲染出来的 YAML：\n%s", yaml)
+                .extracting(w -> w.get("mountPath"))
+                .containsExactly("/workspace", "/creds");
+    }
+
+    @Test
     void everyTaskBindsItsWorkspacesNotJustDeclaresThem() {
         // ⭐ 第二次真跑的失败（集群 events 里抓到的原话）：
         //    Warning Failed taskrun/…-git-quo31

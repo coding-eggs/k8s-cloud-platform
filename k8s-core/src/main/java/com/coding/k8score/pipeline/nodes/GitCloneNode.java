@@ -17,9 +17,12 @@ import java.util.List;
 public class GitCloneNode implements PipelineNode {
 
     /**
-     * 隐式共享 workspace 的挂载点。**它与 Tekton 的默认值对齐** ——
-     * 渲染器只给 {@code WorkspaceDeclaration} 设了 name、没设 mountPath，Tekton 就挂到这里。
-     * 改这个名字要同时改渲染器里的 mountPath，否则节点的工作目录会指向一个不存在的路径。
+     * 隐式共享 workspace 的挂载点。
+     *
+     * <p>⚠️ 这个路径**不是 Tekton 的默认值** —— 默认值是 {@code /workspace/<workspace 名>}
+     * （旁边还站着 Tekton 自己的 {@code /workspace} 空目录）。是 {@code PipelineRenderer}
+     * 在 task 的 workspace 声明里**显式**写了 {@code mountPath}，才让本节点的工作目录成立。
+     * 改这里必须同时改那个常量，否则节点写的东西会落到一个没人共享的地方（2026-10-15 真撞到）。
      */
     static final String WS = "/workspace";
 

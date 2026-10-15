@@ -41,6 +41,17 @@ public final class PipelineRenderer {
     public static final String CREDS_WORKSPACE = "creds";
     public static final String CREDS_MOUNT = "/creds";
 
+    /**
+     * 隐式共享 workspace 的挂载点。**必须显式声明**（见 {@link #declaration} 的调用点）。
+     *
+     * <p>⚠️ Tekton 对**没写 {@code mountPath}** 的 workspace 默认挂到 {@code /workspace/<workspace 名>}
+     * （{@code pkg/pod/pod.go} 里 {@code filepath.Join(workspaceDir, ws.Name)}），而 {@code /workspace}
+     * 本身站的是 Tekton 自己的空目录（{@code tekton-internal-workspace}）。真撞到过（2026-10-15）：
+     * git 节点写的东西全落进那个空目录、**根本没进 PVC** —— 名为"共享 workspace"，
+     * 实际下游一个字节都看不到，且 {@code git clone} 会因为目录非空直接失败。
+     */
+    public static final String WORKSPACE_MOUNT = "/workspace";
+
     private final PipelineNodeRegistry nodes;
 
     public PipelineRenderer(PipelineNodeRegistry nodes) {
@@ -102,9 +113,10 @@ public final class PipelineRenderer {
             // 集群的 admission webhook 会拒：missing field(s): ...taskSpec.steps（2026-10-15 线上回归）。
             EmbeddedTask taskSpec = new EmbeddedTask();
             taskSpec.setSteps(rendered.steps());
-            // 隐式共享 workspace：每个 task 都挂上，用户不用管
+            // 隐式共享 workspace：每个 task 都挂上，用户不用管。
+            // ⚠️ 挂载点**显式写死**成 /workspace（Tekton 的默认值是 /workspace/<名字>，见 WORKSPACE_MOUNT）
             List<WorkspaceDeclaration> ws = new ArrayList<>();
-            ws.add(declaration(workspaceClaimName, null));
+            ws.add(declaration(workspaceClaimName, WORKSPACE_MOUNT));
             for (String extra : rendered.extraWorkspaces()) {
                 ws.add(declaration(extra, CREDS_MOUNT));
             }
