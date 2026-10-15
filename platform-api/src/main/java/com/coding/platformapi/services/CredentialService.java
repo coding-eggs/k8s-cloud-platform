@@ -404,6 +404,21 @@ public class CredentialService {
         }
     }
 
+    /**
+     * 解析一条连接，给「触发一次运行」用：**先校授权、再解密**，一次拿到 endpoint 与凭据。
+     *
+     * <p>⚠️ 返回值里带明文凭据，调用方只许把它交给 k8s-server 去建 Secret ——
+     * 绝不进渲染结果（预览页会把渲染结果原样给用户看），也不进日志。
+     */
+    public com.coding.common.models.pipeline.PipelineConnectionRef resolveForPipeline(String id,
+                                                                                       String expectedType) {
+        assertUsableByPipelines(id, expectedType);
+        PlatformCredential c = mapper.selectById(id);
+        CredentialSecret secret = resolveSecret(id);
+        return new com.coding.common.models.pipeline.PipelineConnectionRef(
+                c.getId(), c.getEndpoint(), secret.getUsername(), secret.getSecret());
+    }
+
     /** 窄投影：只有身份与地址，**没有认证方式的任何痕迹**。 */
     public record ConnectionView(String id, String name, String endpoint) {
     }

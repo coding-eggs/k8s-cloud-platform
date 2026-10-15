@@ -6,11 +6,15 @@ import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.k8score.converter.impl.pipeline.PipelineRunConverter;
 import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.pipeline.PipelineCanvasOperations;
+import com.coding.k8score.pipeline.PipelineRenderer;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimSpec;
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.SecretVolumeSource;
 import io.fabric8.kubernetes.api.model.VolumeResourceRequirements;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.Watch;
@@ -23,6 +27,7 @@ import io.fabric8.tekton.v1.StepState;
 import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.PipelineRunStatus;
 import io.fabric8.tekton.v1.TaskRunStatus;
+import com.coding.common.models.pipeline.PipelineConnectionRef;
 import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import io.fabric8.tekton.v1.PipelineSpec;
@@ -66,6 +71,14 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      * 用完即删（PipelineRun 被归档删除时级联）。
      */
     static final String WORKSPACE_STORAGE = "1Gi";
+
+    /**
+     * 存本次运行凭据的那个 Secret 的名字。**由 k8s-server 在创建 PipelineRun 之前建好** ——
+     * 两边必须算出同一个名字，所以它是这里的一个常量式方法，不是两处各自的拼接。
+     */
+    public static String credsSecretName(String runName) {
+        return "platform-pipeline-creds-" + runName;
+    }
 
     private final KubernetesClient client;
     private final PipelineRunConverter converter;
@@ -171,6 +184,10 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
             throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
                     "创建流水线运行必须带画布");
         }
+        // ① 先把凭据建成 Secret（有连接才建）—— Pod 起来时要读得到它
+        ensureCredsSecret(dto);
+
+        // ② 再建 PipelineRun
         PipelineRun created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
                 .resource(buildRun(dto)).create();
         return converter.toDto(created);
@@ -190,7 +207,15 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      * 「git 克隆的源码给下游所有节点用」（spec §3.3）。
      */
     PipelineRun buildRun(PipelineRunDTO dto) {
-        PipelineSpec spec = canvasOps.render(dto.getPipelineCanvasJson());
+        // ⚠️ 带上本次运行的连接：镜像节点要靠连接的 endpoint 拼目标地址，
+        //    解析不出连接它就**拒渲染**（宁可不出来，也不产出必然失败的脚本）。
+        Map<String, PipelineConnectionRef> byId = new java.util.LinkedHashMap<>();
+        if (dto.getConnections() != null) {
+            for (PipelineConnectionRef c : dto.getConnections()) {
+                byId.put(c.id(), c);
+            }
+        }
+        PipelineSpec spec = canvasOps.render(dto.getPipelineCanvasJson(), byId);
 
         PipelineRun pr = new PipelineRun();
         // ⚠️ tekton-model 不初始化 metadata —— 不先 setMetadata 就 NPE
@@ -201,15 +226,94 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
 
         PipelineRunSpec runSpec = new PipelineRunSpec();
         runSpec.setPipelineSpec(spec);
-        runSpec.setWorkspaces(bindWorkspaces(spec));
+        runSpec.setWorkspaces(bindWorkspaces(spec, dto.getName()));
         // ⚠️ 有意**不设** spec.timeouts —— 超时由平台判定（spec §4.2）。让 Tekton 自己超时
         // 会删掉 Pod，那批运行的日志必然丢失，与「日志进库」直接冲突。
         pr.setSpec(runSpec);
         return pr;
     }
 
-    /** 给 spec 里声明的每个 workspace 配一个 PVC 绑定 —— **一个都不能漏**（见 {@link #buildRun}）。 */
-    private static List<WorkspaceBinding> bindWorkspaces(PipelineSpec spec) {
+    /**
+     * 按本次运行引用到的连接建一个 Secret：`config.json`（推送凭据）+ `git-credentials`（.netrc）。
+     *
+     * <p>⚠️ 凭据**只以文件形式进 Pod**（挂成 workspace），绝不写进 step 的 script ——
+     * 后者会让凭据进 PipelineRun 的 spec，而预览页把渲染结果原样给用户看。
+     *
+     * <p>用 `createOrReplace`：重投 / 重建同一次运行时不会因为「已存在」而失败。
+     */
+    private void ensureCredsSecret(PipelineRunDTO dto) {
+        List<PipelineConnectionRef> conns = dto.getConnections();
+        if (conns == null || conns.isEmpty()) {
+            return;                       // 没引用连接就不建，Pod 里也就没有 creds 这个 workspace
+        }
+        Map<String, String> data = new java.util.HashMap<>();
+        data.put("config.json", dockerConfigJson(conns));
+        String netrc = netrc(conns);
+        if (!netrc.isEmpty()) {
+            data.put("git-credentials", netrc);
+        }
+
+        Map<String, String> encoded = new java.util.LinkedHashMap<>();
+        data.forEach((k, v) -> encoded.put(k, java.util.Base64.getEncoder()
+                .encodeToString(v.getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+
+        Secret secret = new SecretBuilder()
+                .withNewMetadata()
+                .withName(credsSecretName(dto.getName()))
+                .withNamespace(dto.getNamespace())
+                .withLabels(managedLabels(dto.getLabels()))
+                .endMetadata()
+                .withType("Opaque")
+                .addToData(encoded)
+                .build();
+        client.secrets().inNamespace(dto.getNamespace()).resource(secret).createOrReplace();
+    }
+
+    /** docker 的 config.json：`{"auths":{"<host>":{"auth":"base64(user:pass)"}}}` */
+    private static String dockerConfigJson(List<PipelineConnectionRef> conns) {
+        Map<String, Object> auths = new java.util.LinkedHashMap<>();
+        for (PipelineConnectionRef c : conns) {
+            if (c.username() == null || c.secret() == null || c.endpoint() == null) {
+                continue;                 // 匿名连接没有可写的东西
+            }
+            auths.put(hostOf(c.endpoint()), Map.of("auth", java.util.Base64.getEncoder().encodeToString(
+                    (c.username() + ":" + c.secret()).getBytes(java.nio.charset.StandardCharsets.UTF_8))));
+        }
+        return Serialization.asJson(Map.of("auths", auths));
+    }
+
+    /** git 用的 .netrc（每行一个 machine） */
+    private static String netrc(List<PipelineConnectionRef> conns) {
+        StringBuilder out = new StringBuilder();
+        for (PipelineConnectionRef c : conns) {
+            if (c.username() == null || c.secret() == null || c.endpoint() == null) {
+                continue;
+            }
+            out.append("machine ").append(hostOf(c.endpoint()))
+               .append(" login ").append(c.username())
+               .append(" password ").append(c.secret()).append('\n');
+        }
+        return out.toString();
+    }
+
+    /** endpoint → host（可能是 `https://gitlab.example.com`，也可能是裸的 `harbor.example.com`）。 */
+    static String hostOf(String endpoint) {
+        String e = endpoint == null ? "" : endpoint.trim();
+        int scheme = e.indexOf("://");
+        if (scheme >= 0) {
+            e = e.substring(scheme + 3);
+        }
+        int slash = e.indexOf('/');
+        return slash >= 0 ? e.substring(0, slash) : e;
+    }
+
+    /**
+     * 给 spec 里声明的每个 workspace 配绑定 —— **一个都不能漏**（缺了 Tekton 直接拒绝）。
+     *
+     * <p>两种绑定：隐式共享的那个现开一块 PVC；凭据那个**绑到 k8s-server 刚建的 Secret** 上
+     * （凭据以文件形式挂进 Pod，绝不进 spec）。
+     */
+    private static List<WorkspaceBinding> bindWorkspaces(PipelineSpec spec, String runName) {
         if (spec.getWorkspaces() == null || spec.getWorkspaces().isEmpty()) {
             return List.of();
         }
@@ -217,6 +321,14 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         for (PipelineWorkspaceDeclaration decl : spec.getWorkspaces()) {
             WorkspaceBinding b = new WorkspaceBinding();
             b.setName(decl.getName());
+
+            if (PipelineRenderer.CREDS_WORKSPACE.equals(decl.getName())) {
+                SecretVolumeSource secret = new SecretVolumeSource();
+                secret.setSecretName(credsSecretName(runName));
+                b.setSecret(secret);
+                out.add(b);
+                continue;
+            }
 
             VolumeResourceRequirements res = new VolumeResourceRequirements();
             res.setRequests(Map.of("storage", new Quantity(WORKSPACE_STORAGE)));

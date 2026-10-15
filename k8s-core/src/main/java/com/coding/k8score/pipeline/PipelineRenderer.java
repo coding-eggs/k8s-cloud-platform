@@ -2,6 +2,7 @@ package com.coding.k8score.pipeline;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.pipeline.PipelineConnectionRef;
 import io.fabric8.tekton.v1.EmbeddedTask;
 import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.PipelineTask;
@@ -36,6 +37,10 @@ import java.util.Set;
 @Component
 public final class PipelineRenderer {
 
+    /** 挂凭据的 workspace：名字与挂载点与 {@code GitCloneNode} / {@code ImagePushNode} 里的常量成对。 */
+    public static final String CREDS_WORKSPACE = "creds";
+    public static final String CREDS_MOUNT = "/creds";
+
     private final PipelineNodeRegistry nodes;
 
     public PipelineRenderer(PipelineNodeRegistry nodes) {
@@ -46,6 +51,15 @@ public final class PipelineRenderer {
      * @param workspaceClaimName 隐式共享 workspace 的名字。平台注入到**所有**节点，用户不感知
      */
     public PipelineSpec render(PipelineCanvas canvas, String workspaceClaimName) {
+        return render(canvas, workspaceClaimName, Map.of());
+    }
+
+    /**
+     * @param connections 本次运行可用的连接（已授权、已解密），按 id 索引。
+     *                    空 map = 预览/校验路径（**不该拿到凭据**）。
+     */
+    public PipelineSpec render(PipelineCanvas canvas, String workspaceClaimName,
+                               Map<String, PipelineConnectionRef> connections) {
         if (canvas == null || canvas.nodes() == null || canvas.nodes().isEmpty()) {
             throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID, "流水线至少要有一个节点");
         }
@@ -73,17 +87,23 @@ public final class PipelineRenderer {
         rejectCycles(byId.keySet(), edges);
 
         List<PipelineTask> tasks = new ArrayList<>();
+        // 谁要凭据就把它记下来 —— 声明一次，**只在实际用到时才声明**（不用就不建那个 Secret）
+        Set<String> extraWorkspaces = new LinkedHashSet<>();
         for (PipelineCanvas.CanvasNode n : canvas.nodes()) {
             PipelineNode impl = nodes.of(n.type());
-            NodeContext ctx = new NodeContext(n.id(), n.id(), workspaceClaimName, n);
+            NodeContext ctx = new NodeContext(n.id(), n.id(), workspaceClaimName, n, connections);
             RenderedStep rendered = impl.render(ctx);
+            extraWorkspaces.addAll(rendered.extraWorkspaces());
 
             TaskSpec taskSpec = new TaskSpec();
             taskSpec.setSteps(rendered.steps());
             // 隐式共享 workspace：每个 task 都挂上，用户不用管
-            WorkspaceDeclaration wd = new WorkspaceDeclaration();
-            wd.setName(workspaceClaimName);
-            taskSpec.setWorkspaces(List.of(wd));
+            List<WorkspaceDeclaration> ws = new ArrayList<>();
+            ws.add(declaration(workspaceClaimName, null));
+            for (String extra : rendered.extraWorkspaces()) {
+                ws.add(declaration(extra, CREDS_MOUNT));
+            }
+            taskSpec.setWorkspaces(ws);
 
             // ⚠️ PipelineTask.taskSpec 的类型是 **EmbeddedTask** 而不是 TaskSpec ——
             // fabric8 的模型里 EmbeddedTask 是「内联任务」的外壳（它还有 apiVersion/kind/metadata
@@ -101,12 +121,31 @@ public final class PipelineRenderer {
             tasks.add(task);
         }
 
-        PipelineWorkspaceDeclaration ws = new PipelineWorkspaceDeclaration();
-        ws.setName(workspaceClaimName);
+        List<PipelineWorkspaceDeclaration> declared = new ArrayList<>();
+        declared.add(pipelineWorkspace(workspaceClaimName));
+        for (String extra : extraWorkspaces) {
+            declared.add(pipelineWorkspace(extra));
+        }
         PipelineSpec spec = new PipelineSpec();
         spec.setTasks(tasks);
-        spec.setWorkspaces(List.of(ws));
+        spec.setWorkspaces(declared);
         return spec;
+    }
+
+    private static WorkspaceDeclaration declaration(String name, String mountPath) {
+        WorkspaceDeclaration wd = new WorkspaceDeclaration();
+        wd.setName(name);
+        if (mountPath != null) {
+            // 挂载点是**约定**：节点脚本里写死了 /creds/... —— 改这里要同时改那两个节点
+            wd.setMountPath(mountPath);
+        }
+        return wd;
+    }
+
+    private static PipelineWorkspaceDeclaration pipelineWorkspace(String name) {
+        PipelineWorkspaceDeclaration ws = new PipelineWorkspaceDeclaration();
+        ws.setName(name);
+        return ws;
     }
 
     /**

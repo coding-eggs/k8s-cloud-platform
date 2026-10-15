@@ -21,6 +21,8 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 
 /**
@@ -95,8 +97,10 @@ public class PipelineRunService {
      * @return 集群里的 PipelineRun 名（= 归档幂等键）
      */
     public String run(PipelineDTO pipeline, String user, PipelineRunContext ctx) {
-        // ① 画布里每一条被引用的连接都必须被显式授权 —— 绕过前端直接打接口也一样
-        assertConnectionsAuthorized(pipeline.getCanvasJson());
+        // ① 解析画布里引用到的连接：**逐条校授权 + 解密**（绕过前端直接打接口也一样）。
+        //    解密出来的东西只交给 k8s-server 建 Secret，不进任何能被用户看到的地方。
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections =
+                resolveConnections(pipeline.getCanvasJson());
 
         // ② 先生成名字：**幂等键从源头就有**
         String runName = generateRunName(pipeline.getName());
@@ -115,7 +119,7 @@ public class PipelineRunService {
         // ④ 再创建。失败就把刚写的那行撤掉 —— 库里不能留一条 RUNNING 的孤儿
         try {
             k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
-                    runName, pipeline.getCanvasJson());
+                    runName, pipeline.getCanvasJson(), connections);
         } catch (RuntimeException e) {
             log.warn("创建 PipelineRun 失败，回滚刚落的库：{}", runName, e);
             runMapper.deleteById(row.getId());
@@ -231,14 +235,15 @@ public class PipelineRunService {
     // ---- 内部 ----
 
     /**
-     * 逐条问「这条连接被授权了吗」。**明确拒绝，绝不静默降级成"匿名去拉"**（spec §5.3）。
+     * 解析画布引用到的每一条连接。**明确拒绝，绝不静默降级成"匿名去拉"**（spec §5.3）。
      *
      * <p>画布是平台自己的数据（`{nodes:[{id,type,config}]}`），不是 Tekton 的结构 ——
      * 所以在这里读懂它是合适的，与「不碰 fabric8」那条边界无关。
      */
-    private void assertConnectionsAuthorized(String canvasJson) {
+    private List<com.coding.common.models.pipeline.PipelineConnectionRef> resolveConnections(
+            String canvasJson) {
         if (canvasJson == null || canvasJson.isBlank()) {
-            return;
+            return List.of();
         }
         JsonNode canvas;
         try {
@@ -249,18 +254,22 @@ public class PipelineRunService {
         }
         JsonNode nodes = canvas.path("nodes");
         if (!nodes.isArray()) {
-            return;
+            return List.of();
         }
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
         for (JsonNode node : nodes) {
             JsonNode config = node.path("config");
             for (String key : CONNECTION_KEYS) {
                 String id = config.path(key).asString(null);
-                if (id != null && !id.isBlank()) {
-                    credentials.assertUsableByPipelines(id.trim(),
-                            GIT_KEYS.contains(key) ? "GIT" : null);
+                if (id == null || id.isBlank() || !seen.add(id.trim())) {
+                    continue;
                 }
+                out.add(credentials.resolveForPipeline(id.trim(),
+                        GIT_KEYS.contains(key) ? "GIT" : null));
             }
         }
+        return out;
     }
 
     /**

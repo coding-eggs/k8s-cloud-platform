@@ -1,6 +1,10 @@
 package com.coding.k8score.pipeline.nodes;
 
+import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.pipeline.PipelineConnectionRef;
 import com.coding.k8score.pipeline.*;
+import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.tekton.v1.Step;
 import org.springframework.stereotype.Component;
 
@@ -18,9 +22,6 @@ public class ImagePushNode implements PipelineNode {
 
     /** 见 {@link GitCloneNode#WS} —— 与 Tekton 的默认 workspace 挂载点对齐。 */
     static final String WS = "/workspace";
-
-    /** 组装 {@code PipelineRun} 时用它做替换 —— 占位符只有这一处，找得到。 */
-    public static final String IMAGE_REF_PLACEHOLDER = "__IMAGE_REF__";
 
     @Override
     public String type() {
@@ -43,22 +44,56 @@ public class ImagePushNode implements PipelineNode {
 
     @Override
     public RenderedStep render(NodeContext ctx) {
+        // ⚠️ 目标镜像 = <被授权连接的 endpoint>/<仓库路径>:<tag>，而 endpoint 只能从连接来。
+        // 解析不出就**明确拒渲染** —— 宁可这个节点不可用，也不要产出一个必然失败的脚本
+        // （占位符没被替换的 `buildah bud -t __IMAGE_REF__` 是非法镜像引用，一跑就挂）。
+        PipelineConnectionRef registry = ctx.connection(ctx.value("registryConnectionId"));
+        if (registry == null) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "目标仓库连接不存在或未授权在流水线里使用 —— 无法确定镜像地址");
+        }
+        String repo = ctx.value("imageName");
+        if (repo.isEmpty()) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "镜像名（仓库路径）必填，如 proj/app");
+        }
         String dockerfile = ctx.value("dockerfile").isEmpty() ? "Dockerfile" : ctx.value("dockerfile");
         String context = ctx.value("context").isEmpty() ? "." : ctx.value("context");
 
-        // ⚠️ 这里用占位符 IMAGE_REF_PLACEHOLDER，由组装 PipelineRun 的那一层替换成
-        // `endpoint/仓库路径:tag`（那时才知道 git sha 与 run 序号）。
-        // 用占位符而不是 ${...}，是为了让"这不是一门模板语言"这件事在代码里也看得见。
+        String image = GitCloneNode.shellQuote(registry.endpoint() + "/" + repo);
+        String tag = tagExpression(ctx.value("tagSource"), ctx.value("fixedTag"));
+
+        // ⚠️ 两处 Tekton 的坑都在这段里：
+        //   1. shell 的命令替换要写成 $$(...)，否则 Tekton 会当成自己的变量替换并因解析不到而报错；
+        //   2. $(context.pipelineRun.name) 是 Tekton 内建变量，**要它替换**，所以不转义。
         String script = "set -e\n"
-                + "buildah bud -f " + GitCloneNode.shellQuote(dockerfile)
-                + " -t " + IMAGE_REF_PLACEHOLDER + " " + GitCloneNode.shellQuote(context) + "\n"
-                + "buildah push --digestfile " + WS + "/.image-digest " + IMAGE_REF_PLACEHOLDER + "\n";
+                + "IMAGE=" + image + ":$(" + tag + ")\n"
+                + "echo \"目标镜像：$IMAGE\"\n"
+                + "buildah bud -f " + GitCloneNode.shellQuote(dockerfile) + " -t \"$IMAGE\" " + GitCloneNode.shellQuote(context) + "\n"
+                + "buildah push --digestfile " + GitCloneNode.shellQuote(GitCloneNode.WS + "/.image-digest") + " \"$IMAGE\"\n";
 
         Step step = new Step();
         step.setName("build-and-push");
         step.setImage("quay.io/buildah/stable:v1.35");
         step.setWorkingDir(WS);
         step.setScript(script);
-        return new RenderedStep(List.of(step));
+        // 推送凭据以文件形式挂进来（k8s-server 按 platform-api 给的连接建 Secret）——
+        // buildah 认 REGISTRY_AUTH_FILE 这个环境变量
+        step.setEnv(List.of(new EnvVar("REGISTRY_AUTH_FILE",
+                GitCloneNode.CREDS_MOUNT + "/config.json", null)));
+        return new RenderedStep(List.of(step), List.of(GitCloneNode.CREDS_WORKSPACE));
+    }
+
+    /**
+     * tag 的三种来源 —— 都用**运行时**能算出来的形式表达，因为渲染发生在保存/预览那一刻，
+     * 那时还不知道 git sha、也不知道这次的运行名。
+     */
+    private static String tagExpression(String tagSource, String fixedTag) {
+        return switch (tagSource) {
+            case "fixed" -> GitCloneNode.shellQuote(fixedTag.isEmpty() ? "latest" : fixedTag);
+            case "run-id" -> "\"$(context.pipelineRun.name)\"";        // Tekton 内建变量，**不转义**
+            default -> "\"$$(cat " + GitCloneNode.shellQuote(GitCloneNode.GIT_SHA_FILE)
+                    + " 2>/dev/null || echo manual)\"";               // git 短 sha（克隆节点落的）
+        };
     }
 }

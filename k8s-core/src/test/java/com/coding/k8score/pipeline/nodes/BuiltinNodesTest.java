@@ -7,11 +7,21 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BuiltinNodesTest {
 
     private static NodeContext ctx(String type, Map<String, String> config) {
         return new NodeContext("n1", "n1", "ws", new PipelineCanvas.CanvasNode("n1", type, config));
+    }
+
+    /** 带一条已授权连接（渲染时才有 —— 预览路径不带凭据）。 */
+    private static NodeContext ctxWithConnection(String type, Map<String, String> config,
+                                                 String id, String endpoint) {
+        return new NodeContext("n1", "n1", "ws",
+                new PipelineCanvas.CanvasNode("n1", type, config),
+                Map.of(id, new com.coding.common.models.pipeline.PipelineConnectionRef(
+                        id, endpoint, "u", "p")));
     }
 
     @Test
@@ -94,12 +104,54 @@ class BuiltinNodesTest {
     }
 
     @Test
-    void imageNodeRendersABuildahStep() {
-        RenderedStep step = new ImagePushNode().render(ctx("image",
-                Map.of("imageName", "app", "tagSource", "git-sha", "dockerfile", "Dockerfile", "context", ".")));
-        assertThat(step.steps()).hasSize(1);
+    void imageNodeRendersABuildahStepWithTheResolvedImageReference() {
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app",
+                        "tagSource", "git-sha", "dockerfile", "Dockerfile", "context", "."),
+                "reg-1", "harbor.example.com"));
+
+        String script = step.steps().get(0).getScript();
         assertThat(step.steps().get(0).getImage()).contains("buildah");
-        assertThat(step.steps().get(0).getScript()).contains("buildah");
+        assertThat(script).contains("buildah");
+        // 目标地址来自**被授权连接的 endpoint**，不是用户输入 —— 用户只提供仓库路径
+        assertThat(script).contains("harbor.example.com/proj/app");
+        // ⚠️ 再也不该有没被替换的占位符（那会让 buildah 收到一个非法镜像引用，一跑就挂）
+        assertThat(script).doesNotContain("__IMAGE_REF__");
+        // shell 的命令替换必须写成 $$(...)，否则 Tekton 会当自己的变量替换并因解析不到而报错
+        assertThat(script).contains("$$(cat");
+        // 凭据以文件形式挂进来，不是写进脚本
+        assertThat(step.extraWorkspaces()).contains("creds");
+        assertThat(step.steps().get(0).getEnv())
+                .anySatisfy(e -> assertThat(e.getName()).isEqualTo("REGISTRY_AUTH_FILE"));
+    }
+
+    @Test
+    void imageNodeRefusesToRenderWithoutAResolvedConnection() {
+        // ⭐ 宁可这个节点不可用，也不要产出一个必然失败的脚本
+        assertThatThrownBy(() -> new ImagePushNode().render(ctx("image",
+                Map.of("registryConnectionId", "reg-x", "imageName", "app"))))
+                .isInstanceOf(com.coding.common.exception.CloudPlatformException.class)
+                .hasMessageContaining("未授权");
+    }
+
+    @Test
+    void theRunIdTagUsesTektonsBuiltInVariableUnescaped() {
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "app", "tagSource", "run-id"),
+                "reg-1", "harbor.example.com"));
+
+        // $(context.pipelineRun.name) **要** Tekton 替换，所以不能转义成 $$(...)
+        assertThat(step.steps().get(0).getScript()).contains("$(context.pipelineRun.name)");
+    }
+
+    @Test
+    void theGitNodeCapturesTheShortShaAndUsesTheMountedCredentials() {
+        RenderedStep step = new GitCloneNode().render(ctxWithConnection("git",
+                Map.of("connectionId", "git-1", "repo", "https://g/r.git"), "git-1", "https://g"));
+
+        assertThat(step.steps().get(0).getScript()).contains("rev-parse --short HEAD");
+        assertThat(step.steps().get(0).getScript()).contains(".netrc");
+        assertThat(step.extraWorkspaces()).contains("creds");
     }
 
     /**

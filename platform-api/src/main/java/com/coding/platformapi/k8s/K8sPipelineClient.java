@@ -64,13 +64,15 @@ public class K8sPipelineClient {
      * 幂等键从源头就有，也不会出现「集群里有对象、库里没记录」的孤儿。
      */
     public PipelineRunDTO createRun(String clusterId, String tenantId, String namespace,
-                                   String runName, String canvasJson) {
+                                   String runName, String canvasJson,
+                                   java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections) {
         PipelineRunDTO dto = new PipelineRunDTO();
         dto.setClusterId(clusterId);
         dto.setTenantId(tenantId);
         dto.setNamespace(namespace);
         dto.setName(runName);
         dto.setPipelineCanvasJson(canvasJson);
+        dto.setConnections(connections);
         return k8s.create(dto);
     }
 

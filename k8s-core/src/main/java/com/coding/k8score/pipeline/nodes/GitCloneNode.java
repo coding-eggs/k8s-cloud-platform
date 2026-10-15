@@ -45,21 +45,42 @@ public class GitCloneNode implements PipelineNode {
         String repo = ctx.value("repo");
         String revision = ctx.value("revision");
         String dir = ctx.value("dir").isEmpty() ? "." : ctx.value("dir");
+        boolean useCredentials = ctx.connection(ctx.value("connectionId")) != null;
 
         StringBuilder script = new StringBuilder("set -e\n");
+        if (useCredentials) {
+            // ⚠️ 凭据**只以文件形式挂进来**（platform-api 解密后交给 k8s-server 建 Secret），
+            // 绝不写进脚本：那会让凭据进 PipelineRun 的 spec，而预览页把渲染结果原样给用户看。
+            script.append("cp ").append(CREDS_MOUNT).append("/git-credentials \"$HOME/.netrc\"\n");
+            script.append("chmod 600 \"$HOME/.netrc\"\n");
+        }
         script.append("git clone --depth 1 ");
         if (!revision.isEmpty()) {
             script.append("--branch ").append(shellQuote(revision)).append(' ');
         }
         script.append(shellQuote(repo)).append(' ').append(shellQuote(dir)).append('\n');
+        // 把短 sha 落下来给下游拼 tag 用。
+        // ⚠️ shell 的命令替换必须写成 $$(...) —— Tekton 会把未转义的 $(x) 当成**自己的**变量替换，
+        // 解析不到就直接报错（这是 Tekton 脚本最常见的坑）。
+        script.append("git -C ").append(shellQuote(dir))
+              .append(" rev-parse --short HEAD > ").append(shellQuote(GIT_SHA_FILE)).append('\n');
 
         Step step = new Step();
         step.setName("clone");
         step.setImage("alpine/git:2.45.2");
         step.setWorkingDir(WS);
         step.setScript(script.toString());
-        return new RenderedStep(List.of(step));
+        return useCredentials
+                ? new RenderedStep(List.of(step), List.of(CREDS_WORKSPACE))
+                : new RenderedStep(List.of(step));
     }
+
+    /** 挂凭据的那个 workspace 的名字与挂载点 —— 与 {@code PipelineRenderer} 里的声明成对。 */
+    static final String CREDS_WORKSPACE = "creds";
+    static final String CREDS_MOUNT = "/creds";
+
+    /** 克隆出来的短 sha 落在这里，给下游（打镜像节点）拼 tag 用。 */
+    static final String GIT_SHA_FILE = WS + "/.git-sha";
 
     /** 只加单引号并把内部的单引号转义 —— 不引入完整 shell 解析，够用且可预测。 */
     static String shellQuote(String s) {

@@ -1,5 +1,6 @@
 package com.coding.k8score.pipeline;
 
+import com.coding.common.models.pipeline.PipelineConnectionRef;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.tekton.v1.PipelineSpec;
 import lombok.RequiredArgsConstructor;
@@ -7,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 画布相关的动作：**节点元数据**与**渲染**。全是纯函数（无 IO、无集群状态）。
@@ -46,6 +48,17 @@ public class PipelineCanvasOperations {
      */
     public PipelineSpec render(String canvasJson) {
         return renderer.render(PipelineCanvas.fromJson(canvasJson), WORKSPACE);
+    }
+
+    /**
+     * 渲染，并带上本次运行可用的连接（**已授权、已解密**）。
+     *
+     * <p>⚠️ 只有**创建运行**那条路径调这个重载 —— 预览与保存校验用上面那个不带连接的：
+     * 那两种路径产出的东西会给用户看（预览页），不该让凭据参与其中。
+     */
+    public PipelineSpec render(String canvasJson, Map<String, PipelineConnectionRef> connections) {
+        return renderer.render(PipelineCanvas.fromJson(canvasJson), WORKSPACE,
+                connections == null ? Map.of() : connections);
     }
 
     /**

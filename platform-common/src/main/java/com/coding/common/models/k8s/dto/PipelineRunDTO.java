@@ -24,6 +24,15 @@ public class PipelineRunDTO extends BaseResources {
     @Schema(description = "画布 JSON。create 时必填")
     private String pipelineCanvasJson;
 
+    /**
+     * 本次运行可用的连接（**已授权、已解密**）。只有 create 那条路径会带。
+     *
+     * <p>⚠️ 它们是给 k8s-server 建 Secret 用的（凭据以文件形式挂进 Pod），
+     * **绝不进渲染结果** —— 预览页会把渲染结果原样给用户看。
+     */
+    @Schema(description = "画布里引用到的连接（含凭据）。仅 create 时传")
+    private java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections;
+
     /** 平台的流水线 id —— 用于运行历史列表按流水线过滤 */
     @Schema(description = "平台侧流水线 id")
     private String pipelineId;

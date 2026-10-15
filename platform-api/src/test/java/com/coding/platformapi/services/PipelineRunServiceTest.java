@@ -71,21 +71,21 @@ class PipelineRunServiceTest {
     void theRunNameIsGeneratedAndPersistedBeforeTheClusterCall() {
         // ⭐ spec §4.5①：run_name 由平台先生成 → 幂等键从源头就有，
         //    也不会出现「集群里有对象、库里没记录」的孤儿
-        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString()))
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any()))
                 .thenReturn(new PipelineRunDTO());
 
         String runName = svc.run(pipeline(canvas("conn-1")), "alice", ctx);
 
         InOrder inOrder = inOrder(runMapper, k8s);
         inOrder.verify(runMapper).insert(any());                                  // 先落库
-        inOrder.verify(k8s).createRun(anyString(), any(), anyString(), anyString(), anyString());
+        inOrder.verify(k8s).createRun(anyString(), any(), anyString(), anyString(), anyString(), any());
         assertThat(runName).isNotBlank().startsWith("my-app-");
     }
 
     @Test
     void aFailedClusterCreateDoesNotLeaveARunningOrphan() {
         // ⭐ 先落库再创建的代价要在这里堵住
-        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString()))
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any()))
                 .thenThrow(new CloudPlatformException(EnumResponseType.ERROR, "boom"));
 
         assertThatThrownBy(() -> svc.run(pipeline(canvas("conn-1")), "alice", ctx))
@@ -99,7 +99,7 @@ class PipelineRunServiceTest {
         // ⭐ Review Focus #4：绕过前端直接打接口，引用一条没被授权的连接也要被拒
         svc.run(pipeline(canvas("conn-1")), "alice", ctx);
 
-        verify(credentials).assertUsableByPipelines("conn-1", "GIT");
+        verify(credentials).resolveForPipeline("conn-1", "GIT");
     }
 
     @Test
@@ -111,7 +111,7 @@ class PipelineRunServiceTest {
                 .hasMessageContaining("未授权");
 
         verify(runMapper, never()).insert(any());
-        verify(k8s, never()).createRun(anyString(), any(), anyString(), anyString(), anyString());
+        verify(k8s, never()).createRun(anyString(), any(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
@@ -123,7 +123,7 @@ class PipelineRunServiceTest {
         svc.run(pipeline(withImage), "alice", ctx);
 
         // null = 不校验类型：镜像节点只要求「是一条被授权的 registry 连接」
-        verify(credentials).assertUsableByPipelines("reg-9", null);
+        verify(credentials).resolveForPipeline("reg-9", null);
     }
 
     @Test
@@ -202,7 +202,7 @@ class PipelineRunServiceTest {
     private void doThrowUnauthorized() {
         org.mockito.Mockito.doThrow(new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                         "该连接未授权在流水线里使用：conn-1"))
-                .when(credentials).assertUsableByPipelines(any(), any());
+                .when(credentials).resolveForPipeline(any(), any());
     }
 
     // ---- 日志（两种数据源，分界线是「归档了没有」）----
