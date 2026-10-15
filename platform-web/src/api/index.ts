@@ -678,20 +678,28 @@ export const pipelineApi = {
   /** 同上，但面向**镜像节点**（排除 git）—— 少了它，镜像节点只能手打连接 id */
   registryConnections: () => http.post<never, PipelineConnection[]>('/pipeline/registry-connections'),
 
-  run: (pipelineId: string) => http.post<never, string>('/pipeline/run', { id: pipelineId }),
-  cancelRun: (runName: string) => http.post<never, void>('/pipeline/run/cancel', { name: runName }),
+  /**
+   * ⚠️ 下面几个端点里有**一半要走到 k8s-server**（触发 / 取消 / 节点落点 / 日志 / YAML），
+   * 而 k8s-server 对**平台管理员**要求显式指定租户（"管理员代操作需显式指定 tenantId"）——
+   * 所以它们都要带**生效租户**。租户用户不用给（token 说了算，传别人的反而会被判 TENANT_MISMATCH）；
+   * 平台管理员必须给：取顶栏级联里选的那个租户（`state.tenantId`）。
+   */
+  run: (pipelineId: string, tenantId?: string) =>
+    http.post<never, string>('/pipeline/run', { id: pipelineId, tenantId }),
+  cancelRun: (runName: string, tenantId?: string) =>
+    http.post<never, void>('/pipeline/run/cancel', { name: runName, tenantId }),
   runs: (pipelineId: string) => http.post<never, PipelineRun[]>('/pipeline/run/list', { id: pipelineId }),
   /** 详情（含**触发那一刻的画布**与**归档时抓的 YAML**）—— 列表行不带这两个大字段 */
   runGet: (runName: string) => http.post<never, PipelineRun>('/pipeline/run/get', { name: runName }),
   /** 每个节点**现在**的落点（运行详情的 DAG 着色）。⚠️ 只有还在跑才有：归档后返回空 */
-  runSteps: (runName: string) =>
-    http.post<never, PipelineStepRef[]>('/pipeline/run/steps', { name: runName }),
+  runSteps: (runName: string, tenantId?: string) =>
+    http.post<never, PipelineStepRef[]>('/pipeline/run/steps', { name: runName, tenantId }),
   /** 一次运行渲染出来的 YAML（还在跑抓集群对象；归档后读归档时抓下来的那一份） */
-  runYaml: (runName: string) =>
-    http.post<never, string | null>('/pipeline/run/yaml', { name: runName }),
+  runYaml: (runName: string, tenantId?: string) =>
+    http.post<never, string | null>('/pipeline/run/yaml', { name: runName, tenantId }),
   /** 已归档读库、还在跑现抓；nodeName 为空则把所有节点拼起来 */
-  runLogs: (runName: string, nodeName?: string) =>
-    http.post<never, string>('/pipeline/run/logs', { runName, nodeName }),
+  runLogs: (runName: string, nodeName?: string, tenantId?: string) =>
+    http.post<never, string>('/pipeline/run/logs', { runName, nodeName, tenantId }),
 
   /** 这个集群能不能跑 CI —— **页面级门控的唯一判据**（不可用时带原因，前端据此提示并禁用「运行」） */
   capability: (clusterId: string) =>

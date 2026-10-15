@@ -60,4 +60,21 @@ public class AuthContext {
         TokenUserInfo info = current();
         return info != null && info.getTenantInfo() != null ? info.getTenantInfo().getTenantId() : null;
     }
+
+    /**
+     * 这次调用**以哪个租户的身份**去问 k8s-server（调有租户维度的资源时必须给一个）。
+     *
+     * <p>两条轨，与前端 {@code api/index.ts} 那条约定（"tenantId 为生效租户 id"）同一条规矩：
+     * <ul>
+     *   <li><b>自管轨</b>（token 带 tenantInfo）→ **以 token 为准**。请求里传别人的，k8s-server 会判
+     *       {@code TENANT_MISMATCH}；这里干脆忽略请求值，不给它机会。</li>
+     *   <li><b>代管轨</b>（平台管理员 base token，{@link #hatTenantId()} 为 null）→ 用**请求里显式指定的**
+     *       那个租户（前端顶栏级联里选的那个）。k8s-server 的 "管理员代操作需显式指定 tenantId"
+     *       就是为这一轨准备的；没传就保持 null，让 k8s-server 照旧拒 —— **不在这里猜一个租户**。</li>
+     * </ul>
+     */
+    public String effectiveTenantId(String requestedTenantId) {
+        String hat = hatTenantId();
+        return hat != null ? hat : requestedTenantId;
+    }
 }

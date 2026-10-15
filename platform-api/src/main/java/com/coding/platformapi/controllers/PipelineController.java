@@ -170,7 +170,8 @@ public class PipelineController {
     public ResponseData<String> run(@RequestBody PipelineDTO request) {
         PipelineDTO pipeline = pipelineService.get(request.getId());   // 顺带校验归属
         return new ResponseData<>(runService.run(pipeline, currentUser(),
-                new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(), auth.hatTenantId())));
+                new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(),
+                        auth.effectiveTenantId(request.getTenantId()))));
     }
 
     @PostMapping("/run/cancel")
@@ -179,7 +180,7 @@ public class PipelineController {
     @Auditable(action = AuditAction.PIPELINE_CANCEL, target = "#request.name")
     public ResponseData<Void> cancelRun(@RequestBody PipelineRunDTO request) {
         PlatformPipelineRun run = runService.get(request.getName());
-        runService.cancel(request.getName(), contextOf(run));
+        runService.cancel(request.getName(), contextOf(run, request.getTenantId()));
         return new ResponseData<>();
     }
 
@@ -208,7 +209,7 @@ public class PipelineController {
             description = "还在跑时现抓 k8s-server；已归档返回空 —— 状态看 run/get 的 stepsJson")
     public ResponseData<List<PipelineStepRefDTO>> runSteps(@RequestBody PipelineRunDTO request) {
         PlatformPipelineRun run = runService.get(request.getName());
-        return new ResponseData<>(runService.steps(request.getName(), contextOf(run)));
+        return new ResponseData<>(runService.steps(request.getName(), contextOf(run, request.getTenantId())));
     }
 
     /**
@@ -221,7 +222,7 @@ public class PipelineController {
             description = "还在跑抓集群对象；归档后读归档时抓下来的那一份。老运行没留下则回空")
     public ResponseData<String> runYaml(@RequestBody PipelineRunDTO request) {
         PlatformPipelineRun run = runService.get(request.getName());
-        return new ResponseData<>(runService.runYaml(request.getName(), contextOf(run)));
+        return new ResponseData<>(runService.runYaml(request.getName(), contextOf(run, request.getTenantId())));
     }
 
     /**
@@ -238,19 +239,29 @@ public class PipelineController {
     public ResponseData<String> runLogs(@RequestBody RunLogsRequest request) {
         PlatformPipelineRun run = runService.get(request.runName());
         return new ResponseData<>(runService.logs(request.runName(), request.nodeName(),
-                contextOf(run), maxLogBytes));
+                contextOf(run, request.tenantId()), maxLogBytes));
     }
 
-    /** 日志端点的入参：只看某个节点时给 nodeName。 */
-    public record RunLogsRequest(String runName, String nodeName) {
+    /**
+     * 日志端点的入参：只看某个节点时给 nodeName。
+     *
+     * @param tenantId 生效租户 —— **平台管理员（代管轨）必须显式给**，否则 k8s-server 会以
+     *                 「管理员代操作需显式指定 tenantId」拒掉（租户用户不用给，token 说了算）
+     */
+    public record RunLogsRequest(String runName, String nodeName, String tenantId) {
     }
 
     /**
      * 库里的那行 → 调 k8s-server 用的上下文。
-     * **cluster/namespace 取库里存的**（run 名是调用方给的，不带边界），租户帽取当前请求的。
+     *
+     * <p>**cluster/namespace 取库里存的**（run 名是调用方给的，不带边界）；租户取
+     * {@link AuthContext#effectiveTenantId}：自管轨以 token 为准，代管轨（平台管理员）用请求里
+     * 显式指定的那个 —— 否则 k8s-server 会以「管理员代操作需显式指定 tenantId」拒掉
+     * （2026-10-15 用户在真环境撞到过这条）。
      */
-    private PipelineRunContext contextOf(PlatformPipelineRun run) {
-        return new PipelineRunContext(run.getClusterId(), run.getNamespace(), auth.hatTenantId());
+    private PipelineRunContext contextOf(PlatformPipelineRun run, String requestedTenantId) {
+        return new PipelineRunContext(run.getClusterId(), run.getNamespace(),
+                auth.effectiveTenantId(requestedTenantId));
     }
 
     private String currentUser() {

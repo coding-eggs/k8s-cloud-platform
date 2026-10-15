@@ -62,7 +62,8 @@ watch([clusterId, namespace], load)
 function toEditor(id?: string) {
   router.push({
     path: '/pipelines/editor',
-    query: { id, clusterId: clusterId.value, namespace: namespace.value },
+    // tenantId 一起带过去：编辑器不进顶栏级联，而触发运行要它（平台管理员代管轨必须显式给）
+    query: { id, clusterId: clusterId.value, namespace: namespace.value, tenantId: state.tenantId ?? '' },
   })
 }
 
@@ -72,7 +73,7 @@ function toRuns(id: string) {
 
 async function run(row: Pipeline) {
   try {
-    const runName = await pipelineApi.run(row.id!)
+    const runName = await pipelineApi.run(row.id!, state.tenantId ?? undefined)
     ElMessage.success(`已触发：${runName}`)
     toRuns(row.id!)
   } catch {

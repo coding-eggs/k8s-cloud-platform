@@ -90,6 +90,9 @@ const saving = ref(false)
 const canManage = computed(() => perm.has(apiCodes.pipelineManage))
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 
+/** 生效租户：同样来自进来时带的上下文（平台管理员代管轨触发运行必须显式给） */
+const effectiveTenantId = computed(() => (route.query.tenantId as string) || undefined)
+
 /** 集群来自创建流水线时带过来的上下文（编辑器不进顶栏级联） */
 const capClusterId = computed(() => form.value.clusterId || '')
 /** 页面级门控（三态：`false` 才禁用 —— `null` = 不知道，不拦；真正的拦截在后端） */
@@ -347,7 +350,7 @@ async function run() {
   const id = await save()
   if (!id) return
   try {
-    const runName = await pipelineApi.run(id)
+    const runName = await pipelineApi.run(id, effectiveTenantId.value)
     ElMessage.success(`已触发：${runName}`)
     await router.push({ path: '/pipelines/runs', query: { id } })
   } catch {
