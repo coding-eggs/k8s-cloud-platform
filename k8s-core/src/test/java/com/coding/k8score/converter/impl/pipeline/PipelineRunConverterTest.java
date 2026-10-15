@@ -59,6 +59,18 @@ class PipelineRunConverterTest {
     }
 
     @Test
+    void anUnknownConditionMeansStillRunningNotFailed() {
+        // ⭐ Tekton 在**运行中**给的条件就是 Succeeded=Unknown / reason=Running。
+        //    把它算成 FAILED，归档的「未终结不归档」守卫就整个失效了。
+        PipelineRun pr = run("r4", "ns1");
+        PipelineRunStatus st = new PipelineRunStatus();
+        st.setConditions(List.of(condition("Succeeded", "Unknown", "Running")));
+        pr.setStatus(st);
+
+        assertThat(converter.toDto(pr).getStatus()).isEqualTo("RUNNING");
+    }
+
+    @Test
     void failedConditionMapsToFailed() {
         PipelineRun pr = run("r3", "ns1");
         PipelineRunStatus st = new PipelineRunStatus();

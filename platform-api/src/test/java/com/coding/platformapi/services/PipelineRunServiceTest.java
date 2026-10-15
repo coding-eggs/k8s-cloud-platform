@@ -34,11 +34,12 @@ class PipelineRunServiceTest {
     private final K8sPipelineClient k8s = mock(K8sPipelineClient.class);
     private final CredentialService credentials = mock(CredentialService.class);
     private final PipelineArchiveService archive = mock(PipelineArchiveService.class);
+    private final NamespaceAccessGuard access = mock(NamespaceAccessGuard.class);
 
     private final PlatformPipelineRunLogMapper logMapper = mock(PlatformPipelineRunLogMapper.class);
 
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, logMapper, k8s, credentials, archive);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, archive, access);
 
     private final PipelineRunContext ctx = new PipelineRunContext("c1", "ns1", "t1");
 
@@ -256,5 +257,32 @@ class PipelineRunServiceTest {
         PlatformPipelineRun r = running(runName);
         r.setStatus("SUCCEEDED");
         return r;
+    }
+
+    // ---- 归属边界（run 名是调用方给的，不带边界）----
+
+    @Test
+    void anArchivedRunsLogsAreRefusedForATenantThatDoesNotOwnTheNamespace() {
+        // ⭐ 已归档的日志路径**不经过集群** —— k8s-server 侧的分配表兜不住它，
+        //    只有这里拦得住。日志按 spec §10.1.2 是可能含敏感内容的东西。
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+        org.mockito.Mockito.doThrow(new CloudPlatformException(
+                        EnumResponseType.NAMESPACE_NOT_ACCESSIBLE, "无权访问该命名空间：ns1"))
+                .when(access).assertAccessible(any(), any());
+
+        assertThatThrownBy(() -> svc.logs("r1", null, ctx, 1024))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(logMapper, never()).listByRunId(anyString());
+        verify(k8s, never()).steps(anyString(), any(), anyString(), anyString());
+    }
+
+    @Test
+    void theAccessCheckUsesTheStoredLocationNotTheCallers() {
+        // run 名来自请求，边界必须取**库里那行**
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+
+        svc.get("r1");
+
+        verify(access).assertAccessible("c1", "ns1");
     }
 }

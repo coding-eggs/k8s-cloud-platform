@@ -4,7 +4,6 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.utils.ULIDGenerator;
-import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformPipelineMapper;
 import com.coding.data.models.system.PlatformPipeline;
 import com.coding.data.models.system.TokenUserInfo;
@@ -46,7 +45,7 @@ public class PipelineService {
     private static final Pattern NAME = Pattern.compile("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$");
 
     private final PlatformPipelineMapper mapper;
-    private final PlatformTenantNamespaceMapper allocationMapper;
+    private final NamespaceAccessGuard access;
     private final K8sPipelineClient k8s;
     private final AuthContext auth;
 
@@ -68,19 +67,19 @@ public class PipelineService {
     }
 
     public List<PipelineDTO> list(PipelineDTO query) {
-        assertNamespaceAccessible(query.getClusterId(), query.getNamespace());
+        access.assertAccessible(query.getClusterId(), query.getNamespace());
         return mapper.listByNamespace(query.getClusterId(), query.getNamespace())
                 .stream().map(this::toDto).toList();
     }
 
     public PipelineDTO get(String id) {
         PlatformPipeline p = require(id);
-        assertNamespaceAccessible(p.getClusterId(), p.getNamespace());
+        access.assertAccessible(p.getClusterId(), p.getNamespace());
         return toDto(p);
     }
 
     public PipelineDTO create(PipelineDTO req) {
-        assertNamespaceAccessible(req.getClusterId(), req.getNamespace());
+        access.assertAccessible(req.getClusterId(), req.getNamespace());
         validateName(req.getName());
         assertCanvasUsable(req.getCanvasJson());
         if (mapper.selectByKey(req.getClusterId(), req.getNamespace(), req.getName()) != null) {
@@ -108,7 +107,7 @@ public class PipelineService {
      */
     public PipelineDTO update(PipelineDTO req) {
         PlatformPipeline p = require(req.getId());
-        assertNamespaceAccessible(p.getClusterId(), p.getNamespace());
+        access.assertAccessible(p.getClusterId(), p.getNamespace());
         validateName(req.getName());
         assertCanvasUsable(req.getCanvasJson());
         if (!p.getName().equals(req.getName())
@@ -126,7 +125,7 @@ public class PipelineService {
 
     public void delete(String id) {
         PlatformPipeline p = require(id);
-        assertNamespaceAccessible(p.getClusterId(), p.getNamespace());
+        access.assertAccessible(p.getClusterId(), p.getNamespace());
         mapper.deleteById(id);
     }
 
@@ -147,18 +146,6 @@ public class PipelineService {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "流水线不存在：" + id);
         }
         return p;
-    }
-
-    /** 租户帽态下必须持有该命名空间的分配行；无帽（平台管理员代操作）不过滤。 */
-    private void assertNamespaceAccessible(String clusterId, String namespace) {
-        String tenantId = auth.hatTenantId();
-        if (tenantId == null) {
-            return;
-        }
-        if (allocationMapper.selectByTenantClusterNs(tenantId, clusterId, namespace) == null) {
-            throw new CloudPlatformException(EnumResponseType.NAMESPACE_NOT_ACCESSIBLE,
-                    "无权访问该命名空间：" + namespace);
-        }
     }
 
     private String currentUsername() {

@@ -66,17 +66,20 @@ public class PipelineRunService {
     private final K8sPipelineClient k8s;
     private final CredentialService credentials;
     private final PipelineArchiveService archive;
+    private final NamespaceAccessGuard access;
 
     public PipelineRunService(PlatformPipelineRunMapper runMapper,
                               PlatformPipelineRunLogMapper logMapper,
                               K8sPipelineClient k8s,
                               CredentialService credentials,
-                              PipelineArchiveService archive) {
+                              PipelineArchiveService archive,
+                              NamespaceAccessGuard access) {
         this.runMapper = runMapper;
         this.logMapper = logMapper;
         this.k8s = k8s;
         this.credentials = credentials;
         this.archive = archive;
+        this.access = access;
     }
 
     /**
@@ -125,6 +128,7 @@ public class PipelineRunService {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST,
                     "运行不存在：" + runName);
         }
+        access.assertAccessible(row.getClusterId(), row.getNamespace());
         archive.capture(runName, ctx);          // ← 先抓
         k8s.cancelRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);   // ← 再取消
     }
@@ -150,6 +154,7 @@ public class PipelineRunService {
         if (row == null) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "运行不存在：" + runName);
         }
+        access.assertAccessible(row.getClusterId(), row.getNamespace());
         if (!"RUNNING".equals(row.getStatus())) {
             return archivedLogs(row.getId(), nodeName);
         }
@@ -201,6 +206,9 @@ public class PipelineRunService {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST,
                     "运行不存在：" + runName);
         }
+        // ⚠️ 归属校验用**库里那行**的 cluster/namespace，不是请求里的 —— run 名是调用方给的，
+        // 不带边界；拿它直接查库就等于「知道名字就能读别人的运行」。
+        access.assertAccessible(row.getClusterId(), row.getNamespace());
         return row;
     }
 

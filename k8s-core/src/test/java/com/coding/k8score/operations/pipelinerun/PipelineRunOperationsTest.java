@@ -2,9 +2,14 @@ package com.coding.k8score.operations.pipelinerun;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
+import com.coding.k8score.pipeline.PipelineNodeRegistry;
 import io.fabric8.tekton.v1.StepState;
 import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.TaskRunStatus;
+import io.fabric8.tekton.v1.PipelineRun;
+import io.fabric8.tekton.v1.WorkspaceBinding;
+import com.coding.k8score.converter.impl.pipeline.PipelineRunConverter;
+import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -101,5 +106,61 @@ class PipelineRunOperationsTest {
         assertThat(ref.status()).isEqualTo("RUNNING");
         assertThat(ref.podName()).isNull();
         assertThat(ref.containers()).isEmpty();
+    }
+
+    // ---- 创建出来的 PipelineRun 的形状 ----
+
+    private static PipelineRunOperations opsForBuild() {
+        PipelineNodeRegistry registry = new PipelineNodeRegistry(
+                List.of(new com.coding.k8score.pipeline.nodes.GitCloneNode(),
+                        new com.coding.k8score.pipeline.nodes.ShellNode(),
+                        new com.coding.k8score.pipeline.nodes.ImagePushNode()));
+        return new PipelineRunOperations(null, new PipelineRunConverter(),
+                new com.coding.k8score.pipeline.PipelineCanvasOperations(
+                        registry, new com.coding.k8score.pipeline.PipelineRenderer(registry)));
+    }
+
+    private static PipelineRunDTO runOf(String canvasJson) {
+        PipelineRunDTO dto = new PipelineRunDTO();
+        dto.setClusterId("c1");
+        dto.setNamespace("ns1");
+        dto.setName("my-app-20261015-abcd");
+        dto.setPipelineCanvasJson(canvasJson);
+        return dto;
+    }
+
+    @Test
+    void everyRunBindsTheSharedWorkspaceWithAPvcTemplate() {
+        // ⭐ 没有这一步，Tekton 会对每个非 optional 的 pipeline workspace 报
+        //    "pipeline requires workspace ... be provided by pipelinerun"，
+        //    创建会成功、reconciler 立刻把这条运行标成 Failed，Pod 不创建、日志也没有。
+        //    ——「跑得起来」的全部前提就在这一个 setter 上。
+        String canvas = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}}],"edges":[]}""";
+
+        PipelineRun pr = opsForBuild().buildRun(runOf(canvas));
+
+        assertThat(pr.getSpec().getPipelineSpec().getWorkspaces()).hasSize(1);
+        WorkspaceBinding binding = pr.getSpec().getWorkspaces().get(0);
+        assertThat(binding.getName())
+                .isEqualTo(pr.getSpec().getPipelineSpec().getWorkspaces().get(0).getName());
+        assertThat(binding.getVolumeClaimTemplate()).as("必须是 PVC —— emptyDir 不跨 TaskRun 共享").isNotNull();
+        assertThat(binding.getVolumeClaimTemplate().getSpec().getAccessModes()).isNotEmpty();
+        assertThat(binding.getVolumeClaimTemplate().getSpec().getResources().getRequests())
+                .containsKey("storage");
+    }
+
+    @Test
+    void theRunCarriesThePlatformLabelAndNoTimeouts() {
+        String canvas = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}}],"edges":[]}""";
+
+        PipelineRun pr = opsForBuild().buildRun(runOf(canvas));
+
+        assertThat(pr.getMetadata().getLabels())
+                .containsEntry(PipelineRunOperations.MANAGED_LABEL, PipelineRunOperations.MANAGED_VALUE);
+        // 有意不设 spec.timeouts —— 让 Tekton 自己超时会删 Pod，那批运行的日志必然丢失
+        assertThat(pr.getSpec().getTimeouts()).isNull();
+        assertThat(pr.getMetadata().getNamespace()).isEqualTo("ns1");
     }
 }

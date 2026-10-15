@@ -157,6 +157,11 @@ spring:
       - "/test/**"
       - "/.well-known/**"
       - "/manifest.json"
+      # ⚠️ 集群 → 平台的内部回调。**必须在这里放行**：ExemptPaths 只免「权限表」，
+      # 不免认证 —— 少了这一行，k8s-server 那条不带 Authorization 的请求会被
+      # 资源服务器的 entry point 直接 401，控制器永远不执行，
+      # 而控制器的密钥校验（唯一防线）也就从未真正生效过。
+      - "/internal/pipeline-run/finished"
     oauth2:
       resourceserver:
         jwt:

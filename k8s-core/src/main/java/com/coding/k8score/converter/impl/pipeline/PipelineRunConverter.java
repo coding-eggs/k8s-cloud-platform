@@ -18,6 +18,10 @@ public class PipelineRunConverter {
      * <ul>
      *   <li>没有 condition（还没被 reconciler 处理）→ {@code RUNNING}</li>
      *   <li>{@code Succeeded=True} → {@code SUCCEEDED}</li>
+     *   <li>⚠️ {@code Succeeded=Unknown}（reason=Running）→ <b>{@code RUNNING}</b> ——
+     *       Tekton 在**运行中**给的就是 Unknown，把它算成 FAILED 会让归档的
+     *       「未终结不归档」守卫整个失效：一条正在跑的运行会被写出 FAILED 的结论、
+     *       日志抓半截、**对象被删掉**，正在跑的构建被打断</li>
      *   <li>{@code Succeeded=False} 且 reason 含 Cancelled → {@code CANCELLED}</li>
      *   <li>{@code Succeeded=False} 且 reason 含 Timeout → {@code TIMEOUT}</li>
      *   <li>其余 {@code Succeeded=False} → {@code FAILED}</li>
@@ -70,11 +74,12 @@ public class PipelineRunConverter {
     public static String mapConditions(List<Condition> conditions) {
         String reason = reasonOf(conditions);
         String cond = conditionStatus(conditions);
-        if (cond == null) {
-            return "RUNNING";
-        }
         if ("True".equals(cond)) {
             return "SUCCEEDED";
+        }
+        if (!"False".equals(cond)) {
+            // null（还没有 condition）与 "Unknown"（reconciler 正在跑）都是「还没结束」
+            return "RUNNING";
         }
         if (reason != null && reason.toLowerCase().contains("cancel")) {
             return "CANCELLED";

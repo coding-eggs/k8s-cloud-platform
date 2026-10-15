@@ -8,6 +8,10 @@ import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.pipeline.PipelineCanvasOperations;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
+import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
+import io.fabric8.kubernetes.api.model.PersistentVolumeClaimSpec;
+import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.VolumeResourceRequirements;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.tekton.v1.PipelineRun;
@@ -17,6 +21,8 @@ import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.TaskRunStatus;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import io.fabric8.tekton.v1.PipelineSpec;
+import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
+import io.fabric8.tekton.v1.WorkspaceBinding;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
@@ -46,6 +52,15 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
     public static final String MANAGED_LABEL = "app.kubernetes.io/managed-by";
     public static final String MANAGED_VALUE = "platform-system";
     public static final String MANAGED_SELECTOR = MANAGED_LABEL + "=" + MANAGED_VALUE;
+
+    /**
+     * 隐式共享 workspace 每次运行要的那块临时 PVC。
+     *
+     * <p>⚠️ 有意**不做成配置项**：它是一次运行的工作区大小，不是集群策略；平台也没有给用户
+     * 「选 StorageClass / 定配额」的入口（spec 已定不做）。真要调的时候是改这里一行。
+     * 用完即删（PipelineRun 被归档删除时级联）。
+     */
+    static final String WORKSPACE_STORAGE = "1Gi";
 
     private final KubernetesClient client;
     private final PipelineRunConverter converter;
@@ -151,6 +166,25 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
             throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
                     "创建流水线运行必须带画布");
         }
+        PipelineRun created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
+                .resource(buildRun(dto)).create();
+        return converter.toDto(created);
+    }
+
+    /**
+     * 把画布渲染成一个可以交给集群的 {@code PipelineRun}。**纯构造、不碰 client**（所以可单测）。
+     *
+     * <p>⚠️ <b>隐式共享 workspace 必须在这里绑定</b>，只在 {@code PipelineSpec} 上声明是不够的：
+     * Tekton 对**每个非 optional 的 pipeline workspace** 都要求 PipelineRun 给出绑定，
+     * 缺了会报 {@code pipeline requires workspace with name "ws" be provided by pipelinerun} ——
+     * 而创建本身会成功（webhook 只校验 PipelineRun 自己那份列表），随后 reconciler 把这条运行
+     * 标成 Failed：Pod 不创建、没有日志。也就是说「跑得起来」的全部前提就在这一个 setter 上。
+     *
+     * <p>用 {@code volumeClaimTemplate}（每次运行现开一块临时 PVC）而**不是 emptyDir**：
+     * Tekton 的 emptyDir workspace **不跨 TaskRun 共享**，而我们要的正是
+     * 「git 克隆的源码给下游所有节点用」（spec §3.3）。
+     */
+    PipelineRun buildRun(PipelineRunDTO dto) {
         PipelineSpec spec = canvasOps.render(dto.getPipelineCanvasJson());
 
         PipelineRun pr = new PipelineRun();
@@ -162,13 +196,36 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
 
         PipelineRunSpec runSpec = new PipelineRunSpec();
         runSpec.setPipelineSpec(spec);
+        runSpec.setWorkspaces(bindWorkspaces(spec));
         // ⚠️ 有意**不设** spec.timeouts —— 超时由平台判定（spec §4.2）。让 Tekton 自己超时
         // 会删掉 Pod，那批运行的日志必然丢失，与「日志进库」直接冲突。
         pr.setSpec(runSpec);
+        return pr;
+    }
 
-        PipelineRun created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
-                .resource(pr).create();
-        return converter.toDto(created);
+    /** 给 spec 里声明的每个 workspace 配一个 PVC 绑定 —— **一个都不能漏**（见 {@link #buildRun}）。 */
+    private static List<WorkspaceBinding> bindWorkspaces(PipelineSpec spec) {
+        if (spec.getWorkspaces() == null || spec.getWorkspaces().isEmpty()) {
+            return List.of();
+        }
+        List<WorkspaceBinding> out = new ArrayList<>(spec.getWorkspaces().size());
+        for (PipelineWorkspaceDeclaration decl : spec.getWorkspaces()) {
+            WorkspaceBinding b = new WorkspaceBinding();
+            b.setName(decl.getName());
+
+            VolumeResourceRequirements res = new VolumeResourceRequirements();
+            res.setRequests(Map.of("storage", new Quantity(WORKSPACE_STORAGE)));
+            PersistentVolumeClaimSpec pvcSpec = new PersistentVolumeClaimSpec();
+            pvcSpec.setAccessModes(List.of("ReadWriteOnce"));
+            pvcSpec.setResources(res);
+            PersistentVolumeClaim pvc = new PersistentVolumeClaim();
+            // ⚠️ 与 PipelineRun 的 metadata 同理：模型不保证初始化嵌套对象
+            pvc.setSpec(pvcSpec);
+
+            b.setVolumeClaimTemplate(pvc);
+            out.add(b);
+        }
+        return out;
     }
 
     @Override

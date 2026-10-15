@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 
 /**
@@ -38,8 +39,9 @@ class PipelineServiceTest {
     private final PlatformTenantNamespaceMapper allocationMapper = mock(PlatformTenantNamespaceMapper.class);
     private final K8sPipelineClient k8s = mock(K8sPipelineClient.class);
     private final AuthContext auth = mock(AuthContext.class);
+    private final NamespaceAccessGuard access = mock(NamespaceAccessGuard.class);
 
-    private final PipelineService svc = new PipelineService(mapper, allocationMapper, k8s, auth);
+    private final PipelineService svc = new PipelineService(mapper, access, k8s, auth);
 
     private static PipelineDTO req(String name, String namespace) {
         PipelineDTO d = new PipelineDTO();
@@ -120,25 +122,29 @@ class PipelineServiceTest {
         verify(mapper, never()).insert(any());
     }
 
+    /**
+     * 归属校验**委托给 {@link NamespaceAccessGuard}**（规则本身在它自己的测试里钉）。
+     * 这里只断言「问过了、并且问的是这条流水线真正的一对 cluster/namespace」——
+     * 校验写在哪个方法里、用哪个字段，才是这一层会出错的地方。
+     */
     @Test
-    void createRejectsANamespaceTheTenantDoesNotOwn() {
-        when(auth.hatTenantId()).thenReturn("t1");
-        when(allocationMapper.selectByTenantClusterNs("t1", "c1", "ns1")).thenReturn(null);
-
-        assertThatThrownBy(() -> svc.create(req("good-name", "ns1")))
-                .isInstanceOf(CloudPlatformException.class);
-        verify(mapper, never()).insert(any());
-    }
-
-    @Test
-    void platformAdminWithoutAHatSkipsTheAllocationCheck() {
-        // 平台管理员代操作时不去翻分配表 —— 与 PersistentVolumeService 同一条判断
+    void createAsksTheGuardAboutThePipelinesNamespace() {
         asPlatformAdmin();
         when(mapper.selectByKey(anyString(), anyString(), anyString())).thenReturn(null);
 
         svc.create(req("good-name", "ns1"));
 
-        verify(allocationMapper, never()).selectByTenantClusterNs(any(), any(), any());
+        verify(access).assertAccessible("c1", "ns1");
+    }
+
+    @Test
+    void aRefusedNamespaceStopsBeforeAnythingIsWritten() {
+        doThrow(new CloudPlatformException(10008, "无权访问该命名空间：ns1"))
+                .when(access).assertAccessible(any(), any());
+
+        assertThatThrownBy(() -> svc.create(req("good-name", "ns1")))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(mapper, never()).insert(any());
     }
 
     @Test

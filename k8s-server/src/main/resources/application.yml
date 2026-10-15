@@ -81,3 +81,17 @@ jwt:
 logging:
   level:
     root: info
+
+# CI（Tekton）：k8s-server 侧只用到回调那几项。
+# ⚠️ internal-token 必须与 platform-api 配的是**同一个值** —— 这个进程用它发
+#    X-Internal-Token，那边用它校验。只配一半的表现是「回调一直被拒、运行永远不归档」，
+#    而且失败是静默的（见 PipelineRunCallbackClient 的 ack 语义）。
+platform:
+  pipeline:
+    archive:
+      internal-token: ${PIPELINE_INTERNAL_TOKEN:}
+    callback:
+      url: ${PIPELINE_CALLBACK_URL:http://127.0.0.1:8081}
+    run:
+      timeout: ${PIPELINE_RUN_TIMEOUT:30m}
+      timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}

@@ -6,6 +6,9 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.system.ResponseData;
+
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Map;
@@ -53,14 +56,25 @@ public class PipelineRunCallbackClient {
      */
     public boolean finished(String clusterId, String namespace, String runName, boolean timedOut) {
         try {
-            http.post()
+            ResponseData<?> resp = http.post()
                     .uri(platformUrl + "/internal/pipeline-run/finished")
                     .header("X-Internal-Token", token == null ? "" : token)
                     .body(Map.of("clusterId", clusterId, "namespace", namespace,
                             "runName", runName, "timedOut", timedOut))
                     .retrieve()
-                    .toBodilessEntity();
-            return true;
+                    .body(ResponseData.class);
+            // ⚠️ **只看 HTTP 状态是不够的**：本仓的业务失败一律是 200 + body 里的错误码
+            // （前端 http.ts 就是靠 body.code 判断失败的，见 GlobalExceptionHandler）。
+            // 只看 HTTP 会把「密钥不对」「未终结不归档」「集群 401」全当成成功 ——
+            // 于是 k8s-server 关掉 watch、把这条 run 从待补集合里删掉、**再也不重投**，
+            // 而集群里的对象与 Pod 就一直留着。这正是本批要消掉的东西，且是静默的。
+            boolean ok = resp != null
+                    && Integer.valueOf(EnumResponseType.SUCCESS.getCode()).equals(resp.getCode());
+            if (!ok) {
+                log.warn("归档回调未被平台接受（进待补集合，由节拍器重投）run={}/{} code={}",
+                        namespace, runName, resp == null ? null : resp.getCode());
+            }
+            return ok;
         } catch (Exception e) {
             log.warn("归档回调失败（进待补集合，由节拍器重投）run={}/{}", namespace, runName, e);
             return false;
