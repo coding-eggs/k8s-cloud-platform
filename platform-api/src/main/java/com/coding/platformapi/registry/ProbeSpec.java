@@ -15,6 +15,15 @@ package com.coding.platformapi.registry;
  * 那几条安全要求散到各档去实现，迟早会漏掉一条。
  *
  * <p>设计见 docs/superpowers/specs/2026-10-14-registry-dockerhub-design.md §4。
+ *
+ * @param authorizationHeader 非空 = 探测时**带这个头**（Docker Hub 的站点 API 只认 Bearer，
+ *                            必须在探测前先换 token —— 见 {@link DockerHubDialect#probeSpec}）。
+ *                            为空则由 {@code CredentialProbeClient} 按凭据自己发 Basic（Harbor 那条路）
  */
-public record ProbeSpec(String url, String notFoundMessage) {
+public record ProbeSpec(String url, String notFoundMessage, String authorizationHeader) {
+
+    /** 走 Basic（或匿名）的常用形式。 */
+    public ProbeSpec(String url, String notFoundMessage) {
+        this(url, notFoundMessage, null);
+    }
 }

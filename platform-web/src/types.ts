@@ -1584,8 +1584,11 @@ export interface AuditQuery {
 export interface CredentialView {
   id: string
   name: string
-  /** GIT / HARBOR（Docker Hub 是内置档，不走凭据表，所以不在这里） */
-  type: 'GIT' | 'HARBOR'
+  /**
+   * GIT / HARBOR（镜像仓库）/ DOCKERHUB（**私有** Docker Hub：用户名 + PAT）。
+   * 公共镜像的来源是平台的**内置档**，不走凭据表 —— 所以这里的 DOCKERHUB 专指私有仓库
+   */
+  type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   /** host 基址 */
   endpoint: string
   /** BASIC = 用户名+密码/令牌；NONE = 匿名（无凭据，出站不带 Authorization 头） */
@@ -1611,7 +1614,7 @@ export interface CredentialView {
  */
 export interface CredentialCreateBody {
   name: string
-  type: 'GIT' | 'HARBOR'
+  type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   endpoint: string
   authType: 'BASIC' | 'NONE'
   username?: string
@@ -1626,7 +1629,7 @@ export interface CredentialCreateBody {
 export interface CredentialUpdateBody {
   id: string
   name: string
-  type: 'GIT' | 'HARBOR'
+  type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   endpoint: string
   authType: 'BASIC' | 'NONE'
   username?: string | null

@@ -17,6 +17,7 @@ import com.coding.platformapi.registry.HarborDialect;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import com.coding.platformapi.registry.RegistryHttpClient;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -223,22 +224,45 @@ class CredentialServiceTest {
         // 这件事就只能由 CredentialService 自己判 type 才知道，那是第二个真相源（spec §4）
         PlatformCredential c = stored("c1", "h", "HARBOR", "harbor.example.com", "u", "p");
         when(mapper.selectById("c1")).thenReturn(c);
-        when(probeClient.probeRegistry(anyString(), any(), any(), any())).thenReturn(ProbeResult.pass());
+        when(probeClient.probeRegistry(anyString(), any(), any(), any(), any())).thenReturn(ProbeResult.pass());
 
         CredentialTestRequest req = new CredentialTestRequest();
         req.setId("c1");
         svc.test(req);
 
         var url = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(probeClient).probeRegistry(url.capture(), any(), any(), any());
+        verify(probeClient).probeRegistry(url.capture(), any(), any(), any(), any());
         assertThat(url.getValue()).isEqualTo("https://harbor.example.com/v2/");
     }
 
     @Test
-    void dockerHubIsNoLongerACredentialType() {
-        // 2026-10-14：Docker Hub 改成平台的**内置档**（BuiltinRegistry），不经凭据表 ——
-        // 没有行、没有 authType、没有密文、没有启停状态。所以凭据页也不再提供这个类型。
-        // 它的方言实现仍在（由 RegistryService.allSources() 直接产出来源）。
+    void dockerHubPrivateIsACredentialTypeAgain() {
+        // 2026-10-14：Docker Hub 改成内置档、从凭据类型里移除（只允许匿名）。
+        // **2026-10-15 用户撤销**：私有 Docker Hub 要能搜、能浏览、能推 —— 于是它回到凭据表。
+        // 匿名那一份仍是内置档（不走这里），所以这一档作为**凭据行**必须带认证。
+        when(mapper.selectByName(anyString())).thenReturn(null);
+        when(mapper.insert(any())).thenReturn(1);
+
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("dockerhub-release");
+        req.setType("DOCKERHUB");
+        req.setEndpoint("docker.io");
+        req.setAuthType("BASIC");
+        req.setUsername("myuser");
+        req.setSecret("pat-xyz");
+
+        svc.create(req);
+
+        ArgumentCaptor<PlatformCredential> cap = ArgumentCaptor.forClass(PlatformCredential.class);
+        verify(mapper).insert(cap.capture());
+        assertThat(cap.getValue().getType()).isEqualTo("DOCKERHUB");
+        assertThat(cap.getValue().getEndpoint()).isEqualTo("docker.io");
+    }
+
+    @Test
+    void aDockerHubCredentialCannotBeAnonymous() {
+        // 匿名那一份是**内置档**；凭据行要是也匿名，下拉里就会多出一个与它一模一样、
+        // 候选完全重复的来源。允许的认证方式由方言声明（authTypes），不在这里手写清单
         CredentialCreateRequest req = new CredentialCreateRequest();
         req.setName("hub");
         req.setType("DOCKERHUB");
@@ -247,7 +271,44 @@ class CredentialServiceTest {
 
         assertThatThrownBy(() -> svc.create(req))
                 .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("凭据类型仅支持");
+                .hasMessageContaining("认证方式");
+    }
+
+    @Test
+    void aDockerHubsEndpointIsNormalisedToDockerIo() {
+        // 三个别名指向同一个 registry；统一存 docker.io（出站站点由方言写死，与 endpoint 无关）
+        when(mapper.selectByName(anyString())).thenReturn(null);
+        when(mapper.insert(any())).thenReturn(1);
+
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("hub-alias");
+        req.setType("DOCKERHUB");
+        req.setEndpoint("registry-1.docker.io/");
+        req.setAuthType("BASIC");
+        req.setUsername("myuser");
+        req.setSecret("pat-xyz");
+
+        svc.create(req);
+
+        ArgumentCaptor<PlatformCredential> cap = ArgumentCaptor.forClass(PlatformCredential.class);
+        verify(mapper).insert(cap.capture());
+        assertThat(cap.getValue().getEndpoint()).isEqualTo("docker.io");
+    }
+
+    @Test
+    void aDockerHubCredentialPointingSomewhereElseIsRefusedNotSilentlyRewritten() {
+        // 静默改写会让管理员以为配的是个私有 registry，实际收到的是 Docker Hub 的连接
+        CredentialCreateRequest req = new CredentialCreateRequest();
+        req.setName("hub-wrong");
+        req.setType("DOCKERHUB");
+        req.setEndpoint("harbor.example.com");
+        req.setAuthType("BASIC");
+        req.setUsername("myuser");
+        req.setSecret("pat-xyz");
+
+        assertThatThrownBy(() -> svc.create(req))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("docker.io");
     }
 
     // ---- 匿名（authType=NONE） ----
@@ -432,7 +493,7 @@ class CredentialServiceTest {
         when(mapper.selectById("c1")).thenReturn(
                 stored("c1", "harbor", "HARBOR", "harbor.example.com", "robot", "pw"));
         // 收到的已经是**拼好的 URL**（由 HarborDialect.probeSpec 给），不再是裸 endpoint
-        when(probeClient.probeRegistry(eq("https://harbor.example.com/v2/"), eq("robot"), eq("pw"), any()))
+        when(probeClient.probeRegistry(eq("https://harbor.example.com/v2/"), eq("robot"), eq("pw"), any(), any()))
                 .thenReturn(ProbeResult.fail("凭据不通过，或该凭据无权访问此 registry"));
 
         CredentialTestRequest req = new CredentialTestRequest();
@@ -450,7 +511,7 @@ class CredentialServiceTest {
         PlatformCredential row = stored("c1", "harbor", "HARBOR", "harbor.example.com", "r", "pw");
         row.setLastVerifiedAt(new Date(1_700_000_000_000L));
         when(mapper.selectById("c1")).thenReturn(row);
-        when(probeClient.probeRegistry(anyString(), anyString(), anyString(), any()))
+        when(probeClient.probeRegistry(anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(ProbeResult.fail("凭据不通过"));
 
         CredentialTestRequest req = new CredentialTestRequest();

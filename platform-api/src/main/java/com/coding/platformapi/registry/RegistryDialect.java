@@ -56,4 +56,16 @@ public interface RegistryDialect {
      * {@code CredentialProbeClient} 一处**，各档只给 URL 与文案 —— 那几条安全要求散到各档会漏。
      */
     ProbeSpec probeSpec(CredentialRef cred);
+
+    /**
+     * 把用户填的 {@code endpoint} 归一成这一档认的写法（默认：原样 {@code trim}）。
+     *
+     * <p>存在的理由：Docker Hub 的 endpoint 是**恒定的**（它没有"用户自己的地址"，
+     * 出站用的两个站点也写死在方言里），所以那一档把三个别名统一成 {@code docker.io}、
+     * 填别的直接拒 —— 不静默改写（管理员会以为配的是个私有 registry）。
+     * 规则归**这一档**声明，不在 {@code CredentialService} 里按 type 分叉（spec §3.7 的同一条判断）。
+     */
+    default String normalizeEndpoint(String endpoint) {
+        return endpoint == null ? null : endpoint.trim();
+    }
 }

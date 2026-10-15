@@ -443,15 +443,16 @@ class RegistryServiceTest {
     }
 
     @Test
-    void aLeftoverDockerHubCredentialRowIsIgnoredWhenTheBuiltinIsOn() {
-        // 老库里可能残留一条同类型的凭据行（该 type 已从 CredentialService.TYPES 移除）。
-        // 不挡掉的话，同一个 Docker Hub 会在下拉里出现两次，而两条的候选还长得一模一样
+    void aDockerHubCredentialRowIsASecondSourceNextToTheBuiltin() {
+        // 2026-10-15 起两者**并存**：内置档（匿名）只答公共镜像，凭据行（带 PAT）只答"我名下" ——
+        // 它们答的东西不同，所以下拉里出现两条不是重复，而是各答一半。
+        // （2026-10-14 曾把同类型凭据行整条挡掉；那次裁定的反例见 DockerHubDialect 的类注释。）
         when(mapper.selectAll()).thenReturn(List.of(
-                row("c9", "old-hub", "DOCKERHUB", "docker.io", 1)));
+                row("c9", "dockerhub-release", "DOCKERHUB", "docker.io", 1)));
 
         assertThat(withBuiltin.connections())
                 .extracting(RegistryConnectionView::id)
-                .containsExactly("builtin:dockerhub");
+                .containsExactly("builtin:dockerhub", "c9");
     }
 
     // ---- 浏览 ----

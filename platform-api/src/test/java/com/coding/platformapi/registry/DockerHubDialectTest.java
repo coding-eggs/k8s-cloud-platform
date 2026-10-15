@@ -9,6 +9,7 @@ import org.springframework.web.client.RestClient;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
@@ -29,6 +30,20 @@ class DockerHubDialectTest {
     private static CredentialRef anonCred() {
         return new CredentialRef("c1", "hub", "DOCKERHUB", "docker.io", null, null);
     }
+
+
+    /**
+     * 一条**带凭据**的 Docker Hub 连接（私有仓库）。
+     *
+     * <p>⚠️ 当年（2026-10-14）这一档被裁定「只允许匿名」，2026-10-15 用户撤销：
+     * 私有仓库要能搜、能浏览、能推。匿名那一份仍然由**内置档**提供（它不走凭据表）。
+     */
+    private static CredentialRef authedCred() {
+        return new CredentialRef("c2", "dockerhub-release", "DOCKERHUB", "docker.io", "myuser", "pat-xyz");
+    }
+
+    /** 登录换 token 的响应（站点 API 的 {@code POST /v2/users/login/}）。 */
+    private static final String LOGIN_OK = "{\"token\":\"jwt-abc\"}";
 
     // ---- 输入切分 ----
 
@@ -283,5 +298,111 @@ class DockerHubDialectTest {
         ProbeSpec spec = dialect.probeSpec(anonCred());
         assertThat(spec.url()).isEqualTo("https://hub.docker.com/v2/repositories/library/?page_size=100");
         assertThat(spec.notFoundMessage()).contains("Docker Hub");
+    }
+
+    // ---- 带凭据的那一份（私有仓库）：认证、只答我名下、token 复用 ----
+
+    @Test
+    void asACredentialTypeItOnlyAcceptsBasicAuth() {
+        // 匿名那一份是**内置档**（不经本档的凭据校验）；凭据行的存在意义就是带认证。
+        // 若这里放行 NONE，就会造出一个与内置档一模一样、候选完全重复的第二来源。
+        assertThat(dialect.authTypes()).containsExactly("BASIC");
+    }
+
+    @Test
+    void anAuthenticatedSourceLogsInAndOffersMyOwnNamespaceOnTheFirstLevel() {
+        // 第一层：library（公共）+ 我自己的命名空间（含私有仓库）
+        BrowseResult r = dialect.browse(authedCred(), List.of());
+        assertThat(r.children()).extracting(BrowseResult.Node::name)
+                .containsExactly("library", "myuser");
+    }
+
+    @Test
+    void listingMyRepositoriesCarriesTheBearerTokenFetchedFromTheLoginEndpoint() {
+        // ⭐ 站点 API **不认 Basic**（实测：带 Basic 的错误凭据照样 200，等于被当成匿名）——
+        // 必须先换 token，之后每个请求都带 Bearer。
+        server.expect(requestTo("https://hub.docker.com/v2/users/login/"))
+                .andRespond(withSuccess(LOGIN_OK, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/myuser/?page_size=100"))
+                .andExpect(header("Authorization", "Bearer jwt-abc"))
+                .andRespond(withSuccess(
+                        "{\"results\":[{\"name\":\"app-private\"},{\"name\":\"web\"}]}",
+                        MediaType.APPLICATION_JSON));
+
+        BrowseResult r = dialect.browse(authedCred(), List.of("myuser"));
+
+        assertThat(r.children()).extracting(BrowseResult.Node::name)
+                .containsExactly("app-private", "web");
+    }
+
+    @Test
+    void aPrivateReposTagsComeBackWithBearerToo() {
+        server.expect(requestTo("https://hub.docker.com/v2/users/login/"))
+                .andRespond(withSuccess(LOGIN_OK, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/myuser/app-private/tags?page_size=100"))
+                .andExpect(header("Authorization", "Bearer jwt-abc"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"1.2\",\"full_size\":10}]}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(dialect.suggest(authedCred(), "myuser/app-private:1."))
+                .containsExactly("myuser/app-private:1.2");
+    }
+
+    @Test
+    void theCredentialSourceOnlyAnswersForMyOwnNamespace() {
+        // 别人的仓库（公开的）由**内置档**答；这一份只答"我名下的" —— 两个来源各答各的，
+        // 用户看到的候选因此既不重复也不缺。
+        assertThat(dialect.suggest(authedCred(), "bitnami/nginx:1.")).isEmpty();
+    }
+
+    @Test
+    void aSingleSegmentSearchListsMyOwnRepositoriesMatchingThePrefix() {
+        server.expect(requestTo("https://hub.docker.com/v2/users/login/"))
+                .andRespond(withSuccess(LOGIN_OK, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/myuser/?page_size=100"))
+                .andRespond(withSuccess(
+                        "{\"results\":[{\"name\":\"app-private\"},{\"name\":\"web\"}]}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(dialect.suggest(authedCred(), "ap")).containsExactly("myuser/app-private");
+    }
+
+    @Test
+    void theTokenIsFetchedOnceAndReusedAcrossCalls() {
+        // 站点 API 无 SLA，登录是额外的一次往返 —— 每次按键都登录既慢又容易被限流
+        server.expect(requestTo("https://hub.docker.com/v2/users/login/"))
+                .andRespond(withSuccess(LOGIN_OK, MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/myuser/app/tags?page_size=100"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"1.0\"}]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/myuser/app/tags?page_size=100"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"1.0\"}]}", MediaType.APPLICATION_JSON));
+
+        dialect.suggest(authedCred(), "myuser/app:1.");
+        dialect.suggest(authedCred(), "myuser/app:1.");
+
+        server.verify();   // 只登录了一次（第二次没有 login 期望）
+    }
+
+    @Test
+    void theProbeOfAnAuthenticatedSourceCarriesABearerAndProbesMyRepositories() {
+        server.expect(requestTo("https://hub.docker.com/v2/users/login/"))
+                .andRespond(withSuccess(LOGIN_OK, MediaType.APPLICATION_JSON));
+
+        ProbeSpec spec = dialect.probeSpec(authedCred());
+
+        assertThat(spec.url()).isEqualTo("https://hub.docker.com/v2/repositories/myuser/?page_size=1");
+        assertThat(spec.authorizationHeader()).isEqualTo("Bearer jwt-abc");
+    }
+
+    @Test
+    void anAnonymousSourceNeverLogsIn() {
+        // 内置档那条路必须一格都不变（它没有凭据，也不该去登录）
+        server.expect(requestTo("https://hub.docker.com/v2/repositories/library/?page_size=100"))
+                .andRespond(withSuccess("{\"results\":[{\"name\":\"alpine\"}]}", MediaType.APPLICATION_JSON));
+
+        BrowseResult r = dialect.browse(anonCred(), List.of("library"));
+
+        assertThat(r.children()).extracting(BrowseResult.Node::name).containsExactly("alpine");
+        assertThat(dialect.probeSpec(anonCred()).authorizationHeader()).isNull();
     }
 }

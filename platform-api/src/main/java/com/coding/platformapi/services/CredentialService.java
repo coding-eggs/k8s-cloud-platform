@@ -57,12 +57,13 @@ public class CredentialService {
      * <p>扩展位由 {@code RegistryDialect} 接口 + {@code RegistryDialectRegistry} + 一条护栏测试提供：
      * 加一档 = 加一个枚举值 + 一个实现类 + 一个 UI 选项，其余零改动。
      *
-     * <p>⚠️ <b>{@code DOCKERHUB} 于 2026-10-14 从本集合移除</b> —— 它改成平台的**内置档**
-     * （{@code BuiltinRegistry}），不经凭据表：没有行、没有 authType、没有密文、没有启停状态。
-     * 所以凭据页的类型下拉里不再有它。它的方言实现仍在，由 {@code RegistryService.allSources()}
-     * 直接产出来源。
+     * <p>⚠️ <b>{@code DOCKERHUB} 的历史（两次翻转，别再翻回去）</b>：
+     * 2026-10-14 它从本集合移除（改成平台的**内置档**：没有行、没有 authType、没有密文），
+     * 理由是「Docker Hub 在这平台里的角色就是公共镜像的来源，私有镜像该放自建 Harbor」；
+     * <b>2026-10-15 用户撤销该裁定</b> —— 私有 Docker Hub 要能配（用户名 + PAT），于是它回到凭据表。
+     * 现在两者**并存**：内置档（匿名）只答公共镜像，凭据行只答"我名下"（见 {@code DockerHubDialect}）。
      */
-    private static final Set<String> TYPES = Set.of("GIT", "HARBOR");
+    private static final Set<String> TYPES = Set.of("GIT", "HARBOR", "DOCKERHUB");
 
     private static final String AUTH_BASIC = "BASIC";
 
@@ -104,7 +105,7 @@ public class CredentialService {
         c.setId(ULIDGenerator.generateULID());
         c.setName(req.getName());
         c.setType(req.getType());
-        c.setEndpoint(req.getEndpoint().trim());
+        c.setEndpoint(normalizeEndpoint(req.getType(), req.getEndpoint()));
         c.setAuthType(req.getAuthType());
         if (AUTH_NONE.equals(req.getAuthType())) {
             // 匿名：**不写密文**，而不是写一份 username/secret 都是 null 的密文 ——
@@ -147,7 +148,7 @@ public class CredentialService {
         c.setId(old.getId());
         c.setName(req.getName());
         c.setType(req.getType());
-        c.setEndpoint(req.getEndpoint().trim());
+        c.setEndpoint(normalizeEndpoint(req.getType(), req.getEndpoint()));
         c.setAuthType(req.getAuthType());
         c.setDescription(req.getDescription());
         c.setEnabled(req.getEnabled() == null || req.getEnabled() ? 1 : 0);
@@ -192,7 +193,7 @@ public class CredentialService {
                     c.getEndpoint(), s.getUsername(), s.getSecret());
             ProbeSpec spec = dialects.of(c.getType()).probeSpec(ref);
             result = probeClient.probeRegistry(spec.url(), s.getUsername(), s.getSecret(),
-                    spec.notFoundMessage());
+                    spec.notFoundMessage(), spec.authorizationHeader());
         }
 
         mapper.updateVerifyResult(c.getId(), result.ok(),
@@ -235,6 +236,16 @@ public class CredentialService {
         }
         // authType 的合法性由 requireAllowedAuthType 判（它要知道 type 才问得出允许集合），
         // 这里不再硬编码 BASIC
+    }
+
+    /**
+     * 地址归一。**问 dialect**（GIT 没有方言，原样 trim）——
+     * Docker Hub 那一档会把它统一成 {@code docker.io} 并把别的地址拒掉（见 {@code normalizeEndpoint}）。
+     */
+    private String normalizeEndpoint(String type, String endpoint) {
+        return "GIT".equals(type)
+                ? endpoint.trim()
+                : dialects.of(type).normalizeEndpoint(endpoint);
     }
 
     /** 该类型允许的认证方式。**问 dialect，不维护手写清单**（spec §3.7）。 */

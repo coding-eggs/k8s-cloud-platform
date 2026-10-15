@@ -1,7 +1,5 @@
 package com.coding.platformapi.registry;
 
-import java.util.List;
-
 /**
  * 平台**自带的**镜像仓库来源 —— <b>不是一条 {@code platform_credential} 记录</b>。
  *
@@ -14,17 +12,20 @@ import java.util.List;
  * 下游（聚合 / 并发 / 排序 / 候选带来源名 / 浏览）全都只认它吐出来的 {@code Source} 形状，
  * 不需要知道有"内置"这回事。
  *
+ * <p>⚠️ <b>2026-10-15：同一个 Docker Hub 可以同时有内置档与凭据行</b> ——
+ * 内置档（这一份）匿名、只答公共镜像；凭据行（{@code type=DOCKERHUB}，用户名 + PAT）
+ * 只答"我名下"的仓库。两者并存不是重复：方言按这条 ref **有没有凭据**决定自己答哪一半。
+ * （2026-10-14 曾靠 {@code isBuiltinType} 把同类型凭据行整条挡掉，那个方法已随这次改定删除。）
+ *
  * <p>⚠️ <b>开关不是在这里，是配置</b>：{@code platform.registry.dockerhub.enabled}（默认 true）。
  * 关掉它，{@code allSources()} 就不会把它算进来 —— 隔离内网里没人希望每次按键都朝一个
  * 不可达的地址打一发。
  */
 public final class BuiltinRegistry {
 
-    /** 唯一的那个。三个值都是常量：Docker Hub 没有"用户自己的地址"，也**只允许匿名**。 */
+    /** 唯一的那个。三个值都是常量：Docker Hub 没有"用户自己的地址"，这一份也**只允许匿名**。 */
     public static final BuiltinRegistry DOCKER_HUB =
             new BuiltinRegistry("builtin:dockerhub", "Docker Hub", "DOCKERHUB", "docker.io");
-
-    private static final List<BuiltinRegistry> ALL = List.of(DOCKER_HUB);
 
     private final String id;
     private final String displayName;
@@ -57,16 +58,5 @@ public final class BuiltinRegistry {
 
     public String endpoint() {
         return endpoint;
-    }
-
-    /**
-     * 这个 type 是不是由某个内置档提供（而不是由凭据行提供）。
-     *
-     * <p>{@code RegistryService} 用它把「库里残留的同类型凭据行」挡掉 ——
-     * 否则同一个 Docker Hub 会在下拉里出现两次（一次内置、一次凭据）。
-     * 该 type 已从 {@code CredentialService.TYPES} 移除，正常建不出来，但老库里可能有。
-     */
-    public static boolean isBuiltinType(String type) {
-        return ALL.stream().anyMatch(b -> b.type.equals(type));
     }
 }

@@ -16,7 +16,7 @@ const form = reactive({
   visible: false,
   id: '',
   name: '',
-  type: 'GIT' as 'GIT' | 'HARBOR',
+  type: 'GIT' as 'GIT' | 'HARBOR' | 'DOCKERHUB',
   endpoint: '',
   username: '',
   secret: '',
@@ -36,12 +36,37 @@ const isEdit = computed(() => !!form.id)
 const TYPE_OPTIONS = [
   { value: 'GIT', label: 'Git 仓库' },
   { value: 'HARBOR', label: 'Harbor 镜像仓库' },
+  // ⚠️ 这一项专指**私有**仓库（用户名 + PAT）。公共镜像的来源是平台的**内置档**，
+  // 不用配置、也不在这儿 —— 2026-10-15 用户撤销了 2026-10-14 那条「只允许匿名」的裁定
+  { value: 'DOCKERHUB', label: 'Docker Hub（私有仓库）' },
 ]
+
+/** Docker Hub 的地址是恒定的：它没有"你自己的地址"，出站的两个站点由后端写死 */
+const DOCKER_HUB = 'DOCKERHUB'
+const isDockerHub = computed(() => form.type === DOCKER_HUB)
 
 const AUTH_OPTIONS = [
   { value: 'BASIC', label: '用户名 + 密码/令牌' },
   { value: 'NONE', label: '匿名（不使用凭据）' },
 ]
+
+/**
+ * 这一档能选哪些认证方式。Docker Hub 只有 BASIC —— 匿名的那一份是**内置档**，
+ * 在这儿再建一条匿名的，只会多出一个与它一模一样、候选完全重复的来源（后端也会拒）。
+ */
+const authOptions = computed(() =>
+  isDockerHub.value ? AUTH_OPTIONS.filter((o) => o.value === 'BASIC') : AUTH_OPTIONS,
+)
+
+/** 换类型时的联动：Docker Hub 的地址恒定、且必须带认证 */
+function onTypeChange(v: string): void {
+  if (v === DOCKER_HUB) {
+    form.endpoint = 'docker.io'
+    authType.value = 'BASIC'
+  } else if (!form.endpoint.trim() || form.endpoint === 'docker.io') {
+    form.endpoint = ''
+  }
+}
 
 /**
  * 换认证方式时的联动：改成匿名就把已输入的凭据清掉 —— 那些输入框随即隐藏，
@@ -283,27 +308,34 @@ onMounted(load)
           <el-input v-model="form.name" placeholder="如 harbor-prod / gitlab-main" />
         </el-form-item>
         <el-form-item label="类型" required>
-          <el-select v-model="form.type" style="width: 100%">
+          <el-select v-model="form.type" style="width: 100%" @change="onTypeChange">
             <el-option v-for="o in TYPE_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="地址" required>
           <el-input
             v-model="form.endpoint"
-            :placeholder="form.type === 'GIT' ? 'https://gitlab.example.com' : 'harbor.example.com'"
+            :disabled="isDockerHub"
+            :placeholder="form.type === 'GIT' ? 'https://gitlab.example.com' : isDockerHub ? 'docker.io' : 'harbor.example.com'"
           />
           <div class="tip">填 host 基址（站点级），不是具体仓库或 project</div>
         </el-form-item>
         <el-form-item label="认证方式">
           <el-select v-model="authType" style="width: 100%" @change="onAuthTypeChange">
-            <el-option v-for="o in AUTH_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+            <el-option v-for="o in authOptions" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
           <div v-if="authType === 'NONE'" class="tip">匿名连接不带凭据，只能访问对端公开的资源</div>
+          <div v-if="isDockerHub" class="tip">
+            公共镜像由平台<b>内置</b>的 Docker Hub 提供（不用配、也不在这里）—— 这条连接只用于
+            <b>你自己的私有仓库</b>：候选补全、浏览、以及流水线推送。
+            <br />
+            令牌请用 <b>Access Token（PAT）</b>，不是登录密码。
+          </div>
         </el-form-item>
         <el-form-item v-if="authType === 'BASIC'" label="用户名">
           <el-input
             v-model="form.username"
-            :placeholder="isEdit ? '留空 = 保持不变' : 'robot$platform+ci / ci-bot'"
+            :placeholder="isEdit ? '留空 = 保持不变' : isDockerHub ? 'Docker ID' : 'robot$platform+ci / ci-bot'"
           />
         </el-form-item>
         <el-form-item v-if="authType === 'BASIC'" label="密码/令牌">

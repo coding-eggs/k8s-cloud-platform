@@ -6,6 +6,7 @@ import com.coding.platformapi.outbound.OutboundProxy;
 import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -70,25 +71,30 @@ public class RegistryHttpClient {
      * 是**静默吞掉**（补全）还是**往上抛**（浏览）—— 见 spec §5.3 的姿态差异。
      */
     public String get(CredentialRef cred, String url) {
+        return get(cred, url, null);
+    }
+
+    /**
+     * GET，**用一个 Bearer token 而不是凭据本身**。
+     *
+     * <p>存在的理由：Docker Hub 的站点 API（{@code hub.docker.com/v2}）**不认 Basic** ——
+     * 2026-10-15 实测：带一对错误凭据的 Basic 头照样 200，等于被当成匿名请求。
+     * 它只认 {@code POST /v2/users/login/} 换来的 JWT（错误 Bearer → 401）。
+     * 所以那一档必须先换 token，再用这个入口发请求。
+     */
+    public String getWithBearer(String url, String bearerToken) {
+        return get(null, url, "Bearer " + bearerToken);
+    }
+
+    private String get(CredentialRef cred, String url, String authorizationHeader) {
         try {
             RestClient.RequestHeadersSpec<?> spec = restClient.get().uri(URI.create(url));
-            if (hasCredential(cred)) {
+            if (authorizationHeader != null) {
+                spec.header(HttpHeaders.AUTHORIZATION, authorizationHeader);
+            } else if (hasCredential(cred)) {
                 spec.header(HttpHeaders.AUTHORIZATION, basic(cred));
             }
-            return spec.retrieve()
-                    // ⚠️ 注册顺序要紧：RestClient 按**注册顺序**取第一个匹配的 handler。
-                    // 所以**窄的（401/403）必须先注册**，宽的（非 2xx）后注册 ——
-                    // 反过来的话 401 会拿到「返回 401」而不是那句二义文案，
-                    // 而二义文案正是本模块最要防的误判（spec §5.4）。实测确认过。
-                    .onStatus(status -> status.value() == 401 || status.value() == 403, (req, res) -> {
-                        throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                                "凭据不通过，或该凭据无权访问此仓库");
-                    })
-                    .onStatus(status -> !status.is2xxSuccessful(), (req, res) -> {
-                        throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                                "镜像仓库返回 " + res.getStatusCode().value());
-                    })
-                    .body(String.class);
+            return send(spec, url, "凭据不通过，或该凭据无权访问此仓库");
         } catch (CloudPlatformException e) {
             throw e;
         } catch (IllegalArgumentException e) {
@@ -102,6 +108,52 @@ public class RegistryHttpClient {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                     "无法连接镜像仓库：" + e.getMessage());
         }
+    }
+
+    /**
+     * POST 一个 JSON 体，返回响应体。**不带 Authorization**（凭据在 body 里）——
+     * 只为 Docker Hub 的登录换 token 那一步存在。
+     *
+     * @param unauthorizedMessage 401/403 时的文案。这一跳的 401 含义很明确（用户名/令牌不对），
+     *                            用通用那句「凭据不通过，或该凭据无权访问此仓库」会把管理员
+     *                            引去查仓库权限
+     */
+    public String postJson(String url, Object body, String unauthorizedMessage) {
+        try {
+            return send(restClient.post().uri(URI.create(url))
+                            .contentType(MediaType.APPLICATION_JSON).body(body),
+                    url, unauthorizedMessage);
+        } catch (CloudPlatformException e) {
+            throw e;
+        } catch (IllegalArgumentException e) {
+            log.warn("登录地址格式非法 url={}", url, e);
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "镜像仓库地址格式不对：请检查该连接配置的 endpoint");
+        } catch (Exception e) {
+            log.warn("镜像仓库登录请求失败 url={}", url, e);
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "无法连接镜像仓库：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 两个入口共用的状态处理。
+     *
+     * <p>⚠️ 注册顺序要紧：RestClient 按**注册顺序**取第一个匹配的 handler。
+     * 所以**窄的（401/403）必须先注册**，宽的（非 2xx）后注册 ——
+     * 反过来的话 401 会拿到「返回 401」而不是那句二义文案，
+     * 而二义文案正是本模块最要防的误判（spec §5.4）。实测确认过。
+     */
+    private String send(RestClient.RequestHeadersSpec<?> spec, String url, String unauthorizedMessage) {
+        return spec.retrieve()
+                .onStatus(status -> status.value() == 401 || status.value() == 403, (req, res) -> {
+                    throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID, unauthorizedMessage);
+                })
+                .onStatus(status -> !status.is2xxSuccessful(), (req, res) -> {
+                    throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                            "镜像仓库返回 " + res.getStatusCode().value());
+                })
+                .body(String.class);
     }
 
     /**

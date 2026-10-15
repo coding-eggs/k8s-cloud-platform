@@ -93,7 +93,16 @@ public class CredentialProbeClient {
      *                        它来自调用方而不是本层，因为**同一句 404 文案对各档含义不同**。
      */
     public ProbeResult probeRegistry(String url, String username, String secret, String notFoundMessage) {
-        return probe(url, username, secret, false, notFoundMessage);
+        return probeRegistry(url, username, secret, notFoundMessage, null);
+    }
+
+    /**
+     * @param authorizationHeader 非空 = **用它**而不是 Basic（Docker Hub 的站点 API 只认 Bearer，
+     *                            而且要先把 token 换出来 —— 见 {@code ProbeSpec#authorizationHeader()}）。
+     */
+    public ProbeResult probeRegistry(String url, String username, String secret,
+                                     String notFoundMessage, String authorizationHeader) {
+        return probe(url, username, secret, false, notFoundMessage, authorizationHeader);
     }
 
     private ProbeResult probe(String url, String username, String secret, boolean git) {
@@ -102,10 +111,17 @@ public class CredentialProbeClient {
 
     private ProbeResult probe(String url, String username, String secret, boolean git,
                               String notFoundMessage) {
+        return probe(url, username, secret, git, notFoundMessage, null);
+    }
+
+    private ProbeResult probe(String url, String username, String secret, boolean git,
+                              String notFoundMessage, String authorizationHeader) {
         try {
             boolean anonymous = !StringUtils.hasText(username) && !StringUtils.hasText(secret);
             RestClient.RequestHeadersSpec<?> spec = restClient.get().uri(java.net.URI.create(url));
-            if (!anonymous) {
+            if (StringUtils.hasText(authorizationHeader)) {
+                spec.header(HttpHeaders.AUTHORIZATION, authorizationHeader);
+            } else if (!anonymous) {
                 // ⚠️ 匿名时**根本不发这个头**。发一个 `Basic Og==`（只有冒号的空 Basic）
                 // 会让有些对端判成「凭据错误」，于是匿名连接永远测不过，看起来却像地址不对。
                 spec.header(HttpHeaders.AUTHORIZATION, basic(username, secret));

@@ -267,12 +267,12 @@ public class RegistryService {
      * <p>⚠️ **问分派表，不自己维护一份 type 清单** —— 手写清单是第二个真相源，
      * 加一档时忘了改它会「全测绿但新档静默失效」。见 {@link RegistryDialectRegistry#supports}。
      *
-     * <p>⚠️ 还要排掉**内置档的 type** —— 那个 type 已从 {@code CredentialService.TYPES} 移除，
-     * 不由凭据提供。老库里万一残留一行，忽略它：否则同一个 Docker Hub 会在下拉里出现两次
-     * （一次内置、一次凭据），而两条的候选还长得一模一样。
+     * <p>⚠️ 2026-10-15 起**不再排掉内置档的 type**：Docker Hub 现在可以同时有内置档（匿名、公共）
+     * 与凭据行（带 PAT、只答"我名下"），两者答的东西不同，所以并存不是重复而是各答一半。
+     * 「谁答什么」由方言按这条 ref **有没有凭据**判（见 {@code DockerHubDialect}）。
      */
     private boolean isRegistry(PlatformCredential c) {
-        return dialects.supports(c.getType()) && !BuiltinRegistry.isBuiltinType(c.getType());
+        return dialects.supports(c.getType());
     }
 
     private static boolean enabled(PlatformCredential c) {
