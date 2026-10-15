@@ -63,10 +63,10 @@ class PipelineServiceTest {
     void theCapabilityProbeIsAnsweredForTheClusterItWasAskedAbout() {
         // ⭐ 在接上这个端点之前，PipelineCapabilityService 是**死代码**：算得出「这个集群能不能跑 CI」，
         //    却没有任何人问它 —— 于是页面照旧让用户点「运行」，然后收一个 500
-        when(capability.available("c1")).thenReturn(new PipelineCapabilityService.Capability(
-                false, "该集群未安装 Tekton（没有 tekton.dev 资源）"));
+        when(capability.available("c1", null, null)).thenReturn(new PipelineCapabilityService.Capability(
+                false, "该集群未安装 Tekton（没有 tekton.dev 资源）", null));
 
-        var c = svc.capability("c1");
+        var c = svc.capability("c1", null, null);
 
         assertThat(c.available()).isFalse();
         assertThat(c.reason()).contains("Tekton");
@@ -74,12 +74,25 @@ class PipelineServiceTest {
 
     @Test
     void theCapabilityProbeIsNotNamespaceScopedOnPurpose() {
-        // 它回答的是**集群能力**（有没有 Tekton、有没有可动态供应的 StorageClass），
+        // 「能不能跑 CI」那一半回答的是**集群能力**（有没有 Tekton、有没有可动态供应的 StorageClass），
         // 不含任何资源数据 —— 同 /cluster/capability/get 那条判断。
-        // ⚠️ 加上命名空间归属校验反而会把页面级门控弄坏：门控要在**没有**命名空间上下文时也答得出来
-        svc.capability("c1");
+        // ⚠️ 加上命名空间归属校验反而会把页面级门控弄坏：门控要在**没有**命名空间上下文时也答得出来。
+        //    （缓存那一半是命名空间级的资源状态，但它的边界由 k8s-server 的分配表校验兜住，
+        //     见 PipelineCapabilityService#available 的 javadoc。）
+        svc.capability("c1", null, null);
 
         verify(access, never()).assertAccessible(any(), any());
+    }
+
+    @Test
+    void clearingTheCacheChecksOwnershipBeforeTouchingTheCluster() {
+        // 与其它命名空间级写操作同一条规矩：先校验归属，再打集群。
+        // 顺序反了的话，越权请求也会先落到集群上（k8s-server 会拒，但那是第二道闸）
+        svc.clearCache("c1", "t1", "ns1");
+
+        var o = org.mockito.Mockito.inOrder(access, k8s);
+        o.verify(access).assertAccessible("c1", "ns1");
+        o.verify(k8s).clearCache("c1", "t1", "ns1");
     }
 
     private static PipelineDTO req(String name, String namespace) {

@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
+import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
@@ -111,6 +112,46 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
     public ResponseData<String> render(@RequestBody PipelineCanvasRequest request) {
         return new ResponseData<>(
                 canvasOps.renderYaml(request.canvasJson(), PipelineCanvasOperations.byId(request.connections())));
+    }
+
+    /**
+     * **构建缓存**：每命名空间一块平台管理的长期卷（{@code platform-pipeline-cache}），
+     * 构建节点的依赖缓存挂在它上面 —— 有了它第二次构建才不必再下一遍依赖。
+     *
+     * <p>⚠️ 端点放在 {@code /pipelineruns} 下而不是另开一个 controller：缓存卷是**这个功能的一部分**，
+     * 却不属于任何一类 K8s 资源（它就是一个 PVC），为一个读与一个清单独开 controller 不划算。
+     * 两个都用 POST —— 与流水线其余端点一致，也免得 {@code /cache} 被 {@code /{name}} 之类的路由抢走。
+     */
+    @PostMapping("/cache/status")
+    @Operation(summary = "构建缓存的状态（每命名空间一块长期卷）")
+    public ResponseData<PipelineCacheStatusDTO> cacheStatus(
+            @RequestParam(required = false) String tenantId,
+            @RequestParam String clusterId,
+            @RequestParam String namespace) {
+        AccessContext ctx = resolve(tenantId, clusterId, namespace);
+        return new ResponseData<>(pipelineRunOps(ctx, clusterId).cacheStatus(namespace));
+    }
+
+    @PostMapping("/cache/clear")
+    @Operation(summary = "清掉这个命名空间的构建缓存（删卷，下次运行自动重建）",
+            description = "删的是那块卷而不是里面的文件 —— 精确清目录得起一个 Pod 去 rm，比删卷重得多")
+    public ResponseData<Void> clearCache(
+            @RequestParam(required = false) String tenantId,
+            @RequestParam String clusterId,
+            @RequestParam String namespace) {
+        AccessContext ctx = resolve(tenantId, clusterId, namespace);
+        pipelineRunOps(ctx, clusterId).clearCache(namespace);
+        return new ResponseData<>(null);
+    }
+
+    /** {@code /pipelineruns} 的操作实现 —— 缓存那几个方法只在这里有（Tekton 专有，塞不进通用接口）。 */
+    private PipelineRunOperations pipelineRunOps(AccessContext ctx, String clusterId) {
+        NamespacedOperations<PipelineRunDTO> ops = ops(ctx, clusterId);
+        if (!(ops instanceof PipelineRunOperations runOps)) {
+            throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED,
+                    "本资源不支持构建缓存：" + ops.getClass().getSimpleName());
+        }
+        return runOps;
     }
 
     /**

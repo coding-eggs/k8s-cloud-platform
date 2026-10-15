@@ -31,6 +31,7 @@ import io.fabric8.tekton.v1.StepState;
 import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.PipelineRunStatus;
 import io.fabric8.tekton.v1.TaskRunStatus;
+import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.common.models.pipeline.PipelineConnectionRef;
 import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
@@ -133,9 +134,58 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         return isBound(pvc) ? CACHE_PVC : null;
     }
 
+    /**
+     * 构建缓存现在什么状态（页面上的「构建缓存」那一行读它）。
+     *
+     * <p>⚠️ 三种「不可用」要分清楚，因为**用户能做的事不一样**：
+     * 没建（等第一次用到缓存的运行自动建）、正在删（刚清过，下次运行重建）、
+     * 绑不上（这个集群的存储不支持共享卷 —— 那就不该建，得靠集群侧解决）。
+     */
+    public PipelineCacheStatusDTO cacheStatus(String namespace) {
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace)
+                .withName(CACHE_PVC).get();
+        if (pvc == null) {
+            return new PipelineCacheStatusDTO(false, false, CACHE_PVC, CACHE_STORAGE,
+                    "还没建 —— 第一次用到缓存的运行会自动建一块 " + CACHE_STORAGE + " 的共享卷");
+        }
+        if (pvc.getMetadata() != null && pvc.getMetadata().getDeletionTimestamp() != null) {
+            return new PipelineCacheStatusDTO(false, true, CACHE_PVC, CACHE_STORAGE,
+                    "正在删除（刚清过）—— 下次运行会重建一块空的");
+        }
+        if (!isBound(pvc)) {
+            return new PipelineCacheStatusDTO(false, true, CACHE_PVC, CACHE_STORAGE,
+                    "卷绑不上（当前 " + phaseOf(pvc) + "）—— 这个集群的存储大概不支持共享卷"
+                            + "（ReadWriteMany），所以缓存自动关闭：照样能跑，只是每次都重下依赖");
+        }
+        return new PipelineCacheStatusDTO(true, true, CACHE_PVC, capacityOf(pvc), null);
+    }
+
+    /**
+     * 清掉这个命名空间的构建缓存（删那块卷，下次运行自动重建一块空的）。
+     *
+     * <p>⚠️ 删的是**卷**而不是里面的文件：要精确清目录就得起一个 Pod 去 {@code rm -rf}，
+     * 那比删卷重得多。代价是「正在跑的运行会失去自己的缓存挂载点」—— 所以调用方要先确认。
+     * 删不掉（还有 Pod 挂着）就让它抛，别假装成功。
+     */
+    public void clearCache(String namespace) {
+        client.persistentVolumeClaims().inNamespace(namespace).withName(CACHE_PVC).delete();
+    }
+
+    private static String phaseOf(PersistentVolumeClaim pvc) {
+        return pvc.getStatus() == null ? "Pending" : String.valueOf(pvc.getStatus().getPhase());
+    }
+
+    private static String capacityOf(PersistentVolumeClaim pvc) {
+        if (pvc.getStatus() == null || pvc.getStatus().getCapacity() == null) {
+            return CACHE_STORAGE;
+        }
+        Quantity q = pvc.getStatus().getCapacity().get("storage");
+        // Quantity 的 toString 不保证是原串，拼 amount+format 才是稳定的 "10Gi"
+        return q == null ? CACHE_STORAGE : q.getAmount() + (q.getFormat() == null ? "" : q.getFormat());
+    }
+
     /** 见 {@link #CACHE_BIND_WAIT_MS}。 */
-    private PersistentVolumeClaim waitForBound(String namespace) {
-        long deadline = System.currentTimeMillis() + CACHE_BIND_WAIT_MS;
+    private PersistentVolumeClaim waitForBound(String namespace) {        long deadline = System.currentTimeMillis() + CACHE_BIND_WAIT_MS;
         PersistentVolumeClaim pvc = null;
         while (System.currentTimeMillis() < deadline) {
             pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(CACHE_PVC).get();

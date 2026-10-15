@@ -1,5 +1,6 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.platformapi.k8s.K8sPipelineClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -43,15 +44,41 @@ public class PipelineCapabilityService {
         this.k8s = k8s;
     }
 
-    public Capability available(String clusterId) {
+    /**
+     * 这个集群能不能跑 CI —— 外加**构建缓存**的状态。
+     *
+     * <p>⚠️ 缓存那一段与「能不能跑」是**两件事**：缓存关系到"快不快"（没了就每次都重下依赖），
+     * 而 CI 照样能跑。所以缓存探不到时只是不回这一段（前端显示「—」），
+     * **绝不因此把 available 按下去**。
+     *
+     * @param namespace 构建缓存是**按命名空间**的（每 ns 一块长期卷）；留空 = 不回缓存那一段
+     */
+    public Capability available(String clusterId, String tenantId, String namespace) {
         if (!clusterCapability.hasTekton(clusterId)) {
-            return new Capability(false, "该集群未安装 Tekton（没有 tekton.dev 资源）");
+            return new Capability(false, "该集群未安装 Tekton（没有 tekton.dev 资源）", null);
         }
         if (!hasDynamicStorageClass(clusterId)) {
             return new Capability(false,
-                    "该集群没有可动态供应的 StorageClass —— 共享 workspace 需要现开一块 PVC");
+                    "该集群没有可动态供应的 StorageClass —— 共享 workspace 需要现开一块 PVC", null);
         }
-        return new Capability(true, null);
+        return new Capability(true, null, cacheStatus(clusterId, tenantId, namespace));
+    }
+
+    /** 只问「能不能跑」时的形态（不回缓存状态）。 */
+    public Capability available(String clusterId) {
+        return available(clusterId, null, null);
+    }
+
+    private PipelineCacheStatusDTO cacheStatus(String clusterId, String tenantId, String namespace) {
+        if (namespace == null || namespace.isBlank()) {
+            return null;
+        }
+        try {
+            return k8s.cacheStatus(clusterId, tenantId, namespace);
+        } catch (Exception e) {
+            log.warn("探测集群 {} 的命名空间 {} 的构建缓存失败（只影响缓存那一行）", clusterId, namespace, e);
+            return null;
+        }
     }
 
     /**
@@ -81,7 +108,10 @@ public class PipelineCapabilityService {
         }
     }
 
-    /** @param reason 不可用时**必须**给原因 —— 不然用户只看到"功能没了" */
-    public record Capability(boolean available, String reason) {
+    /**
+     * @param reason 不可用时**必须**给原因 —— 不然用户只看到"功能没了"
+     * @param cache  构建缓存的状态；{@code null} = 没问/没探到（前端显示「—」，不当作"不可用"）
+     */
+    public record Capability(boolean available, String reason, PipelineCacheStatusDTO cache) {
     }
 }

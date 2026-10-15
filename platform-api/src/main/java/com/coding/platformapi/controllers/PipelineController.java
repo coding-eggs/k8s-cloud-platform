@@ -104,10 +104,29 @@ public class PipelineController {
      * 而不是让用户配完一条流水线、点运行，才收一个 500。
      */
     @PostMapping("/capability")
-    @Operation(summary = "这个集群能不能跑 CI",
-            description = "Tekton 与可动态供应的 StorageClass 缺一不可；不可用时带原因")
+    @Operation(summary = "这个集群能不能跑 CI（外加构建缓存的状态）",
+            description = "Tekton 与可动态供应的 StorageClass 缺一不可；不可用时带原因。"
+                    + "带了命名空间时顺带回构建缓存的状态 —— 它是命名空间级的资源状态，"
+                    + "边界由 k8s-server 的分配表校验兜住；问不了就不回那一段")
     public ResponseData<PipelineCapabilityService.Capability> capability(@RequestBody PipelineDTO request) {
-        return new ResponseData<>(pipelineService.capability(request.getClusterId()));
+        return new ResponseData<>(pipelineService.capability(request.getClusterId(),
+                auth.effectiveTenantId(request.getTenantId()), request.getNamespace()));
+    }
+
+    /**
+     * 清掉这个命名空间的**构建缓存**（删那块长期卷，下次运行自动重建）。
+     *
+     * <p>放在流水线域：缓存卷是构建用的东西，与流水线定义/运行同属一个功能面。
+     * 权限沿用 {@code tenant:pipeline:manage}（能改流水线的人才该能清缓存）。
+     */
+    @PostMapping("/cache/clear")
+    @Operation(summary = "清掉这个命名空间的构建缓存（删卷，下次运行自动重建）",
+            description = "删的是那块卷而不是里面的文件；有运行正在用它时删不掉（会让它抛错，不是假装成功）")
+    @Auditable(action = AuditAction.PIPELINE_CACHE_CLEAR, target = "#request.namespace")
+    public ResponseData<Void> clearCache(@RequestBody PipelineDTO request) {
+        pipelineService.clearCache(request.getClusterId(),
+                auth.effectiveTenantId(request.getTenantId()), request.getNamespace());
+        return new ResponseData<>();
     }
 
     /**

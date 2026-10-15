@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
+import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpMethod;
@@ -151,6 +152,32 @@ public class K8sPipelineClient {
         params.put("namespace", namespace);
         gateway.exchange(HttpMethod.POST, "/pipelineruns/" + name + "/cancel", params, null,
                 gateway.responseType(Void.class));
+    }
+
+    /**
+     * 构建缓存的状态（每命名空间一块长期卷）。
+     *
+     * <p>⚠️ 随 {@code /pipeline/capability} 一起回给前端 —— 「能不能开缓存」与「能不能跑 CI」
+     * 是同一类问题（环境给不给得了），页面本来就为后者发一次请求。
+     */
+    public PipelineCacheStatusDTO cacheStatus(String clusterId, String tenantId, String namespace) {
+        return gateway.exchange(HttpMethod.POST, "/pipelineruns/cache/status",
+                cacheParams(clusterId, tenantId, namespace), null,
+                gateway.responseType(PipelineCacheStatusDTO.class));
+    }
+
+    /** 清掉这个命名空间的构建缓存（删卷）。 */
+    public void clearCache(String clusterId, String tenantId, String namespace) {
+        gateway.exchange(HttpMethod.POST, "/pipelineruns/cache/clear",
+                cacheParams(clusterId, tenantId, namespace), null, gateway.responseType(Void.class));
+    }
+
+    private static Map<String, String> cacheParams(String clusterId, String tenantId, String namespace) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("tenantId", tenantId);
+        params.put("clusterId", clusterId);
+        params.put("namespace", namespace);
+        return params;
     }
 
     /**

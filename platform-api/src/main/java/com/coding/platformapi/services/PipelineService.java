@@ -54,17 +54,30 @@ public class PipelineService {
     private final PipelineCapabilityService capability;
 
     /**
-     * 这个集群**能不能跑 CI**：Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。
+     * 这个集群**能不能跑 CI**，外加**构建缓存**的状态（spec §9）。
      *
      * <p>前端拿它做**页面级门控** —— 不可用时在页面顶部给一句原因、把「运行」按下去，
      * 而不是让用户点了才收一个 500。所以它是「能不能用 + 为什么不能」，不是一个布尔。
      *
-     * <p>⚠️ <b>有意不按命名空间校验归属</b>：它回答的是集群能力（装了没有），
-     * 不含任何资源数据 —— 与 {@code /cluster/capability/get}（码是 cluster 域的只读快照）同一条判断。
-     * 加上归属校验反而会把门控弄坏：那要求调用方手里已经有一个能用的命名空间上下文。
+     * <p>⚠️ <b>两半的归属规则不一样</b>：「能不能跑 CI」回答的是集群能力（装了没有），
+     * 不含任何资源数据，所以**有意不校验命名空间归属** —— 加上校验反而会把门控弄坏
+     * （那要求调用方手里已经有一个能用的命名空间上下文）。而**缓存那一半是命名空间级的资源状态**，
+     * 所以它只在给了 namespace 时才回，边界由 k8s-server 的分配表校验兜住
+     * （{@code assertNamespacedAccess}）；问不了就不回那一段（前端显示「—」），绝不影响门控。
      */
-    public PipelineCapabilityService.Capability capability(String clusterId) {
-        return capability.available(clusterId);
+    public PipelineCapabilityService.Capability capability(String clusterId, String tenantId, String namespace) {
+        return capability.available(clusterId, tenantId, namespace);
+    }
+
+    /**
+     * 清掉这个命名空间的**构建缓存**（删那块长期卷，下次运行自动重建一块空的）。
+     *
+     * <p>⚠️ 它删的是卷而不是里面的文件 —— 见 k8s-server 侧 {@code clearCache} 的取舍。
+     * 权限沿用 {@code tenant:pipeline:manage}：能改流水线的人才该能清缓存。
+     */
+    public void clearCache(String clusterId, String tenantId, String namespace) {
+        access.assertAccessible(clusterId, namespace);
+        k8s.clearCache(clusterId, tenantId, namespace);
     }
 
     public void validateName(String name) {

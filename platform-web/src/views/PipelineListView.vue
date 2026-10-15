@@ -25,6 +25,8 @@ const { state } = useResourceContext()
 
 const rows = ref<Pipeline[]>([])
 const loading = ref(false)
+const showCache = ref(false)
+const clearing = ref(false)
 const keyword = ref('')
 
 const canManage = computed(() => perm.has(apiCodes.pipelineManage))
@@ -33,9 +35,43 @@ const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 const clusterId = computed(() => state.clusterId ?? '')
 const namespace = computed(() => state.namespace ?? '')
 
-/** 页面级门控（三态：`false` 才禁用 —— 「不知道」不禁，真正的拦截在后端） */
-const { available: capAvailable, reason: capReason, load: reloadCapability } =
-  usePipelineCapability(clusterId)
+/** 页面级门控（三态：`false` 才禁用 —— 「不知道」不禁，真正的拦截在后端）+ 构建缓存状态 */
+const { available: capAvailable, reason: capReason, cache: cacheStatus,
+        load: reloadCapability, clearCache } = usePipelineCapability(
+  clusterId, namespace, computed(() => state.tenantId ?? null))
+
+/**
+ * 缓存那一行的文案。**「不知道」与「未启用」要分开说**：
+ * 前者是我们没探到（显示「状态未知」），后者是集群真的给不了共享卷（那时才显示原因）。
+ */
+const cacheLabel = computed(() => {
+  if (!cacheStatus.value) return '构建缓存：状态未知'
+  return cacheStatus.value.ready
+    ? `构建缓存：已启用 ${cacheStatus.value.capacity}`
+    : '构建缓存：未启用'
+})
+
+/** 清缓存：删的是那块长期卷（不是里面的文件），下次运行自动重建一块空的。 */
+async function doClearCache() {
+  await ElMessageBox.confirm(
+    `清掉「${namespace.value}」的构建缓存？
+
+`
+      + '删掉的是那块卷本身，下次运行会自动重建一块空的 —— '
+      + '那一次构建要把依赖重新下载一遍（会明显变慢）。',
+    '确认清缓存',
+    { type: 'warning', confirmButtonText: '清掉', cancelButtonText: '算了' },
+  )
+  clearing.value = true
+  try {
+    await clearCache()
+    ElMessage.success('已清掉，下次运行会重建一块空的')
+  } catch {
+    /* 拦截器已提示（还挂着 Pod 的卷删不掉，后端会拒） */
+  } finally {
+    clearing.value = false
+  }
+}
 
 const filtered = computed(() => {
   const k = keyword.value.trim().toLowerCase()
@@ -111,6 +147,12 @@ function onCommand(cmd: string, row: Pipeline): void {
   <div class="page">
     <div class="bar">
       <el-input v-model="keyword" placeholder="按名字筛选" clearable style="width: 220px" />
+      <!-- 构建缓存：作用域正好是「当前集群 + 命名空间」，与缓存卷一一对应 -->
+      <el-button v-if="clusterId && namespace" size="small" plain
+                 :type="cacheStatus?.ready ? 'success' : 'info'"
+                 @click="showCache = true">
+        {{ cacheLabel }}
+      </el-button>
       <div class="spacer" />
       <el-button @click="load">刷新</el-button>
       <el-button v-if="canManage" type="primary" @click="toEditor()">新建流水线</el-button>
@@ -175,6 +217,36 @@ function onCommand(cmd: string, row: Pipeline): void {
         </template>
       </el-table-column>
     </el-table>
+
+    <el-dialog v-model="showCache" title="构建缓存" width="520px">
+      <div class="cache-row">
+        <span class="cache-key">状态</span>
+        <el-tag v-if="cacheStatus?.ready" type="success" size="small">已启用</el-tag>
+        <el-tag v-else-if="cacheStatus" type="info" size="small">未启用</el-tag>
+        <span v-else class="dim">状态未知（没探到）</span>
+      </div>
+      <div v-if="cacheStatus" class="cache-row">
+        <span class="cache-key">容量</span><span>{{ cacheStatus.capacity }}</span>
+      </div>
+      <div v-if="cacheStatus" class="cache-row">
+        <span class="cache-key">卷名</span><span class="mono">{{ cacheStatus.claimName }}</span>
+      </div>
+      <div v-if="cacheStatus && !cacheStatus.ready && cacheStatus.reason" class="cache-why">
+        {{ cacheStatus.reason }}
+      </div>
+
+      <div class="cache-note">
+        构建节点（Java / Node / Go / Python，以及开了开关的命令节点）的依赖缓存在这里，
+        <b>跨运行保留</b> —— 第二次构建不必再下一遍依赖。<br />
+        清除会删掉那块卷本身，下次运行自动重建一块空的：<b>那一次构建会明显变慢</b>。
+      </div>
+
+      <template #footer>
+        <el-button @click="showCache = false">关闭</el-button>
+        <el-button v-if="canManage && cacheStatus?.exists" type="danger" plain
+                   :loading="clearing" @click="doClearCache">清掉缓存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -207,6 +279,39 @@ function onCommand(cmd: string, row: Pipeline): void {
 .name {
   color: var(--el-color-primary);
   cursor: pointer;
+}
+/* 构建缓存对话框里的几行（键值对齐 + 卷名等宽） */
+.cache-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.cache-key {
+  width: 48px;
+  color: var(--text-3);
+}
+.mono {
+  font-family: monospace;
+}
+.cache-why {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--el-color-info-light-9);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.cache-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.7;
+}
+.dim {
+  color: var(--text-3);
 }
 .name.focus {
   font-weight: 600;

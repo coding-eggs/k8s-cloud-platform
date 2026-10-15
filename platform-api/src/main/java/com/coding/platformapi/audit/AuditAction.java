@@ -117,6 +117,14 @@ public final class AuditAction {
     public static final String PIPELINE_CANCEL = "pipeline:cancel";
 
     /**
+     * 清掉命名空间的构建缓存（删那块长期卷）。
+     *
+     * <p>它值得进审计：这一步会让**下一次构建变慢**（依赖要重下一遍），而用户看到的现象是
+     * "别人动过之后我的构建慢了" —— 没有审计就只能猜。
+     */
+    public static final String PIPELINE_CACHE_CLEAR = "pipeline:cache-clear";
+
+    /**
      * 全部动作码（常量类的反射视图），按字母序。
      *
      * <p><b>为什么用反射而不是再手写一份 List</b>：手写那份会与常量漂移（加了常量忘了加进 List），

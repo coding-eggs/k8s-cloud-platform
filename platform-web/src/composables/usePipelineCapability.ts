@@ -2,6 +2,7 @@ import { ref, watch, type Ref } from 'vue'
 import { pipelineApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
 import { usePermission } from '@/stores/permission'
+import type { PipelineCacheStatus } from '@/types'
 
 /**
  * 「这个集群能不能跑 CI」—— Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。
@@ -25,10 +26,16 @@ import { usePermission } from '@/stores/permission'
  * <p>返回的是一组普通 ref —— 在 `<script setup>` 顶层解构后，模板里可直接写
  * `v-if="cap.available === false"`（顶层绑定会被解包）。
  */
-export function usePipelineCapability(clusterId: Ref<string | null | undefined>) {
+export function usePipelineCapability(
+  clusterId: Ref<string | null | undefined>,
+  /** 给了才回**构建缓存**那一段（它是命名空间级的资源状态；不给就只答「能不能跑 CI」） */
+  namespace?: Ref<string | null | undefined>,
+  tenantId?: Ref<string | null | undefined>,
+) {
   const perm = usePermission()
   const available = ref<boolean | null>(null)
   const reason = ref<string | null>(null)
+  const cache = ref<PipelineCacheStatus | null>(null)
   const loading = ref(false)
 
   async function load(): Promise<void> {
@@ -36,25 +43,44 @@ export function usePipelineCapability(clusterId: Ref<string | null | undefined>)
     if (!id || !perm.has(apiCodes.pipelineRead)) {
       available.value = null
       reason.value = null
+      cache.value = null
       return
     }
     loading.value = true
     try {
-      const c = await pipelineApi.capability(id)
+      const c = await pipelineApi.capability(id, tenantId?.value ?? undefined, namespace?.value ?? undefined)
       // 加载期间切了集群 → 丢弃过期结果，等下一次 watch 触发
       if (clusterId.value !== id) return
       available.value = c?.available ?? null
       reason.value = c?.reason ?? null
+      cache.value = c?.cache ?? null
     } catch {
       if (clusterId.value !== id) return
       available.value = null // 拦截器已提示；按「不知道」降级，不禁用
       reason.value = null
+      cache.value = null
     } finally {
       loading.value = false
     }
   }
 
-  watch(clusterId, () => { void load() }, { immediate: true })
+  /**
+   * 清掉这个命名空间的构建缓存（删那块长期卷）。
+   *
+   * <p>确认框与提示留在调用方：这里只做「清完重新探测」——
+   * 状态就在同一个 composable 里，清完不重读等于页面自己骗自己。
+   */
+  async function clearCache(): Promise<void> {
+    const id = clusterId.value
+    const ns = namespace?.value
+    if (!id || !ns) return
+    await pipelineApi.clearCache(id, ns, tenantId?.value ?? undefined)
+    await load()
+  }
 
-  return { available, reason, loading, load }
+  const nsRef = namespace ?? ref<string | null>(null)
+  const tenantRef = tenantId ?? ref<string | null>(null)
+  watch([clusterId, nsRef, tenantRef], () => { void load() }, { immediate: true })
+
+  return { available, reason, cache, loading, load, clearCache }
 }

@@ -1810,6 +1810,20 @@ export interface PipelineCapability {
   available: boolean
   /** 不可用时**一定有**原因：不然用户只看到「功能没了」 */
   reason?: string | null
+  /** 构建缓存的状态；null = 没问（没给命名空间）或没探到 —— 前端显示「—」，不当作"不可用" */
+  cache?: PipelineCacheStatus | null
+}
+
+/** 构建缓存：每个命名空间一块长期卷，构建节点的依赖缓存挂在它上面（跑完不删）。 */
+export interface PipelineCacheStatus {
+  /** 现在挂得上吗 —— 决定下次运行会不会用上缓存 */
+  ready: boolean
+  /** 那块卷在不在。存在却没 ready = 建了却绑不上（存储不支持共享卷 RWX） */
+  exists: boolean
+  claimName: string
+  capacity: string
+  /** ready=false 时的一句人话 */
+  reason?: string | null
 }
 
 /** 一次运行里一个节点**现在**的落点（k8s-server 解析的 Tekton run → TaskRun → Pod）。 */

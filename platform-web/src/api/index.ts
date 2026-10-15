@@ -702,6 +702,14 @@ export const pipelineApi = {
     http.post<never, string>('/pipeline/run/logs', { runName, nodeName, tenantId }),
 
   /** 这个集群能不能跑 CI —— **页面级门控的唯一判据**（不可用时带原因，前端据此提示并禁用「运行」） */
-  capability: (clusterId: string) =>
-    http.post<never, PipelineCapability>('/pipeline/capability', { clusterId }),
+  capability: (clusterId: string, tenantId?: string, namespace?: string) =>
+    http.post<never, PipelineCapability>('/pipeline/capability', { clusterId, tenantId, namespace }),
+
+  /**
+   * 清掉这个命名空间的**构建缓存**（删那块长期卷，下次运行自动重建）。
+   *
+   * ⚠️ 删的是卷而不是里面的文件：有运行正在用它时删不掉（后端会抛，不是假装成功）。
+   */
+  clearCache: (clusterId: string, namespace: string, tenantId?: string) =>
+    http.post<never, void>('/pipeline/cache/clear', { clusterId, namespace, tenantId }),
 }

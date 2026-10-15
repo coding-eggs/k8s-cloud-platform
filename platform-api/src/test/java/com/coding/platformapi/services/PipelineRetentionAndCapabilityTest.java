@@ -1,6 +1,7 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
+import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
@@ -117,6 +118,51 @@ class PipelineRetentionAndCapabilityTest {
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
 
         assertThat(capability.available("c1").available()).isTrue();
+    }
+
+    @Test
+    void theCacheStatusRidesAlongWithTheCapabilityAnswer() {
+        // ⭐ 缓存状态**随 capability 一起回**：两者是同一类问题（环境给不给得了），
+        //    页面本来就为后者发一次请求 —— 分成两个端点只是多一次往返、多一条权限行
+        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
+        when(k8s.cacheStatus("c1", "t1", "ns1")).thenReturn(new PipelineCacheStatusDTO(
+                true, true, "platform-pipeline-cache", "10Gi", null));
+
+        var c = capability.available("c1", "t1", "ns1");
+
+        assertThat(c.available()).isTrue();
+        assertThat(c.cache().ready()).isTrue();
+        assertThat(c.cache().capacity()).isEqualTo("10Gi");
+    }
+
+    @Test
+    void aFailedCacheProbeDoesNotSinkTheCiGate() {
+        // ⭐ 这两个概念的分界线：缓存关系到"快不快"（没了就每次重下依赖），CI 照样能跑。
+        //    所以探不到只是不回那一段（前端显示「—」），绝不把 available 按下去
+        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
+        when(k8s.cacheStatus(anyString(), any(), anyString()))
+                .thenThrow(new RuntimeException("cluster down"));
+
+        var c = capability.available("c1", "t1", "ns1");
+
+        assertThat(c.available()).as("CI 仍然能跑").isTrue();
+        assertThat(c.cache()).as("只是没有缓存那一段").isNull();
+    }
+
+    @Test
+    void withoutANamespaceTheCacheIsNotEvenAsked() {
+        // 门控要在**没有命名空间上下文**时也答得出来（这是它有意不校验归属的原因）——
+        // 那就别去问缓存（问了必然失败，还要白打一次集群）
+        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
+
+        var c = capability.available("c1", "t1", null);
+
+        assertThat(c.available()).isTrue();
+        assertThat(c.cache()).isNull();
+        verify(k8s, never()).cacheStatus(anyString(), any(), any());
     }
 
     @Test
