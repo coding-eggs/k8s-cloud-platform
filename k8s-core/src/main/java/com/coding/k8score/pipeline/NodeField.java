@@ -31,7 +31,7 @@ public record NodeField(String key, String label, FieldType type,
 
     public static NodeField image(String key, String label) {
         return new NodeField(key, label, FieldType.IMAGE, true, "如 maven:3.9-eclipse-temurin-21",
-                "基础镜像。**带候选补全** —— 从已配的镜像仓库里挑", null, List.of());
+                "基础镜像。带候选补全 —— 从已配的镜像仓库里挑", null, List.of());
     }
 
     public static NodeField select(String key, String label, List<Option> options, String def) {

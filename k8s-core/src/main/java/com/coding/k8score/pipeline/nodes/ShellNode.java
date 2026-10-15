@@ -54,8 +54,13 @@ public class ShellNode implements PipelineNode {
         return new NodeSchema(List.of(
                 NodeField.select("preset", "预设（只是默认值，下面都能改）", BuildPreset.options(), "custom"),
                 NodeField.image("image", "镜像"),
-                NodeField.text("command", "命令（可多行）", true),
-                NodeField.text("workDir", "工作目录（相对 workspace）", false)));
+                NodeField.text("command", "命令（可多行）", true,
+                        "在共享 workspace 里按顺序执行；任一行失败就中止（Tekton 默认 set -e）。\n"
+                                + "前面 git 克隆放下的代码就在工作目录里。\n"
+                                + "例：mvn -B -DskipTests package"),
+                NodeField.text("workDir", "工作目录（相对 workspace）", false,
+                        "留空 = 共享 workspace 的根目录。\n"
+                                + "例：多模块仓库里只跑前端 → 填 frontend")));
     }
 
     @Override

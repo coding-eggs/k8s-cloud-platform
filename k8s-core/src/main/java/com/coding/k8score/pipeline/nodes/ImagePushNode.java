@@ -57,19 +57,33 @@ public class ImagePushNode implements PipelineNode {
     public NodeSchema formSchema() {
         return new NodeSchema(List.of(
                 NodeField.text("registryConnectionId", "目标仓库（被授权的 registry 连接）", true),
-                NodeField.text("imageName", "镜像名（仓库路径，如 proj/app）", true),
+                NodeField.text("imageName", "镜像名（仓库路径，如 proj/app）", true,
+                        "只填仓库路径，不要带 registry 地址与 tag —— 那两段由上面的连接和下面的 tag 来源拼出来。\n"
+                                + "例：连接是 harbor.example.com、这里填 proj/app、tag 取 git 短 sha\n"
+                                + "    → 最终镜像 harbor.example.com/proj/app:a1b2c3d"),
                 NodeField.select("tagSource", "tag 来源",
                         List.of(new NodeField.Option("git-sha", "git 短 sha"),
                                 new NodeField.Option("run-id", "本次运行序号"),
                                 new NodeField.Option("fixed", "自定义固定值")), "git-sha"),
-                NodeField.text("fixedTag", "固定 tag（仅「自定义固定值」时用）", false),
+                NodeField.text("fixedTag", "固定 tag（仅「自定义固定值」时用）", false,
+                        "只有上面的 tag 来源选「自定义固定值」时才用。\n例：v1.0.0、latest"),
                 NodeField.text("dockerfile", "Dockerfile 路径", false,
-                        "留空 = 用 Dockerfile。相对共享 workspace 的根目录 —— "
-                                + "Dockerfile 在子目录里就写全，如 frontend/Dockerfile"),
+                        "留空 = 用 workspace 根目录下的 Dockerfile。\n"
+                                + "相对「共享 workspace 的根」，可以指向构建上下文之外。\n"
+                                + "例：在仓库根 → 留空；在前端目录 → frontend/Dockerfile；"
+                                + "统一放一处 → docker/Dockerfile（此时上下文一般留空）"),
                 NodeField.text("context", "构建上下文", false,
-                        "构建工具能看到的那一个目录，决定 COPY/ADD 能从哪拿文件"
-                                + "（与 Dockerfile 在哪无关）。留空 = workspace 根（.）；"
-                                + "代码在子目录里就填它，如 frontend")));
+                        "构建工具能看到的那一个目录 —— 决定 Dockerfile 里的 COPY/ADD 能从哪儿拿文件"
+                                + "（与 Dockerfile 放在哪儿无关）。\n"
+                                + "留空 = 共享 workspace 的根（git 克隆节点把代码放进来的地方）。\n"
+                                + "例：\n"
+                                + "  · 仓库根就是构建目录 → 留空\n"
+                                + "  · 只有一个前端工程，代码在 frontend/ → 填 frontend\n"
+                                + "    （Dockerfile 路径同时要写全：frontend/Dockerfile）\n"
+                                + "  · 一个仓库要出多个镜像（frontend/ 与 backend/ 各一份 Dockerfile）\n"
+                                + "    → 两个节点分别填 frontend 与 backend\n"
+                                + "⚠️ 别把上下文填成含 node_modules/、target/ 的大目录："
+                                + "整个目录都要打包传给构建工具，慢且吃盘 —— 用 .dockerignore 排掉")));
     }
 
     @Override

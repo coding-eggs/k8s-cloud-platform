@@ -59,10 +59,19 @@ public class GitCloneNode implements PipelineNode {
         // 逐条问「这条连接被授权了吗」（spec §5.3、Review Focus #4）。
         // 改名要同时改 PipelineRunService.CONNECTION_KEYS 与那条护栏测试。
         return new NodeSchema(List.of(
-                NodeField.text("connectionId", "git 连接（只列出被授权可用的）", false),
-                NodeField.text("repo", "仓库地址", true),
-                NodeField.text("revision", "分支 / commit", false),
-                NodeField.text("dir", "目标目录（相对 workspace）", false)));
+                NodeField.text("connectionId", "git 连接（只列出被授权可用的）", false,
+                        "留空 = 匿名拉取，只适用于公开仓库。\n"
+                                + "私有仓库要选一条已勾「允许在流水线里使用」的连接（在凭据页勾）。\n"
+                                + "凭据只以文件形式挂进构建容器，不会出现在流水线定义与预览里。"),
+                NodeField.text("repo", "仓库地址", true,
+                        "HTTP(S) 克隆地址。\n例：https://gitlab.example.com/group/repo.git"),
+                NodeField.text("revision", "分支 / 标签", false,
+                        "留空 = 仓库默认分支。只认分支与标签（浅克隆 --depth 1），"
+                                + "填 commit sha 会报 Remote branch not found。\n例：main、v1.2.0"),
+                NodeField.text("dir", "目标目录（相对 workspace）", false,
+                        "克隆到共享 workspace 的哪个子目录；留空 = 直接放进根目录。\n"
+                                + "例：留空 → /workspace 下就是仓库内容；填 src → /workspace/src"
+                                + "（下游节点的工作目录与构建上下文记得跟着写 src）")));
     }
 
     @Override

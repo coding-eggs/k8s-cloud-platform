@@ -10,7 +10,7 @@
  * 3. **选预设只换默认值**：`preset` 变化时把 `image` / `command` 两个框填上该预设的值，
  *    **不锁死任何字段**（用户明确要求：预设只是预设，都能改）。
  */
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { useImageSuggest } from '@/composables/useImageSuggest'
 import type { PipelineCanvasNode, PipelineConnection, RegistrySuggestItem } from '@/types'
@@ -28,8 +28,12 @@ const emit = defineEmits<{
   (e: 'rename', name: string): void
 }>()
 
-const { byType, optionsOf, presetOf } = usePipelineNodeTypes()
+const { byType, optionsOf, presetOf, load: loadNodeTypes } = usePipelineNodeTypes()
 const { fetchImageSuggestions } = useImageSuggest()
+
+// 自己也要拉一次节点 schema：这份单例由**先挂载的那个组件**填，面板不拉的话
+// 单独用（父组件没拉过）就只会显示「未知节点类型」。load() 是幂等的（单例缓存 inflight）
+onMounted(loadNodeTypes)
 
 const schema = computed(() => byType(props.node.type))
 const fields = computed(() => schema.value?.fields ?? [])
@@ -221,5 +225,8 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
   color: var(--text-3);
   margin-top: 4px;
   line-height: 1.5;
+  /* 说明里可以带换行与示例（节点 schema 的 help 是纯文本，用 
+ 分行） */
+  white-space: pre-line;
 }
 </style>
