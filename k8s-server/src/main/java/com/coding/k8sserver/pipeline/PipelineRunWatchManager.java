@@ -46,21 +46,19 @@ public class PipelineRunWatchManager {
     public record ActiveRun(String clusterId, String namespace, String runName, Instant startedAt) { }
 
     private final KubernetesOperationsFactory operationsFactory;
-    private final PipelineRunCallbackClient callback;
-    private final int maxLogBytes;
+    private final PipelineRunFinisher finisher;
 
     /** key = clusterId + "/" + namespace + "/" + runName */
     private final Map<String, ActiveRun> active = new ConcurrentHashMap<>();
     private final Map<String, Watch> watches = new ConcurrentHashMap<>();
     /** 回调没被确认的（platform-api 重启/不可达）—— 节拍器会重投。值 = 这次是平台判的超时 */
+    /** 终结了但**还没归档成功**的（落库失败 / 抓快照失败）—— 节拍器会重试。值 = 这次是平台判的超时 */
     private final Map<String, Boolean> pending = new ConcurrentHashMap<>();
 
     public PipelineRunWatchManager(KubernetesOperationsFactory operationsFactory,
-                                   PipelineRunCallbackClient callback,
-                                   @Value("${platform.pipeline.log.max-bytes:1048576}") int maxLogBytes) {
+                                   PipelineRunFinisher finisher) {
         this.operationsFactory = operationsFactory;
-        this.callback = callback;
-        this.maxLogBytes = maxLogBytes;
+        this.finisher = finisher;
     }
 
     private static String key(String clusterId, String namespace, String runName) {
@@ -125,17 +123,9 @@ public class PipelineRunWatchManager {
 
     private void onTerminated(String clusterId, String namespace, String runName, boolean timedOut) {
         String k = key(clusterId, namespace, runName);
-        PipelineRunSnapshotDTO snapshot = takeSnapshot(clusterId, namespace, runName, timedOut);
-        if (snapshot == null) {
-            // 对象已经没了（他方删除 / 重投）—— 没什么可归档的，把对象再删一次也无妨
-            deleteObject(clusterId, namespace, runName);
-            recordClosed(clusterId, namespace, runName);
-            pending.remove(k);
-            return;
-        }
-        if (callback.finished(snapshot)) {
-            // ⚠️ **确认之后才删** —— 删了会把那份日志的唯一副本一起带走
-            deleteObject(clusterId, namespace, runName);
+        // 抓快照 → 落库 → 删对象，全在 k8s-server 本地做完（见 PipelineRunFinisher）。
+        // ⚠️ 落库失败时它**不删对象** —— 那份日志的唯一副本还在集群里，等下一次重试。
+        if (finisher.finish(clusterId, namespace, runName, timedOut)) {
             pending.remove(k);
             recordClosed(clusterId, namespace, runName);
         } else {
@@ -143,37 +133,7 @@ public class PipelineRunWatchManager {
         }
     }
 
-    /**
-     * 抓快照。**平台判超时时状态改写为 TIMEOUT** —— Tekton 那边它还在跑（平台是"先抓日志、再取消"），
-     * 光看对象的 condition 分不出「用户取消」与「平台判超时」。
-     */
-    private PipelineRunSnapshotDTO takeSnapshot(String clusterId, String namespace, String runName,
-                                               boolean timedOut) {
-        try {
-            PipelineRunSnapshotDTO s = runOps(clusterId).snapshot(clusterId, namespace, runName, maxLogBytes);
-            if (s == null || !timedOut) {
-                return s;
-            }
-            return new PipelineRunSnapshotDTO(s.clusterId(), s.namespace(), s.runName(),
-                    "TIMEOUT", s.reason(), s.startTime(), s.completionTime(), s.steps());
-        } catch (Exception e) {
-            log.warn("抓运行快照失败（进待补集合）{}/{}", namespace, runName, e);
-            return null;
-        }
-    }
-
-    private void deleteObject(String clusterId, String namespace, String runName) {
-        try {
-            NamespacedOperations<PipelineRunDTO> ops =
-                    operationsFactory.getAdminNamespacedOperation(ResourceType.PIPELINE_RUN, clusterId);
-            ops.delete(namespace, runName);
-        } catch (Exception e) {
-            // 删不掉不致命：下次重投还会试（删本身幂等）
-            log.warn("删运行对象失败（下次重投再试）{}/{}", namespace, runName, e);
-        }
-    }
-
-    /** 节拍器重投待补的。 */
+    /** 节拍器重投待补的：**都是本地动作**，没有 HTTP。 */
     void retryPending() {
         for (Map.Entry<String, Boolean> e : Map.copyOf(pending).entrySet()) {
             String[] parts = e.getKey().split("/", 3);

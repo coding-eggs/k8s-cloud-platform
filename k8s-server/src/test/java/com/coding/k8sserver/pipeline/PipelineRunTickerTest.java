@@ -33,7 +33,7 @@ class PipelineRunTickerTest {
 
     @Test
     void anOverdueRunIsCancelledAndPendingIsRetried() {
-        PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null, 1024);
+        PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null);
         Instant now = Instant.parse("2026-10-15T10:31:00Z");
         mgr.recordOpened("c1", "ns1", "old", now.minus(Duration.ofMinutes(31)));
         mgr.recordOpened("c1", "ns1", "fresh", now.minus(Duration.ofMinutes(1)));
@@ -47,7 +47,7 @@ class PipelineRunTickerTest {
 
     @Test
     void nothingOverdueMeansNothingCancelledButStillRetries() {
-        PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null, 1024);
+        PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null);
         RecordingTicker t = new RecordingTicker(mgr, Duration.ofMinutes(30));
         t.tick(Instant.now());
 
@@ -58,7 +58,7 @@ class PipelineRunTickerTest {
     @Test
     void withNoActiveRunsTheTickTouchesNoCluster() {
         // ⭐ 这是「它不是轮询」的正面断言：台账空 → 一次集群调用都不发
-        PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null, 1024);
+        PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null);
         RecordingTicker t = new RecordingTicker(mgr, Duration.ofMinutes(30));
         t.tick(Instant.now());
         assertThat(mgr.activeRuns()).isEmpty();

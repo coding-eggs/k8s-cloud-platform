@@ -53,11 +53,6 @@ platform:
       # 关掉它的后果（spec §4.5 显式记过）：Pod 不会被删（回到 Tekton 的默认行为），
       # 而且运行记录**只在集群里**、不落库。这个开关是给"我就是要用 pruner 自己管"的部署留的。
       enabled: ${PIPELINE_ARCHIVE_ENABLED:true}
-      # ⚠️ **必须配**，没有默认值：它是 k8s-server → platform-api 归档回调的共享密钥，
-      # 而那个端点不在用户 JWT 体系里 —— **密钥就是唯一防线**（platform-api 是单体，
-      # 没法只给它绑 127.0.0.1）。留空 = 内部端点**拒绝一切请求**（fail-closed）。
-      # 用随机长串（32+ 字节）：openssl rand -base64 32
-      internal-token: ${PIPELINE_INTERNAL_TOKEN:}
     run:
       # 平台自己判定的超时。**有意不用 Tekton 的 spec.timeouts** ——
       # 它超时会自己删 Pod，那批运行的日志必然丢失，与"日志进库"直接冲突（spec §4.2）。
@@ -157,11 +152,6 @@ spring:
       - "/test/**"
       - "/.well-known/**"
       - "/manifest.json"
-      # ⚠️ 集群 → 平台的内部回调。**必须在这里放行**：ExemptPaths 只免「权限表」，
-      # 不免认证 —— 少了这一行，k8s-server 那条不带 Authorization 的请求会被
-      # 资源服务器的 entry point 直接 401，控制器永远不执行，
-      # 而控制器的密钥校验（唯一防线）也就从未真正生效过。
-      - "/internal/pipeline-run/finished"
     oauth2:
       resourceserver:
         jwt:

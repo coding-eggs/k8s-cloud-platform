@@ -33,13 +33,12 @@ class PipelineRunServiceTest {
     private final PlatformPipelineRunMapper runMapper = mock(PlatformPipelineRunMapper.class);
     private final K8sPipelineClient k8s = mock(K8sPipelineClient.class);
     private final CredentialService credentials = mock(CredentialService.class);
-    private final PipelineArchiveService archive = mock(PipelineArchiveService.class);
     private final NamespaceAccessGuard access = mock(NamespaceAccessGuard.class);
 
     private final PlatformPipelineRunLogMapper logMapper = mock(PlatformPipelineRunLogMapper.class);
 
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, logMapper, k8s, credentials, archive, access, 1024);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, access);
 
     private final PipelineRunContext ctx = new PipelineRunContext("c1", "ns1", "t1");
 
@@ -142,19 +141,17 @@ class PipelineRunServiceTest {
     // ---- 取消 ----
 
     @Test
-    void cancelCapturesLogsBeforeTellingTektonToCancel() {
-        // ⭐ spec §4.2：这是「取消之后日志仍然看得到」的全部依据
+    void cancelIsForwardedToK8sServerWhichOwnsTheCaptureThenCancelOrdering() {
+        // ⭐ spec §4.2「先抓后取消」的**顺序**在 k8s-server 的 PipelineRunFinisher 里 ——
+        //    那条链路有集群连接，也只有它能在 Pod 被删之前把日志抓下来。
         when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
-        when(k8s.snapshot("c1", "t1", "ns1", "r1", 1024)).thenReturn(
-                new com.coding.common.models.pipeline.PipelineRunSnapshotDTO(
-                        "c1", "ns1", "r1", "CANCELLED", null, null, null, List.of()));
 
         svc.cancel("r1", ctx);
 
-        InOrder inOrder = inOrder(k8s, archive);
-        inOrder.verify(k8s).snapshot("c1", "t1", "ns1", "r1", 1024);            // 先抓
-        inOrder.verify(archive).persist(any());                                 // 先落
-        inOrder.verify(k8s).cancelRun("c1", "t1", "ns1", "r1");                 // 再取消
+        // ⚠️ 「先抓日志、再取消」的**编排在 k8s-server 侧**（PipelineRunFinisher.cancel）——
+        //    那边才有集群连接。platform-api 这一层只做归属校验与转发，
+        //    所以这里只需断言它把取消转了出去。
+        verify(k8s).cancelRun("c1", "t1", "ns1", "r1");
     }
 
     @Test

@@ -1,4 +1,4 @@
-package com.coding.platformapi.services;
+package com.coding.k8sserver.pipeline;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
@@ -15,14 +15,18 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * 归档的**落库那一半**：把 k8s-server 抓好的快照写进平台库。
+ * 归档的**落库那一半**：把快照写进平台库。
  *
- * <h2>⚠️ 它不碰集群，也不该碰</h2>
- * 快照由 k8s-server 抓（watch 是它开的，收到终结事件时集群对象、TaskRun、Pod 都还在它手上），
- * 随回调一起送过来；平台落完库回 200，**k8s-server 收到 ack 后自己删对象**。
- * 于是本服务没有任何集群调用 —— 也就不需要为「没有用户 token 的后台调用」造一套机器身份。
+ * <h2>⚠️ 它为什么在 k8s-server 而不是 platform-api</h2>
+ * 因为抓快照的就是 k8s-server（watch 是它开的，收到终结事件时集群对象、TaskRun、Pod 都还在它手上），
+ * 而它**本来就有 platform-data**（{@code K8sClusterMapper} 早就在用）、{@code @MapperScan}
+ * 与事务也都已启用。于是「抓完直接写」不需要任何跨进程调用 ——
+ * 也就**不需要**那条免认证的入站端点、那个共享密钥、以及配套的 ack / 待补 / 重投语义。
  *
- * <p>服务的意义在这里只有两件事：**幂等**（同一条运行重投多少次都只写一遍）与
+ * <p>代价如实记着：运行表从此有**两个写入方**（这里是归档，platform-api 是触发与保留清理），
+ * 且「k8s-server 零业务逻辑」在这条链上让了步。换来的是**入站攻击面归零**。
+ *
+ * <p>本服务只管两件事：**幂等**（同一条运行重投多少次都只写一遍）与
  * **事务**（日志行与运行状态要么一起进，要么都不进）。
  */
 @Slf4j
@@ -39,17 +43,17 @@ public class PipelineArchiveService {
     }
 
     /**
-     * 落库。**幂等**：重投（k8s-server 重试 / 平台重启后补投）时只写一次。
+     * 落库。**幂等**：重投时只写一次。
      *
-     * <p>⚠️ 幂等分支**返回正常**（而不是抛）—— 调用方据此回 200，k8s-server 才会去删对象。
+     * <p>⚠️ 已归档时**返回正常**（而不是抛）—— 调用方据此才去删对象。
      * 这里如果抛，就变成「库早就写好了，但对象永远删不掉」。
      */
     @Transactional
     public void persist(PipelineRunSnapshotDTO snapshot) {
         PlatformPipelineRun row = runMapper.selectByRunName(snapshot.runName());
         if (row == null) {
-            // 不是平台发起的运行（或保留清理已经把它删了）—— 落不了库，但对象该由那边删
-            log.warn("归档时库里没有这条运行（跳过落库，对象由 k8s-server 删）：{}", snapshot.runName());
+            // 不是平台发起的运行（或保留清理已经把它删了）—— 落不了库，但对象该由调用方删
+            log.warn("归档时库里没有这条运行（跳过落库，对象照删）：{}", snapshot.runName());
             return;
         }
         if (!"RUNNING".equals(row.getStatus())) {
@@ -57,8 +61,8 @@ public class PipelineArchiveService {
             return;
         }
         if ("RUNNING".equals(snapshot.status())) {
-            // 防御：k8s-server 只在终结（或平台判超时）时才发快照。真到了这里说明对方判断有误 ——
-            // **不 ack**，让它留着对象与 Pod（那份日志还在），比删掉再看要好
+            // 防御：只在终结（或平台判超时）时才抓快照。真到了这里说明判断有误 ——
+            // **不写也不删**，留着对象与 Pod（那份日志还在），比删掉再想找回要好
             throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
                     "该运行尚未终结，不能归档：" + snapshot.runName());
         }

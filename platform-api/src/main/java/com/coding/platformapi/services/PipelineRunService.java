@@ -3,7 +3,6 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PipelineDTO;
-import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
@@ -68,25 +67,18 @@ public class PipelineRunService {
     private final PlatformPipelineRunLogMapper logMapper;
     private final K8sPipelineClient k8s;
     private final CredentialService credentials;
-    private final PipelineArchiveService archive;
     private final NamespaceAccessGuard access;
-    private final int maxLogBytes;
 
     public PipelineRunService(PlatformPipelineRunMapper runMapper,
                               PlatformPipelineRunLogMapper logMapper,
                               K8sPipelineClient k8s,
                               CredentialService credentials,
-                              PipelineArchiveService archive,
-                              NamespaceAccessGuard access,
-                              @org.springframework.beans.factory.annotation.Value(
-                                      "${platform.pipeline.log.max-bytes:1048576}") int maxLogBytes) {
+                              NamespaceAccessGuard access) {
         this.runMapper = runMapper;
         this.logMapper = logMapper;
         this.k8s = k8s;
         this.credentials = credentials;
-        this.archive = archive;
         this.access = access;
-        this.maxLogBytes = maxLogBytes;
     }
 
     /**
@@ -143,14 +135,9 @@ public class PipelineRunService {
                     "运行不存在：" + runName);
         }
         access.assertAccessible(row.getClusterId(), row.getNamespace());
-
-        // ← 先抓：Tekton 取消时会自己删 Pod，删了日志就没了
-        PipelineRunSnapshotDTO snapshot = k8s.snapshot(
-                ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName, maxLogBytes);
-        if (snapshot != null) {
-            archive.persist(snapshot);
-        }
-        k8s.cancelRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);   // ← 再取消
+        // ⚠️ 编排（**先抓日志、再取消**）在 k8s-server 侧：Tekton 取消时会自己删 Pod，
+        //    顺序反了那次运行的日志就没了。本方法只做归属校验与转发。
+        k8s.cancelRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
     }
 
     /** 运行历史。**只读库** —— 集群里的对象归档后已经删了（spec §4.3）。 */

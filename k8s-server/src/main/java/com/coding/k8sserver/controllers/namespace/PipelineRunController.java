@@ -16,6 +16,7 @@ import com.coding.k8score.pipeline.PipelineNodeTypeView;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.ResourceAccessResolver.AccessContext;
 import com.coding.k8sserver.controllers.base.AbstractNamespacedResourceController;
+import com.coding.k8sserver.pipeline.PipelineRunFinisher;
 import com.coding.k8sserver.pipeline.PipelineRunWatchManager;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -50,16 +51,21 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
     /** 按需 watch 台账 —— 创建成功后要在钩子里开一条。 */
     private final PipelineRunWatchManager watch;
 
+    /** 终结/取消时「抓快照 → 落库 → 删对象」的唯一编排点。 */
+    private final PipelineRunFinisher finisher;
+
     @org.springframework.beans.factory.annotation.Value("${platform.pipeline.log.max-bytes:1048576}")
     private int maxLogBytes;
 
     public PipelineRunController(KubernetesOperationsFactory operationsFactory,
                                  ResourceAccessResolver accessResolver,
                                  PipelineCanvasOperations canvasOps,
-                                 PipelineRunWatchManager watch) {
+                                 PipelineRunWatchManager watch,
+                                 PipelineRunFinisher finisher) {
         super(operationsFactory, accessResolver);
         this.canvasOps = canvasOps;
         this.watch = watch;
+        this.finisher = finisher;
     }
 
     /**
@@ -130,28 +136,6 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
     }
 
     /**
-     * 抓一次运行当前的快照（状态 + 每个节点的状态与日志）。
-     *
-     * <p>⚠️ 它给**取消路径**用：Tekton 取消时会自己把 Pod 删掉，所以平台必须**先抓后取消**。
-     * 走的是**发起取消那个人的 token**（有租户身份），所以不存在「后台调用没有身份」的问题；
-     * watch 驱动的归档则是 k8s-server 侧自己抓（见 {@code PipelineRunWatchManager}）。
-     */
-    @PostMapping("/{name}/snapshot")
-    @Operation(summary = "抓一次运行当前的快照（取消前抢抓日志用）")
-    public ResponseData<PipelineRunSnapshotDTO> snapshot(@PathVariable String name,
-                                                         @RequestParam(required = false) String tenantId,
-                                                         @RequestParam String clusterId,
-                                                         @RequestParam String namespace) {
-        AccessContext ctx = resolve(tenantId, clusterId, namespace);
-        NamespacedOperations<PipelineRunDTO> ops = ops(ctx, clusterId);
-        if (!(ops instanceof PipelineRunOperations runOps)) {
-            throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED,
-                    "本资源不支持抓快照：" + ops.getClass().getSimpleName());
-        }
-        return new ResponseData<>(runOps.snapshot(clusterId, namespace, name, maxLogBytes));
-    }
-
-    /**
      * 取消一次运行。
      *
      * <p>⚠️ **平台侧的编排（先抓日志、再取消）在 platform-api 的 {@code PipelineRunService} 里** ——
@@ -164,7 +148,9 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
                                      @RequestParam String clusterId,
                                      @RequestParam String namespace) {
         AccessContext ctx = resolve(tenantId, clusterId, namespace);
-        ops(ctx, clusterId).cancel(namespace, name);
+        // ⚠️ 编排（**先抓日志、再取消**）在 k8s-server 侧 —— Tekton 取消时会自己删 Pod，
+        //    顺序反了那次运行的日志就没了。本端点只负责边界解析与转发。
+        finisher.cancel(clusterId, namespace, name);
         return new ResponseData<>();
     }
 }

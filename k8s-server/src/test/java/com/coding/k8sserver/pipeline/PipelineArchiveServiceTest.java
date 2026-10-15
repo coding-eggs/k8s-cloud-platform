@@ -1,4 +1,4 @@
-package com.coding.platformapi.services;
+package com.coding.k8sserver.pipeline;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
