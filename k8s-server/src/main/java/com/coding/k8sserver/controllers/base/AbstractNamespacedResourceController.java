@@ -127,7 +127,19 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
         AccessContext ctx = resolve(tenantId, clusterId, body.getNamespace());
         T item = ops(ctx, clusterId).create(body);
         stamp(item, clusterId, body.getNamespace(), ctx.tenantId());
+        afterCreate(item, clusterId);
         return new ResponseData<>(item);
+    }
+
+    /**
+     * 创建成功之后的钩子，默认什么都不做。
+     *
+     * <p>存在的理由：有资源在**创建成功那一刻**需要做一件只能在这一层做的事 ——
+     * PipelineRun 要在此时开一条按需 watch（那条路径是 spec §4.1 指定的开 watch 时机）。
+     * 子类覆写 {@code create} 会与基类的 {@code @PostMapping} 形成两个候选映射，
+     * 所以给一个显式的钩子比让子类去覆写带注解的方法干净。
+     */
+    protected void afterCreate(T item, String clusterId) {
     }
 
     @PutMapping("/{name}")

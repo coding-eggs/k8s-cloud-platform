@@ -2,6 +2,7 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
+import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpMethod;
@@ -101,6 +102,22 @@ public class K8sPipelineClient {
         params.put("namespace", namespace);
         gateway.exchange(HttpMethod.POST, "/pipelineruns/" + name + "/cancel", params, null,
                 gateway.responseType(Void.class));
+    }
+
+    /**
+     * 抓一次运行当前的快照（状态 + 每个节点的状态与日志）。
+     *
+     * <p>⚠️ 它只给**取消路径**用（那时调用方有用户 token）。watch 驱动的归档**不走这里** ——
+     * 那是 k8s-server 自己在收到终结事件时抓的，随回调送过来。
+     */
+    public PipelineRunSnapshotDTO snapshot(String clusterId, String tenantId, String namespace,
+                                           String runName, int maxLogBytes) {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("tenantId", tenantId);
+        params.put("clusterId", clusterId);
+        params.put("namespace", namespace);
+        return gateway.exchange(HttpMethod.POST, "/pipelineruns/" + runName + "/snapshot", params, null,
+                gateway.responseType(PipelineRunSnapshotDTO.class));
     }
 
     /**

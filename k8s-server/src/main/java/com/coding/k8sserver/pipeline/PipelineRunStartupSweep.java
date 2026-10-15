@@ -76,7 +76,9 @@ public class PipelineRunStartupSweep {
             }
             log.info("启动扫描：补盯一个还在跑的运行 cluster={} {}/{}",
                     clusterId, run.getNamespace(), run.getName());
-            watch.recordOpened(clusterId, run.getNamespace(), run.getName(), startedAtOf(run));
+            // 补开 watch（不是只记台账）—— 只记的话，这条运行要靠"跑满超时"才会被终结，
+            // 而一个 5 分钟就跑完的正常运行根本不会超时，于是永远滞留在台账里。
+            watch.watch(clusterId, run.getNamespace(), run.getName(), startedAtOf(run));
         }
     }
 

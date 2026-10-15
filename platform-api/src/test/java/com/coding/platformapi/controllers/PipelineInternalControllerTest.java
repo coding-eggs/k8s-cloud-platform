@@ -1,7 +1,10 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.platformapi.services.PipelineArchiveService;
+
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,8 +18,13 @@ import static org.mockito.Mockito.verifyNoInteractions;
  */
 class PipelineInternalControllerTest {
 
+    private static PipelineRunSnapshotDTO snap() {
+        return new PipelineRunSnapshotDTO("c1", "ns1", "r1", "SUCCEEDED", "ok",
+                "2026-10-15T10:00:00Z", "2026-10-15T10:03:00Z", List.of());
+    }
+
     private static PipelineInternalController.FinishedRequest req() {
-        return new PipelineInternalController.FinishedRequest("c1", "ns1", "r1", false);
+        return new PipelineInternalController.FinishedRequest(snap());
     }
 
     @Test
@@ -69,18 +77,21 @@ class PipelineInternalControllerTest {
 
         c.finished("s3cret", req());
 
-        verify(archive).archive("c1", "ns1", "r1", false);
+        verify(archive).persist(snap());
     }
 
     @Test
-    void theTimeoutFlagIsCarriedThroughToTheArchive() {
-        // ⭐ 平台判超时时 Tekton 那边**还在跑**，光看对象的 condition 分不出
-        // 「用户取消」与「平台判超时」—— 所以这个标志必须跟着请求走（spec §4.2）
+    void aTimeoutIsCarriedByTheSnapshotsOwnStatus() {
+        // 平台判超时时 Tekton 那边**还在跑**（平台是"先抓日志、再取消"），
+        // 光看对象的 condition 分不出「用户取消」与「平台判超时」——
+        // 所以 k8s-server 抓快照时就把状态改写成 TIMEOUT，而不是另发一个布尔标志。
         PipelineArchiveService archive = mock(PipelineArchiveService.class);
         PipelineInternalController c = new PipelineInternalController(archive, "s3cret");
+        PipelineRunSnapshotDTO timedOut = new PipelineRunSnapshotDTO("c1", "ns1", "r1", "TIMEOUT",
+                null, null, null, List.of());
 
-        c.finished("s3cret", new PipelineInternalController.FinishedRequest("c1", "ns1", "r1", true));
+        c.finished("s3cret", new PipelineInternalController.FinishedRequest(timedOut));
 
-        verify(archive).archive("c1", "ns1", "r1", true);
+        verify(archive).persist(timedOut);
     }
 }

@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PipelineRunWatchManagerTest {
 
     /** 只测**台账与超时判定** —— 真正的 watch 调用靠部署后冒烟。 */
-    private final PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null);
+    private final PipelineRunWatchManager mgr = new PipelineRunWatchManager(null, null, 1024);
 
     @Test
     void anOpenedRunShowsUpInTheLedgerWithItsStartTime() {

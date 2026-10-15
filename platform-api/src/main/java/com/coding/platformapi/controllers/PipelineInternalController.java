@@ -2,6 +2,7 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.PipelineArchiveService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -56,20 +57,22 @@ public class PipelineInternalController {
         // ⚠️ 两边都空**不算匹配**：`token.equals(given)` 在都为 null 时会是 true 吗？不会（NPE），
         // 但 `"" .equals("")` 会是 true —— 所以先判 token 非空，这是 fail-closed 的关键一步。
         if (!StringUtils.hasText(token) || !token.equals(given)) {
-            log.warn("内部归档回调被拒（密钥未配置或不匹配）run={}", req == null ? null : req.runName());
+            log.warn("内部归档回调被拒（密钥未配置或不匹配）run={}",
+                    req == null || req.snapshot() == null ? null : req.snapshot().runName());
             throw new CloudPlatformException(EnumResponseType.NON_AUTH_ENTRY_POINT,
                     "内部回调鉴权失败");
         }
-        archive.archive(req.clusterId(), req.namespace(), req.runName(), req.timedOut());
+        archive.persist(req.snapshot());
         return new ResponseData<>();
     }
 
     /**
-     * @param timedOut 平台**判定超时**而终结的（节拍器发的）。
-     *                 ⚠️ 必须跟着请求走：Tekton 侧看到的是平台 patch 的 {@code spec.status: Cancelled}，
-     *                 光看对象的 condition 分不出「用户取消」与「平台判超时」，
-     *                 而 spec §4.2 要求运行历史里两者不一样。
+     * @param snapshot **k8s-server 已经抓好的**快照：状态 + 每个节点的状态与日志。
+     *                 ⚠️ 快照随回调一起来，是因为 watch 是 k8s-server 开的 ——
+     *                 收到终结事件时集群对象、TaskRun、Pod 都还在它手上，快照本来就在它手里。
+     *                 让 platform-api 反过来取，就得为「没有用户 token 的后台调用」另造一套机器身份。
+     *                 平台判超时时，快照的状态已经是 {@code TIMEOUT}（由 k8s-server 改写）。
      */
-    public record FinishedRequest(String clusterId, String namespace, String runName, boolean timedOut) {
+    public record FinishedRequest(PipelineRunSnapshotDTO snapshot) {
     }
 }

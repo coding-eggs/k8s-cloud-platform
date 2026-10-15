@@ -3,6 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PipelineDTO;
+import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
@@ -67,19 +68,23 @@ public class PipelineRunService {
     private final CredentialService credentials;
     private final PipelineArchiveService archive;
     private final NamespaceAccessGuard access;
+    private final int maxLogBytes;
 
     public PipelineRunService(PlatformPipelineRunMapper runMapper,
                               PlatformPipelineRunLogMapper logMapper,
                               K8sPipelineClient k8s,
                               CredentialService credentials,
                               PipelineArchiveService archive,
-                              NamespaceAccessGuard access) {
+                              NamespaceAccessGuard access,
+                              @org.springframework.beans.factory.annotation.Value(
+                                      "${platform.pipeline.log.max-bytes:1048576}") int maxLogBytes) {
         this.runMapper = runMapper;
         this.logMapper = logMapper;
         this.k8s = k8s;
         this.credentials = credentials;
         this.archive = archive;
         this.access = access;
+        this.maxLogBytes = maxLogBytes;
     }
 
     /**
@@ -120,7 +125,12 @@ public class PipelineRunService {
     }
 
     /**
-     * 取消一次运行。**先抓日志、再取消**（spec §4.2）—— 顺序反了那次运行的日志就没了。
+     * 取消一次运行。**先抓日志、再取消**（spec §4.2）—— 顺序反了那次运行的日志就没了
+     * （Tekton 取消时会自己把 Pod 删掉）。
+     *
+     * <p>⚠️ 这条路径**有用户身份**（发起取消的那个人），所以抓快照走的是带 token 的
+     * `/pipelineruns/{name}/snapshot`；而 watch 驱动的归档是 k8s-server 侧自己抓的
+     * （它开 watch，收到终结事件时快照就在手上），平台不需要为后台调用另造身份。
      */
     public void cancel(String runName, PipelineRunContext ctx) {
         PlatformPipelineRun row = runMapper.selectByRunName(runName);
@@ -129,7 +139,13 @@ public class PipelineRunService {
                     "运行不存在：" + runName);
         }
         access.assertAccessible(row.getClusterId(), row.getNamespace());
-        archive.capture(runName, ctx);          // ← 先抓
+
+        // ← 先抓：Tekton 取消时会自己删 Pod，删了日志就没了
+        PipelineRunSnapshotDTO snapshot = k8s.snapshot(
+                ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName, maxLogBytes);
+        if (snapshot != null) {
+            archive.persist(snapshot);
+        }
         k8s.cancelRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);   // ← 再取消
     }
 

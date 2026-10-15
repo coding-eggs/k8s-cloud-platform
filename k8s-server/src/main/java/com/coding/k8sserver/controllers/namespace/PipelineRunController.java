@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
+import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
@@ -15,6 +16,7 @@ import com.coding.k8score.pipeline.PipelineNodeTypeView;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.ResourceAccessResolver.AccessContext;
 import com.coding.k8sserver.controllers.base.AbstractNamespacedResourceController;
+import com.coding.k8sserver.pipeline.PipelineRunWatchManager;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,11 +47,33 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
     /** 画布相关的两个纯函数动作（节点元数据 / 渲染）。**没有集群上下文**，所以不走 ops 那条路。 */
     private final PipelineCanvasOperations canvasOps;
 
+    /** 按需 watch 台账 —— 创建成功后要在钩子里开一条。 */
+    private final PipelineRunWatchManager watch;
+
+    @org.springframework.beans.factory.annotation.Value("${platform.pipeline.log.max-bytes:1048576}")
+    private int maxLogBytes;
+
     public PipelineRunController(KubernetesOperationsFactory operationsFactory,
                                  ResourceAccessResolver accessResolver,
-                                 PipelineCanvasOperations canvasOps) {
+                                 PipelineCanvasOperations canvasOps,
+                                 PipelineRunWatchManager watch) {
         super(operationsFactory, accessResolver);
         this.canvasOps = canvasOps;
+        this.watch = watch;
+    }
+
+    /**
+     * 创建成功之后**顺手开一条按需 watch**（spec §4.1 指定的时机）。
+     *
+     * <p>那一刻起集群里有一个在跑的对象，而这个对象结束时必须被归档并删掉；
+     * 没人盯着的话它就会一直留着（连同跑完的 Completed Pod）。
+     */
+    @Override
+    protected void afterCreate(PipelineRunDTO item, String clusterId) {
+        if (item == null || item.getName() == null) {
+            return;
+        }
+        watch.watch(clusterId, item.getNamespace(), item.getName(), java.time.Instant.now());
     }
 
     @Override
@@ -103,6 +127,28 @@ public class PipelineRunController extends AbstractNamespacedResourceController<
                     "本资源不支持按节点列举：" + ops.getClass().getSimpleName());
         }
         return new ResponseData<>(runOps.steps(namespace, name));
+    }
+
+    /**
+     * 抓一次运行当前的快照（状态 + 每个节点的状态与日志）。
+     *
+     * <p>⚠️ 它给**取消路径**用：Tekton 取消时会自己把 Pod 删掉，所以平台必须**先抓后取消**。
+     * 走的是**发起取消那个人的 token**（有租户身份），所以不存在「后台调用没有身份」的问题；
+     * watch 驱动的归档则是 k8s-server 侧自己抓（见 {@code PipelineRunWatchManager}）。
+     */
+    @PostMapping("/{name}/snapshot")
+    @Operation(summary = "抓一次运行当前的快照（取消前抢抓日志用）")
+    public ResponseData<PipelineRunSnapshotDTO> snapshot(@PathVariable String name,
+                                                         @RequestParam(required = false) String tenantId,
+                                                         @RequestParam String clusterId,
+                                                         @RequestParam String namespace) {
+        AccessContext ctx = resolve(tenantId, clusterId, namespace);
+        NamespacedOperations<PipelineRunDTO> ops = ops(ctx, clusterId);
+        if (!(ops instanceof PipelineRunOperations runOps)) {
+            throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED,
+                    "本资源不支持抓快照：" + ops.getClass().getSimpleName());
+        }
+        return new ResponseData<>(runOps.snapshot(clusterId, namespace, name, maxLogBytes));
     }
 
     /**

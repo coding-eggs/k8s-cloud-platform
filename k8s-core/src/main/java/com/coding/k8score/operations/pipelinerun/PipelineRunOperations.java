@@ -13,12 +13,17 @@ import io.fabric8.kubernetes.api.model.PersistentVolumeClaimSpec;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.VolumeResourceRequirements;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.Watch;
+import io.fabric8.kubernetes.client.Watcher;
+import io.fabric8.kubernetes.client.WatcherException;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.tekton.v1.PipelineRun;
 import io.fabric8.tekton.v1.PipelineRunSpec;
 import io.fabric8.tekton.v1.StepState;
 import io.fabric8.tekton.v1.TaskRun;
+import io.fabric8.tekton.v1.PipelineRunStatus;
 import io.fabric8.tekton.v1.TaskRunStatus;
+import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
@@ -268,6 +273,112 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
             }
         });
         return out;
+    }
+
+    /**
+     * 盯住一次运行，**终结时回调一次**，然后返回这条 watch（调用方负责关）。
+     *
+     * <p>⚠️ 按需 watch 的全部形态就在这里：只在有运行在跑时开一条，
+     * 用 {@code fieldSelector} 只收这一个对象的事件（一条连接按住整个命名空间的事件是浪费）。
+     * 运行结束 → 回调 → 调用方关掉它 → **空闲时零连接**（spec §4.1）。
+     *
+     * @param onTerminal 终结时调用**一次**（重复事件由调用方按台账去重）
+     */
+    public Watch watchUntilTerminal(String namespace, String runName, Runnable onTerminal) {
+        return client.resources(PipelineRun.class).inNamespace(namespace)
+                .withField("metadata.name", runName)
+                .watch(new Watcher<PipelineRun>() {
+                    @Override
+                    public void eventReceived(Action action, PipelineRun item) {
+                        if (item == null || action == Action.ERROR) {
+                            return;
+                        }
+                        PipelineRunStatus st = item.getStatus();
+                        String status = PipelineRunConverter.mapConditions(
+                                st == null ? null : st.getConditions());
+                        if (!"RUNNING".equals(status)) {
+                            onTerminal.run();
+                        }
+                    }
+
+                    @Override
+                    public void onClose(WatcherException cause) {
+                        // 断线不在这里处理：台账仍在，节拍器与启动扫描负责补
+                        if (cause != null) {
+                            log.debug("运行 watch 关闭（{}）：{}", runName, cause.getMessage());
+                        }
+                    }
+                });
+    }
+
+    /**
+     * 一次终结的运行的**完整快照**：状态 + 每个节点的状态与日志。**抓完就能删对象了。**
+     *
+     * <p>⚠️ 它由 k8s-server 调（watch 是它开的，收到终结事件时集群对象、TaskRun、Pod 都还在），
+     * 抓完随回调一起发给 platform-api。这样 platform-api 在归档链里**一次都不用回打 k8s-server**，
+     * 也就不需要为「没有用户 token 的后台调用」另造一套机器身份。
+     *
+     * @param maxLogBytes 单步日志上限。**交给 API 侧截**（{@code limitBytes}）而不是全读进来再切 ——
+     *                    一次构建的日志可以是几百 MB。代价是「有没有被截断」只能靠长度推断
+     * @return 对象已经不在时返回 null（重投 / 他方已删）
+     */
+    public PipelineRunSnapshotDTO snapshot(String clusterId, String namespace, String runName, int maxLogBytes) {
+        PipelineRun pr = fetch(namespace, runName);
+        if (pr == null) {
+            return null;
+        }
+        assertManaged(pr.getMetadata().getLabels(), runName);
+
+        PipelineRunStatus st = pr.getStatus();
+        String status = PipelineRunConverter.mapConditions(st == null ? null : st.getConditions());
+
+        List<PipelineRunSnapshotDTO.StepLog> steps = new ArrayList<>();
+        for (PipelineStepRefDTO step : steps(namespace, runName)) {
+            StringBuilder log = new StringBuilder();
+            boolean truncated = false;
+            int size = 0;
+            if (step.podName() != null && !step.podName().isBlank()) {
+                for (String container : step.containers()) {
+                    String part = podLog(namespace, step.podName(), container, maxLogBytes);
+                    log.append(part);
+                    size += part.length();
+                    // limitBytes 是 API 侧截的，拿不到「原始有多长」—— 到顶就按截断记
+                    truncated = truncated || part.length() >= maxLogBytes;
+                }
+            }
+            steps.add(new PipelineRunSnapshotDTO.StepLog(
+                    step.nodeName(), step.status(), log.toString(), truncated, size));
+        }
+
+        return new PipelineRunSnapshotDTO(
+                clusterId, namespace, runName, status,
+                reasonOf(st), st == null ? null : st.getStartTime(),
+                st == null ? null : st.getCompletionTime(), steps);
+    }
+
+    /** 读一个容器的日志并**在 API 侧截断**（一次构建的日志可能是几百 MB，不能全读进内存）。 */
+    private String podLog(String namespace, String podName, String container, int maxLogBytes) {
+        try {
+            String text = client.pods().inNamespace(namespace).withName(podName)
+                    .inContainer(container)
+                    .limitBytes(maxLogBytes)
+                    .getLog();
+            return text == null ? "" : text;
+        } catch (Exception e) {
+            // ⚠️ 竞态：抓到一半 Pod 没了 / 容器还没起来 —— 抓到多少算多少，**不整条丢**
+            log.debug("抓运行日志失败（按已抓到的部分记）：{}/{}", podName, container, e);
+            return "";
+        }
+    }
+
+    private static String reasonOf(PipelineRunStatus st) {
+        if (st == null || st.getConditions() == null) {
+            return null;
+        }
+        return st.getConditions().stream()
+                .filter(c -> "Succeeded".equals(c.getType()))
+                .map(io.fabric8.knative.pkg.apis.Condition::getReason)
+                .findFirst().orElse(null);
     }
 
     /**

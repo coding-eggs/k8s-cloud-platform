@@ -39,7 +39,7 @@ class PipelineRunServiceTest {
     private final PlatformPipelineRunLogMapper logMapper = mock(PlatformPipelineRunLogMapper.class);
 
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, logMapper, k8s, credentials, archive, access);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, archive, access, 1024);
 
     private final PipelineRunContext ctx = new PipelineRunContext("c1", "ns1", "t1");
 
@@ -145,11 +145,15 @@ class PipelineRunServiceTest {
     void cancelCapturesLogsBeforeTellingTektonToCancel() {
         // ⭐ spec §4.2：这是「取消之后日志仍然看得到」的全部依据
         when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
+        when(k8s.snapshot("c1", "t1", "ns1", "r1", 1024)).thenReturn(
+                new com.coding.common.models.pipeline.PipelineRunSnapshotDTO(
+                        "c1", "ns1", "r1", "CANCELLED", null, null, null, List.of()));
 
         svc.cancel("r1", ctx);
 
-        InOrder inOrder = inOrder(archive, k8s);
-        inOrder.verify(archive).capture(eq("r1"), any());                       // 先抓
+        InOrder inOrder = inOrder(k8s, archive);
+        inOrder.verify(k8s).snapshot("c1", "t1", "ns1", "r1", 1024);            // 先抓
+        inOrder.verify(archive).persist(any());                                 // 先落
         inOrder.verify(k8s).cancelRun("c1", "t1", "ns1", "r1");                 // 再取消
     }
 
