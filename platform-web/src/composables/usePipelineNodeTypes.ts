@@ -33,7 +33,14 @@ export function usePipelineNodeTypes() {
     return types.value.find((x) => x.type === t)
   }
 
-  /** 展示名：后端 schema 说了算；schema 还没拉到时退回 type 本身 */
+  /**
+   * 展示名：后端 schema 说了算；后端还没给（schema 没拉到 / **k8s-server 还是加 label 之前的旧构建**）
+   * 就退回 type 本身。
+   *
+   * ⚠️ **每个显示名字的地方都必须走这里，不能直接读 `t.label`**：旧后端下 `t.label` 是
+   * `undefined`，直取会渲染成**一片空白**（2026-10-15 踩过：节点面板的卡片全没了名字，
+   * 因为名字从「前端写死」改成了「后端下发」，而跑着的后端还是几小时前的构建）。
+   */
   function labelOf(t: string): string {
     return byType(t)?.label ?? t
   }

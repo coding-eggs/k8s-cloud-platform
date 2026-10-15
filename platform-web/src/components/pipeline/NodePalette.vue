@@ -9,7 +9,7 @@
 import { onMounted } from 'vue'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 
-const { types, load, accentOf, iconOf } = usePipelineNodeTypes()
+const { types, load, accentOf, iconOf, labelOf } = usePipelineNodeTypes()
 
 onMounted(load)
 
@@ -38,7 +38,7 @@ function onDragStart(e: DragEvent, type: string) {
         <el-icon><component :is="iconOf(t.type)" /></el-icon>
       </div>
       <div class="pcard-body">
-        <div class="pcard-label">{{ t.label }}</div>
+        <div class="pcard-label">{{ labelOf(t.type) }}</div>
         <div v-if="t.description" class="pcard-desc">{{ t.description }}</div>
       </div>
     </div>
