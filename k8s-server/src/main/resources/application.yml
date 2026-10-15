@@ -86,6 +86,15 @@ logging:
 # **没有任何跨进程调用**，所以这里不需要共享密钥、也不需要 platform-api 的地址。
 platform:
   pipeline:
+    archive:
+      # 关掉它的后果（spec §4.5 显式记过）：Pod 不会被删（回到 Tekton 的默认行为），
+      # 而且运行记录**只在集群里**、不落库。这个开关是给"我就是要用 pruner 自己管"的部署留的。
+      enabled: ${PIPELINE_ARCHIVE_ENABLED:true}
     run:
       timeout: ${PIPELINE_RUN_TIMEOUT:30m}
       timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}
+    log:
+      # ⚠️ 与 platform-api 那份**保持一致**：归档在这里截断，而 platform-api 的
+      # /pipeline/run/logs 在线看日志时也用同一个上限。两边不同的话，同一条日志
+      # 「归档后」与「运行中」看到的长短会不一样。
+      max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}

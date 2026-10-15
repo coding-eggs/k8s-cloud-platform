@@ -49,23 +49,12 @@ platform:
   pipeline:
     # ===== CI（Tekton，S3.5 第 ① 片）=====
     # 设计见 docs/superpowers/specs/2026-10-15-ci-tekton-design.md §4.5 / §4bis。
-    archive:
-      # 关掉它的后果（spec §4.5 显式记过）：Pod 不会被删（回到 Tekton 的默认行为），
-      # 而且运行记录**只在集群里**、不落库。这个开关是给"我就是要用 pruner 自己管"的部署留的。
-      enabled: ${PIPELINE_ARCHIVE_ENABLED:true}
-    run:
-      # 平台自己判定的超时。**有意不用 Tekton 的 spec.timeouts** ——
-      # 它超时会自己删 Pod，那批运行的日志必然丢失，与"日志进库"直接冲突（spec §4.2）。
-      timeout: ${PIPELINE_RUN_TIMEOUT:30m}
-      # 判定节拍 —— **只看活动 watch 的台账**（哪些 run 在跑 + 它们的 startTime），不打集群。
-      timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}
+    # ⚠️ archive.enabled 与 run.* 都**不在这里** —— 读它们的是 k8s-server 的
+    # 节拍器与归档链（整条链都在那边）。配在这一侧会变成"改了不生效"的静默坑。
     log:
       # 单步日志上限，超出截断并在 UI 上标注「已截断」
       max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}
       retention-days: ${PIPELINE_LOG_RETENTION_DAYS:90}
-    callback:
-      # k8s-server 调 platform-api 的地址（回环，同机）
-      url: ${PIPELINE_CALLBACK_URL:http://127.0.0.1:8081}
   namespace:
     # 受保护（系统）命名空间：命中者不可编辑 / 删除 / 设配额 / 设限制范围，读仍开放。
     # 精确匹配，须与集群内真实 ns 名一致；按部署环境增删。
