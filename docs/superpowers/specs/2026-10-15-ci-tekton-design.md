@@ -644,6 +644,16 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
       > 落点：`usePipelineCapability` + `PipelineListView` / `PipelineEditorView`，
       > 端点 `/pipeline/capability`（`tenant:pipeline:read`；**未知态不拦** —— 没权限/拉失败时不禁用，
       > 真正的拦截永远在后端）。
+      >
+      > ⚠️ **同日再修**：这条门控一开始对**任何人都答不出真话**。探针问的是
+      > `/storageclasses/list-all` —— 集群级资源根本没有这个端点（`listAll` 只存在于**命名空间级** ops），
+      > 于是每次都抛异常被 catch 吞掉、恒返回「没有可动态供应的 StorageClass」；而**就算**换成
+      > `/storageclasses/list` 也不行：那个 controller 的边界是 `PLATFORM`（V2026_10_07_3 有意收成
+      > 平台管理员专属），租户一律 403。现在走**窄投影** `POST /storageclasses/provisioners`
+      > （只回 `name` + `provisioner`，不回 `parameters`；`UPSTREAM` 边界 + admin client）——
+      > 与 `/nodes/addresses`、PersistentVolume 同形，是第三个这类例外。
+      > 判据（什么算"可动态供应"、给用户看的文案）**仍在 platform-api**：按 docs/development/backend-layering.md §5
+      > 「适配器不引用产品阈值」，k8s-server 只提供集群事实。
 - [ ] 租户成员建一条流水线（`git 克隆 → 命令 → 构建并推送镜像`）→ 保存 → **画布能重新打开并还原**
 - [ ] 点运行 → 运行详情里 DAG 按状态着色、每步日志出得来、能看渲染出的 YAML
 - [ ] 取消一个正在跑的运行 → 状态变 Cancelled，**对象还在**（历史没丢）

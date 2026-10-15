@@ -1,10 +1,10 @@
 package com.coding.platformapi.services;
 
-import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
-import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.k8s.K8sPipelineClient;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -77,12 +77,13 @@ class PipelineRetentionAndCapabilityTest {
     // ---- capability 门控 ----
 
     private final ClusterCapabilityService clusterCapability = mock(ClusterCapabilityService.class);
-    private final K8sClient k8s = mock(K8sClient.class);
+    private final K8sPipelineClient k8s = mock(K8sPipelineClient.class);
     private final PipelineCapabilityService capability =
             new PipelineCapabilityService(clusterCapability, k8s);
 
-    private static StorageClassDTO sc(String provisioner) {
-        StorageClassDTO d = new StorageClassDTO();
+    private static StorageClassProvisionerDTO sc(String provisioner) {
+        StorageClassProvisionerDTO d = new StorageClassProvisionerDTO();
+        d.setName("sc-" + provisioner.hashCode());
         d.setProvisioner(provisioner);
         return d;
     }
@@ -95,14 +96,14 @@ class PipelineRetentionAndCapabilityTest {
 
         assertThat(c.available()).isFalse();
         assertThat(c.reason()).contains("Tekton");
-        verify(k8s, never()).listAll(any());       // 已经知道不能用了，不再去打集群
+        verify(k8s, never()).storageClassProvisioners(anyString());   // 已经知道不能用了，不再去打集群
     }
 
     @Test
     void withoutADynamicStorageClassItIsUnavailableToo() {
         // workspace 用 volumeClaimTemplate，没有可动态供应的 StorageClass 就跑不起来（spec §3.3）
         when(clusterCapability.hasTekton("c1")).thenReturn(true);
-        when(k8s.listAll(any())).thenReturn(List.of(sc("kubernetes.io/no-provisioner")));
+        when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("kubernetes.io/no-provisioner")));
 
         var c = capability.available("c1");
 
@@ -113,7 +114,7 @@ class PipelineRetentionAndCapabilityTest {
     @Test
     void withBothItIsAvailable() {
         when(clusterCapability.hasTekton("c1")).thenReturn(true);
-        when(k8s.listAll(any())).thenReturn(List.of(sc("rancher.io/local-path")));
+        when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
 
         assertThat(capability.available("c1").available()).isTrue();
     }
@@ -122,7 +123,7 @@ class PipelineRetentionAndCapabilityTest {
     void aFailedProbeIsTreatedAsUnavailableNotAsAvailable() {
         // fail-closed：CI 跑起来卡在 PVC 绑定等待上，比"暂时不可用"更糟
         when(clusterCapability.hasTekton("c1")).thenReturn(true);
-        when(k8s.listAll(any())).thenThrow(new RuntimeException("cluster down"));
+        when(k8s.storageClassProvisioners(anyString())).thenThrow(new RuntimeException("cluster down"));
 
         assertThat(capability.available("c1").available()).isFalse();
     }
@@ -130,7 +131,7 @@ class PipelineRetentionAndCapabilityTest {
     @Test
     void aBlankProvisionerDoesNotCountAsDynamic() {
         when(clusterCapability.hasTekton("c1")).thenReturn(true);
-        when(k8s.listAll(any())).thenReturn(List.of(sc("  ")));
+        when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("  ")));
 
         assertThat(capability.available("c1").available()).isFalse();
     }

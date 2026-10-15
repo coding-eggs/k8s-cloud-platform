@@ -1,6 +1,8 @@
 package com.coding.platformapi.k8s;
 
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
+import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import lombok.RequiredArgsConstructor;
@@ -98,6 +100,25 @@ public class K8sPipelineClient {
         dto.setNamespace(namespace);
         dto.setName(name);
         return k8s.yaml(dto);
+    }
+
+    /**
+     * 集群里 StorageClass 的**窄投影**（name + provisioner）—— CI 能力探针要的那次集群读。
+     *
+     * <p>⚠️ 为什么不能走通用的 {@code /storageclasses/list}：那个 controller 的边界是
+     * {@code PLATFORM}（V2026_10_07_3 有意收成平台管理员专属），**租户调用方一律 403**；
+     * 而列集群级 StorageClass 又必须用 admin client（租户 SA 的 K8s RBAC 里没有它）。
+     * 窄投影这条与 {@code /nodes/addresses} 同形：UPSTREAM 边界 + 只回两个字段，
+     * 收窄在上游（{@code /pipeline/capability} 挂 {@code tenant:pipeline:read}）。
+     *
+     * <p>放在这个 client 里而不是通用 {@link K8sClient}：它是**非六端点形态**的窄投影，
+     * 且只服务于 CI 这条链。
+     */
+    public List<StorageClassProvisionerDTO> storageClassProvisioners(String clusterId) {
+        StorageClassDTO body = new StorageClassDTO();
+        body.setClusterId(clusterId);
+        return gateway.exchange(HttpMethod.POST, "/storageclasses/provisioners", null, body,
+                gateway.listResponseType(StorageClassProvisionerDTO.class));
     }
 
     /** 删除一次运行（**级联删 TaskRun 与 Pod** —— 这正是「k8s 不留 Pod」的那一步）。 */
