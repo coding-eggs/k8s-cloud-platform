@@ -64,6 +64,7 @@ public enum EnumResponseType {
     PIPELINE_CANVAS_INVALID(10038, "流水线画布非法"),
     PIPELINE_NODE_UNSUPPORTED(10039, "不支持的流水线节点类型"),
     PIPELINE_INVALID(10040, "流水线参数非法"),
+    K8S_OPERATION_REJECTED(10041, "集群拒绝了该操作: "),
 
     ERROR(5000,"服务端异常"),
 

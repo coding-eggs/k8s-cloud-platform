@@ -163,4 +163,27 @@ class PipelineRunOperationsTest {
         assertThat(pr.getSpec().getTimeouts()).isNull();
         assertThat(pr.getMetadata().getNamespace()).isEqualTo("ns1");
     }
+
+    @Test
+    void theApiServersOwnWordsAreUsedWhenTheClusterRejectsTheCreate() {
+        // 2026-10-15：以前这条失败会塌成 k8s-server 兜底的那句「服务端异常」，
+        // 用户在页面上看不到任何线索（真环境撞到过）。现在把 K8s 的原话带出来
+        io.fabric8.kubernetes.client.KubernetesClientException e =
+                new io.fabric8.kubernetes.client.KubernetesClientException("boom", 403,
+                        new io.fabric8.kubernetes.api.model.StatusBuilder()
+                                .withMessage("pipelineruns.tekton.dev \"x\" is forbidden: "
+                                        + "User \"system:serviceaccount:demo:sa\" cannot create resource")
+                                .build());
+
+        assertThat(PipelineRunOperations.apiMessage(e))
+                .isEqualTo("pipelineruns.tekton.dev \"x\" is forbidden: "
+                        + "User \"system:serviceaccount:demo:sa\" cannot create resource");
+    }
+
+    @Test
+    void aClientExceptionWithoutStatusFallsBackToItsOwnMessage() {
+        assertThat(PipelineRunOperations.apiMessage(
+                new io.fabric8.kubernetes.client.KubernetesClientException("socket closed")))
+                .isEqualTo("socket closed");
+    }
 }

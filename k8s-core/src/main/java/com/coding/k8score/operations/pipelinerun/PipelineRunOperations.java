@@ -17,6 +17,7 @@ import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.SecretVolumeSource;
 import io.fabric8.kubernetes.api.model.VolumeResourceRequirements;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.WatcherException;
@@ -185,12 +186,36 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                     "创建流水线运行必须带画布");
         }
         // ① 先把凭据建成 Secret（有连接才建）—— Pod 起来时要读得到它
-        ensureCredsSecret(dto);
+        // ⚠️ 两次 K8s 调用都要把**集群的原话**带出来：以前任何失败都塌成 k8s-server 兜底的那句
+        //    「服务端异常」，用户在页面上看不到任何线索（2026-10-15 真环境撞到过）
+        try {
+            ensureCredsSecret(dto);
+        } catch (KubernetesClientException e) {
+            throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
+                    "创建凭据 Secret 失败：" + apiMessage(e));
+        }
 
         // ② 再建 PipelineRun
-        PipelineRun created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
-                .resource(buildRun(dto)).create();
+        PipelineRun created;
+        try {
+            created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
+                    .resource(buildRun(dto)).create();
+        } catch (KubernetesClientException e) {
+            throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
+                    "创建 PipelineRun 失败：" + apiMessage(e));
+        }
         return converter.toDto(created);
+    }
+
+    /**
+     * K8s 客户端异常的**原话**：优先取 {@code Status.message}（API server 给的那一句，
+     * 例如 {@code pipelineruns.tekton.dev "x" is forbidden: ...}），拿不到才退回异常消息。
+     */
+    static String apiMessage(KubernetesClientException e) {
+        if (e.getStatus() != null && e.getStatus().getMessage() != null) {
+            return e.getStatus().getMessage();
+        }
+        return e.getMessage() == null ? e.toString() : e.getMessage();
     }
 
     /**
