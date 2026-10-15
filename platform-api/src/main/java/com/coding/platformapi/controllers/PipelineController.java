@@ -135,6 +135,18 @@ public class PipelineController {
 
     // ---- 运行 ----
 
+    /**
+     * 可以在流水线的**镜像节点**里引用的连接（同样的窄投影，只是排除 git）。
+     *
+     * <p>⚠️ 少了它，租户只能手打连接 id —— 而他们看不到凭据页（那个要 platform:credential:read），
+     * 于是「构建并推送镜像」这个节点在界面上根本配不出来。
+     */
+    @PostMapping("/registry-connections")
+    @Operation(summary = "可在流水线里使用的镜像仓库连接（窄投影：只回 id/name/endpoint）")
+    public ResponseData<List<CredentialService.ConnectionView>> registryConnections() {
+        return new ResponseData<>(credentialService.pipelineUsableRegistryConnections());
+    }
+
     @PostMapping("/run")
     @Operation(summary = "触发一次运行",
             description = "先生成 run 名并落库、再创建集群对象（幂等键从源头就有）。"

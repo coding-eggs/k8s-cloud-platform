@@ -9,7 +9,7 @@
  * 3. **选预设只换默认值**：`preset` 变化时把 `image` / `command` 两个框填上该预设的值，
  *    **不锁死任何字段**（用户明确要求：预设只是预设，都能改）。
  */
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { useImageSuggest } from '@/composables/useImageSuggest'
 import type { PipelineCanvasNode, PipelineConnection, RegistrySuggestItem } from '@/types'
@@ -18,6 +18,8 @@ const props = defineProps<{
   node: PipelineCanvasNode
   /** 可引用的 git 连接（窄投影，只有被授权的才在里面） */
   gitConnections: PipelineConnection[]
+  /** 可引用的镜像仓库连接（同上；镜像节点的目标地址由它决定） */
+  registryConnections: PipelineConnection[]
 }>()
 const emit = defineEmits<{ (e: 'change'): void }>()
 
@@ -38,16 +40,20 @@ function setValue(key: string, v: string) {
   emit('change')
 }
 
-/** 选预设 = 把它的镜像与命令填进去。两个框之后照样能改。 */
-watch(
-  () => (isShell.value ? valueOf('preset') : ''),
-  (key) => {
-    const p = presetOf(key)
-    if (!p) return
-    if (p.image) setValue('image', p.image)
-    if (p.command) setValue('command', p.command)
-  },
-)
+/**
+ * 选预设 = 把它的镜像与命令填进去。两个框之后照样能改。
+ *
+ * ⚠️ **必须挂在"用户改了这个控件"上，不能挂 watch**：面板在切换选中节点时不卸载，
+ * 而 watch 的 getter 依赖 `props.node` —— 换节点时它会拿**新节点的** preset 执行一次，
+ * 把用户在旧节点上手改过的 image/command 静默覆盖掉（而那正是规格最强调的"预设只是默认值"）。
+ */
+function onPresetChange(key: string) {
+  setValue('preset', key)
+  const p = presetOf(key)
+  if (!p) return
+  if (p.image) setValue('image', p.image)
+  if (p.command) setValue('command', p.command)
+}
 
 /** IMAGE 字段的候选：**整段替换**（后端给的已经是完整镜像串），候选右侧标来源连接名 */
 function onImageFetch(query: string, cb: (items: { value: string; connectionName?: string }[]) => void) {
@@ -76,6 +82,26 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
           @update:model-value="(v: string) => setValue(f.key, v ?? '')"
         >
           <el-option v-for="c in gitConnections" :key="c.id" :label="c.name" :value="c.id" />
+        </el-select>
+
+        <el-select
+          v-else-if="f.key === 'preset'"
+          :model-value="valueOf(f.key)"
+          style="width: 100%"
+          @update:model-value="(v: string) => onPresetChange(v ?? '')"
+        >
+          <el-option v-for="o in optionsOf(f)" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
+
+        <!-- 镜像节点的目标仓库：**必须下拉**，候选只含被授权可用的（窄投影，没有凭据内容） -->
+        <el-select
+          v-else-if="f.key === 'registryConnectionId'"
+          :model-value="valueOf(f.key)"
+          placeholder="选一条被授权的镜像仓库连接"
+          style="width: 100%"
+          @update:model-value="(v: string) => setValue(f.key, v ?? '')"
+        >
+          <el-option v-for="c in registryConnections" :key="c.id" :label="c.name" :value="c.id" />
         </el-select>
 
         <el-select

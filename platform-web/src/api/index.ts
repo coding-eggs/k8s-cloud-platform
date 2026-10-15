@@ -673,6 +673,8 @@ export const pipelineApi = {
     http.post<never, string>('/pipeline/preview', { canvasJson }),
   /** 可在流水线里引用的 git 连接（窄投影） */
   gitConnections: () => http.post<never, PipelineConnection[]>('/pipeline/git-connections'),
+  /** 同上，但面向**镜像节点**（排除 git）—— 少了它，镜像节点只能手打连接 id */
+  registryConnections: () => http.post<never, PipelineConnection[]>('/pipeline/registry-connections'),
 
   run: (pipelineId: string) => http.post<never, string>('/pipeline/run', { id: pipelineId }),
   cancelRun: (runName: string) => http.post<never, void>('/pipeline/run/cancel', { name: runName }),

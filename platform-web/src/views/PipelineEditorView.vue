@@ -73,6 +73,7 @@ const flowNodes = computed(() => nodes.value as unknown as Node[])
 const flowEdgesBound = computed(() => edges.value as unknown as Edge[])
 const selected = ref<string>('')
 const gitConnections = ref<PipelineConnection[]>([])
+const registryConnections = ref<PipelineConnection[]>([])
 const yamlPreview = ref('')
 const showPreview = ref(false)
 const saving = ref(false)
@@ -110,6 +111,7 @@ const selectedNode = computed(() => {
 onMounted(async () => {
   await loadNodeTypes()
   gitConnections.value = await pipelineApi.gitConnections().catch(() => [])
+  registryConnections.value = await pipelineApi.registryConnections().catch(() => [])
   if (!isNew.value) {
     const p = await pipelineApi.get(pipelineId.value)
     form.value = {
@@ -353,6 +355,7 @@ async function removePipeline() {
         v-if="selectedNode"
         :node="selectedNode"
         :git-connections="gitConnections"
+        :registry-connections="registryConnections"
         @change="onPropsChange"
       />
       <div v-else class="props-empty">点一个节点看它的属性</div>

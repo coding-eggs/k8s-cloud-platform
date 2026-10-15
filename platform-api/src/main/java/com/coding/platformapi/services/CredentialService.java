@@ -405,6 +405,22 @@ public class CredentialService {
     }
 
     /**
+     * 可在流水线的**镜像节点**里引用的连接 —— 即除 git 之外的那些（Harbor / Docker Hub…）。
+     *
+     * <p>与 git 那条同一形状、同一 code：都是「列出可在流水线里使用的连接」，只是面向的节点不同。
+     */
+    public List<ConnectionView> pipelineUsableRegistryConnections() {
+        return mapper.selectAll().stream()
+                .filter(c -> !"GIT".equals(c.getType()))
+                .filter(c -> c.getUsableByPipelines() != null && c.getUsableByPipelines() == 1)
+                .filter(c -> c.getEnabled() != null && c.getEnabled() == 1)
+                .sorted(Comparator.comparing(PlatformCredential::getName,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(c -> new ConnectionView(c.getId(), c.getName(), c.getEndpoint()))
+                .toList();
+    }
+
+    /**
      * 解析一条连接，给「触发一次运行」用：**先校授权、再解密**，一次拿到 endpoint 与凭据。
      *
      * <p>⚠️ 返回值里带明文凭据，调用方只许把它交给 k8s-server 去建 Secret ——
