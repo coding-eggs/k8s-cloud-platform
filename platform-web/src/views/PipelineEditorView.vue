@@ -80,6 +80,15 @@ const edges = ref<FlowEdgeView[]>([])
 const flowNodes = computed(() => nodes.value as unknown as Node[])
 const flowEdgesBound = computed(() => edges.value as unknown as Edge[])
 const selected = ref<string>('')
+/**
+ * 选中的**连线**。与节点选中互斥 —— 工具栏那个按钮只删"当前选中的那个东西"，
+ * 两边都算选中只会让人猜它要删谁。
+ *
+ * ⚠️ 为什么需要它：Vue Flow 内置的删除是「选中 + Backspace/Delete」，界面上**没有任何地方
+ * 说过这件事**；而看得见的「删除节点」按钮当时只认节点选中 → 用户点线、再点按钮 = 什么也没发生，
+ * 看起来就像"连线不能删"（2026-10-16 用户报的）。
+ */
+const selectedEdge = ref('')
 const gitConnections = ref<PipelineConnection[]>([])
 const registryConnections = ref<PipelineConnection[]>([])
 const yamlPreview = ref('')
@@ -221,6 +230,7 @@ function onNodesChange(changes: NodeChange[]) {
   if (removed) {
     const alive = new Set(nodes.value.map((n) => n.id))
     edges.value = edges.value.filter((e) => alive.has(e.source) && alive.has(e.target))
+    selectedEdge.value = ''            // 被删的节点可能正连着它
     if (!alive.has(selected.value)) selected.value = ''
   }
 }
@@ -275,6 +285,12 @@ function onConnect(params: Connection) {
 
 function onNodeClick(e: { node: { id: string } }) {
   selected.value = e.node.id
+  selectedEdge.value = ''
+}
+
+function onEdgeClick(e: { edge: { id: string } }) {
+  selectedEdge.value = e.edge.id
+  selected.value = ''
 }
 
 /** 从一个节点的 "+" 接一个下游节点：新节点落在它右边，并自动连一条边。 */
@@ -291,6 +307,12 @@ function insertAfter(fromId: string, type: string) {
 }
 
 async function removeSelected() {
+  // 先看连线：它不需要确认（删一条连线是画布上的家常动作，误删也只是重连一次）
+  if (selectedEdge.value) {
+    edges.value = edges.value.filter((e) => e.id !== selectedEdge.value)
+    selectedEdge.value = ''
+    return
+  }
   if (!selected.value) return
   nodes.value = nodes.value.filter((n) => n.id !== selected.value)
   edges.value = edges.value.filter((e) => e.source !== selected.value && e.target !== selected.value)
@@ -389,7 +411,9 @@ async function removePipeline() {
       <el-input v-model="form.description" placeholder="描述（可选）" style="width: 260px" />
       <span class="loc">{{ form.clusterId }} / {{ form.namespace }}</span>
       <div class="spacer" />
-      <el-button :disabled="!selected" @click="removeSelected">删除节点</el-button>
+      <el-button :disabled="!selected && !selectedEdge" @click="removeSelected">
+        {{ selectedEdge ? '删除连线' : '删除节点' }}
+      </el-button>
       <el-button @click="doPreview">预览 YAML</el-button>
       <el-button v-if="canManage" :loading="saving" @click="save()">保存</el-button>
       <el-button v-if="canRun" type="primary" :disabled="capAvailable === false" @click="run">
@@ -403,6 +427,9 @@ async function removePipeline() {
       <span>这个集群现在跑不了 CI：{{ capReason }}。流水线可以照常编辑保存，但「运行」已禁用。</span>
     </div>
 
+    <div v-if="selectedEdge" class="hint">
+      已选中一条连线 —— 按 <b>Delete</b> 或点上面的「删除连线」把它删掉
+    </div>
     <div v-if="concurrentHint" class="hint">{{ concurrentHint }}</div>
 
     <div class="canvas-wrap">
@@ -423,6 +450,7 @@ async function removePipeline() {
           @edges-change="onEdgesChange"
           @connect="onConnect"
           @node-click="onNodeClick"
+          @edge-click="onEdgeClick"
         >
           <template #node-pipeline="nodeProps">
             <PipelineNodeVue
