@@ -8,6 +8,7 @@ import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.tekton.v1.Step;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -83,7 +84,12 @@ public class ImagePushNode implements PipelineNode {
                                 + "  · 一个仓库要出多个镜像（frontend/ 与 backend/ 各一份 Dockerfile）\n"
                                 + "    → 两个节点分别填 frontend 与 backend\n"
                                 + "⚠️ 别把上下文填成含 node_modules/、target/ 的大目录："
-                                + "整个目录都要打包传给构建工具，慢且吃盘 —— 用 .dockerignore 排掉")));
+                                + "整个目录都要打包传给构建工具，慢且吃盘 —— 用 .dockerignore 排掉"),
+                NodeField.advancedText("proxy", "HTTP 代理（高级）",
+                        "只在「这个集群拉不到基础镜像 / 推不到目标仓库」时才填；留空 = 直连。\n"
+                                + "例：http://192.168.85.1:7890\n"
+                                + "buildah 取基础镜像与 push 都会走它；集群内网地址（.svc、内网网段）自动直连。\n"
+                                + "⚠️ 不支持带账号密码的代理 —— 那属于凭据，要单独建凭据，别写在这里")));
     }
 
     @Override
@@ -126,8 +132,11 @@ public class ImagePushNode implements PipelineNode {
         step.setScript(script);
         // 推送凭据以文件形式挂进来（k8s-server 按 platform-api 给的连接建 Secret）——
         // buildah 认 REGISTRY_AUTH_FILE 这个环境变量
-        step.setEnv(List.of(new EnvVar("REGISTRY_AUTH_FILE",
-                GitCloneNode.CREDS_MOUNT + "/config.json", null)));
+        // ⚠️ 代理是**加进这个列表**，不是替换它：冲掉 REGISTRY_AUTH_FILE = 推送 401
+        List<EnvVar> env = new ArrayList<>();
+        env.add(new EnvVar("REGISTRY_AUTH_FILE", GitCloneNode.CREDS_MOUNT + "/config.json", null));
+        env.addAll(ProxyEnv.of(ctx.value("proxy")));
+        step.setEnv(env);
         return new RenderedStep(List.of(step), List.of(GitCloneNode.CREDS_WORKSPACE));
     }
 

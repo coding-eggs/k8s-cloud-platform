@@ -1,6 +1,7 @@
 package com.coding.k8score.pipeline.nodes;
 
 import com.coding.k8score.pipeline.*;
+import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.tekton.v1.Step;
 import org.springframework.stereotype.Component;
 
@@ -74,7 +75,13 @@ public class GitCloneNode implements PipelineNode {
                 NodeField.text("dir", "目标目录（相对 workspace）", false,
                         "克隆到共享 workspace 的哪个子目录；留空 = 直接放进根目录。\n"
                                 + "例：留空 → /workspace 下就是仓库内容；填 src → /workspace/src"
-                                + "（下游节点的工作目录与构建上下文记得跟着写 src）")));
+                                + "（下游节点的工作目录与构建上下文记得跟着写 src）"),
+                NodeField.advancedText("proxy", "HTTP 代理（高级）",
+                        "只在「这个集群出不去」时才填；留空 = 直连。\n"
+                                + "例：http://192.168.85.1:7890\n"
+                                + "写进 step 的环境变量，所以同一步里别的下载器也一起走它；\n"
+                                + "集群内网地址（.svc、内网网段）自动直连，不绕代理。\n"
+                                + "⚠️ 不支持带账号密码的代理 —— 那属于凭据，要单独建凭据，别写在这里")));
     }
 
     @Override
@@ -107,6 +114,12 @@ public class GitCloneNode implements PipelineNode {
         step.setImage("alpine/git:2.45.2");
         step.setWorkingDir(WS);
         step.setScript(script.toString());
+        // 代理（留空 = 直连，一个变量都不加）—— GitHub 的 pack 下载实测会在 10MiB 处卡死，
+        // 真出不去时这一步就是"能不能拉代码"的分界线
+        List<EnvVar> env = ProxyEnv.of(ctx.value("proxy"));
+        if (!env.isEmpty()) {
+            step.setEnv(env);
+        }
         return useCredentials
                 ? new RenderedStep(List.of(step), List.of(CREDS_WORKSPACE))
                 : new RenderedStep(List.of(step));

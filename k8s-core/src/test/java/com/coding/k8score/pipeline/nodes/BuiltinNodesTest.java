@@ -181,6 +181,60 @@ class BuiltinNodesTest {
         assertThat(step.extraWorkspaces()).contains("creds");
     }
 
+    // ---- 代理（2026-10-15：GitHub 的 pack 下载实测卡在 10MiB 不动、Docker Hub 从 Pod 里不通 ——
+    //      代理不是优化，是"这个集群能不能拉代码/基础镜像"）----
+
+    @Test
+    void theGitNodePutsTheProxyIntoTheStepEnvironment() {
+        RenderedStep step = new GitCloneNode().render(ctx("git", Map.of(
+                "repo", "https://github.com/g/r.git", "proxy", "http://192.168.85.1:7890")));
+
+        // 两个大小写都写：git/curl 认小写，Go 的 net/http 认大写
+        assertThat(envOf(step)).containsEntry("HTTPS_PROXY", "http://192.168.85.1:7890")
+                .containsEntry("https_proxy", "http://192.168.85.1:7890");
+        // 集群内部的东西（K8s API、内网仓库）不该绕代理
+        assertThat(envOf(step).get("NO_PROXY")).contains(".svc").contains("192.168.0.0/16");
+    }
+
+    @Test
+    void noProxyValueMeansNoProxyEnvAtAll() {
+        // 留空 = 直连：**一个变量都不写**（写空值反而会让某些工具把空串当代理地址）
+        RenderedStep step = new GitCloneNode().render(ctx("git", Map.of("repo", "https://g/r.git")));
+
+        assertThat(envOf(step)).doesNotContainKeys("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy");
+    }
+
+    @Test
+    void theImageNodeKeepsItsAuthFileWhenAProxyIsSet() {
+        // ⭐ 合并而不是覆盖：那个 env 里本来就有一个 REGISTRY_AUTH_FILE（推送凭据），
+        //    加代理时顺手把它冲掉 = 推送 401。这类"顺手覆盖"最容易出，所以钉住。
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "app",
+                        "proxy", "http://192.168.85.1:7890"),
+                "reg-1", "harbor.example.com"));
+
+        assertThat(envOf(step))
+                .containsEntry("REGISTRY_AUTH_FILE", "/creds/config.json")
+                .containsEntry("HTTPS_PROXY", "http://192.168.85.1:7890");
+    }
+
+    @Test
+    void theProxyIsAnAdvancedFieldOnBothNodesThatNeedTheNetwork() {
+        // 它是"高级"：常态不用填，但排障时得有地方填（面板里收在「高级」下面）
+        assertThat(new GitCloneNode().formSchema().fields())
+                .filteredOn(NodeField::advanced).extracting(NodeField::key).contains("proxy");
+        assertThat(new ImagePushNode().formSchema().fields())
+                .filteredOn(NodeField::advanced).extracting(NodeField::key).contains("proxy");
+    }
+
+    /** 一个 step 的环境变量（key → value）—— 断言代理这类东西比逐个 find 清楚。 */
+    private static Map<String, String> envOf(RenderedStep rendered) {
+        return rendered.steps().get(0).getEnv().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        io.fabric8.kubernetes.api.model.EnvVar::getName,
+                        e -> e.getValue() == null ? "" : e.getValue()));
+    }
+
     /**
      * ⚠️ **跨模块契约的护栏**：platform-api 会照这两个字段名扫画布、逐条问「这条连接被授权了吗」
      * （spec §5.3 / Review Focus #4）。它读不到 k8s-core 的类型，所以字段名就是契约 ——

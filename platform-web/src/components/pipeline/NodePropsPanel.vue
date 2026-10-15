@@ -10,10 +10,10 @@
  * 3. **选预设只换默认值**：`preset` 变化时把 `image` / `command` 两个框填上该预设的值，
  *    **不锁死任何字段**（用户明确要求：预设只是预设，都能改）。
  */
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { useImageSuggest } from '@/composables/useImageSuggest'
-import type { PipelineCanvasNode, PipelineConnection, RegistrySuggestItem } from '@/types'
+import type { PipelineCanvasNode, PipelineConnection, PipelineNodeField, RegistrySuggestItem } from '@/types'
 
 const props = defineProps<{
   node: PipelineCanvasNode
@@ -72,6 +72,21 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
     cb(items.map((i) => ({ value: i.value, connectionName: i.connectionName }))),
   )
 }
+
+/**
+ * 「高级」折叠。后端把「常态不用填、但排障时必须能填」的字段标成 `advanced`
+ * （代理就是第一个），它们摊在面板上会把真正要看的字段挤下去。
+ *
+ * ⚠️ 开关插在**第一个 advanced 字段之前**：面板的字段顺序完全由后端 schema 决定，
+ * 所以只要求 advanced 一律排在末尾（现在就是这么写的），不用在前端把数组切成两段。
+ * 展开状态有意**不跟着切节点重置** —— 连着给几个节点配代理时，收起来更烦人。
+ */
+const advancedOpen = ref(false)
+const firstAdvancedKey = computed(() => fields.value.find((f) => f.advanced)?.key)
+
+function isFirstAdvanced(f: PipelineNodeField): boolean {
+  return f.advanced === true && f.key === firstAdvancedKey.value
+}
 </script>
 
 <template>
@@ -97,7 +112,13 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
     <el-empty v-if="!schema" description="未知节点类型" :image-size="60" />
 
     <template v-for="f in fields" :key="f.key">
-      <div class="props-field">
+      <!-- 「高级」开关：只出现在第一个 advanced 字段之前（见 isFirstAdvanced 的说明） -->
+      <div v-if="isFirstAdvanced(f)" class="props-advanced-toggle" @click="advancedOpen = !advancedOpen">
+        <span>高级</span>
+        <span class="caret">{{ advancedOpen ? '▴' : '▾' }}</span>
+      </div>
+
+      <div v-if="!f.advanced || advancedOpen" class="props-field">
         <label>{{ f.label }}<span v-if="f.required" class="req">*</span></label>
 
         <!-- git 连接：候选来自**被授权**的窄投影；没被授权的不出现在这里（Review Focus #4） -->
@@ -200,6 +221,22 @@ function onImageFetch(query: string, cb: (items: { value: string; connectionName
 }
 .props-field {
   margin-bottom: 12px;
+}
+/* 「高级」折叠的开关（收着的是常态字段，摊开的才是代理这类排障字段） */
+.props-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #ebeef5);
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.props-advanced-toggle .caret {
+  font-size: 10px;
 }
 .props-field label {
   display: block;

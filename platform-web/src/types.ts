@@ -1713,6 +1713,8 @@ export interface PipelineNodeField {
   help?: string | null
   defaultValue?: string | null
   options?: { value: string; label: string }[] | null
+  /** 收在属性面板的「高级」里（常态不用填、但排障时必须能填的字段，例如代理） */
+  advanced?: boolean
 }
 
 /** 语言预设。**只是默认值** —— 选它只换下面几个框里的内容，不锁死任何字段。 */
