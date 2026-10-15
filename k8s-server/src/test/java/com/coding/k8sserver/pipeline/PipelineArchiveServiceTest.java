@@ -145,4 +145,50 @@ class PipelineArchiveServiceTest {
         verify(logMapper, never()).insert(any());
         verify(runMapper).update(any());     // 状态与快照照写
     }
+
+    /** 取消路径专用的那次抢抓（spec §4.2）：对象还在跑，快照状态就是 RUNNING。 */
+    private static PipelineRunSnapshotDTO grabbed() {
+        return snapshot("RUNNING", step("build", "编译到一半的输出", false, 24));
+    }
+
+    @Test
+    void persistLogsWritesTheGrabbedLogsAndLeavesTheRunRunning() {
+        // ⭐ 取消路径：这一刻对象**还在跑**，快照状态就是 RUNNING ——
+        //    日志照存，但那行**不能结案**（还没终结，状态/时间/steps_json/YAML 都归后续的终止事件）
+        when(runMapper.selectByRunName("r1")).thenReturn(running());
+
+        svc.persistLogs(grabbed());
+
+        ArgumentCaptor<PlatformPipelineRunLog> cap = ArgumentCaptor.forClass(PlatformPipelineRunLog.class);
+        verify(logMapper).insert(cap.capture());
+        assertThat(cap.getValue().getRunId()).isEqualTo("run-1");
+        assertThat(cap.getValue().getNodeName()).isEqualTo("build");
+        assertThat(cap.getValue().getContent()).isEqualTo("编译到一半的输出");
+
+        verify(runMapper, never()).update(any());
+    }
+
+    @Test
+    void persistLogsLeavesAnAlreadyClosedRunAlone() {
+        // 抢抓只是「趁着 Pod 还在先存一份」。运行**已经结案**了就不再动它 ——
+        // 否则一份还没跑完的日志会盖掉结案时那份完整的（ON DUPLICATE KEY 是无条件覆写）
+        PlatformPipelineRun done = running();
+        done.setStatus("SUCCEEDED");
+        when(runMapper.selectByRunName("r1")).thenReturn(done);
+
+        svc.persistLogs(grabbed());
+
+        verify(logMapper, never()).insert(any());
+        verify(runMapper, never()).update(any());
+    }
+
+    @Test
+    void persistLogsOfARunThatIsNotOursIsSkippedNotInvented() {
+        when(runMapper.selectByRunName("r1")).thenReturn(null);
+
+        svc.persistLogs(grabbed());
+
+        verify(logMapper, never()).insert(any());
+        verify(runMapper, never()).update(any());
+    }
 }

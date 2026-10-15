@@ -28,6 +28,14 @@ import java.util.List;
  *
  * <p>本服务只管两件事：**幂等**（同一条运行重投多少次都只写一遍）与
  * **事务**（日志行与运行状态要么一起进，要么都不进）。
+ *
+ * <h2>两个入口，别混用</h2>
+ * <ul>
+ *   <li>{@link #persist} —— **结案**：写日志 <b>+</b> 写状态/时间/{@code steps_json}/YAML。
+ *       只在运行**真的终结**时用（watch 的终止事件、平台判超时）。</li>
+ *   <li>{@link #persistLogs} —— **只写日志**：取消前那次抢抓用（那一刻对象还在跑）。
+ *       运行行原样不动，结案仍归后续的终止事件。</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -40,6 +48,38 @@ public class PipelineArchiveService {
                                   PlatformPipelineRunLogMapper logMapper) {
         this.runMapper = runMapper;
         this.logMapper = logMapper;
+    }
+
+    /**
+     * **只落日志，不结案** —— 取消路径专用（spec §4.2）。
+     *
+     * <p>为什么不能用 {@link #persist}：取消的那一刻对象**还在跑**，{@code snapshot.status()}
+     * 就是 {@code RUNNING}，而 persist 的「尚未终结不能归档」守卫（对归档路径是对的）
+     * 会每次都把这份抢抓的日志整条扔掉 —— 随后 Tekton 取消时自己删掉 Pod，
+     * 那份日志就再也拿不到了。
+     *
+     * <p>为什么也不能顺手结案：这次运行**还没终结**。状态、时间、{@code steps_json} 与 YAML
+     * 都归后续的终止事件（走 {@link #persist}）写 —— 这里只把日志先存下来，
+     * 运行行保持 {@code RUNNING}，历史里它就是「跑着 / 正在被取消」。
+     *
+     * <p>与 {@link #persist} 一样是**幂等**的：重投 / 反复取消都只留一行
+     * （唯一索引 (run_id, node_name) + ON DUPLICATE KEY）。
+     */
+    @Transactional
+    public void persistLogs(PipelineRunSnapshotDTO snapshot) {
+        PlatformPipelineRun row = runMapper.selectByRunName(snapshot.runName());
+        if (row == null) {
+            // 同 persist：不是平台发起的运行（或保留清理已经把它删了）—— 没有可挂的行
+            log.warn("抢抓日志时库里没有这条运行（跳过落库）：{}", snapshot.runName());
+            return;
+        }
+        if (!"RUNNING".equals(row.getStatus())) {
+            // 已经结案了就别再把抢抓那份盖上去 —— ON DUPLICATE KEY 是无条件覆写，
+            // 而抢抓到的多半是**没跑完**的那半截，比结案时那份完整日志短
+            log.debug("这条运行已经归档过了，跳过抢抓落库：{}", snapshot.runName());
+            return;
+        }
+        writeLogs(row.getId(), snapshot.steps());
     }
 
     /**
@@ -69,20 +109,7 @@ public class PipelineArchiveService {
 
         List<PipelineRunSnapshotDTO.StepLog> steps =
                 snapshot.steps() == null ? List.of() : snapshot.steps();
-        for (PipelineRunSnapshotDTO.StepLog step : steps) {
-            if (step.log() == null || step.log().isEmpty()) {
-                // 「没有日志」与「日志是空的」不是一回事 —— 不写空行
-                continue;
-            }
-            PlatformPipelineRunLog line = new PlatformPipelineRunLog();
-            line.setId(ULIDGenerator.generateULID());
-            line.setRunId(row.getId());
-            line.setNodeName(step.nodeName());
-            line.setContent(step.log());
-            line.setTruncated(step.truncated() ? 1 : 0);
-            line.setSizeBytes(step.sizeBytes());
-            logMapper.insert(line);           // 唯一索引 (run_id, node_name) + ON DUPLICATE KEY
-        }
+        writeLogs(row.getId(), steps);
 
         row.setStatus(snapshot.status());
         row.setReason(snapshot.reason());
@@ -92,6 +119,31 @@ public class PipelineArchiveService {
         // YAML 是**归档这一刻**才拿得到的东西（对象马上就被删了），所以它跟着这次回写一起进去
         row.setRunYaml(snapshot.runYaml());
         runMapper.update(row);
+    }
+
+    /**
+     * 日志行的那一段 —— {@link #persist} 与 {@link #persistLogs} 共用。
+     *
+     * <p>「没有日志」与「日志是空的」不是一回事 —— 空日志不写行。
+     * 唯一索引 (run_id, node_name) + ON DUPLICATE KEY 保证同一节点只留一行。
+     */
+    private void writeLogs(String runId, List<PipelineRunSnapshotDTO.StepLog> steps) {
+        if (steps == null) {
+            return;
+        }
+        for (PipelineRunSnapshotDTO.StepLog step : steps) {
+            if (step.log() == null || step.log().isEmpty()) {
+                continue;
+            }
+            PlatformPipelineRunLog line = new PlatformPipelineRunLog();
+            line.setId(ULIDGenerator.generateULID());
+            line.setRunId(runId);
+            line.setNodeName(step.nodeName());
+            line.setContent(step.log());
+            line.setTruncated(step.truncated() ? 1 : 0);
+            line.setSizeBytes(step.sizeBytes());
+            logMapper.insert(line);           // 唯一索引 (run_id, node_name) + ON DUPLICATE KEY
+        }
     }
 
     private static String stepsJson(List<PipelineRunSnapshotDTO.StepLog> steps) {
