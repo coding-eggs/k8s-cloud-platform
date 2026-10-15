@@ -32,7 +32,7 @@ class PipelineCanvasOperationsTest {
         PipelineNodeTypeView shell = types.stream()
                 .filter(t -> t.type().equals("shell")).findFirst().orElseThrow();
         assertThat(shell.fields()).extracting(NodeField::key)
-                .containsExactly("preset", "image", "command", "workDir");
+                .containsExactly("preset", "image", "command", "workDir", "cache");
         assertThat(shell.presets()).isNotEmpty();
     }
 
@@ -83,6 +83,27 @@ class PipelineCanvasOperationsTest {
         assertThat(maps(taskSpec.get("workspaces")))
                 .extracting(w -> w.get("name"))
                 .containsExactly(PipelineCanvasOperations.WORKSPACE);
+    }
+
+    @Test
+    void aCacheToggleAddsTheCacheWorkspaceDeclaredAndBoundAtSlashCache() {
+        // ⭐ 「声明 / 绑定 / 挂载点」三件套缺一不可（前两个我们都踩过）：
+        //    pipeline 级声明 → TaskRun 才有得挂；task 级声明带 mountPath → 才落在 /cache
+        //    （不写就是 Tekton 默认的 /workspace/cache）；task 级绑定 → 才接得到。-->
+        String canvas = """
+                {"nodes":[{"id":"build","type":"shell","config":{"image":"alpine:3.20",
+                   "command":"echo hi","cache":"true"}}],"edges":[]}""";
+
+        String yaml = ops.renderYaml(canvas);
+
+        assertThat(yaml).as("渲染出来的 YAML：\n%s", yaml).contains("cache");
+        Map<String, Object> task = firstTaskOf(yaml);
+        assertThat(maps(task.get("workspaces"))).extracting(w -> w.get("name"))
+                .containsExactly(PipelineCanvasOperations.WORKSPACE, "cache");
+        assertThat(maps(asMap(task.get("taskSpec")).get("workspaces")))
+                .filteredOn(w -> "cache".equals(w.get("name")))
+                .singleElement()
+                .satisfies(w -> assertThat(w.get("mountPath")).isEqualTo("/cache"));
     }
 
     @Test

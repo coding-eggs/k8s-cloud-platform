@@ -14,7 +14,7 @@ public record NodeField(String key, String label, FieldType type,
                         boolean required, String placeholder, String help,
                         String defaultValue, List<Option> options, boolean advanced) {
 
-    public enum FieldType { TEXT, TEXTAREA, SELECT, IMAGE }
+    public enum FieldType { TEXT, TEXTAREA, SELECT, IMAGE, BOOLEAN }
 
     public record Option(String value, String label) { }
 
@@ -41,6 +41,15 @@ public record NodeField(String key, String label, FieldType type,
     /** 收在「高级」里的文本字段（见 {@link #advanced}）。 */
     public static NodeField advancedText(String key, String label, String help) {
         return new NodeField(key, label, FieldType.TEXT, false, null, help, null, List.of(), true);
+    }
+
+    /**
+     * 开关（收在「高级」里）。值就是 {@code "true"} / {@code "false"} 字符串 ——
+     * 与其它字段一样"全是字符串"（{@code config} 的形状不为此破例）。
+     */
+    public static NodeField advancedCheckbox(String key, String label, String help) {
+        return new NodeField(key, label, FieldType.BOOLEAN, false, null, help, "false",
+                List.of(), true);
     }
 
     public static NodeField image(String key, String label) {

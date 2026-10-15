@@ -119,8 +119,8 @@ class BuiltinNodesTest {
         assertThat(script).doesNotContain("__IMAGE_REF__");
         // shell 的命令替换必须写成 $$(...)，否则 Tekton 会当自己的变量替换并因解析不到而报错
         assertThat(script).contains("$$(cat");
-        // 凭据以文件形式挂进来，不是写进脚本
-        assertThat(step.extraWorkspaces()).contains("creds");
+        // 凭据以文件形式挂进来，不是写进脚本（挂载点也必须显式给上 —— 见 WorkspaceRef）
+        assertThat(step.workspaces()).extracting(RenderedStep.WorkspaceRef::name).contains("creds");
         assertThat(step.steps().get(0).getEnv())
                 .anySatisfy(e -> assertThat(e.getName()).isEqualTo("REGISTRY_AUTH_FILE"));
     }
@@ -178,7 +178,7 @@ class BuiltinNodesTest {
 
         assertThat(step.steps().get(0).getScript()).contains("rev-parse --short HEAD");
         assertThat(step.steps().get(0).getScript()).contains(".netrc");
-        assertThat(step.extraWorkspaces()).contains("creds");
+        assertThat(step.workspaces()).extracting(RenderedStep.WorkspaceRef::name).contains("creds");
     }
 
     // ---- 代理（2026-10-15：GitHub 的 pack 下载实测卡在 10MiB 不动、Docker Hub 从 Pod 里不通 ——
@@ -225,6 +225,36 @@ class BuiltinNodesTest {
                 .filteredOn(NodeField::advanced).extracting(NodeField::key).contains("proxy");
         assertThat(new ImagePushNode().formSchema().fields())
                 .filteredOn(NodeField::advanced).extracting(NodeField::key).contains("proxy");
+    }
+
+    // ---- 依赖缓存（2026-10-15：shell 节点的「复用依赖缓存」开关）----
+
+    @Test
+    void theShellNodePointsEveryToolAtTheCacheWhenTheToggleIsOn() {
+        RenderedStep step = new ShellNode().render(ctx("shell", Map.of(
+                "image", "maven:3.9-eclipse-temurin-21", "command", "mvn -B package", "cache", "true")));
+
+        // 一次给全套：节点并不知道这一步会跑 mvn 还是 npm，而**没跑的工具会忽略自己那几个变量**
+        assertThat(envOf(step)).containsEntry("MAVEN_OPTS", "-Dmaven.repo.local=/cache/m2")
+                .containsEntry("npm_config_cache", "/cache/npm")
+                .containsEntry("GOMODCACHE", "/cache/go-mod")
+                .containsEntry("PIP_CACHE_DIR", "/cache/pip");
+        // 还要把 /cache 挂上（挂的是什么卷由绑定层决定：长期卷或退化的空目录）
+        assertThat(step.workspaces()).singleElement()
+                .satisfies(w -> {
+                    assertThat(w.name()).isEqualTo("cache");
+                    assertThat(w.mountPath()).isEqualTo("/cache");
+                });
+    }
+
+    @Test
+    void theShellNodeStaysBareWhenTheCacheToggleIsOff() {
+        // 默认（没开）不能有任何副作用：不挂卷、不写环境变量 —— 老画布渲染结果逐字节不变
+        RenderedStep step = new ShellNode().render(ctx("shell",
+                Map.of("image", "alpine:3.20", "command", "echo hi")));
+
+        assertThat(step.workspaces()).isEmpty();
+        assertThat(step.steps().get(0).getEnv()).isEmpty();
     }
 
     /** 一个 step 的环境变量（key → value）—— 断言代理这类东西比逐个 find 清楚。 */

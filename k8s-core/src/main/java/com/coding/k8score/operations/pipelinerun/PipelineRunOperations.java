@@ -7,12 +7,14 @@ import com.coding.k8score.converter.impl.pipeline.PipelineRunConverter;
 import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.pipeline.PipelineCanvasOperations;
 import com.coding.k8score.pipeline.PipelineRenderer;
+import io.fabric8.kubernetes.api.model.EmptyDirVolumeSource;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimSpec;
+import io.fabric8.kubernetes.api.model.PersistentVolumeClaimVolumeSource;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.SecretVolumeSource;
 import io.fabric8.kubernetes.api.model.VolumeResourceRequirements;
@@ -24,6 +26,7 @@ import io.fabric8.kubernetes.client.WatcherException;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.tekton.v1.PipelineRun;
 import io.fabric8.tekton.v1.PipelineRunSpec;
+import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.StepState;
 import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.PipelineRunStatus;
@@ -79,6 +82,106 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      */
     public static String credsSecretName(String runName) {
         return "platform-pipeline-creds-" + runName;
+    }
+
+    /** 依赖缓存卷的名字。**每个命名空间一块**，平台建、**跨运行保留**（跑完不删）。 */
+    public static final String CACHE_PVC = "platform-pipeline-cache";
+
+    /** 缓存卷大小（用户 2026-10-15 定）。这是缓存不是仓库：满了就构建自己失败，不会咬到别人。 */
+    public static final String CACHE_STORAGE = "10Gi";
+
+    /**
+     * 等缓存卷绑定的上限，**只在刚创建那一次等**。
+     *
+     * <p>等到了这次就能用上缓存；等不到就这一次先不用（下次再说）。
+     * 给不了共享卷的集群（只有块存储的）会一直 Pending —— 那时之后每次都是立即返回「不可用」。
+     */
+    private static final long CACHE_BIND_WAIT_MS = 8_000;
+
+    /**
+     * 这次运行到底用不用得上缓存卷 —— 看渲染出来的 spec 里**有没有声明** {@code cache} workspace。
+     * 没声明的运行连一次 GET 都不发（绝大多数流水线用不到缓存）。
+     */
+    private static boolean declaresCache(PipelineRun pr) {
+        PipelineSpec spec = pr.getSpec() == null ? null : pr.getSpec().getPipelineSpec();
+        if (spec == null || spec.getWorkspaces() == null) {
+            return false;
+        }
+        return spec.getWorkspaces().stream()
+                .anyMatch(w -> PipelineRenderer.CACHE_WORKSPACE.equals(w.getName()));
+    }
+
+    /**
+     * 确保命名空间里那块缓存卷**可用**，可用返回 claim 名，否则 {@code null}（调用方退化成空目录）。
+     *
+     * <p>⚠️ 一律按 {@code ReadWriteMany} 建 —— 「共享缓存」的前提就是多个 Pod 能同时挂它。
+     * 只有块存储（RWO）的集群会让它一直 Pending：那时这里**永远返回 null**，
+     * 也就是缓存自动关闭、每次都重下，而不是让某次运行卡在挂载上或直接判失败（用户 2026-10-15 定的降级）。
+     */
+    private String ensureCachePvc(String namespace) {
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace)
+                .withName(CACHE_PVC).get();
+        if (pvc == null) {
+            pvc = createCachePvc(namespace);
+            pvc = pvc == null ? null : waitForBound(namespace);
+        }
+        if (pvc == null || pvc.getMetadata() == null
+                || pvc.getMetadata().getDeletionTimestamp() != null) {
+            // 删除中（刚点过「清缓存」）：名字还被占着，这次不带缓存，下次运行会重建一块空的
+            return null;
+        }
+        return isBound(pvc) ? CACHE_PVC : null;
+    }
+
+    /** 见 {@link #CACHE_BIND_WAIT_MS}。 */
+    private PersistentVolumeClaim waitForBound(String namespace) {
+        long deadline = System.currentTimeMillis() + CACHE_BIND_WAIT_MS;
+        PersistentVolumeClaim pvc = null;
+        while (System.currentTimeMillis() < deadline) {
+            pvc = client.persistentVolumeClaims().inNamespace(namespace).withName(CACHE_PVC).get();
+            if (pvc != null && isBound(pvc)) {
+                return pvc;
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return pvc;
+            }
+        }
+        log.info("构建缓存卷在 {}ms 内没绑定上（这个集群可能给不了共享卷）—— 本次运行不带缓存：{}/{}",
+                CACHE_BIND_WAIT_MS, namespace, CACHE_PVC);
+        return pvc;
+    }
+
+    private static boolean isBound(PersistentVolumeClaim pvc) {
+        return pvc.getStatus() != null && "Bound".equals(pvc.getStatus().getPhase());
+    }
+
+    private PersistentVolumeClaim createCachePvc(String namespace) {
+        VolumeResourceRequirements res = new VolumeResourceRequirements();
+        res.setRequests(Map.of("storage", new Quantity(CACHE_STORAGE)));
+        PersistentVolumeClaimSpec spec = new PersistentVolumeClaimSpec();
+        spec.setAccessModes(List.of("ReadWriteMany"));
+        spec.setResources(res);
+
+        PersistentVolumeClaim pvc = new PersistentVolumeClaim();
+        // ⚠️ 与 PipelineRun 的 metadata 同理：模型不保证初始化嵌套对象
+        pvc.setMetadata(new ObjectMeta());
+        pvc.getMetadata().setName(CACHE_PVC);
+        pvc.getMetadata().setNamespace(namespace);
+        pvc.getMetadata().setLabels(managedLabels(Map.of()));
+        pvc.setSpec(spec);
+        try {
+            return client.persistentVolumeClaims().inNamespace(namespace).resource(pvc).create();
+        } catch (KubernetesClientException e) {
+            if (e.getCode() == 409) {
+                // 并发两条运行同时建（AlreadyExists）—— 不是错，拿现成的那块
+                return client.persistentVolumeClaims().inNamespace(namespace).withName(CACHE_PVC).get();
+            }
+            log.warn("创建构建缓存卷失败（本次运行不带缓存）{}/{}：{}", namespace, CACHE_PVC, apiMessage(e));
+            return null;
+        }
     }
 
     private final KubernetesClient client;
@@ -196,10 +299,16 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         }
 
         // ② 再建 PipelineRun
+        // ⚠️ 带缓存卷的运行要**先确认那块卷可用**（见 ensureCachePvc）：先按「没有缓存卷」构造一份，
+        //    确认真用到了缓存 workspace 才去碰集群里那块卷 —— 不用的运行连一次 GET 都不发。
+        PipelineRun pr = buildRun(dto, null);
+        if (declaresCache(pr)) {
+            pr = buildRun(dto, ensureCachePvc(dto.getNamespace()));
+        }
         PipelineRun created;
         try {
             created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
-                    .resource(buildRun(dto)).create();
+                    .resource(pr).create();
         } catch (KubernetesClientException e) {
             throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
                     "创建 PipelineRun 失败：" + apiMessage(e));
@@ -232,6 +341,14 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      * 「git 克隆的源码给下游所有节点用」（spec §3.3）。
      */
     PipelineRun buildRun(PipelineRunDTO dto) {
+        return buildRun(dto, null);
+    }
+
+    /**
+     * @param cachePvc 依赖缓存卷的 claim 名；{@code null} = 这个集群上不可用 →
+     *                 缓存 workspace 退化成**本次运行自己的空目录**（能跑，只是不跨运行复用）
+     */
+    PipelineRun buildRun(PipelineRunDTO dto, String cachePvc) {
         // ⚠️ 带上本次运行的连接：镜像节点要靠连接的 endpoint 拼目标地址，
         //    解析不出连接它就**拒渲染**（宁可不出来，也不产出必然失败的脚本）。
         Map<String, PipelineConnectionRef> byId = new java.util.LinkedHashMap<>();
@@ -251,7 +368,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
 
         PipelineRunSpec runSpec = new PipelineRunSpec();
         runSpec.setPipelineSpec(spec);
-        runSpec.setWorkspaces(bindWorkspaces(spec, dto.getName()));
+        runSpec.setWorkspaces(bindWorkspaces(spec, dto.getName(), cachePvc));
         // ⚠️ 有意**不设** spec.timeouts —— 超时由平台判定（spec §4.2）。让 Tekton 自己超时
         // 会删掉 Pod，那批运行的日志必然丢失，与「日志进库」直接冲突。
         pr.setSpec(runSpec);
@@ -335,10 +452,12 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
     /**
      * 给 spec 里声明的每个 workspace 配绑定 —— **一个都不能漏**（缺了 Tekton 直接拒绝）。
      *
-     * <p>两种绑定：隐式共享的那个现开一块 PVC；凭据那个**绑到 k8s-server 刚建的 Secret** 上
-     * （凭据以文件形式挂进 Pod，绝不进 spec）。
+     * <p>三种绑定：隐式共享的那个现开一块 PVC（每次运行一块，跑完随运行一起消失）；
+     * 凭据那个**绑到 k8s-server 刚建的 Secret** 上（凭据以文件形式挂进 Pod，绝不进 spec）；
+     * 缓存那个绑到**长期保留的那块 PVC**（拿不到就退化成空目录）。
      */
-    private static List<WorkspaceBinding> bindWorkspaces(PipelineSpec spec, String runName) {
+    private static List<WorkspaceBinding> bindWorkspaces(PipelineSpec spec, String runName,
+                                                         String cachePvc) {
         if (spec.getWorkspaces() == null || spec.getWorkspaces().isEmpty()) {
             return List.of();
         }
@@ -351,6 +470,21 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                 SecretVolumeSource secret = new SecretVolumeSource();
                 secret.setSecretName(credsSecretName(runName));
                 b.setSecret(secret);
+                out.add(b);
+                continue;
+            }
+
+            if (PipelineRenderer.CACHE_WORKSPACE.equals(decl.getName())) {
+                if (cachePvc == null) {
+                    // 退化：这个集群给不了共享卷（或它还没绑上）→ 给本次运行一个自己的空目录。
+                    // 工具照写不误（/cache 存在），只是**不跨运行复用** —— 有意的降级：
+                    // 宁可每次都重下，也不要为了缓存把整条流水线卡住或判失败
+                    b.setEmptyDir(new EmptyDirVolumeSource());
+                } else {
+                    PersistentVolumeClaimVolumeSource src = new PersistentVolumeClaimVolumeSource();
+                    src.setClaimName(cachePvc);
+                    b.setPersistentVolumeClaim(src);
+                }
                 out.add(b);
                 continue;
             }

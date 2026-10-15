@@ -121,7 +121,8 @@ public class GitCloneNode implements PipelineNode {
             step.setEnv(env);
         }
         return useCredentials
-                ? new RenderedStep(List.of(step), List.of(CREDS_WORKSPACE))
+                ? new RenderedStep(List.of(step),
+                        List.of(new RenderedStep.WorkspaceRef(CREDS_WORKSPACE, CREDS_MOUNT)))
                 : new RenderedStep(List.of(step));
     }
 

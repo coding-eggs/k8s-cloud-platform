@@ -52,6 +52,16 @@ public final class PipelineRenderer {
      */
     public static final String WORKSPACE_MOUNT = "/workspace";
 
+    /**
+     * 依赖缓存的 workspace：名字与挂载点与节点的缓存环境变量成对（见 {@code CacheEnv}）。
+     *
+     * <p>⚠️ 它与 {@code creds} 的区别是**卷的来源**：creds 绑的是每次运行现建的 Secret，
+     * 而 cache 绑的是一块**跨运行保留**的 PVC（平台按 集群+命名空间 建一块，跑完不删）——
+     * 所以「每次重下 jar」才有解（2026-10-15 定的方案）。
+     */
+    public static final String CACHE_WORKSPACE = "cache";
+    public static final String CACHE_MOUNT = "/cache";
+
     private final PipelineNodeRegistry nodes;
 
     public PipelineRenderer(PipelineNodeRegistry nodes) {
@@ -98,13 +108,16 @@ public final class PipelineRenderer {
         rejectCycles(byId.keySet(), edges);
 
         List<PipelineTask> tasks = new ArrayList<>();
-        // 谁要凭据就把它记下来 —— 声明一次，**只在实际用到时才声明**（不用就不建那个 Secret）
-        Set<String> extraWorkspaces = new LinkedHashSet<>();
+        // 谁要额外的 workspace（凭据 / 缓存）就把它记下来 —— 声明一次，
+        // **只在实际用到时才声明**（不用就不建那个 Secret、不挂那块缓存卷）
+        Map<String, String> extraWorkspaces = new LinkedHashMap<>();
         for (PipelineCanvas.CanvasNode n : canvas.nodes()) {
             PipelineNode impl = nodes.of(n.type());
             NodeContext ctx = new NodeContext(n.id(), n.id(), workspaceClaimName, n, connections);
             RenderedStep rendered = impl.render(ctx);
-            extraWorkspaces.addAll(rendered.extraWorkspaces());
+            // 挂载点**由节点给**（凭据 /creds、缓存 /cache）：以前这里对所有 extra 一律套 CREDS_MOUNT，
+            // 加第二个额外 workspace 时就会静默挂错地方
+            rendered.workspaces().forEach(w -> extraWorkspaces.putIfAbsent(w.name(), w.mountPath()));
 
             // ⚠️ 内联 TaskSpec 的字段是**平铺**在 taskSpec 上的，**不是**装在它的 `spec` 里。
             // Tekton v1 的 EmbeddedTask 把 TaskSpec 内联在自己身上
@@ -117,8 +130,8 @@ public final class PipelineRenderer {
             // ⚠️ 挂载点**显式写死**成 /workspace（Tekton 的默认值是 /workspace/<名字>，见 WORKSPACE_MOUNT）
             List<WorkspaceDeclaration> ws = new ArrayList<>();
             ws.add(declaration(workspaceClaimName, WORKSPACE_MOUNT));
-            for (String extra : rendered.extraWorkspaces()) {
-                ws.add(declaration(extra, CREDS_MOUNT));
+            for (RenderedStep.WorkspaceRef extra : rendered.workspaces()) {
+                ws.add(declaration(extra.name(), extra.mountPath()));
             }
             taskSpec.setWorkspaces(ws);
 
@@ -150,7 +163,7 @@ public final class PipelineRenderer {
 
         List<PipelineWorkspaceDeclaration> declared = new ArrayList<>();
         declared.add(pipelineWorkspace(workspaceClaimName));
-        for (String extra : extraWorkspaces) {
+        for (String extra : extraWorkspaces.keySet()) {
             declared.add(pipelineWorkspace(extra));
         }
         PipelineSpec spec = new PipelineSpec();

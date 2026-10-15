@@ -1707,7 +1707,7 @@ export interface RegistrySuggestResponse {
 export interface PipelineNodeField {
   key: string
   label: string
-  type: 'TEXT' | 'TEXTAREA' | 'SELECT' | 'IMAGE'
+  type: 'TEXT' | 'TEXTAREA' | 'SELECT' | 'IMAGE' | 'BOOLEAN'
   required: boolean
   placeholder?: string | null
   help?: string | null

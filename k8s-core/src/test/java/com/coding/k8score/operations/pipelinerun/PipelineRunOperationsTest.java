@@ -152,6 +152,59 @@ class PipelineRunOperationsTest {
                 .isEqualTo("Succeeded");
     }
 
+    @Test
+    void theCacheWorkspaceBindsTheLongLivedPvcWhenItIsAvailable() {
+        // ⭐ 依赖缓存的地基：cache workspace 绑的不是「每次现开一块」，而是
+        //    **命名空间里那块长期保留的卷** —— 否则每次运行都是空卷，"不重下 jar"无从谈起。
+        String canvas = """
+                {"nodes":[{"id":"build","type":"shell","config":{"image":"alpine:3.20",
+                   "command":"echo hi","cache":"true"}}],"edges":[]}""";
+
+        PipelineRun pr = opsForBuild().buildRun(runOf(canvas), PipelineRunOperations.CACHE_PVC);
+
+        WorkspaceBinding cache = bindingOf(pr, "cache");
+        assertThat(cache.getPersistentVolumeClaim().getClaimName())
+                .isEqualTo(PipelineRunOperations.CACHE_PVC);
+        assertThat(cache.getEmptyDir()).isNull();
+    }
+
+    @Test
+    void theCacheWorkspaceFallsBackToAnEmptyDirWhenNoSharedVolumeExists() {
+        // ⭐ 降级（用户 2026-10-15 定）：集群给不了共享卷就**不共享**，而不是卡住或判失败。
+        //    空目录让 /cache 照样存在、工具照写 —— 只是这次运行的东西跑完就没了。
+        String canvas = """
+                {"nodes":[{"id":"build","type":"shell","config":{"image":"alpine:3.20",
+                   "command":"echo hi","cache":"true"}}],"edges":[]}""";
+
+        PipelineRun pr = opsForBuild().buildRun(runOf(canvas), null);
+
+        WorkspaceBinding cache = bindingOf(pr, "cache");
+        assertThat(cache.getEmptyDir()).as("退化成本次运行自己的空目录").isNotNull();
+        assertThat(cache.getPersistentVolumeClaim()).isNull();
+    }
+
+    @Test
+    void aRunThatDoesNotAskForCacheCarriesNoCacheWorkspaceAtAll() {
+        // 不用缓存的运行不该为它付出任何代价：不声明 workspace、不建卷、不发那次 GET
+        String canvas = """
+                {"nodes":[{"id":"build","type":"shell","config":{"image":"alpine:3.20",
+                   "command":"echo hi"}}],"edges":[]}""";
+
+        PipelineRun pr = opsForBuild().buildRun(runOf(canvas), PipelineRunOperations.CACHE_PVC);
+
+        assertThat(pr.getSpec().getPipelineSpec().getWorkspaces())
+                .extracting(io.fabric8.tekton.v1.PipelineWorkspaceDeclaration::getName)
+                .containsExactly("ws");
+    }
+
+    /** 找某个 workspace 的绑定（找不到就抛 —— 断言失败要说清楚是"没绑"）。 */
+    private static WorkspaceBinding bindingOf(PipelineRun pr, String name) {
+        return pr.getSpec().getWorkspaces().stream()
+                .filter(b -> name.equals(b.getName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("没有 " + name + " 的绑定：" + pr.getSpec().getWorkspaces()));
+    }
+
     // ---- 创建出来的 PipelineRun 的形状 ----
 
     private static PipelineRunOperations opsForBuild() {

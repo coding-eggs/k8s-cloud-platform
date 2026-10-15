@@ -193,6 +193,13 @@ function isFirstAdvanced(f: PipelineNodeField): boolean {
           @update:model-value="(v: string) => setValue(f.key, v)"
         />
 
+        <!-- 开关：值仍是 "true"/"false" 字符串（config 的形状不为此破例） -->
+        <el-switch
+          v-else-if="f.type === 'BOOLEAN'"
+          :model-value="valueOf(f.key) === 'true'"
+          @update:model-value="(v: boolean) => setValue(f.key, v ? 'true' : 'false')"
+        />
+
         <el-input
           v-else
           :model-value="valueOf(f.key)"

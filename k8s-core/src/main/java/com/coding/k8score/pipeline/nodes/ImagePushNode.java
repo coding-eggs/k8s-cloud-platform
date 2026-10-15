@@ -137,7 +137,8 @@ public class ImagePushNode implements PipelineNode {
         env.add(new EnvVar("REGISTRY_AUTH_FILE", GitCloneNode.CREDS_MOUNT + "/config.json", null));
         env.addAll(ProxyEnv.of(ctx.value("proxy")));
         step.setEnv(env);
-        return new RenderedStep(List.of(step), List.of(GitCloneNode.CREDS_WORKSPACE));
+        return new RenderedStep(List.of(step), List.of(new RenderedStep.WorkspaceRef(
+                GitCloneNode.CREDS_WORKSPACE, GitCloneNode.CREDS_MOUNT)));
     }
 
     /**

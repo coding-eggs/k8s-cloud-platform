@@ -60,7 +60,12 @@ public class ShellNode implements PipelineNode {
                                 + "例：mvn -B -DskipTests package"),
                 NodeField.text("workDir", "工作目录（相对 workspace）", false,
                         "留空 = 共享 workspace 的根目录。\n"
-                                + "例：多模块仓库里只跑前端 → 填 frontend")));
+                                + "例：多模块仓库里只跑前端 → 填 frontend"),
+                NodeField.advancedCheckbox("cache", "复用依赖缓存",
+                        "把 Maven / npm / Go / pip 的缓存目录指到 /cache —— 跨运行保留，\n"
+                                + "第二次构建就不用再下一遍依赖（10Gi 的共享卷，按命名空间一块）。\n"
+                                + "没跑到的工具会忽略自己那几个变量，所以选了 java 预设也不影响。\n"
+                                + "⚠️ 这个集群的存储若不支持共享卷，缓存会自动关掉（照样能跑，只是每次重下）")));
     }
 
     @Override
@@ -83,6 +88,12 @@ public class ShellNode implements PipelineNode {
         step.setImage(image);
         step.setWorkingDir(resolveWorkDir(ctx.value("workDir")));
         step.setScript(script);
+        // 依赖缓存（可选）：环境变量 + 一个 cache workspace，挂载与卷的来源由渲染/绑定层决定
+        if ("true".equals(ctx.value("cache"))) {
+            step.setEnv(CacheEnv.of());
+            return new RenderedStep(List.of(step), List.of(new RenderedStep.WorkspaceRef(
+                    PipelineRenderer.CACHE_WORKSPACE, PipelineRenderer.CACHE_MOUNT)));
+        }
         return new RenderedStep(List.of(step));
     }
 
