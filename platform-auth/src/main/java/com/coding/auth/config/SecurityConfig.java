@@ -168,12 +168,8 @@ public class SecurityConfig {
                                     }
                                 })
 
-                                // ⚠️ 别以为这一行能"打开索引"—— 它不能，见下面那个 bean 的说明。
-                                //    它在链路里的实际作用：把 RegisterSessionAuthenticationStrategy /
-                                //    ConcurrentSessionControlAuthenticationStrategy 装上（isConcurrentSessionControlEnabled()
-                                //    的判据就是"有没有 sessionRegistry"）。maximumSessions(-1) = 不限并发，
-                                //    所以今天它是空转 —— 留着是为了哪天真设上限时走的是 Redis 版而不是内存版。
-                                //    索引真正的开关在 RedisSessionConfig 的 @EnableRedisIndexedHttpSession。
+                                // 这一行**打不开索引**（见上面那个 bean）。它只是把并发控制那两个策略装进链路，
+                                // maximumSessions(-1) 之下是空转。
                                 .sessionRegistry(sessionRegistry)
 
                 )
@@ -205,22 +201,14 @@ public class SecurityConfig {
     }
 
     /**
-     * 会话登记表。**它不是索引的来源** —— 这一点 2026-10-16 读源码才弄明白，别照着旧注释理解。
+     * 会话登记表 —— ⚠️ 但它**不写索引**，别弄反（本类注释以前就写反过）。
+     * Spring Session 4.x 里这个类的 {@code registerNewSession} 是**空方法**，源码原话：
+     * {@code This is a no-op, as we don't administer sessions ourselves}。
+     * 索引是仓库自己在 save 时写的，开关在 {@link RedisSessionConfig}。
      *
-     * <p>⚠️ 真相：在 Spring Session 4.x 里 {@code SpringSessionBackedSessionRegistry} 的
-     * {@code registerNewSession / removeSessionInformation / refreshLastRequest} **全是空方法**
-     * （源码注释：{@code This is a no-op, as we don't administer sessions ourselves}）。
-     * 索引是**仓库自己在 save() 时**写的：{@code RedisIndexedSessionRepository} 默认挂
-     * {@code DelegatingIndexResolver<>(new PrincipalNameIndexResolver<>())}，后者从会话里的
-     * {@code SPRING_SECURITY_CONTEXT} 取 {@code authentication.name}。所以要"按用户名找会话"，
-     * 真正的开关是 {@link RedisSessionConfig} 上的 {@code @EnableRedisIndexedHttpSession}，
-     * 不是这里。
-     *
-     * <p>那还留着它干什么：{@code maximumSessions(>0)} 时并发会话控制走的是
-     * {@code SessionRegistry}，**内存版**在集群/重启下会把"这人有哪些会话"记丢；
-     * 换成这个才是从 Redis 现读。当前配的是 {@code maximumSessions(-1)}（不限并发，只借它把
-     * {@code RegisterSessionAuthenticationStrategy} 装进链路），所以今天它确实**什么也没做** ——
-     * 但哪天真设了上限，用错的 registry 就是另一种静默失效。
+     * <p>那留着它干什么：{@code maximumSessions(>0)} 时并发控制要一个 registry，
+     * 该用 Redis 版而不是默认的**内存版**（后者在集群/重启下会把"这人有哪些会话"记丢）。
+     * 今天配的是 {@code (-1)}（不限并发），所以它是**空转**。
      */
     @Bean
     public SpringSessionBackedSessionRegistry<? extends Session> sessionRegistry(
