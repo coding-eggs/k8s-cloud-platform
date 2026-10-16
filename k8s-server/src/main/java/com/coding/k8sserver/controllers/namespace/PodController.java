@@ -7,6 +7,7 @@ import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
+import com.coding.k8sserver.components.PodLogQuery;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.ResourceAccessResolver.AccessContext;
 import com.coding.k8sserver.controllers.base.AbstractNamespacedResourceController;
@@ -70,7 +71,8 @@ public class PodController extends AbstractNamespacedResourceController<PodDTO> 
     }
 
     @GetMapping(value = "/{name}/logs")
-    @Operation(summary = "获取 Pod 日志（增量轮询 sinceTime；初始化回看 tailLines/sinceSeconds + timestamps）")
+    @Operation(summary = "获取 Pod 日志（增量轮询 sinceTime；初始化回看 tailLines/sinceSeconds + timestamps；"
+            + "previous=true 取上一次终止的容器实例）")
     public StreamingResponseBody logs(@PathVariable String name,
                                       @RequestParam(required = false) String tenantId,
                                       @RequestParam String clusterId,
@@ -78,40 +80,38 @@ public class PodController extends AbstractNamespacedResourceController<PodDTO> 
                                       @RequestParam(required = false) String container,
                                       @RequestParam(required = false) Integer sinceSeconds,
                                       @RequestParam(required = false) String sinceTime,
-                                      @RequestParam(required = false) Integer tailLines) {
+                                      @RequestParam(required = false) Integer tailLines,
+                                      @RequestParam(required = false) Boolean previous) {
         AccessContext ctx = accessResolver.resolveNamespacedAccess(tenantId, clusterId, namespace);
 
         KubernetesClient client = getClient(ctx, clusterId);
-        // 转具体类才能链式调用 usingTimestamps()/sinceTime()/tailingLines()（公开接口类型够不到这些方法）
-        BytesLimitTerminateTimeTailPrettyLoggable prettyLoggable = client.pods()
-                .inNamespace(namespace)
-                .withName(name)
-                .inContainer(container)
-                .usingTimestamps();
-
         // 恒带 timestamps：每行加 RFC3339Nano 前缀，前端据此做增量游标、展示时剥掉前缀还原原始日志。
         // sinceTime=增量轮询（取上次之后所有新行，不丢行）；tailLines=初始化回看最近 N 行（首选，安静容器也不空）；
         // sinceSeconds=按时间窗回看（旧方式，保留兼容）；都不给=全量。
+        // ⚠️ previous=true 时这条链会降级（丢掉 limitBytes）—— 见 PodLogQuery 的类注释。
+        TimeTailPrettyLoggable loggable = PodLogQuery.withPrevious(
+                PodLogQuery.open(client, namespace, name, container),
+                Boolean.TRUE.equals(previous));
 
         return outputStream -> {
 
             if (StringUtils.hasText(sinceTime)) {
-                prettyLoggable.sinceTime(sinceTime)
+                loggable.sinceTime(sinceTime)
                         .withPrettyOutput()
                         .getLogInputStream()
                         .transferTo(outputStream);
             } else if (tailLines != null) {
-                prettyLoggable.tailingLines(tailLines)
+                loggable.tailingLines(tailLines)
                         .withPrettyOutput()
                         .getLogInputStream()
                         .transferTo(outputStream);
             } else if (sinceSeconds != null) {
-                prettyLoggable.sinceSeconds(sinceSeconds)
+                loggable.sinceSeconds(sinceSeconds)
                         .withPrettyOutput()
                         .getLogInputStream()
                         .transferTo(outputStream);
             } else {
-                prettyLoggable.withPrettyOutput()
+                loggable.withPrettyOutput()
                         .getLogInputStream()
                         .transferTo(outputStream);
             }
