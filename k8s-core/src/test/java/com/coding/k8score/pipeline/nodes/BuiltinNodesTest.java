@@ -247,6 +247,26 @@ class BuiltinNodesTest {
     }
 
     @Test
+    void theImageNodeNeverDependsOnFuse() {
+        // ⭐ 2026-10-16 真跑撞到：构建 Pod 里**没有 /dev/fuse**。
+        //    k8s 给每个容器的是最小 /dev（只有 null/zero/full/tty/random/urandom —— 实机 ls 过），
+        //    而 buildah 镜像默认的 overlay 驱动挂的是 /usr/bin/fuse-overlayfs：
+        //      fuse: device not found, try 'modprobe fuse' first
+        //      fuse-overlayfs: cannot mount: No such file or directory
+        //    → Error: mounting new container: … exit status 1（整步挂掉）
+        //    内核 overlay 驱动同样不行：容器默认能力集里**没有 CAP_SYS_ADMIN**，mount 会 EPERM。
+        //    剩下的路只有"压根不挂载"：vfs 存储驱动（纯目录拷贝）+ chroot 隔离（不起 runc、不建命名空间）。
+        //    集群侧一行都不用改 —— 这也是选它而不是"加 privileged"的理由。
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app"),
+                "reg-1", "harbor.example.com"));
+
+        assertThat(envOf(step))
+                .containsEntry("STORAGE_DRIVER", "vfs")
+                .containsEntry("BUILDAH_ISOLATION", "chroot");
+    }
+
+    @Test
     void theProxyIsAnAdvancedFieldOnBothNodesThatNeedTheNetwork() {
         // 它是"高级"：常态不用填，但排障时得有地方填（面板里收在「高级」下面）
         assertThat(new GitCloneNode().formSchema().fields())

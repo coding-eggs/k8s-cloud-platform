@@ -81,6 +81,39 @@ kubectl -n tekton-pipelines patch configmap config-defaults --type merge -p \
 对策：节点 schema 里带**代理**字段（git 克隆 / 构建并推送镜像两个节点的高级区），
 或集群级给 Tekton 注入 `default-pod-template` 的 `HTTPS_PROXY`；目标仓库优先用**集群内可达的 Harbor**。
 
+### 1.5 构建镜像**不需要** fuse / privileged（平台侧已在脚本里绕开）
+
+2026-10-16 真跑撞到：镜像节点在 `FROM` 之后立刻挂掉，日志是
+
+```
+using mount program /usr/bin/fuse-overlayfs: unknown argument ignored: lazytime
+fuse: device not found, try 'modprobe fuse' first
+fuse-overlayfs: cannot mount: No such file or directory
+Error: mounting new container: … exit status 1
+```
+
+原因两条，都在容器本身、与集群配置无关：
+
+- **容器里没有 `/dev/fuse`**。k8s 给每个容器的是最小 `/dev`，只有
+  `null / zero / full / tty / random / urandom`（本集群里 `ls /dev` 实测过）。
+  而 buildah 镜像默认就是**照无根（rootless）用法做的** —— overlay 存储驱动挂
+  `fuse-overlayfs`，于是哪怕进程是 root 也照样去要 `/dev/fuse`。
+- **容器没有 `CAP_SYS_ADMIN`**（默认能力集 14 个里没有它），所以换成内核 overlay 驱动
+  也一样 `mount(2)` EPERM。
+
+平台的对策是**改脚本里的两个环境变量**，不动集群：
+
+| 变量 | 值 | 换来什么 |
+|---|---|---|
+| `STORAGE_DRIVER` | `vfs` | vfs 驱动的"挂载"是空操作（返回目录本身），不需要 fuse、也不需要 `mount(2)` |
+| `BUILDAH_ISOLATION` | `chroot` | 不起 runc → 不建命名空间 → 不需要 `CAP_SYS_ADMIN`；`CAP_SYS_CHROOT` 在默认能力集里 |
+
+- 代价：vfs **每一层都是整棵树的拷贝**（overlay 是写时复制）。构建会慢一些、临时盘吃得多一些，
+  所以**别把构建 Pod 的 1.2 那档资源/配额卡得太死**（节点上有 40G+ 富余就够）。
+- 有意**不做**"加 privileged + hostPath 挂 /dev/fuse"那条路：那要同时把 Tekton 的
+  `set-security-context` 从 `false` 打开（否则 Tekton 会把 step 的 `securityContext` 整个丢掉）、
+  给到 privileged、还得给 Pod 塞 `podTemplate` —— 为一个构建节点把整个集群的隔离打开，不划算。
+
 ---
 
 ## 2. 一条命令核对

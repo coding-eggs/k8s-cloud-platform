@@ -24,6 +24,20 @@ public class ImagePushNode implements PipelineNode {
     /** 见 {@link GitCloneNode#WS} —— 与 Tekton 的默认 workspace 挂载点对齐。 */
     static final String WS = "/workspace";
 
+    /**
+     * 存储驱动：**不用 overlay**。见 {@link #render} 里那段注释 —— 容器里没有 /dev/fuse，
+     * 也没有 CAP_SYS_ADMIN，overlay 的两条路（fuse-overlayfs / 内核 overlay）都走不通。
+     * vfs 是唯一"压根不挂载"的档位：整棵树按目录拷贝，因此慢、吃盘。
+     */
+    private static final String STORAGE_DRIVER = "vfs";
+
+    /**
+     * 隔离级别：**不用 runc**。默认的 oci 隔离要起 runc，而 runc 建命名空间（CLONE_NEWNS）
+     * 要 CAP_SYS_ADMIN —— 普通容器同样没有。chroot 只做一次 chroot(2)，
+     * 而 CAP_SYS_CHROOT **在容器的默认能力集里**（默认集一共 14 个，它在）。
+     */
+    private static final String ISOLATION = "chroot";
+
     @Override
     public String type() {
         return "image";
@@ -141,6 +155,30 @@ public class ImagePushNode implements PipelineNode {
         // ⚠️ 代理是**加进这个列表**，不是替换它：冲掉 REGISTRY_AUTH_FILE = 推送 401
         List<EnvVar> env = new ArrayList<>();
         env.add(new EnvVar("REGISTRY_AUTH_FILE", GitCloneNode.CREDS_MOUNT + "/config.json", null));
+        // ⚠️⚠️ 2026-10-16 真跑撞到（"fuse: device not found, try 'modprobe fuse' first"）：
+        //    buildah 默认用 overlay 存储驱动，而**容器里根本没有 /dev/fuse** —— k8s 给每个容器的
+        //    是最小 /dev，只有 null/zero/full/tty/random/urandom（在真集群里 ls 过）。
+        //    实况日志：
+        //      using mount program /usr/bin/fuse-overlayfs: unknown argument ignored: lazytime
+        //      fuse: device not found, try 'modprobe fuse' first
+        //      fuse-overlayfs: cannot mount: No such file or directory
+        //      Error: mounting new container: … exit status 1
+        //    换成内核 overlay 也一样不行：容器默认能力集里没有 CAP_SYS_ADMIN，mount(2) 会 EPERM。
+        //    buildah 镜像是**照着无根（rootless）用法做**的，默认就挂 fuse-overlayfs，
+        //    所以哪怕这里是 root 也照样撞上。
+        //
+        //    这两行是"压根不挂载"的那条路，**集群侧一个字都不用改**：
+        //      · STORAGE_DRIVER=vfs —— vfs 驱动的 Mount 是个空操作（就是目录本身），不需要 fuse，
+        //        也不需要 mount(2)。代价：每一层都是整棵树的拷贝，慢且吃盘
+        //        （构建 Pod 的临时盘，节点上还有 40G+，够；但别指望它像 overlay 那样秒开）。
+        //      · BUILDAH_ISOLATION=chroot —— 不启 runc，就不建命名空间、不要 CAP_SYS_ADMIN。
+        //
+        //    为什么不上"加 privileged + hostPath 挂 /dev/fuse"那条路：那要同时改
+        //    `set-security-context`（本集群是 false，Tekton 会把 step 的 securityContext
+        //    整个丢掉）、给到 privileged、还得给 Pod 塞 podTemplate —— 为一个构建节点
+        //    把集群的隔离打开，不划算。
+        env.add(new EnvVar("STORAGE_DRIVER", STORAGE_DRIVER, null));
+        env.add(new EnvVar("BUILDAH_ISOLATION", ISOLATION, null));
         env.addAll(ProxyEnv.of(ctx.value("proxy")));
         step.setEnv(env);
         return new RenderedStep(List.of(step), List.of(new RenderedStep.WorkspaceRef(
