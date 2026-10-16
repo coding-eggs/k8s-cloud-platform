@@ -141,8 +141,13 @@ final class BuildStep {
                              String commandHelp, List<NodeField> extraAdvanced) {
         List<NodeField> fields = new ArrayList<>();
         fields.add(NodeField.imageOptional("image", "镜像", defaultImage));
+        // ⚠️ 这段第一个说清：**这里要的是完整命令**，不是"参数"。曾经这个字段在 Java 节点上叫「Maven 参数」，
+        //    于是有人只填 `clean package -DskipTests` → 被当命令执行 → `clean: not found`
+        //    （2026-10-16 用户真撞到，并要求改掉这个误导）。可执行文件也算命令的一部分。
         fields.add(NodeField.textarea("command", commandLabel,
-                commandHelp + "\n留空 = " + defaultCommand));
+                "填完整的一条命令 —— 可执行文件（mvn / npm / go / pip）也要写上，平台把整段当脚本跑。\n"
+                        + commandHelp
+                        + "\n留空 = " + defaultCommand));
         fields.add(NodeField.text("workDir", "工作目录（相对 workspace）", false,
                 "留空 = 共享 workspace 的**根目录**，也就是**仓库的根** —— git 克隆节点把仓库内容"
                         + "直接放在那里，**不会**多出一层以仓库名命名的目录。\n"

@@ -54,11 +54,11 @@ public class JavaBuildNode implements PipelineNode {
 
     @Override
     public NodeSchema formSchema() {
-        return BuildStep.schema(DEFAULT_IMAGE, DEFAULT_COMMAND, "Maven 参数",
-                "典型的写法是 「阶段 + 开关」，例：\n"
-                        + "  -B -DskipTests package（打 jar，跳过测试）\n"
-                        + "  -B clean verify（跑完整校验）\n"
-                        + "跳过测试也可以用节点连线表达（自由 DAG）—— 但一条命令更省事。",
+        return BuildStep.schema(DEFAULT_IMAGE, DEFAULT_COMMAND, "构建命令",
+                "写完整的 Maven 命令，开头的 mvn 不能省。例：\n"
+                        + "  mvn -B -DskipTests package（打 jar，跳过测试）\n"
+                        + "  mvn -B clean verify（跑完整校验）\n"
+                        + "只写后面的参数（如 clean package）会被当命令去执行 —— 报 clean: not found。",
                 List.of());
     }
 

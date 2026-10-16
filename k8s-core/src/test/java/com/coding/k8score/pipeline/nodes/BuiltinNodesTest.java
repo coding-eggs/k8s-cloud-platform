@@ -373,6 +373,23 @@ class BuiltinNodesTest {
     }
 
     @Test
+    void everyBuildNodesCommandFieldAsksForTheWholeCommand() {
+        // ⭐ 2026-10-16 用户被这个字段误导：Java 节点上它**曾叫「Maven 参数」**，
+        //    于是他只填了 `clean package -DskipTests`（没有 mvn）→ 平台把它当脚本跑 →
+        //    `/tekton/scripts/script-0-xxx: 5: clean: not found`，节点失败。
+        //    这里钉住三件事：四个节点**同名**、名字说的是「命令」、说明里点明要**完整**的。
+        for (PipelineNode node : List.of(new JavaBuildNode(), new NodeBuildNode(),
+                new GoBuildNode(), new PythonBuildNode())) {
+            NodeField f = node.formSchema().fields().stream()
+                    .filter(x -> "command".equals(x.key())).findFirst()
+                    .orElseThrow(() -> new AssertionError(node.type() + " 少了 command 字段"));
+
+            assertThat(f.label()).as(node.type() + " 的字段名").isEqualTo("构建命令");
+            assertThat(f.help()).as(node.type() + " 的说明").contains("完整");
+        }
+    }
+
+    @Test
     void aFilledFieldWinsOverTheBuildNodesDefault() {
         // 与 shell 节点的预设同一条规矩：默认值只是默认值
         RenderedStep step = new JavaBuildNode().render(ctx("java", Map.of(
