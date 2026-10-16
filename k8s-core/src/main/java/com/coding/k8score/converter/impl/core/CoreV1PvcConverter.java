@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.util.QuantityUtil;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
+import io.fabric8.kubernetes.api.model.PersistentVolumeClaimCondition;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaimBuilder;
 import io.fabric8.kubernetes.api.model.Quantity;
 
@@ -75,6 +76,14 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
         }
         if (pvc.getStatus() != null) {
             dto.setPhase(pvc.getStatus().getPhase());
+            // ⚠️ 扩容的中间态只在 conditions 里，不在 phase 上 —— 扩容期间 phase 一直是 Bound。
+            //    只放 status=True 的那些 type（False/Unknown 的放出去会让 UI 说不清"到底在不在扩"）
+            if (pvc.getStatus().getConditions() != null) {
+                dto.setConditions(pvc.getStatus().getConditions().stream()
+                        .filter(c -> "True".equalsIgnoreCase(c.getStatus()))
+                        .map(PersistentVolumeClaimCondition::getType)
+                        .toList());
+            }
         }
         return dto;
     }

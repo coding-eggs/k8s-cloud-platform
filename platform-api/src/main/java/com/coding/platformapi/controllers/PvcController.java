@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 资源管理 - PVC（spec 创建后不可变，更新仅同步标签）。本层只做 HTTP 绑定与 {@link ResponseData}
+ * 资源管理 - PVC（标签随时可改；**容量只能往大改**，见 {@link PvcService#update}）。本层只做 HTTP 绑定与 {@link ResponseData}
  * 包装，业务与 k8s-server 调用在 {@link PvcService}（分层约定见 docs/development/backend-layering.md）。
  */
 @Tag(name = "资源管理-PVC", description = "命名空间内 PVC")
@@ -61,7 +61,7 @@ public class PvcController {
     }
 
     @PutMapping("/{name}")
-    @Operation(summary = "更新 PVC（仅同步标签）")
+    @Operation(summary = "更新 PVC（标签 + 扩容；容量只能往大改）")
     public ResponseData<PersistentVolumeClaimDTO> update(@PathVariable String name,
                                                          @RequestBody PersistentVolumeClaimDTO body) {
         body.setName(name);
