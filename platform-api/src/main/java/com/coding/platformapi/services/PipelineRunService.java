@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import org.springframework.transaction.annotation.Transactional;
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.utils.ULIDGenerator;
@@ -129,6 +130,31 @@ public class PipelineRunService {
     /** 运行历史。**只读库** —— 集群里的对象归档后已经删了（spec §4.3）。 */
     public List<PlatformPipelineRun> list(String pipelineId, PipelineRunContext ctx) {
         return runMapper.listByPipeline(pipelineId, ctx.clusterId(), ctx.namespace());
+    }
+
+    /**
+     * 删掉一条运行记录（用户 2026-10-16 要的「运行历史删除」）。
+     *
+     * <p>⚠️ 删的**只是库里的行**：归档那一刻集群里的对象与 Pod 就已经删了，所以这里没有任何
+     * 集群动作 —— 但也正因为如此，**库是唯一留存**（日志、YAML、节点状态都在上面），删了不可恢复。
+     * 前端的确认框必须把这句话说清楚。
+     *
+     * <p>⚠️ <b>还在跑的那条拒删</b>：它的归档回写还要落在这行上（删了就是「归档落在不存在的行」，
+     * 静默丢掉一次运行的结论），而集群里那次运行还在跑 —— 用户想停的是运行本身，不是它的记录。
+     * 先取消，等它终结即可。
+     *
+     * <p>⚠️ **先删日志行、再删运行行**（同 {@code PipelineRetentionService}）：本仓不加外键、
+     * 级联靠代码，顺序反了会留下一堆没人认领的日志行。
+     */
+    @Transactional
+    public void delete(String runName) {
+        PlatformPipelineRun row = requireRun(runName);       // 存在性 + 命名空间边界都在这条里
+        if ("RUNNING".equals(row.getStatus())) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "这条运行还在跑，先取消它，等结束之后再删：" + runName);
+        }
+        logMapper.deleteByRunId(row.getId());
+        runMapper.deleteById(row.getId());
     }
 
     /**

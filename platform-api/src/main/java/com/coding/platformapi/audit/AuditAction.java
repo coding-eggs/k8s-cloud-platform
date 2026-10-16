@@ -125,6 +125,14 @@ public final class AuditAction {
     public static final String PIPELINE_CACHE_CLEAR = "pipeline:cache-clear";
 
     /**
+     * 删掉一条运行记录（运行历史里的行）。
+     *
+     * <p>它值得进审计：删掉之后**那次运行就再也查不到了**（日志与 YAML 都只在那一行上，
+     * 集群里的对象早在归档时就删了）—— 事后想追「那次到底怎么跑的」只能靠审计里这条。
+     */
+    public static final String PIPELINE_RUN_DELETE = "pipeline:run-delete";
+
+    /**
      * 全部动作码（常量类的反射视图），按字母序。
      *
      * <p><b>为什么用反射而不是再手写一份 List</b>：手写那份会与常量漂移（加了常量忘了加进 List），

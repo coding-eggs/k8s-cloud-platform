@@ -39,6 +39,8 @@ const runs = ref<PipelineRun[]>([])
 const loading = ref(false)
 
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
+/** 删运行历史要的是**改流水线**那个码（后端 `/pipeline/run/delete` 用的就是它，与清缓存同一条理由） */
+const canManage = computed(() => perm.has(apiCodes.pipelineManage))
 
 const STATUS_TAG: Record<string, string> = {
   SUCCEEDED: 'success',
@@ -91,8 +93,8 @@ async function run(): Promise<void> {
 /**
  * 行操作下拉（与 `ClusterView` 同一套：`MoreFilled` 图标 + `@command`）。
  *
- * ⚠️ 这里**只有执行得动的事**：查看详情（名称也可点，两条路都留着）、取消（只对正在跑的）。
- * 取消对跑完的行**禁用而不是隐藏** —— 灰着能说明「这条已经结束了，取消不了」，
+ * ⚠️ 这里**只有执行得动的事**：查看详情（名称也可点，两条路都留着）、取消（只对正在跑的）、
+ * 删除（只对已结束的）。**禁用而不是隐藏** —— 灰着能说明"这一条现在做不了"，
  * 比一个空菜单好读。
  */
 function onCommand(cmd: string, r: PipelineRun): void {
@@ -103,18 +105,43 @@ function onCommand(cmd: string, r: PipelineRun): void {
   if (cmd === 'cancel') {
     void cancel(r)
   }
+  if (cmd === 'delete') {
+    void removeRun(r)
+  }
 }
 
 /** 取消：**先抓一次日志再取消**（见后端 cancel 的说明），所以取消之后日志仍然看得到 */
 async function cancel(r: PipelineRun): Promise<void> {
   await ElMessageBox.confirm(
-    '取消这次运行？**会先抓一次日志再取消** —— 所以取消之后日志仍然看得到。',
+    '取消这次运行？会先抓一次日志再取消 —— 所以取消之后日志仍然看得到。',
     '确认',
     { type: 'warning' },
   )
   try {
     await pipelineApi.cancelRun(r.runName, effectiveTenantId.value)
     ElMessage.success('已取消')
+    await load()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+/**
+ * 删掉这条运行记录。**不可恢复**：归档那一刻集群里的对象与 Pod 就删了，
+ * 库里的这一行是它的日志、YAML 与节点状态的**唯一留存** —— 确认框必须把这句话说清楚。
+ *
+ * <p>还在跑的那条后端会拒（先取消），所以这里对它**禁用**（见模板）。
+ */
+async function removeRun(r: PipelineRun): Promise<void> {
+  // ⚠️ 运行名放**标题**、不放正文：ElMessageBox 的正文是纯文本，`\n` 会被折成空格
+  await ElMessageBox.confirm(
+    '删掉这条运行记录？不可恢复 —— 归档时集群里那个对象就已经删了，这行是它的日志与 YAML 的唯一留存。',
+    `删除 ${r.runName}`,
+    { type: 'warning', confirmButtonText: '删除' },
+  )
+  try {
+    await pipelineApi.runDelete(r.runName)
+    ElMessage.success('已删除')
     await load()
   } catch {
     /* 拦截器已提示 */
@@ -165,6 +192,11 @@ async function cancel(r: PipelineRun): Promise<void> {
                 </el-dropdown-item>
                 <el-dropdown-item divided command="cancel" :disabled="row.status !== 'RUNNING'">
                   <el-button link type="danger" :disabled="row.status !== 'RUNNING'">取消</el-button>
+                </el-dropdown-item>
+                <!-- ⚠️ 还在跑的那条删不了（后端也拒）：它的归档回写还要落在这行上，
+                     而集群里那次运行还在跑 —— 想停它就点「取消」 -->
+                <el-dropdown-item v-if="canManage" command="delete" :disabled="row.status === 'RUNNING'">
+                  <el-button link type="danger" :disabled="row.status === 'RUNNING'">删除</el-button>
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>

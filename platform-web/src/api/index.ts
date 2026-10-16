@@ -688,6 +688,12 @@ export const pipelineApi = {
     http.post<never, string>('/pipeline/run', { id: pipelineId, tenantId }),
   cancelRun: (runName: string, tenantId?: string) =>
     http.post<never, void>('/pipeline/run/cancel', { name: runName, tenantId }),
+  /**
+   * 删掉一条运行记录。⚠️ **不可恢复** —— 归档时集群对象就删了，库里的行是日志与 YAML 的唯一留存。
+   * 还在跑的那条会被后端拒（先取消）。确认框留在调用方。
+   */
+  runDelete: (runName: string) =>
+    http.post<never, void>('/pipeline/run/delete', { name: runName }),
   runs: (pipelineId: string) => http.post<never, PipelineRun[]>('/pipeline/run/list', { id: pipelineId }),
   /** 详情（含**触发那一刻的画布**与**归档时抓的 YAML**）—— 列表行不带这两个大字段 */
   runGet: (runName: string) => http.post<never, PipelineRun>('/pipeline/run/get', { name: runName }),

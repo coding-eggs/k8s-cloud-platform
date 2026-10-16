@@ -203,6 +203,21 @@ public class PipelineController {
         return new ResponseData<>();
     }
 
+    /**
+     * 删掉一条运行记录。**删的只是库里的行** —— 归档时集群里那个对象与 Pod 就已经删了，
+     * 所以没有任何集群动作；但也正因为如此，库是唯一留存（日志、YAML、节点状态都在上面）。
+     * 还在跑的那条拒删（先取消）—— 见 {@code PipelineRunService#delete}。
+     */
+    @PostMapping("/run/delete")
+    @Operation(summary = "删掉一条运行记录",
+            description = "只删库里的行（归档时集群对象已删）—— **不可恢复**。"
+                    + "还在跑的那条拒删：先取消，等它结束")
+    @Auditable(action = AuditAction.PIPELINE_RUN_DELETE, target = "#request.name")
+    public ResponseData<Void> deleteRun(@RequestBody PipelineRunDTO request) {
+        runService.delete(request.getName());
+        return new ResponseData<>();
+    }
+
     @PostMapping("/run/list")
     @Operation(summary = "运行历史", description = "**只读库** —— 集群里的对象归档后已经删了")
     public ResponseData<List<PlatformPipelineRun>> runList(@RequestBody PipelineDTO request) {

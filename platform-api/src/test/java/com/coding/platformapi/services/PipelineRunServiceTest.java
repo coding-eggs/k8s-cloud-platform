@@ -370,6 +370,60 @@ class PipelineRunServiceTest {
         assertThat(svc.logs("r1", "image-m2k9", ctx, 1024)).doesNotContain("old cloning");
     }
 
+    // ---- 手动删一条运行记录（用户 2026-10-16 要的「运行历史删除」）----
+    //
+    // ⚠️ 删的**只是库里的行**：归档那一刻集群里的对象（与 Pod）就已经删了 ——
+    //    所以这是"把历史记录抹掉"，不可恢复（库是唯一留存，日志与 YAML 都在这里）。
+
+    @Test
+    void deletingARunRemovesItsLogsFirstThenTheRun() {
+        // ⭐ 顺序有意义：本仓不加外键、级联靠代码 —— 反了就会留下一堆没人认领的日志行
+        //    （表会一直长，而没有任何入口能看到它们）
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+
+        svc.delete("r1");
+
+        InOrder order = inOrder(logMapper, runMapper);
+        order.verify(logMapper).deleteByRunId("run-1");
+        order.verify(runMapper).deleteById("run-1");
+    }
+
+    @Test
+    void aRunningRunCannotBeDeleted() {
+        // 还在跑的那条**先取消**：它的归档回写还要落在这行上（删了就是"归档落在不存在的行"），
+        // 而且集群里的对象还在跑 —— 用户想停的是那次运行，不是它的历史记录
+        when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
+
+        assertThatThrownBy(() -> svc.delete("r1"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("先取消");
+
+        verify(runMapper, never()).deleteById(anyString());
+        verify(logMapper, never()).deleteByRunId(anyString());
+    }
+
+    @Test
+    void deletingAnUnknownRunIsRefused() {
+        assertThatThrownBy(() -> svc.delete("nope"))
+                .isInstanceOf(CloudPlatformException.class);
+
+        verify(runMapper, never()).deleteById(anyString());
+    }
+
+    @Test
+    void deletingChecksTheNamespaceBoundaryFromTheStoredRow() {
+        // ⭐ run 名是调用方给的，边界必须取**库里那行**（与 logs / get 同一条）
+        when(runMapper.selectByRunName("r1")).thenReturn(archived("r1"));
+        org.mockito.Mockito.doThrow(new CloudPlatformException(
+                        EnumResponseType.NAMESPACE_NOT_ACCESSIBLE, "无权访问该命名空间：ns1"))
+                .when(access).assertAccessible(any(), any());
+
+        assertThatThrownBy(() -> svc.delete("r1")).isInstanceOf(CloudPlatformException.class);
+
+        verify(runMapper, never()).deleteById(anyString());
+        verify(logMapper, never()).deleteByRunId(anyString());
+    }
+
     // ---- 归属边界（run 名是调用方给的，不带边界）----
 
     @Test
