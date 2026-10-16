@@ -14,6 +14,10 @@
 
 - **本仓前端没有测试框架**（没有 vitest / jest / @vue/test-utils）—— 前端的验证一律走**浏览器冒烟台**：在 `platform-web/` 下放一对 `smoke-*.html` + `smoke-*.ts`，用 Vite dev server 起来，断言写在页面上并把结论 `console.log` 出来。**跑完即删**，不进仓库（本仓没有提交冒烟文件的先例）。
 - **假 XHR 必须是属性回调**：axios 装的是 `onreadystatechange` / `onloadend` **属性**，不是 `addEventListener`。写成后者请求永远不回。
+- ⚠️ **改完源文件要重启 dev server，再跑冒烟**（`preview_stop` + `preview_start`）。
+  实测（Task 3）：`window.location.reload()`、甚至给 HTML 加 cache-buster，**都不保证**重新取到新模块 ——
+  同一个 `/src/utils/logLines.ts` 在页面里仍旧返回**旧实现**，只有换 URL 新开实例才拿到新代码。
+  后果很具体：**变异验证会假绿，正常的绿也可能是假的**。每轮多两次工具调用，别省。
 - **`:hover` 不认合成事件**：要验悬停/跟随这类行为就量几何，别 `dispatchEvent(new MouseEvent('mouseover'))`。
 - **几何断言先钉"面板有真实高度"**：预览面板里元素可能塌成 0~5px，塌着量"贴底"会**无条件成立**（假绿）。
 - **yaml/字段说明等给人看的纯文本里不许出现 markdown 的 `**`** —— 面板按字面渲染，星号会露给用户。
