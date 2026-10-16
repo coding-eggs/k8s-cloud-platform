@@ -57,14 +57,29 @@ const failed = computed(
   () => selected.value?.status === 'FAILED' || selected.value?.status === 'TIMEOUT',
 )
 
-/** run 的 `stepsJson` 是 `节点=状态` 逗号分隔（归档时抓的快照）—— 键是**节点 id** */
+/**
+ * run 的 `stepsJson` 是 `节点=状态` 逗号分隔（归档时抓的快照）—— 键是**节点 id**。
+ */
 function statusMap(run: PipelineRun | null): Record<string, string> {
   const out: Record<string, string> = {}
   for (const part of (run?.stepsJson ?? '').split(',')) {
     const [k, v] = part.split('=')
-    if (k && v) out[k] = v
+    if (k && v) out[nodeIdOf(k, run?.runName)] = v
   }
   return out
+}
+
+/**
+ * 快照里的键 → **画布节点 id**。
+ *
+ * <p>⚠️ 两种键都认：新的是画布节点 id；2026-10-16 之前归档的是 **TaskRun 名**
+ * （`<运行名>-<节点 id>`）—— 那时后端把节点名取成了 TaskRun 名（根因见
+ * `PipelineRunOperations.nodeNameOf`），于是老运行的状态键与画布节点 id 对不上，
+ * 运行详情里**所有节点都没有状态**。不认老键的话这些历史运行永远不着色。
+ */
+function nodeIdOf(stored: string, runName?: string): string {
+  const prefix = runName ? `${runName}-` : ''
+  return prefix && stored.startsWith(prefix) ? stored.slice(prefix.length) : stored
 }
 
 function parseCanvas(json?: string | null): PipelineCanvas | null {

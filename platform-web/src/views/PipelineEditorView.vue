@@ -181,7 +181,11 @@ function applyCanvas(json?: string | null) {
   try {
     const c = JSON.parse(json) as PipelineCanvas
     nodes.value = (c.nodes ?? []).map((n, i) => flowNode(n.id, n.type, n.name ?? '', n.config, i, n.position, n))
-    edges.value = (c.edges ?? []).map((e) => flowEdge(e.from, e.to))
+    // ⚠️ 老画布上可能有**重复连线**（同一个 from→to 存了两遍）：加载时按边的 id 去重 ——
+    //    留着的话画布上是两条叠着的箭头，删掉一条还剩一条（2026-10-16 用户的真画布上撞到）。
+    //    去重只在内存里做，用户下次保存就落干净了
+    const loaded = (c.edges ?? []).map((e) => flowEdge(e.from, e.to))
+    edges.value = loaded.filter((e, i) => loaded.findIndex((x) => x.id === e.id) === i)
   } catch {
     ElMessage.error('画布内容无法解析')
   }
@@ -232,6 +236,16 @@ function flowNode(
 
 function flowEdge(from: string, to: string): FlowEdgeView {
   return { id: `e-${from}-${to}`, source: from, target: to }
+}
+
+/**
+ * 这一对节点之间已经有一条线了吗。
+ *
+ * <p>⚠️ 同一个 `from→to` 存两遍的后果：渲染时被折叠（执行不受影响），但画布上是**两条叠着的
+ * 箭头**，删掉一条还剩一条 —— 看起来像「删不掉」（2026-10-16 用户的真画布上就有一条重复的）。
+ */
+function hasEdge(from: string, to: string): boolean {
+  return edges.value.some((e) => e.source === from && e.target === to)
 }
 
 // ---- 画布交互 ----
@@ -306,6 +320,12 @@ function isFinallyNode(id: string): boolean {
 }
 
 function onConnect(params: Connection) {
+  // ⚠️ 重复连线先拦：同一个 from→to 存两遍，画布上就是两条叠着的箭头 ——
+  // 删掉一条还剩一条，看起来像「删不掉」
+  if (hasEdge(params.source, params.target)) {
+    ElMessage.info('这两个节点之间已经有一条连线了')
+    return
+  }
   // ⚠️ 收尾节点**不参与顺序**（Tekton 的 finally 没有 runAfter、也不按顺序跑）——
   // 连上去的线后端保存时会被拒（`PipelineRenderer` 那条校验），所以这里先拦，
   // 让用户当场知道而不是保存时才炸

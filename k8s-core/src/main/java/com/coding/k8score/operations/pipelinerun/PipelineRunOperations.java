@@ -24,6 +24,7 @@ import io.fabric8.kubernetes.client.Watch;
 import io.fabric8.kubernetes.client.Watcher;
 import io.fabric8.kubernetes.client.WatcherException;
 import io.fabric8.kubernetes.client.utils.Serialization;
+import io.fabric8.tekton.v1.ChildStatusReference;
 import io.fabric8.tekton.v1.PipelineRun;
 import io.fabric8.tekton.v1.PipelineRunSpec;
 import io.fabric8.tekton.v1.PipelineSpec;
@@ -608,20 +609,25 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
     }
 
     /**
-     * 一次运行的每个 TaskRun 名（归档时要按它去取 Pod 与日志）。
+     * 子对象引用 → **画布节点 id**。
+     *
+     * <p>⚠️ Tekton 给子对象起的名字是 {@code <pipelineRun 名>-<pipelineTask 名>}，
+     * 而画布节点 id 是 {@code pipelineTaskName} —— 两者差着一个运行名前缀。
+     * 整个下游（日志行的键、{@code stepsJson} 的键、运行详情的 DAG 着色、前端传的过滤键）
+     * 用的都是**节点 id**，所以这里必须取 {@code pipelineTaskName}。
+     *
+     * <p>⭐ 2026-10-16 用户报「节点日志只能在『全部』里看到」：根因就是这里取了 TaskRun 名 ——
+     * 按节点 id 过滤一条都匹配不上（归档后连 DAG 也不着色了）。
+     *
+     * <p>缺 {@code pipelineTaskName}（理论上不会，Tekton 一定写）时退回对象名 ——
+     * 总比让那个节点在界面上凭空消失好。
      */
-    public List<String> childTaskRunNames(String namespace, String runName) {
-        PipelineRun pr = fetch(namespace, runName);
-        if (pr == null || pr.getStatus() == null || pr.getStatus().getChildReferences() == null) {
-            return List.of();
+    static String nodeNameOf(ChildStatusReference ref) {
+        if (ref == null) {
+            return null;
         }
-        List<String> out = new ArrayList<>();
-        pr.getStatus().getChildReferences().forEach(ref -> {
-            if (ref.getName() != null) {
-                out.add(ref.getName());
-            }
-        });
-        return out;
+        String task = ref.getPipelineTaskName();
+        return task == null || task.isBlank() ? ref.getName() : task;
     }
 
     /**
@@ -800,15 +806,23 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         }
         assertManaged(pr.getMetadata().getLabels(), runName);
 
+        PipelineRunStatus st = pr.getStatus();
+        List<ChildStatusReference> refs = (st == null || st.getChildReferences() == null)
+                ? List.of() : st.getChildReferences();
+
         List<PipelineStepRefDTO> out = new ArrayList<>();
-        for (String taskRunName : childTaskRunNames(namespace, runName)) {
+        for (ChildStatusReference ref : refs) {
+            String taskRunName = ref.getName();
+            if (taskRunName == null || taskRunName.isBlank()) {
+                continue;      // 没起子对象的节点（跳过的）不带名字，它们走下面的 appendSkipped
+            }
             TaskRun tr = client.resources(TaskRun.class).inNamespace(namespace)
                     .withName(taskRunName).get();
             if (tr != null) {
-                out.add(toStepRef(taskRunName, tr));
+                // ⚠️ 节点名取 **pipelineTaskName**（= 画布节点 id），不是 TaskRun 名 —— 见 nodeNameOf
+                out.add(toStepRef(nodeNameOf(ref), tr));
             }
         }
-        PipelineRunStatus st = pr.getStatus();
         return appendSkipped(out, st == null ? List.of() : st.getSkippedTasks());
     }
 

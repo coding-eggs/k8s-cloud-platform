@@ -354,6 +354,22 @@ class PipelineRunServiceTest {
         assertThat(svc.logs("r1", "拉取代码", ctx, 1024)).isEmpty();
     }
 
+    @Test
+    void anOldArchiveStillFiltersByNodeIdWhenItsRowsCarryTheTaskRunName() {
+        // ⚠️ 兼容：2026-10-16 之前归档的运行，日志行是按 **TaskRun 名** 存的
+        //    （`<运行名>-<节点 id>`，根因见 PipelineRunOperations.nodeNameOf）。
+        //    只认节点 id 的话，点这些老运行的节点日志会一条都取不到 ——
+        //    用户看到的还是「只能在『全部』里看到」，等于没修。
+        when(runMapper.selectByRunName("r1")).thenReturn(archivedWithCanvas("r1"));
+        when(logMapper.listByRunId("run-1")).thenReturn(List.of(
+                logLine("r1-git-l8x31", "old cloning\n"), logLine("image-m2k9", "new building\n")));
+
+        assertThat(svc.logs("r1", "git-l8x31", ctx, 1024)).isEqualTo("old cloning\n");
+        assertThat(svc.logs("r1", "image-m2k9", ctx, 1024)).isEqualTo("new building\n");
+        // 别名不能把别的节点也捞进来：按节点过滤就该只有那一个节点
+        assertThat(svc.logs("r1", "image-m2k9", ctx, 1024)).doesNotContain("old cloning");
+    }
+
     // ---- 归属边界（run 名是调用方给的，不带边界）----
 
     @Test

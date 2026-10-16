@@ -147,7 +147,8 @@ public class PipelineRunService {
         // 段头是**给人看**的那一行 —— 用用户起的名字（见 displayNames）。⚠️ 过滤键仍是 id
         Map<String, String> names = displayNames(row.getCanvasJson());
         if (!"RUNNING".equals(row.getStatus())) {
-            return archivedLogs(row.getId(), nodeName, names);
+            // 老运行的日志行键里带着运行名前缀 —— 归一化要用**库里那行**的运行名（不是调用方给的）
+            return archivedLogs(row.getId(), nodeName, names, row.getRunName());
         }
         return liveLogs(runName, nodeName, ctx, maxBytes, names);
     }
@@ -189,20 +190,37 @@ public class PipelineRunService {
         return row.getRunYaml();
     }
 
-    private String archivedLogs(String runId, String nodeName, Map<String, String> names) {
+    private String archivedLogs(String runId, String nodeName, Map<String, String> names, String runName) {
         List<PlatformPipelineRunLog> lines = logMapper.listByRunId(runId);
         if (nodeName != null && !nodeName.isBlank()) {
-            lines = lines.stream().filter(l -> nodeName.equals(l.getNodeName())).toList();
+            lines = lines.stream()
+                    .filter(l -> nodeName.equals(nodeIdOf(l.getNodeName(), runName))).toList();
         }
         StringBuilder out = new StringBuilder();
         for (PlatformPipelineRunLog l : lines) {
-            out.append(header(names, l.getNodeName(), lines.size() > 1));
+            out.append(header(names, nodeIdOf(l.getNodeName(), runName), lines.size() > 1));
             out.append(l.getContent() == null ? "" : l.getContent());
             if (l.getTruncated() != null && l.getTruncated() == 1) {
                 out.append("\n\n[日志超过单步上限，已截断]\n");
             }
         }
         return out.toString();
+    }
+
+    /**
+     * 日志行里那个键 → **画布节点 id**。
+     *
+     * <p>⚠️ 两种键都认：新的是画布节点 id；2026-10-16 之前归档的是 **TaskRun 名**
+     * （{@code <运行名>-<节点 id>}）—— 那时节点名取的是 TaskRun 名（根因见
+     * {@code PipelineRunOperations.nodeNameOf}），日志行与 {@code stepsJson} 都记成了它。
+     * 不认老键的话，点老运行的节点日志会一条都取不到 —— 用户看到的还是「只能在『全部』里看到」，
+     * 等于没修。顺手把老运行的段头也换回用户起的名字（那个长名不是给人看的）。
+     */
+    private static String nodeIdOf(String stored, String runName) {
+        String prefix = runName == null ? null : runName + "-";
+        return prefix != null && stored != null && stored.startsWith(prefix)
+                ? stored.substring(prefix.length())
+                : stored;
     }
 
     private String liveLogs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes,

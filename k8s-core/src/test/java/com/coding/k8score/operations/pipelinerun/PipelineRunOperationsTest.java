@@ -3,6 +3,7 @@ package com.coding.k8score.operations.pipelinerun;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.k8score.pipeline.PipelineNodeRegistry;
+import io.fabric8.tekton.v1.ChildStatusReference;
 import io.fabric8.tekton.v1.StepState;
 import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.TaskRunStatus;
@@ -216,6 +217,41 @@ class PipelineRunOperationsTest {
                 List.of(new PipelineStepRefDTO("notify", "SKIPPED", null, List.of(),
                         "Parent Tasks had failed")), "Failed"))
                 .isEqualTo("Failed");
+    }
+
+    // ---- 节点名必须是**画布节点 id**，不是 TaskRun 名 ----
+    //
+    // ⭐ 2026-10-16 用户报「节点日志只能在『全部』里看到」。根因就在这里：
+    //    Tekton 的子对象名是 `<pipelineRun 名>-<pipelineTask 名>`，而整个下游 —— 日志行的键、
+    //    stepsJson 的键、运行详情的 DAG 着色、前端传的过滤键 —— 一律用**画布节点 id**。
+    //    库里那条运行的真数据：
+    //      log.node_name = k8s-cloud-platform-20261016123954-1kzt-git-quo31
+    //      画布节点 id   = git-quo31
+    //    按 id 过滤 → 一条都匹配不上（于是只剩「全部」能用）；按 id 着色 → 所有节点都没状态。
+
+    @Test
+    void aNodeIsNamedByThePipelineTaskNotByItsTaskRun() {
+        ChildStatusReference ref = childRef("git-quo31", "k8s-cloud-platform-1kzt-git-quo31");
+
+        assertThat(PipelineRunOperations.nodeNameOf(ref)).isEqualTo("git-quo31");
+    }
+
+    @Test
+    void aChildReferenceWithoutAPipelineTaskNameFallsBackToTheObjectName() {
+        // 理论上不会缺（Tekton 一定写 pipelineTaskName），但缺了也不能变成 null ——
+        // 那会让那个节点在运行详情里凭空消失
+        assertThat(PipelineRunOperations.nodeNameOf(childRef(null, "run-git-quo31")))
+                .isEqualTo("run-git-quo31");
+        assertThat(PipelineRunOperations.nodeNameOf(childRef("  ", "run-git-quo31")))
+                .isEqualTo("run-git-quo31");
+        assertThat(PipelineRunOperations.nodeNameOf(null)).isNull();
+    }
+
+    private static ChildStatusReference childRef(String pipelineTaskName, String name) {
+        ChildStatusReference ref = new ChildStatusReference();
+        ref.setPipelineTaskName(pipelineTaskName);
+        ref.setName(name);
+        return ref;
     }
 
     private static io.fabric8.tekton.v1.SkippedTask skippedTask(String name, String reason) {
