@@ -7,6 +7,11 @@
  * 本组件就是那个扇出：每个 (pod, 容器) 各自一个 sinceTime 游标，每 2 秒收一次新行，
  * **在本轮内**按时间戳排好再追加（不跨轮缓存排序 —— spec §3.3）。
  *
+ * 工具栏（行数 / 搜索 / 清除 / 重新加载 / 全屏）与单 Pod 的 `PodLogDialog` 对齐 ——
+ * 两个视图看的是同一批日志，控制项摆哪儿、叫什么名字不该各来一套。
+ * 有意**没有**的两个：容器下拉（这里天然跟全部容器，靠前缀分）、彩色（那要 xterm 渲染 ANSI，
+ * 本视图是 `<pre>` 纯文本）。
+ *
  * ⚠️ 每一步抓取都走**既有**的单 Pod 日志端点，授权与今天逐个点开完全一样 ——
  *    所以本批不新增端点、不新增权限行（spec §5）。
  */
@@ -33,15 +38,16 @@ const visible = computed({
 /** 默认勾选数与硬上限：抓取量 = Pod 数 × 容器数，不封顶会直接撞到集群（spec §3.2） */
 const DEFAULT_PICK = 10
 const HARD_MAX = 20
-/** 首次回看最近多少行（每个来源各自一份） */
-const TAIL_LINES = 200
+/** 首次回看行数：默认 200，可下拉切换（切换 = 重新加载 —— 与单 Pod 弹窗同一个语义） */
+const TAIL_OPTIONS = [100, 200, 500, 1000]
+const tailLines = ref(200)
 /**
- * 文本缓冲的上限。20 条来源一起往同一个 `<pre>` 里灌，不封顶的话长跟随会越用越卡 ——
+ * 文本缓冲的字符上限。20 条来源一起往同一个 `<pre>` 里灌，不封顶的话长跟随会越用越卡 ——
  * 单 Pod 那边有同样的兜底（`MAX_LINES`），而聚合这侧来源更多、更该设。
- * ⚠️ 到顶**才**裁：每轮都 split 会把"追加"变成 O(n) 的常态开销，而这条路径每 2 秒就跑一次。
+ * ⚠️ 到顶**才**裁：每轮都从头量一遍会把"追加"变成 O(n) 的常态开销，而这条路径每 2 秒就跑一次
+ *    （所以字符总量是**跟着增删走**的 `totalChars`，不重算）。
  */
 const MAX_CHARS = 2_000_000
-const MAX_LINES = 20_000
 /** 无时间戳的降级只提示一次（与单 Pod 弹窗同一条口径） */
 let warnedNoTs = false
 
@@ -59,10 +65,28 @@ const phase = ref<'pick' | 'stream'>('pick')
 const fullscreen = ref(false)
 const picked = ref<string[]>([])
 const sources = ref<Source[]>([])
-const logText = ref('')
+
+/**
+ * 已收下的行，**带 `[pod/<pod>/<容器>]` 前缀** —— 就是最终显示的样子。
+ * ⚠️ 缓冲以**行数组**为准，`displayText` 只是渲染结果：有搜索要筛、有上限要从头部丢，
+ *    在数组上做才不用每轮把整块文本 split 一遍（这条路径每 2 秒跑一次）。
+ */
+const logLines = ref<string[]>([])
+/** 行数组的字符总量，跟着增删走（见 MAX_CHARS 的说明） */
+let totalChars = 0
+/** 搜索/过滤关键词（大小写不敏感）；非空时只显示包含它的行 */
+const searchTerm = ref('')
+
 const textEl = ref<HTMLElement | null>(null)
 const atBottom = ref(true)
-const busy = ref(false)
+
+const shownLines = computed(() => {
+  const q = searchTerm.value.trim().toLowerCase()
+  return q ? logLines.value.filter((l) => l.toLowerCase().includes(q)) : logLines.value
+})
+const displayText = computed(() => shownLines.value.join('\n'))
+/** 有搜索才报匹配数：否则那只是"总行数"，跟"筛掉了多少"混在一起反而看不懂 */
+const matchCountText = computed(() => (searchTerm.value.trim() ? `${shownLines.value.length} 条匹配` : ''))
 
 /** 最近创建的排前面 —— 纯按时间，不做"异常优先"那套（用户裁定，spec §3.2） */
 const podsByNewest = computed(() =>
@@ -94,8 +118,9 @@ function resetPick(): void {
   stopPolling()
   phase.value = 'pick'
   picked.value = podsByNewest.value.slice(0, DEFAULT_PICK).map((p) => p.name)
+  clearBuffer()
   sources.value = []
-  logText.value = ''
+  searchTerm.value = ''
   atBottom.value = true
 }
 
@@ -122,7 +147,7 @@ function requestUrl(s: Source, sinceTime?: string): string {
   q.set('namespace', props.namespace)
   if (s.container) q.set('container', s.container)
   if (sinceTime) q.set('sinceTime', sinceTime)
-  else q.set('tailLines', String(TAIL_LINES))
+  else q.set('tailLines', String(tailLines.value))
   return `/api/pods/${encodeURIComponent(s.pod)}/logs?${q.toString()}`
 }
 
@@ -144,24 +169,44 @@ async function fetchSource(s: Source, sinceTime?: string): Promise<string> {
   return await resp.text()
 }
 
-/** 把 (来源, 文本) 收成带前缀、排好序的整块文本 */
-function render(s: Source, lines: LogLine[]): string {
-  return lines.map((l) => prefixOf(s.pod, s.container) + l.content).join('\n') + (lines.length ? '\n' : '')
+/** 某个来源取不到 —— 只插一行说明，**不影响其余**（Review Focus #2 / spec §3.4） */
+function warnOnce(s: Source, why: string): string | null {
+  if (s.warned) return null
+  s.warned = true
+  return `${prefixOf(s.pod, s.container)}暂时取不到日志（${why}）`
 }
 
-/** 某个来源取不到 —— 只插一行说明，**不影响其余**（Review Focus #2 / spec §3.4） */
-function warnOnce(s: Source, why: string): string {
-  if (s.warned) return ''
-  s.warned = true
-  return `${prefixOf(s.pod, s.container)}暂时取不到日志（${why}）\n`
+function clearBuffer(): void {
+  logLines.value = []
+  totalChars = 0
 }
 
 /** 缓冲到顶才裁（见 MAX_CHARS 的说明）。从头部丢，并在丢掉处留一句 —— 静默丢行比慢更糟。 */
 function trimIfHuge(): void {
-  if (logText.value.length <= MAX_CHARS) return
-  const all = logText.value.split('\n')
-  const keep = all.slice(-MAX_LINES)
-  logText.value = `（更早的 ${all.length - keep.length} 行已折叠）\n` + keep.join('\n')
+  if (totalChars <= MAX_CHARS) return
+  const all = logLines.value
+  let drop = 0
+  let freed = 0
+  // 至少留最后一行：全丢光会让画面变成空白，看不出是"还在跟"还是"已经停了"
+  while (drop < all.length - 1 && totalChars - freed > MAX_CHARS) {
+    freed += (all[drop]?.length ?? 0) + 1
+    drop++
+  }
+  if (!drop) return
+  const marker = `（更早的 ${drop} 行已折叠）`
+  logLines.value = [marker, ...all.slice(drop)]
+  totalChars = totalChars - freed + marker.length + 1
+}
+
+/** 收下新行：入缓冲（含裁剪）后贴底 */
+function appendLines(rows: string[]): void {
+  if (!rows.length) return
+  for (const r of rows) {
+    logLines.value.push(r)
+    totalChars += r.length + 1
+  }
+  trimIfHuge()
+  scrollToBottom()
 }
 
 /**
@@ -186,27 +231,21 @@ function advanceCursor(s: Source, lines: LogLine[], nextCursor: string): void {
   if (nextCursor) s.cursor = nextCursor
 }
 
-/** 首次：每个来源各拉一次 tailLines 快照 */
+/** 首次：每个来源各拉一次 tailLines 快照（串行 —— 20 条流一起打出去只会互相挤） */
 async function snapshot(): Promise<void> {
-  busy.value = true
-  try {
-    const chunks: string[] = []
-    for (const s of sources.value) {
-      try {
-        const text = await fetchSource(s)
-        const { lines, nextCursor } = takeNewLines(text, '')
-        advanceCursor(s, lines, nextCursor)
-        chunks.push(render(s, sortByTs(lines)))
-      } catch (e) {
-        chunks.push(warnOnce(s, (e as Error).message))
-      }
+  const rows: string[] = []
+  for (const s of sources.value) {
+    try {
+      const text = await fetchSource(s)
+      const { lines, nextCursor } = takeNewLines(text, '')
+      advanceCursor(s, lines, nextCursor)
+      for (const l of sortByTs(lines)) rows.push(prefixOf(s.pod, s.container) + l.content)
+    } catch (e) {
+      const w = warnOnce(s, (e as Error).message)
+      if (w) rows.push(w)
     }
-    logText.value = chunks.join('')
-    trimIfHuge()
-    scrollToBottom()
-  } finally {
-    busy.value = false
   }
+  appendLines(rows)
 }
 
 function start(): void {
@@ -215,12 +254,29 @@ function start(): void {
     return p ? sourcesOf(p) : []
   })
   phase.value = 'stream'
-  logText.value = ''
+  reload()
+}
+
+/** 重新加载：清空显示、各来源游标归零，按当前的「最近 N 行」重开一轮快照（换行数 / 手点都走这里） */
+function reload(): void {
+  clearBuffer()
+  warnedNoTs = false
+  for (const s of sources.value) {
+    s.cursor = ''
+    s.warned = false
+  }
   stopPolling()
   // 先出一份快照（首屏立刻有内容），再各自按游标增量跟
   void snapshot().then(() => {
     timer = window.setInterval(() => void pollOnce(), POLL_MS)
   })
+}
+
+/** 清除：清空显示，游标推到"现在" —— 之后只显示新行（与单 Pod 弹窗 `clearLog` 同一个语义） */
+function clearLog(): void {
+  clearBuffer()
+  const now = new Date().toISOString()
+  for (const s of sources.value) s.cursor = now
 }
 
 function scrollToBottom(): void {
@@ -263,8 +319,6 @@ function stopPolling(): void {
  * ⚠️ 比较用 `compareTs`（**与单 Pod 视图同一份**），别再写第二个比较器。
  */
 async function pollOnce(): Promise<void> {
-  const collected: Array<{ s: Source; l: LogLine }> = []
-  let extra = ''
   const results = await Promise.all(
     sources.value.map(async (s) => {
       try {
@@ -276,19 +330,20 @@ async function pollOnce(): Promise<void> {
       }
     }),
   )
+  const rows: string[] = []
+  const collected: Array<{ s: Source; l: LogLine }> = []
   for (const r of results) {
     // ⭐ 某个来源没了（Pod 被滚动更新删掉）不能让整条流停掉或清空
-    if (r.err) extra += warnOnce(r.s, r.err.message)
+    if (r.err) {
+      const w = warnOnce(r.s, r.err.message)
+      if (w) rows.push(w)
+    }
     advanceCursor(r.s, r.lines, r.nextCursor)
     for (const l of r.lines) collected.push({ s: r.s, l })
   }
   collected.sort((a, b) => compareTs(a.l.ts, b.l.ts)) // 相等时保持收集顺序（现代 Array.sort 稳定）
-  const body = collected.map((x) => prefixOf(x.s.pod, x.s.container) + x.l.content).join('\n')
-  if (body || extra) {
-    logText.value += extra + (body ? body + '\n' : '')
-    trimIfHuge()
-    scrollToBottom()
-  }
+  for (const x of collected) rows.push(prefixOf(x.s.pod, x.s.container) + x.l.content)
+  appendLines(rows)
 }
 
 onUnmounted(() => {
@@ -299,6 +354,24 @@ onUnmounted(() => {
 <template>
   <el-dialog v-model="visible" title="全部 Pod 日志" width="min(1280px, 94vw)" class="wl-logs"
              :fullscreen="fullscreen">
+    <!-- 工具栏在两种阶段都在（勾选阶段只有全屏）—— 全屏的落点是右上角，
+         不跟着内容在"页脚左下角"和"工具栏右侧"之间跳。 -->
+    <div class="wl-toolbar">
+      <template v-if="phase === 'stream'">
+        <el-select v-model="tailLines" size="small" style="width: 130px" @change="reload()">
+          <el-option v-for="n in TAIL_OPTIONS" :key="n" :label="`最近 ${n} 行`" :value="n" />
+        </el-select>
+        <el-input v-model="searchTerm" size="small" clearable placeholder="搜索 / 过滤日志…" class="wl-search" />
+        <span v-if="matchCountText" class="match-count">{{ matchCountText }}</span>
+        <el-button size="small" @click="clearLog()">清除</el-button>
+        <el-button size="small" style="margin-left: 0" @click="reload()">重新加载</el-button>
+        <!-- 换一批 = 回到勾选那一步；它改的是"跟哪些来源"，所以和上面几个摆一起 -->
+        <el-button size="small" style="margin-left: 0" @click="resetPick">换一批 Pod</el-button>
+      </template>
+      <div class="spacer" />
+      <el-button size="small" @click="fullscreen = !fullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</el-button>
+    </div>
+
     <template v-if="phase === 'pick'">
       <div class="pick-note">
         这个负载共 {{ pods.length }} 个 Pod，已勾 {{ picked.length }} 个（最多 {{ HARD_MAX }} 个）。
@@ -338,21 +411,14 @@ onUnmounted(() => {
     </template>
 
     <template v-else>
-      <div class="stream-note">
-        正在跟 {{ sources.length }} 条来源（{{ picked.length }} 个 Pod）。
-        <el-button link type="primary" @click="resetPick">换一批 Pod</el-button>
-      </div>
-      <pre ref="textEl" class="wl-log" @scroll="onScroll">{{ logText || '（还没有日志）' }}</pre>
+      <div class="stream-note">正在跟 {{ sources.length }} 条来源（{{ picked.length }} 个 Pod）。</div>
+      <pre ref="textEl" class="wl-log" @scroll="onScroll">{{ displayText || '（还没有日志）' }}</pre>
       <div class="wl-foot">
         <el-button v-if="!atBottom" link type="primary" @click="jumpToBottom">↓ 回到底部</el-button>
       </div>
     </template>
 
     <template #footer>
-      <!-- 页脚是右对齐的（EP 默认），全屏那个靠 float 单独挪到左边 -->
-      <el-button link type="primary" style="float: left" @click="fullscreen = !fullscreen">
-        {{ fullscreen ? '退出全屏' : '全屏' }}
-      </el-button>
       <el-button v-if="phase === 'pick'" @click="visible = false">取消</el-button>
       <el-button v-if="phase === 'pick'" type="primary" :disabled="!picked.length" @click="start">确定</el-button>
     </template>
@@ -360,6 +426,25 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.wl-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.spacer {
+  flex: 1;
+}
+.wl-search {
+  flex: 1;
+  min-width: 120px;
+  max-width: 340px;
+}
+.match-count {
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
 .pick-note,
 .stream-note {
   font-size: 12px;
