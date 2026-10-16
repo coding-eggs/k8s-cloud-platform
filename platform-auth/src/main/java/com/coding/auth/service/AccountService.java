@@ -53,13 +53,24 @@ public class AccountService {
      * {@code SPRING_SECURITY_CONTEXT} 取 {@code authentication.name}），**不是**登录策略写的。
      * 开关是 {@code RedisSessionConfig} 上的 {@code @EnableRedisIndexedHttpSession} ——
      * 用 {@code @EnableRedisHttpSession} 的话连索引机制都没有，而这个差别**不报错、只是静默地
-     * 一个都踢不动**。所以：**会话里没有 security context 就进不了索引**（比如没登录的会话）。
+     * 一个都踢不动**。
      *
-     * <p>由此两条推论：
+     * <p>⚠️ <b>什么时候才写索引</b>（这条最容易想错 —— 本类第一版注释就写错了，害得排查时照着它推）：
+     * **只有"这次改动里含 security context"的那一次 save 才写**。判据在
+     * {@code RedisIndexedSessionRepository.saveDelta()} 里，原话是
+     * {@code if (delta.containsKey("sessionAttr:SPRING_SECURITY_CONTEXT"))}。由此三条推论：
      * <ul>
-     *   <li>本功能上线**之前**建的会话不在索引里，踢不到，会自然过期。</li>
-     *   <li>某个会话要**被保存过一次**才会进索引 —— 登录会保存，`/session/keepalive` 也会。</li>
+     *   <li>{@code /session/keepalive} 只改 {@code lastKeepaliveAt} → **一次都不会写索引**。
+     *       所以"多用一会儿就补上了"是错的。</li>
+     *   <li>本功能上线**之前**建的会话，它的 context 是旧构建写进去的 → 之后怎么 keepalive 都不会补；
+     *       踢不到，会自然过期。**必须重新登录一次**才会进索引（登录会写 context）。</li>
+     *   <li>从来没有过 security context 的会话（例如访问 {@code /oauth2/authorize} 时建的那个
+     *       只带 {@code SPRING_SECURITY_SAVED_REQUEST} 的匿名会话）本来就不该进索引。</li>
      * </ul>
+     *
+     * <p>⚠️ 别拿 Redis 的 {@code EXISTS} / {@code KEYS} 当"踢没踢掉"的判据：{@code deleteById} 之后
+     * 键可能**还留着一个空壳**（{@code findById} 已经返回 null，哈希键等 TTL 自己收走）。
+     * 要看的是 {@code findById} 与索引集合。
      *
      * <p>⚠️ 注入的是**具体类型**而不是 {@code FindByIndexNameSessionRepository<? extends Session>}：
      * 那个 bean 的泛型参数是 {@code RedisIndexedSessionRepository.RedisSession}，
