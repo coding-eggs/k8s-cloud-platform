@@ -111,7 +111,14 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
       position: n.position
         ? { x: n.position.x, y: n.position.y }
         : { x: 60 + (i % 3) * 200, y: 40 + Math.floor(i / 3) * 110 },
-      data: { nodeType: n.type, name: n.name ?? '', config: n.config, status: st[n.id] },
+      data: {
+        nodeType: n.type,
+        name: n.name ?? '',
+        config: n.config,
+        // 收尾标记在运行详情里也要看得出来（它与节点状态无关，是画布属性）
+        finallyTask: n.finallyTask === true,
+        status: st[n.id],
+      },
     })),
     edges: (c.edges ?? []).map((e) => ({
       id: `e-${e.from}-${e.to}`,

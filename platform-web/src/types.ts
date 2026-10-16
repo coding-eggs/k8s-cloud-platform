@@ -1755,6 +1755,26 @@ export interface PipelineCanvasNode {
    *  ⚠️ 必须存下来：不存就等于「每次打开都换一张图」，用户手摆的布局白摆。
    *  老画布没有它 → 退回自动排布 */
   position?: { x: number; y: number } | null
+  /** **失败也继续**：`'continue'` = 这一节点失败不阻断它的下游（Tekton 的 `task.onError`）。
+   *  不写 = 照常失败（它挂了，下游全部跳过）。
+   *  ⚠️ 取值与后端 `PipelineRenderer.CONTINUE` 成对 —— 改要同时改 */
+  onError?: string | null
+  /** **收尾执行**：true = 挪进 Tekton 的 `finally[]`。
+   *  ⚠️ 收尾节点**不参与顺序**（既不能连线，也不能写 runAfter）—— 它们同时开跑 */
+  finallyTask?: boolean | null
+  /** 收尾节点的**执行时机**：`'always'`（不写）/ `'failed'` / `'succeeded'`。
+   *  只在 `finallyTask` 为 true 时有意义。
+   *  ⚠️ 与后端 `PipelineRenderer.WHEN_*` 三个常量成对 —— 改要同时改 */
+  finallyWhen?: string | null
+}
+
+/** 运行控制那一小包（属性面板 → 编辑器的 patch）。
+ *  ⚠️ 走 patch 而不是让面板直接改 `data`：勾上「收尾执行」要**顺手摘掉它的连线**，
+ *  那个副作用只有编辑器做得了（面板不持有 edges）。 */
+export interface PipelineRunControlPatch {
+  onError?: string
+  finallyTask?: boolean
+  finallyWhen?: string
 }
 
 export interface PipelineCanvasEdge {

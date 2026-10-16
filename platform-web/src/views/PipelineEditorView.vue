@@ -22,7 +22,7 @@ import type { Connection, Edge, EdgeChange, MouseTouchEvent, Node, NodeChange } 
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
-import type { PipelineCanvas, PipelineCanvasNode, PipelineConnection, PipelineNodeType } from '@/types'
+import type { PipelineCanvas, PipelineCanvasNode, PipelineConnection, PipelineNodeType, PipelineRunControlPatch } from '@/types'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { usePipelineCapability } from '@/composables/usePipelineCapability'
 import { usePermission } from '@/stores/permission'
@@ -54,6 +54,12 @@ interface PipelineNodeData {
   /** 用户起的显示名（可空）；空则卡片上退回显示节点 id */
   name: string
   config: Record<string, string>
+  /** **失败也继续**（`'continue'`）/ 空 = 照常失败 —— 见 `PipelineCanvasNode.onError` */
+  onError: string
+  /** **收尾执行** —— 卡片上要显示「收尾」标记，所以它是一个明确的布尔（不是可空） */
+  finallyTask: boolean
+  /** 收尾时机：`'always'` / `'failed'` / `'succeeded'` */
+  finallyWhen: string
   status?: string
 }
 
@@ -119,6 +125,11 @@ function toCanvasNodes(): PipelineCanvasNode[] {
       //    （2026-10-15 用户报「保存后再编辑，节点叠在一起了」）。
       //    取整只是让 JSON 干净 —— Vue Flow 拖动会给出小数
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
+      // 运行控制同样**只在勾了的时候写**（与 name 一个道理：没勾的节点不该多出键来）。
+      // ⚠️ finallyWhen 只在收尾节点上写 —— 普通节点带着它只是噪音，后端也不看
+      ...(n.data.onError ? { onError: n.data.onError } : {}),
+      ...(n.data.finallyTask ? { finallyTask: true } : {}),
+      ...(n.data.finallyTask && n.data.finallyWhen ? { finallyWhen: n.data.finallyWhen } : {}),
     }
   })
 }
@@ -140,6 +151,9 @@ const selectedNode = computed(() => {
     type: n.data.nodeType,
     name: n.data.name ?? '',
     config: n.data.config ?? {},
+    onError: n.data.onError || null,
+    finallyTask: n.data.finallyTask,
+    finallyWhen: n.data.finallyWhen || null,
   }
 })
 
@@ -166,7 +180,7 @@ function applyCanvas(json?: string | null) {
   if (!json) return
   try {
     const c = JSON.parse(json) as PipelineCanvas
-    nodes.value = (c.nodes ?? []).map((n, i) => flowNode(n.id, n.type, n.name ?? '', n.config, i, n.position))
+    nodes.value = (c.nodes ?? []).map((n, i) => flowNode(n.id, n.type, n.name ?? '', n.config, i, n.position, n))
     edges.value = (c.edges ?? []).map((e) => flowEdge(e.from, e.to))
   } catch {
     ElMessage.error('画布内容无法解析')
@@ -193,13 +207,26 @@ function flowNode(
   config: Record<string, string>,
   index: number,
   position?: { x: number; y: number } | null,
+  /** 存下来的运行控制（老画布没有 → 全空 = 照常失败、不在收尾里跑） */
+  run?: {
+    onError?: string | null
+    finallyTask?: boolean | null
+    finallyWhen?: string | null
+  },
 ): FlowNodeView {
   return {
     id,
     type: 'pipeline',
     // 存过坐标就用存的（用户手拖出来的布局）；没有才退回网格
     position: position ? { x: position.x, y: position.y } : autoPosition(index),
-    data: { nodeType: type, name: name ?? '', config: config ?? {} },
+    data: {
+      nodeType: type,
+      name: name ?? '',
+      config: config ?? {},
+      onError: run?.onError ?? '',
+      finallyTask: run?.finallyTask === true,
+      finallyWhen: run?.finallyWhen ?? '',
+    },
   }
 }
 
@@ -273,7 +300,19 @@ function wouldCycle(from: string, to: string): boolean {
   return false
 }
 
+/** 这个节点是不是收尾节点（收尾不参与顺序 —— 它既不能连线，也不能当别人的上游） */
+function isFinallyNode(id: string): boolean {
+  return nodes.value.find((n) => n.id === id)?.data.finallyTask === true
+}
+
 function onConnect(params: Connection) {
+  // ⚠️ 收尾节点**不参与顺序**（Tekton 的 finally 没有 runAfter、也不按顺序跑）——
+  // 连上去的线后端保存时会被拒（`PipelineRenderer` 那条校验），所以这里先拦，
+  // 让用户当场知道而不是保存时才炸
+  if (isFinallyNode(params.source) || isFinallyNode(params.target)) {
+    ElMessage.warning('收尾执行的节点不参与顺序，不能连线')
+    return
+  }
   if (wouldCycle(params.source, params.target)) {
     ElMessage.warning('这样连会形成环 —— 节点之间的连线必须是一条有向无环图')
     return
@@ -298,7 +337,8 @@ function insertAfter(fromId: string, type: string) {
   const y = (from?.position.y ?? 0) + 20
   const id = nextId(type)
   nodes.value = [...nodes.value, { ...flowNode(id, type, '', {}, 0), position: { x, y } }]
-  if (!wouldCycle(fromId, id)) {
+  // 收尾节点不能有下游（右键菜单已经不给这一项了，这里是绕过菜单那条路的兜底）
+  if (!from?.data.finallyTask && !wouldCycle(fromId, id)) {
     edges.value = [...edges.value, flowEdge(fromId, id)]
   }
   selected.value = id
@@ -330,6 +370,33 @@ function onRename(name: string) {
   const n = nodes.value.find((x) => x.id === selected.value)
   if (!n) return
   n.data.name = name
+  nodes.value = [...nodes.value]
+}
+
+/**
+ * 运行控制（失败也继续 / 收尾执行 / 收尾时机）。
+ *
+ * ⚠️ 与「名称」一样是**画布级**的东西（不在节点自己的 `fields` 里），但状态落在 `data` 上 ——
+ * 因为它要连同 config 一起进画布 JSON（后端渲染器读的是它）。
+ * ⚠️ 勾上「收尾执行」要**顺手摘掉这个节点的连线**：收尾节点不参与顺序（Tekton 的 finally
+ * 没有 runAfter），留着线的话保存时后端会拒。这里摘掉并说清楚，比让用户保存时才撞墙好。
+ */
+function onRunControl(patch: PipelineRunControlPatch) {
+  const n = nodes.value.find((x) => x.id === selected.value)
+  if (!n) return
+  if (patch.onError !== undefined) n.data.onError = patch.onError
+  if (patch.finallyWhen !== undefined) n.data.finallyWhen = patch.finallyWhen
+  if (patch.finallyTask !== undefined) {
+    n.data.finallyTask = patch.finallyTask
+    if (patch.finallyTask) {
+      const kept = edges.value.filter((e) => e.source !== n.id && e.target !== n.id)
+      const dropped = edges.value.length - kept.length
+      if (dropped > 0) {
+        edges.value = kept
+        ElMessage.info(`收尾执行的节点不参与顺序，已摘掉它的 ${dropped} 条连线`)
+      }
+    }
+  }
   nodes.value = [...nodes.value]
 }
 
@@ -395,21 +462,24 @@ function onPaneMenu(e: MouseTouchEvent): void {
 }
 
 function onNodeMenu(e: { event: MouseTouchEvent; node: { id: string } }): void {
-  openMenu(e.event, e.node.id, [
-    {
+  const items: MenuItem[] = []
+  // 收尾节点没有下游（它不参与顺序）—— 菜单里就不给这一项，省得点了没反应
+  if (!isFinallyNode(e.node.id)) {
+    items.push({
       label: '接一个下游节点',
       children: nodeTypeList.value.map((t) => ({ label: t.label, run: () => insertAfter(e.node.id, t.type) })),
+    })
+  }
+  items.push({
+    label: '删除节点',
+    danger: true,
+    run: () => {
+      selected.value = e.node.id
+      selectedEdge.value = ''
+      void removeSelected()
     },
-    {
-      label: '删除节点',
-      danger: true,
-      run: () => {
-        selected.value = e.node.id
-        selectedEdge.value = ''
-        void removeSelected()
-      },
-    },
-  ])
+  })
+  openMenu(e.event, e.node.id, items)
 }
 
 function onEdgeMenu(e: { event: MouseTouchEvent; edge: { id: string } }): void {
@@ -430,10 +500,19 @@ function onEdgeMenu(e: { event: MouseTouchEvent; edge: { id: string } }): void {
 const _unusedLabel = labelOf
 
 const concurrentHint = computed(() => {
-  if (nodes.value.length < 2) return ''
+  // ⚠️ 收尾节点**不算**在里面：它们本来就不连线（Tekton 的 finally 同时开跑），
+  // 拿「没有上游」去说它们会并发开始，是在把一个正确的东西说成可疑的
+  const plain = nodes.value.filter((n) => !n.data.finallyTask)
+  if (plain.length < 2) return ''
   const hasIncoming = new Set(edges.value.map((e) => e.target))
-  const roots = nodes.value.filter((n) => !hasIncoming.has(n.id))
+  const roots = plain.filter((n) => !hasIncoming.has(n.id))
   return roots.length > 1 ? `${roots.length} 个节点没有上游 —— 它们会**并发**开始，不是没连上` : ''
+})
+
+/** 收尾节点会在最后同时开跑（它们之间没有、也不能有顺序）—— 与上面那条并发提示成对 */
+const finallyHint = computed(() => {
+  const n = nodes.value.filter((x) => x.data.finallyTask).length
+  return n > 0 ? `${n} 个收尾节点：前面全部跑完后同时开跑，不参与连线顺序` : ''
 })
 
 // ---- 动作 ----
@@ -519,6 +598,7 @@ async function removePipeline() {
       已选中一条连线 —— 按 <b>Delete</b> 删掉它，或在它上面右键
     </div>
     <div v-if="concurrentHint" class="hint">{{ concurrentHint }}</div>
+    <div v-if="finallyHint" class="hint">{{ finallyHint }}</div>
 
     <div class="canvas-wrap">
       <NodePalette />
@@ -586,6 +666,7 @@ async function removePipeline() {
         :registry-connections="registryConnections"
         @change="onPropsChange"
         @rename="onRename"
+        @run-control="onRunControl"
       />
       <div v-else class="props-empty">点一个节点看它的属性</div>
     </div>

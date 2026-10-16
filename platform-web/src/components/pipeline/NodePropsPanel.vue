@@ -13,7 +13,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { useImageSuggest } from '@/composables/useImageSuggest'
-import type { PipelineCanvasNode, PipelineConnection, PipelineNodeField, RegistrySuggestItem } from '@/types'
+import type {
+  PipelineCanvasNode,
+  PipelineConnection,
+  PipelineNodeField,
+  PipelineRunControlPatch,
+  RegistrySuggestItem,
+} from '@/types'
 
 const props = defineProps<{
   node: PipelineCanvasNode
@@ -26,6 +32,8 @@ const emit = defineEmits<{
   (e: 'change'): void
   /** 改名：名字是**画布级**的东西，不在 `fields` 里，所以单独一条事件（见 editor 的 onRename） */
   (e: 'rename', name: string): void
+  /** 运行控制（失败也继续 / 收尾执行 / 收尾时机）—— 同上，画布级的东西走自己的事件 */
+  (e: 'runControl', patch: PipelineRunControlPatch): void
 }>()
 
 const { byType, optionsOf, presetOf, load: loadNodeTypes } = usePipelineNodeTypes()
@@ -86,6 +94,32 @@ const firstAdvancedKey = computed(() => fields.value.find((f) => f.advanced)?.ke
 
 function isFirstAdvanced(f: PipelineNodeField): boolean {
   return f.advanced === true && f.key === firstAdvancedKey.value
+}
+
+/**
+ * 「运行控制」段 —— 与上面那个「名称」一样，**不在后端的 `fields` 里**：
+ * 它不是某个节点类型的参数，而是这个节点**在流程里怎么走**（跟着画布走，不进 config）。
+ *
+ * 三个取值都与后端成对，改要一起改：
+ * · `'continue'` → `PipelineRenderer.CONTINUE`
+ * · `always` / `failed` / `succeeded` → `PipelineRenderer.WHEN_ALWAYS / WHEN_FAILED / WHEN_SUCCEEDED`
+ */
+const WHEN_OPTIONS = [
+  { value: 'always', label: '总是执行' },
+  { value: 'failed', label: '仅前面有节点失败时' },
+  { value: 'succeeded', label: '仅前面全部成功时' },
+]
+const isFinally = computed(() => props.node.finallyTask === true)
+const isContinuing = computed(() => props.node.onError === 'continue')
+
+function setFinally(v: boolean) {
+  emit('runControl', { finallyTask: v })
+}
+function setContinue(v: boolean) {
+  emit('runControl', { onError: v ? 'continue' : '' })
+}
+function setWhen(v: string) {
+  emit('runControl', { finallyWhen: v || 'always' })
 }
 </script>
 
@@ -210,6 +244,45 @@ function isFirstAdvanced(f: PipelineNodeField): boolean {
         <div v-if="f.help" class="props-help">{{ f.help }}</div>
       </div>
     </template>
+
+    <!-- 运行控制：**画布级**的东西（与上面那个「名称」一样不在 fields 里）——
+         它决定这个节点在流程里怎么走，而不是它自己干什么活。
+         ⚠️ 有意排在节点自己的字段**之后**：面板窄、字段多，日常改的是仓库/命令，
+         把这块摆前面会把它们挤到折叠线以下。 -->
+    <div class="props-section">运行控制</div>
+
+    <div class="props-field">
+      <label>收尾执行</label>
+      <el-switch :model-value="isFinally" @update:model-value="(v: boolean) => setFinally(v)" />
+      <div class="props-help">
+        勾上 = 挪到流程最后（Tekton 的 finally）：不参与连线顺序，前面的节点怎么走都会轮到它。
+        跑不跑由下面的时机决定。勾上时会摘掉它的连线（收尾节点之间没有、也不能有顺序）。
+      </div>
+    </div>
+
+    <div v-if="isFinally" class="props-field">
+      <label>收尾时机</label>
+      <el-select
+        :model-value="node.finallyWhen ?? 'always'"
+        style="width: 100%"
+        @update:model-value="(v: string) => setWhen(v)"
+      >
+        <el-option v-for="o in WHEN_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+      </el-select>
+      <div class="props-help">
+        「前面有节点失败」看的是这一趟的总体结果：只要有节点失败（哪怕它勾了「失败后继续」）
+        就算，全部成功不算。
+      </div>
+    </div>
+
+    <div class="props-field">
+      <label>失败后继续</label>
+      <el-switch :model-value="isContinuing" @update:model-value="(v: boolean) => setContinue(v)" />
+      <div class="props-help">
+        勾上 = 这个节点失败不阻断它的下游。不勾 = 它失败，所有下游直接跳过（Tekton 的默认行为）。
+        收尾节点上勾它 = 这个收尾节点自己失败也不会把整趟运行判成失败。
+      </div>
+    </div>
   </div>
 </template>
 
@@ -228,6 +301,15 @@ function isFirstAdvanced(f: PipelineNodeField): boolean {
 }
 .props-field {
   margin-bottom: 12px;
+}
+/* 段标题：**画布级**的东西（名称 / 运行控制）与节点自己的字段清单之间的分界 */
+.props-section {
+  margin: 14px 0 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border, #ebeef5);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 /* 「高级」折叠的开关（收着的是常态字段，摊开的才是代理这类排障字段） */
 .props-advanced-toggle {

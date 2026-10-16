@@ -24,6 +24,8 @@ const props = defineProps<{
     /** 用户起的显示名（可空）—— 空就退回显示 id */
     name?: string
     config?: Record<string, string>
+    /** 收尾执行（Tekton 的 finally）：不参与顺序，画布上得看得出来 */
+    finallyTask?: boolean
     /** 运行视图里才有 */
     status?: string
   }
@@ -75,6 +77,8 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
     </div>
 
     <div v-if="statusText" class="pnode-status">{{ statusText }}</div>
+    <!-- 收尾标记：**这根线之外的东西**，画布上必须看得出来（否则用户会去连它、然后被拦） -->
+    <div v-if="data.finallyTask" class="pnode-finally" title="收尾执行：不参与连线顺序，最后同时开跑">收尾</div>
 
     <Handle type="source" :position="Position.Right" class="pnode-port" />
   </div>
@@ -171,6 +175,18 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
   background: var(--panel);
   border: 1px solid var(--border);
   color: var(--text-2);
+}
+/* 收尾标记：放左上角 —— 右上角是运行状态的位置（运行视图里两个会同时出现） */
+.pnode-finally {
+  position: absolute;
+  top: -9px;
+  left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: var(--panel);
+  border: 1px solid var(--warning);
+  color: var(--warning);
 }
 .pnode.ok {
   border-color: var(--success);
