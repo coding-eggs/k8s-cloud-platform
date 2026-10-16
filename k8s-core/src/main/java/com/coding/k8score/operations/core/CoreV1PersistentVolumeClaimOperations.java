@@ -97,23 +97,34 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
     }
 
     /**
-     * 更新 PVC：spec 不可变，仅同步 metadata 标签
+     * 更新 PVC：同步标签（以及平台侧算好的容量 —— 扩容，见 platform-api 的 PvcService）。
+     *
+     * <p>⚠️⚠️ **只发平台管的字段（apply config），不要发"从集群读回来的整个对象"。**
+     * 2026-10-16 真撞到：
+     * <pre>
+     * PATCH …/persistentvolumeclaims/platform-pipeline-cache?fieldManager=platform-system&force=true
+     * Message: metadata.managedFields must be nil. Received status: Status(code=400 …)
+     * </pre>
+     * 读回来的那份带着 {@code metadata.managedFields}，而 SSA **明确要求它是 nil**；
+     * 而且发整个对象还会把平台标成**所有字段**的 owner（连 kube-controller-manager 写的
+     * {@code spec.volumeName} 一起）。{@link ServerSideApply} 的约定本来就是
+     * 「converter 只产出 apply config」。
+     *
+     * <p>这个 bug 一直是潜伏的：{@code PUT /resource/pvcs/{name}} 在 2026-10-16 之前
+     * **没有任何调用方**（PVC 页没有编辑入口），所以这段代码从没真跑过。
      */
     @Override
     public PersistentVolumeClaimDTO update(PersistentVolumeClaimDTO pvc) {
-        String namespace = pvc.getNamespace();
-        String name = pvc.getName();
-        PersistentVolumeClaim existing = client.persistentVolumeClaims()
-                .inNamespace(namespace)
-                .withName(name)
-                .get();
-        if (existing == null) {
+        // ⚠️ SSA 对不存在的对象是**会创建**的 —— 所以"不存在"得自己先拦，别让 PUT 变成隐式 create
+        if (!checkExist(pvc.getNamespace(), pvc.getName())) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
         }
-        existing.getMetadata().setLabels(pvc.getLabels());
+        PersistentVolumeClaim apply = converter.convert(pvc);
+        apply.getMetadata().setName(pvc.getName());
+        apply.getMetadata().setNamespace(pvc.getNamespace());
         PersistentVolumeClaim updated = client.persistentVolumeClaims()
-                .inNamespace(namespace)
-                .resource(existing)
+                .inNamespace(pvc.getNamespace())
+                .resource(apply)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(updated);
     }
