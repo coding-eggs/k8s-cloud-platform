@@ -71,11 +71,12 @@ record MeshEdge(String source, String target, double rps, double errorRate,
 菜单项的显隐**用同一个码** `tenant:gateway:list` —— 与后端那一行权限是同一个判据，
 不另造页面码（前端只管显隐，权威判定在后端）。
 
-**画布选型：ECharts 的 `graph` 系列（力导向布局）。**
-理由：`echarts` 已经是依赖；力导向布局、hover、tooltip、缩放拖拽全都现成，代码量最小。
-**备选**：`@vue-flow/core`（流水线画布在用）+ dagre 布局 —— 要**新增 dagre 依赖**，
-而且网格流量常是双向的，分层布局不一定比力导向好读。
-若你要与画布视觉统一，说一声我换这条。
+**画布：ECharts 的 `graph` 系列（力导向布局）。**（2026-10-17 定；用户不参与技术选型，由我拍板。）
+
+理由：`echarts` 已经是依赖，力导向布局、hover、tooltip、缩放拖拽全都现成，代码量最小。
+**不用 VueFlow + dagre 的原因**：要新增 dagre 依赖，而且网格流量常是双向的，
+分层布局（DAG 语义）不一定比力导向好读 —— 流水线画布那边用 VueFlow 是因为**用户要拖拽摆位**
+（编辑态），这里是纯查看态，需求不同，不必强行统一。
 
 - **边**：`lineStyle.width ∝ log(rps)`；颜色按错误率分档（0 → 绿，>0 → 黄，>5% → 红）
 - **节点**：标签 = workload 名；按命名空间分组着色；网关节点换个图标/颜色（它是"外部入口"）
@@ -101,10 +102,13 @@ record MeshEdge(String source, String target, double rps, double errorRate,
 
 ## 6. 本次不做（附理由）
 
-- **S2.4.3 链路追踪**：集群里**没有任何追踪后端** —— jaeger / tempo / zipkin 都没有；
+- **S2.4.3 链路追踪**：**本次不做，但用户 2026-10-17 已明确「后期会做」—— 不是砍掉。**
+  现在做不了的原因：集群里**没有任何追踪后端** —— jaeger / tempo / zipkin 都没有；
   otel collector 虽然在跑（`default/collector`），但**没配 traces 管道**。
-  这和 S2.4 本身当初"没米下锅"是同一类问题：要做得先部署一个后端，**并且**让业务注入/透传 trace header。
-  单独排，别塞进这一批。
+  和 S2.4 本身当初"没米下锅"是同一类问题：要做得先部署一个后端，**并且**让业务注入/透传 trace header。
+  真要开工时，起点是：① 选后端（Tempo 比 Jaeger 更贴这套 thanos/otel 的栈）；
+  ② 部署 + 接 otel collector 的 traces exporter；③ 让被测应用透传 `traceparent`
+  （Istio 只负责透传，不负责生成 —— 应用不发 header 就没有 span）。
 - **时间轴回放 / 历史对比**：`query_range` 代价高不少，v1 没这个需求，YAGNI。
 - **补全"在网格里但没流量"的节点**：指标里没有它们，要另外查 pod/service 再合并，v1 不做；
   这也正是 §4 那条"覆盖范围"说明要写在页面上的原因。
