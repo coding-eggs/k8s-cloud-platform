@@ -47,9 +47,14 @@ S3.5 在台账里是 **XL / 13 个子任务** —— 一批 spec + 一个实施�
 隐式共享 workspace + 手动触发与取消 + **运行归档任务（先抓后删）** + **运行记录与日志落库** +
 **保留策略** + 权限（5 个码）+ git 连接逐条授权 + 推送凭据 + capability 门控 + 审计。
 
-**不做**：条件分支与 `finally`（片②）· 自定义节点 · 运行时参数 vs 固定配置分离 · 流水线级并发策略 ·
+**不做**：条件分支（**有意不做** —— Tekton 的 `tasks[].when` 不能引用执行状态，而按参数分支要先有
+运行时参数；画布上只给 `onError`（失败也继续）+ `finally`（收尾执行）两个开关，见 §10）·
+自定义节点 · 运行时参数 vs 固定配置分离 · 流水线级并发策略 ·
 部署节点 · 触发器 / Webhook / 定时 · 平台级流水线模板 · **Tekton Pruner**（理由见 §4.1 / §10）·
 `imagePullSecret`（用户自理）。
+
+> ⚠️ 上面这份是**片①时的**交付边界。片② 实际交付的是 `onError` + `finally`，
+> **条件分支从"待做"改成了"有意不做"** —— 要看清最终的做/不做，以 §10 那张表为准。
 
 ---
 
@@ -586,7 +591,7 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 | **Tekton Pruner** | 独立项目（0.3.3）、要单独装。**不用它**：它删的时候平台还没抓日志 —— 两个组件各干各的，归档与清理的先后无法保证（§4.1）。平台一个动作做完，时序天然正确 |
 | **构建缓存** | per-Pod Buildah 每次从零构建。加缓存要么挂 PVC（vfs 会吃掉大量空间），要么上共享构建服务（跨租户串味）—— 两条都比本批重 |
 | **运行历史落库** | §7 的理由 |
-| **取消时抢抓的日志会被丢弃**（2026-10-15 发现，**未修**） | `PipelineRunFinisher.cancel` 按「先抓后取消」抓了快照并调 `archive.persist(...)`，但**取消那一刻对象还在跑**，而 `PipelineArchiveService.persist` 有一条「快照状态还是 RUNNING 就拒写」的守卫 → **每次都抛**，被 `cancel` 的 catch 吞掉（只留一句 warn），抢抓的日志一个字都没落库；等 Tekton 取消完把 Pod 删了，终结事件再归档时已经抓不到日志。**§4.2「取消之后日志仍然看得到」目前不成立。** 单测 `cancelCapturesBeforeCancellingAndNeverDeletes` 把 archive 打了桩，所以只验证了「调用发生过」。修法：把「存日志」与「结案（写状态/时间/YAML）」拆开，cancel 只存日志 |
+| **取消时抢抓的日志会被丢弃**（2026-10-15 发现，**2026-10-15 已修**） | 原因：`PipelineRunFinisher.cancel` 抓完快照调的是 `archive.persist(...)`，而**取消那一刻对象还在跑**，`persist` 有一条「快照状态还是 RUNNING 就拒写」的守卫 → 每次都抛、被 catch 吞掉（只留一句 warn），抢抓的日志一个字都没落库。**修法**：把「存日志」与「结案（写状态/时间/YAML）」拆成两个入口 —— 新增 `PipelineArchiveService.persistLogs`（只写日志、不碰状态），cancel 改走它。⚠️ 教训：老测试把 archive 打了桩，只验证了「调用发生过」，所以这个 bug 一直是绿的；取消路径的测试现在用**真 service + mock 两个 mapper** |
 
 ### 10.1 已知风险（接受）
 
@@ -602,8 +607,12 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 
 与代理那条一样：**纸上推不出来的，必须真跑一遍**。
 
-- [ ] **Buildah per-Pod 的确切 `securityContext`** —— vfs 还是 fuse-overlayfs、要不要 `seccompProfile: Unconfined`、
-      能不能做到**不用 privileged**。这决定 §0 那条「零集群写权限」之外还要放宽什么
+- [x] **Buildah per-Pod 的确切 `securityContext`** —— ✅ **2026-10-16 真跑答完**：
+      **不用 privileged、也不放宽 seccomp**。容器默认那套能力就够，代价是换两个环境变量：
+      `STORAGE_DRIVER=vfs`（不挂 fuse；容器里根本没有 `/dev/fuse` —— k8s 只给最小 `/dev`）
+      + `BUILDAH_ISOLATION=chroot`（不起 runc；容器默认能力集里没有 `CAP_SYS_ADMIN`，
+      但 `CAP_SYS_CHROOT` 在）。**代价是慢且吃临时盘**（vfs 每层都是整棵树的拷贝）。
+      完整取证与两条坑见 `docs/development/cluster-prerequisites.md` §1.5 / §1.6
 - [ ] **Tekton `v1` 的取消取值** —— v1beta1 是 `spec.status: PipelineRunCancelled`，**v1 改成了什么**（查实，不猜）
 - [ ] **Tekton 给 Pod 打的标签名** —— `tekton.dev/pipelineRun` / `tekton.dev/taskRun` 是否就是要用的那两个
 - [ ] ⚠️ **Tekton 的默认超时** —— 平台不设 `spec.timeouts` 之后，Tekton 会不会用它的 `default-timeout`
@@ -660,6 +669,14 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
       > 与 `/nodes/addresses`、PersistentVolume 同形，是第三个这类例外。
       > 判据（什么算"可动态供应"、给用户看的文案）**仍在 platform-api**：按 docs/development/backend-layering.md §5
       > 「适配器不引用产品阈值」，k8s-server 只提供集群事实。
+
+> 🔁 **交接给 S1.2（台账 2026-10-14 明写要求，此处补上）**：
+> 本批只做了一次**最小** capability 探测（「这个集群有没有 `tekton.dev/v1`」），因为台账已裁定
+> 「**先做 S3.5（CI），S1.2 排后**」，并要求在这里写明**将来由 S1.2 接手这块门控**。
+> 所以：**S1.2 做的时候，把这里的探测并进它的「组件清单 + 组件↔平台功能依赖映射」，
+> 不要让它继续长成第二份判据。** 现在的落点是 `usePipelineCapability`（前端）
+> + `POST /pipeline/capability`（`PipelineCapabilityService`）—— 那两处是**要被 S1.2 收编的**，
+> 不是又一个可以各写一份的先例（spec §7「门控判据单一出处」）。
 - [ ] 租户成员建一条流水线（`git 克隆 → 命令 → 构建并推送镜像`）→ 保存 → **画布能重新打开并还原**
 - [ ] 点运行 → 运行详情里 DAG 按状态着色、每步日志出得来、能看渲染出的 YAML
 - [ ] 取消一个正在跑的运行 → 状态变 Cancelled，**对象还在**（历史没丢）
@@ -669,5 +686,5 @@ S0.2 特意留着「租户侧没有凭据码」这条边界（`platform:credenti
 - [ ] **跑完一次之后 `kubectl get pods` 里那个 `Completed` 的 Pod 消失了**，`kubectl get pipelinerun` 也没了 ——
       而平台里的运行记录与日志都在
 - [ ] **取消一次正在跑的运行** → 取消之后**日志仍然看得到**（这条验的是「先抓后取消」的顺序）
-      > ⚠️ **2026-10-15 发现：这条目前不成立**，见 §10「取消时抢抓的日志会被丢弃」。修完再勾。
+      > ✅ 2026-10-16：代码路径已修（见 §10 那一行 —— cancel 改走 `persistLogs`），**待真跑确认**。
 - [ ] 一条超 1 MB 的日志 → UI 上标了「已截断」
