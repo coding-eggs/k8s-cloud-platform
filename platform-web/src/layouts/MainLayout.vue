@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { getAccessToken, getUserInfo, logout, startSessionMaintenance } from '@/auth/oauth'
 import { getTheme, toggleTheme } from '@/utils/theme'
 import ContextSelector from '@/components/ContextSelector.vue'
@@ -9,6 +9,7 @@ import { usePermission } from '@/stores/permission'
 import { pageCodes } from '@/pageCodes'
 
 const route = useRoute()
+const router = useRouter()
 const theme = ref(getTheme())
 const perm = usePermission()
 
@@ -107,6 +108,7 @@ const userRoleLabel = computed(() => {
 
 function onUserCommand(cmd: string): void {
   if (cmd === 'theme') onToggleTheme()
+  else if (cmd === 'profile') void router.push('/profile')
   else if (cmd === 'logout') void handleLogout()
 }
 
@@ -343,7 +345,10 @@ async function handleLogout(): Promise<void> {
                 <el-dropdown-item v-if="narrow" divided command="theme">
                   <span class="logout-item"><el-icon><Sunny v-if="theme === 'dark'" /><Moon v-else /></el-icon>切换主题</span>
                 </el-dropdown-item>
-                <el-dropdown-item divided command="logout">
+                <el-dropdown-item divided command="profile">
+                  <span class="logout-item"><el-icon><User /></el-icon>个人中心</span>
+                </el-dropdown-item>
+                <el-dropdown-item command="logout">
                   <span class="logout-item"><el-icon><SwitchButton /></el-icon>退出登录</span>
                 </el-dropdown-item>
               </el-dropdown-menu>

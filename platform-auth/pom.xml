@@ -68,6 +68,13 @@
             <artifactId>spring-session-data-redis</artifactId>
         </dependency>
 
+        <!-- 本模块一直是零测试；自助改密/改资料那套「验旧密码 + 按用户名踢会话」是有分支的逻辑，
+             值得钉住（尤其是"当前这台留着、别的踢掉"这条） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
 
     </dependencies>
 

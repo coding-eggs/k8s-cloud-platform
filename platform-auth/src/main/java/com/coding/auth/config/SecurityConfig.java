@@ -29,10 +29,15 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.session.FindByIndexNameSessionRepository;
+import org.springframework.session.Session;
+import org.springframework.session.security.SpringSessionBackedSessionRegistry;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
 import org.springframework.security.web.session.InvalidSessionStrategy;
@@ -75,7 +80,8 @@ public class SecurityConfig {
 
     // @formatter:off
     @Bean
-    public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http, Properties properties) throws Exception {
+    public SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http, Properties properties,
+                                                                              SessionRegistry sessionRegistry) throws Exception {
         http
                 .authorizeHttpRequests(authorize ->
                         authorize
@@ -163,6 +169,16 @@ public class SecurityConfig {
                                     }
                                 })
 
+                                // ⚠️ 这一行是「改密码后按用户名踢掉其它会话」的**全部前提**。
+                                //    光配 maximumSessions(-1) 是不够的：没给 sessionRegistry 时 Spring 用
+                                //    默认的**内存版** SessionRegistryImpl，它**不会**往会话里写 principal 索引
+                                //    属性 —— 于是 Redis 里一个 spring:session:index:* 都不会有
+                                //    （2026-10-16 在线上查过：21 个 sessions key、0 个 index key），
+                                //    findByPrincipalName 永远返回空。换成 SpringSessionBackedSessionRegistry
+                                //    才会在登录那一刻把索引写进 Redis。
+                                //    maximumSessions(-1) = 不限并发数：我们只要它**登记**，不要它踢人。
+                                .sessionRegistry(sessionRegistry)
+
                 )
                 // 登出：SPA 侧「退出登录」必须打到这里，否则根凭证（HttpOnly 会话）仍在，
                 // 再点登录会被 /oauth2/authorize 静默 SSO 回原用户 —— 表现为「换不了用户」。
@@ -191,11 +207,37 @@ public class SecurityConfig {
                 (acceptHeader != null && acceptHeader.contains("application/json"));
     }
 
+    /**
+     * 密码编码器。做成 bean 是为了**只有一个实例**：登录校验（{@code DaoAuthenticationProvider}）
+     * 与自助改密码（{@code AccountService}）必须用同一个 —— 各 new 一个 BCryptPasswordEncoder
+     * 现在恰好等价（BCrypt 自带盐、无共享状态），但那是巧合，不该靠它。
+     */
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+    /**
+     * 会话登记表：**按用户名**索引会话的那一套（自助改密码踢会话靠它）。
+     *
+     * <p>⚠️ 别改回默认的内存版 {@code SessionRegistryImpl}：它只在堆里记，**不会**往会话里写
+     * {@code FindByIndexNameSessionRepository.PRINCIPAL_NAME_INDEX_NAME} 这个属性，
+     * 于是 Redis 里没有 {@code spring:session:index:*}、{@code findByPrincipalName} 恒空 ——
+     * 「改密码把别的设备踢下去」会静默地一个都踢不到（2026-10-16 线上核对过：0 个 index key）。
+     *
+     * <p>⚠️ 索引是**登录那一刻**写进去的，所以本功能上线之前就存在的会话不在索引里、踢不到。
+     */
+    @Bean
+    public SpringSessionBackedSessionRegistry<? extends Session> sessionRegistry(
+            FindByIndexNameSessionRepository<? extends Session> sessionRepository) {
+        return new SpringSessionBackedSessionRegistry<>(sessionRepository);
+    }
+
     @Bean
     public AuthenticationProvider authorizationManager(UserDetailsService userDetailsService) {
 
         DaoAuthenticationProvider authenticationProvider = new DaoAuthenticationProvider(userDetailsService);
-        authenticationProvider.setPasswordEncoder(new BCryptPasswordEncoder());
+        authenticationProvider.setPasswordEncoder(passwordEncoder());
         return authenticationProvider;
     }
 

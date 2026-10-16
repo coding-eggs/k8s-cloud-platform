@@ -36,6 +36,10 @@ const router = createRouter({
         // 总览：无 requiresPerm（登录即可见）—— 路由守卫的回落目标，加码会死循环
         { path: 'overview', name: 'overview', component: () => import('@/views/OverviewView.vue'), meta: { title: '总览' } },
 
+        // 个人中心：同样**不挂权限点** —— 改自己的密码/资料是登录即有的能力，
+        // 跟"有没有某个资源的管理权"无关。入口在右上角头像那个下拉里，侧边菜单不露。
+        { path: 'profile', name: 'profile', component: () => import('@/views/ProfileView.vue'), meta: { title: '个人中心' } },
+
         // 平台管理
         { path: 'clusters', name: 'clusters', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群管理', group: '平台管理', requiresPerm: [pageCodes.cluster] } },
         { path: 'clusters/detail', name: 'cluster-detail', component: () => import('@/views/ClusterDetailView.vue'), meta: { title: '集群概览', group: '平台管理', requiresPerm: [pageCodes.cluster] } },
