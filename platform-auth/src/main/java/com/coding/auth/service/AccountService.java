@@ -7,8 +7,7 @@ import com.coding.data.models.auth.PlatformUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.session.FindByIndexNameSessionRepository;
-import org.springframework.session.Session;
+import org.springframework.session.data.redis.RedisIndexedSessionRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.Date;
@@ -52,8 +51,14 @@ public class AccountService {
      * ⚠️ 这个索引是登录那一刻由 Spring Security 的会话策略写进去的（见 {@code SecurityConfig}
      * 里注册的 {@code SpringSessionBackedSessionRegistry}）；**本功能上线之前就已经存在的会话
      * 不在索引里**，踢不到，会自然过期。部署后新登的都算数。
+     *
+     * <p>⚠️ 注入的是**具体类型**而不是 {@code FindByIndexNameSessionRepository<? extends Session>}：
+     * 那个 bean 的泛型参数是 {@code RedisIndexedSessionRepository.RedisSession}，
+     * **Spring 不认通配符那条**，按接口注入直接启动失败
+     * （{@code No qualifying bean of type 'FindByIndexNameSessionRepository<Session>'}）。
+     * 实现只有一个，按具体类型注入反而更直白。
      */
-    private final FindByIndexNameSessionRepository<? extends Session> sessions;
+    private final RedisIndexedSessionRepository sessions;
 
     /**
      * 改密码：验旧密码 → 存新哈希 → 踢掉**其它**会话，当前这台留着。
@@ -133,12 +138,13 @@ public class AccountService {
      * "踢不到"和"踢失败"是两回事，前者是正常的。
      */
     private int killSessions(String principalName, String keepSessionId) {
-        Map<String, ? extends Session> found = sessions.findByPrincipalName(principalName);
+        Map<String, RedisIndexedSessionRepository.RedisSession> found =
+                sessions.findByPrincipalName(principalName);
         if (found == null || found.isEmpty()) {
             return 0;
         }
         int killed = 0;
-        for (Session s : found.values()) {
+        for (RedisIndexedSessionRepository.RedisSession s : found.values()) {
             if (s == null || s.getId() == null) {
                 continue;
             }

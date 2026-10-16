@@ -1,7 +1,7 @@
 package com.coding.auth.config;
 
 import org.springframework.context.annotation.Configuration;
-import org.springframework.session.data.redis.config.annotation.web.http.EnableRedisHttpSession;
+import org.springframework.session.data.redis.config.annotation.web.http.EnableRedisIndexedHttpSession;
 
 /**
  * 显式启用基于 Redis 的 HTTP 会话（作为 session-renewal grant 的根凭证存储）。
@@ -10,13 +10,26 @@ import org.springframework.session.data.redis.config.annotation.web.http.EnableR
  * （3.x 里仅把 starter 放上 classpath 即自动生效，4.0.6 的 autoconfigure 中已无
  * {@code SessionAutoConfiguration}/{@code RedisSessionConfiguration}）。因此必须用本注解显式启用。
  *
- * <p>{@link EnableRedisHttpSession} 会：
+ * <p>⚠️ <b>是 {@code Indexed} 那个，不是 {@code @EnableRedisHttpSession}</b>（2026-10-16 修正）。
+ * Spring Session 3.0 起这两个注解分了家：
  * <ul>
- *   <li>创建 {@code RedisIndexedSessionRepository}（复用 Boot 自动装配的 LettuceConnectionFactory，
- *       连接参数来自 {@code spring.data.redis.*}）；</li>
- *   <li>注册 {@code SpringSessionRepositoryFilter}，把 {@link jakarta.servlet.http.HttpSession}
- *       透明替换为 Redis 支撑的实现 —— 应用代码（converter / keepalive）仍走标准 HttpSession API。</li>
+ *   <li>{@code @EnableRedisHttpSession} → {@code RedisSessionRepository}，**没有**索引。
+ *       本类原来用的就是它，而 javadoc 里却写着"创建 RedisIndexedSessionRepository" ——
+ *       文档是照着更早的版本写的，代码早就不是那个意思了。</li>
+ *   <li>{@code @EnableRedisIndexedHttpSession} → {@code RedisIndexedSessionRepository}，
+ *       多一份「**按用户名**（principal）索引会话」的表。</li>
  * </ul>
+ * 这个差别**不报错、只是静默地少一样东西**：线上 Redis 里 21 个
+ * {@code spring:session:sessions:*}、**0 个** {@code spring:session:index:*}，
+ * 于是"改密码把别的设备踢下去"一个都踢不到。自助改密码（S1.1）就靠这张索引。
+ *
+ * <p>代价：多维护 index / expirations 两类键（Spring 当初把它拆出去就是为了省这点内存），
+ * 对本平台的量级无所谓。⚠️ 切换**不影响已有会话** —— 两类仓库用同一个
+ * {@code RedisSessionMapper} 写同一批 {@code spring:session:sessions:*} 哈希，
+ * 老会话照常能读出来（只是不在索引里、踢不到，会自然过期）。
+ *
+ * <p>它还注册 {@code SpringSessionRepositoryFilter}，把 {@link jakarta.servlet.http.HttpSession}
+ * 透明替换为 Redis 支撑的实现 —— 应用代码（converter / keepalive）仍走标准 HttpSession API。
  *
  * <p>会话空闲超时设为 8h（{@code maxInactiveIntervalInSeconds = 28800}），由 SPA 活跃期间定期调用
  * {@code /session/keepalive} 滑动续期。
@@ -26,7 +39,7 @@ import org.springframework.session.data.redis.config.annotation.web.http.EnableR
  * 保持该连接热并主动探活恢复，详见该类说明。
  */
 @Configuration
-@EnableRedisHttpSession(maxInactiveIntervalInSeconds = RedisSessionConfig.SESSION_MAX_INACTIVE_SECONDS)
+@EnableRedisIndexedHttpSession(maxInactiveIntervalInSeconds = RedisSessionConfig.SESSION_MAX_INACTIVE_SECONDS)
 public class RedisSessionConfig {
 
     /**

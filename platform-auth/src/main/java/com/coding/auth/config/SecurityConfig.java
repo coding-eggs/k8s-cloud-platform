@@ -32,11 +32,10 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.core.session.SessionRegistry;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.session.FindByIndexNameSessionRepository;
 import org.springframework.session.Session;
+import org.springframework.session.data.redis.RedisIndexedSessionRepository;
 import org.springframework.session.security.SpringSessionBackedSessionRegistry;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.authentication.logout.CookieClearingLogoutHandler;
@@ -208,16 +207,6 @@ public class SecurityConfig {
     }
 
     /**
-     * 密码编码器。做成 bean 是为了**只有一个实例**：登录校验（{@code DaoAuthenticationProvider}）
-     * 与自助改密码（{@code AccountService}）必须用同一个 —— 各 new 一个 BCryptPasswordEncoder
-     * 现在恰好等价（BCrypt 自带盐、无共享状态），但那是巧合，不该靠它。
-     */
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
-
-    /**
      * 会话登记表：**按用户名**索引会话的那一套（自助改密码踢会话靠它）。
      *
      * <p>⚠️ 别改回默认的内存版 {@code SessionRegistryImpl}：它只在堆里记，**不会**往会话里写
@@ -229,15 +218,20 @@ public class SecurityConfig {
      */
     @Bean
     public SpringSessionBackedSessionRegistry<? extends Session> sessionRegistry(
-            FindByIndexNameSessionRepository<? extends Session> sessionRepository) {
+            RedisIndexedSessionRepository sessionRepository) {
         return new SpringSessionBackedSessionRegistry<>(sessionRepository);
     }
 
     @Bean
-    public AuthenticationProvider authorizationManager(UserDetailsService userDetailsService) {
+    public AuthenticationProvider authorizationManager(UserDetailsService userDetailsService,
+                                                       PasswordEncoder passwordEncoder) {
 
         DaoAuthenticationProvider authenticationProvider = new DaoAuthenticationProvider(userDetailsService);
-        authenticationProvider.setPasswordEncoder(passwordEncoder());
+        // ⚠️ 用容器里那一个（`AuthorizationServerConfig#passwordEncoder`），别在这儿 new ——
+        //    这个类里原本就是 `new BCryptPasswordEncoder()`，而我在 S1.1 里想当然地又加了一个同名
+        //    `@Bean passwordEncoder()`，结果**启动直接失败**（bean 名冲突，overriding 是关的）。
+        //    这就是"单测绿 ≠ 装得起来"：8 条单测全过，启动才发现。
+        authenticationProvider.setPasswordEncoder(passwordEncoder);
         return authenticationProvider;
     }
 

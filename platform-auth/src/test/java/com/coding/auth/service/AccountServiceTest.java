@@ -7,8 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.session.FindByIndexNameSessionRepository;
-import org.springframework.session.Session;
+import org.springframework.session.data.redis.RedisIndexedSessionRepository;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -33,9 +32,8 @@ class AccountServiceTest {
     private final PlatformUserMapper users = mock(PlatformUserMapper.class);
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
 
-    @SuppressWarnings("unchecked")
-    private final FindByIndexNameSessionRepository<Session> sessions =
-            mock(FindByIndexNameSessionRepository.class);
+    /** ⚠️ mock 的是**具体类型** —— 服务注入的就是它（按接口注入通配符 Spring 解析不了）。 */
+    private final RedisIndexedSessionRepository sessions = mock(RedisIndexedSessionRepository.class);
 
     private final AccountService svc = new AccountService(users, encoder, sessions);
 
@@ -51,9 +49,10 @@ class AccountServiceTest {
 
     /** 三个会话：s2 当作"当前这台"。 */
     private void aliceHasThreeSessions() {
-        Map<String, Session> found = new LinkedHashMap<>();
+        Map<String, RedisIndexedSessionRepository.RedisSession> found = new LinkedHashMap<>();
         for (String id : new String[]{"s1", "s2", "s3"}) {
-            Session s = mock(Session.class);
+            RedisIndexedSessionRepository.RedisSession s =
+                    mock(RedisIndexedSessionRepository.RedisSession.class);
             when(s.getId()).thenReturn(id);
             found.put(id, s);
         }
