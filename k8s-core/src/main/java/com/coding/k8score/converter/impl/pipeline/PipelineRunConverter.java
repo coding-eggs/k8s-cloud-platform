@@ -14,6 +14,17 @@ import java.util.List;
 public class PipelineRunConverter {
 
     /**
+     * 「这个节点**根本没跑**」—— Tekton 对跳过的 PipelineTask **不建 TaskRun**，所以它不在下面
+     * 那套 condition 映射里，得由 {@code status.skippedTasks[]} 补进来
+     * （见 {@code PipelineRunOperations.steps}）。
+     *
+     * <p>两种情形会走到这里：上游没成功被级联跳过、以及 finally 节点的执行时机不满足。
+     *
+     * <p>⚠️ 与前端 {@code PipelineNodeVue} 的 {@code STATUS_TEXT} 成对 —— 加状态要同时加两边。
+     */
+    public static final String SKIPPED = "SKIPPED";
+
+    /**
      * Tekton 用 conditions 表达结果，平台用五个状态。映射：
      * <ul>
      *   <li>没有 condition（还没被 reconciler 处理）→ {@code RUNNING}</li>

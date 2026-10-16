@@ -50,6 +50,9 @@ const STATUS_CLASS: Record<string, string> = {
   CANCELLED: 'warn',
   TIMEOUT: 'warn',
   RUNNING: 'running',
+  // ⚠️ 「没跑」也是一种结果，而且是**最需要解释**的那一种（上游没成功 / 收尾时机不满足）——
+  // 不画出来，用户看到的就是「画布上这个节点凭空不见了」。原因在运行详情里那一行「已跳过」
+  SKIPPED: 'skipped',
 }
 const STATUS_TEXT: Record<string, string> = {
   SUCCEEDED: '成功',
@@ -57,6 +60,7 @@ const STATUS_TEXT: Record<string, string> = {
   CANCELLED: '已取消',
   TIMEOUT: '超时',
   RUNNING: '正在跑',
+  SKIPPED: '已跳过',
 }
 const statusClass = computed(() => (props.data.status ? STATUS_CLASS[props.data.status] ?? '' : ''))
 const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.status] ?? props.data.status : ''))
@@ -208,6 +212,16 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
 .pnode.warn .pnode-status {
   color: var(--warning);
   border-color: var(--warning);
+}
+/* 「没跑」：**虚线 + 灰** —— 它既不是成功也不是失败，不该被读成两者之一 */
+.pnode.skipped {
+  border-style: dashed;
+  border-color: var(--border-strong);
+}
+.pnode.skipped .pnode-status {
+  color: var(--text-3);
+  border-color: var(--border-strong);
+  border-style: dashed;
 }
 .pnode.running {
   border-color: var(--info);

@@ -28,6 +28,7 @@ import io.fabric8.tekton.v1.PipelineRun;
 import io.fabric8.tekton.v1.PipelineRunSpec;
 import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.StepState;
+import io.fabric8.tekton.v1.SkippedTask;
 import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.PipelineRunStatus;
 import io.fabric8.tekton.v1.TaskRunStatus;
@@ -44,8 +45,10 @@ import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Tekton {@code PipelineRun} 操作（{@code tekton.dev/v1}，命名空间级、租户域）。
@@ -743,6 +746,11 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      * 而对象一归档就被删，所以这句话只有抓快照这一刻能拿到（2026-10-15 真跑撞到：
      * 用户在运行历史里只看到一句 Failed）。
      *
+     * <p>⚠️ <b>只认「失败」那三个状态，不用反向条件</b>：{@code SKIPPED} 节点的 message 是
+     * <b>跳过</b>的原因（{@code Parent Tasks had failed}），拿它当失败原因会把真因顶掉
+     * （2026-10-16 加跳过节点时撞到 —— 原来的条件是「不是 SUCCEEDED / RUNNING」，正好把
+     * SKIPPED 放了进来）。
+     *
      * @param fallback Tekton 自己给的 reason（没有更具体的就用它，绝不编一个）
      */
     static String failureReasonOf(List<PipelineStepRefDTO> steps, String fallback) {
@@ -750,10 +758,16 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
             return fallback;
         }
         return steps.stream()
-                .filter(s -> !"SUCCEEDED".equals(s.status()) && !"RUNNING".equals(s.status()))
+                .filter(PipelineRunOperations::isFailure)
                 .map(PipelineStepRefDTO::message)
                 .filter(m -> m != null && !m.isBlank())
                 .findFirst().orElse(fallback);
+    }
+
+    /** 这个节点是**失败**了吗（跳过的节点不算 —— 它的 message 说的是跳过原因）。 */
+    private static boolean isFailure(PipelineStepRefDTO s) {
+        return "FAILED".equals(s.status()) || "TIMEOUT".equals(s.status())
+                || "CANCELLED".equals(s.status());
     }
 
     /** TaskRun 的 Succeeded condition 上的 message —— Tekton 把「为什么失败」写在这里。 */
@@ -774,6 +788,10 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      * <p>⚠️ <b>「run → TaskRun → Pod → 容器」这套解析放在这里</b>，不放在 platform-api：
      * 那是 Tekton 的结构知识，而 platform-api 不依赖 k8s-core（spec §7 的改定块）。
      * 回的是**已经解析好的落点**，调用方拿着 podName + containers 去走既有的 Pod 日志通道。
+     *
+     * <p>⚠️ <b>跑过的节点 + 没跑的节点都要有</b>：Tekton 对跳过的 PipelineTask 不建 TaskRun，
+     * 只照 {@code childReferences} 找的话，运行详情里那些节点连状态都没有 ——
+     * 用户看到的是「画布上那个节点凭空不见了」（2026-10-16 补，见 {@link #appendSkipped}）。
      */
     public List<PipelineStepRefDTO> steps(String namespace, String runName) {
         PipelineRun pr = fetch(namespace, runName);
@@ -790,7 +808,47 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                 out.add(toStepRef(taskRunName, tr));
             }
         }
+        PipelineRunStatus st = pr.getStatus();
+        return appendSkipped(out, st == null ? List.of() : st.getSkippedTasks());
+    }
+
+    /**
+     * 把**没跑起来**的节点补进来（Tekton 的 {@code status.skippedTasks[]}）。
+     *
+     * <p>两种情形：上游没成功被级联跳过、finally 节点的执行时机不满足。
+     *
+     * <p>⚠️ 真跑过的节点以 TaskRun 为准（同名就丢掉跳过那条）—— 同一个节点在界面上
+     * 出现两次是最糟的形态。
+     *
+     * <p>**纯函数**（不碰 client），所以可单测。
+     */
+    static List<PipelineStepRefDTO> appendSkipped(List<PipelineStepRefDTO> refs,
+                                                  List<SkippedTask> skipped) {
+        List<PipelineStepRefDTO> out = new ArrayList<>(refs == null ? List.of() : refs);
+        if (skipped == null || skipped.isEmpty()) {
+            return out;
+        }
+        Set<String> seen = new HashSet<>();
+        out.forEach(r -> seen.add(r.nodeName()));
+        for (SkippedTask sk : skipped) {
+            String name = sk == null ? null : sk.getName();
+            if (name == null || name.isBlank() || !seen.add(name)) {
+                continue;
+            }
+            out.add(toSkippedStepRef(sk));
+        }
         return out;
+    }
+
+    /**
+     * 跳过的节点 → 落点：**没有 TaskRun、没有 Pod**，只有 Tekton 给的跳过原因。
+     * 于是抓日志那条路自然跳过它（{@code liveLogs} 按 podName 过滤）—— 它本来就没有日志。
+     *
+     * <p>**纯函数**（不碰 client），所以可单测。
+     */
+    static PipelineStepRefDTO toSkippedStepRef(SkippedTask sk) {
+        return new PipelineStepRefDTO(sk.getName(), PipelineRunConverter.SKIPPED, null, List.of(),
+                sk.getReason());
     }
 
     /**

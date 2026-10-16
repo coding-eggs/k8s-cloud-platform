@@ -18,7 +18,7 @@ import type { Edge, Node } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas, PipelineRun, PipelineStepRef } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineCanvasNode, PipelineRun, PipelineStepRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
@@ -135,6 +135,54 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
 const logTargets = computed(() =>
   (canvas.value?.nodes ?? []).map((n) => ({ id: n.id, label: (n.name ?? '').trim() || n.id })),
 )
+
+/**
+ * 被跳过的节点 —— **光有「已跳过」三个字不够，得说清楚为什么不跑**。
+ *
+ * <p>⚠️ 为什么这里的「为什么」是**推出来**的，而不是读 Tekton 的原话：归档之后每个节点的状态
+ * 只剩 `stepsJson` 里的 `节点=状态` 那几对（**没有原因那一栏**），而运行详情绝大多数时候看的
+ * 是归档后的运行。好在两条口径都在我们自己的数据里 —— 跳过的原因只有两类（前面没成功 /
+ * 运行提前结束），而「这个节点是不是收尾、时机选的是哪个」就写在**这条运行当年那张画布**上
+ * （`canvasJson` 是随运行存下来的，见 `skipWhy`）。
+ *
+ * <p>⚠️ Tekton 的原话**不能拿来当判据**：真跑过的那条（2026-10-15，git 失败 → 镜像节点被跳过）
+ * 归档 YAML 里写的是 {@code reason: "PipelineRun was stopping"} —— 既不是文档里的
+ * `Parent Tasks had failed`，也不像人话。原话仍在时（还在跑、现抓得到）挂到 `title` 上，不丢。
+ */
+const skippedNodes = computed(() => {
+  const c = canvas.value
+  if (!c) return []
+  const st = nodeStatus.value
+  const raw = new Map(liveSteps.value.map((s) => [s.nodeName, s.message ?? '']))
+  const anyFailed = Object.values(st).some((s) => s === 'FAILED')
+  return (c.nodes ?? [])
+    .filter((n) => st[n.id] === 'SKIPPED')
+    .map((n) => ({
+      id: n.id,
+      label: (n.name ?? '').trim() || n.id,
+      why: skipWhy(n, anyFailed),
+      raw: raw.get(n.id) ?? '',
+    }))
+})
+
+/**
+ * 跳过的两种情形 —— 与后端 `PipelineRunConverter.SKIPPED` 的说明成对：
+ * 前面没成功被跟着跳过；或收尾节点的执行时机不满足。
+ *
+ * @param anyFailed 这一趟里有没有节点失败 —— 有失败就是「跟着被跳过」；
+ *                  一个都没失败（取消/超时结束的运行）就是「没轮到它」
+ */
+function skipWhy(n: PipelineCanvasNode, anyFailed: boolean): string {
+  if (n.finallyTask === true) {
+    const when = n.finallyWhen ?? 'always'
+    if (when === 'failed') return '收尾时机是「仅前面有节点失败时」，这次前面是成功的'
+    if (when === 'succeeded') return '收尾时机是「仅前面全部成功时」，这次前面有节点失败了'
+    // when=always 却还被跳过，只可能是运行提前结束了（取消/超时）
+    return '运行提前结束，没轮到它'
+  }
+  // tasks[] 里我们**不渲染任何 when**（Tekton 也不让引用执行状态），所以普通节点被跳过只有两种可能
+  return anyFailed ? '上游没成功，跟着被跳过' : '运行提前结束（取消或超时），没轮到它'
+}
 
 const STATUS_TAG: Record<string, string> = {
   SUCCEEDED: 'success',
@@ -262,6 +310,15 @@ async function openYaml() {
 async function loadLogs(nodeName?: string) {
   if (!selected.value) return
   logNode.value = nodeName ?? ''
+  // 跳过的节点**没有日志**（它没有 Pod）—— 与其回一句「（没有日志）」让人以为日志丢了，
+  // 不如把「为什么没跑」原地说一遍
+  if (nodeName) {
+    const skipped = skippedNodes.value.find((s) => s.id === nodeName)
+    if (skipped) {
+      logs.value = `这个节点被跳过了，没有日志：${skipped.why}`
+      return
+    }
+  }
   try {
     logs.value = await pipelineApi.runLogs(selected.value.runName, nodeName, effectiveTenantId.value)
   } catch {
@@ -355,6 +412,14 @@ async function cancel(r: PipelineRun) {
         </div>
         <div v-if="canvasIsCurrent" class="dim">
           （这条运行没有留下当时的画布，下面画的是「当前」的流水线定义）
+        </div>
+
+        <!-- 跳过的节点：画布上那三个字说不清「为什么不跑」，这里逐条讲 -->
+        <div v-if="skippedNodes.length" class="skipped">
+          <span class="skipped-head">已跳过</span>
+          <span v-for="s in skippedNodes" :key="s.id" class="skipped-item" :title="s.raw">
+            {{ s.label }}（{{ s.why }}）
+          </span>
         </div>
 
         <div class="dag">
@@ -455,6 +520,23 @@ async function cancel(r: PipelineRun) {
 }
 .dim {
   color: var(--text-3);
+}
+/* 跳过的节点：一条一行地列出来（画布上的节点太小，写不下原因） */
+.skipped {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.skipped-head {
+  color: var(--text-3);
+}
+.skipped-item {
+  padding: 1px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
 }
 .dag {
   height: 220px;

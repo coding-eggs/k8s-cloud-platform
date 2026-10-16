@@ -152,6 +152,83 @@ class PipelineRunOperationsTest {
                 .isEqualTo("Succeeded");
     }
 
+    // ---- 「跳过的节点」也得看得见（2026-10-16：运行详情里节点凭空不见了）----
+    //
+    // ⚠️ Tekton 对**没跑起来**的节点**不建 TaskRun**（上游失败级联跳过、finally 的执行时机
+    //    不满足，都会这样），它们只出现在 PipelineRun 的 `status.skippedTasks[]` 里。
+    //    只照 childReferences 找 TaskRun 的话，画布上那个节点在运行详情里连状态都没有。
+
+    @Test
+    void aSkippedNodeShowsUpEvenThoughItNeverRan() {
+        PipelineStepRefDTO ref =
+                PipelineRunOperations.toSkippedStepRef(skippedTask("notify", "Parent Tasks had failed"));
+
+        assertThat(ref.nodeName()).isEqualTo("notify");           // PipelineTask 名 = 画布节点 id
+        assertThat(ref.status()).isEqualTo("SKIPPED");
+        assertThat(ref.podName()).isNull();                       // 没跑就没有 Pod（抓日志那条路自然跳过它）
+        assertThat(ref.containers()).isEmpty();
+        assertThat(ref.message()).isEqualTo("Parent Tasks had failed");   // Tekton 的原话，不翻译
+    }
+
+    @Test
+    void skippedNodesAreAppendedAfterTheOnesThatRan() {
+        List<PipelineStepRefDTO> out = PipelineRunOperations.appendSkipped(
+                List.of(stepRef("clone", "FAILED", "clone-pod", "boom")),
+                List.of(skippedTask("build", "Parent Tasks had failed"),
+                        skippedTask("notify", "When Expressions evaluated to false")));
+
+        assertThat(out).extracting(PipelineStepRefDTO::nodeName)
+                .containsExactly("clone", "build", "notify");
+        assertThat(out.get(0).status()).isEqualTo("FAILED");      // 跑过的那条原样不动
+        assertThat(out.get(1).status()).isEqualTo("SKIPPED");
+    }
+
+    @Test
+    void aNodeListedAsSkippedButAlsoHavingATaskRunIsNotDuplicated() {
+        // 真跑过就以 TaskRun 为准 —— 同一个节点在界面上出现两次是最糟的形态
+        List<PipelineStepRefDTO> out = PipelineRunOperations.appendSkipped(
+                List.of(stepRef("build", "SUCCEEDED", "build-pod", null)),
+                List.of(skippedTask("build", "Parent Tasks had failed")));
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).status()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void aSkippedEntryWithoutANameIsIgnored() {
+        assertThat(PipelineRunOperations.appendSkipped(List.of(), List.of(skippedTask(null, "x"))))
+                .isEmpty();
+        assertThat(PipelineRunOperations.appendSkipped(List.of(), null)).isEmpty();
+    }
+
+    @Test
+    void aSkippedNodesReasonIsNeverMistakenForTheRunsFailure() {
+        // ⚠️ 这里曾经会错：failureReasonOf 用的是「不是 SUCCEEDED / RUNNING」这个**反向**条件，
+        //    加上 SKIPPED 之后，排在它前面的跳过原因会把真失败原因顶掉 ——
+        //    而「Parent Tasks had failed」是**跳过**的原因，不是失败的原因。
+        List<PipelineStepRefDTO> ordered = List.of(
+                new PipelineStepRefDTO("notify", "SKIPPED", null, List.of(), "Parent Tasks had failed"),
+                stepRef("build", "FAILED", "build-pod", "boom：真因"));
+        assertThat(PipelineRunOperations.failureReasonOf(ordered, "Failed")).isEqualTo("boom：真因");
+
+        // 只剩跳过原因时退回 Tekton 自己的 reason —— 绝不把跳过原因冒充成失败原因
+        assertThat(PipelineRunOperations.failureReasonOf(
+                List.of(new PipelineStepRefDTO("notify", "SKIPPED", null, List.of(),
+                        "Parent Tasks had failed")), "Failed"))
+                .isEqualTo("Failed");
+    }
+
+    private static io.fabric8.tekton.v1.SkippedTask skippedTask(String name, String reason) {
+        io.fabric8.tekton.v1.SkippedTask sk = new io.fabric8.tekton.v1.SkippedTask();
+        sk.setName(name);
+        sk.setReason(reason);
+        return sk;
+    }
+
+    private static PipelineStepRefDTO stepRef(String node, String status, String pod, String message) {
+        return new PipelineStepRefDTO(node, status, pod, List.of(), message);
+    }
+
     @Test
     void theCacheWorkspaceBindsTheLongLivedPvcWhenItIsAvailable() {
         // ⭐ 依赖缓存的地基：cache workspace 绑的不是「每次现开一块」，而是
