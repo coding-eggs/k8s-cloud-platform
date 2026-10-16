@@ -350,6 +350,10 @@ const contextDesc = computed(() => {
       <el-tooltip v-if="detail?.kind === 'deployment'" :content="isOpManaged ? '由 Operator 管理，不可操作' : ''" :disabled="!isOpManaged" placement="bottom">
         <el-button size="small" :disabled="!detail || isOpManaged" @click="togglePause">{{ detail?.paused ? '恢复更新' : '暂停更新' }}</el-button>
       </el-tooltip>
+      <!-- 看日志是**只读**动作，排在主操作「编辑」前面；没有 Pod 时没日志可看 -->
+      <el-button size="small" :disabled="!pods.length" @click="workloadLogsVisible = true">
+        全部 Pod 日志
+      </el-button>
       <el-tooltip :content="isOpManaged ? '由 Operator 管理，不可编辑' : ''" :disabled="!isOpManaged" placement="bottom">
         <el-button size="small" type="primary" :disabled="!detail || isOpManaged" @click="goEditor">编辑</el-button>
       </el-tooltip>
@@ -444,8 +448,6 @@ const contextDesc = computed(() => {
           <div class="list-head">
             <h3 class="info-title">Pod 副本</h3>
             <span class="muted count">{{ pods.length }} 个</span>
-            <el-button size="small" style="margin-left: 8px" :disabled="!pods.length"
-                       @click="workloadLogsVisible = true">全部 Pod 日志</el-button>
           </div>
           <EmptyState v-if="pods.length === 0 && !loading" title="暂无 Pod" description="该工作负载下当前没有运行中的 Pod。" />
           <el-table v-else :data="pods" stripe size="small">
