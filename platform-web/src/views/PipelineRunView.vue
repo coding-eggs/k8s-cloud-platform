@@ -167,7 +167,7 @@ async function removeRun(r: PipelineRun): Promise<void> {
           <code class="res-name name-link" @click="openRun(row)">{{ row.runName }}</code>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="110">
+      <el-table-column label="状态" width="160">
         <template #default="{ row }">
           <el-tag :type="tagType(row.status)" size="small">{{ row.status }}</el-tag>
         </template>
