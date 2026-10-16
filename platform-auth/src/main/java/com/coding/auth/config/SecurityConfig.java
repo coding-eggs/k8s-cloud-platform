@@ -168,14 +168,12 @@ public class SecurityConfig {
                                     }
                                 })
 
-                                // ⚠️ 这一行是「改密码后按用户名踢掉其它会话」的**全部前提**。
-                                //    光配 maximumSessions(-1) 是不够的：没给 sessionRegistry 时 Spring 用
-                                //    默认的**内存版** SessionRegistryImpl，它**不会**往会话里写 principal 索引
-                                //    属性 —— 于是 Redis 里一个 spring:session:index:* 都不会有
-                                //    （2026-10-16 在线上查过：21 个 sessions key、0 个 index key），
-                                //    findByPrincipalName 永远返回空。换成 SpringSessionBackedSessionRegistry
-                                //    才会在登录那一刻把索引写进 Redis。
-                                //    maximumSessions(-1) = 不限并发数：我们只要它**登记**，不要它踢人。
+                                // ⚠️ 别以为这一行能"打开索引"—— 它不能，见下面那个 bean 的说明。
+                                //    它在链路里的实际作用：把 RegisterSessionAuthenticationStrategy /
+                                //    ConcurrentSessionControlAuthenticationStrategy 装上（isConcurrentSessionControlEnabled()
+                                //    的判据就是"有没有 sessionRegistry"）。maximumSessions(-1) = 不限并发，
+                                //    所以今天它是空转 —— 留着是为了哪天真设上限时走的是 Redis 版而不是内存版。
+                                //    索引真正的开关在 RedisSessionConfig 的 @EnableRedisIndexedHttpSession。
                                 .sessionRegistry(sessionRegistry)
 
                 )
@@ -207,14 +205,22 @@ public class SecurityConfig {
     }
 
     /**
-     * 会话登记表：**按用户名**索引会话的那一套（自助改密码踢会话靠它）。
+     * 会话登记表。**它不是索引的来源** —— 这一点 2026-10-16 读源码才弄明白，别照着旧注释理解。
      *
-     * <p>⚠️ 别改回默认的内存版 {@code SessionRegistryImpl}：它只在堆里记，**不会**往会话里写
-     * {@code FindByIndexNameSessionRepository.PRINCIPAL_NAME_INDEX_NAME} 这个属性，
-     * 于是 Redis 里没有 {@code spring:session:index:*}、{@code findByPrincipalName} 恒空 ——
-     * 「改密码把别的设备踢下去」会静默地一个都踢不到（2026-10-16 线上核对过：0 个 index key）。
+     * <p>⚠️ 真相：在 Spring Session 4.x 里 {@code SpringSessionBackedSessionRegistry} 的
+     * {@code registerNewSession / removeSessionInformation / refreshLastRequest} **全是空方法**
+     * （源码注释：{@code This is a no-op, as we don't administer sessions ourselves}）。
+     * 索引是**仓库自己在 save() 时**写的：{@code RedisIndexedSessionRepository} 默认挂
+     * {@code DelegatingIndexResolver<>(new PrincipalNameIndexResolver<>())}，后者从会话里的
+     * {@code SPRING_SECURITY_CONTEXT} 取 {@code authentication.name}。所以要"按用户名找会话"，
+     * 真正的开关是 {@link RedisSessionConfig} 上的 {@code @EnableRedisIndexedHttpSession}，
+     * 不是这里。
      *
-     * <p>⚠️ 索引是**登录那一刻**写进去的，所以本功能上线之前就存在的会话不在索引里、踢不到。
+     * <p>那还留着它干什么：{@code maximumSessions(>0)} 时并发会话控制走的是
+     * {@code SessionRegistry}，**内存版**在集群/重启下会把"这人有哪些会话"记丢；
+     * 换成这个才是从 Redis 现读。当前配的是 {@code maximumSessions(-1)}（不限并发，只借它把
+     * {@code RegisterSessionAuthenticationStrategy} 装进链路），所以今天它确实**什么也没做** ——
+     * 但哪天真设了上限，用错的 registry 就是另一种静默失效。
      */
     @Bean
     public SpringSessionBackedSessionRegistry<? extends Session> sessionRegistry(

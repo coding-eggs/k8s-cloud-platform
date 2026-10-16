@@ -48,9 +48,18 @@ public class AccountService {
 
     /**
      * {@code RedisIndexedSessionRepository} —— 它能**按用户名**找出这个人的所有会话。
-     * ⚠️ 这个索引是登录那一刻由 Spring Security 的会话策略写进去的（见 {@code SecurityConfig}
-     * 里注册的 {@code SpringSessionBackedSessionRegistry}）；**本功能上线之前就已经存在的会话
-     * 不在索引里**，踢不到，会自然过期。部署后新登的都算数。
+     *
+     * <p>⚠️ 索引是**仓库自己在 save() 时**写的（默认的 {@code PrincipalNameIndexResolver} 从会话里的
+     * {@code SPRING_SECURITY_CONTEXT} 取 {@code authentication.name}），**不是**登录策略写的。
+     * 开关是 {@code RedisSessionConfig} 上的 {@code @EnableRedisIndexedHttpSession} ——
+     * 用 {@code @EnableRedisHttpSession} 的话连索引机制都没有，而这个差别**不报错、只是静默地
+     * 一个都踢不动**。所以：**会话里没有 security context 就进不了索引**（比如没登录的会话）。
+     *
+     * <p>由此两条推论：
+     * <ul>
+     *   <li>本功能上线**之前**建的会话不在索引里，踢不到，会自然过期。</li>
+     *   <li>某个会话要**被保存过一次**才会进索引 —— 登录会保存，`/session/keepalive` 也会。</li>
+     * </ul>
      *
      * <p>⚠️ 注入的是**具体类型**而不是 {@code FindByIndexNameSessionRepository<? extends Session>}：
      * 那个 bean 的泛型参数是 {@code RedisIndexedSessionRepository.RedisSession}，
