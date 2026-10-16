@@ -537,11 +537,17 @@
 
 ### S4 · 收尾
 
-#### S4.1 PVC 扩容 ｜ 规模 S ｜ 方案已出
-- [ ] S4.1.1 `StorageClass.allowVolumeExpansion` 门控
-- [ ] S4.1.2 只增不减的前后端双重校验 + 权限点 + 迁移
-- [ ] S4.1.3 中间态展示（`Resizing` / `FileSystemResizePending` **不是异常**）
-- [ ] S4.1.4 STS `volumeClaimTemplate` 的特例处理（改 template + 手工对齐，或只读）
+#### S4.1 PVC 扩容 ｜ 规模 S ｜ 方案已出 ｜ ✅ 2026-10-16 完成
+- [x] S4.1.1 `StorageClass.allowVolumeExpansion` 门控 —— 数据本来就有（`StorageClassDTO` 里带了），
+      判断落在 `PvcService.update`；读不到存储类时 **fail-closed** 拒掉
+- [x] S4.1.2 只增不减的前后端双重校验 + 权限点 + 迁移 —— ⚠️ **权限点与迁移本来就有**
+      （`tenant:pvc:update` 早已存在且绑对了：tenant_admin 持有、tenant_member 只拿读动词），
+      所以只做了前后端两道校验。前端那道拦住了**不发请求**，后端才是权威（它读集群上那个对象）
+- [x] S4.1.3 中间态展示（`Resizing` / `FileSystemResizePending` **不是异常**）——
+      ⚠️ 它们**不在 `phase` 上**（扩容期间 `phase` 一直是 `Bound`），所以 DTO 补了 `conditions`、converter 补了映射
+- [x] S4.1.4 STS `volumeClaimTemplate` 的特例处理 —— ⚠️ **原方案里的「改 template」是错的**：
+      K8s 不允许改 StatefulSet 的 `spec.volumeClaimTemplates`，改了会被 API server 拒。
+      所以维持**只读**，补的是"为什么只读"的说明（另见 commit `dc6b0df`）
 
 #### S4.2 Istio 表单补偿 ｜ 规模 M ｜ 方案已出
 - [ ] S4.2.1 「快速路由」表单（域名 + 路径 + 后端 Service + TLS → 自动拆 Gateway + HTTPRoute，已有 Gateway 则复用）
@@ -576,7 +582,7 @@
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
-| **S4.1** | PVC 扩容 | — | S | 🔄 **进行中**（另一个 session：后端规则已落 `0de9533`，前端在做） | — |
+| **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 `0de9533` 后端 + `31c0c65` 前端 + `dc6b0df` STS 说明） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⬜ 未开始 | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |
 
