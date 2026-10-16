@@ -15,6 +15,7 @@ import KvTags from '@/components/KvTags.vue'
 import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import PodTerminal from '@/components/PodTerminal.vue'
 import PodLogDialog from '@/components/PodLogDialog.vue'
+import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import { fmtAge, fmtDate, podPhaseType, workloadStatus } from '@/utils/format'
 import { sumCpuCores, sumMemBytes } from '@/utils/metrics'
 import { formatBytes } from '@/utils/quantity'
@@ -144,6 +145,8 @@ async function openYaml(row: K8sPod): Promise<void> {
 // 日志（PodLogDialog：恒跟随 + 底部自动滚动 + 全屏）
 const logVisible = ref(false)
 const logPod = ref<K8sPod | null>(null)
+/** 工作负载级日志（勾选若干 Pod → 一条带前缀的流）：入口在 Pod 列表头上 */
+const workloadLogsVisible = ref(false)
 
 function openLogs(row: K8sPod): void {
   logPod.value = row
@@ -441,6 +444,8 @@ const contextDesc = computed(() => {
           <div class="list-head">
             <h3 class="info-title">Pod 副本</h3>
             <span class="muted count">{{ pods.length }} 个</span>
+            <el-button size="small" style="margin-left: 8px" :disabled="!pods.length"
+                       @click="workloadLogsVisible = true">全部 Pod 日志</el-button>
           </div>
           <EmptyState v-if="pods.length === 0 && !loading" title="暂无 Pod" description="该工作负载下当前没有运行中的 Pod。" />
           <el-table v-else :data="pods" stripe size="small">
@@ -579,6 +584,15 @@ const contextDesc = computed(() => {
     <PodLogDialog
       v-model="logVisible"
       :pod="logPod"
+      :tenant-id="ctxParams.tenantId"
+      :cluster-id="ctxParams.clusterId"
+      :namespace="ctxParams.namespace"
+    />
+
+    <!-- 工作负载级日志：勾选若干 Pod → 一条带 [pod/<pod>/<容器>] 前缀的流（照抄 kubectl -l --prefix） -->
+    <WorkloadLogsDialog
+      v-model="workloadLogsVisible"
+      :pods="pods"
       :tenant-id="ctxParams.tenantId"
       :cluster-id="ctxParams.clusterId"
       :namespace="ctxParams.namespace"
