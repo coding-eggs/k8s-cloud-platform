@@ -400,16 +400,53 @@ export async function switchTenant(tenantId: string | null, tenantName?: string)
   return true
 }
 
-/** 会话滑动续期。返回会话是否仍有效（false = 根凭证已失效，应重登） */
-async function keepalive(): Promise<boolean> {
+/**
+ * 保活探测的结论。
+ *
+ * ⚠️ **必须是三态**：把「问不到」（网络抖动 / 5xx / 响应看不懂）当成「失效」，就会因为一次闪断
+ * 把正在用的人踢下线 —— 那比「晚一点才发现会话没了」糟糕得多。只有**确定**失效才动人。
+ */
+export type KeepaliveVerdict = 'alive' | 'dead' | 'unknown'
+
+/**
+ * platform-auth 的 `ResponseData.code` 里表示「这个会话已经没了」的几个
+ * （与 platform-api 侧那套同一个约定，见 `api/http.ts` 的 4003 兜底）。
+ */
+const SESSION_DEAD_CODES = new Set([
+  4003, // USER_UN_LOGIN —— 会话不存在
+  4004, // USER_SESSION_EXPIRED
+  4005, // USER_SESSION_EXPIRED_CON（并发会话控制踢掉的）
+])
+
+/**
+ * 从一次 HTTP 结果判定会话状态。**纯函数**，方便钉住 —— 网络那一层在 {@link keepalive} 里兜。
+ *
+ * 约定（见 platform-auth 的 `authenticationEntryPoint`）：**JSON 请求**下，未登录/会话过期
+ * 也是 **HTTP 200 + body.code 非 200**，所以判据是 code 而不是状态码。
+ */
+export function keepaliveVerdict(ok: boolean, status: number, code: number | undefined): KeepaliveVerdict {
+  if (!ok) {
+    // 5xx = 「服务端现在答不上来」，跟「你没会话了」是两回事
+    return status >= 500 ? 'unknown' : 'dead'
+  }
+  if (code === 200) return 'alive'
+  return code != null && SESSION_DEAD_CODES.has(code) ? 'dead' : 'unknown'
+}
+
+/** 会话滑动续期。返回**三态**结论，不是布尔 —— 调用方要能区分「确定失效」与「问不到」。 */
+async function keepalive(): Promise<KeepaliveVerdict> {
   try {
-    const resp = await fetch(`${ISSUER}/session/keepalive`, { credentials: 'include' })
-    if (!resp.ok) return false
-    const data = (await resp.json()) as { code?: number }
-    // 会话失效时后端返回 USER_UN_LOGIN（非 200 code），HTTP 仍是 200 → 必须看 body.code
-    return data.code === 200
+    // ⚠️ 必须**显式要 JSON**：不带 Accept 时，会话失效会让安全链走「重定向」那一支
+    //    （302 → login.html → 200 HTML），`resp.json()` 抛错被吞成「问不到」，
+    //    于是"确定失效"永远判不出来 —— 这个兜底就等于没做。
+    const resp = await fetch(`${ISSUER}/session/keepalive`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    })
+    const body = resp.ok ? ((await resp.json().catch(() => null)) as { code?: number } | null) : null
+    return keepaliveVerdict(resp.ok, resp.status, body?.code)
   } catch {
-    return false
+    return 'unknown' // 网络错 / CORS / 响应不是 JSON —— 都算"问不到"，不动人
   }
 }
 
@@ -439,10 +476,35 @@ function scheduleRenew(): void {
   renewTimer = window.setTimeout(renewIfDue, delay)
 }
 
-/** 一次保活 tick：滑会话；token 快到期就续（兜底 renewTimer 被冻结的情况） */
+/**
+ * 根凭证（HttpOnly 会话）确定没了：清本地 + 回登录页。
+ *
+ * <p>与 http 拦截器的 401/4003 兜底（`api/http.ts` 的 redirectToLogin）走**同一套动作**：
+ * 先 `logout()`（会话已死时是幂等 no-op，网络失败也不阻断）再跳登录页。
+ *
+ * <p>⚠️ 为什么值得专门做：会话被删之后（例如在别处改了密码把人踢了），手上那张 access token
+ * 仍是自包含 JWT、**最长还能再用 2 小时**。没有这一步，那台设备就要傻等到 token 自然过期才回登录页；
+ * 有了它，**最长一个 keepalive 周期（10 分钟）内**就回去了。
+ */
+let rootGoneHandled = false
+
+function onRootCredentialGone(): void {
+  if (rootGoneHandled) return // 已经决定走了，别重复跳
+  rootGoneHandled = true
+  void logout().finally(() => {
+    window.location.href = '/login'
+  })
+}
+
+/** 一次保活 tick：滑会话；token 快到期就续（兜底 renewTimer 被冻结的情况）；确定失效就送走 */
 function tick(): void {
-  void keepalive().then((alive) => {
-    if (alive) void renewIfDue()
+  void keepalive().then((verdict) => {
+    if (verdict === 'alive') {
+      void renewIfDue()
+    } else if (verdict === 'dead') {
+      onRootCredentialGone()
+    }
+    // 'unknown'（网络抖动等）：**什么都不做**，等下一轮 —— 别拿闪断当"该重登"
   })
 }
 
@@ -457,6 +519,8 @@ function onVisibility(): void {
  */
 export function startSessionMaintenance(): () => void {
   stopSessionMaintenance()
+  // 新一轮维护 = 一次干净的开始：重新登录之后，会话再被踢时还要能送走（否则第一次的标记会一直挡着）
+  rootGoneHandled = false
   scheduleRenew() // 按当前 token 排首次「到期前」续期
   tick() // 立即滑一次会话
   keepaliveTimer = window.setInterval(tick, KEEPALIVE_INTERVAL_MS)
