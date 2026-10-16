@@ -14,7 +14,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { K8sPod } from '@/types'
 import { getAccessToken } from '@/auth/oauth'
 import EmptyState from '@/components/EmptyState.vue'
-import { prefixOf, sortByTs, takeNewLines, type LogLine } from '@/utils/logLines'
+import { prefixOf, compareTs, sortByTs, takeNewLines, type LogLine } from '@/utils/logLines'
 
 const props = defineProps<{
   modelValue: boolean
@@ -80,6 +80,7 @@ function togglePick(name: string): void {
 
 /** 弹窗每次打开都回到勾选这一步，并按"最近创建的 10 个"预选 */
 function resetPick(): void {
+  stopPolling()
   phase.value = 'pick'
   picked.value = podsByNewest.value.slice(0, DEFAULT_PICK).map((p) => p.name)
   sources.value = []
@@ -88,7 +89,9 @@ function resetPick(): void {
 }
 
 watch(visible, (v) => {
-  if (v) resetPick()
+  // 关掉就别在后台接着轮询（N 条流一起转，人走了还在打集群）
+  if (!v) stopPolling()
+  else resetPick()
 })
 
 function podOf(name: string): K8sPod | undefined {
@@ -171,9 +174,11 @@ function start(): void {
   })
   phase.value = 'stream'
   logText.value = ''
-  // ⚠️ Task 5 的交付物就是"勾完给一份快照" —— 这里必须真的去拉，否则点了确定什么都不发生。
-  // 轮询是 Task 6 的事（它会在这句之后接上计时器）。
-  void snapshot()
+  stopPolling()
+  // 先出一份快照（首屏立刻有内容），再各自按游标增量跟
+  void snapshot().then(() => {
+    timer = window.setInterval(() => void pollOnce(), POLL_MS)
+  })
 }
 
 function scrollToBottom(): void {
@@ -195,8 +200,56 @@ function jumpToBottom(): void {
   scrollToBottom()
 }
 
+// ---- 增量跟着走 ----
+
+const POLL_MS = 2000
+let timer: number | undefined
+
+function stopPolling(): void {
+  if (timer !== undefined) {
+    window.clearInterval(timer)
+    timer = undefined
+  }
+}
+
+/**
+ * 一轮：把**所有来源**的新行收上来，**在本轮内**按时间戳排好，再追加到末尾。
+ *
+ * ⚠️ 为什么"收齐再排"而不是各收各的边收边追加：后者会让"两个 Pod 的行交错成什么顺序"
+ *    取决于网络快慢 —— 同一份日志每看一次都不一样。收齐再排，至少本轮顺序是稳定的。
+ * ⚠️ 只排本轮：跨批全局有序要缓存"还没到齐的更早行"，延迟与内存都不好控（spec §3.3）。
+ * ⚠️ 比较用 `compareTs`（**与单 Pod 视图同一份**），别再写第二个比较器。
+ */
+async function pollOnce(): Promise<void> {
+  const collected: Array<{ s: Source; l: LogLine }> = []
+  let extra = ''
+  const results = await Promise.all(
+    sources.value.map(async (s) => {
+      try {
+        const text = await fetchSource(s, s.cursor || undefined)
+        const { lines, nextCursor } = takeNewLines(text, s.cursor)
+        return { s, lines, nextCursor, err: null as Error | null }
+      } catch (e) {
+        return { s, lines: [] as LogLine[], nextCursor: s.cursor, err: e as Error }
+      }
+    }),
+  )
+  for (const r of results) {
+    // ⭐ 某个来源没了（Pod 被滚动更新删掉）不能让整条流停掉或清空
+    if (r.err) extra += warnOnce(r.s, r.err.message)
+    if (r.nextCursor) r.s.cursor = r.nextCursor
+    for (const l of r.lines) collected.push({ s: r.s, l })
+  }
+  collected.sort((a, b) => compareTs(a.l.ts, b.l.ts)) // 相等时保持收集顺序（现代 Array.sort 稳定）
+  const body = collected.map((x) => prefixOf(x.s.pod, x.s.container) + x.l.content).join('\n')
+  if (body || extra) {
+    logText.value += extra + (body ? body + '\n' : '')
+    scrollToBottom()
+  }
+}
+
 onUnmounted(() => {
-  /* Task 6 会在这里停轮询 */
+  stopPolling()
 })
 </script>
 
