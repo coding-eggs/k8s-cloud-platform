@@ -549,6 +549,14 @@ export interface K8sPvc {
   dataSourceRef?: { apiGroup?: string | null; kind?: string | null; name?: string | null; namespace?: string | null } | null
   phase?: string | null
   /**
+   * 这块卷**真能不能**在线扩容（`unsupported` / `csi` / `unbacked`；读不到对应存储类时 `null`）。
+   *
+   * ⚠️ 由后端算好带下来，**前端别自己拿 `storageClassName` 去猜** —— 判据要 `CSIDriver` 名单，
+   * 前端拿不到；而只看存储类上的 `allowVolumeExpansion` 是假绿灯（2026-10-16 就是这么撞上的：
+   * 两个 SC 都写着 true、两个都做不到）。`null` 按「不许扩」处理，与后端同一口径。
+   */
+  expansion?: string | null
+  /**
    * `status.conditions` 里 **status=True 的那些 type**（如 `Resizing` / `FileSystemResizePending`）。
    * ⚠️ 扩容的中间态**不在 `phase` 上** —— 扩容期间 `phase` 一直是 `Bound`，只有这里看得出来。
    */

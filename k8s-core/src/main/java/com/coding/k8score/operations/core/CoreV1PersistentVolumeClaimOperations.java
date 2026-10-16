@@ -3,18 +3,24 @@ package com.coding.k8score.operations.core;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
+import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
+import io.fabric8.kubernetes.api.model.storage.StorageClass;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 /**
  * corev1 PersistentVolumeClaim 操作。
@@ -47,7 +53,7 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
         }
         List<PersistentVolumeClaim> items = client.persistentVolumeClaims()
                 .inNamespace(ns).list(options).getItems();
-        return items.stream().map(converter::revert).toList();
+        return enrich(items);
     }
 
     /**
@@ -65,7 +71,7 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
         }
         List<PersistentVolumeClaim> items = client.persistentVolumeClaims()
                 .inAnyNamespace().list(options).getItems();
-        return items.stream().map(converter::revert).toList();
+        return enrich(items);
     }
 
     @Override
@@ -77,7 +83,52 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
                 .inNamespace(namespace)
                 .withName(name)
                 .get();
-        return converter.revert(pvc);
+        return enrich(List.of(pvc)).stream().findFirst().orElse(null);
+    }
+
+    /**
+     * 给每条补上「这块卷**真能不能**在线扩容」—— 列表页拿它决定「调整容量」能不能点。
+     *
+     * <p>⚠️ 判据（{@code allowVolumeExpansion} + provisioner 是否在 {@code CSIDriver} 名单里）
+     * **只有一处算法**（{@link CoreV1StorageClassOperations#fillExpansion}），这里只是按
+     * {@code storageClassName} 查表。前端自己猜不出来：{@code CSIDriver} 名单它拿不到，
+     * 而只看 {@code allowVolumeExpansion} 是假绿灯 —— 2026-10-16 用户就是这么撞上的
+     * （两个 SC 都写着 true、两个都做不到）。
+     *
+     * <p>整批只读**一次**存储类（不是每条 PVC 读一次）。读不到就留 {@code null} ——
+     * UI 那边把 null 当"不许扩"处理（fail-closed），与后端同一个口径。
+     */
+    private List<PersistentVolumeClaimDTO> enrich(List<PersistentVolumeClaim> items) {
+        Map<String, String> byStorageClass = expansionByStorageClass();
+        return items.stream()
+                .map(converter::revert)
+                .filter(Objects::nonNull)
+                .peek(dto -> dto.setExpansion(dto.getStorageClassName() == null ? null
+                        : byStorageClass.get(dto.getStorageClassName())))
+                .toList();
+    }
+
+    /** {@code 存储类名 → 扩容结论}；读不到就空表（调用方据此留 null）。 */
+    private Map<String, String> expansionByStorageClass() {
+        Map<String, String> out = new HashMap<>();
+        try {
+            Set<String> csiDrivers = CoreV1StorageClassOperations.csiDriverNames(client);
+            for (StorageClass sc : client.storage().v1().storageClasses().list().getItems()) {
+                if (sc.getMetadata() == null) {
+                    continue;
+                }
+                StorageClassDTO probe = new StorageClassDTO();
+                probe.setProvisioner(sc.getProvisioner());
+                probe.setAllowVolumeExpansion(sc.getAllowVolumeExpansion());
+                CoreV1StorageClassOperations.fillExpansion(probe, csiDrivers);
+                out.put(sc.getMetadata().getName(), probe.getExpansion());
+            }
+        } catch (Exception e) {
+            // ⚠️ 读不到就整批留空 → 前端把 null 当"不许扩"。有意的 fail-closed：
+            //    宁可少给一个入口，也别让用户对着一个不动的容量猜
+            log.warn("读存储类失败 —— 本次 PVC 列表不带「能不能扩」：{}", e.getMessage());
+        }
+        return out;
     }
 
     @Override

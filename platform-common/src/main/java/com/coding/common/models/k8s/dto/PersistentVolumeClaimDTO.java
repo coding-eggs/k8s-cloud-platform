@@ -31,6 +31,16 @@ public class PersistentVolumeClaimDTO extends BaseResources {
     private String phase;
 
     /**
+     * 这块卷**真能不能在线扩容**（仅查询返回）：{@code unsupported} / {@code csi} / {@code unbacked}
+     * （取值见 {@link VolumeExpansion}），读不到对应存储类时是 {@code null}。
+     *
+     * <p>它由后端算好带下来（判据的唯一算法在 {@code CoreV1StorageClassOperations.fillExpansion}）——
+     * 前端**不要**自己拿 {@link #storageClassName} 去猜：判据要 {@code CSIDriver} 名单，前端拿不到；
+     * 而只看存储类上的 {@code allowVolumeExpansion} 是假绿灯（2026-10-16 就是这么撞上的）。
+     */
+    private String expansion;
+
+    /**
      * {@code status.conditions} 里 **status=True 的那些 type**（仅查询返回，如 {@code Resizing}、
      * {@code FileSystemResizePending}）。
      *

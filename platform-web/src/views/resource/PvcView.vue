@@ -373,6 +373,21 @@ const contextDesc = computed(() => {
         <el-table-column label="StorageClass" width="150">
           <template #default="{ row }"><span class="muted">{{ row.storageClassName ?? '（默认）' }}</span></template>
         </el-table-column>
+        <!-- ⚠️ 这一列由**后端**算好带下来（判据是 allowVolumeExpansion + provisioner 在不在
+             CSIDriver 名单里）—— 前端别自己拿 storageClassName 猜：那个名单它拿不到，
+             而只看 allowVolumeExpansion 是假绿灯。`null`（读不到）按"不许扩"处理。 -->
+        <el-table-column label="可扩容" width="130">
+          <template #default="{ row }">
+            <span v-if="row.expansion === 'csi'" class="ok">可以</span>
+            <span
+              v-else-if="row.expansion === 'unbacked'"
+              class="warn"
+              title="存储类上写着允许扩，但它的 provisioner 不是 CSI 驱动 —— 没有 external-resizer 会去执行。改了也只是把「请求」改大，status.capacity 不会动，连条件都不会挂。"
+            >没人执行</span>
+            <span v-else-if="row.expansion === 'unsupported'" class="muted">不支持</span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
         </el-table-column>
@@ -383,10 +398,18 @@ const contextDesc = computed(() => {
               <el-button link type="primary">操作 ▾</el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <!-- ⚠️ 只有 Bound 的卷能扩（Pending 的还没绑上）；没权限时留着但禁用，
-                       而不是干脆不显示 —— 不显示会让人以为功能没做 -->
-                  <el-dropdown-item command="resize" :disabled="!canResize || row.phase !== 'Bound'">
-                    调整容量
+                  <!-- ⚠️ 三个条件缺一不可：有权限、卷是 Bound、**所在存储类真能扩**。
+                       第三个由后端算好（见「可扩容」列）—— 只看存储类上的 allowVolumeExpansion
+                       是假绿灯：本集群两个 SC 都写着 true、两个都做不到。
+                       禁用而不是隐藏：不显示会让人以为功能没做；旁边那列写着为什么。
+                       `null`（读不到存储类）也禁用 —— 与后端同一个 fail-closed 口径。 -->
+                  <el-dropdown-item
+                    command="resize"
+                    :disabled="!canResize || row.phase !== 'Bound' || row.expansion !== 'csi'"
+                  >
+                    <span :title="row.expansion === 'csi' ? '' : '这个卷所在的存储类不能在线扩容 —— 见「可扩容」列'">
+                      调整容量
+                    </span>
                   </el-dropdown-item>
                   <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
                 </el-dropdown-menu>
@@ -576,5 +599,12 @@ const contextDesc = computed(() => {
 .resize-note {
   margin-top: 4px;
   line-height: 1.7;
+}
+/* 「可扩容」列：绿=真能扩；橙=存储类写着允许但没人执行（最该被看见的一档）；灰=不支持/读不到 */
+.ok {
+  color: var(--success, #67c23a);
+}
+.warn {
+  color: var(--warning, #e6a23c);
 }
 </style>
