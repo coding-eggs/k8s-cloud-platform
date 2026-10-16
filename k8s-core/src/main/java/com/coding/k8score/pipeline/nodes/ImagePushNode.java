@@ -38,6 +38,15 @@ public class ImagePushNode implements PipelineNode {
      */
     private static final String ISOLATION = "chroot";
 
+    /**
+     * 短名解析的候选源。**只留 docker.io** —— 也就是"Dockerfile 里的短名按 Docker 的规矩来"
+     * （`foo` → `docker.io/library/foo`，`me/foo` → `docker.io/me/foo`）。
+     * 详见 {@link #shortNamePrologue()}。
+     */
+    private static final String REGISTRIES_CONF = "/etc/containers/registries.conf";
+    private static final String REGISTRIES_CONF_D = "/etc/containers/registries.conf.d";
+    private static final String SEARCH_REGISTRIES_LINE = "unqualified-search-registries = [\"docker.io\"]";
+
     @Override
     public String type() {
         return "image";
@@ -139,6 +148,7 @@ public class ImagePushNode implements PipelineNode {
         //   3. 字面量（固定 tag）别包 `$( )`：Tekton 替换不了就留给 shell，而 shell 会把它
         //      当命令替换去执行 —— `$('v1')` 会去跑命令 `v1`，tag 变空（2026-10-15 抓到的）。
         String script = "set -e\n"
+                + shortNamePrologue()
                 + tagPrologue
                 + "IMAGE=" + image + ":\"$TAG\"\n"
                 + "echo \"目标镜像：$IMAGE\"\n"
@@ -183,6 +193,34 @@ public class ImagePushNode implements PipelineNode {
         step.setEnv(env);
         return new RenderedStep(List.of(step), List.of(new RenderedStep.WorkspaceRef(
                 GitCloneNode.CREDS_WORKSPACE, GitCloneNode.CREDS_MOUNT)));
+    }
+
+    /**
+     * 把"短名"的候选源钉死成 {@code docker.io}，让 Dockerfile 里的 {@code FROM} 按 **Docker 的规矩**
+     * 解析（{@code foo} → {@code docker.io/library/foo}，{@code me/foo} → {@code docker.io/me/foo}）。
+     *
+     * <p>⚠️ 2026-10-16 真跑撞到（{@code FROM maven:3.9-eclipse-temurin-21}）：
+     * <pre>
+     * Error: creating build container: short-name resolution enforced but cannot prompt without a TTY
+     * </pre>
+     * 同一个 Dockerfile 里的 {@code FROM node:20-alpine} 却没事 —— 差别在日志里：
+     * <pre>
+     * Resolved "node" as an alias (/etc/containers/registries.conf.d/000-shortnames.conf)
+     * </pre>
+     * 短名解析是**两段**：先查 alias 表（命中且只有一个候选就直接用），查不到才退到
+     * {@code unqualified-search-registries}。buildah 镜像（Fedora 底）那张表里有**不止一个**
+     * 候选源（fedora / redhat / docker.io 之类），于是它想去**交互式问人选哪个** ——
+     * 构建里没有 TTY，直接报错。{@code maven} 不在 alias 表里，撞的是这条；{@code node} 在。
+     *
+     * <p>两个路径**都写**（主文件 + 编号最大的 drop-in）：drop-in 是**按文件名顺序合并**的，
+     * 但"后面覆盖前面"还是"第一个非空生效"各版本说法不一 —— 两条都铺上，
+     * 不管合并顺序如何，生效的都是我们这一份，同时**不删**镜像自带的那张 alias 表。
+     */
+    private static String shortNamePrologue() {
+        String write = "printf '%s\\n' '" + SEARCH_REGISTRIES_LINE + "' > ";
+        return "mkdir -p " + REGISTRIES_CONF_D + "\n"
+                + write + REGISTRIES_CONF + "\n"
+                + write + REGISTRIES_CONF_D + "/999-platform-dockerhub.conf\n";
     }
 
     /**

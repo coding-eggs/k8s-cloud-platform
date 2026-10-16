@@ -267,6 +267,33 @@ class BuiltinNodesTest {
     }
 
     @Test
+    void theImageNodePinsShortNamesToDockerHub() {
+        // ⭐ 2026-10-16 真跑撞到：Dockerfile 里写 `FROM maven:3.9-eclipse-temurin-21`（**短名**）
+        //    → Error: creating build container: short-name resolution enforced but cannot
+        //      prompt without a TTY
+        //    同一个 Dockerfile 里的 `FROM node:20-alpine` 却没事 —— 因为日志里它前面多一行
+        //      Resolved "node" as an alias (/etc/containers/registries.conf.d/000-shortnames.conf)
+        //    短名解析是两段：**先查 alias 表**（命中且只有一个候选就直接用），查不到才退到
+        //    `unqualified-search-registries`。buildah 镜像那张表里有**不止一个**候选源，
+        //    于是它想去**交互式问人选哪个** —— 构建里没有 TTY，直接报错。`maven` 不在 alias 表里，
+        //    撞的就是这条；`node` 在，所以躲过去了。
+        //
+        //    平台的对策：把候选源**钉死成 docker.io**，也就是"短名按 Docker 的规矩解析"
+        //    （`foo` → docker.io/library/foo，`me/foo` → docker.io/me/foo）——
+        //    写 Dockerfile 的人本来就是这么预期的。要别的仓库就写全（`harbor.x/proj/app`）。
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app"),
+                "reg-1", "harbor.example.com"));
+
+        String script = step.steps().get(0).getScript();
+        assertThat(script).contains("unqualified-search-registries = [\"docker.io\"]");
+        // 必须**在 buildah 跑之前** —— 钉在后面的配置文件没有任何意义
+        assertThat(script.indexOf("unqualified-search-registries"))
+                .as("钉候选源的语句要排在 buildah 前面")
+                .isLessThan(script.indexOf("buildah bud"));
+    }
+
+    @Test
     void theProxyIsAnAdvancedFieldOnBothNodesThatNeedTheNetwork() {
         // 它是"高级"：常态不用填，但排障时得有地方填（面板里收在「高级」下面）
         assertThat(new GitCloneNode().formSchema().fields())

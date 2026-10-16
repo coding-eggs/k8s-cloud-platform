@@ -114,6 +114,32 @@ Error: mounting new container: … exit status 1
   `set-security-context` 从 `false` 打开（否则 Tekton 会把 step 的 `securityContext` 整个丢掉）、
   给到 privileged、还得给 Pod 塞 `podTemplate` —— 为一个构建节点把整个集群的隔离打开，不划算。
 
+### 1.6 Dockerfile 里的**短名**按 Docker 的规矩解析（平台侧已钉死）
+
+2026-10-16 真跑撞到：同一个 Dockerfile，`FROM node:20-alpine` 过、`FROM maven:3.9-eclipse-temurin-21` 挂：
+
+```
+Error: creating build container: short-name resolution enforced but cannot prompt without a TTY
+```
+
+短名解析是**两段**：先查 alias 表（命中且只有一个候选就直接用），查不到才退到
+`unqualified-search-registries`。差别就在日志里 —— 命中 alias 的会多一行
+`Resolved "node" as an alias (/etc/containers/registries.conf.d/000-shortnames.conf)`。
+
+buildah 镜像（Fedora 底）那张表里有**不止一个**候选源（fedora / redhat / docker.io …），
+所以没命中 alias 的名字会去**交互式问人选哪个** —— 构建里没有 TTY，直接报错。
+
+平台的对策：把候选源**钉死成 `docker.io`**（主文件 + 编号最大的 drop-in 两处都写，
+不管合并顺序如何都生效），也就是
+
+| 你写的 | 解析成 |
+|---|---|
+| `maven:3.9-eclipse-temurin-21` | `docker.io/library/maven:3.9-eclipse-temurin-21` |
+| `me/app` | `docker.io/me/app` |
+| `harbor.example.com/proj/app` | 原样（写全了就不经过这一步） |
+
+**要别的仓库就把名字写全** —— 这与 Docker / docker-compose 的规矩一致，写 Dockerfile 的人本来就是这么预期的。
+
 ---
 
 ## 2. 一条命令核对
