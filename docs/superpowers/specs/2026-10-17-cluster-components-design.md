@@ -14,7 +14,7 @@
 
 | # | 决策 | 理由 |
 |---|---|---|
-| 1 | **首批纳管：平台功能依赖的 + 用户已装的关键中间件**（11 条） | 用户选定。集群自带的 coredns/kube-proxy/CNI 不列，避免把清单变成"集群上有什么"的罗列；另外四条由用户单独裁定不展示（见 §2.1） |
+| 1 | **首批纳管：平台功能依赖的 + 用户已装的关键中间件**（11 条） | 用户选定。集群自带的 coredns/kube-proxy/CNI 不列，避免把清单变成"集群上有什么"的罗列；另外四条见 §2.1（三条不展示、`eck-operator` 推迟到 S2.3） |
 | 2 | **探测机制 = 目录 + 一次活探测 + 短 TTL 缓存** | 用户选定方案 A。"健康"天生是时刻值，存快照没有意义；版本与健康是同一次读取的产物 |
 | 3 | **门控也全改走新源** | 用户选定。本批把 CI / 网格 / 网络 / HPA 的判据收到同一份派生实现 |
 | 4 | **按镜像仓库名匹配工作负载，不按名字** | 现场勘查：一半组件的工作负载名带 Helm release 前缀（`ps-` / `th-` / `nfs-client-`），换 release 名就找不到。镜像仓库路径跨安装稳定 |
@@ -80,17 +80,22 @@ public record Probe(String namespace, WorkloadKind kind, String imageRepo, Strin
 | `cert-manager` | cert-manager | `cert-manager.io` | `cert-manager` Deploy `cert-manager-controller` | 证书（网关 TLS） |
 | `otel-operator` | OpenTelemetry Operator | `opentelemetry.io` | `opentelemetry-operator-system` Deploy `opentelemetry-operator` | OTel 采集（S2.3 的地基） |
 
-**不纳入的四条（用户 2026-10-17 裁定）**：`eck-operator`、`local-path-provisioner`、
-`nfs-subdir-external-provisioner`、`snapshot-controller`。前三条**不作为集群组件展示**；
-`snapshot-controller` 是因为**功能还没做**（S4.3），届时再决定它的门控读哪里。
+**不纳入本批的四条**：
 
-**有意不列的**（与上面四条不同，这是设计判断）：Grafana / Thanos 各件 / Alertmanager /
+| 条目 | 处置 | 依据 |
+|---|---|---|
+| `eck-operator`（Elastic Operator） | **推迟到 S2.3（日志采集）再定** | 用户 2026-10-17：ECK 要等日志采集做完再考虑 —— 换句话说它的价值由那批定义（"日志存哪"），本批单独展示一个操作器没有落点。**S2.3 开工时决定它进不进这份清单** |
+| `local-path-provisioner` | 不作为集群组件展示 | 用户 2026-10-17 裁定 |
+| `nfs-subdir-external-provisioner` | 不作为集群组件展示 | 同上 |
+| `snapshot-controller` | 功能还没做 | S4.3 开工时再定它的门控读哪里 |
+
+**有意不列的**（与上面不同，这是设计判断）：Grafana / Thanos 各件 / Alertmanager /
 node-exporter / kube-state-metrics 都是 **Prometheus Operator 撑起的后代**（操作器装了 = 这些在跑），
 minio-operator / milvus-operator 是**用户业务**，coredns / kube-proxy / CNI 是**集群自带的基础设施**
 ——都不直接对应平台功能。
 
-⚠️ 因此 **日志存储（ES）在本清单里没有对应行**：S2.3（日志采集）那批的门控得自己处理，
-不要以为"组件清单里没有 = 平台不关心"。
+⚠️ 因此 **S2.3（日志采集）的门控在这份清单里没有现成的行**：届时先决定 `eck-operator`
+进不进清单，再决定门控读哪里 —— 别把"清单里没有"读成"平台不关心"。
 
 ---
 
@@ -342,10 +347,10 @@ CI 页顶部、网格横幅、HPA 编辑器的提示。数据来自 `flags`。
 2. **安装 / 升级 / 卸载** —— 决策 9，留给 S3.3 / S3.4。
 3. **"交给平台管"开关** —— 台账裁决"已装的一律只探测不接管"。
 4. **`StorageClass 能不能动态供应` 不进组件清单** —— 它是集群存储配置、粒度是 SC（§5.3）。
-5. **`eck-operator` / `local-path-provisioner` / `nfs-subdir-external-provisioner` /
-   `snapshot-controller` 不展示** —— 用户 2026-10-17 裁定（§2.1）。前三条是"不作为集群组件展示"，
-   末条是"功能还没做"。**别把这几条当成漏纳**：日志存储（ES）因此在本清单里没有对应行，
-   S2.3 那批的门控得自己处理。
+5. **`local-path-provisioner` / `nfs-subdir-external-provisioner` / `snapshot-controller`
+   不展示；`eck-operator` 推迟到 S2.3** —— 用户 2026-10-17 裁定（§2.1）。
+   **别把这几条当成漏纳**，尤其 `eck-operator`：它是**推迟**不是否决，
+   S2.3（日志采集）开工时先决定它进不进这份清单。
 6. **残留（显式接受）**：持任意已认证 token 直连 k8s-server 的 `/workload-probes`，
    可读到**清单内**命名空间的工作负载名称、镜像与副本数。实际新增面很窄 ——
    这套集群上那些命名空间本来就分配给租户（§9），该租户今天用 `/workloads/list` 就能读到同样内容。
