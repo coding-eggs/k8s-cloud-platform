@@ -20,8 +20,14 @@
 -- 注意：MySQL 注释 `--` 后面必须跟空白字符，否则整个文件重放失败。
 -- ============================================================================================
 
+-- ⚠️⚠️ 路径**不带 `/resource` 前缀** —— 那个前缀在 V2026_10_08_1__drop_api_resource_url_prefix.sql
+--      里被统一去掉了，`resource` 列现在与 Spring MVC 的 pattern 一字不差。
+--      别去照抄 V2026_09_29_1 的文本（那是去前缀**之前**的）：照抄会得到一行
+--      `/resource/pvcs/{name}/resize`，与真实端点 `/pvcs/{name}/resize` 永远匹配不上，
+--      于是 PermissionCrossCheckRunner 在**启动时**就把服务拦下来（2026-10-16 真撞到）。
+--      拿不准就照着库里现成的行抄：`select resource from platform_permission where domain='API'`。
 INSERT INTO platform_permission (id, domain, resource, action, code, description) VALUES
- ('perm_res_pvc_resize', 'API','/resource/pvcs/{name}/resize', 'POST','tenant:pvc:update',
+ ('perm_res_pvc_resize', 'API','/pvcs/{name}/resize', 'POST','tenant:pvc:update',
   '扩容 PVC（在线扩容量，只能往大改；与 update 共享动词）')
 ON DUPLICATE KEY UPDATE
   domain=VALUES(domain), resource=VALUES(resource), action=VALUES(action),
