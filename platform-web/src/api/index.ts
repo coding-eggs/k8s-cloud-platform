@@ -346,8 +346,21 @@ export const secretApi = makeResourceApi<K8sSecret>('secrets')
 /** Service /services */
 export const serviceApi = makeResourceApi<K8sService>('services')
 
-/** PVC /pvcs（update = 标签 + **扩容**：容量只能往大改，且存储类得开了 allowVolumeExpansion） */
-export const pvcApi = makeResourceApi<K8sPvc>('pvcs')
+/**
+ * PVC /pvcs。⚠️ `update` **只同步标签**；扩容是**独立端点**（与工作负载的改镜像 / 暂停同形）。
+ */
+export const pvcApi = {
+  ...makeResourceApi<K8sPvc>('pvcs'),
+  /**
+   * 扩容。⚠️ 只能往大改、且存储类得开了 `allowVolumeExpansion` —— **两条判据都在后端**，
+   * 而且它读的是**集群上那个对象**。前端拦一遍只是为体验，别把这当防线。
+   *
+   * 为什么和 `update` 分开：扩容动的是存储后端、异步、不可逆，跟"改个标签"不是一回事 ——
+   * 合成一个入口，权限与审计都说不清。
+   */
+  resize: (name: string, ctx: Ctx2, storage: number) =>
+    http.post<never, K8sPvc>(`/pvcs/${encodeURIComponent(name)}/resize`, { ...ctx, storage }),
+}
 
 /** StorageClass /storageclasses（集群级，只读：供下拉选择 storageClassName；无 namespace） */
 export const storageClassApi = {

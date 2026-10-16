@@ -117,13 +117,9 @@ async function submitResize(): Promise<void> {
   }
   resizing.value = true
   try {
-    await pvcApi.update(row.name, ctxParams.value, {
-      name: row.name,
-      namespace: row.namespace,
-      // 字节（基础单位）。别的字段**不用带** —— 后端是读-改-写，只盖容量与标签；
-      // PVC 的 accessModes 是必填、storageClassName 不可变，漏带反而会被拒
-      storage: Math.round(parseFloat(num) * 1024 * 1024 * 1024),
-    })
+    // 走**扩容专用端点**（不是 update）—— 后端读-改-写，只盖容量：
+    // 别的字段不用带，PVC 的 accessModes 必填、storageClassName 不可变，漏带反而会被拒
+    await pvcApi.resize(row.name, ctxParams.value, Math.round(parseFloat(num) * 1024 * 1024 * 1024))
     ElMessage.success('已提交扩容 —— 中间态会在「状态」列标出来')
     resizeVisible.value = false
     await refresh()

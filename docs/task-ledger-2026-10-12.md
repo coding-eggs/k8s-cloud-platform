@@ -538,11 +538,18 @@
 ### S4 · 收尾
 
 #### S4.1 PVC 扩容 ｜ 规模 S ｜ 方案已出 ｜ ✅ 2026-10-16 完成
+> 扩容做成了**独立端点** `POST /resource/pvcs/{name}/resize`（不是塞进 PUT）——
+> 与工作负载的 `POST /{name}/image`、`POST /{name}/pause` 同形：**端点与权限行按「一次有意义的操作」分，
+> 权限码按「资源 + write 家族」共享**（这里沿用 `tenant:pvc:update`）。迁移 `V2026_10_16_3`（已重放）。
+> ⚠️ 最初我把它塞进了 `PUT /resource/pvcs/{name}`，理由是"端点与权限行本来就有、零迁移" ——
+> 那让 PUT 的语义从「同步标签」悄悄变成「也能扩容」（动存储后端、异步、不可逆），
+> 权限与审计都说不清。**这个仓的惯例是分开的，台账原文写的「+ 权限点 + 迁移」本来就是对的那条。**
 - [x] S4.1.1 `StorageClass.allowVolumeExpansion` 门控 —— 数据本来就有（`StorageClassDTO` 里带了），
-      判断落在 `PvcService.update`；读不到存储类时 **fail-closed** 拒掉
-- [x] S4.1.2 只增不减的前后端双重校验 + 权限点 + 迁移 —— ⚠️ **权限点与迁移本来就有**
-      （`tenant:pvc:update` 早已存在且绑对了：tenant_admin 持有、tenant_member 只拿读动词），
-      所以只做了前后端两道校验。前端那道拦住了**不发请求**，后端才是权威（它读集群上那个对象）
+      判断落在 `PvcService.resize`；读不到存储类时 **fail-closed** 拒掉
+- [x] S4.1.2 只增不减的前后端双重校验 + 权限点 + 迁移 —— 权限码 `tenant:pvc:update` **复用**
+      （早就有，绑对了：tenant_admin 持有、tenant_member 只拿读动词），但**权限行与迁移是新加的**
+      （新端点在 PermissionCrossCheckRunner 下必须有自己的行，否则拒启）。
+      前端那道拦住了**不发请求**，后端才是权威（它读集群上那个对象）
 - [x] S4.1.3 中间态展示（`Resizing` / `FileSystemResizePending` **不是异常**）——
       ⚠️ 它们**不在 `phase` 上**（扩容期间 `phase` 一直是 `Bound`），所以 DTO 补了 `conditions`、converter 补了映射
 - [x] S4.1.4 STS `volumeClaimTemplate` 的特例处理 —— ⚠️ **原方案里的「改 template」是错的**：

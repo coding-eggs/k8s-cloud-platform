@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.models.PvcResizeRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -19,9 +20,9 @@ import java.util.List;
  * k8s-server 只提供集群事实。所以「只能往大改」「存储类得开了在线扩容」这类判断落在这里，
  * 而不是让 k8s-server 去懂"什么算合法"。
  *
- * <p>为什么非得拦这两条：K8s 对 PVC 的 {@code spec} 是**不可变**的，唯一允许的例外就是
- * "往大改容量"，且**还要**存储类开了 {@code allowVolumeExpansion}。不透传校验的话，
- * 用户填小了会拿到一句 K8s 原话（或者更糟：什么都没发生），填大了而存储类没开则在 SSA 那一步才炸。
+ * <p>⚠️ {@link #update} 与 {@link #resize} 是两个端点、两件事，**别合并**：
+ * 前者同步标签，后者是动存储后端、异步、不可逆的扩容。合成一个 PUT 会让权限与审计都说不清
+ * （与工作负载那边 {@code POST /{name}/image}、{@code POST /{name}/pause} 单独成端点同一个理由）。
  */
 @Service
 @RequiredArgsConstructor
@@ -47,16 +48,41 @@ public class PvcService {
     }
 
     /**
-     * 更新（标签 + **扩容**）。扩容的两条规则见类注释。
+     * 更新 —— **只同步标签**。容量改不了，那是 {@link #resize} 的事。
      *
-     * <p>⚠️ **存储类读的是集群上那个对象**（{@code current.getStorageClassName()}），
-     * 不是请求里带的 —— 请求里那个可能是旧的，甚至被改过；照它去查门控等于让调用方自证清白。
+     * <p>⚠️ 带上变化的 {@code storage} 会**明确报错**而不是被静默忽略：
+     * 静默忽略的话调用方会以为改成功了。要改容量就换那个端点。
      */
     public PersistentVolumeClaimDTO update(PersistentVolumeClaimDTO body) {
-        PersistentVolumeClaimDTO current = k8s.get(dto(body.getName(), body.getTenantId(),
-                body.getClusterId(), body.getNamespace()));
+        PersistentVolumeClaimDTO current = require(body.getName(), body.getTenantId(),
+                body.getClusterId(), body.getNamespace());
         BigDecimal target = body.getStorage();
-        BigDecimal now = current == null ? null : current.getStorage();
+        if (target != null && current.getStorage() != null && target.compareTo(current.getStorage()) != 0) {
+            throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED,
+                    "这个端点只同步标签 —— 改容量请走「调整容量」"
+                            + "（POST /resource/pvcs/{name}/resize）。");
+        }
+        // ⚠️ 读-改-写：以集群上那份为底，只盖标签。不能把请求体直接 SSA 上去 ——
+        //    PVC 的 `accessModes` 必填、`storageClassName`/`dataSourceRef` 不可变，
+        //    调用方只要漏带一个，要么被 API server 拒，要么把不该动的字段删掉。
+        current.setLabels(body.getLabels());
+        return k8s.update(current);
+    }
+
+    /**
+     * 扩容。两条规则：**只能往大改** + **存储类得开了 {@code allowVolumeExpansion}**。
+     *
+     * <p>为什么非得拦：K8s 对 PVC 的 {@code spec} 是**不可变**的，唯一允许的例外就是"往大改容量"，
+     * 且**还要**存储类开了那个开关。不拦的话，用户填小了会拿到一句 K8s 原话，
+     * 填大了而存储类没开则在 SSA 那一步才炸。
+     *
+     * <p>⚠️ **存储类读的是集群上那个对象**，不是请求里带的 —— 否则门控等于让调用方自证清白。
+     */
+    public PersistentVolumeClaimDTO resize(String name, PvcResizeRequest req) {
+        PersistentVolumeClaimDTO current = require(name, req.getTenantId(),
+                req.getClusterId(), req.getNamespace());
+        BigDecimal target = req.getStorage();
+        BigDecimal now = current.getStorage();
         if (target == null || now == null) {
             throw new CloudPlatformException(EnumResponseType.PVC_RESIZE_INVALID,
                     "没带新容量，改不了。要改容量就填一个比现在更大的值。");
@@ -73,7 +99,7 @@ public class PvcService {
                     "这个卷没写存储类（多半是手工绑到某块 PV 上的），线上扩容得由存储类支持，"
                             + "这里不敢替你断言能扩。");
         }
-        StorageClassDTO klass = storageClasses.get(sc, body.getTenantId(), body.getClusterId());
+        StorageClassDTO klass = storageClasses.get(sc, req.getTenantId(), req.getClusterId());
         if (klass == null) {
             // ⚠️ fail-closed：读不到就不敢说"能扩"。放过去只会让用户在 SSA 那一步撞上 K8s 原话
             throw new CloudPlatformException(EnumResponseType.PVC_RESIZE_INVALID,
@@ -85,19 +111,21 @@ public class PvcService {
                     "存储类 " + sc + " 没开在线扩容（allowVolumeExpansion）—— 这个卷只能删了重建。"
                             + "（改存储类上的这个开关要集群管理员，而且只对之后新建的卷生效。）");
         }
-        // ⚠️ **读-改-写**：以集群上那个对象为底，只盖**容量**和**标签**，不能直接把请求体 SSA 上去。
-        //    理由：PVC 的 spec 里 `accessModes` 是**必填**，`storageClassName` / `dataSourceRef`
-        //    又是不可变的 —— 前端只要漏带一个，SSA 要么被 API server 拒（accessModes 必填），
-        //    要么把不该动的字段删掉。读回来的那一份才是完整且真实的版本。
         current.setStorage(target);
-        if (body.getLabels() != null) {
-            current.setLabels(body.getLabels());
-        }
         return k8s.update(current);
     }
 
     public void delete(String name, String tenantId, String clusterId, String namespace) {
         k8s.delete(dto(name, tenantId, clusterId, namespace));
+    }
+
+    /** 取集群上那一份（读-改-写的底稿）；不存在就明确报错，而不是拿 null 往下走。 */
+    private PersistentVolumeClaimDTO require(String name, String tenantId, String clusterId, String namespace) {
+        PersistentVolumeClaimDTO current = k8s.get(dto(name, tenantId, clusterId, namespace));
+        if (current == null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "PVC 不存在：" + name);
+        }
+        return current;
     }
 
     /** 字节 → {@code 10Gi} 这种给人看的写法。**只用在报错文案里** —— 数字对不上时才看得懂。 */
