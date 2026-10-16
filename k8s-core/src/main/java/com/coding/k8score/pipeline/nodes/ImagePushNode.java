@@ -111,16 +111,22 @@ public class ImagePushNode implements PipelineNode {
         String context = ctx.value("context").isEmpty() ? "." : ctx.value("context");
 
         String image = GitCloneNode.shellQuote(registry.endpoint() + "/" + repo);
-        String tag = tagExpression(ctx.value("tagSource"), ctx.value("fixedTag"));
+        String tagPrologue = tagPrologue(ctx.value("tagSource"), ctx.value("fixedTag"));
 
-        // ⚠️ 两处 Tekton 的坑都在这段里：
-        //   1. shell 的命令替换要写成 $$(...)，否则 Tekton 会当成自己的变量替换并因解析不到而报错；
-        //   2. $(context.pipelineRun.name) 是 Tekton 内建变量，**要它替换**，所以不转义。
-        // ⚠️ 而且 tag 表达式**直接拼在冒号后面**，别再套一层 $( )：那种写法只对第 2 条成立，
-        //    套在字面量（固定 tag）上会渲染成 `$('v1')` —— Tekton 替换不了就留给 shell，
-        //    shell 当命令替换去执行命令 `v1`，tag 变空。
+        // ⚠️ 三处 Tekton 的坑都在这段里：
+        //   1. ⭐ 2026-10-16 真跑撞到：**别用 `$$( )` 那个"转义 shell 命令替换"的写法**。
+        //      Tekton 在这一版里**没有**把 `$$` 还原成 `$`，于是 shell 把 `$$` 当**进程号**展开：
+        //        IMAGE='docker.io/.../platform-web':"$$(cat '/workspace/.git-sha' … )"
+        //        → docker.io/.../platform-web:15(cat '/workspace/.git-sha' … )
+        //          （15 就是那个 shell 的 PID）→ buildah: invalid reference format
+        //      现在**完全不用命令替换**：`read` 进一个普通变量 TAG（`$TAG` / `$IMAGE` 这种
+        //      普通变量 Tekton 从来不碰，脚本里一直这么用）。
+        //   2. `$(context.pipelineRun.name)` 是 Tekton **自己的**内建变量，**要它替换**，所以不转义。
+        //   3. 字面量（固定 tag）别包 `$( )`：Tekton 替换不了就留给 shell，而 shell 会把它
+        //      当命令替换去执行 —— `$('v1')` 会去跑命令 `v1`，tag 变空（2026-10-15 抓到的）。
         String script = "set -e\n"
-                + "IMAGE=" + image + ":" + tag + "\n"
+                + tagPrologue
+                + "IMAGE=" + image + ":\"$TAG\"\n"
                 + "echo \"目标镜像：$IMAGE\"\n"
                 + "buildah bud -f " + GitCloneNode.shellQuote(dockerfile) + " -t \"$IMAGE\" " + GitCloneNode.shellQuote(context) + "\n"
                 + "buildah push --digestfile " + GitCloneNode.shellQuote(GitCloneNode.WS + "/.image-digest") + " \"$IMAGE\"\n";
@@ -142,18 +148,30 @@ public class ImagePushNode implements PipelineNode {
     }
 
     /**
-     * tag 的三种来源 —— 都用**运行时**能算出来的形式表达，因为渲染发生在保存/预览那一刻，
-     * 那时还不知道 git sha、也不知道这次的运行名。
+     * tag 的三种来源 —— 都收敛成一个**普通 shell 变量** {@code TAG} 的赋值语句（含换行），
+     * 之后统一拼进 {@code IMAGE=...:"$TAG"}。
      *
-     * <p>每个分支返回的都是**完整的** shell 表达式（含引号），调用点直接拼在冒号后面 ——
-     * 别在外面再包一层 {@code $( )}（那是 Tekton 的变量替换语法，只对第二个分支成立）。
+     * <p>为什么是"普通变量 + 赋值"而不是"一段表达式直接拼在冒号后"（2026-10-16 改）：
+     * 三种来源里只有 {@code run-id} 需要 **Tekton** 替换（它是 Tekton 的内建变量），
+     * 另外两种是 shell 的事 —— 而 shell 的**命令替换** `$( )` 恰好和 Tekton 的变量语法撞车。
+     * 之前的写法是用 `$$( )` 去转义，但这一版 Tekton **没有**把 `$$` 还原成 `$`，
+     * shell 就当进程号展开了（真跑：tag 变成 `15(cat '/workspace/.git-sha' …)`）。
+     * 现在 git-sha 用 {@code read} 读文件，**一个命令替换都不需要**；
+     * 普通变量（`$TAG` / `$IMAGE`）Tekton 从来不碰 —— 不跟它的转义规则打赌。
      */
-    private static String tagExpression(String tagSource, String fixedTag) {
+    private static String tagPrologue(String tagSource, String fixedTag) {
+        String shaFile = GitCloneNode.shellQuote(GitCloneNode.GIT_SHA_FILE);
         return switch (tagSource) {
-            case "fixed" -> GitCloneNode.shellQuote(fixedTag.isEmpty() ? "latest" : fixedTag);
-            case "run-id" -> "\"$(context.pipelineRun.name)\"";        // Tekton 内建变量，**不转义**
-            default -> "\"$$(cat " + GitCloneNode.shellQuote(GitCloneNode.GIT_SHA_FILE)
-                    + " 2>/dev/null || echo manual)\"";               // git 短 sha（克隆节点落的）
+            // 字面量：别包 $( )，否则 shell 会把它当命令替换去执行（见上面第 3 条）
+            case "fixed" -> "TAG=" + GitCloneNode.shellQuote(fixedTag.isEmpty() ? "latest" : fixedTag) + "\n";
+            // Tekton 内建变量：**要它替换**，所以不转义（替换发生在 controller 建 TaskRun 时）
+            case "run-id" -> "TAG=\"$(context.pipelineRun.name)\"\n";
+            // git 短 sha：克隆节点落的文件。⚠️ `read` 失败（文件没有结尾换行）时 `||` 兜一下 ——
+            // 否则 `set -e` 会把整步干掉
+            default -> "TAG=manual\n"
+                    + "if [ -s " + shaFile + " ]; then\n"
+                    + "  read -r TAG < " + shaFile + " || TAG=manual\n"
+                    + "fi\n";
         };
     }
 }

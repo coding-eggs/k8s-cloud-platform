@@ -138,8 +138,11 @@ class BuiltinNodesTest {
         assertThat(script).contains("harbor.example.com/proj/app");
         // ⚠️ 再也不该有没被替换的占位符（那会让 buildah 收到一个非法镜像引用，一跑就挂）
         assertThat(script).doesNotContain("__IMAGE_REF__");
-        // shell 的命令替换必须写成 $$(...)，否则 Tekton 会当自己的变量替换并因解析不到而报错
-        assertThat(script).contains("$$(cat");
+        // ⭐ 2026-10-16 真跑撞到：`$$( )` 那套"转义 shell 命令替换"的写法在这一版 Tekton 上
+        //    **不还原** —— shell 把 `$$` 当进程号展开，tag 变成 `15(cat '/workspace/.git-sha' …)`，
+        //    buildah 报 invalid reference format。现在**一个命令替换都不用**（read 进普通变量）。
+        assertThat(script).doesNotContain("$$");
+        assertThat(script).contains("read -r TAG < '/workspace/.git-sha'");
         // 凭据以文件形式挂进来，不是写进脚本（挂载点也必须显式给上 —— 见 WorkspaceRef）
         assertThat(step.workspaces()).extracting(RenderedStep.WorkspaceRef::name).contains("creds");
         assertThat(step.steps().get(0).getEnv())
@@ -163,14 +166,18 @@ class BuiltinNodesTest {
         //    包一个不是变量名的东西，Tekton 替换不了就原样留给 shell，
         //    而 shell 把 `$('v1')` 当成命令替换去执行命令 `v1` —— tag 变空，
         //    buildah 收到 `harbor.example.com/proj/app:` 直接报非法镜像引用。
-        //    三种 tag 来源**自己**就是完整的 shell 表达式，冒号后直接拼即可。
+        //
+        // ⭐ 2026-10-16 真跑又抓到**另一面**：`$$(` 那个转义在这一版 Tekton 上**不还原**，
+        //    shell 把 `$$` 当**进程号**展开 → `.../platform-web:15(cat '/workspace/.git-sha' …)`。
+        //    所以现在三种来源都先落进一个**普通 shell 变量 TAG**（`$TAG`/`$IMAGE` 这种普通变量
+        //    Tekton 从来不碰），再用 `"$TAG"` 拼进 IMAGE —— 一个命令替换都不需要。
         assertThat(scriptOfTag("fixed", "v1"))
-                .contains("IMAGE='harbor.example.com/proj/app':'v1'");
+                .contains("TAG='v1'\nIMAGE='harbor.example.com/proj/app':\"$TAG\"");
         assertThat(scriptOfTag("run-id", ""))
-                .contains("IMAGE='harbor.example.com/proj/app':\"$(context.pipelineRun.name)\"");
+                .contains("TAG=\"$(context.pipelineRun.name)\"\nIMAGE='harbor.example.com/proj/app':\"$TAG\"");
         assertThat(scriptOfTag("git-sha", ""))
-                .contains("IMAGE='harbor.example.com/proj/app':"
-                        + "\"$$(cat '/workspace/.git-sha' 2>/dev/null || echo manual)\"");
+                .contains("read -r TAG < '/workspace/.git-sha'")
+                .contains("IMAGE='harbor.example.com/proj/app':\"$TAG\"");
     }
 
     /** 同一个镜像节点，只换 tag 来源。 */
