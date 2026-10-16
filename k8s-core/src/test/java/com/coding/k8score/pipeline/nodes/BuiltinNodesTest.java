@@ -57,6 +57,8 @@ class BuiltinNodesTest {
 
     @Test
     void shellNodeSplitsTheCommandOnNewlines() {
+        // ⚠️ 「命令」节点**有意不带**预设构建节点那两行「工作目录/目录内容」的自白：
+        //    它的合同是"脚本你自己写，平台一个字都不加"（与 presetBuildNodesSayWhereTheyAreRunning 成对）
         RenderedStep step = new ShellNode().render(ctx("shell",
                 Map.of("image", "alpine:3", "command", "echo a\necho b", "workDir", ".")));
         assertThat(step.steps().get(0).getScript()).isEqualTo("echo a\necho b");
@@ -79,6 +81,21 @@ class BuiltinNodesTest {
                         "command", "mvn -B verify", "workDir", ".")));
         assertThat(step.steps().get(0).getImage()).isEqualTo("my-harbor.example.com/base/maven:3.9");
         assertThat(step.steps().get(0).getScript()).isEqualTo("mvn -B verify");
+    }
+
+    @Test
+    void presetBuildNodesSayWhereTheyAreRunning() {
+        // ⭐ 2026-10-16 真跑撞到：工作目录**填多了一层仓库名** → kubelet 把不存在的目录 mkdir 出来 →
+        //    命令在一个空目录里跑，报出来的是「npm ci 没有 package-lock.json」
+        //    「/tekton/scripts/script-0-xxx: 3: -B: not found」这类与路径毫不相干的错。
+        //    所以预设构建节点的脚本最前面必须自报「我在哪、这儿有什么」。
+        RenderedStep step = new NodeBuildNode().render(ctx("node",
+                Map.of("image", "", "command", "npm ci && npm run build", "workDir", "platform-web")));
+
+        String script = step.steps().get(0).getScript();
+        assertThat(script).startsWith("echo \"工作目录：$(pwd)\"\nls -A | head -20\n");
+        assertThat(script).endsWith("npm ci && npm run build");   // 用户填的命令原样还在最后
+        assertThat(step.steps().get(0).getWorkingDir()).isEqualTo("/workspace/platform-web");
     }
 
     @Test
@@ -292,7 +309,9 @@ class BuiltinNodesTest {
                 "workDir", "backend")));
 
         assertThat(step.steps().get(0).getImage()).isEqualTo("harbor.example.com/base/maven:3.9");
-        assertThat(step.steps().get(0).getScript()).isEqualTo("mvn -B clean verify");
+        // 命令原样落在脚本最后 —— 前面那两行是平台自报的「工作目录 / 目录内容」
+        // （见 presetBuildNodesSayWhereTheyAreRunning）
+        assertThat(step.steps().get(0).getScript()).endsWith("mvn -B clean verify");
         assertThat(step.steps().get(0).getWorkingDir()).isEqualTo("/workspace/backend");
     }
 

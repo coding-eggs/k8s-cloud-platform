@@ -44,7 +44,7 @@ final class BuildStep {
         step.setName("build");
         step.setImage(image);
         step.setWorkingDir(workDir(ctx.value("workDir")));
-        step.setScript(script);
+        step.setScript(withDirBanner(script));
 
         List<EnvVar> env = new ArrayList<>(CacheEnv.of());
         env.addAll(toolEnv);
@@ -69,14 +69,35 @@ final class BuildStep {
         fields.add(NodeField.textarea("command", commandLabel,
                 commandHelp + "\n留空 = " + defaultCommand));
         fields.add(NodeField.text("workDir", "工作目录（相对 workspace）", false,
-                "留空 = 共享 workspace 的根目录（git 克隆节点把代码放进来的地方）。\n"
-                        + "例：多模块仓库里只构建后端 → 填 backend"));
+                "留空 = 共享 workspace 的**根目录**，也就是**仓库的根** —— git 克隆节点把仓库内容"
+                        + "直接放在那里，**不会**多出一层以仓库名命名的目录。\n"
+                        + "例：仓库里只构建前端 → 填 platform-web（不是 my-repo/platform-web）"));
         fields.add(NodeField.advancedText("proxy", "HTTP 代理（高级）",
                 "只在「这个集群出不去」时才填；留空 = 直连。\n"
                         + "例：http://192.168.85.1:7890\n"
                         + "下载依赖会走它；集群内网地址（.svc、内网网段）自动直连。"));
         fields.addAll(extraAdvanced);
         return new NodeSchema(List.copyOf(fields));
+    }
+
+    /**
+     * 命令前面那两行「我在哪、这儿有什么」。
+     *
+     * <p>⚠️ 为什么值得占日志两行（2026-10-16 真跑撞到）：**工作目录填错层级时没有任何提示** ——
+     * kubelet 会把不存在的 `workingDir` 直接 {@code mkdir -p} 出来，于是命令在一个**空目录**里跑，
+     * 报出来的却是工具自己的错（`npm ci` 说「没有 package-lock.json」、
+     * `/tekton/scripts/script-0-xxx: 3: -B: not found`）—— 看起来全是依赖/命令问题，
+     * 与「路径多了一层仓库名」这件事毫不相干，查半天查不出来。
+     * 把 pwd 与目录内容摊在日志最前面，这类事故第一眼就看得见。
+     *
+     * <p>只列出前若干项：仓库根可能有上千个文件，日志不该被它淹掉。
+     * ⚠️ 有意**不加** {@code set -e} —— 那会悄悄改掉用户命令的语义（用户可能写着
+     * {@code a || true}、或依赖不在第一行失败时继续），不是这个改动该顺手做的事。
+     */
+    static String withDirBanner(String script) {
+        return "echo \"工作目录：$(pwd)\"\n"
+                + "ls -A | head -20\n"
+                + script;
     }
 
     /**
