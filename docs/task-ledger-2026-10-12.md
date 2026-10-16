@@ -707,7 +707,7 @@
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16 收口；**2026-10-17 用户验收通过，需求完结**） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
 | **S2.2** | 告警 | — | L | ⬜ 未开始 | — |
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ⬜ 未开始 | — |
-| **S2.4** | 服务网格可视化 | — | M-L | ⬜ 未开始 | — |
+| **S2.4** | 服务网格可视化 | — | M-L | 🔄 **设计已出**（2026-10-17）。数据前提已在 coding-cluster 打通（5 个采集对象 + movie 前后端纳入 ambient，见集群前提 §1.7）；S2.4.4 **已实测回答**；**S2.4.3 链路追踪本次不做**（集群里没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) |
 | **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
 | **S3.2** | 应用级交付 | D1 | L | ⬜ 未开始 | — |
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
