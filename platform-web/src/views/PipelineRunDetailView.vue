@@ -13,7 +13,7 @@
  * 详情里的 DAG 画的是**这条运行自己的画布**（触发时留在 run 行上的 `canvasJson`），
  * 不是今天的流水线定义 —— 改过名字、换过镜像之后，拿今天那份画出来的图会把排障的人带沟里。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MarkerType, VueFlow } from '@vue-flow/core'
@@ -230,7 +230,8 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(async () => {
+/** 一条运行的完整初始化：取详情（+ 需要时取流水线定义）、起轮询、拉一次日志 */
+async function init(): Promise<void> {
   // ⚠️ 也要拉一次节点清单：直接打开这一页（没先进过编辑器）时那份单例缓存是空的，
   // 卡片会退化成通用图标 + 原始 type（`git`），看着像"没名字"
   loadNodeTypes()
@@ -242,7 +243,24 @@ onMounted(async () => {
   }
   if (isRunning.value) startPolling()
   if (canLogs.value) await loadLogs()
+}
+
+/**
+ * ⚠️ `?name=` 变了要**重新初始化**：同一条路由只换 query 时组件**不会重挂**，
+ * 不看着它就会继续显示**上一条运行**的数据（最迷惑的那种错）——
+ * 而这一页的卖点正是「URL 可以直接改/分享」，所以这条路真会被走到。
+ */
+watch(runName, async () => {
+  stopPolling()
+  run.value = null
+  logs.value = ''
+  logNode.value = ''
+  liveSteps.value = []
+  runYamlText.value = ''
+  await init()
 })
+
+onMounted(init)
 
 onUnmounted(stopPolling)
 

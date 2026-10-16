@@ -3,15 +3,18 @@
  * 运行历史（**列表**）。
  *
  * ⚠️ 详情在**另一个页面**（`/pipelines/run?name=…`）：原先它是这里右侧那 560px 的一栏，
- * DAG 与日志都被挤在小框里看着不方便（2026-10-16 用户的反馈）。这一页只管列与两个动作
- * （触发 / 取消），点一行就去详情页。
+ * DAG 与日志都被挤在小框里看着不方便（2026-10-16 用户的反馈）。这一页只管列与两个动作，
+ * **点运行名**去详情（与集群/命名空间那几个列表页同一套：名称可点）。
+ *
+ * ⚠️ 「取消」不在这张表上：它就是「操作」那栏唯一的东西，而绝大多数行（跑完的）那栏是空的
+ * （2026-10-16 用户的反馈：空栏不如去掉）。取消在**详情页**头部 —— 打开正在跑的那条就能点。
  *
  * ⚠️ 数据源是「归档了没有」那条分界线（spec §4.3）：历史一律读库 ——
  * 集群里的 `PipelineRun` 与它的 Pod 在归档那一刻就被删了。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { pipelineApi } from '@/api'
 import type { Pipeline, PipelineRun } from '@/types'
 import { usePermission } from '@/stores/permission'
@@ -67,7 +70,7 @@ async function load(): Promise<void> {
 
 onMounted(load)
 
-/** 点一行 → 详情页。**带上流水线 id**：详情页的「← 运行历史」要靠它回到这里 */
+/** 点运行名 → 详情页。**带上流水线 id**：详情页的「← 运行历史」要靠它回到这里 */
 function openRun(r: PipelineRun): void {
   void router.push({ path: '/pipelines/run', query: { name: r.runName, id: pipelineId.value } })
 }
@@ -76,21 +79,6 @@ async function run(): Promise<void> {
   try {
     const runName = await pipelineApi.run(pipelineId.value, effectiveTenantId.value)
     ElMessage.success(`已触发：${runName}`)
-    await load()
-  } catch {
-    /* 拦截器已提示 */
-  }
-}
-
-async function cancel(r: PipelineRun): Promise<void> {
-  await ElMessageBox.confirm(
-    '取消这次运行？**会先抓一次日志再取消** —— 所以取消之后日志仍然看得到。',
-    '确认',
-    { type: 'warning' },
-  )
-  try {
-    await pipelineApi.cancelRun(r.runName, effectiveTenantId.value)
-    ElMessage.success('已取消')
     await load()
   } catch {
     /* 拦截器已提示 */
@@ -108,10 +96,12 @@ async function cancel(r: PipelineRun): Promise<void> {
       <el-button v-if="canRun" type="primary" @click="run">运行</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="runs" row-key="id" @row-click="openRun">
+    <el-table v-loading="loading" :data="runs" row-key="id">
       <el-table-column label="运行" min-width="260">
         <template #default="{ row }">
-          <span class="run-name">{{ row.runName }}</span>
+          <!-- 详情挂在**名称**上（与集群/命名空间那几个列表页同一套：res-name + name-link）——
+               整行可点会把「复制运行名」这类操作也吃掉 -->
+          <code class="res-name name-link" @click="openRun(row)">{{ row.runName }}</code>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="110">
@@ -126,14 +116,6 @@ async function cancel(r: PipelineRun): Promise<void> {
       <el-table-column label="触发人" width="110" prop="triggeredBy" />
       <el-table-column label="耗时" width="90">
         <template #default="{ row }">{{ duration(row) }}</template>
-      </el-table-column>
-      <el-table-column label="操作" width="90">
-        <template #default="{ row }">
-          <!-- ⚠️ .stop：这一列在行里，不拦的话点「取消」会连带跳去详情页 -->
-          <el-button v-if="canRun && row.status === 'RUNNING'" link type="danger" @click.stop="cancel(row)">
-            取消
-          </el-button>
-        </template>
       </el-table-column>
       <template #empty>
         <div class="empty">还没有运行过 —— 点右上角「运行」触发一次</div>
@@ -160,8 +142,18 @@ async function cancel(r: PipelineRun): Promise<void> {
 .spacer {
   flex: 1;
 }
-.run-name {
+/* 点运行名进详情 —— 与集群/命名空间那几个列表页同一套（res-name + name-link） */
+.res-name {
+  font-family: Consolas, 'JetBrains Mono', monospace;
+  font-size: 13px;
   word-break: break-all;
+}
+.name-link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.name-link:hover {
+  text-decoration: underline;
 }
 .empty {
   color: var(--text-3);
