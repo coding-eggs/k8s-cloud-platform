@@ -1060,6 +1060,17 @@ const contextDesc = computed(() => {
             </el-card>
             <el-card v-if="form.kind === 'statefulset'" shadow="never" class="sec-card">
               <template #header><span class="sec-title">存储卷模板 volumeClaimTemplates <FieldHelp tip="StatefulSet 专属：为每个副本自动创建独立 PVC 的模板。" /></span></template>
+              <!-- ⚠️ 只读不是我们偷懒：K8s **不允许**改 StatefulSet 的 spec.volumeClaimTemplates
+                   （可变的是 replicas / ordinals / template / updateStrategy /
+                   persistentVolumeClaimRetentionPolicy / minReadySeconds 那几个），
+                   改了会被 API server 拒。而且就算能改，也只对**新建的副本**生效。
+                   不把这两句说出来，用户只会看到一片灰掉的输入框。 -->
+              <div v-if="editing" class="form-tip warn">
+                ⚠️ 编辑已有对象时这块是只读的：K8s 不允许改 StatefulSet 的 volumeClaimTemplates
+                （可变的是 replicas / template / updateStrategy 那几个），改了会被集群拒掉。
+                <br />另外——就算能改，模板也只对新建的副本生效，已有的 PVC 一个都不会动。
+                <br />要扩已有副本的容量 → 去「存储 · PVC」页，用那一行的「调整容量」逐个改（K8s 支持在线扩容）。
+              </div>
               <PvcTemplateEditor v-model="volumeClaimTemplates" :disabled="!!editing" />
             </el-card>
           </div>
