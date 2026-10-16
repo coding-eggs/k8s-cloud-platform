@@ -20,6 +20,7 @@ import type { K8sPod } from '@/types'
 import { getAccessToken } from '@/auth/oauth'
 import EmptyState from '@/components/EmptyState.vue'
 import { prefixOf, compareTs, sortByTs, takeNewLines, type LogLine } from '@/utils/logLines'
+import { toHtml, escapeHtml } from '@/utils/logColor'
 
 const props = defineProps<{
   modelValue: boolean
@@ -48,6 +49,8 @@ const tailLines = ref(200)
  *    （所以字符总量是**跟着增删走**的 `totalChars`，不重算）。
  */
 const MAX_CHARS = 2_000_000
+/** 一行都没有时的占位：画面空着看不出是"还在跟"还是"已经停了" */
+const NO_LINES_HINT = '（还没有日志）'
 /** 无时间戳的降级只提示一次（与单 Pod 弹窗同一条口径） */
 let warnedNoTs = false
 
@@ -67,24 +70,44 @@ const picked = ref<string[]>([])
 const sources = ref<Source[]>([])
 
 /**
- * 已收下的行，**带 `[pod/<pod>/<容器>]` 前缀** —— 就是最终显示的样子。
- * ⚠️ 缓冲以**行数组**为准，`displayText` 只是渲染结果：有搜索要筛、有上限要从头部丢，
- *    在数组上做才不用每轮把整块文本 split 一遍（这条路径每 2 秒跑一次）。
+ * 已收下的行。**前缀与正文分开存**，不是拼好的一整条串：
+ * ① 着色（`utils/logColor` 的 Spring Boot 正则）要求行**以时间戳开头**，前缀一拼上去就匹配不上了 ——
+ *    那样开关在、却一行都不变色；
+ * ② 搜索要能按 pod 名找（前缀也算内容）。
  */
-const logLines = ref<string[]>([])
+interface LogRow {
+  /** `[pod/<pod>/<容器>] ` —— 最终显示时在正文前，但不参与着色 */
+  prefix: string
+  text: string
+}
+
+const logLines = ref<LogRow[]>([])
 /** 行数组的字符总量，跟着增删走（见 MAX_CHARS 的说明） */
 let totalChars = 0
 /** 搜索/过滤关键词（大小写不敏感）；非空时只显示包含它的行 */
 const searchTerm = ref('')
+/** 彩色开关：按 Spring Boot 级别分段着色（与单 Pod 弹窗同一套规则，见 utils/logColor） */
+const colorEnabled = ref(true)
 
 const textEl = ref<HTMLElement | null>(null)
 const atBottom = ref(true)
 
 const shownLines = computed(() => {
   const q = searchTerm.value.trim().toLowerCase()
-  return q ? logLines.value.filter((l) => l.toLowerCase().includes(q)) : logLines.value
+  // 搜索匹配「前缀 + 正文」：这样既能按内容找，也能只盯某一个 Pod
+  return q ? logLines.value.filter((r) => (r.prefix + r.text).toLowerCase().includes(q)) : logLines.value
 })
-const displayText = computed(() => shownLines.value.join('\n'))
+/**
+ * ⚠️ 走 `v-html` 是为了着色（`<pre>` 渲染不了 ANSI），所以**每一段都必须先转义** ——
+ *    日志内容是集群里的进程写出来的，等于不可信输入（`toHtml` / `escapeHtml` 负责这件事）。
+ */
+const displayHtml = computed(() => {
+  const rows = shownLines.value
+  if (!rows.length) return NO_LINES_HINT
+  return rows
+    .map((r) => escapeHtml(r.prefix) + (colorEnabled.value ? toHtml(r.text) : escapeHtml(r.text)))
+    .join('\n')
+})
 /** 有搜索才报匹配数：否则那只是"总行数"，跟"筛掉了多少"混在一起反而看不懂 */
 const matchCountText = computed(() => (searchTerm.value.trim() ? `${shownLines.value.length} 条匹配` : ''))
 
@@ -170,10 +193,10 @@ async function fetchSource(s: Source, sinceTime?: string): Promise<string> {
 }
 
 /** 某个来源取不到 —— 只插一行说明，**不影响其余**（Review Focus #2 / spec §3.4） */
-function warnOnce(s: Source, why: string): string | null {
+function warnOnce(s: Source, why: string): LogRow | null {
   if (s.warned) return null
   s.warned = true
-  return `${prefixOf(s.pod, s.container)}暂时取不到日志（${why}）`
+  return { prefix: prefixOf(s.pod, s.container), text: `暂时取不到日志（${why}）` }
 }
 
 function clearBuffer(): void {
@@ -189,21 +212,22 @@ function trimIfHuge(): void {
   let freed = 0
   // 至少留最后一行：全丢光会让画面变成空白，看不出是"还在跟"还是"已经停了"
   while (drop < all.length - 1 && totalChars - freed > MAX_CHARS) {
-    freed += (all[drop]?.length ?? 0) + 1
+    const r = all[drop]
+    freed += (r?.prefix.length ?? 0) + (r?.text.length ?? 0) + 1
     drop++
   }
   if (!drop) return
-  const marker = `（更早的 ${drop} 行已折叠）`
+  const marker: LogRow = { prefix: '', text: `（更早的 ${drop} 行已折叠）` }
   logLines.value = [marker, ...all.slice(drop)]
-  totalChars = totalChars - freed + marker.length + 1
+  totalChars = totalChars - freed + marker.text.length + 1
 }
 
 /** 收下新行：入缓冲（含裁剪）后贴底 */
-function appendLines(rows: string[]): void {
+function appendLines(rows: LogRow[]): void {
   if (!rows.length) return
   for (const r of rows) {
     logLines.value.push(r)
-    totalChars += r.length + 1
+    totalChars += r.prefix.length + r.text.length + 1
   }
   trimIfHuge()
   scrollToBottom()
@@ -233,13 +257,14 @@ function advanceCursor(s: Source, lines: LogLine[], nextCursor: string): void {
 
 /** 首次：每个来源各拉一次 tailLines 快照（串行 —— 20 条流一起打出去只会互相挤） */
 async function snapshot(): Promise<void> {
-  const rows: string[] = []
+  const rows: LogRow[] = []
   for (const s of sources.value) {
+    const prefix = prefixOf(s.pod, s.container)
     try {
       const text = await fetchSource(s)
       const { lines, nextCursor } = takeNewLines(text, '')
       advanceCursor(s, lines, nextCursor)
-      for (const l of sortByTs(lines)) rows.push(prefixOf(s.pod, s.container) + l.content)
+      for (const l of sortByTs(lines)) rows.push({ prefix, text: l.content })
     } catch (e) {
       const w = warnOnce(s, (e as Error).message)
       if (w) rows.push(w)
@@ -330,7 +355,7 @@ async function pollOnce(): Promise<void> {
       }
     }),
   )
-  const rows: string[] = []
+  const rows: LogRow[] = []
   const collected: Array<{ s: Source; l: LogLine }> = []
   for (const r of results) {
     // ⭐ 某个来源没了（Pod 被滚动更新删掉）不能让整条流停掉或清空
@@ -342,7 +367,7 @@ async function pollOnce(): Promise<void> {
     for (const l of r.lines) collected.push({ s: r.s, l })
   }
   collected.sort((a, b) => compareTs(a.l.ts, b.l.ts)) // 相等时保持收集顺序（现代 Array.sort 稳定）
-  for (const x of collected) rows.push(prefixOf(x.s.pod, x.s.container) + x.l.content)
+  for (const x of collected) rows.push({ prefix: prefixOf(x.s.pod, x.s.container), text: x.l.content })
   appendLines(rows)
 }
 
@@ -369,7 +394,11 @@ onUnmounted(() => {
         <el-button size="small" style="margin-left: 0" @click="resetPick">换一批 Pod</el-button>
       </template>
       <div class="spacer" />
-      <el-button size="small" @click="fullscreen = !fullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</el-button>
+      <!-- 彩色与单 Pod 弹窗同一个开关位置（spacer 之后、全屏之前），别在两处摆到不同角落 -->
+      <el-button size="small" :type="colorEnabled ? 'primary' : 'default'" @click="colorEnabled = !colorEnabled">
+        彩色
+      </el-button>
+      <el-button size="small" style="margin-left: 0" @click="fullscreen = !fullscreen">{{ fullscreen ? '退出全屏' : '全屏' }}</el-button>
     </div>
 
     <template v-if="phase === 'pick'">
@@ -412,7 +441,7 @@ onUnmounted(() => {
 
     <template v-else>
       <div class="stream-note">正在跟 {{ sources.length }} 条来源（{{ picked.length }} 个 Pod）。</div>
-      <pre ref="textEl" class="wl-log" @scroll="onScroll">{{ displayText || '（还没有日志）' }}</pre>
+      <pre ref="textEl" class="wl-log" v-html="displayHtml" @scroll="onScroll"></pre>
       <div class="wl-foot">
         <el-button v-if="!atBottom" link type="primary" @click="jumpToBottom">↓ 回到底部</el-button>
       </div>
@@ -452,7 +481,10 @@ onUnmounted(() => {
   padding-bottom: 8px;
 }
 .wl-log {
-  height: 56vh;
+  /* 高度交给 flex（见文末非 scoped 块里的 `.wl-logs`）：原来写死 56vh，
+     结果全屏之后还是一半屏幕多一点 —— 弹窗长大了，日志框没跟着长。 */
+  flex: 1;
+  min-height: 0;
   margin: 0;
   padding: 10px;
   overflow: auto;
@@ -468,4 +500,36 @@ onUnmounted(() => {
 .wl-foot {
   height: 22px;
 }
+</style>
+
+<style>
+/* el-dialog 内部结构被 Element Plus 剥离了 scoped 属性，无法用 :deep 触达；
+   改用 .wl-logs 前缀的全局规则（该类为本组件独有）约束弹窗盒体与 body 高度。
+
+   ⚠️ `margin-top` 只能写在 `:not(.is-fullscreen)` 里 —— 否则全屏时弹窗会比屏幕还高：
+   EP 的全屏规则只把 `--el-dialog-margin-top` 改成 0，`margin` 简写仍由 `.el-dialog` 给
+   （同特异性），我们这条 longhand 排在 EP 样式之后，**全屏下也照样生效**，
+   于是 `height:100%` 之外又叠了一个上边距，最外层 `.el-overlay` 就长出滚动条。 */
+.wl-logs {
+  display: flex;
+  flex-direction: column;
+}
+.wl-logs:not(.is-fullscreen) {
+  height: min(720px, 85vh);
+  margin-top: 7rem;
+}
+.wl-logs .el-dialog__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 彩色：v-html 生成的片段不带 data-v-*（Vue 只给模板里的节点打标记），scoped 规则够不着，
+   所以这段也必须放在非 scoped 块里，用 .wl-log 前缀圈住作用域。配色跟主题变量走。 */
+.wl-log .lg-info { color: var(--success); }
+.wl-log .lg-warn { color: var(--warning); }
+.wl-log .lg-error { color: var(--danger); }
+.wl-log .lg-thread { color: var(--accent); }
+.wl-log .lg-class { color: var(--info); }
 </style>

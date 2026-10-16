@@ -16,6 +16,7 @@ import '@xterm/xterm/css/xterm.css'
 import type { K8sPod } from '@/types'
 import { getAccessToken } from '@/auth/oauth'
 import { takeNewLines } from '@/utils/logLines'
+import { toAnsi } from '@/utils/logColor'
 
 const props = defineProps<{
   modelValue: boolean
@@ -165,48 +166,8 @@ async function fetchLogs(sinceTime?: string, tailLinesParam?: number): Promise<s
 //    聚合视图共用。理由：同一份日志在两个视图里必须显示出**一样的行**，各写一份迟早分叉。
 //    （顺带修掉了原来"找第一个制表符"那个写法：内容里自带制表符的行会被从中间劈开，
 //     那个"假时间戳"还会被当成游标推上去，之后的增量全乱。）
-
-/** Spring Boot 日志分段着色（保留原始对齐，只给指定片段套 ANSI 色）：
- *  时间/pid/服务名/msg = 默认；级别 INFO·DEBUG·TRACE 绿 / WARN 黄 / ERROR 红；[线程] 紫；类名蓝 */
-const C_GREEN = '\x1b[32m'
-const C_YELLOW = '\x1b[33m'
-const C_RED = '\x1b[31m'
-const C_PURPLE = '\x1b[35m'
-const C_BLUE = '\x1b[36m'
-const C_RESET = '\x1b[0m'
-
-/** 级别 → 颜色（未识别的级别不着色） */
-const LEVEL_COLOR: Record<string, string> = {
-  INFO: C_GREEN, DEBUG: C_GREEN, TRACE: C_GREEN,
-  WARN: C_YELLOW, ERROR: C_RED,
-}
-
-// <ts> <LEVEL> <pid> --- [service] [thread] <class> : <msg>
-// 捕获各段之间的原始空白（m[2]/m[4]/...），重建时原样保留 → 列对齐不变；方括号是字面量需手动补回
-const SPRING_LINE_RE = /^(\S+)(\s+)(\w{2,7})(\s+)(\S+)(\s+)---(\s+)\[([^\]]*)\](\s+)\[([^\]]*)\](\s+)(.+?)(\s*:\s*)(.*)$/
-
-function colorize(line: string): string {
-  const m = SPRING_LINE_RE.exec(line)
-  if (!m) return line // 非 Spring Boot 格式（如堆栈续行）：原样
-  const lvlColor = LEVEL_COLOR[(m[3] ?? '').toUpperCase()] ?? ''
-  return [
-    m[1],                                            // 时间：默认
-    m[2],
-    lvlColor ? lvlColor + m[3] + C_RESET : m[3],     // 级别：绿/黄/红
-    m[4],
-    m[5],                                            // pid：默认
-    m[6],
-    '---',                                           // 分隔符：默认
-    m[7],
-    '[' + m[8] + ']',                                // 服务名：默认
-    m[9],
-    C_PURPLE + '[' + m[10] + ']' + C_RESET,          // [线程]：紫
-    m[11],
-    C_BLUE + m[12] + C_RESET,                        // 类名：蓝
-    m[13],                                           // " : " 分隔符：默认
-    m[14],                                           // msg：默认
-  ].join('')
-}
+// ⚠️ 着色规则同理，抽到 `@/utils/logColor`：本组件渲染 ANSI，聚合视图渲染 HTML 片段，
+//    但"哪一段是什么"只有一份定义 —— 同一行在两个视图里颜色不同比没颜色更让人怀疑自己看错了。
 
 /**
  * 解析一次拉回的日志文本，返回「新增的原始行（已剥 k8s 前缀、未着色）+ 新游标」。
@@ -248,7 +209,7 @@ function appendNew(newContents: string[]): void {
   let buf = ''
   for (const c of newContents) {
     if (q && !c.toLowerCase().includes(q)) continue
-    buf += (colorEnabled.value ? colorize(c) : c) + '\n'
+    buf += (colorEnabled.value ? toAnsi(c) : c) + '\n'
   }
   if (buf) term.write(buf)
   updateMatchCount()
@@ -262,7 +223,7 @@ function renderAll(): void {
   let buf = ''
   for (const line of displayLines) {
     if (q && !line.toLowerCase().includes(q)) continue
-    buf += (colorEnabled.value ? colorize(line) : line) + '\n'
+    buf += (colorEnabled.value ? toAnsi(line) : line) + '\n'
   }
   term.write(buf)
   updateMatchCount()
@@ -498,15 +459,20 @@ onBeforeUnmount(() => {
 
 <style>
 /* el-dialog 内部结构被 Element Plus 剥离了 scoped 属性，无法用 :deep 触达；
-   改用 .log-dialog 前缀的全局规则（该类为本组件独有）约束弹窗盒体与 body 高度。 */
+   改用 .log-dialog 前缀的全局规则（该类为本组件独有）约束弹窗盒体与 body 高度。
+
+   ⚠️ `margin-top` 必须写在 `:not(.is-fullscreen)` 里 —— 这是全屏时"整个弹窗比屏幕还高、
+   最外层长出滚动条"的根因：EP 的全屏规则只把 `--el-dialog-margin-top` 改成 0，
+   而 `margin` 简写仍由 `.el-dialog` 给（同特异性）。我们这条 longhand 排在 EP 样式之后，
+   就在**全屏下也照样生效**：`height:100%` 之外又叠了 7rem。 */
 .log-dialog {
   display: flex;
   flex-direction: column;
-  margin-top: 7rem;
   min-width: 720px;
 }
 .log-dialog:not(.is-fullscreen) {
   height: min(720px, 85vh);
+  margin-top: 7rem;
 }
 .log-dialog .el-dialog__body {
   flex: 1;
