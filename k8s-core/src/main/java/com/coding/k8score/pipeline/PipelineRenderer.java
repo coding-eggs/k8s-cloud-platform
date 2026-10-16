@@ -9,6 +9,7 @@ import io.fabric8.tekton.v1.PipelineTask;
 import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
 import io.fabric8.tekton.v1.WorkspaceDeclaration;
 import io.fabric8.tekton.v1.WorkspacePipelineTaskBinding;
+import io.fabric8.tekton.v1.WhenExpression;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -62,6 +63,28 @@ public final class PipelineRenderer {
     public static final String CACHE_WORKSPACE = "cache";
     public static final String CACHE_MOUNT = "/cache";
 
+    /**
+     * 「失败也继续」的取值 —— Tekton 的 {@code task.onError} 目前**只有这一个合法值**，
+     * 所以画布上它是个开关，落到 YAML 里是这个字符串（原样透传，不做映射表）。
+     */
+    public static final String CONTINUE = "continue";
+
+    /**
+     * 收尾节点的执行时机（画布上的三选一）。
+     *
+     * <p>⚠️ 这三个字符串**前端也写着一份**（{@code NodePropsPanel.vue} 的「运行控制」段）——
+     * 改这里要同时改那边。
+     */
+    public static final String WHEN_ALWAYS = "always";
+    public static final String WHEN_FAILED = "failed";
+    public static final String WHEN_SUCCEEDED = "succeeded";
+
+    /**
+     * 聚合状态变量。**只能用在 {@code finally} 里** —— 写在 {@code tasks[]} 的 {@code when} 上，
+     * 校验 webhook 会直接拒（见下面 {@link #finallyWhenOf} 的说明）。
+     */
+    public static final String AGGREGATE_STATUS = "$(tasks.status)";
+
     private final PipelineNodeRegistry nodes;
 
     public PipelineRenderer(PipelineNodeRegistry nodes) {
@@ -95,19 +118,38 @@ public final class PipelineRenderer {
         // 连线按 to 归组 —— 一个节点可以被多个上游指向（汇合）
         Map<String, Set<String>> runAfter = new LinkedHashMap<>();
         for (PipelineCanvas.CanvasEdge e : edges) {
-            if (!byId.containsKey(e.from())) {
+            PipelineCanvas.CanvasNode from = byId.get(e.from());
+            if (from == null) {
                 throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
                         "连线指向了不存在的节点：" + e.from());
             }
-            if (!byId.containsKey(e.to())) {
+            PipelineCanvas.CanvasNode to = byId.get(e.to());
+            if (to == null) {
                 throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
                         "连线指向了不存在的节点：" + e.to());
+            }
+            // ⚠️ 收尾节点**不参与顺序**：Tekton 的 finally 既不能写 runAfter、也不按顺序跑
+            // （它们同时开跑，见 spec 里那条「已知限制」）。画布上还留着一根线就是画布在说谎 ——
+            // 拒掉，而不是把那根线静默丢掉（用户会以为它生效了）。
+            if (from.isFinally() || to.isFinally()) {
+                throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                        "收尾执行的节点不参与顺序，不能连线：" + (from.isFinally() ? e.from() : e.to()));
             }
             runAfter.computeIfAbsent(e.to(), k -> new LinkedHashSet<>()).add(e.from());
         }
         rejectCycles(byId.keySet(), edges);
 
+        long finallyCount = canvas.nodes().stream().filter(PipelineCanvas.CanvasNode::isFinally).count();
+        if (finallyCount == canvas.nodes().size()) {
+            // 全是收尾节点 = Tekton 那边 tasks 为空，pipeline 本身就不成立 —— 报错要报在我们自己嘴里
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "全是收尾执行的节点 —— 至少要有一个不在收尾里跑的节点");
+        }
+
         List<PipelineTask> tasks = new ArrayList<>();
+        // 收尾节点单独一列（Tekton 的 finally[]）。**只在真有收尾节点时才写这个键** ——
+        // 普通流水线的 YAML 里不该冒出一个空的 `finally:`
+        List<PipelineTask> finallyTasks = new ArrayList<>();
         // 谁要额外的 workspace（凭据 / 缓存）就把它记下来 —— 声明一次，
         // **只在实际用到时才声明**（不用就不建那个 Secret、不挂那块缓存卷）
         Map<String, String> extraWorkspaces = new LinkedHashMap<>();
@@ -154,11 +196,32 @@ public final class PipelineRenderer {
             // 一秒内失败、Pod 都没起来（所以连日志都没有）——2026-10-15 第二次真跑撞到。
             // 只写 name：Tekton 会把它接到 pipeline 里同名的那个 workspace 上。
             task.setWorkspaces(ws.stream().map(PipelineRenderer::taskWorkspaceBinding).toList());
+
+            // 失败也继续（Tekton 的 `onError: continue`）：这一节点挂了不阻断它的下游 ——
+            // 「失败分支」在这套画布上只有这一种表达（原因见 finallyWhenOf 上那段说明）。
+            if (n.onError() != null && !n.onError().isBlank()) {
+                if (!CONTINUE.equals(n.onError())) {
+                    throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                            "节点 " + n.id() + " 的失败处理认不出来：" + n.onError()
+                                    + "（只能是 " + CONTINUE + "）");
+                }
+                task.setOnError(CONTINUE);
+            }
+
             Set<String> after = runAfter.get(n.id());
             if (after != null && !after.isEmpty()) {
                 task.setRunAfter(new ArrayList<>(after));
             }
-            tasks.add(task);
+            if (n.isFinally()) {
+                // 收尾节点没有 runAfter（上面已经拒掉了连到它的线）—— 它跑不跑由聚合状态决定
+                WhenExpression when = finallyWhenOf(n);
+                if (when != null) {
+                    task.setWhen(List.of(when));
+                }
+                finallyTasks.add(task);
+            } else {
+                tasks.add(task);
+            }
         }
 
         List<PipelineWorkspaceDeclaration> declared = new ArrayList<>();
@@ -168,8 +231,48 @@ public final class PipelineRenderer {
         }
         PipelineSpec spec = new PipelineSpec();
         spec.setTasks(tasks);
+        if (!finallyTasks.isEmpty()) {
+            spec.setFinally(finallyTasks);
+        }
         spec.setWorkspaces(declared);
         return spec;
+    }
+
+    /**
+     * 收尾节点的执行时机 → Tekton 的 {@code when}（{@code null} = 总是执行，不写 {@code when}）。
+     *
+     * <p>⚠️ <b>为什么条件只能写在这里</b>（2026-10-16 用 {@code --dry-run=server} 实测）：
+     * {@code tasks[]} 里的 {@code when} **一律不能引用任务的执行状态** —— 单个的
+     * {@code $(tasks.X.status)} 与聚合的 {@code $(tasks.status)} 都拒，原话是
+     * <i>pipeline tasks can not refer to execution status of any other pipeline task or
+     * aggregate status of tasks</i>。执行状态条件**只有 finally 能用**。
+     * 于是「失败/成功如何走」的落点就是：普通节点上的 {@code onError} + 收尾节点上的这个 {@code when}。
+     *
+     * <p>⚠️ {@link #WHEN_FAILED} 有意**不**写 {@code values: ["Failed"]}：
+     * 聚合值的档位是 {@code Succeeded / Completed / Failed / None}，而 {@code Completed}
+     * 那一档是「有任务被跳过」—— 平台上唯一能造成跳过的原因就是上游失败（{@code tasks[]} 里的
+     * {@code when} 我们根本不渲染），所以「不是全成功、也不是全跳过」才是在任何档位口径下
+     * 都成立的「前面失败了」。
+     */
+    private static WhenExpression finallyWhenOf(PipelineCanvas.CanvasNode n) {
+        String timing = n.finallyWhen();
+        if (timing == null || timing.isBlank() || WHEN_ALWAYS.equals(timing)) {
+            return null;
+        }
+        WhenExpression when = new WhenExpression();
+        when.setInput(AGGREGATE_STATUS);
+        if (WHEN_SUCCEEDED.equals(timing)) {
+            when.setOperator("in");
+            when.setValues(List.of("Succeeded"));
+        } else if (WHEN_FAILED.equals(timing)) {
+            when.setOperator("notin");
+            when.setValues(List.of("Succeeded", "None"));
+        } else {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "节点 " + n.id() + " 的收尾时机认不出来：" + timing
+                            + "（只能是 " + WHEN_ALWAYS + " / " + WHEN_FAILED + " / " + WHEN_SUCCEEDED + "）");
+        }
+        return when;
     }
 
     /**

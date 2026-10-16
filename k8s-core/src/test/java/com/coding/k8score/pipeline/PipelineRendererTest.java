@@ -1,8 +1,12 @@
 package com.coding.k8score.pipeline;
 
 import com.coding.common.exception.CloudPlatformException;
+import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.PipelineTask;
+import io.fabric8.tekton.v1.WhenExpression;
+import io.fabric8.tekton.v1.WorkspaceDeclaration;
+import io.fabric8.tekton.v1.WorkspacePipelineTaskBinding;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -170,5 +174,176 @@ class PipelineRendererTest {
         // 这是「历史运行天然带当时那一版」的前提 —— 同一份画布渲染两次必须字节等价
         PipelineCanvas c = canvas(List.of(node("n1", "git"), node("n2", "echo")), List.of());
         assertThat(renderer.render(c, "ws")).isEqualTo(renderer.render(c, "ws"));
+    }
+
+    // ==================== 运行控制：失败也继续 / 收尾执行 ====================
+    //
+    // ⚠️ 这两个开关为什么**只**做到这一步（2026-10-16 用 --dry-run=server 实测过）：
+    //   · `tasks[]` 里的 `when` **不能引用任何任务的执行状态** —— webhook 直接拒：
+    //       invalid value: pipeline tasks can not refer to execution status of any other
+    //       pipeline task or aggregate status of tasks
+    //     所以「上游失败才走这条线」「上游成功才走这条线」**在 tasks[] 里表达不出来**。
+    //     （顺带：上游失败本来就会跳过所有下游，所以「成功才继续」是 Tekton 的默认行为，不用开关。）
+    //   · 执行状态条件**只有 finally 能用**（`$(tasks.status)` / `$(tasks.X.status)`）。
+    //   · finally **没有 runAfter、也不按顺序跑** —— 它们同时开跑。
+    // 于是「失败成功如何走」在这套画布上的落点就是下面这两个字段。
+
+    @Test
+    void aNodeThatContinuesOnErrorRendersOnErrorContinue() {
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(node("n1", "git"), withRun("n2", "echo", PipelineRenderer.CONTINUE, null, null)),
+                        List.of(new PipelineCanvas.CanvasEdge("n1", "n2"))), "ws");
+
+        PipelineTask second = task(spec, "n2");
+        assertThat(second.getOnError()).isEqualTo("continue");
+        assertThat(second.getRunAfter()).containsExactly("n1");   // 开关不动连线语义
+    }
+
+    @Test
+    void anUnknownOnErrorIsRejected() {
+        // 同理：存下来的画布是外部输入，认不出来的失败处理不能**静默丢掉**（那等于开关没生效）
+        assertThatThrownBy(() -> renderer.render(
+                canvas(List.of(withRun("n1", "git", "explode", null, null)), List.of()), "ws"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("失败处理")
+                .hasMessageContaining("n1");
+    }
+
+    @Test
+    void aNodeWithoutRunControlRendersNeitherOnErrorNorFinally() {
+        // 没勾任何开关 → 一个字段都不多写（老画布渲染出来与加这个功能之前逐字节一致）
+        PipelineSpec spec = renderer.render(canvas(List.of(node("n1", "git")), List.of()), "ws");
+
+        assertThat(spec.getTasks().get(0).getOnError()).isNull();
+        assertThat(spec.getFinally()).isNullOrEmpty();
+    }
+
+    @Test
+    void withoutFinallyNodesTheRenderedYamlHasNoFinallySection() {
+        // 普通流水线的 YAML 里不该冒出一个空的 `finally:`（老运行的 YAML 还要能对着看）
+        String yaml = Serialization.asYaml(
+                renderer.render(canvas(List.of(node("n1", "git")), List.of()), "ws"));
+
+        assertThat(yaml).doesNotContain("finally");
+    }
+
+    @Test
+    void aFinallyNodeLandsInTheFinallyListNotInTasks() {
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(node("n1", "git"), withRun("n9", "echo", null, true, null)), List.of()), "ws");
+
+        assertThat(spec.getTasks()).extracting(PipelineTask::getName).containsExactly("n1");
+        assertThat(spec.getFinally()).extracting(PipelineTask::getName).containsExactly("n9");
+    }
+
+    @Test
+    void finallyRunsAlwaysWhenNoTimingIsChosen() {
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(node("n1", "git"), withRun("n9", "echo", null, true, null)), List.of()), "ws");
+
+        assertThat(finallyTask(spec, "n9").getWhen()).isNullOrEmpty();
+    }
+
+    @Test
+    void finallyOnFailureAsksForAnythingButSuccess() {
+        // ⚠️ 有意**不**写 values: ["Failed"]：聚合值的档位是 Succeeded / Completed / Failed / None，
+        //    而 Completed 那一档的含义是「有任务被跳过」—— 平台上唯一能造成跳过的原因就是上游失败，
+        //    所以「只要不是全成功、也不是全跳过」才是「前面失败了」的准确表达（两种档位口径下都成立）。
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(node("n1", "git"),
+                        withRun("n9", "echo", null, true, PipelineRenderer.WHEN_FAILED)), List.of()), "ws");
+
+        WhenExpression when = onlyWhen(spec, "n9");
+        assertThat(when.getInput()).isEqualTo("$(tasks.status)");
+        assertThat(when.getOperator()).isEqualTo("notin");
+        assertThat(when.getValues()).containsExactly("Succeeded", "None");
+    }
+
+    @Test
+    void finallyOnSuccessRunsOnlyWhenEverythingSucceeded() {
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(node("n1", "git"),
+                        withRun("n9", "echo", null, true, PipelineRenderer.WHEN_SUCCEEDED)), List.of()), "ws");
+
+        WhenExpression when = onlyWhen(spec, "n9");
+        assertThat(when.getInput()).isEqualTo("$(tasks.status)");
+        assertThat(when.getOperator()).isEqualTo("in");
+        assertThat(when.getValues()).containsExactly("Succeeded");
+    }
+
+    @Test
+    void anUnknownFinallyTimingIsRejected() {
+        // 存下来的画布是**外部输入**（前端可以绕过），未知取值不能静默当成"总是执行"
+        assertThatThrownBy(() -> renderer.render(
+                canvas(List.of(node("n1", "git"), withRun("n9", "echo", null, true, "什么时候都行")), List.of()),
+                "ws"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("收尾时机");
+    }
+
+    @Test
+    void aFinallyNodeKeepsTheSharedWorkspaceBound() {
+        // 收尾节点走的是同一条构造路径 —— 少一个 workspace 绑定就整个 TaskRun 起不来
+        // （declared workspace "ws" is required but has not been bound）
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(node("n1", "git"), withRun("n9", "echo", null, true, null)), List.of()), "ws");
+
+        PipelineTask n9 = finallyTask(spec, "n9");
+        assertThat(n9.getTaskSpec().getWorkspaces())
+                .extracting(WorkspaceDeclaration::getName).containsExactly("ws");
+        assertThat(n9.getWorkspaces())
+                .extracting(WorkspacePipelineTaskBinding::getName).containsExactly("ws");
+    }
+
+    @Test
+    void aFinallyNodeCanAlsoContinueOnError() {
+        PipelineSpec spec = renderer.render(
+                canvas(List.of(node("n1", "git"),
+                        withRun("n9", "echo", PipelineRenderer.CONTINUE, true, PipelineRenderer.WHEN_FAILED)),
+                        List.of()), "ws");
+
+        PipelineTask n9 = finallyTask(spec, "n9");
+        assertThat(n9.getOnError()).isEqualTo("continue");
+        assertThat(n9.getWhen()).hasSize(1);
+    }
+
+    @Test
+    void anEdgeTouchingAFinallyNodeIsRejected() {
+        // 收尾节点**不参与顺序**（Tekton 里它们没有 runAfter、且同时开跑）。
+        // 画布上还连着一根线 = 画布在说谎，必须拒掉而不是静默丢掉那根线
+        assertThatThrownBy(() -> renderer.render(
+                canvas(List.of(node("n1", "git"), withRun("n9", "echo", null, true, null)),
+                        List.of(new PipelineCanvas.CanvasEdge("n1", "n9"))), "ws"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("收尾")
+                .hasMessageContaining("n9");
+    }
+
+    @Test
+    void aCanvasMadeOnlyOfFinallyNodesIsRejected() {
+        // 全是 finally = tasks 为空 —— Tekton 那边也起不来，报错要报在我们自己嘴里
+        assertThatThrownBy(() -> renderer.render(
+                canvas(List.of(withRun("n1", "git", null, true, null)), List.of()), "ws"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("收尾");
+    }
+
+    /** 收尾节点（finally）—— 时机见 {@link PipelineRenderer#WHEN_FAILED} 那几个常量 */
+    private static PipelineCanvas.CanvasNode withRun(String id, String type, String onError,
+                                                     Boolean finallyTask, String finallyWhen) {
+        return new PipelineCanvas.CanvasNode(id, type, null, Map.of("repo", "x", "msg", "y"),
+                null, onError, finallyTask, finallyWhen);
+    }
+
+    private static PipelineTask task(PipelineSpec spec, String name) {
+        return spec.getTasks().stream().filter(t -> name.equals(t.getName())).findFirst().orElseThrow();
+    }
+
+    private static PipelineTask finallyTask(PipelineSpec spec, String name) {
+        return spec.getFinally().stream().filter(t -> name.equals(t.getName())).findFirst().orElseThrow();
+    }
+
+    private static WhenExpression onlyWhen(PipelineSpec spec, String name) {
+        return finallyTask(spec, name).getWhen().get(0);
     }
 }

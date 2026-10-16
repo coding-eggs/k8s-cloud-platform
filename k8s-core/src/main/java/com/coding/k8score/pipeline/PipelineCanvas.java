@@ -31,13 +31,37 @@ public record PipelineCanvas(List<CanvasNode> nodes, List<CanvasEdge> edges) {
      *                 前端会退回自动排布。
      *                 ⚠️ 必须存下来：不存就等于「每次打开都换一张图」，用户手摆的布局白摆
      *                 （2026-10-15 用户报「保存后再编辑，节点叠在一起了」）。
+     * @param onError <b>失败也继续</b>。取值见 {@link PipelineRenderer#CONTINUE}；空 = 照常失败
+     *                （这一节点挂了就跳过它所有的下游）。它落在 Tekton 的 {@code task.onError} 上。
+     * @param finallyTask <b>收尾执行</b>。{@code true} = 这个节点挪进 {@code finally[]} ——
+     *                不参与顺序、前面的节点怎么走它都要跑（跑不跑由 {@code finallyWhen} 定）。
+     *                ⚠️ 用装箱的 {@code Boolean}：老画布（这个字段还不存在时存的）反序列化出来是
+     *                {@code null}，与基本类型的 {@code false} 在渲染上等价，但不会在 Jackson 那里炸。
+     * @param finallyWhen 收尾节点的**执行时机**（见 {@code PipelineRenderer} 的 {@code WHEN_*} 常量）。
+     *                    空 = 总是执行（就不用写 {@code when}）。只在 {@code finallyTask} 为真时有意义。
      */
     public record CanvasNode(String id, String type, String name, Map<String, String> config,
-                             Position position) {
+                             Position position, String onError, Boolean finallyTask, String finallyWhen) {
 
         /** 没有布局信息（老画布 / 只关心「跑什么」的地方）—— 前端会退回自动排布。 */
         public CanvasNode(String id, String type, String name, Map<String, String> config) {
             this(id, type, name, config, null);
+        }
+
+        /** 有布局、但没有任何运行控制（老画布的常态）。 */
+        public CanvasNode(String id, String type, String name, Map<String, String> config,
+                          Position position) {
+            this(id, type, name, config, position, null, null, null);
+        }
+
+        /** 这个节点是不是收尾节点（{@code null} 与 {@code false} 一样）。 */
+        public boolean isFinally() {
+            return Boolean.TRUE.equals(finallyTask);
+        }
+
+        /** 这个节点失败后要不要继续（{@code onError} 是不是 {@code continue}）。 */
+        public boolean continuesOnError() {
+            return PipelineRenderer.CONTINUE.equals(onError);
         }
     }
 
