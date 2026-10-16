@@ -140,6 +140,70 @@ buildah 镜像（Fedora 底）那张表里有**不止一个**候选源（fedora 
 
 **要别的仓库就把名字写全** —— 这与 Docker / docker-compose 的规矩一致，写 Dockerfile 的人本来就是这么预期的。
 
+### 1.7 服务网格的指标要**自己接上**（S2.4 的前置；2026-10-17 已在 coding-cluster 做完）
+
+Istio **不会**自动把指标送进你的 Prometheus：代理各自暴露 `/metrics`，但没人去抓就没有。
+2026-10-17 实测：`kube-prometheus-stack` 的 14 个 ServiceMonitor **全是标准组件**（apiserver /
+coredns / kubelet / node-exporter…），网格一条都没有 → Thanos 的 2279 个指标名里，
+`istio`/`ztunnel`/`waypoint`/`envoy` 命中 **全是 0**。
+
+补上这五个对象即可。以 istiod 那条为模板（`release: ps` 是 kube-prometheus-stack 认的 label）：
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: { name: istio-istiod, namespace: istio-system, labels: { release: ps } }
+spec:
+  namespaceSelector: { matchNames: [istio-system] }
+  selector: { matchLabels: { app: istiod } }
+  endpoints: [{ port: http-monitoring, path: /metrics, interval: 30s }]
+```
+
+其余四条**同结构**，只换这几处（端口名都取自各自 Pod/Service 的 spec，不是猜的）：
+
+| 对象 | kind | selector（matchLabels） | 端口名 | 路径 |
+|---|---|---|---|---|
+| `istio-ztunnel` | PodMonitor | `app: ztunnel` | `ztunnel-stats` | `/metrics` |
+| `istio-cni` | PodMonitor | `k8s-app: istio-cni-node` | `metrics` | `/metrics` |
+| `istio-external-gateway` | PodMonitor | `gateway.networking.k8s.io/gateway-name: external-gateway` | `metrics` | `/stats/prometheus` |
+| `istio-waypoint` | PodMonitor | `gateway.istio.io/managed: istio.io-mesh-controller` | `metrics` | `/stats/prometheus` |
+
+（后两条用 `podMetricsEndpoints` 而不是 `endpoints`。**waypoint 那条的
+`namespaceSelector` 必须写 `{ any: true }`** —— 见下面第 1 个坑。
+要现成的整份，直接从集群 dump：`kubectl get servicemonitors,podmonitors -A -l release=ps -o yaml`。）
+
+⚠️ **三个坑，都踩过**：
+
+1. **`namespaceSelector: {}` 不是"所有命名空间"，是"本命名空间"**。给 waypoint 那条这么写，
+   operator 会生成 `names: [istio-system]`，而 waypoint 的 pod 在 `default` → **0 个目标**，
+   而且不报错。要写 `any: true`（prometheus-operator ≥ v0.64；本集群是 v0.93.1）。
+2. **Label 必须是 `release: ps`**，否则 Prometheus 的 `serviceMonitorSelector/podMonitorSelector` 根本看不见它。
+3. **抓到了 ≠ 有数据**。网格基础设施自己只吐 xDS / 进程指标；**L7（`istio_requests_total`）
+   只有 Envoy 类代理产出** —— 即**外部网关**（南北向）和 **waypoint**（东西向）。
+   2026-10-17 实测：抓取配好后 ztunnel/waypoint 全 up，但业务一条都没有 ——
+   因为**没有任何负载被纳入网格**（所有 ns/pod 都是 `dataplane-mode: none`）。
+
+**把负载纳入网格**（会影响流量路径，改前先想清楚动谁）：
+
+```bash
+# ① 进 ambient：给 **pod 模板** 打标记（会触发滚动重启，标记必须建 pod 时就带上）
+kubectl -n <ns> patch deploy <name> --type merge \
+  -p '{"spec":{"template":{"metadata":{"labels":{"istio.io/dataplane-mode":"ambient"}}}}}'
+# ② 让入向流量走 waypoint（**不加这步只有 L4**，没有 istio_requests_total）
+kubectl -n <ns> label svc <svc> istio.io/use-waypoint=<waypoint 名>
+```
+
+**验证**（做完应当看到边，而不只是指标名）：
+
+```bash
+curl -sG "$THANOS/api/v1/query" --data-urlencode \
+  'query=sum by (source_workload,destination_service_name) (istio_requests_total)'
+```
+
+本集群做完之后：Thanos 里 `istio_*` 指标名 **0 → 76**，可查到的边 5 条
+（外部网关 → minio / movie-web / thanos-query / prometheus，以及 movie-web → movie-service）。
+被纳入网格的是 `default` 里的 movie 前后端，**mysql / es / redis 有意没动**。
+
 ---
 
 ## 2. 一条命令核对
@@ -147,11 +211,12 @@ buildah 镜像（Fedora 底）那张表里有**不止一个**候选源（fedora 
 ```bash
 kubectl -n tekton-pipelines get cm feature-flags -o jsonpath='{.data.coschedule}{"\n"}' \
   && kubectl -n tekton-pipelines get cm config-defaults -o jsonpath='{.data.default-container-resource-requirements}{"\n"}' \
-  && kubectl get sc
+  && kubectl get sc \
+  && kubectl get servicemonitors,podmonitors -A | grep -c istio
 ```
 
 期望：第一行 `pipelineruns`（或一条明确的例外说明）；第二行有内容（**当且仅当**目标命名空间有
-1.2 那类配额）；第三行有能动态供应的 SC。
+1.2 那类配额）；第三行有能动态供应的 SC；第四行 **≥ 5**（§1.7 那五个网格采集对象都在）。
 
 ## 3. 变更记录
 
@@ -159,5 +224,7 @@ kubectl -n tekton-pipelines get cm feature-flags -o jsonpath='{.data.coschedule}
 |---|---|---|---|
 | 2026-10-15 | coding-cluster（研发） | `config-defaults` 加 `default-container-resource-requirements` | 配额逼的：Tekton init 容器平台侧设不了，CI 一秒内失败且没有日志 |
 | 2026-10-15 | coding-cluster（研发） | `feature-flags` 的 `coschedule`: `workspaces` → `pipelineruns` | 构建缓存要两个 PVC workspace |
+| 2026-10-17 | coding-cluster（研发） | 加 5 个 ServiceMonitor/PodMonitor（istiod / ztunnel / istio-cni / waypoint / external-gateway），全部 `release: ps` | 网格指标以前**一条都没人抓**（Thanos 里 `istio_*` = 0），S2.4 拓扑图没米下锅 |
+| 2026-10-17 | coding-cluster（研发） | `default`：movie 前后端 pod 模板打 `istio.io/dataplane-mode: ambient`，`movie-service` 打 `istio.io/use-waypoint: waypoint-all` | 光抓不够 —— 没有负载在网格里，抓到的只有基础设施自身的 xDS 指标，**没有 L7**。mysql/es/redis 有意没动 |
 
-**这两处改动只存在于集群里、不在仓库里** —— 换集群/重建集群时必须重做。
+**这些改动只存在于集群里、不在仓库里** —— 换集群/重建集群时必须重做（§1.7 里有可直接粘贴的清单）。
