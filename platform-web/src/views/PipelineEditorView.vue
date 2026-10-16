@@ -789,10 +789,27 @@ async function removePipeline() {
 .ctx-arrow {
   color: var(--text-3);
 }
+/**
+ * ⚠️ 这一条是二级菜单能不能点中的**全部关键**：`.ctx-sub` 是绝对定位的，
+ * 它的包含块必须是**这个条目自己**（见下面 `left: 100%`）。
+ *
+ * 少了它，包含块会退到 `.ctx-menu`（最近的定位祖先），`left: 100%` 于是相对**整个菜单的
+ * padding box** 算 —— 子菜单落在条目右边缘之外 4px 处，中间留出一条**死缝**：
+ * 鼠标从条目往右挪进那条缝时，`.ctx-has-sub` 的 `:hover` 掉了 → `display: none` →
+ * 子菜单当场消失，手根本够不到。
+ * 用户 2026-10-16 报的就是这个：「鼠标一挪到列表上就消失了，这也太蠢了」。
+ *
+ * 为什么 `:hover` 之前能撑住：子菜单是 `.ctx-has-sub` 的**后代**，指针落在子菜单上就等于
+ * 还在父条目里 —— 前提是**两者之间没有缝**。缝一有，这个前提就没了。
+ */
+.ctx-has-sub {
+  position: relative;
+}
 .ctx-sub {
   display: none;
   position: absolute;
   left: 100%;
+  /* 相对**条目**上移 5px：让子菜单的顶边与条目的文字行对齐（相对整个菜单算会跑到菜单最上面） */
   top: -5px;
   min-width: 160px;
   padding: 4px;
