@@ -16,6 +16,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
 import { MarkerType, VueFlow } from '@vue-flow/core'
 import type { Edge, Node } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
@@ -212,6 +213,26 @@ function skipWhy(n: PipelineCanvasNode, anyFailed: boolean): string {
   return anyFailed ? '上游没成功，跟着被跳过' : '运行提前结束（取消或超时），没轮到它'
 }
 
+/**
+ * 日志全屏：把日志块变成**铺满窗口的浮层**（用户 2026-10-16 要的）。
+ *
+ * <p>⚠️ 有意用 `position: fixed` 的浮层，而不是浏览器的 Fullscreen API：这一页大多数时候在
+ * 应用窗口里读，铺满窗口就是想要的效果；而真正的全屏要处理权限、Esc 与状态同步三件事，
+ * 在嵌入式窗口里还可能直接被拒。Esc 与按钮都能退出。
+ */
+const logFullscreen = ref(false)
+
+function toggleLogFullscreen(): void {
+  logFullscreen.value = !logFullscreen.value
+}
+
+/** Esc 退出 —— 读长日志时手在键盘上，不该为了退出把鼠标挪回去 */
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && logFullscreen.value) {
+    logFullscreen.value = false
+  }
+}
+
 const STATUS_TAG: Record<string, string> = {
   SUCCEEDED: 'success',
   FAILED: 'danger',
@@ -285,7 +306,14 @@ watch(runName, async () => {
 
 onMounted(init)
 
-onUnmounted(stopPolling)
+onUnmounted(() => {
+  stopPolling()
+  window.removeEventListener('keydown', onKeydown)
+})
+
+// ⚠️ 常驻注册（不是只在全屏时注册）：处理函数自己看 `logFullscreen` 那个开关，
+//    不生效时按 Esc 什么也不做；换来的是不用管"什么时候加/什么时候摘"这条容易漏的分支
+window.addEventListener('keydown', onKeydown)
 
 // ---- 还在跑的运行：每 5 秒对一次集群 ----
 
@@ -470,14 +498,21 @@ async function loadLogs(nodeId: string): Promise<void> {
         </VueFlow>
       </div>
 
-      <!-- 日志区只剩一行标题（当前看的是哪个节点）—— 节点在上面点，不再罗列一排 tab -->
-      <div class="log-head">
-        <span>日志</span>
-        <span v-if="logNodeId" class="log-node">{{ logNodeLabel }}</span>
-        <span v-else class="dim">点上面的节点看它的日志</span>
-        <span v-if="!canLogs" class="dim">（没有『看运行日志』权限）</span>
+      <!-- 日志区只剩一行标题（当前看的是哪个节点）—— 节点在上面点，不再罗列一排 tab。
+           全屏 = 这一块变成铺满窗口的浮层（Esc 或按钮退出） -->
+      <div class="log-panel" :class="{ full: logFullscreen }">
+        <div class="log-head">
+          <span>日志</span>
+          <span v-if="logNodeId" class="log-node">{{ logNodeLabel }}</span>
+          <span v-else class="dim">点上面的节点看它的日志</span>
+          <span v-if="!canLogs" class="dim">（没有『看运行日志』权限）</span>
+          <div class="spacer" />
+          <el-button link :icon="logFullscreen ? ScaleToOriginal : FullScreen" @click="toggleLogFullscreen">
+            {{ logFullscreen ? '退出全屏' : '全屏' }}
+          </el-button>
+        </div>
+        <pre class="log">{{ logText || (logNodeId ? '（没有日志）' : '') }}</pre>
       </div>
-      <pre class="log">{{ logText || (logNodeId ? '（没有日志）' : '') }}</pre>
     </template>
 
     <el-dialog v-model="showYaml" title="这次运行渲染出来的 PipelineRun" width="70%">
@@ -552,6 +587,22 @@ async function loadLogs(nodeId: string): Promise<void> {
   border: 1px solid var(--border, #ebeef5);
   border-radius: 4px;
 }
+/* 日志块：平时占下半屏（标题 + 内容），全屏时变成铺满窗口的浮层 */
+.log-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 55%;
+  min-height: 240px;
+}
+.log-panel.full {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  padding: 12px 16px;
+  /* 必须有底色：不然浮层底下那一页会透上来（字叠字完全没法读） */
+  background: var(--bg);
+}
 .log-head {
   display: flex;
   gap: 6px;
@@ -569,8 +620,9 @@ async function loadLogs(nodeId: string): Promise<void> {
   cursor: pointer;
 }
 .log {
-  flex: 1 1 55%;
-  min-height: 240px;
+  /* 高度由**父容器**（.log-panel）决定：这里必须能缩能长，`min-height: 0` 是让它别顶破浮层 */
+  flex: 1 1 auto;
+  min-height: 0;
   margin: 0;
   padding: 10px;
   overflow: auto;
