@@ -382,8 +382,8 @@ const contextDesc = computed(() => {
             <span
               v-else-if="row.expansion === 'unbacked'"
               class="warn"
-              title="存储类上写着允许扩，但它的 provisioner 不是 CSI 驱动 —— 没有 external-resizer 会去执行。改了也只是把「请求」改大，status.capacity 不会动，连条件都不会挂。"
-            >没人执行</span>
+              title="扩容由 CSI 驱动的 external-resizer 执行，这个存储类的 provisioner 不是 CSI 驱动 —— 改了也只是把「请求」改大，status.capacity 不会动，连条件都不会挂。"
+            >非 CSI 驱动</span>
             <span v-else-if="row.expansion === 'unsupported'" class="muted">不支持</span>
             <span v-else class="muted">—</span>
           </template>

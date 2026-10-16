@@ -111,9 +111,9 @@ public class PvcService {
         }
         if (VolumeExpansion.UNBACKED.equals(expansion)) {
             throw new CloudPlatformException(EnumResponseType.PVC_RESIZE_INVALID,
-                    "存储类 " + sc + " 标着允许扩容，但没人会执行：它的 provisioner 不是 CSI 驱动"
-                            + "（没有 external-resizer）。改了也只会把「请求」改大，status.capacity 不会动，"
-                            + "连一个条件都不会挂 —— 这个卷要变大只能删了重建。");
+                    "存储类 " + sc + " 的 provisioner 不是 CSI 驱动 —— 在线扩容由 CSI 的"
+                            + "external-resizer 执行，这个存储类没有。改了也只会把「请求」改大，"
+                            + "status.capacity 不会动，连一个条件都不会挂 —— 这个卷要变大只能删了重建。");
         }
         if (!VolumeExpansion.CSI.equals(expansion)) {
             // ⚠️ fail-closed：读不到（存储类不存在 / 集群读不出 CSIDriver 名单）就不敢说"能扩"。

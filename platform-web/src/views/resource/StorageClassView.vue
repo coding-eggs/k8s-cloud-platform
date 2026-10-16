@@ -104,15 +104,15 @@ const contextDesc = computed(() => {
         </el-table-column>
         <!-- ⚠️ 这一列与左边那列**不是一回事**，别合并：左边是存储类上的开关（只表示「允许」），
              这一列是"真有没有人会执行"。2026-10-16 真撞到：两个 SC 左边都是"是"，右边其实都是
-             "写着允许·没人执行" —— 用户对着一个不动的容量猜了半天。判据在后端（唯一算法）。 -->
+             "非 CSI 驱动"（那一态原来的说法是"没人执行"，太口语）—— 用户对着一个不动的容量猜了半天。判据在后端（唯一算法）。 -->
         <el-table-column label="在线扩容" width="150">
           <template #default="{ row }">
             <span v-if="row.expansion === 'csi'" class="yes">可以（CSI）</span>
             <span
               v-else-if="row.expansion === 'unbacked'"
               class="warn"
-              title="存储类上写着允许扩，但它的 provisioner 不是 CSI 驱动 —— 没有 external-resizer 会去执行。改 PVC 也只是把「请求」改大，status.capacity 不会动，连一个条件都不会挂。"
-            >写着允许·没人执行</span>
+              title="扩容由 CSI 驱动的 external-resizer 执行，这个存储类的 provisioner 不是 CSI 驱动 —— 改了也只是把「请求」改大，status.capacity 不会动，连条件都不会挂。"
+            >非 CSI 驱动</span>
             <span v-else-if="row.expansion === 'unsupported'" class="muted">不支持</span>
             <span v-else class="muted">—</span>
           </template>
@@ -138,11 +138,11 @@ const contextDesc = computed(() => {
                 <span class="yes">可以 —— provisioner 是集群里已注册的 CSI 驱动</span>
               </template>
               <template v-else-if="detail?.expansion === 'unbacked'">
-                <span class="warn">写着允许，但没人会执行</span>
+                <span class="warn">非 CSI 驱动</span>
                 <div class="muted expansion-note">
-                  它的 provisioner 不是 CSI 驱动 —— 真正执行扩容的是 CSI 的 external-resizer，
-                  这个存储类没有。改 PVC 的容量只会把「请求」改大，status.capacity 不会动，
-                  而且连一个条件都不会挂（没人在试，也就没人报错）。
+                  扩容由 CSI 驱动的 external-resizer 执行，这个存储类的 provisioner 不是 CSI 驱动
+                  —— 改了也只会把「请求」改大，status.capacity 不会动，而且连一个条件都不会挂
+                  （没人在试，也就没人报错）。要真能扩，得在集群侧装一个 CSI 驱动。
                 </div>
               </template>
               <template v-else-if="detail?.expansion === 'unsupported'">

@@ -26,7 +26,7 @@ public class StorageClassDTO extends BaseResources {
      *
      * <p>⚠️ 为什么不直接看 {@link #allowVolumeExpansion}：那个字段只表示「**允许**扩」，
      * 而真正执行扩容的是 CSI 驱动的 {@code external-resizer}。非 CSI 的 provisioner
-     * （nfs-subdir、local-path 这类）**不会有人执行** —— 改了 {@code spec} 也只是把请求改大，
+     * （nfs-subdir、local-path 这类）**没有执行方** —— 改了 {@code spec} 也只是把请求改大，
      * {@code status.capacity} 一动不动，而且**连一个条件都不会挂**（没人在试，也就没人报错）。
      * 2026-10-16 真撞到：集群两个 SC 都写着 {@code allowVolumeExpansion: true}，两个都做不到。
      *

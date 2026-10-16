@@ -20,7 +20,7 @@ public final class VolumeExpansion {
     /** 允许 + provisioner 是已注册的 CSI 驱动 → 正常情况下有人会执行扩容。 */
     public static final String CSI = "csi";
 
-    /** 允许，但 provisioner 不是 CSI 驱动 → **没人会执行**（最反直觉、也最该被说出来的那一态）。 */
+    /** 允许，但 provisioner 不是 CSI 驱动 → **没有执行方**（最反直觉、也最该被说出来的那一态）。 */
     public static final String UNBACKED = "unbacked";
 
     private VolumeExpansion() {

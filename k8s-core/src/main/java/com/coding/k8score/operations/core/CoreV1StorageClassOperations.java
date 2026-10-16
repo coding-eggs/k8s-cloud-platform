@@ -69,7 +69,7 @@ public class CoreV1StorageClassOperations implements ClusterOperations<StorageCl
                     .filter(Objects::nonNull)
                     .collect(Collectors.toSet());
         } catch (Exception e) {
-            log.warn("读 CSIDriver 名单失败 —— 扩容能力一律按「没人会执行」算：{}", e.getMessage());
+            log.warn("读 CSIDriver 名单失败 —— 扩容能力一律按「没有执行方」算：{}", e.getMessage());
             return Set.of();
         }
     }
