@@ -630,7 +630,7 @@
 |---|---|---|---|---|---|
 | **S0.1** | 审计日志 | — | L | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-audit-log-design.md) · [plan](superpowers/plans/2026-10-13-audit-log.md) |
 | **S0.2** | 凭据与连接管理 | — | M | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-credential-management-design.md) · [plan](superpowers/plans/2026-10-13-credential-management.md) |
-| **S1.1** | 用户自助 | — | S | ⬜ 未开始 | — |
+| **S1.1** | 用户自助 | — | S | ✅ **已实施待部署**（2026-10-16；`5d8fd8e`+`a2ac99d`+`f427ae6`+`bb955a6`。改密码 / 改资料 + 清掉两个死 URL。**要重建 platform-auth + platform-web**；无迁移。⚠️ 顺手修了个既有配置错：`@EnableRedisHttpSession` 建的是**无索引版**仓库，"按用户名踢会话"要 `@EnableRedisIndexedHttpSession` —— 见 `RedisSessionConfig`。S1.1.4（登录失败锁定 / 在线会话管理）**按用户决定未做**） | — |
 | **S1.2** | 集群组件展示 | — | M | ⬜ 未开始 | — |
 | **S1.3** | 平台总览 | — | M | ⬜ 未开始 | — |
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
