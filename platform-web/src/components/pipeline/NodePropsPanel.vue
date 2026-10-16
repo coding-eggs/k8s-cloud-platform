@@ -234,6 +234,17 @@ function setWhen(v: string) {
           @update:model-value="(v: boolean) => setValue(f.key, v ? 'true' : 'false')"
         />
 
+        <!-- 数字：只收数字，**单位由 schema 固定**在输入框后面（用户不用写、也写不了单位） -->
+        <el-input
+          v-else-if="f.type === 'NUMBER'"
+          type="number"
+          :model-value="valueOf(f.key)"
+          :placeholder="f.placeholder ?? ''"
+          @update:model-value="(v: string) => setValue(f.key, v)"
+        >
+          <template v-if="f.unit" #suffix>{{ f.unit }}</template>
+        </el-input>
+
         <el-input
           v-else
           :model-value="valueOf(f.key)"

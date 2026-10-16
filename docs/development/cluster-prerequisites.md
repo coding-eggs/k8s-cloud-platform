@@ -45,7 +45,8 @@ kubectl -n tekton-pipelines patch configmap config-defaults --type merge -p \
 `limits.cpu` 拍 2 就会让两条并发运行反过来撞 `exceeded quota`。上面这组（5 容器 ≈ 5 CPU 上限）
 在 8 CPU 配额的命名空间里能跑两条并发。
 
-**单个节点想要更多，不用改这里**：预设构建节点的「高级 → 内存上限」（如 `2Gi`）会渲染成**一整组**
+**单个节点想要更多，不用改这里**：预设构建节点的「高级 → 内存上限」（**只填数字，单位固定 Mi**，如 `2048`）
+会渲染成**一整组**
 容器资源 —— `requests {cpu: 100m, memory: 128Mi}` + `limits {cpu: 1, memory: <填的>}`。
 
 - ⚠️ **四个字段必须一起写**：Tekton 的默认资源**只在容器完全没写 resources 时才填**，

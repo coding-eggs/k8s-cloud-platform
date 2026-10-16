@@ -327,7 +327,7 @@ class BuiltinNodesTest {
     @Test
     void aMemoryLimitIsWrittenAsACompleteResourceBlock() {
         RenderedStep step = new NodeBuildNode().render(ctx("node",
-                Map.of("command", "npm ci && npm run build-only", "memory", "2Gi")));
+                Map.of("command", "npm ci && npm run build-only", "memory", "2048")));
 
         ResourceRequirements res = step.steps().get(0).getComputeResources();
         assertThat(res).isNotNull();
@@ -336,34 +336,39 @@ class BuiltinNodesTest {
         assertThat(res.getLimits()).containsOnlyKeys("cpu", "memory");
         assertThat(res.getRequests().get("memory")).isEqualTo(Quantity.parse("128Mi"));
         assertThat(res.getRequests().get("cpu")).isEqualTo(Quantity.parse("100m"));
-        assertThat(res.getLimits().get("memory")).isEqualTo(Quantity.parse("2Gi"));
+        // ⭐ 用户只填数字，单位是平台补的 Mi
+        assertThat(res.getLimits().get("memory")).isEqualTo(Quantity.parse("2048Mi"));
         assertThat(res.getLimits().get("cpu")).isEqualTo(Quantity.parse("1"));
     }
 
     @Test
-    void aMemoryLimitThatIsNotAQuantityIsRejected() {
-        // 用户填的是外部输入（还能绕过前端直接存画布）—— 认不出来就拒，不能渲染出一个必挂的 Pod
-        assertThatThrownBy(() -> new NodeBuildNode().render(ctx("node", Map.of("memory", "大一点"))))
+    void aMemoryLimitThatIsNotANumberIsRejected() {
+        // 字段是「只填数字、单位固定 Mi」—— 用户仍可能绕过前端直接存画布（`2Gi` 就是典型的手写值）
+        assertThatThrownBy(() -> new NodeBuildNode().render(ctx("node", Map.of("memory", "2Gi"))))
                 .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("内存上限");
+                .hasMessageContaining("只能填数字");
     }
 
     @Test
     void aMemoryLimitBelowTheRequestFloorIsRejected() {
         // requests.memory 是 128Mi（那档必须小）—— 上限比它还小的话 Pod 会被 K8s 拒，
         // 报出来的是另一句看不懂的话，所以在这里先拦
-        assertThatThrownBy(() -> new NodeBuildNode().render(ctx("node", Map.of("memory", "64Mi"))))
+        assertThatThrownBy(() -> new NodeBuildNode().render(ctx("node", Map.of("memory", "64"))))
                 .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("128Mi");
+                .hasMessageContaining("128");
     }
 
     @Test
-    void everyBuildNodeOffersTheMemoryField() {
-        // 字段清单是四个节点共用的（BuildStep.schema）—— 这条保证没人改漏
+    void everyBuildNodeOffersTheMemoryFieldWithAFixedUnit() {
+        // 字段清单是四个节点共用的（BuildStep.schema）—— 这条保证没人改漏。
+        // ⚠️ 顺带钉住**前端合同**：类型是 NUMBER、单位由 schema 给（用户不用写单位）
         for (PipelineNode node : List.of(new JavaBuildNode(), new NodeBuildNode(),
                 new GoBuildNode(), new PythonBuildNode())) {
-            assertThat(node.formSchema().fields()).as(node.type())
-                    .extracting(f -> f.key()).contains("memory");
+            NodeField f = node.formSchema().fields().stream()
+                    .filter(x -> "memory".equals(x.key())).findFirst()
+                    .orElseThrow(() -> new AssertionError(node.type() + " 少了 memory 字段"));
+            assertThat(f.type()).as(node.type()).isEqualTo(NodeField.FieldType.NUMBER);
+            assertThat(f.unit()).as(node.type()).isEqualTo("Mi");
         }
     }
 

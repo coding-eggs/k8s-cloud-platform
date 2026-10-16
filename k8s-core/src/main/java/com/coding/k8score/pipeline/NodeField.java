@@ -5,23 +5,34 @@ import java.util.List;
 /**
  * 一个表单字段。**纯数据** —— 前端据此渲染，渲染器据此校验。
  *
- * @param type TEXT / TEXTAREA / SELECT / IMAGE。IMAGE 在前端会挂 S3.1 的候选补全
+ * @param type TEXT / TEXTAREA / SELECT / IMAGE / BOOLEAN / NUMBER。IMAGE 在前端会挂 S3.1 的候选补全
  * @param advanced {@code true} = 收在属性面板的「高级」里。
  *                 常态不用填、但排障/特殊环境必须能填的字段走这里（例如代理）——
  *                 摊在面板上会把真正要看的几个字段挤下去。
+ * @param unit 只对 {@link FieldType#NUMBER} 有意义：**固定**跟在输入框后面的单位（如 {@code Mi}）。
+ *             ⚠️ 单位**不交给用户填** —— 让用户填自由文本，最后必然同时出现 `2G` / `2GB` / `2048` 三种写法，
+ *             而它们进了容器就是三种不同的意思（甚至非法值）。数字归数字、单位归字段。
  */
 public record NodeField(String key, String label, FieldType type,
                         boolean required, String placeholder, String help,
-                        String defaultValue, List<Option> options, boolean advanced) {
+                        String defaultValue, List<Option> options, boolean advanced,
+                        String unit) {
 
-    public enum FieldType { TEXT, TEXTAREA, SELECT, IMAGE, BOOLEAN }
+    public enum FieldType { TEXT, TEXTAREA, SELECT, IMAGE, BOOLEAN, NUMBER }
 
     public record Option(String value, String label) { }
 
-    /** 八参的便利构造：{@code advanced=false}（绝大多数字段）。 */
+    /** 八参的便利构造：{@code advanced=false}、{@code unit=null}（绝大多数字段）。 */
     public NodeField(String key, String label, FieldType type, boolean required,
                      String placeholder, String help, String defaultValue, List<Option> options) {
-        this(key, label, type, required, placeholder, help, defaultValue, options, false);
+        this(key, label, type, required, placeholder, help, defaultValue, options, false, null);
+    }
+
+    /** 九参的便利构造：给得出 {@code advanced}、但没有单位（数字字段之外都走这条）。 */
+    public NodeField(String key, String label, FieldType type, boolean required,
+                     String placeholder, String help, String defaultValue, List<Option> options,
+                     boolean advanced) {
+        this(key, label, type, required, placeholder, help, defaultValue, options, advanced, null);
     }
 
     public static NodeField text(String key, String label, boolean required) {
@@ -41,6 +52,16 @@ public record NodeField(String key, String label, FieldType type,
     /** 收在「高级」里的文本字段（见 {@link #advanced}）。 */
     public static NodeField advancedText(String key, String label, String help) {
         return new NodeField(key, label, FieldType.TEXT, false, null, help, null, List.of(), true);
+    }
+
+    /**
+     * 收在「高级」里的**数字**字段：只填数字，单位**固定**（渲染成输入框 + 后面跟着 {@code unit}）。
+     *
+     * <p>与 {@link #advancedText} 的区别就是这一点：单位不由用户写，取值只有一种解释。
+     */
+    public static NodeField advancedNumber(String key, String label, String unit, String help) {
+        return new NodeField(key, label, FieldType.NUMBER, false, null, help, null, List.of(),
+                true, unit);
     }
 
     /**

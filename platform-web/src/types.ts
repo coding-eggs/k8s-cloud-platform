@@ -1707,7 +1707,7 @@ export interface RegistrySuggestResponse {
 export interface PipelineNodeField {
   key: string
   label: string
-  type: 'TEXT' | 'TEXTAREA' | 'SELECT' | 'IMAGE' | 'BOOLEAN'
+  type: 'TEXT' | 'TEXTAREA' | 'SELECT' | 'IMAGE' | 'BOOLEAN' | 'NUMBER'
   required: boolean
   placeholder?: string | null
   help?: string | null
@@ -1715,6 +1715,9 @@ export interface PipelineNodeField {
   options?: { value: string; label: string }[] | null
   /** 收在属性面板的「高级」里（常态不用填、但排障时必须能填的字段，例如代理） */
   advanced?: boolean
+  /** 只对 `NUMBER` 有意义：**固定**跟在输入框后面的单位（如 `Mi`）。
+   *  ⚠️ 单位由后端给，用户只填数字 —— 让用户写单位最后会出现 `2G`/`2GB`/`2048` 三种写法 */
+  unit?: string | null
 }
 
 /** 语言预设。**只是默认值** —— 选它只换下面几个框里的内容，不锁死任何字段。 */
