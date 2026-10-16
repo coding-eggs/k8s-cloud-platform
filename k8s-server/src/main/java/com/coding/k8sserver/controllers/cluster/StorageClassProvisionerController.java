@@ -64,16 +64,21 @@ public class StorageClassProvisionerController implements AccessBoundaryAware {
 
     @PostMapping("/provisioners")
     @Operation(summary = "StorageClass 窄投影",
-            description = "只回 name + provisioner（不回 parameters）；CI 能力探针判断有没有可动态供应的盘")
+            description = "回 name + provisioner + allowVolumeExpansion + expansion（不回 parameters）。"
+                    + "CI 能力探针判断有没有可动态供应的盘；「调整容量」用 expansion 判断能不能真扩。"
+                    + "⚠️ 租户读不了 /storageclasses/**（PLATFORM 边界），所以那两个事实只能走这里。")
     public ResponseData<List<StorageClassProvisionerDTO>> provisioners(@RequestBody StorageClassDTO body) {
         accessResolver.assertClusterAccess(body.getClusterId());
         ClusterOperations<StorageClassDTO> ops =
                 operationsFactory.getClusterOperation(ResourceType.STORAGE_CLASS, body.getClusterId());
+        // ⚠️ expansion 是在 ops.list 里算好的（唯一算法在那儿）—— 这里只做投影，不重算
         return new ResponseData<>(ops.list(null, null).stream()
                 .map(sc -> {
                     StorageClassProvisionerDTO view = new StorageClassProvisionerDTO();
                     view.setName(sc.getName());
                     view.setProvisioner(sc.getProvisioner());
+                    view.setAllowVolumeExpansion(sc.getAllowVolumeExpansion());
+                    view.setExpansion(sc.getExpansion());
                     return view;
                 })
                 .toList());

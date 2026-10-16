@@ -1,6 +1,8 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
+import com.coding.platformapi.k8s.K8sPipelineClient;
 import com.coding.platformapi.k8s.K8sClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,9 +23,30 @@ import java.util.List;
 public class StorageClassService {
 
     private final K8sClient k8s;
+    private final K8sPipelineClient pipeline;
 
     public List<StorageClassDTO> list(StorageClassDTO query) {
         return k8s.list(query);
+    }
+
+    /**
+     * 这块存储类**真能不能在线扩容**：{@code unsupported} / {@code csi} / {@code unbacked}，
+     * 读不到（存储类不存在 / 名单读不出来）返回 {@code null} —— 调用方按 fail-closed 处理。
+     *
+     * <p>⚠️ <b>刻意不走本类的 {@link #get}</b>：{@code /storageclasses/{name}} 的边界是 {@code PLATFORM}
+     * （{@code V2026_10_07_3}），**租户一律 403** —— 而扩容恰恰是租户管理员要做的事。
+     * 窄投影那条是 {@code UPSTREAM} 边界（与 {@code /nodes/addresses} 同形），走 admin client，
+     * 租户调得动。2026-10-16 做扩容时踩到过这个：只有管理员能用，租户点一下 403。
+     *
+     * <p>（为什么不干脆在本层调 {@code k8s.get} 再自己判：那还得读 {@code CSIDriver} 名单，
+     * 而那是集群级、租户 SA 更没有权限 —— 判据算一次就好，在 {@code CoreV1StorageClassOperations}。）
+     */
+    public String expansionOf(String clusterId, String storageClassName) {
+        return pipeline.storageClassProvisioners(clusterId).stream()
+                .filter(sc -> storageClassName.equals(sc.getName()))
+                .map(StorageClassProvisionerDTO::getExpansion)
+                .findFirst()
+                .orElse(null);
     }
 
     public StorageClassDTO get(String name, String tenantId, String clusterId) {

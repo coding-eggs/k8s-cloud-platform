@@ -562,6 +562,12 @@ export interface K8sStorageClass {
   provisioner?: string | null
   reclaimPolicy?: string | null
   allowVolumeExpansion?: boolean | null
+  /**
+   * **真能不能在线扩容**（unsupported / csi / unbacked）。
+   * ⚠️ 与 allowVolumeExpansion 不是一回事：那个只表示「允许」，非 CSI 的 provisioner
+   * （nfs-subdir、local-path）改了也只会把请求改大，status.capacity 一动不动。
+   */
+  expansion?: string | null
   creationTime?: string | null
 }
 

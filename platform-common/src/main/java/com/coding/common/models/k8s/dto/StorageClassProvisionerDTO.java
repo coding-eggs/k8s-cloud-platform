@@ -32,4 +32,21 @@ public class StorageClassProvisionerDTO {
     /** 空 / {@code kubernetes.io/no-provisioner} = 静态盘，跑 CI 会在 PVC 绑定上卡住 */
     @Schema(description = "provisioner")
     private String provisioner;
+
+    /** 存储类上那个开关。⚠️ 只表示「**允许**扩」，不代表有人会执行 —— 见 {@link #expansion}。 */
+    @Schema(description = "是否允许扩容（只表示「允许」）")
+    private Boolean allowVolumeExpansion;
+
+    /**
+     * **真能不能在线扩容**：{@code unsupported} / {@code csi} / {@code unbacked}。
+     *
+     * <p>它是「调整容量」那个入口的判据（唯一算法在 {@code CoreV1StorageClassOperations}）。
+     * 光看 {@link #allowVolumeExpansion} 是假绿灯：非 CSI 的 provisioner（nfs-subdir、local-path）
+     * 没有 {@code external-resizer}，改了也只是把请求改大，{@code status.capacity} 一动不动。
+     *
+     * <p>2026-10-16：租户读不了 StorageClass（{@code /storageclasses/**} 是 PLATFORM 边界），
+     * 所以扩容要的那两个事实只能从这条窄投影拿 —— 这也是它从"只回 name+provisioner"扩宽的原因。
+     */
+    @Schema(description = "真能不能扩（unsupported / csi / unbacked）")
+    private String expansion;
 }

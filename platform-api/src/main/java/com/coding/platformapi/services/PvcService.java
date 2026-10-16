@@ -3,7 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
-import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.k8s.dto.VolumeExpansion;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.PvcResizeRequest;
 import lombok.RequiredArgsConstructor;
@@ -99,17 +99,28 @@ public class PvcService {
                     "这个卷没写存储类（多半是手工绑到某块 PV 上的），线上扩容得由存储类支持，"
                             + "这里不敢替你断言能扩。");
         }
-        StorageClassDTO klass = storageClasses.get(sc, req.getTenantId(), req.getClusterId());
-        if (klass == null) {
-            // ⚠️ fail-closed：读不到就不敢说"能扩"。放过去只会让用户在 SSA 那一步撞上 K8s 原话
-            throw new CloudPlatformException(EnumResponseType.PVC_RESIZE_INVALID,
-                    "读不到存储类 " + sc + "（它可能已经不存在）—— 没法确认它开没开在线扩容，"
-                            + "先确认这个存储类还在、且开了 allowVolumeExpansion。");
-        }
-        if (!Boolean.TRUE.equals(klass.getAllowVolumeExpansion())) {
+        // ⚠️ 判据是「**真能不能**扩」，不是 `allowVolumeExpansion` —— 后者只表示"允许"。
+        //    2026-10-16 真撞到：本集群两个 SC 都写着 true、两个都做不到，改了只是把请求改大。
+        //    走窄投影（`expansionOf`）而不是 `storageClasses.get(...)`：后者是 PLATFORM 边界，
+        //    **租户一律 403**，而扩容恰恰是租户管理员要做的事。
+        String expansion = storageClasses.expansionOf(req.getClusterId(), sc);
+        if (VolumeExpansion.UNSUPPORTED.equals(expansion)) {
             throw new CloudPlatformException(EnumResponseType.PVC_RESIZE_INVALID,
                     "存储类 " + sc + " 没开在线扩容（allowVolumeExpansion）—— 这个卷只能删了重建。"
                             + "（改存储类上的这个开关要集群管理员，而且只对之后新建的卷生效。）");
+        }
+        if (VolumeExpansion.UNBACKED.equals(expansion)) {
+            throw new CloudPlatformException(EnumResponseType.PVC_RESIZE_INVALID,
+                    "存储类 " + sc + " 标着允许扩容，但没人会执行：它的 provisioner 不是 CSI 驱动"
+                            + "（没有 external-resizer）。改了也只会把「请求」改大，status.capacity 不会动，"
+                            + "连一个条件都不会挂 —— 这个卷要变大只能删了重建。");
+        }
+        if (!VolumeExpansion.CSI.equals(expansion)) {
+            // ⚠️ fail-closed：读不到（存储类不存在 / 集群读不出 CSIDriver 名单）就不敢说"能扩"。
+            //    放过去只会让用户对着一个不动的容量猜。
+            throw new CloudPlatformException(EnumResponseType.PVC_RESIZE_INVALID,
+                    "读不到存储类 " + sc + " 的扩容能力（它可能不存在，或集群读不出 CSIDriver 名单）"
+                            + "—— 没法确认有没有人会执行扩容，先确认这个存储类还在。");
         }
         current.setStorage(target);
         return k8s.update(current);
