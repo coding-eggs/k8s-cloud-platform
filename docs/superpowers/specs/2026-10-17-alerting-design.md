@@ -339,9 +339,24 @@ RuleHealth {
 |---|---|---|
 | `loaded` | 在 `/api/v1/rules` 里按 §6.2 对齐上了 | 「已加载」 |
 | `missing` | 没对齐上，且 `now - creationTimestamp` 超过宽限期（**5 分钟**，覆盖 prometheus-operator 的 reload 延迟） | 「**未加载（已 N 分钟）**」+ 悬停解释可能原因 |
-| `unknown` | Prometheus 拉不到 / 没配 `prometheus_url` / 解析失败 | 「状态未知」 |
+| `unknown` | ① Prometheus 拉不到 ② 没配 `prometheus_url` ③ 解析失败 ④ **文件名前缀有歧义** | 「状态未知」 |
 
 宽限期内一律显示「加载中」，**不报 missing** —— 刚建完的规则本来就还没被 reload。
+
+#### ⚠️ 前缀不是单射（④ 的来源）
+
+`<namespace>-<CR名>-` 这个前缀**会撞**：
+
+```
+ns=a    + name=b-c   →  a-b-c-
+ns=a-b  + name=c     →  a-b-c-      ← 同一个前缀
+```
+
+prometheus-operator 的文件名就是 `<ns>-<CR名>-<uuid>.yaml`，**信息在这里已经丢了** —— 没有任何解析办法能还原。
+所以当**一个前缀对上两份 CR** 时，两份都标 `unknown`，**不许猜**（猜错就是把 A 的运行状态挂到 B 身上，
+而那正是本块要消灭的那类静默错误）。
+
+概率很低（要求两个命名空间与 CR 名的拼法恰好相同），但代价对称：多写五行守卫 vs. 长期显示错的状态。
 
 ### 6.4 为什么这个判据比读 `ruleSelector` 好
 
@@ -422,7 +437,7 @@ startsAt / endsAt / generatorURL / fingerprint
 
 ```sql
 CREATE TABLE IF NOT EXISTS `platform_alert_event` (
-  `id`          VARCHAR(64)  NOT NULL COMMENT 'ULID',
+  `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增（非 ULID）—— 理由同 platform_audit_log',
   `cluster_id`  VARCHAR(64)  NOT NULL,
   `namespace`   VARCHAR(253)          DEFAULT NULL COMMENT '来自 labels.namespace，规则作者自报；归属靠查询时 join 分配表',
   `alertname`   VARCHAR(253) NOT NULL,
@@ -440,6 +455,8 @@ CREATE TABLE IF NOT EXISTS `platform_alert_event` (
   KEY `idx_alert_time`    (`cluster_id`, `starts_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='告警事件（一次 firing 会话一行）';
 ```
+
+> **`id` 用自增而非本仓惯用的 ULID** —— 照 `platform_audit_log` 的先例：追加型日志表用自增，插入更省、时间序扫描更顺，而且游标分页要的正是「时间 + 单调 id」这个组合。**同时它也是 §7.3 游标 `(starts_at, id)` 的后半段** —— 用 `Long` 才能这么比。
 
 **幂等键 = `(cluster_id, fingerprint, starts_at)`**，理由：
 
