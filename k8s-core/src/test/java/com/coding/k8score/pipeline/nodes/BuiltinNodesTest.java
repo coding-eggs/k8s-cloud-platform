@@ -1,6 +1,9 @@
 package com.coding.k8score.pipeline.nodes;
 
+import com.coding.common.exception.CloudPlatformException;
 import com.coding.k8score.pipeline.*;
+import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -297,6 +300,70 @@ class BuiltinNodesTest {
                         assertThat(w.name()).isEqualTo("cache");
                         assertThat(w.mountPath()).isEqualTo("/cache");
                     });
+        }
+    }
+
+    // ---- 资源：构建 Pod 的容器上限（用户 2026-10-16：构建 OOM 了，要能多要点内存）----
+    //
+    // 形状由集群侧两条约束定死：
+    //   1. Tekton 的 `default-container-resource-requirements` 只在容器**完全没写** resources 时才填
+    //      → 我们一旦要写，就**四个字段一起写**（requests.cpu/memory + limits.cpu/memory）。
+    //      少写的那一项会被命名空间配额拒：`must specify limits.cpu for: step-xxx`；
+    //   2. requests 那档必须**小**：命名空间配额的 requests 档通常远小于 limits 档
+    //      （真集群：requests 4 CPU / 4Gi vs limits 8 CPU / 8Gi）—— 把 requests 跟着用户填的数放大就会撞它。
+
+    @Test
+    void buildNodesWriteNoResourcesUnlessAskedTo() {
+        // 留空 = 一个字都不写（集群那套默认照旧生效）—— 老画布渲染出来与本功能之前逐字节一致
+        for (PipelineNode node : List.of(new JavaBuildNode(), new NodeBuildNode(),
+                new GoBuildNode(), new PythonBuildNode())) {
+            RenderedStep step = node.render(ctx(node.type(), Map.of()));
+
+            assertThat(step.steps().get(0).getComputeResources()).as(node.type() + " 没填就该什么都不写")
+                    .isNull();
+        }
+    }
+
+    @Test
+    void aMemoryLimitIsWrittenAsACompleteResourceBlock() {
+        RenderedStep step = new NodeBuildNode().render(ctx("node",
+                Map.of("command", "npm ci && npm run build-only", "memory", "2Gi")));
+
+        ResourceRequirements res = step.steps().get(0).getComputeResources();
+        assertThat(res).isNotNull();
+        // 四个字段一个都不能少（少一个就被配额校验拒，见上面那段）
+        assertThat(res.getRequests()).containsOnlyKeys("cpu", "memory");
+        assertThat(res.getLimits()).containsOnlyKeys("cpu", "memory");
+        assertThat(res.getRequests().get("memory")).isEqualTo(Quantity.parse("128Mi"));
+        assertThat(res.getRequests().get("cpu")).isEqualTo(Quantity.parse("100m"));
+        assertThat(res.getLimits().get("memory")).isEqualTo(Quantity.parse("2Gi"));
+        assertThat(res.getLimits().get("cpu")).isEqualTo(Quantity.parse("1"));
+    }
+
+    @Test
+    void aMemoryLimitThatIsNotAQuantityIsRejected() {
+        // 用户填的是外部输入（还能绕过前端直接存画布）—— 认不出来就拒，不能渲染出一个必挂的 Pod
+        assertThatThrownBy(() -> new NodeBuildNode().render(ctx("node", Map.of("memory", "大一点"))))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("内存上限");
+    }
+
+    @Test
+    void aMemoryLimitBelowTheRequestFloorIsRejected() {
+        // requests.memory 是 128Mi（那档必须小）—— 上限比它还小的话 Pod 会被 K8s 拒，
+        // 报出来的是另一句看不懂的话，所以在这里先拦
+        assertThatThrownBy(() -> new NodeBuildNode().render(ctx("node", Map.of("memory", "64Mi"))))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("128Mi");
+    }
+
+    @Test
+    void everyBuildNodeOffersTheMemoryField() {
+        // 字段清单是四个节点共用的（BuildStep.schema）—— 这条保证没人改漏
+        for (PipelineNode node : List.of(new JavaBuildNode(), new NodeBuildNode(),
+                new GoBuildNode(), new PythonBuildNode())) {
+            assertThat(node.formSchema().fields()).as(node.type())
+                    .extracting(f -> f.key()).contains("memory");
         }
     }
 

@@ -45,6 +45,18 @@ kubectl -n tekton-pipelines patch configmap config-defaults --type merge -p \
 `limits.cpu` 拍 2 就会让两条并发运行反过来撞 `exceeded quota`。上面这组（5 容器 ≈ 5 CPU 上限）
 在 8 CPU 配额的命名空间里能跑两条并发。
 
+**单个节点想要更多，不用改这里**：预设构建节点的「高级 → 内存上限」（如 `2Gi`）会渲染成**一整组**
+容器资源 —— `requests {cpu: 100m, memory: 128Mi}` + `limits {cpu: 1, memory: <填的>}`。
+
+- ⚠️ **四个字段必须一起写**：Tekton 的默认资源**只在容器完全没写 resources 时才填**，
+  所以一旦写了 `limits.memory`，Tekton 一个字都不补 —— 缺 `requests.cpu`/`limits.cpu`
+  就被配额拒（`must specify limits.cpu for: step-xxx`）。那三个兜底值抄的就是上面这组。
+- ⚠️ 改这里那份默认**不会**同步到平台侧那三个兜底值（各写各的），别把它们当成同一个真相。
+- ⚠️ 典型场景：1Gi 的容器里 Node 的默认堆约 512MB，`vue-tsc` 会 `Reached heap limit`
+  （2026-10-16 真撞到）。只加 `NODE_OPTIONS=--max-old-space-size` 没用 —— 会从"撞 Node 的堆上限"
+  变成"被 cgroup 杀掉"（exit 137），**必须同时把容器上限提上去**。
+- ⚠️ 提之前看配额还剩多少：`kubectl -n <ns> get resourcequota`（按"所有容器求和"算，一个构建 Pod 约 3 个容器）。
+
 ### 1.3 存储：可动态供应的 StorageClass；构建缓存另需 **RWX**
 
 - **CI 能跑** 需要至少一个能动态供应的 StorageClass（共享 workspace 是现开的 PVC）——

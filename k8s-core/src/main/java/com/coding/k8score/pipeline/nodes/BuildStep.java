@@ -1,5 +1,7 @@
 package com.coding.k8score.pipeline.nodes;
 
+import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
 import com.coding.k8score.pipeline.CacheEnv;
 import com.coding.k8score.pipeline.NodeContext;
 import com.coding.k8score.pipeline.NodeField;
@@ -8,10 +10,14 @@ import com.coding.k8score.pipeline.PipelineRenderer;
 import com.coding.k8score.pipeline.ProxyEnv;
 import com.coding.k8score.pipeline.RenderedStep;
 import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import io.fabric8.tekton.v1.Step;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 预设构建节点（java / node / go / python）**共用的那一半**：字段清单与渲染的骨架。
@@ -27,6 +33,25 @@ final class BuildStep {
 
     /** 与 {@link GitCloneNode#WS} 同一个路径（那是共享 workspace 的挂载点）。 */
     static final String WS = GitCloneNode.WS;
+
+    /**
+     * 写了「内存上限」时，另外三个字段用这一组兜底 —— 抄的是**集群前提文档 §1.2** 里那组数值
+     * （`docs/development/cluster-prerequisites.md`）。
+     *
+     * <p>⚠️ 为什么非得替用户补上这三个：Tekton 的 `default-container-resource-requirements`
+     * **只在容器完全没写 resources 时才填**。我们一旦写了 `limits.memory`，Tekton 就一个字都不补，
+     * 于是 `requests.cpu` / `limits.cpu` 缺失 → 命名空间配额（含 requests.cpu/limits.cpu 的那种）
+     * 直接拒：`must specify limits.cpu for: step-xxx`。四个字段必须**一起**写。
+     *
+     * <p>⚠️ requests 那档**故意小**：配额的 requests 档通常远小于 limits 档（真集群是 4 CPU/4Gi
+     * vs 8 CPU/8Gi）—— 把 requests 跟着用户填的数放大会撞请求配额，那比 OOM 更难查。
+     *
+     * <p>⚠️ 这三个数与集群那份默认是**各自独立**的：改了那边，这里不会自动跟。
+     * 所以它们只是"补全用的兜底"，不是集群配置的唯一真相。
+     */
+    private static final String REQUEST_CPU = "100m";
+    private static final String REQUEST_MEMORY = "128Mi";
+    private static final String LIMIT_CPU = "1";
 
     private BuildStep() {
     }
@@ -45,6 +70,8 @@ final class BuildStep {
         step.setImage(image);
         step.setWorkingDir(workDir(ctx.value("workDir")));
         step.setScript(withDirBanner(script));
+        // 留空 = 一个字都不写（集群那套默认资源照旧生效）
+        step.setComputeResources(resources(ctx.value("memory")));
 
         List<EnvVar> env = new ArrayList<>(CacheEnv.of());
         env.addAll(toolEnv);
@@ -57,7 +84,50 @@ final class BuildStep {
     }
 
     /**
-     * 四个节点共用的字段：镜像、命令、工作目录，外加「高级」里的代理。
+     * 用户填的「内存上限」→ **一整组**容器资源；留空返回 {@code null}（一个字都不写）。
+     *
+     * <p>为什么需要它（用户 2026-10-16 真撞到）：集群侧 Tekton 的默认容器资源是
+     * `requests 100m/128Mi + limits cpu 1/memory 1Gi`（见集群前提文档 §1.2），而 Node 会按
+     * **容器的 cgroup 上限**推算自己的默认堆大小 —— 1Gi 的容器 ≈ 512MB 堆，
+     * 于是 `vue-tsc`（`npm run build` 里与 vite **并行**跑的那个）直接
+     * `FATAL ERROR: Reached heap limit`（日志里那行 510.2MB 就是它）。
+     * 而只加 `NODE_OPTIONS=--max-old-space-size` 没用：那只是把"撞 Node 自己的堆上限"
+     * 换成"被 cgroup 杀掉"（exit 137）。
+     *
+     * <p>**纯函数**（不碰 IO），所以可单测。
+     */
+    static ResourceRequirements resources(String memory) {
+        String raw = memory == null ? "" : memory.trim();
+        if (raw.isEmpty()) {
+            return null;
+        }
+        Quantity limit;
+        BigDecimal limitBytes;
+        try {
+            limit = Quantity.parse(raw);
+            // ⚠️ `Quantity.parse` 很**宽松**：`"大一点"` 也能给你一个 Quantity，
+            //    真正算数的时候（BigDecimal）才炸 —— 所以在这里就把它换成字节，两类坏输入一起拦下
+            limitBytes = Quantity.getAmountInBytes(limit);
+        } catch (RuntimeException e) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "内存上限认不出来：" + raw + "（用 K8s 的写法，如 2Gi / 1536Mi）");
+        }
+        // ⚠️ 上限不能比 requests 小：K8s 要求 requests ≤ limits，否则 Pod 被拒 ——
+        //    而报出来的是另一句看不懂的话，所以在这里先拦，并说清是哪个数
+        if (limitBytes.compareTo(Quantity.getAmountInBytes(Quantity.parse(REQUEST_MEMORY))) < 0) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "内存上限至少 " + REQUEST_MEMORY + "（requests 那档就是它，上限不能比它小）：" + raw);
+        }
+        ResourceRequirements out = new ResourceRequirements();
+        // ⚠️ 四个字段一起写，理由见上面那组常量的注释
+        out.setRequests(Map.of("cpu", Quantity.parse(REQUEST_CPU),
+                "memory", Quantity.parse(REQUEST_MEMORY)));
+        out.setLimits(Map.of("cpu", Quantity.parse(LIMIT_CPU), "memory", limit));
+        return out;
+    }
+
+    /**
+     * 四个节点共用的字段：镜像、命令、工作目录，外加「高级」里的代理与内存上限。
      *
      * @param extraAdvanced 这个工具自己的高级字段（如 Go 的 GOPROXY）—— 一律排在最后，
      *                      属性面板的「高级」开关插在第一个 advanced 字段之前
@@ -76,6 +146,12 @@ final class BuildStep {
                 "只在「这个集群出不去」时才填；留空 = 直连。\n"
                         + "例：http://192.168.85.1:7890\n"
                         + "下载依赖会走它；集群内网地址（.svc、内网网段）自动直连。"));
+        fields.add(NodeField.advancedText("memory", "内存上限（高级）",
+                "留空 = 用集群给构建容器的那档默认（真集群是 1Gi —— 前端构建常常不够，"
+                        + "npm run build 里的 vue-tsc 会「Reached heap limit」）。\n"
+                        + "要更多就填，如 2Gi / 1536Mi。\n"
+                        + "⚠️ 填了之后 CPU 上限与 requests 由平台补一组小的兜底值（少了它们会被命名空间配额拒）。\n"
+                        + "⚠️ 命名空间配额按「所有容器求和」算（一个构建 Pod 约 3 个容器），填大之前先看还剩多少。"));
         fields.addAll(extraAdvanced);
         return new NodeSchema(List.copyOf(fields));
     }
