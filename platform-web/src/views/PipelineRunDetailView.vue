@@ -22,7 +22,7 @@ import type { Edge, Node } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas, PipelineCanvasNode, PipelineRun, PipelineStepRef } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineRun, PipelineStepRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
@@ -184,24 +184,63 @@ const skippedNodes = computed(() => {
   if (!c) return []
   const st = nodeStatus.value
   const raw = new Map(liveSteps.value.map((s) => [s.nodeName, s.message ?? '']))
-  const anyFailed = Object.values(st).some((s) => s === 'FAILED')
+  const edges = c.edges ?? []
   return (c.nodes ?? [])
     .filter((n) => st[n.id] === 'SKIPPED')
     .map((n) => ({
       id: n.id,
       label: (n.name ?? '').trim() || n.id,
-      why: skipWhy(n, anyFailed),
+      why: skipWhy(n, st, edges),
       raw: raw.get(n.id) ?? '',
     }))
 })
 
 /**
+ * 一个节点的**传递上游**（沿连线反向找祖先，去重）。
+ *
+ * <p>⚠️ 只看直接上游不够：`A(失败) → B(被跳过) → C(被跳过)` 里 C 的直接上游是 B，
+ * 而"为什么"要落到 A 失败这件事上 —— 所以要把整条链都找出来。
+ */
+function ancestorsOf(edges: PipelineCanvasEdge[], id: string): string[] {
+  const up = new Map<string, string[]>()
+  for (const e of edges) {
+    const list = up.get(e.to)
+    if (list) list.push(e.from)
+    else up.set(e.to, [e.from])
+  }
+  const seen = new Set<string>()
+  const stack = [...(up.get(id) ?? [])]
+  while (stack.length) {
+    const cur = stack.pop()!
+    if (seen.has(cur)) continue
+    seen.add(cur)
+    stack.push(...(up.get(cur) ?? []))
+  }
+  return [...seen]
+}
+
+/**
  * 跳过的两种情形 —— 与后端 `PipelineRunConverter.SKIPPED` 的说明成对。
  *
- * @param anyFailed 这一趟里有没有节点失败 —— 有失败就是「跟着被跳过」；
- *                  一个都没失败（取消/超时结束的运行）就是「没轮到它」
+ * <p>⚠️ 2026-10-16 用户报的形态（fork 两条分支）：
+ * `git(成功) → auth-build(失败) → auth-image(跳过)` 与
+ * `git(成功) → platform-web(成功) → platform-web-image(跳过)`。
+ * `platform-web-image` 被跳过时屏幕上写的是「上游没成功」——**它的上游明明成功了**，那句话是假的。
+ *
+ * <p>真因是 Tekton 的语义：**任何没勾「失败后继续」的节点失败，整条运行就停下**，
+ * 还没开始的节点一律跳过（`reason: PipelineRun was stopping`）—— 它不会"只停自己那条分支"。
+ * 所以说法必须按**自己的传递上游**分：
+ * <ul>
+ *   <li>自己的上游里有失败 →「上游没成功」（这条路径确实断在自己前面）；</li>
+ *   <li>自己的上游全成功、但**别处**有失败 →「别的分支失败了，整条运行提前结束」；</li>
+ *   <li>一个节点都没失败 → 取消/超时导致（见下）。</li>
+ * </ul>
  */
-function skipWhy(n: PipelineCanvasNode, anyFailed: boolean): string {
+function skipWhy(
+  n: PipelineCanvasNode,
+  st: Record<string, string>,
+  edges: PipelineCanvasEdge[],
+): string {
   if (n.finallyTask === true) {
     const when = n.finallyWhen ?? 'always'
     if (when === 'failed') return '收尾时机是「仅前面有节点失败时」，这次前面是成功的'
@@ -209,8 +248,16 @@ function skipWhy(n: PipelineCanvasNode, anyFailed: boolean): string {
     // when=always 却还被跳过，只可能是运行提前结束了（取消/超时）
     return '运行提前结束，没轮到它'
   }
-  // tasks[] 里我们**不渲染任何 when**（Tekton 也不让引用执行状态），所以普通节点被跳过只有两种可能
-  return anyFailed ? '上游没成功，跟着被跳过' : '运行提前结束（取消或超时），没轮到它'
+  // ⚠️ 只认 **FAILED**，不把被跳过的上游也算进来：上游"被跳过"往往也是别处的失败造成的，
+  //    把它算成"自己的上游没成功"就又回到了那条假话
+  const upstreamFailed = ancestorsOf(edges, n.id).some((id) => st[id] === 'FAILED')
+  if (upstreamFailed) {
+    return '上游没成功，跟着被跳过'
+  }
+  const anyFailed = Object.values(st).some((s) => s === 'FAILED')
+  return anyFailed
+    ? '别的分支失败了，整条运行提前结束，没轮到它'
+    : '运行提前结束（取消或超时），没轮到它'
 }
 
 /**
