@@ -47,7 +47,8 @@ const run = ref<PipelineRun | null>(null)
 /** 只在「这条运行没留下画布」时用得上（退回画当前的定义，并在界面上明说） */
 const pipeline = ref<Pipeline | null>(null)
 const logs = ref('')
-const logNode = ref('')
+/** 当前在看的那个节点 —— 日志区标题与节点高亮都看它（用户 2026-10-16：不要下面那排 tab） */
+const logNodeId = ref('')
 const loading = ref(false)
 /** 还在跑时现抓的节点落点（归档后它就没有了 —— 那时状态在 run 行的 stepsJson 里） */
 const liveSteps = ref<PipelineStepRef[]>([])
@@ -142,6 +143,8 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
         // 收尾标记在运行详情里也要看得出来（它与节点状态无关，是画布属性）
         finallyTask: n.finallyTask === true,
         status: st[n.id],
+        // 正在看它的日志 —— 卡片描边跟着亮，免得"日志区换了但不知道换成了谁"
+        selected: n.id === logNodeId.value,
       },
     })),
     edges: (c.edges ?? []).map((e) => ({
@@ -155,10 +158,13 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
   }
 })
 
-/** 日志按钮：**显示名字，过滤仍按 id**（日志在库里是按 id 存的，名字只是给人看的） */
-const logTargets = computed(() =>
-  (canvas.value?.nodes ?? []).map((n) => ({ id: n.id, label: (n.name ?? '').trim() || n.id })),
-)
+/**
+ * 日志区标题上那个名字：用**用户起的名字**（与卡片、跳过说明同一套），没起名才退回 id。
+ */
+const logNodeLabel = computed(() => {
+  const n = (canvas.value?.nodes ?? []).find((x) => x.id === logNodeId.value)
+  return n ? (n.name ?? '').trim() || n.id : logNodeId.value
+})
 
 /**
  * 被跳过的节点 —— **光有「已跳过」三个字不够，得说清楚为什么不跑**。
@@ -259,7 +265,7 @@ async function init(): Promise<void> {
     pipeline.value = await pipelineApi.get(id).catch(() => null)
   }
   if (isRunning.value) startPolling()
-  if (canLogs.value) await loadLogs()
+  // ⚠️ 这里**不再预拉日志**：日志按节点看，而"看哪个节点"由用户点（下面那排 tab 已经去掉）
 }
 
 /**
@@ -271,7 +277,7 @@ watch(runName, async () => {
   stopPolling()
   run.value = null
   logs.value = ''
-  logNode.value = ''
+  logNodeId.value = ''
   liveSteps.value = []
   runYamlText.value = ''
   await init()
@@ -387,23 +393,28 @@ async function openYaml(): Promise<void> {
   }
 }
 
-async function loadLogs(nodeName?: string): Promise<void> {
+/**
+ * 看**某个节点**的日志。点上面流程里的节点就是它（用户 2026-10-16 定的形态：
+ * 不要「全部」那排 tab，日志区只用标题说明当前看的是谁）。
+ *
+ * <p>⚠️ 跳过的节点**没有日志**（它没有 Pod）：与其回一句「（没有日志）」让人以为日志丢了，
+ * 不如把「为什么没跑」原地说一遍。
+ */
+async function loadLogs(nodeId: string): Promise<void> {
   const r = run.value
-  if (!r) return
-  logNode.value = nodeName ?? ''
-  // 跳过的节点**没有日志**（它没有 Pod）—— 与其回一句「（没有日志）」让人以为日志丢了，
-  // 不如把「为什么没跑」原地说一遍
-  if (nodeName) {
-    const skipped = skippedNodes.value.find((s) => s.id === nodeName)
-    if (skipped) {
-      logs.value = `这个节点被跳过了，没有日志：${skipped.why}`
-      return
-    }
+  if (!r || !nodeId) return
+  logNodeId.value = nodeId
+  const skipped = skippedNodes.value.find((s) => s.id === nodeId)
+  if (skipped) {
+    logs.value = `这个节点被跳过了，没有日志：${skipped.why}`
+    return
   }
   try {
-    logs.value = await pipelineApi.runLogs(r.runName, nodeName, effectiveTenantId.value)
+    const text = await pipelineApi.runLogs(r.runName, nodeId, effectiveTenantId.value)
+    // 期间又点了别的节点 → 丢掉这次的结果，免得标题与内容对不上
+    if (logNodeId.value === nodeId) logs.value = text
   } catch {
-    logs.value = ''
+    if (logNodeId.value === nodeId) logs.value = ''
   }
 }
 </script>
@@ -447,23 +458,26 @@ async function loadLogs(nodeName?: string): Promise<void> {
         </span>
       </div>
 
-      <!-- DAG：**撑满剩下的上半屏** —— 详情独立成页就是为了让它别再挤在一个小框里 -->
+      <!-- DAG：**撑满剩下的上半屏** —— 详情独立成页就是为了让它别再挤在一个小框里。
+           ⭐ 点节点 = 看那个节点的日志（用户 2026-10-16 定的形态：不要下面那排 tab） -->
       <div class="dag">
         <VueFlow :nodes="dag.nodes" :edges="dag.edges" fit-view-on-init
-                 :nodes-draggable="false" :edges-updatable="false">
+                 :nodes-draggable="false" :edges-updatable="false"
+                 @node-click="(e: { node: { id: string } }) => loadLogs(e.node.id)">
           <template #node-pipeline="nodeProps">
             <PipelineNodeVue :id="nodeProps.id" :data="nodeProps.data" />
           </template>
         </VueFlow>
       </div>
 
+      <!-- 日志区只剩一行标题（当前看的是哪个节点）—— 节点在上面点，不再罗列一排 tab -->
       <div class="log-head">
         <span>日志</span>
-        <el-button link @click="loadLogs()">全部</el-button>
-        <el-button v-for="t in logTargets" :key="t.id" link @click="loadLogs(t.id)">{{ t.label }}</el-button>
+        <span v-if="logNodeId" class="log-node">{{ logNodeLabel }}</span>
+        <span v-else class="dim">点上面的节点看它的日志</span>
         <span v-if="!canLogs" class="dim">（没有『看运行日志』权限）</span>
       </div>
-      <pre class="log">{{ logText || '（没有日志）' }}</pre>
+      <pre class="log">{{ logText || (logNodeId ? '（没有日志）' : '') }}</pre>
     </template>
 
     <el-dialog v-model="showYaml" title="这次运行渲染出来的 PipelineRun" width="70%">
@@ -544,6 +558,15 @@ async function loadLogs(nodeName?: string): Promise<void> {
   align-items: center;
   font-size: 12px;
   flex-wrap: wrap;
+}
+/* 标题上那个名字：当前看的是哪个节点（用户 2026-10-16：不要那排 tab，就用这一行说清） */
+.log-head .log-node {
+  color: var(--text-1);
+  font-weight: 600;
+}
+/* 详情里的节点是**可点的**（点它看日志）—— 不只手型，光标本身就是提示 */
+.dag :deep(.vue-flow__node) {
+  cursor: pointer;
 }
 .log {
   flex: 1 1 55%;

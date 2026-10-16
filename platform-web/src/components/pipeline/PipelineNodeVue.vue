@@ -26,6 +26,8 @@ const props = defineProps<{
     config?: Record<string, string>
     /** 收尾执行（Tekton 的 finally）：不参与顺序，画布上得看得出来 */
     finallyTask?: boolean
+    /** 正在看它的日志（运行详情里点节点看日志）—— 卡片描边亮起来，别让人猜日志区换成了谁 */
+    selected?: boolean
     /** 运行视图里才有 */
     status?: string
   }
@@ -67,7 +69,11 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
 </script>
 
 <template>
-  <div class="pnode" :class="[`accent-${accent}`, statusClass]" :title="id">
+  <div
+    class="pnode"
+    :class="[`accent-${accent}`, statusClass, { selected: data.selected === true }]"
+    :title="id"
+  >
     <Handle type="target" :position="Position.Left" class="pnode-port" />
 
     <div class="pnode-icon">
