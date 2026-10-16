@@ -93,29 +93,7 @@ public class PodController extends AbstractNamespacedResourceController<PodDTO> 
                 PodLogQuery.open(client, namespace, name, container),
                 Boolean.TRUE.equals(previous));
 
-        return outputStream -> {
-
-            if (StringUtils.hasText(sinceTime)) {
-                loggable.sinceTime(sinceTime)
-                        .withPrettyOutput()
-                        .getLogInputStream()
-                        .transferTo(outputStream);
-            } else if (tailLines != null) {
-                loggable.tailingLines(tailLines)
-                        .withPrettyOutput()
-                        .getLogInputStream()
-                        .transferTo(outputStream);
-            } else if (sinceSeconds != null) {
-                loggable.sinceSeconds(sinceSeconds)
-                        .withPrettyOutput()
-                        .getLogInputStream()
-                        .transferTo(outputStream);
-            } else {
-                loggable.withPrettyOutput()
-                        .getLogInputStream()
-                        .transferTo(outputStream);
-            }
-        };
+        return outputStream -> PodLogQuery.stream(loggable, sinceTime, tailLines, sinceSeconds, outputStream);
     }
 
     /**租户模式→tenant client（最小权限）；admin 模式→admin client */

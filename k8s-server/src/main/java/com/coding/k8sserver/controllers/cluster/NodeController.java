@@ -163,17 +163,7 @@ public class NodeController implements AccessBoundaryAware {
                 PodLogQuery.open(client, namespace, podName, container),
                 Boolean.TRUE.equals(previous));
 
-        return outputStream -> {
-            if (StringUtils.hasText(sinceTime)) {
-                loggable.sinceTime(sinceTime).withPrettyOutput().getLogInputStream().transferTo(outputStream);
-            } else if (tailLines != null) {
-                loggable.tailingLines(tailLines).withPrettyOutput().getLogInputStream().transferTo(outputStream);
-            } else if (sinceSeconds != null) {
-                loggable.sinceSeconds(sinceSeconds).withPrettyOutput().getLogInputStream().transferTo(outputStream);
-            } else {
-                loggable.withPrettyOutput().getLogInputStream().transferTo(outputStream);
-            }
-        };
+        return outputStream -> PodLogQuery.stream(loggable, sinceTime, tailLines, sinceSeconds, outputStream);
     }
 
     @GetMapping("/{name}/events")

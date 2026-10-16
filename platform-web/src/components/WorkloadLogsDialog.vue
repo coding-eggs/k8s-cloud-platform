@@ -35,6 +35,15 @@ const DEFAULT_PICK = 10
 const HARD_MAX = 20
 /** 首次回看最近多少行（每个来源各自一份） */
 const TAIL_LINES = 200
+/**
+ * 文本缓冲的上限。20 条来源一起往同一个 `<pre>` 里灌，不封顶的话长跟随会越用越卡 ——
+ * 单 Pod 那边有同样的兜底（`MAX_LINES`），而聚合这侧来源更多、更该设。
+ * ⚠️ 到顶**才**裁：每轮都 split 会把"追加"变成 O(n) 的常态开销，而这条路径每 2 秒就跑一次。
+ */
+const MAX_CHARS = 2_000_000
+const MAX_LINES = 20_000
+/** 无时间戳的降级只提示一次（与单 Pod 弹窗同一条口径） */
+let warnedNoTs = false
 
 /** 一条来源 = 一个 (pod, 容器) */
 interface Source {
@@ -46,6 +55,8 @@ interface Source {
 }
 
 const phase = ref<'pick' | 'stream'>('pick')
+/** 全屏：20 条来源一起看时，`min(1280px,94vw) × 56vh` 那个框太挤了（spec §3.1 承诺过复用外壳的观感） */
+const fullscreen = ref(false)
 const picked = ref<string[]>([])
 const sources = ref<Source[]>([])
 const logText = ref('')
@@ -145,6 +156,36 @@ function warnOnce(s: Source, why: string): string {
   return `${prefixOf(s.pod, s.container)}暂时取不到日志（${why}）\n`
 }
 
+/** 缓冲到顶才裁（见 MAX_CHARS 的说明）。从头部丢，并在丢掉处留一句 —— 静默丢行比慢更糟。 */
+function trimIfHuge(): void {
+  if (logText.value.length <= MAX_CHARS) return
+  const all = logText.value.split('\n')
+  const keep = all.slice(-MAX_LINES)
+  logText.value = `（更早的 ${all.length - keep.length} 行已折叠）\n` + keep.join('\n')
+}
+
+/**
+ * 推进某个来源的游标。
+ *
+ * ⚠️ 一批里**一个 k8s 时间戳都没有**时 `takeNewLines` 不会推进游标（它没法比大小），
+ *    于是下一轮又会用 `tailLines` 重拉最近 200 行、把同一批**再追加一遍** ——
+ *    每来源每 2 秒一轮的重复洪水。触发条件是"platform-web 先上线、k8s-server 还是旧构建"
+ *    （timestamps 未启用），正是单 Pod 弹窗那条 console.warn 针对的状态。
+ *    这里照它的降级：改用**墙钟游标**（之后照常发 sinceTime，服务端仍按时间过滤），并只告警一次。
+ */
+function advanceCursor(s: Source, lines: LogLine[], nextCursor: string): void {
+  if (lines.length && !lines.some((l) => l.ts)) {
+    if (!warnedNoTs) {
+      warnedNoTs = true
+      console.warn('[WorkloadLogs] 响应缺少 k8s 时间戳前缀（<ts>\\t）—— 已退化为墙钟游标；'
+        + '请确认 k8s-server 已重建并启用 usingTimestamps。')
+    }
+    s.cursor = new Date().toISOString()
+    return
+  }
+  if (nextCursor) s.cursor = nextCursor
+}
+
 /** 首次：每个来源各拉一次 tailLines 快照 */
 async function snapshot(): Promise<void> {
   busy.value = true
@@ -154,13 +195,14 @@ async function snapshot(): Promise<void> {
       try {
         const text = await fetchSource(s)
         const { lines, nextCursor } = takeNewLines(text, '')
-        s.cursor = nextCursor
+        advanceCursor(s, lines, nextCursor)
         chunks.push(render(s, sortByTs(lines)))
       } catch (e) {
         chunks.push(warnOnce(s, (e as Error).message))
       }
     }
     logText.value = chunks.join('')
+    trimIfHuge()
     scrollToBottom()
   } finally {
     busy.value = false
@@ -237,13 +279,14 @@ async function pollOnce(): Promise<void> {
   for (const r of results) {
     // ⭐ 某个来源没了（Pod 被滚动更新删掉）不能让整条流停掉或清空
     if (r.err) extra += warnOnce(r.s, r.err.message)
-    if (r.nextCursor) r.s.cursor = r.nextCursor
+    advanceCursor(r.s, r.lines, r.nextCursor)
     for (const l of r.lines) collected.push({ s: r.s, l })
   }
   collected.sort((a, b) => compareTs(a.l.ts, b.l.ts)) // 相等时保持收集顺序（现代 Array.sort 稳定）
   const body = collected.map((x) => prefixOf(x.s.pod, x.s.container) + x.l.content).join('\n')
   if (body || extra) {
     logText.value += extra + (body ? body + '\n' : '')
+    trimIfHuge()
     scrollToBottom()
   }
 }
@@ -254,7 +297,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="全部 Pod 日志" width="min(1280px, 94vw)" class="wl-logs">
+  <el-dialog v-model="visible" title="全部 Pod 日志" width="min(1280px, 94vw)" class="wl-logs"
+             :fullscreen="fullscreen">
     <template v-if="phase === 'pick'">
       <div class="pick-note">
         这个负载共 {{ pods.length }} 个 Pod，已勾 {{ picked.length }} 个（最多 {{ HARD_MAX }} 个）。
@@ -305,6 +349,10 @@ onUnmounted(() => {
     </template>
 
     <template #footer>
+      <!-- 页脚是右对齐的（EP 默认），全屏那个靠 float 单独挪到左边 -->
+      <el-button link type="primary" style="float: left" @click="fullscreen = !fullscreen">
+        {{ fullscreen ? '退出全屏' : '全屏' }}
+      </el-button>
       <el-button v-if="phase === 'pick'" @click="visible = false">取消</el-button>
       <el-button v-if="phase === 'pick'" type="primary" :disabled="!picked.length" @click="start">确定</el-button>
     </template>
