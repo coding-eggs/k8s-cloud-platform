@@ -44,6 +44,8 @@ export const apiCodes = {
   configmapList: 'tenant:configmap:list',
   secretList: 'tenant:secret:list',
   pvcList: 'tenant:pvc:list',
+  /** 改容量（扩容）—— 与创建/删除分开，扩容是唯一能改 spec 的动作 */
+  pvcUpdate: 'tenant:pvc:update',
   /** 集群 API 能力快照只读（V2026_10_07_2 起租户可读；refresh 仍独占 platform:cluster:manage） */
   clusterCapabilityView: 'tenant:cluster:capability:view',
   /** 工作负载写（编辑/伸缩/暂停/ambient 开关共享该动词码）—— ambient 开关与 pause 同挂此码 */

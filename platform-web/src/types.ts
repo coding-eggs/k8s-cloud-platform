@@ -548,6 +548,11 @@ export interface K8sPvc {
   /** 数据来源（可选，spec.dataSourceRef）：从已有对象填充新卷 */
   dataSourceRef?: { apiGroup?: string | null; kind?: string | null; name?: string | null; namespace?: string | null } | null
   phase?: string | null
+  /**
+   * `status.conditions` 里 **status=True 的那些 type**（如 `Resizing` / `FileSystemResizePending`）。
+   * ⚠️ 扩容的中间态**不在 `phase` 上** —— 扩容期间 `phase` 一直是 `Bound`，只有这里看得出来。
+   */
+  conditions?: string[] | null
   creationTime?: string | null
 }
 

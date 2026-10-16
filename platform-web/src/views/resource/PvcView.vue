@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { pvcApi, persistentVolumeApi } from '@/api'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import type { K8sPvc, K8sPersistentVolume } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import { useResourceOptions } from '@/composables/useResourceOptions'
@@ -54,7 +56,90 @@ function phaseType(phase?: string | null): 'success' | 'warning' | 'danger' | 'i
   }
 }
 
-// ---------- 创建对话框（spec 创建后不可变，无编辑入口） ----------
+// ---------- 扩容（S4.1） ----------
+
+const perm = usePermission()
+/** 扩容要 `tenant:pvc:update` —— 与创建/删除分开，因为扩容是唯一能改 spec 的动作 */
+const canResize = computed(() => perm.has(apiCodes.pvcUpdate))
+
+/**
+ * 扩容的**中间态**。⚠️ 它不在 `phase` 上：扩容期间 `phase` 一直是 `Bound`，
+ * 只有 `status.conditions` 里看得出来 —— 不标出来，"正在扩"和"已经好了"长得一模一样，
+ * 运维会把正常过程当故障处置。
+ */
+const RESIZE_CONDITIONS: Record<string, string> = {
+  Resizing: '正在扩容',
+  FileSystemResizePending: '等 Pod 重启完成',
+}
+
+/** 这个卷此刻在扩容吗（以及在等什么）；没有就是空串 */
+function resizeState(row: K8sPvc): string {
+  for (const c of row.conditions ?? []) {
+    const text = RESIZE_CONDITIONS[c]
+    if (text) return text
+  }
+  return ''
+}
+
+const resizeVisible = ref(false)
+const resizing = ref(false)
+const resizeRow = ref<K8sPvc | null>(null)
+/** 只填数字，单位固定 Gi —— 与创建对话框同一套口径 */
+const resizeNum = ref('')
+
+/** 现在多少 Gi（列表给的是字节） */
+const resizeNowGi = computed(() =>
+  resizeRow.value?.storage == null ? null : resizeRow.value.storage / 1024 / 1024 / 1024,
+)
+
+function openResize(row: K8sPvc): void {
+  resizeRow.value = row
+  const now = resizeNowGi.value
+  // 默认填一个"至少 +1Gi"的整数，用户改一个数就能交
+  resizeNum.value = now == null ? '1' : String(Math.ceil(now) + 1)
+  resizeVisible.value = true
+}
+
+async function submitResize(): Promise<void> {
+  const row = resizeRow.value
+  if (!row) return
+  const num = resizeNum.value.trim()
+  if (!/^\d+(\.\d+)?$/.test(num) || parseFloat(num) <= 0) {
+    ElMessage.warning('容量请输入大于 0 的数字（单位固定为 Gi）')
+    return
+  }
+  const now = resizeNowGi.value
+  // ⚠️ 这一遍是**为体验**，不是防线：真正的判据在后端 —— 它读的是**集群上那个对象**，
+  //    而这里的 row 可能是几分钟前拉的列表。两道都要有，但别把这里当权威。
+  if (now != null && parseFloat(num) <= now) {
+    ElMessage.warning(`只能往大改：现在是 ${now}Gi。K8s 不支持缩容，要变小只能删了重建。`)
+    return
+  }
+  resizing.value = true
+  try {
+    await pvcApi.update(row.name, ctxParams.value, {
+      name: row.name,
+      namespace: row.namespace,
+      // 字节（基础单位）。别的字段**不用带** —— 后端是读-改-写，只盖容量与标签；
+      // PVC 的 accessModes 是必填、storageClassName 不可变，漏带反而会被拒
+      storage: Math.round(parseFloat(num) * 1024 * 1024 * 1024),
+    })
+    ElMessage.success('已提交扩容 —— 中间态会在「状态」列标出来')
+    resizeVisible.value = false
+    await refresh()
+  } catch {
+    /* 拦截器已提示：存储类没开在线扩容、只能往大改，后端那句原话就在里面 */
+  } finally {
+    resizing.value = false
+  }
+}
+
+function onRowCommand(cmd: string, row: K8sPvc): void {
+  if (cmd === 'resize') openResize(row)
+  else if (cmd === 'delete') void onDelete(row)
+}
+
+// ---------- 创建对话框 ----------
 const dialogVisible = ref(false)
 const saving = ref(false)
 const form = reactive({
@@ -266,7 +351,7 @@ const contextDesc = computed(() => {
     <EmptyState
       v-if="ready && list.length === 0 && !loading"
       title="该命名空间下暂无 PVC"
-      description="点击右上「创建 PVC」新建；PVC spec 创建后不可变，调整容量请删除重建。"
+      description="点击右上「创建 PVC」新建；容量之后可以调大（行操作里的「调整容量」），但 K8s 不支持缩容，要变小只能删了重建。"
     />
 
     <div v-else class="panel table-panel">
@@ -274,9 +359,11 @@ const contextDesc = computed(() => {
         <el-table-column label="名称" min-width="200">
           <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code></template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column label="状态" width="150">
           <template #default="{ row }">
             <StatusBadge :label="row.phase ?? 'Unknown'" :type="phaseType(row.phase)" />
+            <!-- 扩容中间态：`phase` 这时还是 Bound，不看条件就分不出"在扩"和"扩完了" -->
+            <div v-if="resizeState(row)" class="resize-state">{{ resizeState(row) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="容量" width="100">
@@ -295,7 +382,20 @@ const contextDesc = computed(() => {
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
-            <el-button link type="danger" @click="onDelete(row)">删除</el-button>
+            <!-- 与工作负载那几个行内动作同形：一个下拉，别在行里排一排按钮 -->
+            <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
+              <el-button link type="primary">操作 ▾</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <!-- ⚠️ 只有 Bound 的卷能扩（Pending 的还没绑上）；没权限时留着但禁用，
+                       而不是干脆不显示 —— 不显示会让人以为功能没做 -->
+                  <el-dropdown-item command="resize" :disabled="!canResize || row.phase !== 'Bound'">
+                    调整容量
+                  </el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -410,6 +510,36 @@ const contextDesc = computed(() => {
       </template>
       <div v-else class="muted">未找到与该 PVC 绑定的 PV（可能尚未绑定，或 PV 的 claimRef 不匹配）</div>
     </el-dialog>
+
+    <!-- 调整容量（扩容）。⚠️ K8s **只支持往大改**，没有缩容这条路 —— 对话框里就这么说，
+         而不是让用户填完了再被后端拒一次 -->
+    <el-dialog v-model="resizeVisible" title="调整容量" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="PVC">
+          <code>{{ resizeRow?.name }}</code>
+        </el-form-item>
+        <el-form-item label="当前容量">
+          <span class="muted">{{ fmtStorage(resizeRow?.storage) }}</span>
+        </el-form-item>
+        <el-form-item label="新容量" required>
+          <el-input v-model="resizeNum" style="width: 160px">
+            <template #append>Gi</template>
+          </el-input>
+          <div class="form-tip">
+            只能填比上面更大的值 —— K8s 不支持缩容，要变小只能删了重建。
+          </div>
+        </el-form-item>
+      </el-form>
+      <div class="form-tip resize-note">
+        ⚠️ 能不能在线扩容由存储类决定（它的 allowVolumeExpansion）—— 平台在提交时核对，
+        没开的话会明确告诉你。扩容是异步的：提交后「状态」列会先显示「正在扩容」，
+        文件系统那一半要等 Pod 重启后才完成。
+      </div>
+      <template #footer>
+        <el-button @click="resizeVisible = false">取消</el-button>
+        <el-button type="primary" :loading="resizing" @click="submitResize">提交</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -439,5 +569,16 @@ const contextDesc = computed(() => {
 }
 .name-link:hover {
   text-decoration: underline;
+}
+/* 扩容中间态：用「信息」色而不是警告色 —— 它是正常过程，不是异常（S4.1.3 的原话） */
+.resize-state {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--accent, #409eff);
+}
+/* 扩容对话框底下那段说明：贴着底部，别跟表单字段抢注意力 */
+.resize-note {
+  margin-top: 4px;
+  line-height: 1.7;
 }
 </style>

@@ -346,7 +346,7 @@ export const secretApi = makeResourceApi<K8sSecret>('secrets')
 /** Service /services */
 export const serviceApi = makeResourceApi<K8sService>('services')
 
-/** PVC /pvcs（spec 不可变，update 仅同步标签） */
+/** PVC /pvcs（update = 标签 + **扩容**：容量只能往大改，且存储类得开了 allowVolumeExpansion） */
 export const pvcApi = makeResourceApi<K8sPvc>('pvcs')
 
 /** StorageClass /storageclasses（集群级，只读：供下拉选择 storageClassName；无 namespace） */
