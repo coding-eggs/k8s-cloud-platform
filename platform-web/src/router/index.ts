@@ -48,10 +48,13 @@ const router = createRouter({
         { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '审计日志', group: '平台管理', requiresPerm: [pageCodes.audit] } },
         { path: 'credentials', name: 'credentials', component: () => import('@/views/CredentialView.vue'), meta: { title: '凭据管理', group: '平台管理', requiresPerm: [pageCodes.credential] } },
         { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', group: '资源管理', requiresPerm: [pageCodes.registry] } },
-        // CI（流水线）：三个路由共用**一个**页面码 —— 列表/画布/运行历史是同一件事的三步
+        // CI（流水线）：四个路由共用**一个**页面码 —— 列表/画布/运行历史/运行详情是同一件事的四步
         { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },
         { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },
         { path: 'pipelines/runs', name: 'pipeline-runs', component: () => import('@/views/PipelineRunView.vue'), meta: { title: '流水线运行', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        // 一次运行的详情：**单独一页**（原先挤在列表右侧 560px 那一栏里，DAG 与日志都没法看）。
+        // ⚠️ 与上面三个同码 —— 它是同一个页面码下的第四步，菜单里**不露**（菜单是手写的，见 MainLayout）
+        { path: 'pipelines/run', name: 'pipeline-run-detail', component: () => import('@/views/PipelineRunDetailView.vue'), meta: { title: '运行详情', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },
 
         // 用户与权限
         { path: 'tenants', name: 'tenants', component: () => import('@/views/TenantView.vue'), meta: { title: '租户管理', group: '用户与权限', requiresPerm: [pageCodes.tenant.list] } },
