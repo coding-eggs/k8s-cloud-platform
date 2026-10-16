@@ -14,7 +14,7 @@
 
 | # | 决策 | 理由 |
 |---|---|---|
-| 1 | **首批纳管：平台功能依赖的 + 用户已装的关键中间件**（15 条） | 用户选定。集群自带的 coredns/kube-proxy/CNI 不列，避免把清单变成"集群上有什么"的罗列 |
+| 1 | **首批纳管：平台功能依赖的 + 用户已装的关键中间件**（11 条） | 用户选定。集群自带的 coredns/kube-proxy/CNI 不列，避免把清单变成"集群上有什么"的罗列；另外四条由用户单独裁定不展示（见 §2.1） |
 | 2 | **探测机制 = 目录 + 一次活探测 + 短 TTL 缓存** | 用户选定方案 A。"健康"天生是时刻值，存快照没有意义；版本与健康是同一次读取的产物 |
 | 3 | **门控也全改走新源** | 用户选定。本批把 CI / 网格 / 网络 / HPA 的判据收到同一份派生实现 |
 | 4 | **按镜像仓库名匹配工作负载，不按名字** | 现场勘查：一半组件的工作负载名带 Helm release 前缀（`ps-` / `th-` / `nfs-client-`），换 release 名就找不到。镜像仓库路径跨安装稳定 |
@@ -62,7 +62,7 @@ public record Probe(String namespace, WorkloadKind kind, String imageRepo, Strin
 **依赖关系只写一遍**：目录里每条组件写"我支撑哪些功能"，`feature → 组件` 的反查由代码算，
 不手写第二张表 —— 手写两张表迟早对不上。
 
-### 2.1 首批目录（15 条）
+### 2.1 首批目录（11 条）
 
 判据取自**真集群实测**（§9），不是照文档猜的：
 
@@ -79,15 +79,18 @@ public record Probe(String namespace, WorkloadKind kind, String imageRepo, Strin
 | `tigera-operator` | Tigera Operator | `operator.tigera.io` | `tigera-operator` Deploy `tigera/operator` | 网络（安装来源） |
 | `cert-manager` | cert-manager | `cert-manager.io` | `cert-manager` Deploy `cert-manager-controller` | 证书（网关 TLS） |
 | `otel-operator` | OpenTelemetry Operator | `opentelemetry.io` | `opentelemetry-operator-system` Deploy `opentelemetry-operator` | OTel 采集（S2.3 的地基） |
-| `eck-operator` | Elastic Operator（ECK） | `elasticsearch.k8s.elastic.co` | `operators` StatefulSet `eck-operator` | 日志存储（S2.3 的地基） |
-| `local-path-provisioner` | local-path provisioner | — | `kube-system` Deploy `local-path-provisioner` | 动态供应存储 |
-| `nfs-provisioner` | NFS subdir provisioner | — | `kube-system` Deploy `nfs-subdir-external-provisioner` | 动态供应存储 |
-| `snapshot-controller` | VolumeSnapshot 控制器 | `snapshot.storage.k8s.io` | —（纯 CRD） | 卷快照（S4.3） |
 
-**未纳入但已知在集群上的**（有意）：Grafana / Thanos 各件 / Alertmanager / node-exporter /
-kube-state-metrics / minio-operator / milvus-operator —— 前者是 Prometheus Operator 撑起的**后代**，
-后者是**用户业务**，都不直接对应平台功能。台账原稿点名的 `ES` 与 `Alertmanager` 以
-`eck-operator` + `prometheus-operator` 两条覆盖（"操作器装了"比"某个实例在跑"更稳定）。
+**不纳入的四条（用户 2026-10-17 裁定）**：`eck-operator`、`local-path-provisioner`、
+`nfs-subdir-external-provisioner`、`snapshot-controller`。前三条**不作为集群组件展示**；
+`snapshot-controller` 是因为**功能还没做**（S4.3），届时再决定它的门控读哪里。
+
+**有意不列的**（与上面四条不同，这是设计判断）：Grafana / Thanos 各件 / Alertmanager /
+node-exporter / kube-state-metrics 都是 **Prometheus Operator 撑起的后代**（操作器装了 = 这些在跑），
+minio-operator / milvus-operator 是**用户业务**，coredns / kube-proxy / CNI 是**集群自带的基础设施**
+——都不直接对应平台功能。
+
+⚠️ 因此 **日志存储（ES）在本清单里没有对应行**：S2.3（日志采集）那批的门控得自己处理，
+不要以为"组件清单里没有 = 平台不关心"。
 
 ---
 
@@ -100,9 +103,9 @@ kube-state-metrics / minio-operator / milvus-operator —— 前者是 Prometheu
 
 - **成本固定**：候选写死在目录里，**与集群的命名空间数量无关** —— 这条约束照
   `ClusterAggregationOperations` 的"固定 9 次 list"同形，**有单测盯着**。
-  15 条目录里两条只有 CRD 判据（`gateway-api` / `snapshot-controller`），其余 13 条各 1 个候选
-  → **13 次 list**；同一 `(namespace, kind)` 上的多个候选**合并成一次 list**（如
-  `kube-system` 下的两个 provisioner），去重后更少。
+  11 条目录里 `gateway-api` 只有 CRD 判据（无工作负载），`istio-ambient` 只有工作负载判据，
+  其余 9 条两者都有 → **10 次 list**（`istio` 与 `istio-ambient` 同在 `istio-system`
+  但 kind 不同，各自一次）。同一 `(namespace, kind)` 上若出现多个候选**合并成一次 list**。
 - **健康按 kind 分支**（真集群实测踩到的）：Deployment / StatefulSet 用
   `status.readyReplicas / status.replicas`；**DaemonSet 用 `status.numberReady /
   status.desiredNumberScheduled`** —— `calico-node` / `ztunnel` / `kube-proxy` 的
@@ -186,10 +189,10 @@ token 直连 k8s-server，传 `namespace=milvus` 就能问出"那个命名空间
 
 因此：
 
-- 配置项 `platform.k8s.probe-namespaces`，值为**允许被探测的命名空间清单**
-  （默认 = 组件所在的那几个：`kube-system`、`istio-system`、`monitor`、`tekton-pipelines`、
-  `tekton-operator`、`cert-manager`、`calico-system`、`calico-apiserver`、`tigera-operator`、
-  `operators`、`opentelemetry-operator-system`）。
+- 配置项 `platform.k8s.probe-namespaces`，值为**允许被探测的命名空间清单**。
+  默认值**只放目录真正要探的那 9 个**：`kube-system`、`istio-system`、`monitor`、
+  `tekton-pipelines`、`tekton-operator`、`cert-manager`、`calico-system`、`tigera-operator`、
+  `opentelemetry-operator-system` —— 清单越小越好，这是唯一一条能按命名空间读工作负载的路径。
 - 请求里**任何**不在清单内的候选 → **整个请求 400**（不是静默跳过 —— 静默跳过会让平台侧
   把"被拒"当成"没装"，与 §3.2「不要把失败说成没装」同一条原则）。
 - **清单的语义要写进配置注释**：*把一个命名空间加进这个清单，等于允许任何已认证用户探测
@@ -260,8 +263,10 @@ ClusterComponentService.status(clusterId)
   显示「HPA 资源指标不可用」。这是台账说的"新的那一层"。
 - 缺组件的行给**指引**（一句话 + 需要 `cluster-admin` 的说明），**不给安装按钮**
   （决策 9）。安装入口留给 S3.3/S3.4，届时这里换成"去安装"的跳转。
-- 顶部：一句摘要（`15 个组件中 13 个已装，缺 2 个会影响 2 项平台功能`）+「重新探测」按钮
+- 顶部：一句摘要（形如 `11 个组件中 10 个已装，缺 1 个会影响 1 项平台功能`）+「重新探测」按钮
   （清缓存 + 重探，@audit 记录）。
+  ⚠️ 这不是编的例子：按 §9 的勘查，本集群此刻的实际状态就是 **10 装 1 缺**，
+  缺的那个是 `metrics-server` → 影响「HPA 资源指标」。这也是这批功能最该兑现的样子。
 - 探测失败（`UNKNOWN`）时顶部给一句"集群当前探测不到，以下状态可能不准确" —— 不静默。
 
 ### 6.2 概览 tab 的收敛
@@ -320,11 +325,11 @@ CI 页顶部、网格横幅、HPA 编辑器的提示。数据来自 `flags`。
 
 | 事实 | 影响 |
 |---|---|
-| 一半组件的工作负载名带 Helm release 前缀：`ps-kube-prometheus-stack-operator`、`th-thanos-*`、`nfs-client-nfs-subdir-external-provisioner`、`local-client-local-path-provisioner` | 决策 4：**按镜像仓库匹配**，不按名字 |
+| 集群上相当一部分基础设施工作负载的名字带 Helm release 前缀：`ps-kube-prometheus-stack-operator`（在目录内）、`th-thanos-*`、`nfs-client-nfs-subdir-external-provisioner`、`local-client-local-path-provisioner` | 决策 4：**按镜像仓库匹配**，不按名字。若按名字写死，换个 release 名就探测不到 |
 | DaemonSet 的 `status.readyReplicas` 为空（`calico-node`/`ztunnel`/`kube-proxy` 实测） | §3.1 的 kind 分支 |
 | `app.kubernetes.io/version` 只在部分组件上有（istiod 有；coredns / otel-operator / prometheus-operator 没有） | 版本主来源是 image tag |
 | `metrics.k8s.io` **不在** apiservice 列表 | metrics-server 真没装 → 这正是"缺关键组件"的真实样本，也是 HPA 资源指标在这套集群上不可用的原因 |
-| `snapshot.storage.k8s.io` **不在** | S4.3 那批会被整块隐藏（其门控届时读本清单的 `snapshot-controller`） |
+| `snapshot.storage.k8s.io` **不在** | S4.3（卷快照）那批会被整块隐藏。⚠️ 本清单**不含** `snapshot-controller`（§2.1），届时它的门控自己探 |
 | 库里的 capability 快照与集群实况**一致**（`monitoring.coreos.com` 两处都有、`metrics.k8s.io` 两处都无） | 决策 7：capability 列可信，继续当 group 判据 |
 | `istio.io` 组不存在，`networking.istio.io` 存在 | 目录里 istio 的 group 判据必须覆盖 Istio 的多组形态（既有 `ISTIO_GROUPS` 常量） |
 | **分配表里几乎所有基础设施命名空间都已分配给租户**（`kube-system` / `istio-system` / `tekton-pipelines` / `calico-system` / `cert-manager` / `monitor` / `operators` / … 同属一个租户；`milvus` 属另一个） | §4.3：「基础设施命名空间」不是安全边界。要防的是**把探测指向清单外**，不是"别读基础设施" |
@@ -337,12 +342,16 @@ CI 页顶部、网格横幅、HPA 编辑器的提示。数据来自 `flags`。
 2. **安装 / 升级 / 卸载** —— 决策 9，留给 S3.3 / S3.4。
 3. **"交给平台管"开关** —— 台账裁决"已装的一律只探测不接管"。
 4. **`StorageClass 能不能动态供应` 不进组件清单** —— 它是集群存储配置、粒度是 SC（§5.3）。
-5. **残留（显式接受）**：持任意已认证 token 直连 k8s-server 的 `/workload-probes`，
+5. **`eck-operator` / `local-path-provisioner` / `nfs-subdir-external-provisioner` /
+   `snapshot-controller` 不展示** —— 用户 2026-10-17 裁定（§2.1）。前三条是"不作为集群组件展示"，
+   末条是"功能还没做"。**别把这几条当成漏纳**：日志存储（ES）因此在本清单里没有对应行，
+   S2.3 那批的门控得自己处理。
+6. **残留（显式接受）**：持任意已认证 token 直连 k8s-server 的 `/workload-probes`，
    可读到**清单内**命名空间的工作负载名称、镜像与副本数。实际新增面很窄 ——
    这套集群上那些命名空间本来就分配给租户（§9），该租户今天用 `/workloads/list` 就能读到同样内容。
    闭合它需要"只接受 platform-api 调用"的内部凭证 —— 与 PV / 节点 IP / StorageClass 三条
    一并留给下一步。**清单外的命名空间已被挡住**（§4.3），这是本条与那三条的关键差别。
-6. **版本号的语义化比较**（"这个 Tekton 太旧了"）—— 本批只展示，不做版本门槛判断。
+7. **版本号的语义化比较**（"这个 Tekton 太旧了"）—— 本批只展示，不做版本门槛判断。
 
 ---
 
