@@ -6,15 +6,18 @@
  * DAG 与日志都被挤在小框里看着不方便（2026-10-16 用户的反馈）。这一页只管列与两个动作，
  * **点运行名**去详情（与集群/命名空间那几个列表页同一套：名称可点）。
  *
- * ⚠️ 「取消」不在这张表上：它就是「操作」那栏唯一的东西，而绝大多数行（跑完的）那栏是空的
- * （2026-10-16 用户的反馈：空栏不如去掉）。取消在**详情页**头部 —— 打开正在跑的那条就能点。
+ * ⚠️ 「取消」放在**行操作下拉**里（`ClusterView` 那一套）：这一列原来直接摊一个「取消」按钮，
+ * 而只有正在跑的行才有它 —— 跑完的行那一栏全是空的，看着像坏了（2026-10-16 用户的反馈）。
+ * 收进下拉之后触发图标**每行都有**，取消对跑完的行**禁用**（灰着说明取消不了），
+ * 不会再有「空栏」（中间一度整栏去掉过，随后按用户要求以这个形态加回来）。
  *
  * ⚠️ 数据源是「归档了没有」那条分界线（spec §4.3）：历史一律读库 ——
  * 集群里的 `PipelineRun` 与它的 Pod 在归档那一刻就被删了。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { MoreFilled } from '@element-plus/icons-vue'
 import { pipelineApi } from '@/api'
 import type { Pipeline, PipelineRun } from '@/types'
 import { usePermission } from '@/stores/permission'
@@ -84,6 +87,39 @@ async function run(): Promise<void> {
     /* 拦截器已提示 */
   }
 }
+
+/**
+ * 行操作下拉（与 `ClusterView` 同一套：`MoreFilled` 图标 + `@command`）。
+ *
+ * ⚠️ 这里**只有执行得动的事**：查看详情（名称也可点，两条路都留着）、取消（只对正在跑的）。
+ * 取消对跑完的行**禁用而不是隐藏** —— 灰着能说明「这条已经结束了，取消不了」，
+ * 比一个空菜单好读。
+ */
+function onCommand(cmd: string, r: PipelineRun): void {
+  if (cmd === 'detail') {
+    openRun(r)
+    return
+  }
+  if (cmd === 'cancel') {
+    void cancel(r)
+  }
+}
+
+/** 取消：**先抓一次日志再取消**（见后端 cancel 的说明），所以取消之后日志仍然看得到 */
+async function cancel(r: PipelineRun): Promise<void> {
+  await ElMessageBox.confirm(
+    '取消这次运行？**会先抓一次日志再取消** —— 所以取消之后日志仍然看得到。',
+    '确认',
+    { type: 'warning' },
+  )
+  try {
+    await pipelineApi.cancelRun(r.runName, effectiveTenantId.value)
+    ElMessage.success('已取消')
+    await load()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
 </script>
 
 <template>
@@ -116,6 +152,24 @@ async function run(): Promise<void> {
       <el-table-column label="触发人" width="110" prop="triggeredBy" />
       <el-table-column label="耗时" width="90">
         <template #default="{ row }">{{ duration(row) }}</template>
+      </el-table-column>
+      <!-- 行操作下拉：与 ClusterView 同一套（宽度 64、无列头、固定在右侧） -->
+      <el-table-column width="64" fixed="right">
+        <template #default="{ row }">
+          <el-dropdown trigger="click" @command="(cmd: string) => onCommand(cmd, row)">
+            <el-button link type="primary" :icon="MoreFilled" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="detail">
+                  <el-button link type="primary">查看详情</el-button>
+                </el-dropdown-item>
+                <el-dropdown-item divided command="cancel" :disabled="row.status !== 'RUNNING'">
+                  <el-button link type="danger" :disabled="row.status !== 'RUNNING'">取消</el-button>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
       </el-table-column>
       <template #empty>
         <div class="empty">还没有运行过 —— 点右上角「运行」触发一次</div>
