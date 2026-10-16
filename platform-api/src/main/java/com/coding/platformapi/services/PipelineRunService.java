@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import org.springframework.transaction.annotation.Transactional;
 import com.coding.common.models.k8s.dto.PipelineDTO;
+import com.coding.common.models.pipeline.PipelineRunLogDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
@@ -26,6 +27,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 触发、取消与运行历史。
@@ -52,6 +55,19 @@ public class PipelineRunService {
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
     private static final String ALNUM = "abcdefghijklmnopqrstuvwxyz0123456789";
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    /**
+     * k8s 注入的日志时间戳前缀：**行首**的 RFC3339Nano（UTC {@code Z}）+ 空白。
+     *
+     * <p>⚠️ 只认 {@code Z}：认 {@code +08:00} 的话，应用自己打在行首的时间戳会被当成 k8s 的剥掉。
+     * 与前端 {@code PodLogDialog} 那条正则同一套口径（两边都改才不算走偏）。
+     */
+    private static final Pattern TS_PREFIX =
+            Pattern.compile("^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z)[ \t]+");
+
+    /** 「整串就是个时间戳」的拆解式：{@code 前面 + .小数 + 时区} —— 给 {@link #normTs} 补零用。 */
+    private static final Pattern TS_PREFIX_FULL =
+            Pattern.compile("^(.*?)(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})?$");
 
     private final PlatformPipelineRunMapper runMapper;
     private final PlatformPipelineRunLogMapper logMapper;
@@ -166,17 +182,27 @@ public class PipelineRunService {
      *       **不落库也不落缓存** —— 落库只发生在归档那一刻。</li>
      * </ul>
      *
-     * @param nodeName 只看某个节点；为空则把所有节点拼起来（每段前面标节点名）
+     * <p>⭐ 2026-10-16 起「还在跑」那一路支持**增量**：{@code sinceTime} 是上一批的游标，
+     * 带上它就只回新行 —— 页面于是能自己往下滚，而不是让人反复点节点。
+     * 集群侧本来就有这个能力（k8s-server 的 Pod 日志端点 {@code sinceTime} + {@code usingTimestamps}），
+     * 只是这条路以前每次都在全量重抓（上限 {@code maxBytes}）。
+     *
+     * <p>⚠️ 时间戳前缀**在服务端剥掉**，游标也只在这里算 —— 见 {@link PipelineRunLogDTO} 的说明：
+     * 那是实现细节，漏到前端就等于让每个调用方各自重写一遍正则与去重。
+     *
+     * @param nodeName  只看某个节点；为空则把所有节点拼起来（每段前面标节点名）
+     * @param sinceTime 增量游标（上一批的 {@code cursor}）；为空 = 从头全量
      */
-    public String logs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes) {
+    public PipelineRunLogDTO logs(String runName, String nodeName, PipelineRunContext ctx,
+                                  int maxBytes, String sinceTime) {
         PlatformPipelineRun row = requireRun(runName);
         // 段头是**给人看**的那一行 —— 用用户起的名字（见 displayNames）。⚠️ 过滤键仍是 id
         Map<String, String> names = displayNames(row.getCanvasJson());
         if (!"RUNNING".equals(row.getStatus())) {
             // 老运行的日志行键里带着运行名前缀 —— 归一化要用**库里那行**的运行名（不是调用方给的）
-            return archivedLogs(row.getId(), nodeName, names, row.getRunName());
+            return PipelineRunLogDTO.whole(archivedLogs(row.getId(), nodeName, names, row.getRunName()));
         }
-        return liveLogs(runName, nodeName, ctx, maxBytes, names);
+        return liveLogs(runName, nodeName, ctx, maxBytes, names, sinceTime);
     }
 
     /**
@@ -249,24 +275,108 @@ public class PipelineRunService {
                 : stored;
     }
 
-    private String liveLogs(String runName, String nodeName, PipelineRunContext ctx, int maxBytes,
-                            Map<String, String> names) {
+    /**
+     * 现抓一次运行在集群上的日志。
+     *
+     * <p>⭐ 增量（{@code sinceTime}）的**去重口径**：只收**严格晚于游标**的行。
+     * k8s 的 {@code sinceTime} 语义是「该时刻之后」且边界那行会**重复来一次**，
+     * 所以不滤的话每轮都会多出一行"上一轮的尾巴"。
+     *
+     * <p>⚠️ 批内每个容器都用**同一个** {@code floor}（本轮的入参游标）去比，而不是用"已经涨上去的"
+     * 那个最大值 —— 否则容器 A 抢先把游标推高了，容器 B 在中间时刻产生的行就会被静默丢掉。
+     * 返回的游标才是本轮见过的**最大**时间戳。
+     *
+     * <p>⚠️ 已知的理论损失：容器是**串行**抓的，A 抓完到 B 抓完之间 A 新产生的行，时间戳落在
+     * 「本轮 max 之内」→ 下一轮会被当成旧的滤掉。窗口是毫秒级，且只在一个 TaskRun 有**多个
+     * step 容器**时才存在（平台渲染出来的节点每个都是单 step，所以现实中不会走到）；
+     * 兜底是运行结束那一刻的**整段重取**（归档内容才是权威，见前端）。
+     */
+    private PipelineRunLogDTO liveLogs(String runName, String nodeName, PipelineRunContext ctx,
+                                       int maxBytes, Map<String, String> names, String sinceTime) {
+        String floor = sinceTime == null ? "" : sinceTime;
         List<PipelineStepRefDTO> steps = k8s.steps(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
         if (nodeName != null && !nodeName.isBlank()) {
             steps = steps.stream().filter(s -> nodeName.equals(s.nodeName())).toList();
         }
         StringBuilder out = new StringBuilder();
+        boolean sawTimestamp = false;
+        String cursor = floor;
         for (PipelineStepRefDTO step : steps) {
             if (step.podName() == null || step.podName().isBlank()) {
                 continue;                                  // 还没起来，没日志可看
             }
-            out.append(header(names, step.nodeName(), steps.size() > 1));
+            StringBuilder section = new StringBuilder();
             for (String container : step.containers()) {
-                out.append(k8s.podLog(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
-                        step.podName(), container, maxBytes).content());
+                String raw = k8s.podLog(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
+                        step.podName(), container, maxBytes, floor.isEmpty() ? null : floor).content();
+                for (String line : raw.split("\n", -1)) {
+                    String[] parts = splitLogLine(line);
+                    if (parts[0].isEmpty()) {
+                        // 没有 k8s 前缀。空串是 split 留下的尾巴（内容本来就以换行结尾）→ 丢掉；
+                        // 其余原样给（没法比大小也没法去重，下面会退化成整段模式）
+                        if (!line.isEmpty()) {
+                            section.append(parts[1]).append('\n');
+                        }
+                        continue;
+                    }
+                    sawTimestamp = true;
+                    if (!floor.isEmpty() && normTs(parts[0]).compareTo(normTs(floor)) <= 0) {
+                        continue;                          // 边界重复的那一行
+                    }
+                    section.append(parts[1]).append('\n');
+                    if (cursor.isEmpty() || normTs(parts[0]).compareTo(normTs(cursor)) > 0) {
+                        cursor = parts[0];
+                    }
+                }
+            }
+            // 段头只在**这一段真有新内容**时才加 —— 否则每轮都会把一排空段头刷一遍
+            if (section.length() > 0) {
+                out.append(header(names, step.nodeName(), steps.size() > 1)).append(section);
             }
         }
-        return out.toString();
+        if (sawTimestamp) {
+            return new PipelineRunLogDTO(out.toString(), cursor.isEmpty() ? floor : cursor, true);
+        }
+        // 集群侧没给时间戳（k8s-server 没重建 / 老版本）→ 增量没法成立。
+        // 这时**必须退回整段**，否则调用方按增量追加会把同一份日志一遍遍接上去。
+        if (floor.isEmpty()) {
+            return PipelineRunLogDTO.whole(out.toString());   // 本轮本来就是全量
+        }
+        return PipelineRunLogDTO.whole(
+                liveLogs(runName, nodeName, ctx, maxBytes, names, null).text());
+    }
+
+    /**
+     * 一行 {@code <RFC3339Nano>\t<内容>} → {@code [时间戳, 内容]}；没有前缀则时间戳为空串。
+     *
+     * <p>kubelet 用的分隔符是**制表符**；但中间隔着 k8s-server 与网关的转发，可能被规整成空格，
+     * 所以两种空白都认。**只认 UTC 的 {@code Z}** —— 认 {@code +08:00} 的话，应用自己打在行首的
+     * 时间戳会被当成 k8s 的剥掉。
+     *
+     * <p>⚠️ 刻意**不**用「找第一个制表符」那种写法：内容里本来就有制表符的行（不只是日志，
+     * 比如 {@code ls -l} 的输出）会被从中间劈开，前半个当时间戳、后半个当内容。
+     */
+    static String[] splitLogLine(String line) {
+        Matcher m = TS_PREFIX.matcher(line);
+        if (m.find()) {
+            return new String[]{m.group(1), line.substring(m.end())};
+        }
+        return new String[]{"", line};
+    }
+
+    /**
+     * 小数秒补到固定 9 位，让同一来源的时间戳能**按字典序**比较。
+     *
+     * <p>⚠️ 直接比字符串是不对的：{@code …:00.5Z} 与 {@code …:00.45Z} 按字符串比会得出前者更小，
+     * 而按时间比它更大。补零之后就一致了。
+     */
+    static String normTs(String ts) {
+        Matcher m = TS_PREFIX_FULL.matcher(ts);
+        if (!m.matches()) {
+            return ts;
+        }
+        String frac = ((m.group(2) == null ? "" : m.group(2).substring(1)) + "000000000");
+        return m.group(1) + "." + frac.substring(0, 9) + (m.group(3) == null ? "" : m.group(3));
     }
 
     /**

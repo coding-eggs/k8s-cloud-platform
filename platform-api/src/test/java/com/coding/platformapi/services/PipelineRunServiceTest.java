@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
+import com.coding.common.models.pipeline.PipelineRunLogDTO;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
@@ -219,7 +220,7 @@ class PipelineRunServiceTest {
         line.setTruncated(0);
         when(logMapper.listByRunId("run-1")).thenReturn(List.of(line));
 
-        String logs = svc.logs("r1", null, ctx, 1024);
+        String logs = svc.logs("r1", null, ctx, 1024, null).text();
 
         assertThat(logs).isEqualTo("hello from the archive");
         verify(k8s, never()).steps(anyString(), any(), anyString(), anyString());
@@ -231,10 +232,10 @@ class PipelineRunServiceTest {
         when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(
                 List.of(new com.coding.common.models.pipeline.PipelineStepRefDTO(
                         "clone", "RUNNING", "clone-pod", List.of("step-run"), null)));
-        when(k8s.podLog("c1", "t1", "ns1", "clone-pod", "step-run", 1024))
-                .thenReturn(new K8sPipelineClient.CappedLog("live!", false, 5));
+        when(k8s.podLog("c1", "t1", "ns1", "clone-pod", "step-run", 1024, null))
+                .thenReturn(new K8sPipelineClient.CappedLog("live!\n", false, 6));
 
-        assertThat(svc.logs("r1", null, ctx, 1024)).isEqualTo("live!");
+        assertThat(svc.logs("r1", null, ctx, 1024, null).text()).isEqualTo("live!\n");
         verify(logMapper, never()).listByRunId(anyString());   // 没落库
     }
 
@@ -248,14 +249,116 @@ class PipelineRunServiceTest {
         line.setTruncated(1);
         when(logMapper.listByRunId("run-1")).thenReturn(List.of(line));
 
-        assertThat(svc.logs("r1", null, ctx, 1024)).contains("已截断");
+        assertThat(svc.logs("r1", null, ctx, 1024, null).text()).contains("已截断");
     }
 
     @Test
     void logsOfAnUnknownRunAreRefused() {
         when(runMapper.selectByRunName("nope")).thenReturn(null);
-        assertThatThrownBy(() -> svc.logs("nope", null, ctx, 1024))
+        assertThatThrownBy(() -> svc.logs("nope", null, ctx, 1024, null).text())
                 .isInstanceOf(CloudPlatformException.class);
+    }
+
+    // ---- 增量（⭐ 2026-10-16：日志要能自己往下滚，而不是让人反复点节点）----
+
+    /** 一个还在跑的运行 + 一个节点一个容器 —— 增量那几条测试的公共布景。 */
+    private void aRunningNodeWithOneContainer() {
+        when(runMapper.selectByRunName("r1")).thenReturn(running("r1"));
+        when(k8s.steps("c1", "t1", "ns1", "r1")).thenReturn(List.of(
+                new com.coding.common.models.pipeline.PipelineStepRefDTO(
+                        "build", "RUNNING", "build-pod", List.of("step-build"), null)));
+    }
+
+    private static K8sPipelineClient.CappedLog cap(String content) {
+        return new K8sPipelineClient.CappedLog(content, false, content.length());
+    }
+
+    @Test
+    void aLiveLogsBatchComesBackWithTheTimestampPrefixStrippedAndACursor() {
+        // k8s-server 恒带 `<RFC3339Nano>\t` 前缀（那是增量游标的依据），但它是**实现细节** ——
+        // 漏到前端就等于让每个调用方各自重写一遍正则与去重
+        aRunningNodeWithOneContainer();
+        when(k8s.podLog("c1", "t1", "ns1", "build-pod", "step-build", 1024, null)).thenReturn(cap(
+                "2026-10-16T07:16:32.598034681Z 第一行\n"
+                        + "2026-10-16T07:16:35.000000000Z 第二行\n"));
+
+        PipelineRunLogDTO logs = svc.logs("r1", "build", ctx, 1024, null);
+
+        assertThat(logs.text()).isEqualTo("第一行\n第二行\n");
+        assertThat(logs.cursor()).isEqualTo("2026-10-16T07:16:35.000000000Z");
+        assertThat(logs.live()).isTrue();
+    }
+
+    @Test
+    void theNextPollAsksForNewLinesOnlyAndDropsTheRepeatedBoundaryLine() {
+        // ⚠️ k8s 的 sinceTime 是「该时刻之后」且**边界那行会重复来一次** ——
+        //    不滤的话每轮都多出一行"上一轮的尾巴"
+        aRunningNodeWithOneContainer();
+        when(k8s.podLog("c1", "t1", "ns1", "build-pod", "step-build", 1024,
+                "2026-10-16T07:16:35.000000000Z")).thenReturn(cap(
+                "2026-10-16T07:16:35.000000000Z 第二行\n"
+                        + "2026-10-16T07:16:40.123456789Z 第三行\n"));
+
+        PipelineRunLogDTO logs = svc.logs("r1", "build", ctx, 1024, "2026-10-16T07:16:35.000000000Z");
+
+        assertThat(logs.text()).isEqualTo("第三行\n");
+        assertThat(logs.cursor()).isEqualTo("2026-10-16T07:16:40.123456789Z");
+        verify(k8s).podLog("c1", "t1", "ns1", "build-pod", "step-build", 1024,
+                "2026-10-16T07:16:35.000000000Z");
+    }
+
+    @Test
+    void aLogThatComesBackWithoutTimestampsFallsBackToWholesale() {
+        // 集群侧没给时间戳时增量没有依据 —— **必须退回整段**（live=false）：
+        // 否则调用方按"追加"把同一份日志一遍遍接上去，屏幕上越长越离谱
+        aRunningNodeWithOneContainer();
+        when(k8s.podLog("c1", "t1", "ns1", "build-pod", "step-build", 1024, null))
+                .thenReturn(cap("没有时间戳的一行\n"));
+
+        PipelineRunLogDTO logs = svc.logs("r1", "build", ctx, 1024, null);
+
+        assertThat(logs.live()).isFalse();
+        assertThat(logs.cursor()).isNull();
+        assertThat(logs.text()).isEqualTo("没有时间戳的一行\n");
+    }
+
+    @Test
+    void aCursorAgainstATimestamplessLogReFetchesFromTheStart() {
+        // 已经带着游标了，却发现这一批没有时间戳 —— 手上这份是**残缺**的，
+        // 不能说"这就是全量"，得回头重新整段取一次
+        aRunningNodeWithOneContainer();
+        when(k8s.podLog("c1", "t1", "ns1", "build-pod", "step-build", 1024, "2026-10-16T07:16:35Z"))
+                .thenReturn(cap("半截\n"));
+        when(k8s.podLog("c1", "t1", "ns1", "build-pod", "step-build", 1024, null))
+                .thenReturn(cap("从头来的整段\n"));
+
+        PipelineRunLogDTO logs = svc.logs("r1", "build", ctx, 1024, "2026-10-16T07:16:35Z");
+
+        assertThat(logs.text()).isEqualTo("从头来的整段\n");
+        assertThat(logs.live()).isFalse();
+    }
+
+    @Test
+    void aTabInTheContentIsNotMistakenForTheTimestampSeparator() {
+        // ⚠️ 「找第一个制表符」那种写法会把含制表符的行从中间劈开，前半个当时间戳、后半个当内容。
+        //    分隔符可能是制表符（kubelet 原样）也可能是空格（中间转发规整过），两种都认。
+        assertThat(PipelineRunService.splitLogLine("a\tb")).containsExactly("", "a\tb");
+        assertThat(PipelineRunService.splitLogLine("2026-10-16T07:16:32Z\thello"))
+                .containsExactly("2026-10-16T07:16:32Z", "hello");
+        assertThat(PipelineRunService.splitLogLine("2026-10-16T07:16:32Z hello"))
+                .containsExactly("2026-10-16T07:16:32Z", "hello");
+        // 应用自己打在行首的 +08:00 时间戳**不许**当 k8s 的剥掉
+        assertThat(PipelineRunService.splitLogLine("2026-10-16T15:16:32+08:00 hello"))
+                .containsExactly("", "2026-10-16T15:16:32+08:00 hello");
+    }
+
+    @Test
+    void fractionalSecondsArePaddedBeforeComparingSoStringOrderIsChronological() {
+        // ⚠️ 直接比字符串：`…:00.5Z` 与 `…:00.45Z` 会得出前者更小，而按时间它更大
+        assertThat(PipelineRunService.normTs("2026-10-16T07:16:00.5Z"))
+                .isGreaterThan(PipelineRunService.normTs("2026-10-16T07:16:00.45Z"));
+        assertThat(PipelineRunService.normTs("2026-10-16T07:16:00Z"))
+                .isLessThan(PipelineRunService.normTs("2026-10-16T07:16:01Z"));
     }
 
     private static PlatformPipelineRun archived(String runName) {
@@ -298,7 +401,7 @@ class PipelineRunServiceTest {
         when(logMapper.listByRunId("run-1")).thenReturn(List.of(
                 logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
 
-        String out = svc.logs("r1", null, ctx, 1024);
+        String out = svc.logs("r1", null, ctx, 1024, null).text();
 
         assertThat(out).contains("===== 拉取代码 =====");
         assertThat(out).doesNotContain("===== git-l8x31 =====");
@@ -311,7 +414,7 @@ class PipelineRunServiceTest {
         when(logMapper.listByRunId("run-1")).thenReturn(List.of(
                 logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
 
-        assertThat(svc.logs("r1", null, ctx, 1024)).contains("===== image-m2k9 =====");
+        assertThat(svc.logs("r1", null, ctx, 1024, null).text()).contains("===== image-m2k9 =====");
     }
 
     @Test
@@ -321,7 +424,7 @@ class PipelineRunServiceTest {
         when(logMapper.listByRunId("run-1")).thenReturn(List.of(
                 logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
 
-        assertThat(svc.logs("r1", null, ctx, 1024)).contains("===== git-l8x31 =====");
+        assertThat(svc.logs("r1", null, ctx, 1024, null).text()).contains("===== git-l8x31 =====");
     }
 
     @Test
@@ -333,10 +436,10 @@ class PipelineRunServiceTest {
                         "git-l8x31", "RUNNING", "git-pod", List.of("step-run"), null),
                 new com.coding.common.models.pipeline.PipelineStepRefDTO(
                         "image-m2k9", "RUNNING", "image-pod", List.of("step-build"), null)));
-        when(k8s.podLog(anyString(), any(), anyString(), anyString(), anyString(), anyInt()))
+        when(k8s.podLog(anyString(), any(), anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(new K8sPipelineClient.CappedLog("x\n", false, 2));
 
-        String out = svc.logs("r1", null, ctx, 1024);
+        String out = svc.logs("r1", null, ctx, 1024, null).text();
 
         assertThat(out).contains("===== 拉取代码 =====");
         assertThat(out).contains("===== image-m2k9 =====");
@@ -350,8 +453,8 @@ class PipelineRunServiceTest {
         when(logMapper.listByRunId("run-1")).thenReturn(List.of(
                 logLine("git-l8x31", "cloning\n"), logLine("image-m2k9", "building\n")));
 
-        assertThat(svc.logs("r1", "git-l8x31", ctx, 1024)).isEqualTo("cloning\n");
-        assertThat(svc.logs("r1", "拉取代码", ctx, 1024)).isEmpty();
+        assertThat(svc.logs("r1", "git-l8x31", ctx, 1024, null).text()).isEqualTo("cloning\n");
+        assertThat(svc.logs("r1", "拉取代码", ctx, 1024, null).text()).isEmpty();
     }
 
     @Test
@@ -364,10 +467,10 @@ class PipelineRunServiceTest {
         when(logMapper.listByRunId("run-1")).thenReturn(List.of(
                 logLine("r1-git-l8x31", "old cloning\n"), logLine("image-m2k9", "new building\n")));
 
-        assertThat(svc.logs("r1", "git-l8x31", ctx, 1024)).isEqualTo("old cloning\n");
-        assertThat(svc.logs("r1", "image-m2k9", ctx, 1024)).isEqualTo("new building\n");
+        assertThat(svc.logs("r1", "git-l8x31", ctx, 1024, null).text()).isEqualTo("old cloning\n");
+        assertThat(svc.logs("r1", "image-m2k9", ctx, 1024, null).text()).isEqualTo("new building\n");
         // 别名不能把别的节点也捞进来：按节点过滤就该只有那一个节点
-        assertThat(svc.logs("r1", "image-m2k9", ctx, 1024)).doesNotContain("old cloning");
+        assertThat(svc.logs("r1", "image-m2k9", ctx, 1024, null).text()).doesNotContain("old cloning");
     }
 
     // ---- 手动删一条运行记录（用户 2026-10-16 要的「运行历史删除」）----
@@ -435,7 +538,7 @@ class PipelineRunServiceTest {
                         EnumResponseType.NAMESPACE_NOT_ACCESSIBLE, "无权访问该命名空间：ns1"))
                 .when(access).assertAccessible(any(), any());
 
-        assertThatThrownBy(() -> svc.logs("r1", null, ctx, 1024))
+        assertThatThrownBy(() -> svc.logs("r1", null, ctx, 1024, null).text())
                 .isInstanceOf(CloudPlatformException.class);
         verify(logMapper, never()).listByRunId(anyString());
         verify(k8s, never()).steps(anyString(), any(), anyString(), anyString());

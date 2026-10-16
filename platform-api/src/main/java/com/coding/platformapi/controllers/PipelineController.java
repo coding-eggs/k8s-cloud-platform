@@ -3,6 +3,7 @@ package com.coding.platformapi.controllers;
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
+import com.coding.common.models.pipeline.PipelineRunLogDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformPipelineRun;
@@ -269,20 +270,23 @@ public class PipelineController {
     @PostMapping("/run/logs")
     @Operation(summary = "看运行日志",
             description = "已归档读库、还在跑现抓。nodeName 为空则把所有节点拼起来"
-                    + "（每段的段头用**节点显示名**，没起名则用 id；⚠️ 但 nodeName 入参给的是 **id**）")
-    public ResponseData<String> runLogs(@RequestBody RunLogsRequest request) {
+                    + "（每段的段头用**节点显示名**，没起名则用 id；⚠️ 但 nodeName 入参给的是 **id**）。"
+                    + "⭐ 还在跑时带 `sinceTime`（上一批回的 cursor）就是**增量**：只回新行，"
+                    + "游标与 k8s 时间戳前缀都在服务端处理，调用方只管把 text 接上去")
+    public ResponseData<PipelineRunLogDTO> runLogs(@RequestBody RunLogsRequest request) {
         PlatformPipelineRun run = runService.get(request.runName());
         return new ResponseData<>(runService.logs(request.runName(), request.nodeName(),
-                contextOf(run, request.tenantId()), maxLogBytes));
+                contextOf(run, request.tenantId()), maxLogBytes, request.sinceTime()));
     }
 
     /**
      * 日志端点的入参：只看某个节点时给 nodeName。
      *
-     * @param tenantId 生效租户 —— **平台管理员（代管轨）必须显式给**，否则 k8s-server 会以
-     *                 「管理员代操作需显式指定 tenantId」拒掉（租户用户不用给，token 说了算）
+     * @param tenantId  生效租户 —— **平台管理员（代管轨）必须显式给**，否则 k8s-server 会以
+     *                  「管理员代操作需显式指定 tenantId」拒掉（租户用户不用给，token 说了算）
+     * @param sinceTime 增量游标（上一批返回的 {@code cursor}）；为空 = 从头全量
      */
-    public record RunLogsRequest(String runName, String nodeName, String tenantId) {
+    public record RunLogsRequest(String runName, String nodeName, String tenantId, String sinceTime) {
     }
 
     /**

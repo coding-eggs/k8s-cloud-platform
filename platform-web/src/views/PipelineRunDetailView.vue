@@ -13,7 +13,7 @@
  * 详情里的 DAG 画的是**这条运行自己的画布**（触发时留在 run 行上的 `canvasJson`），
  * 不是今天的流水线定义 —— 改过名字、换过镜像之后，拿今天那份画出来的图会把排障的人带沟里。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { FullScreen, ScaleToOriginal } from '@element-plus/icons-vue'
@@ -50,6 +50,19 @@ const pipeline = ref<Pipeline | null>(null)
 const logs = ref('')
 /** 当前在看的那个节点 —— 日志区标题与节点高亮都看它（用户 2026-10-16：不要下面那排 tab） */
 const logNodeId = ref('')
+/**
+ * ⭐ 日志是**流式**的（2026-10-16）：服务端每轮只回新行，这里把游标原样带回去。
+ * `logCursor === null`（或服务端说 `live=false`）表示"手上这份是全量、没法增量跟" ——
+ * 那种情况整段替换并停止追加，而不是把同一份日志一遍遍接上去。
+ *
+ * ⚠️ 游标是**服务端**的东西，前端不碰时间戳：k8s 的前缀剥离与边界去重都在那边做完了。
+ */
+let logCursor: string | null = null
+/** 服务端确认"能按游标增量跟" —— 日志面板要不要继续追加就看它 */
+const logLive = ref(false)
+/** 日志面板贴着底吗：用户往上翻就置 false（停止自动跟随），回到底部再打开 */
+const logAtBottom = ref(true)
+const logEl = ref<HTMLElement | null>(null)
 const loading = ref(false)
 /** 还在跑时现抓的节点落点（归档后它就没有了 —— 那时状态在 run 行的 stepsJson 里） */
 const liveSteps = ref<PipelineStepRef[]>([])
@@ -62,6 +75,8 @@ const canLogs = computed(() => perm.has(apiCodes.pipelineLogs))
 /** 删除要的是**改流水线**那个码（后端 `/pipeline/run/delete` 用的就是它） */
 const canManage = computed(() => perm.has(apiCodes.pipelineManage))
 const isRunning = computed(() => run.value?.status === 'RUNNING')
+/** 日志面板此刻正在"跟着走"（服务端说能增量 + 运行还没结束）—— 标题上给个提示 */
+const logFollowing = computed(() => logLive.value && isRunning.value)
 
 /** 失败/超时才把 reason 当报错显示（取消是用户自己点的，Succeeded 更不是报错） */
 const failed = computed(() => run.value?.status === 'FAILED' || run.value?.status === 'TIMEOUT')
@@ -346,6 +361,8 @@ watch(runName, async () => {
   run.value = null
   logs.value = ''
   logNodeId.value = ''
+  logCursor = null
+  logLive.value = false
   liveSteps.value = []
   runYamlText.value = ''
   await init()
@@ -362,9 +379,18 @@ onUnmounted(() => {
 //    不生效时按 Esc 什么也不做；换来的是不用管"什么时候加/什么时候摘"这条容易漏的分支
 window.addEventListener('keydown', onKeydown)
 
-// ---- 还在跑的运行：每 5 秒对一次集群 ----
+// ---- 还在跑的运行：每 2 秒对一次集群 ----
 
 let timer: number | undefined
+
+/**
+ * ⭐ 2026-10-16：一轮 **2 秒**，同一班车做两件事 —— 刷节点状态 + **追加**日志新行。
+ *
+ * 原来只有节点状态、5 秒一轮，日志非得重新点节点才刷新。改成增量之后日志这一侧
+ * 每轮只传新增的几十行（不是整份重下，`maxBytes` 上限 1MB 那种），
+ * 所以把频率提上去几乎不花钱，也才有"流式"的观感。
+ */
+const POLL_MS = 2000
 
 /**
  * 还在跑的运行要**有颜色**：节点状态只有 k8s-server 现抓才知道（归档才写 stepsJson）。
@@ -372,7 +398,7 @@ let timer: number | undefined
  */
 function startPolling(): void {
   stopPolling()
-  timer = window.setInterval(refreshRunning, 5000)
+  timer = window.setInterval(() => void tick(), POLL_MS)
 }
 
 function stopPolling(): void {
@@ -380,6 +406,11 @@ function stopPolling(): void {
     window.clearInterval(timer)
     timer = undefined
   }
+}
+
+/** 一轮：节点状态和日志**并发**拉，互不拖累（其中一个失败不影响另一个） */
+async function tick(): Promise<void> {
+  await Promise.all([refreshRunning(), pollLog()])
 }
 
 async function refreshRunning(): Promise<void> {
@@ -400,6 +431,10 @@ async function refreshRunning(): Promise<void> {
       // 归档了：现抓的落点已经没了（Pod 被删），状态改由 stepsJson 提供
       liveSteps.value = []
       stopPolling()
+      // ⭐ 收尾：运行一结束就**整段重取**一次日志 —— 归档内容才是权威。
+      //    增量追到的可能差最后几行（Pod 刚被删），而且这段追出来的文本与归档那份
+      //    本来就不必逐字节一致；整段换掉之后前后看到的东西才对得上。
+      if (logNodeId.value) await loadLogs(logNodeId.value)
     }
   } catch {
     /* 拦截器已提示；下一次 tick 再来 */
@@ -472,6 +507,9 @@ async function openYaml(): Promise<void> {
  * 看**某个节点**的日志。点上面流程里的节点就是它（用户 2026-10-16 定的形态：
  * 不要「全部」那排 tab，日志区只用标题说明当前看的是谁）。
  *
+ * ⭐ 这是**整段**拉一次（不带游标）：点节点等于"重新开始看这一个"。拉回来的如果是
+ * `live` 的，后面就由 {@link pollLog} 按游标往后接。
+ *
  * <p>⚠️ 跳过的节点**没有日志**（它没有 Pod）：与其回一句「（没有日志）」让人以为日志丢了，
  * 不如把「为什么没跑」原地说一遍。
  */
@@ -479,18 +517,78 @@ async function loadLogs(nodeId: string): Promise<void> {
   const r = run.value
   if (!r || !nodeId) return
   logNodeId.value = nodeId
+  logCursor = null
+  logLive.value = false
+  logAtBottom.value = true // 换了节点 = 重新开始跟
   const skipped = skippedNodes.value.find((s) => s.id === nodeId)
   if (skipped) {
     logs.value = `这个节点被跳过了，没有日志：${skipped.why}`
     return
   }
   try {
-    const text = await pipelineApi.runLogs(r.runName, nodeId, effectiveTenantId.value)
+    const batch = await pipelineApi.runLogs(r.runName, nodeId, effectiveTenantId.value)
     // 期间又点了别的节点 → 丢掉这次的结果，免得标题与内容对不上
-    if (logNodeId.value === nodeId) logs.value = text
+    if (logNodeId.value !== nodeId) return
+    logs.value = batch.text ?? ''
+    logCursor = batch.cursor ?? null
+    logLive.value = batch.live === true
+    scrollLogToBottom()
   } catch {
     if (logNodeId.value === nodeId) logs.value = ''
   }
+}
+
+/**
+ * 增量：把上一次的游标带回去，拿到的新行**接在末尾**（不是整份替换 —— 整份替换会闪、
+ * 会把你正在读的位置冲掉，这正是"流式"要解决的事）。
+ *
+ * <p>服务端说 `live: false` 时，说明它给的是**整段**（运行结束了，或集群那份日志没有时间戳）：
+ * 那就整段换掉并停止追加。
+ */
+async function pollLog(): Promise<void> {
+  const r = run.value
+  const nodeId = logNodeId.value
+  if (!r || !nodeId || !logLive.value || !logCursor) return
+  if (skippedNodes.value.some((s) => s.id === nodeId)) return
+  try {
+    const batch = await pipelineApi.runLogs(r.runName, nodeId, effectiveTenantId.value, logCursor)
+    if (logNodeId.value !== nodeId || run.value?.runName !== r.runName) return
+    if (batch.live !== true || !batch.cursor) {
+      logs.value = batch.text ?? ''
+      logCursor = null
+      logLive.value = false
+      scrollLogToBottom()
+      return
+    }
+    if (batch.text) {
+      logs.value += batch.text
+      scrollLogToBottom()
+    }
+    logCursor = batch.cursor
+  } catch {
+    /* 拦截器已提示；下一轮再来 */
+  }
+}
+
+/** 贴着底才自动跟；用户往上翻的时候**不许**把人家拽回来 */
+function scrollLogToBottom(): void {
+  if (!logAtBottom.value) return
+  void nextTick(() => {
+    const el = logEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+/** 到底没有：留 8px 余量（滚动是像素级的，严格要求相等会永远判不成"贴底"） */
+function onLogScroll(): void {
+  const el = logEl.value
+  if (!el) return
+  logAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 8
+}
+
+function jumpToLogBottom(): void {
+  logAtBottom.value = true
+  scrollLogToBottom()
 }
 </script>
 
@@ -519,7 +617,8 @@ async function loadLogs(nodeId: string): Promise<void> {
       <el-alert v-if="failed && run.reason" type="error" :closable="false" show-icon :title="run.reason" />
 
       <div v-if="isRunning" class="dim">
-        正在跑 —— 每 5 秒自动刷新节点状态。归档后集群对象会被删，历史从这里读。
+        正在跑 —— 每 2 秒自动刷新节点状态；点开某个节点后，它的日志会自己往下接，不用重新点。
+        归档后集群对象会被删，历史从这里读。
       </div>
       <div v-if="canvasIsCurrent" class="dim">
         （这条运行没有留下当时的画布，下面画的是「当前」的流水线定义）
@@ -552,13 +651,21 @@ async function loadLogs(nodeId: string): Promise<void> {
           <span>日志</span>
           <span v-if="logNodeId" class="log-node">{{ logNodeLabel }}</span>
           <span v-else class="dim">点上面的节点看它的日志</span>
+          <!-- 「实时」= 服务端能按游标增量、且运行还没结束 —— 面板会自己接上新行 -->
+          <span v-if="logFollowing" class="log-live" title="每 2 秒自动接上新行，不用重新点节点">· 实时</span>
           <span v-if="!canLogs" class="dim">（没有『看运行日志』权限）</span>
           <div class="spacer" />
+          <!-- 只在"没贴底"时出现：贴着底本来就一直跟着走，再放个按钮是噪声 -->
+          <el-button v-if="logNodeId && !logAtBottom" link type="primary" @click="jumpToLogBottom">
+            ↓ 回到底部
+          </el-button>
           <el-button link :icon="logFullscreen ? ScaleToOriginal : FullScreen" @click="toggleLogFullscreen">
             {{ logFullscreen ? '退出全屏' : '全屏' }}
           </el-button>
         </div>
-        <pre class="log">{{ logText || (logNodeId ? '（没有日志）' : '') }}</pre>
+        <!-- ⚠️ 往上翻的时候**不许**把滚动位置拽回去（onLogScroll 负责记"贴没贴底"）——
+             这是"流式"与"每 2 秒整份重画"最直观的区别 -->
+        <pre ref="logEl" class="log" @scroll="onLogScroll">{{ logText || (logNodeId ? '（没有日志）' : '') }}</pre>
       </div>
     </template>
 
@@ -661,6 +768,11 @@ async function loadLogs(nodeId: string): Promise<void> {
 .log-head .log-node {
   color: var(--text-1);
   font-weight: 600;
+}
+/* 「实时」：日志正跟着走（服务端能增量 + 运行还没结束） */
+.log-head .log-live {
+  color: var(--success, #67c23a);
+  font-size: 12px;
 }
 /* 详情里的节点是**可点的**（点它看日志）—— 不只手型，光标本身就是提示 */
 .dag :deep(.vue-flow__node) {

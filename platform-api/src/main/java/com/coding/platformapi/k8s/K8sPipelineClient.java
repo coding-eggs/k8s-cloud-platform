@@ -215,17 +215,25 @@ public class K8sPipelineClient {
      * 这里用一个**会丢弃超出部分**的输出流接住 —— 抓归档日志时不需要把 100 MB 都读进来，
      * 但也不必为此给 k8s-server 加参数。
      *
+     * <p>⚠️ 对端**恒带 k8s 时间戳前缀**（{@code usingTimestamps()}，每行 {@code <RFC3339Nano>\t}）——
+     * 那是增量游标的依据，所以内容里**带着它**回来，剥前缀是调用方的事
+     * （{@code PipelineRunService} 剥掉之后才给人看）。
+     *
+     * @param sinceTime 只看这个时刻之后的新行（增量轮询的游标）；为空 = 从头全量
      * @return 日志内容 + **是否被截断**；对端不可达或容器不存在时是空内容
      *         （归档要「抓到多少存多少」，不整条丢）
      */
     public CappedLog podLog(String clusterId, String tenantId, String namespace,
-                            String podName, String container, int cap) {
+                            String podName, String container, int cap, String sinceTime) {
         Map<String, String> params = new LinkedHashMap<>();
         params.put("tenantId", tenantId);
         params.put("clusterId", clusterId);
         params.put("namespace", namespace);
         if (container != null && !container.isBlank()) {
             params.put("container", container);
+        }
+        if (sinceTime != null && !sinceTime.isBlank()) {
+            params.put("sinceTime", sinceTime);
         }
         CappedBuffer out = new CappedBuffer(cap);
         try {

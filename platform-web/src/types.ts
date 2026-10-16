@@ -1863,6 +1863,19 @@ export interface PipelineStepRef {
   message?: string | null
 }
 
+/**
+ * 一次运行的日志，**给"跟着看"用的形状**。
+ *
+ * ⚠️ `cursor` 是**服务端**的增量游标（k8s 的时间戳前缀与边界去重都在那边处理完了）——
+ * 前端只管把 `text` 接上去、把 `cursor` 原样带回来，不要自己去解析时间戳。
+ * `cursor === null`（或 `live === false`）表示"这一份是全量、没法增量"：整段替换并停止轮询。
+ */
+export interface PipelineRunLog {
+  text: string
+  cursor?: string | null
+  live: boolean
+}
+
 /** 可在流水线里引用的连接（**窄投影**：只有身份与地址）。 */
 export interface PipelineConnection {
   id: string

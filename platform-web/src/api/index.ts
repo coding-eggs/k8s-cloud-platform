@@ -27,6 +27,7 @@ import type {
   PipelineConnection,
   PipelineNodeType,
   PipelineRun,
+  PipelineRunLog,
   PipelineStepRef,
   K8sHttpRoute,
   K8sNode,
@@ -703,9 +704,13 @@ export const pipelineApi = {
   /** 一次运行渲染出来的 YAML（还在跑抓集群对象；归档后读归档时抓下来的那一份） */
   runYaml: (runName: string, tenantId?: string) =>
     http.post<never, string | null>('/pipeline/run/yaml', { name: runName, tenantId }),
-  /** 已归档读库、还在跑现抓；nodeName 为空则把所有节点拼起来 */
-  runLogs: (runName: string, nodeName?: string, tenantId?: string) =>
-    http.post<never, string>('/pipeline/run/logs', { runName, nodeName, tenantId }),
+  /**
+   * 已归档读库、还在跑现抓；nodeName 为空则把所有节点拼起来。
+   *
+   * ⭐ 还在跑时带上上一批回的 `cursor` 就是**增量**：只回新行，游标与时间戳前缀都在服务端处理。
+   */
+  runLogs: (runName: string, nodeName?: string, tenantId?: string, sinceTime?: string) =>
+    http.post<never, PipelineRunLog>('/pipeline/run/logs', { runName, nodeName, tenantId, sinceTime }),
 
   /** 这个集群能不能跑 CI —— **页面级门控的唯一判据**（不可用时带原因，前端据此提示并禁用「运行」） */
   capability: (clusterId: string, tenantId?: string, namespace?: string) =>
