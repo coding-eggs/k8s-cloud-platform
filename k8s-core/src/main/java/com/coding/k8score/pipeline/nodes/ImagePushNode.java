@@ -97,15 +97,20 @@ public class ImagePushNode implements PipelineNode {
                                 + "例：在仓库根 → 留空；在前端目录 → frontend/Dockerfile；"
                                 + "统一放一处 → docker/Dockerfile（此时上下文一般留空）"),
                 NodeField.text("context", "构建上下文", false,
-                        "构建工具能看到的那一个目录 —— 决定 Dockerfile 里的 COPY/ADD 能从哪儿拿文件"
-                                + "（与 Dockerfile 放在哪儿无关）。\n"
+                        "构建工具能看到的那一个目录 —— Dockerfile 里的 COPY/ADD 的路径都是相对它的，"
+                                + "不是相对仓库根（与 Dockerfile 本身放在哪儿无关）。\n"
                                 + "留空 = 共享 workspace 的根（git 克隆节点把代码放进来的地方）。\n"
+                                + "⚠️ 先看你的 Dockerfile 是照哪个视角写的，再决定这里填不填：\n"
+                                + "  · 写着 COPY platform-web/package.json（带目录前缀）→ 仓库根视角，"
+                                + "这里必须留空；\n"
+                                + "    填了 platform-web 它就会去找 platform-web/platform-web/package.json，"
+                                + "报 no such file or directory\n"
+                                + "  · 写着 COPY package.json ./ → 工程目录视角，"
+                                + "这里填那个目录（如 platform-web），Dockerfile 路径同时写全："
+                                + "platform-web/Dockerfile\n"
                                 + "例：\n"
                                 + "  · 仓库根就是构建目录 → 留空\n"
-                                + "  · 只有一个前端工程，代码在 frontend/ → 填 frontend\n"
-                                + "    （Dockerfile 路径同时要写全：frontend/Dockerfile）\n"
-                                + "  · 一个仓库要出多个镜像（frontend/ 与 backend/ 各一份 Dockerfile）\n"
-                                + "    → 两个节点分别填 frontend 与 backend\n"
+                                + "  · 一个仓库要出多个镜像（各目录一份 Dockerfile）→ 分别填各自的目录\n"
                                 + "⚠️ 别把上下文填成含 node_modules/、target/ 的大目录："
                                 + "整个目录都要打包传给构建工具，慢且吃盘 —— 用 .dockerignore 排掉"),
                 NodeField.advancedText("proxy", "HTTP 代理（高级）",
@@ -148,6 +153,7 @@ public class ImagePushNode implements PipelineNode {
         //   3. 字面量（固定 tag）别包 `$( )`：Tekton 替换不了就留给 shell，而 shell 会把它
         //      当命令替换去执行 —— `$('v1')` 会去跑命令 `v1`，tag 变空（2026-10-15 抓到的）。
         String script = "set -e\n"
+                + contextBanner(context, dockerfile)
                 + shortNamePrologue()
                 + tagPrologue
                 + "IMAGE=" + image + ":\"$TAG\"\n"
@@ -193,6 +199,32 @@ public class ImagePushNode implements PipelineNode {
         step.setEnv(env);
         return new RenderedStep(List.of(step), List.of(new RenderedStep.WorkspaceRef(
                 GitCloneNode.CREDS_WORKSPACE, GitCloneNode.CREDS_MOUNT)));
+    }
+
+    /**
+     * 开跑前把"上下文是谁、**里面到底有什么**、Dockerfile 是哪份"摊在日志最前面。
+     *
+     * <p>⚠️ 2026-10-16 真跑撞到：
+     * <pre>
+     * Error: building at STEP "COPY platform-web/package.json platform-web/package-lock.json ./":
+     *   checking on sources under "/workspace/platform-web": copier: stat:
+     *   "/platform-web/package.json": no such file or directory
+     * </pre>
+     * 病因是**配置与 Dockerfile 对不上**：Dockerfile 是**仓库根视角**写的
+     * （{@code COPY platform-web/xxx …}），而节点的「构建上下文」填了 {@code platform-web}
+     * → buildah 去找 {@code /workspace/platform-web/platform-web/xxx}。
+     * 可 buildah 那句话要琢磨半天才反应过来，所以这里（跟预设构建节点那两行同一个理由）
+     * 把三样都摊出来 —— **上下文目录里有没有 {@code platform-web} 那个子目录，一眼就知道**。
+     *
+     * <p>两个路径用的是**同一套归一化规则**（相对共享 workspace 的根），
+     * 所以直接借 {@link BuildStep#workDir}：留空 = workspace 根、{@code ./} 与前后的 {@code /} 都抹掉。
+     */
+    private static String contextBanner(String context, String dockerfile) {
+        String ctxDir = BuildStep.workDir(context);
+        String dfPath = BuildStep.workDir(dockerfile);
+        return "echo \"构建上下文：" + ctxDir + "（COPY/ADD 的路径都相对它）\"\n"
+                + "ls -A " + GitCloneNode.shellQuote(ctxDir) + " | head -20\n"
+                + "echo \"Dockerfile：" + dfPath + "\"\n";
     }
 
     /**

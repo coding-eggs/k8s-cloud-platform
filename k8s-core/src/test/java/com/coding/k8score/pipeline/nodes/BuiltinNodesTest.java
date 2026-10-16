@@ -294,6 +294,56 @@ class BuiltinNodesTest {
     }
 
     @Test
+    void theImageNodeSaysWhichContextAndDockerfileItIsBuilding() {
+        // ⭐ 2026-10-16 真跑撞到：
+        //      COPY platform-web/package.json …  →  copier: stat: "/platform-web/package.json":
+        //      no such file or directory
+        //    Dockerfile 是**仓库根视角**写的（`platform-web/xxx`），而节点的「构建上下文」
+        //    填了 `platform-web` → buildah 去找 platform-web/platform-web/package.json。
+        //    单看 buildah 那句话很难反应过来，所以开跑前把这三样摊在日志最前面：
+        //    上下文是谁、**里面到底有什么**（有没有那个子目录一眼就知道）、Dockerfile 是哪份。
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app",
+                        "dockerfile", "platform-web/Dockerfile", "context", "platform-web"),
+                "reg-1", "harbor.example.com"));
+
+        String script = step.steps().get(0).getScript();
+        assertThat(script)
+                .contains("echo \"构建上下文：/workspace/platform-web（COPY/ADD 的路径都相对它）\"")
+                .contains("ls -A '/workspace/platform-web' | head -20")
+                .contains("echo \"Dockerfile：/workspace/platform-web/Dockerfile\"");
+        assertThat(script.indexOf("构建上下文"))
+                .as("自白要排在 buildah 前面")
+                .isLessThan(script.indexOf("buildah bud"));
+    }
+
+    @Test
+    void theImageNodeDefaultsTheBannerToTheRepositoryRoot() {
+        // 两个字段都留空 = 仓库根 + 根目录下的 Dockerfile（最常见的那种）
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app"),
+                "reg-1", "harbor.example.com"));
+
+        assertThat(step.steps().get(0).getScript())
+                .contains("echo \"构建上下文：/workspace（COPY/ADD 的路径都相对它）\"")
+                .contains("echo \"Dockerfile：/workspace/Dockerfile\"");
+    }
+
+    @Test
+    void theContextFieldSaysCopyPathsAreRelativeToItNotToTheRepoRoot() {
+        // ⭐ 原来的说明只说了"决定 COPY 能从哪儿拿文件"，还举了「代码在 frontend/ 就填 frontend」的例子 ——
+        //    于是一个**仓库根视角**写好的 Dockerfile 被填上子目录后当场挂掉，谁也没提醒。
+        //    现在把这条规则和它的失败样子写死在说明里。
+        NodeField context = new ImagePushNode().formSchema().fields().stream()
+                .filter(f -> f.key().equals("context")).findFirst().orElseThrow();
+
+        assertThat(context.help()).contains("相对");
+        assertThat(context.help()).contains("platform-web");
+        assertThat(context.help()).as("说明要是纯文本，别拿 markdown 的 ** 当粗体（面板按字面渲染）")
+                .doesNotContain("**");
+    }
+
+    @Test
     void theProxyIsAnAdvancedFieldOnBothNodesThatNeedTheNetwork() {
         // 它是"高级"：常态不用填，但排障时得有地方填（面板里收在「高级」下面）
         assertThat(new GitCloneNode().formSchema().fields())
