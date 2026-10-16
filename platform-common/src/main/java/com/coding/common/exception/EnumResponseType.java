@@ -67,6 +67,13 @@ public enum EnumResponseType {
 
     PVC_RESIZE_INVALID(10042, "PVC 扩容参数非法"),
     K8S_OPERATION_REJECTED(10041, "集群拒绝了该操作: "),
+    /**
+     * 集群侧 403 —— 与 {@link #K8S_OPERATION_REJECTED} 分开的理由：那个是「对象本身被拒」（校验、终态、
+     * 并发冲突），这个是「凭据没这个权限」，处置方式完全不同（前者改请求，后者改 RBAC 模板）。
+     * <p>租户域请求拿到它，几乎总是 {@code platform_rbac_template.rules} 少了那个 apiGroup
+     * （2026-10-17：CRD 族首见于此）；msg 尾部会拼上 apiserver 原文，apiGroup/resource/verb/SA 都在里面。
+     */
+    K8S_RBAC_FORBIDDEN(10043, "集群侧 RBAC 拒绝了该操作。若这是租户操作，请检查「RBAC 模板」是否覆盖该资源的 apiGroup，并在改动后重下发。集群返回: "),
 
     ERROR(5000,"服务端异常"),
 

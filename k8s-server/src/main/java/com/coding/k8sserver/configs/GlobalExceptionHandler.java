@@ -4,6 +4,7 @@ package com.coding.k8sserver.configs;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.system.ResponseData;
+import io.fabric8.kubernetes.client.KubernetesClientException;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.annotation.Order;
@@ -42,6 +43,33 @@ public class GlobalExceptionHandler {
     public ResponseData<String> handleMovieException(CloudPlatformException movieException){
         log.error(ERROR_STRING,movieException.getClass().getName(),movieException.getCode(),movieException.getMsg());
         return new ResponseData<>(movieException.getCode(),movieException.getMsg(),null);
+    }
+
+    /**
+     * 集群侧 403：翻译成一句能照着做的话。
+     *
+     * <p>为什么值得单独一个 handler：{@link KubernetesClientException} 原先落进 {@link #handleOtherError}，
+     * 响应里只剩 code=5000 /「服务端异常」，而 apiserver 原文 ——
+     * {@code servicemonitors.monitoring.coreos.com is forbidden: User "...:tn-default" cannot list resource
+     * "servicemonitors" in API group "monitoring.coreos.com"} —— 是<b>唯一</b>能指出缺哪条规则的信息，被整个吞掉了。
+     * 租户 2026-10-17 报的「CRD 页面全打不开」就卡在这里：界面说不出缺什么，运维也就无从下手。
+     *
+     * <p>修在这一层（而不是前端逐页写 403 文案）是因为前端本来就在渲染 {@code body.msg}
+     * （{@code api/http.ts} 的响应拦截器），所有页面一次覆盖。
+     *
+     * <p><b>只翻译 403</b>，其余码原样交回 {@link #handleOtherError} —— 404/409/422 不是权限问题，
+     * 一律套「检查 RBAC 模板」会把排障引到错的方向。
+     */
+    @ResponseBody
+    @ExceptionHandler(value = KubernetesClientException.class)
+    public ResponseData<String> handleKubernetesClientException(KubernetesClientException e) {
+        if (e.getCode() != 403) {
+            return handleOtherError(e);
+        }
+        //集群原文要进日志（它是排障依据），也要进 msg（用户/运维看得到）
+        log.error(ERROR_STRING, e.getClass().getName(), EnumResponseType.K8S_RBAC_FORBIDDEN.getCode(), e.getMessage());
+        return new ResponseData<>(EnumResponseType.K8S_RBAC_FORBIDDEN.getCode(),
+                EnumResponseType.K8S_RBAC_FORBIDDEN.getMsg() + e.getMessage(), null);
     }
 
 
