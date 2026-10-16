@@ -516,6 +516,9 @@ function onEdgeMenu(e: { event: MouseTouchEvent; edge: { id: string } }): void {
   ])
 }
 
+/** 语义说明默认**收起**：第一句（一个节点失败整条停）常显就够了，细节按需展开 */
+const showSemantics = ref(false)
+
 /** 没连线的两个节点 = 并发。显式提示，否则用户以为"没连上"是错的。 */
 const _unusedLabel = labelOf
 
@@ -526,7 +529,8 @@ const concurrentHint = computed(() => {
   if (plain.length < 2) return ''
   const hasIncoming = new Set(edges.value.map((e) => e.target))
   const roots = plain.filter((n) => !hasIncoming.has(n.id))
-  return roots.length > 1 ? `${roots.length} 个节点没有上游 —— 它们会**并发**开始，不是没连上` : ''
+  // ⚠️ 别在这儿写 markdown 的 ** —— 这里是**纯文本**渲染，星号会原样露出来（用 <b>）
+  return roots.length > 1 ? `${roots.length} 个节点没有上游 —— 它们会同时开始（并发），不是没连上` : ''
 })
 
 /** 收尾节点会在最后同时开跑（它们之间没有、也不能有顺序）—— 与上面那条并发提示成对 */
@@ -607,6 +611,24 @@ async function removePipeline() {
         保存并运行
       </el-button>
       <el-button v-if="canManage && form.id" type="danger" plain @click="removePipeline">删除</el-button>
+    </div>
+
+    <!-- ⭐ Tekton 语义的**明面声明**。放这儿不是装饰：画布上这些东西的默认含义不直观 ——
+         连线看着像"条件分支"（其实是纯顺序），而"一个节点失败整条就停"是第一反应会被当成
+         平台 bug 的那一条（2026-10-16 用户真问过「下面的分支失败凭什么把上面的也停了」）。
+         所以第一句常显、不折叠；细节收在展开里。 -->
+    <div class="semantics">
+      <div class="semantics-head" @click="showSemantics = !showSemantics">
+        <b>一个节点失败，整条流水线就停</b> —— 它后面的节点不会开始。这是 Tekton 的默认行为，不是平台的毛病。
+        <span class="semantics-toggle">{{ showSemantics ? '收起说明 ▴' : '那到底是怎么走的 ▾' }}</span>
+      </div>
+      <ul v-if="showSemantics" class="semantics-body">
+        <li><b>连线 = 顺序，不是条件。</b>它只说「谁在谁之后」——没有"通过 / 不通过"这回事，所以连不出分支。</li>
+        <li><b>没连线的两个节点会同时开始</b>，那不是漏连了。</li>
+        <li><b>任何一个节点失败 → 整条停</b>：失败节点后面的那些<b>根本不会开始</b>（不是被跳成成功）。</li>
+        <li>想「这个节点失败也别拖垮后面」→ 选中它，勾<b>失败后继续</b>。</li>
+        <li>想「不管成败，最后都跑一趟」→ 勾<b>收尾执行</b>：它不参与连线顺序，前面全跑完后同时开跑。</li>
+      </ul>
     </div>
 
     <!-- 门控只挡「保存并运行」：画布照常编辑与保存（渲染是纯函数，不需要集群装 Tekton） -->
@@ -720,6 +742,34 @@ async function removePipeline() {
   font-size: 12px;
   color: var(--warning, #e6a23c);
   padding: 4px 0;
+}
+/* Tekton 语义的常显那一条 + 可展开的细节 */
+.semantics {
+  padding: 6px 10px;
+  border: 1px solid var(--border, #ebeef5);
+  border-radius: 6px;
+  background: var(--accent-soft, rgb(64 158 255 / 8%));
+  font-size: 12px;
+  color: var(--text-2);
+}
+.semantics-head {
+  cursor: pointer;
+  user-select: none;
+}
+.semantics-head b {
+  color: var(--text-1);
+}
+.semantics-toggle {
+  margin-left: 6px;
+  color: var(--accent, #409eff);
+}
+.semantics-body {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  line-height: 1.8;
+}
+.semantics-body li {
+  margin: 0;
 }
 /* capability 门控横幅：与列表页、Calico 那几个页面同一形状 */
 .cap-banner {
