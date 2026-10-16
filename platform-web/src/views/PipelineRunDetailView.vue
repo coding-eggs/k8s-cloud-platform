@@ -212,6 +212,21 @@ const STATUS_TAG: Record<string, string> = {
   RUNNING: 'primary',
 }
 
+/**
+ * 展示用的日志文本：**把回车（`\r`）也当成换行**。
+ *
+ * <p>⚠️ 真跑撞到（2026-10-16 用户报「部分日志不换行」）：`git clone` 的进度输出是
+ * `Updating files: 15%…\rUpdating files: 16%…\r…` —— `\r` 是「回到行首覆盖」，
+ * **在真终端里它不换行**。而浏览器在 `<pre>` 里**直接把 `\r` 丢掉**（实测：
+ * `'a\rb\rc\nd'` 只渲染出 2 行，不是 4 行），于是几十段进度被粘成一行，
+ * 看起来就是「这段日志不换行」。（真数据：git 那个节点的日志里 90 个 `\r`、只有 2 个 `\n`。）
+ *
+ * <p>这里选择**换行**，而不是「按终端的覆盖语义把中间态折叠掉」（后者只剩最后一行、
+ * 读起来更干净，但会丢内容）—— 日志宁可啰嗦，也别悄悄少东西。
+ * ⚠️ 只在展示这一层做：库里存的仍是原始字节（那是它本来的样子，与终端一致）。
+ */
+const logText = computed(() => (logs.value ?? '').replace(/\r\n?/g, '\n'))
+
 function tagType(s: string): string {
   return STATUS_TAG[s] ?? 'info'
 }
@@ -418,7 +433,7 @@ async function loadLogs(nodeName?: string): Promise<void> {
         <el-button v-for="t in logTargets" :key="t.id" link @click="loadLogs(t.id)">{{ t.label }}</el-button>
         <span v-if="!canLogs" class="dim">（没有『看运行日志』权限）</span>
       </div>
-      <pre class="log">{{ logs || '（没有日志）' }}</pre>
+      <pre class="log">{{ logText || '（没有日志）' }}</pre>
     </template>
 
     <el-dialog v-model="showYaml" title="这次运行渲染出来的 PipelineRun" width="70%">
