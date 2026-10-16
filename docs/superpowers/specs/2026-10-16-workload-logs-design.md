@@ -6,11 +6,37 @@
 
 ---
 
+## 0. 先说清：k8s 原生有没有"工作负载级日志"
+
+**服务端没有。** 核心 API 里看日志的入口只有 **Pod 的 `logs` 子资源**
+（`/api/v1/namespaces/{ns}/pods/{name}/log`），粒度就是**一个 Pod 的一个容器**。
+Deployment / StatefulSet / DaemonSet **没有** log 子资源 —— 在真集群上问过
+`/apis/apps/v1/namespaces/default/deployments/<name>/log` → **404**，
+而同一时刻同一个 Pod 的 `log` 子资源能正常取到内容。
+
+**kubectl 客户端有，而本批做的就是它的 UI 等价物。** kubectl 的三个便捷用法（都在客户端实现）：
+
+| kubectl | 它其实做了什么 |
+|---|---|
+| `kubectl logs deployment/foo` | 解析出该负载的 selector → 列出 Pod → 逐个发 `pods/log` |
+| `kubectl logs -l app=x --all-containers --prefix` | 同上；`--all-containers` **会自动打开 `--prefix`** |
+| `kubectl logs -l app=x --max-log-requests=10` | 扇出时最多同时请求几个；**默认只有 5**，超了直接报错让你显式调高 |
+
+kubectl 在防的，正是本 spec §3.2 那个"副本太多怎么办"——它用 `--max-log-requests` 防，我们用勾选上限防。
+`--ignore-errors` 对应 §3.4 的部分失败降级；`-p/--previous` 是**同一个子资源**的参数，对应 §2。
+
+**真正"服务端级 / 可检索"的工作负载日志，k8s 核心没有** —— 业界答案是日志采集器
+（DaemonSet 收）送到 Loki / ES / ClickHouse，也就是台账里的 **S2.3**。
+两者不冲突也不重叠：**本批解决"现在怎么了"**（在线排障、多副本横向比一眼），
+**S2.3 解决"上周那次是怎么回事"**（历史、检索、Pod 删了还在）。
+
+---
+
 ## 已定决策（brainstorming 结论，2026-10-16）
 
 | 问题 | 结论 | 为什么 |
 |---|---|---|
-| 聚合出来的日志长什么样 | **每行带前缀 `<pod>/<容器>`，混成一条流**（`kubectl logs -l app=x --prefix` 的样子） | 十个副本跑同一个应用时 90% 的行是一模一样的噪声；分段得读十遍，混着看只需扫一眼「哪个 Pod 在刷错」。这也正是"逐个 Pod 点开"这个痛点的反面 |
+| 聚合出来的日志长什么样 | **每行带前缀 `[pod/<pod名>/<容器名>]`，混成一条流**（照抄 `kubectl logs -l app=x --prefix` 的形态） | 十个副本跑同一个应用时 90% 的行是一模一样的噪声；分段得读十遍，混着看只需扫一眼「哪个 Pod 在刷错」。这也正是"逐个 Pod 点开"这个痛点的反面 |
 | 副本很多时怎么办 | **打开时先勾选** Pod（默认勾最近创建的 10 个，上限 20），不做"异常优先"的智能预选 | 用户裁定：**不做**按失败/异常排序的预选 —— 状态列就摆在那儿，谁坏了自己看得见 |
 | `previous` 的作用范围 | **本批一起做**，但**只在单 Pod 那条路上**（聚合视图不做） | 用户裁定：聚合就是把日志聚起来；Pod 的失败原因"点进去看"。而"点进去"这条路现在恰好缺 `previous` |
 
@@ -107,8 +133,14 @@ TimeTailPrettyLoggable loggable = Boolean.TRUE.equals(previous) ? pretty.termina
 
 ### 3.3 第二步：一条带前缀的流
 
-- 每行前缀 `<pod名>/<容器名>`。多容器 Pod 的**每个容器都跟**，靠前缀分开 —— 前缀要能把
-  (pod, 容器) 唯一定位
+- 每行前缀 **`[pod/<pod名>/<容器名>]`** —— **照抄 kubectl `--prefix` 的形态**，不自创。
+  在真集群上跑过，它长这样：
+  ```
+  [pod/movie-deployment-976f89cbb-5l7tv/movie] 2026-10-16T19:21:48.185+08:00 DEBUG 1 --- …
+  ```
+  照抄的理由：排障的人多半会先想到 `kubectl logs -l … --prefix` 那条命令，
+  两边长得一样，从 kubectl 过来的人不用重新认。多容器 Pod 的**每个容器都跟**，
+  靠前缀分开 —— 前缀要能把 (pod, 容器) 唯一定位。
 - 轮询：**每个 (pod, 容器) 各自一个 `sinceTime` 游标**（沿用既有增量能力），2 秒一轮
 - 新行**在"本轮"内**按时间戳排序后再追加。**不跨轮缓存排序**：那需要缓冲"还没到齐的更早行"
   才能保证全局有序，延迟与内存都不好控，而排障时多等几秒就是副作用
