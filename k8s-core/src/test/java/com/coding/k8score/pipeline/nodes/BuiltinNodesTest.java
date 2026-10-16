@@ -6,6 +6,7 @@ import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceRequirements;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +26,35 @@ class BuiltinNodesTest {
                 new PipelineCanvas.CanvasNode("n1", type, null, config),
                 Map.of(id, new com.coding.common.models.pipeline.PipelineConnectionRef(
                         id, endpoint, "u", "p")));
+    }
+
+    /** 同上，但把**渲染时刻**钉死 —— 「时间戳当 tag」这类断言必须可控，否则就是看运气。 */
+    private static NodeContext ctxWithConnectionAt(String type, Map<String, String> config,
+                                                   String id, String endpoint, LocalDateTime at) {
+        return new NodeContext("n1", "n1", "ws",
+                new PipelineCanvas.CanvasNode("n1", type, null, config),
+                Map.of(id, new com.coding.common.models.pipeline.PipelineConnectionRef(
+                        id, endpoint, "u", "p")), at);
+    }
+
+    @Test
+    void noNodeFieldLeaksMarkdownIntoItsPlainTextText() {
+        // ⭐ 表单里的 help / label / 下拉项 都是**纯文本**渲染的 —— 写进去的 markdown `**`
+        //    不会变粗体，只会原样把星号露给用户。这个错在本项目里犯过好几次
+        //    （字段说明、画布上的并发提示…），所以在这儿做一次**全量护栏**：
+        //    以后谁再往里写 markdown，这条直接红。
+        for (PipelineNode n : AllNodes.list()) {
+            for (NodeField f : n.formSchema().fields()) {
+                String where = n.type() + "." + f.key();
+                assertThat(f.help() == null ? "" : f.help()).as(where + " 的 help").doesNotContain("**");
+                assertThat(f.label() == null ? "" : f.label()).as(where + " 的 label").doesNotContain("**");
+                assertThat(f.placeholder() == null ? "" : f.placeholder())
+                        .as(where + " 的 placeholder").doesNotContain("**");
+                for (NodeField.Option o : f.options() == null ? List.<NodeField.Option>of() : f.options()) {
+                    assertThat(o.label() == null ? "" : o.label()).as(where + " 的选项").doesNotContain("**");
+                }
+            }
+        }
     }
 
     @Test
@@ -114,14 +144,31 @@ class BuiltinNodesTest {
     }
 
     @Test
-    void imageNodeTagSourceIsAThreeWayChoiceNotATemplate() {
-        // spec §2.2：tag 由三选一下拉决定，**不发明 ${...} 模板语法**
+    void imageNodeTagSourceIsAFourWayChoiceNotATemplate() {
+        // spec §2.2：tag 由下拉决定，**不发明 ${...} 模板语法**
         NodeSchema schema = new ImagePushNode().formSchema();
         NodeField tagSource = schema.fields().stream()
                 .filter(f -> f.key().equals("tagSource")).findFirst().orElseThrow();
         assertThat(tagSource.options()).extracting(NodeField.Option::value)
-                .containsExactlyInAnyOrder("git-sha", "run-id", "fixed");
+                .containsExactlyInAnyOrder("git-sha", "run-id", "time", "fixed");
         assertThat(schema.fields()).extracting(NodeField::key).doesNotContain("tagTemplate");
+    }
+
+    @Test
+    void theImageNodeCanTagWithTheRenderTimestamp() {
+        // ⭐ 用户 2026-10-16 要的第四种来源：yyyyMMddHHmmss 的时间戳。
+        //    时刻取自**渲染上下文**，不是当场 `LocalDateTime.now()` —— 两个理由：
+        //      · 一条流水线里两个镜像节点拿到的是**同一个** tag（同一次运行的产物配套）；
+        //      · 渲染出的 YAML 里直接看得见最后用的是哪个 tag（排障时那一份是权威，
+        //        上次那个 `$$` 被吃成进程号的 bug 就是靠读归档 YAML 定位的）。
+        RenderedStep step = new ImagePushNode().render(ctxWithConnectionAt("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app", "tagSource", "time"),
+                "reg-1", "harbor.example.com", LocalDateTime.of(2026, 10, 16, 15, 30, 12)));
+
+        assertThat(step.steps().get(0).getScript()).contains("TAG='20261016153012'");
+        // 与既有那三种一样：**一个命令替换都不许有**
+        // （`$$( )` 那次真跑过：这一版 Tekton 不把 `$$` 还原成 `$`，shell 就当进程号展开了）
+        assertThat(step.steps().get(0).getScript()).doesNotContain("$(");
     }
 
     @Test

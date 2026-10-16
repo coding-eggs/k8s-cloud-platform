@@ -12,6 +12,7 @@ import io.fabric8.tekton.v1.WorkspacePipelineTaskBinding;
 import io.fabric8.tekton.v1.WhenExpression;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -153,9 +154,12 @@ public final class PipelineRenderer {
         // 谁要额外的 workspace（凭据 / 缓存）就把它记下来 —— 声明一次，
         // **只在实际用到时才声明**（不用就不建那个 Secret、不挂那块缓存卷）
         Map<String, String> extraWorkspaces = new LinkedHashMap<>();
+        // ⭐ 渲染时刻**整张画布只取一次**：一张流水线里的两个镜像节点要拿到**同一个** tag
+        //    （同一次运行的产物配套），各自 `now()` 会跨秒、跨出两个不一样的 tag 来。
+        LocalDateTime renderedAt = LocalDateTime.now();
         for (PipelineCanvas.CanvasNode n : canvas.nodes()) {
             PipelineNode impl = nodes.of(n.type());
-            NodeContext ctx = new NodeContext(n.id(), n.id(), workspaceClaimName, n, connections);
+            NodeContext ctx = new NodeContext(n.id(), n.id(), workspaceClaimName, n, connections, renderedAt);
             RenderedStep rendered = impl.render(ctx);
             // 挂载点**由节点给**（凭据 /creds、缓存 /cache）：以前这里对所有 extra 一律套 CREDS_MOUNT，
             // 加第二个额外 workspace 时就会静默挂错地方

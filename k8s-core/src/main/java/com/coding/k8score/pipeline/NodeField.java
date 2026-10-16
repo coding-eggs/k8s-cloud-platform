@@ -103,4 +103,9 @@ public record NodeField(String key, String label, FieldType type,
     public static NodeField select(String key, String label, List<Option> options, String def) {
         return new NodeField(key, label, FieldType.SELECT, true, null, null, def, options);
     }
+
+    /** 带说明的下拉。⚠️ help 是**纯文本**渲染的 —— 别在里面写 markdown（`**` 会原样露出来）。 */
+    public static NodeField select(String key, String label, List<Option> options, String def, String help) {
+        return new NodeField(key, label, FieldType.SELECT, true, null, help, def, options);
+    }
 }

@@ -36,6 +36,41 @@ class PipelineRendererTest {
             return new RenderedStep(List.of(newStep("echo-" + ctx.nodeName())));
         }
     }
+
+    /** 把"这次渲染给我的时刻"记下来 —— 用来钉住「整张画布只取一次时刻」。 */
+    static class ClockNode implements PipelineNode {
+        final List<java.time.LocalDateTime> seen = new java.util.ArrayList<>();
+        @Override public String type() { return "clock"; }
+        @Override public NodeSchema formSchema() { return new NodeSchema(List.of(NodeField.text("x", "x", false))); }
+        @Override public RenderedStep render(NodeContext ctx) {
+            // ⚠️ 这个 sleep 是**测试能成立的前提**，不是随手加的：Windows 上 `LocalDateTime.now()`
+            //    是**毫秒**粒度，两次紧挨着的调用会落在同一毫秒里、比出来相等 ——
+            //    那样"整张画布只取一次时刻"这条断言就成了摆设（第一版正是如此，
+            //    变异成"每个节点各取一次 now()"之后测试照样绿，被变异测试戳穿了）。
+            //    睡过时钟粒度之后，"各取一次"才会真的差开，这条断言才算数。
+            try {
+                Thread.sleep(30);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            seen.add(ctx.renderedAt());
+            return new RenderedStep(List.of(newStep("clock-" + ctx.nodeName())));
+        }
+    }
+
+    @Test
+    void theWholeCanvasIsRenderedWithOneSingleInstant() {
+        // ⭐ 一张画布上两个镜像节点（web + auth）必须拿到**同一个** tag ——
+        //    那正是"同一次运行的产物配套"的意思。渲染器若给每个节点各取一次 now()，
+        //    两个 tag 就会差几百微秒、彻底对不上。（时间戳当 tag 是新功能，这条是它的地基。）
+        ClockNode clock = new ClockNode();
+        PipelineRenderer r = new PipelineRenderer(new PipelineNodeRegistry(List.of(clock)));
+
+        r.render(canvas(List.of(node("n1", "clock"), node("n2", "clock")), List.of()), "ws");
+
+        assertThat(clock.seen).hasSize(2).doesNotContainNull();
+        assertThat(clock.seen.get(0)).isEqualTo(clock.seen.get(1));
+    }
     private static io.fabric8.tekton.v1.Step newStep(String name) {
         io.fabric8.tekton.v1.Step s = new io.fabric8.tekton.v1.Step();
         s.setName(name);

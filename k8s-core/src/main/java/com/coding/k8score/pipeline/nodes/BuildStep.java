@@ -149,8 +149,8 @@ final class BuildStep {
                         + commandHelp
                         + "\n留空 = " + defaultCommand));
         fields.add(NodeField.text("workDir", "工作目录（相对 workspace）", false,
-                "留空 = 共享 workspace 的**根目录**，也就是**仓库的根** —— git 克隆节点把仓库内容"
-                        + "直接放在那里，**不会**多出一层以仓库名命名的目录。\n"
+                "留空 = 共享 workspace 的根目录，也就是仓库的根 —— git 克隆节点把仓库内容"
+                        + "直接放在那里，不会多出一层以仓库名命名的目录。\n"
                         + "例：仓库里只构建前端 → 填 platform-web（不是 my-repo/platform-web）"));
         fields.add(NodeField.advancedText("proxy", "HTTP 代理（高级）",
                 "只在「这个集群出不去」时才填；留空 = 直连。\n"

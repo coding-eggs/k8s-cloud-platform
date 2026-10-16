@@ -8,6 +8,7 @@ import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.tekton.v1.Step;
 import org.springframework.stereotype.Component;
 
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,7 +16,8 @@ import java.util.List;
  * 构建并推送镜像。**真特殊**的节点之二：Buildah（per-Pod、不用共享构建服务）、
  * 推送凭据由平台注入、产出 digest。
  *
- * <p>⚠️ tag 由**三选一下拉**决定，不发明 {@code ${...}} 模板语法（spec §2.2）。
+ * <p>⚠️ tag 由**四选一下拉**决定（git 短 sha / 运行序号 / 时间戳 / 自定义），
+ * 不发明 {@code ${...}} 模板语法（spec §2.2）。
  * 真正的拼接在组装 {@code PipelineRun} 时做 —— 那里才知道 git sha 与 run 序号。
  */
 @Component
@@ -46,6 +48,14 @@ public class ImagePushNode implements PipelineNode {
     private static final String REGISTRIES_CONF = "/etc/containers/registries.conf";
     private static final String REGISTRIES_CONF_D = "/etc/containers/registries.conf.d";
     private static final String SEARCH_REGISTRIES_LINE = "unqualified-search-registries = [\"docker.io\"]";
+
+    /**
+     * 时间戳 tag 的形状：{@code yyyyMMddHHmmss}。
+     *
+     * <p>与 platform-api 生成 run 名用的是**同一个格式**（{@code PipelineRunService.STAMP}）——
+     * 两个数对着看的时候能一眼对上是哪次运行。
+     */
+    private static final DateTimeFormatter TAG_STAMP = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
 
     @Override
     public String type() {
@@ -88,7 +98,17 @@ public class ImagePushNode implements PipelineNode {
                 NodeField.select("tagSource", "tag 来源",
                         List.of(new NodeField.Option("git-sha", "git 短 sha"),
                                 new NodeField.Option("run-id", "本次运行序号"),
-                                new NodeField.Option("fixed", "自定义固定值")), "git-sha"),
+                                new NodeField.Option("time", "时间戳（yyyyMMddHHmmss）"),
+                                new NodeField.Option("fixed", "自定义固定值")), "git-sha",
+                        "选哪个，看你要的是「同一份代码永远同一个 tag」还是「每次一个新的」：\n"
+                                + "  · git 短 sha —— 同一份代码永远是同一个 tag，重跑不会覆盖旧镜像；\n"
+                                + "    仓库没给出 sha 时退成 manual\n"
+                                + "  · 本次运行序号 —— 每次运行都不一样（就是这次运行的运行名）\n"
+                                + "  · 时间戳 —— 也是每次一个新的，但一眼看得出是什么时候打的\n"
+                                + "  · 自定义固定值 —— 手写一个，覆盖由你自己负责\n"
+                                + "⚠️ 时间戳用的是平台服务器那一侧的时钟与时区，不是你本机的。\n"
+                                + "⚠️ 时间戳在「渲染这一趟」里只取一次：同一趟里的两个镜像节点拿到的是同一个 tag\n"
+                                + "   （同一次运行的产物配套），换个时间重跑就是新的。"),
                 NodeField.text("fixedTag", "固定 tag（仅「自定义固定值」时用）", false,
                         "只有上面的 tag 来源选「自定义固定值」时才用。\n例：v1.0.0、latest"),
                 NodeField.text("dockerfile", "Dockerfile 路径", false,
@@ -139,7 +159,8 @@ public class ImagePushNode implements PipelineNode {
         String context = ctx.value("context").isEmpty() ? "." : ctx.value("context");
 
         String image = GitCloneNode.shellQuote(registry.endpoint() + "/" + repo);
-        String tagPrologue = tagPrologue(ctx.value("tagSource"), ctx.value("fixedTag"));
+        String tagPrologue = tagPrologue(ctx.value("tagSource"), ctx.value("fixedTag"),
+                TAG_STAMP.format(ctx.renderedAt()));
 
         // ⚠️ 三处 Tekton 的坑都在这段里：
         //   1. ⭐ 2026-10-16 真跑撞到：**别用 `$$( )` 那个"转义 shell 命令替换"的写法**。
@@ -267,13 +288,19 @@ public class ImagePushNode implements PipelineNode {
      * 现在 git-sha 用 {@code read} 读文件，**一个命令替换都不需要**；
      * 普通变量（`$TAG` / `$IMAGE`）Tekton 从来不碰 —— 不跟它的转义规则打赌。
      */
-    private static String tagPrologue(String tagSource, String fixedTag) {
+    private static String tagPrologue(String tagSource, String fixedTag, String renderedAt) {
         String shaFile = GitCloneNode.shellQuote(GitCloneNode.GIT_SHA_FILE);
         return switch (tagSource) {
             // 字面量：别包 $( )，否则 shell 会把它当命令替换去执行（见上面第 3 条）
             case "fixed" -> "TAG=" + GitCloneNode.shellQuote(fixedTag.isEmpty() ? "latest" : fixedTag) + "\n";
             // Tekton 内建变量：**要它替换**，所以不转义（替换发生在 controller 建 TaskRun 时）
             case "run-id" -> "TAG=\"$(context.pipelineRun.name)\"\n";
+            // 渲染时刻（yyyyMMddHHmmss）：**平台在渲染时就算好**，脚本里只是个字面量。
+            // ⚠️ 刻意不在脚本里写 `$(date +%Y%m%d%H%M%S)` —— 那又变成跟 Tekton 的 `$()` 规则打赌，
+            //    而 `$$` 那一次已经证明这一版不会替我们保留 shell 的命令替换。
+            //    顺带两个好处：一条流水线里两个镜像节点拿到的是**同一个** tag；
+            //    渲染出的 YAML 里直接看得见用的是哪个 tag。
+            case "time" -> "TAG=" + GitCloneNode.shellQuote(renderedAt) + "\n";
             // git 短 sha：克隆节点落的文件。⚠️ `read` 失败（文件没有结尾换行）时 `||` 兜一下 ——
             // 否则 `set -e` 会把整步干掉
             default -> "TAG=manual\n"
