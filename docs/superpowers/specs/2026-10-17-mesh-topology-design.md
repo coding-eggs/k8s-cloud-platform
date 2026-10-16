@@ -38,7 +38,7 @@
 
 ```java
 record MeshTopologyResponse(List<MeshNode> nodes, List<MeshEdge> edges,
-                           int windowSeconds, boolean l7Available)
+                           int windowSeconds, boolean meshMetricsAvailable)
 record MeshNode(String id, String namespace, String workload, boolean gateway)
 record MeshEdge(String source, String target, double rps, double errorRate,
                 Double p95Ms, boolean hasL7)
@@ -54,7 +54,13 @@ record MeshEdge(String source, String target, double rps, double errorRate,
 - 三条查询**并发**发出（现有的 `queryCluster` 是一条条打的，拓扑页每 30 秒一刷，串行会慢）
 - 边的 QPS 与错误率按 `(source, target)` 合并；延迟独立聚合，缺就是 `p95Ms = null`
 - 节点集合 = 出现在边两端的 workload（v1 **不补**"在网格里但没流量"的节点，见 §6）
-- `l7Available`：主查询**一条序列都没有**时为 `false` → 前端据此显示"没接采集"，而不是画空图
+- **`meshMetricsAvailable`（原叫 `l7Available`，2026-10-17 改名）**：判据是**哨兵指标**
+  `count(istio_build) > 0` —— 它由每个代理（istiod / ztunnel / waypoint / 网关）产出，
+  **与流量无关**，所以能区分两件长得一模一样的事：
+  「**没接采集**」和「接了、但这段时间没调用」—— 两者的主查询**都是空的**。
+  ⚠️ 名字刻意不叫 `l7Available`：哨兵只能证明"**在采集**"，**证明不了"有 L7 能力"**
+  （只抓了 ztunnel 而没挂任何 waypoint 时，也永远不会有 `istio_requests_total`）——
+  许一个兑现不了的诺，正是这个项目里反复吃过亏的那类注释。
 - `gateway` 标记：`source_workload` 属于 `istio-system` 的（外部网关）标出来，前端画得跟业务节点不一样
 
 **端点**：`POST /mesh/topology`，挂在既有的 `MeshController` 上。
@@ -83,8 +89,11 @@ record MeshEdge(String source, String target, double rps, double errorRate,
 - **点击节点或边** → 右侧抽屉显示三个数 + 该边对应的 PromQL（用户可以拿去 Grafana 自己复核）
 - **顶部**：命名空间选择（默认取顶栏的上下文）、时间窗（5m / 1h / 24h）、手动刷新 + 30 秒自动
 
-⚠️ **空态必须说人话**：没有数据时显示「这个集群没在采集网格指标 —— 怎么接见集群前提 §1.7」，
-而不是画一张空图（那会让人以为"集群里没有流量"）。
+⚠️ **空态分两种，说人话**：
+- `meshMetricsAvailable=false` → 「这个集群**没在采集**网格指标 —— 怎么接见集群前提 §1.7」（别画空图，
+  那会让人以为"集群里没有流量"）；
+- `meshMetricsAvailable=true` 但 `edges` 为空 → 「在采集，但这段时间没有 L7 调用」，
+  并把页面上那段"看不见什么"的说明顶到显眼处（可能是没流量，也可能是网格里没有负载 / 没挂 waypoint）。
 
 ⚠️ **页面上要写明覆盖范围的限制**（就是"看不见什么"）：
 

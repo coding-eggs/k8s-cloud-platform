@@ -103,14 +103,24 @@ class MeshTopologyQueryTest {
     }
 
     @Test
-    void eachTemplateTakesExactlyTwoSlots() {
-        // 两个 %s：① 命名空间过滤片段（空串或 ,source_…="ns",destination_…="ns"）② 时间窗（如 300s）
-        // 多一个少一个都会让 String.format 在运行期炸，所以钉住
-        for (MetricQuery q : MetricQuery.values()) {
-            if (!q.name().startsWith("MESH_TOPOLOGY")) continue;
+    void eachTemplateTakesTheSlotsItsCallersFill() {
+        // 三条业务查询各两个 %s：① 命名空间过滤片段 ② 时间窗（如 300s）。
+        // 多一个少一个都会让 String.format 在运行期炸，所以钉住。
+        for (MetricQuery q : new MetricQuery[]{
+                MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS, MetricQuery.MESH_TOPOLOGY_LATENCY}) {
             long slots = q.sql().chars().filter(c -> c == '%').count();
             assertThat(slots).as(q.name()).isEqualTo(2);
         }
+        // 哨兵没有参数
+        long sentinel = MetricQuery.MESH_TOPOLOGY_SCRAPED.sql().chars().filter(c -> c == '%').count();
+        assertThat(sentinel).isZero();
+    }
+
+    @Test
+    void theSentinelIsTrafficIndependent() {
+        // ⭐ 判"有没有在采集"**不能**看主查询空不空 —— "没接采集"和"接了但没流量"的主查询**都是空的**。
+        // 哨兵由每个代理产出（istiod / ztunnel / waypoint / 网关），代理活着就有，与流量无关。
+        assertThat(MetricQuery.MESH_TOPOLOGY_SCRAPED.sql()).isEqualTo("count(istio_build)");
     }
 }
 ```
@@ -132,6 +142,9 @@ Expected: 编译失败（`MESH_TOPOLOGY_EDGES` 不存在）
     MESH_TOPOLOGY_ERRORS("sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_requests_total{response_code=~\"5..\"%s}[%s]))", MeshErrorLabels.class),
     /** 边的 P95 延迟（毫秒）。 */
     MESH_TOPOLOGY_LATENCY("histogram_quantile(0.95, sum by (le, source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_request_duration_milliseconds_bucket%s[%s])))", MeshLatencyLabels.class),
+    /** 哨兵：**在不在采集网格指标**。与流量无关（代理活着就有），所以它能区分
+     *  "没接采集"和"接了但没流量"——这两者的主查询都是空的。无参数。 */
+    MESH_TOPOLOGY_SCRAPED("count(istio_build)", MetricLabels.class),
 ```
 
 ⚠️ 命名空间过滤片段本身**不放进方括号里**，而是拼在花括号**内部**（`istio_requests_total{...%s}`）——
@@ -185,11 +198,11 @@ git commit -m "feat(mesh): 拓扑的三条 PromQL + label 类（实测出来的�
 - Consumes: Task 1 的三个常量与 label 类；既有 `ThanosQueryClient.query(sql, time, labelClass)`
 - Produces:
   ```java
-  record MeshTopologyResponse(List<MeshNode> nodes, List<MeshEdge> edges, int windowSeconds, boolean l7Available)
+  record MeshTopologyResponse(List<MeshNode> nodes, List<MeshEdge> edges, int windowSeconds, boolean meshMetricsAvailable)
   record MeshNode(String id, String namespace, String workload, boolean gateway)
   record MeshEdge(String source, String target, double rps, double errorRate, Double p95Ms, boolean hasL7)
   // MetricsService:
-  public MeshTopologyResponse meshTopology(String clusterId, String namespace, int windowSeconds)
+  public MeshTopologyResponse meshTopology(String clusterId, String namespace, int windowSeconds)   // 第四条（哨兵）查询见 Task 1
   ```
 
 - [ ] **Step 1: 写失败的测试**（**纯合并逻辑**，Thanos 客户端 mock 掉）
@@ -201,7 +214,9 @@ git commit -m "feat(mesh): 拓扑的三条 PromQL + label 类（实测出来的�
     @Test void theErrorRateIsErrorsOverTotal()
     @Test void aMissingLatencySeriesMeansNullNotZero()      // p95Ms == null，不是 0
     @Test void aMissingErrorSeriesMeansZeroErrorsNotNoEdge() // 有边、无 5xx → errorRate 0、hasL7 true
-    @Test void noSeriesAtAllMeansL7Unavailable()             // l7Available == false
+    @Test void noSentinelMeansMetricsAreNotScraped()         // 哨兵 0 → meshMetricsAvailable=false
+    @Test void anEmptyWindowWithASentinelIsStillScraped()  // 哨兵>0 但边为空 → meshMetricsAvailable=true、edges 空
+                                                            //   ⭐ 这一条正是改名换判据的理由：两种情况主查询都空，别混
     @Test void theSameWorkloadNameInTwoNamespacesStaysTwoNodes()   // id = ns + "/" + workload
     @Test void theGatewayIsFlaggedAsGateway()
     @Test void theNamespaceFilterIsPassedThrough()           // 断言发出去的 sql 带上了过滤片段
@@ -220,7 +235,9 @@ Expected: 编译失败（`meshTopology` 不存在）
 3. `id = namespace + "/" + workload`。
 4. `gateway = "istio-system".equals(namespace)`（外部网关就在那儿）。
 5. `errorRate = errors / (rps + errors)`？ ❌ **不对** —— 错误查询是**总量里筛 5xx 的子集**，所以分母是 `rps`（总量），`errorRate = errors / rps`，且要防除零。
-6. `l7Available = !edges.isEmpty()`（**主查询**为空才是"没接采集"）。
+6. **`meshMetricsAvailable = 哨兵 > 0`**（哨兵 = `count(istio_build)`，第四条查询，与其余三条并发）。
+   ❌ **不要写成 `!edges.isEmpty()`** —— "没接采集"和"接了但没流量"的主查询**都是空的**，
+   那样写会把后者误报成前者，用户会以为集群里没流量。
 7. 节点集合由边两端推出来（不额外查）。
 
 - [ ] **Step 4: 跑测试确认通过**
@@ -387,8 +404,11 @@ const option = computed<EChartsOption>(() => ({
 
 节点侧：`symbolSize = 18 + min(度数 * 2, 18)`；`gateway: true` 的用 `symbol: 'diamond'` 配 `--accent` 色
 （它是「外部入口」，不是业务节点，视觉上要能一眼分出来）。
-- [ ] **Step 3: 空态** —— `l7Available=false` 时**不画图**，显示：
-  「这个集群没在采集网格指标 —— 怎么接见集群前提 §1.7」+ 一个「仍要试试」的按钮
+- [ ] **Step 3: 空态分两种**（判据不同，话也不同 —— 见 Task 2 要点 6）：
+  - `meshMetricsAvailable=false` → **不画图**，显示「这个集群**没在采集**网格指标 ——
+    怎么接见集群前提 §1.7」+ 一个「仍要试试」的按钮；
+  - `meshMetricsAvailable=true` 但 `edges` 为空 → 正常画（空图），并显示
+    「在采集，但这段时间没有 L7 调用」，同时把 Step 4 那段覆盖范围说明顶到显眼处
 - [ ] **Step 4: 覆盖范围说明**（页面上常驻一段小字，内容照 spec §4 那段抄）
 - [ ] **Step 5: 30 秒自动刷新**（`onUnmounted` 清掉定时器；页面不可见时不刷）
 - [ ] **Step 6: 提交**
@@ -406,6 +426,8 @@ const option = computed<EChartsOption>(() => ({
   2. 摘掉 `movie-service` 的 `use-waypoint` → 那条边变 `hasL7=false`
   3. 没接采集的集群 → 明确提示
   4. `movie-web → movie-service` 的错误率显示 **100%**
+  5. 把时间窗切到一个**没有流量**的过去时段 → 应显示「在采集，但这段时间没有 L7 调用」，
+     **不能**显示成「没在采集」（两者主查询都空，靠哨兵分开 —— 这条最容易做错）
 - [ ] **Step 4: 把结果写进提交信息，删掉烟台文件**
 
 ---
