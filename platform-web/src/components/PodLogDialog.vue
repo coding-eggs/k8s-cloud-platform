@@ -15,6 +15,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import type { K8sPod } from '@/types'
 import { getAccessToken } from '@/auth/oauth'
+import { takeNewLines } from '@/utils/logLines'
 
 const props = defineProps<{
   modelValue: boolean
@@ -32,6 +33,20 @@ const visible = computed({
   get: () => props.modelValue,
   set: (v) => emit('update:modelValue', v),
 })
+
+/** 看**上一次容器实例**（CrashLoopBackOff 的死因在那一代里）。只在 Pod 真重启过时给这个开关。 */
+const showPreviousToggle = computed(() => (props.pod?.restarts ?? 0) > 0)
+const previous = ref(false)
+
+/**
+ * ⚠️ 上一次实例是**已终止**的容器，不会再产出任何行 —— 实测（真集群）
+ * `--previous --since-time=<现在>` 的输出长度是 0。所以这个模式下只做一次 tailLines 快照、
+ * **不轮询**（见 spec §9.2）。切容器或回看行数时留在同一模式里，只有重开弹窗才复位。
+ */
+function setPrevious(v: boolean): void {
+  previous.value = v
+  beginSession()
+}
 
 const logContainer = ref('')
 // 初始化回看行数（tailLines）：默认 200，切换即重新拉取重渲染；可选值见 TAIL_OPTIONS
@@ -120,12 +135,15 @@ async function fetchLogs(sinceTime?: string, tailLinesParam?: number): Promise<s
   const basePath = clusterScoped
     ? `/api/nodes/${encodeURIComponent(props.nodeName ?? '')}/pods/${encodeURIComponent(props.namespace)}/${podName}/logs`
     : `/api/pods/${podName}/logs`
+  // ⚠️ previous 模式没有增量可言（死掉的容器不产出新行），游标一律不发
+  const since = previous.value ? undefined : sinceTime
   const q = new URLSearchParams()
   if (!clusterScoped && props.tenantId) q.set('tenantId', props.tenantId)
   q.set('clusterId', props.clusterId)
   q.set('namespace', props.namespace)
   if (logContainer.value) q.set('container', logContainer.value)
-  if (sinceTime) q.set('sinceTime', sinceTime)
+  if (previous.value) q.set('previous', 'true')
+  if (since) q.set('sinceTime', since)
   else if (tailLinesParam != null) q.set('tailLines', String(tailLinesParam))
   const resp = await fetch(
     `${basePath}?${q.toString()}`,
@@ -143,30 +161,10 @@ async function fetchLogs(sinceTime?: string, tailLinesParam?: number): Promise<s
   return await resp.text()
 }
 
-/** k8s 注入的时间戳前缀：RFC3339Nano（UTC 'Z'）+ 制表符/空格。只匹配 UTC-Z，避免误伤应用自己的 +08:00 时间戳 */
-const K8S_TS_PREFIX = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)[ \t]+/
-
-/**
- * 拆出 [k8s时间戳, 原始内容]（无 k8s 前缀则 ts=''）。
- * kubelet 标准分隔符是制表符；但透传链路可能把它规整成空格，故再加一条「行首 UTC-Z RFC3339 + 空白」兜底。
- */
-function splitLine(line: string): [string, string] {
-  const i = line.indexOf('\t')
-  if (i > 0) return [line.slice(0, i), line.slice(i + 1)]
-  const m = K8S_TS_PREFIX.exec(line)
-  if (m) {
-    return [m[1] ?? '', line.slice(m[0].length)]
-  }
-  return ['', line]
-}
-
-/** 分数秒补到固定 9 位，使同一容器（同格式/时区）的时间戳可按字典序比较 */
-function normTs(ts: string): string {
-  const m = /^(.*?)(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/.exec(ts)
-  if (!m) return ts
-  const frac = ((m[2] || '').slice(1) + '000000000').slice(0, 9)
-  return m[1] + '.' + frac + (m[3] || '')
-}
+// ⚠️ k8s 时间戳前缀的拆解与比大小**不在这里**了 —— 抽到 `@/utils/logLines` 与工作负载级的
+//    聚合视图共用。理由：同一份日志在两个视图里必须显示出**一样的行**，各写一份迟早分叉。
+//    （顺带修掉了原来"找第一个制表符"那个写法：内容里自带制表符的行会被从中间劈开，
+//     那个"假时间戳"还会被当成游标推上去，之后的增量全乱。）
 
 /** Spring Boot 日志分段着色（保留原始对齐，只给指定片段套 ANSI 色）：
  *  时间/pid/服务名/msg = 默认；级别 INFO·DEBUG·TRACE 绿 / WARN 黄 / ERROR 红；[线程] 紫；类名蓝 */
@@ -216,29 +214,16 @@ function colorize(line: string): string {
  * - 无时间戳（后端未启用 timestamps / 旧构建）：退化为「整批追加 + 墙钟游标」，保证仍能滚动，并告警一次。
  */
 function processLog(text: string, startCursor: string): { newContents: string[]; nextCursor: string } {
-  const newContents: string[] = []
-  let nextCursor = startCursor
-  let hadTs = false
-  for (const line of text.split('\n')) {
-    if (!line) continue
-    const [ts, content] = splitLine(line)
-    if (ts) {
-      hadTs = true
-      if (normTs(ts) > normTs(nextCursor)) {
-        newContents.push(content)
-        nextCursor = ts
-      }
-    } else {
-      // 无前缀：无法精确去重，直接追加（避免整屏冻结）
-      newContents.push(content)
-    }
-  }
+  const { lines, nextCursor } = takeNewLines(text, startCursor)
+  const newContents = lines.map((l) => l.content)
+  const hadTs = lines.some((l) => !!l.ts)
   if (!hadTs && newContents.length) {
-    nextCursor = new Date().toISOString()
+    // 无前缀：无法精确去重 —— 保持既有降级（整批追加 + 每次会话只提示一次）
     if (!warnedNoTs) {
       warnedNoTs = true
       console.warn('[PodLog] 响应缺少 k8s 时间戳前缀（<ts>\\t），请确认 k8s-server 已重建并启用 usingTimestamps；当前退化为按批次追加。')
     }
+    return { newContents, nextCursor: new Date().toISOString() }
   }
   return { newContents, nextCursor }
 }
@@ -300,6 +285,7 @@ async function bootstrap(): Promise<void> {
 
 /** 增量轮询：拉 sinceTime=cursor 之后的新行（严格更新），追加并推进游标 */
 async function pollOnce(): Promise<void> {
+  if (previous.value) return // 上一次实例不会再产出（见 setPrevious 的说明）
   if (!props.pod || !logAbort || !cursor) return
   try {
     const text = await fetchLogs(cursor)
@@ -322,13 +308,18 @@ function beginSession(): void {
   warnedNoTs = false
   matchCount.value = 0
   void bootstrap()
-  pollTimer = window.setInterval(() => void pollOnce(), POLL_MS)
+  // ⚠️ previous 模式是一次性快照，不起轮询（死掉的容器不会再产出）
+  if (!previous.value) {
+    pollTimer = window.setInterval(() => void pollOnce(), POLL_MS)
+  }
 }
 
 /** el-dialog @opened：DOM 就绪后创建终端并开始拉取（每次打开都触发） */
 function onOpened(): void {
   ensureTerm()
   fit()
+  // ⚠️ 每次打开都回到"当前实例"—— 上一次是排障时临时切过去看的，不该粘住
+  previous.value = false
   beginSession()
 }
 
@@ -426,6 +417,15 @@ onBeforeUnmount(() => {
       <el-button size="small" @click="clearLog()">清除</el-button>
       <el-button size="small" @click="beginSession()" style="margin-left: 0">重新加载</el-button>
       <div class="spacer" />
+      <el-button
+        v-if="showPreviousToggle"
+        size="small"
+        :type="previous ? 'warning' : 'default'"
+        :title="previous ? '正在看上一次容器实例（已终止，不会再刷新）' : '看看上一次容器实例为什么死的'"
+        @click="setPrevious(!previous)"
+      >
+        上一次
+      </el-button>
       <el-button
         size="small"
         :type="colorEnabled ? 'primary' : 'default'"
