@@ -17,6 +17,7 @@ import PodTerminal from '@/components/PodTerminal.vue'
 import PodLogDialog from '@/components/PodLogDialog.vue'
 import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import { fmtAge, fmtDate, podPhaseType, workloadStatus } from '@/utils/format'
+import { podLabelSelector } from '@/utils/podSelector'
 import { sumCpuCores, sumMemBytes } from '@/utils/metrics'
 import { formatBytes } from '@/utils/quantity'
 import FieldHelp from "@/components/workload/FieldHelp.vue";
@@ -41,13 +42,6 @@ const loadError = ref(false)
 /** 监控面板引用：全局刷新时联动重取指标 */
 const metricsRef = ref<InstanceType<typeof MetricsPanel> | null>(null)
 
-/**把 spec.selector.matchLabels 拼成 K8s labelSelector（等值集合 → k=v,k2=v2）；缺失时退回平台约定 app=name */
-function podLabelSelector(sel?: Record<string, string> | null): string {
-  const entries = Object.entries(sel ?? {})
-  if (entries.length) return entries.map(([k, v]) => `${k}=${v}`).join(',')
-  return `app=${name.value}`
-}
-
 async function refresh(): Promise<void> {
   if (!ready.value || !name.value) return
   const target = name.value // 记录发起时的目标；期间若切到别的工作负载，丢弃过期结果（避免慢响应跨页覆盖）
@@ -58,7 +52,7 @@ async function refresh(): Promise<void> {
     const d = await workloadApi.get(target, ctxParams.value)
     if (target !== name.value) return
     detail.value = d
-    pods.value = (await podApi.list({ ...ctxParams.value, labelSelector: podLabelSelector(d.selector) })) ?? []
+    pods.value = (await podApi.list({ ...ctxParams.value, labelSelector: podLabelSelector(d.selector, target) })) ?? []
     if (target !== name.value) return
   } catch {
     if (target === name.value) loadError.value = true
@@ -591,8 +585,10 @@ const contextDesc = computed(() => {
       :namespace="ctxParams.namespace"
     />
 
-    <!-- 工作负载级日志：勾选若干 Pod → 一条带 [pod/<pod>/<容器>] 前缀的流（照抄 kubectl -l --prefix） -->
+    <!-- 工作负载级日志：勾选若干 Pod → 一条带 [pod/<pod>/<容器>] 前缀的流（照抄 kubectl -l --prefix）。
+         `v-if="ready"`：上下文没载入时 ctxParams 三级都是 null，灌进弹窗的必要 prop 只会刷 dev 警告。 -->
     <WorkloadLogsDialog
+      v-if="ready"
       v-model="workloadLogsVisible"
       :pods="pods"
       :tenant-id="ctxParams.tenantId"

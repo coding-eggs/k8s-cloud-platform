@@ -2,8 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { workloadApi, hpaApi, gatewayApi } from '@/api'
-import type { K8sGateway, K8sWorkload, K8sHpa, WaypointRef } from '@/types'
+import { workloadApi, hpaApi, gatewayApi, podApi } from '@/api'
+import type { K8sGateway, K8sWorkload, K8sHpa, K8sPod, WaypointRef } from '@/types'
 import type { WorkloadKind } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
@@ -19,10 +19,12 @@ import {
   toWaypointRef,
   USE_WAYPOINT_NONE,
 } from '@/utils/waypoint'
+import { podLabelSelector } from '@/utils/podSelector'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import WorkloadRollbackDialog from '@/components/workload/WorkloadRollbackDialog.vue'
+import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import { fmtAge, fmtDate, workloadStatus } from '@/utils/format'
 import { Refresh, MoreFilled, Search, EditPen, TopRight } from '@element-plus/icons-vue'
 import YamlBlock from '@/components/YamlBlock.vue'
@@ -298,6 +300,35 @@ async function openYaml(row: K8sWorkload): Promise<void> {
   }
 }
 
+// ---------- 日志（S2.1）：勾选这个工作负载的 Pod，聚合成一条带 [pod/<pod>/<容器>] 前缀的流 ----------
+/** 弹窗只是个壳；`pods` 得先备好 —— 弹窗设计的取舍是「打开时先让我勾选」，所以它接的是现成的 Pod 列表 */
+const logsVisible = ref(false)
+const logsPods = ref<K8sPod[]>([])
+/** 正在为哪一行取 Pod（唯一判据，兼作防抖：拿 Pod 要两次往返，期间重复点是同一个请求） */
+const logsBusy = ref<string | null>(null)
+
+/**
+ * ⚠️ 列表 DTO 不带 `spec.selector`，所以是**两次往返**：先 get 拿 selector，再按它反查 Pod ——
+ *    与详情页同一条路（`WorkloadDetailView.refresh`）。不该为了少一次请求去改列表 DTO 的契约。
+ * ⚠️ 拿不到就**不开**弹窗：空弹窗会被当成"这个负载没有日志"。
+ */
+async function openLogs(row: K8sWorkload): Promise<void> {
+  if (logsBusy.value) return
+  logsBusy.value = row.name
+  try {
+    const d = await workloadApi.get(row.name, ctxParams.value)
+    logsPods.value = (await podApi.list({
+      ...ctxParams.value,
+      labelSelector: podLabelSelector(d.selector, row.name),
+    })) ?? []
+    logsVisible.value = true
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    logsBusy.value = null
+  }
+}
+
 // ---------- 服务网格开关（B3 §11.4：行内两个显式开关，不入下拉菜单） ----------
 /**
  * 三态 label 与两态开关的对应（回显）：
@@ -445,6 +476,7 @@ function onRowCommand(cmd: string, row: K8sWorkload): void {
   }
   switch (cmd) {
     case 'yaml': openYaml(row); break
+    case 'logs': void openLogs(row); break
     case 'edit': if (!isOpManaged(row)) goEditor(row.name); break
     case 'scale': openScale(row); break
     case 'rollback': openRollback(row); break
@@ -574,7 +606,7 @@ const contextDesc = computed(() => {
         <el-table-column label="操作" width="64" fixed="right">
           <template #default="{ row }">
             <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
-              <el-button link type="primary" :icon="MoreFilled" />
+              <el-button link type="primary" :icon="MoreFilled" :loading="logsBusy === row.name" />
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="edit" :disabled="isOpManaged(row)">编辑</el-dropdown-item>
@@ -586,6 +618,9 @@ const contextDesc = computed(() => {
                   <el-dropdown-item command="rollback" :disabled="!canWrite || isOpManaged(row)">回滚</el-dropdown-item>
                   <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
+                  <!-- 日志：只读动作，紧挨 Yaml 排在只读这一组。点它要先取 Pod（两次往返，见 openLogs），
+                       期间「⋯」转圈 —— 否则这一两秒里"点了没反应"，人会再点一次。 -->
+                  <el-dropdown-item command="logs">日志</el-dropdown-item>
 
                   <!-- 服务网格（B3 §11.4）：两态开关表达不了三态（跟随 / 纳入 / 排除），故用带当前态的菜单项。
                        禁用项只作分组标题，把"当前是什么"写在标题里；下面是可点的目标态（当前态不出现在列表里）。
@@ -669,6 +704,18 @@ const contextDesc = computed(() => {
         <el-button type="primary" :loading="imgSaving" @click="submitImage">提交</el-button>
       </template>
     </el-dialog>
+
+    <!-- 工作负载级日志：勾选若干 Pod → 一条带 [pod/<pod>/<容器>] 前缀的流（与详情页同一个弹窗）。
+         `v-if="ready"`：上下文没载入时 ctxParams 三级都是 null，灌进弹窗的必要 prop 只会刷 dev 警告；
+         而且没有上下文本来也没有日志可看。 -->
+    <WorkloadLogsDialog
+      v-if="ready"
+      v-model="logsVisible"
+      :pods="logsPods"
+      :tenant-id="ctxParams.tenantId"
+      :cluster-id="ctxParams.clusterId"
+      :namespace="ctxParams.namespace"
+    />
 
     <!-- 回滚（选历史版本） -->
     <WorkloadRollbackDialog v-model="rollbackVisible" :row="rollbackRow" :ctx="ctxParams" @done="refresh" />
