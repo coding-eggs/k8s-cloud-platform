@@ -576,7 +576,7 @@
 
 ### S4 · 收尾
 
-#### S4.1 PVC 扩容 ｜ 规模 S ｜ 方案已出 ｜ ✅ 2026-10-16 完成
+#### S4.1 PVC 扩容 ｜ 规模 S ｜ ✅ 2026-10-16 完成（已实施待部署）
 > 扩容做成了**独立端点** `POST /resource/pvcs/{name}/resize`（不是塞进 PUT）——
 > 与工作负载的 `POST /{name}/image`、`POST /{name}/pause` 同形：**端点与权限行按「一次有意义的操作」分，
 > 权限码按「资源 + write 家族」共享**（这里沿用 `tenant:pvc:update`）。迁移 `V2026_10_16_3`（已重放）。
@@ -594,6 +594,20 @@
 - [x] S4.1.4 STS `volumeClaimTemplate` 的特例处理 —— ⚠️ **原方案里的「改 template」是错的**：
       K8s 不允许改 StatefulSet 的 `spec.volumeClaimTemplates`，改了会被 API server 拒。
       所以维持**只读**，补的是"为什么只读"的说明（另见 commit `dc6b0df`）
+
+> ⚠️ **收口时真撞到的那个坑（2026-10-16，`2e84329`）**：门控只看 `StorageClass.allowVolumeExpansion`
+> 是**假绿灯** —— 本集群两个 SC 都写着 `true`，两个都做不到（provisioner 不是 CSI，没有
+> `external-resizer` 去执行）。「允许扩」≠「有人执行扩」。判据改成
+> `allowVolumeExpansion && provisioner ∈ 集群已注册的 CSIDriver 名单`，三态
+> `unsupported` / `csi` / `unbacked`（唯一算法在 `CoreV1StorageClassOperations.fillExpansion`）。
+> 顺带修掉两个真 bug：扩容走 `storageClasses.get()` 是 **PLATFORM 边界、租户一律 403**
+> （改走窄投影 `expansionOf()`）；PVC 的 `update()` 把读回来的对象当 SSA apply config 发，
+> 被 `metadata.managedFields must be nil` 拒（**这个 op 的老 bug，不是扩容引入的；未补回归测试** ——
+> fabric8 自引用泛型挡掉了 MockStubs）。
+- [x] S4.1.5（补）列表页「可扩容」列 + 不能扩就把「调整容量」禁掉（`31666be`）；
+      存储类页加「在线扩容」列，两种非绿状态分开（`unsupported` 灰 / `unbacked` 橙 + 悬停讲机制）
+- [x] S4.1.6（补）文案定稿：`unbacked` 那一态叫 **「非 CSI 驱动」**（`4b9eda0`）——
+      原来的「没人执行」太口语，用户点名换掉
 
 #### S4.2 Istio 表单补偿 ｜ 规模 M ｜ 方案已出
 - [ ] S4.2.1 「快速路由」表单（域名 + 路径 + 后端 Service + TLS → 自动拆 Gateway + HTTPRoute，已有 Gateway 则复用）
@@ -628,7 +642,7 @@
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
-| **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 `0de9533` 后端 + `31c0c65` 前端 + `dc6b0df` STS 说明） | — |
+| **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⬜ 未开始 | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |
 
