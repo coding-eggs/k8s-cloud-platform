@@ -171,10 +171,92 @@ const chartLinks = computed(() => {
     }))
 })
 
+/**
+ * 力导向**收敛一次**后把坐标记在内存里，之后刷新只更新数据、不再跑模拟。
+ * ⚠️ 不写它的话，每 30 秒自动刷新都会 setOption → 力导向从初始圈重放一遍动画，
+ * 用户看到的就是"图每隔半分钟抖一下"。这份坐标**不落盘**（只在本次打开期间有效）。
+ */
+let settledPositions: Record<string, [number, number]> | null = null
+/** settledPositions 属于哪一套节点（节点集变了就作废） */
+let settledKey = ''
+/** 画布此刻画的是哪一套节点 */
+let renderedKey = ''
+
+/** ECharts 不把力导向结果写回 option，只能读内部 data 的 layout（类型里是私有的）。 */
+interface GraphInternals {
+  getModel(): {
+    getSeriesByIndex(index: number): {
+      getData(): {
+        count(): number
+        getRawDataItem(index: number): { id?: string } | null
+        getItemLayout(index: number): number[] | undefined
+      }
+    }
+  }
+}
+
+function nodeKey(nodes: { id: string }[]): string {
+  return nodes.map((n) => n.id).join('|')
+}
+
+/** 读**当前画布**的节点坐标。只应在"画面已经画完"之后调用。 */
+function captureLayout(key: string): void {
+  if (!chart) return
+  try {
+    const data = (chart as unknown as GraphInternals).getModel().getSeriesByIndex(0).getData()
+    const out: Record<string, [number, number]> = {}
+    for (let i = 0; i < data.count(); i++) {
+      const item = data.getRawDataItem(i)
+      const l = data.getItemLayout(i)
+      const x = l?.[0] ?? NaN
+      const y = l?.[1] ?? NaN
+      if (item?.id && Number.isFinite(x) && Number.isFinite(y)) out[item.id] = [x, y]
+    }
+    if (Object.keys(out).length && nodeKey(Object.keys(out).map((id) => ({ id }))) === key) {
+      settledPositions = out
+      settledKey = key
+    }
+  } catch {
+    /* 内部 API 变了就不冻结，最坏是刷新时多抖一下 */
+  }
+}
+
+/** 当前的缩放/平移。notMerge 重画会把 roam 打回默认，得手动接上（用户每 30 秒被拉回默认视野同样是"跳一下"）。 */
+function currentRoam(): { center?: number[]; zoom?: number } {
+  try {
+    const s = (chart?.getOption() as { series?: Array<{ center?: unknown; zoom?: unknown }> } | undefined)?.series?.[0]
+    return {
+      center: Array.isArray(s?.center) ? (s.center as number[]) : undefined,
+      zoom: typeof s?.zoom === 'number' ? s.zoom : undefined,
+    }
+  } catch {
+    return {}
+  }
+}
+
 function buildOption(): echarts.EChartsCoreOption {
   const panel = cssVar('--panel', '#ffffff')
   const border = cssVar('--border', '#e6eaf2')
   const text1 = cssVar('--text-1', '#1e293b')
+
+  // 布局：已冻结就原样摆回去（layout:'none' 完全不跑模拟），否则从"按 id 排序后的圆环"起跑。
+  const nodes = chartNodes.value
+  const settled = settledPositions && settledKey === nodeKey(nodes) ? settledPositions : null
+  const w = chart?.getWidth() || 900
+  const h = chart?.getHeight() || 520
+  const cx = w / 2
+  const cy = h / 2
+  const radius = Math.min(w, h) * 0.35
+  const n = Math.max(nodes.length, 1)
+  const data = nodes.map((node, i) => {
+    const p = settled?.[node.id]
+    const angle = (2 * Math.PI * i) / n - Math.PI / 2
+    return {
+      ...node,
+      x: p ? p[0] : cx + radius * Math.cos(angle),
+      y: p ? p[1] : cy + radius * Math.sin(angle),
+    }
+  })
   return {
     backgroundColor: 'transparent',
     tooltip: {
@@ -195,18 +277,18 @@ function buildOption(): echarts.EChartsCoreOption {
     },
     series: [{
       type: 'graph',
-      layout: 'force',
+      layout: settled ? 'none' : 'force',
       roam: true,          // 查看态：可缩放拖拽，但不做"摆位"（那是编辑态的需求，见流水线画布）
       draggable: true,
-      // ⚠️ initLayout:'circular' —— 不写它时 ECharts 给每个节点**随机撒点**，
-      // 同一份数据每次进来都会长成不同的样子。circular 按 data 顺序摆一圈，
-      // 配合上面的排序 = 确定性布局。
+      // 只在**第一次**排布时用；节点集合变了（新工作负载出现）才会再跑一次。
+      // initLayout:'circular' + 上面按 id 排序 = 确定性起跑位置。
       force: { initLayout: 'circular', repulsion: 320, edgeLength: [90, 220], gravity: 0.08 },
       label: { show: true, position: 'right', formatter: (p: any) => p.data?.workload ?? '' },
       edgeSymbol: ['none', 'arrow'],
       edgeSymbolSize: 7,
       emphasis: { focus: 'adjacency' },
-      data: chartNodes.value,
+      ...currentRoam(),
+      data,
       links: chartLinks.value,
     }],
   }
@@ -214,7 +296,23 @@ function buildOption(): echarts.EChartsCoreOption {
 
 function render(): void {
   if (!chart) return
+  const key = nodeKey(chartNodes.value)
+
+  // 画布上当前这套布局属于 renderedKey：这次要画的还是同一套节点时，
+  // 说明首屏的力导向早就收敛了 —— 趁现在把它记下来，之后就只用 'none' 摆回去。
+  // （不靠"等 N 毫秒"猜收敛：猜早了会存到半路的坐标，下次刷新反而会跳。）
+  if (!settledPositions && renderedKey && renderedKey === key) captureLayout(key)
+
+  // 节点集变了：旧坐标作废，这次重新排一次
+  if (renderedKey && renderedKey !== key) {
+    settledPositions = null
+    settledKey = ''
+  }
+
+  // ⚠️ **notMerge**：merge 模式下 graph 的 links 不会真正更新（实测 rps 一直停在旧值），
+  // 所以每次都整体重画；靠下面的坐标冻结保证"重画也不跑模拟"。
   chart.setOption(buildOption(), true)
+  renderedKey = key
 }
 
 // ---- 详情抽屉 ----
@@ -251,6 +349,8 @@ function attachChart(): void {
   if (!chartEl.value || chart) return
   chart = echarts.init(chartEl.value)
   chart.on('click', onChartClick)
+  // 用户拖动后立刻更新冻结坐标，否则下一次自动刷新会把节点弹回原位
+  chart.on('dragend', () => { if (renderedKey) captureLayout(renderedKey) })
   render()
   resizeObserver = new ResizeObserver(() => chart?.resize())
   resizeObserver.observe(chartEl.value)
