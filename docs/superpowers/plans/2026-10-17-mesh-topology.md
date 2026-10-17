@@ -10,6 +10,25 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-17-mesh-topology-design.md`
 
+## 执行记录（2026-10-17，已完成）
+
+提交：`25ef30e`（查询+label）→ `b7fadea`（集群收口）→ `c85e0ed`（合并成图）→ `319594d`（端点+迁移）→ `ef8443f`（前端）。
+
+**四处与下面正文的偏差，正文未改，以本节为准：**
+
+1. **四条查询都带 `cluster_name`**（Task 1）。实跑确认 Thanos 是全局单端点、`istio_requests_total`
+   与 `istio_build` 都带该标签。业务模板因此变成 **三个** `%s`（集群名 / 命名空间过滤片段 / 时间窗），
+   哨兵变成 **一个** `%s`（集群名）—— 否则「B 集群没采集、A 集群在采集」会被误判成已采集。
+2. **`MeshEdge` 删掉了 `hasL7`**（Task 2/5）。本版所有边都来自 `istio_requests_total`（L7 指标），
+   该字段恒为 true，兑现不了任何信息。摘掉 waypoint 后那条边**直接消失**，不是变 `hasL7=false`。
+3. **迁移文件是 `V2026_10_17_2`**（Task 3）：`V2026_10_17_1` 已被 `tenant_rbac_template_crd_groups`
+   占用；且 `platform_permission` 的列名是 **`action`** 不是 `method`。
+4. **`watch(showChart)` 用 `nextTick` 等 DOM**（Task 5）：pre-flush 的 watcher 跑在渲染之前，
+   只 await 一个 microtask 时 `.chart` 可能还没进 DOM。
+
+另：Task 2 的测试桩改成了**按入参类型分派的单桩** —— 连续注册多个 `argThat` 桩时，Mockito
+会把上一条桩记录的 null 占位当参数求值（`NullPointerException`）。
+
 ## Global Constraints
 
 - **本仓没有 Flyway**：`db/migration/*.sql` 一律**手工重放**到库；MySQL 注释 `--` 后面**必须跟空白**。

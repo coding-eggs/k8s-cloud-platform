@@ -18,18 +18,24 @@
 
 | 要什么 | 查询 |
 |---|---|
-| 边 + QPS | `sum by (source_workload, destination_workload) (rate(istio_requests_total{…}[$w]))` |
-| 错误率 | 同上加 `response_code=~"5.."`，两条相除 |
-| P95 | `histogram_quantile(0.95, sum by (le, source_workload, destination_workload) (rate(istio_request_duration_milliseconds_bucket{…}[$w])))` |
+| 边 + QPS | `sum by (source_workload, destination_workload, …ns) (rate(istio_requests_total{cluster_name="…",…}[$w]))` |
+| 错误率 | 同上加 `response_code=~"5.."`，两条相除（分母是**总量**，不是 rps+errors） |
+| P95 | `histogram_quantile(0.95, sum by (le, …, 两端 ns) (rate(istio_request_duration_milliseconds_bucket{cluster_name="…",…}[$w])))` |
+| 哨兵 | `count(istio_build{cluster_name="…"})` —— 判「在不在采集」 |
 
-⚠️ 四条**实测出来的**约束，全部写进代码注释：
+⚠️ 五条**实测出来的**约束，全部写进代码注释：
 
 1. 延迟桶名是 `istio_request_duration_milliseconds_bucket` —— 本集群里**没有** `_seconds` 版，也没有不带后缀的裸名。
+   窗口内没请求时 `histogram_quantile` 返回字符串 `"NaN"`（不是空序列），要当 null 处理。
 2. `reporter` 当前只有 `source`（网关记的）与 `waypoint`（waypoint 记的）两种取值。
    **别照抄网上那些带 `reporter="destination"` 的查询** —— 在这个集群里查出来是空的。
    将来上了 sidecar，同一请求会被源侧与目的侧各记一次，**那时才需要它去重**（Kiali 的做法）。
-3. 命名空间过滤用 `source_workload_namespace` / `destination_workload_namespace`。
-4. **「外部来客」没有真实源标识**：从集群外进来的流量，`source_workload` 就是网关自己
+3. 命名空间过滤用 `source_workload_namespace` / `destination_workload_namespace`，**两端都滤**
+   （只滤一端会漏掉"从别处进来"的边）。
+4. **所有查询都必须带 `cluster_name`**：Thanos 是全局单端点，所有远程写入的指标都统一打了这个标签，
+   不滤就会把**别的集群**的边画进来；哨兵不滤则「B 集群没采集、A 集群在采集」会被误判成已采集。
+   （2026-10-17 实跑确认 `istio_requests_total` 与 `istio_build` 都带它。）
+5. **「外部来客」没有真实源标识**：从集群外进来的流量，`source_workload` 就是网关自己
    （`external-gateway-istio`）。真实来源只能靠 XFF / 网关日志，指标里没有。
 
 ## 3. 后端
@@ -40,24 +46,30 @@
 record MeshTopologyResponse(List<MeshNode> nodes, List<MeshEdge> edges,
                            int windowSeconds, boolean meshMetricsAvailable)
 record MeshNode(String id, String namespace, String workload, boolean gateway)
-record MeshEdge(String source, String target, double rps, double errorRate,
-                Double p95Ms, boolean hasL7)
+record MeshEdge(String source, String target, double rps, double errorRate, Double p95Ms)
 ```
 
 ⚠️ **`MeshNode.id` 的约定：`namespace + "/" + workload`**（如 `default/movie-deployment`）。
 命名空间必须进 id —— 同名 workload 在多个命名空间里很常见，只用 workload 名会**把两条边粘成一个节点**。
 `MeshEdge.source/target` 存的就是这个 id。
 
+⚠️ **没有 `hasL7` 字段**（2026-10-17 实施时删掉）：本版所有边都来自 `istio_requests_total`（L7 指标），
+它的值恒为 `true` —— 那是个兑现不了任何信息的承诺。没有 waypoint 的调用**根本不会出现在图里**
+（详见 §5 第 2 条），这件事由页面底部常驻的「覆盖范围」说明讲清楚。
+`p95Ms == null` 已经承担了「这条边有调用但量不出延迟」的表达。
+
 **查询**：`MetricQuery` 枚举加三个常量（与现有"一个枚举常量 = 一条 PromQL 模板 + 一个 label 类型"的风格一致）。
 
 **服务**：`MetricsService.meshTopology(clusterId, namespace, windowSeconds)`
-- 三条查询**并发**发出（现有的 `queryCluster` 是一条条打的，拓扑页每 30 秒一刷，串行会慢）
+- 三条业务查询 + 一条哨兵**并发**发出（现有的 `queryCluster` 是一条条打的，拓扑页每 30 秒一刷，串行会慢）
 - 边的 QPS 与错误率按 `(source, target)` 合并；延迟独立聚合，缺就是 `p95Ms = null`
+- **延迟那条失败不算整体失败**（只让 `p95Ms` 为 null）—— 少一个数不该让整张图打不开
 - 节点集合 = 出现在边两端的 workload（v1 **不补**"在网格里但没流量"的节点，见 §6）
 - **`meshMetricsAvailable`（原叫 `l7Available`，2026-10-17 改名）**：判据是**哨兵指标**
-  `count(istio_build) > 0` —— 它由每个代理（istiod / ztunnel / waypoint / 网关）产出，
+  `count(istio_build{cluster_name="…"}) > 0` —— 它由每个代理（istiod / ztunnel / waypoint / 网关）产出，
   **与流量无关**，所以能区分两件长得一模一样的事：
   「**没接采集**」和「接了、但这段时间没调用」—— 两者的主查询**都是空的**。
+  ⚠️ 哨兵**必须按集群过滤**，否则「B 集群没采集、A 集群在采集」会被误判成已采集。
   ⚠️ 名字刻意不叫 `l7Available`：哨兵只能证明"**在采集**"，**证明不了"有 L7 能力"**
   （只抓了 ztunnel 而没挂任何 waypoint 时，也永远不会有 `istio_requests_total`）——
   许一个兑现不了的诺，正是这个项目里反复吃过亏的那类注释。
@@ -104,10 +116,15 @@ record MeshEdge(String source, String target, double rps, double errorRate,
 ## 5. 验收
 
 1. 在 coding-cluster 上打开，应看到那 5 条边（minio / movie-web / thanos-query / prometheus / movie-service）。
-2. **摘掉** `movie-service` 的 `istio.io/use-waypoint` → 那条边应变成"无 L7"状态（`hasL7=false`，
-   三个数变灰/显示"—"）—— 这条同时验证了 §2 第 1 条限制是真的。
-3. 在一个**没接采集**的集群上打开 → 明确提示，不是空图。
-4. 从图上应能一眼看出：`movie-web → movie-service` 的错误率是 **100%**（那 30 次请求全是 404）。
+   ✅ 2026-10-17 对真 Thanos 跑过服务方法：`meshMetricsAvailable=true`、6 个节点、5 条边。
+2. **摘掉** `movie-service` 的 `istio.io/use-waypoint` → **那条边会消失**（不是变成"无 L7"）。
+   因为 ztunnel 只提供 L4，没有 waypoint 就没有 `istio_requests_total`，图里根本没有这条边。
+   ✅ 这一点由页面底部常驻的「覆盖范围」说明对用户讲清楚；
+   原计划里的 `hasL7=false` 状态已删除（见 §3），因为本版所有边都来自 L7 指标。
+3. 在一个**没接采集**的集群上打开 → 明确提示「没在采集」，不是空图。✅
+4. 从图上应能一眼看出 `movie-web → movie-service` 的错误率高：2026-10-17 实测计数器
+   `404=30 / 200=6` → 错误率 **83.3%**（早先那次读数是 100%，因为当时 200 的样本还没出现）。
+   颜色分档 >5% 即红，所以这条边一眼是红的。✅
 
 ## 6. 本次不做（附理由）
 

@@ -342,10 +342,10 @@
 #### S2.4 服务网格可视化 ｜ 规模 M-L
 > 已定：**自研**（不引 Kiali、不引 Loki）。分析文档 §7.7。
 
-- [ ] S2.4.1 拓扑数据查询（Thanos 的 `istio_requests_total` / `istio_request_duration_milliseconds` → 节点与边）
-- [ ] S2.4.2 拓扑图前端（节点 = workload/service，边 = 速率 / 错误率 / 延迟）
+- [x] S2.4.1 拓扑数据查询（Thanos 的 `istio_requests_total` / `istio_request_duration_milliseconds_bucket` → 节点与边） —— 2026-10-17 已实施
+- [x] S2.4.2 拓扑图前端（节点 = workload，边 = 速率 / 错误率 / 延迟） —— 2026-10-17 已实施（ECharts 力导向）
 - [ ] S2.4.3 链路追踪接入（Jaeger 或 Grafana Tempo；嵌入或跳转） —— **用户 2026-10-17 明确：后期会做**（不是砍掉）。现在做不了是因为集群里**没有任何追踪后端**（jaeger/tempo/zipkin 都没有，otel collector 也没配 traces 管道）；开工时要先部署后端 + 让业务透传 `traceparent`
-- [ ] S2.4.4 ⚠️ 确认 ambient 模式下指标是否齐备（ztunnel / waypoint 的指标产出与命名）
+- [x] S2.4.4 确认 ambient 模式下指标是否齐备（ztunnel / waypoint 的指标产出与命名） —— **已实测回答**（见 spec §7）
 
 ---
 
@@ -707,7 +707,7 @@
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16 收口；**2026-10-17 用户验收通过，需求完结**） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
 | **S2.2** | 告警 | — | L | ⬜ 未开始 | — |
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ⬜ 未开始 | — |
-| **S2.4** | 服务网格可视化 | — | M-L | 🔄 **设计已出**（2026-10-17）。数据前提已在 coding-cluster 打通（5 个采集对象 + movie 前后端纳入 ambient，见集群前提 §1.7）；S2.4.4 **已实测回答**；**S2.4.3 链路追踪本次未做、后期会做**（集群里现在没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) |
+| **S2.4** | 服务网格可视化 | — | M-L | ✅ **已实施待部署**（2026-10-17）。部署：**platform-api + platform-web**，先重放 `V2026_10_17_2`。S2.4.4 **已实测回答**；**S2.4.3 链路追踪后期会做**（集群里现在没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) · [plan](superpowers/plans/2026-10-17-mesh-topology.md) |
 | **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
 | **S3.2** | 应用级交付 | D1 | L | ⬜ 未开始 | — |
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
@@ -734,9 +734,9 @@ S1.2 集群组件展示 ──▶ S3.4 Operator 管理（另需 D1）
 ### 无依赖、可立即开工的批
 
 **S1.1 用户自助 · S1.2 集群组件展示 · S1.3 平台总览 ·
-S2.2 告警 · S2.4 服务网格可视化 · S4.3 VolumeSnapshot**
+S2.2 告警 · S4.3 VolumeSnapshot**
 
-> 已完成的从这份名单里划掉：S0.1 审计、S0.2 凭据、S2.1 工作负载级日志、S4.1 PVC 扩容。
+> 已完成的从这份名单里划掉：S0.1 审计、S0.2 凭据、S2.1 工作负载级日志、S4.1 PVC 扩容、S2.4 服务网格可视化。
 > S4.2 从「可立即开工」改为**待定**（用户要先想清「对外暴露」的产品规划）。
 
 > **S0.1（审计）建议最优先** —— 它是唯一「不做就补不回来」的，而且凭据使用、CI 触发、Operator 安装
