@@ -129,6 +129,11 @@ function labelOf(id: string): string {
   return id.substring(id.indexOf('/') + 1)
 }
 
+/**
+ * ⚠️ **必须排序**：Prometheus 不保证 `sum by(...)` 返回序列的顺序稳定。
+ * 顺序一变，力导向的初始位就变，用户会觉得"每次重进画布都不一样"。
+ * 按 id 排 + 下面 `force.initLayout: 'circular'` = 同一份数据永远收敛到同一张图。
+ */
 const chartNodes = computed(() => {
   void themeTick.value // 主题变量是依赖
   const degree = new Map<string, number>()
@@ -136,30 +141,34 @@ const chartNodes = computed(() => {
     degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
     degree.set(e.target, (degree.get(e.target) ?? 0) + 1)
   }
-  return (topo.value?.nodes ?? []).map((n: MeshTopologyNode) => ({
-    id: n.id,
-    name: n.id,
-    workload: n.workload,
-    namespace: n.namespace,
-    gateway: n.gateway,
-    symbol: n.gateway ? 'diamond' : 'circle',
-    symbolSize: 18 + Math.min((degree.get(n.id) ?? 0) * 2, 18),
-    itemStyle: { color: n.gateway ? cssVar('--accent', '#6f7cff') : nsColor(n.namespace) },
-  }))
+  return [...(topo.value?.nodes ?? [])]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((n: MeshTopologyNode) => ({
+      id: n.id,
+      name: n.id,
+      workload: n.workload,
+      namespace: n.namespace,
+      gateway: n.gateway,
+      symbol: n.gateway ? 'diamond' : 'circle',
+      symbolSize: 18 + Math.min((degree.get(n.id) ?? 0) * 2, 18),
+      itemStyle: { color: n.gateway ? cssVar('--accent', '#6f7cff') : nsColor(n.namespace) },
+    }))
 })
 
 const chartLinks = computed(() => {
   void themeTick.value // 主题变量是依赖
-  return (topo.value?.edges ?? []).map((e: MeshTopologyEdge) => ({
-    source: e.source,
-    target: e.target,
-    sourceName: labelOf(e.source),
-    targetName: labelOf(e.target),
-    rps: e.rps,
-    errorRate: e.errorRate,
-    p95Ms: e.p95Ms,
-    lineStyle: { width: edgeWidth(e.rps), color: edgeColor(e.errorRate), curveness: 0.12 },
-  }))
+  return [...(topo.value?.edges ?? [])]
+    .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
+    .map((e: MeshTopologyEdge) => ({
+      source: e.source,
+      target: e.target,
+      sourceName: labelOf(e.source),
+      targetName: labelOf(e.target),
+      rps: e.rps,
+      errorRate: e.errorRate,
+      p95Ms: e.p95Ms,
+      lineStyle: { width: edgeWidth(e.rps), color: edgeColor(e.errorRate), curveness: 0.12 },
+    }))
 })
 
 function buildOption(): echarts.EChartsCoreOption {
@@ -189,7 +198,10 @@ function buildOption(): echarts.EChartsCoreOption {
       layout: 'force',
       roam: true,          // 查看态：可缩放拖拽，但不做"摆位"（那是编辑态的需求，见流水线画布）
       draggable: true,
-      force: { repulsion: 320, edgeLength: [90, 220], gravity: 0.08 },
+      // ⚠️ initLayout:'circular' —— 不写它时 ECharts 给每个节点**随机撒点**，
+      // 同一份数据每次进来都会长成不同的样子。circular 按 data 顺序摆一圈，
+      // 配合上面的排序 = 确定性布局。
+      force: { initLayout: 'circular', repulsion: 320, edgeLength: [90, 220], gravity: 0.08 },
       label: { show: true, position: 'right', formatter: (p: any) => p.data?.workload ?? '' },
       edgeSymbol: ['none', 'arrow'],
       edgeSymbolSize: 7,
