@@ -1,0 +1,209 @@
+package com.coding.platformapi.services;
+
+import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
+import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
+import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.platformapi.components.ClusterComponentCatalog;
+import com.coding.platformapi.components.ComponentDef;
+import com.coding.platformapi.components.ComponentProbe;
+import com.coding.platformapi.k8s.K8sComponentClient;
+import com.coding.platformapi.models.ComponentFlagDTO;
+import com.coding.platformapi.models.ComponentStatusDTO;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import tools.jackson.core.type.TypeReference;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 集群组件状态的<b>唯一派生实现</b>：目录（判什么）+ capability 列（API group 那一半）+
+ * 一次活探测（工作负载那一半）→ 四态 → 两个投影。
+ *
+ * <h2>四态的意义</h2>
+ * {@code UNKNOWN}（探测失败 / 未探测）与 {@code NOT_INSTALLED}（探测成功但没命中）必须分开 ——
+ * 把"不知道"说成"没装"是本仓修过一次的坑（见 {@code MeshStatusDTO} 与 {@code CapabilitySummaryDTO} 的注释）。
+ *
+ * <h2>为什么必须缓存</h2>
+ * 门控收口后，<b>每个租户进 CI 页 / 网格页都会触发一次</b>。不挡的话一个 20 人的团队进进出出
+ * 就是几百次集群调用。45s 是"多新算够新"的取舍：组件是分钟级变化的东西。
+ * <b>缓存不随租户变</b> —— 探测结果里没有任何按租户切分的内容。
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ClusterComponentService {
+
+    public static final String HEALTHY = "INSTALLED_HEALTHY";
+    public static final String UNHEALTHY = "INSTALLED_UNHEALTHY";
+    public static final String NOT_INSTALLED = "NOT_INSTALLED";
+    public static final String UNKNOWN = "UNKNOWN";
+
+    private static final String KEY_PREFIX = "cluster:components:";
+    /** 45s —— 组件是分钟级变化的东西；装完想看最新状态走「重新探测」（探完覆写缓存） */
+    private static final Duration TTL = Duration.ofSeconds(45);
+    private static final TypeReference<List<ComponentStatusDTO>> LIST_TYPE = new TypeReference<>() {};
+
+    private final ClusterComponentCatalog catalog;
+    private final ClusterCapabilityService capabilityService;
+    private final K8sComponentClient client;
+    private final RedisJsonCache cache;
+
+    /** full 投影：状态 + 版本 + 命名空间 + detail + 功能映射（管理员） */
+    public List<ComponentStatusDTO> status(String clusterId) {
+        return cache.get(KEY_PREFIX + clusterId, TTL, LIST_TYPE, () -> probe(clusterId));
+    }
+
+    /**
+     * flags 投影：功能 code → 能不能用 + 一句话原因，**不含版本/命名空间/detail**。
+     * <p>判定口径：该功能依赖的组件<b>全部</b>处于 {@link #HEALTHY} 才算可用。
+     */
+    public Map<String, ComponentFlagDTO> flags(String clusterId) {
+        List<ComponentStatusDTO> all = status(clusterId);
+        Map<String, ComponentFlagDTO> out = new LinkedHashMap<>();
+        for (String feature : catalog.featureCodes()) {
+            List<ComponentDef> deps = catalog.componentsOf(feature);
+            List<String> missing = deps.stream()
+                    .filter(d -> !HEALTHY.equals(stateOf(all, d.code())))
+                    .map(ComponentDef::name).toList();
+            out.put(feature, new ComponentFlagDTO(missing.isEmpty(), reasonOf(all, deps, missing), missing));
+        }
+        return out;
+    }
+
+    /**
+     * 「重新探测」：探一次并**覆写**缓存。
+     *
+     * <p>⚠️ 不是"清缓存让下次重探" —— {@link RedisJsonCache} 的公开方法只有 get / getMany / setMany，
+     * <b>没有 evict</b>，这是有意的（TTL-only，见 memory「别做手工失效」）。本类恰好受得了这条约束：
+     * 失效点只有这一个，写成"探完覆写"即可。
+     */
+    public void refresh(String clusterId) {
+        cache.setMany(Map.of(KEY_PREFIX + clusterId, probe(clusterId)), TTL);
+    }
+
+    // ---------- 派生 ----------
+
+    private List<ComponentStatusDTO> probe(String clusterId) {
+        Map<String, List<String>> groups = capabilityService.groups(clusterId);
+
+        // 目录 → 探测候选（顺序即结果顺序；(ns,kind) 在目录里唯一）
+        List<String> codes = new ArrayList<>();
+        List<WorkloadProbeTargetDTO> targets = new ArrayList<>();
+        for (ComponentDef def : catalog.all()) {
+            for (ComponentProbe p : def.probes()) {
+                codes.add(def.code());
+                targets.add(targetOf(p));
+            }
+        }
+
+        Map<String, WorkloadProbeResultDTO> byCode = new HashMap<>();
+        if (!targets.isEmpty()) {
+            List<WorkloadProbeResultDTO> results;
+            try {
+                results = client.probe(clusterId, targets);
+            } catch (Exception e) {
+                // ⚠️ 探测整体失败（集群不可达 / 网关异常）不得冒成页面错误 —— 全部 UNKNOWN，
+                //    页面照常打开并说明"探测不到"（spec §11）。
+                String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                log.warn("集群 {} 工作负载探测失败（全部按 UNKNOWN 处理）: {}", clusterId, msg);
+                return catalog.all().stream().map(d -> unknown(d, "探测失败：" + msg)).toList();
+            }
+            int n = results == null ? 0 : Math.min(codes.size(), results.size());
+            for (int i = 0; i < n; i++) {
+                byCode.merge(codes.get(i), results.get(i), ClusterComponentService::prefer);
+            }
+        }
+        return catalog.all().stream().map(d -> compose(d, byCode, groups)).toList();
+    }
+
+    /** 四态合成：**探测失败 = UNKNOWN，不是 NOT_INSTALLED**（集群断开时说"没装"是本仓修过的坑） */
+    private ComponentStatusDTO compose(ComponentDef def, Map<String, WorkloadProbeResultDTO> byCode,
+                                       Map<String, List<String>> groups) {
+        ComponentStatusDTO s = new ComponentStatusDTO();
+        s.setCode(def.code());
+        s.setName(def.name());
+        s.setFeatures(def.features());
+
+        // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
+        // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现
+        // 一半"未探测"、一半"没装"的自相矛盾（spec §3.2）。
+        if (groups.isEmpty()) {
+            s.setState(UNKNOWN);
+            s.setDetail("尚未探测集群 API 能力");
+            return s;
+        }
+
+        boolean groupHit = def.apiGroup() != null && groups.containsKey(def.apiGroup());
+        WorkloadProbeResultDTO w = byCode.get(def.code());
+
+        if (w != null && w.getError() != null) {
+            s.setState(UNKNOWN);
+            s.setDetail("探测失败：" + w.getError());
+            return s;
+        }
+        boolean workloadHit = w != null && w.isFound();
+        if (!groupHit && !workloadHit) {
+            s.setState(NOT_INSTALLED);
+            s.setDetail(w != null && w.getDetail() != null ? w.getDetail() : "在所有判据上都没命中");
+            return s;
+        }
+        if (w != null) {
+            s.setNamespace(w.getNamespace());
+            s.setVersion(w.getVersion());
+            s.setReady(w.getReady());
+            s.setDesired(w.getDesired());
+            s.setDetail(w.getDetail());
+        }
+        // ⚠️ desired == 0 判不健康：被 scale 到 0 的组件没在跑，不是"健康"
+        boolean healthy = w == null || (w.getDesired() != null && w.getDesired() > 0
+                && w.getReady() != null && w.getReady().equals(w.getDesired()));
+        s.setState(healthy ? HEALTHY : UNHEALTHY);
+        return s;
+    }
+
+    private static ComponentStatusDTO unknown(ComponentDef def, String detail) {
+        ComponentStatusDTO s = new ComponentStatusDTO();
+        s.setCode(def.code());
+        s.setName(def.name());
+        s.setFeatures(def.features());
+        s.setState(UNKNOWN);
+        s.setDetail(detail);
+        return s;
+    }
+
+    private static WorkloadProbeTargetDTO targetOf(ComponentProbe p) {
+        WorkloadProbeTargetDTO t = new WorkloadProbeTargetDTO();
+        t.setNamespace(p.namespace());
+        t.setKind(p.kind());
+        t.setImageRepo(p.imageRepo());
+        t.setName(p.name());
+        return t;
+    }
+
+    /** 一个组件有多条判据时怎么合并：命中优先于未命中，成功结果优先于错误结果 */
+    private static WorkloadProbeResultDTO prefer(WorkloadProbeResultDTO a, WorkloadProbeResultDTO b) {
+        if (a.isFound() != b.isFound()) {
+            return a.isFound() ? a : b;
+        }
+        return a.getError() == null ? a : b;
+    }
+
+    private static String stateOf(List<ComponentStatusDTO> all, String code) {
+        return all.stream().filter(s -> s.getCode().equals(code))
+                .map(ComponentStatusDTO::getState).findFirst().orElse(UNKNOWN);
+    }
+
+    private static String reasonOf(List<ComponentStatusDTO> all, List<ComponentDef> deps, List<String> missing) {
+        if (missing.isEmpty()) {
+            return null;
+        }
+        boolean unknown = deps.stream().map(d -> stateOf(all, d.code())).anyMatch(UNKNOWN::equals);
+        return (unknown ? "探测不到：" : "缺 ") + String.join("、", missing);
+    }
+}

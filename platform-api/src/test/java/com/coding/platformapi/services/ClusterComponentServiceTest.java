@@ -1,0 +1,230 @@
+package com.coding.platformapi.services;
+
+import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
+import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.platformapi.components.ClusterComponentCatalog;
+import com.coding.platformapi.components.ComponentProbe;
+import com.coding.platformapi.k8s.K8sComponentClient;
+import com.coding.platformapi.models.ComponentStatusDTO;
+import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import tools.jackson.databind.json.JsonMapper;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * 四态合成的口径 + 两投影 + 缓存。
+ *
+ * <p>最要紧的一条：<b>探测失败是 UNKNOWN，不是 NOT_INSTALLED</b>。把"不知道"说成"没装"
+ * 是本仓修过一次的坑（{@code MeshStatusDTO}「未探测」、{@code CapabilitySummaryDTO}「全 false = 未探测」）。
+ */
+class ClusterComponentServiceTest {
+
+    /** 默认能力组：非空（否则全 UNKNOWN），但**不含** metrics.k8s.io / gateway group —— 让"没命中"真的是没命中 */
+    private static final Map<String, List<String>> DEFAULT_GROUPS = Map.of("networking.istio.io", List.of("v1"));
+
+    @Test
+    void aMissingComponentIsNotInstalledButStillSaysWhereWeLooked() {
+        // Review Focus #4：候选位置之外**没去看**，所以措辞是"在平台已知的位置没找到"，
+        // 而不是断言"这个集群没装"
+        ClusterComponentService svc = svc(List.of(probe("kube-system", false, null, null, null)));
+
+        ComponentStatusDTO s = find(svc.status("c1"), "metrics-server");
+
+        assertThat(s.getState()).isEqualTo("NOT_INSTALLED");
+        assertThat(s.getDetail()).contains("没有找到");
+    }
+
+    @Test
+    void zeroDesiredReplicasIsNotHealthy() {
+        // Review Focus #2：被 scale 到 0 的 Deployment，0/0 判成"健康"是错的 —— 它根本没在跑
+        ClusterComponentService svc = svc(List.of(probe("kube-system", true, 0, 0, "v0.7.2")));
+
+        assertThat(find(svc.status("c1"), "metrics-server").getState()).isEqualTo("INSTALLED_UNHEALTHY");
+    }
+
+    @Test
+    void readyBelowDesiredIsUnhealthyAndTheDetailSaysByHowMuch() {
+        ClusterComponentService svc = svc(List.of(probe("istio-system", true, 1, 2, "1.30.3")));
+
+        ComponentStatusDTO s = find(svc.status("c1"), "istio");
+
+        assertThat(s.getState()).isEqualTo("INSTALLED_UNHEALTHY");
+        assertThat(s.getDetail()).contains("1/2");
+    }
+
+    @Test
+    void aProbeFailureIsUnknownNotMissing() {
+        // ⭐ Review Focus #1：集群断开时页面必须说"探测不到"，而不是"没装"
+        ClusterComponentService svc = svc(List.of(probe("kube-system", false, null, null, null, "连接被拒")));
+
+        assertThat(find(svc.status("c1"), "metrics-server").getState()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    void aWholeProbeThatThrowsIsUnknownEverywhereNotAnErrorPage() {
+        // spec §11：集群断开时页面照常打开 —— 探测整体失败（网关抛异常）也必须是 UNKNOWN
+        ClusterComponentService svc = svcThrowing(new RuntimeException("k8s-server 不可达"));
+
+        assertThat(svc.status("c1")).allSatisfy(s -> assertThat(s.getState()).isEqualTo("UNKNOWN"));
+    }
+
+    @Test
+    void aComponentWithOnlyAnApiGroupJudgeIsHealthyWhenTheGroupExists() {
+        // gateway-api 只有 CRD 判据（没有工作负载）—— group 在即"已装"，版本列空着是诚实的
+        ClusterComponentService svc = svcWithGroups(List.of(), Map.of("gateway.networking.k8s.io", List.of("v1")));
+
+        ComponentStatusDTO s = find(svc.status("c1"), "gateway-api");
+
+        assertThat(s.getState()).isEqualTo("INSTALLED_HEALTHY");
+        assertThat(s.getVersion()).isNull();
+    }
+
+    @Test
+    void anUndetectedClusterIsUnknownEverywhere() {
+        // capability 列为空 = 未探测（既有口径）→ 所有组件都 UNKNOWN，不是 NOT_INSTALLED
+        ClusterComponentService svc = svcWithGroups(List.of(), Map.of());
+
+        assertThat(svc.status("c1")).allSatisfy(s -> assertThat(s.getState()).isEqualTo("UNKNOWN"));
+    }
+
+    @Test
+    void flagsCarryNoVersionOrNamespace() {
+        // 租户侧投影有意砍掉版本与命名空间 —— 租户不需要知道 istiod 装在哪儿
+        ClusterComponentService svc = svc(List.of(probe("tekton-pipelines", true, 1, 1, "v1.15.3")));
+
+        Map<String, ?> flags = svc.flags("c1");
+
+        assertThat(flags).containsKey("ci");
+        assertThat(flags.get("ci").toString()).doesNotContain("tekton-pipelines").doesNotContain("v1.15.3");
+    }
+
+    @Test
+    void aFeatureIsAvailableOnlyWhenAllItsComponentsAreHealthy() {
+        // ci 依赖 tekton 与 tekton-operator —— 两个都好才叫能跑
+        ClusterComponentService svc = svc(List.of(
+                probe("tekton-pipelines", true, 1, 1, "v1.15.3"),
+                probe("tekton-operator", false, null, null, null)));
+
+        assertThat(svc.flags("c1").get("ci").available()).isFalse();
+        assertThat(svc.flags("c1").get("ci").missing()).contains("Tekton Operator");
+    }
+
+    @Test
+    void theSecondCallWithinTtlDoesNotProbeAgain() {
+        // 门控收口后每个租户进 CI 页/网格页都会触发 —— 不挡就是几百次集群调用
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterComponentService svc = svcWith(client, DEFAULT_GROUPS);
+
+        svc.status("c1");
+        svc.status("c1");
+
+        verify(client, times(1)).probe(eq("c1"), any());
+    }
+
+    // ==================== 夹具 ====================
+
+    private static ClusterComponentService svc(List<WorkloadProbeResultDTO> overrides) {
+        return svcWithGroups(overrides, DEFAULT_GROUPS);
+    }
+
+    private static ClusterComponentService svcWithGroups(List<WorkloadProbeResultDTO> overrides,
+                                                         Map<String, List<String>> groups) {
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(overrides));
+        return svcWith(client, groups);
+    }
+
+    private static ClusterComponentService svcThrowing(RuntimeException e) {
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenThrow(e);
+        return svcWith(client, DEFAULT_GROUPS);
+    }
+
+    private static ClusterComponentService svcWith(K8sComponentClient client, Map<String, List<String>> groups) {
+        ClusterCapabilityService capability = mock(ClusterCapabilityService.class);
+        when(capability.groups("c1")).thenReturn(groups);
+        return new ClusterComponentService(new ClusterComponentCatalog(), capability, client, cache());
+    }
+
+    /** 一条覆盖项：{@code namespace}+deployment。其余组件一律"没找到"。 */
+    private static WorkloadProbeResultDTO probe(String ns, boolean found, Integer ready, Integer desired, String version) {
+        return probe(ns, found, ready, desired, version, null);
+    }
+
+    private static WorkloadProbeResultDTO probe(String ns, boolean found, Integer ready, Integer desired,
+                                                String version, String error) {
+        WorkloadProbeResultDTO r = new WorkloadProbeResultDTO();
+        r.setNamespace(ns);
+        r.setKind("deployment");
+        r.setFound(found);
+        r.setReady(ready);
+        r.setDesired(desired);
+        r.setVersion(version);
+        r.setError(error);
+        r.setDetail(found ? ready + "/" + desired + " 就绪" : "在平台已知的位置（" + ns + "）没有找到");
+        return r;
+    }
+
+    /**
+     * 把覆盖项贴回**目录顺序**的完整结果表 —— 服务按目标顺序回收结果，
+     * 所以夹具必须回一条对齐的列表（(ns,kind) 在目录里唯一，足以定位）。
+     */
+    private static List<WorkloadProbeResultDTO> aligned(List<WorkloadProbeResultDTO> overrides) {
+        List<WorkloadProbeResultDTO> out = new ArrayList<>();
+        for (var def : new ClusterComponentCatalog().all()) {
+            for (ComponentProbe p : def.probes()) {
+                WorkloadProbeResultDTO hit = overrides.stream()
+                        .filter(o -> o.getNamespace().equals(p.namespace()) && o.getKind().equals(p.kind()))
+                        .findFirst().orElse(null);
+                if (hit != null) {
+                    out.add(hit);
+                    continue;
+                }
+                WorkloadProbeResultDTO miss = new WorkloadProbeResultDTO();
+                miss.setNamespace(p.namespace());
+                miss.setKind(p.kind());
+                miss.setFound(false);
+                miss.setDetail("在平台已知的位置（" + p.namespace() + "）没有找到");
+                out.add(miss);
+            }
+        }
+        return out;
+    }
+
+    private static ComponentStatusDTO find(List<ComponentStatusDTO> all, String code) {
+        return all.stream().filter(s -> s.getCode().equals(code)).findFirst()
+                .orElseThrow(() -> new AssertionError("没有组件 " + code));
+    }
+
+    /** 带存储语义的 RedisJsonCache（mock 的 StringRedisTemplate 自身不存值） */
+    private static RedisJsonCache cache() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        @SuppressWarnings("unchecked")
+        ValueOperations<String, String> ops = mock(ValueOperations.class);
+        Map<String, String> store = new HashMap<>();
+        when(redis.opsForValue()).thenReturn(ops);
+        when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0)));
+        doAnswer(inv -> {
+            store.put(inv.getArgument(0), inv.getArgument(1));
+            return null;
+        }).when(ops).set(anyString(), anyString(), any(Duration.class));
+        return new RedisJsonCache(redis, JsonMapper.builder().build());
+    }
+}
