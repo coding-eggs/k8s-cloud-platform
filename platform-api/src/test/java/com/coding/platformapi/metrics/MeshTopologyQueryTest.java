@@ -20,9 +20,19 @@ class MeshTopologyQueryTest {
         // ⚠️ 实测：本集群只有 reporter=source(网关) 与 reporter=waypoint，
         // 照抄网上的 reporter="destination" 会查出空图。
         for (MetricQuery q : new MetricQuery[]{
-                MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS, MetricQuery.MESH_TOPOLOGY_LATENCY}) {
+                MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS,
+                MetricQuery.MESH_TOPOLOGY_LATENCY, MetricQuery.MESH_TOPOLOGY_L4_EDGES}) {
             assertThat(q.sql()).as(q.name()).doesNotContain("reporter=");
         }
+    }
+
+    @Test
+    void theL4EdgeQueryUsesBytesNotConnectionCount() {
+        // ⚠️ 实测：连接数对长连接（mysql/redis）几乎恒为 0，画出来全是细线；
+        // 字节/秒才有区分度（mysql 7.9KB/s、es 1.5KB/s）。
+        String sql = MetricQuery.MESH_TOPOLOGY_L4_EDGES.sql();
+        assertThat(sql).contains("istio_tcp_sent_bytes_total");
+        assertThat(sql).doesNotContain("connections_opened");
     }
 
     @Test
@@ -44,7 +54,8 @@ class MeshTopologyQueryTest {
         // 三条业务查询各三个 %s：① 集群名 ② 命名空间过滤片段（无过滤时为空串）③ 时间窗（如 300s）。
         // 多一个少一个都会让 String.format 在运行期炸，所以钉住。
         for (MetricQuery q : new MetricQuery[]{
-                MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS, MetricQuery.MESH_TOPOLOGY_LATENCY}) {
+                MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS,
+                MetricQuery.MESH_TOPOLOGY_LATENCY, MetricQuery.MESH_TOPOLOGY_L4_EDGES}) {
             long slots = q.sql().chars().filter(c -> c == '%').count();
             assertThat(slots).as(q.name()).isEqualTo(3);
         }
@@ -60,7 +71,8 @@ class MeshTopologyQueryTest {
         // 会被误判成已采集。四条一律带上 `cluster_name="%s"`。
         for (MetricQuery q : new MetricQuery[]{
                 MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS,
-                MetricQuery.MESH_TOPOLOGY_LATENCY, MetricQuery.MESH_TOPOLOGY_SCRAPED}) {
+                MetricQuery.MESH_TOPOLOGY_LATENCY, MetricQuery.MESH_TOPOLOGY_L4_EDGES,
+                MetricQuery.MESH_TOPOLOGY_SCRAPED}) {
             assertThat(q.sql()).as(q.name()).contains("cluster_name=\"%s\"");
         }
     }

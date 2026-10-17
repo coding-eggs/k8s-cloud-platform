@@ -91,15 +91,25 @@ class MeshTopologyServiceTest {
     /** 延迟查询是否模拟失败（只有「延迟失败不影响整张图」那条用）。 */
     private boolean latencyFails;
 
-    /**
-     * 一个分发式的桩：Mockito 的 {@code argThat} 在连续注册多个同方法桩时会互相把对方的
-     * 记录值（null 占位）当参数求值，所以四个查询统一按**入参类型**分派。
-     */
     private void stub(List<PromResult<MeshEdgeLabels>> edges,
                       List<PromResult<MeshErrorLabels>> errors,
                       List<PromResult<MeshLatencyLabels>> latency,
                       List<PromResult<MetricLabels>> sentinel) {
+        stub(edges, errors, latency, sentinel, List.of());
+    }
+
+    /**
+     * 一个分发式的桩：Mockito 的 {@code argThat} 在连续注册多个同方法桩时会互相把对方的
+     * 记录值（null 占位）当参数求值，所以五个查询统一按**入参类型 + SQL 形状**分派
+     * （L7 与 L4 用的是同一个 label 类，只能靠 SQL 区分）。
+     */
+    private void stub(List<PromResult<MeshEdgeLabels>> edges,
+                      List<PromResult<MeshErrorLabels>> errors,
+                      List<PromResult<MeshLatencyLabels>> latency,
+                      List<PromResult<MetricLabels>> sentinel,
+                      List<PromResult<MeshEdgeLabels>> l4Edges) {
         when(client.query(anyString(), isNull(), any())).thenAnswer(inv -> {
+            String sql = inv.getArgument(0);
             Class<?> type = inv.getArgument(2);
             if (type == MeshErrorLabels.class) {
                 return errors;
@@ -111,7 +121,7 @@ class MeshTopologyServiceTest {
                 return latency;
             }
             if (type == MeshEdgeLabels.class) {
-                return edges;
+                return sql.contains("istio_tcp_sent_bytes_total") ? l4Edges : edges;
             }
             if (type == MetricLabels.class) {
                 return sentinel;
@@ -259,7 +269,9 @@ class MeshTopologyServiceTest {
         svc.meshTopology("c1", "default", 600);
 
         // 两端都滤：只滤一端会漏掉"从别处进来"的边。同时钉住集群名与时间窗。
-        verify(client).query(argThat(s -> s.contains("cluster_name=\"prod\"")
+        // 只看 L7 那条（L4 用同一个 DTO、同样的过滤，会一起匹配到）
+        verify(client).query(argThat(s -> s.contains("istio_requests_total")
+                        && s.contains("cluster_name=\"prod\"")
                         && s.contains("source_workload_namespace=\"default\"")
                         && s.contains("destination_workload_namespace=\"default\"")
                         && s.contains("[600s]")),
@@ -274,9 +286,59 @@ class MeshTopologyServiceTest {
 
         svc.meshTopology("c1", null, 300);
 
-        verify(client).query(argThat(s -> !s.contains("source_workload_namespace=\"")
+        verify(client).query(argThat(s -> s.contains("istio_requests_total")
+                        && !s.contains("source_workload_namespace=\"")
                         && !s.contains("destination_workload_namespace=\"")
                         && s.contains("[300s]")),
                 isNull(), eq(MeshEdgeLabels.class));
+    }
+
+    @Test
+    void anL4OnlyEdgeKeepsItsBytesAndDoesNotInventQps() {
+        cluster();
+        // L4 只有连接与字节：没有错误率、没有请求延迟，QPS 也不该硬编码成有意义的数
+        stub(List.of(), List.of(), List.of(), List.of(sentinel("8")),
+                List.of(row(edgeLabels("default", "movie", "default", "mysql"), "7933.4")));
+
+        MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
+
+        assertThat(resp.getEdges()).singleElement().satisfies(e -> {
+            assertThat(e.getLevel()).isEqualTo("L4");
+            assertThat(e.getBytesPerSec()).isEqualTo(7933.4);
+            assertThat(e.getRps()).isZero();
+            assertThat(e.getP95Ms()).isNull();
+        });
+        assertThat(resp.getNodes()).hasSize(2);
+    }
+
+    @Test
+    void anL7EdgeCarriesTheBytesOfTheSamePairAndIsNotDrawnTwice() {
+        cluster();
+        // 同一对端点两层都有 → 只出一条 L7 边，字节数附在它上面（不重复画两条）
+        stub(List.of(row(edgeLabels("default", "movie", "default", "mysql"), "2")),
+                List.of(), List.of(), List.of(sentinel("8")),
+                List.of(row(edgeLabels("default", "movie", "default", "mysql"), "100")));
+
+        MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
+
+        assertThat(resp.getEdges()).singleElement().satisfies(e -> {
+            assertThat(e.getLevel()).isEqualTo("L7");
+            assertThat(e.getRps()).isEqualTo(2);
+            assertThat(e.getBytesPerSec()).isEqualTo(100);
+        });
+    }
+
+    @Test
+    void theUnknownWorkloadIsNotDrawnAsANode() {
+        cluster();
+        // Istio 解析不到目标时给 destination_workload="unknown"，把它当节点画出来只会让人困惑
+        stub(List.of(row(edgeLabels("istio-system", "external-gateway-istio", "default", "unknown"), "1")),
+                List.of(), List.of(), List.of(sentinel("8")),
+                List.of(row(edgeLabels("istio-system", "external-gateway-istio", "default", "unknown"), "10")));
+
+        MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
+
+        assertThat(resp.getEdges()).isEmpty();
+        assertThat(resp.getNodes()).isEmpty();
     }
 }

@@ -113,6 +113,19 @@ function edgeWidth(rps: number): number {
   return 1 + 5 * Math.min(1, Math.log10(Math.max(rps, 0) + 1) / 6)
 }
 
+/** L4 的边宽按**字节/秒**（log10）。与 QPS 不同量纲，别指望两根线的宽度可直接比较。 */
+function bytesWidth(bytes: number): number {
+  return 1 + 4 * Math.min(1, Math.log10(Math.max(bytes, 0) + 1) / 7)
+}
+
+/** 字节/秒 → 人能读的单位。 */
+function bytesText(v: number | null | undefined): string {
+  if (v == null) return '—'
+  if (v >= 1024 * 1024) return `${(v / 1024 / 1024).toFixed(2)} MB/s`
+  if (v >= 1024) return `${(v / 1024).toFixed(1)} KB/s`
+  return `${v.toFixed(0)} B/s`
+}
+
 /** 错误率分档：0 绿 / >0 黄 / >5% 红。 */
 function edgeColor(errorRate: number): string {
   if (errorRate > 0.05) return cssVar('--danger', '#f56c6c')
@@ -228,19 +241,29 @@ const chartNodes = computed(() => {
 /** 抽屉按 id 取健康（chartNodes 里已经算过，不重复算一遍） */
 const healthById = computed(() => new Map(chartNodes.value.map((n) => [n.id, n.health])))
 
-const chartLinks = computed(() => {  void themeTick.value // 主题变量是依赖
+const chartLinks = computed(() => {
+  void themeTick.value // 主题变量是依赖
+  const l4Color = cssVar('--text-3', '#94a3b8')
   return [...(topo.value?.edges ?? [])]
     .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
-    .map((e: MeshTopologyEdge) => ({
-      source: e.source,
-      target: e.target,
-      sourceName: labelOf(e.source),
-      targetName: labelOf(e.target),
-      rps: e.rps,
-      errorRate: e.errorRate,
-      p95Ms: e.p95Ms,
-      lineStyle: { width: edgeWidth(e.rps), color: edgeColor(e.errorRate), curveness: 0.12 },
-    }))
+    .map((e: MeshTopologyEdge) => {
+      const l4 = e.level === 'L4'
+      return {
+        source: e.source,
+        target: e.target,
+        sourceName: labelOf(e.source),
+        targetName: labelOf(e.target),
+        level: e.level,
+        rps: e.rps,
+        errorRate: e.errorRate,
+        p95Ms: e.p95Ms,
+        bytesPerSec: e.bytesPerSec,
+        lineStyle: l4
+          // L4 没有响应码，不能用错误率上色；虚线 + 中性色表示"只看到连接与字节"
+          ? { width: bytesWidth(e.bytesPerSec ?? 0), color: l4Color, type: 'dashed', opacity: 0.85, curveness: 0.12 }
+          : { width: edgeWidth(e.rps), color: edgeColor(e.errorRate), curveness: 0.12 },
+      }
+    })
 })
 
 /**
@@ -339,10 +362,16 @@ function buildOption(): echarts.EChartsCoreOption {
       formatter: (p: any) => {
         const d = p.data ?? {}
         if (p.dataType === 'edge') {
+          if (d.level === 'L4') {
+            return `${d.sourceName} → ${d.targetName}<br/>`
+              + `L4（只看得到连接与字节，没有响应码）<br/>`
+              + `流量 ${bytesText(d.bytesPerSec)}`
+          }
           return `${d.sourceName} → ${d.targetName}<br/>`
-            + `QPS ${num(d.rps)}<br/>`
+            + `L7 · QPS ${num(d.rps)}<br/>`
             + `错误率 ${(d.errorRate * 100).toFixed(1)}%<br/>`
             + `P95 ${num(d.p95Ms, 1)} ms`
+            + (d.bytesPerSec != null ? `<br/>L4 流量 ${bytesText(d.bytesPerSec)}` : '')
         }
         return `${d.workload}<br/>命名空间 ${d.namespace}${d.gateway ? '<br/>（外部网关）' : ''}`
           + `<br/>${healthText(d.health)}`
@@ -393,15 +422,19 @@ const drawer = ref(false)
 const selectedNode = ref<MeshTopologyNode | null>(null)
 const selectedEdge = ref<MeshTopologyEdge | null>(null)
 
-/** 这条边对应的 PromQL —— 用户可以拿去 Grafana 自己复核（spec §4）。 */
+/** 这条边对应的 PromQL —— 用户可以拿去 Grafana 自己复核（spec §4）。L4/L7 用的是不同指标。 */
 const edgePromql = computed(() => {
   const e = selectedEdge.value
   if (!e) return ''
   const sNs = e.source.substring(0, e.source.indexOf('/'))
   const dNs = e.target.substring(0, e.target.indexOf('/'))
-  return `sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (`
-    + `rate(istio_requests_total{cluster_name="${ctx.currentCluster.value?.clusterName ?? '<集群名>'}",`
-    + `source_workload_namespace="${sNs}",destination_workload_namespace="${dNs}"}[${windowSeconds.value}s]))`
+  const sel = `cluster_name="${ctx.currentCluster.value?.clusterName ?? '<集群名>'}",`
+    + `source_workload_namespace="${sNs}",destination_workload_namespace="${dNs}"`
+  if (e.level === 'L4') {
+    return `sum by (source_workload, destination_workload) (rate(istio_tcp_sent_bytes_total{${sel}}[${windowSeconds.value}s]))`
+  }
+  return `sum by (source_workload, destination_workload) (`
+    + `rate(istio_requests_total{${sel}}[${windowSeconds.value}s]))`
 })
 
 function onChartClick(params: any): void {
@@ -520,24 +553,32 @@ onMounted(() => {
         <span><i class="dot warn"></i>有错误或偏慢（P95 ≥ 300ms）</span>
         <span><i class="dot bad"></i>错误率 ≥ 5% 或 P95 ≥ 1s</span>
         <span><i class="dot unknown"></i>无入向流量（按命名空间着色）</span>
-        <span class="legend-note">描边 = 命名空间；健康只看入向边</span>
+        <span class="sep"></span>
+        <span><i class="line l7"></i>L7：有请求数 / 响应码 / 延迟</span>
+        <span><i class="line l4"></i>L4：只有连接与字节</span>
+        <span class="legend-note">描边 = 命名空间；健康只看 L7 入向边</span>
       </div>
     </template>
 
     <!-- 覆盖范围：常驻，别删（用户会以为自己看到了全部调用） -->
     <p class="coverage">
-      图里只有：走<strong>外部网关</strong>的南北向，和<strong>进了网格且挂了 waypoint</strong> 的东西向。
-      没被纳入网格的负载互相调用、以及网关之外的集群外来源，<strong>一条都不在这里</strong> ——
-      这是 Istio 的机制决定的，不是平台少画了。
+      <strong>实线（L7）</strong>：有请求数 / 响应码 / 延迟 —— 来自外部网关（南北向）和挂了 waypoint 的工作负载（东西向）。<br/>
+      <strong>虚线（L4）</strong>：只有连接与字节 —— ztunnel 看到的全部 TCP，所以它的目标<strong>可能是不在网格里的</strong>
+      工作负载（mysql / redis 这类），但调用本身是从网格内发起的。<br/>
+      两层都看不见的：完全不经过 ztunnel 的流量。这是 Istio 的机制决定的，不是平台少画了。
     </p>
 
     <el-drawer v-model="drawer" :title="selectedEdge ? '调用详情' : '节点详情'" size="420px">
       <template v-if="selectedEdge">
         <el-descriptions :column="1" border>
           <el-descriptions-item label="调用">{{ selectedEdge.source }} → {{ selectedEdge.target }}</el-descriptions-item>
-          <el-descriptions-item label="QPS">{{ num(selectedEdge.rps) }}</el-descriptions-item>
-          <el-descriptions-item label="错误率">{{ (selectedEdge.errorRate * 100).toFixed(1) }}%</el-descriptions-item>
-          <el-descriptions-item label="P95">{{ num(selectedEdge.p95Ms, 1) }} ms</el-descriptions-item>
+          <el-descriptions-item label="层级">
+            {{ selectedEdge.level }}（{{ selectedEdge.level === 'L7' ? '请求数 / 响应码 / 延迟' : '只有连接与字节，没有响应码' }}）
+          </el-descriptions-item>
+          <el-descriptions-item label="QPS">{{ selectedEdge.level === 'L7' ? num(selectedEdge.rps) : '—' }}</el-descriptions-item>
+          <el-descriptions-item label="错误率">{{ selectedEdge.level === 'L7' ? (selectedEdge.errorRate * 100).toFixed(1) + '%' : '—' }}</el-descriptions-item>
+          <el-descriptions-item label="P95">{{ selectedEdge.level === 'L7' ? num(selectedEdge.p95Ms, 1) + ' ms' : '—' }}</el-descriptions-item>
+          <el-descriptions-item v-if="selectedEdge.bytesPerSec != null" label="L4 流量">{{ bytesText(selectedEdge.bytesPerSec) }}</el-descriptions-item>
         </el-descriptions>
         <p class="drawer-hint">这条边对应的 PromQL（可拿去 Grafana 自己复核）：</p>
         <YamlBlock :yaml="edgePromql" max-height="30vh" />
@@ -583,6 +624,16 @@ onMounted(() => {
 .health-legend .dot.warn { background: var(--warning, #e6a23c); }
 .health-legend .dot.bad { background: var(--danger, #f56c6c); }
 .health-legend .dot.unknown { background: var(--text-3, #94a3b8); }
+.health-legend .sep { width: 1px; height: 12px; background: var(--border, #e6eaf2); }
+.health-legend .line {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 2px solid var(--text-3, #94a3b8);
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.health-legend .line.l4 { border-top-style: dashed; }
 .health-legend .legend-note { margin-left: auto; opacity: 0.8; }
 .empty-title { font-size: 15px; font-weight: 700; color: var(--text-1); }
 .empty-hint { margin-top: 6px; font-size: 12.5px; color: var(--text-3); line-height: 1.7; }

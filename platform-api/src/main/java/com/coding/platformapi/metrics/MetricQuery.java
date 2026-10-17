@@ -138,6 +138,14 @@ public enum MetricQuery {
     /** 边的 P95 延迟（毫秒）。⚠️ 实测本集群只有 `..._milliseconds_bucket`，没有 `_seconds` 版、也没有裸名。 */
     MESH_TOPOLOGY_LATENCY(MeshLatencyLabels.class,
             "histogram_quantile(0.95, sum by (le, source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_request_duration_milliseconds_bucket{cluster_name=\"%s\"%s}[%s])))"),
+    /**
+     * 只经 ztunnel 的 **L4** 边（ambient 下没有 waypoint / 对端不在网格里的调用）。
+     * ⚠️ 用**字节/秒**而不是连接数：`istio_tcp_connections_opened_total` 对长连接（mysql/redis）
+     * 几乎恒为 0，画出来全是细线；实测 mysql 7.9KB/s、es 1.5KB/s 才有区分度。
+     * L4 只有连接与字节，**没有响应码、没有请求延迟** —— 前端不能给它算错误率。
+     */
+    MESH_TOPOLOGY_L4_EDGES(MeshEdgeLabels.class,
+            "sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_tcp_sent_bytes_total{cluster_name=\"%s\"%s}[%s]))"),
     /** 哨兵：**在不在采集网格指标**。代理（istiod / ztunnel / waypoint / 网关）活着就产出，与流量无关，
      *  所以它能区分「没接采集」和「接了但这段时间没调用」—— 这两者的主查询**都是空的**。
      *  ⚠️ 必须按集群过滤：否则「B 集群没采集、A 集群在采集」会被误判成已采集。 */

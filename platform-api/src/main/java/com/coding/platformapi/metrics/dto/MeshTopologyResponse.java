@@ -59,15 +59,27 @@ public class MeshTopologyResponse {
         @Schema(description = "目标节点 id")
         private String target;
 
-        @Schema(description = "请求数/秒")
+        /**
+         * `L7` = 有请求数/响应码/延迟（来自 Envoy 类代理：外部网关、waypoint）；
+         * `L4` = 只有连接与字节（来自 ztunnel），**没有错误率、没有请求延迟**。
+         * 同一对端点同时有两者时只出一条 `L7` 边，字节数一并带上。
+         */
+        @Schema(description = "L7 | L4")
+        private String level;
+
+        @Schema(description = "请求数/秒（仅 L7；L4 为 0，无意义）")
         private double rps;
 
-        /** 5xx / 总量。分母是**总量**（错误查询是总量的子集），不是 rps+errors。 */
-        @Schema(description = "错误率 0..1")
+        /** 5xx / 总量。分母是**总量**（错误查询是总量的子集），不是 rps+errors。仅 L7。 */
+        @Schema(description = "错误率 0..1（仅 L7）")
         private double errorRate;
 
         /** ⚠️ 窗口内没有样本时是 **null**（Thanos 会给 NaN），不是 0 —— 0 会被读成"延迟为 0ms"。 */
-        @Schema(description = "P95 延迟（毫秒），无样本为 null")
+        @Schema(description = "P95 延迟（毫秒，仅 L7），无样本为 null")
         private Double p95Ms;
+
+        /** L4 的流量口径：字节/秒。仅 L4 边，或"同一对端点也有 L4 流量"的 L7 边。 */
+        @Schema(description = "字节/秒（L4 流量；没有则为 null）")
+        private Double bytesPerSec;
     }
 }

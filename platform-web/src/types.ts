@@ -1646,10 +1646,14 @@ export interface MeshTopologyNode {
 export interface MeshTopologyEdge {
   source: string
   target: string
+  /** `L7` = 有请求数/响应码/延迟；`L4` = 只有连接与字节（没有错误率、没有请求延迟）。 */
+  level: 'L7' | 'L4'
   rps: number
-  /** 5xx / 总量，0..1 */
+  /** 5xx / 总量，0..1。仅 L7 有意义。 */
   errorRate: number
   p95Ms?: number | null
+  /** L4 的流量口径：字节/秒。仅 L4 边，或同一对端点也有 L4 流量的 L7 边。 */
+  bytesPerSec?: number | null
 }
 
 export interface MeshTopology {

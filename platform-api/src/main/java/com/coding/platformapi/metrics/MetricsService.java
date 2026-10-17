@@ -325,6 +325,11 @@ public class MetricsService {
     private static final int DEFAULT_TOPOLOGY_WINDOW = 300;
     /** 外部网关所在的命名空间 —— 那些节点是"外部入口"，前端画得跟业务节点不一样。 */
     private static final String INGRESS_NAMESPACE = "istio-system";
+    /** 边的层级：L7 = 有请求数/响应码/延迟；L4 = 只有连接与字节。 */
+    private static final String L7 = "L7";
+    private static final String L4 = "L4";
+    /** Istio 解析不到工作负载时给的占位值；把它当节点名画出来只会让人困惑。 */
+    private static final String UNKNOWN_WORKLOAD = "unknown";
 
     /** 边两端（都已拼成 `命名空间/工作负载`）。 */
     private record Pair(String source, String target) { }
@@ -362,8 +367,16 @@ public class MetricsService {
         CompletableFuture<List<PromResult<MetricLabels>>> sentinelF = CompletableFuture.supplyAsync(() ->
                 client.query(String.format(MetricQuery.MESH_TOPOLOGY_SCRAPED.sql(), cluster),
                         null, MetricLabels.class));
+        // L4 与 L7 同一个 DTO 收（by 出来的四个标签完全一样）；失败也不算整体失败 —— 少一层信息而已
+        CompletableFuture<List<PromResult<MeshEdgeLabels>>> l4EdgesF = CompletableFuture.supplyAsync(() ->
+                        client.query(String.format(MetricQuery.MESH_TOPOLOGY_L4_EDGES.sql(), cluster, filters, span),
+                                null, MeshEdgeLabels.class))
+                .exceptionally(e -> {
+                    log.warn("拓扑 L4 查询失败，图里只会有 L7 边", e);
+                    return List.of();
+                });
 
-        CompletableFuture.allOf(edgesF, errorsF, latencyF, sentinelF).join();
+        CompletableFuture.allOf(edgesF, errorsF, latencyF, sentinelF, l4EdgesF).join();
 
         Map<Pair, Double> rps = new LinkedHashMap<>();
         for (PromResult<MeshEdgeLabels> r : edgesF.join()) {
@@ -389,12 +402,21 @@ public class MetricsService {
                 latency.put(p, v);   // 同一条边只保留一个分位数
             }
         }
+        Map<Pair, Double> l4Bytes = new LinkedHashMap<>();
+        for (PromResult<MeshEdgeLabels> r : l4EdgesF.join()) {
+            Pair p = pairOf(r.getMetric());
+            Double v = instantValue(r);
+            if (p != null && v != null) {
+                l4Bytes.merge(p, v, Double::sum);
+            }
+        }
 
         MeshTopologyResponse resp = new MeshTopologyResponse();
         resp.setWindowSeconds(window);
         resp.setMeshMetricsAvailable(hasPositive(sentinelF.join()));
 
         Set<String> nodeIds = new LinkedHashSet<>();
+        // ① L7 边：一对端点同时也有 L4 流量时，把字节数**附在同一条边**上（不重复画）
         for (Map.Entry<Pair, Double> e : rps.entrySet()) {
             Pair p = e.getKey();
             double total = e.getValue();
@@ -402,9 +424,29 @@ public class MetricsService {
             MeshTopologyResponse.MeshEdge edge = new MeshTopologyResponse.MeshEdge();
             edge.setSource(p.source());
             edge.setTarget(p.target());
+            edge.setLevel(L7);
             edge.setRps(total);
             edge.setErrorRate(total > 0 ? err / total : 0.0);   // 分母是总量；防除零
             edge.setP95Ms(latency.get(p));
+            edge.setBytesPerSec(l4Bytes.get(p));
+            resp.getEdges().add(edge);
+            nodeIds.add(p.source());
+            nodeIds.add(p.target());
+        }
+        // ② 只有 L4 的边（对端不在网格里、或还没挂 waypoint）：没有错误率、没有请求延迟
+        for (Map.Entry<Pair, Double> e : l4Bytes.entrySet()) {
+            Pair p = e.getKey();
+            if (rps.containsKey(p)) {
+                continue;   // 已在 ① 里并进 L7 那条边
+            }
+            MeshTopologyResponse.MeshEdge edge = new MeshTopologyResponse.MeshEdge();
+            edge.setSource(p.source());
+            edge.setTarget(p.target());
+            edge.setLevel(L4);
+            edge.setRps(0);
+            edge.setErrorRate(0);
+            edge.setP95Ms(null);
+            edge.setBytesPerSec(e.getValue());
             resp.getEdges().add(edge);
             nodeIds.add(p.source());
             nodeIds.add(p.target());
@@ -421,9 +463,12 @@ public class MetricsService {
         return resp;
     }
 
-    /** 标签 → 边两端；标签缺失时返回 null（该行丢弃，不编造节点）。 */
+    /** 标签 → 边两端；标签缺失或落在 `unknown` 上时返回 null（该行丢弃，不编造节点）。 */
     private Pair pairOf(MeshEdgeLabels l) {
         if (l == null || !StringUtils.hasText(l.getSourceWorkload()) || !StringUtils.hasText(l.getDestinationWorkload())) {
+            return null;
+        }
+        if (UNKNOWN_WORKLOAD.equals(l.getSourceWorkload()) || UNKNOWN_WORKLOAD.equals(l.getDestinationWorkload())) {
             return null;
         }
         return new Pair(idOf(l.getSourceNamespace(), l.getSourceWorkload()),
