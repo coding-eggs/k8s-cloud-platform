@@ -28,6 +28,8 @@ FROM eclipse-temurin:21-jre
 
 RUN useradd -m -u 1001 app
 WORKDIR /app
+# S3.6：组件安装用的内置 chart（文本目录，不是 tgz）
+COPY --chown=app:app charts /app/charts
 COPY --chown=app:app target/*.jar /app/app.jar
 USER app
 

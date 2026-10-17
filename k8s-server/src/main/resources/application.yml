@@ -85,6 +85,9 @@ logging:
 # CI（Tekton）：归档整条链都在本进程内完成（抓快照 → 落库 → 删对象），
 # **没有任何跨进程调用**，所以这里不需要共享密钥、也不需要 platform-api 的地址。
 platform:
+  components:
+    # S3.6：内置 chart 的根目录（镜像里由 Dockerfile COPY 到 /app/charts）
+    charts-dir: ${COMPONENT_CHARTS_DIR:charts}
   pipeline:
     archive:
       # 关掉它的后果（spec §4.5 显式记过）：Pod 不会被删（回到 Tekton 的默认行为），
