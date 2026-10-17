@@ -32,4 +32,6 @@ public class ComponentStatusDTO {
      * ⚠️ 这是 chart 版本，不是上面 {@code version} 的应用版本 —— 两套编号。
      */
     private List<String> availableVersions;
+    /** 可编辑配置项（⚙️，来自 recipe）；契约值（🔒）不在其中 */
+    private List<EditableFieldDTO> editableFields;
 }

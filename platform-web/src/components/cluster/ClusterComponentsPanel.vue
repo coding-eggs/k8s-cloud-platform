@@ -13,7 +13,10 @@
  *    UNKNOWN 不给装：「不知道」不是「没有」。
  */
 import { computed, ref } from 'vue'
-import type { K8sComponentOperation, K8sComponentState, K8sComponentStatus } from '@/types'
+import { ElMessage } from 'element-plus'
+import type {
+  K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
+} from '@/types'
 
 const props = defineProps<{
   statuses: K8sComponentStatus[]
@@ -27,7 +30,12 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'refresh'): void
-  (e: 'apply', payload: { code: string; action: 'INSTALL' | 'UPGRADE'; targetVersion?: string }): void
+  (e: 'apply', payload: {
+    code: string
+    action: 'INSTALL' | 'UPGRADE'
+    targetVersion?: string
+    editableValues?: Record<string, unknown>
+  }): void
 }>()
 
 /** 四态 → 徽标。⚠️ UNKNOWN 用虚线边（effect=plain）与 NOT_INSTALLED（实心灰）区分开 */
@@ -86,22 +94,87 @@ function upgradeTargets(row: K8sComponentStatus): string[] {
   return (row.availableVersions ?? []).filter((v) => v !== current)
 }
 
-const upgradeDialog = ref<{ visible: boolean; code: string; version: string; versions: string[] }>({
-  visible: false, code: '', version: '', versions: [],
-})
-
-function openUpgrade(row: K8sComponentStatus): void {
-  const versions = upgradeTargets(row)
-  if (!versions.length) return
-  // 候选按后端（recipe）顺序展示，默认选第一个 —— recipe 的版本列表约定为「新 → 旧」
-  upgradeDialog.value = { visible: true, code: row.code, version: versions[0] ?? '', versions }
+interface ApplyDialog {
+  visible: boolean
+  code: string
+  name: string
+  action: 'INSTALL' | 'UPGRADE'
+  version: string
+  versions: string[]
+  fields: K8sEditableField[]
+  /** 非 JSON 字段的当前值（动态类型，模板按 type 渲染不同控件） */
+  values: Record<string, any>
+  /** JSON 字段的文本（textarea 里编辑，提交时解析） */
+  jsonText: Record<string, string>
+  /**
+   * 打开时的初始值快照。提交时**只发改动过的字段** —— 未改的沿用后端合并规则里的
+   * 「上次快照」基线，否则每次升级都会把用户上次改的值重置成 recipe 默认值。
+   */
+  initial: Record<string, string>
 }
 
-function confirmUpgrade(): void {
-  const d = upgradeDialog.value
-  if (!d.version) return
+const applyDialog = ref<ApplyDialog>({
+  visible: false, code: '', name: '', action: 'INSTALL',
+  version: '', versions: [], fields: [], values: {}, jsonText: {}, initial: {},
+})
+
+function openInstall(row: K8sComponentStatus): void {
+  openApply(row, 'INSTALL')
+}
+
+function openUpgrade(row: K8sComponentStatus): void {
+  openApply(row, 'UPGRADE')
+}
+
+function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void {
+  const versions = action === 'UPGRADE' ? upgradeTargets(row) : []
+  if (action === 'UPGRADE' && !versions.length) return
+  const fields = row.editableFields ?? []
+  const values: Record<string, any> = {}
+  const jsonText: Record<string, string> = {}
+  const initial: Record<string, string> = {}
+  for (const f of fields) {
+    if (f.type === 'json') {
+      const text = JSON.stringify(f.defaultValue ?? {}, null, 2)
+      jsonText[f.key] = text
+      initial[f.key] = text
+    } else {
+      values[f.key] = f.defaultValue
+      initial[f.key] = JSON.stringify(f.defaultValue)
+    }
+  }
+  applyDialog.value = {
+    visible: true, code: row.code, name: row.name, action,
+    version: versions[0] ?? '', versions, fields, values, jsonText, initial,
+  }
+}
+
+function confirmApply(): void {
+  const d = applyDialog.value
+  const editable: Record<string, unknown> = {}
+  for (const f of d.fields) {
+    if (f.type === 'json') {
+      const text = d.jsonText[f.key] ?? ''
+      if (text === d.initial[f.key]) continue
+      try {
+        editable[f.key] = JSON.parse(text)
+      } catch {
+        ElMessage.error(`「${f.label}」不是合法 JSON`)
+        return
+      }
+    } else {
+      const value = d.values[f.key]
+      if (JSON.stringify(value) === d.initial[f.key]) continue
+      editable[f.key] = value
+    }
+  }
   d.visible = false
-  emit('apply', { code: d.code, action: 'UPGRADE', targetVersion: d.version })
+  emit('apply', {
+    code: d.code,
+    action: d.action,
+    targetVersion: d.action === 'UPGRADE' ? d.version : undefined,
+    editableValues: Object.keys(editable).length ? editable : undefined,
+  })
 }
 
 const rows = computed(() => props.statuses)
@@ -188,7 +261,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <template #default="{ row }">
           <template v-if="row.state === 'NOT_INSTALLED' && installable(row)">
             <el-button link type="primary" :loading="props.applying === row.code"
-                       @click="emit('apply', { code: row.code, action: 'INSTALL' })">
+                       @click="openInstall(row)">
               安装
             </el-button>
           </template>
@@ -212,18 +285,37 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="upgradeDialog.visible" title="选择升级版本" width="360px" append-to-body>
-      <div class="cc-upgrade-tip">
-        当前 chart 版本：<code>{{ installedChartVersion(upgradeDialog.code) ?? '未知' }}</code>
+    <el-dialog v-model="applyDialog.visible" width="480px" append-to-body
+               :title="`${applyDialog.action === 'INSTALL' ? '安装' : '升级'} ${applyDialog.name}`">
+      <div v-if="applyDialog.action === 'UPGRADE'" class="cc-form-row">
+        <span class="cc-form-label">目标版本</span>
+        <div class="cc-form-control">
+          <div class="cc-upgrade-tip">
+            当前 chart 版本：<code>{{ installedChartVersion(applyDialog.code) ?? '未知' }}</code>
+          </div>
+          <el-radio-group v-model="applyDialog.version">
+            <el-radio v-for="v in applyDialog.versions" :key="v" :value="v" class="cc-upgrade-option">
+              {{ v }}
+            </el-radio>
+          </el-radio-group>
+        </div>
       </div>
-      <el-radio-group v-model="upgradeDialog.version">
-        <el-radio v-for="v in upgradeDialog.versions" :key="v" :value="v" class="cc-upgrade-option">
-          {{ v }}
-        </el-radio>
-      </el-radio-group>
+      <div v-for="f in applyDialog.fields" :key="f.key" class="cc-form-row">
+        <span class="cc-form-label">{{ f.label }}</span>
+        <div class="cc-form-control">
+          <el-switch v-if="f.type === 'boolean'" v-model="applyDialog.values[f.key]" />
+          <el-input-number v-else-if="f.type === 'number'" v-model="applyDialog.values[f.key]" :min="0" />
+          <el-input v-else-if="f.type === 'json'" v-model="applyDialog.jsonText[f.key]"
+                    type="textarea" :rows="5" spellcheck="false" />
+          <el-input v-else v-model="applyDialog.values[f.key]" />
+        </div>
+      </div>
+      <div v-if="!applyDialog.fields.length && applyDialog.action === 'INSTALL'" class="cc-upgrade-tip">
+        该组件没有可编辑配置，将使用平台默认值安装。
+      </div>
       <template #footer>
-        <el-button @click="upgradeDialog.visible = false">取消</el-button>
-        <el-button type="primary" :disabled="!upgradeDialog.version" @click="confirmUpgrade">升级</el-button>
+        <el-button @click="applyDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="confirmApply">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -252,4 +344,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 /* ⚠️ el-dialog 内部节点没有 data-v-*，scoped 匹配不到 —— 非 scoped + 独有前缀（本仓既有约定） */
 .cc-upgrade-tip { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
 .cc-upgrade-option { display: block; margin: 6px 0; }
+.cc-form-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
+.cc-form-control { flex: 1 1 auto; min-width: 0; }
 </style>

@@ -47,7 +47,12 @@ const operations = useComponentOperations(computed(() => clusterId.value || null
 const applying = ref<string | null>(null)
 
 /** 安装/升级：确认 → 发起 → 轮询 → 成功后刷新探测 */
-async function onApply(p: { code: string; action: 'INSTALL' | 'UPGRADE'; targetVersion?: string }): Promise<void> {
+async function onApply(p: {
+  code: string
+  action: 'INSTALL' | 'UPGRADE'
+  targetVersion?: string
+  editableValues?: Record<string, unknown>
+}): Promise<void> {
   const target = components.statusOf(p.code)
   try {
     await ElMessageBox.confirm(
@@ -64,7 +69,7 @@ async function onApply(p: { code: string; action: 'INSTALL' | 'UPGRADE'; targetV
   }
   applying.value = p.code
   try {
-    const id = await operations.apply(p.code, p.action, p.targetVersion)
+    const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues)
     const op = await operations.wait(id)
     if (op.status === 'SUCCESS') {
       ElMessage.success('操作完成，正在刷新探测…')

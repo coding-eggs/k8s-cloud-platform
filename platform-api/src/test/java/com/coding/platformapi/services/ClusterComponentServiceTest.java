@@ -217,6 +217,37 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void editableFieldsCarryKeyLabelTypeAndDefault() {
+        // 前端据此渲染表单；契约值（🔒）不在其中
+        ClusterComponentService svc = svc(List.of(probe("kube-system", false, null, null, null)));
+
+        var fields = find(svc.status("c1"), "metrics-server").getEditableFields();
+
+        assertThat(fields).hasSize(1);
+        assertThat(fields.get(0).getKey()).isEqualTo("replicas");
+        assertThat(fields.get(0).getType()).isEqualTo("number");
+        assertThat(fields.get(0).getDefaultValue()).isEqualTo(1);
+        assertThat(fields.get(0).getLabel()).isEqualTo("副本数");
+    }
+
+    @Test
+    void prometheusExposesTheFourEditableFieldsIncludingJsonStorageSpec() {
+        ClusterComponentService svc = svc(List.of());
+
+        var fields = find(svc.status("c1"), "prometheus-operator").getEditableFields();
+
+        assertThat(fields).extracting(com.coding.platformapi.models.EditableFieldDTO::getKey)
+                .containsExactlyInAnyOrder(
+                        "prometheus.prometheusSpec.retention",
+                        "prometheus.prometheusSpec.storageSpec",
+                        "prometheus.prometheusSpec.replicas",
+                        "grafana.enabled");
+        assertThat(fields).filteredOn(f -> f.getKey().endsWith("storageSpec"))
+                .singleElement()
+                .satisfies(f -> assertThat(f.getType()).isEqualTo("json"));
+    }
+
+    @Test
     void whenTheProfileCannotBeReadTheVersionListIsEmpty() {
         // 画像读不到 → 取不到 recipe → 版本列表为空（探测本身照常，不因此整体失败）
         ClusterService failing = mock(ClusterService.class);

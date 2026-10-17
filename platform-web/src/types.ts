@@ -916,6 +916,16 @@ export interface K8sComponentStatus {
   features: string[]
   /** 平台可安装的 chart 版本（空 = 没有 recipe，不支持安装）；⚠️ chart 版本，与上面 version 不是一套编号 */
   availableVersions?: string[]
+  /** 可编辑配置项（⚙️，来自 recipe）；契约值（🔒）不在其中 */
+  editableFields?: K8sEditableField[]
+}
+
+/** 组件的一个可编辑配置项；key 是路径形式，apply 时原样回传 */
+export interface K8sEditableField {
+  key: string
+  label: string
+  type: 'string' | 'number' | 'boolean' | 'json'
+  defaultValue: unknown
 }
 
 /** 组件安装/升级操作（S3.6）。chart 版本与应用版本是两套编号 —— from/to 指 chart 版本 */

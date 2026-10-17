@@ -69,6 +69,10 @@ public class ComponentRecipeCatalog {
             Map.of(
                     "prometheus.prometheusSpec.retention", "15d",
                     "prometheus.prometheusSpec.replicas", 1,
+                    // 默认不写 storageClassName：空串在 K8s 里表示"不用动态供给"，会装出一个 Pending 的 PVC
+                    "prometheus.prometheusSpec.storageSpec", Map.of(
+                            "volumeClaimTemplate", Map.of("spec", Map.of(
+                                    "resources", Map.of("requests", Map.of("storage", "50Gi"))))),
                     "grafana.enabled", true)));
 
     // ==================== gateway-api ====================
@@ -181,6 +185,20 @@ public class ComponentRecipeCatalog {
         return Map.of(
                 BUSINESS, new ComponentRecipe(BUSINESS, releases, requires),
                 MANAGEMENT, new ComponentRecipe(MANAGEMENT, releases, requires));
+    }
+
+    /** 可编辑字段的展示文案（key 是路径形式）；没有登记的 key 原样显示 */
+    private static final Map<String, String> EDITABLE_LABELS = Map.of(
+            "prometheus.prometheusSpec.retention", "指标保留时长（如 15d）",
+            "prometheus.prometheusSpec.storageSpec", "存储配置（JSON）",
+            "prometheus.prometheusSpec.replicas", "Prometheus 副本数",
+            "grafana.enabled", "部署 Grafana",
+            "replicaCount", "副本数",
+            "autoscaleEnabled", "自动扩缩容",
+            "replicas", "副本数");
+
+    public static String labelOf(String key) {
+        return EDITABLE_LABELS.getOrDefault(key, key);
     }
 
     /** 没有安装方式的组件返回 null；调用方据此禁用安装按钮 */

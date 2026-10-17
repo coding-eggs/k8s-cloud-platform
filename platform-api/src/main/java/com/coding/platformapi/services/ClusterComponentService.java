@@ -12,6 +12,7 @@ import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
+import com.coding.platformapi.models.EditableFieldDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -161,6 +162,42 @@ public class ClusterComponentService {
                 .toList();
     }
 
+    /** 可编辑配置项（⚙️）：按各 release 声明的 editableValues 展平、同 key 去重 */
+    private List<EditableFieldDTO> editableFields(String code, String profile) {
+        ComponentRecipe recipe = recipes.recipeOf(code, profile);
+        if (recipe == null) {
+            return List.of();
+        }
+        Map<String, EditableFieldDTO> byKey = new LinkedHashMap<>();
+        for (ReleaseSpec r : recipe.releases()) {
+            r.editableValues().forEach((key, defaultValue) ->
+                    byKey.putIfAbsent(key, field(key, defaultValue)));
+        }
+        return List.copyOf(byKey.values());
+    }
+
+    private static EditableFieldDTO field(String key, Object defaultValue) {
+        EditableFieldDTO f = new EditableFieldDTO();
+        f.setKey(key);
+        f.setLabel(ComponentRecipeCatalog.labelOf(key));
+        f.setType(typeOf(defaultValue));
+        f.setDefaultValue(defaultValue);
+        return f;
+    }
+
+    private static String typeOf(Object defaultValue) {
+        if (defaultValue instanceof Boolean) {
+            return "boolean";
+        }
+        if (defaultValue instanceof Number) {
+            return "number";
+        }
+        if (defaultValue instanceof Map || defaultValue instanceof List) {
+            return "json";
+        }
+        return "string";
+    }
+
     /** 四态合成：**探测失败 = UNKNOWN，不是 NOT_INSTALLED**（集群断开时说"没装"是本仓修过的坑） */
     private ComponentStatusDTO compose(ComponentDef def, Map<String, WorkloadProbeResultDTO> byCode,
                                        Map<String, List<String>> groups, String profile) {
@@ -169,6 +206,7 @@ public class ClusterComponentService {
         s.setName(def.name());
         s.setFeatures(def.features());
         s.setAvailableVersions(availableVersions(def.code(), profile));
+        s.setEditableFields(editableFields(def.code(), profile));
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现
