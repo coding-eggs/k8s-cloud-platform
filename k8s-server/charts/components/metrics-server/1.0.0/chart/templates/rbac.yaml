@@ -42,13 +42,31 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: metrics-server-auth-reader
-  namespace: kube-system
+  namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: extension-apiserver-authentication-reader
+subjects:
+  - kind: ServiceAccount
+    name: metrics-server
+    namespace: {{ .Release.Namespace }}
+---
+# ⚠️ 缺这一条时：APIService 显示 Available，但 kubectl top / metrics API 一调就 500 ——
+#    metrics-server 要创建 SubjectAccessReview 做鉴权委托，没有 system:auth-delegator 会被拒。
+#    （2026-10-17 本集群实装时踩到，报错 "cannot create resource subjectaccessreviews"）
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: metrics-server:system:auth-delegator
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
 subjects:
   - kind: ServiceAccount
     name: metrics-server

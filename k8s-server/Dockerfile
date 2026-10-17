@@ -26,6 +26,24 @@
 
 FROM eclipse-temurin:21-jre
 
+# S3.6：组件安装靠 PATH 上的 helm 二进制（HelmRunner 直接调 `helm`）。
+# ⚠️ 版本必须与平台验证过的一致：Helm 4 用 --rollback-on-failure，没有 --atomic。
+# ⚠️ 构建机需要能访问 get.helm.sh（内网可用 --build-arg HELM_BASE_URL=<镜像站>）；
+#    需要出网代理时按惯例传 --build-arg HTTP_PROXY/HTTPS_PROXY。
+ARG HELM_VERSION=v4.2.0
+ARG HELM_BASE_URL=https://get.helm.sh
+ARG TARGETARCH
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && curl -fsSL "${HELM_BASE_URL}/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" -o /tmp/helm.tgz \
+ && tar -xzf /tmp/helm.tgz -C /tmp \
+ && mv "/tmp/linux-${TARGETARCH}/helm" /usr/local/bin/helm \
+ && chmod +x /usr/local/bin/helm \
+ && helm version --short \
+ && rm -rf /tmp/helm.tgz "/tmp/linux-${TARGETARCH}" \
+ && apt-get purge -y --auto-remove curl \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -u 1001 app
 WORKDIR /app
 # S3.6：组件安装用的内置 chart（文本目录，不是 tgz）
