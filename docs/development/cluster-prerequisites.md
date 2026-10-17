@@ -206,6 +206,104 @@ curl -sG "$THANOS/api/v1/query" --data-urlencode \
 
 ---
 
+### 1.8 告警链路：Alertmanager 要指到平台（S2.2 的前置）
+
+**为什么**：平台有 `PrometheusRule` CRUD 和告警列表，但**告警事件是 Alertmanager 推过来的** ——
+集群侧的 receiver 不指过来，列表永远空的，而这件事**不会报错**。基线配置里
+`route.receiver: "null"`（所有告警进这里、全丢）是 operator 的默认兜底，不改就一直丢。
+
+对象：Helm release `ps`（kube-prometheus-stack 88.6.2，`monitor` 命名空间）/ Alertmanager v0.34.0 /
+Prometheus Operator v0.93.1。
+
+**① 先改 Helm values（否则第 ② 步会"看起来能用"）**
+
+```yaml
+alertmanager:
+  alertmanagerSpec:
+    alertmanagerConfigMatcherStrategy:
+      type: OnNamespaceExceptForAlertmanagerNamespace
+```
+
+理由：默认 `OnNamespace` 会让 operator 往 AMC 的一级路由**注入 `namespace="monitor"` 的 matcher**。
+`monitor` 恰好是集群自带规则与 Watchdog 所在的命名空间，所以**收得到一部分告警、看起来是通的**，
+而别的命名空间全丢 —— 这是最容易漏的一条。别用 `None`（那会把集群里**所有人**的 AMC 语义一起放宽）。
+
+```bash
+helm upgrade ps prometheus-community/kube-prometheus-stack -n monitor -f values.yaml --version 88.6.2
+```
+
+**② 建 Secret + AlertmanagerConfig（都在 `monitor`）**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-alert-token
+  namespace: monitor
+type: Opaque
+stringData:
+  # 必须与 platform-api 的 ALERT_WEBHOOK_TOKEN 是同一个值
+  token: <平台共享密钥>
+---
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: platform-webhook
+  namespace: monitor          # 必须在这里 —— ① 的策略只对 Alertmanager 自己所在命名空间开口子
+spec:
+  route:
+    receiver: platform
+    groupBy: ['namespace', 'alertname']
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 12h
+  receivers:
+    - name: platform
+      webhookConfigs:
+        # ⚠️ clusterId 是**必填查询参数**（平台纳管多集群，不能靠默认值）——
+        #    漏了平台会回 400，Alertmanager 侧表现为一直重试。
+        - url: http://<平台地址>/alert/webhook?clusterId=<集群 id>
+          sendResolved: true      # ⚠️ 不给 true，平台里的告警**永远停在 firing**（恢复事件根本不来）
+          timeout: 10s
+          httpConfig:
+            authorization:
+              type: Bearer        # CRD 里 "Basic" 不支持
+              credentials:
+                name: platform-alert-token
+                key: token
+```
+
+字段名按 CRD 核对过：AMC 里是 **`sendResolved`**（不是原生配置的 `send_resolved`）；
+`httpConfig.authorization.credentials` 是 SecretKeySelector；`url` 与 `urlSecret` 二选一。
+
+**③ 平台侧**
+
+- `ALERT_WEBHOOK_TOKEN` 必须配 —— **不配 platform-api 直接拒启**（fail-closed，有意为之）。
+- 放行有三处、缺一不可：`spring.security.ignore-urls`（跳过 JWT 认证）、`ExemptPaths`（跳过权限表）、
+  `ResourceServerConfig` 的 `bearerTokenResolver` 对该路径不解析 Bearer。**只加 ExemptPaths 是不够的**
+  —— 认证层会先把带 `Authorization: Bearer <共享密钥>` 的请求当 JWT 解、解不开就 401。
+
+**④ 验证（每步独立可判）**
+
+```bash
+# 1. operator 接受了 AMC
+kubectl get secret alertmanager-ps-kube-prometheus-stack-alertmanager-generated -n monitor \
+  -o jsonpath='{.data.alertmanager\.yaml}' | base64 -d | grep -A3 platform
+#    期望：platform 那条路由**不应**出现 namespace="monitor" 的 matcher
+
+# 2. 网络与配置通了（平台端点此时 404 也算通 —— 能收到 404 就说明请求到得了）
+kubectl logs -n monitor alertmanager-ps-kube-prometheus-stack-alertmanager-0 -c alertmanager --tail=50 | grep -i webhook
+
+# 3. 平台这一侧：调 POST /alert/self-test?clusterId=<id> → status=200、rowCount≥1
+
+# 4. sendResolved 生效：让一条告警 firing 再恢复，列表里那行应从 firing **原地**变 resolved
+```
+
+> `Watchdog`（永远 firing 的心跳）**不在集群侧排除** —— 平台默认过滤并给了开关（§1.8 的 AMC 里不要加排除路由）。
+> 回退：删掉 `AlertmanagerConfig/platform-webhook` 即可（基线那条 `null` receiver 一直没动过）。
+
+---
+
 ## 2. 一条命令核对
 
 ```bash

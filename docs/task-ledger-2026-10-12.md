@@ -375,11 +375,39 @@
 
 #### S2.2 告警 ｜ 规模 L
 > 已定：PrometheusRule 做；**Alertmanager 已部署、平台不做其管理面、不对外暴露**；webhook 落库；发送渠道待定。
+>
+> **已实施待部署**（2026-10-17，19 任务；[spec](superpowers/specs/2026-10-17-alerting-design.md) ·
+> [plan](superpowers/plans/2026-10-17-alerting.md)）。全项目 `mvn test` **1193 绿**；前端 type-check + build 绿；
+> 真集群与真库都验过（见下）。
 
-- [ ] S2.2.1 `PrometheusRule` CRUD（通用 CRD 范式，同 Calico/Gateway）
-- [ ] S2.2.2 平台侧**按 Alertmanager `/api/v2/alerts` 契约**的接收端点（集群侧 receiver 指向它）
-- [ ] S2.2.3 告警落库 + 列表页 + 权限点
+- [x] S2.2.1 `PrometheusRule` CRUD（通用 CRD 范式，同 Calico/Gateway）
+- [x] S2.2.2 平台侧接收端点 —— ⚠️ **不是 `/api/v2/alerts` 契约**：Alertmanager 的 webhook receiver 推的是
+      `[]Alert` 数组，形状与 `GET /api/v2/alerts` **返回**一致，但与那个端点的**查询参数**无关。
+      端点 `POST /alert/webhook?clusterId=<id>`，**回真实 HTTP 状态码**（401/400/200）
+- [x] S2.2.3 告警落库 + 列表页 + 权限点
 - [ ] S2.2.4（待定）发送渠道 —— 用户明确「后续如何发送待定」，不要提前做
+
+> **三块**：① PrometheusRule CRUD（逐层照抄 ServiceMonitor，`groups`/`rules` 都是 atomic list →
+> 按组名/规则名对齐的 fetch-overlay）；② 运行状态回读（`k8s_cluster.prometheus_url` + `/api/v1/rules`，
+> **K8s 对象是唯一真源**，Prometheus 只补状态，拉不到就是「未知」且 CRUD 照常）；③ Alertmanager webhook 落库 + 列表。
+>
+> **真实测**：① 对齐算法拿真集群数据跑 —— 36 条 CR 全部 loaded、280 条规则 0 条 unknown、
+> `AlertmanagerClusterCrashlooping=ok/firing`；② webhook 真机连投两次 → `accepted:1` 且库里**只有 1 行**
+> （幂等键 `(cluster_id, fingerprint, starts_at)` 生效）、`.123456` 截成 `.123`；③ 五种状态码逐个 curl 验过。
+>
+> **⚠️ 计划里的两处错误已在实施中纠正**（都会让功能看起来能用、实际不可用）：
+> 1. 「进 `ExemptPaths` 就跳过 JWT 鉴权」**不对** —— 那只跳权限表；认证层还要 `spring.security.ignore-urls`。
+> 2. 即便放行，带 `Authorization: Bearer <共享密钥>` 的请求会被 **JWT 解码器**先 401 ——
+>    `ResourceServerConfig.bearerTokenResolver` 必须对 `/alert/webhook` 返回 null。
+>
+> **⚠️ 部署前提**：`ALERT_WEBHOOK_TOKEN` 必须配置，否则 **platform-api 拒启**（fail-closed，有意为之）。
+>
+> **部署**：先重放 **`V2026_10_17_3__alerting.sql`**（注意不是计划里写的 10_17_1 —— 那个号被
+> 「租户 RBAC 模板 CRD 组」占了，10_17_2 被网格拓扑占了），**再**起新构建；重建
+> **platform-data + platform-common + k8s-core + k8s-server + platform-api + platform-web**；
+> **重新登录**（权限行变了）。集群侧四步见 `docs/development/cluster-prerequisites.md` §1.8 ——
+> 其中 `alertmanagerConfigMatcherStrategy` 与 `sendResolved` **配错会静默半工作**，必须逐条验。
+
 
 #### S2.3 日志采集 + OTel 采集 ｜ 规模 L（范围待 D3 澄清）
 > 依赖：端点与凭据走 S0.2；存储为 ES（用户在 `platform-system` 自建）。
@@ -756,7 +784,7 @@
 | **S1.2** | 集群组件展示 | — | M | ✅ **已实施待部署**（2026-10-17；9 任务 / 全模块测试绿；真集群实测 10 装 1 缺）。部署：**k8s-server + platform-api + platform-web**，先重放 `V2026_10_17_4` | [spec](superpowers/specs/2026-10-17-cluster-components-design.md) · [plan](superpowers/plans/2026-10-17-cluster-components.md) |
 | **S1.3** | 平台总览 | — | M | ⬜ 未开始 | — |
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16 收口；**2026-10-17 用户验收通过，需求完结**） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
-| **S2.2** | 告警 | — | L | ⬜ 未开始 | — |
+| **S2.2** | 告警 | — | L | ✅ **已实施待部署**（2026-10-17；19 任务 / 全项目 1193 绿）。部署：**先重放 `V2026_10_17_3` 再起构建**，重建 platform-data + platform-common + k8s-core + k8s-server + platform-api + platform-web，**重新登录**；⚠️ `ALERT_WEBHOOK_TOKEN` 不配则 platform-api **拒启**；集群侧四步见 cluster-prerequisites §1.8（matcherStrategy 与 sendResolved 会静默半工作） | [spec](superpowers/specs/2026-10-17-alerting-design.md) · [plan](superpowers/plans/2026-10-17-alerting.md) |
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ⬜ 未开始 | — |
 | **S2.4** | 服务网格可视化 | — | M-L | ✅ **已实施待部署**（2026-10-17）。部署：**platform-api + platform-web**，先重放 `V2026_10_17_2`。S2.4.4 **已实测回答**；**S2.4.3 链路追踪后期会做**（集群里现在没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) · [plan](superpowers/plans/2026-10-17-mesh-topology.md) |
 | **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
