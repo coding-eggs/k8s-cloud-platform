@@ -194,7 +194,7 @@ public class ComponentInstallController implements AccessBoundaryAware {
         accessResolver.assertClusterAccess(request.getClusterId());
         if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())
                 || isBlank(request.getEndpoint()) || isBlank(request.getBucket())
-                || isBlank(request.getTargetSecretName())) {
+                || isBlank(request.getTargetNamespace()) || isBlank(request.getTargetSecretName())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "Thanos 对象存储参数不完整");
         }
         var client = clientFactory.getAdminClient(request.getClusterId());
@@ -216,14 +216,14 @@ public class ComponentInstallController implements AccessBoundaryAware {
         Secret target = new SecretBuilder()
                 .withNewMetadata()
                 .withName(request.getTargetSecretName())
-                .withNamespace(request.getNamespace())
+                .withNamespace(request.getTargetNamespace())
                 .addToLabels("platform.coding/managed", "true")
                 .addToLabels("platform.coding/component", "prometheus-operator")
                 .endMetadata()
                 .withType("Opaque")
                 .addToStringData(ThanosObjstoreObjects.OBJSTORE_KEY, objstore)
                 .build();
-        client.secrets().inNamespace(request.getNamespace())
+        client.secrets().inNamespace(request.getTargetNamespace())
                 .resource(target)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>();

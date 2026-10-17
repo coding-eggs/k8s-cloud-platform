@@ -483,7 +483,7 @@ class ComponentInstallServiceTest {
                 op -> "SUCCESS".equals(op.getStatus())));
         org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(client);
         inOrder.verify(client).applyThanosObjstore("c1", "monitor", "minio-creds",
-                "minio.default.svc:9000", "thanos", true, "platform-thanos-objstore");
+                "minio.default.svc:9000", "thanos", true, "monitor", "platform-thanos-objstore");
         inOrder.verify(client).applyComponent(anyString(), anyString(), anyString(), any());
     }
 

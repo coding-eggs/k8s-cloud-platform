@@ -71,7 +71,7 @@ public class K8sComponentClient {
      */
     public void applyThanosObjstore(String clusterId, String namespace, String secretName,
                                     String endpoint, String bucket, boolean insecureSkipVerify,
-                                    String targetSecretName) {
+                                    String targetNamespace, String targetSecretName) {
         ThanosObjstoreRequestDTO body = new ThanosObjstoreRequestDTO();
         body.setClusterId(clusterId);
         body.setNamespace(namespace);
@@ -79,6 +79,7 @@ public class K8sComponentClient {
         body.setEndpoint(endpoint);
         body.setBucket(bucket);
         body.setInsecureSkipVerify(insecureSkipVerify);
+        body.setTargetNamespace(targetNamespace);
         body.setTargetSecretName(targetSecretName);
         gateway.exchange(HttpMethod.POST, "/components/thanos-objstore", null, body,
                 gateway.responseType(Void.class));

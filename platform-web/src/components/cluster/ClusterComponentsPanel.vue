@@ -383,12 +383,13 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </div>
       </div>
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
-        <span class="cc-form-label">Thanos 命名空间</span>
+        <span class="cc-form-label">凭证 Secret 所在命名空间</span>
         <div class="cc-form-control">
           <el-select v-model="applyDialog.thanos.namespace" filterable allow-create style="width: 100%"
                      @change="() => refreshSecretOptions()">
             <el-option v-for="ns in applyDialog.namespaceOptions" :key="ns" :label="ns" :value="ns" />
           </el-select>
+          <div class="cc-form-hint">凭证可以放在任意命名空间；Thanos 本身装在 monitor</div>
         </div>
       </div>
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">

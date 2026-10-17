@@ -378,7 +378,7 @@ public class ComponentInstallService {
             if (thanos != null) {
                 client.applyThanosObjstore(clusterId, thanos.getNamespace(), thanos.getSecretName(),
                         thanos.getEndpoint(), thanos.getBucket(), thanos.isInsecureSkipVerify(),
-                        THANOS_OBJSTORE_SECRET);
+                        thanosReleaseNamespace(releases), THANOS_OBJSTORE_SECRET);
             }
             ComponentInstallResultDTO result =
                     client.applyComponent(clusterId, componentCode, action, toDtos(releases));
@@ -444,6 +444,15 @@ public class ComponentInstallService {
     private String resolveAlertWebhookUrl(String requested, String previous) {
         String value = firstNonBlank(requested, previous, alertWebhookBaseUrl);
         return value == null ? null : value.trim();
+    }
+
+    /** Thanos 的部署命名空间（Pod 只能挂本 ns 的 Secret）：取 recipe 里那个 release 的 ns */
+    private static String thanosReleaseNamespace(List<ReleaseSpec> releases) {
+        return releases.stream()
+                .filter(r -> r.releaseName().equals("platform-thanos"))
+                .map(ReleaseSpec::namespace)
+                .findFirst()
+                .orElse("monitor");
     }
 
     /** 表单值优先，其次上次成功里的值，最后平台配置；只做 trim */
