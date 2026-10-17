@@ -206,6 +206,9 @@
 >   **按镜像仓库片段匹配**（真集群上一半工作负载名带 Helm release 前缀）；DaemonSet 健康用
 >   `numberReady/desiredNumberScheduled`（`readyReplicas` 实测为空）。k8s-server 新增 `POST /workload-probes`
 >   （**UPSTREAM**，租户可达），候选命名空间必须落在 `platform.k8s.probe-namespaces` 清单内，越界**整请求 400**。
+> - **纯 CRD 组件的版本**（2026-10-17 追加）：探测契约扩一种 `kind=crd`（集群级，按名字 get 一次），
+>   版本读 CRD 的 `*bundle-version` 标签/注解 —— Gateway API 因此能显示实测 `v1.6.2`（真集群确认）。
+>   CRD 不受命名空间清单约束，另配 `platform.k8s.crd-probes`（有默认值）。
 > - **派生**：`ClusterComponentService` → 四态（HEALTHY / UNHEALTHY / NOT_INSTALLED / **UNKNOWN**）+ Redis 45s 缓存，
 >   两个投影：`/cluster/components`（全量，管理员）与 `/cluster/component-flags`（功能旗标，租户可读）。
 >   **UNKNOWN 与 NOT_INSTALLED 严格分开**：探测失败/未探测不得说成"没装"。
@@ -232,9 +235,11 @@
 > `nfs-subdir-external-provisioner` / `snapshot-controller` 不展示 ·
 > **`eck-operator` 推迟到 S2.3**（日志采集开工时先决定它进不进这份清单）。
 >
-> **待清理项**：`MeshOperations.ambient()` + `K8sMeshClient.meshAmbient()` + k8s-server `POST /mesh/status`
-> 已无调用方（本批有意不删 —— 删它要连带改 `MeshController` 与其测试，属独立的一次清理）。
-> **别在别处再新调它**，那会造出第二份 ztunnel 探测。
+> **残留清理（2026-10-17 第二批完成）**：`POST /mesh/status` + `MeshOperations` + `AdminMeshProbeResult` +
+> `K8sMeshClient.meshAmbient()` + `KubernetesOperationsFactory.getMeshOperation` 已删除（ztunnel 探测只剩组件清单一处）；
+> `/cluster/overview` 的 `capabilitySummary` 七 flag 与 `CapabilitySummaryDTO` 已删（前端换摘要后无消费方）；
+> `ClusterCapabilityService` 只剩 `groups` / `versionsOf` / `hasIstio`（group 存在性的唯一读取处），
+> `summary` / `hasTekton` 与不再使用的 group 常量一并删除。
 >
 > **真集群实测（2026-10-17，只读 `coding-cluster`）**：10 条工作负载判据全部命中（含
 > `ps-kube-prometheus-stack-operator` 这类 release 前缀名）；`metrics.k8s.io` 不在 apiservice 列表 →
@@ -243,7 +248,8 @@
 >
 > **部署**：重建 **k8s-server + platform-api + platform-web**。迁移 `V2026_10_17_4__cluster_components.sql`
 > （4 条权限行 + 6 条角色关联，**已在 dev 库重放并回查**）**先重放再起新构建**；k8s-server 新配置
-> `platform.k8s.probe-namespaces`（有默认值，不配也能跑）。无新外部依赖、无集群侧前提。
+> `platform.k8s.probe-namespaces` 与 `platform.k8s.crd-probes`（都有默认值，不配也能跑）。
+> 无新外部依赖、无集群侧前提。
 > ⚠️ **本仓没有 Flyway**，`db/migration/*.sql` 一律手工重放。
 
 
