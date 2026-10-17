@@ -15,7 +15,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type {
-  K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
+  K8sCalicoInstall, K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
   K8sThanosInstall, SecretRefOption,
 } from '@/types'
 
@@ -46,6 +46,8 @@ const emit = defineEmits<{
     thanosReceiveUrl?: string
     /** Thanos 安装参数（仅 thanosInstall 的组件，管理集群） */
     thanosInstall?: K8sThanosInstall
+    /** Calico 网络参数（仅 calicoNetwork 的组件） */
+    calicoInstall?: K8sCalicoInstall
   }): void
 }>()
 
@@ -137,7 +139,14 @@ interface ApplyDialog {
   initialThanosInstall: string
   namespaceOptions: string[]
   secretOptions: SecretRefOption[]
+  /** 该组件是否要填 Calico 网络参数（CIDR / 封装方式） */
+  showCalico: boolean
+  calico: K8sCalicoInstall
+  initialCalico: string
 }
+
+/** Calico 支持的封装方式（Installation CR 的取值） */
+const ENCAPSULATIONS = ['IPIP', 'VXLAN', 'IPIPCrossSubnet', 'VXLANCrossSubnet', 'None']
 
 const EMPTY_THANOS: K8sThanosInstall = {
   namespace: 'monitor', secretName: '', endpoint: '', bucket: '', insecureSkipVerify: false,
@@ -151,6 +160,8 @@ const applyDialog = ref<ApplyDialog>({
   showThanosInstall: false, thanos: { ...EMPTY_THANOS },
   initialThanosInstall: JSON.stringify(EMPTY_THANOS),
   namespaceOptions: [], secretOptions: [],
+  showCalico: false, calico: { podCidr: '', encapsulation: 'IPIP' },
+  initialCalico: '',
 })
 
 function openInstall(row: K8sComponentStatus): void {
@@ -179,6 +190,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
     }
   }
   const thanos: K8sThanosInstall = { ...EMPTY_THANOS }
+  const calico: K8sCalicoInstall = {
+    podCidr: row.defaultPodCidr ?? '',
+    encapsulation: row.defaultEncapsulation || 'IPIP',
+  }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
@@ -192,6 +207,9 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
     thanos,
     initialThanosInstall: JSON.stringify(thanos),
     namespaceOptions: [], secretOptions: [],
+    showCalico: !!row.calicoNetwork,
+    calico,
+    initialCalico: JSON.stringify(calico),
   }
   if (row.thanosInstall) {
     void loadThanosOptions()
@@ -256,6 +274,8 @@ function confirmApply(): void {
     // Thanos 安装参数：整组没改动就不发，后端沿用上次成功操作里记的
     thanosInstall: d.showThanosInstall && JSON.stringify(d.thanos) !== d.initialThanosInstall
       ? { ...d.thanos } : undefined,
+    calicoInstall: d.showCalico && JSON.stringify(d.calico) !== d.initialCalico
+      ? { ...d.calico } : undefined,
   })
 }
 
@@ -380,6 +400,22 @@ const anyUnknown = computed(() => unknownCount.value > 0)
               {{ v }}
             </el-radio>
           </el-radio-group>
+        </div>
+      </div>
+      <div v-if="applyDialog.showCalico" class="cc-form-row">
+        <span class="cc-form-label">Pod CIDR</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.calico.podCidr"
+                    placeholder="192.168.0.0/16" spellcheck="false" />
+          <div class="cc-form-hint">必须与集群现有 Pod CIDR 一致；写错会立即中断集群网络</div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showCalico" class="cc-form-row">
+        <span class="cc-form-label">封装方式</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.calico.encapsulation" style="width: 100%">
+            <el-option v-for="e in ENCAPSULATIONS" :key="e" :label="e" :value="e" />
+          </el-select>
         </div>
       </div>
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">

@@ -15,10 +15,11 @@ class ClusterComponentCatalogTest {
     private final ClusterComponentCatalog catalog = new ClusterComponentCatalog();
 
     @Test
-    void firstBatchIsExactlyTheElevenAgreedOnes() {
+    void theCatalogIsExactlyTheAgreedOnes() {
+        // tigera-operator 不再单独出现：它随 calico 的同一个 release 安装（不单独探测）
         assertThat(catalog.all()).extracting(ComponentDef::code).containsExactly(
                 "metrics-server", "prometheus-operator", "gateway-api", "istio", "istio-ambient",
-                "tekton", "tekton-operator", "calico", "tigera-operator", "cert-manager", "otel-operator");
+                "tekton", "tekton-operator", "calico", "cert-manager", "otel-operator");
     }
 
     @Test

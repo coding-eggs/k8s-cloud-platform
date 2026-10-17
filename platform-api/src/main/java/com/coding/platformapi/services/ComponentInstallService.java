@@ -14,6 +14,7 @@ import com.coding.platformapi.components.ValueTemplate;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
+import com.coding.platformapi.models.CalicoInstallRequest;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
@@ -138,6 +139,15 @@ public class ComponentInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "请选择 Thanos 的命名空间与凭证 Secret，并填写 MinIO 地址和桶名");
         }
+        // Calico 网络参数：表单 > 上次成功 > 平台配置；填错直接断网，缺一个就拒
+        CalicoInstallRequest calico = recipe.calicoNetwork()
+                ? resolveCalicoInstall(req.getCalicoInstall(), previousPlatform.get("calicoInstall"))
+                : null;
+        if (recipe.calicoNetwork() && (calico == null
+                || isBlank(calico.getPodCidr()) || isBlank(calico.getEncapsulation()))) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请填写 Calico 的 Pod CIDR 与封装方式（写错会立即中断集群网络）");
+        }
 
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
         String action = req.getAction() == null ? "INSTALL" : req.getAction();
@@ -150,7 +160,7 @@ public class ComponentInstallService {
         List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
                 parseSnapshot(last == null ? null : last.getValuesSnapshot()));
         // 占位符（${cluster.name} / ${thanos.receive.url}）在落库前解析 —— 配置缺失要立刻失败，不留失败记录
-        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl);
+        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico);
         String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
@@ -163,7 +173,7 @@ public class ComponentInstallService {
         op.setReleaseNames(JSON.writeValueAsString(
                 effective.stream().map(ReleaseSpec::releaseName).toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
-                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos)));
+                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -247,12 +257,15 @@ public class ComponentInstallService {
 
     /** 把 recipe 里的占位符替换成真实值（集群名、Thanos receive 地址） */
     @SuppressWarnings("unchecked")
-    private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId, String thanosUrl) {
+    private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId, String thanosUrl,
+                                            CalicoInstallRequest calico) {
         Map<String, String> context = new LinkedHashMap<>();
         context.put("cluster.name", clusterService.requireName(clusterId));
         context.put("thanos.receive.url", thanosUrl == null ? "" : thanosUrl);
-        context.put("calico.podCidr", calicoPodCidr == null ? "" : calicoPodCidr);
-        context.put("calico.encapsulation", calicoEncapsulation == null ? "" : calicoEncapsulation);
+        context.put("calico.podCidr", calico != null && calico.getPodCidr() != null
+                ? calico.getPodCidr() : (calicoPodCidr == null ? "" : calicoPodCidr));
+        context.put("calico.encapsulation", calico != null && calico.getEncapsulation() != null
+                ? calico.getEncapsulation() : (calicoEncapsulation == null ? "" : calicoEncapsulation));
         List<ReleaseSpec> out = new ArrayList<>();
         for (ReleaseSpec r : releases) {
             Map<String, Object> resolved =
@@ -280,7 +293,8 @@ public class ComponentInstallService {
      */
     private static Map<String, Object> snapshotWithPlatformInputs(List<ReleaseSpec> releases, ComponentRecipe recipe,
                                                                   String alertWebhookUrl, String thanosUrl,
-                                                                  ThanosInstallRequest thanos) {
+                                                                  ThanosInstallRequest thanos,
+                                                                  CalicoInstallRequest calico) {
         Map<String, Object> snapshot = snapshotOf(releases);
         Map<String, Object> platform = new LinkedHashMap<>();
         if (recipe.platformAlerting() && alertWebhookUrl != null) {
@@ -297,6 +311,12 @@ public class ComponentInstallService {
             t.put("bucket", thanos.getBucket());
             t.put("insecureSkipVerify", thanos.isInsecureSkipVerify());
             platform.put("thanosInstall", t);
+        }
+        if (recipe.calicoNetwork() && calico != null) {
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("podCidr", calico.getPodCidr());
+            c.put("encapsulation", calico.getEncapsulation());
+            platform.put("calicoInstall", c);
         }
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
@@ -335,6 +355,22 @@ public class ComponentInstallService {
         out.setInsecureSkipVerify(requested != null
                 ? requested.isInsecureSkipVerify()
                 : Boolean.TRUE.equals(prev.get("insecureSkipVerify")));
+        return out;
+    }
+
+    /** Calico 参数：表单 > 上次成功 > 平台配置 */
+    @SuppressWarnings("unchecked")
+    private CalicoInstallRequest resolveCalicoInstall(CalicoInstallRequest requested, Object previous) {
+        Map<String, Object> prev = previous instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+        CalicoInstallRequest out = new CalicoInstallRequest();
+        out.setPodCidr(firstNonBlank(
+                requested == null ? null : requested.getPodCidr(), asString(prev.get("podCidr")), calicoPodCidr));
+        out.setEncapsulation(firstNonBlank(
+                requested == null ? null : requested.getEncapsulation(),
+                asString(prev.get("encapsulation")), calicoEncapsulation));
+        if (isBlank(out.getPodCidr()) && isBlank(out.getEncapsulation())) {
+            return null;
+        }
         return out;
     }
 

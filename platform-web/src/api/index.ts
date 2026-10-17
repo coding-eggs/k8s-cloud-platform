@@ -18,6 +18,7 @@ import type {
   K8sComponentOperation,
   K8sComponentStatus,
   K8sThanosInstall,
+  K8sCalicoInstall,
   K8sNamespaceStatEntry,
   K8sTenantOverview,
   K8sConfigMap,
@@ -134,6 +135,8 @@ export const clusterApi = {
     thanosReceiveUrl?: string
     /** Thanos 安装参数（仅 thanosInstall 的组件；管理集群） */
     thanosInstall?: K8sThanosInstall
+    /** Calico 网络参数（仅 calicoNetwork 的组件） */
+    calicoInstall?: K8sCalicoInstall
   }) => http.post<never, number>('/cluster/components/apply', payload),
   /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
   componentOperation: (payload: {

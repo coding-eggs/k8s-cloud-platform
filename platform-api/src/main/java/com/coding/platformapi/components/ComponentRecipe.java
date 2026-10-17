@@ -12,22 +12,29 @@ import java.util.List;
  *                         （Secret {@code platform-alert-token} + AlertmanagerConfig {@code platform-webhook}）
  * @param thanosRemoteWrite 是否引用 {@code ${thanos.receive.url}}（表单里要填 Thanos Receive 地址）
  * @param thanosInstall     是否同时安装 Thanos（管理集群，表单里要填 MinIO/凭证 Secret）
+ * @param calicoNetwork     安装时是否要填 Pod CIDR 与封装方式（calico）
  */
 public record ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
-                              boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall) {
+                              boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
+                              boolean calicoNetwork) {
 
     /** 默认既不联动告警、也不上报 Thanos 的简写 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires) {
-        this(profile, releases, requires, false, false, false);
+        this(profile, releases, requires, false, false, false, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting) {
-        this(profile, releases, requires, platformAlerting, false, false);
+        this(profile, releases, requires, platformAlerting, false, false, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false, false);
+    }
+
+    public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
+                           boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall) {
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, false);
     }
 }

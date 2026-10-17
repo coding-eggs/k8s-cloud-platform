@@ -69,6 +69,13 @@ public class ClusterComponentService {
     /** Thanos Receive 地址的平台默认值：安装表单预填（remoteWrite 目标） */
     @Value("${thanos.receive.url:}")
     private String defaultThanosReceiveUrl;
+
+    /** Calico 表单的预填默认值（部署环境配置） */
+    @Value("${platform.calico.pod-cidr:}")
+    private String defaultPodCidr;
+
+    @Value("${platform.calico.encapsulation:}")
+    private String defaultEncapsulation;
     /** full 投影：状态 + 版本 + 命名空间 + detail + 功能映射（管理员） */
     public List<ComponentStatusDTO> status(String clusterId) {
         return cache.get(KEY_PREFIX + clusterId, TTL, LIST_TYPE, () -> probe(clusterId));
@@ -222,6 +229,9 @@ public class ClusterComponentService {
         s.setDefaultThanosReceiveUrl(recipe != null && recipe.thanosRemoteWrite()
                 ? defaultThanosReceiveUrl : null);
         s.setThanosInstall(recipe != null && recipe.thanosInstall());
+        s.setCalicoNetwork(recipe != null && recipe.calicoNetwork());
+        s.setDefaultPodCidr(recipe != null && recipe.calicoNetwork() ? defaultPodCidr : null);
+        s.setDefaultEncapsulation(recipe != null && recipe.calicoNetwork() ? defaultEncapsulation : null);
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现

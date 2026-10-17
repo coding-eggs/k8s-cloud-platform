@@ -13,20 +13,10 @@ class ComponentRecipeCatalogTest {
 
     private final ComponentRecipeCatalog catalog = new ComponentRecipeCatalog();
 
-    /**
-     * 有意没有独立 recipe 的组件：calico 把 operator + Installation 作为一个整体安装
-     * （两个 recipe 共用同一 release 会在"升级 operator"时删掉 Installation CR → 断网）。
-     */
-    private static final java.util.Set<String> PROBE_ONLY = java.util.Set.of("tigera-operator");
-
     @Test
     void everyCatalogComponentHasARecipeForBothProfiles() {
-        // 目录（探测）与 recipe（安装）必须一一对应：加了组件却忘了 recipe，面板会显示"暂不支持"
+        // tigera-operator 已从目录移除（随 calico 的 release 一起安装），所以每个组件都必须有 recipe
         for (ComponentDef def : new ClusterComponentCatalog().all()) {
-            if (PROBE_ONLY.contains(def.code())) {
-                assertThat(catalog.supports(def.code())).as(def.code()).isFalse();
-                continue;
-            }
             assertThat(catalog.supports(def.code())).as(def.code()).isTrue();
             for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
                 assertThat(catalog.recipeOf(def.code(), profile))
@@ -237,6 +227,8 @@ class ComponentRecipeCatalogTest {
     @Test
     void calicoIsInstalledAsAUnitAndDisablesUnneededSubComponents() {
         // operator + Installation 一个 release：不需要的 APIServer / Goldmane / Whisker 默认关闭
+        var recipe = catalog.recipeOf("calico", "BUSINESS");
+        assertThat(recipe.calicoNetwork()).as("安装表单要填 CIDR/封装").isTrue();
         Map<String, Object> values = catalogValues("calico");
         assertThat((Map<String, Object>) values.get("installation")).containsEntry("enabled", true);
         for (String key : List.of("apiServer", "goldmane", "whisker")) {

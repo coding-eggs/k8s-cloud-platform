@@ -143,8 +143,15 @@ public class ComponentRecipeCatalog {
      */
     private static final List<ReleaseSpec> ISTIO_RELEASES = List.of(
             new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.30.6", Map.of(), Map.of()),
-            new ReleaseSpec("istiod", "istio-system", "istio-istiod", "1.30.6", Map.of(),
-                    Map.of("replicaCount", 1, "autoscaleEnabled", true)),
+            // meshID 全局一致：管理平台下的所有集群共用同一个网格 ID（装完再改是破坏性操作）
+            // revision 有意不设：平台的升级不做按 revision 的灰度，设了反而要求命名空间打 istio.io/rev 标签
+            new ReleaseSpec("istiod", "istio-system", "istio-istiod", "1.30.6",
+                    Map.of("global", Map.of("meshID", "platform-mesh")),
+                    Map.of("replicaCount", 1,
+                            "autoscaleEnabled", true,
+                            "resources", Map.of(
+                                    "requests", Map.of("cpu", "100m", "memory", "256Mi"),
+                                    "limits", Map.of("cpu", "1", "memory", "1Gi")))),
             new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.30.6",
                     Map.of("ambient", Map.of("enabled", true)), Map.of()),
             new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of()),
@@ -248,7 +255,9 @@ public class ComponentRecipeCatalog {
             Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),
             Map.entry("tekton", profiles(TEKTON_RELEASES, List.of("tekton-operator"))),
             Map.entry("tekton-operator", profiles(TEKTON_OPERATOR_RELEASES, List.of())),
-            Map.entry("calico", profiles(CALICO_RELEASES, List.of())),
+            Map.entry("calico", Map.of(
+                    BUSINESS, new ComponentRecipe(BUSINESS, CALICO_RELEASES, List.of(), false, false, false, true),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, CALICO_RELEASES, List.of(), false, false, false, true))),
             Map.entry("cert-manager", profiles(CERT_MANAGER_RELEASES, List.of())),
             Map.entry("otel-operator", profiles(OTEL_OPERATOR_RELEASES, List.of("cert-manager"))));
 
@@ -279,6 +288,7 @@ public class ComponentRecipeCatalog {
             "grafana.enabled", "部署 Grafana",
             "replicaCount", "副本数",
             "autoscaleEnabled", "自动扩缩容",
+            "resources", "资源限制（JSON）",
             "replicas", "副本数");
 
     public static String labelOf(String key) {

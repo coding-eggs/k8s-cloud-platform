@@ -277,7 +277,9 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 |---|---|---|
 | 控制面命名空间固定 `istio-system` | 🔒 | S1.2 探测与平台网格页都按它找 |
 | **对外入口 gateway 名固定 `external-gateway`** | 🔒 | 集群对外入口拓扑依赖它（2026-10-16 实测：端口级 listener ×15、路由跨 ns 挂） |
-| `meshID` 全局一致（多集群时） | 🔒 | 跨集群网格 |
+| `meshID` 全局一致（多集群时） | 🔒 | 固定 `platform-mesh`：同一平台下的集群共用一个网格 ID（装完再改是破坏性操作） |
+| istiod 资源限制 | ⚙️ | 默认 requests 100m/256Mi、limits 1C/1Gi，可编辑 |
+| `revision` | 有意不设 | 平台的升级不做按 revision 的灰度；设了反而要求命名空间打 `istio.io/rev` 标签 |
 | ambient：`istio-cni` + `ztunnel` 两个子 chart | 🔒 | **`istio` recipe 默认就带这两个 release**（ambient 模式是默认部署形态，不进表单）；`istio-ambient` 的 recipe 是同一组 release 的幂等子集，`requires: [istio]` |
 | ambient：`dataplane-mode` / `use-waypoint` 标签由平台写 | 🔒 | 组件本身不管 |
 
@@ -300,16 +302,16 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | 值 | 类型 | 说明 |
 |---|---|---|
 | `installation.enabled=true` | 🔒 | operator + Installation **作为一个整体**安装 |
-| `installation.calicoNetwork.ipPools[0].cidr=${calico.podCidr}` | 🔒 | **装错断网**；必须与集群现有 Pod CIDR 一致（平台配置提供，空则拒装） |
-| `installation.calicoNetwork.ipPools[0].encapsulation=${calico.encapsulation}` | 🔒 | 与集群网络方案一致 |
+| `installation.calicoNetwork.ipPools[0].cidr` | 🔒（表单） | **装错断网**；安装表单里填，必须与集群现有 Pod CIDR 一致（平台配置只做预填默认值） |
+| `installation.calicoNetwork.ipPools[0].encapsulation` | 🔒（表单） | 与集群网络方案一致（IPIP / VXLAN / *CrossSubnet / None） |
 | `apiServer.enabled=false` / `goldmane.enabled=false` / `whisker.enabled=false` | 🔒 | Calico API Server / 流量日志 / 可视化 UI 平台用不到，chart 默认是开，显式关掉 |
 | tigera-operator 命名空间 `tigera-operator`；CNI 命名空间 `calico-system` | 🔒 | 探测位置 |
 
-- **`tigera-operator` 没有独立 recipe**（只有探测）：两个 recipe 共用同一 release 时，
-  "升级 operator"会以 `installation.enabled=false` 重放并把 Installation CR 删掉 → **断网**。
-  平台把 Calico 作为一个整体安装，`calico` 的 recipe 里同时创建 operator 与 Installation。
+- **`tigera-operator` 不是独立组件**（已从组件目录移除）：Calico 作为一个整体安装（operator + Installation）。
+  原因：两个 recipe 共用同一 release 时，"升级 operator"会以 `installation.enabled=false` 重放并把
+  Installation CR 删掉 → **断网**。
 - 对**已运行**的集群，本组件的安装/升级属最高风险档：UI 二次确认必须明示"可能中断集群网络"。
-- 可编辑：无（CIDR 由平台配置决定，不在 UI 里改）。
+- 可编辑：无 —— CIDR / 封装方式在**安装表单**里填（安装前必须确定），不进 values 编辑区。
 - **功能级验收**：探测 healthy + 节点间连通性抽样（平台无此能力 → 手工检查项）。
 
 ### 5.6 `cert-manager` / `otel-operator`

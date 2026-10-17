@@ -508,6 +508,59 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void theFormSuppliedCalicoCidrWinsOverThePlatformDefault() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "calico")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("calico", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-tigera-operator", "tigera-operator", "tigera-operator", "v3.33.0",
+                                Map.of("installation", Map.of("calicoNetwork", Map.of(
+                                        "ipPools", List.of(Map.of(
+                                                "cidr", "${calico.podCidr}",
+                                                "encapsulation", "${calico.encapsulation}"))))),
+                                Map.of())), List.of(), false, false, false, true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "calicoPodCidr", "10.0.0.0/16");
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "calicoEncapsulation", "VXLAN");
+
+        svc.apply(new ComponentApplyRequest("c1", "calico", "INSTALL", null, Map.of(), null, null, null,
+                new com.coding.platformapi.models.CalicoInstallRequest("172.16.0.0/16", "IPIP")), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), captor.capture());
+        assertThat(captor.getValue().get(0).getValues().toString())
+                .contains("172.16.0.0/16").contains("IPIP")
+                .doesNotContain("10.0.0.0/16");
+    }
+
+    @Test
+    void aMissingCalicoCidrIsRejectedBeforeInstalling() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("calico", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-tigera-operator", "tigera-operator", "tigera-operator", "v3.33.0",
+                                Map.of(), Map.of())), List.of(), false, false, false, true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "calicoPodCidr", "");
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "calico", "INSTALL", null, Map.of()), "admin"))
+                .hasMessageContaining("Pod CIDR");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
     void staleRunningOperationsAreMarkedUnknown() {
         PlatformComponentOperation stale = new PlatformComponentOperation();
         stale.setId(7L);

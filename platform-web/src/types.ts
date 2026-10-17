@@ -928,6 +928,17 @@ export interface K8sComponentStatus {
   defaultThanosReceiveUrl?: string | null
   /** 安装时是否同时安装 Thanos（管理集群的 Prometheus：要选命名空间/凭证 Secret、填 MinIO） */
   thanosInstall?: boolean
+  /** 安装时是否要填 Calico 的 Pod CIDR / 封装方式 */
+  calicoNetwork?: boolean
+  /** Calico 表单预填默认值 */
+  defaultPodCidr?: string | null
+  defaultEncapsulation?: string | null
+}
+
+/** Calico 网络参数（安装表单） */
+export interface K8sCalicoInstall {
+  podCidr: string
+  encapsulation: string
 }
 
 /** Thanos 安装参数（凭证在 Secret 里，不进表单） */

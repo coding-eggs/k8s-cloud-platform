@@ -47,4 +47,9 @@ public class ComponentStatusDTO {
     private String defaultThanosReceiveUrl;
     /** 该组件安装时是否同时安装 Thanos（管理集群的 Prometheus：表单要选命名空间/凭证 Secret、填 MinIO） */
     private boolean thanosInstall;
+    /** 安装时是否要填 Calico 的 Pod CIDR / 封装方式 */
+    private boolean calicoNetwork;
+    /** Calico 默认值（表单预填） */
+    private String defaultPodCidr;
+    private String defaultEncapsulation;
 }
