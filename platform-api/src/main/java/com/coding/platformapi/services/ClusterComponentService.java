@@ -199,6 +199,8 @@ public class ClusterComponentService {
         t.setKind(p.kind());
         t.setImageRepo(p.imageRepo());
         t.setName(p.name());
+        // CRD 判据要带上"读哪个标签"；漏了它只能靠 *bundle-version 兜底（能跑，但显式配置失效）
+        t.setVersionLabel(p.versionLabel());
         return t;
     }
 

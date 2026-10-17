@@ -1,6 +1,7 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
+import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
 import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
 import com.coding.platformapi.components.ComponentProbe;
@@ -8,6 +9,7 @@ import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import tools.jackson.databind.json.JsonMapper;
@@ -122,6 +124,26 @@ class ClusterComponentServiceTest {
         svc.status("c1");
 
         verify(client, times(2)).probe(eq("c1"), any());
+    }
+
+    @Test
+    void theCrdVersionLabelFromTheCatalogReachesTheAdapter() {
+        // catalog 里 gateway-api 指定读 gateway.networking.k8s.io/bundle-version —— 这个配置必须传到
+        // k8s-core，否则只能靠"任意 *bundle-version"兜底（显式配置形同虚设）
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterComponentService svc = new ClusterComponentService(
+                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cache());
+
+        svc.status("c1");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<WorkloadProbeTargetDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client).probe(eq("c1"), captor.capture());
+        WorkloadProbeTargetDTO crd = captor.getValue().stream()
+                .filter(t -> "crd".equals(t.getKind())).findFirst().orElseThrow();
+        assertThat(crd.getVersionLabel()).isEqualTo("gateway.networking.k8s.io/bundle-version");
+        assertThat(crd.getName()).isEqualTo("gateways.gateway.networking.k8s.io");
     }
 
     @Test
