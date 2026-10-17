@@ -73,6 +73,12 @@ public class ClusterService {
             throw new CloudPlatformException(EnumResponseType.NON_KUBE_CONFIG);
         }
 
+        String role = normalizeRole(req.getClusterRole());
+        if ("MANAGEMENT".equals(role) && clusterMapper.countByRole("MANAGEMENT") > 0) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "已经存在管理集群，全局只允许一个 MANAGEMENT");
+        }
+
         // 连通性测试（经 k8s-server 探测，临时 client 测完即关）
         adminClient.probe(req.getKubeconfig());
 
@@ -92,6 +98,7 @@ public class ClusterService {
         cluster.setGrafanaUrl(req.getGrafanaUrl());
         cluster.setStatus(K8sCluster.ClusterStatus.CONNECTED);
         cluster.setEnabled(1);
+        cluster.setClusterRole(role);
         cluster.setCreatedAt(now);
         cluster.setUpdatedAt(now);
         clusterMapper.insert(cluster);
@@ -152,6 +159,17 @@ public class ClusterService {
         K8sCluster old = require(req.getClusterId());
         K8sCluster upd = new K8sCluster();
         upd.setClusterId(req.getClusterId());
+
+        if (StringUtils.hasText(req.getClusterRole())) {
+            String role = normalizeRole(req.getClusterRole());
+            // 已经是 MANAGEMENT 的集群再保存不算"第二个"
+            if ("MANAGEMENT".equals(role) && !"MANAGEMENT".equals(normalizeRole(old.getClusterRole()))
+                    && clusterMapper.countByRole("MANAGEMENT") > 0) {
+                throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                        "已经存在管理集群，全局只允许一个 MANAGEMENT");
+            }
+            upd.setClusterRole(role);
+        }
 
         // kubeconfig：留空 = 保留原值；填写 = 重新探测 + 重新加密
         boolean kubeconfigChanged = false;
@@ -434,6 +452,25 @@ public class ClusterService {
     /**
      * 对外不暴露 kubeconfig（即使是密文也不下发）
      */
+    /** 画像归一：空 → BUSINESS；只接受两个值（避免库里出现第三个拼写） */
+    static String normalizeRole(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return "BUSINESS";
+        }
+        String role = raw.trim().toUpperCase();
+        if (!"MANAGEMENT".equals(role) && !"BUSINESS".equals(role)) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "clusterRole 只能是 MANAGEMENT 或 BUSINESS");
+        }
+        return role;
+    }
+
+    /** 组件安装用：取该集群的画像，缺省 BUSINESS */
+    public String requireProfile(String clusterId) {
+        K8sCluster cluster = require(clusterId);
+        return normalizeRole(cluster.getClusterRole());
+    }
+
     private K8sCluster sanitize(K8sCluster cluster) {
         cluster.setKubeconfig(null);
         return cluster;

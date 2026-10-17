@@ -16,8 +16,10 @@ import com.coding.common.models.k8s.dto.StorageStatDTO;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
 import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.platformapi.models.ClusterCreateRequest;
 import com.coding.platformapi.k8s.K8sLifecycleClient;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import tools.jackson.databind.json.JsonMapper;
@@ -255,6 +257,46 @@ class ClusterServiceTest {
     }
 
     // ==================== 造数据 ====================
+
+    // ==================== 集群画像（S3.6）====================
+
+    @Test
+    void createRejectsASecondManagementCluster() {
+        // 全局只允许一个 MANAGEMENT（平台自身所在集群）
+        when(clusterMapper.countByRole("MANAGEMENT")).thenReturn(1);
+        ClusterCreateRequest req = new ClusterCreateRequest();
+        req.setClusterName("second-mgmt");
+        req.setKubeconfig("dummy");
+        req.setClusterRole("MANAGEMENT");
+
+        assertThatThrownBy(() -> svc.create(req))
+                .hasMessageContaining("已经存在管理集群");
+    }
+
+    @Test
+    void createPersistsTheNormalizedRole() {
+        // AES_KEY 是 @Value 注入的，手工构造的 svc 里是 null —— 这里补上，否则加密 kubeconfig 时 NPE
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "AES_KEY", "test-aes-key");
+        when(clusterMapper.countByRole("MANAGEMENT")).thenReturn(1);
+        when(clusterMapper.selectByPrimaryKey(anyString())).thenReturn(new K8sCluster());
+        ClusterCreateRequest req = new ClusterCreateRequest();
+        req.setClusterName("biz-1");
+        req.setKubeconfig("dummy");
+
+        svc.create(req);
+
+        ArgumentCaptor<K8sCluster> captor = ArgumentCaptor.forClass(K8sCluster.class);
+        verify(clusterMapper).insert(captor.capture());
+        assertThat(captor.getValue().getClusterRole()).isEqualTo("BUSINESS");
+    }
+
+    @Test
+    void roleNormalizationRejectsUnknownValues() {
+        assertThat(ClusterService.normalizeRole("management")).isEqualTo("MANAGEMENT");
+        assertThat(ClusterService.normalizeRole(null)).isEqualTo("BUSINESS");
+        assertThatThrownBy(() -> ClusterService.normalizeRole("root"))
+                .hasMessageContaining("MANAGEMENT");
+    }
 
     private void stubCluster(String capabilityJson) {
         K8sCluster c = new K8sCluster();

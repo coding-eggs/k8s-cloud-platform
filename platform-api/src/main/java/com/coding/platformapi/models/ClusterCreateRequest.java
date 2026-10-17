@@ -37,4 +37,8 @@ public class ClusterCreateRequest {
 
     @Schema(description = "Grafana 地址（仅记录）")
     private String grafanaUrl;
+
+    @Schema(description = "集群画像：MANAGEMENT(平台自身所在集群) / BUSINESS(业务集群，默认)",
+            example = "BUSINESS")
+    private String clusterRole;
 }

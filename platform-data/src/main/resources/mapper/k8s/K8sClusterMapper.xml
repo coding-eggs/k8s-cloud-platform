@@ -20,10 +20,11 @@
     <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
     <result column="deleted_at" jdbcType="TIMESTAMP" property="deletedAt" />
     <result column="capability" jdbcType="VARCHAR" property="capability" />
+    <result column="cluster_role" jdbcType="VARCHAR" property="clusterRole" />
   </resultMap>
   <sql id="Base_Column_List">
     cluster_id, cluster_name, kubeconfig, version, istio_version, calico_version, container_runtime,
-    prometheus_url, grafana_url, description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at, capability
+    prometheus_url, grafana_url, description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at, capability, cluster_role
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
@@ -43,13 +44,13 @@
       istio_version, calico_version, container_runtime, prometheus_url, grafana_url,
       description, ip_stack, `status`,
       enabled, last_heartbeat_time, created_at,
-      updated_at, capability)
+      updated_at, capability, cluster_role)
     values (#{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR},
       #{istioVersion,jdbcType=VARCHAR}, #{calicoVersion,jdbcType=VARCHAR}, #{containerRuntime,jdbcType=VARCHAR},
       #{prometheusUrl,jdbcType=VARCHAR}, #{grafanaUrl,jdbcType=VARCHAR},
       #{description,jdbcType=VARCHAR}, #{ipStack,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
       #{enabled,jdbcType=BOOLEAN}, #{lastHeartbeatTime,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP},
-      #{updatedAt,jdbcType=TIMESTAMP}, #{capability,jdbcType=VARCHAR})
+      #{updatedAt,jdbcType=TIMESTAMP}, #{capability,jdbcType=VARCHAR}, #{clusterRole,jdbcType=VARCHAR})
   </insert>
   <insert id="insertSelective" keyColumn="cluster_id" keyProperty="clusterId" parameterType="com.coding.data.models.k8s.K8sCluster" useGeneratedKeys="true">
     insert into k8s_cluster
@@ -102,6 +103,9 @@
       <if test="capability != null">
         capability,
       </if>
+      <if test="clusterRole != null">
+        cluster_role,
+      </if>
     </trim>
     <trim prefix="values (" suffix=")" suffixOverrides=",">
       <if test="clusterName != null">
@@ -151,6 +155,9 @@
       </if>
       <if test="capability != null">
         #{capability,jdbcType=VARCHAR},
+      </if>
+      <if test="clusterRole != null">
+        #{clusterRole,jdbcType=VARCHAR},
       </if>
     </trim>
   </insert>
@@ -205,6 +212,9 @@
       <if test="capability != null">
         capability = #{capability,jdbcType=VARCHAR},
       </if>
+      <if test="clusterRole != null">
+        cluster_role = #{clusterRole,jdbcType=VARCHAR},
+      </if>
     </set>
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
   </update>
@@ -225,7 +235,11 @@
       last_heartbeat_time = #{lastHeartbeatTime,jdbcType=TIMESTAMP},
       created_at = #{createdAt,jdbcType=TIMESTAMP},
       updated_at = #{updatedAt,jdbcType=TIMESTAMP},
-      capability = #{capability,jdbcType=VARCHAR}
+      capability = #{capability,jdbcType=VARCHAR},
+      cluster_role = #{clusterRole,jdbcType=VARCHAR}
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
   </update>
+  <select id="countByRole" resultType="int">
+    select count(*) from k8s_cluster where cluster_role = #{clusterRole} and deleted_at is null
+  </select>
 </mapper>

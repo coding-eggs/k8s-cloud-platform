@@ -100,6 +100,12 @@ public class K8sCluster {
      */
     private String capability;
 
+    /**
+     * 集群画像：MANAGEMENT=平台自身所在集群（多装 Thanos 等底座）；BUSINESS=业务集群（默认）。
+     * 见 docs/superpowers/specs/2026-10-17-component-lifecycle-design.md §2.1
+     */
+    private String clusterRole;
+
 
     public enum IPStack {
         IPV4, IPV6 ,IPV4_AND_IPV6

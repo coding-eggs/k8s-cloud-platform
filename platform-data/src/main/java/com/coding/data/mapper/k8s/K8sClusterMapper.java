@@ -22,4 +22,7 @@ public interface K8sClusterMapper {
     int updateByPrimaryKey(K8sCluster record);
 
     List<K8sCluster> listAll();
+
+    /** 某画像的集群数量（创建/编辑时保证 MANAGEMENT 全局唯一） */
+    int countByRole(@Param("clusterRole") String clusterRole);
 }
