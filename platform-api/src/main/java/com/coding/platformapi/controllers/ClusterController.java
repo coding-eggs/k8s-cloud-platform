@@ -13,6 +13,9 @@ import com.coding.platformapi.models.ClusterCreateRequest;
 import com.coding.platformapi.models.ClusterKeyRequest;
 import com.coding.platformapi.models.ClusterToggleRequest;
 import com.coding.platformapi.models.ClusterUpdateRequest;
+import com.coding.platformapi.models.ComponentFlagDTO;
+import com.coding.platformapi.models.ComponentStatusDTO;
+import com.coding.platformapi.services.ClusterComponentService;
 import com.coding.platformapi.services.ClusterService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,6 +38,9 @@ public class ClusterController {
 
     @Autowired
     private MetricsService metricsService;
+
+    @Autowired
+    private ClusterComponentService componentService;
 
     @PostMapping("/create")
     @Operation(summary = "新增集群", description = "校验 kubeconfig 连通性后加密入库，并执行 K8s 侧开通（platform-system、租户 SA、模板 ClusterRole）")
@@ -103,6 +109,31 @@ public class ClusterController {
     @Operation(summary = "读取集群 API 能力", description = "返回 k8s_cluster.capability 持久化的 group→versions 快照；未探测返回空对象")
     public ResponseData<Map<String, List<String>>> getCapability(@RequestBody ClusterKeyRequest request) {
         return new ResponseData<>(clusterService.getCapability(request.getClusterId()));
+    }
+
+    // ===== 集群组件（S1.2）：一页一 controller —— 组件 tab ↔ 本类 =====
+
+    @PostMapping("/components")
+    @Operation(summary = "集群组件清单（全量：状态 / 版本 / 健康 / 命名空间 / 影响的功能）",
+            description = "平台侧展示用。租户侧门控走 /cluster/component-flags —— 那个投影不含版本与命名空间。")
+    public ResponseData<List<ComponentStatusDTO>> components(@RequestBody ClusterKeyRequest request) {
+        return new ResponseData<>(componentService.status(request.getClusterId()));
+    }
+
+    @PostMapping("/component-flags")
+    @Operation(summary = "组件功能旗标（租户可读的窄投影：功能 code → 能不能用 + 原因）",
+            description = "租户侧门控的单一出处：CI / 服务网格 / 网络 / HPA 都读它。"
+                    + "权限行与 /cluster/capability/get 同源（两行同一路径：管理员 + tenant:cluster:capability:view）。")
+    public ResponseData<Map<String, ComponentFlagDTO>> componentFlags(@RequestBody ClusterKeyRequest request) {
+        return new ResponseData<>(componentService.flags(request.getClusterId()));
+    }
+
+    @PostMapping("/components/refresh")
+    @Auditable(action = AuditAction.CLUSTER_REFRESH_COMPONENTS, target = "#request.clusterId")
+    @Operation(summary = "重新探测集群组件（探完覆写缓存）")
+    public ResponseData<Void> refreshComponents(@RequestBody ClusterKeyRequest request) {
+        componentService.refresh(request.getClusterId());
+        return new ResponseData<>(null);
     }
 
     // ===== 集群概览（B4）：一页一 controller —— 概览页 ↔ 本类 =====

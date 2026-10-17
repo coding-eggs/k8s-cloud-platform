@@ -83,6 +83,9 @@ public final class AuditAction {
     /** K8s 侧重新开通（幂等重试） */
     public static final String CLUSTER_PROVISION = "cluster:provision";
 
+    /** 重新探测集群组件（清缓存语义上的重探：探完覆写缓存） */
+    public static final String CLUSTER_REFRESH_COMPONENTS = "cluster:refresh-components";
+
     // ---- 凭据（S0.2，4 个写端点全量）----
 
     public static final String CREDENTIAL_CREATE = "credential:create";
