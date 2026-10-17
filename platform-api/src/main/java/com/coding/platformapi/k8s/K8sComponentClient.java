@@ -2,6 +2,7 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
@@ -47,5 +48,19 @@ public class K8sComponentClient {
         body.setReleases(releases);
         return gateway.exchangeSlow(HttpMethod.POST, "/components/apply", null, body,
                 gateway.responseType(ComponentInstallResultDTO.class));
+    }
+
+    /**
+     * 平台告警联动：下发 Secret（共享密钥）+ AlertmanagerConfig（route/receivers）。
+     * 幂等 SSA；token 只在这一跳出现，**不进 helm values**。
+     */
+    public void applyPlatformAlerting(String clusterId, String namespace, String webhookUrl, String token) {
+        PlatformAlertingRequestDTO body = new PlatformAlertingRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setWebhookUrl(webhookUrl);
+        body.setToken(token);
+        gateway.exchange(HttpMethod.POST, "/components/platform-alerting", null, body,
+                gateway.responseType(Void.class));
     }
 }

@@ -30,6 +30,10 @@ platform:
       # ⚠️ 必须配 —— 留空应用**拒启**（fail-closed）。一个"忘了配就等于全开"的入站端点不该存在。
       # 集群侧对应 AlertmanagerConfig 里 alertmanager 的 http_config.authorization.credentials。
       token: ${ALERT_WEBHOOK_TOKEN:Bearer sd}
+      # 集群里的 Alertmanager 回调平台的**完整端点地址**（含 /alert/webhook 路径）。
+      # ⚠️ 必须是集群网络能访问到的平台地址：平台与集群不在同一台机器时 127.0.0.1 不可达。
+      # 组件安装成功后会自动拼上 ?clusterId=... 写进 AlertmanagerConfig。
+      url: ${ALERT_WEBHOOK_URL:http://127.0.0.1:8081/alert/webhook}
   credential:
     # 凭据库（platform_credential）的 AES 主密钥。**独立于 k8s.cloud.kubeconfig.aes-key**：
     # 轮换边界独立，且不扩散后者把默认密钥硬编码在配置里的坏味道。

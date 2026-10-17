@@ -85,6 +85,14 @@ public class ComponentInstallService {
     @Value("${platform.calico.encapsulation:}")
     private String calicoEncapsulation;
 
+    /** 集群里的 Alertmanager 回调平台的**完整端点**（含 /alert/webhook）；代码只追加 ?clusterId= */
+    @Value("${platform.alert.webhook.url:http://127.0.0.1:8081/alert/webhook}")
+    private String alertWebhookBaseUrl;
+
+    /** 与 /alert/webhook 的共享密钥；下发到集群 Secret 前会剥掉 Bearer 前缀 */
+    @Value("${platform.alert.webhook.token:}")
+    private String alertWebhookToken;
+
     public Long apply(ComponentApplyRequest req, String operator) {
         String profile = clusterService.requireProfile(req.getClusterId());
         ComponentRecipe recipe = recipes.recipeOf(req.getComponentCode(), profile);
@@ -140,13 +148,12 @@ public class ComponentInstallService {
         String authorization = K8sServerGateway.currentAuthorization();
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                        List.copyOf(effective))));
+                        List.copyOf(effective), recipe.platformAlerting())));
         return id;
     }
 
     /** 前置组件必须已 INSTALLED_HEALTHY（批① 的 metrics-server 无前置，批② 起生效） */
-    private void requireDependencies(String clusterId, ComponentRecipe recipe) {
-        if (recipe.requires() == null || recipe.requires().isEmpty()) {
+    private void requireDependencies(String clusterId, ComponentRecipe recipe) {        if (recipe.requires() == null || recipe.requires().isEmpty()) {
             return;
         }
         Map<String, String> states = components.status(clusterId).stream()
@@ -258,7 +265,7 @@ public class ComponentInstallService {
     }
 
     private void run(Long id, String clusterId, String componentCode, String action,
-                     List<ReleaseSpec> releases) {
+                     List<ReleaseSpec> releases, boolean platformAlerting) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
@@ -266,6 +273,14 @@ public class ComponentInstallService {
         try {
             ComponentInstallResultDTO result =
                     client.applyComponent(clusterId, componentCode, action, toDtos(releases));
+            // 告警联动在写 SUCCESS 之前做：失败则整条操作记 FAILED（消息里说明组件本身已装好）
+            if (result.isSuccess() && platformAlerting) {
+                try {
+                    applyPlatformAlerting(clusterId, releases.get(0).namespace());
+                } catch (Exception e) {
+                    throw new IllegalStateException("组件已安装，但平台告警联动配置失败：" + e.getMessage(), e);
+                }
+            }
             PlatformComponentOperation done = new PlatformComponentOperation();
             done.setId(id);
             done.setStatus(result.isSuccess() ? SUCCESS : FAILED);
@@ -291,6 +306,34 @@ public class ComponentInstallService {
             failed.setFinishedAt(new Date());
             mapper.updateById(failed);
         }
+    }
+
+    /**
+     * 下发平台告警联动（Secret + AlertmanagerConfig）。
+     *
+     * <p>⚠️ 集群里的 Alertmanager 需要能访问 {@code platform.alert.webhook.url} ——
+     * 平台与集群不在同一台机器时，127.0.0.1 不可达，必须配成集群网络可达的地址。
+     */
+    private void applyPlatformAlerting(String clusterId, String namespace) {
+        String token = stripBearer(alertWebhookToken);
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("platform.alert.webhook.token 未配置");
+        }
+        String base = alertWebhookBaseUrl == null ? "" : alertWebhookBaseUrl.trim();
+        if (base.isEmpty()) {
+            throw new IllegalStateException("platform.alert.webhook.url 未配置（集群里的 Alertmanager 需要能访问到平台）");
+        }
+        String separator = base.contains("?") ? "&" : "?";
+        client.applyPlatformAlerting(clusterId, namespace,
+                base + separator + "clusterId=" + clusterId, token);
+    }
+
+    /**
+     * AlertmanagerConfig 的 {@code authorization.type=Bearer} 会自己拼前缀；
+     * 配置里常见的 "Bearer xxx" 必须剥掉，否则线上头变成 "Bearer Bearer xxx"，平台侧校验不过。
+     */
+    private static String stripBearer(String value) {
+        return value != null && value.startsWith("Bearer ") ? value.substring(7) : value;
     }
 
     private static List<ReleaseInstallSpecDTO> toDtos(List<ReleaseSpec> releases) {

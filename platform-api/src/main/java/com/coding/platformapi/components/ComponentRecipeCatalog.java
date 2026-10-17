@@ -170,7 +170,7 @@ public class ComponentRecipeCatalog {
 
     private static final Map<String, Map<String, ComponentRecipe>> RECIPES = Map.ofEntries(
             Map.entry("metrics-server", profiles(METRICS_SERVER_RELEASES, List.of())),
-            Map.entry("prometheus-operator", profiles(PROMETHEUS_RELEASES, List.of())),
+            Map.entry("prometheus-operator", profiles(PROMETHEUS_RELEASES, List.of(), true)),
             Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
             Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),
@@ -182,9 +182,14 @@ public class ComponentRecipeCatalog {
             Map.entry("otel-operator", profiles(OTEL_OPERATOR_RELEASES, List.of("cert-manager"))));
 
     private static Map<String, ComponentRecipe> profiles(List<ReleaseSpec> releases, List<String> requires) {
+        return profiles(releases, requires, false);
+    }
+
+    private static Map<String, ComponentRecipe> profiles(List<ReleaseSpec> releases, List<String> requires,
+                                                         boolean platformAlerting) {
         return Map.of(
-                BUSINESS, new ComponentRecipe(BUSINESS, releases, requires),
-                MANAGEMENT, new ComponentRecipe(MANAGEMENT, releases, requires));
+                BUSINESS, new ComponentRecipe(BUSINESS, releases, requires, platformAlerting),
+                MANAGEMENT, new ComponentRecipe(MANAGEMENT, releases, requires, platformAlerting));
     }
 
     /** 可编辑字段的展示文案（key 是路径形式）；没有登记的 key 原样显示 */

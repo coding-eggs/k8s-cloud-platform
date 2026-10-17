@@ -4,11 +4,14 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesClientFactory;
+import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
+import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.helm.ChartBundle;
 import com.coding.k8sserver.helm.HelmResult;
@@ -144,6 +147,34 @@ public class ComponentInstallController implements AccessBoundaryAware {
         out.setMessage(firstError);
         out.setReleases(statuses);
         return new ResponseData<>(out);
+    }
+
+    /**
+     * 平台告警联动（S3.6 批②）：把 Alertmanager 接回平台。
+     *
+     * <p>两个固定名字的对象，幂等 SSA：Secret（共享密钥）+ AlertmanagerConfig（route/receivers）。
+     * token 只在这一跳出现，**不进 helm values** —— 否则它会落进操作记录的 values_snapshot（DB 明文）。
+     */
+    @PostMapping("/platform-alerting")
+    @Operation(summary = "下发平台告警联动对象（Secret + AlertmanagerConfig）",
+            description = "固定对象名、幂等 SSA；由 platform-api 在 Prometheus 安装成功后调用")
+    public ResponseData<Void> platformAlerting(@RequestBody PlatformAlertingRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (request.getNamespace() == null || request.getNamespace().isBlank()
+                || request.getWebhookUrl() == null || request.getWebhookUrl().isBlank()
+                || request.getToken() == null || request.getToken().isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "平台告警联动参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        client.secrets().inNamespace(request.getNamespace())
+                .resource(PlatformAlertingObjects.secret(request.getNamespace(), request.getToken()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        client.genericKubernetesResources(PlatformAlertingObjects.ALERTMANAGER_CONFIG_CRD)
+                .inNamespace(request.getNamespace())
+                .resource(PlatformAlertingObjects.alertmanagerConfig(
+                        request.getNamespace(), request.getWebhookUrl()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>();
     }
 
     private static Map<String, String> labels(ComponentInstallRequestDTO request) {

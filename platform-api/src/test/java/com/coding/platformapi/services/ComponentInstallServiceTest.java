@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
@@ -256,6 +257,63 @@ class ComponentInstallServiceTest {
                 .hasMessageContaining("thanos.receive.url");
         verify(mapper, never()).insert(any());
         verify(client, never()).applyComponent(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void platformAlertingIsPushedAfterASuccessfulInstall() {
+        // 告警联动：安装成功后下发 Secret + AlertmanagerConfig；token 必须剥掉 Bearer 前缀
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of(), Map.of())), List.of(), true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "Bearer sd");
+
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin");
+
+        verify(client, timeout(5000)).applyPlatformAlerting(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("monitor"),
+                org.mockito.ArgumentMatchers.eq("http://10.0.0.5:8081/alert/webhook?clusterId=c1"),
+                org.mockito.ArgumentMatchers.eq("sd"));
+        verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
+                op -> "SUCCESS".equals(op.getStatus())));
+    }
+
+    @Test
+    void aFailedPlatformAlertingMarksTheOperationFailedWithAClearMessage() {
+        // helm 成功但告警联动失败：不能报 SUCCESS 后静默丢掉 —— 告警收不到，页面却显示装好了
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        doThrow(new RuntimeException("subjectaccessreviews forbidden"))
+                .when(client).applyPlatformAlerting(anyString(), anyString(), anyString(), anyString());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of(), Map.of())), List.of(), true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "Bearer sd");
+
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin");
+
+        verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
+                op -> "FAILED".equals(op.getStatus()) && op.getMessage().contains("告警联动")));
     }
 
     @Test
