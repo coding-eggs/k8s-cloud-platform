@@ -3,11 +3,17 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PrometheusRuleDTO;
+import com.coding.data.mapper.k8s.K8sClusterMapper;
+import com.coding.data.models.k8s.K8sCluster;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.metrics.PromRulesClient;
+import com.coding.platformapi.metrics.RuleRuntimeMatcher;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,18 +28,30 @@ import java.util.Map;
  *
  * <p>只打 {@code alert} 规则：{@code record} 规则不产生告警，给它打 namespace 只会污染指标标签。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PrometheusRuleService {
 
     private final K8sClient k8s;
+    private final K8sClusterMapper clusterMapper;
+    private final PromRulesClient promRules;
+
+    /** 规则刚建、Prometheus 还没 reload 的宽限期。覆盖 prometheus-operator 的 reload 延迟。 */
+    private static final Duration LOAD_GRACE = Duration.ofMinutes(5);
 
     public List<PrometheusRuleDTO> list(PrometheusRuleDTO query) {
-        return k8s.list(query);
+        List<PrometheusRuleDTO> out = k8s.list(query);
+        enrich(out, query.getClusterId());
+        return out;
     }
 
     public PrometheusRuleDTO get(String name, String tenantId, String clusterId, String namespace) {
-        return k8s.get(dto(name, tenantId, clusterId, namespace));
+        PrometheusRuleDTO out = k8s.get(dto(name, tenantId, clusterId, namespace));
+        if (out != null) {
+            enrich(List.of(out), clusterId);
+        }
+        return out;
     }
 
     public String yaml(String name, String tenantId, String clusterId, String namespace) {
@@ -52,6 +70,34 @@ public class PrometheusRuleService {
 
     public void delete(String name, String tenantId, String clusterId, String namespace) {
         k8s.delete(dto(name, tenantId, clusterId, namespace));
+    }
+
+    /**
+     * 附着运行状态。**整个 list 只打 Prometheus 一次**（一次响应可能有几百 KB，
+     * 不能按规则条数打）。任何失败都降级成"不附着"，**绝不让它影响 CRUD**
+     * —— 与 ServiceMonitorService 的 relabelLabels/metricNames 同一口径。
+     *
+     * <p>⚠️ {@code match} 的第二个参数逐条传单元素 list：契约是「一个 CR 一份 runtime」，
+     * 而 missing 判定要看这个 CR 自己的 {@code creationTime} —— 传整个 list 会让一条老规则的
+     * missing 连累新规则。
+     */
+    private void enrich(List<PrometheusRuleDTO> rules, String clusterId) {
+        if (rules == null || rules.isEmpty() || !StringUtils.hasText(clusterId)) {
+            return;
+        }
+        K8sCluster cluster = clusterMapper.selectByPrimaryKey(clusterId);
+        if (cluster == null || !StringUtils.hasText(cluster.getPrometheusUrl())) {
+            return;                                     // 没配就不探，与 SM/PM 同口径
+        }
+        String base = cluster.getPrometheusUrl().replaceAll("/+$", "");
+        try {
+            List<PromRulesClient.RuleGroup> groups = promRules.groups(base);
+            for (PrometheusRuleDTO r : rules) {
+                r.setRuntime(RuleRuntimeMatcher.match(groups, List.of(r), LOAD_GRACE));
+            }
+        } catch (Exception e) {
+            log.warn("拉取 Prometheus 规则状态失败（cluster={}）: {}", clusterId, e.getMessage());
+        }
     }
 
     /**

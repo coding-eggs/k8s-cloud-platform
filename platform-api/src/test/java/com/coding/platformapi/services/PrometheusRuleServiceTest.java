@@ -2,7 +2,9 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.PrometheusRuleDTO;
+import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.metrics.PromRulesClient;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -25,7 +27,7 @@ class PrometheusRuleServiceTest {
     @BeforeEach
     void setUp() {
         k8s = mock(K8sClient.class);
-        svc = new PrometheusRuleService(k8s);
+        svc = new PrometheusRuleService(k8s, mock(K8sClusterMapper.class), mock(PromRulesClient.class));
     }
 
     private static PrometheusRuleDTO sample(String ns) {
