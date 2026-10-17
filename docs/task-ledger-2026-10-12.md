@@ -753,8 +753,15 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 > - k8s-server 镜像构建需要 helm 4.2.0 二进制（构建机下载或内网镜像），`charts/` 目录随镜像复制。
 > - 无需迁移之外的外部依赖；运行时不需要外网。
 >
-> **验证**：全模块 `mvn test` 1230 绿（common 21 / core 365 / server 95 / auth 8 / api 741）；
-> 前端 `type-check` + `build` 通过；浏览器冒烟覆盖三种按钮态与 apply→轮询→refresh 全链路。
+> **验证**：修复后全模块 `mvn test` **1239 绿**（common 21 / core 365 / server 97 / auth 8 / api 748）；
+> 前端 `type-check` + `build` 通过；浏览器冒烟覆盖三种按钮态与 apply→轮询→refresh 全链路；
+> 迁移在 dev 库重放并回查（含两个生成列 + 唯一键）。
+>
+> **独立评审后的修复（`099b5ca`）**：helm 读输出阻塞导致超时不触发 · 请求漏传 componentCode
+> （release 标签会变成 null）· 并发插入 TOCTOU（生成列 + 唯一键）· message 超长丢失败原因 ·
+> 后端不校验"只升级平台装的"· 升级不复用上次 values · 陈旧操作只在启动扫一次 · UI 升级传旧版本号。
+> **顺带发现（未处理）**：platform-api 没有 `@EnableScheduling`，`PipelineRetentionService` 的
+> `@Scheduled` 很可能从未执行 —— 已记录，未擅自开启。
 
 ---
 
