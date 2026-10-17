@@ -13,10 +13,16 @@ import com.coding.platformapi.models.ClusterCreateRequest;
 import com.coding.platformapi.models.ClusterKeyRequest;
 import com.coding.platformapi.models.ClusterToggleRequest;
 import com.coding.platformapi.models.ClusterUpdateRequest;
+import com.coding.data.models.system.PlatformComponentOperation;
+import com.coding.data.models.system.TokenUserInfo;
+import com.coding.platformapi.models.ComponentApplyRequest;
 import com.coding.platformapi.models.ComponentFlagDTO;
+import com.coding.platformapi.models.ComponentOperationQuery;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.services.ClusterComponentService;
+import com.coding.platformapi.security.AuthContext;
 import com.coding.platformapi.services.ClusterService;
+import com.coding.platformapi.services.ComponentInstallService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +47,12 @@ public class ClusterController {
 
     @Autowired
     private ClusterComponentService componentService;
+
+    @Autowired
+    private ComponentInstallService componentInstallService;
+
+    @Autowired
+    private AuthContext auth;
 
     @PostMapping("/create")
     @Operation(summary = "新增集群", description = "校验 kubeconfig 连通性后加密入库，并执行 K8s 侧开通（platform-system、租户 SA、模板 ClusterRole）")
@@ -134,6 +146,37 @@ public class ClusterController {
     public ResponseData<Void> refreshComponents(@RequestBody ClusterKeyRequest request) {
         componentService.refresh(request.getClusterId());
         return new ResponseData<>(null);
+    }
+
+    // ===== 组件生命周期（S3.6 批①）：安装 / 升级 =====
+
+    @PostMapping("/components/apply")
+    @Auditable(action = AuditAction.COMPONENT_APPLY, target = "#request.componentCode")
+    @Operation(summary = "安装/升级集群组件（异步；返回操作 id）",
+            description = "helm 执行；平台只管理自己装的 release。进度用 /cluster/components/operations/get 轮询")
+    public ResponseData<Long> applyComponent(@RequestBody ComponentApplyRequest request) {
+        TokenUserInfo me = auth.current();
+        String operator = me != null ? me.getUsername() : "unknown";
+        return new ResponseData<>(componentInstallService.apply(request, operator));
+    }
+
+    @PostMapping("/components/operations/get")
+    @Operation(summary = "查询一条组件操作（轮询进度）",
+            description = "body 给 operationId 按 id 查；否则按 clusterId+componentCode 取最近一次成功的操作")
+    public ResponseData<PlatformComponentOperation> componentOperation(
+            @RequestBody ComponentOperationQuery request) {
+        if (request.getOperationId() != null) {
+            return new ResponseData<>(componentInstallService.get(request.getOperationId()));
+        }
+        return new ResponseData<>(
+                componentInstallService.latest(request.getClusterId(), request.getComponentCode()));
+    }
+
+    @PostMapping("/components/operations/list")
+    @Operation(summary = "按集群列出各组件最近一次操作（含进行中）")
+    public ResponseData<List<PlatformComponentOperation>> componentOperations(
+            @RequestBody ClusterKeyRequest request) {
+        return new ResponseData<>(componentInstallService.latestByCluster(request.getClusterId()));
     }
 
     // ===== 集群概览（B4）：一页一 controller —— 概览页 ↔ 本类 =====
