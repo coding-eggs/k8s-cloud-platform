@@ -165,11 +165,111 @@ public class PrometheusRuleConverter {
         return out;
     }
 
-    // ---------- update：按名对齐的 fetch-overlay（Task 3 实现） ----------
+    // ---------- update：按名对齐的 fetch-overlay ----------
 
-    /** update 专用占位，Task 3 填实现。 */
+    /**
+     * update 专用：{@code spec.groups} 与 {@code group.rules} 都是 atomic list，
+     * SSA 重声明会丢弃未建模子字段。故以线上对象为底，**按组名 / 规则名对齐**后逐项覆盖建模字段。
+     *
+     * <p><b>为什么按名而不是按 index</b>（ServiceMonitor 用的是 index）：组名与规则名在 CRD 里
+     * 本来就是唯一键，用户重排、插入、删除都不会错位 —— 而 index 对齐在"中间插一条"时会
+     * 把后面所有元素的未建模字段串到错误的对象上。
+     *
+     * <p>对齐不上的（用户新加的）→ 全新构建；线上有而本次没带的（用户删掉的）→ 丢弃。
+     */
+    @SuppressWarnings("unchecked")
     public GenericKubernetesResource convertForUpdate(PrometheusRuleDTO dto, GenericKubernetesResource live) {
-        return convert(dto);
+        GenericKubernetesResource res = convert(dto);
+        Map<String, Object> liveSpec = live != null && live.getAdditionalProperties() != null
+                ? (Map<String, Object>) live.getAdditionalProperties().get("spec") : null;
+        Map<String, Map<String, Object>> liveGroups =
+                indexByName(readList(liveSpec, "groups"), m -> asStr(m.get("name")));
+
+        List<Map<String, Object>> merged = new ArrayList<>();
+        for (PrometheusRuleDTO.Group g : (dto.getGroups() != null ? dto.getGroups() : List.<PrometheusRuleDTO.Group>of())) {
+            Map<String, Object> base = liveGroups.get(g.getName());
+            merged.add(overlayGroup(base, g));
+        }
+        Map<String, Object> spec = (Map<String, Object>) res.getAdditionalProperties().get("spec");
+        if (spec != null) {
+            spec.put("groups", merged);
+        }
+        return res;
+    }
+
+    /** 以 base（线上组）为底，仅覆盖建模字段；未建模 key 保留。rules 单独按规则名对齐。 */
+    private Map<String, Object> overlayGroup(Map<String, Object> base, PrometheusRuleDTO.Group g) {
+        Map<String, Object> dtoGroup = toGroupMaps(List.of(g)).get(0);
+        Map<String, Object> out = base != null ? new LinkedHashMap<>(base) : new LinkedHashMap<>();
+        for (String key : MODELED_GROUP_KEYS) {
+            if ("rules".equals(key)) {
+                continue;                       // rules 单独处理
+            }
+            if (dtoGroup.containsKey(key)) {
+                out.put(key, dtoGroup.get(key));
+            } else {
+                out.remove(key);                // 用户清空该字段 → 从对象移除
+            }
+        }
+        Map<String, Map<String, Object>> liveRules =
+                indexByName(readList(base, "rules"), PrometheusRuleConverter::ruleKeyOf);
+        List<Map<String, Object>> mergedRules = new ArrayList<>();
+        for (PrometheusRuleDTO.Rule r : (g.getRules() != null ? g.getRules() : List.<PrometheusRuleDTO.Rule>of())) {
+            mergedRules.add(overlayRule(liveRules.get(ruleKey(r)), r));
+        }
+        out.put("rules", mergedRules);
+        return out;
+    }
+
+    /** 以 base（线上规则）为底，仅覆盖建模字段；未建模 key 保留。 */
+    private Map<String, Object> overlayRule(Map<String, Object> base, PrometheusRuleDTO.Rule r) {
+        Map<String, Object> dtoRule = toRuleMaps(List.of(r)).get(0);
+        Map<String, Object> out = base != null ? new LinkedHashMap<>(base) : new LinkedHashMap<>();
+        for (String key : MODELED_RULE_KEYS) {
+            if (dtoRule.containsKey(key)) {
+                out.put(key, dtoRule.get(key));
+            } else {
+                out.remove(key);
+            }
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> readList(Map<String, Object> holder, String key) {
+        if (holder == null || !(holder.get(key) instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (o instanceof Map) {
+                out.add((Map<String, Object>) o);
+            }
+        }
+        return out;
+    }
+
+    /** 把线上的一串 Map 按某个键索引起来（键为空则跳过该元素）。 */
+    private static Map<String, Map<String, Object>> indexByName(
+            List<Map<String, Object>> items, java.util.function.Function<Map<String, Object>, String> keyFn) {
+        Map<String, Map<String, Object>> out = new LinkedHashMap<>();
+        for (Map<String, Object> m : items) {
+            String k = keyFn.apply(m);
+            if (k != null && !k.isBlank()) {
+                out.put(k, m);                  // 同名只留最后一个 —— CRD 本就要求唯一，这里只是不炸
+            }
+        }
+        return out;
+    }
+
+    /** 线上规则 Map 的对齐键：与 {@link #ruleKey} 同一套前缀，两处共用一个定义。 */
+    static String ruleKeyOf(Map<String, Object> m) {
+        String alert = asStr(m.get("alert"));
+        if (alert != null && !alert.isBlank()) {
+            return "alert:" + alert;
+        }
+        String record = asStr(m.get("record"));
+        return record != null && !record.isBlank() ? "record:" + record : "";
     }
 
     // ---------- 辅助 ----------
