@@ -121,12 +121,63 @@ function edgeColor(errorRate: number): string {
 }
 
 /** ⚠️ null 显示「—」而不是 0 —— 0 会被读成"延迟为 0ms"，那是假信息。 */
+/** 节点 tooltip 里的健康摘要。阈值与 healthOf 保持一致。 */
+function healthText(h?: NodeHealth): string {
+  if (!h || h.level === 'unknown') return '无入向流量（不判定健康）'
+  return `入向 ${num(h.inboundRps, 1)} QPS · 错误率 ${(h.errorRate * 100).toFixed(1)}% · P95 ${num(h.p95Ms, 0)} ms`
+}
+
 function num(v: number | null | undefined, digits = 2): string {
   return v == null ? '—' : v.toFixed(digits)
 }
 
 function labelOf(id: string): string {
   return id.substring(id.indexOf('/') + 1)
+}
+
+/** 健康判定阈值（先写死，图例上明说；将来要可配再挪到后端）。 */
+const HEALTH_ERROR_RED = 0.05      // 错误率 ≥ 5%
+const HEALTH_P95_RED = 1000        // P95 ≥ 1s
+const HEALTH_P95_WARN = 300        // P95 ≥ 300ms
+
+type HealthLevel = 'ok' | 'warn' | 'bad' | 'unknown'
+
+interface NodeHealth {
+  level: HealthLevel
+  /** 入向 QPS（所有入向边之和）；0 表示这条判断没有依据 */
+  inboundRps: number
+  /** 按入向 QPS 加权的错误率 */
+  errorRate: number
+  /** 入向边的最大 P95；没有样本为 null */
+  p95Ms: number | null
+}
+
+/**
+ * 节点健康**只看入向边**：一条边的错误率/延迟描述的是**目标端**的表现，
+ * 拿它去染源节点会把别人的错误记在你头上。
+ * ⚠️ 没有入向流量（外部网关那种）→ unknown，保留原来的着色，不假装健康。
+ */
+function healthOf(id: string, edges: MeshTopologyEdge[]): NodeHealth {
+  let rps = 0
+  let weightedErr = 0
+  let p95: number | null = null
+  for (const e of edges) {
+    if (e.target !== id) continue
+    if (e.p95Ms != null) p95 = p95 == null ? e.p95Ms : Math.max(p95, e.p95Ms)
+    if (e.rps <= 0) continue          // 0 QPS 的边（窗口内没调用）不参与加权
+    rps += e.rps
+    weightedErr += e.errorRate * e.rps
+  }
+  if (rps <= 0) {
+    // 只有延迟样本、没有 QPS 的极端情况也不判定，避免用半截信息下结论
+    return { level: 'unknown', inboundRps: 0, errorRate: 0, p95Ms: p95 }
+  }
+  const errorRate = weightedErr / rps
+  const level: HealthLevel =
+    errorRate >= HEALTH_ERROR_RED || (p95 != null && p95 >= HEALTH_P95_RED) ? 'bad'
+      : errorRate > 0 || (p95 != null && p95 >= HEALTH_P95_WARN) ? 'warn'
+        : 'ok'
+  return { level, inboundRps: rps, errorRate, p95Ms: p95 }
 }
 
 /**
@@ -136,27 +187,48 @@ function labelOf(id: string): string {
  */
 const chartNodes = computed(() => {
   void themeTick.value // 主题变量是依赖
+  const edges = topo.value?.edges ?? []
   const degree = new Map<string, number>()
-  for (const e of topo.value?.edges ?? []) {
+  for (const e of edges) {
     degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
     degree.set(e.target, (degree.get(e.target) ?? 0) + 1)
   }
+  const success = cssVar('--success', '#67c23a')
+  const warning = cssVar('--warning', '#e6a23c')
+  const danger = cssVar('--danger', '#f56c6c')
   return [...(topo.value?.nodes ?? [])]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map((n: MeshTopologyNode) => ({
-      id: n.id,
-      name: n.id,
-      workload: n.workload,
-      namespace: n.namespace,
-      gateway: n.gateway,
-      symbol: n.gateway ? 'diamond' : 'circle',
-      symbolSize: 18 + Math.min((degree.get(n.id) ?? 0) * 2, 18),
-      itemStyle: { color: n.gateway ? cssVar('--accent', '#6f7cff') : nsColor(n.namespace) },
-    }))
+    .map((n: MeshTopologyNode) => {
+      const health = healthOf(n.id, edges)
+      const healthColor =
+        health.level === 'bad' ? danger
+          : health.level === 'warn' ? warning
+            : health.level === 'ok' ? success
+              : null
+      return {
+        id: n.id,
+        name: n.id,
+        workload: n.workload,
+        namespace: n.namespace,
+        gateway: n.gateway,
+        health,
+        symbol: n.gateway ? 'diamond' : 'circle',
+        symbolSize: 18 + Math.min((degree.get(n.id) ?? 0) * 2, 18),
+        itemStyle: {
+          // 有入向流量 → 用健康色；没有 → 保留原来的命名空间色（不假装健康）
+          color: healthColor ?? (n.gateway ? cssVar('--accent', '#6f7cff') : nsColor(n.namespace)),
+          // 描边始终是命名空间色：颜色说健康，边框说归属，两个信号都不丢
+          borderColor: nsColor(n.namespace),
+          borderWidth: healthColor ? 2 : 0,
+        },
+      }
+    })
 })
 
-const chartLinks = computed(() => {
-  void themeTick.value // 主题变量是依赖
+/** 抽屉按 id 取健康（chartNodes 里已经算过，不重复算一遍） */
+const healthById = computed(() => new Map(chartNodes.value.map((n) => [n.id, n.health])))
+
+const chartLinks = computed(() => {  void themeTick.value // 主题变量是依赖
   return [...(topo.value?.edges ?? [])]
     .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
     .map((e: MeshTopologyEdge) => ({
@@ -273,6 +345,7 @@ function buildOption(): echarts.EChartsCoreOption {
             + `P95 ${num(d.p95Ms, 1)} ms`
         }
         return `${d.workload}<br/>命名空间 ${d.namespace}${d.gateway ? '<br/>（外部网关）' : ''}`
+          + `<br/>${healthText(d.health)}`
       },
     },
     series: [{
@@ -440,6 +513,15 @@ onMounted(() => {
       <div class="chart-wrap" v-loading="loading">
         <div ref="chartEl" class="chart"></div>
       </div>
+
+      <!-- 健康色图例：**颜色说健康，描边说命名空间**，两个信号别混 -->
+      <div v-if="showChart" class="health-legend">
+        <span><i class="dot ok"></i>正常</span>
+        <span><i class="dot warn"></i>有错误或偏慢（P95 ≥ 300ms）</span>
+        <span><i class="dot bad"></i>错误率 ≥ 5% 或 P95 ≥ 1s</span>
+        <span><i class="dot unknown"></i>无入向流量（按命名空间着色）</span>
+        <span class="legend-note">描边 = 命名空间；健康只看入向边</span>
+      </div>
     </template>
 
     <!-- 覆盖范围：常驻，别删（用户会以为自己看到了全部调用） -->
@@ -465,6 +547,7 @@ onMounted(() => {
           <el-descriptions-item label="工作负载">{{ selectedNode.workload }}</el-descriptions-item>
           <el-descriptions-item label="命名空间">{{ selectedNode.namespace }}</el-descriptions-item>
           <el-descriptions-item label="类型">{{ selectedNode.gateway ? '外部网关（南北向入口）' : '业务工作负载' }}</el-descriptions-item>
+          <el-descriptions-item label="健康">{{ healthText(healthById.get(selectedNode.id)) }}</el-descriptions-item>
         </el-descriptions>
       </template>
     </el-drawer>
@@ -480,6 +563,27 @@ onMounted(() => {
   min-height: 520px;
 }
 .chart { width: 100%; height: 520px; }
+.health-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.health-legend .dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.health-legend .dot.ok { background: var(--success, #67c23a); }
+.health-legend .dot.warn { background: var(--warning, #e6a23c); }
+.health-legend .dot.bad { background: var(--danger, #f56c6c); }
+.health-legend .dot.unknown { background: var(--text-3, #94a3b8); }
+.health-legend .legend-note { margin-left: auto; opacity: 0.8; }
 .empty-title { font-size: 15px; font-weight: 700; color: var(--text-1); }
 .empty-hint { margin-top: 6px; font-size: 12.5px; color: var(--text-3); line-height: 1.7; }
 .empty-hint code { background: var(--fill-2, #f1f5f9); padding: 1px 5px; border-radius: 4px; }
