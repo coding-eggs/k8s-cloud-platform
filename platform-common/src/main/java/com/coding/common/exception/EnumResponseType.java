@@ -75,6 +75,9 @@ public enum EnumResponseType {
      */
     K8S_RBAC_FORBIDDEN(10043, "集群侧 RBAC 拒绝了该操作。若这是租户操作，请检查「RBAC 模板」是否覆盖该资源的 apiGroup，并在改动后重下发。集群返回: "),
 
+    /** PrometheusRule 内容不合法（alert/record 二选一、expr 必填、组名必填） */
+    PROMETHEUS_RULE_INVALID(10045, "PrometheusRule 内容不合法"),
+
     ERROR(5000,"服务端异常"),
 
 
