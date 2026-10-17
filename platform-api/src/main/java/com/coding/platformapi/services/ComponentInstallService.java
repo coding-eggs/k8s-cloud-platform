@@ -10,6 +10,7 @@ import com.coding.platformapi.components.ComponentRecipe;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.k8s.K8sComponentClient;
+import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import lombok.RequiredArgsConstructor;
@@ -115,8 +116,11 @@ public class ComponentInstallService {
         }
 
         Long id = op.getId();
-        executor.submit(() -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                List.copyOf(effective)));
+        // worker 线程没有请求上下文：把发起人的 Authorization 显式带进去（否则 k8s-server 401）
+        String authorization = K8sServerGateway.currentAuthorization();
+        executor.submit(() -> K8sServerGateway.runAs(authorization,
+                () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
+                        List.copyOf(effective))));
         return id;
     }
 

@@ -3,7 +3,6 @@ package com.coding.platformapi.k8s;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.system.ResponseData;
-import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
@@ -220,14 +219,54 @@ public class K8sServerGateway {
         return new ErrorInfo(EnumResponseType.ERROR.getCode(), "k8s-server 流式接口返回 HTTP " + status);
     }
 
-    private void passThroughAuthorization(HttpHeaders headers) {
+    /**
+     * 后台任务（虚拟线程）委托的 Authorization。
+     *
+     * <p>worker 线程里没有请求上下文 —— 组件安装这类分钟级任务只能异步执行，但调用 k8s-server
+     * 仍需要发起人的凭据。复制的是**字符串**，不是 request 对象：响应返回后容器会回收 request，
+     * 晚读会读到别人的头或直接抛异常。
+     */
+    private static final ThreadLocal<String> DELEGATED_AUTHORIZATION = new ThreadLocal<>();
+
+    /**
+     * 在委托凭据下执行一段后台工作（作用域仅限 body，异常也会清理）。
+     * 典型用法：`executor.submit(() -> runAs(auth, () -> run(...)))`。
+     */
+    public static void runAs(String authorization, Runnable body) {
+        String previous = DELEGATED_AUTHORIZATION.get();
+        DELEGATED_AUTHORIZATION.set(authorization);
+        try {
+            body.run();
+        } finally {
+            if (previous == null) {
+                DELEGATED_AUTHORIZATION.remove();
+            } else {
+                DELEGATED_AUTHORIZATION.set(previous);
+            }
+        }
+    }
+
+    /** 当前线程生效的委托凭据（正常请求线程为 null） */
+    public static String delegatedAuthorization() {
+        return DELEGATED_AUTHORIZATION.get();
+    }
+
+    /** 当前请求的 Authorization；不在请求线程上时为 null */
+    public static String currentAuthorization() {
         RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
         if (attrs instanceof ServletRequestAttributes servletAttrs) {
-            HttpServletRequest request = servletAttrs.getRequest();
-            String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
-            if (authorization != null) {
-                headers.set(HttpHeaders.AUTHORIZATION, authorization);
-            }
+            return servletAttrs.getRequest().getHeader(HttpHeaders.AUTHORIZATION);
+        }
+        return null;
+    }
+
+    private void passThroughAuthorization(HttpHeaders headers) {
+        String authorization = DELEGATED_AUTHORIZATION.get();
+        if (authorization == null) {
+            authorization = currentAuthorization();
+        }
+        if (authorization != null) {
+            headers.set(HttpHeaders.AUTHORIZATION, authorization);
         } else {
             log.warn("无请求上下文，调用 k8s-server 未携带 Authorization（后台任务场景需改用服务身份）");
         }

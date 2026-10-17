@@ -166,6 +166,34 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void theWorkerCarriesTheRequestersAuthorization() {
+        // 真实故障：worker 在虚拟线程里跑，没有请求上下文 → k8s-server 401 → 操作 FAILED
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
+        java.util.concurrent.atomic.AtomicReference<String> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenAnswer(inv -> {
+            seen.set(com.coding.platformapi.k8s.K8sServerGateway.delegatedAuthorization());
+            return successResult();
+        });
+
+        org.springframework.mock.web.MockHttpServletRequest request =
+                new org.springframework.mock.web.MockHttpServletRequest();
+        request.addHeader(org.springframework.http.HttpHeaders.AUTHORIZATION, "Bearer from-user");
+        org.springframework.web.context.request.RequestContextHolder.setRequestAttributes(
+                new org.springframework.web.context.request.ServletRequestAttributes(request));
+        try {
+            service().apply(new ComponentApplyRequest(
+                    "c1", "metrics-server", "INSTALL", null, Map.of()), "admin");
+
+            verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
+                    op -> "SUCCESS".equals(op.getStatus())));
+            assertThat(seen.get()).isEqualTo("Bearer from-user");
+        } finally {
+            org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
+        }
+    }
+
+    @Test
     void staleRunningOperationsAreMarkedUnknown() {
         PlatformComponentOperation stale = new PlatformComponentOperation();
         stale.setId(7L);
