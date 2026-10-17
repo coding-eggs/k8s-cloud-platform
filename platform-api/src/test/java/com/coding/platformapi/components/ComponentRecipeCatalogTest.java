@@ -48,7 +48,7 @@ class ComponentRecipeCatalogTest {
     void theChartVersionExistsInTheAdapterBundle() throws Exception {
         // ⭐ 跨模块一致性：recipe 指向的版本必须真的在 k8s-server 的内置 chart 里
         ReleaseSpec spec = catalog.recipeOf("metrics-server", "BUSINESS").releases().get(0);
-        Path chart = Path.of("../k8s-server/charts/components/" + spec.chartCode() + "/"
+        Path chart = Path.of("../k8s-server/src/main/resources/charts/components/" + spec.chartCode() + "/"
                 + spec.chartVersion() + "/chart/Chart.yaml");
         assertThat(Files.exists(chart)).as("缺少内置 chart：%s", chart).isTrue();
     }

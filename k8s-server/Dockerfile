@@ -46,8 +46,10 @@ RUN apt-get update \
 
 RUN useradd -m -u 1001 app
 WORKDIR /app
-# S3.6：组件安装用的内置 chart（文本目录，不是 tgz）
-COPY --chown=app:app charts /app/charts
+# S3.6：组件安装用的内置 chart（文本目录，不是 tgz）。
+# 源位置在 src/main/resources/charts（IDE 走 classpath 解析）；镜像里复制成真实目录 /app/charts，
+# 配合 WORKDIR=/app，ChartBundle 的默认配置值 `charts` 正好命中。
+COPY --chown=app:app src/main/resources/charts /app/charts
 COPY --chown=app:app target/*.jar /app/app.jar
 USER app
 

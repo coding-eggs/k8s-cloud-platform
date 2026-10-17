@@ -22,7 +22,7 @@ public class ComponentRecipeCatalog {
     private static final ComponentRecipe METRICS_SERVER = new ComponentRecipe(
             BUSINESS,
             List.of(new ReleaseSpec(
-                    // chart 版本必须与 k8s-server/charts/components/metrics-server/<version> 完全一致（官方版，不自定义）
+                    // chart 版本必须与 k8s-server/src/main/resources/charts/components/metrics-server/<version> 一致（官方版，不自定义）
                     "platform-metrics-server", "kube-system", "metrics-server", "3.14.0",
                     // 🔒 契约值
                     //  - args：自签 kubelet 证书的集群不加这个参数，metrics-server 永远 NotReady

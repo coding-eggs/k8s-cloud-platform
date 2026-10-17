@@ -24,6 +24,18 @@ class ChartBundleTest {
     }
 
     @Test
+    void fallsBackToTheClasspathWhenTheConfiguredDirDoesNotExist() throws Exception {
+        // chart 在 src/main/resources/charts 下：IDE 的进程工作目录不一定是模块目录，
+        // 按相对路径找不到时必须回退到 classpath，否则面板点安装会报"内置 chart 不存在"
+        ChartBundle bundle = new ChartBundle("/no/such/charts-dir");
+
+        Path chart = bundle.chartDir("metrics-server", "3.14.0");
+
+        assertThat(Files.isRegularFile(chart.resolve("Chart.yaml"))).isTrue();
+        assertThat(Files.readString(chart.resolve("Chart.yaml"))).contains("version: 3.14.0");
+    }
+
+    @Test
     void anUnknownVersionFailsLoudlyInsteadOfFallingBack(@TempDir Path root) {
         ChartBundle bundle = new ChartBundle(root.toString());
 

@@ -3,16 +3,24 @@ package com.coding.k8sserver.helm;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
  * 内置 chart 的定位器（S3.6）。
  *
- * <p>chart 以**目录形态**内置在 k8s-server（不是 tgz）：git 里可读、可 review，helm 直接吃目录。
- * 目录约定：{@code <charts-dir>/components/<code>/<version>/chart/}。
+ * <p>chart 以**目录形态**内置在 {code src/main/resources/charts}（不是 tgz）：git 里可读、可 review，
+ * helm 直接吃目录。目录约定：{@code <charts-dir>/components/<code>/<version>/chart/}。
+ *
+ * <p><b>两种解析方式</b>：先按 {@code platform.components.charts-dir}（默认 {@code charts}，相对进程工作目录）
+ * 找；找不到再回退到 classpath —— IDE 的进程工作目录不一定是模块目录，只按相对路径会读不到。
+ * 打包进 jar 后资源不是文件系统路径（helm 需要真实目录），镜像里由 Dockerfile 把 charts 复制到
+ * {@code /app/charts}，WORKDIR=/app 时默认值正好命中。
  *
  * <p>⚠️ 版本找不到时**必须报错**，不能回退到别的版本 —— 否则 platform-api 的 recipe 与
  * k8s-server 的产物一旦漂移，就会静默装出一个用户没选的版本。
@@ -23,7 +31,23 @@ public class ChartBundle {
     private final Path root;
 
     public ChartBundle(@Value("${platform.components.charts-dir:charts}") String chartsDir) {
-        this.root = Path.of(chartsDir).toAbsolutePath().normalize();
+        this.root = resolveRoot(chartsDir);
+    }
+
+    private static Path resolveRoot(String chartsDir) {
+        Path configured = Path.of(chartsDir).toAbsolutePath().normalize();
+        if (Files.isDirectory(configured)) {
+            return configured;
+        }
+        try {
+            Resource resource = new ClassPathResource("charts");
+            if (resource.isFile()) {
+                return resource.getFile().toPath().toAbsolutePath().normalize();
+            }
+        } catch (IOException ignored) {
+            // 打包进 jar：不是文件系统路径，退回配置目录
+        }
+        return configured;
     }
 
     public Path chartDir(String code, String version) {

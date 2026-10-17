@@ -77,12 +77,17 @@ public record ReleaseSpec(
 **chart 放在执行侧（k8s-server）**，不放在 platform-api：
 
 ```
-k8s-server/charts/components/<code>/<chartVersion>/
+k8s-server/src/main/resources/charts/components/<code>/<chartVersion>/
     provenance.yaml         # 上游仓库/版本、拉取命令、拉取日期（完整性由 git / 镜像保证）
     chart/                  # 上游 chart 原样解包，**不修改任何模板**
       Chart.yaml
       templates/…
 ```
+
+> 放在 `resources` 下是为了**按 classpath 解析**：IDE 的进程工作目录不一定是模块目录，
+> 只按相对路径 `charts` 会读不到。`ChartBundle` 先找 `platform.components.charts-dir`
+> （默认 `charts`），找不到再回退 classpath；镜像里由 Dockerfile 复制到 `/app/charts`
+>（helm 需要真实目录，jar 内资源不是文件系统路径）。
 
 **chart 规则（2026-10-17 用户裁定）**：
 
