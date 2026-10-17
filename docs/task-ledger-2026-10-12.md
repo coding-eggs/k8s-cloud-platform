@@ -717,6 +717,45 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 **醒目风险**：`kube-prometheus-stack` 的 `*SelectorNilUsesHelmValues` 默认 `true` —— 不改成 `false`，
 平台在租户命名空间创建的 PrometheusRule / ServiceMonitor / PodMonitor 会被**静默忽略**（装上了但告警不生效）。
 
+
+> **✅ 批① 实施完成（2026-10-17）｜待部署｜plan [2026-10-17-component-lifecycle-batch1](superpowers/plans/2026-10-17-component-lifecycle-batch1.md)**
+>
+> **做了什么（引擎 + metrics-server 试点）**
+> - `cluster_role`（MANAGEMENT / BUSINESS）+ 全局唯一校验；`platform_component_operation` 操作表。
+> - k8s-server 内置 chart 目录（文本形态，非 tgz）+ `ChartBundle`（版本漂移明确报错）+ `HelmRunner`
+>   （Helm 4.2.0、`--rollback-on-failure`、临时 kubeconfig 0600 + finally 删除）。
+> - `POST /components/apply`（PLATFORM 边界）：`helm template` 硬预检 → `--dry-run=server` 软警告 → `helm upgrade --install`。
+> - platform-api `ComponentRecipeCatalog`（metrics-server 一条，含契约值 `--kubelet-insecure-tls`）+
+>   `ComponentInstallService`（异步 + 并发拒绝 + 中断标 UNKNOWN + 装完刷新探测）。
+> - 三条端点 + 审计；组件 tab 的安装/升级按钮与轮询；集群列表的画像展示。
+>
+> **与计划的出入（均已 ledger 记录）**
+> - MySQL 不支持 `ADD COLUMN IF NOT EXISTS` → 迁移改用 information_schema + PREPARE 幂等写法。
+> - 假 helm 用同 JVM 小程序而非 shell 脚本（Windows 的 PATH 里 bash 可能是 WSL，退出码 127）。
+> - 多 release 失败即停（不继续装依赖它的后续 release）。
+> - 测试里手工构造的 `ClusterService` 需补 `AES_KEY`（@Value 注入在单测里为 null）。
+>
+> **未执行**
+> - **真集群试点（在非生产集群装 metrics-server）未做** —— 需要用户明确批准；当前没有非生产集群。
+>   上线前应补这一步，或在部署冒烟时完成。
+>
+> **待办**
+> - **批②：其余 10 条组件的 recipe 与配置契约**（Prometheus 的 selector/externalLabels/remoteWrite、
+>   gateway-api 的 experimental channel、Tekton 的 coschedule、Calico 的 CIDR 等）。批② 开工前先决定
+>   嵌套 values 的合并方式（批① 只支持顶层 key）。
+> - 组件 tab 的"哪些组件可安装"目前在前端硬编码（`recipeCodes = ['metrics-server']`）；
+>   批② 改为由后端下发。
+>
+> **部署**
+> - 重建 **k8s-server + platform-api + platform-web**。
+> - **先重放** `V2026_10_18_1__component_lifecycle.sql`（cluster_role 列 + 操作表 + 三条权限行），
+>   重放后把平台自身所在集群改为 `MANAGEMENT`（见迁移注释里的 UPDATE）。
+> - k8s-server 镜像构建需要 helm 4.2.0 二进制（构建机下载或内网镜像），`charts/` 目录随镜像复制。
+> - 无需迁移之外的外部依赖；运行时不需要外网。
+>
+> **验证**：全模块 `mvn test` 1230 绿（common 21 / core 365 / server 95 / auth 8 / api 741）；
+> 前端 `type-check` + `build` 通过；浏览器冒烟覆盖三种按钮态与 apply→轮询→refresh 全链路。
+
 ---
 
 ---
@@ -833,7 +872,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
-| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 📝 **设计中**（2026-10-17 brainstorming 完成，spec 待 review） | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) |
+| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批① 已实施待部署**（引擎 + metrics-server 试点；批② 其余 10 条组件待出计划） | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |
