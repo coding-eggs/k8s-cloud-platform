@@ -35,7 +35,7 @@ class AlertServiceTest {
         mapper = mock(PlatformAlertEventMapper.class);
         allocs = mock(PlatformTenantNamespaceMapper.class);
         auth = mock(AuthContext.class);
-        svc = new AlertService(mapper, allocs, auth);
+        svc = new AlertService(mapper, allocs, auth, org.springframework.web.client.RestClient.builder(), "t", 8081);
     }
 
     private static AlertQueryRequest req() {
