@@ -65,6 +65,10 @@ public class ClusterComponentService {
     /** 告警回调地址的平台默认值：前端安装表单预填（用户可改，clusterId 由后端拼） */
     @Value("${platform.alert.webhook.url:}")
     private String defaultAlertWebhookUrl;
+
+    /** Thanos Receive 地址的平台默认值：安装表单预填（remoteWrite 目标） */
+    @Value("${thanos.receive.url:}")
+    private String defaultThanosReceiveUrl;
     /** full 投影：状态 + 版本 + 命名空间 + detail + 功能映射（管理员） */
     public List<ComponentStatusDTO> status(String clusterId) {
         return cache.get(KEY_PREFIX + clusterId, TTL, LIST_TYPE, () -> probe(clusterId));
@@ -214,6 +218,9 @@ public class ClusterComponentService {
         s.setPlatformAlerting(recipe != null && recipe.platformAlerting());
         s.setDefaultAlertWebhookUrl(recipe != null && recipe.platformAlerting()
                 ? defaultAlertWebhookUrl : null);
+        s.setThanosRemoteWrite(recipe != null && recipe.thanosRemoteWrite());
+        s.setDefaultThanosReceiveUrl(recipe != null && recipe.thanosRemoteWrite()
+                ? defaultThanosReceiveUrl : null);
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现

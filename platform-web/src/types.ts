@@ -922,6 +922,10 @@ export interface K8sComponentStatus {
   platformAlerting?: boolean
   /** 告警回调地址的平台默认值（表单预填；clusterId 由后端拼） */
   defaultAlertWebhookUrl?: string | null
+  /** 安装时是否需要填 Thanos Receive 地址（Prometheus 的 remoteWrite 目标） */
+  thanosRemoteWrite?: boolean
+  /** Thanos Receive 地址的平台默认值（表单预填） */
+  defaultThanosReceiveUrl?: string | null
 }
 
 /** 组件的一个可编辑配置项；key 是路径形式，apply 时原样回传 */

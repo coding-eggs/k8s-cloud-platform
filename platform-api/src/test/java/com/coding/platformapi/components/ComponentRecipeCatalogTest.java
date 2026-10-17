@@ -13,10 +13,20 @@ class ComponentRecipeCatalogTest {
 
     private final ComponentRecipeCatalog catalog = new ComponentRecipeCatalog();
 
+    /**
+     * 有意没有独立 recipe 的组件：calico 把 operator + Installation 作为一个整体安装
+     * （两个 recipe 共用同一 release 会在"升级 operator"时删掉 Installation CR → 断网）。
+     */
+    private static final java.util.Set<String> PROBE_ONLY = java.util.Set.of("tigera-operator");
+
     @Test
     void everyCatalogComponentHasARecipeForBothProfiles() {
         // 目录（探测）与 recipe（安装）必须一一对应：加了组件却忘了 recipe，面板会显示"暂不支持"
         for (ComponentDef def : new ClusterComponentCatalog().all()) {
+            if (PROBE_ONLY.contains(def.code())) {
+                assertThat(catalog.supports(def.code())).as(def.code()).isFalse();
+                continue;
+            }
             assertThat(catalog.supports(def.code())).as(def.code()).isTrue();
             for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
                 assertThat(catalog.recipeOf(def.code(), profile))
@@ -71,11 +81,11 @@ class ComponentRecipeCatalogTest {
 
     @Test
     void dependenciesAreDeclared() {
-        // spec §5：ambient 依赖控制面、calico 依赖 operator（operator 单独装不改网络）、
-        // otel 依赖 cert-manager、tekton 由 operator 安装
+        // spec §5：ambient 依赖控制面、otel 依赖 cert-manager、tekton 由 operator 安装。
+        // calico 不再依赖 tigera-operator —— 它自己就把 operator 一起装了
         assertThat(catalog.recipeOf("istio-ambient", "BUSINESS").requires()).containsExactly("istio");
         assertThat(catalog.recipeOf("tekton", "BUSINESS").requires()).containsExactly("tekton-operator");
-        assertThat(catalog.recipeOf("calico", "BUSINESS").requires()).containsExactly("tigera-operator");
+        assertThat(catalog.recipeOf("calico", "BUSINESS").requires()).isEmpty();
         assertThat(catalog.recipeOf("otel-operator", "BUSINESS").requires()).containsExactly("cert-manager");
     }
 
@@ -116,8 +126,52 @@ class ComponentRecipeCatalogTest {
                 .containsEntry("cluster_name", "${cluster.name}");
 
         Map<String, Object> alertmanagerSpec = specOf("prometheus-operator", "alertmanager", "alertmanagerSpec");
+        // OnNamespaceExceptForAlertmanagerNamespace：Alertmanager 所在 ns（monitor）的 AMC 处理全部告警，
+        // 租户 ns 的 AMC 仍只处理本 ns —— 用 OnNamespace 平台收不到任何租户告警
         assertThat((Map<String, Object>) alertmanagerSpec.get("alertmanagerConfigMatcherStrategy"))
-                .containsEntry("type", "OnNamespace");
+                .containsEntry("type", "OnNamespaceExceptForAlertmanagerNamespace");
+    }
+
+    @Test
+    void prometheusDisablesTheControlPlaneScrapersAndEnablesTheCrdUpgradeJob() {
+        Map<String, Object> values = catalogValues("prometheus-operator");
+        for (String key : List.of("kubeApiServer", "kubeControllerManager", "kubeEtcd", "kubeScheduler")) {
+            assertThat((Map<String, Object>) values.get(key)).as(key).containsEntry("enabled", false);
+        }
+        // Helm 不升级 crds/ 目录：官方 chart 的 Job 是 CRD 升级的唯一正确姿势
+        assertThat((Map<String, Object>) values.get("crds"))
+                .containsEntry("enabled", true)
+                .containsEntry("upgradeJob", Map.of("enabled", true));
+    }
+
+    @Test
+    void grafanaIsOnlyEnabledByDefaultOnTheManagementProfile() {
+        Map<String, Object> business = catalog.recipeOf("prometheus-operator", "BUSINESS")
+                .releases().get(0).editableValues();
+        Map<String, Object> management = catalog.recipeOf("prometheus-operator", "MANAGEMENT")
+                .releases().get(0).editableValues();
+
+        assertThat(business).containsEntry("grafana.enabled", false);
+        assertThat(management).containsEntry("grafana.enabled", true);
+    }
+
+    @Test
+    void istioShipsTheAmbientDataplaneByDefault() {
+        List<String> releases = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .map(ReleaseSpec::releaseName).toList();
+        assertThat(releases).containsExactly("istio-base", "istiod", "istio-cni", "ztunnel", "external-gateway");
+
+        ReleaseSpec cni = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .filter(r -> r.releaseName().equals("istio-cni")).findFirst().orElseThrow();
+        assertThat((Map<String, Object>) cni.contractValues().get("ambient")).containsEntry("enabled", true);
+    }
+
+    @Test
+    void metricsServerPinsTheKubeletAddressPreference() {
+        // 不依赖 chart 的 defaultArgs 默认值：换版本时漂移会变成"连不上 kubelet"
+        List<String> defaultArgs = (List<String>) catalog.recipeOf("metrics-server", "BUSINESS")
+                .releases().get(0).contractValues().get("defaultArgs");
+        assertThat(defaultArgs).contains("--kubelet-preferred-address-types=InternalIP");
     }
 
     @Test
@@ -146,12 +200,16 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
-    void tigeraOperatorDoesNotTakeOverTheNetworkOnItsOwn() {
-        // 只有 Installation CR 才接管 CNI：operator 单独安装必须是 installation.enabled=false
-        Map<String, Object> installation = specOf("tigera-operator", "installation");
-        assertThat(installation).containsEntry("enabled", false);
-
-        Map<String, Object> calico = specOf("calico", "installation");
-        assertThat(calico).containsEntry("enabled", true);
+    void calicoIsInstalledAsAUnitAndDisablesUnneededSubComponents() {
+        // operator + Installation 一个 release：不需要的 APIServer / Goldmane / Whisker 默认关闭
+        Map<String, Object> values = catalogValues("calico");
+        assertThat((Map<String, Object>) values.get("installation")).containsEntry("enabled", true);
+        for (String key : List.of("apiServer", "goldmane", "whisker")) {
+            assertThat((Map<String, Object>) values.get(key)).as(key).containsEntry("enabled", false);
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> network = (Map<String, Object>) ((Map<String, Object>) values.get("installation"))
+                .get("calicoNetwork");
+        assertThat(network.toString()).contains("${calico.podCidr}").contains("${calico.encapsulation}");
     }
 }

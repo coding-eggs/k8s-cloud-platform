@@ -106,15 +106,25 @@ public class ComponentInstallService {
         }
         requireDependencies(req.getClusterId(), recipe);
 
-        // 告警回调地址：表单值优先，其次平台配置。platformAlerting 的组件没地址就直接拒（别装完才失败）
-        String alertWebhookUrl = resolveAlertWebhookUrl(req.getAlertWebhookUrl());
+        PlatformComponentOperation last =
+                mapper.selectLatestSuccess(req.getClusterId(), req.getComponentCode());
+
+        // 告警回调地址 / Thanos Receive：表单值 > 上次成功操作里记的值 > 平台配置。
+        // platformAlerting / thanosRemoteWrite 的组件没有地址就直接拒（别装完才失败）
+        Map<String, Object> previousPlatform = platformInputsOf(last);
+        String alertWebhookUrl = resolveAlertWebhookUrl(
+                req.getAlertWebhookUrl(), asString(previousPlatform.get("alertWebhookUrl")));
         if (recipe.platformAlerting() && (alertWebhookUrl == null || alertWebhookUrl.isBlank())) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "请填写平台告警回调地址（集群里的 Alertmanager 需要能访问到平台）");
         }
+        String thanosUrl = resolveThanosReceiveUrl(
+                req.getThanosReceiveUrl(), asString(previousPlatform.get("thanosReceiveUrl")));
+        if (recipe.thanosRemoteWrite() && (thanosUrl == null || thanosUrl.isBlank())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请填写 Thanos Receive 地址（Prometheus 的 remoteWrite 目标）");
+        }
 
-        PlatformComponentOperation last =
-                mapper.selectLatestSuccess(req.getClusterId(), req.getComponentCode());
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
         String action = req.getAction() == null ? "INSTALL" : req.getAction();
         if ("UPGRADE".equals(action) && last == null) {
@@ -126,7 +136,7 @@ public class ComponentInstallService {
         List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
                 parseSnapshot(last == null ? null : last.getValuesSnapshot()));
         // 占位符（${cluster.name} / ${thanos.receive.url}）在落库前解析 —— 配置缺失要立刻失败，不留失败记录
-        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId());
+        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl);
         String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
@@ -138,7 +148,8 @@ public class ComponentInstallService {
         op.setToVersion(targetVersion);
         op.setReleaseNames(JSON.writeValueAsString(
                 effective.stream().map(ReleaseSpec::releaseName).toList()));
-        op.setValuesSnapshot(JSON.writeValueAsString(snapshotOf(effective)));
+        op.setValuesSnapshot(JSON.writeValueAsString(
+                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -222,10 +233,10 @@ public class ComponentInstallService {
 
     /** 把 recipe 里的占位符替换成真实值（集群名、Thanos receive 地址） */
     @SuppressWarnings("unchecked")
-    private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId) {
+    private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId, String thanosUrl) {
         Map<String, String> context = new LinkedHashMap<>();
         context.put("cluster.name", clusterService.requireName(clusterId));
-        context.put("thanos.receive.url", thanosReceiveUrl == null ? "" : thanosReceiveUrl);
+        context.put("thanos.receive.url", thanosUrl == null ? "" : thanosUrl);
         context.put("calico.podCidr", calicoPodCidr == null ? "" : calicoPodCidr);
         context.put("calico.encapsulation", calicoEncapsulation == null ? "" : calicoEncapsulation);
         List<ReleaseSpec> out = new ArrayList<>();
@@ -245,6 +256,40 @@ public class ComponentInstallService {
             snapshot.put(r.releaseName(), r.contractValues());
         }
         return snapshot;
+    }
+
+    /**
+     * 快照 + 平台输入（表单里的两个地址）。
+     *
+     * <p>{@code __platform} 不是 release 名，{@code mergeValues} 按 release 名取值时天然忽略它，
+     * 不会混进 helm values；升级时用它把用户上次填的地址带回来。
+     */
+    private static Map<String, Object> snapshotWithPlatformInputs(List<ReleaseSpec> releases, ComponentRecipe recipe,
+                                                                  String alertWebhookUrl, String thanosUrl) {
+        Map<String, Object> snapshot = snapshotOf(releases);
+        Map<String, Object> platform = new LinkedHashMap<>();
+        if (recipe.platformAlerting() && alertWebhookUrl != null) {
+            platform.put("alertWebhookUrl", alertWebhookUrl);
+        }
+        if (recipe.thanosRemoteWrite() && thanosUrl != null) {
+            platform.put("thanosReceiveUrl", thanosUrl);
+        }
+        if (!platform.isEmpty()) {
+            snapshot.put("__platform", platform);
+        }
+        return snapshot;
+    }
+
+    /** 从上次成功的快照里取平台输入（{@code __platform} 子对象）；没有/解析失败 → 空 */
+    private static Map<String, Object> platformInputsOf(PlatformComponentOperation last) {
+        if (last == null) {
+            return Map.of();
+        }
+        return parseSnapshot(last.getValuesSnapshot()).getOrDefault("__platform", Map.of());
+    }
+
+    private static String asString(Object value) {
+        return value instanceof String s ? s : null;
     }
 
     private static Map<String, Map<String, Object>> parseSnapshot(String json) {
@@ -338,10 +383,25 @@ public class ComponentInstallService {
                 base + separator + "clusterId=" + clusterId, token);
     }
 
-    /** 表单值优先，其次平台配置；只做 trim */
-    private String resolveAlertWebhookUrl(String requested) {
-        String value = requested != null && !requested.isBlank() ? requested : alertWebhookBaseUrl;
+    /** 表单值优先，其次上次成功里的值，最后平台配置；只做 trim */
+    private String resolveAlertWebhookUrl(String requested, String previous) {
+        String value = firstNonBlank(requested, previous, alertWebhookBaseUrl);
         return value == null ? null : value.trim();
+    }
+
+    /** 表单值优先，其次上次成功里的值，最后平台配置；只做 trim */
+    private String resolveThanosReceiveUrl(String requested, String previous) {
+        String value = firstNonBlank(requested, previous, thanosReceiveUrl);
+        return value == null ? null : value.trim();
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     /**

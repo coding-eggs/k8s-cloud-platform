@@ -53,6 +53,7 @@ async function onApply(p: {
   targetVersion?: string
   editableValues?: Record<string, unknown>
   alertWebhookUrl?: string
+  thanosReceiveUrl?: string
 }): Promise<void> {
   const target = components.statusOf(p.code)
   try {
@@ -61,16 +62,21 @@ async function onApply(p: {
 `
       + `release 与命名空间由平台固定，chart 版本 ${p.targetVersion ?? '平台默认版本'}。
 `
+      // 网络组件是最高风险档：CIDR/封装写错会直接断网
+      + (p.code === 'calico'
+        ? '⚠️ 这是网络组件：CIDR / 封装方式与集群现状不一致会立即中断集群网络。\n'
+        : '')
       + '过程会向集群写入对象，请确认。',
       '确认操作',
-      { type: 'warning' },
+      { type: p.code === 'calico' ? 'error' : 'warning' },
     )
   } catch {
     return
   }
   applying.value = p.code
   try {
-    const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues, p.alertWebhookUrl)
+    const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues,
+      p.alertWebhookUrl, p.thanosReceiveUrl)
     const op = await operations.wait(id)
     if (op.status === 'SUCCESS') {
       ElMessage.success('操作完成，正在刷新探测…')

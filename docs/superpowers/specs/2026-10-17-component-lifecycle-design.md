@@ -240,9 +240,12 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | `prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues=false` | 🔒 | 同上 |
 | `prometheus.prometheusSpec.probeSelectorNilUsesHelmValues=false` | 🔒 | 同上 |
 | `prometheus.prometheusSpec.ruleNamespaceSelector={}` / `serviceMonitorNamespaceSelector={}` / `podMonitorNamespaceSelector={}` / `probeNamespaceSelector={}` | 🔒 | 显式全命名空间（业务 ns 里的对象才能被发现） |
-| `alertmanager.alertmanagerSpec.alertmanagerConfigMatcherStrategy.type=OnNamespace` | 🔒 | 否则租户 ns 的 AlertmanagerConfig 不生效（默认 `None` 只匹配同 ns） |
+| `alertmanager.alertmanagerSpec.alertmanagerConfigMatcherStrategy.type=OnNamespaceExceptForAlertmanagerNamespace` | 🔒 | 每条 AMC 只处理**本命名空间**的告警；例外是 Alertmanager 自己所在 ns（monitor）里的 AMC —— 它处理**全部**告警。平台自己的联动 AMC 就放在 monitor。用 `OnNamespace` 平台一条租户告警都收不到；用 `None` 每条租户 AMC 都会看到全平台告警（跨租户泄漏） |
 | `alertmanager.alertmanagerSpec.alertmanagerConfigSelector={}` / `alertmanagerConfigNamespaceSelector={}` | 🔒 | 同上 |
-| `prometheus.prometheusSpec.remoteWrite[0].url=<管理集群 Thanos receive>` | 🔒（business） | 业务集群上报入口。**平台现有配置只有 `thanos.query.url`，本批需新增 `thanos.receive.url`**（同一 Thanos 的 receive 端点） |
+| `prometheus.prometheusSpec.remoteWrite[0].url=<管理集群 Thanos receive>` | 🔒 | 业务集群上报入口。值由**安装/升级表单**填写（平台配置 `thanos.receive.url` 只做预填默认值）；未填直接拒装 |
+| `kubeApiServer` / `kubeControllerManager` / `kubeEtcd` / `kubeScheduler`.enabled=false | 🔒 | kubeadm 类集群上这些控制面端点只在 127.0.0.1，target 恒 DOWN、制造噪音告警 |
+| `crds.enabled=true` + `crds.upgradeJob.enabled=true` | 🔒 | Helm **不升级** `crds/` 目录；官方 chart 自带的 Job 在 operator 部署前 `kubectl apply` CRD —— 这是 CRD 升级的唯一正确姿势 |
+| `grafana.enabled` | ⚙️ | **BUSINESS 默认 false，MANAGEMENT 默认 true**（只有管理集群需要看板） |
 | 额外 release `platform-thanos`（query / receive / store + 对象存储） | 🔒（management） | 管理集群的观测底座 |
 
 可编辑（⚙️）：`prometheus.prometheusSpec.retention`、`prometheus.prometheusSpec.storageSpec`（StorageClass + 容量）、`prometheus.prometheusSpec.replicas`、`grafana.enabled`。
@@ -273,7 +276,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | 控制面命名空间固定 `istio-system` | 🔒 | S1.2 探测与平台网格页都按它找 |
 | **对外入口 gateway 名固定 `external-gateway`** | 🔒 | 集群对外入口拓扑依赖它（2026-10-16 实测：端口级 listener ×15、路由跨 ns 挂） |
 | `meshID` 全局一致（多集群时） | 🔒 | 跨集群网格 |
-| ambient：`istio-cni` + `ztunnel` 两个子 chart | 🔒 | `istio-ambient` recipe **`requires: [istio]`** |
+| ambient：`istio-cni` + `ztunnel` 两个子 chart | 🔒 | **`istio` recipe 默认就带这两个 release**（ambient 模式是默认部署形态，不进表单）；`istio-ambient` 的 recipe 是同一组 release 的幂等子集，`requires: [istio]` |
 | ambient：`dataplane-mode` / `use-waypoint` 标签由平台写 | 🔒 | 组件本身不管 |
 
 可编辑：`replicas`、资源限制。**功能级验收**：`istioctl` 不在平台内 → 用探测 + 一次 Gateway 创建/删除验证控制面存活。
@@ -294,13 +297,17 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 
 | 值 | 类型 | 说明 |
 |---|---|---|
-| `Installation.spec.calicoNetwork.ipPools[].cidr` | 🔒 | **装错断网**；必须与集群现有 Pod CIDR 一致 |
-| `Installation.spec.calicoNetwork.encapsulation` | 🔒 | 与集群网络方案一致 |
+| `installation.enabled=true` | 🔒 | operator + Installation **作为一个整体**安装 |
+| `installation.calicoNetwork.ipPools[0].cidr=${calico.podCidr}` | 🔒 | **装错断网**；必须与集群现有 Pod CIDR 一致（平台配置提供，空则拒装） |
+| `installation.calicoNetwork.ipPools[0].encapsulation=${calico.encapsulation}` | 🔒 | 与集群网络方案一致 |
+| `apiServer.enabled=false` / `goldmane.enabled=false` / `whisker.enabled=false` | 🔒 | Calico API Server / 流量日志 / 可视化 UI 平台用不到，chart 默认是开，显式关掉 |
 | tigera-operator 命名空间 `tigera-operator`；CNI 命名空间 `calico-system` | 🔒 | 探测位置 |
 
-- `tigera-operator` 单独安装**不改变网络**，只有 `Installation` CR 才接管 CNI —— 目录里 `calico` **`requires: [tigera-operator]`**。
-- 对**已运行**的集群，本组件的安装/升级属最高风险档：UI 需二次确认 + 明示"可能中断集群网络"。
-- 可编辑：无（新建集群时的 CIDR 由集群登记流程决定，不在本批）。
+- **`tigera-operator` 没有独立 recipe**（只有探测）：两个 recipe 共用同一 release 时，
+  "升级 operator"会以 `installation.enabled=false` 重放并把 Installation CR 删掉 → **断网**。
+  平台把 Calico 作为一个整体安装，`calico` 的 recipe 里同时创建 operator 与 Installation。
+- 对**已运行**的集群，本组件的安装/升级属最高风险档：UI 二次确认必须明示"可能中断集群网络"。
+- 可编辑：无（CIDR 由平台配置决定，不在 UI 里改）。
 - **功能级验收**：探测 healthy + 节点间连通性抽样（平台无此能力 → 手工检查项）。
 
 ### 5.6 `cert-manager` / `otel-operator`
@@ -317,7 +324,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | 值 | 类型 | 说明 |
 |---|---|---|
 | `args: --kubelet-insecure-tls` | 🔒 | 自签 kubelet 证书的集群（本集群同类）否则永远 NotReady |
-| `args: --kubelet-preferred-address-types=InternalIP` | 🔒 | 内网地址可达性 |
+| `defaultArgs` 显式钉住：`--cert-dir=/tmp` / `--kubelet-preferred-address-types=InternalIP` / `--kubelet-use-node-status-port` / `--metric-resolution=15s` | 🔒 | 不依赖 chart 默认值（换版本时可能漂移） |
 | 命名空间固定 `kube-system` | 🔒 | 探测位置 |
 
 可编辑：副本数、资源限制。

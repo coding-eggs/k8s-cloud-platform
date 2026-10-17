@@ -37,6 +37,8 @@ const emit = defineEmits<{
     editableValues?: Record<string, unknown>
     /** 平台告警回调地址（仅 platformAlerting 的组件） */
     alertWebhookUrl?: string
+    /** Thanos Receive 地址（仅 thanosRemoteWrite 的组件） */
+    thanosReceiveUrl?: string
   }): void
 }>()
 
@@ -116,12 +118,19 @@ interface ApplyDialog {
   /** 该组件装完是否要下发告警联动（Prometheus）：显示回调地址输入框 */
   showWebhook: boolean
   webhookUrl: string
+  /** 打开时的预填值：没改就不提交，后端会沿用上次成功操作里记的地址 */
+  initialWebhook: string
+  /** 该组件是否需要 Thanos Receive 地址（Prometheus 的 remoteWrite 目标） */
+  showThanos: boolean
+  thanosUrl: string
+  initialThanos: string
 }
 
 const applyDialog = ref<ApplyDialog>({
   visible: false, code: '', name: '', action: 'INSTALL',
   version: '', versions: [], fields: [], values: {}, jsonText: {}, initial: {},
-  showWebhook: false, webhookUrl: '',
+  showWebhook: false, webhookUrl: '', initialWebhook: '',
+  showThanos: false, thanosUrl: '', initialThanos: '',
 })
 
 function openInstall(row: K8sComponentStatus): void {
@@ -154,6 +163,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
     showWebhook: !!row.platformAlerting,
     webhookUrl: row.defaultAlertWebhookUrl ?? '',
+    initialWebhook: (row.defaultAlertWebhookUrl ?? '').trim(),
+    showThanos: !!row.thanosRemoteWrite,
+    thanosUrl: row.defaultThanosReceiveUrl ?? '',
+    initialThanos: (row.defaultThanosReceiveUrl ?? '').trim(),
   }
 }
 
@@ -182,7 +195,11 @@ function confirmApply(): void {
     action: d.action,
     targetVersion: d.action === 'UPGRADE' ? d.version : undefined,
     editableValues: Object.keys(editable).length ? editable : undefined,
-    alertWebhookUrl: d.showWebhook && d.webhookUrl.trim() ? d.webhookUrl.trim() : undefined,
+    // 两个地址：只发改动过的 —— 没改的由后端沿用上次成功操作里记的值（否则升级会被平台默认值覆盖）
+    alertWebhookUrl: d.showWebhook && d.webhookUrl.trim() && d.webhookUrl.trim() !== d.initialWebhook
+      ? d.webhookUrl.trim() : undefined,
+    thanosReceiveUrl: d.showThanos && d.thanosUrl.trim() && d.thanosUrl.trim() !== d.initialThanos
+      ? d.thanosUrl.trim() : undefined,
   })
 }
 
@@ -307,6 +324,16 @@ const anyUnknown = computed(() => unknownCount.value > 0)
               {{ v }}
             </el-radio>
           </el-radio-group>
+        </div>
+      </div>
+      <div v-if="applyDialog.showThanos" class="cc-form-row">
+        <span class="cc-form-label">Thanos Receive 地址</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.thanosUrl"
+                    placeholder="http://thanos-receive:19291/api/v1/receive" spellcheck="false" />
+          <div class="cc-form-hint">
+            Prometheus 的 remoteWrite 目标（管理集群 Thanos）；集群网络需可达
+          </div>
         </div>
       </div>
       <div v-if="applyDialog.showWebhook" class="cc-form-row">

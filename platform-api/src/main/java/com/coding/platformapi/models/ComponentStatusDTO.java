@@ -41,4 +41,8 @@ public class ComponentStatusDTO {
      * 用户可在安装表单里改；clusterId 永远由后端拼。
      */
     private String defaultAlertWebhookUrl;
+    /** 该组件安装时是否需要填写 Thanos Receive 地址（Prometheus 的 remoteWrite） */
+    private boolean thanosRemoteWrite;
+    /** Thanos Receive 地址的平台默认值（表单预填用） */
+    private String defaultThanosReceiveUrl;
 }

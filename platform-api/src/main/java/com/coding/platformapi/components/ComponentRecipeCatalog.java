@@ -2,6 +2,7 @@ package com.coding.platformapi.components;
 
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -18,6 +19,7 @@ import java.util.Set;
  *
  * <p><b>占位符</b>：{@code ${cluster.name}} / {@code ${thanos.receive.url}} / {@code ${calico.podCidr}} /
  * {@code ${calico.encapsulation}} 在安装前由 {@link ValueTemplate} 解析，缺失或为空直接报错。
+ * 其中 Thanos Receive 地址可由安装表单填写（{@code thanosRemoteWrite} 标记的 recipe）。
  *
  * <p>⚠️ 同一组件的多个 chart 版本按**新 → 旧**排列：前端升级弹窗直接按这个顺序展示并默认选第一个。
  */
@@ -33,9 +35,15 @@ public class ComponentRecipeCatalog {
             "platform-metrics-server", "kube-system", "metrics-server", "3.14.0",
             // 🔒 契约值
             //  - args：自签 kubelet 证书的集群不加这个参数，metrics-server 永远 NotReady
+            //  - defaultArgs：显式钉住（不依赖 chart 默认值漂移）——优先 InternalIP
             //  - fullnameOverride：官方 chart 默认用 release 名做 fullname（= platform-metrics-server），
             //    而组件探测认的是 deployment `metrics-server` —— 固定名字，探测与安装才对得上
             Map.of("args", List.of("--kubelet-insecure-tls"),
+                    "defaultArgs", List.of(
+                            "--cert-dir=/tmp",
+                            "--kubelet-preferred-address-types=InternalIP",
+                            "--kubelet-use-node-status-port",
+                            "--metric-resolution=15s"),
                     "fullnameOverride", "metrics-server"),
             // ⚙️ 可编辑默认值
             Map.of("replicas", 1)));
@@ -44,36 +52,55 @@ public class ComponentRecipeCatalog {
 
     /**
      * 平台对它的依赖：监控曲线（Thanos 按 cluster_name 过滤）、SM/PM 页、告警规则、租户 AlertmanagerConfig。
-     * <p>四个 {@code *NilUsesHelmValues=false} 与四个 {@code *NamespaceSelector={}} 是**必须**的：
-     * 默认值下平台在租户 ns 创建的对象会被 Prometheus **静默忽略**。
-     * <p>{@code remoteWrite} 指向管理集群 Thanos receive —— 空配置会在安装前报错（见 ValueTemplate）。
+     *
+     * <p>几个必须覆盖的默认值：
+     * <ul>
+     *   <li>四个 {@code *SelectorNilUsesHelmValues=false} + 四个 {@code *NamespaceSelector={}}：
+     *       默认值下平台在租户 ns 创建的对象会被 Prometheus <b>静默忽略</b></li>
+     *   <li>{@code alertmanagerConfigMatcherStrategy=OnNamespaceExceptForAlertmanagerNamespace}：
+     *       Alertmanager 所在 ns（monitor）里的 AMC 处理**全部**告警（平台自己的联动），
+     *       租户 ns 的 AMC 仍只处理本 ns 的告警。用 {@code OnNamespace} 平台将收不到任何租户告警</li>
+     *   <li>控制面抓取四项关闭：kubeadm 类集群上这些端点只在 127.0.0.1，target 恒 DOWN</li>
+     *   <li>{@code crds.upgradeJob.enabled=true}：Helm 不升级 {@code crds/} 目录，
+     *       官方 chart 自带的 Job 会在 operator 部署前 apply CRD（CRD 升级的唯一正确姿势）</li>
+     * </ul>
      */
-    private static final List<ReleaseSpec> PROMETHEUS_RELEASES = List.of(new ReleaseSpec(
-            "platform-kps", "monitor", "prometheus-operator", "92.10.1",
-            Map.of(
-                    "prometheus", Map.of("prometheusSpec", Map.of(
-                            "externalLabels", Map.of("cluster_name", "${cluster.name}"),
-                            "ruleSelectorNilUsesHelmValues", false,
-                            "serviceMonitorSelectorNilUsesHelmValues", false,
-                            "podMonitorSelectorNilUsesHelmValues", false,
-                            "probeSelectorNilUsesHelmValues", false,
-                            "ruleNamespaceSelector", Map.of(),
-                            "serviceMonitorNamespaceSelector", Map.of(),
-                            "podMonitorNamespaceSelector", Map.of(),
-                            "probeNamespaceSelector", Map.of(),
-                            "remoteWrite", List.of(Map.of("url", "${thanos.receive.url}")))),
-                    "alertmanager", Map.of("alertmanagerSpec", Map.of(
-                            "alertmanagerConfigMatcherStrategy", Map.of("type", "OnNamespace"),
-                            "alertmanagerConfigSelector", Map.of(),
-                            "alertmanagerConfigNamespaceSelector", Map.of()))),
-            Map.of(
-                    "prometheus.prometheusSpec.retention", "15d",
-                    "prometheus.prometheusSpec.replicas", 1,
-                    // 默认不写 storageClassName：空串在 K8s 里表示"不用动态供给"，会装出一个 Pending 的 PVC
-                    "prometheus.prometheusSpec.storageSpec", Map.of(
-                            "volumeClaimTemplate", Map.of("spec", Map.of(
-                                    "resources", Map.of("requests", Map.of("storage", "50Gi"))))),
-                    "grafana.enabled", true)));
+    private static List<ReleaseSpec> prometheusReleases(boolean grafanaEnabled) {
+        Map<String, Object> contract = new LinkedHashMap<>();
+        contract.put("prometheus", Map.of("prometheusSpec", Map.of(
+                "externalLabels", Map.of("cluster_name", "${cluster.name}"),
+                "ruleSelectorNilUsesHelmValues", false,
+                "serviceMonitorSelectorNilUsesHelmValues", false,
+                "podMonitorSelectorNilUsesHelmValues", false,
+                "probeSelectorNilUsesHelmValues", false,
+                "ruleNamespaceSelector", Map.of(),
+                "serviceMonitorNamespaceSelector", Map.of(),
+                "podMonitorNamespaceSelector", Map.of(),
+                "probeNamespaceSelector", Map.of(),
+                "remoteWrite", List.of(Map.of("url", "${thanos.receive.url}")))));
+        contract.put("alertmanager", Map.of("alertmanagerSpec", Map.of(
+                "alertmanagerConfigMatcherStrategy", Map.of("type", "OnNamespaceExceptForAlertmanagerNamespace"),
+                "alertmanagerConfigSelector", Map.of(),
+                "alertmanagerConfigNamespaceSelector", Map.of())));
+        contract.put("kubeApiServer", Map.of("enabled", false));
+        contract.put("kubeControllerManager", Map.of("enabled", false));
+        contract.put("kubeEtcd", Map.of("enabled", false));
+        contract.put("kubeScheduler", Map.of("enabled", false));
+        contract.put("crds", Map.of("enabled", true, "upgradeJob", Map.of("enabled", true)));
+
+        return List.of(new ReleaseSpec(
+                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                contract,
+                // ⚙️ 可编辑默认值：Grafana 只在管理集群默认开启
+                Map.of(
+                        "prometheus.prometheusSpec.retention", "15d",
+                        "prometheus.prometheusSpec.replicas", 1,
+                        // 默认不写 storageClassName：空串在 K8s 里表示"不用动态供给"，会装出一个 Pending 的 PVC
+                        "prometheus.prometheusSpec.storageSpec", Map.of(
+                                "volumeClaimTemplate", Map.of("spec", Map.of(
+                                        "resources", Map.of("requests", Map.of("storage", "50Gi"))))),
+                        "grafana.enabled", grafanaEnabled)));
+    }
 
     // ==================== gateway-api ====================
 
@@ -84,15 +111,21 @@ public class ComponentRecipeCatalog {
 
     // ==================== istio / istio-ambient ====================
 
-    /** 控制面：base（CRD/集群资源）→ istiod → 对外入口 gateway（名字固定 external-gateway）。 */
+    /**
+     * 默认按 **ambient** 模式部署：base → istiod → cni（ambient）→ ztunnel → 对外入口 gateway。
+     * 入口名固定 {@code external-gateway}（集群对外拓扑依赖它）。
+     */
     private static final List<ReleaseSpec> ISTIO_RELEASES = List.of(
             new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.30.6", Map.of(), Map.of()),
             new ReleaseSpec("istiod", "istio-system", "istio-istiod", "1.30.6", Map.of(),
                     Map.of("replicaCount", 1, "autoscaleEnabled", true)),
+            new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.30.6",
+                    Map.of("ambient", Map.of("enabled", true)), Map.of()),
+            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of()),
             new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.30.6",
                     Map.of("name", "external-gateway"), Map.of()));
 
-    /** ambient 数据面：cni（开启 ambient）+ ztunnel；必须先有控制面。 */
+    /** ambient 数据面单装入口（istio 已包含它们；这个 recipe 幂等，供只补数据面的场景用）。 */
     private static final List<ReleaseSpec> ISTIO_AMBIENT_RELEASES = List.of(
             new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.30.6",
                     Map.of("ambient", Map.of("enabled", true)), Map.of()),
@@ -133,25 +166,32 @@ public class ComponentRecipeCatalog {
     /** pipelines 由 operator 依据 TektonConfig 安装：与 operator 是同一个 release（幂等），但要求前置健康。 */
     private static final List<ReleaseSpec> TEKTON_RELEASES = TEKTON_OPERATOR_RELEASES;
 
-    // ==================== calico / tigera-operator ====================
-
-    /** 只装 operator，**不接管网络**（installation.enabled=false）；装 calico 才下发 Installation CR。 */
-    private static final List<ReleaseSpec> TIGERA_OPERATOR_RELEASES = List.of(new ReleaseSpec(
-            "platform-tigera-operator", "tigera-operator", "tigera-operator", "v3.33.0",
-            Map.of("installation", Map.of("enabled", false)), Map.of()));
+    // ==================== calico ====================
 
     /**
-     * ⚠️ 最高风险组件：CIDR / encapsulation 与集群现有网络不一致会**直接断网**。
+     * Calico 作为一个整体安装（operator + Installation CR）—— 同一个 release。
+     *
+     * <p>⚠️ 最高风险组件：CIDR / encapsulation 与集群现有网络不一致会**直接断网**。
      * 两个值来自平台配置（{@code platform.calico.*}），为空时安装前报错。
+     *
+     * <p>只保留平台用得到的东西：Calico API Server / Goldmane（流量日志）/ Whisker（可视化 UI）
+     * 都不是平台功能所需，默认关闭（chart 默认三者都是开）。
+     *
+     * <p>{@code tigera-operator} 组件因此**没有独立 recipe**：operator 单独安装没有产品意义，
+     * 而两个 recipe 共用同一 release 会让"升级 operator"把 Installation CR 删掉（断网）。
      */
     private static final List<ReleaseSpec> CALICO_RELEASES = List.of(new ReleaseSpec(
             "platform-tigera-operator", "tigera-operator", "tigera-operator", "v3.33.0",
-            Map.of("installation", Map.of(
-                    "enabled", true,
-                    "calicoNetwork", Map.of(
-                            "ipPools", List.of(Map.of(
-                                    "cidr", "${calico.podCidr}",
-                                    "encapsulation", "${calico.encapsulation}"))))),
+            Map.of(
+                    "installation", Map.of(
+                            "enabled", true,
+                            "calicoNetwork", Map.of(
+                                    "ipPools", List.of(Map.of(
+                                            "cidr", "${calico.podCidr}",
+                                            "encapsulation", "${calico.encapsulation}")))),
+                    "apiServer", Map.of("enabled", false),
+                    "goldmane", Map.of("enabled", false),
+                    "whisker", Map.of("enabled", false)),
             Map.of()));
 
     // ==================== cert-manager / otel-operator ====================
@@ -170,26 +210,27 @@ public class ComponentRecipeCatalog {
 
     private static final Map<String, Map<String, ComponentRecipe>> RECIPES = Map.ofEntries(
             Map.entry("metrics-server", profiles(METRICS_SERVER_RELEASES, List.of())),
-            Map.entry("prometheus-operator", profiles(PROMETHEUS_RELEASES, List.of(), true)),
+            Map.entry("prometheus-operator", Map.of(
+                    BUSINESS, new ComponentRecipe(BUSINESS, prometheusReleases(false), List.of(), true, true),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, prometheusReleases(true), List.of(), true, true))),
             Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
             Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),
             Map.entry("tekton", profiles(TEKTON_RELEASES, List.of("tekton-operator"))),
             Map.entry("tekton-operator", profiles(TEKTON_OPERATOR_RELEASES, List.of())),
-            Map.entry("calico", profiles(CALICO_RELEASES, List.of("tigera-operator"))),
-            Map.entry("tigera-operator", profiles(TIGERA_OPERATOR_RELEASES, List.of())),
+            Map.entry("calico", profiles(CALICO_RELEASES, List.of())),
             Map.entry("cert-manager", profiles(CERT_MANAGER_RELEASES, List.of())),
             Map.entry("otel-operator", profiles(OTEL_OPERATOR_RELEASES, List.of("cert-manager"))));
 
     private static Map<String, ComponentRecipe> profiles(List<ReleaseSpec> releases, List<String> requires) {
-        return profiles(releases, requires, false);
+        return profiles(releases, requires, false, false);
     }
 
     private static Map<String, ComponentRecipe> profiles(List<ReleaseSpec> releases, List<String> requires,
-                                                         boolean platformAlerting) {
+                                                         boolean platformAlerting, boolean thanosRemoteWrite) {
         return Map.of(
-                BUSINESS, new ComponentRecipe(BUSINESS, releases, requires, platformAlerting),
-                MANAGEMENT, new ComponentRecipe(MANAGEMENT, releases, requires, platformAlerting));
+                BUSINESS, new ComponentRecipe(BUSINESS, releases, requires, platformAlerting, thanosRemoteWrite),
+                MANAGEMENT, new ComponentRecipe(MANAGEMENT, releases, requires, platformAlerting, thanosRemoteWrite));
     }
 
     /** 可编辑字段的展示文案（key 是路径形式）；没有登记的 key 原样显示 */

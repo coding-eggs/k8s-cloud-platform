@@ -25,9 +25,22 @@ public class ComponentApplyRequest {
      */
     private String alertWebhookUrl;
 
-    /** 兼容旧调用（不含告警地址） */
+    /**
+     * Thanos Receive 地址（仅 thanosRemoteWrite 的组件用，如 Prometheus）。
+     * 用户在建/升级时填写；空 = 用平台配置 {@code thanos.receive.url}。
+     */
+    private String thanosReceiveUrl;
+
+    /** 兼容旧调用（不含告警地址与 Thanos 地址） */
     public ComponentApplyRequest(String clusterId, String componentCode, String action,
                                  String targetVersion, Map<String, Object> editableValues) {
-        this(clusterId, componentCode, action, targetVersion, editableValues, null);
+        this(clusterId, componentCode, action, targetVersion, editableValues, null, null);
+    }
+
+    /** 兼容只带告警地址的调用 */
+    public ComponentApplyRequest(String clusterId, String componentCode, String action,
+                                 String targetVersion, Map<String, Object> editableValues,
+                                 String alertWebhookUrl) {
+        this(clusterId, componentCode, action, targetVersion, editableValues, alertWebhookUrl, null);
     }
 }

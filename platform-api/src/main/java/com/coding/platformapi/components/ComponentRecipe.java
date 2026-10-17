@@ -10,12 +10,18 @@ import java.util.List;
  * @param requires         前置组件 code（安装前必须已 INSTALLED_HEALTHY）
  * @param platformAlerting 安装/升级成功后是否下发平台告警联动对象
  *                         （Secret {@code platform-alert-token} + AlertmanagerConfig {@code platform-webhook}）
+ * @param thanosRemoteWrite 是否引用 {@code ${thanos.receive.url}}（表单里要填 Thanos Receive 地址）
  */
 public record ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
-                              boolean platformAlerting) {
+                              boolean platformAlerting, boolean thanosRemoteWrite) {
 
-    /** 默认不联动告警的简写（批② 里只有 prometheus-operator 需要） */
+    /** 默认既不联动告警、也不上报 Thanos 的简写 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires) {
-        this(profile, releases, requires, false);
+        this(profile, releases, requires, false, false);
+    }
+
+    public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
+                           boolean platformAlerting) {
+        this(profile, releases, requires, platformAlerting, false);
     }
 }

@@ -368,6 +368,95 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void theFormSuppliedThanosUrlWinsOverThePlatformDefault() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of("remoteWrite", List.of(Map.of("url", "${thanos.receive.url}"))),
+                                Map.of())), List.of(), false, true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "http://default:19291/receive");
+
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
+                null, "http://thanos:9999/receive"), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), captor.capture());
+        Object remoteWrite = captor.getValue().get(0).getValues().get("remoteWrite");
+        assertThat(remoteWrite.toString()).contains("http://thanos:9999/receive").doesNotContain("default:19291");
+    }
+
+    @Test
+    void aMissingThanosUrlIsRejectedBeforeInstalling() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of(), Map.of())), List.of(), false, true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "");
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
+                .hasMessageContaining("Thanos Receive");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void thePreviouslyUsedAddressesAreReusedWhenTheFormDoesNotSendThem() {
+        // 表单只在"改过"时才发地址；没发就沿用上次成功操作里记的（__platform），别被平台默认值覆盖
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        PlatformComponentOperation last = new PlatformComponentOperation();
+        last.setId(1L);
+        last.setToVersion("92.10.1");
+        last.setValuesSnapshot("{\"platform-kps\":{}, \"__platform\":{"
+                + "\"alertWebhookUrl\":\"http://prev:8081/alert/webhook\","
+                + "\"thanosReceiveUrl\":\"http://prev-thanos:19291/receive\"}}");
+        when(mapper.selectLatestSuccess("c1", "prometheus-operator")).thenReturn(last);
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of("remoteWrite", List.of(Map.of("url", "${thanos.receive.url}"))),
+                                Map.of())), List.of(), true, true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://default:8081/alert/webhook");
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "http://default-thanos/receive");
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "sd");
+
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "UPGRADE", null, Map.of()), "admin");
+
+        verify(client, timeout(5000)).applyPlatformAlerting(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("monitor"),
+                org.mockito.ArgumentMatchers.eq("http://prev:8081/alert/webhook?clusterId=c1"),
+                org.mockito.ArgumentMatchers.eq("sd"));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), captor.capture());
+        assertThat(captor.getValue().get(0).getValues().toString()).contains("http://prev-thanos:19291/receive");
+    }
+
+    @Test
     void staleRunningOperationsAreMarkedUnknown() {
         PlatformComponentOperation stale = new PlatformComponentOperation();
         stale.setId(7L);

@@ -129,6 +129,8 @@ export const clusterApi = {
     editableValues?: Record<string, unknown>
     /** 平台告警回调地址（仅 platformAlerting 的组件；clusterId 由后端拼） */
     alertWebhookUrl?: string
+    /** Thanos Receive 地址（仅 thanosRemoteWrite 的组件；remoteWrite 目标） */
+    thanosReceiveUrl?: string
   }) => http.post<never, number>('/cluster/components/apply', payload),
   /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
   componentOperation: (payload: {
