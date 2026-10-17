@@ -117,7 +117,8 @@ class ClusterComponentServiceTest {
         when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
         Map<String, String> store = new HashMap<>();
         ClusterComponentService svc = new ClusterComponentService(
-                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cacheOver(store));
+                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cacheOver(store),
+                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog());
 
         svc.status("c1");
         store.clear(); // 45s 到期
@@ -133,7 +134,8 @@ class ClusterComponentServiceTest {
         K8sComponentClient client = mock(K8sComponentClient.class);
         when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
         ClusterComponentService svc = new ClusterComponentService(
-                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cache());
+                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cache(),
+                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog());
 
         svc.status("c1");
 
@@ -207,6 +209,22 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void aComponentWithARecipeCarriesTheAvailableChartVersions() {
+        // 前端据此决定「安装/升级」是否给按钮、以及升级时列出哪些版本
+        ClusterComponentService svc = svc(List.of(probe("kube-system", false, null, null, null)));
+
+        assertThat(find(svc.status("c1"), "metrics-server").getAvailableVersions()).containsExactly("3.14.0");
+    }
+
+    @Test
+    void aComponentWithoutARecipeHasNoAvailableVersions() {
+        // 空列表 = 平台不会装它（面板显示"暂不支持"），与"不知道"无关
+        ClusterComponentService svc = svc(List.of(probe("istio-system", true, 1, 1, "1.30.3")));
+
+        assertThat(find(svc.status("c1"), "istio").getAvailableVersions()).isEmpty();
+    }
+
+    @Test
     void theSecondCallWithinTtlDoesNotProbeAgain() {
         // 门控收口后每个租户进 CI 页/网格页都会触发 —— 不挡就是几百次集群调用
         K8sComponentClient client = mock(K8sComponentClient.class);
@@ -243,7 +261,15 @@ class ClusterComponentServiceTest {
     }
 
     private static ClusterComponentService svcWith(K8sComponentClient client, Map<String, List<String>> groups) {
-        return new ClusterComponentService(new ClusterComponentCatalog(), capability(groups), client, cache());
+        return new ClusterComponentService(new ClusterComponentCatalog(), capability(groups), client, cache(),
+                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog());
+    }
+
+    /** 画像：测试固定 BUSINESS（metrics-server 的 recipe 两个画像相同，但版本列表要走画像取） */
+    private static ClusterService profileService() {
+        ClusterService s = mock(ClusterService.class);
+        when(s.requireProfile("c1")).thenReturn("BUSINESS");
+        return s;
     }
 
     private static ClusterCapabilityService capability(Map<String, List<String>> groups) {

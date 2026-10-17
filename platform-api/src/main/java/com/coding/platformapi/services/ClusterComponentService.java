@@ -6,6 +6,9 @@ import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
 import com.coding.platformapi.components.ComponentDef;
 import com.coding.platformapi.components.ComponentProbe;
+import com.coding.platformapi.components.ComponentRecipe;
+import com.coding.platformapi.components.ComponentRecipeCatalog;
+import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
@@ -53,7 +56,9 @@ public class ClusterComponentService {
     private final ClusterCapabilityService capabilityService;
     private final K8sComponentClient client;
     private final RedisJsonCache cache;
-
+    /** 可安装版本来自 recipe（按集群画像取哪一套） */
+    private final ClusterService clusterService;
+    private final ComponentRecipeCatalog recipes;
     /** full 投影：状态 + 版本 + 命名空间 + detail + 功能映射（管理员） */
     public List<ComponentStatusDTO> status(String clusterId) {
         return cache.get(KEY_PREFIX + clusterId, TTL, LIST_TYPE, () -> probe(clusterId));
@@ -91,6 +96,8 @@ public class ClusterComponentService {
 
     private List<ComponentStatusDTO> probe(String clusterId) {
         Map<String, List<String>> groups = capabilityService.groups(clusterId);
+        // 画像决定可用 recipe；读不到就按"没有 recipe"处理（版本列留空），不让探测整体失败
+        String profile = profileOf(clusterId);
 
         // 目录 → 探测候选（顺序即结果顺序；(ns,kind) 在目录里唯一）
         List<String> codes = new ArrayList<>();
@@ -130,16 +137,38 @@ public class ClusterComponentService {
                 byCode.merge(codes.get(i), r, ClusterComponentService::prefer);
             }
         }
-        return catalog.all().stream().map(d -> compose(d, byCode, groups)).toList();
+        return catalog.all().stream().map(d -> compose(d, byCode, groups, profile)).toList();
+    }
+
+    private String profileOf(String clusterId) {
+        try {
+            return clusterService.requireProfile(clusterId);
+        } catch (Exception e) {
+            log.warn("读取集群 {} 画像失败，可安装版本按空处理: {}", clusterId, e.getMessage());
+            return null; // recipeOf(code, null) 返回 null → 版本列表为空
+        }
+    }
+
+    /** 平台可安装的 chart 版本（去重，保持 recipe 顺序）；没有 recipe → 空列表 */
+    private List<String> availableVersions(String code, String profile) {
+        ComponentRecipe recipe = recipes.recipeOf(code, profile);
+        if (recipe == null) {
+            return List.of();
+        }
+        return recipe.releases().stream()
+                .map(ReleaseSpec::chartVersion)
+                .distinct()
+                .toList();
     }
 
     /** 四态合成：**探测失败 = UNKNOWN，不是 NOT_INSTALLED**（集群断开时说"没装"是本仓修过的坑） */
     private ComponentStatusDTO compose(ComponentDef def, Map<String, WorkloadProbeResultDTO> byCode,
-                                       Map<String, List<String>> groups) {
+                                       Map<String, List<String>> groups, String profile) {
         ComponentStatusDTO s = new ComponentStatusDTO();
         s.setCode(def.code());
         s.setName(def.name());
         s.setFeatures(def.features());
+        s.setAvailableVersions(availableVersions(def.code(), profile));
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现

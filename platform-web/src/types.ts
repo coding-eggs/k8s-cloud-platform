@@ -914,6 +914,8 @@ export interface K8sComponentStatus {
   detail?: string | null
   /** 它支撑的平台功能 code（依赖关系只在后端目录里写一遍） */
   features: string[]
+  /** 平台可安装的 chart 版本（空 = 没有 recipe，不支持安装）；⚠️ chart 版本，与上面 version 不是一套编号 */
+  availableVersions?: string[]
 }
 
 /** 组件安装/升级操作（S3.6）。chart 版本与应用版本是两套编号 —— from/to 指 chart 版本 */

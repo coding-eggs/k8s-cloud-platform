@@ -6,11 +6,13 @@
  *
  * ⚠️ 四态必须分开渲染 —— {@code UNKNOWN}（探测不到）与 {@code NOT_INSTALLED}（没装）是相反结论，
  *    都渲染成灰 tag 就等于把"不知道"说成了"没有"（本仓修过的坑）。
- * ⚠️ 安装/升级（S3.6）：只有 recipe 支持的组件（批① = metrics-server）才给按钮；
+ * ⚠️ 安装/升级（S3.6）：能不能装由后端下发的 `availableVersions` 决定（空 = 没有 recipe），
+ *    前端不再硬编码组件清单。
  *    已装但**不是平台装的**（无平台操作记录）只读 —— 与「已装的一律只探测不接管」一致。
+ *    升级只在**有别的版本可选**时给按钮，点开先选版本（只有一个版本时显示「已是最新」）。
  *    UNKNOWN 不给装：「不知道」不是「没有」。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { K8sComponentOperation, K8sComponentState, K8sComponentStatus } from '@/types'
 
 const props = defineProps<{
@@ -20,8 +22,6 @@ const props = defineProps<{
   canRefresh: boolean
   /** 各组件最近一次操作（由页面统一加载） */
   operations: Record<string, K8sComponentOperation>
-  /** 是否有安装 recipe（批① 只有 metrics-server） */
-  installable: (code: string) => boolean
   /** 正在执行的组件 code（按钮 loading） */
   applying?: string | null
 }>()
@@ -64,6 +64,44 @@ function featureLabel(code: string): string {
 /** 只滤掉与「健康」列重复的 `n/m 就绪`，其余 detail 一律显示 */
 function showDetail(detail?: string | null): boolean {
   return !!detail && !/^\d+\/\d+ 就绪$/.test(detail)
+}
+
+/** 平台能不能装它：由后端下发的可安装 chart 版本决定（空 = 没有 recipe） */
+function installable(row: K8sComponentStatus): boolean {
+  return (row.availableVersions?.length ?? 0) > 0
+}
+
+/**
+ * 线上 chart 版本 —— 只有「平台装成功的最后一次操作」知道。
+ * 最近一次操作失败时无法确定，按未知处理（此时允许升级重试）。
+ */
+function installedChartVersion(code: string): string | null {
+  const op = props.operations[code]
+  return op && op.status === 'SUCCESS' ? (op.toVersion ?? null) : null
+}
+
+/** 可升级到的版本：recipe 里除当前版本之外的 —— 只有一个版本时不出现升级按钮 */
+function upgradeTargets(row: K8sComponentStatus): string[] {
+  const current = installedChartVersion(row.code)
+  return (row.availableVersions ?? []).filter((v) => v !== current)
+}
+
+const upgradeDialog = ref<{ visible: boolean; code: string; version: string; versions: string[] }>({
+  visible: false, code: '', version: '', versions: [],
+})
+
+function openUpgrade(row: K8sComponentStatus): void {
+  const versions = upgradeTargets(row)
+  if (!versions.length) return
+  // 候选按后端（recipe）顺序展示，默认选第一个 —— recipe 的版本列表约定为「新 → 旧」
+  upgradeDialog.value = { visible: true, code: row.code, version: versions[0] ?? '', versions }
+}
+
+function confirmUpgrade(): void {
+  const d = upgradeDialog.value
+  if (!d.version) return
+  d.visible = false
+  emit('apply', { code: d.code, action: 'UPGRADE', targetVersion: d.version })
 }
 
 const rows = computed(() => props.statuses)
@@ -148,7 +186,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </el-table-column>
       <el-table-column label="操作" width="110" fixed="right">
         <template #default="{ row }">
-          <template v-if="row.state === 'NOT_INSTALLED' && installable(row.code)">
+          <template v-if="row.state === 'NOT_INSTALLED' && installable(row)">
             <el-button link type="primary" :loading="props.applying === row.code"
                        @click="emit('apply', { code: row.code, action: 'INSTALL' })">
               安装
@@ -158,10 +196,14 @@ const anyUnknown = computed(() => unknownCount.value > 0)
             <el-tooltip v-if="!operations[row.code]" content="该组件由外部安装，平台不接管" placement="top">
               <span class="cc-readonly">只读</span>
             </el-tooltip>
-            <el-button v-else link type="primary" :loading="props.applying === row.code"
-                       @click="emit('apply', { code: row.code, action: 'UPGRADE' })">
+            <!-- 有可升级版本才给按钮；只有一个版本时不是"能升级"，说清楚 -->
+            <el-button v-else-if="upgradeTargets(row).length" link type="primary"
+                       :loading="props.applying === row.code" @click="openUpgrade(row)">
               升级
             </el-button>
+            <el-tooltip v-else content="平台内置的就是当前版本，暂无可升级版本" placement="top">
+              <span class="cc-readonly">已是最新</span>
+            </el-tooltip>
           </template>
           <!-- UNKNOWN / 无 recipe：不给装 —— "不知道"不是"没有"；没有 recipe 就明确说"暂不支持" -->
           <span v-else-if="row.state === 'UNKNOWN'" class="cc-readonly">—</span>
@@ -169,6 +211,21 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </template>
       </el-table-column>
     </el-table>
+
+    <el-dialog v-model="upgradeDialog.visible" title="选择升级版本" width="360px" append-to-body>
+      <div class="cc-upgrade-tip">
+        当前 chart 版本：<code>{{ installedChartVersion(upgradeDialog.code) ?? '未知' }}</code>
+      </div>
+      <el-radio-group v-model="upgradeDialog.version">
+        <el-radio v-for="v in upgradeDialog.versions" :key="v" :value="v" class="cc-upgrade-option">
+          {{ v }}
+        </el-radio>
+      </el-radio-group>
+      <template #footer>
+        <el-button @click="upgradeDialog.visible = false">取消</el-button>
+        <el-button type="primary" :disabled="!upgradeDialog.version" @click="confirmUpgrade">升级</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -189,4 +246,10 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-guide { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .cc-detail { font-style: italic; }
 .cc-readonly { font-size: 12px; color: var(--text-3); }
+</style>
+
+<style>
+/* ⚠️ el-dialog 内部节点没有 data-v-*，scoped 匹配不到 —— 非 scoped + 独有前缀（本仓既有约定） */
+.cc-upgrade-tip { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+.cc-upgrade-option { display: block; margin: 6px 0; }
 </style>

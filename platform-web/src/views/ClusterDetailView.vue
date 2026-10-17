@@ -41,11 +41,8 @@ const metricsRef = ref<InstanceType<typeof ClusterMetricsPanel> | null>(null)
 // ---- 集群组件（S1.2）：组件 tab 与概览摘要共用同一份全量投影 ----
 // 页面本身由 platform:page:cluster 门禁（管理员），组件 tab 不另要页面码。
 const components = useClusterComponents(computed(() => clusterId.value || null))
-// 组件安装/升级（S3.6 批①）：操作记录 + 轮询
+// 组件安装/升级（S3.6）：操作记录 + 轮询。能不能装由后端下发的 availableVersions 决定，前端不硬编码清单
 const operations = useComponentOperations(computed(() => clusterId.value || null))
-/** 批① 只接了 metrics-server；批② 改为由后端下发支持的组件清单 */
-const recipeCodes = new Set(['metrics-server'])
-const installable = (code: string) => recipeCodes.has(code)
 /** 正在执行的组件（按钮 loading / 禁用） */
 const applying = ref<string | null>(null)
 
@@ -56,7 +53,7 @@ async function onApply(p: { code: string; action: 'INSTALL' | 'UPGRADE'; targetV
     await ElMessageBox.confirm(
       `将${p.action === 'INSTALL' ? '安装' : '升级'} ${target?.name ?? p.code}。
 `
-      + `release 与命名空间由平台固定，chart 版本 ${p.targetVersion ?? '当前版本'}。
+      + `release 与命名空间由平台固定，chart 版本 ${p.targetVersion ?? '平台默认版本'}。
 `
       + '过程会向集群写入对象，请确认。',
       '确认操作',
@@ -687,7 +684,6 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
             :loading="components.statusesLoading.value"
             :can-refresh="components.canManage.value"
             :operations="operations.latest.value"
-            :installable="installable"
             :applying="applying"
             @refresh="components.refresh()"
             @apply="onApply"

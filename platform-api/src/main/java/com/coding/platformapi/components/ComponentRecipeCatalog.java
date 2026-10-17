@@ -12,6 +12,8 @@ import java.util.Map;
  * 这边回答"怎么装"（chart / 版本 / values 契约）。两者用同一个 component code 关联。
  *
  * <p>批② 在这里逐条补其余 10 个组件；每个组件的契约值以 spec §5 为准。
+ *
+ * <p>⚠️ 同一组件的多个 chart 版本按**新 → 旧**排列：前端升级弹窗直接按这个顺序展示并默认选第一个。
  */
 @Component
 public class ComponentRecipeCatalog {

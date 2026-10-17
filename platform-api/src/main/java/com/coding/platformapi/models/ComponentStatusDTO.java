@@ -27,4 +27,9 @@ public class ComponentStatusDTO {
     private String detail;
     /** 它支撑的平台功能 code（依赖关系只在目录里写一遍，这里是派生出来的） */
     private List<String> features;
+    /**
+     * 平台**可安装**的 chart 版本（来自 recipe；空 = 没有 recipe，不支持安装）。
+     * ⚠️ 这是 chart 版本，不是上面 {@code version} 的应用版本 —— 两套编号。
+     */
+    private List<String> availableVersions;
 }
