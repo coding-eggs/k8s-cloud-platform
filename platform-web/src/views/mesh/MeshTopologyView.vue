@@ -83,6 +83,7 @@ function stopTimer(): void {
 
 watch([clusterId, namespace, windowSeconds], () => {
   forced.value = false
+  dragOffsets.clear()   // 换了范围 = 换了一张图，旧的手工位置不再适用
   void load()
 })
 
@@ -267,17 +268,89 @@ const chartLinks = computed(() => {
 })
 
 /**
- * 力导向**收敛一次**后把坐标记在内存里，之后刷新只更新数据、不再跑模拟。
- * ⚠️ 不写它的话，每 30 秒自动刷新都会 setOption → 力导向从初始圈重放一遍动画，
- * 用户看到的就是"图每隔半分钟抖一下"。这份坐标**不落盘**（只在本次打开期间有效）。
+ * 分层布局：把"谁调谁"画成**从左到右**的流，层内上下排。
+ * 静态计算、没有模拟 —— 不会晃，也不会每次刷新重新收敛。
+ * 步骤：断环 → 最长路径定层 → 层内重心排序（减交叉）→ 摆坐标。
  */
-let settledPositions: Record<string, [number, number]> | null = null
-/** settledPositions 属于哪一套节点（节点集变了就作废） */
-let settledKey = ''
-/** 画布此刻画的是哪一套节点 */
-let renderedKey = ''
+function computeLayout(
+  nodes: { id: string }[],
+  edges: { source: string; target: string }[],
+  w: number,
+  h: number,
+): Map<string, [number, number]> {
+  const ids = nodes.map((n) => n.id)
+  const known = new Set(ids)
+  const succ = new Map<string, string[]>(ids.map((id) => [id, []]))
+  const pred = new Map<string, string[]>(ids.map((id) => [id, []]))
+  for (const e of edges) {
+    if (!known.has(e.source) || !known.has(e.target) || e.source === e.target) continue
+    succ.get(e.source)!.push(e.target)
+    pred.get(e.target)!.push(e.source)
+  }
 
-/** ECharts 不把力导向结果写回 option，只能读内部 data 的 layout（类型里是私有的）。 */
+  // ① 断环：DFS 里指向"正在访问"的边是回边，分层时忽略（节点本身照画）
+  const backEdges = new Set<string>()
+  const state = new Map<string, 0 | 1 | 2>(ids.map((id) => [id, 0]))
+  const isBack = (u: string, v: string): boolean => backEdges.has(`${u}\u0000${v}`)
+  const visit = (u: string): void => {
+    state.set(u, 1)
+    for (const v of succ.get(u)!) {
+      const s = state.get(v)!
+      if (s === 1) backEdges.add(`${u}\u0000${v}`)
+      else if (s === 0) visit(v)
+    }
+    state.set(u, 2)
+  }
+  for (const id of ids) if (state.get(id) === 0) visit(id)
+
+  // ② 分层 = 无环图上的最长路径（保证每条边都从左指向右）
+  const rank = new Map<string, number>(ids.map((id) => [id, 0]))
+  const indeg = new Map<string, number>(ids.map((id) => [id, 0]))
+  for (const [u, vs] of succ) for (const v of vs) if (!isBack(u, v)) indeg.set(v, indeg.get(v)! + 1)
+  const queue = ids.filter((id) => indeg.get(id) === 0)
+  while (queue.length) {
+    const u = queue.shift()!
+    for (const v of succ.get(u)!) {
+      if (isBack(u, v)) continue
+      rank.set(v, Math.max(rank.get(v)!, rank.get(u)! + 1))
+      indeg.set(v, indeg.get(v)! - 1)
+      if (indeg.get(v) === 0) queue.push(v)
+    }
+  }
+
+  // ③ 层内排序：按前驱的平均位置（重心）排，减少交叉
+  const byRank: string[][] = []
+  for (const id of ids) (byRank[rank.get(id)!] ??= []).push(id)
+  const layers = byRank.filter((l) => l && l.length)
+  for (let i = 1; i < layers.length; i++) {
+    const prevLayer = layers[i - 1]!
+    const curLayer = layers[i]!
+    const prev = new Map(prevLayer.map((id, idx) => [id, idx]))
+    const bary = (id: string): number => {
+      const ps = pred.get(id)!.filter((p) => prev.has(p))
+      return ps.length ? ps.reduce((s, p) => s + prev.get(p)!, 0) / ps.length : Number.POSITIVE_INFINITY
+    }
+    curLayer.sort((a, b) => bary(a) - bary(b) || a.localeCompare(b))
+  }
+
+  // ④ 坐标：横向按层、纵向层内均匀分布；间距按画布大小收缩，保证一屏放得下
+  const pos = new Map<string, [number, number]>()
+  const cols = Math.max(layers.length, 1)
+  const maxRows = Math.max(...layers.map((l) => l.length), 1)
+  const xGap = cols > 1 ? Math.min(300, Math.max(150, (w - 160) / (cols - 1))) : 0
+  const yGap = Math.min(90, Math.max(52, (h - 120) / Math.max(maxRows - 1, 1)))
+  const x0 = Math.max(80, (w - (cols - 1) * xGap) / 2)
+  layers.forEach((layer, col) => {
+    const top = h / 2 - ((layer.length - 1) * yGap) / 2
+    layer.forEach((id, row) => pos.set(id, [x0 + col * xGap, top + row * yGap]))
+  })
+  return pos
+}
+
+/** 用户拖过的位置（**只在内存里**，不落盘）。拖动是临时微调，不参与分层计算。 */
+const dragOffsets = new Map<string, [number, number]>()
+
+/** ECharts 不把节点坐标写回 option，只能读内部 data 的 layout（类型里是私有的）。 */
 interface GraphInternals {
   getModel(): {
     getSeriesByIndex(index: number): {
@@ -290,29 +363,20 @@ interface GraphInternals {
   }
 }
 
-function nodeKey(nodes: { id: string }[]): string {
-  return nodes.map((n) => n.id).join('|')
-}
-
-/** 读**当前画布**的节点坐标。只应在"画面已经画完"之后调用。 */
-function captureLayout(key: string): void {
+/** 读**当前画布**的节点坐标（拖动结束后用）。 */
+function readCurrentPositions(): void {
   if (!chart) return
   try {
     const data = (chart as unknown as GraphInternals).getModel().getSeriesByIndex(0).getData()
-    const out: Record<string, [number, number]> = {}
     for (let i = 0; i < data.count(); i++) {
       const item = data.getRawDataItem(i)
       const l = data.getItemLayout(i)
       const x = l?.[0] ?? NaN
       const y = l?.[1] ?? NaN
-      if (item?.id && Number.isFinite(x) && Number.isFinite(y)) out[item.id] = [x, y]
-    }
-    if (Object.keys(out).length && nodeKey(Object.keys(out).map((id) => ({ id }))) === key) {
-      settledPositions = out
-      settledKey = key
+      if (item?.id && Number.isFinite(x) && Number.isFinite(y)) dragOffsets.set(item.id, [x, y])
     }
   } catch {
-    /* 内部 API 变了就不冻结，最坏是刷新时多抖一下 */
+    /* 内部 API 变了就不记拖动位置，不影响看图 */
   }
 }
 
@@ -334,25 +398,18 @@ function buildOption(): echarts.EChartsCoreOption {
   const border = cssVar('--border', '#e6eaf2')
   const text1 = cssVar('--text-1', '#1e293b')
 
-  // 布局：已冻结就原样摆回去（layout:'none' 完全不跑模拟），否则从"按 id 排序后的圆环"起跑。
   const nodes = chartNodes.value
-  const settled = settledPositions && settledKey === nodeKey(nodes) ? settledPositions : null
   const w = chart?.getWidth() || 900
-  const h = chart?.getHeight() || 520
-  const cx = w / 2
-  const cy = h / 2
-  const radius = Math.min(w, h) * 0.35
-  const n = Math.max(nodes.length, 1)
-  const data = nodes.map((node, i) => {
-    const p = settled?.[node.id]
-    const angle = (2 * Math.PI * i) / n - Math.PI / 2
-    return {
-      ...node,
-      x: p ? p[0] : cx + radius * Math.cos(angle),
-      y: p ? p[1] : cy + radius * Math.sin(angle),
-    }
+  const h = chart?.getHeight() || 620
+  // 每帧都重算：纯函数、成本可忽略；结果是确定性的，数据不变图就不变
+  const layout = computeLayout(nodes, chartLinks.value, w, h)
+  const data = nodes.map((node) => {
+    const p = dragOffsets.get(node.id) ?? layout.get(node.id) ?? [w / 2, h / 2]
+    return { ...node, x: p[0], y: p[1] }
   })
   return {
+    // 位置是算出来的，别让 ECharts 再做过渡动画（那正是"晃"的来源）
+    animation: false,
     backgroundColor: 'transparent',
     tooltip: {
       backgroundColor: panel,
@@ -379,13 +436,19 @@ function buildOption(): echarts.EChartsCoreOption {
     },
     series: [{
       type: 'graph',
-      layout: settled ? 'none' : 'force',
+      layout: 'none',      // 坐标全由 computeLayout 算好，ECharts 不跑任何布局模拟
       roam: true,          // 查看态：可缩放拖拽，但不做"摆位"（那是编辑态的需求，见流水线画布）
       draggable: true,
-      // 只在**第一次**排布时用；节点集合变了（新工作负载出现）才会再跑一次。
-      // initLayout:'circular' + 上面按 id 排序 = 确定性起跑位置。
-      force: { initLayout: 'circular', repulsion: 320, edgeLength: [90, 220], gravity: 0.08 },
-      label: { show: true, position: 'right', formatter: (p: any) => p.data?.workload ?? '' },
+      // 标签放在节点**下方**并截断：左→右流动时，右侧标签会顶到下一列
+      label: {
+        show: true,
+        position: 'bottom',
+        distance: 6,
+        fontSize: 11,
+        width: 150,
+        overflow: 'truncate',
+        formatter: (p: any) => p.data?.workload ?? '',
+      },
       edgeSymbol: ['none', 'arrow'],
       edgeSymbolSize: 7,
       emphasis: { focus: 'adjacency' },
@@ -398,23 +461,9 @@ function buildOption(): echarts.EChartsCoreOption {
 
 function render(): void {
   if (!chart) return
-  const key = nodeKey(chartNodes.value)
-
-  // 画布上当前这套布局属于 renderedKey：这次要画的还是同一套节点时，
-  // 说明首屏的力导向早就收敛了 —— 趁现在把它记下来，之后就只用 'none' 摆回去。
-  // （不靠"等 N 毫秒"猜收敛：猜早了会存到半路的坐标，下次刷新反而会跳。）
-  if (!settledPositions && renderedKey && renderedKey === key) captureLayout(key)
-
-  // 节点集变了：旧坐标作废，这次重新排一次
-  if (renderedKey && renderedKey !== key) {
-    settledPositions = null
-    settledKey = ''
-  }
-
   // ⚠️ **notMerge**：merge 模式下 graph 的 links 不会真正更新（实测 rps 一直停在旧值），
-  // 所以每次都整体重画；靠下面的坐标冻结保证"重画也不跑模拟"。
+  // 所以每次都整体重画。重画不会晃：坐标是算出来的、且关掉了动画。
   chart.setOption(buildOption(), true)
-  renderedKey = key
 }
 
 // ---- 详情抽屉 ----
@@ -455,8 +504,8 @@ function attachChart(): void {
   if (!chartEl.value || chart) return
   chart = echarts.init(chartEl.value)
   chart.on('click', onChartClick)
-  // 用户拖动后立刻更新冻结坐标，否则下一次自动刷新会把节点弹回原位
-  chart.on('dragend', () => { if (renderedKey) captureLayout(renderedKey) })
+  // 用户拖动后记住位置（只在内存里），否则下一次自动刷新会把节点弹回布局位置
+  chart.on('dragend', readCurrentPositions)
   render()
   resizeObserver = new ResizeObserver(() => chart?.resize())
   resizeObserver.observe(chartEl.value)
@@ -601,9 +650,9 @@ onMounted(() => {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--panel, #fff);
-  min-height: 520px;
+  min-height: 620px;
 }
-.chart { width: 100%; height: 520px; }
+.chart { width: 100%; height: 620px; }
 .health-legend {
   display: flex;
   flex-wrap: wrap;
