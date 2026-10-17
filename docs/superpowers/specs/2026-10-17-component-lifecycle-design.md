@@ -115,11 +115,12 @@ platform-api 只传 `code + recipeVersion + releaseName + values`，**业务判�
 helm upgrade --install <release> <chart.tgz> \
   -n <namespace> --create-namespace \
   --values <merged-values.yaml> \
-  --atomic --timeout 10m \
+  --rollback-on-failure --timeout 10m \
   --labels platform.coding/managed=true,platform.coding/component=<code>,platform.coding/cluster=<clusterId>
 ```
 
-- `--atomic`：失败自动回滚到上一版本；首次安装失败则自动清理。
+- **Helm 4 把 `--atomic` 改名为 `--rollback-on-failure`**（本平台钉死 helm 4.2.0；照旧写 `--atomic` 会直接报未知参数）。
+  `--rollback-on-failure` 会把 `--wait` 默认成 `watcher`：失败自动回滚到上一版本；首次安装失败则自动清理。
 - **预检分两级**（重要）：
   - `helm template`（客户端渲染）**必须通过**，失败即硬失败 —— 这一级能抓 values 路径写错、模板错误；
   - `helm upgrade --install --dry-run=server` **失败只记警告**：chart 同时安装 CRD 与 CR 时，
@@ -337,7 +338,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 
 - 重建 **k8s-server + platform-api + platform-web**。
 - 迁移 `V2026_10_18_1__component_operations.sql`（建表 + 两行权限 + 显式绑 admin）**先重放**。
-- k8s-server 镜像**新增 helm 二进制**（固定版本，随镜像发布）。
+- k8s-server 镜像**新增 helm 二进制**（固定 **4.2.0**，随镜像发布；注意 Helm 4 的 `--rollback-on-failure` 取代了 3.x 的 `--atomic`）。
 - 新增配置：`platform.components.helm-binary`（默认 `helm`，指向镜像内置的固定版本）、
   `thanos.receive.url`（业务集群 Prometheus 的 remoteWrite 目标；管理集群 recipe 引用同一地址）。
   chart 已内置，运行时**不需要外网或代理**。
