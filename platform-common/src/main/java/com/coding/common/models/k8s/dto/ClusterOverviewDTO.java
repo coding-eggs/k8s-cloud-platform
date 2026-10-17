@@ -7,7 +7,7 @@ import java.util.Map;
 
 /**
  * 集群概览（首屏）响应：{@code POST /cluster/overview} 的出参。
- * <p>一次返回「总量快照 + 健康/异常 + 存储 + 能力」，<b>不灌 per-ns 全量</b>（那是
+ * <p>一次返回「总量快照 + 健康/异常 + 存储」，<b>不灌 per-ns 全量</b>（那是
  * {@code /cluster/resource-breakdown} 懒加载的事）。
  * <p><b>降级约定（重要）：聚合来源不可用时，聚合派生段是 {@code null}（不是 0、不是空数组）</b>
  * —— 「集群未连接，读不到」与「真的一个异常 Pod 都没有」在运维上是相反的结论，
@@ -16,8 +16,6 @@ import java.util.Map;
  *   <li>聚合段（resourceTotal / resourceCapacity / nodeSummary / unhealthyNodes / storage /
  *       abnormalPods+abnormalPodTotal）—— 同一次 {@code resource-aggregate} 调用，要么全有要么全 null。</li>
  *   <li>基本信息（名称/版本/...）不在这里：走 {@code /cluster/get}，只读 DB，集群断开也照常可见。</li>
- *   <li>capabilitySummary 始终有值（读 DB 的 capability 列，与集群连通性无关）；
- *       七 flag 全 false = 未探测。</li>
  * </ul>
  */
 @Data
@@ -38,9 +36,6 @@ public class ClusterOverviewDTO {
 
     /** allocated 口径 + 对象计数（取聚合的 total 行） */
     private ClusterTotalDTO resourceTotal;
-
-    /** 能力摘要（capability 列派生，始终非 null） */
-    private CapabilitySummaryDTO capabilitySummary;
 
     private StorageStatDTO storage;
 

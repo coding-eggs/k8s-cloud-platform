@@ -39,12 +39,13 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 集群概览的编排规则（spec §7 的降级承诺 + capability 派生）。
+ * 集群概览的编排规则（spec §7 的降级承诺）。
  * <p>三件事在这里被钉死：
  * <ol>
  *   <li><b>降级不是 0 而是 null</b>：聚合来源不可用时聚合派生段全为 null，前端才能显示「—」；
- *       但能力摘要（读 DB）与基本信息不受影响 —— 「集群未连接」不等于「什么都不知道」。</li>
- *   <li><b>能力 flag 全由 capability 列派生</b>；未探测（空列）→ 全 false，不瞎猜「没装」。</li>
+ *       但基本信息（读 DB）不受影响 —— 「集群未连接」不等于「什么都不知道」。</li>
+ *   <li><b>capability 列只回答 group 存在性与 served versions</b>；未探测（空列）/损坏 JSON
+ *       → 空 map，不瞎猜「没装」。组件四态由 {@code ClusterComponentService} 负责（S1.2 收口）。</li>
  *   <li><b>overview 与 resourceBreakdown 共享同一份聚合</b>（TTL 缓存命中）——
  *       两个 tab 的数字不会因为两次查询之间的集群变化而互相矛盾。</li>
  * </ol>
@@ -59,11 +60,11 @@ class ClusterServiceTest {
     private final NamespaceStatService statService = mock(NamespaceStatService.class);
     /** 内存假 Redis 的底层 store：新用例直接塞集群键，模拟"集群键命中、不触聚合"。 */
     private final Map<String, String> cacheStore = new HashMap<>();
+    private final ClusterCapabilityService capabilityService =
+            new ClusterCapabilityService(clusterMapper, JsonMapper.builder().build());
     private final ClusterService svc = new ClusterService(clusterMapper, adminClient,
             JsonMapper.builder().build(), inMemoryCache(cacheStore),
-            // capability 派生已搬到 ClusterCapabilityService（本类的 3 条 flag 用例仍是它的回归网）
-            new ClusterCapabilityService(clusterMapper, JsonMapper.builder().build()),
-            statService);
+            capabilityService, statService);
 
     private static RedisJsonCache inMemoryCache(Map<String, String> store) {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
@@ -82,41 +83,33 @@ class ClusterServiceTest {
                 JsonMapper.builder().build().writeValueAsString(snap));
     }
 
-    // ==================== capability 派生 ====================
+    // ==================== capability 列（group 存在性 + served versions）====================
 
     @Test
-    void overview_derives_capability_flags_from_capability_column() {
-        stubCluster("{\"gateway.networking.k8s.io\":[\"v1\"],\"networking.istio.io\":[\"v1\"],"
-                + "\"crd.projectcalico.org\":[\"v1\"],\"monitoring.coreos.com\":[\"v1\"],\"metrics.k8s.io\":[\"v1beta1\"]}");
+    void capabilityColumnDerivesGroupPresenceAndServedVersions() {
+        stubCluster("{\"gateway.networking.k8s.io\":[\"v1\",\"v1beta1\"],\"networking.istio.io\":[\"v1\"]}");
 
-        var cap = svc.overview("c1").getCapabilitySummary();
-
-        assertThat(cap.isHasGatewayApi()).isTrue();
-        assertThat(cap.isHasIstio()).isTrue();          // 命中 networking.istio.io
-        assertThat(cap.isHasCalico()).isTrue();
-        assertThat(cap.isHasMonitoringOperator()).isTrue();
-        assertThat(cap.isHasMetricsServer()).isTrue();
-        assertThat(cap.isHasCustomMetrics()).isFalse(); // 没装 adapter：false 而不是「未知」
-        assertThat(cap.isHasExternalMetrics()).isFalse();
+        assertThat(capabilityService.groups("c1"))
+                .containsKeys("gateway.networking.k8s.io", "networking.istio.io");
+        assertThat(capabilityService.versionsOf("c1", ClusterCapabilityService.GATEWAY_API_GROUP))
+                .containsExactly("v1", "v1beta1");
+        assertThat(capabilityService.hasIstio("c1")).isTrue();   // 命中 networking.istio.io
     }
 
     @Test
-    void overview_capability_all_false_when_not_probed() {
+    void anEmptyCapabilityColumnMeansNotProbedNotAbsent() {
         stubCluster(null);
 
-        var cap = svc.overview("c1").getCapabilitySummary();
-
-        assertThat(cap.isHasMetricsServer()).isFalse();
-        assertThat(cap.isHasGatewayApi()).isFalse();
-        assertThat(cap.isHasIstio()).isFalse();
-        assertThat(cap.isHasCalico()).isFalse();
+        assertThat(capabilityService.groups("c1")).isEmpty();
+        assertThat(capabilityService.hasIstio("c1")).isFalse();
     }
 
     @Test
-    void overview_capability_tolerates_broken_json() {
+    void capabilityJsonThatIsBrokenIsTreatedAsNotProbed() {
         stubCluster("{ not json");
 
-        assertThat(svc.overview("c1").getCapabilitySummary().isHasCalico()).isFalse();
+        // 解析失败 → 空 map（未探测），不是抛错、也不是"没装"
+        assertThat(capabilityService.groups("c1")).isEmpty();
     }
 
     // ==================== 降级 ====================
@@ -137,8 +130,6 @@ class ClusterServiceTest {
         assertThat(out.getStorage()).isNull();
         assertThat(out.getAbnormalPods()).isNull();
         assertThat(out.getAbnormalPodTotal()).isNull();
-        // 能力摘要读 DB，不受集群连通性影响
-        assertThat(out.getCapabilitySummary().isHasCalico()).isTrue();
     }
 
     @Test
@@ -236,7 +227,7 @@ class ClusterServiceTest {
         assertThat(out.getAbnormalPods()).isNull();
         assertThat(out.getAbnormalPodTotal()).isNull();
         // 能力摘要读 DB，不受切片可用性影响
-        assertThat(out.getCapabilitySummary().isHasCalico()).isTrue();
+
     }
 
     /** 同上：resourceBreakdown 遇 rows 抛异常 → 返回 null（前端「—」），不抛。 */

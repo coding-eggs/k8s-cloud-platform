@@ -314,16 +314,16 @@ public class ClusterService {
      * 这些集群级事实取自集群键。
      *
      * <p><b>降级</b>：聚合来源（k8s-server → admin client → 集群）不可用时，聚合派生段整体为 null
-     * （{@link ClusterOverviewDTO} 的字段语义），前端显示「—」；<b>基本信息与能力摘要不受影响</b> ——
-     * 前者读 DB（{@code /cluster/get}），后者读 capability 列，两者都与集群当前是否连得上无关。
+     * （{@link ClusterOverviewDTO} 的字段语义），前端显示「—」；<b>基本信息不受影响</b> ——
+     * 它读 DB（{@code /cluster/get}），与集群当前是否连得上无关。
      * 这也是 spec §7「集群断开时基本信息可见」的落点。
+     * <p>能力/组件状态不在本响应里：组件清单走 {@code /cluster/components}（S1.2 起是唯一出处）。
      */
     public ClusterOverviewDTO overview(String clusterId) {
         K8sCluster cluster = require(clusterId);
         ClusterSnapshotDTO snap = snapshot(clusterId);
 
         ClusterOverviewDTO out = new ClusterOverviewDTO();
-        out.setCapabilitySummary(capabilityService.summary(clusterId));
         if (snap != null) {
             try {
                 //先滤掉 null 切片（rows 的网关异常路径可能 append 进 null；合并函数会直接解引用）

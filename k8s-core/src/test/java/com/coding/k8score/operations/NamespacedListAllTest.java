@@ -140,7 +140,7 @@ class NamespacedListAllTest {
     /**
      * 挂一条 {@code inAnyNamespace().list()} 链并返回 (mixed, any) 两个 mock 供 verify。
      * <p>不用 RETURNS_DEEP_STUBS：{@code inAnyNamespace()} 的返回类型带泛型变量，deep stubs 解不出来会返回 null
-     * （MeshOperationsTest 踩过）。
+     * （同类 fluent 链踩过）。
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static <T extends HasMetadata, L extends KubernetesResourceList<T>> MixedOperation<T, L, ?> stubAny(

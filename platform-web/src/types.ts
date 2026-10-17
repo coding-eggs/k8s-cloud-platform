@@ -60,7 +60,6 @@ export interface K8sClusterOption {
  *
  * ⚠️ **聚合段为 null 表示「读不到」而不是「为 0」**（集群未连接 / 聚合超时）：UI 必须显示「—」，
  * 不能把 null 当 0 渲染 —— 「一个异常 Pod 都没有」与「不知道有没有」是相反结论。
- * 只有 capabilitySummary 始终有值（读 DB 的 capability 列，与连通性无关，全 false = 未探测）。
  */
 export interface K8sClusterOverview {
   nodeSummary?: K8sNodeSummary | null
@@ -68,7 +67,6 @@ export interface K8sClusterOverview {
   unhealthyNodes?: K8sNodeHealth[] | null
   resourceCapacity?: K8sResourceCapacity | null
   resourceTotal?: K8sClusterResourceTotal | null
-  capabilitySummary: K8sCapabilitySummary
   storage?: K8sStorageStat | null
   abnormalPods?: K8sAbnormalPod[] | null
   /** 异常 Pod 总数（未封顶）；null = 聚合不可用 */
@@ -258,17 +256,6 @@ export interface K8sStorageStat {
   pvCapacityBytes?: number | null
   /** Σ 已 Bound PV 的容量（字节） */
   pvBoundBytes?: number | null
-}
-
-/** 集群 API 能力摘要（七个 flag，全由 k8s_cluster.capability 派生；全 false = 未探测） */
-export interface K8sCapabilitySummary {
-  hasMetricsServer: boolean
-  hasCustomMetrics: boolean
-  hasExternalMetrics: boolean
-  hasMonitoringOperator: boolean
-  hasGatewayApi: boolean
-  hasIstio: boolean
-  hasCalico: boolean
 }
 
 /** 租户 */

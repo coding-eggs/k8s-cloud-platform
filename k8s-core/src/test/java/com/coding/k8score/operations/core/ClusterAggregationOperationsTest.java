@@ -628,7 +628,7 @@ class ClusterAggregationOperationsTest {
      * aggregate() 的 client 侧 fixture：为九条 fluent 链各挂一次
      * {@code inAnyNamespace().list()}（cluster-scoped 的两条是裸 {@code list()}）。
      * <p>刻意不用 {@code RETURNS_DEEP_STUBS}：{@code inAnyNamespace()} 的返回类型带泛型变量，
-     * deep stubs 解不出来会返回 null（同 {@code MeshOperationsTest} 踩过的坑）。
+     * deep stubs 解不出来会返回 null（同类 fluent 链踩过的坑）。
      */
     private static final class Fixture {
 

@@ -69,7 +69,6 @@ import com.coding.k8score.operations.gateway.GatewayClassOperations;
 import com.coding.k8score.operations.gateway.GatewayOperations;
 import com.coding.k8score.operations.gateway.GrpcRouteOperations;
 import com.coding.k8score.operations.gateway.HttpRouteOperations;
-import com.coding.k8score.operations.gateway.MeshOperations;
 import com.coding.k8score.operations.gateway.TcpRouteOperations;
 import com.coding.k8score.operations.gateway.TlsRouteOperations;
 import com.coding.k8score.operations.gateway.UdpRouteOperations;
@@ -199,17 +198,6 @@ public class KubernetesOperationsFactory {
     public CalicoFormOptionOperations getCalicoFormOptionOperation(String clusterId) {
         KubernetesClient client = clientFactory.getAdminClient(clusterId);
         return new CalicoFormOptionOperations(client);
-    }
-
-    /**
-     * 服务网格探测操作（集群级，admin client；只读）。非标准 CRUD，独立返回具体类型。
-     * <p><b>不再读 DB</b>（2026-10-10）：capability 快照的派生已上移 platform-api 的
-     * {@code ClusterCapabilityService}，本方法只构造"探测 ztunnel"这一半 —— 适配器不派生业务 flag。
-     * 仍在用 {@link #readCapability} 的只剩 HPA / L4 路由的版本分派，那是 K8s 语义，正当。
-     */
-    public MeshOperations getMeshOperation(String clusterId) {
-        KubernetesClient client = clientFactory.getAdminClient(clusterId);
-        return new MeshOperations(client);
     }
 
     /** 按资源类型构造 operation。单版本资源直接 new；HPA 等跨版本发散资源在此按集群 capability 分派 converter。 */
