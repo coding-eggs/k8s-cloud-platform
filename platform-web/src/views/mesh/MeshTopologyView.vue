@@ -26,18 +26,20 @@ echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 const ctx = useResourceContext()
 
 // ---- 查询参数 ----
-const clusterId = ref<string>(ctx.state.clusterId ?? '')
-/** '' = 全部命名空间；默认跟随顶栏的命名空间（拓扑本身是集群级的，允许放开） */
-const namespace = ref<string>(ctx.state.namespace ?? '')
+// 集群 / 命名空间**来自顶栏级联**（本路由 context:'full'），页内不再放一套下拉。
+// 拓扑本身是集群级视图：默认看全集群（否则网关那些边会因为源在 istio-system 而消失），
+// 「仅当前命名空间」是给想收窄的人开关。
+const clusterId = computed(() => ctx.state.clusterId ?? '')
+const scopeToNamespace = ref(false)
+/** 顶栏当前命名空间（用于「仅当前命名空间」的文案与禁用态） */
+const currentNamespace = computed(() => ctx.state.namespace ?? '')
+const namespace = computed(() => (scopeToNamespace.value ? currentNamespace.value : ''))
 const windowSeconds = ref(300)
 const WINDOWS = [
   { label: '5 分钟', value: 300 },
   { label: '1 小时', value: 3600 },
   { label: '24 小时', value: 86400 },
 ]
-
-const clusterOptions = computed(() => ctx.clustersOfTenant.value)
-const namespaceOptions = computed(() => ctx.namespacesOfCluster.value)
 
 // ---- 数据 ----
 const loading = ref(false)
@@ -250,13 +252,11 @@ function detachChart(): void {
 }
 
 onMounted(async () => {
-  ctx.load().then(() => {
-    if (!clusterId.value && ctx.state.clusterId) {
-      clusterId.value = ctx.state.clusterId
-      namespace.value = ctx.state.namespace ?? ''
-    }
-  })
-  await load()
+  // 集群来自顶栏级联。ctx.load() 会按持久化选择校验并补齐缺级：
+  // 补出集群时 watch(clusterId) 自动首查；本来就选好时 watch 不会触发，这里补一次。
+  const alreadySelected = !!clusterId.value
+  await ctx.load()
+  if (alreadySelected && !topo.value) await load()
   startTimer()
 })
 
@@ -295,13 +295,9 @@ onMounted(() => {
 <template>
   <div class="mesh-topology">
     <PageHeader title="网格拓扑" description="谁在调谁：节点 = 工作负载，边 = 调用（粗细 = QPS，颜色 = 错误率）">
-      <el-select v-model="clusterId" placeholder="选择集群" style="width: 180px">
-        <el-option v-for="c in clusterOptions" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
-      </el-select>
-      <el-select v-model="namespace" placeholder="全部命名空间" clearable style="width: 180px">
-        <el-option label="全部命名空间" value="" />
-        <el-option v-for="ns in namespaceOptions" :key="ns" :label="ns" :value="ns" />
-      </el-select>
+      <el-checkbox v-model="scopeToNamespace" :disabled="!currentNamespace">
+        仅当前命名空间<template v-if="currentNamespace">（{{ currentNamespace }}）</template>
+      </el-checkbox>
       <el-radio-group v-model="windowSeconds" size="small">
         <el-radio-button v-for="w in WINDOWS" :key="w.value" :value="w.value">{{ w.label }}</el-radio-button>
       </el-radio-group>
@@ -309,7 +305,7 @@ onMounted(() => {
     </PageHeader>
 
     <!-- ① 没选集群 -->
-    <el-empty v-if="!clusterId" description="请选择集群" />
+    <el-empty v-if="!clusterId" description="请在顶栏选择集群" />
 
     <!-- ② 没接采集：这不是空图能表达的事 -->
     <el-empty v-else-if="notScraped">

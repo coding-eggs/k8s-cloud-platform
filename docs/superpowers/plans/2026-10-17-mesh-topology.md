@@ -29,6 +29,10 @@
 另：Task 2 的测试桩改成了**按入参类型分派的单桩** —— 连续注册多个 `argThat` 桩时，Mockito
 会把上一条桩记录的 null 占位当参数求值（`NullPointerException`）。
 
+另：Task 5 的页头**不再有集群 / 命名空间下拉**（实施后按用户反馈改）：本路由是 `context: 'full'`，
+顶栏级联已经提供这两级，页内再来一套是重复。集群与命名空间改为 `useResourceContext()` 派生，
+只保留一个「仅当前命名空间」开关（默认关 = 看全集群）。
+
 ## Global Constraints
 
 - **本仓没有 Flyway**：`db/migration/*.sql` 一律**手工重放**到库；MySQL 注释 `--` 后面**必须跟空白**。
