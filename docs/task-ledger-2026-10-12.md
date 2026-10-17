@@ -428,9 +428,21 @@
 > 已定：**自研**（不引 Kiali、不引 Loki）。分析文档 §7.7。
 
 - [x] S2.4.1 拓扑数据查询（Thanos 的 `istio_requests_total` / `istio_request_duration_milliseconds_bucket` → 节点与边） —— 2026-10-17 已实施
-- [x] S2.4.2 拓扑图前端（节点 = workload，边 = 速率 / 错误率 / 延迟） —— 2026-10-17 已实施（ECharts 力导向）
+- [x] S2.4.2 拓扑图前端（节点 = workload，边 = 速率 / 错误率 / 延迟） —— 2026-10-17 已实施（ECharts `graph` + 自算静态分层布局，左→右 + 层内上下）
 - [ ] S2.4.3 链路追踪接入（Jaeger 或 Grafana Tempo；嵌入或跳转） —— **用户 2026-10-17 明确：后期会做**（不是砍掉）。现在做不了是因为集群里**没有任何追踪后端**（jaeger/tempo/zipkin 都没有，otel collector 也没配 traces 管道）；开工时要先部署后端 + 让业务透传 `traceparent`
 - [x] S2.4.4 确认 ambient 模式下指标是否齐备（ztunnel / waypoint 的指标产出与命名） —— **已实测回答**（见 spec §7）
+- [ ] S2.4.5 **Service 列表 / 详情补网格信息**（用户 2026-10-17 提出，记作优化项）
+      **现状**：Service **列表**只有 名称 / 类型 / Cluster IP / 端口 / 创建时间；**根本没有详情页**（只有编辑器）。
+      编辑器里已经有 Service 级的 `istio.io/use-waypoint` 字段，但**看列表时完全看不出这个服务在不在网格里**，
+      和刚做完的拓扑页是断开的。
+      **要补**：
+      ① 列表加「网格」列 —— **最终生效的 waypoint** 与 ambient 状态；
+      ② 新建 Service 详情页：生效 waypoint（含来源）、端口 / 端点，以及一个「在拓扑里看」的入口；
+      ③ 拓扑页支持 `?focus=<ns>/<workload>`，只显示上下游子图（拓扑页数据已经够，纯前端过滤）。
+      **数据来源**：Service 的 `istio.io/use-waypoint`；Namespace 的 `istio.io/dataplane-mode` / `istio.io/use-waypoint`。
+      **⚠️ 继承是三层，优先级 Pod > Service > Namespace** —— 必须显示**最终生效值 + 来源**，
+      只读 Service 自己的标签会把「跟随命名空间」的服务误报成没接网格。
+      成本：列表半天；详情页 1 天；拓扑 focus 半天。
 
 ---
 
