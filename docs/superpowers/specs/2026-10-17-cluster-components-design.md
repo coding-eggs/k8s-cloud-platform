@@ -274,11 +274,20 @@ ClusterComponentService.status(clusterId)
   缺的那个是 `metrics-server` → 影响「HPA 资源指标」。这也是这批功能最该兑现的样子。
 - 探测失败（`UNKNOWN`）时顶部给一句"集群当前探测不到，以下状态可能不准确" —— 不静默。
 
-### 6.2 概览 tab 的收敛
+### 6.2 两处"同一事实两个来源"必须一起收掉
 
-现有「组件版本与 API 能力」那块 7 个 tag 与 `CapabilitySummaryDTO` **收敛**为：
+**① 概览 tab 的「组件版本与 API 能力」块**：与 `CapabilitySummaryDTO` 的 7 个 tag 收敛为
 一行摘要（`N 个组件，M 个缺失 · 查看详情 →`）+ 跳转到新 tab。
 **两个地方各说一套是这类页面的经典腐化路径**（同一个事实两个渲染点，迟早不一致）。
+
+**② `cluster.istioVersion` / `cluster.calicoVersion`（登记集群时人工填的字段）**：
+概览 tab 现在展示的就是这两个字段，而新 tab 展示的是**实测值** —— 同一个 Istio 会出现两个版本号，
+其中一个还是人手填的旧值。**这比不做这个 tab 更糟**（用户看到两个数字会先怀疑平台）。
+
+处理：概览那两行**改为显示探测值**，人工登记值降为 tooltip；两者不一致时 tooltip 明说
+`登记值 1.24 与实测 1.30.3 不一致`（升级了集群但没更新登记信息，是真实会发生的）。
+**字段本身不删**（`K8sCluster` 的列与创建/更新请求都不动 —— 删列是破坏性变更，
+且"登记时你以为是什么版本"本身有记录价值）。
 
 ### 6.3 租户侧的能力提示
 
@@ -289,12 +298,25 @@ CI 页顶部、网格横幅、HPA 编辑器的提示。数据来自 `flags`。
 
 ## 7. 权限与迁移
 
-- 新页面码 + API 码：`platform:cluster:component:view`（页面）与 `platform:cluster:component:read`（接口）。
-- **新权限行必须显式绑内置 admin 角色**（本仓踩过的坑：权限行不按 code 前缀继承），
-  手写迁移 SQL、人工重放。命名照既有：`V2026_10_17_1__cluster_component_permission.sql`。
-- **租户侧不新增权限行**：`flags` 走各功能页既有码（`tenant:pipeline:read` 等），
-  CI 的 `/pipeline/capability` 已经是那个码。
-- 探测端点（k8s-server）**不加权限点**：它是 UPSTREAM 边界，收窄在上游（§4.2）。
+**新 tab 不需要新页面码**：它长在既有的集群详情页里，那个页面已由 `platform:page:cluster` 门禁
+（`router/index.ts` 的 `cluster-detail` 路由）。**记错这条的后果不是多一行权限，而是多一行幽灵行**。
+
+新增三条 platform-api 端点，**每条都要权限行**（无行的新端点会被 `PermissionCrossCheckRunner`
+在启动时拒服）：
+
+| 端点 | 权限码 | 给谁 |
+|---|---|---|
+| `POST /cluster/components` | `platform:cluster:manage` | 管理员：全量（状态 + 版本 + 命名空间 + detail + 功能映射） |
+| `POST /cluster/component-flags` | `tenant:cluster:capability:view` **＋** `platform:cluster:manage`（**两行同一路径**） | 租户侧门控。两行同路径是既有做法 —— `/cluster/capability/get` 就是这么写的 |
+| `POST /cluster/components/refresh` | `platform:cluster:manage` | 「重新探测」（清缓存 + 重探，@audit） |
+
+- `tenant:cluster:capability:view` **复用既有码**（它的语义正是"租户可读的集群只读快照"，
+  `/nodes/addresses` 那条也是它），不新造租户码。
+- **新权限行必须显式绑内置 admin 角色**（本仓踩过的坑：权限行不按 code 前缀继承）。
+- 手写迁移 SQL、人工重放：`V2026_10_17_1__cluster_components.sql`。
+  照 `V2026_10_16_3` 的形态（显式 id + ODKU；角色关联按**显式 id**，不用 LIKE —— `_` 是通配符；
+  `resource` 列**不带** `/cluster` 之外的任何前缀，与 Spring MVC pattern 一字不差）。
+- 探测端点（k8s-server `/workload-probes`）**不加权限点**：UPSTREAM 边界，收窄在上游（§4.2）。
 
 ---
 
