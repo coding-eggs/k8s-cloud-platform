@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformComponentOperationMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformComponentOperation">
+    <id     column="id"              jdbcType="BIGINT"    property="id" />
+    <result column="cluster_id"      jdbcType="VARCHAR"   property="clusterId" />
+    <result column="component_code"  jdbcType="VARCHAR"   property="componentCode" />
+    <result column="action"          jdbcType="VARCHAR"   property="action" />
+    <result column="profile"         jdbcType="VARCHAR"   property="profile" />
+    <result column="from_version"    jdbcType="VARCHAR"   property="fromVersion" />
+    <result column="to_version"      jdbcType="VARCHAR"   property="toVersion" />
+    <result column="release_names"   jdbcType="VARCHAR"   property="releaseNames" />
+    <result column="values_snapshot" jdbcType="VARCHAR"   property="valuesSnapshot" />
+    <result column="status"          jdbcType="VARCHAR"   property="status" />
+    <result column="message"         jdbcType="VARCHAR"   property="message" />
+    <result column="log_tail"        jdbcType="VARCHAR"   property="logTail" />
+    <result column="operator"        jdbcType="VARCHAR"   property="operator" />
+    <result column="started_at"      jdbcType="TIMESTAMP" property="startedAt" />
+    <result column="finished_at"     jdbcType="TIMESTAMP" property="finishedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, component_code, `action`, profile, from_version, to_version,
+    release_names, values_snapshot, `status`, message, log_tail, `operator`, started_at, finished_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformComponentOperation"
+          useGeneratedKeys="true" keyProperty="id">
+    insert into platform_component_operation (cluster_id, component_code, `action`, profile,
+      from_version, to_version, release_names, values_snapshot, `status`, message, log_tail,
+      `operator`, started_at, finished_at)
+    values (#{clusterId,jdbcType=VARCHAR}, #{componentCode,jdbcType=VARCHAR}, #{action,jdbcType=VARCHAR},
+      #{profile,jdbcType=VARCHAR}, #{fromVersion,jdbcType=VARCHAR}, #{toVersion,jdbcType=VARCHAR},
+      #{releaseNames,jdbcType=VARCHAR}, #{valuesSnapshot,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
+      #{message,jdbcType=VARCHAR}, #{logTail,jdbcType=VARCHAR}, #{operator,jdbcType=VARCHAR},
+      #{startedAt,jdbcType=TIMESTAMP}, #{finishedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformComponentOperation">
+    update platform_component_operation
+    <set>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>
+      <if test="logTail != null">log_tail = #{logTail,jdbcType=VARCHAR},</if>
+      <if test="finishedAt != null">finished_at = #{finishedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <select id="selectByPrimaryKey" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_component_operation
+    where id = #{id,jdbcType=BIGINT}
+  </select>
+
+  <select id="selectLatestPerComponent" resultMap="BaseResultMap">
+    select o.* from platform_component_operation o
+    join (select component_code, max(id) as mid
+          from platform_component_operation
+          where cluster_id = #{clusterId,jdbcType=VARCHAR}
+          group by component_code) t on o.id = t.mid
+    order by o.component_code
+  </select>
+
+  <select id="selectLatestSuccess" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_component_operation
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and component_code = #{componentCode,jdbcType=VARCHAR}
+      and `status` = 'SUCCESS'
+    order by id desc
+    limit 1
+  </select>
+
+  <select id="countRunning" resultType="int">
+    select count(*) from platform_component_operation
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and component_code = #{componentCode,jdbcType=VARCHAR}
+      and `status` in ('PENDING', 'RUNNING')
+  </select>
+
+  <select id="selectStaleRunning" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_component_operation
+    where `status` = 'RUNNING'
+      and started_at &lt; now() - interval #{minutes} minute
+  </select>
+
+</mapper>

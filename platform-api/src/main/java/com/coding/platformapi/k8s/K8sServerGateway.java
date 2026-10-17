@@ -111,9 +111,22 @@ public class K8sServerGateway {
      * 报错上下文由 {@link ResponsePreviewStream} 限在前 8KB，避免"解析失败时把整包 body 写进日志"。
      */
     public <T> T exchange(HttpMethod method, String path, Map<String, String> params, Object body, JavaType respType) {
+        return exchangeWith(restClient, method, path, params, body, respType);
+    }
+
+    /**
+     * 慢速通道（30 分钟读超时）：给 helm 安装这类分钟级长任务用。
+     * 常规 {@link #exchange} 的读超时是 120s，装一个栈会被提前掐断。
+     */
+    public <T> T exchangeSlow(HttpMethod method, String path, Map<String, String> params, Object body, JavaType respType) {
+        return exchangeWith(streamRestClient, method, path, params, body, respType);
+    }
+
+    private <T> T exchangeWith(RestClient client, HttpMethod method, String path, Map<String, String> params,
+                               Object body, JavaType respType) {
         String uri = buildUri(path, params);
         try {
-            var spec = restClient.method(method)
+            var spec = client.method(method)
                     .uri(uri)
                     .headers(this::passThroughAuthorization);
             if (body != null) {

@@ -1,5 +1,8 @@
 package com.coding.platformapi.k8s;
 
+import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
+import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
@@ -27,5 +30,17 @@ public class K8sComponentClient {
         body.setTargets(targets);
         return gateway.exchange(HttpMethod.POST, "/workload-probes", null, body,
                 gateway.listResponseType(WorkloadProbeResultDTO.class));
+    }
+
+    /**
+     * 安装/升级（长任务）：POST /components/apply。
+     * 用**慢速通道**（30 分钟读超时）—— helm 装一个栈可能要几分钟，常规 120s 会提前断开。
+     */
+    public ComponentInstallResultDTO applyComponent(String clusterId, List<ReleaseInstallSpecDTO> releases) {
+        ComponentInstallRequestDTO body = new ComponentInstallRequestDTO();
+        body.setClusterId(clusterId);
+        body.setReleases(releases);
+        return gateway.exchangeSlow(HttpMethod.POST, "/components/apply", null, body,
+                gateway.responseType(ComponentInstallResultDTO.class));
     }
 }
