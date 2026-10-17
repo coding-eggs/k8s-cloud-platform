@@ -40,6 +40,7 @@ import type {
   K8sSecret,
   K8sService,
   K8sServiceMonitor,
+  K8sPrometheusRule,
   K8sStorageClass,
   K8sTcpRoute,
   K8sTlsRoute,
@@ -407,6 +408,9 @@ export const workloadApi = {
 
 /** ServiceMonitor /servicemonitors（CRD，集群未装 Prometheus Operator 时透传错误） */
 export const serviceMonitorApi = makeResourceApi<K8sServiceMonitor>('servicemonitors')
+
+/** PrometheusRule /prometheusrules。运行状态（runtime）由后端在 list/get 时附着，前端不需要额外请求。 */
+export const prometheusRuleApi = makeResourceApi<K8sPrometheusRule>('prometheusrules')
 
 /** ServiceMonitor Prometheus discovery 定位（对应后端 ServiceMonitorKeyRequest：clusterId + namespace + name） */
 type SmDiscoveryCtx = { clusterId: string; namespace: string; name: string }

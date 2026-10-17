@@ -67,6 +67,7 @@ export const pageCodes = {
   persistentVolume: { list: 'tenant:page:persistentvolume.list' },
   storageClass: { list: 'platform:page:storageclass.list' },
   serviceMonitor: { list: 'tenant:page:servicemonitor.list', edit: 'tenant:page:servicemonitor.edit' },
+  prometheusRule: { list: 'tenant:page:prometheusrule.list', edit: 'tenant:page:prometheusrule.edit' },
   podMonitor: { list: 'tenant:page:podmonitor.list', edit: 'tenant:page:podmonitor.edit' },
   hpa: { list: 'tenant:page:hpa.list', edit: 'tenant:page:hpa.edit' },
 

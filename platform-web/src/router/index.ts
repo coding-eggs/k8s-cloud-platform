@@ -98,6 +98,8 @@ const router = createRouter({
         { path: 'resources/servicemonitors/editor', name: 'servicemonitor-editor', component: () => import('@/views/resource/ServiceMonitorEditorView.vue'), meta: { title: 'ServiceMonitor 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.serviceMonitor.edit] } },
         { path: 'resources/podmonitors', name: 'podmonitors', component: () => import('@/views/resource/PodMonitorView.vue'), meta: { title: 'PodMonitor', group: '监控告警', context: 'full', requiresPerm: [pageCodes.podMonitor.list] } },
         { path: 'resources/podmonitors/editor', name: 'podmonitor-editor', component: () => import('@/views/resource/PodMonitorEditorView.vue'), meta: { title: 'PodMonitor 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.podMonitor.edit] } },
+        { path: 'resources/prometheusrules', name: 'prometheusrules', component: () => import('@/views/resource/PrometheusRuleView.vue'), meta: { title: 'PrometheusRule', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.list] } },
+        { path: 'resources/prometheusrules/editor', name: 'prometheusrule-editor', component: () => import('@/views/resource/PrometheusRuleEditorView.vue'), meta: { title: 'PrometheusRule 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.edit] } },
 
         // 集群运维（Calico）
         { path: 'ops/ippools', name: 'ippools', component: () => import('@/views/ops/IppoolView.vue'), meta: { title: '地址池', group: '集群运维', requiresPerm: [pageCodes.ops.ippool.list] } },

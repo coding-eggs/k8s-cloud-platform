@@ -743,6 +743,59 @@ export interface K8sServiceMonitor {
   creationTime?: string | null
 }
 
+/** PrometheusRule 里的一条规则（alert 与 record 二选一，expr 必填） */
+export interface K8sPrometheusRuleRule {
+  alert?: string | null
+  record?: string | null
+  expr?: string | null
+  /** ⚠️ 后端 Java 字段是 for_（for 是关键字），JSON 键就是 for_ */
+  for_?: string | null
+  keepFiringFor?: string | null
+  labels?: Record<string, string> | null
+  annotations?: Record<string, string> | null
+}
+
+/** PrometheusRule 的一组规则（spec.groups[]） */
+export interface K8sPrometheusRuleGroup {
+  name?: string | null
+  interval?: string | null
+  queryOffset?: string | null
+  limit?: number | null
+  labels?: Record<string, string> | null
+  partialResponseStrategy?: string | null
+  rules?: K8sPrometheusRuleRule[] | null
+}
+
+/** 单条规则的运行状态（仅查询返回，由后端读 Prometheus /api/v1/rules 附着） */
+export interface K8sRuleHealth {
+  group?: string | null
+  name?: string | null
+  /** ok | err | unknown */
+  health?: string | null
+  lastError?: string | null
+  /** inactive | pending | firing；recording 规则为 null */
+  state?: string | null
+  activeAlerts?: number | null
+}
+
+/** loaded = 在 Prometheus 里找到了；missing = 没找到且过了宽限期；unknown = 拉不到 */
+export interface K8sRuleRuntime {
+  loadState?: 'loaded' | 'missing' | 'unknown' | null
+  rules?: K8sRuleHealth[] | null
+}
+
+/** PrometheusRule（monitoring.coreos.com/v1 CRD） */
+export interface K8sPrometheusRule {
+  name: string
+  namespace: string
+  labels?: Record<string, string> | null
+  /** spec.groups（必填，至少一组） */
+  groups?: K8sPrometheusRuleGroup[] | null
+  creationTime?: string | null
+  /** 仅查询返回；拉不到 Prometheus 时为 null */
+  runtime?: K8sRuleRuntime | null
+}
+
 /** PodMonitor endpoint Secret 引用（与后端 PodMonitorEndpointDTO.SecretRef 同构） */
 export interface K8sPmSecretRef { name?: string | null; key?: string | null }
 
