@@ -971,6 +971,7 @@ export interface K8sComponentOperation {
   toVersion?: string | null
   status: K8sComponentOperationStatus
   message?: string | null
+  /** helm 输出的尾部（失败时是排查的主要依据） */
   logTail?: string | null
   operator?: string | null
   startedAt?: string | null

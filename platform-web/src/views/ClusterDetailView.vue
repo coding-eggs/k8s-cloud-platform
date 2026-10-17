@@ -106,7 +106,7 @@ async function onApply(p: {
       ElMessage.success('操作完成，正在刷新探测…')
       await components.refresh()
     } else {
-      ElMessage.error(op.message || '操作失败')
+      ElMessage.error(`${op.message || '操作失败'}（可在组件列表的「上次操作」查看 helm 日志）`)
     }
   } catch (e) {
     ElMessage.error((e as Error).message)

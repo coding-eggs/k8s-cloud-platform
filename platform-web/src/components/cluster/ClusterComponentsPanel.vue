@@ -279,6 +279,68 @@ function confirmApply(): void {
   })
 }
 
+/** 操作状态 → 色标（列与详情弹窗共用） */
+const OP_STATUS: Record<K8sComponentOperation['status'], {
+  label: string
+  type: 'success' | 'info' | 'warning' | 'danger'
+}> = {
+  PENDING: { label: '排队中', type: 'info' },
+  RUNNING: { label: '进行中', type: 'warning' },
+  SUCCESS: { label: '成功', type: 'success' },
+  FAILED: { label: '失败', type: 'danger' },
+  UNKNOWN: { label: '中断', type: 'info' },
+}
+
+/** 上次操作色标（模板里 Safe 访问，避免 Record 索引的 undefined 类型） */
+function opTag(code: string): {
+  present: boolean
+  label: string
+  type: 'success' | 'info' | 'warning' | 'danger'
+  tooltip: string
+} {
+  const op = props.operations[code]
+  if (!op) {
+    return { present: false, label: '', type: 'info', tooltip: '' }
+  }
+  const meta = OP_STATUS[op.status]
+  return { present: true, label: meta.label, type: meta.type,
+    tooltip: `${op.finishedAt ?? '进行中'} · ${op.operator ?? ''}` }
+}
+
+const operationDialog = ref<{
+  visible: boolean
+  name: string
+  op: K8sComponentOperation | null
+}>({ visible: false, name: '', op: null })
+
+function openOperation(row: K8sComponentStatus): void {
+  const op = props.operations[row.code]
+  if (!op) return
+  operationDialog.value = { visible: true, name: row.name, op }
+}
+
+/** 复制 helm 输出：http 内网下 navigator.clipboard 不存在，必须带 execCommand 兜底 */
+async function copyLog(): Promise<void> {
+  const text = operationDialog.value.op?.logTail ?? ''
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const area = document.createElement('textarea')
+      area.value = text
+      area.style.position = 'fixed'
+      area.style.opacity = '0'
+      document.body.appendChild(area)
+      area.select()
+      document.execCommand('copy')
+      document.body.removeChild(area)
+    }
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动选择文本')
+  }
+}
+
 const rows = computed(() => props.statuses)
 
 const healthyCount = computed(() =>
@@ -345,6 +407,18 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       <el-table-column label="健康" width="100">
         <template #default="{ row }">
           {{ row.ready == null ? '—' : `${row.ready}/${row.desired}` }}
+        </template>
+      </el-table-column>
+      <el-table-column label="上次操作" width="100">
+        <template #default="{ row }">
+          <el-tooltip v-if="opTag(row.code).present" :content="opTag(row.code).tooltip" placement="top">
+            <el-tag size="small" effect="plain" class="cc-op-tag"
+                    :type="opTag(row.code).type"
+                    @click="openOperation(row)">
+              {{ opTag(row.code).label }}
+            </el-tag>
+          </el-tooltip>
+          <span v-else class="cc-readonly">—</span>
         </template>
       </el-table-column>
       <el-table-column label="影响的功能" min-width="260">
@@ -498,6 +572,34 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <el-button type="primary" @click="confirmApply">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 上次操作详情：失败原因 + helm 输出（排查日志的唯一入口） -->
+    <el-dialog v-model="operationDialog.visible" :title="`操作详情 · ${operationDialog.name}`"
+               width="760px" append-to-body>
+      <template v-if="operationDialog.op">
+        <div class="cc-op-meta">
+          <span>动作：{{ operationDialog.op.action === 'INSTALL' ? '安装' : '升级' }}</span>
+          <span>chart 版本：{{ operationDialog.op.fromVersion || '—' }} → {{ operationDialog.op.toVersion || '—' }}</span>
+          <span>结果：
+            <el-tag size="small" :type="OP_STATUS[operationDialog.op.status].type">
+              {{ OP_STATUS[operationDialog.op.status].label }}
+            </el-tag>
+          </span>
+          <span>操作人：{{ operationDialog.op.operator || '—' }}</span>
+          <span>时间：{{ operationDialog.op.startedAt || '—' }} ~ {{ operationDialog.op.finishedAt || '未结束' }}</span>
+        </div>
+        <div v-if="operationDialog.op.message" class="cc-op-message">{{ operationDialog.op.message }}</div>
+        <div class="cc-op-log-head">
+          <span>helm 输出</span>
+          <el-button size="small" link type="primary" :disabled="!operationDialog.op.logTail"
+                     @click="copyLog">复制</el-button>
+        </div>
+        <pre class="cc-op-log">{{ operationDialog.op.logTail || '（无输出）' }}</pre>
+      </template>
+      <template #footer>
+        <el-button @click="operationDialog.visible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -528,4 +630,16 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
 .cc-form-control { flex: 1 1 auto; min-width: 0; }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
+.cc-op-tag { cursor: pointer; }
+.cc-op-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
+.cc-op-message { font-size: 13px; color: var(--danger); margin-bottom: 10px; white-space: pre-wrap; }
+.cc-op-log-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; color: var(--text-2); margin-bottom: 6px;
+}
+.cc-op-log {
+  max-height: 380px; overflow: auto; margin: 0; padding: 10px; border-radius: 6px;
+  background: var(--bg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; white-space: pre-wrap; word-break: break-all;
+}
 </style>
