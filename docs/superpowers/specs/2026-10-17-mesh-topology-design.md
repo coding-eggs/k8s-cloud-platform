@@ -18,10 +18,17 @@
 
 | 要什么 | 查询 |
 |---|---|
-| 边 + QPS | `sum by (source_workload, destination_workload, …ns) (rate(istio_requests_total{cluster_name="…",…}[$w]))` |
-| 错误率 | 同上加 `response_code=~"5.."`，两条相除（分母是**总量**，不是 rps+errors） |
-| P95 | `histogram_quantile(0.95, sum by (le, …, 两端 ns) (rate(istio_request_duration_milliseconds_bucket{cluster_name="…",…}[$w])))` |
+| 边 + QPS（L7） | `sum by (source_workload, destination_workload, …ns) (rate(istio_requests_total{cluster_name="…",…}[$w]))` |
+| 错误率（L7） | 同上加 `response_code=~"5.."`，两条相除（分母是**总量**，不是 rps+errors） |
+| P95（L7） | `histogram_quantile(0.95, sum by (le, …, 两端 ns) (rate(istio_request_duration_milliseconds_bucket{cluster_name="…",…}[$w])))` |
+| 边 + 字节（L4） | `sum by (…同上) (rate(istio_tcp_sent_bytes_total{cluster_name="…",…}[$w]))` |
 | 哨兵 | `count(istio_build{cluster_name="…"})` —— 判「在不在采集」 |
+
+**两层怎么合并**：同一对端点同时有 L4 与 L7 时**只出一条 L7 边**，字节数附在它上面；
+只有 L4 的边标 `level=L4`（没有错误率、没有请求延迟）。
+⚠️ L4 用**字节/秒**而不是连接数：`istio_tcp_connections_opened_total` 对长连接（mysql/redis）
+几乎恒为 0，实测没有区分度（mysql 7.9KB/s、es 1.5KB/s 才有）。
+⚠️ `destination_workload="unknown"`（Istio 解析不到目标）的行**丢弃**，别把它画成一个叫 unknown 的节点。
 
 ⚠️ 五条**实测出来的**约束，全部写进代码注释：
 
@@ -46,17 +53,17 @@
 record MeshTopologyResponse(List<MeshNode> nodes, List<MeshEdge> edges,
                            int windowSeconds, boolean meshMetricsAvailable)
 record MeshNode(String id, String namespace, String workload, boolean gateway)
-record MeshEdge(String source, String target, double rps, double errorRate, Double p95Ms)
+record MeshEdge(String source, String target, String level, double rps, double errorRate,
+                Double p95Ms, Double bytesPerSec)
 ```
 
 ⚠️ **`MeshNode.id` 的约定：`namespace + "/" + workload`**（如 `default/movie-deployment`）。
 命名空间必须进 id —— 同名 workload 在多个命名空间里很常见，只用 workload 名会**把两条边粘成一个节点**。
 `MeshEdge.source/target` 存的就是这个 id。
 
-⚠️ **没有 `hasL7` 字段**（2026-10-17 实施时删掉）：本版所有边都来自 `istio_requests_total`（L7 指标），
-它的值恒为 `true` —— 那是个兑现不了任何信息的承诺。没有 waypoint 的调用**根本不会出现在图里**
-（详见 §5 第 2 条），这件事由页面底部常驻的「覆盖范围」说明讲清楚。
-`p95Ms == null` 已经承担了「这条边有调用但量不出延迟」的表达。
+⚠️ **层级由 `level` 表达，不是 `hasL7`**：`L7` 的边有请求数/响应码/延迟；`L4` 的边只有
+`bytesPerSec`，`rps`/`errorRate`/`p95Ms` 一律是「没有意义」而不是 0 —— 前端要显示「—」。
+同一对端点两层都有时只出一条 `L7` 边，字节数一并带上。
 
 **查询**：`MetricQuery` 枚举加三个常量（与现有"一个枚举常量 = 一条 PromQL 模板 + 一个 label 类型"的风格一致）。
 
@@ -96,7 +103,8 @@ record MeshEdge(String source, String target, double rps, double errorRate, Doub
 分层布局（DAG 语义）不一定比力导向好读 —— 流水线画布那边用 VueFlow 是因为**用户要拖拽摆位**
 （编辑态），这里是纯查看态，需求不同，不必强行统一。
 
-- **边**：`lineStyle.width ∝ log(rps)`；颜色按错误率分档（0 → 绿，>0 → 黄，>5% → 红）
+- **边**：L7 = **实线**，`lineStyle.width ∝ log(rps)`、颜色按错误率分档（0 → 绿，>0 → 黄，>5% → 红）；
+  L4 = **虚线 + 中性色**，宽度按字节/秒（与 QPS 不同量纲，两根线的宽度不可直接比较）
 - **节点**：标签 = workload 名；按命名空间分组着色；网关节点换个图标/颜色（它是"外部入口"）
 - **点击节点或边** → 右侧抽屉显示三个数 + 该边对应的 PromQL（用户可以拿去 Grafana 自己复核）
 - **顶部**：时间窗（5m / 1h / 24h）、手动刷新 + 30 秒自动；
@@ -120,10 +128,9 @@ record MeshEdge(String source, String target, double rps, double errorRate, Doub
 
 1. 在 coding-cluster 上打开，应看到那 5 条边（minio / movie-web / thanos-query / prometheus / movie-service）。
    ✅ 2026-10-17 对真 Thanos 跑过服务方法：`meshMetricsAvailable=true`、6 个节点、5 条边。
-2. **摘掉** `movie-service` 的 `istio.io/use-waypoint` → **那条边会消失**（不是变成"无 L7"）。
-   因为 ztunnel 只提供 L4，没有 waypoint 就没有 `istio_requests_total`，图里根本没有这条边。
-   ✅ 这一点由页面底部常驻的「覆盖范围」说明对用户讲清楚；
-   原计划里的 `hasL7=false` 状态已删除（见 §3），因为本版所有边都来自 L7 指标。
+2. **摘掉** `movie-service` 的 `istio.io/use-waypoint` → 那条边**从实线变成虚线**（`level` 由 L7 变 L4，
+   三个数变「—」，只剩字节）—— 这正是识别「有没有 L7」的用法，比自己消失更有信息量。
+   顺带：ztunnel 只提供 L4，所以这一条同时验证了 §7 的结论。
 3. 在一个**没接采集**的集群上打开 → 明确提示「没在采集」，不是空图。✅
 4. 从图上应能一眼看出 `movie-web → movie-service` 的错误率高：2026-10-17 实测计数器
    `404=30 / 200=6` → 错误率 **83.3%**（早先那次读数是 100%，因为当时 200 的样本还没出现）。
