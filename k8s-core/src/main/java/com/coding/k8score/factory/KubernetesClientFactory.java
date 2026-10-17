@@ -127,6 +127,18 @@ public class KubernetesClientFactory {
     }
 
     /**
+     * 解密后的 admin kubeconfig（S3.6：helm 需要文件而不是 fabric8 client）。
+     * <p>⚠️ 调用方必须立即使用并丢弃，不得写日志、不得落盘到临时目录之外。
+     */
+    public String adminKubeconfig(String clusterId) {
+        K8sCluster k8sCluster = k8sClusterMapper.selectByPrimaryKey(clusterId);
+        if (k8sCluster == null) {
+            throw new CloudPlatformException(EnumResponseType.CLUSTER_NOT_EXIST);
+        }
+        return AESUtils.decrypt(k8sCluster.getKubeconfig(), AES_KEY);
+    }
+
+    /**
      * 获取租户的client
      * @param clusterId 集群id
      * @param tenantId 租户id
