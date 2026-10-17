@@ -37,9 +37,39 @@ public final class RuleRuntimeMatcher {
     private RuleRuntimeMatcher() {
     }
 
-    /** 规则文件名的前缀：{@code <ns>-<CR名>-}。 */
-    private static String filePrefix(PrometheusRuleDTO r) {
+    /** 规则文件名的前缀：{@code <ns>-<CR名>-}。public：业务层要按整个列表算歧义（见 {@link #ambiguousPrefixes}）。 */
+    public static String filePrefix(PrometheusRuleDTO r) {
         return r.getNamespace() + "-" + r.getName() + "-";
+    }
+
+    /**
+     * 哪些前缀是**歧义**的（对上多于一份不同 CR）。
+     *
+     * <p>调用方常常逐条 match（宽限期要按各自的 creationTime 判），那样 {@link #match} 内部的
+     * 歧义守卫看不全候选集 —— 所以判断必须**先在整个列表上算一次**，再逐条带上结论。
+     * 否则这条守卫在生产路径上是死代码：两份 CR 各自独立匹配，**都会**认领同一个文件。
+     */
+    public static Set<String> ambiguousPrefixes(List<PrometheusRuleDTO> rules) {
+        Map<String, Set<String>> identities = new LinkedHashMap<>();
+        for (PrometheusRuleDTO r : rules) {
+            if (r.getNamespace() == null || r.getName() == null) {
+                continue;
+            }
+            identities.computeIfAbsent(filePrefix(r), k -> new LinkedHashSet<>())
+                    .add(r.getNamespace() + "/" + r.getName());
+        }
+        Set<String> out = new LinkedHashSet<>();
+        identities.forEach((prefix, ids) -> {
+            if (ids.size() > 1) {
+                out.add(prefix);
+            }
+        });
+        return out;
+    }
+
+    /** 一个 {@code loadState=unknown} 的空 runtime（前缀歧义时用）。 */
+    public static PrometheusRuleDTO.RuleRuntime unknown() {
+        return runtime("unknown", List.of());
     }
 
     /**
@@ -61,14 +91,8 @@ public final class RuleRuntimeMatcher {
         }
 
         // 有任何一个前缀对上多份**不同的** CR → 整份 unknown。宁可说"对不上账"，也不猜。
-        for (List<PrometheusRuleDTO> candidates : byPrefix.values()) {
-            Set<String> identities = new LinkedHashSet<>();
-            for (PrometheusRuleDTO c : candidates) {
-                identities.add(c.getNamespace() + "/" + c.getName());
-            }
-            if (identities.size() > 1) {
-                return runtime("unknown", List.of());
-            }
+        if (!ambiguousPrefixes(rules).isEmpty()) {
+            return runtime("unknown", List.of());
         }
 
         // group → 平台认定的 CR（只有前缀匹配上的才算）

@@ -20,7 +20,7 @@ platform:
       # Alertmanager 的 webhook receiver 打到 /alert/webhook 时带的共享密钥（Bearer，带不带前缀都认）。
       # ⚠️ 必须配 —— 留空应用**拒启**（fail-closed）。一个"忘了配就等于全开"的入站端点不该存在。
       # 集群侧对应 AlertmanagerConfig 里 alertmanager 的 http_config.authorization.credentials。
-      token: ${ALERT_WEBHOOK_TOKEN:Bearer dsadsad}
+      token: ${ALERT_WEBHOOK_TOKEN:}
   credential:
     # 凭据库（platform_credential）的 AES 主密钥。**独立于 k8s.cloud.kubeconfig.aes-key**：
     # 轮换边界独立，且不扩散后者把默认密钥硬编码在配置里的坏味道。

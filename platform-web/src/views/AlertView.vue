@@ -27,7 +27,12 @@ const loading = ref(false)
 const hasMore = ref(false)
 
 const filters = reactive({
-  range: null as [Date, Date] | null,
+  /**
+   * ⚠️ 存**字符串**不存 Date：后端的 Date 反序列化用的是全局 `yyyy-MM-dd HH:mm:ss`
+   * （JsonMapperConfig），发 ISO（`toISOString()` 那种带 T 和 Z 的）会解析失败，
+   * 症状是「筛选后永远是空列表」。`value-format` 让日期选择器直接吐这个格式。
+   */
+  range: null as [string, string] | null,
   status: '',
   severity: '',
   namespace: '',
@@ -63,8 +68,8 @@ function buildQuery(extra?: Partial<AlertQuery>): AlertQuery {
     clusterId: state.clusterId,
     limit: PAGE_SIZE,
     showWatchdog: filters.showWatchdog,
-    from: filters.range ? filters.range[0].toISOString() : null,
-    to: filters.range ? filters.range[1].toISOString() : null,
+    from: filters.range ? filters.range[0] : null,
+    to: filters.range ? filters.range[1] : null,
     status: filters.status,
     severity: filters.severity,
     namespace: filters.namespace,
@@ -218,6 +223,7 @@ const clusterDesc = computed(() => {
           <el-date-picker
             v-model="filters.range"
             type="datetimerange"
+            value-format="YYYY-MM-DD HH:mm:ss"
             start-placeholder="开始时间 ≥"
             end-placeholder="开始时间 <"
             style="width: 380px"

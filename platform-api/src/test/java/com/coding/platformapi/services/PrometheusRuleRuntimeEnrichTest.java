@@ -153,6 +153,24 @@ class PrometheusRuleRuntimeEnrichTest {
         assertThat(out.getRuntime().getRules().get(0).getLastError()).isEqualTo("parse error");
     }
 
+    /**
+     * ⚠️ 生产路径上的歧义守卫：service 逐条 match（宽限期要看各自的 creationTime），
+     * 所以歧义必须先在**整个列表**上算一次 —— 否则两份同前缀的 CR 会各自认领同一个文件。
+     */
+    @Test
+    void two_crs_whose_file_prefixes_collide_are_both_unknown() {
+        when(k8s.list(any())).thenReturn(List.of(rule("a", "b-c"), rule("a-b", "c")));
+        when(clusters.selectByPrimaryKey(anyString())).thenReturn(clusterWith("http://p:9090"));
+        when(prom.groups(anyString())).thenReturn(List.of(
+                new PromRulesClient.RuleGroup("app", "/x/a-b-c-uuid.yaml",
+                        List.of(new PromRulesClient.RuleView("HighCPU", "ok", null, "firing", 1)))));
+
+        List<PrometheusRuleDTO> out = svc.list(query());
+
+        assertThat(out).allSatisfy(r -> assertThat(r.getRuntime().getLoadState()).isEqualTo("unknown"));
+        assertThat(out.get(0).getRuntime().getRules()).isEmpty();
+    }
+
     /** 对象不存在时不能因为探测而 NPE（get 返回 null 是既有语义）。 */
     @Test
     void a_missing_object_returns_null_without_probing() {

@@ -1,5 +1,6 @@
 package com.coding.platformapi.models;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
 
 import java.util.Date;
@@ -36,7 +37,15 @@ public class AlertQueryRequest {
     /** 默认 false（即默认排除 Watchdog 心跳告警，见 spec §7.3） */
     private Boolean showWatchdog;
 
-    /** 首页留空 */
+    /**
+     * 首页留空。
+     *
+     * <p>⚠️ 必须按**毫秒**解析：这个值来自上一页最后一条的 {@code startsAt}，而
+     * {@code starts_at} 列是 {@code DATETIME(3)}。全局默认格式（{@code yyyy-MM-dd HH:mm:ss}）
+     * 会把 {@code .123} 静默丢掉，于是游标条件 {@code starts_at = cursor} 永远不成立 ——
+     * 「加载更多」返回 0 行。
+     */
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss.SSS")
     private Date cursorStartsAt;
 
     /** 首页留空 */

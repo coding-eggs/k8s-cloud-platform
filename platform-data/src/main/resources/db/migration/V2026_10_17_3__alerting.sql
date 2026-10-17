@@ -49,6 +49,14 @@ WHERE (p.id LIKE 'perm_res_pr_%'
    OR p.id = 'perm_page_pr_list'
 ON DUPLICATE KEY UPDATE permission_id=VALUES(permission_id);
 
+-- admin → 6 个 API 行（**必须**：admin 的闭包同样只来自关联表，没有任何硬编码兜底；
+-- 漏了它，管理员能看见页面但列表/详情/YAML/建/改/删全是 403 —— 同 V2026_09_29_2 那一课的教训）
+INSERT INTO platform_role_permission (id,role_id,permission_id)
+SELECT CONCAT('rp_admin_pr_', p.id), 'builtin_role_admin', p.id
+FROM platform_permission p
+WHERE p.id LIKE 'perm_res_pr_%'
+ON DUPLICATE KEY UPDATE permission_id=VALUES(permission_id);
+
 -- admin → 全部 Page 行（admin 代管态要能进租户页面；与 V2026_10_07_1 同一口径）
 INSERT INTO platform_role_permission (id,role_id,permission_id)
 SELECT CONCAT('rp_page_admin_pr_', p.id), 'builtin_role_admin', p.id

@@ -92,8 +92,15 @@ public class PrometheusRuleService {
         String base = cluster.getPrometheusUrl().replaceAll("/+$", "");
         try {
             List<PromRulesClient.RuleGroup> groups = promRules.groups(base);
+            // ⚠️ 歧义必须**先在整个列表上算一次**：下面逐条 match（宽限期要看各自的 creationTime），
+            //    单条调用时 match 内部的守卫看不全候选集 —— 那种情况下两份同前缀的 CR 会各自认领同一个文件。
+            java.util.Set<String> ambiguous = RuleRuntimeMatcher.ambiguousPrefixes(rules);
             for (PrometheusRuleDTO r : rules) {
-                r.setRuntime(RuleRuntimeMatcher.match(groups, List.of(r), LOAD_GRACE));
+                boolean isAmbiguous = r.getNamespace() != null && r.getName() != null
+                        && ambiguous.contains(RuleRuntimeMatcher.filePrefix(r));
+                r.setRuntime(isAmbiguous
+                        ? RuleRuntimeMatcher.unknown()
+                        : RuleRuntimeMatcher.match(groups, List.of(r), LOAD_GRACE));
             }
         } catch (Exception e) {
             log.warn("拉取 Prometheus 规则状态失败（cluster={}）: {}", clusterId, e.getMessage());

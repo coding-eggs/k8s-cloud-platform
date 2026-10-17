@@ -15,6 +15,15 @@
 
 
     <dependencies>
+        <!-- 只为一个注解：PlatformAlertEvent 的日期字段要用 @JsonFormat 保留毫秒
+             （否则列表游标 (startsAt, id) 回传时被截到秒，翻页会静默失效）。
+             注解只在编译期需要；运行期的 Jackson 由 platform-api 提供。 -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- MySQL Driver -->
         <dependency>
             <groupId>com.mysql</groupId>

@@ -1,5 +1,6 @@
 package com.coding.data.models.k8s;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
 
 import java.util.Date;
@@ -43,9 +44,17 @@ public class PlatformAlertEvent {
     /** 原始 annotations 的 JSON 串 */
     private String annotations;
 
+    /**
+     * ⚠️ 必须带毫秒。全应用默认的 Date 格式是 {@code yyyy-MM-dd HH:mm:ss}（见 JsonMapperConfig），
+     * 而列表的游标就是 {@code (startsAt, id)} —— 截到秒再回传，下一页的
+     * {@code starts_at = cursor} 永远不成立，**「加载更多」会静默失效**（同一秒内的行再也翻不到）。
+     */
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss.SSS")
     private Date startsAt;
 
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss.SSS")
     private Date endsAt;
 
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss.SSS")
     private Date receivedAt;
 }
