@@ -65,7 +65,7 @@ public class ComponentRecipeCatalog {
      *       官方 chart 自带的 Job 会在 operator 部署前 apply CRD（CRD 升级的唯一正确姿势）</li>
      * </ul>
      */
-    private static List<ReleaseSpec> prometheusReleases(boolean grafanaEnabled) {
+    private static List<ReleaseSpec> prometheusReleases(boolean grafanaEnabled, String remoteWriteUrl) {
         Map<String, Object> contract = new LinkedHashMap<>();
         contract.put("prometheus", Map.of("prometheusSpec", Map.of(
                 "externalLabels", Map.of("cluster_name", "${cluster.name}"),
@@ -77,7 +77,7 @@ public class ComponentRecipeCatalog {
                 "serviceMonitorNamespaceSelector", Map.of(),
                 "podMonitorNamespaceSelector", Map.of(),
                 "probeNamespaceSelector", Map.of(),
-                "remoteWrite", List.of(Map.of("url", "${thanos.receive.url}")))));
+                "remoteWrite", List.of(Map.of("url", remoteWriteUrl)))));
         contract.put("alertmanager", Map.of("alertmanagerSpec", Map.of(
                 "alertmanagerConfigMatcherStrategy", Map.of("type", "OnNamespaceExceptForAlertmanagerNamespace"),
                 "alertmanagerConfigSelector", Map.of(),
@@ -99,8 +99,34 @@ public class ComponentRecipeCatalog {
                         "prometheus.prometheusSpec.storageSpec", Map.of(
                                 "volumeClaimTemplate", Map.of("spec", Map.of(
                                         "resources", Map.of("requests", Map.of("storage", "50Gi"))))),
+                        // Alertmanager 的静默/通知日志要跨重启保留
+                        "alertmanager.alertmanagerSpec.storage", Map.of(
+                                "volumeClaimTemplate", Map.of("spec", Map.of(
+                                        "resources", Map.of("requests", Map.of("storage", "10Gi"))))),
                         "grafana.enabled", grafanaEnabled)));
     }
+
+    /** 管理集群内置 Thanos receive 的集群内地址（kps 的 remoteWrite 指向它） */
+    private static final String THANOS_RECEIVE_IN_CLUSTER =
+            "http://platform-thanos-receive.monitor.svc:19291/api/v1/receive";
+
+    /**
+     * 管理集群的观测底座：query / receive / storegateway / compactor。
+     * 对象存储配置由平台从"凭证 Secret + 表单字段"拼出来后写成
+     * {@code platform-thanos-objstore}（见 ThanosObjstoreObjects）。
+     */
+    private static final List<ReleaseSpec> THANOS_RELEASES = List.of(new ReleaseSpec(
+            "platform-thanos", "monitor", "thanos", "0.47.2",
+            Map.of(
+                    "global", Map.of("objstore", Map.of(
+                            "createSecret", false,
+                            "secretName", "platform-thanos-objstore",
+                            "secretKey", "objstore.yml")),
+                    "query", Map.of("replicaCount", 1),
+                    "receive", Map.of("replicaCount", 1),
+                    "storegateway", Map.of("replicaCount", 1),
+                    "bucket", Map.of("enabled", false)),
+            Map.of()));
 
     // ==================== gateway-api ====================
 
@@ -211,8 +237,12 @@ public class ComponentRecipeCatalog {
     private static final Map<String, Map<String, ComponentRecipe>> RECIPES = Map.ofEntries(
             Map.entry("metrics-server", profiles(METRICS_SERVER_RELEASES, List.of())),
             Map.entry("prometheus-operator", Map.of(
-                    BUSINESS, new ComponentRecipe(BUSINESS, prometheusReleases(false), List.of(), true, true),
-                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, prometheusReleases(true), List.of(), true, true))),
+                    // 业务集群：上报到表单里填的 Thanos Receive
+                    BUSINESS, new ComponentRecipe(BUSINESS, prometheusReleases(false, "${thanos.receive.url}"),
+                            List.of(), true, true, false),
+                    // 管理集群：自带 Thanos 底座，remoteWrite 指向集群内 receive
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, withThanos(
+                            prometheusReleases(true, THANOS_RECEIVE_IN_CLUSTER)), List.of(), true, false, true))),
             Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
             Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),
@@ -233,11 +263,19 @@ public class ComponentRecipeCatalog {
                 MANAGEMENT, new ComponentRecipe(MANAGEMENT, releases, requires, platformAlerting, thanosRemoteWrite));
     }
 
+    /** 管理集群的 Prometheus recipe 末尾追加 Thanos 底座 */
+    private static List<ReleaseSpec> withThanos(List<ReleaseSpec> prometheus) {
+        List<ReleaseSpec> out = new java.util.ArrayList<>(prometheus);
+        out.addAll(THANOS_RELEASES);
+        return List.copyOf(out);
+    }
+
     /** 可编辑字段的展示文案（key 是路径形式）；没有登记的 key 原样显示 */
     private static final Map<String, String> EDITABLE_LABELS = Map.of(
             "prometheus.prometheusSpec.retention", "指标保留时长（如 15d）",
             "prometheus.prometheusSpec.storageSpec", "存储配置（JSON）",
             "prometheus.prometheusSpec.replicas", "Prometheus 副本数",
+            "alertmanager.alertmanagerSpec.storage", "Alertmanager 持久化（JSON）",
             "grafana.enabled", "部署 Grafana",
             "replicaCount", "副本数",
             "autoscaleEnabled", "自动扩缩容",

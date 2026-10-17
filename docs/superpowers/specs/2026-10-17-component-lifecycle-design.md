@@ -115,7 +115,7 @@ k8s-server/src/main/resources/charts/components/<code>/<chartVersion>/
 | calico | 同上（Installation CR 经 values 下发） | v3.33.0 | 官方 |
 | cert-manager | cert-manager | v1.21.2 | 官方（jetstack） |
 | otel-operator | otel-operator | 0.126.0 | 官方（open-telemetry） |
-| thanos | thanos | 0.47.2 | **社区**（thanos-community；上游无 chart）；本批未接 recipe |
+| thanos | thanos | 0.47.2 | **社区**（thanos-community；上游无 chart）；挂在 Prometheus 的 MANAGEMENT recipe |
 
 理由：helm 在 k8s-server 里执行；若 chart 放 platform-api，就得把几 MB 的包经 HTTP 传过去。
 platform-api 只传 `code + chartVersion + releaseName + values`，**业务判断与二进制产物分离**。
@@ -246,6 +246,8 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | `kubeApiServer` / `kubeControllerManager` / `kubeEtcd` / `kubeScheduler`.enabled=false | 🔒 | kubeadm 类集群上这些控制面端点只在 127.0.0.1，target 恒 DOWN、制造噪音告警 |
 | `crds.enabled=true` + `crds.upgradeJob.enabled=true` | 🔒 | Helm **不升级** `crds/` 目录；官方 chart 自带的 Job 在 operator 部署前 `kubectl apply` CRD —— 这是 CRD 升级的唯一正确姿势 |
 | `grafana.enabled` | ⚙️ | **BUSINESS 默认 false，MANAGEMENT 默认 true**（只有管理集群需要看板） |
+| `alertmanager.alertmanagerSpec.storage` | ⚙️ | 默认 10Gi PVC：静默与通知日志要跨重启保留（emptyDir 时重启即丢） |
+| MANAGEMENT 追加 release `platform-thanos` | 🔒 | 管理集群自带 Thanos 底座；`remoteWrite` 指向集群内 `platform-thanos-receive.monitor.svc:19291` |
 | 额外 release `platform-thanos`（query / receive / store + 对象存储） | 🔒（management） | 管理集群的观测底座 |
 
 可编辑（⚙️）：`prometheus.prometheusSpec.retention`、`prometheus.prometheusSpec.storageSpec`（StorageClass + 容量）、`prometheus.prometheusSpec.replicas`、`grafana.enabled`。
@@ -328,6 +330,27 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | 命名空间固定 `kube-system` | 🔒 | 探测位置 |
 
 可编辑：副本数、资源限制。
+
+### 5.8 `thanos`（管理集群，挂在 prometheus-operator 的 MANAGEMENT recipe 里）
+
+chart `thanos` 0.47.2（thanos-community），release `platform-thanos`，ns 取表单（默认 `monitor`）。
+
+| 值 | 类型 | 说明 |
+|---|---|---|
+| `global.objstore.createSecret=false` + `secretName=platform-thanos-objstore` + `secretKey=objstore.yml` | 🔒 | chart 挂载**平台生成**的对象存储配置 |
+| `query/receive/storegateway.replicaCount=1` | 🔒 | 小集群够用（chart 默认 2/3/2） |
+| `bucket.enabled=false` | 🔒 | 不需要 bucketweb |
+
+**安装表单（仅 MANAGEMENT）**：命名空间（下拉）、凭证 Secret（下拉，该 ns 下的 Secret）、MinIO 地址、Bucket、跳过 HTTPS 校验（可选）。
+
+- **凭证不出集群**：Secret 里只放 access key / secret key；k8s-server 在集群内读取，
+  拼成 `objstore.yml` 写入 `platform-thanos-objstore`。凭证不经过 platform-api，也不进操作记录快照。
+- 支持的凭证 key 组合：`access-key+secret-key` / `accessKey+secretKey` / `ACCESS_KEY+SECRET_KEY` /
+  `MINIO_ACCESS_KEY+MINIO_SECRET_KEY` / `minio-access-key+minio-secret-key` /
+  `AWS_ACCESS_KEY_ID+AWS_SECRET_ACCESS_KEY`；都不匹配时明确报错。
+- `insecure_skip_verify` 同时写进 `http_config` 与 `tls_config`（自签 MinIO）。
+- **顺序**：先生成对象存储 Secret，再跑 helm（Pod 会挂载它）。
+- 目前只支持 MinIO/S3；其他对象存储后续再加。
 
 ---
 

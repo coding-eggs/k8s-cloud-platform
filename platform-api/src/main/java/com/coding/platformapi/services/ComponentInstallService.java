@@ -15,6 +15,7 @@ import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
 import com.coding.platformapi.models.ComponentStatusDTO;
+import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -57,6 +58,9 @@ public class ComponentInstallService {
 
     /** 超过这个分钟数仍 RUNNING → 判定为中断 */
     private static final int STALE_MINUTES = 15;
+
+    /** Thanos chart 的 global.objstore.secretName（recipe 里固定为它） */
+    private static final String THANOS_OBJSTORE_SECRET = "platform-thanos-objstore";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final TypeReference<Map<String, Map<String, Object>>> SNAPSHOT_TYPE =
@@ -124,6 +128,16 @@ public class ComponentInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "请填写 Thanos Receive 地址（Prometheus 的 remoteWrite 目标）");
         }
+        // Thanos 安装参数（管理集群）：表单 > 上次成功；必填项缺失直接拒
+        ThanosInstallRequest thanos = recipe.thanosInstall()
+                ? resolveThanosInstall(req.getThanosInstall(), previousPlatform.get("thanosInstall"))
+                : null;
+        if (recipe.thanosInstall() && (thanos == null
+                || isBlank(thanos.getNamespace()) || isBlank(thanos.getSecretName())
+                || isBlank(thanos.getEndpoint()) || isBlank(thanos.getBucket()))) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请选择 Thanos 的命名空间与凭证 Secret，并填写 MinIO 地址和桶名");
+        }
 
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
         String action = req.getAction() == null ? "INSTALL" : req.getAction();
@@ -149,7 +163,7 @@ public class ComponentInstallService {
         op.setReleaseNames(JSON.writeValueAsString(
                 effective.stream().map(ReleaseSpec::releaseName).toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
-                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl)));
+                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -166,7 +180,7 @@ public class ComponentInstallService {
         String authorization = K8sServerGateway.currentAuthorization();
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl)));
+                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos)));
         return id;
     }
 
@@ -265,7 +279,8 @@ public class ComponentInstallService {
      * 不会混进 helm values；升级时用它把用户上次填的地址带回来。
      */
     private static Map<String, Object> snapshotWithPlatformInputs(List<ReleaseSpec> releases, ComponentRecipe recipe,
-                                                                  String alertWebhookUrl, String thanosUrl) {
+                                                                  String alertWebhookUrl, String thanosUrl,
+                                                                  ThanosInstallRequest thanos) {
         Map<String, Object> snapshot = snapshotOf(releases);
         Map<String, Object> platform = new LinkedHashMap<>();
         if (recipe.platformAlerting() && alertWebhookUrl != null) {
@@ -273,6 +288,15 @@ public class ComponentInstallService {
         }
         if (recipe.thanosRemoteWrite() && thanosUrl != null) {
             platform.put("thanosReceiveUrl", thanosUrl);
+        }
+        if (recipe.thanosInstall() && thanos != null) {
+            Map<String, Object> t = new LinkedHashMap<>();
+            t.put("namespace", thanos.getNamespace());
+            t.put("secretName", thanos.getSecretName());
+            t.put("endpoint", thanos.getEndpoint());
+            t.put("bucket", thanos.getBucket());
+            t.put("insecureSkipVerify", thanos.isInsecureSkipVerify());
+            platform.put("thanosInstall", t);
         }
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
@@ -290,6 +314,32 @@ public class ComponentInstallService {
 
     private static String asString(Object value) {
         return value instanceof String s ? s : null;
+    }
+
+    /** 表单没带的字段从上次成功的 {@code __platform.thanosInstall} 补齐 */
+    @SuppressWarnings("unchecked")
+    private static ThanosInstallRequest resolveThanosInstall(ThanosInstallRequest requested, Object previous) {
+        Map<String, Object> prev = previous instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+        if (requested == null && prev.isEmpty()) {
+            return null;
+        }
+        ThanosInstallRequest out = new ThanosInstallRequest();
+        out.setNamespace(firstNonBlank(requested == null ? null : requested.getNamespace(),
+                asString(prev.get("namespace"))));
+        out.setSecretName(firstNonBlank(requested == null ? null : requested.getSecretName(),
+                asString(prev.get("secretName"))));
+        out.setEndpoint(firstNonBlank(requested == null ? null : requested.getEndpoint(),
+                asString(prev.get("endpoint"))));
+        out.setBucket(firstNonBlank(requested == null ? null : requested.getBucket(),
+                asString(prev.get("bucket"))));
+        out.setInsecureSkipVerify(requested != null
+                ? requested.isInsecureSkipVerify()
+                : Boolean.TRUE.equals(prev.get("insecureSkipVerify")));
+        return out;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static Map<String, Map<String, Object>> parseSnapshot(String json) {
@@ -317,12 +367,19 @@ public class ComponentInstallService {
     }
 
     private void run(Long id, String clusterId, String componentCode, String action,
-                     List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl) {
+                     List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl,
+                     ThanosInstallRequest thanos) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
         mapper.updateById(running);
         try {
+            // Thanos 的对象存储 Secret 必须在 helm 之前就位（Pod 会挂载它）
+            if (thanos != null) {
+                client.applyThanosObjstore(clusterId, thanos.getNamespace(), thanos.getSecretName(),
+                        thanos.getEndpoint(), thanos.getBucket(), thanos.isInsecureSkipVerify(),
+                        THANOS_OBJSTORE_SECRET);
+            }
             ComponentInstallResultDTO result =
                     client.applyComponent(clusterId, componentCode, action, toDtos(releases));
             // 告警联动在写 SUCCESS 之前做：失败则整条操作记 FAILED（消息里说明组件本身已装好）

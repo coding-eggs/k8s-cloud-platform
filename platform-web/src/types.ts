@@ -926,6 +926,17 @@ export interface K8sComponentStatus {
   thanosRemoteWrite?: boolean
   /** Thanos Receive 地址的平台默认值（表单预填） */
   defaultThanosReceiveUrl?: string | null
+  /** 安装时是否同时安装 Thanos（管理集群的 Prometheus：要选命名空间/凭证 Secret、填 MinIO） */
+  thanosInstall?: boolean
+}
+
+/** Thanos 安装参数（凭证在 Secret 里，不进表单） */
+export interface K8sThanosInstall {
+  namespace: string
+  secretName: string
+  endpoint: string
+  bucket: string
+  insecureSkipVerify: boolean
 }
 
 /** 组件的一个可编辑配置项；key 是路径形式，apply 时原样回传 */

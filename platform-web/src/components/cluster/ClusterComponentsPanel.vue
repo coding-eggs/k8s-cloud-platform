@@ -16,6 +16,7 @@ import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import type {
   K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
+  K8sThanosInstall, SecretRefOption,
 } from '@/types'
 
 const props = defineProps<{
@@ -27,6 +28,10 @@ const props = defineProps<{
   operations: Record<string, K8sComponentOperation>
   /** 正在执行的组件 code（按钮 loading） */
   applying?: string | null
+  /** 命名空间候选（Thanos 安装表单用；由页面提供，面板不发请求） */
+  loadNamespaces?: () => Promise<string[]>
+  /** 某命名空间下的 Secret 候选（name + keys；凭证数据不会下发） */
+  loadSecretOptions?: (namespace: string) => Promise<SecretRefOption[]>
 }>()
 const emit = defineEmits<{
   (e: 'refresh'): void
@@ -39,6 +44,8 @@ const emit = defineEmits<{
     alertWebhookUrl?: string
     /** Thanos Receive 地址（仅 thanosRemoteWrite 的组件） */
     thanosReceiveUrl?: string
+    /** Thanos 安装参数（仅 thanosInstall 的组件，管理集群） */
+    thanosInstall?: K8sThanosInstall
   }): void
 }>()
 
@@ -124,6 +131,16 @@ interface ApplyDialog {
   showThanos: boolean
   thanosUrl: string
   initialThanos: string
+  /** 该组件是否同时安装 Thanos（管理集群的 Prometheus） */
+  showThanosInstall: boolean
+  thanos: K8sThanosInstall
+  initialThanosInstall: string
+  namespaceOptions: string[]
+  secretOptions: SecretRefOption[]
+}
+
+const EMPTY_THANOS: K8sThanosInstall = {
+  namespace: 'monitor', secretName: '', endpoint: '', bucket: '', insecureSkipVerify: false,
 }
 
 const applyDialog = ref<ApplyDialog>({
@@ -131,6 +148,9 @@ const applyDialog = ref<ApplyDialog>({
   version: '', versions: [], fields: [], values: {}, jsonText: {}, initial: {},
   showWebhook: false, webhookUrl: '', initialWebhook: '',
   showThanos: false, thanosUrl: '', initialThanos: '',
+  showThanosInstall: false, thanos: { ...EMPTY_THANOS },
+  initialThanosInstall: JSON.stringify(EMPTY_THANOS),
+  namespaceOptions: [], secretOptions: [],
 })
 
 function openInstall(row: K8sComponentStatus): void {
@@ -158,6 +178,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
       initial[f.key] = JSON.stringify(f.defaultValue)
     }
   }
+  const thanos: K8sThanosInstall = { ...EMPTY_THANOS }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
@@ -167,6 +188,38 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
     showThanos: !!row.thanosRemoteWrite,
     thanosUrl: row.defaultThanosReceiveUrl ?? '',
     initialThanos: (row.defaultThanosReceiveUrl ?? '').trim(),
+    showThanosInstall: !!row.thanosInstall,
+    thanos,
+    initialThanosInstall: JSON.stringify(thanos),
+    namespaceOptions: [], secretOptions: [],
+  }
+  if (row.thanosInstall) {
+    void loadThanosOptions()
+  }
+}
+
+/** Thanos 表单的命名空间/Secret 候选：懒加载，失败就留空（用户可以手输） */
+async function loadThanosOptions(): Promise<void> {
+  const d = applyDialog.value
+  if (!d.showThanosInstall) return
+  try {
+    d.namespaceOptions = (await props.loadNamespaces?.()) ?? []
+  } catch {
+    d.namespaceOptions = []
+  }
+  await refreshSecretOptions()
+}
+
+async function refreshSecretOptions(): Promise<void> {
+  const d = applyDialog.value
+  if (!d.showThanosInstall || !d.thanos.namespace) {
+    d.secretOptions = []
+    return
+  }
+  try {
+    d.secretOptions = (await props.loadSecretOptions?.(d.thanos.namespace)) ?? []
+  } catch {
+    d.secretOptions = []
   }
 }
 
@@ -200,6 +253,9 @@ function confirmApply(): void {
       ? d.webhookUrl.trim() : undefined,
     thanosReceiveUrl: d.showThanos && d.thanosUrl.trim() && d.thanosUrl.trim() !== d.initialThanos
       ? d.thanosUrl.trim() : undefined,
+    // Thanos 安装参数：整组没改动就不发，后端沿用上次成功操作里记的
+    thanosInstall: d.showThanosInstall && JSON.stringify(d.thanos) !== d.initialThanosInstall
+      ? { ...d.thanos } : undefined,
   })
 }
 
@@ -324,6 +380,47 @@ const anyUnknown = computed(() => unknownCount.value > 0)
               {{ v }}
             </el-radio>
           </el-radio-group>
+        </div>
+      </div>
+      <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
+        <span class="cc-form-label">Thanos 命名空间</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.thanos.namespace" filterable allow-create style="width: 100%"
+                     @change="() => refreshSecretOptions()">
+            <el-option v-for="ns in applyDialog.namespaceOptions" :key="ns" :label="ns" :value="ns" />
+          </el-select>
+        </div>
+      </div>
+      <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
+        <span class="cc-form-label">凭证 Secret</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.thanos.secretName" filterable allow-create style="width: 100%"
+                     placeholder="含 access key / secret key 的 Secret">
+            <el-option v-for="s in applyDialog.secretOptions" :key="s.name" :label="s.name" :value="s.name" />
+          </el-select>
+          <div class="cc-form-hint">
+            凭证不出集群：平台读出后拼成 objstore.yml。
+            支持 access-key+secret-key / MINIO_ACCESS_KEY+MINIO_SECRET_KEY 等组合
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
+        <span class="cc-form-label">MinIO 地址</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.thanos.endpoint"
+                    placeholder="minio.default.svc:9000" spellcheck="false" />
+        </div>
+      </div>
+      <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
+        <span class="cc-form-label">MinIO Bucket</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.thanos.bucket" placeholder="thanos" spellcheck="false" />
+        </div>
+      </div>
+      <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
+        <span class="cc-form-label">跳过 HTTPS 校验</span>
+        <div class="cc-form-control">
+          <el-switch v-model="applyDialog.thanos.insecureSkipVerify" />
         </div>
       </div>
       <div v-if="applyDialog.showThanos" class="cc-form-row">

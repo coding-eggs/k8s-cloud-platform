@@ -200,6 +200,41 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void theManagementPrometheusRecipeAlsoInstallsThanos() {
+        var management = catalog.recipeOf("prometheus-operator", "MANAGEMENT");
+        assertThat(management.releases()).extracting(ReleaseSpec::releaseName)
+                .containsExactly("platform-kps", "platform-thanos");
+        assertThat(management.thanosInstall()).isTrue();
+        assertThat(management.thanosRemoteWrite()).isFalse();
+
+        // 管理集群的 remoteWrite 指向集群内 receive（不是表单值）
+        Map<String, Object> spec = (Map<String, Object>) ((Map<String, Object>)
+                management.releases().get(0).contractValues().get("prometheus")).get("prometheusSpec");
+        assertThat(spec.get("remoteWrite").toString())
+                .contains("http://platform-thanos-receive.monitor.svc:19291/api/v1/receive");
+
+        // thanos 挂载的 objstore Secret 名必须与 platform-api 下发时用的一致
+        Map<String, Object> thanos = management.releases().get(1).contractValues();
+        Map<String, Object> objstore = (Map<String, Object>)
+                ((Map<String, Object>) thanos.get("global")).get("objstore");
+        assertThat(objstore).containsEntry("secretName", "platform-thanos-objstore")
+                .containsEntry("createSecret", false);
+
+        var business = catalog.recipeOf("prometheus-operator", "BUSINESS");
+        assertThat(business.releases()).hasSize(1);
+        assertThat(business.thanosRemoteWrite()).isTrue();
+        assertThat(business.thanosInstall()).isFalse();
+    }
+
+    @Test
+    void alertmanagerHasA10GiPersistenceDefault() {
+        Map<String, Object> editable = catalog.recipeOf("prometheus-operator", "BUSINESS")
+                .releases().get(0).editableValues();
+        assertThat(editable.get("alertmanager.alertmanagerSpec.storage").toString())
+                .contains("volumeClaimTemplate").contains("10Gi");
+    }
+
+    @Test
     void calicoIsInstalledAsAUnitAndDisablesUnneededSubComponents() {
         // operator + Installation 一个 release：不需要的 APIServer / Goldmane / Whisker 默认关闭
         Map<String, Object> values = catalogValues("calico");

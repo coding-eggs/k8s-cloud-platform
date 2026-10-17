@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
@@ -61,6 +62,25 @@ public class K8sComponentClient {
         body.setWebhookUrl(webhookUrl);
         body.setToken(token);
         gateway.exchange(HttpMethod.POST, "/components/platform-alerting", null, body,
+                gateway.responseType(Void.class));
+    }
+
+    /**
+     * Thanos 对象存储：k8s-server 在集群内读凭证 Secret、拼 {@code objstore.yml} 并写成目标 Secret。
+     * 凭证不经过本层。
+     */
+    public void applyThanosObjstore(String clusterId, String namespace, String secretName,
+                                    String endpoint, String bucket, boolean insecureSkipVerify,
+                                    String targetSecretName) {
+        ThanosObjstoreRequestDTO body = new ThanosObjstoreRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setSecretName(secretName);
+        body.setEndpoint(endpoint);
+        body.setBucket(bucket);
+        body.setInsecureSkipVerify(insecureSkipVerify);
+        body.setTargetSecretName(targetSecretName);
+        gateway.exchange(HttpMethod.POST, "/components/thanos-objstore", null, body,
                 gateway.responseType(Void.class));
     }
 }

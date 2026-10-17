@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.operations.ServerSideApply;
@@ -13,6 +14,9 @@ import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
+import com.coding.k8sserver.components.ThanosObjstoreObjects;
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import com.coding.k8sserver.helm.ChartBundle;
 import com.coding.k8sserver.helm.HelmResult;
 import com.coding.k8sserver.helm.HelmRunner;
@@ -175,6 +179,58 @@ public class ComponentInstallController implements AccessBoundaryAware {
                         request.getNamespace(), request.getWebhookUrl()))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>();
+    }
+
+    /**
+     * Thanos 对象存储配置（S3.6）：读已有凭证 Secret → 拼 {@code objstore.yml} → 写成 chart 挂载的 Secret。
+     *
+     * <p>凭证只在集群内流动：platform-api 只传 Secret 名与 MinIO 地址/桶，读值和拼装都在这里，
+     * 既不经过 platform-api，也不会进操作记录的 values 快照。
+     */
+    @PostMapping("/thanos-objstore")
+    @Operation(summary = "下发 Thanos 对象存储配置（凭证 Secret → objstore.yml）",
+            description = "幂等 SSA；由 platform-api 在管理集群安装 Prometheus/Thanos 前调用")
+    public ResponseData<Void> thanosObjstore(@RequestBody ThanosObjstoreRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())
+                || isBlank(request.getEndpoint()) || isBlank(request.getBucket())
+                || isBlank(request.getTargetSecretName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "Thanos 对象存储参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        Secret source = client.secrets().inNamespace(request.getNamespace())
+                .withName(request.getSecretName()).get();
+        if (source == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "凭证 Secret 不存在：" + request.getNamespace() + "/" + request.getSecretName());
+        }
+        String[] credentials = ThanosObjstoreObjects.findCredentials(source.getData());
+        if (credentials == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "凭证 Secret 缺少可识别的 access key / secret key（支持："
+                            + ThanosObjstoreObjects.supportedKeyPairs() + "）");
+        }
+        String objstore = ThanosObjstoreObjects.objstoreYaml(request.getEndpoint(), request.getBucket(),
+                credentials[0], credentials[1], request.isInsecureSkipVerify());
+
+        Secret target = new SecretBuilder()
+                .withNewMetadata()
+                .withName(request.getTargetSecretName())
+                .withNamespace(request.getNamespace())
+                .addToLabels("platform.coding/managed", "true")
+                .addToLabels("platform.coding/component", "prometheus-operator")
+                .endMetadata()
+                .withType("Opaque")
+                .addToStringData(ThanosObjstoreObjects.OBJSTORE_KEY, objstore)
+                .build();
+        client.secrets().inNamespace(request.getNamespace())
+                .resource(target)
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>();
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private static Map<String, String> labels(ComponentInstallRequestDTO request) {

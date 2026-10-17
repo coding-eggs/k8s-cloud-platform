@@ -1,6 +1,6 @@
 import { ref, watch, type Ref } from 'vue'
 import { clusterApi } from '@/api'
-import type { K8sComponentOperation } from '@/types'
+import type { K8sComponentOperation, K8sThanosInstall } from '@/types'
 
 /**
  * 组件安装/升级操作（S3.6）。
@@ -37,11 +37,13 @@ export function useComponentOperations(clusterId: Ref<string | null | undefined>
     editableValues?: Record<string, unknown>,
     alertWebhookUrl?: string,
     thanosReceiveUrl?: string,
+    thanosInstall?: K8sThanosInstall,
   ): Promise<number> {
     const id = clusterId.value
     if (!id) throw new Error('缺少集群上下文')
     const operationId = await clusterApi.componentApply({
-      clusterId: id, componentCode, action, targetVersion, editableValues, alertWebhookUrl, thanosReceiveUrl,
+      clusterId: id, componentCode, action, targetVersion, editableValues,
+      alertWebhookUrl, thanosReceiveUrl, thanosInstall,
     })
     await load()
     return operationId

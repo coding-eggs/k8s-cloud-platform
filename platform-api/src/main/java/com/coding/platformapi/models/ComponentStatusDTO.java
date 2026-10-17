@@ -45,4 +45,6 @@ public class ComponentStatusDTO {
     private boolean thanosRemoteWrite;
     /** Thanos Receive 地址的平台默认值（表单预填用） */
     private String defaultThanosReceiveUrl;
+    /** 该组件安装时是否同时安装 Thanos（管理集群的 Prometheus：表单要选命名空间/凭证 Secret、填 MinIO） */
+    private boolean thanosInstall;
 }

@@ -221,6 +221,7 @@ public class ClusterComponentService {
         s.setThanosRemoteWrite(recipe != null && recipe.thanosRemoteWrite());
         s.setDefaultThanosReceiveUrl(recipe != null && recipe.thanosRemoteWrite()
                 ? defaultThanosReceiveUrl : null);
+        s.setThanosInstall(recipe != null && recipe.thanosInstall());
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现

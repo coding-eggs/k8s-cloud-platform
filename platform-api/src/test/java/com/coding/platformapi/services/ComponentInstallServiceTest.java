@@ -457,6 +457,57 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void thanosObjstoreIsWrittenBeforeHelm() {
+        // Pod 会挂载 objstore Secret：必须先生成它，再跑 helm
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "MANAGEMENT")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("MANAGEMENT", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1", Map.of(), Map.of())),
+                        List.of(), true, false, true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "sd");
+
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
+                null, null, new com.coding.platformapi.models.ThanosInstallRequest(
+                        "monitor", "minio-creds", "minio.default.svc:9000", "thanos", true)), "admin");
+
+        verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
+                op -> "SUCCESS".equals(op.getStatus())));
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(client);
+        inOrder.verify(client).applyThanosObjstore("c1", "monitor", "minio-creds",
+                "minio.default.svc:9000", "thanos", true, "platform-thanos-objstore");
+        inOrder.verify(client).applyComponent(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void aMissingThanosParameterIsRejectedBeforeInstalling() {
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "MANAGEMENT")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("MANAGEMENT", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1", Map.of(), Map.of())),
+                        List.of(), true, false, true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
+                .hasMessageContaining("凭证 Secret");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
     void staleRunningOperationsAreMarkedUnknown() {
         PlatformComponentOperation stale = new PlatformComponentOperation();
         stale.setId(7L);

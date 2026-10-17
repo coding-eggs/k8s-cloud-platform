@@ -231,7 +231,7 @@ class ClusterComponentServiceTest {
     }
 
     @Test
-    void prometheusExposesTheFourEditableFieldsIncludingJsonStorageSpec() {
+    void prometheusExposesTheEditableFieldsIncludingJsonStorage() {
         ClusterComponentService svc = svc(List.of());
 
         var fields = find(svc.status("c1"), "prometheus-operator").getEditableFields();
@@ -241,10 +241,13 @@ class ClusterComponentServiceTest {
                         "prometheus.prometheusSpec.retention",
                         "prometheus.prometheusSpec.storageSpec",
                         "prometheus.prometheusSpec.replicas",
+                        "alertmanager.alertmanagerSpec.storage",
                         "grafana.enabled");
-        assertThat(fields).filteredOn(f -> f.getKey().endsWith("storageSpec"))
-                .singleElement()
-                .satisfies(f -> assertThat(f.getType()).isEqualTo("json"));
+        // 两个 storage 都是 JSON 文本域
+        assertThat(fields).filteredOn(f -> f.getKey().endsWith("storageSpec")
+                        || f.getKey().endsWith("alertmanagerSpec.storage"))
+                .hasSize(2)
+                .allSatisfy(f -> assertThat(f.getType()).isEqualTo("json"));
     }
 
     @Test

@@ -12,9 +12,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { clusterApi } from '@/api'
+import { calicoApi, clusterApi, namespaceApi } from '@/api'
 import { clusterMetrics, type ClusterMetricsReq } from '@/api/metrics'
-import type { K8sAbnormalPod, K8sCluster, K8sClusterOverview, K8sNamespaceStatEntry, K8sNodeHealth, K8sQuotaState } from '@/types'
+import type {
+  K8sAbnormalPod, K8sCluster, K8sClusterOverview, K8sNamespaceStatEntry, K8sNodeHealth,
+  K8sQuotaState, SecretRefOption,
+} from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -46,6 +49,25 @@ const operations = useComponentOperations(computed(() => clusterId.value || null
 /** 正在执行的组件（按钮 loading / 禁用） */
 const applying = ref<string | null>(null)
 
+/** Thanos 安装表单的命名空间候选 */
+async function loadComponentNamespaces(): Promise<string[]> {
+  const id = clusterId.value
+  if (!id) return []
+  const list = await namespaceApi.list(id)
+  return (list ?? []).map((n) => n.name)
+}
+
+/**
+ * Thanos 表单的 Secret 候选。
+ * 复用 calico 的 form-options/secrets —— 同一个权限码（platform:cluster:manage），
+ * 只返回 name + data keys，不下发任何凭证内容。
+ */
+async function loadComponentSecrets(namespace: string): Promise<SecretRefOption[]> {
+  const id = clusterId.value
+  if (!id || !namespace) return []
+  return await calicoApi.secretOptions(id, namespace)
+}
+
 /** 安装/升级：确认 → 发起 → 轮询 → 成功后刷新探测 */
 async function onApply(p: {
   code: string
@@ -54,6 +76,7 @@ async function onApply(p: {
   editableValues?: Record<string, unknown>
   alertWebhookUrl?: string
   thanosReceiveUrl?: string
+  thanosInstall?: import('@/types').K8sThanosInstall
 }): Promise<void> {
   const target = components.statusOf(p.code)
   try {
@@ -76,7 +99,7 @@ async function onApply(p: {
   applying.value = p.code
   try {
     const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues,
-      p.alertWebhookUrl, p.thanosReceiveUrl)
+      p.alertWebhookUrl, p.thanosReceiveUrl, p.thanosInstall)
     const op = await operations.wait(id)
     if (op.status === 'SUCCESS') {
       ElMessage.success('操作完成，正在刷新探测…')
@@ -697,6 +720,8 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
             :can-refresh="components.canManage.value"
             :operations="operations.latest.value"
             :applying="applying"
+            :load-namespaces="loadComponentNamespaces"
+            :load-secret-options="loadComponentSecrets"
             @refresh="components.refresh()"
             @apply="onApply"
           />
