@@ -50,6 +50,7 @@ import type {
   IpamBlockStat,
   IpamIpDetail,
   MeshStatus,
+  MeshTopology,
   NamespaceAllocation,
   NamespaceView,
   NodeAddress,
@@ -465,6 +466,10 @@ export const meshApi = {
    *  故不能走 gatewayApi.list。必须带 waypoint-for：命名空间级只能指向能处理服务流量的（service/all）。 */
   namespaceWaypoints: (clusterId: string, namespace: string) =>
     http.post<never, WaypointRef[]>('/mesh/gateways', null, { params: { clusterId, namespace } }),
+  /** 服务网格拓扑（节点=工作负载，边=谁调谁）。
+   *  ⚠️ meshMetricsAvailable=false 表示这个集群没在采集网格指标，不是"没有流量"。 */
+  topology: (clusterId: string, namespace?: string, windowSeconds?: number) =>
+    http.post<never, MeshTopology>('/mesh/topology', { clusterId, namespace, windowSeconds }),
 }
 
 /** Gateway /gateways（CRD，集群未装 Gateway API 时透传 404；租户域） */

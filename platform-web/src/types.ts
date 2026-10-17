@@ -1553,6 +1553,34 @@ export interface MeshStatus {
   gatewayApiVersions: string[]
 }
 
+/** 拓扑里的一个节点。⚠️ id = `命名空间/工作负载` —— 同名 workload 跨命名空间很常见，
+ *  只存 workload 名会把两条边粘成一个节点。 */
+export interface MeshTopologyNode {
+  id: string
+  namespace: string
+  workload: string
+  /** 外部网关（istio-system 里那些）：它是"外部入口"，画得跟业务节点不一样 */
+  gateway: boolean
+}
+
+/** 拓扑里的一条边。⚠️ p95Ms 为 null = 窗口内没有延迟样本，UI 要显示「—」而不是 0。 */
+export interface MeshTopologyEdge {
+  source: string
+  target: string
+  rps: number
+  /** 5xx / 总量，0..1 */
+  errorRate: number
+  p95Ms?: number | null
+}
+
+export interface MeshTopology {
+  nodes: MeshTopologyNode[]
+  edges: MeshTopologyEdge[]
+  windowSeconds: number
+  /** ⚠️ false = 这个集群**没在采集**网格指标，不是"没有流量"。两种空态文案不同。 */
+  meshMetricsAvailable: boolean
+}
+
 /**
  * 审计日志行（S0.1）。没有单条详情端点：列表即返回全部字段，详情为行展开。
  */
