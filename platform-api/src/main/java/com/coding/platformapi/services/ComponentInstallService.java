@@ -15,7 +15,6 @@ import com.coding.platformapi.models.ComponentStatusDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
@@ -33,8 +32,9 @@ import java.util.stream.Collectors;
  * <p><b>为什么异步</b>：helm 装一个栈可能几分钟，同步 HTTP 撑不住（网关常规读超时 120s）。
  * 操作记录先落 PENDING，虚拟线程执行，前端轮询。
  *
- * <p><b>事务边界</b>：{@code @Transactional} 只包 insert —— 虚拟线程必须在事务提交后启动，
- * 否则 RUNNING 的更新可能读不到未提交的行。
+ * <p><b>事务边界</b>：本方法**刻意不加 @Transactional** —— insert 是单条语句，自身即提交；
+ * 若把整个方法包进事务，`executor.submit` 会在提交前就启动，worker 的 RUNNING 更新
+ * 可能读不到那一行（更新 0 行），记录会停在 PENDING 而任务已经在跑。
  *
  * <p><b>成功判定</b>：helm 成功后会调用 {@link ClusterComponentService#refresh} 重探；
  * 页面上的"已装"以探测为准，不以 helm exit code 为准。
@@ -63,7 +63,6 @@ public class ComponentInstallService {
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
-    @Transactional
     public Long apply(ComponentApplyRequest req, String operator) {
         String profile = clusterService.requireProfile(req.getClusterId());
         ComponentRecipe recipe = recipes.recipeOf(req.getComponentCode(), profile);
