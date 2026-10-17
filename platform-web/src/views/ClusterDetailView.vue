@@ -19,6 +19,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import ClusterMetricsPanel from '@/components/cluster/ClusterMetricsPanel.vue'
+import ClusterComponentsPanel from '@/components/cluster/ClusterComponentsPanel.vue'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 
@@ -33,6 +35,31 @@ const loading = ref(false)
 const loadError = ref(false)
 const overviewError = ref(false)
 const metricsRef = ref<InstanceType<typeof ClusterMetricsPanel> | null>(null)
+
+// ---- 集群组件（S1.2）：组件 tab 与概览摘要共用同一份全量投影 ----
+// 页面本身由 platform:page:cluster 门禁（管理员），组件 tab 不另要页面码。
+const components = useClusterComponents(computed(() => clusterId.value || null))
+
+/** 概览里的 Istio/Calico 显示**实测版本**；人工登记值降为 tooltip（spec §6.2 ②） */
+function probedVersionOf(code: string): string | null {
+  return components.statusOf(code)?.version ?? null
+}
+function registeredVersionTip(code: string, registered?: string | null): string {
+  const probed = probedVersionOf(code)
+  if (!probed) return '尚未探测到实测版本，暂显示登记值'
+  if (registered && registered !== probed) return `登记值 ${registered} 与实测 ${probed} 不一致（升级过集群？）`
+  return registered ? `登记值 ${registered}` : '登记时未填写'
+}
+/** 概览一行摘要（spec §6.2 ①）：与组件 tab 同一个数据源，不再各说一套 */
+const overviewComponentSummary = computed(() => {
+  const all = components.statuses.value
+  if (!all.length) return components.statusesLoading.value ? '正在探测…' : '尚未探测'
+  const missing = all.filter((s) => s.state === 'NOT_INSTALLED').length
+  const unknown = all.filter((s) => s.state === 'UNKNOWN').length
+  return unknown
+    ? `${all.length} 个组件，${missing} 个缺失，${unknown} 个未探测`
+    : `${all.length} 个组件，${missing} 个缺失`
+})
 
 /**
  * 两段分开取、分开降级（spec §7 的落点）：
@@ -64,6 +91,8 @@ async function refresh(): Promise<void> {
   } finally {
     loading.value = false
   }
+  // 组件全量投影（概览摘要 + 组件 tab 共用）：失败时面板自己显示「探测不到」，不影响其它段
+  void components.loadStatuses()
 }
 
 async function refreshAll(): Promise<void> {
@@ -397,26 +426,28 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
 
             <main class="ov-main">
               <section class="info-card">
-                <h3 class="section-title">组件版本与 API 能力</h3>
+                <h3 class="section-title">集群组件</h3>
                 <div class="info-rows">
-                  <div class="info-row"><span class="k">Istio</span><code class="mono v">{{ cluster.istioVersion ?? '—' }}</code></div>
-                  <div class="info-row"><span class="k">Calico</span><code class="mono v">{{ cluster.calicoVersion ?? '—' }}</code></div>
+                  <!-- 版本显示**实测值**；人工登记值降为 tooltip（spec §6.2 ②）。
+                       同一个 Istio 出现两个版本号比不做这个 tab 更糟。 -->
+                  <div class="info-row">
+                    <span class="k">Istio</span>
+                    <el-tooltip :content="registeredVersionTip('istio', cluster.istioVersion)" placement="top">
+                      <code class="mono v">{{ probedVersionOf('istio') ?? cluster.istioVersion ?? '—' }}</code>
+                    </el-tooltip>
+                  </div>
+                  <div class="info-row">
+                    <span class="k">Calico</span>
+                    <el-tooltip :content="registeredVersionTip('calico', cluster.calicoVersion)" placement="top">
+                      <code class="mono v">{{ probedVersionOf('calico') ?? cluster.calicoVersion ?? '—' }}</code>
+                    </el-tooltip>
+                  </div>
+                  <!-- 7 个能力 tag 收敛成一行摘要 + 跳转（spec §6.2 ①）：同一个事实不再两个渲染点 -->
                   <div class="info-row col-row">
-                    <span class="k">集群能力</span>
-                    <span class="v tag-wrap">
-                      <el-tag size="small" :type="overview?.capabilitySummary.hasMetricsServer ? 'success' : 'info'">metrics-server</el-tag>
-                      <el-tag size="small" :type="overview?.capabilitySummary.hasCustomMetrics ? 'success' : 'info'">custom-metrics</el-tag>
-                      <el-tag size="small" :type="overview?.capabilitySummary.hasExternalMetrics ? 'success' : 'info'">external-metrics</el-tag>
-                      <el-tag size="small" :type="overview?.capabilitySummary.hasMonitoringOperator ? 'success' : 'info'">prometheus-operator</el-tag>
-                      <el-tag size="small" :type="overview?.capabilitySummary.hasGatewayApi ? 'success' : 'info'">Gateway API</el-tag>
-                      <el-tag size="small" :type="overview?.capabilitySummary.hasIstio ? 'success' : 'info'">Istio</el-tag>
-                      <el-tag size="small" :type="overview?.capabilitySummary.hasCalico ? 'success' : 'info'">Calico CRD</el-tag>
-                    </span>
-                    <span
-                      v-if="overview && !overview.capabilitySummary.hasCalico && !overview.capabilitySummary.hasGatewayApi && !overview.capabilitySummary.hasIstio"
-                      class="muted cap-hint"
-                    >
-                      能力未探测（全灰）。可在集群列表点「刷新能力」后回来重看。
+                    <span class="k">组件</span>
+                    <span class="v">
+                      {{ overviewComponentSummary }}
+                      <el-button link type="primary" @click="activeTab = 'components'">查看详情</el-button>
                     </span>
                   </div>
                 </div>
@@ -594,6 +625,18 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
               仅显示缺口最大的前 {{ unhealthyWorkloads.length }} 个。
             </div>
           </section>
+        </el-tab-pane>
+
+        <!-- ===== Tab 5：集群组件（S1.2）=====
+             lazy：与其它非首屏 tab 一致 —— 但注意组件全量投影在 refresh() 里就拉了
+             （概览摘要要用），lazy 这里只保证面板自身不额外触发请求。 -->
+        <el-tab-pane label="集群组件" name="components" lazy>
+          <ClusterComponentsPanel
+            :statuses="components.statuses.value"
+            :loading="components.statusesLoading.value"
+            :can-refresh="components.canManage.value"
+            @refresh="components.refresh()"
+          />
         </el-tab-pane>
       </el-tabs>
     </div>
