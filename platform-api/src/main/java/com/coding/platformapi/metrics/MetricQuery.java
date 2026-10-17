@@ -1,6 +1,9 @@
 package com.coding.platformapi.metrics;
 
 import com.coding.platformapi.metrics.labels.DeviceLabels;
+import com.coding.platformapi.metrics.labels.MeshEdgeLabels;
+import com.coding.platformapi.metrics.labels.MeshErrorLabels;
+import com.coding.platformapi.metrics.labels.MeshLatencyLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
 import com.coding.platformapi.metrics.labels.NamespaceLabels;
 
@@ -117,6 +120,26 @@ public enum MetricQuery {
             "sum(rate(container_fs_reads_bytes_total{cluster_name=\"%s\",container!=\"POD\",pod!=\"\",device=~\"/dev/dm-.*\"}[2m]))"),
     CLUSTER_DISK_WRITE(MetricLabels.class,
             "sum(rate(container_fs_writes_bytes_total{cluster_name=\"%s\",container!=\"POD\",pod!=\"\",device=~\"/dev/dm-.*\"}[2m]))"),
+
+    // ===== 服务网格拓扑（%s = ① 命名空间过滤片段 ② 时间窗；哨兵无参数）=====
+    // 一条序列 = 一条边「源工作负载 → 目标工作负载」。命名空间一并 by 出来 —— 同名 workload 跨 ns 很常见，
+    //   只按 workload 名分组会把两条边粘成一个节点。
+    // ⚠️ 命名空间过滤片段拼在花括号**内部**（故模板里是 `...total%s[%s]`），过滤片段有值时以 `,` 开头。
+    // ⚠️ **不要加 `reporter="destination"`**：2026-10-17 实测本集群 `reporter` 只有 `source`（网关记的）
+    //    与 `waypoint`，抄网上那些带 destination 的查询会查出空图。将来上了 sidecar 才需要它去重。
+    /** 拓扑的边 + QPS（请求数/秒）。 */
+    MESH_TOPOLOGY_EDGES(MeshEdgeLabels.class,
+            "sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_requests_total%s[%s]))"),
+    /** 同为边，但只看 5xx —— 与 EDGES 相除得错误率（分母是总量）。 */
+    MESH_TOPOLOGY_ERRORS(MeshErrorLabels.class,
+            "sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_requests_total{response_code=~\"5..\"%s}[%s]))"),
+    /** 边的 P95 延迟（毫秒）。⚠️ 实测本集群只有 `..._milliseconds_bucket`，没有 `_seconds` 版、也没有裸名。 */
+    MESH_TOPOLOGY_LATENCY(MeshLatencyLabels.class,
+            "histogram_quantile(0.95, sum by (le, source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_request_duration_milliseconds_bucket%s[%s])))"),
+    /** 哨兵：**在不在采集网格指标**。代理（istiod / ztunnel / waypoint / 网关）活着就产出，与流量无关，
+     *  所以它能区分「没接采集」和「接了但这段时间没调用」—— 这两者的主查询**都是空的**。无参数。 */
+    MESH_TOPOLOGY_SCRAPED(MetricLabels.class,
+            "count(istio_build)"),
 
     ;
 
