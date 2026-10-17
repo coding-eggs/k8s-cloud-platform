@@ -2,9 +2,11 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { serviceApi } from '@/api'
+import { serviceApi, workloadApi } from '@/api'
 import type { K8sService } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { useMeshStatus } from '@/composables/useMeshStatus'
+import { meshLabelState } from '@/utils/waypoint'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
@@ -144,6 +146,58 @@ function yesNo(v?: boolean | null): string {
   return v ? '是' : '否'
 }
 
+// ---------- 服务网格（S2.4.5） ----------
+/**
+ * Service 级 `istio.io/use-waypoint` 的三态。
+ * ⚠️ 命名空间级的值**租户读不到**（/namespace/get 是平台侧权限），所以「没设」只能说成
+ * "跟随命名空间"，不能替它显示一个猜来的值。
+ */
+const meshOf = (row: K8sService | null) => meshLabelState(row?.labels)
+/** 集群 ambient 是否启用：租户侧走组件旗标，平台侧走 /mesh/status（composable 里已分派） */
+const meshStatus = useMeshStatus(computed(() => state.clusterId ?? null))
+const ambientEnabled = computed(() => meshStatus.istioAmbient.value)
+const ambientKnown = computed(() => meshStatus.ambientKnown.value)
+
+/** 网格列/抽屉里的 waypoint 展示文案 */
+function meshText(row: K8sService | null): string {
+  const s = meshOf(row)
+  if (s.kind === 'waypoint') return s.name
+  if (s.kind === 'none') return '不使用（none）'
+  return '跟随命名空间'
+}
+
+/** 模板里做条件渲染用（避免在模板里对 union 反复求值） */
+function meshKind(row: K8sService | null): 'waypoint' | 'none' | 'inherit' {
+  return meshOf(row).kind
+}
+
+/**
+ * 「在拓扑里看」：拓扑的节点是**工作负载**，而这里是 Service ——
+ * 先用 Service 的 selector 反查匹配的工作负载，再把它们的 id 带过去。
+ * 没有 selector（headless / ExternalName / 端点外部管理）就没法定位，直接去全图。
+ */
+const focusing = ref(false)
+async function openInTopology(row: K8sService | null): Promise<void> {
+  if (!row) return
+  const sel = row.selector ?? {}
+  const ids: string[] = []
+  if (Object.keys(sel).length) {
+    focusing.value = true
+    try {
+      const labelSelector = Object.entries(sel).map(([k, v]) => `${k}=${v}`).join(',')
+      const workloads = await workloadApi.list({ ...ctxParams.value, labelSelector })
+      for (const w of workloads) {
+        if (w.name) ids.push(`${state.namespace}/${w.name}`)
+      }
+    } catch {
+      /* 拦截器已提示；退化到全图 */
+    } finally {
+      focusing.value = false
+    }
+  }
+  await router.push({ path: '/mesh/topology', query: ids.length ? { focus: ids.join(',') } : {} })
+}
+
 // ---------- 上下文联动：顶栏 chip 变化时刷新 ----------
 onMounted(() => {
   void load()
@@ -195,6 +249,15 @@ const contextDesc = computed(() => {
             <el-tag v-if="row.type === 'ExternalName'" size="small" type="info" effect="plain">{{ row.externalName || '—' }}</el-tag>
             <el-tag v-else-if="row.clusterIp === 'None'" size="small" type="info" effect="plain">headless</el-tag>
             <span v-else class="muted">{{ clusterIpDisplay(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="网格" width="190">
+          <template #default="{ row }">
+            <el-tag v-if="meshKind(row) === 'waypoint'" size="small" type="success" effect="plain">
+              waypoint: {{ meshText(row) }}
+            </el-tag>
+            <el-tag v-else-if="meshKind(row) === 'none'" size="small" type="info" effect="plain">L7 未启用</el-tag>
+            <span v-else class="muted">跟随命名空间</span>
           </template>
         </el-table-column>
         <el-table-column label="端口" min-width="200">
@@ -259,6 +322,20 @@ const contextDesc = computed(() => {
             </template>
           </template>
 
+          <div class="section-title">服务网格</div>
+          <el-descriptions :column="1" border class="sub-desc">
+            <el-descriptions-item label="本服务 waypoint">{{ meshText(detail) }}</el-descriptions-item>
+            <el-descriptions-item label="继承优先级">Pod &gt; Service &gt; Namespace</el-descriptions-item>
+            <el-descriptions-item label="集群 ambient">
+              {{ !ambientKnown ? '未探测' : (ambientEnabled ? '已启用' : '未启用') }}
+            </el-descriptions-item>
+          </el-descriptions>
+          <p class="mesh-tip">
+            没设本服务标签时，L7 走哪个 waypoint 由命名空间级设置决定（平台侧维护）——
+            这里读不到那个值，所以只如实显示"跟随命名空间"。
+          </p>
+          <el-button size="small" :loading="focusing" @click="openInTopology(detail)">在拓扑里看</el-button>
+
           <div class="section-title">端口</div>
           <el-table :data="detail?.ports ?? []" stripe size="small">
             <el-table-column prop="name" label="名称" width="100">
@@ -322,6 +399,12 @@ const contextDesc = computed(() => {
 }
 .sel-chip {
   font-family: Consolas, 'JetBrains Mono', monospace;
+}
+.mesh-tip {
+  margin: 8px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-3);
 }
 .name-link {
   cursor: pointer;

@@ -91,3 +91,21 @@ export const DATAPLANE_MODES = [
 
 /** use-waypoint 的「显式不使用」取值：显式关掉从命名空间继承来的 waypoint */
 export const USE_WAYPOINT_NONE = 'none'
+
+/**
+ * 一个 Service / Pod 上的 use-waypoint 状态。
+ * ⚠️ **不含命名空间继承值** —— 命名空间标签对租户不可见（/namespace/get 是平台侧权限），
+ * 所以「没设」只能如实说成"跟随命名空间"，不能替它编一个值。
+ */
+export type MeshLabelState =
+  | { kind: 'waypoint'; name: string }
+  | { kind: 'none' }
+  | { kind: 'inherit' }
+
+/** 读 labels 上的 use-waypoint → 三态（未设 / 显式 none / 指向某个 waypoint） */
+export function meshLabelState(labels?: Record<string, string> | null): MeshLabelState {
+  const v = labels?.[LABEL_USE_WAYPOINT]?.trim()
+  if (!v) return { kind: 'inherit' }
+  if (v === USE_WAYPOINT_NONE) return { kind: 'none' }
+  return { kind: 'waypoint', name: v }
+}

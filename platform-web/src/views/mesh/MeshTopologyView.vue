@@ -14,6 +14,7 @@ import { GraphChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import YamlBlock from '@/components/YamlBlock.vue'
@@ -24,6 +25,8 @@ import type { MeshTopology, MeshTopologyEdge, MeshTopologyNode } from '@/types'
 echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 
 const ctx = useResourceContext()
+const route = useRoute()
+const router = useRouter()
 
 // ---- 查询参数 ----
 // 集群 / 命名空间**来自顶栏级联**（本路由 context:'full'），页内不再放一套下拉。
@@ -52,6 +55,49 @@ const notScraped = computed(() => !!topo.value && !topo.value.meshMetricsAvailab
 const scrapedButEmpty = computed(
   () => !!topo.value && topo.value.meshMetricsAvailable && topo.value.edges.length === 0,
 )
+
+// ---- 聚焦（?focus=ns/workload，逗号分隔；从 Service 页「在拓扑里看」过来）----
+const focusIds = computed(() =>
+  String(route.query.focus ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+)
+/** 画布上要保留的节点集合：命中的 focus 节点 + 它们的直接邻居。null = 不聚焦 */
+const focusKeep = computed<Set<string> | null>(() => {
+  const ids = focusIds.value
+  const t = topo.value
+  if (!ids.length || !t) return null
+  const known = new Set(t.nodes.map((n) => n.id))
+  const keep = new Set(ids.filter((id) => known.has(id)))
+  if (!keep.size) return null
+  for (const e of t.edges) {
+    if (keep.has(e.source)) keep.add(e.target)
+    if (keep.has(e.target)) keep.add(e.source)
+  }
+  return keep
+})
+/** off = 没带 focus；on = 已聚焦；missing = 带了但图里找不到（多半是没有 L7 流量） */
+const focusState = computed<'off' | 'on' | 'missing'>(() => {
+  if (!focusIds.value.length || !topo.value) return 'off'
+  return focusKeep.value ? 'on' : 'missing'
+})
+
+/** 实际参与画布渲染的拓扑（聚焦后只留子图） */
+const viewTopo = computed<MeshTopology | null>(() => {
+  const t = topo.value
+  const keep = focusKeep.value
+  if (!t || !keep) return t
+  return {
+    ...t,
+    nodes: t.nodes.filter((n) => keep.has(n.id)),
+    edges: t.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+  }
+})
+
+function clearFocus(): void {
+  const q = { ...route.query }
+  delete q.focus
+  void router.replace({ query: q })
+}
+
 let timer: number | undefined
 
 async function load(): Promise<void> {
@@ -201,7 +247,7 @@ function healthOf(id: string, edges: MeshTopologyEdge[]): NodeHealth {
  */
 const chartNodes = computed(() => {
   void themeTick.value // 主题变量是依赖
-  const edges = topo.value?.edges ?? []
+  const edges = viewTopo.value?.edges ?? []
   const degree = new Map<string, number>()
   for (const e of edges) {
     degree.set(e.source, (degree.get(e.source) ?? 0) + 1)
@@ -210,7 +256,7 @@ const chartNodes = computed(() => {
   const success = cssVar('--success', '#67c23a')
   const warning = cssVar('--warning', '#e6a23c')
   const danger = cssVar('--danger', '#f56c6c')
-  return [...(topo.value?.nodes ?? [])]
+  return [...(viewTopo.value?.nodes ?? [])]
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((n: MeshTopologyNode) => {
       const health = healthOf(n.id, edges)
@@ -245,7 +291,7 @@ const healthById = computed(() => new Map(chartNodes.value.map((n) => [n.id, n.h
 const chartLinks = computed(() => {
   void themeTick.value // 主题变量是依赖
   const l4Color = cssVar('--text-3', '#94a3b8')
-  return [...(topo.value?.edges ?? [])]
+  return [...(viewTopo.value?.edges ?? [])]
     .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
     .map((e: MeshTopologyEdge) => {
       const l4 = e.level === 'L4'
@@ -587,6 +633,16 @@ onMounted(() => {
     </el-empty>
 
     <template v-else>
+      <div v-if="focusState !== 'off'" class="focus-banner">
+        <span v-if="focusState === 'on'">
+          已聚焦：<code>{{ focusIds.join('、') }}</code> 及其上下游
+        </span>
+        <span v-else>
+          拓扑里没有找到 <code>{{ focusIds.join('、') }}</code> —— 它可能这段时间没有 L7 流量，或不是工作负载
+        </span>
+        <el-button link type="primary" @click="clearFocus">看全图</el-button>
+      </div>
+
       <div v-if="scrapedButEmpty" class="empty-banner">
         在采集，但<strong>这段时间没有 L7 调用</strong> —— 可能是确实没有流量，也可能是网格里没有
         负载、或目标服务没挂 waypoint。把时间窗调大再看。
@@ -695,6 +751,21 @@ onMounted(() => {
   border-radius: 8px;
   font-size: 13px;
   line-height: 1.7;
+}
+.focus-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border: 1px solid var(--accent-border, #c7d2fe);
+  background: var(--accent-bg, #eef2ff);
+  color: var(--text-2);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.focus-banner code {
+  font-family: Consolas, 'JetBrains Mono', monospace;
+  color: var(--text-1);
 }
 .coverage {
   margin: 0;
