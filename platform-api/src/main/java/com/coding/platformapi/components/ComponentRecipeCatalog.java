@@ -22,9 +22,14 @@ public class ComponentRecipeCatalog {
     private static final ComponentRecipe METRICS_SERVER = new ComponentRecipe(
             BUSINESS,
             List.of(new ReleaseSpec(
-                    "platform-metrics-server", "kube-system", "metrics-server", "1.0.0",
+                    // chart 版本必须与 k8s-server/charts/components/metrics-server/<version> 完全一致（官方版，不自定义）
+                    "platform-metrics-server", "kube-system", "metrics-server", "3.14.0",
                     // 🔒 契约值
-                    Map.of("args", List.of("--kubelet-insecure-tls")),
+                    //  - args：自签 kubelet 证书的集群不加这个参数，metrics-server 永远 NotReady
+                    //  - fullnameOverride：官方 chart 默认用 release 名做 fullname（= platform-metrics-server），
+                    //    而组件探测认的是 deployment `metrics-server` —— 固定名字，探测与安装才对得上
+                    Map.of("args", List.of("--kubelet-insecure-tls"),
+                            "fullnameOverride", "metrics-server"),
                     // ⚙️ 可编辑默认值
                     Map.of("replicas", 1))),
             List.of());

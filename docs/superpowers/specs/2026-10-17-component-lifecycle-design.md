@@ -14,7 +14,7 @@
 |---|---|---|
 | 1 | **只装/升目录内 11 条组件**，不开放任意 chart | 用户选定。通用 Helm 商店与本批无关 |
 | 2 | **只做安装 + 升级**，不做卸载/回滚按钮 | 用户选定。卸载比安装危险一个量级（Calico 断网 / Istio 断流） |
-| 3 | **统一 Helm 执行器**（含给简单组件打的 thin chart） | Prometheus 这类富生态组件必须有 values；为简单组件保留第二套 apply 会带来两套版本/回滚/账本语义 |
+| 3 | **统一 Helm 执行器**（chart 一律用官方 chart，原样入库） | Prometheus 这类富生态组件必须有 values；为简单组件保留第二套 apply 会带来两套版本/回滚/账本语义。2026-10-17 补充裁定：不写 thin chart，官方版本对齐 |
 | 4 | **chart 内置进平台**（`platform-api` 资源目录），不引用外部仓库 | 用户选定。内网可复现、版本矩阵可审计；11 个组件几十 MB |
 | 5 | **cluster profile（画像）**：同一组件在管理集群与业务集群的 recipe 可以不同 | 管理集群要额外部署 Thanos；业务集群只装 chart |
 | 6 | **新增 `cluster_role`**（MANAGEMENT / BUSINESS，默认 BUSINESS） | 用户选定。不用安装时人工选画像 |
@@ -77,17 +77,28 @@ public record ReleaseSpec(
 **chart 放在执行侧（k8s-server）**，不放在 platform-api：
 
 ```
-k8s-server/src/main/resources/components/<code>/<recipeVersion>/
-    provenance.yaml         # 上游来源 URL、拉取日期（chart 是目录形态，完整性由 git / 镜像保证）
-    chart/                  # 一份 chart（thin chart 或解包后的上游 chart）
+k8s-server/charts/components/<code>/<chartVersion>/
+    provenance.yaml         # 上游仓库/版本、拉取命令、拉取日期（完整性由 git / 镜像保证）
+    chart/                  # 上游 chart 原样解包，**不修改任何模板**
       Chart.yaml
       templates/…
 ```
 
-理由：helm 在 k8s-server 里执行；若 chart 放 platform-api，就得把几 MB 的 tgz 经 HTTP 传过去。
-platform-api 只传 `code + recipeVersion + releaseName + values`，**业务判断与二进制产物分离**。
+**chart 规则（2026-10-17 用户裁定）**：
 
-- 运行时把 `.tgz` 解到临时目录（0600）再交给 helm；用完删除。
+- **尽量用官方 chart，版本对齐，不自定义**。目录名 = 上游 chart 版本（如 `metrics-server/3.14.0`），
+  不另起"自己的版本号"（最初的 thin chart 用 `1.0.0` 是错误示范）。
+- **不修改 chart 模板**。平台需要的一切定制都通过 recipe 的 values（只使用 chart 支持的键）。
+  例：metrics-server 的 `fullnameOverride: metrics-server`（否则官方 chart 用 release 名做 fullname，
+  与组件探测认的 `deployment/metrics-server` 对不上）、`args: [--kubelet-insecure-tls]`。
+- 升级组件版本 = 重新 `helm pull` 同一官方来源的新版本入库 + 改 recipe 的 `chartVersion`（平台发版）。
+- **手写 chart 的代价已被实测证明**：metrics-server 的手写 thin chart 漏了 `system:auth-delegator` 绑定，
+  `helm template` 与单测全绿，只有真集群调用 metrics API 时才 500。批② 起禁止手写。
+
+理由：helm 在 k8s-server 里执行；若 chart 放 platform-api，就得把几 MB 的包经 HTTP 传过去。
+platform-api 只传 `code + chartVersion + releaseName + values`，**业务判断与二进制产物分离**。
+
+- 运行时 chart 以**目录**形态直接交给 helm（不打包 tgz）；临时 kubeconfig 0600，用完删除。
 - **请求时校验** `(code, version)` 存在于内置包中且 `Chart.yaml` 存在，缺了就明确报错
   （两端版本漂移的症状是"装了个不存在的版本"，必须一眼可辨）。
 - **不另做 sha256**（实现时修订）：chart 以文本目录进 git、随镜像发布，完整性由版本控制与镜像保证；

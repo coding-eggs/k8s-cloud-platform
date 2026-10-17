@@ -37,6 +37,14 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void theContractPinsTheDeploymentNameTheProbeLooksFor() {
+        // 官方 chart 默认用 release 名做 fullname（platform-metrics-server），
+        // 而 ClusterComponentCatalog 探测的是 deployment `metrics-server` —— 名字对不上就永远"未安装"
+        ReleaseSpec spec = catalog.recipeOf("metrics-server", "BUSINESS").releases().get(0);
+        assertThat(spec.contractValues().get("fullnameOverride")).isEqualTo("metrics-server");
+    }
+
+    @Test
     void theChartVersionExistsInTheAdapterBundle() throws Exception {
         // ⭐ 跨模块一致性：recipe 指向的版本必须真的在 k8s-server 的内置 chart 里
         ReleaseSpec spec = catalog.recipeOf("metrics-server", "BUSINESS").releases().get(0);

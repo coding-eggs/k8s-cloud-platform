@@ -1,8 +1,0 @@
-image:
-  repository: registry.k8s.io/metrics-server/metrics-server
-  tag: v0.7.2
-  pullPolicy: IfNotPresent
-replicas: 1
-# 🔒 由 recipe 传入的平台契约值（--kubelet-insecure-tls 等）
-args: []
-resources: {}

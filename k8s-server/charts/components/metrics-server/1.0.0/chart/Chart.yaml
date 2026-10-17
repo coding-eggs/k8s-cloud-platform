@@ -1,6 +1,0 @@
-apiVersion: v2
-name: metrics-server
-description: 平台内置的 metrics-server（S3.6 组件安装用）
-type: application
-version: 1.0.0
-appVersion: "v0.7.2"

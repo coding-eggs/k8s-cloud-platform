@@ -1,0 +1,10 @@
+source: https://github.com/kubernetes-sigs/metrics-server/tree/main/charts/metrics-server
+helm_repo: https://kubernetes-sigs.github.io/metrics-server
+chart: metrics-server
+version: 3.14.0
+appVersion: 0.9.0
+fetched_at: 2026-10-17
+fetch_command: helm pull metrics-server --repo https://kubernetes-sigs.github.io/metrics-server --version 3.14.0 --untar
+note: >-
+  官方 chart 原样入库，**未修改任何模板**。平台的定制全部通过 recipe 的 values 完成
+  （args / replicas / fullnameOverride），升级时重新 helm pull 同一来源的新版本即可。
