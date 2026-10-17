@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.k8s.PlatformAlertEventMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.k8s.PlatformAlertEvent">
+    <id     column="id"          jdbcType="BIGINT"    property="id" />
+    <result column="cluster_id"  jdbcType="VARCHAR"   property="clusterId" />
+    <result column="namespace"   jdbcType="VARCHAR"   property="namespace" />
+    <result column="alertname"   jdbcType="VARCHAR"   property="alertname" />
+    <result column="severity"    jdbcType="VARCHAR"   property="severity" />
+    <result column="status"      jdbcType="VARCHAR"   property="status" />
+    <result column="fingerprint" jdbcType="VARCHAR"   property="fingerprint" />
+    <result column="labels"      jdbcType="VARCHAR"   property="labels" />
+    <result column="annotations" jdbcType="VARCHAR"   property="annotations" />
+    <result column="starts_at"   jdbcType="TIMESTAMP" property="startsAt" />
+    <result column="ends_at"     jdbcType="TIMESTAMP" property="endsAt" />
+    <result column="received_at" jdbcType="TIMESTAMP" property="receivedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, `namespace`, alertname, severity, `status`, fingerprint,
+    labels, annotations, starts_at, ends_at, received_at
+  </sql>
+
+  <!-- 幂等键 uk_alert_episode (cluster_id, fingerprint, starts_at)；命中则只更新可变字段。
+       alertname / fingerprint / starts_at 是幂等键的一部分，刻意不在 update 列表里。 -->
+  <insert id="upsert" parameterType="com.coding.data.models.k8s.PlatformAlertEvent">
+    insert into platform_alert_event
+      (cluster_id, `namespace`, alertname, severity, `status`, fingerprint,
+       labels, annotations, starts_at, ends_at, received_at)
+    values
+      (#{clusterId,jdbcType=VARCHAR}, #{namespace,jdbcType=VARCHAR},
+       #{alertname,jdbcType=VARCHAR}, #{severity,jdbcType=VARCHAR},
+       #{status,jdbcType=VARCHAR}, #{fingerprint,jdbcType=VARCHAR},
+       #{labels,jdbcType=VARCHAR}, #{annotations,jdbcType=VARCHAR},
+       #{startsAt,jdbcType=TIMESTAMP}, #{endsAt,jdbcType=TIMESTAMP},
+       #{receivedAt,jdbcType=TIMESTAMP})
+    on duplicate key update
+      `status`    = values(`status`),
+      ends_at     = values(ends_at),
+      severity    = values(severity),
+      `namespace` = values(`namespace`),
+      labels      = values(labels),
+      annotations = values(annotations),
+      received_at = values(received_at)
+  </insert>
+
+  <select id="query" parameterType="com.coding.data.models.k8s.PlatformAlertEventQuery"
+          resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_alert_event
+    <where>
+      <if test="clusterId != null">and cluster_id = #{clusterId,jdbcType=VARCHAR}</if>
+      <!-- 租户侧收窄：null = 不限；空 list = 一条都不给（绝不能退化成"不过滤"） -->
+      <if test="namespaces != null and namespaces.size() > 0">
+        and `namespace` in
+        <foreach collection="namespaces" item="ns" open="(" separator="," close=")">#{ns}</foreach>
+      </if>
+      <if test="namespaces != null and namespaces.size() == 0">
+        and 1 = 0
+      </if>
+      <if test="status != null">and `status` = #{status,jdbcType=VARCHAR}</if>
+      <if test="severity != null">and severity = #{severity,jdbcType=VARCHAR}</if>
+      <if test="namespace != null">and `namespace` = #{namespace,jdbcType=VARCHAR}</if>
+      <if test="alertname != null">and alertname like concat('%', #{alertname,jdbcType=VARCHAR}, '%')</if>
+      <if test="excludeWatchdog != null and excludeWatchdog">and alertname &lt;&gt; 'Watchdog'</if>
+      <if test="from != null">and starts_at &gt;= #{from,jdbcType=TIMESTAMP}</if>
+      <if test="to != null">and starts_at &lt; #{to,jdbcType=TIMESTAMP}</if>
+      <if test="cursorStartsAt != null">
+        and (starts_at &lt; #{cursorStartsAt,jdbcType=TIMESTAMP}
+             or (starts_at = #{cursorStartsAt,jdbcType=TIMESTAMP} and id &lt; #{cursorId,jdbcType=BIGINT}))
+      </if>
+    </where>
+    order by starts_at desc, id desc
+    limit #{limit,jdbcType=INTEGER}
+  </select>
+
+  <delete id="deleteById">
+    delete from platform_alert_event where id = #{id,jdbcType=BIGINT}
+  </delete>
+
+  <select id="findIdsByAlertname" resultType="java.lang.Long">
+    select id from platform_alert_event
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and alertname = #{alertname,jdbcType=VARCHAR}
+    order by id desc
+    limit 20
+  </select>
+
+</mapper>

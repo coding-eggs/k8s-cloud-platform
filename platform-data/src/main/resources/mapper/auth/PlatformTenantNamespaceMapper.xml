@@ -46,6 +46,22 @@
     from platform_tenant_namespace
     order by tenant_id, cluster_id, `namespace`
   </select>
+  <select id="listByTenantAndCluster" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant_namespace
+    where tenant_id = #{tenantId,jdbcType=VARCHAR}
+      and cluster_id = #{clusterId,jdbcType=VARCHAR}
+    order by `namespace`
+  </select>
+  <select id="selectByClusterAndNs" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_tenant_namespace
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and `namespace` = #{namespace,jdbcType=VARCHAR}
+    order by tenant_id
+  </select>
   <insert id="insert" parameterType="com.coding.data.models.auth.PlatformTenantNamespace">
     insert into platform_tenant_namespace (id, tenant_id, cluster_id, `namespace`, role_template_id)
     values (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},

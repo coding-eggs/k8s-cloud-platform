@@ -23,6 +23,14 @@ public interface PlatformTenantNamespaceMapper {
 
     List<PlatformTenantNamespace> listAll();
 
+    /** 某租户在某集群上的全部命名空间分配（告警列表按 token 收窄用）。 */
+    List<PlatformTenantNamespace> listByTenantAndCluster(@Param("tenantId") String tenantId,
+                                                         @Param("clusterId") String clusterId);
+
+    /** 某集群上某命名空间的分配记录（告警落库时反查归属；可能 0 条、也可能多条 = 分给了多个租户）。 */
+    List<PlatformTenantNamespace> selectByClusterAndNs(@Param("clusterId") String clusterId,
+                                                       @Param("namespace") String namespace);
+
     /**
      * 关联表物理删除（平台约定：关联表无软删）
      */
