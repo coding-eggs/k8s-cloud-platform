@@ -457,6 +457,75 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void editableDefaultsApplyOnFirstInstallAndBlankStorageClassIsOmitted() {
+        // 表单没改的字段 = recipe 默认值（第一次安装没有"上次快照"可继承）。
+        // 空的 StorageClass 表示"跟随集群默认存储类"，不能以 storageClassName: "" 落进 values ——
+        // K8s 里空串是"不用动态供给"，会装出一个永远 Pending 的 PVC。
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of("prometheus", Map.of("prometheusSpec", Map.of(
+                                        "externalLabels", Map.of("cluster_name", "${cluster.name}")))),
+                                Map.of(
+                                        "prometheus.prometheusSpec.retention", "15d",
+                                        "prometheus.prometheusSpec.storageSpec"
+                                                + ".volumeClaimTemplate.spec.storageClassName", "",
+                                        "prometheus.prometheusSpec.storageSpec"
+                                                + ".volumeClaimTemplate.spec.resources.requests.storage", "50Gi"))),
+                        List.of()));
+
+        service(catalog).apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL",
+                null, null), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"), org.mockito.ArgumentMatchers.eq("prometheus-operator"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> spec = (Map<String, Object>) ((Map<String, Object>)
+                captor.getValue().get(0).getValues().get("prometheus")).get("prometheusSpec");
+
+        assertThat(spec).containsEntry("retention", "15d");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> claimSpec = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>)
+                spec.get("storageSpec")).get("volumeClaimTemplate")).get("spec");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> requests = (Map<String, Object>) ((Map<String, Object>)
+                claimSpec.get("resources")).get("requests");
+        assertThat(requests).containsEntry("storage", "50Gi");
+        assertThat(claimSpec).doesNotContainKey("storageClassName");
+    }
+
+    @Test
+    void aCredentialSecretOutsideTheThanosNamespaceIsRejected() {
+        // 凭证只允许在 Thanos 自己的命名空间（monitor）里找
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "MANAGEMENT")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("MANAGEMENT", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-thanos", "monitor", "thanos", "0.47.2", Map.of(), Map.of())),
+                        List.of(), false, false, true));
+
+        ComponentInstallService svc = service(catalog);
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest("c1", "prometheus-operator",
+                "INSTALL", null, null, null, null, new com.coding.platformapi.models.ThanosInstallRequest(
+                        "default", "minio-creds", "minio.default.svc:9000", "thanos", false)), "admin"))
+                .hasMessageContaining("monitor");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
     void thanosObjstoreIsWrittenBeforeHelm() {
         // Pod 会挂载 objstore Secret：必须先生成它，再跑 helm
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");

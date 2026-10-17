@@ -12,7 +12,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calicoApi, clusterApi, namespaceApi } from '@/api'
+import { calicoApi, clusterApi, storageClassApi } from '@/api'
 import { clusterMetrics, type ClusterMetricsReq } from '@/api/metrics'
 import type {
   K8sAbnormalPod, K8sCluster, K8sClusterOverview, K8sNamespaceStatEntry, K8sNodeHealth,
@@ -26,11 +26,14 @@ import ClusterMetricsPanel from '@/components/cluster/ClusterMetricsPanel.vue'
 import ClusterComponentsPanel from '@/components/cluster/ClusterComponentsPanel.vue'
 import { useClusterComponents } from '@/composables/useClusterComponents'
 import { useComponentOperations } from '@/composables/useComponentOperations'
+import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 
 const route = useRoute()
 const router = useRouter()
+/** 资源上下文：只为 StorageClass 下拉带出 tenantId（集群级资源不按租户收口） */
+const resourceCtx = useResourceContext()
 
 // ---- 上下文：clusterId 来自 query（从集群列表点名称/「查看」进来）----
 const clusterId = ref((route.query.clusterId as string) || '')
@@ -49,12 +52,16 @@ const operations = useComponentOperations(computed(() => clusterId.value || null
 /** 正在执行的组件（按钮 loading / 禁用） */
 const applying = ref<string | null>(null)
 
-/** Thanos 安装表单的命名空间候选 */
-async function loadComponentNamespaces(): Promise<string[]> {
+/** 安装表单的 StorageClass 候选：集群级只读列表（平台管理员可读）。
+ *  存储类本身不走租户边界，tenantId 仅为满足上下文 DTO；拿不到就留空，用户仍可手输。 */
+async function loadComponentStorageClasses(): Promise<string[]> {
   const id = clusterId.value
   if (!id) return []
-  const list = await namespaceApi.list(id)
-  return (list ?? []).map((n) => n.name)
+  const list = await storageClassApi.list({
+    tenantId: resourceCtx.state.tenantId ?? '',
+    clusterId: id,
+  })
+  return (list ?? []).map((sc) => sc.name)
 }
 
 /**
@@ -721,7 +728,7 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
             :can-refresh="components.canManage.value"
             :operations="operations.latest.value"
             :applying="applying"
-            :load-namespaces="loadComponentNamespaces"
+            :load-storage-classes="loadComponentStorageClasses"
             :load-secret-options="loadComponentSecrets"
             @refresh="components.refresh()"
             @apply="onApply"

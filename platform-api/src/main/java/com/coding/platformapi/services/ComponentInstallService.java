@@ -137,7 +137,16 @@ public class ComponentInstallService {
                 || isBlank(thanos.getNamespace()) || isBlank(thanos.getSecretName())
                 || isBlank(thanos.getEndpoint()) || isBlank(thanos.getBucket()))) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "请选择 Thanos 的命名空间与凭证 Secret，并填写 MinIO 地址和桶名");
+                    "请选择对象存储凭证 Secret（monitor 命名空间），并填写 MinIO 地址和桶名");
+        }
+        // 凭证只在 Thanos 自己的命名空间里找（monitor）：跨命名空间读 Secret 既没有产品必要，
+        // 也让"谁能读到凭证"这件事不可预期
+        if (recipe.thanosInstall() && thanos != null) {
+            String thanosNamespace = thanosReleaseNamespace(recipe.releases());
+            if (!thanosNamespace.equals(thanos.getNamespace())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "对象存储凭证 Secret 必须放在 Thanos 的命名空间（" + thanosNamespace + "）");
+            }
         }
         // Calico 网络参数：表单 > 上次成功 > 平台配置；填错直接断网，缺一个就拒
         CalicoInstallRequest calico = recipe.calicoNetwork()
@@ -209,7 +218,7 @@ public class ComponentInstallService {
     }
 
     /**
-     * 合并 values：上次快照 < 本次可编辑值 < 契约值（**深合并**）。
+     * 合并 values：recipe 可编辑默认值 &lt; 上次快照 &lt; 本次用户值 &lt; 契约值（**深合并**）。
      * 可编辑字段的 key 是路径形式（如 {@code prometheus.prometheusSpec.retention}），
      * 先转成嵌套 Map 再合并；契约值永远最后压，不能被历史值或用户值覆盖。
      */
@@ -217,8 +226,9 @@ public class ComponentInstallService {
                                                  Map<String, Map<String, Object>> previous) {
         List<ReleaseSpec> out = new ArrayList<>();
         for (ReleaseSpec r : releases) {
-            Map<String, Object> merged = DeepMerge.merge(
-                    previous.getOrDefault(r.releaseName(), Map.of()), editableNested(r, editable));
+            Map<String, Object> merged = DeepMerge.merge(pathNested(r, r.editableValues()),
+                    previous.getOrDefault(r.releaseName(), Map.of()));
+            merged = DeepMerge.merge(merged, pathNested(r, editable));
             merged = DeepMerge.merge(merged, r.contractValues());
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
                     r.chartVersion(), merged, r.editableValues()));
@@ -226,16 +236,23 @@ public class ComponentInstallService {
         return out;
     }
 
-    /** 可编辑字段按路径声明，这里转成嵌套 Map（只接受 recipe 声明过的 key） */
-    private static Map<String, Object> editableNested(ReleaseSpec r, Map<String, Object> editable) {
-        if (editable == null) {
+    /**
+     * 可编辑字段按路径声明，这里转成嵌套 Map —— 只接受 recipe 声明过的 key。
+     *
+     * <p><b>空值 / 空串跳过</b>：StorageClass 的空串表示"跟随集群默认存储类"，而
+     * {@code storageClassName: ""} 在 K8s 里是「不用动态供给」，会装出一个永远 Pending 的 PVC。
+     */
+    private static Map<String, Object> pathNested(ReleaseSpec r, Map<String, Object> source) {
+        if (source == null) {
             return Map.of();
         }
         Map<String, Object> out = new LinkedHashMap<>();
         for (String key : r.editableValues().keySet()) {
-            if (editable.containsKey(key)) {
-                putPath(out, key, editable.get(key));
+            Object value = source.get(key);
+            if (value == null || (value instanceof String s && s.isBlank())) {
+                continue;
             }
+            putPath(out, key, value);
         }
         return out;
     }

@@ -249,23 +249,29 @@ class ClusterComponentServiceTest {
     }
 
     @Test
-    void prometheusExposesTheEditableFieldsIncludingJsonStorage() {
+    void prometheusExposesStorageAsStorageClassAndSizeFields() {
+        // 存储不做 JSON 文本域：SC 走集群下拉（storageClass），容量按带单位的输入框（size）。
+        // 顺序即表单顺序（recipe 用 LinkedHashMap 固定）
         ClusterComponentService svc = svc(List.of());
 
         var fields = find(svc.status("c1"), "prometheus-operator").getEditableFields();
 
         assertThat(fields).extracting(com.coding.platformapi.models.EditableFieldDTO::getKey)
-                .containsExactlyInAnyOrder(
+                .containsExactly(
                         "prometheus.prometheusSpec.retention",
-                        "prometheus.prometheusSpec.storageSpec",
                         "prometheus.prometheusSpec.replicas",
-                        "alertmanager.alertmanagerSpec.storage",
+                        "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName",
+                        "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage",
+                        "alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.storageClassName",
+                        "alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage",
                         "grafana.enabled");
-        // 两个 storage 都是 JSON 文本域
-        assertThat(fields).filteredOn(f -> f.getKey().endsWith("storageSpec")
-                        || f.getKey().endsWith("alertmanagerSpec.storage"))
-                .hasSize(2)
-                .allSatisfy(f -> assertThat(f.getType()).isEqualTo("json"));
+        assertThat(fields).filteredOn(f -> f.getKey().endsWith(".storageClassName"))
+                .hasSize(2).allSatisfy(f -> assertThat(f.getType()).isEqualTo("storageClass"));
+        assertThat(fields).filteredOn(f -> f.getKey().endsWith(".requests.storage"))
+                .hasSize(2).allSatisfy(f -> assertThat(f.getType()).isEqualTo("size"));
+        assertThat(fields).filteredOn(f -> f.getKey().endsWith(".requests.storage"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getDefaultValue)
+                .containsExactly("50Gi", "10Gi");
     }
 
     @Test

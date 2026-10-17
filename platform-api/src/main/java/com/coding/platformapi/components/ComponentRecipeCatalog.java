@@ -91,19 +91,26 @@ public class ComponentRecipeCatalog {
         return List.of(new ReleaseSpec(
                 "platform-kps", "monitor", "prometheus-operator", "92.10.1",
                 contract,
-                // ⚙️ 可编辑默认值：Grafana 只在管理集群默认开启
-                Map.of(
-                        "prometheus.prometheusSpec.retention", "15d",
-                        "prometheus.prometheusSpec.replicas", 1,
-                        // 默认不写 storageClassName：空串在 K8s 里表示"不用动态供给"，会装出一个 Pending 的 PVC
-                        "prometheus.prometheusSpec.storageSpec", Map.of(
-                                "volumeClaimTemplate", Map.of("spec", Map.of(
-                                        "resources", Map.of("requests", Map.of("storage", "50Gi"))))),
-                        // Alertmanager 的静默/通知日志要跨重启保留
-                        "alertmanager.alertmanagerSpec.storage", Map.of(
-                                "volumeClaimTemplate", Map.of("spec", Map.of(
-                                        "resources", Map.of("requests", Map.of("storage", "10Gi"))))),
-                        "grafana.enabled", grafanaEnabled)));
+                prometheusEditable(grafanaEnabled)));
+    }
+
+    /**
+     * ⚙️ management/business 共用的可编辑默认值。**顺序即表单顺序**（LinkedHashMap）。
+     *
+     * <p>存储拆成「StorageClass + 容量」两个字段，而不是整块 JSON —— SC 从集群下拉选、容量带单位提示。
+     * StorageClass 默认空串 = 跟随集群默认存储类；空串**不会**写进 values
+     * （K8s 里 {@code storageClassName: ""} 表示"不用动态供给"，会装出 Pending 的 PVC）。
+     */
+    private static Map<String, Object> prometheusEditable(boolean grafanaEnabled) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("prometheus.prometheusSpec.retention", "15d");
+        out.put("prometheus.prometheusSpec.replicas", 1);
+        out.put("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName", "");
+        out.put("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage", "50Gi");
+        out.put("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.storageClassName", "");
+        out.put("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage", "10Gi");
+        out.put("grafana.enabled", grafanaEnabled);
+        return out;
     }
 
     /** 管理集群内置 Thanos receive 的集群内地址（kps 的 remoteWrite 指向它） */
@@ -280,16 +287,22 @@ public class ComponentRecipeCatalog {
     }
 
     /** 可编辑字段的展示文案（key 是路径形式）；没有登记的 key 原样显示 */
-    private static final Map<String, String> EDITABLE_LABELS = Map.of(
-            "prometheus.prometheusSpec.retention", "指标保留时长（如 15d）",
-            "prometheus.prometheusSpec.storageSpec", "存储配置（JSON）",
-            "prometheus.prometheusSpec.replicas", "Prometheus 副本数",
-            "alertmanager.alertmanagerSpec.storage", "Alertmanager 持久化（JSON）",
-            "grafana.enabled", "部署 Grafana",
-            "replicaCount", "副本数",
-            "autoscaleEnabled", "自动扩缩容",
-            "resources", "资源限制（JSON）",
-            "replicas", "副本数");
+    private static final Map<String, String> EDITABLE_LABELS = Map.ofEntries(
+            Map.entry("prometheus.prometheusSpec.retention", "指标保留时长（如 15d）"),
+            Map.entry("prometheus.prometheusSpec.replicas", "Prometheus 副本数"),
+            Map.entry("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName",
+                    "Prometheus 存储类"),
+            Map.entry("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage",
+                    "Prometheus 存储容量"),
+            Map.entry("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.storageClassName",
+                    "Alertmanager 存储类（持久化静默与通知日志）"),
+            Map.entry("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage",
+                    "Alertmanager 存储容量"),
+            Map.entry("grafana.enabled", "部署 Grafana"),
+            Map.entry("replicaCount", "副本数"),
+            Map.entry("autoscaleEnabled", "自动扩缩容"),
+            Map.entry("resources", "资源限制（JSON）"),
+            Map.entry("replicas", "副本数"));
 
     public static String labelOf(String key) {
         return EDITABLE_LABELS.getOrDefault(key, key);

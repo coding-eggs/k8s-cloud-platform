@@ -246,11 +246,16 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | `kubeApiServer` / `kubeControllerManager` / `kubeEtcd` / `kubeScheduler`.enabled=false | 🔒 | kubeadm 类集群上这些控制面端点只在 127.0.0.1，target 恒 DOWN、制造噪音告警 |
 | `crds.enabled=true` + `crds.upgradeJob.enabled=true` | 🔒 | Helm **不升级** `crds/` 目录；官方 chart 自带的 Job 在 operator 部署前 `kubectl apply` CRD —— 这是 CRD 升级的唯一正确姿势 |
 | `grafana.enabled` | ⚙️ | **BUSINESS 默认 false，MANAGEMENT 默认 true**（只有管理集群需要看板） |
-| `alertmanager.alertmanagerSpec.storage` | ⚙️ | 默认 10Gi PVC：静默与通知日志要跨重启保留（emptyDir 时重启即丢） |
+| `prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName` | ⚙️ | **表单里选 StorageClass**（候选来自集群）；空 = 跟随集群默认存储类，**不写进 values**（空串在 K8s 里是「不用动态供给」→ PVC 永远 Pending） |
+| `prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage` | ⚙️ | **表单里填容量**，默认 50Gi |
+| `alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.storageClassName` | ⚙️ | 同上（静默与通知日志要跨重启保留） |
+| `alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage` | ⚙️ | 默认 10Gi |
 | MANAGEMENT 追加 release `platform-thanos` | 🔒 | 管理集群自带 Thanos 底座；`remoteWrite` 指向集群内 `platform-thanos-receive.monitor.svc:19291` |
 | 额外 release `platform-thanos`（query / receive / store + 对象存储） | 🔒（management） | 管理集群的观测底座 |
 
-可编辑（⚙️）：`prometheus.prometheusSpec.retention`、`prometheus.prometheusSpec.storageSpec`（StorageClass + 容量）、`prometheus.prometheusSpec.replicas`、`grafana.enabled`。
+可编辑（⚙️）：`prometheus.prometheusSpec.retention`、`prometheus.prometheusSpec.replicas`、
+`grafana.enabled`、Prometheus / Alertmanager 的**存储类 + 容量**（四个标量字段，不做整块 JSON 文本域；
+前端控件类型 `storageClass` / `size` 由 key 后缀判定）。
 
 **功能级验收**（安装/升级后自动执行，失败则该操作标为「已下发但功能未就绪」）。
 验收会**临时写入**少量对象（打 `platform.coding/verify=true` 标签，测完立即删除）——这是一次写操作，
@@ -343,7 +348,14 @@ chart `thanos` 0.47.2（thanos-community），release `platform-thanos`，ns 取
 | `query/receive/storegateway.replicaCount=1` | 🔒 | 小集群够用（chart 默认 2/3/2） |
 | `bucket.enabled=false` | 🔒 | 不需要 bucketweb |
 
-**安装表单（仅 MANAGEMENT）**：命名空间（下拉）、凭证 Secret（下拉，该 ns 下的 Secret）、MinIO 地址、Bucket、跳过 HTTPS 校验（可选）。
+**安装表单（仅 MANAGEMENT）**：凭证 Secret（下拉，**只列 monitor 命名空间**的 Secret，选项里标出它包含哪些 key）、
+MinIO 地址、Bucket、跳过 HTTPS 校验（可选）。
+
+- **Thanos 固定在 monitor**（recipe 决定），凭证 Secret 必须与它同命名空间 —— platform-api 也做校验，
+  跨命名空间直接拒（前端下拉已经只列 monitor 的 Secret）。
+- **MinIO 的用途写在表单上**：它是 Thanos 的对象存储（S3 兼容），保存 Prometheus 的**长期指标**；
+  没有它就装不出可查询的历史数据。Bucket 必须已存在，平台不创建。
+- **凭证是什么也要写清楚**：MinIO 的 access key / secret key；支持的 key 组合见下。
 
 - **凭证不出集群**：Secret 里只放 access key / secret key；k8s-server 在集群内读取，
   拼成 `objstore.yml` 写入 `platform-thanos-objstore`。凭证不经过 platform-api，也不进操作记录快照。

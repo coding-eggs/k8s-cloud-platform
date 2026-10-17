@@ -954,7 +954,11 @@ export interface K8sThanosInstall {
 export interface K8sEditableField {
   key: string
   label: string
-  type: 'string' | 'number' | 'boolean' | 'json'
+  /**
+   * 控件类型：storageClass = 集群 StorageClass 下拉；size = 带单位的容量输入；
+   * json = 多行 JSON 文本域（其余按 defaultValue 的 JS 类型）
+   */
+  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size'
   defaultValue: unknown
 }
 

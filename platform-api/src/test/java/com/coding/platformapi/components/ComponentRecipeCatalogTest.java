@@ -217,11 +217,20 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
-    void alertmanagerHasA10GiPersistenceDefault() {
+    void persistenceIsAStorageClassPlusSizeDefault() {
+        // 持久化在表单里是「存储类 + 容量」两个字段（不是一个 JSON 文本域）：
+        // StorageClass 默认空串 = 跟随集群默认存储类（不写进 values）
         Map<String, Object> editable = catalog.recipeOf("prometheus-operator", "BUSINESS")
                 .releases().get(0).editableValues();
-        assertThat(editable.get("alertmanager.alertmanagerSpec.storage").toString())
-                .contains("volumeClaimTemplate").contains("10Gi");
+        assertThat(editable)
+                .containsEntry("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec"
+                        + ".resources.requests.storage", "10Gi")
+                .containsEntry("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec"
+                        + ".storageClassName", "")
+                .containsEntry("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec"
+                        + ".resources.requests.storage", "50Gi")
+                .containsEntry("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec"
+                        + ".storageClassName", "");
     }
 
     @Test

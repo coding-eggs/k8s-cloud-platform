@@ -28,8 +28,8 @@ const props = defineProps<{
   operations: Record<string, K8sComponentOperation>
   /** 正在执行的组件 code（按钮 loading） */
   applying?: string | null
-  /** 命名空间候选（Thanos 安装表单用；由页面提供，面板不发请求） */
-  loadNamespaces?: () => Promise<string[]>
+  /** 集群 StorageClass 候选名称（安装表单的存储类下拉；由页面提供，面板不发请求） */
+  loadStorageClasses?: () => Promise<string[]>
   /** 某命名空间下的 Secret 候选（name + keys；凭证数据不会下发） */
   loadSecretOptions?: (namespace: string) => Promise<SecretRefOption[]>
 }>()
@@ -137,7 +137,7 @@ interface ApplyDialog {
   showThanosInstall: boolean
   thanos: K8sThanosInstall
   initialThanosInstall: string
-  namespaceOptions: string[]
+  storageClasses: string[]
   secretOptions: SecretRefOption[]
   /** 该组件是否要填 Calico 网络参数（CIDR / 封装方式） */
   showCalico: boolean
@@ -147,6 +147,9 @@ interface ApplyDialog {
 
 /** Calico 支持的封装方式（Installation CR 的取值） */
 const ENCAPSULATIONS = ['IPIP', 'VXLAN', 'IPIPCrossSubnet', 'VXLANCrossSubnet', 'None']
+
+/** 容量写法（K8s quantity）：50Gi / 500Mi / 1Ti；不带单位按字节，几乎不会是本意，所以默认要求带单位 */
+const SIZE_RE = /^[1-9]\d*(\.\d+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$/
 
 const EMPTY_THANOS: K8sThanosInstall = {
   namespace: 'monitor', secretName: '', endpoint: '', bucket: '', insecureSkipVerify: false,
@@ -159,7 +162,7 @@ const applyDialog = ref<ApplyDialog>({
   showThanos: false, thanosUrl: '', initialThanos: '',
   showThanosInstall: false, thanos: { ...EMPTY_THANOS },
   initialThanosInstall: JSON.stringify(EMPTY_THANOS),
-  namespaceOptions: [], secretOptions: [],
+  storageClasses: [], secretOptions: [],
   showCalico: false, calico: { podCidr: '', encapsulation: 'IPIP' },
   initialCalico: '',
 })
@@ -206,7 +209,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
     showThanosInstall: !!row.thanosInstall,
     thanos,
     initialThanosInstall: JSON.stringify(thanos),
-    namespaceOptions: [], secretOptions: [],
+    storageClasses: [], secretOptions: [],
     showCalico: !!row.calicoNetwork,
     calico,
     initialCalico: JSON.stringify(calico),
@@ -214,30 +217,33 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
   if (row.thanosInstall) {
     void loadThanosOptions()
   }
+  if (fields.some((f) => f.type === 'storageClass')) {
+    void loadStorageClassOptions()
+  }
 }
 
-/** Thanos 表单的命名空间/Secret 候选：懒加载，失败就留空（用户可以手输） */
+/** Thanos 的部署命名空间（recipe 固定为 monitor，凭证只允许在这个命名空间里找） */
+const THANOS_NAMESPACE = 'monitor'
+
+/** Thanos 表单的 Secret 候选：懒加载，失败就留空（用户可以手输） */
 async function loadThanosOptions(): Promise<void> {
   const d = applyDialog.value
   if (!d.showThanosInstall) return
+  d.thanos.namespace = THANOS_NAMESPACE
   try {
-    d.namespaceOptions = (await props.loadNamespaces?.()) ?? []
+    d.secretOptions = (await props.loadSecretOptions?.(THANOS_NAMESPACE)) ?? []
   } catch {
-    d.namespaceOptions = []
+    d.secretOptions = []
   }
-  await refreshSecretOptions()
 }
 
-async function refreshSecretOptions(): Promise<void> {
+/** 存储类候选：集群里有什么就列什么；拿不到就留空（仍可手输） */
+async function loadStorageClassOptions(): Promise<void> {
   const d = applyDialog.value
-  if (!d.showThanosInstall || !d.thanos.namespace) {
-    d.secretOptions = []
-    return
-  }
   try {
-    d.secretOptions = (await props.loadSecretOptions?.(d.thanos.namespace)) ?? []
+    d.storageClasses = (await props.loadStorageClasses?.()) ?? []
   } catch {
-    d.secretOptions = []
+    d.storageClasses = []
   }
 }
 
@@ -254,8 +260,21 @@ function confirmApply(): void {
         ElMessage.error(`「${f.label}」不是合法 JSON`)
         return
       }
+    } else if (f.type === 'storageClass') {
+      // 空 = 跟随集群默认存储类 → 不提交。空串写进 values 会被 K8s 当成"不用动态供给"（PVC 永远 Pending）
+      const value = String(d.values[f.key] ?? '').trim()
+      if (!value || JSON.stringify(value) === d.initial[f.key]) continue
+      editable[f.key] = value
+    } else if (f.type === 'size') {
+      const value = String(d.values[f.key] ?? '').trim()
+      if (JSON.stringify(value) === d.initial[f.key]) continue
+      if (!SIZE_RE.test(value)) {
+        ElMessage.error(`「${f.label}」需要写成 50Gi、500Mi 这样的容量`)
+        return
+      }
+      editable[f.key] = value
     } else {
-      const value = d.values[f.key]
+      const value = typeof d.values[f.key] === 'string' ? d.values[f.key].trim() : d.values[f.key]
       if (JSON.stringify(value) === d.initial[f.key]) continue
       editable[f.key] = value
     }
@@ -461,7 +480,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="applyDialog.visible" width="480px" append-to-body
+    <el-dialog v-model="applyDialog.visible" width="960px" append-to-body
                :title="`${applyDialog.action === 'INSTALL' ? '安装' : '升级'} ${applyDialog.name}`">
       <div v-if="applyDialog.action === 'UPGRADE'" class="cc-form-row">
         <span class="cc-form-label">目标版本</span>
@@ -492,26 +511,28 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-select>
         </div>
       </div>
+      <!-- Thanos（管理集群）：Prometheus 的长期指标写进 MinIO，由 Thanos 查询 -->
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
-        <span class="cc-form-label">凭证 Secret 所在命名空间</span>
+        <span class="cc-form-label">Thanos 对象存储</span>
         <div class="cc-form-control">
-          <el-select v-model="applyDialog.thanos.namespace" filterable allow-create style="width: 100%"
-                     @change="() => refreshSecretOptions()">
-            <el-option v-for="ns in applyDialog.namespaceOptions" :key="ns" :label="ns" :value="ns" />
-          </el-select>
-          <div class="cc-form-hint">凭证可以放在任意命名空间；Thanos 本身装在 monitor</div>
+          <div class="cc-form-hint">
+            Thanos 装在 <code>monitor</code> 命名空间，用 <b>MinIO</b>（S3 兼容对象存储）保存 Prometheus
+            的长期指标；平台只读取下面的凭证用于生成存储配置，密钥不经过 platform-api、不进操作记录。
+          </div>
         </div>
       </div>
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
-        <span class="cc-form-label">凭证 Secret</span>
+        <span class="cc-form-label">对象存储凭证 Secret</span>
         <div class="cc-form-control">
           <el-select v-model="applyDialog.thanos.secretName" filterable allow-create style="width: 100%"
-                     placeholder="含 access key / secret key 的 Secret">
-            <el-option v-for="s in applyDialog.secretOptions" :key="s.name" :label="s.name" :value="s.name" />
+                     placeholder="monitor 命名空间下的 Secret">
+            <el-option v-for="s in applyDialog.secretOptions" :key="s.name" :value="s.name"
+                       :label="s.keys?.length ? `${s.name}（${s.keys.join(', ')}）` : s.name" />
           </el-select>
           <div class="cc-form-hint">
-            凭证不出集群：平台读出后拼成 objstore.yml。
-            支持 access-key+secret-key / MINIO_ACCESS_KEY+MINIO_SECRET_KEY 等组合
+            必须是 <b>monitor</b> 命名空间的 Secret，内容是 <b>MinIO 的 access key / secret key</b>。
+            支持的 key 组合：access-key+secret-key、accessKey+secretKey、MINIO_ACCESS_KEY+MINIO_SECRET_KEY 等。
+            平台在集群内拼成 objstore.yml，写成 Secret <code>platform-thanos-objstore</code>
           </div>
         </div>
       </div>
@@ -520,18 +541,23 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <div class="cc-form-control">
           <el-input v-model="applyDialog.thanos.endpoint"
                     placeholder="minio.default.svc:9000" spellcheck="false" />
+          <div class="cc-form-hint">
+            Thanos 把指标写进这个 S3 端点（可带 http:// / https://；不带协议默认 https）
+          </div>
         </div>
       </div>
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
         <span class="cc-form-label">MinIO Bucket</span>
         <div class="cc-form-control">
           <el-input v-model="applyDialog.thanos.bucket" placeholder="thanos" spellcheck="false" />
+          <div class="cc-form-hint">存储桶必须已存在，平台不会创建</div>
         </div>
       </div>
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
         <span class="cc-form-label">跳过 HTTPS 校验</span>
         <div class="cc-form-control">
           <el-switch v-model="applyDialog.thanos.insecureSkipVerify" />
+          <div class="cc-form-hint">MinIO 用自签证书时打开</div>
         </div>
       </div>
       <div v-if="applyDialog.showThanos" class="cc-form-row">
@@ -559,9 +585,18 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <div class="cc-form-control">
           <el-switch v-if="f.type === 'boolean'" v-model="applyDialog.values[f.key]" />
           <el-input-number v-else-if="f.type === 'number'" v-model="applyDialog.values[f.key]" :min="0" />
+          <!-- 存储类：候选来自集群的 StorageClass；清空 = 跟随集群默认存储类（不提交该键） -->
+          <el-select v-else-if="f.type === 'storageClass'" v-model="applyDialog.values[f.key]"
+                     filterable allow-create clearable style="width: 100%"
+                     placeholder="跟随集群默认存储类">
+            <el-option v-for="sc in applyDialog.storageClasses" :key="sc" :label="sc" :value="sc" />
+          </el-select>
+          <el-input v-else-if="f.type === 'size'" v-model="applyDialog.values[f.key]"
+                    placeholder="如 50Gi" spellcheck="false" />
           <el-input v-else-if="f.type === 'json'" v-model="applyDialog.jsonText[f.key]"
                     type="textarea" :rows="5" spellcheck="false" />
           <el-input v-else v-model="applyDialog.values[f.key]" />
+          <div v-if="f.type === 'size'" class="cc-form-hint">容量带单位：50Gi / 500Mi / 1Ti</div>
         </div>
       </div>
       <div v-if="!applyDialog.fields.length && applyDialog.action === 'INSTALL'" class="cc-upgrade-tip">

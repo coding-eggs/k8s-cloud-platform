@@ -194,12 +194,22 @@ public class ClusterComponentService {
         EditableFieldDTO f = new EditableFieldDTO();
         f.setKey(key);
         f.setLabel(ComponentRecipeCatalog.labelOf(key));
-        f.setType(typeOf(defaultValue));
+        f.setType(typeOf(key, defaultValue));
         f.setDefaultValue(defaultValue);
         return f;
     }
 
-    private static String typeOf(Object defaultValue) {
+    /**
+     * 表单控件类型：存储的两个字段按 key 后缀特判（{@code storageClass} = 集群 StorageClass 下拉，
+     * {@code size} = 带单位的容量输入），其余按默认值的 Java 类型。
+     */
+    private static String typeOf(String key, Object defaultValue) {
+        if (key.endsWith(".storageClassName")) {
+            return "storageClass";
+        }
+        if (key.endsWith(".requests.storage")) {
+            return "size";
+        }
         if (defaultValue instanceof Boolean) {
             return "boolean";
         }
