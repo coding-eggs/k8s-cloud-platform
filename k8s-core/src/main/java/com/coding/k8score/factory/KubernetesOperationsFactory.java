@@ -64,6 +64,7 @@ import com.coding.k8score.operations.core.CoreV1ServiceOperations;
 import com.coding.k8score.operations.core.CoreV1ResourceQuotaOperations;
 import com.coding.k8score.operations.core.CoreV1StorageClassOperations;
 import com.coding.k8score.operations.core.NamespaceStatOperations;
+import com.coding.k8score.operations.core.WorkloadProbeOperations;
 import com.coding.k8score.operations.gateway.GatewayClassOperations;
 import com.coding.k8score.operations.gateway.GatewayOperations;
 import com.coding.k8score.operations.gateway.GrpcRouteOperations;
@@ -176,6 +177,16 @@ public class KubernetesOperationsFactory {
      */
     public ClusterAggregationOperations getClusterAggregationOperation(String clusterId) {
         return new ClusterAggregationOperations(clientFactory.getAdminClient(clusterId));
+    }
+
+    /**
+     * 工作负载探测（集群级，admin client）：按候选读工作负载状态。非资源 CRUD，独立返回具体类型
+     * （同 {@link #getClusterAggregationOperation}）。
+     * <p>用 admin client：租户 SA 的 K8s RBAC 模板里没有 kube-system / istio-system 的读权限，
+     * 也不该为一次探测开。
+     */
+    public WorkloadProbeOperations getWorkloadProbeOperation(String clusterId) {
+        return new WorkloadProbeOperations(clientFactory.getAdminClient(clusterId));
     }
 
     /** Calico IPAM 派生视图操作（集群级，admin client）。非标准 CRUD，独立返回具体类型。 */
