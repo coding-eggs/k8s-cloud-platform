@@ -217,11 +217,17 @@ class ClusterComponentServiceTest {
     }
 
     @Test
-    void aComponentWithoutARecipeHasNoAvailableVersions() {
-        // 空列表 = 平台不会装它（面板显示"暂不支持"），与"不知道"无关
-        ClusterComponentService svc = svc(List.of(probe("istio-system", true, 1, 1, "1.30.3")));
+    void whenTheProfileCannotBeReadTheVersionListIsEmpty() {
+        // 画像读不到 → 取不到 recipe → 版本列表为空（探测本身照常，不因此整体失败）
+        ClusterService failing = mock(ClusterService.class);
+        when(failing.requireProfile("c1")).thenThrow(new RuntimeException("db down"));
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterComponentService svc = new ClusterComponentService(
+                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cache(),
+                failing, new com.coding.platformapi.components.ComponentRecipeCatalog());
 
-        assertThat(find(svc.status("c1"), "istio").getAvailableVersions()).isEmpty();
+        assertThat(find(svc.status("c1"), "metrics-server").getAvailableVersions()).isEmpty();
     }
 
     @Test
