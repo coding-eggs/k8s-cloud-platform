@@ -21,6 +21,7 @@ import com.coding.common.models.k8s.dto.PersistentVolumeDTO;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodMonitorDTO;
+import com.coding.common.models.k8s.dto.PrometheusRuleDTO;
 import com.coding.common.models.k8s.dto.ReplicaSetDTO;
 import com.coding.common.models.k8s.dto.ResourceQuotaDTO;
 import com.coding.common.models.k8s.dto.RoleBindingDTO;
@@ -52,6 +53,7 @@ public enum ResourceType {
     POD(PodDTO.class),
     SERVICE_MONITOR(ServiceMonitorDTO.class),
     POD_MONITOR(PodMonitorDTO.class),
+    PROMETHEUS_RULE(PrometheusRuleDTO.class),
     WORKLOAD(WorkloadDTO.class),
     HPA(HpaDTO.class),
     NODE(NodeDTO.class),
