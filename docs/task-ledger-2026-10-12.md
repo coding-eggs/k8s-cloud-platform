@@ -191,10 +191,61 @@
 #### S1.2 集群组件展示 ｜ 规模 M
 > **是 S3.4 的地基**（先能看见，才谈装）。分析文档 §5.1 #7 / §7.1。
 
-- [ ] S1.2.1 组件清单模型（名称 / 是否部署 / 版本 / 健康 / 命名空间）
-- [ ] S1.2.2 探测实现：**收敛现有零散探测**（capability API group 探测、ambient 的 ztunnel 活探测）+ 新增首批内容（**OpenTelemetry Operator**、ES、Alertmanager、snapshot-controller 等）
-- [ ] S1.2.3 集群详情页展示（现为 4 tab，新增一个 tab 或并入概览）
-- [ ] S1.2.4 顺带成为各功能**门控的统一数据源**（capability 判据单一出处）
+- [x] S1.2.1 组件清单模型（名称 / 是否部署 / 版本 / 健康 / 命名空间）
+- [x] S1.2.2 探测实现：**收敛现有零散探测**（capability API group 探测、ambient 的 ztunnel 活探测）+ 新增首批内容（**OpenTelemetry Operator**、ES、Alertmanager、snapshot-controller 等）
+- [x] S1.2.3 集群详情页展示（现为 4 tab，新增一个 tab 或并入概览）
+- [x] S1.2.4 顺带成为各功能**门控的统一数据源**（capability 判据单一出处）
+
+> **✅ 实施完成（2026-10-17）｜待部署｜spec [2026-10-17-cluster-components-design](superpowers/specs/2026-10-17-cluster-components-design.md) · plan [2026-10-17-cluster-components](superpowers/plans/2026-10-17-cluster-components.md)**
+>
+> **做了什么**
+> - **目录（唯一出处）**：platform-api `ClusterComponentCatalog`，首批 **11 条** —— metrics-server / prometheus-operator /
+>   gateway-api / istio / istio-ambient / tekton / tekton-operator / calico / tigera-operator / cert-manager / otel-operator。
+>   每条组件的「支撑哪些平台功能」只写一遍，`feature → 组件` 的反查是算出来的。
+> - **探测**：k8s-core `WorkloadProbeOperations` 按 `(namespace, kind)` 各一次 list（成本与命名空间数量无关），
+>   **按镜像仓库片段匹配**（真集群上一半工作负载名带 Helm release 前缀）；DaemonSet 健康用
+>   `numberReady/desiredNumberScheduled`（`readyReplicas` 实测为空）。k8s-server 新增 `POST /workload-probes`
+>   （**UPSTREAM**，租户可达），候选命名空间必须落在 `platform.k8s.probe-namespaces` 清单内，越界**整请求 400**。
+> - **派生**：`ClusterComponentService` → 四态（HEALTHY / UNHEALTHY / NOT_INSTALLED / **UNKNOWN**）+ Redis 45s 缓存，
+>   两个投影：`/cluster/components`（全量，管理员）与 `/cluster/component-flags`（功能旗标，租户可读）。
+>   **UNKNOWN 与 NOT_INSTALLED 严格分开**：探测失败/未探测不得说成"没装"。
+> - **门控收口**：CI（Tekton 那一半）/ 网格（三条布尔）/ HPA（metrics-server）改读同一份派生；
+>   `/mesh/status` 对外形状不变（前端零改动）。
+> - **前端**：集群详情页第 5 个 tab「集群组件」（四态徽标、影响的功能、缺组件给指引**不给安装按钮**）；
+>   概览的 7 个能力 tag 收敛为一行摘要 + 跳转；Istio/Calico 改显示**实测版本**、人工登记值降为 tooltip
+>   （不一致时 tooltip 明说）。
+>
+> **与 spec / plan 的出入（均已论证或实测）**
+> - 迁移文件名用 `V2026_10_17_4`（`_1/_2/_3` 已分别被租户 RBAC CRD、网格拓扑、告警占用）。
+> - `tenant:cluster:capability:view` 那行**绑三个内置角色**（admin / tenant_admin / tenant_member）——
+>   只绑 admin 等于租户角色一条都没有，租户进 CI 页直接 403。
+> - 网格只有 **ambient** 改读旗标：`service-mesh` 这个功能旗标同时覆盖 istio + gateway-api，拆不出两个布尔；
+>   而这两个问的是"API group 在不在"，按决策 7 仍以 capability 列为唯一判据。
+> - Calico 的两个 group 判据**有意保留** capability：`network` 旗标含 tigera-operator 健康，拿它当 Calico 页门禁
+>   会在 operator 重启时把整页禁用，而 CRD 还在、页面要看的对象也读得到。
+> - 组件全量投影在**页面加载时**拉一次（概览摘要要用），不是切 tab 才拉；`lazy` 仍保留（面板不额外请求）。
+> - `capability` 列为空按**全局**"未探测"处理（对只有工作负载判据的 istio-ambient 同样成立），
+>   否则同一集群会出现一半未探测、一半没装。
+>
+> **有意不做（别当漏做）**：安装 / 升级 / 卸载（留给 S3.3、S3.4）· 控制面组件
+> （etcd / apiserver / scheduler / controller-manager）· `local-path-provisioner` /
+> `nfs-subdir-external-provisioner` / `snapshot-controller` 不展示 ·
+> **`eck-operator` 推迟到 S2.3**（日志采集开工时先决定它进不进这份清单）。
+>
+> **待清理项**：`MeshOperations.ambient()` + `K8sMeshClient.meshAmbient()` + k8s-server `POST /mesh/status`
+> 已无调用方（本批有意不删 —— 删它要连带改 `MeshController` 与其测试，属独立的一次清理）。
+> **别在别处再新调它**，那会造出第二份 ztunnel 探测。
+>
+> **真集群实测（2026-10-17，只读 `coding-cluster`）**：10 条工作负载判据全部命中（含
+> `ps-kube-prometheus-stack-operator` 这类 release 前缀名）；`metrics.k8s.io` 不在 apiservice 列表 →
+> **10 装 1 缺**，缺的正是 metrics-server，与 spec §6.1 的例子一致。istio 实测版本 1.30.3（标签），
+> 登记值 1.24 会作为 tooltip 显示不一致。
+>
+> **部署**：重建 **k8s-server + platform-api + platform-web**。迁移 `V2026_10_17_4__cluster_components.sql`
+> （4 条权限行 + 6 条角色关联，**已在 dev 库重放并回查**）**先重放再起新构建**；k8s-server 新配置
+> `platform.k8s.probe-namespaces`（有默认值，不配也能跑）。无新外部依赖、无集群侧前提。
+> ⚠️ **本仓没有 Flyway**，`db/migration/*.sql` 一律手工重放。
+
 
 > **📌 2026-10-14 新增需求：平台能部署 / 升级 / 卸载集群组件**（用户提出；未实施、未出 spec）
 >
@@ -702,7 +753,7 @@
 | **S0.1** | 审计日志 | — | L | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-audit-log-design.md) · [plan](superpowers/plans/2026-10-13-audit-log.md) |
 | **S0.2** | 凭据与连接管理 | — | M | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-credential-management-design.md) · [plan](superpowers/plans/2026-10-13-credential-management.md) |
 | **S1.1** | 用户自助 | — | S | ✅ **已实施待部署**（2026-10-16；`5d8fd8e`+`a2ac99d`+`f427ae6`+`bb955a6`。改密码 / 改资料 + 清掉两个死 URL。**要重建 platform-auth + platform-web**；无迁移。⚠️ 顺手修了个既有配置错：`@EnableRedisHttpSession` 建的是**无索引版**仓库，"按用户名踢会话"要 `@EnableRedisIndexedHttpSession` —— 见 `RedisSessionConfig`。S1.1.4（登录失败锁定 / 在线会话管理）**按用户决定未做**） | — |
-| **S1.2** | 集群组件展示 | — | M | ⬜ 未开始 | — |
+| **S1.2** | 集群组件展示 | — | M | ✅ **已实施待部署**（2026-10-17；9 任务 / 全模块测试绿；真集群实测 10 装 1 缺）。部署：**k8s-server + platform-api + platform-web**，先重放 `V2026_10_17_4` | [spec](superpowers/specs/2026-10-17-cluster-components-design.md) · [plan](superpowers/plans/2026-10-17-cluster-components.md) |
 | **S1.3** | 平台总览 | — | M | ⬜ 未开始 | — |
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16 收口；**2026-10-17 用户验收通过，需求完结**） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
 | **S2.2** | 告警 | — | L | ⬜ 未开始 | — |

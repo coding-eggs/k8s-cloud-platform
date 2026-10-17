@@ -38,12 +38,13 @@ public class ClusterComponentCatalog {
                     List.of("metrics-charts", "servicemonitor")),
             new ComponentDef("gateway-api", "Gateway API", "gateway.networking.k8s.io",
                     List.of(), List.of("service-mesh", "routes")),
-            // 真实镜像是 docker.io/istio/pilot；app.kubernetes.io/version 标签只有 Helm 装的才有
+            // 实测镜像是 registry.istio.io/release/pilot（含 `istio.io/release/pilot` 片段）；
+            // app.kubernetes.io/version 标签只有部分安装方式才有，故 tag 是主来源
             new ComponentDef("istio", "Istio", "networking.istio.io",
-                    List.of(new ComponentProbe("istio-system", "deployment", "istio/pilot", "istiod")),
+                    List.of(new ComponentProbe("istio-system", "deployment", "istio.io/release/pilot", "istiod")),
                     List.of("service-mesh")),
             new ComponentDef("istio-ambient", "Istio ambient 数据面", null,
-                    List.of(new ComponentProbe("istio-system", "daemonset", "istio/ztunnel", "ztunnel")),
+                    List.of(new ComponentProbe("istio-system", "daemonset", "istio.io/release/ztunnel", "ztunnel")),
                     List.of("ambient-mesh")),
             new ComponentDef("tekton", "Tekton Pipelines", "tekton.dev",
                     List.of(new ComponentProbe("tekton-pipelines", "deployment", "tektoncd/pipeline/controller-", null)),
