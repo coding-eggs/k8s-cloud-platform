@@ -696,6 +696,29 @@
 > **租户 SA 的 K8s RBAC 模板要覆盖 `tekton.dev` 组**（与当年 Gateway 那个坑同形）；
 > PipelineRun 在**租户命名空间**里起 Pod → 配额、PSA、拉取凭据都要通。
 
+#### S3.6 组件生命周期（安装 / 升级）｜ 规模 L ｜ 前置：S1.2（已完成）
+
+> **2026-10-17 用户新建需求**：「对集群概览中的组件，如未探活的可以进行安装部署、升级」。
+> 设计见 [component-lifecycle spec](superpowers/specs/2026-10-17-component-lifecycle-design.md)。
+> **本批部分推翻了 2026-10-14 的「执行复用 S3.3/S3.4」裁定**：执行能力提前到本批，
+> 但仍只有一条写入实现；通用 Helm 商店（S3.3）与 Operator 管理（S3.4）将来是另一件事，与本批无关。
+
+- [ ] S3.6.1 `cluster_role`（MANAGEMENT / BUSINESS）+ 画像化 recipe 目录
+- [ ] S3.6.2 内置 chart（上游 + thin chart）+ sha256 校验
+- [ ] S3.6.3 helm 执行链（预检 / 执行 / 收尾）与异步操作记录
+- [ ] S3.6.4 组件 tab 的安装 / 升级与进度视图
+- [ ] S3.6.5 逐个组件的配置契约与功能级验收（Prometheus 的 selector / externalLabels / remoteWrite 是重点）
+
+**brainstorming 已定**：只做目录内 11 条；安装 + 升级（不做卸载/回滚按钮）；统一 Helm 执行器
+（含 thin chart）；chart 内置进 k8s-server；集群画像区分 management / business（Thanos 挂
+Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名与命名空间由 recipe 固定；
+只升级平台自己装的 release；成功以 S1.2 探测为准。
+
+**醒目风险**：`kube-prometheus-stack` 的 `*SelectorNilUsesHelmValues` 默认 `true` —— 不改成 `false`，
+平台在租户命名空间创建的 PrometheusRule / ServiceMonitor / PodMonitor 会被**静默忽略**（装上了但告警不生效）。
+
+---
+
 ---
 
 ### S4 · 收尾
@@ -810,6 +833,7 @@
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
+| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 📝 **设计中**（2026-10-17 brainstorming 完成，spec 待 review） | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |
