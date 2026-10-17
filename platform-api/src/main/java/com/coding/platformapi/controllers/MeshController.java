@@ -4,6 +4,9 @@ import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.metrics.MetricsService;
+import com.coding.platformapi.metrics.dto.MeshTopologyRequest;
+import com.coding.platformapi.metrics.dto.MeshTopologyResponse;
 import com.coding.platformapi.services.MeshService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -35,6 +38,7 @@ import java.util.List;
 public class MeshController {
 
     private final MeshService mesh;
+    private final MetricsService metricsService;
 
     // ==================== GatewayClass CRUD（平台管理面） ====================
 
@@ -106,6 +110,20 @@ public class MeshController {
                     + "走本端点而非租户域 /gateways：命名空间是平台侧资源，平台管理员无租户上下文。")
     public ResponseData<List<WaypointRefDTO>> waypointCandidates(@RequestParam String clusterId, @RequestParam String namespace) {
         return new ResponseData<>(mesh.waypointCandidates(clusterId, namespace));
+    }
+
+    // ==================== 网格拓扑（S2.4，只读） ====================
+
+    @PostMapping("/topology")
+    @Operation(summary = "服务网格拓扑",
+            description = "返回节点与边（QPS / 错误率 / P95）。"
+                    + "⚠️ meshMetricsAvailable=false 表示这个集群**没在采集**网格指标（与有没有流量无关）—— "
+                    + "两种情况的边都是空的，前端必须给不同的文案。"
+                    + "节点 id 是 `命名空间/工作负载`。")
+    public ResponseData<MeshTopologyResponse> topology(@RequestBody MeshTopologyRequest request) {
+        return new ResponseData<>(metricsService.meshTopology(
+                request.getClusterId(), request.getNamespace(),
+                request.getWindowSeconds() == null ? 300 : request.getWindowSeconds()));
     }
 
 }
