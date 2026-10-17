@@ -35,7 +35,13 @@ public class MeshOperations {
 
     /**
      * ambient 活探测结果。探测失败按 {@code false}（信息性降级，见类注释），不会抛错。
+     *
+     * @deprecated S1.2 收口后（2026-10-17）探测统一走 platform-api 的
+     *             {@code ClusterComponentService}（组件 {@code istio-ambient} 的 ztunnel 判据就是这件事），
+     *             本方法与 {@code POST /mesh/status} 已无调用方，保留待清理。
+     *             <b>别在别处再新调它</b> —— 那会造出第二份 ztunnel 探测。
      */
+    @Deprecated
     public AdminMeshProbeResult ambient() {
         AdminMeshProbeResult result = new AdminMeshProbeResult();
         result.setIstioAmbient(probeAmbient());

@@ -7,10 +7,12 @@ import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
 import com.coding.platformapi.k8s.K8sPipelineClient;
+import com.coding.platformapi.models.ComponentFlagDTO;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -78,10 +80,17 @@ class PipelineRetentionAndCapabilityTest {
 
     // ---- capability 门控 ----
 
-    private final ClusterCapabilityService clusterCapability = mock(ClusterCapabilityService.class);
+    private final ClusterComponentService componentService = mock(ClusterComponentService.class);
     private final K8sPipelineClient k8s = mock(K8sPipelineClient.class);
     private final PipelineCapabilityService capability =
-            new PipelineCapabilityService(clusterCapability, k8s);
+            new PipelineCapabilityService(componentService, k8s);
+
+    /** Tekton 那一半现在读组件旗标（收口后单一出处） */
+    private void tekton(boolean available) {
+        when(componentService.flags("c1")).thenReturn(Map.of("ci",
+                new ComponentFlagDTO(available, available ? null : "缺 Tekton Pipelines",
+                        available ? List.of() : List.of("Tekton Pipelines"))));
+    }
 
     private static StorageClassProvisionerDTO sc(String provisioner) {
         StorageClassProvisionerDTO d = new StorageClassProvisionerDTO();
@@ -92,7 +101,7 @@ class PipelineRetentionAndCapabilityTest {
 
     @Test
     void withoutTektonTheFeatureIsUnavailableWithAReason() {
-        when(clusterCapability.hasTekton("c1")).thenReturn(false);
+        tekton(false);
 
         var c = capability.available("c1");
 
@@ -104,7 +113,7 @@ class PipelineRetentionAndCapabilityTest {
     @Test
     void withoutADynamicStorageClassItIsUnavailableToo() {
         // workspace 用 volumeClaimTemplate，没有可动态供应的 StorageClass 就跑不起来（spec §3.3）
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("kubernetes.io/no-provisioner")));
 
         var c = capability.available("c1");
@@ -115,7 +124,7 @@ class PipelineRetentionAndCapabilityTest {
 
     @Test
     void withBothItIsAvailable() {
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
 
         assertThat(capability.available("c1").available()).isTrue();
@@ -125,7 +134,7 @@ class PipelineRetentionAndCapabilityTest {
     void theCacheStatusRidesAlongWithTheCapabilityAnswer() {
         // ⭐ 缓存状态**随 capability 一起回**：两者是同一类问题（环境给不给得了），
         //    页面本来就为后者发一次请求 —— 分成两个端点只是多一次往返、多一条权限行
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
         when(k8s.tektonScheduling("c1")).thenReturn(new TektonSchedulingDTO("pipelineruns", true));
         when(k8s.cacheStatus("c1", "t1", "ns1")).thenReturn(new PipelineCacheStatusDTO(
@@ -144,7 +153,7 @@ class PipelineRetentionAndCapabilityTest {
     void aClusterWithoutCoschedulePipelinerunsReportsTheCacheAsUnusable() {
         // ⭐ 「卷好好地在那儿却用不了」—— 最容易让人以为平台坏了的那种形态。
         //    所以 exists 照实回 true、ready 为 false、并在前提那一行说清是配置的问题
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
         when(k8s.tektonScheduling("c1")).thenReturn(new TektonSchedulingDTO("workspaces", false));
         when(k8s.cacheStatus("c1", "t1", "ns1")).thenReturn(new PipelineCacheStatusDTO(
@@ -163,7 +172,7 @@ class PipelineRetentionAndCapabilityTest {
     void aFailedCacheProbeDoesNotSinkTheCiGate() {
         // ⭐ 这两个概念的分界线：缓存关系到"快不快"（没了就每次重下依赖），CI 照样能跑。
         //    所以探不到只是不回那一段（前端显示「—」），绝不把 available 按下去
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
         when(k8s.tektonScheduling(anyString())).thenReturn(new TektonSchedulingDTO("pipelineruns", true));
         when(k8s.cacheStatus(anyString(), any(), anyString()))
@@ -179,7 +188,7 @@ class PipelineRetentionAndCapabilityTest {
     void withoutANamespaceTheCacheIsNotEvenAsked() {
         // 门控要在**没有命名空间上下文**时也答得出来（这是它有意不校验归属的原因）——
         // 那就别去问缓存（问了必然失败，还要白打一次集群）
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("rancher.io/local-path")));
 
         var c = capability.available("c1", "t1", null);
@@ -192,7 +201,7 @@ class PipelineRetentionAndCapabilityTest {
     @Test
     void aFailedProbeIsTreatedAsUnavailableNotAsAvailable() {
         // fail-closed：CI 跑起来卡在 PVC 绑定等待上，比"暂时不可用"更糟
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenThrow(new RuntimeException("cluster down"));
 
         assertThat(capability.available("c1").available()).isFalse();
@@ -200,7 +209,7 @@ class PipelineRetentionAndCapabilityTest {
 
     @Test
     void aBlankProvisionerDoesNotCountAsDynamic() {
-        when(clusterCapability.hasTekton("c1")).thenReturn(true);
+        tekton(true);
         when(k8s.storageClassProvisioners(anyString())).thenReturn(List.of(sc("  ")));
 
         assertThat(capability.available("c1").available()).isFalse();

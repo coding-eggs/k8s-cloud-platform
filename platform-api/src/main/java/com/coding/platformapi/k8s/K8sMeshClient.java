@@ -71,7 +71,12 @@ public class K8sMeshClient {
      * gatewayApiVersions）是 {@code k8s_cluster.capability} 列的派生，留在 platform-api
      * （{@code ClusterCapabilityService}），不再经这一跳。组装成完整 {@code MeshStatusDTO} 是
      * {@code MeshService} 的事。
+     *
+     * @deprecated S1.2 收口后（2026-10-17）ambient 也改由 {@code ClusterComponentService} 的
+     *             组件 {@code istio-ambient} 判据派生，本方法已无调用方（连同 k8s-server 的
+     *             {@code POST /mesh/status}）。保留待清理，**别再新调**。
      */
+    @Deprecated
     public boolean meshAmbient(String clusterId) {
         AdminMeshProbeResult probe = gateway.exchange(HttpMethod.POST, "/mesh/status", queryOf(clusterId), null,
                 gateway.responseType(AdminMeshProbeResult.class));

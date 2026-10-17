@@ -3,6 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.common.models.pipeline.TektonSchedulingDTO;
 import com.coding.platformapi.k8s.K8sPipelineClient;
+import com.coding.platformapi.models.ComponentFlagDTO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -12,10 +13,12 @@ import org.springframework.stereotype.Service;
  * <p>两个前提缺一不可：
  * <ol>
  *   <li><b>集群装了 Tekton</b> —— 没有 {@code tekton.dev} 就没有 {@code PipelineRun} 这个资源类型。
- *       判据来自 {@link ClusterCapabilityService} 的 capability 快照（**不打集群**）。</li>
+ *       判据来自 {@link ClusterComponentService#flags} 的 {@code ci}（S1.2 收口后与组件 tab /
+ *       网格 / 网络 / HPA <b>同一份派生实现</b>；收口前读 {@link ClusterCapabilityService#hasTekton}）。</li>
  *   <li><b>有可动态供应的 StorageClass</b> —— 隐式共享 workspace 用 {@code volumeClaimTemplate}，
  *       它要现开一块 PVC（spec §3.3）。全是 {@code kubernetes.io/no-provisioner} 的静态盘
- *       会让每次运行都卡在绑定等待上。</li>
+ *       会让每次运行都卡在绑定等待上。⚠️ <b>这一条有意不并进组件清单</b>：StorageClass 是集群存储配置，
+ *       粒度是 SC 不是组件。</li>
  * </ol>
  *
  * <p>⚠️ 门控的意义是**整块不可用而不是报 500**：前端拿这个结果把「运行」按下去并说明原因
@@ -37,11 +40,11 @@ public class PipelineCapabilityService {
     /** Local PV 这类不能动态供应的 provisioner 的固定名字 */
     private static final String NO_PROVISIONER = "kubernetes.io/no-provisioner";
 
-    private final ClusterCapabilityService clusterCapability;
+    private final ClusterComponentService componentService;
     private final K8sPipelineClient k8s;
 
-    public PipelineCapabilityService(ClusterCapabilityService clusterCapability, K8sPipelineClient k8s) {
-        this.clusterCapability = clusterCapability;
+    public PipelineCapabilityService(ClusterComponentService componentService, K8sPipelineClient k8s) {
+        this.componentService = componentService;
         this.k8s = k8s;
     }
 
@@ -55,8 +58,13 @@ public class PipelineCapabilityService {
      * @param namespace 构建缓存是**按命名空间**的（每 ns 一块长期卷）；留空 = 不回缓存那一段
      */
     public Capability available(String clusterId, String tenantId, String namespace) {
-        if (!clusterCapability.hasTekton(clusterId)) {
-            return new Capability(false, "该集群未安装 Tekton（没有 tekton.dev 资源）", null);
+        // Tekton 那一半改读组件旗标（S1.2 收口）：ci 依赖 tekton 与 tekton-operator，两个都好才叫能跑
+        ComponentFlagDTO ci = componentService.flags(clusterId).get("ci");
+        if (ci == null || !ci.available()) {
+            String reason = ci == null || ci.reason() == null || ci.reason().isBlank()
+                    ? "该集群未安装 Tekton（没有 tekton.dev 资源）"
+                    : ci.reason();
+            return new Capability(false, reason, null);
         }
         if (!hasDynamicStorageClass(clusterId)) {
             return new Capability(false,
