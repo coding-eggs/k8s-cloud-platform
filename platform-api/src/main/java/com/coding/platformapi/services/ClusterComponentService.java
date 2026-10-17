@@ -108,15 +108,26 @@ public class ClusterComponentService {
             try {
                 results = client.probe(clusterId, targets);
             } catch (Exception e) {
-                // ⚠️ 探测整体失败（集群不可达 / 网关异常）不得冒成页面错误 —— 全部 UNKNOWN，
-                //    页面照常打开并说明"探测不到"（spec §11）。
+                // 探测整体失败（集群不可达 / 网关异常）：**不整体返回 UNKNOWN** ——
+                // 只有依赖工作负载判据的组件失去答案；纯 group 判据的组件（gateway-api）仍能从
+                // DB 快照得出答案（spec 决策 7：group 存在性的唯一判据就是 capability 列）。
                 String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-                log.warn("集群 {} 工作负载探测失败（全部按 UNKNOWN 处理）: {}", clusterId, msg);
-                return catalog.all().stream().map(d -> unknown(d, "探测失败：" + msg)).toList();
+                log.warn("集群 {} 工作负载探测失败（工作负载判据按 UNKNOWN 处理）: {}", clusterId, msg);
+                results = new ArrayList<>();
+                for (WorkloadProbeTargetDTO t : targets) {
+                    results.add(errorResult(t, msg));
+                }
             }
-            int n = results == null ? 0 : Math.min(codes.size(), results.size());
-            for (int i = 0; i < n; i++) {
-                byCode.merge(codes.get(i), results.get(i), ClusterComponentService::prefer);
+            if (results == null) {
+                results = List.of();
+            }
+            // ⚠️ 按入参下标对齐；条数不足**不得**静默当成"没命中" —— 那会把"探测结果不完整"
+            //    说成"没装"（与 UNKNOWN/NOT_INSTALLED 同一条原则）。
+            for (int i = 0; i < codes.size(); i++) {
+                WorkloadProbeResultDTO r = i < results.size()
+                        ? results.get(i)
+                        : incompleteResult(targets.get(i));
+                byCode.merge(codes.get(i), r, ClusterComponentService::prefer);
             }
         }
         return catalog.all().stream().map(d -> compose(d, byCode, groups)).toList();
@@ -167,14 +178,17 @@ public class ClusterComponentService {
         return s;
     }
 
-    private static ComponentStatusDTO unknown(ComponentDef def, String detail) {
-        ComponentStatusDTO s = new ComponentStatusDTO();
-        s.setCode(def.code());
-        s.setName(def.name());
-        s.setFeatures(def.features());
-        s.setState(UNKNOWN);
-        s.setDetail(detail);
-        return s;
+    private static WorkloadProbeResultDTO incompleteResult(WorkloadProbeTargetDTO t) {
+        return errorResult(t, "探测结果不完整（适配器少回了一条）");
+    }
+
+    private static WorkloadProbeResultDTO errorResult(WorkloadProbeTargetDTO t, String error) {
+        WorkloadProbeResultDTO r = new WorkloadProbeResultDTO();
+        r.setNamespace(t.getNamespace());
+        r.setKind(t.getKind());
+        r.setFound(false);
+        r.setError(error);
+        return r;
     }
 
     private static WorkloadProbeTargetDTO targetOf(ComponentProbe p) {

@@ -40,14 +40,14 @@ class MeshServiceTest {
         when(componentService.status("c1")).thenReturn(List.of(
                 status("istio", ClusterComponentService.HEALTHY),
                 status("gateway-api", ClusterComponentService.HEALTHY),
-                // ambient 装了但不健康 → 不叫"可用"
+                // 装了但不健康 → 仍是"装了"（横幅问数据面形态，可用性走 flags）
                 status("istio-ambient", ClusterComponentService.UNHEALTHY)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
         assertThat(dto.isHasIstio()).isTrue();
         assertThat(dto.isHasGatewayApi()).isTrue();
-        assertThat(dto.isIstioAmbient()).isFalse();
+        assertThat(dto.isIstioAmbient()).isTrue();
         // versions 仍来自 capability 列（组件清单不回答"哪些版本"）
         assertThat(dto.getGatewayApiVersions()).containsExactly("v1", "v1beta1");
     }
@@ -83,6 +83,45 @@ class MeshServiceTest {
         assertThat(dto.getGatewayApiVersions()).isEmpty();   // 空列表而不是 null
         assertThat(dto.isHasIstio()).isFalse();
         assertThat(dto.isIstioAmbient()).isFalse();
+    }
+
+    @Test
+    void aNotInstalledAmbientIsFalse() {
+        stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"]}");
+        when(componentService.status("c1")).thenReturn(List.of(
+                status("istio", ClusterComponentService.HEALTHY),
+                status("gateway-api", ClusterComponentService.HEALTHY),
+                status("istio-ambient", ClusterComponentService.NOT_INSTALLED)));
+
+        assertThat(svc.meshStatus("c1").isIstioAmbient()).isFalse();
+    }
+
+    @Test
+    void unknownComponentsFallBackToTheCapabilitySnapshot() {
+        // ⭐ 评审修正：集群不可达 → 组件 UNKNOWN。此时**不能**说"没装"（本仓修过的坑），
+        //    退回 DB 快照（capability 列非空即装过）
+        stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"],\"networking.istio.io\":[\"v1\"]}");
+        when(componentService.status("c1")).thenReturn(List.of(
+                status("istio", ClusterComponentService.UNKNOWN),
+                status("gateway-api", ClusterComponentService.UNKNOWN),
+                status("istio-ambient", ClusterComponentService.UNKNOWN)));
+
+        MeshStatusDTO dto = svc.meshStatus("c1");
+
+        assertThat(dto.isHasIstio()).isTrue();
+        assertThat(dto.isHasGatewayApi()).isTrue();
+        assertThat(dto.isIstioAmbient()).isFalse(); // 快照不回答 ztunnel
+    }
+
+    @Test
+    void aConfirmedMissingIstioStaysFalse() {
+        // 探测**成功了**且没命中（NOT_INSTALLED）时，快照虽还留着 group 也要判 false ——
+        // 那是"CRD 在、istiod 没了"，不是"不知道"
+        stubCapability("{\"networking.istio.io\":[\"v1\"]}");
+        when(componentService.status("c1")).thenReturn(List.of(
+                status("istio", ClusterComponentService.NOT_INSTALLED)));
+
+        assertThat(svc.meshStatus("c1").isHasIstio()).isFalse();
     }
 
     @Test

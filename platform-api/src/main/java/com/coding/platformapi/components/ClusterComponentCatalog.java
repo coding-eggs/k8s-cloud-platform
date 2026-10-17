@@ -40,18 +40,27 @@ public class ClusterComponentCatalog {
                     List.of(), List.of("service-mesh", "routes")),
             // 实测镜像是 registry.istio.io/release/pilot（含 `istio.io/release/pilot` 片段）；
             // app.kubernetes.io/version 标签只有部分安装方式才有，故 tag 是主来源
+            // 两条候选同一 (ns,kind)：先匹配 registry.istio.io/release/pilot（本集群实测），
+            // 再兜底 docker.io/istio/pilot（标准 istioctl/Helm 安装）。name 快路径吃 revision 安装
+            // （部署名可能是 istiod-1-30，但镜像不变）。
             new ComponentDef("istio", "Istio", "networking.istio.io",
-                    List.of(new ComponentProbe("istio-system", "deployment", "istio.io/release/pilot", "istiod")),
+                    List.of(new ComponentProbe("istio-system", "deployment", "istio.io/release/pilot", "istiod"),
+                            new ComponentProbe("istio-system", "deployment", "istio/pilot", null)),
                     List.of("service-mesh")),
             new ComponentDef("istio-ambient", "Istio ambient 数据面", null,
-                    List.of(new ComponentProbe("istio-system", "daemonset", "istio.io/release/ztunnel", "ztunnel")),
+                    List.of(new ComponentProbe("istio-system", "daemonset", "istio.io/release/ztunnel", "ztunnel"),
+                            new ComponentProbe("istio-system", "daemonset", "istio/ztunnel", null)),
                     List.of("ambient-mesh")),
             new ComponentDef("tekton", "Tekton Pipelines", "tekton.dev",
-                    List.of(new ComponentProbe("tekton-pipelines", "deployment", "tektoncd/pipeline/controller-", null)),
+                    List.of(new ComponentProbe("tekton-pipelines", "deployment", "tektoncd/pipeline/controller-",
+                            "tekton-pipelines-controller")),
                     List.of("ci")),
+            // ⚠️ operator 是**安装来源**，不是 CI 的功能前提：用官方 release 清单装的 Tekton 没有 operator，
+            //    照样能跑。把它挂到 `ci` 上会让那种集群的 CI 整块被禁用（评审发现）。
             new ComponentDef("tekton-operator", "Tekton Operator", "operator.tekton.dev",
-                    List.of(new ComponentProbe("tekton-operator", "deployment", "tektoncd/operator/operator-", null)),
-                    List.of("ci")),
+                    List.of(new ComponentProbe("tekton-operator", "deployment", "tektoncd/operator/operator-",
+                            "tekton-operator")),
+                    List.of("ci-install-source")),
             new ComponentDef("calico", "Calico", "crd.projectcalico.org",
                     List.of(new ComponentProbe("calico-system", "daemonset", "calico/node", "calico-node")),
                     List.of("network", "ipam")),

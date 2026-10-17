@@ -52,12 +52,15 @@ export function useClusterCapability(clusterId: Ref<string | null | undefined>) 
   }
 
   /** 手动触发后端重新 discovery 并回读（HPA 页「刷新能力」按钮用）。
-   *  refresh 是写操作（真跑一次 discovery 并持久化），权限独占 platform:cluster:manage。 */
+   *  refresh 是写操作（真跑一次 discovery 并持久化），权限独占 platform:cluster:manage。
+   *  ⚠️ S1.2 收口后 hasMetricsServer 读的是组件旗标 —— 所以必须**一并重探组件**
+   *  （`comp.refresh()` = 探完覆写 45s 缓存 + 回读旗标）；只刷 capability 会让按钮变成死胡同。 */
   async function refresh(): Promise<void> {
     if (!perm.has(apiCodes.clusterManage)) return
     const id = clusterId.value
     if (!id) return
     await clusterApi.refreshCapability(id)
+    await comp.refresh()
     await load()
   }
 

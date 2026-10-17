@@ -197,6 +197,27 @@ class WorkloadProbeOperationsTest {
     }
 
     @Test
+    void resultsComeBackInInputOrderEvenWhenChainsInterleave() {
+        // ⭐ 结果表与入参**按位置对齐**是消费方的契约（ClusterComponentService 按下标贴回组件 code）。
+        //    分组 list 只能影响成本，不能影响顺序 —— 两条同 (ns,kind) 的候选被别的组件隔开时尤其明显。
+        MixedOperation<Deployment, DeploymentList, RollableScalableResource<Deployment>> chain =
+                deployChain(List.of(withImage("a", "kube-system", "x/a:v1")));
+        KubernetesClient client = clientWithDeployments(chain);
+        List<WorkloadProbeTargetDTO> targets = List.of(
+                target("kube-system", "deployment", "x/a", null),
+                target("istio-system", "deployment", "y/b", null),
+                target("kube-system", "deployment", "x/c", null));
+
+        List<WorkloadProbeResultDTO> r = new WorkloadProbeOperations(client).probe(targets);
+
+        assertThat(r).hasSize(3);
+        assertThat(r.get(0).getNamespace()).isEqualTo("kube-system");
+        assertThat(r.get(1).getNamespace()).isEqualTo("istio-system");
+        assertThat(r.get(2).getNamespace()).isEqualTo("kube-system");
+        assertThat(r.get(0).getName()).isEqualTo("a");   // 顺序错了这里会拿到 c 的链
+    }
+
+    @Test
     void aNamespaceWithNoMatchSaysWhereWeLookedInsteadOfClaimingNotInstalled() {
         // Review Focus #4：候选命名空间之外我们**没去看**，所以措辞只能是"在平台已知的位置没找到"
         List<WorkloadProbeResultDTO> r = opsWithDeployments(List.of())

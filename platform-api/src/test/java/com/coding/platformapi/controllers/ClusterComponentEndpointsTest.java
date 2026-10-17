@@ -22,7 +22,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 三条组件端点的<b>路径与委托</b>。端点很薄，但路径写错只有
  * {@code PermissionCrossCheckRunner} 在真启动时才会兜住 —— 单测里先把这一格钉住。
  *
- * <p>三跳的权限码见 {@code V2026_10_17_1__cluster_components.sql}：
+ * <p>三跳的权限码见 {@code V2026_10_17_4__cluster_components.sql}：
  * {@code /cluster/components} 与 {@code /cluster/components/refresh} 是
  * {@code platform:cluster:manage}；{@code /cluster/component-flags} <b>两行同一路径</b>
  * （管理员 + 租户只读码），少一行租户就吃 403。

@@ -31,6 +31,12 @@ export function useClusterComponents(clusterId: Ref<string | null | undefined>) 
   const statuses = ref<K8sComponentStatus[]>([])
   const loading = ref(false)
   const statusesLoading = ref(false)
+  /**
+   * 这个 composable 实例是否被要求过全量状态。
+   * 「重新探测」据此决定要不要回读 statuses：需要它的视图（集群详情）首屏失败后必须能自愈，
+   * 而不需要它的页面（HPA / 网格门控）不该因为刷新多打一次全量探测。
+   */
+  let statusesRequested = false
 
   /** 读旗标所需权限（ANY-of，与后端权限表该端点的两行一一对应） */
   const canRead = () => perm.hasAny([apiCodes.clusterManage, apiCodes.clusterCapabilityView])
@@ -59,6 +65,7 @@ export function useClusterComponents(clusterId: Ref<string | null | undefined>) 
 
   /** 全量状态（组件 tab / 概览摘要用）。不做自动加载 —— 见类注释。 */
   async function loadStatuses(): Promise<void> {
+    statusesRequested = true
     const id = clusterId.value
     if (!id || !canManage()) { statuses.value = []; return }
     statusesLoading.value = true
@@ -79,7 +86,8 @@ export function useClusterComponents(clusterId: Ref<string | null | undefined>) 
     const id = clusterId.value
     if (!id || !canManage()) return
     await clusterApi.refreshComponents(id)
-    await Promise.all([load(), statuses.value.length ? loadStatuses() : Promise.resolve()])
+    // ⚠️ 曾经要过 statuses 的视图（哪怕首屏失败了）必须重拉，否则「重新探测」不作用于当前视图
+    await Promise.all([load(), statusesRequested ? loadStatuses() : Promise.resolve()])
   }
 
   function available(code: string): boolean { return flags.value[code]?.available ?? false }

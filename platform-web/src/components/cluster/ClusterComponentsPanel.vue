@@ -40,6 +40,7 @@ const FEATURE_LABELS: Record<string, string> = {
   routes: '路由',
   'ambient-mesh': 'ambient 流量接管',
   ci: 'CI 流水线',
+  'ci-install-source': 'CI（安装来源）',
   network: '网络',
   ipam: 'IPAM',
   'gateway-tls': '网关 TLS 证书',
@@ -47,6 +48,11 @@ const FEATURE_LABELS: Record<string, string> = {
 }
 function featureLabel(code: string): string {
   return FEATURE_LABELS[code] ?? code
+}
+
+/** 只滤掉与「健康」列重复的 `n/m 就绪`，其余 detail 一律显示 */
+function showDetail(detail?: string | null): boolean {
+  return !!detail && !/^\d+\/\d+ 就绪$/.test(detail)
 }
 
 const rows = computed(() => props.statuses)
@@ -124,8 +130,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div v-if="row.state === 'NOT_INSTALLED' && row.features.length" class="cc-guide">
             缺它 → {{ row.features.map(featureLabel).join(' / ') }} 不可用（安装需 cluster-admin）
           </div>
-          <div v-else-if="row.state === 'UNKNOWN'" class="cc-guide">{{ row.detail }}</div>
-          <div v-else-if="row.state === 'INSTALLED_UNHEALTHY'" class="cc-guide">{{ row.detail }}</div>
+          <!-- ⚠️ detail 必须显示：Review Focus #4（"在平台已知的位置没有找到"）与 #5（"命中 2 个，取 X"）
+               都只活在这个字段里。藏掉它们 = UI 变回「断言没装」/「静默挑一个」。 -->
+          <div v-if="showDetail(row.detail)" class="cc-guide cc-detail">{{ row.detail }}</div>
         </template>
       </el-table-column>
     </el-table>
@@ -147,4 +154,5 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-code { font-size: 12px; color: var(--text-3); }
 .cc-feature { margin-right: 8px; font-size: 12px; color: var(--text-2); }
 .cc-guide { margin-top: 4px; font-size: 12px; color: var(--text-3); }
+.cc-detail { font-style: italic; }
 </style>

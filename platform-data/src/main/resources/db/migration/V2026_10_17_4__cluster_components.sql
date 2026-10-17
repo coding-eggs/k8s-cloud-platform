@@ -31,8 +31,10 @@ ON DUPLICATE KEY UPDATE
   code=VALUES(code), description=VALUES(description);
 
 -- ⚠️ 新权限行必须**显式绑角色**（不按 code 前缀继承）。
---    tenant:cluster:capability:view 那行按 V2026_10_12_1 的先例绑**三个**内置角色 ——
---    少绑 tenant_member，成员在 CI 页/网格页就拿不到旗标（他本来就持这个码的其它读行）。
+--    tenant:cluster:capability:view 那行按 V2026_10_12_1 的先例绑**三个**内置角色。
+--    注：授权判定看的是**权限码**（PermissionClosureService 按 code 聚合），而两个租户角色早已通过
+--    V2026_10_07_2 的 perm_cluster_cap_get_t 持有这个码 —— 所以多绑的三行不是"能不能用"的开关，
+--    而是让权限页按角色展示时与其它只读码一致。**别据此推断"码是按权限行继承的"**。
 INSERT INTO platform_role_permission (id, role_id, permission_id) VALUES
  ('rp_admin_cluster_components',        'builtin_role_admin', 'perm_res_cluster_components'),
  ('rp_admin_cluster_comp_flags',        'builtin_role_admin', 'perm_res_cluster_component_flags_admin'),

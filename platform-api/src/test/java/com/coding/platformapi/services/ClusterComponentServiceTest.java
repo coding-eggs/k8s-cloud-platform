@@ -5,6 +5,7 @@ import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
 import com.coding.platformapi.components.ComponentProbe;
 import com.coding.platformapi.k8s.K8sComponentClient;
+import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -77,11 +78,43 @@ class ClusterComponentServiceTest {
     }
 
     @Test
-    void aWholeProbeThatThrowsIsUnknownEverywhereNotAnErrorPage() {
-        // spec §11：集群断开时页面照常打开 —— 探测整体失败（网关抛异常）也必须是 UNKNOWN
-        ClusterComponentService svc = svcThrowing(new RuntimeException("k8s-server 不可达"));
+    void aWholeProbeThatThrowsLeavesWorkloadJudgesUnknownButGroupJudgesStillAnswer() {
+        // spec §11：集群断开时页面照常打开。工作负载判据失去答案 → UNKNOWN；
+        // 而纯 group 判据（gateway-api）仍能从 DB 快照回答（决策 7：group 存在性只有 capability 一处判据）
+        ClusterComponentService svc = svcThrowingWithGroups(new RuntimeException("k8s-server 不可达"),
+                Map.of("gateway.networking.k8s.io", List.of("v1")));
 
-        assertThat(svc.status("c1")).allSatisfy(s -> assertThat(s.getState()).isEqualTo("UNKNOWN"));
+        List<ComponentStatusDTO> all = svc.status("c1");
+
+        assertThat(find(all, "metrics-server").getState()).isEqualTo("UNKNOWN");
+        assertThat(find(all, "istio").getState()).isEqualTo("UNKNOWN");
+        assertThat(find(all, "gateway-api").getState()).isEqualTo("INSTALLED_HEALTHY");
+    }
+
+    @Test
+    void theCacheExpiringCausesAFreshProbe() {
+        // spec §8：TTL 过期后重探（store 清空 = 过期）
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        Map<String, String> store = new HashMap<>();
+        ClusterComponentService svc = new ClusterComponentService(
+                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cacheOver(store));
+
+        svc.status("c1");
+        store.clear(); // 45s 到期
+        svc.status("c1");
+
+        verify(client, times(2)).probe(eq("c1"), any());
+    }
+
+    @Test
+    void theDetailFromTheAdapterIsCarriedIntoTheStatus() {
+        // Review Focus #5：多命中时"命中 2 个（a, b），取 a"必须原样到前端 ——
+        // 否则健康组件（升级残留/新旧两版并存通常都是健康的）的详情永远不会被看到。
+        ClusterComponentService svc = svc(List.of(probeWithDetail("istio-system", "命中 2 个（istiod-a, istiod-b），取 istiod-a")));
+
+        assertThat(find(svc.status("c1"), "istio").getDetail())
+                .isEqualTo("命中 2 个（istiod-a, istiod-b），取 istiod-a");
     }
 
     @Test
@@ -116,13 +149,22 @@ class ClusterComponentServiceTest {
 
     @Test
     void aFeatureIsAvailableOnlyWhenAllItsComponentsAreHealthy() {
-        // ci 依赖 tekton 与 tekton-operator —— 两个都好才叫能跑
-        ClusterComponentService svc = svc(List.of(
-                probe("tekton-pipelines", true, 1, 1, "v1.15.3"),
-                probe("tekton-operator", false, null, null, null)));
+        // service-mesh 依赖 istio 与 gateway-api —— istio 在跑、gateway group 没有 → 整块不可用
+        ClusterComponentService svc = svc(List.of(probe("istio-system", true, 1, 1, "1.30.3")));
 
-        assertThat(svc.flags("c1").get("ci").available()).isFalse();
-        assertThat(svc.flags("c1").get("ci").missing()).contains("Tekton Operator");
+        Map<String, ComponentFlagDTO> flags = svc.flags("c1");
+        assertThat(flags.get("service-mesh").available()).isFalse();
+        assertThat(flags.get("service-mesh").missing()).contains("Gateway API");
+    }
+
+    @Test
+    void ciDoesNotDependOnTheTektonOperator() {
+        // ⭐ operator 是安装来源，不是 CI 的功能前提：官方 release 清单装的 Tekton 没有 operator，照样能跑
+        ClusterComponentService svc = svc(List.of(probe("tekton-pipelines", true, 1, 1, "v1.15.3")));
+
+        assertThat(svc.flags("c1").get("ci").available()).isTrue();
+        assertThat(new ClusterComponentCatalog().componentsOf("ci"))
+                .extracting(d -> d.code()).containsExactly("tekton");
     }
 
     @Test
@@ -152,15 +194,23 @@ class ClusterComponentServiceTest {
     }
 
     private static ClusterComponentService svcThrowing(RuntimeException e) {
+        return svcThrowingWithGroups(e, DEFAULT_GROUPS);
+    }
+
+    private static ClusterComponentService svcThrowingWithGroups(RuntimeException e, Map<String, List<String>> groups) {
         K8sComponentClient client = mock(K8sComponentClient.class);
         when(client.probe(anyString(), any())).thenThrow(e);
-        return svcWith(client, DEFAULT_GROUPS);
+        return svcWith(client, groups);
     }
 
     private static ClusterComponentService svcWith(K8sComponentClient client, Map<String, List<String>> groups) {
+        return new ClusterComponentService(new ClusterComponentCatalog(), capability(groups), client, cache());
+    }
+
+    private static ClusterCapabilityService capability(Map<String, List<String>> groups) {
         ClusterCapabilityService capability = mock(ClusterCapabilityService.class);
         when(capability.groups("c1")).thenReturn(groups);
-        return new ClusterComponentService(new ClusterComponentCatalog(), capability, client, cache());
+        return capability;
     }
 
     /** 一条覆盖项：{@code namespace}+deployment。其余组件一律"没找到"。 */
@@ -213,12 +263,22 @@ class ClusterComponentServiceTest {
                 .orElseThrow(() -> new AssertionError("没有组件 " + code));
     }
 
+    /** 一条"多命中"结果（detail 原样透传用） */
+    private static WorkloadProbeResultDTO probeWithDetail(String ns, String detail) {
+        WorkloadProbeResultDTO r = probe(ns, true, 1, 1, "1.30.3");
+        r.setDetail(detail);
+        return r;
+    }
+
     /** 带存储语义的 RedisJsonCache（mock 的 StringRedisTemplate 自身不存值） */
     private static RedisJsonCache cache() {
+        return cacheOver(new HashMap<>());
+    }
+
+    private static RedisJsonCache cacheOver(Map<String, String> store) {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         @SuppressWarnings("unchecked")
         ValueOperations<String, String> ops = mock(ValueOperations.class);
-        Map<String, String> store = new HashMap<>();
         when(redis.opsForValue()).thenReturn(ops);
         when(ops.get(anyString())).thenAnswer(inv -> store.get(inv.getArgument(0)));
         doAnswer(inv -> {

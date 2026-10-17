@@ -45,10 +45,19 @@ function probedVersionOf(code: string): string | null {
   return components.statusOf(code)?.version ?? null
 }
 function registeredVersionTip(code: string, registered?: string | null): string {
-  const probed = probedVersionOf(code)
+  const s = components.statusOf(code)
+  // 已确认没装：此时显示的是登记值，措辞不能是"尚未探测到"
+  if (s?.state === 'NOT_INSTALLED') return '探测确认未安装 —— 这里显示的是登记值'
+  const probed = s?.version ?? null
   if (!probed) return '尚未探测到实测版本，暂显示登记值'
-  if (registered && registered !== probed) return `登记值 ${registered} 与实测 ${probed} 不一致（升级过集群？）`
+  if (registered && normVersion(registered) !== normVersion(probed)) {
+    return `登记值 ${registered} 与实测 ${probed} 不一致（升级过集群？）`
+  }
   return registered ? `登记值 ${registered}` : '登记时未填写'
+}
+/** 比较版本时忽略前导 v（实测 tag 是 v3.30.3，登记值常写 3.30.3）—— 否则 tooltip 会稳定误报不一致 */
+function normVersion(v: string): string {
+  return v.trim().replace(/^v/i, '')
 }
 /** 概览一行摘要（spec §6.2 ①）：与组件 tab 同一个数据源，不再各说一套 */
 const overviewComponentSummary = computed(() => {

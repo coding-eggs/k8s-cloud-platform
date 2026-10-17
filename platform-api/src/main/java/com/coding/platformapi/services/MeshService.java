@@ -101,25 +101,47 @@ public class MeshService {
     /**
      * 服务网格状态（istio / ambient / Gateway API + versions）—— 三布尔从组件清单派生，见类注释。
      *
-     * <p>判定：组件的 {@code state} 必须是 {@code INSTALLED_HEALTHY} ——
-     * 「装了但不健康」不叫可用，「不知道」也不叫可用（全 false = 未探测的既有渲染）。
+     * <p>⚠️ 两个刻意的语义（评审 2026-10-17 修正）：
+     * <ul>
+     *   <li><b>「装了但不健康」仍算装了</b> —— 横幅问的是数据面形态（ambient / sidecar），
+     *       可用性由 flags（{@code ambient-mesh} / {@code service-mesh}）回答。把 UNHEALTHY 判成
+     *       "没装"会让 istiod 重启时横幅写「Istio 未安装」。</li>
+     *   <li><b>「不知道」（UNKNOWN）退回 capability 快照</b> —— 快照读 DB，集群断开也照常可用。
+     *       不退回就会在集群不可达时说「Istio 未安装」—— 正是本仓反复修过的那个坑。</li>
+     * </ul>
+     * <p>{@code istioAmbient} 没有快照可退（capability 列不回答 ztunnel），UNKNOWN 按 false ——
+     * 与改造前的活探测失败同一行为。
      * <p>异常不会从这里逃出去：{@link ClusterComponentService#status} 把探测失败
      * 转成 {@code UNKNOWN}，不抛。
      */
     public MeshStatusDTO meshStatus(String clusterId) {
         List<ComponentStatusDTO> components = componentService.status(clusterId);
+        List<String> gatewayVersions =
+                capabilityService.versionsOf(clusterId, ClusterCapabilityService.GATEWAY_API_GROUP);
+
         MeshStatusDTO dto = new MeshStatusDTO();
-        dto.setHasGatewayApi(healthy(components, "gateway-api"));
-        dto.setHasIstio(healthy(components, "istio"));
-        dto.setGatewayApiVersions(
-                capabilityService.versionsOf(clusterId, ClusterCapabilityService.GATEWAY_API_GROUP));
-        dto.setIstioAmbient(healthy(components, "istio-ambient"));
+        dto.setHasGatewayApi(installed(components, "gateway-api")
+                || (unknown(components, "gateway-api") && !gatewayVersions.isEmpty()));
+        dto.setHasIstio(installed(components, "istio")
+                || (unknown(components, "istio") && capabilityService.hasIstio(clusterId)));
+        dto.setGatewayApiVersions(gatewayVersions);
+        dto.setIstioAmbient(installed(components, "istio-ambient"));
         return dto;
     }
 
-    private static boolean healthy(List<ComponentStatusDTO> components, String code) {
-        return components.stream().anyMatch(
-                s -> code.equals(s.getCode()) && ClusterComponentService.HEALTHY.equals(s.getState()));
+    /** 装了（健康与否都算）—— 与"可用"是两件事 */
+    private static boolean installed(List<ComponentStatusDTO> components, String code) {
+        return components.stream().anyMatch(s -> code.equals(s.getCode())
+                && (ClusterComponentService.HEALTHY.equals(s.getState())
+                    || ClusterComponentService.UNHEALTHY.equals(s.getState())));
+    }
+
+    /** 没有任何答案（探测失败 / 未探测 / 清单里没这一条） */
+    private static boolean unknown(List<ComponentStatusDTO> components, String code) {
+        return components.stream().noneMatch(s -> code.equals(s.getCode())
+                && (ClusterComponentService.HEALTHY.equals(s.getState())
+                    || ClusterComponentService.UNHEALTHY.equals(s.getState())
+                    || ClusterComponentService.NOT_INSTALLED.equals(s.getState())));
     }
 
     // ==================== waypoint 候选（平台侧读，供命名空间编辑器） ====================

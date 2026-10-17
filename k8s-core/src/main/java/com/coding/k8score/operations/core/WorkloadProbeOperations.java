@@ -36,27 +36,33 @@ public class WorkloadProbeOperations {
     private final KubernetesClient client;
 
     public List<WorkloadProbeResultDTO> probe(List<WorkloadProbeTargetDTO> targets) {
-        Map<String, List<WorkloadProbeTargetDTO>> byChain = new LinkedHashMap<>();
+        // ⭐ 两件事分开：**成本**按 (namespace, kind) 去重（每个 chain 只 list 一次），
+        //    **结果顺序**严格跟着入参走。消费方（ClusterComponentService）按下标把结果贴回组件 code，
+        //    沿用分组顺序会让两条同 chain 但不相邻的候选互换成对方的版本/健康。
+        Map<String, List<Cand>> listed = new LinkedHashMap<>();
+        Map<String, String> errors = new LinkedHashMap<>();
         for (WorkloadProbeTargetDTO t : targets) {
-            byChain.computeIfAbsent(t.getNamespace() + "\u0000" + t.getKind(), k -> new ArrayList<>()).add(t);
-        }
-        List<WorkloadProbeResultDTO> out = new ArrayList<>();
-        for (List<WorkloadProbeTargetDTO> group : byChain.values()) {
-            // 一次 list 服务这一组的全部候选
-            WorkloadProbeTargetDTO head = group.get(0);
-            List<Cand> listed;
-            String error = null;
+            String key = chainKey(t);
+            if (listed.containsKey(key) || errors.containsKey(key)) {
+                continue;
+            }
             try {
-                listed = list(head.getNamespace(), head.getKind());
+                listed.put(key, list(t.getNamespace(), t.getKind()));
             } catch (Exception e) {
-                listed = List.of();
-                error = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                errors.put(key, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             }
-            for (WorkloadProbeTargetDTO t : group) {
-                out.add(error == null ? match(t, listed) : failed(t, error));
-            }
+        }
+
+        List<WorkloadProbeResultDTO> out = new ArrayList<>(targets.size());
+        for (WorkloadProbeTargetDTO t : targets) {
+            String key = chainKey(t);
+            out.add(errors.containsKey(key) ? failed(t, errors.get(key)) : match(t, listed.get(key)));
         }
         return out;
+    }
+
+    private static String chainKey(WorkloadProbeTargetDTO t) {
+        return t.getNamespace() + "\u0000" + t.getKind();
     }
 
     // ---------- 内部 ----------
