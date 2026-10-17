@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -37,11 +38,19 @@ public class PromRulesClient {
     private final RestClient restClient;
     private final JsonMapper jsonMapper;
 
-    public PromRulesClient(RestClient.Builder builder) {
+    /**
+     * 生产构造器：自己装配 RestClient（同 {@code PromDiscoveryClient}）。
+     *
+     * <p>⚠️ 不注入 {@code RestClient.Builder} —— 本应用里**没有那个 bean**
+     * （启动时报 {@code required a bean of type RestClient$Builder}）。保留包级私有的
+     * {@link #PromRulesClient(RestClient)} 给测试用；本类有两个构造器，故必须显式 {@code @Autowired}。
+     */
+    @Autowired
+    public PromRulesClient() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(CONNECT_TIMEOUT_MS);
         factory.setReadTimeout(READ_TIMEOUT_MS);
-        this.restClient = builder.requestFactory(factory).build();
+        this.restClient = RestClient.builder().requestFactory(factory).build();
         this.jsonMapper = lenientMapper();
     }
 
