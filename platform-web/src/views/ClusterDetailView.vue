@@ -9,6 +9,7 @@
  * 基本信息走 /cluster/get（只读 DB），集群断开也照常可见。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { clusterApi } from '@/api'
@@ -21,6 +22,7 @@ import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import ClusterMetricsPanel from '@/components/cluster/ClusterMetricsPanel.vue'
 import ClusterComponentsPanel from '@/components/cluster/ClusterComponentsPanel.vue'
 import { useClusterComponents } from '@/composables/useClusterComponents'
+import { useComponentOperations } from '@/composables/useComponentOperations'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 
@@ -39,6 +41,46 @@ const metricsRef = ref<InstanceType<typeof ClusterMetricsPanel> | null>(null)
 // ---- 集群组件（S1.2）：组件 tab 与概览摘要共用同一份全量投影 ----
 // 页面本身由 platform:page:cluster 门禁（管理员），组件 tab 不另要页面码。
 const components = useClusterComponents(computed(() => clusterId.value || null))
+// 组件安装/升级（S3.6 批①）：操作记录 + 轮询
+const operations = useComponentOperations(computed(() => clusterId.value || null))
+/** 批① 只接了 metrics-server；批② 改为由后端下发支持的组件清单 */
+const recipeCodes = new Set(['metrics-server'])
+const installable = (code: string) => recipeCodes.has(code)
+/** 正在执行的组件（按钮 loading / 禁用） */
+const applying = ref<string | null>(null)
+
+/** 安装/升级：确认 → 发起 → 轮询 → 成功后刷新探测 */
+async function onApply(p: { code: string; action: 'INSTALL' | 'UPGRADE'; targetVersion?: string }): Promise<void> {
+  const target = components.statusOf(p.code)
+  try {
+    await ElMessageBox.confirm(
+      `将${p.action === 'INSTALL' ? '安装' : '升级'} ${target?.name ?? p.code}。
+`
+      + `release 与命名空间由平台固定，chart 版本 ${p.targetVersion ?? '当前版本'}。
+`
+      + '过程会向集群写入对象，请确认。',
+      '确认操作',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  applying.value = p.code
+  try {
+    const id = await operations.apply(p.code, p.action, p.targetVersion)
+    const op = await operations.wait(id)
+    if (op.status === 'SUCCESS') {
+      ElMessage.success('操作完成，正在刷新探测…')
+      await components.refresh()
+    } else {
+      ElMessage.error(op.message || '操作失败')
+    }
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    applying.value = null
+  }
+}
 
 /** 概览里的 Istio/Calico 显示**实测版本**；人工登记值降为 tooltip（spec §6.2 ②） */
 function probedVersionOf(code: string): string | null {
@@ -644,7 +686,11 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
             :statuses="components.statuses.value"
             :loading="components.statusesLoading.value"
             :can-refresh="components.canManage.value"
+            :operations="operations.latest.value"
+            :installable="installable"
+            :applying="applying"
             @refresh="components.refresh()"
+            @apply="onApply"
           />
         </el-tab-pane>
       </el-tabs>

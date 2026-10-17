@@ -6,18 +6,29 @@
  *
  * ⚠️ 四态必须分开渲染 —— {@code UNKNOWN}（探测不到）与 {@code NOT_INSTALLED}（没装）是相反结论，
  *    都渲染成灰 tag 就等于把"不知道"说成了"没有"（本仓修过的坑）。
- * ⚠️ 本批**不给安装按钮**：安装/升级留给 S3.3 / S3.4（spec 决策 9），这里只给指引。
+ * ⚠️ 安装/升级（S3.6）：只有 recipe 支持的组件（批① = metrics-server）才给按钮；
+ *    已装但**不是平台装的**（无平台操作记录）只读 —— 与「已装的一律只探测不接管」一致。
+ *    UNKNOWN 不给装：「不知道」不是「没有」。
  */
 import { computed } from 'vue'
-import type { K8sComponentState, K8sComponentStatus } from '@/types'
+import type { K8sComponentOperation, K8sComponentState, K8sComponentStatus } from '@/types'
 
 const props = defineProps<{
   statuses: K8sComponentStatus[]
   loading: boolean
   /** 「重新探测」需要 platform:cluster:manage（写操作） */
   canRefresh: boolean
+  /** 各组件最近一次操作（由页面统一加载） */
+  operations: Record<string, K8sComponentOperation>
+  /** 是否有安装 recipe（批① 只有 metrics-server） */
+  installable: (code: string) => boolean
+  /** 正在执行的组件 code（按钮 loading） */
+  applying?: string | null
 }>()
-const emit = defineEmits<{ (e: 'refresh'): void }>()
+const emit = defineEmits<{
+  (e: 'refresh'): void
+  (e: 'apply', payload: { code: string; action: 'INSTALL' | 'UPGRADE'; targetVersion?: string }): void
+}>()
 
 /** 四态 → 徽标。⚠️ UNKNOWN 用虚线边（effect=plain）与 NOT_INSTALLED（实心灰）区分开 */
 const STATE: Record<K8sComponentState, {
@@ -135,6 +146,27 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div v-if="showDetail(row.detail)" class="cc-guide cc-detail">{{ row.detail }}</div>
         </template>
       </el-table-column>
+      <el-table-column label="操作" width="110" fixed="right">
+        <template #default="{ row }">
+          <template v-if="row.state === 'NOT_INSTALLED' && installable(row.code)">
+            <el-button link type="primary" :loading="props.applying === row.code"
+                       @click="emit('apply', { code: row.code, action: 'INSTALL' })">
+              安装
+            </el-button>
+          </template>
+          <template v-else-if="row.state === 'INSTALLED_HEALTHY' || row.state === 'INSTALLED_UNHEALTHY'">
+            <el-tooltip v-if="!operations[row.code]" content="该组件由外部安装，平台不接管" placement="top">
+              <span class="cc-readonly">只读</span>
+            </el-tooltip>
+            <el-button v-else link type="primary" :loading="props.applying === row.code"
+                       @click="emit('apply', { code: row.code, action: 'UPGRADE', targetVersion: operations[row.code]?.toVersion ?? undefined })">
+              升级
+            </el-button>
+          </template>
+          <!-- UNKNOWN：不给装 —— "不知道"不是"没有" -->
+          <span v-else class="cc-readonly">—</span>
+        </template>
+      </el-table-column>
     </el-table>
   </div>
 </template>
@@ -155,4 +187,5 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-feature { margin-right: 8px; font-size: 12px; color: var(--text-2); }
 .cc-guide { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .cc-detail { font-style: italic; }
+.cc-readonly { font-size: 12px; color: var(--text-3); }
 </style>

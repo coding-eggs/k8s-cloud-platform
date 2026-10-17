@@ -15,6 +15,7 @@ import type {
   K8sClusterOption,
   K8sClusterOverview,
   K8sComponentFlag,
+  K8sComponentOperation,
   K8sComponentStatus,
   K8sNamespaceStatEntry,
   K8sTenantOverview,
@@ -119,6 +120,23 @@ export const clusterApi = {
   /** 重新探测（探完覆写缓存；写操作，需 platform:cluster:manage） */
   refreshComponents: (clusterId: string) =>
     http.post<never, void>('/cluster/components/refresh', { clusterId }),
+  /** 安装/升级组件（异步，返回 operationId；需 platform:cluster:manage） */
+  componentApply: (payload: {
+    clusterId: string
+    componentCode: string
+    action: 'INSTALL' | 'UPGRADE'
+    targetVersion?: string
+    editableValues?: Record<string, unknown>
+  }) => http.post<never, number>('/cluster/components/apply', payload),
+  /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
+  componentOperation: (payload: {
+    operationId?: number
+    clusterId?: string
+    componentCode?: string
+  }) => http.post<never, K8sComponentOperation>('/cluster/components/operations/get', payload),
+  /** 按集群列出各组件最近一次操作（含进行中；组件 tab 首屏一次拿全） */
+  componentOperations: (clusterId: string) =>
+    http.post<never, K8sComponentOperation[]>('/cluster/components/operations/list', { clusterId }),
 
   /**
    * 集群概览快照（集群概览页首屏）：总量 + 节点健康/异常 Pod + 存储 + 能力摘要。

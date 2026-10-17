@@ -39,6 +39,8 @@ export interface K8sCluster {
   updatedAt?: string | null
   /** 集群 API 能力（JSON：group → versions[]），运行时 discovery 探测后持久化 */
   capability?: string | null
+  /** 集群画像（S3.6）：MANAGEMENT=平台自身所在集群；BUSINESS=业务集群 */
+  clusterRole?: 'MANAGEMENT' | 'BUSINESS' | null
 }
 
 /**
@@ -912,6 +914,25 @@ export interface K8sComponentStatus {
   detail?: string | null
   /** 它支撑的平台功能 code（依赖关系只在后端目录里写一遍） */
   features: string[]
+}
+
+/** 组件安装/升级操作（S3.6）。chart 版本与应用版本是两套编号 —— from/to 指 chart 版本 */
+export type K8sComponentOperationStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'UNKNOWN'
+
+export interface K8sComponentOperation {
+  id: number
+  clusterId: string
+  componentCode: string
+  action: 'INSTALL' | 'UPGRADE'
+  profile: string
+  fromVersion?: string | null
+  toVersion?: string | null
+  status: K8sComponentOperationStatus
+  message?: string | null
+  logTail?: string | null
+  operator?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
 }
 
 /** 一个功能的可用性旗标（租户侧窄投影，`POST /cluster/component-flags`）—— 有意不含版本/命名空间 */

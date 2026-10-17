@@ -37,6 +37,7 @@ const form = reactive({
   ipStack: 'IPV4' as K8sCluster['ipStack'],
   prometheusUrl: '',
   grafanaUrl: '',
+  clusterRole: 'BUSINESS' as 'MANAGEMENT' | 'BUSINESS',
 })
 
 function resetForm(): void {
@@ -51,6 +52,7 @@ function resetForm(): void {
   form.ipStack = 'IPV4'
   form.prometheusUrl = ''
   form.grafanaUrl = ''
+  form.clusterRole = 'BUSINESS'
 }
 
 function openCreate(): void {
@@ -72,6 +74,7 @@ function openEdit(row: K8sCluster): void {
   form.ipStack = row.ipStack ?? 'IPV4'
   form.prometheusUrl = row.prometheusUrl ?? ''
   form.grafanaUrl = row.grafanaUrl ?? ''
+  form.clusterRole = row.clusterRole ?? 'BUSINESS'
   // kubeconfig 留空 = 保留原值
   dialogVisible.value = true
 }
@@ -87,6 +90,7 @@ function commonPayload() {
     ipStack: form.ipStack,
     prometheusUrl: form.prometheusUrl || undefined,
     grafanaUrl: form.grafanaUrl || undefined,
+    clusterRole: form.clusterRole,
   }
 }
 
@@ -241,6 +245,13 @@ onMounted(load)
         </template>
       </el-table-column>
       <el-table-column prop="version" label="版本" width="120" />
+      <el-table-column label="画像" width="110">
+        <template #default="{ row }">
+          <el-tag size="small" :type="row.clusterRole === 'MANAGEMENT' ? 'warning' : 'info'">
+            {{ row.clusterRole === 'MANAGEMENT' ? '管理集群' : '业务集群' }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ fmtDate(row.createdAt) }}</template>
@@ -317,6 +328,14 @@ onMounted(load)
             </el-form-item>
           </el-col>
         </el-row>
+
+        <el-divider content-position="left">集群画像</el-divider>
+        <el-form-item label="集群角色">
+          <el-select v-model="form.clusterRole" style="width: 240px">
+            <el-option label="业务集群（默认）" value="BUSINESS" />
+            <el-option label="管理集群（平台自身所在）" value="MANAGEMENT" />
+          </el-select>
+        </el-form-item>
 
         <el-divider content-position="left">网络</el-divider>
         <el-form-item label="IP 栈">
