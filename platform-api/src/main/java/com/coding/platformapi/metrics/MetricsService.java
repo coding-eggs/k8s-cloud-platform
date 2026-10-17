@@ -12,11 +12,15 @@ import com.coding.platformapi.metrics.dto.ClusterMetricsRequest;
 import com.coding.platformapi.metrics.dto.MetricPoint;
 import com.coding.platformapi.metrics.dto.MetricSeries;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
+import com.coding.platformapi.metrics.dto.MeshTopologyResponse;
 import com.coding.platformapi.metrics.dto.NodeCurrentMetric;
 import com.coding.platformapi.metrics.dto.NodeMetricsRequest;
 import com.coding.platformapi.metrics.dto.NamespaceMetricsRequest;
 import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
 import com.coding.platformapi.metrics.labels.DeviceLabels;
+import com.coding.platformapi.metrics.labels.MeshEdgeLabels;
+import com.coding.platformapi.metrics.labels.MeshErrorLabels;
+import com.coding.platformapi.metrics.labels.MeshLatencyLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
 import com.coding.platformapi.metrics.labels.NamespaceLabels;
 import com.coding.platformapi.metrics.model.PromResult;
@@ -33,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -311,6 +316,145 @@ public class MetricsService {
         return new MetricSeriesResponse("字节/秒", List.of(
                 toSeries("读", queryCluster(String.format(MetricQuery.CLUSTER_DISK_READ.sql(), c), req)),
                 toSeries("写", queryCluster(String.format(MetricQuery.CLUSTER_DISK_WRITE.sql(), c), req))));
+    }
+
+    // ===== 服务网格拓扑（S2.4）=====
+    // 三条业务查询 + 一条哨兵并发发出；合并是纯内存活。
+
+    /** 默认时间窗（秒）：与前端默认的 5m 一致。 */
+    private static final int DEFAULT_TOPOLOGY_WINDOW = 300;
+    /** 外部网关所在的命名空间 —— 那些节点是"外部入口"，前端画得跟业务节点不一样。 */
+    private static final String INGRESS_NAMESPACE = "istio-system";
+
+    /** 边两端（都已拼成 `命名空间/工作负载`）。 */
+    private record Pair(String source, String target) { }
+
+    /**
+     * 服务网格拓扑：节点 = 工作负载（由边两端推出），边 = 谁调谁。
+     *
+     * <p>⚠️ {@code meshMetricsAvailable} 用**哨兵** {@code count(istio_build)} 判，不看边数 ——
+     * 「没接采集」和「接了但这段时间没调用」的主查询都是空的，只有哨兵能把它们分开。
+     * <p>⚠️ 延迟那条失败不算整体失败（只让 {@code p95Ms = null}）—— 少一个数不该让整张图打不开。
+     */
+    public MeshTopologyResponse meshTopology(String clusterId, String namespace, int windowSeconds) {
+        String cluster = clusterName(clusterId);   // 同时校验集群存在/未删
+        int window = windowSeconds > 0 ? windowSeconds : DEFAULT_TOPOLOGY_WINDOW;
+        // 过滤片段拼在花括号内部，故有值时以 `,` 开头；空串 = 不过滤。
+        // 命名空间**两端都滤**：只滤一端会漏掉"从别处进来"的边。
+        String filters = StringUtils.hasText(namespace)
+                ? ",source_workload_namespace=\"" + namespace + "\",destination_workload_namespace=\"" + namespace + "\""
+                : "";
+        String span = window + "s";
+
+        CompletableFuture<List<PromResult<MeshEdgeLabels>>> edgesF = CompletableFuture.supplyAsync(() ->
+                client.query(String.format(MetricQuery.MESH_TOPOLOGY_EDGES.sql(), cluster, filters, span),
+                        null, MeshEdgeLabels.class));
+        CompletableFuture<List<PromResult<MeshErrorLabels>>> errorsF = CompletableFuture.supplyAsync(() ->
+                client.query(String.format(MetricQuery.MESH_TOPOLOGY_ERRORS.sql(), cluster, filters, span),
+                        null, MeshErrorLabels.class));
+        CompletableFuture<List<PromResult<MeshLatencyLabels>>> latencyF = CompletableFuture.supplyAsync(() ->
+                        client.query(String.format(MetricQuery.MESH_TOPOLOGY_LATENCY.sql(), cluster, filters, span),
+                                null, MeshLatencyLabels.class))
+                .exceptionally(e -> {
+                    log.warn("拓扑延迟查询失败，p95 一律判为无样本", e);
+                    return List.of();
+                });
+        CompletableFuture<List<PromResult<MetricLabels>>> sentinelF = CompletableFuture.supplyAsync(() ->
+                client.query(String.format(MetricQuery.MESH_TOPOLOGY_SCRAPED.sql(), cluster),
+                        null, MetricLabels.class));
+
+        CompletableFuture.allOf(edgesF, errorsF, latencyF, sentinelF).join();
+
+        Map<Pair, Double> rps = new LinkedHashMap<>();
+        for (PromResult<MeshEdgeLabels> r : edgesF.join()) {
+            Pair p = pairOf(r.getMetric());
+            Double v = instantValue(r);
+            if (p != null && v != null) {
+                rps.merge(p, v, Double::sum);
+            }
+        }
+        Map<Pair, Double> errors = new LinkedHashMap<>();
+        for (PromResult<MeshErrorLabels> r : errorsF.join()) {
+            Pair p = pairOf(r.getMetric());
+            Double v = instantValue(r);
+            if (p != null && v != null) {
+                errors.merge(p, v, Double::sum);
+            }
+        }
+        Map<Pair, Double> latency = new LinkedHashMap<>();
+        for (PromResult<MeshLatencyLabels> r : latencyF.join()) {
+            Pair p = pairOf(r.getMetric());
+            Double v = instantValue(r);
+            if (p != null && v != null) {
+                latency.put(p, v);   // 同一条边只保留一个分位数
+            }
+        }
+
+        MeshTopologyResponse resp = new MeshTopologyResponse();
+        resp.setWindowSeconds(window);
+        resp.setMeshMetricsAvailable(hasPositive(sentinelF.join()));
+
+        Set<String> nodeIds = new LinkedHashSet<>();
+        for (Map.Entry<Pair, Double> e : rps.entrySet()) {
+            Pair p = e.getKey();
+            double total = e.getValue();
+            double err = errors.getOrDefault(p, 0.0);
+            MeshTopologyResponse.MeshEdge edge = new MeshTopologyResponse.MeshEdge();
+            edge.setSource(p.source());
+            edge.setTarget(p.target());
+            edge.setRps(total);
+            edge.setErrorRate(total > 0 ? err / total : 0.0);   // 分母是总量；防除零
+            edge.setP95Ms(latency.get(p));
+            resp.getEdges().add(edge);
+            nodeIds.add(p.source());
+            nodeIds.add(p.target());
+        }
+        for (String id : nodeIds) {
+            int slash = id.indexOf('/');
+            MeshTopologyResponse.MeshNode node = new MeshTopologyResponse.MeshNode();
+            node.setId(id);
+            node.setNamespace(id.substring(0, slash));
+            node.setWorkload(id.substring(slash + 1));
+            node.setGateway(INGRESS_NAMESPACE.equals(node.getNamespace()));
+            resp.getNodes().add(node);
+        }
+        return resp;
+    }
+
+    /** 标签 → 边两端；标签缺失时返回 null（该行丢弃，不编造节点）。 */
+    private Pair pairOf(MeshEdgeLabels l) {
+        if (l == null || !StringUtils.hasText(l.getSourceWorkload()) || !StringUtils.hasText(l.getDestinationWorkload())) {
+            return null;
+        }
+        return new Pair(idOf(l.getSourceNamespace(), l.getSourceWorkload()),
+                idOf(l.getDestinationNamespace(), l.getDestinationWorkload()));
+    }
+
+    private String idOf(String namespace, String workload) {
+        return (StringUtils.hasText(namespace) ? namespace : "unknown") + "/" + workload;
+    }
+
+    /** 即时查询的 value → 数值；缺失/NaN/Inf 返回 null。 */
+    private Double instantValue(PromResult<?> r) {
+        if (r == null || r.getValue() == null || r.getValue().size() < 2) {
+            return null;
+        }
+        double v = parseDouble(r.getValue().get(1));
+        return (Double.isNaN(v) || Double.isInfinite(v)) ? null : v;
+    }
+
+    /** 哨兵：任一序列的值 > 0 即「在采集」。 */
+    private boolean hasPositive(List<PromResult<MetricLabels>> rows) {
+        if (rows == null) {
+            return false;
+        }
+        for (PromResult<MetricLabels> r : rows) {
+            Double v = instantValue(r);
+            if (v != null && v > 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ===== 节点底层调用 / 转换 =====
