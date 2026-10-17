@@ -41,22 +41,34 @@ class MeshTopologyQueryTest {
 
     @Test
     void eachTemplateTakesTheSlotsItsCallersFill() {
-        // 三条业务查询各两个 %s：① 命名空间过滤片段 ② 时间窗（如 300s）。
+        // 三条业务查询各三个 %s：① 集群名 ② 命名空间过滤片段（无过滤时为空串）③ 时间窗（如 300s）。
         // 多一个少一个都会让 String.format 在运行期炸，所以钉住。
         for (MetricQuery q : new MetricQuery[]{
                 MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS, MetricQuery.MESH_TOPOLOGY_LATENCY}) {
             long slots = q.sql().chars().filter(c -> c == '%').count();
-            assertThat(slots).as(q.name()).isEqualTo(2);
+            assertThat(slots).as(q.name()).isEqualTo(3);
         }
-        // 哨兵没有参数
+        // 哨兵只要一个：集群名。
         long sentinel = MetricQuery.MESH_TOPOLOGY_SCRAPED.sql().chars().filter(c -> c == '%').count();
-        assertThat(sentinel).isZero();
+        assertThat(sentinel).isEqualTo(1);
+    }
+
+    @Test
+    void everyQueryIsScopedToOneCluster() {
+        // ⚠️ 实测：Thanos 是全局单端点，istio_* 指标**都带 cluster_name**。
+        // 不按集群过滤会把别的集群的边一起画进来；哨兵不滤则「B 集群没采集、A 集群在采集」
+        // 会被误判成已采集。四条一律带上 `cluster_name="%s"`。
+        for (MetricQuery q : new MetricQuery[]{
+                MetricQuery.MESH_TOPOLOGY_EDGES, MetricQuery.MESH_TOPOLOGY_ERRORS,
+                MetricQuery.MESH_TOPOLOGY_LATENCY, MetricQuery.MESH_TOPOLOGY_SCRAPED}) {
+            assertThat(q.sql()).as(q.name()).contains("cluster_name=\"%s\"");
+        }
     }
 
     @Test
     void theSentinelIsTrafficIndependent() {
         // ⭐ 判"有没有在采集"**不能**看主查询空不空 —— "没接采集"和"接了但没流量"的主查询**都是空的**。
         // 哨兵由每个代理产出（istiod / ztunnel / waypoint / 网关），代理活着就有，与流量无关。
-        assertThat(MetricQuery.MESH_TOPOLOGY_SCRAPED.sql()).isEqualTo("count(istio_build)");
+        assertThat(MetricQuery.MESH_TOPOLOGY_SCRAPED.sql()).isEqualTo("count(istio_build{cluster_name=\"%s\"})");
     }
 }

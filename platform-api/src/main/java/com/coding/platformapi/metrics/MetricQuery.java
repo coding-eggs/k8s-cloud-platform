@@ -121,25 +121,28 @@ public enum MetricQuery {
     CLUSTER_DISK_WRITE(MetricLabels.class,
             "sum(rate(container_fs_writes_bytes_total{cluster_name=\"%s\",container!=\"POD\",pod!=\"\",device=~\"/dev/dm-.*\"}[2m]))"),
 
-    // ===== 服务网格拓扑（%s = ① 命名空间过滤片段 ② 时间窗；哨兵无参数）=====
+    // ===== 服务网格拓扑（%s = ① 集群名 ② 命名空间过滤片段（可为空串）③ 时间窗；哨兵只要集群名）=====
     // 一条序列 = 一条边「源工作负载 → 目标工作负载」。命名空间一并 by 出来 —— 同名 workload 跨 ns 很常见，
     //   只按 workload 名分组会把两条边粘成一个节点。
-    // ⚠️ 命名空间过滤片段拼在花括号**内部**（故模板里是 `...total%s[%s]`），过滤片段有值时以 `,` 开头。
+    // ⚠️ **必须带 cluster_name**：Thanos 是全局单端点，istio_* 指标都带 cluster_name，
+    //    不滤就会把别的集群的边一起画进来（2026-10-17 实测确认该标签存在）。
+    // ⚠️ 命名空间过滤片段拼在花括号**内部**（有值时以 `,` 开头，无过滤时为空串）。
     // ⚠️ **不要加 `reporter="destination"`**：2026-10-17 实测本集群 `reporter` 只有 `source`（网关记的）
     //    与 `waypoint`，抄网上那些带 destination 的查询会查出空图。将来上了 sidecar 才需要它去重。
     /** 拓扑的边 + QPS（请求数/秒）。 */
     MESH_TOPOLOGY_EDGES(MeshEdgeLabels.class,
-            "sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_requests_total%s[%s]))"),
+            "sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_requests_total{cluster_name=\"%s\"%s}[%s]))"),
     /** 同为边，但只看 5xx —— 与 EDGES 相除得错误率（分母是总量）。 */
     MESH_TOPOLOGY_ERRORS(MeshErrorLabels.class,
-            "sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_requests_total{response_code=~\"5..\"%s}[%s]))"),
+            "sum by (source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_requests_total{cluster_name=\"%s\",response_code=~\"5..\"%s}[%s]))"),
     /** 边的 P95 延迟（毫秒）。⚠️ 实测本集群只有 `..._milliseconds_bucket`，没有 `_seconds` 版、也没有裸名。 */
     MESH_TOPOLOGY_LATENCY(MeshLatencyLabels.class,
-            "histogram_quantile(0.95, sum by (le, source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_request_duration_milliseconds_bucket%s[%s])))"),
+            "histogram_quantile(0.95, sum by (le, source_workload, destination_workload, source_workload_namespace, destination_workload_namespace) (rate(istio_request_duration_milliseconds_bucket{cluster_name=\"%s\"%s}[%s])))"),
     /** 哨兵：**在不在采集网格指标**。代理（istiod / ztunnel / waypoint / 网关）活着就产出，与流量无关，
-     *  所以它能区分「没接采集」和「接了但这段时间没调用」—— 这两者的主查询**都是空的**。无参数。 */
+     *  所以它能区分「没接采集」和「接了但这段时间没调用」—— 这两者的主查询**都是空的**。
+     *  ⚠️ 必须按集群过滤：否则「B 集群没采集、A 集群在采集」会被误判成已采集。 */
     MESH_TOPOLOGY_SCRAPED(MetricLabels.class,
-            "count(istio_build)"),
+            "count(istio_build{cluster_name=\"%s\"})"),
 
     ;
 
