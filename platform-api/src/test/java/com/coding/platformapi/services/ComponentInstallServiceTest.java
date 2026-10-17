@@ -45,8 +45,11 @@ class ComponentInstallServiceTest {
     }
 
     private ComponentInstallService service() {
-        return new ComponentInstallService(mapper, client, new ComponentRecipeCatalog(),
-                clusterService, components);
+        return service(new ComponentRecipeCatalog());
+    }
+
+    private ComponentInstallService service(ComponentRecipeCatalog catalog) {
+        return new ComponentInstallService(mapper, client, catalog, clusterService, components);
     }
 
     @Test
@@ -191,6 +194,68 @@ class ComponentInstallServiceTest {
         } finally {
             org.springframework.web.context.request.RequestContextHolder.resetRequestAttributes();
         }
+    }
+
+    @Test
+    void nestedContractValuesAreDeepMergedAndPlaceholdersResolved() {
+        // 批② 的契约是嵌套的（prometheus.prometheusSpec.*），浅合并会把整棵子树替换掉；
+        // 占位符 ${cluster.name} 必须换成真实集群名
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of("prometheus", Map.of("prometheusSpec", Map.of(
+                                        "externalLabels", Map.of("cluster_name", "${cluster.name}"),
+                                        "ruleSelectorNilUsesHelmValues", false))),
+                                Map.of("prometheus.prometheusSpec.retention", "10d"))), List.of()));
+
+        service(catalog).apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL",
+                null, Map.of("prometheus.prometheusSpec.retention", "30d")), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"), org.mockito.ArgumentMatchers.eq("prometheus-operator"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> spec = (Map<String, Object>) ((Map<String, Object>)
+                captor.getValue().get(0).getValues().get("prometheus")).get("prometheusSpec");
+        assertThat(spec).containsEntry("retention", "30d")            // ⚙️ 用户值覆盖默认
+                .containsEntry("ruleSelectorNilUsesHelmValues", false); // 🔒 契约值仍在
+        @SuppressWarnings("unchecked")
+        Map<String, Object> labels = (Map<String, Object>) spec.get("externalLabels");
+        assertThat(labels).containsEntry("cluster_name", "coding-cluster");
+    }
+
+    @Test
+    void anEmptyThanosReceiveUrlFailsBeforeCreatingAnOperation() {
+        // 空 remoteWrite url 装出来的 Prometheus 永远上报不了，且运行时没有任何报错
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of("remoteWrite", List.of(Map.of("url", "${thanos.receive.url}"))),
+                                Map.of())), List.of()));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "");
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
+                .hasMessageContaining("thanos.receive.url");
+        verify(mapper, never()).insert(any());
+        verify(client, never()).applyComponent(anyString(), anyString(), anyString(), any());
     }
 
     @Test

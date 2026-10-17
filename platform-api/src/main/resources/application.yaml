@@ -13,8 +13,17 @@ thanos:
   # Thanos Query（全局单端点、无鉴权）；各集群 Prometheus remote_write 汇入并统一打 cluster_name 标签
   query:
     url: ${THANOS_QUERY_URL:http://192.168.31.80:19090}
+  receive:
+    # Thanos Receive：业务集群 Prometheus remote_write 的上报入口（组件安装时注入到 values）。
+    # 为空时，引用 ${thanos.receive.url} 的 recipe 会在安装前明确报错，不会下发空 URL。
+    url: ${THANOS_RECEIVE_URL:}
 
 platform:
+  calico:
+    # Calico Installation CR 的契约值（spec §5.5）：与集群现有网络不一致会**直接断网**。
+    # 留空时安装 calico 会在执行前明确报错，不会下发空值。
+    pod-cidr: ${CALICO_POD_CIDR:}
+    encapsulation: ${CALICO_ENCAPSULATION:}
   alert:
     webhook:
       # Alertmanager 的 webhook receiver 打到 /alert/webhook 时带的共享密钥（Bearer，带不带前缀都认）。

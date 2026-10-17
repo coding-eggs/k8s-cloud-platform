@@ -8,13 +8,16 @@ import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.components.ComponentRecipe;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
+import com.coding.platformapi.components.DeepMerge;
 import com.coding.platformapi.components.ReleaseSpec;
+import com.coding.platformapi.components.ValueTemplate;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
@@ -67,6 +70,21 @@ public class ComponentInstallService {
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
+    /**
+     * 业务集群 Prometheus 的 remoteWrite 目标（管理集群 Thanos receive）。
+     * 空值时凡是引用 {@code ${thanos.receive.url}} 的 recipe 都会**明确报错** ——
+     * 下发一个空 URL 装出来的 Prometheus 永远上报不了，且运行时没有报错。
+     */
+    @Value("${thanos.receive.url:}")
+    private String thanosReceiveUrl;
+
+    /** Calico Installation 的 CIDR 与封装方式（spec §5.5）；为空时安装 calico 会明确报错 */
+    @Value("${platform.calico.pod-cidr:}")
+    private String calicoPodCidr;
+
+    @Value("${platform.calico.encapsulation:}")
+    private String calicoEncapsulation;
+
     public Long apply(ComponentApplyRequest req, String operator) {
         String profile = clusterService.requireProfile(req.getClusterId());
         ComponentRecipe recipe = recipes.recipeOf(req.getComponentCode(), profile);
@@ -90,8 +108,10 @@ public class ComponentInstallService {
         }
 
         // spec §3.3：升级复用上次成功操作里的 values（本次显式传入的字段覆盖它）
-        List<ReleaseSpec> effective = mergeValues(recipe.releases(), req.getEditableValues(),
+        List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
                 parseSnapshot(last == null ? null : last.getValuesSnapshot()));
+        // 占位符（${cluster.name} / ${thanos.receive.url}）在落库前解析 —— 配置缺失要立刻失败，不留失败记录
+        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId());
         String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
@@ -140,27 +160,66 @@ public class ComponentInstallService {
     }
 
     /**
-     * 合并 values：契约值打底，用户值只能覆盖 recipe **声明过**的可编辑 key。
-     * 注意这是**顶层 key** 的合并；批② 的嵌套 values（如 prometheus.prometheusSpec.*）
-     * 要么用扁平 key，要么在这里加路径式合并 —— 届时补用例。
+     * 合并 values：上次快照 < 本次可编辑值 < 契约值（**深合并**）。
+     * 可编辑字段的 key 是路径形式（如 {@code prometheus.prometheusSpec.retention}），
+     * 先转成嵌套 Map 再合并；契约值永远最后压，不能被历史值或用户值覆盖。
      */
     private static List<ReleaseSpec> mergeValues(List<ReleaseSpec> releases, Map<String, Object> editable,
                                                  Map<String, Map<String, Object>> previous) {
         List<ReleaseSpec> out = new ArrayList<>();
         for (ReleaseSpec r : releases) {
-            // 优先级：上次的值 < 本次可编辑值 < 🔒 契约值（契约永远最后压，不能被历史值覆盖）
-            Map<String, Object> merged = new LinkedHashMap<>(
-                    previous.getOrDefault(r.releaseName(), Map.of()));
-            merged.putAll(r.contractValues());
-            if (editable != null) {
-                for (String key : r.editableValues().keySet()) {
-                    if (editable.containsKey(key)) {
-                        merged.put(key, editable.get(key));
-                    }
-                }
-            }
+            Map<String, Object> merged = DeepMerge.merge(
+                    previous.getOrDefault(r.releaseName(), Map.of()), editableNested(r, editable));
+            merged = DeepMerge.merge(merged, r.contractValues());
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
                     r.chartVersion(), merged, r.editableValues()));
+        }
+        return out;
+    }
+
+    /** 可编辑字段按路径声明，这里转成嵌套 Map（只接受 recipe 声明过的 key） */
+    private static Map<String, Object> editableNested(ReleaseSpec r, Map<String, Object> editable) {
+        if (editable == null) {
+            return Map.of();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String key : r.editableValues().keySet()) {
+            if (editable.containsKey(key)) {
+                putPath(out, key, editable.get(key));
+            }
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void putPath(Map<String, Object> root, String path, Object value) {
+        String[] parts = path.split("\\.");
+        Map<String, Object> cursor = root;
+        for (int i = 0; i < parts.length - 1; i++) {
+            Object next = cursor.get(parts[i]);
+            if (!(next instanceof Map<?, ?>)) {
+                next = new LinkedHashMap<String, Object>();
+                cursor.put(parts[i], next);
+            }
+            cursor = (Map<String, Object>) next;
+        }
+        cursor.put(parts[parts.length - 1], value);
+    }
+
+    /** 把 recipe 里的占位符替换成真实值（集群名、Thanos receive 地址） */
+    @SuppressWarnings("unchecked")
+    private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId) {
+        Map<String, String> context = new LinkedHashMap<>();
+        context.put("cluster.name", clusterService.requireName(clusterId));
+        context.put("thanos.receive.url", thanosReceiveUrl == null ? "" : thanosReceiveUrl);
+        context.put("calico.podCidr", calicoPodCidr == null ? "" : calicoPodCidr);
+        context.put("calico.encapsulation", calicoEncapsulation == null ? "" : calicoEncapsulation);
+        List<ReleaseSpec> out = new ArrayList<>();
+        for (ReleaseSpec r : releases) {
+            Map<String, Object> resolved =
+                    (Map<String, Object>) ValueTemplate.resolve(r.contractValues(), context);
+            out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
+                    r.chartVersion(), resolved, r.editableValues()));
         }
         return out;
     }

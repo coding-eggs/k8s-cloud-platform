@@ -477,6 +477,14 @@ public class ClusterService {
         return normalizeRole(cluster.getClusterRole());
     }
 
+    /**
+     * 集群名 —— recipe values 的 {@code ${cluster.name}} 用它（Thanos 的 externalLabels 按它过滤）。
+     * 与 {@link #requireProfile} 一样，集群不存在时抛错。
+     */
+    public String requireName(String clusterId) {
+        return require(clusterId).getClusterName();
+    }
+
     private K8sCluster sanitize(K8sCluster cluster) {
         cluster.setKubeconfig(null);
         return cluster;
