@@ -44,7 +44,13 @@ public class AlertWebhookTokenCheck {
         if (presented == null) {
             return false;
         }
-        String v = presented.startsWith("Bearer ") ? presented.substring(7) : presented;
-        return MessageDigest.isEqual(v.getBytes(StandardCharsets.UTF_8), token.getBytes(StandardCharsets.UTF_8));
+        // 两边都剥一次前缀：配置里写成 "Bearer xxx" 或 "xxx" 都能对上（本地开发常直接抄一份头）
+        String v = stripBearer(presented);
+        String expected = stripBearer(token);
+        return MessageDigest.isEqual(v.getBytes(StandardCharsets.UTF_8), expected.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String stripBearer(String s) {
+        return s != null && s.startsWith("Bearer ") ? s.substring(7) : s;
     }
 }
