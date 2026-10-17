@@ -137,7 +137,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       <el-table-column label="影响的功能" min-width="260">
         <template #default="{ row }">
           <span v-for="f in row.features" :key="f" class="cc-feature">{{ featureLabel(f) }}</span>
-          <!-- 缺组件给指引，不给安装按钮（安装/升级留给 S3.3 / S3.4） -->
+          <!-- 缺组件给指引；安装按钮在右侧「操作」列 -->
           <div v-if="row.state === 'NOT_INSTALLED' && row.features.length" class="cc-guide">
             缺它 → {{ row.features.map(featureLabel).join(' / ') }} 不可用（安装需 cluster-admin）
           </div>
@@ -159,12 +159,13 @@ const anyUnknown = computed(() => unknownCount.value > 0)
               <span class="cc-readonly">只读</span>
             </el-tooltip>
             <el-button v-else link type="primary" :loading="props.applying === row.code"
-                       @click="emit('apply', { code: row.code, action: 'UPGRADE', targetVersion: operations[row.code]?.toVersion ?? undefined })">
+                       @click="emit('apply', { code: row.code, action: 'UPGRADE' })">
               升级
             </el-button>
           </template>
-          <!-- UNKNOWN：不给装 —— "不知道"不是"没有" -->
-          <span v-else class="cc-readonly">—</span>
+          <!-- UNKNOWN / 无 recipe：不给装 —— "不知道"不是"没有"；没有 recipe 就明确说"暂不支持" -->
+          <span v-else-if="row.state === 'UNKNOWN'" class="cc-readonly">—</span>
+          <span v-else class="cc-readonly">暂不支持</span>
         </template>
       </el-table-column>
     </el-table>

@@ -36,9 +36,14 @@ public class K8sComponentClient {
      * 安装/升级（长任务）：POST /components/apply。
      * 用**慢速通道**（30 分钟读超时）—— helm 装一个栈可能要几分钟，常规 120s 会提前断开。
      */
-    public ComponentInstallResultDTO applyComponent(String clusterId, List<ReleaseInstallSpecDTO> releases) {
+    public ComponentInstallResultDTO applyComponent(String clusterId, String componentCode, String action,
+                                                    List<ReleaseInstallSpecDTO> releases) {
         ComponentInstallRequestDTO body = new ComponentInstallRequestDTO();
         body.setClusterId(clusterId);
+        // ⚠️ componentCode/action 缺一不可：k8s-server 用 componentCode 拼 release 标签，
+        //    漏了会在 release secret 上留下 component=null（评审发现过）
+        body.setComponentCode(componentCode);
+        body.setAction(action);
         body.setReleases(releases);
         return gateway.exchangeSlow(HttpMethod.POST, "/components/apply", null, body,
                 gateway.responseType(ComponentInstallResultDTO.class));

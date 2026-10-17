@@ -274,6 +274,21 @@ class ClusterServiceTest {
     }
 
     @Test
+    void createRejectsAConcurrentManagementInsert() {
+        // 竞态：countByRole 查的时候还没有，插入时被生成列的唯一键挡住
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "AES_KEY", "test-aes-key");
+        when(clusterMapper.countByRole("MANAGEMENT")).thenReturn(0);
+        when(clusterMapper.insert(any())).thenThrow(new org.springframework.dao.DuplicateKeyException("dup"));
+        ClusterCreateRequest req = new ClusterCreateRequest();
+        req.setClusterName("second-mgmt");
+        req.setKubeconfig("dummy");
+        req.setClusterRole("MANAGEMENT");
+
+        assertThatThrownBy(() -> svc.create(req))
+                .hasMessageContaining("已经存在管理集群");
+    }
+
+    @Test
     void createPersistsTheNormalizedRole() {
         // AES_KEY 是 @Value 注入的，手工构造的 svc 里是 null —— 这里补上，否则加密 kubeconfig 时 NPE
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "AES_KEY", "test-aes-key");

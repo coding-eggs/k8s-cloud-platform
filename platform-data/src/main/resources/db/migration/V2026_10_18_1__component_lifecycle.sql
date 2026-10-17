@@ -47,6 +47,33 @@ CREATE TABLE IF NOT EXISTS platform_component_operation (
   KEY idx_component_op_cluster_component (cluster_id, component_code, started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组件安装/升级操作记录';
 
+
+-- ===== 2.5) 并发保护（评审发现：countRunning + insert 是 TOCTOU）=====
+-- MySQL 没有部分索引，用**生成列 + 唯一键**表达"同一组件同时只能有一条进行中的操作"：
+--   running_lock 只在 PENDING/RUNNING 时有值，其余为 NULL（唯一索引允许多个 NULL）。
+SET @col := (SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'platform_component_operation'
+               AND COLUMN_NAME = 'running_lock');
+SET @ddl := IF(@col = 0,
+  'ALTER TABLE platform_component_operation
+     ADD COLUMN running_lock varchar(130) GENERATED ALWAYS AS
+       (IF(`status` IN (''PENDING'',''RUNNING''), CONCAT(cluster_id, ''|'', component_code), NULL)) STORED,
+     ADD UNIQUE KEY uk_component_op_running (running_lock)',
+  'SET @component_v1_skip_lock = 1');
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE PREPARE st;
+
+-- 同理：全局只允许一个未删除的 MANAGEMENT 集群（评审发现：countByRole + insert 也是 TOCTOU）
+SET @col := (SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'k8s_cluster'
+               AND COLUMN_NAME = 'management_lock');
+SET @ddl := IF(@col = 0,
+  'ALTER TABLE k8s_cluster
+     ADD COLUMN management_lock varchar(16) GENERATED ALWAYS AS
+       (IF(cluster_role = ''MANAGEMENT'' AND deleted_at IS NULL, ''M'', NULL)) STORED,
+     ADD UNIQUE KEY uk_cluster_management (management_lock)',
+  'SET @component_v1_skip_mgmt = 1');
+PREPARE st FROM @ddl; EXECUTE st; DEALLOCATE PREPARE st;
+
 -- ===== 3) 权限行 =====
 INSERT INTO platform_permission (id, domain, resource, action, code, description) VALUES
  ('perm_res_cluster_components_apply', 'API','/cluster/components/apply','POST','platform:cluster:manage',

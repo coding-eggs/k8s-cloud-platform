@@ -15,6 +15,7 @@ import com.coding.platformapi.models.ComponentStatusDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
@@ -54,6 +55,8 @@ public class ComponentInstallService {
     private static final int STALE_MINUTES = 15;
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
+    private static final TypeReference<Map<String, Map<String, Object>>> SNAPSHOT_TYPE =
+            new TypeReference<>() {};
 
     private final PlatformComponentOperationMapper mapper;
     private final K8sComponentClient client;
@@ -76,28 +79,44 @@ public class ComponentInstallService {
         }
         requireDependencies(req.getClusterId(), recipe);
 
-        List<ReleaseSpec> effective = mergeValues(recipe.releases(), req.getEditableValues());
-        String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
         PlatformComponentOperation last =
                 mapper.selectLatestSuccess(req.getClusterId(), req.getComponentCode());
+        // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
+        String action = req.getAction() == null ? "INSTALL" : req.getAction();
+        if ("UPGRADE".equals(action) && last == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "该组件不是平台安装的，平台不接管（只升级平台自己装的 release）");
+        }
+
+        // spec §3.3：升级复用上次成功操作里的 values（本次显式传入的字段覆盖它）
+        List<ReleaseSpec> effective = mergeValues(recipe.releases(), req.getEditableValues(),
+                parseSnapshot(last == null ? null : last.getValuesSnapshot()));
+        String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
         op.setClusterId(req.getClusterId());
         op.setComponentCode(req.getComponentCode());
-        op.setAction(req.getAction() == null ? "INSTALL" : req.getAction());
+        op.setAction(action);
         op.setProfile(profile);
         op.setFromVersion(last == null ? null : last.getToVersion());
         op.setToVersion(targetVersion);
         op.setReleaseNames(JSON.writeValueAsString(
                 effective.stream().map(ReleaseSpec::releaseName).toList()));
-        op.setValuesSnapshot(JSON.writeValueAsString(effective));
+        op.setValuesSnapshot(JSON.writeValueAsString(snapshotOf(effective)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
-        mapper.insert(op);
+        try {
+            mapper.insert(op);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // 生成列 running_lock 的唯一键兜住了并发：两个请求都过了 countRunning 检查
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "该组件正在执行安装/升级，请等待当前操作结束");
+        }
 
         Long id = op.getId();
-        executor.submit(() -> run(id, req.getClusterId(), List.copyOf(effective)));
+        executor.submit(() -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
+                List.copyOf(effective)));
         return id;
     }
 
@@ -121,22 +140,46 @@ public class ComponentInstallService {
      * 注意这是**顶层 key** 的合并；批② 的嵌套 values（如 prometheus.prometheusSpec.*）
      * 要么用扁平 key，要么在这里加路径式合并 —— 届时补用例。
      */
-    private static List<ReleaseSpec> mergeValues(List<ReleaseSpec> releases, Map<String, Object> editable) {
-        if (editable == null || editable.isEmpty()) {
-            return releases;
-        }
+    private static List<ReleaseSpec> mergeValues(List<ReleaseSpec> releases, Map<String, Object> editable,
+                                                 Map<String, Map<String, Object>> previous) {
         List<ReleaseSpec> out = new ArrayList<>();
         for (ReleaseSpec r : releases) {
-            Map<String, Object> merged = new LinkedHashMap<>(r.contractValues());
-            for (String key : r.editableValues().keySet()) {
-                if (editable.containsKey(key)) {
-                    merged.put(key, editable.get(key));
+            // 优先级：上次的值 < 本次可编辑值 < 🔒 契约值（契约永远最后压，不能被历史值覆盖）
+            Map<String, Object> merged = new LinkedHashMap<>(
+                    previous.getOrDefault(r.releaseName(), Map.of()));
+            merged.putAll(r.contractValues());
+            if (editable != null) {
+                for (String key : r.editableValues().keySet()) {
+                    if (editable.containsKey(key)) {
+                        merged.put(key, editable.get(key));
+                    }
                 }
             }
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
                     r.chartVersion(), merged, r.editableValues()));
         }
         return out;
+    }
+
+    /** 快照按 release 存"最终 values"，下次升级时作为基线 */
+    private static Map<String, Object> snapshotOf(List<ReleaseSpec> releases) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        for (ReleaseSpec r : releases) {
+            snapshot.put(r.releaseName(), r.contractValues());
+        }
+        return snapshot;
+    }
+
+    private static Map<String, Map<String, Object>> parseSnapshot(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return JSON.readValue(json, SNAPSHOT_TYPE);
+        } catch (Exception e) {
+            // 旧格式（整段 ReleaseSpec 数组）解析不了：当没有历史值，别让升级因此失败
+            return Map.of();
+        }
     }
 
     /** 目标版本必须存在于 recipe 里（批① 只有一个版本；批② 起一个组件可有多个） */
@@ -151,30 +194,37 @@ public class ComponentInstallService {
         return requested;
     }
 
-    private void run(Long id, String clusterId, List<ReleaseSpec> releases) {
+    private void run(Long id, String clusterId, String componentCode, String action,
+                     List<ReleaseSpec> releases) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
         mapper.updateById(running);
         try {
-            ComponentInstallResultDTO result = client.applyComponent(clusterId, toDtos(releases));
+            ComponentInstallResultDTO result =
+                    client.applyComponent(clusterId, componentCode, action, toDtos(releases));
             PlatformComponentOperation done = new PlatformComponentOperation();
             done.setId(id);
             done.setStatus(result.isSuccess() ? SUCCESS : FAILED);
-            done.setMessage(result.getMessage());
+            done.setMessage(truncate(result.getMessage(), 1000));
             done.setLogTail(tailOf(result));
             done.setFinishedAt(new Date());
             mapper.updateById(done);
             if (result.isSuccess()) {
-                // 以探测为准：装完刷新一次，页面状态跟着变
-                components.refresh(clusterId);
+                // 以探测为准：装完刷新一次，页面状态跟着变。
+                // ⚠️ 刷新失败**不能**把已经成功的安装覆盖成 FAILED（评审发现）——单独 catch。
+                try {
+                    components.refresh(clusterId);
+                } catch (Exception e) {
+                    log.warn("组件 {} 安装成功但刷新探测失败（不影响操作结果）: {}", id, e.getMessage());
+                }
             }
         } catch (Exception e) {
             log.warn("组件操作 {} 执行失败: {}", id, e.getMessage());
             PlatformComponentOperation failed = new PlatformComponentOperation();
             failed.setId(id);
             failed.setStatus(FAILED);
-            failed.setMessage(e.getMessage());
+            failed.setMessage(truncate(e.getMessage(), 1000));
             failed.setFinishedAt(new Date());
             mapper.updateById(failed);
         }
@@ -233,6 +283,17 @@ public class ComponentInstallService {
     }
 
     public List<PlatformComponentOperation> latestByCluster(String clusterId) {
+        // 惰性标定：页面每次加载都会经过这里，比"只在启动时扫一次"更能兜住"重启时还没超时"的情况。
+        // （platform-api 当前没有 @EnableScheduling，故不用定时任务。）
+        markStaleRunning();
         return mapper.selectLatestPerComponent(clusterId);
+    }
+
+    /** message 列是 VARCHAR(1024)：helm 原始输出可能很长，落库前截断（完整输出在 log_tail） */
+    private static String truncate(String value, int max) {
+        if (value == null) {
+            return null;
+        }
+        return value.length() <= max ? value : value.substring(0, max);
     }
 }

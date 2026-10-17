@@ -101,7 +101,13 @@ public class ClusterService {
         cluster.setClusterRole(role);
         cluster.setCreatedAt(now);
         cluster.setUpdatedAt(now);
-        clusterMapper.insert(cluster);
+        try {
+            clusterMapper.insert(cluster);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // 生成列 management_lock 的唯一键兜住了并发创建
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "已经存在管理集群，全局只允许一个 MANAGEMENT");
+        }
 
         try {
             adminClient.provisionCluster(cluster.getClusterId());

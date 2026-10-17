@@ -83,7 +83,7 @@
   <select id="selectStaleRunning" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_component_operation
-    where `status` = 'RUNNING'
+    where `status` in ('PENDING', 'RUNNING')
       and started_at &lt; now() - interval #{minutes} minute
   </select>
 

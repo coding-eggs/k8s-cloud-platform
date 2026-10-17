@@ -38,6 +38,24 @@ class ComponentLifecycleMigrationTest {
     }
 
     @Test
+    void concurrencyIsGuardedByGeneratedColumns() throws Exception {
+        // ⭐ 评审发现：countRunning + insert 是 TOCTOU。用生成列 + 唯一键兜住。
+        String sql = Files.readString(SQL);
+        assertThat(sql).contains("running_lock");
+        assertThat(sql).contains("uk_component_op_running");
+        assertThat(sql).contains("management_lock");
+        assertThat(sql).contains("uk_cluster_management");
+    }
+
+    @Test
+    void staleSweepAlsoCoversPendingOperations() throws Exception {
+        // 评审发现：只看 RUNNING 会让"重启时还没超时"的 PENDING 永远卡住
+        String xml = Files.readString(Path.of(
+                "../platform-data/src/main/resources/mapper/system/PlatformComponentOperationMapper.xml"));
+        assertThat(xml).contains("'PENDING', 'RUNNING'");
+    }
+
+    @Test
     void allThreeEndpointsHavePermissionRowsBoundToAdmin() throws Exception {
         String sql = Files.readString(SQL);
         assertThat(sql).contains("'/cluster/components/apply'");

@@ -78,17 +78,22 @@ public record ReleaseSpec(
 
 ```
 k8s-server/src/main/resources/components/<code>/<recipeVersion>/
-    provenance.yaml         # 上游来源 URL、拉取日期、每个 chart 的 sha256
-    charts/<release>.tgz    # 一个或多个 chart（thin chart 或上游 chart）
-    values-default.yaml     # 平台默认 values（🔒 + ⚙️ 的初始值）
+    provenance.yaml         # 上游来源 URL、拉取日期（chart 是目录形态，完整性由 git / 镜像保证）
+    chart/                  # 一份 chart（thin chart 或解包后的上游 chart）
+      Chart.yaml
+      templates/…
 ```
 
 理由：helm 在 k8s-server 里执行；若 chart 放 platform-api，就得把几 MB 的 tgz 经 HTTP 传过去。
 platform-api 只传 `code + recipeVersion + releaseName + values`，**业务判断与二进制产物分离**。
 
 - 运行时把 `.tgz` 解到临时目录（0600）再交给 helm；用完删除。
-- **启动时校验**每个 chart 的 sha256；**请求时校验** `(code, version)` 存在于内置包中，不存在就明确报错
+- **请求时校验** `(code, version)` 存在于内置包中且 `Chart.yaml` 存在，缺了就明确报错
   （两端版本漂移的症状是"装了个不存在的版本"，必须一眼可辨）。
+- **不另做 sha256**（实现时修订）：chart 以文本目录进 git、随镜像发布，完整性由版本控制与镜像保证；
+  真正的防漂移靠"版本找不到就报错"。
+- **values 的契约值只在 platform-api 的 recipe 里写一遍**（实现时修订，删掉了最初的 `values-default.yaml`）——
+  那份文件没有任何代码读取，两处重复会在漂移时毫无信号。
 - **升级组件版本 = 平台发版**（用户已接受）。
 
 ---

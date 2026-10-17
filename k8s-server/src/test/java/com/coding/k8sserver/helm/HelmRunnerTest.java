@@ -5,6 +5,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -16,14 +18,20 @@ class HelmRunnerTest {
     Path tmp;
 
     private HelmRunner runner(Path log, int exit) {
+        return runner(log, exit, Map.of(), Duration.ofMinutes(15));
+    }
+
+    private HelmRunner runner(Path log, int exit, Map<String, String> extraEnv, Duration timeout) {
         // 假 helm 用同 JVM 启动的小程序，不依赖 shell：
         // Windows 上 PATH 里的 bash 可能是 WSL，不认 D:/ 路径（实测退出码 127）
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         String cp = System.getProperty("surefire.test.class.path", System.getProperty("java.class.path"));
+        Map<String, String> env = new HashMap<>(extraEnv);
+        env.put("FAKE_HELM_LOG", log.toString());
+        env.put("FAKE_HELM_EXIT", String.valueOf(exit));
         return new HelmRunner("helm",
                 List.of(java, "-cp", cp, "com.coding.k8sserver.helm.FakeHelm"),
-                Map.of("FAKE_HELM_LOG", log.toString(), "FAKE_HELM_EXIT", String.valueOf(exit)),
-                tmp);
+                env, tmp, timeout);
     }
 
     private Path chart() throws Exception {
@@ -91,6 +99,36 @@ class HelmRunnerTest {
 
         assertThat(r.ok()).isFalse();
         assertThat(r.exitCode()).isEqualTo(3);
+    }
+
+    @Test
+    void aHungHelmIsKilledByTheTimeout() throws Exception {
+        // ⭐ 评审发现：读输出若在 waitFor 之前，超时形同虚设。假 helm 睡 5s，超时 300ms。
+        Path values = tmp.resolve("values.yaml");
+        Files.writeString(values, "replicas: 1\n");
+        long start = System.currentTimeMillis();
+
+        HelmResult r = runner(tmp.resolve("argv.log"), 0,
+                Map.of("FAKE_HELM_SLEEP_MS", "5000"), Duration.ofMillis(300))
+                .render("k", chart(), values, "kube-system");
+
+        long elapsed = System.currentTimeMillis() - start;
+        assertThat(r.ok()).isFalse();
+        assertThat(r.output()).contains("超时");
+        assertThat(elapsed).as("必须在超时附近返回，而不是等 helm 自己结束").isLessThan(4000);
+    }
+
+    @Test
+    void theTemporaryKubeconfigIsOwnerOnly() throws Exception {
+        Path permLog = tmp.resolve("perm.log");
+        Path values = tmp.resolve("values.yaml");
+        Files.writeString(values, "replicas: 1\n");
+
+        runner(tmp.resolve("argv.log"), 0, Map.of("FAKE_HELM_PERM_LOG", permLog.toString()), Duration.ofMinutes(15))
+                .render("apiVersion: v1\nkind: Config\n", chart(), values, "kube-system");
+
+        // POSIX 上必须是 rw-------；Windows 测试机上是 n/a（无法设 POSIX 权限，生产镜像是 Linux）
+        assertThat(Files.readString(permLog)).isIn("rw-------", "n/a");
     }
 
     @Test

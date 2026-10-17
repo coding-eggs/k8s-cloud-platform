@@ -1,5 +1,7 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
@@ -7,6 +9,8 @@ import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentApplyRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.List;
 import java.util.Map;
@@ -69,7 +73,7 @@ class ComponentInstallServiceTest {
     void aSuccessfulRunMarksSuccessAndRefreshesTheProbe() throws Exception {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
-        when(client.applyComponent(anyString(), any())).thenReturn(successResult());
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
         CountDownLatch done = new CountDownLatch(1);
         doAnswer(inv -> {
             done.countDown();
@@ -91,13 +95,74 @@ class ComponentInstallServiceTest {
     void aFailedRunRecordsTheHelmMessage() throws Exception {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
-        when(client.applyComponent(anyString(), any())).thenReturn(failureResult());
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(failureResult());
 
         service().apply(new ComponentApplyRequest(
                 "c1", "metrics-server", "INSTALL", null, Map.of()), "admin");
 
         verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
                 op -> "FAILED".equals(op.getStatus()) && op.getMessage().contains("预检")));
+    }
+
+    @Test
+    void upgradeRequiresAPriorPlatformInstall() {
+        // spec 决策 10：手工装的 release 平台不接管
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
+        when(mapper.selectLatestSuccess("c1", "metrics-server")).thenReturn(null);
+
+        assertThatThrownBy(() -> service().apply(new ComponentApplyRequest(
+                "c1", "metrics-server", "UPGRADE", null, Map.of()), "admin"))
+                .hasMessageContaining("不接管");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void valuesFromTheLastSuccessAreReusedOnUpgrade() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
+        PlatformComponentOperation last = new PlatformComponentOperation();
+        last.setId(1L);
+        last.setToVersion("1.0.0");
+        last.setValuesSnapshot(
+                "{\"platform-metrics-server\":{\"args\":[\"--kubelet-insecure-tls\"],\"replicas\":3}}");
+        when(mapper.selectLatestSuccess("c1", "metrics-server")).thenReturn(last);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        service().apply(new ComponentApplyRequest("c1", "metrics-server", "UPGRADE", null, null), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("metrics-server"),
+                org.mockito.ArgumentMatchers.eq("UPGRADE"), captor.capture());
+        assertThat(captor.getValue().get(0).getValues()).containsEntry("replicas", 3);
+    }
+
+    @Test
+    void aVeryLongHelmMessageIsTruncatedBeforePersisting() {
+        // message 是 VARCHAR(1024)：超长会让 UPDATE 失败，真正的失败原因反而丢失
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
+        ComponentInstallResultDTO failure = failureResult();
+        failure.setMessage("x".repeat(5000));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(failure);
+
+        service().apply(new ComponentApplyRequest("c1", "metrics-server", "INSTALL", null, Map.of()), "admin");
+
+        verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
+                op -> "FAILED".equals(op.getStatus()) && op.getMessage().length() == 1000));
+    }
+
+    @Test
+    void aConcurrentInsertIsRejectedWithAFriendlyMessage() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
+        org.mockito.Mockito.doThrow(new DuplicateKeyException("dup")).when(mapper).insert(any());
+
+        assertThatThrownBy(() -> service().apply(new ComponentApplyRequest(
+                "c1", "metrics-server", "INSTALL", null, Map.of()), "admin"))
+                .hasMessageContaining("正在执行");
     }
 
     @Test

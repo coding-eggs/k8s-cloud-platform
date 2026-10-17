@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +14,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -30,26 +32,29 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class HelmRunner {
 
-    private static final long TIMEOUT_MINUTES = 15;
-
     private final String binary;
     /** 测试注入：非空时命令以这个前缀开头（通常是 java -cp ... FakeHelm） */
     private final List<String> commandPrefix;
     private final Map<String, String> extraEnv;
     /** 临时 kubeconfig 的落点；测试注入 @TempDir 才能断言"确实删了" */
     private final Path tempDir;
+    /** 单次 helm 调用的超时（超过则 destroyForcibly） */
+    private final Duration timeout;
 
     /** 生产构造器。类里有第二个构造器，Spring 不会自己挑 —— 必须标 @Autowired。 */
     @Autowired
-    public HelmRunner(@Value("${platform.components.helm-binary:helm}") String binary) {
-        this(binary, null, Map.of(), Path.of(System.getProperty("java.io.tmpdir")));
+    public HelmRunner(@Value("${platform.components.helm-binary:helm}") String binary,
+                      @Value("${platform.components.helm-timeout:15m}") Duration timeout) {
+        this(binary, null, Map.of(), Path.of(System.getProperty("java.io.tmpdir")), timeout);
     }
 
-    HelmRunner(String binary, List<String> commandPrefix, Map<String, String> extraEnv, Path tempDir) {
+    HelmRunner(String binary, List<String> commandPrefix, Map<String, String> extraEnv,
+               Path tempDir, Duration timeout) {
         this.binary = binary;
         this.commandPrefix = commandPrefix;
         this.extraEnv = extraEnv;
         this.tempDir = tempDir;
+        this.timeout = timeout;
     }
 
     /**
@@ -125,13 +130,27 @@ public class HelmRunner {
         pb.redirectErrorStream(true);
         pb.environment().putAll(extraEnv);
         Process p = pb.start();
-        String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        boolean finished = p.waitFor(TIMEOUT_MINUTES, TimeUnit.MINUTES);
+
+        // ⚠️ 输出**必须**在另一个线程读：readAllBytes 会阻塞到进程关闭 stdout，
+        //    放在 waitFor 之前的话超时永远不会触发（helm 卡住 = 线程永久阻塞）。
+        StringBuilder out = new StringBuilder();
+        Thread reader = Thread.ofVirtual().start(() -> {
+            try (InputStream in = p.getInputStream()) {
+                out.append(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            } catch (IOException ignored) {
+                // 进程被 kill 时读端会报错，输出按已读到的部分处理
+            }
+        });
+
+        boolean finished = p.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
         if (!finished) {
             p.destroyForcibly();
-            return new HelmResult(false, -1, "helm 超时（" + TIMEOUT_MINUTES + " 分钟）");
+            reader.join(2000);
+            return new HelmResult(false, -1, "helm 超时（" + timeout.toSeconds() + " 秒）");
         }
+        reader.join(5000);
         int exit = p.exitValue();
+        String output = out.toString();
         log.info("helm {} 退出码 {}（{} 字节输出）", logicalArgs.get(0), exit, output.length());
         return new HelmResult(exit == 0, exit, truncate(output));
     }
@@ -143,7 +162,13 @@ public class HelmRunner {
         } catch (UnsupportedOperationException ignored) {
             // 非 POSIX 文件系统（Windows 测试机）：退化为默认权限，生产镜像里是 Linux
         }
-        Files.writeString(file, kubeconfig, StandardCharsets.UTF_8);
+        try {
+            Files.writeString(file, kubeconfig, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            // 写失败时 exec() 还没拿到路径 —— 必须在这里删掉，否则 0600 的明文会留在临时目录
+            deleteQuietly(file);
+            throw e;
+        }
         return file;
     }
 

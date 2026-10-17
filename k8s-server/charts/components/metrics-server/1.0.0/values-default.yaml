@@ -1,3 +1,0 @@
-# 🔒 平台契约值：自签 kubelet 证书的集群必须加 --kubelet-insecure-tls，否则 metrics-server 永远 NotReady
-args:
-  - --kubelet-insecure-tls
