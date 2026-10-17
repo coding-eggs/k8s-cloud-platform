@@ -864,6 +864,32 @@ export interface K8sPodMonitor {
 /** 集群 API 能力快照（group → versions[]）；空对象 = 未探测。后端 POST /cluster/capability/get */
 export type K8sClusterCapability = Record<string, string[]>
 
+// ---- 集群组件（S1.2）----
+
+/** 组件状态四态 —— ⚠️ UNKNOWN 不是 NOT_INSTALLED：探测失败时不能说"没装" */
+export type K8sComponentState = 'INSTALLED_HEALTHY' | 'INSTALLED_UNHEALTHY' | 'NOT_INSTALLED' | 'UNKNOWN'
+
+/** 一条组件的完整状态（平台侧投影，`POST /cluster/components`） */
+export interface K8sComponentStatus {
+  code: string
+  name: string
+  state: K8sComponentState
+  version?: string | null
+  namespace?: string | null
+  ready?: number | null
+  desired?: number | null
+  detail?: string | null
+  /** 它支撑的平台功能 code（依赖关系只在后端目录里写一遍） */
+  features: string[]
+}
+
+/** 一个功能的可用性旗标（租户侧窄投影，`POST /cluster/component-flags`）—— 有意不含版本/命名空间 */
+export interface K8sComponentFlag {
+  available: boolean
+  reason?: string | null
+  missing: string[]
+}
+
 /** HPA 指标目标（对应后端 HpaMetricTargetDTO） */
 export interface K8sHpaMetricTarget {
   type?: 'Utilization' | 'AverageValue' | 'Value' | null

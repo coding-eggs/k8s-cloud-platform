@@ -3,19 +3,21 @@ import { meshApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
 import { usePermission } from '@/stores/permission'
 import { useClusterCapability } from '@/composables/useClusterCapability'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import type { MeshStatus } from '@/types'
 
 /**
- * 服务网格状态（B6）：模块横幅 + create 门禁的数据源。两层来源，按权限降级。
+ * 服务网格状态（B6，S1.2 收口）：模块横幅 + create 门禁的数据源。按权限降级。
  *
- * <h2>为什么有两层</h2>
- * `/mesh/status` 是平台侧端点（k8s-server 声明 `AccessBoundary.PLATFORM`，api 侧码 `platform:cluster:manage`）——
- * 只有平台管理员调得到。但租户的 Gateway 页也要知道「本集群装没装 Gateway API」（否则无法决定 create 是否可用），
- * 而那份信息租户本来就有：`/cluster/capability/get` 对租户开放（`tenant:cluster:capability:view`，V2026_10_07_2）。
- *
- * - **有权读 /mesh/status** → 全量：Gateway API + Istio + **ambient（ztunnel 活探测，只有这条通路有）**
- * - **只有 capability 读权** → 从能力快照派生 Gateway API / Istio；**ambient 标记为未知**（不猜、也不显示"未安装"）
- * - **两者都无权** → 「未探测」态，hasGatewayApi=false（保守，与 useClusterCapability 一致）
+ * <h2>三层来源，各答不同的问题</h2>
+ * - **有权读 /mesh/status**（平台管理员）→ 全量：三个布尔全部来自后端组件清单的派生
+ *   （组件 {@code istio} / {@code gateway-api} / {@code istio-ambient}），同一次探测、同一份缓存。
+ * - **只有 capability 读权**（租户）→ {@code hasGatewayApi} / {@code hasIstio} 仍从能力快照派生：
+ *   它们问的是 **API group 在不在**，而 group 存在性的唯一判据按设计就是 {@code k8s_cluster.capability}
+ *   列（S1.2 决策 7：组件清单里这一列读它、不另探）。**ambient 改读组件旗标**
+ *   （{@code /cluster/component-flags} 的 {@code ambient-mesh}）—— 它是工作负载判据，
+ *   能力快照回答不了，而收口前租户这一格只能显示「ambient 未知」。
+ * - **两者都无权** → 「未探测」态，hasGatewayApi=false（保守，与 useClusterCapability 一致）。
  *
  * <h2>hasGatewayApi=false 的三种成因不可区分</h2>
  * 未安装 / 未探测 / 集群断开。故本 composable 只暴露 hasGatewayApi 与 probed，由横幅负责把措辞写成
@@ -32,8 +34,10 @@ export function useMeshStatus(clusterId: Ref<string | null | undefined>) {
   /** 刷新能力（写操作，独占 platform:cluster:manage） */
   const canRefresh = computed(() => perm.has(apiCodes.clusterManage))
 
-  // 能力快照：租户侧唯一可用的来源，也是"刷新能力"后的即时回读
+  // 能力快照：租户侧 group 存在性的来源，也是"刷新能力"后的即时回读
   const cap = useClusterCapability(clusterId)
+  // 组件旗标（S1.2 收口）：租户侧 ambient 的唯一来源
+  const comp = useClusterComponents(clusterId)
 
   const full = ref<MeshStatus | null>(null)
   const loading = ref(false)
@@ -70,11 +74,13 @@ export function useMeshStatus(clusterId: Ref<string | null | undefined>) {
     const c = cap.cap.value
     return 'istio.io' in c || 'networking.istio.io' in c
   })
-  /** ambient 是否探测过：只有全量通路能给答案，能力快照里没有这个信息 */
-  const ambientKnown = computed(() => full.value !== null)
-  const istioAmbient = computed(() => full.value?.istioAmbient === true)
+  /** ambient 是否已有答案：平台侧全量通路，或组件旗标已拿到（S1.2 收口后租户也有答案） */
+  const ambientKnown = computed(() => full.value !== null || comp.probed.value)
+  /** ambient 判定：全量优先，否则读组件旗标的 ambient-mesh（依赖组件 istio-ambient） */
+  const istioAmbient = computed(() =>
+    full.value ? full.value.istioAmbient === true : comp.available('ambient-mesh'))
   /** 有没有任何来源的答案（决定横幅写"未探测"还是具体状态） */
-  const probed = computed(() => full.value !== null || cap.probed.value)
+  const probed = computed(() => full.value !== null || cap.probed.value || comp.probed.value)
 
   /**
    * 刷新能力：真跑一次 discovery 并持久化，然后回读。
@@ -85,7 +91,7 @@ export function useMeshStatus(clusterId: Ref<string | null | undefined>) {
     const id = clusterId.value
     if (!id) return
     await cap.refresh()
-    await loadFull()
+    await Promise.all([loadFull(), comp.load()])
   }
 
   return {

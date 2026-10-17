@@ -2,6 +2,7 @@ import { computed, ref, watch, type Ref } from 'vue'
 import { clusterApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
 import { usePermission } from '@/stores/permission'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import type { K8sClusterCapability } from '@/types'
 
 /**
@@ -26,6 +27,8 @@ export function useClusterCapability(clusterId: Ref<string | null | undefined>) 
   const perm = usePermission()
   const cap = ref<K8sClusterCapability>({})
   const loading = ref(false)
+  // S1.2 收口：HPA 资源指标那一格改读组件旗标（metrics-server 是组件；group 只是它的一个判据）
+  const comp = useClusterComponents(clusterId)
 
   /** 读能力快照所需权限（ANY-of，与后端权限表的该端点多行一一对应） */
   const canRead = () => perm.hasAny([apiCodes.clusterManage, apiCodes.clusterCapabilityView])
@@ -59,7 +62,13 @@ export function useClusterCapability(clusterId: Ref<string | null | undefined>) 
   }
 
   const probed = computed(() => Object.keys(cap.value).length > 0)
-  const hasMetricsServer = computed(() => 'metrics.k8s.io' in cap.value)
+  /**
+   * metrics-server 是否可用（S1.2 收口）：旗标拿到了就以组件为准（组件 {@code metrics-server}，
+   * 功能码 {@code hpa-resource-metrics}），否则退回 capability 列 —— 两条来源的**降级方向**是
+   * "组件优先"，因为组件判据同时看了 group 与工作负载健康。
+   */
+  const hasMetricsServer = computed(() =>
+    comp.probed.value ? comp.available('hpa-resource-metrics') : 'metrics.k8s.io' in cap.value)
   const hasCustomMetrics = computed(() => 'custom.metrics.k8s.io' in cap.value)
   const hasExternalMetrics = computed(() => 'external.metrics.k8s.io' in cap.value)
   /** 探测到 autoscaling 且无 v2 → false；未探测 → true（默认 V2） */
@@ -70,6 +79,10 @@ export function useClusterCapability(clusterId: Ref<string | null | undefined>) 
     !probed.value || hasMetricsServer.value || hasCustomMetrics.value || hasExternalMetrics.value)
 
   // ---- Calico（网络）能力门禁：纯 discovery，无活探测。未探测（cap 空）→ false（保守，可点「刷新能力」补探）----
+  // ⚠️ S1.2 收口时**有意不改读组件旗标**（与 HPA 那一格不同）：hasCalicoCrd 问的是
+  //    「crd.projectcalico.org 这个 group 在不在」，而 network 这个功能旗标还包含 tigera-operator 的健康
+  //    —— 把 Calico 页门禁建在操作器 Pod 的健康上，会在 operator 重启时把整页禁用，而 CRD 明明还在、
+  //    页面上要看的 IPPool/BGP 对象也读得到。group 存在性按设计只有 capability 列一处判据（S1.2 决策 7）。
   /** IPPool/BGP* 等 projectcalico.org 资源可用 → 允许创建；缺失则禁创建 + 横幅 */
   const hasCalico = computed(() => 'projectcalico.org' in cap.value)
   /** IPAM 派生视图另需 crd.projectcalico.org（ipamblocks）；缺失则派生段降级「—」 */

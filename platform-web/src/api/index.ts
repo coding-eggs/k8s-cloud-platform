@@ -14,6 +14,8 @@ import type {
   K8sClusterCapability,
   K8sClusterOption,
   K8sClusterOverview,
+  K8sComponentFlag,
+  K8sComponentStatus,
   K8sNamespaceStatEntry,
   K8sTenantOverview,
   K8sConfigMap,
@@ -101,6 +103,19 @@ export const clusterApi = {
   refreshCapability: (clusterId: string) => http.post<never, void>('/cluster/capability/refresh', { clusterId }),
   getCapability: (clusterId: string) =>
     http.post<never, K8sClusterCapability>('/cluster/capability/get', { clusterId }),
+
+  /** 集群组件清单（全量，平台侧；需 platform:cluster:manage） */
+  components: (clusterId: string) =>
+    http.post<never, K8sComponentStatus[]>('/cluster/components', { clusterId }),
+  /**
+   * 组件功能旗标（租户可读的窄投影：功能 code → 能不能用 + 原因）。
+   * ⭐ 这是 CI / 服务网格 / 网络 / HPA 四处门控的**单一出处** —— 别再各自去读 capability 拼。
+   */
+  componentFlags: (clusterId: string) =>
+    http.post<never, Record<string, K8sComponentFlag>>('/cluster/component-flags', { clusterId }),
+  /** 重新探测（探完覆写缓存；写操作，需 platform:cluster:manage） */
+  refreshComponents: (clusterId: string) =>
+    http.post<never, void>('/cluster/components/refresh', { clusterId }),
 
   /**
    * 集群概览快照（集群概览页首屏）：总量 + 节点健康/异常 Pod + 存储 + 能力摘要。
