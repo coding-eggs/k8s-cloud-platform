@@ -140,10 +140,15 @@ public record WorkloadProbeResult(
 
 | 状态 | 判据 |
 |---|---|
-| `INSTALLED_HEALTHY` | 有判据命中，且（无工作负载判据 或 ready == desired） |
-| `INSTALLED_UNHEALTHY` | 有判据命中，但 ready < desired（或期望副本为 0） |
-| `NOT_INSTALLED` | 探测**成功**且所有判据都没命中 |
+| `INSTALLED_HEALTHY` | 活判据命中，且（无副本语义 / CRD 或 ready == desired） |
+| `INSTALLED_UNHEALTHY` | 活判据命中，但 ready < desired（或期望副本为 0） |
+| `NOT_INSTALLED` | 探测**成功**且活判据没命中 |
 | `UNKNOWN` | 探测**失败**（集群不可达 / 无权限），或 capability 列为空（未探测） |
+
+**API group 判据不作为"装没装"的依据**（2026-10-18 修订，真实事故）：capability 是 DB 快照，
+且 **Helm 卸载不删除 CRD** —— `monitoring.coreos.com` 这类 group 会在 `helm uninstall` 之后永久残留。
+所以目录里只要有工作负载 / CRD 探测，**活判据就是唯一权威**；group 只在组件完全没有活判据时兜底
+（当前目录里没有这种组件）。活判据没命中而 group 仍在时，`detail` 要点明"CRD 残留"，便于排障。
 
 **`NOT_INSTALLED` 与 `UNKNOWN` 必须分开**：这与既有口径一致（`MeshStatusDTO` 的
 "未探测"注释、`CapabilitySummaryDTO` 的"全 false = 未探测"）。把探测失败说成"没装"

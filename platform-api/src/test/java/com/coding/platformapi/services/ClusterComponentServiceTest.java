@@ -159,14 +159,32 @@ class ClusterComponentServiceTest {
     }
 
     @Test
-    void aComponentWithOnlyAnApiGroupJudgeIsHealthyWhenTheGroupExists() {
-        // gateway-api 只有 CRD 判据（没有工作负载）—— group 在即"已装"，版本列空着是诚实的
+    void aStaleApiGroupDoesNotMakeACrdOnlyComponentLookInstalled() {
+        // 真实事故（2026-10-18 手动验证）：Helm 卸载不删 CRD，capability 快照也不会自己刷新 ——
+        // group 还在**不能**当"已装"。有活判据时它是唯一权威，版本列空着才是诚实的。
         ClusterComponentService svc = svcWithGroups(List.of(), Map.of("gateway.networking.k8s.io", List.of("v1")));
 
         ComponentStatusDTO s = find(svc.status("c1"), "gateway-api");
 
-        assertThat(s.getState()).isEqualTo("INSTALLED_HEALTHY");
+        assertThat(s.getState()).isEqualTo("NOT_INSTALLED");
         assertThat(s.getVersion()).isNull();
+        assertThat(s.getDetail()).contains("没有找到 CRD");
+    }
+
+    @Test
+    void anUninstalledWorkloadIsNotInstalledEvenWhenTheApiGroupRemains() {
+        // 2026-10-18 手动验证：`helm uninstall` 旧 Prometheus 后 monitor 下已无 Deployment，
+        // 但 monitoring.coreos.com 的 CRD（10 个）与 capability 快照都还在 ——
+        // 以前会显示「已安装且健康」，让用户以为卸载没生效。
+        ClusterComponentService svc = svcWithGroups(
+                List.of(probe("monitor", false, null, null, null)),
+                Map.of("monitoring.coreos.com", List.of("v1")));
+
+        ComponentStatusDTO s = find(svc.status("c1"), "prometheus-operator");
+
+        assertThat(s.getState()).isEqualTo("NOT_INSTALLED");
+        // 详情要点出"group 还在是因为 CRD 残留"，否则排障时看不出为什么它以前显示已安装
+        assertThat(s.getDetail()).contains("monitoring.coreos.com").contains("CRD");
     }
 
     @Test

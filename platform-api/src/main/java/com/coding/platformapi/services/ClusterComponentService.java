@@ -250,10 +250,18 @@ public class ClusterComponentService {
             s.setDetail("探测失败：" + w.getError());
             return s;
         }
-        boolean workloadHit = w != null && w.isFound();
-        if (!groupHit && !workloadHit) {
+        // ⭐ 有活判据（工作负载 / CRD 探测）时它是**唯一权威**。API group 来自 DB 快照，
+        //    而 Helm 卸载**不删 CRD**、capability 快照也不会自己刷新 ——"group 还在"
+        //    永远不代表组件还在跑。2026-10-18 实测：`helm uninstall` 旧 Prometheus 后，
+        //    monitor 下已无 Deployment，group 却因 10 个残留 CRD 仍在，页面仍显示「已安装且健康」。
+        if (w != null && !w.isFound()) {
             s.setState(NOT_INSTALLED);
-            s.setDetail(w != null && w.getDetail() != null ? w.getDetail() : "在所有判据上都没命中");
+            s.setDetail(notFoundDetail(w, def, groupHit));
+            return s;
+        }
+        if (w == null && !groupHit) {
+            s.setState(NOT_INSTALLED);
+            s.setDetail("在所有判据上都没命中");
             return s;
         }
         if (w != null) {
@@ -270,6 +278,19 @@ public class ClusterComponentService {
                 || (w.getDesired() > 0 && w.getReady() != null && w.getReady().equals(w.getDesired()));
         s.setState(healthy ? HEALTHY : UNHEALTHY);
         return s;
+    }
+
+    /**
+     * 活判据没命中时的详情。若 capability 快照里还留着这个 group，要点明那是 **CRD 残留**
+     * （Helm 卸载不删 CRD），否则用户排障时看不出"以前为什么显示已安装"。
+     */
+    private static String notFoundDetail(WorkloadProbeResultDTO w, ComponentDef def, boolean groupHit) {
+        String base = w.getDetail() != null ? w.getDetail() : "在平台已知的位置没有找到";
+        if (!groupHit) {
+            return base;
+        }
+        return base + "（API group " + def.apiGroup()
+                + " 仍在：Helm 卸载不删除 CRD，不代表组件还在运行）";
     }
 
     private static WorkloadProbeResultDTO incompleteResult(WorkloadProbeTargetDTO t) {
