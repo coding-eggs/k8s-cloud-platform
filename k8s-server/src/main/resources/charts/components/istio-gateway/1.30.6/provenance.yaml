@@ -1,0 +1,8 @@
+source: https://github.com/istio/istio
+chart: gateway
+version: 1.30.6
+appVersion: 1.30.6
+fetched_at: 2026-10-17
+fetch_command: helm pull gateway（见 source 仓库）
+note: >-
+  Istio 官方 chart；对外入口 release 名固定 external-gateway。

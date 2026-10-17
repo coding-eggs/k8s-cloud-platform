@@ -1,0 +1,8 @@
+source: https://github.com/thanos-community/helm-charts
+chart: thanos
+version: 0.47.2
+appVersion: v0.42.4
+fetched_at: 2026-10-17
+fetch_command: helm pull thanos（见 source 仓库）
+note: >-
+  上游 Thanos 项目不发布官方 Helm chart，使用 thanos-community 社区 chart（用户 2026-10-17 裁定）；原样入库。

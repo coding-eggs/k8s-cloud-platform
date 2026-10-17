@@ -1,0 +1,8 @@
+source: https://github.com/tektoncd/operator/releases/download/tekton-operator-0.81.2/tekton-operator-0.81.2.tgz
+chart: tekton-operator
+version: 0.81.2
+appVersion: v0.81.2
+fetched_at: 2026-10-17
+fetch_command: helm pull tekton-operator（见 source 仓库）
+note: >-
+  Tekton 官方 release asset 里的 Helm chart（0.81.2 与集群现状一致）；原样入库；TektonConfig 通过 chart 自带的 extraObjects 下发。

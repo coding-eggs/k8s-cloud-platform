@@ -1,0 +1,8 @@
+source: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+chart: kube-prometheus-stack
+version: 92.10.1
+appVersion: v0.94.1
+fetched_at: 2026-10-17
+fetch_command: helm pull kube-prometheus-stack（见 source 仓库）
+note: >-
+  官方 chart 原样入库，未修改任何模板；平台定制全部通过 recipe values。

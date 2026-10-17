@@ -1,0 +1,8 @@
+source: https://github.com/open-telemetry/opentelemetry-helm-charts
+chart: opentelemetry-operator
+version: 0.126.0
+appVersion: 0.161.0
+fetched_at: 2026-10-17
+fetch_command: helm pull opentelemetry-operator（见 source 仓库）
+note: >-
+  官方 chart 原样入库；webhook 证书依赖 cert-manager。

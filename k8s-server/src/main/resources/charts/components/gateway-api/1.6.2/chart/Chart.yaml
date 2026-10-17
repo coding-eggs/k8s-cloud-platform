@@ -1,0 +1,16 @@
+annotations:
+  category: DeveloperTools
+apiVersion: v2
+appVersion: 1.6.2
+description: Manage gateway-api (experimental) CRDs
+keywords:
+- gateway-api
+- crds
+maintainers:
+- name: Wiremind
+  url: https://github.com/wiremind/wiremind-helm-charts
+name: gateway-api-crds
+sources:
+- https://github.com/wiremind/wiremind-helm-charts/tree/main/charts/gateway-api-crds
+- https://github.com/kubernetes-sigs/gateway-api
+version: 1.6.2

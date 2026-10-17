@@ -1,0 +1,8 @@
+source: https://github.com/projectcalico/calico
+chart: tigera-operator
+version: v3.33.0
+appVersion: v3.33.0
+fetched_at: 2026-10-17
+fetch_command: helm pull tigera-operator（见 source 仓库）
+note: >-
+  Calico 官方 chart（docs.tigera.io 仓库）；原样入库。

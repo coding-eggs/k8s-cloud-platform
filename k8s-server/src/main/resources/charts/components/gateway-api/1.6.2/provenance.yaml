@@ -1,0 +1,8 @@
+source: https://github.com/wiremind/wiremind-helm-charts/tree/main/charts/gateway-api-crds
+chart: gateway-api-crds
+version: 1.6.2
+appVersion: 1.6.2
+fetched_at: 2026-10-17
+fetch_command: helm pull gateway-api-crds（见 source 仓库）
+note: >-
+  上游 Gateway API 只发 standard/experimental YAML，使用 wiremind 社区 CRD chart（experimental 通道，用户 2026-10-17 裁定）；原样入库。

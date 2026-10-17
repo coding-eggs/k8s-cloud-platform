@@ -1,0 +1,8 @@
+source: https://github.com/cert-manager/cert-manager
+chart: cert-manager
+version: v1.21.2
+appVersion: v1.21.2
+fetched_at: 2026-10-17
+fetch_command: helm pull cert-manager（见 source 仓库）
+note: >-
+  官方 chart 原样入库；契约只开 crds.enabled/keep。
