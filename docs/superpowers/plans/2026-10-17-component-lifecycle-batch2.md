@@ -122,21 +122,22 @@ git commit -m "feat(components): recipe values 支持嵌套合并与集群占位
 
 ### Task 2: 官方/社区 chart 入库
 
-**Files（每个 chart 一个目录 + provenance.yaml）:**
+**Files（每个 chart 一个目录 + provenance.yaml；目录名 = chart 名，版本号与上游一致）:**
 - Create: `k8s-server/src/main/resources/charts/components/prometheus-operator/92.10.1/chart/`（kube-prometheus-stack）
-- Create: `k8s-server/src/main/resources/charts/components/thanos/0.47.2/chart/`（thanos-community/thanos）
-- Create: `k8s-server/src/main/resources/charts/components/gateway-api/1.6.2/chart/`（wiremind/gateway-api-crds，experimental）
-- Create: `k8s-server/src/main/resources/charts/components/istio/1.30.6/chart/`（istio/base）
-- Create: `k8s-server/src/main/resources/charts/components/istio/1.30.6-istiod/chart/`（istio/istiod）
-- Create: `k8s-server/src/main/resources/charts/components/istio/1.30.6-gateway/chart/`（istio/gateway）
-- Create: `k8s-server/src/main/resources/charts/components/istio-ambient/1.30.6-cni/chart/`（istio/cni）
-- Create: `k8s-server/src/main/resources/charts/components/istio-ambient/1.30.6-ztunnel/chart/`（istio/ztunnel）
+- Create: `k8s-server/src/main/resources/charts/components/thanos/0.47.2/chart/`（thanos-community）
+- Create: `k8s-server/src/main/resources/charts/components/gateway-api/1.6.2/chart/`（wiremind，experimental）
+- Create: `k8s-server/src/main/resources/charts/components/istio-base/1.30.6/chart/`
+- Create: `k8s-server/src/main/resources/charts/components/istio-istiod/1.30.6/chart/`
+- Create: `k8s-server/src/main/resources/charts/components/istio-gateway/1.30.6/chart/`
+- Create: `k8s-server/src/main/resources/charts/components/istio-cni/1.30.6/chart/`
+- Create: `k8s-server/src/main/resources/charts/components/istio-ztunnel/1.30.6/chart/`
 - Create: `k8s-server/src/main/resources/charts/components/cert-manager/v1.21.2/chart/`
 - Create: `k8s-server/src/main/resources/charts/components/otel-operator/0.126.0/chart/`
 - Create: `k8s-server/src/main/resources/charts/components/tigera-operator/v3.33.0/chart/`
 - Create: `k8s-server/src/main/resources/charts/components/tekton-operator/0.81.2/chart/`（GitHub release asset）
 
-**注意：** istio 的 base/istiod/gateway/cni/ztunnel 是**五个独立官方 chart**，同一版本号。目录名带后缀以避免冲突（chartCode 与 chartVersion 是两个字段，这里用 `<version>-<chart>` 形式的 chartVersion 只是为了目录唯一；recipe 里按实际填）。
+**注意：** Istio 的 base/istiod/gateway/cni/ztunnel 是**五个独立官方 chart**，版本号都是 1.30.6；
+用不同的 `chartCode`（目录名）区分，**不往版本号里塞后缀**。
 
 - [ ] **Step 1: 逐个 `helm pull`（走 7890 代理）并原样入库**
 - [ ] **Step 2: 每个目录写 provenance.yaml**（source / repo / version / appVersion / fetched_at / fetch_command / note）
@@ -189,11 +190,16 @@ git commit -m "feat(components): recipe values 支持嵌套合并与集群占位
 
 ---
 
-### Task 7: prometheus-operator（+ 管理集群 thanos）recipe
+### Task 7: prometheus-operator recipe
 
-**契约（BUSINESS）：** release `platform-kps`，ns `monitor`，chart `prometheus-operator` @ `92.10.1`；
+**契约（BUSINESS 与 MANAGEMENT 相同）：** release `platform-kps`，ns `monitor`，chart `prometheus-operator` @ `92.10.1`；
 `prometheus.prometheusSpec.externalLabels.cluster_name=${cluster.name}`、四个 `*SelectorNilUsesHelmValues=false`、四个 `*NamespaceSelector={}`、`alertmanager.alertmanagerSpec.alertmanagerConfigMatcherStrategy.type=OnNamespace`、两个 alertmanagerConfig `*Selector={}`、`remoteWrite=[{url: ${thanos.receive.url}}]`。
-**契约（MANAGEMENT）：** 同上 + 额外 release `platform-thanos`（chart `thanos` @ `0.47.2`，ns `monitor`），其 query/receive 配置与平台 `thanos.query.url` 对齐。
+
+**Ruling（执行时定）：平台托管 Thanos 的安装本批不做。**
+原因：Thanos 需要对象存储凭据（不能进 values），且必须与集群现有 bucket 布局一致；
+本集群已有手工安装的 `th` release，平台按"不接管已有 release"只读。
+代价：管理集群的 Thanos 仍需手工安装；`${thanos.receive.url}` 指向既有 Thanos。
+chart（thanos 0.47.2）已入库，后续批次补 recipe 即可。
 
 ---
 
@@ -223,3 +229,20 @@ extraObjects:
 - [ ] 每个 chart 用 `helm template` + 契约值渲染一次（记录在提交说明）
 - [ ] 更新 spec §2.3 的组件清单与版本表
 - [ ] 更新记忆
+
+## Rulings（执行时做的决定）
+
+1. **没有官方 chart 的组件用社区 chart**（用户 2026-10-17 裁定）：gateway-api → wiremind gateway-api-crds（experimental）；
+   thanos → thanos-community。provenance 标注「上游无官方 chart」。
+2. **Tekton 走官方 operator chart**（GitHub release asset 里的 `tekton-operator-0.81.2.tgz`），
+   TektonConfig 通过 chart 自带的 `extraObjects` 下发 —— 契约值（coschedule / 配额默认资源）只存在于 TektonConfig，
+   而 TektonConfig 只有 operator 路径才有。代价：operator 与 pipelines 共用一个 release。
+3. **tekton / calico 与其 operator 共用一个 release**（幂等），依赖靠 `requires` 串行。
+   代价：第二个组件升级时会重放同一个 release。
+4. **Istio 用五个 chartCode**（istio-base / istio-istiod / istio-gateway / istio-cni / istio-ztunnel），
+   版本号保持上游 1.30.6，不发明「1.30.6-istiod」这类自定义版本。
+5. **空占位符一律硬失败**（不只 URL）：空 CIDR 的 Calico 会断网、空值的 TektonConfig 字段会静默失效。
+6. **TektonConfig 的取值以集群实测为准**：`coschedule: workspaces`、`profile: lite`、`targetNamespace: tekton-pipelines`
+   （旧记忆里的 `pipelineruns` 与实测不符，已按实测修正）。
+7. **功能级验收不在本批**（用户 2026-10-17 裁定）。
+8. **平台托管 Thanos 不在本批**（见 Task 7）。

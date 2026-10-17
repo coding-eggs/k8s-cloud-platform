@@ -130,7 +130,7 @@ class ComponentRecipeCatalogTest {
         assertThat(extra).hasSize(1);
         Map<String, Object> spec = (Map<String, Object>) extra.get(0).get("spec");
         Map<String, Object> pipeline = (Map<String, Object>) spec.get("pipeline");
-        assertThat(pipeline).containsEntry("coschedule", "pipelineruns");
+        assertThat(pipeline).containsEntry("coschedule", "workspaces");
         assertThat(pipeline).containsKey("default-container-resource-requirements");
     }
 

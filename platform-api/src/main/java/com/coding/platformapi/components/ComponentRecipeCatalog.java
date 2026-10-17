@@ -99,8 +99,13 @@ public class ComponentRecipeCatalog {
     /**
      * Tekton 由 operator 安装，契约值落在 TektonConfig 上（通过官方 chart 自带的 {@code extraObjects} 下发）：
      * <ul>
-     *   <li>{@code coschedule: pipelineruns} —— 否则一个 TaskRun 挂不了两块 PVC workspace，构建缓存不启用</li>
-     *   <li>{@code default-container-resource-requirements} —— 命名空间配额下 init 容器需要默认资源</li>
+     *   <li>{@code coschedule: workspaces} —— 允许一个 TaskRun 挂多块 PVC workspace（构建缓存）。
+     *       取值以 2026-10-17 集群实测的 TektonConfig 为准（1.15.x 的合法值是 workspaces /
+     *       pipelineruns / isolate-pipelinerun，默认就是 workspaces）</li>
+     *   <li>{@code default-container-resource-requirements} —— 命名空间配额下 init 容器需要默认资源
+     *       （平台侧设不到 init 容器）</li>
+     *   <li>{@code profile: lite} + {@code targetNamespace: tekton-pipelines} —— 与集群现状一致，
+     *       探测判据就在这个命名空间</li>
      * </ul>
      */
     private static final Map<String, Object> TEKTON_CONFIG = Map.of(
@@ -108,9 +113,10 @@ public class ComponentRecipeCatalog {
             "kind", "TektonConfig",
             "metadata", Map.of("name", "config"),
             "spec", Map.of(
-                    "profile", "all",
+                    "profile", "lite",
+                    "targetNamespace", "tekton-pipelines",
                     "pipeline", Map.of(
-                            "coschedule", "pipelineruns",
+                            "coschedule", "workspaces",
                             "default-container-resource-requirements", Map.of(
                                     "containers", Map.of(
                                             "requests", Map.of("cpu", "100m", "memory", "128Mi"),

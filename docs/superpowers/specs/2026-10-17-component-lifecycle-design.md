@@ -100,6 +100,23 @@ k8s-server/src/main/resources/charts/components/<code>/<chartVersion>/
 - **手写 chart 的代价已被实测证明**：metrics-server 的手写 thin chart 漏了 `system:auth-delegator` 绑定，
   `helm template` 与单测全绿，只有真集群调用 metrics API 时才 500。批② 起禁止手写。
 
+**批② 落地的 chart 清单（2026-10-17）**
+
+| 组件 code | chart 目录 | 版本 | 来源 |
+|---|---|---|---|
+| metrics-server | metrics-server | 3.14.0 | 官方（kubernetes-sigs） |
+| prometheus-operator | prometheus-operator | 92.10.1 | 官方（prometheus-community，kube-prometheus-stack） |
+| gateway-api | gateway-api | 1.6.2 | **社区**（wiremind，experimental；上游只发 YAML） |
+| istio | istio-base / istio-istiod / istio-gateway | 1.30.6 | 官方（istio） |
+| istio-ambient | istio-cni / istio-ztunnel | 1.30.6 | 官方（istio） |
+| tekton-operator | tekton-operator | 0.81.2 | 官方（tektoncd/operator release asset） |
+| tekton | 同上（TektonConfig 经 extraObjects 下发） | 0.81.2 | 官方 |
+| tigera-operator | tigera-operator | v3.33.0 | 官方（projectcalico） |
+| calico | 同上（Installation CR 经 values 下发） | v3.33.0 | 官方 |
+| cert-manager | cert-manager | v1.21.2 | 官方（jetstack） |
+| otel-operator | otel-operator | 0.126.0 | 官方（open-telemetry） |
+| thanos | thanos | 0.47.2 | **社区**（thanos-community；上游无 chart）；本批未接 recipe |
+
 理由：helm 在 k8s-server 里执行；若 chart 放 platform-api，就得把几 MB 的包经 HTTP 传过去。
 platform-api 只传 `code + chartVersion + releaseName + values`，**业务判断与二进制产物分离**。
 
