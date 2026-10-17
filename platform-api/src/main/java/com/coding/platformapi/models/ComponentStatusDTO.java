@@ -34,4 +34,11 @@ public class ComponentStatusDTO {
     private List<String> availableVersions;
     /** 可编辑配置项（⚙️，来自 recipe）；契约值（🔒）不在其中 */
     private List<EditableFieldDTO> editableFields;
+    /** 安装/升级成功后是否下发平台告警联动（Secret + AlertmanagerConfig） */
+    private boolean platformAlerting;
+    /**
+     * 告警回调地址的**平台默认值**（前端表单预填用）。
+     * 用户可在安装表单里改；clusterId 永远由后端拼。
+     */
+    private String defaultAlertWebhookUrl;
 }

@@ -918,6 +918,10 @@ export interface K8sComponentStatus {
   availableVersions?: string[]
   /** 可编辑配置项（⚙️，来自 recipe）；契约值（🔒）不在其中 */
   editableFields?: K8sEditableField[]
+  /** 安装/升级成功后是否下发平台告警联动（Secret + AlertmanagerConfig） */
+  platformAlerting?: boolean
+  /** 告警回调地址的平台默认值（表单预填；clusterId 由后端拼） */
+  defaultAlertWebhookUrl?: string | null
 }
 
 /** 组件的一个可编辑配置项；key 是路径形式，apply 时原样回传 */

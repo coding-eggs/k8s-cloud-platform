@@ -135,6 +135,17 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void onlyPrometheusDeclaresPlatformAlerting() {
+        // 平台告警联动只对 Prometheus 有意义（Alertmanager 由 kube-prometheus-stack 带出来）
+        assertThat(catalog.recipeOf("prometheus-operator", "BUSINESS").platformAlerting()).isTrue();
+        for (String code : catalog.codes()) {
+            if (!code.equals("prometheus-operator")) {
+                assertThat(catalog.recipeOf(code, "BUSINESS").platformAlerting()).as(code).isFalse();
+            }
+        }
+    }
+
+    @Test
     void tigeraOperatorDoesNotTakeOverTheNetworkOnItsOwn() {
         // 只有 Installation CR 才接管 CNI：operator 单独安装必须是 installation.enabled=false
         Map<String, Object> installation = specOf("tigera-operator", "installation");

@@ -19,4 +19,15 @@ public class ComponentApplyRequest {
     private String targetVersion;
     /** 用户可编辑的 values（只允许 recipe 声明的字段） */
     private Map<String, Object> editableValues;
+    /**
+     * 平台告警回调地址（仅 platformAlerting 的组件用，如 Prometheus）。
+     * 用户在建/升级时填写；clusterId 由后端拼接。空 = 用平台配置的默认值。
+     */
+    private String alertWebhookUrl;
+
+    /** 兼容旧调用（不含告警地址） */
+    public ComponentApplyRequest(String clusterId, String componentCode, String action,
+                                 String targetVersion, Map<String, Object> editableValues) {
+        this(clusterId, componentCode, action, targetVersion, editableValues, null);
+    }
 }

@@ -248,6 +248,15 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void onlyPrometheusExposesPlatformAlerting() {
+        // 表单据此显示"告警回调地址"输入框
+        ClusterComponentService svc = svc(List.of());
+
+        assertThat(find(svc.status("c1"), "prometheus-operator").isPlatformAlerting()).isTrue();
+        assertThat(find(svc.status("c1"), "istio").isPlatformAlerting()).isFalse();
+    }
+
+    @Test
     void whenTheProfileCannotBeReadTheVersionListIsEmpty() {
         // 画像读不到 → 取不到 recipe → 版本列表为空（探测本身照常，不因此整体失败）
         ClusterService failing = mock(ClusterService.class);

@@ -15,6 +15,7 @@ import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EditableFieldDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 
@@ -60,6 +61,10 @@ public class ClusterComponentService {
     /** 可安装版本来自 recipe（按集群画像取哪一套） */
     private final ClusterService clusterService;
     private final ComponentRecipeCatalog recipes;
+
+    /** 告警回调地址的平台默认值：前端安装表单预填（用户可改，clusterId 由后端拼） */
+    @Value("${platform.alert.webhook.url:}")
+    private String defaultAlertWebhookUrl;
     /** full 投影：状态 + 版本 + 命名空间 + detail + 功能映射（管理员） */
     public List<ComponentStatusDTO> status(String clusterId) {
         return cache.get(KEY_PREFIX + clusterId, TTL, LIST_TYPE, () -> probe(clusterId));
@@ -151,8 +156,7 @@ public class ClusterComponentService {
     }
 
     /** 平台可安装的 chart 版本（去重，保持 recipe 顺序）；没有 recipe → 空列表 */
-    private List<String> availableVersions(String code, String profile) {
-        ComponentRecipe recipe = recipes.recipeOf(code, profile);
+    private static List<String> availableVersions(ComponentRecipe recipe) {
         if (recipe == null) {
             return List.of();
         }
@@ -163,8 +167,7 @@ public class ClusterComponentService {
     }
 
     /** 可编辑配置项（⚙️）：按各 release 声明的 editableValues 展平、同 key 去重 */
-    private List<EditableFieldDTO> editableFields(String code, String profile) {
-        ComponentRecipe recipe = recipes.recipeOf(code, profile);
+    private static List<EditableFieldDTO> editableFields(ComponentRecipe recipe) {
         if (recipe == null) {
             return List.of();
         }
@@ -205,8 +208,12 @@ public class ClusterComponentService {
         s.setCode(def.code());
         s.setName(def.name());
         s.setFeatures(def.features());
-        s.setAvailableVersions(availableVersions(def.code(), profile));
-        s.setEditableFields(editableFields(def.code(), profile));
+        ComponentRecipe recipe = recipes.recipeOf(def.code(), profile);
+        s.setAvailableVersions(availableVersions(recipe));
+        s.setEditableFields(editableFields(recipe));
+        s.setPlatformAlerting(recipe != null && recipe.platformAlerting());
+        s.setDefaultAlertWebhookUrl(recipe != null && recipe.platformAlerting()
+                ? defaultAlertWebhookUrl : null);
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现

@@ -35,6 +35,8 @@ const emit = defineEmits<{
     action: 'INSTALL' | 'UPGRADE'
     targetVersion?: string
     editableValues?: Record<string, unknown>
+    /** 平台告警回调地址（仅 platformAlerting 的组件） */
+    alertWebhookUrl?: string
   }): void
 }>()
 
@@ -111,11 +113,15 @@ interface ApplyDialog {
    * 「上次快照」基线，否则每次升级都会把用户上次改的值重置成 recipe 默认值。
    */
   initial: Record<string, string>
+  /** 该组件装完是否要下发告警联动（Prometheus）：显示回调地址输入框 */
+  showWebhook: boolean
+  webhookUrl: string
 }
 
 const applyDialog = ref<ApplyDialog>({
   visible: false, code: '', name: '', action: 'INSTALL',
   version: '', versions: [], fields: [], values: {}, jsonText: {}, initial: {},
+  showWebhook: false, webhookUrl: '',
 })
 
 function openInstall(row: K8sComponentStatus): void {
@@ -146,6 +152,8 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
+    showWebhook: !!row.platformAlerting,
+    webhookUrl: row.defaultAlertWebhookUrl ?? '',
   }
 }
 
@@ -174,6 +182,7 @@ function confirmApply(): void {
     action: d.action,
     targetVersion: d.action === 'UPGRADE' ? d.version : undefined,
     editableValues: Object.keys(editable).length ? editable : undefined,
+    alertWebhookUrl: d.showWebhook && d.webhookUrl.trim() ? d.webhookUrl.trim() : undefined,
   })
 }
 
@@ -300,6 +309,16 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-radio-group>
         </div>
       </div>
+      <div v-if="applyDialog.showWebhook" class="cc-form-row">
+        <span class="cc-form-label">平台告警回调地址</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.webhookUrl"
+                    placeholder="http://<平台地址>:8081/alert/webhook" spellcheck="false" />
+          <div class="cc-form-hint">
+            集群里的 Alertmanager 需要能访问到；后端会自动追加 ?clusterId=…
+          </div>
+        </div>
+      </div>
       <div v-for="f in applyDialog.fields" :key="f.key" class="cc-form-row">
         <span class="cc-form-label">{{ f.label }}</span>
         <div class="cc-form-control">
@@ -347,4 +366,5 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-form-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
 .cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
 .cc-form-control { flex: 1 1 auto; min-width: 0; }
+.cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 </style>

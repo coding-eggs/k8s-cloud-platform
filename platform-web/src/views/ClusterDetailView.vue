@@ -52,6 +52,7 @@ async function onApply(p: {
   action: 'INSTALL' | 'UPGRADE'
   targetVersion?: string
   editableValues?: Record<string, unknown>
+  alertWebhookUrl?: string
 }): Promise<void> {
   const target = components.statusOf(p.code)
   try {
@@ -69,7 +70,7 @@ async function onApply(p: {
   }
   applying.value = p.code
   try {
-    const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues)
+    const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues, p.alertWebhookUrl)
     const op = await operations.wait(id)
     if (op.status === 'SUCCESS') {
       ElMessage.success('操作完成，正在刷新探测…')

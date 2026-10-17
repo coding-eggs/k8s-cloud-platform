@@ -35,11 +35,12 @@ export function useComponentOperations(clusterId: Ref<string | null | undefined>
     action: 'INSTALL' | 'UPGRADE',
     targetVersion?: string,
     editableValues?: Record<string, unknown>,
+    alertWebhookUrl?: string,
   ): Promise<number> {
     const id = clusterId.value
     if (!id) throw new Error('缺少集群上下文')
     const operationId = await clusterApi.componentApply({
-      clusterId: id, componentCode, action, targetVersion, editableValues,
+      clusterId: id, componentCode, action, targetVersion, editableValues, alertWebhookUrl,
     })
     await load()
     return operationId

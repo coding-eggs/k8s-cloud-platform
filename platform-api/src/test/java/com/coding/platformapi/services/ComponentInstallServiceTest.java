@@ -317,6 +317,57 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void theFormSuppliedWebhookUrlWinsOverThePlatformDefault() {
+        // 用户在建表里填的地址优先；clusterId 仍由后端拼
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of(), Map.of())), List.of(), true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://default:8081/alert/webhook");
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "Bearer sd");
+
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
+                "http://10.1.2.3:9000/hook"), "admin");
+
+        verify(client, timeout(5000)).applyPlatformAlerting(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("monitor"),
+                org.mockito.ArgumentMatchers.eq("http://10.1.2.3:9000/hook?clusterId=c1"),
+                org.mockito.ArgumentMatchers.eq("sd"));
+    }
+
+    @Test
+    void aMissingWebhookUrlIsRejectedBeforeInstalling() {
+        // 没有地址就别开始装 —— 装完再失败会让用户以为告警已生效
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of(), Map.of())), List.of(), true));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "");
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
+                .hasMessageContaining("告警回调地址");
+        verify(mapper, never()).insert(any());
+        verify(client, never()).applyComponent(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
     void staleRunningOperationsAreMarkedUnknown() {
         PlatformComponentOperation stale = new PlatformComponentOperation();
         stale.setId(7L);

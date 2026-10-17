@@ -106,6 +106,13 @@ public class ComponentInstallService {
         }
         requireDependencies(req.getClusterId(), recipe);
 
+        // 告警回调地址：表单值优先，其次平台配置。platformAlerting 的组件没地址就直接拒（别装完才失败）
+        String alertWebhookUrl = resolveAlertWebhookUrl(req.getAlertWebhookUrl());
+        if (recipe.platformAlerting() && (alertWebhookUrl == null || alertWebhookUrl.isBlank())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请填写平台告警回调地址（集群里的 Alertmanager 需要能访问到平台）");
+        }
+
         PlatformComponentOperation last =
                 mapper.selectLatestSuccess(req.getClusterId(), req.getComponentCode());
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
@@ -148,7 +155,7 @@ public class ComponentInstallService {
         String authorization = K8sServerGateway.currentAuthorization();
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                        List.copyOf(effective), recipe.platformAlerting())));
+                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl)));
         return id;
     }
 
@@ -265,7 +272,7 @@ public class ComponentInstallService {
     }
 
     private void run(Long id, String clusterId, String componentCode, String action,
-                     List<ReleaseSpec> releases, boolean platformAlerting) {
+                     List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
@@ -276,7 +283,7 @@ public class ComponentInstallService {
             // 告警联动在写 SUCCESS 之前做：失败则整条操作记 FAILED（消息里说明组件本身已装好）
             if (result.isSuccess() && platformAlerting) {
                 try {
-                    applyPlatformAlerting(clusterId, releases.get(0).namespace());
+                    applyPlatformAlerting(clusterId, releases.get(0).namespace(), alertWebhookUrl);
                 } catch (Exception e) {
                     throw new IllegalStateException("组件已安装，但平台告警联动配置失败：" + e.getMessage(), e);
                 }
@@ -311,21 +318,30 @@ public class ComponentInstallService {
     /**
      * 下发平台告警联动（Secret + AlertmanagerConfig）。
      *
-     * <p>⚠️ 集群里的 Alertmanager 需要能访问 {@code platform.alert.webhook.url} ——
+     * <p>⚠️ 地址是**表单里填的**（集群里的 Alertmanager 要能访问到）——
      * 平台与集群不在同一台机器时，127.0.0.1 不可达，必须配成集群网络可达的地址。
+     * clusterId 由这里统一拼，前端不传。
      */
-    private void applyPlatformAlerting(String clusterId, String namespace) {
+    private void applyPlatformAlerting(String clusterId, String namespace, String base) {
         String token = stripBearer(alertWebhookToken);
         if (token == null || token.isBlank()) {
             throw new IllegalStateException("platform.alert.webhook.token 未配置");
         }
-        String base = alertWebhookBaseUrl == null ? "" : alertWebhookBaseUrl.trim();
-        if (base.isEmpty()) {
-            throw new IllegalStateException("platform.alert.webhook.url 未配置（集群里的 Alertmanager 需要能访问到平台）");
+        if (base == null || base.isBlank()) {
+            throw new IllegalStateException("平台告警回调地址为空");
+        }
+        if (!base.startsWith("http://") && !base.startsWith("https://")) {
+            throw new IllegalStateException("平台告警回调地址必须以 http:// 或 https:// 开头：" + base);
         }
         String separator = base.contains("?") ? "&" : "?";
         client.applyPlatformAlerting(clusterId, namespace,
                 base + separator + "clusterId=" + clusterId, token);
+    }
+
+    /** 表单值优先，其次平台配置；只做 trim */
+    private String resolveAlertWebhookUrl(String requested) {
+        String value = requested != null && !requested.isBlank() ? requested : alertWebhookBaseUrl;
+        return value == null ? null : value.trim();
     }
 
     /**
