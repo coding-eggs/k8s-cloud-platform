@@ -1,5 +1,6 @@
 package com.coding.platformapi.components;
 
+import com.coding.common.constants.ProbeCrds;
 import com.coding.common.constants.ProbeNamespaces;
 import org.junit.jupiter.api.Test;
 
@@ -42,9 +43,17 @@ class ClusterComponentCatalogTest {
         //    因为越界的探测被 400 拒了，而上游把被拒渲染成没装。靠这条测试盯住，不靠人记得改两处。
         for (ComponentDef d : catalog.all()) {
             for (ComponentProbe p : d.probes()) {
-                assertThat(ProbeNamespaces.DEFAULT)
-                        .as("组件 %s 的候选命名空间 %s 不在 adapter 的探测清单里", d.code(), p.namespace())
-                        .contains(p.namespace());
+                if ("crd".equals(p.kind())) {
+                    // CRD 是集群级资源：走 CRD 清单，且不该带命名空间
+                    assertThat(ProbeCrds.DEFAULT)
+                            .as("组件 %s 的 CRD %s 不在 adapter 的探测清单里", d.code(), p.name())
+                            .contains(p.name());
+                    assertThat(p.namespace()).as("CRD 判据不该带命名空间").isNull();
+                } else {
+                    assertThat(ProbeNamespaces.DEFAULT)
+                            .as("组件 %s 的候选命名空间 %s 不在 adapter 的探测清单里", d.code(), p.namespace())
+                            .contains(p.namespace());
+                }
             }
         }
     }

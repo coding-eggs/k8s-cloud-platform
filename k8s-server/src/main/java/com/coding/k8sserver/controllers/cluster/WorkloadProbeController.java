@@ -1,5 +1,6 @@
 package com.coding.k8sserver.controllers.cluster;
 
+import com.coding.common.constants.ProbeCrds;
 import com.coding.common.constants.ProbeNamespaces;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
@@ -52,14 +53,18 @@ public class WorkloadProbeController implements AccessBoundaryAware {
     private final KubernetesOperationsFactory operationsFactory;
     private final ResourceAccessResolver accessResolver;
     private final List<String> probeNamespaces;
+    private final List<String> probeCrds;
 
     public WorkloadProbeController(KubernetesOperationsFactory operationsFactory,
                                    ResourceAccessResolver accessResolver,
                                    @Value("${platform.k8s.probe-namespaces:" + ProbeNamespaces.DEFAULT_CSV + "}")
-                                   List<String> probeNamespaces) {
+                                   List<String> probeNamespaces,
+                                   @Value("${platform.k8s.crd-probes:" + ProbeCrds.DEFAULT_CSV + "}")
+                                   List<String> probeCrds) {
         this.operationsFactory = operationsFactory;
         this.accessResolver = accessResolver;
         this.probeNamespaces = probeNamespaces;
+        this.probeCrds = probeCrds;
     }
 
     @Override
@@ -75,7 +80,13 @@ public class WorkloadProbeController implements AccessBoundaryAware {
         accessResolver.assertClusterAccess(request.getClusterId());
         List<WorkloadProbeTargetDTO> targets = request.getTargets() == null ? List.of() : request.getTargets();
         for (WorkloadProbeTargetDTO t : targets) {
-            if (!probeNamespaces.contains(t.getNamespace())) {
+            // CRD 是集群级资源：走 CRD 清单，不走命名空间清单（两者是不同的边界维度）
+            if ("crd".equals(t.getKind())) {
+                if (!probeCrds.contains(t.getName())) {
+                    throw new CloudPlatformException(EnumResponseType.ERROR,
+                            "CRD " + t.getName() + " 不在允许探测的清单内");
+                }
+            } else if (!probeNamespaces.contains(t.getNamespace())) {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "命名空间 " + t.getNamespace() + " 不在允许探测的清单内");
             }

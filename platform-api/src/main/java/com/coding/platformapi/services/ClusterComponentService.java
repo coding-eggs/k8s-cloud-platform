@@ -27,7 +27,7 @@ import java.util.Map;
  *
  * <h2>四态的意义</h2>
  * {@code UNKNOWN}（探测失败 / 未探测）与 {@code NOT_INSTALLED}（探测成功但没命中）必须分开 ——
- * 把"不知道"说成"没装"是本仓修过一次的坑（见 {@code MeshStatusDTO} 与 {@code CapabilitySummaryDTO} 的注释）。
+ * 把"不知道"说成"没装"是本仓修过一次的坑（见 {@code MeshStatusDTO} 的注释）。
  *
  * <h2>为什么必须缓存</h2>
  * 门控收口后，<b>每个租户进 CI 页 / 网格页都会触发一次</b>。不挡的话一个 20 人的团队进进出出
@@ -171,9 +171,11 @@ public class ClusterComponentService {
             s.setDesired(w.getDesired());
             s.setDetail(w.getDetail());
         }
-        // ⚠️ desired == 0 判不健康：被 scale 到 0 的组件没在跑，不是"健康"
-        boolean healthy = w == null || (w.getDesired() != null && w.getDesired() > 0
-                && w.getReady() != null && w.getReady().equals(w.getDesired()));
+        // ⚠️ desired == 0 判不健康：被 scale 到 0 的组件没在跑，不是"健康"。
+        //    desired == null = 这条判据没有副本语义（纯 CRD 组件）→ 命中即健康。
+        boolean healthy = w == null
+                || w.getDesired() == null
+                || (w.getDesired() > 0 && w.getReady() != null && w.getReady().equals(w.getDesired()));
         s.setState(healthy ? HEALTHY : UNHEALTHY);
         return s;
     }

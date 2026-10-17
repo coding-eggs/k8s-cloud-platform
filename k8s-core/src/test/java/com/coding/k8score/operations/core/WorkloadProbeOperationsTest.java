@@ -2,6 +2,9 @@ package com.coding.k8score.operations.core;
 
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionBuilder;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinitionList;
 import io.fabric8.kubernetes.api.model.apps.DaemonSet;
 import io.fabric8.kubernetes.api.model.apps.DaemonSetBuilder;
 import io.fabric8.kubernetes.api.model.apps.DaemonSetList;
@@ -11,6 +14,8 @@ import io.fabric8.kubernetes.api.model.apps.DeploymentBuilder;
 import io.fabric8.kubernetes.api.model.apps.DeploymentList;
 import io.fabric8.kubernetes.api.model.apps.DeploymentListBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.V1ApiextensionAPIGroupDSL;
+import io.fabric8.kubernetes.client.dsl.ApiextensionsAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.AppsAPIGroupDSL;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
 import io.fabric8.kubernetes.client.dsl.NonNamespaceOperation;
@@ -218,6 +223,48 @@ class WorkloadProbeOperationsTest {
     }
 
     @Test
+    void aCrdProbeReadsTheBundleVersionLabel() {
+        // ⭐ gateway-api 是纯 CRD（没有工作负载），版本只能从 CRD 的 bundle-version 标签读。
+        //    真集群实测：gateways.gateway.networking.k8s.io 带 gateway.networking.k8s.io/bundle-version=v1.6.2
+        CustomResourceDefinition crd = new CustomResourceDefinitionBuilder()
+                .withNewMetadata().withName("gateways.gateway.networking.k8s.io")
+                    .addToLabels("gateway.networking.k8s.io/bundle-version", "v1.6.2").endMetadata()
+                .build();
+
+        List<WorkloadProbeResultDTO> r = new WorkloadProbeOperations(clientWithCrd(crd))
+                .probe(List.of(target(null, "crd", null, "gateways.gateway.networking.k8s.io")));
+
+        assertThat(r.get(0).isFound()).isTrue();
+        assertThat(r.get(0).getVersion()).isEqualTo("v1.6.2");
+        assertThat(r.get(0).getReady()).isNull();
+        assertThat(r.get(0).getDesired()).isNull();
+        assertThat(r.get(0).getDetail()).contains("CRD");
+    }
+
+    @Test
+    void aCrdWithoutABundleVersionFallsBackToTheAppVersionLabel() {
+        CustomResourceDefinition crd = new CustomResourceDefinitionBuilder()
+                .withNewMetadata().withName("widgets.example.io")
+                    .addToLabels("app.kubernetes.io/version", "2.3.4").endMetadata()
+                .build();
+
+        List<WorkloadProbeResultDTO> r = new WorkloadProbeOperations(clientWithCrd(crd))
+                .probe(List.of(target(null, "crd", null, "widgets.example.io")));
+
+        assertThat(r.get(0).getVersion()).isEqualTo("2.3.4");
+    }
+
+    @Test
+    void aMissingCrdIsNotFoundAndSaysWhichCrd() {
+        List<WorkloadProbeResultDTO> r = new WorkloadProbeOperations(clientWithCrd(null))
+                .probe(List.of(target(null, "crd", null, "gateways.gateway.networking.k8s.io")));
+
+        assertThat(r.get(0).isFound()).isFalse();
+        assertThat(r.get(0).getError()).isNull();
+        assertThat(r.get(0).getDetail()).contains("gateways.gateway.networking.k8s.io");
+    }
+
+    @Test
     void aNamespaceWithNoMatchSaysWhereWeLookedInsteadOfClaimingNotInstalled() {
         // Review Focus #4：候选命名空间之外我们**没去看**，所以措辞只能是"在平台已知的位置没找到"
         List<WorkloadProbeResultDTO> r = opsWithDeployments(List.of())
@@ -283,6 +330,22 @@ class WorkloadProbeOperationsTest {
 
     private static WorkloadProbeOperations opsWithDeployments(List<Deployment> items) {
         return new WorkloadProbeOperations(clientWithDeployments(deployChain(items)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static KubernetesClient clientWithCrd(CustomResourceDefinition crd) {
+        KubernetesClient client = mock(KubernetesClient.class);
+        ApiextensionsAPIGroupDSL api = mock(ApiextensionsAPIGroupDSL.class);
+        V1ApiextensionAPIGroupDSL v1 = mock(V1ApiextensionAPIGroupDSL.class);
+        MixedOperation<CustomResourceDefinition, CustomResourceDefinitionList,
+                Resource<CustomResourceDefinition>> defs = mock(MixedOperation.class);
+        Resource<CustomResourceDefinition> named = mock(Resource.class);
+        when(client.apiextensions()).thenReturn(api);
+        when(api.v1()).thenReturn(v1);
+        when(v1.customResourceDefinitions()).thenReturn(defs);
+        when(defs.withName(anyString())).thenReturn(named);
+        when(named.get()).thenReturn(crd);
+        return client;
     }
 
     private static WorkloadProbeOperations opsWithDaemonSets(List<DaemonSet> items) {

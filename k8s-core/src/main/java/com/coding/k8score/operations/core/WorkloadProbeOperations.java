@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
 import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
+import io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition;
 import io.fabric8.kubernetes.api.model.apps.DaemonSet;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.api.model.apps.StatefulSet;
@@ -16,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * 按候选读工作负载的状态（组件探测的数据面）。
@@ -36,18 +38,17 @@ public class WorkloadProbeOperations {
     private final KubernetesClient client;
 
     public List<WorkloadProbeResultDTO> probe(List<WorkloadProbeTargetDTO> targets) {
-        // ⭐ 两件事分开：**成本**按 (namespace, kind) 去重（每个 chain 只 list 一次），
-        //    **结果顺序**严格跟着入参走。消费方（ClusterComponentService）按下标把结果贴回组件 code，
-        //    沿用分组顺序会让两条同 chain 但不相邻的候选互换成对方的版本/健康。
-        Map<String, List<Cand>> listed = new LinkedHashMap<>();
+        // ⭐ 两件事分开：**成本**按候选归并（同一 (namespace, kind) 只 list 一次；CRD 每个名字一次 get），
+        //    **结果顺序**严格跟着入参走。消费方（ClusterComponentService）按下标把结果贴回组件 code。
+        Map<String, List<Cand>> fetched = new LinkedHashMap<>();
         Map<String, String> errors = new LinkedHashMap<>();
         for (WorkloadProbeTargetDTO t : targets) {
-            String key = chainKey(t);
-            if (listed.containsKey(key) || errors.containsKey(key)) {
+            String key = fetchKey(t);
+            if (fetched.containsKey(key) || errors.containsKey(key)) {
                 continue;
             }
             try {
-                listed.put(key, list(t.getNamespace(), t.getKind()));
+                fetched.put(key, fetch(t));
             } catch (Exception e) {
                 errors.put(key, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
             }
@@ -55,14 +56,67 @@ public class WorkloadProbeOperations {
 
         List<WorkloadProbeResultDTO> out = new ArrayList<>(targets.size());
         for (WorkloadProbeTargetDTO t : targets) {
-            String key = chainKey(t);
-            out.add(errors.containsKey(key) ? failed(t, errors.get(key)) : match(t, listed.get(key)));
+            String key = fetchKey(t);
+            out.add(errors.containsKey(key) ? failed(t, errors.get(key)) : match(t, fetched.get(key)));
         }
         return out;
     }
 
-    private static String chainKey(WorkloadProbeTargetDTO t) {
-        return t.getNamespace() + "\u0000" + t.getKind();
+    /**
+     * 成本键：工作负载按 {@code (namespace, kind)} 合并成一次 list；CRD 是集群级资源、按名字各取一次。
+     * 两者都与集群的命名空间数量无关。
+     */
+    private static String fetchKey(WorkloadProbeTargetDTO t) {
+        return "crd".equals(t.getKind())
+                ? "crd\u0000" + t.getName()
+                : t.getNamespace() + "\u0000" + t.getKind();
+    }
+
+    private List<Cand> fetch(WorkloadProbeTargetDTO t) {
+        return "crd".equals(t.getKind()) ? getCrd(t) : list(t.getNamespace(), t.getKind());
+    }
+
+    /** 纯 CRD 组件（如 Gateway API）没有工作负载，版本只能读 CRD 自己的标签/注解 */
+    private List<Cand> getCrd(WorkloadProbeTargetDTO t) {
+        CustomResourceDefinition crd = client.apiextensions().v1().customResourceDefinitions()
+                .withName(t.getName())
+                .get();
+        if (crd == null) {
+            return List.of();
+        }
+        ObjectMeta md = crd.getMetadata();
+        return List.of(new Cand(md.getName(), List.of(), crdVersion(md, t.getVersionLabel()), null, null));
+    }
+
+    /**
+     * CRD 版本：显式 {@code versionLabel} → {@code app.kubernetes.io/version} → 任意 {@code *bundle-version}
+     * （Gateway API 的约定是 {@code gateway.networking.k8s.io/bundle-version}）。标签与注解都看。
+     */
+    static String crdVersion(ObjectMeta md, String versionLabel) {
+        Map<String, String> labels = md.getLabels() == null ? Map.of() : md.getLabels();
+        Map<String, String> annotations = md.getAnnotations() == null ? Map.of() : md.getAnnotations();
+        if (versionLabel != null && !versionLabel.isBlank()) {
+            String v = labels.get(versionLabel);
+            if (v == null || v.isBlank()) {
+                v = annotations.get(versionLabel);
+            }
+            if (v != null && !v.isBlank()) {
+                return v;
+            }
+        }
+        String app = labels.get("app.kubernetes.io/version");
+        if (app != null && !app.isBlank()) {
+            return app;
+        }
+        return findBundleVersion(labels).or(() -> findBundleVersion(annotations)).orElse(null);
+    }
+
+    private static Optional<String> findBundleVersion(Map<String, String> m) {
+        return m.entrySet().stream()
+                .filter(e -> e.getKey().endsWith("bundle-version")
+                        && e.getValue() != null && !e.getValue().isBlank())
+                .map(Map.Entry::getValue)
+                .findFirst();
     }
 
     // ---------- 内部 ----------
@@ -122,8 +176,10 @@ public class WorkloadProbeOperations {
         r.setKind(t.getKind());
         if (matched.isEmpty()) {
             r.setFound(false);
-            // ⚠️ 措辞很讲究：候选命名空间之外的安装位置我们**没去看**，所以不能说"没装"
-            r.setDetail("在平台已知的位置（" + t.getNamespace() + "）没有找到");
+            // ⚠️ 措辞很讲究：候选位置之外我们**没去看**，所以不能说"没装"
+            r.setDetail("crd".equals(t.getKind())
+                    ? "集群内没有找到 CRD " + t.getName()
+                    : "在平台已知的位置（" + t.getNamespace() + "）没有找到");
             return r;
         }
         Cand hit = matched.get(0);
@@ -132,8 +188,10 @@ public class WorkloadProbeOperations {
         r.setReady(hit.ready());
         r.setDesired(hit.desired());
         r.setVersion(versionOf(hit));
+        // CRD 没有副本语义（ready/desired 均为 null）——别渲染成 "null/null 就绪"
+        String readyText = hit.ready() == null ? "已安装（CRD）" : hit.ready() + "/" + hit.desired() + " 就绪";
         r.setDetail(matched.size() == 1
-                ? hit.ready() + "/" + hit.desired() + " 就绪"
+                ? readyText
                 : "命中 " + matched.size() + " 个（" + String.join(", ", matched.stream().map(Cand::name).toList())
                         + "），取 " + hit.name());
         return r;

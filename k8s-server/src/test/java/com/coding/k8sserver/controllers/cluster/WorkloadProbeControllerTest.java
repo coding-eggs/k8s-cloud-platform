@@ -29,6 +29,7 @@ class WorkloadProbeControllerTest {
 
     /** 注入两条清单，测试不受真实默认值变化影响 */
     private static final List<String> ALLOWED = List.of("kube-system", "istio-system");
+    private static final List<String> ALLOWED_CRDS = List.of("gateways.gateway.networking.k8s.io");
 
     private static WorkloadProbeTargetDTO t(String ns, String kind, String repo) {
         WorkloadProbeTargetDTO d = new WorkloadProbeTargetDTO();
@@ -48,7 +49,7 @@ class WorkloadProbeControllerTest {
     private static WorkloadProbeController controller() {
         KubernetesOperationsFactory factory = mock(KubernetesOperationsFactory.class);
         when(factory.getWorkloadProbeOperation("c1")).thenReturn(mock(WorkloadProbeOperations.class));
-        return new WorkloadProbeController(factory, mock(ResourceAccessResolver.class), ALLOWED);
+        return new WorkloadProbeController(factory, mock(ResourceAccessResolver.class), ALLOWED, ALLOWED_CRDS);
     }
 
     @Test
@@ -72,6 +73,25 @@ class WorkloadProbeControllerTest {
                 t("kube-system", "deployment", "metrics-server"),
                 t("milvus", "deployment", "x/y"))))
                 .hasMessageContaining("milvus");
+    }
+
+    @Test
+    void aCrdOutsideTheConfiguredListIsRejected() {
+        // CRD 是集群级资源，不走命名空间清单 —— 必须有自己的清单
+        WorkloadProbeTargetDTO crd = t(null, "crd", null);
+        crd.setName("secrets.example.io");
+
+        assertThatThrownBy(() -> controller().probe(req(crd)))
+                .hasMessageContaining("secrets.example.io");
+    }
+
+    @Test
+    void anAllowedCrdPassesTheWhitelist() {
+        WorkloadProbeTargetDTO crd = t(null, "crd", null);
+        crd.setName("gateways.gateway.networking.k8s.io");
+
+        // 能走到 factory（mock 的 probe 回 null，行为与本用例无关）；关键是没被白名单拦下
+        assertThat(controller().probe(req(crd))).isNotNull();
     }
 
     @Test

@@ -14,6 +14,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Objects;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +33,7 @@ import static org.mockito.Mockito.when;
  * 四态合成的口径 + 两投影 + 缓存。
  *
  * <p>最要紧的一条：<b>探测失败是 UNKNOWN，不是 NOT_INSTALLED</b>。把"不知道"说成"没装"
- * 是本仓修过一次的坑（{@code MeshStatusDTO}「未探测」、{@code CapabilitySummaryDTO}「全 false = 未探测」）。
+ * 是本仓修过一次的坑（{@code MeshStatusDTO}「未探测」）。
  */
 class ClusterComponentServiceTest {
 
@@ -78,9 +79,10 @@ class ClusterComponentServiceTest {
     }
 
     @Test
-    void aWholeProbeThatThrowsLeavesWorkloadJudgesUnknownButGroupJudgesStillAnswer() {
-        // spec §11：集群断开时页面照常打开。工作负载判据失去答案 → UNKNOWN；
-        // 而纯 group 判据（gateway-api）仍能从 DB 快照回答（决策 7：group 存在性只有 capability 一处判据）
+    void aWholeProbeThatThrowsLeavesEveryProbedComponentUnknown() {
+        // spec §11：集群断开时页面照常打开。**只要有判据失败**就 UNKNOWN（保守，不猜）——
+        // gateway-api 也有 CRD 判据，CRD 读不到就是 UNKNOWN；它"装没装"由 MeshService 用
+        // capability 快照回退兜住（那边有专门用例）。
         ClusterComponentService svc = svcThrowingWithGroups(new RuntimeException("k8s-server 不可达"),
                 Map.of("gateway.networking.k8s.io", List.of("v1")));
 
@@ -88,7 +90,22 @@ class ClusterComponentServiceTest {
 
         assertThat(find(all, "metrics-server").getState()).isEqualTo("UNKNOWN");
         assertThat(find(all, "istio").getState()).isEqualTo("UNKNOWN");
-        assertThat(find(all, "gateway-api").getState()).isEqualTo("INSTALLED_HEALTHY");
+        assertThat(find(all, "gateway-api").getState()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    void aCrdOnlyComponentIsHealthyWhenTheCrdIsFoundAndCarriesItsVersion() {
+        // ⭐ gateway-api 是纯 CRD：没有副本语义，找到即"已装"，版本来自 CRD 的 bundle-version 标签
+        ClusterComponentService svc = svcWithGroups(
+                List.of(probeCrd("gateways.gateway.networking.k8s.io", "v1.6.2")),
+                Map.of("gateway.networking.k8s.io", List.of("v1")));
+
+        ComponentStatusDTO s = find(svc.status("c1"), "gateway-api");
+
+        assertThat(s.getState()).isEqualTo("INSTALLED_HEALTHY");
+        assertThat(s.getVersion()).isEqualTo("v1.6.2");
+        assertThat(s.getReady()).isNull();
+        assertThat(s.getDesired()).isNull();
     }
 
     @Test
@@ -241,7 +258,8 @@ class ClusterComponentServiceTest {
         for (var def : new ClusterComponentCatalog().all()) {
             for (ComponentProbe p : def.probes()) {
                 WorkloadProbeResultDTO hit = overrides.stream()
-                        .filter(o -> o.getNamespace().equals(p.namespace()) && o.getKind().equals(p.kind()))
+                        .filter(o -> Objects.equals(o.getNamespace(), p.namespace())
+                                && Objects.equals(o.getKind(), p.kind()))
                         .findFirst().orElse(null);
                 if (hit != null) {
                     out.add(hit);
@@ -251,7 +269,9 @@ class ClusterComponentServiceTest {
                 miss.setNamespace(p.namespace());
                 miss.setKind(p.kind());
                 miss.setFound(false);
-                miss.setDetail("在平台已知的位置（" + p.namespace() + "）没有找到");
+                miss.setDetail("crd".equals(p.kind())
+                        ? "集群内没有找到 CRD " + p.name()
+                        : "在平台已知的位置（" + p.namespace() + "）没有找到");
                 out.add(miss);
             }
         }
@@ -261,6 +281,17 @@ class ClusterComponentServiceTest {
     private static ComponentStatusDTO find(List<ComponentStatusDTO> all, String code) {
         return all.stream().filter(s -> s.getCode().equals(code)).findFirst()
                 .orElseThrow(() -> new AssertionError("没有组件 " + code));
+    }
+
+    /** 一条 CRD 判据的结果（namespace 为 null） */
+    private static WorkloadProbeResultDTO probeCrd(String crdName, String version) {
+        WorkloadProbeResultDTO r = new WorkloadProbeResultDTO();
+        r.setKind("crd");
+        r.setName(crdName);
+        r.setFound(true);
+        r.setVersion(version);
+        r.setDetail("已安装（CRD）");
+        return r;
     }
 
     /** 一条"多命中"结果（detail 原样透传用） */

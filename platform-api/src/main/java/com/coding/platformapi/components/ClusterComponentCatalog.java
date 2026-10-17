@@ -36,8 +36,11 @@ public class ClusterComponentCatalog {
             new ComponentDef("prometheus-operator", "Prometheus Operator", "monitoring.coreos.com",
                     List.of(new ComponentProbe("monitor", "deployment", "prometheus-operator/prometheus-operator", null)),
                     List.of("metrics-charts", "servicemonitor")),
+            // 纯 CRD：没有工作负载，版本读 CRD 的 bundle-version 标签（真集群实测 v1.6.2）
             new ComponentDef("gateway-api", "Gateway API", "gateway.networking.k8s.io",
-                    List.of(), List.of("service-mesh", "routes")),
+                    List.of(new ComponentProbe(null, "crd", null, "gateways.gateway.networking.k8s.io",
+                            "gateway.networking.k8s.io/bundle-version")),
+                    List.of("service-mesh", "routes")),
             // 实测镜像是 registry.istio.io/release/pilot（含 `istio.io/release/pilot` 片段）；
             // app.kubernetes.io/version 标签只有部分安装方式才有，故 tag 是主来源
             // 两条候选同一 (ns,kind)：先匹配 registry.istio.io/release/pilot（本集群实测），
