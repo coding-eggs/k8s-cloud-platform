@@ -68,6 +68,8 @@ export const pageCodes = {
   storageClass: { list: 'platform:page:storageclass.list' },
   serviceMonitor: { list: 'tenant:page:servicemonitor.list', edit: 'tenant:page:servicemonitor.edit' },
   prometheusRule: { list: 'tenant:page:prometheusrule.list', edit: 'tenant:page:prometheusrule.edit' },
+  /** 告警列表页（租户域页面码 —— 管理员因 PLATFORM 族豁免也持它，两边都能看见） */
+  alert: 'tenant:page:alert',
   podMonitor: { list: 'tenant:page:podmonitor.list', edit: 'tenant:page:podmonitor.edit' },
   hpa: { list: 'tenant:page:hpa.list', edit: 'tenant:page:hpa.edit' },
 

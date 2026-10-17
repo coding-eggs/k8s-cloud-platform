@@ -43,6 +43,9 @@ import type {
   K8sService,
   K8sServiceMonitor,
   K8sPrometheusRule,
+  PlatformAlertEvent,
+  AlertQuery,
+  AlertSelfTestResult,
   K8sStorageClass,
   K8sTcpRoute,
   K8sTlsRoute,
@@ -426,6 +429,18 @@ export const serviceMonitorApi = makeResourceApi<K8sServiceMonitor>('servicemoni
 
 /** PrometheusRule /prometheusrules。运行状态（runtime）由后端在 list/get 时附着，前端不需要额外请求。 */
 export const prometheusRuleApi = makeResourceApi<K8sPrometheusRule>('prometheusrules')
+
+/**
+ * 告警（平台库里的数据，不是 K8s 对象）。租户身份由后端按 token 自动收窄。
+ * - `selfTest` 让平台给自己投一条测试告警，验证「HTTP → 放行 → 密钥 → 解析 → 落库」整条链路；
+ * - `remove` 是清测试数据用的物理删（幂等）。
+ */
+export const alertApi = {
+  list: (q: AlertQuery) => http.post<never, PlatformAlertEvent[]>('/alert/list', q),
+  selfTest: (clusterId: string) =>
+    http.post<never, AlertSelfTestResult>('/alert/self-test', null, { params: { clusterId } }),
+  remove: (id: number) => http.delete<never, void>(`/alert/${encodeURIComponent(String(id))}`),
+}
 
 /** ServiceMonitor Prometheus discovery 定位（对应后端 ServiceMonitorKeyRequest：clusterId + namespace + name） */
 type SmDiscoveryCtx = { clusterId: string; namespace: string; name: string }

@@ -796,6 +796,50 @@ export interface K8sPrometheusRule {
   runtime?: K8sRuleRuntime | null
 }
 
+/** 告警事件（平台库 platform_alert_event 里的一行；一次 firing 会话一行） */
+export interface PlatformAlertEvent {
+  id: number
+  clusterId: string
+  /** 来自 labels.namespace（规则作者自报）；null = 不属于任何租户 */
+  namespace?: string | null
+  alertname: string
+  severity?: string | null
+  /** firing | resolved */
+  status: string
+  fingerprint: string
+  /** 原始 labels 的 JSON 串 */
+  labels?: string | null
+  /** 原始 annotations 的 JSON 串 */
+  annotations?: string | null
+  startsAt: string
+  endsAt?: string | null
+  receivedAt: string
+}
+
+/** 告警列表查询（筛选 + 游标）；租户身份由后端按 token 自动收窄 */
+export interface AlertQuery {
+  clusterId: string
+  from?: string | null
+  to?: string | null
+  namespace?: string | null
+  status?: string | null
+  severity?: string | null
+  alertname?: string | null
+  /** 默认 false：心跳告警不进首屏 */
+  showWatchdog?: boolean
+  cursorStartsAt?: string | null
+  cursorId?: number | null
+  limit?: number
+}
+
+/** 自检结果：三个数字定位链路断在哪一层 */
+export interface AlertSelfTestResult {
+  status: number
+  rowCount: number
+  ids: number[]
+  error?: string | null
+}
+
 /** PodMonitor endpoint Secret 引用（与后端 PodMonitorEndpointDTO.SecretRef 同构） */
 export interface K8sPmSecretRef { name?: string | null; key?: string | null }
 

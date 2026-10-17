@@ -100,6 +100,7 @@ const router = createRouter({
         { path: 'resources/podmonitors/editor', name: 'podmonitor-editor', component: () => import('@/views/resource/PodMonitorEditorView.vue'), meta: { title: 'PodMonitor 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.podMonitor.edit] } },
         { path: 'resources/prometheusrules', name: 'prometheusrules', component: () => import('@/views/resource/PrometheusRuleView.vue'), meta: { title: 'PrometheusRule', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.list] } },
         { path: 'resources/prometheusrules/editor', name: 'prometheusrule-editor', component: () => import('@/views/resource/PrometheusRuleEditorView.vue'), meta: { title: 'PrometheusRule 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.edit] } },
+        { path: 'alerts', name: 'alerts', component: () => import('@/views/AlertView.vue'), meta: { title: '告警', group: '监控告警', context: 'full', requiresPerm: [pageCodes.alert] } },
 
         // 集群运维（Calico）
         { path: 'ops/ippools', name: 'ippools', component: () => import('@/views/ops/IppoolView.vue'), meta: { title: '地址池', group: '集群运维', requiresPerm: [pageCodes.ops.ippool.list] } },
