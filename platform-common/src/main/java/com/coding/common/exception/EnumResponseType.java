@@ -78,6 +78,9 @@ public enum EnumResponseType {
     /** PrometheusRule 内容不合法（alert/record 二选一、expr 必填、组名必填） */
     PROMETHEUS_RULE_INVALID(10045, "PrometheusRule 内容不合法"),
 
+    /** Alertmanager webhook 的共享密钥不对（HTTP 状态码由控制器直接给，不靠全局异常映射） */
+    ALERT_WEBHOOK_UNAUTHORIZED(10044, "告警接收端点鉴权失败"),
+
     ERROR(5000,"服务端异常"),
 
 

@@ -82,7 +82,15 @@ public class ResourceServerConfig {
 						}))
 				.oauth2ResourceServer(ors -> {
 					//WS 握手无法带 Authorization 头，允许 token 走 query（access_token）
-					ors.bearerTokenResolver(new QueryParameterBearerTokenResolver());
+					//⚠️ /alert/webhook 例外：它用的是**共享密钥**，不是 JWT —— 那个 "Bearer xxx"
+					//   会被 JWT 解码器拒掉（过滤器链层直接 401，控制器根本收不到）。
+					//   故对这条路径**不解析 Bearer**，交给 AlertWebhookController 自校验。
+					ors.bearerTokenResolver(new QueryParameterBearerTokenResolver() {
+						@Override
+						public String resolve(jakarta.servlet.http.HttpServletRequest request) {
+							return "/alert/webhook".equals(request.getServletPath()) ? null : super.resolve(request);
+						}
+					});
 					//权限码不再随 token 下发（全量码表太大且有保鲜期），由 PermissionClosureResolver 按需解析
 					ors.jwt(jwt -> jwt.jwtAuthenticationConverter(
 							new PlatformJwtAuthenticationConverter(dataKey, permissionResolver)));

@@ -29,6 +29,11 @@ public final class ExemptPaths {
             // 租户的 Gateway 编辑器下拉会恒空 —— 那不是"降级"而是"用不了"（本端点回带的是"装了哪些
             // gateway controller"，与 /cluster/capability/get 已对租户开放的 RESTMapper 信息同级）。
             "/mesh/gatewayclass-refs",
+            // Alertmanager 的 webhook receiver：**非用户身份**的入站端点，没有 JWT。
+            // 放行的只是 JWT 鉴权；端点自己校验共享密钥（AlertWebhookTokenCheck），
+            // 且密钥没配就拒启 —— 不会出现"忘了配 = 全开"。
+            // 它也是本平台唯一一个**必须回真状态码**的端点（见 AlertWebhookController 的类注释）。
+            "/alert/webhook",
             "/user/me", "/user/my-tenants", "/callback", "/error",
             "/actuator/**", "/doc.html", "/swagger-ui/**", "/swagger-ui.html",
             "/v3/api-docs/**", "/v3/api-docs.yaml", "/v3/api-docs.yaml/**",
