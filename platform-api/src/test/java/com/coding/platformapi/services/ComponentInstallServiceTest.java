@@ -891,6 +891,38 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void anUpgradeDoesNotInheritExtraObjectsIntoTheFirstOperatorPass() {
+        // 两遍同名 release 的快照会互相覆盖；extraObjects 必须每次重建，
+        // 否则第一遍（只装 CRD）会从历史快照里继承到 CR，重新踩 CRD 时序
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        PlatformComponentOperation last = new PlatformComponentOperation();
+        last.setId(1L);
+        last.setToVersion("0.126.0");
+        last.setValuesSnapshot(
+                "{\"platform-otel-operator\":{\"extraObjects\":[{\"kind\":\"Instrumentation\"}]}}");
+        when(mapper.selectLatestSuccess("c1", "otel-operator")).thenReturn(last);
+
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "UPGRADE", null, Map.of());
+        req.setOtel(baseOtel());
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("otel-operator"),
+                org.mockito.ArgumentMatchers.eq("UPGRADE"), captor.capture());
+        assertThat(captor.getValue().get(0).getValues()).doesNotContainKey("extraObjects");
+        assertThat(captor.getValue().get(1).getValues()).containsKey("extraObjects");
+    }
+
+    @Test
     void anOtelServiceMonitorFailureDoesNotFailTheOperation() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");

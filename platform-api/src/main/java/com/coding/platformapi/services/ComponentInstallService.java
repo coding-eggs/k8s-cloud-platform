@@ -255,8 +255,12 @@ public class ComponentInstallService {
                                                  Map<String, Map<String, Object>> previous) {
         List<ReleaseSpec> out = new ArrayList<>();
         for (ReleaseSpec r : releases) {
-            Map<String, Object> merged = DeepMerge.merge(pathNested(r, r.editableValues()),
+            // extraObjects 是“本次请求重建”的对象（TektonConfig / OTel CR），不能从历史快照继承：
+            // 两遍同名 release 的快照会互相覆盖，继承下来会把 CR 塞进只装 CRD 的第一遍
+            Map<String, Object> prev = new LinkedHashMap<>(
                     previous.getOrDefault(r.releaseName(), Map.of()));
+            prev.remove("extraObjects");
+            Map<String, Object> merged = DeepMerge.merge(pathNested(r, r.editableValues()), prev);
             merged = DeepMerge.merge(merged, pathNested(r, editable));
             merged = DeepMerge.merge(merged, r.contractValues());
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
