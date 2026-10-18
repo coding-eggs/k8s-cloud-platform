@@ -66,6 +66,18 @@ class ComponentLifecycleMigrationTest {
         assertThat(count(sql, "'platform:cluster:manage'")).isGreaterThanOrEqualTo(3);
     }
 
+    @Test
+    void theWaypointTracingEndpointsHavePermissionRowsAndBindings() throws Exception {
+        String sql = Files.readString(Path.of(
+                "../platform-data/src/main/resources/db/migration/V2026_10_19_1__mesh_waypoint_tracing.sql"));
+        assertThat(sql).contains("'/mesh/waypoints/tracing'")
+                .contains("tenant:gateway:update")
+                .contains("tenant:gateway:get")
+                .contains("builtin_role_admin")
+                .contains("builtin_role_tenant_admin")
+                .contains("builtin_role_tenant_member");
+    }
+
     private static int count(String haystack, String needle) {
         int n = 0;
         int i = 0;

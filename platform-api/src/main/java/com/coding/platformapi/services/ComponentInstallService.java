@@ -784,6 +784,21 @@ public class ComponentInstallService {
                             id, e.getMessage());
                 }
             }
+            // 网格 tracing：ingress 的 Telemetry。谁后装谁补建；Gateway/CRD 缺失时服务端返回 false
+            if (result.isSuccess() && ("otel-operator".equals(componentCode) || "istio".equals(componentCode))) {
+                try {
+                    int sampling = otel != null && otel.getSamplingPercentage() != null
+                            ? otel.getSamplingPercentage() : otelSamplingPercentage(clusterId);
+                    if (!client.applyOtelTelemetry(clusterId, "istio-system",
+                            "platform-tracing-ingress", "external-gateway", sampling, true)) {
+                        log.info("集群 {} 的 ingress gateway / Telemetry CRD 未就绪，跳过 ingress tracing",
+                                clusterId);
+                    }
+                } catch (Exception e) {
+                    log.warn("组件 {} 安装成功但 ingress Telemetry 下发失败（不影响操作结果）: {}",
+                            id, e.getMessage());
+                }
+            }
             PlatformComponentOperation done = new PlatformComponentOperation();
             done.setId(id);
             done.setStatus(result.isSuccess() ? SUCCESS : FAILED);
@@ -928,6 +943,18 @@ public class ComponentInstallService {
      */
     public PlatformComponentOperation latest(String clusterId, String componentCode) {
         return mapper.selectLatestSuccess(clusterId, componentCode);
+    }
+
+    /**
+     * OTel 组件的采样率（上次成功快照的 {@code __platform.otel.samplingPercentage}）；
+     * 没有记录 → 默认 10。waypoint/ingress 的 Telemetry 用它，保证应用与网格采样一致。
+     */
+    public int otelSamplingPercentage(String clusterId) {
+        Map<String, Object> platform = platformInputsOf(mapper.selectLatestSuccess(clusterId, "otel-operator"));
+        if (platform.get("otel") instanceof Map<?, ?> m && m.get("samplingPercentage") instanceof Number n) {
+            return n.intValue();
+        }
+        return DEFAULT_OTEL_SAMPLING;
     }
 
     public List<PlatformComponentOperation> latestByCluster(String clusterId) {

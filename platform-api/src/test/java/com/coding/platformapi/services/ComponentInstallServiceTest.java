@@ -923,6 +923,23 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void anOtelInstallAlsoCreatesTheIngressTelemetry() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(baseOtel());
+        service().apply(req, "admin");
+
+        verify(client, timeout(5000)).applyOtelTelemetry("c1", "istio-system",
+                "platform-tracing-ingress", "external-gateway", 10, true);
+    }
+
+    @Test
     void anOtelServiceMonitorFailureDoesNotFailTheOperation() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");

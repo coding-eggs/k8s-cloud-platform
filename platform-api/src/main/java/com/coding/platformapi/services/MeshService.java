@@ -1,13 +1,18 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
+import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sMeshClient;
 import com.coding.platformapi.models.ComponentStatusDTO;
+import com.coding.platformapi.models.WaypointTracingRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.util.List;
 
@@ -50,6 +55,10 @@ public class MeshService {
     private final ClusterComponentService componentService;
     /** capability 列的派生判据（只用于 gatewayApiVersions） */
     private final ClusterCapabilityService capabilityService;
+    /** 组件安装侧：waypoint tracing 要读 OTel 的采样率快照 */
+    private final ComponentInstallService installService;
+    /** Telemetry CR 的下发/查询走组件安装的 k8s-server 端点 */
+    private final K8sComponentClient componentClient;
 
     // ==================== GatewayClass CRUD（平台管理面） ====================
 
@@ -169,4 +178,35 @@ public class MeshService {
         return GatewayService.waypointRefsOf(k8s.namespaceGateways(clusterId, namespace));
     }
 
+    // ==================== waypoint 链路追踪（批次二） ====================
+
+    private static final String TELEMETRY_PREFIX = "platform-tracing-";
+
+    /** 该 waypoint 是否已有 Telemetry（编辑页回填用） */
+    public boolean waypointTracing(WaypointTracingRequest req) {
+        requireTracingTarget(req);
+        return componentClient.otelTelemetryState(req.getClusterId(), req.getNamespace(),
+                telemetryName(req.getGatewayName())).isEnabled();
+    }
+
+    /** 开/关该 waypoint 的 Telemetry；采样率取 OTel 组件上次成功快照（缺省 10） */
+    public boolean setWaypointTracing(WaypointTracingRequest req) {
+        requireTracingTarget(req);
+        int sampling = installService.otelSamplingPercentage(req.getClusterId());
+        return componentClient.applyOtelTelemetry(req.getClusterId(), req.getNamespace(),
+                telemetryName(req.getGatewayName()), req.getGatewayName(), sampling, req.isEnabled());
+    }
+
+    private static void requireTracingTarget(WaypointTracingRequest req) {
+        if (req == null || !StringUtils.hasText(req.getClusterId())
+                || !StringUtils.hasText(req.getNamespace()) || !StringUtils.hasText(req.getGatewayName())) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "clusterId / namespace / gatewayName 不能为空");
+        }
+    }
+
+    static String telemetryName(String gatewayName) {
+        String name = TELEMETRY_PREFIX + gatewayName;
+        return name.length() <= 63 ? name : name.substring(0, 63);
+    }
 }

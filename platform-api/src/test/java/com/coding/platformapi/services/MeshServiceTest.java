@@ -32,7 +32,9 @@ class MeshServiceTest {
     private final ClusterCapabilityService capabilityService =
             new ClusterCapabilityService(clusterMapper, JsonMapper.builder().build());
     private final MeshService svc =
-            new MeshService(mock(com.coding.platformapi.k8s.K8sMeshClient.class), componentService, capabilityService);
+            new MeshService(mock(com.coding.platformapi.k8s.K8sMeshClient.class), componentService, capabilityService,
+                    mock(ComponentInstallService.class),
+                    mock(com.coding.platformapi.k8s.K8sComponentClient.class));
 
     @Test
     void meshStatus_derives_from_the_component_states() {

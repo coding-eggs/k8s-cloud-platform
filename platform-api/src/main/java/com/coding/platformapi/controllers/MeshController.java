@@ -8,6 +8,7 @@ import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MeshTopologyRequest;
 import com.coding.platformapi.metrics.dto.MeshTopologyResponse;
 import com.coding.platformapi.services.MeshService;
+import com.coding.platformapi.models.WaypointTracingRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -110,6 +111,30 @@ public class MeshController {
                     + "走本端点而非租户域 /gateways：命名空间是平台侧资源，平台管理员无租户上下文。")
     public ResponseData<List<WaypointRefDTO>> waypointCandidates(@RequestParam String clusterId, @RequestParam String namespace) {
         return new ResponseData<>(mesh.waypointCandidates(clusterId, namespace));
+    }
+
+    // ==================== waypoint 链路追踪（批次二） ====================
+
+    @PostMapping("/waypoints/tracing")
+    @Operation(summary = "开/关 waypoint 的链路追踪",
+            description = "下发/删除指向该 Gateway 的 Istio Telemetry；采样率取 OTel 组件上次成功快照（缺省 10）。"
+                    + "Telemetry CRD 或 Gateway 不存在时返回 false（跳过）。")
+    public ResponseData<Boolean> setWaypointTracing(@RequestBody WaypointTracingRequest body) {
+        return new ResponseData<>(mesh.setWaypointTracing(body));
+    }
+
+    @GetMapping("/waypoints/tracing")
+    @Operation(summary = "查询 waypoint 的链路追踪状态（编辑页回填）")
+    public ResponseData<Boolean> waypointTracing(@RequestParam String tenantId,
+                                                 @RequestParam String clusterId,
+                                                 @RequestParam String namespace,
+                                                 @RequestParam String gatewayName) {
+        WaypointTracingRequest req = new WaypointTracingRequest();
+        req.setTenantId(tenantId);
+        req.setClusterId(clusterId);
+        req.setNamespace(namespace);
+        req.setGatewayName(gatewayName);
+        return new ResponseData<>(mesh.waypointTracing(req));
     }
 
     // ==================== 网格拓扑（S2.4，只读） ====================
