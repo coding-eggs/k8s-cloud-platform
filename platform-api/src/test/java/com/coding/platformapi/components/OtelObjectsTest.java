@@ -1,0 +1,72 @@
+package com.coding.platformapi.components;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class OtelObjectsTest {
+
+    @Test
+    void itBuildsThreeInstrumentationsAndOneGateway() {
+        var objects = OtelObjects.build(true, 1);
+        assertThat(objects).hasSize(4);
+        assertThat(objects.stream()
+                .map(o -> String.valueOf(((Map<?, ?>) o.get("metadata")).get("name")))
+                .toList())
+                .containsExactly("platform-instrumentation", "platform-instrumentation-logs",
+                        "platform-instrumentation-all", "platform-otel-gateway");
+    }
+
+    @Test
+    void theTracingInstrumentationUsesTheHttpEndpointAndRatioPlaceholder() {
+        Map<?, ?> tracing = OtelObjects.build(false, 1).get(0);
+        Map<?, ?> spec = (Map<?, ?>) tracing.get("spec");
+        assertThat(((Map<?, ?>) spec.get("exporter")).get("endpoint"))
+                .isEqualTo("http://platform-otel-gateway-collector.monitor.svc:4318");
+        assertThat(spec.get("env").toString()).contains("http/protobuf");
+        assertThat(((Map<?, ?>) spec.get("sampler")).get("argument")).isEqualTo("${otel.sampling}");
+    }
+
+    @Test
+    void theLogsInstrumentationTurnsTracingOffAndAddsTheLogEnv() {
+        Map<?, ?> logs = OtelObjects.build(true, 1).get(1);
+        Map<?, ?> spec = (Map<?, ?>) logs.get("spec");
+        assertThat(((Map<?, ?>) spec.get("sampler")).get("type")).isEqualTo("always_off");
+        assertThat(spec.get("env").toString()).contains("OTEL_LOGS_EXPORTER").contains("otlp");
+        assertThat(spec.get("java").toString()).contains("LOGBACK_APPENDER")
+                .contains("LOG4J_APPENDER");
+    }
+
+    @Test
+    void logsOffOmitsTheElasticsearchExporterAndTheLogsPipeline() {
+        String off = OtelObjects.build(false, 1).get(3).toString();
+        assertThat(off).doesNotContain("elasticsearch").doesNotContain("logs=");
+        String on = OtelObjects.build(true, 1).get(3).toString();
+        assertThat(on).contains("elasticsearch").contains("logs=");
+    }
+
+    @Test
+    void theGatewayUsesTheContribImageAndAllThreePorts() {
+        Map<?, ?> gateway = OtelObjects.build(true, 2).get(3);
+        Map<?, ?> spec = (Map<?, ?>) gateway.get("spec");
+        assertThat(spec.get("image").toString()).endsWith("opentelemetry-collector-contrib:0.161.0");
+        assertThat(spec.get("ports").toString()).contains("4317").contains("4318").contains("8889");
+        // replicas 必须是整数：ValueTemplate 只能产出字符串，CRD 会拒
+        assertThat(spec.get("replicas")).isEqualTo(2);
+    }
+
+    @Test
+    void theGatewayCarriesTheTempoAndEsPlaceholders() {
+        String gateway = OtelObjects.build(true, 1).get(3).toString();
+        assertThat(gateway).contains("${tempo.endpoint}")
+                .contains("${otel.es.endpoint}")
+                .contains("${otel.es.username}")
+                .contains("${otel.logs.index}")
+                // collector 的 env 展开用 ${env:...}（含冒号，不会命中平台占位符正则）
+                .contains("${env:TEMPO_ENDPOINT}")
+                .contains("${env:ES_PASSWORD}");
+    }
+}
