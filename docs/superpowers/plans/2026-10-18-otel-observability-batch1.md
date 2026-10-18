@@ -6,7 +6,11 @@
 
 **Architecture:** 复用 S3.6 的组件安装引擎（recipe + 两遍同名 ReleaseSpec + `extraObjects`），新增 Tempo chart 与 OTel CR 组装；工作负载侧新增一个与 `mesh-toggle` 同形的读-改-写端点，只改 PodTemplate 的注解/环境变量，不改规格。
 
-**Tech Stack:** Java 21 / Spring Boot 4 / fabric8 / MyBatis / MySQL；Vue 3 + Element Plus + TypeScript；Helm 4.2.0；OTel operator 0.161.0、collector-contrib 0.161.0、Tempo 1.24.4。
+**Tech Stack:** Java 21 / Spring Boot 4 / fabric8 / MyBatis / MySQL；Vue 3 + Element Plus + TypeScript；Helm 4.2.0；OTel operator 0.161.0、collector-contrib 0.161.0、Tempo。 
+
+> 执行备注（2026-10-19）：Tempo 入库时发现 `grafana/tempo` 1.24.4 已标记 deprecated（Grafana charts
+> 2026-01 迁移到 `grafana-community/helm-charts`），实际采用 **grafana-community/tempo 3.2.0（app 3.1.0）**；
+> 其余按本计划执行。
 
 **Spec:** `docs/superpowers/specs/2026-10-18-otel-observability-design.md`
 
