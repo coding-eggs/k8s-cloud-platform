@@ -64,4 +64,28 @@ class ValueTemplateTest {
         assertThat(ValueTemplate.resolve(Map.of("replicas", 3, "enabled", true), Map.of()))
                 .isEqualTo(Map.of("replicas", 3, "enabled", true));
     }
+
+    @Test
+    void unknownPlaceholdersArePreservedWhenTheReleaseOptsOut() {
+        // Tempo 的凭证占位符要留到运行时由 -config.expand-env 展开（spec §3.2）
+        Map<String, Object> in = Map.of("tempo", Map.of(
+                "access_key", "${MINIO_ACCESS_KEY}",
+                "bucket", "${tempo.minio.bucket}"));
+
+        Object out = ValueTemplate.resolve(in,
+                Map.of("tempo.minio.bucket", "thanos"), true);
+
+        assertThat(out).isEqualTo(Map.of("tempo", Map.of(
+                "access_key", "${MINIO_ACCESS_KEY}",
+                "bucket", "thanos")));
+    }
+
+    @Test
+    void aKnownPlaceholderResolvingToBlankStillFailsInPreserveMode() {
+        assertThatThrownBy(() -> ValueTemplate.resolve(
+                Map.of("bucket", "${tempo.minio.bucket}"),
+                Map.of("tempo.minio.bucket", ""), true))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("tempo.minio.bucket");
+    }
 }

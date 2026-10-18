@@ -30,31 +30,44 @@ public final class ValueTemplate {
 
     /** 递归替换 Map / List / String 里的占位符；其余类型原样返回 */
     public static Object resolve(Object value, Map<String, String> context) {
+        return resolve(value, context, false);
+    }
+
+    /**
+     * @param preserveUnknown 未知占位符是否原样保留。只有 Tempo 这类把凭证占位符留给运行时
+     *                        {@code -config.expand-env} 展开的 release 才使用；已知占位符为空仍报错。
+     */
+    public static Object resolve(Object value, Map<String, String> context, boolean preserveUnknown) {
         if (value instanceof Map<?, ?> map) {
             Map<String, Object> out = new LinkedHashMap<>();
-            map.forEach((k, v) -> out.put(String.valueOf(k), resolve(v, context)));
+            map.forEach((k, v) -> out.put(String.valueOf(k), resolve(v, context, preserveUnknown)));
             return out;
         }
         if (value instanceof List<?> list) {
             List<Object> out = new ArrayList<>(list.size());
             for (Object item : list) {
-                out.add(resolve(item, context));
+                out.add(resolve(item, context, preserveUnknown));
             }
             return out;
         }
         if (value instanceof String template) {
-            return resolveString(template, context);
+            return resolveString(template, context, preserveUnknown);
         }
         return value;
     }
 
-    private static String resolveString(String template, Map<String, String> context) {
+    private static String resolveString(String template, Map<String, String> context, boolean preserveUnknown) {
         Matcher matcher = PLACEHOLDER.matcher(template);
         StringBuilder out = new StringBuilder();
         while (matcher.find()) {
             String key = matcher.group(1);
             String replacement = context.get(key);
             if (replacement == null) {
+                if (preserveUnknown) {
+                    // 留给运行时展开（如 Tempo 的 ${MINIO_ACCESS_KEY}）
+                    matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group()));
+                    continue;
+                }
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "values 引用了未配置的占位符：" + key);
             }
