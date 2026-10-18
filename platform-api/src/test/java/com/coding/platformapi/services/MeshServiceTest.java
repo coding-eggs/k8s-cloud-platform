@@ -39,27 +39,25 @@ class MeshServiceTest {
         stubCapability("{\"gateway.networking.k8s.io\":[\"v1\",\"v1beta1\"],\"networking.istio.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
                 status("istio", ClusterComponentService.HEALTHY),
-                status("gateway-api", ClusterComponentService.HEALTHY),
-                // 装了但不健康 → 仍是"装了"（横幅问数据面形态，可用性走 flags）
-                status("istio-ambient", ClusterComponentService.UNHEALTHY)));
+                status("gateway-api", ClusterComponentService.HEALTHY)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
         assertThat(dto.isHasIstio()).isTrue();
         assertThat(dto.isHasGatewayApi()).isTrue();
+        // ambient 跟着 istio 走（同一个安装单元，2026-10-18 合并）
         assertThat(dto.isIstioAmbient()).isTrue();
         // versions 仍来自 capability 列（组件清单不回答"哪些版本"）
         assertThat(dto.getGatewayApiVersions()).containsExactly("v1", "v1beta1");
     }
 
     @Test
-    void anUnknownAmbientDoesNotLeakIntoTheOtherFlags() {
-        // "不知道有没有 ztunnel"不等于"没装 Istio / Gateway API"
-        stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"],\"networking.istio.io\":[\"v1\"]}");
+    void anUnknownIstioDoesNotLeakIntoGatewayApi() {
+        // Istio 探测不到 → 退回 capability 快照；不影响 Gateway API 自己的判定
+        stubCapability("{\"networking.istio.io\":[\"v1\"],\"gateway.networking.k8s.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
-                status("istio", ClusterComponentService.HEALTHY),
-                status("gateway-api", ClusterComponentService.HEALTHY),
-                status("istio-ambient", ClusterComponentService.UNKNOWN)));
+                status("istio", ClusterComponentService.UNKNOWN),
+                status("gateway-api", ClusterComponentService.HEALTHY)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
@@ -74,8 +72,7 @@ class MeshServiceTest {
         stubCapability(null);
         when(componentService.status("c1")).thenReturn(List.of(
                 status("istio", ClusterComponentService.UNKNOWN),
-                status("gateway-api", ClusterComponentService.UNKNOWN),
-                status("istio-ambient", ClusterComponentService.UNKNOWN)));
+                status("gateway-api", ClusterComponentService.UNKNOWN)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
@@ -86,12 +83,11 @@ class MeshServiceTest {
     }
 
     @Test
-    void aNotInstalledAmbientIsFalse() {
+    void aNotInstalledIstioIsNotAmbient() {
         stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
-                status("istio", ClusterComponentService.HEALTHY),
-                status("gateway-api", ClusterComponentService.HEALTHY),
-                status("istio-ambient", ClusterComponentService.NOT_INSTALLED)));
+                status("istio", ClusterComponentService.NOT_INSTALLED),
+                status("gateway-api", ClusterComponentService.HEALTHY)));
 
         assertThat(svc.meshStatus("c1").isIstioAmbient()).isFalse();
     }
@@ -103,8 +99,7 @@ class MeshServiceTest {
         stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"],\"networking.istio.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
                 status("istio", ClusterComponentService.UNKNOWN),
-                status("gateway-api", ClusterComponentService.UNKNOWN),
-                status("istio-ambient", ClusterComponentService.UNKNOWN)));
+                status("gateway-api", ClusterComponentService.UNKNOWN)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 

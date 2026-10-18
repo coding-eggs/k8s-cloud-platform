@@ -16,9 +16,10 @@ class ClusterComponentCatalogTest {
 
     @Test
     void theCatalogIsExactlyTheAgreedOnes() {
-        // tigera-operator / tekton-operator 都不单独出现：它们随各自组件的同一个 release 安装
+        // tigera-operator / tekton-operator / istio-ambient 都不单独出现：它们随各自组件的
+        // 同一个安装单元部署（operator + CR、istiod + cni + ztunnel）
         assertThat(catalog.all()).extracting(ComponentDef::code).containsExactly(
-                "metrics-server", "prometheus-operator", "gateway-api", "istio", "istio-ambient",
+                "metrics-server", "prometheus-operator", "gateway-api", "istio",
                 "tekton", "calico", "cert-manager", "otel-operator");
     }
 

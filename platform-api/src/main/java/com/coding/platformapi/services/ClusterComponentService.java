@@ -385,7 +385,7 @@ public class ClusterComponentService {
                 ? ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE : null);
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
-        // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现
+        // 它对将来可能出现的"只有工作负载判据"的组件同样成立，否则同一集群里会出现
         // 一半"未探测"、一半"没装"的自相矛盾（spec §3.2）。
         if (groups.isEmpty()) {
             s.setState(UNKNOWN);

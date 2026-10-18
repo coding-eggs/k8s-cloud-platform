@@ -27,9 +27,12 @@ import java.util.List;
  *
  * <h2>mesh-status 的来源（S1.2 收口后）</h2>
  * 三个布尔（{@code hasIstio} / {@code hasGatewayApi} / {@code istioAmbient}）全部从
- * {@link ClusterComponentService} 的组件清单派生（组件 {@code istio} / {@code gateway-api} /
- * {@code istio-ambient}，<b>要求 {@code INSTALLED_HEALTHY}</b>）；{@code gatewayApiVersions} 仍来自
+ * {@link ClusterComponentService} 的组件清单派生（组件 {@code istio} / {@code gateway-api}，
+ * <b>要求 {@code INSTALLED_HEALTHY}</b>）；{@code gatewayApiVersions} 仍来自
  * {@code k8s_cluster.capability} 列（组件清单不回答"哪些版本"）。
+ * <p>{@code istioAmbient} 跟着 {@code istio} 一起判定：ambient 数据面（cni/ztunnel）与 istiod 在同一个
+ * 安装单元里（2026-10-18 合并为单个组件，不再单列 {@code istio-ambient}）。手工按 sidecar 模式装的
+ * Istio 会显示为 ambient —— 平台自己装的永远是 ambient，这是有意的简化。
  * <p>收口前这三条有两个来源（capability 列 + ztunnel 活探），与 CI / 网络 / HPA 四处各判一次。
  * 现在派生实现只有 {@link ClusterComponentService} 一份，本层只做投影。
  * <p><b>对外 shape 不变</b>：{@code MeshStatusDTO} 仍是四个字段，前端零改动；变的只是这四个字段在
@@ -110,7 +113,7 @@ public class MeshService {
      *       不退回就会在集群不可达时说「Istio 未安装」—— 正是本仓反复修过的那个坑。</li>
      * </ul>
      * <p>{@code istioAmbient} 没有快照可退（capability 列不回答 ztunnel），UNKNOWN 按 false ——
-     * 与改造前的活探测失败同一行为。
+     * 与改造前的活探测失败同一行为；它跟随 {@code istio} 组件判定。
      * <p>异常不会从这里逃出去：{@link ClusterComponentService#status} 把探测失败
      * 转成 {@code UNKNOWN}，不抛。
      */
@@ -125,7 +128,7 @@ public class MeshService {
         dto.setHasIstio(installed(components, "istio")
                 || (unknown(components, "istio") && capabilityService.hasIstio(clusterId)));
         dto.setGatewayApiVersions(gatewayVersions);
-        dto.setIstioAmbient(installed(components, "istio-ambient"));
+        dto.setIstioAmbient(installed(components, "istio"));
         return dto;
     }
 

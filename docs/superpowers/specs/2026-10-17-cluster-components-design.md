@@ -71,17 +71,16 @@ public record Probe(String namespace, WorkloadKind kind, String imageRepo, Strin
 | `metrics-server` | metrics-server | `metrics.k8s.io` | `kube-system` Deploy `metrics-server` | HPA 资源指标 |
 | `prometheus-operator` | Prometheus Operator | `monitoring.coreos.com` | `monitor` Deploy `prometheus-operator` | 监控曲线 · ServiceMonitor / PodMonitor 页 |
 | `gateway-api` | Gateway API | `gateway.networking.k8s.io` | —（纯 CRD，无工作负载） | 服务网格 · 路由 |
-| `istio` | Istio | `networking.istio.io`（`security.` / `telemetry.` 任一亦可） | `istio-system` Deploy `pilot` | 服务网格 |
-| `istio-ambient` | Istio ambient 数据面 | — | `istio-system` DaemonSet `ztunnel` | ambient 流量接管 |
+| `istio` | Istio | `networking.istio.io`（`security.` / `telemetry.` 任一亦可） | `istio-system` Deploy `pilot` | 服务网格 · ambient 流量接管 |
 | `tekton` | Tekton Pipelines | `tekton.dev` | `tekton-pipelines` Deploy `pipeline/controller-` | CI 流水线 |
 | `calico` | Calico | `crd.projectcalico.org` | `calico-system` DaemonSet `calico/node` | 网络 · IPAM |
 | `cert-manager` | cert-manager | `cert-manager.io` | `cert-manager` Deploy `cert-manager-controller` | 证书（网关 TLS） |
 | `otel-operator` | OpenTelemetry Operator | `opentelemetry.io` | `opentelemetry-operator-system` Deploy `opentelemetry-operator` | OTel 采集（S2.3 的地基） |
 
-**两次目录收敛**：`tigera-operator`（2026-10-17）与 `tekton-operator`（2026-10-18）先后从目录移除 ——
-它们都随各自组件的**同一个 release** 安装（Calico = operator + Installation；Tekton = operator chart
-+ TektonConfig），单列一行只会让用户在页面上点两次安装，还要靠 `requires` 串行。判据只保留下层
-真正干活的组件（`calico` / `tekton`）。
+**目录收敛（三次）**：`tigera-operator`（2026-10-17）、`tekton-operator` 与 `istio-ambient`（2026-10-18）
+先后从目录移除 —— 它们都随各自组件的**同一个安装单元**部署（Calico = operator + Installation；
+Tekton = operator chart + TektonConfig；Istio = base + istiod + cni + ztunnel + gateway），
+单列一行只会让用户在页面上点两次安装，还要靠 `requires` 串行。判据只保留下层真正干活的组件。
 
 **不纳入本批的四条**：
 
@@ -111,9 +110,9 @@ minio-operator / milvus-operator 是**用户业务**，coredns / kube-proxy / CN
 
 - **成本固定**：候选写死在目录里，**与集群的命名空间数量无关** —— 这条约束照
   `ClusterAggregationOperations` 的"固定 9 次 list"同形，**有单测盯着**。
-  11 条目录里 `gateway-api` 只有 CRD 判据（无工作负载），`istio-ambient` 只有工作负载判据，
-  其余 9 条两者都有 → **10 次 list**（`istio` 与 `istio-ambient` 同在 `istio-system`
-  但 kind 不同，各自一次）。同一 `(namespace, kind)` 上若出现多个候选**合并成一次 list**。
+  当前 8 条目录里 `gateway-api` 只有 CRD 判据（无工作负载），其余 7 条是工作负载判据，
+  落在 6 个 `(namespace, kind)` 上（`istio` 的两条候选同为 `istio-system/deployment`，合并成一次）
+  → **6 次 list + 1 次 CRD get**。同一 `(namespace, kind)` 上若出现多个候选**合并成一次 list**。
 - **健康按 kind 分支**（真集群实测踩到的）：Deployment / StatefulSet 用
   `status.readyReplicas / status.replicas`；**DaemonSet 用 `status.numberReady /
   status.desiredNumberScheduled`** —— `calico-node` / `ztunnel` / `kube-proxy` 的
@@ -255,7 +254,7 @@ ClusterComponentService.status(clusterId)
 | 消费方 | 今天 | 改后 | 注意 |
 |---|---|---|---|
 | CI（`PipelineCapabilityService.available`） | capability 列（Tekton）+ 活探 StorageClass | Tekton 那条改读 `flags`；**StorageClass 那条不动** | ⚠️ CI 有**两个**前提，StorageClass 不是组件（它是集群存储配置），不该硬塞进组件清单。即 CI 的 available 仍是 join，但 Tekton 那一半有了单一出处 |
-| 网格（`/mesh/status`） | 活探 ztunnel + capability 列 | 三条全从 `full`/`flags` 派生（istio 组件 / gateway-api 组件 / istio-ambient 组件） | 对外的 `MeshStatusDTO` **形状不变**，前端零改动（只换数据来源） |
+| 网格（`/mesh/status`） | 活探 ztunnel + capability 列 | 三条全从 `full`/`flags` 派生（istio 组件 / gateway-api 组件；ambient 跟随 istio） | 对外的 `MeshStatusDTO` **形状不变**，前端零改动（只换数据来源） |
 | 网络页 | capability 列的 `crd.projectcalico.org` | `flags` 的 `calico` | 前端零改动 |
 | HPA | capability 列的 `metrics.k8s.io` | `flags` 的 `metrics-server` | 前端提示文案改成"缺 metrics-server → HPA 的资源指标不可用"（今天是干巴巴一个 tag） |
 

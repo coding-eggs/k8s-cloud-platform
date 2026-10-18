@@ -11,7 +11,7 @@ import type { MeshStatus } from '@/types'
  *
  * <h2>三层来源，各答不同的问题</h2>
  * - **有权读 /mesh/status**（平台管理员）→ 全量：三个布尔全部来自后端组件清单的派生
- *   （组件 {@code istio} / {@code gateway-api} / {@code istio-ambient}），同一次探测、同一份缓存。
+ *   （组件 {@code istio} / {@code gateway-api}，ambient 跟随 istio），同一次探测、同一份缓存。
  * - **只有 capability 读权**（租户）→ {@code hasGatewayApi} / {@code hasIstio} 仍从能力快照派生：
  *   它们问的是 **API group 在不在**，而 group 存在性的唯一判据按设计就是 {@code k8s_cluster.capability}
  *   列（S1.2 决策 7：组件清单里这一列读它、不另探）。**ambient 改读组件旗标**
@@ -76,7 +76,7 @@ export function useMeshStatus(clusterId: Ref<string | null | undefined>) {
   })
   /** ambient 是否已有答案：平台侧全量通路，或组件旗标已拿到（S1.2 收口后租户也有答案） */
   const ambientKnown = computed(() => full.value !== null || comp.probed.value)
-  /** ambient 判定：全量优先，否则读组件旗标的 ambient-mesh（依赖组件 istio-ambient） */
+  /** ambient 判定：全量优先，否则读组件旗标的 ambient-mesh（依赖组件 istio） */
   const istioAmbient = computed(() =>
     full.value ? full.value.istioAmbient === true : comp.available('ambient-mesh'))
   /** 有没有任何来源的答案（决定横幅写"未探测"还是具体状态） */

@@ -148,11 +148,11 @@ public class ComponentRecipeCatalog {
             "platform-gateway-api", "kube-system", "gateway-api", "1.6.2",
             Map.of(), Map.of()));
 
-    // ==================== istio / istio-ambient ====================
+    // ==================== istio ====================
 
     /**
      * 默认按 **ambient** 模式部署：base → istiod → cni（ambient）→ ztunnel → 对外入口 gateway。
-     * 入口名固定 {@code external-gateway}（集群对外拓扑依赖它）。
+     * 五个 release 是一个安装单元，入口名固定 {@code external-gateway}（集群对外拓扑依赖它）。
      */
     private static final List<ReleaseSpec> ISTIO_RELEASES = List.of(
             new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.30.6", Map.of(), Map.of()),
@@ -170,12 +170,6 @@ public class ComponentRecipeCatalog {
             new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of()),
             new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.30.6",
                     Map.of("name", "external-gateway"), Map.of()));
-
-    /** ambient 数据面单装入口（istio 已包含它们；这个 recipe 幂等，供只补数据面的场景用）。 */
-    private static final List<ReleaseSpec> ISTIO_AMBIENT_RELEASES = List.of(
-            new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.30.6",
-                    Map.of("ambient", Map.of("enabled", true)), Map.of()),
-            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of()));
 
     // ==================== tekton ====================
 
@@ -283,7 +277,6 @@ public class ComponentRecipeCatalog {
                             THANOS_RECEIVE_IN_CLUSTER))),
             Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
-            Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),
             // Tekton 是一个组件：operator chart + TektonConfig 同一个 release（与 calico 同形），
             // 不再单列 tekton-operator
             Map.entry("tekton", Map.of(

@@ -55,7 +55,7 @@
 public record ComponentRecipe(
     String profile,              // management / business
     List<ReleaseSpec> releases,  // 该画像下要装的 release（通常 1 个，Prometheus 管理画像是 2 个）
-    List<String> requires        // 前置组件 code（如 istio-ambient requires istio）
+    List<String> requires        // 前置组件 code（如 otel-operator requires cert-manager）
 ) {}
 
 public record ReleaseSpec(
@@ -107,8 +107,7 @@ k8s-server/src/main/resources/charts/components/<code>/<chartVersion>/
 | metrics-server | metrics-server | 3.14.0 | 官方（kubernetes-sigs） |
 | prometheus-operator | prometheus-operator | 92.10.1 | 官方（prometheus-community，kube-prometheus-stack） |
 | gateway-api | gateway-api | 1.6.2 | **社区**（wiremind，experimental；上游只发 YAML） |
-| istio | istio-base / istio-istiod / istio-gateway | 1.30.6 | 官方（istio） |
-| istio-ambient | istio-cni / istio-ztunnel | 1.30.6 | 官方（istio） |
+| istio | istio-base / istio-istiod / istio-cni / istio-ztunnel / istio-gateway | 1.30.6 | 官方（istio） |
 | tekton | tekton-operator（官方 operator chart；TektonConfig 经 extraObjects 下发） | 0.81.2 | 官方（tektoncd/operator release asset） |
 | tigera-operator | tigera-operator | v3.33.0 | 官方（projectcalico） |
 | calico | 同上（Installation CR 经 values 下发） | v3.33.0 | 官方 |
@@ -286,7 +285,9 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 
 可编辑：无。**功能级验收**：三个实验类路由各创建一条 dry-run。
 
-### 5.3 `istio` / `istio-ambient`
+### 5.3 `istio`
+
+平台对它的依赖：服务网格（ambient 是默认部署形态）。
 
 | 值 | 类型 | 说明 |
 |---|---|---|
@@ -295,7 +296,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | `meshID` 全局一致（多集群时） | 🔒 | 固定 `platform-mesh`：同一平台下的集群共用一个网格 ID（装完再改是破坏性操作） |
 | istiod 资源限制 | ⚙️ | 默认 requests 100m/256Mi、limits 1C/1Gi，可编辑 |
 | `revision` | 有意不设 | 平台的升级不做按 revision 的灰度；设了反而要求命名空间打 `istio.io/rev` 标签 |
-| ambient：`istio-cni` + `ztunnel` 两个子 chart | 🔒 | **`istio` recipe 默认就带这两个 release**（ambient 模式是默认部署形态，不进表单）；`istio-ambient` 的 recipe 是同一组 release 的幂等子集，`requires: [istio]` |
+| ambient：`istio-cni` + `ztunnel` 两个子 chart | 🔒 | **`istio` recipe 默认就带这两个 release**（ambient 是默认部署形态，不进表单）；`istio-ambient` 不再是独立组件（2026-10-18），ambient 随 `istio` 一起装 |
 | ambient：`dataplane-mode` / `use-waypoint` 标签由平台写 | 🔒 | 组件本身不管 |
 
 可编辑：`replicas`、资源限制。**功能级验收**：`istioctl` 不在平台内 → 用探测 + 一次 Gateway 创建/删除验证控制面存活。

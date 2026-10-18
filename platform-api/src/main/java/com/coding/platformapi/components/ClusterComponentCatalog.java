@@ -43,6 +43,8 @@ public class ClusterComponentCatalog {
                     List.of(new ComponentProbe(null, "crd", null, "gateways.gateway.networking.k8s.io",
                             "gateway.networking.k8s.io/bundle-version")),
                     List.of("service-mesh", "routes")),
+            // Istio 是一个安装单元：base + istiod + cni + ztunnel + external-gateway 同一个 recipe。
+            // ambient 数据面（ztunnel/cni）随它一起装 —— 不再单列 istio-ambient（2026-10-18）。
             // 实测镜像是 registry.istio.io/release/pilot（含 `istio.io/release/pilot` 片段）；
             // app.kubernetes.io/version 标签只有部分安装方式才有，故 tag 是主来源
             // 两条候选同一 (ns,kind)：先匹配 registry.istio.io/release/pilot（本集群实测），
@@ -51,11 +53,7 @@ public class ClusterComponentCatalog {
             new ComponentDef("istio", "Istio", "networking.istio.io",
                     List.of(new ComponentProbe("istio-system", "deployment", "istio.io/release/pilot", "istiod"),
                             new ComponentProbe("istio-system", "deployment", "istio/pilot", null)),
-                    List.of("service-mesh")),
-            new ComponentDef("istio-ambient", "Istio ambient 数据面", null,
-                    List.of(new ComponentProbe("istio-system", "daemonset", "istio.io/release/ztunnel", "ztunnel"),
-                            new ComponentProbe("istio-system", "daemonset", "istio/ztunnel", null)),
-                    List.of("ambient-mesh")),
+                    List.of("service-mesh", "ambient-mesh")),
             new ComponentDef("tekton", "Tekton Pipelines", "tekton.dev",
                     List.of(new ComponentProbe("tekton-pipelines", "deployment", "tektoncd/pipeline/controller-",
                             "tekton-pipelines-controller")),

@@ -73,7 +73,7 @@ class ComponentRecipeCatalogTest {
     void dependenciesAreDeclared() {
         // spec §5：ambient 依赖控制面、otel 依赖 cert-manager、tekton 由 operator 安装。
         // calico 不再依赖 tigera-operator —— 它自己就把 operator 一起装了
-        assertThat(catalog.recipeOf("istio-ambient", "BUSINESS").requires()).containsExactly("istio");
+        assertThat(catalog.supports("istio-ambient")).as("ambient 随 istio 同一个安装单元").isFalse();
         assertThat(catalog.recipeOf("tekton", "BUSINESS").requires()).isEmpty();
         assertThat(catalog.supports("tekton-operator")).as("operator 不再单列，随 tekton 同一个 release").isFalse();
         assertThat(catalog.recipeOf("calico", "BUSINESS").requires()).isEmpty();
