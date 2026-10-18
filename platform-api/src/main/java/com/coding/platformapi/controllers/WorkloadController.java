@@ -10,6 +10,7 @@ import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.metrics.dto.WorkloadMetricsRequest;
 import com.coding.platformapi.models.WorkloadImageRequest;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
+import com.coding.platformapi.models.WorkloadObservabilityRequest;
 import com.coding.platformapi.models.WorkloadRollbackRequest;
 import com.coding.platformapi.services.WorkloadService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -107,6 +108,18 @@ public class WorkloadController {
     public ResponseData<WorkloadDTO> meshToggle(@PathVariable String name, @RequestBody WorkloadMeshToggleRequest body) {
         body.setName(name);
         return new ResponseData<>(workloadService.meshToggle(body));
+    }
+
+    @PostMapping("/{name}/observability")
+    @Operation(summary = "开/关工作负载的 OTel 可观测接入",
+            description = "只改 pod template 的 instrumentation.opentelemetry.io/inject-* 注解与主容器的 "
+                    + "OTEL_SERVICE_NAME，其余字段取线上现值回写；语言只支持 java / python；"
+                    + "追踪与日志都关闭时移除注入注解。改的是 pod template → 触发滚动更新。")
+    @Auditable(action = AuditAction.WORKLOAD_TOGGLE_OBSERVABILITY)
+    public ResponseData<WorkloadDTO> observability(@PathVariable String name,
+                                                   @RequestBody WorkloadObservabilityRequest body) {
+        body.setName(name);
+        return new ResponseData<>(workloadService.observability(body));
     }
 
     // ===== 列表页行内动作（改镜像 / 历史版本 / 回滚）=====

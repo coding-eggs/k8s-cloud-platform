@@ -44,6 +44,9 @@ public final class AuditAction {
     /** 切 ambient 开关（pod template 的两个保留 label） */
     public static final String WORKLOAD_TOGGLE_MESH = "workload:toggle-mesh";
 
+    /** 开/关 OTel 可观测接入（注入注解 + OTEL_SERVICE_NAME） */
+    public static final String WORKLOAD_TOGGLE_OBSERVABILITY = "workload:toggle-observability";
+
     // ---- 命名空间（7 个写端点全量）----
 
     public static final String NAMESPACE_CREATE = "namespace:create";

@@ -3,7 +3,10 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.ServiceType;
+import com.coding.common.models.k8s.dto.ContainerDTO;
+import com.coding.common.models.k8s.dto.EnvDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
+import com.coding.common.models.k8s.dto.PodSpecDTO;
 import com.coding.common.models.k8s.dto.PodTemplateDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServicePortDTO;
@@ -14,6 +17,7 @@ import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sWorkloadClient;
 import com.coding.platformapi.models.WorkloadImageRequest;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
+import com.coding.platformapi.models.WorkloadObservabilityRequest;
 import com.coding.platformapi.models.WorkloadRollbackRequest;
 import com.coding.platformapi.services.validation.WorkloadValidator;
 import lombok.RequiredArgsConstructor;
@@ -50,6 +54,17 @@ public class WorkloadService {
     private static final String USE_WAYPOINT_NONE = "none";
     /** ztunnel 认的两个 ambient 取值：ambient 纳入、none 排除 */
     private static final List<String> DATAPLANE_MODES = List.of("ambient", "none");
+
+    // ==================== OTel 可观测接入（批次一） ====================
+
+    /** 注入注解前缀；第一批只支持 java / python */
+    private static final String OTEL_INJECT_PREFIX = "instrumentation.opentelemetry.io/inject-";
+    private static final Map<String, String> OTEL_INJECT_KEYS = Map.of(
+            "java", OTEL_INJECT_PREFIX + "java",
+            "python", OTEL_INJECT_PREFIX + "python");
+    private static final String OTEL_SERVICE_NAME_ENV = "OTEL_SERVICE_NAME";
+    /** Instrumentation 所在命名空间（平台固定） */
+    private static final String OTEL_NAMESPACE = "monitor";
 
     private final K8sClient k8s;
     private final K8sWorkloadClient workloadClient;
@@ -274,6 +289,93 @@ public class WorkloadService {
         applyMeshLabel(labels, LABEL_USE_WAYPOINT, req.getUseWaypoint());
         existing.getPodTemplate().setLabels(labels.isEmpty() ? null : labels);
         return k8s.update(existing);
+    }
+
+    // ==================== OTel 可观测接入（批次一） ====================
+
+    /**
+     * 打开/关闭工作负载的 OTel 接入。只改 PodTemplate 的注入注解与主容器的 {@code OTEL_SERVICE_NAME}，
+     * 其余字段取线上现值回写（同 {@link #meshToggle} 的道理：不拿一个开关当借口改动别人的工作负载）。
+     *
+     * <p>语言/组合 → Instrumentation：只追踪 {@code platform-instrumentation}、
+     * 只日志 {@code platform-instrumentation-logs}、两者都要 {@code platform-instrumentation-all}。
+     * 切换语言时会先移除所有语言注解，不会残留上一个运行时的注入。
+     *
+     * <p>关闭（tracing/logs 都为 false）只移除平台管的注入注解；用户自己的
+     * {@code OTEL_SERVICE_NAME} 等字段不动。
+     */
+    public WorkloadDTO observability(WorkloadObservabilityRequest req) {
+        boolean enable = req.isTracing() || req.isLogs();
+        String language = req.getLanguage() == null ? null : req.getLanguage().trim().toLowerCase();
+        if (enable && !OTEL_INJECT_KEYS.containsKey(language)) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "不支持的应用类型：" + req.getLanguage() + "（第一批只支持 java / python）");
+        }
+
+        WorkloadDTO query = dto(req.getName(), req.getTenantId(), req.getClusterId(), req.getNamespace());
+        query.setKind(req.getKind());
+        WorkloadDTO existing = k8s.get(query);
+        if (existing == null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "工作负载不存在: " + req.getName());
+        }
+        if (existing.getPodTemplate() == null) {
+            existing.setPodTemplate(new PodTemplateDTO());
+        }
+        Map<String, Object> annotations = existing.getPodTemplate().getAnnotations() == null
+                ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(existing.getPodTemplate().getAnnotations());
+        // 先清掉所有语言的注入注解：切换语言 / 关闭时都不残留
+        OTEL_INJECT_KEYS.values().forEach(annotations::remove);
+        if (enable) {
+            String instrumentation = req.isTracing() && req.isLogs()
+                    ? "platform-instrumentation-all"
+                    : req.isTracing() ? "platform-instrumentation" : "platform-instrumentation-logs";
+            annotations.put(OTEL_INJECT_KEYS.get(language),
+                    OTEL_NAMESPACE + "/" + instrumentation);
+        }
+        existing.getPodTemplate().setAnnotations(annotations.isEmpty() ? null : annotations);
+
+        if (enable) {
+            String serviceName = StringUtils.hasText(req.getServiceName())
+                    ? req.getServiceName().trim() : req.getName();
+            setServiceNameEnv(existing, req.getContainerName(), serviceName);
+        }
+        return k8s.update(existing);
+    }
+
+    /** 把 OTEL_SERVICE_NAME 写到指定容器（空 = 第一个）；同名 env 覆盖，不重复追加 */
+    private static void setServiceNameEnv(WorkloadDTO workload, String containerName, String value) {
+        PodSpecDTO spec = workload.getPodTemplate().getSpec();
+        if (spec == null || spec.getContainers() == null || spec.getContainers().isEmpty()) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "工作负载没有容器，无法写入 " + OTEL_SERVICE_NAME_ENV);
+        }
+        ContainerDTO container;
+        if (StringUtils.hasText(containerName)) {
+            container = spec.getContainers().stream()
+                    .filter(c -> containerName.trim().equals(c.getName()))
+                    .findFirst().orElse(null);
+            if (container == null) {
+                throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                        "容器不存在：" + containerName);
+            }
+        } else {
+            container = spec.getContainers().get(0);
+        }
+        List<EnvDTO> envs = container.getEnvs() == null
+                ? new ArrayList<>() : new ArrayList<>(container.getEnvs());
+        EnvDTO target = envs.stream()
+                .filter(e -> OTEL_SERVICE_NAME_ENV.equals(e.getName()))
+                .findFirst().orElse(null);
+        if (target == null) {
+            target = new EnvDTO();
+            target.setName(OTEL_SERVICE_NAME_ENV);
+            envs.add(target);
+        }
+        // 平台写入的是字面值：若用户原来用 valueFrom 提供同名变量，这里改成字面值
+        target.setValue(value);
+        target.setValueFrom(null);
+        container.setEnvs(envs);
     }
 
     /** null=不动；空串=移除；有值=覆写（去空格） */
