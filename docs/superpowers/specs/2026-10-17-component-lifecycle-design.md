@@ -184,11 +184,14 @@ PENDING → RUNNING → SUCCESS
   都只看 `platform-kps`；把 thanos 的 0.47.2 混进来会让 UI 显示「已装 92.10.1，可升级到 0.47.2」（2026-10-18 实锤）。
 - **不要拿探测到的应用版本跟 chart 版本比**：`prometheus-operator v0.93.1` 与 `kube-prometheus-stack 88.6.2` 是两套编号。UI 两个都显示并注明。
 - 升级**复用上次成功操作的最终 values**（见 §4），用户修改可编辑字段则覆盖对应路径。
-- **已装组件可编辑（不换版本地重放）**：告警回调地址、Thanos Receive 地址与可编辑字段都能在装完后改。
-  UI 的「编辑」按 `UPGRADE` 提交、`targetVersion` 取当前 chart 版本（相同版本重放 helm，幂等）。
-  编辑表单预填**当前生效**的值 —— 两个地址来自上次成功操作的 `values_snapshot.__platform`
-  （状态接口下发 `alertWebhookUrl` / `thanosReceiveUrl`），其余可编辑字段按路径从快照的
-  组件本体 release 里取（`EditableFieldDTO.currentValue`）；没改的项不提交，后端沿用上次快照。
+- **已装组件可编辑（不换版本地重放）**：告警回调地址、Thanos Receive 地址、Thanos 安装参数
+  （凭证 Secret / MinIO 地址与桶 / 跳过 HTTPS 校验）以及副本数、Grafana 开关、保留时长等可编辑字段，
+  装完后都能改。UI 的「编辑」按 `UPGRADE` 提交、`targetVersion` 取当前 chart 版本（相同版本重放 helm，幂等）。
+  **存储类与容量在编辑里置灰**：StatefulSet 的 `volumeClaimTemplates` 不可变；扩容需 StorageClass 支持
+  并在集群侧操作 PVC。Calico 的 CIDR / 封装方式是安装期决定，编辑不显示。
+  编辑表单预填**当前生效**的值 —— 两个地址与 Thanos 参数来自上次成功操作的 `values_snapshot.__platform`
+  （状态接口下发 `alertWebhookUrl` / `thanosReceiveUrl` / `thanosInstallCurrent`），其余可编辑字段按路径
+  从快照的组件本体 release 里取（`EditableFieldDTO.currentValue`）；没改的项不提交，后端沿用上次快照。
 
 ---
 

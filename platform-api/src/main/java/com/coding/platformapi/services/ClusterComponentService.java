@@ -15,6 +15,7 @@ import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EditableFieldDTO;
+import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -199,6 +200,9 @@ public class ClusterComponentService {
             if (s.isThanosRemoteWrite() && platform.get("thanosReceiveUrl") instanceof String url) {
                 s.setThanosReceiveUrl(url);
             }
+            if (s.isThanosInstall()) {
+                s.setThanosInstallCurrent(thanosInstallOf(platform));
+            }
             applyCurrentEditableValues(s, snapshot, profile);
         }
     }
@@ -262,6 +266,24 @@ public class ClusterComponentService {
     private static Map<String, Object> platformOf(Map<String, Object> snapshot) {
         Object platform = snapshot.get("__platform");
         return platform instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+    }
+
+    /** {@code __platform.thanosInstall} → 编辑表单的当前值；没有记录返回 null（表单退回空值） */
+    private static ThanosInstallRequest thanosInstallOf(Map<String, Object> platform) {
+        if (!(platform.get("thanosInstall") instanceof Map<?, ?> m)) {
+            return null;
+        }
+        ThanosInstallRequest cur = new ThanosInstallRequest();
+        cur.setNamespace(asString(m.get("namespace")));
+        cur.setSecretName(asString(m.get("secretName")));
+        cur.setEndpoint(asString(m.get("endpoint")));
+        cur.setBucket(asString(m.get("bucket")));
+        cur.setInsecureSkipVerify(Boolean.TRUE.equals(m.get("insecureSkipVerify")));
+        return cur;
+    }
+
+    private static String asString(Object value) {
+        return value instanceof String s ? s : null;
     }
 
     private String profileOf(String clusterId) {

@@ -309,14 +309,18 @@ class ClusterComponentServiceTest {
                 + "{\"retention\":\"30d\"}}},"
                 + "\"__platform\":{"
                 + "\"alertWebhookUrl\":\"http://now:8081/alert/webhook\","
-                + "\"thanosReceiveUrl\":\"http://now-receive:10908/api/v1/receive\"}}");
+                + "\"thanosReceiveUrl\":\"http://now-receive:10908/api/v1/receive\","
+                + "\"thanosInstall\":{\"namespace\":\"monitor\",\"secretName\":\"minio-creds\","
+                + "\"endpoint\":\"minio.default.svc:9000\",\"bucket\":\"thanos\",\"insecureSkipVerify\":true}}}");
         PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
         when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
 
         K8sComponentClient client = mock(K8sComponentClient.class);
         when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService management = mock(ClusterService.class);
+        when(management.requireProfile("c1")).thenReturn("MANAGEMENT");
         ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
-                capability(DEFAULT_GROUPS), client, cache(), profileService(),
+                capability(DEFAULT_GROUPS), client, cache(), management,
                 new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
 
         ComponentStatusDTO prom = find(svc.status("c1"), "prometheus-operator");
@@ -328,6 +332,11 @@ class ClusterComponentServiceTest {
                 .filteredOn(f -> f.getKey().endsWith("prometheusSpec.retention"))
                 .extracting(com.coding.platformapi.models.EditableFieldDTO::getCurrentValue)
                 .containsExactly("30d");
+        // Thanos 安装参数同样要能回填（Secret / MinIO / 跳过 HTTPS 校验都允许装完后改）
+        assertThat(prom.getThanosInstallCurrent().getSecretName()).isEqualTo("minio-creds");
+        assertThat(prom.getThanosInstallCurrent().getEndpoint()).isEqualTo("minio.default.svc:9000");
+        assertThat(prom.getThanosInstallCurrent().getBucket()).isEqualTo("thanos");
+        assertThat(prom.getThanosInstallCurrent().isInsecureSkipVerify()).isTrue();
     }
 
     @Test

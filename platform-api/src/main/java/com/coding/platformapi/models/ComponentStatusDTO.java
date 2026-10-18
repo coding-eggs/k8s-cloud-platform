@@ -54,6 +54,11 @@ public class ComponentStatusDTO {
     private String thanosReceiveUrl;
     /** 该组件安装时是否同时安装 Thanos（管理集群的 Prometheus：表单要选命名空间/凭证 Secret、填 MinIO） */
     private boolean thanosInstall;
+    /**
+     * **当前生效**的 Thanos 安装参数（上次成功操作的 {@code __platform.thanosInstall}）。
+     * 编辑表单预填：凭证 Secret、MinIO 地址/桶、跳过 HTTPS 校验都能在装完后改。
+     */
+    private ThanosInstallRequest thanosInstallCurrent;
     /** 安装时是否要填 Calico 的 Pod CIDR / 封装方式 */
     private boolean calicoNetwork;
     /** Calico 默认值（表单预填） */

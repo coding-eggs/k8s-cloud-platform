@@ -209,7 +209,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
       initial[f.key] = JSON.stringify(start)
     }
   }
-  const thanos: K8sThanosInstall = { ...EMPTY_THANOS }
+  // 编辑时回填当前生效的 Thanos 参数（凭证 Secret / MinIO 地址与桶 / 跳过 HTTPS 校验都能改）
+  const thanos: K8sThanosInstall = editing && row.thanosInstallCurrent
+    ? { ...EMPTY_THANOS, ...row.thanosInstallCurrent, namespace: THANOS_NAMESPACE }
+    : { ...EMPTY_THANOS }
   const calico: K8sCalicoInstall = {
     podCidr: row.defaultPodCidr ?? '',
     encapsulation: row.defaultEncapsulation || 'IPIP',
@@ -223,8 +226,8 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     showThanos: !!row.thanosRemoteWrite,
     thanosUrl: thanosInitial,
     initialThanos: thanosInitial.trim(),
-    // 编辑只改配置：不重装 Thanos、不改 Calico 网络参数（那两个是安装期决定，改错会断网）
-    showThanosInstall: !!row.thanosInstall && !editing,
+    // 编辑也能改 Thanos 的凭证/MinIO 参数；Calico 网络参数是安装期决定，编辑时不显示
+    showThanosInstall: !!row.thanosInstall,
     thanos,
     initialThanosInstall: JSON.stringify(thanos),
     storageClasses: [], secretOptions: [],
@@ -232,7 +235,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     calico,
     initialCalico: JSON.stringify(calico),
   }
-  if (row.thanosInstall && !editing) {
+  if (row.thanosInstall) {
     void loadThanosOptions()
   }
   if (fields.some((f) => f.type === 'storageClass')) {
@@ -646,15 +649,21 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <!-- 存储类：候选来自集群的 StorageClass；清空 = 跟随集群默认存储类（不提交该键） -->
           <el-select v-else-if="f.type === 'storageClass'" v-model="applyDialog.values[f.key]"
                      filterable allow-create clearable style="width: 100%"
+                     :disabled="applyDialog.action === 'EDIT'"
                      placeholder="跟随集群默认存储类">
             <el-option v-for="sc in applyDialog.storageClasses" :key="sc" :label="sc" :value="sc" />
           </el-select>
           <el-input v-else-if="f.type === 'size'" v-model="applyDialog.values[f.key]"
-                    placeholder="如 50Gi" spellcheck="false" />
+                    placeholder="如 50Gi" spellcheck="false"
+                    :disabled="applyDialog.action === 'EDIT'" />
           <el-input v-else-if="f.type === 'json'" v-model="applyDialog.jsonText[f.key]"
                     type="textarea" :rows="5" spellcheck="false" />
           <el-input v-else v-model="applyDialog.values[f.key]" />
-          <div v-if="f.type === 'size'" class="cc-form-hint">容量带单位：50Gi / 500Mi / 1Ti</div>
+          <div v-if="(f.type === 'size' || f.type === 'storageClass') && applyDialog.action === 'EDIT'"
+               class="cc-form-hint">
+            存储类与容量不能在这里改：StatefulSet 的 volumeClaimTemplates 不可变；扩容需 StorageClass 支持并在集群侧操作 PVC
+          </div>
+          <div v-else-if="f.type === 'size'" class="cc-form-hint">容量带单位：50Gi / 500Mi / 1Ti</div>
         </div>
       </div>
       <div v-if="!applyDialog.fields.length && applyDialog.action === 'INSTALL'" class="cc-upgrade-tip">
