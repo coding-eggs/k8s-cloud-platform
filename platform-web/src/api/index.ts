@@ -453,6 +453,9 @@ export const workloadApi = {
     logs: boolean
     serviceName?: string
     containerName?: string
+    logMode?: 'app' | 'file'
+    logDirectory?: string
+    confirmFileLogs?: boolean
   }) => http.post<never, WorkloadDetail>(
     `/workloads/${encodeURIComponent(name)}/observability`, { ...ctx, name }),
   /**

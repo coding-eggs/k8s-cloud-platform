@@ -147,6 +147,14 @@ const workloadLogsVisible = ref(false)
 const observabilityVisible = ref(false)
 const observabilityContainers = computed(() =>
   (detail.value?.podTemplate?.spec?.containers ?? []).map((c) => c.name))
+/** 已接入文件日志时，应用容器上平台卷的挂载目录（弹窗回填用） */
+const observabilityLogDirectory = computed(() => {
+  for (const c of detail.value?.podTemplate?.spec?.containers ?? []) {
+    const m = (c.volumeMounts ?? []).find((x) => x.name === 'platform-otel-logs')
+    if (m?.mountPath) return m.mountPath
+  }
+  return undefined
+})
 
 function openLogs(row: K8sPod): void {
   logPod.value = row
@@ -616,6 +624,7 @@ const contextDesc = computed(() => {
       :namespace="ctxParams.namespace"
       :annotations="detail.podTemplate?.annotations"
       :containers="observabilityContainers"
+      :file-log-directory="observabilityLogDirectory"
       @update:visible="observabilityVisible = $event"
       @saved="refreshAll"
     />
