@@ -7,6 +7,10 @@ import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentApplyRequest;
+import com.coding.platformapi.models.ComponentStatusDTO;
+import com.coding.platformapi.models.EsConfig;
+import com.coding.platformapi.models.OtelInstallRequest;
+import com.coding.platformapi.models.SecretRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -759,6 +763,118 @@ class ComponentInstallServiceTest {
 
         verify(mapper).updateById(org.mockito.ArgumentMatchers.argThat(
                 op -> "UNKNOWN".equals(op.getStatus())));
+    }
+
+    // ==================== OTel 采集栈（批次一） ====================
+
+    @Test
+    void otelRequiresATempoEndpoint() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoEndpoint(" ");
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("Tempo");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void otelSamplingAndReplicasAreValidated() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        OtelInstallRequest otel = baseOtel();
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        otel.setSamplingPercentage(0);
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("采样率");
+
+        otel.setSamplingPercentage(10);
+        otel.setGatewayReplicas(0);
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("副本数");
+
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void otelInjectsCrObjectsOnlyIntoTheSecondOperatorPass() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(baseOtel());
+
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("otel-operator"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        List<ReleaseInstallSpecDTO> dto = captor.getValue();
+        assertThat(dto).hasSize(2);
+        // 第一遍只装 CRD+operator，不能带 CR；带上就会在 Helm Build 阶段找不到 CRD
+        assertThat(dto.get(0).getValues()).doesNotContainKey("extraObjects");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> extra =
+                (List<Map<String, Object>>) dto.get(1).getValues().get("extraObjects");
+        assertThat(extra).hasSize(4);
+        assertThat(extra.toString()).contains("platform-instrumentation")
+                .contains("platform-otel-gateway").contains("4318");
+    }
+
+    @Test
+    void otelSnapshotKeepsAddressesAndSecretRefsButNoCredentialValues() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(baseOtel());
+
+        service().apply(req, "admin");
+
+        ArgumentCaptor<PlatformComponentOperation> captor =
+                ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper).insert(captor.capture());
+        String snapshot = captor.getValue().getValuesSnapshot();
+        assertThat(snapshot).contains("tempoEndpoint")
+                .contains("es-es-elastic-user")
+                .contains("\"samplingPercentage\":10")
+                .doesNotContain("codingegg").doesNotContain("minio-secret");
+    }
+
+    private static ComponentStatusDTO healthy(String code) {
+        ComponentStatusDTO s = new ComponentStatusDTO();
+        s.setCode(code);
+        s.setState(ClusterComponentService.HEALTHY);
+        return s;
+    }
+
+    private static OtelInstallRequest baseOtel() {
+        OtelInstallRequest o = new OtelInstallRequest();
+        o.setTempoEndpoint("platform-tempo.monitor.svc:4317");
+        o.setSamplingPercentage(10);
+        o.setGatewayReplicas(1);
+        o.setLogsEnabled(false);
+        o.setEs(new EsConfig("https://es-es-http.default.svc:9200", "elastic",
+                new SecretRef("default", "es-es-elastic-user"), "elastic", true, "otel-logs"));
+        return o;
     }
 
     private static com.coding.common.models.k8s.dto.ComponentInstallResultDTO successResult() {

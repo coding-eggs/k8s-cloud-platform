@@ -9,6 +9,8 @@ import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.components.ComponentRecipe;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.components.DeepMerge;
+import com.coding.platformapi.components.OtelObjects;
+import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.components.ValueTemplate;
 import com.coding.platformapi.k8s.K8sComponentClient;
@@ -16,6 +18,10 @@ import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
 import com.coding.platformapi.models.CalicoInstallRequest;
 import com.coding.platformapi.models.ComponentStatusDTO;
+import com.coding.platformapi.models.EsConfig;
+import com.coding.platformapi.models.OtelInstallRequest;
+import com.coding.platformapi.models.SecretRef;
+import com.coding.platformapi.models.TempoStorageConfig;
 import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +30,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -62,6 +69,19 @@ public class ComponentInstallService {
 
     /** Thanos chart 的 global.objstore.secretName（recipe 里固定为它） */
     private static final String THANOS_OBJSTORE_SECRET = "platform-thanos-objstore";
+
+    // ==================== OTel（批次一） ====================
+
+    private static final int DEFAULT_OTEL_SAMPLING = 10;
+    private static final int DEFAULT_OTEL_REPLICAS = 1;
+    private static final String DEFAULT_ES_ENDPOINT = "https://es-es-http.default.svc:9200";
+    private static final String DEFAULT_ES_USERNAME = "elastic";
+    private static final String DEFAULT_ES_PASSWORD_KEY = "elastic";
+    private static final String DEFAULT_ES_LOGS_INDEX = "otel-logs";
+    private static final String DEFAULT_MINIO_BUCKET = "thanos";
+    private static final String DEFAULT_MINIO_PREFIX = "tempo";
+    /** Tempo/collector 的命名空间：凭证 Secret 必须落在这里，Pod 才能挂到 */
+    private static final String OTEL_NAMESPACE = "monitor";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final TypeReference<Map<String, Map<String, Object>>> SNAPSHOT_TYPE =
@@ -162,6 +182,9 @@ public class ComponentInstallService {
         String tektonProfile = recipe.tektonProfile()
                 ? resolveTektonProfile(req.getTektonProfile(), asString(previousPlatform.get("tektonProfile")))
                 : null;
+        // OTel 采集栈：表单 > 上次成功 > 默认；Tempo 地址为空直接拒（装完才失败的话，traces 永远发不出去）
+        OtelInstallRequest otel = recipe.otel() == null ? null
+                : resolveOtel(req.getOtel(), previousPlatform.get("otel"), recipe.otel());
 
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
         String action = req.getAction() == null ? "INSTALL" : req.getAction();
@@ -173,8 +196,8 @@ public class ComponentInstallService {
         // spec §3.3：升级复用上次成功操作里的 values（本次显式传入的字段覆盖它）
         List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
                 parseSnapshot(last == null ? null : last.getValuesSnapshot()));
-        // 占位符（${cluster.name} / ${thanos.receive.url}）在落库前解析 —— 配置缺失要立刻失败，不留失败记录
-        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico, tektonProfile);
+        // 占位符（${cluster.name} / ${thanos.receive.url} / ${tempo.endpoint}）在落库前解析
+        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico, tektonProfile, otel);
         String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
@@ -188,7 +211,7 @@ public class ComponentInstallService {
                 effective.stream().map(ReleaseSpec::releaseName).distinct().toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
                 snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico,
-                        tektonProfile)));
+                        tektonProfile, otel)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -237,7 +260,7 @@ public class ComponentInstallService {
             merged = DeepMerge.merge(merged, pathNested(r, editable));
             merged = DeepMerge.merge(merged, r.contractValues());
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
-                    r.chartVersion(), merged, r.editableValues()));
+                    r.chartVersion(), merged, r.editableValues(), r.preserveUnknownPlaceholders()));
         }
         return out;
     }
@@ -278,10 +301,11 @@ public class ComponentInstallService {
         cursor.put(parts[parts.length - 1], value);
     }
 
-    /** 把 recipe 里的占位符替换成真实值（集群名、Thanos receive 地址） */
+    /** 把 recipe 里的占位符替换成真实值（集群名、Thanos receive 地址、Tempo/ES 表单值） */
     @SuppressWarnings("unchecked")
     private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId, String thanosUrl,
-                                            CalicoInstallRequest calico, String tektonProfile) {
+                                            CalicoInstallRequest calico, String tektonProfile,
+                                            OtelInstallRequest otel) {
         Map<String, String> context = new LinkedHashMap<>();
         context.put("cluster.name", clusterService.requireName(clusterId));
         context.put("thanos.receive.url", thanosUrl == null ? "" : thanosUrl);
@@ -292,14 +316,54 @@ public class ComponentInstallService {
         // Tekton profile：没传（非 tekton 组件）就用默认值；值已在 apply() 里校验过
         context.put("tekton.profile", tektonProfile != null && !tektonProfile.isBlank()
                 ? tektonProfile : ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE);
+        if (otel != null) {
+            context.put("tempo.endpoint", otel.getTempoEndpoint());
+            context.put("otel.sampling", samplingRatio(otel.getSamplingPercentage()));
+            if (otel.getTempoStorage() != null) {
+                context.put("tempo.minio.endpoint", otel.getTempoStorage().getEndpoint());
+                context.put("tempo.minio.bucket", otel.getTempoStorage().getBucket());
+                context.put("tempo.minio.prefix", otel.getTempoStorage().getPrefix());
+            }
+            if (otel.getEs() != null) {
+                context.put("otel.es.endpoint", otel.getEs().getEndpoint());
+                context.put("otel.es.username", otel.getEs().getUsername());
+                context.put("otel.logs.index", otel.getEs().getLogsIndex());
+            }
+        }
+
+        // Instrumentation/collector 只下发给**最后一个** otel-operator release（第二遍）；
+        // 第一遍带上 CR 会在 Helm Build 阶段找不到 CRD
+        int lastOtelOperator = -1;
+        for (int i = 0; i < releases.size(); i++) {
+            if ("otel-operator".equals(releases.get(i).chartCode())) {
+                lastOtelOperator = i;
+            }
+        }
+
         List<ReleaseSpec> out = new ArrayList<>();
-        for (ReleaseSpec r : releases) {
-            Map<String, Object> resolved =
-                    (Map<String, Object>) ValueTemplate.resolve(r.contractValues(), context);
-            out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
-                    r.chartVersion(), resolved, r.editableValues()));
+        for (int i = 0; i < releases.size(); i++) {
+            ReleaseSpec r = releases.get(i);
+            Map<String, Object> values = r.contractValues();
+            if (i == lastOtelOperator && otel != null) {
+                Map<String, Object> copy = new LinkedHashMap<>(values);
+                copy.put("extraObjects", OtelObjects.build(
+                        Boolean.TRUE.equals(otel.getLogsEnabled()), otel.getGatewayReplicas()));
+                values = copy;
+            }
+            Map<String, Object> resolved = (Map<String, Object>) ValueTemplate.resolve(
+                    values, context, r.preserveUnknownPlaceholders());
+            out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(), r.chartVersion(),
+                    resolved, r.editableValues(), r.preserveUnknownPlaceholders()));
         }
         return out;
+    }
+
+    /** 10 -> "0.1"；5 -> "0.05"；100 -> "1"（Instrumentation 的 sampler.argument 是字符串） */
+    private static String samplingRatio(Integer percentage) {
+        return BigDecimal.valueOf(percentage)
+                .divide(BigDecimal.valueOf(100))
+                .stripTrailingZeros()
+                .toPlainString();
     }
 
     /** 快照按 release 存"最终 values"，下次升级时作为基线 */
@@ -321,7 +385,8 @@ public class ComponentInstallService {
                                                                   String alertWebhookUrl, String thanosUrl,
                                                                   ThanosInstallRequest thanos,
                                                                   CalicoInstallRequest calico,
-                                                                  String tektonProfile) {
+                                                                  String tektonProfile,
+                                                                  OtelInstallRequest otel) {
         Map<String, Object> snapshot = snapshotOf(releases);
         Map<String, Object> platform = new LinkedHashMap<>();
         if (recipe.platformAlerting() && alertWebhookUrl != null) {
@@ -348,6 +413,9 @@ public class ComponentInstallService {
         if (recipe.tektonProfile() && tektonProfile != null) {
             platform.put("tektonProfile", tektonProfile);
         }
+        if (otel != null) {
+            platform.put("otel", otelSnapshot(otel));
+        }
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
         }
@@ -364,6 +432,221 @@ public class ComponentInstallService {
 
     private static String asString(Object value) {
         return value instanceof String s ? s : null;
+    }
+
+    // ==================== OTel 参数解析 / 快照（批次一） ====================
+
+    private static OtelInstallRequest resolveOtel(OtelInstallRequest requested, Object previous, OtelRecipe recipe) {
+        OtelInstallRequest req = requested == null ? new OtelInstallRequest() : requested;
+        OtelInstallRequest prev = otelOf(previous);
+
+        OtelInstallRequest out = new OtelInstallRequest();
+        out.setTempoEndpoint(firstNonBlank(req.getTempoEndpoint(),
+                prev == null ? null : prev.getTempoEndpoint(), recipe.tempoEndpointDefault()));
+        if (isBlank(out.getTempoEndpoint())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请填写 Tempo 地址（collector 的 traces 导出目标）");
+        }
+        out.setSamplingPercentage(firstNonNull(req.getSamplingPercentage(),
+                prev == null ? null : prev.getSamplingPercentage(), DEFAULT_OTEL_SAMPLING));
+        if (out.getSamplingPercentage() < 1 || out.getSamplingPercentage() > 100) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "采样率必须在 1..100 之间（收到 " + out.getSamplingPercentage() + "）");
+        }
+        out.setGatewayReplicas(firstNonNull(req.getGatewayReplicas(),
+                prev == null ? null : prev.getGatewayReplicas(), DEFAULT_OTEL_REPLICAS));
+        if (out.getGatewayReplicas() < 1 || out.getGatewayReplicas() > 10) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "Gateway 副本数必须在 1..10 之间（收到 " + out.getGatewayReplicas() + "）");
+        }
+        Boolean logs = req.getLogsEnabled() != null ? req.getLogsEnabled()
+                : prev != null && prev.getLogsEnabled() != null ? prev.getLogsEnabled() : Boolean.FALSE;
+        out.setLogsEnabled(logs);
+        out.setTempoStorage(recipe.tempoInstall()
+                ? resolveTempoStorage(req.getTempoStorage(), prev == null ? null : prev.getTempoStorage())
+                : null);
+        out.setEs(resolveEs(req.getEs(), prev == null ? null : prev.getEs(), logs));
+        return out;
+    }
+
+    private static TempoStorageConfig resolveTempoStorage(TempoStorageConfig requested, TempoStorageConfig prev) {
+        TempoStorageConfig out = new TempoStorageConfig();
+        out.setEndpoint(firstNonBlank(
+                requested == null ? null : requested.getEndpoint(),
+                prev == null ? null : prev.getEndpoint()));
+        out.setBucket(firstNonBlank(
+                requested == null ? null : requested.getBucket(),
+                prev == null ? null : prev.getBucket(), DEFAULT_MINIO_BUCKET));
+        out.setPrefix(firstNonBlank(
+                requested == null ? null : requested.getPrefix(),
+                prev == null ? null : prev.getPrefix(), DEFAULT_MINIO_PREFIX));
+        SecretRef secret = requested != null && requested.getCredentialSecret() != null
+                ? requested.getCredentialSecret()
+                : prev == null ? null : prev.getCredentialSecret();
+        out.setCredentialSecret(secret);
+        out.setInsecureSkipVerify(requested != null
+                ? requested.isInsecureSkipVerify()
+                : prev == null || prev.isInsecureSkipVerify());
+        if (isBlank(out.getEndpoint()) || isBlank(out.getBucket()) || isBlank(out.getPrefix())
+                || secret == null || isBlank(secret.getNamespace()) || isBlank(secret.getName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请填写 MinIO 地址/桶/前缀，并选择 Tempo 的凭证 Secret");
+        }
+        if (!OTEL_NAMESPACE.equals(secret.getNamespace())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "Tempo 的凭证 Secret 必须放在 " + OTEL_NAMESPACE + " 命名空间");
+        }
+        return out;
+    }
+
+    private static EsConfig resolveEs(EsConfig requested, EsConfig prev, Boolean logs) {
+        EsConfig out = new EsConfig();
+        out.setEndpoint(firstNonBlank(
+                requested == null ? null : requested.getEndpoint(),
+                prev == null ? null : prev.getEndpoint(), DEFAULT_ES_ENDPOINT));
+        out.setUsername(firstNonBlank(
+                requested == null ? null : requested.getUsername(),
+                prev == null ? null : prev.getUsername(), DEFAULT_ES_USERNAME));
+        out.setPasswordKey(firstNonBlank(
+                requested == null ? null : requested.getPasswordKey(),
+                prev == null ? null : prev.getPasswordKey(), DEFAULT_ES_PASSWORD_KEY));
+        out.setLogsIndex(firstNonBlank(
+                requested == null ? null : requested.getLogsIndex(),
+                prev == null ? null : prev.getLogsIndex(), DEFAULT_ES_LOGS_INDEX));
+        SecretRef secret = requested != null && requested.getCredentialSecret() != null
+                ? requested.getCredentialSecret()
+                : prev == null ? null : prev.getCredentialSecret();
+        out.setCredentialSecret(secret);
+        out.setInsecureSkipVerify(requested != null
+                ? requested.isInsecureSkipVerify()
+                : prev == null || prev.isInsecureSkipVerify());
+        if (Boolean.TRUE.equals(logs)) {
+            if (!out.getLogsIndex().matches("[a-z0-9][a-z0-9._-]*")) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "日志索引只能包含小写字母、数字、点、下划线和连字符：" + out.getLogsIndex());
+            }
+            if (!out.getEndpoint().startsWith("http://") && !out.getEndpoint().startsWith("https://")) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "ES 地址必须以 http:// 或 https:// 开头：" + out.getEndpoint());
+            }
+            if (secret == null || isBlank(secret.getNamespace()) || isBlank(secret.getName())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, "请选择 ES 凭证 Secret");
+            }
+        }
+        return out;
+    }
+
+    /** 只放地址、用户名、索引与 Secret 引用；密码不在其中 */
+    private static Map<String, Object> otelSnapshot(OtelInstallRequest otel) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tempoEndpoint", otel.getTempoEndpoint());
+        out.put("samplingPercentage", otel.getSamplingPercentage());
+        out.put("gatewayReplicas", otel.getGatewayReplicas());
+        out.put("logsEnabled", Boolean.TRUE.equals(otel.getLogsEnabled()));
+        if (otel.getTempoStorage() != null) {
+            TempoStorageConfig s = otel.getTempoStorage();
+            Map<String, Object> t = new LinkedHashMap<>();
+            t.put("endpoint", s.getEndpoint());
+            t.put("bucket", s.getBucket());
+            t.put("prefix", s.getPrefix());
+            t.put("credentialSecret", secretRefSnapshot(s.getCredentialSecret()));
+            t.put("insecureSkipVerify", s.isInsecureSkipVerify());
+            out.put("tempoStorage", t);
+        }
+        if (otel.getEs() != null) {
+            EsConfig e = otel.getEs();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("endpoint", e.getEndpoint());
+            m.put("username", e.getUsername());
+            m.put("credentialSecret", secretRefSnapshot(e.getCredentialSecret()));
+            m.put("passwordKey", e.getPasswordKey());
+            m.put("insecureSkipVerify", e.isInsecureSkipVerify());
+            m.put("logsIndex", e.getLogsIndex());
+            out.put("es", m);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> secretRefSnapshot(SecretRef ref) {
+        if (ref == null) {
+            return Map.of();
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("namespace", ref.getNamespace());
+        m.put("name", ref.getName());
+        return m;
+    }
+
+    private static OtelInstallRequest otelOf(Object previous) {
+        if (!(previous instanceof Map<?, ?> map)) {
+            return null;
+        }
+        OtelInstallRequest out = new OtelInstallRequest();
+        out.setTempoEndpoint(asString(map.get("tempoEndpoint")));
+        out.setSamplingPercentage(asInt(map.get("samplingPercentage")));
+        out.setGatewayReplicas(asInt(map.get("gatewayReplicas")));
+        out.setLogsEnabled(map.get("logsEnabled") instanceof Boolean b ? b : null);
+        out.setTempoStorage(tempoStorageOf(map.get("tempoStorage")));
+        out.setEs(esOf(map.get("es")));
+        return out;
+    }
+
+    private static TempoStorageConfig tempoStorageOf(Object value) {
+        if (!(value instanceof Map<?, ?> map)) {
+            return null;
+        }
+        TempoStorageConfig out = new TempoStorageConfig();
+        out.setEndpoint(asString(map.get("endpoint")));
+        out.setBucket(asString(map.get("bucket")));
+        out.setPrefix(asString(map.get("prefix")));
+        out.setCredentialSecret(secretRefOf(map.get("credentialSecret")));
+        out.setInsecureSkipVerify(Boolean.TRUE.equals(map.get("insecureSkipVerify")));
+        return out;
+    }
+
+    private static EsConfig esOf(Object value) {
+        if (!(value instanceof Map<?, ?> map)) {
+            return null;
+        }
+        EsConfig out = new EsConfig();
+        out.setEndpoint(asString(map.get("endpoint")));
+        out.setUsername(asString(map.get("username")));
+        out.setCredentialSecret(secretRefOf(map.get("credentialSecret")));
+        out.setPasswordKey(asString(map.get("passwordKey")));
+        out.setInsecureSkipVerify(Boolean.TRUE.equals(map.get("insecureSkipVerify")));
+        out.setLogsIndex(asString(map.get("logsIndex")));
+        return out;
+    }
+
+    private static SecretRef secretRefOf(Object value) {
+        if (!(value instanceof Map<?, ?> map)) {
+            return null;
+        }
+        return new SecretRef(asString(map.get("namespace")), asString(map.get("name")));
+    }
+
+    private static Integer asInt(Object value) {
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Integer.parseInt(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    @SafeVarargs
+    private static <T> T firstNonNull(T... values) {
+        for (T value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
     }
 
     /** 表单没带的字段从上次成功的 {@code __platform.thanosInstall} 补齐 */
