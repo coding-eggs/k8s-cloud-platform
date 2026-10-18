@@ -316,7 +316,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | **同一个 release 顺序跑两遍** | 🔒 | 第一遍只装 CRD + operator（不含 extraObjects），第二遍再下发 TektonConfig。Helm 在 **Build 阶段**就要把整份 manifest 映射成对象 —— CRD 与 CR 在同一份 manifest 里时，CRD 还没进集群，CR 映射必然失败（2026-10-18 实际踩到） |
 | `operator.autoInstallComponents=false` | 🔒 | TektonConfig 由平台通过 chart 的 `extraObjects` 下发；不关自动安装会两边抢同一个 `config` |
 | `TektonConfig.spec.pipeline.coschedule=workspaces` | 🔒 | 否则一个 TaskRun 挂不了两块 PVC workspace ⇒ **构建缓存不启用**（1.15.x 合法值；实测以 workspaces 为准） |
-| ~~`TektonConfig.spec.pipeline.default-container-resource-requirements`~~ | — | **tekton-operator 0.81.2 的 TektonConfig CRD 没有这个字段**，SSA 严格校验直接拒（2026-10-18 实装踩到）；配额命名空间下 init 容器的默认资源问题待 operator 升版解决 |
+| `TektonConfig.spec.pipeline.options.configMaps["config-defaults"].data["default-container-resource-requirements"]` | 🔒 | 默认容器资源。0.81.2 的 TektonConfig **没有独立字段**，只能通过 `options` 注入 Tekton Pipelines 的 `config-defaults`；缺它时配额命名空间会拒 TaskRun Pod（`must specify limits.cpu for: place-scripts, prepare, step-*`）。用 `default:` 覆盖所有空资源容器，再显式列 `prepare` / `place-scripts` / `working-dir-initializer` / `sidecar-tekton-log-results` |
 | 命名空间固定：release 在 `tekton-operator`，组件落在 `tekton-pipelines` | 🔒 | 探测判据是后者 |
 
 可编辑：无。**功能级验收**：跑一条最小 PipelineRun（平台已有该能力），确认成功。

@@ -182,14 +182,66 @@ public class ComponentRecipeCatalog {
     public static final String DEFAULT_TEKTON_PROFILE = "all";
 
     /**
+     * 配额命名空间里 Tekton 的默认资源。Tekton 自己的容器（place-scripts / prepare /
+     * working-dir-initializer）和没写资源的 step 容器默认不带 requests/limits，
+     * 会被 ResourceQuota 直接拒（"must specify limits.cpu for: place-scripts, prepare, step-clone"）。
+     *
+     * <p>开关只能落在 Tekton Pipelines 的 config-defaults ConfigMap 上（operator 0.81.2 的
+     * TektonConfig 没有独立字段），通过 {@code spec.pipeline.options.configMaps} 注入：
+     * <ul>
+     *   <li>{@code default:} —— 覆盖所有"没写资源"的 init/普通容器；</li>
+     *   <li>四个内部容器再显式列一遍（官方文档推荐，named entry 优先于 default）。</li>
+     * </ul>
+     * 取值保守（requests 100m/128Mi，limits 500m/512Mi）：要能塞进常见的 requests.cpu=2 配额。
+     */
+    private static final String TEKTON_DEFAULT_RESOURCES = """
+            default:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "500m"
+                memory: "512Mi"
+            prepare:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "500m"
+                memory: "512Mi"
+            place-scripts:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "500m"
+                memory: "512Mi"
+            working-dir-initializer:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "500m"
+                memory: "512Mi"
+            sidecar-tekton-log-results:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "500m"
+                memory: "512Mi"
+            """;
+
+    /**
      * Tekton 由 operator 安装，契约值落在 TektonConfig 上（通过官方 chart 自带的 {@code extraObjects} 下发）：
      * <ul>
      *   <li>{@code coschedule: workspaces} —— 允许一个 TaskRun 挂多块 PVC workspace（构建缓存）。
      *       取值以 2026-10-17 集群实测的 TektonConfig 为准（1.15.x 的合法值是 workspaces /
      *       pipelineruns / isolate-pipelinerun，默认就是 workspaces）</li>
-     *   <li>⚠️ <b>不写 {@code default-container-resource-requirements}</b>：tekton-operator 0.81.2 的
-     *       TektonConfig CRD 里没有这个字段，SSA 严格校验会直接拒（2026-10-18 实装踩到）。
-     *       配额命名空间下 init 容器的默认资源问题只能等 operator 升版或另行处理。</li>
+     *   <li>{@code options.configMaps['config-defaults']} —— 默认容器资源（见
+     *       {@link #TEKTON_DEFAULT_RESOURCES}）；不写它，配额命名空间里 TaskRun 直接被拒。
+     *       ⚠️ 不要写 {@code default-container-resource-requirements} 到 spec.pipeline 直属：
+     *       0.81.2 的 CRD 没有这个字段，SSA 严格校验会拒。</li>
      *   <li>{@code profile: ${tekton.profile}} —— **安装表单里选**（lite / basic / all，默认 all）；
      *       占位符不能解析为空，否则装出的 Tekton 缺组件而 helm 显示成功</li>
      *   <li>{@code targetNamespace: tekton-pipelines} —— 探测判据就在这个命名空间</li>
@@ -202,7 +254,14 @@ public class ComponentRecipeCatalog {
             "spec", Map.of(
                     "profile", "${tekton.profile}",
                     "targetNamespace", "tekton-pipelines",
-                    "pipeline", Map.of("coschedule", "workspaces")));
+                    "pipeline", Map.of(
+                            "coschedule", "workspaces",
+                            "options", Map.of(
+                                    "configMaps", Map.of(
+                                            "config-defaults", Map.of(
+                                                    "data", Map.of(
+                                                            "default-container-resource-requirements",
+                                                            TEKTON_DEFAULT_RESOURCES)))))));
 
     /**
      * Tekton 是一个组件：官方 **operator chart** + TektonConfig。

@@ -186,8 +186,14 @@ class ComponentRecipeCatalogTest {
         Map<String, Object> pipeline = (Map<String, Object>) spec.get("pipeline");
         assertThat(pipeline).containsEntry("coschedule", "workspaces");
         // tekton-operator 0.81.2 的 TektonConfig CRD **没有** default-container-resource-requirements 字段
-        // （SSA 严格校验会直接拒）。配额相关的默认资源只能等 operator 升版或另行处理
+        // （SSA 严格校验会直接拒）。默认资源走 pipeline.options.configMaps → config-defaults
         assertThat(pipeline).doesNotContainKey("default-container-resource-requirements");
+        Map<String, Object> options = (Map<String, Object>) pipeline.get("options");
+        Map<String, Object> configMaps = (Map<String, Object>) options.get("configMaps");
+        Map<String, Object> configDefaults = (Map<String, Object>) configMaps.get("config-defaults");
+        Map<String, Object> data = (Map<String, Object>) configDefaults.get("data");
+        assertThat(data.get("default-container-resource-requirements").toString())
+                .contains("default:").contains("place-scripts").contains("prepare");
         // profile 由安装表单选（占位符），默认 all
         assertThat(spec).containsEntry("profile", "${tekton.profile}");
         assertThat(catalog.recipeOf("tekton", "BUSINESS").tektonProfile()).isTrue();
