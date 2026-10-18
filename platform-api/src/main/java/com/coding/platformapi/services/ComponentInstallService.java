@@ -185,7 +185,7 @@ public class ComponentInstallService {
         op.setFromVersion(last == null ? null : last.getToVersion());
         op.setToVersion(targetVersion);
         op.setReleaseNames(JSON.writeValueAsString(
-                effective.stream().map(ReleaseSpec::releaseName).toList()));
+                effective.stream().map(ReleaseSpec::releaseName).distinct().toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
                 snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico,
                         tektonProfile)));

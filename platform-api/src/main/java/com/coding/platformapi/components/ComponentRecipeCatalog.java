@@ -209,18 +209,35 @@ public class ComponentRecipeCatalog {
                                             "limits", Map.of("cpu", "1", "memory", "1Gi"))))));
 
     /**
-     * Tekton 是一个组件：官方 **operator chart** + TektonConfig 同一个 release。
-     * Pipelines / Trigger / Result / Chain / Dashboard 都由 operator 依据 TektonConfig 落地，
-     * 所以这里不再单列 {@code tekton-operator}（拆两行只会在页面上要求点两次安装）。
+     * Tekton 是一个组件：官方 **operator chart** + TektonConfig。
+     *
+     * <p>⚠️ <b>同一个 release 跑两次</b>，不是笔误：
+     * <ul>
+     *   <li>这个 chart 的 CRD 在 {@code templates/kubernetes-crds.yaml}（由 {@code installCRDs} 控制，
+     *       默认 false）—— 不开 {@code installCRDs}，TektonConfig 根本没有 CRD；</li>
+     *   <li>而 TektonConfig 是 CR。Helm 在 **Build 阶段**就要把整份 manifest 映射成对象，
+     *       那时 CRD 还没进集群，会报
+     *       "no matches for kind TektonConfig ... ensure CRDs are installed first"。</li>
+     * </ul>
+     * 所以第一遍只装 CRD + operator（不含 extraObjects），第二遍再下发 TektonConfig ——
+     * 第二遍启动新的 helm 进程，discovery 里已经有这些 CRD。
+     * k8s-server 的多 release 执行是**顺序**的、失败即停，正好保证这个次序。
      */
-    private static final List<ReleaseSpec> TEKTON_RELEASES = List.of(new ReleaseSpec(
-            "platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
-            Map.of(
-                    // TektonConfig 由我们自己下发：必须关掉 operator 的自动安装，
-                    // 否则两边同时创建 config，可能把我们这份 profile/配置冲掉（chart values 注释也这么要求）
-                    "operator", Map.of("autoInstallComponents", false),
-                    "extraObjects", List.of(TEKTON_CONFIG)),
-            Map.of()));
+    private static final Map<String, Object> TEKTON_CRD_VALUES = Map.of(
+            "installCRDs", true,
+            // TektonConfig 由平台下发：关掉 operator 的自动安装，否则两边抢同一个 config
+            "operator", Map.of("autoInstallComponents", false));
+
+    private static final Map<String, Object> TEKTON_FULL_VALUES = Map.of(
+            "installCRDs", true,
+            "operator", Map.of("autoInstallComponents", false),
+            "extraObjects", List.of(TEKTON_CONFIG));
+
+    private static final List<ReleaseSpec> TEKTON_RELEASES = List.of(
+            new ReleaseSpec("platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
+                    TEKTON_CRD_VALUES, Map.of()),
+            new ReleaseSpec("platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
+                    TEKTON_FULL_VALUES, Map.of()));
 
     // ==================== calico ====================
 

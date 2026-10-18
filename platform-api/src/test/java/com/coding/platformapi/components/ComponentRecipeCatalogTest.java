@@ -167,11 +167,17 @@ class ComponentRecipeCatalogTest {
 
     @Test
     void tektonContractCarriesTheTektonConfig() {
+        // 同一个 release 两遍：第一遍 CRD+operator，第二遍再下发 TektonConfig（见 recipe 注释）
+        var releases = catalog.recipeOf("tekton", "BUSINESS").releases();
+        assertThat(releases).hasSize(2)
+                .allSatisfy(r -> assertThat(r.contractValues()).containsEntry("installCRDs", true));
+        assertThat(releases.get(0).contractValues()).doesNotContainKey("extraObjects");
+        assertThat(releases.get(1).contractValues()).containsKey("extraObjects");
+
         // coschedule 决定构建缓存能不能用；配额下 init 容器需要默认资源
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> extra = (List<Map<String, Object>>)
-                catalog.recipeOf("tekton", "BUSINESS").releases().get(0)
-                        .contractValues().get("extraObjects");
+                releases.get(1).contractValues().get("extraObjects");
         assertThat(extra).hasSize(1);
         Map<String, Object> spec = (Map<String, Object>) extra.get(0).get("spec");
         Map<String, Object> pipeline = (Map<String, Object>) spec.get("pipeline");
@@ -182,8 +188,7 @@ class ComponentRecipeCatalogTest {
         assertThat(catalog.recipeOf("tekton", "BUSINESS").tektonProfile()).isTrue();
         // 我们自己下发 TektonConfig，就必须关掉 operator 的自动安装，否则两边抢同一个 config
         Map<String, Object> operator = (Map<String, Object>)
-                catalog.recipeOf("tekton", "BUSINESS").releases().get(0)
-                        .contractValues().get("operator");
+                releases.get(1).contractValues().get("operator");
         assertThat(operator).containsEntry("autoInstallComponents", false);
     }
 
