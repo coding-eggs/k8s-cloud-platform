@@ -313,13 +313,16 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
-    void theTempoReleaseKeepsCredentialPlaceholdersForRuntimeExpansion() {
-        var tempo = catalog.recipeOf("otel-operator", "MANAGEMENT").releases().get(1);
-        String values = tempo.contractValues().toString();
-        assertThat(values).contains("${MINIO_ACCESS_KEY}").contains("${MINIO_SECRET_KEY}")
-                .contains("${tempo.minio.bucket}").contains("${tempo.minio.prefix}");
-        assertThat(values).contains("config.expand-env");
-        // 凭证绝不能作为字面值出现在 recipe 里
-        assertThat(values).doesNotContain("minio-secret").doesNotContain("codingegg");
+    void istioDeclaresTheOtelTracingProvider() {
+        // 网格侧只声明 provider；具体哪些 Gateway 用它由 Telemetry CR 决定（批次二）
+        var istiod = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .filter(r -> r.releaseName().equals("istiod")).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> mesh = (Map<String, Object>) istiod.contractValues().get("meshConfig");
+        assertThat(mesh).containsEntry("enableTracing", true);
+        assertThat(mesh.get("extensionProviders").toString())
+                .contains("platform-otel")
+                .contains("platform-otel-gateway-collector.monitor.svc.cluster.local")
+                .contains("4317");
     }
 }

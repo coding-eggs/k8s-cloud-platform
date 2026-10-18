@@ -159,7 +159,18 @@ public class ComponentRecipeCatalog {
             // meshID 全局一致：管理平台下的所有集群共用同一个网格 ID（装完再改是破坏性操作）
             // revision 有意不设：平台的升级不做按 revision 的灰度，设了反而要求命名空间打 istio.io/rev 标签
             new ReleaseSpec("istiod", "istio-system", "istio-istiod", "1.30.6",
-                    Map.of("global", Map.of("meshID", "platform-mesh")),
+                    Map.of(
+                            "global", Map.of("meshID", "platform-mesh"),
+                            // 批次二：网格侧 tracing 的 provider（ingress/waypoint 的 Telemetry 引用它）。
+                            // collector 不在时 Envoy 只丢 span，不影响流量
+                            "meshConfig", Map.of(
+                                    "enableTracing", true,
+                                    "extensionProviders", List.of(Map.of(
+                                            "name", "platform-otel",
+                                            "opentelemetry", Map.of(
+                                                    "service", "platform-otel-gateway-collector.monitor"
+                                                            + ".svc.cluster.local",
+                                                    "port", 4317))))),
                     Map.of("replicaCount", 1,
                             "autoscaleEnabled", true,
                             "resources", Map.of(
