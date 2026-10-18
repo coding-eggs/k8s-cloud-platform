@@ -188,7 +188,7 @@ function emptyOtel(): OtelForm {
     gatewayReplicas: 1,
     logsEnabled: false,
     tempoStorage: {
-      endpoint: '', bucket: 'thanos', prefix: 'tempo',
+      endpoint: '192.168.31.80:9002', bucket: 'thanos', prefix: 'tempo',
       credentialSecret: { namespace: 'monitor', name: '' },
       insecureSkipVerify: true,
     },
@@ -382,8 +382,8 @@ function confirmApply(): void {
       ? { ...d.calico } : undefined,
     tektonProfile: d.showTektonProfile && d.tektonProfile !== d.initialTektonProfile
       ? d.tektonProfile : undefined,
-    // OTel 整组改动才提交，没改的沿用上次成功快照
-    otel: d.showOtel && JSON.stringify(d.otel) !== d.initialOtel
+    // OTel：安装时整组下发（表单就是默认值的来源）；编辑时只发改动过的，没改的沿用上次快照
+    otel: d.showOtel && (d.action === 'INSTALL' || JSON.stringify(d.otel) !== d.initialOtel)
       ? JSON.parse(JSON.stringify(d.otel)) as K8sOtelInstall : undefined,
   })
 }
