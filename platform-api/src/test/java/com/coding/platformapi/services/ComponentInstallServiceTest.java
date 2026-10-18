@@ -11,6 +11,7 @@ import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EsConfig;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
+import com.coding.platformapi.models.TempoStorageConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -857,6 +858,36 @@ class ComponentInstallServiceTest {
                 .contains("es-es-elastic-user")
                 .contains("\"samplingPercentage\":10")
                 .doesNotContain("codingegg").doesNotContain("minio-secret");
+    }
+
+    @Test
+    void otelSecretsAreWrittenBeforeHelm() {
+        // Tempo/collector 的 Pod 会引用这两个 Secret：必须先生成，再跑 helm
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        OtelInstallRequest otel = baseOtel();
+        otel.setLogsEnabled(true);
+        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "thanos", "tempo",
+                new SecretRef("monitor", "minio-creds"), true));
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        service().apply(req, "admin");
+
+        // 等 worker 跑完再验顺序（apply 是异步的）
+        verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
+                op -> "SUCCESS".equals(op.getStatus())));
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(client);
+        inOrder.verify(client).applyTempoObjstore("c1", "monitor", "minio-creds",
+                "monitor", "platform-tempo-objstore");
+        inOrder.verify(client).applyOtelEsSecret("c1", "default", "es-es-elastic-user",
+                "elastic", "elastic", "monitor", "platform-otel-es");
+        inOrder.verify(client).applyComponent(anyString(), anyString(), anyString(), any());
     }
 
     private static ComponentStatusDTO healthy(String code) {

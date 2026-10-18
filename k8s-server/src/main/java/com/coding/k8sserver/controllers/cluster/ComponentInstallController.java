@@ -4,8 +4,10 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesClientFactory;
@@ -14,6 +16,8 @@ import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
+import com.coding.k8sserver.components.OtelEsSecretObjects;
+import com.coding.k8sserver.components.TempoObjstoreObjects;
 import com.coding.k8sserver.components.ThanosObjstoreObjects;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
@@ -223,6 +227,76 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 .withType("Opaque")
                 .addToStringData(ThanosObjstoreObjects.OBJSTORE_KEY, objstore)
                 .build();
+        client.secrets().inNamespace(request.getTargetNamespace())
+                .resource(target)
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>();
+    }
+
+    /**
+     * Tempo 的对象存储凭证（OTel 批次一）：读来源 Secret → 归一化成
+     * {@code MINIO_ACCESS_KEY} / {@code MINIO_SECRET_KEY} → 写成 Tempo 挂载的 Secret。
+     *
+     * <p>与 Thanos 的 objstore 同一原则：凭证只在集群内转换。
+     */
+    @PostMapping("/tempo-objstore")
+    @Operation(summary = "下发 Tempo 对象存储凭证 Secret",
+            description = "幂等 SSA；由 platform-api 在管理集群安装 Tempo 前调用")
+    public ResponseData<Void> tempoObjstore(@RequestBody TempoObjstoreRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())
+                || isBlank(request.getTargetNamespace()) || isBlank(request.getTargetSecretName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "Tempo 对象存储参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        Secret source = client.secrets().inNamespace(request.getNamespace())
+                .withName(request.getSecretName()).get();
+        if (source == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "凭证 Secret 不存在：" + request.getNamespace() + "/" + request.getSecretName());
+        }
+        String[] credentials = ThanosObjstoreObjects.findCredentials(source.getData());
+        if (credentials == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "凭证 Secret 缺少可识别的 access key / secret key（支持："
+                            + ThanosObjstoreObjects.supportedKeyPairs() + "）");
+        }
+        Secret target = TempoObjstoreObjects.build(credentials[0], credentials[1],
+                request.getTargetNamespace(), request.getTargetSecretName());
+        client.secrets().inNamespace(request.getTargetNamespace())
+                .resource(target)
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>();
+    }
+
+    /**
+     * ES 凭证（OTel 批次一）：把 ECK 的 {@code elastic} key 归一化成 collector 读的
+     * {@code username} / {@code password}，写到 collector 所在的命名空间。
+     */
+    @PostMapping("/otel-es-secret")
+    @Operation(summary = "下发 collector 的 ES basic auth Secret",
+            description = "幂等 SSA；由 platform-api 在打开日志采集时调用")
+    public ResponseData<Void> otelEsSecret(@RequestBody OtelEsSecretRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())
+                || isBlank(request.getPasswordKey()) || isBlank(request.getUsername())
+                || isBlank(request.getTargetNamespace()) || isBlank(request.getTargetSecretName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "ES 凭证参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        Secret source = client.secrets().inNamespace(request.getNamespace())
+                .withName(request.getSecretName()).get();
+        if (source == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "凭证 Secret 不存在：" + request.getNamespace() + "/" + request.getSecretName());
+        }
+        String password = OtelEsSecretObjects.password(source, request.getPasswordKey());
+        if (password == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "凭证 Secret 缺少密码 key：" + request.getPasswordKey());
+        }
+        Secret target = OtelEsSecretObjects.build(request.getUsername(), password,
+                request.getTargetNamespace(), request.getTargetSecretName());
         client.secrets().inNamespace(request.getTargetNamespace())
                 .resource(target)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();

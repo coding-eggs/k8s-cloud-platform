@@ -228,7 +228,7 @@ public class ComponentInstallService {
         String authorization = K8sServerGateway.currentAuthorization();
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos)));
+                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos, otel)));
         return id;
     }
 
@@ -734,12 +734,25 @@ public class ComponentInstallService {
 
     private void run(Long id, String clusterId, String componentCode, String action,
                      List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl,
-                     ThanosInstallRequest thanos) {
+                     ThanosInstallRequest thanos, OtelInstallRequest otel) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
         mapper.updateById(running);
         try {
+            // Tempo 的凭证 Secret / collector 的 ES Secret 必须在 helm 之前就位（Pod 会挂载/引用它）
+            if (otel != null && otel.getTempoStorage() != null) {
+                TempoStorageConfig s = otel.getTempoStorage();
+                client.applyTempoObjstore(clusterId,
+                        s.getCredentialSecret().getNamespace(), s.getCredentialSecret().getName(),
+                        OTEL_NAMESPACE, "platform-tempo-objstore");
+            }
+            if (otel != null && Boolean.TRUE.equals(otel.getLogsEnabled())) {
+                EsConfig e = otel.getEs();
+                client.applyOtelEsSecret(clusterId,
+                        e.getCredentialSecret().getNamespace(), e.getCredentialSecret().getName(),
+                        e.getPasswordKey(), e.getUsername(), OTEL_NAMESPACE, "platform-otel-es");
+            }
             // Thanos 的对象存储 Secret 必须在 helm 之前就位（Pod 会挂载它）
             if (thanos != null) {
                 client.applyThanosObjstore(clusterId, thanos.getNamespace(), thanos.getSecretName(),

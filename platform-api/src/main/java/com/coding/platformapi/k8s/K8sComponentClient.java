@@ -2,8 +2,10 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
@@ -82,6 +84,41 @@ public class K8sComponentClient {
         body.setTargetNamespace(targetNamespace);
         body.setTargetSecretName(targetSecretName);
         gateway.exchange(HttpMethod.POST, "/components/thanos-objstore", null, body,
+                gateway.responseType(Void.class));
+    }
+
+    /**
+     * Tempo 对象存储凭证：k8s-server 读来源 Secret、归一化成 MINIO_ACCESS_KEY/MINIO_SECRET_KEY。
+     * 凭证不经过本层。
+     */
+    public void applyTempoObjstore(String clusterId, String namespace, String secretName,
+                                   String targetNamespace, String targetSecretName) {
+        TempoObjstoreRequestDTO body = new TempoObjstoreRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setSecretName(secretName);
+        body.setTargetNamespace(targetNamespace);
+        body.setTargetSecretName(targetSecretName);
+        gateway.exchange(HttpMethod.POST, "/components/tempo-objstore", null, body,
+                gateway.responseType(Void.class));
+    }
+
+    /**
+     * ES basic auth：把来源 Secret 的密码归一化成 collector 读的 platform-otel-es。
+     * 密码不经过本层。
+     */
+    public void applyOtelEsSecret(String clusterId, String namespace, String secretName,
+                                  String passwordKey, String username,
+                                  String targetNamespace, String targetSecretName) {
+        OtelEsSecretRequestDTO body = new OtelEsSecretRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setSecretName(secretName);
+        body.setPasswordKey(passwordKey);
+        body.setUsername(username);
+        body.setTargetNamespace(targetNamespace);
+        body.setTargetSecretName(targetSecretName);
+        gateway.exchange(HttpMethod.POST, "/components/otel-es-secret", null, body,
                 gateway.responseType(Void.class));
     }
 }
