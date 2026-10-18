@@ -64,4 +64,10 @@ public class ComponentStatusDTO {
     /** Calico 默认值（表单预填） */
     private String defaultPodCidr;
     private String defaultEncapsulation;
+    /** 安装时是否要选 Tekton profile（lite / basic / all） */
+    private boolean tektonProfile;
+    /** Tekton profile 的默认值（表单预填） */
+    private String defaultTektonProfile;
+    /** **当前生效**的 Tekton profile（上次成功操作快照）；无记录 → null */
+    private String tektonProfileCurrent;
 }

@@ -49,6 +49,8 @@ const emit = defineEmits<{
     thanosInstall?: K8sThanosInstall
     /** Calico 网络参数（仅 calicoNetwork 的组件） */
     calicoInstall?: K8sCalicoInstall
+    /** Tekton profile（仅 tektonProfile 的组件：lite / basic / all） */
+    tektonProfile?: string
   }): void
 }>()
 
@@ -145,6 +147,10 @@ interface ApplyDialog {
   showCalico: boolean
   calico: K8sCalicoInstall
   initialCalico: string
+  /** 该组件是否要选 Tekton profile */
+  showTektonProfile: boolean
+  tektonProfile: string
+  initialTektonProfile: string
 }
 
 /** Calico 支持的封装方式（Installation CR 的取值） */
@@ -171,6 +177,7 @@ const applyDialog = ref<ApplyDialog>({
   storageClasses: [], secretOptions: [],
   showCalico: false, calico: { podCidr: '', encapsulation: 'IPIP' },
   initialCalico: '',
+  showTektonProfile: false, tektonProfile: 'all', initialTektonProfile: 'all',
 })
 
 function openInstall(row: K8sComponentStatus): void {
@@ -217,6 +224,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     podCidr: row.defaultPodCidr ?? '',
     encapsulation: row.defaultEncapsulation || 'IPIP',
   }
+  // 编辑时用当前生效的 profile；安装时用后端下发的默认值（all）
+  const tektonProfile = editing
+    ? (row.tektonProfileCurrent ?? row.defaultTektonProfile ?? 'all')
+    : (row.defaultTektonProfile ?? 'all')
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
@@ -234,6 +245,9 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     showCalico: !!row.calicoNetwork && !editing,
     calico,
     initialCalico: JSON.stringify(calico),
+    showTektonProfile: !!row.tektonProfile,
+    tektonProfile,
+    initialTektonProfile: tektonProfile,
   }
   if (row.thanosInstall) {
     void loadThanosOptions()
@@ -318,6 +332,8 @@ function confirmApply(): void {
       ? { ...d.thanos } : undefined,
     calicoInstall: d.showCalico && JSON.stringify(d.calico) !== d.initialCalico
       ? { ...d.calico } : undefined,
+    tektonProfile: d.showTektonProfile && d.tektonProfile !== d.initialTektonProfile
+      ? d.tektonProfile : undefined,
   })
 }
 
@@ -571,6 +587,19 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-select>
         </div>
       </div>
+      <div v-if="applyDialog.showTektonProfile" class="cc-form-row">
+        <span class="cc-form-label">Tekton profile</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.tektonProfile" style="width: 100%">
+            <el-option label="all —— Pipeline + Trigger + Result + Chain + Dashboard" value="all" />
+            <el-option label="basic —— Pipeline + Trigger + Result + Chain" value="basic" />
+            <el-option label="lite —— 只有 Pipeline" value="lite" />
+          </el-select>
+          <div class="cc-form-hint">
+            Tekton Operator 按 profile 安装对应组件；默认 all（完整 Tekton）
+          </div>
+        </div>
+      </div>
       <!-- Thanos（管理集群）：Prometheus 的长期指标写进 MinIO，由 Thanos 查询 -->
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
         <span class="cc-form-label">Thanos 对象存储</span>
@@ -666,7 +695,10 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div v-else-if="f.type === 'size'" class="cc-form-hint">容量带单位：50Gi / 500Mi / 1Ti</div>
         </div>
       </div>
-      <div v-if="!applyDialog.fields.length && applyDialog.action === 'INSTALL'" class="cc-upgrade-tip">
+      <div v-if="!applyDialog.fields.length && !applyDialog.showWebhook && !applyDialog.showThanos
+                && !applyDialog.showThanosInstall && !applyDialog.showCalico
+                && !applyDialog.showTektonProfile && applyDialog.action === 'INSTALL'"
+           class="cc-upgrade-tip">
         该组件没有可编辑配置，将使用平台默认值安装。
       </div>
       <template #footer>

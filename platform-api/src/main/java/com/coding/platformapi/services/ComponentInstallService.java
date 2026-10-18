@@ -158,6 +158,10 @@ public class ComponentInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "请填写 Calico 的 Pod CIDR 与封装方式（写错会立即中断集群网络）");
         }
+        // Tekton profile：表单 > 上次成功 > 默认 all；只认官方三个值（lite / basic / all）
+        String tektonProfile = recipe.tektonProfile()
+                ? resolveTektonProfile(req.getTektonProfile(), asString(previousPlatform.get("tektonProfile")))
+                : null;
 
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
         String action = req.getAction() == null ? "INSTALL" : req.getAction();
@@ -170,7 +174,7 @@ public class ComponentInstallService {
         List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
                 parseSnapshot(last == null ? null : last.getValuesSnapshot()));
         // 占位符（${cluster.name} / ${thanos.receive.url}）在落库前解析 —— 配置缺失要立刻失败，不留失败记录
-        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico);
+        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico, tektonProfile);
         String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
@@ -183,7 +187,8 @@ public class ComponentInstallService {
         op.setReleaseNames(JSON.writeValueAsString(
                 effective.stream().map(ReleaseSpec::releaseName).toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
-                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico)));
+                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico,
+                        tektonProfile)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -276,7 +281,7 @@ public class ComponentInstallService {
     /** 把 recipe 里的占位符替换成真实值（集群名、Thanos receive 地址） */
     @SuppressWarnings("unchecked")
     private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId, String thanosUrl,
-                                            CalicoInstallRequest calico) {
+                                            CalicoInstallRequest calico, String tektonProfile) {
         Map<String, String> context = new LinkedHashMap<>();
         context.put("cluster.name", clusterService.requireName(clusterId));
         context.put("thanos.receive.url", thanosUrl == null ? "" : thanosUrl);
@@ -284,6 +289,9 @@ public class ComponentInstallService {
                 ? calico.getPodCidr() : (calicoPodCidr == null ? "" : calicoPodCidr));
         context.put("calico.encapsulation", calico != null && calico.getEncapsulation() != null
                 ? calico.getEncapsulation() : (calicoEncapsulation == null ? "" : calicoEncapsulation));
+        // Tekton profile：没传（非 tekton 组件）就用默认值；值已在 apply() 里校验过
+        context.put("tekton.profile", tektonProfile != null && !tektonProfile.isBlank()
+                ? tektonProfile : ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE);
         List<ReleaseSpec> out = new ArrayList<>();
         for (ReleaseSpec r : releases) {
             Map<String, Object> resolved =
@@ -312,7 +320,8 @@ public class ComponentInstallService {
     private static Map<String, Object> snapshotWithPlatformInputs(List<ReleaseSpec> releases, ComponentRecipe recipe,
                                                                   String alertWebhookUrl, String thanosUrl,
                                                                   ThanosInstallRequest thanos,
-                                                                  CalicoInstallRequest calico) {
+                                                                  CalicoInstallRequest calico,
+                                                                  String tektonProfile) {
         Map<String, Object> snapshot = snapshotOf(releases);
         Map<String, Object> platform = new LinkedHashMap<>();
         if (recipe.platformAlerting() && alertWebhookUrl != null) {
@@ -335,6 +344,9 @@ public class ComponentInstallService {
             c.put("podCidr", calico.getPodCidr());
             c.put("encapsulation", calico.getEncapsulation());
             platform.put("calicoInstall", c);
+        }
+        if (recipe.tektonProfile() && tektonProfile != null) {
+            platform.put("tektonProfile", tektonProfile);
         }
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
@@ -374,6 +386,16 @@ public class ComponentInstallService {
                 ? requested.isInsecureSkipVerify()
                 : Boolean.TRUE.equals(prev.get("insecureSkipVerify")));
         return out;
+    }
+
+    /** Tekton profile：表单 > 上次成功 > 默认 all；只接受官方三个值 */
+    private static String resolveTektonProfile(String requested, String previous) {
+        String value = firstNonBlank(requested, previous, ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE);
+        if (!ComponentRecipeCatalog.TEKTON_PROFILES.contains(value)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的 Tekton profile：" + value + "（可选 lite / basic / all）");
+        }
+        return value;
     }
 
     /** Calico 参数：表单 > 上次成功 > 平台配置 */

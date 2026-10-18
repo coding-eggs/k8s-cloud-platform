@@ -180,6 +180,14 @@ public class ComponentRecipeCatalog {
     // ==================== tekton / tekton-operator ====================
 
     /**
+     * Tekton profile 的可选值与默认值（operator 官方语义，v0.81.2 文档）：
+     * {@code lite} = 只有 TektonPipeline；{@code basic} = + Trigger / Result / Chain；
+     * {@code all} = basic + Dashboard（K8s）。安装表单里可改。
+     */
+    public static final List<String> TEKTON_PROFILES = List.of("lite", "basic", "all");
+    public static final String DEFAULT_TEKTON_PROFILE = "all";
+
+    /**
      * Tekton 由 operator 安装，契约值落在 TektonConfig 上（通过官方 chart 自带的 {@code extraObjects} 下发）：
      * <ul>
      *   <li>{@code coschedule: workspaces} —— 允许一个 TaskRun 挂多块 PVC workspace（构建缓存）。
@@ -187,8 +195,8 @@ public class ComponentRecipeCatalog {
      *       pipelineruns / isolate-pipelinerun，默认就是 workspaces）</li>
      *   <li>{@code default-container-resource-requirements} —— 命名空间配额下 init 容器需要默认资源
      *       （平台侧设不到 init 容器）</li>
-     *   <li>{@code profile: all} —— 完整 Tekton：Pipeline + Trigger + Result + Chain，K8s 上再加 Dashboard。
-     *       ⚠️ {@code lite} 只装 TektonPipeline（没有 Trigger / Dashboard），不要用它</li>
+     *   <li>{@code profile: ${tekton.profile}} —— **安装表单里选**（lite / basic / all，默认 all）；
+     *       占位符不能解析为空，否则装出的 Tekton 缺组件而 helm 显示成功</li>
      *   <li>{@code targetNamespace: tekton-pipelines} —— 探测判据就在这个命名空间</li>
      * </ul>
      */
@@ -197,7 +205,7 @@ public class ComponentRecipeCatalog {
             "kind", "TektonConfig",
             "metadata", Map.of("name", "config"),
             "spec", Map.of(
-                    "profile", "all",
+                    "profile", "${tekton.profile}",
                     "targetNamespace", "tekton-pipelines",
                     "pipeline", Map.of(
                             "coschedule", "workspaces",
@@ -274,7 +282,12 @@ public class ComponentRecipeCatalog {
             Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
             Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),
-            Map.entry("tekton", profiles(TEKTON_RELEASES, List.of("tekton-operator"))),
+            // profile 只在 tekton 组件上暴露：tekton-operator 是安装来源，tekton 才是用户要的那套
+            Map.entry("tekton", Map.of(
+                    BUSINESS, new ComponentRecipe(BUSINESS, TEKTON_RELEASES, List.of("tekton-operator"),
+                            false, false, false, false, null, true),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, TEKTON_RELEASES, List.of("tekton-operator"),
+                            false, false, false, false, null, true))),
             Map.entry("tekton-operator", profiles(TEKTON_OPERATOR_RELEASES, List.of())),
             Map.entry("calico", Map.of(
                     BUSINESS, new ComponentRecipe(BUSINESS, CALICO_RELEASES, List.of(), false, false, false, true),

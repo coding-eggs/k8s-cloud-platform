@@ -39,12 +39,13 @@ export function useComponentOperations(clusterId: Ref<string | null | undefined>
     thanosReceiveUrl?: string,
     thanosInstall?: K8sThanosInstall,
     calicoInstall?: K8sCalicoInstall,
+    tektonProfile?: string,
   ): Promise<number> {
     const id = clusterId.value
     if (!id) throw new Error('缺少集群上下文')
     const operationId = await clusterApi.componentApply({
       clusterId: id, componentCode, action, targetVersion, editableValues,
-      alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall,
+      alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, tektonProfile,
     })
     await load()
     return operationId

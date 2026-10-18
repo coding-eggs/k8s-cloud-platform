@@ -939,6 +939,12 @@ export interface K8sComponentStatus {
   /** Calico 表单预填默认值 */
   defaultPodCidr?: string | null
   defaultEncapsulation?: string | null
+  /** 安装时是否要选 Tekton profile（lite / basic / all） */
+  tektonProfile?: boolean
+  /** Tekton profile 默认值（表单预填） */
+  defaultTektonProfile?: string | null
+  /** 当前生效的 Tekton profile（上次成功快照）—— 编辑表单预填 */
+  tektonProfileCurrent?: string | null
 }
 
 /** Calico 网络参数（安装表单） */

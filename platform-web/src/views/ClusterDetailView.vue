@@ -85,6 +85,7 @@ async function onApply(p: {
   thanosReceiveUrl?: string
   thanosInstall?: import('@/types').K8sThanosInstall
   calicoInstall?: import('@/types').K8sCalicoInstall
+  tektonProfile?: string
 }): Promise<void> {
   const target = components.statusOf(p.code)
   try {
@@ -107,7 +108,7 @@ async function onApply(p: {
   applying.value = p.code
   try {
     const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues,
-      p.alertWebhookUrl, p.thanosReceiveUrl, p.thanosInstall, p.calicoInstall)
+      p.alertWebhookUrl, p.thanosReceiveUrl, p.thanosInstall, p.calicoInstall, p.tektonProfile)
     const op = await operations.wait(id)
     if (op.status === 'SUCCESS') {
       ElMessage.success('操作完成，正在刷新探测…')

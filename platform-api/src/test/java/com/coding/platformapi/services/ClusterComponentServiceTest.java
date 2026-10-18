@@ -313,7 +313,11 @@ class ClusterComponentServiceTest {
                 + "\"thanosInstall\":{\"namespace\":\"monitor\",\"secretName\":\"minio-creds\","
                 + "\"endpoint\":\"minio.default.svc:9000\",\"bucket\":\"thanos\",\"insecureSkipVerify\":true}}}");
         PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
-        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
+        PlatformComponentOperation tektonOp = new PlatformComponentOperation();
+        tektonOp.setComponentCode("tekton");
+        tektonOp.setStatus("SUCCESS");
+        tektonOp.setValuesSnapshot("{\"__platform\":{\"tektonProfile\":\"basic\"}}");
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op, tektonOp));
 
         K8sComponentClient client = mock(K8sComponentClient.class);
         when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
@@ -337,6 +341,11 @@ class ClusterComponentServiceTest {
         assertThat(prom.getThanosInstallCurrent().getEndpoint()).isEqualTo("minio.default.svc:9000");
         assertThat(prom.getThanosInstallCurrent().getBucket()).isEqualTo("thanos");
         assertThat(prom.getThanosInstallCurrent().isInsecureSkipVerify()).isTrue();
+        // Tekton profile：表单可选的默认值与当前生效值
+        ComponentStatusDTO tekton = find(svc.status("c1"), "tekton");
+        assertThat(tekton.isTektonProfile()).isTrue();
+        assertThat(tekton.getDefaultTektonProfile()).isEqualTo("all");
+        assertThat(tekton.getTektonProfileCurrent()).isEqualTo("basic");
     }
 
     @Test

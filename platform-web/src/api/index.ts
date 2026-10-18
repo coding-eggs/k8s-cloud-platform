@@ -137,6 +137,8 @@ export const clusterApi = {
     thanosInstall?: K8sThanosInstall
     /** Calico 网络参数（仅 calicoNetwork 的组件） */
     calicoInstall?: K8sCalicoInstall
+    /** Tekton profile（仅 tektonProfile 的组件：lite / basic / all） */
+    tektonProfile?: string
   }) => http.post<never, number>('/cluster/components/apply', payload),
   /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
   componentOperation: (payload: {

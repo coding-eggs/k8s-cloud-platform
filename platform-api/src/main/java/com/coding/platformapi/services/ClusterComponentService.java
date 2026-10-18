@@ -203,6 +203,9 @@ public class ClusterComponentService {
             if (s.isThanosInstall()) {
                 s.setThanosInstallCurrent(thanosInstallOf(platform));
             }
+            if (s.isTektonProfile() && platform.get("tektonProfile") instanceof String p) {
+                s.setTektonProfileCurrent(p);
+            }
             applyCurrentEditableValues(s, snapshot, profile);
         }
     }
@@ -377,6 +380,9 @@ public class ClusterComponentService {
         s.setCalicoNetwork(recipe != null && recipe.calicoNetwork());
         s.setDefaultPodCidr(recipe != null && recipe.calicoNetwork() ? defaultPodCidr : null);
         s.setDefaultEncapsulation(recipe != null && recipe.calicoNetwork() ? defaultEncapsulation : null);
+        s.setTektonProfile(recipe != null && recipe.tektonProfile());
+        s.setDefaultTektonProfile(recipe != null && recipe.tektonProfile()
+                ? ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE : null);
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对只有工作负载判据的组件（istio-ambient）同样成立，否则同一集群里会出现

@@ -307,7 +307,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 
 | 值 | 类型 | 说明 |
 |---|---|---|
-| `TektonConfig.spec.profile=all` | 🔒 | **完整 Tekton**：Pipeline + Trigger + Result + Chain，K8s 上再加 Dashboard。`lite` 只装 TektonPipeline（没有 Trigger/Dashboard），`basic` 无 Dashboard |
+| `TektonConfig.spec.profile` | ⚙️（表单） | **安装表单里选**：`lite` 只有 Pipeline；`basic` 加 Trigger/Result/Chain；`all` 再加 Dashboard（K8s）。默认 `all`，值通过占位符 `${tekton.profile}` 落进 TektonConfig，存 `__platform.tektonProfile` |
 | `operator.autoInstallComponents=false` | 🔒 | TektonConfig 由平台通过 chart 的 `extraObjects` 下发；不关自动安装会两边抢同一个 `config` |
 | `TektonConfig.spec.pipeline.coschedule=workspaces` | 🔒 | 否则一个 TaskRun 挂不了两块 PVC workspace ⇒ **构建缓存不启用**（1.15.x 合法值；实测以 workspaces 为准） |
 | `TektonConfig.spec.pipeline.default-container-resource-requirements` | 🔒 | 命名空间配额下 init 容器需要默认资源 |

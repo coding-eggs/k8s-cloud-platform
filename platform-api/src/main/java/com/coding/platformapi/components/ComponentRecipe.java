@@ -16,34 +16,44 @@ import java.util.List;
  * @param thanosReceiveDefault 该画像下 Thanos Receive 地址的**预填默认值**（可空）。
  *                         管理集群用集群内 receive 地址（同集群 Service 名），业务集群为空、
  *                         由平台配置 {@code thanos.receive.url} 预填。表单里始终可改。
+ * @param tektonProfile     安装时是否让用户选 Tekton 的 profile（lite / basic / all，默认 all）。
+ *                          值通过占位符 {@code ${tekton.profile}} 落进 TektonConfig。
  */
 public record ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                               boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
-                              boolean calicoNetwork, String thanosReceiveDefault) {
+                              boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile) {
 
     /** 默认既不联动告警、也不上报 Thanos 的简写 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires) {
-        this(profile, releases, requires, false, false, false, false, null);
+        this(profile, releases, requires, false, false, false, false, null, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting) {
-        this(profile, releases, requires, platformAlerting, false, false, false, null);
+        this(profile, releases, requires, platformAlerting, false, false, false, null, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false, false, null);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false, false, null, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, false, null);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, false, null, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                            boolean calicoNetwork) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork, null);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork, null,
+                false);
+    }
+
+    public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
+                           boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
+                           boolean calicoNetwork, String thanosReceiveDefault) {
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork,
+                thanosReceiveDefault, false);
     }
 }

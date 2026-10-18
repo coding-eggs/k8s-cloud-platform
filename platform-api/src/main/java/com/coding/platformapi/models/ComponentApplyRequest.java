@@ -37,17 +37,24 @@ public class ComponentApplyRequest {
     /** Calico 网络参数（仅 calicoNetwork 的组件用：Pod CIDR / 封装方式） */
     private CalicoInstallRequest calicoInstall;
 
+    /**
+     * Tekton 的 profile（仅 tektonProfile 的组件用：lite / basic / all）。
+     * 空 = 沿用上次成功操作里的值，再空 = 默认 all。
+     */
+    private String tektonProfile;
+
     /** 兼容旧调用（不含告警地址与 Thanos 地址） */
     public ComponentApplyRequest(String clusterId, String componentCode, String action,
                                  String targetVersion, Map<String, Object> editableValues) {
-        this(clusterId, componentCode, action, targetVersion, editableValues, null, null, null, null);
+        this(clusterId, componentCode, action, targetVersion, editableValues, null, null, null, null, null);
     }
 
     /** 兼容只带告警地址的调用 */
     public ComponentApplyRequest(String clusterId, String componentCode, String action,
                                  String targetVersion, Map<String, Object> editableValues,
                                  String alertWebhookUrl) {
-        this(clusterId, componentCode, action, targetVersion, editableValues, alertWebhookUrl, null, null, null);
+        this(clusterId, componentCode, action, targetVersion, editableValues, alertWebhookUrl,
+                null, null, null, null);
     }
 
     /** 兼容带两个地址的调用 */
@@ -55,7 +62,7 @@ public class ComponentApplyRequest {
                                  String targetVersion, Map<String, Object> editableValues,
                                  String alertWebhookUrl, String thanosReceiveUrl) {
         this(clusterId, componentCode, action, targetVersion, editableValues,
-                alertWebhookUrl, thanosReceiveUrl, null, null);
+                alertWebhookUrl, thanosReceiveUrl, null, null, null);
     }
 
     /** 兼容带 Thanos 安装参数的调用 */
@@ -64,6 +71,15 @@ public class ComponentApplyRequest {
                                  String alertWebhookUrl, String thanosReceiveUrl,
                                  ThanosInstallRequest thanosInstall) {
         this(clusterId, componentCode, action, targetVersion, editableValues,
-                alertWebhookUrl, thanosReceiveUrl, thanosInstall, null);
+                alertWebhookUrl, thanosReceiveUrl, thanosInstall, null, null);
+    }
+
+    /** 兼容带 Calico 参数的调用（不含 tektonProfile） */
+    public ComponentApplyRequest(String clusterId, String componentCode, String action,
+                                 String targetVersion, Map<String, Object> editableValues,
+                                 String alertWebhookUrl, String thanosReceiveUrl,
+                                 ThanosInstallRequest thanosInstall, CalicoInstallRequest calicoInstall) {
+        this(clusterId, componentCode, action, targetVersion, editableValues,
+                alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, null);
     }
 }

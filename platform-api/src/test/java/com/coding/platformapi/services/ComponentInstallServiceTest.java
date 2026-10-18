@@ -588,6 +588,63 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void tektonProfileFromTheFormLandsInTektonConfig() {
+        // profile 是安装表单参数：占位符 ${tekton.profile} 必须替换成用户选的值
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "tekton")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("tekton", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
+                                Map.of(
+                                        "operator", Map.of("autoInstallComponents", false),
+                                        "extraObjects", List.of(Map.of(
+                                                "kind", "TektonConfig",
+                                                "spec", Map.of("profile", "${tekton.profile}")))),
+                                Map.of())),
+                        List.of(), false, false, false, false, null, true));
+
+        ComponentApplyRequest req = new ComponentApplyRequest("c1", "tekton", "INSTALL", null, null);
+        req.setTektonProfile("basic");
+        service(catalog).apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"), org.mockito.ArgumentMatchers.eq("tekton"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> extra = (List<Map<String, Object>>)
+                captor.getValue().get(0).getValues().get("extraObjects");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> spec = (Map<String, Object>) extra.get(0).get("spec");
+        assertThat(spec).containsEntry("profile", "basic");
+    }
+
+    @Test
+    void anUnknownTektonProfileIsRejectedBeforeInstalling() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("tekton", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
+                                Map.of(), Map.of())),
+                        List.of(), false, false, false, false, null, true));
+
+        ComponentApplyRequest req = new ComponentApplyRequest("c1", "tekton", "INSTALL", null, null);
+        req.setTektonProfile("full");
+        assertThatThrownBy(() -> service(catalog).apply(req, "admin"))
+                .hasMessageContaining("不支持的 Tekton profile");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
     void thanosObjstoreIsWrittenBeforeHelm() {
         // Pod 会挂载 objstore Secret：必须先生成它，再跑 helm
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
