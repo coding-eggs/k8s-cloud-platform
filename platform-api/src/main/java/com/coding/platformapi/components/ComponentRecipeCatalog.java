@@ -374,7 +374,9 @@ public class ComponentRecipeCatalog {
      * <p>{@code preserveUnknownPlaceholders=true}：{@code ${MINIO_ACCESS_KEY}} /
      * {@code ${MINIO_SECRET_KEY}} 必须留到 Tempo 启动时由 {@code -config.expand-env=true} 展开，
      * 平台的 ValueTemplate 不能把它们当未知占位符拒掉。
-     * bucket / prefix / endpoint 是平台占位符（表单值），由 ValueTemplate 解析。
+     * bucket / endpoint 是平台占位符（表单值），由 ValueTemplate 解析。
+     * ⚠️ 不写 {@code prefix}：Tempo 用独立桶（默认 {@code tempo}），block 直接落在桶根，
+     *    不与 Thanos 的 {@code thanos} 桶/前缀混用。
      */
     private static final ReleaseSpec TEMPO_RELEASE = new ReleaseSpec(
             "platform-tempo", "monitor", "tempo", "3.2.0",
@@ -384,7 +386,6 @@ public class ComponentRecipeCatalog {
                                     "backend", "s3",
                                     "s3", Map.of(
                                             "bucket", "${tempo.minio.bucket}",
-                                            "prefix", "${tempo.minio.prefix}",
                                             "endpoint", "${tempo.minio.endpoint}",
                                             "access_key", "${MINIO_ACCESS_KEY}",
                                             "secret_key", "${MINIO_SECRET_KEY}",

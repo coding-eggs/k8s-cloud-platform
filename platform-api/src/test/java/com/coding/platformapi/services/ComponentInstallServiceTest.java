@@ -861,6 +861,60 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void esSecretMustLiveInMonitorWhenLogsAreEnabled() {
+        // 表单上 ES 凭证不再给命名空间选择：所有 OTel 凭证统一放 monitor。
+        // 后端也钉死，避免绕过 UI 后 collector 读到别的命名空间的 Secret。
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        OtelInstallRequest otel = baseOtel();
+        otel.setLogsEnabled(true);
+        otel.setEs(new EsConfig("https://es-es-http.default.svc:9200", "elastic",
+                new SecretRef("default", "es-es-elastic-user"), "elastic", true, "otel-logs"));
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("monitor");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void tempoStorageDefaultsToItsOwnBucketWithoutAPrefix() {
+        // Tempo 不跟 Thanos 共用桶：默认落到独立桶 tempo，且不写 prefix（直接写桶根）
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        TempoStorageConfig storage = new TempoStorageConfig();
+        storage.setEndpoint("192.168.31.80:9002");
+        storage.setCredentialSecret(new SecretRef("monitor", "minio-creds"));
+        storage.setInsecureSkipVerify(true);
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoStorage(storage);
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("otel-operator"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> tempo = (Map<String, Object>) captor.getValue().get(1).getValues().get("tempo");
+        assertThat(tempo.toString()).contains("bucket=tempo");
+        // 不写 prefix：Tempo 直接把 block 写在桶根，不再和 Thanos 的 thanos/ 前缀混在一起
+        assertThat(tempo.toString()).doesNotContain("prefix");
+    }
+
+    @Test
     void tempoRetentionAndTlsModeGoIntoTheReleaseValues() {
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
@@ -869,7 +923,7 @@ class ComponentInstallServiceTest {
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
 
         OtelInstallRequest otel = baseOtel();
-        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "thanos", "tempo",
+        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "tempo",
                 new SecretRef("monitor", "minio-creds"), true));
         otel.setTempoRetention("336h");
         otel.setTempoTlsMode("tls-skip-verify");
@@ -905,7 +959,7 @@ class ComponentInstallServiceTest {
 
         OtelInstallRequest otel = baseOtel();
         otel.setLogsEnabled(true);
-        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "thanos", "tempo",
+        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "tempo",
                 new SecretRef("monitor", "minio-creds"), true));
         ComponentApplyRequest req = new ComponentApplyRequest(
                 "c1", "otel-operator", "INSTALL", null, Map.of());
@@ -919,7 +973,7 @@ class ComponentInstallServiceTest {
         org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(client);
         inOrder.verify(client).applyTempoObjstore("c1", "monitor", "minio-creds",
                 "monitor", "platform-tempo-objstore");
-        inOrder.verify(client).applyOtelEsSecret("c1", "default", "es-es-elastic-user",
+        inOrder.verify(client).applyOtelEsSecret("c1", "monitor", "es-es-elastic-user",
                 "elastic", "elastic", "monitor", "platform-otel-es");
         inOrder.verify(client).applyComponent(anyString(), anyString(), anyString(), any());
     }
@@ -1007,7 +1061,7 @@ class ComponentInstallServiceTest {
         o.setGatewayReplicas(1);
         o.setLogsEnabled(false);
         o.setEs(new EsConfig("https://es-es-http.default.svc:9200", "elastic",
-                new SecretRef("default", "es-es-elastic-user"), "elastic", true, "otel-logs"));
+                new SecretRef("monitor", "es-es-elastic-user"), "elastic", true, "otel-logs"));
         return o;
     }
 

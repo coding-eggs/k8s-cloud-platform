@@ -320,7 +320,6 @@ public class ClusterComponentService {
         TempoStorageConfig out = new TempoStorageConfig();
         out.setEndpoint(asString(m.get("endpoint")));
         out.setBucket(asString(m.get("bucket")));
-        out.setPrefix(asString(m.get("prefix")));
         out.setCredentialSecret(secretRefOf(m.get("credentialSecret")));
         out.setInsecureSkipVerify(Boolean.TRUE.equals(m.get("insecureSkipVerify")));
         return out;

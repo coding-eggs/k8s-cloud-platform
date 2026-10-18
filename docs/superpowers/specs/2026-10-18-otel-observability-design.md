@@ -124,9 +124,10 @@ Tempo / gateway 的失败通过**操作记录**（`log_tail`、FAILED）呈现�
 - 地址：
   - OTLP gRPC 入库：`platform-tempo.monitor.svc:4317`
   - 查询 HTTP：`http://platform-tempo.monitor.svc:3200`（`/api/search`、`/api/traces/{id}`）
-- 存储：S3/MinIO。**MinIO 地址、桶、前缀、凭证 Secret、TLS 校验开关全部是安装/编辑表单字段**
-  （默认 `192.168.31.80:9002` / `thanos` / `tempo` / 复用 Thanos 的凭证 Secret / 跳过校验；
-  见 §6.2），平台只做预填，不硬编码。默认不新建桶，`prefix` 负责与 Thanos 数据隔离。
+- 存储：S3/MinIO。**MinIO 地址、桶、凭证 Secret、TLS 校验开关全部是安装/编辑表单字段**
+  （默认 `192.168.31.80:9002` / `tempo` / 复用 Thanos 的凭证 Secret / 跳过校验；
+  见 §6.2），平台只做预填，不硬编码。Tempo 用**独立桶**（默认 `tempo`，需先在 MinIO 建好），
+  **不与 Thanos 的 `thanos` 桶共用，也不设前缀** —— block 直接写在桶根。
 - 凭证：平台在 helm 之前于 `monitor` 生成 `platform-tempo-objstore` Secret
   （`MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`，从表单选定的来源 Secret 转换），
   Tempo 通过 `extraEnvFrom` + `-config.expand-env=true` 引用；**凭证不写进 values 快照**
@@ -141,8 +142,7 @@ tempo:
     trace:
       backend: s3
       s3:
-        bucket: ${tempo.minio.bucket}          # 平台占位符（表单值）
-        prefix: ${tempo.minio.prefix}
+        bucket: ${tempo.minio.bucket}          # 平台占位符（表单值，独立桶 tempo）
         endpoint: ${tempo.minio.endpoint}
         access_key: ${MINIO_ACCESS_KEY}        # 留给 Tempo 的 -config.expand-env
         secret_key: ${MINIO_SECRET_KEY}
@@ -339,8 +339,9 @@ spec:
 
 - **镜像必须是 contrib**。operator 默认的 `opentelemetry-collector-k8s:0.161.0` 不含
   `elasticsearch` exporter；contrib 同时覆盖 traces/metrics/logs。
-- ES 凭证：表单指定来源 Secret（默认 `default/es-es-elastic-user`，key `elastic`；也允许其他
-  namespace/name），平台校验后复制成 `monitor/platform-otel-es`（`username` / `password`）。
+- ES 凭证：表单从 `monitor` 选择来源 Secret（默认名字 `es-es-elastic-user`，key `elastic`；
+  ECK 的原始 Secret 在 `default`，需先复制到 `monitor`；**命名空间固定，不提供切换**），
+  平台校验后复制成 `monitor/platform-otel-es`（`username` / `password`）。
   ES 地址、用户名、TLS 校验开关、日志索引同样来自表单（见 §6.2）。
 - `prometheus` exporter 打开 `resource_to_telemetry_conversion`，把 `service.name`、
   `cluster.name` 等 resource 属性转成指标 label。
@@ -532,7 +533,7 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
      `otelEsInsecure`、`otelEsLogsIndex`；
    - 采集：`otelSampling`、`otelGatewayReplicas`、`otelLogsEnabled`；
    - 所有字段都进快照 `__platform`；编辑表单预填上次成功操作的值（复用 `selectLatestSuccesses`）；
-   - **地址、桶、前缀、用户名、索引名、TLS 开关都不硬编码**，只作为表单默认值。
+   - **地址、桶、用户名、索引名、TLS 开关都不硬编码**，只作为表单默认值。
 
 3. **OTel CR 在请求期组装**：Instrumentation / gateway 的 `extraObjects` 里包含采样率、日志开关等
    用户值，**不能**走 `editableValues` 的路径机制（该机制只遍历 Map，不支持 list 下标）。
@@ -540,7 +541,7 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
 
 4. **前置 Secret 生成**（k8s-server 新端点，复用 Thanos 的做法）：
    - `platform-tempo-objstore`（MANAGEMENT，取自安装表单的 MinIO 凭证 Secret）；
-   - `platform-otel-es`（从 ECK 的 `es-es-elastic-user` 复制，或表单指定 `monitor` 内的 Secret）。
+   - `platform-otel-es`（从表单指定的 `monitor` 内 Secret 复制）。
 
 5. **后置步骤**（helm 成功之后）：
    - `ServiceMonitor`（CRD 存在才建）；
@@ -565,8 +566,7 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
    | 字段 | 默认值 | 说明 |
    |---|---|---|
    | MinIO 地址 | 平台配置或 `192.168.31.80:9002` | S3 endpoint，`host:port` |
-   | 桶 | `thanos` | 复用现有桶 |
-   | 前缀 | `tempo` | Tempo 数据在桶内的前缀，与 Thanos 隔离 |
+   | 桶 | `tempo` | **独立桶**（需先在 MinIO 建好），不与 Thanos 的 `thanos` 桶共用；不设前缀 |
    | 凭证 Secret | 选 `monitor` 内的 Secret（同名 Thanos 凭证可直接复用） | 支持与 Thanos 相同的 key 组合（`access-key`/`secret-key` 等），平台渲染成 `platform-tempo-objstore` |
    | 跳过 TLS 校验 | `true` | MinIO 是 HTTP 时保持 true |
 
@@ -576,7 +576,7 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
    |---|---|---|
    | ES 地址 | `https://es-es-http.default.svc:9200` | 完整 URL（含 scheme） |
    | ES 用户名 | `elastic` | 使用 ECK 默认用户时可不动 |
-   | 凭证 Secret | 默认 `default/es-es-elastic-user`（key `elastic`） | 也允许选其他 namespace/name；平台校验后复制成 `monitor/platform-otel-es` |
+   | 凭证 Secret | 从 `monitor` 选（默认名字 `es-es-elastic-user`，key `elastic`） | **命名空间固定 monitor，表单不提供切换**；ECK 的原始 Secret 在 `default`，需先复制到 `monitor` |
    | 跳过 HTTPS 校验 | `true` | ECK 自签证书 |
    | 日志索引 | `otel-logs` | exporter 实际写成 `otel-logs-%{+yyyy.MM.dd}` |
 
@@ -596,7 +596,7 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
    - 打开弹窗时读现有注解/env 回显状态；
    - 说明：切换会触发滚动更新；回滚到旧 revision 可能把接入配置一起回滚。
 3. waypoint 创建/编辑弹窗新增「开启链路追踪」开关（第二批）。
-4. 组件状态接口返回 §6.2 表格里的**所有当前值**（Tempo 地址、MinIO 地址/桶/前缀、ES 地址/用户名、采样率、副本数、日志开关），编辑表单按上次成功操作预填。
+4. 组件状态接口返回 §6.2 表格里的**所有当前值**（Tempo 地址、MinIO 地址/桶、ES 地址/用户名、采样率、副本数、日志开关），编辑表单按上次成功操作预填。
 
 ### 6.3 权限
 

@@ -983,8 +983,8 @@ export interface K8sSecretRef {
 /** Tempo 的 MinIO 存储参数（管理集群） */
 export interface K8sTempoStorage {
   endpoint: string
+  /** 独立桶（默认 tempo，不与 Thanos 共用）；Tempo 的 block 直接落在桶根，没有前缀 */
   bucket: string
-  prefix: string
   credentialSecret: K8sSecretRef
   insecureSkipVerify: boolean
 }

@@ -144,6 +144,10 @@ interface ApplyDialog {
   initialThanosInstall: string
   storageClasses: string[]
   secretOptions: SecretRefOption[]
+  /** OTel·Tempo 的 MinIO 凭证 Secret 候选（只查 monitor 命名空间） */
+  otelMinioSecretOptions: SecretRefOption[]
+  /** OTel·日志的 ES 凭证 Secret 候选（按表单里填的 ES 命名空间现查） */
+  esSecretOptions: SecretRefOption[]
   /** 该组件是否要填 Calico 网络参数（CIDR / 封装方式） */
   showCalico: boolean
   calico: K8sCalicoInstall
@@ -192,13 +196,13 @@ function emptyOtel(): OtelForm {
     tempoRetention: '168h',
     tempoTlsMode: 'plaintext',
     tempoStorage: {
-      endpoint: '192.168.31.80:9002', bucket: 'thanos', prefix: 'tempo',
+      endpoint: '192.168.31.80:9002', bucket: 'tempo',
       credentialSecret: { namespace: 'monitor', name: '' },
       insecureSkipVerify: true,
     },
     es: {
       endpoint: 'https://es-es-http.default.svc:9200', username: 'elastic',
-      credentialSecret: { namespace: 'default', name: 'es-es-elastic-user' },
+      credentialSecret: { namespace: 'monitor', name: 'es-es-elastic-user' },
       passwordKey: 'elastic', insecureSkipVerify: true, logsIndex: 'otel-logs',
     },
   }
@@ -211,7 +215,7 @@ const applyDialog = ref<ApplyDialog>({
   showThanos: false, thanosUrl: '', initialThanos: '',
   showThanosInstall: false, thanos: { ...EMPTY_THANOS },
   initialThanosInstall: JSON.stringify(EMPTY_THANOS),
-  storageClasses: [], secretOptions: [],
+  storageClasses: [], secretOptions: [], otelMinioSecretOptions: [], esSecretOptions: [],
   showCalico: false, calico: { podCidr: '', encapsulation: 'IPIP' },
   initialCalico: '',
   showTektonProfile: false, tektonProfile: 'all', initialTektonProfile: 'all',
@@ -278,6 +282,9 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     tempoStorage: { ...baseOtel.tempoStorage, ...(otelCurrent?.tempoStorage ?? {}) },
     es: { ...baseOtel.es, ...(otelCurrent?.es ?? {}) },
   }
+  // 凭证 Secret 只能放 monitor（表单不提供命名空间选择）；旧快照里别的命名空间值在这里归一
+  otel.tempoStorage.credentialSecret.namespace = OTEL_NAMESPACE
+  otel.es.credentialSecret.namespace = OTEL_NAMESPACE
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
@@ -291,7 +298,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     showThanosInstall: !!row.thanosInstall,
     thanos,
     initialThanosInstall: JSON.stringify(thanos),
-    storageClasses: [], secretOptions: [],
+    storageClasses: [], secretOptions: [], otelMinioSecretOptions: [], esSecretOptions: [],
     showCalico: !!row.calicoNetwork && !editing,
     calico,
     initialCalico: JSON.stringify(calico),
@@ -309,10 +316,17 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   if (fields.some((f) => f.type === 'storageClass')) {
     void loadStorageClassOptions()
   }
+  if (row.otelInstrumentation) {
+    // Secret 候选懒加载；拿不到就留空 —— 下拉是 filterable + allow-create，仍可手输
+    if (row.tempoInstall) void loadOtelMinioSecrets()
+    if (otel.logsEnabled) void loadEsSecrets()
+  }
 }
 
 /** Thanos 的部署命名空间（recipe 固定为 monitor，凭证只允许在这个命名空间里找） */
 const THANOS_NAMESPACE = 'monitor'
+/** OTel 的凭证 Secret 统一放 monitor（MinIO 与 ES 都是，后端同样钉死） */
+const OTEL_NAMESPACE = 'monitor'
 
 /** Thanos 表单的 Secret 候选：懒加载，失败就留空（用户可以手输） */
 async function loadThanosOptions(): Promise<void> {
@@ -323,6 +337,33 @@ async function loadThanosOptions(): Promise<void> {
     d.secretOptions = (await props.loadSecretOptions?.(THANOS_NAMESPACE)) ?? []
   } catch {
     d.secretOptions = []
+  }
+}
+
+/**
+ * Tempo 的 MinIO 凭证 Secret 候选：只查 monitor（后端 resolveTempoStorage 同样钉死）。
+ */
+async function loadOtelMinioSecrets(): Promise<void> {
+  const d = applyDialog.value
+  if (!d.showOtel || !d.showTempoInstall) return
+  try {
+    d.otelMinioSecretOptions = (await props.loadSecretOptions?.(OTEL_NAMESPACE)) ?? []
+  } catch {
+    d.otelMinioSecretOptions = []
+  }
+}
+
+/**
+ * ES 凭证 Secret 候选：同样只查 monitor（后端 resolveEs 校验）。
+ * ECK 的 {@code es-es-elastic-user} 默认在 default 命名空间，需要管理员先复制到 monitor。
+ */
+async function loadEsSecrets(): Promise<void> {
+  const d = applyDialog.value
+  if (!d.showOtel || !d.otel.logsEnabled) return
+  try {
+    d.esSecretOptions = (await props.loadSecretOptions?.(OTEL_NAMESPACE)) ?? []
+  } catch {
+    d.esSecretOptions = []
   }
 }
 
@@ -694,7 +735,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       <div v-if="applyDialog.showOtel" class="cc-form-row">
         <span class="cc-form-label">应用日志</span>
         <div class="cc-form-control">
-          <el-switch v-model="applyDialog.otel.logsEnabled" />
+          <el-switch v-model="applyDialog.otel.logsEnabled" @change="loadEsSecrets" />
           <div class="cc-form-hint">
             打开后 collector 增加 logs 管道，Java（Logback/Log4j2）与 Python（logging）的日志写入 ES。
             具体工作负载还要在「可观测」里单独打开日志开关
@@ -720,23 +761,27 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
         <div class="cc-form-row">
-          <span class="cc-form-label">Bucket / 前缀</span>
-          <div class="cc-form-control" style="display: flex; gap: 8px">
-            <el-input v-model="applyDialog.otel.tempoStorage.bucket" placeholder="thanos" spellcheck="false" />
-            <el-input v-model="applyDialog.otel.tempoStorage.prefix" placeholder="tempo" spellcheck="false" />
+          <span class="cc-form-label">Bucket</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.otel.tempoStorage.bucket" placeholder="tempo" spellcheck="false" />
           </div>
-          <div class="cc-form-hint" style="flex-basis: 100%">桶必须已存在；前缀用于与 Thanos 数据隔离</div>
+          <div class="cc-form-hint" style="flex-basis: 100%">
+            Tempo 用<b>独立桶</b>（默认 <code>tempo</code>，需先在 MinIO 建好），不要与 Thanos 的
+            <code>thanos</code> 桶共用；不设前缀，block 直接写在桶根
+          </div>
         </div>
         <div class="cc-form-row">
           <span class="cc-form-label">凭证 Secret</span>
-          <div class="cc-form-control" style="display: flex; gap: 8px">
-            <el-input v-model="applyDialog.otel.tempoStorage.credentialSecret.namespace"
-                      placeholder="monitor" style="width: 200px" spellcheck="false" />
-            <el-input v-model="applyDialog.otel.tempoStorage.credentialSecret.name"
-                      placeholder="Secret 名称" spellcheck="false" />
+          <div class="cc-form-control">
+            <el-select v-model="applyDialog.otel.tempoStorage.credentialSecret.name"
+                       filterable allow-create style="width: 100%"
+                       placeholder="选择 monitor 命名空间下的 Secret">
+              <el-option v-for="s in applyDialog.otelMinioSecretOptions" :key="s.name" :value="s.name"
+                         :label="s.keys?.length ? `${s.name}（${s.keys.join(', ')}）` : s.name" />
+            </el-select>
           </div>
           <div class="cc-form-hint" style="flex-basis: 100%">
-            必须是 <b>monitor</b> 命名空间的 Secret，内容为 MinIO access key / secret key
+            Secret 固定从 <b>monitor</b> 命名空间选（不可切换命名空间），内容为 MinIO access key / secret key
           </div>
         </div>
         <div class="cc-form-row">
@@ -772,15 +817,18 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div class="cc-form-control" style="display: flex; gap: 8px; flex-wrap: wrap">
             <el-input v-model="applyDialog.otel.es.username" placeholder="elastic" style="width: 160px"
                       spellcheck="false" />
-            <el-input v-model="applyDialog.otel.es.credentialSecret.namespace"
-                      placeholder="default" style="width: 160px" spellcheck="false" />
-            <el-input v-model="applyDialog.otel.es.credentialSecret.name"
-                      placeholder="es-es-elastic-user" spellcheck="false" />
+            <el-select v-model="applyDialog.otel.es.credentialSecret.name"
+                       filterable allow-create style="flex: 1 1 200px; min-width: 200px"
+                       placeholder="选择 monitor 命名空间下的 Secret">
+              <el-option v-for="s in applyDialog.esSecretOptions" :key="s.name" :value="s.name"
+                         :label="s.keys?.length ? `${s.name}（${s.keys.join(', ')}）` : s.name" />
+            </el-select>
             <el-input v-model="applyDialog.otel.es.passwordKey" placeholder="密码 key：elastic"
                       style="width: 180px" spellcheck="false" />
           </div>
           <div class="cc-form-hint" style="flex-basis: 100%">
-            默认取 ECK 的 <code>es-es-elastic-user</code>；平台在集群内归一化成
+            Secret 固定从 <b>monitor</b> 命名空间选（不可切换命名空间）；ECK 的
+            <code>es-es-elastic-user</code> 默认在 default，需先复制到 monitor。平台在集群内归一化成
             <code>platform-otel-es</code>（username/password），密码不经过 platform-api
           </div>
         </div>
@@ -966,7 +1014,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-upgrade-option { display: block; margin: 6px 0; }
 .cc-form-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
 .cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
-.cc-form-control { flex: 1 1 auto; min-width: 0; }
+.cc-form-control { flex: 1 1 auto; min-width: 300px; }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .cc-op-tag { cursor: pointer; }
 .cc-op-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--text-2); margin-bottom: 10px; }

@@ -78,8 +78,8 @@ public class ComponentInstallService {
     private static final String DEFAULT_ES_USERNAME = "elastic";
     private static final String DEFAULT_ES_PASSWORD_KEY = "elastic";
     private static final String DEFAULT_ES_LOGS_INDEX = "otel-logs";
-    private static final String DEFAULT_MINIO_BUCKET = "thanos";
-    private static final String DEFAULT_MINIO_PREFIX = "tempo";
+    /** Tempo 用独立桶，不与 Thanos 共用（Thanos 的桶是 thanos） */
+    private static final String DEFAULT_MINIO_BUCKET = "tempo";
     private static final String DEFAULT_TEMPO_RETENTION = "168h";
     private static final String DEFAULT_TEMPO_TLS_MODE = "plaintext";
     private static final List<String> TEMPO_TLS_MODES =
@@ -330,7 +330,6 @@ public class ComponentInstallService {
             if (otel.getTempoStorage() != null) {
                 context.put("tempo.minio.endpoint", otel.getTempoStorage().getEndpoint());
                 context.put("tempo.minio.bucket", otel.getTempoStorage().getBucket());
-                context.put("tempo.minio.prefix", otel.getTempoStorage().getPrefix());
             }
             if (otel.getEs() != null) {
                 context.put("otel.es.endpoint", otel.getEs().getEndpoint());
@@ -508,9 +507,6 @@ public class ComponentInstallService {
         out.setBucket(firstNonBlank(
                 requested == null ? null : requested.getBucket(),
                 prev == null ? null : prev.getBucket(), DEFAULT_MINIO_BUCKET));
-        out.setPrefix(firstNonBlank(
-                requested == null ? null : requested.getPrefix(),
-                prev == null ? null : prev.getPrefix(), DEFAULT_MINIO_PREFIX));
         SecretRef secret = requested != null && requested.getCredentialSecret() != null
                 ? requested.getCredentialSecret()
                 : prev == null ? null : prev.getCredentialSecret();
@@ -518,10 +514,10 @@ public class ComponentInstallService {
         out.setInsecureSkipVerify(requested != null
                 ? requested.isInsecureSkipVerify()
                 : prev == null || prev.isInsecureSkipVerify());
-        if (isBlank(out.getEndpoint()) || isBlank(out.getBucket()) || isBlank(out.getPrefix())
+        if (isBlank(out.getEndpoint()) || isBlank(out.getBucket())
                 || secret == null || isBlank(secret.getNamespace()) || isBlank(secret.getName())) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "请填写 MinIO 地址/桶/前缀，并选择 Tempo 的凭证 Secret");
+                    "请填写 MinIO 地址/桶，并选择 Tempo 的凭证 Secret");
         }
         if (!OTEL_NAMESPACE.equals(secret.getNamespace())) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
@@ -563,6 +559,10 @@ public class ComponentInstallService {
             if (secret == null || isBlank(secret.getNamespace()) || isBlank(secret.getName())) {
                 throw new CloudPlatformException(EnumResponseType.ERROR, "请选择 ES 凭证 Secret");
             }
+            if (!OTEL_NAMESPACE.equals(secret.getNamespace())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "ES 的凭证 Secret 必须放在 " + OTEL_NAMESPACE + " 命名空间");
+            }
         }
         return out;
     }
@@ -581,7 +581,6 @@ public class ComponentInstallService {
             Map<String, Object> t = new LinkedHashMap<>();
             t.put("endpoint", s.getEndpoint());
             t.put("bucket", s.getBucket());
-            t.put("prefix", s.getPrefix());
             t.put("credentialSecret", secretRefSnapshot(s.getCredentialSecret()));
             t.put("insecureSkipVerify", s.isInsecureSkipVerify());
             out.put("tempoStorage", t);
@@ -631,7 +630,6 @@ public class ComponentInstallService {
         TempoStorageConfig out = new TempoStorageConfig();
         out.setEndpoint(asString(map.get("endpoint")));
         out.setBucket(asString(map.get("bucket")));
-        out.setPrefix(asString(map.get("prefix")));
         out.setCredentialSecret(secretRefOf(map.get("credentialSecret")));
         out.setInsecureSkipVerify(Boolean.TRUE.equals(map.get("insecureSkipVerify")));
         return out;
