@@ -441,13 +441,16 @@ async function submit(): Promise<void> {
     // 失败只提示，不回滚 Gateway（对象已经存在，用户可在编辑页重试）
     if (waypointMode.value) {
       try {
-        await meshApi.setWaypointTracing({
+        const enabled = await meshApi.setWaypointTracing({
           tenantId: state.tenantId!,
           clusterId: state.clusterId!,
           namespace: state.namespace!,
           gatewayName: (editing.value ?? form.name).trim(),
           enabled: form.tracing,
         })
+        if (form.tracing && !enabled) {
+          ElMessage.warning('链路追踪未生效：集群缺少 Istio Telemetry CRD 或 OTel collector')
+        }
       } catch {
         ElMessage.warning('Gateway 已保存，但链路追踪设置失败；可在编辑页重试')
       }
