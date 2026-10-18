@@ -334,10 +334,60 @@ public class ComponentRecipeCatalog {
             // 🔒 CRD 必须跟着 chart 走且卸载保留：否则升级/卸载会删掉全部证书对象
             Map.of("crds", Map.of("enabled", true, "keep", true)), Map.of()));
 
-    private static final List<ReleaseSpec> OTEL_OPERATOR_RELEASES = List.of(new ReleaseSpec(
-            "platform-otel-operator", "opentelemetry-operator-system", "otel-operator", "0.126.0",
+    /**
+     * OTel operator 两遍共用：第一遍装 CRD + operator，第二遍用 {@code extraObjects} 下发
+     * Instrumentation / collector（CRD 是 templates，同一份 manifest 里会报
+     * {@code no matches for kind ... ensure CRDs are installed first}，与 Tekton 同一个坑）。
+     *
+     * <p>collector 镜像固定 contrib：operator 默认的 {@code -k8s} 发行版不含 elasticsearch exporter。
+     */
+    private static final Map<String, Object> OTEL_OPERATOR_VALUES = Map.of(
             // 🔒 webhook 证书由 cert-manager 签发
-            Map.of("admissionWebhooks", Map.of("certManager", Map.of("enabled", true))), Map.of()));
+            "admissionWebhooks", Map.of("certManager", Map.of("enabled", true)),
+            "manager", Map.of("collectorImage", Map.of(
+                    "repository", "ghcr.io/open-telemetry/opentelemetry-collector-releases/"
+                            + "opentelemetry-collector-contrib",
+                    "tag", "0.161.0")));
+
+    private static final ReleaseSpec OTEL_OPERATOR_PASS1 = new ReleaseSpec(
+            "platform-otel-operator", "opentelemetry-operator-system", "otel-operator", "0.126.0",
+            OTEL_OPERATOR_VALUES, Map.of());
+
+    private static final ReleaseSpec OTEL_OPERATOR_PASS2 = new ReleaseSpec(
+            "platform-otel-operator", "opentelemetry-operator-system", "otel-operator", "0.126.0",
+            OTEL_OPERATOR_VALUES, Map.of());
+
+    /**
+     * Tempo（traces 后端，仅管理集群）。
+     *
+     * <p>{@code preserveUnknownPlaceholders=true}：{@code ${MINIO_ACCESS_KEY}} /
+     * {@code ${MINIO_SECRET_KEY}} 必须留到 Tempo 启动时由 {@code -config.expand-env=true} 展开，
+     * 平台的 ValueTemplate 不能把它们当未知占位符拒掉。
+     * bucket / prefix / endpoint 是平台占位符（表单值），由 ValueTemplate 解析。
+     */
+    private static final ReleaseSpec TEMPO_RELEASE = new ReleaseSpec(
+            "platform-tempo", "monitor", "tempo", "1.24.4",
+            Map.of(
+                    "tempo", Map.of(
+                            "storage", Map.of("trace", Map.of(
+                                    "backend", "s3",
+                                    "s3", Map.of(
+                                            "bucket", "${tempo.minio.bucket}",
+                                            "prefix", "${tempo.minio.prefix}",
+                                            "endpoint", "${tempo.minio.endpoint}",
+                                            "access_key", "${MINIO_ACCESS_KEY}",
+                                            "secret_key", "${MINIO_SECRET_KEY}",
+                                            "insecure", true),
+                                    "wal", Map.of("path", "/var/tempo/wal"))),
+                            "extraArgs", Map.of("config.expand-env", "true"),
+                            "extraEnvFrom", List.of(Map.of("secretRef",
+                                    Map.of("name", "platform-tempo-objstore"))),
+                            "resources", Map.of(
+                                    "requests", Map.of("cpu", "200m", "memory", "512Mi"),
+                                    "limits", Map.of("cpu", "1", "memory", "2Gi"))),
+                    "persistence", Map.of(
+                            "enabled", true, "storageClassName", "nfs-client", "size", "20Gi")),
+            Map.of(), true);
 
     // ==================== 汇总 ====================
 
@@ -365,7 +415,18 @@ public class ComponentRecipeCatalog {
                     BUSINESS, new ComponentRecipe(BUSINESS, CALICO_RELEASES, List.of(), false, false, false, true),
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, CALICO_RELEASES, List.of(), false, false, false, true))),
             Map.entry("cert-manager", profiles(CERT_MANAGER_RELEASES, List.of())),
-            Map.entry("otel-operator", profiles(OTEL_OPERATOR_RELEASES, List.of("cert-manager"))));
+            // OTel 采集栈：operator 两遍 + Tempo（管理集群）。Tempo 夹在两遍 operator 之间，
+            // 第一遍先落 CRD，Tempo 作为后端就绪后再下发 Instrumentation/collector。
+            Map.entry("otel-operator", Map.of(
+                    BUSINESS, new ComponentRecipe(BUSINESS,
+                            List.of(OTEL_OPERATOR_PASS1, OTEL_OPERATOR_PASS2), List.of("cert-manager"),
+                            false, false, false, false, null, false,
+                            new OtelRecipe(true, false, true, "")),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT,
+                            List.of(OTEL_OPERATOR_PASS1, TEMPO_RELEASE, OTEL_OPERATOR_PASS2),
+                            List.of("cert-manager"),
+                            false, false, false, false, null, false,
+                            new OtelRecipe(true, true, true, "platform-tempo.monitor.svc:4317")))));
 
     private static Map<String, ComponentRecipe> profiles(List<ReleaseSpec> releases, List<String> requires) {
         return profiles(releases, requires, false, false);

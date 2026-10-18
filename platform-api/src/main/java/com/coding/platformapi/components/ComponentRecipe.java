@@ -18,42 +18,53 @@ import java.util.List;
  *                         由平台配置 {@code thanos.receive.url} 预填。表单里始终可改。
  * @param tektonProfile     安装时是否让用户选 Tekton 的 profile（lite / basic / all，默认 all）。
  *                          值通过占位符 {@code ${tekton.profile}} 落进 TektonConfig。
+ * @param otel              OTel 采集栈的表单开关；非 OTel 组件为 null。
  */
 public record ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                               boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
-                              boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile) {
+                              boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile,
+                              OtelRecipe otel) {
 
     /** 默认既不联动告警、也不上报 Thanos 的简写 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires) {
-        this(profile, releases, requires, false, false, false, false, null, false);
+        this(profile, releases, requires, false, false, false, false, null, false, null);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting) {
-        this(profile, releases, requires, platformAlerting, false, false, false, null, false);
+        this(profile, releases, requires, platformAlerting, false, false, false, null, false, null);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false, false, null, false);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false, false, null, false, null);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, false, null, false);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, false, null, false,
+                null);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                            boolean calicoNetwork) {
         this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork, null,
-                false);
+                false, null);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                            boolean calicoNetwork, String thanosReceiveDefault) {
         this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork,
-                thanosReceiveDefault, false);
+                thanosReceiveDefault, false, null);
+    }
+
+    /** 保留 9 参形态（不含 otel）：现有调用点不必改动 */
+    public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
+                           boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
+                           boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile) {
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork,
+                thanosReceiveDefault, tektonProfile, null);
     }
 }

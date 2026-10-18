@@ -276,4 +276,50 @@ class ComponentRecipeCatalogTest {
                 .get("calicoNetwork");
         assertThat(network.toString()).contains("${calico.podCidr}").contains("${calico.encapsulation}");
     }
+
+    // ==================== otel-operator 采集栈（2026-10-18） ====================
+
+    @Test
+    void theOtelRecipeHasThreeReleasesOnManagementAndTwoOnBusiness() {
+        // 两遍同名 operator release 之间夹一个 Tempo：先有 CRD，再有后端，最后下发 CR
+        var mgmt = catalog.recipeOf("otel-operator", "MANAGEMENT");
+        assertThat(mgmt.releases()).extracting(ReleaseSpec::releaseName)
+                .containsExactly("platform-otel-operator", "platform-tempo", "platform-otel-operator");
+        assertThat(mgmt.releases().get(1).chartCode()).isEqualTo("tempo");
+        assertThat(mgmt.releases().get(1).chartVersion()).isEqualTo("1.24.4");
+        assertThat(mgmt.releases().get(1).preserveUnknownPlaceholders()).isTrue();
+        assertThat(mgmt.otel()).isNotNull();
+        assertThat(mgmt.otel().tempoInstall()).isTrue();
+        assertThat(mgmt.otel().tempoEndpointDefault()).isEqualTo("platform-tempo.monitor.svc:4317");
+
+        var biz = catalog.recipeOf("otel-operator", "BUSINESS");
+        assertThat(biz.releases()).extracting(ReleaseSpec::releaseName)
+                .containsExactly("platform-otel-operator", "platform-otel-operator");
+        assertThat(biz.otel().tempoInstall()).isFalse();
+        assertThat(biz.otel().tempoRemoteWrite()).isTrue();
+    }
+
+    @Test
+    void theOtelCollectorImageIsContrib() {
+        // operator 默认的 -k8s 发行版不含 elasticsearch exporter
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pass2 = catalog.recipeOf("otel-operator", "BUSINESS").releases().get(1)
+                .contractValues();
+        Map<String, Object> manager = (Map<String, Object>) pass2.get("manager");
+        Map<String, Object> image = (Map<String, Object>) manager.get("collectorImage");
+        assertThat(image).containsEntry("repository",
+                "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib");
+        assertThat(image).containsEntry("tag", "0.161.0");
+    }
+
+    @Test
+    void theTempoReleaseKeepsCredentialPlaceholdersForRuntimeExpansion() {
+        var tempo = catalog.recipeOf("otel-operator", "MANAGEMENT").releases().get(1);
+        String values = tempo.contractValues().toString();
+        assertThat(values).contains("${MINIO_ACCESS_KEY}").contains("${MINIO_SECRET_KEY}")
+                .contains("${tempo.minio.bucket}").contains("${tempo.minio.prefix}");
+        assertThat(values).contains("config.expand-env");
+        // 凭证绝不能作为字面值出现在 recipe 里
+        assertThat(values).doesNotContain("minio-secret").doesNotContain("codingegg");
+    }
 }
