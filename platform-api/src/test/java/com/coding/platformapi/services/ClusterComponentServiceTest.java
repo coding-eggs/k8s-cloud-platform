@@ -275,6 +275,23 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void availableVersionsOnlyCarryTheComponentsOwnChart() {
+        // 管理集群的 Prometheus recipe 里含随附的 platform-thanos 0.47.2。
+        // 版本列表只能报组件本体（platform-kps 92.10.1）—— 混进 thanos 的版本会让 UI 出现
+        // 「已装 92.10.1，可升级到 0.47.2」这种荒唐提示（2026-10-18 实锤）
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService management = mock(ClusterService.class);
+        when(management.requireProfile("c1")).thenReturn("MANAGEMENT");
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), management,
+                new com.coding.platformapi.components.ComponentRecipeCatalog());
+
+        assertThat(find(svc.status("c1"), "prometheus-operator").getAvailableVersions())
+                .containsExactly("92.10.1");
+    }
+
+    @Test
     void onlyPrometheusExposesPlatformAlerting() {
         // 表单据此显示"告警回调地址"输入框
         ClusterComponentService svc = svc(List.of());

@@ -166,15 +166,18 @@ public class ClusterComponentService {
         }
     }
 
-    /** 平台可安装的 chart 版本（去重，保持 recipe 顺序）；没有 recipe → 空列表 */
+    /**
+     * 平台可安装的 chart 版本：**只取 recipe 的第一个 release** —— 它才是组件本体。
+     *
+     * <p>其余 release 是随附底座（管理集群的 Prometheus recipe = platform-kps 92.10.1
+     * + platform-thanos 0.47.2）。把它们的版本混进来，UI 会显示
+     * 「已装 92.10.1，可升级到 0.47.2」—— 两个 chart 的版本根本不可比（2026-10-18 实锤）。
+     */
     private static List<String> availableVersions(ComponentRecipe recipe) {
-        if (recipe == null) {
+        if (recipe == null || recipe.releases().isEmpty()) {
             return List.of();
         }
-        return recipe.releases().stream()
-                .map(ReleaseSpec::chartVersion)
-                .distinct()
-                .toList();
+        return List.of(recipe.releases().get(0).chartVersion());
     }
 
     /** 可编辑配置项（⚙️）：按各 release 声明的 editableValues 展平、同 key 去重 */

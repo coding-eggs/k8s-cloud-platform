@@ -408,12 +408,19 @@ public class ComponentInstallService {
     }
 
     /** 目标版本必须存在于 recipe 里（批① 只有一个版本；批② 起一个组件可有多个） */
+    /**
+     * 目标版本只能是**组件本体**（recipe 第一个 release）的版本。
+     *
+     * <p>多 release 组件（管理集群的 Prometheus = platform-kps + platform-thanos）里，
+     * 随附 release 的版本不是组件的版本 —— 放它进来会把操作记录写成"已升级到 0.47.2"，
+     * 后续页面按这个版本比较，永远显示可升级。
+     */
     private static String resolveTargetVersion(List<ReleaseSpec> releases, String requested) {
+        String primary = releases.get(0).chartVersion();
         if (requested == null || requested.isBlank()) {
-            return releases.get(0).chartVersion();
+            return primary;
         }
-        boolean known = releases.stream().anyMatch(r -> requested.equals(r.chartVersion()));
-        if (!known) {
+        if (!primary.equals(requested)) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "未知的目标版本：" + requested);
         }
         return requested;

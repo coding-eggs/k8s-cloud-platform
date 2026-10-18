@@ -179,6 +179,9 @@ PENDING → RUNNING → SUCCESS
 ### 3.3 升级语义
 
 - **比较的是 chart 版本**：读目标 release 的 chart version（`helm list` / release secret），与 recipe 里的 `chartVersion` 比。
+- **多 release 组件只认第一个 release**（组件本体）：管理集群的 Prometheus recipe = `platform-kps 92.10.1`
+  + `platform-thanos 0.47.2`，两个 chart 的版本不可比。版本列表（`availableVersions`）与 targetVersion 校验
+  都只看 `platform-kps`；把 thanos 的 0.47.2 混进来会让 UI 显示「已装 92.10.1，可升级到 0.47.2」（2026-10-18 实锤）。
 - **不要拿探测到的应用版本跟 chart 版本比**：`prometheus-operator v0.93.1` 与 `kube-prometheus-stack 88.6.2` 是两套编号。UI 两个都显示并注明。
 - 升级**复用上次成功操作的最终 values**（见 §4），用户修改可编辑字段则覆盖对应路径。
 

@@ -526,6 +526,29 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void aBundledReleaseVersionIsNotAValidTargetVersion() {
+        // 0.47.2 是随附的 platform-thanos 的版本，不是 prometheus-operator 的版本。
+        // 允许它当 targetVersion 会把操作记录写成"已升级到 0.47.2"，下次页面就按这个版本比
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "MANAGEMENT")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("MANAGEMENT", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1", Map.of(), Map.of()),
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-thanos", "monitor", "thanos", "0.47.2", Map.of(), Map.of())),
+                        List.of()));
+
+        assertThatThrownBy(() -> service(catalog).apply(new ComponentApplyRequest(
+                "c1", "prometheus-operator", "INSTALL", "0.47.2", null), "admin"))
+                .hasMessageContaining("未知的目标版本");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
     void thanosObjstoreIsWrittenBeforeHelm() {
         // Pod 会挂载 objstore Secret：必须先生成它，再跑 helm
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
