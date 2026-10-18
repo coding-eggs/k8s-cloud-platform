@@ -306,6 +306,8 @@ public class ClusterComponentService {
         cur.setSamplingPercentage(asInt(m.get("samplingPercentage")));
         cur.setGatewayReplicas(asInt(m.get("gatewayReplicas")));
         cur.setLogsEnabled(m.get("logsEnabled") instanceof Boolean b ? b : null);
+        cur.setTempoRetention(asString(m.get("tempoRetention")));
+        cur.setTempoTlsMode(asString(m.get("tempoTlsMode")));
         cur.setTempoStorage(tempoStorageOf(m.get("tempoStorage")));
         cur.setEs(esOf(m.get("es")));
         return cur;

@@ -161,9 +161,11 @@ interface ApplyDialog {
 }
 
 /** OTel 表单里两个嵌套对象始终存在（后端可以为空，但表单控件需要可绑定） */
-type OtelForm = Omit<K8sOtelInstall, 'tempoStorage' | 'es'> & {
+type OtelForm = Omit<K8sOtelInstall, 'tempoStorage' | 'es' | 'tempoRetention' | 'tempoTlsMode'> & {
   tempoStorage: K8sTempoStorage
   es: K8sEsConfig
+  tempoRetention: string
+  tempoTlsMode: 'plaintext' | 'tls' | 'tls-skip-verify'
 }
 
 /** Calico 支持的封装方式（Installation CR 的取值） */
@@ -187,6 +189,8 @@ function emptyOtel(): OtelForm {
     samplingPercentage: 10,
     gatewayReplicas: 1,
     logsEnabled: false,
+    tempoRetention: '168h',
+    tempoTlsMode: 'plaintext',
     tempoStorage: {
       endpoint: '192.168.31.80:9002', bucket: 'thanos', prefix: 'tempo',
       credentialSecret: { namespace: 'monitor', name: '' },
@@ -269,6 +273,8 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     samplingPercentage: otelCurrent?.samplingPercentage ?? baseOtel.samplingPercentage,
     gatewayReplicas: otelCurrent?.gatewayReplicas ?? baseOtel.gatewayReplicas,
     logsEnabled: otelCurrent?.logsEnabled ?? baseOtel.logsEnabled,
+    tempoRetention: otelCurrent?.tempoRetention ?? baseOtel.tempoRetention,
+    tempoTlsMode: (otelCurrent?.tempoTlsMode as OtelForm['tempoTlsMode']) ?? baseOtel.tempoTlsMode,
     tempoStorage: { ...baseOtel.tempoStorage, ...(otelCurrent?.tempoStorage ?? {}) },
     es: { ...baseOtel.es, ...(otelCurrent?.es ?? {}) },
   }
@@ -664,6 +670,19 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </div>
       </div>
       <div v-if="applyDialog.showOtel" class="cc-form-row">
+        <span class="cc-form-label">Tempo TLS</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.otel.tempoTlsMode" style="width: 100%">
+            <el-option label="明文 gRPC（集群内 / 内网）" value="plaintext" />
+            <el-option label="TLS（校验证书）" value="tls" />
+            <el-option label="TLS（跳过证书校验，自签）" value="tls-skip-verify" />
+          </el-select>
+          <div class="cc-form-hint">
+            collector 连 Tempo 的传输方式。管理员用明文 4317 入口时选第一个；用 TLS 终止时按证书情况选后两个
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showOtel" class="cc-form-row">
         <span class="cc-form-label">采样率 / 副本数</span>
         <div class="cc-form-control" style="display: flex; align-items: center; gap: 10px; padding-top: 2px">
           <el-input-number v-model="applyDialog.otel.samplingPercentage" :min="1" :max="100" />
@@ -725,6 +744,17 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div class="cc-form-control">
             <el-switch v-model="applyDialog.otel.tempoStorage.insecureSkipVerify" />
             <div class="cc-form-hint">MinIO 用 HTTP / 自签证书时打开</div>
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">Trace 保留期</span>
+          <div class="cc-form-control">
+            <el-select v-model="applyDialog.otel.tempoRetention" style="width: 220px">
+              <el-option label="24 小时" value="24h" />
+              <el-option label="7 天" value="168h" />
+              <el-option label="14 天" value="336h" />
+            </el-select>
+            <div class="cc-form-hint">Tempo 的 block retention；多集群汇总后别用 chart 默认的 24h</div>
           </div>
         </div>
       </template>

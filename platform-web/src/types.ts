@@ -1005,6 +1005,10 @@ export interface K8sOtelInstall {
   samplingPercentage: number
   gatewayReplicas: number
   logsEnabled: boolean
+  /** Tempo 保留期（Go duration，如 168h） */
+  tempoRetention?: string
+  /** collector → Tempo 传输：plaintext / tls / tls-skip-verify */
+  tempoTlsMode?: string
   tempoStorage?: K8sTempoStorage
   es?: K8sEsConfig
 }

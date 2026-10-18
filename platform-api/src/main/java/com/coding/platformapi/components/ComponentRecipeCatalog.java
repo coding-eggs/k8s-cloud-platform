@@ -393,8 +393,9 @@ public class ComponentRecipeCatalog {
                             "extraArgs", Map.of("config.expand-env", "true"),
                             "extraEnvFrom", List.of(Map.of("secretRef",
                                     Map.of("name", "platform-tempo-objstore"))),
-                            // 内网部署：不发 usage report
+                            // 内网部署：不发 usage report；保留期由安装表单覆盖（默认 168h）
                             "reportingEnabled", false,
+                            "retention", "168h",
                             "resources", Map.of(
                                     "requests", Map.of("cpu", "200m", "memory", "512Mi"),
                                     "limits", Map.of("cpu", "1", "memory", "2Gi"))),

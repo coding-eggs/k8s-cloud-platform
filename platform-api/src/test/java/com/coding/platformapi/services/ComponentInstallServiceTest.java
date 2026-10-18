@@ -861,6 +861,40 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void tempoRetentionAndTlsModeGoIntoTheReleaseValues() {
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "thanos", "tempo",
+                new SecretRef("monitor", "minio-creds"), true));
+        otel.setTempoRetention("336h");
+        otel.setTempoTlsMode("tls-skip-verify");
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("otel-operator"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        List<ReleaseInstallSpecDTO> dto = captor.getValue();
+        assertThat(dto).hasSize(3);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> tempo = (Map<String, Object>) dto.get(1).getValues().get("tempo");
+        assertThat(tempo).containsEntry("retention", "336h");
+        assertThat(dto.get(2).getValues().get("extraObjects").toString())
+                .contains("insecure_skip_verify=true");
+    }
+
+    @Test
     void otelSecretsAreWrittenBeforeHelm() {
         // Tempo/collector 的 Pod 会引用这两个 Secret：必须先生成，再跑 helm
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");

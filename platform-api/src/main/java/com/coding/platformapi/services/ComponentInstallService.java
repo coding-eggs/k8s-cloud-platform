@@ -80,6 +80,10 @@ public class ComponentInstallService {
     private static final String DEFAULT_ES_LOGS_INDEX = "otel-logs";
     private static final String DEFAULT_MINIO_BUCKET = "thanos";
     private static final String DEFAULT_MINIO_PREFIX = "tempo";
+    private static final String DEFAULT_TEMPO_RETENTION = "168h";
+    private static final String DEFAULT_TEMPO_TLS_MODE = "plaintext";
+    private static final List<String> TEMPO_TLS_MODES =
+            List.of("plaintext", "tls", "tls-skip-verify");
     /** Tempo/collector 的命名空间：凭证 Secret 必须落在这里，Pod 才能挂到 */
     private static final String OTEL_NAMESPACE = "monitor";
 
@@ -351,7 +355,18 @@ public class ComponentInstallService {
             if (i == lastOtelOperator && otel != null) {
                 Map<String, Object> copy = new LinkedHashMap<>(values);
                 copy.put("extraObjects", OtelObjects.build(
-                        Boolean.TRUE.equals(otel.getLogsEnabled()), otel.getGatewayReplicas()));
+                        Boolean.TRUE.equals(otel.getLogsEnabled()), otel.getGatewayReplicas(),
+                        otel.getTempoTlsMode()));
+                values = copy;
+            }
+            // Tempo 保留期按表单注入（chart 默认只有 24h）
+            if ("tempo".equals(r.chartCode()) && otel != null) {
+                Map<String, Object> copy = new LinkedHashMap<>(values);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> tempo = new LinkedHashMap<>(
+                        (Map<String, Object>) copy.getOrDefault("tempo", Map.of()));
+                tempo.put("retention", otel.getTempoRetention());
+                copy.put("tempo", tempo);
                 values = copy;
             }
             Map<String, Object> resolved = (Map<String, Object>) ValueTemplate.resolve(
@@ -466,6 +481,18 @@ public class ComponentInstallService {
         Boolean logs = req.getLogsEnabled() != null ? req.getLogsEnabled()
                 : prev != null && prev.getLogsEnabled() != null ? prev.getLogsEnabled() : Boolean.FALSE;
         out.setLogsEnabled(logs);
+        out.setTempoRetention(firstNonBlank(req.getTempoRetention(),
+                prev == null ? null : prev.getTempoRetention(), DEFAULT_TEMPO_RETENTION));
+        if (!out.getTempoRetention().matches("\\d+[hms]")) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "Tempo 保留期必须是 Go duration（如 168h）：" + out.getTempoRetention());
+        }
+        out.setTempoTlsMode(firstNonBlank(req.getTempoTlsMode(),
+                prev == null ? null : prev.getTempoTlsMode(), DEFAULT_TEMPO_TLS_MODE));
+        if (!TEMPO_TLS_MODES.contains(out.getTempoTlsMode())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "Tempo TLS 模式只支持 " + String.join(" / ", TEMPO_TLS_MODES));
+        }
         out.setTempoStorage(recipe.tempoInstall()
                 ? resolveTempoStorage(req.getTempoStorage(), prev == null ? null : prev.getTempoStorage())
                 : null);
@@ -547,6 +574,8 @@ public class ComponentInstallService {
         out.put("samplingPercentage", otel.getSamplingPercentage());
         out.put("gatewayReplicas", otel.getGatewayReplicas());
         out.put("logsEnabled", Boolean.TRUE.equals(otel.getLogsEnabled()));
+        out.put("tempoRetention", otel.getTempoRetention());
+        out.put("tempoTlsMode", otel.getTempoTlsMode());
         if (otel.getTempoStorage() != null) {
             TempoStorageConfig s = otel.getTempoStorage();
             Map<String, Object> t = new LinkedHashMap<>();

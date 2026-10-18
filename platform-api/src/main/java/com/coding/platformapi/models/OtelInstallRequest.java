@@ -22,6 +22,10 @@ public class OtelInstallRequest {
     private Integer gatewayReplicas;
     /** 是否打开应用日志（OTel logs → ES） */
     private Boolean logsEnabled;
+    /** Tempo 的 traces 保留期（Go duration，如 168h；默认 7 天） */
+    private String tempoRetention;
+    /** collector → Tempo 的传输模式：plaintext / tls / tls-skip-verify */
+    private String tempoTlsMode;
     /** Tempo 的 MinIO 参数（仅 MANAGEMENT） */
     private TempoStorageConfig tempoStorage;
     /** ES 参数（logsEnabled 时必填） */

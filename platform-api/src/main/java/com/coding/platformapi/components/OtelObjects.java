@@ -37,12 +37,12 @@ public final class OtelObjects {
      *                       否则会引用一个不存在的 Secret，Pod 起不来）
      * @param gatewayReplicas collector Deployment 副本数（表单值）
      */
-    public static List<Map<String, Object>> build(boolean logsEnabled, int gatewayReplicas) {
+    public static List<Map<String, Object>> build(boolean logsEnabled, int gatewayReplicas, String tempoTlsMode) {
         return List.of(
                 instrumentation("platform-instrumentation", true, false),
                 instrumentation("platform-instrumentation-logs", false, true),
                 instrumentation("platform-instrumentation-all", true, true),
-                gateway(logsEnabled, gatewayReplicas),
+                gateway(logsEnabled, gatewayReplicas, tempoTlsMode),
                 sidecar());
     }
 
@@ -129,11 +129,18 @@ public final class OtelObjects {
                 "spec", spec);
     }
 
-    private static Map<String, Object> gateway(boolean logsEnabled, int replicas) {
+    private static Map<String, Object> gateway(boolean logsEnabled, int replicas, String tempoTlsMode) {
         Map<String, Object> exporters = new LinkedHashMap<>();
-        exporters.put("otlp/tempo", Map.of(
-                "endpoint", "${env:TEMPO_ENDPOINT}",
-                "tls", Map.of("insecure", true)));
+        Map<String, Object> tempoExporter = new LinkedHashMap<>();
+        tempoExporter.put("endpoint", "${env:TEMPO_ENDPOINT}");
+        switch (tempoTlsMode == null ? "plaintext" : tempoTlsMode) {
+            case "tls" -> {
+                // 不写 tls 块 = 默认 TLS + 校验证书（管理员用受信任证书时）
+            }
+            case "tls-skip-verify" -> tempoExporter.put("tls", Map.of("insecure_skip_verify", true));
+            default -> tempoExporter.put("tls", Map.of("insecure", true));
+        }
+        exporters.put("otlp/tempo", tempoExporter);
         exporters.put("prometheus", Map.of(
                 "endpoint", "0.0.0.0:8889",
                 "resource_to_telemetry_conversion", Map.of("enabled", true)));
@@ -150,16 +157,16 @@ public final class OtelObjects {
         Map<String, Object> pipelines = new LinkedHashMap<>();
         pipelines.put("traces", Map.of(
                 "receivers", List.of("otlp"),
-                "processors", List.of("memory_limiter", "k8sattributes", "batch"),
+                "processors", List.of("memory_limiter", "resource", "k8sattributes", "batch"),
                 "exporters", List.of("otlp/tempo")));
         pipelines.put("metrics", Map.of(
                 "receivers", List.of("otlp"),
-                "processors", List.of("memory_limiter", "k8sattributes", "batch"),
+                "processors", List.of("memory_limiter", "resource", "k8sattributes", "batch"),
                 "exporters", List.of("prometheus")));
         if (logsEnabled) {
             pipelines.put("logs", Map.of(
                     "receivers", List.of("otlp"),
-                    "processors", List.of("memory_limiter", "k8sattributes", "batch"),
+                    "processors", List.of("memory_limiter", "resource", "k8sattributes", "batch"),
                     "exporters", List.of("elasticsearch")));
         }
 
@@ -172,6 +179,9 @@ public final class OtelObjects {
                         "check_interval", "1s",
                         "limit_percentage", 80,
                         "spike_limit_percentage", 20),
+                // 应用 span 由 Instrumentation 带 cluster.name；网格 span 没有 —— 在 gateway 统一补
+                "resource", Map.of("attributes", List.of(Map.of(
+                        "key", "cluster.name", "value", "${cluster.name}", "action", "upsert"))),
                 "k8sattributes", Map.of(
                         "auth_type", "serviceAccount",
                         "extract", Map.of("metadata", List.of(

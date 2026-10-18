@@ -11,7 +11,7 @@ class OtelObjectsTest {
 
     @Test
     void itBuildsThreeInstrumentationsAndOneGateway() {
-        var objects = OtelObjects.build(true, 1);
+        var objects = OtelObjects.build(true, 1, "plaintext");
         assertThat(objects).hasSize(5);
         assertThat(objects.stream()
                 .map(o -> String.valueOf(((Map<?, ?>) o.get("metadata")).get("name")))
@@ -23,7 +23,7 @@ class OtelObjectsTest {
 
     @Test
     void theSidecarCollectorReadsTheSharedLogVolume() {
-        String sidecar = OtelObjects.build(true, 1).get(4).toString();
+        String sidecar = OtelObjects.build(true, 1, "plaintext").get(4).toString();
         assertThat(sidecar).contains("mode=sidecar")
                 .contains("filelog").contains("/var/log/app/*.log")
                 .contains("platform-otel-logs")
@@ -33,7 +33,7 @@ class OtelObjectsTest {
 
     @Test
     void theTracingInstrumentationUsesTheHttpEndpointAndRatioPlaceholder() {
-        Map<?, ?> tracing = OtelObjects.build(false, 1).get(0);
+        Map<?, ?> tracing = OtelObjects.build(false, 1, "plaintext").get(0);
         Map<?, ?> spec = (Map<?, ?>) tracing.get("spec");
         assertThat(((Map<?, ?>) spec.get("exporter")).get("endpoint"))
                 .isEqualTo("http://platform-otel-gateway-collector.monitor.svc:4318");
@@ -43,7 +43,7 @@ class OtelObjectsTest {
 
     @Test
     void theLogsInstrumentationTurnsTracingOffAndAddsTheLogEnv() {
-        Map<?, ?> logs = OtelObjects.build(true, 1).get(1);
+        Map<?, ?> logs = OtelObjects.build(true, 1, "plaintext").get(1);
         Map<?, ?> spec = (Map<?, ?>) logs.get("spec");
         assertThat(((Map<?, ?>) spec.get("sampler")).get("type")).isEqualTo("always_off");
         assertThat(spec.get("env").toString()).contains("OTEL_LOGS_EXPORTER").contains("otlp");
@@ -53,15 +53,15 @@ class OtelObjectsTest {
 
     @Test
     void logsOffOmitsTheElasticsearchExporterAndTheLogsPipeline() {
-        String off = OtelObjects.build(false, 1).get(3).toString();
+        String off = OtelObjects.build(false, 1, "plaintext").get(3).toString();
         assertThat(off).doesNotContain("elasticsearch").doesNotContain("logs=");
-        String on = OtelObjects.build(true, 1).get(3).toString();
+        String on = OtelObjects.build(true, 1, "plaintext").get(3).toString();
         assertThat(on).contains("elasticsearch").contains("logs=");
     }
 
     @Test
     void theGatewayUsesTheContribImageAndAllThreePorts() {
-        Map<?, ?> gateway = OtelObjects.build(true, 2).get(3);
+        Map<?, ?> gateway = OtelObjects.build(true, 2, "plaintext").get(3);
         Map<?, ?> spec = (Map<?, ?>) gateway.get("spec");
         assertThat(spec.get("image").toString()).endsWith("opentelemetry-collector-contrib:0.161.0");
         assertThat(spec.get("ports").toString()).contains("4317").contains("4318").contains("8889");
@@ -71,7 +71,7 @@ class OtelObjectsTest {
 
     @Test
     void theGatewayCarriesTheTempoAndEsPlaceholders() {
-        String gateway = OtelObjects.build(true, 1).get(3).toString();
+        String gateway = OtelObjects.build(true, 1, "plaintext").get(3).toString();
         assertThat(gateway).contains("${tempo.endpoint}")
                 .contains("${otel.es.endpoint}")
                 .contains("${otel.es.username}")
@@ -79,5 +79,22 @@ class OtelObjectsTest {
                 // collector 的 env 展开用 ${env:...}（含冒号，不会命中平台占位符正则）
                 .contains("${env:TEMPO_ENDPOINT}")
                 .contains("${env:ES_PASSWORD}");
+    }
+
+    @Test
+    void theGatewayStampsClusterNameOnAllSignals() {
+        String gateway = OtelObjects.build(true, 1, "plaintext").get(3).toString();
+        assertThat(gateway).contains("resource=").contains("cluster.name").contains("${cluster.name}");
+        assertThat(gateway).contains("processors=[memory_limiter, resource, k8sattributes, batch]");
+    }
+
+    @Test
+    void tempoTlsModeControlsTheExporterTlsBlock() {
+        assertThat(OtelObjects.build(true, 1, "plaintext").get(3).toString())
+                .contains("insecure=true");
+        assertThat(OtelObjects.build(true, 1, "tls").get(3).toString())
+                .doesNotContain("insecure=true");
+        assertThat(OtelObjects.build(true, 1, "tls-skip-verify").get(3).toString())
+                .contains("insecure_skip_verify=true");
     }
 }
