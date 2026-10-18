@@ -94,7 +94,7 @@ Java / Python 应用 ──┤    traces / metrics / logs  ──OTLP──▶ p
 | 顺序 | release | namespace | 内容 |
 |---|---|---|---|
 | 1 | `platform-otel-operator` | `opentelemetry-operator-system` | **第一遍**：CRD + operator（`crds.create: true` 默认） |
-| 2 | `platform-tempo`（仅 MANAGEMENT） | `monitor` | Tempo 1.24.4 |
+| 2 | `platform-tempo`（仅 MANAGEMENT） | `monitor` | Tempo 3.2.0 |
 | 3 | `platform-otel-operator` | `opentelemetry-operator-system` | **第二遍**：`extraObjects` 下发 Instrumentation + collector gateway |
 
 两个硬约束：
@@ -104,7 +104,7 @@ Java / Python 应用 ──┤    traces / metrics / logs  ──OTLP──▶ p
    `no matches for kind ... ensure CRDs are installed first`。必须用**同名 ReleaseSpec 跑两遍**，
    第二遍是新 helm 进程，discovery 里已经有 CRD。
 2. **版本语义**：`availableVersions()` / `resolveTargetVersion()` 只认 `releases().get(0)`，
-   所以 operator 必须是第一个 ReleaseSpec；Tempo 不能排第一，否则组件版本会变成 Tempo 的 1.24.4。
+   所以 operator 必须是第一个 ReleaseSpec；Tempo 不能排第一，否则组件版本会变成 Tempo 的 3.2.0。
 
 **探针**：沿用现有 operator Deployment 判据，不把 gateway / Tempo 塞进 `probes`。
 原因：`ComponentProbe` 之间是「任一命中即算」（istio 用两个镜像片段判同一个 Deployment），
@@ -114,9 +114,11 @@ Tempo / gateway 的失败通过**操作记录**（`log_tail`、FAILED）呈现�
 
 ### 3.2 Tempo 部署形态
 
-- chart：`grafana/tempo` **1.24.4**（app 2.9.0，单二进制、1 副本 StatefulSet）；
+- chart：`grafana-community/tempo` **3.2.0**（app 3.1.0，单二进制、1 副本 StatefulSet）；
+  `grafana/helm-charts` 自 2026-01 起迁移到 `grafana-community/helm-charts`，旧 `grafana/tempo`
+  1.24.4 已标记 deprecated，故采用社区仓库版本；
   需要 `helm pull` 官方 chart 入库，目录
-  `k8s-server/src/main/resources/charts/components/tempo/1.24.4/chart/`。
+  `k8s-server/src/main/resources/charts/components/tempo/3.2.0/chart/`。
 - 命名：release `platform-tempo`（release 名包含 chart 名 → fullname = `platform-tempo`），
   namespace `monitor`。
 - 地址：
@@ -149,6 +151,7 @@ tempo:
     config.expand-env: "true"
   extraEnvFrom:
     - secretRef: {name: platform-tempo-objstore}
+  reportingEnabled: false      # 内网部署，不发 usage report
   resources:
     requests: {cpu: 200m, memory: 512Mi}
     limits:   {cpu: "1",  memory: 2Gi}

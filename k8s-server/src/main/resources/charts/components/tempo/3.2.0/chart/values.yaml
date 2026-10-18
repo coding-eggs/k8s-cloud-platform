@@ -2,6 +2,9 @@ global:
   # -- Common labels for all object directly managed by this chart.
   commonLabels: {}
 
+  # -- Overrides the Docker registry globally for all images
+  imageRegistry: null
+
 # -- Overrides the chart's name
 nameOverride: ""
 
@@ -41,7 +44,7 @@ tempo:
   #    cpu: 2000m
   #    memory: 6Gi
 
-  memBallastSizeMbs: 1024
+  streamOverHttpEnabled: false
   multitenancyEnabled: false
   # -- If true, Tempo will report anonymous usage data about the shape of a deployment to Grafana Labs
   reportingEnabled: true
@@ -50,12 +53,8 @@ tempo:
     enabled: false
     remoteWriteUrl: "http://prometheus.monitoring:9090/api/v1/write"
     # -- Processor-specific configuration for metrics generator (optional)
-    # Supports service_graphs, span_metrics, and local_blocks processors
+    # Supports the service_graphs, span_metrics and host_info processors
     processor: {}
-    #   local_blocks:
-    #     flush_to_storage: true
-    #     filter_server_spans: false
-    #     max_block_duration: 1m
     #   service_graphs:
     #     wait: 10s
     #     max_items: 10000
@@ -74,18 +73,30 @@ tempo:
       # -- Optional remote write configuration (will use remoteWriteUrl if not specified)
       # Supports full Prometheus remote_write config: https://prometheus.io/docs/prometheus/latest/configuration/configuration/#remote_write
       remote_write: []
-    # -- Traces storage (WAL) configuration for metrics generator
-    # This configures the Write Ahead Log for traces used by the metrics generator
-    traces_storage:
-      # -- Path for traces storage WAL used by metrics generator
-      path: "/tmp/traces"
-  # -- Configuration options for the ingester.
-  # Refers to: https://grafana.com/docs/tempo/latest/configuration/#ingester
-  ingester: {}
-  #  flush_check_period: 10s
-  #  trace_idle_period: 10s
-  #  max_block_duration: 30m
-  #  complete_block_timeout: 1h
+  # -- Configuration options for the live-store, which holds recent traces in memory
+  # and flushes them to storage. Replaces the ingester of Tempo 2.x.
+  # Refers to: https://grafana.com/docs/tempo/latest/configuration/#live-store
+  liveStore: {}
+  #  max_block_duration: 30s
+  #  complete_block_timeout: 20m
+  # -- Configuration options for the backend scheduler, which creates the compaction and
+  # retention jobs. Replaces the compactor of Tempo 2.x. Compaction settings are inherited
+  # by the backend worker and override `tempo.retention`, unless overridden in
+  # `tempo.backendWorker.compaction`.
+  # Refers to: https://grafana.com/docs/tempo/latest/configuration/#backend-scheduler
+  backendScheduler: {}
+  #  provider:
+  #    compaction:
+  #      max_input_blocks: 4
+  #      compaction:
+  #        compaction_window: 1h
+  # -- Configuration options for the backend worker, which runs the jobs of the backend
+  # scheduler. Compaction settings override those inherited from `tempo.backendScheduler`,
+  # including the `block_retention` set by `tempo.retention`.
+  # Refers to: https://grafana.com/docs/tempo/latest/configuration/#backend-worker
+  backendWorker: {}
+  #  compaction:
+  #    max_block_bytes: 107374182400
   # -- Configuration options for the querier.
   # Refers to: https://grafana.com/docs/tempo/latest/configuration/#querier
   querier: {}
@@ -95,6 +106,10 @@ tempo:
   queryFrontend: {}
   #  search:
   #    concurrent_jobs: 2000
+  # -- Duration to keep blocks. Rendered into
+  # `backend_worker.compaction.block_retention`, where Tempo enforces retention, and
+  # `backend_scheduler.provider.compaction.compaction.block_retention`. Explicit compaction
+  # settings in `tempo.backendScheduler` or `tempo.backendWorker` take precedence.
   retention: 24h
   # -- The standard overrides configuration section. This can include a `defaults` object for applying to all tenants (not to be confused with the `global` property of the same name, which overrides `max_byte_per_trace` for all tenants). For an example on how to enable the metrics generator using the `overrides` object, see the 'Activate metrics generator' section below. Refer to [Standard overrides](https://grafana.com/docs/tempo/latest/configuration/#standard-overrides) for more details.
   overrides:
@@ -171,7 +186,6 @@ tempo:
           endpoint: 0.0.0.0:6831
         thrift_http:
           endpoint: 0.0.0.0:14268
-    opencensus:
     otlp:
       protocols:
         grpc:
@@ -200,19 +214,31 @@ tempo:
 # -- Tempo configuration file contents
 # @default -- Dynamically generated tempo configmap
 config: |
+    stream_over_http_enabled: {{ .Values.tempo.streamOverHttpEnabled }}
     memberlist:
       cluster_label: "{{ .Release.Name }}.{{ .Release.Namespace }}"
     multitenancy_enabled: {{ .Values.tempo.multitenancyEnabled }}
     usage_report:
       reporting_enabled: {{ .Values.tempo.reportingEnabled }}
-    compactor:
-      compaction:
-        block_retention: {{ .Values.tempo.retention }}
+    {{- $backendScheduler := dict "provider" (dict "compaction" (dict "compaction" (dict "block_retention" .Values.tempo.retention))) }}
+    {{- with .Values.tempo.backendScheduler }}
+    {{- $backendScheduler = mergeOverwrite $backendScheduler (deepCopy .) }}
+    {{- end }}
+    backend_scheduler:
+      {{- toYaml $backendScheduler | nindent 6 }}
+    {{- $backendWorker := dict "compaction" (deepCopy ($backendScheduler.provider.compaction.compaction | default dict)) }}
+    {{- with .Values.tempo.backendWorker }}
+    {{- $backendWorker = mergeOverwrite $backendWorker (deepCopy .) }}
+    {{- end }}
+    backend_worker:
+      {{- toYaml $backendWorker | nindent 6 }}
     distributor:
       receivers:
         {{- toYaml .Values.tempo.receivers | nindent 8 }}
-    ingester:
-      {{- toYaml .Values.tempo.ingester | nindent 6 }}
+    {{- with .Values.tempo.liveStore }}
+    live_store:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     server:
       {{- toYaml .Values.tempo.server | nindent 6 }}
     storage:
@@ -242,8 +268,6 @@ config: |
         remote_write:
           - url: {{ .Values.tempo.metricsGenerator.remoteWriteUrl }}
         {{- end }}
-      traces_storage:
-        path: {{ .Values.tempo.metricsGenerator.traces_storage.path | quote }}
       {{- end }}
 
 tempoQuery:
@@ -359,6 +383,64 @@ service:
   labels: {}
   targetPort: ""
 
+# -- BETA: Configure the gateway routes for the chart here.
+# More routes can be added by adding a dictionary key like the 'main' route.
+# Being BETA this can/will change in the future without notice, do not use unless you want to take that risk
+# [[ref]](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io%2fv1alpha2)
+route:
+  main:
+    # -- Enables or disables the route
+    enabled: false
+
+    # -- Set the route apiVersion, e.g. gateway.networking.k8s.io/v1 or gateway.networking.k8s.io/v1beta1
+    # If not set, the latest available version will be auto-detected
+    apiVersion: ""
+    # -- Set the route kind. The template renders an HTTPRoute body, so only
+    # HTTPRoute is supported. The field stays configurable for a future route kind.
+    kind: HTTPRoute
+
+    # -- Route annotations
+    annotations: {}
+    # -- Route labels
+    labels: {}
+
+    # -- Hostnames for the route
+    hostnames: []
+    # - tempo.example.com
+    # -- Parent references (gateway to attach to)
+    parentRefs: []
+    # - name: my-gateway
+    #   namespace: gateway-namespace
+
+    # -- Port of the tempo service to route to. Defaults to the Tempo HTTP API port.
+    # Use 4318 for the OTLP HTTP receiver or tempoQuery.service.port for the Jaeger UI.
+    # The port must be one that the tempo service exposes. The receiver ports follow
+    # `tempo.receivers`, so a route to a disabled receiver fails the render.
+    backendPort: 3200
+
+    matches:
+      - path:
+          type: PathPrefix
+          value: /
+
+    ## Timeouts define the timeouts that can be configured for an HTTP request.
+    ## Ref. https://gateway-api.sigs.k8s.io/api-types/httproute/#timeouts-optional
+    timeouts: {}
+    # request: 10s
+    # backendRequest: 5s
+
+    ## Filters define the filters that are applied to requests that match this rule.
+    filters: []
+
+    ## Additional custom rules that can be added to the route
+    additionalRules: []
+
+    ## httpsRedirect adds a filter for redirecting to https (HTTP 301 Moved Permanently).
+    ## To redirect HTTP traffic to HTTPS, you need to have a Gateway with both HTTP and HTTPS listeners.
+    ## Matches and filters do not take effect if enabled.
+    ## Ref. https://gateway-api.sigs.k8s.io/guides/http-redirect-rewrite/
+    httpsRedirect: false
+
 serviceMonitor:
   enabled: false
   interval: ""
@@ -383,6 +465,12 @@ podLabels: {}
 
 # Apply extra labels to common labels.
 extraLabels: {}
+
+# -- Add initContainers to the Tempo StatefulSet
+initContainers: []
+
+# -- Add extra containers to the Tempo StatefulSet
+extraContainers: []
 
 # -- Volumes to add
 extraVolumes: []

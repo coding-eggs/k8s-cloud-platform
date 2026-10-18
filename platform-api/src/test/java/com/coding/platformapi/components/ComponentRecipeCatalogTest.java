@@ -286,7 +286,7 @@ class ComponentRecipeCatalogTest {
         assertThat(mgmt.releases()).extracting(ReleaseSpec::releaseName)
                 .containsExactly("platform-otel-operator", "platform-tempo", "platform-otel-operator");
         assertThat(mgmt.releases().get(1).chartCode()).isEqualTo("tempo");
-        assertThat(mgmt.releases().get(1).chartVersion()).isEqualTo("1.24.4");
+        assertThat(mgmt.releases().get(1).chartVersion()).isEqualTo("3.2.0");
         assertThat(mgmt.releases().get(1).preserveUnknownPlaceholders()).isTrue();
         assertThat(mgmt.otel()).isNotNull();
         assertThat(mgmt.otel().tempoInstall()).isTrue();

@@ -1,0 +1,9 @@
+chart: tempo
+version: 3.2.0
+appVersion: 3.1.0
+source: https://grafana-community.github.io/helm-charts
+note: >-
+  grafana/helm-charts 自 2026-01 起迁移到 grafana-community/helm-charts；
+  旧 grafana/tempo 1.24.4 已标记 deprecated，故改用社区仓库的 3.2.0（app 3.1.0）。
+pullCommand: helm pull tempo --repo https://grafana-community.github.io/helm-charts --version 3.2.0
+pulledAt: 2026-10-19

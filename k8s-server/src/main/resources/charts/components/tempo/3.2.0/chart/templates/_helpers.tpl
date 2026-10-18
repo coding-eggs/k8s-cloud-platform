@@ -81,35 +81,34 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
-Return the appropriate apiVersion for ingress.
+Ports of the tempo service, as a YAML list. Mirrors the protocol selection of
+templates/service.yaml, so a caller can check whether a port is reachable.
 */}}
-{{- define "tempo.ingress.apiVersion" -}}
-{{- if and ($.Capabilities.APIVersions.Has "networking.k8s.io/v1") (semverCompare ">= 1.19-0" .Capabilities.KubeVersion.Version) }}
-{{- print "networking.k8s.io/v1" }}
-{{- else if $.Capabilities.APIVersions.Has "networking.k8s.io/v1beta1" }}
-{{- print "networking.k8s.io/v1beta1" }}
+{{- define "tempo.servicePorts" -}}
+{{- if (eq .Values.service.type "LoadBalancer") }}
+{{- $protocol := .Values.service.protocol | default "TCP" }}
+{{- if contains "UDP" $protocol }}
+{{- include "tempo.udp" . }}
+{{- end }}
+{{- if contains "TCP" $protocol }}
+{{- include "tempo.tcp" . }}
+{{- end }}
 {{- else }}
-{{- print "extensions/v1beta1" }}
+{{- include "tempo.udp" . }}
+{{- include "tempo.tcp" . }}
 {{- end }}
-{{- end }}
+{{- end -}}
 
 {{/*
-Return if ingress is stable.
+Return the appropriate apiVersion for Gateway API resources.
 */}}
-{{- define "tempo.ingress.isStable" -}}
-{{- eq (include "tempo.ingress.apiVersion" .) "networking.k8s.io/v1" }}
+{{- define "tempo.gatewayApi.apiVersion" -}}
+{{- if .Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1" }}
+{{- print "gateway.networking.k8s.io/v1" }}
+{{- else if .Capabilities.APIVersions.Has "gateway.networking.k8s.io/v1beta1" }}
+{{- print "gateway.networking.k8s.io/v1beta1" }}
+{{- else }}
+{{- print "gateway.networking.k8s.io/v1" }}
 {{- end }}
+{{- end -}}
 
-{{/*
-Return if ingress supports ingressClassName.
-*/}}
-{{- define "tempo.ingress.supportsIngressClassName" -}}
-{{- or (eq (include "tempo.ingress.isStable" .) "true") (and (eq (include "tempo.ingress.apiVersion" .) "networking.k8s.io/v1beta1") (semverCompare ">= 1.18-0" .Capabilities.KubeVersion.Version)) }}
-{{- end }}
-
-{{/*
-Return if ingress supports pathType.
-*/}}
-{{- define "tempo.ingress.supportsPathType" -}}
-{{- or (eq (include "tempo.ingress.isStable" .) "true") (and (eq (include "tempo.ingress.apiVersion" .) "networking.k8s.io/v1beta1") (semverCompare ">= 1.18-0" .Capabilities.KubeVersion.Version)) }}
-{{- end }}

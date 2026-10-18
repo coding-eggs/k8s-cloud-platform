@@ -366,7 +366,7 @@ public class ComponentRecipeCatalog {
      * bucket / prefix / endpoint 是平台占位符（表单值），由 ValueTemplate 解析。
      */
     private static final ReleaseSpec TEMPO_RELEASE = new ReleaseSpec(
-            "platform-tempo", "monitor", "tempo", "1.24.4",
+            "platform-tempo", "monitor", "tempo", "3.2.0",
             Map.of(
                     "tempo", Map.of(
                             "storage", Map.of("trace", Map.of(
@@ -382,6 +382,8 @@ public class ComponentRecipeCatalog {
                             "extraArgs", Map.of("config.expand-env", "true"),
                             "extraEnvFrom", List.of(Map.of("secretRef",
                                     Map.of("name", "platform-tempo-objstore"))),
+                            // 内网部署：不发 usage report
+                            "reportingEnabled", false,
                             "resources", Map.of(
                                     "requests", Map.of("cpu", "200m", "memory", "512Mi"),
                                     "limits", Map.of("cpu", "1", "memory", "2Gi"))),
