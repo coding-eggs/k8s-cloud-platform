@@ -12,12 +12,23 @@ class OtelObjectsTest {
     @Test
     void itBuildsThreeInstrumentationsAndOneGateway() {
         var objects = OtelObjects.build(true, 1);
-        assertThat(objects).hasSize(4);
+        assertThat(objects).hasSize(5);
         assertThat(objects.stream()
                 .map(o -> String.valueOf(((Map<?, ?>) o.get("metadata")).get("name")))
                 .toList())
                 .containsExactly("platform-instrumentation", "platform-instrumentation-logs",
-                        "platform-instrumentation-all", "platform-otel-gateway");
+                        "platform-instrumentation-all", "platform-otel-gateway",
+                        "platform-otel-sidecar");
+    }
+
+    @Test
+    void theSidecarCollectorReadsTheSharedLogVolume() {
+        String sidecar = OtelObjects.build(true, 1).get(4).toString();
+        assertThat(sidecar).contains("mode=sidecar")
+                .contains("filelog").contains("/var/log/app/*.log")
+                .contains("platform-otel-logs")
+                .contains("K8S_POD_UID")
+                .contains("platform-otel-gateway-collector.monitor.svc:4317");
     }
 
     @Test

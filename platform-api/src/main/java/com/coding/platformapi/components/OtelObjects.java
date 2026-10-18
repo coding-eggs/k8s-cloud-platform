@@ -42,7 +42,60 @@ public final class OtelObjects {
                 instrumentation("platform-instrumentation", true, false),
                 instrumentation("platform-instrumentation-logs", false, true),
                 instrumentation("platform-instrumentation-all", true, true),
-                gateway(logsEnabled, gatewayReplicas));
+                gateway(logsEnabled, gatewayReplicas),
+                sidecar());
+    }
+
+    /**
+     * 文件日志的 per-Pod collector（批次二）。**只有工作负载显式开启文件日志时才被注入**
+     * （注解 {@code sidecar.opentelemetry.io/inject}），CR 本身常驻无害。
+     *
+     * <p>卷名固定 {@code platform-otel-logs}：工作负载模板把用户的日志目录挂到这个 emptyDir，
+     * sidecar 只读挂到 {@code /var/log/app}；两边看到的是同一份文件。
+     */
+    private static Map<String, Object> sidecar() {
+        Map<String, Object> config = Map.of(
+                "receivers", Map.of("filelog", Map.of(
+                        "include", List.of("/var/log/app/*.log"),
+                        "start_at", "end",
+                        "include_file_path", true)),
+                "processors", Map.of(
+                        "resource", Map.of("attributes", List.of(
+                                Map.of("key", "k8s.pod.name", "value", "${env:K8S_POD_NAME}",
+                                        "action", "upsert"),
+                                Map.of("key", "k8s.namespace.name", "value", "${env:K8S_NAMESPACE}",
+                                        "action", "upsert"),
+                                Map.of("key", "k8s.pod.uid", "value", "${env:K8S_POD_UID}",
+                                        "action", "upsert"))),
+                        "k8sattributes", Map.of("auth_type", "serviceAccount"),
+                        "batch", Map.of("timeout", "5s")),
+                "exporters", Map.of("otlp", Map.of(
+                        "endpoint", GATEWAY_SERVICE + "." + NAMESPACE + ".svc:4317",
+                        "tls", Map.of("insecure", true))),
+                "service", Map.of("pipelines", Map.of("logs", Map.of(
+                        "receivers", List.of("filelog"),
+                        "processors", List.of("resource", "k8sattributes", "batch"),
+                        "exporters", List.of("otlp")))));
+
+        return Map.of(
+                "apiVersion", "opentelemetry.io/v1beta1",
+                "kind", "OpenTelemetryCollector",
+                "metadata", Map.of("name", "platform-otel-sidecar", "namespace", NAMESPACE),
+                "spec", Map.of(
+                        "mode", "sidecar",
+                        "image", CONTRIB_IMAGE,
+                        "env", List.of(
+                                Map.of("name", "K8S_POD_NAME", "valueFrom",
+                                        Map.of("fieldRef", Map.of("fieldPath", "metadata.name"))),
+                                Map.of("name", "K8S_NAMESPACE", "valueFrom",
+                                        Map.of("fieldRef", Map.of("fieldPath", "metadata.namespace"))),
+                                Map.of("name", "K8S_POD_UID", "valueFrom",
+                                        Map.of("fieldRef", Map.of("fieldPath", "metadata.uid")))),
+                        "volumeMounts", List.of(Map.of(
+                                "name", "platform-otel-logs",
+                                "mountPath", "/var/log/app",
+                                "readOnly", true)),
+                        "config", config));
     }
 
     private static Map<String, Object> instrumentation(String name, boolean tracing, boolean logs) {
