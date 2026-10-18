@@ -2,6 +2,7 @@ package com.coding.platformapi.trace;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -37,6 +38,8 @@ public class TempoTraceClient {
     private final RestClient restClient;
     private final String baseUrl;
 
+    /** ⚠️ 必须标 {@code @Autowired} —— 本类还有第二个（包级私有、给测试注入 RestClient 的）构造器。 */
+    @Autowired
     public TempoTraceClient(
             @Value("${platform.tempo.query-url:http://platform-tempo.monitor.svc:3200}") String baseUrl) {
         this(defaultRestClient(), baseUrl);
