@@ -70,4 +70,17 @@ public class ComponentStatusDTO {
     private String defaultTektonProfile;
     /** **当前生效**的 Tekton profile（上次成功操作快照）；无记录 → null */
     private String tektonProfileCurrent;
+
+    /** 安装时是否要暴露「语言 / 追踪 / 日志」表单（OTel 采集栈） */
+    private boolean otelInstrumentation;
+    /** 安装时是否同时安装 Tempo（管理集群，表单要填 MinIO 地址/桶/凭证） */
+    private boolean tempoInstall;
+    /** 安装时是否要填 Tempo 地址（collector 的 traces 导出目标） */
+    private boolean tempoRemoteWrite;
+    /** Tempo 地址的平台默认值（表单预填用） */
+    private String defaultTempoEndpoint;
+    /** **当前生效**的 Tempo 地址（上次成功操作快照）；无记录 → null */
+    private String tempoEndpoint;
+    /** **当前生效**的 OTel 安装参数（上次成功操作快照）；无记录 → null */
+    private OtelInstallRequest otelInstallCurrent;
 }
