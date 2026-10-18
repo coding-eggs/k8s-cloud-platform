@@ -143,8 +143,8 @@ public class TempoTraceClient {
     }
 
     private static SpanDTO span(JsonNode s, String service, String cluster, String namespace) {
-        long start = parseLong(text(s.path("startTimeUnixNano")));
-        long end = parseLong(text(s.path("endTimeUnixNano")));
+        long start = parseLong(textOrNumber(s.path("startTimeUnixNano")));
+        long end = parseLong(textOrNumber(s.path("endTimeUnixNano")));
         return new SpanDTO(
                 text(s.path("spanId")),
                 text(s.path("parentSpanId")),
@@ -219,6 +219,15 @@ public class TempoTraceClient {
 
     private static String text(JsonNode node) {
         return node == null || node.isMissingNode() || node.isNull() ? null : node.asString(null);
+    }
+
+    /** 时间戳在 OTLP JSON 里通常是字符串，但某些版本会输出数字 —— 两种都接受 */
+    private static String textOrNumber(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        String value = node.asString(null);
+        return value != null ? value : node.toString();
     }
 
     private static String trimSlash(String value) {

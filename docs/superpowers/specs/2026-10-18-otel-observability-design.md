@@ -661,9 +661,9 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
 ## 10. 待定
 
 1. ES 日志 ILM 的保留期（7 天是建议值，需按磁盘容量确认）。
-2. trace 查看：先启用 kps 的 Grafana + Tempo datasource，还是直接做平台自研视图。
-3. 业务集群回传 Tempo 的入口方式（external-gateway / NodePort / LB）。
-4. 采样率是否要支持按工作负载覆盖（当前是组件级的一个全局值，对应三个 Instrumentation）。
+2. 业务集群回传 Tempo 的入口方式由管理员负责（平台不实现暴露/TLS 终止）。
+3. 采样率是否要支持按工作负载覆盖（当前是组件级的一个全局值，对应三个 Instrumentation）。
+4. 租户级 trace 过滤（按 `k8s.namespace.name` 收窄）——当前 trace 页只给平台管理员。
 
 ---
 
@@ -679,3 +679,20 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
   ingress 的 Telemetry 由 OTel 或 istio 组件安装成功后的后置步骤补建（谁后装谁补）。
   **部署前必须先重放 `V2026_10_19_1__mesh_waypoint_tracing.sql`**（缺失权限行会让
   `PermissionCrossCheckRunner` 在启动时直接 brick）。
+
+## 12. 批次三实现备注（2026-10-19）
+
+- gateway 增加 `resource` processor：所有信号统一 upsert `cluster.name`（应用 span 由 Instrumentation
+  已带；网格 span 没有，必须靠这一层补）。
+- Tempo 保留期进表单（`tempoRetention`，Go duration，默认 `168h`），注入 `tempo.retention`。
+- Tempo exporter 三种传输模式：`plaintext`（`insecure: true`）/ `tls`（校验证书）/ `tls-skip-verify`
+  （自签）；业务集群按管理员给的入口选。
+- 平台自研 trace 查看：
+  - 后端 `TraceController`：`POST /traces/search`（TraceQL，按 `resource.cluster.name` /
+    `resource.service.name`）与 `GET /traces/{traceId}`；数据源 `platform.tempo.query-url`
+    （默认 `http://platform-tempo.monitor.svc:3200`）；trace-by-ID 同时接受 `batches`（Tempo 2.x）
+    与 `resourceSpans`（OTLP 兼容）两种 JSON。
+  - 前端 `/mesh/traces` 页面：集群/服务/时间范围/条数 + 列表 + 瀑布图 + span 属性。
+  - 权限：`platform:trace:search` / `platform:trace:get` / `platform:page:mesh.trace`，
+    **只绑 admin**（中心 Tempo 可能跨租户）；**部署前重放 `V2026_10_19_2__trace_view_permissions.sql`**。
+- 业务集群 Tempo 地址的**可达性/TLS 终止由管理员负责**；平台只提供 collector 侧的地址与传输模式。
