@@ -418,7 +418,6 @@ spec:
           - {key: k8s.pod.name, value: "${env:K8S_POD_NAME}", action: upsert}
           - {key: k8s.namespace.name, value: "${env:K8S_NAMESPACE}", action: upsert}
           - {key: k8s.pod.uid, value: "${env:K8S_POD_UID}", action: upsert}
-      k8sattributes: {auth_type: serviceAccount}
       batch: {timeout: 5s}
     exporters:
       otlp:
@@ -428,9 +427,12 @@ spec:
       pipelines:
         logs:
           receivers: [filelog]
-          processors: [resource, k8sattributes, batch]
+          processors: [resource, batch]
           exporters: [otlp]
 ```
+
+> sidecar 不再跑 `k8sattributes`：它用 Pod 的 ServiceAccount，未必有 list pods 权限；
+> gateway 收到同 Pod IP 的 OTLP 后会用 `from: connection` 补齐 deployment 等元数据。
 
 限制：
 

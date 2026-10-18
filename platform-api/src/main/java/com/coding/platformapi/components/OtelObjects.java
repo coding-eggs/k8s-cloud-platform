@@ -67,14 +67,15 @@ public final class OtelObjects {
                                         "action", "upsert"),
                                 Map.of("key", "k8s.pod.uid", "value", "${env:K8S_POD_UID}",
                                         "action", "upsert"))),
-                        "k8sattributes", Map.of("auth_type", "serviceAccount"),
+                        // 不再在 sidecar 里跑 k8sattributes：sidecar 用 Pod 的 SA，未必有 list pods 权限；
+                        // gateway 收到同 Pod IP 的 OTLP 后会用 from: connection 补齐 deployment
                         "batch", Map.of("timeout", "5s")),
                 "exporters", Map.of("otlp", Map.of(
                         "endpoint", GATEWAY_SERVICE + "." + NAMESPACE + ".svc:4317",
                         "tls", Map.of("insecure", true))),
                 "service", Map.of("pipelines", Map.of("logs", Map.of(
                         "receivers", List.of("filelog"),
-                        "processors", List.of("resource", "k8sattributes", "batch"),
+                        "processors", List.of("resource", "batch"),
                         "exporters", List.of("otlp")))));
 
         return Map.of(

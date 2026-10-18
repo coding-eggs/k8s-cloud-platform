@@ -147,7 +147,7 @@ async function submit(): Promise<void> {
           <el-input v-model="logDirectory" placeholder="/var/log/nginx" spellcheck="false" />
           <div class="wl-otel-hint wl-otel-block">
             容器内的绝对路径。平台把该目录挂成 emptyDir，sidecar 只读采集其中的 *.log 文件；
-            目录下所有日志会一起被采集
+            目录下所有日志会一起被采集。需要 OTel 采集栈已重放到批次二（sidecar CR 就绪）
           </div>
         </el-form-item>
         <el-form-item label="确认写文件">

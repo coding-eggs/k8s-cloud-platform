@@ -124,6 +124,19 @@ class WorkloadServiceObservabilityTest {
     }
 
     @Test
+    void fileLogsWithTracingUseTheTracingOnlyInstrumentation() {
+        WorkloadObservabilityRequest req = fileLogReq("/var/log/nginx", true);
+        req.setTracing(true);
+
+        WorkloadDTO updated = apply(workload(), req);
+
+        // 文件日志不应该打开应用日志 appender：即使 logs=true 也只选 tracing 版
+        assertThat(updated.getPodTemplate().getAnnotations())
+                .containsEntry(INJECT_JAVA, "monitor/platform-instrumentation")
+                .containsEntry("sidecar.opentelemetry.io/inject", "monitor/platform-otel-sidecar");
+    }
+
+    @Test
     void switchingBackToAppLogsRemovesTheSidecarBits() {
         WorkloadDTO existing = workload();
         apply(existing, fileLogReq("/var/log/nginx", true));

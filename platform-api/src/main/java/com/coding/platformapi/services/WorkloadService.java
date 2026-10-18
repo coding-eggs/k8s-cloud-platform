@@ -348,7 +348,8 @@ public class WorkloadService {
         // 先清掉所有语言的注入注解：切换语言 / 关闭时都不残留
         OTEL_INJECT_KEYS.values().forEach(annotations::remove);
         if (agentEnabled) {
-            String instrumentation = req.isTracing() && req.isLogs()
+            // 文件日志走 sidecar 的 filelog，不开应用日志 appender；此时即使 logs=true 也只选 tracing 版
+            String instrumentation = req.isTracing() && req.isLogs() && !fileLogs
                     ? "platform-instrumentation-all"
                     : req.isTracing() ? "platform-instrumentation" : "platform-instrumentation-logs";
             annotations.put(OTEL_INJECT_KEYS.get(language),
