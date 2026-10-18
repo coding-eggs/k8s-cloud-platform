@@ -381,7 +381,7 @@ CRD 不存在时**跳过并记一条提示**，不算安装失败（traces 不�
 
 | 表单项 | 必填 | 说明 |
 |---|---|---|
-| 日志路径 / glob | 是 | 容器内路径，如 `/var/log/nginx/*.log` |
+| 日志目录 | 是 | 容器内的绝对路径，如 `/var/log/nginx`（sidecar 采集该目录下的 `*.log`；共享 CR 固定路径，不能用 per-workload glob） |
 | 确认写文件 | 是 | sidecar 读不到别的容器 stdout；不勾选不允许提交 |
 | 日志格式 | 否 | combined / json / plain，决定 parser；先原样采也可 |
 | 多行合并 | 否 | Java 堆栈类；本批不做（后续再加） |
@@ -404,8 +404,8 @@ spec:
     - {name: K8S_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
     - {name: K8S_POD_UID, valueFrom: {fieldRef: {fieldPath: metadata.uid}}}
   volumeMounts:
-    # 卷 platform-app-logs 由工作负载的 PodTemplate 定义（emptyDir），这里只挂载
-    - {name: platform-app-logs, mountPath: /var/log/app, readOnly: true}
+    # 卷 platform-otel-logs 由工作负载的 PodTemplate 定义（emptyDir），这里只挂载
+    - {name: platform-otel-logs, mountPath: /var/log/app, readOnly: true}
   config:
     receivers:
       filelog:
@@ -662,3 +662,18 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
 2. trace 查看：先启用 kps 的 Grafana + Tempo datasource，还是直接做平台自研视图。
 3. 业务集群回传 Tempo 的入口方式（external-gateway / NodePort / LB）。
 4. 采样率是否要支持按工作负载覆盖（当前是组件级的一个全局值，对应三个 Instrumentation）。
+
+---
+
+## 11. 实现备注（批次一/二，2026-10-19）
+
+- Tempo 实际用 **grafana-community/tempo 3.2.0（app 3.1.0）**：旧 `grafana/tempo` 1.24.4 已 deprecated。
+- Instrumentation 的 exporter 端点用 **4318 + http/protobuf**（Python 注入镜像只带 HTTP exporter）。
+- `OtelObjects.build(logsEnabled, gatewayReplicas)` 生成 **5** 个对象：3 个 Instrumentation +
+  gateway + **sidecar collector**（sidecar 常驻，只有工作负载开启文件日志时才被注入）。
+- 文件日志的共享 sidecar CR 固定采集 `/var/log/app/*.log`；**用户提供的是目录**（不是 glob），
+  平台把目录挂成 emptyDir 卷 `platform-otel-logs`（应用容器与 sidecar 共享）。
+- 网格 tracing：新增 `/mesh/waypoints/tracing`（POST/GET，权限码复用 `tenant:gateway:update/get`）；
+  ingress 的 Telemetry 由 OTel 或 istio 组件安装成功后的后置步骤补建（谁后装谁补）。
+  **部署前必须先重放 `V2026_10_19_1__mesh_waypoint_tracing.sql`**（缺失权限行会让
+  `PermissionCrossCheckRunner` 在启动时直接 brick）。

@@ -832,9 +832,9 @@ class ComponentInstallServiceTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> extra =
                 (List<Map<String, Object>>) dto.get(1).getValues().get("extraObjects");
-        assertThat(extra).hasSize(4);
+        assertThat(extra).hasSize(5);
         assertThat(extra.toString()).contains("platform-instrumentation")
-                .contains("platform-otel-gateway").contains("4318");
+                .contains("platform-otel-gateway").contains("platform-otel-sidecar").contains("4318");
     }
 
     @Test
