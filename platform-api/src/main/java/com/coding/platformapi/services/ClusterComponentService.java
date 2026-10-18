@@ -10,11 +10,16 @@ import com.coding.platformapi.components.ComponentDef;
 import com.coding.platformapi.components.ComponentProbe;
 import com.coding.platformapi.components.ComponentRecipe;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
+import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EditableFieldDTO;
+import com.coding.platformapi.models.EsConfig;
+import com.coding.platformapi.models.OtelInstallRequest;
+import com.coding.platformapi.models.SecretRef;
+import com.coding.platformapi.models.TempoStorageConfig;
 import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -206,6 +211,12 @@ public class ClusterComponentService {
             if (s.isTektonProfile() && platform.get("tektonProfile") instanceof String p) {
                 s.setTektonProfileCurrent(p);
             }
+            if (s.isTempoRemoteWrite() && platform.get("otel") instanceof Map<?, ?> otelMap) {
+                s.setTempoEndpoint(asString(((Map<?, ?>) otelMap).get("tempoEndpoint")));
+            }
+            if (s.isOtelInstrumentation()) {
+                s.setOtelInstallCurrent(otelInstallOf(platform));
+            }
             applyCurrentEditableValues(s, snapshot, profile);
         }
     }
@@ -283,6 +294,69 @@ public class ClusterComponentService {
         cur.setBucket(asString(m.get("bucket")));
         cur.setInsecureSkipVerify(Boolean.TRUE.equals(m.get("insecureSkipVerify")));
         return cur;
+    }
+
+    /** {@code __platform.otel} → 编辑表单的当前值；没有记录返回 null */
+    private static OtelInstallRequest otelInstallOf(Map<String, Object> platform) {
+        if (!(platform.get("otel") instanceof Map<?, ?> m)) {
+            return null;
+        }
+        OtelInstallRequest cur = new OtelInstallRequest();
+        cur.setTempoEndpoint(asString(m.get("tempoEndpoint")));
+        cur.setSamplingPercentage(asInt(m.get("samplingPercentage")));
+        cur.setGatewayReplicas(asInt(m.get("gatewayReplicas")));
+        cur.setLogsEnabled(m.get("logsEnabled") instanceof Boolean b ? b : null);
+        cur.setTempoStorage(tempoStorageOf(m.get("tempoStorage")));
+        cur.setEs(esOf(m.get("es")));
+        return cur;
+    }
+
+    private static TempoStorageConfig tempoStorageOf(Object value) {
+        if (!(value instanceof Map<?, ?> m)) {
+            return null;
+        }
+        TempoStorageConfig out = new TempoStorageConfig();
+        out.setEndpoint(asString(m.get("endpoint")));
+        out.setBucket(asString(m.get("bucket")));
+        out.setPrefix(asString(m.get("prefix")));
+        out.setCredentialSecret(secretRefOf(m.get("credentialSecret")));
+        out.setInsecureSkipVerify(Boolean.TRUE.equals(m.get("insecureSkipVerify")));
+        return out;
+    }
+
+    private static EsConfig esOf(Object value) {
+        if (!(value instanceof Map<?, ?> m)) {
+            return null;
+        }
+        EsConfig out = new EsConfig();
+        out.setEndpoint(asString(m.get("endpoint")));
+        out.setUsername(asString(m.get("username")));
+        out.setCredentialSecret(secretRefOf(m.get("credentialSecret")));
+        out.setPasswordKey(asString(m.get("passwordKey")));
+        out.setInsecureSkipVerify(Boolean.TRUE.equals(m.get("insecureSkipVerify")));
+        out.setLogsIndex(asString(m.get("logsIndex")));
+        return out;
+    }
+
+    private static SecretRef secretRefOf(Object value) {
+        if (!(value instanceof Map<?, ?> m)) {
+            return null;
+        }
+        return new SecretRef(asString(m.get("namespace")), asString(m.get("name")));
+    }
+
+    private static Integer asInt(Object value) {
+        if (value instanceof Number n) {
+            return n.intValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Integer.parseInt(s.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private static String asString(Object value) {
@@ -383,6 +457,11 @@ public class ClusterComponentService {
         s.setTektonProfile(recipe != null && recipe.tektonProfile());
         s.setDefaultTektonProfile(recipe != null && recipe.tektonProfile()
                 ? ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE : null);
+        OtelRecipe otel = recipe == null ? null : recipe.otel();
+        s.setOtelInstrumentation(otel != null && otel.instrumentation());
+        s.setTempoInstall(otel != null && otel.tempoInstall());
+        s.setTempoRemoteWrite(otel != null && otel.tempoRemoteWrite());
+        s.setDefaultTempoEndpoint(otel == null ? null : otel.tempoEndpointDefault());
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对将来可能出现的"只有工作负载判据"的组件同样成立，否则同一集群里会出现

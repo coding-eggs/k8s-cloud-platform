@@ -349,6 +349,40 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void theOtelRowCarriesItsFlagsAndCurrentValues() {
+        PlatformComponentOperation op = new PlatformComponentOperation();
+        op.setComponentCode("otel-operator");
+        op.setStatus("SUCCESS");
+        op.setValuesSnapshot("{\"__platform\":{\"otel\":{"
+                + "\"tempoEndpoint\":\"tempo.example:4317\","
+                + "\"samplingPercentage\":25,\"gatewayReplicas\":2,\"logsEnabled\":true,"
+                + "\"es\":{\"endpoint\":\"https://es:9200\",\"username\":\"elastic\","
+                + "\"credentialSecret\":{\"namespace\":\"default\",\"name\":\"es-es-elastic-user\"},"
+                + "\"passwordKey\":\"elastic\",\"insecureSkipVerify\":true,\"logsIndex\":\"otel-logs\"}}}}");
+        PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
+
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService management = mock(ClusterService.class);
+        when(management.requireProfile("c1")).thenReturn("MANAGEMENT");
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), management,
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        ComponentStatusDTO otel = find(svc.status("c1"), "otel-operator");
+
+        assertThat(otel.isOtelInstrumentation()).isTrue();
+        assertThat(otel.isTempoInstall()).isTrue();
+        assertThat(otel.isTempoRemoteWrite()).isTrue();
+        assertThat(otel.getDefaultTempoEndpoint()).isEqualTo("platform-tempo.monitor.svc:4317");
+        assertThat(otel.getTempoEndpoint()).isEqualTo("tempo.example:4317");
+        assertThat(otel.getOtelInstallCurrent().getSamplingPercentage()).isEqualTo(25);
+        assertThat(otel.getOtelInstallCurrent().getEs().getCredentialSecret().getName())
+                .isEqualTo("es-es-elastic-user");
+    }
+
+    @Test
     void onlyPrometheusExposesPlatformAlerting() {
         // 表单据此显示"告警回调地址"输入框
         ClusterComponentService svc = svc(List.of());
