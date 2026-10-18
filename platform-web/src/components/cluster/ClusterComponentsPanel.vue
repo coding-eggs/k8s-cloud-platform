@@ -112,7 +112,8 @@ interface ApplyDialog {
   visible: boolean
   code: string
   name: string
-  action: 'INSTALL' | 'UPGRADE'
+  /** EDIT = 已装组件的"编辑并重放"（不带版本选择，按当前版本重放） */
+  action: 'INSTALL' | 'UPGRADE' | 'EDIT'
   version: string
   versions: string[]
   fields: K8sEditableField[]
@@ -149,6 +150,10 @@ interface ApplyDialog {
 /** Calico 支持的封装方式（Installation CR 的取值） */
 const ENCAPSULATIONS = ['IPIP', 'VXLAN', 'IPIPCrossSubnet', 'VXLANCrossSubnet', 'None']
 
+const ACTION_LABEL: Record<ApplyDialog['action'], string> = {
+  INSTALL: '安装', UPGRADE: '升级', EDIT: '编辑',
+}
+
 /** 容量写法（K8s quantity）：50Gi / 500Mi / 1Ti；不带单位按字节，几乎不会是本意，所以默认要求带单位 */
 const SIZE_RE = /^[1-9]\d*(\.\d+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$/
 
@@ -176,9 +181,17 @@ function openUpgrade(row: K8sComponentStatus): void {
   openApply(row, 'UPGRADE')
 }
 
-function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void {
+function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDIT'): void {
   const versions = action === 'UPGRADE' ? upgradeTargets(row) : []
   if (action === 'UPGRADE' && !versions.length) return
+  const editing = action === 'EDIT'
+  // 编辑表单预填**当前生效**的地址（上次成功操作的快照）；安装表单预填平台默认值
+  const webhookInitial = (editing
+    ? row.alertWebhookUrl ?? row.defaultAlertWebhookUrl
+    : row.defaultAlertWebhookUrl) ?? ''
+  const thanosInitial = (editing
+    ? row.thanosReceiveUrl ?? row.defaultThanosReceiveUrl
+    : row.defaultThanosReceiveUrl) ?? ''
   const fields = row.editableFields ?? []
   const values: Record<string, any> = {}
   const jsonText: Record<string, string> = {}
@@ -202,20 +215,21 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE'): void
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
     showWebhook: !!row.platformAlerting,
-    webhookUrl: row.defaultAlertWebhookUrl ?? '',
-    initialWebhook: (row.defaultAlertWebhookUrl ?? '').trim(),
+    webhookUrl: webhookInitial,
+    initialWebhook: webhookInitial.trim(),
     showThanos: !!row.thanosRemoteWrite,
-    thanosUrl: row.defaultThanosReceiveUrl ?? '',
-    initialThanos: (row.defaultThanosReceiveUrl ?? '').trim(),
-    showThanosInstall: !!row.thanosInstall,
+    thanosUrl: thanosInitial,
+    initialThanos: thanosInitial.trim(),
+    // 编辑只改配置：不重装 Thanos、不改 Calico 网络参数（那两个是安装期决定，改错会断网）
+    showThanosInstall: !!row.thanosInstall && !editing,
     thanos,
     initialThanosInstall: JSON.stringify(thanos),
     storageClasses: [], secretOptions: [],
-    showCalico: !!row.calicoNetwork,
+    showCalico: !!row.calicoNetwork && !editing,
     calico,
     initialCalico: JSON.stringify(calico),
   }
-  if (row.thanosInstall) {
+  if (row.thanosInstall && !editing) {
     void loadThanosOptions()
   }
   if (fields.some((f) => f.type === 'storageClass')) {
@@ -283,8 +297,10 @@ function confirmApply(): void {
   d.visible = false
   emit('apply', {
     code: d.code,
-    action: d.action,
-    targetVersion: d.action === 'UPGRADE' ? d.version : undefined,
+    // EDIT 复用 UPGRADE：按当前 chart 版本重放（幂等），只是不带版本选择
+    action: d.action === 'EDIT' ? 'UPGRADE' : d.action,
+    targetVersion: d.action === 'UPGRADE' ? d.version
+      : d.action === 'EDIT' ? (installedChartVersion(d.code) ?? undefined) : undefined,
     editableValues: Object.keys(editable).length ? editable : undefined,
     // 两个地址：只发改动过的 —— 没改的由后端沿用上次成功操作里记的值（否则升级会被平台默认值覆盖）
     alertWebhookUrl: d.showWebhook && d.webhookUrl.trim() && d.webhookUrl.trim() !== d.initialWebhook
@@ -479,7 +495,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div v-if="showDetail(row.detail)" class="cc-guide cc-detail">{{ row.detail }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="110" fixed="right">
+      <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <template v-if="row.state === 'NOT_INSTALLED' && installable(row)">
             <el-button link type="primary" :loading="props.applying === row.code"
@@ -491,14 +507,21 @@ const anyUnknown = computed(() => unknownCount.value > 0)
             <el-tooltip v-if="!operations[row.code]" content="该组件由外部安装，平台不接管" placement="top">
               <span class="cc-readonly">只读</span>
             </el-tooltip>
-            <!-- 有可升级版本才给按钮；只有一个版本时不是"能升级"，说清楚 -->
-            <el-button v-else-if="upgradeTargets(row).length" link type="primary"
-                       :loading="props.applying === row.code" @click="openUpgrade(row)">
-              升级
-            </el-button>
-            <el-tooltip v-else content="平台内置的就是当前版本，暂无可升级版本" placement="top">
-              <span class="cc-readonly">已是最新</span>
-            </el-tooltip>
+            <template v-else>
+              <!-- 平台装的都能编辑：告警回调地址 / Thanos Receive / 可编辑字段，按当前版本重放一次 -->
+              <el-button link type="primary" :loading="props.applying === row.code"
+                         @click="openApply(row, 'EDIT')">
+                编辑
+              </el-button>
+              <!-- 有可升级版本才给按钮；只有一个版本时不是"能升级"，说清楚 -->
+              <el-button v-if="upgradeTargets(row).length" link type="primary"
+                         :loading="props.applying === row.code" @click="openUpgrade(row)">
+                升级
+              </el-button>
+              <el-tooltip v-else content="平台内置的就是当前版本，暂无可升级版本" placement="top">
+                <span class="cc-readonly">已是最新</span>
+              </el-tooltip>
+            </template>
           </template>
           <!-- UNKNOWN / 无 recipe：不给装 —— "不知道"不是"没有"；没有 recipe 就明确说"暂不支持" -->
           <span v-else-if="row.state === 'UNKNOWN'" class="cc-readonly">—</span>
@@ -508,7 +531,10 @@ const anyUnknown = computed(() => unknownCount.value > 0)
     </el-table>
 
     <el-dialog v-model="applyDialog.visible" width="960px" append-to-body
-               :title="`${applyDialog.action === 'INSTALL' ? '安装' : '升级'} ${applyDialog.name}`">
+               :title="`${ACTION_LABEL[applyDialog.action]} ${applyDialog.name}`">
+      <div v-if="applyDialog.action === 'EDIT'" class="cc-upgrade-tip">
+        保存后会按当前 chart 版本重放一次 helm（幂等），并重新下发告警联动；没改的项沿用上次成功操作的值。
+      </div>
       <div v-if="applyDialog.action === 'UPGRADE'" class="cc-form-row">
         <span class="cc-form-label">目标 chart 版本</span>
         <div class="cc-form-control">

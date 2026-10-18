@@ -2,6 +2,8 @@ package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
+import com.coding.data.mapper.system.PlatformComponentOperationMapper;
+import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
 import com.coding.platformapi.components.ComponentDef;
@@ -18,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -25,6 +28,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 集群组件状态的<b>唯一派生实现</b>：目录（判什么）+ capability 列（API group 那一半）+
@@ -53,6 +57,8 @@ public class ClusterComponentService {
     /** 45s —— 组件是分钟级变化的东西；装完想看最新状态走「重新探测」（探完覆写缓存） */
     private static final Duration TTL = Duration.ofSeconds(45);
     private static final TypeReference<List<ComponentStatusDTO>> LIST_TYPE = new TypeReference<>() {};
+    private static final TypeReference<Map<String, Object>> SNAPSHOT_TYPE = new TypeReference<>() {};
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final ClusterComponentCatalog catalog;
     private final ClusterCapabilityService capabilityService;
@@ -61,6 +67,8 @@ public class ClusterComponentService {
     /** 可安装版本来自 recipe（按集群画像取哪一套） */
     private final ClusterService clusterService;
     private final ComponentRecipeCatalog recipes;
+    /** 编辑表单要显示"当前生效"的地址：从上次成功操作的快照里读 */
+    private final PlatformComponentOperationMapper operationMapper;
 
     /** 告警回调地址的平台默认值：前端安装表单预填（用户可改，clusterId 由后端拼） */
     @Value("${platform.alert.webhook.url:}")
@@ -154,7 +162,58 @@ public class ClusterComponentService {
                 byCode.merge(codes.get(i), r, ClusterComponentService::prefer);
             }
         }
-        return catalog.all().stream().map(d -> compose(d, byCode, groups, profile)).toList();
+        List<ComponentStatusDTO> statuses = catalog.all().stream()
+                .map(d -> compose(d, byCode, groups, profile)).toList();
+        applyEffectivePlatformInputs(statuses, clusterId);
+        return statuses;
+    }
+
+    /**
+     * 把「上次成功操作」里记的平台输入填回状态。
+     *
+     * <p>安装表单用平台默认值预填；**编辑表单**必须预填**当前生效**的地址 ——
+     * 否则用户改完 webhook / Thanos Receive 后再打开编辑，看到的还是平台默认值，
+     * 分不清到底哪个在生效。
+     */
+    private void applyEffectivePlatformInputs(List<ComponentStatusDTO> statuses, String clusterId) {
+        Map<String, PlatformComponentOperation> latest;
+        try {
+            latest = operationMapper.selectLatestSuccesses(clusterId).stream()
+                    .collect(Collectors.toMap(PlatformComponentOperation::getComponentCode,
+                            o -> o, (a, b) -> a));
+        } catch (Exception e) {
+            // 读操作记录失败不影响状态探测本身；地址按未知处理（编辑表单退回平台默认值）
+            log.warn("读取集群 {} 的组件操作快照失败: {}", clusterId, e.getMessage());
+            return;
+        }
+        for (ComponentStatusDTO s : statuses) {
+            PlatformComponentOperation op = latest.get(s.getCode());
+            if (op == null) {
+                continue;
+            }
+            Map<String, Object> platform = platformInputsOf(op.getValuesSnapshot());
+            if (s.isPlatformAlerting() && platform.get("alertWebhookUrl") instanceof String url) {
+                s.setAlertWebhookUrl(url);
+            }
+            if (s.isThanosRemoteWrite() && platform.get("thanosReceiveUrl") instanceof String url) {
+                s.setThanosReceiveUrl(url);
+            }
+        }
+    }
+
+    /** {@code values_snapshot.__platform}；解析失败按空处理（不猜） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> platformInputsOf(String snapshotJson) {
+        if (snapshotJson == null || snapshotJson.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> snapshot = JSON.readValue(snapshotJson, SNAPSHOT_TYPE);
+            Object platform = snapshot.get("__platform");
+            return platform instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+        } catch (Exception e) {
+            return Map.of();
+        }
     }
 
     private String profileOf(String clusterId) {

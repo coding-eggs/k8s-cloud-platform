@@ -2,6 +2,8 @@ package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
+import com.coding.data.mapper.system.PlatformComponentOperationMapper;
+import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
 import com.coding.platformapi.components.ComponentProbe;
@@ -118,7 +120,7 @@ class ClusterComponentServiceTest {
         Map<String, String> store = new HashMap<>();
         ClusterComponentService svc = new ClusterComponentService(
                 new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cacheOver(store),
-                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog());
+                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
 
         svc.status("c1");
         store.clear(); // 45s 到期
@@ -135,7 +137,7 @@ class ClusterComponentServiceTest {
         when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
         ClusterComponentService svc = new ClusterComponentService(
                 new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cache(),
-                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog());
+                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
 
         svc.status("c1");
 
@@ -285,7 +287,7 @@ class ClusterComponentServiceTest {
         when(management.requireProfile("c1")).thenReturn("MANAGEMENT");
         ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
                 capability(DEFAULT_GROUPS), client, cache(), management,
-                new com.coding.platformapi.components.ComponentRecipeCatalog());
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
 
         assertThat(find(svc.status("c1"), "prometheus-operator").getAvailableVersions())
                 .containsExactly("92.10.1");
@@ -294,6 +296,31 @@ class ClusterComponentServiceTest {
         assertThat(prom.isThanosRemoteWrite()).isTrue();
         assertThat(prom.getDefaultThanosReceiveUrl())
                 .isEqualTo("http://platform-thanos-receive.monitor.svc:10908/api/v1/receive");
+    }
+
+    @Test
+    void installedComponentsCarryTheEffectivePlatformUrls() {
+        // 编辑表单要预填**当前生效**的地址（上次成功操作的 __platform 快照），不是平台默认值 ——
+        // 否则用户改完再打开编辑，看到的还是默认值，分不清哪个在生效
+        PlatformComponentOperation op = new PlatformComponentOperation();
+        op.setComponentCode("prometheus-operator");
+        op.setStatus("SUCCESS");
+        op.setValuesSnapshot("{\"__platform\":{"
+                + "\"alertWebhookUrl\":\"http://now:8081/alert/webhook\","
+                + "\"thanosReceiveUrl\":\"http://now-receive:10908/api/v1/receive\"}}");
+        PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
+
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), profileService(),
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        ComponentStatusDTO prom = find(svc.status("c1"), "prometheus-operator");
+
+        assertThat(prom.getAlertWebhookUrl()).isEqualTo("http://now:8081/alert/webhook");
+        assertThat(prom.getThanosReceiveUrl()).isEqualTo("http://now-receive:10908/api/v1/receive");
     }
 
     @Test
@@ -314,7 +341,7 @@ class ClusterComponentServiceTest {
         when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
         ClusterComponentService svc = new ClusterComponentService(
                 new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cache(),
-                failing, new com.coding.platformapi.components.ComponentRecipeCatalog());
+                failing, new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
 
         assertThat(find(svc.status("c1"), "metrics-server").getAvailableVersions()).isEmpty();
     }
@@ -357,7 +384,7 @@ class ClusterComponentServiceTest {
 
     private static ClusterComponentService svcWith(K8sComponentClient client, Map<String, List<String>> groups) {
         return new ClusterComponentService(new ClusterComponentCatalog(), capability(groups), client, cache(),
-                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog());
+                profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
     }
 
     /** 画像：测试固定 BUSINESS（metrics-server 的 recipe 两个画像相同，但版本列表要走画像取） */
@@ -371,6 +398,11 @@ class ClusterComponentServiceTest {
         ClusterCapabilityService capability = mock(ClusterCapabilityService.class);
         when(capability.groups("c1")).thenReturn(groups);
         return capability;
+    }
+
+    /** 默认没有操作记录（Mockito 对 List 返回值默认给空集合） */
+    private static PlatformComponentOperationMapper operationMapper() {
+        return mock(PlatformComponentOperationMapper.class);
     }
 
     /** 一条覆盖项：{@code namespace}+deployment。其余组件一律"没找到"。 */

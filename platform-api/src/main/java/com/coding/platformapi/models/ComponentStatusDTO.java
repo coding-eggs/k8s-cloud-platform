@@ -41,10 +41,17 @@ public class ComponentStatusDTO {
      * 用户可在安装表单里改；clusterId 永远由后端拼。
      */
     private String defaultAlertWebhookUrl;
+    /**
+     * **当前生效**的告警回调地址（上次成功操作的 {@code __platform} 快照）。
+     * 编辑表单用它预填 —— 用户要能看到现在用的是哪个地址；无记录 → null。
+     */
+    private String alertWebhookUrl;
     /** 该组件安装时是否需要填写 Thanos Receive 地址（Prometheus 的 remoteWrite） */
     private boolean thanosRemoteWrite;
     /** Thanos Receive 地址的平台默认值（表单预填用） */
     private String defaultThanosReceiveUrl;
+    /** **当前生效**的 Thanos Receive 地址（上次成功操作的快照）；无记录 → null */
+    private String thanosReceiveUrl;
     /** 该组件安装时是否同时安装 Thanos（管理集群的 Prometheus：表单要选命名空间/凭证 Secret、填 MinIO） */
     private boolean thanosInstall;
     /** 安装时是否要填 Calico 的 Pod CIDR / 封装方式 */

@@ -922,10 +922,14 @@ export interface K8sComponentStatus {
   platformAlerting?: boolean
   /** 告警回调地址的平台默认值（表单预填；clusterId 由后端拼） */
   defaultAlertWebhookUrl?: string | null
+  /** 当前生效的告警回调地址（上次成功操作的快照）—— 编辑表单预填它 */
+  alertWebhookUrl?: string | null
   /** 安装时是否需要填 Thanos Receive 地址（Prometheus 的 remoteWrite 目标） */
   thanosRemoteWrite?: boolean
   /** Thanos Receive 地址的平台默认值（表单预填） */
   defaultThanosReceiveUrl?: string | null
+  /** 当前生效的 Thanos Receive 地址（上次成功操作的快照）—— 编辑表单预填它 */
+  thanosReceiveUrl?: string | null
   /** 安装时是否同时安装 Thanos（管理集群的 Prometheus：要选命名空间/凭证 Secret、填 MinIO） */
   thanosInstall?: boolean
   /** 安装时是否要填 Calico 的 Pod CIDR / 封装方式 */

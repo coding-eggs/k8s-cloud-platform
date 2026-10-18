@@ -63,6 +63,16 @@
     order by o.component_code
   </select>
 
+  <select id="selectLatestSuccesses" resultMap="BaseResultMap">
+    select o.* from platform_component_operation o
+    join (select component_code, max(id) as mid
+          from platform_component_operation
+          where cluster_id = #{clusterId,jdbcType=VARCHAR}
+            and `status` = 'SUCCESS'
+          group by component_code) t on o.id = t.mid
+    order by o.component_code
+  </select>
+
   <select id="selectLatestSuccess" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_component_operation

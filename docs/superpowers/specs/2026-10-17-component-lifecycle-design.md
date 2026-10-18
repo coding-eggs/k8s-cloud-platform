@@ -184,6 +184,10 @@ PENDING → RUNNING → SUCCESS
   都只看 `platform-kps`；把 thanos 的 0.47.2 混进来会让 UI 显示「已装 92.10.1，可升级到 0.47.2」（2026-10-18 实锤）。
 - **不要拿探测到的应用版本跟 chart 版本比**：`prometheus-operator v0.93.1` 与 `kube-prometheus-stack 88.6.2` 是两套编号。UI 两个都显示并注明。
 - 升级**复用上次成功操作的最终 values**（见 §4），用户修改可编辑字段则覆盖对应路径。
+- **已装组件可编辑（不换版本地重放）**：告警回调地址、Thanos Receive 地址与可编辑字段都能在装完后改。
+  UI 的「编辑」按 `UPGRADE` 提交、`targetVersion` 取当前 chart 版本（相同版本重放 helm，幂等）。
+  编辑表单预填**当前生效**的值 —— 来自上次成功操作的 `values_snapshot.__platform`
+  （状态接口下发 `alertWebhookUrl` / `thanosReceiveUrl`），不是平台默认值；没改的项不提交，后端沿用上次快照。
 
 ---
 
