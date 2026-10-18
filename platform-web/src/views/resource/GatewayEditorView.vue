@@ -145,6 +145,8 @@ const form = reactive({
   waypointAllowedFrom: '' as string,
   /** from=Selector 时的命名空间标签选择器 */
   waypointSelector: {} as Record<string, string>,
+  /** waypoint 链路追踪：下发/删除指向本 Gateway 的 Istio Telemetry */
+  tracing: false,
 })
 
 function addListener(): void { form.listeners.push(newListener()) }
@@ -316,8 +318,24 @@ async function loadDetail(): Promise<void> {
     form.waypointAllowedFrom = first?.allowedRoutes?.namespaces?.from ?? ''
     form.waypointSelector = { ...(first?.allowedRoutes?.namespaces?.selector?.matchLabels ?? {}) }
     detailState.value = 'loaded'
+    void loadTracing()
   } catch {
     detailState.value = 'error'
+  }
+}
+
+/** waypoint 的链路追踪状态（Telemetry CR 是否存在）；读不到按关闭处理 */
+async function loadTracing(): Promise<void> {
+  if (!editing.value || !waypointMode.value) return
+  try {
+    form.tracing = await meshApi.waypointTracing({
+      tenantId: state.tenantId!,
+      clusterId: state.clusterId!,
+      namespace: state.namespace!,
+      gatewayName: editing.value,
+    })
+  } catch {
+    form.tracing = false
   }
 }
 
@@ -419,6 +437,21 @@ async function submit(): Promise<void> {
       await gatewayApi.create(ctx2.value, body)
       ElMessage.success('创建成功')
     }
+    // waypoint 的链路追踪是独立对象（Telemetry），Gateway 保存成功后再下发；
+    // 失败只提示，不回滚 Gateway（对象已经存在，用户可在编辑页重试）
+    if (waypointMode.value) {
+      try {
+        await meshApi.setWaypointTracing({
+          tenantId: state.tenantId!,
+          clusterId: state.clusterId!,
+          namespace: state.namespace!,
+          gatewayName: (editing.value ?? form.name).trim(),
+          enabled: form.tracing,
+        })
+      } catch {
+        ElMessage.warning('Gateway 已保存，但链路追踪设置失败；可在编辑页重试')
+      }
+    }
     router.push({ name: 'gateways' })
   } catch { /* 拦截器提示 */ } finally {
     saving.value = false
@@ -516,6 +549,11 @@ onMounted(() => {
               <el-option v-for="v in WAYPOINT_FOR_VALUES" :key="v" :label="WAYPOINT_FOR_LABELS[v]" :value="v" />
             </el-select>
             <FieldHelp tip="对应 Gateway 上的 istio.io/waypoint-for 标签，决定这个 waypoint 处理哪类流量。判据是流量**最初**发往的目标类型 —— 即使最终解析到 Pod IP，发往服务的流量仍算 service，所以不会绕两次 waypoint。选错不会报错，只是那份 L7 策略静默不生效（例：只处理 service 时，直接打到 Pod IP 的请求会绕过它）。这也决定它出现在哪些选择器里：service / all 型才能被命名空间级 use-waypoint 选中，workload / all 型才能被工作负载（pod template）级选中。" />
+          </el-form-item>
+
+          <el-form-item label="链路追踪">
+            <el-switch v-model="form.tracing" />
+            <FieldHelp tip="开：平台下发一条 Telemetry（targetRefs 指向本 waypoint，provider 为 OTel collector），waypoint 对 L7 流量产生 span；关：删除该 Telemetry。ztunnel 是 L4，不产生 span、不受此开关影响。采样率取 OTel 组件安装时填的值（默认 10%）。" />
           </el-form-item>
 
           <el-form-item label="允许的 Route 命名空间">

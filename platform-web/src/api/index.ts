@@ -546,6 +546,12 @@ export const meshApi = {
    *  故不能走 gatewayApi.list。必须带 waypoint-for：命名空间级只能指向能处理服务流量的（service/all）。 */
   namespaceWaypoints: (clusterId: string, namespace: string) =>
     http.post<never, WaypointRef[]>('/mesh/gateways', null, { params: { clusterId, namespace } }),
+  /** waypoint 链路追踪：读 */
+  waypointTracing: (ctx: { tenantId: string; clusterId: string; namespace: string; gatewayName: string }) =>
+    http.get<never, boolean>('/mesh/waypoints/tracing', { params: ctx }),
+  /** waypoint 链路追踪：开/关（下发/删除指向该 Gateway 的 Telemetry） */
+  setWaypointTracing: (ctx: { tenantId: string; clusterId: string; namespace: string; gatewayName: string; enabled: boolean }) =>
+    http.post<never, boolean>('/mesh/waypoints/tracing', ctx),
   /** 服务网格拓扑（节点=工作负载，边=谁调谁）。
    *  ⚠️ meshMetricsAvailable=false 表示这个集群没在采集网格指标，不是"没有流量"。 */
   topology: (clusterId: string, namespace?: string, windowSeconds?: number) =>
