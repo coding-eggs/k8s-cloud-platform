@@ -769,6 +769,17 @@ public class ComponentInstallService {
                     throw new IllegalStateException("组件已安装，但平台告警联动配置失败：" + e.getMessage(), e);
                 }
             }
+            // ServiceMonitor 依赖 prometheus-operator 的 CRD：缺失/失败都不该把安装结果改成 FAILED
+            if (result.isSuccess() && "otel-operator".equals(componentCode)) {
+                try {
+                    if (!client.applyOtelServiceMonitor(clusterId, OTEL_NAMESPACE)) {
+                        log.info("集群 {} 没有 ServiceMonitor CRD，跳过 collector 指标抓取配置", clusterId);
+                    }
+                } catch (Exception e) {
+                    log.warn("组件 {} 安装成功但 ServiceMonitor 下发失败（不影响操作结果）: {}",
+                            id, e.getMessage());
+                }
+            }
             PlatformComponentOperation done = new PlatformComponentOperation();
             done.setId(id);
             done.setStatus(result.isSuccess() ? SUCCESS : FAILED);

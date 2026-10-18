@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
+import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
@@ -17,6 +18,7 @@ import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.OtelEsSecretObjects;
+import com.coding.k8sserver.components.OtelServiceMonitorObjects;
 import com.coding.k8sserver.components.TempoObjstoreObjects;
 import com.coding.k8sserver.components.ThanosObjstoreObjects;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -301,6 +303,30 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 .resource(target)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>();
+    }
+
+    /**
+     * collector gateway 的 ServiceMonitor（OTel 批次一）。CRD 不存在时返回 {@code false}（跳过），
+     * 不算失败：traces 不依赖 Prometheus；没装 prometheus-operator 时不该因此让整次安装 FAILED。
+     */
+    @PostMapping("/otel-servicemonitor")
+    @Operation(summary = "下发 collector 的 ServiceMonitor（CRD 缺失时跳过）",
+            description = "幂等 SSA；由 platform-api 在 otel-operator 安装成功后调用")
+    public ResponseData<Boolean> otelServiceMonitor(@RequestBody OtelServiceMonitorRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "缺少命名空间");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        if (client.apiextensions().v1().customResourceDefinitions()
+                .withName("servicemonitors.monitoring.coreos.com").get() == null) {
+            return new ResponseData<>(false);
+        }
+        client.genericKubernetesResources(OtelServiceMonitorObjects.CRD)
+                .inNamespace(request.getNamespace())
+                .resource(OtelServiceMonitorObjects.build(request.getNamespace()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>(true);
     }
 
     private static boolean isBlank(String value) {

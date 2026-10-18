@@ -3,6 +3,7 @@ package com.coding.platformapi.k8s;
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
+import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
@@ -120,5 +121,18 @@ public class K8sComponentClient {
         body.setTargetSecretName(targetSecretName);
         gateway.exchange(HttpMethod.POST, "/components/otel-es-secret", null, body,
                 gateway.responseType(Void.class));
+    }
+
+    /**
+     * collector 的 ServiceMonitor；返回 false 表示集群没有 {@code monitoring.coreos.com} CRD（跳过）。
+     * 调用方应把异常/失败当作提示而不是安装失败。
+     */
+    public boolean applyOtelServiceMonitor(String clusterId, String namespace) {
+        OtelServiceMonitorRequestDTO body = new OtelServiceMonitorRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        Boolean created = gateway.exchange(HttpMethod.POST, "/components/otel-servicemonitor", null, body,
+                gateway.responseType(Boolean.class));
+        return Boolean.TRUE.equals(created);
     }
 }

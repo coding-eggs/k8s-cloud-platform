@@ -890,6 +890,26 @@ class ComponentInstallServiceTest {
         inOrder.verify(client).applyComponent(anyString(), anyString(), anyString(), any());
     }
 
+    @Test
+    void anOtelServiceMonitorFailureDoesNotFailTheOperation() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(client.applyOtelServiceMonitor("c1", "monitor"))
+                .thenThrow(new RuntimeException("没有 ServiceMonitor CRD"));
+
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(baseOtel());
+        service().apply(req, "admin");
+
+        verify(client, timeout(5000)).applyOtelServiceMonitor("c1", "monitor");
+        verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
+                op -> "SUCCESS".equals(op.getStatus())));
+    }
+
     private static ComponentStatusDTO healthy(String code) {
         ComponentStatusDTO s = new ComponentStatusDTO();
         s.setCode(code);
