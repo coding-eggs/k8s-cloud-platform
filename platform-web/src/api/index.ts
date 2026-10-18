@@ -443,6 +443,19 @@ export const workloadApi = {
   meshToggle: (name: string, ctx: Ctx3 & { kind?: string; dataplaneMode?: string; useWaypoint?: string }) =>
     http.post<never, WorkloadDetail>(`/workloads/${encodeURIComponent(name)}/mesh-toggle`, { ...ctx, name }),
   /**
+   * OTel 可观测接入：只改 pod template 的注入注解与主容器 OTEL_SERVICE_NAME；
+   * tracing/logs 都关 = 移除注入注解。改 pod template → 触发滚动更新。
+   */
+  observability: (name: string, ctx: Ctx3 & {
+    kind?: string
+    language: string
+    tracing: boolean
+    logs: boolean
+    serviceName?: string
+    containerName?: string
+  }) => http.post<never, WorkloadDetail>(
+    `/workloads/${encodeURIComponent(name)}/observability`, { ...ctx, name }),
+  /**
    * 改一个容器的镜像（列表页「镜像」列的行内编辑 = 直接发版）：只改该容器的 image，
    * 其余字段取线上现值回写（未建模字段不丢）→ 改的是 pod template，触发滚动更新。
    * 注意只收 name/containerName/image，不把 name 塞进 body（路径里已经有了）。

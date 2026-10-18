@@ -16,6 +16,7 @@ import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import PodTerminal from '@/components/PodTerminal.vue'
 import PodLogDialog from '@/components/PodLogDialog.vue'
 import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
+import WorkloadObservabilityDialog from '@/components/workload/WorkloadObservabilityDialog.vue'
 import { fmtAge, fmtDate, podPhaseType, workloadStatus } from '@/utils/format'
 import { podLabelSelector } from '@/utils/podSelector'
 import { sumCpuCores, sumMemBytes } from '@/utils/metrics'
@@ -141,6 +142,11 @@ const logVisible = ref(false)
 const logPod = ref<K8sPod | null>(null)
 /** 工作负载级日志（勾选若干 Pod → 一条带前缀的流）：入口在 Pod 列表头上 */
 const workloadLogsVisible = ref(false)
+
+// OTel 可观测接入（批次一）：语言 + 追踪/日志开关，写 pod template 的注入注解
+const observabilityVisible = ref(false)
+const observabilityContainers = computed(() =>
+  (detail.value?.podTemplate?.spec?.containers ?? []).map((c) => c.name))
 
 function openLogs(row: K8sPod): void {
   logPod.value = row
@@ -347,6 +353,9 @@ const contextDesc = computed(() => {
       <!-- 看日志是**只读**动作，排在主操作「编辑」前面；没有 Pod 时没日志可看 -->
       <el-button size="small" :disabled="!pods.length" @click="workloadLogsVisible = true">
         全部 Pod 日志
+      </el-button>
+      <el-button size="small" :disabled="!detail" @click="observabilityVisible = true">
+        可观测
       </el-button>
       <el-tooltip :content="isOpManaged ? '由 Operator 管理，不可编辑' : ''" :disabled="!isOpManaged" placement="bottom">
         <el-button size="small" type="primary" :disabled="!detail || isOpManaged" @click="goEditor">编辑</el-button>
@@ -594,6 +603,21 @@ const contextDesc = computed(() => {
       :tenant-id="ctxParams.tenantId"
       :cluster-id="ctxParams.clusterId"
       :namespace="ctxParams.namespace"
+    />
+
+    <!-- OTel 可观测接入：只改注入注解与 OTEL_SERVICE_NAME，不改规格 -->
+    <WorkloadObservabilityDialog
+      v-if="ready && detail"
+      :visible="observabilityVisible"
+      :workload-name="detail.name"
+      :kind="detail.kind"
+      :tenant-id="ctxParams.tenantId"
+      :cluster-id="ctxParams.clusterId"
+      :namespace="ctxParams.namespace"
+      :annotations="detail.podTemplate?.annotations"
+      :containers="observabilityContainers"
+      @update:visible="observabilityVisible = $event"
+      @saved="refreshAll"
     />
 
     <!-- Pod Exec 终端 -->
