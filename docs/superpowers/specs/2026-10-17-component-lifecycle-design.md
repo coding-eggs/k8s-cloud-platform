@@ -186,8 +186,9 @@ PENDING → RUNNING → SUCCESS
 - 升级**复用上次成功操作的最终 values**（见 §4），用户修改可编辑字段则覆盖对应路径。
 - **已装组件可编辑（不换版本地重放）**：告警回调地址、Thanos Receive 地址与可编辑字段都能在装完后改。
   UI 的「编辑」按 `UPGRADE` 提交、`targetVersion` 取当前 chart 版本（相同版本重放 helm，幂等）。
-  编辑表单预填**当前生效**的值 —— 来自上次成功操作的 `values_snapshot.__platform`
-  （状态接口下发 `alertWebhookUrl` / `thanosReceiveUrl`），不是平台默认值；没改的项不提交，后端沿用上次快照。
+  编辑表单预填**当前生效**的值 —— 两个地址来自上次成功操作的 `values_snapshot.__platform`
+  （状态接口下发 `alertWebhookUrl` / `thanosReceiveUrl`），其余可编辑字段按路径从快照的
+  组件本体 release 里取（`EditableFieldDTO.currentValue`）；没改的项不提交，后端沿用上次快照。
 
 ---
 

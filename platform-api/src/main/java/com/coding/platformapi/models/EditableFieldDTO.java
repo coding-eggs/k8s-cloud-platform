@@ -21,4 +21,10 @@ public class EditableFieldDTO {
     private String type;
     /** recipe 里的默认值 */
     private Object defaultValue;
+    /**
+     * **当前生效**的值（上次成功操作的 values 快照里按 {@code key} 取出来的）。
+     * 编辑/升级表单用它预填，否则用户改完再打开看到的还是默认值，以为没生效；
+     * 没有安装记录 → null（表单退回 {@code defaultValue}）。
+     */
+    private Object currentValue;
 }

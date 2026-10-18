@@ -964,6 +964,8 @@ export interface K8sEditableField {
    */
   type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size'
   defaultValue: unknown
+  /** 当前生效值（上次成功操作的 values 快照）；无安装记录时为空 → 表单用 defaultValue */
+  currentValue?: unknown
 }
 
 /** 组件安装/升级操作（S3.6）。chart 版本与应用版本是两套编号 —— from/to 指 chart 版本 */

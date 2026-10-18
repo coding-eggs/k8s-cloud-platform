@@ -164,7 +164,7 @@ public class ClusterComponentService {
         }
         List<ComponentStatusDTO> statuses = catalog.all().stream()
                 .map(d -> compose(d, byCode, groups, profile)).toList();
-        applyEffectivePlatformInputs(statuses, clusterId);
+        applyEffectivePlatformInputs(statuses, clusterId, profile);
         return statuses;
     }
 
@@ -175,7 +175,7 @@ public class ClusterComponentService {
      * 否则用户改完 webhook / Thanos Receive 后再打开编辑，看到的还是平台默认值，
      * 分不清到底哪个在生效。
      */
-    private void applyEffectivePlatformInputs(List<ComponentStatusDTO> statuses, String clusterId) {
+    private void applyEffectivePlatformInputs(List<ComponentStatusDTO> statuses, String clusterId, String profile) {
         Map<String, PlatformComponentOperation> latest;
         try {
             latest = operationMapper.selectLatestSuccesses(clusterId).stream()
@@ -191,29 +191,77 @@ public class ClusterComponentService {
             if (op == null) {
                 continue;
             }
-            Map<String, Object> platform = platformInputsOf(op.getValuesSnapshot());
+            Map<String, Object> snapshot = parseSnapshot(op.getValuesSnapshot());
+            Map<String, Object> platform = platformOf(snapshot);
             if (s.isPlatformAlerting() && platform.get("alertWebhookUrl") instanceof String url) {
                 s.setAlertWebhookUrl(url);
             }
             if (s.isThanosRemoteWrite() && platform.get("thanosReceiveUrl") instanceof String url) {
                 s.setThanosReceiveUrl(url);
             }
+            applyCurrentEditableValues(s, snapshot, profile);
         }
     }
 
-    /** {@code values_snapshot.__platform}；解析失败按空处理（不猜） */
+    /**
+     * 可编辑字段的"当前生效值"：上次成功的 values 快照里，组件本体 release 下按路径取。
+     * 没有记录 / 路径不存在 → 不填（前端退回 recipe 默认值）。
+     */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> platformInputsOf(String snapshotJson) {
+    private void applyCurrentEditableValues(ComponentStatusDTO s, Map<String, Object> snapshot, String profile) {
+        if (s.getEditableFields() == null || s.getEditableFields().isEmpty()) {
+            return;
+        }
+        ComponentRecipe recipe = recipes.recipeOf(s.getCode(), profile);
+        if (recipe == null || recipe.releases().isEmpty()) {
+            return;
+        }
+        Object releaseValues = snapshot.get(recipe.releases().get(0).releaseName());
+        if (!(releaseValues instanceof Map<?, ?>)) {
+            return;
+        }
+        Map<String, Object> values = (Map<String, Object>) releaseValues;
+        for (EditableFieldDTO f : s.getEditableFields()) {
+            Object current = valueAtPath(values, f.getKey());
+            if (current != null) {
+                f.setCurrentValue(current);
+            }
+        }
+    }
+
+    /** 按点分路径从 values 树里取值（与安装侧 putPath 同一约定）；不存在 → null */
+    private static Object valueAtPath(Map<String, Object> root, String path) {
+        Object cursor = root;
+        for (String part : path.split("\\.")) {
+            if (!(cursor instanceof Map<?, ?> map)) {
+                return null;
+            }
+            cursor = map.get(part);
+            if (cursor == null) {
+                return null;
+            }
+        }
+        return cursor;
+    }
+
+    /** {@code values_snapshot} 整棵；解析失败按空处理（不猜） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> parseSnapshot(String snapshotJson) {
         if (snapshotJson == null || snapshotJson.isBlank()) {
             return Map.of();
         }
         try {
-            Map<String, Object> snapshot = JSON.readValue(snapshotJson, SNAPSHOT_TYPE);
-            Object platform = snapshot.get("__platform");
-            return platform instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+            return JSON.readValue(snapshotJson, SNAPSHOT_TYPE);
         } catch (Exception e) {
             return Map.of();
         }
+    }
+
+    /** {@code values_snapshot.__platform}；没有按空处理 */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> platformOf(Map<String, Object> snapshot) {
+        Object platform = snapshot.get("__platform");
+        return platform instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
     }
 
     private String profileOf(String clusterId) {

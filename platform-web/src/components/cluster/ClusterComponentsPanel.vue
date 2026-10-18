@@ -197,13 +197,16 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   const jsonText: Record<string, string> = {}
   const initial: Record<string, string> = {}
   for (const f of fields) {
+    // 有安装记录时预填**当前生效值**（后端从上次成功快照里取）；否则用 recipe 默认值。
+    // 只显示默认值会让用户改完再打开看到旧值，以为没生效
+    const start = f.currentValue !== undefined ? f.currentValue : f.defaultValue
     if (f.type === 'json') {
-      const text = JSON.stringify(f.defaultValue ?? {}, null, 2)
+      const text = JSON.stringify(start ?? {}, null, 2)
       jsonText[f.key] = text
       initial[f.key] = text
     } else {
-      values[f.key] = f.defaultValue
-      initial[f.key] = JSON.stringify(f.defaultValue)
+      values[f.key] = start
+      initial[f.key] = JSON.stringify(start)
     }
   }
   const thanos: K8sThanosInstall = { ...EMPTY_THANOS }

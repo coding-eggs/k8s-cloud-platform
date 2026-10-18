@@ -305,7 +305,9 @@ class ClusterComponentServiceTest {
         PlatformComponentOperation op = new PlatformComponentOperation();
         op.setComponentCode("prometheus-operator");
         op.setStatus("SUCCESS");
-        op.setValuesSnapshot("{\"__platform\":{"
+        op.setValuesSnapshot("{\"platform-kps\":{\"prometheus\":{\"prometheusSpec\":"
+                + "{\"retention\":\"30d\"}}},"
+                + "\"__platform\":{"
                 + "\"alertWebhookUrl\":\"http://now:8081/alert/webhook\","
                 + "\"thanosReceiveUrl\":\"http://now-receive:10908/api/v1/receive\"}}");
         PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
@@ -321,6 +323,11 @@ class ClusterComponentServiceTest {
 
         assertThat(prom.getAlertWebhookUrl()).isEqualTo("http://now:8081/alert/webhook");
         assertThat(prom.getThanosReceiveUrl()).isEqualTo("http://now-receive:10908/api/v1/receive");
+        // 可编辑字段也要带当前生效值：改完 retention 再打开编辑，不能还显示 recipe 默认的 15d
+        assertThat(prom.getEditableFields())
+                .filteredOn(f -> f.getKey().endsWith("prometheusSpec.retention"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getCurrentValue)
+                .containsExactly("30d");
     }
 
     @Test
