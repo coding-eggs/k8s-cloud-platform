@@ -109,8 +109,7 @@ k8s-server/src/main/resources/charts/components/<code>/<chartVersion>/
 | gateway-api | gateway-api | 1.6.2 | **社区**（wiremind，experimental；上游只发 YAML） |
 | istio | istio-base / istio-istiod / istio-gateway | 1.30.6 | 官方（istio） |
 | istio-ambient | istio-cni / istio-ztunnel | 1.30.6 | 官方（istio） |
-| tekton-operator | tekton-operator | 0.81.2 | 官方（tektoncd/operator release asset） |
-| tekton | 同上（TektonConfig 经 extraObjects 下发） | 0.81.2 | 官方 |
+| tekton | tekton-operator（官方 operator chart；TektonConfig 经 extraObjects 下发） | 0.81.2 | 官方（tektoncd/operator release asset） |
 | tigera-operator | tigera-operator | v3.33.0 | 官方（projectcalico） |
 | calico | 同上（Installation CR 经 values 下发） | v3.33.0 | 官方 |
 | cert-manager | cert-manager | v1.21.2 | 官方（jetstack） |
@@ -301,9 +300,12 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 
 可编辑：`replicas`、资源限制。**功能级验收**：`istioctl` 不在平台内 → 用探测 + 一次 Gateway 创建/删除验证控制面存活。
 
-### 5.4 `tekton` / `tekton-operator`
+### 5.4 `tekton`
 
 平台对它的依赖：CI 全流程、构建缓存。
+
+**Tekton 是一个组件**：官方 operator chart + TektonConfig 同一个 release（与 calico 同形）；
+`tekton-operator` 不再单列（2026-10-18）。
 
 | 值 | 类型 | 说明 |
 |---|---|---|
@@ -311,7 +313,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | `operator.autoInstallComponents=false` | 🔒 | TektonConfig 由平台通过 chart 的 `extraObjects` 下发；不关自动安装会两边抢同一个 `config` |
 | `TektonConfig.spec.pipeline.coschedule=workspaces` | 🔒 | 否则一个 TaskRun 挂不了两块 PVC workspace ⇒ **构建缓存不启用**（1.15.x 合法值；实测以 workspaces 为准） |
 | `TektonConfig.spec.pipeline.default-container-resource-requirements` | 🔒 | 命名空间配额下 init 容器需要默认资源 |
-| 命名空间固定 `tekton-pipelines` / `tekton-operator` | 🔒 | 探测位置 |
+| 命名空间固定：release 在 `tekton-operator`，组件落在 `tekton-pipelines` | 🔒 | 探测判据是后者 |
 
 可编辑：无。**功能级验收**：跑一条最小 PipelineRun（平台已有该能力），确认成功。
 

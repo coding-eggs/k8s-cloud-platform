@@ -58,7 +58,7 @@ public class PipelineCapabilityService {
      * @param namespace 构建缓存是**按命名空间**的（每 ns 一块长期卷）；留空 = 不回缓存那一段
      */
     public Capability available(String clusterId, String tenantId, String namespace) {
-        // Tekton 那一半改读组件旗标（S1.2 收口）：ci 依赖 tekton 与 tekton-operator，两个都好才叫能跑
+        // Tekton 那一半改读组件旗标（S1.2 收口）：ci 只依赖 tekton（operator 随同一 release 装，不单列）
         ComponentFlagDTO ci = componentService.flags(clusterId).get("ci");
         if (ci == null || !ci.available()) {
             String reason = ci == null || ci.reason() == null || ci.reason().isBlank()

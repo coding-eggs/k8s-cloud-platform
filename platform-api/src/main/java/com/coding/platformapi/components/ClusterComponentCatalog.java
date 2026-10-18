@@ -60,12 +60,6 @@ public class ClusterComponentCatalog {
                     List.of(new ComponentProbe("tekton-pipelines", "deployment", "tektoncd/pipeline/controller-",
                             "tekton-pipelines-controller")),
                     List.of("ci")),
-            // ⚠️ operator 是**安装来源**，不是 CI 的功能前提：用官方 release 清单装的 Tekton 没有 operator，
-            //    照样能跑。把它挂到 `ci` 上会让那种集群的 CI 整块被禁用（评审发现）。
-            new ComponentDef("tekton-operator", "Tekton Operator", "operator.tekton.dev",
-                    List.of(new ComponentProbe("tekton-operator", "deployment", "tektoncd/operator/operator-",
-                            "tekton-operator")),
-                    List.of("ci-install-source")),
             new ComponentDef("calico", "Calico", "crd.projectcalico.org",
                     List.of(new ComponentProbe("calico-system", "daemonset", "calico/node", "calico-node")),
                     List.of("network", "ipam")),

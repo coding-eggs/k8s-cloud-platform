@@ -177,7 +177,7 @@ public class ComponentRecipeCatalog {
                     Map.of("ambient", Map.of("enabled", true)), Map.of()),
             new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of()));
 
-    // ==================== tekton / tekton-operator ====================
+    // ==================== tekton ====================
 
     /**
      * Tekton profile 的可选值与默认值（operator 官方语义，v0.81.2 文档）：
@@ -214,7 +214,12 @@ public class ComponentRecipeCatalog {
                                             "requests", Map.of("cpu", "100m", "memory", "128Mi"),
                                             "limits", Map.of("cpu", "1", "memory", "1Gi"))))));
 
-    private static final List<ReleaseSpec> TEKTON_OPERATOR_RELEASES = List.of(new ReleaseSpec(
+    /**
+     * Tekton 是一个组件：官方 **operator chart** + TektonConfig 同一个 release。
+     * Pipelines / Trigger / Result / Chain / Dashboard 都由 operator 依据 TektonConfig 落地，
+     * 所以这里不再单列 {@code tekton-operator}（拆两行只会在页面上要求点两次安装）。
+     */
+    private static final List<ReleaseSpec> TEKTON_RELEASES = List.of(new ReleaseSpec(
             "platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
             Map.of(
                     // TektonConfig 由我们自己下发：必须关掉 operator 的自动安装，
@@ -222,9 +227,6 @@ public class ComponentRecipeCatalog {
                     "operator", Map.of("autoInstallComponents", false),
                     "extraObjects", List.of(TEKTON_CONFIG)),
             Map.of()));
-
-    /** pipelines 由 operator 依据 TektonConfig 安装：与 operator 是同一个 release（幂等），但要求前置健康。 */
-    private static final List<ReleaseSpec> TEKTON_RELEASES = TEKTON_OPERATOR_RELEASES;
 
     // ==================== calico ====================
 
@@ -282,13 +284,13 @@ public class ComponentRecipeCatalog {
             Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
             Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),
-            // profile 只在 tekton 组件上暴露：tekton-operator 是安装来源，tekton 才是用户要的那套
+            // Tekton 是一个组件：operator chart + TektonConfig 同一个 release（与 calico 同形），
+            // 不再单列 tekton-operator
             Map.entry("tekton", Map.of(
-                    BUSINESS, new ComponentRecipe(BUSINESS, TEKTON_RELEASES, List.of("tekton-operator"),
+                    BUSINESS, new ComponentRecipe(BUSINESS, TEKTON_RELEASES, List.of(),
                             false, false, false, false, null, true),
-                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, TEKTON_RELEASES, List.of("tekton-operator"),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, TEKTON_RELEASES, List.of(),
                             false, false, false, false, null, true))),
-            Map.entry("tekton-operator", profiles(TEKTON_OPERATOR_RELEASES, List.of())),
             Map.entry("calico", Map.of(
                     BUSINESS, new ComponentRecipe(BUSINESS, CALICO_RELEASES, List.of(), false, false, false, true),
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, CALICO_RELEASES, List.of(), false, false, false, true))),

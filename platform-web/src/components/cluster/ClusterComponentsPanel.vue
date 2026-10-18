@@ -75,7 +75,6 @@ const FEATURE_LABELS: Record<string, string> = {
   routes: '路由',
   'ambient-mesh': 'ambient 流量接管',
   ci: 'CI 流水线',
-  'ci-install-source': 'CI（安装来源）',
   network: '网络',
   ipam: 'IPAM',
   'gateway-tls': '网关 TLS 证书',

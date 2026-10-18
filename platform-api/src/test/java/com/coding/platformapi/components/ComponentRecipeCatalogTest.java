@@ -74,7 +74,8 @@ class ComponentRecipeCatalogTest {
         // spec §5：ambient 依赖控制面、otel 依赖 cert-manager、tekton 由 operator 安装。
         // calico 不再依赖 tigera-operator —— 它自己就把 operator 一起装了
         assertThat(catalog.recipeOf("istio-ambient", "BUSINESS").requires()).containsExactly("istio");
-        assertThat(catalog.recipeOf("tekton", "BUSINESS").requires()).containsExactly("tekton-operator");
+        assertThat(catalog.recipeOf("tekton", "BUSINESS").requires()).isEmpty();
+        assertThat(catalog.supports("tekton-operator")).as("operator 不再单列，随 tekton 同一个 release").isFalse();
         assertThat(catalog.recipeOf("calico", "BUSINESS").requires()).isEmpty();
         assertThat(catalog.recipeOf("otel-operator", "BUSINESS").requires()).containsExactly("cert-manager");
     }
@@ -165,11 +166,11 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
-    void tektonOperatorContractCarriesTheTektonConfig() {
+    void tektonContractCarriesTheTektonConfig() {
         // coschedule 决定构建缓存能不能用；配额下 init 容器需要默认资源
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> extra = (List<Map<String, Object>>)
-                catalog.recipeOf("tekton-operator", "BUSINESS").releases().get(0)
+                catalog.recipeOf("tekton", "BUSINESS").releases().get(0)
                         .contractValues().get("extraObjects");
         assertThat(extra).hasSize(1);
         Map<String, Object> spec = (Map<String, Object>) extra.get(0).get("spec");
@@ -179,10 +180,9 @@ class ComponentRecipeCatalogTest {
         // profile 由安装表单选（占位符），默认 all
         assertThat(spec).containsEntry("profile", "${tekton.profile}");
         assertThat(catalog.recipeOf("tekton", "BUSINESS").tektonProfile()).isTrue();
-        assertThat(catalog.recipeOf("tekton-operator", "BUSINESS").tektonProfile()).isFalse();
         // 我们自己下发 TektonConfig，就必须关掉 operator 的自动安装，否则两边抢同一个 config
         Map<String, Object> operator = (Map<String, Object>)
-                catalog.recipeOf("tekton-operator", "BUSINESS").releases().get(0)
+                catalog.recipeOf("tekton", "BUSINESS").releases().get(0)
                         .contractValues().get("operator");
         assertThat(operator).containsEntry("autoInstallComponents", false);
     }

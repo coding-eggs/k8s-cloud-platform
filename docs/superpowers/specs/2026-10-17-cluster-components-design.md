@@ -62,7 +62,7 @@ public record Probe(String namespace, WorkloadKind kind, String imageRepo, Strin
 **依赖关系只写一遍**：目录里每条组件写"我支撑哪些功能"，`feature → 组件` 的反查由代码算，
 不手写第二张表 —— 手写两张表迟早对不上。
 
-### 2.1 首批目录（11 条）
+### 2.1 组件目录（当前 9 条）
 
 判据取自**真集群实测**（§9），不是照文档猜的：
 
@@ -74,11 +74,14 @@ public record Probe(String namespace, WorkloadKind kind, String imageRepo, Strin
 | `istio` | Istio | `networking.istio.io`（`security.` / `telemetry.` 任一亦可） | `istio-system` Deploy `pilot` | 服务网格 |
 | `istio-ambient` | Istio ambient 数据面 | — | `istio-system` DaemonSet `ztunnel` | ambient 流量接管 |
 | `tekton` | Tekton Pipelines | `tekton.dev` | `tekton-pipelines` Deploy `pipeline/controller-` | CI 流水线 |
-| `tekton-operator` | Tekton Operator | `operator.tekton.dev` | `tekton-operator` Deploy `operator` | CI（安装来源） |
 | `calico` | Calico | `crd.projectcalico.org` | `calico-system` DaemonSet `calico/node` | 网络 · IPAM |
-| `tigera-operator` | Tigera Operator | `operator.tigera.io` | `tigera-operator` Deploy `tigera/operator` | 网络（安装来源） |
 | `cert-manager` | cert-manager | `cert-manager.io` | `cert-manager` Deploy `cert-manager-controller` | 证书（网关 TLS） |
 | `otel-operator` | OpenTelemetry Operator | `opentelemetry.io` | `opentelemetry-operator-system` Deploy `opentelemetry-operator` | OTel 采集（S2.3 的地基） |
+
+**两次目录收敛**：`tigera-operator`（2026-10-17）与 `tekton-operator`（2026-10-18）先后从目录移除 ——
+它们都随各自组件的**同一个 release** 安装（Calico = operator + Installation；Tekton = operator chart
++ TektonConfig），单列一行只会让用户在页面上点两次安装，还要靠 `requires` 串行。判据只保留下层
+真正干活的组件（`calico` / `tekton`）。
 
 **不纳入本批的四条**：
 
