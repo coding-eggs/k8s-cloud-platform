@@ -14,6 +14,7 @@
  */
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import type {
   K8sCalicoInstall, K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
   K8sThanosInstall, SecretRefOption,
@@ -417,8 +418,34 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="版本" width="150">
-        <template #default="{ row }"><code class="mono">{{ row.version ?? '—' }}</code></template>
+      <el-table-column label="版本" width="170">
+        <template #header>
+          <span class="cc-ver-head">
+            版本
+            <el-tooltip placement="top"
+                        content="应用 version 来自集群探测（镜像 tag / 版本标签）；chart 版本是平台安装 Helm chart 的版本。kube-prometheus-stack 与应用版本是两套编号，不可直接比较">
+              <el-icon class="cc-ver-help"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </span>
+        </template>
+        <template #default="{ row }">
+          <!-- 两个版本都显示并各自标注：只显示一个时，92.10.1（chart）与 v0.93.1（应用）
+               会让人以为是同一个东西的不同写法 -->
+          <div class="cc-ver">
+            <span class="cc-ver-line">
+              <span class="cc-ver-kind">应用</span>
+              <code class="mono">{{ row.version ?? '—' }}</code>
+            </span>
+            <span class="cc-ver-line">
+              <span class="cc-ver-kind">chart</span>
+              <el-tooltip v-if="!installedChartVersion(row.code)" placement="top"
+                          content="非平台安装，或最近一次操作未成功——chart 版本无从得知">
+                <code class="mono cc-ver-unknown">—</code>
+              </el-tooltip>
+              <code v-else class="mono">{{ installedChartVersion(row.code) }}</code>
+            </span>
+          </div>
+        </template>
       </el-table-column>
       <el-table-column label="命名空间" width="180">
         <template #default="{ row }">{{ row.namespace ?? '—' }}</template>
@@ -483,10 +510,11 @@ const anyUnknown = computed(() => unknownCount.value > 0)
     <el-dialog v-model="applyDialog.visible" width="960px" append-to-body
                :title="`${applyDialog.action === 'INSTALL' ? '安装' : '升级'} ${applyDialog.name}`">
       <div v-if="applyDialog.action === 'UPGRADE'" class="cc-form-row">
-        <span class="cc-form-label">目标版本</span>
+        <span class="cc-form-label">目标 chart 版本</span>
         <div class="cc-form-control">
           <div class="cc-upgrade-tip">
             当前 chart 版本：<code>{{ installedChartVersion(applyDialog.code) ?? '未知' }}</code>
+            <span class="cc-upgrade-note">（应用版本由集群探测，与 chart 版本是两套编号）</span>
           </div>
           <el-radio-group v-model="applyDialog.version">
             <el-radio v-for="v in applyDialog.versions" :key="v" :value="v" class="cc-upgrade-option">
@@ -655,6 +683,14 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-guide { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .cc-detail { font-style: italic; }
 .cc-readonly { font-size: 12px; color: var(--text-3); }
+/* 版本列：应用版本（探测）与 chart 版本（平台安装）分两行各自标注 */
+.cc-ver-head { display: inline-flex; align-items: center; gap: 4px; }
+.cc-ver-help { color: var(--text-3); font-size: 13px; }
+.cc-ver { display: flex; flex-direction: column; line-height: 1.5; }
+.cc-ver-line { display: flex; align-items: center; gap: 6px; }
+.cc-ver-kind { font-size: 11px; color: var(--text-3); min-width: 30px; }
+.cc-ver-unknown { color: var(--text-3); cursor: help; }
+.cc-upgrade-note { color: var(--text-3); font-size: 12px; }
 </style>
 
 <style>
