@@ -245,7 +245,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | `prometheus.prometheusSpec.ruleNamespaceSelector={}` / `serviceMonitorNamespaceSelector={}` / `podMonitorNamespaceSelector={}` / `probeNamespaceSelector={}` | 🔒 | 显式全命名空间（业务 ns 里的对象才能被发现） |
 | `alertmanager.alertmanagerSpec.alertmanagerConfigMatcherStrategy.type=OnNamespaceExceptForAlertmanagerNamespace` | 🔒 | 每条 AMC 只处理**本命名空间**的告警；例外是 Alertmanager 自己所在 ns（monitor）里的 AMC —— 它处理**全部**告警。平台自己的联动 AMC 就放在 monitor。用 `OnNamespace` 平台一条租户告警都收不到；用 `None` 每条租户 AMC 都会看到全平台告警（跨租户泄漏） |
 | `alertmanager.alertmanagerSpec.alertmanagerConfigSelector={}` / `alertmanagerConfigNamespaceSelector={}` | 🔒 | 同上 |
-| `prometheus.prometheusSpec.remoteWrite[0].url=<管理集群 Thanos receive>` | 🔒 | 业务集群上报入口。值由**安装/升级表单**填写（平台配置 `thanos.receive.url` 只做预填默认值）；未填直接拒装 |
+| `prometheus.prometheusSpec.remoteWrite[0].url=<管理集群 Thanos receive>` | 🔒 | 上报入口。**两个画像都进表单**：业务集群预填平台配置 `thanos.receive.url`（跨集群入口），管理集群预填集群内 `platform-thanos-receive.monitor.svc:10908`（recipe 的 `thanosReceiveDefault`，优先于平台配置）；未填直接拒装 |
 | `kubeApiServer` / `kubeControllerManager` / `kubeEtcd` / `kubeScheduler`.enabled=false | 🔒 | kubeadm 类集群上这些控制面端点只在 127.0.0.1，target 恒 DOWN、制造噪音告警 |
 | `crds.enabled=true` + `crds.upgradeJob.enabled=true` | 🔒 | Helm **不升级** `crds/` 目录；官方 chart 自带的 Job 在 operator 部署前 `kubectl apply` CRD —— 这是 CRD 升级的唯一正确姿势 |
 | `grafana.enabled` | ⚙️ | **BUSINESS 默认 false，MANAGEMENT 默认 true**（只有管理集群需要看板） |
@@ -253,7 +253,7 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 | `prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage` | ⚙️ | **表单里填容量**，默认 50Gi |
 | `alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.storageClassName` | ⚙️ | 同上（静默与通知日志要跨重启保留） |
 | `alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage` | ⚙️ | 默认 10Gi |
-| MANAGEMENT 追加 release `platform-thanos` | 🔒 | 管理集群自带 Thanos 底座；`remoteWrite` 指向集群内 `platform-thanos-receive.monitor.svc:19291` |
+| MANAGEMENT 追加 release `platform-thanos` | 🔒 | 管理集群自带 Thanos 底座；`remoteWrite` **默认**指向集群内 `platform-thanos-receive.monitor.svc:10908`（chart 的 remote-write 端口是 10908；10902 是 HTTP、19291 是旧版默认）。地址仍**进安装表单**，预填这个集群内值，可改成跨集群外部地址 |
 | 额外 release `platform-thanos`（query / receive / store + 对象存储） | 🔒（management） | 管理集群的观测底座 |
 
 可编辑（⚙️）：`prometheus.prometheusSpec.retention`、`prometheus.prometheusSpec.replicas`、

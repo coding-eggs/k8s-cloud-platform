@@ -195,13 +195,16 @@ class ComponentRecipeCatalogTest {
         assertThat(management.releases()).extracting(ReleaseSpec::releaseName)
                 .containsExactly("platform-kps", "platform-thanos");
         assertThat(management.thanosInstall()).isTrue();
-        assertThat(management.thanosRemoteWrite()).isFalse();
+        // 表单必须能改：跨集群场景要填外部地址（同集群才用 Service 名）
+        assertThat(management.thanosRemoteWrite()).isTrue();
+        assertThat(management.thanosReceiveDefault())
+                .isEqualTo("http://platform-thanos-receive.monitor.svc:10908/api/v1/receive");
 
-        // 管理集群的 remoteWrite 指向集群内 receive（不是表单值）
+        // 管理集群的 remoteWrite 默认指向集群内 receive（thanos chart 的 remote-write 端口是 10908）
         Map<String, Object> spec = (Map<String, Object>) ((Map<String, Object>)
                 management.releases().get(0).contractValues().get("prometheus")).get("prometheusSpec");
         assertThat(spec.get("remoteWrite").toString())
-                .contains("http://platform-thanos-receive.monitor.svc:19291/api/v1/receive");
+                .contains("http://platform-thanos-receive.monitor.svc:10908/api/v1/receive");
 
         // thanos 挂载的 objstore Secret 名必须与 platform-api 下发时用的一致
         Map<String, Object> thanos = management.releases().get(1).contractValues();

@@ -124,7 +124,8 @@ public class ComponentInstallService {
                     "请填写平台告警回调地址（集群里的 Alertmanager 需要能访问到平台）");
         }
         String thanosUrl = resolveThanosReceiveUrl(
-                req.getThanosReceiveUrl(), asString(previousPlatform.get("thanosReceiveUrl")));
+                req.getThanosReceiveUrl(), asString(previousPlatform.get("thanosReceiveUrl")),
+                recipe.thanosReceiveDefault());
         if (recipe.thanosRemoteWrite() && (thanosUrl == null || thanosUrl.isBlank())) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "请填写 Thanos Receive 地址（Prometheus 的 remoteWrite 目标）");
@@ -516,8 +517,14 @@ public class ComponentInstallService {
     }
 
     /** 表单值优先，其次上次成功里的值，最后平台配置；只做 trim */
-    private String resolveThanosReceiveUrl(String requested, String previous) {
-        String value = firstNonBlank(requested, previous, thanosReceiveUrl);
+    /**
+     * 表单值优先，其次上次成功里的值，最后**画像默认**（管理集群 = 集群内 receive）或平台配置
+     * （业务集群的跨集群入口）。画像默认优先于平台配置：同一个 {@code thanos.receive.url}
+     * 是业务集群指向管理集群的地址，拿来当管理集群自己的 remoteWrite 会写回它自己。
+     */
+    private String resolveThanosReceiveUrl(String requested, String previous, String profileDefault) {
+        String fallback = profileDefault != null && !profileDefault.isBlank() ? profileDefault : thanosReceiveUrl;
+        String value = firstNonBlank(requested, previous, fallback);
         return value == null ? null : value.trim();
     }
 

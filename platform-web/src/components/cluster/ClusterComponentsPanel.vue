@@ -592,9 +592,10 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <span class="cc-form-label">Thanos Receive 地址</span>
         <div class="cc-form-control">
           <el-input v-model="applyDialog.thanosUrl"
-                    placeholder="http://thanos-receive:19291/api/v1/receive" spellcheck="false" />
+                    placeholder="http://platform-thanos-receive.monitor.svc:10908/api/v1/receive"
+                    spellcheck="false" />
           <div class="cc-form-hint">
-            Prometheus 的 remoteWrite 目标（管理集群 Thanos）；集群网络需可达
+            Prometheus 的 remoteWrite 目标。同集群用 Service 名即可；跨集群要填集群网络可达的外部地址
           </div>
         </div>
       </div>

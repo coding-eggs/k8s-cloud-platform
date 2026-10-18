@@ -113,9 +113,15 @@ public class ComponentRecipeCatalog {
         return out;
     }
 
-    /** 管理集群内置 Thanos receive 的集群内地址（kps 的 remoteWrite 指向它） */
+    /**
+     * 管理集群内置 Thanos receive 的集群内地址（kps 的 remoteWrite 默认指向它）。
+     *
+     * <p>端口是 **10908** —— thanos chart 里 receive 的 {@code --remote-write.address=0.0.0.0:10908}
+     * 与 Service 的 {@code remote-write} 端口。10902 是它的 HTTP/metrics 端口，19291 是旧版默认值，
+     * 两者都不对（2026-10-18 用户指出，已按 chart 渲染结果核对）。
+     */
     private static final String THANOS_RECEIVE_IN_CLUSTER =
-            "http://platform-thanos-receive.monitor.svc:19291/api/v1/receive";
+            "http://platform-thanos-receive.monitor.svc:10908/api/v1/receive";
 
     /**
      * 管理集群的观测底座：query / receive / storegateway / compactor。
@@ -254,9 +260,11 @@ public class ComponentRecipeCatalog {
                     // 业务集群：上报到表单里填的 Thanos Receive
                     BUSINESS, new ComponentRecipe(BUSINESS, prometheusReleases(false, "${thanos.receive.url}"),
                             List.of(), true, true, false),
-                    // 管理集群：自带 Thanos 底座，remoteWrite 指向集群内 receive
+                    // 管理集群：自带 Thanos 底座，remoteWrite 默认指向集群内 receive；
+                    // 表单仍然暴露（跨集群/外部地址场景要能改），预填这个集群内地址
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, withThanos(
-                            prometheusReleases(true, THANOS_RECEIVE_IN_CLUSTER)), List.of(), true, false, true))),
+                            prometheusReleases(true, THANOS_RECEIVE_IN_CLUSTER)), List.of(), true, true, true, false,
+                            THANOS_RECEIVE_IN_CLUSTER))),
             Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
             Map.entry("istio-ambient", profiles(ISTIO_AMBIENT_RELEASES, List.of("istio"))),

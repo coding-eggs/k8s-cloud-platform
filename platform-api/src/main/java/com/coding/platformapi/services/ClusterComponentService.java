@@ -238,9 +238,12 @@ public class ClusterComponentService {
         s.setPlatformAlerting(recipe != null && recipe.platformAlerting());
         s.setDefaultAlertWebhookUrl(recipe != null && recipe.platformAlerting()
                 ? defaultAlertWebhookUrl : null);
-        s.setThanosRemoteWrite(recipe != null && recipe.thanosRemoteWrite());
-        s.setDefaultThanosReceiveUrl(recipe != null && recipe.thanosRemoteWrite()
-                ? defaultThanosReceiveUrl : null);
+        boolean thanosRemoteWrite = recipe != null && recipe.thanosRemoteWrite();
+        s.setThanosRemoteWrite(thanosRemoteWrite);
+        // 预填：画像自带默认值（管理集群 = 集群内 receive）优先，否则用平台配置（业务集群的跨集群入口）
+        s.setDefaultThanosReceiveUrl(!thanosRemoteWrite ? null
+                : recipe.thanosReceiveDefault() != null && !recipe.thanosReceiveDefault().isBlank()
+                ? recipe.thanosReceiveDefault() : defaultThanosReceiveUrl);
         s.setThanosInstall(recipe != null && recipe.thanosInstall());
         s.setCalicoNetwork(recipe != null && recipe.calicoNetwork());
         s.setDefaultPodCidr(recipe != null && recipe.calicoNetwork() ? defaultPodCidr : null);

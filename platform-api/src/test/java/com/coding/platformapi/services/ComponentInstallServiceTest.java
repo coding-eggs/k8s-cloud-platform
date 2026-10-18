@@ -549,6 +549,45 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void managementPrometheusDefaultsRemoteWriteToTheInClusterReceiver() {
+        // 表单不填时用 recipe 的预填值（集群内 receive，10908）。
+        // 平台配置 thanos.receive.url 是业务集群的跨集群入口，不能拿来当管理集群的默认值
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "MANAGEMENT")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("MANAGEMENT", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-kps", "monitor", "prometheus-operator", "92.10.1",
+                                Map.of("prometheus", Map.of("prometheusSpec", Map.of(
+                                        "remoteWrite", List.of(Map.of("url", "${thanos.receive.url}"))))),
+                                Map.of()),
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-thanos", "monitor", "thanos", "0.47.2", Map.of(), Map.of())),
+                        List.of(), false, true, true, false,
+                        "http://platform-thanos-receive.monitor.svc:10908/api/v1/receive"));
+
+        ComponentInstallService svc = service(catalog);
+        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "http://external:9999/receive");
+
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, null, null, null,
+                new com.coding.platformapi.models.ThanosInstallRequest(
+                        "monitor", "minio-creds", "minio.default.svc:9000", "thanos", false)), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"), org.mockito.ArgumentMatchers.eq("prometheus-operator"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        assertThat(captor.getValue().get(0).getValues().toString())
+                .contains("platform-thanos-receive.monitor.svc:10908")
+                .doesNotContain("9999");
+    }
+
+    @Test
     void thanosObjstoreIsWrittenBeforeHelm() {
         // Pod 会挂载 objstore Secret：必须先生成它，再跑 helm
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");

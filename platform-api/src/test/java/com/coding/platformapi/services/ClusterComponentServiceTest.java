@@ -289,6 +289,11 @@ class ClusterComponentServiceTest {
 
         assertThat(find(svc.status("c1"), "prometheus-operator").getAvailableVersions())
                 .containsExactly("92.10.1");
+        // Thanos Receive 地址进表单（管理集群预填集群内 receive，端口是 chart 的 remote-write 10908）
+        ComponentStatusDTO prom = find(svc.status("c1"), "prometheus-operator");
+        assertThat(prom.isThanosRemoteWrite()).isTrue();
+        assertThat(prom.getDefaultThanosReceiveUrl())
+                .isEqualTo("http://platform-thanos-receive.monitor.svc:10908/api/v1/receive");
     }
 
     @Test
