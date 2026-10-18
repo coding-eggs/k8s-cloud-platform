@@ -78,6 +78,19 @@ class ComponentLifecycleMigrationTest {
                 .contains("builtin_role_tenant_member");
     }
 
+    @Test
+    void theTraceEndpointsAndPageHavePermissionRowsBoundToAdmin() throws Exception {
+        String sql = Files.readString(Path.of(
+                "../platform-data/src/main/resources/db/migration/V2026_10_19_2__trace_view_permissions.sql"));
+        assertThat(sql).contains("'/traces/search'")
+                .contains("'/traces/{traceId}'")
+                .contains("'/mesh/traces'")
+                .contains("platform:trace:search")
+                .contains("platform:trace:get")
+                .contains("platform:page:mesh.trace")
+                .contains("builtin_role_admin");
+    }
+
     private static int count(String haystack, String needle) {
         int n = 0;
         int i = 0;
