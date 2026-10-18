@@ -176,6 +176,13 @@ class ComponentRecipeCatalogTest {
         Map<String, Object> pipeline = (Map<String, Object>) spec.get("pipeline");
         assertThat(pipeline).containsEntry("coschedule", "workspaces");
         assertThat(pipeline).containsKey("default-container-resource-requirements");
+        // 完整 Tekton：lite 只装 Pipeline（没有 Trigger/Result/Chain/Dashboard），平台要 all
+        assertThat(spec).containsEntry("profile", "all");
+        // 我们自己下发 TektonConfig，就必须关掉 operator 的自动安装，否则两边抢同一个 config
+        Map<String, Object> operator = (Map<String, Object>)
+                catalog.recipeOf("tekton-operator", "BUSINESS").releases().get(0)
+                        .contractValues().get("operator");
+        assertThat(operator).containsEntry("autoInstallComponents", false);
     }
 
     @Test

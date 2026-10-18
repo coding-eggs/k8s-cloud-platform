@@ -187,8 +187,9 @@ public class ComponentRecipeCatalog {
      *       pipelineruns / isolate-pipelinerun，默认就是 workspaces）</li>
      *   <li>{@code default-container-resource-requirements} —— 命名空间配额下 init 容器需要默认资源
      *       （平台侧设不到 init 容器）</li>
-     *   <li>{@code profile: lite} + {@code targetNamespace: tekton-pipelines} —— 与集群现状一致，
-     *       探测判据就在这个命名空间</li>
+     *   <li>{@code profile: all} —— 完整 Tekton：Pipeline + Trigger + Result + Chain，K8s 上再加 Dashboard。
+     *       ⚠️ {@code lite} 只装 TektonPipeline（没有 Trigger / Dashboard），不要用它</li>
+     *   <li>{@code targetNamespace: tekton-pipelines} —— 探测判据就在这个命名空间</li>
      * </ul>
      */
     private static final Map<String, Object> TEKTON_CONFIG = Map.of(
@@ -196,7 +197,7 @@ public class ComponentRecipeCatalog {
             "kind", "TektonConfig",
             "metadata", Map.of("name", "config"),
             "spec", Map.of(
-                    "profile", "lite",
+                    "profile", "all",
                     "targetNamespace", "tekton-pipelines",
                     "pipeline", Map.of(
                             "coschedule", "workspaces",
@@ -207,7 +208,12 @@ public class ComponentRecipeCatalog {
 
     private static final List<ReleaseSpec> TEKTON_OPERATOR_RELEASES = List.of(new ReleaseSpec(
             "platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
-            Map.of("extraObjects", List.of(TEKTON_CONFIG)), Map.of()));
+            Map.of(
+                    // TektonConfig 由我们自己下发：必须关掉 operator 的自动安装，
+                    // 否则两边同时创建 config，可能把我们这份 profile/配置冲掉（chart values 注释也这么要求）
+                    "operator", Map.of("autoInstallComponents", false),
+                    "extraObjects", List.of(TEKTON_CONFIG)),
+            Map.of()));
 
     /** pipelines 由 operator 依据 TektonConfig 安装：与 operator 是同一个 release（幂等），但要求前置健康。 */
     private static final List<ReleaseSpec> TEKTON_RELEASES = TEKTON_OPERATOR_RELEASES;
