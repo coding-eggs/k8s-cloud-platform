@@ -4,12 +4,15 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.ServiceType;
 import com.coding.common.models.k8s.dto.ContainerDTO;
+import com.coding.common.models.k8s.dto.EmptyDirVolumeDTO;
 import com.coding.common.models.k8s.dto.EnvDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodSpecDTO;
 import com.coding.common.models.k8s.dto.PodTemplateDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServicePortDTO;
+import com.coding.common.models.k8s.dto.VolumeDTO;
+import com.coding.common.models.k8s.dto.VolumeMountDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.common.models.k8s.dto.WorkloadRevisionDTO;
@@ -65,6 +68,11 @@ public class WorkloadService {
     private static final String OTEL_SERVICE_NAME_ENV = "OTEL_SERVICE_NAME";
     /** Instrumentation 所在命名空间（平台固定） */
     private static final String OTEL_NAMESPACE = "monitor";
+    /** 文件日志：sidecar 注入注解与平台固定卷名（与 OtelObjects 的 sidecar CR 一致） */
+    private static final String OTEL_SIDECAR_ANNOTATION = "sidecar.opentelemetry.io/inject";
+    private static final String OTEL_SIDECAR_VALUE = OTEL_NAMESPACE + "/platform-otel-sidecar";
+    private static final String OTEL_LOG_VOLUME = "platform-otel-logs";
+    private static final String LOG_MODE_FILE = "file";
 
     private final K8sClient k8s;
     private final K8sWorkloadClient workloadClient;
@@ -305,11 +313,24 @@ public class WorkloadService {
      * {@code OTEL_SERVICE_NAME} 等字段不动。
      */
     public WorkloadDTO observability(WorkloadObservabilityRequest req) {
-        boolean enable = req.isTracing() || req.isLogs();
+        boolean fileLogs = req.isLogs() && LOG_MODE_FILE.equalsIgnoreCase(req.getLogMode());
+        // 应用日志（agent appender）才需要 Instrumentation；文件日志靠 sidecar 注入
+        boolean agentEnabled = req.isTracing() || (req.isLogs() && !fileLogs);
         String language = req.getLanguage() == null ? null : req.getLanguage().trim().toLowerCase();
-        if (enable && !OTEL_INJECT_KEYS.containsKey(language)) {
+        if (agentEnabled && !OTEL_INJECT_KEYS.containsKey(language)) {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
                     "不支持的应用类型：" + req.getLanguage() + "（第一批只支持 java / python）");
+        }
+        if (fileLogs) {
+            if (!req.isConfirmFileLogs()) {
+                throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                        "请勾选“确认应用把日志写入该目录”（sidecar 读不到容器 stdout）");
+            }
+            if (!StringUtils.hasText(req.getLogDirectory())
+                    || !req.getLogDirectory().trim().startsWith("/")) {
+                throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                        "日志目录必须是容器内的绝对路径（以 / 开头）");
+            }
         }
 
         WorkloadDTO query = dto(req.getName(), req.getTenantId(), req.getClusterId(), req.getNamespace());
@@ -326,16 +347,30 @@ public class WorkloadService {
                 : new LinkedHashMap<>(existing.getPodTemplate().getAnnotations());
         // 先清掉所有语言的注入注解：切换语言 / 关闭时都不残留
         OTEL_INJECT_KEYS.values().forEach(annotations::remove);
-        if (enable) {
+        if (agentEnabled) {
             String instrumentation = req.isTracing() && req.isLogs()
                     ? "platform-instrumentation-all"
                     : req.isTracing() ? "platform-instrumentation" : "platform-instrumentation-logs";
             annotations.put(OTEL_INJECT_KEYS.get(language),
                     OTEL_NAMESPACE + "/" + instrumentation);
         }
+        // 文件日志：sidecar 注入注解；切回应用日志/关闭时只移除**平台自己的**注解值
+        if (fileLogs) {
+            annotations.put(OTEL_SIDECAR_ANNOTATION, OTEL_SIDECAR_VALUE);
+        } else if (OTEL_SIDECAR_VALUE.equals(annotations.get(OTEL_SIDECAR_ANNOTATION))) {
+            annotations.remove(OTEL_SIDECAR_ANNOTATION);
+        }
         existing.getPodTemplate().setAnnotations(annotations.isEmpty() ? null : annotations);
 
-        if (enable) {
+        if (fileLogs) {
+            ContainerDTO container = targetContainer(existing, req.getContainerName());
+            ensureLogVolume(existing.getPodTemplate());
+            ensureLogMount(container, req.getLogDirectory().trim());
+        } else {
+            removeLogVolumeAndMounts(existing.getPodTemplate());
+        }
+
+        if (agentEnabled) {
             String serviceName = StringUtils.hasText(req.getServiceName())
                     ? req.getServiceName().trim() : req.getName();
             setServiceNameEnv(existing, req.getContainerName(), serviceName);
@@ -343,25 +378,26 @@ public class WorkloadService {
         return k8s.update(existing);
     }
 
-    /** 把 OTEL_SERVICE_NAME 写到指定容器（空 = 第一个）；同名 env 覆盖，不重复追加 */
-    private static void setServiceNameEnv(WorkloadDTO workload, String containerName, String value) {
+    /** 主容器（containerName 空 = 第一个）；不存在就明确报错 */
+    private static ContainerDTO targetContainer(WorkloadDTO workload, String containerName) {
         PodSpecDTO spec = workload.getPodTemplate().getSpec();
         if (spec == null || spec.getContainers() == null || spec.getContainers().isEmpty()) {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "工作负载没有容器，无法写入 " + OTEL_SERVICE_NAME_ENV);
+                    "工作负载没有容器，无法写入可观测配置");
         }
-        ContainerDTO container;
         if (StringUtils.hasText(containerName)) {
-            container = spec.getContainers().stream()
+            return spec.getContainers().stream()
                     .filter(c -> containerName.trim().equals(c.getName()))
-                    .findFirst().orElse(null);
-            if (container == null) {
-                throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                        "容器不存在：" + containerName);
-            }
-        } else {
-            container = spec.getContainers().get(0);
+                    .findFirst()
+                    .orElseThrow(() -> new CloudPlatformException(
+                            EnumResponseType.BEAN_VALIDATION_EXCEPTION, "容器不存在：" + containerName));
         }
+        return spec.getContainers().get(0);
+    }
+
+    /** 把 OTEL_SERVICE_NAME 写到指定容器（空 = 第一个）；同名 env 覆盖，不重复追加 */
+    private static void setServiceNameEnv(WorkloadDTO workload, String containerName, String value) {
+        ContainerDTO container = targetContainer(workload, containerName);
         List<EnvDTO> envs = container.getEnvs() == null
                 ? new ArrayList<>() : new ArrayList<>(container.getEnvs());
         EnvDTO target = envs.stream()
@@ -376,6 +412,76 @@ public class WorkloadService {
         target.setValue(value);
         target.setValueFrom(null);
         container.setEnvs(envs);
+    }
+
+    /** 文件日志的平台卷（emptyDir）；同名卷不是 emptyDir → 拒绝，避免覆盖用户卷 */
+    private static void ensureLogVolume(PodTemplateDTO podTemplate) {
+        PodSpecDTO spec = podTemplate.getSpec();
+        if (spec == null) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "工作负载没有 Pod 规格，无法接入文件日志");
+        }
+        List<VolumeDTO> volumes = spec.getVolumes() == null
+                ? new ArrayList<>() : new ArrayList<>(spec.getVolumes());
+        VolumeDTO hit = volumes.stream()
+                .filter(v -> OTEL_LOG_VOLUME.equals(v.getName()))
+                .findFirst().orElse(null);
+        if (hit != null && !"emptyDir".equalsIgnoreCase(hit.getType())) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "工作负载已有同名卷 " + OTEL_LOG_VOLUME + "（不是 emptyDir），无法接入文件日志");
+        }
+        if (hit == null) {
+            VolumeDTO volume = new VolumeDTO();
+            volume.setName(OTEL_LOG_VOLUME);
+            volume.setType("emptyDir");
+            volume.setEmptyDir(new EmptyDirVolumeDTO());
+            volumes.add(volume);
+        }
+        spec.setVolumes(volumes);
+    }
+
+    private static void ensureLogMount(ContainerDTO container, String directory) {
+        List<VolumeMountDTO> mounts = container.getVolumeMounts() == null
+                ? new ArrayList<>() : new ArrayList<>(container.getVolumeMounts());
+        VolumeMountDTO hit = mounts.stream()
+                .filter(m -> OTEL_LOG_VOLUME.equals(m.getName()))
+                .findFirst().orElse(null);
+        if (hit == null) {
+            hit = new VolumeMountDTO();
+            hit.setName(OTEL_LOG_VOLUME);
+            mounts.add(hit);
+        }
+        hit.setMountPath(directory);
+        hit.setReadOnly(false);
+        container.setVolumeMounts(mounts);
+    }
+
+    /** 切回应用日志/关闭：移除平台卷与所有容器上的同名挂载（用户同名卷在 ensure 时会拒绝，不会走到这里） */
+    private static void removeLogVolumeAndMounts(PodTemplateDTO podTemplate) {
+        PodSpecDTO spec = podTemplate.getSpec();
+        if (spec == null) {
+            return;
+        }
+        if (spec.getVolumes() != null) {
+            List<VolumeDTO> volumes = spec.getVolumes().stream()
+                    .filter(v -> !OTEL_LOG_VOLUME.equals(v.getName())).toList();
+            spec.setVolumes(volumes.isEmpty() ? null : volumes);
+        }
+        List<ContainerDTO> all = new ArrayList<>();
+        if (spec.getContainers() != null) {
+            all.addAll(spec.getContainers());
+        }
+        if (spec.getInitContainers() != null) {
+            all.addAll(spec.getInitContainers());
+        }
+        for (ContainerDTO c : all) {
+            if (c.getVolumeMounts() == null) {
+                continue;
+            }
+            List<VolumeMountDTO> mounts = c.getVolumeMounts().stream()
+                    .filter(m -> !OTEL_LOG_VOLUME.equals(m.getName())).toList();
+            c.setVolumeMounts(mounts.isEmpty() ? null : mounts);
+        }
     }
 
     /** null=不动；空串=移除；有值=覆写（去空格） */

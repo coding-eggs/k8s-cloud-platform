@@ -20,6 +20,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -95,7 +96,72 @@ class WorkloadServiceObservabilityTest {
         assertThat(envOf(updated, "EXISTING")).isEqualTo("v");
     }
 
+    @Test
+    void fileLogsAddTheSidecarAnnotationAndVolume() {
+        WorkloadDTO updated = apply(workload(), fileLogReq("/var/log/nginx", true));
+
+        assertThat(updated.getPodTemplate().getAnnotations())
+                .containsEntry("sidecar.opentelemetry.io/inject", "monitor/platform-otel-sidecar");
+        assertThat(updated.getPodTemplate().getSpec().getVolumes())
+                .anySatisfy(v -> assertThat(v.getName()).isEqualTo("platform-otel-logs"));
+        assertThat(updated.getPodTemplate().getSpec().getContainers().get(0).getVolumeMounts())
+                .anySatisfy(m -> {
+                    assertThat(m.getName()).isEqualTo("platform-otel-logs");
+                    assertThat(m.getMountPath()).isEqualTo("/var/log/nginx");
+                });
+        // 文件日志不带应用侧 Instrumentation（没有 tracing 时）
+        assertThat(updated.getPodTemplate().getAnnotations())
+                .doesNotContainKey(INJECT_JAVA)
+                .doesNotContainKey(INJECT_PYTHON);
+    }
+
+    @Test
+    void fileLogsRequireConfirmationAndAnAbsoluteDirectory() {
+        assertThatThrownBy(() -> svc.observability(fileLogReq("/var/log/nginx", false)))
+                .hasMessageContaining("确认");
+        assertThatThrownBy(() -> svc.observability(fileLogReq("relative/logs", true)))
+                .hasMessageContaining("绝对路径");
+    }
+
+    @Test
+    void switchingBackToAppLogsRemovesTheSidecarBits() {
+        WorkloadDTO existing = workload();
+        apply(existing, fileLogReq("/var/log/nginx", true));
+        clearInvocations(k8s);
+
+        WorkloadDTO updated = apply(existing, request("java", false, true, null));
+
+        assertThat(updated.getPodTemplate().getAnnotations())
+                .doesNotContainKey("sidecar.opentelemetry.io/inject");
+        assertThat(updated.getPodTemplate().getSpec().getVolumes() == null
+                || updated.getPodTemplate().getSpec().getVolumes().isEmpty()).isTrue();
+        assertThat(updated.getPodTemplate().getSpec().getContainers().get(0).getVolumeMounts() == null
+                || updated.getPodTemplate().getSpec().getContainers().get(0).getVolumeMounts().isEmpty())
+                .isTrue();
+    }
+
+    @Test
+    void aNonEmptyDirVolumeWithTheSameNameIsRejected() {
+        WorkloadDTO existing = workload();
+        var volume = new com.coding.common.models.k8s.dto.VolumeDTO();
+        volume.setName("platform-otel-logs");
+        volume.setType("configMap");
+        existing.getPodTemplate().getSpec().setVolumes(new ArrayList<>(List.of(volume)));
+        when(k8s.get(any(WorkloadDTO.class))).thenReturn(existing);
+
+        assertThatThrownBy(() -> svc.observability(fileLogReq("/var/log/nginx", true)))
+                .hasMessageContaining("同名卷");
+    }
+
     // ==================== 夹具 ====================
+
+    private static WorkloadObservabilityRequest fileLogReq(String directory, boolean confirm) {
+        WorkloadObservabilityRequest r = request("java", false, true, null);
+        r.setLogMode("file");
+        r.setLogDirectory(directory);
+        r.setConfirmFileLogs(confirm);
+        return r;
+    }
 
     private WorkloadDTO apply(WorkloadDTO existing, WorkloadObservabilityRequest request) {
         when(k8s.get(any(WorkloadDTO.class))).thenReturn(existing);

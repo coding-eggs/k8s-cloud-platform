@@ -41,6 +41,18 @@ public class WorkloadObservabilityRequest {
     @Schema(description = "是否开启应用日志（OTel logs → ES）")
     private boolean logs;
 
+    /** app = Java/Python 日志框架（默认）；file = sidecar 读日志文件（Nginx 等） */
+    @Schema(description = "日志采集方式：app / file")
+    private String logMode;
+
+    /** 文件日志：应用容器把日志写入的目录（挂载到 sidecar 的 /var/log/app） */
+    @Schema(description = "文件日志的容器内日志目录")
+    private String logDirectory;
+
+    /** 文件日志：用户确认应用确实把日志写入该目录（sidecar 读不到 stdout） */
+    @Schema(description = "确认应用写文件（不勾选不允许提交文件日志）")
+    private boolean confirmFileLogs;
+
     @Schema(description = "OTEL_SERVICE_NAME；空 = 工作负载名")
     private String serviceName;
 
