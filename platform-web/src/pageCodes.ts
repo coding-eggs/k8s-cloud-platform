@@ -115,5 +115,7 @@ export const pageCodes = {
     tcpRoute: { list: 'tenant:page:tcproute.list', edit: 'tenant:page:tcproute.edit' },
     tlsRoute: { list: 'tenant:page:tlsroute.list', edit: 'tenant:page:tlsroute.edit' },
     udpRoute: { list: 'tenant:page:udproute.list', edit: 'tenant:page:udproute.edit' },
+    /** 平台自研链路追踪（数据源 = 中心 Tempo；仅 admin） */
+    trace: 'platform:page:mesh.trace',
   },
 } as const

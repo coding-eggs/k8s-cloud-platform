@@ -19,6 +19,8 @@ import type {
   K8sComponentStatus,
   K8sOtelInstall,
   K8sThanosInstall,
+  TraceDetail,
+  TraceSummary,
   K8sCalicoInstall,
   K8sNamespaceStatEntry,
   K8sTenantOverview,
@@ -559,6 +561,19 @@ export const meshApi = {
    *  ⚠️ meshMetricsAvailable=false 表示这个集群没在采集网格指标，不是"没有流量"。 */
   topology: (clusterId: string, namespace?: string, windowSeconds?: number) =>
     http.post<never, MeshTopology>('/mesh/topology', { clusterId, namespace, windowSeconds }),
+}
+
+/** 链路追踪 /traces（平台自研视图；数据源 = 管理集群的 Tempo，仅平台管理员） */
+export const traceApi = {
+  search: (body: {
+    clusterName?: string
+    serviceName?: string
+    start?: number
+    end?: number
+    limit?: number
+  }) => http.post<never, TraceSummary[]>('/traces/search', body),
+  get: (traceId: string) =>
+    http.get<never, TraceDetail>(`/traces/${encodeURIComponent(traceId)}`),
 }
 
 /** Gateway /gateways（CRD，集群未装 Gateway API 时透传 404；租户域） */

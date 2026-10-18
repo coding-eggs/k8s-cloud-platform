@@ -297,7 +297,8 @@ async function handleLogout(): Promise<void> {
         <!-- 服务网格（Gateway API）。跨两上下文：GatewayClass = 集群级平台管理（storageClass 先例），
              Gateway / HTTPRoute = 租户资源面（命名空间来自顶栏级联，同 ServiceMonitor）。 -->
         <div v-if="can(pageCodes.mesh.gatewayClass.list) || can(pageCodes.mesh.gateway.list) || can(pageCodes.mesh.httpRoute.list)
-          || can(pageCodes.mesh.grpcRoute.list) || can(pageCodes.mesh.tcpRoute.list) || can(pageCodes.mesh.tlsRoute.list) || can(pageCodes.mesh.udpRoute.list)" class="menu-group">服务网格</div>
+          || can(pageCodes.mesh.grpcRoute.list) || can(pageCodes.mesh.tcpRoute.list) || can(pageCodes.mesh.tlsRoute.list) || can(pageCodes.mesh.udpRoute.list)
+          || can(pageCodes.mesh.trace)" class="menu-group">服务网格</div>
         <el-menu-item v-if="can(pageCodes.mesh.gatewayClass.list)" index="/mesh/gatewayclasses">
           <el-icon><Guide /></el-icon>
           <template #title>GatewayClass</template>
@@ -310,6 +311,10 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.mesh.gateway.list)" index="/mesh/topology">
           <el-icon><DataLine /></el-icon>
           <template #title>网格拓扑</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.mesh.trace)" index="/mesh/traces">
+          <el-icon><Timer /></el-icon>
+          <template #title>链路追踪</template>
         </el-menu-item>
         <!-- 路由策略（Route 五合一）：5 种 route 一个页面。requiresPerm/菜单同源：5 个 list 码任一 -->
         <el-menu-item

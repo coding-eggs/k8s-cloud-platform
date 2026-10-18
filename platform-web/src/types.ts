@@ -1013,6 +1013,35 @@ export interface K8sOtelInstall {
   es?: K8sEsConfig
 }
 
+// ---- 链路追踪（批次三，平台自研视图） ----
+
+export interface TraceSummary {
+  traceId: string
+  rootService?: string | null
+  rootName?: string | null
+  startTimeUnixNano?: string | null
+  durationMs?: number | null
+}
+
+export interface TraceSpan {
+  spanId: string
+  parentSpanId?: string | null
+  name: string
+  serviceName?: string | null
+  clusterName?: string | null
+  namespace?: string | null
+  startTimeUnixNano?: string | null
+  endTimeUnixNano?: string | null
+  durationMs?: number | null
+  statusCode?: string | null
+  attributes?: Record<string, string> | null
+}
+
+export interface TraceDetail {
+  traceId: string
+  spans: TraceSpan[]
+}
+
 /** 组件的一个可编辑配置项；key 是路径形式，apply 时原样回传 */
 export interface K8sEditableField {
   key: string

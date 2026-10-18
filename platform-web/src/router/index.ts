@@ -123,6 +123,7 @@ const router = createRouter({
         { path: 'mesh/gatewayclasses', name: 'gatewayclasses', component: () => import('@/views/mesh/GatewayClassView.vue'), meta: { title: 'GatewayClass', group: '服务网格', requiresPerm: [pageCodes.mesh.gatewayClass.list] } },
         { path: 'mesh/gatewayclasses/editor', name: 'gatewayclass-editor', component: () => import('@/views/mesh/GatewayClassEditorView.vue'), meta: { title: 'GatewayClass 编辑', group: '服务网格', requiresPerm: [pageCodes.mesh.gatewayClass.edit] } },
         { path: 'mesh/topology', name: 'mesh-topology', component: () => import('@/views/mesh/MeshTopologyView.vue'), meta: { title: '网格拓扑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.gateway.list] } },
+        { path: 'mesh/traces', name: 'mesh-traces', component: () => import('@/views/mesh/TraceView.vue'), meta: { title: '链路追踪', group: '服务网格', requiresPerm: [pageCodes.mesh.trace] } },
         { path: 'resources/gateways', name: 'gateways', component: () => import('@/views/resource/GatewayView.vue'), meta: { title: 'Gateway', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.gateway.list] } },
         { path: 'resources/gateways/editor', name: 'gateway-editor', component: () => import('@/views/resource/GatewayEditorView.vue'), meta: { title: 'Gateway 编辑', group: '服务网格', context: 'full', requiresPerm: [pageCodes.mesh.gateway.edit] } },
         // 路由策略（Route 五合一）：一个页面管 5 种 route；requiresPerm 传 5 个码 = 任一命中即可进
