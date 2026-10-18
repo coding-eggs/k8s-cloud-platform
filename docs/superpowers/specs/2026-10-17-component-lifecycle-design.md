@@ -312,10 +312,11 @@ k8s-server 侧：`POST /components/apply`，`AccessBoundary.PLATFORM`（平台�
 |---|---|---|
 | `TektonConfig.spec.profile` | ⚙️（表单） | **安装表单里选**：`lite` 只有 Pipeline；`basic` 加 Trigger/Result/Chain；`all` 再加 Dashboard（K8s）。默认 `all`，值通过占位符 `${tekton.profile}` 落进 TektonConfig，存 `__platform.tektonProfile` |
 | `installCRDs=true` | 🔒 | chart 的 CRD 在 `templates/kubernetes-crds.yaml`（由该值控制，**默认 false**）；不打开 TektonConfig 根本没有 CRD，装出报 "ensure CRDs are installed first" |
+| `fullnameOverride=tekton-operator` | 🔒 | operator 自己注册的 webhook 配置**硬编码** service `tekton-operator-webhook`（官方默认 release 名）；release 名带 `platform-` 前缀时资源名对不上，TektonConfig 会被 webhook 拒（service not found） |
 | **同一个 release 顺序跑两遍** | 🔒 | 第一遍只装 CRD + operator（不含 extraObjects），第二遍再下发 TektonConfig。Helm 在 **Build 阶段**就要把整份 manifest 映射成对象 —— CRD 与 CR 在同一份 manifest 里时，CRD 还没进集群，CR 映射必然失败（2026-10-18 实际踩到） |
 | `operator.autoInstallComponents=false` | 🔒 | TektonConfig 由平台通过 chart 的 `extraObjects` 下发；不关自动安装会两边抢同一个 `config` |
 | `TektonConfig.spec.pipeline.coschedule=workspaces` | 🔒 | 否则一个 TaskRun 挂不了两块 PVC workspace ⇒ **构建缓存不启用**（1.15.x 合法值；实测以 workspaces 为准） |
-| `TektonConfig.spec.pipeline.default-container-resource-requirements` | 🔒 | 命名空间配额下 init 容器需要默认资源 |
+| ~~`TektonConfig.spec.pipeline.default-container-resource-requirements`~~ | — | **tekton-operator 0.81.2 的 TektonConfig CRD 没有这个字段**，SSA 严格校验直接拒（2026-10-18 实装踩到）；配额命名空间下 init 容器的默认资源问题待 operator 升版解决 |
 | 命名空间固定：release 在 `tekton-operator`，组件落在 `tekton-pipelines` | 🔒 | 探测判据是后者 |
 
 可编辑：无。**功能级验收**：跑一条最小 PipelineRun（平台已有该能力），确认成功。

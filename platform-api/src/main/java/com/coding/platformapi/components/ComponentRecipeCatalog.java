@@ -187,8 +187,9 @@ public class ComponentRecipeCatalog {
      *   <li>{@code coschedule: workspaces} —— 允许一个 TaskRun 挂多块 PVC workspace（构建缓存）。
      *       取值以 2026-10-17 集群实测的 TektonConfig 为准（1.15.x 的合法值是 workspaces /
      *       pipelineruns / isolate-pipelinerun，默认就是 workspaces）</li>
-     *   <li>{@code default-container-resource-requirements} —— 命名空间配额下 init 容器需要默认资源
-     *       （平台侧设不到 init 容器）</li>
+     *   <li>⚠️ <b>不写 {@code default-container-resource-requirements}</b>：tekton-operator 0.81.2 的
+     *       TektonConfig CRD 里没有这个字段，SSA 严格校验会直接拒（2026-10-18 实装踩到）。
+     *       配额命名空间下 init 容器的默认资源问题只能等 operator 升版或另行处理。</li>
      *   <li>{@code profile: ${tekton.profile}} —— **安装表单里选**（lite / basic / all，默认 all）；
      *       占位符不能解析为空，否则装出的 Tekton 缺组件而 helm 显示成功</li>
      *   <li>{@code targetNamespace: tekton-pipelines} —— 探测判据就在这个命名空间</li>
@@ -201,12 +202,7 @@ public class ComponentRecipeCatalog {
             "spec", Map.of(
                     "profile", "${tekton.profile}",
                     "targetNamespace", "tekton-pipelines",
-                    "pipeline", Map.of(
-                            "coschedule", "workspaces",
-                            "default-container-resource-requirements", Map.of(
-                                    "containers", Map.of(
-                                            "requests", Map.of("cpu", "100m", "memory", "128Mi"),
-                                            "limits", Map.of("cpu", "1", "memory", "1Gi"))))));
+                    "pipeline", Map.of("coschedule", "workspaces")));
 
     /**
      * Tekton 是一个组件：官方 **operator chart** + TektonConfig。
@@ -225,11 +221,16 @@ public class ComponentRecipeCatalog {
      */
     private static final Map<String, Object> TEKTON_CRD_VALUES = Map.of(
             "installCRDs", true,
+            // operator 自己注册的 webhook 配置**硬编码** service `tekton-operator-webhook`
+            // （官方默认 release 名）；我们的 release 带 platform- 前缀，不覆盖的话资源名对不上，
+            // TektonConfig 会被 webhook 拒（service not found）。2026-10-18 实装踩到。
+            "fullnameOverride", "tekton-operator",
             // TektonConfig 由平台下发：关掉 operator 的自动安装，否则两边抢同一个 config
             "operator", Map.of("autoInstallComponents", false));
 
     private static final Map<String, Object> TEKTON_FULL_VALUES = Map.of(
             "installCRDs", true,
+            "fullnameOverride", "tekton-operator",
             "operator", Map.of("autoInstallComponents", false),
             "extraObjects", List.of(TEKTON_CONFIG));
 

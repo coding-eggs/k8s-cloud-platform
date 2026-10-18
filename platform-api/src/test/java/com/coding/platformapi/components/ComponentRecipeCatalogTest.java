@@ -170,7 +170,10 @@ class ComponentRecipeCatalogTest {
         // 同一个 release 两遍：第一遍 CRD+operator，第二遍再下发 TektonConfig（见 recipe 注释）
         var releases = catalog.recipeOf("tekton", "BUSINESS").releases();
         assertThat(releases).hasSize(2)
-                .allSatisfy(r -> assertThat(r.contractValues()).containsEntry("installCRDs", true));
+                .allSatisfy(r -> assertThat(r.contractValues())
+                        .containsEntry("installCRDs", true)
+                        // operator 注册的 webhook 配置硬编码 `tekton-operator-webhook`，资源名必须对齐
+                        .containsEntry("fullnameOverride", "tekton-operator"));
         assertThat(releases.get(0).contractValues()).doesNotContainKey("extraObjects");
         assertThat(releases.get(1).contractValues()).containsKey("extraObjects");
 
@@ -182,7 +185,9 @@ class ComponentRecipeCatalogTest {
         Map<String, Object> spec = (Map<String, Object>) extra.get(0).get("spec");
         Map<String, Object> pipeline = (Map<String, Object>) spec.get("pipeline");
         assertThat(pipeline).containsEntry("coschedule", "workspaces");
-        assertThat(pipeline).containsKey("default-container-resource-requirements");
+        // tekton-operator 0.81.2 的 TektonConfig CRD **没有** default-container-resource-requirements 字段
+        // （SSA 严格校验会直接拒）。配额相关的默认资源只能等 operator 升版或另行处理
+        assertThat(pipeline).doesNotContainKey("default-container-resource-requirements");
         // profile 由安装表单选（占位符），默认 all
         assertThat(spec).containsEntry("profile", "${tekton.profile}");
         assertThat(catalog.recipeOf("tekton", "BUSINESS").tektonProfile()).isTrue();
