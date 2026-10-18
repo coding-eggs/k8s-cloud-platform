@@ -17,6 +17,7 @@ import type {
   K8sComponentFlag,
   K8sComponentOperation,
   K8sComponentStatus,
+  K8sOtelInstall,
   K8sThanosInstall,
   K8sCalicoInstall,
   K8sNamespaceStatEntry,
@@ -139,6 +140,8 @@ export const clusterApi = {
     calicoInstall?: K8sCalicoInstall
     /** Tekton profile（仅 tektonProfile 的组件：lite / basic / all） */
     tektonProfile?: string
+    /** OTel 采集栈参数（仅 otel-operator 组件） */
+    otel?: K8sOtelInstall
   }) => http.post<never, number>('/cluster/components/apply', payload),
   /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
   componentOperation: (payload: {

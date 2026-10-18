@@ -17,7 +17,7 @@ import { ElMessage } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type {
   K8sCalicoInstall, K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
-  K8sThanosInstall, SecretRefOption,
+  K8sEsConfig, K8sOtelInstall, K8sTempoStorage, K8sThanosInstall, SecretRefOption,
 } from '@/types'
 
 const props = defineProps<{
@@ -51,6 +51,8 @@ const emit = defineEmits<{
     calicoInstall?: K8sCalicoInstall
     /** Tekton profile（仅 tektonProfile 的组件：lite / basic / all） */
     tektonProfile?: string
+    /** OTel 采集栈参数（仅 otelInstrumentation 的组件） */
+    otel?: K8sOtelInstall
   }): void
 }>()
 
@@ -150,6 +152,18 @@ interface ApplyDialog {
   showTektonProfile: boolean
   tektonProfile: string
   initialTektonProfile: string
+  /** 该组件是否是 OTel 采集栈（Tempo / 采样 / MinIO / ES 表单） */
+  showOtel: boolean
+  /** 是否显示 Tempo 的 MinIO 存储区块（管理集群） */
+  showTempoInstall: boolean
+  otel: OtelForm
+  initialOtel: string
+}
+
+/** OTel 表单里两个嵌套对象始终存在（后端可以为空，但表单控件需要可绑定） */
+type OtelForm = Omit<K8sOtelInstall, 'tempoStorage' | 'es'> & {
+  tempoStorage: K8sTempoStorage
+  es: K8sEsConfig
 }
 
 /** Calico 支持的封装方式（Installation CR 的取值） */
@@ -166,6 +180,26 @@ const EMPTY_THANOS: K8sThanosInstall = {
   namespace: 'monitor', secretName: '', endpoint: '', bucket: '', insecureSkipVerify: false,
 }
 
+/** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
+function emptyOtel(): OtelForm {
+  return {
+    tempoEndpoint: '',
+    samplingPercentage: 10,
+    gatewayReplicas: 1,
+    logsEnabled: false,
+    tempoStorage: {
+      endpoint: '', bucket: 'thanos', prefix: 'tempo',
+      credentialSecret: { namespace: 'monitor', name: '' },
+      insecureSkipVerify: true,
+    },
+    es: {
+      endpoint: 'https://es-es-http.default.svc:9200', username: 'elastic',
+      credentialSecret: { namespace: 'default', name: 'es-es-elastic-user' },
+      passwordKey: 'elastic', insecureSkipVerify: true, logsIndex: 'otel-logs',
+    },
+  }
+}
+
 const applyDialog = ref<ApplyDialog>({
   visible: false, code: '', name: '', action: 'INSTALL',
   version: '', versions: [], fields: [], values: {}, jsonText: {}, initial: {},
@@ -177,8 +211,8 @@ const applyDialog = ref<ApplyDialog>({
   showCalico: false, calico: { podCidr: '', encapsulation: 'IPIP' },
   initialCalico: '',
   showTektonProfile: false, tektonProfile: 'all', initialTektonProfile: 'all',
+  showOtel: false, showTempoInstall: false, otel: emptyOtel(), initialOtel: JSON.stringify(emptyOtel()),
 })
-
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
 }
@@ -227,6 +261,17 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   const tektonProfile = editing
     ? (row.tektonProfileCurrent ?? row.defaultTektonProfile ?? 'all')
     : (row.defaultTektonProfile ?? 'all')
+  // OTel：编辑时回填上次成功操作的值；安装时用默认值预填（地址/桶/索引都可改）
+  const baseOtel = emptyOtel()
+  const otelCurrent = editing ? row.otelInstallCurrent : null
+  const otel: OtelForm = {
+    tempoEndpoint: ((editing ? row.tempoEndpoint ?? row.defaultTempoEndpoint : row.defaultTempoEndpoint) ?? ''),
+    samplingPercentage: otelCurrent?.samplingPercentage ?? baseOtel.samplingPercentage,
+    gatewayReplicas: otelCurrent?.gatewayReplicas ?? baseOtel.gatewayReplicas,
+    logsEnabled: otelCurrent?.logsEnabled ?? baseOtel.logsEnabled,
+    tempoStorage: { ...baseOtel.tempoStorage, ...(otelCurrent?.tempoStorage ?? {}) },
+    es: { ...baseOtel.es, ...(otelCurrent?.es ?? {}) },
+  }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, fields, values, jsonText, initial,
@@ -247,6 +292,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     showTektonProfile: !!row.tektonProfile,
     tektonProfile,
     initialTektonProfile: tektonProfile,
+    showOtel: !!row.otelInstrumentation,
+    showTempoInstall: !!row.tempoInstall,
+    otel,
+    initialOtel: JSON.stringify(otel),
   }
   if (row.thanosInstall) {
     void loadThanosOptions()
@@ -333,6 +382,9 @@ function confirmApply(): void {
       ? { ...d.calico } : undefined,
     tektonProfile: d.showTektonProfile && d.tektonProfile !== d.initialTektonProfile
       ? d.tektonProfile : undefined,
+    // OTel 整组改动才提交，没改的沿用上次成功快照
+    otel: d.showOtel && JSON.stringify(d.otel) !== d.initialOtel
+      ? JSON.parse(JSON.stringify(d.otel)) as K8sOtelInstall : undefined,
   })
 }
 
@@ -599,6 +651,120 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+      <!-- OpenTelemetry 采集栈：Tempo 地址 + 采样/副本/日志 + MinIO/ES -->
+      <div v-if="applyDialog.showOtel" class="cc-form-row">
+        <span class="cc-form-label">Tempo 地址</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.otel.tempoEndpoint"
+                    placeholder="platform-tempo.monitor.svc:4317" spellcheck="false" />
+          <div class="cc-form-hint">
+            collector 的 traces 导出目标（gRPC host:port）。管理集群默认指向集群内 Tempo；
+            业务集群要填平台侧可达的地址
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showOtel" class="cc-form-row">
+        <span class="cc-form-label">采样率 / 副本数</span>
+        <div class="cc-form-control" style="display: flex; align-items: center; gap: 10px; padding-top: 2px">
+          <el-input-number v-model="applyDialog.otel.samplingPercentage" :min="1" :max="100" />
+          <span class="cc-form-hint">% 采样</span>
+          <el-input-number v-model="applyDialog.otel.gatewayReplicas" :min="1" :max="10" />
+          <span class="cc-form-hint">collector 副本</span>
+        </div>
+      </div>
+      <div v-if="applyDialog.showOtel" class="cc-form-row">
+        <span class="cc-form-label">应用日志</span>
+        <div class="cc-form-control">
+          <el-switch v-model="applyDialog.otel.logsEnabled" />
+          <div class="cc-form-hint">
+            打开后 collector 增加 logs 管道，Java（Logback/Log4j2）与 Python（logging）的日志写入 ES。
+            具体工作负载还要在「可观测」里单独打开日志开关
+          </div>
+        </div>
+      </div>
+      <template v-if="applyDialog.showOtel && applyDialog.showTempoInstall">
+        <div class="cc-form-row">
+          <span class="cc-form-label">Tempo 对象存储</span>
+          <div class="cc-form-control">
+            <div class="cc-form-hint">
+              Tempo 把 traces 写进 <b>MinIO</b>（S3 兼容）；凭证只在集群内转换成
+              <code>platform-tempo-objstore</code>，密钥不经过 platform-api、不进操作记录。
+            </div>
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">MinIO 地址</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.otel.tempoStorage.endpoint"
+                      placeholder="192.168.31.80:9002" spellcheck="false" />
+            <div class="cc-form-hint">S3 endpoint（host:port）</div>
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">Bucket / 前缀</span>
+          <div class="cc-form-control" style="display: flex; gap: 8px">
+            <el-input v-model="applyDialog.otel.tempoStorage.bucket" placeholder="thanos" spellcheck="false" />
+            <el-input v-model="applyDialog.otel.tempoStorage.prefix" placeholder="tempo" spellcheck="false" />
+          </div>
+          <div class="cc-form-hint" style="flex-basis: 100%">桶必须已存在；前缀用于与 Thanos 数据隔离</div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">凭证 Secret</span>
+          <div class="cc-form-control" style="display: flex; gap: 8px">
+            <el-input v-model="applyDialog.otel.tempoStorage.credentialSecret.namespace"
+                      placeholder="monitor" style="width: 200px" spellcheck="false" />
+            <el-input v-model="applyDialog.otel.tempoStorage.credentialSecret.name"
+                      placeholder="Secret 名称" spellcheck="false" />
+          </div>
+          <div class="cc-form-hint" style="flex-basis: 100%">
+            必须是 <b>monitor</b> 命名空间的 Secret，内容为 MinIO access key / secret key
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">跳过 TLS 校验</span>
+          <div class="cc-form-control">
+            <el-switch v-model="applyDialog.otel.tempoStorage.insecureSkipVerify" />
+            <div class="cc-form-hint">MinIO 用 HTTP / 自签证书时打开</div>
+          </div>
+        </div>
+      </template>
+      <template v-if="applyDialog.showOtel && applyDialog.otel.logsEnabled">
+        <div class="cc-form-row">
+          <span class="cc-form-label">ES 地址</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.otel.es.endpoint"
+                      placeholder="https://es-es-http.default.svc:9200" spellcheck="false" />
+            <div class="cc-form-hint">完整 URL，含 http:// 或 https://</div>
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">ES 用户名 / Secret</span>
+          <div class="cc-form-control" style="display: flex; gap: 8px; flex-wrap: wrap">
+            <el-input v-model="applyDialog.otel.es.username" placeholder="elastic" style="width: 160px"
+                      spellcheck="false" />
+            <el-input v-model="applyDialog.otel.es.credentialSecret.namespace"
+                      placeholder="default" style="width: 160px" spellcheck="false" />
+            <el-input v-model="applyDialog.otel.es.credentialSecret.name"
+                      placeholder="es-es-elastic-user" spellcheck="false" />
+            <el-input v-model="applyDialog.otel.es.passwordKey" placeholder="密码 key：elastic"
+                      style="width: 180px" spellcheck="false" />
+          </div>
+          <div class="cc-form-hint" style="flex-basis: 100%">
+            默认取 ECK 的 <code>es-es-elastic-user</code>；平台在集群内归一化成
+            <code>platform-otel-es</code>（username/password），密码不经过 platform-api
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">索引 / TLS</span>
+          <div class="cc-form-control" style="display: flex; align-items: center; gap: 10px">
+            <el-input v-model="applyDialog.otel.es.logsIndex" placeholder="otel-logs" style="width: 200px"
+                      spellcheck="false" />
+            <span class="cc-form-hint">索引前缀（实际写成 otel-logs-日期）</span>
+            <el-switch v-model="applyDialog.otel.es.insecureSkipVerify" />
+            <span class="cc-form-hint">跳过 HTTPS 校验</span>
+          </div>
+        </div>
+      </template>
       <!-- Thanos（管理集群）：Prometheus 的长期指标写进 MinIO，由 Thanos 查询 -->
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
         <span class="cc-form-label">Thanos 对象存储</span>
@@ -696,7 +862,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </div>
       <div v-if="!applyDialog.fields.length && !applyDialog.showWebhook && !applyDialog.showThanos
                 && !applyDialog.showThanosInstall && !applyDialog.showCalico
-                && !applyDialog.showTektonProfile && applyDialog.action === 'INSTALL'"
+                && !applyDialog.showTektonProfile && !applyDialog.showOtel
+                && applyDialog.action === 'INSTALL'"
            class="cc-upgrade-tip">
         该组件没有可编辑配置，将使用平台默认值安装。
       </div>

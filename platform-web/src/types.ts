@@ -945,6 +945,18 @@ export interface K8sComponentStatus {
   defaultTektonProfile?: string | null
   /** 当前生效的 Tekton profile（上次成功快照）—— 编辑表单预填 */
   tektonProfileCurrent?: string | null
+  /** 安装时是否要暴露「语言 / 追踪 / 日志」表单（OTel 采集栈） */
+  otelInstrumentation?: boolean
+  /** 安装时是否同时安装 Tempo（管理集群：要填 MinIO 地址/桶/凭证） */
+  tempoInstall?: boolean
+  /** 安装时是否要填 Tempo 地址（collector 的 traces 导出目标） */
+  tempoRemoteWrite?: boolean
+  /** Tempo 地址的平台默认值（表单预填） */
+  defaultTempoEndpoint?: string | null
+  /** 当前生效的 Tempo 地址（上次成功快照）—— 编辑表单预填 */
+  tempoEndpoint?: string | null
+  /** 当前生效的 OTel 安装参数（上次成功快照）—— 编辑表单预填 */
+  otelInstallCurrent?: K8sOtelInstall | null
 }
 
 /** Calico 网络参数（安装表单） */
@@ -960,6 +972,41 @@ export interface K8sThanosInstall {
   endpoint: string
   bucket: string
   insecureSkipVerify: boolean
+}
+
+/** Secret 引用（OTel 表单用） */
+export interface K8sSecretRef {
+  namespace: string
+  name: string
+}
+
+/** Tempo 的 MinIO 存储参数（管理集群） */
+export interface K8sTempoStorage {
+  endpoint: string
+  bucket: string
+  prefix: string
+  credentialSecret: K8sSecretRef
+  insecureSkipVerify: boolean
+}
+
+/** ES 日志参数（应用日志走 OTel logs → collector → ES） */
+export interface K8sEsConfig {
+  endpoint: string
+  username: string
+  credentialSecret: K8sSecretRef
+  passwordKey: string
+  insecureSkipVerify: boolean
+  logsIndex: string
+}
+
+/** OTel 采集栈的安装参数 */
+export interface K8sOtelInstall {
+  tempoEndpoint: string
+  samplingPercentage: number
+  gatewayReplicas: number
+  logsEnabled: boolean
+  tempoStorage?: K8sTempoStorage
+  es?: K8sEsConfig
 }
 
 /** 组件的一个可编辑配置项；key 是路径形式，apply 时原样回传 */
