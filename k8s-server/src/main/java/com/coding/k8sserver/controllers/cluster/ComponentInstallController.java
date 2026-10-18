@@ -6,6 +6,8 @@ import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
+import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
+import com.coding.common.models.k8s.dto.OtelTelemetryStateDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
@@ -19,6 +21,7 @@ import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.OtelEsSecretObjects;
 import com.coding.k8sserver.components.OtelServiceMonitorObjects;
+import com.coding.k8sserver.components.OtelTelemetryObjects;
 import com.coding.k8sserver.components.TempoObjstoreObjects;
 import com.coding.k8sserver.components.ThanosObjstoreObjects;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -28,9 +31,11 @@ import com.coding.k8sserver.helm.HelmResult;
 import com.coding.k8sserver.helm.HelmRunner;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -327,6 +332,77 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 .resource(OtelServiceMonitorObjects.build(request.getNamespace()))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>(true);
+    }
+
+    /**
+     * Istio Telemetry（批次二）：ingress gateway / waypoint 的链路追踪开关。
+     *
+     * <p>{@code enabled=false} 删除；CRD 或目标 Gateway 不存在返回 false（跳过），
+     * 不把"网格还没装好"当成失败。
+     */
+    @PostMapping("/telemetry")
+    @Operation(summary = "下发/删除 Istio Telemetry（ingress/waypoint tracing）",
+            description = "幂等 SSA；enabled=false 时删除；CRD 或 Gateway 不存在时返回 false")
+    public ResponseData<Boolean> otelTelemetry(@RequestBody OtelTelemetryRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getName())
+                || isBlank(request.getGatewayName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "Telemetry 参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        if (client.apiextensions().v1().customResourceDefinitions()
+                .withName("telemetries.telemetry.istio.io").get() == null) {
+            return new ResponseData<>(false);
+        }
+        if (!Boolean.TRUE.equals(request.getEnabled())) {
+            client.genericKubernetesResources(OtelTelemetryObjects.CRD)
+                    .inNamespace(request.getNamespace())
+                    .withName(request.getName())
+                    .delete();
+            return new ResponseData<>(true);
+        }
+        Integer sampling = request.getSamplingPercentage();
+        if (sampling == null || sampling < 1 || sampling > 100) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "采样率必须在 1..100 之间");
+        }
+        if (client.genericKubernetesResources(OtelTelemetryObjects.GATEWAY_CRD)
+                .inNamespace(request.getNamespace())
+                .withName(request.getGatewayName()).get() == null) {
+            return new ResponseData<>(false);
+        }
+        client.genericKubernetesResources(OtelTelemetryObjects.CRD)
+                .inNamespace(request.getNamespace())
+                .resource(OtelTelemetryObjects.build(request.getNamespace(), request.getName(),
+                        request.getGatewayName(), sampling))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>(true);
+    }
+
+    /** 查询某条 Telemetry 是否存在及其采样率（waypoint 编辑页回填）。 */
+    @GetMapping("/telemetry")
+    @Operation(summary = "查询 Istio Telemetry 状态")
+    public ResponseData<OtelTelemetryStateDTO> otelTelemetryState(@RequestParam String clusterId,
+                                                                  @RequestParam String namespace,
+                                                                  @RequestParam String name) {
+        accessResolver.assertClusterAccess(clusterId);
+        var client = clientFactory.getAdminClient(clusterId);
+        if (client.apiextensions().v1().customResourceDefinitions()
+                .withName("telemetries.telemetry.istio.io").get() == null) {
+            return new ResponseData<>(new OtelTelemetryStateDTO(false, null));
+        }
+        var resource = client.genericKubernetesResources(OtelTelemetryObjects.CRD)
+                .inNamespace(namespace).withName(name).get();
+        if (resource == null) {
+            return new ResponseData<>(new OtelTelemetryStateDTO(false, null));
+        }
+        Integer sampling = null;
+        Object spec = resource.getAdditionalProperties().get("spec");
+        if (spec instanceof Map<?, ?> m && m.get("tracing") instanceof List<?> list && !list.isEmpty()
+                && list.get(0) instanceof Map<?, ?> tracing
+                && tracing.get("randomSamplingPercentage") instanceof Number n) {
+            sampling = n.intValue();
+        }
+        return new ResponseData<>(new OtelTelemetryStateDTO(true, sampling));
     }
 
     private static boolean isBlank(String value) {

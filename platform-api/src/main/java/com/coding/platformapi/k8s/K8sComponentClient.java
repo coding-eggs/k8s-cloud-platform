@@ -4,6 +4,8 @@ import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
+import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
+import com.coding.common.models.k8s.dto.OtelTelemetryStateDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
@@ -16,6 +18,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * k8s-server 的组件探测专用端点 client（{@code POST /workload-probes}）。
@@ -134,5 +137,31 @@ public class K8sComponentClient {
         Boolean created = gateway.exchange(HttpMethod.POST, "/components/otel-servicemonitor", null, body,
                 gateway.responseType(Boolean.class));
         return Boolean.TRUE.equals(created);
+    }
+
+    /**
+     * Istio Telemetry（ingress/waypoint tracing）：enabled=false 时删除。
+     * 返回 false 表示集群没有 Telemetry CRD 或目标 Gateway（跳过）。
+     */
+    public boolean applyOtelTelemetry(String clusterId, String namespace, String name,
+                                      String gatewayName, int samplingPercentage, boolean enabled) {
+        OtelTelemetryRequestDTO body = new OtelTelemetryRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setName(name);
+        body.setGatewayName(gatewayName);
+        body.setSamplingPercentage(samplingPercentage);
+        body.setEnabled(enabled);
+        Boolean ok = gateway.exchange(HttpMethod.POST, "/components/telemetry", null, body,
+                gateway.responseType(Boolean.class));
+        return Boolean.TRUE.equals(ok);
+    }
+
+    /** 查询某条 Telemetry 是否存在及其采样率（waypoint 编辑页回填）。 */
+    public OtelTelemetryStateDTO otelTelemetryState(String clusterId, String namespace, String name) {
+        Map<String, String> params = Map.of(
+                "clusterId", clusterId, "namespace", namespace, "name", name);
+        return gateway.exchange(HttpMethod.GET, "/components/telemetry", params, null,
+                gateway.responseType(OtelTelemetryStateDTO.class));
     }
 }
