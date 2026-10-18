@@ -63,6 +63,9 @@ class HelmRunnerTest {
         // ⭐ Helm 4：不是 --atomic
         assertThat(argv).contains("--rollback-on-failure");
         assertThat(argv).doesNotContain("--atomic");
+        // ⭐ 接管手工 release 残留的 CRD：旧 manager 是 helm/Update，新装用 SSA 会报
+        //   "Apply failed with 3 conflicts: conflicts with \"helm\""，必须显式 force
+        assertThat(argv).contains("--force-conflicts");
         assertThat(argv).contains("platform.coding/managed=true");
         assertThat(argv).contains("--timeout");
     }

@@ -83,6 +83,13 @@ public class HelmRunner {
     /**
      * 安装或升级。幂等：同一 release 上重复调用就是 upgrade。
      * {@code --rollback-on-failure} 在 Helm 4 里同时把 wait 默认成 watcher。
+     *
+     * <p><b>{@code --force-conflicts}</b>：Helm 4 用 SSA 装 chart 里的 {@code crds/}，而
+     * 手工 {@code helm install} 过的集群会留下 manager=helm、operation=Update 的 CRD ——
+     * SSA 不认这个身份，报 "Apply failed with 3 conflicts: conflicts with \"helm\""。
+     * 这些 CRD 是"卸载 release 后残留"的孤儿（Helm 从不删除 CRD，见 S1.2）。
+     * 拿它们的所有权是安装 kube-prometheus-stack 这类带 CRD 的 chart 的前提；
+     * 没有 force 时任何接管场景都会永远装不上，而 CR 实例（其他 operator 的 monitor 等）不受影响。
      */
     public HelmResult apply(String kubeconfig, Path chartDir, Path valuesFile,
                             String release, String namespace, Map<String, String> labels) {
@@ -92,6 +99,7 @@ public class HelmRunner {
                 "--create-namespace",
                 "--values", valuesFile.toString(),
                 "--rollback-on-failure",
+                "--force-conflicts",
                 "--timeout", "10m"));
         if (!labels.isEmpty()) {
             List<String> kv = new ArrayList<>();
