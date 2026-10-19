@@ -172,8 +172,8 @@ public class ClusterComponentService {
                 results = client.probe(clusterId, targets);
             } catch (Exception e) {
                 // 探测整体失败（集群不可达 / 网关异常）：**不整体返回 UNKNOWN** ——
-                // 只有依赖工作负载判据的组件失去答案；纯 group 判据的组件（gateway-api）仍能从
-                // DB 快照得出答案（spec 决策 7：group 存在性的唯一判据就是 capability 列）。
+                // 只有依赖工作负载判据的组件失去答案；若将来有纯 group 判据的组件，
+                // 仍能从 DB 快照得出答案（spec 决策 7：group 存在性的唯一判据就是 capability 列）。
                 String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 log.warn("集群 {} 工作负载探测失败（工作负载判据按 UNKNOWN 处理）: {}", clusterId, msg);
                 results = new ArrayList<>();

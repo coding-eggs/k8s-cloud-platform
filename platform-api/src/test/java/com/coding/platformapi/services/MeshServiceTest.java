@@ -40,26 +40,24 @@ class MeshServiceTest {
     void meshStatus_derives_from_the_component_states() {
         stubCapability("{\"gateway.networking.k8s.io\":[\"v1\",\"v1beta1\"],\"networking.istio.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
-                status("istio", ClusterComponentService.HEALTHY),
-                status("gateway-api", ClusterComponentService.HEALTHY)));
+                status("istio", ClusterComponentService.HEALTHY)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
         assertThat(dto.isHasIstio()).isTrue();
+        // Gateway API 并入 istio 后不再有独立组件行：CRD 是否可用直接看 capability 的 group 版本
         assertThat(dto.isHasGatewayApi()).isTrue();
         // ambient 跟着 istio 走（同一个安装单元，2026-10-18 合并）
         assertThat(dto.isIstioAmbient()).isTrue();
-        // versions 仍来自 capability 列（组件清单不回答"哪些版本"）
         assertThat(dto.getGatewayApiVersions()).containsExactly("v1", "v1beta1");
     }
 
     @Test
-    void anUnknownIstioDoesNotLeakIntoGatewayApi() {
-        // Istio 探测不到 → 退回 capability 快照；不影响 Gateway API 自己的判定
+    void gatewayApiIsAnsweredByTheCapabilitySnapshotNotByIstioState() {
+        // istiod 探测不到（UNKNOWN）不影响 Gateway API 自己的判定：CRD 在就是可用
         stubCapability("{\"networking.istio.io\":[\"v1\"],\"gateway.networking.k8s.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
-                status("istio", ClusterComponentService.UNKNOWN),
-                status("gateway-api", ClusterComponentService.HEALTHY)));
+                status("istio", ClusterComponentService.UNKNOWN)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
@@ -69,12 +67,23 @@ class MeshServiceTest {
     }
 
     @Test
+    void noGatewayGroupMeansNoGatewayApi() {
+        stubCapability("{\"networking.istio.io\":[\"v1\"]}");
+        when(componentService.status("c1")).thenReturn(List.of(
+                status("istio", ClusterComponentService.HEALTHY)));
+
+        MeshStatusDTO dto = svc.meshStatus("c1");
+
+        assertThat(dto.isHasGatewayApi()).isFalse();
+        assertThat(dto.getGatewayApiVersions()).isEmpty();
+    }
+
+    @Test
     void allUnknownMeansNotProbedNotAbsent() {
         // 集群探测不到（或尚未探测）→ 全 false；与既有「未探测」的渲染一致，不抛
         stubCapability(null);
         when(componentService.status("c1")).thenReturn(List.of(
-                status("istio", ClusterComponentService.UNKNOWN),
-                status("gateway-api", ClusterComponentService.UNKNOWN)));
+                status("istio", ClusterComponentService.UNKNOWN)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
@@ -88,8 +97,7 @@ class MeshServiceTest {
     void aNotInstalledIstioIsNotAmbient() {
         stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
-                status("istio", ClusterComponentService.NOT_INSTALLED),
-                status("gateway-api", ClusterComponentService.HEALTHY)));
+                status("istio", ClusterComponentService.NOT_INSTALLED)));
 
         assertThat(svc.meshStatus("c1").isIstioAmbient()).isFalse();
     }
@@ -100,8 +108,7 @@ class MeshServiceTest {
         //    退回 DB 快照（capability 列非空即装过）
         stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"],\"networking.istio.io\":[\"v1\"]}");
         when(componentService.status("c1")).thenReturn(List.of(
-                status("istio", ClusterComponentService.UNKNOWN),
-                status("gateway-api", ClusterComponentService.UNKNOWN)));
+                status("istio", ClusterComponentService.UNKNOWN)));
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 
@@ -125,7 +132,7 @@ class MeshServiceTest {
     void aMissingComponentRowIsTreatedAsAbsent() {
         // 组件清单里没有这一条（理论上不会发生）→ 按不可用处理，别 NPE
         stubCapability("{\"gateway.networking.k8s.io\":[\"v1\"]}");
-        when(componentService.status("c1")).thenReturn(List.of(status("gateway-api", ClusterComponentService.HEALTHY)));
+        when(componentService.status("c1")).thenReturn(List.of());
 
         MeshStatusDTO dto = svc.meshStatus("c1");
 

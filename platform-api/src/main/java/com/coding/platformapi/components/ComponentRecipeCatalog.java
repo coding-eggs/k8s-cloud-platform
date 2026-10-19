@@ -141,20 +141,19 @@ public class ComponentRecipeCatalog {
                     "bucket", Map.of("enabled", false)),
             Map.of()));
 
-    // ==================== gateway-api ====================
-
-    /** 纯 CRD 组件：experimental 通道（TCP/TLS/UDP Route 只在 experimental 里）。 */
-    private static final List<ReleaseSpec> GATEWAY_API_RELEASES = List.of(new ReleaseSpec(
-            "platform-gateway-api", "kube-system", "gateway-api", "1.6.2",
-            Map.of(), Map.of()));
-
-    // ==================== istio ====================
+    // ==================== istio（含 Gateway API CRD） ====================
 
     /**
-     * 默认按 **ambient** 模式部署：base → istiod → cni（ambient）→ ztunnel → 对外入口 gateway。
-     * 五个 release 是一个安装单元，入口名固定 {@code external-gateway}（集群对外拓扑依赖它）。
+     * 默认按 **ambient** 模式部署：Gateway API CRD → base → istiod → cni（ambient）→ ztunnel → 对外入口 gateway。
+     * 六个 release 是一个安装单元，入口名固定 {@code external-gateway}（集群对外拓扑依赖它）。
+     *
+     * <p>Gateway API 是 Istio 组件的一部分（2026-10-19 合并）：只装 Istio 不装 Gateway API，
+     * 网关 / 路由页面不可用 —— 拆成两个组件只会让用户漏装。experimental 通道：
+     * TCP/TLS/UDP Route 只在 experimental 里。
      */
     private static final List<ReleaseSpec> ISTIO_RELEASES = List.of(
+            new ReleaseSpec("platform-gateway-api", "kube-system", "gateway-api", "1.6.2",
+                    Map.of(), Map.of()),
             new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.30.6", Map.of(), Map.of()),
             // meshID 全局一致：管理平台下的所有集群共用同一个网格 ID（装完再改是破坏性操作）
             // revision 有意不设：平台的升级不做按 revision 的灰度，设了反而要求命名空间打 istio.io/rev 标签
@@ -417,7 +416,6 @@ public class ComponentRecipeCatalog {
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, withThanos(
                             prometheusReleases(true, THANOS_RECEIVE_IN_CLUSTER)), List.of(), true, true, true, false,
                             THANOS_RECEIVE_IN_CLUSTER))),
-            Map.entry("gateway-api", profiles(GATEWAY_API_RELEASES, List.of())),
             Map.entry("istio", profiles(ISTIO_RELEASES, List.of())),
             // Tekton 是一个组件：operator chart + TektonConfig 同一个 release（与 calico 同形），
             // 不再单列 tekton-operator

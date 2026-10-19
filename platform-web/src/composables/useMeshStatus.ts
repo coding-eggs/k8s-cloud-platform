@@ -10,8 +10,9 @@ import type { MeshStatus } from '@/types'
  * 服务网格状态（B6，S1.2 收口）：模块横幅 + create 门禁的数据源。按权限降级。
  *
  * <h2>三层来源，各答不同的问题</h2>
- * - **有权读 /mesh/status**（平台管理员）→ 全量：三个布尔全部来自后端组件清单的派生
- *   （组件 {@code istio} / {@code gateway-api}，ambient 跟随 istio），同一次探测、同一份缓存。
+ * - **有权读 /mesh/status**（平台管理员）→ 后端统一投影：{@code hasIstio} / ambient 来自组件清单
+ *   （组件 {@code istio}；Gateway API 已并入同一安装单元），{@code hasGatewayApi} 与版本来自
+ *   capability 列 —— 同一次探测、同一份缓存。
  * - **只有 capability 读权**（租户）→ {@code hasGatewayApi} / {@code hasIstio} 仍从能力快照派生：
  *   它们问的是 **API group 在不在**，而 group 存在性的唯一判据按设计就是 {@code k8s_cluster.capability}
  *   列（S1.2 决策 7：组件清单里这一列读它、不另探）。**ambient 改读组件旗标**

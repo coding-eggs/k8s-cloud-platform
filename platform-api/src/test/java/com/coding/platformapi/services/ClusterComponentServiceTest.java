@@ -6,6 +6,7 @@ import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
+import com.coding.platformapi.components.ComponentDef;
 import com.coding.platformapi.components.ComponentProbe;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
@@ -84,9 +85,7 @@ class ClusterComponentServiceTest {
 
     @Test
     void aWholeProbeThatThrowsLeavesEveryProbedComponentUnknown() {
-        // spec §11：集群断开时页面照常打开。**只要有判据失败**就 UNKNOWN（保守，不猜）——
-        // gateway-api 也有 CRD 判据，CRD 读不到就是 UNKNOWN；它"装没装"由 MeshService 用
-        // capability 快照回退兜住（那边有专门用例）。
+        // spec §11：集群断开时页面照常打开。**只要有判据失败**就 UNKNOWN（保守，不猜）
         ClusterComponentService svc = svcThrowingWithGroups(new RuntimeException("k8s-server 不可达"),
                 Map.of("gateway.networking.k8s.io", List.of("v1")));
 
@@ -94,17 +93,16 @@ class ClusterComponentServiceTest {
 
         assertThat(find(all, "metrics-server").getState()).isEqualTo("UNKNOWN");
         assertThat(find(all, "istio").getState()).isEqualTo("UNKNOWN");
-        assertThat(find(all, "gateway-api").getState()).isEqualTo("UNKNOWN");
     }
 
     @Test
     void aCrdOnlyComponentIsHealthyWhenTheCrdIsFoundAndCarriesItsVersion() {
-        // ⭐ gateway-api 是纯 CRD：没有副本语义，找到即"已装"，版本来自 CRD 的 bundle-version 标签
-        ClusterComponentService svc = svcWithGroups(
+        // CRD 判据的通用覆盖（生产目录当前没有纯 CRD 组件，用测试目录钉住这条能力）
+        ClusterComponentService svc = svcWithCatalog(crdOnlyCatalog(),
                 List.of(probeCrd("gateways.gateway.networking.k8s.io", "v1.6.2")),
                 Map.of("gateway.networking.k8s.io", List.of("v1")));
 
-        ComponentStatusDTO s = find(svc.status("c1"), "gateway-api");
+        ComponentStatusDTO s = find(svc.status("c1"), "crd-demo");
 
         assertThat(s.getState()).isEqualTo("INSTALLED_HEALTHY");
         assertThat(s.getVersion()).isEqualTo("v1.6.2");
@@ -131,12 +129,12 @@ class ClusterComponentServiceTest {
 
     @Test
     void theCrdVersionLabelFromTheCatalogReachesTheAdapter() {
-        // catalog 里 gateway-api 指定读 gateway.networking.k8s.io/bundle-version —— 这个配置必须传到
+        // CRD 判据指定读 gateway.networking.k8s.io/bundle-version —— 这个配置必须传到
         // k8s-core，否则只能靠"任意 *bundle-version"兜底（显式配置形同虚设）
         K8sComponentClient client = mock(K8sComponentClient.class);
-        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        when(client.probe(anyString(), any())).thenReturn(List.of());
         ClusterComponentService svc = new ClusterComponentService(
-                new ClusterComponentCatalog(), capability(DEFAULT_GROUPS), client, cache(),
+                crdOnlyCatalog(), capability(DEFAULT_GROUPS), client, cache(),
                 profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
 
         svc.status("c1");
@@ -164,9 +162,11 @@ class ClusterComponentServiceTest {
     void aStaleApiGroupDoesNotMakeACrdOnlyComponentLookInstalled() {
         // 真实事故（2026-10-18 手动验证）：Helm 卸载不删 CRD，capability 快照也不会自己刷新 ——
         // group 还在**不能**当"已装"。有活判据时它是唯一权威，版本列空着才是诚实的。
-        ClusterComponentService svc = svcWithGroups(List.of(), Map.of("gateway.networking.k8s.io", List.of("v1")));
+        ClusterComponentService svc = svcWithCatalog(crdOnlyCatalog(),
+                List.of(probeCrdMissing("gateways.gateway.networking.k8s.io")),
+                Map.of("gateway.networking.k8s.io", List.of("v1")));
 
-        ComponentStatusDTO s = find(svc.status("c1"), "gateway-api");
+        ComponentStatusDTO s = find(svc.status("c1"), "crd-demo");
 
         assertThat(s.getState()).isEqualTo("NOT_INSTALLED");
         assertThat(s.getVersion()).isNull();
@@ -209,13 +209,18 @@ class ClusterComponentServiceTest {
     }
 
     @Test
-    void aFeatureIsAvailableOnlyWhenAllItsComponentsAreHealthy() {
-        // service-mesh 依赖 istio 与 gateway-api —— istio 在跑、gateway group 没有 → 整块不可用
+    void aFeatureIsAvailableOnlyWhenItsComponentIsHealthy() {
+        // service-mesh 现在只依赖 istio（Gateway API 已并入同一安装单元，2026-10-19）
         ClusterComponentService svc = svc(List.of(probe("istio-system", true, 1, 1, "1.30.3")));
 
         Map<String, ComponentFlagDTO> flags = svc.flags("c1");
-        assertThat(flags.get("service-mesh").available()).isFalse();
-        assertThat(flags.get("service-mesh").missing()).contains("Gateway API");
+        assertThat(flags.get("service-mesh").available()).isTrue();
+        assertThat(flags.get("routes").available()).isTrue();
+
+        // istio 没找到 → 整块不可用，并点名缺谁
+        Map<String, ComponentFlagDTO> missingFlags = svc(List.of()).flags("c1");
+        assertThat(missingFlags.get("service-mesh").available()).isFalse();
+        assertThat(missingFlags.get("service-mesh").missing()).contains("Istio");
     }
 
     @Test
@@ -467,6 +472,32 @@ class ClusterComponentServiceTest {
                 profileService(), new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
     }
 
+    /**
+     * 测试目录：只含一条纯 CRD 组件。
+     * 生产目录 2026-10-19 起没有纯 CRD 组件（gateway-api 并入 istio），但 CRD 判据的能力要保留覆盖。
+     */
+    private static ClusterComponentCatalog crdOnlyCatalog() {
+        return new ClusterComponentCatalog() {
+            @Override
+            public List<ComponentDef> all() {
+                return List.of(new ComponentDef("crd-demo", "CRD Demo", "gateway.networking.k8s.io",
+                        List.of(new ComponentProbe(null, "crd", null,
+                                "gateways.gateway.networking.k8s.io",
+                                "gateway.networking.k8s.io/bundle-version")),
+                        List.of("routes")));
+            }
+        };
+    }
+
+    private static ClusterComponentService svcWithCatalog(ClusterComponentCatalog catalog,
+                                                          List<WorkloadProbeResultDTO> results,
+                                                          Map<String, List<String>> groups) {
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(results);
+        return new ClusterComponentService(catalog, capability(groups), client, cache(), profileService(),
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
+    }
+
     /** 画像：测试固定 BUSINESS（metrics-server 的 recipe 两个画像相同，但版本列表要走画像取） */
     private static ClusterService profileService() {
         ClusterService s = mock(ClusterService.class);
@@ -546,6 +577,15 @@ class ClusterComponentServiceTest {
         r.setFound(true);
         r.setVersion(version);
         r.setDetail("已安装（CRD）");
+        return r;
+    }
+
+    private static WorkloadProbeResultDTO probeCrdMissing(String crdName) {
+        WorkloadProbeResultDTO r = new WorkloadProbeResultDTO();
+        r.setKind("crd");
+        r.setName(crdName);
+        r.setFound(false);
+        r.setDetail("没有找到 CRD " + crdName);
         return r;
     }
 

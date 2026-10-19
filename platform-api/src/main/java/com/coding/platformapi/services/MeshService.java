@@ -31,10 +31,12 @@ import java.util.List;
  * </ul>
  *
  * <h2>mesh-status 的来源（S1.2 收口后）</h2>
- * 三个布尔（{@code hasIstio} / {@code hasGatewayApi} / {@code istioAmbient}）全部从
- * {@link ClusterComponentService} 的组件清单派生（组件 {@code istio} / {@code gateway-api}，
- * <b>要求 {@code INSTALLED_HEALTHY}</b>）；{@code gatewayApiVersions} 仍来自
- * {@code k8s_cluster.capability} 列（组件清单不回答"哪些版本"）。
+ * 组件布尔 {@code hasIstio} / {@code istioAmbient} 从 {@link ClusterComponentService} 的组件清单派生
+ * （组件 {@code istio}，<b>要求 {@code INSTALLED_HEALTHY}</b>）；{@code hasGatewayApi} 与
+ * {@code gatewayApiVersions} 都来自 {@code k8s_cluster.capability} 列。
+ * <p>Gateway API 已并入 {@code istio} 组件（2026-10-19）：安装契约里包含 Gateway API CRD
+ * （release {@code platform-gateway-api}），但 Istio 的探测判据只认 istiod —— 多判据是 ANY-命中，
+ * CRD 还在而 istiod 没了时会被误判成「已安装」。是否可用由 capability 的 group 版本回答。
  * <p>{@code istioAmbient} 跟着 {@code istio} 一起判定：ambient 数据面（cni/ztunnel）与 istiod 在同一个
  * 安装单元里（2026-10-18 合并为单个组件，不再单列 {@code istio-ambient}）。手工按 sidecar 模式装的
  * Istio 会显示为 ambient —— 平台自己装的永远是 ambient，这是有意的简化。
@@ -132,8 +134,9 @@ public class MeshService {
                 capabilityService.versionsOf(clusterId, ClusterCapabilityService.GATEWAY_API_GROUP);
 
         MeshStatusDTO dto = new MeshStatusDTO();
-        dto.setHasGatewayApi(installed(components, "gateway-api")
-                || (unknown(components, "gateway-api") && !gatewayVersions.isEmpty()));
+        // Gateway API 已并入 istio 组件（2026-10-19），不再有独立的组件行可查；
+        // 直接看 API group 版本 —— 这就是 CRD 是否可用的唯一事实。
+        dto.setHasGatewayApi(!gatewayVersions.isEmpty());
         dto.setHasIstio(installed(components, "istio")
                 || (unknown(components, "istio") && capabilityService.hasIstio(clusterId)));
         dto.setGatewayApiVersions(gatewayVersions);

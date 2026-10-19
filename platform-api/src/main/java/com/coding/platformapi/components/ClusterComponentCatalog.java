@@ -38,22 +38,21 @@ public class ClusterComponentCatalog {
             new ComponentDef("prometheus-operator", "Prometheus Operator", "monitoring.coreos.com",
                     List.of(new ComponentProbe("monitor", "deployment", "prometheus-operator/prometheus-operator", null)),
                     List.of("metrics-charts", "servicemonitor")),
-            // 纯 CRD：没有工作负载，版本读 CRD 的 bundle-version 标签（真集群实测 v1.6.2）
-            new ComponentDef("gateway-api", "Gateway API", "gateway.networking.k8s.io",
-                    List.of(new ComponentProbe(null, "crd", null, "gateways.gateway.networking.k8s.io",
-                            "gateway.networking.k8s.io/bundle-version")),
-                    List.of("service-mesh", "routes")),
-            // Istio 是一个安装单元：base + istiod + cni + ztunnel + external-gateway 同一个 recipe。
+            // Istio 是一个安装单元：Gateway API CRD + base + istiod + cni + ztunnel + external-gateway
+            // 同一个 recipe（2026-10-19 把 gateway-api 组件合并进来 —— 装 Istio 不带 Gateway API
+            // 等于路由/网关页不可用，拆成两个组件只会让用户漏装一个）。
             // ambient 数据面（ztunnel/cni）随它一起装 —— 不再单列 istio-ambient（2026-10-18）。
             // 实测镜像是 registry.istio.io/release/pilot（含 `istio.io/release/pilot` 片段）；
             // app.kubernetes.io/version 标签只有部分安装方式才有，故 tag 是主来源
             // 两条候选同一 (ns,kind)：先匹配 registry.istio.io/release/pilot（本集群实测），
             // 再兜底 docker.io/istio/pilot（标准 istioctl/Helm 安装）。name 快路径吃 revision 安装
             // （部署名可能是 istiod-1-30，但镜像不变）。
+            // ⚠️ 不把 Gateway API 的 CRD 判据挂到这里：多判据是 ANY-命中，istiod 没了但 CRD 还在时
+            //    会把整个组件判成"已安装"。Gateway API 是否可用由 MeshService 读 capability 版本回答。
             new ComponentDef("istio", "Istio", "networking.istio.io",
                     List.of(new ComponentProbe("istio-system", "deployment", "istio.io/release/pilot", "istiod"),
                             new ComponentProbe("istio-system", "deployment", "istio/pilot", null)),
-                    List.of("service-mesh", "ambient-mesh")),
+                    List.of("service-mesh", "ambient-mesh", "routes")),
             new ComponentDef("tekton", "Tekton Pipelines", "tekton.dev",
                     List.of(new ComponentProbe("tekton-pipelines", "deployment", "tektoncd/pipeline/controller-",
                             "tekton-pipelines-controller")),

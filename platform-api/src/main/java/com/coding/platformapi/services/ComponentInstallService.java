@@ -854,6 +854,14 @@ public class ComponentInstallService {
                 } catch (Exception e) {
                     log.warn("组件 {} 安装成功但刷新探测失败（不影响操作结果）: {}", id, e.getMessage());
                 }
+                // 能力快照也要刷新：Gateway API / monitoring.coreos.com 等 group 的存在性影响
+                // 网格横幅与功能门控（hasGatewayApi 直接读 capability，不再有独立组件行）。
+                // 失败同样不能把已成功的安装覆盖成 FAILED。
+                try {
+                    clusterService.refreshCapabilityQuietly(clusterId);
+                } catch (Exception e) {
+                    log.warn("组件 {} 安装成功但刷新集群能力失败（不影响操作结果）: {}", id, e.getMessage());
+                }
             }
         } catch (Exception e) {
             log.warn("组件操作 {} 执行失败: {}", id, e.getMessage());

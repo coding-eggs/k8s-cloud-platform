@@ -17,9 +17,10 @@ class ClusterComponentCatalogTest {
     @Test
     void theCatalogIsExactlyTheAgreedOnes() {
         // tigera-operator / tekton-operator / istio-ambient 都不单独出现：它们随各自组件的
-        // 同一个安装单元部署（operator + CR、istiod + cni + ztunnel）
+        // 同一个安装单元部署（operator + CR、istiod + cni + ztunnel）。
+        // gateway-api 于 2026-10-19 并入 istio（同一个安装单元，避免漏装）。
         assertThat(catalog.all()).extracting(ComponentDef::code).containsExactly(
-                "metrics-server", "prometheus-operator", "gateway-api", "istio",
+                "metrics-server", "prometheus-operator", "istio",
                 "tekton", "calico", "cert-manager", "otel-operator");
     }
 
@@ -76,8 +77,11 @@ class ClusterComponentCatalogTest {
     void featureToComponentReverseLookupIsDerivedNotHandWritten() {
         // 依赖关系只写一遍（在组件上写"我支撑哪些功能"），反查是算出来的
         assertThat(catalog.componentsOf("ci")).extracting(ComponentDef::code).contains("tekton");
+        // Gateway API 已并入 istio：service-mesh / routes / ambient 都由它一个组件回答
         assertThat(catalog.componentsOf("service-mesh")).extracting(ComponentDef::code)
-                .contains("istio", "gateway-api");
+                .containsExactly("istio");
+        assertThat(catalog.componentsOf("routes")).extracting(ComponentDef::code)
+                .containsExactly("istio");
         assertThat(catalog.componentsOf("hpa-resource-metrics")).extracting(ComponentDef::code)
                 .containsExactly("metrics-server");
     }

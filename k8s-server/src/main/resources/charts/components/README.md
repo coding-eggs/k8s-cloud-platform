@@ -18,9 +18,11 @@ charts/components/<chart>/<version>/
 | `prometheus-operator` | [prometheus-operator/92.10.1](prometheus-operator/92.10.1/README.md) |
 | （Prometheus 组件的管理集群底座） | [thanos/0.47.2](thanos/0.47.2/README.md) |
 | `tekton` | [tekton-operator/0.81.2](tekton-operator/0.81.2/README.md) |
+| `istio`（**含 Gateway API**） | [istio-base/1.30.6](istio-base/1.30.6/README.md)（`gateway-api/1.6.2` 是它的第一个 release） |
 | `otel-operator` | [otel-operator/0.126.0](otel-operator/0.126.0/README.md)、[tempo/3.2.0](tempo/3.2.0/README.md) |
 
-> 其余组件（istio / calico / cert-manager / gateway-api 等）暂未单独成文；recipe 同样在
+> `gateway-api` 于 2026-10-19 并入 `istio` 组件（同一个安装单元），目录里不再有独立的 gateway-api 行。
+> 其余组件（calico / cert-manager 等）暂未单独成文；recipe 同样在
 > `ComponentRecipeCatalog`，可照本目录格式补。
 
 ---

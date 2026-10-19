@@ -251,6 +251,11 @@
 > `platform.k8s.probe-namespaces` 与 `platform.k8s.crd-probes`（都有默认值，不配也能跑）。
 > 无新外部依赖、无集群侧前提。
 > ⚠️ **本仓没有 Flyway**，`db/migration/*.sql` 一律手工重放。
+>
+> **2026-10-19 目录再收敛**：`gateway-api` 并入 `istio`（同一安装单元 —— 装 Istio 必带 Gateway API CRD，
+> 否则网关/路由页不可用）。当前组件目录 **7 条**，`service-mesh` / `ambient-mesh` / `routes` 都由 `istio` 回答；
+> `hasGatewayApi` 改由 capability 的 group 版本回答（Istio 组件探测只认 istiod）。
+> 存量集群升级 Istio 时 helm 会接管已有的 `platform-gateway-api` release。
 
 
 > **📌 2026-10-14 新增需求：平台能部署 / 升级 / 卸载集群组件**（用户提出；未实施、未出 spec）

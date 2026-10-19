@@ -147,10 +147,14 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
-    void istioShipsTheAmbientDataplaneByDefault() {
+    void istioShipsGatewayApiAndTheAmbientDataplaneByDefault() {
+        // Gateway API 于 2026-10-19 并入 istio：装 Istio 必带 CRD，且排在最前
         List<String> releases = catalog.recipeOf("istio", "BUSINESS").releases().stream()
                 .map(ReleaseSpec::releaseName).toList();
-        assertThat(releases).containsExactly("istio-base", "istiod", "istio-cni", "ztunnel", "external-gateway");
+        assertThat(releases).containsExactly("platform-gateway-api", "istio-base", "istiod",
+                "istio-cni", "ztunnel", "external-gateway");
+        assertThat(catalog.recipeOf("istio", "BUSINESS").releases().get(0).chartCode())
+                .isEqualTo("gateway-api");
 
         ReleaseSpec cni = catalog.recipeOf("istio", "BUSINESS").releases().stream()
                 .filter(r -> r.releaseName().equals("istio-cni")).findFirst().orElseThrow();
