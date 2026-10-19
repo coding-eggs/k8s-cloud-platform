@@ -47,7 +47,6 @@ const filters = reactive({
   range: null as [string, string] | null,
   status: '',
   severity: '',
-  namespace: '',
   alertname: '',
   showWatchdog: false,
 })
@@ -84,7 +83,8 @@ function buildQuery(extra?: Partial<AlertQuery>): AlertQuery {
     to: filters.range ? filters.range[1] : null,
     status: filters.status,
     severity: filters.severity,
-    namespace: filters.namespace,
+    // 命名空间取**导航栏**的当前选择（告警页不再单独给一个输入框 —— 两处不一致会让人以为看的是别的 ns）
+    namespace: state.namespace,
     alertname: filters.alertname,
     ...extra,
   })
@@ -204,7 +204,8 @@ onMounted(() => {
   void refresh()
 })
 watch(
-  [() => state.clusterId, ready],
+  // ⚠️ 必须连 namespace 一起监听：它是查询条件（取自导航栏），切了不刷新会让人看着旧 ns 的数据
+  [() => state.clusterId, () => state.namespace, ready],
   () => {
     if (ready.value) void refresh()
   },
@@ -212,7 +213,7 @@ watch(
 
 const clusterDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择集群'
-  return currentCluster.value?.clusterName ?? state.clusterId ?? ''
+  return `${currentCluster.value?.clusterName ?? state.clusterId ?? ''} / ${state.namespace ?? ''}`
 })
 </script>
 
@@ -246,7 +247,6 @@ const clusterDesc = computed(() => {
           <el-select v-model="filters.severity" placeholder="严重度" clearable style="width: 120px">
             <el-option v-for="o in SEVERITY_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
-          <el-input v-model="filters.namespace" placeholder="命名空间（精确）" clearable style="width: 180px" />
           <el-input v-model="filters.alertname" placeholder="告警名（模糊）" clearable style="width: 180px" />
           <el-button @click="refresh">查询</el-button>
         </div>
