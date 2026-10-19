@@ -232,6 +232,46 @@ class AlertDispatchServiceTest {
         verify(sender).send(any(), eq(List.of("admin@x.com")), any(), any());
     }
 
+    /**
+     * 租户管理员一个能发的邮箱都没有 → **兜底到平台管理员**（不能让告警静默丢掉）。
+     */
+    @Test
+    void recipients_fall_back_to_platform_admins() throws Exception {
+        tenantOwns("ns", "t1");
+        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(resolver.crNameOf(eq("c1"), any(), any())).thenReturn(null);
+        when(users.tenantAdminUserIds("t1")).thenReturn(List.of("admin1"));   // 没填邮箱
+        when(users.platformAdminUserIds()).thenReturn(List.of("pa1"));
+        when(users.emailsOf(any())).thenAnswer(inv -> {
+            java.util.Collection<String> ids = inv.getArgument(0);
+            return ids.contains("pa1") ? List.of("platform@x.com") : List.of();
+        });
+
+        svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
+
+        verify(sender).send(any(), eq(List.of("platform@x.com")), any(), any());
+    }
+
+    /**
+     * 命名空间不属于任何租户（节点/集群级告警的常态）→ 没有租户管理员可找，
+     * 直接走平台管理员。
+     */
+    @Test
+    void a_cluster_scoped_alert_goes_to_platform_admins() throws Exception {
+        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(resolver.crNameOf(eq("c1"), any(), any())).thenReturn(null);
+        when(users.platformAdminUserIds()).thenReturn(List.of("pa1"));
+        when(users.emailsOf(any())).thenAnswer(inv -> {
+            java.util.Collection<String> ids = inv.getArgument(0);
+            return ids.contains("pa1") ? List.of("platform@x.com") : List.of();
+        });
+
+        svc.dispatch("c1", List.of(event(1, "kube-system", "{\"platform_notify\":\"ops-mail\"}", "firing")));
+
+        verify(users, never()).tenantAdminUserIds(anyString());
+        verify(sender).send(any(), eq(List.of("platform@x.com")), any(), any());
+    }
+
     /** 一个有效收件人都没有 → 记 FAILED，**不调用发送器**（否则会"给空列表发一封"）。 */
     @Test
     void no_recipients_marks_the_delivery_failed_and_sends_nothing() throws Exception {

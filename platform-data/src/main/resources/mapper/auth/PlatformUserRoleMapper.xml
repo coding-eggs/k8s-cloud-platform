@@ -31,4 +31,14 @@
           AND r.`status` = 1
           AND r.`scope` = 'PLATFORM'
     </select>
+    <!-- 告警默认收件人兜底：持某平台角色的所有用户（口径同上：角色未删未停） -->
+    <select id="selectUserIdsByRoleCode" resultType="java.lang.String">
+        SELECT DISTINCT ur.user_id
+        FROM platform_user_role ur
+        INNER JOIN platform_role r ON ur.role_id = r.id
+        WHERE r.`code` = #{roleCode,jdbcType=VARCHAR}
+          AND r.deleted_at IS NULL
+          AND r.`status` = 1
+          AND r.`scope` = 'PLATFORM'
+    </select>
 </mapper>

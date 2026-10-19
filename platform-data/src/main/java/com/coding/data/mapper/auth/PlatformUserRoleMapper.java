@@ -27,4 +27,12 @@ public interface PlatformUserRoleMapper {
      * 查询用户被授予的角色 id 列表（仅启用且未删除的角色）
      */
     List<String> selectRoleIdsByUser(@Param("userId") String userId);
+
+    /**
+     * 持某个**平台域**角色 code 的用户 id（告警默认收件人兜底用：平台管理员）。
+     *
+     * <p>与 {@link PlatformUserTenantRoleMapper#selectUserIdsByTenantAndRoleCode} 分开：
+     * 平台角色在 {@code platform_user_role}（无租户维度），租户角色在 {@code platform_user_tenant_role}。
+     */
+    List<String> selectUserIdsByRoleCode(@Param("roleCode") String roleCode);
 }

@@ -216,7 +216,9 @@ public class AlertDispatchService {
     }
 
     /**
-     * 收件人：绑定表的 user_ids（按 CR 名反查）→ 没有则该命名空间所属租户的管理员。
+     * 收件人：绑定表的 user_ids（按 CR 名反查）→ 没有则该命名空间所属租户的管理员
+     * → 还**一个能发的邮箱都没有**时兜底到平台管理员（租户没管理员 / 都没填邮箱 /
+     * 命名空间压根不属于任何租户 —— 后者是集群级告警的常态）。
      * 最后统一过滤掉没填邮箱的用户。
      */
     private List<String> recipientsFor(String clusterId, List<PlatformAlertEvent> batch,
@@ -238,7 +240,11 @@ public class AlertDispatchService {
                 userIds.addAll(userService.tenantAdminUserIds(tenantId));
             }
         }
-        return userService.emailsOf(userIds);
+        List<String> emails = userService.emailsOf(userIds);
+        if (!emails.isEmpty()) {
+            return emails;
+        }
+        return userService.emailsOf(userService.platformAdminUserIds());
     }
 
     private List<String> parseIds(String jsonIds) {

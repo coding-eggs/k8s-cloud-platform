@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantMapper;
+import com.coding.data.mapper.auth.PlatformUserRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantRoleMapper;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.auth.PlatformUserTenant;
@@ -19,6 +20,7 @@ class NotificationUserServiceTest {
 
     private PlatformUserTenantMapper members;
     private PlatformUserTenantRoleMapper roles;
+    private PlatformUserRoleMapper platformRoles;
     private PlatformUserMapper users;
     private NotificationUserService svc;
 
@@ -26,8 +28,9 @@ class NotificationUserServiceTest {
     void setUp() {
         members = mock(PlatformUserTenantMapper.class);
         roles = mock(PlatformUserTenantRoleMapper.class);
+        platformRoles = mock(PlatformUserRoleMapper.class);
         users = mock(PlatformUserMapper.class);
-        svc = new NotificationUserService(members, roles, users);
+        svc = new NotificationUserService(members, roles, platformRoles, users);
     }
 
     private static PlatformUser user(String id, String name, String email) {
@@ -71,6 +74,14 @@ class NotificationUserServiceTest {
         when(roles.selectUserIdsByTenantAndRoleCode("t1", "tenant-admin")).thenReturn(List.of("u1"));
 
         assertThat(svc.tenantAdminUserIds("t1")).containsExactly("u1");
+    }
+
+    /** 平台管理员（默认收件人的最后一级兜底）—— 角色 code 是 admin，在 platform_user_role 里。 */
+    @Test
+    void platform_admin_ids_come_from_the_platform_role_table() {
+        when(platformRoles.selectUserIdsByRoleCode("admin")).thenReturn(List.of("pa1"));
+
+        assertThat(svc.platformAdminUserIds()).containsExactly("pa1");
     }
 
     /** 投递用：没有邮箱的用户必须被过滤掉（否则会往空地址发）。 */

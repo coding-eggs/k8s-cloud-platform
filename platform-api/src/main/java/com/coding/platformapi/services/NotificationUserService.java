@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantMapper;
+import com.coding.data.mapper.auth.PlatformUserRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantRoleMapper;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.auth.PlatformUserTenant;
@@ -24,15 +25,21 @@ public class NotificationUserService {
      */
     private static final String TENANT_ADMIN_ROLE_CODE = "tenant-admin";
 
+    /** 平台管理员角色 code（在 platform_user_role 里，没有租户维度） */
+    private static final String PLATFORM_ADMIN_ROLE_CODE = "admin";
+
     private final PlatformUserTenantMapper members;
     private final PlatformUserTenantRoleMapper roles;
+    private final PlatformUserRoleMapper platformRoles;
     private final PlatformUserMapper users;
 
     public NotificationUserService(PlatformUserTenantMapper members,
                                    PlatformUserTenantRoleMapper roles,
+                                   PlatformUserRoleMapper platformRoles,
                                    PlatformUserMapper users) {
         this.members = members;
         this.roles = roles;
+        this.platformRoles = platformRoles;
         this.users = users;
     }
 
@@ -51,6 +58,14 @@ public class NotificationUserService {
     /** 该租户的管理员用户 id（规则没配收件人时的默认收件人）。 */
     public List<String> tenantAdminUserIds(String tenantId) {
         return roles.selectUserIdsByTenantAndRoleCode(tenantId, TENANT_ADMIN_ROLE_CODE);
+    }
+
+    /**
+     * 平台管理员用户 id —— 告警默认收件人的**最后一级兜底**：
+     * 租户管理员不存在、都没填邮箱、或命名空间根本不属于任何租户时，至少让平台管理员收到。
+     */
+    public List<String> platformAdminUserIds() {
+        return platformRoles.selectUserIdsByRoleCode(PLATFORM_ADMIN_ROLE_CODE);
     }
 
     /** 投递用：id → 邮箱，**过滤空邮箱**并去重保序。 */
