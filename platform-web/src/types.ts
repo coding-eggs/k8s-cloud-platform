@@ -2256,3 +2256,31 @@ export interface PipelineConnection {
   name: string
   endpoint: string
 }
+
+// ---------- S2.2.4 通知方式 ----------
+
+/** 通知方式（平台实体）。config 里的密码字段后端**不回传**（已摘除）。 */
+export interface NotificationChannel {
+  id: string
+  code: string
+  name: string
+  /** EMAIL（本轮唯一） */
+  type: string
+  /** JSON 串；不含 passwordEnc */
+  config?: string | null
+  tenantId?: string | null
+  isDefault?: boolean
+  enabled?: boolean
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface NotificationChannelRequest {
+  code: string
+  name: string
+  type: string
+  config: Record<string, string>
+  tenantId?: string | null
+  isDefault?: boolean
+  enabled?: boolean
+}

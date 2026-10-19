@@ -103,6 +103,8 @@ const router = createRouter({
         { path: 'resources/prometheusrules/detail', name: 'prometheusrule-detail', component: () => import('@/views/resource/PrometheusRuleDetailView.vue'), meta: { title: 'PrometheusRule 详情', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.list] } },
         { path: 'resources/prometheusrules/editor', name: 'prometheusrule-editor', component: () => import('@/views/resource/PrometheusRuleEditorView.vue'), meta: { title: 'PrometheusRule 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.edit] } },
         { path: 'alerts', name: 'alerts', component: () => import('@/views/AlertView.vue'), meta: { title: '告警', group: '监控告警', context: 'full', requiresPerm: [pageCodes.alert] } },
+        // 通知方式：**平台管理员专属**（platform 族页面码；租户角色不绑，直连会被守卫拦回）
+        { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', group: '监控告警', context: 'full', requiresPerm: [pageCodes.notifyChannel] } },
 
         // 集群运维（Calico）
         { path: 'ops/ippools', name: 'ippools', component: () => import('@/views/ops/IppoolView.vue'), meta: { title: '地址池', group: '集群运维', requiresPerm: [pageCodes.ops.ippool.list] } },

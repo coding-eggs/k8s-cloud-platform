@@ -257,7 +257,7 @@ async function handleLogout(): Promise<void> {
           <template #title>存储类</template>
         </el-menu-item>
 
-        <div v-if="can(pageCodes.serviceMonitor.list) || can(pageCodes.podMonitor.list) || can(pageCodes.prometheusRule.list) || can(pageCodes.alert)" class="menu-group">监控告警</div>
+        <div v-if="can(pageCodes.serviceMonitor.list) || can(pageCodes.podMonitor.list) || can(pageCodes.prometheusRule.list) || can(pageCodes.alert) || can(pageCodes.notifyChannel)" class="menu-group">监控告警</div>
         <el-menu-item v-if="can(pageCodes.serviceMonitor.list)" index="/resources/servicemonitors">
           <el-icon><DataLine /></el-icon>
           <template #title>ServiceMonitor</template>
@@ -273,6 +273,10 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.alert)" index="/alerts">
           <el-icon><Bell /></el-icon>
           <template #title>告警</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.notifyChannel)" index="/notification-channels">
+          <el-icon><Message /></el-icon>
+          <template #title>通知方式</template>
         </el-menu-item>
 
         <!-- 集群运维（Calico）。入口按 Page 域码收敛（原先写死 perm.isAdmin）：

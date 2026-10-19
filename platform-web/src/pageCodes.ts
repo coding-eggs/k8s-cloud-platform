@@ -70,6 +70,8 @@ export const pageCodes = {
   prometheusRule: { list: 'tenant:page:prometheusrule.list', edit: 'tenant:page:prometheusrule.edit' },
   /** 告警列表页（租户域页面码 —— 管理员因 PLATFORM 族豁免也持它，两边都能看见） */
   alert: 'tenant:page:alert',
+  /** 通知方式（**平台管理员专属**页面：platform 族页面码，租户角色不绑） */
+  notifyChannel: 'platform:page:notifychannel',
   podMonitor: { list: 'tenant:page:podmonitor.list', edit: 'tenant:page:podmonitor.edit' },
   hpa: { list: 'tenant:page:hpa.list', edit: 'tenant:page:hpa.edit' },
 

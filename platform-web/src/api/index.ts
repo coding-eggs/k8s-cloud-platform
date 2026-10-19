@@ -54,6 +54,8 @@ import type {
   PlatformAlertEvent,
   AlertQuery,
   AlertSelfTestResult,
+  NotificationChannel,
+  NotificationChannelRequest,
   K8sStorageClass,
   K8sTcpRoute,
   K8sTlsRoute,
@@ -496,6 +498,22 @@ export const alertApi = {
   selfTest: (clusterId: string) =>
     http.post<never, AlertSelfTestResult>('/alert/self-test', null, { params: { clusterId } }),
   remove: (id: number) => http.delete<never, void>(`/alert/${encodeURIComponent(String(id))}`),
+}
+
+/**
+ * 通知方式（管理员维护）。当前只支持邮件。
+ * - `options` 是规则编辑页的候选（全局 + 本租户的启用渠道），用 `tenant:` 码，租户管理员也能调；
+ * - `list` / 增删改是 `platform:` 码，只有管理员能调。
+ */
+export const notificationChannelApi = {
+  list: () => http.post<never, NotificationChannel[]>('/notification-channels/list', {}),
+  create: (body: NotificationChannelRequest) =>
+    http.post<never, NotificationChannel>('/notification-channels', body),
+  update: (code: string, body: NotificationChannelRequest) =>
+    http.put<never, NotificationChannel>(`/notification-channels/${encodeURIComponent(code)}`, body),
+  remove: (code: string) => http.delete<never, void>(`/notification-channels/${encodeURIComponent(code)}`),
+  options: (tenantId?: string | null) =>
+    http.post<never, NotificationChannel[]>('/notification-channels/options', { tenantId: tenantId ?? null }),
 }
 
 /** ServiceMonitor Prometheus discovery 定位（对应后端 ServiceMonitorKeyRequest：clusterId + namespace + name） */
