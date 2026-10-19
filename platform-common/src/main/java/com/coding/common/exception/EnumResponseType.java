@@ -81,6 +81,12 @@ public enum EnumResponseType {
     /** Alertmanager webhook 的共享密钥不对（HTTP 状态码由控制器直接给，不靠全局异常映射） */
     ALERT_WEBHOOK_UNAUTHORIZED(10044, "告警接收端点鉴权失败"),
 
+    /** 通知方式参数非法（code 不合法 / 类型不支持 / 配置缺字段） */
+    NOTIFY_CHANNEL_INVALID(10046, "通知方式参数非法"),
+
+    /** 通知方式仍被规则绑定，不能删除 */
+    NOTIFY_CHANNEL_IN_USE(10047, "该通知方式仍被规则使用，不能删除"),
+
     ERROR(5000,"服务端异常"),
 
 
