@@ -95,4 +95,31 @@ class RuleNotifyBinderTest {
 
         verifyNoInteractions(mapper);
     }
+
+    /** 详情回填：绑定表里的渠道与收件人补回 DTO（它们在 CR 里不存在）。 */
+    @Test
+    void fill_backfills_the_binding_onto_the_dto() {
+        RuleNotify stored = new RuleNotify();
+        stored.setChannelCode("ops-mail");
+        stored.setUserIds("[\"u1\",\"u2\"]");
+        when(mapper.selectByRule("c1", "mon-app", "app-rules")).thenReturn(stored);
+
+        PrometheusRuleDTO dto = rule("mon-app", "app-rules", null, List.of());
+        binder.fill(dto);
+
+        assertThat(dto.getNotifyChannel()).isEqualTo("ops-mail");
+        assertThat(dto.getNotifyUserIds()).containsExactly("u1", "u2");
+    }
+
+    /** 没有绑定 → 两个字段保持 null（前端据此显示「走默认」）。 */
+    @Test
+    void fill_leaves_the_dto_alone_when_there_is_no_binding() {
+        when(mapper.selectByRule("c1", "mon-app", "app-rules")).thenReturn(null);
+
+        PrometheusRuleDTO dto = rule("mon-app", "app-rules", null, null);
+        binder.fill(dto);
+
+        assertThat(dto.getNotifyChannel()).isNull();
+        assertThat(dto.getNotifyUserIds()).isNull();
+    }
 }

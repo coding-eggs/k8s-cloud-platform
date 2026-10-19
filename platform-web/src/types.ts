@@ -783,6 +783,13 @@ export interface K8sPrometheusRule {
   creationTime?: string | null
   /** 仅查询返回；拉不到 Prometheus 时为 null */
   runtime?: K8sRuleRuntime | null
+  /**
+   * 平台侧字段（**不是 K8s 对象的一部分**）：规则选中的通知方式 code。
+   * 保存时后端写进绑定表，并给 alert 规则代打 `labels.platform_notify` 后剥离，不下发集群。
+   */
+  notifyChannel?: string | null
+  /** 平台侧字段：收件人用户 id（只进绑定表，不下发） */
+  notifyUserIds?: string[] | null
 }
 
 /** 告警的来源规则：由哪个 PrometheusRule 的哪个组定义（查询时按 (namespace, alertname) 反查） */

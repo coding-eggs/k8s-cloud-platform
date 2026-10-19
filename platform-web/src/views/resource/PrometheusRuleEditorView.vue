@@ -2,8 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { prometheusRuleApi } from '@/api'
-import type { K8sPrometheusRule, K8sPrometheusRuleGroup, K8sPrometheusRuleRule } from '@/types'
+import { prometheusRuleApi, notificationChannelApi, notificationUserApi } from '@/api'
+import type { K8sPrometheusRule, K8sPrometheusRuleGroup, K8sPrometheusRuleRule, NotificationChannel } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -60,7 +60,19 @@ const form = reactive({
   name: '',
   labels: {} as Record<string, string>,
   groups: [newGroup()] as GroupRow[],
+  /**
+   * 平台侧（不写进 K8s 对象的 spec，只进绑定表）：
+   * 留空 = 用默认通知方式；收件人留空 = 该命名空间所属租户的管理员。
+   */
+  notifyChannel: null as string | null,
+  notifyUserIds: [] as string[],
 })
+
+// ---------- 通知方式候选（全局 + 本租户的启用渠道） ----------
+const channelOptions = ref<NotificationChannel[]>([])
+const userOptions = ref<{ id: string; displayName: string; email: string | null }[]>([])
+/** 下拉里标出「默认」，让用户知道留空会走哪条渠道 */
+const defaultChannelName = computed(() => channelOptions.value.find((c) => c.isDefault)?.name ?? '')
 
 /** 切换类型时清掉另一边专属的字段 —— 否则会发出 alert 与 record 同时存在的、注定被后端拒的请求。 */
 function onKindChange(row: RuleRow): void {
@@ -75,9 +87,11 @@ function onKindChange(row: RuleRow): void {
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
 function fromRule(r: K8sPrometheusRuleRule): RuleRow {
-  // namespace 标签由后端在保存时统一覆写，回填时不带出来（表单不该控制它）
+  // namespace 标签由后端在保存时统一覆写，回填时不带出来（表单不该控制它）。
+  // platform_notify 同理：它是后端按「通知方式」代打的，留在这里只会与绑定表打架。
   const labels = { ...(r.labels ?? {}) }
   delete labels.namespace
+  delete labels.platform_notify
   return {
     kind: r.alert ? 'alert' : 'record',
     name: r.alert ?? r.record ?? '',
@@ -111,17 +125,36 @@ async function loadDetail(): Promise<void> {
     form.labels = { ...(d.labels ?? {}) }
     const gs = (d.groups ?? []).map(fromGroup)
     form.groups = gs.length ? gs : [newGroup()]
+    // 平台侧字段：后端从绑定表补回来的（CR 里没有这两个）
+    form.notifyChannel = d.notifyChannel ?? null
+    form.notifyUserIds = [...(d.notifyUserIds ?? [])]
     detailState.value = 'loaded'
   } catch {
     detailState.value = 'error'
   }
 }
 
+/** 候选渠道与收件人：纯候选值，失败只让下拉为空（拦截器已提示），不影响保存。 */
+async function loadNotifyOptions(): Promise<void> {
+  if (!ready.value) return
+  try {
+    channelOptions.value = await notificationChannelApi.options(state.tenantId)
+    userOptions.value = await notificationUserApi.list(state.tenantId)
+  } catch {
+    channelOptions.value = []
+    userOptions.value = []
+  }
+}
+
 onMounted(() => {
   void load()
-  if (ready.value && editing.value) void loadDetail()
+  if (ready.value) {
+    void loadNotifyOptions()
+    if (editing.value) void loadDetail()
+  }
 })
 watch(ready, (r) => {
+  if (r && !channelOptions.value.length) void loadNotifyOptions()
   if (r && editing.value && detailState.value === 'idle') void loadDetail()
 })
 
@@ -197,6 +230,9 @@ async function submit(): Promise<void> {
     namespace: state.namespace!,
     labels: form.labels,
     groups: form.groups.map(toGroupDto),
+    // 平台侧：留空 = 走默认（后端不会写空值 label，也不会落绑定行）
+    notifyChannel: form.notifyChannel || null,
+    notifyUserIds: form.notifyUserIds,
   }
   saving.value = true
   try {
@@ -243,6 +279,43 @@ function goBack(): void {
             </el-form-item>
             <el-form-item label="标签 labels">
               <LabelEditor v-model="form.labels" class="sub-editor" style="max-width: 1080px" />
+            </el-form-item>
+          </el-form>
+        </el-card>
+
+        <!-- 通知：平台侧配置，不写进 CR 的 spec（后端存绑定表 + 代打 label） -->
+        <el-card shadow="never" class="sec-card">
+          <template #header><span class="sec-title">通知</span></template>
+          <el-form label-width="140px" label-position="left">
+            <el-form-item label="通知方式">
+              <el-select
+                v-model="form.notifyChannel"
+                clearable
+                placeholder="留空 = 使用默认通知方式"
+                style="width: 320px"
+              >
+                <el-option v-for="c in channelOptions" :key="c.code" :label="c.name" :value="c.code" />
+              </el-select>
+              <div class="form-tip">
+                默认通知方式：{{ defaultChannelName || '未配置' }}。留空时走默认。
+              </div>
+            </el-form-item>
+            <el-form-item label="通知给谁">
+              <el-select
+                v-model="form.notifyUserIds"
+                multiple
+                filterable
+                placeholder="留空 = 该命名空间所属租户的管理员"
+                style="width: 100%; max-width: 720px"
+              >
+                <el-option
+                  v-for="u in userOptions"
+                  :key="u.id"
+                  :label="`${u.displayName}（${u.email || '无邮箱'}）`"
+                  :value="u.id"
+                />
+              </el-select>
+              <div class="form-tip">只能选本租户用户；没有邮箱的用户选了也发不出去。</div>
             </el-form-item>
           </el-form>
         </el-card>

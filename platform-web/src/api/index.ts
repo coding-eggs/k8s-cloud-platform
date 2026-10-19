@@ -516,6 +516,15 @@ export const notificationChannelApi = {
     http.post<never, NotificationChannel[]>('/notification-channels/options', { tenantId: tenantId ?? null }),
 }
 
+/** 本租户用户（规则编辑页的收件人候选）。email 可能为空 —— 界面上要提示「无邮箱」 */
+export const notificationUserApi = {
+  list: (tenantId?: string | null) =>
+    http.post<never, { id: string; displayName: string; email: string | null }[]>(
+      '/notification-users/list',
+      { tenantId: tenantId ?? null },
+    ),
+}
+
 /** ServiceMonitor Prometheus discovery 定位（对应后端 ServiceMonitorKeyRequest：clusterId + namespace + name） */
 type SmDiscoveryCtx = { clusterId: string; namespace: string; name: string }
 

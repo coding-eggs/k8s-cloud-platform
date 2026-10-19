@@ -9,6 +9,7 @@ import com.coding.data.models.alert.RuleNotify;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.Date;
@@ -59,5 +60,37 @@ public class RuleNotifyBinder {
         r.setCreatedAt(now);
         r.setUpdatedAt(now);
         mapper.upsert(r);
+    }
+
+    /**
+     * 读：把已存的绑定回填到 DTO 上（详情页回填用）。
+     *
+     * <p>为什么必须在服务端做：{@code notifyChannel}/{@code notifyUserIds} **不在 CR 里**，
+     * 集群侧对象读回来永远是 null。前端若拿不到，编辑一次规则就会以为「用户取消了通知方式」，
+     * 而 {@code stampNamespace} 也不会再打 label —— 绑定表还在、label 却没了，两边开始打架。
+     */
+    public void fill(PrometheusRuleDTO dto) {
+        if (dto == null || !StringUtils.hasText(dto.getClusterId())
+                || !StringUtils.hasText(dto.getNamespace()) || !StringUtils.hasText(dto.getName())) {
+            return;
+        }
+        RuleNotify r = mapper.selectByRule(dto.getClusterId(), dto.getNamespace(), dto.getName());
+        if (r == null) {
+            return;
+        }
+        dto.setNotifyChannel(r.getChannelCode());
+        dto.setNotifyUserIds(parseIds(r.getUserIds()));
+    }
+
+    /** user_ids 是 JSON 数组字符串；空/坏值一律当空列表（坏数据不该让详情页 500）。 */
+    private List<String> parseIds(String jsonIds) {
+        if (!StringUtils.hasText(jsonIds)) {
+            return List.of();
+        }
+        try {
+            return json.readValue(jsonIds, new TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 }

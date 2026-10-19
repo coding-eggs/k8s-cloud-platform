@@ -50,6 +50,7 @@ public class PrometheusRuleService {
     public PrometheusRuleDTO get(String name, String tenantId, String clusterId, String namespace) {
         PrometheusRuleDTO out = k8s.get(dto(name, tenantId, clusterId, namespace));
         if (out != null) {
+            notifyBinder.fill(out);          // 平台侧字段不在 CR 里，得从绑定表补回来
             enrich(List.of(out), clusterId);
         }
         return out;
