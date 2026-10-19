@@ -146,7 +146,9 @@ tempo:
         endpoint: ${tempo.minio.endpoint}
         access_key: ${MINIO_ACCESS_KEY}        # 留给 Tempo 的 -config.expand-env
         secret_key: ${MINIO_SECRET_KEY}
-        insecure: true
+        # 两个布尔值在占位符解析后注入（ValueTemplate 只产出字符串，Go 不认字符串布尔）：
+        insecure: false                        # 表单「传输方式」= HTTP（明文）时为 true；默认 HTTPS
+        tls_insecure_skip_verify: true         # 表单「跳过 TLS 校验」开关（仅 HTTPS 有意义）
   extraArgs:
     config.expand-env: "true"
   extraEnvFrom:
@@ -565,10 +567,11 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
 
    | 字段 | 默认值 | 说明 |
    |---|---|---|
-   | MinIO 地址 | 平台配置或 `192.168.31.80:9002` | S3 endpoint，`host:port` |
+   | MinIO 地址 | 平台配置或 `192.168.31.80:9002` | S3 endpoint，只填 `host:port`（scheme 会被剥掉，不参与判断） |
+   | 传输方式 | HTTPS | 显式选择 HTTPS / HTTP（明文）；**不靠地址里的 scheme 隐式决定** |
    | 桶 | `tempo` | **独立桶**（需先在 MinIO 建好），不与 Thanos 的 `thanos` 桶共用；不设前缀 |
    | 凭证 Secret | 选 `monitor` 内的 Secret（同名 Thanos 凭证可直接复用） | 支持与 Thanos 相同的 key 组合（`access-key`/`secret-key` 等），平台渲染成 `platform-tempo-objstore` |
-   | 跳过 TLS 校验 | `true` | MinIO 是 HTTP 时保持 true |
+   | 跳过 TLS 校验 | `true` | 仅 HTTPS + 自签证书时有意义；选 HTTP（明文）时置灰 |
 
    **ES 日志（两个画像都显示，日志关闭时置灰）**
 

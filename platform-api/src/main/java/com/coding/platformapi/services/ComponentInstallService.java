@@ -190,9 +190,12 @@ public class ComponentInstallService {
         OtelInstallRequest otel = recipe.otel() == null ? null
                 : resolveOtel(req.getOtel(), previousPlatform.get("otel"), recipe.otel());
 
-        // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管
+        // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管。
+        // ⚠️「平台装过但没成功」（FAILED / UNKNOWN）仍算平台装的：release 是平台建的，
+        //    一次失败不能把组件永久锁成"外部安装"（否则用户连改配置重试都做不到）。
         String action = req.getAction() == null ? "INSTALL" : req.getAction();
-        if ("UPGRADE".equals(action) && last == null) {
+        if ("UPGRADE".equals(action) && last == null
+                && mapper.countAttempted(req.getClusterId(), req.getComponentCode()) == 0) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "该组件不是平台安装的，平台不接管（只升级平台自己装的 release）");
         }
@@ -328,7 +331,7 @@ public class ComponentInstallService {
             context.put("tempo.endpoint", otel.getTempoEndpoint());
             context.put("otel.sampling", samplingRatio(otel.getSamplingPercentage()));
             if (otel.getTempoStorage() != null) {
-                context.put("tempo.minio.endpoint", otel.getTempoStorage().getEndpoint());
+                context.put("tempo.minio.endpoint", tempoMinioHost(otel.getTempoStorage().getEndpoint()));
                 context.put("tempo.minio.bucket", otel.getTempoStorage().getBucket());
             }
             if (otel.getEs() != null) {
@@ -370,10 +373,50 @@ public class ComponentInstallService {
             }
             Map<String, Object> resolved = (Map<String, Object>) ValueTemplate.resolve(
                     values, context, r.preserveUnknownPlaceholders());
+            if ("tempo".equals(r.chartCode()) && otel != null && otel.getTempoStorage() != null) {
+                applyTempoS3Security(resolved, otel.getTempoStorage());
+            }
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(), r.chartVersion(),
                     resolved, r.editableValues(), r.preserveUnknownPlaceholders()));
         }
         return out;
+    }
+
+    /** Tempo 的 s3.endpoint 只接受 host:port；带 {@code http://} 前缀表示明文，其余按 HTTPS */
+    private static String tempoMinioHost(String endpoint) {
+        String value = endpoint == null ? "" : endpoint.trim();
+        if (value.startsWith("http://")) {
+            return value.substring("http://".length());
+        }
+        if (value.startsWith("https://")) {
+            return value.substring("https://".length());
+        }
+        return value;
+    }
+
+    /** 旧调用兜底：endpoint 带 {@code http://} 前缀视为明文（新表单用 plaintext 字段显式选择） */
+    private static boolean tempoMinioPlaintext(String endpoint) {
+        return endpoint != null && endpoint.trim().startsWith("http://");
+    }
+
+    /**
+     * Tempo 的 S3 传输方式必须在占位符解析后写**布尔值**（ValueTemplate 只会产出字符串，
+     * 而 Go 的 YAML 解析不认字符串布尔）。
+     *
+     * <p>{@code insecure}：明文 HTTP —— 由表单的「传输方式」选择（{@code plaintext}）决定；
+     * 否则 HTTPS。{@code tls_insecure_skip_verify}：表单的「跳过 TLS 校验」开关，用于自签证书。
+     */
+    @SuppressWarnings("unchecked")
+    private static void applyTempoS3Security(Map<String, Object> values, TempoStorageConfig storage) {
+        if (!(values.get("tempo") instanceof Map<?, ?> tempo)
+                || !(tempo.get("storage") instanceof Map<?, ?> store)
+                || !(store.get("trace") instanceof Map<?, ?> trace)
+                || !(trace.get("s3") instanceof Map<?, ?> s3)) {
+            return;
+        }
+        Map<String, Object> mutable = (Map<String, Object>) s3;
+        mutable.put("insecure", Boolean.TRUE.equals(storage.getPlaintext()));
+        mutable.put("tls_insecure_skip_verify", storage.isInsecureSkipVerify());
     }
 
     /** 10 -> "0.1"；5 -> "0.05"；100 -> "1"（Instrumentation 的 sampler.argument 是字符串） */
@@ -501,12 +544,23 @@ public class ComponentInstallService {
 
     private static TempoStorageConfig resolveTempoStorage(TempoStorageConfig requested, TempoStorageConfig prev) {
         TempoStorageConfig out = new TempoStorageConfig();
-        out.setEndpoint(firstNonBlank(
+        String endpoint = firstNonBlank(
                 requested == null ? null : requested.getEndpoint(),
-                prev == null ? null : prev.getEndpoint()));
+                prev == null ? null : prev.getEndpoint());
+        // Tempo 的 s3.endpoint 只接受 host:port：scheme 一律剥掉，传输方式由下面的 plaintext 决定
+        out.setEndpoint(tempoMinioHost(endpoint));
         out.setBucket(firstNonBlank(
                 requested == null ? null : requested.getBucket(),
                 prev == null ? null : prev.getBucket(), DEFAULT_MINIO_BUCKET));
+        // 传输方式：表单显式选择优先；没传（旧调用/旧快照）才按 endpoint 的 scheme 推断
+        Boolean plaintext = requested != null ? requested.getPlaintext() : null;
+        if (plaintext == null && prev != null) {
+            plaintext = prev.getPlaintext();
+        }
+        if (plaintext == null) {
+            plaintext = tempoMinioPlaintext(endpoint);
+        }
+        out.setPlaintext(plaintext);
         SecretRef secret = requested != null && requested.getCredentialSecret() != null
                 ? requested.getCredentialSecret()
                 : prev == null ? null : prev.getCredentialSecret();
@@ -583,6 +637,7 @@ public class ComponentInstallService {
             t.put("bucket", s.getBucket());
             t.put("credentialSecret", secretRefSnapshot(s.getCredentialSecret()));
             t.put("insecureSkipVerify", s.isInsecureSkipVerify());
+            t.put("plaintext", s.getPlaintext());
             out.put("tempoStorage", t);
         }
         if (otel.getEs() != null) {
@@ -632,6 +687,7 @@ public class ComponentInstallService {
         out.setBucket(asString(map.get("bucket")));
         out.setCredentialSecret(secretRefOf(map.get("credentialSecret")));
         out.setInsecureSkipVerify(Boolean.TRUE.equals(map.get("insecureSkipVerify")));
+        out.setPlaintext(map.get("plaintext") instanceof Boolean b ? b : null);
         return out;
     }
 
@@ -982,6 +1038,31 @@ public class ComponentInstallService {
             return n.intValue();
         }
         return DEFAULT_OTEL_SAMPLING;
+    }
+
+    /**
+     * 管理员中止一条进行中的操作：只把平台侧记录置为终态 {@code CANCELED}，**不 kill helm 进程**。
+     *
+     * <p>存在的理由：worker 随进程重启消失后，RUNNING 记录会一直占着并发锁（要等 15 分钟标定）；
+     * 或者 helm 早已失败/退出、但调用链没有回来。释放锁之后用户可以改配置重试；
+     * 如果 helm 其实还在跑，下一次提交会被 helm 的 release 锁拒绝（报错可见），不会静默并发。
+     */
+    public void abandon(Long id, String operator) {
+        PlatformComponentOperation op = mapper.selectByPrimaryKey(id);
+        if (op == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "操作不存在：" + id);
+        }
+        if (!"PENDING".equals(op.getStatus()) && !"RUNNING".equals(op.getStatus())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "该操作已结束（当前状态 " + op.getStatus() + "），无需中止");
+        }
+        PlatformComponentOperation upd = new PlatformComponentOperation();
+        upd.setId(id);
+        upd.setStatus("CANCELED");
+        upd.setMessage("管理员中止" + (isBlank(operator) ? "" : "（" + operator + "）")
+                + "；仅释放平台侧并发锁，若 helm 仍在运行请稍后确认 release 状态");
+        upd.setFinishedAt(new Date());
+        mapper.updateById(upd);
     }
 
     public List<PlatformComponentOperation> latestByCluster(String clusterId) {

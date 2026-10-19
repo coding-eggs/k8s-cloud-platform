@@ -987,6 +987,8 @@ export interface K8sTempoStorage {
   bucket: string
   credentialSecret: K8sSecretRef
   insecureSkipVerify: boolean
+  /** 明文 HTTP（表单的「传输方式」）；null/缺省时后端按 endpoint 的 scheme 推断 */
+  plaintext?: boolean | null
 }
 
 /** ES 日志参数（应用日志走 OTel logs → collector → ES） */
@@ -1057,7 +1059,7 @@ export interface K8sEditableField {
 }
 
 /** 组件安装/升级操作（S3.6）。chart 版本与应用版本是两套编号 —— from/to 指 chart 版本 */
-export type K8sComponentOperationStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'UNKNOWN'
+export type K8sComponentOperationStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'UNKNOWN' | 'CANCELED'
 
 export interface K8sComponentOperation {
   id: number

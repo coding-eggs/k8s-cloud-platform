@@ -32,5 +32,8 @@ public interface PlatformComponentOperationMapper {
 
     int countRunning(@Param("clusterId") String clusterId, @Param("componentCode") String componentCode);
 
+    /** 该组件是否有过任何操作记录（含失败/中断）：用来区分「平台装过但没成功」和「手工装的」 */
+    int countAttempted(@Param("clusterId") String clusterId, @Param("componentCode") String componentCode);
+
     List<PlatformComponentOperation> selectStaleRunning(@Param("minutes") int minutes);
 }

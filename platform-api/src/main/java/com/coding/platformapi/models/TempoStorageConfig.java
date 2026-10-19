@@ -22,6 +22,11 @@ public class TempoStorageConfig {
     private String bucket;
     /** 含 access key / secret key 的 Secret */
     private SecretRef credentialSecret;
-    /** 自签证书 / HTTP 时跳过校验 */
+    /** 自签证书 / HTTPS 时跳过证书校验 */
     private boolean insecureSkipVerify;
+    /**
+     * 明文 HTTP（表单的「传输方式」选择）。
+     * null = 按 endpoint 的 scheme 推断（兼容不带该字段的旧调用/快照）；表单总会显式下发。
+     */
+    private Boolean plaintext;
 }

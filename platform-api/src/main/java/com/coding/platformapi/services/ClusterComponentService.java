@@ -322,6 +322,7 @@ public class ClusterComponentService {
         out.setBucket(asString(m.get("bucket")));
         out.setCredentialSecret(secretRefOf(m.get("credentialSecret")));
         out.setInsecureSkipVerify(Boolean.TRUE.equals(m.get("insecureSkipVerify")));
+        out.setPlaintext(m.get("plaintext") instanceof Boolean b ? b : null);
         return out;
     }
 

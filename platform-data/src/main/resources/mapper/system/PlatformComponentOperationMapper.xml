@@ -90,6 +90,12 @@
       and `status` in ('PENDING', 'RUNNING')
   </select>
 
+  <select id="countAttempted" resultType="int">
+    select count(*) from platform_component_operation
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and component_code = #{componentCode,jdbcType=VARCHAR}
+  </select>
+
   <select id="selectStaleRunning" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_component_operation

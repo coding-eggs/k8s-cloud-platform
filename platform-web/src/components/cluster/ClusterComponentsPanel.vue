@@ -13,7 +13,7 @@
  *    UNKNOWN 不给装：「不知道」不是「没有」。
  */
 import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type {
   K8sCalicoInstall, K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
@@ -54,6 +54,8 @@ const emit = defineEmits<{
     /** OTel 采集栈参数（仅 otelInstrumentation 的组件） */
     otel?: K8sOtelInstall
   }): void
+  /** 中止一条进行中的操作（由页面调接口并刷新操作列表） */
+  (e: 'abandon', id: number): void
 }>()
 
 /** 四态 → 徽标。⚠️ UNKNOWN 用虚线边（effect=plain）与 NOT_INSTALLED（实心灰）区分开 */
@@ -198,7 +200,7 @@ function emptyOtel(): OtelForm {
     tempoStorage: {
       endpoint: '192.168.31.80:9002', bucket: 'tempo',
       credentialSecret: { namespace: 'monitor', name: '' },
-      insecureSkipVerify: true,
+      insecureSkipVerify: true, plaintext: false,
     },
     es: {
       endpoint: 'https://es-es-http.default.svc:9200', username: 'elastic',
@@ -445,6 +447,7 @@ const OP_STATUS: Record<K8sComponentOperation['status'], {
   SUCCESS: { label: '成功', type: 'success' },
   FAILED: { label: '失败', type: 'danger' },
   UNKNOWN: { label: '中断', type: 'info' },
+  CANCELED: { label: '已中止', type: 'info' },
 }
 
 /** 上次操作色标（模板里 Safe 访问，避免 Record 索引的 undefined 类型） */
@@ -473,6 +476,28 @@ function openOperation(row: K8sComponentStatus): void {
   const op = props.operations[row.code]
   if (!op) return
   operationDialog.value = { visible: true, name: row.name, op }
+}
+
+/**
+ * 中止进行中的操作：只把平台侧记录置为终态（CANCELED），**不会 kill helm**。
+ * 典型场景：安装途中重启了 platform-api，worker 随进程消失，记录一直占着并发锁。
+ */
+async function abandonOperation(): Promise<void> {
+  const op = operationDialog.value.op
+  if (!op) return
+  try {
+    await ElMessageBox.confirm(
+      '中止只会释放平台侧的并发锁，不会终止正在运行的 helm。\n'
+      + '如果 helm 其实还在执行，下一次提交会被 helm 的 release 锁拒绝（报错可见，不会静默并发）；'
+      + '稍后可在集群里确认 release 状态。',
+      '中止操作',
+      { type: 'warning', confirmButtonText: '中止', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  emit('abandon', op.id)
+  operationDialog.value.visible = false
 }
 
 /** 复制 helm 输出：http 内网下 navigator.clipboard 不存在，必须带 execCommand 兜底 */
@@ -754,10 +779,16 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </div>
         <div class="cc-form-row">
           <span class="cc-form-label">MinIO 地址</span>
-          <div class="cc-form-control">
+          <div class="cc-form-control" style="display: flex; gap: 8px">
             <el-input v-model="applyDialog.otel.tempoStorage.endpoint"
                       placeholder="192.168.31.80:9002" spellcheck="false" />
-            <div class="cc-form-hint">S3 endpoint（host:port）</div>
+            <el-select v-model="applyDialog.otel.tempoStorage.plaintext" style="width: 150px">
+              <el-option label="HTTPS" :value="false" />
+              <el-option label="HTTP（明文）" :value="true" />
+            </el-select>
+          </div>
+          <div class="cc-form-hint" style="flex-basis: 100%">
+            地址只填 <b>host:port</b>；传输方式看右侧选择（地址里误写的 http:// / https:// 会被剥掉，不参与判断）
           </div>
         </div>
         <div class="cc-form-row">
@@ -787,8 +818,11 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <div class="cc-form-row">
           <span class="cc-form-label">跳过 TLS 校验</span>
           <div class="cc-form-control">
-            <el-switch v-model="applyDialog.otel.tempoStorage.insecureSkipVerify" />
-            <div class="cc-form-hint">MinIO 用 HTTP / 自签证书时打开</div>
+            <el-switch v-model="applyDialog.otel.tempoStorage.insecureSkipVerify"
+                       :disabled="applyDialog.otel.tempoStorage.plaintext === true" />
+            <div class="cc-form-hint">
+              只在 <b>HTTPS + 自签证书</b>时打开；选「HTTP（明文）」时该开关无意义
+            </div>
           </div>
         </div>
         <div class="cc-form-row">
@@ -975,6 +1009,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <pre class="cc-op-log">{{ operationDialog.op.logTail || '（无输出）' }}</pre>
       </template>
       <template #footer>
+        <el-button v-if="operationDialog.op && ['PENDING', 'RUNNING'].includes(operationDialog.op.status)"
+                   type="danger" plain @click="abandonOperation">中止操作</el-button>
         <el-button @click="operationDialog.visible = false">关闭</el-button>
       </template>
     </el-dialog>

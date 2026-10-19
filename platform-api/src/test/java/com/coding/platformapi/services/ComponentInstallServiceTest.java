@@ -127,6 +127,21 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void anUpgradeAfterAFailedPlatformInstallIsStillAllowed() {
+        // 平台自己装过但没成功（例如 Tempo 起不来、helm 超时）：release 是平台建的，
+        // 不能因为一次失败就把组件永久锁成"外部安装"，否则用户连改配置重试都做不到
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
+        when(mapper.selectLatestSuccess("c1", "metrics-server")).thenReturn(null);
+        when(mapper.countAttempted("c1", "metrics-server")).thenReturn(1);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        service().apply(new ComponentApplyRequest("c1", "metrics-server", "UPGRADE", null, null), "admin");
+
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
     void valuesFromTheLastSuccessAreReusedOnUpgrade() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "metrics-server")).thenReturn(0);
@@ -754,6 +769,36 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void abandonMarksARunningOperationAsCanceled() {
+        // worker 随进程重启消失时，RUNNING 记录会一直占着并发锁；允许管理员主动中止解锁
+        PlatformComponentOperation running = new PlatformComponentOperation();
+        running.setId(16L);
+        running.setStatus("RUNNING");
+        when(mapper.selectByPrimaryKey(16L)).thenReturn(running);
+
+        service().abandon(16L, "admin");
+
+        ArgumentCaptor<PlatformComponentOperation> captor =
+                ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo("CANCELED");
+        assertThat(captor.getValue().getMessage()).contains("中止").contains("admin");
+        assertThat(captor.getValue().getFinishedAt()).isNotNull();
+    }
+
+    @Test
+    void abandonRejectsAnOperationThatAlreadyFinished() {
+        PlatformComponentOperation done = new PlatformComponentOperation();
+        done.setId(16L);
+        done.setStatus("SUCCESS");
+        when(mapper.selectByPrimaryKey(16L)).thenReturn(done);
+
+        assertThatThrownBy(() -> service().abandon(16L, "admin"))
+                .hasMessageContaining("已结束");
+        verify(mapper, never()).updateById(any());
+    }
+
+    @Test
     void staleRunningOperationsAreMarkedUnknown() {
         PlatformComponentOperation stale = new PlatformComponentOperation();
         stale.setId(7L);
@@ -881,6 +926,72 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void tempoUsesHttpsForBareHostAndSkipsVerifyWhenAsked() {
+        // MinIO 默认是 HTTPS（表单「传输方式」显式选择）；自签证书由「跳过 TLS 校验」开关控制。
+        // 之前 values 里写死 insecure: true → Tempo 用明文连 HTTPS 端口，连接被断开后 CrashLoop，
+        // helm --wait 一直等到超时，操作卡在 RUNNING。
+        @SuppressWarnings("unchecked")
+        Map<String, Object> s3 = captureTempoS3(new TempoStorageConfig(
+                "192.168.31.80:9002", "tempo", new SecretRef("monitor", "minio-creds"), true, false));
+
+        assertThat(s3).containsEntry("insecure", false);
+        assertThat(s3).containsEntry("tls_insecure_skip_verify", true);
+        assertThat(s3).containsEntry("endpoint", "192.168.31.80:9002");
+    }
+
+    @Test
+    void tempoTransportComesFromTheFormEvenIfTheAddressHasAScheme() {
+        // 地址里手滑写了 http:// 不该偷偷切换成明文：传输方式只认表单的显式选择，
+        // scheme 只负责剥掉（Tempo 的 s3.endpoint 只接受 host:port）
+        @SuppressWarnings("unchecked")
+        Map<String, Object> s3 = captureTempoS3(new TempoStorageConfig(
+                "http://192.168.31.80:9002", "tempo", new SecretRef("monitor", "minio-creds"), true, false));
+
+        assertThat(s3).containsEntry("insecure", false);
+        assertThat(s3).containsEntry("endpoint", "192.168.31.80:9002");
+    }
+
+    @Test
+    void tempoTreatsAnHttpEndpointAsPlaintextForLegacyCallers() {
+        // 不带 plaintext 字段的旧调用（或旧快照）：仍按 scheme 推断，避免明文 MinIO 被切成 HTTPS
+        @SuppressWarnings("unchecked")
+        Map<String, Object> s3 = captureTempoS3(new TempoStorageConfig(
+                "http://minio.default.svc:9000", "tempo", new SecretRef("monitor", "minio-creds"), false, null));
+
+        assertThat(s3).containsEntry("insecure", true);
+        assertThat(s3).containsEntry("tls_insecure_skip_verify", false);
+        assertThat(s3).containsEntry("endpoint", "minio.default.svc:9000");
+    }
+
+    /** 跑一次 MANAGEMENT 的 otel-operator 安装，取出 Tempo release 的 s3 段 */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> captureTempoS3(TempoStorageConfig storage) {
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoStorage(storage);
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        service().apply(req, "admin");
+
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("otel-operator"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        Map<String, Object> tempo = (Map<String, Object>) captor.getValue().get(1).getValues().get("tempo");
+        Map<String, Object> storageNode = (Map<String, Object>) tempo.get("storage");
+        Map<String, Object> trace = (Map<String, Object>) storageNode.get("trace");
+        return (Map<String, Object>) trace.get("s3");
+    }
+
+    @Test
     void tempoStorageDefaultsToItsOwnBucketWithoutAPrefix() {
         // Tempo 不跟 Thanos 共用桶：默认落到独立桶 tempo，且不写 prefix（直接写桶根）
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
@@ -924,7 +1035,7 @@ class ComponentInstallServiceTest {
 
         OtelInstallRequest otel = baseOtel();
         otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "tempo",
-                new SecretRef("monitor", "minio-creds"), true));
+                new SecretRef("monitor", "minio-creds"), true, false));
         otel.setTempoRetention("336h");
         otel.setTempoTlsMode("tls-skip-verify");
         ComponentApplyRequest req = new ComponentApplyRequest(
@@ -960,7 +1071,7 @@ class ComponentInstallServiceTest {
         OtelInstallRequest otel = baseOtel();
         otel.setLogsEnabled(true);
         otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "tempo",
-                new SecretRef("monitor", "minio-creds"), true));
+                new SecretRef("monitor", "minio-creds"), true, false));
         ComponentApplyRequest req = new ComponentApplyRequest(
                 "c1", "otel-operator", "INSTALL", null, Map.of());
         req.setOtel(otel);

@@ -26,6 +26,7 @@ import com.coding.platformapi.services.ComponentInstallService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -177,6 +178,17 @@ public class ClusterController {
     public ResponseData<List<PlatformComponentOperation>> componentOperations(
             @RequestBody ClusterKeyRequest request) {
         return new ResponseData<>(componentInstallService.latestByCluster(request.getClusterId()));
+    }
+
+    @PostMapping("/components/operations/{id}/abandon")
+    @Auditable(action = AuditAction.COMPONENT_ABANDON, target = "#id")
+    @Operation(summary = "中止一条进行中的组件操作（释放平台侧并发锁）",
+            description = "只把操作记录置为 CANCELED，不 kill helm 进程；"
+                    + "worker 已随进程消失、或 helm 早已退出但调用没回来时用它解锁")
+    public ResponseData<Void> abandonComponentOperation(@PathVariable Long id) {
+        TokenUserInfo me = auth.current();
+        componentInstallService.abandon(id, me != null ? me.getUsername() : "unknown");
+        return new ResponseData<>();
     }
 
     // ===== 集群概览（B4）：一页一 controller —— 概览页 ↔ 本类 =====

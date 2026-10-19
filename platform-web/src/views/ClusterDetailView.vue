@@ -124,6 +124,17 @@ async function onApply(p: {
   }
 }
 
+/** 中止进行中的组件操作：只释放平台侧并发锁（worker 随重启消失时用它解锁），随后刷新列表 */
+async function onAbandon(id: number): Promise<void> {
+  try {
+    await clusterApi.componentAbandon(id)
+    ElMessage.success('已中止，可重新提交安装/升级')
+    await operations.load()
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  }
+}
+
 /** 概览里的 Istio/Calico 显示**实测版本**；人工登记值降为 tooltip（spec §6.2 ②） */
 function probedVersionOf(code: string): string | null {
   return components.statusOf(code)?.version ?? null
@@ -734,6 +745,7 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
             :load-secret-options="loadComponentSecrets"
             @refresh="components.refresh()"
             @apply="onApply"
+            @abandon="onAbandon"
           />
         </el-tab-pane>
       </el-tabs>

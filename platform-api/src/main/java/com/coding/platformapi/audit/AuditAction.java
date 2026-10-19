@@ -89,6 +89,9 @@ public final class AuditAction {
     /** 安装/升级集群组件（helm 执行，cluster-admin 级写入） */
     public static final String COMPONENT_APPLY = "component:apply";
 
+    /** 中止进行中的组件操作（只释放平台侧并发锁，不 kill helm 进程） */
+    public static final String COMPONENT_ABANDON = "component:abandon";
+
     /** 重新探测集群组件（清缓存语义上的重探：探完覆写缓存） */
     public static final String CLUSTER_REFRESH_COMPONENTS = "cluster:refresh-components";
 

@@ -154,6 +154,9 @@ export const clusterApi = {
   /** 按集群列出各组件最近一次操作（含进行中；组件 tab 首屏一次拿全） */
   componentOperations: (clusterId: string) =>
     http.post<never, K8sComponentOperation[]>('/cluster/components/operations/list', { clusterId }),
+  /** 中止进行中的操作：只释放平台侧并发锁（worker 已随重启消失 / helm 早已退出时用它解锁） */
+  componentAbandon: (operationId: number) =>
+    http.post<never, void>(`/cluster/components/operations/${operationId}/abandon`),
 
   /**
    * 集群概览快照（集群概览页首屏）：总量 + 节点健康/异常 Pod + 存储 + 能力摘要。
