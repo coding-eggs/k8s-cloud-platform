@@ -167,4 +167,12 @@
       set last_login_at = #{dateTime}
       where username = #{id,jdbcType=VARCHAR}
     </update>
+    <!-- 通知收件人候选 / 投递取邮箱：调用方保证 ids 非空 -->
+    <select id="selectByIds" resultMap="BaseResultMap">
+      select
+      <include refid="Base_Column_List" />
+      from platform_user
+      where deleted_at is null and id in
+      <foreach collection="ids" item="uid" open="(" separator="," close=")">#{uid,jdbcType=VARCHAR}</foreach>
+    </select>
 </mapper>

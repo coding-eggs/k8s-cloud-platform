@@ -39,4 +39,12 @@
         where tenant_id = #{tenantId} and role_id = #{roleId}
         for update
     </select>
+    <!-- 默认收件人：该租户的 admin 用户；过滤已删/停用角色，口径同 selectRoleIdsByUserAndTenant -->
+    <select id="selectUserIdsByTenantAndRoleCode" resultType="java.lang.String">
+        select distinct utr.user_id from platform_user_tenant_role utr
+        inner join platform_role r on r.id = utr.role_id
+            and r.deleted_at is null and r.status = 1
+        where utr.tenant_id = #{tenantId,jdbcType=VARCHAR}
+          and r.code = #{roleCode,jdbcType=VARCHAR}
+    </select>
 </mapper>

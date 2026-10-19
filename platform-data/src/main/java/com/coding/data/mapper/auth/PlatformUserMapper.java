@@ -29,4 +29,9 @@ public interface PlatformUserMapper {
     List<PlatformUser> listAllActive();
 
     int updateLastLoginTime(@Param("id") String id,@Param("dateTime") LocalDateTime dateTime);
+
+    /**
+     * 按 id 批量取（只取未删除的用户；调用方负责保证 ids 非空 —— `in ()` 是语法错误）
+     */
+    List<PlatformUser> selectByIds(@Param("ids") List<String> ids);
 }
