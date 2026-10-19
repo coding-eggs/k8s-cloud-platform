@@ -50,10 +50,10 @@
     order by id desc
   </select>
 
-  <select id="selectPending" resultMap="BaseResultMap">
-    select <include refid="Base_Cols" /> from platform_alert_delivery
-    where `status` = 'PENDING'
-    order by id
-  </select>
+  <update id="failStalePending">
+    update platform_alert_delivery
+    set `status` = 'FAILED', last_error = #{error,jdbcType=VARCHAR}
+    where `status` = 'PENDING' and created_at &lt; #{before,jdbcType=TIMESTAMP}
+  </update>
 
 </mapper>

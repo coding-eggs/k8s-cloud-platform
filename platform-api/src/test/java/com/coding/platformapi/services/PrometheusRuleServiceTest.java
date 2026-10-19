@@ -175,7 +175,8 @@ class PrometheusRuleServiceTest {
         PrometheusRuleDTO.Rule rec = new PrometheusRuleDTO.Rule();
         rec.setRecord("job:x:rate5m");
         rec.setExpr("vector(1)");
-        rec.setLabels(new java.util.LinkedHashMap<>());   // 有标签容器但**不该**被加 platform_notify
+        rec.setLabels(new java.util.LinkedHashMap<>());   // 有容器但**不该**被加 platform_notify
+        rec.setAnnotations(new java.util.LinkedHashMap<>());
         dto.getGroups().get(0).setRules(List.of(dto.getGroups().get(0).getRules().get(0), rec));
         when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -183,10 +184,13 @@ class PrometheusRuleServiceTest {
 
         PrometheusRuleDTO sent = captured();
         assertThat(sent.getGroups().get(0).getRules().get(0).getLabels())
-                .containsEntry("platform_notify", "ops-mail")
+                .containsEntry("platform_notify", "ops-mail");
+        // CR 名走 annotation（label 值上限 63，长规则名会存不下）
+        assertThat(sent.getGroups().get(0).getRules().get(0).getAnnotations())
                 .containsEntry("platform_rule", "app-rules");
         assertThat(sent.getGroups().get(0).getRules().get(1).getLabels())
-                .doesNotContainKey("platform_notify")
+                .doesNotContainKey("platform_notify");
+        assertThat(sent.getGroups().get(0).getRules().get(1).getAnnotations())
                 .doesNotContainKey("platform_rule");
         // 平台侧字段不下发
         assertThat(sent.getNotifyChannel()).isNull();
@@ -205,20 +209,40 @@ class PrometheusRuleServiceTest {
                 .doesNotContainKey("platform_notify");
     }
 
-    /** 绑定在打 label **之前**写（update 也要能拿到渠道），且 update 同样剥离平台侧字段。 */
+    /** 绑定在打 label **之后**、K8s 写成功**之后**写（写失败就不该留绑定），且剥离平台侧字段。 */
     @Test
-    void update_binds_then_strips_the_platform_fields() {
+    void update_binds_after_the_write_and_strips_the_platform_fields() {
         PrometheusRuleDTO dto = sample("my-app");
+        dto.setClusterId("c1");
+        dto.setTenantId("t1");
         dto.setNotifyChannel("ops-mail");
+        dto.setNotifyUserIds(List.of("u1"));
         when(k8s.update(any())).thenAnswer(i -> i.getArgument(0));
 
         svc.update(dto);
 
-        verify(binder).bind(any());
+        verify(binder).bind("c1", "t1", "my-app", "app-rules", "ops-mail", List.of("u1"));
         PrometheusRuleDTO sent = capturedUpdate();
         assertThat(sent.getGroups().get(0).getRules().get(0).getLabels())
                 .containsEntry("platform_notify", "ops-mail");
         assertThat(sent.getNotifyChannel()).isNull();
+    }
+
+    /** 参数不合法（渠道不存在 / 收件人越界）必须在**写 K8s 之前**被拒 —— 不留任何副作用。 */
+    @Test
+    void an_invalid_binding_is_rejected_before_the_write() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.setClusterId("c1");
+        dto.setTenantId("t1");
+        dto.setNotifyChannel("nope");
+        org.mockito.Mockito.doThrow(new CloudPlatformException(
+                        com.coding.common.exception.EnumResponseType.NOTIFY_CHANNEL_INVALID, "通知方式不存在: nope"))
+                .when(binder).validate(any(), any(), any());
+
+        assertThatThrownBy(() -> svc.create(dto)).isInstanceOf(CloudPlatformException.class);
+
+        verify(k8s, org.mockito.Mockito.never()).create(any());
+        verify(binder, org.mockito.Mockito.never()).bind(any(), any(), any(), any(), any(), any());
     }
 
     private PrometheusRuleDTO captured() {

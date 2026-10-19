@@ -19,6 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -102,7 +103,7 @@ public class AlertDispatchService {
         Map<String, List<PlatformAlertEvent>> byChannel = new LinkedHashMap<>();
         for (PlatformAlertEvent e : toSend) {
             String tenantId = tenantOf(clusterId, e.getNamespace());
-            NotificationChannel c = channels.resolve(labelValue(e, "platform_notify"));
+            NotificationChannel c = channels.resolve(mapValue(e.getLabels(), "platform_notify"));
             // 跨租户：规则租户与渠道租户不一致（且渠道非全局）→ 不允许，回落默认
             if (c != null && StringUtils.hasText(c.getTenantId()) && !c.getTenantId().equals(tenantId)) {
                 log.warn("规则绑定了其他租户的通知方式，回落默认（code={} tenant={}）", c.getCode(), tenantId);
@@ -144,8 +145,19 @@ public class AlertDispatchService {
                 continue;
             }
 
+            // ⚠️ 投递只带**本次真正领取成功**的那几条。
+            // Alertmanager 的 groupBy 是 (namespace, alertname)：一个已 firing 的组里新加入一条告警时，
+            // 它会把**整组**重推过来 —— 用整个 batch 发信，用户会再收到一封把老告警又列一遍的邮件，
+            // 而且 recipients 是对整个 batch 取并集，会把 A 规则的告警发给 B 规则的收件人。
+            Set<Long> claimedIds = new HashSet<>();
+            for (AlertDelivery d : claimed) {
+                claimedIds.add(d.getEventId());
+            }
+            List<PlatformAlertEvent> mailEvents =
+                    batch.stream().filter(ev -> claimedIds.contains(ev.getId())).toList();
+
             // 2.2 收件人
-            List<String> recipients = recipientsFor(clusterId, batch);
+            List<String> recipients = recipientsFor(clusterId, mailEvents);
             if (recipients.isEmpty()) {
                 claimed.forEach(d -> deliveries.markFailed(d.getId(), "无有效收件人", 0));
                 continue;
@@ -163,7 +175,7 @@ public class AlertDispatchService {
             for (int i = 0; i < MAX_ATTEMPTS; i++) {
                 attempts++;
                 try {
-                    sender.send(channel, recipients, batch);
+                    sender.send(channel, recipients, mailEvents);
                     last = null;
                     break;
                 } catch (Exception ex) {
@@ -207,9 +219,9 @@ public class AlertDispatchService {
         Set<String> userIds = new LinkedHashSet<>();
         for (PlatformAlertEvent e : batch) {
             String tenantId = tenantOf(clusterId, e.getNamespace());
-            // CR 名优先取规则自带的 platform_rule 标签 —— 投递在 @Async 线程上跑，
+            // CR 名优先取规则自带的 platform_rule **注解** —— 投递在 @Async 线程上跑，
             // 没有请求上下文就没有 Authorization，去集群反查只会拿到 401。
-            String ruleName = labelValue(e, "platform_rule");
+            String ruleName = mapValue(e.getAnnotations(), "platform_rule");
             if (!StringUtils.hasText(ruleName)) {
                 ruleName = ruleSourceResolver.crNameOf(clusterId, tenantId, e);
             }
@@ -244,14 +256,15 @@ public class AlertDispatchService {
         }
     }
 
-    private String labelValue(PlatformAlertEvent e, String key) {
-        if (e == null || !StringUtils.hasText(e.getLabels())) {
+    /** 从 labels / annotations 的 JSON 串里取一个键；空串、坏 JSON 一律返回 null。 */
+    private String mapValue(String jsonText, String key) {
+        if (!StringUtils.hasText(jsonText)) {
             return null;
         }
         try {
-            Map<String, String> labels = json.readValue(e.getLabels(),
+            Map<String, String> m = json.readValue(jsonText,
                     new TypeReference<LinkedHashMap<String, String>>() {});
-            return labels == null ? null : labels.get(key);
+            return m == null ? null : m.get(key);
         } catch (Exception ex) {
             return null;
         }

@@ -2291,6 +2291,14 @@ export interface NotificationChannel {
   updatedAt?: string | null
 }
 
+/** 规则编辑页的候选（窄投影：**不含** SMTP 连接配置，租户管理员也能拿到） */
+export interface NotificationChannelOption {
+  code: string
+  name: string
+  isDefault?: boolean
+  tenantId?: string | null
+}
+
 export interface NotificationChannelRequest {
   code: string
   name: string

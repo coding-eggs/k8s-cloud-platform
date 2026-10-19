@@ -190,7 +190,7 @@ class AlertDispatchServiceTest {
      * 去集群反查只会拿到 401（2026-10-20 真跑验到）。标签缺了才回落到反查。
      */
     @Test
-    void the_binding_is_found_from_the_platform_rule_label() throws Exception {
+    void the_binding_is_found_from_the_platform_rule_annotation() throws Exception {
         tenantOwns("ns", "t1");
         when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
         RuleNotify r = new RuleNotify();
@@ -199,8 +199,9 @@ class AlertDispatchServiceTest {
         when(bindings.selectByRule("c1", "ns", "app-rules")).thenReturn(r);
         when(users.emailsOf(any())).thenReturn(List.of("u9@x.com"));
 
-        svc.dispatch("c1", List.of(event(1, "ns",
-                "{\"platform_notify\":\"ops-mail\",\"platform_rule\":\"app-rules\"}", "firing")));
+        PlatformAlertEvent e = event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing");
+        e.setAnnotations("{\"platform_rule\":\"app-rules\"}");
+        svc.dispatch("c1", List.of(e));
 
         verify(resolver, never()).crNameOf(any(), any(), any());
         verify(sender).send(any(), eq(List.of("u9@x.com")), any());
@@ -305,6 +306,32 @@ class AlertDispatchServiceTest {
         verify(deliveries).insertIfAbsent(cap.capture());
         assertThat(cap.getValue().getAlertStatus()).isEqualTo("firing");
         verify(deliveries).markSent(any());
+    }
+
+    /**
+     * ⚠️ Alertmanager 的 groupBy 是 (namespace, alertname)：一个已在 firing 的组里新加入一条告警时，
+     * 它会把**整组**重推过来。邮件里只能出现本次真正领取成功的那条，
+     * 否则用户会反复收到把老告警又列一遍的邮件（评审 Critical #1）。
+     */
+    @SuppressWarnings("unchecked")
+    @Test
+    void only_newly_claimed_events_go_into_the_email() throws Exception {
+        tenantOwns("ns", "t1");
+        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        bindingFrom("app-rules", List.of("u1"));
+        // 第一条领取成功，第二条已有投递记录
+        when(deliveries.insertIfAbsent(any())).thenReturn(1, 0);
+
+        PlatformAlertEvent e1 = event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing");
+        e1.setAnnotations("{\"platform_rule\":\"app-rules\"}");
+        PlatformAlertEvent e2 = event(2, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing");
+        e2.setAnnotations("{\"platform_rule\":\"app-rules\"}");
+        svc.dispatch("c1", List.of(e1, e2));
+
+        ArgumentCaptor<List<PlatformAlertEvent>> cap = ArgumentCaptor.forClass(List.class);
+        verify(sender).send(any(), any(), cap.capture());
+        assertThat(cap.getValue()).hasSize(1);
+        assertThat(cap.getValue().get(0).getId()).isEqualTo(1L);
     }
 
     /** 没有 id 的告警（id 回查失败）→ 跳过：投递记录按 event_id 去重，null 写不进去。 */

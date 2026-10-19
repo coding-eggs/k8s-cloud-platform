@@ -143,6 +143,11 @@ public class EmailSender implements NotificationSender {
         props.put("mail.smtp.auth", String.valueOf(auth));
         props.put("mail.smtp.ssl.enable", String.valueOf(ssl));
         props.put("mail.smtp.starttls.enable", String.valueOf(!ssl));
+        // ⚠️ 必须给超时：SMTP 配错（端口被防火墙丢包）时 JavaMail 默认**无限等**，
+        // 4 个投递线程各卡一次 + 3 次重试就把池子永久占满，后面的告警全堵在队列里。
+        props.put("mail.smtp.connectiontimeout", "10000");
+        props.put("mail.smtp.timeout", "30000");
+        props.put("mail.smtp.writetimeout", "30000");
         impl.setJavaMailProperties(props);
         return impl;
     }

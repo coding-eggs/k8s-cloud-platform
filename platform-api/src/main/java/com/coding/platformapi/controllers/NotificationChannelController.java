@@ -2,6 +2,7 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.alert.NotificationChannel;
+import com.coding.platformapi.models.NotificationChannelOption;
 import com.coding.platformapi.models.NotificationChannelRequest;
 import com.coding.platformapi.models.TenantRefRequest;
 import com.coding.platformapi.security.AuthContext;
@@ -44,10 +45,11 @@ public class NotificationChannelController {
     }
 
     @Operation(summary = "规则编辑页候选",
-            description = "全局 + 本租户的**启用**渠道。token 带租户帽时以 token 为准；"
-                    + "平台管理员代管态用请求体里的 tenantId，缺省时只返回全局渠道")
+            description = "全局 + 本租户的**启用**渠道（窄投影：不含 SMTP 连接配置）。"
+                    + "token 带租户帽时以 token 为准；平台管理员代管态用请求体里的 tenantId，"
+                    + "缺省时只返回全局渠道")
     @PostMapping("/options")
-    public ResponseData<List<NotificationChannel>> options(
+    public ResponseData<List<NotificationChannelOption>> options(
             @RequestBody(required = false) TenantRefRequest request) {
         String requested = request == null ? null : request.getTenantId();
         return new ResponseData<>(channelService.options(authContext.effectiveTenantId(requested)));

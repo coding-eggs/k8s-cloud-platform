@@ -62,16 +62,29 @@ public class PrometheusRuleService {
 
     public PrometheusRuleDTO create(PrometheusRuleDTO body) {
         stampNamespace(body);
-        notifyBinder.bind(body);            // ⚠️ 必须在剥离之前：绑定要用 body 上的 notifyChannel
+        // ⚠️ 先校验、再剥离、再写集群、**最后**写绑定：
+        //   - 参数不对要在什么都没改的前提下被拒（不是写完 K8s 对象才报错）；
+        //   - 集群写失败时不该留下绑定（否则一条不存在的规则也能挂收件人）。
+        String channel = body.getNotifyChannel();
+        List<String> userIds = body.getNotifyUserIds();
+        notifyBinder.validate(body.getTenantId(), channel, userIds);
         stripPlatformFields(body);
-        return k8s.create(body);
+        PrometheusRuleDTO out = k8s.create(body);
+        notifyBinder.bind(body.getClusterId(), body.getTenantId(), body.getNamespace(),
+                body.getName(), channel, userIds);
+        return out;
     }
 
     public PrometheusRuleDTO update(PrometheusRuleDTO body) {
         stampNamespace(body);
-        notifyBinder.bind(body);
+        String channel = body.getNotifyChannel();
+        List<String> userIds = body.getNotifyUserIds();
+        notifyBinder.validate(body.getTenantId(), channel, userIds);
         stripPlatformFields(body);
-        return k8s.update(body);
+        PrometheusRuleDTO out = k8s.update(body);
+        notifyBinder.bind(body.getClusterId(), body.getTenantId(), body.getNamespace(),
+                body.getName(), channel, userIds);
+        return out;
     }
 
     public void delete(String name, String tenantId, String clusterId, String namespace) {
@@ -150,19 +163,24 @@ public class PrometheusRuleService {
                     Map<String, String> labels = r.getLabels() != null
                             ? new LinkedHashMap<>(r.getLabels()) : new LinkedHashMap<>();
                     labels.put("namespace", body.getNamespace());
-                    // 这条告警属于哪个 CR —— 投递引擎按它找通知绑定。
-                    // 为什么写进 label 而不去集群反查：投递跑在 @Async 线程上，**没有请求上下文
-                    // 就没有 Authorization**，k8s-server 会回 401（2026-10-20 真跑验到）。
-                    // 写进 label 后，告警自己带着归属，投递端不再需要任何集群读权限。
-                    if (StringUtils.hasText(body.getName())) {
-                        labels.put("platform_rule", body.getName());
-                    }
                     // 通知方式：选了才写。没选**不能写空串** —— 空值会变成一个无意义的
                     // platform_notify="" 标签，投递端还得区分「没写」与「写了空」。
                     if (StringUtils.hasText(body.getNotifyChannel())) {
                         labels.put("platform_notify", body.getNotifyChannel());
                     }
                     r.setLabels(labels);
+
+                    // 这条告警属于哪个 CR —— 投递引擎按它找通知绑定。
+                    // 为什么写 annotation 而不是 label：label 值上限 63 字符，而 CR 名可达 253
+                    // （长名字的规则会直接保存失败）；annotation 没有这个限制。
+                    // 为什么不用集群反查：投递跑在 @Async 线程上，**没有请求上下文就没有
+                    // Authorization**，k8s-server 会回 401（2026-10-20 真跑验到）。
+                    if (StringUtils.hasText(body.getName())) {
+                        Map<String, String> ann = r.getAnnotations() != null
+                                ? new LinkedHashMap<>(r.getAnnotations()) : new LinkedHashMap<>();
+                        ann.put("platform_rule", body.getName());
+                        r.setAnnotations(ann);
+                    }
                 }
             }
         }

@@ -6,6 +6,7 @@ import com.coding.common.utils.AESUtils;
 import com.coding.data.mapper.alert.NotificationChannelMapper;
 import com.coding.data.mapper.alert.RuleNotifyMapper;
 import com.coding.data.models.alert.NotificationChannel;
+import com.coding.platformapi.models.NotificationChannelOption;
 import com.coding.platformapi.models.NotificationChannelRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,8 +50,15 @@ public class NotificationChannelService {
         return mapper.selectAll().stream().map(this::masked).toList();
     }
 
-    public List<NotificationChannel> options(String tenantId) {
-        return mapper.selectAvailable(tenantId).stream().map(this::masked).toList();
+    /**
+     * 规则编辑页候选。**窄投影**：只回 code / name / isDefault / tenantId ——
+     * SMTP 的 host / 端口 / 发件账号是平台运维信息，不该下发给每个租户管理员。
+     */
+    public List<NotificationChannelOption> options(String tenantId) {
+        return mapper.selectAvailable(tenantId).stream()
+                .map(c -> new NotificationChannelOption(c.getCode(), c.getName(),
+                        c.getIsDefault(), c.getTenantId()))
+                .toList();
     }
 
     public NotificationChannel create(NotificationChannelRequest req) {

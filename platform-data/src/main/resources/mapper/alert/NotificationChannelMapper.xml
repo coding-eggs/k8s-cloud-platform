@@ -35,14 +35,17 @@
     order by tenant_id is not null desc, code
   </select>
 
+  <!-- ⚠️ 默认渠道**不看 enabled**：停用的语义是「不再作为新选择」（selectAvailable 那个查询才过滤），
+       已绑定的规则与所有未绑定的内置规则照常走它。在这里加 enabled=1 会让「停用一次」
+       直接演成「所有未绑定规则静默不再发送」。 -->
   <select id="selectTenantDefault" resultMap="BaseResultMap">
     select <include refid="Base_Cols" /> from platform_notification_channel
-    where tenant_id = #{tenantId,jdbcType=VARCHAR} and is_default = 1 and enabled = 1 limit 1
+    where tenant_id = #{tenantId,jdbcType=VARCHAR} and is_default = 1 limit 1
   </select>
 
   <select id="selectGlobalDefault" resultMap="BaseResultMap">
     select <include refid="Base_Cols" /> from platform_notification_channel
-    where tenant_id is null and is_default = 1 and enabled = 1 limit 1
+    where tenant_id is null and is_default = 1 limit 1
   </select>
 
   <insert id="insert" parameterType="com.coding.data.models.alert.NotificationChannel">

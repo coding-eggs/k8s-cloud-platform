@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { prometheusRuleApi, notificationChannelApi, notificationUserApi } from '@/api'
-import type { K8sPrometheusRule, K8sPrometheusRuleGroup, K8sPrometheusRuleRule, NotificationChannel } from '@/types'
+import type { K8sPrometheusRule, K8sPrometheusRuleGroup, K8sPrometheusRuleRule, NotificationChannelOption } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -69,7 +69,7 @@ const form = reactive({
 })
 
 // ---------- 通知方式候选（全局 + 本租户的启用渠道） ----------
-const channelOptions = ref<NotificationChannel[]>([])
+const channelOptions = ref<NotificationChannelOption[]>([])
 const userOptions = ref<{ id: string; displayName: string; email: string | null }[]>([])
 /** 下拉里标出「默认」，让用户知道留空会走哪条渠道 */
 const defaultChannelName = computed(() => channelOptions.value.find((c) => c.isDefault)?.name ?? '')
@@ -88,11 +88,13 @@ const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
 function fromRule(r: K8sPrometheusRuleRule): RuleRow {
   // namespace 标签由后端在保存时统一覆写，回填时不带出来（表单不该控制它）。
-  // platform_notify / platform_rule 同理：都是后端代打的，留在表单里只会与绑定表打架。
+  // platform_notify（label）与 platform_rule（annotation）同理：都是后端代打的，
+  // 留在表单里只会与绑定表打架。
   const labels = { ...(r.labels ?? {}) }
   delete labels.namespace
   delete labels.platform_notify
-  delete labels.platform_rule
+  const annotations = { ...(r.annotations ?? {}) }
+  delete annotations.platform_rule
   return {
     kind: r.alert ? 'alert' : 'record',
     name: r.alert ?? r.record ?? '',
@@ -100,7 +102,7 @@ function fromRule(r: K8sPrometheusRuleRule): RuleRow {
     for_: r.for_ ?? '',
     keepFiringFor: r.keepFiringFor ?? '',
     labels,
-    annotations: { ...(r.annotations ?? {}) },
+    annotations,
   }
 }
 

@@ -55,6 +55,7 @@ import type {
   AlertQuery,
   AlertSelfTestResult,
   NotificationChannel,
+  NotificationChannelOption,
   NotificationChannelRequest,
   K8sStorageClass,
   K8sTcpRoute,
@@ -513,7 +514,7 @@ export const notificationChannelApi = {
     http.put<never, NotificationChannel>(`/notification-channels/${encodeURIComponent(code)}`, body),
   remove: (code: string) => http.delete<never, void>(`/notification-channels/${encodeURIComponent(code)}`),
   options: (tenantId?: string | null) =>
-    http.post<never, NotificationChannel[]>('/notification-channels/options', { tenantId: tenantId ?? null }),
+    http.post<never, NotificationChannelOption[]>('/notification-channels/options', { tenantId: tenantId ?? null }),
 }
 
 /** 本租户用户（规则编辑页的收件人候选）。email 可能为空 —— 界面上要提示「无邮箱」 */
