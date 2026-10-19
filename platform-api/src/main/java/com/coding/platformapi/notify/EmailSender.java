@@ -125,7 +125,8 @@ public class EmailSender implements NotificationSender {
         field(sb, "开始", time(e.getStartsAt()) + durationHint(e, firing));
         if (firing) {
             field(sb, "表达式", StringUtils.hasText(expression) ? expression : "—（Prometheus 里没查到）");
-            // 模板里的 {{ $labels.xxx }} 这里不会展开（平台不渲染模板），原样给出去仍然比空着强
+            // 注：{{ $labels.xxx }} 这类模板**是 Prometheus 求值时展开的**，
+            // 告警推到平台时已经是渲染好的文本，这里原样打印即可。
             field(sb, "摘要", StringUtils.hasText(summary) ? summary : "—（这条规则没有写 summary 注解）");
         } else {
             field(sb, "结束", time(e.getEndsAt()));
