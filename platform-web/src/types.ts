@@ -785,6 +785,12 @@ export interface K8sPrometheusRule {
   runtime?: K8sRuleRuntime | null
 }
 
+/** 告警的来源规则：由哪个 PrometheusRule 的哪个组定义（查询时按 (namespace, alertname) 反查） */
+export interface AlertSource {
+  cr: string
+  group: string
+}
+
 /** 告警事件（平台库 platform_alert_event 里的一行；一次 firing 会话一行） */
 export interface PlatformAlertEvent {
   id: number
@@ -803,6 +809,11 @@ export interface PlatformAlertEvent {
   startsAt: string
   endsAt?: string | null
   receivedAt: string
+  /**
+   * 来源规则（反查得到的）。空数组 = 规则已改名/删除（历史告警）；
+   * null = 没做反查（后端读不到 PrometheusRule）。
+   */
+  sources?: AlertSource[] | null
 }
 
 /** 告警列表查询（筛选 + 游标）；租户身份由后端按 token 自动收窄 */

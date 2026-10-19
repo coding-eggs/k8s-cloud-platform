@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
 
 import java.util.Date;
+import java.util.List;
 
 /**
  * 告警事件（表 platform_alert_event）。**一次 firing 会话一行**。
@@ -57,4 +58,12 @@ public class PlatformAlertEvent {
 
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss.SSS")
     private Date receivedAt;
+
+    /**
+     * **查询时补的**，不落库、不参与 SQL：这条告警由哪个 PrometheusRule 的哪个组定义。
+     *
+     * <p>Alertmanager 的 payload 里没有 CR 名/组名，所以只能按 {@code (namespace, alertname)}
+     * 反查 K8s 对象。规则改名或删除过的历史告警查不到 → 前端显示「—」。
+     */
+    private List<AlertSource> sources;
 }

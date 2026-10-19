@@ -5,6 +5,10 @@ import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.k8s.PlatformAlertEventMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.PlatformAlertEventQuery;
+import com.coding.common.models.k8s.dto.PrometheusRuleDTO;
+import com.coding.data.models.k8s.AlertSource;
+import com.coding.data.models.k8s.PlatformAlertEvent;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.AlertQueryRequest;
 import com.coding.platformapi.security.AuthContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,8 +18,12 @@ import org.mockito.ArgumentCaptor;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,6 +36,7 @@ class AlertServiceTest {
     private PlatformAlertEventMapper mapper;
     private PlatformTenantNamespaceMapper allocs;
     private AuthContext auth;
+    private K8sClient k8s;
     private AlertService svc;
 
     @BeforeEach
@@ -35,7 +44,8 @@ class AlertServiceTest {
         mapper = mock(PlatformAlertEventMapper.class);
         allocs = mock(PlatformTenantNamespaceMapper.class);
         auth = mock(AuthContext.class);
-        svc = new AlertService(mapper, allocs, auth, org.springframework.web.client.RestClient.builder(), "t", 8081);
+        k8s = mock(K8sClient.class);
+        svc = new AlertService(mapper, allocs, auth, k8s, org.springframework.web.client.RestClient.builder(), "t", 8081);
     }
 
     private static AlertQueryRequest req() {
@@ -165,6 +175,74 @@ class AlertServiceTest {
         show.setShowWatchdog(true);
         svc.list(show);
         assertThat(capturedQuery(2).getExcludeWatchdog()).isFalse();
+    }
+
+    // ---------- 来源反查（告警 → PrometheusRule/组） ----------
+
+    private static PlatformAlertEvent event(String ns, String alertname) {
+        PlatformAlertEvent e = new PlatformAlertEvent();
+        e.setClusterId("c1");
+        e.setNamespace(ns);
+        e.setAlertname(alertname);
+        return e;
+    }
+
+    private static PrometheusRuleDTO cr(String ns, String name, String group, String alert) {
+        PrometheusRuleDTO dto = new PrometheusRuleDTO();
+        dto.setNamespace(ns);
+        dto.setName(name);
+        PrometheusRuleDTO.Rule r = new PrometheusRuleDTO.Rule();
+        r.setAlert(alert);
+        r.setExpr("up == 0");
+        PrometheusRuleDTO.Group g = new PrometheusRuleDTO.Group();
+        g.setName(group);
+        g.setRules(List.of(r));
+        dto.setGroups(List.of(g));
+        return dto;
+    }
+
+    /** 租户：按结果里的 namespace 拉规则，反查出 CR/组。 */
+    @Test
+    void tenant_path_resolves_the_source_rule_via_namespace_list() {
+        asTenant("t1");
+        when(allocs.listByTenantAndCluster("t1", "c1")).thenReturn(List.of(alloc("t1", "mon-app")));
+        when(mapper.query(any())).thenReturn(List.of(event("mon-app", "HighCPU")));
+        doReturn(List.of(cr("mon-app", "app-rules", "app", "HighCPU"))).when(k8s).list(any());
+
+        List<PlatformAlertEvent> out = svc.list(req());
+
+        assertThat(out.get(0).getSources())
+                .containsExactly(new AlertSource("app-rules", "app"));
+        verify(k8s).list(any());
+        verify(k8s, never()).listAll(any());
+    }
+
+    /** 管理员（无租户 claim）：一次 listAll，不过滤命名空间。 */
+    @Test
+    void admin_path_resolves_the_source_rule_via_list_all() {
+        asPlatformAdmin();
+        when(mapper.query(any())).thenReturn(List.of(event("kube-system", "NodeDown")));
+        doReturn(List.of(cr("kube-system", "node-rules", "node", "NodeDown"))).when(k8s).listAll(any());
+
+        List<PlatformAlertEvent> out = svc.list(req());
+
+        assertThat(out.get(0).getSources()).containsExactly(new AlertSource("node-rules", "node"));
+        verify(k8s).listAll(any());
+        verify(k8s, never()).list(any());
+    }
+
+    /** 反查失败只降级为空来源 —— 列表照常返回。 */
+    @Test
+    void a_failed_source_lookup_leaves_sources_empty_without_breaking_the_list() {
+        asTenant("t1");
+        when(allocs.listByTenantAndCluster("t1", "c1")).thenReturn(List.of(alloc("t1", "mon-app")));
+        when(mapper.query(any())).thenReturn(List.of(event("mon-app", "HighCPU")));
+        doThrow(new RuntimeException("k8s down")).when(k8s).list(any());
+
+        List<PlatformAlertEvent> out = svc.list(req());
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getSources()).isNull();   // 没附着
     }
 
     private PlatformAlertEventQuery capturedQuery() {

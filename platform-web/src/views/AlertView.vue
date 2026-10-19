@@ -203,6 +203,13 @@ function severityType(s?: string | null): 'danger' | 'warning' | 'info' | 'succe
   return 'success'
 }
 
+/** 多个候选时给悬停看全量 */
+function sourceTitle(row: PlatformAlertEvent): string {
+  const src = row.sources ?? []
+  if (!src.length) return '规则可能已改名或删除（历史告警），或当前身份读不到该命名空间的 PrometheusRule'
+  return src.map((x) => `${x.cr} / ${x.group}`).join('; ')
+}
+
 /** 命名空间为空 = 规则没经平台下发，归属不明；悬停说明它是"不属于任何租户"。 */
 const noNamespaceTip = '这条告警没有命名空间标签 —— 规则多半是 kubectl 直连建的，不属于任何租户；管理员仍能在这里看到它。'
 
@@ -289,6 +296,16 @@ const clusterDesc = computed(() => {
           <el-table-column label="告警名" min-width="220">
             <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.alertname }}</code></template>
           </el-table-column>
+          <el-table-column label="来源" min-width="220">
+            <template #default="{ row }">
+              <span v-if="row.sources && row.sources.length" :title="sourceTitle(row)">
+                <code class="res-name">{{ row.sources![0]!.cr }}</code>
+                <span class="muted"> / {{ row.sources![0]!.group }}</span>
+                <el-tag v-if="row.sources.length > 1" size="small" type="info" effect="plain" class="src-more">+{{ row.sources.length - 1 }}</el-tag>
+              </span>
+              <span v-else class="muted" :title="sourceTitle(row)">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="严重度" width="110">
             <template #default="{ row }">
               <el-tag v-if="row.severity" size="small" :type="severityType(row.severity)" effect="plain">{{ row.severity }}</el-tag>
@@ -333,6 +350,14 @@ const clusterDesc = computed(() => {
         </el-descriptions-item>
         <el-descriptions-item label="严重度">{{ detail?.severity ?? '—' }}</el-descriptions-item>
         <el-descriptions-item label="命名空间">{{ detail?.namespace ?? '—（不属于任何租户）' }}</el-descriptions-item>
+        <el-descriptions-item label="来源">
+          <template v-if="detail?.sources?.length">
+            <div v-for="sv in detail.sources" :key="`${sv.cr}/${sv.group}`">
+              <code class="res-name">{{ sv.cr }}</code><span class="muted"> / {{ sv.group }}</span>
+            </div>
+          </template>
+          <span v-else class="muted" :title="detail ? sourceTitle(detail) : ''">—</span>
+        </el-descriptions-item>
         <el-descriptions-item label="开始时间">{{ fmtDate(detail?.startsAt) }}</el-descriptions-item>
         <el-descriptions-item label="结束时间">{{ detail?.endsAt ? fmtDate(detail.endsAt) : '—' }}</el-descriptions-item>
         <el-descriptions-item label="收到时间">{{ fmtDate(detail?.receivedAt) }}</el-descriptions-item>
@@ -380,6 +405,9 @@ const clusterDesc = computed(() => {
 .sep {
   color: var(--text-3);
   margin: 0 4px;
+}
+.src-more {
+  margin-left: 6px;
 }
 .table-panel {
   padding: 8px;
