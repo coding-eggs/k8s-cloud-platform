@@ -312,6 +312,14 @@ const clusterDesc = computed(() => {
               <span v-else class="muted" title="规则没有绑定通知方式，按默认渠道发送">—（默认）</span>
             </template>
           </el-table-column>
+          <el-table-column label="投递" width="110">
+            <template #default="{ row }">
+              <el-tag v-if="row.deliveryStatus === 'SENT'" size="small" type="success" effect="plain">已发送</el-tag>
+              <el-tag v-else-if="row.deliveryStatus === 'FAILED'" size="small" type="danger" effect="plain" :title="row.deliveryError">失败</el-tag>
+              <el-tag v-else-if="row.deliveryStatus === 'PENDING'" size="small" type="info" effect="plain">发送中</el-tag>
+              <span v-else class="muted">—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="严重度" width="110">
             <template #default="{ row }">
               <el-tag v-if="row.severity" size="small" :type="severityType(row.severity)" effect="plain">{{ row.severity }}</el-tag>
@@ -367,6 +375,13 @@ const clusterDesc = computed(() => {
         <el-descriptions-item label="通知方式">
           <span v-if="detail?.notifyChannelName">{{ detail.notifyChannelName }}</span>
           <span v-else class="muted">—（默认渠道）</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="投递">
+          <el-tag v-if="detail?.deliveryStatus === 'SENT'" size="small" type="success" effect="plain">已发送</el-tag>
+          <el-tag v-else-if="detail?.deliveryStatus === 'FAILED'" size="small" type="danger" effect="plain">失败</el-tag>
+          <el-tag v-else-if="detail?.deliveryStatus === 'PENDING'" size="small" type="info" effect="plain">发送中</el-tag>
+          <span v-else class="muted">—</span>
+          <div v-if="detail?.deliveryError" class="muted">{{ detail.deliveryError }}</div>
         </el-descriptions-item>
         <el-descriptions-item label="开始时间">{{ fmtDate(detail?.startsAt) }}</el-descriptions-item>
         <el-descriptions-item label="结束时间">{{ detail?.endsAt ? fmtDate(detail.endsAt) : '—' }}</el-descriptions-item>

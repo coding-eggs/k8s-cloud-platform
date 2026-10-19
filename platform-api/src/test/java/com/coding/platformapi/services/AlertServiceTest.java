@@ -38,6 +38,7 @@ class AlertServiceTest {
     private AuthContext auth;
     private K8sClient k8s;
     private com.coding.data.mapper.alert.NotificationChannelMapper channels;
+    private com.coding.data.mapper.alert.AlertDeliveryMapper deliveries;
     private AlertService svc;
 
     @BeforeEach
@@ -47,7 +48,8 @@ class AlertServiceTest {
         auth = mock(AuthContext.class);
         k8s = mock(K8sClient.class);
         channels = mock(com.coding.data.mapper.alert.NotificationChannelMapper.class);
-        svc = new AlertService(mapper, allocs, auth, new RuleSourceResolver(k8s), channels,
+        deliveries = mock(com.coding.data.mapper.alert.AlertDeliveryMapper.class);
+        svc = new AlertService(mapper, allocs, auth, new RuleSourceResolver(k8s), channels, deliveries,
                 org.springframework.web.client.RestClient.builder(), "t", 8081);
     }
 
@@ -294,6 +296,41 @@ class AlertServiceTest {
 
         assertThat(e.getNotifyChannelName()).isNull();
         verify(channels, never()).selectByCode(any());
+    }
+
+    // ---------- 投递状态 ----------
+
+    /** 回填最新一次投递的状态（SQL 已按 id desc，第一条就是最新）。 */
+    @Test
+    void delivery_status_is_filled_from_the_latest_delivery_row() {
+        asPlatformAdmin();
+        PlatformAlertEvent e = event("mon-app", "HighCPU");
+        e.setId(7L);
+        when(mapper.query(any())).thenReturn(List.of(e));
+        com.coding.data.models.alert.AlertDelivery d = new com.coding.data.models.alert.AlertDelivery();
+        d.setEventId(7L);
+        d.setStatus("FAILED");
+        d.setLastError("smtp down");
+        when(deliveries.selectLatestByEventIds(List.of(7L))).thenReturn(List.of(d));
+
+        svc.list(req());
+
+        assertThat(e.getDeliveryStatus()).isEqualTo("FAILED");
+        assertThat(e.getDeliveryError()).isEqualTo("smtp down");
+    }
+
+    /** 没有投递记录 → 两个字段保持 null（前端显示「—」）。 */
+    @Test
+    void no_delivery_row_leaves_the_status_null() {
+        asPlatformAdmin();
+        PlatformAlertEvent e = event("mon-app", "HighCPU");
+        e.setId(8L);
+        when(mapper.query(any())).thenReturn(List.of(e));
+        when(deliveries.selectLatestByEventIds(List.of(8L))).thenReturn(List.of());
+
+        svc.list(req());
+
+        assertThat(e.getDeliveryStatus()).isNull();
     }
 
     private PlatformAlertEventQuery capturedQuery() {        ArgumentCaptor<PlatformAlertEventQuery> c = ArgumentCaptor.forClass(PlatformAlertEventQuery.class);

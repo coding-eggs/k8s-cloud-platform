@@ -826,6 +826,10 @@ export interface PlatformAlertEvent {
    * null = 规则没绑通知方式，按默认渠道发送。
    */
   notifyChannelName?: string | null
+  /** 最新一次投递的状态（PENDING / SENT / FAILED）；null = 还没有投递记录 */
+  deliveryStatus?: string | null
+  /** 最新一次投递失败的原因（只有 FAILED 时才有值） */
+  deliveryError?: string | null
 }
 
 /** 告警列表查询（筛选 + 游标）；租户身份由后端按 token 自动收窄 */

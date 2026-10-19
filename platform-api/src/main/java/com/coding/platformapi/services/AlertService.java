@@ -1,8 +1,10 @@
 package com.coding.platformapi.services;
 
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
+import com.coding.data.mapper.alert.AlertDeliveryMapper;
 import com.coding.data.mapper.alert.NotificationChannelMapper;
 import com.coding.data.mapper.k8s.PlatformAlertEventMapper;
+import com.coding.data.models.alert.AlertDelivery;
 import com.coding.data.models.alert.NotificationChannel;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.AlertSource;
@@ -25,9 +27,11 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 告警列表。
@@ -57,6 +61,8 @@ public class AlertService {
     private final RuleSourceResolver ruleSourceResolver;
     /** labels.platform_notify（渠道 code）→ 显示名 */
     private final NotificationChannelMapper channels;
+    /** 列表回填「最新一次投递状态」 */
+    private final AlertDeliveryMapper deliveries;
     private final JsonMapper json = JsonMapper.builder().build();
 
     /** 自检用的回环客户端工厂（每次调用新建一个，避免把连接状态带进长活 bean）。 */
@@ -77,9 +83,10 @@ public class AlertService {
                         AuthContext authContext,
                         RuleSourceResolver ruleSourceResolver,
                         NotificationChannelMapper channels,
+                        AlertDeliveryMapper deliveries,
                         @Value("${platform.alert.webhook.token}") String webhookToken,
                         @Value("${server.port}") int serverPort) {
-        this(mapper, allocs, authContext, ruleSourceResolver, channels,
+        this(mapper, allocs, authContext, ruleSourceResolver, channels, deliveries,
                 RestClient.builder(), webhookToken, serverPort);
     }
 
@@ -89,6 +96,7 @@ public class AlertService {
                  AuthContext authContext,
                  RuleSourceResolver ruleSourceResolver,
                  NotificationChannelMapper channels,
+                 AlertDeliveryMapper deliveries,
                  RestClient.Builder restClientBuilder,
                  String webhookToken,
                  int serverPort) {
@@ -97,6 +105,7 @@ public class AlertService {
         this.authContext = authContext;
         this.ruleSourceResolver = ruleSourceResolver;
         this.channels = channels;
+        this.deliveries = deliveries;
         this.restClientBuilder = restClientBuilder;
         this.webhookToken = webhookToken;
         this.serverPort = serverPort;
@@ -131,7 +140,34 @@ public class AlertService {
         List<PlatformAlertEvent> rows = mapper.query(q);
         attachSources(rows, req.getClusterId(), tokenTenantId);
         attachNotifyChannel(rows);
+        attachDelivery(rows);
         return rows;
+    }
+
+    /**
+     * 回填「最新一次投递状态」。一次批量查询（按 id desc），每个 event 取第一条 ——
+     * 比按行查省掉 N 次往返。
+     */
+    private void attachDelivery(List<PlatformAlertEvent> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        List<Long> ids = rows.stream().map(PlatformAlertEvent::getId)
+                .filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            return;
+        }
+        Map<Long, AlertDelivery> latest = new HashMap<>();
+        for (AlertDelivery d : deliveries.selectLatestByEventIds(ids)) {
+            latest.putIfAbsent(d.getEventId(), d);
+        }
+        for (PlatformAlertEvent row : rows) {
+            AlertDelivery d = latest.get(row.getId());
+            if (d != null) {
+                row.setDeliveryStatus(d.getStatus());
+                row.setDeliveryError(d.getLastError());
+            }
+        }
     }
 
     /**

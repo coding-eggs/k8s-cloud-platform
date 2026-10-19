@@ -75,4 +75,13 @@ public class PlatformAlertEvent {
      * 有 label 但渠道已被删 → 回填 code 本身，让「配置坏了」看得见。
      */
     private String notifyChannelName;
+
+    /**
+     * **查询时补的**，不落库：这条告警**最新一次**投递的状态（PENDING / SENT / FAILED）。
+     * null = 还没有投递记录（例如投递引擎还没跑到，或重启时丢在队列里）。
+     */
+    private String deliveryStatus;
+
+    /** 最新一次投递失败的原因（只有 FAILED 时才有值） */
+    private String deliveryError;
 }
