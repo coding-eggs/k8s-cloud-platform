@@ -39,6 +39,16 @@ public class PrometheusRuleDTO extends BaseResources {
      */
     private RuleRuntime runtime;
 
+    /**
+     * 平台侧字段（**不是 K8s 对象的一部分**）：规则选中的通知方式 code。
+     * converter 不映射；保存时由 {@code RuleNotifyBinder} 写绑定表，并由
+     * {@code PrometheusRuleService} 代打 {@code labels.platform_notify} 后剥离，不下发。
+     */
+    private String notifyChannel;
+
+    /** 平台侧字段：收件人用户 id 列表（只进绑定表，不下发） */
+    private List<String> notifyUserIds;
+
     @Override
     public String getApiPath() {
         return "/prometheusrules";

@@ -32,7 +32,7 @@ class PrometheusRuleRuntimeEnrichTest {
         k8s = mock(K8sClient.class);
         clusters = mock(K8sClusterMapper.class);
         prom = mock(PromRulesClient.class);
-        svc = new PrometheusRuleService(k8s, clusters, prom);
+        svc = new PrometheusRuleService(k8s, clusters, prom, mock(RuleNotifyBinder.class));
     }
 
     /** list 的查询条件——clusterId 是探测的开关（控制器从 body 里拿到它）。 */

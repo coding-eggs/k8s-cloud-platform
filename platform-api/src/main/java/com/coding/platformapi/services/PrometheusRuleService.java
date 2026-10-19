@@ -36,6 +36,7 @@ public class PrometheusRuleService {
     private final K8sClient k8s;
     private final K8sClusterMapper clusterMapper;
     private final PromRulesClient promRules;
+    private final RuleNotifyBinder notifyBinder;
 
     /** 规则刚建、Prometheus 还没 reload 的宽限期。覆盖 prometheus-operator 的 reload 延迟。 */
     private static final Duration LOAD_GRACE = Duration.ofMinutes(5);
@@ -60,11 +61,15 @@ public class PrometheusRuleService {
 
     public PrometheusRuleDTO create(PrometheusRuleDTO body) {
         stampNamespace(body);
+        notifyBinder.bind(body);            // ⚠️ 必须在剥离之前：绑定要用 body 上的 notifyChannel
+        stripPlatformFields(body);
         return k8s.create(body);
     }
 
     public PrometheusRuleDTO update(PrometheusRuleDTO body) {
         stampNamespace(body);
+        notifyBinder.bind(body);
+        stripPlatformFields(body);
         return k8s.update(body);
     }
 
@@ -144,10 +149,24 @@ public class PrometheusRuleService {
                     Map<String, String> labels = r.getLabels() != null
                             ? new LinkedHashMap<>(r.getLabels()) : new LinkedHashMap<>();
                     labels.put("namespace", body.getNamespace());
+                    // 通知方式：选了才写。没选**不能写空串** —— 空值会变成一个无意义的
+                    // platform_notify="" 标签，投递端还得区分「没写」与「写了空」。
+                    if (StringUtils.hasText(body.getNotifyChannel())) {
+                        labels.put("platform_notify", body.getNotifyChannel());
+                    }
                     r.setLabels(labels);
                 }
             }
         }
+    }
+
+    /**
+     * 平台侧字段**不下发**：它们是平台自己的簿记（绑定已在 {@code RuleNotifyBinder} 落表），
+     * K8s 那边只该看到 {@code labels.platform_notify} 这一份冗余展示。
+     */
+    private void stripPlatformFields(PrometheusRuleDTO body) {
+        body.setNotifyChannel(null);
+        body.setNotifyUserIds(null);
     }
 
     private PrometheusRuleDTO dto(String name, String tenantId, String clusterId, String namespace) {

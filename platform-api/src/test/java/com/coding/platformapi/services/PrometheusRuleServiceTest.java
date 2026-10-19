@@ -22,12 +22,14 @@ import static org.mockito.Mockito.when;
 class PrometheusRuleServiceTest {
 
     private K8sClient k8s;
+    private RuleNotifyBinder binder;
     private PrometheusRuleService svc;
 
     @BeforeEach
     void setUp() {
         k8s = mock(K8sClient.class);
-        svc = new PrometheusRuleService(k8s, mock(K8sClusterMapper.class), mock(PromRulesClient.class));
+        binder = mock(RuleNotifyBinder.class);
+        svc = new PrometheusRuleService(k8s, mock(K8sClusterMapper.class), mock(PromRulesClient.class), binder);
     }
 
     private static PrometheusRuleDTO sample(String ns) {
@@ -160,6 +162,61 @@ class PrometheusRuleServiceTest {
         assertThatThrownBy(() -> svc.create(dto))
                 .isInstanceOfSatisfying(CloudPlatformException.class,
                         e -> assertThat(e.getCode()).isEqualTo(10045));
+    }
+
+    // ---------- S2.2.4 通知方式 ----------
+
+    /** 保存时给每条 alert 规则代打 platform_notify；record 规则不打；平台侧字段不下发。 */
+    @Test
+    void create_stamps_the_notify_label_on_alert_rules_only() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.setNotifyChannel("ops-mail");
+        dto.setNotifyUserIds(List.of("u1"));
+        PrometheusRuleDTO.Rule rec = new PrometheusRuleDTO.Rule();
+        rec.setRecord("job:x:rate5m");
+        rec.setExpr("vector(1)");
+        rec.setLabels(new java.util.LinkedHashMap<>());   // 有标签容器但**不该**被加 platform_notify
+        dto.getGroups().get(0).setRules(List.of(dto.getGroups().get(0).getRules().get(0), rec));
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        PrometheusRuleDTO sent = captured();
+        assertThat(sent.getGroups().get(0).getRules().get(0).getLabels())
+                .containsEntry("platform_notify", "ops-mail");
+        assertThat(sent.getGroups().get(0).getRules().get(1).getLabels())
+                .doesNotContainKey("platform_notify");
+        // 平台侧字段不下发
+        assertThat(sent.getNotifyChannel()).isNull();
+        assertThat(sent.getNotifyUserIds()).isNull();
+    }
+
+    /** 没选渠道 → 不写 label（写空串会让告警带一个无意义的 platform_notify=""）。 */
+    @Test
+    void create_without_a_channel_writes_no_notify_label() {
+        PrometheusRuleDTO dto = sample("my-app");
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        assertThat(captured().getGroups().get(0).getRules().get(0).getLabels())
+                .doesNotContainKey("platform_notify");
+    }
+
+    /** 绑定在打 label **之前**写（update 也要能拿到渠道），且 update 同样剥离平台侧字段。 */
+    @Test
+    void update_binds_then_strips_the_platform_fields() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.setNotifyChannel("ops-mail");
+        when(k8s.update(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.update(dto);
+
+        verify(binder).bind(any());
+        PrometheusRuleDTO sent = capturedUpdate();
+        assertThat(sent.getGroups().get(0).getRules().get(0).getLabels())
+                .containsEntry("platform_notify", "ops-mail");
+        assertThat(sent.getNotifyChannel()).isNull();
     }
 
     private PrometheusRuleDTO captured() {
