@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * PrometheusRule 业务层。与 ServiceMonitorService 一样是透传 —— 只多**一条**本平台自己的规则。
@@ -40,6 +41,17 @@ public class PrometheusRuleService {
 
     /** 规则刚建、Prometheus 还没 reload 的宽限期。覆盖 prometheus-operator 的 reload 延迟。 */
     private static final Duration LOAD_GRACE = Duration.ofMinutes(5);
+
+    /**
+     * CRD 里 {@code interval / for / keep_firing_for / query_offset} 的格式要求
+     * （prometheus-operator 的 Duration 类型，与 apiserver 的 schema 一字不差）。
+     *
+     * <p>写成纯数字会被 apiserver 以 422 拒掉，而回给用户的是 fabric8 的
+     * {@code KubernetesClientException} 加一坨 Status —— 这里先拦，报「要写成 30s」。
+     */
+    private static final Pattern CRD_DURATION = Pattern.compile(
+            "^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?"
+                    + "(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$");
 
     public List<PrometheusRuleDTO> list(PrometheusRuleDTO query) {
         List<PrometheusRuleDTO> out = k8s.list(query);
@@ -141,6 +153,8 @@ public class PrometheusRuleService {
                 throw new CloudPlatformException(EnumResponseType.PROMETHEUS_RULE_INVALID,
                         "每一组都要有组名（groups[].name）。");
             }
+            checkDuration("组「" + g.getName() + "」的求值间隔 interval", g.getInterval());
+            checkDuration("组「" + g.getName() + "」的 query_offset", g.getQueryOffset());
             if (g.getRules() == null || g.getRules().isEmpty()) {
                 throw new CloudPlatformException(EnumResponseType.PROMETHEUS_RULE_INVALID,
                         "组「" + g.getName() + "」里没有规则。");
@@ -158,6 +172,10 @@ public class PrometheusRuleService {
                             "组「" + g.getName() + "」里的规则「"
                                     + (hasAlert ? r.getAlert() : r.getRecord()) + "」没有表达式（expr）。");
                 }
+                String ruleLabel = "组「" + g.getName() + "」里规则「"
+                        + (hasAlert ? r.getAlert() : r.getRecord()) + "」";
+                checkDuration(ruleLabel + " 的 for", r.getFor_());
+                checkDuration(ruleLabel + " 的 keep_firing_for", r.getKeepFiringFor());
                 if (hasAlert) {
                     // 以平台的为准：先复制用户那份，再覆写 namespace（不动其它标签）
                     Map<String, String> labels = r.getLabels() != null
@@ -193,6 +211,23 @@ public class PrometheusRuleService {
     private void stripPlatformFields(PrometheusRuleDTO body) {
         body.setNotifyChannel(null);
         body.setNotifyUserIds(null);
+    }
+
+    /**
+     * 校验 CRD 的时长字段。**空值放行**（留空 = 用 Prometheus 默认）。
+     *
+     * <p>不校验的后果：apiserver 422 + fabric8 的 KubernetesClientException 原样抛给前端，
+     * 用户看到一坨 Status 而不是「interval 要写成 30s」。
+     */
+    private static void checkDuration(String label, String value) {
+        if (!StringUtils.hasText(value)) {
+            return;
+        }
+        if (!CRD_DURATION.matcher(value.trim()).matches()) {
+            throw new CloudPlatformException(EnumResponseType.PROMETHEUS_RULE_INVALID,
+                    label + " 不合法：「" + value + "」。要写成带单位的时长，"
+                            + "如 30s / 5m / 1h / 0（只写数字会被集群拒掉；留空表示用默认）。");
+        }
     }
 
     private PrometheusRuleDTO dto(String name, String tenantId, String clusterId, String namespace) {

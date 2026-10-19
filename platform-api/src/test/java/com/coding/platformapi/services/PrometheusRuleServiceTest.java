@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -162,6 +163,53 @@ class PrometheusRuleServiceTest {
         assertThatThrownBy(() -> svc.create(dto))
                 .isInstanceOfSatisfying(CloudPlatformException.class,
                         e -> assertThat(e.getCode()).isEqualTo(10045));
+    }
+
+    // ---------- 时长字段格式（apiserver 422 的前置拦截）----------
+
+    /**
+     * ⚠️ 2026-10-20 真实踩到：interval 写成纯数字 "30"，apiserver 直接 422，
+     * 回给前端的是 fabric8 的 KubernetesClientException + 一坨 Status。
+     * 平台必须先拦，报「要写成 30s」。
+     */
+    @Test
+    void a_bare_number_interval_is_rejected_before_hitting_the_cluster() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.getGroups().get(0).setInterval("30");
+
+        assertThatThrownBy(() -> svc.create(dto))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("interval")
+                .hasMessageContaining("30s");
+
+        verify(k8s, never()).create(any());
+    }
+
+    /** for 同样：只写秒数没有单位也拦。 */
+    @Test
+    void a_bare_number_for_is_rejected() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.getGroups().get(0).getRules().get(0).setFor_("300");
+
+        assertThatThrownBy(() -> svc.create(dto))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("for");
+
+        verify(k8s, never()).create(any());
+    }
+
+    /** 带单位的合法写法（含 0、复合时长、留空）照常放行。 */
+    @Test
+    void valid_durations_pass_through() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.getGroups().get(0).setInterval("30s");
+        dto.getGroups().get(0).getRules().get(0).setFor_("5m");
+        dto.getGroups().get(0).getRules().get(0).setKeepFiringFor("1h30m");
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        verify(k8s).create(any());
     }
 
     // ---------- S2.2.4 通知方式 ----------

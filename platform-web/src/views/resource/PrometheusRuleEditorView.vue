@@ -180,6 +180,19 @@ const pageTitle = computed(() => (editing.value ? `编辑 PrometheusRule · ${ed
 
 // ---------- 提交：本地校验 → 组装 body ----------
 const RFC1123_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+
+/**
+ * CRD 的 Duration 格式（与 apiserver 的 schema 一字不差）：必须带单位。
+ * 只写数字（如 interval=30）会被集群 422 拒掉、回一堆 Status —— 在这里先拦。
+ */
+const DURATION_RE = /^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$/
+
+/** 空值放行（留空 = 用 Prometheus 默认）；不合法返回给人看的提示 */
+function durationError(v: string | null | undefined, label: string): string {
+  const s = (v ?? '').trim()
+  if (!s) return ''
+  return DURATION_RE.test(s) ? '' : `${label} 要写成带单位的时长，如 30s / 5m / 1h / 0`
+}
 const saving = ref(false)
 
 /** 与后端 PrometheusRuleService 的校验同一套口径 —— 在这里拦是为了不发注定被拒的请求。 */
@@ -194,6 +207,8 @@ function validate(): string | null {
     if (!gn) return '每一组都要有组名'
     if (groupNames.has(gn)) return `组名「${gn}」重复了（同一 PrometheusRule 内组名必须唯一）`
     groupNames.add(gn)
+    const intervalErr = durationError(g.interval, '求值间隔 interval')
+    if (intervalErr) return `组「${gn}」的${intervalErr}`
     if (!g.rules.length) return `组「${gn}」里没有规则`
     const keys = new Set<string>()
     for (const r of g.rules) {
@@ -203,6 +218,12 @@ function validate(): string | null {
       if (keys.has(key)) return `组「${gn}」里的${r.kind === 'alert' ? '告警' : '记录'}规则「${rn}」重复了（同组内必须唯一）`
       keys.add(key)
       if (!r.expr.trim()) return `组「${gn}」里的规则「${rn}」没有表达式（expr）`
+      if (r.kind === 'alert') {
+        const forErr = durationError(r.for_, 'for')
+        if (forErr) return `组「${gn}」里的规则「${rn}」的${forErr}`
+        const keepErr = durationError(r.keepFiringFor, 'keep_firing_for')
+        if (keepErr) return `组「${gn}」里的规则「${rn}」的${keepErr}`
+      }
     }
   }
   return null
@@ -351,7 +372,7 @@ function goBack(): void {
               <el-form-item label="组名 name" required>
                 <el-input v-model="g.name" placeholder="如 app" />
               </el-form-item>
-              <el-form-item label="求值间隔 interval">
+              <el-form-item label="求值间隔 interval" :error="durationError(g.interval, 'interval')">
                 <el-input v-model="g.interval" placeholder="如 30s（留空 = Prometheus 默认）" />
               </el-form-item>
               <el-form-item>
@@ -392,7 +413,7 @@ function goBack(): void {
                 </el-form-item>
 
                 <div v-if="r.kind === 'alert'" class="row-2">
-                  <el-form-item>
+                  <el-form-item :error="durationError(r.for_, 'for')">
                     <template #label>
                       <span class="label-help">
                         持续 for<FieldHelper :text="FOR_HELP" />
@@ -400,7 +421,7 @@ function goBack(): void {
                     </template>
                     <el-input v-model="r.for_" placeholder="如 5m（留空 = 立即触发）" />
                   </el-form-item>
-                  <el-form-item>
+                  <el-form-item :error="durationError(r.keepFiringFor, 'keep_firing_for')">
                     <template #label>
                       <span class="label-help">
                         keep_firing_for<FieldHelper :text="KEEP_FIRING_FOR_HELP" />
