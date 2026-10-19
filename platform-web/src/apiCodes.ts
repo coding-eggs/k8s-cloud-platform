@@ -81,4 +81,12 @@ export const apiCodes = {
   udpRouteList: 'tenant:udproute:list',
   udpRouteCreate: 'tenant:udproute:create',
   udpRouteUpdate: 'tenant:udproute:update',
+
+  // ---- 告警（S2.2）----
+  /** 列表接口（租户侧收窄到本租户命名空间）。**页面可见性用 pageCodes.alert**，这个只用于接口门控 */
+  alertListTenant: 'tenant:alert:list',
+  /** 平台侧告警（看全部命名空间）+ 删除告警记录。租户角色不持有 → 删除按钮对租户隐藏 */
+  alertRead: 'platform:alert:read',
+  /** 链路自检（会往真实命名空间写两条测试告警）。仅平台管理员 */
+  alertTest: 'platform:alert:test',
 } as const

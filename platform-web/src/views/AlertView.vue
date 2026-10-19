@@ -11,13 +11,25 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { alertApi } from '@/api'
+import { apiCodes } from '@/apiCodes'
 import type { AlertQuery, PlatformAlertEvent } from '@/types'
+import { usePermission } from '@/stores/permission'
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
 
 const { state, ready, currentCluster, load } = useResourceContext()
+const perm = usePermission()
+
+/**
+ * 按钮门控（接口才是权威判定，这里只是别让用户点到注定 403 的按钮）：
+ * - 自检会往真实命名空间写两条测试告警 → 仅 `platform:alert:test`（内置 admin）；
+ * - 删除用 `platform:alert:read` → 租户角色没有该码，整列对租户隐藏。
+ * 列表本身租户能看（`tenant:alert:list`），数据由后端按分配表收窄。
+ */
+const canSelfTest = computed(() => perm.has(apiCodes.alertTest))
+const canDelete = computed(() => perm.has(apiCodes.alertRead))
 
 const PAGE_SIZE = 50
 
@@ -207,7 +219,7 @@ const clusterDesc = computed(() => {
 <template>
   <div>
     <PageHeader title="告警" :description="clusterDesc">
-      <el-button :loading="selfTesting" :disabled="!ready" @click="onSelfTest">自检</el-button>
+      <el-button v-if="canSelfTest" :loading="selfTesting" :disabled="!ready" @click="onSelfTest">自检</el-button>
       <el-button :disabled="!ready" @click="refresh">刷新</el-button>
     </PageHeader>
 
@@ -283,7 +295,7 @@ const clusterDesc = computed(() => {
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column v-if="canDelete" label="操作" width="120" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
               <el-button link type="danger" @click="onDelete(row)">删除</el-button>
