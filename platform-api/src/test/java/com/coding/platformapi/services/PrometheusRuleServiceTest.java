@@ -92,13 +92,14 @@ class PrometheusRuleServiceTest {
     @Test
     void existing_labels_survive_the_stamp() {
         PrometheusRuleDTO dto = sample("my-app");
-        dto.getGroups().get(0).getRules().get(0).setLabels(Map.of("severity", "critical"));
+        dto.getGroups().get(0).getRules().get(0).setLabels(Map.of("team", "os"));
         when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
 
         svc.create(dto);
 
+        // severity 现在由下拉（平台侧字段）掌管，不再走 labels；这里验的是「其它标签不被抹掉」
         assertThat(captured().getGroups().get(0).getRules().get(0).getLabels())
-                .containsEntry("severity", "critical")
+                .containsEntry("team", "os")
                 .containsEntry("namespace", "my-app");
     }
 
@@ -210,6 +211,53 @@ class PrometheusRuleServiceTest {
         svc.create(dto);
 
         verify(k8s).create(any());
+    }
+
+    // ---------- 严重度（下拉 → labels.severity）----------
+
+    /** 编辑页严重度下拉是平台侧字段：保存时拼成 Prometheus 约定的 labels.severity。 */
+    @Test
+    void create_stamps_the_severity_into_labels() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.getGroups().get(0).getRules().get(0).setSeverity("critical");
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        PrometheusRuleDTO sent = captured();
+        assertThat(sent.getGroups().get(0).getRules().get(0).getLabels())
+                .containsEntry("severity", "critical");
+        // 平台侧字段不下发（K8s 那边只该看到 labels.severity 这一份）
+        assertThat(sent.getGroups().get(0).getRules().get(0).getSeverity()).isNull();
+    }
+
+    /** 下拉被清空 = 删掉 labels.severity（不能留着旧值让用户以为改了）。 */
+    @Test
+    void a_cleared_severity_removes_the_label() {
+        PrometheusRuleDTO dto = sample("my-app");
+        PrometheusRuleDTO.Rule rule = dto.getGroups().get(0).getRules().get(0);
+        rule.setLabels(new java.util.LinkedHashMap<>(Map.of("severity", "warning", "team", "os")));
+        rule.setSeverity(null);
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        assertThat(captured().getGroups().get(0).getRules().get(0).getLabels())
+                .doesNotContainKey("severity")
+                .containsEntry("team", "os");
+    }
+
+    /** 读详情时把 labels.severity 摘回平台侧字段，编辑页的下拉才有值。 */
+    @Test
+    void get_fills_the_severity_back_from_labels() {
+        PrometheusRuleDTO stored = sample("my-app");
+        stored.getGroups().get(0).getRules().get(0)
+                .setLabels(new java.util.LinkedHashMap<>(Map.of("severity", "warning")));
+        when(k8s.get(any())).thenReturn(stored);
+
+        PrometheusRuleDTO out = svc.get("app-rules", "t1", "c1", "my-app");
+
+        assertThat(out.getGroups().get(0).getRules().get(0).getSeverity()).isEqualTo("warning");
     }
 
     // ---------- S2.2.4 通知方式 ----------

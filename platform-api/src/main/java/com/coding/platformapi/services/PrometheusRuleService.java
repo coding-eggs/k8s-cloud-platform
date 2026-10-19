@@ -62,6 +62,7 @@ public class PrometheusRuleService {
     public PrometheusRuleDTO get(String name, String tenantId, String clusterId, String namespace) {
         PrometheusRuleDTO out = k8s.get(dto(name, tenantId, clusterId, namespace));
         if (out != null) {
+            fillSeverity(out);               // labels.severity → 平台侧字段（编辑页回显）
             notifyBinder.fill(out);          // 平台侧字段不在 CR 里，得从绑定表补回来
             enrich(List.of(out), clusterId);
         }
@@ -181,6 +182,13 @@ public class PrometheusRuleService {
                     Map<String, String> labels = r.getLabels() != null
                             ? new LinkedHashMap<>(r.getLabels()) : new LinkedHashMap<>();
                     labels.put("namespace", body.getNamespace());
+                    // 严重度：编辑页的下拉是**平台侧字段**，这里拼成 Prometheus 生态约定的 labels.severity。
+                    // 下拉被清空 = 删掉这个标签（不能留着旧值，否则用户以为改了、实际没改）。
+                    if (StringUtils.hasText(r.getSeverity())) {
+                        labels.put("severity", r.getSeverity());
+                    } else {
+                        labels.remove("severity");
+                    }
                     // 通知方式：选了才写。没选**不能写空串** —— 空值会变成一个无意义的
                     // platform_notify="" 标签，投递端还得区分「没写」与「写了空」。
                     if (StringUtils.hasText(body.getNotifyChannel())) {
@@ -207,10 +215,43 @@ public class PrometheusRuleService {
     /**
      * 平台侧字段**不下发**：它们是平台自己的簿记（绑定已在 {@code RuleNotifyBinder} 落表），
      * K8s 那边只该看到 {@code labels.platform_notify} 这一份冗余展示。
+     * {@code severity} 同理 —— 它已经拼进 {@code labels.severity} 了。
      */
     private void stripPlatformFields(PrometheusRuleDTO body) {
         body.setNotifyChannel(null);
         body.setNotifyUserIds(null);
+        if (body.getGroups() == null) {
+            return;
+        }
+        for (PrometheusRuleDTO.Group g : body.getGroups()) {
+            if (g.getRules() == null) {
+                continue;
+            }
+            for (PrometheusRuleDTO.Rule r : g.getRules()) {
+                r.setSeverity(null);
+            }
+        }
+    }
+
+    /** 读：把 {@code labels.severity} 摘回平台侧字段，编辑页的严重度下拉才有值。 */
+    private void fillSeverity(PrometheusRuleDTO dto) {
+        if (dto.getGroups() == null) {
+            return;
+        }
+        for (PrometheusRuleDTO.Group g : dto.getGroups()) {
+            if (g.getRules() == null) {
+                continue;
+            }
+            for (PrometheusRuleDTO.Rule r : g.getRules()) {
+                if (r.getLabels() == null) {
+                    continue;
+                }
+                String severity = r.getLabels().get("severity");
+                if (StringUtils.hasText(severity)) {
+                    r.setSeverity(severity);
+                }
+            }
+        }
     }
 
     /**

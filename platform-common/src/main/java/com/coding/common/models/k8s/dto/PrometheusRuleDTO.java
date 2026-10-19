@@ -105,6 +105,18 @@ public class PrometheusRuleDTO extends BaseResources {
         /** 条件消失后继续 firing 多久（Prometheus ≥ 2.38） */
         private String keepFiringFor;
 
+        /**
+         * 平台侧便捷字段：**严重度下拉**。
+         *
+         * <p>它本质上就是 K8s 的 {@code labels.severity}（Prometheus 生态的约定位置），
+         * 平台在保存时把它拼进 labels、读出来时再摘回本字段供编辑页回显 ——
+         * 这样编辑页可以给一个固定选项的下拉，而不是让用户在通用标签编辑器里手打。
+         *
+         * <p>⚠️ 保存时本字段为空的含义是「**清掉 severity 标签**」（下拉被清空），
+         * 因为读接口一定会先把它回填进来 —— 老客户端不传这个字段等于清空。
+         */
+        private String severity;
+
         private Map<String, String> labels;
 
         /** 仅 alert 规则有效 */

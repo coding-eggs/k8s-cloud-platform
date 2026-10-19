@@ -742,6 +742,11 @@ export interface K8sPrometheusRuleRule {
   keepFiringFor?: string | null
   labels?: Record<string, string> | null
   annotations?: Record<string, string> | null
+  /**
+   * 平台侧字段：严重度下拉。本质是 `labels.severity` ——
+   * 保存时后端拼进 labels，读详情时再摘回本字段供编辑页回显。
+   */
+  severity?: string | null
 }
 
 /** PrometheusRule 的一组规则（spec.groups[]） */

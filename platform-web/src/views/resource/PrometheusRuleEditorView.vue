@@ -41,6 +41,8 @@ interface RuleRow {
   /** 仅前端：决定提交时写 alert 还是 record（CRD 要求二选一） */
   kind: 'alert' | 'record'
   name: string
+  /** 严重度 = labels.severity，但用下拉管（平台侧字段，后端负责拼/摘） */
+  severity: string
   expr: string
   for_: string
   keepFiringFor: string
@@ -64,7 +66,7 @@ interface GroupRow {
 }
 
 function newRule(): RuleRow {
-  return { kind: 'alert', name: '', expr: '', for_: '', keepFiringFor: '', labels: {}, annotations: {} }
+  return { kind: 'alert', name: '', severity: '', expr: '', for_: '', keepFiringFor: '', labels: {}, annotations: {} }
 }
 function newGroup(): GroupRow {
   return { name: '', interval: '', limit: null, queryOffset: '', partialResponseStrategy: '', groupLabels: {}, rules: [newRule()] }
@@ -107,11 +109,15 @@ function fromRule(r: K8sPrometheusRuleRule): RuleRow {
   const labels = { ...(r.labels ?? {}) }
   delete labels.namespace
   delete labels.platform_notify
+  // labels.severity 归严重度下拉管：先取值再摘掉，否则编辑器里会同时出现两个入口
+  const severity = r.severity ?? labels.severity ?? ''
+  delete labels.severity
   const annotations = { ...(r.annotations ?? {}) }
   delete annotations.platform_rule
   return {
     kind: r.alert ? 'alert' : 'record',
     name: r.alert ?? r.record ?? '',
+    severity,
     expr: r.expr ?? '',
     for_: r.for_ ?? '',
     keepFiringFor: r.keepFiringFor ?? '',
@@ -187,6 +193,13 @@ const RFC1123_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
  */
 const DURATION_RE = /^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$/
 
+const SEVERITIES = ['critical', 'warning', 'info']
+
+/** 下拉选项：三个标准级别 + 当前值（老规则里可能是 page / P1 这类自定义级别，不能因此丢掉） */
+function severityOptions(current: string): string[] {
+  return current && !SEVERITIES.includes(current) ? [...SEVERITIES, current] : SEVERITIES
+}
+
 /** 空值放行（留空 = 用 Prometheus 默认）；不合法返回给人看的提示 */
 function durationError(v: string | null | undefined, label: string): string {
   const s = (v ?? '').trim()
@@ -233,6 +246,7 @@ function toRuleDto(r: RuleRow): K8sPrometheusRuleRule {
   const dto: K8sPrometheusRuleRule = { expr: r.expr.trim() }
   if (r.kind === 'alert') {
     dto.alert = r.name.trim()
+    if (r.severity) dto.severity = r.severity
     if (r.for_.trim()) dto.for_ = r.for_.trim()
     if (r.keepFiringFor.trim()) dto.keepFiringFor = r.keepFiringFor.trim()
     if (Object.keys(r.labels).length) dto.labels = r.labels
@@ -396,7 +410,7 @@ function goBack(): void {
               </template>
 
               <el-form label-width="140px" label-position="left">
-                <div class="row-2">
+                <div :class="r.kind === 'alert' ? 'row-3' : 'row-2'">
                   <el-form-item label="类型">
                     <el-select v-model="r.kind" style="width: 180px" @change="onKindChange(r)">
                       <el-option label="告警 alert" value="alert" />
@@ -405,6 +419,12 @@ function goBack(): void {
                   </el-form-item>
                   <el-form-item :label="r.kind === 'alert' ? '告警名 alert' : '记录名 record'" required>
                     <el-input v-model="r.name" :placeholder="r.kind === 'alert' ? '如 HighCPU' : '如 job:http_errors:rate5m'" />
+                  </el-form-item>
+                  <!-- 严重度：本质是 labels.severity，用下拉管，保存时后端拼、读详情时后端摘 -->
+                  <el-form-item v-if="r.kind === 'alert'" label="严重度">
+                    <el-select v-model="r.severity" clearable placeholder="未设置" style="width: 100%">
+                      <el-option v-for="s in severityOptions(r.severity)" :key="s" :label="s" :value="s" />
+                    </el-select>
                   </el-form-item>
                 </div>
 
@@ -434,7 +454,7 @@ function goBack(): void {
                 <el-form-item label="标签 labels">
                   <div class="sub-editor-wrap">
                     <div v-if="r.kind === 'alert'" class="form-tip">平台会在保存时把 namespace 标签写成这条规则所在的命名空间 —— 告警的归属靠它，所以它不由表单控制。</div>
-                    <LabelEditor v-model="r.labels" class="sub-editor" :exclude-keys="['namespace']" style="max-width: 1080px" />
+                    <LabelEditor v-model="r.labels" class="sub-editor" :exclude-keys="['namespace', 'severity']" style="max-width: 1080px" />
                   </div>
                 </el-form-item>
 
