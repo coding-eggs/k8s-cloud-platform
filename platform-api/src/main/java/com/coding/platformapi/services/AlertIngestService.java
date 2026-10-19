@@ -13,6 +13,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -40,12 +41,18 @@ public class AlertIngestService {
 
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
-    /** 落库。返回**实际成功条数**。单条失败不中断整批（Alertmanager 只看状态码）。 */
-    public int ingest(String clusterId, List<AlertWebhookRequest.Alert> alerts) {
+    /**
+     * 落库。返回**本次成功落库的行**（含 id，供投递引擎用）。
+     * 单条失败不中断整批（Alertmanager 只看状态码）。
+     *
+     * <p>id 是回查来的：{@code ON DUPLICATE KEY UPDATE} 只在真插入时回填自增 id，
+     * 重推命中已有行时 id 仍是 null —— 而投递记录按 {@code event_id} 去重，没 id 就没法记。
+     */
+    public List<PlatformAlertEvent> ingest(String clusterId, List<AlertWebhookRequest.Alert> alerts) {
         if (alerts == null || alerts.isEmpty()) {
-            return 0;
+            return List.of();
         }
-        int ok = 0;
+        List<PlatformAlertEvent> out = new ArrayList<>();
         for (AlertWebhookRequest.Alert a : alerts) {
             try {
                 PlatformAlertEvent row = toRow(clusterId, a);
@@ -53,13 +60,20 @@ public class AlertIngestService {
                     continue;                          // alertname / startsAt 缺失 —— 记 warn 后跳过
                 }
                 mapper.upsert(row);
-                ok++;
+                if (StringUtils.hasText(row.getFingerprint())) {
+                    PlatformAlertEvent stored =
+                            mapper.selectByEpisode(clusterId, row.getFingerprint(), row.getStartsAt());
+                    if (stored != null) {
+                        row.setId(stored.getId());
+                    }
+                }
+                out.add(row);                          // id 可能还是 null —— 投递端会跳过这种行
             } catch (Exception e) {
                 log.error("告警落库失败（cluster={} alertname={}）",
                         clusterId, a.getLabels() != null ? a.getLabels().get("alertname") : null, e);
             }
         }
-        return ok;
+        return out;
     }
 
     /** 转成表行；返回 null = 这条不可落库（调用方跳过）。 */

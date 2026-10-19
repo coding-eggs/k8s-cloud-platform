@@ -88,4 +88,14 @@
     limit 20
   </select>
 
+  <!-- 投递引擎要的 id：ON DUPLICATE KEY UPDATE 不回填自增 id，只能按幂等键回查 -->
+  <select id="selectByEpisode" resultMap="BaseResultMap">
+    select
+    <include refid="Base_Column_List" />
+    from platform_alert_event
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and fingerprint = #{fingerprint,jdbcType=VARCHAR}
+      and starts_at = #{startsAt,jdbcType=TIMESTAMP}
+  </select>
+
 </mapper>

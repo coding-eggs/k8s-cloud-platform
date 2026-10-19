@@ -286,4 +286,20 @@ class AlertDispatchServiceTest {
         assertThat(cap.getValue().getAlertStatus()).isEqualTo("firing");
         verify(deliveries).markSent(any());
     }
+
+    /** 没有 id 的告警（id 回查失败）→ 跳过：投递记录按 event_id 去重，null 写不进去。 */
+    @Test
+    void events_without_an_id_are_skipped() throws Exception {
+        tenantOwns("ns", "t1");
+        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        bindingFrom("app-rules", List.of("u1"));
+
+        PlatformAlertEvent noId = event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing");
+        noId.setId(null);
+
+        svc.dispatch("c1", List.of(noId));
+
+        verify(deliveries, never()).insertIfAbsent(any());
+        verify(sender, never()).send(any(), any(), any());
+    }
 }

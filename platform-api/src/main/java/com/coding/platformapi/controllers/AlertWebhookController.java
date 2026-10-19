@@ -2,8 +2,10 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.system.ResponseData;
+import com.coding.data.models.k8s.PlatformAlertEvent;
 import com.coding.platformapi.configs.AlertWebhookTokenCheck;
 import com.coding.platformapi.models.AlertWebhookRequest;
+import com.coding.platformapi.services.AlertDispatchService;
 import com.coding.platformapi.services.AlertIngestService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -55,6 +57,7 @@ public class AlertWebhookController {
 
     private final AlertIngestService ingest;
     private final AlertWebhookTokenCheck tokenCheck;
+    private final AlertDispatchService dispatch;
 
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
@@ -90,15 +93,25 @@ public class AlertWebhookController {
                             "请求体不是 Alertmanager 的 webhook 信封（{version,status,alerts:[...]}）。", null));
         }
 
-        int accepted;
+        List<PlatformAlertEvent> stored;
         try {
-            accepted = ingest.ingest(clusterId, alerts);
+            stored = ingest.ingest(clusterId, alerts);
         } catch (Exception e) {
             // 仍然回 200：Alertmanager 只看状态码，重投一次也不会好，只会放大。
             log.error("告警落库整体失败（cluster={}）", clusterId, e);
-            accepted = 0;
+            stored = List.of();
         }
-        return ResponseEntity.ok(new ResponseData<>(Map.of("accepted", accepted)));
+
+        // 投递是异步的（@Async）；而且这里再包一层 try —— 邮件发不出去绝不能让 webhook 变成 500，
+        // 那会让 Alertmanager 以为投递失败而反复重推同一条告警。
+        if (!stored.isEmpty()) {
+            try {
+                dispatch.dispatch(clusterId, stored);
+            } catch (Exception e) {
+                log.error("触发告警投递失败（cluster={}）", clusterId, e);
+            }
+        }
+        return ResponseEntity.ok(new ResponseData<>(Map.of("accepted", stored.size())));
     }
 
     /**

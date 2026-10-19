@@ -16,6 +16,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -62,7 +63,7 @@ class AlertIngestServiceTest {
     void ingest_maps_the_payload_onto_the_row() {
         when(allocs.selectByClusterAndNs("c1", "my-app")).thenReturn(List.of(alloc("t1", "my-app")));
 
-        int n = svc.ingest("c1", List.of(alert("firing", "my-app", "2026-10-17T10:00:00Z")));
+        int n = ingestCount("c1", List.of(alert("firing", "my-app", "2026-10-17T10:00:00Z")));
 
         assertThat(n).isEqualTo(1);
         PlatformAlertEvent row = captured();
@@ -98,7 +99,7 @@ class AlertIngestServiceTest {
     void an_alert_without_a_parseable_starts_at_is_skipped() {
         when(allocs.selectByClusterAndNs(anyString(), anyString())).thenReturn(List.of(alloc("t1", "ns")));
 
-        assertThat(svc.ingest("c1", List.of(alert("firing", "ns", "not-a-timestamp")))).isZero();
+        assertThat(ingestCount("c1", List.of(alert("firing", "ns", "not-a-timestamp")))).isZero();
         verify(mapper, never()).upsert(any());
     }
 
@@ -148,7 +149,7 @@ class AlertIngestServiceTest {
      */
     @Test
     void a_missing_namespace_label_still_ingests_with_a_null_namespace() {
-        int n = svc.ingest("c1", List.of(alert("firing", null, "2026-10-17T10:00:00Z")));
+        int n = ingestCount("c1", List.of(alert("firing", null, "2026-10-17T10:00:00Z")));
 
         assertThat(n).isEqualTo(1);
         assertThat(captured().getNamespace()).isNull();
@@ -159,7 +160,7 @@ class AlertIngestServiceTest {
     void a_namespace_outside_every_allocation_still_ingests() {
         when(allocs.selectByClusterAndNs("c1", "kube-system")).thenReturn(List.of());
 
-        int n = svc.ingest("c1", List.of(alert("firing", "kube-system", "2026-10-17T10:00:00Z")));
+        int n = ingestCount("c1", List.of(alert("firing", "kube-system", "2026-10-17T10:00:00Z")));
 
         assertThat(n).isEqualTo(1);
         assertThat(captured().getNamespace()).isEqualTo("kube-system");
@@ -191,7 +192,7 @@ class AlertIngestServiceTest {
                 .thenThrow(new RuntimeException("boom"))
                 .thenReturn(1);
 
-        int n = svc.ingest("c1", List.of(
+        int n = ingestCount("c1", List.of(
                 alert("firing", "ns", "2026-10-17T10:00:00Z"),
                 alert("firing", "ns", "2026-10-17T10:02:00Z")));
 
@@ -201,7 +202,7 @@ class AlertIngestServiceTest {
     /** 空批次 → 0，不炸。 */
     @Test
     void an_empty_batch_is_a_no_op() {
-        assertThat(svc.ingest("c1", List.of())).isZero();
+        assertThat(ingestCount("c1", List.of())).isZero();
         verifyNoInteractions(mapper);
     }
 
@@ -211,8 +212,48 @@ class AlertIngestServiceTest {
         AlertWebhookRequest.Alert bad = alert("firing", "ns", "2026-10-17T10:00:00Z");
         bad.getLabels().remove("alertname");
 
-        assertThat(svc.ingest("c1", List.of(bad))).isZero();
+        assertThat(svc.ingest("c1", List.of(bad))).isEmpty();
         verify(mapper, never()).upsert(any());
+    }
+
+    /**
+     * 返回落库后的行（**含 id**），供投递引擎用。
+     * id 必须回查：MySQL 的 ON DUPLICATE KEY UPDATE 只在"真插入"时回填自增 id。
+     */
+    @Test
+    void ingest_returns_the_upserted_events_with_ids() {
+        when(allocs.selectByClusterAndNs(anyString(), anyString())).thenReturn(List.of(alloc("t1", "ns")));
+        PlatformAlertEvent stored = new PlatformAlertEvent();
+        stored.setId(42L);
+        stored.setAlertname("HighCPU");
+        when(mapper.selectByEpisode(eq("c1"), eq("fp-1"), any())).thenReturn(stored);
+
+        List<PlatformAlertEvent> out = svc.ingest("c1",
+                List.of(alert("firing", "ns", "2026-10-17T10:00:00Z")));
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getId()).isEqualTo(42L);
+    }
+
+    /**
+     * 回查不到（并发删了 / 读失败）→ 行照常算落库，但**没有 id**；
+     * 投递端看到 null id 会跳过它（投递记录按 event_id 去重，null 没法记）。
+     */
+    @Test
+    void a_row_whose_id_cannot_be_read_back_is_returned_without_an_id() {
+        when(allocs.selectByClusterAndNs(anyString(), anyString())).thenReturn(List.of(alloc("t1", "ns")));
+        when(mapper.selectByEpisode(anyString(), anyString(), any())).thenReturn(null);
+
+        List<PlatformAlertEvent> out = svc.ingest("c1",
+                List.of(alert("firing", "ns", "2026-10-17T10:00:00Z")));
+
+        assertThat(out).hasSize(1);
+        assertThat(out.get(0).getId()).isNull();
+    }
+
+    /** 成功条数口径：老调用方要数字，这里只是把 list 折成 size。 */
+    private int ingestCount(String clusterId, List<AlertWebhookRequest.Alert> alerts) {
+        return svc.ingest(clusterId, alerts).size();
     }
 
     private PlatformAlertEvent captured() {

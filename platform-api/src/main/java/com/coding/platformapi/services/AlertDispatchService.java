@@ -91,6 +91,12 @@ public class AlertDispatchService {
         if (toSend == null || toSend.isEmpty()) {
             return;
         }
+        // 没有 id 的行没法记投递（唯一键要用 event_id）—— 宁可少发一封，也不要写坏一行
+        toSend = toSend.stream().filter(e -> e != null && e.getId() != null).toList();
+        if (toSend.isEmpty()) {
+            log.warn("这一批告警都没有 id，跳过投递");
+            return;
+        }
 
         // 1) 决定每条告警走哪个渠道
         Map<String, List<PlatformAlertEvent>> byChannel = new LinkedHashMap<>();
