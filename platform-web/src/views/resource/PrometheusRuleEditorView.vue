@@ -7,6 +7,7 @@ import type { K8sPrometheusRule, K8sPrometheusRuleGroup, K8sPrometheusRuleRule, 
 import { useResourceContext } from '@/stores/context'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import FieldHelper from '@/components/FieldHelper.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
 
 const route = useRoute()
@@ -21,6 +22,19 @@ const ctx3 = computed(() => ({
   clusterId: state.clusterId!,
   namespace: state.namespace!,
 }))
+
+// ---------- 字段说明（放在标题后的小问号里，不铺在表单上）----------
+const FOR_HELP =
+  '表达式成立后还要持续满足这么久，才真正进入 firing；这之前的阶段是 pending，不发通知。' +
+  '留空 = 立即触发。'
+const KEEP_FIRING_FOR_HELP =
+  '条件不再成立后，告警仍保持 firing 这么久才转成 resolved。用来吃掉阈值附近的抖动，' +
+  '避免 firing / resolved 反复来回各发一次通知；窗口内条件恢复则无缝续上。' +
+  '代价是「恢复」通知会相应延后这么久。'
+const LIMIT_HELP =
+  '这个组里每条规则最多能产出多少条（告警规则按告警数，record 规则按序列数）。' +
+  '超过时这条规则整体失败、在规则状态里报错，而不是截断成上限那么多条。' +
+  '留空 = 不限制。用来兜住写错的表达式（比如漏了聚合）别把 Ruler 打爆。'
 
 // ---------- 表单模型 ----------
 interface RuleRow {
@@ -340,7 +354,12 @@ function goBack(): void {
               <el-form-item label="求值间隔 interval">
                 <el-input v-model="g.interval" placeholder="如 30s（留空 = Prometheus 默认）" />
               </el-form-item>
-              <el-form-item label="limit">
+              <el-form-item>
+                <template #label>
+                  <span class="label-help">
+                    产出上限<FieldHelper :text="LIMIT_HELP" />
+                  </span>
+                </template>
                 <el-input-number v-model="g.limit" :min="1" controls-position="right" placeholder="可空" class="num-input" />
               </el-form-item>
             </div>
@@ -373,10 +392,20 @@ function goBack(): void {
                 </el-form-item>
 
                 <div v-if="r.kind === 'alert'" class="row-2">
-                  <el-form-item label="持续 for">
+                  <el-form-item>
+                    <template #label>
+                      <span class="label-help">
+                        持续 for<FieldHelper :text="FOR_HELP" />
+                      </span>
+                    </template>
                     <el-input v-model="r.for_" placeholder="如 5m（留空 = 立即触发）" />
                   </el-form-item>
-                  <el-form-item label="条件消失后继续 keep_firing_for">
+                  <el-form-item>
+                    <template #label>
+                      <span class="label-help">
+                        keep_firing_for<FieldHelper :text="KEEP_FIRING_FOR_HELP" />
+                      </span>
+                    </template>
                     <el-input v-model="r.keepFiringFor" placeholder="如 5m（可空）" />
                   </el-form-item>
                 </div>
@@ -456,6 +485,12 @@ function goBack(): void {
 }
 .num-input {
   width: 180px;
+}
+/* 标题 + 小问号：问号是 FieldHelper，不能把标题挤成两行 */
+.label-help {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
 }
 .section-title {
   font-size: 13px;
