@@ -37,6 +37,7 @@ class AlertServiceTest {
     private PlatformTenantNamespaceMapper allocs;
     private AuthContext auth;
     private K8sClient k8s;
+    private com.coding.data.mapper.alert.NotificationChannelMapper channels;
     private AlertService svc;
 
     @BeforeEach
@@ -45,7 +46,8 @@ class AlertServiceTest {
         allocs = mock(PlatformTenantNamespaceMapper.class);
         auth = mock(AuthContext.class);
         k8s = mock(K8sClient.class);
-        svc = new AlertService(mapper, allocs, auth, new RuleSourceResolver(k8s),
+        channels = mock(com.coding.data.mapper.alert.NotificationChannelMapper.class);
+        svc = new AlertService(mapper, allocs, auth, new RuleSourceResolver(k8s), channels,
                 org.springframework.web.client.RestClient.builder(), "t", 8081);
     }
 
@@ -246,8 +248,55 @@ class AlertServiceTest {
         assertThat(out.get(0).getSources()).isNull();   // 没附着
     }
 
-    private PlatformAlertEventQuery capturedQuery() {
-        ArgumentCaptor<PlatformAlertEventQuery> c = ArgumentCaptor.forClass(PlatformAlertEventQuery.class);
+    // ---------- 通知方式（labels.platform_notify → 渠道显示名） ----------
+
+    /** 能找到渠道 → 回显示名。 */
+    @Test
+    void notify_channel_name_is_filled_from_the_label() {
+        asPlatformAdmin();
+        PlatformAlertEvent e = event("mon-app", "HighCPU");
+        e.setLabels("{\"platform_notify\":\"ops-mail\"}");
+        when(mapper.query(any())).thenReturn(List.of(e));
+        com.coding.data.models.alert.NotificationChannel c =
+                new com.coding.data.models.alert.NotificationChannel();
+        c.setCode("ops-mail");
+        c.setName("运维邮件");
+        when(channels.selectByCode("ops-mail")).thenReturn(c);
+
+        svc.list(req());
+
+        assertThat(e.getNotifyChannelName()).isEqualTo("运维邮件");
+    }
+
+    /** 渠道已被删 → 回填 code 本身（「配置坏了」要看得见，而不是显示成走默认）。 */
+    @Test
+    void an_unknown_channel_falls_back_to_the_code_itself() {
+        asPlatformAdmin();
+        PlatformAlertEvent e = event("mon-app", "HighCPU");
+        e.setLabels("{\"platform_notify\":\"gone-mail\"}");
+        when(mapper.query(any())).thenReturn(List.of(e));
+        when(channels.selectByCode("gone-mail")).thenReturn(null);
+
+        svc.list(req());
+
+        assertThat(e.getNotifyChannelName()).isEqualTo("gone-mail");
+    }
+
+    /** 没有 label → 保持 null（前端显示「默认」），且不去查库。 */
+    @Test
+    void no_label_means_the_default_channel() {
+        asPlatformAdmin();
+        PlatformAlertEvent e = event("mon-app", "HighCPU");
+        e.setLabels("{\"severity\":\"critical\"}");
+        when(mapper.query(any())).thenReturn(List.of(e));
+
+        svc.list(req());
+
+        assertThat(e.getNotifyChannelName()).isNull();
+        verify(channels, never()).selectByCode(any());
+    }
+
+    private PlatformAlertEventQuery capturedQuery() {        ArgumentCaptor<PlatformAlertEventQuery> c = ArgumentCaptor.forClass(PlatformAlertEventQuery.class);
         verify(mapper, atLeastOnce()).query(c.capture());
         List<PlatformAlertEventQuery> all = c.getAllValues();
         return all.get(all.size() - 1);

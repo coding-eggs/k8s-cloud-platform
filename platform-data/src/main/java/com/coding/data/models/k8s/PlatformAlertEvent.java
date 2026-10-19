@@ -66,4 +66,13 @@ public class PlatformAlertEvent {
      * 反查 K8s 对象。规则改名或删除过的历史告警查不到 → 前端显示「—」。
      */
     private List<AlertSource> sources;
+
+    /**
+     * **查询时补的**，不落库：这条告警该用哪个通知方式（把 {@code labels.platform_notify}
+     * 的渠道 code 翻成显示名）。
+     *
+     * <p>没有 label → null（前端显示「—（默认）」，表示它会走默认渠道）；
+     * 有 label 但渠道已被删 → 回填 code 本身，让「配置坏了」看得见。
+     */
+    private String notifyChannelName;
 }

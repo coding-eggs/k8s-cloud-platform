@@ -1,7 +1,9 @@
 package com.coding.platformapi.services;
 
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
+import com.coding.data.mapper.alert.NotificationChannelMapper;
 import com.coding.data.mapper.k8s.PlatformAlertEventMapper;
+import com.coding.data.models.alert.NotificationChannel;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.AlertSource;
 import com.coding.data.models.k8s.PlatformAlertEvent;
@@ -17,6 +19,8 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -51,6 +55,9 @@ public class AlertService {
     private final AuthContext authContext;
     /** 反查告警来源（读 PrometheusRule 对象）—— 与投递引擎共用同一实现 */
     private final RuleSourceResolver ruleSourceResolver;
+    /** labels.platform_notify（渠道 code）→ 显示名 */
+    private final NotificationChannelMapper channels;
+    private final JsonMapper json = JsonMapper.builder().build();
 
     /** 自检用的回环客户端工厂（每次调用新建一个，避免把连接状态带进长活 bean）。 */
     private final RestClient.Builder restClientBuilder;
@@ -69,9 +76,11 @@ public class AlertService {
                         PlatformTenantNamespaceMapper allocs,
                         AuthContext authContext,
                         RuleSourceResolver ruleSourceResolver,
+                        NotificationChannelMapper channels,
                         @Value("${platform.alert.webhook.token}") String webhookToken,
                         @Value("${server.port}") int serverPort) {
-        this(mapper, allocs, authContext, ruleSourceResolver, RestClient.builder(), webhookToken, serverPort);
+        this(mapper, allocs, authContext, ruleSourceResolver, channels,
+                RestClient.builder(), webhookToken, serverPort);
     }
 
     /** 测试专用：传入已 bind 了 {@code MockRestServiceServer} 的 builder。 */
@@ -79,6 +88,7 @@ public class AlertService {
                  PlatformTenantNamespaceMapper allocs,
                  AuthContext authContext,
                  RuleSourceResolver ruleSourceResolver,
+                 NotificationChannelMapper channels,
                  RestClient.Builder restClientBuilder,
                  String webhookToken,
                  int serverPort) {
@@ -86,6 +96,7 @@ public class AlertService {
         this.allocs = allocs;
         this.authContext = authContext;
         this.ruleSourceResolver = ruleSourceResolver;
+        this.channels = channels;
         this.restClientBuilder = restClientBuilder;
         this.webhookToken = webhookToken;
         this.serverPort = serverPort;
@@ -119,7 +130,43 @@ public class AlertService {
         // 无租户 claim（平台管理员）→ namespaces 保持 null = 不过滤
         List<PlatformAlertEvent> rows = mapper.query(q);
         attachSources(rows, req.getClusterId(), tokenTenantId);
+        attachNotifyChannel(rows);
         return rows;
+    }
+
+    /**
+     * 回填「这条告警用什么通知方式」：{@code labels.platform_notify} 里只有渠道 code
+     * （label 值 ≤63 且不能放用户列表），这里翻成显示名。
+     *
+     * <p>查不到渠道时回填 code 本身 —— 让「渠道被删了」在列表上看得见。
+     */
+    private void attachNotifyChannel(List<PlatformAlertEvent> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        for (PlatformAlertEvent row : rows) {
+            String code = labelValue(row.getLabels(), "platform_notify");
+            if (!StringUtils.hasText(code)) {
+                continue;
+            }
+            NotificationChannel c = channels.selectByCode(code);
+            row.setNotifyChannelName(c == null ? code : c.getName());
+        }
+    }
+
+    /** 从 labels 的 JSON 串里取一个键；空串/坏 JSON 一律返回 null。 */
+    private String labelValue(String labelsJson, String key) {
+        if (!StringUtils.hasText(labelsJson)) {
+            return null;
+        }
+        try {
+            Map<String, String> labels = json.readValue(labelsJson,
+                    new TypeReference<LinkedHashMap<String, String>>() {
+                    });
+            return labels == null ? null : labels.get(key);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

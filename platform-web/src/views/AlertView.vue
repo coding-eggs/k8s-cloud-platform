@@ -306,6 +306,12 @@ const clusterDesc = computed(() => {
               <span v-else class="muted" :title="sourceTitle(row)">—</span>
             </template>
           </el-table-column>
+          <el-table-column label="通知方式" width="160">
+            <template #default="{ row }">
+              <span v-if="row.notifyChannelName">{{ row.notifyChannelName }}</span>
+              <span v-else class="muted" title="规则没有绑定通知方式，按默认渠道发送">—（默认）</span>
+            </template>
+          </el-table-column>
           <el-table-column label="严重度" width="110">
             <template #default="{ row }">
               <el-tag v-if="row.severity" size="small" :type="severityType(row.severity)" effect="plain">{{ row.severity }}</el-tag>
@@ -357,6 +363,10 @@ const clusterDesc = computed(() => {
             </div>
           </template>
           <span v-else class="muted" :title="detail ? sourceTitle(detail) : ''">—</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="通知方式">
+          <span v-if="detail?.notifyChannelName">{{ detail.notifyChannelName }}</span>
+          <span v-else class="muted">—（默认渠道）</span>
         </el-descriptions-item>
         <el-descriptions-item label="开始时间">{{ fmtDate(detail?.startsAt) }}</el-descriptions-item>
         <el-descriptions-item label="结束时间">{{ detail?.endsAt ? fmtDate(detail.endsAt) : '—' }}</el-descriptions-item>

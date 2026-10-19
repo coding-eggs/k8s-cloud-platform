@@ -41,7 +41,8 @@ class AlertSelfTestTest {
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         svc = new AlertService(mapper, allocs, mock(AuthContext.class),
-                new RuleSourceResolver(mock(com.coding.platformapi.k8s.K8sClient.class)), builder, "s3cret", 8081);
+                new RuleSourceResolver(mock(com.coding.platformapi.k8s.K8sClient.class)),
+                mock(com.coding.data.mapper.alert.NotificationChannelMapper.class), builder, "s3cret", 8081);
     }
 
     /** self-test 打自己的回环地址，带正确的 Bearer —— 验的是完整 HTTP + 鉴权 + 解析 + 落库链路。 */

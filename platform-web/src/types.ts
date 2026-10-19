@@ -821,6 +821,11 @@ export interface PlatformAlertEvent {
    * null = 没做反查（后端读不到 PrometheusRule）。
    */
   sources?: AlertSource[] | null
+  /**
+   * 通知方式的显示名（后端把 labels.platform_notify 的渠道 code 翻成名字）。
+   * null = 规则没绑通知方式，按默认渠道发送。
+   */
+  notifyChannelName?: string | null
 }
 
 /** 告警列表查询（筛选 + 游标）；租户身份由后端按 token 自动收窄 */
