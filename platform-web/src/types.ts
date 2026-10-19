@@ -830,6 +830,10 @@ export interface PlatformAlertEvent {
   deliveryStatus?: string | null
   /** 最新一次投递失败的原因（只有 FAILED 时才有值） */
   deliveryError?: string | null
+  /** 所在集群的显示名（查询时补的；查不到回落 clusterId） */
+  clusterName?: string | null
+  /** 命名空间归属的租户显示名；null = 没分配给任何租户 */
+  tenantName?: string | null
 }
 
 /** 告警列表查询（筛选 + 游标）；租户身份由后端按 token 自动收窄 */

@@ -20,8 +20,9 @@ public interface NotificationSender {
      * 发一批告警给这批收件人。
      *
      * @param recipients 已经过滤掉空值、去重过的地址列表（**可能是空**，此时实现应抛错而不是静默成功）
+     * @param context    正文要用的补充信息（集群名 / 租户名 / 表达式）—— 告警 payload 里没有这些
      * @throws Exception 任何发送失败 —— 调用方按它决定重试
      */
-    void send(NotificationChannel channel, List<String> recipients, List<PlatformAlertEvent> events)
-            throws Exception;
+    void send(NotificationChannel channel, List<String> recipients,
+              List<PlatformAlertEvent> events, NotifyContext context) throws Exception;
 }

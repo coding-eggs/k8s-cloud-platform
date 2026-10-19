@@ -363,7 +363,9 @@ const clusterDesc = computed(() => {
           <el-tag v-else size="small" type="info" effect="plain">resolved</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="严重度">{{ detail?.severity ?? '—' }}</el-descriptions-item>
-        <el-descriptions-item label="命名空间">{{ detail?.namespace ?? '—（不属于任何租户）' }}</el-descriptions-item>
+        <el-descriptions-item label="集群">{{ detail?.clusterName ?? detail?.clusterId ?? '—' }}</el-descriptions-item>
+        <el-descriptions-item label="租户">{{ detail?.tenantName ?? '—（命名空间未分配给任何租户）' }}</el-descriptions-item>
+        <el-descriptions-item label="命名空间">{{ detail?.namespace ?? '—' }}</el-descriptions-item>
         <el-descriptions-item label="来源">
           <template v-if="detail?.sources?.length">
             <div v-for="sv in detail.sources" :key="`${sv.cr}/${sv.group}`">

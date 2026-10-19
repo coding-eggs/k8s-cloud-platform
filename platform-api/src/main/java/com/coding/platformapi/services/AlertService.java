@@ -12,6 +12,8 @@ import com.coding.data.models.k8s.PlatformAlertEvent;
 import com.coding.data.models.k8s.PlatformAlertEventQuery;
 import com.coding.data.models.system.TokenUserInfo;
 import com.coding.platformapi.models.AlertQueryRequest;
+import com.coding.platformapi.notify.AlertNotifyContextService;
+import com.coding.platformapi.notify.NotifyContext;
 import com.coding.platformapi.models.AlertWebhookRequest;
 import com.coding.platformapi.security.AuthContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -63,6 +65,8 @@ public class AlertService {
     private final NotificationChannelMapper channels;
     /** 列表回填「最新一次投递状态」 */
     private final AlertDeliveryMapper deliveries;
+    /** 列表回填「哪个集群 / 哪个租户」（与通知正文同一份口径） */
+    private final AlertNotifyContextService notifyContext;
     private final JsonMapper json = JsonMapper.builder().build();
 
     /** 自检用的回环客户端工厂（每次调用新建一个，避免把连接状态带进长活 bean）。 */
@@ -84,9 +88,10 @@ public class AlertService {
                         RuleSourceResolver ruleSourceResolver,
                         NotificationChannelMapper channels,
                         AlertDeliveryMapper deliveries,
+                        AlertNotifyContextService notifyContext,
                         @Value("${platform.alert.webhook.token}") String webhookToken,
                         @Value("${server.port}") int serverPort) {
-        this(mapper, allocs, authContext, ruleSourceResolver, channels, deliveries,
+        this(mapper, allocs, authContext, ruleSourceResolver, channels, deliveries, notifyContext,
                 RestClient.builder(), webhookToken, serverPort);
     }
 
@@ -97,6 +102,7 @@ public class AlertService {
                  RuleSourceResolver ruleSourceResolver,
                  NotificationChannelMapper channels,
                  AlertDeliveryMapper deliveries,
+                 AlertNotifyContextService notifyContext,
                  RestClient.Builder restClientBuilder,
                  String webhookToken,
                  int serverPort) {
@@ -106,6 +112,7 @@ public class AlertService {
         this.ruleSourceResolver = ruleSourceResolver;
         this.channels = channels;
         this.deliveries = deliveries;
+        this.notifyContext = notifyContext;
         this.restClientBuilder = restClientBuilder;
         this.webhookToken = webhookToken;
         this.serverPort = serverPort;
@@ -141,7 +148,23 @@ public class AlertService {
         attachSources(rows, req.getClusterId(), tokenTenantId);
         attachNotifyChannel(rows);
         attachDelivery(rows);
+        attachOwnership(rows, req.getClusterId());
         return rows;
+    }
+
+    /**
+     * 回填「哪个集群 / 哪个租户」—— 告警详情页要回答「这是谁的、在哪」。
+     * 与通知正文共用 {@link AlertNotifyContextService} 的口径，避免两边各写一套。
+     */
+    private void attachOwnership(List<PlatformAlertEvent> rows, String clusterId) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        NotifyContext ctx = notifyContext.ownership(clusterId, rows);
+        for (PlatformAlertEvent row : rows) {
+            row.setClusterName(ctx.clusterName());
+            row.setTenantName(ctx.tenantName(row.getId()));
+        }
     }
 
     /**

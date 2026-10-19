@@ -39,6 +39,7 @@ class AlertServiceTest {
     private K8sClient k8s;
     private com.coding.data.mapper.alert.NotificationChannelMapper channels;
     private com.coding.data.mapper.alert.AlertDeliveryMapper deliveries;
+    private com.coding.platformapi.notify.AlertNotifyContextService notifyContext;
     private AlertService svc;
 
     @BeforeEach
@@ -49,8 +50,11 @@ class AlertServiceTest {
         k8s = mock(K8sClient.class);
         channels = mock(com.coding.data.mapper.alert.NotificationChannelMapper.class);
         deliveries = mock(com.coding.data.mapper.alert.AlertDeliveryMapper.class);
+        notifyContext = mock(com.coding.platformapi.notify.AlertNotifyContextService.class);
+        when(notifyContext.ownership(any(), any()))
+                .thenReturn(com.coding.platformapi.notify.NotifyContext.EMPTY);
         svc = new AlertService(mapper, allocs, auth, new RuleSourceResolver(k8s), channels, deliveries,
-                org.springframework.web.client.RestClient.builder(), "t", 8081);
+                notifyContext, org.springframework.web.client.RestClient.builder(), "t", 8081);
     }
 
     private static AlertQueryRequest req() {
@@ -321,8 +325,7 @@ class AlertServiceTest {
 
     /** 没有投递记录 → 两个字段保持 null（前端显示「—」）。 */
     @Test
-    void no_delivery_row_leaves_the_status_null() {
-        asPlatformAdmin();
+    void no_delivery_row_leaves_the_status_null() {        asPlatformAdmin();
         PlatformAlertEvent e = event("mon-app", "HighCPU");
         e.setId(8L);
         when(mapper.query(any())).thenReturn(List.of(e));
@@ -331,6 +334,25 @@ class AlertServiceTest {
         svc.list(req());
 
         assertThat(e.getDeliveryStatus()).isNull();
+    }
+
+    /** 列表回填「集群名 / 租户名」（告警详情页要回答「在哪、是谁的」）。 */
+    @Test
+    void ownership_names_are_filled_on_each_row() {
+        asPlatformAdmin();
+        PlatformAlertEvent e = event("mon-app", "HighCPU");
+        e.setId(9L);
+        when(mapper.query(any())).thenReturn(List.of(e));
+        when(notifyContext.ownership(any(), any())).thenReturn(
+                new com.coding.platformapi.notify.NotifyContext("coding-cluster",
+                        java.util.Map.of(9L, "t1"),
+                        java.util.Map.of(9L, "平台默认租户"),
+                        java.util.Map.of()));
+
+        svc.list(req());
+
+        assertThat(e.getClusterName()).isEqualTo("coding-cluster");
+        assertThat(e.getTenantName()).isEqualTo("平台默认租户");
     }
 
     private PlatformAlertEventQuery capturedQuery() {        ArgumentCaptor<PlatformAlertEventQuery> c = ArgumentCaptor.forClass(PlatformAlertEventQuery.class);

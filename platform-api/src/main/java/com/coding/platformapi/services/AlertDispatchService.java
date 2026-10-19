@@ -2,13 +2,13 @@ package com.coding.platformapi.services;
 
 import com.coding.data.mapper.alert.AlertDeliveryMapper;
 import com.coding.data.mapper.alert.RuleNotifyMapper;
-import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.models.alert.AlertDelivery;
 import com.coding.data.models.alert.NotificationChannel;
 import com.coding.data.models.alert.RuleNotify;
-import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.PlatformAlertEvent;
+import com.coding.platformapi.notify.AlertNotifyContextService;
 import com.coding.platformapi.notify.NotificationSender;
+import com.coding.platformapi.notify.NotifyContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -54,7 +54,8 @@ public class AlertDispatchService {
     private final RuleSourceResolver ruleSourceResolver;
     private final AlertDeliveryMapper deliveries;
     private final NotificationUserService userService;
-    private final PlatformTenantNamespaceMapper allocs;
+    /** 集群名 / 租户 / 表达式 —— 告警 payload 里没有，通知正文与归属都要 */
+    private final AlertNotifyContextService notifyContext;
     private final Map<String, NotificationSender> senders;
     private final JsonMapper json = JsonMapper.builder().build();
 
@@ -63,14 +64,14 @@ public class AlertDispatchService {
                                 RuleSourceResolver ruleSourceResolver,
                                 AlertDeliveryMapper deliveries,
                                 NotificationUserService userService,
-                                PlatformTenantNamespaceMapper allocs,
+                                AlertNotifyContextService notifyContext,
                                 List<NotificationSender> senders) {
         this.channels = channels;
         this.bindings = bindings;
         this.ruleSourceResolver = ruleSourceResolver;
         this.deliveries = deliveries;
         this.userService = userService;
-        this.allocs = allocs;
+        this.notifyContext = notifyContext;
         Map<String, NotificationSender> byType = new HashMap<>();
         for (NotificationSender s : senders) {
             byType.put(s.type(), s);
@@ -99,10 +100,13 @@ public class AlertDispatchService {
             return;
         }
 
+        // 0) 归属与表达式：一次算好，渠道决策、收件人、正文三处共用
+        NotifyContext context = notifyContext.build(clusterId, toSend);
+
         // 1) 决定每条告警走哪个渠道
         Map<String, List<PlatformAlertEvent>> byChannel = new LinkedHashMap<>();
         for (PlatformAlertEvent e : toSend) {
-            String tenantId = tenantOf(clusterId, e.getNamespace());
+            String tenantId = context.tenantId(e.getId());
             NotificationChannel c = channels.resolve(mapValue(e.getLabels(), "platform_notify"));
             // 跨租户：规则租户与渠道租户不一致（且渠道非全局）→ 不允许，回落默认
             if (c != null && StringUtils.hasText(c.getTenantId()) && !c.getTenantId().equals(tenantId)) {
@@ -157,7 +161,7 @@ public class AlertDispatchService {
                     batch.stream().filter(ev -> claimedIds.contains(ev.getId())).toList();
 
             // 2.2 收件人
-            List<String> recipients = recipientsFor(clusterId, mailEvents);
+            List<String> recipients = recipientsFor(clusterId, mailEvents, context);
             if (recipients.isEmpty()) {
                 claimed.forEach(d -> deliveries.markFailed(d.getId(), "无有效收件人", 0));
                 continue;
@@ -175,7 +179,7 @@ public class AlertDispatchService {
             for (int i = 0; i < MAX_ATTEMPTS; i++) {
                 attempts++;
                 try {
-                    sender.send(channel, recipients, mailEvents);
+                    sender.send(channel, recipients, mailEvents, context);
                     last = null;
                     break;
                 } catch (Exception ex) {
@@ -215,10 +219,11 @@ public class AlertDispatchService {
      * 收件人：绑定表的 user_ids（按 CR 名反查）→ 没有则该命名空间所属租户的管理员。
      * 最后统一过滤掉没填邮箱的用户。
      */
-    private List<String> recipientsFor(String clusterId, List<PlatformAlertEvent> batch) {
+    private List<String> recipientsFor(String clusterId, List<PlatformAlertEvent> batch,
+                                       NotifyContext context) {
         Set<String> userIds = new LinkedHashSet<>();
         for (PlatformAlertEvent e : batch) {
-            String tenantId = tenantOf(clusterId, e.getNamespace());
+            String tenantId = context.tenantId(e.getId());
             // CR 名优先取规则自带的 platform_rule **注解** —— 投递在 @Async 线程上跑，
             // 没有请求上下文就没有 Authorization，去集群反查只会拿到 401。
             String ruleName = mapValue(e.getAnnotations(), "platform_rule");
@@ -234,15 +239,6 @@ public class AlertDispatchService {
             }
         }
         return userService.emailsOf(userIds);
-    }
-
-    /** 告警归属：namespace → 分配表的第一个租户；没有分配返回 null。 */
-    private String tenantOf(String clusterId, String namespace) {
-        if (!StringUtils.hasText(namespace) || !StringUtils.hasText(clusterId)) {
-            return null;
-        }
-        List<PlatformTenantNamespace> rows = allocs.selectByClusterAndNs(clusterId, namespace);
-        return rows == null || rows.isEmpty() ? null : rows.get(0).getTenantId();
     }
 
     private List<String> parseIds(String jsonIds) {

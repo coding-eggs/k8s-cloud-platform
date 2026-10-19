@@ -84,4 +84,16 @@ public class PlatformAlertEvent {
 
     /** 最新一次投递失败的原因（只有 FAILED 时才有值） */
     private String deliveryError;
+
+    /**
+     * **查询时补的**，不落库：所在集群的显示名（列表/详情/通知正文都要「哪个集群」）。
+     * 查不到就保持 null，前端回落到 clusterId。
+     */
+    private String clusterName;
+
+    /**
+     * **查询时补的**，不落库：这个命名空间归属的租户显示名。
+     * null = 该命名空间没分配给任何租户（不是错误，管理员本来就该看得到这类告警）。
+     */
+    private String tenantName;
 }

@@ -137,4 +137,22 @@ class PromRulesClientTest {
 
         assertThat(client.groups(BASE)).isEmpty();
     }
+
+    /** 通知正文要的 alertname → query 索引；recording 规则不进（它不产生告警）。 */
+    @Test
+    void alert_expressions_are_indexed_by_alertname() {
+        server.expect(requestTo(BASE + "/api/v1/rules")).andRespond(withSuccess("""
+                {"status":"success","data":{"groups":[
+                  {"name":"app","rules":[
+                    {"name":"HighCPU","type":"alerting","query":"rate(x[5m]) > 1"},
+                    {"name":"job:rate5m","type":"recording","query":"rate(y[5m])"}
+                  ]}
+                ]}}
+                """, MediaType.APPLICATION_JSON));
+
+        var m = client.alertExpressions(BASE);
+
+        assertThat(m).containsEntry("HighCPU", "rate(x[5m]) > 1");
+        assertThat(m).doesNotContainKey("job:rate5m");
+    }
 }

@@ -14,6 +14,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Prometheus 规则只读客户端：{@code GET <baseUrl>/api/v1/rules}。
@@ -107,6 +108,38 @@ public class PromRulesClient {
     public record RuleView(String name, String health, String lastError, String state, Integer activeAlerts) {
     }
 
+    /**
+     * alertname → PromQL 表达式。
+     *
+     * <p>用途：**通知正文**要写清「这条告警是什么表达式跑出来的」，而 Alertmanager 的 webhook
+     * payload 里没有表达式字段，只能回 Prometheus 的 {@code /api/v1/rules} 取。
+     * 同一 alertname 在多处定义时取第一条（告警名重复本身就不是好实践）。
+     *
+     * <p>失败抛 {@link CloudPlatformException}，由调用方降级成「不写表达式行」。
+     */
+    public Map<String, String> alertExpressions(String baseUrl) {
+        RulesResp resp = get(URI.create(baseUrl + "/api/v1/rules"), RulesResp.class);
+        if (!"success".equals(resp.status)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "Prometheus 查询失败: " + resp.error);
+        }
+        Map<String, String> out = new java.util.HashMap<>();
+        if (resp.data == null || resp.data.groups == null) {
+            return out;
+        }
+        for (RulesResp.GroupJson g : resp.data.groups) {
+            if (g.rules == null) {
+                continue;
+            }
+            for (RulesResp.RuleJson r : g.rules) {
+                if (!"alerting".equals(r.type) || r.name == null || r.query == null) {
+                    continue;
+                }
+                out.putIfAbsent(r.name, r.query);
+            }
+        }
+        return out;
+    }
+
     /** GET + 反序列化 Prometheus 标准 envelope（{status,data,error}）。HTTP/解析异常统一转业务异常。 */
     private <T> T get(URI uri, Class<T> type) {
         String body;
@@ -154,6 +187,8 @@ public class PromRulesClient {
             private String health;          // ok | err | unknown
             private String lastError;
             private String state;           // inactive | pending | firing（recording 无）
+            /** PromQL 表达式（通知正文用；runtime 匹配不用它） */
+            private String query;
             private List<Object> alerts;    // 只取长度
         }
     }

@@ -2,11 +2,9 @@ package com.coding.platformapi.services;
 
 import com.coding.data.mapper.alert.AlertDeliveryMapper;
 import com.coding.data.mapper.alert.RuleNotifyMapper;
-import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.models.alert.AlertDelivery;
 import com.coding.data.models.alert.NotificationChannel;
 import com.coding.data.models.alert.RuleNotify;
-import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.PlatformAlertEvent;
 import com.coding.platformapi.notify.NotificationSender;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +37,8 @@ class AlertDispatchServiceTest {
     private RuleSourceResolver resolver;
     private AlertDeliveryMapper deliveries;
     private NotificationUserService users;
-    private PlatformTenantNamespaceMapper allocs;
+    private com.coding.platformapi.notify.AlertNotifyContextService notifyContext;
+    private final java.util.Map<String, String> nsToTenant = new java.util.HashMap<>();
     private NotificationSender sender;
     private AlertDispatchService svc;
 
@@ -50,10 +49,25 @@ class AlertDispatchServiceTest {
         resolver = mock(RuleSourceResolver.class);
         deliveries = mock(AlertDeliveryMapper.class);
         users = mock(NotificationUserService.class);
-        allocs = mock(PlatformTenantNamespaceMapper.class);
+        nsToTenant.clear();
+        notifyContext = mock(com.coding.platformapi.notify.AlertNotifyContextService.class);
+        // 租户口径由 nsToTenant 决定，与真实现（分配表）同形
+        when(notifyContext.build(any(), any())).thenAnswer(inv -> {
+            List<PlatformAlertEvent> events = inv.getArgument(1);
+            java.util.Map<Long, String> ids = new java.util.HashMap<>();
+            java.util.Map<Long, String> names = new java.util.HashMap<>();
+            for (PlatformAlertEvent e : events) {
+                String tid = nsToTenant.get(e.getNamespace());
+                if (tid != null) {
+                    ids.put(e.getId(), tid);
+                    names.put(e.getId(), "租户-" + tid);
+                }
+            }
+            return new com.coding.platformapi.notify.NotifyContext("test-cluster", ids, names, java.util.Map.of());
+        });
         sender = mock(NotificationSender.class);
         when(sender.type()).thenReturn("EMAIL");
-        svc = spy(new AlertDispatchService(channels, bindings, resolver, deliveries, users, allocs,
+        svc = spy(new AlertDispatchService(channels, bindings, resolver, deliveries, users, notifyContext,
                 List.of(sender)));
         doNothing().when(svc).sleep(anyLong());          // 重试退避在测试里不真等
         when(deliveries.insertIfAbsent(any())).thenReturn(1);
@@ -83,10 +97,7 @@ class AlertDispatchServiceTest {
     }
 
     private void tenantOwns(String ns, String tenantId) {
-        PlatformTenantNamespace a = new PlatformTenantNamespace();
-        a.setTenantId(tenantId);
-        a.setNamespace(ns);
-        when(allocs.selectByClusterAndNs("c1", ns)).thenReturn(List.of(a));
+        nsToTenant.put(ns, tenantId);
     }
 
     private void bindingFrom(String ruleName, List<String> userIds) {
@@ -111,7 +122,7 @@ class AlertDispatchServiceTest {
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
         verify(channels, org.mockito.Mockito.atLeastOnce()).resolve("ops-mail");
-        verify(sender).send(any(), eq(List.of("ops@x.com")), any());
+        verify(sender).send(any(), eq(List.of("ops@x.com")), any(), any());
     }
 
     /** 没有 label → 默认渠道（租户默认优先，其次全局 —— 由 service.defaultFor 决定）。 */
@@ -124,7 +135,7 @@ class AlertDispatchServiceTest {
 
         svc.dispatch("c1", List.of(event(1, "ns", "{}", "firing")));
 
-        verify(sender).send(any(), any(), any());
+        verify(sender).send(any(), any(), any(), any());
     }
 
     /** label 里的 code 在库里不存在（渠道被删了）→ 回落默认，而不是不发。 */
@@ -138,7 +149,7 @@ class AlertDispatchServiceTest {
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"gone-mail\"}", "firing")));
 
-        verify(sender).send(any(), any(), any());
+        verify(sender).send(any(), any(), any(), any());
     }
 
     /** 渠道**停用**只影响"新选择"—— 已绑定的规则照常发（否则停用一次就静默断掉线上告警）。 */
@@ -150,7 +161,7 @@ class AlertDispatchServiceTest {
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
-        verify(sender).send(any(), any(), any());
+        verify(sender).send(any(), any(), any(), any());
     }
 
     /** 规则租户 ≠ 渠道租户（且渠道非全局）→ 回落默认，不跨租户发。 */
@@ -165,7 +176,7 @@ class AlertDispatchServiceTest {
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"other-tenant-mail\"}", "firing")));
 
         ArgumentCaptor<NotificationChannel> cap = ArgumentCaptor.forClass(NotificationChannel.class);
-        verify(sender).send(cap.capture(), any(), any());
+        verify(sender).send(cap.capture(), any(), any(), any());
         assertThat(cap.getValue().getCode()).isEqualTo("default-mail");
     }
 
@@ -204,7 +215,7 @@ class AlertDispatchServiceTest {
         svc.dispatch("c1", List.of(e));
 
         verify(resolver, never()).crNameOf(any(), any(), any());
-        verify(sender).send(any(), eq(List.of("u9@x.com")), any());
+        verify(sender).send(any(), eq(List.of("u9@x.com")), any(), any());
     }
 
     /** 规则改名/删除后绑定查不到 → 回落到该命名空间所属租户的管理员。 */
@@ -218,7 +229,7 @@ class AlertDispatchServiceTest {
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
         verify(users).tenantAdminUserIds("t1");
-        verify(sender).send(any(), eq(List.of("admin@x.com")), any());
+        verify(sender).send(any(), eq(List.of("admin@x.com")), any(), any());
     }
 
     /** 一个有效收件人都没有 → 记 FAILED，**不调用发送器**（否则会"给空列表发一封"）。 */
@@ -231,7 +242,7 @@ class AlertDispatchServiceTest {
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
-        verify(sender, never()).send(any(), any(), any());
+        verify(sender, never()).send(any(), any(), any(), any());
         verify(deliveries).markFailed(any(), eq("无有效收件人"), eq(0));
     }
 
@@ -244,7 +255,7 @@ class AlertDispatchServiceTest {
         svc.dispatch("c1", List.of(event(1, "ns", "{}", "firing")));
 
         verify(deliveries).markFailed(any(), eq("未配置通知渠道"), eq(0));
-        verify(sender, never()).send(any(), any(), any());
+        verify(sender, never()).send(any(), any(), any(), any());
     }
 
     // ---------- 去重 / 合并 / 重试 ----------
@@ -259,7 +270,7 @@ class AlertDispatchServiceTest {
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
-        verify(sender, never()).send(any(), any(), any());
+        verify(sender, never()).send(any(), any(), any(), any());
         verify(deliveries, never()).markSent(any());
     }
 
@@ -274,7 +285,7 @@ class AlertDispatchServiceTest {
                 event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing"),
                 event(2, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
-        verify(sender, times(1)).send(any(), any(), any());
+        verify(sender, times(1)).send(any(), any(), any(), any());
         verify(deliveries, times(2)).markSent(any());
     }
 
@@ -284,11 +295,11 @@ class AlertDispatchServiceTest {
         tenantOwns("ns", "t1");
         when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
-        doThrow(new RuntimeException("smtp down")).when(sender).send(any(), any(), any());
+        doThrow(new RuntimeException("smtp down")).when(sender).send(any(), any(), any(), any());
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
-        verify(sender, times(3)).send(any(), any(), any());
+        verify(sender, times(3)).send(any(), any(), any(), any());
         verify(deliveries).markFailed(any(), eq("smtp down"), eq(3));
         verify(deliveries, never()).markSent(any());
     }
@@ -329,7 +340,7 @@ class AlertDispatchServiceTest {
         svc.dispatch("c1", List.of(e1, e2));
 
         ArgumentCaptor<List<PlatformAlertEvent>> cap = ArgumentCaptor.forClass(List.class);
-        verify(sender).send(any(), any(), cap.capture());
+        verify(sender).send(any(), any(), cap.capture(), any());
         assertThat(cap.getValue()).hasSize(1);
         assertThat(cap.getValue().get(0).getId()).isEqualTo(1L);
     }
@@ -347,6 +358,6 @@ class AlertDispatchServiceTest {
         svc.dispatch("c1", List.of(noId));
 
         verify(deliveries, never()).insertIfAbsent(any());
-        verify(sender, never()).send(any(), any(), any());
+        verify(sender, never()).send(any(), any(), any(), any());
     }
 }
