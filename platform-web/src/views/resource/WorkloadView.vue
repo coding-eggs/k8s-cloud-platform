@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { workloadApi, hpaApi, gatewayApi, podApi } from '@/api'
 import type { K8sGateway, K8sWorkload, K8sHpa, K8sPod, WaypointRef } from '@/types'
-import type { WorkloadKind } from '@/types/workload'
+import type { WorkloadKind, WorkloadDetail } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
@@ -24,6 +24,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import WorkloadRollbackDialog from '@/components/workload/WorkloadRollbackDialog.vue'
+import WorkloadObservabilityDialog from '@/components/workload/WorkloadObservabilityDialog.vue'
 import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import { fmtAge, fmtDate, workloadStatus } from '@/utils/format'
 import { Refresh, MoreFilled, Search, EditPen, TopRight } from '@element-plus/icons-vue'
@@ -268,6 +269,41 @@ function openRollback(row: K8sWorkload): void {
   rollbackVisible.value = true
 }
 
+// ---------- OTel 可观测接入（行内入口，与详情页同一个弹窗） ----------
+const observabilityVisible = ref(false)
+const observabilityRow = ref<K8sWorkload | null>(null)
+const observabilityDetail = ref<WorkloadDetail | null>(null)
+const observabilityBusy = ref<string | null>(null)
+
+const observabilityContainers = computed(() =>
+  (observabilityDetail.value?.podTemplate?.spec?.containers ?? []).map((c) => c.name))
+/** 已接入文件日志时，应用容器上平台卷的挂载目录（弹窗回填用） */
+const observabilityLogDirectory = computed(() => {
+  for (const c of observabilityDetail.value?.podTemplate?.spec?.containers ?? []) {
+    const m = (c.volumeMounts ?? []).find((x) => x.name === 'platform-otel-logs')
+    if (m?.mountPath) return m.mountPath
+  }
+  return undefined
+})
+
+/**
+ * 弹窗要 pod template 的注解 / 容器 / 卷挂载，列表投影里没有 —— 先取一次详情再打开。
+ * 取详情的这一两秒里「⋯」转圈，避免"点了没反应"被重复点击。
+ */
+async function openObservability(row: K8sWorkload): Promise<void> {
+  observabilityBusy.value = row.name
+  try {
+    const d = await workloadApi.get(row.name, ctxParams.value)
+    observabilityRow.value = row
+    observabilityDetail.value = d
+    observabilityVisible.value = true
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    observabilityBusy.value = null
+  }
+}
+
 // ---------- 删除（跨 kind 查找） ----------
 async function onDelete(row: K8sWorkload): Promise<void> {
   try {
@@ -480,6 +516,7 @@ function onRowCommand(cmd: string, row: K8sWorkload): void {
     case 'edit': if (!isOpManaged(row)) goEditor(row.name); break
     case 'scale': openScale(row); break
     case 'rollback': openRollback(row); break
+    case 'observability': void openObservability(row); break
     case 'addHpa':
       // 传小写原值 kind，编辑器 canonicalKey 统一小写 + KIND_CAP 还原大写
       router.push({ name: 'hpa-editor', query: { targetKind: row.kind, targetName: row.name } })
@@ -606,7 +643,8 @@ const contextDesc = computed(() => {
         <el-table-column label="操作" width="64" fixed="right">
           <template #default="{ row }">
             <el-dropdown trigger="click" @command="(cmd: string) => onRowCommand(cmd, row)">
-              <el-button link type="primary" :icon="MoreFilled" :loading="logsBusy === row.name" />
+              <el-button link type="primary" :icon="MoreFilled"
+                         :loading="logsBusy === row.name || observabilityBusy === row.name" />
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="edit" :disabled="isOpManaged(row)">编辑</el-dropdown-item>
@@ -617,6 +655,8 @@ const contextDesc = computed(() => {
                   <!-- 回滚：选一个历史版本，把它的 pod template 覆盖回工作负载本身。op 管理的不给（同上） -->
                   <el-dropdown-item command="rollback" :disabled="!canWrite || isOpManaged(row)">回滚</el-dropdown-item>
                   <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
+                  <!-- 可观测：写 pod template 的注入注解 / OTEL_SERVICE_NAME（共享 tenant:workload:update） -->
+                  <el-dropdown-item command="observability" :disabled="!canWrite">可观测</el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
                   <!-- 日志：只读动作，紧挨 Yaml 排在只读这一组。点它要先取 Pod（两次往返，见 openLogs），
                        期间「⋯」转圈 —— 否则这一两秒里"点了没反应"，人会再点一次。 -->
@@ -719,6 +759,22 @@ const contextDesc = computed(() => {
 
     <!-- 回滚（选历史版本） -->
     <WorkloadRollbackDialog v-model="rollbackVisible" :row="rollbackRow" :ctx="ctxParams" @done="refresh" />
+
+    <!-- OTel 可观测接入：与详情页同一个弹窗组件（只改注入注解 / OTEL_SERVICE_NAME） -->
+    <WorkloadObservabilityDialog
+      v-if="observabilityVisible && observabilityRow && observabilityDetail"
+      :visible="observabilityVisible"
+      :workload-name="observabilityRow.name"
+      :kind="observabilityRow.kind"
+      :tenant-id="ctxParams.tenantId"
+      :cluster-id="ctxParams.clusterId"
+      :namespace="ctxParams.namespace"
+      :annotations="observabilityDetail.podTemplate?.annotations"
+      :containers="observabilityContainers"
+      :file-log-directory="observabilityLogDirectory"
+      @update:visible="observabilityVisible = $event"
+      @saved="refresh"
+    />
   </div>
 </template>
 

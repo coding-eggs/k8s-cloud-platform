@@ -49,9 +49,11 @@ const serviceName = ref('')
 const containerName = ref('')
 const saving = ref(false)
 
+// immediate：列表行入口是「先取详情、再挂载并直接置 visible=true」，
+// 此时 watcher 不会自己触发，必须在挂载时就初始化一次
 watch(() => props.visible, (v) => {
   if (v) init()
-})
+}, { immediate: true })
 
 function init(): void {
   const ann = props.annotations ?? {}
