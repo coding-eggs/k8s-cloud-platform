@@ -117,6 +117,17 @@ public class PrometheusRuleDTO extends BaseResources {
          */
         private String severity;
 
+        /**
+         * 平台侧便捷字段：**摘要**。
+         *
+         * <p>本质是 {@code annotations.summary}（Prometheus 生态的约定位置，通知正文与告警列表都从那里读）。
+         * 保存时平台拼进 annotations，读详情时再摘回本字段供编辑页回显，
+         * 这样摘要有一个专门的输入框，而不是藏在通用注解编辑器里。
+         *
+         * <p>⚠️ 保存时本字段为空 = **清掉 summary 注解**（同 severity 的口径）。
+         */
+        private String summary;
+
         private Map<String, String> labels;
 
         /** 仅 alert 规则有效 */

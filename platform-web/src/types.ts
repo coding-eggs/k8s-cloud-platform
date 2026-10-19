@@ -747,6 +747,11 @@ export interface K8sPrometheusRuleRule {
    * 保存时后端拼进 labels，读详情时再摘回本字段供编辑页回显。
    */
   severity?: string | null
+  /**
+   * 平台侧字段：摘要。本质是 `annotations.summary` ——
+   * 保存时后端拼进 annotations，读详情时再摘回本字段供编辑页回显。
+   */
+  summary?: string | null
 }
 
 /** PrometheusRule 的一组规则（spec.groups[]） */

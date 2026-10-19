@@ -260,6 +260,53 @@ class PrometheusRuleServiceTest {
         assertThat(out.getGroups().get(0).getRules().get(0).getSeverity()).isEqualTo("warning");
     }
 
+    /** 摘要输入框是平台侧字段：保存时拼成 annotations.summary。 */
+    @Test
+    void create_stamps_the_summary_into_annotations() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.getGroups().get(0).getRules().get(0).setSummary("实例挂了");
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        PrometheusRuleDTO sent = captured();
+        assertThat(sent.getGroups().get(0).getRules().get(0).getAnnotations())
+                .containsEntry("summary", "实例挂了")
+                .containsEntry("platform_rule", "app-rules");
+        // 平台侧字段不下发
+        assertThat(sent.getGroups().get(0).getRules().get(0).getSummary()).isNull();
+    }
+
+    /** 清空摘要 = 删掉 annotations.summary，但 platform_rule 要留着（投递靠它找绑定）。 */
+    @Test
+    void a_cleared_summary_removes_only_the_summary_annotation() {
+        PrometheusRuleDTO dto = sample("my-app");
+        PrometheusRuleDTO.Rule rule = dto.getGroups().get(0).getRules().get(0);
+        rule.setAnnotations(new java.util.LinkedHashMap<>(Map.of("summary", "旧的", "description", "x")));
+        rule.setSummary(null);
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        assertThat(captured().getGroups().get(0).getRules().get(0).getAnnotations())
+                .doesNotContainKey("summary")
+                .containsEntry("description", "x")
+                .containsEntry("platform_rule", "app-rules");
+    }
+
+    /** 读详情时把 annotations.summary 摘回平台侧字段，编辑页的摘要输入框才有值。 */
+    @Test
+    void get_fills_the_summary_back_from_annotations() {
+        PrometheusRuleDTO stored = sample("my-app");
+        stored.getGroups().get(0).getRules().get(0)
+                .setAnnotations(new java.util.LinkedHashMap<>(Map.of("summary", "实例挂了")));
+        when(k8s.get(any())).thenReturn(stored);
+
+        PrometheusRuleDTO out = svc.get("app-rules", "t1", "c1", "my-app");
+
+        assertThat(out.getGroups().get(0).getRules().get(0).getSummary()).isEqualTo("实例挂了");
+    }
+
     // ---------- S2.2.4 通知方式 ----------
 
     /** 保存时给每条 alert 规则代打 platform_notify；record 规则不打；平台侧字段不下发。 */

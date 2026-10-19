@@ -62,7 +62,7 @@ public class PrometheusRuleService {
     public PrometheusRuleDTO get(String name, String tenantId, String clusterId, String namespace) {
         PrometheusRuleDTO out = k8s.get(dto(name, tenantId, clusterId, namespace));
         if (out != null) {
-            fillSeverity(out);               // labels.severity → 平台侧字段（编辑页回显）
+            fillPlatformFields(out);         // labels.severity / annotations.summary → 平台侧字段
             notifyBinder.fill(out);          // 平台侧字段不在 CR 里，得从绑定表补回来
             enrich(List.of(out), clusterId);
         }
@@ -201,12 +201,19 @@ public class PrometheusRuleService {
                     // （长名字的规则会直接保存失败）；annotation 没有这个限制。
                     // 为什么不用集群反查：投递跑在 @Async 线程上，**没有请求上下文就没有
                     // Authorization**，k8s-server 会回 401（2026-10-20 真跑验到）。
+                    Map<String, String> ann = r.getAnnotations() != null
+                            ? new LinkedHashMap<>(r.getAnnotations()) : new LinkedHashMap<>();
                     if (StringUtils.hasText(body.getName())) {
-                        Map<String, String> ann = r.getAnnotations() != null
-                                ? new LinkedHashMap<>(r.getAnnotations()) : new LinkedHashMap<>();
                         ann.put("platform_rule", body.getName());
-                        r.setAnnotations(ann);
                     }
+                    // 摘要同理：编辑页的输入框是平台侧字段，这里拼成 annotations.summary；
+                    // 清空 = 删掉这个注解。
+                    if (StringUtils.hasText(r.getSummary())) {
+                        ann.put("summary", r.getSummary());
+                    } else {
+                        ann.remove("summary");
+                    }
+                    r.setAnnotations(ann);
                 }
             }
         }
@@ -229,12 +236,16 @@ public class PrometheusRuleService {
             }
             for (PrometheusRuleDTO.Rule r : g.getRules()) {
                 r.setSeverity(null);
+                r.setSummary(null);
             }
         }
     }
 
-    /** 读：把 {@code labels.severity} 摘回平台侧字段，编辑页的严重度下拉才有值。 */
-    private void fillSeverity(PrometheusRuleDTO dto) {
+    /**
+     * 读：把 {@code labels.severity} / {@code annotations.summary} 摘回平台侧字段，
+     * 编辑页的严重度下拉与摘要输入框才有值。
+     */
+    private void fillPlatformFields(PrometheusRuleDTO dto) {
         if (dto.getGroups() == null) {
             return;
         }
@@ -243,12 +254,11 @@ public class PrometheusRuleService {
                 continue;
             }
             for (PrometheusRuleDTO.Rule r : g.getRules()) {
-                if (r.getLabels() == null) {
-                    continue;
+                if (r.getLabels() != null && StringUtils.hasText(r.getLabels().get("severity"))) {
+                    r.setSeverity(r.getLabels().get("severity"));
                 }
-                String severity = r.getLabels().get("severity");
-                if (StringUtils.hasText(severity)) {
-                    r.setSeverity(severity);
+                if (r.getAnnotations() != null && StringUtils.hasText(r.getAnnotations().get("summary"))) {
+                    r.setSummary(r.getAnnotations().get("summary"));
                 }
             }
         }

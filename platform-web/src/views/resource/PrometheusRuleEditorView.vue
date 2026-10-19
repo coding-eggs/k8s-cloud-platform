@@ -43,6 +43,8 @@ interface RuleRow {
   name: string
   /** 严重度 = labels.severity，但用下拉管（平台侧字段，后端负责拼/摘） */
   severity: string
+  /** 摘要 = annotations.summary，用单独输入框（平台侧字段，后端负责拼/摘） */
+  summary: string
   expr: string
   for_: string
   keepFiringFor: string
@@ -66,7 +68,7 @@ interface GroupRow {
 }
 
 function newRule(): RuleRow {
-  return { kind: 'alert', name: '', severity: '', expr: '', for_: '', keepFiringFor: '', labels: {}, annotations: {} }
+  return { kind: 'alert', name: '', severity: '', summary: '', expr: '', for_: '', keepFiringFor: '', labels: {}, annotations: {} }
 }
 function newGroup(): GroupRow {
   return { name: '', interval: '', limit: null, queryOffset: '', partialResponseStrategy: '', groupLabels: {}, rules: [newRule()] }
@@ -114,10 +116,13 @@ function fromRule(r: K8sPrometheusRuleRule): RuleRow {
   delete labels.severity
   const annotations = { ...(r.annotations ?? {}) }
   delete annotations.platform_rule
+  const summary = r.summary ?? annotations.summary ?? ''
+  delete annotations.summary
   return {
     kind: r.alert ? 'alert' : 'record',
     name: r.alert ?? r.record ?? '',
     severity,
+    summary,
     expr: r.expr ?? '',
     for_: r.for_ ?? '',
     keepFiringFor: r.keepFiringFor ?? '',
@@ -247,6 +252,7 @@ function toRuleDto(r: RuleRow): K8sPrometheusRuleRule {
   if (r.kind === 'alert') {
     dto.alert = r.name.trim()
     if (r.severity) dto.severity = r.severity
+    if (r.summary.trim()) dto.summary = r.summary.trim()
     if (r.for_.trim()) dto.for_ = r.for_.trim()
     if (r.keepFiringFor.trim()) dto.keepFiringFor = r.keepFiringFor.trim()
     if (Object.keys(r.labels).length) dto.labels = r.labels
@@ -458,8 +464,13 @@ function goBack(): void {
                   </div>
                 </el-form-item>
 
+                <el-form-item v-if="r.kind === 'alert'" label="摘要 summary">
+                  <el-input v-model="r.summary" placeholder="一句话说明这条告警在报什么，如「实例连续 5 分钟不可达」" />
+                  <div class="form-tip">通知正文与告警列表的「摘要」都取自这里；留空则显示「没有写 summary 注解」。</div>
+                </el-form-item>
+
                 <el-form-item v-if="r.kind === 'alert'" label="注解 annotations">
-                  <LabelEditor v-model="r.annotations" class="sub-editor" style="max-width: 1080px" />
+                  <LabelEditor v-model="r.annotations" class="sub-editor" :exclude-keys="['platform_rule', 'summary']" style="max-width: 1080px" />
                 </el-form-item>
               </el-form>
             </el-card>
