@@ -45,7 +45,8 @@ class AlertServiceTest {
         allocs = mock(PlatformTenantNamespaceMapper.class);
         auth = mock(AuthContext.class);
         k8s = mock(K8sClient.class);
-        svc = new AlertService(mapper, allocs, auth, k8s, org.springframework.web.client.RestClient.builder(), "t", 8081);
+        svc = new AlertService(mapper, allocs, auth, new RuleSourceResolver(k8s),
+                org.springframework.web.client.RestClient.builder(), "t", 8081);
     }
 
     private static AlertQueryRequest req() {
