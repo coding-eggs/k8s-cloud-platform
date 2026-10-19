@@ -8,6 +8,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -38,8 +41,9 @@ class AlertWebhookControllerTest {
         mvc = MockMvcBuilders.standaloneSetup(new AlertWebhookController(ingest, check)).build();
     }
 
+    /** 裸数组（手工 curl / 旧版自检）：控制器有意兼容，但**真实推送永远是信封**。 */
     private static final String ONE_ALERT = """
-            [{"status":{"state":"firing"},
+            [{"status":"firing",
               "labels":{"alertname":"HighCPU","namespace":"ns1","severity":"warning"},
               "annotations":{"summary":"CPU 高"},
               "startsAt":"2026-10-17T10:00:00Z",
@@ -134,6 +138,62 @@ class AlertWebhookControllerTest {
         mvc.perform(post(URL).queryParam("clusterId", "c1")
                         .header("Authorization", "Bearer " + TOKEN)
                         .contentType(MediaType.APPLICATION_JSON).content(ONE_ALERT))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accepted").value(0));
+    }
+
+    /**
+     * ⚠️ **Alertmanager 真正推的是信封对象**（`{version, groupKey, status, alerts:[...]}`），
+     * 不是裸数组 —— 裸数组是 {@code GET /api/v2/alerts} 的**返回**形状，两回事。
+     * 而且 alert 里的 {@code status} 是**字符串** "firing"，不是 {@code {state:...}}。
+     * 曾经按裸数组 + 对象 status 建模 → 真实推送整包解析失败 → 回 400 →
+     * Alertmanager 报 `clientError` / `AlertmanagerFailedToSendAlerts`。
+     */
+    private static final String REAL_ENVELOPE = """
+            {"receiver":"monitor/platform-webhook/platform","status":"firing",
+             "alerts":[{"status":"firing",
+                        "labels":{"alertname":"HighCPU","namespace":"ns1","severity":"warning"},
+                        "annotations":{"summary":"CPU 高"},
+                        "startsAt":"2026-10-19T02:21:40.088Z",
+                        "endsAt":"0001-01-01T00:00:00Z",
+                        "generatorURL":"http://am/graph",
+                        "fingerprint":"91286ffa74e3a0eb"}],
+             "groupLabels":{"alertname":"HighCPU"},
+             "commonLabels":{"alertname":"HighCPU"},
+             "commonAnnotations":{"summary":"CPU 高"},
+             "externalURL":"http://am:9093","version":"4",
+             "groupKey":"{}:{alertname=\\"HighCPU\\"}","truncatedAlerts":0}
+            """;
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void the_real_alertmanager_envelope_is_parsed() throws Exception {
+        when(ingest.ingest(anyString(), any())).thenReturn(1);
+
+        mvc.perform(post(URL).queryParam("clusterId", "c1")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON).content(REAL_ENVELOPE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accepted").value(1));
+
+        org.mockito.ArgumentCaptor<List<com.coding.platformapi.models.AlertWebhookRequest.Alert>> cap =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(ingest).ingest(eq("c1"), cap.capture());
+        assertThat(cap.getValue()).hasSize(1);
+        // 状态是**字符串**，不是对象
+        assertThat(cap.getValue().get(0).getStatus()).isEqualTo("firing");
+        assertThat(cap.getValue().get(0).getLabels()).containsEntry("namespace", "ns1");
+    }
+
+    /** 信封里 {@code alerts} 为空也要 200 + accepted:0（批次可能为空）。 */
+    @Test
+    void an_empty_envelope_is_accepted_with_zero() throws Exception {
+        when(ingest.ingest(anyString(), any())).thenReturn(0);
+
+        mvc.perform(post(URL).queryParam("clusterId", "c1")
+                        .header("Authorization", "Bearer " + TOKEN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":\"4\",\"status\":\"firing\",\"alerts\":[]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accepted").value(0));
     }

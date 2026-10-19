@@ -83,12 +83,12 @@ public class AlertIngestService {
         row.setClusterId(clusterId);
         row.setAlertname(alertname);
         row.setFingerprint(a.getFingerprint());
-        row.setStatus(a.getStatus() != null ? a.getStatus().getState() : null);
+        row.setStatus(a.getStatus());
         row.setSeverity(labels.get("severity"));
         row.setLabels(toJson(labels));
         row.setAnnotations(toJson(a.getAnnotations()));
         row.setStartsAt(startsAt);
-        row.setEndsAt(parseInstant(a.getEndsAt()));
+        row.setEndsAt(parseEndsAt(a.getEndsAt()));
         row.setReceivedAt(Date.from(Instant.now().truncatedTo(ChronoUnit.MILLIS)));
 
         String ns = labels.get("namespace");
@@ -127,6 +127,19 @@ public class AlertIngestService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * endsAt 专用：Alertmanager 对**未结束**的告警发的是零值时间 {@code 0001-01-01T00:00:00Z}，
+     * 它不是"结束时间"，落库前归一成 null（否则会存一个公元 1 年的 ends_at）。
+     */
+    private static Date parseEndsAt(String rfc3339) {
+        Date d = parseInstant(rfc3339);
+        if (d == null) {
+            return null;
+        }
+        Instant i = d.toInstant();
+        return i.isBefore(Instant.EPOCH) ? null : d;   // 公元 1 年 → 早于 1970 → 视作未结束
     }
 
     private String toJson(Map<String, String> map) {

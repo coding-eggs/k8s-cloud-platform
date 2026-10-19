@@ -81,14 +81,13 @@ public class AlertWebhookController {
 
         List<AlertWebhookRequest.Alert> alerts;
         try {
-            JavaType type = jsonMapper.getTypeFactory()
-                    .constructCollectionType(List.class, AlertWebhookRequest.Alert.class);
-            alerts = jsonMapper.readValue(rawBody == null ? "" : rawBody, type);
+            alerts = parseAlerts(rawBody);
         } catch (Exception e) {
-            log.warn("告警推送的请求体解析失败：{}", e.getMessage());
+            log.warn("告警推送的请求体解析失败（前 500 字符）：{}",
+                    rawBody == null ? "null" : rawBody.substring(0, Math.min(500, rawBody.length())), e);
             return ResponseEntity.badRequest()
                     .body(new ResponseData<>(EnumResponseType.INVALID_FORMAT_FAIL.getCode(),
-                            "请求体不是 Alertmanager 的告警数组。", null));
+                            "请求体不是 Alertmanager 的 webhook 信封（{version,status,alerts:[...]}）。", null));
         }
 
         int accepted;
@@ -100,5 +99,23 @@ public class AlertWebhookController {
             accepted = 0;
         }
         return ResponseEntity.ok(new ResponseData<>(Map.of("accepted", accepted)));
+    }
+
+    /**
+     * 解析请求体。
+     *
+     * <p>**正常路径是信封对象**（Alertmanager webhook 契约）；裸数组只在一种情况下出现：
+     * 平台自己的自检（早期版本）或手工 curl。两者都收，但不要因此把信封当成可选 ——
+     * 真实推送永远是信封。
+     */
+    private List<AlertWebhookRequest.Alert> parseAlerts(String rawBody) {
+        String body = rawBody == null ? "" : rawBody.trim();
+        if (body.startsWith("[")) {
+            JavaType arrayType = jsonMapper.getTypeFactory()
+                    .constructCollectionType(List.class, AlertWebhookRequest.Alert.class);
+            return jsonMapper.readValue(body, arrayType);
+        }
+        AlertWebhookRequest envelope = jsonMapper.readValue(body, AlertWebhookRequest.class);
+        return envelope.getAlerts() == null ? List.of() : envelope.getAlerts();
     }
 }

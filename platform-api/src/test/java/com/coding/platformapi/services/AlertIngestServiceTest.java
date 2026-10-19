@@ -38,9 +38,7 @@ class AlertIngestServiceTest {
 
     private static AlertWebhookRequest.Alert alert(String state, String ns, String startsAt) {
         AlertWebhookRequest.Alert a = new AlertWebhookRequest.Alert();
-        AlertWebhookRequest.Status s = new AlertWebhookRequest.Status();
-        s.setState(state);
-        a.setStatus(s);
+        a.setStatus(state);   // 字符串，不是对象（见 AlertWebhookRequest 的类注释）
         a.setLabels(new java.util.LinkedHashMap<>(Map.of(
                 "alertname", "HighCPU", "severity", "warning", "namespace", ns == null ? "" : ns)));
         if (ns == null) {
@@ -117,6 +115,21 @@ class AlertIngestServiceTest {
 
         verify(mapper, times(1)).upsert(any());
         verify(mapper, never()).deleteById(any());
+    }
+
+    /**
+     * ⚠️ firing 告警的 endsAt 是**零值时间** {@code 0001-01-01T00:00:00Z}（表示"未结束"），
+     * 落库前必须归一成 null —— 否则库里会出现公元 1 年的结束时间。
+     */
+    @Test
+    void a_zero_ends_at_is_normalised_to_null() {
+        when(allocs.selectByClusterAndNs(anyString(), anyString())).thenReturn(List.of(alloc("t1", "ns")));
+        AlertWebhookRequest.Alert a = alert("firing", "ns", "2026-10-17T10:00:00Z");
+        a.setEndsAt("0001-01-01T00:00:00Z");
+
+        svc.ingest("c1", List.of(a));
+
+        assertThat(captured().getEndsAt()).isNull();
     }
 
     /** startsAt 归一：带小数秒的 RFC3339 解析成 Date 后，毫秒位稳定。 */

@@ -102,9 +102,9 @@ class AlertSelfTestTest {
     @Test
     void self_test_sends_a_firing_and_a_resolved_with_different_starts_at() {
         server.expect(requestTo(startsWith("http://127.0.0.1:8081/alert/webhook")))
-                .andExpect(jsonPath("$", hasSize(2)))
-                .andExpect(jsonPath("$[0].status.state", is("resolved")))
-                .andExpect(jsonPath("$[1].status.state", is("firing")))
+                .andExpect(jsonPath("$.alerts", hasSize(2)))
+                .andExpect(jsonPath("$.alerts[0].status", is("resolved")))
+                .andExpect(jsonPath("$.alerts[1].status", is("firing")))
                 .andExpect(request -> {
                     String body = ((java.io.ByteArrayOutputStream)
                             ((org.springframework.mock.http.client.MockClientHttpRequest) request).getBody())
@@ -131,7 +131,7 @@ class AlertSelfTestTest {
         a.setNamespace("mon-app");
         when(allocs.listByCluster("c1")).thenReturn(List.of(a));
         server.expect(requestTo(startsWith("http://127.0.0.1:8081/alert/webhook")))
-                .andExpect(jsonPath("$[0].labels.namespace", is("mon-app")))
+                .andExpect(jsonPath("$.alerts[0].labels.namespace", is("mon-app")))
                 .andRespond(withSuccess("{\"data\":{\"accepted\":2}}", MediaType.APPLICATION_JSON));
 
         svc.selfTest("c1");

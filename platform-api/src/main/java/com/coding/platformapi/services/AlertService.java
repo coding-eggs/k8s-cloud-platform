@@ -131,7 +131,12 @@ public class AlertService {
      */
     public SelfTestResult selfTest(String clusterId) {
         String url = "http://127.0.0.1:" + serverPort + "/alert/webhook?clusterId=" + clusterId;
-        List<AlertWebhookRequest.Alert> payload = buildSelfTestAlerts(clusterId);
+        // 发**真实信封**（与 Alertmanager 推的形状一致），这样自检才验得到真实解析路径
+        AlertWebhookRequest payload = new AlertWebhookRequest();
+        payload.setVersion("4");
+        payload.setStatus("firing");
+        payload.setReceiver("platform-self-test");
+        payload.setAlerts(buildSelfTestAlerts(clusterId));
         int status;
         try {
             status = restClientBuilder.build().post().uri(url)
@@ -189,9 +194,6 @@ public class AlertService {
 
     private static AlertWebhookRequest.Alert selfTestAlert(String state, String namespace,
                                                            Instant startsAt, Instant endsAt) {
-        AlertWebhookRequest.Status st = new AlertWebhookRequest.Status();
-        st.setState(state);
-
         Map<String, String> labels = new LinkedHashMap<>();
         labels.put("alertname", SELF_TEST_ALERTNAME);
         labels.put("severity", "info");
@@ -200,7 +202,7 @@ public class AlertService {
         }
 
         AlertWebhookRequest.Alert a = new AlertWebhookRequest.Alert();
-        a.setStatus(st);
+        a.setStatus(state);          // 字符串（webhook 契约），不是对象
         a.setLabels(labels);
         a.setAnnotations(Map.of("summary", "平台告警链路自检"));
         a.setStartsAt(startsAt.toString());
