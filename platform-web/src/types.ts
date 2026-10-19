@@ -1023,6 +1023,8 @@ export interface K8sLogEntry {
   body?: string | null
   traceId?: string | null
   spanId?: string | null
+  /** 日志所属 trace 是否被采样（false = Tempo 里没有这条 trace，别给链路入口） */
+  sampled?: boolean | null
   service?: string | null
   cluster?: string | null
   namespace?: string | null
@@ -1039,6 +1041,8 @@ export interface K8sLogQuery {
   clusterName?: string
   namespace?: string
   workload?: string
+  /** Pod 名（模糊匹配；表格不展示，但可查询） */
+  pod?: string
   keyword?: string
   severity?: string
   startMillis?: number

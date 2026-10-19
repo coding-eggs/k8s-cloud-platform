@@ -571,7 +571,10 @@ export const meshApi = {
 /** 链路追踪 /traces（平台自研视图；数据源 = 管理集群的 Tempo，仅平台管理员） */
 export const traceApi = {
   search: (body: {
+    /** 平台管理员用它按顶栏/筛选器的租户收窄；租户用户由后端强制自己的租户 */
+    tenantId?: string
     clusterName?: string
+    namespace?: string
     serviceName?: string
     start?: number
     end?: number
@@ -582,8 +585,13 @@ export const traceApi = {
     minDurationMs?: number
   }) => http.post<never, TraceSummary[]>('/traces/search', body),
   /** 某集群下出现过的服务名（Tempo 标签值；页面「服务」下拉的候选） */
-  services: (params: { clusterName?: string; start?: number; end?: number }) =>
-    http.get<never, string[]>('/traces/services', { params }),
+  services: (params: {
+    tenantId?: string
+    clusterName?: string
+    namespace?: string
+    start?: number
+    end?: number
+  }) => http.get<never, string[]>('/traces/services', { params }),
   get: (traceId: string) =>
     http.get<never, TraceDetail>(`/traces/${encodeURIComponent(traceId)}`),
 }

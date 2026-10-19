@@ -60,6 +60,14 @@ public class TempoTraceClient {
 
     /** TraceQL 搜索；时间范围缺省最近 1 小时，limit 1..200。 */
     public List<TraceSummaryDTO> search(TraceSearchRequest req) {
+        return search(req, List.of());
+    }
+
+    /**
+     * @param scopes 租户可见范围（{@code empty} = 平台管理员，不加条件）；非空时拼成
+     *               {@code (cluster && namespace) || ...} 交给 Tempo 服务端过滤
+     */
+    public List<TraceSummaryDTO> search(TraceSearchRequest req, List<TraceScope> scopes) {
         TraceSearchRequest r = req == null ? new TraceSearchRequest() : req;
         long end = r.getEnd() != null ? r.getEnd() : System.currentTimeMillis() / 1000;
         long start = r.getStart() != null ? r.getStart() : end - 3600;
@@ -71,8 +79,8 @@ public class TempoTraceClient {
 
         URI uri = UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/api/search")
-                .queryParam("q", traceQl(r.getClusterName(), r.getServiceName(),
-                        r.getErrorsOnly(), r.getMinDurationMs()))
+                .queryParam("q", traceQl(r.getClusterName(), r.getNamespace(), r.getServiceName(),
+                        r.getErrorsOnly(), r.getMinDurationMs(), scopes))
                 .queryParam("start", start)
                 .queryParam("end", end)
                 .queryParam("limit", limit)
@@ -132,6 +140,18 @@ public class TempoTraceClient {
 
     /** 某集群下出现过的 service.name 列表（Tempo v2 标签值；页面下拉候选，失败由调用方展示） */
     public List<String> serviceNames(String clusterName, Long start, Long end) {
+        return serviceNames(clusterName, null, start, end, List.of());
+    }
+
+    /** 同上，叠加租户可见范围（空 = 平台管理员） */
+    public List<String> serviceNames(String clusterName, Long start, Long end,
+                                     List<TraceScope> scopes) {
+        return serviceNames(clusterName, null, start, end, scopes);
+    }
+
+    /** 同上，可再按命名空间收窄（顶栏/页面筛选） */
+    public List<String> serviceNames(String clusterName, String namespace, Long start, Long end,
+                                     List<TraceScope> scopes) {
         long to = end != null ? end : System.currentTimeMillis() / 1000;
         long from = start != null ? start : to - 3600;
         if (from >= to) {
@@ -140,7 +160,7 @@ public class TempoTraceClient {
         }
         URI uri = UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/api/v2/search/tag/resource.service.name/values")
-                .queryParam("q", traceQl(clusterName, null))
+                .queryParam("q", traceQl(clusterName, namespace, null, null, null, scopes))
                 .queryParam("start", from)
                 .queryParam("end", to)
                 .build().encode().toUri();
@@ -167,7 +187,9 @@ public class TempoTraceClient {
                 .path("/api/traces/{traceId}")
                 .buildAndExpand(traceId).encode().toUri();
 
-        JsonNode body = getJson(uri);
+        // 404 对 trace-by-id 有特定含义：该 trace 没有被导出（采样率 < 100% 时日志里的
+        // 未采样 traceId 就会出现），或已超出 Tempo 保留期 —— 与「Tempo 不可达」区分开。
+        JsonNode body = getJson(uri, "trace 不存在：该请求未被链路采样，或已超出 Tempo 保留期");
         JsonNode batches = body.path("batches");
         if (!batches.isArray()) {
             batches = body.path("resourceSpans");
@@ -194,13 +216,24 @@ public class TempoTraceClient {
     }
 
     private JsonNode getJson(URI uri) {
+        return getJson(uri, null);
+    }
+
+    /**
+     * @param notFoundMessage 404 时用的提示；{@code null} = 统一按「Tempo 查询失败」报
+     */
+    private JsonNode getJson(URI uri, String notFoundMessage) {
         String text;
         try {
             text = restClient.get().uri(uri).accept(MediaType.APPLICATION_JSON)
                     .retrieve().body(String.class);
         } catch (RestClientResponseException e) {
+            int status = e.getStatusCode().value();
+            if (status == 404 && notFoundMessage != null) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, notFoundMessage);
+            }
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "Tempo 查询失败：HTTP " + e.getStatusCode().value());
+                    "Tempo 查询失败：HTTP " + status);
         } catch (Exception e) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Tempo 不可达：" + e.getMessage());
@@ -261,15 +294,19 @@ public class TempoTraceClient {
         return v.toString();
     }
 
-    private static String traceQl(String cluster, String service) {
-        return traceQl(cluster, service, null, null);
-    }
-
-    private static String traceQl(String cluster, String service,
-                                  Boolean errorsOnly, Integer minDurationMs) {
+    /**
+     * 租户范围作为**一个**条件加入（内部是 OR 的 (集群, 命名空间) 对），与集群/命名空间/服务/
+     * 错误/耗时条件之间仍是 AND —— 租户即使用别人的集群名筛，也只会得到空结果。
+     */
+    private static String traceQl(String cluster, String namespace, String service,
+                                  Boolean errorsOnly, Integer minDurationMs,
+                                  List<TraceScope> scopes) {
         List<String> conditions = new ArrayList<>();
         if (StringUtils.hasText(cluster)) {
             conditions.add("resource.cluster.name = \"" + escape(cluster) + "\"");
+        }
+        if (StringUtils.hasText(namespace)) {
+            conditions.add("resource.k8s.namespace.name = \"" + escape(namespace) + "\"");
         }
         if (StringUtils.hasText(service)) {
             conditions.add("resource.service.name = \"" + escape(service) + "\"");
@@ -279,6 +316,14 @@ public class TempoTraceClient {
         }
         if (minDurationMs != null && minDurationMs > 0) {
             conditions.add("duration > " + minDurationMs + "ms");
+        }
+        if (scopes != null && !scopes.isEmpty()) {
+            List<String> pairs = new ArrayList<>();
+            for (TraceScope scope : scopes) {
+                pairs.add("(resource.cluster.name = \"" + escape(scope.clusterName())
+                        + "\" && resource.k8s.namespace.name = \"" + escape(scope.namespace()) + "\")");
+            }
+            conditions.add("(" + String.join(" || ", pairs) + ")");
         }
         return conditions.isEmpty() ? "{}" : "{ " + String.join(" && ", conditions) + " }";
     }

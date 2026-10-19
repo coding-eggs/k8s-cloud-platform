@@ -19,6 +19,11 @@ function can(code: string): boolean {
   return perm.has(code)
 }
 
+/** 同一个页面在平台态 / 租户态用不同页代码时（如链路追踪），命中任一即可见 */
+function canAny(codes: string[]): boolean {
+  return perm.hasAny(codes)
+}
+
 onMounted(() => {
   // 会话恢复接线（Task 17 carry）：刷新页面时 handleCallback 不会重跑，
   // 续期/保活定时器随之休眠 —— 在「已登录且进入 shell」的唯一收口点补拉起（幂等）。
@@ -294,9 +299,9 @@ async function handleLogout(): Promise<void> {
           <template #title>BGP 过滤器</template>
         </el-menu-item>
 
-        <!-- 可观测（跨上下文）：链路追踪 = 平台管理员；日志查询 = 平台/租户都可达（后端按租户收窄命名空间） -->
-        <div v-if="can(pageCodes.mesh.trace) || can(pageCodes.observability.logs)" class="menu-group">可观测</div>
-        <el-menu-item v-if="can(pageCodes.mesh.trace)" index="/mesh/traces">
+        <!-- 可观测（跨上下文）：链路追踪 = 平台/租户两套页代码（租户侧后端按分配表收窄）；日志查询 = 平台/租户都可达 -->
+        <div v-if="canAny([pageCodes.mesh.trace, pageCodes.mesh.traceTenant]) || can(pageCodes.observability.logs)" class="menu-group">可观测</div>
+        <el-menu-item v-if="canAny([pageCodes.mesh.trace, pageCodes.mesh.traceTenant])" index="/mesh/traces">
           <el-icon><Timer /></el-icon>
           <template #title>链路追踪</template>
         </el-menu-item>

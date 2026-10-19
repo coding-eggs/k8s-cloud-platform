@@ -73,6 +73,27 @@ function barStyle(span: TraceSpan): Record<string, string> {
   return { left: `${left}%`, width: `${Math.min(width, 100 - left)}%` }
 }
 
+/** 服务配色：同一条 trace 里不同服务一眼可分（错误 span 固定用 danger） */
+const COLORS = ['#22d3ee', '#a78bfa', '#34d399', '#fbbf24', '#f472b6',
+  '#60a5fa', '#fb923c', '#4ade80', '#2dd4bf', '#c084fc']
+
+function serviceColor(name?: string | null): string {
+  const text = name ?? ''
+  let hash = 0
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0
+  return COLORS[hash % COLORS.length] as string
+}
+
+function isError(span: TraceSpan): boolean {
+  return (span.statusCode ?? '').toUpperCase().includes('ERROR')
+}
+
+function barColor(span: TraceSpan): string {
+  return isError(span) ? 'var(--danger)' : serviceColor(span.serviceName)
+}
+
+const serviceCount = computed(() => new Set((props.spans ?? []).map((s) => s.serviceName || '—')).size)
+
 function fmtDuration(ms?: number | null): string {
   if (ms == null) return '—'
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`
@@ -83,25 +104,25 @@ function fmtDuration(ms?: number | null): string {
   <div class="tw">
     <div class="tw-head">
       <span>调用链</span>
-      <span class="tw-count">{{ spans.length }} spans</span>
+      <span class="tw-count">{{ spans.length }} spans · {{ serviceCount }} services</span>
     </div>
     <div v-if="!spans.length" class="tw-empty">没有 span（Tempo 可能还没写入或已被保留期清理）</div>
     <div
       v-for="row in rows"
       :key="row.span.spanId"
       class="tw-row"
-      :class="{ 'tw-selected': row.span.spanId === selectedSpanId }"
+      :class="{ 'tw-selected': row.span.spanId === selectedSpanId, 'tw-row-error': isError(row.span) }"
       @click="emit('select', row.span)"
     >
-      <div class="tw-name" :style="{ paddingLeft: `${row.depth * 16}px` }">
-        <span class="tw-svc">{{ row.span.serviceName || '—' }}</span>
+      <div class="tw-name" :style="{ paddingLeft: `${row.depth * 14}px` }">
+        <span class="tw-dot" :style="{ background: serviceColor(row.span.serviceName) }"></span>
+        <span class="tw-svc" :style="{ color: serviceColor(row.span.serviceName) }">{{ row.span.serviceName || '—' }}</span>
         <span class="tw-op">{{ row.span.name }}</span>
       </div>
       <div class="tw-track">
-        <div class="tw-bar" :style="barStyle(row.span)">
-          <span class="tw-dur">{{ fmtDuration(row.span.durationMs) }}</span>
-        </div>
+        <div class="tw-bar" :style="{ ...barStyle(row.span), background: barColor(row.span) }"></div>
       </div>
+      <div class="tw-dur" :class="{ 'tw-dur-error': isError(row.span) }">{{ fmtDuration(row.span.durationMs) }}</div>
     </div>
   </div>
 </template>
@@ -116,24 +137,30 @@ function fmtDuration(ms?: number | null): string {
 .tw-empty { padding: 24px; text-align: center; color: var(--text-3); font-size: 13px; }
 .tw-row {
   display: flex; align-items: center; gap: 12px;
-  padding: 5px 12px; cursor: pointer; border-top: 1px solid var(--border);
+  padding: 6px 12px; cursor: pointer; border-top: 1px solid var(--border);
 }
 .tw-row:hover { background: var(--bg); }
 .tw-selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tw-row-error .tw-op { color: var(--danger); }
 .tw-name {
-  flex: 0 0 360px; min-width: 0; display: flex; align-items: center; gap: 8px;
-  font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  flex: 0 0 42%; max-width: 42%; min-width: 0; display: flex; align-items: center; gap: 8px;
+  font-size: 12px; overflow: hidden; white-space: nowrap;
 }
-.tw-svc { color: var(--accent); flex: 0 0 auto; }
+.tw-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; opacity: .9; }
+.tw-svc { flex: 0 0 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
 .tw-op { color: var(--text-1); overflow: hidden; text-overflow: ellipsis; }
-.tw-track { flex: 1 1 auto; position: relative; height: 16px; }
+.tw-track { flex: 1 1 auto; position: relative; height: 18px; }
+.tw-track::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 50%;
+  border-top: 1px dashed var(--border);
+}
 .tw-bar {
-  position: absolute; top: 3px; height: 10px; border-radius: 3px;
-  background: color-mix(in srgb, var(--accent) 55%, transparent);
-  min-width: 2px; display: flex; align-items: center;
+  position: absolute; top: 5px; height: 8px; border-radius: 4px;
+  opacity: .85; min-width: 2px;
 }
 .tw-dur {
-  position: absolute; left: calc(100% + 6px); white-space: nowrap;
-  font-size: 11px; color: var(--text-3);
+  flex: 0 0 70px; text-align: right; font-size: 11px; color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
+.tw-dur-error { color: var(--danger); }
 </style>

@@ -31,8 +31,8 @@
 | # | 决策 | 影响 | 现状 |
 |---|---|---|---|
 | **D1** | **release 状态存哪** —— 平台自己存（DB 记 values + 渲染历史），还是真走 `helm install/upgrade`（Helm 成为第二写入方） | S3.2 / S3.3 / S3.4 | ⬜ 未定（分析文档 §7.1） |
-| **D2** | **日志采集器形态** —— OTel webhook 注入（与模板编辑零冲突）vs 自建 filebeat sidecar（与模板编辑/回滚/重下发冲突） | S2.3 | ⬜ 未定（§6.6） |
-| **D3** | **「日志采集」与「OTel 采集」是同一件事还是两件事** —— OTel sidecar 采日志本身就是一种日志采集方式；若两者是一件事，S2.3 合并为一批 | S2.3 | ⬜ **需求歧义，需澄清** |
+| **D2** | **日志采集器形态** —— OTel webhook 注入（与模板编辑零冲突）vs 自建 filebeat sidecar（与模板编辑/回滚/重下发冲突） | S2.3 | ✅ **已定（2026-10-19）**：OTel operator 注入；文件日志用 per-Pod **sidecar + filelog**（卷/注解由平台加，与模板编辑同一套 SSA 写入） |
+| **D3** | **「日志采集」与「OTel 采集」是同一件事还是两件事** —— OTel sidecar 采日志本身就是一种日志采集方式；若两者是一件事，S2.3 合并为一批 | S2.3 | ✅ **已合并（2026-10-19）**：应用日志（agent appender）与文件日志（sidecar）都归 OTel 一条链 |
 | **D4** | **审计的埋点机制** —— 统一拦截（`PermissionAuthorizationManager` 之后）vs 各 Service 写路径埋点 | S0.1 | ⬜ 未定（漏埋点的审计不如没有） |
 | **D5** | **平台总览的口径** —— 平台级统计 + 健康摘要分别取哪些数 | S1.3 | ⬜ 未定 |
 | **D6** | **租户可见性**：Helm 商店 / Operator 管理对租户开放到什么程度 | S3.3 / S3.4 | ⬜ 未定 |
@@ -415,14 +415,23 @@
 > 其中 `alertmanagerConfigMatcherStrategy` 与 `sendResolved` **配错会静默半工作**，必须逐条验。
 
 
-#### S2.3 日志采集 + OTel 采集 ｜ 规模 L（范围待 D3 澄清）
+#### S2.3 日志采集 + OTel 采集 ｜ 规模 L ｜ ✅ **已完成（2026-10-19）**
 > 依赖：端点与凭据走 S0.2；存储为 ES（用户在 `platform-system` 自建）。
 
-- [ ] S2.3.1 **D2 / D3 决策**
-- [ ] S2.3.2 采集配置（ES 端点、索引策略）—— 走 S0.2 的连接管理
-- [ ] S2.3.3 注入/下发实现（按 D2 定）
-- [ ] S2.3.4 日志查询 UI（对接 ES）+ 权限点
-- [ ] S2.3.5 ⚠️ **若选 filebeat sidecar**：注入层 × 模板编辑 / 回滚 / 重下发的交互设计（分析文档 §6.6 —— 否则「回滚一次日志就没了」）
+- [x] S2.3.1 **D2 / D3 决策** —— 2026-10-19：D2 = OTel 注入（应用日志 agent appender / 文件日志 per-Pod sidecar），D3 = 合并为一批
+- [x] S2.3.2 采集配置（ES 端点、索引策略）—— 表单化：ES 地址 + `monitor` 内的凭证 Secret（key 固定 `username` / `password`）+ 固定按天索引 `otel-logs-YYYY.MM.DD`
+- [x] S2.3.3 注入/下发实现 —— Instrumentation（traces / logs / all）+ gateway collector（traces→Tempo、logs→ES）+ sidecar（filelog，具体文件）
+- [x] S2.3.4 日志查询 UI + 权限点 —— `POST /logs/search` + 日志查询中心（顶栏租户/集群/命名空间、工作负载/Pod 下拉+模糊、关键词高亮、级别、时间、分页、日志↔链路）；权限 `tenant:log:query` / `tenant:page:observability.logs`（`V2026_10_19_6`）
+- [x] S2.3.5 filebeat 交互设计 —— **不适用**：最终未选 filebeat；文件日志走 OTel sidecar，卷/注解与模板编辑同一套 SSA 写入
+
+> **交付与部署（2026-10-19）**：设计见 `superpowers/specs/2026-10-18-otel-observability-design.md`；
+> 采集侧 = `otel-operator` 组件（operator + Tempo + collector gateway + sidecar），查询侧 = 日志查询中心。
+> 需重放 `V2026_10_19_6`（日志查询权限）与 `V2026_10_19_7`（租户链路权限），
+> 重建 platform-api + k8s-server + platform-web；集群侧需配置 ES 连接
+> （`PLATFORM_ES_URL` / `PLATFORM_ES_USERNAME` / `PLATFORM_ES_PASSWORD`）与 `monitor` 内的 ES 凭证
+> Secret（key 固定 `username` / `password`）。
+> **隔离口径**：日志按 `platform_tenant_namespace` 的 (集群, 命名空间) 收窄；链路按 span 的
+> `resource.cluster.name` + `resource.k8s.namespace.name` 过滤（列表在 Tempo 侧、详情在平台侧）。
 
 #### S2.4 服务网格可视化 ｜ 规模 M-L
 > 已定：**自研**（不引 Kiali、不引 Loki）。分析文档 §7.7。
@@ -872,7 +881,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S1.3** | 平台总览 | — | M | ⬜ 未开始 | — |
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16 收口；**2026-10-17 用户验收通过，需求完结**） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
 | **S2.2** | 告警 | — | L | ✅ **已实施待部署**（2026-10-17；19 任务 / 全项目 1193 绿）。部署：**先重放 `V2026_10_17_3` 再起构建**，重建 platform-data + platform-common + k8s-core + k8s-server + platform-api + platform-web，**重新登录**；⚠️ `ALERT_WEBHOOK_TOKEN` 不配则 platform-api **拒启**；集群侧四步见 cluster-prerequisites §1.8（matcherStrategy 与 sendResolved 会静默半工作） | [spec](superpowers/specs/2026-10-17-alerting-design.md) · [plan](superpowers/plans/2026-10-17-alerting.md) |
-| **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ⬜ 未开始 | — |
+| **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ✅ **已完成（2026-10-19）**。部署：**先重放 `V2026_10_19_6` + `V2026_10_19_7`**，重建 platform-api + k8s-server + platform-web；集群侧配 ES 连接与 `monitor` 内的 ES 凭证 Secret。采集 = otel-operator 组件（operator + Tempo + collector + sidecar），查询 = 日志查询中心 + 链路追踪（租户按分配表收窄） | [spec](superpowers/specs/2026-10-18-otel-observability-design.md) · 组件文档见 `docs/components/` |
 | **S2.4** | 服务网格可视化 | — | M-L | ✅ **已实施待部署**（2026-10-17，含 S2.4.5 Service 页补网格信息）。部署：**platform-api + platform-web**，先重放 `V2026_10_17_2`（S2.4.5 本身只动前端，随 platform-web 一起发）。S2.4.4 **已实测回答**；**S2.4.3 链路追踪后期会做**（集群里现在没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) · [plan](superpowers/plans/2026-10-17-mesh-topology.md) |
 | **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
 | **S3.2** | 应用级交付 | D1 | L | ⬜ 未开始 | — |

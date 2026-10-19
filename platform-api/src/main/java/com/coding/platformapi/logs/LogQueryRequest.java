@@ -25,6 +25,9 @@ public class LogQueryRequest {
     /** 工作负载名（模糊匹配 service.name / deployment / statefulset / daemonset / pod） */
     private String workload;
 
+    /** Pod 名（模糊匹配 Resource.k8s.pod.name） */
+    private String pod;
+
     /** 全文关键词（Body 与 Attributes.*，AND 语义） */
     private String keyword;
 

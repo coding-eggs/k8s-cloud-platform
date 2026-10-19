@@ -92,6 +92,9 @@ public class LogQueryService {
         if (StringUtils.hasText(req.getWorkload())) {
             filter.add(workloadFilter(req.getWorkload().trim()));
         }
+        if (StringUtils.hasText(req.getPod())) {
+            filter.add(containsFilter("Resource.k8s.pod.name.keyword", req.getPod().trim()));
+        }
         String tenant = StringUtils.hasText(forcedTenantId) ? forcedTenantId : req.getTenantId();
         if (StringUtils.hasText(tenant)) {
             filter.add(tenantFilter(tenant.trim()));
@@ -139,6 +142,12 @@ public class LogQueryService {
 
     private static Map<String, Object> term(String field, String value) {
         return Map.of("term", Map.of(field, value));
+    }
+
+    /** 大小写不敏感的包含匹配（Pod 名很长，用户通常只记得一段） */
+    private static Map<String, Object> containsFilter(String field, String value) {
+        return Map.of("wildcard", Map.of(field, Map.of(
+                "value", "*" + value.toLowerCase() + "*", "case_insensitive", true)));
     }
 
     /** 工作负载名：模糊匹配 service.name 与三种工作负载 / Pod 名（用户可能只记得一半） */
@@ -193,6 +202,7 @@ public class LogQueryService {
             e.setBody(bodyText(src.path("Body")));
             e.setTraceId(text(src.path("TraceId")));
             e.setSpanId(text(src.path("SpanId")));
+            e.setSampled(sampled(src.path("TraceFlags")));
             e.setService(text(src.path("Resource.service.name")));
             e.setCluster(text(src.path("Resource.cluster.name")));
             e.setNamespace(text(src.path("Resource.k8s.namespace.name")));
@@ -223,8 +233,18 @@ public class LogQueryService {
         return out;
     }
 
-    private static String bodyText(JsonNode node) {
-        if (node == null || node.isMissingNode() || node.isNull()) {
+    /**
+     * {@code TraceFlags} 的 bit0 = W3C sampled（bit1 是 random-trace-id，不参与判断）。
+     * 未采样的请求只有日志、没有导出到 Tempo 的 trace —— 页面据此不给链路入口。
+     */
+    private static Boolean sampled(JsonNode flags) {
+        if (flags == null || flags.isMissingNode() || flags.isNull() || !flags.isNumber()) {
+            return null;
+        }
+        return (flags.asInt() & 1) == 1;
+    }
+
+    private static String bodyText(JsonNode node) {        if (node == null || node.isMissingNode() || node.isNull()) {
             return null;
         }
         return node.isString() ? node.asString() : node.toString();

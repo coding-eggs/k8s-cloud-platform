@@ -60,6 +60,7 @@ class LogQueryServiceTest {
         req.setClusterName("coding-cluster");
         req.setNamespace("default");
         req.setWorkload("movie");
+        req.setPod("movie-abc");
         req.setKeyword("boom");
         req.setSeverity("error");
         req.setStartMillis(1792386000000L);
@@ -76,6 +77,8 @@ class LogQueryServiceTest {
                 .contains("Resource.k8s.namespace.name.keyword")
                 .contains("SeverityText.keyword").contains("ERROR")
                 .contains("Resource.k8s.deployment.name.keyword")
+                // Pod 是独立条件（表格不再展示，但查询要支持）
+                .contains("Resource.k8s.pod.name.keyword").contains("movie-abc")
                 .contains("simple_query_string").contains("boom");
 
         assertThat(rows).hasSize(1);
@@ -89,6 +92,28 @@ class LogQueryServiceTest {
         assertThat(row.getWorkload()).isEqualTo("movie");
         assertThat(row.getAttributes()).containsEntry("http.method", "GET");
         assertThat(row.getSort()).containsExactly(1000L, 2L);
+    }
+
+    @Test
+    void traceSampledFlagFollowsTheLowBitOfTraceFlags() {
+        // 采样率 < 100% 时，日志里的 traceId 大多没有被导出到 Tempo（点过去 404）。
+        // TraceFlags 的 bit0 = W3C sampled；bit1 是 random-trace-id，不能当采样标记用。
+        when(es.search(anyString(), org.mockito.ArgumentMatchers.any())).thenReturn(JSON.readTree("""
+                {"hits":{"hits":[
+                  {"_source":{"TraceId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","TraceFlags":3}},
+                  {"_source":{"TraceId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","TraceFlags":2}},
+                  {"_source":{"TraceId":"cccccccccccccccccccccccccccccccc"}}
+                ]}}
+                """));
+
+        LogQueryRequest req = new LogQueryRequest();
+        req.setStartMillis(1792386000000L);
+        req.setEndMillis(1792389600000L);
+
+        var rows = svc.search(req, null);
+
+        assertThat(rows).extracting(LogEntryDTO::getSampled)
+                .containsExactly(true, false, null);
     }
 
     @Test

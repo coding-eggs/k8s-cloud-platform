@@ -1,12 +1,14 @@
 package com.coding.platformapi.trace;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class TempoTraceClientTest {
@@ -152,6 +154,77 @@ class TempoTraceClientTest {
         assertThat(out.get(0).getDurationMs()).isEqualTo(1500);
         assertThat(out.get(0).getServiceCount()).isEqualTo(2);
         assertThat(out.get(0).getSpanCount()).isEqualTo(5);
+    }
+
+    @Test
+    void aMissingTraceSaysItWasNotSampledOrExpired() {
+        // 日志里的 traceId 可能来自未采样的请求 —— Tempo 没有它就是 404，
+        // 这跟「Tempo 挂了」是两回事，提示要能区分。
+        server.expect(request -> assertThat(request.getURI().getPath())
+                        .isEqualTo("/api/traces/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> client.get("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"))
+                .hasMessageContaining("未被链路采样")
+                .hasMessageContaining("保留期");
+    }
+
+    @Test
+    void tenantScopesBecomeOrEdTraceQlConditions() {
+        server.expect(request -> {
+                    String query = java.net.URLDecoder.decode(
+                            String.valueOf(request.getURI().getRawQuery()),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    assertThat(query)
+                            .contains("(resource.cluster.name = \"coding-cluster\" && resource.k8s.namespace.name = \"movie-ns\")")
+                            .contains(" || ")
+                            .contains("resource.k8s.namespace.name = \"shared\"");
+                })
+                .andRespond(withSuccess("{\"traces\":[]}", MediaType.APPLICATION_JSON));
+
+        TraceSearchRequest req = new TraceSearchRequest();
+        req.setStart(1000L);
+        req.setEnd(2000L);
+        client.search(req, java.util.List.of(
+                new TraceScope("coding-cluster", "movie-ns"),
+                new TraceScope("coding-cluster", "shared")));
+
+        server.verify();
+    }
+
+    @Test
+    void serviceOptionsAreAlsoScopedToTheTenantNamespaces() {
+        server.expect(request -> {
+                    String query = java.net.URLDecoder.decode(
+                            String.valueOf(request.getURI().getRawQuery()),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    assertThat(query).contains("resource.k8s.namespace.name = \"movie-ns\"");
+                })
+                .andRespond(withSuccess("{\"tagValues\":[]}", MediaType.APPLICATION_JSON));
+
+        client.serviceNames("coding-cluster", 1000L, 2000L,
+                java.util.List.of(new TraceScope("coding-cluster", "movie-ns")));
+
+        server.verify();
+    }
+
+    @Test
+    void theNamespaceFilterBecomesAResourceCondition() {
+        server.expect(request -> {
+                    String query = java.net.URLDecoder.decode(
+                            String.valueOf(request.getURI().getRawQuery()),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    assertThat(query).contains("resource.k8s.namespace.name = \"movie-ns\"");
+                })
+                .andRespond(withSuccess("{\"traces\":[]}", MediaType.APPLICATION_JSON));
+
+        TraceSearchRequest req = new TraceSearchRequest();
+        req.setNamespace("movie-ns");
+        req.setStart(1000L);
+        req.setEnd(2000L);
+        client.search(req);
+
+        server.verify();
     }
 
     @Test

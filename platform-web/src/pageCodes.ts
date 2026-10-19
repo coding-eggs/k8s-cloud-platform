@@ -115,8 +115,9 @@ export const pageCodes = {
     tcpRoute: { list: 'tenant:page:tcproute.list', edit: 'tenant:page:tcproute.edit' },
     tlsRoute: { list: 'tenant:page:tlsroute.list', edit: 'tenant:page:tlsroute.edit' },
     udpRoute: { list: 'tenant:page:udproute.list', edit: 'tenant:page:udproute.edit' },
-    /** 平台自研链路追踪（数据源 = 中心 Tempo；仅 admin） */
+    /** 平台自研链路追踪（数据源 = 中心 Tempo）；平台管理员用 platform 码，租户用 tenant 码（按分配表收窄） */
     trace: 'platform:page:mesh.trace',
+    traceTenant: 'tenant:page:mesh.trace',
   },
 
   // ---- 可观测（日志查询中心）：租户可达页，后端按租户分配收窄命名空间 ----

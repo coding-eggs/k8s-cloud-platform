@@ -19,6 +19,12 @@ public class LogEntryDTO {
     private String body;
     private String traceId;
     private String spanId;
+    /**
+     * 日志所属 trace 是否被采样（{@code TraceFlags} 的 bit0，W3C sampled）。
+     * 为 {@code false} 时 traceId 只存在于日志里，Tempo 中没有对应 trace（点过去会 404）；
+     * {@code null} = 文档没有该字段（老索引），前端按未知处理。
+     */
+    private Boolean sampled;
     private String service;
     private String cluster;
     private String namespace;

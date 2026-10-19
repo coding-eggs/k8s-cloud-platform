@@ -709,3 +709,21 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
   - 权限：`platform:trace:search` / `platform:trace:get` / `platform:page:mesh.trace`，
     **只绑 admin**（中心 Tempo 可能跨租户）；**部署前重放 `V2026_10_19_2__trace_view_permissions.sql`**。
 - 业务集群 Tempo 地址的**可达性/TLS 终止由管理员负责**；平台只提供 collector 侧的地址与传输模式。
+- 日志 → 链路跳转以 **采样** 为准：ES 文档里 `TraceFlags` 的 bit0 是 W3C sampled（bit1 是
+  random-trace-id，不能拿来做判断）。采样率 < 100% 时，大部分日志行带的是**未采样**的 traceId，
+  Tempo 里根本没有对应 trace（实测默认 10% 采样下约 86% 的日志行如此，跳过去必然 404）。
+  日志查询中心只对已采样的行给「查看链路」，未采样显示「未采样」并给出说明；Tempo 的 404
+  单独提示「未被链路采样 / 超出保留期」，与「Tempo 查询失败」区分开。
+- 租户链路边界（2026-10-19 追加）：trace 整体没有命名空间，但**每条 span 有**
+  `resource.cluster.name`（gateway 统一盖）与 `resource.k8s.namespace.name`（k8sattributes 提取）。
+  - 已知且接受：Tempo 的 `rootServiceName` / `rootTraceName` / `serviceStats` 是整条 trace 的全局统计，
+    租户模式下这些摘要字段仍可能覆盖其他命名空间的 span（只暴露服务名/操作名/计数，不暴露其 span 内容）。
+  - 租户可见范围 = 分配表的 (集群, 命名空间) 集合；列表 / 服务候选把它拼进 TraceQL 由 Tempo 过滤；
+    `GET /traces/{id}` 拉回整条 trace 后在平台侧按 span 资源属性过滤（Tempo 的 trace-by-ID 没有
+    span 级投影），过滤后为空按「不存在」返回，避免用 traceId 探测。
+  - 权限：新增 `tenant:trace:search` / `tenant:trace:get` / `tenant:page:mesh.trace`
+    （`V2026_10_19_7`，绑 tenant_admin / tenant_member）；`platform:trace:*` 与
+    `platform:page:mesh.trace` 仍只绑 admin。管理员戴租户帽时与租户用户同规则（同日志查询）。
+  - 前端筛选完全取顶栏三级（租户 / 集群 / 命名空间），两个页面都挂 `meta.context = full` 露出顶栏级联；
+    页面内不再重复摆这三个条件（日志保留工作负载/关键词/级别/时间，链路保留服务/时间/条数/错误/耗时）。
+    顶栏变化即自动重查；平台管理员把顶栏租户作为 `tenantId` 传入，由后端翻成该租户的分配条件。

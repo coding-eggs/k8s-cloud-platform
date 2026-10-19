@@ -8,14 +8,17 @@
  * ⚠️ 租户隔离在后端：token 带租户帽时 platform-api 按分配表把查询收窄到本租户的命名空间，
  *    前端的租户选择只是**平台管理员**用来筛选的。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { ArrowRight, CopyDocument, InfoFilled, Search } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
-import { logApi } from '@/api'
+import { logApi, podApi, workloadApi } from '@/api'
 import type { K8sLogEntry } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
+import { writeClipboard } from '@/utils/clipboard'
 
 const RANGES = [
   { label: '最近 15 分钟', value: 900 },
@@ -30,22 +33,85 @@ const SEVERITIES = ['ERROR', 'WARN', 'INFO', 'DEBUG']
 const PAGE_SIZE = 100
 
 const router = useRouter()
-const { state, load } = useResourceContext()
+const { state, currentCluster, load } = useResourceContext()
 const perm = usePermission()
 
 const filters = reactive({
-  tenantId: state.tenantId ?? '',
-  clusterName: state.clusterId
-    ? (state.tenants.find((t) => t.tenantId === state.tenantId)?.clusters
-        .find((c) => c.clusterId === state.clusterId)?.clusterName ?? '')
-    : '',
+  /** 以下三项不在页面上展示，直接取顶栏上下文（改顶栏即重查） */
+  tenantId: '',
+  clusterName: '',
   namespace: '',
   workload: '',
+  /** Pod 名只在查询区出现，表格不展示（太长） */
+  pod: '',
   keyword: '',
   severity: '',
   range: 3600,
 })
 const customRange = ref<[Date, Date] | null>(null)
+
+/** 工作负载 / Pod 下拉候选：按当前上下文的 namespace 懒加载（展开下拉时才拉），失败仍可手输 */
+const workloadOptions = ref<string[]>([])
+const podOptions = ref<string[]>([])
+const workloadLoading = ref(false)
+const podLoading = ref(false)
+
+async function loadWorkloadOptions(): Promise<void> {
+  if (!state.tenantId || !state.clusterId || !state.namespace) return
+  workloadLoading.value = true
+  try {
+    const list = await workloadApi.list({
+      tenantId: state.tenantId,
+      clusterId: state.clusterId,
+      namespace: state.namespace,
+    })
+    workloadOptions.value = [...new Set((list ?? []).map((w) => w.name).filter(Boolean))].sort()
+  } catch {
+    workloadOptions.value = []
+  } finally {
+    workloadLoading.value = false
+  }
+}
+
+async function loadPodOptions(): Promise<void> {
+  if (!state.tenantId || !state.clusterId || !state.namespace) return
+  podLoading.value = true
+  try {
+    const list = await podApi.list({
+      tenantId: state.tenantId,
+      clusterId: state.clusterId,
+      namespace: state.namespace,
+    })
+    podOptions.value = [...new Set((list ?? []).map((p) => p.name).filter(Boolean))].sort()
+  } catch {
+    podOptions.value = []
+  } finally {
+    podLoading.value = false
+  }
+}
+
+function onWorkloadDropdown(visible: boolean): void {
+  if (visible) void loadWorkloadOptions()
+}
+
+function onPodDropdown(visible: boolean): void {
+  if (visible) void loadPodOptions()
+}
+
+/** 筛选范围 = 顶栏三级；页面只保留工作负载 / Pod / 关键词 / 级别 / 时间。 */
+function syncFromContext(): void {
+  const changed = filters.tenantId !== (state.tenantId ?? '')
+    || filters.clusterName !== (currentCluster.value?.clusterName ?? '')
+    || filters.namespace !== (state.namespace ?? '')
+  filters.tenantId = state.tenantId ?? ''
+  filters.clusterName = currentCluster.value?.clusterName ?? ''
+  filters.namespace = state.namespace ?? ''
+  if (changed) {
+    // 候选跟着命名空间走，换了范围就重取
+    workloadOptions.value = []
+    podOptions.value = []
+  }
+}
 
 const rows = ref<K8sLogEntry[]>([])
 const loading = ref(false)
@@ -55,34 +121,6 @@ const hasMore = ref(false)
 
 const detailVisible = ref(false)
 const selected = ref<K8sLogEntry | null>(null)
-
-/** 租户下拉（管理员可按租户筛选；租户用户只有一个） */
-const tenantOptions = computed(() => state.tenants)
-const clusterOptions = computed(() => {
-  const tenants = filters.tenantId
-    ? state.tenants.filter((t) => t.tenantId === filters.tenantId)
-    : state.tenants
-  const seen = new Map<string, string>()
-  for (const t of tenants) {
-    for (const c of t.clusters) {
-      if (!seen.has(c.clusterName)) seen.set(c.clusterName, c.clusterName)
-    }
-  }
-  return [...seen.values()].sort()
-})
-const namespaceOptions = computed(() => {
-  const tenants = filters.tenantId
-    ? state.tenants.filter((t) => t.tenantId === filters.tenantId)
-    : state.tenants
-  const out = new Set<string>()
-  for (const t of tenants) {
-    for (const c of t.clusters) {
-      if (filters.clusterName && c.clusterName !== filters.clusterName) continue
-      c.namespaces.forEach((n) => out.add(n))
-    }
-  }
-  return [...out].sort()
-})
 
 function bounds(): { start: number; end: number } {
   const now = Date.now()
@@ -106,10 +144,11 @@ async function query(reset = true): Promise<void> {
   const { start, end } = bounds()
   try {
     const next = (await logApi.search({
-      tenantId: perm.isAdmin && filters.tenantId ? filters.tenantId : undefined,
+      tenantId: filters.tenantId || undefined,
       clusterName: filters.clusterName || undefined,
       namespace: filters.namespace || undefined,
       workload: filters.workload.trim() || undefined,
+      pod: filters.pod.trim() || undefined,
       keyword: filters.keyword.trim() || undefined,
       severity: filters.severity || undefined,
       startMillis: start,
@@ -134,14 +173,76 @@ function openDetail(row: K8sLogEntry): void {
   detailVisible.value = true
 }
 
-function gotoTraces(traceId: string): void {
-  void router.push({ path: '/mesh/traces', query: { trace: traceId } })
+function gotoTraces(traceId?: string | null): void {
+  if (traceId) void router.push({ path: '/mesh/traces', query: { trace: traceId } })
+}
+
+/**
+ * 只有被采样的 trace 才会导出到 Tempo。采样率 < 100% 时大部分日志行带着
+ * 「未采样」的 traceId，点进链路页必然 404 —— 这类不给入口，只标「未采样」。
+ * 没有链路页权限（平台码 / 租户码任一）时同理不给入口。
+ */
+const canOpenTrace = computed(() =>
+  perm.hasAny([pageCodes.mesh.trace, pageCodes.mesh.traceTenant]))
+
+function traceState(row: K8sLogEntry): 'link' | 'forbidden' | 'unsampled' | 'none' {
+  const id = row.traceId
+  if (!id || /^0+$/.test(id)) return 'none'
+  if (!canOpenTrace.value) return 'forbidden'
+  return row.sampled === false ? 'unsampled' : 'link'
+}
+
+function parseTime(value?: string | null): Date | null {
+  if (!value) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? new Date(ms) : null
 }
 
 function fmtTime(value?: string | null): string {
-  if (!value) return '—'
-  const ms = Date.parse(value)
-  return Number.isFinite(ms) ? new Date(ms).toLocaleString('zh-CN', { hour12: false }) : value
+  const d = parseTime(value)
+  return d ? d.toLocaleString('zh-CN', { hour12: false }) : (value ?? '—')
+}
+
+/** 表格里的两行时间：时分秒 + 月日（完整时间放 tooltip） */
+function fmtClock(value?: string | null): string {
+  const d = parseTime(value)
+  if (!d) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+function fmtDay(value?: string | null): string {
+  const d = parseTime(value)
+  if (!d) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** 表格里的单行时间：MM-DD HH:mm:ss */
+function fmtStamp(value?: string | null): string {
+  const d = parseTime(value)
+  if (!d) return value ?? '—'
+  return `${fmtDay(value)} ${fmtClock(value)}`
+}
+
+/** 结果范围（顶栏上下文）→ 标题行的小标签 */
+const scopeChips = computed(() => {
+  const chips: string[] = []
+  if (filters.tenantId) {
+    const tenant = state.tenants.find((t) => t.tenantId === filters.tenantId)
+    if (tenant) chips.push(tenant.name)
+  }
+  chips.push(filters.clusterName || '全部集群')
+  chips.push(filters.namespace || '全部命名空间')
+  return chips
+})
+
+/** 错误 / 警告行整行着色，扫日志时先看到问题 */
+function rowClass({ row }: { row: K8sLogEntry }): string {
+  const sev = (row.severity ?? '').toUpperCase()
+  if (sev === 'ERROR' || sev === 'FATAL') return 'logs-row-error'
+  if (sev === 'WARN') return 'logs-row-warn'
+  return ''
 }
 
 function severityType(sev?: string | null): 'danger' | 'warning' | 'info' | 'success' {
@@ -153,141 +254,242 @@ function severityType(sev?: string | null): 'danger' | 'warning' | 'info' | 'suc
   }
 }
 
-function resetScope(): void {
-  filters.namespace = ''
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * 关键词高亮。日志正文是不可信输入：先整体转义，再把「转义后的关键词」包进 mark，
+ * 不拼接任何原始 HTML。
+ */
+function highlightBody(text?: string | null): string {
+  const escaped = escapeHtml(text ?? '')
+  const terms = filters.keyword.trim().split(/\s+/).filter(Boolean)
+  if (!terms.length) return escaped
+  const pattern = new RegExp(`(${terms.map((t) => escapeRegExp(escapeHtml(t))).join('|')})`, 'gi')
+  return escaped.replace(pattern, '<mark class="logs-mark">$1</mark>')
+}
+
+async function copyBody(): Promise<void> {
+  const text = selected.value?.body
+  if (!text) return
+  if (await writeClipboard(text)) ElMessage.success('日志正文已复制')
+  else ElMessage.warning('复制失败，请手动选择')
 }
 
 onMounted(async () => {
   await load() // 载入租户树（页面可能不是从资源页进的）
-  // 默认落到顶栏当前上下文
-  if (!filters.tenantId && state.tenantId) filters.tenantId = state.tenantId
-  const cluster = state.tenants.find((t) => t.tenantId === filters.tenantId)?.clusters
-    .find((c) => c.clusterId === state.clusterId)
-  if (!filters.clusterName && cluster) filters.clusterName = cluster.clusterName
-  if (!filters.namespace && state.namespace) filters.namespace = state.namespace
+  syncFromContext()
   void query()
+  // 顶栏切换 → 重查。watcher 在首次 sync 之后注册，避免 mount 时重复打一轮
+  watch(() => [state.tenantId, state.clusterId, state.namespace], () => {
+    syncFromContext()
+    void query()
+  })
 })
 </script>
 
 <template>
   <div class="logs-page">
-    <PageHeader title="日志查询" description="查询应用日志（OTel → ES）；按租户 / 集群 / 命名空间 / 工作负载 / 关键词 / 时间过滤" />
+    <PageHeader title="日志查询" description="查询应用日志（OTel → ES）；范围取顶栏的租户 / 集群 / 命名空间，另可按工作负载 / 关键词 / 时间过滤" />
 
-    <div class="logs-filters">
-      <el-form inline>
-        <el-form-item v-if="perm.isAdmin" label="租户">
-          <el-select v-model="filters.tenantId" filterable clearable placeholder="全部租户"
-                     style="width: 170px" @change="filters.clusterName = ''; resetScope()">
-            <el-option v-for="t in tenantOptions" :key="t.tenantId" :label="t.name" :value="t.tenantId" />
+    <div class="logs-toolbar">
+      <div class="logs-toolbar-main">
+        <div class="logs-field">
+          <span class="logs-label">工作负载</span>
+          <el-select v-model="filters.workload" filterable allow-create clearable :loading="workloadLoading"
+                     placeholder="选择或输入名称" style="width: 190px"
+                     @visible-change="onWorkloadDropdown">
+            <el-option v-for="w in workloadOptions" :key="w" :label="w" :value="w" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="集群">
-          <el-select v-model="filters.clusterName" filterable clearable placeholder="全部集群"
-                     style="width: 180px" @change="resetScope">
-            <el-option v-for="c in clusterOptions" :key="c" :label="c" :value="c" />
+        </div>
+        <div class="logs-field">
+          <span class="logs-label">Pod</span>
+          <el-select v-model="filters.pod" filterable allow-create clearable :loading="podLoading"
+                     placeholder="选择或输入 Pod 名" style="width: 210px"
+                     @visible-change="onPodDropdown">
+            <el-option v-for="p in podOptions" :key="p" :label="p" :value="p" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="命名空间">
-          <el-select v-model="filters.namespace" filterable allow-create clearable
-                     placeholder="全部命名空间" style="width: 180px">
-            <el-option v-for="n in namespaceOptions" :key="n" :label="n" :value="n" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="工作负载">
-          <el-input v-model="filters.workload" clearable placeholder="按名称模糊匹配"
-                    style="width: 170px" @keyup.enter="query()" />
-        </el-form-item>
-        <el-form-item label="关键词">
+        </div>
+        <div class="logs-field">
+          <span class="logs-label">关键词</span>
           <el-input v-model="filters.keyword" clearable placeholder="正文 / 属性，多个词 AND"
-                    style="width: 220px" @keyup.enter="query()" />
-        </el-form-item>
-        <el-form-item label="级别">
-          <el-select v-model="filters.severity" clearable placeholder="全部" style="width: 110px">
+                    style="width: 230px" @keyup.enter="query()" />
+        </div>
+        <div class="logs-field">
+          <span class="logs-label">级别</span>
+          <el-select v-model="filters.severity" clearable placeholder="全部" style="width: 108px">
             <el-option v-for="s in SEVERITIES" :key="s" :label="s" :value="s" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="时间">
+        </div>
+        <div class="logs-field">
+          <span class="logs-label">时间</span>
           <el-select v-model="filters.range" style="width: 140px">
             <el-option v-for="r in RANGES" :key="r.value" :label="r.label" :value="r.value" />
           </el-select>
-        </el-form-item>
-        <el-form-item v-if="filters.range === -1">
-          <el-date-picker v-model="customRange" type="datetimerange"
-                          start-placeholder="开始" end-placeholder="结束"
-                          :shortcuts="[]" style="width: 360px" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="loading" @click="query()">查询</el-button>
-        </el-form-item>
-      </el-form>
-      <div class="logs-hint">
-        工作负载按 service.name / deployment / statefulset / daemonset / pod 名模糊匹配；
-        日志来自 collector 的按天索引，时间范围最多 31 天
+        </div>
+        <el-date-picker v-if="filters.range === -1" v-model="customRange" type="datetimerange"
+                        start-placeholder="开始" end-placeholder="结束" :shortcuts="[]"
+                        style="width: 340px" />
+        <el-button type="primary" :loading="loading" @click="query()">
+          <el-icon><Search /></el-icon>
+          <span>查询</span>
+        </el-button>
+      </div>
+      <div class="logs-toolbar-hint">
+        <el-tooltip placement="top-start" :show-after="150">
+          <template #content>
+            <div class="logs-tip">
+              <p>范围跟随顶栏的租户 / 集群 / 命名空间，改顶栏即自动重查。</p>
+              <p>工作负载 / Pod 可从下拉选，也可以直接输入一段做模糊匹配；工作负载同时匹配 service.name / deployment / statefulset / daemonset / Pod 名，关键词在正文和属性里做 AND。</p>
+              <p>日志来自 collector 的按天索引（otel-logs-YYYY.MM.DD），时间范围最多 31 天。</p>
+            </div>
+          </template>
+          <span class="logs-hint-inline"><el-icon><InfoFilled /></el-icon> 查询范围与索引说明</span>
+        </el-tooltip>
       </div>
     </div>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon class="logs-alert" />
 
-    <el-table v-loading="loading" :data="rows" class="logs-table" @row-click="openDetail">
-      <el-table-column label="时间" width="170">
-        <template #default="{ row }">{{ fmtTime(row.time) }}</template>
-      </el-table-column>
-      <el-table-column label="级别" width="90">
-        <template #default="{ row }">
-          <el-tag v-if="row.severity" size="small" :type="severityType(row.severity)">{{ row.severity }}</el-tag>
-          <span v-else class="logs-muted">—</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="消息" min-width="320">
-        <template #default="{ row }"><div class="logs-body">{{ row.body || '（无正文）' }}</div></template>
-      </el-table-column>
-      <el-table-column prop="service" label="服务" width="160" />
-      <el-table-column prop="namespace" label="命名空间" width="130" />
-      <el-table-column label="工作负载 / Pod" width="200">
-        <template #default="{ row }">
-          <div class="logs-wl">{{ row.workload || '—' }}</div>
-          <div class="logs-muted">{{ row.pod || '' }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="Trace" width="120">
-        <template #default="{ row }">
-          <el-button v-if="row.traceId" link type="primary" @click.stop="gotoTraces(row.traceId)">
-            查看链路
-          </el-button>
-          <span v-else class="logs-muted">—</span>
-        </template>
-      </el-table-column>
-      <template #empty>
-        没有查到日志（ES 可能未配置 / 该时间范围没有数据 / 采集未开启）
-      </template>
-    </el-table>
+    <div class="logs-result">
+      <div class="logs-result-head">
+        <div class="logs-result-title">
+          查询结果
+          <span class="logs-result-count">{{ rows.length }}</span>
+          <span v-if="hasMore" class="logs-result-more">还有更多</span>
+        </div>
+        <div class="logs-result-scope">
+          <el-tag v-for="part in scopeChips" :key="part" size="small" effect="plain" round>{{ part }}</el-tag>
+        </div>
+      </div>
 
-    <div v-if="hasMore" class="logs-more">
-      <el-button :loading="loading" @click="query(false)">加载更多</el-button>
+      <el-table v-loading="loading" :data="rows" class="logs-table" :row-class-name="rowClass"
+                @row-click="openDetail">
+        <el-table-column label="时间" width="140">
+          <template #default="{ row }">
+            <el-tooltip :content="fmtTime(row.time)" placement="top">
+              <span class="logs-time">{{ fmtStamp(row.time) }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="级别" width="86">
+          <template #default="{ row }">
+            <el-tag v-if="row.severity" size="small" effect="dark" :type="severityType(row.severity)">
+              {{ row.severity }}
+            </el-tag>
+            <span v-else class="logs-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="消息" min-width="400">
+          <template #default="{ row }">
+            <div class="logs-body" v-html="highlightBody(row.body)"></div>
+          </template>
+        </el-table-column>
+        <el-table-column label="命名空间" width="140">
+          <template #default="{ row }"><span class="logs-ns">{{ row.namespace || '—' }}</span></template>
+        </el-table-column>
+        <el-table-column label="工作负载" width="150">
+          <template #default="{ row }"><span class="logs-wl">{{ row.workload || '—' }}</span></template>
+        </el-table-column>
+        <el-table-column label="Trace" width="110">
+          <template #default="{ row }">
+            <el-button v-if="traceState(row) === 'link'" link type="primary" @click.stop="gotoTraces(row.traceId)">
+              查看链路
+            </el-button>
+            <el-tooltip v-else-if="traceState(row) === 'unsampled'" placement="top"
+                        content="该请求未被链路采样，Tempo 中没有对应 trace">
+              <span class="logs-muted logs-unsampled">未采样</span>
+            </el-tooltip>
+            <el-tooltip v-else-if="traceState(row) === 'forbidden'" placement="top"
+                        content="当前角色没有链路追踪权限">
+              <span class="logs-muted logs-unsampled">无权限</span>
+            </el-tooltip>
+            <span v-else class="logs-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column width="52" align="right">
+          <template #default>
+            <el-icon class="logs-open"><ArrowRight /></el-icon>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <div class="logs-empty">
+            <div class="logs-empty-title">没有查到日志</div>
+            <div class="logs-empty-sub">ES 可能未配置 / 该时间范围没有数据 / 采集未开启</div>
+          </div>
+        </template>
+      </el-table>
     </div>
 
-    <el-drawer v-model="detailVisible" title="日志详情" size="52%">
+    <div class="logs-more">
+      <span class="logs-more-count">已加载 {{ rows.length }} 条</span>
+      <el-button v-if="hasMore" :loading="loading" @click="query(false)">加载更多</el-button>
+    </div>
+
+    <el-drawer v-model="detailVisible" size="56%" class="logs-drawer">
+      <template #header>
+        <div class="logs-drawer-head">
+          <div class="logs-drawer-title">
+            日志详情
+            <el-tag v-if="selected?.severity" size="small" effect="dark" :type="severityType(selected.severity)">
+              {{ selected.severity }}
+            </el-tag>
+          </div>
+          <div v-if="selected" class="logs-drawer-sub">{{ fmtTime(selected.time) }}</div>
+        </div>
+      </template>
+
       <template v-if="selected">
-        <div class="logs-detail-meta">
-          <div><span>时间</span><code>{{ fmtTime(selected.time) }}</code></div>
-          <div><span>级别</span><code>{{ selected.severity || '—' }}（{{ selected.severityNumber ?? '—' }}）</code></div>
-          <div><span>服务</span><code>{{ selected.service || '—' }}</code></div>
-          <div><span>集群 / 命名空间</span><code>{{ selected.cluster || '—' }} / {{ selected.namespace || '—' }}</code></div>
-          <div><span>工作负载</span><code>{{ selected.workload || '—' }}</code></div>
-          <div><span>Pod</span><code>{{ selected.pod || '—' }}</code></div>
-          <div>
+        <div class="logs-summary">
+          <div class="logs-summary-item"><span>服务</span><b>{{ selected.service || '—' }}</b></div>
+          <div class="logs-summary-item"><span>集群 / 命名空间</span><b>{{ selected.cluster || '—' }} / {{ selected.namespace || '—' }}</b></div>
+          <div class="logs-summary-item"><span>工作负载</span><b>{{ selected.workload || '—' }}</b></div>
+          <div class="logs-summary-item"><span>Pod</span><b>{{ selected.pod || '—' }}</b></div>
+          <div class="logs-summary-item"><span>级别数值</span><b>{{ selected.severityNumber ?? '—' }}</b></div>
+        </div>
+
+        <div class="logs-section-head">
+          <span>正文</span>
+          <el-button link @click="copyBody">
+            <el-icon><CopyDocument /></el-icon> 复制
+          </el-button>
+        </div>
+        <pre class="logs-detail-body" v-html="highlightBody(selected.body || '（无正文）')"></pre>
+
+        <div class="logs-section-head"><span>Trace / Span</span></div>
+        <div class="logs-meta">
+          <div class="logs-meta-row">
             <span>Trace</span>
-            <el-button v-if="selected.traceId" link type="primary" @click="gotoTraces(selected.traceId)">
-              {{ selected.traceId }}
-            </el-button>
+            <template v-if="selected.traceId">
+              <el-button v-if="traceState(selected) === 'link'" link type="primary"
+                         @click="gotoTraces(selected.traceId)">
+                {{ selected.traceId }}
+              </el-button>
+              <template v-else>
+                <code>{{ selected.traceId }}</code>
+                <el-tooltip v-if="traceState(selected) === 'unsampled'" placement="top"
+                            content="该请求未被链路采样，Tempo 中没有对应 trace">
+                  <span class="logs-muted logs-unsampled">未采样</span>
+                </el-tooltip>
+                <el-tooltip v-else-if="traceState(selected) === 'forbidden'" placement="top"
+                            content="当前角色没有链路追踪权限">
+                  <span class="logs-muted logs-unsampled">无权限</span>
+                </el-tooltip>
+              </template>
+            </template>
             <code v-else>—</code>
           </div>
-          <div><span>Span</span><code>{{ selected.spanId || '—' }}</code></div>
+          <div class="logs-meta-row"><span>Span</span><code>{{ selected.spanId || '—' }}</code></div>
         </div>
-        <div class="logs-detail-head">正文</div>
-        <pre class="logs-detail-body">{{ selected.body || '（无正文）' }}</pre>
-        <template v-if="selected.attributes">
-          <div class="logs-detail-head">属性</div>
+
+        <template v-if="selected.attributes && Object.keys(selected.attributes).length">
+          <div class="logs-section-head"><span>属性</span></div>
           <div class="logs-attr" v-for="(value, key) in selected.attributes" :key="key">
             <span>{{ key }}</span><code>{{ value }}</code>
           </div>
@@ -298,28 +500,115 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.logs-page { display: flex; flex-direction: column; gap: 12px; }
-.logs-filters { padding: 4px 0; }
-.logs-hint { font-size: 12px; color: var(--text-3); padding: 0 0 4px 4px; }
-.logs-alert { margin-bottom: 4px; }
-.logs-table { cursor: pointer; }
+.logs-page { display: flex; flex-direction: column; gap: 14px; }
+
+/* ---------- 工具栏 ---------- */
+.logs-toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 5%, transparent), transparent 70%);
+}
+.logs-toolbar-main { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.logs-field { display: flex; align-items: center; gap: 8px; }
+.logs-label { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+.logs-toolbar-hint { flex-basis: 100%; }
+.logs-hint-inline {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: var(--text-3); cursor: help;
+}
+.logs-hint-inline:hover { color: var(--text-2); }
+.logs-tip { max-width: 420px; }
+.logs-tip p { margin: 0 0 6px; font-size: 12px; line-height: 1.65; }
+.logs-tip p:last-child { margin-bottom: 0; }
+
+/* ---------- 结果 ---------- */
+.logs-result { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.logs-result-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; background: var(--bg);
+}
+.logs-result-title { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+.logs-result-count {
+  min-width: 22px; padding: 0 7px; text-align: center; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-size: 12px;
+}
+.logs-result-more { font-size: 11px; color: var(--text-3); }
+.logs-result-scope { display: flex; flex-wrap: wrap; gap: 6px; }
+.logs-table { width: 100%; }
+.logs-table :deep(.el-table__row) { cursor: pointer; }
+.logs-table :deep(.logs-row-error > td) { background: color-mix(in srgb, var(--danger) 5%, transparent); }
+.logs-table :deep(.logs-row-warn > td) { background: color-mix(in srgb, var(--warning) 4%, transparent); }
+
+.logs-time { font-size: 12px; color: var(--text-1); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .logs-body {
   white-space: pre-wrap; word-break: break-all;
-  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 12px; line-height: 1.55; color: var(--text-1);
 }
-.logs-wl { line-height: 1.4; }
+.logs-table :deep(.logs-mark) {
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--text-1); border-radius: 2px; padding: 0 1px;
+}
+.logs-ns { line-height: 1.4; font-size: 12px; color: var(--text-1); }
+.logs-wl { font-size: 12px; color: var(--text-1); }
 .logs-muted { font-size: 12px; color: var(--text-3); }
-.logs-more { display: flex; justify-content: center; padding: 8px 0; }
-.logs-detail-meta { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
-.logs-detail-meta > div { display: flex; gap: 12px; }
-.logs-detail-meta span { flex: 0 0 120px; color: var(--text-3); }
-.logs-detail-head { margin: 14px 0 6px; font-size: 12px; color: var(--text-2); }
-.logs-detail-body {
-  background: var(--panel-hover); border: 1px solid var(--border); border-radius: 6px;
-  padding: 10px; font-size: 12.5px; white-space: pre-wrap; word-break: break-all;
-  max-height: 420px; overflow: auto;
+.logs-unsampled { cursor: help; }
+.logs-open { color: var(--text-3); }
+.logs-empty { padding: 22px 0; }
+.logs-empty-title { font-size: 14px; color: var(--text-2); margin-bottom: 4px; }
+.logs-empty-sub { font-size: 12px; color: var(--text-3); }
+.logs-more { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 4px 0 10px; }
+.logs-more-count { font-size: 12px; color: var(--text-3); }
+
+/* ---------- 详情抽屉 ---------- */
+.logs-drawer :deep(.el-drawer__header) {
+  margin-bottom: 0; padding-bottom: 12px; border-bottom: 1px solid var(--border);
 }
-.logs-attr { display: flex; gap: 10px; padding: 3px 0; font-size: 12px; border-bottom: 1px dashed var(--border); }
-.logs-attr > span { flex: 0 0 200px; color: var(--text-3); }
-.logs-attr > code { flex: 1 1 auto; word-break: break-all; }
+.logs-drawer-head { display: flex; flex-direction: column; gap: 4px; }
+.logs-drawer-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 16px; font-weight: 600; color: var(--text-1);
+}
+.logs-drawer-sub { font-size: 12px; color: var(--text-3); }
+.logs-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.logs-summary-item {
+  display: flex; flex-direction: column; gap: 2px; min-width: 110px; max-width: 100%;
+  padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+}
+.logs-summary-item span { font-size: 11px; color: var(--text-3); }
+.logs-summary-item b {
+  font-size: 13px; font-weight: 600; color: var(--text-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.logs-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 16px 0 8px; font-size: 12px; color: var(--text-2);
+}
+.logs-detail-body {
+  background: var(--panel-hover); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; margin: 0; font-size: 12.5px; line-height: 1.65;
+  white-space: pre-wrap; word-break: break-all; max-height: 46vh; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.logs-detail-body :deep(.logs-mark) {
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--text-1); border-radius: 2px;
+}
+.logs-meta { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.logs-meta-row {
+  display: flex; align-items: flex-start; gap: 10px; padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.logs-meta-row > span { flex: 0 0 120px; color: var(--text-3); }
+.logs-meta-row > code {
+  flex: 1 1 auto; color: var(--text-1); word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.logs-attr { display: flex; gap: 10px; padding: 4px 0; font-size: 12px; border-bottom: 1px dashed var(--border); }
+.logs-attr > span { flex: 0 0 200px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+.logs-attr > code {
+  flex: 1 1 auto; word-break: break-all; color: var(--text-1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 </style>
