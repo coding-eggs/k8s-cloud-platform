@@ -248,8 +248,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   const initial: Record<string, string> = {}
   for (const f of fields) {
     // 有安装记录时预填**当前生效值**（后端从上次成功快照里取）；否则用 recipe 默认值。
-    // 只显示默认值会让用户改完再打开看到旧值，以为没生效
-    const start = f.currentValue !== undefined ? f.currentValue : f.defaultValue
+    // 只显示默认值会让用户改完再打开看到旧值，以为没生效。
+    // ⚠️ 后端没值时字段**不出现**；这里仍按 `!= null` 兜底（null 也视为无值），
+    //    否则 `"currentValue": null` 会让输入框显示为空。
+    const start = f.currentValue != null ? f.currentValue : f.defaultValue
     if (f.type === 'json') {
       const text = JSON.stringify(start ?? {}, null, 2)
       jsonText[f.key] = text

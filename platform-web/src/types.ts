@@ -1092,7 +1092,7 @@ export interface K8sEditableField {
    */
   type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size'
   defaultValue: unknown
-  /** 当前生效值（上次成功操作的 values 快照）；无安装记录时为空 → 表单用 defaultValue */
+  /** 当前生效值（上次成功操作的 values 快照）；无安装记录时**字段不出现**（null 也按无值处理）→ 表单用 defaultValue */
   currentValue?: unknown
 }
 
