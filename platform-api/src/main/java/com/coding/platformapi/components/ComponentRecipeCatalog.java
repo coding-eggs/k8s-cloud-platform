@@ -246,9 +246,10 @@ public class ComponentRecipeCatalog {
     /**
      * Tekton 由 operator 安装，契约值落在 TektonConfig 上（通过官方 chart 自带的 {@code extraObjects} 下发）：
      * <ul>
-     *   <li>{@code coschedule: workspaces} —— 允许一个 TaskRun 挂多块 PVC workspace（构建缓存）。
-     *       取值以 2026-10-17 集群实测的 TektonConfig 为准（1.15.x 的合法值是 workspaces /
-     *       pipelineruns / isolate-pipelinerun，默认就是 workspaces）</li>
+     *   <li>{@code coschedule: pipelineruns} —— **构建缓存的硬前提**：一个 TaskRun 要再挂一块长期
+     *       PVC workspace，而 {@code workspaces}（Tekton 默认）下**不允许**一个 TaskRun 挂两个 PVC
+     *       类 workspace，会直接被 {@code MarkResourceFailed}（ValidateOnlyOnePVCIsUsed）。
+     *       1.15.x 的合法值：workspaces / pipelineruns / isolate-pipelinerun / disabled</li>
      *   <li>{@code options.configMaps['config-defaults']} —— 默认容器资源（见
      *       {@link #TEKTON_DEFAULT_RESOURCES}）；不写它，配额命名空间里 TaskRun 直接被拒。
      *       ⚠️ 不要写 {@code default-container-resource-requirements} 到 spec.pipeline 直属：
@@ -266,7 +267,7 @@ public class ComponentRecipeCatalog {
                     "profile", "${tekton.profile}",
                     "targetNamespace", "tekton-pipelines",
                     "pipeline", Map.of(
-                            "coschedule", "workspaces",
+                            "coschedule", "pipelineruns",
                             "options", Map.of(
                                     "configMaps", Map.of(
                                             "config-defaults", Map.of(

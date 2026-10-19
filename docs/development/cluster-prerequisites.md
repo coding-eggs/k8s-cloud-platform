@@ -25,6 +25,10 @@ kubectl -n tekton-pipelines patch configmap feature-flags --type merge -p '{"dat
 **⚠️ 值名**：Tekton 1.15.3 的合法值是 `workspaces` / **`pipelineruns`** / `isolate-pipelinerun` / `disabled`。
 老文档里的 `pipeline` **已经改名**，填错会被 `config.webhook.pipeline.tekton.dev` 直接拒。
 
+**✅ 2026-10-19 起由平台安装的 Tekton 自动带上**：组件 recipe 的 TektonConfig 已固定
+`coschedule: pipelineruns`（`ComponentRecipeCatalog.TEKTON_CONFIG`）。上面的手工 patch 只用于
+**旧 recipe 装过的集群**或**平台外安装的 Tekton**；平台新装无需再补。
+
 **代价**：亲和助手从「每个 workspace 一个」变成「每条 PipelineRun 一个」——
 一次运行的所有 task 被钉到**同一个节点**。对共享 workspace 的 CI 来说正是想要的；
 但同一集群上别的 Tekton 用法会一起受影响，纳管前要与集群属主确认。

@@ -60,7 +60,7 @@ spec:
   profile: "${tekton.profile}"          # 表单：lite / basic / all，默认 all
   targetNamespace: tekton-pipelines     # 探测判据就在这里
   pipeline:
-    coschedule: workspaces              # ⚠️ 见 §6.1
+    coschedule: pipelineruns             # 构建缓存的硬前提；见 §6.1
     options:
       configMaps:
         config-defaults:
@@ -98,21 +98,24 @@ kubectl -n tekton-pipelines get cm config-defaults -o jsonpath='{.data.default-c
 
 ## 6. 已知坑
 
-### 6.1 `coschedule` 与构建缓存冲突（⚠️ 待修）
+### 6.1 `coschedule` 必须是 `pipelineruns`
 
-当前 recipe 写的是 `coschedule: workspaces`（Tekton 默认值，也是 2026-10-17 集群实测值），
-但平台的构建缓存要给**同一个 TaskRun 再挂一块 PVC workspace**。`workspaces` 模式下
+平台的构建缓存要给**同一个 TaskRun 再挂一块 PVC workspace**。`workspaces`（Tekton 默认）模式下
 `ValidateOnlyOnePVCIsUsed` 会直接 `MarkResourceFailed` —— 症状是运行一秒内失败、Pod 都没起来。
 
-构建缓存的硬前提是 `pipelineruns`（见 `docs/development/cluster-prerequisites.md` §1.1）。
-**新集群用平台安装 Tekton 后必须补一刀**，或后续把 recipe 改成 `pipelineruns`：
+**2026-10-19 起 recipe 固定写 `coschedule: pipelineruns`**（此前误写成 `workspaces`）。
+1.15.3 的合法值：`workspaces` / `pipelineruns` / `isolate-pipelinerun` / `disabled`。
+
+- 新装集群：recipe 直接生效，无需额外操作；
+- **旧 recipe 装过的集群**：重新执行一次组件「升级」让 TektonConfig 更新，或手工补一刀：
 
 ```bash
 kubectl -n tekton-pipelines patch configmap feature-flags --type merge \
   -p '{"data":{"coschedule":"pipelineruns"}}'
 ```
 
-> 1.15.3 的合法值：`workspaces` / `pipelineruns` / `isolate-pipelinerun` / `disabled`。
+> 注意代价：亲和助手从「每个 workspace 一个」变成「每条 PipelineRun 一个」，一次运行的所有 task
+> 会钉到同一节点 —— 对共享缓存 workspace 反而是想要的行为。
 
 ### 6.2 其他
 

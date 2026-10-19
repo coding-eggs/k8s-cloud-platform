@@ -177,14 +177,15 @@ class ComponentRecipeCatalogTest {
         assertThat(releases.get(0).contractValues()).doesNotContainKey("extraObjects");
         assertThat(releases.get(1).contractValues()).containsKey("extraObjects");
 
-        // coschedule 决定构建缓存能不能用；配额下 init 容器需要默认资源
+        // coschedule 决定构建缓存能不能用（一个 TaskRun 要挂两块 PVC workspace → 必须 pipelineruns）；
+        // 配额下 init 容器需要默认资源
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> extra = (List<Map<String, Object>>)
                 releases.get(1).contractValues().get("extraObjects");
         assertThat(extra).hasSize(1);
         Map<String, Object> spec = (Map<String, Object>) extra.get(0).get("spec");
         Map<String, Object> pipeline = (Map<String, Object>) spec.get("pipeline");
-        assertThat(pipeline).containsEntry("coschedule", "workspaces");
+        assertThat(pipeline).containsEntry("coschedule", "pipelineruns");
         // tekton-operator 0.81.2 的 TektonConfig CRD **没有** default-container-resource-requirements 字段
         // （SSA 严格校验会直接拒）。默认资源走 pipeline.options.configMaps → config-defaults
         assertThat(pipeline).doesNotContainKey("default-container-resource-requirements");
