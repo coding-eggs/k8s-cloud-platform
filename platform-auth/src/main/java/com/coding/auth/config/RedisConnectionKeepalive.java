@@ -1,7 +1,6 @@
 package com.coding.auth.config;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -27,10 +26,9 @@ import org.springframework.stereotype.Component;
  * 真正承载 session 命令的那条 socket。异常被吞掉并降级为 debug 日志——单次 PING 失败由 Lettuce 自动重连兜底，
  * 不应影响业务线程。
  */
+@Slf4j
 @Component
 public class RedisConnectionKeepalive {
-
-    private static final Logger log = LoggerFactory.getLogger(RedisConnectionKeepalive.class);
 
     private final RedisConnectionFactory connectionFactory;
 

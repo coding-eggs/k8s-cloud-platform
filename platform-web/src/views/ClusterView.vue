@@ -245,7 +245,7 @@ onMounted(load)
         </template>
       </el-table-column>
       <el-table-column prop="version" label="版本" width="120" />
-      <el-table-column label="画像" width="110">
+      <el-table-column label="集群角色" width="110">
         <template #default="{ row }">
           <el-tag size="small" :type="row.clusterRole === 'MANAGEMENT' ? 'warning' : 'info'">
             {{ row.clusterRole === 'MANAGEMENT' ? '管理集群' : '业务集群' }}
