@@ -108,18 +108,15 @@ public class K8sComponentClient {
     }
 
     /**
-     * ES basic auth：把来源 Secret 的密码归一化成 collector 读的 platform-otel-es。
-     * 密码不经过本层。
+     * ES basic auth：把来源 Secret（固定 key {@code username}/{@code password}）复制成
+     * collector 读的 {@code platform-otel-es}。密码不经过本层。
      */
     public void applyOtelEsSecret(String clusterId, String namespace, String secretName,
-                                  String passwordKey, String username,
                                   String targetNamespace, String targetSecretName) {
         OtelEsSecretRequestDTO body = new OtelEsSecretRequestDTO();
         body.setClusterId(clusterId);
         body.setNamespace(namespace);
         body.setSecretName(secretName);
-        body.setPasswordKey(passwordKey);
-        body.setUsername(username);
         body.setTargetNamespace(targetNamespace);
         body.setTargetSecretName(targetSecretName);
         gateway.exchange(HttpMethod.POST, "/components/otel-es-secret", null, body,

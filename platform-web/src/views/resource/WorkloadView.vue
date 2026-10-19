@@ -6,6 +6,7 @@ import { workloadApi, hpaApi, gatewayApi, podApi } from '@/api'
 import type { K8sGateway, K8sWorkload, K8sHpa, K8sPod, WaypointRef } from '@/types'
 import type { WorkloadKind, WorkloadDetail } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useMeshStatus } from '@/composables/useMeshStatus'
@@ -50,6 +51,14 @@ const ctxParams = computed(() => ({
   clusterId: state.clusterId!,
   namespace: state.namespace!,
 }))
+
+/** 组件旗标：`otel-logs` 决定可观测弹窗里的日志开关能不能打开 */
+const components = useClusterComponents(computed(() => state.clusterId ?? null))
+/** 未探测到旗标时不拦（读不到 ≠ 不可用）；只有明确 false 才禁 */
+const otelLogsAvailable = computed(() =>
+  !components.probed.value || components.available('otel-logs'))
+const otelLogsReason = computed(() =>
+  components.probed.value && !components.available('otel-logs') ? components.reasonOf('otel-logs') : '')
 
 /** canonical 键：小写 kind/name —— 与 HpaEditorView 同一全局约定 */
 function canonicalKey(kind: string | null | undefined, name: string | null | undefined): string {
@@ -772,6 +781,8 @@ const contextDesc = computed(() => {
       :annotations="observabilityDetail.podTemplate?.annotations"
       :containers="observabilityContainers"
       :file-log-directory="observabilityLogDirectory"
+      :logs-available="otelLogsAvailable"
+      :logs-unavailable-reason="otelLogsReason"
       @update:visible="observabilityVisible = $event"
       @saved="refresh"
     />

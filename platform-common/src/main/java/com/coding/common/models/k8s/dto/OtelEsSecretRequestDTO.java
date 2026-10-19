@@ -5,21 +5,17 @@ import lombok.Data;
 /**
  * ES 凭证 Secret 的下发参数（OTel 批次一）。
  *
- * <p>collector 的 elasticsearch exporter 用 basic auth 写 ES；密码从集群里已有的 Secret
- * （ECK 默认是 {@code es-es-elastic-user}，key 为 {@code elastic}）读出，
- * 归一化写入 {@code monitor/platform-otel-es}（key 为 {@code username}/{@code password}）。
+ * <p>collector 的 elasticsearch exporter 用 basic auth 写 ES。来源 Secret 必须放在
+ * {@code monitor} 且包含固定的 {@code username} / {@code password} 两个 key；k8s-server
+ * 把它复制成 {@code monitor/platform-otel-es}（同名 key），密码不经过 platform-api。
  */
 @Data
 public class OtelEsSecretRequestDTO {
     private String clusterId;
-    /** 来源 Secret 的命名空间（ECK 默认 default） */
+    /** 来源 Secret 的命名空间（固定 monitor） */
     private String namespace;
-    /** 来源 Secret 名（ECK 默认 es-es-elastic-user） */
+    /** 来源 Secret 名 */
     private String secretName;
-    /** 密码在来源 Secret 里的 key（ECK 默认 elastic） */
-    private String passwordKey;
-    /** ES 用户名（ECK 默认 elastic） */
-    private String username;
     /** 目标 Secret 的命名空间（collector 在 monitor，必须同 ns） */
     private String targetNamespace;
     /** 目标 Secret 名（collector 的 env 指向它） */

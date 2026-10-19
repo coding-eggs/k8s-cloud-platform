@@ -8,6 +8,7 @@ import type { K8sPod, PodContainerDetail } from '@/types'
 import type { WorkloadDetail, Affinity, Toleration, VolumeDef, PvcTemplate } from '@/types/workload'
 import { LABEL_DATAPLANE_MODE, LABEL_USE_WAYPOINT } from '@/utils/waypoint'
 import { useResourceContext } from '@/stores/context'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
@@ -35,6 +36,14 @@ const ctxParams = computed(() => ({
   clusterId: state.clusterId!,
   namespace: state.namespace!,
 }))
+
+/** 组件旗标：`otel-logs` 决定工作负载日志开关能不能打开（采集栈没开应用日志时禁掉） */
+const components = useClusterComponents(computed(() => state.clusterId ?? null))
+/** 未探测到旗标时不拦（读不到 ≠ 不可用）；只有明确 false 才禁 */
+const otelLogsAvailable = computed(() =>
+  !components.probed.value || components.available('otel-logs'))
+const otelLogsReason = computed(() =>
+  components.probed.value && !components.available('otel-logs') ? components.reasonOf('otel-logs') : '')
 
 const detail = ref<WorkloadDetail | null>(null)
 const pods = ref<K8sPod[]>([])
@@ -625,6 +634,8 @@ const contextDesc = computed(() => {
       :annotations="detail.podTemplate?.annotations"
       :containers="observabilityContainers"
       :file-log-directory="observabilityLogDirectory"
+      :logs-available="otelLogsAvailable"
+      :logs-unavailable-reason="otelLogsReason"
       @update:visible="observabilityVisible = $event"
       @saved="refreshAll"
     />

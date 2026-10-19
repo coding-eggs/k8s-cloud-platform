@@ -13,27 +13,16 @@ thanos:
   # Thanos Query（全局单端点、无鉴权）；各集群 Prometheus remote_write 汇入并统一打 cluster_name 标签
   query:
     url: ${THANOS_QUERY_URL:http://192.168.31.80:19090}
-  receive:
-    # Thanos Receive：业务集群 Prometheus remote_write 的上报入口（组件安装时注入到 values）。
-    # 为空时，引用 ${thanos.receive.url} 的 recipe 会在安装前明确报错，不会下发空 URL。
-    url: ${THANOS_RECEIVE_URL:}
 
 platform:
-  calico:
-    # Calico Installation CR 的契约值（spec §5.5）：与集群现有网络不一致会**直接断网**。
-    # 留空时安装 calico 会在执行前明确报错，不会下发空值。
-    pod-cidr: ${CALICO_POD_CIDR:}
-    encapsulation: ${CALICO_ENCAPSULATION:}
+  tempo:
+    query-url: http://192.168.31.80:21746
   alert:
     webhook:
       # Alertmanager 的 webhook receiver 打到 /alert/webhook 时带的共享密钥（Bearer，带不带前缀都认）。
       # ⚠️ 必须配 —— 留空应用**拒启**（fail-closed）。一个"忘了配就等于全开"的入站端点不该存在。
       # 集群侧对应 AlertmanagerConfig 里 alertmanager 的 http_config.authorization.credentials。
       token: ${ALERT_WEBHOOK_TOKEN:Bearer sd}
-      # 集群里的 Alertmanager 回调平台的**完整端点地址**（含 /alert/webhook 路径）。
-      # ⚠️ 必须是集群网络能访问到的平台地址：平台与集群不在同一台机器时 127.0.0.1 不可达。
-      # 组件安装成功后会自动拼上 ?clusterId=... 写进 AlertmanagerConfig。
-      url: ${ALERT_WEBHOOK_URL:http://127.0.0.1:8081/alert/webhook}
   credential:
     # 凭据库（platform_credential）的 AES 主密钥。**独立于 k8s.cloud.kubeconfig.aes-key**：
     # 轮换边界独立，且不扩散后者把默认密钥硬编码在配置里的坏味道。
@@ -110,6 +99,13 @@ knife4j:
 spring:
   application:
     name: platform-api
+  elasticsearch:
+    # 日志查询中心的 ES（spring-boot-starter-data-elasticsearch 的自动配置读这里：
+    # 连接池 / Basic Auth / 超时都由它提供）。功能开关另见 platform.logs.es.url ——
+    # 两者都由 PLATFORM_ES_URL 注入：env 没设时这里落到默认 localhost，但开关为空 → 页面提示未配置。
+    uris: ${PLATFORM_ES_URL:http://192.168.31.80:9200}
+    username: ${PLATFORM_ES_USERNAME:elastic}
+    password: ${PLATFORM_ES_PASSWORD:tz5Z0iflkC2jA84U0dA40F33}
   mvc:
     pathmatch:
       matching-strategy: ant_path_matcher

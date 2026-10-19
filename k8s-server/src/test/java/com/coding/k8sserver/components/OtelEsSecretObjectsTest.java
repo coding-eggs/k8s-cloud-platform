@@ -13,10 +13,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OtelEsSecretObjectsTest {
 
     @Test
-    void itNormalizesTheEckPasswordUnderAStableKey() {
-        Secret source = new SecretBuilder().withData(Map.of("elastic", b64("pw"))).build();
+    void itCopiesTheFixedUsernameAndPasswordKeys() {
+        // 平台约定：来源 Secret（monitor）key 固定为 username / password
+        Secret source = new SecretBuilder()
+                .withData(Map.of("username", b64("elastic"), "password", b64("pw"))).build();
 
-        assertThat(OtelEsSecretObjects.password(source, "elastic")).isEqualTo("pw");
+        assertThat(OtelEsSecretObjects.value(source, OtelEsSecretObjects.USERNAME_KEY))
+                .isEqualTo("elastic");
+        assertThat(OtelEsSecretObjects.value(source, OtelEsSecretObjects.PASSWORD_KEY))
+                .isEqualTo("pw");
 
         Secret target = OtelEsSecretObjects.build("elastic", "pw",
                 "monitor", "platform-otel-es");
@@ -29,9 +34,9 @@ class OtelEsSecretObjectsTest {
 
     @Test
     void aMissingKeyYieldsNullSoTheCallerCanFailLoudly() {
-        Secret source = new SecretBuilder().withData(Map.of("elastic", b64("pw"))).build();
+        Secret source = new SecretBuilder().withData(Map.of("username", b64("elastic"))).build();
 
-        assertThat(OtelEsSecretObjects.password(source, "password")).isNull();
+        assertThat(OtelEsSecretObjects.value(source, OtelEsSecretObjects.PASSWORD_KEY)).isNull();
     }
 
     private static String b64(String value) {

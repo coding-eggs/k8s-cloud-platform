@@ -23,7 +23,6 @@ import com.coding.platformapi.models.TempoStorageConfig;
 import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
@@ -76,20 +75,6 @@ public class ClusterComponentService {
     /** 编辑表单要显示"当前生效"的地址：从上次成功操作的快照里读 */
     private final PlatformComponentOperationMapper operationMapper;
 
-    /** 告警回调地址的平台默认值：前端安装表单预填（用户可改，clusterId 由后端拼） */
-    @Value("${platform.alert.webhook.url:}")
-    private String defaultAlertWebhookUrl;
-
-    /** Thanos Receive 地址的平台默认值：安装表单预填（remoteWrite 目标） */
-    @Value("${thanos.receive.url:}")
-    private String defaultThanosReceiveUrl;
-
-    /** Calico 表单的预填默认值（部署环境配置） */
-    @Value("${platform.calico.pod-cidr:}")
-    private String defaultPodCidr;
-
-    @Value("${platform.calico.encapsulation:}")
-    private String defaultEncapsulation;
     /** full 投影：状态 + 版本 + 命名空间 + detail + 功能映射（管理员） */
     public List<ComponentStatusDTO> status(String clusterId) {
         return cache.get(KEY_PREFIX + clusterId, TTL, LIST_TYPE, () -> probe(clusterId));
@@ -109,7 +94,47 @@ public class ClusterComponentService {
                     .map(ComponentDef::name).toList();
             out.put(feature, new ComponentFlagDTO(missing.isEmpty(), reasonOf(all, deps, missing), missing));
         }
+        out.put("otel-logs", otelLogsFlag(clusterId, all));
         return out;
+    }
+
+    /**
+     * 工作负载日志开关的可用性：**采集栈健康** 且上次成功安装时开了「应用日志」。
+     *
+     * <p>只装了 operator、没开应用日志时，gateway 没有 logs 管道 —— 工作负载这边的
+     * 应用日志/文件日志上报都会被 gateway 丢弃，ES 里什么都不会有。这个旗标让工作负载页
+     * 直接把日志开关禁掉并说明原因，而不是让用户配完才发现没数据。
+     *
+     * <p>与其它 feature 旗标不同，它读的是**配置**（上次成功操作的快照），不是安装状态。
+     */
+    private ComponentFlagDTO otelLogsFlag(String clusterId, List<ComponentStatusDTO> all) {
+        if (!HEALTHY.equals(stateOf(all, "otel-operator"))) {
+            return new ComponentFlagDTO(false, "OTel 采集栈未安装或未就绪", List.of("OpenTelemetry 采集栈"));
+        }
+        PlatformComponentOperation last = operationMapper.selectLatestSuccess(clusterId, "otel-operator");
+        boolean logs = last != null && Boolean.TRUE.equals(logsEnabledOf(last.getValuesSnapshot()));
+        return logs
+                ? new ComponentFlagDTO(true, null, List.of())
+                : new ComponentFlagDTO(false,
+                        "OTel 采集栈未开启「应用日志」（gateway 没有 logs 管道），请先在集群组件页打开",
+                        List.of());
+    }
+
+    /** {@code __platform.otel.logsEnabled}；快照缺失/旧格式返回 null */
+    private static Boolean logsEnabledOf(String snapshotJson) {
+        if (snapshotJson == null || snapshotJson.isBlank()) {
+            return null;
+        }
+        try {
+            Map<String, Object> snapshot = JSON.readValue(snapshotJson, SNAPSHOT_TYPE);
+            if (!(snapshot.get("__platform") instanceof Map<?, ?> platform)
+                    || !(platform.get("otel") instanceof Map<?, ?> otel)) {
+                return null;
+            }
+            return otel.get("logsEnabled") instanceof Boolean b ? b : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
@@ -332,11 +357,8 @@ public class ClusterComponentService {
         }
         EsConfig out = new EsConfig();
         out.setEndpoint(asString(m.get("endpoint")));
-        out.setUsername(asString(m.get("username")));
         out.setCredentialSecret(secretRefOf(m.get("credentialSecret")));
-        out.setPasswordKey(asString(m.get("passwordKey")));
         out.setInsecureSkipVerify(Boolean.TRUE.equals(m.get("insecureSkipVerify")));
-        out.setLogsIndex(asString(m.get("logsIndex")));
         return out;
     }
 
@@ -444,18 +466,12 @@ public class ClusterComponentService {
         s.setAvailableVersions(availableVersions(recipe));
         s.setEditableFields(editableFields(recipe));
         s.setPlatformAlerting(recipe != null && recipe.platformAlerting());
-        s.setDefaultAlertWebhookUrl(recipe != null && recipe.platformAlerting()
-                ? defaultAlertWebhookUrl : null);
         boolean thanosRemoteWrite = recipe != null && recipe.thanosRemoteWrite();
         s.setThanosRemoteWrite(thanosRemoteWrite);
-        // 预填：画像自带默认值（管理集群 = 集群内 receive）优先，否则用平台配置（业务集群的跨集群入口）
-        s.setDefaultThanosReceiveUrl(!thanosRemoteWrite ? null
-                : recipe.thanosReceiveDefault() != null && !recipe.thanosReceiveDefault().isBlank()
-                ? recipe.thanosReceiveDefault() : defaultThanosReceiveUrl);
+        // 表单预填只来自画像默认值（管理集群 = 集群内 receive）；业务集群的跨集群入口由用户填
+        s.setDefaultThanosReceiveUrl(!thanosRemoteWrite ? null : recipe.thanosReceiveDefault());
         s.setThanosInstall(recipe != null && recipe.thanosInstall());
         s.setCalicoNetwork(recipe != null && recipe.calicoNetwork());
-        s.setDefaultPodCidr(recipe != null && recipe.calicoNetwork() ? defaultPodCidr : null);
-        s.setDefaultEncapsulation(recipe != null && recipe.calicoNetwork() ? defaultEncapsulation : null);
         s.setTektonProfile(recipe != null && recipe.tektonProfile());
         s.setDefaultTektonProfile(recipe != null && recipe.tektonProfile()
                 ? ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE : null);

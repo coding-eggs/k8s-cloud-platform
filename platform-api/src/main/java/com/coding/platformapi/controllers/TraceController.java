@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -36,6 +37,15 @@ public class TraceController {
             description = "TraceQL 过滤 resource.cluster.name / resource.service.name；缺省最近 1 小时，limit ≤ 200")
     public ResponseData<List<TraceSummaryDTO>> search(@RequestBody(required = false) TraceSearchRequest body) {
         return new ResponseData<>(tempo.search(body == null ? new TraceSearchRequest() : body));
+    }
+
+    @GetMapping("/services")
+    @Operation(summary = "某集群下出现过的服务名（Tempo 标签值，供页面下拉）",
+            description = "service.name 是 OTel 的服务名（平台默认写工作负载名），不是 K8s Service 对象")
+    public ResponseData<List<String>> services(@RequestParam(required = false) String clusterName,
+                                               @RequestParam(required = false) Long start,
+                                               @RequestParam(required = false) Long end) {
+        return new ResponseData<>(tempo.serviceNames(clusterName, start, end));
     }
 
     @GetMapping("/{traceId}")

@@ -75,9 +75,6 @@ public class ComponentInstallService {
     private static final int DEFAULT_OTEL_SAMPLING = 10;
     private static final int DEFAULT_OTEL_REPLICAS = 1;
     private static final String DEFAULT_ES_ENDPOINT = "https://es-es-http.default.svc:9200";
-    private static final String DEFAULT_ES_USERNAME = "elastic";
-    private static final String DEFAULT_ES_PASSWORD_KEY = "elastic";
-    private static final String DEFAULT_ES_LOGS_INDEX = "otel-logs";
     /** Tempo 用独立桶，不与 Thanos 共用（Thanos 的桶是 thanos） */
     private static final String DEFAULT_MINIO_BUCKET = "tempo";
     private static final String DEFAULT_TEMPO_RETENTION = "168h";
@@ -98,25 +95,6 @@ public class ComponentInstallService {
     private final ClusterComponentService components;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
-
-    /**
-     * 业务集群 Prometheus 的 remoteWrite 目标（管理集群 Thanos receive）。
-     * 空值时凡是引用 {@code ${thanos.receive.url}} 的 recipe 都会**明确报错** ——
-     * 下发一个空 URL 装出来的 Prometheus 永远上报不了，且运行时没有报错。
-     */
-    @Value("${thanos.receive.url:}")
-    private String thanosReceiveUrl;
-
-    /** Calico Installation 的 CIDR 与封装方式（spec §5.5）；为空时安装 calico 会明确报错 */
-    @Value("${platform.calico.pod-cidr:}")
-    private String calicoPodCidr;
-
-    @Value("${platform.calico.encapsulation:}")
-    private String calicoEncapsulation;
-
-    /** 集群里的 Alertmanager 回调平台的**完整端点**（含 /alert/webhook）；代码只追加 ?clusterId= */
-    @Value("${platform.alert.webhook.url:http://127.0.0.1:8081/alert/webhook}")
-    private String alertWebhookBaseUrl;
 
     /** 与 /alert/webhook 的共享密钥；下发到集群 Secret 前会剥掉 Bearer 前缀 */
     @Value("${platform.alert.webhook.token:}")
@@ -321,9 +299,9 @@ public class ComponentInstallService {
         context.put("cluster.name", clusterService.requireName(clusterId));
         context.put("thanos.receive.url", thanosUrl == null ? "" : thanosUrl);
         context.put("calico.podCidr", calico != null && calico.getPodCidr() != null
-                ? calico.getPodCidr() : (calicoPodCidr == null ? "" : calicoPodCidr));
+                ? calico.getPodCidr() : "");
         context.put("calico.encapsulation", calico != null && calico.getEncapsulation() != null
-                ? calico.getEncapsulation() : (calicoEncapsulation == null ? "" : calicoEncapsulation));
+                ? calico.getEncapsulation() : "");
         // Tekton profile：没传（非 tekton 组件）就用默认值；值已在 apply() 里校验过
         context.put("tekton.profile", tektonProfile != null && !tektonProfile.isBlank()
                 ? tektonProfile : ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE);
@@ -336,8 +314,6 @@ public class ComponentInstallService {
             }
             if (otel.getEs() != null) {
                 context.put("otel.es.endpoint", otel.getEs().getEndpoint());
-                context.put("otel.es.username", otel.getEs().getUsername());
-                context.put("otel.logs.index", otel.getEs().getLogsIndex());
             }
         }
 
@@ -585,15 +561,6 @@ public class ComponentInstallService {
         out.setEndpoint(firstNonBlank(
                 requested == null ? null : requested.getEndpoint(),
                 prev == null ? null : prev.getEndpoint(), DEFAULT_ES_ENDPOINT));
-        out.setUsername(firstNonBlank(
-                requested == null ? null : requested.getUsername(),
-                prev == null ? null : prev.getUsername(), DEFAULT_ES_USERNAME));
-        out.setPasswordKey(firstNonBlank(
-                requested == null ? null : requested.getPasswordKey(),
-                prev == null ? null : prev.getPasswordKey(), DEFAULT_ES_PASSWORD_KEY));
-        out.setLogsIndex(firstNonBlank(
-                requested == null ? null : requested.getLogsIndex(),
-                prev == null ? null : prev.getLogsIndex(), DEFAULT_ES_LOGS_INDEX));
         SecretRef secret = requested != null && requested.getCredentialSecret() != null
                 ? requested.getCredentialSecret()
                 : prev == null ? null : prev.getCredentialSecret();
@@ -602,10 +569,6 @@ public class ComponentInstallService {
                 ? requested.isInsecureSkipVerify()
                 : prev == null || prev.isInsecureSkipVerify());
         if (Boolean.TRUE.equals(logs)) {
-            if (!out.getLogsIndex().matches("[a-z0-9][a-z0-9._-]*")) {
-                throw new CloudPlatformException(EnumResponseType.ERROR,
-                        "日志索引只能包含小写字母、数字、点、下划线和连字符：" + out.getLogsIndex());
-            }
             if (!out.getEndpoint().startsWith("http://") && !out.getEndpoint().startsWith("https://")) {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "ES 地址必须以 http:// 或 https:// 开头：" + out.getEndpoint());
@@ -644,11 +607,8 @@ public class ComponentInstallService {
             EsConfig e = otel.getEs();
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("endpoint", e.getEndpoint());
-            m.put("username", e.getUsername());
             m.put("credentialSecret", secretRefSnapshot(e.getCredentialSecret()));
-            m.put("passwordKey", e.getPasswordKey());
             m.put("insecureSkipVerify", e.isInsecureSkipVerify());
-            m.put("logsIndex", e.getLogsIndex());
             out.put("es", m);
         }
         return out;
@@ -697,11 +657,8 @@ public class ComponentInstallService {
         }
         EsConfig out = new EsConfig();
         out.setEndpoint(asString(map.get("endpoint")));
-        out.setUsername(asString(map.get("username")));
         out.setCredentialSecret(secretRefOf(map.get("credentialSecret")));
-        out.setPasswordKey(asString(map.get("passwordKey")));
         out.setInsecureSkipVerify(Boolean.TRUE.equals(map.get("insecureSkipVerify")));
-        out.setLogsIndex(asString(map.get("logsIndex")));
         return out;
     }
 
@@ -774,10 +731,10 @@ public class ComponentInstallService {
         Map<String, Object> prev = previous instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
         CalicoInstallRequest out = new CalicoInstallRequest();
         out.setPodCidr(firstNonBlank(
-                requested == null ? null : requested.getPodCidr(), asString(prev.get("podCidr")), calicoPodCidr));
+                requested == null ? null : requested.getPodCidr(), asString(prev.get("podCidr"))));
         out.setEncapsulation(firstNonBlank(
                 requested == null ? null : requested.getEncapsulation(),
-                asString(prev.get("encapsulation")), calicoEncapsulation));
+                asString(prev.get("encapsulation"))));
         if (isBlank(out.getPodCidr()) && isBlank(out.getEncapsulation())) {
             return null;
         }
@@ -838,7 +795,7 @@ public class ComponentInstallService {
                 EsConfig e = otel.getEs();
                 client.applyOtelEsSecret(clusterId,
                         e.getCredentialSecret().getNamespace(), e.getCredentialSecret().getName(),
-                        e.getPasswordKey(), e.getUsername(), OTEL_NAMESPACE, "platform-otel-es");
+                        OTEL_NAMESPACE, "platform-otel-es");
             }
             // Thanos 的对象存储 Secret 必须在 helm 之前就位（Pod 会挂载它）
             if (thanos != null) {
@@ -934,7 +891,7 @@ public class ComponentInstallService {
 
     /** 表单值优先，其次上次成功里的值，最后平台配置；只做 trim */
     private String resolveAlertWebhookUrl(String requested, String previous) {
-        String value = firstNonBlank(requested, previous, alertWebhookBaseUrl);
+        String value = firstNonBlank(requested, previous);
         return value == null ? null : value.trim();
     }
 
@@ -948,14 +905,9 @@ public class ComponentInstallService {
     }
 
     /** 表单值优先，其次上次成功里的值，最后平台配置；只做 trim */
-    /**
-     * 表单值优先，其次上次成功里的值，最后**画像默认**（管理集群 = 集群内 receive）或平台配置
-     * （业务集群的跨集群入口）。画像默认优先于平台配置：同一个 {@code thanos.receive.url}
-     * 是业务集群指向管理集群的地址，拿来当管理集群自己的 remoteWrite 会写回它自己。
-     */
+    /** 表单值优先，其次上次成功里的值，最后**画像默认**（只有管理集群自带集群内 receive） */
     private String resolveThanosReceiveUrl(String requested, String previous, String profileDefault) {
-        String fallback = profileDefault != null && !profileDefault.isBlank() ? profileDefault : thanosReceiveUrl;
-        String value = firstNonBlank(requested, previous, fallback);
+        String value = firstNonBlank(requested, previous, profileDefault);
         return value == null ? null : value.trim();
     }
 

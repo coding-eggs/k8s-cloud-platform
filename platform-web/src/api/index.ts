@@ -21,6 +21,8 @@ import type {
   K8sThanosInstall,
   TraceDetail,
   TraceSummary,
+  K8sLogEntry,
+  K8sLogQuery,
   K8sCalicoInstall,
   K8sNamespaceStatEntry,
   K8sTenantOverview,
@@ -459,8 +461,8 @@ export const workloadApi = {
     serviceName?: string
     containerName?: string
     logMode?: 'app' | 'file'
-    logDirectory?: string
-    confirmFileLogs?: boolean
+    /** 文件日志的具体文件（容器内绝对路径；支持 access.log* 这类 glob） */
+    logFile?: string
   }) => http.post<never, WorkloadDetail>(
     `/workloads/${encodeURIComponent(name)}/observability`, { ...ctx, name }),
   /**
@@ -574,9 +576,24 @@ export const traceApi = {
     start?: number
     end?: number
     limit?: number
+    /** 只看包含 error 状态 span 的 trace */
+    errorsOnly?: boolean
+    /** 只看耗时超过该毫秒数的 trace */
+    minDurationMs?: number
   }) => http.post<never, TraceSummary[]>('/traces/search', body),
+  /** 某集群下出现过的服务名（Tempo 标签值；页面「服务」下拉的候选） */
+  services: (params: { clusterName?: string; start?: number; end?: number }) =>
+    http.get<never, string[]>('/traces/services', { params }),
   get: (traceId: string) =>
     http.get<never, TraceDetail>(`/traces/${encodeURIComponent(traceId)}`),
+}
+
+/**
+ * 日志查询中心 /logs（数据源 = collector 写日志的 ES）。
+ * 租户用户由后端按分配表收窄命名空间，前端只负责把筛选条件传过去。
+ */
+export const logApi = {
+  search: (body: K8sLogQuery) => http.post<never, K8sLogEntry[]>('/logs/search', body),
 }
 
 /** Gateway /gateways（CRD，集群未装 Gateway API 时透传 404；租户域） */

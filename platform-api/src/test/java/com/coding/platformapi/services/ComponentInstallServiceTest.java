@@ -270,7 +270,6 @@ class ComponentInstallServiceTest {
                                 Map.of())), List.of()));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "");
 
         assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
                 "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
@@ -295,10 +294,10 @@ class ComponentInstallServiceTest {
                                 Map.of(), Map.of())), List.of(), true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "Bearer sd");
 
-        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin");
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
+                "http://10.0.0.5:8081/alert/webhook"), "admin");
 
         verify(client, timeout(5000)).applyPlatformAlerting(
                 org.mockito.ArgumentMatchers.eq("c1"),
@@ -327,17 +326,17 @@ class ComponentInstallServiceTest {
                                 Map.of(), Map.of())), List.of(), true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "Bearer sd");
 
-        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin");
+        svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
+                "http://10.0.0.5:8081/alert/webhook"), "admin");
 
         verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
                 op -> "FAILED".equals(op.getStatus()) && op.getMessage().contains("告警联动")));
     }
 
     @Test
-    void theFormSuppliedWebhookUrlWinsOverThePlatformDefault() {
+    void theFormSuppliedWebhookUrlIsAppendedWithTheClusterId() {
         // 用户在建表里填的地址优先；clusterId 仍由后端拼
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
@@ -352,7 +351,6 @@ class ComponentInstallServiceTest {
                                 Map.of(), Map.of())), List.of(), true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://default:8081/alert/webhook");
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "Bearer sd");
 
         svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
@@ -378,7 +376,6 @@ class ComponentInstallServiceTest {
                                 Map.of(), Map.of())), List.of(), true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "");
 
         assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
                 "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
@@ -388,7 +385,7 @@ class ComponentInstallServiceTest {
     }
 
     @Test
-    void theFormSuppliedThanosUrlWinsOverThePlatformDefault() {
+    void theFormSuppliedThanosUrlIsUsed() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
         when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
@@ -403,7 +400,6 @@ class ComponentInstallServiceTest {
                                 Map.of())), List.of(), false, true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "http://default:19291/receive");
 
         svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
                 null, "http://thanos:9999/receive"), "admin");
@@ -427,7 +423,6 @@ class ComponentInstallServiceTest {
                                 Map.of(), Map.of())), List.of(), false, true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "");
 
         assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
                 "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
@@ -459,8 +454,6 @@ class ComponentInstallServiceTest {
                                 Map.of())), List.of(), true, true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://default:8081/alert/webhook");
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "http://default-thanos/receive");
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "sd");
 
         svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "UPGRADE", null, Map.of()), "admin");
@@ -591,7 +584,6 @@ class ComponentInstallServiceTest {
                         "http://platform-thanos-receive.monitor.svc:10908/api/v1/receive"));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "thanosReceiveUrl", "http://external:9999/receive");
 
         svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, null, null, null,
                 new com.coding.platformapi.models.ThanosInstallRequest(
@@ -680,11 +672,11 @@ class ComponentInstallServiceTest {
                         List.of(), true, false, true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
         org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookToken", "sd");
 
         svc.apply(new ComponentApplyRequest("c1", "prometheus-operator", "INSTALL", null, Map.of(),
-                null, null, new com.coding.platformapi.models.ThanosInstallRequest(
+                "http://10.0.0.5:8081/alert/webhook", null,
+                new com.coding.platformapi.models.ThanosInstallRequest(
                         "monitor", "minio-creds", "minio.default.svc:9000", "thanos", true)), "admin");
 
         verify(mapper, timeout(5000)).updateById(org.mockito.ArgumentMatchers.argThat(
@@ -707,16 +699,16 @@ class ComponentInstallServiceTest {
                         List.of(), true, false, true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "alertWebhookBaseUrl", "http://10.0.0.5:8081/alert/webhook");
 
         assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
-                "c1", "prometheus-operator", "INSTALL", null, Map.of()), "admin"))
+                "c1", "prometheus-operator", "INSTALL", null, Map.of(),
+                "http://10.0.0.5:8081/alert/webhook"), "admin"))
                 .hasMessageContaining("凭证 Secret");
         verify(mapper, never()).insert(any());
     }
 
     @Test
-    void theFormSuppliedCalicoCidrWinsOverThePlatformDefault() {
+    void theFormSuppliedCalicoParametersAreUsed() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
         when(mapper.countRunning("c1", "calico")).thenReturn(0);
@@ -734,8 +726,6 @@ class ComponentInstallServiceTest {
                                 Map.of())), List.of(), false, false, false, true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "calicoPodCidr", "10.0.0.0/16");
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "calicoEncapsulation", "VXLAN");
 
         svc.apply(new ComponentApplyRequest("c1", "calico", "INSTALL", null, Map.of(), null, null, null,
                 new com.coding.platformapi.models.CalicoInstallRequest("172.16.0.0/16", "IPIP")), "admin");
@@ -760,7 +750,6 @@ class ComponentInstallServiceTest {
                                 Map.of(), Map.of())), List.of(), false, false, false, true));
 
         ComponentInstallService svc = service(catalog);
-        org.springframework.test.util.ReflectionTestUtils.setField(svc, "calicoPodCidr", "");
 
         assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
                 "c1", "calico", "INSTALL", null, Map.of()), "admin"))
@@ -914,8 +903,8 @@ class ComponentInstallServiceTest {
         when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
         OtelInstallRequest otel = baseOtel();
         otel.setLogsEnabled(true);
-        otel.setEs(new EsConfig("https://es-es-http.default.svc:9200", "elastic",
-                new SecretRef("default", "es-es-elastic-user"), "elastic", true, "otel-logs"));
+        otel.setEs(new EsConfig("https://es-es-http.default.svc:9200",
+                new SecretRef("default", "es-es-elastic-user"), true));
         ComponentApplyRequest req = new ComponentApplyRequest(
                 "c1", "otel-operator", "INSTALL", null, Map.of());
         req.setOtel(otel);
@@ -1085,7 +1074,7 @@ class ComponentInstallServiceTest {
         inOrder.verify(client).applyTempoObjstore("c1", "monitor", "minio-creds",
                 "monitor", "platform-tempo-objstore");
         inOrder.verify(client).applyOtelEsSecret("c1", "monitor", "es-es-elastic-user",
-                "elastic", "elastic", "monitor", "platform-otel-es");
+                "monitor", "platform-otel-es");
         inOrder.verify(client).applyComponent(anyString(), anyString(), anyString(), any());
     }
 
@@ -1171,8 +1160,8 @@ class ComponentInstallServiceTest {
         o.setSamplingPercentage(10);
         o.setGatewayReplicas(1);
         o.setLogsEnabled(false);
-        o.setEs(new EsConfig("https://es-es-http.default.svc:9200", "elastic",
-                new SecretRef("monitor", "es-es-elastic-user"), "elastic", true, "otel-logs"));
+        o.setEs(new EsConfig("https://es-es-http.default.svc:9200",
+                new SecretRef("monitor", "es-es-elastic-user"), true));
         return o;
     }
 

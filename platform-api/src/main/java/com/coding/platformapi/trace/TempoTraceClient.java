@@ -71,7 +71,8 @@ public class TempoTraceClient {
 
         URI uri = UriComponentsBuilder.fromUriString(baseUrl)
                 .path("/api/search")
-                .queryParam("q", traceQl(r.getClusterName(), r.getServiceName()))
+                .queryParam("q", traceQl(r.getClusterName(), r.getServiceName(),
+                        r.getErrorsOnly(), r.getMinDurationMs()))
                 .queryParam("start", start)
                 .queryParam("end", end)
                 .queryParam("limit", limit)
@@ -85,8 +86,74 @@ public class TempoTraceClient {
                     text(t.path("rootServiceName")),
                     text(t.path("rootTraceName")),
                     text(t.path("startTimeUnixNano")),
-                    t.path("durationMs").isNumber() ? t.path("durationMs").asLong() : null));
+                    durationMs(t),
+                    serviceCount(t),
+                    spanCount(t)));
         }
+        return out;
+    }
+
+    /**
+     * 耗时：优先用顶层 {@code durationMs}；部分 Tempo 版本的 /api/search 不返回它 ——
+     * 退回到根 span 的 {@code durationNanos}（根 span 的耗时就是整条 trace 的耗时）。
+     */
+    private static Long durationMs(JsonNode trace) {
+        if (trace.path("durationMs").isNumber()) {
+            return trace.path("durationMs").asLong();
+        }
+        JsonNode spans = trace.path("spanSet").path("spans");
+        if (spans.size() == 0) {
+            spans = trace.path("spanSets").path(0).path("spans");
+        }
+        if (spans.size() > 0) {
+            long nanos = parseLong(text(spans.get(0).path("durationNanos")));
+            return nanos > 0 ? nanos / 1_000_000 : null;
+        }
+        return null;
+    }
+
+    /** 涉及几个服务（serviceStats 的条目数） */
+    private static int serviceCount(JsonNode trace) {
+        JsonNode stats = trace.path("serviceStats");
+        return stats.isObject() ? stats.size() : 0;
+    }
+
+    /** span 总数：各服务 spanCount 之和 */
+    private static int spanCount(JsonNode trace) {
+        int total = 0;
+        for (JsonNode stat : trace.path("serviceStats")) {
+            JsonNode count = stat.path("spanCount");
+            if (count.isNumber()) {
+                total += count.asInt();
+            }
+        }
+        return total;
+    }
+
+    /** 某集群下出现过的 service.name 列表（Tempo v2 标签值；页面下拉候选，失败由调用方展示） */
+    public List<String> serviceNames(String clusterName, Long start, Long end) {
+        long to = end != null ? end : System.currentTimeMillis() / 1000;
+        long from = start != null ? start : to - 3600;
+        if (from >= to) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "trace 查询的时间范围不合法（start 必须早于 end）");
+        }
+        URI uri = UriComponentsBuilder.fromUriString(baseUrl)
+                .path("/api/v2/search/tag/resource.service.name/values")
+                .queryParam("q", traceQl(clusterName, null))
+                .queryParam("start", from)
+                .queryParam("end", to)
+                .build().encode().toUri();
+
+        JsonNode body = getJson(uri);
+        List<String> out = new ArrayList<>();
+        for (JsonNode item : body.path("tagValues")) {
+            String value = text(item.path("value"));
+            if (value != null && !value.isBlank()) {
+                out.add(value);
+            }
+        }
+        out.sort(String::compareTo);
         return out;
     }
 
@@ -195,12 +262,23 @@ public class TempoTraceClient {
     }
 
     private static String traceQl(String cluster, String service) {
+        return traceQl(cluster, service, null, null);
+    }
+
+    private static String traceQl(String cluster, String service,
+                                  Boolean errorsOnly, Integer minDurationMs) {
         List<String> conditions = new ArrayList<>();
         if (StringUtils.hasText(cluster)) {
             conditions.add("resource.cluster.name = \"" + escape(cluster) + "\"");
         }
         if (StringUtils.hasText(service)) {
             conditions.add("resource.service.name = \"" + escape(service) + "\"");
+        }
+        if (Boolean.TRUE.equals(errorsOnly)) {
+            conditions.add("status = error");
+        }
+        if (minDurationMs != null && minDurationMs > 0) {
+            conditions.add("duration > " + minDurationMs + "ms");
         }
         return conditions.isEmpty() ? "{}" : "{ " + String.join(" && ", conditions) + " }";
     }

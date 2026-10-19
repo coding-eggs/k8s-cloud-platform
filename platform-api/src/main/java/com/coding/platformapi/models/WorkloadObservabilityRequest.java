@@ -45,13 +45,12 @@ public class WorkloadObservabilityRequest {
     @Schema(description = "日志采集方式：app / file")
     private String logMode;
 
-    /** 文件日志：应用容器把日志写入的目录（挂载到 sidecar 的 /var/log/app） */
-    @Schema(description = "文件日志的容器内日志目录")
-    private String logDirectory;
-
-    /** 文件日志：用户确认应用确实把日志写入该目录（sidecar 读不到 stdout） */
-    @Schema(description = "确认应用写文件（不勾选不允许提交文件日志）")
-    private boolean confirmFileLogs;
+    /**
+     * 文件日志：应用容器写入的**具体日志文件**（容器内绝对路径，如 {@code /var/log/nginx/access.log}）。
+     * 平台把它的父目录挂成 emptyDir，sidecar 只采这个文件（支持 glob，如 {@code access.log*}）。
+     */
+    @Schema(description = "文件日志的容器内文件路径（不是目录）")
+    private String logFile;
 
     @Schema(description = "OTEL_SERVICE_NAME；空 = 工作负载名")
     private String serviceName;

@@ -219,6 +219,27 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void theOtelLogsFlagRequiresLogsEnabledInTheLastSuccessfulInstall() {
+        // 只装 operator 不开「应用日志」→ gateway 没有 logs 管道；工作负载页要据此禁掉日志开关
+        PlatformComponentOperationMapper ops = operationMapper();
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(
+                List.of(probe("opentelemetry-operator-system", true, 1, 1, "0.161.0"))));
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), profileService(),
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        PlatformComponentOperation op = new PlatformComponentOperation();
+        op.setValuesSnapshot("{\"__platform\":{\"otel\":{\"logsEnabled\":false}}}");
+        when(ops.selectLatestSuccess("c1", "otel-operator")).thenReturn(op);
+        assertThat(svc.flags("c1").get("otel-logs").available()).isFalse();
+        assertThat(svc.flags("c1").get("otel-logs").reason()).contains("应用日志");
+
+        op.setValuesSnapshot("{\"__platform\":{\"otel\":{\"logsEnabled\":true}}}");
+        assertThat(svc.flags("c1").get("otel-logs").available()).isTrue();
+    }
+
+    @Test
     void ciDoesNotDependOnTheTektonOperator() {
         // ⭐ operator 是安装来源，不是 CI 的功能前提：官方 release 清单装的 Tekton 没有 operator，照样能跑
         ClusterComponentService svc = svc(List.of(probe("tekton-pipelines", true, 1, 1, "v1.15.3")));
@@ -356,9 +377,9 @@ class ClusterComponentServiceTest {
         op.setValuesSnapshot("{\"__platform\":{\"otel\":{"
                 + "\"tempoEndpoint\":\"tempo.example:4317\","
                 + "\"samplingPercentage\":25,\"gatewayReplicas\":2,\"logsEnabled\":true,"
-                + "\"es\":{\"endpoint\":\"https://es:9200\",\"username\":\"elastic\","
-                + "\"credentialSecret\":{\"namespace\":\"default\",\"name\":\"es-es-elastic-user\"},"
-                + "\"passwordKey\":\"elastic\",\"insecureSkipVerify\":true,\"logsIndex\":\"otel-logs\"}}}}");
+                + "\"es\":{\"endpoint\":\"https://es:9200\","
+                + "\"credentialSecret\":{\"namespace\":\"monitor\",\"name\":\"es-es-elastic-user\"},"
+                + "\"insecureSkipVerify\":true}}}}");
         PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
         when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
 

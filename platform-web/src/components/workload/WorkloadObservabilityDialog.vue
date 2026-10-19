@@ -8,8 +8,8 @@
  *
  * 日志两种模式：
  * - 应用日志（app）：Java/Python 的日志框架，由 Instrumentation 注入的 agent 上报；
- * - 文件日志（file）：Nginx 等写文件的应用，由 per-Pod sidecar collector 读目录。
- *   sidecar 读不到 stdout，所以必须用户提供日志目录并确认应用确实写文件。
+ * - 文件日志（file）：Nginx 等写文件的应用，由 per-Pod sidecar collector 读**指定文件**
+ *   （父目录挂成 emptyDir；sidecar 读不到 stdout，没写文件就没数据）。
  *
  * Node 在第一批置灰：operator 不会自动识别语言，写错注解不会报错但永远没有数据。
  */
@@ -26,8 +26,11 @@ const props = defineProps<{
   namespace: string
   annotations?: Record<string, unknown> | null
   containers: string[]
-  /** 已接入文件日志时，应用容器上的日志目录（从平台卷的挂载反推） */
+  /** 已接入文件日志时，应用容器上平台卷的挂载目录（日志文件的父目录，从 volumeMount 反推） */
   fileLogDirectory?: string
+  /** 集群的 OTel 采集栈是否开了「应用日志」；false 时日志开关不能打开（gateway 没有 logs 管道） */
+  logsAvailable?: boolean
+  logsUnavailableReason?: string
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -38,13 +41,14 @@ const INJECT_JAVA = 'instrumentation.opentelemetry.io/inject-java'
 const INJECT_PYTHON = 'instrumentation.opentelemetry.io/inject-python'
 const SIDECAR_ANNOTATION = 'sidecar.opentelemetry.io/inject'
 const SIDECAR_VALUE = 'monitor/platform-otel-sidecar'
+/** 平台写入的具体日志文件（sidecar 视角，如 /var/log/app/access.log） */
+const LOG_FILE_ANNOTATION = 'platform.coding/otel-log-file'
 
 const language = ref<'java' | 'python'>('java')
 const tracing = ref(false)
 const logs = ref(false)
 const logMode = ref<'app' | 'file'>('app')
-const logDirectory = ref('/var/log/nginx')
-const confirmFileLogs = ref(false)
+const logFile = ref('/var/log/nginx/access.log')
 const serviceName = ref('')
 const containerName = ref('')
 const saving = ref(false)
@@ -65,12 +69,14 @@ function init(): void {
   if (sidecar) {
     logs.value = true
     logMode.value = 'file'
-    logDirectory.value = props.fileLogDirectory ?? '/var/log/nginx'
-    confirmFileLogs.value = true
+    // 回填：父目录（卷挂载）+ 文件名（平台注解里 sidecar 视角的 /var/log/app/<文件名>）
+    const mount = props.fileLogDirectory ?? '/var/log/nginx'
+    const logged = typeof ann[LOG_FILE_ANNOTATION] === 'string' ? ann[LOG_FILE_ANNOTATION] as string : ''
+    const fileName = logged.split('/').filter(Boolean).pop()
+    logFile.value = fileName ? `${mount}/${fileName}` : `${mount}/access.log`
   } else {
     logs.value = value.endsWith('-logs') || value.endsWith('-all')
     logMode.value = 'app'
-    confirmFileLogs.value = false
   }
   tracing.value = value.endsWith('platform-instrumentation') || value.endsWith('-all')
   serviceName.value = props.workloadName
@@ -79,12 +85,9 @@ function init(): void {
 
 async function submit(): Promise<void> {
   if (logs.value && logMode.value === 'file') {
-    if (!confirmFileLogs.value) {
-      ElMessage.warning('请勾选“确认应用把日志写入该目录”（sidecar 读不到容器 stdout）')
-      return
-    }
-    if (!logDirectory.value.trim().startsWith('/')) {
-      ElMessage.warning('日志目录必须是容器内的绝对路径（以 / 开头）')
+    const file = logFile.value.trim()
+    if (!file.startsWith('/') || file.endsWith('/')) {
+      ElMessage.warning('请填到具体日志文件（容器内绝对路径，如 /var/log/nginx/access.log）')
       return
     }
   }
@@ -101,8 +104,7 @@ async function submit(): Promise<void> {
       serviceName: serviceName.value.trim() || undefined,
       containerName: containerName.value || undefined,
       logMode: logs.value ? logMode.value : undefined,
-      logDirectory: logs.value && logMode.value === 'file' ? logDirectory.value.trim() : undefined,
-      confirmFileLogs: logs.value && logMode.value === 'file' ? confirmFileLogs.value : false,
+      logFile: logs.value && logMode.value === 'file' ? logFile.value.trim() : undefined,
     })
     ElMessage.success('已提交，Pod 滚动更新后生效')
     emit('update:visible', false)
@@ -135,8 +137,12 @@ async function submit(): Promise<void> {
         <span class="wl-otel-hint">traces 写入 Tempo</span>
       </el-form-item>
       <el-form-item label="日志采集">
-        <el-switch v-model="logs" />
-        <span class="wl-otel-hint">容器 stdout 不采；只采应用日志框架或指定目录的文件</span>
+        <el-switch v-model="logs" :disabled="logsAvailable === false && !logs" />
+        <span class="wl-otel-hint">容器 stdout 不采；只采应用日志框架或指定文件</span>
+        <div v-if="logsAvailable === false" class="wl-otel-hint wl-otel-block">
+          {{ logsUnavailableReason || '集群的 OTel 采集栈未开启「应用日志」' }}。
+          现在打开也不会有数据，需先在集群组件页打开「应用日志」并重新提交
+        </div>
       </el-form-item>
       <el-form-item v-if="logs" label="采集方式">
         <el-radio-group v-model="logMode">
@@ -145,17 +151,12 @@ async function submit(): Promise<void> {
         </el-radio-group>
       </el-form-item>
       <template v-if="logs && logMode === 'file'">
-        <el-form-item label="日志目录">
-          <el-input v-model="logDirectory" placeholder="/var/log/nginx" spellcheck="false" />
+        <el-form-item label="日志文件">
+          <el-input v-model="logFile" placeholder="/var/log/nginx/access.log" spellcheck="false" />
           <div class="wl-otel-hint wl-otel-block">
-            容器内的绝对路径。平台把该目录挂成 emptyDir，sidecar 只读采集其中的 *.log 文件；
-            目录下所有日志会一起被采集。需要 OTel 采集栈已重放到批次二（sidecar CR 就绪）
+            容器内的<b>具体文件</b>（不是目录）。平台把它的父目录挂成 emptyDir，sidecar 只采这一个文件；
+            支持 glob（如 <code>access.log*</code>，可连带轮转文件）
           </div>
-        </el-form-item>
-        <el-form-item label="确认写文件">
-          <el-checkbox v-model="confirmFileLogs">
-            确认应用把日志写入该目录（不是只打 stdout）
-          </el-checkbox>
         </el-form-item>
       </template>
       <el-form-item label="服务名">

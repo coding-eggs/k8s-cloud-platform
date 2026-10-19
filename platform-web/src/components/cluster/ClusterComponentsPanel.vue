@@ -203,9 +203,9 @@ function emptyOtel(): OtelForm {
       insecureSkipVerify: true, plaintext: false,
     },
     es: {
-      endpoint: 'https://es-es-http.default.svc:9200', username: 'elastic',
+      endpoint: 'https://es-es-http.default.svc:9200',
       credentialSecret: { namespace: 'monitor', name: 'es-es-elastic-user' },
-      passwordKey: 'elastic', insecureSkipVerify: true, logsIndex: 'otel-logs',
+      insecureSkipVerify: true,
     },
   }
 }
@@ -847,31 +847,25 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
         <div class="cc-form-row">
-          <span class="cc-form-label">ES 用户名 / Secret</span>
-          <div class="cc-form-control" style="display: flex; gap: 8px; flex-wrap: wrap">
-            <el-input v-model="applyDialog.otel.es.username" placeholder="elastic" style="width: 160px"
-                      spellcheck="false" />
+          <span class="cc-form-label">ES 凭证 Secret</span>
+          <div class="cc-form-control">
             <el-select v-model="applyDialog.otel.es.credentialSecret.name"
-                       filterable allow-create style="flex: 1 1 200px; min-width: 200px"
+                       filterable allow-create style="width: 100%"
                        placeholder="选择 monitor 命名空间下的 Secret">
               <el-option v-for="s in applyDialog.esSecretOptions" :key="s.name" :value="s.name"
                          :label="s.keys?.length ? `${s.name}（${s.keys.join(', ')}）` : s.name" />
             </el-select>
-            <el-input v-model="applyDialog.otel.es.passwordKey" placeholder="密码 key：elastic"
-                      style="width: 180px" spellcheck="false" />
           </div>
           <div class="cc-form-hint" style="flex-basis: 100%">
-            Secret 固定从 <b>monitor</b> 命名空间选（不可切换命名空间）；ECK 的
-            <code>es-es-elastic-user</code> 默认在 default，需先复制到 monitor。平台在集群内归一化成
-            <code>platform-otel-es</code>（username/password），密码不经过 platform-api
+            Secret 必须放在 <b>monitor</b>，且包含 <code>username</code> / <code>password</code> 两个 key；
+            平台在集群内复制成 <code>platform-otel-es</code>，密码不经过 platform-api
           </div>
         </div>
         <div class="cc-form-row">
           <span class="cc-form-label">索引 / TLS</span>
           <div class="cc-form-control" style="display: flex; align-items: center; gap: 10px">
-            <el-input v-model="applyDialog.otel.es.logsIndex" placeholder="otel-logs" style="width: 200px"
-                      spellcheck="false" />
-            <span class="cc-form-hint">索引前缀（实际写成 otel-logs-日期）</span>
+            <code>otel-logs</code>
+            <span class="cc-form-hint">固定的索引前缀（按天自动加日期后缀：otel-logs-YYYY.MM.DD）</span>
             <el-switch v-model="applyDialog.otel.es.insecureSkipVerify" />
             <span class="cc-form-hint">跳过 HTTPS 校验</span>
           </div>

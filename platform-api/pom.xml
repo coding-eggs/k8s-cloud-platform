@@ -22,6 +22,14 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
+        <!-- 日志查询中心的数据源（ES）。用官方客户端而不是手写 RestClient：
+             后续做日志统计/聚合、保存查询、bulk 写入时可以直接复用同一套客户端与连接池。
+             ⚠️ 地址/凭证走 spring.elasticsearch.*（由 PLATFORM_ES_* 环境变量注入），
+             功能开关仍是 platform.logs.es.url（留空 = 页面提示未配置）。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>

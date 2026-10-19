@@ -118,4 +118,9 @@ export const pageCodes = {
     /** 平台自研链路追踪（数据源 = 中心 Tempo；仅 admin） */
     trace: 'platform:page:mesh.trace',
   },
+
+  // ---- 可观测（日志查询中心）：租户可达页，后端按租户分配收窄命名空间 ----
+  observability: {
+    logs: 'tenant:page:observability.logs',
+  },
 } as const

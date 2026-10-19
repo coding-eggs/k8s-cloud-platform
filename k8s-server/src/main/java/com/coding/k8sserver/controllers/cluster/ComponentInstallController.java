@@ -286,7 +286,6 @@ public class ComponentInstallController implements AccessBoundaryAware {
     public ResponseData<Void> otelEsSecret(@RequestBody OtelEsSecretRequestDTO request) {
         accessResolver.assertClusterAccess(request.getClusterId());
         if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())
-                || isBlank(request.getPasswordKey()) || isBlank(request.getUsername())
                 || isBlank(request.getTargetNamespace()) || isBlank(request.getTargetSecretName())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "ES 凭证参数不完整");
         }
@@ -297,12 +296,14 @@ public class ComponentInstallController implements AccessBoundaryAware {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "凭证 Secret 不存在：" + request.getNamespace() + "/" + request.getSecretName());
         }
-        String password = OtelEsSecretObjects.password(source, request.getPasswordKey());
-        if (password == null) {
+        // 来源 Secret 的 key 固定为 username / password（平台约定，表单只让选 Secret 名）
+        String username = OtelEsSecretObjects.value(source, OtelEsSecretObjects.USERNAME_KEY);
+        String password = OtelEsSecretObjects.value(source, OtelEsSecretObjects.PASSWORD_KEY);
+        if (isBlank(username) || isBlank(password)) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "凭证 Secret 缺少密码 key：" + request.getPasswordKey());
+                    "凭证 Secret 必须包含 username / password 两个 key：" + request.getSecretName());
         }
-        Secret target = OtelEsSecretObjects.build(request.getUsername(), password,
+        Secret target = OtelEsSecretObjects.build(username, password,
                 request.getTargetNamespace(), request.getTargetSecretName());
         client.secrets().inNamespace(request.getTargetNamespace())
                 .resource(target)

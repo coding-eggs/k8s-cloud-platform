@@ -25,7 +25,9 @@ class OtelObjectsTest {
     void theSidecarCollectorReadsTheSharedLogVolume() {
         String sidecar = OtelObjects.build(true, 1, "plaintext").get(4).toString();
         assertThat(sidecar).contains("mode=sidecar")
-                .contains("filelog").contains("/var/log/app/*.log")
+                // 采哪个文件由每个 Pod 的注解决定（downward API → env → filelog include）
+                .contains("filelog").contains("${env:OTEL_FILELOG_INCLUDE}")
+                .contains("metadata.annotations['platform.coding/otel-log-file']")
                 .contains("platform-otel-logs")
                 .contains("K8S_POD_UID")
                 .contains("platform-otel-gateway-collector.monitor.svc:4317");
@@ -56,7 +58,13 @@ class OtelObjectsTest {
         String off = OtelObjects.build(false, 1, "plaintext").get(3).toString();
         assertThat(off).doesNotContain("elasticsearch").doesNotContain("logs=");
         String on = OtelObjects.build(true, 1, "plaintext").get(3).toString();
-        assertThat(on).contains("elasticsearch").contains("logs=");
+        assertThat(on).contains("elasticsearch").contains("logs=")
+                // 按天分割：logs_index 是前缀，日期由 logstash_format 追加（不是 Fluentd 的 %{+...}）
+                .contains("logstash_format").contains("%Y.%m.%d")
+                .doesNotContain("%{+yyyy.MM.dd}")
+                // mapping.mode 在 0.161.0 被忽略、默认 otel（data stream）；必须用 allowed_modes 固定 none
+                .contains("allowed_modes=[none]")
+                .doesNotContain("mode=none");
     }
 
     @Test
@@ -74,8 +82,9 @@ class OtelObjectsTest {
         String gateway = OtelObjects.build(true, 1, "plaintext").get(3).toString();
         assertThat(gateway).contains("${tempo.endpoint}")
                 .contains("${otel.es.endpoint}")
-                .contains("${otel.es.username}")
-                .contains("${otel.logs.index}")
+                .contains("otel-logs")
+                // 用户名/密码都从 platform-otel-es 读（来源 Secret 固定 username/password 两个 key）
+                .contains("key=username").contains("key=password")
                 // collector 的 env 展开用 ${env:...}（含冒号，不会命中平台占位符正则）
                 .contains("${env:TEMPO_ENDPOINT}")
                 .contains("${env:ES_PASSWORD}");

@@ -8,11 +8,12 @@
  * 注意：查询范围是整条中心 Tempo，不是当前顶栏的租户/集群上下文 —— 集群用输入框过滤，
  * 走 resource.cluster.name（gateway 统一 upsert）。
  */
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
 import TraceWaterfall from '@/components/trace/TraceWaterfall.vue'
-import { traceApi } from '@/api'
+import { clusterApi, traceApi } from '@/api'
 import type { TraceDetail, TraceSpan, TraceSummary } from '@/types'
 
 const RANGES = [
@@ -27,11 +28,47 @@ const filters = reactive({
   serviceName: '',
   range: 3600,
   limit: 20,
+  /** 只看包含 error span 的 trace */
+  errorsOnly: false,
+  /** 只看耗时 > N ms；0 = 不限 */
+  minDurationMs: 0,
 })
+
+/** Trace ID 直达输入：接受裸 ID 或含 ID 的链接（Tempo/Jaeger/日志里复制） */
+const traceIdInput = ref('')
 
 const rows = ref<TraceSummary[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
+
+/** 集群下拉：窄投影（clusterId/clusterName），页面本身就是 admin-only */
+const clusterOptions = ref<{ clusterId: string; clusterName: string }[]>([])
+/** 服务下拉：Tempo 里该集群实际出现过的 resource.service.name（可手输） */
+const serviceOptions = ref<string[]>([])
+
+async function loadClusters(): Promise<void> {
+  try {
+    clusterOptions.value = (await clusterApi.options()) ?? []
+  } catch {
+    clusterOptions.value = []
+  }
+}
+
+async function loadServices(): Promise<void> {
+  const end = Math.floor(Date.now() / 1000)
+  try {
+    serviceOptions.value = (await traceApi.services({
+      clusterName: String(filters.clusterName ?? '').trim() || undefined,
+      start: end - filters.range,
+      end,
+    })) ?? []
+  } catch {
+    serviceOptions.value = [] // 候选拿不到不影响手输
+  }
+}
+
+// 换集群/改时间范围 → 重新取服务候选（服务名只在对应时间窗里有数据）
+watch(() => [filters.clusterName, filters.range], () => { void loadServices() })
 
 const detailVisible = ref(false)
 const detailLoading = ref(false)
@@ -44,11 +81,13 @@ async function search(): Promise<void> {
   try {
     const end = Math.floor(Date.now() / 1000)
     rows.value = await traceApi.search({
-      clusterName: filters.clusterName.trim() || undefined,
-      serviceName: filters.serviceName.trim() || undefined,
+      clusterName: String(filters.clusterName ?? '').trim() || undefined,
+      serviceName: String(filters.serviceName ?? '').trim() || undefined,
       start: end - filters.range,
       end,
       limit: filters.limit,
+      errorsOnly: filters.errorsOnly || undefined,
+      minDurationMs: filters.minDurationMs > 0 ? filters.minDurationMs : undefined,
     })
   } catch {
     error.value = 'Tempo 查询失败：检查 Tempo 是否已安装、platform.tempo.query-url 是否可达'
@@ -58,19 +97,51 @@ async function search(): Promise<void> {
   }
 }
 
+const route = useRoute()
+const router = useRouter()
+
+/** 从裸 ID 或含 ID 的链接里取 traceId（Tempo / Jaeger 链接、日志里复制的都认） */
+function extractTraceId(value: string): string | null {
+  const match = value.trim().match(/([0-9a-fA-F]{32})|([0-9a-fA-F]{16})/)
+  if (!match) return null
+  const id = match[1] ?? match[2]
+  return id ? id.toLowerCase() : null
+}
+
+/** 把当前查看的 trace 写进 URL：刷新/分享链接都能直接回到这条 trace */
+function syncTraceQuery(traceId?: string): void {
+  const query = { ...route.query }
+  if (traceId) query.trace = traceId
+  else delete query.trace
+  void router.replace({ query })
+}
+
 async function openTrace(row: TraceSummary): Promise<void> {
   detailVisible.value = true
   detailLoading.value = true
   detail.value = null
   selectedSpan.value = null
+  traceIdInput.value = row.traceId
   try {
     detail.value = await traceApi.get(row.traceId)
     selectedSpan.value = detail.value?.spans?.[0] ?? null
+    syncTraceQuery(row.traceId)
   } catch {
-    ElMessage.error('trace 详情加载失败')
+    ElMessage.error('trace 不存在，或已超出 Tempo 保留期')
   } finally {
     detailLoading.value = false
   }
+}
+
+/** Trace ID 直达：粘贴 ID（或含 ID 的链接）直接拉详情，不经过列表 */
+async function openTraceById(): Promise<void> {
+  const id = extractTraceId(traceIdInput.value)
+  if (!id) {
+    ElMessage.warning('请粘贴有效的 Trace ID（16/32 位十六进制），或包含它的链接')
+    return
+  }
+  traceIdInput.value = id
+  await openTrace({ traceId: id } as TraceSummary)
 }
 
 function fmtStart(nano?: string | null): string {
@@ -84,7 +155,17 @@ function fmtDuration(ms?: number | null): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`
 }
 
-onMounted(search)
+onMounted(() => {
+  void loadClusters()
+  void loadServices()
+  void search()
+  // 分享链接 / 刷新：?trace=<id> 直接打开详情
+  const fromUrl = typeof route.query.trace === 'string' ? extractTraceId(route.query.trace) : null
+  if (fromUrl) {
+    traceIdInput.value = fromUrl
+    void openTrace({ traceId: fromUrl } as TraceSummary)
+  }
+})
 </script>
 
 <template>
@@ -94,12 +175,17 @@ onMounted(search)
     <div class="trace-filters">
       <el-form inline>
         <el-form-item label="集群">
-          <el-input v-model="filters.clusterName" placeholder="coding-cluster" clearable
-                    style="width: 190px" @keyup.enter="search" />
+          <el-select v-model="filters.clusterName" filterable clearable placeholder="全部集群"
+                     style="width: 190px">
+            <el-option v-for="c in clusterOptions" :key="c.clusterId"
+                       :label="c.clusterName" :value="c.clusterName" />
+          </el-select>
         </el-form-item>
         <el-form-item label="服务">
-          <el-input v-model="filters.serviceName" placeholder="service.name" clearable
-                    style="width: 190px" @keyup.enter="search" />
+          <el-select v-model="filters.serviceName" filterable allow-create clearable
+                     placeholder="全部服务" style="width: 220px">
+            <el-option v-for="s in serviceOptions" :key="s" :label="s" :value="s" />
+          </el-select>
         </el-form-item>
         <el-form-item label="时间范围">
           <el-select v-model="filters.range" style="width: 150px">
@@ -113,10 +199,29 @@ onMounted(search)
             <el-option :value="100" label="100" />
           </el-select>
         </el-form-item>
+        <el-form-item label="只看错误">
+          <el-checkbox v-model="filters.errorsOnly">包含 error span</el-checkbox>
+        </el-form-item>
+        <el-form-item label="耗时 ≥">
+          <el-input-number v-model="filters.minDurationMs" :min="0" :step="100"
+                           controls-position="right" style="width: 130px" />
+          <span class="trace-hint">ms，0 = 不限</span>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="loading" @click="search">查询</el-button>
         </el-form-item>
+        <el-form-item label="Trace ID">
+          <el-input v-model="traceIdInput" clearable style="width: 320px"
+                    placeholder="粘贴 Trace ID 或含 ID 的链接" @keyup.enter="openTraceById" />
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="openTraceById">查看</el-button>
+        </el-form-item>
       </el-form>
+      <div class="trace-hint">
+        服务名是 OTel 的 <code>service.name</code>（平台默认写入工作负载名；ingress / waypoint 报的是它们自己的服务名）。
+        下拉候选来自 Tempo 里该集群实际出现过的值，也可以直接输入
+      </div>
     </div>
 
     <el-alert v-if="error" :title="error" type="warning" :closable="false" show-icon class="trace-alert" />
@@ -130,6 +235,9 @@ onMounted(search)
       <el-table-column label="耗时" width="110">
         <template #default="{ row }">{{ fmtDuration(row.durationMs) }}</template>
       </el-table-column>
+      <el-table-column label="服务 / span" width="110">
+        <template #default="{ row }">{{ row.serviceCount ?? '—' }} / {{ row.spanCount ?? '—' }}</template>
+      </el-table-column>
       <el-table-column label="Trace ID" min-width="300">
         <template #default="{ row }"><span class="trace-id">{{ row.traceId }}</span></template>
       </el-table-column>
@@ -138,7 +246,7 @@ onMounted(search)
       </template>
     </el-table>
 
-    <el-drawer v-model="detailVisible" title="调用链详情" size="78%">
+    <el-drawer v-model="detailVisible" title="调用链详情" size="78%" @closed="syncTraceQuery()">
       <div v-loading="detailLoading" class="trace-detail">
         <div class="trace-detail-head">
           <span>Trace ID：<code>{{ detail?.traceId || '—' }}</code></span>
@@ -178,6 +286,7 @@ onMounted(search)
 <style scoped>
 .trace-page { display: flex; flex-direction: column; gap: 12px; }
 .trace-filters { padding: 4px 0; }
+.trace-hint { font-size: 12px; color: var(--text-3); padding: 0 0 4px 4px; }
 .trace-alert { margin-bottom: 4px; }
 .trace-table { cursor: pointer; }
 .trace-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }

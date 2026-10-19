@@ -994,11 +994,9 @@ export interface K8sTempoStorage {
 /** ES 日志参数（应用日志走 OTel logs → collector → ES） */
 export interface K8sEsConfig {
   endpoint: string
-  username: string
+  /** monitor 下、含 username/password 两个 key 的 Secret */
   credentialSecret: K8sSecretRef
-  passwordKey: string
   insecureSkipVerify: boolean
-  logsIndex: string
 }
 
 /** OTel 采集栈的安装参数 */
@@ -1017,12 +1015,48 @@ export interface K8sOtelInstall {
 
 // ---- 链路追踪（批次三，平台自研视图） ----
 
+/** 日志查询中心的一行（collector 写进 ES 的应用日志） */
+export interface K8sLogEntry {
+  time?: string | null
+  severity?: string | null
+  severityNumber?: number | null
+  body?: string | null
+  traceId?: string | null
+  spanId?: string | null
+  service?: string | null
+  cluster?: string | null
+  namespace?: string | null
+  pod?: string | null
+  workload?: string | null
+  attributes?: Record<string, string> | null
+  /** ES 的 sort 值，翻页用（原样回传） */
+  sort?: unknown[] | null
+}
+
+/** 日志查询条件 */
+export interface K8sLogQuery {
+  tenantId?: string
+  clusterName?: string
+  namespace?: string
+  workload?: string
+  keyword?: string
+  severity?: string
+  startMillis?: number
+  endMillis?: number
+  limit?: number
+  searchAfter?: unknown[] | null
+}
+
 export interface TraceSummary {
   traceId: string
   rootService?: string | null
   rootName?: string | null
   startTimeUnixNano?: string | null
   durationMs?: number | null
+  /** 涉及的服务数（Tempo serviceStats 条目数） */
+  serviceCount?: number | null
+  /** span 总数 */
+  spanCount?: number | null
 }
 
 export interface TraceSpan {

@@ -97,16 +97,19 @@ class WorkloadServiceObservabilityTest {
     }
 
     @Test
-    void fileLogsAddTheSidecarAnnotationAndVolume() {
-        WorkloadDTO updated = apply(workload(), fileLogReq("/var/log/nginx", true));
+    void fileLogsCollectOnlyTheGivenFileInItsParentDirectory() {
+        WorkloadDTO updated = apply(workload(), fileLogReq("/var/log/nginx/access.log"));
 
         assertThat(updated.getPodTemplate().getAnnotations())
-                .containsEntry("sidecar.opentelemetry.io/inject", "monitor/platform-otel-sidecar");
+                .containsEntry("sidecar.opentelemetry.io/inject", "monitor/platform-otel-sidecar")
+                // sidecar 视角的具体文件：挂载点是父目录，文件名原样保留
+                .containsEntry("platform.coding/otel-log-file", "/var/log/app/access.log");
         assertThat(updated.getPodTemplate().getSpec().getVolumes())
                 .anySatisfy(v -> assertThat(v.getName()).isEqualTo("platform-otel-logs"));
         assertThat(updated.getPodTemplate().getSpec().getContainers().get(0).getVolumeMounts())
                 .anySatisfy(m -> {
                     assertThat(m.getName()).isEqualTo("platform-otel-logs");
+                    // 挂的是文件的父目录（文件路径本身不能挂 emptyDir）
                     assertThat(m.getMountPath()).isEqualTo("/var/log/nginx");
                 });
         // 文件日志不带应用侧 Instrumentation（没有 tracing 时）
@@ -116,16 +119,17 @@ class WorkloadServiceObservabilityTest {
     }
 
     @Test
-    void fileLogsRequireConfirmationAndAnAbsoluteDirectory() {
-        assertThatThrownBy(() -> svc.observability(fileLogReq("/var/log/nginx", false)))
-                .hasMessageContaining("确认");
-        assertThatThrownBy(() -> svc.observability(fileLogReq("relative/logs", true)))
+    void fileLogsRequireAnAbsoluteFilePathNotADirectory() {
+        assertThatThrownBy(() -> svc.observability(fileLogReq("relative/access.log")))
                 .hasMessageContaining("绝对路径");
+        // 目录结尾（以 / 收尾）说明用户没填到具体文件
+        assertThatThrownBy(() -> svc.observability(fileLogReq("/var/log/nginx/")))
+                .hasMessageContaining("具体日志文件");
     }
 
     @Test
     void fileLogsWithTracingUseTheTracingOnlyInstrumentation() {
-        WorkloadObservabilityRequest req = fileLogReq("/var/log/nginx", true);
+        WorkloadObservabilityRequest req = fileLogReq("/var/log/nginx/access.log");
         req.setTracing(true);
 
         WorkloadDTO updated = apply(workload(), req);
@@ -139,13 +143,14 @@ class WorkloadServiceObservabilityTest {
     @Test
     void switchingBackToAppLogsRemovesTheSidecarBits() {
         WorkloadDTO existing = workload();
-        apply(existing, fileLogReq("/var/log/nginx", true));
+        apply(existing, fileLogReq("/var/log/nginx/access.log"));
         clearInvocations(k8s);
 
         WorkloadDTO updated = apply(existing, request("java", false, true, null));
 
         assertThat(updated.getPodTemplate().getAnnotations())
-                .doesNotContainKey("sidecar.opentelemetry.io/inject");
+                .doesNotContainKey("sidecar.opentelemetry.io/inject")
+                .doesNotContainKey("platform.coding/otel-log-file");
         assertThat(updated.getPodTemplate().getSpec().getVolumes() == null
                 || updated.getPodTemplate().getSpec().getVolumes().isEmpty()).isTrue();
         assertThat(updated.getPodTemplate().getSpec().getContainers().get(0).getVolumeMounts() == null
@@ -162,17 +167,16 @@ class WorkloadServiceObservabilityTest {
         existing.getPodTemplate().getSpec().setVolumes(new ArrayList<>(List.of(volume)));
         when(k8s.get(any(WorkloadDTO.class))).thenReturn(existing);
 
-        assertThatThrownBy(() -> svc.observability(fileLogReq("/var/log/nginx", true)))
+        assertThatThrownBy(() -> svc.observability(fileLogReq("/var/log/nginx/access.log")))
                 .hasMessageContaining("同名卷");
     }
 
     // ==================== 夹具 ====================
 
-    private static WorkloadObservabilityRequest fileLogReq(String directory, boolean confirm) {
+    private static WorkloadObservabilityRequest fileLogReq(String file) {
         WorkloadObservabilityRequest r = request("java", false, true, null);
         r.setLogMode("file");
-        r.setLogDirectory(directory);
-        r.setConfirmFileLogs(confirm);
+        r.setLogFile(file);
         return r;
     }
 

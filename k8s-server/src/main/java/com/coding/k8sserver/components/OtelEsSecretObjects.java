@@ -9,9 +9,9 @@ import java.util.Base64;
 /**
  * collector 写 ES 用的 basic auth Secret。
  *
- * <p>ECK 把用户密码放在 {@code es-es-elastic-user} 的 {@code elastic} key 里；collector 侧的 env
- * 固定读 {@code platform-otel-es} 的 {@code username}/{@code password}，所以这里做一次归一化。
- * 密码只在集群内转换，不经过 platform-api。
+ * <p>平台约定：来源 Secret 放在 {@code monitor}，key 固定为 {@code username} / {@code password}。
+ * collector 侧的 env 读 {@code platform-otel-es} 的同名 key，所以这里做一次复制。
+ * 凭证只在集群内转换，不经过 platform-api。
  */
 public final class OtelEsSecretObjects {
 
@@ -21,8 +21,8 @@ public final class OtelEsSecretObjects {
     private OtelEsSecretObjects() {
     }
 
-    /** 解码来源 Secret 里的密码；key 不存在返回 null */
-    public static String password(Secret source, String key) {
+    /** 解码来源 Secret 里的某个 key；不存在返回 null */
+    public static String value(Secret source, String key) {
         if (source == null || source.getData() == null || key == null) {
             return null;
         }

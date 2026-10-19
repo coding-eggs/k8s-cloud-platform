@@ -72,6 +72,8 @@ public class WorkloadService {
     private static final String OTEL_SIDECAR_ANNOTATION = "sidecar.opentelemetry.io/inject";
     private static final String OTEL_SIDECAR_VALUE = OTEL_NAMESPACE + "/platform-otel-sidecar";
     private static final String OTEL_LOG_VOLUME = "platform-otel-logs";
+    /** 平台写入的具体日志文件（sidecar 视角的路径），sidecar 用它拼 filelog include */
+    private static final String OTEL_LOG_FILE_ANNOTATION = "platform.coding/otel-log-file";
     private static final String LOG_MODE_FILE = "file";
 
     private final K8sClient k8s;
@@ -321,16 +323,23 @@ public class WorkloadService {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
                     "不支持的应用类型：" + req.getLanguage() + "（第一批只支持 java / python）");
         }
+        // 文件日志指定**具体文件**（不是整个目录）：平台把父目录挂成 emptyDir，
+        // sidecar 侧只采这一个文件（支持 access.log* 这样的 glob，连带轮转文件）
+        String logDir = null;
+        String logFileName = null;
         if (fileLogs) {
-            if (!req.isConfirmFileLogs()) {
+            String logFile = req.getLogFile() == null ? "" : req.getLogFile().trim();
+            int slash = logFile.lastIndexOf('/');
+            if (!logFile.startsWith("/") || slash <= 0) {
                 throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                        "请勾选“确认应用把日志写入该目录”（sidecar 读不到容器 stdout）");
+                        "日志文件必须是容器内的绝对路径（以 / 开头）");
             }
-            if (!StringUtils.hasText(req.getLogDirectory())
-                    || !req.getLogDirectory().trim().startsWith("/")) {
+            if (slash == logFile.length() - 1) {
                 throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                        "日志目录必须是容器内的绝对路径（以 / 开头）");
+                        "请填到具体日志文件（如 /var/log/nginx/access.log），不要填目录");
             }
+            logDir = logFile.substring(0, slash);
+            logFileName = logFile.substring(slash + 1);
         }
 
         WorkloadDTO query = dto(req.getName(), req.getTenantId(), req.getClusterId(), req.getNamespace());
@@ -355,18 +364,23 @@ public class WorkloadService {
             annotations.put(OTEL_INJECT_KEYS.get(language),
                     OTEL_NAMESPACE + "/" + instrumentation);
         }
-        // 文件日志：sidecar 注入注解；切回应用日志/关闭时只移除**平台自己的**注解值
+        // 文件日志：sidecar 注入注解 + 具体文件注解；切回应用日志/关闭时只移除**平台自己的**注解值
         if (fileLogs) {
             annotations.put(OTEL_SIDECAR_ANNOTATION, OTEL_SIDECAR_VALUE);
-        } else if (OTEL_SIDECAR_VALUE.equals(annotations.get(OTEL_SIDECAR_ANNOTATION))) {
-            annotations.remove(OTEL_SIDECAR_ANNOTATION);
+            // sidecar 把共享卷挂在 /var/log/app —— include 用这个视角的文件名
+            annotations.put(OTEL_LOG_FILE_ANNOTATION, "/var/log/app/" + logFileName);
+        } else {
+            if (OTEL_SIDECAR_VALUE.equals(annotations.get(OTEL_SIDECAR_ANNOTATION))) {
+                annotations.remove(OTEL_SIDECAR_ANNOTATION);
+            }
+            annotations.remove(OTEL_LOG_FILE_ANNOTATION);
         }
         existing.getPodTemplate().setAnnotations(annotations.isEmpty() ? null : annotations);
 
         if (fileLogs) {
             ContainerDTO container = targetContainer(existing, req.getContainerName());
             ensureLogVolume(existing.getPodTemplate());
-            ensureLogMount(container, req.getLogDirectory().trim());
+            ensureLogMount(container, logDir);
         } else {
             removeLogVolumeAndMounts(existing.getPodTemplate());
         }

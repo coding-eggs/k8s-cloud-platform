@@ -316,11 +316,16 @@ spec:
         resource_to_telemetry_conversion: {enabled: true}
       elasticsearch:
         endpoints: ["${env:ES_ENDPOINT}"]
+        # 用户名/密码都来自 monitor/platform-otel-es（来源 Secret 固定 username/password 两个 key）
         user: ${env:ES_USERNAME}
         password: ${env:ES_PASSWORD}
         tls: {insecure_skip_verify: true}
-        logs_index: otel-logs-%{+yyyy.MM.dd}
-        mapping: {mode: none}
+        # logs_index 是**前缀**；logstash_format 追加日期 → 实际索引 otel-logs-YYYY.MM.DD（按天分割）
+        logs_index: otel-logs                # 固定前缀（表单不暴露）
+        logstash_format: {enabled: true, prefix_separator: "-", date_format: "%Y.%m.%d"}
+        # 0.161.0 起 mapping.mode 被忽略且默认 otel（data stream / require_data_stream）；
+        # 写普通索引必须用 allowed_modes 固定 none，否则报 resource_not_found
+        mapping: {allowed_modes: [none]}
     service:
       pipelines:
         traces:
@@ -341,10 +346,10 @@ spec:
 
 - **镜像必须是 contrib**。operator 默认的 `opentelemetry-collector-k8s:0.161.0` 不含
   `elasticsearch` exporter；contrib 同时覆盖 traces/metrics/logs。
-- ES 凭证：表单从 `monitor` 选择来源 Secret（默认名字 `es-es-elastic-user`，key `elastic`；
-  ECK 的原始 Secret 在 `default`，需先复制到 `monitor`；**命名空间固定，不提供切换**），
-  平台校验后复制成 `monitor/platform-otel-es`（`username` / `password`）。
-  ES 地址、用户名、TLS 校验开关、日志索引同样来自表单（见 §6.2）。
+- ES 凭证：表单只选 `monitor` 命名空间下的 Secret 名（**命名空间固定，不提供切换**），
+  该 Secret 必须包含固定的 `username` / `password` 两个 key；平台在集群内复制成
+  `monitor/platform-otel-es`（同名 key），密码不经过 platform-api。
+  ES 地址、TLS 校验开关同样来自表单（见 §6.2）；索引前缀固定为 `otel-logs`，不暴露给表单。
 - `prometheus` exporter 打开 `resource_to_telemetry_conversion`，把 `service.name`、
   `cluster.name` 等 resource 属性转成指标 label。
 - `k8sattributes` 需要 collector ServiceAccount 有 pods/namespaces/replicasets 的
@@ -384,16 +389,19 @@ CRD 不存在时**跳过并记一条提示**，不算安装失败（traces 不�
 
 | 表单项 | 必填 | 说明 |
 |---|---|---|
-| 日志目录 | 是 | 容器内的绝对路径，如 `/var/log/nginx`（sidecar 采集该目录下的 `*.log`；共享 CR 固定路径，不能用 per-workload glob） |
-| 确认写文件 | 是 | sidecar 读不到别的容器 stdout；不勾选不允许提交 |
+| 日志文件 | 是 | 容器内的**具体文件**（绝对路径），如 `/var/log/nginx/access.log`；支持 glob（`access.log*` 可连带轮转文件）。平台把它的**父目录**挂成 emptyDir，sidecar 只采这个文件 —— 不采整个目录 |
 | 日志格式 | 否 | combined / json / plain，决定 parser；先原样采也可 |
 | 多行合并 | 否 | Java 堆栈类；本批不做（后续再加） |
 
+不要求用户「确认写文件」：没写就没数据，与采集配置无关。
+
 平台在打开开关时改 PodTemplate：
 
-1. 加 `emptyDir` 卷，并挂到应用容器的日志目录（默认 `/var/log/nginx`）；
+1. 加 `emptyDir` 卷，并挂到应用容器上日志文件的**父目录**（如 `/var/log/nginx`）；
 2. 加注解 `sidecar.opentelemetry.io/inject: "monitor/platform-otel-sidecar"`；
-3. 固定 sidecar collector CR：
+3. 加注解 `platform.coding/otel-log-file: /var/log/app/<文件名>`（sidecar 视角的具体文件，
+   由 downward API 注入为环境变量，共享 CR 才能 per-Pod 采不同文件）；
+4. 固定 sidecar collector CR：
 
 ```yaml
 apiVersion: opentelemetry.io/v1beta1
@@ -406,13 +414,14 @@ spec:
     - {name: K8S_POD_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
     - {name: K8S_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
     - {name: K8S_POD_UID, valueFrom: {fieldRef: {fieldPath: metadata.uid}}}
+    - {name: OTEL_FILELOG_INCLUDE, valueFrom: {fieldRef: {fieldPath: "metadata.annotations['platform.coding/otel-log-file']"}}}
   volumeMounts:
     # 卷 platform-otel-logs 由工作负载的 PodTemplate 定义（emptyDir），这里只挂载
     - {name: platform-otel-logs, mountPath: /var/log/app, readOnly: true}
   config:
     receivers:
       filelog:
-        include: [/var/log/app/*.log]
+        include: ["${env:OTEL_FILELOG_INCLUDE}"]
         start_at: end
         include_file_path: true
     processors:
@@ -578,10 +587,9 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
    | 字段 | 默认值 | 说明 |
    |---|---|---|
    | ES 地址 | `https://es-es-http.default.svc:9200` | 完整 URL（含 scheme） |
-   | ES 用户名 | `elastic` | 使用 ECK 默认用户时可不动 |
-   | 凭证 Secret | 从 `monitor` 选（默认名字 `es-es-elastic-user`，key `elastic`） | **命名空间固定 monitor，表单不提供切换**；ECK 的原始 Secret 在 `default`，需先复制到 `monitor` |
+   | 凭证 Secret | 从 `monitor` 选（只选**名称**） | Secret 必须含 `username` / `password` 两个 key；**命名空间固定 monitor，不提供切换** |
    | 跳过 HTTPS 校验 | `true` | ECK 自签证书 |
-   | 日志索引 | `otel-logs` | exporter 实际写成 `otel-logs-%{+yyyy.MM.dd}` |
+   | 日志索引 | `otel-logs`（固定） | 前缀不可配置，exporter 按天写成 `otel-logs-YYYY.MM.DD`；日志查询中心用同一个常量 |
 
    **采集参数（两个画像都显示）**
 
@@ -623,7 +631,7 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
 | Tempo 地址为空 | **拒绝安装**（与告警地址同一原则，不留到 helm 成功后失败） |
 | ServiceMonitor CRD 不存在（没装 prometheus-operator） | 跳过 ServiceMonitor，操作记 WARN，不 FAILED |
 | 语言选错 | 注入的 agent 不产生数据；UI 文案提示「确认运行时」；不视为安装失败 |
-| 应用只写 stdout | 第一批不支持；第二批 sidecar 表单要求勾选「确认写文件」 |
+| 应用只写 stdout | 文件日志没写文件就没数据（不在表单里要求确认）；纯 stdout 应用改用应用日志方式（Java/Python） |
 | Node 被选中 | 前端不提供该选项；后端收到也拒绝 |
 
 ---
@@ -645,9 +653,9 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
 ### 8.2 第二批
 
 8. ingress gateway 的请求产生 span；waypoint 的 L7 请求产生 span；ztunnel 无任何 tracing 配置。
-9. sidecar 文件日志：用户填 `/var/log/nginx/*.log` 后，只采集该 Pod 的日志；
-   不勾选「确认写文件」不能提交；纯 stdout 应用给出明确拒绝提示。
-10. 关闭日志开关后，sidecar 注解/env/卷被移除，Pod 滚动更新后不再产生日志。
+9. sidecar 文件日志：用户填 `/var/log/nginx/access.log` 后，只采集该 Pod 的这一个文件；
+   填目录（以 `/` 结尾）被拒绝；应用没写文件时就是没有数据（不再要求确认）。
+10. 关闭日志开关后，sidecar 注解/log-file 注解/卷被移除，Pod 滚动更新后不再产生日志。
 
 ---
 
@@ -676,8 +684,10 @@ ztunnel 工作在 L4，不产生 L7 span；它的指标（`ztunnel-stats`）是�
 - Instrumentation 的 exporter 端点用 **4318 + http/protobuf**（Python 注入镜像只带 HTTP exporter）。
 - `OtelObjects.build(logsEnabled, gatewayReplicas)` 生成 **5** 个对象：3 个 Instrumentation +
   gateway + **sidecar collector**（sidecar 常驻，只有工作负载开启文件日志时才被注入）。
-- 文件日志的共享 sidecar CR 固定采集 `/var/log/app/*.log`；**用户提供的是目录**（不是 glob），
-  平台把目录挂成 emptyDir 卷 `platform-otel-logs`（应用容器与 sidecar 共享）。
+- 文件日志采的是**具体文件**：平台的 Pod 注解 `platform.coding/otel-log-file` 经 downward API
+  变成 sidecar 的 `OTEL_FILELOG_INCLUDE`，共享 CR 的 include 用 `${env:OTEL_FILELOG_INCLUDE}`
+  —— 同一个 sidecar CR 也能让不同工作负载各采各的文件。平台把文件的**父目录**挂成 emptyDir
+  卷 `platform-otel-logs`（应用容器与 sidecar 共享）。
 - 网格 tracing：新增 `/mesh/waypoints/tracing`（POST/GET，权限码复用 `tenant:gateway:update/get`）；
   ingress 的 Telemetry 由 OTel 或 istio 组件安装成功后的后置步骤补建（谁后装谁补）。
   **部署前必须先重放 `V2026_10_19_1__mesh_waypoint_tracing.sql`**（缺失权限行会让

@@ -23,6 +23,8 @@ public final class OtelObjects {
     public static final String NAMESPACE = "monitor";
     public static final String GATEWAY = "platform-otel-gateway";
     public static final String GATEWAY_SERVICE = "platform-otel-gateway-collector";
+    /** 日志索引前缀：**固定值**（组件表单不再暴露）。日志查询中心按同一个常量裁剪按天索引。 */
+    public static final String LOG_INDEX_PREFIX = "otel-logs";
     public static final String CONTRIB_IMAGE =
             "ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.161.0";
 
@@ -50,13 +52,18 @@ public final class OtelObjects {
      * 文件日志的 per-Pod collector（批次二）。**只有工作负载显式开启文件日志时才被注入**
      * （注解 {@code sidecar.opentelemetry.io/inject}），CR 本身常驻无害。
      *
-     * <p>卷名固定 {@code platform-otel-logs}：工作负载模板把用户的日志目录挂到这个 emptyDir，
+     * <p>卷名固定 {@code platform-otel-logs}：工作负载模板把日志文件的**父目录**挂到这个 emptyDir，
      * sidecar 只读挂到 {@code /var/log/app}；两边看到的是同一份文件。
+     *
+     * <p>采集的是**具体文件**而不是整个目录：include 从环境变量
+     * {@code OTEL_FILELOG_INCLUDE} 取，值来自每个 Pod 自己的注解
+     * {@code platform.coding/otel-log-file}（downward API 注入）。这样共享一个 CR
+     * 也能让不同工作负载各采各的文件（支持 {@code access.log*} 这类 glob）。
      */
     private static Map<String, Object> sidecar() {
         Map<String, Object> config = Map.of(
                 "receivers", Map.of("filelog", Map.of(
-                        "include", List.of("/var/log/app/*.log"),
+                        "include", List.of("${env:OTEL_FILELOG_INCLUDE}"),
                         "start_at", "end",
                         "include_file_path", true)),
                 "processors", Map.of(
@@ -91,7 +98,12 @@ public final class OtelObjects {
                                 Map.of("name", "K8S_NAMESPACE", "valueFrom",
                                         Map.of("fieldRef", Map.of("fieldPath", "metadata.namespace"))),
                                 Map.of("name", "K8S_POD_UID", "valueFrom",
-                                        Map.of("fieldRef", Map.of("fieldPath", "metadata.uid")))),
+                                        Map.of("fieldRef", Map.of("fieldPath", "metadata.uid"))),
+                                // 每 Pod 的具体日志文件（sidecar 视角：/var/log/app/<文件名>）；
+                                // 只有平台写入的文件日志工作负载才有这个注解，注入与注解成对出现
+                                Map.of("name", "OTEL_FILELOG_INCLUDE", "valueFrom",
+                                        Map.of("fieldRef", Map.of("fieldPath",
+                                                "metadata.annotations['platform.coding/otel-log-file']")))),
                         "volumeMounts", List.of(Map.of(
                                 "name", "platform-otel-logs",
                                 "mountPath", "/var/log/app",
@@ -150,8 +162,16 @@ public final class OtelObjects {
                     "user", "${env:ES_USERNAME}",
                     "password", "${env:ES_PASSWORD}",
                     "tls", Map.of("insecure_skip_verify", true),
-                    "logs_index", "${otel.logs.index}-%{+yyyy.MM.dd}",
-                    "mapping", Map.of("mode", "none")));
+                    // logs_index 是**前缀**（固定值）；logstash_format 追加日期 → otel-logs-YYYY.MM.DD（按天分割）
+                    "logs_index", LOG_INDEX_PREFIX,
+                    "logstash_format", Map.of(
+                            "enabled", true,
+                            "prefix_separator", "-",
+                            "date_format", "%Y.%m.%d"),
+                    // ⚠️ 0.161.0 起 mapping.mode 被忽略且默认是 otel —— otel/ecs 模式走 data stream
+                    //     （require_data_stream=true），普通索引会报 resource_not_found。
+                    //     用 allowed_modes 固定为 none：写普通索引，ES 自动创建。
+                    "mapping", Map.of("allowed_modes", List.of("none"))));
         }
 
         Map<String, Object> pipelines = new LinkedHashMap<>();
@@ -186,7 +206,8 @@ public final class OtelObjects {
                         "auth_type", "serviceAccount",
                         "extract", Map.of("metadata", List.of(
                                 "k8s.namespace.name", "k8s.pod.name",
-                                "k8s.deployment.name", "k8s.node.name")),
+                                "k8s.deployment.name", "k8s.statefulset.name",
+                                "k8s.daemonset.name", "k8s.job.name", "k8s.node.name")),
                         "pod_association", List.of(
                                 Map.of("sources", List.of(Map.of(
                                         "from", "resource_attribute", "name", "k8s.pod.ip"))),
@@ -222,7 +243,9 @@ public final class OtelObjects {
         if (logsEnabled) {
             // 日志关闭时不引用 platform-otel-es（平台不会创建它），否则 Pod 会因缺 Secret 起不来
             env.add(Map.of("name", "ES_ENDPOINT", "value", "${otel.es.endpoint}"));
-            env.add(Map.of("name", "ES_USERNAME", "value", "${otel.es.username}"));
+            // 用户名/密码都来自平台在集群内生成的 platform-otel-es（来源 Secret 固定 username/password 两个 key）
+            env.add(Map.of("name", "ES_USERNAME", "valueFrom", Map.of("secretKeyRef",
+                    Map.of("name", "platform-otel-es", "key", "username"))));
             env.add(Map.of("name", "ES_PASSWORD", "valueFrom", Map.of("secretKeyRef",
                     Map.of("name", "platform-otel-es", "key", "password"))));
         }
