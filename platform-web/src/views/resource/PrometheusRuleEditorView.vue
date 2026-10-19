@@ -88,10 +88,11 @@ const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
 function fromRule(r: K8sPrometheusRuleRule): RuleRow {
   // namespace 标签由后端在保存时统一覆写，回填时不带出来（表单不该控制它）。
-  // platform_notify 同理：它是后端按「通知方式」代打的，留在这里只会与绑定表打架。
+  // platform_notify / platform_rule 同理：都是后端代打的，留在表单里只会与绑定表打架。
   const labels = { ...(r.labels ?? {}) }
   delete labels.namespace
   delete labels.platform_notify
+  delete labels.platform_rule
   return {
     kind: r.alert ? 'alert' : 'record',
     name: r.alert ?? r.record ?? '',

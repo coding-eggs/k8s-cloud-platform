@@ -183,9 +183,11 @@ class PrometheusRuleServiceTest {
 
         PrometheusRuleDTO sent = captured();
         assertThat(sent.getGroups().get(0).getRules().get(0).getLabels())
-                .containsEntry("platform_notify", "ops-mail");
+                .containsEntry("platform_notify", "ops-mail")
+                .containsEntry("platform_rule", "app-rules");
         assertThat(sent.getGroups().get(0).getRules().get(1).getLabels())
-                .doesNotContainKey("platform_notify");
+                .doesNotContainKey("platform_notify")
+                .doesNotContainKey("platform_rule");
         // 平台侧字段不下发
         assertThat(sent.getNotifyChannel()).isNull();
         assertThat(sent.getNotifyUserIds()).isNull();

@@ -207,7 +207,12 @@ public class AlertDispatchService {
         Set<String> userIds = new LinkedHashSet<>();
         for (PlatformAlertEvent e : batch) {
             String tenantId = tenantOf(clusterId, e.getNamespace());
-            String ruleName = ruleSourceResolver.crNameOf(clusterId, tenantId, e);
+            // CR 名优先取规则自带的 platform_rule 标签 —— 投递在 @Async 线程上跑，
+            // 没有请求上下文就没有 Authorization，去集群反查只会拿到 401。
+            String ruleName = labelValue(e, "platform_rule");
+            if (!StringUtils.hasText(ruleName)) {
+                ruleName = ruleSourceResolver.crNameOf(clusterId, tenantId, e);
+            }
             RuleNotify binding = ruleName == null
                     ? null : bindings.selectByRule(clusterId, e.getNamespace(), ruleName);
             if (binding != null) {

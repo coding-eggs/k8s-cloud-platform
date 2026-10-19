@@ -128,10 +128,11 @@ public class EmailSender implements NotificationSender {
             log.warn("通知方式 {} 的端口不是数字，按 25 处理", channel.getCode());
         }
         impl.setPort(port);
-        if (StringUtils.hasText(cfg.get("username"))) {
+        // 只有用户名 + 密码**都**给了才开认证：只填用户名（编辑时密码留空、又没沿用旧密文）
+        // 会拿空密码去 AUTH，换回来一个让人摸不着头脑的 "Authentication failed"。
+        boolean auth = StringUtils.hasText(cfg.get("username")) && StringUtils.hasText(cfg.get("password"));
+        if (auth) {
             impl.setUsername(cfg.get("username"));
-        }
-        if (StringUtils.hasText(cfg.get("password"))) {
             impl.setPassword(cfg.get("password"));
         }
         // 465 默认隐式 TLS；其它端口默认 STARTTLS。config 里显式给了 ssl 就以它为准。
@@ -139,7 +140,7 @@ public class EmailSender implements NotificationSender {
                 ? Boolean.parseBoolean(cfg.get("ssl"))
                 : port == 465;
         Properties props = new Properties();
-        props.put("mail.smtp.auth", StringUtils.hasText(cfg.get("username")) ? "true" : "false");
+        props.put("mail.smtp.auth", String.valueOf(auth));
         props.put("mail.smtp.ssl.enable", String.valueOf(ssl));
         props.put("mail.smtp.starttls.enable", String.valueOf(!ssl));
         impl.setJavaMailProperties(props);

@@ -185,10 +185,30 @@ class AlertDispatchServiceTest {
         verify(users, never()).tenantAdminUserIds(anyString());
     }
 
+    /**
+     * 绑定按 {@code platform_rule} 标签找 —— 投递跑在 @Async 线程上，**没有 Authorization**，
+     * 去集群反查只会拿到 401（2026-10-20 真跑验到）。标签缺了才回落到反查。
+     */
+    @Test
+    void the_binding_is_found_from_the_platform_rule_label() throws Exception {
+        tenantOwns("ns", "t1");
+        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        RuleNotify r = new RuleNotify();
+        r.setChannelCode("ops-mail");
+        r.setUserIds("[\"u9\"]");
+        when(bindings.selectByRule("c1", "ns", "app-rules")).thenReturn(r);
+        when(users.emailsOf(any())).thenReturn(List.of("u9@x.com"));
+
+        svc.dispatch("c1", List.of(event(1, "ns",
+                "{\"platform_notify\":\"ops-mail\",\"platform_rule\":\"app-rules\"}", "firing")));
+
+        verify(resolver, never()).crNameOf(any(), any(), any());
+        verify(sender).send(any(), eq(List.of("u9@x.com")), any());
+    }
+
     /** 规则改名/删除后绑定查不到 → 回落到该命名空间所属租户的管理员。 */
     @Test
-    void recipients_fall_back_to_the_tenant_admin_when_the_binding_is_gone() throws Exception {
-        tenantOwns("ns", "t1");
+    void recipients_fall_back_to_the_tenant_admin_when_the_binding_is_gone() throws Exception {        tenantOwns("ns", "t1");
         when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
         when(resolver.crNameOf(eq("c1"), any(), any())).thenReturn(null);
         when(users.tenantAdminUserIds("t1")).thenReturn(List.of("admin1"));

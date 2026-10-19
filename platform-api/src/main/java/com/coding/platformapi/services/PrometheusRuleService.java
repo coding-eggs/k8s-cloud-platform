@@ -150,6 +150,13 @@ public class PrometheusRuleService {
                     Map<String, String> labels = r.getLabels() != null
                             ? new LinkedHashMap<>(r.getLabels()) : new LinkedHashMap<>();
                     labels.put("namespace", body.getNamespace());
+                    // 这条告警属于哪个 CR —— 投递引擎按它找通知绑定。
+                    // 为什么写进 label 而不去集群反查：投递跑在 @Async 线程上，**没有请求上下文
+                    // 就没有 Authorization**，k8s-server 会回 401（2026-10-20 真跑验到）。
+                    // 写进 label 后，告警自己带着归属，投递端不再需要任何集群读权限。
+                    if (StringUtils.hasText(body.getName())) {
+                        labels.put("platform_rule", body.getName());
+                    }
                     // 通知方式：选了才写。没选**不能写空串** —— 空值会变成一个无意义的
                     // platform_notify="" 标签，投递端还得区分「没写」与「写了空」。
                     if (StringUtils.hasText(body.getNotifyChannel())) {
