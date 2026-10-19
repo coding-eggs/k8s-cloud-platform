@@ -30,6 +30,8 @@ const perm = usePermission()
  */
 const canSelfTest = computed(() => perm.has(apiCodes.alertTest))
 const canDelete = computed(() => perm.has(apiCodes.alertRead))
+/** 「全部命名空间」开关的可见性 = 平台侧告警读码（管理员）。租户永远只看当前命名空间。 */
+const canSeeAll = computed(() => perm.has(apiCodes.alertRead))
 
 const PAGE_SIZE = 50
 
@@ -49,6 +51,12 @@ const filters = reactive({
   severity: '',
   alertname: '',
   showWatchdog: false,
+  /**
+   * 全部命名空间（**仅管理员**）。默认关 —— 告警页跟导航栏的命名空间走；
+   * 跨命名空间的多是集群配置 / 节点类告警（kube-system、monitor 等），不是业务告警，
+   * 所以这个开关只给 `platform:alert:read` 的人。
+   */
+  allNamespaces: false,
 })
 
 const STATUS_OPTIONS = [
@@ -83,8 +91,8 @@ function buildQuery(extra?: Partial<AlertQuery>): AlertQuery {
     to: filters.range ? filters.range[1] : null,
     status: filters.status,
     severity: filters.severity,
-    // 命名空间取**导航栏**的当前选择（告警页不再单独给一个输入框 —— 两处不一致会让人以为看的是别的 ns）
-    namespace: state.namespace,
+    // 命名空间取**导航栏**的当前选择；管理员可切「全部命名空间」→ 不传该条件（后端按 token 范围给全量）
+    namespace: filters.allNamespaces && canSeeAll.value ? null : state.namespace,
     alertname: filters.alertname,
     ...extra,
   })
@@ -213,7 +221,8 @@ watch(
 
 const clusterDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择集群'
-  return `${currentCluster.value?.clusterName ?? state.clusterId ?? ''} / ${state.namespace ?? ''}`
+  const ns = filters.allNamespaces && canSeeAll.value ? '全部命名空间' : (state.namespace ?? '')
+  return `${currentCluster.value?.clusterName ?? state.clusterId ?? ''} / ${ns}`
 })
 </script>
 
@@ -251,6 +260,12 @@ const clusterDesc = computed(() => {
           <el-button @click="refresh">查询</el-button>
         </div>
         <div class="filter-row">
+          <template v-if="canSeeAll">
+            <span class="muted">全部命名空间</span>
+            <el-switch v-model="filters.allNamespaces" @change="refresh" />
+            <span class="muted tip">跨命名空间的多是集群配置 / 节点类告警，不是业务告警。</span>
+            <span class="sep">|</span>
+          </template>
           <span class="muted">显示心跳告警</span>
           <el-switch v-model="filters.showWatchdog" @change="refresh" />
           <span class="muted tip">默认隐藏 Watchdog —— 它是「一切正常」的心跳，会淹没真实告警。</span>
@@ -361,6 +376,10 @@ const clusterDesc = computed(() => {
 }
 .tip {
   font-size: 12px;
+}
+.sep {
+  color: var(--text-3);
+  margin: 0 4px;
 }
 .table-panel {
   padding: 8px;
