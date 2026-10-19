@@ -99,6 +99,8 @@ const router = createRouter({
         { path: 'resources/podmonitors', name: 'podmonitors', component: () => import('@/views/resource/PodMonitorView.vue'), meta: { title: 'PodMonitor', group: '监控告警', context: 'full', requiresPerm: [pageCodes.podMonitor.list] } },
         { path: 'resources/podmonitors/editor', name: 'podmonitor-editor', component: () => import('@/views/resource/PodMonitorEditorView.vue'), meta: { title: 'PodMonitor 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.podMonitor.edit] } },
         { path: 'resources/prometheusrules', name: 'prometheusrules', component: () => import('@/views/resource/PrometheusRuleView.vue'), meta: { title: 'PrometheusRule', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.list] } },
+        // 详情用 list 码：能看列表就能看详情（没有独立的 detail 页面码，也不值得单开一行）
+        { path: 'resources/prometheusrules/detail', name: 'prometheusrule-detail', component: () => import('@/views/resource/PrometheusRuleDetailView.vue'), meta: { title: 'PrometheusRule 详情', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.list] } },
         { path: 'resources/prometheusrules/editor', name: 'prometheusrule-editor', component: () => import('@/views/resource/PrometheusRuleEditorView.vue'), meta: { title: 'PrometheusRule 编辑', group: '监控告警', context: 'full', requiresPerm: [pageCodes.prometheusRule.edit] } },
         { path: 'alerts', name: 'alerts', component: () => import('@/views/AlertView.vue'), meta: { title: '告警', group: '监控告警', context: 'full', requiresPerm: [pageCodes.alert] } },
 
