@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.alert.NotificationChannelMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.alert.NotificationChannel">
+    <id     column="id"         jdbcType="VARCHAR"   property="id" />
+    <result column="code"       jdbcType="VARCHAR"   property="code" />
+    <result column="name"       jdbcType="VARCHAR"   property="name" />
+    <result column="type"       jdbcType="VARCHAR"   property="type" />
+    <result column="config"     jdbcType="VARCHAR"   property="config" />
+    <result column="tenant_id"  jdbcType="VARCHAR"   property="tenantId" />
+    <result column="is_default" jdbcType="TINYINT"   property="isDefault" />
+    <result column="enabled"    jdbcType="TINYINT"   property="enabled" />
+    <result column="created_at" jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at" jdbcType="TIMESTAMP" property="updatedAt" />
+  </resultMap>
+
+  <sql id="Base_Cols">
+    id, code, name, `type`, config, tenant_id, is_default, enabled, created_at, updated_at
+  </sql>
+
+  <select id="selectAll" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_notification_channel
+    order by tenant_id is not null, code
+  </select>
+
+  <select id="selectByCode" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_notification_channel
+    where code = #{code,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectAvailable" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_notification_channel
+    where enabled = 1 and (tenant_id is null or tenant_id = #{tenantId,jdbcType=VARCHAR})
+    order by tenant_id is not null desc, code
+  </select>
+
+  <select id="selectTenantDefault" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_notification_channel
+    where tenant_id = #{tenantId,jdbcType=VARCHAR} and is_default = 1 and enabled = 1 limit 1
+  </select>
+
+  <select id="selectGlobalDefault" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_notification_channel
+    where tenant_id is null and is_default = 1 and enabled = 1 limit 1
+  </select>
+
+  <insert id="insert" parameterType="com.coding.data.models.alert.NotificationChannel">
+    insert into platform_notification_channel
+      (id, code, name, `type`, config, tenant_id, is_default, enabled, created_at, updated_at)
+    values
+      (#{id,jdbcType=VARCHAR}, #{code,jdbcType=VARCHAR}, #{name,jdbcType=VARCHAR},
+       #{type,jdbcType=VARCHAR}, #{config,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR},
+       #{isDefault,jdbcType=TINYINT}, #{enabled,jdbcType=TINYINT},
+       #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <!-- code 是业务主键且不可改（它写进了规则 label），故按 code 更新，id 不动 -->
+  <update id="updateByCode" parameterType="com.coding.data.models.alert.NotificationChannel">
+    update platform_notification_channel
+    set name       = #{name,jdbcType=VARCHAR},
+        `type`     = #{type,jdbcType=VARCHAR},
+        config     = #{config,jdbcType=VARCHAR},
+        tenant_id  = #{tenantId,jdbcType=VARCHAR},
+        is_default = #{isDefault,jdbcType=TINYINT},
+        enabled    = #{enabled,jdbcType=TINYINT},
+        updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+    where code = #{code,jdbcType=VARCHAR}
+  </update>
+
+  <delete id="deleteByCode">
+    delete from platform_notification_channel where code = #{code,jdbcType=VARCHAR}
+  </delete>
+
+  <update id="clearDefault">
+    update platform_notification_channel set is_default = 0
+    <choose>
+      <when test="tenantId != null">where tenant_id = #{tenantId,jdbcType=VARCHAR}</when>
+      <otherwise>where tenant_id is null</otherwise>
+    </choose>
+  </update>
+
+</mapper>

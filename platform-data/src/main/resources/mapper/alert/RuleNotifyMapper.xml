@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.alert.RuleNotifyMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.alert.RuleNotify">
+    <id     column="id"           jdbcType="VARCHAR"   property="id" />
+    <result column="cluster_id"   jdbcType="VARCHAR"   property="clusterId" />
+    <result column="namespace"    jdbcType="VARCHAR"   property="namespace" />
+    <result column="rule_name"    jdbcType="VARCHAR"   property="ruleName" />
+    <result column="channel_code" jdbcType="VARCHAR"   property="channelCode" />
+    <result column="user_ids"     jdbcType="VARCHAR"   property="userIds" />
+    <result column="created_at"   jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at"   jdbcType="TIMESTAMP" property="updatedAt" />
+  </resultMap>
+
+  <sql id="Base_Cols">
+    id, cluster_id, `namespace`, rule_name, channel_code, user_ids, created_at, updated_at
+  </sql>
+
+  <select id="selectByRule" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_rule_notify
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and `namespace` = #{namespace,jdbcType=VARCHAR}
+      and rule_name = #{ruleName,jdbcType=VARCHAR}
+  </select>
+
+  <!-- 幂等键 uk_rule_notify (cluster_id, namespace, rule_name) -->
+  <insert id="upsert" parameterType="com.coding.data.models.alert.RuleNotify">
+    insert into platform_rule_notify
+      (id, cluster_id, `namespace`, rule_name, channel_code, user_ids, created_at, updated_at)
+    values
+      (#{id,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR}, #{namespace,jdbcType=VARCHAR},
+       #{ruleName,jdbcType=VARCHAR}, #{channelCode,jdbcType=VARCHAR}, #{userIds,jdbcType=VARCHAR},
+       #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP})
+    on duplicate key update
+      channel_code = values(channel_code),
+      user_ids     = values(user_ids),
+      updated_at   = values(updated_at)
+  </insert>
+
+  <delete id="deleteByRule">
+    delete from platform_rule_notify
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and `namespace` = #{namespace,jdbcType=VARCHAR}
+      and rule_name = #{ruleName,jdbcType=VARCHAR}
+  </delete>
+
+  <select id="countByChannel" resultType="int">
+    select count(1) from platform_rule_notify where channel_code = #{channelCode,jdbcType=VARCHAR}
+  </select>
+
+</mapper>

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.alert.AlertDeliveryMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.alert.AlertDelivery">
+    <id     column="id"           jdbcType="BIGINT"    property="id" />
+    <result column="event_id"     jdbcType="BIGINT"    property="eventId" />
+    <result column="channel_code" jdbcType="VARCHAR"   property="channelCode" />
+    <result column="alert_status" jdbcType="VARCHAR"   property="alertStatus" />
+    <result column="status"       jdbcType="VARCHAR"   property="status" />
+    <result column="attempts"     jdbcType="INTEGER"   property="attempts" />
+    <result column="last_error"   jdbcType="VARCHAR"   property="lastError" />
+    <result column="created_at"   jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="sent_at"      jdbcType="TIMESTAMP" property="sentAt" />
+  </resultMap>
+
+  <sql id="Base_Cols">
+    id, event_id, channel_code, alert_status, `status`, attempts, last_error, created_at, sent_at
+  </sql>
+
+  <!-- 幂等领取：uk_delivery_once (event_id, channel_code, alert_status)。
+       命中唯一键时不插入、返回 0 —— 调用方据此判断「这次是不是第一次投递」。
+       ⚠️ 命中时 MySQL 不回填 id，所以返回 0 的行不能用于 markSent/markFailed。 -->
+  <insert id="insertIfAbsent" parameterType="com.coding.data.models.alert.AlertDelivery"
+          useGeneratedKeys="true" keyProperty="id">
+    insert ignore into platform_alert_delivery
+      (event_id, channel_code, alert_status, `status`, attempts, created_at)
+    values
+      (#{eventId,jdbcType=BIGINT}, #{channelCode,jdbcType=VARCHAR},
+       #{alertStatus,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR}, 0,
+       #{createdAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="markSent">
+    update platform_alert_delivery
+    set `status` = 'SENT', sent_at = now(3), last_error = null
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <update id="markFailed">
+    update platform_alert_delivery
+    set `status` = 'FAILED', last_error = #{error,jdbcType=VARCHAR}, attempts = #{attempts,jdbcType=INTEGER}
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <select id="selectLatestByEventIds" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_alert_delivery
+    where event_id in
+    <foreach collection="eventIds" item="eid" open="(" separator="," close=")">#{eid}</foreach>
+    order by id desc
+  </select>
+
+  <select id="selectPending" resultMap="BaseResultMap">
+    select <include refid="Base_Cols" /> from platform_alert_delivery
+    where `status` = 'PENDING'
+    order by id
+  </select>
+
+</mapper>
