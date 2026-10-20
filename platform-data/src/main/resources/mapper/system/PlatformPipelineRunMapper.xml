@@ -94,6 +94,25 @@
     from platform_pipeline_run
   </select>
 
+  <!-- 孤儿对账的候选：库里还说在跑的那些行。常态 0~1 条 -->
+  <select id="listRunning" resultMap="BaseResultMap">
+    select <include refid="List_Column_List" />
+    from platform_pipeline_run
+    where status = 'RUNNING'
+  </select>
+
+  <!-- 「集群对象已经不在」的结案。
+       ⚠️ 只写三列，且 where 带 status = 'RUNNING'：幂等，且不会像 update 那样
+          把 steps_json / run_yaml 一起覆盖成 null -->
+  <update id="markLost">
+    update platform_pipeline_run
+    set status = 'FAILED',
+        reason = #{reason,jdbcType=VARCHAR},
+        completion_time = #{completionTime,jdbcType=VARCHAR}
+    where run_name = #{runName,jdbcType=VARCHAR}
+      and status = 'RUNNING'
+  </update>
+
   <!-- 正在跑的运行占着哪些工作区卷 —— 「待重试工作区」列表与清理都要排除它们。
        工作区在运行创建时就存在；不排除的话，在途运行会被当成「失败残留」删掉。
        链上的子运行共用父运行那一块，所以 distinct。 -->

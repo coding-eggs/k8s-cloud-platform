@@ -38,6 +38,27 @@ public interface PlatformPipelineRunMapper {
     List<PlatformPipelineRun> listAll();
 
     /**
+     * 所有**仍标记为 RUNNING** 的行 —— 孤儿对账的候选。
+     *
+     * <p>⚠️ 常态下只有 0~1 条：平台判超时的上限是 30 分钟，正常运行不会在里面久留。
+     * 对账器拿它逐条去集群里核对对象是否还活着。
+     */
+    List<PlatformPipelineRun> listRunning();
+
+    /**
+     * 把一条「集群对象已经不在」的运行结案（{@code FAILED}）。
+     *
+     * <p>⚠️ **只写这三列**，且 {@code where} 带着 {@code status = 'RUNNING'}：
+     * 一来幂等（重投/对账重复调用只生效一次），二来绝不会拿空值盖掉已经归档的
+     * {@code steps_json} / {@code run_yaml}（通用的 {@link #update} 会把它们一起写成 null）。
+     *
+     * @return 受影响行数；0 = 这行已经结过案，不归它管了
+     */
+    int markLost(@Param("runName") String runName,
+                 @Param("reason") String reason,
+                 @Param("completionTime") String completionTime);
+
+    /**
      * 正在跑的运行占用的工作区 PVC 名（去重）。
      *
      * <p>⚠️ 「待重试工作区」的列表与清理都要把它们排除 —— 工作区在运行**创建时**就存在，

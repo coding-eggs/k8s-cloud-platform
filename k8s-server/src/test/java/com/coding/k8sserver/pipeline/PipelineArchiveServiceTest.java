@@ -14,6 +14,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -224,5 +225,32 @@ class PipelineArchiveServiceTest {
 
         verify(logMapper, never()).insert(any());
         verify(runMapper, never()).update(any());
+    }
+
+    @Test
+    void aRunWhoseObjectVanishedIsClosedAsFailed() {
+        // ⭐ 对象已经不在集群里（Tekton 升级/重启把它带走了）—— 没有日志可抓，
+        //    但库里那行**必须结案**：否则它永远停在 RUNNING，删除按钮永远不出现。
+        //    ⚠️ 不能用 update()：那条语句会把 steps_json / run_yaml 一起写成 null，
+        //    真遇到一条归档过又被误判的行就把历史抹了。
+        when(runMapper.markLost(any(), any(), any())).thenReturn(1);
+
+        assertThat(svc.markLost("r1")).isTrue();
+
+        ArgumentCaptor<String> reason = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> stamp = ArgumentCaptor.forClass(String.class);
+        verify(runMapper).markLost(eq("r1"), reason.capture(), stamp.capture());
+        assertThat(reason.getValue()).contains("不在集群");
+        // completion_time 与保留清理做**字符串比较** —— 必须与 Tekton 的 RFC3339 同形：
+        // 秒级、Z 结尾、不带小数秒
+        assertThat(stamp.getValue()).matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z");
+    }
+
+    @Test
+    void markingAnAlreadyClosedRunLostIsANoOp() {
+        // 幂等：重投 / 对账重复调用只生效一次（mapper 的 where 带着 status = 'RUNNING'）
+        when(runMapper.markLost(any(), any(), any())).thenReturn(0);
+
+        assertThat(svc.markLost("r1")).isFalse();
     }
 }

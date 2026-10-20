@@ -70,6 +70,17 @@ public class PipelineRunFinisher {
                 log.warn("归档落库失败（**对象不删**，等重试）{}/{}", namespace, runName, e);
                 return false;
             }
+        } else {
+            // ⭐ 对象已经不在集群里（Tekton 升级/重启把它带走、被 pruner 或别人删掉）。
+            //    以前这里当作「没事可做」直接返回成功 —— 于是库里那行永远停在 RUNNING：
+            //    删除按钮不出现、后端也拒删。没有日志可抓了，至少要**结案**。
+            //    ⚠️ 写不进库就返回 false，让节拍器重投；不能假装这次终结已经处理完。
+            try {
+                archive.markLost(runName);
+            } catch (Exception e) {
+                log.warn("运行对象已不在，但结案落库失败（等重投）{}/{}", namespace, runName, e);
+                return false;
+            }
         }
         // ⚠️ 工作区的 PVC 名要在**删对象之前**读 —— 删了 PipelineRun 就读不到它的绑定了
         String workspaceClaim = claimOf(clusterId, namespace, runName);

@@ -12,6 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /**
@@ -122,6 +124,43 @@ public class PipelineArchiveService {
         // YAML 是**归档这一刻**才拿得到的东西（对象马上就被删了），所以它跟着这次回写一起进去
         row.setRunYaml(snapshot.runYaml());
         runMapper.update(row);
+    }
+
+    /**
+     * 把一条**集群对象已经不在**的运行结案。
+     *
+     * <p>⭐ 这个入口是 2026-10-20 补的。之前所有路径都以「集群里还能看到这个 PipelineRun」为前提：
+     * watch 只在对象还在时发事件、启动扫描只列集群里还在的对象、取消对不存在的对象是 no-op——
+     * 于是「运行中升级 Tekton，对象被带走」的运行会**永远停在 RUNNING**：删除按钮不出现，
+     * 后端也拒删。对象没了，至少库里那行要有人结案。
+     *
+     * <p>状态取 {@code FAILED} 而**不新增一个状态值**：新值要在前端三处状态映射里各加一份，
+     * 收益为零；而且它确实不是成功，FAILED 的语义（未成功完成、不是用户取消）是准的。
+     *
+     * <p>幂等：mapper 的语句带着 {@code and status = 'RUNNING'}，重复调用只生效一次，
+     * 已经归档过的行一个字节都不改（不会拿空值盖掉 {@code steps_json} / {@code run_yaml}）。
+     *
+     * @return true = 这次真的结了案（之前是 RUNNING）；false = 已经不归它管了
+     */
+    @Transactional
+    public boolean markLost(String runName) {
+        int changed = runMapper.markLost(runName, LOST_REASON, nowStamp());
+        if (changed > 0) {
+            log.warn("运行对象已不在集群中，按失败结案：{}", runName);
+        }
+        return changed > 0;
+    }
+
+    /** 结案理由。<b>不要写成节点失败的原话</b> —— 这条运行根本没有节点状态可抓。 */
+    static final String LOST_REASON =
+            "运行对象已不在集群中（可能由 Tekton 升级/重启或他人删除），平台未能归档";
+
+    /**
+     * {@code completion_time} 是 varchar，且保留清理拿它做**字符串比较**。
+     * 固定成「秒级、Z 结尾」正是 Tekton {@code metav1.Time} 的形状 —— 带小数秒会让同一秒内的比较失真。
+     */
+    private static String nowStamp() {
+        return Instant.now().truncatedTo(ChronoUnit.SECONDS).toString();
     }
 
     /**

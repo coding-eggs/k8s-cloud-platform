@@ -134,6 +134,34 @@ class PipelineRunFinisherTest {
     }
 
     @Test
+    void aRunWhoseObjectVanishedIsClosedInsteadOfLeftRunningForever() {
+        // ⭐ 用户 2026-10-20 实际踩到的洞：运行中升级 Tekton，对象被带走。
+        //    watch 与启动扫描都以「集群里还能看到它」为前提，取消对不存在的对象又是 no-op ——
+        //    于是库里那行永远 RUNNING，删除按钮永远不出现。对象没了也要**结案**。
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(null);
+
+        assertThat(finisher.finish("c1", "ns1", "r1", false)).isTrue();
+
+        verify(archive).markLost("r1");
+        verify(archive, never()).persist(any());
+        // 凭据 Secret 仍要回收：里面是可解的 git token / registry 认证
+        verify(ops).deleteCredsSecret("ns1", "r1");
+    }
+
+    @Test
+    void aFailedLostRunCloseIsRetriedRatherThanReportedAsDone() {
+        // 结案写不进库就返回 false —— 节拍器会重投，而不是当这次终结已经处理完
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(null);
+        doThrow(new RuntimeException("db down")).when(archive).markLost("r1");
+
+        assertThat(finisher.finish("c1", "ns1", "r1", false)).isFalse();
+
+        verify(ops, never()).deleteCredsSecret(anyString(), anyString());
+    }
+
+    @Test
     void cancelCapturesBeforeCancellingAndNeverDeletes() {
         // ⭐ spec §4.2：日志必须在**取消之前**就进库 —— Tekton 一取消就把 Pod 删了，
         //    顺序反了那份日志就没了。所以这里盯着真实效果（insert）与 cancel 的先后，

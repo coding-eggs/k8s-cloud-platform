@@ -82,8 +82,12 @@ public class PipelineRunStartupSweep {
         }
     }
 
-    /** 集群对象的 {@code status.startTime} 是 RFC3339；解析不了就退回 now（宁可晚判，不可误判）。 */
-    private static Instant startedAtOf(PipelineRunDTO run) {
+    /**
+     * 集群对象的 {@code status.startTime} 是 RFC3339；解析不了就退回 now（宁可晚判，不可误判）。
+     *
+     * <p>包内共用：孤儿对账补 watch 时也用它 —— 取 now 会把超时时钟重置到发现它的那一刻。
+     */
+    static Instant startedAtOf(PipelineRunDTO run) {
         String raw = run.getStartTime();
         if (raw == null || raw.isBlank()) {
             return Instant.now();
