@@ -481,27 +481,27 @@ function goBack(): void {
                   </el-form-item>
                 </div>
 
-                <el-form-item label="标签 labels">
+                <el-form-item label="labels">
                   <div class="sub-editor-wrap">
                     <div v-if="r.kind === 'alert'" class="form-tip">平台会在保存时把 namespace 标签写成这条规则所在的命名空间 —— 告警的归属靠它，所以它不由表单控制。</div>
                     <LabelEditor v-model="r.labels" class="sub-editor" :exclude-keys="['namespace', 'severity']" :reserved-by="LABEL_RESERVED_BY" style="max-width: 1080px" />
                   </div>
                 </el-form-item>
 
-                <el-form-item v-if="r.kind === 'alert'" label="摘要 summary">
+                <el-form-item v-if="r.kind === 'alert'" label="摘要">
                   <el-input v-model="r.summary" placeholder="一句话说明这条告警在报什么，如「实例连续 5 分钟不可达」" />
                   <div class="form-tip">通知正文与告警列表的「摘要」都取自这里；留空则显示「没有写 summary 注解」。</div>
                 </el-form-item>
 
-                <el-form-item v-if="r.kind === 'alert'" label="详情 description">
+                <el-form-item v-if="r.kind === 'alert'" label="详情">
                   <el-input v-model="r.description" placeholder="展开说：哪个对象、当前值、阈值、持续多久；可用 {{ $labels.xxx }} / {{ $value }}" />
                 </el-form-item>
 
-                <el-form-item v-if="r.kind === 'alert'" label="排障链接 runbook_url">
+                <el-form-item v-if="r.kind === 'alert'" label="排障链接">
                   <el-input v-model="r.runbookUrl" placeholder="https://…（通知正文里单独一行 Runbook）" />
                 </el-form-item>
 
-                <el-form-item v-if="r.kind === 'alert'" label="注解 annotations">
+                <el-form-item v-if="r.kind === 'alert'" label="annotations">
                   <LabelEditor v-model="r.annotations" class="sub-editor" :exclude-keys="['platform_rule', 'summary', 'description', 'runbook_url']" :reserved-by="ANNOTATION_RESERVED_BY" style="max-width: 1080px" />
                 </el-form-item>
               </el-form>
