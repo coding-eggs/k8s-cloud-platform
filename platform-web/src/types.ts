@@ -752,6 +752,8 @@ export interface K8sPrometheusRuleRule {
    * 保存时后端拼进 annotations，读详情时再摘回本字段供编辑页回显。
    */
   summary?: string | null
+  /** 平台侧字段：详情（`annotations.description`），同样由后端拼/摘 */
+  description?: string | null
 }
 
 /** PrometheusRule 的一组规则（spec.groups[]） */

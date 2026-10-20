@@ -213,6 +213,11 @@ public class PrometheusRuleService {
                     } else {
                         ann.remove("summary");
                     }
+                    if (StringUtils.hasText(r.getDescription())) {
+                        ann.put("description", r.getDescription());
+                    } else {
+                        ann.remove("description");
+                    }
                     r.setAnnotations(ann);
                 }
             }
@@ -237,6 +242,7 @@ public class PrometheusRuleService {
             for (PrometheusRuleDTO.Rule r : g.getRules()) {
                 r.setSeverity(null);
                 r.setSummary(null);
+                r.setDescription(null);
             }
         }
     }
@@ -259,6 +265,9 @@ public class PrometheusRuleService {
                 }
                 if (r.getAnnotations() != null && StringUtils.hasText(r.getAnnotations().get("summary"))) {
                     r.setSummary(r.getAnnotations().get("summary"));
+                }
+                if (r.getAnnotations() != null && StringUtils.hasText(r.getAnnotations().get("description"))) {
+                    r.setDescription(r.getAnnotations().get("description"));
                 }
             }
         }

@@ -282,7 +282,7 @@ class PrometheusRuleServiceTest {
     void a_cleared_summary_removes_only_the_summary_annotation() {
         PrometheusRuleDTO dto = sample("my-app");
         PrometheusRuleDTO.Rule rule = dto.getGroups().get(0).getRules().get(0);
-        rule.setAnnotations(new java.util.LinkedHashMap<>(Map.of("summary", "旧的", "description", "x")));
+        rule.setAnnotations(new java.util.LinkedHashMap<>(Map.of("summary", "旧的", "runbook_url", "https://x")));
         rule.setSummary(null);
         when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
 
@@ -290,7 +290,7 @@ class PrometheusRuleServiceTest {
 
         assertThat(captured().getGroups().get(0).getRules().get(0).getAnnotations())
                 .doesNotContainKey("summary")
-                .containsEntry("description", "x")
+                .containsEntry("runbook_url", "https://x")
                 .containsEntry("platform_rule", "app-rules");
     }
 
@@ -305,6 +305,50 @@ class PrometheusRuleServiceTest {
         PrometheusRuleDTO out = svc.get("app-rules", "t1", "c1", "my-app");
 
         assertThat(out.getGroups().get(0).getRules().get(0).getSummary()).isEqualTo("实例挂了");
+    }
+
+    /** 详情输入框同样是平台侧字段：保存时拼成 annotations.description。 */
+    @Test
+    void create_stamps_the_description_into_annotations() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.getGroups().get(0).getRules().get(0).setDescription("实例连续 5 分钟不可达，当前 up=0");
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        assertThat(captured().getGroups().get(0).getRules().get(0).getAnnotations())
+                .containsEntry("description", "实例连续 5 分钟不可达，当前 up=0");
+    }
+
+    /** 清空详情 = 删掉 annotations.description，但 summary / platform_rule 不受影响。 */
+    @Test
+    void a_cleared_description_removes_only_the_description_annotation() {
+        PrometheusRuleDTO dto = sample("my-app");
+        PrometheusRuleDTO.Rule rule = dto.getGroups().get(0).getRules().get(0);
+        rule.setSummary("实例挂了");
+        rule.setAnnotations(new java.util.LinkedHashMap<>(Map.of("description", "旧的")));
+        rule.setDescription(null);
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        assertThat(captured().getGroups().get(0).getRules().get(0).getAnnotations())
+                .doesNotContainKey("description")
+                .containsEntry("summary", "实例挂了")
+                .containsEntry("platform_rule", "app-rules");
+    }
+
+    /** 读详情时把 annotations.description 摘回平台侧字段。 */
+    @Test
+    void get_fills_the_description_back_from_annotations() {
+        PrometheusRuleDTO stored = sample("my-app");
+        stored.getGroups().get(0).getRules().get(0)
+                .setAnnotations(new java.util.LinkedHashMap<>(Map.of("description", "详细说明")));
+        when(k8s.get(any())).thenReturn(stored);
+
+        PrometheusRuleDTO out = svc.get("app-rules", "t1", "c1", "my-app");
+
+        assertThat(out.getGroups().get(0).getRules().get(0).getDescription()).isEqualTo("详细说明");
     }
 
     // ---------- S2.2.4 通知方式 ----------

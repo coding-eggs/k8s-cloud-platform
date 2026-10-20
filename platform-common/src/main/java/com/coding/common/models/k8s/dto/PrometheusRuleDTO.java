@@ -128,6 +128,15 @@ public class PrometheusRuleDTO extends BaseResources {
          */
         private String summary;
 
+        /**
+         * 平台侧便捷字段：**详情**。
+         *
+         * <p>本质是 {@code annotations.description} —— 约定上与 summary 分工：
+         * summary 一句话说「什么坏了」，description 展开「哪个对象、多少、多久」。
+         * 保存时拼进 annotations，读详情时摘回本字段。空 = 清掉该注解。
+         */
+        private String description;
+
         private Map<String, String> labels;
 
         /** 仅 alert 规则有效 */
