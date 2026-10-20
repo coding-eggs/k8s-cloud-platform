@@ -13,6 +13,7 @@ import com.coding.platformapi.components.DeepMerge;
 import com.coding.platformapi.components.OtelObjects;
 import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
+import com.coding.platformapi.components.ThanosRetention;
 import com.coding.platformapi.components.ValueTemplate;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
@@ -184,6 +185,9 @@ public class ComponentInstallService {
                 parseSnapshot(last == null ? null : last.getValuesSnapshot()));
         // 占位符（${cluster.name} / ${thanos.receive.url} / ${tempo.endpoint}）在落库前解析
         List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico, tektonProfile, otel);
+        // Thanos compactor 的保留期下限（raw ≥ 40h、5m ≥ 10d）：违反时 helm 照样成功，
+        // 但 compactor 启动即 CrashLoopBackOff —— 必须在下发之前拒（2026-10-20 实锤）
+        validateThanosRetention(effective);
         String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
@@ -219,6 +223,22 @@ public class ComponentInstallService {
     }
 
     /** 前置组件必须已 INSTALLED_HEALTHY（批① 的 metrics-server 无前置，批② 起生效） */
+    /**
+     * Thanos compactor 保留期的下限（raw ≥ 40h、5m ≥ 10d，见 {@link ThanosRetention}）。
+     *
+     * <p>违反时 Helm 安装是成功的，只有 compactor 容器启动即退出 —— 平台会记一条 SUCCESS，
+     * 集群里却是个永远起不来的 StatefulSet，所以必须在落库/下发之前拒绝。
+     */
+    private static void validateThanosRetention(List<ReleaseSpec> releases) {
+        for (ReleaseSpec r : releases) {
+            // mergeValues 之后有效 values 放在 contractValues 槽位里
+            String problem = ThanosRetention.violation(r.contractValues());
+            if (problem != null) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, problem);
+            }
+        }
+    }
+
     private void requireDependencies(String clusterId, ComponentRecipe recipe) {        if (recipe.requires() == null || recipe.requires().isEmpty()) {
             return;
         }

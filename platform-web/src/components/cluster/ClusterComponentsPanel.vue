@@ -218,6 +218,48 @@ const QUANTITY_RE = /^\d+(\.\d+)?(m|k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?$/
 /** Prometheus/Thanos 时长：30d / 12h / 1h30m；留空 = 不设置（chart 默认） */
 const DURATION_RE = /^(?:\d+(?:ms|s|m|h|d|w|y))+$/
 
+/**
+ * Thanos compactor 的保留期下限（thanos v0.42.4 `cmd/thanos/compact.go`）：
+ * raw 非 0 时必须 ≥ 40h（否则 5m 降采样永远不发生）、5m 非 0 时必须 ≥ 10d（否则 1h 降采样永远不发生）。
+ * 违反时 helm 装成功、compactor 却 CrashLoopBackOff（2026-10-20 实锤：三档全填 1d）。
+ * 前端先拦一道给出人话，后端在下发 helm 前同样会拒。
+ */
+const RETENTION_MINIMUMS: Record<string, { ms: number; label: string; why: string }> = {
+  'compactor.retention.resolutionRaw': {
+    ms: 40 * 3_600_000,
+    label: '40h',
+    why: 'Thanos 要保留 40 小时以上的原始块才能做 5m 降采样',
+  },
+  'compactor.retention.resolution5m': {
+    ms: 10 * 86_400_000,
+    label: '10d',
+    why: 'Thanos 要保留 10 天以上的 5m 块才能做 1h 降采样',
+  },
+}
+
+const DURATION_UNIT_MS: Record<string, number> = {
+  ms: 1,
+  s: 1_000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+  w: 604_800_000,
+  y: 31_536_000_000,
+}
+
+/** 把 30d / 1h30m 这样的时长换成毫秒；格式不合法返回 null */
+function durationMs(text: string): number | null {
+  const value = text.trim()
+  if (!value || !DURATION_RE.test(value)) return null
+  let total = 0
+  for (const m of value.matchAll(/(\d+)(ms|s|m|h|d|w|y)/g)) {
+    const amount = Number(m[1] ?? 0)
+    const unit = m[2] ?? ''
+    total += amount * (DURATION_UNIT_MS[unit] ?? 0)
+  }
+  return total
+}
+
 /** Service 端口表单：一行一个端口（同时描述 Gateway listener） */
 interface PortRow {
   name: string
@@ -662,8 +704,17 @@ function confirmApply(): void {
       const value = String(d.values[f.key] ?? '').trim()
       if (JSON.stringify(value) === d.initial[f.key]) continue
       if (value && !DURATION_RE.test(value)) {
-        ElMessage.error(`「${f.label}」需要写成 30d、12h 这样的时长（留空 = chart 默认）`)
+        ElMessage.error(`「${f.label}」需要写成 30d、12h 这样的时长（留空 = 不改动）`)
         return
+      }
+      // Thanos compactor 起不来的组合先在这里拦住（后端也会拒，这里是即时反馈）
+      const minimum = RETENTION_MINIMUMS[f.key]
+      if (value && minimum) {
+        const ms = durationMs(value)
+        if (ms !== null && ms < minimum.ms) {
+          ElMessage.error(`「${f.label}」不能小于 ${minimum.label}：${minimum.why}（否则 compactor 启动即崩溃）`)
+          return
+        }
       }
       editable[f.key] = value
     } else if (f.type === 'json') {
@@ -1085,7 +1136,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
             <el-input v-else-if="f.type === 'json'" v-model="applyDialog.jsonText[f.key]"
                       type="textarea" :rows="5" spellcheck="false" />
             <el-input v-else-if="f.type === 'duration'" v-model="applyDialog.values[f.key]"
-                      placeholder="如 30d / 12h（留空 = chart 默认）" spellcheck="false" />
+                      placeholder="如 30d / 12h（留空 = 不改动）" spellcheck="false" />
             <el-input v-else v-model="applyDialog.values[f.key]" />
             <div v-if="(f.type === 'size' || f.type === 'storageClass') && applyDialog.action === 'EDIT'"
                  class="cc-form-hint">
@@ -1332,9 +1383,12 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <div v-for="f in thanosFields" :key="f.key" class="cc-form-row">
           <span class="cc-form-label">{{ f.label }}</span>
           <div class="cc-form-control">
-            <el-input v-model="applyDialog.values[f.key]" placeholder="如 30d / 12h（留空 = chart 默认）"
+            <el-input v-model="applyDialog.values[f.key]" placeholder="如 30d / 12h（留空 = 不改动）"
                       spellcheck="false" />
             <div class="cc-form-hint">
+              <template v-if="RETENTION_MINIMUMS[f.key]">
+                Thanos 下限 {{ RETENTION_MINIMUMS[f.key]?.label }}：{{ RETENTION_MINIMUMS[f.key]?.why }}；
+              </template>
               MinIO 里按分辨率的保留上限：raw 默认 30d、5m 降采样 90d、1h 降采样 365d。
               <b>改小会立即删除更早的数据且不可逆</b>；改大只是不再删
             </div>

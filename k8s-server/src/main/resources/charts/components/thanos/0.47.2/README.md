@@ -66,6 +66,22 @@ bucket: { enabled: false }
 （对应 `compactor.retention.resolutionRaw/5m/1h`，时长写法 `30d` / `12h`），再重放组件。
 ⚠️ **改小会立即触发删除且不可逆**；改大只是不再删。
 
+#### 下限是硬约束（写小了 compactor 起不来）
+
+Thanos v0.42.4 `cmd/thanos/compact.go`（降采样默认开启，本平台不暴露 `--disable-downsampling`）：
+
+| 字段 | 下限 | 违反时 |
+|---|---|---|
+| `resolutionRaw` | **40h**（非 0 时） | 容器启动即退出：`raw resolution must be higher than the minimum block size after which 5m resolution downsampling will occur (40 hours)` |
+| `resolution5m` | **10d**（非 0 时） | `5m resolution retention must be higher than the minimum block size after which 1h resolution downsampling will occur (10 days)` |
+| `resolution1h` | 无 | — |
+
+- 2026-10-20 实锤：三档都填 `1d` → **Helm 装成功、`platform-thanos-compactor` 直接 CrashLoopBackOff**，
+  而平台的操作记录是 SUCCESS。
+- 现在两道闸：表单即时拒绝（提示 `Thanos 下限 40h / 10d`），
+  `ComponentInstallService` 在下发 helm 之前也会拒（含「按上次快照重放」这条路径，坏值不会被一直沿用）。
+- 留空 = 不改动（首次安装用默认 30d / 90d / 365d）。
+
 ## 3. 安装表单（挂载在 Prometheus 组件的 MANAGEMENT 表单里）
 
 | 字段 | 说明 |
@@ -117,6 +133,9 @@ kubectl -n monitor logs statefulset/platform-thanos-receive --tail=50
 5. **数据在中心查不到** —— Prometheus 侧的 `externalLabels.cluster_name` 丢失（属于 Prometheus 契约）。
 6. **四条 `thanos-component-absent` 恒 firing** —— 没开 `global.serviceMonitor.enabled`
    （chart 默认规则开着、抓取关着）；见 §4 最后一条。
+7. **compactor CrashLoopBackOff，日志 `raw resolution must be higher than ... (40 hours)`** ——
+   保留期写到了下限以下（raw < 40h 或 5m < 10d）；`helm` 是成功的，只有 Pod 起不来。
+   改成 `>= 40h` / `>= 10d`（或留空）后重放组件，见 §2.1。
 
 ## 7. 新增版本
 

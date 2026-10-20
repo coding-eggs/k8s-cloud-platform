@@ -112,7 +112,7 @@ prometheus-node-exporter:
 | `...requests.storage` | `50Gi` | Prometheus 容量 |
 | `alertmanager...storageClassName` / `storage` | 空 / `10Gi` | Alertmanager 持久化 |
 | `grafana.enabled` | MANAGEMENT true / BUSINESS false | 用户评审第 4 条 |
-| `compactor.retention.resolutionRaw` / `5m` / `1h` | `30d` / `90d` / `365d` | **Thanos 对象存储保留期**（仅 MANAGEMENT）。表单与凭据/桶同属「Thanos 对象存储」一节；时长写法 `30d` / `12h`，改小立即删历史且不可逆（见 [thanos 文档](../../thanos/0.47.2/README.md) §2.1） |
+| `compactor.retention.resolutionRaw` / `5m` / `1h` | `30d` / `90d` / `365d` | **Thanos 对象存储保留期**（仅 MANAGEMENT）。表单与凭据/桶同属「Thanos 对象存储」一节；时长写法 `30d` / `12h`，改小立即删历史且不可逆（见 [thanos 文档](../../thanos/0.47.2/README.md) §2.1）。**下限**：raw ≥ 40h、5m ≥ 10d（写小了 helm 成功但 compactor 启动即崩；表单与后端都会拒） |
 
 > 表单按组渲染：**基础配置 / 指标保留 / 存储 / Thanos 对象存储（管理集群）/ 平台联动**，
 > 不再把所有输入框平铺在一起（2026-10-20 用户反馈后整理）。

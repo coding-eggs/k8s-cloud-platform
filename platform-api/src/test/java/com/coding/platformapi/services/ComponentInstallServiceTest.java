@@ -374,6 +374,61 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void thanosRetentionBelowThanosMinimumsIsRejectedBeforeHelm() {
+        // 2026-10-20 实锤：三档保留期都填 1d 时 helm 装成功，但 compactor 启动即崩
+        // （raw resolution must be higher than ... (40 hours)）。必须在下发 helm 之前拒掉
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-thanos", "monitor", "thanos", "0.47.2", Map.of(),
+                                Map.of("compactor.retention.resolutionRaw", "30d",
+                                        "compactor.retention.resolution5m", "90d",
+                                        "compactor.retention.resolution1h", "365d"))), List.of()));
+        ComponentInstallService svc = service(catalog);
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "prometheus-operator", "INSTALL", null,
+                Map.of("compactor.retention.resolutionRaw", "1d",
+                        "compactor.retention.resolution5m", "1d",
+                        "compactor.retention.resolution1h", "1d")), "admin"))
+                .hasMessageContaining("40h");
+        verify(mapper, never()).insert(any());
+        verify(client, never()).applyComponent(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void thanosRetentionFromThePreviousSnapshotIsAlsoValidated() {
+        // 升级时表单没带保留期 → 沿用上次快照；快照里的坏值同样不能放行（否则"修好"永远修不好）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "prometheus-operator")).thenReturn(0);
+        PlatformComponentOperation last = new PlatformComponentOperation();
+        last.setValuesSnapshot("{\"platform-thanos\":{\"compactor\":{\"retention\":"
+                + "{\"resolutionRaw\":\"1d\",\"resolution5m\":\"1d\",\"resolution1h\":\"1d\"}}}}");
+        when(mapper.selectLatestSuccess("c1", "prometheus-operator")).thenReturn(last);
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("prometheus-operator", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-thanos", "monitor", "thanos", "0.47.2", Map.of(),
+                                Map.of("compactor.retention.resolutionRaw", "30d",
+                                        "compactor.retention.resolution5m", "90d",
+                                        "compactor.retention.resolution1h", "365d"))), List.of()));
+        ComponentInstallService svc = service(catalog);
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "prometheus-operator", "UPGRADE", null, Map.of()), "admin"))
+                .hasMessageContaining("40h");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
     void anEmptyThanosReceiveUrlFailsBeforeCreatingAnOperation() {
         // 空 remoteWrite url 装出来的 Prometheus 永远上报不了，且运行时没有任何报错
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
