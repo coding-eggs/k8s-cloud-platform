@@ -411,6 +411,8 @@
       - **评审修复 7 条**：投递只带本次领取成功的事件（groupBy 重推不再重复通知）、收件人必须是本租户成员、
         清空通知方式要真删绑定、默认渠道查询不再过滤 enabled、`/options` 改窄投影（不再下发 SMTP 配置）、
         SMTP 加连接/读写超时、启动时把中断的 PENDING 标 FAILED。
+      - **Watchdog 不投递**：kube-prometheus-stack 的心跳规则（`vector(1)` 恒 firing）只落库、不发通知，
+        连投递记录都不写；列表里本来也默认隐藏（`showWatchdog=true` 才看）。
       - **未做（有意）**：告警抑制（下一轮，`AlertDispatchService.beforeSend()` 钩子已留）；
         失败过的投递不占「补发」通道（补好收件人后不会自动重发，靠下一次重推）。
 

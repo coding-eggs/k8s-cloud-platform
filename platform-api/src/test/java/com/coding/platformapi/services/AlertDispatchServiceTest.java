@@ -272,6 +272,26 @@ class AlertDispatchServiceTest {
         verify(sender).send(any(), eq(List.of("platform@x.com")), any(), any());
     }
 
+    /**
+     * Watchdog 是 kube-prometheus-stack 的心跳（`vector(1)` 恒 firing）：**只落库、不投递**。
+     * 连投递记录都不写 —— 否则列表的「投递」列会显示一条永远失败的记录。
+     */
+    @Test
+    void the_watchdog_alert_is_recorded_but_never_delivered() throws Exception {
+        tenantOwns("ns", "t1");
+        when(channels.resolve("default-mail")).thenReturn(channel("default-mail", null, true));
+        when(channels.defaultFor("t1")).thenReturn(channel("default-mail", null, true));
+
+        PlatformAlertEvent watchdog = event(1, "monitor", "{}", "firing");
+        watchdog.setAlertname("Watchdog");
+        watchdog.setSeverity("none");
+
+        svc.dispatch("c1", List.of(watchdog));
+
+        verify(deliveries, never()).insertIfAbsent(any());
+        verify(sender, never()).send(any(), any(), any(), any());
+    }
+
     /** 一个有效收件人都没有 → 记 FAILED，**不调用发送器**（否则会"给空列表发一封"）。 */
     @Test
     void no_recipients_marks_the_delivery_failed_and_sends_nothing() throws Exception {

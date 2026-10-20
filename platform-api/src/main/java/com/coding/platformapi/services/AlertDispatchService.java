@@ -45,6 +45,13 @@ import java.util.Set;
 @Service
 public class AlertDispatchService {
 
+    /**
+     * kube-prometheus-stack 的 dead-man's switch：表达式是 {@code vector(1)}，**恒 firing、永不 resolved**。
+     * 它是给 Alertmanager 用的心跳（停了才说明告警链路坏了），不是给人看的事件 ——
+     * 只留告警记录，**不投递**。
+     */
+    static final String WATCHDOG_ALERTNAME = "Watchdog";
+
     private static final int MAX_ATTEMPTS = 3;
     private static final long[] BACKOFF_MS = {1_000, 5_000, 30_000};
     private static final int MAX_ERROR_LEN = 1000;
@@ -97,6 +104,13 @@ public class AlertDispatchService {
         toSend = toSend.stream().filter(e -> e != null && e.getId() != null).toList();
         if (toSend.isEmpty()) {
             log.warn("这一批告警都没有 id，跳过投递");
+            return;
+        }
+        // Watchdog 只落库不通知（见常量注释）；整批都是它就直接结束，连投递记录都不写
+        toSend = toSend.stream()
+                .filter(e -> !WATCHDOG_ALERTNAME.equals(e.getAlertname()))
+                .toList();
+        if (toSend.isEmpty()) {
             return;
         }
 
