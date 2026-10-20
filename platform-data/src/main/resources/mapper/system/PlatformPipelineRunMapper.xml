@@ -94,6 +94,18 @@
     from platform_pipeline_run
   </select>
 
+  <!-- 正在跑的运行占着哪些工作区卷 —— 「待重试工作区」列表与清理都要排除它们。
+       工作区在运行创建时就存在；不排除的话，在途运行会被当成「失败残留」删掉。
+       链上的子运行共用父运行那一块，所以 distinct。 -->
+  <select id="selectRunningWorkspacePvcs" resultType="java.lang.String">
+    select distinct workspace_pvc
+    from platform_pipeline_run
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and namespace = #{namespace,jdbcType=VARCHAR}
+      and status = 'RUNNING'
+      and workspace_pvc is not null
+  </select>
+
   <!-- ⚠️ 字符串比较，不是日期比较：该列存的是 Tekton 的 RFC3339 原文（见 mapper 接口的注释）。
        未终结（completion_time 为 null）的行自然不在候选里。 -->
   <select id="selectCompletedBefore" resultMap="BaseResultMap">

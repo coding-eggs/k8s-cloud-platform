@@ -324,20 +324,35 @@ public class PipelineRunService {
     public com.coding.common.models.pipeline.PipelineRetryWorkspacesDTO retryWorkspaces(
             String clusterId, String namespace, String tenantId) {
         access.assertAccessible(clusterId, namespace);
-        List<com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO> items =
-                k8s.listRetryWorkspaces(clusterId, tenantId, namespace);
-        long total = items.stream()
+        List<com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO> free =
+                orphanWorkspaces(clusterId, namespace, tenantId);
+        long total = free.stream()
                 .mapToLong(com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO::sizeBytes).sum();
-        return new com.coding.common.models.pipeline.PipelineRetryWorkspacesDTO(items.size(), total, items);
+        return new com.coding.common.models.pipeline.PipelineRetryWorkspacesDTO(free.size(), total, free);
     }
 
     /** 清掉全部待重试工作区。⚠️ 清掉之后那些运行就**不能**再从断点继续了。 */
     public void clearRetryWorkspaces(String clusterId, String namespace, String tenantId) {
         access.assertAccessible(clusterId, namespace);
         for (com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO item
-                : k8s.listRetryWorkspaces(clusterId, tenantId, namespace)) {
+                : orphanWorkspaces(clusterId, namespace, tenantId)) {
             k8s.deleteRetryWorkspace(clusterId, tenantId, namespace, item.name());
         }
+    }
+
+    /**
+     * 命名空间里**没有运行正在用**的工作区卷。
+     *
+     * <p>⚠️ 工作区在运行**创建时**就存在并带平台标签 —— 不排除在途运行的话，
+     * 列表会显示「待重试工作区：1 块」，而「全部清理」会把正在跑的那条运行的工作区删掉。
+     * 唯一可靠的判据在库里（PVC 的 phase 看不出来）。
+     */
+    private List<com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO> orphanWorkspaces(
+            String clusterId, String namespace, String tenantId) {
+        Set<String> inUse = new LinkedHashSet<>(runMapper.selectRunningWorkspacePvcs(clusterId, namespace));
+        return k8s.listRetryWorkspaces(clusterId, tenantId, namespace).stream()
+                .filter(item -> !inUse.contains(item.name()))
+                .toList();
     }
 
     /**

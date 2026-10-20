@@ -38,6 +38,15 @@ public interface PlatformPipelineRunMapper {
     List<PlatformPipelineRun> listAll();
 
     /**
+     * 正在跑的运行占用的工作区 PVC 名（去重）。
+     *
+     * <p>⚠️ 「待重试工作区」的列表与清理都要把它们排除 —— 工作区在运行**创建时**就存在，
+     * 不过滤的话在途运行的卷会被当成「失败残留」删掉。链上的子运行共用父运行那一块，所以去重。
+     */
+    List<String> selectRunningWorkspacePvcs(@Param("clusterId") String clusterId,
+                                            @Param("namespace") String namespace);
+
+    /**
      * 保留清理的候选：{@code completion_time} 早于 cutoff 的。
      *
      * <p>⚠️ <b>这是字符串比较</b>（该列是 varchar，存 Tekton 的 RFC3339 原文）。

@@ -218,6 +218,13 @@ async function retryNode(nodeId: string): Promise<void> {
   }
 }
 
+/** 这个节点为什么不能点重试 —— 没有按钮时总得说清原因（spec §8） */
+function retryHintFor(id: string): string | undefined {
+  const p = plan.value
+  if (!p?.retryable || p.retryableNodes.includes(id)) return undefined
+  return p.blocked[id] ?? undefined
+}
+
 /** DAG：画布 + 每个节点的状态（状态按节点 **id** 对） */
 const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
   const c = canvas.value
@@ -246,6 +253,7 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
         retryable: plan.value?.retryable === true
           ? plan.value.retryableNodes.includes(n.id)
           : false,
+        retryHint: retryHintFor(n.id),
         onRetry: retryNode,
         // 正在看它的日志 —— 卡片描边跟着亮，免得"日志区换了但不知道换成了谁"
         selected: n.id === logNodeId.value,
@@ -717,6 +725,9 @@ function jumpToLogBottom(): void {
       <!-- ⚠️ 失败原因必须显眼：Tekton 顶层只会给一句 Failed（统计口径），
            真正的报错是后端从**失败那个节点**的 TaskRun 上带下来的原话 -->
       <el-alert v-if="failed && run.reason" type="error" :closable="false" show-icon :title="run.reason" />
+      <!-- 整条运行不能重试时把原因说出来（成功的运行、老运行没有工作区、还在跑） -->
+      <el-alert v-if="plan && !plan.retryable && plan.reason" type="info" :closable="false"
+                show-icon :title="plan.reason" />
 
       <div v-if="isRunning" class="dim">
         正在跑 —— 每 2 秒自动刷新节点状态；点开某个节点后，它的日志会自己往下接，不用重新点。

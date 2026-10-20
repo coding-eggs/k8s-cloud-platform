@@ -103,13 +103,20 @@ public class K8sPipelineClient {
         query.setTenantId(tenantId);
         query.setNamespace(namespace);
         query.setLabelSelector("platform.pipeline/role=workspace");
-        return k8s.list(query).stream().map(p -> new com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO(
+        return k8s.list(query).stream().map(K8sPipelineClient::retryWorkspaceOf).toList();
+    }
+
+    /** PVC → 窄投影。⚠️ 注解缺失时 `retainUntil` 必须是 null，不能是字符串 `"null"`。 */
+    private static com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO retryWorkspaceOf(
+            com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO p) {
+        Object raw = p.getAnnotations() == null ? null
+                : p.getAnnotations().get("platform.pipeline/retain-until");
+        return new com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO(
                 p.getName(),
                 p.getLabels() == null ? null : p.getLabels().get("platform.pipeline/run"),
                 p.getCreationTime(),
-                p.getAnnotations() == null ? null
-                        : String.valueOf(p.getAnnotations().get("platform.pipeline/retain-until")),
-                p.getStorage() == null ? 0L : p.getStorage().longValue())).toList();
+                raw == null ? null : String.valueOf(raw),
+                p.getStorage() == null ? 0L : p.getStorage().longValue());
     }
 
     /** 删一块待重试工作区（按 PVC 名）。 */

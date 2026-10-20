@@ -386,8 +386,12 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
             workspaceCreated = ensureWorkspacePvc(dto.getWorkspacePvc(), dto.getNamespace(),
                     dto.getName(), dto.isReuseWorkspace());
         } catch (KubernetesClientException e) {
+            cleanupFailedCreate(dto, false);
             throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
                     "准备工作区 PVC 失败：" + apiMessage(e));
+        } catch (RuntimeException e) {
+            cleanupFailedCreate(dto, false);
+            throw e;
         }
 
         // ③ 再建 PipelineRun
@@ -405,18 +409,31 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
             created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
                     .resource(pr).create();
         } catch (KubernetesClientException e) {
-            if (workspaceCreated) {
-                deleteWorkspacePvcQuietly(dto.getNamespace(), dto.getWorkspacePvc());
-            }
+            cleanupFailedCreate(dto, workspaceCreated);
             throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
                     "创建 PipelineRun 失败：" + apiMessage(e));
         } catch (RuntimeException e) {
-            if (workspaceCreated) {
-                deleteWorkspacePvcQuietly(dto.getNamespace(), dto.getWorkspacePvc());
-            }
+            cleanupFailedCreate(dto, workspaceCreated);
             throw e;
         }
         return converter.toDto(created);
+    }
+
+    /**
+     * 创建失败时的统一回收：**本次新建的工作区 PVC** + **凭据 Secret**。
+     *
+     * <p>⚠️ 凭据 Secret 里是可解的 git token / registry 认证；创建失败意味着它已经建好、
+     * 却永远不会有 Pod 来用它。不回收就是每失败一次攒一份（2026-10-20 复审发现）。
+     */
+    void cleanupFailedCreate(PipelineRunDTO dto, boolean workspaceCreated) {
+        if (workspaceCreated) {
+            deleteWorkspacePvcQuietly(dto.getNamespace(), dto.getWorkspacePvc());
+        }
+        try {
+            deleteCredsSecret(dto.getNamespace(), dto.getName());
+        } catch (Exception e) {
+            log.warn("回收凭据 Secret 失败（多留一会儿）：{}/{}", dto.getNamespace(), dto.getName(), e);
+        }
     }
 
     /**

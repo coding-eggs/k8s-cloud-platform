@@ -53,6 +53,37 @@ class PipelineRetryWorkspaceTest {
     }
 
     @Test
+    void aWorkspaceThatBelongsToARunningRunIsNotOfferedForCleanup() {
+        // ⭐ 工作区在运行**创建时**就存在并带平台标签 —— 不过滤的话，任意时刻都会有
+        //    「待重试工作区：1 块」，在跑的过程中点「全部清理」就会把在途运行的工作区删掉。
+        when(runMapper.selectRunningWorkspacePvcs("c1", "ns1")).thenReturn(List.of("ws-running"));
+        when(k8s.listRetryWorkspaces("c1", "t1", "ns1")).thenReturn(List.of(
+                new PipelineRetryWorkspaceDTO("ws-running", "r1", null, null, 1024L),
+                new PipelineRetryWorkspaceDTO("ws-failed", "r2", null, null, 2048L)));
+
+        var out = svc.retryWorkspaces("c1", "ns1", "t1");
+
+        assertThat(out.items()).extracting(PipelineRetryWorkspaceDTO::name)
+                .containsExactly("ws-failed");
+        assertThat(out.count()).isEqualTo(1);
+        assertThat(out.totalBytes()).isEqualTo(2048L);
+    }
+
+    @Test
+    void clearingSkipsAWorkspaceThatIsStillInUse() {
+        when(runMapper.selectRunningWorkspacePvcs("c1", "ns1")).thenReturn(List.of("ws-running"));
+        when(k8s.listRetryWorkspaces("c1", "t1", "ns1")).thenReturn(List.of(
+                new PipelineRetryWorkspaceDTO("ws-running", "r1", null, null, 1024L),
+                new PipelineRetryWorkspaceDTO("ws-failed", "r2", null, null, 2048L)));
+
+        svc.clearRetryWorkspaces("c1", "ns1", "t1");
+
+        verify(k8s).deleteRetryWorkspace("c1", "t1", "ns1", "ws-failed");
+        verify(k8s, org.mockito.Mockito.never())
+                .deleteRetryWorkspace("c1", "t1", "ns1", "ws-running");
+    }
+
+    @Test
     void theNamespaceBoundaryIsCheckedFirst() {
         doThrow(new CloudPlatformException(EnumResponseType.NAMESPACE_NOT_ACCESSIBLE, "no"))
                 .when(access).assertAccessible("c1", "ns1");

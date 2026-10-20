@@ -51,6 +51,11 @@ public class CoreV1PvcConverter implements CommonConverter<PersistentVolumeClaim
             dto.setName(pvc.getMetadata().getName());
             dto.setNamespace(pvc.getMetadata().getNamespace());
             dto.setLabels(pvc.getMetadata().getLabels());
+            // ⚠️ 注解必须带出来：工作区回收器只认 PVC 上的 `platform.pipeline/retain-until`，
+            //    不映射的话它拿到的永远是 null → 一块过期卷都删不掉（2026-10-20 复审发现）。
+            if (pvc.getMetadata().getAnnotations() != null) {
+                dto.setAnnotations(new java.util.HashMap<>(pvc.getMetadata().getAnnotations()));
+            }
             if (pvc.getMetadata().getCreationTimestamp() != null) {
                 dto.setCreationTime(pvc.getMetadata().getCreationTimestamp());
             }

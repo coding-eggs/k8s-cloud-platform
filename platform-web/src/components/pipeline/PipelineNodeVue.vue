@@ -34,6 +34,8 @@ const props = defineProps<{
     retryable?: boolean
     /** 点重试的回调（放在 data 里是为了不把事件管道绕一圈） */
     onRetry?: (id: string) => void
+    /** 不能重试的原因（来自 plan.blocked）—— 没有按钮时总得说清为什么 */
+    retryHint?: string
   }
 }>()
 
@@ -95,6 +97,8 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
       <div class="pnode-title">{{ title }}</div>
       <div class="pnode-type">{{ typeLabel }}</div>
       <div v-if="summary" class="pnode-summary">{{ summary }}</div>
+      <!-- 不能重试的原因：没有按钮时总得说清为什么（spec §8） -->
+      <div v-if="data.retryHint" class="pnode-hint" :title="data.retryHint">{{ data.retryHint }}</div>
     </div>
 
     <div v-if="statusText" class="pnode-status">{{ statusText }}</div>
@@ -186,6 +190,14 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
   font-size: 11px;
   color: var(--text-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pnode-hint {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

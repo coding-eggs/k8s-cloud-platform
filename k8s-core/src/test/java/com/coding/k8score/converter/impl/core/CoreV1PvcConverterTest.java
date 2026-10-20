@@ -62,4 +62,25 @@ class CoreV1PvcConverterTest {
         assertThat(converter.revert(bare).getPhase()).isNull();
         assertThat(converter.revert(bare).getConditions()).isNull();
     }
+
+    @Test
+    void annotationsSurviveTheRoundTripBecauseTheWorkspaceReaperReadsItsTtlFromThem() {
+        // ⭐ 工作区回收器只认 PVC 上的 `platform.pipeline/retain-until` 注解。
+        //    revert 不映射 annotations 的话，回收器拿到的永远是 null → **一块过期卷都删不掉**，
+        //    每次失败/取消都永久占 1Gi。
+        PersistentVolumeClaim annotated = new PersistentVolumeClaimBuilder()
+                .withNewMetadata()
+                    .withName("platform-pipeline-ws-r1")
+                    .withNamespace("ns1")
+                    .withLabels(java.util.Map.of("platform.pipeline/role", "workspace"))
+                    .withAnnotations(java.util.Map.of(
+                            "platform.pipeline/retain-until", "2026-10-21T00:00:00Z"))
+                .endMetadata()
+                .build();
+
+        PersistentVolumeClaimDTO dto = converter.revert(annotated);
+
+        assertThat(dto.getAnnotations())
+                .containsEntry("platform.pipeline/retain-until", "2026-10-21T00:00:00Z");
+    }
 }

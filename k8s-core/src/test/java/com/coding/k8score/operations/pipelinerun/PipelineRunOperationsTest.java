@@ -417,6 +417,22 @@ class PipelineRunOperationsTest {
     }
 
     @Test
+    void aFailedCreateReleasesTheCredsSecretEvenWhenNoPipelineRunWasCreated() {
+        // ⭐ 凭据 Secret 里是可解的 git token / registry 认证。创建失败时它已经建好了，
+        //    不回收就会每失败一次攒一份 —— spec §6.3 说「跑完没有任何留着的理由」，
+        //    而这里连「跑」都没发生。
+        PipelineRunOperations ops = org.mockito.Mockito.spy(
+                new PipelineRunOperations(null, new PipelineRunConverter(), null));
+        org.mockito.Mockito.doNothing().when(ops).deleteCredsSecret(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+
+        ops.cleanupFailedCreate(runOf("{}"), false);
+
+        org.mockito.Mockito.verify(ops)
+                .deleteCredsSecret("ns1", "my-app-20261015-abcd");
+    }
+
+    @Test
     void theRunCarriesThePlatformLabelAndNoTimeouts() {
         String canvas = """
                 {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}}],"edges":[]}""";
