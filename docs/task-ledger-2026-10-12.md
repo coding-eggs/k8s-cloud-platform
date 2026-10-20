@@ -388,9 +388,8 @@
 > 已定：PrometheusRule 做；**Alertmanager 已部署、平台不做其管理面、不对外暴露**；webhook 落库；
 > **发送渠道由平台接管**（S2.2.4，2026-10-20：Alertmanager 只往平台推，发不发/发给谁由平台决定）。
 >
-> **已实施待部署**（2026-10-17，19 任务；[spec](superpowers/specs/2026-10-17-alerting-design.md) ·
-> [plan](superpowers/plans/2026-10-17-alerting.md)）。全项目 `mvn test` **1193 绿**；前端 type-check + build 绿；
-> 真集群与真库都验过（见下）。
+> **已实施待部署**（主体 2026-10-17 的 19 任务；**S2.2.4 通知方式 2026-10-20 收口**，14 任务 + 一轮独立评审修复）。
+> 全项目 `mvn test` **983 绿**；前端 type-check + build 绿；真集群 + 真库 + 本地 SMTP 收信器都验过（见下）。
 
 - [x] S2.2.1 `PrometheusRule` CRUD（通用 CRD 范式，同 Calico/Gateway）
 - [x] S2.2.2 平台侧接收端点 —— ⚠️ **不是 `/api/v2/alerts` 契约**：Alertmanager 的 webhook receiver 推的是
@@ -400,6 +399,20 @@
 - [x] S2.2.4 通知方式（**2026-10-20 已实施待部署**）—— 平台接管「发给谁 / 怎么发」：通知方式实体（类型 + JSON 连接配置 +
       租户属性 + 字段级加密）、规则 ↔ 通知方式/收件人 绑定（CR 级，存平台表）、告警到达后异步发邮件 + 投递记录 + 失败重试 3 次。
       [spec](superpowers/specs/2026-10-19-notification-design.md) · [plan](superpowers/plans/2026-10-19-notification.md)
+- [x] S2.2.5 通知内容与规则字段收口（**2026-10-20**，S2.2.4 之后的连续打磨）
+      - **通知正文写全**：集群 / 租户 / 命名空间 / 规则 / 严重度 / 状态 / 开始（含已持续时长）/ PromQL 表达式 /
+        摘要 / 详情 / Runbook / 全部标签。表达式投递时查一次 `/api/v1/rules`（webhook payload 里没有）；
+        集群名与租户名与告警详情页共用 `AlertNotifyContextService`。
+      - **默认收件人三级回落**：绑定 → 租户管理员 → **平台管理员**（集群级告警的命名空间不属于任何租户，靠这一级）。
+      - **规则字段专用入口**：严重度（下拉）/ 摘要 / 详情 / 排障链接 做成独立输入，后端拼进
+        `labels.severity` 与 `annotations.summary|description|runbook_url`、读详情时摘回；
+        这几个键在通用「标签 / 注解」编辑器里**不可写**（前端标红提示 + 后端丢弃并 warn）。
+      - **时长字段前后端校验**：`interval / for / keep_firing_for / query_offset`，纯数字会被 apiserver 422。
+      - **评审修复 7 条**：投递只带本次领取成功的事件（groupBy 重推不再重复通知）、收件人必须是本租户成员、
+        清空通知方式要真删绑定、默认渠道查询不再过滤 enabled、`/options` 改窄投影（不再下发 SMTP 配置）、
+        SMTP 加连接/读写超时、启动时把中断的 PENDING 标 FAILED。
+      - **未做（有意）**：告警抑制（下一轮，`AlertDispatchService.beforeSend()` 钩子已留）；
+        失败过的投递不占「补发」通道（补好收件人后不会自动重发，靠下一次重推）。
 
 > **三块**：① PrometheusRule CRUD（逐层照抄 ServiceMonitor，`groups`/`rules` 都是 atomic list →
 > 按组名/规则名对齐的 fetch-overlay）；② 运行状态回读（`k8s_cluster.prometheus_url` + `/api/v1/rules`，
@@ -888,7 +901,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S1.2** | 集群组件展示 | — | M | ✅ **已实施待部署**（2026-10-17；9 任务 / 全模块测试绿；真集群实测 10 装 1 缺）。部署：**k8s-server + platform-api + platform-web**，先重放 `V2026_10_17_4` | [spec](superpowers/specs/2026-10-17-cluster-components-design.md) · [plan](superpowers/plans/2026-10-17-cluster-components.md) |
 | **S1.3** | 平台总览 | — | M | ⬜ 未开始 | — |
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16 收口；**2026-10-17 用户验收通过，需求完结**） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
-| **S2.2** | 告警 | — | L | ✅ **已实施待部署**（2026-10-17 主体 19 任务；**2026-10-20 补 S2.2.4 通知方式**，14 任务 / 全项目 945 绿）。部署：**先重放 `V2026_10_17_3` 再重放 `V2026_10_19_8`**，再起构建；重建 platform-data + platform-common + k8s-core + k8s-server + platform-api + platform-web，**重新登录**；⚠️ `ALERT_WEBHOOK_TOKEN` 不配则 platform-api **拒启**；集群侧四步见 cluster-prerequisites §1.8（matcherStrategy 与 sendResolved 会静默半工作）；**部署后到「通知方式」页建一条邮件渠道并设默认**，否则投递记 `FAILED("未配置通知渠道")` | [spec](superpowers/specs/2026-10-17-alerting-design.md) · [plan](superpowers/plans/2026-10-17-alerting.md) · S2.2.4 [spec](superpowers/specs/2026-10-19-notification-design.md) [plan](superpowers/plans/2026-10-19-notification.md) |
+| **S2.2** | 告警 | — | L | ✅ **已实施待部署**（2026-10-17 主体 19 任务；**2026-10-20 补 S2.2.4 通知方式 + S2.2.5 收口**，全项目 983 绿）。部署：**先重放 `V2026_10_17_3` 再重放 `V2026_10_19_8`**，再起构建；重建 platform-data + platform-common + k8s-core + k8s-server + platform-api + platform-web，**重新登录**；⚠️ `ALERT_WEBHOOK_TOKEN` 不配则 platform-api **拒启**；集群侧四步见 cluster-prerequisites §1.8（matcherStrategy 与 sendResolved 会静默半工作）；**部署后到「通知方式」页建一条邮件渠道并设默认**，否则投递记 `FAILED("未配置通知渠道")` | [spec](superpowers/specs/2026-10-17-alerting-design.md) · [plan](superpowers/plans/2026-10-17-alerting.md) · S2.2.4 [spec](superpowers/specs/2026-10-19-notification-design.md) [plan](superpowers/plans/2026-10-19-notification.md) |
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ✅ **已完成（2026-10-19）**。部署：**先重放 `V2026_10_19_6` + `V2026_10_19_7`**，重建 platform-api + k8s-server + platform-web；集群侧配 ES 连接与 `monitor` 内的 ES 凭证 Secret。采集 = otel-operator 组件（operator + Tempo + collector + sidecar），查询 = 日志查询中心 + 链路追踪（租户按分配表收窄） | [spec](superpowers/specs/2026-10-18-otel-observability-design.md) · 组件文档在 `k8s-server/src/main/resources/charts/components/<chart>/<version>/README.md` |
 | **S2.4** | 服务网格可视化 | — | M-L | ✅ **已实施待部署**（2026-10-17，含 S2.4.5 Service 页补网格信息）。部署：**platform-api + platform-web**，先重放 `V2026_10_17_2`（S2.4.5 本身只动前端，随 platform-web 一起发）。S2.4.4 **已实测回答**；**S2.4.3 链路追踪后期会做**（集群里现在没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) · [plan](superpowers/plans/2026-10-17-mesh-topology.md) |
 | **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
