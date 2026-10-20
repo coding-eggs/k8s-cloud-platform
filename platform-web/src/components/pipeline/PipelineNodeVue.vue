@@ -30,6 +30,10 @@ const props = defineProps<{
     selected?: boolean
     /** 运行视图里才有 */
     status?: string
+    /** 本次重试时是否可点「重试」（来自 plan.retryableNodes） */
+    retryable?: boolean
+    /** 点重试的回调（放在 data 里是为了不把事件管道绕一圈） */
+    onRetry?: (id: string) => void
   }
 }>()
 
@@ -55,6 +59,10 @@ const STATUS_CLASS: Record<string, string> = {
   // ⚠️ 「没跑」也是一种结果，而且是**最需要解释**的那一种（上游没成功 / 收尾时机不满足）——
   // 不画出来，用户看到的就是「画布上这个节点凭空不见了」。原因在运行详情里那一行「已跳过」
   SKIPPED: 'skipped',
+  // 三种「没跑」：屏蔽 / 沿用 / 本次未重试 —— 与运行详情那三行文案成对
+  MASKED: 'skipped',
+  REUSED: 'reused',
+  NOT_RETRIED: 'skipped',
 }
 const STATUS_TEXT: Record<string, string> = {
   SUCCEEDED: '成功',
@@ -63,6 +71,9 @@ const STATUS_TEXT: Record<string, string> = {
   TIMEOUT: '超时',
   RUNNING: '正在跑',
   SKIPPED: '已跳过',
+  MASKED: '已屏蔽',
+  REUSED: '已沿用',
+  NOT_RETRIED: '未重试',
 }
 const statusClass = computed(() => (props.data.status ? STATUS_CLASS[props.data.status] ?? '' : ''))
 const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.status] ?? props.data.status : ''))
@@ -87,6 +98,12 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
     </div>
 
     <div v-if="statusText" class="pnode-status">{{ statusText }}</div>
+    <button
+      v-if="data.retryable"
+      class="pnode-retry nodrag nopan"
+      title="从断点继续：会跑这个节点及全部下游"
+      @click.stop="data.onRetry?.(id)"
+    >重试</button>
     <!-- 收尾标记：**这根线之外的东西**，画布上必须看得出来（否则用户会去连它、然后被拦） -->
     <div v-if="data.finallyTask" class="pnode-finally" title="收尾执行：不参与连线顺序，最后同时开跑">收尾</div>
 
@@ -235,6 +252,32 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
 .pnode.running .pnode-status {
   color: var(--info);
   border-color: var(--info);
+}
+/* 沿用：虚线 + 信息色 —— 与「失败/跳过」区分开 */
+.pnode.reused {
+  border-style: dashed;
+  border-color: var(--info);
+}
+.pnode.reused .pnode-status {
+  color: var(--info);
+  border-color: var(--info);
+  border-style: dashed;
+}
+/* 重试按钮：浮在卡片右下角。⚠️ 必须带 nodrag/nopan，否则点它会拖动画布 */
+.pnode-retry {
+  position: absolute;
+  right: 8px;
+  bottom: -10px;
+  padding: 1px 8px;
+  font-size: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--info);
+  color: var(--info);
+  background: var(--panel);
+  cursor: pointer;
+}
+.pnode-retry:hover {
+  background: color-mix(in srgb, var(--info) 12%, transparent);
 }
 
 /* 连接点：小圆点，悬停时放大 */

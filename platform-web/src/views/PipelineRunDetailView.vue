@@ -22,7 +22,7 @@ import type { Edge, Node } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineRun, PipelineStepRef } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineRetryPlan, PipelineRun, PipelineStepRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
@@ -138,6 +138,86 @@ const canvas = computed<PipelineCanvas | null>(
   () => runCanvas.value ?? parseCanvas(pipeline.value?.canvasJson),
 )
 
+// ---- 重试：计划由服务端算，前端只读 ----
+
+const plan = ref<PipelineRetryPlan | null>(null)
+const maskedSet = computed(() => new Set(parseIds(run.value?.maskedNodesJson)))
+const reusedSet = computed(() => new Set(parseIds(run.value?.reusedNodesJson)))
+/** 父运行的**名字**：血缘链接要它（run_get 只给了 parentRunId） */
+const parentRunName = ref('')
+
+function parseIds(json: string | null | undefined): string[] {
+  if (!json) return []
+  try {
+    const v = JSON.parse(json)
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+/** 重试计划：按钮能不能点、点了会跑哪些，全听服务端的 */
+async function loadPlan(): Promise<void> {
+  const r = run.value
+  if (!r || !canRun.value || r.status === 'RUNNING' || r.status === 'SUCCEEDED') {
+    plan.value = null
+    return
+  }
+  try {
+    plan.value = await pipelineApi.retryPlan(r.runName, effectiveTenantId.value)
+  } catch {
+    plan.value = null
+  }
+}
+
+async function loadParentRunName(): Promise<void> {
+  const r = run.value
+  if (!r?.parentRunId) {
+    parentRunName.value = ''
+    return
+  }
+  try {
+    const rows = await pipelineApi.runs(r.pipelineId)
+    parentRunName.value = rows.find((x) => x.id === r.parentRunId)?.runName ?? ''
+  } catch {
+    parentRunName.value = ''
+  }
+}
+
+/**
+ * 从断点继续：范围由服务端算（所有断点的子树），前端只把「将执行 / 沿用」如实列给用户看。
+ *
+ * ⚠️ 收尾节点只跑它自己 —— 普通断点跑的是「所有断点的子树」。
+ */
+async function retryNode(nodeId: string): Promise<void> {
+  const r = run.value
+  const p = plan.value
+  if (!r || !p) return
+  const nodes = canvas.value?.nodes ?? []
+  const labelOf = (id: string) => {
+    const n = nodes.find((x) => x.id === id)
+    return (n?.name ?? '').trim() || id
+  }
+  const target = nodes.find((n) => n.id === nodeId)
+  const willRun = target?.finallyTask ? [nodeId] : p.runNodeIds
+  const runText = willRun.map(labelOf).join('、')
+  const reuseText = p.reusedNodeIds.map(labelOf).join('、') || '无'
+
+  await ElMessageBox.confirm(
+    `将执行：${runText}；沿用：${reuseText}。`
+      + '⚠️ 连线只表示执行顺序，不表示数据依赖；沿用的是上一次运行结束时的工作区状态。',
+    '从断点继续',
+    { type: 'warning', confirmButtonText: '继续', cancelButtonText: '算了' },
+  )
+  try {
+    const newRunName = await pipelineApi.retryRun(r.runName, nodeId, effectiveTenantId.value)
+    ElMessage.success(`已触发重试：${newRunName}`)
+    await router.push({ path: '/pipelines/run', query: { name: newRunName, id: r.pipelineId } })
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
 /** DAG：画布 + 每个节点的状态（状态按节点 **id** 对） */
 const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
   const c = canvas.value
@@ -158,7 +238,15 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
         config: n.config,
         // 收尾标记在运行详情里也要看得出来（它与节点状态无关，是画布属性）
         finallyTask: n.finallyTask === true,
-        status: st[n.id],
+        status: maskedSet.value.has(n.id)
+          ? 'MASKED'
+          : st[n.id] ?? (reusedSet.value.has(n.id)
+              ? 'REUSED'
+              : (run.value?.parentRunId ? 'NOT_RETRIED' : undefined)),
+        retryable: plan.value?.retryable === true
+          ? plan.value.retryableNodes.includes(n.id)
+          : false,
+        onRetry: retryNode,
         // 正在看它的日志 —— 卡片描边跟着亮，免得"日志区换了但不知道换成了谁"
         selected: n.id === logNodeId.value,
       },
@@ -342,6 +430,8 @@ async function init(): Promise<void> {
   // 卡片会退化成通用图标 + 原始 type（`git`），看着像"没名字"
   loadNodeTypes()
   await load()
+  await loadPlan()
+  void loadParentRunName()
   // 「没留下画布」时要退回画当前的定义 —— 得先把流水线定义取回来
   const id = run.value?.pipelineId || pipelineId.value
   if (id && !run.value?.canvasJson) {
@@ -365,6 +455,8 @@ watch(runName, async () => {
   logLive.value = false
   liveSteps.value = []
   runYamlText.value = ''
+  plan.value = null
+  parentRunName.value = ''
   await init()
 })
 
@@ -431,6 +523,8 @@ async function refreshRunning(): Promise<void> {
       // 归档了：现抓的落点已经没了（Pod 被删），状态改由 stepsJson 提供
       liveSteps.value = []
       stopPolling()
+      // 运行刚终结 → 服务端现在能给出重试计划了
+      void loadPlan()
       // ⭐ 收尾：运行一结束就**整段重取**一次日志 —— 归档内容才是权威。
       //    增量追到的可能差最后几行（Pod 刚被删），而且这段追出来的文本与归档那份
       //    本来就不必逐字节一致；整段换掉之后前后看到的东西才对得上。
@@ -599,6 +693,14 @@ function jumpToLogBottom(): void {
       <el-button link type="primary" @click="backToList">← 运行历史</el-button>
       <span class="run-name">{{ runName }}</span>
       <el-tag v-if="run" :type="tagType(run.status)" size="small">{{ run.status }}</el-tag>
+      <span v-if="(run?.attemptNo ?? 1) > 1" class="attempt">
+        第 {{ run?.attemptNo }} 次尝试
+        <a
+          v-if="run?.parentRunId && parentRunName"
+          href="javascript:void(0)"
+          @click="void router.push({ path: '/pipelines/run', query: { name: parentRunName, id: run?.pipelineId } })"
+        >· 源自上一次运行</a>
+      </span>
       <span class="dim">
         {{ fmtDate(run?.startTime) }} → {{ run?.completionTime ? fmtDate(run.completionTime) : '（未完）' }}
       </span>
@@ -706,6 +808,18 @@ function jumpToLogBottom(): void {
 .run-name {
   font-weight: 600;
   word-break: break-all;
+}
+.attempt {
+  font-size: 12px;
+  color: var(--info);
+}
+.attempt a {
+  margin-left: 4px;
+  color: var(--info);
+  text-decoration: none;
+}
+.attempt a:hover {
+  text-decoration: underline;
 }
 .spacer {
   flex: 1;
