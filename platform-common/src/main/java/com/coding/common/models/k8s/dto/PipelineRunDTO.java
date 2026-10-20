@@ -34,6 +34,25 @@ public class PipelineRunDTO extends BaseResources {
     private java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections;
 
     /**
+     * 本次运行绑定的工作区 PVC 名。**创建时必填**：
+     * 首跑由 platform-api 生成 {@code platform-pipeline-ws-<runName>}；重试沿用父运行那一块。
+     *
+     * <p>⚠️ 名字由 platform-api 定，k8s-server 只负责「新建就建、沿用就校验并刷新 TTL」——
+     * 名字只有一个落点，两个模块不需要各自拼前缀。
+     */
+    @Schema(description = "工作区 PVC 名。create 时必填")
+    private String workspacePvc;
+
+    /**
+     * 这块工作区是**沿用**的（重试）还是本次新建的（首跑）。
+     *
+     * <p>⚠️ 必须区分：沿用而卷不存在时**不能重建一块空的** —— 那会让重试在一个空工作区上跑，
+     * 看起来成功、产物却全缺。此时要如实报「工作区已过期」。
+     */
+    @Schema(description = "true = 沿用具名工作区（重试）；false = 本次新建")
+    private boolean reuseWorkspace;
+
+    /**
      * 这个集群的 Tekton 允不允许一个 TaskRun 挂两块 PVC 类 workspace
      * （{@code coschedule=pipelineruns}；见 {@code docs/development/cluster-prerequisites.md}）。
      *
