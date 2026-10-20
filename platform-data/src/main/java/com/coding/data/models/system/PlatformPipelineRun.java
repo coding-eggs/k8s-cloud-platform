@@ -71,5 +71,23 @@ public class PlatformPipelineRun {
      */
     private String runYaml;
 
+    /** 重试来源运行 id；NULL = 首跑。 */
+    private String parentRunId;
+
+    /** 同一条重试链的第几次尝试；首跑 = 1。 */
+    private Integer attemptNo;
+
+    /** 用户点的那个断点（画布节点 id）。范围不存这里 —— 由 steps_json 与画布共同还原。 */
+    private String retryFromNode;
+
+    /** 本次运行**实际不跑**的节点集合（JSON 数组，闭包展开后）。首跑与重试各一份。 */
+    private String maskedNodesJson;
+
+    /** 重试时沿用的节点（JSON 数组，父运行里已成功）。首跑为 NULL。 */
+    private String reusedNodesJson;
+
+    /** 本次运行（链）使用的共享工作区 PVC 名。成功即删；失败保留到 TTL。 */
+    private String workspacePvc;
+
     private Date createdAt;
 }

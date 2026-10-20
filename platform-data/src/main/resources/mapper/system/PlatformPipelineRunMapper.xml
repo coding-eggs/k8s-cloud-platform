@@ -16,27 +16,39 @@
     <result column="completion_time" jdbcType="VARCHAR"     property="completionTime" />
     <result column="steps_json"      jdbcType="LONGVARCHAR" property="stepsJson" />
     <result column="run_yaml"        jdbcType="LONGVARCHAR" property="runYaml" />
+    <result column="parent_run_id"      jdbcType="VARCHAR"     property="parentRunId" />
+    <result column="attempt_no"         jdbcType="INTEGER"     property="attemptNo" />
+    <result column="retry_from_node"    jdbcType="VARCHAR"     property="retryFromNode" />
+    <result column="masked_nodes_json"  jdbcType="LONGVARCHAR" property="maskedNodesJson" />
+    <result column="reused_nodes_json"  jdbcType="LONGVARCHAR" property="reusedNodesJson" />
+    <result column="workspace_pvc"      jdbcType="VARCHAR"     property="workspacePvc" />
     <result column="created_at"      jdbcType="TIMESTAMP"   property="createdAt" />
   </resultMap>
 
   <sql id="Base_Column_List">
     id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by,
-    start_time, completion_time, steps_json, run_yaml, created_at
+    start_time, completion_time, steps_json, run_yaml, created_at,
+    parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc
   </sql>
 
   <!-- 列表用：**不带 canvas_json / run_yaml 两个大字段** —— 一次历史几十条，
-       每条都背着画布与 YAML 只是白白撑大响应。详情走 selectByRunName（那是全列）。 -->
+       每条都背着画布与 YAML 只是白白撑大响应。详情走 selectByRunName（那是全列）。
+       重试的两个 JSON 大字段同理不进列表；attempt_no/parent_run_id 要进（「第 N 次」徽标）。 -->
   <sql id="List_Column_List">
     id, pipeline_id, cluster_id, namespace, run_name, status, reason, triggered_by,
-    start_time, completion_time, steps_json, created_at
+    start_time, completion_time, steps_json, created_at, parent_run_id, attempt_no
   </sql>
 
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformPipelineRun">
     insert into platform_pipeline_run
-      (id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by)
+      (id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by,
+       parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc)
     values (#{id,jdbcType=VARCHAR}, #{pipelineId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},
       #{namespace,jdbcType=VARCHAR}, #{canvasJson,jdbcType=LONGVARCHAR}, #{runName,jdbcType=VARCHAR},
-      #{status,jdbcType=VARCHAR}, #{reason,jdbcType=VARCHAR}, #{triggeredBy,jdbcType=VARCHAR})
+      #{status,jdbcType=VARCHAR}, #{reason,jdbcType=VARCHAR}, #{triggeredBy,jdbcType=VARCHAR},
+      #{parentRunId,jdbcType=VARCHAR}, #{attemptNo,jdbcType=INTEGER},
+      #{retryFromNode,jdbcType=VARCHAR}, #{maskedNodesJson,jdbcType=LONGVARCHAR},
+      #{reusedNodesJson,jdbcType=LONGVARCHAR}, #{workspacePvc,jdbcType=VARCHAR})
   </insert>
 
   <!-- 归档回写：只写结果列。run_name / pipeline_id / cluster_id / namespace / canvas_json
