@@ -145,6 +145,14 @@ public final class AuditAction {
     public static final String PIPELINE_RUN_DELETE = "pipeline:run-delete";
 
     /**
+     * 清掉待重试工作区。
+     *
+     * <p>它值得进审计：清掉之后**那些运行就再也不能从断点继续了**，而用户看到的现象是
+     * 「重试按钮突然报工作区已过期」—— 不记下来就只能猜是谁清的。
+     */
+    public static final String PIPELINE_RETRY_WORKSPACE_CLEAR = "pipeline:retry-workspace-clear";
+
+    /**
      * 全部动作码（常量类的反射视图），按字母序。
      *
      * <p><b>为什么用反射而不是再手写一份 List</b>：手写那份会与常量漂移（加了常量忘了加进 List），

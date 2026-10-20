@@ -320,6 +320,26 @@ public class PipelineRunService {
         }
     }
 
+    /** 本命名空间里保留中的工作区（给列表页那一行）。 */
+    public com.coding.common.models.pipeline.PipelineRetryWorkspacesDTO retryWorkspaces(
+            String clusterId, String namespace, String tenantId) {
+        access.assertAccessible(clusterId, namespace);
+        List<com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO> items =
+                k8s.listRetryWorkspaces(clusterId, tenantId, namespace);
+        long total = items.stream()
+                .mapToLong(com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO::sizeBytes).sum();
+        return new com.coding.common.models.pipeline.PipelineRetryWorkspacesDTO(items.size(), total, items);
+    }
+
+    /** 清掉全部待重试工作区。⚠️ 清掉之后那些运行就**不能**再从断点继续了。 */
+    public void clearRetryWorkspaces(String clusterId, String namespace, String tenantId) {
+        access.assertAccessible(clusterId, namespace);
+        for (com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO item
+                : k8s.listRetryWorkspaces(clusterId, tenantId, namespace)) {
+            k8s.deleteRetryWorkspace(clusterId, tenantId, namespace, item.name());
+        }
+    }
+
     /**
      * 取消一次运行。**先抓日志、再取消**（spec §4.2）—— 顺序反了那次运行的日志就没了
      * （Tekton 取消时会自己把 Pod 删掉）。

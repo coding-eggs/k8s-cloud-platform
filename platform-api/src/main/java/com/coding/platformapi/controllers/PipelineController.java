@@ -5,6 +5,7 @@ import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.pipeline.PipelineRunLogDTO;
 import com.coding.common.models.pipeline.PipelineRetryPlanDTO;
+import com.coding.common.models.pipeline.PipelineRetryWorkspacesDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformPipelineRun;
@@ -229,6 +230,29 @@ public class PipelineController {
             description = "哪些节点能点、点了会跑哪些、每个不可点节点的原因。前端据此决定按钮与确认框")
     public ResponseData<PipelineRetryPlanDTO> retryPlan(@RequestBody RetryPlanRequest request) {
         return new ResponseData<>(runService.retryPlan(request.runName()));
+    }
+
+    /** 工作区端点的入参（与缓存清理同形）。 */
+    public record RetryWorkspacesRequest(String clusterId, String namespace, String tenantId) {
+    }
+
+    @PostMapping("/retry-workspaces")
+    @Operation(summary = "待重试工作区",
+            description = "本命名空间里保留中的平台工作区 PVC（失败运行留下来的）；给列表页显示数量与占用")
+    public ResponseData<PipelineRetryWorkspacesDTO> retryWorkspaces(
+            @RequestBody RetryWorkspacesRequest request) {
+        return new ResponseData<>(runService.retryWorkspaces(request.clusterId(), request.namespace(),
+                auth.effectiveTenantId(request.tenantId())));
+    }
+
+    @PostMapping("/retry-workspaces/clear")
+    @Operation(summary = "清理待重试工作区",
+            description = "**不可恢复地**删掉这些卷：之后对应运行不能再从断点继续，只能整条重跑")
+    @Auditable(action = AuditAction.PIPELINE_RETRY_WORKSPACE_CLEAR, target = "#request.namespace")
+    public ResponseData<Void> clearRetryWorkspaces(@RequestBody RetryWorkspacesRequest request) {
+        runService.clearRetryWorkspaces(request.clusterId(), request.namespace(),
+                auth.effectiveTenantId(request.tenantId()));
+        return new ResponseData<>();
     }
 
     @PostMapping("/run/cancel")

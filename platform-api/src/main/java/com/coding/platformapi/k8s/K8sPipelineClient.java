@@ -94,6 +94,35 @@ public class K8sPipelineClient {
         return k8s.create(dto);
     }
 
+    /** 待重试工作区：本命名空间里带平台工作区标签的 PVC（窄投影）。 */
+    public List<com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO> listRetryWorkspaces(
+            String clusterId, String tenantId, String namespace) {
+        com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO query =
+                new com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO();
+        query.setClusterId(clusterId);
+        query.setTenantId(tenantId);
+        query.setNamespace(namespace);
+        query.setLabelSelector("platform.pipeline/role=workspace");
+        return k8s.list(query).stream().map(p -> new com.coding.common.models.pipeline.PipelineRetryWorkspaceDTO(
+                p.getName(),
+                p.getLabels() == null ? null : p.getLabels().get("platform.pipeline/run"),
+                p.getCreationTime(),
+                p.getAnnotations() == null ? null
+                        : String.valueOf(p.getAnnotations().get("platform.pipeline/retain-until")),
+                p.getStorage() == null ? 0L : p.getStorage().longValue())).toList();
+    }
+
+    /** 删一块待重试工作区（按 PVC 名）。 */
+    public void deleteRetryWorkspace(String clusterId, String tenantId, String namespace, String name) {
+        com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO dto =
+                new com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO();
+        dto.setClusterId(clusterId);
+        dto.setTenantId(tenantId);
+        dto.setNamespace(namespace);
+        dto.setName(name);
+        k8s.delete(dto);
+    }
+
     /** 读一次运行的当前状态（归档时抓快照用）。不存在返回 null。 */
     public PipelineRunDTO getRun(String clusterId, String tenantId, String namespace, String name) {
         PipelineRunDTO dto = new PipelineRunDTO();
