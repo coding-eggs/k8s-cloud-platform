@@ -182,16 +182,26 @@ public class PipelineController {
         return new ResponseData<>(credentialService.pipelineUsableRegistryConnections());
     }
 
+    /**
+     * 触发一次的入参。
+     *
+     * <p>字段名保持 {@code id}（审计 target 与前端都在用）；{@code maskedNodeIds} 空/缺省 = 不屏蔽。
+     */
+    public record RunRequest(String id, String tenantId, List<String> maskedNodeIds) {
+    }
+
     @PostMapping("/run")
     @Operation(summary = "触发一次运行",
             description = "先生成 run 名并落库、再创建集群对象（幂等键从源头就有）。"
+                    + "`maskedNodeIds` 里的节点**连同其全部下游**本次不执行；"
                     + "画布引用的每条连接都必须已授权，否则当场拒（**不静默降级成匿名**）")
     @Auditable(action = AuditAction.PIPELINE_RUN, target = "#request.id")
-    public ResponseData<String> run(@RequestBody PipelineDTO request) {
-        PipelineDTO pipeline = pipelineService.get(request.getId());   // 顺带校验归属
+    public ResponseData<String> run(@RequestBody RunRequest request) {
+        PipelineDTO pipeline = pipelineService.get(request.id());   // 顺带校验归属
         return new ResponseData<>(runService.run(pipeline, currentUser(),
                 new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(),
-                        auth.effectiveTenantId(request.getTenantId()))));
+                        auth.effectiveTenantId(request.tenantId())),
+                request.maskedNodeIds() == null ? List.of() : request.maskedNodeIds()));
     }
 
     @PostMapping("/run/cancel")

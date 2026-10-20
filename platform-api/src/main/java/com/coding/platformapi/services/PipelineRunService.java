@@ -24,6 +24,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.List;
@@ -87,18 +88,30 @@ public class PipelineRunService {
         this.access = access;
     }
 
+    /** 兼容旧调用点：不屏蔽任何节点。 */
+    public String run(PipelineDTO pipeline, String user, PipelineRunContext ctx) {
+        return run(pipeline, user, ctx, List.of());
+    }
+
     /**
      * 触发一次运行。
      *
-     * @param pipeline 已经载入并校验过归属的流水线定义
-     * @param user     触发人（审计与运行历史都用它）
+     * @param pipeline       已经载入并校验过归属的流水线定义
+     * @param user           触发人（审计与运行历史都用它）
+     * @param maskedNodeIds  本次要屏蔽的节点（**连同全部下游**）；空 = 全跑
      * @return 集群里的 PipelineRun 名（= 归档幂等键）
      */
-    public String run(PipelineDTO pipeline, String user, PipelineRunContext ctx) {
-        // ① 解析画布里引用到的连接：**逐条校授权 + 解密**（绕过前端直接打接口也一样）。
-        //    解密出来的东西只交给 k8s-server 建 Secret，不进任何能被用户看到的地方。
-        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections =
-                resolveConnections(pipeline.getCanvasJson());
+    public String run(PipelineDTO pipeline, String user, PipelineRunContext ctx,
+                      List<String> maskedNodeIds) {
+        String canvas = pipeline.getCanvasJson();
+        Set<String> masked = PipelineCanvasMask.maskedClosure(canvas, maskedNodeIds);
+        // ⚠️ 落库的是**完整画布**（详情页要画全图）；发给 k8s-server 的是**裁剪后的子画布**。
+        //    这两者从本批起有意不同，别以为写错了。
+        String toRun = PipelineCanvasMask.trim(canvas, allBut(canvas, masked), null);
+
+        // ① 解析连接：**逐条校授权 + 解密**（绕过前端直接打接口也一样）。
+        //    只解析**本次真要跑**的子画布 —— 被屏蔽节点的连接不要求授权（它这次不跑）。
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(toRun);
 
         // ② 先生成名字：**幂等键从源头就有**
         String runName = generateRunName(pipeline.getName());
@@ -110,8 +123,11 @@ public class PipelineRunService {
         row.setPipelineId(pipeline.getId());
         row.setClusterId(ctx.clusterId());
         row.setNamespace(ctx.namespace());
-        row.setCanvasJson(pipeline.getCanvasJson());
+        row.setCanvasJson(canvas);
         row.setRunName(runName);
+        row.setWorkspacePvc(workspacePvcName(runName));
+        row.setMaskedNodesJson(masked.isEmpty() ? null : jsonArray(masked));
+        row.setAttemptNo(1);
         row.setStatus("RUNNING");
         row.setTriggeredBy(user);
         runMapper.insert(row);
@@ -119,13 +135,39 @@ public class PipelineRunService {
         // ④ 再创建。失败就把刚写的那行撤掉 —— 库里不能留一条 RUNNING 的孤儿
         try {
             k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
-                    runName, pipeline.getCanvasJson(), connections);
+                    runName, toRun, connections, workspacePvcName(runName), false);
         } catch (RuntimeException e) {
             log.warn("创建 PipelineRun 失败，回滚刚落的库：{}", runName, e);
             runMapper.deleteById(row.getId());
             throw e;
         }
         return runName;
+    }
+
+    /** 平台给这条运行（链）定的工作区 PVC 名。 */
+    public static String workspacePvcName(String runName) {
+        return "platform-pipeline-ws-" + runName;
+    }
+
+    /** 画布全部节点去掉屏蔽闭包 —— 本次要跑的节点集合。 */
+    private static Set<String> allBut(String canvasJson, Set<String> masked) {
+        Set<String> keep = new LinkedHashSet<>(PipelineCanvasMask.idsOf(PipelineCanvasMask.parse(canvasJson)));
+        keep.removeAll(masked);
+        return keep;
+    }
+
+    /** 节点 id 列表 → JSON 数组（库里的两列都是这个形状）。 */
+    static String jsonArray(java.util.Collection<String> ids) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        for (String id : ids) {
+            if (!first) {
+                sb.append(',');
+            }
+            sb.append('"').append(id).append('"');
+            first = false;
+        }
+        return sb.append(']').toString();
     }
 
     /**

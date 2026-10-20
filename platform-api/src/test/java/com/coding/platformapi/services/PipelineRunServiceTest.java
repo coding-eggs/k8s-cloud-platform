@@ -21,6 +21,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -72,21 +73,21 @@ class PipelineRunServiceTest {
     void theRunNameIsGeneratedAndPersistedBeforeTheClusterCall() {
         // ⭐ spec §4.5①：run_name 由平台先生成 → 幂等键从源头就有，
         //    也不会出现「集群里有对象、库里没记录」的孤儿
-        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any()))
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean()))
                 .thenReturn(new PipelineRunDTO());
 
         String runName = svc.run(pipeline(canvas("conn-1")), "alice", ctx);
 
         InOrder inOrder = inOrder(runMapper, k8s);
         inOrder.verify(runMapper).insert(any());                                  // 先落库
-        inOrder.verify(k8s).createRun(anyString(), any(), anyString(), anyString(), anyString(), any());
+        inOrder.verify(k8s).createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean());
         assertThat(runName).isNotBlank().startsWith("my-app-");
     }
 
     @Test
     void aFailedClusterCreateDoesNotLeaveARunningOrphan() {
         // ⭐ 先落库再创建的代价要在这里堵住
-        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any()))
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean()))
                 .thenThrow(new CloudPlatformException(EnumResponseType.ERROR, "boom"));
 
         assertThatThrownBy(() -> svc.run(pipeline(canvas("conn-1")), "alice", ctx))
@@ -112,7 +113,7 @@ class PipelineRunServiceTest {
                 .hasMessageContaining("未授权");
 
         verify(runMapper, never()).insert(any());
-        verify(k8s, never()).createRun(anyString(), any(), anyString(), anyString(), anyString(), any());
+        verify(k8s, never()).createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean());
     }
 
     @Test
@@ -636,5 +637,90 @@ class PipelineRunServiceTest {
         when(runMapper.selectByRunName("nope")).thenReturn(null);
 
         assertThatThrownBy(() -> svc.runYaml("nope", ctx)).isInstanceOf(CloudPlatformException.class);
+    }
+
+    // ---- 触发时的节点屏蔽 ----
+
+    @Test
+    void theMaskedClosureIsPersistedAndTheTrimmedCanvasIsSent() {
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean()))
+                .thenReturn(new PipelineRunDTO());
+        String canvas = """
+                {"nodes":[
+                  {"id":"a","type":"shell","config":{}},
+                  {"id":"b","type":"shell","config":{}},
+                  {"id":"c","type":"shell","config":{}}
+                ],"edges":[{"from":"a","to":"b"},{"from":"b","to":"c"}]}""";
+
+        // 只屏蔽 c（叶子）
+        svc.run(pipeline(canvas), "alice", ctx, List.of("c"));
+
+        ArgumentCaptor<PlatformPipelineRun> row = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).insert(row.capture());
+        assertThat(row.getValue().getMaskedNodesJson()).isEqualTo("[\"c\"]");
+        assertThat(row.getValue().getCanvasJson()).as("库里存完整画布").isEqualTo(canvas);
+        assertThat(row.getValue().getWorkspacePvc()).startsWith("platform-pipeline-ws-");
+
+        ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
+        verify(k8s).createRun(anyString(), any(), anyString(), anyString(), sent.capture(), any(),
+                anyString(), anyBoolean());
+        assertThat(sent.getValue()).doesNotContain("\"id\":\"c\"").contains("\"id\":\"a\"");
+    }
+
+    @Test
+    void maskingAMiddleNodeDropsItsWholeSubtreeFromTheRun() {
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean()))
+                .thenReturn(new PipelineRunDTO());
+        String canvas = """
+                {"nodes":[{"id":"a","type":"shell","config":{}},
+                          {"id":"b","type":"shell","config":{}},
+                          {"id":"c","type":"shell","config":{}}],
+                 "edges":[{"from":"a","to":"b"},{"from":"b","to":"c"}]}""";
+
+        svc.run(pipeline(canvas), "alice", ctx, List.of("b"));
+
+        ArgumentCaptor<PlatformPipelineRun> row = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).insert(row.capture());
+        assertThat(row.getValue().getMaskedNodesJson()).isEqualTo("[\"b\",\"c\"]");
+    }
+
+    @Test
+    void maskingEveryRunnableNodeIsRefused() {
+        String canvas = """
+                {"nodes":[{"id":"a","type":"shell","config":{}}],"edges":[]}""";
+        assertThatThrownBy(() -> svc.run(pipeline(canvas), "alice", ctx, List.of("a")))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(runMapper, never()).insert(any());
+    }
+
+    @Test
+    void connectionsAreResolvedFromTheTrimmedCanvasOnly() {
+        // 被屏蔽节点引用的连接不该因为「这次不跑」还要求授权
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean()))
+                .thenReturn(new PipelineRunDTO());
+        String canvas = """
+                {"nodes":[
+                  {"id":"a","type":"git","config":{"connectionId":"conn-1"}},
+                  {"id":"b","type":"git","config":{"connectionId":"conn-2"}}
+                ],"edges":[]}""";
+
+        svc.run(pipeline(canvas), "alice", ctx, List.of("b"));
+
+        verify(credentials).resolveForPipeline("conn-1", "GIT");
+        verify(credentials, never()).resolveForPipeline("conn-2", "GIT");
+    }
+
+    @Test
+    void noMaskMeansNoMaskedColumnAndTheFullCanvasGoesOut() {
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any(), anyString(), anyBoolean()))
+                .thenReturn(new PipelineRunDTO());
+        String canvas = """
+                {"nodes":[{"id":"a","type":"shell","config":{}}],"edges":[]}""";
+
+        svc.run(pipeline(canvas), "alice", ctx, List.of());
+
+        ArgumentCaptor<PlatformPipelineRun> row = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).insert(row.capture());
+        assertThat(row.getValue().getMaskedNodesJson()).isNull();
     }
 }

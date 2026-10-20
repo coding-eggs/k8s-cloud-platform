@@ -80,7 +80,8 @@ public class K8sPipelineClient {
      */
     public PipelineRunDTO createRun(String clusterId, String tenantId, String namespace,
                                    String runName, String canvasJson,
-                                   java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections) {
+                                   java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections,
+                                   String workspacePvc, boolean reuseWorkspace) {
         PipelineRunDTO dto = new PipelineRunDTO();
         dto.setClusterId(clusterId);
         dto.setTenantId(tenantId);
@@ -88,6 +89,8 @@ public class K8sPipelineClient {
         dto.setName(runName);
         dto.setPipelineCanvasJson(canvasJson);
         dto.setConnections(connections);
+        dto.setWorkspacePvc(workspacePvc);
+        dto.setReuseWorkspace(reuseWorkspace);
         return k8s.create(dto);
     }
 
