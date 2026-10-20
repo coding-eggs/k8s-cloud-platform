@@ -741,7 +741,9 @@
 - [x] S3.6.4 组件 tab 的安装 / 升级与进度视图 —— 批①（2026-10-17）
 - [ ] S3.6.5 逐个组件的配置契约与功能级验收（Prometheus 的 selector / externalLabels / remoteWrite 是重点）
   —— **已验收 6/7**：metrics-server、prometheus-operator（含 Thanos）、tekton、otel-operator（含 Tempo）、
-  cert-manager、istio（含 Gateway API）；**剩 calico**
+  cert-manager、istio（含 Gateway API）；**剩 calico**。
+  2026-10-21 裁定：calico 在管理集群只能做「已装 → 只读 + 探测 + Calico 页面」验收（外部安装、非 Helm），
+  **安装路径留待业务集群/裸集群实测**，本版不再等它（见下方收口记录）。
 
 **brainstorming 已定**：只做目录内 11 条；安装 + 升级（不做卸载/回滚按钮）；统一 Helm 执行器
 （含 thin chart）；chart 内置进 k8s-server；集群画像区分 management / business（Thanos 挂
@@ -814,6 +816,28 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 >
 > **部署**：先重放 `V2026_10_18_1`（同批①），重建 **k8s-server + platform-api + platform-web**。
 > `istio` 安装/重放会额外创建 `istio-system/external-gateway` Gateway CR（不再需要手工维护）。
+
+> **✅ S3.6 本版收口（2026-10-21）**
+>
+> - **Thanos 保留期下限校验（`8fd3619`）**：用户把三档保留期都填 `1d` → helm 装成功、
+>   `platform-thanos-compactor` 却 CrashLoopBackOff，而平台操作记录是 SUCCESS。新增 `ThanosRetention`
+>   （raw ≥ 40h、5m ≥ 10d，照抄 thanos v0.42.4 `cmd/thanos/compact.go`；1h 无下限），在**下发 helm 之前**
+>   校验，且**按上次成功快照重放的路径同样校验**（否则坏值永远修不好）；前端同规则即时拦截并显示下限。
+>   部署：只需重建 **platform-api + platform-web**。
+> - **排障实锤（通用坑，任何组件都可能撞）**：`podManagementPolicy: OrderedReady`（默认）的 StatefulSet，
+>   Pod 未 Running&Ready 时控制器在 `processReplica` 提前 return，**永远走不到"删旧 revision Pod"那段**
+>   → 新模板永远不生效。表现：Helm `--wait` 超时、`--rollback-on-failure` 回滚到同样崩溃的旧 revision
+>   也超时（history 连刷 failed），而 StatefulSet 的 `currentRevision` 已是新 hash、Pod 还挂在旧 hash 上。
+>   **解法：手工删 Pod**（`kubectl -n <ns> delete pod <sts>-0`），控制器按新模板重建。
+> - **Calico 实测结论**：管理集群的 Calico 是 `kubectl apply` 的 tigera-operator（operator v1.38.6 /
+>   Calico 3.30.3），**不是 Helm 装的**（无 `meta.helm.sh` 注解，`helm list` 无记录）；
+>   现有 `Installation/default` = `10.244.0.0/16` + `VXLANCrossSubnet`。
+>   `helm template` + `kubectl diff`（server-side dry-run，零风险）证明 recipe 的 Installation 是
+>   **"空集群最小值"**：会洗掉 ipPool 的 blockSize / name / natOutgoing / nodeSelector / allowedUses，
+>   并把 `kubeletVolumePluginPath` 从 `/var/lib/kubelet` 改成 `None` → **对已装集群是破坏性的**，
+>   管理集群上不能做安装验证（adoption 后还会升级 Calico 3.30.3 → 3.33.0）。
+> - **用户裁定（2026-10-21）**：calico 这版就这样 —— 不改 recipe、不做「MANAGEMENT 画像取消 recipe」、
+>   不做「安装前检测其它 CNI（flannel/cilium…）并拒绝」；有业务集群时再验安装路径。
 
 ---
 
@@ -937,7 +961,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
-| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批①+批② 已实施**（2026-10-18/20；引擎 + 11 条组件 recipe + 组件文档）；**功能级验收 6/7，剩 calico**。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
+| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批①+批② 已实施**（2026-10-18/20；引擎 + 11 条组件 recipe + 组件文档）；**功能级验收 6/7，2026-10-21 收口**（calico 仅管理集群只读验收，安装路径待业务集群；本版不再等）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-21 的保留期校验只需后两个）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |
