@@ -2,7 +2,16 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
+import { useBackendServiceOptions } from '@/composables/useBackendServiceOptions'
 import type { K8sL4RouteRule, K8sRouteBackendRef } from '@/types'
+
+/** backendRefs 的下拉数据：命名空间只能选本租户的；Service 按 ns 懒加载 */
+const props = defineProps<{
+  namespaceOptions?: string[]
+  currentNamespace?: string
+  loadServices?: (namespace: string) => Promise<string[]>
+}>()
+const { servicesOf, isLoading, ensureServices, onNamespaceChange } = useBackendServiceOptions(props)
 
 /**
  * TLSRoute 的**规则表单**（只有后端列表；SNI 主机名在外壳，与其它 kind 的 hostnames 同一件事）。
@@ -105,8 +114,16 @@ defineExpose({ validate, setRules, toDto })
           <el-form-item label="后端（backendRefs）" required>
             <div class="list-rows">
               <div v-for="(b, bi) in r.backendRefs" :key="bi" class="list-row">
-                <el-input v-model="b.name" placeholder="Service 名" style="flex: 1" />
-                <el-input v-model="b.namespace" placeholder="命名空间（留空=本 ns）" style="width: 180px" />
+                <el-select v-model="b.name" filterable allow-create clearable placeholder="Service 名"
+                           style="flex: 1" :loading="isLoading(b.namespace)"
+                           @visible-change="(open: boolean) => open && ensureServices(b.namespace)"
+                       @focus="ensureServices(b.namespace)">
+                  <el-option v-for="s in servicesOf(b.namespace)" :key="s" :label="s" :value="s" />
+                </el-select>
+                <el-select v-model="b.namespace" clearable placeholder="命名空间（留空=本 ns）"
+                           style="width: 180px" @change="(ns: string) => { onNamespaceChange(b); ensureServices(ns) }">
+                  <el-option v-for="ns in namespaceOptions ?? []" :key="ns" :label="ns" :value="ns" />
+                </el-select>
                 <el-input-number v-model="b.port" :min="1" :max="65535" controls-position="right" placeholder="端口" style="width: 130px" />
                 <el-input-number v-model="b.weight" :min="0" :max="1000000" controls-position="right" placeholder="权重" style="width: 130px" />
                 <el-button v-if="r.backendRefs.length > 1" link type="danger" @click="removeBackend(r, bi)">删除</el-button>

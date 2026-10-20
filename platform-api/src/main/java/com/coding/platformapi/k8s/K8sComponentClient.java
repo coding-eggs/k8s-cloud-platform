@@ -2,6 +2,8 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.ExternalGatewayRequestDTO;
+import com.coding.common.models.k8s.dto.GatewayListenerDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
 import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
@@ -55,6 +57,23 @@ public class K8sComponentClient {
         body.setReleases(releases);
         return gateway.exchangeSlow(HttpMethod.POST, "/components/apply", null, body,
                 gateway.responseType(ComponentInstallResultDTO.class));
+    }
+
+    /**
+     * 对外入口 Gateway CR：组件负责创建并写死 Service 绑定（{@code spec.addresses}）。
+     * Gateway API CRD 缺失时 k8s-server 返回 false（跳过），不当作失败。
+     */
+    public boolean ensureExternalGateway(String clusterId, String namespace, String name,
+                                         String serviceName, List<GatewayListenerDTO> listeners) {
+        ExternalGatewayRequestDTO body = new ExternalGatewayRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setName(name);
+        body.setServiceName(serviceName);
+        body.setListeners(listeners);
+        Boolean ok = gateway.exchange(HttpMethod.POST, "/components/external-gateway", null, body,
+                gateway.responseType(Boolean.class));
+        return Boolean.TRUE.equals(ok);
     }
 
     /**

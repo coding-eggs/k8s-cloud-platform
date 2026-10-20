@@ -6,7 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
 import LabelEditor from '@/components/workload/LabelEditor.vue'
-import { gatewayApi, meshApi } from '@/api'
+import { gatewayApi, meshApi, secretApi } from '@/api'
 import { useResourceContext } from '@/stores/context'
 import {
   isWaypointClassName,
@@ -104,6 +104,26 @@ async function loadClasses(): Promise<void> {
     classLoading.value = false
   }
 }
+
+/** 证书候选：当前命名空间的 Secret（UI 只编辑 name；group/kind/namespace 原样回传） */
+const secretOptions = ref<string[]>([])
+
+async function loadSecrets(): Promise<void> {
+  if (!ready.value || !state.tenantId || !state.clusterId || !state.namespace) return
+  try {
+    const list = await secretApi.list({
+      tenantId: state.tenantId,
+      clusterId: state.clusterId,
+      namespace: state.namespace,
+    })
+    secretOptions.value = (list ?? []).map((s) => s.name).filter(Boolean).sort()
+  } catch {
+    secretOptions.value = [] // 拿不到就退化成手输（allow-create）
+  }
+}
+
+watch([() => ready.value, () => state.clusterId, () => state.namespace],
+  () => { void loadSecrets() }, { immediate: true })
 
 // ---------- 表单模型 ----------
 interface CertRow {
@@ -632,7 +652,8 @@ onMounted(() => {
           </el-form-item>
 
           <el-form-item v-if="tlsAllowed(l.protocol)" label="TLS 模式" required>
-            <el-select v-model="l.tlsMode" style="width: 200px">
+            <!-- HTTPS 只能是 Terminate（Gateway API 定义）；只有 TLS 协议需要选 Terminate / Passthrough -->
+            <el-select v-model="l.tlsMode" style="width: 200px" :disabled="l.protocol !== 'TLS'">
               <el-option label="Terminate（终止，需证书）" value="Terminate" />
               <el-option label="Passthrough（透传，不解密）" value="Passthrough" />
             </el-select>
@@ -642,7 +663,10 @@ onMounted(() => {
           <el-form-item v-if="l.tlsMode === 'Terminate'" label="证书引用（Secret 名）">
             <div class="list-rows">
               <div v-for="(r, ci) in l.certRefs" :key="ci" class="list-row">
-                <el-input v-model="r.name" placeholder="如 wildcard-example-com-tls" style="flex: 1" />
+                <el-select v-model="r.name" filterable allow-create clearable
+                           :placeholder="`选择 ${state.namespace ?? ''} 下的 TLS Secret`" style="flex: 1">
+                  <el-option v-for="s in secretOptions" :key="s" :label="s" :value="s" />
+                </el-select>
                 <el-button link type="danger" @click="removeCertRef(l, ci)">删除</el-button>
               </div>
               <el-button size="small" @click="addCertRef(l)">添加证书</el-button>

@@ -32,6 +32,11 @@ public class ComponentStatusDTO {
      * ⚠️ 这是 chart 版本，不是上面 {@code version} 的应用版本 —— 两套编号。
      */
     private List<String> availableVersions;
+    /**
+     * 组件包含的**每一个 release** 的 chart / 应用版本（含主 release 标记）。
+     * 单 release 组件只有一条；Istio 这类多 chart 安装单元按安装顺序列全。
+     */
+    private List<ComponentReleaseDTO> releases;
     /** 可编辑配置项（⚙️，来自 recipe）；契约值（🔒）不在其中 */
     private List<EditableFieldDTO> editableFields;
     /** 安装/升级成功后是否下发平台告警联动（Secret + AlertmanagerConfig） */

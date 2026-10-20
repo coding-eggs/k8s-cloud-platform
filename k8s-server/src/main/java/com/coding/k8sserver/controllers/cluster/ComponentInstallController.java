@@ -4,6 +4,8 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.ExternalGatewayRequestDTO;
+import com.coding.common.models.k8s.dto.GatewayListenerDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
 import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
@@ -17,6 +19,7 @@ import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
+import com.coding.k8sserver.components.ExternalGatewayObjects;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.OtelEsSecretObjects;
@@ -331,6 +334,76 @@ public class ComponentInstallController implements AccessBoundaryAware {
         client.genericKubernetesResources(OtelServiceMonitorObjects.CRD)
                 .inNamespace(request.getNamespace())
                 .resource(OtelServiceMonitorObjects.build(request.getNamespace()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>(true);
+    }
+
+    /**
+     * 对外入口 Gateway CR（平台安装 Istio 时下发）。
+     *
+     * <p>为什么由组件建：{@code istio-gateway} chart 只建 Deployment + Service；自建网关没有
+     * {@code <网关名>-istio} 这个默认 Service，istiod 的 status 控制器找不到承载它的 Service，
+     * 就是 {@code Programmed=False / AddressNotUsable}。组件负责建 CR 并写死
+     * {@code spec.addresses = <service>.<ns>.svc.cluster.local}，把这层绑定变成组件的责任。
+     *
+     * <p>listeners 来自安装表单的端口表（端口 = targetPort）；Gateway API CRD 缺失返回 false 跳过。
+     */
+    @PostMapping("/external-gateway")
+    @Operation(summary = "下发对外入口 Gateway CR（listeners + Service 绑定）",
+            description = "幂等 SSA；由 platform-api 在 Istio 安装/重放成功后调用；Gateway API CRD 缺失时返回 false")
+    public ResponseData<Boolean> externalGateway(@RequestBody ExternalGatewayRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getName())
+                || isBlank(request.getServiceName())
+                || request.getListeners() == null || request.getListeners().isEmpty()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "external-gateway 参数不完整");
+        }
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (GatewayListenerDTO l : request.getListeners()) {
+            if (isBlank(l.getName()) || !names.add(l.getName())
+                    || l.getPort() == null || l.getPort() < 1 || l.getPort() > 65535) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "Gateway listener 名称/端口不合法：" + l.getName());
+            }
+            String protocol = l.getProtocol() == null ? ""
+                    : l.getProtocol().toUpperCase(java.util.Locale.ROOT);
+            if (!ExternalGatewayObjects.PROTOCOLS.contains(protocol)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "不支持的监听协议：" + l.getProtocol());
+            }
+            l.setProtocol(protocol);
+            boolean tlsProtocol = "HTTPS".equals(protocol) || "TLS".equals(protocol);
+            if (!tlsProtocol) {
+                l.setTlsMode(null);
+                l.setTlsSecret(null);
+                continue;
+            }
+            String mode = l.getTlsMode() == null || l.getTlsMode().isBlank()
+                    ? ("HTTPS".equals(protocol) ? "Terminate" : "Passthrough")
+                    : l.getTlsMode();
+            if (!"Terminate".equals(mode) && !"Passthrough".equals(mode)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "不支持的 TLS 模式：" + l.getTlsMode());
+            }
+            if ("HTTPS".equals(protocol) && "Passthrough".equals(mode)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "HTTPS listener 只能是 Terminate：" + l.getName());
+            }
+            if ("Terminate".equals(mode) && isBlank(l.getTlsSecret())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "TLS Terminate 必须指定证书 Secret：" + l.getName());
+            }
+            l.setTlsMode(mode);
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        if (client.apiextensions().v1().customResourceDefinitions()
+                .withName(ExternalGatewayObjects.CRD_NAME).get() == null) {
+            return new ResponseData<>(false);
+        }
+        client.genericKubernetesResources(ExternalGatewayObjects.CRD)
+                .inNamespace(request.getNamespace())
+                .resource(ExternalGatewayObjects.build(request.getNamespace(), request.getName(),
+                        request.getServiceName(), request.getListeners()))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>(true);
     }

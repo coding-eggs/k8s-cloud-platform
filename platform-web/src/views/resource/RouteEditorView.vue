@@ -10,7 +10,7 @@ import GrpcRouteForm from '@/components/route/GrpcRouteForm.vue'
 import TcpRouteForm from '@/components/route/TcpRouteForm.vue'
 import TlsRouteForm from '@/components/route/TlsRouteForm.vue'
 import UdpRouteForm from '@/components/route/UdpRouteForm.vue'
-import { grpcRouteApi, httpRouteApi, tcpRouteApi, tlsRouteApi, udpRouteApi } from '@/api'
+import { grpcRouteApi, httpRouteApi, serviceApi, tcpRouteApi, tlsRouteApi, udpRouteApi } from '@/api'
 import { normalizeParentKind, useParentCandidates } from '@/composables/useParentCandidates'
 import { usePermission } from '@/stores/permission'
 import { useResourceContext } from '@/stores/context'
@@ -69,6 +69,25 @@ const ctx2 = computed(() => ({
   tenantId: state.tenantId!,
   clusterId: state.clusterId!,
 }))
+
+/**
+ * backendRefs 的 Service 候选：按行内命名空间懒加载。
+ * 上下文（tenantId/clusterId）由平台侧校验，返回的只会是本租户可见的 Service。
+ * 查询失败不阻断填写 —— 下拉仍允许手输（allow-create）。
+ */
+async function loadBackendServices(namespace: string): Promise<string[]> {
+  if (!state.tenantId || !state.clusterId || !namespace) return []
+  try {
+    const list = await serviceApi.list({
+      tenantId: state.tenantId,
+      clusterId: state.clusterId,
+      namespace,
+    })
+    return (list ?? []).map((s) => s.name).filter(Boolean).sort()
+  } catch {
+    return []
+  }
+}
 
 // ==================== 父资源块（搬迁自 HttpRouteEditorView，逐字保留） ====================
 
@@ -505,11 +524,26 @@ onMounted(() => { void load() })
           <FieldHelp tip="只接受 Host 匹配这些名字的请求（可含前缀通配 *）。留空表示该路由接受所有主机名 —— 注意这会与同监听器上的其它路由争抢流量。" />
         </el-form-item>
 
-        <HttpRouteForm v-if="kind === 'httproute'" ref="formEl" />
-        <GrpcRouteForm v-else-if="kind === 'grpcroute'" ref="formEl" />
-        <TcpRouteForm v-else-if="kind === 'tcproute'" ref="formEl" />
-        <TlsRouteForm v-else-if="kind === 'tlsroute'" ref="formEl" />
-        <UdpRouteForm v-else-if="kind === 'udproute'" ref="formEl" />
+        <HttpRouteForm v-if="kind === 'httproute'" ref="formEl"
+                       :namespace-options="namespacesOfCluster"
+                       :current-namespace="state.namespace ?? ''"
+                       :load-services="loadBackendServices" />
+        <GrpcRouteForm v-else-if="kind === 'grpcroute'" ref="formEl"
+                       :namespace-options="namespacesOfCluster"
+                       :current-namespace="state.namespace ?? ''"
+                       :load-services="loadBackendServices" />
+        <TcpRouteForm v-else-if="kind === 'tcproute'" ref="formEl"
+                      :namespace-options="namespacesOfCluster"
+                      :current-namespace="state.namespace ?? ''"
+                      :load-services="loadBackendServices" />
+        <TlsRouteForm v-else-if="kind === 'tlsroute'" ref="formEl"
+                      :namespace-options="namespacesOfCluster"
+                      :current-namespace="state.namespace ?? ''"
+                      :load-services="loadBackendServices" />
+        <UdpRouteForm v-else-if="kind === 'udproute'" ref="formEl"
+                      :namespace-options="namespacesOfCluster"
+                      :current-namespace="state.namespace ?? ''"
+                      :load-services="loadBackendServices" />
 
         <el-form-item class="submit-row">
           <el-button type="primary" :loading="saving" :disabled="!canSave" @click="submit">

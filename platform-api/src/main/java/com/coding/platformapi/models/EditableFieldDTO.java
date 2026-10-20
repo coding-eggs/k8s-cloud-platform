@@ -18,8 +18,11 @@ public class EditableFieldDTO {
     private String key;
     /** 展示文案 */
     private String label;
-    /** string / number / boolean / json */
+    /** string / number / boolean / json / storageClass / size / resources / select / ports */
     private String type;
+    /** type=select 的候选值；其余类型不出现 */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private java.util.List<String> options;
     /** recipe 里的默认值 */
     private Object defaultValue;
     /**

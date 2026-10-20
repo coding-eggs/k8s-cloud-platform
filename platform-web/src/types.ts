@@ -948,6 +948,19 @@ export type K8sClusterCapability = Record<string, string[]>
 export type K8sComponentState = 'INSTALLED_HEALTHY' | 'INSTALLED_UNHEALTHY' | 'NOT_INSTALLED' | 'UNKNOWN'
 
 /** 一条组件的完整状态（平台侧投影，`POST /cluster/components`） */
+/** 组件里一个 Helm release 的版本声明（组件页「版本」列的展开明细） */
+export interface K8sComponentRelease {
+  releaseName: string
+  namespace: string
+  /** 内置 chart 目录名 */
+  chartCode: string
+  chartVersion: string
+  /** chart 的应用版本（Chart.yaml 的 appVersion）；与 chart 版本是两套编号 */
+  appVersion?: string | null
+  /** 组件本体：availableVersions / 升级目标只认它 */
+  primary: boolean
+}
+
 export interface K8sComponentStatus {
   code: string
   name: string
@@ -961,6 +974,8 @@ export interface K8sComponentStatus {
   features: string[]
   /** 平台可安装的 chart 版本（空 = 没有 recipe，不支持安装）；⚠️ chart 版本，与上面 version 不是一套编号 */
   availableVersions?: string[]
+  /** 组件包含的每个 release 的 chart / 应用版本（单 release 组件只有一条；Istio 六个） */
+  releases?: K8sComponentRelease[]
   /** 可编辑配置项（⚙️，来自 recipe）；契约值（🔒）不在其中 */
   editableFields?: K8sEditableField[]
   /** 安装/升级成功后是否下发平台告警联动（Secret + AlertmanagerConfig） */
@@ -1133,9 +1148,13 @@ export interface K8sEditableField {
   label: string
   /**
    * 控件类型：storageClass = 集群 StorageClass 下拉；size = 带单位的容量输入；
+   * resources = requests/limits × cpu/memory 四格资源输入；
+   * select = 枚举下拉（候选值见 options）；ports = Service 端口列表表格；
    * json = 多行 JSON 文本域（其余按 defaultValue 的 JS 类型）
    */
-  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size'
+  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size' | 'resources' | 'select' | 'ports'
+  /** type=select 的候选值 */
+  options?: string[]
   defaultValue: unknown
   /** 当前生效值（上次成功操作的 values 快照）；无安装记录时**字段不出现**（null 也按无值处理）→ 表单用 defaultValue */
   currentValue?: unknown

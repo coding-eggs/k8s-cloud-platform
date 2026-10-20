@@ -14,6 +14,7 @@ import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
+import com.coding.platformapi.models.ComponentReleaseDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EditableFieldDTO;
 import com.coding.platformapi.models.EsConfig;
@@ -259,15 +260,29 @@ public class ClusterComponentService {
         if (recipe == null || recipe.releases().isEmpty()) {
             return;
         }
-        Object releaseValues = snapshot.get(recipe.releases().get(0).releaseName());
-        if (!(releaseValues instanceof Map<?, ?>)) {
+        // ⚠️ 可编辑字段分散在多个 release 里（Istio：istiod 的副本/资源 + external-gateway 的 Service
+        //    类型/端口）。**不能只读第一个 release** —— 合并 Gateway API 后排第一的是它，一个可编辑字段都没有，
+        //    症状是「装好了，再点编辑全是默认值」（2026-10-20 用户实报）。
+        List<Map<String, Object>> releaseValues = new ArrayList<>();
+        for (ReleaseSpec r : recipe.releases()) {
+            Object values = snapshot.get(r.releaseName());
+            if (values instanceof Map<?, ?> map) {
+                Map<String, Object> typed = (Map<String, Object>) map;
+                if (!releaseValues.contains(typed)) { // 同名 release 的两遍安装只算一份
+                    releaseValues.add(typed);
+                }
+            }
+        }
+        if (releaseValues.isEmpty()) {
             return;
         }
-        Map<String, Object> values = (Map<String, Object>) releaseValues;
         for (EditableFieldDTO f : s.getEditableFields()) {
-            Object current = valueAtPath(values, f.getKey());
-            if (current != null) {
-                f.setCurrentValue(current);
+            for (Map<String, Object> values : releaseValues) {
+                Object current = valueAtPath(values, f.getKey());
+                if (current != null) {
+                    f.setCurrentValue(current);
+                    break;
+                }
             }
         }
     }
@@ -397,17 +412,41 @@ public class ClusterComponentService {
     }
 
     /**
-     * 平台可安装的 chart 版本：**只取 recipe 的第一个 release** —— 它才是组件本体。
+     * 平台可安装的 chart 版本：**只取主 release**（组件本体）。
      *
-     * <p>其余 release 是随附底座（管理集群的 Prometheus recipe = platform-kps 92.10.1
-     * + platform-thanos 0.47.2）。把它们的版本混进来，UI 会显示
-     * 「已装 92.10.1，可升级到 0.47.2」—— 两个 chart 的版本根本不可比（2026-10-18 实锤）。
+     * <p>其余 release 是随附底座或依赖（管理集群的 Prometheus = platform-kps 92.10.1
+     * + platform-thanos 0.47.2；Istio = istiod 1.30.6 + Gateway API 1.6.2）。把它们的版本混进来，
+     * UI 会显示「已装 92.10.1，可升级到 0.47.2」「Istio 1.6.2」—— 不同 chart 的版本根本不可比
+     * （2026-10-18 / 2026-10-20 两次实锤）。主 release 由 recipe 的 {@code asPrimary()} 显式标记。
      */
     private static List<String> availableVersions(ComponentRecipe recipe) {
         if (recipe == null || recipe.releases().isEmpty()) {
             return List.of();
         }
-        return List.of(recipe.releases().get(0).chartVersion());
+        return List.of(ReleaseSpec.primaryChartVersion(recipe.releases()));
+    }
+
+    /** 逐个 release 的 chart / 应用版本（同名 release 的多遍安装只列一次，顺序即安装顺序） */
+    private static List<ComponentReleaseDTO> releases(ComponentRecipe recipe) {
+        if (recipe == null) {
+            return List.of();
+        }
+        Map<String, ComponentReleaseDTO> byName = new LinkedHashMap<>();
+        for (ReleaseSpec r : recipe.releases()) {
+            byName.putIfAbsent(r.releaseName(), release(r));
+        }
+        return List.copyOf(byName.values());
+    }
+
+    private static ComponentReleaseDTO release(ReleaseSpec r) {
+        ComponentReleaseDTO dto = new ComponentReleaseDTO();
+        dto.setReleaseName(r.releaseName());
+        dto.setNamespace(r.namespace());
+        dto.setChartCode(r.chartCode());
+        dto.setChartVersion(r.chartVersion());
+        dto.setAppVersion(r.appVersion());
+        dto.setPrimary(r.primary());
+        return dto;
     }
 
     /** 可编辑配置项（⚙️）：按各 release 声明的 editableValues 展平、同 key 去重 */
@@ -429,12 +468,17 @@ public class ClusterComponentService {
         f.setLabel(ComponentRecipeCatalog.labelOf(key));
         f.setType(typeOf(key, defaultValue));
         f.setDefaultValue(defaultValue);
+        List<String> options = ComponentRecipeCatalog.optionsOf(key);
+        if (!options.isEmpty()) {
+            f.setOptions(options);
+        }
         return f;
     }
 
     /**
      * 表单控件类型：存储的两个字段按 key 后缀特判（{@code storageClass} = 集群 StorageClass 下拉，
-     * {@code size} = 带单位的容量输入），其余按默认值的 Java 类型。
+     * {@code size} = 带单位的容量输入）；{@code resources} 走结构化四格（requests/limits × cpu/memory）；
+     * 其余按默认值的 Java 类型。
      */
     private static String typeOf(String key, Object defaultValue) {
         if (key.endsWith(".storageClassName")) {
@@ -442,6 +486,19 @@ public class ClusterComponentService {
         }
         if (key.endsWith(".requests.storage")) {
             return "size";
+        }
+        // 资源限制不做 JSON 文本域：前端拆成 requests/limits × cpu/memory 四个输入框，
+        // 提交时再拼回 {requests:{cpu,memory}, limits:{cpu,memory}}（key 与 values 路径一致）
+        if (key.equals("resources") || key.endsWith(".resources")) {
+            return "resources";
+        }
+        // Service 端口列表：表格编辑器（名称/端口/targetPort/协议/nodePort），不是 JSON 文本域
+        if (key.equals("service.ports") || key.endsWith(".service.ports")) {
+            return "ports";
+        }
+        // 枚举字段（候选值集中声明在 recipe 目录里）→ 下拉
+        if (!ComponentRecipeCatalog.optionsOf(key).isEmpty()) {
+            return "select";
         }
         if (defaultValue instanceof Boolean) {
             return "boolean";
@@ -464,6 +521,7 @@ public class ClusterComponentService {
         s.setFeatures(def.features());
         ComponentRecipe recipe = recipes.recipeOf(def.code(), profile);
         s.setAvailableVersions(availableVersions(recipe));
+        s.setReleases(releases(recipe));
         s.setEditableFields(editableFields(recipe));
         s.setPlatformAlerting(recipe != null && recipe.platformAlerting());
         boolean thanosRemoteWrite = recipe != null && recipe.thanosRemoteWrite();

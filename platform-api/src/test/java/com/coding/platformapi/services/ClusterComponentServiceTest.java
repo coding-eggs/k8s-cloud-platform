@@ -303,6 +303,116 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void istioResourcesRenderAsAFourFieldFormNotJson() {
+        // 资源限制不再用 JSON 文本域：前端按 type=resources 渲染 requests/limits × cpu/memory
+        // 四格输入，默认值仍带结构（表单用它预填）
+        ClusterComponentService svc = svc(List.of());
+
+        var resources = find(svc.status("c1"), "istio").getEditableFields().stream()
+                .filter(f -> f.getKey().equals("resources"))
+                .findFirst().orElseThrow();
+
+        assertThat(resources.getType()).isEqualTo("resources");
+        assertThat(resources.getLabel()).isEqualTo("资源限制");
+        assertThat(resources.getDefaultValue()).isEqualTo(Map.of(
+                "requests", Map.of("cpu", "100m", "memory", "256Mi"),
+                "limits", Map.of("cpu", "1", "memory", "1Gi")));
+    }
+
+    @Test
+    void istioDeclaresEveryChartAndItsApplicationVersion() {
+        // Istio 是 6 个 release 的安装单元：组件版本只认主 release istiod（1.30.6），
+        // Gateway API（1.6.2）是随附依赖。之前"取第一个 release"会把组件版本报成 1.6.2。
+        ClusterComponentService svc = svc(List.of());
+
+        var istio = find(svc.status("c1"), "istio");
+
+        assertThat(istio.getAvailableVersions()).containsExactly("1.30.6");
+        assertThat(istio.getReleases())
+                .extracting(com.coding.platformapi.models.ComponentReleaseDTO::getReleaseName)
+                .containsExactly("platform-gateway-api", "istio-base", "istiod",
+                        "istio-cni", "ztunnel", "external-gateway");
+        assertThat(istio.getReleases())
+                .filteredOn(com.coding.platformapi.models.ComponentReleaseDTO::isPrimary)
+                .singleElement()
+                .satisfies(r -> {
+                    assertThat(r.getReleaseName()).isEqualTo("istiod");
+                    assertThat(r.getChartVersion()).isEqualTo("1.30.6");
+                    assertThat(r.getAppVersion()).isEqualTo("1.30.6");
+                });
+        assertThat(istio.getReleases())
+                .filteredOn(r -> r.getReleaseName().equals("platform-gateway-api"))
+                .singleElement()
+                .satisfies(r -> {
+                    assertThat(r.getChartVersion()).isEqualTo("1.6.2");
+                    assertThat(r.isPrimary()).isFalse();
+                });
+    }
+
+    @Test
+    void externalGatewayServiceTypeAndPortsGetDedicatedWidgets() {
+        // Service 类型走下拉（不是自由文本）；端口列表走表格编辑器（不是 JSON 文本域）
+        ClusterComponentService svc = svc(List.of());
+
+        var fields = find(svc.status("c1"), "istio").getEditableFields();
+
+        var type = fields.stream().filter(f -> f.getKey().equals("service.type")).findFirst().orElseThrow();
+        assertThat(type.getLabel()).isEqualTo("Service 类型");
+        assertThat(type.getType()).isEqualTo("select");
+        assertThat(type.getOptions()).containsExactly("LoadBalancer", "NodePort", "ClusterIP");
+        assertThat(type.getDefaultValue()).isEqualTo("LoadBalancer");
+
+        var ports = fields.stream().filter(f -> f.getKey().equals("service.ports")).findFirst().orElseThrow();
+        assertThat(ports.getLabel()).isEqualTo("端口列表");
+        assertThat(ports.getType()).isEqualTo("ports");
+    }
+
+    @Test
+    void multiReleaseComponentsEchoEditableValuesFromTheOwningRelease() {
+        // Istio 的可编辑字段分散在 istiod（副本/资源）与 external-gateway（Service 类型/端口）两个 release；
+        // 旧实现只读「第一个 release」（Gateway API）的快照，编辑表单全部回退默认值（2026-10-20 用户实报「没有回显」）
+        PlatformComponentOperation op = new PlatformComponentOperation();
+        op.setComponentCode("istio");
+        op.setStatus("SUCCESS");
+        op.setValuesSnapshot("{"
+                + "\"platform-gateway-api\":{},"
+                + "\"istiod\":{\"replicaCount\":2,\"autoscaleEnabled\":false,"
+                + "\"resources\":{\"requests\":{\"cpu\":\"200m\",\"memory\":\"512Mi\"},"
+                + "\"limits\":{\"cpu\":\"2\",\"memory\":\"2Gi\"}}},"
+                + "\"external-gateway\":{\"service\":{\"type\":\"NodePort\",\"ports\":["
+                + "{\"name\":\"http2\",\"port\":80,\"targetPort\":8080,\"protocol\":\"TCP\"},"
+                + "{\"name\":\"admin\",\"port\":8443,\"targetPort\":8443,\"protocol\":\"TCP\","
+                + "\"nodePort\":30080}]}}}");
+        PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
+
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService management = mock(ClusterService.class);
+        when(management.requireProfile("c1")).thenReturn("BUSINESS");
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), management,
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        var fields = find(svc.status("c1"), "istio").getEditableFields();
+
+        // istiod 的字段
+        assertThat(fields).filteredOn(f -> f.getKey().equals("replicaCount"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getCurrentValue)
+                .containsExactly(2);
+        assertThat(fields).filteredOn(f -> f.getKey().equals("resources"))
+                .extracting(f -> String.valueOf(f.getCurrentValue()))
+                .anySatisfy(v -> assertThat(v).contains("200m").contains("2Gi"));
+        // external-gateway 的字段
+        assertThat(fields).filteredOn(f -> f.getKey().equals("service.type"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getCurrentValue)
+                .containsExactly("NodePort");
+        assertThat(fields).filteredOn(f -> f.getKey().equals("service.ports"))
+                .extracting(f -> String.valueOf(f.getCurrentValue()))
+                .anySatisfy(v -> assertThat(v).contains("admin").contains("30080"));
+    }
+
+    @Test
     void availableVersionsOnlyCarryTheComponentsOwnChart() {
         // 管理集群的 Prometheus recipe 里含随附的 platform-thanos 0.47.2。
         // 版本列表只能报组件本体（platform-kps 92.10.1）—— 混进 thanos 的版本会让 UI 出现

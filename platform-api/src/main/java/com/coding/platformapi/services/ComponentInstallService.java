@@ -3,6 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.GatewayListenerDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
@@ -248,8 +249,16 @@ public class ComponentInstallService {
             Map<String, Object> merged = DeepMerge.merge(pathNested(r, r.editableValues()), prev);
             merged = DeepMerge.merge(merged, pathNested(r, editable));
             merged = DeepMerge.merge(merged, r.contractValues());
+            // 存量快照的端口行没有 listener（该功能上线前装的）：按 recipe 默认行补齐，
+            // 否则重放时 Gateway CR 会因为没有 listener 而生成失败
+            if ("external-gateway".equals(r.releaseName())) {
+                merged = withGatewayListenerDefaults(merged, pathNested(r, r.editableValues()));
+            }
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
-                    r.chartVersion(), merged, r.editableValues(), r.preserveUnknownPlaceholders()));
+                    r.chartVersion(), merged, r.editableValues(), r.preserveUnknownPlaceholders(),
+                    // ⚠️ 必须带上 primary / appVersion：resolveTargetVersion 只看主 release，
+                    // 丢了标记就会退回"第一个 release"（Istio 会记成 Gateway API 的 1.6.2）
+                    r.primary(), r.appVersion()));
         }
         return out;
     }
@@ -353,7 +362,9 @@ public class ComponentInstallService {
                 applyTempoS3Security(resolved, otel.getTempoStorage());
             }
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(), r.chartVersion(),
-                    resolved, r.editableValues(), r.preserveUnknownPlaceholders()));
+                    resolved, r.editableValues(), r.preserveUnknownPlaceholders(),
+                    // 同 mergeValues：占位符解析后也不能丢主 release 标记
+                    r.primary(), r.appVersion()));
         }
         return out;
     }
@@ -759,19 +770,21 @@ public class ComponentInstallService {
 
     /** 目标版本必须存在于 recipe 里（批① 只有一个版本；批② 起一个组件可有多个） */
     /**
-     * 目标版本只能是**组件本体**（recipe 第一个 release）的版本。
+     * 目标版本只能是**组件本体**（recipe 里 {@code asPrimary()} 标记的 release）的版本。
      *
-     * <p>多 release 组件（管理集群的 Prometheus = platform-kps + platform-thanos）里，
-     * 随附 release 的版本不是组件的版本 —— 放它进来会把操作记录写成"已升级到 0.47.2"，
-     * 后续页面按这个版本比较，永远显示可升级。
+     * <p>多 release 组件（管理集群的 Prometheus = platform-kps + platform-thanos；
+     * Istio = Gateway API + 5 个 Istio chart）里，随附 release 的版本不是组件的版本 ——
+     * 放它进来会把操作记录写成"已升级到 0.47.2 / 1.6.2"，后续页面按这个版本比较，永远显示可升级。
      */
     private static String resolveTargetVersion(List<ReleaseSpec> releases, String requested) {
-        String primary = releases.get(0).chartVersion();
+        String primary = ReleaseSpec.primaryChartVersion(releases);
         if (requested == null || requested.isBlank()) {
             return primary;
         }
         if (!primary.equals(requested)) {
-            throw new CloudPlatformException(EnumResponseType.ERROR, "未知的目标版本：" + requested);
+            // 把主版本带进消息：存量记录可能记着历史错误版本（Istio 曾把 Gateway API 的 1.6.2 记成组件版本）
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "未知的目标版本：" + requested + "（当前组件版本 " + primary + "）");
         }
         return requested;
     }
@@ -821,6 +834,22 @@ public class ComponentInstallService {
                     }
                 } catch (Exception e) {
                     log.warn("组件 {} 安装成功但 ServiceMonitor 下发失败（不影响操作结果）: {}",
+                            id, e.getMessage());
+                }
+            }
+            // 对外入口 Gateway：组件负责建 CR 并把 addresses 绑到承载它的 Service。
+            // 必须排在 Telemetry 之前 —— Telemetry 的 targetRefs 指向这个 Gateway。
+            if (result.isSuccess() && "istio".equals(componentCode)) {
+                try {
+                    List<GatewayListenerDTO> listeners = externalGatewayListeners(releases);
+                    if (listeners.isEmpty()
+                            || !client.ensureExternalGateway(clusterId, "istio-system",
+                                    "external-gateway", "external-gateway", listeners)) {
+                        log.info("集群 {} 的 Gateway API CRD 未就绪或端口表没有可监听的端口，跳过 external-gateway CR",
+                                clusterId);
+                    }
+                } catch (Exception e) {
+                    log.warn("组件 {} 安装成功但 external-gateway CR 下发失败（不影响操作结果）: {}",
                             id, e.getMessage());
                 }
             }
@@ -944,10 +973,162 @@ public class ComponentInstallService {
             dto.setNamespace(r.namespace());
             dto.setChartCode(r.chartCode());
             dto.setChartVersion(r.chartVersion());
-            dto.setValues(r.contractValues());
+            // 端口表里的 listener/tlsSecret 是平台生成 Gateway CR 用的，不能进 Helm 的 Service values
+            dto.setValues("istio-gateway".equals(r.chartCode())
+                    ? withoutGatewayListenerFields(r.contractValues())
+                    : r.contractValues());
             out.add(dto);
         }
         return out;
+    }
+
+    /**
+     * 从端口表派生 Gateway listener：
+     * <ul>
+     *   <li>端口 = {@code targetPort}（Envoy 实际监听端口；Service 的 port 只是对外映射）；</li>
+     *   <li>{@code listener} 为空 = 仅 Service（如 15021 status-port），不生成 listener；</li>
+     *   <li>协议为表单里选的 HTTP / HTTPS / TLS / TCP / UDP；HTTPS 必须带证书 Secret。</li>
+     * </ul>
+     */
+    @SuppressWarnings("unchecked")
+    static List<GatewayListenerDTO> externalGatewayListeners(List<ReleaseSpec> releases) {
+        ReleaseSpec gateway = releases.stream()
+                .filter(r -> "external-gateway".equals(r.releaseName()))
+                .findFirst().orElse(null);
+        if (gateway == null) {
+            return List.of();
+        }
+        Object service = gateway.contractValues().get("service");
+        if (!(service instanceof Map<?, ?> svc) || !(svc.get("ports") instanceof List<?> rows)) {
+            return List.of();
+        }
+        List<GatewayListenerDTO> out = new ArrayList<>();
+        for (Object o : rows) {
+            if (!(o instanceof Map<?, ?> row)) {
+                continue;
+            }
+            Object listener = row.get("listener");
+            String protocol = listener == null ? "" : listener.toString().trim().toUpperCase(java.util.Locale.ROOT);
+            if (protocol.isEmpty()) {
+                continue;
+            }
+            Object port = row.get("targetPort") != null ? row.get("targetPort") : row.get("port");
+            if (!(port instanceof Number n) || n.intValue() < 1 || n.intValue() > 65535) {
+                continue;
+            }
+            GatewayListenerDTO dto = new GatewayListenerDTO();
+            Object name = row.get("name");
+            dto.setName(name == null || name.toString().isBlank() ? "port-" + n.intValue() : name.toString());
+            dto.setPort(n.intValue());
+            dto.setProtocol(protocol);
+            boolean tlsProtocol = "HTTPS".equals(protocol) || "TLS".equals(protocol);
+            Object mode = row.get("tlsMode");
+            String tlsMode = mode == null || mode.toString().isBlank()
+                    ? ("HTTPS".equals(protocol) ? "Terminate" : "Passthrough")
+                    : mode.toString();
+            dto.setTlsMode(tlsProtocol ? tlsMode : null);
+            Object secret = row.get("tlsSecret");
+            dto.setTlsSecret(tlsProtocol && !"Passthrough".equals(tlsMode) && secret != null
+                    ? secret.toString() : null);
+            out.add(dto);
+        }
+        return out;
+    }
+
+    /** 把端口行裁成 Helm 的 Service 端口字段（listener/tlsSecret 只给平台用） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> withoutGatewayListenerFields(Map<String, Object> values) {        if (!(values.get("service") instanceof Map<?, ?> service)
+                || !(service.get("ports") instanceof List<?> ports)) {
+            return values;
+        }
+        List<Map<String, Object>> cleaned = new ArrayList<>();
+        for (Object o : ports) {
+            if (!(o instanceof Map<?, ?> row)) {
+                continue;
+            }
+            Map<String, Object> copy = new LinkedHashMap<>();
+            for (String key : List.of("name", "port", "targetPort", "protocol", "nodePort")) {
+                if (row.get(key) != null) {
+                    copy.put(key, row.get(key));
+                }
+            }
+            cleaned.add(copy);
+        }
+        Map<String, Object> svc = new LinkedHashMap<>((Map<String, Object>) service);
+        svc.put("ports", cleaned);
+        Map<String, Object> out = new LinkedHashMap<>(values);
+        out.put("service", svc);
+        return out;
+    }
+
+    /**
+     * 存量快照的端口行没有 {@code listener}（功能上线前装的）。重放时按 recipe 默认行（同名/同端口）补齐；
+     * 默认行也没有时按端口兜底：80→HTTP、443→TLS，其余保持「仅 Service」。
+     *
+     * <p>不补的话重放会得到「没有 listener」→ 不生成 Gateway CR，用户会以为功能没生效。
+     */
+    @SuppressWarnings("unchecked")
+    static Map<String, Object> withGatewayListenerDefaults(Map<String, Object> values,
+                                                           Map<String, Object> defaults) {
+        if (!(values.get("service") instanceof Map<?, ?> service)
+                || !(service.get("ports") instanceof List<?> rows)) {
+            return values;
+        }
+        List<Map<String, Object>> defaultRows = List.of();
+        if (defaults.get("service") instanceof Map<?, ?> defaultService
+                && defaultService.get("ports") instanceof List<?> list) {
+            defaultRows = (List<Map<String, Object>>) list;
+        }
+        List<Map<String, Object>> enriched = new ArrayList<>();
+        for (Object o : rows) {
+            if (!(o instanceof Map<?, ?> raw)) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>((Map<String, Object>) raw);
+            if (row.get("listener") == null) {
+                Map<String, Object> fallback = defaultRowFor(defaultRows, row);
+                if (fallback != null && fallback.get("listener") != null) {
+                    row.put("listener", fallback.get("listener"));
+                    if (fallback.get("tlsMode") != null) {
+                        row.put("tlsMode", fallback.get("tlsMode"));
+                    }
+                    if (fallback.get("tlsSecret") != null) {
+                        row.put("tlsSecret", fallback.get("tlsSecret"));
+                    }
+                } else {
+                    Object port = row.get("port");
+                    int value = port instanceof Number n ? n.intValue() : -1;
+                    String listener = value == 80 ? "HTTP" : value == 443 ? "TLS" : "";
+                    row.put("listener", listener);
+                    if ("TLS".equals(listener)) {
+                        row.put("tlsMode", "Passthrough");
+                    }
+                }
+            }
+            enriched.add(row);
+        }
+        Map<String, Object> svc = new LinkedHashMap<>((Map<String, Object>) service);
+        svc.put("ports", enriched);
+        Map<String, Object> out = new LinkedHashMap<>(values);
+        out.put("service", svc);
+        return out;
+    }
+
+    private static Map<String, Object> defaultRowFor(List<Map<String, Object>> defaults,
+                                                     Map<String, Object> row) {
+        Object name = row.get("name");
+        for (Map<String, Object> d : defaults) {
+            if (name != null && name.equals(d.get("name"))) {
+                return d;
+            }
+        }
+        Object port = row.get("port");
+        for (Map<String, Object> d : defaults) {
+            if (port != null && port.equals(d.get("port"))) {
+                return d;
+            }
+        }
+        return null;
     }
 
     private static String tailOf(ComponentInstallResultDTO result) {

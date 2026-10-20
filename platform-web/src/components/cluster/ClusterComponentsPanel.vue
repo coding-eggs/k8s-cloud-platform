@@ -107,6 +107,20 @@ function installedChartVersion(code: string): string | null {
   return op && op.status === 'SUCCESS' ? (op.toVersion ?? null) : null
 }
 
+/**
+ * 组件本体的 chart 版本 = 主 release 的版本（列表「chart」行显示它）。
+ *
+ * <p>为什么不直接用操作记录的 {@code toVersion}：存量记录可能记着历史错误版本
+ * （Istio 曾把 Gateway API 的 1.6.2 记成组件版本，2026-10-20 用户指出）。
+ * 没有平台操作记录（外部安装 / 从未操作）→ null，照旧显示「—」。
+ * 升级判定仍用 {@link installedChartVersion}（记录里的真实安装版本）。
+ */
+function componentChartVersion(row: K8sComponentStatus): string | null {
+  if (!props.operations[row.code]) return null
+  const primary = row.releases?.find((r) => r.primary)
+  return primary?.chartVersion ?? installedChartVersion(row.code)
+}
+
 /** 可升级到的版本：recipe 里除当前版本之外的 —— 只有一个版本时不出现升级按钮 */
 function upgradeTargets(row: K8sComponentStatus): string[] {
   const current = installedChartVersion(row.code)
@@ -121,11 +135,15 @@ interface ApplyDialog {
   action: 'INSTALL' | 'UPGRADE' | 'EDIT'
   version: string
   versions: string[]
+  /** 当前组件本体的 chart 版本（编辑弹窗展示；取主 release，不用历史记录里的 toVersion） */
+  chartVersion: string
   fields: K8sEditableField[]
   /** 非 JSON 字段的当前值（动态类型，模板按 type 渲染不同控件） */
   values: Record<string, any>
   /** JSON 字段的文本（textarea 里编辑，提交时解析） */
   jsonText: Record<string, string>
+  /** 端口列表（type=ports）的行数据，按字段 key 存 */
+  portRows: Record<string, PortRow[]>
   /**
    * 打开时的初始值快照。提交时**只发改动过的字段** —— 未改的沿用后端合并规则里的
    * 「上次快照」基线，否则每次升级都会把用户上次改的值重置成 recipe 默认值。
@@ -146,6 +164,8 @@ interface ApplyDialog {
   initialThanosInstall: string
   storageClasses: string[]
   secretOptions: SecretRefOption[]
+  /** Istio 对外入口 Gateway 的证书候选（istio-system） */
+  gatewaySecretOptions: SecretRefOption[]
   /** OTel·Tempo 的 MinIO 凭证 Secret 候选（只查 monitor 命名空间） */
   otelMinioSecretOptions: SecretRefOption[]
   /** OTel·日志的 ES 凭证 Secret 候选（按表单里填的 ES 命名空间现查） */
@@ -184,6 +204,152 @@ const ACTION_LABEL: Record<ApplyDialog['action'], string> = {
 /** 容量写法（K8s quantity）：50Gi / 500Mi / 1Ti；不带单位按字节，几乎不会是本意，所以默认要求带单位 */
 const SIZE_RE = /^[1-9]\d*(\.\d+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$/
 
+/** 资源限制表单：requests/limits × cpu/memory 四格，提交时拼回 K8s 的 ResourceRequirements */
+interface ResourceFormValues {
+  requestsCpu: string
+  requestsMemory: string
+  limitsCpu: string
+  limitsMemory: string
+}
+
+/** K8s quantity：CPU 100m / 0.5 / 1，内存 256Mi / 1Gi（不带单位按核/字节） */
+const QUANTITY_RE = /^\d+(\.\d+)?(m|k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?$/
+
+/** Service 端口表单：一行一个端口（同时描述 Gateway listener） */
+interface PortRow {
+  name: string
+  port: string
+  targetPort: string
+  protocol: string
+  nodePort: string
+  /** Gateway listener 协议：HTTP / HTTPS / TLS / TCP / UDP；空 = 仅 Service，不监听 */
+  listener: string
+  /** HTTPS/TLS 的 TLS 模式：Terminate / Passthrough */
+  tlsMode: string
+  /** Terminate 的证书 Secret；Passthrough 不需要 */
+  tlsSecret: string
+}
+
+const PORT_PROTOCOLS = ['TCP', 'UDP', 'SCTP']
+const LISTENER_PROTOCOLS = ['HTTP', 'HTTPS', 'TLS', 'TCP', 'UDP']
+
+function toPortRows(value: unknown): PortRow[] {
+  if (!Array.isArray(value)) return []
+  return value.map((p: any) => ({
+    name: String(p?.name ?? ''),
+    port: p?.port == null ? '' : String(p.port),
+    targetPort: p?.targetPort == null ? '' : String(p.targetPort),
+    protocol: String(p?.protocol ?? 'TCP'),
+    nodePort: p?.nodePort == null ? '' : String(p.nodePort),
+    listener: String(p?.listener ?? ''),
+    // HTTPS 只能是 Terminate（Gateway API 定义）；历史快照里就算是别的值也归一
+    tlsMode: p?.listener === 'HTTPS' ? 'Terminate'
+      : String(p?.tlsMode ?? (p?.listener === 'TLS' ? 'Passthrough' : '')),
+    tlsSecret: String(p?.tlsSecret ?? ''),
+  }))
+}
+
+/** 空字段不写进 values（targetPort 省略时 K8s 默认等于 port；nodePort 只有 NodePort 场景才填） */
+function fromPortRows(rows: PortRow[]): Array<Record<string, unknown>> {
+  return rows.map((r) => {
+    const out: Record<string, unknown> = {
+      name: r.name.trim(),
+      port: Number(r.port.trim()),
+      protocol: r.protocol,
+    }
+    const target = r.targetPort.trim()
+    if (target) out.targetPort = /^\d+$/.test(target) ? Number(target) : target
+    const node = r.nodePort.trim()
+    if (node) out.nodePort = Number(node)
+    const listener = r.listener.trim()
+    // ⚠️ 空串也要提交：用来区分「用户选了仅 Service」和「老快照里没有 listener 字段」——
+    //    后端只给"缺失"的行补默认监听，空串是明确的"不监听"（2026-10-20 实报：选仅 Service 仍被加进 CR）
+    out.listener = listener
+    if (listener === 'HTTPS' || listener === 'TLS') {
+      const mode = r.tlsMode.trim() || (listener === 'HTTPS' ? 'Terminate' : 'Passthrough')
+      out.tlsMode = mode
+      if (mode === 'Terminate' && r.tlsSecret.trim()) out.tlsSecret = r.tlsSecret.trim()
+    }
+    return out
+  })
+}
+
+/** 端口表单校验：返回错误文案，null = 通过（名称/端口在 Service 里都要求唯一）
+ *  只校验格式与唯一性，不做范围限制 —— nodePort 可用范围由集群的 --service-node-port-range 决定，
+ *  前端写死 30000-32767 会误伤自定义范围的集群（2026-10-20 用户要求去掉）。 */
+function validatePortRows(rows: PortRow[]): string | null {
+  if (!rows.length) return '至少保留一个端口'
+  const names = new Set<string>()
+  const keys = new Set<string>()
+  const nodePorts = new Set<string>()
+  for (const r of rows) {
+    const name = r.name.trim()
+    const port = r.port.trim()
+    if (!name) return '端口名称不能为空'
+    if (names.has(name)) return `端口名称重复：${name}`
+    names.add(name)
+    if (!/^\d+$/.test(port)) return `「${name}」的端口需要是数字`
+    const key = `${port}/${r.protocol}`
+    if (keys.has(key)) return `端口重复：${key}`
+    keys.add(key)
+    const target = r.targetPort.trim()
+    if (target && !/^\d+$/.test(target) && !/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(target)) {
+      return `「${name}」的 targetPort 需要是数字或端口名`
+    }
+    const node = r.nodePort.trim()
+    if (node) {
+      if (!/^\d+$/.test(node)) return `「${name}」的 nodePort 需要是数字`
+      if (nodePorts.has(node)) return `nodePort 重复：${node}`
+      nodePorts.add(node)
+    }
+    const listener = r.listener.trim()
+    if (listener && !LISTENER_PROTOCOLS.includes(listener)) {
+      return `「${name}」的监听协议不支持：${listener}`
+    }
+    if (listener === 'HTTPS' || listener === 'TLS') {
+      const mode = r.tlsMode.trim() || (listener === 'HTTPS' ? 'Terminate' : 'Passthrough')
+      if (mode !== 'Terminate' && mode !== 'Passthrough') {
+        return `「${name}」的 TLS 模式不支持：${mode}`
+      }
+      if (listener === 'HTTPS' && mode === 'Passthrough') {
+        return `「${name}」的 HTTPS 只能 Terminate`
+      }
+      if (mode === 'Terminate' && !r.tlsSecret.trim()) {
+        return `「${name}」选 Terminate 时必须填证书 Secret`
+      }
+    }
+  }
+  return null
+}
+
+function toResourceForm(value: unknown): ResourceFormValues {
+  const v = (value ?? {}) as {
+    requests?: { cpu?: unknown; memory?: unknown }
+    limits?: { cpu?: unknown; memory?: unknown }
+  }
+  const text = (x: unknown): string => (x == null ? '' : String(x))
+  return {
+    requestsCpu: text(v.requests?.cpu),
+    requestsMemory: text(v.requests?.memory),
+    limitsCpu: text(v.limits?.cpu),
+    limitsMemory: text(v.limits?.memory),
+  }
+}
+
+/** 空值不写进 values（空串不是合法 quantity；缺的键由后端深合并回落到平台默认值） */
+function fromResourceForm(f: ResourceFormValues): Record<string, Record<string, string>> {
+  const requests: Record<string, string> = {}
+  const limits: Record<string, string> = {}
+  if (f.requestsCpu.trim()) requests.cpu = f.requestsCpu.trim()
+  if (f.requestsMemory.trim()) requests.memory = f.requestsMemory.trim()
+  if (f.limitsCpu.trim()) limits.cpu = f.limitsCpu.trim()
+  if (f.limitsMemory.trim()) limits.memory = f.limitsMemory.trim()
+  const out: Record<string, Record<string, string>> = {}
+  if (Object.keys(requests).length) out.requests = requests
+  if (Object.keys(limits).length) out.limits = limits
+  return out
+}
+
 const EMPTY_THANOS: K8sThanosInstall = {
   namespace: 'monitor', secretName: '', endpoint: '', bucket: '', insecureSkipVerify: false,
 }
@@ -212,12 +378,13 @@ function emptyOtel(): OtelForm {
 
 const applyDialog = ref<ApplyDialog>({
   visible: false, code: '', name: '', action: 'INSTALL',
-  version: '', versions: [], fields: [], values: {}, jsonText: {}, initial: {},
+  version: '', versions: [], chartVersion: '', fields: [], values: {}, jsonText: {}, portRows: {}, initial: {},
   showWebhook: false, webhookUrl: '', initialWebhook: '',
   showThanos: false, thanosUrl: '', initialThanos: '',
   showThanosInstall: false, thanos: { ...EMPTY_THANOS },
   initialThanosInstall: JSON.stringify(EMPTY_THANOS),
-  storageClasses: [], secretOptions: [], otelMinioSecretOptions: [], esSecretOptions: [],
+  storageClasses: [], secretOptions: [], gatewaySecretOptions: [],
+  otelMinioSecretOptions: [], esSecretOptions: [],
   showCalico: false, calico: { podCidr: '', encapsulation: 'IPIP' },
   initialCalico: '',
   showTektonProfile: false, tektonProfile: 'all', initialTektonProfile: 'all',
@@ -225,6 +392,26 @@ const applyDialog = ref<ApplyDialog>({
 })
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
+}
+
+/** 端口列表加一行（默认 TCP，空值等用户填） */
+function addPortRow(key: string): void {
+  const rows = applyDialog.value.portRows[key] ?? []
+  applyDialog.value.portRows[key] = rows
+  rows.push({ name: '', port: '', targetPort: '', protocol: 'TCP', nodePort: '',
+    listener: '', tlsMode: '', tlsSecret: '' })
+}
+
+/** 切监听协议：HTTPS 固定 Terminate；TLS 默认 Passthrough；非 TLS 协议清空证书 */
+function onListenerChange(p: PortRow): void {
+  if (p.listener === 'HTTPS') {
+    p.tlsMode = 'Terminate'
+  } else if (p.listener === 'TLS') {
+    p.tlsMode = p.tlsMode || 'Passthrough'
+  } else {
+    p.tlsMode = ''
+    p.tlsSecret = ''
+  }
 }
 
 function openUpgrade(row: K8sComponentStatus): void {
@@ -245,6 +432,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   const fields = row.editableFields ?? []
   const values: Record<string, any> = {}
   const jsonText: Record<string, string> = {}
+  const portRows: Record<string, PortRow[]> = {}
   const initial: Record<string, string> = {}
   for (const f of fields) {
     // 有安装记录时预填**当前生效值**（后端从上次成功快照里取）；否则用 recipe 默认值。
@@ -256,6 +444,19 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
       const text = JSON.stringify(start ?? {}, null, 2)
       jsonText[f.key] = text
       initial[f.key] = text
+    } else if (f.type === 'resources') {
+      // 四个输入框平铺在 values 里（key 加后缀），初始快照也走同一个拼装函数，
+      // 保证「有没有改动」的比较口径一致
+      const form = toResourceForm(start)
+      values[`${f.key}.requestsCpu`] = form.requestsCpu
+      values[`${f.key}.requestsMemory`] = form.requestsMemory
+      values[`${f.key}.limitsCpu`] = form.limitsCpu
+      values[`${f.key}.limitsMemory`] = form.limitsMemory
+      initial[f.key] = JSON.stringify(fromResourceForm(form))
+    } else if (f.type === 'ports') {
+      const rows = toPortRows(start)
+      portRows[f.key] = rows
+      initial[f.key] = JSON.stringify(fromPortRows(rows))
     } else {
       values[f.key] = start
       initial[f.key] = JSON.stringify(start)
@@ -291,7 +492,8 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   otel.es.credentialSecret.namespace = OTEL_NAMESPACE
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
-    version: versions[0] ?? '', versions, fields, values, jsonText, initial,
+    version: versions[0] ?? '', versions, chartVersion: componentChartVersion(row) ?? '',
+    fields, values, jsonText, portRows, initial,
     showWebhook: !!row.platformAlerting,
     webhookUrl: webhookInitial,
     initialWebhook: webhookInitial.trim(),
@@ -302,7 +504,8 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     showThanosInstall: !!row.thanosInstall,
     thanos,
     initialThanosInstall: JSON.stringify(thanos),
-    storageClasses: [], secretOptions: [], otelMinioSecretOptions: [], esSecretOptions: [],
+    storageClasses: [], secretOptions: [], gatewaySecretOptions: [],
+    otelMinioSecretOptions: [], esSecretOptions: [],
     showCalico: !!row.calicoNetwork && !editing,
     calico,
     initialCalico: JSON.stringify(calico),
@@ -320,6 +523,9 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   if (fields.some((f) => f.type === 'storageClass')) {
     void loadStorageClassOptions()
   }
+  if (fields.some((f) => f.key === 'service.ports')) {
+    void loadGatewayOptions()
+  }
   if (row.otelInstrumentation) {
     // Secret 候选懒加载；拿不到就留空 —— 下拉是 filterable + allow-create，仍可手输
     if (row.tempoInstall) void loadOtelMinioSecrets()
@@ -331,6 +537,19 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
 const THANOS_NAMESPACE = 'monitor'
 /** OTel 的凭证 Secret 统一放 monitor（MinIO 与 ES 都是，后端同样钉死） */
 const OTEL_NAMESPACE = 'monitor'
+/** Istio 对外入口 Gateway 的证书 Secret 从 istio-system 选（Gateway CR 在同命名空间） */
+const ISTIO_NAMESPACE = 'istio-system'
+
+/** 端口表的证书候选：istio-system 下的 Secret；失败留空（下拉可手输） */
+async function loadGatewayOptions(): Promise<void> {
+  const d = applyDialog.value
+  if (!d.fields.some((f) => f.key === 'service.ports')) return
+  try {
+    d.gatewaySecretOptions = (await props.loadSecretOptions?.(ISTIO_NAMESPACE)) ?? []
+  } catch {
+    d.gatewaySecretOptions = []
+  }
+}
 
 /** Thanos 表单的 Secret 候选：懒加载，失败就留空（用户可以手输） */
 async function loadThanosOptions(): Promise<void> {
@@ -385,7 +604,37 @@ function confirmApply(): void {
   const d = applyDialog.value
   const editable: Record<string, unknown> = {}
   for (const f of d.fields) {
-    if (f.type === 'json') {
+    if (f.type === 'resources') {
+      const form: ResourceFormValues = {
+        requestsCpu: String(d.values[`${f.key}.requestsCpu`] ?? ''),
+        requestsMemory: String(d.values[`${f.key}.requestsMemory`] ?? ''),
+        limitsCpu: String(d.values[`${f.key}.limitsCpu`] ?? ''),
+        limitsMemory: String(d.values[`${f.key}.limitsMemory`] ?? ''),
+      }
+      const cpuFields = [form.requestsCpu, form.limitsCpu].map((v) => v.trim()).filter(Boolean)
+      const memFields = [form.requestsMemory, form.limitsMemory].map((v) => v.trim()).filter(Boolean)
+      if (cpuFields.some((v) => !QUANTITY_RE.test(v))) {
+        ElMessage.error(`「${f.label}」的 CPU 需要写成 100m、0.5、1 这样的值`)
+        return
+      }
+      if (memFields.some((v) => !QUANTITY_RE.test(v))) {
+        ElMessage.error(`「${f.label}」的内存需要写成 256Mi、1Gi 这样的值`)
+        return
+      }
+      const value = fromResourceForm(form)
+      if (JSON.stringify(value) === d.initial[f.key]) continue
+      editable[f.key] = value
+    } else if (f.type === 'ports') {
+      const rows = d.portRows[f.key] ?? []
+      const error = validatePortRows(rows)
+      if (error) {
+        ElMessage.error(`「${f.label}」${error}`)
+        return
+      }
+      const value = fromPortRows(rows)
+      if (JSON.stringify(value) === d.initial[f.key]) continue
+      editable[f.key] = value
+    } else if (f.type === 'json') {
       const text = d.jsonText[f.key] ?? ''
       if (text === d.initial[f.key]) continue
       try {
@@ -416,10 +665,12 @@ function confirmApply(): void {
   d.visible = false
   emit('apply', {
     code: d.code,
-    // EDIT 复用 UPGRADE：按当前 chart 版本重放（幂等），只是不带版本选择
+    // EDIT 复用 UPGRADE：按**平台内置版本**重放（幂等），只是不带版本选择。
+    // ⚠️ 不要回传「已装版本」：存量操作记录可能记着历史/错误的版本（Istio 曾把 Gateway API 的
+    //    1.6.2 记成组件版本），回传它会被后端的「目标版本必须是主 release」校验拒掉
+    //    （报「未知的目标版本：1.6.2」）。不传时后端按主 release 解析，顺带把记录修正回来。
     action: d.action === 'EDIT' ? 'UPGRADE' : d.action,
-    targetVersion: d.action === 'UPGRADE' ? d.version
-      : d.action === 'EDIT' ? (installedChartVersion(d.code) ?? undefined) : undefined,
+    targetVersion: d.action === 'UPGRADE' ? d.version : undefined,
     editableValues: Object.keys(editable).length ? editable : undefined,
     // 两个地址：只发改动过的 —— 没改的由后端沿用上次成功操作里记的值（否则升级会被平台默认值覆盖）
     alertWebhookUrl: d.showWebhook && d.webhookUrl.trim() && d.webhookUrl.trim() !== d.initialWebhook
@@ -581,12 +832,12 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="版本" width="170">
+      <el-table-column label="版本" width="190">
         <template #header>
           <span class="cc-ver-head">
             版本
             <el-tooltip placement="top"
-                        content="应用 version 来自集群探测（镜像 tag / 版本标签）；chart 版本是平台安装 Helm chart 的版本。kube-prometheus-stack 与应用版本是两套编号，不可直接比较">
+                        content="应用 version 来自集群探测（镜像 tag / 版本标签）；chart 是组件本体（主 release）的 chart 版本。kube-prometheus-stack 这类 chart 版本与应用版本是两套编号；多 chart 组件点「N 个 chart」看逐项版本">
               <el-icon class="cc-ver-help"><QuestionFilled /></el-icon>
             </el-tooltip>
           </span>
@@ -601,11 +852,33 @@ const anyUnknown = computed(() => unknownCount.value > 0)
             </span>
             <span class="cc-ver-line">
               <span class="cc-ver-kind">chart</span>
-              <el-tooltip v-if="!installedChartVersion(row.code)" placement="top"
+              <el-tooltip v-if="!componentChartVersion(row)" placement="top"
                           content="非平台安装，或最近一次操作未成功——chart 版本无从得知">
                 <code class="mono cc-ver-unknown">—</code>
               </el-tooltip>
-              <code v-else class="mono">{{ installedChartVersion(row.code) }}</code>
+              <code v-else class="mono">{{ componentChartVersion(row) }}</code>
+            </span>
+            <!-- 多 chart 组件（Istio 六个、Prometheus 管理集群两个）逐个声明版本 -->
+            <span v-if="(row.releases?.length ?? 0) > 1" class="cc-ver-line">
+              <el-popover placement="bottom-start" trigger="click" :width="400">
+                <template #reference>
+                  <span class="cc-ver-more">{{ row.releases?.length }} 个 chart</span>
+                </template>
+                <div class="cc-rel-list">
+                  <div v-for="r in row.releases ?? []" :key="r.releaseName" class="cc-rel-row">
+                    <span class="cc-rel-name">
+                      {{ r.releaseName }}
+                      <span v-if="r.primary" class="cc-rel-primary">主</span>
+                    </span>
+                    <span class="cc-rel-ver">chart {{ r.chartVersion }}</span>
+                    <span class="cc-rel-ver">应用 {{ r.appVersion ?? '—' }}</span>
+                  </div>
+                  <div class="cc-form-hint">
+                    平台内置版本，安装/升级按这组 chart 执行；「主」是组件本体，
+                    升级目标与版本号只认它
+                  </div>
+                </div>
+              </el-popover>
             </span>
           </div>
         </template>
@@ -677,7 +950,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="applyDialog.visible" width="960px" append-to-body
+    <el-dialog v-model="applyDialog.visible" width="1280px" append-to-body
                :title="`${ACTION_LABEL[applyDialog.action]} ${applyDialog.name}`">
       <div v-if="applyDialog.action === 'EDIT'" class="cc-upgrade-tip">
         保存后会按当前 chart 版本重放一次 helm（幂等），并重新下发告警联动；没改的项沿用上次成功操作的值。
@@ -686,7 +959,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <span class="cc-form-label">目标 chart 版本</span>
         <div class="cc-form-control">
           <div class="cc-upgrade-tip">
-            当前 chart 版本：<code>{{ installedChartVersion(applyDialog.code) ?? '未知' }}</code>
+            当前 chart 版本：<code>{{ applyDialog.chartVersion || '未知' }}</code>
             <span class="cc-upgrade-note">（应用版本由集群探测，与 chart 版本是两套编号）</span>
           </div>
           <el-radio-group v-model="applyDialog.version">
@@ -946,7 +1219,70 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       <div v-for="f in applyDialog.fields" :key="f.key" class="cc-form-row">
         <span class="cc-form-label">{{ f.label }}</span>
         <div class="cc-form-control">
-          <el-switch v-if="f.type === 'boolean'" v-model="applyDialog.values[f.key]" />
+          <!-- 资源限制：requests/limits × cpu/memory 四格，不再用 JSON 文本域 -->
+          <div v-if="f.type === 'resources'" class="cc-resources">
+            <div class="cc-resource-line">
+              <span class="cc-resource-label">requests</span>
+              <el-input v-model="applyDialog.values[f.key + '.requestsCpu']"
+                        placeholder="CPU，如 100m" spellcheck="false" />
+              <el-input v-model="applyDialog.values[f.key + '.requestsMemory']"
+                        placeholder="内存，如 256Mi" spellcheck="false" />
+            </div>
+            <div class="cc-resource-line">
+              <span class="cc-resource-label">limits</span>
+              <el-input v-model="applyDialog.values[f.key + '.limitsCpu']"
+                        placeholder="CPU，如 1" spellcheck="false" />
+              <el-input v-model="applyDialog.values[f.key + '.limitsMemory']"
+                        placeholder="内存，如 1Gi" spellcheck="false" />
+            </div>
+            <div class="cc-form-hint">
+              写法：CPU 100m / 0.5 / 1；内存 256Mi / 1Gi。留空的项不写入 values，回落到平台默认值
+            </div>
+          </div>
+          <!-- Service 端口列表：一行一个端口（名称 / 端口 / targetPort / 协议 / nodePort） -->
+          <div v-else-if="f.type === 'ports'" class="cc-ports">
+            <div class="cc-port-row cc-port-head">
+              <span>名称</span><span>端口</span><span>targetPort</span><span>服务协议</span>
+              <span>nodePort</span><span>监听协议</span><span>TLS 模式</span><span>证书 Secret</span><span></span>
+            </div>
+            <div v-for="(p, i) in (applyDialog.portRows[f.key] ?? [])" :key="i" class="cc-port-row">
+              <el-input v-model="p.name" placeholder="http2" spellcheck="false" />
+              <el-input v-model="p.port" placeholder="80" spellcheck="false" />
+              <el-input v-model="p.targetPort" placeholder="留空 = 同端口" spellcheck="false" />
+              <el-select v-model="p.protocol">
+                <el-option v-for="proto in PORT_PROTOCOLS" :key="proto" :label="proto" :value="proto" />
+              </el-select>
+              <el-input v-model="p.nodePort" placeholder="可选" spellcheck="false" />
+              <el-select v-model="p.listener" placeholder="仅 Service" @change="onListenerChange(p)">
+                <el-option label="仅 Service（不监听）" value="" />
+                <el-option v-for="l in LISTENER_PROTOCOLS" :key="l" :label="l" :value="l" />
+              </el-select>
+              <el-select v-model="p.tlsMode" placeholder="—"
+                         :disabled="p.listener !== 'TLS'">
+                <el-option label="Terminate" value="Terminate" />
+                <el-option label="Passthrough" value="Passthrough" />
+              </el-select>
+              <el-select v-if="p.listener === 'HTTPS' || p.listener === 'TLS'"
+                         v-model="p.tlsSecret" :disabled="p.tlsMode === 'Passthrough'"
+                         filterable allow-create clearable placeholder="证书 Secret">
+                <el-option v-for="s in applyDialog.gatewaySecretOptions" :key="s.name"
+                           :label="s.name" :value="s.name" />
+              </el-select>
+              <span v-else class="cc-port-na">—</span>
+              <el-button link type="danger" @click="applyDialog.portRows[f.key]?.splice(i, 1)">删除</el-button>
+            </div>
+            <el-button link type="primary" @click="addPortRow(f.key)">+ 添加端口</el-button>
+            <div class="cc-form-hint">
+              每个端口可选择是否生成 Gateway listener（空 = 仅 Service，如 15021）。
+              HTTP/HTTPS 才能挂 HTTPRoute；HTTPS = 终止 TLS，必须填证书 Secret；TLS = Passthrough（不挂证书）；
+              listener 端口取 targetPort。选 NodePort 时可在对应列固定端口，留空则随机分配
+            </div>
+          </div>
+          <el-select v-else-if="f.type === 'select'" v-model="applyDialog.values[f.key]"
+                     style="width: 260px">
+            <el-option v-for="o in f.options ?? []" :key="o" :label="o" :value="o" />
+          </el-select>
+          <el-switch v-else-if="f.type === 'boolean'" v-model="applyDialog.values[f.key]" />
           <el-input-number v-else-if="f.type === 'number'" v-model="applyDialog.values[f.key]" :min="0" />
           <!-- 存储类：候选来自集群的 StorageClass；清空 = 跟随集群默认存储类（不提交该键） -->
           <el-select v-else-if="f.type === 'storageClass'" v-model="applyDialog.values[f.key]"
@@ -1037,6 +1373,19 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-ver-line { display: flex; align-items: center; gap: 6px; }
 .cc-ver-kind { font-size: 11px; color: var(--text-3); min-width: 30px; }
 .cc-ver-unknown { color: var(--text-3); cursor: help; }
+.cc-ver-more { font-size: 11px; color: var(--el-color-primary); cursor: pointer; }
+.cc-ver-more:hover { text-decoration: underline; }
+.cc-rel-list { display: flex; flex-direction: column; gap: 6px; }
+.cc-rel-row {
+  display: grid; grid-template-columns: minmax(150px, 1fr) auto auto;
+  gap: 12px; align-items: center; font-size: 12px;
+}
+.cc-rel-name { color: var(--text-2); word-break: break-all; }
+.cc-rel-primary {
+  margin-left: 4px; padding: 0 4px; border-radius: 3px; font-size: 10px;
+  color: var(--el-color-primary); border: 1px solid var(--el-color-primary);
+}
+.cc-rel-ver { color: var(--text-3); white-space: nowrap; }
 .cc-upgrade-note { color: var(--text-3); font-size: 12px; }
 </style>
 
@@ -1048,6 +1397,17 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
 .cc-form-control { flex: 1 1 auto; min-width: 300px; }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
+.cc-resources { display: flex; flex-direction: column; gap: 8px; }
+.cc-resource-line { display: flex; align-items: center; gap: 8px; }
+.cc-resource-label { flex: 0 0 64px; font-size: 12px; color: var(--text-3); }
+.cc-ports { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; overflow-x: auto; }
+.cc-port-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 70px 90px 90px 90px 110px 110px 140px auto;
+  gap: 6px; align-items: center; width: 100%; min-width: 820px;
+}
+.cc-port-head span { font-size: 11px; color: var(--text-3); }
+.cc-port-na { font-size: 12px; color: var(--text-3); text-align: center; }
 .cc-op-tag { cursor: pointer; }
 .cc-op-meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
 .cc-op-message { font-size: 13px; color: var(--danger); margin-bottom: 10px; white-space: pre-wrap; }

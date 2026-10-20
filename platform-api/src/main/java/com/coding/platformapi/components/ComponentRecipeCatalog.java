@@ -46,7 +46,7 @@ public class ComponentRecipeCatalog {
                             "--metric-resolution=15s"),
                     "fullnameOverride", "metrics-server"),
             // ⚙️ 可编辑默认值
-            Map.of("replicas", 1)));
+            Map.of("replicas", 1)).asPrimary().withAppVersion("0.9.0"));
 
     // ==================== prometheus-operator（kube-prometheus-stack） ====================
 
@@ -99,7 +99,7 @@ public class ComponentRecipeCatalog {
         return List.of(new ReleaseSpec(
                 "platform-kps", "monitor", "prometheus-operator", "92.10.1",
                 contract,
-                prometheusEditable(grafanaEnabled)));
+                prometheusEditable(grafanaEnabled)).asPrimary().withAppVersion("v0.94.1"));
     }
 
     /**
@@ -152,7 +152,7 @@ public class ComponentRecipeCatalog {
                     "receive", Map.of("replicaCount", 1),
                     "storegateway", Map.of("replicaCount", 1),
                     "bucket", Map.of("enabled", false)),
-            Map.of()));
+            Map.of()).withAppVersion("v0.42.4"));
 
     // ==================== istio（含 Gateway API CRD） ====================
 
@@ -164,19 +164,61 @@ public class ComponentRecipeCatalog {
      * 网关 / 路由页面不可用 —— 拆成两个组件只会让用户漏装。experimental 通道：
      * TCP/TLS/UDP Route 只在 experimental 里。
      */
+    /**
+     * 对外入口端口表：一行同时描述 **Service 端口** 与 **Gateway listener**。
+     *
+     * <ul>
+     *   <li>{@code port}/{@code targetPort}：Service 映射；listener 的端口取 targetPort（Envoy 实际监听端口）；</li>
+     *   <li>{@code listener}：Gateway listener 协议（HTTP/HTTPS/TLS/TCP/UDP）；空 = 仅 Service（如 15021 status-port）；</li>
+     *   <li>{@code tlsSecret}：HTTPS(Terminate) 用；TLS 是 Passthrough，不需要证书。</li>
+     * </ul>
+     *
+     * <p>写进 editableValues 而不是留给 chart 默认值：Helm 的 list 是整体替换，
+     * 平台显式声明整组端口后，用户在表单里增删端口才有确定语义（2026-10-20 用户要求做成表单）。
+     * 默认 443 用 TLS Passthrough（无证书即可生效）；要终止 TLS，把监听协议改成 HTTPS 并填证书 Secret。
+     */
+    private static final List<Map<String, Object>> GATEWAY_SERVICE_PORTS = List.of(
+            gatewayPort("status-port", 15021, "TCP", "", null, null),
+            gatewayPort("http2", 80, "TCP", "HTTP", null, null),
+            gatewayPort("https", 443, "TCP", "TLS", "Passthrough", null));
+
+    private static Map<String, Object> gatewayPort(String name, int port, String serviceProtocol,
+                                                   String listener, String tlsMode, String tlsSecret) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("name", name);
+        row.put("port", port);
+        row.put("targetPort", port);
+        row.put("protocol", serviceProtocol);
+        row.put("listener", listener);
+        if (tlsMode != null) {
+            row.put("tlsMode", tlsMode);
+        }
+        if (tlsSecret != null) {
+            row.put("tlsSecret", tlsSecret);
+        }
+        return row;
+    }
+
     private static final List<ReleaseSpec> ISTIO_RELEASES = List.of(
             new ReleaseSpec("platform-gateway-api", "kube-system", "gateway-api", "1.6.2",
-                    Map.of(), Map.of()),
-            new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.30.6", Map.of(), Map.of()),
+                    Map.of(), Map.of()).withAppVersion("1.6.2"),
+            new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.30.6", Map.of(), Map.of())
+                    .withAppVersion("1.30.6"),
             // meshID 全局一致：管理平台下的所有集群共用同一个网格 ID（装完再改是破坏性操作）
             // revision 有意不设：平台的升级不做按 revision 的灰度，设了反而要求命名空间打 istio.io/rev 标签
             new ReleaseSpec("istiod", "istio-system", "istio-istiod", "1.30.6",
                     Map.of(
                             "global", Map.of("meshID", "platform-mesh"),
+                            // ambient 模式必须由 istiod 显式开启（官方 profile-ambient.yaml 的等价物）。
+                            // 不开时 ztunnel 连 15012 会被直接拒绝："ztunnel requires PILOT_ENABLE_AMBIENT=true"
+                            // （2026-10-20 实锤）。HBONE metadata 给 waypoint（Envoy）用。
+                            "pilot", Map.of("env", Map.of("PILOT_ENABLE_AMBIENT", "true")),
                             // 批次二：网格侧 tracing 的 provider（ingress/waypoint 的 Telemetry 引用它）。
                             // collector 不在时 Envoy 只丢 span，不影响流量
                             "meshConfig", Map.of(
                                     "enableTracing", true,
+                                    "defaultConfig", Map.of("proxyMetadata",
+                                            Map.of("ISTIO_META_ENABLE_HBONE", "true")),
                                     "extensionProviders", List.of(Map.of(
                                             "name", "platform-otel",
                                             "opentelemetry", Map.of(
@@ -187,12 +229,17 @@ public class ComponentRecipeCatalog {
                             "autoscaleEnabled", true,
                             "resources", Map.of(
                                     "requests", Map.of("cpu", "100m", "memory", "256Mi"),
-                                    "limits", Map.of("cpu", "1", "memory", "1Gi")))),
+                                    "limits", Map.of("cpu", "1", "memory", "1Gi"))))
+                    .asPrimary().withAppVersion("1.30.6"),
             new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.30.6",
-                    Map.of("ambient", Map.of("enabled", true)), Map.of()),
-            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of()),
+                    Map.of("ambient", Map.of("enabled", true)), Map.of()).withAppVersion("1.30.6"),
+            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of())
+                    .withAppVersion("1.30.6"),
             new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.30.6",
-                    Map.of("name", "external-gateway"), Map.of()));
+                    Map.of("name", "external-gateway"),
+                    // 对外入口的 Service：类型 + 端口列表都可在「编辑」表单里改
+                    Map.of("service.type", "LoadBalancer",
+                            "service.ports", GATEWAY_SERVICE_PORTS)).withAppVersion("1.30.6"));
 
     // ==================== tekton ====================
 
@@ -319,9 +366,9 @@ public class ComponentRecipeCatalog {
 
     private static final List<ReleaseSpec> TEKTON_RELEASES = List.of(
             new ReleaseSpec("platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
-                    TEKTON_CRD_VALUES, Map.of()),
+                    TEKTON_CRD_VALUES, Map.of()).asPrimary().withAppVersion("v0.81.2"),
             new ReleaseSpec("platform-tekton-operator", "tekton-operator", "tekton-operator", "0.81.2",
-                    TEKTON_FULL_VALUES, Map.of()));
+                    TEKTON_FULL_VALUES, Map.of()).withAppVersion("v0.81.2"));
 
     // ==================== calico ====================
 
@@ -349,14 +396,15 @@ public class ComponentRecipeCatalog {
                     "apiServer", Map.of("enabled", false),
                     "goldmane", Map.of("enabled", false),
                     "whisker", Map.of("enabled", false)),
-            Map.of()));
+            Map.of()).asPrimary().withAppVersion("v3.33.0"));
 
     // ==================== cert-manager / otel-operator ====================
 
     private static final List<ReleaseSpec> CERT_MANAGER_RELEASES = List.of(new ReleaseSpec(
             "platform-cert-manager", "cert-manager", "cert-manager", "v1.21.2",
             // 🔒 CRD 必须跟着 chart 走且卸载保留：否则升级/卸载会删掉全部证书对象
-            Map.of("crds", Map.of("enabled", true, "keep", true)), Map.of()));
+            Map.of("crds", Map.of("enabled", true, "keep", true)), Map.of())
+            .asPrimary().withAppVersion("v1.21.2"));
 
     /**
      * OTel operator 两遍共用：第一遍装 CRD + operator，第二遍用 {@code extraObjects} 下发
@@ -375,11 +423,11 @@ public class ComponentRecipeCatalog {
 
     private static final ReleaseSpec OTEL_OPERATOR_PASS1 = new ReleaseSpec(
             "platform-otel-operator", "opentelemetry-operator-system", "otel-operator", "0.126.0",
-            OTEL_OPERATOR_VALUES, Map.of());
+            OTEL_OPERATOR_VALUES, Map.of()).asPrimary().withAppVersion("0.161.0");
 
     private static final ReleaseSpec OTEL_OPERATOR_PASS2 = new ReleaseSpec(
             "platform-otel-operator", "opentelemetry-operator-system", "otel-operator", "0.126.0",
-            OTEL_OPERATOR_VALUES, Map.of());
+            OTEL_OPERATOR_VALUES, Map.of()).withAppVersion("0.161.0");
 
     /**
      * Tempo（traces 后端，仅管理集群）。
@@ -414,7 +462,7 @@ public class ComponentRecipeCatalog {
                                     "limits", Map.of("cpu", "1", "memory", "2Gi"))),
                     "persistence", Map.of(
                             "enabled", true, "storageClassName", "nfs-client", "size", "20Gi")),
-            Map.of(), true);
+            Map.of(), true).withAppVersion("3.1.0");
 
     // ==================== 汇总 ====================
 
@@ -487,11 +535,23 @@ public class ComponentRecipeCatalog {
             Map.entry("grafana.enabled", "部署 Grafana"),
             Map.entry("replicaCount", "副本数"),
             Map.entry("autoscaleEnabled", "自动扩缩容"),
-            Map.entry("resources", "资源限制（JSON）"),
+            Map.entry("resources", "资源限制"),
+            Map.entry("service.type", "Service 类型"),
+            Map.entry("service.ports", "端口列表"),
             Map.entry("replicas", "副本数"));
+
+    /**
+     * 枚举型可编辑字段的候选值（前端渲染成下拉）。没有列在这里的按默认值的 Java 类型推断控件。
+     */
+    private static final Map<String, List<String>> EDITABLE_OPTIONS = Map.of(
+            "service.type", List.of("LoadBalancer", "NodePort", "ClusterIP"));
 
     public static String labelOf(String key) {
         return EDITABLE_LABELS.getOrDefault(key, key);
+    }
+
+    public static List<String> optionsOf(String key) {
+        return EDITABLE_OPTIONS.getOrDefault(key, List.of());
     }
 
     /** 没有安装方式的组件返回 null；调用方据此禁用安装按钮 */

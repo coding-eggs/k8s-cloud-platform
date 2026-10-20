@@ -735,11 +735,13 @@
 > **本批部分推翻了 2026-10-14 的「执行复用 S3.3/S3.4」裁定**：执行能力提前到本批，
 > 但仍只有一条写入实现；通用 Helm 商店（S3.3）与 Operator 管理（S3.4）将来是另一件事，与本批无关。
 
-- [ ] S3.6.1 `cluster_role`（MANAGEMENT / BUSINESS）+ 画像化 recipe 目录
-- [ ] S3.6.2 内置 chart（上游 + thin chart）+ sha256 校验
-- [ ] S3.6.3 helm 执行链（预检 / 执行 / 收尾）与异步操作记录
-- [ ] S3.6.4 组件 tab 的安装 / 升级与进度视图
+- [x] S3.6.1 `cluster_role`（MANAGEMENT / BUSINESS）+ 画像化 recipe 目录 —— 批①（2026-10-17）
+- [x] S3.6.2 内置 chart（上游 + thin chart）+ sha256 校验 —— 批①（2026-10-17）
+- [x] S3.6.3 helm 执行链（预检 / 执行 / 收尾）与异步操作记录 —— 批①（2026-10-17）
+- [x] S3.6.4 组件 tab 的安装 / 升级与进度视图 —— 批①（2026-10-17）
 - [ ] S3.6.5 逐个组件的配置契约与功能级验收（Prometheus 的 selector / externalLabels / remoteWrite 是重点）
+  —— **已验收 6/7**：metrics-server、prometheus-operator（含 Thanos）、tekton、otel-operator（含 Tempo）、
+  cert-manager、istio（含 Gateway API）；**剩 calico**
 
 **brainstorming 已定**：只做目录内 11 条；安装 + 升级（不做卸载/回滚按钮）；统一 Helm 执行器
 （含 thin chart）；chart 内置进 k8s-server；集群画像区分 management / business（Thanos 挂
@@ -794,6 +796,24 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 > 后端不校验"只升级平台装的"· 升级不复用上次 values · 陈旧操作只在启动扫一次 · UI 升级传旧版本号。
 > **顺带发现（未处理）**：platform-api 没有 `@EnableScheduling`，`PipelineRetentionService` 的
 > `@Scheduled` 很可能从未执行 —— 已记录，未擅自开启。
+
+> **✅ 批② 实施完成 + 功能级验收（2026-10-18 → 2026-10-20）**
+>
+> - 11 条组件的 recipe 与配置契约全部落地；12 个 chart 原样入库
+>   （`charts/components/<chart>/<version>/`，每个 chart 目录带组件说明：安装契约 / 踩坑 / 新增版本）。
+> - 可编辑项表单：存储（StorageClass + 容量）、资源（四格）、Service 类型与端口表（监听协议 / TLS 模式 /
+>   证书 Secret）、Tekton profile、Calico CIDR、Thanos 凭证、OTel 采样/Tempo/ES。
+> - 平台联动：Prometheus 告警回调（Secret + AlertmanagerConfig）、Thanos 托管安装、ingress `Telemetry`、
+>   Istio `external-gateway` Gateway CR（`addresses` 绑定 Service + listeners 由端口表派生）。
+> - **真集群功能级验收**：metrics-server、prometheus-operator（含 Thanos）、tekton、otel-operator（含 Tempo）、
+>   cert-manager、istio（含 Gateway API）**全部通过**；**剩 calico 未验收**。
+> - 验收中修掉的真问题：ambient 三件套缺 `PILOT_ENABLE_AMBIENT`；external-gateway `Programmed=False`
+>   （chart 不建 CR、CR 又没写 addresses）；组件版本取第一个 release 导致 Istio 显示成 1.6.2；
+>   多 release 的可编辑值不回显；端口表「仅 Service」被默认值补回；Thanos 四条 absent 告警
+>   （ServiceMonitor 未开）；node_exporter 缺 `--collector.cpu.info`。
+>
+> **部署**：先重放 `V2026_10_18_1`（同批①），重建 **k8s-server + platform-api + platform-web**。
+> `istio` 安装/重放会额外创建 `istio-system/external-gateway` Gateway CR（不再需要手工维护）。
 
 ---
 
@@ -867,6 +887,12 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 > - 反向也缺：11 条存量路由在平台里只显示一串 `external-gateway/http-80`，
 >   **没有任何地方说明 9527 是干嘛的、还有哪些端口空着**。
 >
+> **2026-10-20 用户改判（推翻本条「平台不该建入口 Gateway」）**：入口 Gateway CR 由
+> **Istio 组件创建并维护**（安装/重放成功后 SSA 下发 `istio-system/external-gateway`，
+> `spec.addresses` 绑定承载它的 Service，`spec.listeners` 来自安装表单的端口表）。
+> 详见 `charts/components/istio-base/1.30.6/README.md` §5。「对外暴露」整体规划仍未定；
+> 旧的 15 个 listener 如需恢复，在组件编辑表单的端口表里按端口补回即可。
+>
 > **重启时的待决问题（用户卡的就是这个）**：「对外暴露」整体怎么规划 —— 尤其是
 > **「哪些 Gateway 算可供租户挂的入口」由谁定**。三个候选各自的代价：
 > ①管理员在 Gateway 上打标注（要新开「平台侧改集群 Gateway」的口子）；
@@ -911,7 +937,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
-| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批① 已实施待部署**（引擎 + metrics-server 试点；批② 其余 10 条组件待出计划） | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
+| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批①+批② 已实施**（2026-10-18/20；引擎 + 11 条组件 recipe + 组件文档）；**功能级验收 6/7，剩 calico**。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |

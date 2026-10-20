@@ -1,6 +1,7 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
+import com.coding.common.models.k8s.dto.GatewayListenerDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
@@ -26,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -65,6 +67,123 @@ class ComponentInstallServiceTest {
         assertThatThrownBy(() -> service().apply(req, "admin"))
                 .hasMessageContaining("尚未支持安装");
         verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void istioOperationRecordsThePrimaryChartVersionNotGatewayApi() {
+        // Istio 的第一个 release 是 Gateway API（1.6.2），组件本体是 istiod（1.30.6）。
+        // mergeValues 重建 ReleaseSpec 时必须保留 primary 标记，否则操作记录会写成 1.6.2，
+        // 页面此后一直显示「可升级」（2026-10-20 用户指出）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        ArgumentCaptor<PlatformComponentOperation> inserted =
+                ArgumentCaptor.forClass(PlatformComponentOperation.class);
+
+        service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null, Map.of()), "admin");
+
+        verify(mapper).insert(inserted.capture());
+        assertThat(inserted.getValue().getToVersion()).isEqualTo("1.30.6");
+    }
+
+    @Test
+    void istioInstallCreatesTheExternalGatewayAndStripsListenerFieldsFromHelmValues() {
+        // 组件负责建 external-gateway CR（并把 addresses 绑到 Service）；
+        // 端口行里的 listener/tlsSecret 只给 Gateway 用，不能进 Helm 的 Service values
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(true);
+
+        service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null, Map.of()), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(eq("c1"), eq("istio"), eq("INSTALL"), specs.capture());
+        ReleaseInstallSpecDTO gatewayRelease = specs.getValue().stream()
+                .filter(r -> "external-gateway".equals(r.getReleaseName())).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ports = (List<Map<String, Object>>)
+                ((Map<String, Object>) gatewayRelease.getValues().get("service")).get("ports");
+        assertThat(ports).hasSize(3);
+        assertThat(ports).extracting(p -> p.get("port")).containsExactly(15021, 80, 443);
+        assertThat(ports).allSatisfy(p -> assertThat(p).doesNotContainKeys("listener", "tlsSecret"));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<GatewayListenerDTO>> listeners = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
+                eq("external-gateway"), eq("external-gateway"), listeners.capture());
+        // 15021 仅 Service（不监听）；80 → HTTP；443 → TLS Passthrough
+        assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getPort)
+                .containsExactly(80, 443);
+        assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getProtocol)
+                .containsExactly("HTTP", "TLS");
+        assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getTlsMode)
+                .containsExactly(null, "Passthrough");
+    }
+
+    @Test
+    void replayingAnOlderSnapshotFillsTheMissingPortListeners() {
+        // 功能上线前装的 istio：快照里的端口行没有 listener。重放要按默认行补齐，
+        // 否则 external-gateway CR 不会生成（用户会看到"重放了但没变化"）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        PlatformComponentOperation last = new PlatformComponentOperation();
+        last.setComponentCode("istio");
+        last.setStatus("SUCCESS");
+        last.setToVersion("1.30.6");
+        last.setValuesSnapshot("{\"external-gateway\":{\"name\":\"external-gateway\",\"service\":{"
+                + "\"type\":\"NodePort\",\"ports\":["
+                + "{\"name\":\"status-port\",\"port\":15021,\"targetPort\":15021,\"protocol\":\"TCP\"},"
+                + "{\"name\":\"http2\",\"port\":80,\"targetPort\":80,\"protocol\":\"TCP\",\"nodePort\":80},"
+                + "{\"name\":\"https\",\"port\":443,\"targetPort\":443,\"protocol\":\"TCP\",\"nodePort\":443}]}}}");
+        when(mapper.selectLatestSuccess("c1", "istio")).thenReturn(last);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(true);
+
+        service().apply(new ComponentApplyRequest("c1", "istio", "UPGRADE", null, Map.of()), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<GatewayListenerDTO>> listeners = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
+                eq("external-gateway"), eq("external-gateway"), listeners.capture());
+        assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getPort)
+                .containsExactly(80, 443);
+        assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getProtocol)
+                .containsExactly("HTTP", "TLS");
+        assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getTlsMode)
+                .containsExactly(null, "Passthrough");
+    }
+
+    @Test
+    void anExplicitServiceOnlyPortIsNotReintroducedByTheListenerDefaults() {
+        // 用户把 443 改成「仅 Service」：提交的端口行里 listener=""。
+        // 不能被"存量快照补齐"逻辑当成缺失再补回 TLS（2026-10-20 实报：选了仅 Service 仍出现在 Gateway CR）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(true);
+        Map<String, Object> editable = Map.of("service.ports", List.of(
+                Map.of("name", "status-port", "port", 15021, "targetPort", 15021,
+                        "protocol", "TCP", "listener", ""),
+                Map.of("name", "http2", "port", 80, "targetPort", 80,
+                        "protocol", "TCP", "listener", "HTTP"),
+                Map.of("name", "https", "port", 443, "targetPort", 443,
+                        "protocol", "TCP", "listener", "")));
+
+        service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null, editable), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<GatewayListenerDTO>> listeners = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
+                eq("external-gateway"), eq("external-gateway"), listeners.capture());
+        assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getPort)
+                .containsExactly(80);
     }
 
     @Test

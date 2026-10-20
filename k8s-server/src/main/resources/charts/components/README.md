@@ -18,7 +18,7 @@ charts/components/<chart>/<version>/
 | `prometheus-operator` | [prometheus-operator/92.10.1](prometheus-operator/92.10.1/README.md) |
 | （Prometheus 组件的管理集群底座） | [thanos/0.47.2](thanos/0.47.2/README.md) |
 | `tekton` | [tekton-operator/0.81.2](tekton-operator/0.81.2/README.md) |
-| `istio`（**含 Gateway API**） | [istio-base/1.30.6](istio-base/1.30.6/README.md)（`gateway-api/1.6.2` 是它的第一个 release） |
+| `istio`（**含 Gateway API**） | [istio-base/1.30.6](istio-base/1.30.6/README.md)（六个 release：`gateway-api/1.6.2` + 五个 Istio chart `1.30.6`） |
 | `otel-operator` | [otel-operator/0.126.0](otel-operator/0.126.0/README.md)、[tempo/3.2.0](tempo/3.2.0/README.md) |
 
 > `gateway-api` 于 2026-10-19 并入 `istio` 组件（同一个安装单元），目录里不再有独立的 gateway-api 行。
@@ -67,11 +67,29 @@ k8s-server 对每个 release 依次：
 
 `recipe 可编辑默认值` < `上次成功操作的值快照` < `本次用户显式传值` < `契约值（🔒，不可改）`，深合并。
 
+### 2.3.1 版本口径（2026-10-20）
+
+一个组件可以是多个 chart 的安装单元（Istio 六个、管理集群的 Prometheus 两个、OTel 两个）。
+版本必须分两层声明：
+
+- **chart 版本**（`chartVersion`）与**应用版本**（`withAppVersion(...)`，取自 chart 的 `Chart.yaml`）
+  是两个编号，每个 release 都要写；`ComponentRecipeCatalogTest` 会和内置 chart 的 `Chart.yaml` 交叉校验。
+- 每个 recipe **恰好一个主 release**（`asPrimary()`）—— 组件本体。
+  `availableVersions`、升级目标、操作记录的 `toVersion` 都只看主 release；
+  随附 chart（Gateway API / Thanos / Tempo）的版本不参与比较。
+- 组件页的「版本」列：应用版本来自集群探测，chart 版本来自上次成功操作；
+  多 chart 组件额外给「N 个 chart」展开，逐个列出 chart 版本与应用版本。
+
+> 2026-10-20 用户提出：Istio 的版本显示成了 Gateway API 的 1.6.2 —— 因为旧实现取「第一个 release」，
+> 而合并后排第一的是 Gateway API。改成显式主 release 后，组件版本固定为 istiod 的 1.30.6。
+
 ### 2.4 新增一个 chart 版本
 
 1. `helm pull <chart> --repo <repo> --version <x.y.z> --untar`（**不改模板**）；
 2. 放到 `charts/components/<chart>/<x.y.z>/chart/`，写 `provenance.yaml`；
-3. 在 `ComponentRecipeCatalog` 对应组件的 `List<ReleaseSpec>` **最前面**加一条（新 → 旧排序）；
+3. 在 `ComponentRecipeCatalog` 对应组件的 `List<ReleaseSpec>` **最前面**加新版本，
+   并给新 release 标 `asPrimary()` + `withAppVersion(...)`（主 release 不一定是排第一的那个，
+   通常它也是新版本的那一条）；
 4. 两阶段的组件（Tekton / OTel）**两处版本一起改**；
 5. 复制并更新本目录的 README；
 6. 跑测试 + 在**非生产集群**真装一次；

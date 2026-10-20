@@ -89,6 +89,52 @@ class ComponentRecipeCatalogTest {
         }
     }
 
+    @Test
+    void everyReleaseDeclaresTheChartAndApplicationVersions() {
+        // chart 版本与应用版本是两套编号（kube-prometheus-stack 92.10.1 → v0.94.1；
+        // tempo 3.2.0 → 3.1.0）。组件页要逐个 release 展示，recipe 必须自带 appVersion，
+        // 且与内置 chart 的 Chart.yaml 一致（跨模块校验，防止入库后忘记同步）。
+        for (String code : catalog.codes()) {
+            for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
+                for (ReleaseSpec r : catalog.recipeOf(code, profile).releases()) {
+                    Path chart = Path.of("../k8s-server/src/main/resources/charts/components/"
+                            + r.chartCode() + "/" + r.chartVersion() + "/chart/Chart.yaml");
+                    assertThat(r.appVersion())
+                            .as("%s / %s → %s 的 appVersion", code, profile, r.releaseName())
+                            .isEqualTo(appVersionOf(chart));
+                }
+            }
+        }
+    }
+
+    @Test
+    void everyRecipeMarksExactlyOnePrimaryRelease() {
+        // 主 release = 组件本体的版本（availableVersions / 升级目标只认它）。
+        // 同名 release 的多遍安装（tekton / otel）算同一个。
+        for (String code : catalog.codes()) {
+            for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
+                var primaryNames = catalog.recipeOf(code, profile).releases().stream()
+                        .filter(ReleaseSpec::primary)
+                        .map(ReleaseSpec::releaseName)
+                        .distinct()
+                        .toList();
+                assertThat(primaryNames).as("%s / %s", code, profile).hasSize(1);
+            }
+        }
+    }
+
+    private static String appVersionOf(Path chart) {
+        try {
+            return Files.readAllLines(chart).stream()
+                    .filter(line -> line.startsWith("appVersion:"))
+                    .findFirst()
+                    .map(line -> line.substring("appVersion:".length()).trim())
+                    .orElse(null);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> specOf(String code, String... path) {
         Object current = catalogValues(code);
@@ -349,5 +395,45 @@ class ComponentRecipeCatalogTest {
                 .contains("platform-otel")
                 .contains("platform-otel-gateway-collector.monitor.svc.cluster.local")
                 .contains("4317");
+    }
+
+    @Test
+    void istioIstiodCarriesTheAmbientProfileValues() {        // 只装 ztunnel/cni、不给 istiod 开 ambient 的后果：ztunnel 连 15012 直接被拒，
+        // 日志刷 "ztunnel requires PILOT_ENABLE_AMBIENT=true"（2026-10-20 实锤）。
+        // ISTIO_META_ENABLE_HBONE 来自官方 profile-ambient.yaml，waypoint（Envoy）靠它走 HBONE
+        var istiod = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .filter(r -> r.releaseName().equals("istiod")).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pilot = (Map<String, Object>) istiod.contractValues().get("pilot");
+        assertThat((Map<String, Object>) pilot.get("env"))
+                .containsEntry("PILOT_ENABLE_AMBIENT", "true");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> mesh = (Map<String, Object>) istiod.contractValues().get("meshConfig");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> defaultConfig = (Map<String, Object>) mesh.get("defaultConfig");
+        assertThat((Map<String, Object>) defaultConfig.get("proxyMetadata"))
+                .containsEntry("ISTIO_META_ENABLE_HBONE", "true");
+    }
+
+    @Test
+    void externalGatewayExposesServiceTypeAndPortsAsEditableValues() {
+        // 对外入口的 Service 必须可配：默认 LoadBalancer + 80/443/15021；
+        // 端口列表写进 recipe 默认值意味着每次重放都显式声明整组端口（Helm 的 list 是整体替换）
+        var gateway = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .filter(r -> r.releaseName().equals("external-gateway")).findFirst().orElseThrow();
+
+        assertThat(gateway.editableValues()).containsEntry("service.type", "LoadBalancer");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> ports = (List<Map<String, Object>>) gateway.editableValues().get("service.ports");
+        assertThat(ports).hasSize(3);
+        assertThat(ports).extracting(p -> p.get("name"))
+                .containsExactly("status-port", "http2", "https");
+        assertThat(ports).extracting(p -> p.get("port")).containsExactly(15021, 80, 443);
+        assertThat(ports).extracting(p -> p.get("targetPort")).containsExactly(15021, 80, 443);
+        assertThat(ports).allSatisfy(p -> assertThat(p).containsEntry("protocol", "TCP"));
+        // listener 由端口行派生：15021 仅 Service；80 → HTTP；443 → TLS Passthrough（免证书）
+        assertThat(ports).extracting(p -> p.get("listener")).containsExactly("", "HTTP", "TLS");
+        assertThat(ports.get(2)).containsEntry("tlsMode", "Passthrough");
     }
 }
