@@ -218,6 +218,11 @@ public class PrometheusRuleService {
                     } else {
                         ann.remove("description");
                     }
+                    if (StringUtils.hasText(r.getRunbookUrl())) {
+                        ann.put("runbook_url", r.getRunbookUrl());
+                    } else {
+                        ann.remove("runbook_url");
+                    }
                     r.setAnnotations(ann);
                 }
             }
@@ -243,6 +248,7 @@ public class PrometheusRuleService {
                 r.setSeverity(null);
                 r.setSummary(null);
                 r.setDescription(null);
+                r.setRunbookUrl(null);
             }
         }
     }
@@ -268,6 +274,9 @@ public class PrometheusRuleService {
                 }
                 if (r.getAnnotations() != null && StringUtils.hasText(r.getAnnotations().get("description"))) {
                     r.setDescription(r.getAnnotations().get("description"));
+                }
+                if (r.getAnnotations() != null && StringUtils.hasText(r.getAnnotations().get("runbook_url"))) {
+                    r.setRunbookUrl(r.getAnnotations().get("runbook_url"));
                 }
             }
         }

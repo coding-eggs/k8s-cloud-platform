@@ -137,6 +137,14 @@ public class PrometheusRuleDTO extends BaseResources {
          */
         private String description;
 
+        /**
+         * 平台侧便捷字段：**排障文档链接**。
+         *
+         * <p>本质是 {@code annotations.runbook_url}（prometheus-operator 的 runbook 惯例位置，
+         * 通知正文里单独一行 Runbook）。保存时拼进 annotations，读详情时摘回本字段。空 = 清掉该注解。
+         */
+        private String runbookUrl;
+
         private Map<String, String> labels;
 
         /** 仅 alert 规则有效 */

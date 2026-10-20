@@ -47,6 +47,8 @@ interface RuleRow {
   summary: string
   /** 详情 = annotations.description，同上 */
   description: string
+  /** 排障链接 = annotations.runbook_url，同上 */
+  runbookUrl: string
   expr: string
   for_: string
   keepFiringFor: string
@@ -70,7 +72,7 @@ interface GroupRow {
 }
 
 function newRule(): RuleRow {
-  return { kind: 'alert', name: '', severity: '', summary: '', description: '', expr: '', for_: '', keepFiringFor: '', labels: {}, annotations: {} }
+  return { kind: 'alert', name: '', severity: '', summary: '', description: '', runbookUrl: '', expr: '', for_: '', keepFiringFor: '', labels: {}, annotations: {} }
 }
 function newGroup(): GroupRow {
   return { name: '', interval: '', limit: null, queryOffset: '', partialResponseStrategy: '', groupLabels: {}, rules: [newRule()] }
@@ -122,12 +124,15 @@ function fromRule(r: K8sPrometheusRuleRule): RuleRow {
   delete annotations.summary
   const description = r.description ?? annotations.description ?? ''
   delete annotations.description
+  const runbookUrl = r.runbookUrl ?? annotations.runbook_url ?? ''
+  delete annotations.runbook_url
   return {
     kind: r.alert ? 'alert' : 'record',
     name: r.alert ?? r.record ?? '',
     severity,
     summary,
     description,
+    runbookUrl,
     expr: r.expr ?? '',
     for_: r.for_ ?? '',
     keepFiringFor: r.keepFiringFor ?? '',
@@ -259,6 +264,7 @@ function toRuleDto(r: RuleRow): K8sPrometheusRuleRule {
     if (r.severity) dto.severity = r.severity
     if (r.summary.trim()) dto.summary = r.summary.trim()
     if (r.description.trim()) dto.description = r.description.trim()
+    if (r.runbookUrl.trim()) dto.runbookUrl = r.runbookUrl.trim()
     if (r.for_.trim()) dto.for_ = r.for_.trim()
     if (r.keepFiringFor.trim()) dto.keepFiringFor = r.keepFiringFor.trim()
     if (Object.keys(r.labels).length) dto.labels = r.labels
@@ -479,8 +485,12 @@ function goBack(): void {
                   <el-input v-model="r.description" placeholder="展开说：哪个对象、当前值、阈值、持续多久；可用 {{ $labels.xxx }} / {{ $value }}" />
                 </el-form-item>
 
+                <el-form-item v-if="r.kind === 'alert'" label="排障链接 runbook_url">
+                  <el-input v-model="r.runbookUrl" placeholder="https://…（通知正文里单独一行 Runbook）" />
+                </el-form-item>
+
                 <el-form-item v-if="r.kind === 'alert'" label="注解 annotations">
-                  <LabelEditor v-model="r.annotations" class="sub-editor" :exclude-keys="['platform_rule', 'summary', 'description']" style="max-width: 1080px" />
+                  <LabelEditor v-model="r.annotations" class="sub-editor" :exclude-keys="['platform_rule', 'summary', 'description', 'runbook_url']" style="max-width: 1080px" />
                 </el-form-item>
               </el-form>
             </el-card>

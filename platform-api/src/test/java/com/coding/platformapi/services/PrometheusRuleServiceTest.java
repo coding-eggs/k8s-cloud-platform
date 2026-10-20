@@ -282,15 +282,16 @@ class PrometheusRuleServiceTest {
     void a_cleared_summary_removes_only_the_summary_annotation() {
         PrometheusRuleDTO dto = sample("my-app");
         PrometheusRuleDTO.Rule rule = dto.getGroups().get(0).getRules().get(0);
-        rule.setAnnotations(new java.util.LinkedHashMap<>(Map.of("summary", "旧的", "runbook_url", "https://x")));
+        rule.setAnnotations(new java.util.LinkedHashMap<>(Map.of("summary", "旧的", "team", "os")));
         rule.setSummary(null);
         when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
 
         svc.create(dto);
 
+        // summary / description / runbook_url 都已归平台侧字段管，这里用普通注解验「其它注解不被抹掉」
         assertThat(captured().getGroups().get(0).getRules().get(0).getAnnotations())
                 .doesNotContainKey("summary")
-                .containsEntry("runbook_url", "https://x")
+                .containsEntry("team", "os")
                 .containsEntry("platform_rule", "app-rules");
     }
 
@@ -349,6 +350,48 @@ class PrometheusRuleServiceTest {
         PrometheusRuleDTO out = svc.get("app-rules", "t1", "c1", "my-app");
 
         assertThat(out.getGroups().get(0).getRules().get(0).getDescription()).isEqualTo("详细说明");
+    }
+
+    /** 排障链接同样是平台侧字段：保存时拼成 annotations.runbook_url（惯例键，带下划线）。 */
+    @Test
+    void create_stamps_the_runbook_url_into_annotations() {
+        PrometheusRuleDTO dto = sample("my-app");
+        dto.getGroups().get(0).getRules().get(0).setRunbookUrl("https://runbooks/HighCPU");
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        assertThat(captured().getGroups().get(0).getRules().get(0).getAnnotations())
+                .containsEntry("runbook_url", "https://runbooks/HighCPU");
+    }
+
+    /** 清空链接 = 删掉 annotations.runbook_url。 */
+    @Test
+    void a_cleared_runbook_url_removes_the_annotation() {
+        PrometheusRuleDTO dto = sample("my-app");
+        PrometheusRuleDTO.Rule rule = dto.getGroups().get(0).getRules().get(0);
+        rule.setAnnotations(new java.util.LinkedHashMap<>(Map.of("runbook_url", "https://old")));
+        rule.setRunbookUrl(null);
+        when(k8s.create(any())).thenAnswer(i -> i.getArgument(0));
+
+        svc.create(dto);
+
+        assertThat(captured().getGroups().get(0).getRules().get(0).getAnnotations())
+                .doesNotContainKey("runbook_url");
+    }
+
+    /** 读详情时把 annotations.runbook_url 摘回平台侧字段。 */
+    @Test
+    void get_fills_the_runbook_url_back_from_annotations() {
+        PrometheusRuleDTO stored = sample("my-app");
+        stored.getGroups().get(0).getRules().get(0)
+                .setAnnotations(new java.util.LinkedHashMap<>(Map.of("runbook_url", "https://runbooks/HighCPU")));
+        when(k8s.get(any())).thenReturn(stored);
+
+        PrometheusRuleDTO out = svc.get("app-rules", "t1", "c1", "my-app");
+
+        assertThat(out.getGroups().get(0).getRules().get(0).getRunbookUrl())
+                .isEqualTo("https://runbooks/HighCPU");
     }
 
     // ---------- S2.2.4 通知方式 ----------

@@ -754,6 +754,8 @@ export interface K8sPrometheusRuleRule {
   summary?: string | null
   /** 平台侧字段：详情（`annotations.description`），同样由后端拼/摘 */
   description?: string | null
+  /** 平台侧字段：排障链接（`annotations.runbook_url`），同样由后端拼/摘 */
+  runbookUrl?: string | null
 }
 
 /** PrometheusRule 的一组规则（spec.groups[]） */
