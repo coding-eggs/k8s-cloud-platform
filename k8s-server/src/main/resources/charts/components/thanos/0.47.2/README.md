@@ -39,6 +39,33 @@ bucket: { enabled: false }
 | `bucket.enabled=false` | 平台不用 Thanos 的 bucket web UI |
 | 单副本 | 当前规模够用；副本数改动未进表单 |
 
+### 2.1 保留期（MinIO 里存多久）
+
+对象存储里的 block 由 **compactor** 按分辨率删除，chart 默认：
+
+| 分辨率 | 保留 | 对应参数 |
+|---|---|---|
+| raw（原始采样） | **30d** | `--retention.resolution-raw` |
+| 5m（降采样） | **90d** | `--retention.resolution-5m` |
+| 1h（降采样） | **365d** | `--retention.resolution-1h` |
+
+平台 recipe **没有覆盖** `compactor.retention`，所以上面就是当前生效值。实际含义不是"存 30 天"：
+
+- 0–30 天：全采样可查；
+- 30–90 天：按 5 分钟精度可查（raw block 已被删）；
+- 90–365 天：按 1 小时精度可查；
+- 超过 365 天：compactor 删除。
+
+另外两个容易混淆的保留期：
+
+- Prometheus 本地 `prometheusSpec.retention`（默认 15d，**组件表单里的「指标保留时长」**）——只影响本地 TSDB，
+  到期删本地的，Thanos 桶里按上表保留；
+- Receive 的 `receive.tsdb.retention=24h` ——只是 WAL 落盘到对象存储前的缓冲，与 MinIO 保留无关。
+
+要改保留期：在 Prometheus 组件的 **MANAGEMENT 编辑表单 →「Thanos 对象存储」** 一节里改
+（对应 `compactor.retention.resolutionRaw/5m/1h`，时长写法 `30d` / `12h`），再重放组件。
+⚠️ **改小会立即触发删除且不可逆**；改大只是不再删。
+
 ## 3. 安装表单（挂载在 Prometheus 组件的 MANAGEMENT 表单里）
 
 | 字段 | 说明 |

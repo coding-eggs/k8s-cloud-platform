@@ -365,6 +365,13 @@ class ClusterComponentServiceTest {
         var ports = fields.stream().filter(f -> f.getKey().equals("service.ports")).findFirst().orElseThrow();
         assertThat(ports.getLabel()).isEqualTo("端口列表");
         assertThat(ports.getType()).isEqualTo("ports");
+        // 分组：istiod 的控制面字段与入口字段分开渲染
+        assertThat(fields).filteredOn(f -> f.getKey().equals("service.type"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getGroup)
+                .containsExactly("对外入口（external-gateway）");
+        assertThat(fields).filteredOn(f -> f.getKey().equals("replicaCount"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getGroup)
+                .containsExactly("控制面（istiod）");
     }
 
     @Test
@@ -410,6 +417,36 @@ class ClusterComponentServiceTest {
         assertThat(fields).filteredOn(f -> f.getKey().equals("service.ports"))
                 .extracting(f -> String.valueOf(f.getCurrentValue()))
                 .anySatisfy(v -> assertThat(v).contains("admin").contains("30080"));
+    }
+
+    @Test
+    void editableFieldsCarryGroupsAndTheDurationWidget() {
+        // 表单按 group 分节渲染；Thanos 保留期是时长输入（不是自由文本）
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService management = mock(ClusterService.class);
+        when(management.requireProfile("c1")).thenReturn("MANAGEMENT");
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), management,
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), operationMapper());
+
+        var prom = find(svc.status("c1"), "prometheus-operator");
+
+        var retention = prom.getEditableFields().stream()
+                .filter(f -> f.getKey().equals("compactor.retention.resolutionRaw"))
+                .findFirst().orElseThrow();
+        assertThat(retention.getType()).isEqualTo("duration");
+        assertThat(retention.getGroup()).isEqualTo("Thanos 对象存储（管理集群）");
+        assertThat(retention.getLabel()).isEqualTo("原始数据保留期");
+
+        assertThat(prom.getEditableFields())
+                .filteredOn(f -> f.getKey().equals("prometheus.prometheusSpec.retention"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getGroup)
+                .containsExactly("指标保留");
+        assertThat(prom.getEditableFields())
+                .filteredOn(f -> f.getKey().equals("grafana.enabled"))
+                .extracting(com.coding.platformapi.models.EditableFieldDTO::getGroup)
+                .containsExactly("基础配置");
     }
 
     @Test

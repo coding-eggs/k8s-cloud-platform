@@ -152,7 +152,16 @@ public class ComponentRecipeCatalog {
                     "receive", Map.of("replicaCount", 1),
                     "storegateway", Map.of("replicaCount", 1),
                     "bucket", Map.of("enabled", false)),
-            Map.of()).withAppVersion("v0.42.4"));
+            thanosRetentionEditable()).withAppVersion("v0.42.4"));
+
+    /** compactor 的保留期（对象存储里留多久）；默认值来自 chart，做成表单可改 */
+    private static Map<String, Object> thanosRetentionEditable() {
+        Map<String, Object> editable = new LinkedHashMap<>();
+        editable.put("compactor.retention.resolutionRaw", "30d");
+        editable.put("compactor.retention.resolution5m", "90d");
+        editable.put("compactor.retention.resolution1h", "365d");
+        return editable;
+    }
 
     // ==================== istio（含 Gateway API CRD） ====================
 
@@ -538,7 +547,38 @@ public class ComponentRecipeCatalog {
             Map.entry("resources", "资源限制"),
             Map.entry("service.type", "Service 类型"),
             Map.entry("service.ports", "端口列表"),
+            Map.entry("compactor.retention.resolutionRaw", "原始数据保留期"),
+            Map.entry("compactor.retention.resolution5m", "5m 降采样保留期"),
+            Map.entry("compactor.retention.resolution1h", "1h 降采样保留期"),
             Map.entry("replicas", "副本数"));
+
+    /**
+     * 可编辑字段的分组（前端按组渲染小节标题，顺序 = 字段首次出现顺序）。
+     * 没有列在这里的 key 落到「其他配置」。
+     */
+    private static final Map<String, String> EDITABLE_GROUPS = Map.ofEntries(
+            Map.entry("replicas", "基础配置"),
+            Map.entry("grafana.enabled", "基础配置"),
+            Map.entry("prometheus.prometheusSpec.replicas", "基础配置"),
+            Map.entry("prometheus.prometheusSpec.retention", "指标保留"),
+            Map.entry("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName", "存储"),
+            Map.entry("prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage",
+                    "存储"),
+            Map.entry("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.storageClassName", "存储"),
+            Map.entry("alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage",
+                    "存储"),
+            Map.entry("replicaCount", "控制面（istiod）"),
+            Map.entry("autoscaleEnabled", "控制面（istiod）"),
+            Map.entry("resources", "控制面（istiod）"),
+            Map.entry("service.type", "对外入口（external-gateway）"),
+            Map.entry("service.ports", "对外入口（external-gateway）"),
+            Map.entry("compactor.retention.resolutionRaw", "Thanos 对象存储（管理集群）"),
+            Map.entry("compactor.retention.resolution5m", "Thanos 对象存储（管理集群）"),
+            Map.entry("compactor.retention.resolution1h", "Thanos 对象存储（管理集群）"));
+
+    public static String groupOf(String key) {
+        return EDITABLE_GROUPS.getOrDefault(key, "其他配置");
+    }
 
     /**
      * 枚举型可编辑字段的候选值（前端渲染成下拉）。没有列在这里的按默认值的 Java 类型推断控件。

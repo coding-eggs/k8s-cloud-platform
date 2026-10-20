@@ -18,7 +18,9 @@ public class EditableFieldDTO {
     private String key;
     /** 展示文案 */
     private String label;
-    /** string / number / boolean / json / storageClass / size / resources / select / ports */
+    /** 分组标题（前端按组渲染小节；没有分组的组件落「其他配置」） */
+    private String group;
+    /** string / number / boolean / json / storageClass / size / resources / select / ports / duration */
     private String type;
     /** type=select 的候选值；其余类型不出现 */
     @JsonInclude(JsonInclude.Include.NON_NULL)

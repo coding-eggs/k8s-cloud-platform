@@ -466,6 +466,7 @@ public class ClusterComponentService {
         EditableFieldDTO f = new EditableFieldDTO();
         f.setKey(key);
         f.setLabel(ComponentRecipeCatalog.labelOf(key));
+        f.setGroup(ComponentRecipeCatalog.groupOf(key));
         f.setType(typeOf(key, defaultValue));
         f.setDefaultValue(defaultValue);
         List<String> options = ComponentRecipeCatalog.optionsOf(key);
@@ -495,6 +496,11 @@ public class ClusterComponentService {
         // Service 端口列表：表格编辑器（名称/端口/targetPort/协议/nodePort），不是 JSON 文本域
         if (key.equals("service.ports") || key.endsWith(".service.ports")) {
             return "ports";
+        }
+        // 时长（Prometheus/Thanos 语法：30d / 12h / 1w）—— 校验格式，不给自由文本
+        if (key.endsWith(".retention.resolutionRaw") || key.endsWith(".retention.resolution5m")
+                || key.endsWith(".retention.resolution1h")) {
+            return "duration";
         }
         // 枚举字段（候选值集中声明在 recipe 目录里）→ 下拉
         if (!ComponentRecipeCatalog.optionsOf(key).isEmpty()) {

@@ -215,6 +215,9 @@ interface ResourceFormValues {
 /** K8s quantity：CPU 100m / 0.5 / 1，内存 256Mi / 1Gi（不带单位按核/字节） */
 const QUANTITY_RE = /^\d+(\.\d+)?(m|k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?$/
 
+/** Prometheus/Thanos 时长：30d / 12h / 1h30m；留空 = 不设置（chart 默认） */
+const DURATION_RE = /^(?:\d+(?:ms|s|m|h|d|w|y))+$/
+
 /** Service 端口表单：一行一个端口（同时描述 Gateway listener） */
 interface PortRow {
   name: string
@@ -393,6 +396,27 @@ const applyDialog = ref<ApplyDialog>({
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
 }
+
+/** Thanos 对象存储分组：这个组的特殊块（凭证/桶）和保留期字段在同一节里渲染 */
+const THANOS_GROUP = 'Thanos 对象存储（管理集群）'
+
+/** 可编辑字段的分组顺序 = recipe 里字段首次出现的顺序（后端下发 group） */
+const genericGroups = computed(() => {
+  const groups: string[] = []
+  for (const f of applyDialog.value.fields) {
+    const g = f.group || '其他配置'
+    if (g === THANOS_GROUP) continue // 跟 Thanos 凭据块一起渲染
+    if (!groups.includes(g)) groups.push(g)
+  }
+  return groups
+})
+
+function fieldsOf(group: string): K8sEditableField[] {
+  return applyDialog.value.fields.filter((f) => (f.group || '其他配置') === group)
+}
+
+/** Thanos 保留期（compactor.retention.*）：放在 Thanos 凭据块之后 */
+const thanosFields = computed(() => fieldsOf(THANOS_GROUP))
 
 /** 端口列表加一行（默认 TCP，空值等用户填） */
 function addPortRow(key: string): void {
@@ -633,6 +657,14 @@ function confirmApply(): void {
       }
       const value = fromPortRows(rows)
       if (JSON.stringify(value) === d.initial[f.key]) continue
+      editable[f.key] = value
+    } else if (f.type === 'duration') {
+      const value = String(d.values[f.key] ?? '').trim()
+      if (JSON.stringify(value) === d.initial[f.key]) continue
+      if (value && !DURATION_RE.test(value)) {
+        ElMessage.error(`「${f.label}」需要写成 30d、12h 这样的时长（留空 = chart 默认）`)
+        return
+      }
       editable[f.key] = value
     } else if (f.type === 'json') {
       const text = d.jsonText[f.key] ?? ''
@@ -969,6 +1001,101 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-radio-group>
         </div>
       </div>
+      <!-- 组件字段：按后端下发的 group 分节，避免所有输入框平铺在一起 -->
+      <template v-for="g in genericGroups" :key="g">
+        <div class="cc-section-title">{{ g }}</div>
+        <div v-for="f in fieldsOf(g)" :key="f.key" class="cc-form-row">
+          <span class="cc-form-label">{{ f.label }}</span>
+          <div class="cc-form-control">
+            <!-- 资源限制：requests/limits × cpu/memory 四格，不再用 JSON 文本域 -->
+            <div v-if="f.type === 'resources'" class="cc-resources">
+              <div class="cc-resource-line">
+                <span class="cc-resource-label">requests</span>
+                <el-input v-model="applyDialog.values[f.key + '.requestsCpu']"
+                          placeholder="CPU，如 100m" spellcheck="false" />
+                <el-input v-model="applyDialog.values[f.key + '.requestsMemory']"
+                          placeholder="内存，如 256Mi" spellcheck="false" />
+              </div>
+              <div class="cc-resource-line">
+                <span class="cc-resource-label">limits</span>
+                <el-input v-model="applyDialog.values[f.key + '.limitsCpu']"
+                          placeholder="CPU，如 1" spellcheck="false" />
+                <el-input v-model="applyDialog.values[f.key + '.limitsMemory']"
+                          placeholder="内存，如 1Gi" spellcheck="false" />
+              </div>
+              <div class="cc-form-hint">
+                写法：CPU 100m / 0.5 / 1；内存 256Mi / 1Gi。留空的项不写入 values，回落到平台默认值
+              </div>
+            </div>
+            <!-- Service 端口列表：一行一个端口（名称 / 端口 / targetPort / 协议 / nodePort） -->
+            <div v-else-if="f.type === 'ports'" class="cc-ports">
+              <div class="cc-port-row cc-port-head">
+                <span>名称</span><span>端口</span><span>targetPort</span><span>服务协议</span>
+                <span>nodePort</span><span>监听协议</span><span>TLS 模式</span><span>证书 Secret</span><span></span>
+              </div>
+              <div v-for="(p, i) in (applyDialog.portRows[f.key] ?? [])" :key="i" class="cc-port-row">
+                <el-input v-model="p.name" placeholder="http2" spellcheck="false" />
+                <el-input v-model="p.port" placeholder="80" spellcheck="false" />
+                <el-input v-model="p.targetPort" placeholder="留空 = 同端口" spellcheck="false" />
+                <el-select v-model="p.protocol">
+                  <el-option v-for="proto in PORT_PROTOCOLS" :key="proto" :label="proto" :value="proto" />
+                </el-select>
+                <el-input v-model="p.nodePort" placeholder="可选" spellcheck="false" />
+                <el-select v-model="p.listener" placeholder="仅 Service" @change="onListenerChange(p)">
+                  <el-option label="仅 Service（不监听）" value="" />
+                  <el-option v-for="l in LISTENER_PROTOCOLS" :key="l" :label="l" :value="l" />
+                </el-select>
+                <el-select v-model="p.tlsMode" placeholder="—"
+                           :disabled="p.listener !== 'TLS'">
+                  <el-option label="Terminate" value="Terminate" />
+                  <el-option label="Passthrough" value="Passthrough" />
+                </el-select>
+                <el-select v-if="p.listener === 'HTTPS' || p.listener === 'TLS'"
+                           v-model="p.tlsSecret" :disabled="p.tlsMode === 'Passthrough'"
+                           filterable allow-create clearable placeholder="证书 Secret">
+                  <el-option v-for="s in applyDialog.gatewaySecretOptions" :key="s.name"
+                             :label="s.name" :value="s.name" />
+                </el-select>
+                <span v-else class="cc-port-na">—</span>
+                <el-button link type="danger" @click="applyDialog.portRows[f.key]?.splice(i, 1)">删除</el-button>
+              </div>
+              <el-button link type="primary" @click="addPortRow(f.key)">+ 添加端口</el-button>
+              <div class="cc-form-hint">
+                每个端口可选择是否生成 Gateway listener（空 = 仅 Service，如 15021）。
+                HTTP/HTTPS 才能挂 HTTPRoute；HTTPS = 终止 TLS，必须填证书 Secret；TLS = Passthrough（不挂证书）；
+                listener 端口取 targetPort。选 NodePort 时可在对应列固定端口，留空则随机分配
+              </div>
+            </div>
+            <el-select v-else-if="f.type === 'select'" v-model="applyDialog.values[f.key]"
+                       style="width: 260px">
+              <el-option v-for="o in f.options ?? []" :key="o" :label="o" :value="o" />
+            </el-select>
+            <el-switch v-else-if="f.type === 'boolean'" v-model="applyDialog.values[f.key]" />
+            <el-input-number v-else-if="f.type === 'number'" v-model="applyDialog.values[f.key]" :min="0" />
+            <!-- 存储类：候选来自集群的 StorageClass；清空 = 跟随集群默认存储类（不提交该键） -->
+            <el-select v-else-if="f.type === 'storageClass'" v-model="applyDialog.values[f.key]"
+                       filterable allow-create clearable style="width: 100%"
+                       :disabled="applyDialog.action === 'EDIT'"
+                       placeholder="跟随集群默认存储类">
+              <el-option v-for="sc in applyDialog.storageClasses" :key="sc" :label="sc" :value="sc" />
+            </el-select>
+            <el-input v-else-if="f.type === 'size'" v-model="applyDialog.values[f.key]"
+                      placeholder="如 50Gi" spellcheck="false"
+                      :disabled="applyDialog.action === 'EDIT'" />
+            <el-input v-else-if="f.type === 'json'" v-model="applyDialog.jsonText[f.key]"
+                      type="textarea" :rows="5" spellcheck="false" />
+            <el-input v-else-if="f.type === 'duration'" v-model="applyDialog.values[f.key]"
+                      placeholder="如 30d / 12h（留空 = chart 默认）" spellcheck="false" />
+            <el-input v-else v-model="applyDialog.values[f.key]" />
+            <div v-if="(f.type === 'size' || f.type === 'storageClass') && applyDialog.action === 'EDIT'"
+                 class="cc-form-hint">
+              存储类与容量不能在这里改：StatefulSet 的 volumeClaimTemplates 不可变；扩容需 StorageClass 支持并在集群侧操作 PVC
+            </div>
+            <div v-else-if="f.type === 'size'" class="cc-form-hint">容量带单位：50Gi / 500Mi / 1Ti</div>
+          </div>
+        </div>
+      </template>
+      <div v-if="applyDialog.showCalico" class="cc-section-title">网络（Calico）</div>
       <div v-if="applyDialog.showCalico" class="cc-form-row">
         <span class="cc-form-label">Pod CIDR</span>
         <div class="cc-form-control">
@@ -985,6 +1112,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-select>
         </div>
       </div>
+      <div v-if="applyDialog.showTektonProfile" class="cc-section-title">Tekton</div>
       <div v-if="applyDialog.showTektonProfile" class="cc-form-row">
         <span class="cc-form-label">Tekton profile</span>
         <div class="cc-form-control">
@@ -998,6 +1126,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+      <div v-if="applyDialog.showOtel" class="cc-section-title">OTel 采集栈</div>
       <!-- OpenTelemetry 采集栈：Tempo 地址 + 采样/副本/日志 + MinIO/ES -->
       <div v-if="applyDialog.showOtel" class="cc-form-row">
         <span class="cc-form-label">Tempo 地址</span>
@@ -1042,6 +1171,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+      <div v-if="applyDialog.showOtel && applyDialog.showTempoInstall" class="cc-section-title">Tempo 存储</div>
       <template v-if="applyDialog.showOtel && applyDialog.showTempoInstall">
         <div class="cc-form-row">
           <span class="cc-form-label">Tempo 对象存储</span>
@@ -1112,6 +1242,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </template>
+      <div v-if="applyDialog.showOtel && applyDialog.otel.logsEnabled" class="cc-section-title">应用日志（Elasticsearch）</div>
       <template v-if="applyDialog.showOtel && applyDialog.otel.logsEnabled">
         <div class="cc-form-row">
           <span class="cc-form-label">ES 地址</span>
@@ -1146,6 +1277,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </template>
+      <div v-if="applyDialog.showThanosInstall" class="cc-section-title">Thanos 对象存储（管理集群）</div>
       <!-- Thanos（管理集群）：Prometheus 的长期指标写进 MinIO，由 Thanos 查询 -->
       <div v-if="applyDialog.showThanosInstall" class="cc-form-row">
         <span class="cc-form-label">Thanos 对象存储</span>
@@ -1195,6 +1327,21 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div class="cc-form-hint">MinIO 用自签证书时打开</div>
         </div>
       </div>
+      <!-- Thanos 保留期（compactor.retention.*）：与凭据/桶同一节 -->
+      <template v-if="applyDialog.showThanosInstall">
+        <div v-for="f in thanosFields" :key="f.key" class="cc-form-row">
+          <span class="cc-form-label">{{ f.label }}</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.values[f.key]" placeholder="如 30d / 12h（留空 = chart 默认）"
+                      spellcheck="false" />
+            <div class="cc-form-hint">
+              MinIO 里按分辨率的保留上限：raw 默认 30d、5m 降采样 90d、1h 降采样 365d。
+              <b>改小会立即删除更早的数据且不可逆</b>；改大只是不再删
+            </div>
+          </div>
+        </div>
+      </template>
+      <div v-if="applyDialog.showThanos || applyDialog.showWebhook" class="cc-section-title">平台联动</div>
       <div v-if="applyDialog.showThanos" class="cc-form-row">
         <span class="cc-form-label">Thanos Receive 地址</span>
         <div class="cc-form-control">
@@ -1214,94 +1361,6 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <div class="cc-form-hint">
             集群里的 Alertmanager 需要能访问到；后端会自动追加 ?clusterId=…
           </div>
-        </div>
-      </div>
-      <div v-for="f in applyDialog.fields" :key="f.key" class="cc-form-row">
-        <span class="cc-form-label">{{ f.label }}</span>
-        <div class="cc-form-control">
-          <!-- 资源限制：requests/limits × cpu/memory 四格，不再用 JSON 文本域 -->
-          <div v-if="f.type === 'resources'" class="cc-resources">
-            <div class="cc-resource-line">
-              <span class="cc-resource-label">requests</span>
-              <el-input v-model="applyDialog.values[f.key + '.requestsCpu']"
-                        placeholder="CPU，如 100m" spellcheck="false" />
-              <el-input v-model="applyDialog.values[f.key + '.requestsMemory']"
-                        placeholder="内存，如 256Mi" spellcheck="false" />
-            </div>
-            <div class="cc-resource-line">
-              <span class="cc-resource-label">limits</span>
-              <el-input v-model="applyDialog.values[f.key + '.limitsCpu']"
-                        placeholder="CPU，如 1" spellcheck="false" />
-              <el-input v-model="applyDialog.values[f.key + '.limitsMemory']"
-                        placeholder="内存，如 1Gi" spellcheck="false" />
-            </div>
-            <div class="cc-form-hint">
-              写法：CPU 100m / 0.5 / 1；内存 256Mi / 1Gi。留空的项不写入 values，回落到平台默认值
-            </div>
-          </div>
-          <!-- Service 端口列表：一行一个端口（名称 / 端口 / targetPort / 协议 / nodePort） -->
-          <div v-else-if="f.type === 'ports'" class="cc-ports">
-            <div class="cc-port-row cc-port-head">
-              <span>名称</span><span>端口</span><span>targetPort</span><span>服务协议</span>
-              <span>nodePort</span><span>监听协议</span><span>TLS 模式</span><span>证书 Secret</span><span></span>
-            </div>
-            <div v-for="(p, i) in (applyDialog.portRows[f.key] ?? [])" :key="i" class="cc-port-row">
-              <el-input v-model="p.name" placeholder="http2" spellcheck="false" />
-              <el-input v-model="p.port" placeholder="80" spellcheck="false" />
-              <el-input v-model="p.targetPort" placeholder="留空 = 同端口" spellcheck="false" />
-              <el-select v-model="p.protocol">
-                <el-option v-for="proto in PORT_PROTOCOLS" :key="proto" :label="proto" :value="proto" />
-              </el-select>
-              <el-input v-model="p.nodePort" placeholder="可选" spellcheck="false" />
-              <el-select v-model="p.listener" placeholder="仅 Service" @change="onListenerChange(p)">
-                <el-option label="仅 Service（不监听）" value="" />
-                <el-option v-for="l in LISTENER_PROTOCOLS" :key="l" :label="l" :value="l" />
-              </el-select>
-              <el-select v-model="p.tlsMode" placeholder="—"
-                         :disabled="p.listener !== 'TLS'">
-                <el-option label="Terminate" value="Terminate" />
-                <el-option label="Passthrough" value="Passthrough" />
-              </el-select>
-              <el-select v-if="p.listener === 'HTTPS' || p.listener === 'TLS'"
-                         v-model="p.tlsSecret" :disabled="p.tlsMode === 'Passthrough'"
-                         filterable allow-create clearable placeholder="证书 Secret">
-                <el-option v-for="s in applyDialog.gatewaySecretOptions" :key="s.name"
-                           :label="s.name" :value="s.name" />
-              </el-select>
-              <span v-else class="cc-port-na">—</span>
-              <el-button link type="danger" @click="applyDialog.portRows[f.key]?.splice(i, 1)">删除</el-button>
-            </div>
-            <el-button link type="primary" @click="addPortRow(f.key)">+ 添加端口</el-button>
-            <div class="cc-form-hint">
-              每个端口可选择是否生成 Gateway listener（空 = 仅 Service，如 15021）。
-              HTTP/HTTPS 才能挂 HTTPRoute；HTTPS = 终止 TLS，必须填证书 Secret；TLS = Passthrough（不挂证书）；
-              listener 端口取 targetPort。选 NodePort 时可在对应列固定端口，留空则随机分配
-            </div>
-          </div>
-          <el-select v-else-if="f.type === 'select'" v-model="applyDialog.values[f.key]"
-                     style="width: 260px">
-            <el-option v-for="o in f.options ?? []" :key="o" :label="o" :value="o" />
-          </el-select>
-          <el-switch v-else-if="f.type === 'boolean'" v-model="applyDialog.values[f.key]" />
-          <el-input-number v-else-if="f.type === 'number'" v-model="applyDialog.values[f.key]" :min="0" />
-          <!-- 存储类：候选来自集群的 StorageClass；清空 = 跟随集群默认存储类（不提交该键） -->
-          <el-select v-else-if="f.type === 'storageClass'" v-model="applyDialog.values[f.key]"
-                     filterable allow-create clearable style="width: 100%"
-                     :disabled="applyDialog.action === 'EDIT'"
-                     placeholder="跟随集群默认存储类">
-            <el-option v-for="sc in applyDialog.storageClasses" :key="sc" :label="sc" :value="sc" />
-          </el-select>
-          <el-input v-else-if="f.type === 'size'" v-model="applyDialog.values[f.key]"
-                    placeholder="如 50Gi" spellcheck="false"
-                    :disabled="applyDialog.action === 'EDIT'" />
-          <el-input v-else-if="f.type === 'json'" v-model="applyDialog.jsonText[f.key]"
-                    type="textarea" :rows="5" spellcheck="false" />
-          <el-input v-else v-model="applyDialog.values[f.key]" />
-          <div v-if="(f.type === 'size' || f.type === 'storageClass') && applyDialog.action === 'EDIT'"
-               class="cc-form-hint">
-            存储类与容量不能在这里改：StatefulSet 的 volumeClaimTemplates 不可变；扩容需 StorageClass 支持并在集群侧操作 PVC
-          </div>
-          <div v-else-if="f.type === 'size'" class="cc-form-hint">容量带单位：50Gi / 500Mi / 1Ti</div>
         </div>
       </div>
       <div v-if="!applyDialog.fields.length && !applyDialog.showWebhook && !applyDialog.showThanos
@@ -1394,6 +1453,12 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-upgrade-tip { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
 .cc-upgrade-option { display: block; margin: 6px 0; }
 .cc-form-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.cc-section-title {
+  margin: 18px 0 10px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px; font-weight: 600; color: var(--text-2);
+}
+.cc-section-title:first-of-type { margin-top: 4px; }
 .cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
 .cc-form-control { flex: 1 1 auto; min-width: 300px; }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }

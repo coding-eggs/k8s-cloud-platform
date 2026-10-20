@@ -123,6 +123,19 @@ class ComponentRecipeCatalogTest {
         }
     }
 
+    @Test
+    void thanosRetentionIsEditableWithTheChartDefaults() {
+        // compactor 的保留期做成表单（默认值与 chart 一致）；改小会立即删历史，所以默认必须显式
+        var management = catalog.recipeOf("prometheus-operator", "MANAGEMENT");
+        var thanos = management.releases().stream()
+                .filter(r -> r.releaseName().equals("platform-thanos")).findFirst().orElseThrow();
+
+        assertThat(thanos.editableValues())
+                .containsEntry("compactor.retention.resolutionRaw", "30d")
+                .containsEntry("compactor.retention.resolution5m", "90d")
+                .containsEntry("compactor.retention.resolution1h", "365d");
+    }
+
     private static String appVersionOf(Path chart) {
         try {
             return Files.readAllLines(chart).stream()
