@@ -238,10 +238,16 @@ class ComponentRecipeCatalogTest {
 
         // thanos 挂载的 objstore Secret 名必须与 platform-api 下发时用的一致
         Map<String, Object> thanos = management.releases().get(1).contractValues();
-        Map<String, Object> objstore = (Map<String, Object>)
-                ((Map<String, Object>) thanos.get("global")).get("objstore");
+        Map<String, Object> thanosGlobal = (Map<String, Object>) thanos.get("global");
+        Map<String, Object> objstore = (Map<String, Object>) thanosGlobal.get("objstore");
         assertThat(objstore).containsEntry("secretName", "platform-thanos-objstore")
                 .containsEntry("createSecret", false);
+
+        // chart 默认 global.thanosRules.enabled=true，会下发 thanos-component-absent 的 absent(up{...})
+        // 规则；必须同时开 ServiceMonitor，否则 Prometheus 里根本没有 thanos 的 up 序列，
+        // 四条（compact/query/receive/store）会恒 firing。
+        assertThat((Map<String, Object>) thanosGlobal.get("serviceMonitor"))
+                .containsEntry("enabled", true);
 
         var business = catalog.recipeOf("prometheus-operator", "BUSINESS");
         assertThat(business.releases()).hasSize(1);

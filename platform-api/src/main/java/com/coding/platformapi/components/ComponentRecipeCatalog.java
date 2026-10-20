@@ -131,10 +131,15 @@ public class ComponentRecipeCatalog {
     private static final List<ReleaseSpec> THANOS_RELEASES = List.of(new ReleaseSpec(
             "platform-thanos", "monitor", "thanos", "0.47.2",
             Map.of(
-                    "global", Map.of("objstore", Map.of(
-                            "createSecret", false,
-                            "secretName", "platform-thanos-objstore",
-                            "secretKey", "objstore.yml")),
+                    "global", Map.of(
+                            "objstore", Map.of(
+                                    "createSecret", false,
+                                    "secretName", "platform-thanos-objstore",
+                                    "secretKey", "objstore.yml"),
+                            // chart 默认 global.thanosRules.enabled=true，会下发
+                            // thanos-component-absent（compact/query/receive/store 的 absent(up{...})）；
+                            // 不开 ServiceMonitor 就没有 up 序列，四条规则会恒 firing（用户实报）。
+                            "serviceMonitor", Map.of("enabled", true)),
                     "query", Map.of("replicaCount", 1),
                     "receive", Map.of("replicaCount", 1),
                     "storegateway", Map.of("replicaCount", 1),

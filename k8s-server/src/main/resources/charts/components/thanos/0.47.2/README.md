@@ -24,6 +24,8 @@ global:
     createSecret: false
     secretName: platform-thanos-objstore
     secretKey: objstore.yml
+  serviceMonitor:
+    enabled: true            # 让 Prometheus 抓到 thanos 组件自身的 up 序列
 query: { replicaCount: 1 }
 receive: { replicaCount: 1 }
 storegateway: { replicaCount: 1 }
@@ -33,6 +35,7 @@ bucket: { enabled: false }
 | 值 | 为什么 |
 |---|---|
 | `objstore.createSecret=false` | 凭证 Secret 由平台在集群内生成（读来源 Secret → 拼 `objstore.yml` → SSA），凭证不经过 platform-api、不进 values 快照 |
+| `serviceMonitor.enabled=true` | chart **默认** `global.thanosRules.enabled=true`，会下发 `thanos-component-absent` 的 `absent(up{job=~".*thanos.*"})` 规则；不开 ServiceMonitor 就没有 `up` 序列，四条规则会恒 firing（2026-10-20 用户实报，见 §4） |
 | `bucket.enabled=false` | 平台不用 Thanos 的 bucket web UI |
 | 单副本 | 当前规模够用；副本数改动未进表单 |
 
@@ -60,6 +63,13 @@ bucket: { enabled: false }
   由 Prometheus 组件在 MANAGEMENT 追加安装，避免出现两条往集群写东西的平行通道。
 - 同集群同 ns 时 remoteWrite 可以用 Service 名；**跨集群（业务集群 → 管理集群）必须填外部可达地址**，
   所以地址必须进表单（用户评审第 1 条）。
+- **2026-10-20 用户报四条告警恒 firing**：部署 Thanos 后出现
+  `ThanosCompactIsDown` / `ThanosQueryIsDown` / `ThanosReceiveIsDown` / `ThanosStoreIsDown`，
+  规则组 `thanos-component-absent`，表达式 `absent(up{job=~".*thanos.*compact.*"} == 1)` 等。
+  根因：chart 默认 `global.thanosRules.enabled=true`（会下发这些规则），而
+  `global.serviceMonitor.enabled` 默认 **false** —— Prometheus 里没有任何 thanos target，
+  `up` 序列不存在，`absent()` 恒真。修法：recipe 打开 `global.serviceMonitor.enabled=true`
+  （§2）。**存量集群**要重新 EDIT/升级一次 `prometheus-operator` 组件，让四个 ServiceMonitor 下发。
 
 ## 5. 验证
 
@@ -78,6 +88,8 @@ kubectl -n monitor logs statefulset/platform-thanos-receive --tail=50
 3. **对象存储 403** —— 来源 Secret 的 key 组合不在支持列表里，或桶不存在（Thanos 不会建桶）。
 4. **TLS 握手失败** —— endpoint 带 `https://` 但 MinIO 是明文，或反之；scheme 决定 `insecure`。
 5. **数据在中心查不到** —— Prometheus 侧的 `externalLabels.cluster_name` 丢失（属于 Prometheus 契约）。
+6. **四条 `thanos-component-absent` 恒 firing** —— 没开 `global.serviceMonitor.enabled`
+   （chart 默认规则开着、抓取关着）；见 §4 最后一条。
 
 ## 7. 新增版本
 
