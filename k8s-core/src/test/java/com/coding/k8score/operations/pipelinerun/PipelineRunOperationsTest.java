@@ -333,15 +333,16 @@ class PipelineRunOperationsTest {
         dto.setNamespace("ns1");
         dto.setName("my-app-20261015-abcd");
         dto.setPipelineCanvasJson(canvasJson);
+        dto.setWorkspacePvc("platform-pipeline-ws-" + dto.getName());
         return dto;
     }
 
     @Test
-    void everyRunBindsTheSharedWorkspaceWithAPvcTemplate() {
-        // ⭐ 没有这一步，Tekton 会对每个非 optional 的 pipeline workspace 报
-        //    "pipeline requires workspace ... be provided by pipelinerun"，
-        //    创建会成功、reconciler 立刻把这条运行标成 Failed，Pod 不创建、日志也没有。
-        //    ——「跑得起来」的全部前提就在这一个 setter 上。
+    void everyRunBindsThePlatformOwnedWorkspacePvc() {
+        // ⭐ 不绑就等于没跑：Tekton 对非 optional 的 workspace 要求 PipelineRun 给出绑定，
+        //    缺了创建会成功、reconciler 立刻判 Failed，Pod 都不起（连日志都没有）。
+        //    现在绑的是**平台自建的具名 PVC**（不再是 volumeClaimTemplate）—— 这样运行删了卷还在，
+        //    失败后才有「从断点继续」的余地。
         String canvas = """
                 {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}}],"edges":[]}""";
 
@@ -349,12 +350,70 @@ class PipelineRunOperationsTest {
 
         assertThat(pr.getSpec().getPipelineSpec().getWorkspaces()).hasSize(1);
         WorkspaceBinding binding = pr.getSpec().getWorkspaces().get(0);
-        assertThat(binding.getName())
-                .isEqualTo(pr.getSpec().getPipelineSpec().getWorkspaces().get(0).getName());
-        assertThat(binding.getVolumeClaimTemplate()).as("必须是 PVC —— emptyDir 不跨 TaskRun 共享").isNotNull();
-        assertThat(binding.getVolumeClaimTemplate().getSpec().getAccessModes()).isNotEmpty();
-        assertThat(binding.getVolumeClaimTemplate().getSpec().getResources().getRequests())
-                .containsKey("storage");
+        assertThat(binding.getName()).isEqualTo("ws");
+        assertThat(binding.getPersistentVolumeClaim()).isNotNull();
+        assertThat(binding.getPersistentVolumeClaim().getClaimName())
+                .isEqualTo("platform-pipeline-ws-my-app-20261015-abcd");
+        assertThat(binding.getVolumeClaimTemplate()).as("不再用模板").isNull();
+    }
+
+    @Test
+    void aRunWithoutAWorkspaceClaimIsRefusedBeforeAnythingIsBuilt() {
+        String canvas = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}}],"edges":[]}""";
+        PipelineRunDTO dto = runOf(canvas);
+        dto.setWorkspacePvc(null);
+
+        assertThatThrownBy(() -> opsForBuild().buildRun(dto))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("工作区");
+    }
+
+    @Test
+    void theWorkspaceClaimNameIsReadFromTheWsBinding() {
+        String canvas = """
+                {"nodes":[{"id":"clone","type":"git","config":{"repo":"https://g/r.git"}}],"edges":[]}""";
+        PipelineRun pr = opsForBuild().buildRun(runOf(canvas));
+
+        assertThat(PipelineRunOperations.workspaceClaimNameOf(pr))
+                .isEqualTo("platform-pipeline-ws-my-app-20261015-abcd");
+        assertThat(PipelineRunOperations.workspaceClaimNameOf(new PipelineRun())).isNull();
+    }
+
+    @Test
+    void onlyPvcsCarryingTheWorkspaceRoleAreOursToDelete() {
+        io.fabric8.kubernetes.api.model.PersistentVolumeClaim ours =
+                new io.fabric8.kubernetes.api.model.PersistentVolumeClaim();
+        ours.setMetadata(new io.fabric8.kubernetes.api.model.ObjectMeta());
+        ours.getMetadata().setLabels(Map.of(PipelineRunOperations.WORKSPACE_ROLE_LABEL,
+                PipelineRunOperations.WORKSPACE_ROLE_VALUE));
+        assertThat(PipelineRunOperations.isWorkspacePvc(ours)).isTrue();
+
+        io.fabric8.kubernetes.api.model.PersistentVolumeClaim foreign =
+                new io.fabric8.kubernetes.api.model.PersistentVolumeClaim();
+        foreign.setMetadata(new io.fabric8.kubernetes.api.model.ObjectMeta());
+        foreign.getMetadata().setLabels(Map.of("app", "someone-else"));
+        assertThat(PipelineRunOperations.isWorkspacePvc(foreign)).isFalse();
+
+        io.fabric8.kubernetes.api.model.PersistentVolumeClaim noLabels =
+                new io.fabric8.kubernetes.api.model.PersistentVolumeClaim();
+        noLabels.setMetadata(new io.fabric8.kubernetes.api.model.ObjectMeta());
+        assertThat(PipelineRunOperations.isWorkspacePvc(noLabels)).isFalse();
+        assertThat(PipelineRunOperations.isWorkspacePvc(null)).isFalse();
+    }
+
+    @Test
+    void reusingAMissingWorkspaceIsRefusedInsteadOfSowingAnEmptyOne() {
+        // ⭐ 沿用而卷没了 = 工作区过期。重建一块空的会让重试「成功」却产物全缺 ——
+        //    这是本批最隐蔽的一种假成功。
+        assertThatThrownBy(() -> PipelineRunOperations.assertWorkspaceUsable(false, true, "ws-x"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("工作区")
+                .hasMessageContaining("过期");
+
+        // 首跑缺卷是正常的（本次要新建）；沿用且卷在：放行
+        PipelineRunOperations.assertWorkspaceUsable(false, false, "ws-x");
+        PipelineRunOperations.assertWorkspaceUsable(true, true, "ws-x");
     }
 
     @Test

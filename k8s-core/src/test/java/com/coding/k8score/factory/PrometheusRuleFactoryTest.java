@@ -23,7 +23,8 @@ class PrometheusRuleFactoryTest {
         KubernetesClientFactory clientFactory = mock(KubernetesClientFactory.class);
         when(clientFactory.getAdminClient(anyString())).thenReturn(mock(KubernetesClient.class));
         when(clientFactory.getTenantClient(anyString(), anyString())).thenReturn(mock(KubernetesClient.class));
-        factory = new KubernetesOperationsFactory(clientFactory, mock(K8sClusterMapper.class), null);
+        factory = new KubernetesOperationsFactory(clientFactory, mock(K8sClusterMapper.class), null,
+                java.time.Duration.ofHours(24));
     }
 
     @Test

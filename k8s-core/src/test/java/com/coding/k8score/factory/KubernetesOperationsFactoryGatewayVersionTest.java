@@ -33,7 +33,8 @@ class KubernetesOperationsFactoryGatewayVersionTest {
         KubernetesClientFactory clientFactory = mock(KubernetesClientFactory.class);
         when(clientFactory.getAdminClient(anyString())).thenReturn(mock(KubernetesClient.class));
         when(clientFactory.getTenantClient(anyString(), anyString())).thenReturn(mock(KubernetesClient.class));
-        factory = new KubernetesOperationsFactory(clientFactory, mapper, null);
+        factory = new KubernetesOperationsFactory(clientFactory, mapper, null,
+                java.time.Duration.ofHours(24));
     }
 
     /** 造出该集群的 capability 快照（group → versions[]） */

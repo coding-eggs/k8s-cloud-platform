@@ -85,9 +85,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -111,12 +113,18 @@ public class KubernetesOperationsFactory {
     /** 画布渲染（pipeline 专用）。platform-api 不依赖 k8s-core，所以渲染必须在这里被接上。 */
     private final PipelineCanvasOperations canvasOps;
 
+    /** 失败运行的工作区保留多久（成功即删）。见 {@code PipelineRunOperations}。 */
+    private final Duration pipelineWorkspaceRetention;
+
     public KubernetesOperationsFactory(KubernetesClientFactory clientFactory,
                                        K8sClusterMapper k8sClusterMapper,
-                                       PipelineCanvasOperations canvasOps) {
+                                       PipelineCanvasOperations canvasOps,
+                                       @Value("${platform.pipeline.workspace.retention:24h}")
+                                       Duration pipelineWorkspaceRetention) {
         this.clientFactory = clientFactory;
         this.k8sClusterMapper = k8sClusterMapper;
         this.canvasOps = canvasOps;
+        this.pipelineWorkspaceRetention = pipelineWorkspaceRetention;
     }
 
     /** 命名空间级资源 operation（Deployment、RoleBinding、ServiceAccount 等），用 tenant client 实现租户隔离。 */
@@ -239,7 +247,8 @@ public class KubernetesOperationsFactory {
             case HPA -> buildHpa(client, clusterId);
             // CI（Tekton）：单版本（tekton.dev/v1 GA），命名空间级、租户域。
             // 画布渲染也在 k8s-server 侧（platform-api 不依赖 k8s-core/fabric8），所以这里带上 canvasOps。
-            case PIPELINE_RUN -> new PipelineRunOperations(client, new PipelineRunConverter(), canvasOps);
+            case PIPELINE_RUN -> new PipelineRunOperations(client, new PipelineRunConverter(),
+                    canvasOps, pipelineWorkspaceRetention);
             default -> throw new CloudPlatformException(EnumResponseType.NON_RESOURCE);
         };
     }

@@ -40,10 +40,11 @@ import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
 import io.fabric8.tekton.v1.WorkspaceBinding;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -65,12 +66,19 @@ import java.util.Set;
  * 少了它，「看不见别人的 run」就只是 list 的假象，直接按名字打过来照样能删。
  */
 @Slf4j
-@RequiredArgsConstructor
 public class PipelineRunOperations implements NamespacedOperations<PipelineRunDTO> {
 
     public static final String MANAGED_LABEL = "app.kubernetes.io/managed-by";
     public static final String MANAGED_VALUE = "platform-system";
     public static final String MANAGED_SELECTOR = MANAGED_LABEL + "=" + MANAGED_VALUE;
+
+    /** 工作区 PVC 的角色标签 —— 回收器与删除前的守卫都认它。 */
+    public static final String WORKSPACE_ROLE_LABEL = "platform.pipeline/role";
+    public static final String WORKSPACE_ROLE_VALUE = "workspace";
+    /** 这块卷属于哪条运行（链上的第一次运行名）。 */
+    public static final String WORKSPACE_RUN_LABEL = "platform.pipeline/run";
+    /** 保留到什么时候（RFC3339 UTC）。回收器只解析这个注解。 */
+    public static final String RETAIN_UNTIL_ANNOTATION = "platform.pipeline/retain-until";
 
     /**
      * 隐式共享 workspace 每次运行要的那块临时 PVC。
@@ -243,6 +251,26 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
     /** 画布渲染 —— platform-api 不碰 fabric8，所以创建时收到的是画布、渲染在这里做（spec §7 的改定块）。 */
     private final PipelineCanvasOperations canvasOps;
 
+    /**
+     * 失败/超时/取消的运行，其工作区保留多久（成功即删）。由
+     * {@code KubernetesOperationsFactory} 从 {@code platform.pipeline.workspace.retention} 注入。
+     */
+    private final Duration workspaceRetention;
+
+    public PipelineRunOperations(KubernetesClient client, PipelineRunConverter converter,
+                                 PipelineCanvasOperations canvasOps, Duration workspaceRetention) {
+        this.client = client;
+        this.converter = converter;
+        this.canvasOps = canvasOps;
+        this.workspaceRetention = workspaceRetention == null ? Duration.ofHours(24) : workspaceRetention;
+    }
+
+    /** 测试与老调用点的便捷构造器：默认 24 小时。 */
+    public PipelineRunOperations(KubernetesClient client, PipelineRunConverter converter,
+                                 PipelineCanvasOperations canvasOps) {
+        this(client, converter, canvasOps, Duration.ofHours(24));
+    }
+
     @Override
     public String apiVersion() {
         return "tekton.dev/v1";
@@ -352,23 +380,41 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                     "创建凭据 Secret 失败：" + apiMessage(e));
         }
 
-        // ② 再建 PipelineRun
+        // ② 准备共享工作区：首跑本次新建；重试则必须已存在（不存在 = 已过期，见 assertWorkspaceUsable）
+        boolean workspaceCreated;
+        try {
+            workspaceCreated = ensureWorkspacePvc(dto.getWorkspacePvc(), dto.getNamespace(),
+                    dto.getName(), dto.isReuseWorkspace());
+        } catch (KubernetesClientException e) {
+            throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
+                    "准备工作区 PVC 失败：" + apiMessage(e));
+        }
+
+        // ③ 再建 PipelineRun
         // ⚠️ 带缓存卷的运行要**先确认那块卷可用**（见 ensureCachePvc）：先按「没有缓存卷」构造一份，
         //    确认真用到了缓存 workspace 才去碰集群里那块卷 —— 不用的运行连一次 GET 都不发。
-        PipelineRun pr = buildRun(dto, null);
-        if (declaresCache(pr)) {
-            // ⚠️ 先看**集群前提**：coschedule 不是 pipelineruns 时，一个 TaskRun 挂不了两块
-            //    PVC workspace（Tekton 会直接判失败）—— 那时只能退化成空目录。
-            //    这个事实由入口（controller）用 admin 凭据探好放进 dto，见 beforeCreate。
-            pr = buildRun(dto, dto.isCacheWorkspaceAllowed() ? ensureCachePvc(dto.getNamespace()) : null);
-        }
         PipelineRun created;
         try {
+            PipelineRun pr = buildRun(dto, null);
+            if (declaresCache(pr)) {
+                // ⚠️ 先看**集群前提**：coschedule 不是 pipelineruns 时，一个 TaskRun 挂不了两块
+                //    PVC workspace（Tekton 会直接判失败）—— 那时只能退化成空目录。
+                //    这个事实由入口（controller）用 admin 凭据探好放进 dto，见 beforeCreate。
+                pr = buildRun(dto, dto.isCacheWorkspaceAllowed() ? ensureCachePvc(dto.getNamespace()) : null);
+            }
             created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
                     .resource(pr).create();
         } catch (KubernetesClientException e) {
+            if (workspaceCreated) {
+                deleteWorkspacePvcQuietly(dto.getNamespace(), dto.getWorkspacePvc());
+            }
             throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
                     "创建 PipelineRun 失败：" + apiMessage(e));
+        } catch (RuntimeException e) {
+            if (workspaceCreated) {
+                deleteWorkspacePvcQuietly(dto.getNamespace(), dto.getWorkspacePvc());
+            }
+            throw e;
         }
         return converter.toDto(created);
     }
@@ -393,9 +439,10 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      * 而创建本身会成功（webhook 只校验 PipelineRun 自己那份列表），随后 reconciler 把这条运行
      * 标成 Failed：Pod 不创建、没有日志。也就是说「跑得起来」的全部前提就在这一个 setter 上。
      *
-     * <p>用 {@code volumeClaimTemplate}（每次运行现开一块临时 PVC）而**不是 emptyDir**：
-     * Tekton 的 emptyDir workspace **不跨 TaskRun 共享**，而我们要的正是
-     * 「git 克隆的源码给下游所有节点用」（spec §3.3）。
+     * <p>共享工作区绑的是**平台自建的具名 PVC**（名由 platform-api 定，见 {@code create}）而**不是
+     * emptyDir**：Tekton 的 emptyDir workspace **不跨 TaskRun 共享**，而我们要的正是
+     * 「git 克隆的源码给下游所有节点用」（spec §3.3）。用平台自建而不是 {@code volumeClaimTemplate}，
+     * 是为了让运行删掉之后卷还在 —— 失败后才有「从断点继续」的余地。
      */
     PipelineRun buildRun(PipelineRunDTO dto) {
         return buildRun(dto, null);
@@ -406,6 +453,10 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
      *                 缓存 workspace 退化成**本次运行自己的空目录**（能跑，只是不跨运行复用）
      */
     PipelineRun buildRun(PipelineRunDTO dto, String cachePvc) {
+        if (!StringUtils.hasText(dto.getWorkspacePvc())) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "创建运行必须带工作区 PVC 名（platform-pipeline-ws-<运行名>）");
+        }
         // ⚠️ 带上本次运行的连接：镜像节点要靠连接的 endpoint 拼目标地址，
         //    解析不出连接它就**拒渲染**（宁可不出来，也不产出必然失败的脚本）。
         Map<String, PipelineConnectionRef> byId = new java.util.LinkedHashMap<>();
@@ -425,7 +476,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
 
         PipelineRunSpec runSpec = new PipelineRunSpec();
         runSpec.setPipelineSpec(spec);
-        runSpec.setWorkspaces(bindWorkspaces(spec, dto.getName(), cachePvc));
+        runSpec.setWorkspaces(bindWorkspaces(spec, dto.getName(), dto.getWorkspacePvc(), cachePvc));
         // ⚠️ 有意**不设** spec.timeouts —— 超时由平台判定（spec §4.2）。让 Tekton 自己超时
         // 会删掉 Pod，那批运行的日志必然丢失，与「日志进库」直接冲突。
         pr.setSpec(runSpec);
@@ -509,12 +560,12 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
     /**
      * 给 spec 里声明的每个 workspace 配绑定 —— **一个都不能漏**（缺了 Tekton 直接拒绝）。
      *
-     * <p>三种绑定：隐式共享的那个现开一块 PVC（每次运行一块，跑完随运行一起消失）；
+     * <p>三种绑定：隐式共享的那个绑到**平台自建的具名 PVC**（成功即删、失败保留到 TTL）；
      * 凭据那个**绑到 k8s-server 刚建的 Secret** 上（凭据以文件形式挂进 Pod，绝不进 spec）；
      * 缓存那个绑到**长期保留的那块 PVC**（拿不到就退化成空目录）。
      */
     private static List<WorkspaceBinding> bindWorkspaces(PipelineSpec spec, String runName,
-                                                         String cachePvc) {
+                                                         String workspacePvc, String cachePvc) {
         if (spec.getWorkspaces() == null || spec.getWorkspaces().isEmpty()) {
             return List.of();
         }
@@ -546,19 +597,129 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                 continue;
             }
 
-            VolumeResourceRequirements res = new VolumeResourceRequirements();
-            res.setRequests(Map.of("storage", new Quantity(WORKSPACE_STORAGE)));
-            PersistentVolumeClaimSpec pvcSpec = new PersistentVolumeClaimSpec();
-            pvcSpec.setAccessModes(List.of("ReadWriteOnce"));
-            pvcSpec.setResources(res);
-            PersistentVolumeClaim pvc = new PersistentVolumeClaim();
-            // ⚠️ 与 PipelineRun 的 metadata 同理：模型不保证初始化嵌套对象
-            pvc.setSpec(pvcSpec);
-
-            b.setVolumeClaimTemplate(pvc);
+            // 隐式共享 workspace：绑平台自建的具名 PVC（名字由 platform-api 定）。
+            // ⚠️ 不能再用 volumeClaimTemplate —— Tekton 建的卷带 PipelineRun 的 ownerReference，
+            //    运行一删卷就没了，「从断点继续」无从谈起。
+            PersistentVolumeClaimVolumeSource ws = new PersistentVolumeClaimVolumeSource();
+            ws.setClaimName(workspacePvc);
+            b.setPersistentVolumeClaim(ws);
             out.add(b);
         }
         return out;
+    }
+
+    /**
+     * 确保工作区 PVC 存在。返回 true = 本次新建（创建 PipelineRun 失败时要回收它）；
+     * false = 已存在（重试路径），只刷新保留时间。
+     *
+     * <p>⚠️ {@code reuse=true} 而卷不存在 → **拒绝**，不新建空卷：那会让重试在一个空工作区上跑。
+     */
+    private boolean ensureWorkspacePvc(String claimName, String namespace, String runName, boolean reuse) {
+        if (!StringUtils.hasText(claimName)) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "创建运行必须带工作区 PVC 名（platform-pipeline-ws-<运行名>）");
+        }
+        PersistentVolumeClaim existing = client.persistentVolumeClaims().inNamespace(namespace)
+                .withName(claimName).get();
+        assertWorkspaceUsable(existing != null, reuse, claimName);
+        if (existing != null) {
+            refreshWorkspaceRetention(namespace, claimName);
+            return false;
+        }
+        PersistentVolumeClaim pvc = new PersistentVolumeClaim();
+        pvc.setMetadata(new ObjectMeta());
+        pvc.getMetadata().setName(claimName);
+        pvc.getMetadata().setNamespace(namespace);
+        pvc.getMetadata().setLabels(Map.of(
+                MANAGED_LABEL, MANAGED_VALUE,
+                WORKSPACE_ROLE_LABEL, WORKSPACE_ROLE_VALUE,
+                WORKSPACE_RUN_LABEL, runName));
+        pvc.getMetadata().setAnnotations(Map.of(
+                RETAIN_UNTIL_ANNOTATION, Instant.now().plus(workspaceRetention).toString()));
+        VolumeResourceRequirements res = new VolumeResourceRequirements();
+        res.setRequests(Map.of("storage", new Quantity(WORKSPACE_STORAGE)));
+        PersistentVolumeClaimSpec spec = new PersistentVolumeClaimSpec();
+        spec.setAccessModes(List.of("ReadWriteOnce"));
+        spec.setResources(res);
+        pvc.setSpec(spec);
+        client.persistentVolumeClaims().inNamespace(namespace).resource(pvc).create();
+        return true;
+    }
+
+    /**
+     * 沿用而卷不在 = 工作区已过期（保留窗口过了或被人清了）。**不能在这里补一块空的**：
+     * 重试会「成功」但产物全缺 —— 这是最隐蔽的一种假成功。
+     */
+    static void assertWorkspaceUsable(boolean exists, boolean reuse, String claimName) {
+        if (reuse && !exists) {
+            throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
+                    "工作区已过期或已被清理（" + claimName + "），这次运行不能从断点继续，请整条重跑");
+        }
+    }
+
+    /** 把保留时间推到「现在 + retention」—— 重试与失败归档都会调它。 */
+    public void refreshWorkspaceRetention(String namespace, String claimName) {
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace)
+                .withName(claimName).get();
+        if (pvc == null || !isWorkspacePvc(pvc)) {
+            return;
+        }
+        client.persistentVolumeClaims().inNamespace(namespace).withName(claimName)
+                .edit(p -> {
+                    Map<String, String> ann = p.getMetadata().getAnnotations() == null
+                            ? new HashMap<>() : new HashMap<>(p.getMetadata().getAnnotations());
+                    ann.put(RETAIN_UNTIL_ANNOTATION, Instant.now().plus(workspaceRetention).toString());
+                    p.getMetadata().setAnnotations(ann);
+                    return p;
+                });
+    }
+
+    /** 删工作区 PVC。**先校验标签**：名字撞上别人的卷时，宁可不删也不能误删。 */
+    public void deleteWorkspacePvc(String namespace, String claimName) {
+        PersistentVolumeClaim pvc = client.persistentVolumeClaims().inNamespace(namespace)
+                .withName(claimName).get();
+        if (pvc == null) {
+            return;
+        }
+        if (!isWorkspacePvc(pvc)) {
+            throw new CloudPlatformException(EnumResponseType.K8S_OPERATION_REJECTED,
+                    "拒绝删除非平台工作区 PVC：" + claimName);
+        }
+        client.persistentVolumeClaims().inNamespace(namespace).withName(claimName).delete();
+    }
+
+    private void deleteWorkspacePvcQuietly(String namespace, String claimName) {
+        try {
+            deleteWorkspacePvc(namespace, claimName);
+        } catch (Exception e) {
+            log.warn("回收刚创建的工作区 PVC 失败（交给 TTL）：{}/{}", namespace, claimName, e);
+        }
+    }
+
+    /** 从运行对象的 ws 绑定里读出工作区 PVC 名（归档时删卷要用）。 */
+    public String workspaceClaimName(String namespace, String runName) {
+        PipelineRun pr = fetch(namespace, runName);
+        return pr == null ? null : workspaceClaimNameOf(pr);
+    }
+
+    static String workspaceClaimNameOf(PipelineRun pr) {
+        PipelineRunSpec spec = pr == null ? null : pr.getSpec();
+        if (spec == null || spec.getWorkspaces() == null) {
+            return null;
+        }
+        for (WorkspaceBinding b : spec.getWorkspaces()) {
+            if (PipelineCanvasOperations.WORKSPACE.equals(b.getName())
+                    && b.getPersistentVolumeClaim() != null) {
+                return b.getPersistentVolumeClaim().getClaimName();
+            }
+        }
+        return null;
+    }
+
+    static boolean isWorkspacePvc(PersistentVolumeClaim pvc) {
+        return pvc != null && pvc.getMetadata() != null && pvc.getMetadata().getLabels() != null
+                && WORKSPACE_ROLE_VALUE.equals(
+                        pvc.getMetadata().getLabels().get(WORKSPACE_ROLE_LABEL));
     }
 
     @Override
