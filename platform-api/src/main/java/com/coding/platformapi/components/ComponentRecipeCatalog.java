@@ -86,6 +86,14 @@ public class ComponentRecipeCatalog {
         contract.put("kubeControllerManager", Map.of("enabled", false));
         contract.put("kubeEtcd", Map.of("enabled", false));
         contract.put("kubeScheduler", Map.of("enabled", false));
+        // node_exporter 1.12 的 --collector.cpu.info 是 Bool 且**没有默认值**（默认 false），
+        // 不开就没有 node_cpu_info（用户 2026-10-20 要求采集）。
+        // ⚠️ extraArgs 是 list，Helm 合并**整体替换**：必须把 chart 默认的两条 filesystem
+        //    exclude 原样写回，否则会丢掉「不采 overlay/proc/sys 等文件系统」的默认行为。
+        contract.put("prometheus-node-exporter", Map.of("extraArgs", List.of(
+                "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)",
+                "--collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$",
+                "--collector.cpu.info")));
         contract.put("crds", Map.of("enabled", true, "upgradeJob", Map.of("enabled", true)));
 
         return List.of(new ReleaseSpec(

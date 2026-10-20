@@ -42,6 +42,12 @@
 **「装上了但功能不生效」的典型**：`ruleSelectorNilUsesHelmValues` 默认 `true`，不关掉时
 helm/Pod 全绿，但平台在租户 ns 创建的 PrometheusRule 会被 Prometheus **静默忽略**，告警永不触发。
 
+**2026-10-20 用户要求采集 `node_cpu_info`**：node_exporter 1.12.1 里
+`--collector.cpu.info` 是 `Bool()` 且**没有 Default**（默认 false），chart 默认 extraArgs 也没带它 ——
+所以指标根本不存在。修法：recipe 的 `prometheus-node-exporter.extraArgs` 显式加
+`--collector.cpu.info`；同时保留 chart 默认的两条 filesystem exclude（extraArgs 是 list，
+Helm 合并整体替换）。存量集群重放一次本组件后，`node_cpu_info{cpu="0",...}` 才会出现在 Prometheus/Thanos。
+
 ## 3. 两种画像
 
 ### BUSINESS
@@ -80,6 +86,11 @@ kubeControllerManager.enabled: false
 kubeEtcd.enabled: false
 kubeScheduler.enabled: false
 crds: { enabled: true, upgradeJob: { enabled: true } }
+prometheus-node-exporter:
+  extraArgs:
+    - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+    - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+    - --collector.cpu.info
 ```
 
 | 值 | 为什么是契约 |
@@ -89,6 +100,7 @@ crds: { enabled: true, upgradeJob: { enabled: true } }
 | 控制面抓取四项关闭 | kubeadm 类集群这些端点只在 127.0.0.1，target 恒 DOWN（用户评审第 3' 条） |
 | `crds.upgradeJob.enabled=true` | Helm 不升级 `crds/`；官方 Job 在 operator 前 apply CRD（用户评审第 5 条） |
 | `externalLabels.cluster_name` | 中心 Thanos 按 `cluster_name` 区分集群 |
+| `prometheus-node-exporter.extraArgs` | node_exporter 1.12 的 `--collector.cpu.info` 是 Bool 且**没有默认值**（默认 false），不开就没有 `node_cpu_info`；`extraArgs` 是 list，Helm 合并会**整体替换**，所以必须把 chart 默认的两条 filesystem exclude 一起写回 |
 
 ## 5. 可编辑 values
 
@@ -136,6 +148,8 @@ kubectl -n monitor get secret platform-alert-token
 6. **PVC Pending** —— 写了 `storageClassName: ""`（平台已避免）或集群没有默认 SC。
 7. **告警联动失败但组件已装好** —— token/回调地址问题，修好重试升级。
 8. **安装卡 RUNNING** —— 看操作记录 `log_tail`；进程重启留下的记录可中止后重试。
+9. **查询不到 `node_cpu_info`** —— `--collector.cpu.info` 默认 false；确认 node-exporter DaemonSet 的
+   args 里有它（§2 最后一条），且没有把默认的 filesystem exclude 冲掉。
 
 ## 9. 新增版本
 

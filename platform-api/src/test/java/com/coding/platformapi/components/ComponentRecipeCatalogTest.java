@@ -147,6 +147,20 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void nodeExporterEnablesTheCpuInfoCollectorWithoutLosingTheFilesystemExcludes() {
+        // node_exporter 1.12 的 --collector.cpu.info **没有默认值**（Bool，默认 false），
+        // 不开就没有 node_cpu_info。extraArgs 是 list，Helm 合并时**整体替换** ——
+        // 只写 cpu.info 会把 chart 默认的两条 filesystem exclude 冲掉，必须一起写回。
+        ReleaseSpec kps = catalog.recipeOf("prometheus-operator", "BUSINESS").releases().get(0);
+        Map<String, Object> nodeExporter = (Map<String, Object>)
+                kps.contractValues().get("prometheus-node-exporter");
+        List<String> args = (List<String>) nodeExporter.get("extraArgs");
+        assertThat(args).contains("--collector.cpu.info");
+        assertThat(args).anyMatch(a -> a.startsWith("--collector.filesystem.mount-points-exclude="));
+        assertThat(args).anyMatch(a -> a.startsWith("--collector.filesystem.fs-types-exclude="));
+    }
+
+    @Test
     void istioShipsGatewayApiAndTheAmbientDataplaneByDefault() {
         // Gateway API 于 2026-10-19 并入 istio：装 Istio 必带 CRD，且排在最前
         List<String> releases = catalog.recipeOf("istio", "BUSINESS").releases().stream()
