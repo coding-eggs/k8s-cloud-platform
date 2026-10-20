@@ -9,8 +9,10 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -117,6 +119,105 @@ final class PipelineCanvasMask {
         return false;
     }
 
+    /** 重试计划：可点集合、会执行的节点集合、以及每个不可点节点的原因。 */
+    record Plan(Set<String> retryable, Set<String> runNodeIds, Map<String, String> blocked) {
+    }
+
+    /**
+     * 断点 = 自己没成功、且全部传递上游都已经成功。
+     *
+     * <p>范围 = 所有断点的子树之并。并行断点必须一起补：Tekton 的停止是整条运行级的，
+     * 只补一条会产出「成功但流水线没跑完」的记录，而成功即删工作区 —— 另一条就永远补不了了。
+     *
+     * @param effectiveStatus 节点 id → 状态；**没有键 = 没轮到它 = 没成功**
+     */
+    static Plan plan(String canvasJson, Map<String, String> effectiveStatus, Set<String> masked) {
+        Canvas c = parse(canvasJson);
+        Set<String> all = idsOf(c);
+        Map<String, Set<String>> parents = parentsOf(c, all);
+
+        Set<String> frontier = new LinkedHashSet<>();
+        for (Node n : c.nodes()) {
+            if (n.finallyTask() || masked.contains(n.id()) || succeeded(effectiveStatus, n.id())) {
+                continue;
+            }
+            if (allSucceeded(ancestorsOf(n.id(), parents), effectiveStatus)) {
+                frontier.add(n.id());
+            }
+        }
+        Set<String> scope = new LinkedHashSet<>(frontier);
+        scope.addAll(descendants(frontier, c.edges(), all));
+        scope.removeAll(masked);
+
+        Set<String> retryable = new LinkedHashSet<>(frontier);
+        Map<String, String> blocked = new LinkedHashMap<>();
+        for (Node n : c.nodes()) {
+            if (masked.contains(n.id())) {
+                blocked.put(n.id(), "本次运行屏蔽了它（连同下游）");
+            } else if (succeeded(effectiveStatus, n.id())) {
+                blocked.put(n.id(), "这个节点已经成功，不需要重试");
+            } else if (n.finallyTask()) {
+                // 收尾不参与连线，上游概念不成立 —— 没跑成就可单独重跑它自己
+                retryable.add(n.id());
+            } else if (!frontier.contains(n.id())) {
+                String up = firstFrontierAncestor(n.id(), parents, frontier);
+                blocked.put(n.id(), up == null
+                        ? "它的上游还没有全部成功，请从上游开始重试"
+                        : "上游 " + up + " 没有成功，请从它开始重试");
+            }
+        }
+        // ⚠️ 不能用 Set.copyOf：它不保序，会让「断点在前、下游在后」这个可读顺序随机化
+        return new Plan(java.util.Collections.unmodifiableSet(new LinkedHashSet<>(retryable)),
+                java.util.Collections.unmodifiableSet(new LinkedHashSet<>(scope)),
+                Map.copyOf(blocked));
+    }
+
+    private static Map<String, Set<String>> parentsOf(Canvas c, Set<String> all) {
+        Map<String, Set<String>> out = new LinkedHashMap<>();
+        for (String id : all) {
+            out.put(id, new LinkedHashSet<>());
+        }
+        for (Edge e : c.edges()) {
+            out.get(e.to()).add(e.from());
+        }
+        return out;
+    }
+
+    private static Set<String> ancestorsOf(String id, Map<String, Set<String>> parents) {
+        Set<String> out = new LinkedHashSet<>();
+        List<String> stack = new ArrayList<>(parents.getOrDefault(id, Set.of()));
+        while (!stack.isEmpty()) {
+            String cur = stack.remove(stack.size() - 1);
+            if (out.add(cur)) {
+                stack.addAll(parents.getOrDefault(cur, Set.of()));
+            }
+        }
+        return out;
+    }
+
+    private static boolean succeeded(Map<String, String> status, String id) {
+        return "SUCCEEDED".equals(status.get(id));
+    }
+
+    private static boolean allSucceeded(Set<String> ids, Map<String, String> status) {
+        for (String id : ids) {
+            if (!succeeded(status, id)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static String firstFrontierAncestor(String id, Map<String, Set<String>> parents,
+                                                Set<String> frontier) {
+        for (String a : ancestorsOf(id, parents)) {
+            if (frontier.contains(a)) {
+                return a;
+            }
+        }
+        return null;
+    }
+
     // ---- 解析与图遍历（断点计算也复用它们）----
 
     static Canvas parse(String canvasJson) {
@@ -150,7 +251,7 @@ final class PipelineCanvasMask {
 
     /** 从 {@code roots} 出发、沿边正向可达的全部节点（画布已保证无环）。 */
     static Set<String> descendants(Collection<String> roots, List<Edge> edges, Set<String> allIds) {
-        java.util.Map<String, List<String>> next = new java.util.LinkedHashMap<>();
+        Map<String, List<String>> next = new LinkedHashMap<>();
         for (Edge e : edges) {
             next.computeIfAbsent(e.from(), k -> new ArrayList<>()).add(e.to());
         }
