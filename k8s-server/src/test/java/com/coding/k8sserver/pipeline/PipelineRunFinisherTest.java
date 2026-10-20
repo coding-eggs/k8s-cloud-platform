@@ -227,4 +227,52 @@ class PipelineRunFinisherTest {
 
         verify(ops).cancel("ns1", "r1");
     }
+
+    @Test
+    void aSucceededRunReleasesItsWorkspaceSoNothingIsLeftBehind() {
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(snapshot("SUCCEEDED"));
+        when(ops.workspaceClaimName("ns1", "r1")).thenReturn("platform-pipeline-ws-r1");
+
+        assertThat(finisher.finish("c1", "ns1", "r1", false)).isTrue();
+
+        verify(ops).deleteWorkspacePvc("ns1", "platform-pipeline-ws-r1");
+        verify(ops, never()).refreshWorkspaceRetention(anyString(), anyString());
+    }
+
+    @Test
+    void aFailedRunKeepsItsWorkspaceAndPushesTheTtlOut() {
+        // ⭐ 删早了 = 断点再也补不了；所以失败/超时/取消只刷新保留时间
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(snapshot("FAILED"));
+        when(ops.workspaceClaimName("ns1", "r1")).thenReturn("platform-pipeline-ws-r1");
+
+        assertThat(finisher.finish("c1", "ns1", "r1", false)).isTrue();
+
+        verify(ops).refreshWorkspaceRetention("ns1", "platform-pipeline-ws-r1");
+        verify(ops, never()).deleteWorkspacePvc(anyString(), anyString());
+    }
+
+    @Test
+    void aTimedOutRunKeepsItsWorkspaceToo() {
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(snapshot("RUNNING"));
+        when(ops.workspaceClaimName("ns1", "r1")).thenReturn("platform-pipeline-ws-r1");
+
+        assertThat(finisher.finish("c1", "ns1", "r1", true)).isTrue();
+
+        verify(ops).refreshWorkspaceRetention("ns1", "platform-pipeline-ws-r1");
+        verify(ops, never()).deleteWorkspacePvc(anyString(), anyString());
+    }
+
+    @Test
+    void failingToDeleteTheWorkspaceDoesNotFailTheArchive() {
+        // 对象与库都已经落定；删卷失败只是多占一会儿，不能因此把归档重投成死循环
+        opsAre(ops);
+        when(ops.snapshot("c1", "ns1", "r1", 1024)).thenReturn(snapshot("SUCCEEDED"));
+        when(ops.workspaceClaimName("ns1", "r1")).thenReturn("platform-pipeline-ws-r1");
+        doThrow(new RuntimeException("boom")).when(ops).deleteWorkspacePvc(anyString(), anyString());
+
+        assertThat(finisher.finish("c1", "ns1", "r1", false)).isTrue();
+    }
 }

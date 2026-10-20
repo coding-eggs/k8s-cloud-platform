@@ -71,12 +71,48 @@ public class PipelineRunFinisher {
                 return false;
             }
         }
+        // ⚠️ 工作区的 PVC 名要在**删对象之前**读 —— 删了 PipelineRun 就读不到它的绑定了
+        String workspaceClaim = claimOf(clusterId, namespace, runName);
         // 落库成功（或本来就没这条运行）→ 才删。删本身幂等，重投再删一次也无妨
         deleteObject(clusterId, namespace, runName);
         // 凭据 Secret 跟它一起走：里面是可解的 git token / registry 认证，
         // 跑完了没有任何留着的理由（此前没人回收，每跑一次攒一份）
         deleteCredsSecret(clusterId, namespace, runName);
+        releaseWorkspace(clusterId, namespace, workspaceClaim,
+                snapshot != null && "SUCCEEDED".equals(snapshot.status()));
         return true;
+    }
+
+    /** 读这次运行绑定的工作区 PVC 名；读不到不影响归档（交给 TTL）。 */
+    private String claimOf(String clusterId, String namespace, String runName) {
+        try {
+            return runOps(clusterId).workspaceClaimName(namespace, runName);
+        } catch (Exception e) {
+            log.warn("读运行的工作区绑定失败（不影响归档）{}/{}", namespace, runName, e);
+            return null;
+        }
+    }
+
+    /**
+     * 工作区的去处由**这次运行的结果**决定：
+     * 成功 → 删（没人需要续跑了）；失败/超时/取消 → 保留并把 TTL 推到「现在 + retention」。
+     *
+     * <p>⚠️ 任何失败都只记 warn、不改归档结论 —— 对象已经删了、库已经写了，重投也修不了；
+     * 代价只是多占一会儿配额，TTL 回收器会兜住。
+     */
+    private void releaseWorkspace(String clusterId, String namespace, String claim, boolean succeeded) {
+        if (claim == null) {
+            return;
+        }
+        try {
+            if (succeeded) {
+                runOps(clusterId).deleteWorkspacePvc(namespace, claim);
+            } else {
+                runOps(clusterId).refreshWorkspaceRetention(namespace, claim);
+            }
+        } catch (Exception e) {
+            log.warn("处理工作区 PVC 失败（交给 TTL）{}/{}", namespace, claim, e);
+        }
     }
 
     /**
