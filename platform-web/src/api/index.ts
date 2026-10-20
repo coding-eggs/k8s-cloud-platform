@@ -38,6 +38,8 @@ import type {
   PipelineNodeType,
   PipelineRun,
   PipelineRunLog,
+  PipelineRetryPlan,
+  PipelineRetryWorkspaces,
   PipelineStepRef,
   K8sHttpRoute,
   K8sNode,
@@ -863,8 +865,22 @@ export const pipelineApi = {
    * 所以它们都要带**生效租户**。租户用户不用给（token 说了算，传别人的反而会被判 TENANT_MISMATCH）；
    * 平台管理员必须给：取顶栏级联里选的那个租户（`state.tenantId`）。
    */
-  run: (pipelineId: string, tenantId?: string) =>
-    http.post<never, string>('/pipeline/run', { id: pipelineId, tenantId }),
+  run: (pipelineId: string, tenantId?: string, maskedNodeIds?: string[]) =>
+    http.post<never, string>('/pipeline/run', { id: pipelineId, tenantId, maskedNodeIds }),
+  /** 重试计划（只读）：前端据此决定哪些节点有「重试」按钮 */
+  retryPlan: (runName: string, tenantId?: string) =>
+    http.post<never, PipelineRetryPlan>('/pipeline/run/retry/plan', { runName, tenantId }),
+  /** 从断点继续；nodeId 必须是计划里的可重试节点 */
+  retryRun: (runName: string, nodeId: string, tenantId?: string) =>
+    http.post<never, string>('/pipeline/run/retry', { runName, nodeId, tenantId }),
+  /** 待重试工作区（失败运行留下的卷） */
+  retryWorkspaces: (clusterId: string, namespace: string, tenantId?: string) =>
+    http.post<never, PipelineRetryWorkspaces>('/pipeline/retry-workspaces',
+      { clusterId, namespace, tenantId }),
+  /** 清理待重试工作区 —— **不可恢复**：之后那些运行不能再从断点继续 */
+  clearRetryWorkspaces: (clusterId: string, namespace: string, tenantId?: string) =>
+    http.post<never, void>('/pipeline/retry-workspaces/clear',
+      { clusterId, namespace, tenantId }),
   cancelRun: (runName: string, tenantId?: string) =>
     http.post<never, void>('/pipeline/run/cancel', { name: runName, tenantId }),
   /**

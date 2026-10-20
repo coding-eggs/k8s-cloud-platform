@@ -1150,9 +1150,12 @@ export interface K8sEditableField {
    * 控件类型：storageClass = 集群 StorageClass 下拉；size = 带单位的容量输入；
    * resources = requests/limits × cpu/memory 四格资源输入；
    * select = 枚举下拉（候选值见 options）；ports = Service 端口列表表格；
+   * duration = 时长输入（30d / 12h）；
    * json = 多行 JSON 文本域（其余按 defaultValue 的 JS 类型）
    */
-  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size' | 'resources' | 'select' | 'ports'
+  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size' | 'resources' | 'select' | 'ports' | 'duration'
+  /** 分组标题；前端按组渲染小节 */
+  group?: string
   /** type=select 的候选值 */
   options?: string[]
   defaultValue: unknown
@@ -2252,6 +2255,18 @@ export interface PipelineRun {
   /** 归档那一刻抓下来的 PipelineRun YAML（对象随后被删，这是「当年跑的是什么」的唯一存续形式）。
    *  同样只在 run/get 里带 */
   runYaml?: string | null
+  /** 重试来源运行 id；null = 首跑 */
+  parentRunId?: string | null
+  /** 同一条重试链的第几次尝试；首跑 = 1 */
+  attemptNo?: number | null
+  /** 用户点的那个断点（画布节点 id） */
+  retryFromNode?: string | null
+  /** 本次运行屏蔽的节点（JSON 数组字符串，闭包展开后） */
+  maskedNodesJson?: string | null
+  /** 重试时沿用的节点（JSON 数组字符串） */
+  reusedNodesJson?: string | null
+  /** 本次运行（链）使用的共享工作区 PVC 名 */
+  workspacePvc?: string | null
   createdAt?: string | null
 }
 
@@ -2288,6 +2303,35 @@ export interface PipelineStepRef {
   containers?: string[]
   /** Tekton 对这个节点失败的解释；没失败 / Tekton 没给就是 null */
   message?: string | null
+}
+
+/** 一次运行的重试计划 —— **按钮能不能点、点了会跑哪些，全看它**（后端算，前端不重算断点） */
+export interface PipelineRetryPlan {
+  retryable: boolean
+  reason?: string | null
+  /** 可以作为重试起点的节点（普通断点 + 没跑成的收尾节点） */
+  retryableNodes: string[]
+  /** 点普通断点时**会执行**的节点（所有断点的子树之并） */
+  runNodeIds: string[]
+  /** 沿用（上次成功、本次不跑）的节点 */
+  reusedNodeIds: string[]
+  /** 节点 id → 不能点的原因 */
+  blocked: Record<string, string>
+}
+
+/** 一块「待重试工作区」（失败运行留下的平台工作区 PVC） */
+export interface PipelineRetryWorkspace {
+  name: string
+  runName?: string | null
+  createdAt?: string | null
+  retainUntil?: string | null
+  sizeBytes: number
+}
+
+export interface PipelineRetryWorkspaces {
+  count: number
+  totalBytes: number
+  items: PipelineRetryWorkspace[]
 }
 
 /**

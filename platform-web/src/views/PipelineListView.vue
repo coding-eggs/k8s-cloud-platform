@@ -17,6 +17,8 @@ import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
 import { usePipelineCapability } from '@/composables/usePipelineCapability'
+import PipelineRunDialog from '@/components/pipeline/PipelineRunDialog.vue'
+import type { PipelineCanvas } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +30,17 @@ const loading = ref(false)
 const showCache = ref(false)
 const clearing = ref(false)
 const keyword = ref('')
+
+/** 触发对话框：取消勾选 = 本次屏蔽该节点及其下游 */
+const runDialogOpen = ref(false)
+const runTarget = ref<Pipeline | null>(null)
+const runCanvas = computed<PipelineCanvas>(() => {
+  try {
+    return JSON.parse(runTarget.value?.canvasJson ?? '{"nodes":[],"edges":[]}')
+  } catch {
+    return { nodes: [], edges: [] }
+  }
+})
 
 const canManage = computed(() => perm.has(apiCodes.pipelineManage))
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
@@ -108,11 +121,19 @@ function toRuns(id: string) {
   router.push({ path: '/pipelines/runs', query: { id } })
 }
 
-async function run(row: Pipeline) {
+async function openRun(row: Pipeline) {
+  runTarget.value = row
+  runDialogOpen.value = true
+}
+
+async function confirmRun(maskedNodeIds: string[]) {
+  const row = runTarget.value
+  if (!row?.id) return
   try {
-    const runName = await pipelineApi.run(row.id!, state.tenantId ?? undefined)
+    const runName = await pipelineApi.run(row.id, state.tenantId ?? undefined, maskedNodeIds)
     ElMessage.success(`已触发：${runName}`)
-    toRuns(row.id!)
+    runDialogOpen.value = false
+    toRuns(row.id)
   } catch {
     /* 拦截器已提示 */
   }
@@ -137,7 +158,7 @@ function onCommand(cmd: string, row: Pipeline): void {
   switch (cmd) {
     case 'edit': toEditor(row.id); break
     case 'runs': toRuns(row.id!); break
-    case 'run': void run(row); break
+    case 'run': void openRun(row); break
     case 'remove': void remove(row); break
   }
 }
@@ -254,6 +275,14 @@ function onCommand(cmd: string, row: Pipeline): void {
                    :loading="clearing" @click="doClearCache">清掉缓存</el-button>
       </template>
     </el-dialog>
+
+    <PipelineRunDialog
+      v-model="runDialogOpen"
+      :nodes="runCanvas.nodes"
+      :edges="runCanvas.edges"
+      :title="`触发运行 · ${runTarget?.name ?? ''}`"
+      @confirm="confirmRun"
+    />
   </div>
 </template>
 

@@ -24,6 +24,7 @@ import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
 import { fmtDate } from '@/utils/format'
+import PipelineRunDialog from '@/components/pipeline/PipelineRunDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -80,10 +81,25 @@ function openRun(r: PipelineRun): void {
   void router.push({ path: '/pipelines/run', query: { name: r.runName, id: pipelineId.value } })
 }
 
-async function run(): Promise<void> {
+/** 触发对话框：取消勾选 = 本次屏蔽该节点及其下游 */
+const runDialogOpen = ref(false)
+const runCanvas = computed(() => {
   try {
-    const runName = await pipelineApi.run(pipelineId.value, effectiveTenantId.value)
+    return JSON.parse(pipeline.value?.canvasJson ?? '{"nodes":[],"edges":[]}')
+  } catch {
+    return { nodes: [], edges: [] }
+  }
+})
+
+function openRunDialog(): void {
+  runDialogOpen.value = true
+}
+
+async function confirmRun(maskedNodeIds: string[]): Promise<void> {
+  try {
+    const runName = await pipelineApi.run(pipelineId.value, effectiveTenantId.value, maskedNodeIds)
     ElMessage.success(`已触发：${runName}`)
+    runDialogOpen.value = false
     await load()
   } catch {
     /* 拦截器已提示 */
@@ -156,7 +172,7 @@ async function removeRun(r: PipelineRun): Promise<void> {
       <span class="title">{{ pipeline?.name ?? '—' }}</span>
       <div class="spacer" />
       <el-button @click="load">刷新</el-button>
-      <el-button v-if="canRun" type="primary" @click="run">运行</el-button>
+      <el-button v-if="canRun" type="primary" @click="openRunDialog">运行</el-button>
     </div>
 
     <el-table v-loading="loading" :data="runs" row-key="id">
@@ -207,6 +223,13 @@ async function removeRun(r: PipelineRun): Promise<void> {
         <div class="empty">还没有运行过 —— 点右上角「运行」触发一次</div>
       </template>
     </el-table>
+    <PipelineRunDialog
+      v-model="runDialogOpen"
+      :nodes="runCanvas.nodes"
+      :edges="runCanvas.edges"
+      :title="`触发运行 · ${pipeline?.name ?? ''}`"
+      @confirm="confirmRun"
+    />
   </div>
 </template>
 

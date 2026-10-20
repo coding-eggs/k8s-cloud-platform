@@ -31,6 +31,7 @@ import YamlBlock from '@/components/YamlBlock.vue'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
 import NodePalette from '@/components/pipeline/NodePalette.vue'
 import NodePropsPanel from '@/components/pipeline/NodePropsPanel.vue'
+import PipelineRunDialog from '@/components/pipeline/PipelineRunDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,6 +41,12 @@ const { screenToFlowCoordinate } = useVueFlow()
 
 const pipelineId = computed(() => (route.query.id as string) || '')
 const isNew = computed(() => !pipelineId.value)
+
+/** 触发对话框：先保存、再让用户勾选本次要屏蔽的节点 */
+const runDialogOpen = ref(false)
+const savedIdForRun = ref('')
+const dialogNodes = computed(() => toCanvasNodes())
+const dialogEdges = computed(() => edges.value.map((e) => ({ from: e.source, to: e.target })))
 
 const form = ref<{ id?: string; clusterId: string; namespace: string; name: string; description: string }>({
   clusterId: (route.query.clusterId as string) || '',
@@ -576,10 +583,16 @@ async function save(): Promise<string | null> {
 async function run() {
   const id = await save()
   if (!id) return
+  savedIdForRun.value = id
+  runDialogOpen.value = true
+}
+
+async function confirmRun(maskedNodeIds: string[]) {
   try {
-    const runName = await pipelineApi.run(id, effectiveTenantId.value)
+    const runName = await pipelineApi.run(savedIdForRun.value, effectiveTenantId.value, maskedNodeIds)
     ElMessage.success(`已触发：${runName}`)
-    await router.push({ path: '/pipelines/runs', query: { id } })
+    runDialogOpen.value = false
+    await router.push({ path: '/pipelines/runs', query: { id: savedIdForRun.value } })
   } catch {
     /* 拦截器已提示 */
   }
@@ -716,6 +729,14 @@ async function removePipeline() {
     <el-dialog v-model="showPreview" title="渲染出来的 Tekton YAML" width="70%">
       <YamlBlock :yaml="yamlPreview" max-height="50vh" />
     </el-dialog>
+
+    <PipelineRunDialog
+      v-model="runDialogOpen"
+      :nodes="dialogNodes"
+      :edges="dialogEdges"
+      title="触发运行"
+      @confirm="confirmRun"
+    />
   </div>
 </template>
 
