@@ -171,7 +171,18 @@ git ───┤
 | `reused_nodes_json` | `mediumtext NULL` | 重试时沿用的节点（JSON 数组） |
 | `workspace_pvc` | `varchar(128) NULL` | 本次运行（链）使用的共享工作区 PVC 名 |
 
-**没有新的权限行** —— 复用 `tenant:pipeline:run`，所以不需要权限 join 对账那一套。
+**权限行**：本批**不新增权限码**，但**必须新增 4 条权限行** —— 授权是按「端点行」匹配的，
+`PermissionCrossCheckRunner` 在启动时会把「没有权限行的端点」当成裸端点直接拒启。四条都用现有码：
+
+| 权限行 | 端点 | 码 | 角色关联 |
+|---|---|---|---|
+| `perm_pipeline_runretry` | `POST /pipeline/run/retry` | `tenant:pipeline:run` | tenant_admin / tenant_member / admin |
+| `perm_pipeline_runretryplan` | `POST /pipeline/run/retry/plan` | `tenant:pipeline:read` | 同上三个 |
+| `perm_pipeline_retryws` | `POST /pipeline/retry-workspaces` | `tenant:pipeline:read` | 同上三个 |
+| `perm_pipeline_retrywsclear` | `POST /pipeline/retry-workspaces/clear` | `tenant:pipeline:run` | 同上三个 |
+
+⚠️ **角色关联必须逐条显式插**（`platform_role_permission` 按 permission_id 绑，不按 code 继承）——
+这是本仓反复踩过的那条（新权限行不绑角色 = 上线即可见但点了 403）。
 
 **`platform-data` 侧的连带改动**（容易漏）：
 
@@ -190,9 +201,15 @@ git ───┤
  * 首跑由 platform-api 生成 `platform-pipeline-ws-<runName>`；重试沿用父运行那一块。
  */
 private String workspacePvc;
+
+/** true = 沿用（重试）；false = 本次新建（首跑）。 */
+private boolean reuseWorkspace;
 ```
 
-⚠️ **名字由 platform-api 定，k8s-server 只负责「没有就建、有就刷新 TTL」** ——
+⚠️ **必须区分「新建」与「沿用」**：沿用而卷不存在时必须**拒绝**（工作区已过期），
+绝不能「没有就建一块空的」—— 那会让重试在一个空工作区上跑，看起来成功、产物却全缺。
+
+⚠️ **名字由 platform-api 定，k8s-server 只负责「新建就建、沿用就校验并刷新 TTL」** ——
 这样「PVC 叫什么」只有一个落点，两个模块不需要各自拼一遍前缀（与 `credsSecretName` 那种
 「两边必须算出同一个名字」的约定相反，这里刻意不那样做）。platform-api 也因此能在**创建之前**
 就把名字落进运行行，集群创建失败回滚时两边状态一致。
@@ -282,11 +299,14 @@ Tekton 建的 PVC 带 PipelineRun 的 ownerReference —— **删 PipelineRun �
 ### 6.2 创建与绑定
 
 - PVC 名由 platform-api 定（§4.2）：首跑 `platform-pipeline-ws-<runName>`，重试沿用父运行的。
-- k8s-server 收到 `workspacePvc` 后：
-  - **不存在 → 建**：`1Gi`、`ReadWriteOnce`（**与今天一致**，不借机改访问模式）、默认 StorageClass；
-    标签 `app.kubernetes.io/managed-by=platform-system` + `platform.pipeline/role=workspace`
-    + `platform.pipeline/run=<runName>`；注解 `platform.pipeline/retain-until=<RFC3339, now + retention>`。
-  - **已存在 → 不重建**，只刷新 `retain-until`（重试路径）。
+- k8s-server 收到 `workspacePvc` + `reuseWorkspace` 后：
+  - **首跑（reuse=false）且不存在 → 建**：`1Gi`、`ReadWriteOnce`（**与今天一致**，不借机改访问模式）、
+    默认 StorageClass；标签 `app.kubernetes.io/managed-by=platform-system`
+    + `platform.pipeline/role=workspace` + `platform.pipeline/run=<runName>`；
+    注解 `platform.pipeline/retain-until=<RFC3339, now + retention>`。
+  - **已存在 → 不重建**，只刷新 `retain-until`。
+  - **重试（reuse=true）且不存在 → 拒绝**：「工作区已过期或已被清理，请整条重跑」。
+    ⚠️ 绝不能在这里补一块空卷 —— 重试会「成功」而产物全缺。
 - PipelineRun 的 `ws` workspace 绑定改成 `persistentVolumeClaim`（`claimName`）。
 - PVC 建失败 → **运行不创建**（抛出，platform-api 回滚刚落的运行行）。
 - PipelineRun 建失败 → 只有「本次新建的」PVC 才尽力删掉，再抛。
@@ -386,7 +406,8 @@ retry 端点与 plan 端点共用它，前端重算一次就多一处会走偏�
 - 屏蔽：属于触发，`tenant:pipeline:run`。
 - 重试：属于触发，`tenant:pipeline:run`；`@Auditable(action = PIPELINE_RUN, target = "#request.runName")`。
 - 「清理待重试工作区」：`tenant:pipeline:run`；新审计动作 `PIPELINE_RETRY_WORKSPACE_CLEAR = "pipeline:retry-workspace-clear"`。
-- 查看工作区列表：`tenant:pipeline:read`。
+- 查看工作区列表与重试计划：`tenant:pipeline:read`。
+- **不新增权限码，但要新增 4 条端点权限行 + 12 条角色关联**（§4.1）—— 否则启动期交叉校验拒启。
 - 命名空间边界：全部走既有的「租户 × 集群 × 命名空间」分配表（`NamespaceAccessGuard` / `PipelineRunService.requireRun`）。
 
 ---
@@ -399,11 +420,11 @@ retry 端点与 plan 端点共用它，前端重算一次就多一处会走偏�
 | **plan 与 retry 的一致性** | 同一个 `frontier/retryScope` 实现被两个端点共用：同一运行同一输入，plan 返回的 `runNodeIds` 与实际创建出来的子画布节点集合**完全一致**；plan 只读（不建对象、不落行） |
 | **重试服务** | 父运行非终态拒；父运行 `SUCCEEDED` 拒；**上游没成功的节点拒**（报具体上游）；**已成功节点拒**；**收尾节点可重试**；屏蔽节点拒；`workspace_pvc` 为空拒；有效状态 = 自身 steps ∪ 沿用集合；`attempt_no` 递增、`parent_run_id` 正确；`masked` 继承父运行；创建失败**回滚运行行**（不留 RUNNING 孤儿）；连接重新授权校验（撤销授权后重试被拒） |
 | **`steps_json` 解析** | 新键（节点 id）与老键（`<runName>-<id>`）都要认 —— 与日志路径 `nodeIdOf` 同一口径 |
-| **k8s-core** | `buildRun` 要求 `workspacePvc` 必填、绑定形状是 `persistentVolumeClaim`；PVC 工厂的标签/注解与 TTL 刷新；**渲染结果里不再出现 `volumeClaimTemplate`** |
+| **k8s-core** | `buildRun` 要求 `workspacePvc` 必填、绑定形状是 `persistentVolumeClaim`；PVC 工厂的标签/注解与 TTL 刷新；**沿用而卷不存在 → 拒绝（不补空卷）**；**渲染结果里不再出现 `volumeClaimTemplate`** |
 | **`PipelineRunFinisher`** | `SUCCEEDED` → 删 PVC；`FAILED` → 不删；删 PVC 失败**不影响归档判定**；取消路径仍走 `persistLogs`（既有那条回归） |
 | **Reaper** | 过期删 / 未过期留 / 非平台 PVC 不碰 / 一个集群失败不影响其余 |
 | **回归** | 全量 `mvn test`（四个模块）；前端 `npm run build`（**不要用 `vue-tsc --noEmit` 当验收**，它会零报错放过真错误） |
-| **迁移** | 手工重放 + `platform_pipeline_run` 六列存在；`PlatformPipelineRunMapper.xml` 四处（resultMap / Base / insert / List）都能取到新列 |
+| **迁移** | 手工重放 + `platform_pipeline_run` 六列存在；`PlatformPipelineRunMapper.xml` 四处（resultMap / Base / insert / List）都能取到新列；**4 条权限行 + 12 条角色关联**逐条命中真实 endpoint（启动期交叉校验会替我们拒） |
 
 ---
 
@@ -459,7 +480,7 @@ retry 端点与 plan 端点共用它，前端重算一次就多一处会走偏�
          retention: ${PIPELINE_WORKSPACE_RETENTION:24h}          # 失败运行的工作区保留窗口
          reap-interval: ${PIPELINE_WORKSPACE_REAP_INTERVAL:10m}   # 回收节拍
    ```
-5. **不需要重新登录**（没有新权限码）。
+5. **不需要重新登录**（没有新权限码；权限闭包按 code 算，四条新行用的都是既有码）。
 
 ### 13.1 部署后待验清单
 
