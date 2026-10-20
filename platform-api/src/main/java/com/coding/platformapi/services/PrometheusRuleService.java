@@ -184,11 +184,7 @@ public class PrometheusRuleService {
                     labels.put("namespace", body.getNamespace());
                     // 严重度：编辑页的下拉是**平台侧字段**，这里拼成 Prometheus 生态约定的 labels.severity。
                     // 下拉被清空 = 删掉这个标签（不能留着旧值，否则用户以为改了、实际没改）。
-                    if (StringUtils.hasText(r.getSeverity())) {
-                        labels.put("severity", r.getSeverity());
-                    } else {
-                        labels.remove("severity");
-                    }
+                    applyReserved(labels, "severity", r.getSeverity(), ruleLabel);
                     // 通知方式：选了才写。没选**不能写空串** —— 空值会变成一个无意义的
                     // platform_notify="" 标签，投递端还得区分「没写」与「写了空」。
                     if (StringUtils.hasText(body.getNotifyChannel())) {
@@ -206,23 +202,10 @@ public class PrometheusRuleService {
                     if (StringUtils.hasText(body.getName())) {
                         ann.put("platform_rule", body.getName());
                     }
-                    // 摘要同理：编辑页的输入框是平台侧字段，这里拼成 annotations.summary；
-                    // 清空 = 删掉这个注解。
-                    if (StringUtils.hasText(r.getSummary())) {
-                        ann.put("summary", r.getSummary());
-                    } else {
-                        ann.remove("summary");
-                    }
-                    if (StringUtils.hasText(r.getDescription())) {
-                        ann.put("description", r.getDescription());
-                    } else {
-                        ann.remove("description");
-                    }
-                    if (StringUtils.hasText(r.getRunbookUrl())) {
-                        ann.put("runbook_url", r.getRunbookUrl());
-                    } else {
-                        ann.remove("runbook_url");
-                    }
+                    // 摘要 / 详情 / 排障链接同理：编辑页的专用输入框是平台侧字段。
+                    applyReserved(ann, "summary", r.getSummary(), ruleLabel);
+                    applyReserved(ann, "description", r.getDescription(), ruleLabel);
+                    applyReserved(ann, "runbook_url", r.getRunbookUrl(), ruleLabel);
                     r.setAnnotations(ann);
                 }
             }
@@ -280,6 +263,24 @@ public class PrometheusRuleService {
                 }
             }
         }
+    }
+
+    /**
+     * 保留键只能走专用字段：有值就写进去，没值就删掉。
+     *
+     * <p>用户直接把这些键写在通用的 labels / annotations 里时，值会被本方法丢掉 ——
+     * 记一条 warn，免得「我明明写了 summary，怎么没了」变成无头案。
+     */
+    private static void applyReserved(Map<String, String> container, String key,
+                                      String value, String ruleLabel) {
+        if (StringUtils.hasText(value)) {
+            container.put(key, value);
+            return;
+        }
+        if (StringUtils.hasText(container.get(key))) {
+            log.warn("{} 的 {} 被忽略：该键由平台字段独管，只能通过对应输入框设置", ruleLabel, key);
+        }
+        container.remove(key);
     }
 
     /**

@@ -208,6 +208,18 @@ const RFC1123_RE = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
  */
 const DURATION_RE = /^(0|(([0-9]+)y)?(([0-9]+)w)?(([0-9]+)d)?(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?(([0-9]+)ms)?)$/
 
+/** 保留键 → 谁在管（LabelEditor 用来给手打的用户一句明确提示） */
+const LABEL_RESERVED_BY: Record<string, string> = {
+  namespace: '平台（保存时按规则所在命名空间代打）',
+  severity: '上方的「严重度」下拉',
+}
+const ANNOTATION_RESERVED_BY: Record<string, string> = {
+  platform_rule: '平台（保存时按规则名代打，投递靠它找通知绑定）',
+  summary: '上方的「摘要」输入框',
+  description: '上方的「详情」输入框',
+  runbook_url: '上方的「排障链接」输入框',
+}
+
 const SEVERITIES = ['critical', 'warning', 'info']
 
 /** 下拉选项：三个标准级别 + 当前值（老规则里可能是 page / P1 这类自定义级别，不能因此丢掉） */
@@ -472,7 +484,7 @@ function goBack(): void {
                 <el-form-item label="标签 labels">
                   <div class="sub-editor-wrap">
                     <div v-if="r.kind === 'alert'" class="form-tip">平台会在保存时把 namespace 标签写成这条规则所在的命名空间 —— 告警的归属靠它，所以它不由表单控制。</div>
-                    <LabelEditor v-model="r.labels" class="sub-editor" :exclude-keys="['namespace', 'severity']" style="max-width: 1080px" />
+                    <LabelEditor v-model="r.labels" class="sub-editor" :exclude-keys="['namespace', 'severity']" :reserved-by="LABEL_RESERVED_BY" style="max-width: 1080px" />
                   </div>
                 </el-form-item>
 
@@ -490,7 +502,7 @@ function goBack(): void {
                 </el-form-item>
 
                 <el-form-item v-if="r.kind === 'alert'" label="注解 annotations">
-                  <LabelEditor v-model="r.annotations" class="sub-editor" :exclude-keys="['platform_rule', 'summary', 'description', 'runbook_url']" style="max-width: 1080px" />
+                  <LabelEditor v-model="r.annotations" class="sub-editor" :exclude-keys="['platform_rule', 'summary', 'description', 'runbook_url']" :reserved-by="ANNOTATION_RESERVED_BY" style="max-width: 1080px" />
                 </el-form-item>
               </el-form>
             </el-card>
