@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import org.springframework.transaction.annotation.Transactional;
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.pipeline.PipelineRunLogDTO;
+import com.coding.common.models.pipeline.PipelineRetryPlanDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
@@ -168,6 +169,155 @@ public class PipelineRunService {
             first = false;
         }
         return sb.append(']').toString();
+    }
+
+    /**
+     * 重试计划（只读）。**前端据此决定按钮与对话框内容** —— 断点规则不在这里重算。
+     */
+    public PipelineRetryPlanDTO retryPlan(String runName) {
+        PlatformPipelineRun row = requireRun(runName);
+        String blockedReason = retryBlockedReason(row);
+        if (blockedReason != null) {
+            return new PipelineRetryPlanDTO(false, blockedReason, List.of(), List.of(), List.of(), Map.of());
+        }
+        Map<String, String> status = effectiveStatus(row);
+        Set<String> masked = parseIds(row.getMaskedNodesJson());
+        PipelineCanvasMask.Plan plan = PipelineCanvasMask.plan(row.getCanvasJson(), status, masked);
+
+        Set<String> reused = new LinkedHashSet<>();
+        status.forEach((id, st) -> {
+            if ("SUCCEEDED".equals(st) && !plan.runNodeIds().contains(id) && !masked.contains(id)) {
+                reused.add(id);
+            }
+        });
+        return new PipelineRetryPlanDTO(true, null,
+                List.copyOf(plan.retryable()), List.copyOf(plan.runNodeIds()),
+                List.copyOf(reused), plan.blocked());
+    }
+
+    /**
+     * 从断点继续：新建一条只跑「所有断点子树」的运行，沿用父运行的工作区。
+     *
+     * <p>⚠️ 范围**由服务端算**；客户端只给「从哪个断点开始」，而且它必须在可点集合里。
+     */
+    public String retry(String runName, String nodeId, String user, PipelineRunContext ctx) {
+        PlatformPipelineRun parent = requireRun(runName);
+        String blockedReason = retryBlockedReason(parent);
+        if (blockedReason != null) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID, blockedReason);
+        }
+        Map<String, String> status = effectiveStatus(parent);
+        Set<String> masked = parseIds(parent.getMaskedNodesJson());
+        PipelineCanvasMask.Plan plan = PipelineCanvasMask.plan(parent.getCanvasJson(), status, masked);
+        if (!plan.retryable().contains(nodeId)) {
+            String why = plan.blocked().get(nodeId);
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    why == null ? "这个节点不能作为重试起点：" + nodeId : why);
+        }
+
+        boolean finallyTarget = PipelineCanvasMask.isFinally(parent.getCanvasJson(), nodeId);
+        Set<String> toRun = finallyTarget ? Set.of(nodeId) : plan.runNodeIds();
+        String trimmed = PipelineCanvasMask.trim(parent.getCanvasJson(), toRun,
+                finallyTarget ? nodeId : null);
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(trimmed);
+
+        Set<String> reused = new LinkedHashSet<>();
+        status.forEach((id, st) -> {
+            if ("SUCCEEDED".equals(st) && !toRun.contains(id) && !masked.contains(id)) {
+                reused.add(id);
+            }
+        });
+
+        String newRunName = generateRunName(baseNameOfRun(parent.getRunName()));
+        PlatformPipelineRun row = new PlatformPipelineRun();
+        row.setId(ULIDGenerator.generateULID());
+        row.setPipelineId(parent.getPipelineId());
+        row.setClusterId(parent.getClusterId());
+        row.setNamespace(parent.getNamespace());
+        row.setCanvasJson(parent.getCanvasJson());
+        row.setRunName(newRunName);
+        row.setParentRunId(parent.getId());
+        row.setAttemptNo((parent.getAttemptNo() == null ? 1 : parent.getAttemptNo()) + 1);
+        row.setRetryFromNode(nodeId);
+        row.setMaskedNodesJson(masked.isEmpty() ? null : jsonArray(masked));
+        row.setReusedNodesJson(reused.isEmpty() ? null : jsonArray(reused));
+        row.setWorkspacePvc(parent.getWorkspacePvc());
+        row.setStatus("RUNNING");
+        row.setTriggeredBy(user);
+        runMapper.insert(row);
+
+        try {
+            k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
+                    newRunName, trimmed, connections, parent.getWorkspacePvc(), true);
+        } catch (RuntimeException e) {
+            log.warn("创建重试运行失败，回滚刚落的库：{}", newRunName, e);
+            runMapper.deleteById(row.getId());
+            throw e;
+        }
+        return newRunName;
+    }
+
+    /** 整条运行能不能重试；能 → null，不能 → 原因。 */
+    private static String retryBlockedReason(PlatformPipelineRun row) {
+        if ("RUNNING".equals(row.getStatus())) {
+            return "这条运行还在跑，等它结束之后再重试";
+        }
+        if ("SUCCEEDED".equals(row.getStatus())) {
+            return "这次运行成功了 —— 工作区已释放，不能再从中间重试；要重跑就整条重来";
+        }
+        if (row.getWorkspacePvc() == null || row.getWorkspacePvc().isBlank()) {
+            return "这条运行产生于工作区保留功能上线之前，没有可续跑的工作区；要重跑就整条重来";
+        }
+        return null;
+    }
+
+    /** 有效状态 = 本运行自己的结果 ∪ 沿用集合（沿用的一定是 SUCCEEDED）。 */
+    static Map<String, String> effectiveStatus(PlatformPipelineRun row) {
+        Map<String, String> out = new LinkedHashMap<>();
+        String steps = row.getStepsJson();
+        if (steps != null && !steps.isBlank()) {
+            for (String part : steps.split(",")) {
+                int at = part.indexOf('=');
+                if (at <= 0) {
+                    continue;
+                }
+                String id = nodeIdOf(part.substring(0, at).trim(), row.getRunName());
+                String st = part.substring(at + 1).trim();
+                if (id != null && !id.isBlank() && !st.isBlank()) {
+                    out.put(id, st);
+                }
+            }
+        }
+        for (String id : parseIds(row.getReusedNodesJson())) {
+            out.put(id, "SUCCEEDED");
+        }
+        return out;
+    }
+
+    /** 运行名的「流水线名部分」：`<name>-yyyyMMddHHmmss-xxxx` → `<name>`。 */
+    static String baseNameOfRun(String runName) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("^(.*)-\\d{14}-[a-z0-9]{4}$").matcher(runName == null ? "" : runName);
+        return m.matches() ? m.group(1) : "pipeline";
+    }
+
+    /** `["a","b"]` → {"a","b"}；空/坏内容 → 空集合（库里的旧行可能没有这一列）。 */
+    static Set<String> parseIds(String json) {
+        if (json == null || json.isBlank()) {
+            return Set.of();
+        }
+        try {
+            Set<String> out = new LinkedHashSet<>();
+            for (JsonNode n : JSON.readTree(json)) {
+                String id = n.asString("");
+                if (id != null && !id.isBlank()) {
+                    out.add(id);
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return Set.of();
+        }
     }
 
     /**

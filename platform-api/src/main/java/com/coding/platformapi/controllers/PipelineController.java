@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
 import com.coding.common.models.pipeline.PipelineRunLogDTO;
+import com.coding.common.models.pipeline.PipelineRetryPlanDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformPipelineRun;
@@ -202,6 +203,32 @@ public class PipelineController {
                 new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(),
                         auth.effectiveTenantId(request.tenantId())),
                 request.maskedNodeIds() == null ? List.of() : request.maskedNodeIds()));
+    }
+
+    /** 从断点继续的入参。 */
+    public record RetryRequest(String runName, String nodeId, String tenantId) {
+    }
+
+    /** 重试计划的入参（只读）。 */
+    public record RetryPlanRequest(String runName, String tenantId) {
+    }
+
+    @PostMapping("/run/retry")
+    @Operation(summary = "从断点继续重跑",
+            description = "只能从**断点**开始（自己没成功、且全部上游都成功）；范围 = 所有断点的子树之并，"
+                    + "由服务端按连线计算。沿用父运行的工作区，不重新克隆/构建已成功的部分")
+    @Auditable(action = AuditAction.PIPELINE_RUN, target = "#request.runName")
+    public ResponseData<String> retryRun(@RequestBody RetryRequest request) {
+        PlatformPipelineRun run = runService.get(request.runName());
+        return new ResponseData<>(runService.retry(request.runName(), request.nodeId(), currentUser(),
+                contextOf(run, request.tenantId())));
+    }
+
+    @PostMapping("/run/retry/plan")
+    @Operation(summary = "一次运行的重试计划",
+            description = "哪些节点能点、点了会跑哪些、每个不可点节点的原因。前端据此决定按钮与确认框")
+    public ResponseData<PipelineRetryPlanDTO> retryPlan(@RequestBody RetryPlanRequest request) {
+        return new ResponseData<>(runService.retryPlan(request.runName()));
     }
 
     @PostMapping("/run/cancel")
