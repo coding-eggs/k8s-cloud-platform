@@ -18,7 +18,7 @@ import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
 import { usePipelineCapability } from '@/composables/usePipelineCapability'
 import PipelineRunDialog from '@/components/pipeline/PipelineRunDialog.vue'
-import type { PipelineCanvas } from '@/types'
+import type { PipelineCanvas, PipelineRetryWorkspaces } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -106,8 +106,14 @@ async function load() {
   }
 }
 
-onMounted(load)
-watch([clusterId, namespace], load)
+onMounted(() => {
+  void load()
+  void loadRetryWorkspaces()
+})
+watch([clusterId, namespace], () => {
+  void load()
+  void loadRetryWorkspaces()
+})
 
 function toEditor(id?: string) {
   router.push({
@@ -134,6 +140,48 @@ async function confirmRun(maskedNodeIds: string[]) {
     ElMessage.success(`已触发：${runName}`)
     runDialogOpen.value = false
     toRuns(row.id)
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+const retryWs = ref<PipelineRetryWorkspaces | null>(null)
+
+async function loadRetryWorkspaces() {
+  if (!clusterId.value || !namespace.value) {
+    retryWs.value = null
+    return
+  }
+  try {
+    retryWs.value = await pipelineApi.retryWorkspaces(
+      clusterId.value, namespace.value, state.tenantId ?? undefined)
+  } catch {
+    retryWs.value = null
+  }
+}
+
+function fmtBytes(bytes: number): string {
+  if (!bytes) return '0'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let v = bytes
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+async function doClearRetryWorkspaces() {
+  await ElMessageBox.confirm(
+    `清理「${namespace.value}」里全部待重试工作区？清掉之后，那些运行**不能再从断点继续**，只能整条重跑。`,
+    '确认清理',
+    { type: 'warning', confirmButtonText: '清理', cancelButtonText: '算了' },
+  )
+  try {
+    await pipelineApi.clearRetryWorkspaces(clusterId.value, namespace.value, state.tenantId ?? undefined)
+    ElMessage.success('已清理')
+    await loadRetryWorkspaces()
   } catch {
     /* 拦截器已提示 */
   }
@@ -175,6 +223,14 @@ function onCommand(cmd: string, row: Pipeline): void {
         {{ cacheLabel }}
       </el-button>
       <div class="spacer" />
+      <!-- 待重试工作区：失败运行留下的 1Gi 卷；清掉之后那些运行不能再从断点继续 -->
+      <span v-if="clusterId && namespace" class="retry-ws">
+        <template v-if="retryWs && retryWs.count > 0">
+          待重试工作区 {{ retryWs.count }} 块 / {{ fmtBytes(retryWs.totalBytes) }}
+          <el-button link type="warning" size="small" @click="doClearRetryWorkspaces">全部清理</el-button>
+        </template>
+        <template v-else>待重试工作区：无</template>
+      </span>
       <el-button @click="load">刷新</el-button>
       <el-button v-if="canManage" type="primary" @click="toEditor()">新建流水线</el-button>
     </div>
@@ -348,6 +404,11 @@ function onCommand(cmd: string, row: Pipeline): void {
 }
 .dim {
   color: var(--text-3);
+}
+.retry-ws {
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
 }
 .name.focus {
   font-weight: 600;

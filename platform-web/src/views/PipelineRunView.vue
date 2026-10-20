@@ -181,6 +181,7 @@ async function removeRun(r: PipelineRun): Promise<void> {
           <!-- 详情挂在**名称**上（与集群/命名空间那几个列表页同一套：res-name + name-link）——
                整行可点会把「复制运行名」这类操作也吃掉 -->
           <code class="res-name name-link" @click="openRun(row)">{{ row.runName }}</code>
+          <span v-if="(row.attemptNo ?? 1) > 1" class="attempt-tag">第 {{ row.attemptNo }} 次</span>
         </template>
       </el-table-column>
       <el-table-column label="状态" width="160">
@@ -263,6 +264,14 @@ async function removeRun(r: PipelineRun): Promise<void> {
 }
 .name-link:hover {
   text-decoration: underline;
+}
+.attempt-tag {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--info);
+  border: 1px solid var(--info);
+  border-radius: 999px;
+  padding: 0 6px;
 }
 .empty {
   color: var(--text-3);
