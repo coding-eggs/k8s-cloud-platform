@@ -54,6 +54,21 @@ public final class FakeHelm {
         if (sleepMs > 0) {
             Thread.sleep(sleepMs);
         }
+
+        // 模拟 helm pull：按 --destination 生成一个 .tgz（内容来自环境变量），供 ChartFetcher 校验
+        String pullContent = System.getenv("FAKE_HELM_PULL_CONTENT");
+        if (pullContent != null && args.length > 0 && "pull".equals(args[0])) {
+            String destination = null;
+            for (int i = 0; i + 1 < args.length; i++) {
+                if ("--destination".equals(args[i])) {
+                    destination = args[i + 1];
+                }
+            }
+            Path dir = Path.of(destination);
+            Files.createDirectories(dir);
+            Files.writeString(dir.resolve("fake-chart.tgz"), pullContent, StandardCharsets.UTF_8);
+        }
+
         System.exit(Integer.parseInt(System.getenv().getOrDefault("FAKE_HELM_EXIT", "0")));
     }
 }

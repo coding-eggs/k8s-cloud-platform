@@ -48,8 +48,12 @@ public class HelmRunner {
         this(binary, null, Map.of(), Path.of(System.getProperty("java.io.tmpdir")), timeout);
     }
 
-    HelmRunner(String binary, List<String> commandPrefix, Map<String, String> extraEnv,
-               Path tempDir, Duration timeout) {
+    /**
+     * 测试注入构造器（公开是为了让 {@code chart} 包的 ChartFetcherTest 也能用假 helm）。
+     * 生产代码只用上面的 {@link #HelmRunner(String, Duration)}。
+     */
+    public HelmRunner(String binary, List<String> commandPrefix, Map<String, String> extraEnv,
+                      Path tempDir, Duration timeout) {
         this.binary = binary;
         this.commandPrefix = commandPrefix;
         this.extraEnv = extraEnv;
@@ -93,21 +97,70 @@ public class HelmRunner {
      */
     public HelmResult apply(String kubeconfig, Path chartDir, Path valuesFile,
                             String release, String namespace, Map<String, String> labels) {
+        return apply(kubeconfig, chartDir, valuesFile, release, namespace,
+                new InstallOptions(false, false, labels));
+    }
+
+    /** 安装选项：租户路径要收掉 chart 自带的 CRD 与 hook。 */
+    public record InstallOptions(boolean skipCrds, boolean noHooks, Map<String, String> labels) {
+    }
+
+    public HelmResult apply(String kubeconfig, Path chartPath, Path valuesFile,
+                            String release, String namespace, InstallOptions options) {
         List<String> args = new ArrayList<>(List.of(
-                "upgrade", "--install", release, chartDir.toString(),
+                "upgrade", "--install", release, chartPath.toString(),
                 "--namespace", namespace,
                 "--create-namespace",
                 "--values", valuesFile.toString(),
                 "--rollback-on-failure",
                 "--force-conflicts",
                 "--timeout", "10m"));
-        if (!labels.isEmpty()) {
+        if (options.skipCrds()) {
+            args.add("--skip-crds");
+        }
+        if (options.noHooks()) {
+            args.add("--no-hooks");
+        }
+        if (!options.labels().isEmpty()) {
             List<String> kv = new ArrayList<>();
-            labels.forEach((k, v) -> kv.add(k + "=" + v));
+            options.labels().forEach((k, v) -> kv.add(k + "=" + v));
             args.add("--labels");
             args.add(String.join(",", kv));
         }
         return exec(kubeconfig, args);
+    }
+
+    /** 取 release 实际提交给集群的清单（装后复核用）。 */
+    public HelmResult manifest(String kubeconfig, String release, String namespace) {
+        return exec(kubeconfig, new ArrayList<>(List.of(
+                "get", "manifest", release, "--namespace", namespace)));
+    }
+
+    /** 卸载：CRD 与 PVC 不会被删除（Helm 语义），UI 必须明说。 */
+    public HelmResult uninstall(String kubeconfig, String release, String namespace) {
+        return exec(kubeconfig, new ArrayList<>(List.of(
+                "uninstall", release, "--namespace", namespace)));
+    }
+
+    /** chart 自带默认 values（上架/表单初始值用）。 */
+    public HelmResult showValues(Path chartPath) {
+        return pull(new ArrayList<>(List.of("show", "values", chartPath.toString())));
+    }
+
+    /** helm pull：不连集群，因此**不附加** {@code --kubeconfig}。 */
+    public HelmResult pull(List<String> args) {
+        List<String> command = new ArrayList<>();
+        if (commandPrefix != null) {
+            command.addAll(commandPrefix);
+        } else {
+            command.add(binary);
+        }
+        command.addAll(args);
+        try {
+            return run(command, args);
+        } catch (Exception e) {
+            return new HelmResult(false, -1, "helm 执行失败: " + e.getMessage());
+        }
     }
 
     // ---------- 内部 ----------
