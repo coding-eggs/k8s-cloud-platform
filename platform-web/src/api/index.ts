@@ -88,6 +88,10 @@ import type {
   SecretRefOption,
   TenantMemberView,
   TokenUserInfo,
+  K8sApp,
+  K8sAppOperation,
+  ChartPreviewResult,
+  K8sChartRef,
 } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
@@ -917,4 +921,33 @@ export const pipelineApi = {
    */
   clearCache: (clusterId: string, namespace: string, tenantId?: string) =>
     http.post<never, void>('/pipeline/cache/clear', { clusterId, namespace, tenantId }),
+}
+
+/**
+ * 应用商店（计划①：管理员安装/升级/卸载）。
+ *
+ * 预览不落盘：安装向导在提交前调用它，BLOCK 项必须禁用提交。
+ */
+export const appApi = {
+  list: (clusterId: string, namespace?: string) =>
+    http.post<never, K8sApp[]>('/app/list', { clusterId, namespace }),
+  get: (appId: string) => http.post<never, K8sApp>('/app/get', { appId }),
+  preview: (payload: {
+    clusterId: string
+    namespace: string
+    chartRef: K8sChartRef
+    values?: string
+  }) => http.post<never, ChartPreviewResult>('/app/preview', payload),
+  install: (payload: {
+    clusterId: string
+    namespace: string
+    displayName?: string
+    chartRef: K8sChartRef
+    values?: string
+  }) => http.post<never, number>('/app/install', payload),
+  upgrade: (payload: { appId: string; version: string; digest?: string; values?: string }) =>
+    http.post<never, number>('/app/upgrade', payload),
+  uninstall: (appId: string) => http.post<never, number>('/app/uninstall', { appId }),
+  operation: (operationId: number) =>
+    http.post<never, K8sAppOperation>('/app/operations/get', { operationId }),
 }

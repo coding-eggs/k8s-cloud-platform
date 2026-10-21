@@ -2389,3 +2389,58 @@ export interface NotificationChannelRequest {
   isDefault?: boolean
   enabled?: boolean
 }
+
+// ---------------- 应用商店（计划①：管理员安装） ----------------
+
+export interface K8sAppOperation {
+  id: number
+  appId: string
+  action: 'INSTALL' | 'UPGRADE' | 'UNINSTALL'
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'UNKNOWN'
+  message?: string | null
+  logTail?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface K8sApp {
+  id: string
+  clusterId: string
+  namespace: string
+  releaseName: string
+  chartName: string
+  version: string
+  displayName: string
+  status: 'INSTALLING' | 'RUNNING' | 'FAILED' | 'UNINSTALLED'
+  needsReview?: boolean | null
+  valuesJson?: string | null
+  createdAt?: string | null
+}
+
+export interface ChartViolation {
+  severity: 'BLOCK' | 'WARN'
+  type: string
+  object: string
+  message: string
+}
+
+export interface ChartPreviewResult {
+  manifest: string
+  violations: ChartViolation[]
+  objects: {
+    apiVersion: string
+    kind: string
+    name: string
+    namespace?: string | null
+    scope?: string | null
+  }[]
+}
+
+/** 应用安装/预览共用的 chart 引用 */
+export interface K8sChartRef {
+  source: string
+  ref: string
+  chartName: string
+  version: string
+  digest?: string
+}

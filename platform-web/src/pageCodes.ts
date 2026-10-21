@@ -45,6 +45,8 @@ export const pageCodes = {
   credential: 'platform:page:credential',
   /** S3.1 镜像仓库浏览页（租户可达） */
   registry: 'tenant:page:registry',
+  /** 应用商店（租户可达；管理员持 tenant 族码，同一个页面） */
+  app: 'tenant:page:app',
 
   // ---- 资源管理（租户可达；storageClass 因无命名空间维度归平台管理员）----
   workload: {
