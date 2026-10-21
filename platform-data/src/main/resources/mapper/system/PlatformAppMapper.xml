@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformAppMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformApp">
+    <id     column="id"           jdbcType="VARCHAR"   property="id" />
+    <result column="cluster_id"   jdbcType="VARCHAR"   property="clusterId" />
+    <result column="namespace"    jdbcType="VARCHAR"   property="namespace" />
+    <result column="release_name" jdbcType="VARCHAR"   property="releaseName" />
+    <result column="catalog_id"   jdbcType="VARCHAR"   property="catalogId" />
+    <result column="source"       jdbcType="VARCHAR"   property="source" />
+    <result column="chart_ref"    jdbcType="VARCHAR"   property="chartRef" />
+    <result column="chart_name"   jdbcType="VARCHAR"   property="chartName" />
+    <result column="version"      jdbcType="VARCHAR"   property="version" />
+    <result column="digest"       jdbcType="VARCHAR"   property="digest" />
+    <result column="values_json"  jdbcType="VARCHAR"   property="valuesJson" />
+    <result column="app_kind"     jdbcType="VARCHAR"   property="appKind" />
+    <result column="display_name" jdbcType="VARCHAR"   property="displayName" />
+    <result column="status"       jdbcType="VARCHAR"   property="status" />
+    <result column="needs_review" jdbcType="BOOLEAN"   property="needsReview" />
+    <result column="tenant_id"    jdbcType="VARCHAR"   property="tenantId" />
+    <result column="created_by"   jdbcType="VARCHAR"   property="createdBy" />
+    <result column="created_at"   jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at"   jdbcType="TIMESTAMP" property="updatedAt" />
+    <result column="deleted_at"   jdbcType="TIMESTAMP" property="deletedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, `namespace`, release_name, catalog_id, source, chart_ref, chart_name, version,
+    digest, values_json, app_kind, display_name, `status`, needs_review, tenant_id, created_by,
+    created_at, updated_at, deleted_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformApp">
+    insert into platform_app (id, cluster_id, `namespace`, release_name, catalog_id, source, chart_ref,
+      chart_name, version, digest, values_json, app_kind, display_name, `status`, needs_review,
+      tenant_id, created_by, created_at, updated_at, deleted_at)
+    values (#{id,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR}, #{namespace,jdbcType=VARCHAR},
+      #{releaseName,jdbcType=VARCHAR}, #{catalogId,jdbcType=VARCHAR}, #{source,jdbcType=VARCHAR},
+      #{chartRef,jdbcType=VARCHAR}, #{chartName,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR},
+      #{digest,jdbcType=VARCHAR}, #{valuesJson,jdbcType=VARCHAR}, #{appKind,jdbcType=VARCHAR},
+      #{displayName,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR}, #{needsReview,jdbcType=BOOLEAN},
+      #{tenantId,jdbcType=VARCHAR}, #{createdBy,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP},
+      #{updatedAt,jdbcType=TIMESTAMP}, #{deletedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformApp">
+    update platform_app
+    <set>
+      <if test="catalogId != null">catalog_id = #{catalogId,jdbcType=VARCHAR},</if>
+      <if test="chartRef != null">chart_ref = #{chartRef,jdbcType=VARCHAR},</if>
+      <if test="chartName != null">chart_name = #{chartName,jdbcType=VARCHAR},</if>
+      <if test="version != null">version = #{version,jdbcType=VARCHAR},</if>
+      <if test="digest != null">digest = #{digest,jdbcType=VARCHAR},</if>
+      <if test="valuesJson != null">values_json = #{valuesJson,jdbcType=VARCHAR},</if>
+      <if test="displayName != null">display_name = #{displayName,jdbcType=VARCHAR},</if>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="needsReview != null">needs_review = #{needsReview,jdbcType=BOOLEAN},</if>
+      <if test="updatedAt != null">updated_at = #{updatedAt,jdbcType=TIMESTAMP},</if>
+      <if test="deletedAt != null">deleted_at = #{deletedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <select id="selectByPrimaryKey" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app
+    where id = #{id,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectByCluster" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and deleted_at is null
+    <if test="namespace != null and namespace != ''">
+      and `namespace` = #{namespace,jdbcType=VARCHAR}
+    </if>
+    order by created_at desc
+  </select>
+</mapper>

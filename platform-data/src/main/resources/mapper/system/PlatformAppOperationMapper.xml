@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformAppOperationMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformAppOperation">
+    <id     column="id"              jdbcType="BIGINT"    property="id" />
+    <result column="cluster_id"      jdbcType="VARCHAR"   property="clusterId" />
+    <result column="app_id"          jdbcType="VARCHAR"   property="appId" />
+    <result column="action"          jdbcType="VARCHAR"   property="action" />
+    <result column="from_version"    jdbcType="VARCHAR"   property="fromVersion" />
+    <result column="to_version"      jdbcType="VARCHAR"   property="toVersion" />
+    <result column="values_snapshot" jdbcType="VARCHAR"   property="valuesSnapshot" />
+    <result column="status"          jdbcType="VARCHAR"   property="status" />
+    <result column="message"         jdbcType="VARCHAR"   property="message" />
+    <result column="log_tail"        jdbcType="VARCHAR"   property="logTail" />
+    <result column="operator"        jdbcType="VARCHAR"   property="operator" />
+    <result column="started_at"      jdbcType="TIMESTAMP" property="startedAt" />
+    <result column="finished_at"     jdbcType="TIMESTAMP" property="finishedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, app_id, `action`, from_version, to_version, values_snapshot, `status`,
+    message, log_tail, `operator`, started_at, finished_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformAppOperation"
+          useGeneratedKeys="true" keyProperty="id">
+    insert into platform_app_operation (cluster_id, app_id, `action`, from_version, to_version,
+      values_snapshot, `status`, message, log_tail, `operator`, started_at, finished_at)
+    values (#{clusterId,jdbcType=VARCHAR}, #{appId,jdbcType=VARCHAR}, #{action,jdbcType=VARCHAR},
+      #{fromVersion,jdbcType=VARCHAR}, #{toVersion,jdbcType=VARCHAR}, #{valuesSnapshot,jdbcType=VARCHAR},
+      #{status,jdbcType=VARCHAR}, #{message,jdbcType=VARCHAR}, #{logTail,jdbcType=VARCHAR},
+      #{operator,jdbcType=VARCHAR}, #{startedAt,jdbcType=TIMESTAMP}, #{finishedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformAppOperation">
+    update platform_app_operation
+    <set>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>
+      <if test="logTail != null">log_tail = #{logTail,jdbcType=VARCHAR},</if>
+      <if test="finishedAt != null">finished_at = #{finishedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <select id="selectByPrimaryKey" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_operation
+    where id = #{id,jdbcType=BIGINT}
+  </select>
+
+  <select id="selectLatestSuccess" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_operation
+    where app_id = #{appId,jdbcType=VARCHAR}
+      and `status` = 'SUCCESS'
+    order by id desc
+    limit 1
+  </select>
+
+  <select id="selectByApp" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_operation
+    where app_id = #{appId,jdbcType=VARCHAR}
+    order by id desc
+    limit 50
+  </select>
+</mapper>
