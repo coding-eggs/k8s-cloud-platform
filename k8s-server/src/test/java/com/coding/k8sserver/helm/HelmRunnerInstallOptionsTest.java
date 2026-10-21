@@ -75,4 +75,17 @@ class HelmRunnerInstallOptionsTest {
         String argv = Files.readString(log, StandardCharsets.UTF_8);
         assertThat(argv).contains("uninstall").contains("app-1").contains("--namespace").contains("demo");
     }
+
+    @Test
+    void renderForUpgradePassesIsUpgradeFlag() throws Exception {
+        // 复审 I4：升级时必须按 upgrade 模式渲染，否则 {{ if .Release.IsUpgrade }} 的模板预检看不到
+        Path log = tmp.resolve("argv.log");
+        Path values = tmp.resolve("values.yaml");
+        Files.writeString(values, "a: 1\n");
+
+        runner(log).render("kubeconfig", chart(), values, "demo", true);
+
+        String argv = Files.readString(log, StandardCharsets.UTF_8);
+        assertThat(argv).contains("template").contains("--is-upgrade");
+    }
 }

@@ -50,4 +50,32 @@ class ClusterScopeIndexTest {
 
         assertThat(r.scopeOf("demo.example.com/v1", "Widget")).isEqualTo(Scope.UNKNOWN);
     }
+
+    @Test
+    void unknownBuiltInKindIsFailClosed() {
+        // 复审 I6：内置组里没列过的 kind 不能默认当成命名空间级（新版本会新增集群级内置 kind）
+        ScopeResolver r = index(List.of()).forCluster("c1");
+
+        assertThat(r.scopeOf("apps/v1", "Widget")).isEqualTo(Scope.UNKNOWN);
+    }
+
+    @Test
+    void mutatingAdmissionPolicyIsClusterScoped() {
+        ScopeResolver r = index(List.of()).forCluster("c1");
+
+        assertThat(r.scopeOf("admissionregistration.k8s.io/v1", "MutatingAdmissionPolicy"))
+                .isEqualTo(Scope.CLUSTER);
+        assertThat(r.scopeOf("admissionregistration.k8s.io/v1", "MutatingAdmissionPolicyBinding"))
+                .isEqualTo(Scope.CLUSTER);
+    }
+
+    @Test
+    void commonNamespacedKindsStayNamespaced() {
+        ScopeResolver r = index(List.of()).forCluster("c1");
+
+        assertThat(r.scopeOf("v1", "Pod")).isEqualTo(Scope.NAMESPACED);
+        assertThat(r.scopeOf("v1", "Service")).isEqualTo(Scope.NAMESPACED);
+        assertThat(r.scopeOf("batch/v1", "CronJob")).isEqualTo(Scope.NAMESPACED);
+        assertThat(r.scopeOf("networking.k8s.io/v1", "Ingress")).isEqualTo(Scope.NAMESPACED);
+    }
 }

@@ -140,6 +140,103 @@ class AppInstallServiceTest {
                 .hasMessageContaining("不是平台安装");
     }
 
+    @Test
+    void workerRunsWithTheCallersAuthorization() throws Exception {
+        // 复审 C1：worker 在裸虚拟线程里跑，RequestContextHolder 为空；不套 runAs 就会 401
+        CountDownLatch done = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> seen = new java.util.concurrent.atomic.AtomicReference<>();
+        when(client.apply(any())).thenAnswer(inv -> {
+            seen.set(com.coding.platformapi.k8s.K8sServerGateway.delegatedAuthorization());
+            done.countDown();
+            ChartApplyResultDTO ok = new ChartApplyResultDTO();
+            ok.setSuccess(true);
+            return ok;
+        });
+
+        com.coding.platformapi.k8s.K8sServerGateway.runAs("Bearer t0ken",
+                () -> service.install(request(), "admin"));
+
+        assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(seen.get()).isEqualTo("Bearer t0ken");
+    }
+
+    @Test
+    void upgradeAcquiresTheLockBeforeTouchingTheAppRow() {
+        // 复审 I1：先改库再拿锁，并发的失败方会把 version/values 留在库里
+        PlatformApp existing = new PlatformApp();
+        existing.setId("app_1");
+        existing.setClusterId("c1");
+        existing.setNamespace("demo");
+        existing.setReleaseName("app-x");
+        existing.setVersion("1.0.0");
+        existing.setStatus("RUNNING");
+        when(apps.selectByPrimaryKey("app_1")).thenReturn(existing);
+        doThrow(new DuplicateKeyException("running_lock")).when(ops).insert(any());
+
+        AppUpgradeRequest r = new AppUpgradeRequest();
+        r.setAppId("app_1");
+        r.setVersion("2.0.0");
+
+        assertThatThrownBy(() -> service.upgrade(r, "admin"))
+                .hasMessageContaining("正在安装");
+
+        // 拿锁失败时不能动应用行
+        verify(apps, org.mockito.Mockito.never()).updateById(any());
+    }
+
+    @Test
+    void upgradeWithoutDigestClearsThePreviousVersionDigest() throws Exception {
+        // 复审 I3：旧版本的 digest 拿去校验新版本必然失败
+        CountDownLatch done = new CountDownLatch(1);
+        PlatformApp existing = new PlatformApp();
+        existing.setId("app_1");
+        existing.setClusterId("c1");
+        existing.setNamespace("demo");
+        existing.setReleaseName("app-x");
+        existing.setVersion("1.0.0");
+        existing.setDigest("sha256:old");
+        existing.setStatus("RUNNING");
+        when(apps.selectByPrimaryKey("app_1")).thenReturn(existing);
+        when(client.apply(any())).thenAnswer(inv -> {
+            done.countDown();
+            ChartApplyResultDTO ok = new ChartApplyResultDTO();
+            ok.setSuccess(true);
+            return ok;
+        });
+
+        AppUpgradeRequest r = new AppUpgradeRequest();
+        r.setAppId("app_1");
+        r.setVersion("2.0.0");
+
+        service.upgrade(r, "admin");
+        assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
+
+        ArgumentCaptor<com.coding.common.models.k8s.dto.ChartApplyRequestDTO> body =
+                ArgumentCaptor.forClass(com.coding.common.models.k8s.dto.ChartApplyRequestDTO.class);
+        verify(client).apply(body.capture());
+        assertThat(body.getValue().getChart().getDigest()).isEmpty();
+    }
+
+    @Test
+    void staleRunningOperationsAreReaped() {
+        // 复审 I2：进程重启留下的 PENDING/RUNNING 会永久占锁
+        PlatformAppOperation stale = new PlatformAppOperation();
+        stale.setId(7L);
+        stale.setAppId("app_1");
+        stale.setStatus("RUNNING");
+        when(ops.selectStaleRunning(30)).thenReturn(java.util.List.of(stale));
+        PlatformApp app = new PlatformApp();
+        app.setId("app_1");
+        when(apps.selectByPrimaryKey("app_1")).thenReturn(app);
+
+        service.cleanupStale(30);
+
+        ArgumentCaptor<PlatformAppOperation> opCaptor = ArgumentCaptor.forClass(PlatformAppOperation.class);
+        verify(ops).updateById(opCaptor.capture());
+        assertThat(opCaptor.getValue().getStatus()).isEqualTo("UNKNOWN");
+        assertThat(app.getStatus()).isEqualTo("FAILED");
+    }
+
     private static ChartApplyResultDTO failedApply() {
         ChartApplyResultDTO bad = new ChartApplyResultDTO();
         bad.setSuccess(false);

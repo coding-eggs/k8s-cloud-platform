@@ -76,7 +76,8 @@ public class ChartInstallService {
         ChartFetcher.FetchedChart chart = fetcher.fetch(toRef(req.getChart()));
         Path values = writeValues(req.getValues());
         try {
-            HelmResult rendered = helm.render(kubeconfig, chart.tgz(), values, req.getNamespace());
+            HelmResult rendered = helm.render(kubeconfig, chart.tgz(), values, req.getNamespace(),
+                    req.isUpgrade());
             if (!rendered.ok()) {
                 throw new CloudPlatformException(EnumResponseType.ERROR, "渲染失败：" + rendered.output());
             }

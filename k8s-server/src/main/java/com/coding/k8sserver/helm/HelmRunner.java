@@ -77,10 +77,23 @@ public class HelmRunner {
 
     /** 客户端渲染校验（不连集群）—— 模板/values 错误在这一步硬失败 */
     public HelmResult render(String kubeconfig, Path chartDir, Path valuesFile, String namespace) {
+        return render(kubeconfig, chartDir, valuesFile, namespace, false);
+    }
+
+    /**
+     * 升级路径必须用 {@code --is-upgrade} 渲染：{@code helm template} 默认是 install 模式，
+     * 而 {@code upgrade} 时 {@code .Release.IsUpgrade=true} —— 不传这个标志，预检看到的清单
+     * 与真正落盘的可能不是同一份（复审 I4）。
+     */
+    public HelmResult render(String kubeconfig, Path chartDir, Path valuesFile, String namespace,
+                             boolean upgrade) {
         List<String> args = new ArrayList<>(List.of(
                 "template", "precheck", chartDir.toString(),
                 "--namespace", namespace,
                 "--values", valuesFile.toString()));
+        if (upgrade) {
+            args.add("--is-upgrade");
+        }
         return exec(kubeconfig, args);
     }
 

@@ -13,10 +13,13 @@ import com.coding.data.mapper.system.PlatformAppOperationMapper;
 import com.coding.data.models.system.PlatformApp;
 import com.coding.data.models.system.PlatformAppOperation;
 import com.coding.platformapi.k8s.K8sChartClient;
+import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.AppInstallRequest;
 import com.coding.platformapi.models.AppPreviewRequest;
 import com.coding.platformapi.models.AppUninstallRequest;
 import com.coding.platformapi.models.AppUpgradeRequest;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
@@ -32,10 +35,16 @@ import java.util.function.Supplier;
  * 应用安装/升级/卸载（spec §4.5）。异步执行 + 操作记录，形态与 S3.6 的组件安装一致。
  *
  * <p>本计划只有管理员路径（strict=false）。租户闸门（目录白名单、分配表）在计划②，
- * 但 <b>strict 由服务端决定，不接受前端传入</b>，计划②只需改这里。
+ * 但 <b>strict 由服务端决定，不接受前端传入</b>。
+ *
+ * <p><b>worker 线程必须套 {@link K8sServerGateway#runAs}</b>：虚拟线程里没有 RequestContextHolder，
+ * 不委托就会不带 Authorization 调 k8s-server（401）。这是 S3.6 已经踩过的坑。
  */
 @Service
 public class AppInstallService {
+
+    /** 超过这个分钟数仍在 PENDING/RUNNING 的操作视为孤儿（进程重启/worker 丢失） */
+    private static final int STALE_MINUTES = 30;
 
     private final PlatformAppMapper apps;
     private final PlatformAppOperationMapper ops;
@@ -76,7 +85,8 @@ public class AppInstallService {
         apps.insert(app);
 
         PlatformAppOperation op = newOperation(app, "INSTALL", null, app.getVersion(), operator, req.getValues());
-        run(op, () -> client.apply(applyRequest(app, req.getValues(), false)), app);
+        run(op, callerAuthorization(),
+                () -> client.apply(applyRequest(app, req.getValues(), false, false)), app);
         return op.getId();
     }
 
@@ -86,9 +96,18 @@ public class AppInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR, "请选择目标版本");
         }
         String from = app.getVersion();
-        app.setVersion(req.getVersion());
+        String targetVersion = req.getVersion();
+        String targetValues = req.getValues() == null ? app.getValuesJson() : req.getValues();
+
+        // ⚠️ 先拿锁再改应用行：并发的失败方不能把 version/values 留在库里（复审 I1）
+        PlatformAppOperation op = newOperation(app, "UPGRADE", from, targetVersion, operator, targetValues);
+
+        app.setVersion(targetVersion);
         if (req.getDigest() != null) {
             app.setDigest(req.getDigest());
+        } else if (!targetVersion.equals(from)) {
+            // 旧版本的 digest 不能拿去校验新版本（复审 I3）：换了版本又没给 digest → 退回"不校验"
+            app.setDigest("");
         }
         if (req.getValues() != null) {
             app.setValuesJson(req.getValues());
@@ -97,16 +116,15 @@ public class AppInstallService {
         app.setUpdatedAt(new Date());
         apps.updateById(app);
 
-        PlatformAppOperation op = newOperation(app, "UPGRADE", from, req.getVersion(), operator,
-                req.getValues() == null ? app.getValuesJson() : req.getValues());
-        run(op, () -> client.apply(applyRequest(app, app.getValuesJson(), false)), app);
+        run(op, callerAuthorization(),
+                () -> client.apply(applyRequest(app, app.getValuesJson(), false, true)), app);
         return op.getId();
     }
 
     public Long uninstall(AppUninstallRequest req, String operator) {
         PlatformApp app = requireOwned(req.getAppId());
         PlatformAppOperation op = newOperation(app, "UNINSTALL", app.getVersion(), null, operator, null);
-        run(op, () -> {
+        run(op, callerAuthorization(), () -> {
             Boolean ok = client.uninstall(uninstallRequest(app));
             ChartApplyResultDTO dto = new ChartApplyResultDTO();
             dto.setSuccess(Boolean.TRUE.equals(ok));
@@ -140,7 +158,37 @@ public class AppInstallService {
         return client.preview(body);
     }
 
+    /**
+     * 回收孤儿操作：进程重启/worker 丢失后，PENDING/RUNNING 会永久占住 running_lock。
+     * 把超期操作置 UNKNOWN（释放锁），对应应用置 FAILED。
+     */
+    public void cleanupStale(int minutes) {
+        for (PlatformAppOperation op : ops.selectStaleRunning(minutes)) {
+            op.setStatus("UNKNOWN");
+            op.setMessage("平台重启或 worker 丢失，操作状态未知（并发锁已释放）");
+            op.setFinishedAt(new Date());
+            ops.updateById(op);
+            PlatformApp app = apps.selectByPrimaryKey(op.getAppId());
+            if (app != null) {
+                app.setStatus("FAILED");
+                app.setUpdatedAt(new Date());
+                apps.updateById(app);
+            }
+        }
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void reapOnStartup() {
+        cleanupStale(STALE_MINUTES);
+    }
+
     // ---------- 内部 ----------
+
+    /** 请求线程取 header；不在请求线程时退回委托值（后台调用场景） */
+    private static String callerAuthorization() {
+        String auth = K8sServerGateway.currentAuthorization();
+        return auth != null ? auth : K8sServerGateway.delegatedAuthorization();
+    }
 
     private PlatformApp requireOwned(String appId) {
         PlatformApp app = appId == null ? null : apps.selectByPrimaryKey(appId);
@@ -183,8 +231,9 @@ public class AppInstallService {
         return op;
     }
 
-    private void run(PlatformAppOperation op, Supplier<ChartApplyResultDTO> call, PlatformApp app) {
-        executor.submit(() -> {
+    private void run(PlatformAppOperation op, String authorization,
+                     Supplier<ChartApplyResultDTO> call, PlatformApp app) {
+        executor.submit(() -> K8sServerGateway.runAs(authorization, () -> {
             op.setStatus("RUNNING");
             ops.updateById(op);
             try {
@@ -193,11 +242,9 @@ public class AppInstallService {
                 op.setStatus(ok ? "SUCCESS" : "FAILED");
                 op.setMessage(truncate(result == null ? "无返回" : result.getMessage(), 1000));
                 op.setLogTail(result == null ? null : truncate(result.getLogTail(), 60000));
-                if ("UNINSTALL".equals(op.getAction())) {
-                    app.setStatus(ok ? "UNINSTALLED" : "FAILED");
-                } else {
-                    app.setStatus(ok ? "RUNNING" : "FAILED");
-                }
+                app.setStatus("UNINSTALL".equals(op.getAction())
+                        ? (ok ? "UNINSTALLED" : "FAILED")
+                        : (ok ? "RUNNING" : "FAILED"));
                 app.setNeedsReview(ok && result.getViolations() != null && !result.getViolations().isEmpty());
                 app.setUpdatedAt(new Date());
                 apps.updateById(app);
@@ -205,22 +252,25 @@ public class AppInstallService {
                 op.setStatus("FAILED");
                 op.setMessage(truncate(e.getMessage(), 1000));
                 app.setStatus("FAILED");
+                app.setNeedsReview(false);
                 app.setUpdatedAt(new Date());
                 apps.updateById(app);
             } finally {
                 op.setFinishedAt(new Date());
                 ops.updateById(op);
             }
-        });
+        }));
     }
 
-    private static ChartApplyRequestDTO applyRequest(PlatformApp app, String values, boolean strict) {
+    private static ChartApplyRequestDTO applyRequest(PlatformApp app, String values,
+                                                     boolean strict, boolean upgrade) {
         ChartApplyRequestDTO body = new ChartApplyRequestDTO();
         body.setClusterId(app.getClusterId());
         body.setAppId(app.getId());
         body.setReleaseName(app.getReleaseName());
         body.setNamespace(app.getNamespace());
         body.setStrict(strict);
+        body.setUpgrade(upgrade);
         ChartRefDTO chart = new ChartRefDTO();
         chart.setSource(app.getSource());
         chart.setRef(app.getChartRef());

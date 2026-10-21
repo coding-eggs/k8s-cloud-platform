@@ -90,7 +90,10 @@ ON DUPLICATE KEY UPDATE
   domain=VALUES(domain), resource=VALUES(resource), action=VALUES(action),
   code=VALUES(code), description=VALUES(description);
 
--- ===== 角色关联（显式绑定；admin 同时持 tenant 族）=====
+-- ===== 角色关联 =====
+-- ⚠️ 计划①只有管理员路径：**只绑 admin**。
+--    租户角色先不绑——读端点还没有按分配表/归属收窄（复审 C2：绑了就等于跨租户可读 values），
+--    等计划②把租户闸门（目录白名单 + 分配表 + 读收窄）一起上线时，再在本文件之后追加绑定。
 INSERT INTO platform_role_permission (id, role_id, permission_id) VALUES
  ('rp_admin_app_list',      'builtin_role_admin','perm_app_list'),
  ('rp_admin_app_get',       'builtin_role_admin','perm_app_get'),
@@ -99,17 +102,5 @@ INSERT INTO platform_role_permission (id, role_id, permission_id) VALUES
  ('rp_admin_app_install',   'builtin_role_admin','perm_app_install'),
  ('rp_admin_app_upgrade',   'builtin_role_admin','perm_app_upgrade'),
  ('rp_admin_app_uninstall', 'builtin_role_admin','perm_app_uninstall'),
- ('rp_admin_page_app',      'builtin_role_admin','perm_page_app'),
- ('rp_tadmin_app_list',     'builtin_role_tenant_admin','perm_app_list'),
- ('rp_tadmin_app_get',      'builtin_role_tenant_admin','perm_app_get'),
- ('rp_tadmin_app_preview',  'builtin_role_tenant_admin','perm_app_preview'),
- ('rp_tadmin_app_op_get',   'builtin_role_tenant_admin','perm_app_op_get'),
- ('rp_tadmin_app_install',  'builtin_role_tenant_admin','perm_app_install'),
- ('rp_tadmin_app_upgrade',  'builtin_role_tenant_admin','perm_app_upgrade'),
- ('rp_tadmin_app_uninstall','builtin_role_tenant_admin','perm_app_uninstall'),
- ('rp_tadmin_page_app',     'builtin_role_tenant_admin','perm_page_app'),
- ('rp_tmember_app_list',    'builtin_role_tenant_member','perm_app_list'),
- ('rp_tmember_app_get',     'builtin_role_tenant_member','perm_app_get'),
- ('rp_tmember_app_op_get',  'builtin_role_tenant_member','perm_app_op_get'),
- ('rp_tmember_page_app',    'builtin_role_tenant_member','perm_page_app')
+ ('rp_admin_page_app',      'builtin_role_admin','perm_page_app')
 ON DUPLICATE KEY UPDATE permission_id=VALUES(permission_id);

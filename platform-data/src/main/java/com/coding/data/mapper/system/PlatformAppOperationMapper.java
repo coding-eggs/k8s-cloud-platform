@@ -19,4 +19,7 @@ public interface PlatformAppOperationMapper {
     PlatformAppOperation selectLatestSuccess(@Param("appId") String appId);
 
     List<PlatformAppOperation> selectByApp(@Param("appId") String appId);
+
+    /** 超过 minutes 分钟仍在 PENDING/RUNNING 的操作（进程重启/worker 丢失留下的孤儿） */
+    List<PlatformAppOperation> selectStaleRunning(@Param("minutes") int minutes);
 }

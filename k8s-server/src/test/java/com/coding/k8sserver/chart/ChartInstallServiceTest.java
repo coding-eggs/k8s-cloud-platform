@@ -50,6 +50,9 @@ class ChartInstallServiceTest {
         when(scopes.forCluster(anyString())).thenReturn((apiVersion, kind) -> Scope.NAMESPACED);
         when(helm.render(anyString(), any(), any(), anyString()))
                 .thenReturn(new HelmResult(true, 0, manifest));
+        // apply 走带 upgrade 标志的重载（复审 I4）
+        when(helm.render(anyString(), any(), any(), anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(new HelmResult(true, 0, manifest));
     }
 
     @Test

@@ -38,10 +38,35 @@ public class ClusterScopeIndex {
             Map.entry("apiregistration.k8s.io", Set.of("APIService")),
             Map.entry("admissionregistration.k8s.io", Set.of("MutatingWebhookConfiguration",
                     "ValidatingWebhookConfiguration", "ValidatingAdmissionPolicy",
-                    "ValidatingAdmissionPolicyBinding")),
+                    "ValidatingAdmissionPolicyBinding", "MutatingAdmissionPolicy",
+                    "MutatingAdmissionPolicyBinding")),
             Map.entry("certificates.k8s.io", Set.of("CertificateSigningRequest")),
             Map.entry("flowcontrol.apiserver.k8s.io", Set.of("FlowSchema", "PriorityLevelConfiguration")),
             Map.entry("metrics.k8s.io", Set.of("NodeMetrics")));
+
+    /**
+     * 内置**命名空间级** kind 的显式清单。
+     *
+     * <p>为什么不用"内置组里没列进集群级集合就是命名空间级"：新版本会新增集群级内置 kind
+     * （如 1.32 的 MutatingAdmissionPolicy），那种兜底会让它被误判成命名空间级而绕过阻断。
+     * 这里两个集合都没有的 kind 一律 {@link Scope#UNKNOWN}，由调用方 fail-closed。
+     */
+    private static final Map<String, Set<String>> NAMESPACED_SCOPED = Map.ofEntries(
+            Map.entry("", Set.of("Pod", "Service", "ConfigMap", "Secret", "ServiceAccount",
+                    "PersistentVolumeClaim", "Endpoints", "ReplicationController", "ResourceQuota",
+                    "LimitRange", "Event", "PodTemplate", "Binding")),
+            Map.entry("apps", Set.of("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet",
+                    "ControllerRevision")),
+            Map.entry("batch", Set.of("Job", "CronJob")),
+            Map.entry("policy", Set.of("PodDisruptionBudget")),
+            Map.entry("autoscaling", Set.of("HorizontalPodAutoscaler")),
+            Map.entry("coordination.k8s.io", Set.of("Lease")),
+            Map.entry("discovery.k8s.io", Set.of("EndpointSlice")),
+            Map.entry("networking.k8s.io", Set.of("NetworkPolicy", "Ingress")),
+            Map.entry("events.k8s.io", Set.of("Event")),
+            Map.entry("rbac.authorization.k8s.io", Set.of("Role", "RoleBinding")),
+            Map.entry("storage.k8s.io", Set.of("CSIStorageCapacity")),
+            Map.entry("metrics.k8s.io", Set.of("PodMetrics")));
 
     /** 我们"认识"的内置组；组在表里但 kind 不在集群级集合 → 命名空间级 */
     private static final Set<String> BUILT_IN_GROUPS = Set.of(
@@ -85,9 +110,15 @@ public class ClusterScopeIndex {
             // 核心组的 apiVersion 就是 "v1"（没有斜杠）→ group 是空串
             String group = apiVersion == null || !apiVersion.contains("/")
                     ? "" : apiVersion.substring(0, apiVersion.indexOf('/'));
+            if (CLUSTER_SCOPED.getOrDefault(group, Set.of()).contains(kind)) {
+                return Scope.CLUSTER;
+            }
+            if (NAMESPACED_SCOPED.getOrDefault(group, Set.of()).contains(kind)) {
+                return Scope.NAMESPACED;
+            }
             if (BUILT_IN_GROUPS.contains(group)) {
-                return CLUSTER_SCOPED.getOrDefault(group, Set.of()).contains(kind)
-                        ? Scope.CLUSTER : Scope.NAMESPACED;
+                // 内置组里没列过的 kind = 无法判定（fail-closed），不猜"命名空间级"
+                return Scope.UNKNOWN;
             }
             return scopes.getOrDefault(group + "/" + kind, Scope.UNKNOWN);
         };

@@ -12,6 +12,8 @@ public class ChartApplyRequestDTO {
     private String releaseName;
     private String namespace;
     private boolean strict;
+    /** true = 升级已有 release（渲染要带 --is-upgrade，见复审 I4） */
+    private boolean upgrade;
     private ChartRefDTO chart;
     private String values;
     private Map<String, String> labels;

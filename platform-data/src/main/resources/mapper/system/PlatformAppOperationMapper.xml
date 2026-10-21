@@ -66,4 +66,13 @@
     order by id desc
     limit 50
   </select>
+
+  <select id="selectStaleRunning" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_operation
+    where `status` in ('PENDING', 'RUNNING')
+      and started_at &lt; (now() - interval #{minutes} minute)
+    order by id
+    limit 100
+  </select>
 </mapper>
