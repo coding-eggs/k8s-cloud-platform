@@ -1,6 +1,7 @@
 package com.coding.k8sserver.chart;
 
 import com.coding.k8score.factory.KubernetesClientFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -80,6 +81,8 @@ public class ClusterScopeIndex {
     private final Duration ttl;
     private final Map<String, Entry> cache = new ConcurrentHashMap<>();
 
+    /** 生产构造器。类里有第二个包级构造器（单测注入），Spring 不会自己挑 —— 必须标 @Autowired。 */
+    @Autowired
     public ClusterScopeIndex(KubernetesClientFactory clients,
                              @Value("${platform.chart.discovery-ttl:5m}") Duration ttl) {
         this(clusterId -> clients.getAdminClient(clusterId)

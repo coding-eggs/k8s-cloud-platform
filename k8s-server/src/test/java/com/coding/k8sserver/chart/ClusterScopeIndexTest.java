@@ -10,6 +10,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ClusterScopeIndexTest {
 
+    @Test
+    void productionConstructorIsAutowired() {
+        // 两个构造器时 Spring 需要一个 @Autowired 才挑得出来（2026-10-21 启动失败实锤：
+        // "No default constructor found"）；这条测试防止有人再加构造器时又漏标。
+        boolean hasAutowired = java.util.Arrays.stream(ClusterScopeIndex.class.getConstructors())
+                .anyMatch(c -> c.isAnnotationPresent(
+                        org.springframework.beans.factory.annotation.Autowired.class));
+
+        assertThat(hasAutowired).isTrue();
+    }
+
     private ClusterScopeIndex index(List<CrdScope> crds) {
         return new ClusterScopeIndex(clusterId -> crds, Duration.ofMinutes(5));
     }
