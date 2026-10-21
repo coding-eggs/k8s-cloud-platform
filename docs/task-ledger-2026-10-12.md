@@ -660,6 +660,17 @@
 - [ ] S3.4.4 升级（当前版本 vs 目标版本）
 - [ ] S3.4.5 **D6 决策**（租户可见性）
 
+> **📌 2026-10-21 计划①落地（应用引擎 + 管理员安装）**
+>
+> spec `2026-10-21-app-store-and-operator-design.md` + plan `2026-10-21-app-store-engine-and-admin-install.md`。
+> brainstorming 已定：一个模块两个视图（商店 + Operator）、来源 Harbor OCI + Artifact Hub、
+> 租户可自助（白名单目录 + 静态检查）、D1 = 统一复用 S3.6 的 Helm 执行链。
+>
+> 已完成（计划①）：迁移 `V2026_10_21_1`（目录/应用/操作三表 + `tenant:app:read|install` 与页面码）、
+> `/chart/**`（`helm pull` + digest 校验、渲染清单静态检查、装后 `helm get manifest` 复核）、
+> `/app/**`（异步安装/升级/卸载 + 预览 + 轮询）、应用商店页（管理员安装向导）。
+> **真集群安装验证待部署新构建后执行**；租户自助在计划②，Operator 视图在计划③。
+
 #### S3.5 CI（Tekton）｜ 规模 XL ｜ 前置：S0.2
 > 已定全部关键需求：自由 DAG、内置/自定义节点、条件分支 + finally、**只手动触发**。
 > 详见分析文档 §7.4.1–§7.4.3。
