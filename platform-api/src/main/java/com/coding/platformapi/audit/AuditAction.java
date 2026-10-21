@@ -95,6 +95,17 @@ public final class AuditAction {
     /** 重新探测集群组件（清缓存语义上的重探：探完覆写缓存） */
     public static final String CLUSTER_REFRESH_COMPONENTS = "cluster:refresh-components";
 
+    // ---- 应用商店 ----
+
+    /** 安装应用（helm 执行，租户路径会做三道闸的静态检查） */
+    public static final String APP_INSTALL = "app:install";
+
+    /** 升级应用到目标版本 */
+    public static final String APP_UPGRADE = "app:upgrade";
+
+    /** 卸载应用（CRD 与 PVC 不删） */
+    public static final String APP_UNINSTALL = "app:uninstall";
+
     // ---- 凭据（S0.2，4 个写端点全量）----
 
     public static final String CREDENTIAL_CREATE = "credential:create";
