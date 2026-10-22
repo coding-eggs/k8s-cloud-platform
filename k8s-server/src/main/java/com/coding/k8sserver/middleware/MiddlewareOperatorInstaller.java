@@ -10,10 +10,12 @@ import com.coding.k8sserver.helm.HelmRunner;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.springframework.stereotype.Component;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -23,12 +25,17 @@ import java.util.Objects;
  *
  * <p>安装：helm {@code upgrade --install}（幂等），release = {@code platform-middleware-<code>}，
  * 命名空间 {@code platform-middleware-system}（Helm 自带 {@code --create-namespace}）。
+ * values 来自 {@link MiddlewareOperatorCatalog.Entry#helmValues()}——Percona/Strimzi 必须显式
+ * 打开"监听全部命名空间"，否则租户命名空间里的实例 CR 不会被 reconcile。
  *
- * <p>判定（见 spec §2.1）：CRD 齐全（Established 由 API 存在性近似）+ 该 release 的 Operator
- * Deployment 就绪。只看 release 不看 CRD 会把"卸载后 CRD 残留"误判成未安装。
+ * <p><b>状态判定不看标签</b>：不同的 Operator chart 给自身 Deployment 打的标签各不相同
+ * （Strimzi 用 {@code release:}，ECK 甚至是 StatefulSet）。这里改为解析本 release 的
+ * {@code helm get manifest}，取出其中的 Deployment / StatefulSet 逐个判就绪 —— chart 无关且可靠。
  */
 @Component
 public class MiddlewareOperatorInstaller {
+
+    private static final YAMLMapper YAML = YAMLMapper.builder().build();
 
     private final HelmRunner helm;
     private final ChartBundle charts;
@@ -57,7 +64,7 @@ public class MiddlewareOperatorInstaller {
         Path values;
         try {
             values = Files.createTempFile("mw-operator-", ".yaml");
-            Files.writeString(values, "");
+            Files.writeString(values, entry.helmValues() == null ? "" : entry.helmValues());
         } catch (IOException e) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "无法创建临时 values：" + e.getMessage());
         }
@@ -85,24 +92,25 @@ public class MiddlewareOperatorInstaller {
         KubernetesClient client = clients.getAdminClient(clusterId);
 
         boolean crds = entry.requiredCrds().stream()
-                .allMatch(n -> client.apiextensions().v1().customResourceDefinitions().withName(n).get() != null);
+                .allMatch(n -> crdOrNull(client, n) != null);
 
-        List<Deployment> deps = client.apps().deployments()
-                .inNamespace(MiddlewareOperatorCatalog.NAMESPACE)
-                .withLabel("app.kubernetes.io/instance", MiddlewareOperatorCatalog.releaseName(code))
-                .list().getItems();
-
-        boolean ready = crds && !deps.isEmpty() && deps.stream().allMatch(MiddlewareOperatorInstaller::deploymentReady);
+        HelmResult manifest = helm.manifest(clients.adminKubeconfig(clusterId),
+                MiddlewareOperatorCatalog.releaseName(code), MiddlewareOperatorCatalog.NAMESPACE);
+        boolean releaseExists = manifest.ok();
+        List<Workload> workloads = releaseExists ? workloadsOf(manifest.output()) : List.of();
+        boolean ready = crds && !workloads.isEmpty()
+                && workloads.stream().allMatch(w -> workloadReady(client, w.kind(), w.name()));
 
         MiddlewareOperatorStatusDTO out = new MiddlewareOperatorStatusDTO();
         out.setCode(code);
         out.setChartVersion(entry.chartVersion());
-        out.setInstalled(crds || !deps.isEmpty());
+        out.setInstalled(releaseExists || crds);
         out.setReady(ready);
         out.setMessage(ready ? "运行中"
-                : !crds ? "CRD 未就绪（Operator 未安装或安装未完成）"
-                : deps.isEmpty() ? "未找到 Operator Deployment"
-                : "Operator Deployment 未就绪");
+                : !releaseExists ? "Operator 尚未安装（helm release 不存在）"
+                : !crds ? "CRD 未就绪（安装可能仍在进行）"
+                : workloads.isEmpty() ? "release 清单里没有 Deployment/StatefulSet"
+                : "Operator 工作负载未就绪");
         return out;
     }
 
@@ -143,8 +151,30 @@ public class MiddlewareOperatorInstaller {
         return client.apiextensions().v1().customResourceDefinitions().withName(name).get();
     }
 
+    /** 判一个工作负载是否就绪（包级：单测覆写）。 */
+    boolean workloadReady(KubernetesClient client, String kind, String name) {
+        if ("StatefulSet".equals(kind)) {
+            var sts = client.apps().statefulSets()
+                    .inNamespace(MiddlewareOperatorCatalog.NAMESPACE).withName(name).get();
+            if (sts == null || sts.getSpec() == null) {
+                return false;
+            }
+            int want = sts.getSpec().getReplicas() == null ? 1 : sts.getSpec().getReplicas();
+            if (want <= 0) {
+                return false;
+            }
+            return sts.getStatus() != null
+                    && sts.getStatus().getReadyReplicas() != null
+                    && sts.getStatus().getReadyReplicas() >= want;
+        }
+        Deployment d = client.apps().deployments()
+                .inNamespace(MiddlewareOperatorCatalog.NAMESPACE).withName(name).get();
+        return deploymentReady(d);
+    }
+
     private static boolean deploymentReady(Deployment d) {
-        if (d.getSpec() == null || d.getSpec().getReplicas() == null || d.getSpec().getReplicas() <= 0) {
+        if (d == null || d.getSpec() == null || d.getSpec().getReplicas() == null
+                || d.getSpec().getReplicas() <= 0) {
             return false;
         }
         if (d.getStatus() == null || d.getStatus().getReadyReplicas() == null) {
@@ -153,11 +183,43 @@ public class MiddlewareOperatorInstaller {
         return Objects.equals(d.getStatus().getReadyReplicas(), d.getSpec().getReplicas());
     }
 
+    /** 从 helm get manifest 里取出 Deployment / StatefulSet 的名字（chart 无关）。 */
+    @SuppressWarnings("unchecked")
+    List<Workload> workloadsOf(String manifest) {
+        List<Workload> out = new ArrayList<>();
+        if (manifest == null || manifest.isBlank()) {
+            return out;
+        }
+        for (String doc : manifest.split("(?m)^---\\s*$")) {
+            if (doc.isBlank()) {
+                continue;
+            }
+            try {
+                Map<String, Object> m = YAML.readValue(doc, Map.class);
+                Object kind = m.get("kind");
+                if (!"Deployment".equals(kind) && !"StatefulSet".equals(kind)) {
+                    continue;
+                }
+                Object meta = m.get("metadata");
+                if (meta instanceof Map<?, ?> mm && mm.get("name") != null) {
+                    out.add(new Workload((String) kind, (String) mm.get("name")));
+                }
+            } catch (RuntimeException ignored) {
+                // 单个文档解析失败（如注释放错位置）不阻塞其它文档
+            }
+        }
+        return out;
+    }
+
     private static String tail(String output) {
         if (output == null) {
             return "";
         }
         String s = output.strip();
         return s.length() <= 800 ? s : s.substring(s.length() - 800);
+    }
+
+    /** release 清单里的一个工作负载。 */
+    record Workload(String kind, String name) {
     }
 }

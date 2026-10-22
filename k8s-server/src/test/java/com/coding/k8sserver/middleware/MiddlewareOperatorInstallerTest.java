@@ -53,6 +53,53 @@ class MiddlewareOperatorInstallerTest {
     }
 
     @Test
+    void statusIsReadyWhenManifestWorkloadsAreReady() {
+        var installer = new MiddlewareOperatorInstaller(helm, charts, clients,
+                new MiddlewareOperatorCatalog()) {
+            @Override
+            io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition crdOrNull(
+                    io.fabric8.kubernetes.client.KubernetesClient client, String name) {
+                return mock(io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition.class);
+            }
+
+            @Override
+            boolean workloadReady(io.fabric8.kubernetes.client.KubernetesClient client, String kind, String name) {
+                return "strimzi-cluster-operator".equals(name);
+            }
+        };
+        when(clients.adminKubeconfig("c1")).thenReturn("kc");
+        when(helm.manifest("kc", "platform-middleware-kafka", "platform-middleware-system"))
+                .thenReturn(new HelmResult(true, 0, """
+                        apiVersion: apps/v1
+                        kind: Deployment
+                        metadata:
+                          name: strimzi-cluster-operator
+                        ---
+                        apiVersion: v1
+                        kind: Service
+                        metadata:
+                          name: ignored
+                        """));
+
+        var status = installer.status("c1", "kafka");
+
+        assertThat(status.isInstalled()).isTrue();
+        assertThat(status.isReady()).isTrue();
+    }
+
+    @Test
+    void statusReportsMissingRelease() {
+        when(clients.adminKubeconfig("c1")).thenReturn("kc");
+        when(helm.manifest(any(), any(), any())).thenReturn(new HelmResult(false, 1, "release: not found"));
+
+        var status = installer.status("c1", "redis");
+
+        assertThat(status.isInstalled()).isFalse();
+        assertThat(status.isReady()).isFalse();
+        assertThat(status.getMessage()).contains("尚未安装");
+    }
+
+    @Test
     void unknownCodeIsRejected() {
         assertThatThrownBy(() -> installer.install("c1", "minio"))
                 .hasMessageContaining("不支持");

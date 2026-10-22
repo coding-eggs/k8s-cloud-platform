@@ -64,6 +64,11 @@ public class NacosChartInstaller {
         }
     }
 
+    /** release 是否存在（Nacos 的 Service 名是 chart 硬编码的，不能拿实例名去查）。 */
+    public boolean exists(String clusterId, String namespace, String release) {
+        return helm.manifest(clients.adminKubeconfig(clusterId), release, namespace).ok();
+    }
+
     public void delete(String clusterId, String namespace, String release) {
         HelmResult r = helm.uninstall(clients.adminKubeconfig(clusterId), release, namespace);
         if (!r.ok() && !r.output().contains("not found")) {
@@ -86,7 +91,9 @@ public class NacosChartInstaller {
         int replicas = Math.max(1, req.getReplicas() == null ? 1 : req.getReplicas());
         String mode = "CLUSTER".equals(req.getMode()) ? "cluster" : "standalone";
         StringBuilder sb = new StringBuilder();
-        sb.append("mode: ").append(mode).append('\n');
+        // ⚠️ chart 读的是 global.mode（不是顶层 mode）；写错会静默渲染成 standalone
+        sb.append("global:\n");
+        sb.append("  mode: ").append(mode).append('\n');
         sb.append("nacos:\n");
         sb.append("  replicaCount: ").append(replicas).append('\n');
         sb.append("  image:\n");
@@ -106,9 +113,10 @@ public class NacosChartInstaller {
             sb.append("    resources:\n");
             sb.append("      requests:\n");
             sb.append("        storage: ").append(req.getStorageSize()).append('\n');
-            if (req.getStorageClass() != null && !req.getStorageClass().isBlank()) {
-                sb.append("    storageClassName: ").append(req.getStorageClass()).append('\n');
-            }
+            // chart 默认 storageClassName: manual —— 必须显式覆盖；留空写成空串（= 用集群默认 SC）
+            sb.append("    storageClassName: \"")
+                    .append(req.getStorageClass() == null ? "" : req.getStorageClass().trim())
+                    .append("\"\n");
         }
         // chart 默认 NodePort/30000：多实例会撞端口，必须固定 ClusterIP
         sb.append("service:\n");

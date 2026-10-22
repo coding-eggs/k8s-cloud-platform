@@ -117,25 +117,41 @@ public class MiddlewareService {
         List<PlatformMiddlewareInstance> rows = instances.selectByCluster(clusterId, code).stream()
                 .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
                 .toList();
-        // 台账里的状态是"提交时"的快照；列表按 k8s 实时状态覆盖（不写库，读失败则保留台账值）
-        rows.forEach(this::refreshStatus);
+        // 台账里的状态是"提交时"的快照；列表按 k8s 实时状态覆盖（不写库，读失败则保留台账值）。
+        // 按 (code, namespace) 分组批量查，避免每行一次往返。
+        rows.stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        r -> r.getCode() + "|" + r.getNamespace(),
+                        java.util.LinkedHashMap::new,
+                        java.util.stream.Collectors.toList()))
+                .values()
+                .forEach(this::refreshGroup);
         return rows;
     }
 
-    /** 读一次实时状态覆盖当前行（不改库）。失败静默：集群不可达时仍要能看到台账。 */
-    private void refreshStatus(PlatformMiddlewareInstance row) {
+    /** 一次批量读同一 (code, namespace) 下所有实例的状态，失败静默保留台账值。 */
+    private void refreshGroup(List<PlatformMiddlewareInstance> group) {
+        PlatformMiddlewareInstance first = group.get(0);
         try {
             MiddlewareStatusRequestDTO req = new MiddlewareStatusRequestDTO();
-            req.setClusterId(row.getClusterId());
-            req.setCode(row.getCode());
-            req.setNamespace(row.getNamespace());
-            req.setNames(List.of(row.getName()));
-            req.setTenantId(row.getTenantId());
-            var result = client.status(row.getCode(), req);
-            if (result != null && !result.isEmpty()) {
-                var s = result.get(0);
-                row.setStatus(mapK8sStatus(row.getStatus(), s.getStatus()));
-                row.setMessage(s.getMessage());
+            req.setClusterId(first.getClusterId());
+            req.setCode(first.getCode());
+            req.setNamespace(first.getNamespace());
+            req.setNames(group.stream().map(PlatformMiddlewareInstance::getName).toList());
+            req.setTenantId(first.getTenantId());
+            var result = client.status(first.getCode(), req);
+            if (result == null || result.isEmpty()) {
+                return;
+            }
+            var byName = result.stream().collect(java.util.stream.Collectors.toMap(
+                    com.coding.common.models.middleware.MiddlewareStatusResultDTO::getName, r -> r,
+                    (a, b) -> a));
+            for (PlatformMiddlewareInstance row : group) {
+                var s = byName.get(row.getName());
+                if (s != null) {
+                    row.setStatus(mapK8sStatus(row.getStatus(), s.getStatus()));
+                    row.setMessage(s.getMessage());
+                }
             }
         } catch (RuntimeException ignored) {
             // 读状态失败不影响列表
@@ -165,9 +181,19 @@ public class MiddlewareService {
 
     public Long create(MiddlewareCreateRequest req, String operator, String tenantId) {
         var item = catalog.require(req.getCode());
-        catalog.requireMode(item, req.getMode());
+        var mode = catalog.requireMode(item, req.getMode());
+        if (req.getReplicas() != null && req.getReplicas() < mode.minReplicas()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    item.name() + " 的「" + mode.label() + "」至少需要 " + mode.minReplicas() + " 个节点");
+        }
         if (isBlank(req.getClusterId()) || isBlank(req.getNamespace())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "请选择集群与命名空间");
+        }
+        // Nacos 的 chart 把 Service/ConfigMap 名字写死成 nacos-cs：同一命名空间只能有一个实例
+        if (isChartBacked(req.getCode()) && !instances.selectByCluster(req.getClusterId(), req.getCode())
+                .stream().filter(i -> req.getNamespace().equals(i.getNamespace())).toList().isEmpty()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "同一命名空间只能有一个 Nacos 实例（chart 的 Service 名固定为 nacos-cs）");
         }
         // Operator 未就绪的集群不能创建实例（Nacos 走 chart，不在本批）
         if (!isChartBacked(req.getCode())) {
@@ -236,6 +262,7 @@ public class MiddlewareService {
             dto.setNamespace(instance.getNamespace());
             dto.setName(instance.getName());
             dto.setReplicas(req.getReplicas());
+            dto.setMode(instance.getMode());
             dto.setCpuRequest(req.getCpuRequest());
             dto.setCpuLimit(req.getCpuLimit());
             dto.setMemoryRequest(req.getMemoryRequest());

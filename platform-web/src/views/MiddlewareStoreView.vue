@@ -417,6 +417,9 @@ onBeforeUnmount(() => {
         <template v-else-if="createItem?.code === 'nacos'">
           Nacos 的鉴权由 chart 控制，默认未开启；对外暴露前请自行配置鉴权。
         </template>
+        <template v-else-if="createItem?.code === 'kafka'">
+          Kafka 监听器为集群内 plain（9092），未开启认证，没有初始凭据。
+        </template>
         <template v-else>
           凭据由对应 Operator 生成，可在实例命名空间查看（MySQL：&lt;名称&gt;-secrets；Elasticsearch：&lt;名称&gt;-es-elastic-user）。
         </template>

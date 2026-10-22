@@ -24,7 +24,10 @@ public class MiddlewareOperatorCatalog {
     /** Operator 统一装在平台命名空间（不属于任何租户）。 */
     public static final String NAMESPACE = "platform-middleware-system";
 
-    public record Entry(String code, String chartVersion, List<String> requiredCrds) {
+    /**
+     * @param helmValues 安装时必须下发的 values（不能留空：Percona/Strimzi 默认只监听自己命名空间）
+     */
+    public record Entry(String code, String chartVersion, List<String> requiredCrds, String helmValues) {
     }
 
     private static final Map<String, Entry> ENTRIES;
@@ -35,13 +38,20 @@ public class MiddlewareOperatorCatalog {
                 "redis.redis.redis.opstreelabs.in",
                 "redisreplications.redis.redis.opstreelabs.in",
                 "redissentinels.redis.redis.opstreelabs.in",
-                "redisclusters.redis.redis.opstreelabs.in")));
+                "redisclusters.redis.redis.opstreelabs.in"),
+                ""));
         m.put("mysql", new Entry("mysql", "1.2.0",
-                List.of("perconaservermysqls.ps.percona.com")));
+                List.of("perconaservermysqls.ps.percona.com"),
+                // chart 默认只 watch 自身命名空间；不下发这行，租户 ns 的 CR 没人 reconcile
+                "watchAllNamespaces: true\n"));
         m.put("kafka", new Entry("kafka", "1.3.0",
-                List.of("kafkas.kafka.strimzi.io", "kafkanodepools.kafka.strimzi.io")));
+                List.of("kafkas.kafka.strimzi.io", "kafkanodepools.kafka.strimzi.io"),
+                // chart 默认 watchNamespaces: [] + watchAnyNamespace: false
+                "watchAnyNamespace: true\n"));
         m.put("elasticsearch", new Entry("elasticsearch", "3.5.0",
-                List.of("elasticsearches.elasticsearch.k8s.elastic.co")));
+                List.of("elasticsearches.elasticsearch.k8s.elastic.co"),
+                // ECK 默认全集群监听
+                ""));
         ENTRIES = Map.copyOf(m);
     }
 

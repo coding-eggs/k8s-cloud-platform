@@ -10,6 +10,7 @@ import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.ResourceAccessResolver;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceQuota;
@@ -137,8 +138,14 @@ public class MiddlewareInstanceService {
         if (isNacos(req.getCode())) {
             nacos.delete(req.getClusterId(), req.getNamespace(), req.getName());
             if (!req.isKeepPvc()) {
-                client.persistentVolumeClaims().inNamespace(req.getNamespace())
-                        .withLabel("app.kubernetes.io/instance", req.getName()).delete();
+                // chart 的 PVC 没有 labels（volumeClaimTemplates 只写了 name），只能按名字前缀找：
+                // STS 卷名 = <claimName>-<stsName>-<ordinal>，claimName 固定是 data
+                String prefix = "data-" + req.getName() + "-";
+                client.persistentVolumeClaims().inNamespace(req.getNamespace()).list().getItems().stream()
+                        .filter(p -> p.getMetadata() != null && p.getMetadata().getName() != null
+                                && p.getMetadata().getName().startsWith(prefix))
+                        .forEach(p -> client.persistentVolumeClaims().inNamespace(req.getNamespace())
+                                .withName(p.getMetadata().getName()).delete());
             }
             return;
         }
@@ -172,17 +179,18 @@ public class MiddlewareInstanceService {
 
         List<MiddlewareStatusResultDTO> out = new ArrayList<>();
         for (String name : req.getNames()) {
-            boolean exists = false;
+            GenericKubernetesResource live = null;
             for (CustomResourceDefinitionContext crd : adapter.contexts()) {
-                if (client.genericKubernetesResources(crd)
-                        .inNamespace(req.getNamespace()).withName(name).get() != null) {
-                    exists = true;
+                var found = client.genericKubernetesResources(crd)
+                        .inNamespace(req.getNamespace()).withName(name).get();
+                if (found != null) {
+                    live = found;
                     break;
                 }
             }
             MiddlewareStatusResultDTO dto = new MiddlewareStatusResultDTO();
             dto.setName(name);
-            if (!exists) {
+            if (live == null) {
                 dto.setStatus("FAILED");
                 dto.setMessage("实例对象不存在（可能已被删除）");
                 out.add(dto);
@@ -194,8 +202,16 @@ public class MiddlewareInstanceService {
             dto.setReplicas(pods.size());
             dto.setReadyReplicas((int) ready);
             if (pods.isEmpty()) {
-                dto.setStatus("CREATING");
-                dto.setMessage("等待 Pod 创建");
+                // Operator 拒绝了规格（版本不支持、PVC 不可调度等）时只会写 condition，不建 Pod：
+                // 不读 CR status 就会永远显示「创建中」
+                String failure = crFailureMessage(live);
+                if (failure != null) {
+                    dto.setStatus("FAILED");
+                    dto.setMessage(failure);
+                } else {
+                    dto.setStatus("CREATING");
+                    dto.setMessage("等待 Pod 创建");
+                }
             } else if (ready == pods.size()) {
                 dto.setStatus("READY");
                 dto.setMessage("运行中");
@@ -206,6 +222,32 @@ public class MiddlewareInstanceService {
             out.add(dto);
         }
         return out;
+    }
+
+    /** 从 CR 的 status 里读硬失败：ECK 的 health=red、以及各类 Operator 的 Ready/Available=False condition。 */
+    private static String crFailureMessage(GenericKubernetesResource res) {
+        Object status = res.getAdditionalProperties().get("status");
+        if (!(status instanceof Map<?, ?> st)) {
+            return null;
+        }
+        if ("red".equals(st.get("health"))) {
+            return "Operator 报告健康状况为 red";
+        }
+        if (st.get("conditions") instanceof List<?> conditions) {
+            for (Object c : conditions) {
+                if (!(c instanceof Map<?, ?> cm)) {
+                    continue;
+                }
+                boolean bad = "False".equals(cm.get("status"))
+                        && ("Ready".equals(cm.get("type")) || "Available".equals(cm.get("type")));
+                if (bad) {
+                    Object msg = cm.get("message");
+                    Object reason = cm.get("reason");
+                    return msg != null ? String.valueOf(msg) : String.valueOf(reason);
+                }
+            }
+        }
+        return null;
     }
 
     // ==================== 内部 ====================
@@ -220,7 +262,8 @@ public class MiddlewareInstanceService {
         for (String name : req.getNames()) {
             MiddlewareStatusResultDTO dto = new MiddlewareStatusResultDTO();
             dto.setName(name);
-            boolean exists = client.services().inNamespace(req.getNamespace()).withName(name).get() != null;
+            // 不能按 Service 名判断：chart 的 Service 固定叫 nacos-cs，与 release 名无关
+            boolean exists = nacos.exists(req.getClusterId(), req.getNamespace(), name);
             if (!exists) {
                 dto.setStatus("FAILED");
                 dto.setMessage("实例不存在（release 可能已被删除）");
@@ -315,7 +358,7 @@ public class MiddlewareInstanceService {
         if (quotas.isEmpty()) {
             return;
         }
-        int n = "SENTINEL".equals(req.getMode()) ? replicas(req) + 3 : replicas(req);
+        int n = quotaPodCount(req);
         BigDecimal needCpu = amount(req.getCpuRequest()).multiply(BigDecimal.valueOf(n));
         BigDecimal needMem = amount(req.getMemoryRequest()).multiply(BigDecimal.valueOf(n));
 
@@ -333,6 +376,18 @@ public class MiddlewareInstanceService {
             checkQuota(q.getSpec().getHard().get("limits.cpu"), used.get("limits.cpu"), needCpuLimit, "CPU 上限");
             checkQuota(q.getSpec().getHard().get("limits.memory"), used.get("limits.memory"), needMemLimit, "内存上限");
         }
+    }
+
+    /** 实际要起的 Pod 数：MySQL 每个数据节点还带一个 HAProxy；哨兵另加固定 3 个哨兵。 */
+    private static int quotaPodCount(MiddlewareCreateRequestDTO req) {
+        int base = replicas(req);
+        if ("SENTINEL".equals(req.getMode())) {
+            return base + 3;
+        }
+        if ("mysql".equals(req.getCode())) {
+            return base * 2;
+        }
+        return base;
     }
 
     private static void checkQuota(Quantity hard, Quantity used, BigDecimal need, String label) {

@@ -58,11 +58,16 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> pool = new LinkedHashMap<>();
         pool.put("replicas", replicas);
         pool.put("roles", List.of("controller", "broker"));
-        pool.put("storage", Map.of("type", "jbod", "volumes", List.of(Map.of(
-                "id", 0,
-                "type", "persistent-claim",
-                "size", storageSize(req),
-                "kraftMetadata", "shared"))));
+        Map<String, Object> volume = new LinkedHashMap<>();
+        volume.put("id", 0);
+        volume.put("type", "persistent-claim");
+        volume.put("size", storageSize(req));
+        volume.put("kraftMetadata", "shared");
+        if (req.getStorageClass() != null && !req.getStorageClass().isBlank()) {
+            // CRD 字段名是 class；漏了它会静默落到集群默认 SC
+            volume.put("class", req.getStorageClass().trim());
+        }
+        pool.put("storage", Map.of("type", "jbod", "volumes", List.of(volume)));
         pool.put("resources", resourcesOf(req));
         GenericKubernetesResource poolRes = resource(req, "KafkaNodePool", req.getName(), pool);
 
@@ -110,7 +115,8 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
 
     @Override
     public String statusSelector(String name) {
-        return "strimzi.io/cluster=" + name;
+        // strimzi.io/name=<cluster>-kafka 只命中 broker/controller Pod，不把 Entity Operator 算进来
+        return "strimzi.io/cluster=" + name + ",strimzi.io/name=" + name + "-kafka";
     }
 
     @Override

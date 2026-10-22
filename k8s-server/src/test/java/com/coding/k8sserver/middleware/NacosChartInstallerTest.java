@@ -46,11 +46,13 @@ class NacosChartInstallerTest {
         var values = installer.valuesFor(req("CLUSTER", 3));
 
         assertThat(values)
+                .contains("global:")
                 .contains("mode: cluster")
                 .contains("replicaCount: 3")
                 .contains("type: embedded")
                 .contains("type: ClusterIP")
                 .contains("storage: 5Gi")
+                .contains("storageClassName: \"\"")
                 .contains("enabled: true")
                 .contains("cpu: 200m");
     }
@@ -58,6 +60,14 @@ class NacosChartInstallerTest {
     @Test
     void standaloneRendersStandalone() {
         assertThat(installer.valuesFor(req("STANDALONE", 1))).contains("mode: standalone");
+    }
+
+    @Test
+    void explicitStorageClassOverridesChartDefault() {
+        var r = req("CLUSTER", 3);
+        r.setStorageClass("fast-ssd");
+
+        assertThat(installer.valuesFor(r)).contains("storageClassName: \"fast-ssd\"");
     }
 
     @Test

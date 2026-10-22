@@ -14,6 +14,9 @@ public class MiddlewareScaleRequestDTO {
 
     private String name;
 
+    /** 实例形态（SINGLE/CLUSTER/...）：扩容规则依赖它，不能只看请求参数 */
+    private String mode;
+
     private Integer replicas;
 
     private String cpuRequest;

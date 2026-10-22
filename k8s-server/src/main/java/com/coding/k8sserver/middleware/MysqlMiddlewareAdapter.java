@@ -57,10 +57,17 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         mysql.put("resources", resourcesOf(req));
         mysql.put("volumeSpec", volumeSpecOf(req));
 
+        // 可变结构：applyScale 会同步改 haproxy.size
+        Map<String, Object> haproxy = new LinkedHashMap<>();
+        haproxy.put("enabled", true);
+        haproxy.put("size", size);
+        Map<String, Object> proxy = new LinkedHashMap<>();
+        proxy.put("haproxy", haproxy);
+
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("mysql", mysql);
         // HAProxy 作为统一入口（主库写、副本读）
-        spec.put("proxy", Map.of("haproxy", Map.of("enabled", true, "size", size)));
+        spec.put("proxy", proxy);
         return List.of(new CrSpec(CRD, resource(req, "PerconaServerMySQL", spec)));
     }
 
@@ -79,8 +86,23 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         }
         @SuppressWarnings("unchecked")
         Map<String, Object> mysql = (Map<String, Object>) mysqlObj;
+        boolean single = "SINGLE".equals(req.getMode());
         if (req.getReplicas() != null) {
-            mysql.put("size", Math.max(3, req.getReplicas()));
+            if (single) {
+                if (req.getReplicas() != 1) {
+                    throw new CloudPlatformException(EnumResponseType.ERROR,
+                            "单节点形态不支持调整节点数；要扩容请删除后按「高可用集群」重建");
+                }
+            } else {
+                int target = Math.max(3, req.getReplicas());
+                mysql.put("size", target);
+                // HAProxy 入口跟数据节点同步扩，否则入口只有一个副本、没有冗余
+                Object proxyObj = spec.get("proxy");
+                if (proxyObj instanceof Map<?, ?> proxy
+                        && ((Map<String, Object>) proxy).get("haproxy") instanceof Map<?, ?> haproxy) {
+                    ((Map<String, Object>) haproxy).put("size", target);
+                }
+            }
         }
         Map<String, Object> resources = new LinkedHashMap<>();
         resources.put("requests", nonNullMap("cpu", req.getCpuRequest(), "memory", req.getMemoryRequest()));

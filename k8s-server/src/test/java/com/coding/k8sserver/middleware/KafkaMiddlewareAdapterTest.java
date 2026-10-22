@@ -88,8 +88,21 @@ class KafkaMiddlewareAdapterTest {
     }
 
     @Test
-    void statusAndPvcSelectorUseStrimziLabel() {
-        assertThat(adapter.statusSelector("mw-kafka-x")).isEqualTo("strimzi.io/cluster=mw-kafka-x");
+    void statusSelectorExcludesEntityOperatorPods() {
+        assertThat(adapter.statusSelector("mw-kafka-x"))
+                .isEqualTo("strimzi.io/cluster=mw-kafka-x,strimzi.io/name=mw-kafka-x-kafka");
         assertThat(adapter.pvcSelector("mw-kafka-x", "mwi_1")).isEqualTo("strimzi.io/cluster=mw-kafka-x");
+    }
+
+    @Test
+    void storageClassIsRenderedIntoVolume() {
+        var r = req(3);
+        r.setStorageClass("fast-ssd");
+
+        @SuppressWarnings("unchecked")
+        var storage = (Map<String, Object>) spec(byKind(adapter.buildCreate(r), "KafkaNodePool")).get("storage");
+        @SuppressWarnings("unchecked")
+        var volumes = (List<Map<String, Object>>) storage.get("volumes");
+        assertThat(volumes.get(0)).containsEntry("class", "fast-ssd");
     }
 }

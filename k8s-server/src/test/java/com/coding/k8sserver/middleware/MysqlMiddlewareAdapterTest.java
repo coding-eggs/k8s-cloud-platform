@@ -81,6 +81,34 @@ class MysqlMiddlewareAdapterTest {
     }
 
     @Test
+    void scalingASingleNodeToMoreReplicasIsRejected() {
+        var live = adapter.buildCreate(req("SINGLE", 1)).get(0).resource();
+        var scale = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scale.setMode("SINGLE");
+        scale.setReplicas(2);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> adapter.applyScale(live, MysqlMiddlewareAdapter.CRD, scale))
+                .hasMessageContaining("单节点形态不支持调整节点数");
+    }
+
+    @Test
+    void scalingAClusterKeepsHaproxyInSync() {
+        var live = adapter.buildCreate(req("CLUSTER", 3)).get(0).resource();
+        var scale = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scale.setMode("CLUSTER");
+        scale.setReplicas(5);
+
+        adapter.applyScale(live, MysqlMiddlewareAdapter.CRD, scale);
+
+        assertThat(mysqlOf(live)).containsEntry("size", 5);
+        @SuppressWarnings("unchecked")
+        var haproxy = (Map<String, Object>) ((Map<String, Object>) live.getAdditionalProperties().get("spec"))
+                .get("proxy");
+        assertThat((Map<String, Object>) haproxy.get("haproxy")).containsEntry("size", 5);
+    }
+
+    @Test
     void statusSelectorTargetsMysqlPods() {
         assertThat(adapter.statusSelector("mw-mysql-x"))
                 .isEqualTo("app.kubernetes.io/instance=mw-mysql-x,app.kubernetes.io/component=mysql");

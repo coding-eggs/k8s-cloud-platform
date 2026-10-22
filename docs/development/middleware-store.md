@@ -2,7 +2,7 @@
 
 > 设计：[2026-10-22-middleware-store-design.md](../superpowers/specs/2026-10-22-middleware-store-design.md)
 > 计划：[批①-1](../superpowers/plans/2026-10-22-middleware-store-batch1.md)、[批①-2](../superpowers/plans/2026-10-22-middleware-store-batch2.md)
-> 状态：批①-1（底座 + Redis）与批①-2（MySQL/Kafka/ES + Nacos）已实施；PostgreSQL/RabbitMQ 在批②。
+> 状态：批①-1（底座 + Redis）与批①-2（MySQL/Kafka/ES + Nacos）已实施，**待真集群逐款验证**；PostgreSQL/RabbitMQ 在批②。
 
 ## 1. 可用的中间件
 
@@ -25,16 +25,20 @@
   → k8s-server：
       Operator 类：配额预检 + 写凭据（按需）+ 建 CR（MySQL/Kafka/ES 由各自 Operator 接管）
       Nacos：helm upgrade --install（release = 实例名）
-  → 列表页逐条读实时状态（Pod 就绪；Nacos 以 Service 是否存在判断实例是否存在）
+  → 列表页按 (类型, 命名空间) 批量读实时状态（Pod 就绪；Nacos 以 helm release 是否存在判断实例是否存在）
 ```
 
 - Operator 安装：helm `platform-middleware-<code>` → 命名空间 `platform-middleware-system`，chart 随 k8s-server 镜像内置；
-- 判定：必需 CRD 齐全 + Operator Deployment 就绪；安装前做 **CRD 归属预检**（他人 release / 非 Helm 管理一律拒）。
+- 判定：必需 CRD 齐全 + 本 release 清单里的 Deployment/StatefulSet 就绪（不同 chart 的标签各不相同，故按 `helm get manifest` 解析）；安装前做 **CRD 归属预检**（他人 release / 非 Helm 管理一律拒）。
 
 ## 3. 部署
 
-- 批①-2 **无新表、无新权限行**：只需重建 k8s-server + platform-api + platform-web；
-- 批①-1 的迁移（`V2026_10_22_1`）与页面码绑定（`V2026_10_22_4`）仍是一次性的；
+- 批①-2 **无新表、无新权限行**，但新增了一条租户 RBAC 迁移 `V2026_10_22_5`（补
+  `ps.percona.com` / `kafka.strimzi.io` / `elasticsearch.k8s.elastic.co` 三个 apiGroup）；
+  **重放后必须点一次「重下发全部模板」**，否则租户创建这三类实例会 403；
+- 重建 k8s-server + platform-api + platform-web；
+- Operator 安装时平台会下发"监听全部命名空间"的 values（Percona `watchAllNamespaces`、Strimzi
+  `watchAnyNamespace`）—— 这是 CR 能被 reconcile 的前提，手工安装时别漏；
 - 集群需要能拉取的镜像：
 
 | 中间件 | 镜像来源 |
@@ -57,9 +61,10 @@
 | Kafka 起不来 | 检查 NodePool 是否有 `strimzi.io/node-pools: enabled` 注解（平台已自动加） |
 | ES 拒绝创建 | `version` 不在 ECK 支持范围；换一个受支持的版本 |
 | Nacos 一直 Pending | 存储未配（`persistence.enabled=false` 时用 emptyDir）或镜像拉不到 |
+| Nacos 第二个实例安装失败 | chart 的 Service/ConfigMap 名固定为 `nacos-cs`，同一命名空间只允许一个实例 |
+| 实例一直「创建中」 | 先看 CR 的 `status.conditions`；Operator 拒绝规格（版本不支持等）时不会建 Pod |
 
 ## 5. 已知限制
 
-- 实例列表逐条读实时状态（多实例线性变慢）；
 - 前端暂无「详情 / 扩容」入口（后端 scale 已支持 Redis/MySQL/Kafka/ES；Nacos 显式拒绝扩容）；
 - 中间件版本清单未做成可选列表（Kafka/ES 版本是文本框，MySQL/Redis 镜像固定）。
