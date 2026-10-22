@@ -94,3 +94,14 @@ INSERT INTO platform_role_permission (id, role_id, permission_id) VALUES
  ('rp_tmember_mw_instance_get',  'builtin_role_tenant_member','perm_mw_instance_get'),
  ('rp_tmember_mw_op_get',        'builtin_role_tenant_member','perm_mw_op_get')
 ON DUPLICATE KEY UPDATE permission_id=VALUES(permission_id);
+
+-- ===== 租户 RBAC 模板：Redis CRD（实例由租户创建的前提）=====
+-- 为什么在这里加：租户建实例走 tenant client（AccessBoundary.TENANT → 租户 SA），
+-- 第二道闸缺这个 apiGroup 时创建 CR 会 403。内置模板在页面上改不了（built_in 保护）。
+-- ⚠️ 重放后必须点一次「重下发全部模板」（POST /rbacTemplate/sync-all），否则已有 ClusterRole 还是旧 rules。
+UPDATE platform_rbac_template
+SET rules = JSON_ARRAY_APPEND(rules, '$.rules',
+        CAST('{"apiGroups":["redis.redis.opstreelabs.in"],"resources":["redis","redisreplications","redissentinels","redisclusters"],"verbs":["*"]}' AS JSON))
+WHERE built_in = 1
+  AND deleted_at IS NULL
+  AND rules NOT LIKE '%redis.redis.opstreelabs.in%';
