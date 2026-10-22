@@ -30,6 +30,24 @@ public interface MiddlewareAdapter {
     /** 实例产生的 Pod 的 label selector（状态判定用）。 */
     String statusSelector(String name);
 
+    /**
+     * 是否由平台生成并写入口令 Secret。
+     * <p>默认 true（Redis/Nacos 这类需要初始口令）；Percona MySQL 由 Operator 自己生成
+     * {@code <cr>-secrets}，平台写一个没人引用的 Secret 只会造成误导。
+     */
+    default boolean usesPlatformPassword() {
+        return true;
+    }
+
+    /**
+     * 删除实例且 keepPvc=false 时，用来找该实例 PVC 的 label selector。
+     * <p>默认按平台标签（适配器在 volumeClaimTemplate 里自己打的）；
+     * Operator 创建 PVC 的中间件（MySQL/Kafka/ES）覆写成各自 Operator 的标签。
+     */
+    default String pvcSelector(String name, String instanceId) {
+        return "platform.coding/middleware-instance=" + instanceId;
+    }
+
     /** 一个待创建的对象：CRD 上下文 + 资源体。 */
     record CrSpec(CustomResourceDefinitionContext context, GenericKubernetesResource resource) {
     }

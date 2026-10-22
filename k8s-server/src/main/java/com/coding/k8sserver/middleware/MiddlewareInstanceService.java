@@ -60,10 +60,11 @@ public class MiddlewareInstanceService {
         assertQuota(req);
 
         MiddlewareAdapter adapter = adapter(req.getCode());
-        MiddlewareAdapter.CrSpec secretOwner = null;
         List<MiddlewareAdapter.CrSpec> created = new ArrayList<>();
         try {
-            writeSecret(client, req);
+            if (adapter.usesPlatformPassword()) {
+                writeSecret(client, req);
+            }
             for (MiddlewareAdapter.CrSpec spec : adapter.buildCreate(req)) {
                 client.genericKubernetesResources(spec.context())
                         .inNamespace(req.getNamespace())
@@ -75,7 +76,9 @@ public class MiddlewareInstanceService {
             // 部分失败回滚：SENTINEL 是两个 CR，第二个失败时不能把第一个和 Secret 留在集群里
             created.forEach(s -> deleteQuietly(client, s.context(), req.getNamespace(),
                     s.resource().getMetadata().getName()));
-            deleteSecretQuietly(client, req.getNamespace(), secretName(req));
+            if (adapter.usesPlatformPassword()) {
+                deleteSecretQuietly(client, req.getNamespace(), secretName(req));
+            }
             throw e;
         }
     }
@@ -124,11 +127,13 @@ public class MiddlewareInstanceService {
             deleteQuietly(client, crd, req.getNamespace(), req.getName());
         }
         if (!req.isKeepPvc()) {
-            // PVC 由适配器在 volumeClaimTemplate 里打了平台标签（operator 自己的标签不保证存在）
+            // PVC 的标签由各适配器决定：Redis 用平台标签，MySQL/Kafka/ES 用各自 Operator 的标签
             client.persistentVolumeClaims().inNamespace(req.getNamespace())
-                    .withLabel("platform.coding/middleware-instance", req.getInstanceId())
+                    .withLabel(adapter.pvcSelector(req.getName(), req.getInstanceId()))
                     .delete();
-            deleteSecretQuietly(client, req.getNamespace(), secretName(req));
+            if (adapter.usesPlatformPassword()) {
+                deleteSecretQuietly(client, req.getNamespace(), secretName(req));
+            }
         }
         // keepPvc=true 时保留 Secret：数据卷还在，凭据也还给它留着
     }
