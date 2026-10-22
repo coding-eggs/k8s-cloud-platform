@@ -133,9 +133,11 @@
 | operator / started_at / finished_at | |
 | running_lock | 生成列：仅 PENDING/RUNNING 时为 `cluster_id|instance_id`，唯一键防并发 |
 
-### 3.4 计划①的表
+### 3.4 计划①的表（2026-10-22 已清理）
 
-`platform_app` / `platform_app_operation` / `platform_app_catalog` **不删除**（避免误删数据），代码与端点下线，表中数据保留；后续单独清理。
+`platform_app` / `platform_app_operation` / `platform_app_catalog` 三张表与其 7 条 `/app/**` 权限行
+由 `V2026_10_22_2__drop_app_store_legacy.sql` 删除（功能从未上线，表中只有测试数据）；
+**`perm_page_app`（`tenant:page:app`）保留**——路由 `/apps` 现在是中间件商店，页面码沿用。
 
 ---
 
