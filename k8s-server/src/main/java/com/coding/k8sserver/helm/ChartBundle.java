@@ -51,16 +51,25 @@ public class ChartBundle {
     }
 
     public Path chartDir(String code, String version) {
+        return chartDir("components", code, version);
+    }
+
+    /**
+     * 按区域定位：{@code <charts-dir>/<area>/<code>/<version>/chart/}。
+     * 组件在 {@code components/}，中间件 Operator 在 {@code middleware/}。
+     */
+    public Path chartDir(String area, String code, String version) {
         if (code == null || code.isBlank() || version == null || version.isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "缺少 chart code 或 version");
         }
-        if (code.contains("/") || code.contains("..") || version.contains("/") || version.contains("..")) {
-            throw new CloudPlatformException(EnumResponseType.ERROR, "非法的 chart code/version");
+        if (code.contains("/") || code.contains("..") || version.contains("/") || version.contains("..")
+                || area.contains("/") || area.contains("..")) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "非法的 chart 区域/code/version");
         }
-        Path dir = root.resolve("components").resolve(code).resolve(version).resolve("chart");
+        Path dir = root.resolve(area).resolve(code).resolve(version).resolve("chart");
         if (!Files.isDirectory(dir) || !Files.isRegularFile(dir.resolve("Chart.yaml"))) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "内置 chart 不存在或缺少 Chart.yaml: " + code + " @" + version + "（" + dir + "）");
+                    "内置 chart 不存在或缺少 Chart.yaml: " + area + "/" + code + " @" + version + "（" + dir + "）");
         }
         return dir;
     }
