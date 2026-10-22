@@ -2390,12 +2390,50 @@ export interface NotificationChannelRequest {
   enabled?: boolean
 }
 
-// ---------------- 应用商店（计划①：管理员安装） ----------------
+// ---------------- 中间件商店 ----------------
 
-export interface K8sAppOperation {
+export interface MiddlewareMode {
+  mode: string
+  label: string
+  minReplicas: number
+  help?: string | null
+}
+
+/** 商店卡片：固定清单的一项 + 本集群 Operator 状态与实例数 */
+export interface MiddlewareCatalogItem {
+  code: string
+  name: string
+  description?: string | null
+  modes: MiddlewareMode[]
+  operatorInstalled: boolean
+  operatorReady: boolean
+  chartVersion?: string | null
+  operatorMessage?: string | null
+  instanceCount: number
+}
+
+export interface MiddlewareInstance {
+  id: string
+  clusterId: string
+  namespace: string
+  code: string
+  mode: string
+  name: string
+  displayName: string
+  version?: string | null
+  specJson?: string | null
+  status: 'CREATING' | 'READY' | 'DEGRADED' | 'FAILED' | 'DELETING'
+  message?: string | null
+  tenantId?: string | null
+  createdBy?: string | null
+  createdAt?: string | null
+}
+
+export interface MiddlewareOperation {
   id: number
-  appId: string
-  action: 'INSTALL' | 'UPGRADE' | 'UNINSTALL'
+  clusterId: string
+  instanceId: string
+  action: 'CREATE' | 'SCALE' | 'DELETE' | 'UPGRADE'
   status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'UNKNOWN'
   message?: string | null
   logTail?: string | null
@@ -2403,44 +2441,10 @@ export interface K8sAppOperation {
   finishedAt?: string | null
 }
 
-export interface K8sApp {
-  id: string
-  clusterId: string
-  namespace: string
-  releaseName: string
-  chartName: string
-  version: string
-  displayName: string
-  status: 'INSTALLING' | 'RUNNING' | 'FAILED' | 'UNINSTALLED'
-  needsReview?: boolean | null
-  valuesJson?: string | null
-  createdAt?: string | null
-}
-
-export interface ChartViolation {
-  severity: 'BLOCK' | 'WARN'
-  type: string
-  object: string
-  message: string
-}
-
-export interface ChartPreviewResult {
-  manifest: string
-  violations: ChartViolation[]
-  objects: {
-    apiVersion: string
-    kind: string
-    name: string
-    namespace?: string | null
-    scope?: string | null
-  }[]
-}
-
-/** 应用安装/预览共用的 chart 引用 */
-export interface K8sChartRef {
-  source: string
-  ref: string
-  chartName: string
-  version: string
-  digest?: string
+export interface MiddlewareOperatorStatus {
+  code: string
+  installed: boolean
+  ready: boolean
+  chartVersion?: string | null
+  message?: string | null
 }

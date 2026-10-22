@@ -10,6 +10,7 @@ import com.coding.common.models.middleware.MiddlewareOperatorInstallRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
+import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperationMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperatorMapper;
@@ -110,9 +111,43 @@ public class MiddlewareService {
     // ==================== 实例 ====================
 
     public List<PlatformMiddlewareInstance> list(String clusterId, String code, String tenantId) {
-        return instances.selectByCluster(clusterId, code).stream()
+        List<PlatformMiddlewareInstance> rows = instances.selectByCluster(clusterId, code).stream()
                 .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
                 .toList();
+        // 台账里的状态是"提交时"的快照；列表按 k8s 实时状态覆盖（不写库，读失败则保留台账值）
+        rows.forEach(this::refreshStatus);
+        return rows;
+    }
+
+    /** 读一次实时状态覆盖当前行（不改库）。失败静默：集群不可达时仍要能看到台账。 */
+    private void refreshStatus(PlatformMiddlewareInstance row) {
+        try {
+            MiddlewareStatusRequestDTO req = new MiddlewareStatusRequestDTO();
+            req.setClusterId(row.getClusterId());
+            req.setCode(row.getCode());
+            req.setNamespace(row.getNamespace());
+            req.setNames(List.of(row.getName()));
+            var result = client.status(row.getCode(), req);
+            if (result != null && !result.isEmpty()) {
+                var s = result.get(0);
+                row.setStatus(mapK8sStatus(row.getStatus(), s.getStatus()));
+                row.setMessage(s.getMessage());
+            }
+        } catch (RuntimeException ignored) {
+            // 读状态失败不影响列表
+        }
+    }
+
+    private static String mapK8sStatus(String current, String k8s) {
+        if ("DELETING".equals(current)) {
+            return current;
+        }
+        return switch (k8s == null ? "" : k8s) {
+            case "READY" -> "READY";
+            case "DEGRADED" -> "DEGRADED";
+            case "FAILED" -> "FAILED";
+            default -> "CREATING";
+        };
     }
 
     public PlatformMiddlewareInstance get(String instanceId, String tenantId) {

@@ -52,7 +52,7 @@ const router = createRouter({
         { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '审计日志', group: '平台管理', requiresPerm: [pageCodes.audit] } },
         { path: 'credentials', name: 'credentials', component: () => import('@/views/CredentialView.vue'), meta: { title: '凭据管理', group: '平台管理', requiresPerm: [pageCodes.credential] } },
         { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', group: '资源管理', requiresPerm: [pageCodes.registry] } },
-        { path: 'apps', name: 'apps', component: () => import('@/views/AppStoreView.vue'), meta: { title: '应用商店', group: '应用交付', requiresPerm: [pageCodes.app] } },
+        { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', group: '应用交付', requiresPerm: [pageCodes.app] } },
         // CI（流水线）：四个路由共用**一个**页面码 —— 列表/画布/运行历史/运行详情是同一件事的四步
         { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },
         { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },

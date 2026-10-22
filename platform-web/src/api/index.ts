@@ -88,10 +88,10 @@ import type {
   SecretRefOption,
   TenantMemberView,
   TokenUserInfo,
-  K8sApp,
-  K8sAppOperation,
-  ChartPreviewResult,
-  K8sChartRef,
+  MiddlewareCatalogItem,
+  MiddlewareInstance,
+  MiddlewareOperation,
+  MiddlewareOperatorStatus,
 } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
@@ -923,31 +923,44 @@ export const pipelineApi = {
     http.post<never, void>('/pipeline/cache/clear', { clusterId, namespace, tenantId }),
 }
 
-/**
- * 应用商店（计划①：管理员安装/升级/卸载）。
- *
- * 预览不落盘：安装向导在提交前调用它，BLOCK 项必须禁用提交。
- */
-export const appApi = {
-  list: (clusterId: string, namespace?: string) =>
-    http.post<never, K8sApp[]>('/app/list', { clusterId, namespace }),
-  get: (appId: string) => http.post<never, K8sApp>('/app/get', { appId }),
-  preview: (payload: {
+/** 中间件商店（固定清单 + Operator 实例） */
+export const middlewareApi = {
+  catalog: (clusterId: string) =>
+    http.post<never, MiddlewareCatalogItem[]>('/middleware/catalog', { clusterId }),
+  instanceList: (clusterId: string, code?: string, tenantId?: string) =>
+    http.post<never, MiddlewareInstance[]>('/middleware/instance/list', { clusterId, code, tenantId }),
+  instanceGet: (instanceId: string, tenantId?: string) =>
+    http.post<never, MiddlewareInstance>('/middleware/instance/get', { instanceId, tenantId }),
+  create: (payload: {
     clusterId: string
-    namespace: string
-    chartRef: K8sChartRef
-    values?: string
-  }) => http.post<never, ChartPreviewResult>('/app/preview', payload),
-  install: (payload: {
-    clusterId: string
+    code: string
+    mode: string
     namespace: string
     displayName?: string
-    chartRef: K8sChartRef
-    values?: string
-  }) => http.post<never, number>('/app/install', payload),
-  upgrade: (payload: { appId: string; version: string; digest?: string; values?: string }) =>
-    http.post<never, number>('/app/upgrade', payload),
-  uninstall: (appId: string) => http.post<never, number>('/app/uninstall', { appId }),
+    version?: string
+    replicas?: number
+    cpuRequest?: string
+    cpuLimit?: string
+    memoryRequest?: string
+    memoryLimit?: string
+    storageSize?: string
+    storageClass?: string
+    tenantId?: string
+  }) => http.post<never, number>('/middleware/instance/create', payload),
+  scale: (payload: {
+    instanceId: string
+    replicas?: number
+    cpuRequest?: string
+    cpuLimit?: string
+    memoryRequest?: string
+    memoryLimit?: string
+    storageSize?: string
+    tenantId?: string
+  }) => http.post<never, number>('/middleware/instance/scale', payload),
+  remove: (payload: { instanceId: string; keepPvc: boolean; tenantId?: string }) =>
+    http.post<never, number>('/middleware/instance/delete', payload),
   operation: (operationId: number) =>
-    http.post<never, K8sAppOperation>('/app/operations/get', { operationId }),
+    http.post<never, MiddlewareOperation>('/middleware/operation/get', { operationId }),
+  operatorInstall: (clusterId: string, code: string) =>
+    http.post<never, MiddlewareOperatorStatus>('/middleware/operator/install', { clusterId, code }),
 }
