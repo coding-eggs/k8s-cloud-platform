@@ -750,11 +750,11 @@
 - [x] S3.6.2 内置 chart（上游 + thin chart）+ sha256 校验 —— 批①（2026-10-17）
 - [x] S3.6.3 helm 执行链（预检 / 执行 / 收尾）与异步操作记录 —— 批①（2026-10-17）
 - [x] S3.6.4 组件 tab 的安装 / 升级与进度视图 —— 批①（2026-10-17）
-- [ ] S3.6.5 逐个组件的配置契约与功能级验收（Prometheus 的 selector / externalLabels / remoteWrite 是重点）
-  —— **已验收 6/7**：metrics-server、prometheus-operator（含 Thanos）、tekton、otel-operator（含 Tempo）、
-  cert-manager、istio（含 Gateway API）；**剩 calico**。
+- [x] S3.6.5 逐个组件的配置契约与功能级验收（Prometheus 的 selector / externalLabels / remoteWrite 是重点）
+  —— **已验收 7/7**：metrics-server、prometheus-operator（含 Thanos）、tekton、otel-operator（含 Tempo）、
+  cert-manager、istio（含 Gateway API）、calico（2026-10-22 在业务集群 test-work-cluster 真装成功）。
   2026-10-21 裁定：calico 在管理集群只能做「已装 → 只读 + 探测 + Calico 页面」验收（外部安装、非 Helm），
-  **安装路径留待业务集群/裸集群实测**，本版不再等它（见下方收口记录）。
+  **安装路径留待业务集群/裸集群实测** —— 2026-10-22 已在该业务集群完成（见下方收口记录）。
 
 **brainstorming 已定**：只做目录内 11 条；安装 + 升级（不做卸载/回滚按钮）；统一 Helm 执行器
 （含 thin chart）；chart 内置进 k8s-server；集群画像区分 management / business（Thanos 挂
@@ -849,6 +849,31 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 >   管理集群上不能做安装验证（adoption 后还会升级 Calico 3.30.3 → 3.33.0）。
 > - **用户裁定（2026-10-21）**：calico 这版就这样 —— 不改 recipe、不做「MANAGEMENT 画像取消 recipe」、
 >   不做「安装前检测其它 CNI（flannel/cilium…）并拒绝」；有业务集群时再验安装路径。
+>
+> **2026-10-22 calico 在业务集群实测通过（S3.6 收口 7/7）**
+>
+> 环境：`test-work-cluster`（BUSINESS，k8s **v1.37.1**，裸集群无 CNI）。结果：`platform-tigera-operator`
+> deployed，`Installation/default` = `10.243.0.0/16` + `IPIP`，`calico-node`/`typha`/`kube-controllers`
+> 全部 Running，节点 Ready。过程中撞了三件事，都已在代码里修掉：
+>
+> 1. **tigera-operator chart 不含 CRD** → `no matches for kind "Installation" ... ensure CRDs are installed first`。
+>    改用官方独立 CRD chart `projectcalico.org.v3`（v3.33.0，入库为 `projectcalico-crds`）。
+> 2. **CRD chart 不能做成 Helm release** → `Secret ... data: Too long: may not be more than 1048576 bytes`
+>    （Helm 把**整个 chart** 存进 release Secret，这套 chart 3.5MB）。于是引入
+>    `ReleaseSpec.applyMode = SERVER_SIDE_APPLY`：渲染后 `kubectl apply --server-side --force-conflicts
+>    --field-manager=platform-system`，不建 release，再 `kubectl wait --for=condition=Established` 等 CRD，
+>    然后装 operator release。顺带修掉 `HelmRunner.run()` 把输出截到 64KB 的坑（直接 apply 会静默少装对象）：
+>    新增 `renderFull`（不截断）+ `FakeHelm` 输出大清单的回归测试。
+> 3. **`helm template` 的 capabilities 是 helm 自带默认值**（4.2.0 ≈ k8s 1.35）→ `MutatingAdmissionPolicy`
+>    渲染成 `v1beta1`，1.37 只认 `v1`，apply 报 `no matches for kind`。改为渲染前探测集群
+>    `major.minor` 与 `admissionregistration.k8s.io/{v1,v1beta1,v1alpha1}` 中实际提供的版本，
+>    传 `--kube-version/--api-versions`。
+>
+> 同批（都属 S3.6 范畴）：calico 探测判据增加 `kube-system/calico-node`（老 `calico.yaml`/早期 operator
+> 布局），外部安装的集群显示「已装 · 只读」而不是给「安装」按钮；安装表单的「封装方式」五种取值逐个
+> 写明作用（选中项下方显示完整说明），后端也校验这五个值（未知值在 Calico 那边是"网络不通"而非报错）。
+> 部署：重建 **k8s-server**（新 chart + 镜像里多了 kubectl + 渲染修复）+ **platform-api**（recipe/校验）
+> + **platform-web**（表单说明）；无 SQL。
 
 ---
 
@@ -972,7 +997,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
-| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批①+批② 已实施**（2026-10-18/20；引擎 + 11 条组件 recipe + 组件文档）；**功能级验收 6/7，2026-10-21 收口**（calico 仅管理集群只读验收，安装路径待业务集群；本版不再等）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-21 的保留期校验只需后两个）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
+| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批①+批② 已实施**（2026-10-18/20；引擎 + 11 条组件 recipe + 组件文档）；**功能级验收 7/7**（2026-10-22 calico 在业务集群 test-work-cluster/k8s 1.37 真装通过）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-22 的 calico 修复三项都在这一批）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |

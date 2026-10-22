@@ -29,6 +29,7 @@ import com.coding.k8sserver.components.TempoObjstoreObjects;
 import com.coding.k8sserver.components.ThanosObjstoreObjects;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
+import io.fabric8.kubernetes.client.KubernetesClient;
 import com.coding.k8sserver.helm.ChartBundle;
 import com.coding.k8sserver.helm.HelmResult;
 import com.coding.k8sserver.helm.HelmRunner;
@@ -68,6 +69,12 @@ public class ComponentInstallController implements AccessBoundaryAware {
 
     /** values 以 JSON 写入 .yaml 文件 —— JSON 是合法的 YAML 子集，helm 能正确解析。 */
     private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    private static final tools.jackson.dataformat.yaml.YAMLMapper YAML =
+            tools.jackson.dataformat.yaml.YAMLMapper.builder().build();
+
+    /** 渲染结果直接落盘（超大 chart，不建 Helm release）；取值与 platform-api 共用一份 */
+    private static final String APPLY_SERVER_SIDE = ReleaseInstallSpecDTO.APPLY_SERVER_SIDE;
 
     private final HelmRunner helm;
     private final ChartBundle charts;
@@ -111,7 +118,19 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 Path chartDir = charts.chartDir(spec.getChartCode(), spec.getChartVersion());
                 valuesFile = writeValues(spec.getValues());
 
-                HelmResult rendered = helm.render(kubeconfig, chartDir, valuesFile, spec.getNamespace());
+                // 超大 chart 的清单要**完整**：它会被原样写进集群，截断（64KB）会静默少装对象。
+                // 同时必须按**集群真实**的 kube/API 版本渲染：helm template 默认用 helm 自带的
+                // capabilities（4.2.0 ≈ k8s 1.35），会把 MutatingAdmissionPolicy 渲染成 v1beta1，
+                // 而 1.36+ 只认 v1（2026-10-22 实测 apply 报 no matches for kind）。
+                boolean directApply = APPLY_SERVER_SIDE.equals(spec.getApplyMode());
+                HelmResult rendered;
+                if (directApply) {
+                    KubernetesClient client = clientFactory.getAdminClient(request.getClusterId());
+                    rendered = helm.renderFull(kubeconfig, chartDir, valuesFile, spec.getNamespace(),
+                            kubeVersion(client), admissionPolicyApiVersions(client));
+                } else {
+                    rendered = helm.render(kubeconfig, chartDir, valuesFile, spec.getNamespace());
+                }
                 if (!rendered.ok()) {
                     st.setStatus("FAILED");
                     st.setMessage("预检失败：" + rendered.output());
@@ -121,6 +140,38 @@ public class ComponentInstallController implements AccessBoundaryAware {
                         firstError = "预检失败：" + rendered.output();
                     }
                     break; // 失败即停
+                }
+                // 超大 chart（Calico CRD）：不建 Helm release（Secret 1MiB 上限存不下整个 chart），
+                // 直接 server-side apply；并等 CRD Established 再装下一条
+                // （否则下一条里的 CR 会报 no matches for kind）。2026-10-22 实测。
+                if (directApply) {
+                    HelmResult applied = helm.applyServerSide(kubeconfig, rendered.output());
+                    if (!applied.ok()) {
+                        st.setStatus("FAILED");
+                        st.setMessage(applied.output());
+                        statuses.add(st);
+                        allOk = false;
+                        if (firstError == null) {
+                            firstError = applied.output();
+                        }
+                        break; // 失败即停
+                    }
+                    List<String> crds = crdNames(rendered.output());
+                    HelmResult waited = crds.isEmpty() ? null : helm.waitCrdsEstablished(kubeconfig, crds);
+                    boolean waitOk = waited == null || waited.ok();
+                    st.setStatus(waitOk ? "SUCCESS" : "FAILED");
+                    st.setMessage(waitOk
+                            ? "已用 server-side apply 落盘（不建 Helm release）"
+                            : "CRD 已写入，但未在超时内 Established：" + waited.output());
+                    statuses.add(st);
+                    if (!waitOk) {
+                        allOk = false;
+                        if (firstError == null) {
+                            firstError = st.getMessage();
+                        }
+                        break;
+                    }
+                    continue;
                 }
                 // 服务端 dry-run：只把输出记为警告，不阻断（CRD 假阴性见 spec §3.1）
                 HelmResult dry = helm.dryRunServer(kubeconfig, chartDir, valuesFile,
@@ -481,6 +532,69 @@ public class ComponentInstallController implements AccessBoundaryAware {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    /** 集群的 {@code major.minor}（minor 可能带 "+"）：渲染要按它算 capabilities */
+    static String kubeVersion(KubernetesClient client) {
+        var version = client.getKubernetesVersion();
+        String minor = version.getMinor() == null ? "" : version.getMinor().replaceAll("\\D", "");
+        return version.getMajor() + "." + minor;
+    }
+
+    /**
+     * 集群实际提供的 {@code MutatingAdmissionPolicy} API 版本（探测到哪个报哪个）。
+     *
+     * <p>渲染必须按它来：{@code helm template} 默认用 helm 自带的 capabilities（4.2.0 ≈ k8s 1.35），
+     * 在 1.36+ 会把对象渲染成已不提供的 {@code v1beta1}，apply 直接
+     * {@code no matches for kind "MutatingAdmissionPolicy"}（2026-10-22 实测）。
+     */
+    static List<String> admissionPolicyApiVersions(KubernetesClient client) {
+        List<String> out = new ArrayList<>();
+        for (String version : List.of("v1", "v1beta1", "v1alpha1")) {
+            try {
+                var resources = client.getApiResources("admissionregistration.k8s.io/" + version);
+                boolean served = resources != null && resources.getResources() != null
+                        && resources.getResources().stream()
+                        .anyMatch(r -> "mutatingadmissionpolicies".equals(r.getName()));
+                if (served) {
+                    out.add("admissionregistration.k8s.io/" + version + "/MutatingAdmissionPolicy");
+                }
+            } catch (RuntimeException ignored) {
+                // 该 groupVersion 不存在 → 试下一个
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 渲染清单里所有 CRD 的 {@code metadata.name}（去重、保持出现顺序）。
+     *
+     * <p>用于 apply 之后 {@code kubectl wait --for=condition=Established}：CRD 写进去了不代表
+     * 可以被发现，下一个 release 里的 CR 可能在几毫秒内仍然 {@code no matches for kind}。
+     */
+    static List<String> crdNames(String manifest) {
+        List<String> names = new ArrayList<>();
+        if (manifest == null || manifest.isBlank()) {
+            return names;
+        }
+        for (String doc : manifest.split("(?m)^---[ \t]*$")) {
+            if (doc.isBlank()) {
+                continue;
+            }
+            try {
+                tools.jackson.databind.JsonNode root = YAML.readTree(doc);
+                if (root == null || !"CustomResourceDefinition".equals(root.path("kind").asString(""))) {
+                    continue;
+                }
+                String name = root.path("metadata").path("name").asString("");
+                if (!name.isBlank() && !names.contains(name)) {
+                    names.add(name);
+                }
+            } catch (RuntimeException ignored) {
+                // 解析不了的单条文档不影响其余：真正的失败会在 apply / wait 阶段暴露
+            }
+        }
+        return names;
     }
 
     private static Map<String, String> labels(ComponentInstallRequestDTO request) {

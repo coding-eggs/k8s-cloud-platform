@@ -57,8 +57,12 @@ public class ClusterComponentCatalog {
                     List.of(new ComponentProbe("tekton-pipelines", "deployment", "tektoncd/pipeline/controller-",
                             "tekton-pipelines-controller")),
                     List.of("ci")),
+            // 两种真实布局都要认：官方 operator 把 DaemonSet 放 calico-system；
+            // 老的 calico.yaml / 早期 tigera-operator 在 kube-system。只认前者会让「已经装了 Calico」
+            // 的集群显示"未安装"，用户点安装就会撞已有 CRD/对象的 ownership 冲突（2026-10-22）。
             new ComponentDef("calico", "Calico", "crd.projectcalico.org",
-                    List.of(new ComponentProbe("calico-system", "daemonset", "calico/node", "calico-node")),
+                    List.of(new ComponentProbe("calico-system", "daemonset", "calico/node", "calico-node"),
+                            new ComponentProbe("kube-system", "daemonset", "calico/node", "calico-node")),
                     List.of("network", "ipam")),
             new ComponentDef("cert-manager", "cert-manager", "cert-manager.io",
                     List.of(new ComponentProbe("cert-manager", "deployment", "jetstack/cert-manager-controller", null)),

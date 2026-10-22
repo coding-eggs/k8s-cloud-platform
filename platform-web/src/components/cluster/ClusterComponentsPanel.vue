@@ -194,8 +194,56 @@ type OtelForm = Omit<K8sOtelInstall, 'tempoStorage' | 'es' | 'tempoRetention' | 
   tempoTlsMode: 'plaintext' | 'tls' | 'tls-skip-verify'
 }
 
-/** Calico 支持的封装方式（Installation CR 的取值） */
-const ENCAPSULATIONS = ['IPIP', 'VXLAN', 'IPIPCrossSubnet', 'VXLANCrossSubnet', 'None']
+/**
+ * Calico 支持的封装方式（Installation CR 的 calicoNetwork.ipPools[].encapsulation）。
+ * 每种都写清"它到底做什么、什么时候选"，因为选错 = 跨节点 Pod 不通 / 直接断网。
+ */
+interface EncapsulationOption {
+  value: string
+  /** 下拉里的一行：名字 + 一句话 */
+  label: string
+  /** 选中后显示的完整说明 */
+  hint: string
+}
+
+const ENCAPSULATIONS: EncapsulationOption[] = [
+  {
+    value: 'IPIP',
+    label: 'IPIP —— 跨节点全封装（IP-in-IP）',
+    hint: '所有跨节点 Pod 流量都走 IP-in-IP 隧道，同节点直通。对底层网络要求最低（节点间 IP 可达即可），'
+      + '额外 20 字节头、节点网络需允许 IP 协议号 4。自建机房/裸金属通常选它。',
+  },
+  {
+    value: 'VXLAN',
+    label: 'VXLAN —— 跨节点全封装（UDP 4789）',
+    hint: '跨节点流量封进 UDP 包。IPIP 被禁或被丢包的云环境（多数公有云）选它；'
+      + '额外 50 字节头，开销比 IPIP 略高。',
+  },
+  {
+    value: 'IPIPCrossSubnet',
+    label: 'IPIPCrossSubnet —— 只在跨子网时 IPIP',
+    hint: '同子网的节点之间走原生路由（性能更好），只有跨子网才封装。'
+      + '前提是同子网节点二层可达；同网段集群/机房适用。',
+  },
+  {
+    value: 'VXLANCrossSubnet',
+    label: 'VXLANCrossSubnet —— 只在跨子网时 VXLAN',
+    hint: '同上，但跨子网时用 VXLAN 封装；适合跨子网、又不希望同子网有封装开销的环境。',
+  },
+  {
+    value: 'None',
+    label: 'None —— 不封装（纯路由 / BGP）',
+    hint: '性能最好，但要求网络能把每个节点的 Pod CIDR 路由过去（BGP 对等或静态路由）。'
+      + '不满足时跨节点 Pod 完全不通，选前务必确认底层路由已打通。',
+  },
+]
+
+function encapsulationHint(value: string): string {
+  return ENCAPSULATIONS.find((e) => e.value === value)?.hint ?? ''
+}
+
+/** 默认封装方式（后端下发的 platform.calico.* 为空时兜底） */
+const DEFAULT_ENCAPSULATION = 'IPIP'
 
 const ACTION_LABEL: Record<ApplyDialog['action'], string> = {
   INSTALL: '安装', UPGRADE: '升级', EDIT: '编辑',
@@ -430,7 +478,7 @@ const applyDialog = ref<ApplyDialog>({
   initialThanosInstall: JSON.stringify(EMPTY_THANOS),
   storageClasses: [], secretOptions: [], gatewaySecretOptions: [],
   otelMinioSecretOptions: [], esSecretOptions: [],
-  showCalico: false, calico: { podCidr: '', encapsulation: 'IPIP' },
+  showCalico: false, calico: { podCidr: '', encapsulation: DEFAULT_ENCAPSULATION },
   initialCalico: '',
   showTektonProfile: false, tektonProfile: 'all', initialTektonProfile: 'all',
   showOtel: false, showTempoInstall: false, otel: emptyOtel(), initialOtel: JSON.stringify(emptyOtel()),
@@ -534,7 +582,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     : { ...EMPTY_THANOS }
   const calico: K8sCalicoInstall = {
     podCidr: row.defaultPodCidr ?? '',
-    encapsulation: row.defaultEncapsulation || 'IPIP',
+    encapsulation: row.defaultEncapsulation || DEFAULT_ENCAPSULATION,
   }
   // 编辑时用当前生效的 profile；安装时用后端下发的默认值（all）
   const tektonProfile = editing
@@ -1159,8 +1207,14 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <span class="cc-form-label">封装方式</span>
         <div class="cc-form-control">
           <el-select v-model="applyDialog.calico.encapsulation" style="width: 100%">
-            <el-option v-for="e in ENCAPSULATIONS" :key="e" :label="e" :value="e" />
+            <el-option v-for="e in ENCAPSULATIONS" :key="e.value" :label="e.label" :value="e.value" />
           </el-select>
+          <div v-if="encapsulationHint(applyDialog.calico.encapsulation)" class="cc-form-hint">
+            {{ encapsulationHint(applyDialog.calico.encapsulation) }}
+          </div>
+          <div class="cc-form-hint">
+            决定跨节点 Pod 流量怎么走：选错 = 跨节点 Pod 不通，甚至整集群断网；只能在安装前定
+          </div>
         </div>
       </div>
       <div v-if="applyDialog.showTektonProfile" class="cc-section-title">Tekton</div>

@@ -58,6 +58,20 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void calicoInstalledTheLegacyWayInKubeSystemIsStillDetected() {
+        // 老 calico.yaml / 早期 tigera-operator 的 DaemonSet 在 kube-system。认不出来 =
+        // 页面显示「未安装」→ 用户点安装 → 撞已有 CRD/对象的 ownership 冲突（2026-10-22）
+        WorkloadProbeResultDTO legacy = probe("kube-system", true, 3, 3, "v3.28.0");
+        legacy.setKind("daemonset");
+        ClusterComponentService svc = svc(List.of(legacy));
+
+        ComponentStatusDTO s = find(svc.status("c1"), "calico");
+
+        assertThat(s.getState()).isEqualTo("INSTALLED_HEALTHY");
+        assertThat(s.getNamespace()).isEqualTo("kube-system");
+    }
+
+    @Test
     void zeroDesiredReplicasIsNotHealthy() {
         // Review Focus #2：被 scale 到 0 的 Deployment，0/0 判成"健康"是错的 —— 它根本没在跑
         ClusterComponentService svc = svc(List.of(probe("kube-system", true, 0, 0, "v0.7.2")));

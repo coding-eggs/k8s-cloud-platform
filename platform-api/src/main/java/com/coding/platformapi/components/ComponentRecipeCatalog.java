@@ -393,19 +393,34 @@ public class ComponentRecipeCatalog {
      * <p>{@code tigera-operator} 组件因此**没有独立 recipe**：operator 单独安装没有产品意义，
      * 而两个 recipe 共用同一 release 会让"升级 operator"把 Installation CR 删掉（断网）。
      */
-    private static final List<ReleaseSpec> CALICO_RELEASES = List.of(new ReleaseSpec(
-            "platform-tigera-operator", "tigera-operator", "tigera-operator", "v3.33.0",
-            Map.of(
-                    "installation", Map.of(
-                            "enabled", true,
-                            "calicoNetwork", Map.of(
-                                    "ipPools", List.of(Map.of(
-                                            "cidr", "${calico.podCidr}",
-                                            "encapsulation", "${calico.encapsulation}")))),
-                    "apiServer", Map.of("enabled", false),
-                    "goldmane", Map.of("enabled", false),
-                    "whisker", Map.of("enabled", false)),
-            Map.of()).asPrimary().withAppVersion("v3.33.0"));
+    private static final List<ReleaseSpec> CALICO_RELEASES = List.of(
+            // CRD 单独一个 chart —— tigera-operator chart **不含 CRD**（官方 docs 用
+            // `helm template ... | kubectl apply --server-side` 先装）。不先装它，下面 release 里的
+            // Installation 在 manifest Build 阶段就报
+            // "no matches for kind Installation in version operator.tigera.io/v1 ... ensure CRDs are installed first"
+            // （2026-10-22 实锤）。Hooks/App 内的 MutatingAdmissionPolicy 由 chart 按
+            // .Capabilities.APIVersions 选版本，helm install 时取自真实集群。
+            // ⚠️ 这些 CRD 是模板资源而非 chart 的 crds/ 目录 → 算该 release 的托管对象，
+            //    人工 `helm uninstall` 会连 CRD 一起删（随之删除全部 Calico 对象）。平台不提供卸载。
+            // ⚠️ 这个 chart 渲染后 3.5MB，而 Helm 会把**整个 chart** 存进 release Secret（1MiB 上限）——
+            //    当 Helm release 装会报 `Secret sh.helm.release.v1.platform-calico-crds.v1 ... Too long`
+            //    （2026-10-22 实测）。所以走 server-side apply（官方 docs 也是 helm template | kubectl apply），
+            //    不建 Helm release；下面的 operator release 仍是普通 Helm release。
+            new ReleaseSpec("platform-calico-crds", "tigera-operator", "projectcalico-crds", "v3.33.0",
+                    Map.of(), Map.of()).withAppVersion("v3.33.0")
+                    .withApplyMode(ReleaseSpec.APPLY_SERVER_SIDE),
+            new ReleaseSpec("platform-tigera-operator", "tigera-operator", "tigera-operator", "v3.33.0",
+                    Map.of(
+                            "installation", Map.of(
+                                    "enabled", true,
+                                    "calicoNetwork", Map.of(
+                                            "ipPools", List.of(Map.of(
+                                                    "cidr", "${calico.podCidr}",
+                                                    "encapsulation", "${calico.encapsulation}")))),
+                            "apiServer", Map.of("enabled", false),
+                            "goldmane", Map.of("enabled", false),
+                            "whisker", Map.of("enabled", false)),
+                    Map.of()).asPrimary().withAppVersion("v3.33.0"));
 
     // ==================== cert-manager / otel-operator ====================
 

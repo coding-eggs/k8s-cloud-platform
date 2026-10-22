@@ -135,6 +135,77 @@ class HelmRunnerTest {
     }
 
     @Test
+    void renderFullKeepsManifestsLargerThanTheLogTruncationLimit() throws Exception {
+        // server-side apply 的清单必须完整：render() 为日志截到 64KB，
+        // 用它去 apply 会静默少装对象（Calico CRD chart 渲染出来 3.5MB）
+        Path log = tmp.resolve("argv.log");
+        Path big = tmp.resolve("big.yaml");
+        Files.writeString(big, "x".repeat(200_000));
+        Path values = tmp.resolve("values.yaml");
+        Files.writeString(values, "{}\n");
+        HelmRunner runner = runner(log, 0, Map.of("FAKE_HELM_STDOUT_FILE", big.toString()),
+                Duration.ofMinutes(15));
+
+        HelmResult full = runner.renderFull("apiVersion: v1\nkind: Config\n", chart(), values, "tigera-operator");
+        HelmResult truncated = runner.render("apiVersion: v1\nkind: Config\n", chart(), values, "tigera-operator");
+
+        assertThat(full.output()).hasSize(200_000);
+        assertThat(truncated.output()).hasSize(64 * 1024);
+    }
+
+    @Test
+    void renderFullPassesTheClustersKubeVersionAndServedApiVersions() throws Exception {
+        // 不带这两个参数时 helm 用自带默认 capabilities（≈1.35），
+        // MutatingAdmissionPolicy 会渲染成 1.36+ 已不提供的 v1beta1
+        Path log = tmp.resolve("argv.log");
+        Path values = tmp.resolve("values.yaml");
+        Files.writeString(values, "{}\n");
+
+        runner(log, 0).renderFull("apiVersion: v1\nkind: Config\n", chart(), values, "tigera-operator",
+                "1.37", List.of("admissionregistration.k8s.io/v1/MutatingAdmissionPolicy"));
+
+        String argv = Files.readString(log);
+        assertThat(argv).contains("--kube-version").contains("1.37");
+        assertThat(argv).contains("--api-versions")
+                .contains("admissionregistration.k8s.io/v1/MutatingAdmissionPolicy");
+    }
+
+    @Test
+    void applyServerSideRunsKubectlWithServerSideApplyAndThePlatformFieldManager() throws Exception {
+        // 超大 chart（Calico CRD）不能建 Helm release：Helm 把整个 chart 存进 release Secret，
+        // 超过 1MiB 直接装不了。改用 kubectl apply --server-side（官方 docs 同款做法）。
+        Path log = tmp.resolve("argv.log");
+
+        HelmResult r = runner(log, 0).applyServerSide("apiVersion: v1\nkind: Config\n",
+                "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
+                        + "metadata:\n  name: installations.operator.tigera.io\n");
+
+        assertThat(r.ok()).isTrue();
+        String argv = Files.readString(log);
+        assertThat(argv).contains("apply").contains("--server-side").contains("--force-conflicts")
+                // 与平台其它 SSA 写入同一个 fieldManager，managedFields 里能认出是谁改的
+                .contains("--field-manager=platform-system")
+                .contains("-f")
+                .contains("--kubeconfig");
+    }
+
+    @Test
+    void waitCrdsEstablishedWaitsOnTheGivenCrds() throws Exception {
+        // CRD 写进去不等于已 Established；不等的话下一个 release 里的 CR 还是 no matches for kind
+        Path log = tmp.resolve("argv.log");
+
+        HelmResult r = runner(log, 0).waitCrdsEstablished("apiVersion: v1\nkind: Config\n",
+                List.of("installations.operator.tigera.io", "ippools.projectcalico.org"));
+
+        assertThat(r.ok()).isTrue();
+        String argv = Files.readString(log);
+        assertThat(argv).contains("wait").contains("--for=condition=Established");
+        assertThat(argv).contains("customresourcedefinition/installations.operator.tigera.io");
+        assertThat(argv).contains("customresourcedefinition/ippools.projectcalico.org");
+        assertThat(argv).contains("--timeout");
+    }
+
+    @Test
     void theTemporaryKubeconfigIsRemovedEvenOnFailure() throws Exception {
         // 通过把 FAKE_HELM_LOG 指到不可写路径制造失败，断言 temp 文件仍被删
         Path bad = tmp.resolve("no-such-dir/argv.log");

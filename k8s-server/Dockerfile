@@ -32,6 +32,10 @@ FROM eclipse-temurin:21-jre
 #    需要出网代理时按惯例传 --build-arg HTTP_PROXY/HTTPS_PROXY。
 ARG HELM_VERSION=v4.2.0
 ARG HELM_BASE_URL=https://get.helm.sh
+# S3.6：超大 chart（Calico 的 CRD chart）不走 Helm release —— Helm 把整个 chart 存进 release
+# Secret，超过 1MiB 就装不了。那条路径用 `kubectl apply --server-side` 落盘，所以镜像里要有 kubectl。
+ARG KUBECTL_VERSION=v1.36.0
+ARG KUBECTL_BASE_URL=https://dl.k8s.io
 ARG TARGETARCH
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -40,6 +44,10 @@ RUN apt-get update \
  && mv "/tmp/linux-${TARGETARCH}/helm" /usr/local/bin/helm \
  && chmod +x /usr/local/bin/helm \
  && helm version --short \
+ && curl -fsSL "${KUBECTL_BASE_URL}/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+      -o /usr/local/bin/kubectl \
+ && chmod +x /usr/local/bin/kubectl \
+ && kubectl version --client \
  && rm -rf /tmp/helm.tgz "/tmp/linux-${TARGETARCH}" \
  && apt-get purge -y --auto-remove curl \
  && rm -rf /var/lib/apt/lists/*

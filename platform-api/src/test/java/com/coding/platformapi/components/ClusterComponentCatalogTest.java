@@ -5,6 +5,7 @@ import com.coding.common.constants.ProbeNamespaces;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * 组件目录的完整性约束。目录是这批的<b>唯一出处</b>，所以它的约束也都在这里钉住：
@@ -71,6 +72,19 @@ class ClusterComponentCatalogTest {
                         .as("组件 %s 的候选既没有 imageRepo 也没有 name", d.code()).isTrue();
             }
         }
+    }
+
+    @Test
+    void calicoIsRecognisedInBothKubeSystemAndCalicoSystem() {
+        // 两种真实布局：官方 operator（DaemonSet 在 calico-system）与老的 calico.yaml /
+        // 早期 tigera-operator（DaemonSet 在 kube-system）。只认前者的话，已经装了 Calico 的集群
+        // 会显示「未安装」→ 用户点安装 → 撞 CRD/对象的 ownership 冲突（2026-10-22）。
+        ComponentDef calico = catalog.all().stream()
+                .filter(d -> d.code().equals("calico")).findFirst().orElseThrow();
+        assertThat(calico.probes())
+                .extracting(ComponentProbe::namespace, ComponentProbe::kind, ComponentProbe::name)
+                .contains(tuple("calico-system", "daemonset", "calico-node"),
+                        tuple("kube-system", "daemonset", "calico-node"));
     }
 
     @Test

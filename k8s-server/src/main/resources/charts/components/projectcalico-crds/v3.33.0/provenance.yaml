@@ -1,0 +1,15 @@
+source: https://github.com/projectcalico/calico
+chart: projectcalico.org.v3
+version: v3.33.0
+appVersion: v3.33.0
+fetched_at: 2026-10-22
+fetch_command: >-
+  helm pull projectcalico.org.v3 --repo https://docs.tigera.io/calico/charts --version v3.33.0 --untar
+note: >-
+  Calico 的 CRD chart（projectcalico.org/v3 + operator.tigera.io）。tigera-operator chart **本身不含 CRD**：
+  官方 docs 的做法是 `helm template ... | kubectl apply --server-side` 先装它，再 `helm install` operator。
+  平台把它当成 calico 组件的**前一个 release**（失败即停的顺序保证 CRD 先就位），
+  否则 operator release 里的 Installation 会报 “no matches for kind Installation ...
+  ensure CRDs are installed first”。
+  ⚠️ 这里的 CRD 是模板渲染出来的普通资源（不是 chart 的 crds/ 目录），因此算该 release 的托管对象：
+  人工 `helm uninstall platform-calico-crds` 会连 CRD 一起删掉（随之删除全部 Calico 资源）。平台不提供卸载。

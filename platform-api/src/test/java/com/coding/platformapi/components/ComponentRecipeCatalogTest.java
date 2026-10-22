@@ -346,11 +346,40 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void calicoInstallsTheCrdChartBeforeTheOperator() {
+        // 官方 tigera-operator chart 里**没有 CRD**（CRD 在独立 chart projectcalico.org.v3 里，
+        // 官方 docs 是 helm template | kubectl apply）。不先装它，operator release 里的
+        // Installation 在 manifest Build 阶段就会报
+        // "no matches for kind Installation in version operator.tigera.io/v1 ... ensure CRDs are installed first"
+        // （2026-10-22 实锤）。
+        var releases = catalog.recipeOf("calico", "BUSINESS").releases();
+        assertThat(releases).extracting(ReleaseSpec::releaseName)
+                .containsExactly("platform-calico-crds", "platform-tigera-operator");
+        ReleaseSpec crds = releases.get(0);
+        assertThat(crds.chartCode()).isEqualTo("projectcalico-crds");
+        assertThat(crds.chartVersion()).isEqualTo("v3.33.0");
+        assertThat(crds.namespace()).isEqualTo("tigera-operator");
+        assertThat(crds.primary()).as("CRD chart 不是组件本体").isFalse();
+        assertThat(ReleaseSpec.primaryChartVersion(releases)).isEqualTo("v3.33.0");
+    }
+
+    @Test
+    void calicoCrdChartIsAppliedWithServerSideApplyInsteadOfHelm() {
+        // CRD chart 渲染后 3.5MB：Helm 把**整个 chart** 存进 release Secret，超过 1MiB 上限
+        // （2026-10-22 实测 "Secret sh.helm.release.v1.platform-calico-crds.v1 ... Too long:
+        // may not be more than 1048576 bytes"）。官方 docs 也是 helm template | kubectl apply --server-side。
+        // 所以这条 release 走 server-side apply、不建 Helm release；operator 仍是正常 Helm release。
+        var releases = catalog.recipeOf("calico", "BUSINESS").releases();
+        assertThat(releases.get(0).applyMode()).isEqualTo(ReleaseSpec.APPLY_SERVER_SIDE);
+        assertThat(releases.get(1).applyMode()).isNull();
+    }
+
+    @Test
     void calicoIsInstalledAsAUnitAndDisablesUnneededSubComponents() {
         // operator + Installation 一个 release：不需要的 APIServer / Goldmane / Whisker 默认关闭
         var recipe = catalog.recipeOf("calico", "BUSINESS");
         assertThat(recipe.calicoNetwork()).as("安装表单要填 CIDR/封装").isTrue();
-        Map<String, Object> values = catalogValues("calico");
+        Map<String, Object> values = calicoOperatorValues();
         assertThat((Map<String, Object>) values.get("installation")).containsEntry("enabled", true);
         for (String key : List.of("apiServer", "goldmane", "whisker")) {
             assertThat((Map<String, Object>) values.get(key)).as(key).containsEntry("enabled", false);
@@ -359,6 +388,12 @@ class ComponentRecipeCatalogTest {
         Map<String, Object> network = (Map<String, Object>) ((Map<String, Object>) values.get("installation"))
                 .get("calicoNetwork");
         assertThat(network.toString()).contains("${calico.podCidr}").contains("${calico.encapsulation}");
+    }
+
+    /** calico 的主 release（operator+Installation）；第 0 个是 CRD chart，values 为空 */
+    private Map<String, Object> calicoOperatorValues() {
+        return catalog.recipeOf("calico", "BUSINESS").releases().stream()
+                .filter(ReleaseSpec::primary).findFirst().orElseThrow().contractValues();
     }
 
     // ==================== otel-operator 采集栈（2026-10-18） ====================

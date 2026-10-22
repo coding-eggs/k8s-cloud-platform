@@ -55,6 +55,12 @@ public final class FakeHelm {
             Thread.sleep(sleepMs);
         }
 
+        // 模拟 helm template 的 stdout（用来验证 renderFull 不截断、render 截断 64KB）
+        String stdoutFile = System.getenv("FAKE_HELM_STDOUT_FILE");
+        if (stdoutFile != null) {
+            System.out.print(Files.readString(Path.of(stdoutFile), StandardCharsets.UTF_8));
+        }
+
         // 模拟 helm pull：按 --destination 生成一个 .tgz（内容来自环境变量），供 ChartFetcher 校验
         String pullContent = System.getenv("FAKE_HELM_PULL_CONTENT");
         if (pullContent != null && args.length > 0 && "pull".equals(args[0])) {

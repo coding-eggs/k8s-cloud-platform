@@ -72,6 +72,10 @@ public class ComponentInstallService {
     /** Thanos chart 的 global.objstore.secretName（recipe 里固定为它） */
     private static final String THANOS_OBJSTORE_SECRET = "platform-thanos-objstore";
 
+    /** Calico 支持的封装方式（Installation CR 的 calicoNetwork.ipPools[].encapsulation） */
+    private static final List<String> CALICO_ENCAPSULATIONS =
+            List.of("IPIP", "VXLAN", "IPIPCrossSubnet", "VXLANCrossSubnet", "None");
+
     // ==================== OTel（批次一） ====================
 
     private static final int DEFAULT_OTEL_SAMPLING = 10;
@@ -278,7 +282,8 @@ public class ComponentInstallService {
                     r.chartVersion(), merged, r.editableValues(), r.preserveUnknownPlaceholders(),
                     // ⚠️ 必须带上 primary / appVersion：resolveTargetVersion 只看主 release，
                     // 丢了标记就会退回"第一个 release"（Istio 会记成 Gateway API 的 1.6.2）
-                    r.primary(), r.appVersion()));
+                    // applyMode 同理：丢了就会退回 Helm，超大 chart 在 release Secret 上限处失败
+                    r.primary(), r.appVersion(), r.applyMode()));
         }
         return out;
     }
@@ -384,7 +389,7 @@ public class ComponentInstallService {
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(), r.chartVersion(),
                     resolved, r.editableValues(), r.preserveUnknownPlaceholders(),
                     // 同 mergeValues：占位符解析后也不能丢主 release 标记
-                    r.primary(), r.appVersion()));
+                    r.primary(), r.appVersion(), r.applyMode()));
         }
         return out;
     }
@@ -769,6 +774,13 @@ public class ComponentInstallService {
         if (isBlank(out.getPodCidr()) && isBlank(out.getEncapsulation())) {
             return null;
         }
+        // 表单是下拉，API 调用方不受它约束：Calico 收到未知封装方式不会报错退出，
+        // 而是装完跨节点 Pod 不通（排查成本极高），所以这里必须拒。
+        if (!isBlank(out.getEncapsulation()) && !CALICO_ENCAPSULATIONS.contains(out.getEncapsulation())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的 Calico 封装方式：" + out.getEncapsulation()
+                            + "（可选 IPIP / VXLAN / IPIPCrossSubnet / VXLANCrossSubnet / None）");
+        }
         return out;
     }
 
@@ -993,6 +1005,8 @@ public class ComponentInstallService {
             dto.setNamespace(r.namespace());
             dto.setChartCode(r.chartCode());
             dto.setChartVersion(r.chartVersion());
+            // null = 普通 Helm release；SERVER_SIDE_APPLY = 渲染后直接落盘（超大 chart，见 ReleaseSpec）
+            dto.setApplyMode(r.applyMode());
             // 端口表里的 listener/tlsSecret 是平台生成 Gateway CR 用的，不能进 Helm 的 Service values
             dto.setValues("istio-gateway".equals(r.chartCode())
                     ? withoutGatewayListenerFields(r.contractValues())

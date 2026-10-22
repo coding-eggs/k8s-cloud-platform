@@ -60,21 +60,139 @@ class ComponentInstallControllerTest {
                 .apply(anyString(), any(), any(), anyString(), anyString(), anyMap());
     }
 
+    @Test
+    void aServerSideApplyReleaseSkipsHelmAndWaitsForItsCrds() {
+        // 超大 chart（Calico CRD，渲染后 3.5MB）不能建 Helm release：Secret 1MiB 上限。
+        // 这条 release 走 kubectl apply --server-side，并且要等 CRD Established 再装下一条
+        // （否则 operator release 里的 Installation 还是 no matches for kind）
+        HelmRunner helm = mock(HelmRunner.class);
+        when(helm.renderFull(anyString(), any(), any(), anyString(), anyString(), any()))
+                .thenReturn(new HelmResult(true, 0, CRD_MANIFEST));
+        when(helm.applyServerSide(anyString(), anyString()))
+                .thenReturn(new HelmResult(true, 0, "customresourcedefinition.apiextensions.k8s.io/"
+                        + "installations.operator.tigera.io serverside-applied"));
+        when(helm.waitCrdsEstablished(anyString(), any()))
+                .thenReturn(new HelmResult(true, 0, "condition met"));
+
+        ComponentInstallResultDTO r = controller(helm, kubeClient("1", "37"))
+                .apply(request("SERVER_SIDE_APPLY", "platform-calico-crds")).getData();
+
+        assertThat(r.isSuccess()).isTrue();
+        assertThat(r.getReleases().get(0).getStatus()).isEqualTo("SUCCESS");
+        org.mockito.Mockito.verify(helm, org.mockito.Mockito.never())
+                .apply(anyString(), any(), any(), anyString(), anyString(), anyMap());
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<String>> crds =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        org.mockito.Mockito.verify(helm).waitCrdsEstablished(anyString(), crds.capture());
+        assertThat(crds.getValue()).containsExactly("installations.operator.tigera.io");
+    }
+
+    @Test
+    void theDirectApplyRenderUsesTheClustersRealKubeVersionAndApiVersions() {
+        // helm template 默认 capabilities（≈1.35）会把 MutatingAdmissionPolicy 渲染成 v1beta1；
+        // 1.37 只认 v1（2026-10-22 实测：no matches for kind ... in version
+        // "admissionregistration.k8s.io/v1beta1"）。必须按集群探测器渲染。
+        HelmRunner helm = mock(HelmRunner.class);
+        when(helm.renderFull(anyString(), any(), any(), anyString(), anyString(), any()))
+                .thenReturn(new HelmResult(true, 0, CRD_MANIFEST));
+        when(helm.applyServerSide(anyString(), anyString())).thenReturn(new HelmResult(true, 0, "applied"));
+        when(helm.waitCrdsEstablished(anyString(), any())).thenReturn(new HelmResult(true, 0, "ok"));
+
+        controller(helm, kubeClient("1", "37+"))
+                .apply(request("SERVER_SIDE_APPLY", "platform-calico-crds"));
+
+        org.mockito.Mockito.verify(helm).renderFull(
+                anyString(), any(), any(), anyString(),
+                org.mockito.ArgumentMatchers.eq("1.37"),
+                org.mockito.ArgumentMatchers.eq(
+                        List.of("admissionregistration.k8s.io/v1/MutatingAdmissionPolicy")));
+    }
+
+    @Test
+    void aServerSideApplyFailureStopsTheFollowingHelmRelease() {
+        HelmRunner helm = mock(HelmRunner.class);
+        when(helm.renderFull(anyString(), any(), any(), anyString(), anyString(), any()))
+                .thenReturn(new HelmResult(true, 0, CRD_MANIFEST));
+        when(helm.applyServerSide(anyString(), anyString()))
+                .thenReturn(new HelmResult(false, 1, "no matches"));
+
+        ComponentInstallRequestDTO req = request("SERVER_SIDE_APPLY", "platform-calico-crds");
+        ReleaseInstallSpecDTO second = new ReleaseInstallSpecDTO();
+        second.setReleaseName("platform-tigera-operator");
+        second.setNamespace("tigera-operator");
+        second.setChartCode("tigera-operator");
+        second.setChartVersion("v3.33.0");
+        second.setValues(Map.of());
+        req.setReleases(List.of(req.getReleases().get(0), second));
+
+        ComponentInstallResultDTO r = controller(helm).apply(req).getData();
+
+        assertThat(r.isSuccess()).isFalse();
+        assertThat(r.getReleases()).hasSize(1);
+        org.mockito.Mockito.verify(helm, org.mockito.Mockito.never())
+                .apply(anyString(), any(), any(), anyString(), anyString(), anyMap());
+    }
+
+    private static final String CRD_MANIFEST = """
+            apiVersion: apiextensions.k8s.io/v1
+            kind: CustomResourceDefinition
+            metadata:
+              name: installations.operator.tigera.io
+            ---
+            apiVersion: operator.tigera.io/v1
+            kind: Installation
+            metadata:
+              name: default
+            """;
+
+    /** 模拟集群发现：k8s 1.3x 只提供 MutatingAdmissionPolicy 的 v1 */
+    private static io.fabric8.kubernetes.client.KubernetesClient kubeClient(String major, String minor) {
+        io.fabric8.kubernetes.client.KubernetesClient client =
+                mock(io.fabric8.kubernetes.client.KubernetesClient.class);
+        io.fabric8.kubernetes.client.VersionInfo version =
+                mock(io.fabric8.kubernetes.client.VersionInfo.class);
+        when(version.getMajor()).thenReturn(major);
+        when(version.getMinor()).thenReturn(minor);
+        when(client.getKubernetesVersion()).thenReturn(version);
+        when(client.getApiResources("admissionregistration.k8s.io/v1")).thenReturn(
+                new io.fabric8.kubernetes.api.model.APIResourceListBuilder()
+                        .withResources(List.of(new io.fabric8.kubernetes.api.model.APIResourceBuilder()
+                                .withName("mutatingadmissionpolicies").build()))
+                        .build());
+        when(client.getApiResources("admissionregistration.k8s.io/v1beta1")).thenReturn(
+                new io.fabric8.kubernetes.api.model.APIResourceListBuilder().build());
+        when(client.getApiResources("admissionregistration.k8s.io/v1alpha1")).thenReturn(
+                new io.fabric8.kubernetes.api.model.APIResourceListBuilder().build());
+        return client;
+    }
+
     private static ComponentInstallController controller(HelmRunner helm) {
+        return controller(helm, kubeClient("1", "35"));
+    }
+
+    private static ComponentInstallController controller(
+            HelmRunner helm, io.fabric8.kubernetes.client.KubernetesClient kube) {
         KubernetesClientFactory factory = mock(KubernetesClientFactory.class);
         when(factory.adminKubeconfig("c1")).thenReturn("apiVersion: v1\nkind: Config\n");
+        when(factory.getAdminClient("c1")).thenReturn(kube);
         ChartBundle bundle = mock(ChartBundle.class);
         when(bundle.chartDir(anyString(), anyString())).thenReturn(Path.of("/tmp/chart"));
         return new ComponentInstallController(helm, bundle, factory, mock(ResourceAccessResolver.class));
     }
 
     private static ComponentInstallRequestDTO request() {
+        return request(null, "platform-metrics-server");
+    }
+
+    private static ComponentInstallRequestDTO request(String applyMode, String releaseName) {
         ReleaseInstallSpecDTO spec = new ReleaseInstallSpecDTO();
-        spec.setReleaseName("platform-metrics-server");
+        spec.setReleaseName(releaseName);
         spec.setNamespace("kube-system");
         spec.setChartCode("metrics-server");
         spec.setChartVersion("1.0.0");
         spec.setValues(Map.of("args", List.of("--kubelet-insecure-tls")));
+        spec.setApplyMode(applyMode);
         ComponentInstallRequestDTO req = new ComponentInstallRequestDTO();
         req.setClusterId("c1");
         req.setComponentCode("metrics-server");

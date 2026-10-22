@@ -374,6 +374,36 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void serverSideApplyModeSurvivesMergeAndValueResolution() {
+        // 超大 chart（Calico CRD）不能当 Helm release 装：mergeValues / resolveValues 重建
+        // ReleaseSpec 时必须带上 applyMode，否则会退回 Helm 并在 Secret 1MiB 上限处失败
+        // （与 primary/appVersion 丢标记同一类 bug）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "calico")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("calico", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-calico-crds", "tigera-operator", "projectcalico-crds", "v3.33.0",
+                                Map.of(), Map.of())
+                                .withApplyMode(com.coding.platformapi.components.ReleaseSpec.APPLY_SERVER_SIDE)),
+                        List.of()));
+
+        service(catalog).apply(new ComponentApplyRequest("c1", "calico", "INSTALL", null, Map.of()), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                org.mockito.ArgumentMatchers.eq("c1"), org.mockito.ArgumentMatchers.eq("calico"),
+                org.mockito.ArgumentMatchers.eq("INSTALL"), captor.capture());
+        assertThat(captor.getValue().get(0).getApplyMode())
+                .isEqualTo(com.coding.platformapi.components.ReleaseSpec.APPLY_SERVER_SIDE);
+    }
+
+    @Test
     void thanosRetentionBelowThanosMinimumsIsRejectedBeforeHelm() {
         // 2026-10-20 实锤：三档保留期都填 1d 时 helm 装成功，但 compactor 启动即崩
         // （raw resolution must be higher than ... (40 hours)）。必须在下发 helm 之前拒掉
@@ -878,6 +908,21 @@ class ComponentInstallServiceTest {
                 "c1", "prometheus-operator", "INSTALL", null, Map.of(),
                 "http://10.0.0.5:8081/alert/webhook"), "admin"))
                 .hasMessageContaining("凭证 Secret");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void anUnknownCalicoEncapsulationIsRejectedBeforeHelm() {
+        // 表单是下拉，但后端也必须拒：Calico 收到未知封装方式不是"报错退出"，
+        // 而是装完跨节点 Pod 不通（排查成本极高）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "calico")).thenReturn(0);
+
+        assertThatThrownBy(() -> service().apply(new ComponentApplyRequest(
+                "c1", "calico", "INSTALL", null, Map.of(), null, null, null,
+                new com.coding.platformapi.models.CalicoInstallRequest("172.16.0.0/16", "GRE")), "admin"))
+                .hasMessageContaining("封装方式");
         verify(mapper, never()).insert(any());
     }
 
