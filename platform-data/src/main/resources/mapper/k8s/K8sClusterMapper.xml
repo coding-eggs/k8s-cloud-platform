@@ -39,22 +39,27 @@
     delete from k8s_cluster
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
   </delete>
-  <insert id="insert" keyColumn="cluster_id" keyProperty="clusterId" parameterType="com.coding.data.models.k8s.K8sCluster" useGeneratedKeys="true">
-    insert into k8s_cluster (cluster_name, kubeconfig, version,
+  <!-- cluster_id 是 varchar 主键、表上 NOT NULL 且无默认值，必须由实体带进来（ULIDGenerator 生成）。
+       useGeneratedKeys 对非自增主键不生效，写上只会让人误以为主键由库生成 —— 所以不写。 -->
+  <insert id="insert" parameterType="com.coding.data.models.k8s.K8sCluster">
+    insert into k8s_cluster (cluster_id, cluster_name, kubeconfig, version,
       istio_version, calico_version, container_runtime, prometheus_url, grafana_url,
       description, ip_stack, `status`,
       enabled, last_heartbeat_time, created_at,
       updated_at, capability, cluster_role)
-    values (#{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR},
+    values (#{clusterId,jdbcType=VARCHAR}, #{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR},
       #{istioVersion,jdbcType=VARCHAR}, #{calicoVersion,jdbcType=VARCHAR}, #{containerRuntime,jdbcType=VARCHAR},
       #{prometheusUrl,jdbcType=VARCHAR}, #{grafanaUrl,jdbcType=VARCHAR},
       #{description,jdbcType=VARCHAR}, #{ipStack,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
       #{enabled,jdbcType=BOOLEAN}, #{lastHeartbeatTime,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP},
       #{updatedAt,jdbcType=TIMESTAMP}, #{capability,jdbcType=VARCHAR}, #{clusterRole,jdbcType=VARCHAR})
   </insert>
-  <insert id="insertSelective" keyColumn="cluster_id" keyProperty="clusterId" parameterType="com.coding.data.models.k8s.K8sCluster" useGeneratedKeys="true">
+  <insert id="insertSelective" parameterType="com.coding.data.models.k8s.K8sCluster">
     insert into k8s_cluster
     <trim prefix="(" suffix=")" suffixOverrides=",">
+      <if test="clusterId != null">
+        cluster_id,
+      </if>
       <if test="clusterName != null">
         cluster_name,
       </if>
@@ -108,6 +113,9 @@
       </if>
     </trim>
     <trim prefix="values (" suffix=")" suffixOverrides=",">
+      <if test="clusterId != null">
+        #{clusterId,jdbcType=VARCHAR},
+      </if>
       <if test="clusterName != null">
         #{clusterName,jdbcType=VARCHAR},
       </if>
