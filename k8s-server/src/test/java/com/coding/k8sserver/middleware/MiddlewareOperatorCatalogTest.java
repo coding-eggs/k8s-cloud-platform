@@ -20,6 +20,21 @@ class MiddlewareOperatorCatalogTest {
     }
 
     @Test
+    void requiredCrdsMatchEachOperatorsNaming() {
+        assertThat(catalog.require("mysql").requiredCrds())
+                .containsExactly("perconaservermysqls.ps.percona.com");
+        assertThat(catalog.require("kafka").requiredCrds())
+                .containsExactly("kafkas.kafka.strimzi.io", "kafkanodepools.kafka.strimzi.io");
+        assertThat(catalog.require("elasticsearch").requiredCrds())
+                .containsExactly("elasticsearches.elasticsearch.k8s.elastic.co");
+    }
+
+    @Test
+    void nacosIsNotOperatorBacked() {
+        assertThatThrownBy(() -> catalog.require("nacos")).hasMessageContaining("不支持");
+    }
+
+    @Test
     void unknownCodeIsRejected() {
         assertThatThrownBy(() -> catalog.require("minio")).hasMessageContaining("不支持");
     }

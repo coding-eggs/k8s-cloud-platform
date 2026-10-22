@@ -1,0 +1,89 @@
+{{/* vim: set filetype=mustache: */}}
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "nacos.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Create a default fully qualified app name.
+We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
+If release name contains chart name it will be used as a full name.
+*/}}
+{{- define "nacos.fullname" -}}
+{{- if .Values.fullnameOverride -}}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Create chart name and version as used by the chart label.
+*/}}
+{{- define "nacos.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Return the Secret containing the Nacos token and server identity.
+*/}}
+{{- define "nacos.auth.secretName" -}}
+{{- $auth := default (dict) .Values.nacos.auth -}}
+{{- $existingSecret := default "" (get $auth "existingSecret") -}}
+{{- if $existingSecret -}}
+{{- $existingSecret -}}
+{{- else -}}
+{{- printf "%s-auth" (include "nacos.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Hash auth-related values that require a StatefulSet rollout when changed.
+*/}}
+{{- define "nacos.auth.configChecksum" -}}
+{{- $auth := default (dict) .Values.nacos.auth -}}
+{{- $config := dict
+    "auth" $auth
+    "authToken" .Values.nacos.authToken
+    "identityKey" .Values.nacos.identityKey
+    "identityValue" .Values.nacos.identityValue -}}
+{{- $config | toJson | sha256sum -}}
+{{- end -}}
+
+{{/*
+Common labels
+*/}}
+{{- define "nacos.labels" -}}
+app.kubernetes.io/name: {{ include "nacos.name" . }}
+helm.sh/chart: {{ include "nacos.chart" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Detect whether the Nacos image is v3.x.
+Override with nacos.majorVersion if using a custom tag like "latest".
+Returns the string "true" or "false".
+*/}}
+{{- define "nacos.isV3" -}}
+{{- $tag := .Values.nacos.image.tag | toString -}}
+{{- if .Values.nacos.majorVersion -}}
+  {{- eq (.Values.nacos.majorVersion | toString) "3" -}}
+{{- else if hasPrefix "v2." $tag -}}
+  {{- false -}}
+{{- else if hasPrefix "2." $tag -}}
+  {{- false -}}
+{{- else -}}
+  {{- true -}}
+{{- end -}}
+{{- end -}}

@@ -1,0 +1,135 @@
+# Default values for nacos.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+imagePullSecrets: []
+# - name: my-registry-secret
+
+global:
+  mode: standalone
+#  deploymentType: merge
+#  mode: cluster
+
+############################nacos###########################
+#namespace: default
+nacos:
+  image:
+    repository: nacos/nacos-server
+    tag: v3.2.4
+    pullPolicy: IfNotPresent
+  # majorVersion: ""  # Override version detection when using custom tags like "latest".
+                       # Set to "2" for Nacos 2.x or "3" for Nacos 3.x.
+  plugin:
+    enable: true
+    image:
+      repository: nacos/nacos-peer-finder-plugin
+      tag: 1.1
+      pullPolicy: IfNotPresent
+  replicaCount: 1
+  podManagementPolicy: Parallel
+  domainName: cluster.local
+  preferHostMode: hostname
+  serverPort: 8848
+  consolePort: 8080
+  mcpPort: 9080
+  auth:
+    # null inherits the image default. true and false are rendered explicitly.
+    enabled: null
+    # Use an existing Secret in production. When empty, the chart creates one
+    # and reuses its generated values during Helm upgrades.
+    existingSecret: ""
+    tokenSecretKey: token
+    identityKeySecretKey: identity-key
+    identityValueSecretKey: identity-value
+  # Deprecated inline credential values. Prefer nacos.auth.existingSecret.
+  # authToken must be a Base64-encoded value whose decoded form is at least 32 bytes.
+  authToken: ""
+  identityKey: ""
+  identityValue: ""
+  probe:
+    startupDelaySeconds: 180
+  health:
+    enabled: false
+  # Additional environment variables for the Nacos container, appended after
+  # the chart-managed ones. An entry with the same name overrides the chart value.
+  extraEnv: []
+  # - name: NACOS_CONFIG_NAMESPACE_COMPATIBLE_MODE
+  #   value: "false"
+  storage:
+    type: embedded
+    embedded:
+      # Nacos 3.0-3.2 cluster mode only. The namespace migration pre-check at
+      # startup queries through JRaft and gives up after 3 retries (~4s) by
+      # default, which is often before the leader is elected, so all members
+      # restart in a loop. Rendered as NACOS_NAMESPACE_MIGRATE_RETRY_TIMES.
+      # Nacos 3.3+ removes the migration and ignores it. Set to 0 to omit.
+      migrateRetryTimes: 60
+#    type: mysql
+#    db:
+#      host: localhost
+#      name: nacos
+#      port: 3306
+#      username: usernmae
+#      password: password
+#      param: characterEncoding=utf8&connectTimeout=1000&socketTimeout=3000&autoReconnect=true&useSSL=false
+#      # For MySQL 8.0+, you may need to add: &allowPublicKeyRetrieval=true
+#      # Full example: characterEncoding=utf8&connectTimeout=1000&socketTimeout=3000&autoReconnect=true&useSSL=false&allowPublicKeyRetrieval=true
+
+persistence:
+  enabled: false
+  data:
+    accessModes:
+      - ReadWriteOnce
+    storageClassName: manual
+    resources:
+      requests:
+        storage: 5Gi
+
+
+service:
+  #type: ClusterIP
+  type: NodePort
+  port: 8848
+  nodePort: 30000
+
+
+ingress:
+  enabled: false
+  # apiVersion: extensions/v1beta1
+  apiVersion: networking.k8s.io/v1
+  annotations: { }
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+    # For Kubernetes >= 1.18 you should specify the ingress-controller via the field ingressClassName
+    # See https://kubernetes.io/blog/2020/04/02/improvements-to-the-ingress-api-in-kubernetes-1.18/#specifying-the-class-of-an-ingress
+    # ingressClassName: nginx
+  ingressClassName: "nginx"
+  hosts:
+    - host: nacos.example.com
+      #paths: [ ]
+
+  tls: [ ]
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources:
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  requests:
+    cpu: 500m
+    memory: 2Gi
+annotations: { }
+
+nodeSelector: { }
+
+tolerations: [ ]
+
+affinity: { }
+
+

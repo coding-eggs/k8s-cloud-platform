@@ -36,6 +36,12 @@ public class MiddlewareOperatorCatalog {
                 "redisreplications.redis.redis.opstreelabs.in",
                 "redissentinels.redis.redis.opstreelabs.in",
                 "redisclusters.redis.redis.opstreelabs.in")));
+        m.put("mysql", new Entry("mysql", "1.2.0",
+                List.of("perconaservermysqls.ps.percona.com")));
+        m.put("kafka", new Entry("kafka", "1.3.0",
+                List.of("kafkas.kafka.strimzi.io", "kafkanodepools.kafka.strimzi.io")));
+        m.put("elasticsearch", new Entry("elasticsearch", "3.5.0",
+                List.of("elasticsearches.elasticsearch.k8s.elastic.co")));
         ENTRIES = Map.copyOf(m);
     }
 
