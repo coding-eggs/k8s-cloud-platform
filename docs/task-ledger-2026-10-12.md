@@ -453,6 +453,12 @@
 > 重建 platform-api + k8s-server + platform-web；集群侧需配置 ES 连接
 > （`PLATFORM_ES_URL` / `PLATFORM_ES_USERNAME` / `PLATFORM_ES_PASSWORD`）与 `monitor` 内的 ES 凭证
 > Secret（key 固定 `username` / `password`）。
+>
+> **2026-10-22 联动收敛（用户提出）**：工作负载「可观测接入」表单原先只有日志开关受 `otel-logs` 旗标约束，
+> 集群没装采集栈时仍能打开并填写（写进去的是注入注解，没有 operator 消费，填了也没数据）。
+> 现在整张表单按 **`otel-collection`** 旗标（otel-operator 健康）收口：列表行内菜单与详情页按钮禁用并给出去处
+> （集群组件页装 otel-operator），弹窗内显示告警、全部控件与保存禁用（`submit` 里另有兜底）。
+> 读不到旗标时仍不拦（读不到 ≠ 不可用）。
 > **隔离口径**：日志按 `platform_tenant_namespace` 的 (集群, 命名空间) 收窄；链路按 span 的
 > `resource.cluster.name` + `resource.k8s.namespace.name` 过滤（列表在 Tempo 侧、详情在平台侧）。
 
@@ -739,7 +745,7 @@
 > **租户 SA 的 K8s RBAC 模板要覆盖 `tekton.dev` 组**（与当年 Gateway 那个坑同形）；
 > PipelineRun 在**租户命名空间**里起 Pod → 配额、PSA、拉取凭据都要通。
 
-#### S3.6 组件生命周期（安装 / 升级）｜ 规模 L ｜ 前置：S1.2（已完成）
+#### S3.6 组件生命周期（安装 / 升级）｜ 规模 L ｜ 前置：S1.2（已完成）｜ ✅ **已完成（2026-10-22）**
 
 > **2026-10-17 用户新建需求**：「对集群概览中的组件，如未探活的可以进行安装部署、升级」。
 > 设计见 [component-lifecycle spec](superpowers/specs/2026-10-17-component-lifecycle-design.md)。
@@ -997,7 +1003,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
-| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | 🟡 **批①+批② 已实施**（2026-10-18/20；引擎 + 11 条组件 recipe + 组件文档）；**功能级验收 7/7**（2026-10-22 calico 在业务集群 test-work-cluster/k8s 1.37 真装通过）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-22 的 calico 修复三项都在这一批）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
+| **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | ✅ **已完成（2026-10-22）**：批①+批②（引擎 + 11 条组件 recipe + 组件文档），**功能级验收 7/7**（calico 2026-10-22 在业务集群 test-work-cluster/k8s 1.37 真装通过）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-22 的 calico 修复三项与 k8s-server 镜像里的 kubectl 都在这一批）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
 | **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |

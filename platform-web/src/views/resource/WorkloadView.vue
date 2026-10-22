@@ -60,6 +60,16 @@ const otelLogsAvailable = computed(() =>
 const otelLogsReason = computed(() =>
   components.probed.value && !components.available('otel-logs') ? components.reasonOf('otel-logs') : '')
 
+/**
+ * 集群是否启用「工作负载可观测」（OTel 采集栈健康）。
+ * 没开时整个可观测表单不可填：注入注解没人消费，填了也没数据。
+ */
+const otelAvailable = computed(() =>
+  !components.probed.value || components.available('otel-collection'))
+const otelReason = computed(() =>
+  components.probed.value && !components.available('otel-collection')
+    ? components.reasonOf('otel-collection') : '')
+
 /** canonical 键：小写 kind/name —— 与 HpaEditorView 同一全局约定 */
 function canonicalKey(kind: string | null | undefined, name: string | null | undefined): string {
   return `${(kind ?? '').toLowerCase()}/${name ?? ''}`
@@ -664,8 +674,14 @@ const contextDesc = computed(() => {
                   <!-- 回滚：选一个历史版本，把它的 pod template 覆盖回工作负载本身。op 管理的不给（同上） -->
                   <el-dropdown-item command="rollback" :disabled="!canWrite || isOpManaged(row)">回滚</el-dropdown-item>
                   <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
-                  <!-- 可观测：写 pod template 的注入注解 / OTEL_SERVICE_NAME（共享 tenant:workload:update） -->
-                  <el-dropdown-item command="observability" :disabled="!canWrite">可观测</el-dropdown-item>
+                  <!-- 可观测：写 pod template 的注入注解 / OTEL_SERVICE_NAME（共享 tenant:workload:update）。
+                       集群没开 OTel 采集栈时禁用 —— 注解没有消费者，填了也没数据 -->
+                  <el-dropdown-item command="observability" :disabled="!canWrite || !otelAvailable">
+                    可观测{{ otelAvailable ? '' : '（集群未启用 OTel 采集）' }}
+                  </el-dropdown-item>
+                  <el-dropdown-item v-if="!otelAvailable" disabled>
+                    {{ otelReason || '缺 OTel 采集栈' }}；先到集群组件页安装 otel-operator
+                  </el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
                   <!-- 日志：只读动作，紧挨 Yaml 排在只读这一组。点它要先取 Pod（两次往返，见 openLogs），
                        期间「⋯」转圈 —— 否则这一两秒里"点了没反应"，人会再点一次。 -->
@@ -781,6 +797,8 @@ const contextDesc = computed(() => {
       :annotations="observabilityDetail.podTemplate?.annotations"
       :containers="observabilityContainers"
       :file-log-directory="observabilityLogDirectory"
+      :otel-available="otelAvailable"
+      :otel-unavailable-reason="otelReason"
       :logs-available="otelLogsAvailable"
       :logs-unavailable-reason="otelLogsReason"
       @update:visible="observabilityVisible = $event"

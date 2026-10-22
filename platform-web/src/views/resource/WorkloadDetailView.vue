@@ -45,6 +45,16 @@ const otelLogsAvailable = computed(() =>
 const otelLogsReason = computed(() =>
   components.probed.value && !components.available('otel-logs') ? components.reasonOf('otel-logs') : '')
 
+/**
+ * 集群是否启用「工作负载可观测」（OTel 采集栈健康）。没开时「可观测」按钮禁用：
+ * 表单写进去的是注入注解，没有采集栈消费，填了也没数据。
+ */
+const otelAvailable = computed(() =>
+  !components.probed.value || components.available('otel-collection'))
+const otelReason = computed(() =>
+  components.probed.value && !components.available('otel-collection')
+    ? components.reasonOf('otel-collection') : '')
+
 const detail = ref<WorkloadDetail | null>(null)
 const pods = ref<K8sPod[]>([])
 const loading = ref(false)
@@ -371,9 +381,12 @@ const contextDesc = computed(() => {
       <el-button size="small" :disabled="!pods.length" @click="workloadLogsVisible = true">
         全部 Pod 日志
       </el-button>
-      <el-button size="small" :disabled="!detail" @click="observabilityVisible = true">
-        可观测
-      </el-button>
+      <el-tooltip :disabled="otelAvailable" placement="bottom"
+                  :content="`集群未启用工作负载可观测（${otelReason || '缺 OTel 采集栈'}）：这里填的注入注解没人消费，先到集群组件页安装 otel-operator`">
+        <el-button size="small" :disabled="!detail || !otelAvailable" @click="observabilityVisible = true">
+          可观测
+        </el-button>
+      </el-tooltip>
       <el-tooltip :content="isOpManaged ? '由 Operator 管理，不可编辑' : ''" :disabled="!isOpManaged" placement="bottom">
         <el-button size="small" type="primary" :disabled="!detail || isOpManaged" @click="goEditor">编辑</el-button>
       </el-tooltip>
@@ -634,6 +647,8 @@ const contextDesc = computed(() => {
       :annotations="detail.podTemplate?.annotations"
       :containers="observabilityContainers"
       :file-log-directory="observabilityLogDirectory"
+      :otel-available="otelAvailable"
+      :otel-unavailable-reason="otelReason"
       :logs-available="otelLogsAvailable"
       :logs-unavailable-reason="otelLogsReason"
       @update:visible="observabilityVisible = $event"
