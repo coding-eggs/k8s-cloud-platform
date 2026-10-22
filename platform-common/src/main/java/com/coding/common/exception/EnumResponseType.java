@@ -75,6 +75,9 @@ public enum EnumResponseType {
      */
     K8S_RBAC_FORBIDDEN(10043, "集群侧 RBAC 拒绝了该操作。若这是租户操作，请检查「RBAC 模板」是否覆盖该资源的 apiGroup，并在改动后重下发。集群返回: "),
 
+    /** 资源由平台组件或中间件实例管理：通用资源页不允许修改/删除（spec §7） */
+    RESOURCE_MANAGED_BY_PLATFORM(10048, "该资源由平台组件或中间件实例管理，不能在通用资源页修改或删除；请到对应页面操作"),
+
     /** PrometheusRule 内容不合法（alert/record 二选一、expr 必填、组名必填） */
     PROMETHEUS_RULE_INVALID(10045, "PrometheusRule 内容不合法"),
 

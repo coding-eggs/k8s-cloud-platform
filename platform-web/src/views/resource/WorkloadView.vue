@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -141,9 +142,9 @@ function replicasText(row: K8sWorkload): string {
   return `${readyCount}/${total}`
 }
 
-/** 是否由 Operator/控制器管理（ownerReferences 非空）→ 禁用编辑 */
+/** 是否由 Operator/控制器/更上层对象管理（ownerReferences 非空），或由平台组件/中间件实例托管 → 禁用编辑 */
 function isOpManaged(row: K8sWorkload): boolean {
-  return (row.ownerReferences?.length ?? 0) > 0
+  return (row.ownerReferences?.length ?? 0) > 0 || isManaged(row)
 }
 
 /** 对外暴露端口行：port:nodePort（跨所有绑定的 NodePort/LB Service 拍平）；无则空数组 */
@@ -597,7 +598,7 @@ const contextDesc = computed(() => {
         <el-table-column label="名称" width="320">
           <template #default="{ row }">
             <code class="res-name name-link" @click="goDetail(row.name)">{{ row.name }}</code>
-            <el-tooltip v-if="isOpManaged(row)" content="由 Operator 管理，不可编辑" placement="top">
+            <el-tooltip v-if="isOpManaged(row)" :content="isManaged(row) ? managedReason(row) : '由 Operator 管理，不可编辑'" placement="top">
               <el-tag type="warning" size="small" effect="plain" class="op-tag">op</el-tag>
             </el-tooltip>
             <el-tag v-if="row.kind === 'deployment' && row.paused" type="info" size="small" effect="plain" class="op-tag">已暂停</el-tag>
@@ -667,10 +668,10 @@ const contextDesc = computed(() => {
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item command="edit" :disabled="isOpManaged(row)">编辑</el-dropdown-item>
-                  <el-dropdown-item v-if="row.kind === 'deployment'" :command="row.paused ? 'resume' : 'pause'">
+                  <el-dropdown-item v-if="row.kind === 'deployment'" :command="row.paused ? 'resume' : 'pause'" :disabled="isOpManaged(row)">
                     {{ row.paused ? '恢复更新' : '暂停更新' }}
                   </el-dropdown-item>
-                  <el-dropdown-item command="scale">伸缩</el-dropdown-item>
+                  <el-dropdown-item command="scale" :disabled="!canWrite || isOpManaged(row)">伸缩</el-dropdown-item>
                   <!-- 回滚：选一个历史版本，把它的 pod template 覆盖回工作负载本身。op 管理的不给（同上） -->
                   <el-dropdown-item command="rollback" :disabled="!canWrite || isOpManaged(row)">回滚</el-dropdown-item>
                   <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
@@ -708,7 +709,7 @@ const contextDesc = computed(() => {
                     <el-dropdown-item v-if="waypointLabel(row)" command="l7-follow" :disabled="!meshEditable(row)">回到跟随命名空间</el-dropdown-item>
                   </template>
 
-                  <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>
+                  <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete" :disabled="isOpManaged(row)">删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>

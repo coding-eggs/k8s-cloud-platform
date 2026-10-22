@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { pvcApi, persistentVolumeApi } from '@/api'
@@ -403,15 +404,16 @@ const contextDesc = computed(() => {
                        是假绿灯：本集群两个 SC 都写着 true、两个都做不到。
                        禁用而不是隐藏：不显示会让人以为功能没做；旁边那列写着为什么。
                        `null`（读不到存储类）也禁用 —— 与后端同一个 fail-closed 口径。 -->
+                  <el-dropdown-item v-if="isManaged(row)" disabled>{{ managedReason(row) }}</el-dropdown-item>
                   <el-dropdown-item
                     command="resize"
-                    :disabled="!canResize || row.phase !== 'Bound' || row.expansion !== 'csi'"
+                    :disabled="isManaged(row) || !canResize || row.phase !== 'Bound' || row.expansion !== 'csi'"
                   >
                     <span :title="row.expansion === 'csi' ? '' : '这个卷所在的存储类不能在线扩容 —— 见「可扩容」列'">
                       调整容量
                     </span>
                   </el-dropdown-item>
-                  <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided :disabled="isManaged(row)">删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>

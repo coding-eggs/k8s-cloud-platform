@@ -7,9 +7,11 @@ import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
+import com.coding.k8sserver.components.ManagedResourceGuard;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.ResourceAccessResolver.AccessContext;
 import io.swagger.v3.oas.annotations.Operation;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -45,6 +47,13 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
     protected final KubernetesOperationsFactory operationsFactory;
 
     protected final ResourceAccessResolver accessResolver;
+
+    /**
+     * 资源保护（字段注入，避免改 24 个子类的构造器）。
+     * <p>写入前用它拒绝受管资源；列表/详情回填 {@code managedBy} 供前端置灰。
+     */
+    @Autowired
+    protected ManagedResourceGuard managedResourceGuard;
 
     protected AbstractNamespacedResourceController(KubernetesOperationsFactory operationsFactory,
                                                    ResourceAccessResolver accessResolver) {
@@ -82,7 +91,10 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
         //adminMode=true ⇒ ops() 取的是 admin client（租户 SA 无集群范围 list 权限，只能用 admin）
         NamespacedOperations<T> adminOps = ops(ctx, clusterId);
         List<T> items = adminOps.listAll(body.getLabelSelector(), body.getFieldSelector());
-        items.forEach(item -> stampCluster(item, clusterId));
+        items.forEach(item -> {
+            stampCluster(item, clusterId);
+            stampManaged(item, clusterId, item.getNamespace());
+        });
         return new ResponseData<>(items);
     }
 
@@ -93,7 +105,10 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
         String namespace = body.getNamespace();
         AccessContext ctx = resolve(body.getTenantId(), clusterId, namespace);
         List<T> items = ops(ctx, clusterId).list(namespace, body.getLabelSelector(), body.getFieldSelector());
-        items.forEach(item -> stamp(item, clusterId, namespace, ctx.tenantId()));
+        items.forEach(item -> {
+            stamp(item, clusterId, namespace, ctx.tenantId());
+            stampManaged(item, clusterId, namespace);
+        });
         return new ResponseData<>(items);
     }
 
@@ -106,6 +121,7 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
         AccessContext ctx = resolve(tenantId, clusterId, namespace);
         T item = ops(ctx, clusterId).get(namespace, name);
         stamp(item, clusterId, namespace, ctx.tenantId());
+        stampManaged(item, clusterId, namespace);
         return new ResponseData<>(item);
     }
 
@@ -162,8 +178,10 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
                                   @RequestParam String clusterId,
                                   @RequestBody T body) {
         AccessContext ctx = resolve(tenantId, clusterId, body.getNamespace());
+        assertNotManaged(ctx, clusterId, body.getNamespace(), name);
         T item = ops(ctx, clusterId).update(body);
         stamp(item, clusterId, body.getNamespace(), ctx.tenantId());
+        stampManaged(item, clusterId, body.getNamespace());
         return new ResponseData<>(item);
     }
 
@@ -174,6 +192,7 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
                                      @RequestParam String clusterId,
                                      @RequestParam String namespace) {
         AccessContext ctx = resolve(tenantId, clusterId, namespace);
+        assertNotManaged(ctx, clusterId, namespace, name);
         ops(ctx, clusterId).delete(namespace, name);
         return new ResponseData<>();
     }
@@ -195,6 +214,29 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
     /**D5 回填：请求上下文回写 item，使列表/查询拿到的对象可原样发回后续 update/delete。
      *  PLATFORM 边界下 tenantId 为 null（无租户身份），等价于不回填。
      *  子类扩展的非标准端点（同一套身份解析）复用它，避免各写一遍三字段回填。 */
+    /** 回填受管来源（前端据此置灰行内动作）。 */
+    protected void stampManaged(T item, String clusterId, String namespace) {
+        // 单测直接 new controller 时字段未注入（生产由 Spring 注入）；不注入时跳过回填
+        if (item == null || managedResourceGuard == null) {
+            return;
+        }
+        String ns = item.getNamespace() != null ? item.getNamespace() : namespace;
+        item.setManagedBy(managedResourceGuard.managedBy(clusterId, ns,
+                item.getLabels(), item.getAnnotations()));
+    }
+
+    /** 写入前的硬闸：读线上对象的标签/注解判受管，受管则抛 RESOURCE_MANAGED_BY_PLATFORM。 */
+    protected void assertNotManaged(AccessContext ctx, String clusterId, String namespace, String name) {
+        if (managedResourceGuard == null) {
+            return;
+        }
+        T live = ops(ctx, clusterId).get(namespace, name);
+        if (live == null) {
+            return;   // 不存在时交给 ops 自己报 RESOURCE_NOT_EXIST
+        }
+        managedResourceGuard.assertMutable(clusterId, namespace, live.getLabels(), live.getAnnotations());
+    }
+
     protected void stamp(T item, String clusterId, String namespace, String tenantId) {
         if (item != null) {
             item.setClusterId(clusterId);

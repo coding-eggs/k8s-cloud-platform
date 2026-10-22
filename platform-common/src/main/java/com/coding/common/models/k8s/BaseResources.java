@@ -33,6 +33,13 @@ public abstract class BaseResources implements NamespacedResourceDTO {
     @Schema(name = "labels")
     private Map<String, String> labels;
 
+    /**
+     * 受管来源：{@code COMPONENT}（平台组件）/ {@code MIDDLEWARE}（中间件实例），null = 用户资源。
+     * <p>由 k8s-server 计算并回填；前端据此把行内动作置灰，后端同时拒绝写入（不是只靠前端）。
+     */
+    @Schema(name = "managedBy")
+    private String managedBy;
+
     @Schema(name = "通过字段筛选")
     private String fieldSelector;
 

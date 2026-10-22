@@ -57,6 +57,7 @@ public class WorkloadController extends AbstractNamespacedResourceController<Wor
                                                 @RequestParam String clusterId,
                                                 @RequestBody ImageRequest body) {
         AccessContext ctx = resolve(tenantId, clusterId, body.getNamespace());
+        assertNotManaged(ctx, clusterId, body.getNamespace(), name);
         WorkloadDTO item = operationsFactory.getWorkloadOperation(clusterId, ctx.tenantId(), ctx.adminMode())
                 .updateImage(body.getNamespace(), name, body.getContainerName(), body.getImage());
         stamp(item, clusterId, body.getNamespace(), ctx.tenantId());
@@ -81,6 +82,7 @@ public class WorkloadController extends AbstractNamespacedResourceController<Wor
                                               @RequestParam String clusterId,
                                               @RequestBody RollbackRequest body) {
         AccessContext ctx = resolve(tenantId, clusterId, body.getNamespace());
+        assertNotManaged(ctx, clusterId, body.getNamespace(), name);
         WorkloadDTO item = operationsFactory.getWorkloadOperation(clusterId, ctx.tenantId(), ctx.adminMode())
                 .rollback(body.getNamespace(), name, body.getRevision());
         stamp(item, clusterId, body.getNamespace(), ctx.tenantId());

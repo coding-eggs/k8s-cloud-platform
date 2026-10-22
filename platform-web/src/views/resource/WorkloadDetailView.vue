@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, MoreFilled } from '@element-plus/icons-vue'
@@ -93,7 +94,7 @@ async function refreshAll(): Promise<void> {
 }
 function goEditor(): void {
   if (isOpManaged.value) {
-    ElMessage.warning('该工作负载由 Operator 管理，不可编辑')
+    ElMessage.warning(detail.value && isManaged(detail.value) ? managedReason(detail.value) : '该工作负载由 Operator 管理，不可编辑')
     return
   }
   if (name.value) router.push(`/resources/workloads/editor?name=${encodeURIComponent(name.value)}`)
@@ -247,8 +248,9 @@ const replicasText = computed(() => {
 })
 const serviceAccount = computed(() => detail.value?.podTemplate?.spec?.serviceAccountName || 'default')
 
-/** 是否由 Operator/控制器管理（ownerReferences 非空）→ 禁用编辑并展示管理方 */
-const isOpManaged = computed(() => (detail.value?.ownerReferences?.length ?? 0) > 0)
+/** 是否由 Operator/控制器/平台托管（ownerReferences 非空，或 managedBy 非空）→ 禁用编辑并展示管理方 */
+const isOpManaged = computed(() =>
+  (detail.value?.ownerReferences?.length ?? 0) > 0 || isManaged(detail.value))
 
 // ---------- 监控指标配额（CPU/内存 % 切换用；指标是全体 pod 的 sum，故 limit = 单 pod × 副本数）----------
 const metricContainers = computed(() => detail.value?.podTemplate?.spec?.containers ?? [])
