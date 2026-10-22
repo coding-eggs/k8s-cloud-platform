@@ -178,6 +178,11 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
                                   @RequestParam String clusterId,
                                   @RequestBody T body) {
         AccessContext ctx = resolve(tenantId, clusterId, body.getNamespace());
+        // 挡住"路径是用户资源、body.name 是受管资源"的绕过：两者必须一致
+        if (body.getName() != null && !body.getName().isBlank() && !body.getName().equals(name)) {
+            throw new com.coding.common.exception.CloudPlatformException(
+                    com.coding.common.exception.EnumResponseType.ERROR, "路径中的名称与请求体不一致");
+        }
         assertNotManaged(ctx, clusterId, body.getNamespace(), name);
         T item = ops(ctx, clusterId).update(body);
         stamp(item, clusterId, body.getNamespace(), ctx.tenantId());
@@ -221,8 +226,8 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
             return;
         }
         String ns = item.getNamespace() != null ? item.getNamespace() : namespace;
-        item.setManagedBy(managedResourceGuard.managedBy(clusterId, ns,
-                item.getLabels(), item.getAnnotations()));
+        item.setManagedBy(managedResourceGuard.managedBy(
+                item.getLabels(), item.getAnnotations(), item.getOwnerReferences()));
     }
 
     /** 写入前的硬闸：读线上对象的标签/注解判受管，受管则抛 RESOURCE_MANAGED_BY_PLATFORM。 */
@@ -234,7 +239,7 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
         if (live == null) {
             return;   // 不存在时交给 ops 自己报 RESOURCE_NOT_EXIST
         }
-        managedResourceGuard.assertMutable(clusterId, namespace, live.getLabels(), live.getAnnotations());
+        managedResourceGuard.assertMutable(live.getLabels(), live.getAnnotations(), live.getOwnerReferences());
     }
 
     protected void stamp(T item, String clusterId, String namespace, String tenantId) {

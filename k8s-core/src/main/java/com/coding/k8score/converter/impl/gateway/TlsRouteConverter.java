@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.gateway;
 
+import com.coding.k8score.converter.MetaUtil;
+
 import com.coding.common.models.k8s.dto.TlsRouteDTO;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
@@ -64,6 +66,8 @@ public class TlsRouteConverter {
             dto.setName(res.getMetadata().getName());
             dto.setNamespace(res.getMetadata().getNamespace());
             dto.setLabels(res.getMetadata().getLabels());
+            dto.setAnnotations(MetaUtil.annotations(res.getMetadata()));
+            dto.setOwnerReferences(MetaUtil.ownerRefs(res.getMetadata()));
             if (res.getMetadata().getCreationTimestamp() != null) {
                 dto.setCreationTime(res.getMetadata().getCreationTimestamp());
             }

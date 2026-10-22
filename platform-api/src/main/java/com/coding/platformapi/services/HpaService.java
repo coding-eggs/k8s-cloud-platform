@@ -3,6 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.HpaDTO;
+import com.coding.common.models.k8s.dto.WorkloadDTO;
 import com.coding.common.models.k8s.dto.HpaCrossVersionObjectReferenceDTO;
 import com.coding.platformapi.k8s.K8sClient;
 import lombok.RequiredArgsConstructor;
@@ -41,12 +42,40 @@ public class HpaService {
 
     public HpaDTO create(HpaDTO body) {
         validateSingleBinding(body, null);
+        assertTargetNotManaged(body);
         return k8s.create(body);
     }
 
     public HpaDTO update(HpaDTO body) {
         validateSingleBinding(body, body.getName());
+        assertTargetNotManaged(body);
         return k8s.update(body);
+    }
+
+    /** HPA 是"另一个对象"，但把受管工作负载的副本数交给 HPA 等于绕开伸缩禁令 —— 目标受管就拒。 */
+    private void assertTargetNotManaged(HpaDTO body) {
+        var ref = body.getScaleTargetRef();
+        if (ref == null || !StringUtils.hasText(ref.getName()) || !StringUtils.hasText(ref.getKind())) {
+            return;
+        }
+        if (!java.util.Set.of("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet").contains(ref.getKind())) {
+            return;
+        }
+        WorkloadDTO q = new WorkloadDTO();
+        q.setName(ref.getName());
+        q.setTenantId(body.getTenantId());
+        q.setClusterId(body.getClusterId());
+        q.setNamespace(body.getNamespace());
+        WorkloadDTO target;
+        try {
+            target = k8s.get(q);
+        } catch (RuntimeException e) {
+            return;   // 读不到（kind 不匹配/已删除）就交给 apiserver 判定
+        }
+        if (target != null && target.getManagedBy() != null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "该工作负载由平台组件或中间件实例管理，不能为它创建/修改 HPA");
+        }
     }
 
     /**查询 DTO：apiPath 内置于 DTO */

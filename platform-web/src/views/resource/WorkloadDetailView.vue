@@ -385,7 +385,7 @@ const contextDesc = computed(() => {
       </el-button>
       <el-tooltip :disabled="otelAvailable" placement="bottom"
                   :content="`集群未启用工作负载可观测（${otelReason || '缺 OTel 采集栈'}）：这里填的注入注解没人消费，先到集群组件页安装 otel-operator`">
-        <el-button size="small" :disabled="!detail || !otelAvailable" @click="observabilityVisible = true">
+        <el-button size="small" :disabled="!detail || !otelAvailable || isOpManaged" @click="observabilityVisible = true">
           可观测
         </el-button>
       </el-tooltip>

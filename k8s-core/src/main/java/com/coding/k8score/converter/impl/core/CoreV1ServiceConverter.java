@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.core;
 
+import com.coding.k8score.converter.MetaUtil;
+
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServicePortDTO;
 import com.coding.k8score.converter.CommonConverter;
@@ -97,6 +99,8 @@ public class CoreV1ServiceConverter implements CommonConverter<Service, ServiceD
             dto.setName(service.getMetadata().getName());
             dto.setNamespace(service.getMetadata().getNamespace());
             dto.setLabels(service.getMetadata().getLabels());
+            dto.setAnnotations(MetaUtil.annotations(service.getMetadata()));
+            dto.setOwnerReferences(MetaUtil.ownerRefs(service.getMetadata()));
             if (service.getMetadata().getCreationTimestamp() != null) {
                 dto.setCreationTime(service.getMetadata().getCreationTimestamp());
             }

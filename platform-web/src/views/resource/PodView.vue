@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MoreFilled, Search } from '@element-plus/icons-vue'
@@ -218,10 +219,11 @@ const contextDesc = computed(() => {
               <el-button link type="primary" :icon="MoreFilled" />
               <template #dropdown>
                 <el-dropdown-menu>
+                  <el-dropdown-item v-if="isManaged(row)" disabled>{{ managedReason(row) }}</el-dropdown-item>
                   <el-dropdown-item command="logs">日志</el-dropdown-item>
                   <el-dropdown-item command="exec" :disabled="row.phase !== 'Running'">Exec</el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
-                  <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete">删除</el-dropdown-item>
+                  <el-dropdown-item divided style="color: var(--el-color-danger)" command="delete" :disabled="isManaged(row)">删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>

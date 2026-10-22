@@ -1,7 +1,10 @@
 package com.coding.common.models.k8s;
 
+import com.coding.common.models.k8s.dto.OwnerReferenceDTO;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
+
+import java.util.List;
 
 import java.util.Map;
 
@@ -39,6 +42,10 @@ public abstract class BaseResources implements NamespacedResourceDTO {
      */
     @Schema(name = "managedBy")
     private String managedBy;
+
+    /** 属主引用 metadata.ownerReferences（仅查询返回；用于判定资源是否由受管对象派生） */
+    @Schema(description = "属主引用")
+    private List<OwnerReferenceDTO> ownerReferences;
 
     @Schema(name = "通过字段筛选")
     private String fieldSelector;

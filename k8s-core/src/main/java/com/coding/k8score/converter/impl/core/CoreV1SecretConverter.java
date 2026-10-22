@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.core;
 
+import com.coding.k8score.converter.MetaUtil;
+
 import com.coding.common.models.k8s.dto.SecretDTO;
 import com.coding.k8score.converter.CommonConverter;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -39,6 +41,8 @@ public class CoreV1SecretConverter implements CommonConverter<Secret, SecretDTO>
             dto.setName(secret.getMetadata().getName());
             dto.setNamespace(secret.getMetadata().getNamespace());
             dto.setLabels(secret.getMetadata().getLabels());
+            dto.setAnnotations(MetaUtil.annotations(secret.getMetadata()));
+            dto.setOwnerReferences(MetaUtil.ownerRefs(secret.getMetadata()));
             if (secret.getMetadata().getCreationTimestamp() != null) {
                 dto.setCreationTime(secret.getMetadata().getCreationTimestamp());
             }

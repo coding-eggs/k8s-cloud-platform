@@ -78,10 +78,6 @@ public class WorkloadDTO extends BaseResources {
     @Schema(description = "Pod 选择器 matchLabels")
     private Map<String, String> selector;
 
-    /** 属主引用 metadata.ownerReferences（仅查询返回；非空即视为「op 管理」→ 前端禁用编辑并展示管理方） */
-    @Schema(description = "属主引用（由 Operator/控制器创建的才有）")
-    private List<OwnerReferenceDTO> ownerReferences;
-
     /** 完整 PodSpec（三种 kind 共享）★核心 */
     @Schema(description = "Pod 模板（完整 PodSpec）")
     private PodTemplateDTO podTemplate;

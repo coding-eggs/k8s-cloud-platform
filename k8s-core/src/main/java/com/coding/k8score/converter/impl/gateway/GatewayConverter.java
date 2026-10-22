@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.gateway;
 
+import com.coding.k8score.converter.MetaUtil;
+
 import com.coding.common.models.k8s.dto.ConditionDTO;
 import com.coding.common.models.k8s.dto.GatewayDTO;
 import com.coding.common.models.k8s.dto.LabelSelectorDTO;
@@ -80,6 +82,8 @@ public class GatewayConverter {
             dto.setName(res.getMetadata().getName());
             dto.setNamespace(res.getMetadata().getNamespace());
             dto.setLabels(res.getMetadata().getLabels());
+            dto.setAnnotations(MetaUtil.annotations(res.getMetadata()));
+            dto.setOwnerReferences(MetaUtil.ownerRefs(res.getMetadata()));
             if (res.getMetadata().getCreationTimestamp() != null) {
                 dto.setCreationTime(res.getMetadata().getCreationTimestamp());
             }

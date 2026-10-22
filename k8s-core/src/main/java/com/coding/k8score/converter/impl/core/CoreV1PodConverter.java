@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.core;
 
+import com.coding.k8score.converter.MetaUtil;
+
 import com.coding.common.models.k8s.dto.*;
 import com.coding.k8score.converter.CommonConverter;
 import com.coding.k8score.util.QuantityUtil;
@@ -31,6 +33,7 @@ public class CoreV1PodConverter implements CommonConverter<Pod, PodDTO> {
             dto.setName(pod.getMetadata().getName());
             dto.setNamespace(pod.getMetadata().getNamespace());
             dto.setLabels(pod.getMetadata().getLabels());
+            dto.setOwnerReferences(MetaUtil.ownerRefs(pod.getMetadata()));
             if (pod.getMetadata().getAnnotations() != null && !pod.getMetadata().getAnnotations().isEmpty()) {
                 Map<String, Object> ann = new HashMap<>(pod.getMetadata().getAnnotations());
                 dto.setAnnotations(ann);

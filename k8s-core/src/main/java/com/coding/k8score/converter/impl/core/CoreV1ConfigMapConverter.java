@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.core;
 
+import com.coding.k8score.converter.MetaUtil;
+
 import com.coding.common.models.k8s.dto.ConfigMapDTO;
 import com.coding.k8score.converter.CommonConverter;
 import io.fabric8.kubernetes.api.model.ConfigMap;
@@ -32,6 +34,8 @@ public class CoreV1ConfigMapConverter implements CommonConverter<ConfigMap, Conf
             dto.setName(cm.getMetadata().getName());
             dto.setNamespace(cm.getMetadata().getNamespace());
             dto.setLabels(cm.getMetadata().getLabels());
+            dto.setAnnotations(MetaUtil.annotations(cm.getMetadata()));
+            dto.setOwnerReferences(MetaUtil.ownerRefs(cm.getMetadata()));
             if (cm.getMetadata().getCreationTimestamp() != null) {
                 dto.setCreationTime(cm.getMetadata().getCreationTimestamp());
             }

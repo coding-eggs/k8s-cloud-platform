@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.autoscaling;
 
+import com.coding.k8score.converter.MetaUtil;
+
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.HpaCrossVersionObjectReferenceDTO;
@@ -56,6 +58,8 @@ public class HpaV1Converter implements CommonConverter<HorizontalPodAutoscaler, 
             dto.setName(hpa.getMetadata().getName());
             dto.setNamespace(hpa.getMetadata().getNamespace());
             dto.setLabels(hpa.getMetadata().getLabels());
+            dto.setAnnotations(MetaUtil.annotations(hpa.getMetadata()));
+            dto.setOwnerReferences(MetaUtil.ownerRefs(hpa.getMetadata()));
             if (hpa.getMetadata().getCreationTimestamp() != null) {
                 dto.setCreationTime(hpa.getMetadata().getCreationTimestamp());
             }
