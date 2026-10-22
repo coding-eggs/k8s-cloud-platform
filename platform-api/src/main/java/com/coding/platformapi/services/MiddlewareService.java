@@ -79,6 +79,7 @@ public class MiddlewareService {
             dto.setCode(item.code());
             dto.setName(item.name());
             dto.setDescription(item.description());
+            dto.setChartBacked(catalog.chartBacked(item.code()));
             dto.setModes(item.modes().stream()
                     .map(m -> new MiddlewareModeDTO(m.mode(), m.label(), m.minReplicas(), m.help()))
                     .toList());
@@ -405,8 +406,8 @@ public class MiddlewareService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
-    private static boolean isChartBacked(String code) {
-        return "nacos".equals(code);
+    private boolean isChartBacked(String code) {
+        return catalog.chartBacked(code);
     }
 
     private static boolean isBlank(String s) {

@@ -125,7 +125,7 @@ class MiddlewareServiceTest {
 
         assertThat(items).anyMatch(i -> i.getCode().equals("redis")
                 && i.isOperatorReady() && "0.27.0".equals(i.getChartVersion()));
-        assertThat(items).anyMatch(i -> i.getCode().equals("mysql") && i.getModes().isEmpty());
+        assertThat(items).anyMatch(i -> i.getCode().equals("postgresql") && i.getModes().isEmpty());
     }
 
     @Test
@@ -157,6 +157,34 @@ class MiddlewareServiceTest {
         var items = service.catalog("c1", "t1");
 
         assertThat(items).anyMatch(i -> i.getCode().equals("redis") && i.getInstanceCount() == 1);
+    }
+
+    @Test
+    void catalogExposesModesAndChartBackedFlag() {
+        when(client.operatorStatus(any())).thenReturn(List.of());
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of());
+
+        var items = service.catalog("c1", null);
+
+        assertThat(items).anyMatch(i -> i.getCode().equals("mysql") && i.getModes().size() == 2);
+        assertThat(items).anyMatch(i -> i.getCode().equals("kafka") && i.getModes().size() == 1);
+        assertThat(items).anyMatch(i -> i.getCode().equals("elasticsearch") && i.getModes().size() == 1);
+        assertThat(items).anyMatch(i -> i.getCode().equals("nacos")
+                && i.isChartBacked() && i.getModes().size() == 2);
+        assertThat(items).anyMatch(i -> i.getCode().equals("postgresql") && i.getModes().isEmpty());
+    }
+
+    @Test
+    void nacosCreateDoesNotRequireAnOperator() {
+        var r = createRequest();
+        r.setCode("nacos");
+        r.setMode("STANDALONE");
+        r.setReplicas(1);
+        when(client.create(anyString(), any())).thenReturn(true);
+
+        service.create(r, "admin", null);
+
+        verify(client, org.mockito.Mockito.never()).operatorStatus(any());
     }
 
     @Test

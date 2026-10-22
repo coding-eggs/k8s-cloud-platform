@@ -16,6 +16,9 @@ public class MiddlewareCatalogItemDTO {
 
     private List<MiddlewareModeDTO> modes;
 
+    /** true = 不走 Operator（chart 安装，如 Nacos），不受 Operator 就绪门控 */
+    private boolean chartBacked;
+
     private boolean operatorInstalled;
 
     private boolean operatorReady;
