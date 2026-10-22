@@ -106,6 +106,20 @@ public final class AuditAction {
     /** 卸载应用（CRD 与 PVC 不删） */
     public static final String APP_UNINSTALL = "app:uninstall";
 
+    // ---- 中间件商店 ----
+
+    /** 创建中间件实例 */
+    public static final String MIDDLEWARE_CREATE = "middleware:create";
+
+    /** 扩容中间件实例（节点数/资源） */
+    public static final String MIDDLEWARE_SCALE = "middleware:scale";
+
+    /** 删除中间件实例（keepPvc 决定数据卷去留） */
+    public static final String MIDDLEWARE_DELETE = "middleware:delete";
+
+    /** 安装/升级中间件 Operator（管理员） */
+    public static final String MIDDLEWARE_OPERATOR_INSTALL = "middleware:operator:install";
+
     // ---- 凭据（S0.2，4 个写端点全量）----
 
     public static final String CREDENTIAL_CREATE = "credential:create";
