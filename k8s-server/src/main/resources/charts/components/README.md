@@ -20,10 +20,10 @@ charts/components/<chart>/<version>/
 | `tekton` | [tekton-operator/0.81.2](tekton-operator/0.81.2/README.md) |
 | `istio`（**含 Gateway API**） | [istio-base/1.30.6](istio-base/1.30.6/README.md)（六个 release：`gateway-api/1.6.2` + 五个 Istio chart `1.30.6`） |
 | `otel-operator` | [otel-operator/0.126.0](otel-operator/0.126.0/README.md)、[tempo/3.2.0](tempo/3.2.0/README.md) |
+| `calico` | [tigera-operator/3.33.0](tigera-operator/v3.33.0/README.md)（CRD 走 server-side apply，chart 为 `projectcalico-crds/v3.33.0`） |
 
 > `gateway-api` 于 2026-10-19 并入 `istio` 组件（同一个安装单元），目录里不再有独立的 gateway-api 行。
-> 其余组件（calico / cert-manager 等）暂未单独成文；recipe 同样在
-> `ComponentRecipeCatalog`，可照本目录格式补。
+> `cert-manager` 暂未单独成文；recipe 同样在 `ComponentRecipeCatalog`，可照本目录格式补。
 
 ---
 
@@ -38,6 +38,10 @@ charts/components/<chart>/<version>/
 
 所有组件走同一条链路：**前端组件面板 → platform-api `POST /cluster/components/apply` →
 k8s-server `POST /components/apply` → helm**。
+
+> ⚠️ 一个例外：release 标了 `applyMode=SERVER_SIDE_APPLY` 时（目前只有 calico 的 CRD chart），
+> 渲染结果走 `kubectl apply --server-side` 直接落盘、**不建 Helm release**（Helm 的 release Secret 只有 1MiB，
+> 装不下这个 3.5MB 的 chart）。细节见 [calico 文档 §2.1](tigera-operator/v3.33.0/README.md)。
 
 ### 2.1 异步与状态
 
