@@ -2405,6 +2405,8 @@ export interface MiddlewareCatalogItem {
   name: string
   description?: string | null
   modes: MiddlewareMode[]
+  /** true = chart 安装（如 Nacos），不需要 Operator */
+  chartBacked: boolean
   operatorInstalled: boolean
   operatorReady: boolean
   chartVersion?: string | null

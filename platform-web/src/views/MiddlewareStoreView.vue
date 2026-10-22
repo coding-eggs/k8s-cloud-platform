@@ -279,7 +279,8 @@ onBeforeUnmount(() => {
                 <div class="mw-card-name">{{ item.name }}</div>
                 <div class="mw-card-sub">{{ item.code }}</div>
               </div>
-              <el-tag v-if="item.operatorReady" size="small" type="success" effect="plain">可用</el-tag>
+              <el-tag v-if="item.chartBacked" size="small" type="info" effect="plain">无需 Operator</el-tag>
+              <el-tag v-else-if="item.operatorReady" size="small" type="success" effect="plain">可用</el-tag>
               <el-tag v-else-if="item.operatorInstalled" size="small" type="warning" effect="plain">Operator 异常</el-tag>
               <el-tag v-else size="small" type="info" effect="plain">未装 Operator</el-tag>
             </div>
@@ -295,7 +296,7 @@ onBeforeUnmount(() => {
               </template>
               <template v-else>
                 <el-button
-                  v-if="perm.isAdmin && !item.operatorReady"
+                  v-if="perm.isAdmin && !item.chartBacked && !item.operatorReady"
                   size="small"
                   :loading="operating === item.code"
                   @click="installOperator(item)"
@@ -304,10 +305,10 @@ onBeforeUnmount(() => {
                   v-else
                   type="primary"
                   size="small"
-                  :disabled="!item.operatorReady || !clusterId"
+                  :disabled="!clusterId || (!item.chartBacked && !item.operatorReady)"
                   @click="openCreate(item)"
                 >创建实例</el-button>
-                <span v-if="!item.operatorReady" class="mw-hint">
+                <span v-if="!item.chartBacked && !item.operatorReady" class="mw-hint">
                   需要管理员先安装 {{ item.name }} Operator
                 </span>
               </template>
@@ -410,7 +411,15 @@ onBeforeUnmount(() => {
         </el-form-item>
       </el-form>
       <p class="mw-form-note">
-        初始密码由平台生成并写入同命名空间的 Secret（{{ '<名称>-credentials' }}），详情里可以查到 Secret 名。
+        <template v-if="createItem?.code === 'redis'">
+          初始密码由平台生成并写入同命名空间的 Secret（{{ '<名称>-credentials' }}）。
+        </template>
+        <template v-else-if="createItem?.code === 'nacos'">
+          Nacos 的鉴权由 chart 控制，默认未开启；对外暴露前请自行配置鉴权。
+        </template>
+        <template v-else>
+          凭据由对应 Operator 生成，可在实例命名空间查看（MySQL：&lt;名称&gt;-secrets；Elasticsearch：&lt;名称&gt;-es-elastic-user）。
+        </template>
       </p>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
