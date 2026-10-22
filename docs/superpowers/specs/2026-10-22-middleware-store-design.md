@@ -174,7 +174,8 @@
 
 - **密码/凭据**：由平台生成强随机值，写入同命名空间的 Secret（`<name>-credentials`），**不进 `spec_json`、不进审计、不回显**；详情页只显示"凭据 Secret 名称"。
 - **资源**：表单必填 requests/limits（给默认值）；StorageClass 从集群现有列表选。
-- **配额预检**：读命名空间 ResourceQuota，估算 `副本数 × requests` 是否超限，超限直接拒绝并说明差多少（避免创建后 Pending）。
+- **配额预检**：读命名空间 ResourceQuota，估算 `副本数 × requests/limits` 是否超限，超限直接拒绝并说明差多少（避免创建后 Pending）。
+  实现位置在 **k8s-server**（唯一有集群访问的一侧）；且用 **admin client 读配额** —— 租户 SA 的 RBAC 模板没有 `resourcequotas`。
 - **租户路径**：k8s-server 以租户身份创建 CR（现有租户 SA + RBAC），需要补各 CRD 的 apiGroup（见 §9.2）。
 
 ### 5.2 变更
@@ -206,7 +207,7 @@ V1 只开放两类变更：
 
 | 端点 | 说明 |
 |---|---|
-| `POST /middleware/operators/status` | 批量判定 Operator 安装状态 |
+| `POST /middleware/operators/status` | 批量判定 Operator 安装状态（**UPSTREAM 边界**：集群级只读事实，租户也要看） |
 | `POST /middleware/operators/install` | 安装/升级 Operator（helm） |
 | `POST /middleware/{code}/instances` | 创建实例（CR 或 Nacos helm install） |
 | `POST /middleware/{code}/instances/scale` | 扩容 |
