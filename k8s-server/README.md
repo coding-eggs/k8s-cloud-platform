@@ -98,6 +98,18 @@ platform-api ──HTTP（原样透传用户的 Authorization 头）──► k8
 - `ensureNamespace` / `ensureTenantSa` / `syncTemplateClusterRole` / `cleanupTenant`
 - `evictClient` —— 失效某集群的 admin 与派生的全部 tenant client（kubeconfig 变更 / 禁用 / 删除后调用）
 
+### 2.5 集群探活（`KubernetesClientFactory.probeAllClusters` + `ClusterAvailabilityProber`）
+
+探活只回答一件事：**这个集群现在连得上吗**。连得上 → `CONNECTED`，连不上 → `DISCONNECTED`，结果写回
+`k8s_cluster.status`；连得上时顺带补全该集群的 `platform-system` 命名空间（不存在才建）。
+
+- **启动**：`@PostConstruct init()` 探一次（逐集群独立兜异常，一个集群连不上不影响其余集群和启动）。
+- **运行期**：`ClusterAvailabilityProber` 每 `platform.cluster.probe.interval`（默认 2 分钟）再探一轮，首轮延迟同样是一个周期。
+- 探活用**临时 client**，探完即关；启动不再预建 admin/tenant client（都由 `get*Client` 冷启动）。
+
+⚠️ 启动时每个连不上的集群会各占一次 connect 超时（fabric8 默认 10s），集群多且全不可达时启动会明显变慢——这是
+"启动先探一次"的固有代价。
+
 ---
 
 ## 3. 访问控制模型（本模块最重要的部分）
@@ -190,7 +202,7 @@ k8s-server/src/main/java/com/coding/k8sserver/
 
 | 层 | 位置 | 职责 |
 |----|------|------|
-| **factory** | `KubernetesClientFactory` | 客户端缓存与构造。`adminClientCache` 按 clusterId；`tenantClientCache` 按 `(clusterId, tenantId)`。租户 client 由 admin client 创建 SA token 并做 TokenRequest 换取，受 K8s RBAC 限制。**kubeconfig 解密收敛在这里**（AES）。启动时预热：遍历启用集群 + 启用租户的分配集群 |
+| **factory** | `KubernetesClientFactory` | 客户端缓存与构造。`adminClientCache` 按 clusterId；`tenantClientCache` 按 `(clusterId, tenantId)`。租户 client 由 admin client 创建 SA token 并做 TokenRequest 换取，受 K8s RBAC 限制。**kubeconfig 解密收敛在这里**（AES）。启动不预建 client（`get*Client` 冷启动），`@PostConstruct` 只探活一轮（见 §2.5） |
 | | `KubernetesOperationsFactory` | 按 `ResourceType` 直接 `new` 出对应 operation；三个 getter 决定 client：`getNamespacedOperation`（tenant）、`getAdminNamespacedOperation`（admin）、`getClusterOperation`（admin）。跨版本字段发散的资源（HPA/Ingress/CRD/…）按**集群 capability** 分派 converter，目前仅 HPA 落地。L4 路由（TCP/TLS/UDPRoute）按集群是否支持 Gateway API v1 分派版本 |
 | **operations** | `NamespacedOperations` / `ClusterOperations` / `ResourceOperations` | 六操作 + `listAll`；`ServerSideApply` 统一承担写路径（SSA） |
 | **converter** | `converter/impl/**` | K8s 对象 ⇄ 平台 DTO 的双向映射（DTO 定义在 `platform-common` 的 `models/k8s/dto`） |

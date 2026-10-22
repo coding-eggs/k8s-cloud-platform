@@ -65,52 +65,76 @@ public class KubernetesClientFactory {
 
 
     /**
-     * 初始化管理员client和租户client
+     * 启动时探活一次：遍历启用的集群，可用则补全 {@code platform-system}，
+     * 可用/不可用都把结果写回 {@code k8s_cluster.status}。
+     * <p>这里<b>不再预建 client</b>（admin/tenant 都改为冷启动，见 {@link #getAdminClient}/{@link #getTenantClient}）——
+     * 探活用临时 client，连完即关。
+     * <p>逐集群独立兜异常：一个集群连不上只把它标成 DISCONNECTED，不影响其余集群和启动。
      */
     @PostConstruct
     public void init () {
-        List<K8sCluster> k8sClusterList = k8sClusterMapper.listAll();
-        for (K8sCluster k8sCluster : k8sClusterList) {
-            if (k8sCluster.getEnabled() == 1) {
-                KubernetesClient adminClient = createAdminClient(k8sCluster);
-                adminClientCache.put(k8sCluster.getClusterId(), adminClient);
+        probeAllClusters();
+    }
 
-                //补全集群专属命名空间，不存在则创建
-                if (!adminClient.namespaces().withName(SystemConstant.SYSTEM_NAMESPACE).isReady()) {
-                    adminClient.namespaces().resource(new NamespaceBuilder()
-                                    .withNewMetadata()
-                                    .withName(SystemConstant.SYSTEM_NAMESPACE)
-                                    .withLabels(Map.of(MANAGED_BY_LABEL, MANAGED_BY_VALUE))
-                                    .endMetadata()
-                            .build())
-                            .create();
+    /**
+     * 探活全部启用集群（启动一次 + 定时任务周期性调用）。
+     * <p>判定只看「能不能连上、{@code platform-system} 在不在」：可用 → CONNECTED，否则 DISCONNECTED。
+     */
+    public void probeAllClusters() {
+        List<K8sCluster> clusters;
+        try {
+            clusters = k8sClusterMapper.listAll();
+        } catch (Exception e) {
+            log.warn("集群探活：取集群清单失败，跳过这一轮：{}", e.getMessage());
+            return;
+        }
+        int available = 0;
+        int unavailable = 0;
+        for (K8sCluster cluster : clusters) {
+            if (Integer.valueOf(1).equals(cluster.getEnabled())) {
+                if (probeCluster(cluster)) {
+                    available++;
+                } else {
+                    unavailable++;
                 }
             }
         }
-        log.info("初始化所有集群admin客户端缓存结束");
+        log.info("集群探活完成：{} 个可用，{} 个不可用", available, unavailable);
+    }
 
-        //获取所有租户
-        List<PlatformTenant> platformTenantList = tenantMapper.listAll();
-        for (PlatformTenant platformTenant : platformTenantList) {
-            if (platformTenant.getStatus() == 1) {
-                // 租户可用集群由命名空间分配表驱动，一个租户可能有多个集群
-                for (String clusterId : tenantMapper.listClusterIdsByTenant(platformTenant.getId())) {
-                    KubernetesClient adminClient = adminClientCache.get(clusterId);
-                    if (adminClient == null) {
-                        log.debug("跳过租户客户端初始化：集群 {} 未启用，租户 {}", clusterId, platformTenant.getId());
-                        continue;
-                    }
-
-                    //添加到本地缓存
-                    ClientKey clientKey = new ClientKey(clusterId, platformTenant.getId());
-                    KubernetesClient tenantClient = createTenantClient(adminClient, clientKey);
-                    if (tenantClient != null) {
-                        tenantClientCache.put(clientKey, tenantClient);
-                    }
-                }
+    /** @return 集群是否可用 */
+    private boolean probeCluster(K8sCluster cluster) {
+        try (KubernetesClient client = createAdminClient(cluster)) {
+            // 临时 client：探完即关，不放进缓存（缓存只由 get*Client 冷启动时填充）
+            if (!client.namespaces().withName(SystemConstant.SYSTEM_NAMESPACE).isReady()) {
+                client.namespaces().resource(new NamespaceBuilder()
+                                .withNewMetadata()
+                                .withName(SystemConstant.SYSTEM_NAMESPACE)
+                                .withLabels(Map.of(MANAGED_BY_LABEL, MANAGED_BY_VALUE))
+                                .endMetadata()
+                                .build())
+                        .create();
+                log.info("集群 {} 补全系统命名空间 {}", cluster.getClusterId(), SystemConstant.SYSTEM_NAMESPACE);
             }
+            updateStatus(cluster.getClusterId(), K8sCluster.ClusterStatus.CONNECTED);
+            return true;
+        } catch (Exception e) {
+            log.warn("集群 {} 探活失败，标记 DISCONNECTED：{}", cluster.getClusterId(), e.getMessage());
+            updateStatus(cluster.getClusterId(), K8sCluster.ClusterStatus.DISCONNECTED);
+            return false;
         }
-        log.info("初始化所有tenant客户端缓存结束");
+    }
+
+    /** 回写集群状态；库写失败只告警，不能反过来影响探活与启动。 */
+    private void updateStatus(String clusterId, K8sCluster.ClusterStatus status) {
+        try {
+            K8sCluster upd = new K8sCluster();
+            upd.setClusterId(clusterId);
+            upd.setStatus(status);
+            k8sClusterMapper.updateByPrimaryKeySelective(upd);
+        } catch (Exception e) {
+            log.warn("回写集群 {} 状态为 {} 失败：{}", clusterId, status, e.getMessage());
+        }
     }
 
     /**
@@ -146,10 +170,17 @@ public class KubernetesClientFactory {
      */
     public KubernetesClient getTenantClient(String clusterId, String tenantId) {
         ClientKey key = new ClientKey(clusterId, tenantId);
-        if (!tenantClientCache.containsKey(key)) {
-            tenantClientCache.put(key, createTenantClient(getAdminClient(clusterId), key));
+        KubernetesClient cached = tenantClientCache.get(key);
+        if (cached != null) {
+            return cached;
         }
-        return tenantClientCache.get(key);
+        KubernetesClient created = createTenantClient(getAdminClient(clusterId), key);
+        if (created == null) {
+            // 租户不存在 / 已禁用：不缓存（ConcurrentHashMap 不接受 null；租户之后可能被启用）
+            return null;
+        }
+        tenantClientCache.put(key, created);
+        return created;
     }
 
 
@@ -269,7 +300,7 @@ public class KubernetesClientFactory {
      * 创建管理员client
      * @return
      */
-    private KubernetesClient createAdminClient(K8sCluster k8sCluster) {
+    KubernetesClient createAdminClient(K8sCluster k8sCluster) {
         check(k8sCluster);
         String kubeconfig = AESUtils.decrypt(k8sCluster.getKubeconfig(), AES_KEY);
         Config config = Config.fromKubeconfig(kubeconfig);

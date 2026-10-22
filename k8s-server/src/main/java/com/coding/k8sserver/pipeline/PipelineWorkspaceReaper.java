@@ -53,11 +53,15 @@ public class PipelineWorkspaceReaper {
         }
         for (K8sCluster cluster : clusters) {
             // 一个集群连不上不能把其余集群带走（与启动扫描同形）
-            try {
-                reapOne(cluster.getClusterId(), now);
-            } catch (Exception e) {
-                log.warn("工作区回收失败：cluster={}", cluster.getClusterId(), e);
+            if (Integer.valueOf(1).equals(cluster.getEnabled())
+            && cluster.getStatus().equals(K8sCluster.ClusterStatus.CONNECTED)) {
+                try {
+                    reapOne(cluster.getClusterId(), now);
+                } catch (Exception e) {
+                    log.warn("工作区回收失败：cluster={}", cluster.getClusterId(), e);
+                }
             }
+
         }
     }
 

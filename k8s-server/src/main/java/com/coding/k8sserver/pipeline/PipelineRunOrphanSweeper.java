@@ -126,27 +126,30 @@ public class PipelineRunOrphanSweeper {
             return;
         }
         for (K8sCluster cluster : clusters) {
-            String clusterId = cluster.getClusterId();
-            if (bootSwept.contains(clusterId)) {
-                continue;
-            }
-            // 停用 / 已知连不上的集群先不碰：一次 connect 超时是 10s 起步，
-            // 每 5 分钟去撞一遍会把调度线程白占掉。探活任务（2 分钟）会把它翻回 CONNECTED，
-            // 那时这一拍自然就补上了 —— 所以这里**不进已扫集合**
-            if (!usable(cluster)) {
-                continue;
-            }
-            try {
-                bootScanCluster(clusterId);
-                bootSwept.add(clusterId);
-            } catch (Exception e) {
-                if (isNotFound(e)) {
-                    // 没有 Tekton 的集群没有可补盯的对象 —— 算扫过，否则每 5 分钟报一次
-                    log.info("启动补盯：集群没有 Tekton（跳过）cluster={}", clusterId);
+            if (Integer.valueOf(1).equals(cluster.getEnabled())
+                    && cluster.getStatus().equals(K8sCluster.ClusterStatus.CONNECTED)) {
+                String clusterId = cluster.getClusterId();
+                if (bootSwept.contains(clusterId)) {
+                    continue;
+                }
+                // 停用 / 已知连不上的集群先不碰：一次 connect 超时是 10s 起步，
+                // 每 5 分钟去撞一遍会把调度线程白占掉。探活任务（2 分钟）会把它翻回 CONNECTED，
+                // 那时这一拍自然就补上了 —— 所以这里**不进已扫集合**
+                if (!usable(cluster)) {
+                    continue;
+                }
+                try {
+                    bootScanCluster(clusterId);
                     bootSwept.add(clusterId);
-                } else {
-                    // 集群暂时连不上：**不进已扫集合**，下一拍再试
-                    log.warn("启动补盯失败（下一拍再试）：cluster={}", clusterId, e);
+                } catch (Exception e) {
+                    if (isNotFound(e)) {
+                        // 没有 Tekton 的集群没有可补盯的对象 —— 算扫过，否则每 5 分钟报一次
+                        log.info("启动补盯：集群没有 Tekton（跳过）cluster={}", clusterId);
+                        bootSwept.add(clusterId);
+                    } else {
+                        // 集群暂时连不上：**不进已扫集合**，下一拍再试
+                        log.warn("启动补盯失败（下一拍再试）：cluster={}", clusterId, e);
+                    }
                 }
             }
         }

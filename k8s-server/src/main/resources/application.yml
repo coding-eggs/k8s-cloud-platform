@@ -26,6 +26,12 @@ knife4j:
     language: zh_cn
 
 spring:
+  # 集群探活（ClusterAvailabilityProber）会在不可达集群上各占一次 connect 超时；
+  # 默认单线程调度池会把 PipelineRunTicker（30s）一起拖住，所以给到 2
+  task:
+    scheduling:
+      pool:
+        size: 2
   servlet:
     multipart:
       max-file-size: 5120MB
