@@ -22,4 +22,7 @@ public class MiddlewareScaleRequestDTO {
     private String memoryLimit;
 
     private String storageSize;
+
+    /** 管理员代管轨的租户 */
+    private String tenantId;
 }

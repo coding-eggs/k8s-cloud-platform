@@ -70,7 +70,7 @@ public class MiddlewareService {
 
     // ==================== 目录 ====================
 
-    public List<MiddlewareCatalogItemDTO> catalog(String clusterId) {
+    public List<MiddlewareCatalogItemDTO> catalog(String clusterId, String tenantId) {
         List<MiddlewareOperatorStatusDTO> stats = client.operatorStatus(statusRequest(clusterId));
         List<PlatformMiddlewareInstance> all = instances.selectByCluster(clusterId, null);
 
@@ -89,7 +89,9 @@ public class MiddlewareService {
                 dto.setOperatorMessage(s.getMessage());
             });
             dto.setInstanceCount((int) all.stream()
-                    .filter(i -> item.code().equals(i.getCode())).count());
+                    .filter(i -> item.code().equals(i.getCode()))
+                    .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
+                    .count());
             return dto;
         }).toList();
     }
@@ -127,6 +129,7 @@ public class MiddlewareService {
             req.setCode(row.getCode());
             req.setNamespace(row.getNamespace());
             req.setNames(List.of(row.getName()));
+            req.setTenantId(row.getTenantId());
             var result = client.status(row.getCode(), req);
             if (result != null && !result.isEmpty()) {
                 var s = result.get(0);
@@ -208,6 +211,7 @@ public class MiddlewareService {
             dto.setStorageSize(req.getStorageSize());
             dto.setStorageClass(req.getStorageClass());
             dto.setPassword(randomPassword());
+            dto.setTenantId(tenantId);
             client.create(req.getCode(), dto);
             finish(op, "SUCCESS", null);
         } catch (RuntimeException e) {
@@ -236,6 +240,7 @@ public class MiddlewareService {
             dto.setMemoryRequest(req.getMemoryRequest());
             dto.setMemoryLimit(req.getMemoryLimit());
             dto.setStorageSize(req.getStorageSize());
+            dto.setTenantId(tenantId);
             client.scale(instance.getCode(), dto);
             finish(op, "SUCCESS", null);
         } catch (RuntimeException e) {
@@ -255,6 +260,8 @@ public class MiddlewareService {
             dto.setNamespace(instance.getNamespace());
             dto.setName(instance.getName());
             dto.setKeepPvc(req.isKeepPvc());
+            dto.setInstanceId(instance.getId());
+            dto.setTenantId(tenantId);
             client.delete(instance.getCode(), dto);
 
             instance.setStatus("DELETING");
@@ -269,8 +276,42 @@ public class MiddlewareService {
         return op.getId();
     }
 
-    public PlatformMiddlewareOperation operation(Long id) {
-        return operations.selectByPrimaryKey(id);
+    /** 操作记录按实例归属收窄：租户只能看自己实例的操作（operation id 是自增的，不能裸按主键取）。 */
+    public PlatformMiddlewareOperation operation(Long id, String tenantId) {
+        PlatformMiddlewareOperation op = operations.selectByPrimaryKey(id);
+        if (op == null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
+        }
+        if (tenantId != null) {
+            PlatformMiddlewareInstance instance = instances.selectByPrimaryKey(op.getInstanceId());
+            if (instance == null || !tenantId.equals(instance.getTenantId())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, "无权查看该操作");
+            }
+        }
+        return op;
+    }
+
+    /** 进程重启留下的 PENDING/RUNNING 操作会永久占锁：启动时回收。 */
+    @org.springframework.context.event.EventListener(
+            org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void reapOnStartup() {
+        cleanupStale(30);
+    }
+
+    public void cleanupStale(int minutes) {
+        for (PlatformMiddlewareOperation op : operations.selectStaleRunning(minutes)) {
+            op.setStatus("UNKNOWN");
+            op.setMessage("操作超时（进程重启或 worker 丢失）");
+            op.setFinishedAt(new Date());
+            operations.updateById(op);
+            PlatformMiddlewareInstance instance = instances.selectByPrimaryKey(op.getInstanceId());
+            if (instance != null && !"READY".equals(instance.getStatus())) {
+                instance.setStatus("FAILED");
+                instance.setMessage("操作超时，请重新创建或删除");
+                instance.setUpdatedAt(new Date());
+                instances.updateById(instance);
+            }
+        }
     }
 
     // ==================== 内部 ====================

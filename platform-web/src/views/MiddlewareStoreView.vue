@@ -7,7 +7,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { clusterApi, middlewareApi } from '@/api'
+import { clusterApi, middlewareApi, resourceContextApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import MiddlewareIcon from '@/components/middleware/MiddlewareIcon.vue'
 import { MIDDLEWARE_FIELDS } from '@/components/middleware/middlewareForms'
@@ -59,7 +59,21 @@ function nameOf(code: string): string {
 }
 
 async function loadClusters(): Promise<void> {
-  clusters.value = (await clusterApi.list()) ?? []
+  if (perm.isAdmin) {
+    clusters.value = (await clusterApi.list()) ?? []
+  } else {
+    // 租户没有 platform:cluster:manage（/cluster/list 会 403）：从 /context 的分配表取集群
+    const ctx = await resourceContextApi.get()
+    const seen = new Map<string, K8sCluster>()
+    for (const t of ctx?.tenants ?? []) {
+      for (const c of t.clusters ?? []) {
+        if (!seen.has(c.clusterId)) {
+          seen.set(c.clusterId, { clusterId: c.clusterId, clusterName: c.clusterName } as unknown as K8sCluster)
+        }
+      }
+    }
+    clusters.value = [...seen.values()]
+  }
   const firstEnabled = clusters.value.find((c) => c.enabled === 1)
   clusterId.value = firstEnabled?.clusterId ?? clusters.value[0]?.clusterId ?? ''
 }

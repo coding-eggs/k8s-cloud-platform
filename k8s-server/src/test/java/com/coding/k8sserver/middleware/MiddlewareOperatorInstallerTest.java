@@ -24,7 +24,13 @@ class MiddlewareOperatorInstallerTest {
     private final KubernetesClientFactory clients = mock(KubernetesClientFactory.class);
 
     private final MiddlewareOperatorInstaller installer =
-            new MiddlewareOperatorInstaller(helm, charts, clients, new MiddlewareOperatorCatalog());
+            new MiddlewareOperatorInstaller(helm, charts, clients, new MiddlewareOperatorCatalog()) {
+                @Override
+                io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition crdOrNull(
+                        io.fabric8.kubernetes.client.KubernetesClient client, String name) {
+                    return null;   // 预检：CRD 都不存在
+                }
+            };
 
     @Test
     void installUsesThePinnedReleaseNameAndNamespace() throws Exception {

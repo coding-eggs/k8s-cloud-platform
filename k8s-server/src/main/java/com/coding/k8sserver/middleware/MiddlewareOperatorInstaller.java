@@ -52,6 +52,7 @@ public class MiddlewareOperatorInstaller {
     /** 只做 helm 安装（拆出来是为了单测能避开 fabric8 的深度 mock）。 */
     void installHelm(String clusterId, String code) {
         var entry = catalog.require(code);
+        assertCrdsNotForeign(clusterId, entry);
         Path chartDir = charts.chartDir("middleware", entry.code(), entry.chartVersion());
         Path values;
         try {
@@ -103,6 +104,43 @@ public class MiddlewareOperatorInstaller {
                 : deps.isEmpty() ? "未找到 Operator Deployment"
                 : "Operator Deployment 未就绪");
         return out;
+    }
+
+    /**
+     * CRD 归属预检（spec §4.2）：已存在且不是本 release 管理的 CRD 一律拒绝。
+     *
+     * <p>为什么必须拦：helm 4 用 SSA 装 `crds/`，而 apply 带 `--force-conflicts` ——
+     * 不拦的话会把别人（手工装 / 另一个 release 名）的 CRD 所有权抢过来，
+     * 可能把 schema 降级，连带影响已经存在的实例。
+     */
+    void assertCrdsNotForeign(String clusterId, MiddlewareOperatorCatalog.Entry entry) {
+        String release = MiddlewareOperatorCatalog.releaseName(entry.code());
+        KubernetesClient client = clients.getAdminClient(clusterId);
+        for (String name : entry.requiredCrds()) {
+            var crd = crdOrNull(client, name);
+            if (crd == null || crd.getMetadata() == null) {
+                continue;
+            }
+            var labels = crd.getMetadata().getLabels() == null ? Map.<String, String>of()
+                    : crd.getMetadata().getLabels();
+            var anns = crd.getMetadata().getAnnotations() == null ? Map.<String, String>of()
+                    : crd.getMetadata().getAnnotations();
+            String owner = anns.get("meta.helm.sh/release-name");
+            if (owner != null && !owner.equals(release)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "CRD " + name + " 已由另一个 Helm release（" + owner + "）管理，拒绝接管");
+            }
+            if (owner == null && !"Helm".equals(labels.get("app.kubernetes.io/managed-by"))) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "CRD " + name + " 已存在但不由 Helm 管理，拒绝接管（请先手工清理或改由平台安装）");
+            }
+        }
+    }
+
+    /** 读一个 CRD（包级：单测覆写它来跳过 fabric8 客户端链）。 */
+    io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition crdOrNull(
+            KubernetesClient client, String name) {
+        return client.apiextensions().v1().customResourceDefinitions().withName(name).get();
     }
 
     private static boolean deploymentReady(Deployment d) {

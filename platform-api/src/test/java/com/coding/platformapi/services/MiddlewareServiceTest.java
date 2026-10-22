@@ -99,6 +99,7 @@ class MiddlewareServiceTest {
         assertThat(saved.getValue().getStatus()).isEqualTo("CREATING");
         assertThat(saved.getValue().getTenantId()).isEqualTo("t1");
         assertThat(saved.getValue().getSpecJson()).doesNotContain(sent.getValue().getPassword());
+        assertThat(sent.getValue().getTenantId()).isEqualTo("t1");
     }
 
     @Test
@@ -120,11 +121,42 @@ class MiddlewareServiceTest {
         when(client.operatorStatus(any())).thenReturn(List.of(status("redis", true, true)));
         when(instances.selectByCluster("c1", null)).thenReturn(List.of());
 
-        var items = service.catalog("c1");
+        var items = service.catalog("c1", null);
 
         assertThat(items).anyMatch(i -> i.getCode().equals("redis")
                 && i.isOperatorReady() && "0.27.0".equals(i.getChartVersion()));
         assertThat(items).anyMatch(i -> i.getCode().equals("mysql") && i.getModes().isEmpty());
+    }
+
+    @Test
+    void operationIsScopedToTheInstancesTenant() {
+        PlatformMiddlewareOperation op = new PlatformMiddlewareOperation();
+        op.setId(9L);
+        op.setInstanceId("mwi_2");
+        PlatformMiddlewareInstance other = new PlatformMiddlewareInstance();
+        other.setId("mwi_2");
+        other.setTenantId("t2");
+        when(operations.selectByPrimaryKey(9L)).thenReturn(op);
+        when(instances.selectByPrimaryKey("mwi_2")).thenReturn(other);
+
+        assertThatThrownBy(() -> service.operation(9L, "t1"))
+                .hasMessageContaining("无权");
+    }
+
+    @Test
+    void catalogCountsOnlyTheCallersInstances() {
+        when(client.operatorStatus(any())).thenReturn(List.of(status("redis", true, true)));
+        PlatformMiddlewareInstance mine = new PlatformMiddlewareInstance();
+        mine.setCode("redis");
+        mine.setTenantId("t1");
+        PlatformMiddlewareInstance other = new PlatformMiddlewareInstance();
+        other.setCode("redis");
+        other.setTenantId("t2");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(mine, other));
+
+        var items = service.catalog("c1", "t1");
+
+        assertThat(items).anyMatch(i -> i.getCode().equals("redis") && i.getInstanceCount() == 1);
     }
 
     @Test

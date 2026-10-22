@@ -112,8 +112,29 @@ public class ResourceAccessResolver {
     }
 
     /**
-     * 平台级命名空间访问解析：<b>不做分配表校验</b>，只校验集群已登记，返回无租户身份的 admin 模式。
-     * <p>
+     * 中间件实例用的"租户优先、平台兜底"解析。
+     *
+     * <ul>
+     *   <li>调用方带租户身份（token 的 tenantInfo 或显式 tenantId）→ 走
+     *       {@link #resolveNamespacedAccess}：分配表校验 + 租户 client；</li>
+     *   <li>平台管理员且没有指定租户（平台视图）→ 走 {@link #resolvePlatformNamespacedAccess}：
+     *       不做分配表校验、用 admin client。这与「分配表只管租户」一致（spec §2.2）。</li>
+     * </ul>
+     */
+    public AccessContext resolveNamespacedAccessOrPlatform(String explicitTenantId, String clusterId,
+                                                           String namespace) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (tokenTenantIdFrom(auth) != null || StringUtils.hasText(explicitTenantId)) {
+            return resolveNamespacedAccess(auth, explicitTenantId, clusterId, namespace);
+        }
+        if (!StringUtils.hasText(namespace)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "缺少命名空间参数");
+        }
+        return resolvePlatformNamespacedAccess(clusterId);
+    }
+
+    /**
+     * 平台级命名空间访问解析：<b>不做分配表校验</b>，只校验集群已登记，返回无租户身份的 admin 模式。     * <p>
      * 专供命名空间自身的约束资源（ResourceQuota / LimitRange）——这类对象由平台在「尚未分配给任何租户」
      * 的命名空间上创建，走 {@link #resolveNamespacedAccess} 的租户边界会被分配表直接拒。
      * <p>

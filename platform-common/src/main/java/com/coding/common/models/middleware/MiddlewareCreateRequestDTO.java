@@ -37,4 +37,7 @@ public class MiddlewareCreateRequestDTO {
 
     /** 平台生成的初始密码；只用于创建 Secret，不落库、不记日志 */
     private String password;
+
+    /** 管理员代管轨显式指定的租户；租户轨以 token 为准（k8s-server 会忽略不一致的值） */
+    private String tenantId;
 }

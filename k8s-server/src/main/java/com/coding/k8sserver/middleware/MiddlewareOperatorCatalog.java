@@ -32,7 +32,7 @@ public class MiddlewareOperatorCatalog {
     static {
         Map<String, Entry> m = new LinkedHashMap<>();
         m.put("redis", new Entry("redis", "0.27.0", List.of(
-                "redis.redis.opstreelabs.in",
+                "redis.redis.redis.opstreelabs.in",
                 "redisreplications.redis.redis.opstreelabs.in",
                 "redissentinels.redis.redis.opstreelabs.in",
                 "redisclusters.redis.redis.opstreelabs.in")));

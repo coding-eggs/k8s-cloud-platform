@@ -101,6 +101,30 @@ class RedisMiddlewareAdapterTest {
     }
 
     @Test
+    void pvcTemplateCarriesPlatformLabels() {
+        // 删除实例时按这个标签找 PVC：operator 自己打的标签不保证存在
+        var out = adapter.buildCreate(req("STANDALONE", 1));
+        @SuppressWarnings("unchecked")
+        var storage = (Map<String, Object>) spec(out.get(0).resource()).get("storage");
+        @SuppressWarnings("unchecked")
+        var meta = (Map<String, Object>) ((Map<String, Object>) storage.get("volumeClaimTemplate")).get("metadata");
+        @SuppressWarnings("unchecked")
+        var labels = (Map<String, Object>) meta.get("labels");
+        assertThat(labels).containsEntry("platform.coding/middleware-instance", "mwi_1");
+    }
+
+    @Test
+    void scaleClampsClusterToThreeShards() {
+        var live = adapter.buildCreate(req("CLUSTER", 3)).get(0).resource();
+        var scaleReq = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scaleReq.setReplicas(1);
+
+        adapter.applyScale(live, RedisMiddlewareAdapter.CLUSTER, scaleReq);
+
+        assertThat(spec(live)).containsEntry("clusterSize", 3);
+    }
+
+    @Test
     void unknownModeIsRejected() {
         var r = req("REPLICA", 1);
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> adapter.buildCreate(r))

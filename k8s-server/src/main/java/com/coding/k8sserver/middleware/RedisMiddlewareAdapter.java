@@ -110,7 +110,13 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         }
         Map<String, Object> storage = new LinkedHashMap<>();
         storage.put("keepAfterDelete", true);
-        storage.put("volumeClaimTemplate", Map.of("spec", claimSpec));
+        // PVC 必须带平台标签：删除实例时用它找 PVC（operator 自己的标签不保证存在）
+        storage.put("volumeClaimTemplate", Map.of(
+                "metadata", Map.of("labels", Map.of(
+                        "platform.coding/managed-by", "middleware",
+                        "platform.coding/middleware-instance",
+                        req.getInstanceId() == null ? "-" : req.getInstanceId())),
+                "spec", claimSpec));
         return storage;
     }
 
@@ -124,7 +130,8 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         meta.setNamespace(req.getNamespace());
         meta.setLabels(Map.of(
                 "platform.coding/managed-by", "middleware",
-                "platform.coding/middleware-instance", req.getInstanceId()));
+                "platform.coding/middleware-instance",
+                req.getInstanceId() == null ? "-" : req.getInstanceId()));
         res.setMetadata(meta);
         res.setAdditionalProperty("spec", spec);
         return res;
@@ -150,7 +157,13 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
             if (req.getReplicas() == null) {
                 throw new CloudPlatformException(EnumResponseType.ERROR, "缺少目标节点数");
             }
-            spec.put("clusterSize", req.getReplicas());
+            int target = req.getReplicas();
+            if ("RedisCluster".equals(kind)) {
+                target = Math.max(3, target);
+            } else {
+                target = Math.max(2, target);
+            }
+            spec.put("clusterSize", target);
             updateResources(spec, req);
             return;
         }

@@ -42,7 +42,8 @@ public class MiddlewareController {
     @PostMapping("/catalog")
     @Operation(summary = "商店清单（含本集群 Operator 状态与实例数）")
     public ResponseData<List<MiddlewareCatalogItemDTO>> catalog(@RequestBody MiddlewareQueryRequest request) {
-        return new ResponseData<>(service.catalog(request.getClusterId()));
+        return new ResponseData<>(service.catalog(request.getClusterId(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/instance/list")
@@ -60,7 +61,7 @@ public class MiddlewareController {
     }
 
     @PostMapping("/instance/create")
-    @Auditable(action = AuditAction.MIDDLEWARE_CREATE, target = "#request.code")
+    @Auditable(action = AuditAction.MIDDLEWARE_CREATE, target = "#request.code + '/' + #request.namespace")
     @Operation(summary = "创建实例（异步操作记录；返回操作 id）")
     public ResponseData<Long> create(@RequestBody MiddlewareCreateRequest request) {
         return new ResponseData<>(service.create(request, operator(),
@@ -86,7 +87,8 @@ public class MiddlewareController {
     @PostMapping("/operation/get")
     @Operation(summary = "查询一条实例操作（轮询）")
     public ResponseData<PlatformMiddlewareOperation> operation(@RequestBody MiddlewareQueryRequest request) {
-        return new ResponseData<>(service.operation(request.getOperationId()));
+        return new ResponseData<>(service.operation(request.getOperationId(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/operator/install")

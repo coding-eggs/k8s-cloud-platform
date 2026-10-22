@@ -15,4 +15,7 @@ public class MiddlewareStatusRequestDTO {
     private String namespace;
 
     private List<String> names;
+
+    /** 管理员代管轨的租户 */
+    private String tenantId;
 }

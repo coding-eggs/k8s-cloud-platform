@@ -8,6 +8,7 @@ import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
 import com.coding.k8score.factory.KubernetesClientFactory;
+import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Quantity;
@@ -29,10 +30,12 @@ import java.util.stream.Collectors;
 /**
  * 中间件实例的执行层：创建/扩容/删除 CR，写凭据 Secret，读实时状态。
  *
- * <p><b>身份</b>：一律走 {@link ResourceAccessResolver#resolveNamespacedAccess} —— 租户 token 用租户 client
- * （K8s RBAC 第二道闸），admin 用 admin client；分配表边界由它校验，本类不再重复判断。
+ * <p><b>身份</b>：{@link ResourceAccessResolver#resolveNamespacedAccessOrPlatform} ——
+ * 租户 token 用租户 client（K8s RBAC 第二道闸）+ 分配表；管理员不带租户时用 admin client（不受分配表限制）。
  *
- * <p><b>配额预检放在这里</b>（计划 Ruling）：platform-api 没有集群访问，读不到 ResourceQuota。
+ * <p><b>配额预检用 admin client 读 ResourceQuota</b>：租户 RBAC 模板里没有 `resourcequotas`
+ * （2026-10-22 复审实锤：`kubectl auth can-i list resourcequotas` 对租户 SA 是 no），
+ * 用租户 client 读会先 403，用户看到的是权限错误而不是「配额不足」。
  */
 @Service
 public class MiddlewareInstanceService {
@@ -51,37 +54,59 @@ public class MiddlewareInstanceService {
     }
 
     public void create(MiddlewareCreateRequestDTO req) {
-        KubernetesClient client = clientFor(req.getClusterId(), req.getNamespace());
-        assertQuota(client, req);
+        var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
+                req.getTenantId(), req.getClusterId(), req.getNamespace());
+        KubernetesClient client = clientOf(req.getClusterId(), ctx);
+        assertQuota(req);
 
         MiddlewareAdapter adapter = adapter(req.getCode());
-        writeSecret(client, req.getNamespace(), req.getName(), req.getPassword());
-        for (MiddlewareAdapter.CrSpec spec : adapter.buildCreate(req)) {
-            client.genericKubernetesResources(spec.context())
-                    .inNamespace(req.getNamespace())
-                    .resource(spec.resource())
-                    .create();
+        MiddlewareAdapter.CrSpec secretOwner = null;
+        List<MiddlewareAdapter.CrSpec> created = new ArrayList<>();
+        try {
+            writeSecret(client, req);
+            for (MiddlewareAdapter.CrSpec spec : adapter.buildCreate(req)) {
+                client.genericKubernetesResources(spec.context())
+                        .inNamespace(req.getNamespace())
+                        .resource(spec.resource())
+                        .create();
+                created.add(spec);
+            }
+        } catch (RuntimeException e) {
+            // 部分失败回滚：SENTINEL 是两个 CR，第二个失败时不能把第一个和 Secret 留在集群里
+            created.forEach(s -> deleteQuietly(client, s.context(), req.getNamespace(),
+                    s.resource().getMetadata().getName()));
+            deleteSecretQuietly(client, req.getNamespace(), secretName(req));
+            throw e;
         }
     }
 
     public void scale(MiddlewareScaleRequestDTO req) {
-        KubernetesClient client = clientFor(req.getClusterId(), req.getNamespace());
+        if (req.getStorageSize() != null && !req.getStorageSize().isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "暂不支持扩容存储（PVC 扩容依赖各中间件的 Operator 能力），请重建实例或手工扩卷");
+        }
+        var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
+                req.getTenantId(), req.getClusterId(), req.getNamespace());
+        KubernetesClient client = clientOf(req.getClusterId(), ctx);
         MiddlewareAdapter adapter = adapter(req.getCode());
 
         boolean applied = false;
-        for (CustomResourceDefinitionContext ctx : adapter.contexts()) {
-            var live = client.genericKubernetesResources(ctx)
+        for (CustomResourceDefinitionContext crd : adapter.contexts()) {
+            var live = client.genericKubernetesResources(crd)
                     .inNamespace(req.getNamespace())
                     .withName(req.getName())
                     .get();
             if (live == null) {
                 continue;
             }
-            adapter.applyScale(live, ctx, req);
-            client.genericKubernetesResources(ctx)
+            adapter.applyScale(live, crd, req);
+            // 与仓内其它 CR 更新一致：SSA + forceConflicts（fetch-overlay 已保留未建模字段）
+            client.genericKubernetesResources(crd)
                     .inNamespace(req.getNamespace())
                     .resource(live)
-                    .update();
+                    .fieldManager(ServerSideApply.FIELD_MANAGER)
+                    .forceConflicts()
+                    .serverSideApply();
             applied = true;
         }
         if (!applied) {
@@ -90,35 +115,35 @@ public class MiddlewareInstanceService {
     }
 
     public void delete(MiddlewareDeleteRequestDTO req) {
-        KubernetesClient client = clientFor(req.getClusterId(), req.getNamespace());
+        var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
+                req.getTenantId(), req.getClusterId(), req.getNamespace());
+        KubernetesClient client = clientOf(req.getClusterId(), ctx);
         MiddlewareAdapter adapter = adapter(req.getCode());
 
-        for (CustomResourceDefinitionContext ctx : adapter.contexts()) {
-            client.genericKubernetesResources(ctx)
-                    .inNamespace(req.getNamespace())
-                    .withName(req.getName())
-                    .delete();
+        for (CustomResourceDefinitionContext crd : adapter.contexts()) {
+            deleteQuietly(client, crd, req.getNamespace(), req.getName());
         }
         if (!req.isKeepPvc()) {
-            // Operator 生成的 PVC 用同一个 app 标签（与 Pod 一致）；keepPvc=false 才清
+            // PVC 由适配器在 volumeClaimTemplate 里打了平台标签（operator 自己的标签不保证存在）
             client.persistentVolumeClaims().inNamespace(req.getNamespace())
-                    .withLabel(adapter.statusSelector(req.getName()))
+                    .withLabel("platform.coding/middleware-instance", req.getInstanceId())
                     .delete();
+            deleteSecretQuietly(client, req.getNamespace(), secretName(req));
         }
-        client.secrets().inNamespace(req.getNamespace())
-                .withName(RedisMiddlewareAdapter.secretName(req.getName()))
-                .delete();
+        // keepPvc=true 时保留 Secret：数据卷还在，凭据也还给它留着
     }
 
     public List<MiddlewareStatusResultDTO> status(MiddlewareStatusRequestDTO req) {
-        KubernetesClient client = clientFor(req.getClusterId(), req.getNamespace());
+        var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
+                req.getTenantId(), req.getClusterId(), req.getNamespace());
+        KubernetesClient client = clientOf(req.getClusterId(), ctx);
         MiddlewareAdapter adapter = adapter(req.getCode());
 
         List<MiddlewareStatusResultDTO> out = new ArrayList<>();
         for (String name : req.getNames()) {
             boolean exists = false;
-            for (CustomResourceDefinitionContext ctx : adapter.contexts()) {
-                if (client.genericKubernetesResources(ctx)
+            for (CustomResourceDefinitionContext crd : adapter.contexts()) {
+                if (client.genericKubernetesResources(crd)
                         .inNamespace(req.getNamespace()).withName(name).get() != null) {
                     exists = true;
                     break;
@@ -154,11 +179,15 @@ public class MiddlewareInstanceService {
 
     // ==================== 内部 ====================
 
-    private KubernetesClient clientFor(String clusterId, String namespace) {
-        var ctx = accessResolver.resolveNamespacedAccess(null, clusterId, namespace);
-        return ctx.adminMode()
+    private KubernetesClient clientOf(String clusterId, ResourceAccessResolver.AccessContext ctx) {
+        KubernetesClient client = ctx.adminMode()
                 ? clients.getAdminClient(clusterId)
                 : clients.getTenantClient(clusterId, ctx.tenantId());
+        if (client == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "租户上下文不可用（租户可能已停用），请联系管理员");
+        }
+        return client;
     }
 
     private MiddlewareAdapter adapter(String code) {
@@ -169,24 +198,51 @@ public class MiddlewareInstanceService {
         return a;
     }
 
-    private void writeSecret(KubernetesClient client, String namespace, String name, String password) {
-        if (password == null || password.isBlank()) {
+    private void writeSecret(KubernetesClient client, MiddlewareCreateRequestDTO req) {
+        if (req.getPassword() == null || req.getPassword().isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "缺少初始密码");
         }
         Secret secret = new SecretBuilder()
                 .withNewMetadata()
-                .withName(RedisMiddlewareAdapter.secretName(name))
-                .withNamespace(namespace)
+                .withName(secretName(req))
+                .withNamespace(req.getNamespace())
                 .addToLabels("platform.coding/managed-by", "middleware")
+                .addToLabels("platform.coding/middleware-instance", req.getInstanceId())
                 .endMetadata()
-                .addToStringData("password", password)
+                .addToStringData("password", req.getPassword())
                 .build();
-        client.secrets().inNamespace(namespace).resource(secret).createOrReplace();
+        client.secrets().inNamespace(req.getNamespace()).resource(secret).createOrReplace();
     }
 
-    /** 配额预检：命名空间有 ResourceQuota 时，估算 副本数 × requests 是否超限。 */
-    private void assertQuota(KubernetesClient client, MiddlewareCreateRequestDTO req) {
-        List<ResourceQuota> quotas = client.resourceQuotas()
+    private void deleteSecretQuietly(KubernetesClient client, String namespace, String name) {
+        try {
+            client.secrets().inNamespace(namespace).withName(name).delete();
+        } catch (RuntimeException ignored) {
+            // 清理是尽力而为：Secret 不存在或已删都不影响主流程
+        }
+    }
+
+    private void deleteQuietly(KubernetesClient client, CustomResourceDefinitionContext crd,
+                               String namespace, String name) {
+        try {
+            client.genericKubernetesResources(crd).inNamespace(namespace).withName(name).delete();
+        } catch (RuntimeException ignored) {
+            // 同上
+        }
+    }
+
+    private static String secretName(MiddlewareCreateRequestDTO req) {
+        return req.getName() + "-credentials";
+    }
+
+    private static String secretName(MiddlewareDeleteRequestDTO req) {
+        return req.getName() + "-credentials";
+    }
+
+    /** 配额预检：admin client 读 ResourceQuota（租户 SA 没有 resourcequotas 权限）。 */
+    private void assertQuota(MiddlewareCreateRequestDTO req) {
+        KubernetesClient admin = clients.getAdminClient(req.getClusterId());
+        List<ResourceQuota> quotas = admin.resourceQuotas()
                 .inNamespace(req.getNamespace()).list().getItems();
         if (quotas.isEmpty()) {
             return;
@@ -203,6 +259,11 @@ public class MiddlewareInstanceService {
                     ? Map.of() : q.getStatus().getUsed();
             checkQuota(q.getSpec().getHard().get("requests.cpu"), used.get("requests.cpu"), needCpu, "CPU");
             checkQuota(q.getSpec().getHard().get("requests.memory"), used.get("requests.memory"), needMem, "内存");
+            // limits 配额也要看：只配 limits 的命名空间，requests 检查会放行
+            BigDecimal needCpuLimit = amount(req.getCpuLimit()).multiply(BigDecimal.valueOf(n));
+            BigDecimal needMemLimit = amount(req.getMemoryLimit()).multiply(BigDecimal.valueOf(n));
+            checkQuota(q.getSpec().getHard().get("limits.cpu"), used.get("limits.cpu"), needCpuLimit, "CPU 上限");
+            checkQuota(q.getSpec().getHard().get("limits.memory"), used.get("limits.memory"), needMemLimit, "内存上限");
         }
     }
 
