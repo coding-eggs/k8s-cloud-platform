@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformMiddlewareInstance">
+    <id     column="id"           jdbcType="VARCHAR"   property="id" />
+    <result column="cluster_id"   jdbcType="VARCHAR"   property="clusterId" />
+    <result column="namespace"    jdbcType="VARCHAR"   property="namespace" />
+    <result column="code"         jdbcType="VARCHAR"   property="code" />
+    <result column="mode"         jdbcType="VARCHAR"   property="mode" />
+    <result column="name"         jdbcType="VARCHAR"   property="name" />
+    <result column="display_name" jdbcType="VARCHAR"   property="displayName" />
+    <result column="version"      jdbcType="VARCHAR"   property="version" />
+    <result column="spec_json"    jdbcType="LONGVARCHAR" property="specJson" />
+    <result column="status"       jdbcType="VARCHAR"   property="status" />
+    <result column="message"      jdbcType="VARCHAR"   property="message" />
+    <result column="tenant_id"    jdbcType="VARCHAR"   property="tenantId" />
+    <result column="created_by"   jdbcType="VARCHAR"   property="createdBy" />
+    <result column="created_at"   jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at"   jdbcType="TIMESTAMP" property="updatedAt" />
+    <result column="deleted_at"   jdbcType="TIMESTAMP" property="deletedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, `namespace`, code, `mode`, `name`, display_name, `version`, spec_json,
+    `status`, message, tenant_id, created_by, created_at, updated_at, deleted_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformMiddlewareInstance">
+    insert into platform_middleware_instance (id, cluster_id, `namespace`, code, `mode`, `name`,
+      display_name, `version`, spec_json, `status`, message, tenant_id, created_by, created_at,
+      updated_at, deleted_at)
+    values (#{id,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR}, #{namespace,jdbcType=VARCHAR},
+      #{code,jdbcType=VARCHAR}, #{mode,jdbcType=VARCHAR}, #{name,jdbcType=VARCHAR},
+      #{displayName,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR}, #{specJson,jdbcType=LONGVARCHAR},
+      #{status,jdbcType=VARCHAR}, #{message,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR},
+      #{createdBy,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP},
+      #{deletedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformMiddlewareInstance">
+    update platform_middleware_instance
+    <set>
+      <if test="displayName != null">display_name = #{displayName,jdbcType=VARCHAR},</if>
+      <if test="specJson != null">spec_json = #{specJson,jdbcType=LONGVARCHAR},</if>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>
+      <if test="updatedAt != null">updated_at = #{updatedAt,jdbcType=TIMESTAMP},</if>
+      <if test="deletedAt != null">deleted_at = #{deletedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <select id="selectByPrimaryKey" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_instance
+    where id = #{id,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectByCluster" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_instance
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and deleted_at is null
+    <if test="code != null and code != ''">
+      and code = #{code,jdbcType=VARCHAR}
+    </if>
+    order by created_at desc
+  </select>
+
+  <update id="softDelete">
+    update platform_middleware_instance
+    set deleted_at = now(), updated_at = now()
+    where id = #{id,jdbcType=VARCHAR}
+      and deleted_at is null
+  </update>
+</mapper>

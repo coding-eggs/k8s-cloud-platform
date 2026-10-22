@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformMiddlewareOperatorMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformMiddlewareOperator">
+    <id     column="id"            jdbcType="VARCHAR"   property="id" />
+    <result column="cluster_id"    jdbcType="VARCHAR"   property="clusterId" />
+    <result column="code"          jdbcType="VARCHAR"   property="code" />
+    <result column="chart_version" jdbcType="VARCHAR"   property="chartVersion" />
+    <result column="status"        jdbcType="VARCHAR"   property="status" />
+    <result column="message"       jdbcType="VARCHAR"   property="message" />
+    <result column="installed_at"  jdbcType="TIMESTAMP" property="installedAt" />
+    <result column="updated_at"    jdbcType="TIMESTAMP" property="updatedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, code, chart_version, `status`, message, installed_at, updated_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformMiddlewareOperator">
+    insert into platform_middleware_operator (id, cluster_id, code, chart_version, `status`,
+      message, installed_at, updated_at)
+    values (#{id,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR}, #{code,jdbcType=VARCHAR},
+      #{chartVersion,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR}, #{message,jdbcType=VARCHAR},
+      #{installedAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformMiddlewareOperator">
+    update platform_middleware_operator
+    <set>
+      <if test="chartVersion != null">chart_version = #{chartVersion,jdbcType=VARCHAR},</if>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>
+      <if test="installedAt != null">installed_at = #{installedAt,jdbcType=TIMESTAMP},</if>
+      <if test="updatedAt != null">updated_at = #{updatedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <select id="selectByPrimaryKey" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_operator
+    where id = #{id,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectByClusterAndCode" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_operator
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and code = #{code,jdbcType=VARCHAR}
+  </select>
+
+  <select id="selectByCluster" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_operator
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+  </select>
+</mapper>
