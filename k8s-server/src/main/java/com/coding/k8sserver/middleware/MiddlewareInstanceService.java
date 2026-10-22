@@ -42,13 +42,16 @@ public class MiddlewareInstanceService {
 
     private final ResourceAccessResolver accessResolver;
     private final KubernetesClientFactory clients;
+    private final NacosChartInstaller nacos;
     private final Map<String, MiddlewareAdapter> adapters;
 
     public MiddlewareInstanceService(ResourceAccessResolver accessResolver,
                                      KubernetesClientFactory clients,
+                                     NacosChartInstaller nacos,
                                      List<MiddlewareAdapter> adapters) {
         this.accessResolver = accessResolver;
         this.clients = clients;
+        this.nacos = nacos;
         this.adapters = adapters.stream()
                 .collect(Collectors.toMap(MiddlewareAdapter::code, Function.identity()));
     }
@@ -58,6 +61,11 @@ public class MiddlewareInstanceService {
                 req.getTenantId(), req.getClusterId(), req.getNamespace());
         KubernetesClient client = clientOf(req.getClusterId(), ctx);
         assertQuota(req);
+
+        if (isNacos(req.getCode())) {
+            nacos.create(req);
+            return;
+        }
 
         MiddlewareAdapter adapter = adapter(req.getCode());
         List<MiddlewareAdapter.CrSpec> created = new ArrayList<>();
@@ -91,6 +99,10 @@ public class MiddlewareInstanceService {
         var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
                 req.getTenantId(), req.getClusterId(), req.getNamespace());
         KubernetesClient client = clientOf(req.getClusterId(), ctx);
+        if (isNacos(req.getCode())) {
+            nacos.scale(req.getClusterId(), req.getCode());   // 直接抛出"暂不支持"
+            return;
+        }
         MiddlewareAdapter adapter = adapter(req.getCode());
 
         boolean applied = false;
@@ -121,8 +133,17 @@ public class MiddlewareInstanceService {
         var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
                 req.getTenantId(), req.getClusterId(), req.getNamespace());
         KubernetesClient client = clientOf(req.getClusterId(), ctx);
-        MiddlewareAdapter adapter = adapter(req.getCode());
 
+        if (isNacos(req.getCode())) {
+            nacos.delete(req.getClusterId(), req.getNamespace(), req.getName());
+            if (!req.isKeepPvc()) {
+                client.persistentVolumeClaims().inNamespace(req.getNamespace())
+                        .withLabel("app.kubernetes.io/instance", req.getName()).delete();
+            }
+            return;
+        }
+
+        MiddlewareAdapter adapter = adapter(req.getCode());
         for (CustomResourceDefinitionContext crd : adapter.contexts()) {
             deleteQuietly(client, crd, req.getNamespace(), req.getName());
         }
@@ -142,6 +163,11 @@ public class MiddlewareInstanceService {
         var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
                 req.getTenantId(), req.getClusterId(), req.getNamespace());
         KubernetesClient client = clientOf(req.getClusterId(), ctx);
+
+        if (isNacos(req.getCode())) {
+            return nacosStatus(client, req);
+        }
+
         MiddlewareAdapter adapter = adapter(req.getCode());
 
         List<MiddlewareStatusResultDTO> out = new ArrayList<>();
@@ -183,6 +209,43 @@ public class MiddlewareInstanceService {
     }
 
     // ==================== 内部 ====================
+
+    private static boolean isNacos(String code) {
+        return "nacos".equals(code);
+    }
+
+    /** Nacos 不是 CR：有没有对象看 Service 在不在，就绪看 Pod。 */
+    private List<MiddlewareStatusResultDTO> nacosStatus(KubernetesClient client, MiddlewareStatusRequestDTO req) {
+        List<MiddlewareStatusResultDTO> out = new ArrayList<>();
+        for (String name : req.getNames()) {
+            MiddlewareStatusResultDTO dto = new MiddlewareStatusResultDTO();
+            dto.setName(name);
+            boolean exists = client.services().inNamespace(req.getNamespace()).withName(name).get() != null;
+            if (!exists) {
+                dto.setStatus("FAILED");
+                dto.setMessage("实例不存在（release 可能已被删除）");
+                out.add(dto);
+                continue;
+            }
+            List<Pod> pods = client.pods().inNamespace(req.getNamespace())
+                    .withLabel("app.kubernetes.io/instance=" + name).list().getItems();
+            long ready = pods.stream().filter(MiddlewareInstanceService::podReady).count();
+            dto.setReplicas(pods.size());
+            dto.setReadyReplicas((int) ready);
+            if (pods.isEmpty()) {
+                dto.setStatus("CREATING");
+                dto.setMessage("等待 Pod 创建");
+            } else if (ready == pods.size()) {
+                dto.setStatus("READY");
+                dto.setMessage("运行中");
+            } else {
+                dto.setStatus("DEGRADED");
+                dto.setMessage(ready + "/" + pods.size() + " 就绪");
+            }
+            out.add(dto);
+        }
+        return out;
+    }
 
     private KubernetesClient clientOf(String clusterId, ResourceAccessResolver.AccessContext ctx) {
         KubernetesClient client = ctx.adminMode()
