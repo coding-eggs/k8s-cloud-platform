@@ -44,6 +44,9 @@ public class MiddlewareCreateRequestDTO {
     /** 是否启用 TLS（自签证书）；null/true = 开启。目前只有 Elasticsearch/Kibana 支持关闭 */
     private Boolean tls;
 
+    /** Elasticsearch：是否安装 IK 中文分词器 */
+    private Boolean ik;
+
     /** 平台生成的初始密码；只用于创建 Secret，不落库、不记日志 */
     private String password;
 

@@ -311,6 +311,7 @@ public class MiddlewareService {
             dto.setStorageClass(req.getStorageClass());
             dto.setKibana(Boolean.TRUE.equals(req.getKibana()));
             dto.setTls(!Boolean.FALSE.equals(req.getTls()));   // 缺省开
+            dto.setIk(Boolean.TRUE.equals(req.getIk()));
             dto.setPassword(randomPassword());
             dto.setTenantId(tenantId);
             client.create(req.getCode(), dto);

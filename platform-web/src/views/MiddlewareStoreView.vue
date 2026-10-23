@@ -171,9 +171,10 @@ function resetForm(item: MiddlewareCatalogItem): void {
   }
   // 版本从后端下发的清单里选（清单为空 = 不展示）
   f.version = item.versions?.[0] ?? ''
-  // ES 默认不勾 Kibana、默认开 HTTPS
+  // ES 默认不勾 Kibana、默认开 HTTPS、默认不装 IK
   f.kibana = false
   f.tls = true
+  f.ik = false
   form.value = f
   formUnits.value = units
   // 单节点/单实例形态：把节点数直接钉成固定值
@@ -260,6 +261,7 @@ async function submitCreate(): Promise<void> {
       storageClass: form.value.storageClass || undefined,
       kibana: createItem.value.code === 'elasticsearch' ? !!form.value.kibana : undefined,
       tls: createItem.value.code === 'elasticsearch' ? !!form.value.tls : undefined,
+      ik: createItem.value.code === 'elasticsearch' ? !!form.value.ik : undefined,
       replicasPerShard: createItem.value.code === 'redis' && createMode.value === 'CLUSTER'
         ? (form.value.replicasPerShard ?? 1)
         : undefined,
@@ -603,6 +605,12 @@ onBeforeUnmount(() => {
           <el-switch v-model="form.tls" active-text="启用 HTTPS（自签证书）" />
           <div class="mw-form-help">
             关闭后 Elasticsearch 与 Kibana 都走明文 http，仅建议内网测试使用
+          </div>
+        </el-form-item>
+        <el-form-item v-if="createItem?.code === 'elasticsearch'" label="IK 分词器">
+          <el-switch v-model="form.ik" active-text="安装 IK 中文分词器" />
+          <div class="mw-form-help">
+            创建时用 initContainer 下载 analysis-ik（版本与 ES 一致）；集群 Pod 需要能访问 get.infini.cloud
           </div>
         </el-form-item>
         <el-form-item v-if="createItem?.code === 'elasticsearch'" label="Kibana">

@@ -32,6 +32,11 @@
   `实例数`），不再一律叫「节点数」；Redis 集群形态额外给「每个主节点的副本数」（默认 1，0 = 不配备份，
   映射到 `redisFollower.replicas` = 主节点数 × 每个主节点的副本数，值记在 CR 注解
   `platform.coding/redis-replicas-per-shard`，扩主节点时按它同步副本总数）；
+- Elasticsearch 表单有「安装 IK 中文分词器」开关（默认关）：开启后用 initContainer 从
+  `get.infini.cloud/elasticsearch/analysis-ik/<版本>` 下载并解压到共享 emptyDir 的 `plugins/analysis-ik`。
+  ⚠️ **不要用 `bin/elasticsearch-plugin install`**：它会对 config 目录 chown，而 ECK 默认
+  `runAsNonRoot` + drop ALL，容器内必然 `Operation not permitted`；下载 zip 直接解压才可行。
+  该 initContainer 必须带资源（配额要求），且集群 Pod 需要能访问 get.infini.cloud（离线集群要换内网源）。
 - Elasticsearch 表单有「同时部署 Kibana」开关：勾选后平台额外建一个同名 Kibana CR（`elasticsearchRef` 指向该实例）；
   Kibana 的 `status.health` 非 green 时，实例状态降级并带原因，不会因为 ES 本身绿就报「运行中」。
 

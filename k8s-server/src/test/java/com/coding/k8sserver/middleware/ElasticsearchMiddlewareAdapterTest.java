@@ -197,6 +197,42 @@ class ElasticsearchMiddlewareAdapterTest {
     }
 
     @Test
+    void ikInstallsViaInitContainerIntoASharedPluginsVolume() {
+        var r = req(1);
+        r.setIk(true);
+
+        var res = adapter.buildCreate(r).get(0).resource();
+        @SuppressWarnings("unchecked")
+        var podSpec = (Map<String, Object>) ((Map<String, Object>) ((List<?>) spec(res).get("nodeSets")).get(0)
+                instanceof Map<?, ?> ns ? ((Map<String, Object>) ns).get("podTemplate") : null);
+        @SuppressWarnings("unchecked")
+        var pod = (Map<String, Object>) podSpec.get("spec");
+
+        @SuppressWarnings("unchecked")
+        var inits = (List<Map<String, Object>>) pod.get("initContainers");
+        assertThat(inits).hasSize(1);
+        assertThat(inits.get(0)).containsEntry("name", "install-ik");
+        assertThat(inits.get(0).get("image")).isEqualTo("docker.elastic.co/elasticsearch/elasticsearch:9.5.0");
+        assertThat((String) inits.get(0).get("command").toString())
+                .contains("get.infini.cloud/elasticsearch/analysis-ik/9.5.0");
+        assertThat(inits.get(0).get("resources")).isNotNull();   // 配额要求 init 容器也有资源
+        assertThat((List<?>) pod.get("volumes")).hasSize(1);
+        @SuppressWarnings("unchecked")
+        var containers = (List<Map<String, Object>>) pod.get("containers");
+        assertThat(containers.get(0).get("volumeMounts")).isNotNull();
+    }
+
+    @Test
+    void ikIsOffByDefault() {
+        @SuppressWarnings("unchecked")
+        var nodeSet = (Map<String, Object>) ((List<?>) spec(adapter.buildCreate(req(1)).get(0).resource())
+                .get("nodeSets")).get(0);
+        @SuppressWarnings("unchecked")
+        var pod = (Map<String, Object>) ((Map<String, Object>) nodeSet.get("podTemplate")).get("spec");
+        assertThat(pod).doesNotContainKey("initContainers");
+    }
+
+    @Test
     void selectorsUseEckLabels() {
         assertThat(adapter.statusSelector("mw-es-x", "Elasticsearch"))
                 .isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");

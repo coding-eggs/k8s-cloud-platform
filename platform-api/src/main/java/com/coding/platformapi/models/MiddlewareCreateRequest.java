@@ -26,6 +26,9 @@ public class MiddlewareCreateRequest {
 
     /** 是否启用 TLS（ECT 自签证书）；缺省 true。仅 Elasticsearch/Kibana 支持关闭 */
     private Boolean tls;
+
+    /** Elasticsearch：是否安装 IK 中文分词器（initContainer 下载 analysis-ik） */
+    private Boolean ik;
     /** 仅管理员代管轨使用；租户轨以 token 为准 */
     private String tenantId;
 }

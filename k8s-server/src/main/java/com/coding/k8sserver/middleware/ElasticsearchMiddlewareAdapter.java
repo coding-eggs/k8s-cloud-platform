@@ -31,6 +31,16 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
     private static final String VERSION = "v1";
     private static final String DEFAULT_ES_VERSION = "9.5.0";
 
+    /** ES 官方镜像前缀（initContainer 装插件用，必须与实例同版本） */
+    private static final String ES_IMAGE_PREFIX = "docker.elastic.co/elasticsearch/elasticsearch:";
+    /** IK 官方分发地址（infinilabs），路径末尾拼 ES 版本 */
+    static final String IK_DOWNLOAD_PREFIX = "https://get.infini.cloud/elasticsearch/analysis-ik/";
+    static final String PLUGINS_VOLUME = "elasticsearch-plugins";
+    /** initContainer 也要写资源：命名空间有 limits 配额时，没资源的容器会被直接拒 */
+    static final Map<String, Object> INIT_CONTAINER_RESOURCES = Map.of(
+            "requests", Map.of("cpu", "100m", "memory", "128Mi"),
+            "limits", Map.of("cpu", "500m", "memory", "512Mi"));
+
     /** 关掉自签证书 = 该层用明文 HTTP */
     private static Map<String, Object> httpWithoutTls() {
         return Map.of("tls", Map.of("selfSignedCertificate", Map.of("disabled", true)));
@@ -87,6 +97,27 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         container.put("resources", resourcesOf(req));
         Map<String, Object> podSpec = new LinkedHashMap<>();
         podSpec.put("containers", new java.util.ArrayList<>(List.of(container)));
+        if (Boolean.TRUE.equals(req.getIk())) {
+            // IK 不随官方镜像发布：用一个 initContainer 下载到共享 emptyDir，再挂给 ES 容器
+            //（集群 Pod 能出网；离线集群需要改成内部镜像源）
+            Map<String, Object> pluginsVolume = Map.of("name", PLUGINS_VOLUME, "emptyDir", Map.of());
+            Map<String, Object> pluginsMount = Map.of("name", PLUGINS_VOLUME,
+                    "mountPath", "/usr/share/elasticsearch/plugins");
+            Map<String, Object> init = new LinkedHashMap<>();
+            init.put("name", "install-ik");
+            init.put("image", ES_IMAGE_PREFIX + version);
+            // 不用 elasticsearch-plugin install：它会对 config 目录 chown，容器是非 root（ECK 默认
+            // runAsNonRoot + drop ALL），必然 Operation not permitted。直接下载 zip 解到 plugins 目录即可。
+            init.put("command", List.of("sh", "-c",
+                    "set -e; cd /usr/share/elasticsearch/plugins; "
+                            + "curl -fsSL --retry 3 -o ik.zip " + IK_DOWNLOAD_PREFIX + version + "; "
+                            + "mkdir -p analysis-ik; unzip -q -o ik.zip -d analysis-ik; rm -f ik.zip"));
+            init.put("resources", INIT_CONTAINER_RESOURCES);
+            init.put("volumeMounts", new java.util.ArrayList<>(List.of(pluginsMount)));
+            podSpec.put("initContainers", new java.util.ArrayList<>(List.of(init)));
+            podSpec.put("volumes", new java.util.ArrayList<>(List.of(pluginsVolume)));
+            container.put("volumeMounts", new java.util.ArrayList<>(List.of(pluginsMount)));
+        }
         Map<String, Object> podTemplate = new LinkedHashMap<>();
         podTemplate.put("spec", podSpec);
 
