@@ -547,7 +547,7 @@ onBeforeUnmount(() => {
       </el-form>
       <p class="mw-form-note">
         <template v-if="createItem?.code === 'redis'">
-          初始密码由平台生成并写入同命名空间的 Secret（{{ '<名称>-credentials' }}）。
+          初始密码由平台生成并写入同命名空间的 Secret（&lt;名称&gt;-credentials）。
         </template>
         <template v-else-if="createItem?.code === 'nacos'">
           Nacos 的鉴权由 chart 控制，默认未开启；对外暴露前请自行配置鉴权。
