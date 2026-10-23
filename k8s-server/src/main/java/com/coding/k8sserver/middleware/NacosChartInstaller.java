@@ -113,10 +113,11 @@ public class NacosChartInstaller {
             sb.append("    resources:\n");
             sb.append("      requests:\n");
             sb.append("        storage: ").append(req.getStorageSize()).append('\n');
-            // chart 默认 storageClassName: manual —— 必须显式覆盖；留空写成空串（= 用集群默认 SC）
-            sb.append("    storageClassName: \"")
-                    .append(req.getStorageClass() == null ? "" : req.getStorageClass().trim())
-                    .append("\"\n");
+            // chart 默认 storageClassName: manual —— 必须显式覆盖。
+            // ⚠️ 留空要写 null，不能写空串 "": 空串在 K8s 里表示"不申请 StorageClass"，
+            // PVC 会永远 Pending（真集群验证踩过）；null 才是"用集群默认 SC"。
+            String sc = req.getStorageClass() == null ? "" : req.getStorageClass().trim();
+            sb.append("    storageClassName: ").append(sc.isEmpty() ? "null" : "\"" + sc + "\"").append('\n');
         }
         // chart 默认 NodePort/30000：多实例会撞端口，必须固定 ClusterIP
         sb.append("service:\n");

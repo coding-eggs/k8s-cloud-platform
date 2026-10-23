@@ -100,6 +100,28 @@ class MiddlewareOperatorInstallerTest {
     }
 
     @Test
+    void legacyCrdsWithoutAReleaseAreNotReportedInstalled() {
+        // 真集群验证：ECK 的 CRD 是 51 天前别人装的、operator 早已不在；
+        // 只看 CRD 存在会把这一条误报成「已安装」，卡片上的按钮语义就反了
+        var installer = new MiddlewareOperatorInstaller(helm, charts, clients,
+                new MiddlewareOperatorCatalog()) {
+            @Override
+            io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition crdOrNull(
+                    io.fabric8.kubernetes.client.KubernetesClient client, String name) {
+                return mock(io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition.class);
+            }
+        };
+        when(clients.adminKubeconfig("c1")).thenReturn("kc");
+        when(helm.manifest(any(), any(), any())).thenReturn(new HelmResult(false, 1, "release: not found"));
+
+        var status = installer.status("c1", "elasticsearch");
+
+        assertThat(status.isInstalled()).isFalse();
+        assertThat(status.isReady()).isFalse();
+        assertThat(status.getMessage()).contains("尚未安装");
+    }
+
+    @Test
     void unknownCodeIsRejected() {
         assertThatThrownBy(() -> installer.install("c1", "minio"))
                 .hasMessageContaining("不支持");

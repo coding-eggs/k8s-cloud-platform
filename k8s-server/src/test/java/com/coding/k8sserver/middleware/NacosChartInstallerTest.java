@@ -52,7 +52,8 @@ class NacosChartInstallerTest {
                 .contains("type: embedded")
                 .contains("type: ClusterIP")
                 .contains("storage: 5Gi")
-                .contains("storageClassName: \"\"")
+                // 留空必须是 null（= 用集群默认 SC）；写成空串 "": 真集群上 PVC 永远 Pending
+                .contains("storageClassName: null")
                 .contains("enabled: true")
                 .contains("cpu: 200m");
     }

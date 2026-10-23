@@ -29,7 +29,8 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
 
     private static final String GROUP = "kafka.strimzi.io";
     private static final String VERSION = "v1";
-    private static final String DEFAULT_KAFKA_VERSION = "4.4.0";
+    /** Strimzi 1.3.0 支持 4.2.x / 4.3.x；写 4.4.0 会被 operator 直接拒（UnsupportedKafkaVersionException） */
+    private static final String DEFAULT_KAFKA_VERSION = "4.3.1";
 
     static final CustomResourceDefinitionContext KAFKA = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION).withKind("Kafka")
@@ -70,6 +71,11 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
         pool.put("storage", Map.of("type", "jbod", "volumes", List.of(volume)));
         pool.put("resources", resourcesOf(req));
         GenericKubernetesResource poolRes = resource(req, "KafkaNodePool", req.getName(), pool);
+        // Strimzi 按标签 strimzi.io/cluster 关联 NodePool 与 Kafka；只靠 CR 同名不算数
+        //（漏了它 Kafka 永远 NotReady：No KafkaNodePools found）
+        Map<String, String> poolLabels = new LinkedHashMap<>(poolRes.getMetadata().getLabels());
+        poolLabels.put("strimzi.io/cluster", req.getName());
+        poolRes.getMetadata().setLabels(poolLabels);
 
         int rf = Math.min(replicas, 3);
         Map<String, Object> kafka = new LinkedHashMap<>();
@@ -114,7 +120,7 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
     }
 
     @Override
-    public String statusSelector(String name) {
+    public String statusSelector(String name, String kind) {
         // strimzi.io/name=<cluster>-kafka 只命中 broker/controller Pod，不把 Entity Operator 算进来
         return "strimzi.io/cluster=" + name + ",strimzi.io/name=" + name + "-kafka";
     }

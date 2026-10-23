@@ -115,8 +115,23 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
     }
 
     @Override
-    public String statusSelector(String name) {
+    public String statusSelector(String name, String kind) {
         return "elasticsearch.k8s.elastic.co/cluster-name=" + name;
+    }
+
+    @Override
+    public Integer desiredPods(GenericKubernetesResource live, String kind) {
+        Object nodeSets = specOf(live).get("nodeSets");
+        if (!(nodeSets instanceof List<?> list) || list.isEmpty()) {
+            return null;
+        }
+        int sum = 0;
+        for (Object ns : list) {
+            if (ns instanceof Map<?, ?> m && m.get("count") instanceof Number n) {
+                sum += n.intValue();
+            }
+        }
+        return sum > 0 ? sum : null;
     }
 
     @Override

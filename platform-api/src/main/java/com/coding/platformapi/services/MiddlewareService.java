@@ -71,6 +71,7 @@ public class MiddlewareService {
     // ==================== 目录 ====================
 
     public List<MiddlewareCatalogItemDTO> catalog(String clusterId, String tenantId) {
+        requireCluster(clusterId);
         List<MiddlewareOperatorStatusDTO> stats = client.operatorStatus(statusRequest(clusterId));
         List<PlatformMiddlewareInstance> all = instances.selectByCluster(clusterId, null);
 
@@ -114,6 +115,7 @@ public class MiddlewareService {
     // ==================== 实例 ====================
 
     public List<PlatformMiddlewareInstance> list(String clusterId, String code, String tenantId) {
+        requireCluster(clusterId);
         List<PlatformMiddlewareInstance> rows = instances.selectByCluster(clusterId, code).stream()
                 .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
                 .toList();
@@ -138,6 +140,9 @@ public class MiddlewareService {
             req.setCode(first.getCode());
             req.setNamespace(first.getNamespace());
             req.setNames(group.stream().map(PlatformMiddlewareInstance::getName).toList());
+            // 名字→id：k8s-server 侧用实例标签找 Pod（Redis 哨兵的数据/哨兵 Pod 标签不同）
+            req.setInstanceIds(group.stream().collect(java.util.stream.Collectors.toMap(
+                    PlatformMiddlewareInstance::getName, PlatformMiddlewareInstance::getId, (a, b) -> a)));
             req.setTenantId(first.getTenantId());
             var result = client.status(first.getCode(), req);
             if (result == null || result.isEmpty()) {
@@ -326,6 +331,17 @@ public class MiddlewareService {
         cleanupStale(30);
     }
 
+    /**
+     * 运行期也要回收：create 请求被中断（客户端断开/线程被杀）时 {@code finish} 不会执行，
+     * 那条 PENDING 的 {@code running_lock} 会让该实例永远"已有进行中的操作"、连删除都做不了。
+     * 真集群验证踩过：只能靠重启 platform-api 才能解锁。
+     */
+    @org.springframework.scheduling.annotation.Scheduled(
+            fixedDelayString = "${platform.middleware.operation.cleanup-interval:5m}")
+    public void reapStaleOperations() {
+        cleanupStale(30);
+    }
+
     public void cleanupStale(int minutes) {
         for (PlatformMiddlewareOperation op : operations.selectStaleRunning(minutes)) {
             op.setStatus("UNKNOWN");
@@ -351,6 +367,13 @@ public class MiddlewareService {
     private void assertOwned(PlatformMiddlewareInstance instance, String tenantId) {
         if (tenantId != null && !tenantId.equals(instance.getTenantId())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "无权操作该实例");
+        }
+    }
+
+    /** 缺 clusterId 时给明确错误，而不是让 k8s 调用抛出去变成「服务端异常」。 */
+    private static void requireCluster(String clusterId) {
+        if (isBlank(clusterId)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "请选择集群");
         }
     }
 

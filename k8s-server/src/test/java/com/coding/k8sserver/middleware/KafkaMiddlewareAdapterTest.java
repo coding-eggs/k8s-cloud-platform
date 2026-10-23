@@ -59,6 +59,26 @@ class KafkaMiddlewareAdapterTest {
     }
 
     @Test
+    void nodePoolCarriesStrimziClusterLabel() {
+        // 真集群验证：Strimzi 按标签 strimzi.io/cluster 找 NodePool，只靠同名不算数
+        //（漏了它 Kafka 永远 NotReady：No KafkaNodePools found）
+        var out = adapter.buildCreate(req(3));
+
+        assertThat(byKind(out, "KafkaNodePool").getMetadata().getLabels())
+                .containsEntry("strimzi.io/cluster", "mw-kafka-abc12345")
+                .containsEntry("platform.coding/managed-by", "middleware");
+    }
+
+    @Test
+    void defaultKafkaVersionIsSupportedByThePinnedOperator() {
+        // Strimzi 1.3.0 支持到 4.3.1；写 4.4.0 会被 operator 拒绝（UnsupportedKafkaVersionException）
+        var out = adapter.buildCreate(req(3));
+
+        assertThat((Map<String, Object>) spec(byKind(out, "Kafka")).get("kafka"))
+                .containsEntry("version", "4.3.1");
+    }
+
+    @Test
     void kraftStorageUsesSharedMetadata() {
         var out = adapter.buildCreate(req(3));
         @SuppressWarnings("unchecked")
@@ -89,7 +109,7 @@ class KafkaMiddlewareAdapterTest {
 
     @Test
     void statusSelectorExcludesEntityOperatorPods() {
-        assertThat(adapter.statusSelector("mw-kafka-x"))
+        assertThat(adapter.statusSelector("mw-kafka-x", "Kafka"))
                 .isEqualTo("strimzi.io/cluster=mw-kafka-x,strimzi.io/name=mw-kafka-x-kafka");
         assertThat(adapter.pvcSelector("mw-kafka-x", "mwi_1")).isEqualTo("strimzi.io/cluster=mw-kafka-x");
     }

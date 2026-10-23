@@ -2,7 +2,8 @@
 
 > 设计：[2026-10-22-middleware-store-design.md](../superpowers/specs/2026-10-22-middleware-store-design.md)
 > 计划：[批①-1](../superpowers/plans/2026-10-22-middleware-store-batch1.md)、[批①-2](../superpowers/plans/2026-10-22-middleware-store-batch2.md)
-> 状态：批①-1（底座 + Redis）与批①-2（MySQL/Kafka/ES + Nacos）已实施，**待真集群逐款验证**；PostgreSQL/RabbitMQ 在批②。
+> 状态：批①-1（底座 + Redis）与批①-2（MySQL/Kafka/ES + Nacos）已实施，**2026-10-23 真集群验证**（redis 单节点/哨兵、
+> mysql 单节点、kafka 三 broker、nacos 单节点均跑通；ES 待集群里 51 天前的旧 ECK 资源处理后再验）；PostgreSQL/RabbitMQ 在批②。
 
 ## 1. 可用的中间件
 
@@ -43,11 +44,14 @@
 
 | 中间件 | 镜像来源 |
 |---|---|
-| Redis | `quay.io/opstree/redis-operator`、`quay.io/opstree/redis` |
-| MySQL | `percona/percona-server-mysql-operator`、`percona/percona-server:8.4`、`percona/percona-haproxy` |
+| Redis | `quay.io/opstree/redis-operator`、`quay.io/opstree/redis`（数据）、`quay.io/opstree/redis-sentinel`（哨兵） |
+| MySQL | `percona/percona-server-mysql-operator`、`percona/percona-server:8.4`、`percona/percona-xtradb-cluster-operator:1.14.1-haproxy` |
 | Kafka | `quay.io/strimzi/operator`、`quay.io/strimzi/kafka` |
 | Elasticsearch | `docker.elastic.co/eck/eck-operator`、`docker.elastic.co/elasticsearch/elasticsearch` |
 | Nacos | `nacos/nacos-server:v3.2.4` |
+
+> ⚠️ Percona 没有 `percona/percona-haproxy` 这个仓库；HAProxy 入口镜像在 PXC operator 的 `-haproxy` tag 里。
+> 哨兵必须用 `redis-sentinel` 镜像，用 `redis` 镜像会以 standalone 起来、30s 后被探针判死循环重启。
 
 ## 4. 常见失败
 
@@ -57,6 +61,7 @@
 | 安装 Operator 报 CRD 被占用 | 集群里已有别人装的同名 CRD；先清理或改用平台安装 |
 | 创建实例 403 | 租户 RBAC 模板没重下发（批①-1 部署第 2 步） |
 | 「命名空间配额不足」 | ResourceQuota 的 requests/limits 不够；提示里给了差额 |
+| MySQL HAProxy Pod 起不来 | 配额要求每个容器都写 requests/limits，而 Operator 追加的 `haproxy-init` / `mysql-monit` 侧车没有资源字段 —— **配了 `limits.*` 配额的命名空间还需要一个 LimitRange** 给未声明资源的容器兜底（真集群验证实锤） |
 | MySQL 一直 Degraded | 组复制成员数不足或 PVC 不可调度；看 CR 的 `status` 与 Pod 事件 |
 | Kafka 起不来 | 检查 NodePool 是否有 `strimzi.io/node-pools: enabled` 注解（平台已自动加） |
 | ES 拒绝创建 | `version` 不在 ECK 支持范围；换一个受支持的版本 |

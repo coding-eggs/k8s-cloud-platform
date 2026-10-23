@@ -104,7 +104,9 @@ public class MiddlewareOperatorInstaller {
         MiddlewareOperatorStatusDTO out = new MiddlewareOperatorStatusDTO();
         out.setCode(code);
         out.setChartVersion(entry.chartVersion());
-        out.setInstalled(releaseExists || crds);
+        // 「已安装」只认本平台自己的 helm release：CRD 可能是别人早先装的（真集群上 ECK 就是），
+        // 把 CRD 存在算作已安装会让卡片状态与事实相反
+        out.setInstalled(releaseExists);
         out.setReady(ready);
         out.setMessage(ready ? "运行中"
                 : !releaseExists ? "Operator 尚未安装（helm release 不存在）"

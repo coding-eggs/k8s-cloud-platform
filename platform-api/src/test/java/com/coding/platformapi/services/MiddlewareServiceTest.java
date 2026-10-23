@@ -129,6 +129,23 @@ class MiddlewareServiceTest {
     }
 
     @Test
+    void catalogWithoutClusterIsRejectedWithAClearMessage() {
+        // 缺 clusterId 原先会一路打到 k8s 调用，最终只回一个「服务端异常」
+        assertThatThrownBy(() -> service.catalog(null, null))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("请选择集群");
+    }
+
+    @Test
+    void staleOperationSweepIsScheduled() throws Exception {
+        // create 请求被中断时 finish 不会执行，running_lock 会让实例永远"已有进行中的操作"；
+        // 只有启动时回收不够，运行期必须也周期性扫
+        var method = MiddlewareService.class.getMethod("reapStaleOperations");
+        assertThat(method.getAnnotation(org.springframework.scheduling.annotation.Scheduled.class))
+                .isNotNull();
+    }
+
+    @Test
     void operationIsScopedToTheInstancesTenant() {
         PlatformMiddlewareOperation op = new PlatformMiddlewareOperation();
         op.setId(9L);

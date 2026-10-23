@@ -116,6 +116,7 @@ public class MiddlewareInstanceService {
                 continue;
             }
             adapter.applyScale(live, crd, req);
+            stripApplyMetadata(live);
             // 与仓内其它 CR 更新一致：SSA + forceConflicts（fetch-overlay 已保留未建模字段）
             client.genericKubernetesResources(crd)
                     .inNamespace(req.getNamespace())
@@ -197,28 +198,19 @@ public class MiddlewareInstanceService {
                 continue;
             }
             List<Pod> pods = client.pods().inNamespace(req.getNamespace())
-                    .withLabel(adapter.statusSelector(name)).list().getItems();
+                    // ⚠️ 必须用 withLabelSelector（整串 selector）；withLabel 单参是「按 key 存在」
+                    .withLabelSelector(adapter.statusSelector(name, live.getKind(), instanceIdOf(req, name)))
+                    .list().getItems();
             long ready = pods.stream().filter(MiddlewareInstanceService::podReady).count();
             dto.setReplicas(pods.size());
             dto.setReadyReplicas((int) ready);
-            if (pods.isEmpty()) {
-                // Operator 拒绝了规格（版本不支持、PVC 不可调度等）时只会写 condition，不建 Pod：
-                // 不读 CR status 就会永远显示「创建中」
-                String failure = crFailureMessage(live);
-                if (failure != null) {
-                    dto.setStatus("FAILED");
-                    dto.setMessage(failure);
-                } else {
-                    dto.setStatus("CREATING");
-                    dto.setMessage("等待 Pod 创建");
-                }
-            } else if (ready == pods.size()) {
-                dto.setStatus("READY");
-                dto.setMessage("运行中");
-            } else {
-                dto.setStatus("DEGRADED");
-                dto.setMessage(ready + "/" + pods.size() + " 就绪");
-            }
+            // 判定同时看 Pod 数与 CR 信号：只看「现存 Pod 是否全就绪」会把
+            // 「3 个 broker 只起来 2 个」判成 READY（真集群验证踩过）
+            var verdict = MiddlewareStatusEvaluator.evaluate(pods.size(), ready,
+                    adapter.desiredPods(live, live.getKind()),
+                    crInitializing(live), crFailureMessage(live));
+            dto.setStatus(verdict.status());
+            dto.setMessage(verdict.message());
             out.add(dto);
         }
         return out;
@@ -242,18 +234,52 @@ public class MiddlewareInstanceService {
                         && ("Ready".equals(cm.get("type")) || "Available".equals(cm.get("type")));
                 if (bad) {
                     Object msg = cm.get("message");
-                    Object reason = cm.get("reason");
-                    return msg != null ? String.valueOf(msg) : String.valueOf(reason);
+                    String text = msg == null ? "" : String.valueOf(msg).trim();
+                    if (text.isEmpty()) {
+                        // 空消息的 Ready=False 只是阶段信号（Percona bootstrap 期间就是这样），不当硬失败
+                        continue;
+                    }
+                    return text;
                 }
             }
         }
         return null;
     }
 
+    /** CR 是否处在初始化阶段（Operator 在 bootstrap / 滚动中）。 */
+    private static boolean crInitializing(GenericKubernetesResource res) {
+        Object status = res.getAdditionalProperties().get("status");
+        if (!(status instanceof Map<?, ?> st) || !(st.get("conditions") instanceof List<?> conditions)) {
+            return false;
+        }
+        for (Object c : conditions) {
+            if (c instanceof Map<?, ?> cm
+                    && "Initializing".equals(cm.get("type"))
+                    && "True".equals(cm.get("status"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ==================== 内部 ====================
 
     private static boolean isNacos(String code) {
         return "nacos".equals(code);
+    }
+
+    private static String instanceIdOf(MiddlewareStatusRequestDTO req, String name) {
+        return req.getInstanceIds() == null ? null : req.getInstanceIds().get(name);
+    }
+
+    /**
+     * SSA 前必须去掉 {@code metadata.managedFields}：把 GET 到的对象原样回写会被 apiserver 拒
+     * （{@code metadata.managedFields must be nil}，真集群验证踩过）。
+     */
+    static void stripApplyMetadata(GenericKubernetesResource live) {
+        if (live.getMetadata() != null) {
+            live.getMetadata().setManagedFields(null);
+        }
     }
 
     /** Nacos 不是 CR：有没有对象看 Service 在不在，就绪看 Pod。 */

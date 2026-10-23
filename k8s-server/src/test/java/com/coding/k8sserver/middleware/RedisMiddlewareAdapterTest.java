@@ -81,6 +81,51 @@ class RedisMiddlewareAdapterTest {
     }
 
     @Test
+    void sentinelCrUsesSentinelImage() {
+        // 真集群验证：sentinel CR 用 redis 镜像时，容器以 standalone 起不来（30s 后被 SIGTERM），
+        // 三个哨兵 Pod 永远 CrashLoop；必须用 redis-sentinel 镜像
+        var out = adapter.buildCreate(req("SENTINEL", 3));
+
+        assertThat(imageOf(out.get(0).resource())).isEqualTo("quay.io/opstree/redis:v7.0.15");
+        assertThat(imageOf(out.get(1).resource())).isEqualTo("quay.io/opstree/redis-sentinel:v7.0.15");
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object imageOf(GenericKubernetesResource res) {
+        Map<String, Object> kc = (Map<String, Object>) spec(res).get("kubernetesConfig");
+        return kc.get("image");
+    }
+
+    @Test
+    void sentinelStatusSelectorCoversSentinelPods() {
+        // 哨兵 Pod 打的是 app=<name>-sentinel：只看 app=<name> 会把 CrashLoop 的哨兵漏掉、误报 READY
+        assertThat(adapter.statusSelector("mw-redis-x", "RedisSentinel"))
+                .isEqualTo("app in (mw-redis-x,mw-redis-x-sentinel)");
+        assertThat(adapter.statusSelector("mw-redis-x", "Redis")).isEqualTo("app=mw-redis-x");
+        assertThat(adapter.statusSelector("mw-redis-x", "RedisReplication")).isEqualTo("app=mw-redis-x");
+    }
+
+    @Test
+    void desiredPodsCountsSentinelPods() {
+        var out = adapter.buildCreate(req("SENTINEL", 2));
+
+        // 数据节点从 RedisReplication 里读，哨兵固定 3 个另加
+        assertThat(adapter.desiredPods(out.get(0).resource(), "RedisReplication")).isEqualTo(5);
+        assertThat(adapter.desiredPods(adapter.buildCreate(req("STANDALONE", 1)).get(0).resource(), "Redis"))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void statusSelectorPrefersThePlatformInstanceLabel() {
+        // 集合式 selector 在 fabric8 里只命中数据 Pod（5 个只数到 2 个）；
+        // 两个 CR 的 Pod 都带平台实例标签，按它取最稳
+        assertThat(adapter.statusSelector("mw-redis-x", "RedisReplication", "mwi_9"))
+                .isEqualTo("platform.coding/middleware-instance=mwi_9");
+        // 没有 id 时退回按 app 标签（兼容手工调用）
+        assertThat(adapter.statusSelector("mw-redis-x", "Redis", null)).isEqualTo("app=mw-redis-x");
+    }
+
+    @Test
     void passwordIsReferencedBySecretNotInlined() {
         var r = req("STANDALONE", 1);
         r.setPassword("s3cret-should-not-leak");

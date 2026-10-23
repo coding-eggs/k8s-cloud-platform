@@ -38,6 +38,9 @@ const modeMinReplicas = computed(
   () => createItem.value?.modes.find((m) => m.mode === createMode.value)?.minReplicas ?? 1,
 )
 
+// Operator 页只列真正需要装 Operator 的条目（Nacos 走 chart，没有 Operator 可装）
+const operatorCatalog = computed(() => catalog.value.filter((i) => !i.chartBacked))
+
 // ---------------- 删除 ----------------
 const deleteVisible = ref(false)
 const deleting = ref(false)
@@ -345,7 +348,8 @@ onBeforeUnmount(() => {
 
       <!-- ============ Operator（管理员） ============ -->
       <el-tab-pane v-if="perm.isAdmin" label="Operator" name="operator">
-        <el-table :data="catalog" class="panel" empty-text="没有可安装的 Operator">
+        <!-- chart 安装的条目（Nacos）没有 Operator：留在表里会出现一个点了必然失败的「安装」按钮 -->
+        <el-table :data="operatorCatalog" class="panel" empty-text="没有可安装的 Operator">
           <el-table-column prop="name" label="中间件" width="160" />
           <el-table-column prop="code" label="code" width="140" />
           <el-table-column label="状态" width="140">

@@ -27,8 +27,22 @@ public interface MiddlewareAdapter {
     void applyScale(GenericKubernetesResource live, CustomResourceDefinitionContext context,
                     MiddlewareScaleRequestDTO req);
 
-    /** 实例产生的 Pod 的 label selector（状态判定用）。 */
-    String statusSelector(String name);
+    /**
+     * 实例产生的 Pod 的 label selector（状态判定用）。
+     *
+     * <p>{@code kind} 是本次判定找到的那个 CR 的 kind（Redis 哨兵形态有两个 CR，
+     * 哨兵 Pod 的 app 标签是 {@code <name>-sentinel}，必须按 kind 区分）。
+     */
+    String statusSelector(String name, String kind);
+
+    /**
+     * 带实例 id 的版本：能用平台自己的标签（{@code platform.coding/middleware-instance}）时优先用它。
+     * <p>Redis 哨兵形态的数据 Pod 是 {@code app=<name>}、哨兵 Pod 是 {@code app=<name>-sentinel}，
+     * 拼集合式 selector 在 fabric8 里只命中前者（真集群验证：5 个 Pod 只数到 2 个）。
+     */
+    default String statusSelector(String name, String kind, String instanceId) {
+        return statusSelector(name, kind);
+    }
 
     /**
      * 是否由平台生成并写入口令 Secret。
@@ -37,6 +51,14 @@ public interface MiddlewareAdapter {
      */
     default boolean usesPlatformPassword() {
         return true;
+    }
+
+    /**
+     * 该实例期望的 Pod 数（状态判定用）。返回 null = CR 里推不出来，
+     * 此时只能按现存 Pod 是否全就绪判定（Kafka 的期望值在 NodePool 里，见实现注释）。
+     */
+    default Integer desiredPods(GenericKubernetesResource live, String kind) {
+        return null;
     }
 
     /**

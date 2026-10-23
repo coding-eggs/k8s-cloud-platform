@@ -92,8 +92,15 @@ class ElasticsearchMiddlewareAdapterTest {
     }
 
     @Test
+    void desiredPodsFollowNodeSetCount() {
+        var res = adapter.buildCreate(req(3)).get(0).resource();
+
+        assertThat(adapter.desiredPods(res, "Elasticsearch")).isEqualTo(3);
+    }
+
+    @Test
     void selectorsUseEckLabels() {
-        assertThat(adapter.statusSelector("mw-es-x"))
+        assertThat(adapter.statusSelector("mw-es-x", "Elasticsearch"))
                 .isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");
         assertThat(adapter.pvcSelector("mw-es-x", "mwi_1"))
                 .isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");

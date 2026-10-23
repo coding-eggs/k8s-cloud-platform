@@ -31,6 +31,8 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
     private static final String GROUP = "ps.percona.com";
     private static final String VERSION = "v1";
     private static final String IMAGE = "percona/percona-server:8.4";
+    /** Percona 没有独立的 haproxy 仓库；入口镜像在 PXC operator 的 -haproxy tag 里 */
+    private static final String HAPROXY_IMAGE = "percona/percona-xtradb-cluster-operator:1.14.1-haproxy";
 
     static final CustomResourceDefinitionContext CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION)
@@ -61,13 +63,28 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> haproxy = new LinkedHashMap<>();
         haproxy.put("enabled", true);
         haproxy.put("size", size);
+        // CRD 校验要求启用 haproxy 时显式给 image（operator 本身不内置默认值）
+        haproxy.put("image", HAPROXY_IMAGE);
+        // 配额要求每个容器都写 requests/limits（真集群验证：不写会被 quota 挡住，HAProxy Pod 起不来）
+        haproxy.put("resources", resourcesOf(req));
+        Map<String, Object> router = new LinkedHashMap<>();
+        router.put("enabled", false);   // 默认启用；与 haproxy 同时开会直接被 CRD 拒
         Map<String, Object> proxy = new LinkedHashMap<>();
         proxy.put("haproxy", haproxy);
+        proxy.put("router", router);
 
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("mysql", mysql);
         // HAProxy 作为统一入口（主库写、副本读）
         spec.put("proxy", proxy);
+        // Group Replication 的 CRD 校验默认要求 size>=3（含代理 size>=2）；
+        // SINGLE 形态必须显式开 unsafeFlags，否则创建直接被 webhook 拒。
+        if (size < 3) {
+            Map<String, Object> unsafe = new LinkedHashMap<>();
+            unsafe.put("mysqlSize", true);
+            unsafe.put("proxySize", true);
+            spec.put("unsafeFlags", unsafe);
+        }
         return List.of(new CrSpec(CRD, resource(req, "PerconaServerMySQL", spec)));
     }
 
@@ -108,11 +125,29 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         resources.put("requests", nonNullMap("cpu", req.getCpuRequest(), "memory", req.getMemoryRequest()));
         resources.put("limits", nonNullMap("cpu", req.getCpuLimit(), "memory", req.getMemoryLimit()));
         mysql.put("resources", resources);
+        // HAProxy 的资源也要跟着改：配额按容器校验，不同步会在下次滚动时被 quota 挡住
+        Object proxyObj = spec.get("proxy");
+        if (proxyObj instanceof Map<?, ?> proxy
+                && ((Map<String, Object>) proxy).get("haproxy") instanceof Map<?, ?> haproxy) {
+            ((Map<String, Object>) haproxy).put("resources", resources);
+        }
     }
 
     @Override
-    public String statusSelector(String name) {
-        return "app.kubernetes.io/instance=" + name + ",app.kubernetes.io/component=mysql";
+    public String statusSelector(String name, String kind) {
+        // 数据 Pod 与 HAProxy Pod 都算实例的组成部分（HAProxy 是统一入口，它挂了这个实例就用不了）；
+        // Percona 给数据 Pod 打的 component 是 database（真集群验证确认），不要把 component 写死成 mysql
+        return "app.kubernetes.io/instance=" + name;
+    }
+
+    @Override
+    public Integer desiredPods(GenericKubernetesResource live, String kind) {
+        Object mysql = specOf(live).get("mysql");
+        if (mysql instanceof Map<?, ?> m && m.get("size") instanceof Number n) {
+            // 每个数据节点配一个 HAProxy（buildCreate 里 size 对齐）
+            return n.intValue() * 2;
+        }
+        return null;
     }
 
     @Override

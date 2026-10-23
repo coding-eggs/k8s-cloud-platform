@@ -33,6 +33,8 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
     static final String GROUP = "redis.redis.opstreelabs.in";
     static final String VERSION = "v1beta2";
     static final String DEFAULT_IMAGE = "quay.io/opstree/redis:v7.0.15";
+    /** 哨兵容器要的是 sentinel 镜像：用 redis 镜像会以 standalone 起来、随后被探针判死循环重启 */
+    static final String SENTINEL_IMAGE = "quay.io/opstree/redis-sentinel:v7.0.15";
 
     private static final int SENTINEL_COUNT = 3;
 
@@ -65,6 +67,9 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> sentinelSpec = baseSpec(req);
         sentinelSpec.put("clusterSize", SENTINEL_COUNT);
         sentinelSpec.put("redisSentinelConfig", Map.of("redisReplicationName", req.getName()));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> sentinelKc = (Map<String, Object>) sentinelSpec.get("kubernetesConfig");
+        sentinelKc.put("image", SENTINEL_IMAGE);   // 数据节点仍是 redis，哨兵必须是 redis-sentinel
         GenericKubernetesResource sentinel = resource(req, "RedisSentinel", sentinelSpec);
 
         List<CrSpec> out = new ArrayList<>();
@@ -187,9 +192,36 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
     }
 
     @Override
-    public String statusSelector(String name) {
-        // OT-Container-Kit 给实例 Pod 打的标签是 app=<CR 名>（真集群验证时确认）
+    public Integer desiredPods(GenericKubernetesResource live, String kind) {
+        if ("Redis".equals(kind)) {
+            return 1;
+        }
+        Object size = specOf(live).get("clusterSize");
+        if (!(size instanceof Number n)) {
+            return null;
+        }
+        // 只有哨兵形态用 RedisReplication，且它必然另起 3 个哨兵 Pod
+        return "RedisReplication".equals(kind) ? n.intValue() + SENTINEL_COUNT : n.intValue();
+    }
+
+    @Override
+    public String statusSelector(String name, String kind) {
+        // OT-Container-Kit 给实例 Pod 打的标签是 app=<CR 名>（真集群验证时确认）；
+        // 但 RedisSentinel 拉起的哨兵 Pod 是 app=<CR 名>-sentinel —— 只按 app=<name> 查，
+        // 哨兵全 CrashLoop 时仍会因为两个数据节点就绪而误报 READY。
+        if ("RedisSentinel".equals(kind)) {
+            return "app in (" + name + "," + name + "-sentinel)";
+        }
         return "app=" + name;
+    }
+
+    @Override
+    public String statusSelector(String name, String kind, String instanceId) {
+        // 两个 CR 的 Pod 都带平台实例标签，按它取最稳（集合式 selector 在 fabric8 里只命中一部分）
+        if (instanceId != null && !instanceId.isBlank()) {
+            return "platform.coding/middleware-instance=" + instanceId;
+        }
+        return statusSelector(name, kind);
     }
 
     @SuppressWarnings("unchecked")

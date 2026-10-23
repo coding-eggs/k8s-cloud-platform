@@ -109,8 +109,56 @@ class MysqlMiddlewareAdapterTest {
     }
 
     @Test
+    void singleNodeCarriesUnsafeFlags() {
+        // 真集群验证：Group Replication 的 size<3 被 CRD 校验直接拒（no such key: unsafeFlags）
+        var res = adapter.buildCreate(req("SINGLE", 1)).get(0).resource();
+        @SuppressWarnings("unchecked")
+        var unsafe = (Map<String, Object>) res.getAdditionalProperties().get("spec");
+        assertThat((Map<String, Object>) unsafe.get("unsafeFlags"))
+                .containsEntry("mysqlSize", true)
+                .containsEntry("proxySize", true);
+    }
+
+    @Test
+    void clusterDoesNotNeedUnsafeFlags() {
+        var res = adapter.buildCreate(req("CLUSTER", 3)).get(0).resource();
+        @SuppressWarnings("unchecked")
+        var spec = (Map<String, Object>) res.getAdditionalProperties().get("spec");
+        assertThat(spec.get("unsafeFlags")).isNull();
+    }
+
+    @Test
+    void proxyDisablesRouterAndPinsHaproxyImage() {
+        // 真集群验证：不显式关 router 会报「MySQL Router 与 HAProxy 不能同时启用」；
+        // haproxy 启用时 CRD 要求显式 image
+        var res = adapter.buildCreate(req("CLUSTER", 3)).get(0).resource();
+        @SuppressWarnings("unchecked")
+        var proxy = (Map<String, Object>) ((Map<String, Object>) res.getAdditionalProperties().get("spec"))
+                .get("proxy");
+        @SuppressWarnings("unchecked")
+        var haproxy = (Map<String, Object>) proxy.get("haproxy");
+        assertThat(haproxy).containsEntry("enabled", true);
+        assertThat((String) haproxy.get("image")).startsWith("percona/");
+        // 配额按容器校验：HAProxy 不写 resources 会被 quota 挡住（真集群验证）
+        assertThat(haproxy.get("resources")).isNotNull();
+        @SuppressWarnings("unchecked")
+        var router = (Map<String, Object>) proxy.get("router");
+        assertThat(router).containsEntry("enabled", false);
+    }
+
+    @Test
+    void desiredPodsCountMysqlAndHaproxy() {
+        var res = adapter.buildCreate(req("CLUSTER", 5)).get(0).resource();
+
+        // 5 个数据节点 + 5 个 HAProxy
+        assertThat(adapter.desiredPods(res, "PerconaServerMySQL")).isEqualTo(10);
+    }
+
+    @Test
     void statusSelectorTargetsMysqlPods() {
-        assertThat(adapter.statusSelector("mw-mysql-x"))
-                .isEqualTo("app.kubernetes.io/instance=mw-mysql-x,app.kubernetes.io/component=mysql");
+        // 真集群验证：Percona 给数据 Pod 打的 component 是 database（不是 mysql）；
+        // 这里按实例标签取全部 Pod，让 HAProxy 缺失也能被看见
+        assertThat(adapter.statusSelector("mw-mysql-x", "PerconaServerMySQL"))
+                .isEqualTo("app.kubernetes.io/instance=mw-mysql-x");
     }
 }
