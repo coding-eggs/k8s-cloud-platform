@@ -34,11 +34,11 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     {
       key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Mi',
-      default: 128, min: 16,
+      default: 128,
     },
     {
       key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Mi',
-      default: 512, min: 16,
+      default: 512,
     },
     {
       key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi',
@@ -51,9 +51,9 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
-    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1, min: 16 },
-    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4, min: 16 },
-    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 20, min: 1, help: '每个数据节点一块 PVC' },
+    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1 },
+    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4 },
+    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 20, help: '每个数据节点一块 PVC' },
   ],
   kafka: [
     {
@@ -61,9 +61,9 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
-    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 2, min: 16 },
-    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4, min: 16 },
-    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 30, min: 1, help: '每个 broker 一块 PVC' },
+    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 2 },
+    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4 },
+    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 30, help: '每个 broker 一块 PVC' },
   ],
   elasticsearch: [
     {
@@ -73,13 +73,13 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
     {
       key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi',
-      default: 2, min: 16,
+      default: 2,
     },
     {
       key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi',
-      default: 4, min: 16, help: '低于 3Gi 时 ES 9.x 容易 OOM',
+      default: 4, help: '低于 3Gi 时 ES 9.x 容易 OOM',
     },
-    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 30, min: 1 },
+    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 30 },
   ],
   nacos: [
     {
@@ -87,8 +87,8 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.2, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 1, step: 0.1, min: 0.1 },
-    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Mi', default: 512, min: 16 },
-    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1, min: 16 },
+    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Mi', default: 512 },
+    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1 },
     {
       key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi',
       default: 5, min: 1, placeholder: '留空 = 不持久化',
@@ -96,13 +96,13 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   ],
   postgresql: [
     {
-      key: 'replicas', label: '实例数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
+      key: 'replicas', label: '实例数', type: 'number', unit: 'count', default: 1, min: 1, max: 9,
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
-    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1, min: 16 },
-    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4, min: 16 },
-    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 20, min: 1, help: '每个实例一块 PVC' },
+    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1 },
+    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4 },
+    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 20, help: '每个实例一块 PVC' },
   ],
   rabbitmq: [
     {
@@ -110,9 +110,9 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.3, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 1, step: 0.1, min: 0.1 },
-    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Mi', default: 512, min: 16 },
-    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1, min: 16 },
-    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 10, min: 1, help: '每个节点一块 PVC' },
+    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Mi', default: 512 },
+    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1 },
+    { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 10, help: '每个节点一块 PVC' },
   ],
 }
 

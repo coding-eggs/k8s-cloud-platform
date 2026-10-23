@@ -192,6 +192,26 @@ function openCreate(item: MiddlewareCatalogItem): void {
   createVisible.value = true
 }
 
+/** size 字段的最小值随单位变：Mi 至少 16，Gi 至少 1（不换算就是这个数） */
+function unitMin(field: MiddlewareField): number {
+  if (field.unit !== 'size') return field.min ?? 0
+  return (formUnits.value[field.key] ?? field.unitDefault ?? 'Gi') === 'Mi' ? 16 : 1
+}
+
+/** 切换单位时换算数值：Gi → Mi ×1024，Mi → Gi ÷1024，避免「128Mi」切成「128Gi」 */
+function changeUnit(field: MiddlewareField, next: 'Mi' | 'Gi'): void {
+  const prev = (formUnits.value[field.key] ?? field.unitDefault ?? 'Gi') as 'Mi' | 'Gi'
+  if (prev === next) return
+  const cur = Number(form.value[field.key] ?? 0)
+  if (Number.isFinite(cur) && cur > 0) {
+    // 只保留整数值：Gi → Mi 直接 ×1024；Mi → Gi 向上取整（512Mi → 1Gi），避免出现 0.5Gi 这类小数
+    form.value[field.key] = next === 'Mi'
+        ? Math.max(16, Math.round(cur * 1024))
+        : Math.max(1, Math.ceil(cur / 1024))
+  }
+  formUnits.value[field.key] = next
+}
+
 function onModeChange(): void {
   // 固定节点数的形态直接钉死；可变形态不满足下限时抬到下限
   if (modeFixedReplicas.value !== null) {
@@ -473,7 +493,7 @@ onBeforeUnmount(() => {
       width="960px"
       :close-on-click-modal="false"
     >
-      <el-form class="mw-create-form" label-width="120px" label-position="left">
+      <el-form class="mw-create-form" label-width="150px" label-position="left">
         <el-form-item label="形态">
           <div class="mw-mode-wrap">
             <el-radio-group v-model="createMode" @change="onModeChange">
@@ -512,14 +532,19 @@ onBeforeUnmount(() => {
             <el-input-number
               v-model="form[field.key]"
               :disabled="field.key === 'replicas' && modeFixedReplicas !== null"
-              :min="field.key === 'replicas' ? (modeFixedReplicas ?? modeMinReplicas) : (field.min ?? 0)"
+              :min="field.key === 'replicas' ? (modeFixedReplicas ?? modeMinReplicas) : unitMin(field)"
               :max="field.max ?? 9999"
               :step="field.step ?? 1"
               :precision="field.key === 'replicas' || field.unit === 'size' ? 0 : 2"
               controls-position="right"
             />
             <span v-if="field.unit === 'cpu'" class="mw-unit">核</span>
-            <el-select v-else-if="field.unit === 'size'" v-model="formUnits[field.key]" class="mw-unit-select">
+            <el-select
+              v-else-if="field.unit === 'size'"
+              :model-value="formUnits[field.key]"
+              class="mw-unit-select"
+              @update:model-value="(u: string) => changeUnit(field, u as 'Mi' | 'Gi')"
+            >
               <el-option label="Mi" value="Mi" />
               <el-option label="Gi" value="Gi" />
             </el-select>
