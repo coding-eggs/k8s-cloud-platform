@@ -6,6 +6,7 @@ import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
+import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 import org.springframework.stereotype.Component;
 
@@ -33,6 +34,14 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
     static final CustomResourceDefinitionContext CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION).withKind("Elasticsearch")
             .withPlural("elasticsearches").withScope("Namespaced").build();
+
+    /**
+     * Kibana 与 ES 同名（跨 CRD 不冲突）：删除/状态都按实例名逐个 context 找，
+     * 用 {@code <name>-kb} 这类派生名反而要额外记一份映射。
+     */
+    static final CustomResourceDefinitionContext KIBANA = new CustomResourceDefinitionContext.Builder()
+            .withGroup("kibana.k8s.elastic.co").withVersion(VERSION).withKind("Kibana")
+            .withPlural("kibanas").withScope("Namespaced").build();
 
     @Override
     public String code() {
@@ -81,18 +90,31 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("version", version);
         spec.put("nodeSets", new java.util.ArrayList<>(List.of(nodeSet)));
-        return List.of(new CrSpec(CRD, resource(req, "Elasticsearch", spec)));
+        List<CrSpec> out = new java.util.ArrayList<>();
+        out.add(new CrSpec(CRD, resource(req, GROUP + "/" + VERSION, "Elasticsearch", spec)));
+
+        if (Boolean.TRUE.equals(req.getKibana())) {
+            Map<String, Object> kibana = new LinkedHashMap<>();
+            kibana.put("version", version);
+            kibana.put("count", 1);
+            kibana.put("elasticsearchRef", Map.of("name", req.getName()));
+            out.add(new CrSpec(KIBANA, resource(req, "kibana.k8s.elastic.co/" + VERSION, "Kibana", kibana)));
+        }
+        return out;
     }
 
     @Override
     public List<CustomResourceDefinitionContext> contexts() {
-        return List.of(CRD);
+        return List.of(CRD, KIBANA);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public void applyScale(GenericKubernetesResource live, CustomResourceDefinitionContext context,
                            MiddlewareScaleRequestDTO req) {
+        if ("Kibana".equals(context.getKind())) {
+            return;   // Kibana 固定单副本，不随 ES 的节点数变化
+        }
         Map<String, Object> spec = specOf(live);
         Object nodeSetsObj = spec.get("nodeSets");
         if (!(nodeSetsObj instanceof List<?> list) || list.isEmpty() || !(list.get(0) instanceof Map<?, ?>)) {
@@ -112,6 +134,42 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
                 }
             }
         }
+    }
+
+    /** Kibana 是可选附属：ES 全绿但 Kibana 起不来时，实例状态要降级而不是报「运行中」。 */
+    @Override
+    public String accessoryProblem(KubernetesClient client, String namespace, String name) {
+        try {
+            return kibanaProblem(client.genericKubernetesResources(KIBANA)
+                    .inNamespace(namespace).withName(name).get());
+        } catch (RuntimeException e) {
+            return null;   // 读不到就当没有 Kibana，不影响主实例判定
+        }
+    }
+
+    /** 纯函数：从 Kibana CR 的 status 里读出问题（null = 没问题 / 没部署）。 */
+    static String kibanaProblem(GenericKubernetesResource kibana) {
+        if (kibana == null) {
+            return null;
+        }
+        Object status = kibana.getAdditionalProperties().get("status");
+        if (!(status instanceof Map<?, ?> st) || st.get("health") == null) {
+            return "Kibana 尚未就绪";
+        }
+        if ("green".equals(st.get("health"))) {
+            return null;
+        }
+        if (st.get("conditions") instanceof List<?> conditions) {
+            for (Object c : conditions) {
+                if (c instanceof Map<?, ?> cm && "False".equals(cm.get("status"))) {
+                    Object msg = cm.get("message");
+                    if (msg != null && !String.valueOf(msg).isBlank()) {
+                        return "Kibana 异常：" + msg;
+                    }
+                }
+            }
+        }
+        return "Kibana 健康状况 " + st.get("health");
     }
 
     @Override
@@ -155,10 +213,10 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         return resources;
     }
 
-    private GenericKubernetesResource resource(MiddlewareCreateRequestDTO req, String kind,
+    private GenericKubernetesResource resource(MiddlewareCreateRequestDTO req, String apiVersion, String kind,
                                                Map<String, Object> spec) {
         GenericKubernetesResource res = new GenericKubernetesResource();
-        res.setApiVersion(GROUP + "/" + VERSION);
+        res.setApiVersion(apiVersion);
         res.setKind(kind);
         ObjectMeta meta = new ObjectMeta();
         meta.setName(req.getName());

@@ -1,6 +1,7 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
+import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformMiddlewareInstance;
@@ -10,6 +11,7 @@ import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
 import com.coding.platformapi.models.MiddlewareOperatorInstallRequest;
+import com.coding.platformapi.models.MiddlewareOptionsRequest;
 import com.coding.platformapi.models.MiddlewareQueryRequest;
 import com.coding.platformapi.models.MiddlewareScaleRequest;
 import com.coding.platformapi.security.AuthContext;
@@ -43,6 +45,13 @@ public class MiddlewareController {
     @Operation(summary = "商店清单（含本集群 Operator 状态与实例数）")
     public ResponseData<List<MiddlewareCatalogItemDTO>> catalog(@RequestBody MiddlewareQueryRequest request) {
         return new ResponseData<>(service.catalog(request.getClusterId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/form-options")
+    @Operation(summary = "创建表单可选项（本租户命名空间 / 集群 StorageClass）")
+    public ResponseData<MiddlewareFormOptionsDTO> formOptions(@RequestBody MiddlewareOptionsRequest request) {
+        return new ResponseData<>(service.formOptions(request.getClusterId(),
                 auth.effectiveTenantId(request.getTenantId())));
     }
 

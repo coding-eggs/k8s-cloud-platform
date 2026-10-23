@@ -927,6 +927,9 @@ export const pipelineApi = {
 export const middlewareApi = {
   catalog: (clusterId: string) =>
     http.post<never, MiddlewareCatalogItem[]>('/middleware/catalog', { clusterId }),
+  /** 创建表单的可选项（本租户命名空间 / 集群 StorageClass），由后端按租户收窄 */
+  formOptions: (clusterId: string, tenantId?: string) =>
+    http.post<never, MiddlewareFormOptions>('/middleware/form-options', { clusterId, tenantId }),
   instanceList: (clusterId: string, code?: string, tenantId?: string) =>
     http.post<never, MiddlewareInstance[]>('/middleware/instance/list', { clusterId, code, tenantId }),
   instanceGet: (instanceId: string, tenantId?: string) =>
@@ -945,6 +948,7 @@ export const middlewareApi = {
     memoryLimit?: string
     storageSize?: string
     storageClass?: string
+    kibana?: boolean
     tenantId?: string
   }) => http.post<never, number>('/middleware/instance/create', payload),
   scale: (payload: {

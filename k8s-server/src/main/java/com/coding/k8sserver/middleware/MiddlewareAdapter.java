@@ -3,6 +3,7 @@ package com.coding.k8sserver.middleware;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
+import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 
 import java.util.List;
@@ -51,6 +52,14 @@ public interface MiddlewareAdapter {
      */
     default boolean usesPlatformPassword() {
         return true;
+    }
+
+    /**
+     * 附属组件的异常（典型：ES 勾选的 Kibana）。返回非空时实例状态降级 ——
+     * 主实例的全部 Pod 就绪不代表附属组件可用，不能报「运行中」。
+     */
+    default String accessoryProblem(KubernetesClient client, String namespace, String name) {
+        return null;
     }
 
     /**

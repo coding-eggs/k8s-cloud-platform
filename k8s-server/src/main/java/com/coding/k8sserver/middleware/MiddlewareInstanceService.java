@@ -211,6 +211,12 @@ public class MiddlewareInstanceService {
                     crInitializing(live), crFailureMessage(live));
             dto.setStatus(verdict.status());
             dto.setMessage(verdict.message());
+            // 附属组件（如 Kibana）出问题 → 降级，不谎报运行中
+            String accessory = adapter.accessoryProblem(client, req.getNamespace(), name);
+            if (accessory != null && !"FAILED".equals(verdict.status())) {
+                dto.setStatus("DEGRADED");
+                dto.setMessage(verdict.message() + "；" + accessory);
+            }
             out.add(dto);
         }
         return out;

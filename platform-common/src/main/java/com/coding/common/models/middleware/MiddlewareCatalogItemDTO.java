@@ -16,6 +16,9 @@ public class MiddlewareCatalogItemDTO {
 
     private List<MiddlewareModeDTO> modes;
 
+    /** 平台支持的可选版本（第一项为默认）；空 = 版本由实现固定，表单不展示版本字段 */
+    private List<String> versions;
+
     /** true = 不走 Operator（chart 安装，如 Nacos），不受 Operator 就绪门控 */
     private boolean chartBacked;
 

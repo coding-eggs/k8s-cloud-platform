@@ -99,6 +99,75 @@ class ElasticsearchMiddlewareAdapterTest {
     }
 
     @Test
+    void kibanaToggleAddsASecondCrPointingAtTheInstance() {
+        var r = req(1);
+        r.setKibana(true);
+
+        var out = adapter.buildCreate(r);
+
+        assertThat(out).extracting(c -> c.resource().getKind()).containsExactly("Elasticsearch", "Kibana");
+        var kibana = out.get(1).resource();
+        assertThat(kibana.getApiVersion()).isEqualTo("kibana.k8s.elastic.co/v1");
+        // 与 ES 同名：删除/状态都按实例名逐个 context 找，不需要额外映射
+        assertThat(kibana.getMetadata().getName()).isEqualTo("mw-es-abc12345");
+        assertThat(spec(kibana)).containsEntry("count", 1);
+        @SuppressWarnings("unchecked")
+        var ref = (Map<String, Object>) spec(kibana).get("elasticsearchRef");
+        assertThat(ref).containsEntry("name", "mw-es-abc12345");
+        assertThat(spec(kibana)).containsEntry("version", "9.5.0");
+    }
+
+    @Test
+    void kibanaIsOffByDefaultAndScaleLeavesItAlone() {
+        assertThat(adapter.buildCreate(req(1))).hasSize(1);
+
+        var live = adapter.buildCreate(req(3)).get(0).resource();
+        var scale = new MiddlewareScaleRequestDTO();
+        scale.setMode("CLUSTER");
+        scale.setReplicas(5);
+        // Kibana context 也在 contexts() 里：扩容时对它必须是 no-op，否则会把 ES 的 nodeSets 逻辑套上去
+        adapter.applyScale(live, ElasticsearchMiddlewareAdapter.KIBANA, scale);
+        assertThat(spec(live)).doesNotContainKey("count");
+    }
+
+    @Test
+    void contextsCoverElasticsearchAndKibana() {
+        assertThat(adapter.contexts()).extracting(c -> c.getKind())
+                .containsExactly("Elasticsearch", "Kibana");
+    }
+
+    @Test
+    void kibanaProblemIsNullWhenGreenOrAbsent() {
+        assertThat(ElasticsearchMiddlewareAdapter.kibanaProblem(null)).isNull();
+
+        var kibana = new GenericKubernetesResource();
+        kibana.setAdditionalProperty("status", Map.of("health", "green"));
+        assertThat(ElasticsearchMiddlewareAdapter.kibanaProblem(kibana)).isNull();
+    }
+
+    @Test
+    void kibanaProblemSurfacesConditionMessage() {
+        // ES 全绿但 Kibana 起不来时，实例状态要降级并说清原因
+        var kibana = new GenericKubernetesResource();
+        kibana.setAdditionalProperty("status", Map.of(
+                "health", "red",
+                "conditions", List.of(Map.of(
+                        "type", "Ready", "status", "False",
+                        "message", "Cannot connect to Elasticsearch"))));
+
+        assertThat(ElasticsearchMiddlewareAdapter.kibanaProblem(kibana))
+                .contains("Kibana 异常").contains("Cannot connect to Elasticsearch");
+    }
+
+    @Test
+    void kibanaProblemFallsBackToHealthWhenNoMessage() {
+        var kibana = new GenericKubernetesResource();
+        kibana.setAdditionalProperty("status", Map.of("health", "yellow"));
+
+        assertThat(ElasticsearchMiddlewareAdapter.kibanaProblem(kibana)).contains("yellow");
+    }
+
+    @Test
     void selectorsUseEckLabels() {
         assertThat(adapter.statusSelector("mw-es-x", "Elasticsearch"))
                 .isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");

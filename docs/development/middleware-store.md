@@ -20,6 +20,17 @@
 
 > Nacos 3.x 集群模式使用内嵌 JRaft 存储，**不需要外置 MySQL**。
 
+## 1.1 创建表单
+
+- 命名空间、StorageClass 都是**下拉**，选项由 `POST /middleware/form-options` 现算：命名空间按租户分配表收窄，
+  StorageClass 走管理端读（租户 SA 没有 `storageclasses` 权限）；读失败降级为空列表，不影响其它字段；
+- 资源一律「数字 + 单位」：CPU 填核数（可 0.1 步进，提交为 `0.5`），内存/存储填数字并选 `Mi`/`Gi`，
+  提交时拼成 K8s quantity；不接受手写 `500m`/`1Gi` 这类字符串；
+- 版本（Kafka / Elasticsearch）是**下拉**，选项来自 `MiddlewareCatalog` 里声明的受支持清单，接口层同样校验
+  （绕过前端直接传别的 tag 会被拒）；清单为空的中间件（Redis/MySQL/PG/RabbitMQ/Nacos）不展示版本字段；
+- Elasticsearch 表单有「同时部署 Kibana」开关：勾选后平台额外建一个同名 Kibana CR（`elasticsearchRef` 指向该实例）；
+  Kibana 的 `status.health` 非 green 时，实例状态降级并带原因，不会因为 ES 本身绿就报「运行中」。
+
 ## 2. 执行链
 
 ```
@@ -40,6 +51,8 @@
   `ps.percona.com` / `kafka.strimzi.io` / `elasticsearch.k8s.elastic.co` 三个 apiGroup）；
 - 批②（PostgreSQL / RabbitMQ）同样**无新表、无新权限行**，只新增租户 RBAC 迁移 `V2026_10_23_1`
   （补 `postgresql.cnpg.io` / `rabbitmq.com`），重放后同样要点一次「重下发全部模板」；
+- 表单可选项端点新增权限行 `perm_mw_form_options`（`/middleware/form-options` → `tenant:middleware:read`），
+  见 `V2026_10_23_2`，已绑 admin / tenant_admin / tenant_member；
   **重放后必须点一次「重下发全部模板」**，否则租户创建这三类实例会 403；
 - 重建 k8s-server + platform-api + platform-web；
 - Operator 安装时平台会下发"监听全部命名空间"的 values（Percona `watchAllNamespaces`、Strimzi

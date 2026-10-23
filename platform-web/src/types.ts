@@ -2405,6 +2405,8 @@ export interface MiddlewareCatalogItem {
   name: string
   description?: string | null
   modes: MiddlewareMode[]
+  /** 平台支持的可选版本（第一项为默认）；空 = 版本固定，表单不展示 */
+  versions: string[]
   /** true = chart 安装（如 Nacos），不需要 Operator */
   chartBacked: boolean
   operatorInstalled: boolean
@@ -2412,6 +2414,11 @@ export interface MiddlewareCatalogItem {
   chartVersion?: string | null
   operatorMessage?: string | null
   instanceCount: number
+}
+
+export interface MiddlewareFormOptions {
+  namespaces: string[]
+  storageClasses: string[]
 }
 
 export interface MiddlewareInstance {

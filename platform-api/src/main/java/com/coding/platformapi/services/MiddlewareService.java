@@ -2,7 +2,9 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
+import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
 import com.coding.common.models.middleware.MiddlewareModeDTO;
@@ -11,12 +13,15 @@ import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
+import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperationMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperatorMapper;
+import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.system.PlatformMiddlewareInstance;
 import com.coding.data.models.system.PlatformMiddlewareOperation;
 import com.coding.data.models.system.PlatformMiddlewareOperator;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sMiddlewareClient;
 import com.coding.platformapi.middleware.MiddlewareCatalog;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
@@ -32,6 +37,7 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -53,19 +59,25 @@ public class MiddlewareService {
     private final K8sMiddlewareClient client;
     private final MiddlewareCatalog catalog;
     private final JsonMapper jsonMapper;
+    private final K8sClient k8s;
+    private final PlatformTenantNamespaceMapper allocations;
 
     public MiddlewareService(PlatformMiddlewareInstanceMapper instances,
                              PlatformMiddlewareOperationMapper operations,
                              PlatformMiddlewareOperatorMapper operators,
                              K8sMiddlewareClient client,
                              MiddlewareCatalog catalog,
-                             JsonMapper jsonMapper) {
+                             JsonMapper jsonMapper,
+                             K8sClient k8s,
+                             PlatformTenantNamespaceMapper allocations) {
         this.instances = instances;
         this.operations = operations;
         this.operators = operators;
         this.client = client;
         this.catalog = catalog;
         this.jsonMapper = jsonMapper;
+        this.k8s = k8s;
+        this.allocations = allocations;
     }
 
     // ==================== 目录 ====================
@@ -84,6 +96,7 @@ public class MiddlewareService {
             dto.setModes(item.modes().stream()
                     .map(m -> new MiddlewareModeDTO(m.mode(), m.label(), m.minReplicas(), m.help()))
                     .toList());
+            dto.setVersions(item.versions());
             stats.stream().filter(s -> item.code().equals(s.getCode())).findFirst().ifPresent(s -> {
                 dto.setOperatorInstalled(s.isInstalled());
                 dto.setOperatorReady(s.isReady());
@@ -96,6 +109,31 @@ public class MiddlewareService {
                     .count());
             return dto;
         }).toList();
+    }
+
+    /**
+     * 创建表单的可选项：命名空间按租户分配表收窄；StorageClass 走管理端读（租户 SA 无此权限）。
+     * 读失败降级为空列表，不让一个存储类查询把整个表单打挂。
+     */
+    public MiddlewareFormOptionsDTO formOptions(String clusterId, String tenantId) {
+        requireCluster(clusterId);
+        MiddlewareFormOptionsDTO out = new MiddlewareFormOptionsDTO();
+        out.setNamespaces(allocations.listByCluster(clusterId).stream()
+                .filter(a -> tenantId == null || tenantId.equals(a.getTenantId()))
+                .map(PlatformTenantNamespace::getNamespace)
+                .filter(Objects::nonNull)
+                .distinct().sorted().toList());
+        try {
+            StorageClassDTO query = new StorageClassDTO();
+            query.setClusterId(clusterId);
+            out.setStorageClasses(k8s.list(query).stream()
+                    .map(StorageClassDTO::getName)
+                    .filter(Objects::nonNull)
+                    .sorted().toList());
+        } catch (RuntimeException e) {
+            out.setStorageClasses(List.of());
+        }
+        return out;
     }
 
     public MiddlewareOperatorStatusDTO installOperator(String clusterId, String code) {
@@ -194,6 +232,15 @@ public class MiddlewareService {
         if (isBlank(req.getClusterId()) || isBlank(req.getNamespace())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "请选择集群与命名空间");
         }
+        // 版本只能从平台声明的清单里选（表单是下拉，接口也要挡，否则绕过前端就能写任意 tag）
+        if (!item.versions().isEmpty()) {
+            String version = isBlank(req.getVersion()) ? item.versions().get(0) : req.getVersion().trim();
+            if (!catalog.supportsVersion(item, version)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        item.name() + " 不支持版本 " + version + "，可选：" + String.join(" / ", item.versions()));
+            }
+            req.setVersion(version);
+        }
         // Nacos 的 chart 把 Service/ConfigMap 名字写死成 nacos-cs：同一命名空间只能有一个实例
         if (isChartBacked(req.getCode()) && !instances.selectByCluster(req.getClusterId(), req.getCode())
                 .stream().filter(i -> req.getNamespace().equals(i.getNamespace())).toList().isEmpty()) {
@@ -242,6 +289,7 @@ public class MiddlewareService {
             dto.setMemoryLimit(req.getMemoryLimit());
             dto.setStorageSize(req.getStorageSize());
             dto.setStorageClass(req.getStorageClass());
+            dto.setKibana(Boolean.TRUE.equals(req.getKibana()));
             dto.setPassword(randomPassword());
             dto.setTenantId(tenantId);
             client.create(req.getCode(), dto);

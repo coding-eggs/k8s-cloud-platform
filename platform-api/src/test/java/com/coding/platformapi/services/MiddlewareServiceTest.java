@@ -3,11 +3,15 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
+import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperationMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperatorMapper;
+import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.system.PlatformMiddlewareInstance;
 import com.coding.data.models.system.PlatformMiddlewareOperation;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sMiddlewareClient;
 import com.coding.platformapi.middleware.MiddlewareCatalog;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
@@ -33,10 +37,12 @@ class MiddlewareServiceTest {
     private final PlatformMiddlewareOperationMapper operations = mock(PlatformMiddlewareOperationMapper.class);
     private final PlatformMiddlewareOperatorMapper operators = mock(PlatformMiddlewareOperatorMapper.class);
     private final K8sMiddlewareClient client = mock(K8sMiddlewareClient.class);
+    private final K8sClient k8s = mock(K8sClient.class);
+    private final PlatformTenantNamespaceMapper allocations = mock(PlatformTenantNamespaceMapper.class);
 
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, new MiddlewareCatalog(),
-            JsonMapper.builder().build());
+            JsonMapper.builder().build(), k8s, allocations);
 
     @BeforeEach
     void opsGetIds() {
@@ -143,6 +149,75 @@ class MiddlewareServiceTest {
         var method = MiddlewareService.class.getMethod("reapStaleOperations");
         assertThat(method.getAnnotation(org.springframework.scheduling.annotation.Scheduled.class))
                 .isNotNull();
+    }
+
+    @Test
+    void catalogExposesSupportedVersions() {
+        when(client.operatorStatus(any())).thenReturn(List.of());
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of());
+
+        var items = service.catalog("c1", null);
+
+        assertThat(items).anyMatch(i -> i.getCode().equals("elasticsearch")
+                && i.getVersions().contains("9.5.0"));
+        assertThat(items).anyMatch(i -> i.getCode().equals("kafka")
+                && i.getVersions().contains("4.3.1"));
+        // 版本由实现固定的条目不出现在表单里
+        assertThat(items).anyMatch(i -> i.getCode().equals("redis") && i.getVersions().isEmpty());
+    }
+
+    @Test
+    void createRejectsAVersionThatIsNotOnTheSupportedList() {
+        var r = createRequest();
+        r.setCode("elasticsearch");
+        r.setMode("CLUSTER");
+        r.setVersion("8.0.0");
+        when(client.operatorStatus(any())).thenReturn(List.of(status("elasticsearch", true, true)));
+
+        assertThatThrownBy(() -> service.create(r, "coding", null))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("不支持版本");
+    }
+
+    @Test
+    void createDefaultsToTheFirstSupportedVersion() {
+        var r = createRequest();
+        r.setCode("elasticsearch");
+        r.setMode("CLUSTER");
+        when(client.operatorStatus(any())).thenReturn(List.of(status("elasticsearch", true, true)));
+        ArgumentCaptor<MiddlewareCreateRequestDTO> sent = ArgumentCaptor.forClass(MiddlewareCreateRequestDTO.class);
+
+        service.create(r, "coding", null);
+
+        verify(client).create(org.mockito.ArgumentMatchers.eq("elasticsearch"), sent.capture());
+        assertThat(sent.getValue().getVersion()).isEqualTo("9.5.0");
+    }
+
+    @Test
+    void formOptionsFilterNamespacesByTenantAndReadStorageClasses() {
+        PlatformTenantNamespace mine = new PlatformTenantNamespace();
+        mine.setTenantId("t1");
+        mine.setNamespace("demo");
+        PlatformTenantNamespace other = new PlatformTenantNamespace();
+        other.setTenantId("t2");
+        other.setNamespace("other-ns");
+        when(allocations.listByCluster("c1")).thenReturn(List.of(mine, other));
+        StorageClassDTO sc = new StorageClassDTO();
+        sc.setName("nfs-client");
+        when(k8s.list(any())).thenReturn(List.of(sc));
+
+        var options = service.formOptions("c1", "t1");
+
+        assertThat(options.getNamespaces()).containsExactly("demo");
+        assertThat(options.getStorageClasses()).containsExactly("nfs-client");
+    }
+
+    @Test
+    void formOptionsDegradesWhenStorageClassReadFails() {
+        when(allocations.listByCluster("c1")).thenReturn(List.of());
+        when(k8s.list(any())).thenThrow(new RuntimeException("cluster down"));
+
+        assertThat(service.formOptions("c1", null).getStorageClasses()).isEmpty();
     }
 
     @Test

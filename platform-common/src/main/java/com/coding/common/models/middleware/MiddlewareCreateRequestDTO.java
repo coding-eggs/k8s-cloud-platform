@@ -35,6 +35,9 @@ public class MiddlewareCreateRequestDTO {
     private String storageSize;
     private String storageClass;
 
+    /** Elasticsearch：是否同时创建 Kibana CR（其余中间件忽略） */
+    private Boolean kibana;
+
     /** 平台生成的初始密码；只用于创建 Secret，不落库、不记日志 */
     private String password;
 

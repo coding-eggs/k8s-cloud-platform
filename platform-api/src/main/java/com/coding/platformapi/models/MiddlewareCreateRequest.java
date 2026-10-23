@@ -18,6 +18,8 @@ public class MiddlewareCreateRequest {
     private String memoryLimit;
     private String storageSize;
     private String storageClass;
+    /** Elasticsearch：是否同时部署 Kibana（ECH 的 Kibana CR，指向本实例） */
+    private Boolean kibana;
     /** 仅管理员代管轨使用；租户轨以 token 为准 */
     private String tenantId;
 }

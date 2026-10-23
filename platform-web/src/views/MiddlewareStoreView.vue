@@ -10,7 +10,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { clusterApi, middlewareApi, resourceContextApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import MiddlewareIcon from '@/components/middleware/MiddlewareIcon.vue'
-import { MIDDLEWARE_FIELDS } from '@/components/middleware/middlewareForms'
+import { MIDDLEWARE_FIELDS, toQuantity } from '@/components/middleware/middlewareForms'
+import type { MiddlewareField } from '@/components/middleware/middlewareForms'
 import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/types'
 
 const perm = usePermission()
@@ -29,6 +30,13 @@ const creating = ref(false)
 const createItem = ref<MiddlewareCatalogItem | null>(null)
 const form = ref<Record<string, any>>({})
 const createMode = ref('')
+/** 内存/存储的单位（与 form 里的数字分开存；提交时拼成 quantity） */
+const formUnits = ref<Record<string, string>>({})
+/** 命名空间与 StorageClass 都由后端按租户/权限算好 */
+const formOptions = ref<{ namespaces: string[]; storageClasses: string[] }>({
+  namespaces: [],
+  storageClasses: [],
+})
 
 const createFields = computed(() =>
   createItem.value ? (MIDDLEWARE_FIELDS[createItem.value.code] ?? []) : [],
@@ -110,15 +118,39 @@ async function refresh(): Promise<void> {
 function resetForm(item: MiddlewareCatalogItem): void {
   createItem.value = item
   createMode.value = item.modes[0]?.mode ?? ''
-  const f: Record<string, any> = { namespace: '', displayName: '' }
+  const f: Record<string, any> = { namespace: '', displayName: '', storageClass: '' }
+  const units: Record<string, string> = {}
   for (const field of MIDDLEWARE_FIELDS[item.code] ?? []) {
     f[field.key] = field.default ?? (field.type === 'number' ? 1 : '')
+    if (field.unit === 'size') units[field.key] = field.unitDefault ?? 'Gi'
   }
+  // 版本从后端下发的清单里选（清单为空 = 不展示）
+  f.version = item.versions?.[0] ?? ''
+  // ES 默认不勾 Kibana
+  f.kibana = false
   form.value = f
+  formUnits.value = units
+}
+
+async function loadFormOptions(): Promise<void> {
+  if (!clusterId.value) {
+    formOptions.value = { namespaces: [], storageClasses: [] }
+    return
+  }
+  try {
+    const options = await middlewareApi.formOptions(clusterId.value)
+    formOptions.value = {
+      namespaces: options?.namespaces ?? [],
+      storageClasses: options?.storageClasses ?? [],
+    }
+  } catch {
+    formOptions.value = { namespaces: [], storageClasses: [] }
+  }
 }
 
 function openCreate(item: MiddlewareCatalogItem): void {
   resetForm(item)
+  void loadFormOptions()
   createVisible.value = true
 }
 
@@ -131,8 +163,8 @@ function onModeChange(): void {
 
 async function submitCreate(): Promise<void> {
   if (!createItem.value || !clusterId.value) return
-  if (!form.value.namespace?.trim()) {
-    ElMessage.error('请填写命名空间')
+  if (!form.value.namespace) {
+    ElMessage.error('请选择命名空间')
     return
   }
   const min = modeMinReplicas.value
@@ -142,16 +174,19 @@ async function submitCreate(): Promise<void> {
   }
   creating.value = true
   try {
-    const fields = MIDDLEWARE_FIELDS[createItem.value.code] ?? []
+    const fields: MiddlewareField[] = MIDDLEWARE_FIELDS[createItem.value.code] ?? []
     const payload: Record<string, any> = {
       clusterId: clusterId.value,
       code: createItem.value.code,
       mode: createMode.value,
-      namespace: form.value.namespace.trim(),
+      namespace: form.value.namespace,
       displayName: form.value.displayName?.trim() || undefined,
+      version: form.value.version || undefined,
+      storageClass: form.value.storageClass || undefined,
+      kibana: createItem.value.code === 'elasticsearch' ? !!form.value.kibana : undefined,
     }
     for (const field of fields) {
-      payload[field.key] = form.value[field.key]
+      payload[field.key] = toQuantity(field, form.value[field.key], formUnits.value[field.key])
     }
     const opId = await middlewareApi.create(payload as any)
     createVisible.value = false
@@ -398,20 +433,48 @@ onBeforeUnmount(() => {
           </div>
         </el-form-item>
         <el-form-item label="命名空间" required>
-          <el-input v-model="form.namespace" spellcheck="false" placeholder="demo（租户仅限分配表内的命名空间）" />
+          <el-select v-model="form.namespace" filterable placeholder="选择本租户已分配的命名空间" style="width: 100%">
+            <el-option v-for="ns in formOptions.namespaces" :key="ns" :label="ns" :value="ns" />
+          </el-select>
+          <div v-if="!formOptions.namespaces.length" class="mw-form-help">
+            该租户在当前集群还没有分配命名空间，请先在「命名空间管理」里分配
+          </div>
         </el-form-item>
         <el-form-item label="显示名">
           <el-input v-model="form.displayName" spellcheck="false" placeholder="默认按类型 + 短码生成" />
         </el-form-item>
+        <el-form-item v-if="createItem?.versions?.length" label="版本">
+          <el-select v-model="form.version" style="width: 100%">
+            <el-option v-for="v in createItem.versions" :key="v" :label="v" :value="v" />
+          </el-select>
+          <div class="mw-form-help">只能从平台支持的版本里选</div>
+        </el-form-item>
         <el-form-item v-for="field in createFields" :key="field.key" :label="field.label">
-          <el-input-number
-            v-if="field.type === 'number'"
-            v-model="form[field.key]"
-            :min="field.key === 'replicas' ? modeMinReplicas : (field.min ?? 0)"
-            :max="field.max ?? 999"
-          />
-          <el-input v-else v-model="form[field.key]" spellcheck="false" :placeholder="field.placeholder" />
+          <div class="mw-resource-row">
+            <el-input-number
+              v-model="form[field.key]"
+              :min="field.key === 'replicas' ? modeMinReplicas : (field.min ?? 0)"
+              :max="field.max ?? 9999"
+              :step="field.step ?? 1"
+              :precision="field.key === 'replicas' || field.unit === 'size' ? 0 : 2"
+              controls-position="right"
+            />
+            <span v-if="field.unit === 'cpu'" class="mw-unit">核</span>
+            <el-select v-else v-model="formUnits[field.key]" class="mw-unit-select">
+              <el-option label="Mi" value="Mi" />
+              <el-option label="Gi" value="Gi" />
+            </el-select>
+          </div>
           <div v-if="field.help" class="mw-form-help">{{ field.help }}</div>
+        </el-form-item>
+        <el-form-item label="StorageClass">
+          <el-select v-model="form.storageClass" style="width: 100%" clearable placeholder="集群默认">
+            <el-option v-for="sc in formOptions.storageClasses" :key="sc" :label="sc" :value="sc" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="createItem?.code === 'elasticsearch'" label="Kibana">
+          <el-switch v-model="form.kibana" active-text="同时部署 Kibana" />
+          <div class="mw-form-help">勾选后平台会额外创建一个 Kibana 实例，指向当前 ES</div>
         </el-form-item>
       </el-form>
       <p class="mw-form-note">
@@ -459,6 +522,9 @@ onBeforeUnmount(() => {
 .ph-desc { margin: 4px 0 0; font-size: 12.5px; color: var(--text-3); }
 .ph-actions { display: flex; gap: 10px; align-items: center; }
 .mw-tabs { margin-top: -4px; }
+.mw-resource-row { display: flex; align-items: center; gap: 8px; }
+.mw-unit { color: var(--text-3); font-size: 12.5px; }
+.mw-unit-select { width: 80px; }
 
 .mw-grid {
   display: grid;
