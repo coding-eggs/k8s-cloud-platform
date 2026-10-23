@@ -1,6 +1,7 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
+import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.system.ResponseData;
@@ -74,6 +75,13 @@ public class MiddlewareController {
     @Operation(summary = "创建实例（异步操作记录；返回操作 id）")
     public ResponseData<Long> create(@RequestBody MiddlewareCreateRequest request) {
         return new ResponseData<>(service.create(request, operator(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/connection")
+    @Operation(summary = "实例连接方式（集群内地址 + 凭据位置）")
+    public ResponseData<MiddlewareConnectionDTO> connection(@RequestBody MiddlewareQueryRequest request) {
+        return new ResponseData<>(service.connection(request.getInstanceId(),
                 auth.effectiveTenantId(request.getTenantId())));
     }
 

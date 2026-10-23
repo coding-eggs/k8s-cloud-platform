@@ -2396,6 +2396,10 @@ export interface MiddlewareMode {
   mode: string
   label: string
   minReplicas: number
+  /** 非空 = 该形态节点数固定，表单只读（单节点/单实例） */
+  fixedReplicas?: number | null
+  /** 节点数在该形态下的含义（主分片数 / 数据节点数 / Broker 数 ...） */
+  replicasLabel?: string | null
   help?: string | null
 }
 
@@ -2414,6 +2418,14 @@ export interface MiddlewareCatalogItem {
   chartVersion?: string | null
   operatorMessage?: string | null
   instanceCount: number
+}
+
+export interface MiddlewareConnection {
+  instanceName: string
+  namespace: string
+  endpoints: { label: string; value: string }[]
+  credentials: { label: string; value: string }[]
+  note?: string | null
 }
 
 export interface MiddlewareFormOptions {

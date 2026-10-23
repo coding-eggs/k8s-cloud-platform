@@ -28,7 +28,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   redis: [
     {
       key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
-      help: '单节点=1；哨兵=数据节点数（哨兵固定 3）；集群=主分片数（≥3）',
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.1, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
@@ -48,7 +47,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   mysql: [
     {
       key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
-      help: '单节点固定 1；高可用集群 ≥3（Group Replication，单主强一致）',
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
@@ -59,7 +57,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   kafka: [
     {
       key: 'replicas', label: 'Broker 数', type: 'number', unit: 'cpu', default: 3, min: 3, max: 9,
-      help: 'KRaft 要求 ≥3；节点同时承担 controller 与 broker',
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
@@ -70,7 +67,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   elasticsearch: [
     {
       key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 3, min: 1, max: 9,
-      help: '生产建议 ≥3；单节点只适合测试',
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
@@ -87,7 +83,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   nacos: [
     {
       key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
-      help: '集群模式 ≥3；使用内嵌存储（JRaft），不需要外置 MySQL',
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.2, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 1, step: 0.1, min: 0.1 },
@@ -101,7 +96,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   postgresql: [
     {
       key: 'replicas', label: '实例数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
-      help: '单实例固定 1；主备 ≥3（CloudNativePG 自管一主多备与 failover）',
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
@@ -112,7 +106,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   rabbitmq: [
     {
       key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
-      help: '单节点固定 1；集群 ≥3（Quorum 队列需要多数派）',
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.3, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 1, step: 0.1, min: 0.1 },

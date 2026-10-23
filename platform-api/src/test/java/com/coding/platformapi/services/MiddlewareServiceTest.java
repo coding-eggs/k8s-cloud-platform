@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperationMapper;
@@ -218,6 +219,79 @@ class MiddlewareServiceTest {
         when(k8s.list(any())).thenThrow(new RuntimeException("cluster down"));
 
         assertThat(service.formOptions("c1", null).getStorageClasses()).isEmpty();
+    }
+
+    private PlatformMiddlewareInstance instance(String code, String mode) {
+        PlatformMiddlewareInstance i = new PlatformMiddlewareInstance();
+        i.setId("mwi_1");
+        i.setClusterId("c1");
+        i.setNamespace("demo");
+        i.setCode(code);
+        i.setMode(mode);
+        i.setName("mw-" + code + "-abcdefgh");
+        return i;
+    }
+
+    @Test
+    void connectionForRedisSentinelListsMasterReplicaAndSentinel() {
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("redis", "SENTINEL"));
+
+        var c = service.connection("mwi_1", null);
+
+        assertThat(c.getEndpoints()).extracting(MiddlewareConnectionDTO.Line::label)
+                .containsExactly("主库（读写）", "从库（只读）", "哨兵");
+        assertThat(c.getEndpoints().get(0).value())
+                .isEqualTo("mw-redis-abcdefgh-master.demo.svc.cluster.local:6379");
+        assertThat(c.getEndpoints().get(2).value())
+                .isEqualTo("mw-redis-abcdefgh-sentinel.demo.svc.cluster.local:26379");
+        assertThat(c.getCredentials()).extracting(MiddlewareConnectionDTO.Line::value)
+                .anyMatch(v -> v.contains("-credentials"));
+    }
+
+    @Test
+    void connectionForKafkaHasNoCredentials() {
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("kafka", "CLUSTER"));
+
+        var c = service.connection("mwi_1", null);
+
+        assertThat(c.getEndpoints().get(0).value())
+                .isEqualTo("mw-kafka-abcdefgh-kafka-bootstrap.demo.svc.cluster.local:9092");
+        assertThat(c.getCredentials()).isEmpty();
+    }
+
+    @Test
+    void connectionForElasticsearchShowsHttpsAndElasticUser() {
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("elasticsearch", "CLUSTER"));
+
+        var c = service.connection("mwi_1", null);
+
+        assertThat(c.getEndpoints().get(0).value())
+                .startsWith("https://mw-elasticsearch-abcdefgh-es-http.demo.svc.cluster.local:9200");
+        assertThat(c.getCredentials()).extracting(MiddlewareConnectionDTO.Line::value)
+                .anyMatch(v -> v.contains("es-elastic-user"));
+    }
+
+    @Test
+    void connectionForPostgresShowsReadWriteAndReadOnly() {
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("postgresql", "HA"));
+
+        var c = service.connection("mwi_1", null);
+
+        assertThat(c.getEndpoints()).extracting(MiddlewareConnectionDTO.Line::value)
+                .containsExactly(
+                        "mw-postgresql-abcdefgh-rw.demo.svc.cluster.local:5432",
+                        "mw-postgresql-abcdefgh-ro.demo.svc.cluster.local:5432");
+        assertThat(c.getCredentials().get(0).value()).contains("-app");
+    }
+
+    @Test
+    void connectionIsScopedToTheInstancesTenant() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setTenantId("t1");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        assertThatThrownBy(() -> service.connection("mwi_1", "t2"))
+                .hasMessageContaining("无权操作该实例");
     }
 
     @Test

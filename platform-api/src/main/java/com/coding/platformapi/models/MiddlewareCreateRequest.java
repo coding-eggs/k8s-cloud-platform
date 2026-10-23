@@ -12,6 +12,9 @@ public class MiddlewareCreateRequest {
     private String displayName;
     private String version;
     private Integer replicas;
+
+    /** Redis 集群形态：每个主分片的从节点数（默认 1；0 = 无从节点） */
+    private Integer replicasPerShard;
     private String cpuRequest;
     private String cpuLimit;
     private String memoryRequest;

@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
+import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
@@ -32,6 +33,7 @@ import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -94,7 +96,8 @@ public class MiddlewareService {
             dto.setDescription(item.description());
             dto.setChartBacked(catalog.chartBacked(item.code()));
             dto.setModes(item.modes().stream()
-                    .map(m -> new MiddlewareModeDTO(m.mode(), m.label(), m.minReplicas(), m.help()))
+                    .map(m -> new MiddlewareModeDTO(m.mode(), m.label(), m.minReplicas(),
+                            m.fixedReplicas(), m.replicasLabel(), m.help()))
                     .toList());
             dto.setVersions(item.versions());
             stats.stream().filter(s -> item.code().equals(s.getCode())).findFirst().ifPresent(s -> {
@@ -283,6 +286,7 @@ public class MiddlewareService {
             dto.setDisplayName(instance.getDisplayName());
             dto.setVersion(instance.getVersion());
             dto.setReplicas(req.getReplicas());
+            dto.setReplicasPerShard(req.getReplicasPerShard());
             dto.setCpuRequest(req.getCpuRequest());
             dto.setCpuLimit(req.getCpuLimit());
             dto.setMemoryRequest(req.getMemoryRequest());
@@ -303,6 +307,86 @@ public class MiddlewareService {
             throw e;
         }
         return op.getId();
+    }
+
+    /**
+     * 实例的连接方式（创建成功后弹给用户，实例列表里也能随时打开）。
+     *
+     * <p>只给**集群内**地址与凭据位置：集群外暴露（Ingress/NodePort）是租户自己的网络决定，
+     * 平台不替他建；口令不回传，只告诉去哪个 Secret 的哪个键取。
+     */
+    public MiddlewareConnectionDTO connection(String instanceId, String tenantId) {
+        PlatformMiddlewareInstance instance = requireInstance(instanceId, tenantId);
+        String name = instance.getName();
+        String ns = instance.getNamespace();
+        List<MiddlewareConnectionDTO.Line> endpoints = new ArrayList<>();
+        List<MiddlewareConnectionDTO.Line> credentials = new ArrayList<>();
+        String note = "以上是集群内地址（<服务>.<命名空间>.svc.cluster.local）；集群外访问需自行建 Ingress/NodePort。";
+
+        switch (instance.getCode()) {
+            case "redis" -> {
+                switch (instance.getMode() == null ? "" : instance.getMode()) {
+                    case "SENTINEL" -> {
+                        endpoints.add(line("主库（读写）", svc(ns, name + "-master", 6379)));
+                        endpoints.add(line("从库（只读）", svc(ns, name + "-replica", 6379)));
+                        endpoints.add(line("哨兵", svc(ns, name + "-sentinel", 26379)));
+                    }
+                    case "CLUSTER" -> {
+                        endpoints.add(line("读写（任一主分片）", svc(ns, name + "-leader", 6379)));
+                        endpoints.add(line("只读（从节点）", svc(ns, name + "-follower", 6379)));
+                    }
+                    default -> endpoints.add(line("节点", svc(ns, name, 6379)));
+                }
+                credentials.add(line("密码", "Secret " + name + "-credentials，键 password"));
+            }
+            case "mysql" -> {
+                endpoints.add(line("读写（HAProxy）", svc(ns, name + "-haproxy", 3306)));
+                endpoints.add(line("只读（HAProxy）", svc(ns, name + "-haproxy", 3307)));
+                credentials.add(line("账号", "Secret " + name + "-secrets（Operator 生成，root 等用户）"));
+            }
+            case "kafka" -> {
+                endpoints.add(line("Bootstrap（PLAINTEXT）", svc(ns, name + "-kafka-bootstrap", 9092)));
+                note = "监听器是集群内 PLAINTEXT，无认证；客户端 bootstrap.servers 填上面的地址。";
+            }
+            case "elasticsearch" -> {
+                endpoints.add(line("HTTP(S)", "https://" + svc(ns, name + "-es-http", 9200)));
+                endpoints.add(line("Kibana（创建时勾选才有）", "http://" + svc(ns, name + "-kb-http", 5601)));
+                credentials.add(line("用户名", "elastic"));
+                credentials.add(line("密码", "Secret " + name + "-es-elastic-user，键 elastic"));
+            }
+            case "postgresql" -> {
+                endpoints.add(line("读写（主）", svc(ns, name + "-rw", 5432)));
+                endpoints.add(line("只读（备）", svc(ns, name + "-ro", 5432)));
+                credentials.add(line("用户名/密码", "Secret " + name + "-app，键 username / password"));
+            }
+            case "rabbitmq" -> {
+                endpoints.add(line("AMQP", svc(ns, name, 5672)));
+                endpoints.add(line("管理台", svc(ns, name, 15672)));
+                credentials.add(line("用户名/密码", "Secret " + name + "-default-user，键 username / password"));
+            }
+            case "nacos" -> {
+                endpoints.add(line("HTTP 控制台 / 接口", svc(ns, "nacos-cs", 8848)));
+                endpoints.add(line("gRPC（2.x 客户端）", svc(ns, "nacos-cs", 9848)));
+                note = "Nacos chart 默认未开启鉴权；对外暴露前请自行配置。";
+            }
+            default -> note = "该中间件暂未提供连接方式说明。";
+        }
+
+        MiddlewareConnectionDTO out = new MiddlewareConnectionDTO();
+        out.setInstanceName(name);
+        out.setNamespace(ns);
+        out.setEndpoints(endpoints);
+        out.setCredentials(credentials);
+        out.setNote(note);
+        return out;
+    }
+
+    private static MiddlewareConnectionDTO.Line line(String label, String value) {
+        return new MiddlewareConnectionDTO.Line(label, value);
+    }
+
+    private static String svc(String namespace, String service, int port) {
+        return service + "." + namespace + ".svc.cluster.local:" + port;
     }
 
     public Long scale(MiddlewareScaleRequest req, String operator, String tenantId) {

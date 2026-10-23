@@ -78,12 +78,23 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         return out;
     }
 
+    /** 每分片从节点数写在注解里：扩容分片数时按它重算从节点总数（Operator 的 follower.replicas 是总数） */
+    static final String REPLICAS_PER_SHARD_ANNOTATION = "platform.coding/redis-replicas-per-shard";
+
     private List<CrSpec> buildCluster(MiddlewareCreateRequestDTO req) {
         Map<String, Object> spec = baseSpec(req);
-        spec.put("clusterSize", Math.max(3, replicas(req)));
+        int shards = Math.max(3, replicas(req));
+        int perShard = req.getReplicasPerShard() == null ? 1 : Math.max(0, req.getReplicasPerShard());
+        spec.put("clusterSize", shards);
+        // RedisCluster 的 redisFollower.replicas 是**从节点总数**（不设时默认等于 clusterSize，即每分片 1 个）
+        spec.put("redisFollower", Map.of("replicas", shards * perShard));
         spec.put("clusterVersion", "v7");
         spec.put("persistenceEnabled", hasStorage(req));
-        return List.of(new CrSpec(CLUSTER, resource(req, "RedisCluster", spec)));
+        GenericKubernetesResource res = resource(req, "RedisCluster", spec);
+        Map<String, String> anns = new LinkedHashMap<>();
+        anns.put(REPLICAS_PER_SHARD_ANNOTATION, String.valueOf(perShard));
+        res.getMetadata().setAnnotations(anns);
+        return List.of(new CrSpec(CLUSTER, res));
     }
 
     /** 公共 spec：镜像、资源、密码 Secret 引用、持久化。 */
@@ -165,6 +176,8 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
             int target = req.getReplicas();
             if ("RedisCluster".equals(kind)) {
                 target = Math.max(3, target);
+                int perShard = perShardOf(live);
+                spec.put("redisFollower", Map.of("replicas", target * perShard));
             } else {
                 target = Math.max(2, target);
             }
@@ -201,7 +214,14 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
             return null;
         }
         // 只有哨兵形态用 RedisReplication，且它必然另起 3 个哨兵 Pod
-        return "RedisReplication".equals(kind) ? n.intValue() + SENTINEL_COUNT : n.intValue();
+        if ("RedisReplication".equals(kind)) {
+            return n.intValue() + SENTINEL_COUNT;
+        }
+        // RedisCluster：每个主分片 1 个 leader + N 个 follower
+        if ("RedisCluster".equals(kind)) {
+            return n.intValue() * (1 + perShardOf(live));
+        }
+        return n.intValue();
     }
 
     @Override
@@ -222,6 +242,22 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
             return "platform.coding/middleware-instance=" + instanceId;
         }
         return statusSelector(name, kind);
+    }
+
+    /** 读创建时写下的「每分片从节点数」，缺失按 1（= Operator 默认） */
+    private static int perShardOf(GenericKubernetesResource live) {
+        if (live.getMetadata() == null || live.getMetadata().getAnnotations() == null) {
+            return 1;
+        }
+        String raw = live.getMetadata().getAnnotations().get(REPLICAS_PER_SHARD_ANNOTATION);
+        if (raw == null) {
+            return 1;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(raw.trim()));
+        } catch (NumberFormatException e) {
+            return 1;
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -89,6 +89,7 @@ import type {
   TenantMemberView,
   TokenUserInfo,
   MiddlewareCatalogItem,
+  MiddlewareConnection,
   MiddlewareInstance,
   MiddlewareOperation,
   MiddlewareOperatorStatus,
@@ -927,6 +928,9 @@ export const pipelineApi = {
 export const middlewareApi = {
   catalog: (clusterId: string) =>
     http.post<never, MiddlewareCatalogItem[]>('/middleware/catalog', { clusterId }),
+  /** 实例的连接方式（集群内地址 + 凭据位置），创建成功后弹给用户 */
+  connection: (instanceId: string, tenantId?: string) =>
+    http.post<never, MiddlewareConnection>('/middleware/instance/connection', { instanceId, tenantId }),
   /** 创建表单的可选项（本租户命名空间 / 集群 StorageClass），由后端按租户收窄 */
   formOptions: (clusterId: string, tenantId?: string) =>
     http.post<never, MiddlewareFormOptions>('/middleware/form-options', { clusterId, tenantId }),
@@ -942,6 +946,8 @@ export const middlewareApi = {
     displayName?: string
     version?: string
     replicas?: number
+    /** Redis 集群形态：每主分片从节点数 */
+    replicasPerShard?: number
     cpuRequest?: string
     cpuLimit?: string
     memoryRequest?: string

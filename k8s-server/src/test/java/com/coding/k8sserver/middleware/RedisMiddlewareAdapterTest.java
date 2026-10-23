@@ -159,6 +159,40 @@ class RedisMiddlewareAdapterTest {
     }
 
     @Test
+    void clusterDefaultKeepsOneFollowerPerShard() {
+        var res = adapter.buildCreate(req("CLUSTER", 3)).get(0).resource();
+
+        // Operator 的 redisFollower.replicas 是从节点总数；不设时默认等于 clusterSize
+        assertThat((Map<String, Object>) spec(res).get("redisFollower"))
+                .containsEntry("replicas", 3);
+        assertThat(adapter.desiredPods(res, "RedisCluster")).isEqualTo(6);   // 3 leader + 3 follower
+    }
+
+    @Test
+    void clusterHonoursReplicasPerShard() {
+        var r = req("CLUSTER", 3);
+        r.setReplicasPerShard(2);
+        var res = adapter.buildCreate(r).get(0).resource();
+
+        assertThat((Map<String, Object>) spec(res).get("redisFollower")).containsEntry("replicas", 6);
+        assertThat(res.getMetadata().getAnnotations())
+                .containsEntry(RedisMiddlewareAdapter.REPLICAS_PER_SHARD_ANNOTATION, "2");
+        assertThat(adapter.desiredPods(res, "RedisCluster")).isEqualTo(9);   // 3 + 6
+    }
+
+    @Test
+    void scalingClusterKeepsFollowersInSync() {
+        var live = adapter.buildCreate(req("CLUSTER", 3)).get(0).resource();
+        var scale = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scale.setReplicas(5);
+
+        adapter.applyScale(live, RedisMiddlewareAdapter.CLUSTER, scale);
+
+        assertThat(spec(live)).containsEntry("clusterSize", 5);
+        assertThat((Map<String, Object>) spec(live).get("redisFollower")).containsEntry("replicas", 5);
+    }
+
+    @Test
     void scaleClampsClusterToThreeShards() {
         var live = adapter.buildCreate(req("CLUSTER", 3)).get(0).resource();
         var scaleReq = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();

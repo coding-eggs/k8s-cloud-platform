@@ -16,7 +16,12 @@ import java.util.List;
 @Component
 public class MiddlewareCatalog {
 
-    public record Mode(String mode, String label, int minReplicas, String help) {
+    /**
+     * @param fixedReplicas 非空 = 该形态节点数固定，表单只读（单节点/单实例）
+     * @param replicasLabel 节点数在该形态下的含义（主分片数 / 数据节点数 / Broker 数 ...）
+     */
+    public record Mode(String mode, String label, int minReplicas, Integer fixedReplicas,
+                       String replicasLabel, String help) {
     }
 
     /**
@@ -26,31 +31,31 @@ public class MiddlewareCatalog {
     }
 
     private static final List<Mode> REDIS_MODES = List.of(
-            new Mode("STANDALONE", "单节点", 1, "开发/测试，无高可用"),
-            new Mode("SENTINEL", "哨兵主从", 2, "数据节点数；哨兵固定 3 个"),
-            new Mode("CLUSTER", "集群分片", 3, "≥3 个主分片，数据分片存储"));
+            new Mode("STANDALONE", "单节点", 1, 1, "节点数", "开发/测试，无高可用（固定 1 个节点）"),
+            new Mode("SENTINEL", "哨兵主从", 2, null, "数据节点数", "数据节点另加固定 3 个哨兵"),
+            new Mode("CLUSTER", "集群分片", 3, null, "主分片数", "≥3 个主分片，数据分片存储"));
 
     private static final List<Mode> MYSQL_MODES = List.of(
-            new Mode("SINGLE", "单节点", 1, "开发/测试；Group Replication 单成员，无容错"),
-            new Mode("CLUSTER", "高可用集群", 3, "Group Replication，单主强一致，3/5 节点"));
+            new Mode("SINGLE", "单节点", 1, 1, "节点数", "开发/测试；Group Replication 单成员，无容错（固定 1 个）"),
+            new Mode("CLUSTER", "高可用集群", 3, null, "数据节点数", "Group Replication，单主强一致，3/5 节点"));
 
     private static final List<Mode> KAFKA_MODES = List.of(
-            new Mode("CLUSTER", "KRaft 集群", 3, "brokers ≥3，同时承担 controller；2 节点没有容错"));
+            new Mode("CLUSTER", "KRaft 集群", 3, null, "Broker 数", "brokers ≥3，同时承担 controller；2 节点没有容错"));
 
     private static final List<Mode> ES_MODES = List.of(
-            new Mode("CLUSTER", "集群", 1, "生产建议 ≥3 节点"));
+            new Mode("CLUSTER", "集群", 1, null, "节点数", "生产建议 ≥3 节点"));
 
     private static final List<Mode> NACOS_MODES = List.of(
-            new Mode("STANDALONE", "单节点", 1, "开发/测试"),
-            new Mode("CLUSTER", "集群", 3, "内嵌存储（JRaft），≥3 节点"));
+            new Mode("STANDALONE", "单节点", 1, 1, "节点数", "开发/测试（固定 1 个）"),
+            new Mode("CLUSTER", "集群", 3, null, "节点数", "内嵌存储（JRaft），≥3 节点"));
 
     private static final List<Mode> POSTGRESQL_MODES = List.of(
-            new Mode("SINGLE", "单实例", 1, "开发/测试；无容错"),
-            new Mode("HA", "主备", 3, "CloudNativePG 一主多备，自动 failover（3/5 实例）"));
+            new Mode("SINGLE", "单实例", 1, 1, "实例数", "开发/测试；无容错（固定 1 个实例）"),
+            new Mode("HA", "主备", 3, null, "实例数", "CloudNativePG 一主多备，自动 failover（3/5 实例）"));
 
     private static final List<Mode> RABBITMQ_MODES = List.of(
-            new Mode("SINGLE", "单节点", 1, "开发/测试；无容错"),
-            new Mode("CLUSTER", "集群", 3, "≥3 节点，Quorum 队列需要多数派"));
+            new Mode("SINGLE", "单节点", 1, 1, "节点数", "开发/测试；无容错（固定 1 个）"),
+            new Mode("CLUSTER", "集群", 3, null, "节点数", "≥3 节点，Quorum 队列需要多数派"));
 
     /** Strimzi 1.3.0 的受支持版本清单（顺序即展示顺序，第一项为默认） */
     private static final List<String> KAFKA_VERSIONS =

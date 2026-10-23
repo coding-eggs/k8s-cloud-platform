@@ -12,7 +12,7 @@ import { usePermission } from '@/stores/permission'
 import MiddlewareIcon from '@/components/middleware/MiddlewareIcon.vue'
 import { MIDDLEWARE_FIELDS, toQuantity } from '@/components/middleware/middlewareForms'
 import type { MiddlewareField } from '@/components/middleware/middlewareForms'
-import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/types'
+import type { K8sCluster, MiddlewareCatalogItem, MiddlewareConnection, MiddlewareInstance } from '@/types'
 
 const perm = usePermission()
 
@@ -45,6 +45,34 @@ const createFields = computed(() =>
 const modeMinReplicas = computed(
   () => createItem.value?.modes.find((m) => m.mode === createMode.value)?.minReplicas ?? 1,
 )
+
+/** 单节点/单实例形态：节点数固定，表单只读 */
+const modeFixedReplicas = computed(
+  () => createItem.value?.modes.find((m) => m.mode === createMode.value)?.fixedReplicas ?? null,
+)
+
+/** 节点数在该形态下的含义（主分片数 / 数据节点数 / Broker 数 ...） */
+const modeReplicasLabel = computed(
+  () => createItem.value?.modes.find((m) => m.mode === createMode.value)?.replicasLabel || '节点数',
+)
+
+/** Redis 集群形态才有「每分片从节点数」 */
+const showReplicasPerShard = computed(
+  () => createItem.value?.code === 'redis' && createMode.value === 'CLUSTER',
+)
+
+// ---------------- 连接方式 ----------------
+const connectionVisible = ref(false)
+const connection = ref<MiddlewareConnection | null>(null)
+
+async function showConnection(instanceId: string): Promise<void> {
+  try {
+    connection.value = await middlewareApi.connection(instanceId)
+    connectionVisible.value = true
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '获取连接方式失败')
+  }
+}
 
 // Operator 页只列真正需要装 Operator 的条目（Nacos 走 chart，没有 Operator 可装）
 const operatorCatalog = computed(() => catalog.value.filter((i) => !i.chartBacked))
@@ -118,7 +146,13 @@ async function refresh(): Promise<void> {
 function resetForm(item: MiddlewareCatalogItem): void {
   createItem.value = item
   createMode.value = item.modes[0]?.mode ?? ''
-  const f: Record<string, any> = { namespace: '', displayName: '', storageClass: '' }
+  const f: Record<string, any> = {
+    namespace: '',
+    displayName: '',
+    storageClass: '',
+    // Redis 集群形态：每个主分片的从节点数（默认 1）
+    replicasPerShard: 1,
+  }
   const units: Record<string, string> = {}
   for (const field of MIDDLEWARE_FIELDS[item.code] ?? []) {
     f[field.key] = field.default ?? (field.type === 'number' ? 1 : '')
@@ -130,6 +164,10 @@ function resetForm(item: MiddlewareCatalogItem): void {
   f.kibana = false
   form.value = f
   formUnits.value = units
+  // 单节点/单实例形态：把节点数直接钉成固定值
+  if (item.modes[0]?.fixedReplicas != null) {
+    form.value.replicas = item.modes[0].fixedReplicas
+  }
 }
 
 async function loadFormOptions(): Promise<void> {
@@ -155,8 +193,13 @@ function openCreate(item: MiddlewareCatalogItem): void {
 }
 
 function onModeChange(): void {
+  // 固定节点数的形态直接钉死；可变形态不满足下限时抬到下限
+  if (modeFixedReplicas.value !== null) {
+    form.value.replicas = modeFixedReplicas.value
+    return
+  }
   const min = modeMinReplicas.value
-  if (typeof form.value.replicas === 'number' && form.value.replicas < min) {
+  if (typeof form.value.replicas !== 'number' || form.value.replicas < min) {
     form.value.replicas = min
   }
 }
@@ -184,6 +227,9 @@ async function submitCreate(): Promise<void> {
       version: form.value.version || undefined,
       storageClass: form.value.storageClass || undefined,
       kibana: createItem.value.code === 'elasticsearch' ? !!form.value.kibana : undefined,
+      replicasPerShard: createItem.value.code === 'redis' && createMode.value === 'CLUSTER'
+        ? (form.value.replicasPerShard ?? 1)
+        : undefined,
     }
     for (const field of fields) {
       payload[field.key] = toQuantity(field, form.value[field.key], formUnits.value[field.key])
@@ -192,6 +238,13 @@ async function submitCreate(): Promise<void> {
     createVisible.value = false
     ElMessage.success('已提交创建')
     poll(opId)
+    // 创建成功后把连接方式弹给用户（地址不依赖实例是否已就绪）
+    try {
+      const op = await middlewareApi.operation(opId)
+      if (op?.instanceId) void showConnection(op.instanceId)
+    } catch {
+      // 拿不到实例 id 就不弹，实例列表里还有「连接」入口
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
   } finally {
@@ -373,8 +426,9 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column prop="createdAt" label="创建时间" width="170" />
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="130" fixed="right">
             <template #default="{ row }">
+              <el-button link type="primary" @click="showConnection(row.id)">连接</el-button>
               <el-button link type="danger" @click="openDelete(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -416,7 +470,7 @@ onBeforeUnmount(() => {
     <el-dialog
       v-model="createVisible"
       :title="createItem ? `创建 ${createItem.name} 实例` : '创建实例'"
-      width="680px"
+      width="960px"
       :close-on-click-modal="false"
     >
       <el-form label-width="110px">
@@ -449,11 +503,16 @@ onBeforeUnmount(() => {
           </el-select>
           <div class="mw-form-help">只能从平台支持的版本里选</div>
         </el-form-item>
-        <el-form-item v-for="field in createFields" :key="field.key" :label="field.label">
+        <el-form-item
+          v-for="field in createFields"
+          :key="field.key"
+          :label="field.key === 'replicas' ? modeReplicasLabel : field.label"
+        >
           <div class="mw-resource-row">
             <el-input-number
               v-model="form[field.key]"
-              :min="field.key === 'replicas' ? modeMinReplicas : (field.min ?? 0)"
+              :disabled="field.key === 'replicas' && modeFixedReplicas !== null"
+              :min="field.key === 'replicas' ? (modeFixedReplicas ?? modeMinReplicas) : (field.min ?? 0)"
               :max="field.max ?? 9999"
               :step="field.step ?? 1"
               :precision="field.key === 'replicas' || field.unit === 'size' ? 0 : 2"
@@ -467,6 +526,15 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="field.help" class="mw-form-help">{{ field.help }}</div>
         </el-form-item>
+        <el-form-item v-if="showReplicasPerShard" label="每分片从节点数">
+          <el-input-number v-model="form.replicasPerShard" :min="0" :max="5" />
+          <div class="mw-form-help">
+            默认 1（每个主分片 1 个从节点）；0 = 只有主分片、没有副本
+          </div>
+        </el-form-item>
+        <el-form-item v-if="modeFixedReplicas !== null" label=" ">
+          <span class="mw-form-help">{{ modeReplicasLabel }}固定为 {{ modeFixedReplicas }}，不可调整</span>
+        </el-form-item>
         <el-form-item label="StorageClass">
           <el-select v-model="form.storageClass" style="width: 100%" clearable placeholder="集群默认">
             <el-option v-for="sc in formOptions.storageClasses" :key="sc" :label="sc" :value="sc" />
@@ -474,7 +542,7 @@ onBeforeUnmount(() => {
         </el-form-item>
         <el-form-item v-if="createItem?.code === 'elasticsearch'" label="Kibana">
           <el-switch v-model="form.kibana" active-text="同时部署 Kibana" />
-          <div class="mw-form-help">勾选后平台会额外创建一个 Kibana 实例，指向当前 ES</div>
+          <div class="mw-form-help">（勾选后平台会额外创建一个 Kibana 实例，指向当前 ES）</div>
         </el-form-item>
       </el-form>
       <p class="mw-form-note">
@@ -494,6 +562,29 @@ onBeforeUnmount(() => {
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
         <el-button type="primary" :loading="creating" @click="submitCreate">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ============ 连接方式 ============ -->
+    <el-dialog v-model="connectionVisible" title="连接方式" width="680px">
+      <p class="mw-conn-title">{{ connection?.namespace }} / {{ connection?.instanceName }}</p>
+      <div class="mw-conn-block">
+        <div class="mw-conn-label">访问地址（集群内）</div>
+        <div v-for="l in connection?.endpoints ?? []" :key="l.label" class="mw-conn-line">
+          <span class="mw-conn-key">{{ l.label }}</span>
+          <code class="mw-conn-value">{{ l.value }}</code>
+        </div>
+      </div>
+      <div v-if="connection?.credentials?.length" class="mw-conn-block">
+        <div class="mw-conn-label">凭据</div>
+        <div v-for="l in connection?.credentials ?? []" :key="l.label" class="mw-conn-line">
+          <span class="mw-conn-key">{{ l.label }}</span>
+          <span class="mw-conn-value">{{ l.value }}</span>
+        </div>
+      </div>
+      <p class="mw-form-note">{{ connection?.note }}</p>
+      <template #footer>
+        <el-button type="primary" @click="connectionVisible = false">知道了</el-button>
       </template>
     </el-dialog>
 
@@ -525,6 +616,12 @@ onBeforeUnmount(() => {
 .mw-resource-row { display: flex; align-items: center; gap: 8px; }
 .mw-unit { color: var(--text-3); font-size: 12.5px; }
 .mw-unit-select { width: 80px; }
+.mw-conn-title { margin: 0 0 12px; color: var(--text-2); font-size: 13px; }
+.mw-conn-block { margin-bottom: 14px; }
+.mw-conn-label { font-size: 12.5px; color: var(--text-3); margin-bottom: 6px; }
+.mw-conn-line { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; }
+.mw-conn-key { color: var(--text-3); min-width: 120px; }
+.mw-conn-value { color: var(--text-1); word-break: break-all; }
 
 .mw-grid {
   display: grid;
