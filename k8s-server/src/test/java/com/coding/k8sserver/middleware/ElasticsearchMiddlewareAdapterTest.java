@@ -115,6 +115,12 @@ class ElasticsearchMiddlewareAdapterTest {
         var ref = (Map<String, Object>) spec(kibana).get("elasticsearchRef");
         assertThat(ref).containsEntry("name", "mw-es-abc12345");
         assertThat(spec(kibana)).containsEntry("version", "9.5.0");
+        // 命名空间有 limits 配额时，Kibana 容器没资源字段会被 quota 拒（真集群验证：一直 Pending）
+        @SuppressWarnings("unchecked")
+        var podSpec = (Map<String, Object>) spec(kibana).get("podTemplate");
+        @SuppressWarnings("unchecked")
+        var containers = (List<Map<String, Object>>) ((Map<String, Object>) podSpec.get("spec")).get("containers");
+        assertThat((Map<String, Object>) containers.get(0).get("resources")).containsKeys("requests", "limits");
     }
 
     @Test

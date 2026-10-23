@@ -31,6 +31,11 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
     private static final String VERSION = "v1";
     private static final String DEFAULT_ES_VERSION = "9.5.0";
 
+    /** Kibana 侧车没有用户可调的资源入口，给一组固定值（够跑起来、也能过 limits 配额） */
+    static final Map<String, Object> KIBANA_RESOURCES = Map.of(
+            "requests", Map.of("cpu", "200m", "memory", "512Mi"),
+            "limits", Map.of("cpu", "1", "memory", "1Gi"));
+
     static final CustomResourceDefinitionContext CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION).withKind("Elasticsearch")
             .withPlural("elasticsearches").withScope("Namespaced").build();
@@ -98,6 +103,13 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             kibana.put("version", version);
             kibana.put("count", 1);
             kibana.put("elasticsearchRef", Map.of("name", req.getName()));
+            // 必须带资源：命名空间有 limits.* 配额时，没写 requests/limits 的容器会被 quota 直接拒掉
+            //（真集群验证：Kibana Pod 一直 Pending，事件是 must specify limits.cpu for: kibana）
+            Map<String, Object> kibanaContainer = new LinkedHashMap<>();
+            kibanaContainer.put("name", "kibana");
+            kibanaContainer.put("resources", KIBANA_RESOURCES);
+            kibana.put("podTemplate", Map.of("spec", Map.of("containers",
+                    new java.util.ArrayList<>(List.of(kibanaContainer)))));
             out.add(new CrSpec(KIBANA, resource(req, "kibana.k8s.elastic.co/" + VERSION, "Kibana", kibana)));
         }
         return out;
