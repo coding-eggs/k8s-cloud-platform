@@ -40,6 +40,23 @@
   `<名称>-master/-replica/-sentinel`、集群 `<名称>-leader/-follower`、PG `<名称>-rw/-ro`、
   RabbitMQ `<名称>`、ES `<名称>-es-http`、Kafka `<名称>-kafka-bootstrap`）。
 
+## 1.2 实例详情 / 编辑
+
+- 列表点名称或「详情」进 `apps/:id`：概览（台账 + 规格 + 连接方式）、资源对象（CR + Pod / PVC / Service）、
+  YAML（CR 原文）、操作记录；
+- 「资源对象」与状态判定用同一套 selector（Pod 用 `statusSelector`、PVC 用 `pvcSelector`），
+  不会出现"列表 READY、详情没对象"；
+- 编辑只做**副本数 + CPU/内存 + 显示名**：形态与存储不可在线改（后端 scale 语义如此）；
+  Nacos 走 chart，只允许改显示名；
+- 实例列表可按类型筛选（`instance/list` 的 `code` 参数），只拉这一类实例的实时状态。
+
+## 1.3 Operator 状态
+
+- `middleware/catalog` 里的 Operator 状态按集群缓存 **30s（Redis）**：每个 Operator 都要查
+  helm release + CRD + 工作负载，不缓存时进一次页面要查 6 遍（实测 1.9s → 0.01s）；
+- 「已安装版本」取工作负载的 `helm.sh/chart` 标签，与目录里钉死的版本比较：
+  一致 → 按钮显示「重装」，不一致 → 「升级」；不再对所有已安装的 Operator 都显示「升级」。
+
 ## 2. 执行链
 
 ```
@@ -62,6 +79,7 @@
   （补 `postgresql.cnpg.io` / `rabbitmq.com`），重放后同样要点一次「重下发全部模板」；
 - 表单可选项端点新增权限行 `perm_mw_form_options`（`/middleware/form-options` → `tenant:middleware:read`），
   见 `V2026_10_23_2`，已绑 admin / tenant_admin / tenant_member；
+- 详情 / 操作记录 / 改名三个端点见 `V2026_10_23_4`（前两个 `tenant:middleware:read`，改名 `tenant:middleware:write`）；
   **重放后必须点一次「重下发全部模板」**，否则租户创建这三类实例会 403；
 - 重建 k8s-server + platform-api + platform-web；
 - Operator 安装时平台会下发"监听全部命名空间"的 values（Percona `watchAllNamespaces`、Strimzi

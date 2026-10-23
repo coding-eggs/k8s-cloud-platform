@@ -117,6 +117,9 @@ public final class AuditAction {
     /** 删除中间件实例（keepPvc 决定数据卷去留） */
     public static final String MIDDLEWARE_DELETE = "middleware:delete";
 
+    /** 修改中间件实例显示名（只改台账） */
+    public static final String MIDDLEWARE_RENAME = "middleware:rename";
+
     /** 安装/升级中间件 Operator（管理员） */
     public static final String MIDDLEWARE_OPERATOR_INSTALL = "middleware:operator:install";
 

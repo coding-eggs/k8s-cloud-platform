@@ -6,6 +6,7 @@
  * 卡片点「创建实例」→ 手写表单（字段来自 middlewareForms.ts）→ 提交 → 轮询操作记录。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { clusterApi, middlewareApi, resourceContextApi } from '@/api'
 import { usePermission } from '@/stores/permission'
@@ -15,12 +16,15 @@ import type { MiddlewareField } from '@/components/middleware/middlewareForms'
 import type { K8sCluster, MiddlewareCatalogItem, MiddlewareConnection, MiddlewareInstance } from '@/types'
 
 const perm = usePermission()
+const router = useRouter()
 
 const tab = ref<'store' | 'instances' | 'operator'>('store')
 const clusters = ref<K8sCluster[]>([])
 const clusterId = ref('')
 const catalog = ref<MiddlewareCatalogItem[]>([])
 const instances = ref<MiddlewareInstance[]>([])
+/** 实例列表的类型过滤（空 = 全部）：按类型查，避免一次把所有类型的实时状态都拉一遍 */
+const instanceCode = ref('')
 const loading = ref(false)
 const operating = ref('')
 
@@ -130,7 +134,14 @@ async function loadInstances(): Promise<void> {
     instances.value = []
     return
   }
-  instances.value = (await middlewareApi.instanceList(clusterId.value)) ?? []
+  instances.value = (await middlewareApi.instanceList(
+    clusterId.value,
+    instanceCode.value || undefined,
+  )) ?? []
+}
+
+function onInstanceCodeChange(): void {
+  void loadInstances()
 }
 
 async function refresh(): Promise<void> {
@@ -432,11 +443,24 @@ onBeforeUnmount(() => {
 
       <!-- ============ 实例 ============ -->
       <el-tab-pane label="实例" name="instances">
+        <div class="mw-filter">
+          <span class="mw-filter-label">类型</span>
+          <el-select v-model="instanceCode" clearable placeholder="全部" style="width: 180px" @change="onInstanceCodeChange">
+            <el-option v-for="i in catalog" :key="i.code" :label="i.name" :value="i.code" />
+          </el-select>
+          <span class="mw-form-help">按类型查询，只拉这一类实例的实时状态</span>
+        </div>
         <el-table :data="instances" class="panel" empty-text="这个集群还没有中间件实例">
           <el-table-column label="类型" width="140">
             <template #default="{ row }">{{ nameOf(row.code) }}</template>
           </el-table-column>
-          <el-table-column prop="displayName" label="名称" min-width="160" />
+          <el-table-column label="名称" min-width="160">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="router.push(`/apps/${row.id}`)">
+                {{ row.displayName || row.name }}
+              </el-button>
+            </template>
+          </el-table-column>
           <el-table-column prop="namespace" label="命名空间" width="140" />
           <el-table-column prop="mode" label="形态" width="120" />
           <el-table-column prop="version" label="版本" width="100" />
@@ -448,8 +472,9 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column prop="createdAt" label="创建时间" width="170" />
-          <el-table-column label="操作" width="130" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
+              <el-button link type="primary" @click="router.push(`/apps/${row.id}`)">详情</el-button>
               <el-button link type="primary" @click="showConnection(row.id)">连接</el-button>
               <el-button link type="danger" @click="openDelete(row)">删除</el-button>
             </template>
@@ -470,7 +495,14 @@ onBeforeUnmount(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="chartVersion" label="chart 版本" width="130" />
+          <el-table-column label="chart 版本" width="170">
+            <template #default="{ row }">
+              <span>{{ row.installedChartVersion || '—' }}</span>
+              <el-tag v-if="row.upgradeAvailable" size="small" type="warning" style="margin-left: 6px">
+                可升到 {{ row.chartVersion }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column prop="operatorMessage" label="说明" min-width="200" />
           <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
@@ -480,7 +512,7 @@ onBeforeUnmount(() => {
                 type="primary"
                 :loading="operating === row.code"
                 @click="installOperator(row)"
-              >{{ row.operatorInstalled ? '升级' : '安装' }}</el-button>
+              >{{ !row.operatorInstalled ? '安装' : row.upgradeAvailable ? '升级' : '重装' }}</el-button>
               <span v-else class="mw-hint">即将支持</span>
             </template>
           </el-table-column>
@@ -646,6 +678,8 @@ onBeforeUnmount(() => {
 .ph-desc { margin: 4px 0 0; font-size: 12.5px; color: var(--text-3); }
 .ph-actions { display: flex; gap: 10px; align-items: center; }
 .mw-tabs { margin-top: -4px; }
+.mw-filter { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.mw-filter-label { color: var(--text-3); font-size: 12.5px; }
 .mw-resource-row { display: flex; align-items: center; gap: 8px; }
 /* 表单统一左对齐：label 顶格、控件从同一列开始 */
 .mw-create-form :deep(.el-form-item__label) { justify-content: flex-start; text-align: left; }

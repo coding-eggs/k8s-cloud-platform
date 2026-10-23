@@ -4,6 +4,8 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
+import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
+import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
@@ -12,6 +14,8 @@ import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
+import io.fabric8.kubernetes.client.utils.Serialization;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.api.model.ResourceQuota;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -55,6 +59,104 @@ public class MiddlewareInstanceService {
         this.nacos = nacos;
         this.adapters = adapters.stream()
                 .collect(Collectors.toMap(MiddlewareAdapter::code, Function.identity()));
+    }
+
+    /**
+     * 详情页的实时对象：CR（含 YAML）+ 该实例的 Pod / PVC / Service。
+     * 查询口径与 {@link #status} 一致，避免「列表说 READY、详情说没对象」。
+     */
+    public MiddlewareInstanceLiveDTO detail(MiddlewareDetailRequestDTO req) {
+        var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
+                req.getTenantId(), req.getClusterId(), req.getNamespace());
+        KubernetesClient client = clientOf(req.getClusterId(), ctx);
+        MiddlewareAdapter adapter = adapter(req.getCode());
+
+        MiddlewareInstanceLiveDTO out = new MiddlewareInstanceLiveDTO();
+        GenericKubernetesResource live = null;
+        for (CustomResourceDefinitionContext crd : adapter.contexts()) {
+            var found = client.genericKubernetesResources(crd)
+                    .inNamespace(req.getNamespace()).withName(req.getName()).get();
+            if (found != null) {
+                live = found;
+                break;
+            }
+        }
+        if (live != null) {
+            out.setKind(live.getKind());
+            out.setApiVersion(live.getApiVersion());
+            if (live.getMetadata() != null) {
+                out.setName(live.getMetadata().getName());
+                out.setCreatedAt(live.getMetadata().getCreationTimestamp());
+            }
+            out.setYaml(Serialization.asYaml(live));
+        }
+
+        out.setPods(client.pods().inNamespace(req.getNamespace())
+                .withLabelSelector(adapter.statusSelector(req.getName(),
+                        live == null ? null : live.getKind(), req.getInstanceId()))
+                .list().getItems().stream().map(MiddlewareInstanceService::toPodView).toList());
+
+        out.setPvcs(client.persistentVolumeClaims().inNamespace(req.getNamespace())
+                .withLabelSelector(adapter.pvcSelector(req.getName(), req.getInstanceId()))
+                .list().getItems().stream().map(MiddlewareInstanceService::toPvcView).toList());
+
+        // Service 名都比实例名多一段后缀（-master/-haproxy/-kafka-bootstrap…）；Nacos 固定叫 nacos-cs
+        String prefix = req.getName();
+        out.setServices(client.services().inNamespace(req.getNamespace()).list().getItems().stream()
+                .filter(s -> s.getMetadata() != null && s.getMetadata().getName() != null)
+                .filter(s -> s.getMetadata().getName().startsWith(prefix)
+                        || ("nacos".equals(req.getCode()) && "nacos-cs".equals(s.getMetadata().getName())))
+                .map(MiddlewareInstanceService::toServiceView).toList());
+        return out;
+    }
+
+    private static MiddlewareInstanceLiveDTO.PodView toPodView(Pod pod) {
+        MiddlewareInstanceLiveDTO.PodView v = new MiddlewareInstanceLiveDTO.PodView();
+        v.setName(pod.getMetadata() == null ? "" : pod.getMetadata().getName());
+        v.setCreatedAt(pod.getMetadata() == null ? null : pod.getMetadata().getCreationTimestamp());
+        v.setNode(pod.getSpec() == null ? null : pod.getSpec().getNodeName());
+        if (pod.getStatus() != null) {
+            v.setPhase(pod.getStatus().getPhase());
+            int total = pod.getStatus().getContainerStatuses() == null ? 0
+                    : pod.getStatus().getContainerStatuses().size();
+            int ready = pod.getStatus().getContainerStatuses() == null ? 0
+                    : (int) pod.getStatus().getContainerStatuses().stream().filter(c -> c.getReady() != null && c.getReady()).count();
+            int restarts = pod.getStatus().getContainerStatuses() == null ? 0
+                    : pod.getStatus().getContainerStatuses().stream()
+                            .mapToInt(c -> c.getRestartCount() == null ? 0 : c.getRestartCount()).sum();
+            v.setReady(total > 0 && ready == total);
+            v.setReadyText(ready + "/" + total);
+            v.setRestarts(restarts);
+        }
+        return v;
+    }
+
+    private static MiddlewareInstanceLiveDTO.PvcView toPvcView(PersistentVolumeClaim pvc) {
+        MiddlewareInstanceLiveDTO.PvcView v = new MiddlewareInstanceLiveDTO.PvcView();
+        v.setName(pvc.getMetadata() == null ? "" : pvc.getMetadata().getName());
+        v.setCreatedAt(pvc.getMetadata() == null ? null : pvc.getMetadata().getCreationTimestamp());
+        if (pvc.getStatus() != null) {
+            v.setPhase(pvc.getStatus().getPhase());
+            Quantity cap = pvc.getStatus().getCapacity() == null ? null
+                    : pvc.getStatus().getCapacity().get("storage");
+            v.setCapacity(cap == null ? null : cap.toString());
+        }
+        v.setStorageClass(pvc.getSpec() == null ? null : pvc.getSpec().getStorageClassName());
+        return v;
+    }
+
+    private static MiddlewareInstanceLiveDTO.ServiceView toServiceView(
+            io.fabric8.kubernetes.api.model.Service svc) {
+        MiddlewareInstanceLiveDTO.ServiceView v = new MiddlewareInstanceLiveDTO.ServiceView();
+        v.setName(svc.getMetadata().getName());
+        if (svc.getSpec() != null) {
+            v.setType(svc.getSpec().getType());
+            v.setClusterIp(svc.getSpec().getClusterIP());
+            v.setPorts(svc.getSpec().getPorts() == null ? "" : svc.getSpec().getPorts().stream()
+                    .map(p -> p.getPort() + "/" + p.getProtocol()).toList().stream()
+                    .collect(java.util.stream.Collectors.joining(",")));
+        }
+        return v;
     }
 
     public void create(MiddlewareCreateRequestDTO req) {

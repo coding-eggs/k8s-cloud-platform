@@ -90,6 +90,7 @@ import type {
   TokenUserInfo,
   MiddlewareCatalogItem,
   MiddlewareConnection,
+  MiddlewareInstanceDetail,
   MiddlewareInstance,
   MiddlewareOperation,
   MiddlewareOperatorStatus,
@@ -938,6 +939,13 @@ export const middlewareApi = {
     http.post<never, MiddlewareInstance[]>('/middleware/instance/list', { clusterId, code, tenantId }),
   instanceGet: (instanceId: string, tenantId?: string) =>
     http.post<never, MiddlewareInstance>('/middleware/instance/get', { instanceId, tenantId }),
+  /** 详情页聚合：台账 + 规格 + 连接方式 + 集群实时对象 */
+  instanceDetail: (instanceId: string, tenantId?: string) =>
+    http.post<never, MiddlewareInstanceDetail>('/middleware/instance/detail', { instanceId, tenantId }),
+  instanceOperations: (instanceId: string, tenantId?: string) =>
+    http.post<never, MiddlewareOperation[]>('/middleware/instance/operations', { instanceId, tenantId }),
+  rename: (payload: { instanceId: string; displayName: string; tenantId?: string }) =>
+    http.post<never, MiddlewareInstance>('/middleware/instance/rename', payload),
   create: (payload: {
     clusterId: string
     code: string

@@ -2,6 +2,8 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
+import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
+import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorInstallRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusRequestDTO;
@@ -46,6 +48,11 @@ public class K8sMiddlewareClient {
     public Boolean delete(String code, MiddlewareDeleteRequestDTO body) {
         return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/delete", null, body,
                 gateway.responseType(Boolean.class));
+    }
+
+    public MiddlewareInstanceLiveDTO detail(String code, MiddlewareDetailRequestDTO body) {
+        return gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/detail", null, body,
+                gateway.responseType(MiddlewareInstanceLiveDTO.class));
     }
 
     public List<MiddlewareStatusResultDTO> status(String code, MiddlewareStatusRequestDTO body) {

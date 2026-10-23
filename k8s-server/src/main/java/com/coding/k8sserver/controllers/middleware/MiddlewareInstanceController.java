@@ -3,6 +3,8 @@ package com.coding.k8sserver.controllers.middleware;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
+import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
+import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
 import com.coding.common.models.system.ResponseData;
@@ -64,6 +66,14 @@ public class MiddlewareInstanceController implements AccessBoundaryAware {
         request.setCode(code);
         service.delete(request);
         return new ResponseData<>(true);
+    }
+
+    @PostMapping("/{code}/detail")
+    @Operation(summary = "实例实时对象（CR + YAML + Pod/PVC/Service，详情页用）")
+    public ResponseData<MiddlewareInstanceLiveDTO> detail(@PathVariable("code") String code,
+                                                          @RequestBody MiddlewareDetailRequestDTO request) {
+        request.setCode(code);
+        return new ResponseData<>(service.detail(request));
     }
 
     @PostMapping("/{code}/status")

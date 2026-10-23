@@ -171,6 +171,16 @@ class MiddlewareOperatorInstallerTest {
     }
 
     @Test
+    void helmChartLabelVersionIsParsed() {
+        // 工作负载标签 helm.sh/chart = <chart 名>-<版本>，用来判断「有没有升级可做」
+        assertThat(MiddlewareOperatorInstaller.versionOf("eck-operator-3.5.0")).isEqualTo("3.5.0");
+        assertThat(MiddlewareOperatorInstaller.versionOf("redis-operator-0.27.0")).isEqualTo("0.27.0");
+        assertThat(MiddlewareOperatorInstaller.versionOf("cloudnative-pg-0.29.1")).isEqualTo("0.29.1");
+        assertThat(MiddlewareOperatorInstaller.versionOf("no-version-here")).isNull();
+        assertThat(MiddlewareOperatorInstaller.versionOf(null)).isNull();
+    }
+
+    @Test
     void unknownCodeIsRejected() {
         assertThatThrownBy(() -> installer.install("c1", "minio"))
                 .hasMessageContaining("不支持");

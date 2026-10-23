@@ -46,6 +46,14 @@
     where id = #{id,jdbcType=BIGINT}
   </select>
 
+  <select id="selectByInstance" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_operation
+    where instance_id = #{instanceId,jdbcType=VARCHAR}
+    order by id desc
+    limit 100
+  </select>
+
   <select id="selectStaleRunning" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_middleware_operation

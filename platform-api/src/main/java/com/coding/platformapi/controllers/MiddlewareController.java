@@ -12,7 +12,9 @@ import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
 import com.coding.platformapi.models.MiddlewareOperatorInstallRequest;
+import com.coding.platformapi.models.MiddlewareInstanceDetail;
 import com.coding.platformapi.models.MiddlewareOptionsRequest;
+import com.coding.platformapi.models.MiddlewareRenameRequest;
 import com.coding.platformapi.models.MiddlewareQueryRequest;
 import com.coding.platformapi.models.MiddlewareScaleRequest;
 import com.coding.platformapi.security.AuthContext;
@@ -82,6 +84,28 @@ public class MiddlewareController {
     @Operation(summary = "实例连接方式（集群内地址 + 凭据位置）")
     public ResponseData<MiddlewareConnectionDTO> connection(@RequestBody MiddlewareQueryRequest request) {
         return new ResponseData<>(service.connection(request.getInstanceId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/detail")
+    @Operation(summary = "实例详情（台账 + 规格 + 连接方式 + 实时对象）")
+    public ResponseData<MiddlewareInstanceDetail> detail(@RequestBody MiddlewareQueryRequest request) {
+        return new ResponseData<>(service.detail(request.getInstanceId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/operations")
+    @Operation(summary = "实例的操作记录")
+    public ResponseData<List<PlatformMiddlewareOperation>> operations(@RequestBody MiddlewareQueryRequest request) {
+        return new ResponseData<>(service.operations(request.getInstanceId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/rename")
+    @Auditable(action = AuditAction.MIDDLEWARE_RENAME, target = "#request.instanceId")
+    @Operation(summary = "修改实例显示名（只改台账）")
+    public ResponseData<PlatformMiddlewareInstance> rename(@RequestBody MiddlewareRenameRequest request) {
+        return new ResponseData<>(service.rename(request.getInstanceId(), request.getDisplayName(),
                 auth.effectiveTenantId(request.getTenantId())));
     }
 

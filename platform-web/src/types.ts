@@ -2416,6 +2416,10 @@ export interface MiddlewareCatalogItem {
   operatorInstalled: boolean
   operatorReady: boolean
   chartVersion?: string | null
+  /** 集群里实际安装的 chart 版本（读不到为 null） */
+  installedChartVersion?: string | null
+  /** 已安装且版本与平台目录不一致 */
+  upgradeAvailable?: boolean
   operatorMessage?: string | null
   instanceCount: number
 }
@@ -2426,6 +2430,25 @@ export interface MiddlewareConnection {
   endpoints: { label: string; value: string }[]
   credentials: { label: string; value: string }[]
   note?: string | null
+}
+
+export interface MiddlewareInstanceDetail {
+  instance: MiddlewareInstance
+  spec: Record<string, any>
+  connection?: MiddlewareConnection | null
+  live?: MiddlewareInstanceLive | null
+  liveError?: string | null
+}
+
+export interface MiddlewareInstanceLive {
+  kind?: string | null
+  name?: string | null
+  apiVersion?: string | null
+  createdAt?: string | null
+  yaml?: string | null
+  pods: { name: string; phase?: string | null; ready: boolean; readyText?: string | null; restarts: number; node?: string | null; createdAt?: string | null }[]
+  pvcs: { name: string; phase?: string | null; capacity?: string | null; storageClass?: string | null; createdAt?: string | null }[]
+  services: { name: string; type?: string | null; clusterIp?: string | null; ports?: string | null }[]
 }
 
 export interface MiddlewareFormOptions {

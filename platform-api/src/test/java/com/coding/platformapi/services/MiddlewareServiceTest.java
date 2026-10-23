@@ -12,6 +12,7 @@ import com.coding.data.mapper.system.PlatformMiddlewareOperatorMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.system.PlatformMiddlewareInstance;
 import com.coding.data.models.system.PlatformMiddlewareOperation;
+import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sMiddlewareClient;
 import com.coding.platformapi.middleware.MiddlewareCatalog;
@@ -40,13 +41,17 @@ class MiddlewareServiceTest {
     private final K8sMiddlewareClient client = mock(K8sMiddlewareClient.class);
     private final K8sClient k8s = mock(K8sClient.class);
     private final PlatformTenantNamespaceMapper allocations = mock(PlatformTenantNamespaceMapper.class);
+    private final RedisJsonCache cache = mock(RedisJsonCache.class);
 
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, new MiddlewareCatalog(),
-            JsonMapper.builder().build(), k8s, allocations);
+            JsonMapper.builder().build(), k8s, allocations, cache);
 
     @BeforeEach
     void opsGetIds() {
+        // 缓存打桩成直通：测试里不关心 Redis
+        org.mockito.Mockito.when(cache.get(anyString(), any(), any(), any()))
+                .thenAnswer(inv -> ((java.util.function.Supplier<?>) inv.getArgument(3)).get());
         doAnswer(inv -> {
             inv.getArgument(0, PlatformMiddlewareOperation.class).setId(1L);
             return 1;
@@ -230,6 +235,60 @@ class MiddlewareServiceTest {
         i.setMode(mode);
         i.setName("mw-" + code + "-abcdefgh");
         return i;
+    }
+
+    @Test
+    void detailMergesLedgerSpecConnectionAndLiveObjects() {
+        PlatformMiddlewareInstance i = instance("redis", "SENTINEL");
+        i.setSpecJson("{\"replicas\":2,\"cpuRequest\":\"100m\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        var live = new com.coding.common.models.middleware.MiddlewareInstanceLiveDTO();
+        live.setKind("RedisReplication");
+        live.setName(i.getName());
+        when(client.detail(org.mockito.ArgumentMatchers.eq("redis"), any())).thenReturn(live);
+
+        var detail = service.detail("mwi_1", null);
+
+        assertThat(detail.getInstance().getName()).isEqualTo(i.getName());
+        assertThat(detail.getSpec()).containsEntry("replicas", 2);
+        assertThat(detail.getConnection().getEndpoints()).isNotEmpty();
+        assertThat(detail.getLive().getKind()).isEqualTo("RedisReplication");
+        assertThat(detail.getLiveError()).isNull();
+    }
+
+    @Test
+    void detailKeepsLedgeDataWhenClusterReadFails() {
+        PlatformMiddlewareInstance i = instance("redis", "SENTINEL");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.detail(anyString(), any())).thenThrow(new RuntimeException("cluster down"));
+
+        var detail = service.detail("mwi_1", null);
+
+        assertThat(detail.getLive()).isNull();
+        assertThat(detail.getLiveError()).contains("cluster down");
+        assertThat(detail.getConnection()).isNotNull();
+    }
+
+    @Test
+    void operationsAreScopedToTheInstanceOwner() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setTenantId("t1");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        assertThatThrownBy(() -> service.operations("mwi_1", "t2"))
+                .hasMessageContaining("无权操作该实例");
+    }
+
+    @Test
+    void renameOnlyTouchesTheLedger() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var updated = service.rename("mwi_1", "  缓存主库  ", null);
+
+        assertThat(updated.getDisplayName()).isEqualTo("缓存主库");
+        verify(instances).updateById(i);
+        verify(client, org.mockito.Mockito.never()).scale(anyString(), any());
     }
 
     @Test

@@ -108,6 +108,11 @@ public class MiddlewareOperatorInstaller {
         // 把 CRD 存在算作已安装会让卡片状态与事实相反
         out.setInstalled(releaseExists);
         out.setReady(ready);
+        // 「有没有升级可做」以集群里实际的 chart 版本为准：Deployment/StatefulSet 上有 helm.sh/chart 标签
+        String installedVersion = releaseExists ? installedChartVersion(client, workloads) : null;
+        out.setInstalledChartVersion(installedVersion);
+        out.setUpgradeAvailable(installedVersion != null
+                && !installedVersion.equals(entry.chartVersion()));
         out.setMessage(ready ? "运行中"
                 : !releaseExists ? "Operator 尚未安装（helm release 不存在）"
                 : !crds ? "CRD 未就绪（安装可能仍在进行）"
@@ -146,6 +151,43 @@ public class MiddlewareOperatorInstaller {
                         "CRD " + name + " 已存在但不由 Helm 管理，拒绝接管（请先手工清理或改由平台安装）");
             }
         }
+    }
+
+    /**
+     * 从工作负载的 {@code helm.sh/chart} 标签（格式 {@code <chart 名>-<版本>}）里取实际安装的版本。
+     * 读不到返回 null —— 卡片就按「已安装、版本未知」展示，不误报可升级。
+     */
+    String installedChartVersion(KubernetesClient client, List<Workload> workloads) {
+        if (client == null) {
+            return null;
+        }
+        for (Workload w : workloads) {
+            Map<String, String> labels = null;
+            if ("StatefulSet".equals(w.kind())) {
+                var sts = client.apps().statefulSets()
+                        .inNamespace(MiddlewareOperatorCatalog.NAMESPACE).withName(w.name()).get();
+                labels = sts == null || sts.getMetadata() == null ? null : sts.getMetadata().getLabels();
+            } else {
+                var d = client.apps().deployments()
+                        .inNamespace(MiddlewareOperatorCatalog.NAMESPACE).withName(w.name()).get();
+                labels = d == null || d.getMetadata() == null ? null : d.getMetadata().getLabels();
+            }
+            String chart = labels == null ? null : labels.get("helm.sh/chart");
+            String version = versionOf(chart);
+            if (version != null) {
+                return version;
+            }
+        }
+        return null;
+    }
+
+    /** {@code eck-operator-3.5.0} → {@code 3.5.0}（取末尾的 semver） */
+    static String versionOf(String helmChartLabel) {
+        if (helmChartLabel == null) {
+            return null;
+        }
+        var m = java.util.regex.Pattern.compile("(\\d+\\.\\d+\\.\\d+)$").matcher(helmChartLabel.trim());
+        return m.find() ? m.group(1) : null;
     }
 
     /** 读一个 CRD（包级：单测覆写它来跳过 fabric8 客户端链）。 */

@@ -5,6 +5,8 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
+import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
+import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
@@ -22,10 +24,12 @@ import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.system.PlatformMiddlewareInstance;
 import com.coding.data.models.system.PlatformMiddlewareOperation;
 import com.coding.data.models.system.PlatformMiddlewareOperator;
+import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sMiddlewareClient;
 import com.coding.platformapi.middleware.MiddlewareCatalog;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
+import com.coding.platformapi.models.MiddlewareInstanceDetail;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
 import com.coding.platformapi.models.MiddlewareScaleRequest;
 import org.springframework.dao.DuplicateKeyException;
@@ -34,6 +38,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -63,6 +68,7 @@ public class MiddlewareService {
     private final JsonMapper jsonMapper;
     private final K8sClient k8s;
     private final PlatformTenantNamespaceMapper allocations;
+    private final RedisJsonCache cache;
 
     public MiddlewareService(PlatformMiddlewareInstanceMapper instances,
                              PlatformMiddlewareOperationMapper operations,
@@ -71,7 +77,8 @@ public class MiddlewareService {
                              MiddlewareCatalog catalog,
                              JsonMapper jsonMapper,
                              K8sClient k8s,
-                             PlatformTenantNamespaceMapper allocations) {
+                             PlatformTenantNamespaceMapper allocations,
+                             RedisJsonCache cache) {
         this.instances = instances;
         this.operations = operations;
         this.operators = operators;
@@ -80,13 +87,20 @@ public class MiddlewareService {
         this.jsonMapper = jsonMapper;
         this.k8s = k8s;
         this.allocations = allocations;
+        this.cache = cache;
     }
 
     // ==================== 目录 ====================
 
     public List<MiddlewareCatalogItemDTO> catalog(String clusterId, String tenantId) {
         requireCluster(clusterId);
-        List<MiddlewareOperatorStatusDTO> stats = client.operatorStatus(statusRequest(clusterId));
+        // Operator 状态要逐个 Operator 查 helm release + CRD + 工作负载，列表/商店卡片都会打到它：
+        // 用 Redis 缓存一个短 TTL（安装完成后最多旧 30s，比每次进页面查 6 遍值）
+        List<MiddlewareOperatorStatusDTO> stats = cache.get(
+                "middleware:operator-status:" + clusterId, Duration.ofSeconds(30),
+                new tools.jackson.core.type.TypeReference<List<MiddlewareOperatorStatusDTO>>() {
+                },
+                () -> client.operatorStatus(statusRequest(clusterId)));
         List<PlatformMiddlewareInstance> all = instances.selectByCluster(clusterId, null);
 
         return catalog.items().stream().map(item -> {
@@ -104,6 +118,8 @@ public class MiddlewareService {
                 dto.setOperatorInstalled(s.isInstalled());
                 dto.setOperatorReady(s.isReady());
                 dto.setChartVersion(s.getChartVersion());
+                dto.setInstalledChartVersion(s.getInstalledChartVersion());
+                dto.setUpgradeAvailable(s.isUpgradeAvailable());
                 dto.setOperatorMessage(s.getMessage());
             });
             dto.setInstanceCount((int) all.stream()
@@ -403,6 +419,60 @@ public class MiddlewareService {
 
     private static String svc(String namespace, String service, int port) {
         return service + "." + namespace + ".svc.cluster.local:" + port;
+    }
+
+    /**
+     * 详情页的聚合：台账 + 规格 + 连接方式 + 集群里的实时对象。
+     * 集群读失败不整体失败 —— 台账和连接方式仍然有值，实时部分留空并带原因。
+     */
+    public MiddlewareInstanceDetail detail(String instanceId, String tenantId) {
+        PlatformMiddlewareInstance instance = requireInstance(instanceId, tenantId);
+        MiddlewareInstanceDetail out = new MiddlewareInstanceDetail();
+        out.setInstance(instance);
+        out.setSpec(parseSpec(instance.getSpecJson()));
+        out.setConnection(connection(instanceId, tenantId));
+        try {
+            MiddlewareDetailRequestDTO req = new MiddlewareDetailRequestDTO();
+            req.setClusterId(instance.getClusterId());
+            req.setCode(instance.getCode());
+            req.setNamespace(instance.getNamespace());
+            req.setName(instance.getName());
+            req.setInstanceId(instance.getId());
+            req.setTenantId(instance.getTenantId());
+            out.setLive(client.detail(instance.getCode(), req));
+        } catch (RuntimeException e) {
+            out.setLiveError(e.getMessage());
+        }
+        return out;
+    }
+
+    public List<PlatformMiddlewareOperation> operations(String instanceId, String tenantId) {
+        requireInstance(instanceId, tenantId);
+        return operations.selectByInstance(instanceId);
+    }
+
+    /** 只改显示名（台账字段），不动集群对象；重名不拦（显示名不唯一）。 */
+    public PlatformMiddlewareInstance rename(String instanceId, String displayName, String tenantId) {
+        PlatformMiddlewareInstance instance = requireInstance(instanceId, tenantId);
+        if (isBlank(displayName)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "显示名不能为空");
+        }
+        instance.setDisplayName(displayName.trim());
+        instance.setUpdatedAt(new Date());
+        instances.updateById(instance);
+        return instance;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseSpec(String specJson) {
+        if (specJson == null || specJson.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return jsonMapper.readValue(specJson, Map.class);
+        } catch (RuntimeException e) {
+            return Map.of();
+        }
     }
 
     public Long scale(MiddlewareScaleRequest req, String operator, String tenantId) {

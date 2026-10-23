@@ -28,6 +28,12 @@ public class MiddlewareCatalogItemDTO {
 
     private String chartVersion;
 
+    /** 集群里实际安装的 chart 版本（读不到为 null） */
+    private String installedChartVersion;
+
+    /** 已安装且版本与平台目录不一致 = 有升级可做 */
+    private boolean upgradeAvailable;
+
     private String operatorMessage;
 
     private int instanceCount;
