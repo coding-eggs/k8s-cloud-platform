@@ -272,6 +272,27 @@ class MiddlewareServiceTest {
     }
 
     @Test
+    void connectionUsesHttpWhenTlsIsDisabled() {
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        i.setSpecJson("{\"tls\":false}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var c = service.connection("mwi_1", null);
+
+        assertThat(c.getEndpoints().get(0).value()).startsWith("http://");
+        assertThat(c.getEndpoints().get(1).value()).startsWith("http://");
+    }
+
+    @Test
+    void connectionDefaultsToHttpsWhenTlsFlagIsAbsent() {
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        i.setSpecJson("{\"mode\":\"CLUSTER\"}");   // 老实例没有 tls 键
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        assertThat(service.connection("mwi_1", null).getEndpoints().get(0).value()).startsWith("https://");
+    }
+
+    @Test
     void connectionForPostgresShowsReadWriteAndReadOnly() {
         when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("postgresql", "HA"));
 

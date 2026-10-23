@@ -23,6 +23,9 @@ public class MiddlewareCreateRequest {
     private String storageClass;
     /** Elasticsearch：是否同时部署 Kibana（ECH 的 Kibana CR，指向本实例） */
     private Boolean kibana;
+
+    /** 是否启用 TLS（ECT 自签证书）；缺省 true。仅 Elasticsearch/Kibana 支持关闭 */
+    private Boolean tls;
     /** 仅管理员代管轨使用；租户轨以 token 为准 */
     private String tenantId;
 }

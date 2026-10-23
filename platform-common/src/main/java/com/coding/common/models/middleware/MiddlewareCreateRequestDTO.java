@@ -41,6 +41,9 @@ public class MiddlewareCreateRequestDTO {
     /** Elasticsearch：是否同时创建 Kibana CR（其余中间件忽略） */
     private Boolean kibana;
 
+    /** 是否启用 TLS（自签证书）；null/true = 开启。目前只有 Elasticsearch/Kibana 支持关闭 */
+    private Boolean tls;
+
     /** 平台生成的初始密码；只用于创建 Secret，不落库、不记日志 */
     private String password;
 

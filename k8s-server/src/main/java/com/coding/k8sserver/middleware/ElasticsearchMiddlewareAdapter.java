@@ -31,6 +31,15 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
     private static final String VERSION = "v1";
     private static final String DEFAULT_ES_VERSION = "9.5.0";
 
+    /** 关掉自签证书 = 该层用明文 HTTP */
+    private static Map<String, Object> httpWithoutTls() {
+        return Map.of("tls", Map.of("selfSignedCertificate", Map.of("disabled", true)));
+    }
+
+    private static boolean tlsEnabled(MiddlewareCreateRequestDTO req) {
+        return !Boolean.FALSE.equals(req.getTls());
+    }
+
     /** Kibana 侧车没有用户可调的资源入口，给一组固定值（够跑起来、也能过 limits 配额） */
     static final Map<String, Object> KIBANA_RESOURCES = Map.of(
             "requests", Map.of("cpu", "200m", "memory", "512Mi"),
@@ -95,6 +104,10 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("version", version);
         spec.put("nodeSets", new java.util.ArrayList<>(List.of(nodeSet)));
+        if (!tlsEnabled(req)) {
+            // 关掉自签证书 = HTTP 明文（ECS HTTP 层的 TLS 由 selfSignedCertificate 控制）
+            spec.put("http", httpWithoutTls());
+        }
         List<CrSpec> out = new java.util.ArrayList<>();
         out.add(new CrSpec(CRD, resource(req, GROUP + "/" + VERSION, "Elasticsearch", spec)));
 
@@ -103,6 +116,9 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             kibana.put("version", version);
             kibana.put("count", 1);
             kibana.put("elasticsearchRef", Map.of("name", req.getName()));
+            if (!tlsEnabled(req)) {
+                kibana.put("http", httpWithoutTls());   // Kibana 跟着 ES 一起走 http/https
+            }
             // 必须带资源：命名空间有 limits.* 配额时，没写 requests/limits 的容器会被 quota 直接拒掉
             //（真集群验证：Kibana Pod 一直 Pending，事件是 must specify limits.cpu for: kibana）
             Map<String, Object> kibanaContainer = new LinkedHashMap<>();

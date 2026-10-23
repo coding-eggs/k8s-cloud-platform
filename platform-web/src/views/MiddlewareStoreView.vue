@@ -160,8 +160,9 @@ function resetForm(item: MiddlewareCatalogItem): void {
   }
   // 版本从后端下发的清单里选（清单为空 = 不展示）
   f.version = item.versions?.[0] ?? ''
-  // ES 默认不勾 Kibana
+  // ES 默认不勾 Kibana、默认开 HTTPS
   f.kibana = false
+  f.tls = true
   form.value = f
   formUnits.value = units
   // 单节点/单实例形态：把节点数直接钉成固定值
@@ -247,6 +248,7 @@ async function submitCreate(): Promise<void> {
       version: form.value.version || undefined,
       storageClass: form.value.storageClass || undefined,
       kibana: createItem.value.code === 'elasticsearch' ? !!form.value.kibana : undefined,
+      tls: createItem.value.code === 'elasticsearch' ? !!form.value.tls : undefined,
       replicasPerShard: createItem.value.code === 'redis' && createMode.value === 'CLUSTER'
         ? (form.value.replicasPerShard ?? 1)
         : undefined,
@@ -564,6 +566,12 @@ onBeforeUnmount(() => {
           <el-select v-model="form.storageClass" style="width: 100%" clearable placeholder="集群默认">
             <el-option v-for="sc in formOptions.storageClasses" :key="sc" :label="sc" :value="sc" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="createItem?.code === 'elasticsearch'" label="HTTPS">
+          <el-switch v-model="form.tls" active-text="启用 HTTPS（自签证书）" />
+          <div class="mw-form-help">
+            关闭后 Elasticsearch 与 Kibana 都走明文 http，仅建议内网测试使用
+          </div>
         </el-form-item>
         <el-form-item v-if="createItem?.code === 'elasticsearch'" label="Kibana">
           <el-switch v-model="form.kibana" active-text="同时部署 Kibana" />

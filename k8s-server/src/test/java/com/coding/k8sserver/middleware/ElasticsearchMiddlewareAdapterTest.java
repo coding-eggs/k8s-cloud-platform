@@ -174,6 +174,29 @@ class ElasticsearchMiddlewareAdapterTest {
     }
 
     @Test
+    void tlsIsOnByDefault() {
+        var res = adapter.buildCreate(req(1)).get(0).resource();
+
+        assertThat(spec(res)).doesNotContainKey("http");
+    }
+
+    @Test
+    void tlsCanBeDisabledForBothElasticsearchAndKibana() {
+        var r = req(1);
+        r.setTls(false);
+        r.setKibana(true);
+
+        var out = adapter.buildCreate(r);
+
+        @SuppressWarnings("unchecked")
+        var esHttp = (Map<String, Object>) spec(out.get(0).resource()).get("http");
+        assertThat(esHttp.toString()).contains("selfSignedCertificate").contains("disabled=true");
+        @SuppressWarnings("unchecked")
+        var kbHttp = (Map<String, Object>) spec(out.get(1).resource()).get("http");
+        assertThat(kbHttp.toString()).contains("selfSignedCertificate").contains("disabled=true");
+    }
+
+    @Test
     void selectorsUseEckLabels() {
         assertThat(adapter.statusSelector("mw-es-x", "Elasticsearch"))
                 .isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");

@@ -294,6 +294,7 @@ public class MiddlewareService {
             dto.setStorageSize(req.getStorageSize());
             dto.setStorageClass(req.getStorageClass());
             dto.setKibana(Boolean.TRUE.equals(req.getKibana()));
+            dto.setTls(!Boolean.FALSE.equals(req.getTls()));   // 缺省开
             dto.setPassword(randomPassword());
             dto.setTenantId(tenantId);
             client.create(req.getCode(), dto);
@@ -349,8 +350,9 @@ public class MiddlewareService {
                 note = "监听器是集群内 PLAINTEXT，无认证；客户端 bootstrap.servers 填上面的地址。";
             }
             case "elasticsearch" -> {
-                endpoints.add(line("HTTP(S)", "https://" + svc(ns, name + "-es-http", 9200)));
-                endpoints.add(line("Kibana（创建时勾选才有）", "http://" + svc(ns, name + "-kb-http", 5601)));
+                String scheme = tlsEnabled(instance) ? "https" : "http";
+                endpoints.add(line(scheme.toUpperCase() + " 接口", scheme + "://" + svc(ns, name + "-es-http", 9200)));
+                endpoints.add(line("Kibana（创建时勾选才有）", scheme + "://" + svc(ns, name + "-kb-http", 5601)));
                 credentials.add(line("用户名", "elastic"));
                 credentials.add(line("密码", "Secret " + name + "-es-elastic-user，键 elastic"));
             }
@@ -379,6 +381,20 @@ public class MiddlewareService {
         out.setCredentials(credentials);
         out.setNote(note);
         return out;
+    }
+
+    /** 实例规格里的 TLS 开关（缺省视为开启；老实例没有这个键） */
+    private boolean tlsEnabled(PlatformMiddlewareInstance instance) {
+        String raw = instance.getSpecJson();
+        if (raw == null || raw.isBlank()) {
+            return true;
+        }
+        try {
+            Map<?, ?> spec = jsonMapper.readValue(raw, Map.class);
+            return !Boolean.FALSE.equals(spec.get("tls"));
+        } catch (RuntimeException e) {
+            return true;
+        }
     }
 
     private static MiddlewareConnectionDTO.Line line(String label, String value) {
@@ -579,6 +595,8 @@ public class MiddlewareService {
         spec.put("storageSize", req.getStorageSize());
         spec.put("storageClass", req.getStorageClass());
         spec.put("version", req.getVersion());
+        // 连接方式要按它决定 http/https（只有 ES/Kibana 用得到）
+        spec.put("tls", !Boolean.FALSE.equals(req.getTls()));
         return jsonMapper.writeValueAsString(spec);
     }
 
