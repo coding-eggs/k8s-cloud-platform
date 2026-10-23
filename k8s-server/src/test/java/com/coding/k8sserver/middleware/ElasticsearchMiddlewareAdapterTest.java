@@ -296,4 +296,47 @@ class ElasticsearchMiddlewareAdapterTest {
         assertThat(adapter.pvcSelector("mw-es-x", "mwi_1"))
                 .isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");
     }
+
+    // ---------------- 业务指标（ES 9 没有抓取端点 → exporter 边车） ----------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void metricsExporterSidecarIsOptInAndReadsCredentialsFromSecret() {
+        // 默认关：只有 ES 容器
+        assertThat(containers(adapter.buildCreate(req(1)).get(0).resource())).hasSize(1);
+
+        var r = req(1);
+        r.setMetricsEnabled(true);
+        var cs = containers(adapter.buildCreate(r).get(0).resource());
+
+        assertThat(cs).hasSize(2);
+        var exporter = cs.get(1);
+        assertThat(exporter).containsEntry("name", "elasticsearch-exporter");
+        // 凭据取 ECK 生成的 Secret（实测它比 Pod 早创建，sidecar 的 secretKeyRef 安全）
+        var env = (List<Map<String, Object>>) exporter.get("env");
+        assertThat(env).anySatisfy(e -> {
+            assertThat(e).containsEntry("name", "ES_PASSWORD");
+            assertThat((Map<String, Object>) e.get("valueFrom")).containsKey("secretKeyRef");
+        });
+        // 默认开 HTTPS：地址与 TLS 跳过校验必须走命令行参数（该镜像不认 ES_URI/ES_SKIP_TLS_VERIFY——实测）
+        var args = (List<String>) exporter.get("args");
+        assertThat(args).contains("--es.uri=https://localhost:9200", "--es.ssl-skip-verify");
+        // ECK 在 Pod 级设了 runAsNonRoot，镜像用户是 nobody（非数字）→ 必须给数字 uid
+        assertThat((Map<String, Object>) exporter.get("securityContext"))
+                .containsEntry("runAsUser", 65534);
+    }
+
+    @Test
+    void metricsSpecTargetsTheExporterPort() {
+        var spec = adapter.metricsSpec("mw-es-x", "Elasticsearch", "mwi_1");
+
+        assertThat(spec.port()).isEqualTo(9114);
+        assertThat(spec.podSelector()).isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> containers(GenericKubernetesResource res) {
+        var pod = (Map<String, Object>) ((Map<String, Object>) nodeSet(res).get("podTemplate")).get("spec");
+        return (List<Map<String, Object>>) pod.get("containers");
+    }
 }

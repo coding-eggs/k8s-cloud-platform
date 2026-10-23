@@ -175,6 +175,8 @@ function resetForm(item: MiddlewareCatalogItem): void {
   f.kibana = false
   f.tls = true
   f.ik = false
+  // 业务指标默认不采：勾选后才装 exporter / 打开指标端点并建 Service + ServiceMonitor
+  f.metricsEnabled = false
   form.value = f
   formUnits.value = units
   // 单节点/单实例形态：把节点数直接钉成固定值
@@ -262,6 +264,7 @@ async function submitCreate(): Promise<void> {
       kibana: createItem.value.code === 'elasticsearch' ? !!form.value.kibana : undefined,
       tls: createItem.value.code === 'elasticsearch' ? !!form.value.tls : undefined,
       ik: createItem.value.code === 'elasticsearch' ? !!form.value.ik : undefined,
+      metricsEnabled: !!form.value.metricsEnabled,
       replicasPerShard: createItem.value.code === 'redis' && createMode.value === 'CLUSTER'
         ? (form.value.replicasPerShard ?? 1)
         : undefined,
@@ -474,9 +477,10 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column prop="createdAt" label="创建时间" width="170" />
-          <el-table-column label="操作" width="180" fixed="right">
+          <el-table-column label="操作" width="220" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="router.push(`/apps/${row.id}`)">详情</el-button>
+              <el-button link type="primary" @click="router.push({ path: `/apps/${row.id}`, query: { edit: '1' } })">编辑</el-button>
               <el-button link type="primary" @click="showConnection(row.id)">连接</el-button>
               <el-button link type="danger" @click="openDelete(row)">删除</el-button>
             </template>
@@ -600,6 +604,13 @@ onBeforeUnmount(() => {
           <el-select v-model="form.storageClass" style="width: 100%" clearable placeholder="集群默认">
             <el-option v-for="sc in formOptions.storageClasses" :key="sc" :label="sc" :value="sc" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="业务指标">
+          <el-switch v-model="form.metricsEnabled" active-text="采集该中间件的业务指标" />
+          <div class="mw-form-help">
+            关闭时不装 exporter、不建 ServiceMonitor；资源用量（CPU/内存/网络/磁盘）不受影响。
+            Redis/ES/MySQL 会多一个 exporter 边车容器
+          </div>
         </el-form-item>
         <el-form-item v-if="createItem?.code === 'elasticsearch'" label="HTTPS">
           <el-switch v-model="form.tls" active-text="启用 HTTPS（自签证书）" />

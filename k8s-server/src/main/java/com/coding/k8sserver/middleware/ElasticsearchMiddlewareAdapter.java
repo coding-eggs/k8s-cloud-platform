@@ -129,6 +129,47 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             "requests", Map.of("cpu", "200m", "memory", "512Mi"),
             "limits", Map.of("cpu", "1", "memory", "1Gi"));
 
+    /**
+     * 业务指标的 exporter 边车。ES 9 已经没有 {@code /_prometheus/metrics}（真集群实测 404），
+     * 只能靠外挂导出器；凭据 Secret 由 ECK 在 Pod 创建之前就生成好（实测早 1 秒）。
+     */
+    static final String EXPORTER_IMAGE = "quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0";
+    static final int EXPORTER_PORT = 9114;
+    static final Map<String, Object> EXPORTER_RESOURCES = Map.of(
+            "requests", Map.of("cpu", "50m", "memory", "64Mi"),
+            "limits", Map.of("cpu", "100m", "memory", "128Mi"));
+
+    /** 把 exporter 容器挂进同一个 Pod（与 ES 容器共享网络，走 localhost 访问）。 */
+    @SuppressWarnings("unchecked")
+    static void addExporterSidecar(Map<String, Object> podSpec, MiddlewareCreateRequestDTO req, boolean tls) {
+        // 地址/TLS 必须走命令行参数：实测该镜像不认 ES_URI/ES_SKIP_TLS_VERIFY 这两个 env
+        //（日志里仍是 http://localhost:9200，且证书校验因 CN 不含 localhost 而失败）。
+        // 用户名/密码走 env 是有效的。
+        java.util.List<String> args = new java.util.ArrayList<>();
+        args.add("--es.uri=" + (tls ? "https://localhost:9200" : "http://localhost:9200"));
+        if (tls) {
+            args.add("--es.ssl-skip-verify");   // ECK 自签证书的 CN 不含 localhost
+        }
+        List<Object> env = new java.util.ArrayList<>();
+        env.add(Map.of("name", "ES_USERNAME", "value", "elastic"));
+        env.add(Map.of("name", "ES_PASSWORD", "valueFrom", Map.of("secretKeyRef",
+                Map.of("name", req.getName() + "-es-elastic-user", "key", "elastic"))));
+        Map<String, Object> exporter = new LinkedHashMap<>();
+        exporter.put("name", "elasticsearch-exporter");
+        exporter.put("image", EXPORTER_IMAGE);
+        exporter.put("args", args);
+        exporter.put("env", env);
+        exporter.put("ports", List.of(Map.of(
+                "name", "metrics", "containerPort", EXPORTER_PORT, "protocol", "TCP")));
+        exporter.put("resources", EXPORTER_RESOURCES);
+        // ECK 在 Pod 级设了 runAsNonRoot：镜像里的用户是 nobody（非数字），kubelet 无法验证会拒绝启动
+        exporter.put("securityContext", Map.of("runAsUser", 65534, "allowPrivilegeEscalation", false));
+        List<Object> containers = podSpec.get("containers") instanceof List<?> list
+                ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
+        containers.add(exporter);
+        podSpec.put("containers", containers);
+    }
+
     static final CustomResourceDefinitionContext CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION).withKind("Elasticsearch")
             .withPlural("elasticsearches").withScope("Namespaced").build();
@@ -173,6 +214,9 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         podSpec.put("containers", new java.util.ArrayList<>(List.of(container)));
         if (Boolean.TRUE.equals(req.getIk())) {
             ensureIk(podSpec, container, version);
+        }
+        if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
+            addExporterSidecar(podSpec, req, tlsEnabled(req));
         }
         Map<String, Object> podTemplate = new LinkedHashMap<>();
         podTemplate.put("spec", podSpec);
@@ -300,6 +344,12 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
     @Override
     public String statusSelector(String name, String kind) {
         return "elasticsearch.k8s.elastic.co/cluster-name=" + name;
+    }
+
+    /** 业务指标：exporter 边车在 9114；selector 只选 ES Pod（Kibana 的 label 不同）。 */
+    @Override
+    public MetricsSpec metricsSpec(String name, String kind, String instanceId) {
+        return new MetricsSpec(EXPORTER_PORT, "/metrics", "http", statusSelector(name, kind));
     }
 
     @Override

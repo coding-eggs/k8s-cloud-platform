@@ -91,6 +91,15 @@ public class RabbitmqMiddlewareAdapter implements MiddlewareAdapter {
         return "app.kubernetes.io/name=" + name;
     }
 
+    /**
+     * 业务指标：`rabbitmq_prometheus` 是 Operator 的必备插件（默认启用），指标端点 15692；
+     * CR 不需要额外配置，平台只负责建采集资源。selector 与状态判定一致，只选 RabbitMQ Pod。
+     */
+    @Override
+    public MetricsSpec metricsSpec(String name, String kind, String instanceId) {
+        return new MetricsSpec(15692, "/metrics", "http", statusSelector(name, kind));
+    }
+
     // ==================== 内部 ====================
 
     private static int replicasOf(MiddlewareCreateRequestDTO req) {

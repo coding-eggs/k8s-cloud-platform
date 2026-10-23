@@ -101,6 +101,13 @@ public class NacosChartInstaller {
         sb.append("    tag: ").append(IMAGE_TAG).append('\n');
         sb.append("  storage:\n");
         sb.append("    type: embedded\n");
+        if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
+            // 打开 Spring Boot actuator 的 prometheus 端点（chart 原生支持 nacos.extraEnv，不用改模板）。
+            // Nacos 3 的 context-path 是 /nacos → 指标地址是 /nacos/actuator/prometheus。
+            sb.append("  extraEnv:\n");
+            sb.append("    - name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE\n");
+            sb.append("      value: prometheus\n");
+        }
         sb.append("resources:\n");
         appendResources(sb, req);
         boolean persist = req.getStorageSize() != null && !req.getStorageSize().isBlank();

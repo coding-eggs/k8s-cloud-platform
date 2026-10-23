@@ -42,10 +42,12 @@ class MiddlewareServiceTest {
     private final K8sClient k8s = mock(K8sClient.class);
     private final PlatformTenantNamespaceMapper allocations = mock(PlatformTenantNamespaceMapper.class);
     private final RedisJsonCache cache = mock(RedisJsonCache.class);
+    private final com.coding.platformapi.metrics.MetricsService metricsService =
+            mock(com.coding.platformapi.metrics.MetricsService.class);
 
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, new MiddlewareCatalog(),
-            JsonMapper.builder().build(), k8s, allocations, cache);
+            JsonMapper.builder().build(), k8s, allocations, cache, metricsService);
 
     @BeforeEach
     void opsGetIds() {
@@ -274,8 +276,28 @@ class MiddlewareServiceTest {
     }
 
     @Test
-    void detailKeepsLedgeDataWhenClusterReadFails() {
-        PlatformMiddlewareInstance i = instance("redis", "SENTINEL");
+    void detailRefreshesStatusFromClusterInsteadOfStaleLedgerValue() {
+        // 台账的 status 是创建时写死的 CREATING，之后没人回写；详情页必须现场读一次，
+        // 否则实例已经跑起来了还显示「创建中」（2026-10-23 用户实测）。
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setStatus("CREATING");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.detail(org.mockito.ArgumentMatchers.eq("redis"), any()))
+                .thenReturn(new com.coding.common.models.middleware.MiddlewareInstanceLiveDTO());
+        var live = new com.coding.common.models.middleware.MiddlewareStatusResultDTO();
+        live.setName(i.getName());
+        live.setStatus("READY");
+        live.setMessage("运行中");
+        when(client.status(org.mockito.ArgumentMatchers.eq("redis"), any())).thenReturn(List.of(live));
+
+        var detail = service.detail("mwi_1", null);
+
+        assertThat(detail.getInstance().getStatus()).isEqualTo("READY");
+        assertThat(detail.getInstance().getMessage()).isEqualTo("运行中");
+    }
+
+    @Test
+    void detailKeepsLedgeDataWhenClusterReadFails() {        PlatformMiddlewareInstance i = instance("redis", "SENTINEL");
         when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
         when(client.detail(anyString(), any())).thenThrow(new RuntimeException("cluster down"));
 
@@ -284,6 +306,102 @@ class MiddlewareServiceTest {
         assertThat(detail.getLive()).isNull();
         assertThat(detail.getLiveError()).contains("cluster down");
         assertThat(detail.getConnection()).isNotNull();
+    }
+
+    @Test
+    void metricsAggregateAllInstancePodsIntoOneRegex() {
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        var live = new com.coding.common.models.middleware.MiddlewareInstanceLiveDTO();
+        live.setPods(List.of(pod("mw-es-default-0"), pod("mw-es-default-1")));
+        when(client.detail(org.mockito.ArgumentMatchers.eq("elasticsearch"), any())).thenReturn(live);
+        when(metricsService.middlewareInstance(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.empty());
+
+        var req = new com.coding.platformapi.models.MiddlewareMetricsRequest();
+        req.setInstanceId("mwi_1");
+        req.setStart(1000L);
+        req.setEnd(2000L);
+        service.metrics(req);
+
+        var regex = ArgumentCaptor.forClass(String.class);
+        verify(metricsService).middlewareInstance(org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("demo"), regex.capture(),
+                org.mockito.ArgumentMatchers.eq(1000L), org.mockito.ArgumentMatchers.eq(2000L));
+        assertThat(regex.getValue()).isEqualTo("^(?:mw-es-default-0|mw-es-default-1)$");
+    }
+
+    @Test
+    void metricsIncludeDeclaredBusinessMetrics() {
+        // RabbitMQ 在目录里声明了 4 条业务指标：Pod 名单解析一次，声明逐条套进去
+        PlatformMiddlewareInstance i = instance("rabbitmq", "SINGLE");
+        i.setSpecJson("{\"metricsEnabled\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        var live = new com.coding.common.models.middleware.MiddlewareInstanceLiveDTO();
+        live.setPods(List.of(pod("mw-rabbitmq-abc12345-server-0")));
+        when(client.detail(org.mockito.ArgumentMatchers.eq("rabbitmq"), any())).thenReturn(live);
+        when(metricsService.middlewareInstance(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.empty());
+        when(metricsService.businessMetric(anyString(), anyString(), anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(new com.coding.platformapi.metrics.dto.MetricSeriesResponse("条", List.of()));
+
+        var req = new com.coding.platformapi.models.MiddlewareMetricsRequest();
+        req.setInstanceId("mwi_1");
+        var out = service.metrics(req);
+
+        assertThat(out.business()).hasSize(4);
+        assertThat(out.business()).extracting(
+                com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.BusinessMetric::key)
+                .containsExactly("ready", "unacked", "connections", "publish");
+    }
+
+    @Test
+    void metricsSkipBusinessQueriesWhenTheSwitchIsOff() {
+        // 业务指标默认不采：没开开关时只回资源用量四图，不去查 exporter 指标
+        PlatformMiddlewareInstance i = instance("rabbitmq", "SINGLE");
+        i.setSpecJson("{\"metricsEnabled\":false}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        var live = new com.coding.common.models.middleware.MiddlewareInstanceLiveDTO();
+        live.setPods(List.of(pod("mw-rabbitmq-abc12345-server-0")));
+        when(client.detail(anyString(), any())).thenReturn(live);
+        when(metricsService.middlewareInstance(anyString(), anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+                .thenReturn(com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.empty());
+
+        var req = new com.coding.platformapi.models.MiddlewareMetricsRequest();
+        req.setInstanceId("mwi_1");
+        var out = service.metrics(req);
+
+        assertThat(out.business()).isEmpty();
+        org.mockito.Mockito.verify(metricsService, org.mockito.Mockito.never())
+                .businessMetric(anyString(), anyString(), anyString(), anyString(), anyString(),
+                        org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void metricsSkipQueryWhenInstanceHasNoPods() {
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.detail(anyString(), any())).thenReturn(
+                new com.coding.common.models.middleware.MiddlewareInstanceLiveDTO());
+
+        var req = new com.coding.platformapi.models.MiddlewareMetricsRequest();
+        req.setInstanceId("mwi_1");
+        var out = service.metrics(req);
+
+        assertThat(out.cpu().getSeries()).isEmpty();
+        org.mockito.Mockito.verify(metricsService, org.mockito.Mockito.never())
+                .middlewareInstance(anyString(), anyString(), anyString(),
+                        org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    private static com.coding.common.models.middleware.MiddlewareInstanceLiveDTO.PodView pod(String name) {
+        var p = new com.coding.common.models.middleware.MiddlewareInstanceLiveDTO.PodView();
+        p.setName(name);
+        return p;
     }
 
     @Test

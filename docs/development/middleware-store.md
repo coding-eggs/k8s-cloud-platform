@@ -47,12 +47,30 @@
 
 ## 1.2 实例详情 / 编辑
 
-- 列表点名称或「详情」进 `apps/:id`：概览（台账 + 规格 + 连接方式）、资源对象（CR + Pod / PVC / Service）、
-  YAML（CR 原文）、操作记录；
+- 列表点名称或「详情」进 `apps/:id`：概览（台账 + 规格 + 连接方式）、资源对象、YAML（CR 原文）、操作记录；
 - 「资源对象」与状态判定用同一套 selector（Pod 用 `statusSelector`、PVC 用 `pvcSelector`），
   不会出现"列表 READY、详情没对象"；
+- 「资源对象」除 CR / Pod / PVC / Service 外，还给出：
+  - **附属 CR**（Redis 哨兵的 `RedisSentinel`、Kafka 的 `Kafka`、ES 勾选的 `Kibana`）；
+  - **工作负载**（Operator/Helm 为该实例建的 StatefulSet / Deployment，含副本与镜像）——
+    归属判据是「名字是实例名或以 `<实例名>-` 开头」/「ownerReferences 指向实例 CR」/
+    「带 `app.kubernetes.io/instance` 或 `platform.coding/middleware-instance` 标签」，任一成立；
+  - **凭据 Secret**（只给名字、类型与键名，不回传值）；
+  - **状态条件**（主 CR 的 `status.conditions`，DEGRADED 时先看这里）；
+  - **事件**（CR 与其派生对象上的最近 50 条，Pod 起不来/卷绑不上时是第一现场）。
+  每一块独立读，租户 SA 缺某项权限（典型是 `events`）时只在该块上方提示，其余照常展示；
+- **详情页的状态是现场读的**：台账里的 `status` 只在创建时写过 `CREATING`，之后没人回写，
+  详情接口会先按列表同样的口径刷新一次，否则实例已经跑起来还显示「创建中」；
+- **概览有监控曲线**：CPU / 内存 / 网络 / 磁盘四张图（`POST /middleware/instance/metrics`，一次请求返回全部），
+  口径是「该实例 selector 命中的全部 Pod 聚合」——Pod 名单先由 k8s-server 按与状态判定相同的 selector 读出，
+  再拼成 pod 名正则查 Thanos。**这几项不需要 ServiceMonitor**：来自 kubelet/cAdvisor，集群本就在采；
+  中间件自己的业务指标见 §1.4；
+  > 已知环境事实：本集群 Thanos 里没有 `container_network_*`（cAdvisor 网络指标未采），网络图会恒空，
+  > 与工作负载详情的网络图同一现象；
+- 资源对象里的名称都可点击跳到对应资源页（工作负载 / Pod / PVC / Service / Secret）；跳转前会把
+  全局资源上下文（租户/集群/命名空间）对齐到实例所在位置，否则目标页查的是别处；
 - 编辑只做**副本数 + CPU/内存 + 显示名**：形态与存储不可在线改（后端 scale 语义如此）；
-  Nacos 走 chart，只允许改显示名；
+  Nacos 走 chart，只允许改显示名；列表行与详情页右上角都有「编辑」入口；
 - 实例列表可按类型筛选（`instance/list` 的 `code` 参数），只拉这一类实例的实时状态。
 
 ## 1.3 Operator 状态
@@ -61,6 +79,31 @@
   helm release + CRD + 工作负载，不缓存时进一次页面要查 6 遍（实测 1.9s → 0.01s）；
 - 「已安装版本」取工作负载的 `helm.sh/chart` 标签，与目录里钉死的版本比较：
   一致 → 按钮显示「重装」，不一致 → 「升级」；不再对所有已安装的 Operator 都显示「升级」。
+
+## 1.4 业务指标（每款中间件自己的指标）
+
+设计见 [2026-10-23-middleware-metrics-design.md](../superpowers/specs/2026-10-23-middleware-metrics-design.md)，
+计划见 [plans](../superpowers/plans/2026-10-23-middleware-metrics.md)。
+
+- **开关**：创建表单有「采集业务指标」，**默认关**；打开后才装/开指标源并建 Service + ServiceMonitor。
+  资源用量（CPU/内存/网络/磁盘）不受影响。开关值记在 `spec_json.metricsEnabled`，详情页据此展示业务指标区。
+  已有实例不能事后补开（需重建）；
+- 机制：适配器给出 `MetricsSpec`（端口 / 路径 / scheme / Pod 选择器），平台建
+  **`<名字>-platform-metrics` 的 Service + ServiceMonitor**（`targetPort` 用数字，不依赖 Operator 的容器端口名）；
+  删除实例时一并删。集群没有 ServiceMonitor CRD 时自动跳过，**best-effort**，失败不阻断建实例；
+- 命名坑：不能叫 `<名字>-metrics` —— Redis Operator 自己就给 exporter 建了同名 Service，会把平台的 label 覆盖掉；
+- 查询：`MiddlewareCatalog` 按 code 声明 `MetricDef(key/label/unit/promql)`，PromQL 里三个 `%s` 是
+  cluster / namespace / pod 名正则；与资源用量图同一次请求返回（`business` 字段）。
+
+| 中间件 | 指标源 | 端口 | 指标 |
+|---|---|---|---|
+| PostgreSQL | instance manager 内置 | 9187 | 连接数、事务提交/秒、复制延迟、数据库大小 |
+| RabbitMQ | `rabbitmq_prometheus` 插件（默认开，**免鉴权**） | 15692 | 就绪消息、未确认消息、连接数、发布/秒 |
+| Redis | `redisExporter` 边车（口令从 `<名字>-credentials` 注入） | 9121 | 连接数、内存使用、命令/秒、阻塞客户端 |
+| Kafka | `strimziMetricsReporter`（1.3 新增，无需 ConfigMap） | 9404 | 消息入站/秒、字节入站/秒、未充分复制分区、活跃 Controller |
+| Elasticsearch | `elasticsearch-exporter` 边车（args 传 URI/TLS，`runAsUser: 65534`） | 9114 | 集群 health、JVM 堆、查询/秒、未分配分片 |
+| MySQL | `mysqld_exporter` 边车（`monitor` 用户） | 9104 | 连接数、QPS、活跃线程、慢查询 |
+| Nacos | chart 原生 `nacos.extraEnv` 开 actuator | 8848（`/nacos/actuator/prometheus`） | JVM 堆、活跃线程、HTTP 请求/秒、配置数（可能为空） |
 
 ## 2. 执行链
 
@@ -85,7 +128,10 @@
 - 表单可选项端点新增权限行 `perm_mw_form_options`（`/middleware/form-options` → `tenant:middleware:read`），
   见 `V2026_10_23_2`，已绑 admin / tenant_admin / tenant_member；
 - 详情 / 操作记录 / 改名三个端点见 `V2026_10_23_4`（前两个 `tenant:middleware:read`，改名 `tenant:middleware:write`）；
-  **重放后必须点一次「重下发全部模板」**，否则租户创建这三类实例会 403；
+- 详情页的「事件」块要在租户 RBAC 模板里有 core/v1 `events`（只读），见 `V2026_10_23_5`；
+- 业务指标的采集资源要能建 ServiceMonitor，租户模板补 `monitoring.coreos.com/servicemonitors`，见 `V2026_10_23_7`；
+- 概览监控曲线的端点见 `V2026_10_23_6`（`tenant:middleware:read`），重放后无需重下发模板；
+- **重放后必须点一次「重下发全部模板」**，否则租户创建实例会 403（含采集资源）、详情页的事件也读不到；
 - 重建 k8s-server + platform-api + platform-web；
 - Operator 安装时平台会下发"监听全部命名空间"的 values（Percona `watchAllNamespaces`、Strimzi
   `watchAnyNamespace`）—— 这是 CR 能被 reconcile 的前提，手工安装时别漏；
@@ -122,8 +168,8 @@
 
 ## 5. 已知限制
 
-- 前端暂无「详情 / 扩容」入口（后端 scale 已支持 Redis/MySQL/Kafka/ES/PostgreSQL/RabbitMQ；Nacos 显式拒绝扩容）；
-- 中间件版本清单未做成可选列表（Kafka/ES 版本是文本框，MySQL/Redis 镜像固定）。
+- 中间件版本清单未做成可选列表（Kafka/ES 有下拉清单，MySQL/Redis 镜像固定）；
+- 存储与形态不能在线修改（PVC 扩容依赖各 Operator，后端显式拒绝）。
 
 ## 6. 真集群验证记录（2026-10-23，coding-cluster）
 

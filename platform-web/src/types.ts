@@ -18,6 +18,7 @@ import type {
   Resources,
   VolumeMount,
 } from './types/workload'
+import type { MetricSeriesResponse } from './types/metrics'
 
 /** K8s 集群（kubeconfig 不下发，恒为 null） */
 export interface K8sCluster {
@@ -2449,6 +2450,12 @@ export interface MiddlewareInstanceLive {
   pods: { name: string; phase?: string | null; ready: boolean; readyText?: string | null; restarts: number; node?: string | null; createdAt?: string | null }[]
   pvcs: { name: string; phase?: string | null; capacity?: string | null; storageClass?: string | null; createdAt?: string | null }[]
   services: { name: string; type?: string | null; clusterIp?: string | null; ports?: string | null }[]
+  workloads: { kind: string; name: string; apiVersion?: string | null; desiredReplicas?: number | null; readyReplicas?: number | null; images?: string | null; createdAt?: string | null }[]
+  secrets: { name: string; type?: string | null; keys?: string | null; createdAt?: string | null }[]
+  relatedCrs: { kind: string; name: string; apiVersion?: string | null; createdAt?: string | null; yaml?: string | null }[]
+  conditions: { type?: string | null; status?: string | null; reason?: string | null; message?: string | null; lastTransitionTime?: string | null }[]
+  events: { type?: string | null; reason?: string | null; message?: string | null; object?: string | null; count?: number | null; lastTimestamp?: string | null }[]
+  warnings?: string[] | null
   /** CR 里是否装了 IK 分词器（只有 ES 有；null/缺省=不适用或读不到） */
   ikInstalled?: boolean | null
 }
@@ -2456,6 +2463,23 @@ export interface MiddlewareInstanceLive {
 export interface MiddlewareFormOptions {
   namespaces: string[]
   storageClasses: string[]
+}
+
+/** 中间件实例四张图（一次请求返回，跨该实例全部 Pod 聚合） */
+export interface MiddlewareMetrics {
+  cpu: MetricSeriesResponse
+  memory: MetricSeriesResponse
+  network: MetricSeriesResponse
+  disk: MetricSeriesResponse
+  /** 该中间件自己的指标（按类型声明，未声明为空） */
+  business?: MiddlewareBusinessMetric[]
+}
+
+/** 一条业务指标（label 由后端按中间件类型声明） */
+export interface MiddlewareBusinessMetric {
+  key: string
+  label: string
+  data: MetricSeriesResponse
 }
 
 export interface MiddlewareInstance {

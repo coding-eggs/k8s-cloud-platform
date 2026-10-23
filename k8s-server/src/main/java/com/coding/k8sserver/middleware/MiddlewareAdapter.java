@@ -81,6 +81,37 @@ public interface MiddlewareAdapter {
     }
 
     /**
+     * 业务指标的抓取规格（平台据此建 Service + ServiceMonitor）。
+     *
+     * @param port        指标端口（容器内数字；Service 的 targetPort 用它，避免依赖 Operator 的容器端口名）
+     * @param path        指标路径
+     * @param scheme      http / https
+     * @param podSelector Service 选 Pod 的 label selector（"k=v,k2=v2"），须只命中真正带 exporter 的 Pod
+     */
+    record MetricsSpec(int port, String path, String scheme, String podSelector) {
+    }
+
+    /** 业务指标规格；null = 该中间件本版不采业务指标（或不归平台建采集资源，如 PG 用 CR 自带开关）。 */
+    default MetricsSpec metricsSpec(String name, String kind, String instanceId) {
+        return null;
+    }
+
+    /**
+     * 采集资源：`<名字>-platform-metrics` 的 Service + ServiceMonitor（实现见 {@link MetricsResources}）。
+     *
+     * <p>用 Service 而不是 PodMonitor：本集群的 PodMonitor CRD 没有 `targetPort`，只能引用容器端口名，
+     * 而各 Operator 的端口命名不归平台管；Service 的端口名由平台定义（固定 `metrics`）。
+     */
+    default List<CrSpec> buildMetricsResources(MiddlewareCreateRequestDTO req, MetricsSpec spec) {
+        return MetricsResources.build(req, spec);
+    }
+
+    /** 供单测断言：selector 字符串 → map（Service 的 spec.selector）。 */
+    static java.util.Map<String, String> parseSelector(String selector) {
+        return MetricsResources.parseSelector(selector);
+    }
+
+    /**
      * 删除实例且 keepPvc=false 时，用来找该实例 PVC 的 label selector。
      * <p>默认按平台标签（适配器在 volumeClaimTemplate 里自己打的）；
      * Operator 创建 PVC 的中间件（MySQL/Kafka/ES）覆写成各自 Operator 的标签。

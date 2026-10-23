@@ -54,7 +54,18 @@ public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
         spec.put("instances", instancesOf(req));
         spec.put("storage", storageOf(req));
         spec.put("resources", resourcesOf(req));
+        // 不写 spec.monitoring.enablePodMonitor：CNPG 0.29 已把它标为 deprecated（"请自己管理 PodMonitor"）。
+        // 平台统一用 Service + ServiceMonitor 采业务指标（见 metricsSpec），与其它中间件同一条路径。
         return List.of(new CrSpec(CRD, resource(req, "Cluster", spec)));
+    }
+
+    /**
+     * 业务指标：CNPG 的 exporter 是 instance manager 内置的（容器端口名 {@code metrics} = 9187），
+     * 平台按 pod 选择器建 Service + ServiceMonitor（真集群验证：服务端口 9187 抓取正常）。
+     */
+    @Override
+    public MetricsSpec metricsSpec(String name, String kind, String instanceId) {
+        return new MetricsSpec(9187, "/metrics", "http", statusSelector(name, kind));
     }
 
     @Override

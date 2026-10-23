@@ -125,4 +125,35 @@ class KafkaMiddlewareAdapterTest {
         var volumes = (List<Map<String, Object>>) storage.get("volumes");
         assertThat(volumes.get(0)).containsEntry("class", "fast-ssd");
     }
+
+    // ---------------- 业务指标（Strimzi Metrics Reporter） ----------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void kafkaCrEnablesMetricsReporterWithoutConfigMap() {
+        var r = req(3);
+        r.setMetricsEnabled(true);
+        var kafkaCr = spec(byKind(adapter.buildCreate(r), "Kafka"));
+
+        var metricsConfig = (Map<String, Object>) ((Map<String, Object>) kafkaCr.get("kafka")).get("metricsConfig");
+        // strimziMetricsReporter 是 Strimzi 1.3 新增：不用 ConfigMap、也不额外加边车
+        assertThat(metricsConfig).containsEntry("type", "strimziMetricsReporter");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void metricsAreOffByDefault() {
+        var kafkaCr = spec(byKind(adapter.buildCreate(req(3)), "Kafka"));
+
+        assertThat((Map<String, Object>) kafkaCr.get("kafka")).doesNotContainKey("metricsConfig");
+    }
+
+    @Test
+    void metricsSpecPointsAtReporterPort() {
+        var spec = adapter.metricsSpec("mw-kafka-abc12345", "KafkaNodePool", "mwi_1");
+
+        assertThat(spec.port()).isEqualTo(9404);
+        assertThat(spec.podSelector())
+                .isEqualTo("strimzi.io/cluster=mw-kafka-abc12345,strimzi.io/name=mw-kafka-abc12345-kafka");
+    }
 }

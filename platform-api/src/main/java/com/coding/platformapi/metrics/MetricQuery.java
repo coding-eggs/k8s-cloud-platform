@@ -55,6 +55,23 @@ public enum MetricQuery {
     WORKLOAD_DISK_WRITE(MetricLabels.class,
             "sum(rate(container_fs_writes_bytes_total{container!=\"POD\", device=~\"/dev/dm-.*\",pod!=\"\"}[2m]) * on(namespace, pod) group_left(owner_kind, owner_name, owner_is_controller) kube_pod_owner{owner_kind='%s',owner_name=~'%s'})"),
 
+    // ===== 中间件实例（%s = clusterName, namespace, pod 正则；跨该实例全部 Pod 聚合）=====
+    // Pod 集合由 k8s-server 按与状态判定相同的 selector 读出（中间件实例可能由多个工作负载组成，
+    // 工作负载维度按 owner 归并覆盖不到 StrimziPodSet 这类 CRD 工作负载，所以直接按 pod 名正则聚合）。
+    // 网络 TX 照集群级口径**不加** device 过滤（container_network_* 只有 interface 标签）。
+    INSTANCE_CPU_USED(MetricLabels.class,
+            "sum(rate(container_cpu_usage_seconds_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\",container!=\"POD\"}[2m]))"),
+    INSTANCE_MEMORY_USED(MetricLabels.class,
+            "sum(container_memory_working_set_bytes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\",container!=\"POD\"})"),
+    INSTANCE_NETWORK_RECEIVE(MetricLabels.class,
+            "sum(rate(container_network_receive_bytes_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+    INSTANCE_NETWORK_TRANSMIT(MetricLabels.class,
+            "sum(rate(container_network_transmit_bytes_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+    INSTANCE_DISK_READ(MetricLabels.class,
+            "sum(rate(container_fs_reads_bytes_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\",container!=\"POD\",device=~\"/dev/dm-.*\"}[2m]))"),
+    INSTANCE_DISK_WRITE(MetricLabels.class,
+            "sum(rate(container_fs_writes_bytes_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\",container!=\"POD\",device=~\"/dev/dm-.*\"}[2m]))"),
+
     // ===== 节点（%s = instance，形如 "<internalIp>:9100"；node_exporter 指标）=====
     // CPU 用 avg（跨核取平均），仍是标量无 by → MetricLabels。内存为 gauge 原值（字节）。
     NODE_CPU_USED(MetricLabels.class,

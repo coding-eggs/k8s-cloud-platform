@@ -13,6 +13,7 @@ import com.coding.platformapi.models.MiddlewareCreateRequest;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
 import com.coding.platformapi.models.MiddlewareOperatorInstallRequest;
 import com.coding.platformapi.models.MiddlewareInstanceDetail;
+import com.coding.platformapi.models.MiddlewareMetricsRequest;
 import com.coding.platformapi.models.MiddlewareOptionsRequest;
 import com.coding.platformapi.models.MiddlewareRenameRequest;
 import com.coding.platformapi.models.MiddlewareQueryRequest;
@@ -107,6 +108,14 @@ public class MiddlewareController {
     public ResponseData<PlatformMiddlewareInstance> rename(@RequestBody MiddlewareRenameRequest request) {
         return new ResponseData<>(service.rename(request.getInstanceId(), request.getDisplayName(),
                 auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/metrics")
+    @Operation(summary = "实例监控曲线（CPU/内存/网络/磁盘，跨该实例全部 Pod 聚合）")
+    public ResponseData<com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse> metrics(
+            @RequestBody MiddlewareMetricsRequest request) {
+        request.setTenantId(auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>(service.metrics(request));
     }
 
     @PostMapping("/instance/scale")

@@ -11,10 +11,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { middlewareApi } from '@/api'
 import YamlBlock from '@/components/YamlBlock.vue'
+import MiddlewareMetricsPanel from '@/components/middleware/MiddlewareMetricsPanel.vue'
+import { useResourceContext } from '@/stores/context'
 import type { MiddlewareInstanceDetail, MiddlewareOperation } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
+const ctx = useResourceContext()
 const instanceId = computed(() => String(route.params.id))
 
 const detail = ref<MiddlewareInstanceDetail | null>(null)
@@ -51,6 +54,36 @@ const fixedReplicas = computed(() => {
   return mode === 'STANDALONE' || mode === 'SINGLE' ? 1 : null
 })
 const canScale = computed(() => instance.value?.code !== 'nacos')
+
+/** 监控图的百分比上限：CPU 核数 / 内存字节（spec 里是 K8s quantity 字符串） */
+const cpuLimitNum = computed(() => parseCpu(detail.value?.spec?.cpuLimit))
+const memoryLimitBytes = computed(() => {
+  const m = parseMemory(detail.value?.spec?.memoryLimit)
+  return m.value == null ? null : m.value * (m.unit === 'Gi' ? 1024 ** 3 : 1024 ** 2)
+})
+
+// ---------------- 资源跳转 ----------------
+/**
+ * 资源页面（工作负载/Pod/PVC/Service/Secret）都按**全局上下文**里的集群+命名空间取对象，
+ * 而中间件实例可能不在当前上下文里（管理员在平台视图选的是别的 ns）。
+ * 跳转前先把上下文对齐到实例所在的集群/命名空间，否则目标页只会「找不到对象」。
+ */
+function goResource(path: string): void {
+  const inst = instance.value
+  if (!inst) return
+  // 资源页按「租户 → 集群 → 命名空间」全局上下文查询（不认中间件台账）：
+  // 先对齐三级，否则跳到别处只会看到空列表/找不到对象。setTenant 会清空后两级，故按顺序设。
+  if (inst.tenantId && ctx.state.tenantId !== inst.tenantId) ctx.setTenant(inst.tenantId)
+  if (ctx.state.clusterId !== inst.clusterId) ctx.setCluster(inst.clusterId)
+  if (ctx.state.namespace !== inst.namespace) ctx.setNamespace(inst.namespace)
+  void router.push(path)
+}
+
+const goWorkload = (name: string) => goResource(`/resources/workloads/detail?name=${encodeURIComponent(name)}`)
+const goPod = (name: string) => goResource(`/resources/pods/detail?name=${encodeURIComponent(name)}`)
+const goService = (name: string) => goResource(`/resources/services?open=${encodeURIComponent(name)}`)
+const goPvc = (name: string) => goResource(`/resources/pvcs?open=${encodeURIComponent(name)}`)
+const goSecret = (name: string) => goResource(`/resources/secrets?open=${encodeURIComponent(name)}`)
 
 async function load(): Promise<void> {
   loading.value = true
@@ -189,7 +222,14 @@ async function remove(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  // 列表行的「编辑」→ /apps/:id?edit=1：进来直接打开编辑弹窗，然后把 query 去掉（刷新不再弹）
+  if (route.query.edit === '1' && instance.value) {
+    openEdit()
+    void router.replace({ path: route.path })
+  }
+})
 </script>
 
 <template>
@@ -260,6 +300,16 @@ onMounted(load)
           </el-card>
         </div>
 
+        <MiddlewareMetricsPanel
+          v-if="instance"
+          class="panel"
+          :instance-id="instance.id"
+          :tenant-id="instance.tenantId ?? null"
+          :cpu-limit="cpuLimitNum"
+          :memory-limit="memoryLimitBytes"
+          :metrics-enabled="detail?.spec?.metricsEnabled === true"
+        />
+
         <el-card v-if="connection" shadow="never" class="panel mw-conn">
           <template #header><span class="sec-title">连接方式</span></template>
           <div class="mw-conn-block">
@@ -281,6 +331,17 @@ onMounted(load)
       </el-tab-pane>
 
       <el-tab-pane label="资源对象" name="resources">
+        <el-alert
+          v-if="live?.warnings?.length"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="mw-alert"
+          title="部分资源读不到（其余照常展示）"
+        >
+          <div v-for="w in live.warnings" :key="w" class="mw-warn-line">{{ w }}</div>
+        </el-alert>
+
         <el-card shadow="never" class="panel">
           <template #header><span class="sec-title">自定义资源（CR）</span></template>
           <el-descriptions v-if="live?.kind" :column="4" border size="small">
@@ -292,10 +353,43 @@ onMounted(load)
           <el-empty v-else description="未找到 CR" :image-size="60" />
         </el-card>
 
+        <el-card v-if="live?.relatedCrs?.length" shadow="never" class="panel">
+          <template #header><span class="sec-title">附属 CR（{{ live.relatedCrs.length }}）</span></template>
+          <el-table :data="live.relatedCrs" size="small">
+            <el-table-column prop="kind" label="Kind" width="170" />
+            <el-table-column prop="name" label="名称" min-width="220" />
+            <el-table-column prop="apiVersion" label="apiVersion" width="240" />
+            <el-table-column prop="createdAt" label="创建时间" width="170" />
+          </el-table>
+        </el-card>
+
+        <el-card shadow="never" class="panel">
+          <template #header><span class="sec-title">工作负载（{{ live?.workloads?.length ?? 0 }}）</span></template>
+          <el-table :data="live?.workloads ?? []" size="small" empty-text="没有由该实例创建的工作负载">
+            <el-table-column prop="kind" label="类型" width="110" />
+            <el-table-column label="名称" min-width="220">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="goWorkload(row.name)">{{ row.name }}</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="副本" width="90">
+              <template #default="{ row }">
+                {{ row.readyReplicas ?? 0 }} / {{ row.desiredReplicas ?? '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="images" label="镜像" min-width="240" show-overflow-tooltip />
+            <el-table-column prop="createdAt" label="创建时间" width="170" />
+          </el-table>
+        </el-card>
+
         <el-card shadow="never" class="panel">
           <template #header><span class="sec-title">Pod（{{ live?.pods?.length ?? 0 }}）</span></template>
           <el-table :data="live?.pods ?? []" size="small" empty-text="没有 Pod">
-            <el-table-column prop="name" label="名称" min-width="240" />
+            <el-table-column label="名称" min-width="240">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="goPod(row.name)">{{ row.name }}</el-button>
+              </template>
+            </el-table-column>
             <el-table-column prop="phase" label="状态" width="110" />
             <el-table-column prop="readyText" label="就绪" width="90" />
             <el-table-column prop="restarts" label="重启" width="80" />
@@ -307,7 +401,11 @@ onMounted(load)
         <el-card shadow="never" class="panel">
           <template #header><span class="sec-title">PVC（{{ live?.pvcs?.length ?? 0 }}）</span></template>
           <el-table :data="live?.pvcs ?? []" size="small" empty-text="没有 PVC">
-            <el-table-column prop="name" label="名称" min-width="240" />
+            <el-table-column label="名称" min-width="240">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="goPvc(row.name)">{{ row.name }}</el-button>
+              </template>
+            </el-table-column>
             <el-table-column prop="phase" label="状态" width="110" />
             <el-table-column prop="capacity" label="容量" width="100" />
             <el-table-column prop="storageClass" label="StorageClass" width="140" />
@@ -318,10 +416,65 @@ onMounted(load)
         <el-card shadow="never" class="panel">
           <template #header><span class="sec-title">Service（{{ live?.services?.length ?? 0 }}）</span></template>
           <el-table :data="live?.services ?? []" size="small" empty-text="没有 Service">
-            <el-table-column prop="name" label="名称" min-width="220" />
+            <el-table-column label="名称" min-width="220">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="goService(row.name)">{{ row.name }}</el-button>
+              </template>
+            </el-table-column>
             <el-table-column prop="type" label="类型" width="110" />
             <el-table-column prop="clusterIp" label="ClusterIP" width="140" />
             <el-table-column prop="ports" label="端口" min-width="160" />
+          </el-table>
+        </el-card>
+
+        <el-card shadow="never" class="panel">
+          <template #header><span class="sec-title">凭据 Secret（{{ live?.secrets?.length ?? 0 }}）</span></template>
+          <el-table :data="live?.secrets ?? []" size="small" empty-text="没有与该实例关联的 Secret">
+            <el-table-column label="名称" min-width="240">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="goSecret(row.name)">{{ row.name }}</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column prop="type" label="类型" width="200" />
+            <el-table-column prop="keys" label="键（不含值）" min-width="180" />
+            <el-table-column prop="createdAt" label="创建时间" width="170" />
+          </el-table>
+        </el-card>
+
+        <el-card shadow="never" class="panel">
+          <template #header><span class="sec-title">状态条件（CR status.conditions）</span></template>
+          <el-table :data="live?.conditions ?? []" size="small" empty-text="CR 没有 status.conditions">
+            <el-table-column prop="type" label="类型" width="170" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <!-- False 不一定是故障（如 ECK 的 ResourcesAwareManagement=False 只是提示），
+                     真正的严重性由页面顶部的实例状态表达 -->
+                <el-tag size="small" :type="row.status === 'True' ? 'success' : row.status === 'False' ? 'warning' : 'info'">
+                  {{ row.status ?? '—' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="reason" label="原因" width="180" />
+            <el-table-column prop="message" label="说明" min-width="260" show-overflow-tooltip />
+            <el-table-column prop="lastTransitionTime" label="变更时间" width="180" />
+          </el-table>
+        </el-card>
+
+        <el-card shadow="never" class="panel">
+          <template #header><span class="sec-title">事件（最近 {{ live?.events?.length ?? 0 }} 条）</span></template>
+          <el-table :data="live?.events ?? []" size="small" empty-text="没有相关事件">
+            <el-table-column label="级别" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.type === 'Warning' ? 'danger' : 'info'">
+                  {{ row.type ?? '—' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="object" label="对象" min-width="220" />
+            <el-table-column prop="reason" label="原因" width="150" />
+            <el-table-column prop="message" label="说明" min-width="300" show-overflow-tooltip />
+            <el-table-column prop="count" label="次数" width="70" />
+            <el-table-column prop="lastTimestamp" label="时间" width="170" />
           </el-table>
         </el-card>
       </el-tab-pane>
@@ -418,6 +571,7 @@ onMounted(load)
 .mw-msg { color: var(--warning, #e6a23c); }
 .ph-actions { display: flex; gap: 10px; }
 .mw-alert { margin-bottom: 12px; }
+.mw-warn-line { font-size: 12.5px; line-height: 1.7; }
 .mw-tabs { margin-top: 4px; }
 .mw-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .panel { margin-bottom: 12px; }

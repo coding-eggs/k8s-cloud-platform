@@ -2,6 +2,7 @@
 import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 import { pvcApi, persistentVolumeApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
@@ -22,6 +23,10 @@ function fmtStorage(v?: number | null): string {
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const { options } = useResourceOptions()
+const route = useRoute()
+const router = useRouter()
+/** ?open=<name> 只消费一次（避免每次刷新都重新弹详情） */
+let autoOpened = false
 
 const loading = ref(false)
 const list = ref<K8sPvc[]>([])
@@ -41,6 +46,15 @@ async function refresh(): Promise<void> {
   loading.value = true
   try {
     list.value = await pvcApi.list(ctxParams.value)
+    // ?open=<name>：从中间件详情等外部入口直达该 PVC 的详情抽屉；首次加载后清掉参数
+    if (!autoOpened && route.query.open) {
+      autoOpened = true
+      const target = list.value.find((p) => p.name === route.query.open)
+      if (target) await openDetail(target)
+      const q = { ...route.query }
+      delete q.open
+      await router.replace({ query: q })
+    }
   } finally {
     loading.value = false
   }

@@ -22,6 +22,7 @@ import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -43,6 +44,7 @@ import java.util.stream.Collectors;
  * 用租户 client 读会先 403，用户看到的是权限错误而不是「配额不足」。
  */
 @Service
+@Slf4j
 public class MiddlewareInstanceService {
 
     private final ResourceAccessResolver accessResolver;
@@ -62,8 +64,11 @@ public class MiddlewareInstanceService {
     }
 
     /**
-     * 详情页的实时对象：CR（含 YAML）+ 该实例的 Pod / PVC / Service。
+     * 详情页的实时对象：CR（含 YAML）+ 该实例的 Pod / PVC / Service / 工作负载 / 凭据 Secret / 事件。
      * 查询口径与 {@link #status} 一致，避免「列表说 READY、详情说没对象」。
+     *
+     * <p>每块独立 try/catch：租户 SA 的 K8s RBAC 缺某一项（典型是 `events` 没在模板里）时，
+     * 只把那一块记进 {@code warnings}，其余照常返回 —— 否则一个 403 会让整页变成"读不到"。
      */
     public MiddlewareInstanceLiveDTO detail(MiddlewareDetailRequestDTO req) {
         var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
@@ -72,15 +77,27 @@ public class MiddlewareInstanceService {
         MiddlewareAdapter adapter = adapter(req.getCode());
 
         MiddlewareInstanceLiveDTO out = new MiddlewareInstanceLiveDTO();
+        List<String> warnings = new ArrayList<>();
+        out.setWarnings(warnings);
+
+        // 一个实例可能有多个 CR（Redis 哨兵两个、Kafka 两个、ES 勾了 Kibana 也是两个）：
+        // 适配器 contexts 里第一个能找到的是主 CR，其余作为「附属 CR」展示
         GenericKubernetesResource live = null;
+        List<MiddlewareInstanceLiveDTO.CrView> related = new ArrayList<>();
         for (CustomResourceDefinitionContext crd : adapter.contexts()) {
             var found = client.genericKubernetesResources(crd)
                     .inNamespace(req.getNamespace()).withName(req.getName()).get();
-            if (found != null) {
+            if (found == null) {
+                continue;
+            }
+            if (live == null) {
                 live = found;
-                break;
+            } else {
+                related.add(toCrView(found));
             }
         }
+        out.setRelatedCrs(related);
+        out.setConditions(conditionsOf(live));
         if (live != null) {
             out.setKind(live.getKind());
             out.setApiVersion(live.getApiVersion());
@@ -93,24 +110,200 @@ public class MiddlewareInstanceService {
             out.setIkInstalled(adapter.ikInstalled(live));
         }
 
-        out.setPods(client.pods().inNamespace(req.getNamespace())
-                .withLabelSelector(adapter.statusSelector(req.getName(),
-                        live == null ? null : live.getKind(), req.getInstanceId()))
-                .list().getItems().stream().map(MiddlewareInstanceService::toPodView).toList());
+        String selector = adapter.statusSelector(req.getName(),
+                live == null ? null : live.getKind(), req.getInstanceId());
+        block(warnings, "Pod", () -> out.setPods(client.pods().inNamespace(req.getNamespace())
+                .withLabelSelector(selector)
+                .list().getItems().stream().map(MiddlewareInstanceService::toPodView).toList()));
 
-        out.setPvcs(client.persistentVolumeClaims().inNamespace(req.getNamespace())
+        block(warnings, "PVC", () -> out.setPvcs(client.persistentVolumeClaims().inNamespace(req.getNamespace())
                 .withLabelSelector(adapter.pvcSelector(req.getName(), req.getInstanceId()))
-                .list().getItems().stream().map(MiddlewareInstanceService::toPvcView).toList());
+                .list().getItems().stream().map(MiddlewareInstanceService::toPvcView).toList()));
 
-        // Service 名都比实例名多一段后缀（-master/-haproxy/-kafka-bootstrap…）；Nacos 固定叫 nacos-cs
-        String prefix = req.getName();
-        out.setServices(client.services().inNamespace(req.getNamespace()).list().getItems().stream()
-                .filter(s -> s.getMetadata() != null && s.getMetadata().getName() != null)
-                .filter(s -> s.getMetadata().getName().startsWith(prefix)
-                        || ("nacos".equals(req.getCode()) && "nacos-cs".equals(s.getMetadata().getName())))
-                .map(MiddlewareInstanceService::toServiceView).toList());
+        block(warnings, "Service", () -> {
+            // Service 名都比实例名多一段后缀（-master/-haproxy/-kafka-bootstrap…）；Nacos 固定叫 nacos-cs
+            String prefix = req.getName();
+            out.setServices(client.services().inNamespace(req.getNamespace()).list().getItems().stream()
+                    .filter(s -> s.getMetadata() != null && s.getMetadata().getName() != null)
+                    .filter(s -> s.getMetadata().getName().startsWith(prefix)
+                            || ("nacos".equals(req.getCode()) && "nacos-cs".equals(s.getMetadata().getName())))
+                    .map(MiddlewareInstanceService::toServiceView).toList());
+        });
+
+        block(warnings, "工作负载", () -> {
+            List<MiddlewareInstanceLiveDTO.WorkloadView> workloads = new ArrayList<>();
+            client.apps().deployments().inNamespace(req.getNamespace()).list().getItems().stream()
+                    .filter(d -> belongsToInstance(d.getMetadata(), req.getName(), req.getInstanceId()))
+                    .forEach(d -> workloads.add(workloadView("Deployment", d.getMetadata(),
+                            d.getSpec() == null ? null : d.getSpec().getReplicas(),
+                            d.getStatus() == null ? null : d.getStatus().getReadyReplicas(),
+                            d.getSpec() == null || d.getSpec().getTemplate() == null ? null : d.getSpec().getTemplate().getSpec())));
+            client.apps().statefulSets().inNamespace(req.getNamespace()).list().getItems().stream()
+                    .filter(s -> belongsToInstance(s.getMetadata(), req.getName(), req.getInstanceId()))
+                    .forEach(s -> workloads.add(workloadView("StatefulSet", s.getMetadata(),
+                            s.getSpec() == null ? null : s.getSpec().getReplicas(),
+                            s.getStatus() == null ? null : s.getStatus().getReadyReplicas(),
+                            s.getSpec() == null || s.getSpec().getTemplate() == null ? null : s.getSpec().getTemplate().getSpec())));
+            out.setWorkloads(workloads);
+        });
+
+        block(warnings, "Secret", () -> out.setSecrets(
+                client.secrets().inNamespace(req.getNamespace()).list().getItems().stream()
+                        .filter(s -> belongsToInstance(s.getMetadata(), req.getName(), req.getInstanceId()))
+                        .map(MiddlewareInstanceService::toSecretView).toList()));
+
+        block(warnings, "事件", () -> out.setEvents(eventsOf(client, req.getNamespace(), req.getName())));
         return out;
     }
+
+    /** 单块读取失败只影响该块：把原因记进 warnings，其余字段照常返回。 */
+    private static void block(List<String> warnings, String label, Runnable read) {
+        try {
+            read.run();
+        } catch (RuntimeException e) {
+            warnings.add(label + "读取失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
+    /**
+     * 集群对象是否属于这个中间件实例。三条判据（任一成立即可）：
+     * <ul>
+     *   <li>名字是实例名或以 {@code 实例名-} 开头（Operator 的 {@code <name>-pxc}/{@code -es-default}/{@code -1}）；</li>
+     *   <li>ownerReferences 里有以实例名命名的属主（ECK 的 Kibana Deployment 是 {@code <name>-kb}，但属主是 Kibana CR）；</li>
+     *   <li>带 Helm 的 {@code app.kubernetes.io/instance} 或平台的 {@code platform.coding/middleware-instance} 标签。</li>
+     * </ul>
+     * 只按前缀匹配会把 {@code mw-redis-abc12345x} 也算进来，所以要求跟着 {@code -}。
+     */
+    static boolean belongsToInstance(io.fabric8.kubernetes.api.model.ObjectMeta meta, String name, String instanceId) {
+        if (meta == null || name == null) {
+            return false;
+        }
+        String objectName = meta.getName();
+        if (objectName != null && (objectName.equals(name) || objectName.startsWith(name + "-"))) {
+            return true;
+        }
+        Map<String, String> labels = meta.getLabels();
+        if (labels != null) {
+            if (name.equals(labels.get("app.kubernetes.io/instance"))) {
+                return true;
+            }
+            if (instanceId != null && instanceId.equals(labels.get("platform.coding/middleware-instance"))) {
+                return true;
+            }
+        }
+        if (meta.getOwnerReferences() != null) {
+            return meta.getOwnerReferences().stream()
+                    .anyMatch(ref -> name.equals(ref.getName()));
+        }
+        return false;
+    }
+
+    /** CR 的 status.conditions（Operator 的就绪/初始化/失败信号都在这里）。 */
+    static List<MiddlewareInstanceLiveDTO.ConditionView> conditionsOf(GenericKubernetesResource res) {
+        List<MiddlewareInstanceLiveDTO.ConditionView> out = new ArrayList<>();
+        if (res == null) {
+            return out;
+        }
+        Object status = res.getAdditionalProperties().get("status");
+        if (!(status instanceof Map<?, ?> st) || !(st.get("conditions") instanceof List<?> conditions)) {
+            return out;
+        }
+        for (Object c : conditions) {
+            if (!(c instanceof Map<?, ?> cm)) {
+                continue;
+            }
+            MiddlewareInstanceLiveDTO.ConditionView v = new MiddlewareInstanceLiveDTO.ConditionView();
+            v.setType(text(cm.get("type")));
+            v.setStatus(text(cm.get("status")));
+            v.setReason(text(cm.get("reason")));
+            v.setMessage(text(cm.get("message")));
+            v.setLastTransitionTime(text(cm.get("lastTransitionTime")));
+            out.add(v);
+        }
+        return out;
+    }
+
+    /** 与该实例相关的最近事件（CR 本体、它建出来的 Pod/工作负载/Service 上的都算），最多 50 条。 */
+    private static List<MiddlewareInstanceLiveDTO.EventView> eventsOf(
+            KubernetesClient client, String namespace, String name) {
+        return client.v1().events().inNamespace(namespace).list().getItems().stream()
+                .filter(e -> e.getInvolvedObject() != null && e.getInvolvedObject().getName() != null)
+                .filter(e -> {
+                    String n = e.getInvolvedObject().getName();
+                    return n.equals(name) || n.startsWith(name + "-");
+                })
+                .sorted((a, b) -> stampOf(b).compareTo(stampOf(a)))
+                .limit(50)
+                .map(e -> {
+                    MiddlewareInstanceLiveDTO.EventView v = new MiddlewareInstanceLiveDTO.EventView();
+                    v.setType(e.getType());
+                    v.setReason(e.getReason());
+                    v.setMessage(e.getMessage());
+                    v.setObject(e.getInvolvedObject().getKind() + "/" + e.getInvolvedObject().getName());
+                    v.setCount(e.getCount());
+                    v.setLastTimestamp(stampOf(e));
+                    return v;
+                })
+                .toList();
+    }
+
+    /** 事件的排序/展示时间：core v1 的 lastTimestamp 可能为空，退到 metadata.creationTimestamp。 */
+    private static String stampOf(io.fabric8.kubernetes.api.model.Event e) {
+        if (e.getLastTimestamp() != null) {
+            return e.getLastTimestamp();
+        }
+        if (e.getMetadata() != null && e.getMetadata().getCreationTimestamp() != null) {
+            return e.getMetadata().getCreationTimestamp();
+        }
+        return "";
+    }
+
+    private static MiddlewareInstanceLiveDTO.WorkloadView workloadView(
+            String kind, io.fabric8.kubernetes.api.model.ObjectMeta meta,
+            Integer desired, Integer ready, io.fabric8.kubernetes.api.model.PodSpec podSpec) {
+        MiddlewareInstanceLiveDTO.WorkloadView v = new MiddlewareInstanceLiveDTO.WorkloadView();
+        v.setKind(kind);
+        v.setName(meta == null ? null : meta.getName());
+        v.setApiVersion("apps/v1");
+        v.setDesiredReplicas(desired);
+        v.setReadyReplicas(ready);
+        v.setCreatedAt(meta == null ? null : meta.getCreationTimestamp());
+        if (podSpec != null && podSpec.getContainers() != null) {
+            v.setImages(podSpec.getContainers().stream()
+                    .map(c -> c.getName() + ": " + c.getImage())
+                    .collect(Collectors.joining(", ")));
+        }
+        return v;
+    }
+
+    private static MiddlewareInstanceLiveDTO.SecretView toSecretView(Secret secret) {
+        MiddlewareInstanceLiveDTO.SecretView v = new MiddlewareInstanceLiveDTO.SecretView();
+        if (secret.getMetadata() != null) {
+            v.setName(secret.getMetadata().getName());
+            v.setCreatedAt(secret.getMetadata().getCreationTimestamp());
+        }
+        v.setType(secret.getType());
+        // 只给键名，不回传值：凭据本身要走连接方式卡片里的 Secret 引用
+        v.setKeys(secret.getData() == null ? null : String.join(", ", secret.getData().keySet()));
+        return v;
+    }
+
+    private static MiddlewareInstanceLiveDTO.CrView toCrView(GenericKubernetesResource res) {
+        MiddlewareInstanceLiveDTO.CrView v = new MiddlewareInstanceLiveDTO.CrView();
+        v.setKind(res.getKind());
+        v.setApiVersion(res.getApiVersion());
+        if (res.getMetadata() != null) {
+            v.setName(res.getMetadata().getName());
+            v.setCreatedAt(res.getMetadata().getCreationTimestamp());
+        }
+        v.setYaml(Serialization.asYaml(res));
+        return v;
+    }
+
+    private static String text(Object o) {
+        return o == null ? null : String.valueOf(o);
+    }
+
 
     private static MiddlewareInstanceLiveDTO.PodView toPodView(Pod pod) {
         MiddlewareInstanceLiveDTO.PodView v = new MiddlewareInstanceLiveDTO.PodView();
@@ -169,6 +362,7 @@ public class MiddlewareInstanceService {
 
         if (isNacos(req.getCode())) {
             nacos.create(req);
+            createNacosMetricsResources(client, req);
             return;
         }
 
@@ -185,6 +379,7 @@ public class MiddlewareInstanceService {
                         .create();
                 created.add(spec);
             }
+            createMetricsResources(client, adapter, req, created);
         } catch (RuntimeException e) {
             // 部分失败回滚：SENTINEL 是两个 CR，第二个失败时不能把第一个和 Secret 留在集群里
             created.forEach(s -> deleteQuietly(client, s.context(), req.getNamespace(),
@@ -242,6 +437,7 @@ public class MiddlewareInstanceService {
 
         if (isNacos(req.getCode())) {
             nacos.delete(req.getClusterId(), req.getNamespace(), req.getName());
+            deleteMetricsResourcesQuietly(client, req.getNamespace(), req.getName());
             if (!req.isKeepPvc()) {
                 // chart 的 PVC 没有 labels（volumeClaimTemplates 只写了 name），只能按名字前缀找：
                 // STS 卷名 = <claimName>-<stsName>-<ordinal>，claimName 固定是 data
@@ -259,6 +455,8 @@ public class MiddlewareInstanceService {
         for (CustomResourceDefinitionContext crd : adapter.contexts()) {
             deleteQuietly(client, crd, req.getNamespace(), req.getName());
         }
+        // 采集资源跟随实例（keepPvc 只影响数据卷）
+        deleteMetricsResourcesQuietly(client, req.getNamespace(), req.getName());
         if (!req.isKeepPvc()) {
             // PVC 的标签由各适配器决定：Redis 用平台标签，MySQL/Kafka/ES 用各自 Operator 的标签
             client.persistentVolumeClaims().inNamespace(req.getNamespace())
@@ -469,12 +667,99 @@ public class MiddlewareInstanceService {
         }
     }
 
-    private void deleteQuietly(KubernetesClient client, CustomResourceDefinitionContext crd,
-                               String namespace, String name) {
+    private static void deleteQuietly(KubernetesClient client, CustomResourceDefinitionContext crd,
+                                      String namespace, String name) {
         try {
             client.genericKubernetesResources(crd).inNamespace(namespace).withName(name).delete();
         } catch (RuntimeException ignored) {
             // 同上
+        }
+    }
+
+    /**
+     * 业务指标的采集资源：`<name>-metrics` 的 Service + ServiceMonitor。
+     *
+     * <p><b>best-effort</b>：建失败只记日志、不阻断建实例 —— 监控问题不该挡住一个刚建好的数据库；
+     * 详情页业务指标没数据就是它的表现。核心 CR 的失败仍走原来的回滚。
+     */
+    private void createMetricsResources(KubernetesClient client, MiddlewareAdapter adapter,
+                                        MiddlewareCreateRequestDTO req,
+                                        List<MiddlewareAdapter.CrSpec> created) {
+        if (!Boolean.TRUE.equals(req.getMetricsEnabled())) {
+            return;   // 业务指标默认不采
+        }
+        MiddlewareAdapter.MetricsSpec spec;
+        try {
+            String kind = created.isEmpty() ? null : created.get(0).resource().getKind();
+            spec = adapter.metricsSpec(req.getName(), kind, req.getInstanceId());
+        } catch (RuntimeException e) {
+            log.warn("中间件 {} 的指标规格生成失败：{}", req.getName(), e.getMessage());
+            return;
+        }
+        if (spec == null) {
+            return;
+        }
+        if (!monitoringAvailable(client)) {
+            log.info("集群没有 ServiceMonitor CRD，跳过 {} 的采集资源", req.getName());
+            return;
+        }
+        List<MiddlewareAdapter.CrSpec> made = new ArrayList<>();
+        try {
+            for (MiddlewareAdapter.CrSpec s : adapter.buildMetricsResources(req, spec)) {
+                client.genericKubernetesResources(s.context())
+                        .inNamespace(req.getNamespace()).resource(s.resource()).create();
+                made.add(s);
+            }
+            created.addAll(made);
+        } catch (RuntimeException e) {
+            // 半套比没有更糟（Service 在、ServiceMonitor 没有）：已建的一并撤掉
+            made.forEach(s -> deleteQuietly(client, s.context(), req.getNamespace(),
+                    s.resource().getMetadata().getName()));
+            log.warn("中间件 {} 的采集资源创建失败（业务指标将不可用）：{}", req.getName(), e.getMessage());
+        }
+    }
+
+    /**
+     * Nacos 走 chart（不是适配器），指标资源的端口/路径在这里单独给：
+     * 8848 + {@code /nacos/actuator/prometheus}（chart 里按开关打开 actuator 的 prometheus 端点）。
+     */
+    private void createNacosMetricsResources(KubernetesClient client, MiddlewareCreateRequestDTO req) {
+        if (!Boolean.TRUE.equals(req.getMetricsEnabled()) || !monitoringAvailable(client)) {
+            return;
+        }
+        MiddlewareAdapter.MetricsSpec spec = new MiddlewareAdapter.MetricsSpec(
+                8848, "/nacos/actuator/prometheus", "http",
+                "app.kubernetes.io/instance=" + req.getName());
+        List<MiddlewareAdapter.CrSpec> made = new ArrayList<>();
+        try {
+            for (MiddlewareAdapter.CrSpec s : MetricsResources.build(req, spec)) {
+                client.genericKubernetesResources(s.context())
+                        .inNamespace(req.getNamespace()).resource(s.resource()).create();
+                made.add(s);
+            }
+        } catch (RuntimeException e) {
+            made.forEach(s -> deleteQuietly(client, s.context(), req.getNamespace(),
+                    s.resource().getMetadata().getName()));
+            log.warn("Nacos 实例 {} 的采集资源创建失败（业务指标将不可用）：{}", req.getName(), e.getMessage());
+        }
+    }
+
+    private static boolean monitoringAvailable(KubernetesClient client) {        try {
+            return client.apiextensions().v1().customResourceDefinitions()
+                    .withName("servicemonitors.monitoring.coreos.com").get() != null;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private static void deleteMetricsResourcesQuietly(KubernetesClient client, String namespace, String name) {
+        // 与 MetricsResources 的命名保持一致
+        String resourceName = MetricsResources.resourceName(name);
+        deleteQuietly(client, MetricsResources.SERVICE_MONITOR, namespace, resourceName);
+        try {
+            client.services().inNamespace(namespace).withName(resourceName).delete();
+        } catch (RuntimeException ignored) {
+            // 采集资源是附属物：删不到（或集群没有该 CRD）都不影响实例删除
         }
     }
 

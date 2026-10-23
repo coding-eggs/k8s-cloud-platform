@@ -122,6 +122,37 @@ public class MetricsService {
                 toSeries("写", query(write, req))));
     }
 
+    // ===== 中间件实例维度（%s = clusterName, namespace, pod 名正则）=====
+    // 一个实例可能由多个工作负载组成（ES+Kibana、Redis 哨兵两个 CR、Kafka 的 StrimziPodSet），
+    // 按 owner 归并覆盖不全，改由调用方给「该实例全部 Pod 名」拼成的正则。
+    public com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse middlewareInstance(
+            String clusterId, String namespace, String podRegex, long start, long end) {
+        String c = clusterName(clusterId);
+        return new com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse(
+                new MetricSeriesResponse("核", List.of(toSeries("用量", queryAt(
+                        String.format(MetricQuery.INSTANCE_CPU_USED.sql(), c, namespace, podRegex), start, end)))),
+                new MetricSeriesResponse("字节", List.of(toSeries("用量", queryAt(
+                        String.format(MetricQuery.INSTANCE_MEMORY_USED.sql(), c, namespace, podRegex), start, end)))),
+                new MetricSeriesResponse("字节/秒", List.of(
+                        toSeries("RX", queryAt(String.format(MetricQuery.INSTANCE_NETWORK_RECEIVE.sql(), c, namespace, podRegex), start, end)),
+                        toSeries("TX", queryAt(String.format(MetricQuery.INSTANCE_NETWORK_TRANSMIT.sql(), c, namespace, podRegex), start, end)))),
+                new MetricSeriesResponse("字节/秒", List.of(
+                        toSeries("读", queryAt(String.format(MetricQuery.INSTANCE_DISK_READ.sql(), c, namespace, podRegex), start, end)),
+                        toSeries("写", queryAt(String.format(MetricQuery.INSTANCE_DISK_WRITE.sql(), c, namespace, podRegex), start, end)))),
+                List.of());
+    }
+
+    /**
+     * 一条业务指标：PromQL 由 {@code MiddlewareCatalog} 声明（三个 {@code %s} = cluster / namespace / pod 正则），
+     * 这里只负责把实例维度套进去。
+     */
+    public MetricSeriesResponse businessMetric(String clusterId, String namespace, String podRegex,
+                                               String query, String unit, long start, long end) {
+        String c = clusterName(clusterId);
+        return new MetricSeriesResponse(unit, List.of(toSeries("用量",
+                queryAt(String.format(query, c, namespace, podRegex), start, end))));
+    }
+
     // ===== 节点维度（%s = instance，形如 "<internalIp>:9100"）=====
 
     public MetricSeriesResponse nodeCpu(NodeMetricsRequest req) {
@@ -517,6 +548,11 @@ public class MetricsService {
     /** 集群区间查询（固定 step）。 */
     private List<PromResult<MetricLabels>> queryCluster(String sql, ClusterMetricsRequest req) {
         return client.queryRange(sql, req.getStart(), req.getEnd(), STEP, MetricLabels.class);
+    }
+
+    /** 只带 start/end 的区间查询（中间件实例维度：请求体里没有可套用的维度 DTO）。 */
+    private List<PromResult<MetricLabels>> queryAt(String sql, long start, long end) {
+        return client.queryRange(sql, start, end, STEP, MetricLabels.class);
     }
 
     /** 集群 by(namespace) 区间查询（读 namespace 标签作图例）。 */

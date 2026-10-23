@@ -31,6 +31,7 @@ import com.coding.platformapi.middleware.MiddlewareCatalog;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
 import com.coding.platformapi.models.MiddlewareInstanceDetail;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
+import com.coding.platformapi.models.MiddlewareMetricsRequest;
 import com.coding.platformapi.models.MiddlewareScaleRequest;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -69,6 +70,7 @@ public class MiddlewareService {
     private final K8sClient k8s;
     private final PlatformTenantNamespaceMapper allocations;
     private final RedisJsonCache cache;
+    private final com.coding.platformapi.metrics.MetricsService metrics;
 
     public MiddlewareService(PlatformMiddlewareInstanceMapper instances,
                              PlatformMiddlewareOperationMapper operations,
@@ -78,7 +80,8 @@ public class MiddlewareService {
                              JsonMapper jsonMapper,
                              K8sClient k8s,
                              PlatformTenantNamespaceMapper allocations,
-                             RedisJsonCache cache) {
+                             RedisJsonCache cache,
+                             com.coding.platformapi.metrics.MetricsService metrics) {
         this.instances = instances;
         this.operations = operations;
         this.operators = operators;
@@ -88,6 +91,7 @@ public class MiddlewareService {
         this.k8s = k8s;
         this.allocations = allocations;
         this.cache = cache;
+        this.metrics = metrics;
     }
 
     // ==================== 目录 ====================
@@ -312,6 +316,7 @@ public class MiddlewareService {
             dto.setKibana(Boolean.TRUE.equals(req.getKibana()));
             dto.setTls(!Boolean.FALSE.equals(req.getTls()));   // 缺省开
             dto.setIk(Boolean.TRUE.equals(req.getIk()));
+            dto.setMetricsEnabled(Boolean.TRUE.equals(req.getMetricsEnabled()));
             dto.setPassword(randomPassword());
             dto.setTenantId(tenantId);
             client.create(req.getCode(), dto);
@@ -443,6 +448,9 @@ public class MiddlewareService {
      */
     public MiddlewareInstanceDetail detail(String instanceId, String tenantId) {
         PlatformMiddlewareInstance instance = requireInstance(instanceId, tenantId);
+        // 台账的 status 只在创建时写过 CREATING，之后没人回写（列表是每次现读的）。
+        // 详情页也必须现读一次，否则实例已经跑起来了还显示「创建中」。
+        refreshGroup(java.util.List.of(instance));
         MiddlewareInstanceDetail out = new MiddlewareInstanceDetail();
         out.setInstance(instance);
         out.setSpec(parseSpec(instance.getSpecJson()));
@@ -465,6 +473,64 @@ public class MiddlewareService {
     public List<PlatformMiddlewareOperation> operations(String instanceId, String tenantId) {
         requireInstance(instanceId, tenantId);
         return operations.selectByInstance(instanceId);
+    }
+
+    /**
+     * 实例的监控曲线（CPU / 内存 / 网络 / 磁盘），一次返回四张图。
+     *
+     * <p>Pod 集合与状态判定同口径 —— 由 k8s-server 按适配器 selector 读出来，再拼成 pod 名正则交给 Prometheus。
+     * 不按工作负载名猜：一个实例可能有多个工作负载（ES+Kibana、Redis 哨兵两个 CR、Kafka 的 StrimziPodSet）。
+     */
+    public com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse metrics(MiddlewareMetricsRequest req) {
+        PlatformMiddlewareInstance instance = requireInstance(req.getInstanceId(), req.getTenantId());
+        long end = req.getEnd() == null ? System.currentTimeMillis() / 1000 : req.getEnd();
+        long start = req.getStart() == null || req.getStart() >= end ? end - 1800 : req.getStart();
+        List<String> pods = podNamesOf(instance);
+        if (pods.isEmpty()) {
+            return com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.empty();
+        }
+        String regex = "^(?:" + pods.stream().map(MiddlewareService::escapeRegex)
+                .collect(java.util.stream.Collectors.joining("|")) + ")$";
+        var base = metrics.middlewareInstance(instance.getClusterId(), instance.getNamespace(), regex, start, end);
+        // 业务指标默认不采：只有创建时打开了开关（spec_json.metricsEnabled）才去查
+        if (!Boolean.TRUE.equals(parseSpec(instance.getSpecJson()).get("metricsEnabled"))) {
+            return base.withBusiness(List.of());
+        }
+        // 业务指标：清单在 MiddlewareCatalog 里按 code 声明；没有声明就只回四张资源图
+        List<com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.BusinessMetric> business =
+                catalog.require(instance.getCode()).metrics().stream()
+                        .map(def -> new com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.BusinessMetric(
+                                def.key(), def.label(),
+                                metrics.businessMetric(instance.getClusterId(), instance.getNamespace(), regex,
+                                        def.query(), def.unit(), start, end)))
+                        .toList();
+        return base.withBusiness(business);
+    }
+
+    /** 该实例当前在集群里的 Pod 名（读不到就当没有，图表显示「无数据」）。 */
+    private List<String> podNamesOf(PlatformMiddlewareInstance instance) {
+        try {
+            MiddlewareDetailRequestDTO req = new MiddlewareDetailRequestDTO();
+            req.setClusterId(instance.getClusterId());
+            req.setCode(instance.getCode());
+            req.setNamespace(instance.getNamespace());
+            req.setName(instance.getName());
+            req.setInstanceId(instance.getId());
+            req.setTenantId(instance.getTenantId());
+            MiddlewareInstanceLiveDTO live = client.detail(instance.getCode(), req);
+            if (live == null || live.getPods() == null) {
+                return List.of();
+            }
+            return live.getPods().stream().map(MiddlewareInstanceLiveDTO.PodView::getName)
+                    .filter(Objects::nonNull).toList();
+        } catch (RuntimeException e) {
+            return List.of();
+        }
+    }
+
+    /** Prometheus 是 RE2：没有 {@code \Q..\E}，这里手工转义元字符（Pod 名本是 DNS label）。 */
+    private static String escapeRegex(String s) {
+        return s.replaceAll("([\\\\.^$*+?()\\[\\]{}|])", "\\\\$1");
     }
 
     /** 只改显示名（台账字段），不动集群对象；重名不拦（显示名不唯一）。 */
@@ -687,6 +753,8 @@ public class MiddlewareService {
         spec.put("version", req.getVersion());
         // 连接方式要按它决定 http/https（只有 ES/Kibana 用得到）
         spec.put("tls", !Boolean.FALSE.equals(req.getTls()));
+        // 业务指标开关（默认关）：详情页据此决定是否展示业务指标、接口是否去查
+        spec.put("metricsEnabled", Boolean.TRUE.equals(req.getMetricsEnabled()));
         // IK 分词器（只有 ES 用得到）：编辑弹窗靠它回显「已安装」
         spec.put("ik", Boolean.TRUE.equals(req.getIk()));
         return jsonMapper.writeValueAsString(spec);

@@ -90,8 +90,10 @@ import type {
   TokenUserInfo,
   MiddlewareCatalogItem,
   MiddlewareConnection,
+  MiddlewareFormOptions,
   MiddlewareInstanceDetail,
   MiddlewareInstance,
+  MiddlewareMetrics,
   MiddlewareOperation,
   MiddlewareOperatorStatus,
 } from '@/types'
@@ -942,6 +944,9 @@ export const middlewareApi = {
   /** 详情页聚合：台账 + 规格 + 连接方式 + 集群实时对象 */
   instanceDetail: (instanceId: string, tenantId?: string) =>
     http.post<never, MiddlewareInstanceDetail>('/middleware/instance/detail', { instanceId, tenantId }),
+  /** 概览的监控曲线：CPU/内存/网络/磁盘一次返回（start/end 为 unix 秒） */
+  instanceMetrics: (instanceId: string, start: number, end: number, tenantId?: string) =>
+    http.post<never, MiddlewareMetrics>('/middleware/instance/metrics', { instanceId, start, end, tenantId }),
   instanceOperations: (instanceId: string, tenantId?: string) =>
     http.post<never, MiddlewareOperation[]>('/middleware/instance/operations', { instanceId, tenantId }),
   rename: (payload: { instanceId: string; displayName: string; tenantId?: string }) =>
@@ -963,6 +968,12 @@ export const middlewareApi = {
     storageSize?: string
     storageClass?: string
     kibana?: boolean
+    /** Elasticsearch：开启 HTTPS */
+    tls?: boolean
+    /** Elasticsearch：安装 IK 分词器 */
+    ik?: boolean
+    /** 采集业务指标（默认关） */
+    metricsEnabled?: boolean
     tenantId?: string
   }) => http.post<never, number>('/middleware/instance/create', payload),
   scale: (payload: {

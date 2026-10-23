@@ -29,6 +29,9 @@ public class MiddlewareCreateRequest {
 
     /** Elasticsearch：是否安装 IK 中文分词器（initContainer 下载 analysis-ik） */
     private Boolean ik;
+
+    /** 是否采集业务指标（默认关）：装 exporter / 打开指标端点 + 建 Service & ServiceMonitor */
+    private Boolean metricsEnabled;
     /** 仅管理员代管轨使用；租户轨以 token 为准 */
     private String tenantId;
 }

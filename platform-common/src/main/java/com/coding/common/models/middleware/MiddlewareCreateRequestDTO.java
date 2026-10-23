@@ -47,6 +47,12 @@ public class MiddlewareCreateRequestDTO {
     /** Elasticsearch：是否安装 IK 中文分词器 */
     private Boolean ik;
 
+    /**
+     * 是否采集**业务指标**（默认关）：决定要不要装 exporter（Redis/ES/MySQL）、打开指标端点（Kafka/Nacos）
+     * 以及建 Service + ServiceMonitor。资源用量（CPU/内存/网络/磁盘）不受这个开关影响。
+     */
+    private Boolean metricsEnabled;
+
     /** 平台生成的初始密码；只用于创建 Secret，不落库、不记日志 */
     private String password;
 

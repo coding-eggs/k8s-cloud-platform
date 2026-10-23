@@ -82,6 +82,10 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
         kafka.put("version", kafkaVersion);
         kafka.put("listeners", List.of(Map.of(
                 "name", "plain", "port", 9092, "type", "internal", "tls", false)));
+        // 业务指标（默认关）：Strimzi 1.3 的 Metrics Reporter（不用 ConfigMap，也不额外加边车），指标在 9404
+        if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
+            kafka.put("metricsConfig", Map.of("type", "strimziMetricsReporter"));
+        }
         kafka.put("config", Map.of(
                 "offsets.topic.replication.factor", rf,
                 "transaction.state.log.replication.factor", rf,
@@ -128,6 +132,12 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
     @Override
     public String pvcSelector(String name, String instanceId) {
         return "strimzi.io/cluster=" + name;
+    }
+
+    /** 业务指标：Strimzi Metrics Reporter 在 9404 暴露 /metrics；selector 只选 broker/controller Pod。 */
+    @Override
+    public MetricsSpec metricsSpec(String name, String kind, String instanceId) {
+        return new MetricsSpec(9404, "/metrics", "http", statusSelector(name, kind));
     }
 
     // ==================== 内部 ====================

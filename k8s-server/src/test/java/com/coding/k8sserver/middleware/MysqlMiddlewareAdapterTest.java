@@ -4,6 +4,7 @@ import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -160,5 +161,35 @@ class MysqlMiddlewareAdapterTest {
         // 这里按实例标签取全部 Pod，让 HAProxy 缺失也能被看见
         assertThat(adapter.statusSelector("mw-mysql-x", "PerconaServerMySQL"))
                 .isEqualTo("app.kubernetes.io/instance=mw-mysql-x");
+    }
+
+    // ---------------- 业务指标（Percona 只有 PMM → 平台挂 mysqld_exporter） ----------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void metricsSidecarIsOptInAndUsesTheMonitorUser() {
+        var off = (Map<String, Object>) adapter.buildCreate(req("SINGLE", 1)).get(0)
+                .resource().getAdditionalProperties().get("spec");
+        assertThat((Map<String, Object>) off.get("mysql")).doesNotContainKey("sidecars");
+
+        var r = req("SINGLE", 1);
+        r.setMetricsEnabled(true);
+        var on = (Map<String, Object>) adapter.buildCreate(r).get(0)
+                .resource().getAdditionalProperties().get("spec");
+        var sidecars = (List<Map<String, Object>>) ((Map<String, Object>) on.get("mysql")).get("sidecars");
+
+        assertThat(sidecars).hasSize(1);
+        assertThat(sidecars.get(0)).containsEntry("name", "mysqld-exporter");
+        var env = (List<Map<String, Object>>) sidecars.get(0).get("env");
+        var valueFrom = (Map<String, Object>) env.get(0).get("valueFrom");
+        assertThat((Map<String, Object>) valueFrom.get("secretKeyRef"))
+                .containsEntry("name", "mw-mysql-abc12345-secrets")
+                .containsEntry("key", "monitor");
+    }
+
+    @Test
+    void metricsSelectorSkipsHaproxyPods() {
+        assertThat(adapter.metricsSpec("mw-mysql-x", "PerconaServerMySQL", "mwi_1").podSelector())
+                .isEqualTo("app.kubernetes.io/instance=mw-mysql-x,app.kubernetes.io/component=database");
     }
 }

@@ -35,6 +35,9 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
     static final String DEFAULT_IMAGE = "quay.io/opstree/redis:v7.0.15";
     /** 哨兵容器要的是 sentinel 镜像：用 redis 镜像会以 standalone 起来、随后被探针判死循环重启 */
     static final String SENTINEL_IMAGE = "quay.io/opstree/redis-sentinel:v7.0.15";
+    /** 业务指标的 exporter 边车（容器端口与 Service 的 targetPort 都用这个数字） */
+    static final String EXPORTER_IMAGE = "quay.io/opstree/redis-exporter:v1.44.0";
+    static final int EXPORTER_PORT = 9121;
 
     private static final int SENTINEL_COUNT = 3;
 
@@ -67,6 +70,7 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> sentinelSpec = baseSpec(req);
         sentinelSpec.put("clusterSize", SENTINEL_COUNT);
         sentinelSpec.put("redisSentinelConfig", Map.of("redisReplicationName", req.getName()));
+        sentinelSpec.remove("redisExporter");   // 哨兵 Pod 没有 exporter，别让 operator 去装
         @SuppressWarnings("unchecked")
         Map<String, Object> sentinelKc = (Map<String, Object>) sentinelSpec.get("kubernetesConfig");
         sentinelKc.put("image", SENTINEL_IMAGE);   // 数据节点仍是 redis，哨兵必须是 redis-sentinel
@@ -111,6 +115,22 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("kubernetesConfig", kc);
         spec.put("podSecurityContext", Map.of("runAsUser", 1000, "fsGroup", 1000));
+        // 业务指标（默认关）：redis-exporter 边车（9121）。口令从平台写的 Secret 取 —— 不带 REDIS_PASSWORD
+        // 时 exporter 的 INFO 会失败（redis_up=0），指标全空。
+        if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
+            Map<String, Object> exporter = new LinkedHashMap<>();
+            exporter.put("enabled", true);
+            exporter.put("image", EXPORTER_IMAGE);
+            exporter.put("port", EXPORTER_PORT);
+            exporter.put("resources", Map.of(
+                    "requests", Map.of("cpu", "50m", "memory", "64Mi"),
+                    "limits", Map.of("cpu", "100m", "memory", "128Mi")));
+            exporter.put("env", List.of(Map.of(
+                    "name", "REDIS_PASSWORD",
+                    "valueFrom", Map.of("secretKeyRef",
+                            Map.of("name", secretName(req.getName()), "key", "password")))));
+            spec.put("redisExporter", exporter);
+        }
         if (hasStorage(req)) {
             spec.put("storage", storageSpec(req));
         }
@@ -224,9 +244,17 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         return n.intValue();
     }
 
+    /**
+     * 业务指标：redis-exporter 边车（9121）。selector 只选**数据 Pod** ——
+     * 哨兵 Pod 的标签是 {@code app=<name>-sentinel}，没有 exporter，选进来只会得到 down 的 target。
+     */
     @Override
-    public String statusSelector(String name, String kind) {
-        // OT-Container-Kit 给实例 Pod 打的标签是 app=<CR 名>（真集群验证时确认）；
+    public MetricsSpec metricsSpec(String name, String kind, String instanceId) {
+        return new MetricsSpec(EXPORTER_PORT, "/metrics", "http", "app=" + name);
+    }
+
+    @Override
+    public String statusSelector(String name, String kind) {        // OT-Container-Kit 给实例 Pod 打的标签是 app=<CR 名>（真集群验证时确认）；
         // 但 RedisSentinel 拉起的哨兵 Pod 是 app=<CR 名>-sentinel —— 只按 app=<name> 查，
         // 哨兵全 CrashLoop 时仍会因为两个数据节点就绪而误报 READY。
         if ("RedisSentinel".equals(kind)) {

@@ -33,6 +33,12 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
     private static final String IMAGE = "percona/percona-server:8.4";
     /** Percona 没有独立的 haproxy 仓库；入口镜像在 PXC operator 的 -haproxy tag 里 */
     private static final String HAPROXY_IMAGE = "percona/percona-xtradb-cluster-operator:1.14.1-haproxy";
+    /** 业务指标的 exporter 边车（Percona 自己只支持 PMM，Prometheus 要自己挂） */
+    static final String EXPORTER_IMAGE = "prom/mysqld-exporter:v0.15.1";
+    static final int EXPORTER_PORT = 9104;
+    static final Map<String, Object> EXPORTER_RESOURCES = Map.of(
+            "requests", Map.of("cpu", "50m", "memory", "64Mi"),
+            "limits", Map.of("cpu", "100m", "memory", "128Mi"));
 
     static final CustomResourceDefinitionContext CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION)
@@ -58,6 +64,11 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         mysql.put("image", IMAGE);
         mysql.put("resources", resourcesOf(req));
         mysql.put("volumeSpec", volumeSpecOf(req));
+        // 业务指标（默认关）：Percona 只有 PMM，没有 Prometheus exporter → 平台挂 mysqld_exporter 边车。
+        // 用 Operator 自己生成的 monitor 用户（<cr>-secrets 的 monitor 键，权限刚好够导出）。
+        if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
+            mysql.put("sidecars", List.of(exporterSidecar(req)));
+        }
 
         // 可变结构：applyScale 会同步改 haproxy.size
         Map<String, Object> haproxy = new LinkedHashMap<>();
@@ -154,6 +165,30 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
     public String pvcSelector(String name, String instanceId) {
         // Percona 给数据卷打的标签
         return "app.kubernetes.io/instance=" + name;
+    }
+
+    /**
+     * 业务指标：mysqld_exporter 边车在 9104。
+     * <p>selector 带上 {@code component=database}（真集群验证：Percona 给数据 Pod 打的不是 mysql）：
+     * HAProxy Pod 共用 instance 标签但没有 9104 端口，选进来只会得到一批 down 的 target。
+     */
+    @Override
+    public MetricsSpec metricsSpec(String name, String kind, String instanceId) {
+        return new MetricsSpec(EXPORTER_PORT, "/metrics", "http",
+                "app.kubernetes.io/instance=" + name + ",app.kubernetes.io/component=database");
+    }
+
+    private static Map<String, Object> exporterSidecar(MiddlewareCreateRequestDTO req) {
+        Map<String, Object> sidecar = new LinkedHashMap<>();
+        sidecar.put("name", "mysqld-exporter");
+        sidecar.put("image", EXPORTER_IMAGE);
+        sidecar.put("args", List.of("--mysqld.address=127.0.0.1:3306", "--mysqld.username=monitor"));
+        sidecar.put("env", List.of(Map.of("name", "MYSQLD_EXPORTER_PASSWORD", "valueFrom",
+                Map.of("secretKeyRef", Map.of("name", req.getName() + "-secrets", "key", "monitor")))));
+        sidecar.put("ports", List.of(Map.of(
+                "name", "metrics", "containerPort", EXPORTER_PORT, "protocol", "TCP")));
+        sidecar.put("resources", EXPORTER_RESOURCES);
+        return sidecar;
     }
 
     // ==================== 内部 ====================

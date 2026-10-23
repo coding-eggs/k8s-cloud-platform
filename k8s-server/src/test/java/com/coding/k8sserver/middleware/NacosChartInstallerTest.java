@@ -72,6 +72,21 @@ class NacosChartInstallerTest {
     }
 
     @Test
+    void metricsEndpointIsOptIn() {
+        // 默认关：不打开 actuator 的 prometheus 端点
+        assertThat(installer.valuesFor(req("STANDALONE", 1)))
+                .doesNotContain("MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE");
+
+        var r = req("STANDALONE", 1);
+        r.setMetricsEnabled(true);
+        // chart 原生支持 nacos.extraEnv，不需要改模板
+        assertThat(installer.valuesFor(r))
+                .contains("extraEnv:")
+                .contains("MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE")
+                .contains("value: prometheus");
+    }
+
+    @Test
     void createInstallsHelmWithInstanceNameAsRelease() throws Exception {
         Path chart = java.nio.file.Files.createTempDirectory("nacos-chart");
         when(charts.chartDir("middleware", "nacos", NacosChartInstaller.CHART_VERSION)).thenReturn(chart);

@@ -209,4 +209,49 @@ class RedisMiddlewareAdapterTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> adapter.buildCreate(r))
                 .hasMessageContaining("不支持的形态");
     }
+
+    // ---------------- 业务指标（redis-exporter 边车） ----------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void exporterSidecarIsEnabledWithPasswordFromSecret() {
+        var r = req("STANDALONE", 1);
+        r.setMetricsEnabled(true);
+        var out = adapter.buildCreate(r);
+        Map<String, Object> exporter = (Map<String, Object>) spec(out.get(0).resource()).get("redisExporter");
+
+        assertThat(exporter).containsEntry("enabled", true).containsEntry("port", 9121);
+        assertThat((String) exporter.get("image")).contains("redis-exporter");
+        // 口令必须从 Secret 取：不带 REDIS_PASSWORD 时 exporter 的 INFO 会失败，指标全空
+        var env = (List<Map<String, Object>>) exporter.get("env");
+        assertThat(env).anySatisfy(e -> assertThat(e).containsEntry("name", "REDIS_PASSWORD"));
+    }
+
+    @Test
+    void metricsAreNotCollectedUnlessTheSwitchIsOn() {
+        // 默认关：不装 exporter 边车（资源用量不受影响）
+        var out = adapter.buildCreate(req("STANDALONE", 1));
+
+        assertThat(spec(out.get(0).resource())).doesNotContainKey("redisExporter");
+    }
+
+    @Test
+    void sentinelCrHasNoExporterSidecar() {
+        var r = req("SENTINEL", 3);
+        r.setMetricsEnabled(true);
+        var out = adapter.buildCreate(r);
+
+        // 数据 CR 装 exporter；哨兵 CR 不装（哨兵 Pod 没有可导出的数据）
+        assertThat(spec(out.get(0).resource())).containsKey("redisExporter");
+        assertThat(spec(out.get(1).resource())).doesNotContainKey("redisExporter");
+    }
+
+    @Test
+    void metricsSelectorOnlyMatchesDataPods() {
+        var spec = adapter.metricsSpec("mw-redis-abc12345", "RedisReplication", "mwi_1");
+
+        assertThat(spec.port()).isEqualTo(9121);
+        // 哨兵 Pod 是 app=<name>-sentinel：选进来只会得到 down 的 target
+        assertThat(spec.podSelector()).isEqualTo("app=mw-redis-abc12345");
+    }
 }
