@@ -2,8 +2,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
-import { clusterApi, namespaceApi } from '@/api'
-import type { K8sClusterOption, K8sLimitRange, K8sLimitRangeItem, K8sNamespaceStatEntry, K8sQuotaState, K8sResourceQuota, K8sResourceQuotaUsed, NamespaceView, ResourcePair } from '@/types'
+import { namespaceApi } from '@/api'
+import type { K8sLimitRange, K8sLimitRangeItem, K8sNamespaceStatEntry, K8sQuotaState, K8sResourceQuota, K8sResourceQuotaUsed, NamespaceView, ResourcePair } from '@/types'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
@@ -17,18 +17,11 @@ const route = useRoute()
 const router = useRouter()
 
 // ---- 平台上下文：集群级，无租户（刻意不用 stores/context.ts 的租户优先单例）----
-const clusters = ref<K8sClusterOption[]>([])
+// 上下文只来自 URL（从命名空间列表进来时带 clusterId/name）：本页不提供集群下拉，
+// 换集群请回列表重新进入——详情页的语义是「某个集群里的某个命名空间」，不是集群选择器。
 const clusterId = ref((route.query.clusterId as string) || '')
 const name = computed(() => (route.query.name as string) || '')
 const ready = computed(() => !!clusterId.value && !!name.value)
-
-async function loadClusters(): Promise<void> {
-  clusters.value = await clusterApi.options()
-  if (!clusterId.value) {
-    const first = clusters.value.find((c) => c.enabled === 1) ?? clusters.value[0]
-    if (first) clusterId.value = first.clusterId
-  }
-}
 
 // ---- 数据（quota / limitrange / yaml 均为懒加载 tab）----
 const ns = ref<NamespaceView | null>(null)
@@ -356,19 +349,15 @@ const limitSections = computed<LimitSection[]>(() => {
 
 // ---- 上下文联动 ----
 onMounted(async () => {
-  await loadClusters()
   if (ready.value) await refresh()
 })
-watch(clusterId, () => { if (name.value) void refresh() })
+// 同一路由之间只变 query 时组件会被复用：靠 name 变化重新拉数据
 watch(name, () => { if (clusterId.value) void refresh() })
 </script>
 
 <template>
   <div v-loading="loading" class="ns-page">
     <PageHeader title="命名空间详情">
-      <el-select v-model="clusterId" placeholder="选择集群" size="small" style="width: 200px">
-        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
-      </el-select>
       <el-tooltip content="立即刷新" placement="bottom" :show-after="100">
         <el-button :icon="Refresh" circle size="small" :disabled="!ready" @click="refreshAll" />
       </el-tooltip>

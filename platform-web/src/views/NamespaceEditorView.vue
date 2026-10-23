@@ -30,6 +30,8 @@ const router = useRouter()
 /** ?name= → 编辑回填；无 name → 创建 */
 const editing = ref<string | null>((route.query.name as string) || null)
 const clusters = ref<K8sClusterOption[]>([])
+/** 下拉只列启用的集群；停用集群仍保留在 clusters 里，仅用于 ipStack 等回填查找 */
+const enabledClusters = computed(() => clusters.value.filter((c) => c.enabled === 1))
 const clusterId = ref((route.query.clusterId as string) || '')
 /** 平台级页面：ready = 集群已选 */
 const ready = computed(() => !!clusterId.value)
@@ -37,7 +39,7 @@ const ready = computed(() => !!clusterId.value)
 async function loadClusters(): Promise<void> {
   clusters.value = await clusterApi.options()
   if (!clusterId.value) {
-    const first = clusters.value.find((c) => c.enabled === 1) ?? clusters.value[0]
+    const first = enabledClusters.value[0]
     if (first) clusterId.value = first.clusterId
   }
 }
@@ -305,7 +307,7 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
   <div class="res-editor">
     <PageHeader :title="pageTitle">
       <el-select v-model="clusterId" placeholder="选择集群" size="small" style="width: 220px">
-        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
+        <el-option v-for="c in enabledClusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
       </el-select>
       <el-button @click="goBack">返回</el-button>
     </PageHeader>
