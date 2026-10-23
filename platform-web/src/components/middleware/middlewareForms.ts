@@ -13,7 +13,8 @@ export interface MiddlewareField {
   key: string
   label: string
   type: 'number'
-  unit: 'cpu' | 'size'
+  /** count = 纯数量（节点数），不渲染单位 */
+  unit: 'cpu' | 'size' | 'count'
   /** size 类字段的默认单位 */
   unitDefault?: 'Mi' | 'Gi'
   step?: number
@@ -27,7 +28,7 @@ export interface MiddlewareField {
 export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   redis: [
     {
-      key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
+      key: 'replicas', label: '节点数', type: 'number', unit: 'count', default: 1, min: 1, max: 9,
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.1, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
@@ -46,7 +47,7 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   ],
   mysql: [
     {
-      key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
+      key: 'replicas', label: '节点数', type: 'number', unit: 'count', default: 1, min: 1, max: 9,
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
@@ -56,7 +57,7 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   ],
   kafka: [
     {
-      key: 'replicas', label: 'Broker 数', type: 'number', unit: 'cpu', default: 3, min: 3, max: 9,
+      key: 'replicas', label: 'Broker 数', type: 'number', unit: 'count', default: 3, min: 3, max: 9,
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
@@ -66,7 +67,7 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   ],
   elasticsearch: [
     {
-      key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 3, min: 1, max: 9,
+      key: 'replicas', label: '节点数', type: 'number', unit: 'count', default: 3, min: 1, max: 9,
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
@@ -82,7 +83,7 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   ],
   nacos: [
     {
-      key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
+      key: 'replicas', label: '节点数', type: 'number', unit: 'count', default: 1, min: 1, max: 9,
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.2, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 1, step: 0.1, min: 0.1 },
@@ -105,7 +106,7 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
   ],
   rabbitmq: [
     {
-      key: 'replicas', label: '节点数', type: 'number', unit: 'cpu', default: 1, min: 1, max: 9,
+      key: 'replicas', label: '节点数', type: 'number', unit: 'count', default: 1, min: 1, max: 9,
     },
     { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.3, step: 0.1, min: 0.1 },
     { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 1, step: 0.1, min: 0.1 },
@@ -120,5 +121,6 @@ export function toQuantity(field: MiddlewareField, value: unknown, unit: string 
   if (value === null || value === undefined || value === '') return undefined
   const num = Number(value)
   if (!Number.isFinite(num) || num <= 0) return undefined
+  if (field.unit === 'count') return String(num)
   return field.unit === 'cpu' ? String(num) : `${num}${unit ?? field.unitDefault ?? 'Gi'}`
 }

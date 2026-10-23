@@ -473,7 +473,7 @@ onBeforeUnmount(() => {
       width="960px"
       :close-on-click-modal="false"
     >
-      <el-form label-width="110px">
+      <el-form class="mw-create-form" label-width="120px" label-position="left">
         <el-form-item label="形态">
           <div class="mw-mode-wrap">
             <el-radio-group v-model="createMode" @change="onModeChange">
@@ -519,10 +519,13 @@ onBeforeUnmount(() => {
               controls-position="right"
             />
             <span v-if="field.unit === 'cpu'" class="mw-unit">核</span>
-            <el-select v-else v-model="formUnits[field.key]" class="mw-unit-select">
+            <el-select v-else-if="field.unit === 'size'" v-model="formUnits[field.key]" class="mw-unit-select">
               <el-option label="Mi" value="Mi" />
               <el-option label="Gi" value="Gi" />
             </el-select>
+          </div>
+          <div v-if="field.key === 'replicas' && modeFixedReplicas !== null" class="mw-form-help">
+            {{ modeReplicasLabel }}固定为 {{ modeFixedReplicas }}，不可调整
           </div>
           <div v-if="field.help" class="mw-form-help">{{ field.help }}</div>
         </el-form-item>
@@ -531,9 +534,6 @@ onBeforeUnmount(() => {
           <div class="mw-form-help">
             默认 1：每个主节点再配 1 个副本做备份；填 0 = 不配备份（主节点挂了数据就没了）
           </div>
-        </el-form-item>
-        <el-form-item v-if="modeFixedReplicas !== null" label=" ">
-          <span class="mw-form-help">{{ modeReplicasLabel }}固定为 {{ modeFixedReplicas }}，不可调整</span>
         </el-form-item>
         <el-form-item label="StorageClass">
           <el-select v-model="form.storageClass" style="width: 100%" clearable placeholder="集群默认">
@@ -614,6 +614,13 @@ onBeforeUnmount(() => {
 .ph-actions { display: flex; gap: 10px; align-items: center; }
 .mw-tabs { margin-top: -4px; }
 .mw-resource-row { display: flex; align-items: center; gap: 8px; }
+/* 表单统一左对齐：label 顶格、控件从同一列开始 */
+.mw-create-form :deep(.el-form-item__label) { justify-content: flex-start; text-align: left; }
+.mw-create-form :deep(.el-form-item__content) { justify-content: flex-start; flex-wrap: wrap; }
+/* 说明文字单独占一行，别和输入框挤在同一行 */
+.mw-create-form :deep(.el-form-item__content) > .mw-form-help { flex-basis: 100%; }
+.mw-create-form :deep(.el-input-number) { width: 160px; }
+.mw-create-form :deep(.el-form-item__content > .el-input) { width: 100%; }
 .mw-unit { color: var(--text-3); font-size: 12.5px; }
 .mw-unit-select { width: 80px; }
 .mw-conn-title { margin: 0 0 12px; color: var(--text-2); font-size: 13px; }
