@@ -89,8 +89,13 @@ const editForm = ref<{
   ik: false,
 })
 
-/** IK 已装（规格里记着 ik=true）：只显示「已安装」，不提供卸载 */
-const ikInstalled = computed(() => detail.value?.spec?.ik === true)
+/**
+ * IK 已装：以集群里 CR 的现读结果为准（live.ikInstalled），读不到时退回台账 spec_json。
+ * 只看台账会把「创建时就勾了 IK」的实例显示成未安装 —— 那条路径没有回写 spec_json。
+ */
+const ikInstalled = computed(() =>
+  detail.value?.live?.ikInstalled ?? (detail.value?.spec?.ik === true),
+)
 const supportsIk = computed(() => instance.value?.code === 'elasticsearch')
 
 /** "500m" → 0.5 核；"1" → 1 */

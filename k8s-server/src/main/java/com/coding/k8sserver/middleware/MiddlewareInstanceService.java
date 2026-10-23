@@ -89,6 +89,8 @@ public class MiddlewareInstanceService {
                 out.setCreatedAt(live.getMetadata().getCreationTimestamp());
             }
             out.setYaml(Serialization.asYaml(live));
+            // 可选插件（IK）以 CR 为准回显；适配器不适用时保持 null，前端退回台账
+            out.setIkInstalled(adapter.ikInstalled(live));
         }
 
         out.setPods(client.pods().inNamespace(req.getNamespace())

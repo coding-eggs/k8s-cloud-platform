@@ -262,6 +262,18 @@ class ElasticsearchMiddlewareAdapterTest {
     }
 
     @Test
+    void reportsIkStateFromTheLiveCr() {
+        // 详情页「已安装」按 CR 现读：台账 spec_json 只有编辑补装时才回写，
+        // 创建时就勾了 IK 的老实例库里没有标记 —— 只看 DB 会把已安装显示成未安装
+        var withIk = req(1);
+        withIk.setIk(true);
+        assertThat(adapter.ikInstalled(adapter.buildCreate(withIk).get(0).resource())).isTrue();
+        assertThat(adapter.ikInstalled(adapter.buildCreate(req(1)).get(0).resource())).isFalse();
+        // CR 没读到（集群不可用）时不知道装没装，交给台账的 spec_json 兜底
+        assertThat(adapter.ikInstalled(null)).isNull();
+    }
+
+    @Test
     void editingWithoutIkFlagLeavesThePodTemplateAlone() {
         var live = adapter.buildCreate(req(1)).get(0).resource();
         var scale = new MiddlewareScaleRequestDTO();

@@ -687,6 +687,8 @@ public class MiddlewareService {
         spec.put("version", req.getVersion());
         // 连接方式要按它决定 http/https（只有 ES/Kibana 用得到）
         spec.put("tls", !Boolean.FALSE.equals(req.getTls()));
+        // IK 分词器（只有 ES 用得到）：编辑弹窗靠它回显「已安装」
+        spec.put("ik", Boolean.TRUE.equals(req.getIk()));
         return jsonMapper.writeValueAsString(spec);
     }
 

@@ -200,6 +200,23 @@ class MiddlewareServiceTest {
     }
 
     @Test
+    void createRecordsIkInTheSpecSoTheDetailPageCanEchoItBack() {
+        // 创建时勾了 IK 就必须落进 spec_json：详情/编辑弹窗靠它回显「已安装」
+        //（漏了这一步，创建时装的 IK 在编辑弹窗里永远显示「未安装」）
+        var r = createRequest();
+        r.setCode("elasticsearch");
+        r.setMode("CLUSTER");
+        r.setIk(true);
+        when(client.operatorStatus(any())).thenReturn(List.of(status("elasticsearch", true, true)));
+
+        service.create(r, "coding", null);
+
+        ArgumentCaptor<PlatformMiddlewareInstance> saved = ArgumentCaptor.forClass(PlatformMiddlewareInstance.class);
+        verify(instances).insert(saved.capture());
+        assertThat(saved.getValue().getSpecJson()).contains("\"ik\":true");
+    }
+
+    @Test
     void formOptionsFilterNamespacesByTenantAndReadStorageClasses() {
         PlatformTenantNamespace mine = new PlatformTenantNamespace();
         mine.setTenantId("t1");

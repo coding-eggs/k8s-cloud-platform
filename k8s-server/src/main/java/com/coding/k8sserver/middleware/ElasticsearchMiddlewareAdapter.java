@@ -85,6 +85,36 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         return true;
     }
 
+    /**
+     * CR 里是否装了 IK：看 nodeSets[].podTemplate.spec.initContainers 有没有 install-ik。
+     *
+     * <p>详情页回显「已安装」以此为准 —— 台账 spec_json 只有编辑补装成功时才回写，
+     * 创建时就勾了 IK 的实例（以及补丁前建的实例）库里没有标记。
+     */
+    @Override
+    public Boolean ikInstalled(GenericKubernetesResource live) {
+        if (live == null) {
+            return null;   // CR 没读到：交给台账兜底，别谎报「未安装」
+        }
+        Object spec = live.getAdditionalProperties().get("spec");
+        Object nodeSets = spec instanceof Map<?, ?> m ? m.get("nodeSets") : null;
+        if (!(nodeSets instanceof List<?> list)) {
+            return false;
+        }
+        for (Object ns : list) {
+            if (!(ns instanceof Map<?, ?> nodeSet)
+                    || !(nodeSet.get("podTemplate") instanceof Map<?, ?> podTemplate)
+                    || !(podTemplate.get("spec") instanceof Map<?, ?> podSpec)
+                    || !(podSpec.get("initContainers") instanceof List<?> inits)) {
+                continue;
+            }
+            if (inits.stream().anyMatch(o -> o instanceof Map<?, ?> c && "install-ik".equals(c.get("name")))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 关掉自签证书 = 该层用明文 HTTP */
     private static Map<String, Object> httpWithoutTls() {
         return Map.of("tls", Map.of("selfSignedCertificate", Map.of("disabled", true)));

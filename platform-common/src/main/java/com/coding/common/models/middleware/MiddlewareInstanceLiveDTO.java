@@ -27,6 +27,12 @@ public class MiddlewareInstanceLiveDTO {
     private List<PvcView> pvcs;
     private List<ServiceView> services;
 
+    /**
+     * CR 里是否装了 IK 分词器（只有 ES 有这一项）。
+     * null = 不适用或 CR 没读到；前端据此优先于台账 spec_json 回显「已安装」。
+     */
+    private Boolean ikInstalled;
+
     @Data
     public static class PodView {
         private String name;

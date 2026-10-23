@@ -2449,6 +2449,8 @@ export interface MiddlewareInstanceLive {
   pods: { name: string; phase?: string | null; ready: boolean; readyText?: string | null; restarts: number; node?: string | null; createdAt?: string | null }[]
   pvcs: { name: string; phase?: string | null; capacity?: string | null; storageClass?: string | null; createdAt?: string | null }[]
   services: { name: string; type?: string | null; clusterIp?: string | null; ports?: string | null }[]
+  /** CR 里是否装了 IK 分词器（只有 ES 有；null/缺省=不适用或读不到） */
+  ikInstalled?: boolean | null
 }
 
 export interface MiddlewareFormOptions {

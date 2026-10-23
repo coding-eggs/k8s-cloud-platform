@@ -71,6 +71,16 @@ public interface MiddlewareAdapter {
     }
 
     /**
+     * CR 里是否真的装了某个可选插件（目前只有 ES 的 IK 分词器）。
+     *
+     * <p>详情页回显「已安装」以 CR 为准而不是台账：台账 spec_json 只在编辑补装成功时回写，
+     * 创建时就勾上的实例库里可能没有标记。{@code null} = 不适用或 CR 没读到（调用方自行兜底）。
+     */
+    default Boolean ikInstalled(GenericKubernetesResource live) {
+        return null;
+    }
+
+    /**
      * 删除实例且 keepPvc=false 时，用来找该实例 PVC 的 label selector。
      * <p>默认按平台标签（适配器在 volumeClaimTemplate 里自己打的）；
      * Operator 创建 PVC 的中间件（MySQL/Kafka/ES）覆写成各自 Operator 的标签。
