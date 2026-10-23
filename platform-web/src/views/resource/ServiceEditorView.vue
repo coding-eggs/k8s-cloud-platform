@@ -439,8 +439,8 @@ const contextDesc = computed(() => {
                   <el-input-number
                     v-if="showNodePort"
                     v-model="p.nodePort"
-                    :min="30000"
-                    :max="32767"
+                    :min="1"
+                    :max="65535"
                     controls-position="right"
                     placeholder="NodePort（可空）"
                     class="port-num"
@@ -451,6 +451,9 @@ const contextDesc = computed(() => {
                   <el-button link type="danger" :disabled="form.ports.length <= 1" @click="form.ports.splice(idx, 1)">删除</el-button>
                 </div>
                 <el-button class="add-row-btn" plain @click="form.ports.push(newPortRow())">+ 添加端口</el-button>
+                <div v-if="showNodePort" class="form-tip">
+                  NodePort 的可用范围由集群的 --service-node-port-range 决定（本平台不写死 30000-32767，填错由 API Server 拒绝）
+                </div>
               </div>
             </el-form-item>
           </el-form>
@@ -599,7 +602,7 @@ const contextDesc = computed(() => {
               <div class="form-tip">allocateLoadBalancerNodePorts：是否自动为 LB 分配 NodePort；若手动指定了 NodePort 则忽略此开关。</div>
             </el-form-item>
             <el-form-item v-if="showHealthCheckNodePort" label="healthCheckNodePort">
-              <el-input-number v-model="form.healthCheckNodePort" :min="30000" :max="32767" controls-position="right" placeholder="可空，自动分配" class="port-num" />
+              <el-input-number v-model="form.healthCheckNodePort" :min="1" :max="65535" controls-position="right" placeholder="可空，自动分配" class="port-num" />
               <div class="form-tip">externalTrafficPolicy=Local 时供外部 LB 探测节点是否持有端点；一旦设置不可修改。</div>
             </el-form-item>
             <el-form-item label="loadBalancerClass">
