@@ -26,6 +26,9 @@ public class MiddlewareScaleRequestDTO {
 
     private String storageSize;
 
+    /** Elasticsearch：是否安装 IK 分词器（幂等；null/false = 不处理） */
+    private Boolean ik;
+
     /** 管理员代管轨的租户 */
     private String tenantId;
 }

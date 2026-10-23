@@ -414,6 +414,21 @@ public class MiddlewareService {
         }
     }
 
+    /** 装 IK 成功后回写规格（单向：只置 true，不回退） */
+    private void markIkInstalled(PlatformMiddlewareInstance instance) {
+        try {
+            Map<String, Object> spec = isBlank(instance.getSpecJson())
+                    ? new LinkedHashMap<>()
+                    : new LinkedHashMap<>(jsonMapper.readValue(instance.getSpecJson(), Map.class));
+            spec.put("ik", true);
+            instance.setSpecJson(jsonMapper.writeValueAsString(spec));
+            instance.setUpdatedAt(new Date());
+            instances.updateById(instance);
+        } catch (RuntimeException e) {
+            // 回写失败不影响已经装上的插件；规格没标记而已
+        }
+    }
+
     private static MiddlewareConnectionDTO.Line line(String label, String value) {
         return new MiddlewareConnectionDTO.Line(label, value);
     }
@@ -492,8 +507,12 @@ public class MiddlewareService {
             dto.setMemoryRequest(req.getMemoryRequest());
             dto.setMemoryLimit(req.getMemoryLimit());
             dto.setStorageSize(req.getStorageSize());
+            dto.setIk(Boolean.TRUE.equals(req.getIk()));
             dto.setTenantId(tenantId);
             client.scale(instance.getCode(), dto);
+            if (Boolean.TRUE.equals(req.getIk())) {
+                markIkInstalled(instance);
+            }
             finish(op, "SUCCESS", null);
         } catch (RuntimeException e) {
             finish(op, "FAILED", e.getMessage());

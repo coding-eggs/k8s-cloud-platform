@@ -41,6 +41,50 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             "requests", Map.of("cpu", "100m", "memory", "128Mi"),
             "limits", Map.of("cpu", "500m", "memory", "512Mi"));
 
+    /**
+     * 幂等地把 IK 的 initContainer + 共享 plugins 卷挂到 podSpec（创建和后续编辑共用）。
+     *
+     * <p>IK 不随官方镜像发布：initContainer 把 zip 下载解到 emptyDir，ES 容器挂同一个卷。
+     * ⚠️ 不能用 {@code bin/elasticsearch-plugin install}：它会对 config 目录 chown，而 ECK 默认
+     * runAsNonRoot + drop ALL，实测报 Operation not permitted。
+     *
+     * @return true = 本次新加了；false = 已经装过（编辑时重复提交不会重复加）
+     */
+    @SuppressWarnings("unchecked")
+    private static boolean ensureIk(Map<String, Object> podSpec, Map<String, Object> esContainer, String version) {
+        List<Object> inits = podSpec.get("initContainers") instanceof List<?> list
+                ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
+        boolean installed = inits.stream().anyMatch(o ->
+                o instanceof Map<?, ?> m && "install-ik".equals(m.get("name")));
+        if (installed) {
+            return false;
+        }
+        Map<String, Object> pluginsMount = Map.of("name", PLUGINS_VOLUME,
+                "mountPath", "/usr/share/elasticsearch/plugins");
+        Map<String, Object> init = new LinkedHashMap<>();
+        init.put("name", "install-ik");
+        init.put("image", ES_IMAGE_PREFIX + version);
+        init.put("command", List.of("sh", "-c",
+                "set -e; cd /usr/share/elasticsearch/plugins; "
+                        + "curl -fsSL --retry 3 -o ik.zip " + IK_DOWNLOAD_PREFIX + version + "; "
+                        + "mkdir -p analysis-ik; unzip -q -o ik.zip -d analysis-ik; rm -f ik.zip"));
+        init.put("resources", INIT_CONTAINER_RESOURCES);
+        init.put("volumeMounts", new java.util.ArrayList<>(List.of(pluginsMount)));
+        inits.add(init);
+        podSpec.put("initContainers", inits);
+
+        List<Object> volumes = podSpec.get("volumes") instanceof List<?> list
+                ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
+        volumes.add(Map.of("name", PLUGINS_VOLUME, "emptyDir", Map.of()));
+        podSpec.put("volumes", volumes);
+
+        List<Object> mounts = esContainer.get("volumeMounts") instanceof List<?> list
+                ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
+        mounts.add(pluginsMount);
+        esContainer.put("volumeMounts", mounts);
+        return true;
+    }
+
     /** 关掉自签证书 = 该层用明文 HTTP */
     private static Map<String, Object> httpWithoutTls() {
         return Map.of("tls", Map.of("selfSignedCertificate", Map.of("disabled", true)));
@@ -98,25 +142,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> podSpec = new LinkedHashMap<>();
         podSpec.put("containers", new java.util.ArrayList<>(List.of(container)));
         if (Boolean.TRUE.equals(req.getIk())) {
-            // IK 不随官方镜像发布：用一个 initContainer 下载到共享 emptyDir，再挂给 ES 容器
-            //（集群 Pod 能出网；离线集群需要改成内部镜像源）
-            Map<String, Object> pluginsVolume = Map.of("name", PLUGINS_VOLUME, "emptyDir", Map.of());
-            Map<String, Object> pluginsMount = Map.of("name", PLUGINS_VOLUME,
-                    "mountPath", "/usr/share/elasticsearch/plugins");
-            Map<String, Object> init = new LinkedHashMap<>();
-            init.put("name", "install-ik");
-            init.put("image", ES_IMAGE_PREFIX + version);
-            // 不用 elasticsearch-plugin install：它会对 config 目录 chown，容器是非 root（ECK 默认
-            // runAsNonRoot + drop ALL），必然 Operation not permitted。直接下载 zip 解到 plugins 目录即可。
-            init.put("command", List.of("sh", "-c",
-                    "set -e; cd /usr/share/elasticsearch/plugins; "
-                            + "curl -fsSL --retry 3 -o ik.zip " + IK_DOWNLOAD_PREFIX + version + "; "
-                            + "mkdir -p analysis-ik; unzip -q -o ik.zip -d analysis-ik; rm -f ik.zip"));
-            init.put("resources", INIT_CONTAINER_RESOURCES);
-            init.put("volumeMounts", new java.util.ArrayList<>(List.of(pluginsMount)));
-            podSpec.put("initContainers", new java.util.ArrayList<>(List.of(init)));
-            podSpec.put("volumes", new java.util.ArrayList<>(List.of(pluginsVolume)));
-            container.put("volumeMounts", new java.util.ArrayList<>(List.of(pluginsMount)));
+            ensureIk(podSpec, container, version);
         }
         Map<String, Object> podTemplate = new LinkedHashMap<>();
         podTemplate.put("spec", podSpec);
@@ -189,7 +215,17 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             if (specObj instanceof Map<?, ?> podSpec) {
                 Object containersObj = ((Map<String, Object>) podSpec).get("containers");
                 if (containersObj instanceof List<?> containers && !containers.isEmpty()) {
-                    ((Map<String, Object>) containers.get(0)).put("resources", resourcesOf(req));
+                    Map<String, Object> esContainer = (Map<String, Object>) containers.get(0);
+                    // 只带 ik 的请求不能把资源字段抹掉
+                    if (req.getCpuRequest() != null || req.getCpuLimit() != null
+                            || req.getMemoryRequest() != null || req.getMemoryLimit() != null) {
+                        esContainer.put("resources", resourcesOf(req));
+                    }
+                    if (Boolean.TRUE.equals(req.getIk())) {
+                        Object version = spec.get("version");
+                        ensureIk((Map<String, Object>) podSpec, esContainer,
+                                version == null ? DEFAULT_ES_VERSION : String.valueOf(version));
+                    }
                 }
             }
         }

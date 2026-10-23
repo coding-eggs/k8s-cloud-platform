@@ -76,6 +76,7 @@ const editForm = ref<{
   memoryLimit: number | null
   memoryRequestUnit: 'Mi' | 'Gi'
   memoryLimitUnit: 'Mi' | 'Gi'
+  ik: boolean
 }>({
   displayName: '',
   replicas: null,
@@ -85,7 +86,12 @@ const editForm = ref<{
   memoryLimit: null,
   memoryRequestUnit: 'Mi',
   memoryLimitUnit: 'Mi',
+  ik: false,
 })
+
+/** IK 已装（规格里记着 ik=true）：只显示「已安装」，不提供卸载 */
+const ikInstalled = computed(() => detail.value?.spec?.ik === true)
+const supportsIk = computed(() => instance.value?.code === 'elasticsearch')
 
 /** "500m" → 0.5 核；"1" → 1 */
 function parseCpu(q?: string | null): number | null {
@@ -119,6 +125,7 @@ function openEdit(): void {
     memoryLimit: memLim.value,
     memoryRequestUnit: memReq.unit,
     memoryLimitUnit: memLim.unit,
+    ik: false,
   }
   editVisible.value = true
 }
@@ -142,6 +149,8 @@ async function submitEdit(): Promise<void> {
           ? `${editForm.value.memoryRequest}${editForm.value.memoryRequestUnit}` : undefined,
         memoryLimit: editForm.value.memoryLimit != null
           ? `${editForm.value.memoryLimit}${editForm.value.memoryLimitUnit}` : undefined,
+        // IK 是单向的：勾了才发，不勾不发（不卸载）
+        ik: editForm.value.ik ? true : undefined,
       })
     }
     ElMessage.success('已提交')
@@ -376,6 +385,14 @@ onMounted(load)
               <el-option label="Mi" value="Mi" />
               <el-option label="Gi" value="Gi" />
             </el-select>
+          </el-form-item>
+          <el-form-item v-if="supportsIk" label="IK 分词器">
+            <el-switch v-model="editForm.ik" :disabled="ikInstalled" active-text="安装 IK 中文分词器" />
+            <div class="mw-form-help">
+              {{ ikInstalled
+                ? '已安装（不支持在线卸载）'
+                : '保存后会滚动重启 ES，并由 initContainer 下载 analysis-ik（Pod 需能访问 get.infini.cloud）' }}
+            </div>
           </el-form-item>
           <p class="mw-form-help">存储与形态不可在线修改；要改请删除后重建。</p>
         </template>

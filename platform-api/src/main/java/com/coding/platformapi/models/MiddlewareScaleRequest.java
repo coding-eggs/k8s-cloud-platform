@@ -12,5 +12,8 @@ public class MiddlewareScaleRequest {
     private String memoryRequest;
     private String memoryLimit;
     private String storageSize;
+
+    /** Elasticsearch：是否安装 IK 分词器（true = 幂等安装；false/null = 不处理，单向不回退） */
+    private Boolean ik;
     private String tenantId;
 }

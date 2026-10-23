@@ -233,6 +233,51 @@ class ElasticsearchMiddlewareAdapterTest {
     }
 
     @Test
+    void editingCanInstallIkOnAnExistingInstanceIdempotently() {
+        var live = adapter.buildCreate(req(1)).get(0).resource();   // 创建时没勾 ik
+
+        var scale = new MiddlewareScaleRequestDTO();
+        scale.setMode("CLUSTER");
+        scale.setIk(true);
+        adapter.applyScale(live, ElasticsearchMiddlewareAdapter.CRD, scale);
+
+        @SuppressWarnings("unchecked")
+        var nodeSet = (Map<String, Object>) ((List<?>) spec(live).get("nodeSets")).get(0);
+        @SuppressWarnings("unchecked")
+        var pod = (Map<String, Object>) ((Map<String, Object>) nodeSet.get("podTemplate")).get("spec");
+        @SuppressWarnings("unchecked")
+        var inits = (List<Map<String, Object>>) pod.get("initContainers");
+        assertThat(inits).hasSize(1);
+        assertThat(inits.get(0)).containsEntry("name", "install-ik");
+        // 资源没带时不能被抹掉
+        @SuppressWarnings("unchecked")
+        var resources = (Map<String, Object>) ((List<Map<String, Object>>) pod.get("containers")).get(0).get("resources");
+        assertThat(resources).containsKeys("requests", "limits");
+
+        // 再提交一次（编辑弹窗重复保存）不会加第二个 initContainer
+        adapter.applyScale(live, ElasticsearchMiddlewareAdapter.CRD, scale);
+        @SuppressWarnings("unchecked")
+        var again = (List<Map<String, Object>>) pod.get("initContainers");
+        assertThat(again).hasSize(1);
+    }
+
+    @Test
+    void editingWithoutIkFlagLeavesThePodTemplateAlone() {
+        var live = adapter.buildCreate(req(1)).get(0).resource();
+        var scale = new MiddlewareScaleRequestDTO();
+        scale.setMode("CLUSTER");
+        scale.setReplicas(3);
+
+        adapter.applyScale(live, ElasticsearchMiddlewareAdapter.CRD, scale);
+
+        @SuppressWarnings("unchecked")
+        var nodeSet = (Map<String, Object>) ((List<?>) spec(live).get("nodeSets")).get(0);
+        @SuppressWarnings("unchecked")
+        var pod = (Map<String, Object>) ((Map<String, Object>) nodeSet.get("podTemplate")).get("spec");
+        assertThat(pod).doesNotContainKey("initContainers");
+    }
+
+    @Test
     void selectorsUseEckLabels() {
         assertThat(adapter.statusSelector("mw-es-x", "Elasticsearch"))
                 .isEqualTo("elasticsearch.k8s.elastic.co/cluster-name=mw-es-x");

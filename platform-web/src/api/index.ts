@@ -973,6 +973,8 @@ export const middlewareApi = {
     memoryRequest?: string
     memoryLimit?: string
     storageSize?: string
+    /** Elasticsearch：安装 IK（单向，不在编辑里卸载） */
+    ik?: boolean
     tenantId?: string
   }) => http.post<never, number>('/middleware/instance/scale', payload),
   remove: (payload: { instanceId: string; keepPvc: boolean; tenantId?: string }) =>
