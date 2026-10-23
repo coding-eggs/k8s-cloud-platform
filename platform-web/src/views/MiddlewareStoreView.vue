@@ -51,12 +51,12 @@ const modeFixedReplicas = computed(
   () => createItem.value?.modes.find((m) => m.mode === createMode.value)?.fixedReplicas ?? null,
 )
 
-/** 节点数在该形态下的含义（主分片数 / 数据节点数 / Broker 数 ...） */
+/** 节点数在该形态下的含义（主节点数 / 数据节点数 / Broker 数 ...） */
 const modeReplicasLabel = computed(
   () => createItem.value?.modes.find((m) => m.mode === createMode.value)?.replicasLabel || '节点数',
 )
 
-/** Redis 集群形态才有「每分片从节点数」 */
+/** Redis 集群形态才有「每个主节点的副本数」 */
 const showReplicasPerShard = computed(
   () => createItem.value?.code === 'redis' && createMode.value === 'CLUSTER',
 )
@@ -150,7 +150,7 @@ function resetForm(item: MiddlewareCatalogItem): void {
     namespace: '',
     displayName: '',
     storageClass: '',
-    // Redis 集群形态：每个主分片的从节点数（默认 1）
+    // Redis 集群形态：每个主节点配几个副本（默认 1）
     replicasPerShard: 1,
   }
   const units: Record<string, string> = {}
@@ -526,10 +526,10 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="field.help" class="mw-form-help">{{ field.help }}</div>
         </el-form-item>
-        <el-form-item v-if="showReplicasPerShard" label="每分片从节点数">
+        <el-form-item v-if="showReplicasPerShard" label="每个主节点的副本数">
           <el-input-number v-model="form.replicasPerShard" :min="0" :max="5" />
           <div class="mw-form-help">
-            默认 1（每个主分片 1 个从节点）；0 = 只有主分片、没有副本
+            默认 1：每个主节点再配 1 个副本做备份；填 0 = 不配备份（主节点挂了数据就没了）
           </div>
         </el-form-item>
         <el-form-item v-if="modeFixedReplicas !== null" label=" ">

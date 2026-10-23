@@ -18,7 +18,7 @@ public class MiddlewareCatalog {
 
     /**
      * @param fixedReplicas 非空 = 该形态节点数固定，表单只读（单节点/单实例）
-     * @param replicasLabel 节点数在该形态下的含义（主分片数 / 数据节点数 / Broker 数 ...）
+     * @param replicasLabel 节点数在该形态下的含义（主节点数 / 数据节点数 / Broker 数 ...）
      */
     public record Mode(String mode, String label, int minReplicas, Integer fixedReplicas,
                        String replicasLabel, String help) {
@@ -32,12 +32,15 @@ public class MiddlewareCatalog {
 
     private static final List<Mode> REDIS_MODES = List.of(
             new Mode("STANDALONE", "单节点", 1, 1, "节点数", "开发/测试，无高可用（固定 1 个节点）"),
-            new Mode("SENTINEL", "哨兵主从", 2, null, "数据节点数", "数据节点另加固定 3 个哨兵"),
-            new Mode("CLUSTER", "集群分片", 3, null, "主分片数", "≥3 个主分片，数据分片存储"));
+            new Mode("SENTINEL", "哨兵主从", 2, null, "数据节点数",
+                    "数据节点里 1 个主、其余为从；另外固定起 3 个哨兵做故障切换"),
+            new Mode("CLUSTER", "集群分片", 3, null, "主节点数",
+                    "数据分成多份存放，每份由一个主节点负责（至少 3 个）；每个主节点可再配副本做备份"));
 
     private static final List<Mode> MYSQL_MODES = List.of(
             new Mode("SINGLE", "单节点", 1, 1, "节点数", "开发/测试；Group Replication 单成员，无容错（固定 1 个）"),
-            new Mode("CLUSTER", "高可用集群", 3, null, "数据节点数", "Group Replication，单主强一致，3/5 节点"));
+            new Mode("CLUSTER", "高可用集群", 3, null, "节点数",
+                    "组复制：3 或 5 个节点，其中 1 个主、其余为从；写主、读从"));
 
     private static final List<Mode> KAFKA_MODES = List.of(
             new Mode("CLUSTER", "KRaft 集群", 3, null, "Broker 数", "brokers ≥3，同时承担 controller；2 节点没有容错"));

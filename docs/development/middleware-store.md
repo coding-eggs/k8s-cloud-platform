@@ -28,10 +28,10 @@
   提交时拼成 K8s quantity；不接受手写 `500m`/`1Gi` 这类字符串；
 - 版本（Kafka / Elasticsearch）是**下拉**，选项来自 `MiddlewareCatalog` 里声明的受支持清单，接口层同样校验
   （绕过前端直接传别的 tag 会被拒）；清单为空的中间件（Redis/MySQL/PG/RabbitMQ/Nacos）不展示版本字段；
-- 节点数按形态区分：单节点/单实例形态**锁定为 1**（只读），标签随形态变化（`主分片数` / `数据节点数` / `Broker 数` /
-  `实例数`），不再一律叫「节点数」；Redis 集群形态额外给「每分片从节点数」（默认 1，0 = 无从节点，
-  映射到 `redisFollower.replicas` = 分片数 × 每分片数，值记在 CR 注解 `platform.coding/redis-replicas-per-shard`，
-  扩容分片时按它同步从节点总数）；
+- 节点数按形态区分：单节点/单实例形态**锁定为 1**（只读），标签随形态变化（`主节点数` / `数据节点数` / `Broker 数` /
+  `实例数`），不再一律叫「节点数」；Redis 集群形态额外给「每个主节点的副本数」（默认 1，0 = 不配备份，
+  映射到 `redisFollower.replicas` = 主节点数 × 每个主节点的副本数，值记在 CR 注解
+  `platform.coding/redis-replicas-per-shard`，扩主节点时按它同步副本总数）；
 - Elasticsearch 表单有「同时部署 Kibana」开关：勾选后平台额外建一个同名 Kibana CR（`elasticsearchRef` 指向该实例）；
   Kibana 的 `status.health` 非 green 时，实例状态降级并带原因，不会因为 ES 本身绿就报「运行中」。
 
