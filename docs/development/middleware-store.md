@@ -2,8 +2,9 @@
 
 > 设计：[2026-10-22-middleware-store-design.md](../superpowers/specs/2026-10-22-middleware-store-design.md)
 > 计划：[批①-1](../superpowers/plans/2026-10-22-middleware-store-batch1.md)、[批①-2](../superpowers/plans/2026-10-22-middleware-store-batch2.md)
-> 状态：批①-1（底座 + Redis）与批①-2（MySQL/Kafka/ES + Nacos）已实施，**2026-10-23 真集群验证**（redis 单节点/哨兵、
-> mysql 单节点、kafka 三 broker、nacos 单节点均跑通；ES 待集群里 51 天前的旧 ECK 资源处理后再验）；PostgreSQL/RabbitMQ 在批②。
+> 状态：批①-1（底座 + Redis）、批①-2（MySQL/Kafka/ES + Nacos）与**批②（PostgreSQL / RabbitMQ）**已实施；
+> 2026-10-23 真集群验证：redis 单节点/哨兵、mysql 单节点、kafka 三 broker、nacos 单节点已跑通，
+> PostgreSQL / RabbitMQ 见文末验证记录；ES 待集群里 51 天前的旧 ECK 资源处理后再验。
 
 ## 1. 可用的中间件
 
@@ -14,7 +15,8 @@
 | Kafka | Operator（Strimzi，KRaft） | 1.3.0 | 集群（brokers ≥3，NodePool 双角色） | 无（内网 plain 监听） |
 | Elasticsearch | Operator（ECK） | 3.5.0 | 集群（nodeSet，count ≥1） | ECK 生成 → `<名称>-es-elastic-user` |
 | Nacos | **Chart**（不是 Operator） | 1.2.0（appVersion 3.2.4） | 单节点 / 集群（内嵌 JRaft 存储） | chart 默认不鉴权 |
-| PostgreSQL / RabbitMQ | — | — | 即将支持（批②） | — |
+| PostgreSQL | Operator（CloudNativePG） | 0.29.1（appVersion 1.30.1） | 单实例 / 主备（instances ≥3，自动 failover） | Operator 生成 → `<名称>-app` |
+| RabbitMQ | Operator（官方 Cluster Operator，Bitnami 打包） | 4.4.34（appVersion 2.16.1） | 单节点 / 集群（replicas ≥3） | Operator 生成 → `<名称>-default-user` |
 
 > Nacos 3.x 集群模式使用内嵌 JRaft 存储，**不需要外置 MySQL**。
 
@@ -36,6 +38,8 @@
 
 - 批①-2 **无新表、无新权限行**，但新增了一条租户 RBAC 迁移 `V2026_10_22_5`（补
   `ps.percona.com` / `kafka.strimzi.io` / `elasticsearch.k8s.elastic.co` 三个 apiGroup）；
+- 批②（PostgreSQL / RabbitMQ）同样**无新表、无新权限行**，只新增租户 RBAC 迁移 `V2026_10_23_1`
+  （补 `postgresql.cnpg.io` / `rabbitmq.com`），重放后同样要点一次「重下发全部模板」；
   **重放后必须点一次「重下发全部模板」**，否则租户创建这三类实例会 403；
 - 重建 k8s-server + platform-api + platform-web；
 - Operator 安装时平台会下发"监听全部命名空间"的 values（Percona `watchAllNamespaces`、Strimzi
@@ -49,6 +53,8 @@
 | Kafka | `quay.io/strimzi/operator`、`quay.io/strimzi/kafka` |
 | Elasticsearch | `docker.elastic.co/eck/eck-operator`、`docker.elastic.co/elasticsearch/elasticsearch` |
 | Nacos | `nacos/nacos-server:v3.2.4` |
+| PostgreSQL | `ghcr.io/cloudnative-pg/cloudnative-pg`（Operator）、`ghcr.io/cloudnative-pg/postgresql`（实例） |
+| RabbitMQ | `docker.io/bitnami/rabbitmq-cluster-operator`、`docker.io/bitnami/rabbitmq` |
 
 > ⚠️ Percona 没有 `percona/percona-haproxy` 这个仓库；HAProxy 入口镜像在 PXC operator 的 `-haproxy` tag 里。
 > 哨兵必须用 `redis-sentinel` 镜像，用 `redis` 镜像会以 standalone 起来、30s 后被探针判死循环重启。
@@ -71,5 +77,17 @@
 
 ## 5. 已知限制
 
-- 前端暂无「详情 / 扩容」入口（后端 scale 已支持 Redis/MySQL/Kafka/ES；Nacos 显式拒绝扩容）；
+- 前端暂无「详情 / 扩容」入口（后端 scale 已支持 Redis/MySQL/Kafka/ES/PostgreSQL/RabbitMQ；Nacos 显式拒绝扩容）；
 - 中间件版本清单未做成可选列表（Kafka/ES 版本是文本框，MySQL/Redis 镜像固定）。
+
+## 6. 真集群验证记录（2026-10-23，coding-cluster）
+
+| 条目 | 形态 | 结果 |
+|---|---|---|
+| Redis | 单节点 / 哨兵 2→3 数据节点 | ✅ 创建 / 状态 / 扩容 / 删除（PVC 一并清） |
+| MySQL | 单节点（含 HAProxy） | ✅（需命名空间有 LimitRange，见 §4） |
+| Kafka | 3 broker + Entity Operator | ✅ |
+| Nacos | 单节点（内嵌存储） | ✅（`storageClassName: null` 才绑定默认 SC） |
+| PostgreSQL | 单实例 / 主备 3 实例 | ✅（状态按 `cnpg.io/podRole=instance` 过滤，initdb Job 不算） |
+| RabbitMQ | 单节点 / 集群 3 节点 | ✅（Pod/PVC 标签是 `app.kubernetes.io/name=<集群名>`） |
+| Elasticsearch | — | 未验：集群里还有 51 天前遗留的 ECK CRD 与 `es` 集群，需先处理 |

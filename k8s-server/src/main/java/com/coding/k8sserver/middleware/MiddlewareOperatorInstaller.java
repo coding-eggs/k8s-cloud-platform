@@ -140,7 +140,8 @@ public class MiddlewareOperatorInstaller {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "CRD " + name + " 已由另一个 Helm release（" + owner + "）管理，拒绝接管");
             }
-            if (owner == null && !"Helm".equals(labels.get("app.kubernetes.io/managed-by"))) {
+            if (owner == null && !entry.crdsShipInCrdsDir()
+                    && !"Helm".equals(labels.get("app.kubernetes.io/managed-by"))) {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "CRD " + name + " 已存在但不由 Helm 管理，拒绝接管（请先手工清理或改由平台安装）");
             }

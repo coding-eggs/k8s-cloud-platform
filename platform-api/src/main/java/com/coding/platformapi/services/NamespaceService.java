@@ -53,6 +53,12 @@ public class NamespaceService {
     /** 与 k8s-core {@code CoreV1LimitRangeConverter.MODELED_TYPES} 同值（platform-api 不依赖 k8s-core，故本地重复声明，改一处需同步） */
     private static final List<String> MODELED_LIMIT_TYPES = List.of("Container", "PersistentVolumeClaim");
 
+    /** 新建命名空间默认 LimitRange 的 Container 默认值（cpu=核、memory=字节） */
+    private static final BigDecimal DEFAULT_REQUEST_CPU = new BigDecimal("0.1");
+    private static final BigDecimal DEFAULT_REQUEST_MEMORY = new BigDecimal("134217728");   // 128Mi
+    private static final BigDecimal DEFAULT_LIMIT_CPU = new BigDecimal("0.5");
+    private static final BigDecimal DEFAULT_LIMIT_MEMORY = new BigDecimal("536870912");    // 512Mi
+
     private final K8sClient k8s;
 
     private final K8sClusterMapper clusterMapper;
@@ -123,8 +129,46 @@ public class NamespaceService {
         }
         NamespaceDTO dto = toDto(req);
         NamespaceDTO created = k8s.create(dto);
+        ensureDefaultLimitRange(req.getClusterId(), req.getName());
         log.info("集群 {} 创建命名空间 {}", req.getClusterId(), req.getName());
         return created;
+    }
+
+    /**
+     * 给新建的命名空间补一份 {@code default} LimitRange（已存在则不动）。
+     *
+     * <p>为什么建 ns 就要有：配额一旦写了 {@code limits.*}/{@code requests.*}，K8s 要求**每个容器**都有对应
+     * 资源字段；而 Operator 追加的侧车（Percona 的 {@code haproxy-init}/{@code mysql-monit} 等）不带资源，
+     * 于是中间件的 Pod 永远 FailedCreate（真集群验证实锤）。LimitRange 的默认值在配额准入前生效，正好兜住这类容器。
+     *
+     * <p>失败只告警：没有开 limits 配额的命名空间本来就不需要它，不该让建 ns 一起回滚。
+     */
+    public void ensureDefaultLimitRange(String clusterId, String namespace) {
+        try {
+            if (k8s.get(limitRangeDto(clusterId, namespace)) != null) {
+                return;
+            }
+            LimitRangeDTO lr = new LimitRangeDTO();
+            lr.setClusterId(clusterId);
+            lr.setNamespace(namespace);
+            lr.setName(SINGLE_NAME);
+            LimitRangeItemDTO item = new LimitRangeItemDTO();
+            item.setType("Container");
+            item.setDefaultRequest(resourcePair(DEFAULT_REQUEST_CPU, DEFAULT_REQUEST_MEMORY));
+            item.setDefaultValue(resourcePair(DEFAULT_LIMIT_CPU, DEFAULT_LIMIT_MEMORY));
+            lr.setLimits(List.of(item));
+            k8s.create(lr);
+            log.info("集群 {} 命名空间 {} 补默认限制范围", clusterId, namespace);
+        } catch (RuntimeException e) {
+            log.warn("集群 {} 命名空间 {} 补默认限制范围失败（不影响建 ns）：{}", clusterId, namespace, e.getMessage());
+        }
+    }
+
+    private static ResourcePairDTO resourcePair(BigDecimal cpu, BigDecimal memory) {
+        ResourcePairDTO pair = new ResourcePairDTO();
+        pair.setCpu(cpu);
+        pair.setMemory(memory);
+        return pair;
     }
 
     /**

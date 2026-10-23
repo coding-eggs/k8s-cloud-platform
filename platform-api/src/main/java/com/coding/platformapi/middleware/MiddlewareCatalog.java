@@ -41,13 +41,21 @@ public class MiddlewareCatalog {
             new Mode("STANDALONE", "单节点", 1, "开发/测试"),
             new Mode("CLUSTER", "集群", 3, "内嵌存储（JRaft），≥3 节点"));
 
+    private static final List<Mode> POSTGRESQL_MODES = List.of(
+            new Mode("SINGLE", "单实例", 1, "开发/测试；无容错"),
+            new Mode("HA", "主备", 3, "CloudNativePG 一主多备，自动 failover（3/5 实例）"));
+
+    private static final List<Mode> RABBITMQ_MODES = List.of(
+            new Mode("SINGLE", "单节点", 1, "开发/测试；无容错"),
+            new Mode("CLUSTER", "集群", 3, "≥3 节点，Quorum 队列需要多数派"));
+
     private static final List<Item> ITEMS = List.of(
             new Item("redis", "Redis", "内存键值存储：缓存、会话、分布式锁", REDIS_MODES),
             new Item("mysql", "MySQL", "关系型数据库（Percona Operator）", MYSQL_MODES),
             new Item("kafka", "Kafka", "事件流平台（Strimzi，KRaft）", KAFKA_MODES),
             new Item("elasticsearch", "Elasticsearch", "搜索与日志存储（ECK）", ES_MODES),
-            new Item("postgresql", "PostgreSQL", "关系型数据库（CloudNativePG）", List.of()),
-            new Item("rabbitmq", "RabbitMQ", "消息队列（官方 Cluster Operator）", List.of()),
+            new Item("postgresql", "PostgreSQL", "关系型数据库（CloudNativePG）", POSTGRESQL_MODES),
+            new Item("rabbitmq", "RabbitMQ", "消息队列（官方 Cluster Operator）", RABBITMQ_MODES),
             new Item("nacos", "Nacos", "注册中心与配置中心（chart）", NACOS_MODES));
 
     /** chart 安装的条目（不走 Operator） */

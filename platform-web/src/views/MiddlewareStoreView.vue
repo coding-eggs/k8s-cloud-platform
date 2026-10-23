@@ -425,7 +425,7 @@ onBeforeUnmount(() => {
           Kafka 监听器为集群内 plain（9092），未开启认证，没有初始凭据。
         </template>
         <template v-else>
-          凭据由对应 Operator 生成，可在实例命名空间查看（MySQL：&lt;名称&gt;-secrets；Elasticsearch：&lt;名称&gt;-es-elastic-user）。
+          凭据由对应 Operator 生成，可在实例命名空间查看（MySQL：&lt;名称&gt;-secrets；Elasticsearch：&lt;名称&gt;-es-elastic-user；PostgreSQL：&lt;名称&gt;-app；RabbitMQ：&lt;名称&gt;-default-user）。
         </template>
       </p>
       <template #footer>

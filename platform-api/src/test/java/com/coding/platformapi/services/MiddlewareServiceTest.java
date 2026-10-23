@@ -125,7 +125,7 @@ class MiddlewareServiceTest {
 
         assertThat(items).anyMatch(i -> i.getCode().equals("redis")
                 && i.isOperatorReady() && "0.27.0".equals(i.getChartVersion()));
-        assertThat(items).anyMatch(i -> i.getCode().equals("postgresql") && i.getModes().isEmpty());
+        assertThat(items).anyMatch(i -> i.getCode().equals("postgresql") && i.getModes().size() == 2);
     }
 
     @Test
@@ -188,7 +188,10 @@ class MiddlewareServiceTest {
         assertThat(items).anyMatch(i -> i.getCode().equals("elasticsearch") && i.getModes().size() == 1);
         assertThat(items).anyMatch(i -> i.getCode().equals("nacos")
                 && i.isChartBacked() && i.getModes().size() == 2);
-        assertThat(items).anyMatch(i -> i.getCode().equals("postgresql") && i.getModes().isEmpty());
+        assertThat(items).anyMatch(i -> i.getCode().equals("postgresql")
+                && i.getModes().size() == 2
+                && i.getModes().stream().anyMatch(m -> m.getMode().equals("HA")));
+        assertThat(items).anyMatch(i -> i.getCode().equals("rabbitmq") && i.getModes().size() == 2);
     }
 
     @Test

@@ -26,8 +26,12 @@ public class MiddlewareOperatorCatalog {
 
     /**
      * @param helmValues 安装时必须下发的 values（不能留空：Percona/Strimzi 默认只监听自己命名空间）
+     * @param crdsShipInCrdsDir chart 把 CRD 放在 {@code crds/} 目录（Helm 不给它们打 release 注解）。
+     *        这类 CRD 装完就是"无人认领"状态：卸载后仍在，重装时按"外部 CRD"拒掉会让平台**再也装不回来**。
+     *        true = 允许接管没有 release 注解的 CRD（仍拒绝别的 release 明确拥有的）。
      */
-    public record Entry(String code, String chartVersion, List<String> requiredCrds, String helmValues) {
+    public record Entry(String code, String chartVersion, List<String> requiredCrds, String helmValues,
+                        boolean crdsShipInCrdsDir) {
     }
 
     private static final Map<String, Entry> ENTRIES;
@@ -39,19 +43,47 @@ public class MiddlewareOperatorCatalog {
                 "redisreplications.redis.redis.opstreelabs.in",
                 "redissentinels.redis.redis.opstreelabs.in",
                 "redisclusters.redis.redis.opstreelabs.in"),
-                ""));
+                "", false));
         m.put("mysql", new Entry("mysql", "1.2.0",
                 List.of("perconaservermysqls.ps.percona.com"),
                 // chart 默认只 watch 自身命名空间；不下发这行，租户 ns 的 CR 没人 reconcile
-                "watchAllNamespaces: true\n"));
+                "watchAllNamespaces: true\n", false));
         m.put("kafka", new Entry("kafka", "1.3.0",
                 List.of("kafkas.kafka.strimzi.io", "kafkanodepools.kafka.strimzi.io"),
                 // chart 默认 watchNamespaces: [] + watchAnyNamespace: false
-                "watchAnyNamespace: true\n"));
+                "watchAnyNamespace: true\n", false));
         m.put("elasticsearch", new Entry("elasticsearch", "3.5.0",
                 List.of("elasticsearches.elasticsearch.k8s.elastic.co"),
                 // ECK 默认全集群监听
-                ""));
+                "", false));
+        m.put("postgresql", new Entry("postgresql", "0.29.1",
+                List.of("clusters.postgresql.cnpg.io"),
+                // CNPG 默认 clusterWide（监听全部命名空间）；CRD 在 chart 的 templates/ 里，安装即建
+                "", false));
+        m.put("rabbitmq", new Entry("rabbitmq", "4.4.34",
+                List.of("rabbitmqclusters.rabbitmq.com"),
+                // 只要集群 Operator：拓扑 Operator 会多拉两个镜像，平台不提供拓扑类对象。
+                // 镜像全部显式覆盖：Bitnami 2025 起把历史 tag 从 bitnami/* 挪到 bitnamilegacy/*，
+                // 默认值（bitnami/rabbitmq-cluster-operator:2.16.1-debian-12-r0）已 manifest unknown；
+                // broker 用官方 rabbitmq 镜像（library/rabbitmq）。
+                "msgTopologyOperator:\n"
+                        + "  enabled: false\n"
+                        + "global:\n"
+                        + "  security:\n"
+                        + "    allowInsecureImages: true\n"
+                        + "clusterOperator:\n"
+                        + "  image:\n"
+                        + "    registry: docker.io\n"
+                        + "    repository: bitnamilegacy/rabbitmq-cluster-operator\n"
+                        + "    tag: 2.16.1-debian-12-r0\n"
+                        + "credentialUpdaterImage:\n"
+                        + "  registry: docker.io\n"
+                        + "  repository: bitnamilegacy/rmq-default-credential-updater\n"
+                        + "  tag: 1.0.8-debian-12-r0\n"
+                        + "rabbitmqImage:\n"
+                        + "  registry: docker.io\n"
+                        + "  repository: library/rabbitmq\n"
+                        + "  tag: 4.1.3\n", true));
         ENTRIES = Map.copyOf(m);
     }
 

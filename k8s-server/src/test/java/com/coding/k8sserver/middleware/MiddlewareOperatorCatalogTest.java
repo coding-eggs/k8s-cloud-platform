@@ -27,6 +27,18 @@ class MiddlewareOperatorCatalogTest {
                 .containsExactly("kafkas.kafka.strimzi.io", "kafkanodepools.kafka.strimzi.io");
         assertThat(catalog.require("elasticsearch").requiredCrds())
                 .containsExactly("elasticsearches.elasticsearch.k8s.elastic.co");
+        assertThat(catalog.require("postgresql").requiredCrds())
+                .containsExactly("clusters.postgresql.cnpg.io");
+        assertThat(catalog.require("rabbitmq").requiredCrds())
+                .containsExactly("rabbitmqclusters.rabbitmq.com");
+    }
+
+    @Test
+    void rabbitmqDoesNotInstallTheTopologyOperator() {
+        // 平台不提供 Binding/Queue 这类拓扑对象，多装一个 Operator 只是多拉两个镜像
+        assertThat(catalog.require("rabbitmq").helmValues())
+                .contains("msgTopologyOperator")
+                .contains("enabled: false");
     }
 
     @Test

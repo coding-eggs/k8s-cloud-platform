@@ -40,6 +40,7 @@ public class NamespaceAllocationService {
     private final PlatformRbacTemplateMapper templateMapper;
     private final K8sProvisioningService provisioning;
     private final K8sLifecycleClient adminClient;
+    private final NamespaceService namespaceService;
     private final AuthContext authContext;
 
     public PlatformTenantNamespace create(AllocationCreateRequest req) {
@@ -64,6 +65,8 @@ public class NamespaceAllocationService {
         try {
             // K8s 侧四步（幂等；命名 / 构造规则在本侧，k8s-server 只执行单点动作）
             adminClient.ensureNamespace(req.getClusterId(), req.getNamespace());
+            // 分配出来的命名空间同样要有默认 LimitRange（Operator 侧车不带资源，配额会挡住它们）
+            namespaceService.ensureDefaultLimitRange(req.getClusterId(), req.getNamespace());
             provisioning.syncClusterRole(req.getClusterId(),
                     K8sNaming.templateClusterRole(template.getName()), provisioning.parseRules(template.getRules()));
             adminClient.ensureTenantSa(req.getClusterId(), tenant.getServiceAccount());

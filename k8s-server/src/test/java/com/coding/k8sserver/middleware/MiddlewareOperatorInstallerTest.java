@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -119,6 +120,54 @@ class MiddlewareOperatorInstallerTest {
         assertThat(status.isInstalled()).isFalse();
         assertThat(status.isReady()).isFalse();
         assertThat(status.getMessage()).contains("尚未安装");
+    }
+
+    @Test
+    void unannotatedCrdsAreRejectedForChartsThatShipCrdsInTemplates() {
+        var installer = installerWithCrd(Map.of(), Map.of());
+        when(clients.getAdminClient("c1")).thenReturn(
+                mock(io.fabric8.kubernetes.client.KubernetesClient.class));
+
+        assertThatThrownBy(() -> installer.assertCrdsNotForeign("c1",
+                new MiddlewareOperatorCatalog().require("redis")))
+                .hasMessageContaining("拒绝接管");
+    }
+
+    @Test
+    void unannotatedCrdsAreAllowedForChartsThatShipCrdsInCrdsDir() {
+        // Helm 的 crds/ 目录不打 release 注解：这类 CRD 卸载后仍在，
+        // 若一律当"外部 CRD"拒掉，平台就再也装不回来了（真集群踩过：首次安装失败后重装被挡）
+        var installer = installerWithCrd(Map.of(), Map.of());
+        when(clients.getAdminClient("c1")).thenReturn(
+                mock(io.fabric8.kubernetes.client.KubernetesClient.class));
+
+        installer.assertCrdsNotForeign("c1", new MiddlewareOperatorCatalog().require("rabbitmq"));
+    }
+
+    @Test
+    void crdsOwnedByAnotherReleaseAreAlwaysRejected() {
+        var installer = installerWithCrd(Map.of(), Map.of("meta.helm.sh/release-name", "someone-else"));
+        when(clients.getAdminClient("c1")).thenReturn(
+                mock(io.fabric8.kubernetes.client.KubernetesClient.class));
+
+        assertThatThrownBy(() -> installer.assertCrdsNotForeign("c1",
+                new MiddlewareOperatorCatalog().require("rabbitmq")))
+                .hasMessageContaining("另一个 Helm release");
+    }
+
+    private MiddlewareOperatorInstaller installerWithCrd(Map<String, String> labels, Map<String, String> annotations) {
+        return new MiddlewareOperatorInstaller(helm, charts, clients, new MiddlewareOperatorCatalog()) {
+            @Override
+            io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition crdOrNull(
+                    io.fabric8.kubernetes.client.KubernetesClient client, String name) {
+                var crd = mock(io.fabric8.kubernetes.api.model.apiextensions.v1.CustomResourceDefinition.class);
+                var meta = new io.fabric8.kubernetes.api.model.ObjectMeta();
+                meta.setLabels(labels);
+                meta.setAnnotations(annotations);
+                when(crd.getMetadata()).thenReturn(meta);
+                return crd;
+            }
+        };
     }
 
     @Test

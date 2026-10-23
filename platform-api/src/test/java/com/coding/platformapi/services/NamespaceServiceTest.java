@@ -75,6 +75,65 @@ class NamespaceServiceTest {
     }
 
     @Test
+    void create_also_creates_default_limit_range() {
+        // 真集群验证：Operator 追加的侧车（haproxy-init / mysql-monit）不带资源字段，
+        // 配上 limits.* 配额后 Pod 永远 FailedCreate —— 新命名空间默认带一个 LimitRange 兜底
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(null);
+        when(k8s.create(any(NamespaceDTO.class))).thenReturn(ns("app", true));
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        when(k8s.create(any(LimitRangeDTO.class))).thenReturn(new LimitRangeDTO());
+
+        NamespaceUpsertRequest req = new NamespaceUpsertRequest();
+        req.setClusterId("c1");
+        req.setName("app");
+        svc.create(req);
+
+        ArgumentCaptor<LimitRangeDTO> cap = ArgumentCaptor.forClass(LimitRangeDTO.class);
+        verify(k8s).create(cap.capture());
+        LimitRangeDTO lr = cap.getValue();
+        assertThat(lr.getName()).isEqualTo("default");
+        assertThat(lr.getNamespace()).isEqualTo("app");
+        assertThat(lr.getLimits()).hasSize(1);
+        LimitRangeItemDTO item = lr.getLimits().get(0);
+        assertThat(item.getType()).isEqualTo("Container");
+        assertThat(item.getDefaultRequest().getCpu()).isEqualByComparingTo("0.1");
+        assertThat(item.getDefaultRequest().getMemory()).isEqualByComparingTo("134217728");   // 128Mi
+        assertThat(item.getDefaultValue().getCpu()).isEqualByComparingTo("0.5");
+        assertThat(item.getDefaultValue().getMemory()).isEqualByComparingTo("536870912");         // 512Mi
+    }
+
+    @Test
+    void create_keeps_an_existing_default_limit_range() {
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(null);
+        when(k8s.create(any(NamespaceDTO.class))).thenReturn(ns("app", true));
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(new LimitRangeDTO());
+
+        NamespaceUpsertRequest req = new NamespaceUpsertRequest();
+        req.setClusterId("c1");
+        req.setName("app");
+        svc.create(req);
+
+        verify(k8s, never()).create(any(LimitRangeDTO.class));
+    }
+
+    @Test
+    void create_still_succeeds_when_limit_range_creation_fails() {
+        // 配额没开 limits.* 的命名空间本来就不需要它：兜底动作失败不该把建 ns 一起回滚
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(null);
+        when(k8s.create(any(NamespaceDTO.class))).thenReturn(ns("app", true));
+        when(k8s.get(any(LimitRangeDTO.class))).thenReturn(null);
+        when(k8s.create(any(LimitRangeDTO.class))).thenThrow(new RuntimeException("boom"));
+
+        NamespaceUpsertRequest req = new NamespaceUpsertRequest();
+        req.setClusterId("c1");
+        req.setName("app");
+        assertThat(svc.create(req).getName()).isEqualTo("app");
+    }
+
+    @Test
     void create_rejects_illegal_name_before_touching_k8s() {
         clusterExists();
         NamespaceUpsertRequest req = new NamespaceUpsertRequest();
