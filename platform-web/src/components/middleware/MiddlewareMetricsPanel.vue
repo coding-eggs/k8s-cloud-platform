@@ -8,7 +8,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { middlewareApi } from '@/api'
 import MetricChart from '@/components/workload/MetricChart.vue'
-import type { MiddlewareMetrics } from '@/types'
+import type { MiddlewareBusinessMetric, MiddlewareMetrics } from '@/types'
 
 const props = defineProps<{
   instanceId: string
@@ -28,6 +28,49 @@ const data = ref<MiddlewareMetrics | null>(null)
 
 /** 该中间件自己的指标（Redis 连接数 / RabbitMQ 积压 / PG 复制延迟…），由后端按类型声明 */
 const business = computed(() => data.value?.business ?? [])
+/** 适合"当前值/状态"的（连接数、节点数、分片数、存活…）：画成时序图只会是一条平线 */
+const stats = computed(() => business.value.filter((m) => (m.kind ?? 'CHART') !== 'CHART'))
+/** 只有速率/比率这类看趋势才有意义的才画图 */
+const charts = computed(() => business.value.filter((m) => (m.kind ?? 'CHART') === 'CHART'))
+
+/** 序列最后一个采样点（当前值）；没有数据返回 null */
+function latest(m: MiddlewareBusinessMetric): number | null {
+  const points = m.data?.series?.[0]?.points ?? []
+  const v = points.length ? points[points.length - 1]?.value : null
+  return v == null || Number.isNaN(v) ? null : v
+}
+
+/** 字节 → 卡片用的紧凑写法（formatBytes 保留 12 位有效数字，卡片上太长） */
+function statBytes(v: number): string {
+  const abs = Math.abs(v)
+  if (abs >= 1024 ** 4) return `${(v / 1024 ** 4).toFixed(2)} Ti`
+  if (abs >= 1024 ** 3) return `${(v / 1024 ** 3).toFixed(1)} Gi`
+  if (abs >= 1024 ** 2) return `${(v / 1024 ** 2).toFixed(1)} Mi`
+  if (abs >= 1024) return `${(v / 1024).toFixed(1)} Ki`
+  return `${Math.round(v)} B`
+}
+
+/** 当前值按单位格式化（字节走人类可读，百分比/秒保留合适精度） */
+function statText(m: MiddlewareBusinessMetric): string {
+  const v = latest(m)
+  if (v == null) return '无数据'
+  const unit = m.data?.unit ?? ''
+  if (unit === '字节') return statBytes(v)
+  if (unit === '%') return v.toFixed(1)
+  if (unit === '秒') return v >= 10 ? v.toFixed(0) : v.toFixed(2)
+  if (Math.abs(v) >= 10000) return Math.round(v).toLocaleString()
+  return Number.isInteger(v) || Math.abs(v) >= 100 ? String(Math.round(v)) : v.toFixed(2)
+}
+
+/** 状态标签：goodWhenNonZero=true → value>0 正常；否则 value==0 正常（告警数/流控） */
+function stateOf(m: MiddlewareBusinessMetric): { text: string; type: 'success' | 'danger' | 'info' } {
+  const v = latest(m)
+  if (v == null) return { text: '无数据', type: 'info' }
+  const good = m.goodWhenNonZero ? v > 0 : v === 0
+  return good
+    ? { text: m.goodLabel || '正常', type: 'success' }
+    : { text: m.badLabel || '异常', type: 'danger' }
+}
 
 async function load(): Promise<void> {
   if (!props.instanceId) return
@@ -76,16 +119,41 @@ defineExpose({ refresh: load })
                    :loading="loading" />
     </div>
 
-    <!-- 该中间件自己的指标（创建时勾了「采集业务指标」才存在） -->
-    <template v-if="metricsEnabled && business.length">
-      <div class="mm-subhead">业务指标</div>
-      <div class="mm-grid">
-        <MetricChart v-for="m in business" :key="m.key" :title="m.label"
-                     :unit="m.data.unit" :series="m.data.series ?? []" :loading="loading" />
-      </div>
+    <!-- 该中间件自己的指标（创建时勾选或编辑里开启后才存在） -->
+    <template v-if="metricsEnabled">
+      <!-- 当前值 / 状态：画成趋势图只会是平线，用卡片更直观 -->
+      <template v-if="stats.length">
+        <div class="mm-subhead">当前状态</div>
+        <div class="mm-stats">
+          <div v-for="m in stats" :key="m.key" class="mm-stat">
+            <div class="mm-stat-label">{{ m.label }}</div>
+            <div class="mm-stat-value">
+              <el-tag v-if="m.kind === 'STATE'" size="small" :type="stateOf(m).type" effect="light">
+                {{ stateOf(m).text }}
+              </el-tag>
+              <template v-else>
+                <span class="mm-stat-num">{{ statText(m) }}</span>
+                <!-- 字节已经带了 B/Ki/Mi/Gi 单位，不再重复 -->
+                <span v-if="m.data.unit !== '字节'" class="mm-stat-unit">{{ m.data.unit }}</span>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+      <!-- 速率 / 比率：看趋势 -->
+      <template v-if="charts.length">
+        <div class="mm-subhead">业务指标</div>
+        <div class="mm-grid">
+          <MetricChart v-for="m in charts" :key="m.key" :title="m.label"
+                       :unit="m.data.unit" :series="m.data.series ?? []" :loading="loading" />
+        </div>
+      </template>
+      <p v-if="!stats.length && !charts.length" class="mm-hint">
+        已开启指标采集，但还没有数据（新实例需等一轮采集）。
+      </p>
     </template>
-    <p v-else-if="!metricsEnabled" class="mm-hint">
-      该实例创建时未开启「采集业务指标」；需要业务指标请删除后按新规格重建（勾选该开关）。
+    <p v-else class="mm-hint">
+      该实例未开启「采集业务指标」；可在「编辑」里开启（单向，不支持关闭）。
     </p>
 
     <p class="mm-help">
@@ -100,6 +168,15 @@ defineExpose({ refresh: load })
 .mm-title { font-weight: 600; }
 .mm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .mm-subhead { margin: 16px 0 8px; font-weight: 600; font-size: 13px; color: var(--text-2); }
+.mm-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.mm-stat {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  background: var(--panel, #fff);
+}
+.mm-stat-label { font-size: 12px; color: var(--text-3); margin-bottom: 6px; }
+.mm-stat-value { display: flex; align-items: baseline; gap: 4px; }
+.mm-stat-num { font-size: 20px; font-weight: 600; }
+.mm-stat-unit { font-size: 12px; color: var(--text-3); }
 .mm-help { margin: 8px 0 0; font-size: 12px; color: var(--text-3); }
 .mm-hint { margin: 10px 0 0; font-size: 12px; color: var(--text-3); }
 </style>

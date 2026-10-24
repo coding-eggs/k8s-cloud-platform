@@ -22,11 +22,16 @@ public record MiddlewareMetricsResponse(
     /**
      * 一条业务指标。
      *
-     * @param key   稳定标识（前端 key 用）
-     * @param label 展示名（就绪消息 / 复制延迟 …）
-     * @param data  序列（unit 已按声明填好）
+     * @param key             稳定标识（前端 key 用）
+     * @param label           展示名（就绪消息 / 复制延迟 …）
+     * @param data            序列（unit 已按声明填好）
+     * @param kind            展示形态：CHART 时序图 / STAT 当前值 / STATE 状态标签
+     * @param goodWhenNonZero 仅 STATE：value&gt;0 表示正常
+     * @param goodLabel       仅 STATE：正常时显示的文字
+     * @param badLabel        仅 STATE：异常时显示的文字
      */
-    public record BusinessMetric(String key, String label, MetricSeriesResponse data) {
+    public record BusinessMetric(String key, String label, MetricSeriesResponse data, String kind,
+                                 boolean goodWhenNonZero, String goodLabel, String badLabel) {
     }
 
     /** 没有任何 Pod（还没起来 / 已删）时的空结果：前端各图都显示「无数据」。 */

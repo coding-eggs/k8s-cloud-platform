@@ -2475,11 +2475,17 @@ export interface MiddlewareMetrics {
   business?: MiddlewareBusinessMetric[]
 }
 
-/** 一条业务指标（label 由后端按中间件类型声明） */
+/** 一条业务指标（label 与展示形态由后端按中间件类型声明） */
 export interface MiddlewareBusinessMetric {
   key: string
   label: string
   data: MetricSeriesResponse
+  /** CHART=时序图；STAT=当前值卡片；STATE=状态标签 */
+  kind?: 'CHART' | 'STAT' | 'STATE'
+  /** 仅 STATE：value>0 为正常 */
+  goodWhenNonZero?: boolean
+  goodLabel?: string | null
+  badLabel?: string | null
 }
 
 export interface MiddlewareInstance {

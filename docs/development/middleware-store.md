@@ -94,8 +94,14 @@
   **`<名字>-platform-metrics` 的 Service + ServiceMonitor**（`targetPort` 用数字，不依赖 Operator 的容器端口名）；
   删除实例时一并删。集群没有 ServiceMonitor CRD 时自动跳过，**best-effort**，失败不阻断建实例；
 - 命名坑：不能叫 `<名字>-metrics` —— Redis Operator 自己就给 exporter 建了同名 Service，会把平台的 label 覆盖掉；
-- 查询：`MiddlewareCatalog` 按 code 声明 `MetricDef(key/label/unit/promql)`，PromQL 里三个 `%s` 是
-  cluster / namespace / pod 名正则；与资源用量图同一次请求返回（`business` 字段）。
+- 查询：`MiddlewareCatalog` 按 code 声明 `MetricDef(key/label/unit/promql/kind)`，PromQL 里三个 `%s` 是
+  cluster / namespace / pod 名正则；与资源用量图同一次请求返回（`business` 字段）；
+- **展示形态按指标语义分**（`kind`）：
+  - `STAT` 当前值卡片——连接数、节点数、分片数、文档数、存储大小、内存、运行时长等，
+    这些画成 30 分钟折线只会是一条平线；
+  - `STATE` 状态标签——存活、集群 green、持久化状态、活跃 Controller、组复制流控、资源告警，
+    带好/坏两套文案（如「正常 / 无 Controller」）；
+  - `CHART` 时序图——只有速率/比率才画：QPS、命令/秒、命中率、慢查询、复制延迟趋势等。
 
 | 中间件 | 指标源 | 端口 | 指标 |
 |---|---|---|---|

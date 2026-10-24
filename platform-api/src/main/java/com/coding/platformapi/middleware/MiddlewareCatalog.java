@@ -24,12 +24,34 @@ public class MiddlewareCatalog {
                        String replicasLabel, String help) {
     }
 
+    /** 指标展示形态：时序趋势 / 当前值 / 状态标签。 */
+    public enum MetricKind { CHART, STAT, STATE }
+
     /**
      * 业务指标声明：前端按它渲染，后端按它拼 PromQL。
      *
-     * @param query PromQL 模板，三个 {@code %s} 依次是 cluster_name / namespace / pod 名正则
+     * @param query           PromQL 模板，三个 {@code %s} 依次是 cluster_name / namespace / pod 名正则
+     * @param kind            CHART=时序图；STAT=当前值卡片；STATE=状态标签（如存活/集群状态）
+     * @param goodWhenNonZero 仅 STATE：value&gt;0 表示正常（存活=1）；false 时 value==0 才是正常（告警数、流控）
+     * @param goodLabel       仅 STATE：正常时显示的文字
+     * @param badLabel        仅 STATE：异常时显示的文字
      */
-    public record MetricDef(String key, String label, String unit, String query) {
+    public record MetricDef(String key, String label, String unit, String query, MetricKind kind,
+                            boolean goodWhenNonZero, String goodLabel, String badLabel) {
+
+        public static MetricDef chart(String key, String label, String unit, String query) {
+            return new MetricDef(key, label, unit, query, MetricKind.CHART, false, null, null);
+        }
+
+        public static MetricDef stat(String key, String label, String unit, String query) {
+            return new MetricDef(key, label, unit, query, MetricKind.STAT, false, null, null);
+        }
+
+        public static MetricDef state(String key, String label, String unit, String query,
+                                      boolean goodWhenNonZero, String goodLabel, String badLabel) {
+            return new MetricDef(key, label, unit, query, MetricKind.STATE,
+                    goodWhenNonZero, goodLabel, badLabel);
+        }
     }
 
     /**
@@ -76,25 +98,26 @@ public class MiddlewareCatalog {
 
     /** elasticsearch-exporter 边车（9114）的指标（ES 9 已无 /_prometheus/metrics，靠外挂导出器） */
     private static final List<MetricDef> ELASTICSEARCH_METRICS = List.of(
-            new MetricDef("health", "集群状态（green=1）", "1/0",
-                    "max(elasticsearch_cluster_health_status{color=\"green\",cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("nodes", "节点数", "个",
+            MetricDef.state("health", "集群状态", "1/0",
+                    "max(elasticsearch_cluster_health_status{color=\"green\",cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})",
+                    true, "green", "非 green"),
+            MetricDef.stat("nodes", "节点数", "个",
                     "max(elasticsearch_cluster_health_number_of_nodes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("active_shards", "活跃分片", "个",
+            MetricDef.stat("active_shards", "活跃分片", "个",
                     "max(elasticsearch_cluster_health_active_shards{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("unassigned", "未分配分片", "个",
+            MetricDef.stat("unassigned", "未分配分片", "个",
                     "max(elasticsearch_cluster_health_unassigned_shards{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("pending_tasks", "待处理任务", "个",
+            MetricDef.stat("pending_tasks", "待处理任务", "个",
                     "max(elasticsearch_cluster_health_number_of_pending_tasks{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("heap", "JVM 堆使用", "字节",
+            MetricDef.chart("heap", "JVM 堆使用", "字节",
                     "sum(elasticsearch_jvm_memory_used_bytes{area=\"heap\",cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("search", "查询/秒", "次/秒",
+            MetricDef.chart("search", "查询/秒", "次/秒",
                     "max(rate(elasticsearch_indices_search_query_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("indexing", "索引文档/秒", "次/秒",
+            MetricDef.chart("indexing", "索引文档/秒", "次/秒",
                     "max(rate(elasticsearch_indices_indexing_index_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("docs", "文档总数", "个",
+            MetricDef.stat("docs", "文档总数", "个",
                     "max(elasticsearch_indices_docs{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("store", "存储大小", "字节",
+            MetricDef.stat("store", "存储大小", "字节",
                     "max(elasticsearch_indices_store_size_bytes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
 
     /**
@@ -102,28 +125,29 @@ public class MiddlewareCatalog {
      * （存活 / 连接与使用率 / QPS 与线程 / 慢查询 / 缓冲池 / 锁 / 连接中断 / 组复制流控）。
      */
     private static final List<MetricDef> MYSQL_METRICS = List.of(
-            new MetricDef("up", "实例存活（1=正常）", "1/0",
-                    "min(mysql_up{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("connections", "连接数", "个",
+            MetricDef.state("up", "实例存活", "1/0",
+                    "min(mysql_up{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})", true, "正常", "异常"),
+            MetricDef.stat("connections", "连接数", "个",
                     "sum(mysql_global_status_threads_connected{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("conn_usage", "连接使用率", "%",
+            MetricDef.stat("conn_usage", "连接使用率", "%",
                     "100 * sum(mysql_global_status_threads_connected{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"
                             + " / clamp_min(sum(mysql_global_variables_max_connections{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}), 1)"),
-            new MetricDef("qps", "查询/秒", "次/秒",
+            MetricDef.chart("qps", "查询/秒", "次/秒",
                     "sum(rate(mysql_global_status_questions{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("running", "活跃线程", "个",
+            MetricDef.stat("running", "活跃线程", "个",
                     "sum(mysql_global_status_threads_running{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("slow", "慢查询/秒", "次/秒",
+            MetricDef.chart("slow", "慢查询/秒", "次/秒",
                     "sum(rate(mysql_global_status_slow_queries{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("buffer_hit", "InnoDB 缓冲池命中率", "%",
+            MetricDef.stat("buffer_hit", "InnoDB 缓冲池命中率", "%",
                     "100 * (1 - sum(rate(mysql_global_status_innodb_buffer_pool_reads{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
                             + " / clamp_min(sum(rate(mysql_global_status_innodb_buffer_pool_read_requests{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001))"),
-            new MetricDef("lock_waits", "行锁等待/秒", "次/秒",
+            MetricDef.chart("lock_waits", "行锁等待/秒", "次/秒",
                     "sum(rate(mysql_global_status_innodb_row_lock_waits{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("aborted", "连接中断/秒", "次/秒",
+            MetricDef.chart("aborted", "连接中断/秒", "次/秒",
                     "sum(rate(mysql_global_status_aborted_connects{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("flow_control", "组复制流控激活（1=激活）", "1/0",
-                    "sum(mysql_global_status_group_replication_flow_control_active{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
+            MetricDef.state("flow_control", "组复制流控", "1/0",
+                    "sum(mysql_global_status_group_replication_flow_control_active{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})",
+                    false, "未流控", "流控中"));
 
     /**
      * Nacos actuator（/nacos/actuator/prometheus）的 Micrometer 指标。
@@ -132,49 +156,50 @@ public class MiddlewareCatalog {
      * Pod 重启后一段时间内不出现，不适合放进概览。
      */
     private static final List<MetricDef> NACOS_METRICS = List.of(
-            new MetricDef("heap", "JVM 堆使用", "字节",
+            MetricDef.stat("heap", "JVM 堆使用", "字节",
                     "sum(jvm_memory_used_bytes{area=\"heap\",cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("nonheap", "JVM 非堆使用", "字节",
+            MetricDef.stat("nonheap", "JVM 非堆使用", "字节",
                     "sum(jvm_memory_used_bytes{area=\"nonheap\",cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("threads", "活跃线程", "个",
+            MetricDef.stat("threads", "活跃线程", "个",
                     "sum(jvm_threads_live_threads{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("classes", "已加载类", "个",
+            MetricDef.stat("classes", "已加载类", "个",
                     "sum(jvm_classes_loaded_classes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("gc", "GC 次数/秒", "次/秒",
+            MetricDef.chart("gc", "GC 次数/秒", "次/秒",
                     "sum(rate(jvm_gc_pause_seconds_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("http", "HTTP 请求/秒", "次/秒",
+            MetricDef.chart("http", "HTTP 请求/秒", "次/秒",
                     "sum(rate(http_server_requests_seconds_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("http_rt", "HTTP 平均响应时间", "秒",
+            MetricDef.chart("http_rt", "HTTP 平均响应时间", "秒",
                     "sum(rate(http_server_requests_seconds_sum{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
                             + " / clamp_min(sum(rate(http_server_requests_seconds_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
-            new MetricDef("cpu", "进程 CPU", "%",
+            MetricDef.stat("cpu", "进程 CPU", "%",
                     "100 * sum(process_cpu_usage{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("load", "系统负载（1m）", "个",
+            MetricDef.stat("load", "系统负载（1m）", "个",
                     "max(system_load_average_1m{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("uptime", "运行时长", "秒",
+            MetricDef.stat("uptime", "运行时长", "秒",
                     "max(process_uptime_seconds{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
 
     /** Strimzi Metrics Reporter（9404）的指标；名字是 reporter 导出的 JMX 原名（含 persec） */
     private static final List<MetricDef> KAFKA_METRICS = List.of(
-            new MetricDef("messages_in", "消息入站/秒", "条/秒",
+            MetricDef.chart("messages_in", "消息入站/秒", "条/秒",
                     "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("bytes_in", "字节入站/秒", "字节/秒",
+            MetricDef.chart("bytes_in", "字节入站/秒", "字节/秒",
                     "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("bytes_out", "字节出站/秒", "字节/秒",
+            MetricDef.chart("bytes_out", "字节出站/秒", "字节/秒",
                     "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("urp", "未充分复制分区", "个",
+            MetricDef.stat("urp", "未充分复制分区", "个",
                     "sum(kafka_server_replicamanager_underreplicatedpartitions{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("offline", "离线分区", "个",
+            MetricDef.stat("offline", "离线分区", "个",
                     "sum(kafka_controller_kafkacontroller_offlinepartitionscount{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("controller", "活跃 Controller", "个",
-                    "sum(kafka_controller_kafkacontroller_activecontrollercount{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("partitions", "分区总数", "个",
+            MetricDef.state("controller", "活跃 Controller", "1/0",
+                    "sum(kafka_controller_kafkacontroller_activecontrollercount{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})",
+                    true, "正常", "无 Controller"),
+            MetricDef.stat("partitions", "分区总数", "个",
                     "sum(kafka_controller_kafkacontroller_globalpartitioncount{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("topics", "主题总数", "个",
+            MetricDef.stat("topics", "主题总数", "个",
                     "sum(kafka_controller_kafkacontroller_globaltopiccount{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("log_size", "日志数据量", "字节",
+            MetricDef.chart("log_size", "日志数据量", "字节",
                     "sum(kafka_log_log_size{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("heap", "Broker JVM 堆使用", "字节",
+            MetricDef.chart("heap", "Broker JVM 堆使用", "字节",
                     "sum(jvm_memory_used_bytes{area=\"heap\",cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
 
     /**
@@ -182,80 +207,81 @@ public class MiddlewareCatalog {
      * （存活 / 连接 / 内存 / 命中率 / 命令 / 键与淘汰 / 阻塞 / 持久化）。
      */
     private static final List<MetricDef> REDIS_METRICS = List.of(
-            new MetricDef("up", "实例存活（1=正常）", "1/0",
-                    "min(redis_up{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("clients", "连接数", "个",
+            MetricDef.state("up", "实例存活", "1/0",
+                    "min(redis_up{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})", true, "正常", "异常"),
+            MetricDef.stat("clients", "连接数", "个",
                     "sum(redis_connected_clients{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("memory", "内存使用", "字节",
+            MetricDef.stat("memory", "内存使用", "字节",
                     "sum(redis_memory_used_bytes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("hit_ratio", "命中率", "%",
+            MetricDef.chart("hit_ratio", "命中率", "%",
                     "100 * sum(rate(redis_keyspace_hits_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
                             + " / clamp_min(sum(rate(redis_keyspace_hits_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
                             + " + sum(rate(redis_keyspace_misses_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
-            new MetricDef("commands", "命令/秒", "个/秒",
+            MetricDef.chart("commands", "命令/秒", "个/秒",
                     "sum(rate(redis_commands_processed_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("keys", "键数量", "个",
+            MetricDef.stat("keys", "键数量", "个",
                     "sum(redis_db_keys{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("expired", "过期键/秒", "个/秒",
+            MetricDef.chart("expired", "过期键/秒", "个/秒",
                     "sum(rate(redis_expired_keys_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("evicted", "驱逐键/秒", "个/秒",
+            MetricDef.chart("evicted", "驱逐键/秒", "个/秒",
                     "sum(rate(redis_evicted_keys_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("blocked", "阻塞客户端", "个",
+            MetricDef.stat("blocked", "阻塞客户端", "个",
                     "sum(redis_blocked_clients{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("rdb", "持久化状态（1=正常）", "1/0",
-                    "min(redis_rdb_last_bgsave_status{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
+            MetricDef.state("rdb", "持久化状态", "1/0",
+                    "min(redis_rdb_last_bgsave_status{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})", true, "正常", "异常"));
 
     /**
      * CloudNativePG 内置 exporter（9187）的指标：存活 / 连接与等待 / 事务与回滚 / 死锁 / 缓存命中 /
      * 最长事务 / 复制延迟 / 数据库大小。
      */
     private static final List<MetricDef> POSTGRESQL_METRICS = List.of(
-            new MetricDef("up", "实例存活（1=正常）", "1/0",
-                    "min(cnpg_collector_up{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("connections", "连接数", "个",
+            MetricDef.state("up", "实例存活", "1/0",
+                    "min(cnpg_collector_up{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})", true, "正常", "异常"),
+            MetricDef.stat("connections", "连接数", "个",
                     "sum(cnpg_backends_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("waiting", "等待中的后端", "个",
+            MetricDef.stat("waiting", "等待中的后端", "个",
                     "sum(cnpg_backends_waiting_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("xact", "事务提交/秒", "个/秒",
+            MetricDef.chart("xact", "事务提交/秒", "个/秒",
                     "sum(rate(cnpg_pg_stat_database_xact_commit{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("rollback", "事务回滚/秒", "个/秒",
+            MetricDef.chart("rollback", "事务回滚/秒", "个/秒",
                     "sum(rate(cnpg_pg_stat_database_xact_rollback{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("deadlocks", "死锁/秒", "个/秒",
+            MetricDef.chart("deadlocks", "死锁/秒", "个/秒",
                     "sum(rate(cnpg_pg_stat_database_deadlocks{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("cache_hit", "缓存命中率", "%",
+            MetricDef.chart("cache_hit", "缓存命中率", "%",
                     "100 * sum(rate(cnpg_pg_stat_database_blks_hit{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
                             + " / clamp_min(sum(rate(cnpg_pg_stat_database_blks_hit{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
                             + " + sum(rate(cnpg_pg_stat_database_blks_read{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
-            new MetricDef("max_tx", "最长事务时长", "秒",
+            MetricDef.stat("max_tx", "最长事务时长", "秒",
                     "max(cnpg_backends_max_tx_duration_seconds{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("replag", "复制延迟", "秒",
+            MetricDef.stat("replag", "复制延迟", "秒",
                     "max(cnpg_pg_replication_lag{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("dbsize", "数据库大小", "字节",
+            MetricDef.stat("dbsize", "数据库大小", "字节",
                     "sum(cnpg_pg_database_size_bytes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
 
     /** RabbitMQ prometheus 插件（15692）的指标：积压 / 连接与信道 / 队列与消费者 / 吞吐 / 重投 / 资源告警 */
     private static final List<MetricDef> RABBITMQ_METRICS = List.of(
-            new MetricDef("ready", "就绪消息", "条",
+            MetricDef.chart("ready", "就绪消息", "条",
                     "sum(rabbitmq_queue_messages_ready{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("unacked", "未确认消息", "条",
+            MetricDef.chart("unacked", "未确认消息", "条",
                     "sum(rabbitmq_queue_messages_unacked{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("connections", "连接数", "个",
+            MetricDef.stat("connections", "连接数", "个",
                     "sum(rabbitmq_connections{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("channels", "信道数", "个",
+            MetricDef.stat("channels", "信道数", "个",
                     "sum(rabbitmq_channels{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("queues", "队列数", "个",
+            MetricDef.stat("queues", "队列数", "个",
                     "sum(rabbitmq_queues{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("consumers", "消费者数", "个",
+            MetricDef.stat("consumers", "消费者数", "个",
                     "sum(rabbitmq_consumers{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            new MetricDef("publish", "发布/秒", "条/秒",
+            MetricDef.chart("publish", "发布/秒", "条/秒",
                     "sum(rate(rabbitmq_queue_messages_published_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("deliver", "投递/秒", "条/秒",
+            MetricDef.chart("deliver", "投递/秒", "条/秒",
                     "sum(rate(rabbitmq_global_messages_delivered_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("redeliver", "重投/秒", "条/秒",
+            MetricDef.chart("redeliver", "重投/秒", "条/秒",
                     "sum(rate(rabbitmq_global_messages_redelivered_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            new MetricDef("alarms", "资源告警数（0=正常）", "个",
+            MetricDef.state("alarms", "资源告警", "个",
                     "sum(rabbitmq_alarms_memory_used_watermark{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"
-                            + " + sum(rabbitmq_alarms_free_disk_space_watermark{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
+                            + " + sum(rabbitmq_alarms_free_disk_space_watermark{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})",
+                    false, "正常", "有告警"));
 
     private static final List<Item> ITEMS = List.of(
             new Item("redis", "Redis", "内存键值存储：缓存、会话、分布式锁", REDIS_MODES, List.of(), REDIS_METRICS),

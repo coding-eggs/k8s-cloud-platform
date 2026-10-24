@@ -505,7 +505,8 @@ public class MiddlewareService {
                         .map(def -> new com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.BusinessMetric(
                                 def.key(), def.label(),
                                 metrics.businessMetric(instance.getClusterId(), instance.getNamespace(), regex,
-                                        def.query(), def.unit(), start, end)))
+                                        def.query(), def.unit(), start, end),
+                                def.kind().name(), def.goodWhenNonZero(), def.goodLabel(), def.badLabel()))
                         .toList();
         return base.withBusiness(business);
     }
