@@ -100,7 +100,7 @@ platform:
     config-secret: ${OBJECT_STORAGE_CONFIG_SECRET:platform-seaweedfs-s3-config}
     s3-deployment: ${OBJECT_STORAGE_S3_DEPLOYMENT:seaweedfs-s3}
     # 缺省时的 S3 地址（正常情况下 platform-api 会带 endpoint 过来）
-    default-endpoint: ${OBJECT_STORAGE_S3_ENDPOINT:http://seaweedfs-s3.platform-storage:8333}
+    default-endpoint: ${OBJECT_STORAGE_S3_ENDPOINT:http://192.168.31.80:38333}
   pipeline:
     archive:
       # 关掉它的后果（spec §4.5 显式记过）：Pod 不会被删（回到 Tekton 的默认行为），

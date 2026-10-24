@@ -93,7 +93,10 @@
 
 ## 7. 部署
 
-1. 重放 `V2026_10_24_1__object_storage.sql`（表 + 页面码 + 权限行 + 角色绑定）；
+1. 重放 `V2026_10_24_1__object_storage.sql`（表 + 页面码 + 权限行 + 角色绑定）与
+   `V2026_10_24_2__object_storage_credentials_list_permission.sql`（补「凭据列表」端点）；
+   ⚠️ **漏任何一条端点权限行，platform-api 启动期会 fail-closed**（`PermissionCrossCheckRunner`），
+   这类漏配由 `ObjectStoragePermissionMigrationTest` 在单测里挡住；
 2. 重建 `platform-common`、`k8s-server`（S3 客户端 + 新端点）、`platform-api`、`platform-web`；
 3. 已装过 SeaweedFS 的集群：到「集群组件」对对象存储执行一次「编辑/重放」——
    `s3.existingConfigSecret` 会把配置切到平台管理（这一步是发凭据的前提）。
