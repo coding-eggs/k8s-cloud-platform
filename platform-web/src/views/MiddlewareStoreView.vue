@@ -241,6 +241,7 @@ function onModeChange(): void {
 
 async function submitCreate(): Promise<void> {
   if (!createItem.value || !clusterId.value) return
+  if (creating.value) return   // 防连点：按钮 loading 生效前的那一下也不能再发一次
   if (!form.value.namespace) {
     ElMessage.error('请选择命名空间')
     return

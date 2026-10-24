@@ -128,6 +128,8 @@ class MiddlewareServiceTest {
         ArgumentCaptor<PlatformMiddlewareInstance> saved = ArgumentCaptor.forClass(PlatformMiddlewareInstance.class);
         verify(instances).updateById(saved.capture());
         assertThat(saved.getValue().getStatus()).isEqualTo("FAILED");
+        // 失败即软删：否则失败后重试会在列表里多出一条幽灵实例
+        assertThat(saved.getValue().getDeletedAt()).isNotNull();
     }
 
     @Test

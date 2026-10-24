@@ -325,6 +325,9 @@ public class MiddlewareService {
             instance.setStatus("FAILED");
             instance.setMessage(e.getMessage());
             instance.setUpdatedAt(new Date());
+            // 创建失败 = 实例从未存在：软删台账，否则失败后重试会在列表里留下一条幽灵记录
+            //（真集群实测：配额不足 -> 调小规格重试 -> 列表出现两条 MySQL）
+            instance.setDeletedAt(new Date());
             instances.updateById(instance);
             finish(op, "FAILED", e.getMessage());
             throw e;
