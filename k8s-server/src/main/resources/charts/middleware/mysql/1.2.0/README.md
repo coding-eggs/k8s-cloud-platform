@@ -6,3 +6,5 @@
 - CRD：`crds/crd.yaml` → `perconaservermysqls.ps.percona.com`（Helm 只在首装写 `crds/`，升级不更新）
 - 镜像：`percona/percona-server-mysql-operator`（quay.io / docker.io）
 - 实例凭据：Operator 自建 `<cr>-secrets`（平台不使用自生成密码）
+
+组件级约定、坑与加版本流程见上一级 `../README.md`。

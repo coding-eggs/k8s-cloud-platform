@@ -6,3 +6,5 @@
 - CRD：`crds/` 下 `kafkas.kafka.strimzi.io`、`kafkanodepools.kafka.strimzi.io` 等
 - 镜像：`quay.io/strimzi/operator`
 - 注意：1.x 纯 KRaft，实例需要 `KafkaNodePool` + `Kafka`（注解 `strimzi.io/node-pools: enabled`）
+
+组件级约定、坑与加版本流程见上一级 `../README.md`。

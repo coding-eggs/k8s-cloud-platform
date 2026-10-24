@@ -6,3 +6,5 @@
 - 关键 values：`mode: standalone|cluster`、`nacos.replicaCount`、`nacos.storage.type: embedded`、`service.type: ClusterIP`（chart 默认 NodePort/30000，必须覆盖）
 - 镜像：`nacos/nacos-server:v3.2.4`
 - 存储：Nacos 3.x 集群模式用内嵌 JRaft 存储，**不依赖外置 MySQL**
+
+组件级约定、坑与加版本流程见上一级 `../README.md`。

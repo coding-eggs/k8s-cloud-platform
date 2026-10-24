@@ -21,6 +21,11 @@
 
 > Nacos 3.x 集群模式使用内嵌 JRaft 存储，**不需要外置 MySQL**。
 
+> 📚 **每款中间件的约定、坑与「怎么加新版本」写在组件级 README 里**：
+> `k8s-server/src/main/resources/charts/middleware/<code>/README.md`（跨版本）；
+> 版本目录 `<code>/<version>/README.md` 只记该版本自己的来源 / digest / CRD 清单 / 版本特性。
+> 改代码前先读对应那一份 —— 里面列的都是真集群踩过的坑。
+
 ## 1.0 页面构成
 
 中间件分三个页面，**共用同一个页面码** `tenant:page:app`（收一个码三处一起变，不为拆页单开码）：
