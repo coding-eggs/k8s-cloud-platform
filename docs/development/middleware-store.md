@@ -4,7 +4,8 @@
 > 计划：[批①-1](../superpowers/plans/2026-10-22-middleware-store-batch1.md)、[批①-2](../superpowers/plans/2026-10-22-middleware-store-batch2.md)
 > 状态：批①-1（底座 + Redis）、批①-2（MySQL/Kafka/ES + Nacos）与**批②（PostgreSQL / RabbitMQ）**已实施；
 > 2026-10-23 真集群验证：redis 单节点/哨兵、mysql 单节点、kafka 三 broker、nacos 单节点已跑通，
-> PostgreSQL / RabbitMQ 见文末验证记录；ES 待集群里 51 天前的旧 ECK 资源处理后再验。
+> PostgreSQL / RabbitMQ 见文末验证记录；ES 在当天晚些的指标批次里补验（green + exporter 指标）。
+> 业务指标（exporter / ServiceMonitor）见 §1.4，默认关闭、创建或编辑时按实例开启。
 
 ## 1. 可用的中间件
 
@@ -86,7 +87,9 @@
   全局资源上下文（租户/集群/命名空间）对齐到实例所在位置，否则目标页查的是别处；
 - 编辑只做**副本数 + CPU/内存 + 显示名**：形态与存储不可在线改（后端 scale 语义如此）；
   Nacos 走 chart，只允许改显示名；列表行与详情页右上角都有「编辑」入口；
-- 实例列表（`/apps/instances`）可按类型筛选（`instance/list` 的 `code` 参数），只拉这一类实例的实时状态。
+- 实例列表（`/apps/instances`）：列 = 类型 / 名称 / 命名空间 / 形态 / 版本 / 状态 / 创建人 / 创建时间（设计 §5.4）；
+  可按类型筛选（`instance/list` 的 `code` 参数），只拉这一类实例的实时状态；创建人取台账 `created_by`
+  （创建时写入的操作者，租户与平台账号同一字段）。
 
 ## 1.3 Operator 状态
 
@@ -204,4 +207,4 @@
 | Nacos | 单节点（内嵌存储） | ✅（`storageClassName: null` 才绑定默认 SC） |
 | PostgreSQL | 单实例 / 主备 3 实例 | ✅（状态按 `cnpg.io/podRole=instance` 过滤，initdb Job 不算） |
 | RabbitMQ | 单节点 / 集群 3 节点 | ✅（Pod/PVC 标签是 `app.kubernetes.io/name=<集群名>`） |
-| Elasticsearch | — | 未验：集群里还有 51 天前遗留的 ECK CRD 与 `es` 集群，需先处理 |
+| Elasticsearch | 集群（1 节点 + Kibana） | ✅（2026-10-23 指标批次实测：集群 green、exporter sidecar 的 ServiceMonitor `up=1`、8 条 PromQL 全部有数据；TLS/凭据见 §1.4） |

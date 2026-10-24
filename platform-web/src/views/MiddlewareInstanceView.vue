@@ -199,6 +199,9 @@ onBeforeUnmount(() => {
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="创建人" width="120">
+        <template #default="{ row }">{{ row.createdBy || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="createdAt" label="创建时间" width="170" />
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
