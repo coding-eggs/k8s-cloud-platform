@@ -163,7 +163,8 @@ function openEdit(): void {
     memoryLimit: memLim.value,
     memoryRequestUnit: memReq.unit,
     memoryLimitUnit: memLim.unit,
-    ik: false,
+    // 已装的开关要如实回显（置灰且处于开启位），否则「已安装」的文案配一个关着的开关
+    ik: ikInstalled.value,
   }
   editVisible.value = true
 }
@@ -187,8 +188,8 @@ async function submitEdit(): Promise<void> {
           ? `${editForm.value.memoryRequest}${editForm.value.memoryRequestUnit}` : undefined,
         memoryLimit: editForm.value.memoryLimit != null
           ? `${editForm.value.memoryLimit}${editForm.value.memoryLimitUnit}` : undefined,
-        // IK 是单向的：勾了才发，不勾不发（不卸载）
-        ik: editForm.value.ik ? true : undefined,
+        // IK 是单向的：只有「从没装过」才发；已装的不再发（开关也置灰）
+        ik: editForm.value.ik && !ikInstalled.value ? true : undefined,
       })
     }
     ElMessage.success('已提交')
