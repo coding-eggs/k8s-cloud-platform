@@ -141,7 +141,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
 
     /** 把 exporter 容器挂进同一个 Pod（与 ES 容器共享网络，走 localhost 访问）。 */
     @SuppressWarnings("unchecked")
-    static void addExporterSidecar(Map<String, Object> podSpec, MiddlewareCreateRequestDTO req, boolean tls) {
+    static void addExporterSidecar(Map<String, Object> podSpec, String name, boolean tls) {
         // 地址/TLS 必须走命令行参数：实测该镜像不认 ES_URI/ES_SKIP_TLS_VERIFY 这两个 env
         //（日志里仍是 http://localhost:9200，且证书校验因 CN 不含 localhost 而失败）。
         // 用户名/密码走 env 是有效的。
@@ -153,7 +153,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         List<Object> env = new java.util.ArrayList<>();
         env.add(Map.of("name", "ES_USERNAME", "value", "elastic"));
         env.add(Map.of("name", "ES_PASSWORD", "valueFrom", Map.of("secretKeyRef",
-                Map.of("name", req.getName() + "-es-elastic-user", "key", "elastic"))));
+                Map.of("name", name + "-es-elastic-user", "key", "elastic"))));
         Map<String, Object> exporter = new LinkedHashMap<>();
         exporter.put("name", "elasticsearch-exporter");
         exporter.put("image", EXPORTER_IMAGE);
@@ -216,7 +216,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             ensureIk(podSpec, container, version);
         }
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
-            addExporterSidecar(podSpec, req, tlsEnabled(req));
+            addExporterSidecar(podSpec, req.getName(), tlsEnabled(req));
         }
         Map<String, Object> podTemplate = new LinkedHashMap<>();
         podTemplate.put("spec", podSpec);
@@ -260,6 +260,53 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             out.add(new CrSpec(KIBANA, resource(req, "kibana.k8s.elastic.co/" + VERSION, "Kibana", kibana)));
         }
         return out;
+    }
+
+    /**
+     * 编辑时补开业务指标：给 nodeSet[0] 的 Pod 模板补 exporter 边车（幂等，Pod 会滚动重启）。
+     * <p>地址与 TLS 必须走 args；securityContext 给数字 uid（ECK 的 runAsNonRoot 要求）。
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public boolean ensureMetrics(GenericKubernetesResource live, CustomResourceDefinitionContext context,
+                                 MiddlewareScaleRequestDTO req) {
+        if (!"Elasticsearch".equals(context.getKind())) {
+            return false;
+        }
+        Map<String, Object> spec = specOf(live);
+        Object nodeSetsObj = spec.get("nodeSets");
+        if (!(nodeSetsObj instanceof List<?> nodeSets) || nodeSets.isEmpty()
+                || !(nodeSets.get(0) instanceof Map<?, ?>)) {
+            return false;
+        }
+        Map<String, Object> nodeSet = (Map<String, Object>) nodeSets.get(0);
+        Map<String, Object> podTemplate = nodeSet.get("podTemplate") instanceof Map<?, ?> pt
+                ? (Map<String, Object>) pt : new LinkedHashMap<>();
+        Map<String, Object> podSpec = podTemplate.get("spec") instanceof Map<?, ?> ps
+                ? (Map<String, Object>) ps : new LinkedHashMap<>();
+        List<Object> containers = podSpec.get("containers") instanceof List<?> list
+                ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
+        boolean present = containers.stream().anyMatch(c -> c instanceof Map<?, ?> m
+                && "elasticsearch-exporter".equals(m.get("name")));
+        if (present) {
+            return false;
+        }
+        podSpec.put("containers", containers);
+        addExporterSidecar(podSpec, live.getMetadata().getName(), tlsEnabled(spec));
+        podTemplate.put("spec", podSpec);
+        nodeSet.put("podTemplate", podTemplate);
+        return true;
+    }
+
+    /** 线上 CR 当前是否开着 HTTP TLS（关掉时 exporter 走 http://）。 */
+    static boolean tlsEnabled(Map<String, Object> spec) {
+        Object http = spec.get("http");
+        if (http instanceof Map<?, ?> h && h.get("tls") instanceof Map<?, ?> t
+                && t.get("selfSignedCertificate") instanceof Map<?, ?> s
+                && Boolean.TRUE.equals(s.get("disabled"))) {
+            return false;
+        }
+        return true;
     }
 
     @Override

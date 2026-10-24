@@ -110,6 +110,8 @@ const editForm = ref<{
   memoryRequestUnit: 'Mi' | 'Gi'
   memoryLimitUnit: 'Mi' | 'Gi'
   ik: boolean
+  /** 业务指标：单向开启（已开启时开关置灰） */
+  metricsEnabled: boolean
 }>({
   displayName: '',
   replicas: null,
@@ -120,6 +122,7 @@ const editForm = ref<{
   memoryRequestUnit: 'Mi',
   memoryLimitUnit: 'Mi',
   ik: false,
+  metricsEnabled: false,
 })
 
 /**
@@ -130,6 +133,8 @@ const ikInstalled = computed(() =>
   detail.value?.live?.ikInstalled ?? (detail.value?.spec?.ik === true),
 )
 const supportsIk = computed(() => instance.value?.code === 'elasticsearch')
+/** 业务指标是否已开启（只看台账：开启成功后会回写 spec_json） */
+const metricsInstalled = computed(() => detail.value?.spec?.metricsEnabled === true)
 
 /** "500m" → 0.5 核；"1" → 1 */
 function parseCpu(q?: string | null): number | null {
@@ -165,6 +170,7 @@ function openEdit(): void {
     memoryLimitUnit: memLim.unit,
     // 已装的开关要如实回显（置灰且处于开启位），否则「已安装」的文案配一个关着的开关
     ik: ikInstalled.value,
+    metricsEnabled: metricsInstalled.value,
   }
   editVisible.value = true
 }
@@ -176,20 +182,24 @@ async function submitEdit(): Promise<void> {
     if (editForm.value.displayName.trim() && editForm.value.displayName !== instance.value.displayName) {
       await middlewareApi.rename({ instanceId: instanceId.value, displayName: editForm.value.displayName.trim() })
     }
-    if (canScale.value) {
+    // 业务指标是单向开启：已开启就不再发；Nacos 也走这个通道（只带 metricsEnabled）
+    const enableMetrics = editForm.value.metricsEnabled && !metricsInstalled.value
+    if (canScale.value || enableMetrics) {
       const cpuReq = editForm.value.cpuRequest
       const cpuLim = editForm.value.cpuLimit
       await middlewareApi.scale({
         instanceId: instanceId.value,
-        replicas: fixedReplicas.value !== null ? undefined : (editForm.value.replicas ?? undefined),
-        cpuRequest: cpuReq != null ? String(cpuReq) : undefined,
-        cpuLimit: cpuLim != null ? String(cpuLim) : undefined,
-        memoryRequest: editForm.value.memoryRequest != null
+        replicas: canScale.value && fixedReplicas.value === null
+          ? (editForm.value.replicas ?? undefined) : undefined,
+        cpuRequest: canScale.value && cpuReq != null ? String(cpuReq) : undefined,
+        cpuLimit: canScale.value && cpuLim != null ? String(cpuLim) : undefined,
+        memoryRequest: canScale.value && editForm.value.memoryRequest != null
           ? `${editForm.value.memoryRequest}${editForm.value.memoryRequestUnit}` : undefined,
-        memoryLimit: editForm.value.memoryLimit != null
+        memoryLimit: canScale.value && editForm.value.memoryLimit != null
           ? `${editForm.value.memoryLimit}${editForm.value.memoryLimitUnit}` : undefined,
         // IK 是单向的：只有「从没装过」才发；已装的不再发（开关也置灰）
         ik: editForm.value.ik && !ikInstalled.value ? true : undefined,
+        metricsEnabled: enableMetrics ? true : undefined,
       })
     }
     ElMessage.success('已提交')
@@ -512,6 +522,14 @@ onMounted(async () => {
       <el-form class="mw-edit-form" label-width="120px" label-position="left">
         <el-form-item label="显示名">
           <el-input v-model="editForm.displayName" placeholder="显示名（只改台账）" />
+        </el-form-item>
+        <el-form-item label="业务指标">
+          <el-switch v-model="editForm.metricsEnabled" :disabled="metricsInstalled" active-text="采集业务指标" />
+          <div class="mw-form-help">
+            {{ metricsInstalled
+              ? '已开启（单向，不支持关闭）'
+              : '开启后装 exporter 并建采集资源：PG/RabbitMQ 不重启，其余会滚动重启（Nacos 会重新 upgrade）' }}
+          </div>
         </el-form-item>
         <template v-if="canScale">
           <el-form-item label="节点数">

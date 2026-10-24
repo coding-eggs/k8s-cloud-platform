@@ -15,5 +15,9 @@ public class MiddlewareScaleRequest {
 
     /** Elasticsearch：是否安装 IK 分词器（true = 幂等安装；false/null = 不处理，单向不回退） */
     private Boolean ik;
+
+    /** 业务指标：true = 幂等开启（装 exporter + 建采集资源）；单向，不支持关闭 */
+    private Boolean metricsEnabled;
+
     private String tenantId;
 }

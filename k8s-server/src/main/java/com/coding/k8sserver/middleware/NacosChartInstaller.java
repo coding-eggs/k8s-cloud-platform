@@ -3,6 +3,7 @@ package com.coding.k8sserver.middleware;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
+import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8sserver.helm.ChartBundle;
 import com.coding.k8sserver.helm.HelmResult;
@@ -75,6 +76,29 @@ public class NacosChartInstaller {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Nacos 卸载失败：" + tail(r.output()));
         }
+    }
+
+    /**
+     * 编辑时补开业务指标：用台账里的原始规格重新 upgrade 一次 chart，values 里多出 actuator 的 prometheus 端点。
+     * 会滚动重启 Pod；chart 的其它配置（mode/副本/资源/存储）原样带上，不会被冲回默认。
+     */
+    public void enableMetrics(MiddlewareScaleRequestDTO req) {
+        MiddlewareCreateRequestDTO create = new MiddlewareCreateRequestDTO();
+        create.setInstanceId(req.getInstanceId());
+        create.setClusterId(req.getClusterId());
+        create.setCode(req.getCode());
+        create.setMode(req.getMode());
+        create.setNamespace(req.getNamespace());
+        create.setName(req.getName());
+        create.setReplicas(req.getReplicas());
+        create.setCpuRequest(req.getCpuRequest());
+        create.setCpuLimit(req.getCpuLimit());
+        create.setMemoryRequest(req.getMemoryRequest());
+        create.setMemoryLimit(req.getMemoryLimit());
+        create.setStorageSize(req.getStorageSize());
+        create.setStorageClass(req.getStorageClass());
+        create.setMetricsEnabled(true);
+        create(create);
     }
 
     /**

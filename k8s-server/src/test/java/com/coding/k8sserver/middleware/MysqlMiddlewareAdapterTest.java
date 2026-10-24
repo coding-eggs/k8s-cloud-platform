@@ -192,4 +192,19 @@ class MysqlMiddlewareAdapterTest {
         assertThat(adapter.metricsSpec("mw-mysql-x", "PerconaServerMySQL", "mwi_1").podSelector())
                 .isEqualTo("app.kubernetes.io/instance=mw-mysql-x,app.kubernetes.io/component=database");
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void ensureMetricsAddsExporterSidecarIdempotently() {
+        var live = adapter.buildCreate(req("SINGLE", 1)).get(0).resource();
+        var scaleReq = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scaleReq.setName("mw-mysql-abc12345");
+
+        assertThat(adapter.ensureMetrics(live, MysqlMiddlewareAdapter.CRD, scaleReq)).isTrue();
+        var spec = (Map<String, Object>) live.getAdditionalProperties().get("spec");
+        var sidecars = (List<Map<String, Object>>) ((Map<String, Object>) spec.get("mysql")).get("sidecars");
+        assertThat(sidecars).anySatisfy(s -> assertThat(s).containsEntry("name", "mysqld-exporter"));
+        assertThat(adapter.ensureMetrics(live, MysqlMiddlewareAdapter.CRD, scaleReq)).isFalse();
+    }
+
 }

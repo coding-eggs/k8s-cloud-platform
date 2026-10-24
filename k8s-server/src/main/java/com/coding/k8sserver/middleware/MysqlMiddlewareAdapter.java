@@ -67,7 +67,7 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         // 业务指标（默认关）：Percona 只有 PMM，没有 Prometheus exporter → 平台挂 mysqld_exporter 边车。
         // 用 Operator 自己生成的 monitor 用户（<cr>-secrets 的 monitor 键，权限刚好够导出）。
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
-            mysql.put("sidecars", List.of(exporterSidecar(req)));
+            mysql.put("sidecars", List.of(exporterSidecar(req.getName())));
         }
 
         // 可变结构：applyScale 会同步改 haproxy.size
@@ -97,6 +97,28 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
             spec.put("unsafeFlags", unsafe);
         }
         return List.of(new CrSpec(CRD, resource(req, "PerconaServerMySQL", spec)));
+    }
+
+    /** 编辑时补开业务指标：给 mysql 组件补 mysqld_exporter 边车（幂等，Pod 会滚动重启）。 */
+    @Override
+    @SuppressWarnings("unchecked")
+    public boolean ensureMetrics(GenericKubernetesResource live, CustomResourceDefinitionContext context,
+                                 MiddlewareScaleRequestDTO req) {
+        Map<String, Object> spec = specOf(live);
+        if (!(spec.get("mysql") instanceof Map<?, ?>)) {
+            return false;
+        }
+        Map<String, Object> mysql = (Map<String, Object>) spec.get("mysql");
+        List<Object> sidecars = mysql.get("sidecars") instanceof List<?> list
+                ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
+        boolean present = sidecars.stream().anyMatch(c -> c instanceof Map<?, ?> m
+                && "mysqld-exporter".equals(m.get("name")));
+        if (present) {
+            return false;
+        }
+        sidecars.add(exporterSidecar(req.getName()));
+        mysql.put("sidecars", sidecars);
+        return true;
     }
 
     @Override
@@ -178,13 +200,13 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
                 "app.kubernetes.io/instance=" + name + ",app.kubernetes.io/component=database");
     }
 
-    private static Map<String, Object> exporterSidecar(MiddlewareCreateRequestDTO req) {
+    static Map<String, Object> exporterSidecar(String name) {
         Map<String, Object> sidecar = new LinkedHashMap<>();
         sidecar.put("name", "mysqld-exporter");
         sidecar.put("image", EXPORTER_IMAGE);
         sidecar.put("args", List.of("--mysqld.address=127.0.0.1:3306", "--mysqld.username=monitor"));
         sidecar.put("env", List.of(Map.of("name", "MYSQLD_EXPORTER_PASSWORD", "valueFrom",
-                Map.of("secretKeyRef", Map.of("name", req.getName() + "-secrets", "key", "monitor")))));
+                Map.of("secretKeyRef", Map.of("name", name + "-secrets", "key", "monitor")))));
         sidecar.put("ports", List.of(Map.of(
                 "name", "metrics", "containerPort", EXPORTER_PORT, "protocol", "TCP")));
         sidecar.put("resources", EXPORTER_RESOURCES);

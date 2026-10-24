@@ -115,21 +115,9 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("kubernetesConfig", kc);
         spec.put("podSecurityContext", Map.of("runAsUser", 1000, "fsGroup", 1000));
-        // 业务指标（默认关）：redis-exporter 边车（9121）。口令从平台写的 Secret 取 —— 不带 REDIS_PASSWORD
-        // 时 exporter 的 INFO 会失败（redis_up=0），指标全空。
+        // 业务指标（默认关）：redis-exporter 边车（9121）
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
-            Map<String, Object> exporter = new LinkedHashMap<>();
-            exporter.put("enabled", true);
-            exporter.put("image", EXPORTER_IMAGE);
-            exporter.put("port", EXPORTER_PORT);
-            exporter.put("resources", Map.of(
-                    "requests", Map.of("cpu", "50m", "memory", "64Mi"),
-                    "limits", Map.of("cpu", "100m", "memory", "128Mi")));
-            exporter.put("env", List.of(Map.of(
-                    "name", "REDIS_PASSWORD",
-                    "valueFrom", Map.of("secretKeyRef",
-                            Map.of("name", secretName(req.getName()), "key", "password")))));
-            spec.put("redisExporter", exporter);
+            spec.put("redisExporter", exporterSpec(req.getName()));
         }
         if (hasStorage(req)) {
             spec.put("storage", storageSpec(req));
@@ -171,6 +159,40 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         res.setMetadata(meta);
         res.setAdditionalProperty("spec", spec);
         return res;
+    }
+
+    /** redis-exporter 边车定义（创建与「编辑时补开」共用）。 */
+    static Map<String, Object> exporterSpec(String name) {
+        Map<String, Object> exporter = new LinkedHashMap<>();
+        exporter.put("enabled", true);
+        exporter.put("image", EXPORTER_IMAGE);
+        exporter.put("port", EXPORTER_PORT);
+        exporter.put("resources", Map.of(
+                "requests", Map.of("cpu", "50m", "memory", "64Mi"),
+                "limits", Map.of("cpu", "100m", "memory", "128Mi")));
+        // 口令从平台写的 Secret 取 —— 不带 REDIS_PASSWORD 时 exporter 的 INFO 会失败（redis_up=0）
+        exporter.put("env", List.of(Map.of(
+                "name", "REDIS_PASSWORD",
+                "valueFrom", Map.of("secretKeyRef",
+                        Map.of("name", name + "-credentials", "key", "password")))));
+        return exporter;
+    }
+
+    /**
+     * 编辑时补开业务指标：给数据 CR 补上 exporter（幂等）。哨兵 CR 不加 —— 哨兵 Pod 没有可导出的数据。
+     */
+    @Override
+    public boolean ensureMetrics(GenericKubernetesResource live, CustomResourceDefinitionContext context,
+                                 MiddlewareScaleRequestDTO req) {
+        if ("RedisSentinel".equals(context.getKind())) {
+            return false;
+        }
+        Map<String, Object> spec = specOf(live);
+        if (spec.containsKey("redisExporter")) {
+            return false;
+        }
+        spec.put("redisExporter", exporterSpec(req.getName()));
+        return true;
     }
 
     @Override

@@ -156,4 +156,18 @@ class KafkaMiddlewareAdapterTest {
         assertThat(spec.podSelector())
                 .isEqualTo("strimzi.io/cluster=mw-kafka-abc12345,strimzi.io/name=mw-kafka-abc12345-kafka");
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void ensureMetricsAddsReporterIdempotently() {
+        var live = byKind(adapter.buildCreate(req(3)), "Kafka");
+        var scaleReq = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scaleReq.setName("mw-kafka-abc12345");
+
+        assertThat(adapter.ensureMetrics(live, KafkaMiddlewareAdapter.KAFKA, scaleReq)).isTrue();
+        assertThat((Map<String, Object>) ((Map<String, Object>) spec(live).get("kafka")).get("metricsConfig"))
+                .containsEntry("type", "strimziMetricsReporter");
+        assertThat(adapter.ensureMetrics(live, KafkaMiddlewareAdapter.KAFKA, scaleReq)).isFalse();
+    }
+
 }

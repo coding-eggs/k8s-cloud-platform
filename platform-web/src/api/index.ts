@@ -986,6 +986,8 @@ export const middlewareApi = {
     storageSize?: string
     /** Elasticsearch：安装 IK（单向，不在编辑里卸载） */
     ik?: boolean
+    /** 业务指标：单向开启（装 exporter / 建采集资源） */
+    metricsEnabled?: boolean
     tenantId?: string
   }) => http.post<never, number>('/middleware/instance/scale', payload),
   remove: (payload: { instanceId: string; keepPvc: boolean; tenantId?: string }) =>

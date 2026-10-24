@@ -102,6 +102,27 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
         return List.of(new CrSpec(NODE_POOL, poolRes), new CrSpec(KAFKA, kafkaRes));
     }
 
+    /** 编辑时补开业务指标：给 Kafka CR 补上 metricsConfig（幂等，Pod 会滚动重启）。 */
+    @Override
+    @SuppressWarnings("unchecked")
+    public boolean ensureMetrics(GenericKubernetesResource live, CustomResourceDefinitionContext context,
+                                 MiddlewareScaleRequestDTO req) {
+        if (!"Kafka".equals(context.getKind())) {
+            return false;
+        }
+        Map<String, Object> spec = specOf(live);
+        Object kafkaObj = spec.get("kafka");
+        if (!(kafkaObj instanceof Map<?, ?>)) {
+            return false;
+        }
+        Map<String, Object> kafka = (Map<String, Object>) kafkaObj;
+        if (kafka.containsKey("metricsConfig")) {
+            return false;
+        }
+        kafka.put("metricsConfig", Map.of("type", "strimziMetricsReporter"));
+        return true;
+    }
+
     @Override
     public List<CustomResourceDefinitionContext> contexts() {
         return List.of(NODE_POOL, KAFKA);

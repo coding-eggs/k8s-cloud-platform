@@ -399,13 +399,21 @@ public class MiddlewareInstanceService {
         var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
                 req.getTenantId(), req.getClusterId(), req.getNamespace());
         KubernetesClient client = clientOf(req.getClusterId(), ctx);
+        boolean enableMetrics = Boolean.TRUE.equals(req.getMetricsEnabled());
         if (isNacos(req.getCode())) {
+            if (enableMetrics) {
+                // chart 实例：重新 upgrade 一次（values 里带 actuator 环境变量），Pod 会滚动重启
+                nacos.enableMetrics(req);
+                ensureNacosMetricsResources(client, req);
+                return;
+            }
             nacos.scale(req.getClusterId(), req.getCode());   // 直接抛出"暂不支持"
             return;
         }
         MiddlewareAdapter adapter = adapter(req.getCode());
+        boolean hasScale = hasScaleFields(req);
 
-        boolean applied = false;
+        boolean found = false;
         for (CustomResourceDefinitionContext crd : adapter.contexts()) {
             var live = client.genericKubernetesResources(crd)
                     .inNamespace(req.getNamespace())
@@ -414,7 +422,19 @@ public class MiddlewareInstanceService {
             if (live == null) {
                 continue;
             }
-            adapter.applyScale(live, crd, req);
+            found = true;
+            boolean changed = false;
+            if (hasScale) {
+                adapter.applyScale(live, crd, req);
+                changed = true;
+            }
+            if (enableMetrics) {
+                // 只补采集相关字段（exporter/metricsConfig），不碰规格 —— 避免空值把资源字段冲掉
+                changed |= adapter.ensureMetrics(live, crd, req);
+            }
+            if (!changed) {
+                continue;
+            }
             stripApplyMetadata(live);
             // 与仓内其它 CR 更新一致：SSA + forceConflicts（fetch-overlay 已保留未建模字段）
             client.genericKubernetesResources(crd)
@@ -423,10 +443,60 @@ public class MiddlewareInstanceService {
                     .fieldManager(ServerSideApply.FIELD_MANAGER)
                     .forceConflicts()
                     .serverSideApply();
-            applied = true;
         }
-        if (!applied) {
+        if (!found) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
+        }
+        if (enableMetrics) {
+            ensureMetricsResources(client, adapter, req);
+        }
+    }
+
+    /** 请求里有没有真正的规格改动（只有 metricsEnabled 时不能走 applyScale —— 空资源字段会冲掉原值）。 */
+    private static boolean hasScaleFields(MiddlewareScaleRequestDTO req) {
+        return req.getReplicas() != null
+                || notBlank(req.getCpuRequest()) || notBlank(req.getCpuLimit())
+                || notBlank(req.getMemoryRequest()) || notBlank(req.getMemoryLimit());
+    }
+
+    private static boolean notBlank(String s) {
+        return s != null && !s.isBlank();
+    }
+
+    /** 编辑时补开业务指标：建（或补齐）Service + ServiceMonitor，幂等。 */
+    private void ensureMetricsResources(KubernetesClient client, MiddlewareAdapter adapter,
+                                        MiddlewareScaleRequestDTO req) {
+        MiddlewareAdapter.MetricsSpec spec = adapter.metricsSpec(req.getName(), null, req.getInstanceId());
+        if (spec == null || !monitoringAvailable(client)) {
+            return;
+        }
+        MiddlewareCreateRequestDTO create = new MiddlewareCreateRequestDTO();
+        create.setName(req.getName());
+        create.setNamespace(req.getNamespace());
+        create.setInstanceId(req.getInstanceId());
+        putMetricsResources(client, create, spec);
+    }
+
+    /** Nacos（chart）补开指标时也走同一套采集资源。 */
+    private void ensureNacosMetricsResources(KubernetesClient client, MiddlewareScaleRequestDTO req) {
+        MiddlewareCreateRequestDTO create = new MiddlewareCreateRequestDTO();
+        create.setName(req.getName());
+        create.setNamespace(req.getNamespace());
+        create.setInstanceId(req.getInstanceId());
+        create.setMetricsEnabled(true);
+        createNacosMetricsResources(client, create);
+    }
+
+    /** createOrReplace：已经存在的 Service/ServiceMonitor 直接补齐（幂等），不报冲突。 */
+    private void putMetricsResources(KubernetesClient client, MiddlewareCreateRequestDTO create,
+                                     MiddlewareAdapter.MetricsSpec spec) {
+        try {
+            for (MiddlewareAdapter.CrSpec s : MetricsResources.build(create, spec)) {
+                client.genericKubernetesResources(s.context())
+                        .inNamespace(create.getNamespace()).resource(s.resource()).createOrReplace();
+            }
+        } catch (RuntimeException e) {
+            log.warn("中间件 {} 的采集资源创建失败（业务指标将不可用）：{}", create.getName(), e.getMessage());
         }
     }
 

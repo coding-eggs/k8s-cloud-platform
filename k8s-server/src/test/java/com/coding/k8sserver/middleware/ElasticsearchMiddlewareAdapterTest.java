@@ -339,4 +339,21 @@ class ElasticsearchMiddlewareAdapterTest {
         var pod = (Map<String, Object>) ((Map<String, Object>) nodeSet(res).get("podTemplate")).get("spec");
         return (List<Map<String, Object>>) pod.get("containers");
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void ensureMetricsAddsExporterSidecarIdempotently() {
+        var live = adapter.buildCreate(req(1)).get(0).resource();   // 创建时没开指标
+        var scaleReq = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scaleReq.setName("mw-es-abc12345");
+
+        assertThat(adapter.ensureMetrics(live, ElasticsearchMiddlewareAdapter.CRD, scaleReq)).isTrue();
+        var cs = containers(live);
+        assertThat(cs).hasSize(2);
+        assertThat(cs.get(1)).containsEntry("name", "elasticsearch-exporter");
+        assertThat((Map<String, Object>) cs.get(1).get("securityContext")).containsEntry("runAsUser", 65534);
+        // 已存在 → 无改动
+        assertThat(adapter.ensureMetrics(live, ElasticsearchMiddlewareAdapter.CRD, scaleReq)).isFalse();
+    }
+
 }

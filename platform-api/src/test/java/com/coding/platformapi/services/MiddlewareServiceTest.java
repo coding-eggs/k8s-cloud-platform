@@ -45,8 +45,10 @@ class MiddlewareServiceTest {
     private final com.coding.platformapi.metrics.MetricsService metricsService =
             mock(com.coding.platformapi.metrics.MetricsService.class);
 
+    private final MiddlewareCatalog catalog = new MiddlewareCatalog();
+
     private final MiddlewareService service = new MiddlewareService(
-            instances, operations, operators, client, new MiddlewareCatalog(),
+            instances, operations, operators, client, catalog,
             JsonMapper.builder().build(), k8s, allocations, cache, metricsService);
 
     @BeforeEach
@@ -336,7 +338,7 @@ class MiddlewareServiceTest {
 
     @Test
     void metricsIncludeDeclaredBusinessMetrics() {
-        // RabbitMQ 在目录里声明了 4 条业务指标：Pod 名单解析一次，声明逐条套进去
+        // 业务指标逐条按目录声明查：Pod 名单只解析一次，声明有几条就查几条
         PlatformMiddlewareInstance i = instance("rabbitmq", "SINGLE");
         i.setSpecJson("{\"metricsEnabled\":true}");
         when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
@@ -354,10 +356,12 @@ class MiddlewareServiceTest {
         req.setInstanceId("mwi_1");
         var out = service.metrics(req);
 
-        assertThat(out.business()).hasSize(4);
+        // 断言与目录声明同源：以后增删指标不用改测试
         assertThat(out.business()).extracting(
-                com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.BusinessMetric::key)
-                .containsExactly("ready", "unacked", "connections", "publish");
+                        com.coding.platformapi.metrics.dto.MiddlewareMetricsResponse.BusinessMetric::key)
+                .containsExactlyElementsOf(catalog.require("rabbitmq").metrics().stream()
+                        .map(MiddlewareCatalog.MetricDef::key).toList());
+        assertThat(out.business()).hasSizeGreaterThan(4);
     }
 
     @Test
@@ -596,5 +600,69 @@ class MiddlewareServiceTest {
 
         assertThatThrownBy(() -> service.get("mwi_2", "t1"))
                 .hasMessageContaining("无权");
+    }
+
+    @Test
+    void scaleEnablesMetricsAndPersistsTheFlag() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        // 台账里有 storageSize：开启指标时绝不能把它塞进 scale 请求（k8s-server 会当成扩存储直接拒）
+        i.setSpecJson("{\"metricsEnabled\":false,\"storageSize\":\"10Gi\",\"cpuRequest\":\"100m\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var req = new com.coding.platformapi.models.MiddlewareScaleRequest();
+        req.setInstanceId("mwi_1");
+        req.setMetricsEnabled(true);
+        service.scale(req, "admin", null);
+
+        var dto = ArgumentCaptor.forClass(com.coding.common.models.middleware.MiddlewareScaleRequestDTO.class);
+        verify(client).scale(org.mockito.ArgumentMatchers.eq("redis"), dto.capture());
+        assertThat(dto.getValue().getMetricsEnabled()).isTrue();
+        assertThat(dto.getValue().getInstanceId()).isEqualTo("mwi_1");
+        assertThat(dto.getValue().getStorageSize()).isNull();
+        assertThat(dto.getValue().getCpuRequest()).isNull();
+
+        var saved = ArgumentCaptor.forClass(PlatformMiddlewareInstance.class);
+        verify(instances).updateById(saved.capture());
+        assertThat(saved.getValue().getSpecJson()).contains("\"metricsEnabled\":true");
+    }
+
+    @Test
+    void scaleDoesNotTouchMetricsWhenAlreadyEnabled() {
+        // 已开启：再提交不能重复改 CR（否则白白滚动重启一次）
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setSpecJson("{\"metricsEnabled\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var req = new com.coding.platformapi.models.MiddlewareScaleRequest();
+        req.setInstanceId("mwi_1");
+        req.setMetricsEnabled(true);
+        service.scale(req, "admin", null);
+
+        var dto = ArgumentCaptor.forClass(com.coding.common.models.middleware.MiddlewareScaleRequestDTO.class);
+        verify(client).scale(org.mockito.ArgumentMatchers.eq("redis"), dto.capture());
+        assertThat(dto.getValue().getMetricsEnabled()).isFalse();
+        org.mockito.Mockito.verify(instances, org.mockito.Mockito.never())
+                .updateById(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void scaleEnableMetricsOnChartInstanceCarriesSpecForUpgrade() {
+        // Nacos 走 helm upgrade：必须带上台账里的完整规格，否则 values 会被冲回默认
+        PlatformMiddlewareInstance i = instance("nacos", "STANDALONE");
+        i.setSpecJson("{\"metricsEnabled\":false,\"replicas\":1,\"cpuRequest\":\"200m\","
+                + "\"memoryRequest\":\"512Mi\",\"storageSize\":\"5Gi\",\"storageClass\":\"nfs-client\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var req = new com.coding.platformapi.models.MiddlewareScaleRequest();
+        req.setInstanceId("mwi_1");
+        req.setMetricsEnabled(true);
+        service.scale(req, "admin", null);
+
+        var dto = ArgumentCaptor.forClass(com.coding.common.models.middleware.MiddlewareScaleRequestDTO.class);
+        verify(client).scale(org.mockito.ArgumentMatchers.eq("nacos"), dto.capture());
+        assertThat(dto.getValue().getStorageSize()).isEqualTo("5Gi");
+        assertThat(dto.getValue().getStorageClass()).isEqualTo("nfs-client");
+        assertThat(dto.getValue().getReplicas()).isEqualTo(1);
+        assertThat(dto.getValue().getCpuRequest()).isEqualTo("200m");
     }
 }

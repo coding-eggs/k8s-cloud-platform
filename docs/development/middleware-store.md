@@ -86,8 +86,10 @@
 计划见 [plans](../superpowers/plans/2026-10-23-middleware-metrics.md)。
 
 - **开关**：创建表单有「采集业务指标」，**默认关**；打开后才装/开指标源并建 Service + ServiceMonitor。
-  资源用量（CPU/内存/网络/磁盘）不受影响。开关值记在 `spec_json.metricsEnabled`，详情页据此展示业务指标区。
-  已有实例不能事后补开（需重建）；
+  资源用量（CPU/内存/网络/磁盘）不受影响。开关值记在 `spec_json.metricsEnabled`，详情页据此展示业务指标区；
+- **已建实例可在「编辑」里单向开启**（幂等，不支持关闭）：PG/RabbitMQ 只补采集资源**不重启**；
+  Redis/Kafka/ES/MySQL 会给 CR 补 exporter（Pod 滚动重启）；Nacos 重新 `helm upgrade`（Pod 重启）。
+  已开启的实例再提交不会重复改 CR；
 - 机制：适配器给出 `MetricsSpec`（端口 / 路径 / scheme / Pod 选择器），平台建
   **`<名字>-platform-metrics` 的 Service + ServiceMonitor**（`targetPort` 用数字，不依赖 Operator 的容器端口名）；
   删除实例时一并删。集群没有 ServiceMonitor CRD 时自动跳过，**best-effort**，失败不阻断建实例；
@@ -97,13 +99,13 @@
 
 | 中间件 | 指标源 | 端口 | 指标 |
 |---|---|---|---|
-| PostgreSQL | instance manager 内置 | 9187 | 连接数、事务提交/秒、复制延迟、数据库大小 |
-| RabbitMQ | `rabbitmq_prometheus` 插件（默认开，**免鉴权**） | 15692 | 就绪消息、未确认消息、连接数、发布/秒 |
-| Redis | `redisExporter` 边车（口令从 `<名字>-credentials` 注入） | 9121 | 连接数、内存使用、命令/秒、阻塞客户端 |
-| Kafka | `strimziMetricsReporter`（1.3 新增，无需 ConfigMap） | 9404 | 消息入站/秒、字节入站/秒、未充分复制分区、活跃 Controller |
-| Elasticsearch | `elasticsearch-exporter` 边车（args 传 URI/TLS，`runAsUser: 65534`） | 9114 | 集群 health、JVM 堆、查询/秒、未分配分片 |
-| MySQL | `mysqld_exporter` 边车（`monitor` 用户） | 9104 | 连接数、QPS、活跃线程、慢查询 |
-| Nacos | chart 原生 `nacos.extraEnv` 开 actuator | 8848（`/nacos/actuator/prometheus`） | JVM 堆、活跃线程、HTTP 请求/秒、配置数（可能为空） |
+| PostgreSQL | instance manager 内置 | 9187 | 存活、连接/等待、事务提交与回滚、死锁、**缓存命中率**、最长事务、复制延迟、数据库大小（10 项） |
+| RabbitMQ | `rabbitmq_prometheus` 插件（默认开，**免鉴权**） | 15692 | 就绪/未确认消息、连接/信道、队列/消费者、发布/投递/**重投**、**资源告警**（10 项） |
+| Redis | `redisExporter` 边车（口令从 `<名字>-credentials` 注入） | 9121 | 存活、连接数、内存使用、**命中率**、命令/秒、键数量、过期/驱逐、阻塞客户端、持久化状态（10 项） |
+| Kafka | `strimziMetricsReporter`（1.3 新增，无需 ConfigMap） | 9404 | 消息/字节出入、未充分复制/离线分区、Controller、分区/主题数、日志量、Broker 堆（10 项） |
+| Elasticsearch | `elasticsearch-exporter` 边车（args 传 URI/TLS，`runAsUser: 65534`） | 9114 | 集群状态/节点/分片/未分配/待处理任务、堆、查询与索引速率、文档数、存储（10 项） |
+| MySQL | `mysqld_exporter` 边车（`monitor` 用户） | 9104 | 存活、连接数/**连接使用率**、QPS、活跃线程、慢查询、**缓冲池命中率**、行锁等待、连接中断、组复制流控（10 项） |
+| Nacos | chart 原生 `nacos.extraEnv` 开 actuator | 8848（`/nacos/actuator/prometheus`） | 堆/非堆、线程、类、GC、HTTP 请求与**平均响应时间**、CPU、负载、运行时长（10 项） |
 
 ## 2. 执行链
 

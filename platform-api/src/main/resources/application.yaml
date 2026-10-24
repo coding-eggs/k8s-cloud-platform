@@ -105,7 +105,7 @@ spring:
     # 两者都由 PLATFORM_ES_URL 注入：env 没设时这里落到默认 localhost，但开关为空 → 页面提示未配置。
     uris: ${PLATFORM_ES_URL:http://192.168.31.80:9200}
     username: ${PLATFORM_ES_USERNAME:elastic}
-    password: ${PLATFORM_ES_PASSWORD:tz5Z0iflkC2jA84U0dA40F33}
+    password: ${PLATFORM_ES_PASSWORD:n6tsAcYY5FRF3iF7t780kFWN}
   mvc:
     pathmatch:
       matching-strategy: ant_path_matcher

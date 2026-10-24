@@ -97,6 +97,16 @@ public interface MiddlewareAdapter {
     }
 
     /**
+     * 编辑时补开业务指标：把 exporter / metricsConfig 幂等地写进**线上 CR**（返回 true = 有改动，需要落盘）。
+     *
+     * <p>默认 false：PG / RabbitMQ 的指标源是 Operator 内置或默认插件，不需要改 CR —— 只建采集资源即可。
+     */
+    default boolean ensureMetrics(GenericKubernetesResource live, CustomResourceDefinitionContext context,
+                                  MiddlewareScaleRequestDTO req) {
+        return false;
+    }
+
+    /**
      * 采集资源：`<名字>-platform-metrics` 的 Service + ServiceMonitor（实现见 {@link MetricsResources}）。
      *
      * <p>用 Service 而不是 PodMonitor：本集群的 PodMonitor CRD 没有 `targetPort`，只能引用容器端口名，

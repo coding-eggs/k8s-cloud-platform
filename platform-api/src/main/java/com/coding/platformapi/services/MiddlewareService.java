@@ -562,6 +562,9 @@ public class MiddlewareService {
 
     public Long scale(MiddlewareScaleRequest req, String operator, String tenantId) {
         PlatformMiddlewareInstance instance = requireInstance(req.getInstanceId(), tenantId);
+        // 业务指标是单向开关：已经开着的实例再提交也不重复改 CR（避免白白滚动重启一次）
+        boolean enableMetrics = Boolean.TRUE.equals(req.getMetricsEnabled())
+                && !Boolean.TRUE.equals(parseSpec(instance.getSpecJson()).get("metricsEnabled"));
         PlatformMiddlewareOperation op = newOperation(instance, "SCALE", operator);
         try {
             MiddlewareScaleRequestDTO dto = new MiddlewareScaleRequestDTO();
@@ -577,10 +580,29 @@ public class MiddlewareService {
             dto.setMemoryLimit(req.getMemoryLimit());
             dto.setStorageSize(req.getStorageSize());
             dto.setIk(Boolean.TRUE.equals(req.getIk()));
+            dto.setInstanceId(instance.getId());
+            dto.setMetricsEnabled(enableMetrics);
             dto.setTenantId(tenantId);
+            if (enableMetrics && isChartBacked(instance.getCode())) {
+                // chart 实例（Nacos）重新 upgrade 需要完整规格：从台账补齐（请求里可能没带）。
+                // ⚠️ 只对 chart 实例做：给 Operator 实例补上 storageSize 会被 k8s-server 当成"扩容存储"直接拒掉
+                Map<String, Object> spec = parseSpec(instance.getSpecJson());
+                if (dto.getReplicas() == null && spec.get("replicas") instanceof Number n) {
+                    dto.setReplicas(n.intValue());
+                }
+                if (isBlank(dto.getCpuRequest())) dto.setCpuRequest(text(spec.get("cpuRequest")));
+                if (isBlank(dto.getCpuLimit())) dto.setCpuLimit(text(spec.get("cpuLimit")));
+                if (isBlank(dto.getMemoryRequest())) dto.setMemoryRequest(text(spec.get("memoryRequest")));
+                if (isBlank(dto.getMemoryLimit())) dto.setMemoryLimit(text(spec.get("memoryLimit")));
+                if (isBlank(dto.getStorageSize())) dto.setStorageSize(text(spec.get("storageSize")));
+                dto.setStorageClass(text(spec.get("storageClass")));
+            }
             client.scale(instance.getCode(), dto);
             if (Boolean.TRUE.equals(req.getIk())) {
                 markIkInstalled(instance);
+            }
+            if (enableMetrics) {
+                markMetricsEnabled(instance);
             }
             finish(op, "SUCCESS", null);
         } catch (RuntimeException e) {
@@ -588,6 +610,26 @@ public class MiddlewareService {
             throw e;
         }
         return op.getId();
+    }
+
+    /** 台账里记下「业务指标已开启」——详情页据此展示业务指标、metrics 接口据此去查。 */
+    @SuppressWarnings("unchecked")
+    private void markMetricsEnabled(PlatformMiddlewareInstance instance) {
+        try {
+            Map<String, Object> spec = isBlank(instance.getSpecJson())
+                    ? new LinkedHashMap<>()
+                    : new LinkedHashMap<>(jsonMapper.readValue(instance.getSpecJson(), Map.class));
+            spec.put("metricsEnabled", true);
+            instance.setSpecJson(jsonMapper.writeValueAsString(spec));
+            instance.setUpdatedAt(new Date());
+            instances.updateById(instance);
+        } catch (RuntimeException e) {
+            // 回写失败不影响已经开起来的采集；下次编辑会再尝试
+        }
+    }
+
+    private static String text(Object o) {
+        return o == null ? null : String.valueOf(o);
     }
 
     public Long delete(MiddlewareDeleteRequest req, String operator, String tenantId) {

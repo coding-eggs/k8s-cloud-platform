@@ -254,4 +254,27 @@ class RedisMiddlewareAdapterTest {
         // 哨兵 Pod 是 app=<name>-sentinel：选进来只会得到 down 的 target
         assertThat(spec.podSelector()).isEqualTo("app=mw-redis-abc12345");
     }
+
+    @Test
+    void ensureMetricsAddsExporterIdempotently() {
+        var live = adapter.buildCreate(req("STANDALONE", 1)).get(0).resource();
+        var scaleReq = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scaleReq.setName("mw-redis-abc12345");
+
+        assertThat(adapter.ensureMetrics(live, RedisMiddlewareAdapter.REDIS, scaleReq)).isTrue();
+        assertThat(spec(live)).containsKey("redisExporter");
+        // 再点一次：已存在 → 无改动（避免白白滚动重启）
+        assertThat(adapter.ensureMetrics(live, RedisMiddlewareAdapter.REDIS, scaleReq)).isFalse();
+    }
+
+    @Test
+    void ensureMetricsSkipsSentinelCr() {
+        var live = adapter.buildCreate(req("SENTINEL", 3)).get(1).resource();   // RedisSentinel
+        var scaleReq = new com.coding.common.models.middleware.MiddlewareScaleRequestDTO();
+        scaleReq.setName("mw-redis-abc12345");
+
+        assertThat(adapter.ensureMetrics(live, RedisMiddlewareAdapter.SENTINEL, scaleReq)).isFalse();
+        assertThat(spec(live)).doesNotContainKey("redisExporter");
+    }
+
 }
