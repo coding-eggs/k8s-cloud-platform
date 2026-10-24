@@ -1,29 +1,32 @@
 # 组件 chart 目录与文档
 
-平台通过组件安装引擎落地的 chart 都在这里。每个版本目录的结构：
+平台通过组件安装引擎落地的 chart 都在这里。**README 分两层**（2026-10-24 起）：
 
 ```
-charts/components/<chart>/<version>/
-├── chart/            # 上游 chart，原样入库（不改模板）
-├── provenance.yaml   # 来源、版本、拉取命令
-└── README.md         # 本版本的平台文档（安装契约 / 使用 / 踩坑 / 新增版本）
+charts/components/<chart>/
+├── README.md             # 组件级（跨版本）：怎么装、约定、坑、加版本 checklist
+└── <version>/
+    ├── chart/            # 上游 chart，原样入库（不改模板）
+    ├── provenance.yaml   # 来源、版本、拉取命令
+    └── README.md         # 版本级：来源 / digest / 本版本注意
 ```
 
 组件的探测判据在 platform-api `ClusterComponentCatalog`，安装契约在 `ComponentRecipeCatalog`。
 **文档与代码同目录**：改 recipe 时顺手改同一目录下的 README，避免两处漂移。
 
-| 组件 code | 文档 |
+| 组件 code | 组件级文档 |
 |---|---|
-| `metrics-server` | [metrics-server/3.14.0](metrics-server/3.14.0/README.md) |
-| `prometheus-operator` | [prometheus-operator/92.10.1](prometheus-operator/92.10.1/README.md) |
-| （Prometheus 组件的管理集群底座） | [thanos/0.47.2](thanos/0.47.2/README.md) |
-| `tekton` | [tekton-operator/0.81.2](tekton-operator/0.81.2/README.md) |
-| `istio`（**含 Gateway API**） | [istio-base/1.30.6](istio-base/1.30.6/README.md)（六个 release：`gateway-api/1.6.2` + 五个 Istio chart `1.30.6`） |
-| `otel-operator` | [otel-operator/0.126.0](otel-operator/0.126.0/README.md)、[tempo/3.2.0](tempo/3.2.0/README.md) |
-| `calico` | [tigera-operator/3.33.0](tigera-operator/v3.33.0/README.md)（CRD 走 server-side apply，chart 为 `projectcalico-crds/v3.33.0`） |
+| `metrics-server` | [metrics-server/README.md](metrics-server/README.md) |
+| `prometheus-operator` | [prometheus-operator/README.md](prometheus-operator/README.md)（管理集群追加 [thanos](thanos/README.md)） |
+| `tekton` | [tekton-operator/README.md](tekton-operator/README.md) |
+| `istio`（**含 Gateway API**） | [istio-base/README.md](istio-base/README.md)（六个 chart：`gateway-api` + 五个 Istio chart；各 chart 目录另有 chart 级 README） |
+| `otel-operator` | [otel-operator/README.md](otel-operator/README.md)（MANAGEMENT 追加 [tempo](tempo/README.md)） |
+| `calico` | [tigera-operator/README.md](tigera-operator/README.md)（CRD chart 见 [projectcalico-crds](projectcalico-crds/README.md)） |
+| `cert-manager` | [cert-manager/README.md](cert-manager/README.md) |
+| `seaweedfs`（对象存储） | [seaweedfs/README.md](seaweedfs/README.md) |
 
-> `gateway-api` 于 2026-10-19 并入 `istio` 组件（同一个安装单元），目录里不再有独立的 gateway-api 行。
-> `cert-manager` 暂未单独成文；recipe 同样在 `ComponentRecipeCatalog`，可照本目录格式补。
+> `gateway-api` 于 2026-10-19 并入 `istio` 组件（同一个安装单元），没有独立组件行；
+> 它的 chart 级说明在 `gateway-api/README.md`，组件总文档仍在 `istio-base/README.md`。
 
 ---
 
@@ -41,7 +44,7 @@ k8s-server `POST /components/apply` → helm**。
 
 > ⚠️ 一个例外：release 标了 `applyMode=SERVER_SIDE_APPLY` 时（目前只有 calico 的 CRD chart），
 > 渲染结果走 `kubectl apply --server-side` 直接落盘、**不建 Helm release**（Helm 的 release Secret 只有 1MiB，
-> 装不下这个 3.5MB 的 chart）。细节见 [calico 文档 §2.1](tigera-operator/v3.33.0/README.md)。
+> 装不下这个 3.5MB 的 chart）。细节见 [calico 组件文档](tigera-operator/README.md)。
 
 ### 2.1 异步与状态
 
@@ -95,7 +98,7 @@ k8s-server 对每个 release 依次：
    并给新 release 标 `asPrimary()` + `withAppVersion(...)`（主 release 不一定是排第一的那个，
    通常它也是新版本的那一条）；
 4. 两阶段的组件（Tekton / OTel）**两处版本一起改**；
-5. 复制并更新本目录的 README；
+5. 在**组件级** README 更新版本行，并在版本目录写 `<x.y.z>/README.md`（来源 / digest / 本版本注意）；
 6. 跑测试 + 在**非生产集群**真装一次；
 7. 重建 **k8s-server**（charts 入镜像）+ **platform-api**（recipe）。
 
