@@ -116,12 +116,12 @@ class AlertDispatchServiceTest {
     @Test
     void the_channel_comes_from_the_label_when_present() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
-        verify(channels, org.mockito.Mockito.atLeastOnce()).resolve("ops-mail");
+        verify(channels, org.mockito.Mockito.atLeastOnce()).resolveEnabled("ops-mail");
         verify(sender).send(any(), eq(List.of("ops@x.com")), any(), any());
     }
 
@@ -130,7 +130,7 @@ class AlertDispatchServiceTest {
     void without_a_label_the_default_channel_is_used() throws Exception {
         tenantOwns("ns", "t1");
         when(channels.defaultFor("t1")).thenReturn(channel("default-mail", null, true));
-        when(channels.resolve("default-mail")).thenReturn(channel("default-mail", null, true));
+        when(channels.resolveEnabled("default-mail")).thenReturn(channel("default-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         svc.dispatch("c1", List.of(event(1, "ns", "{}", "firing")));
@@ -142,9 +142,9 @@ class AlertDispatchServiceTest {
     @Test
     void an_unknown_channel_falls_back_to_the_default() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("gone-mail")).thenReturn(null);
+        when(channels.resolveEnabled("gone-mail")).thenReturn(null);
         when(channels.defaultFor("t1")).thenReturn(channel("default-mail", null, true));
-        when(channels.resolve("default-mail")).thenReturn(channel("default-mail", null, true));
+        when(channels.resolveEnabled("default-mail")).thenReturn(channel("default-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"gone-mail\"}", "firing")));
@@ -152,25 +152,32 @@ class AlertDispatchServiceTest {
         verify(sender).send(any(), any(), any(), any());
     }
 
-    /** 渠道**停用**只影响"新选择"—— 已绑定的规则照常发（否则停用一次就静默断掉线上告警）。 */
+    /**
+     * 渠道**停用** = 发送时不存在：已绑定的规则也不再走它，回落默认渠道。
+     * （规则编辑页的候选本来就只列启用中的；这里守的是「早就绑定了」那一半。）
+     */
     @Test
-    void a_disabled_channel_still_sends() throws Exception {
+    void a_disabled_channel_falls_back_to_the_default() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, false));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(null);
+        when(channels.defaultFor("t1")).thenReturn(channel("default-mail", null, true));
+        when(channels.resolveEnabled("default-mail")).thenReturn(channel("default-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
 
-        verify(sender).send(any(), any(), any(), any());
+        ArgumentCaptor<NotificationChannel> cap = ArgumentCaptor.forClass(NotificationChannel.class);
+        verify(sender).send(cap.capture(), any(), any(), any());
+        assertThat(cap.getValue().getCode()).isEqualTo("default-mail");
     }
 
     /** 规则租户 ≠ 渠道租户（且渠道非全局）→ 回落默认，不跨租户发。 */
     @Test
     void a_channel_of_another_tenant_falls_back_to_the_default() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("other-tenant-mail")).thenReturn(channel("other-tenant-mail", "t2", true));
+        when(channels.resolveEnabled("other-tenant-mail")).thenReturn(channel("other-tenant-mail", "t2", true));
         when(channels.defaultFor("t1")).thenReturn(channel("default-mail", null, true));
-        when(channels.resolve("default-mail")).thenReturn(channel("default-mail", null, true));
+        when(channels.resolveEnabled("default-mail")).thenReturn(channel("default-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"other-tenant-mail\"}", "firing")));
@@ -186,7 +193,7 @@ class AlertDispatchServiceTest {
     @Test
     void recipients_come_from_the_binding_when_it_exists() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1", "u2"));
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
@@ -203,7 +210,7 @@ class AlertDispatchServiceTest {
     @Test
     void the_binding_is_found_from_the_platform_rule_annotation() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         RuleNotify r = new RuleNotify();
         r.setChannelCode("ops-mail");
         r.setUserIds("[\"u9\"]");
@@ -221,7 +228,7 @@ class AlertDispatchServiceTest {
     /** 规则改名/删除后绑定查不到 → 回落到该命名空间所属租户的管理员。 */
     @Test
     void recipients_fall_back_to_the_tenant_admin_when_the_binding_is_gone() throws Exception {        tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         when(resolver.crNameOf(eq("c1"), any(), any())).thenReturn(null);
         when(users.tenantAdminUserIds("t1")).thenReturn(List.of("admin1"));
         when(users.emailsOf(any())).thenReturn(List.of("admin@x.com"));
@@ -238,7 +245,7 @@ class AlertDispatchServiceTest {
     @Test
     void recipients_fall_back_to_platform_admins() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         when(resolver.crNameOf(eq("c1"), any(), any())).thenReturn(null);
         when(users.tenantAdminUserIds("t1")).thenReturn(List.of("admin1"));   // 没填邮箱
         when(users.platformAdminUserIds()).thenReturn(List.of("pa1"));
@@ -258,7 +265,7 @@ class AlertDispatchServiceTest {
      */
     @Test
     void a_cluster_scoped_alert_goes_to_platform_admins() throws Exception {
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         when(resolver.crNameOf(eq("c1"), any(), any())).thenReturn(null);
         when(users.platformAdminUserIds()).thenReturn(List.of("pa1"));
         when(users.emailsOf(any())).thenAnswer(inv -> {
@@ -279,7 +286,7 @@ class AlertDispatchServiceTest {
     @Test
     void the_watchdog_alert_is_recorded_but_never_delivered() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("default-mail")).thenReturn(channel("default-mail", null, true));
+        when(channels.resolveEnabled("default-mail")).thenReturn(channel("default-mail", null, true));
         when(channels.defaultFor("t1")).thenReturn(channel("default-mail", null, true));
 
         PlatformAlertEvent watchdog = event(1, "monitor", "{}", "firing");
@@ -296,7 +303,7 @@ class AlertDispatchServiceTest {
     @Test
     void no_recipients_marks_the_delivery_failed_and_sends_nothing() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
         when(users.emailsOf(any())).thenReturn(List.of());
 
@@ -306,15 +313,32 @@ class AlertDispatchServiceTest {
         verify(deliveries).markFailed(any(), eq("无有效收件人"), eq(0));
     }
 
-    /** 连渠道都没有（没配默认）→ 也留一条 FAILED 的记录，而不是什么都没有。 */
+    /**
+     * 绑定的渠道停用、且没有可用的默认渠道 → 整条不发，**也不留投递记录**。
+     * 「没有可用的通知方式」是用户主动关闭告警的形态，不是故障。
+     */
     @Test
-    void no_channel_at_all_is_recorded_as_failed() throws Exception {
+    void a_disabled_bound_channel_without_a_default_sends_nothing() throws Exception {
+        tenantOwns("ns", "t1");
+        when(channels.resolveEnabled("ops-mail")).thenReturn(null);
+        when(channels.defaultFor("t1")).thenReturn(null);
+        bindingFrom("app-rules", List.of("u1"));
+
+        svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
+
+        verify(deliveries, never()).insertIfAbsent(any());
+        verify(sender, never()).send(any(), any(), any(), any());
+    }
+
+    /** 一个通知方式都没有（没配默认）→ 不发、不记：等同用户还没开启告警。 */
+    @Test
+    void no_channel_at_all_sends_nothing_and_records_nothing() throws Exception {
         tenantOwns("ns", "t1");
         when(channels.defaultFor("t1")).thenReturn(null);
 
         svc.dispatch("c1", List.of(event(1, "ns", "{}", "firing")));
 
-        verify(deliveries).markFailed(any(), eq("未配置通知渠道"), eq(0));
+        verify(deliveries, never()).insertIfAbsent(any());
         verify(sender, never()).send(any(), any(), any(), any());
     }
 
@@ -324,7 +348,7 @@ class AlertDispatchServiceTest {
     @Test
     void a_second_dispatch_of_the_same_alert_sends_nothing() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
         when(deliveries.insertIfAbsent(any())).thenReturn(0);      // ← 已有记录
 
@@ -338,7 +362,7 @@ class AlertDispatchServiceTest {
     @Test
     void events_on_the_same_channel_are_sent_in_one_batch() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         svc.dispatch("c1", List.of(
@@ -353,7 +377,7 @@ class AlertDispatchServiceTest {
     @Test
     void a_failing_sender_is_retried_three_times_then_marked_failed() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
         doThrow(new RuntimeException("smtp down")).when(sender).send(any(), any(), any(), any());
 
@@ -368,7 +392,7 @@ class AlertDispatchServiceTest {
     @Test
     void a_successful_send_marks_the_delivery_sent() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         svc.dispatch("c1", List.of(event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing")));
@@ -388,7 +412,7 @@ class AlertDispatchServiceTest {
     @Test
     void only_newly_claimed_events_go_into_the_email() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
         // 第一条领取成功，第二条已有投递记录
         when(deliveries.insertIfAbsent(any())).thenReturn(1, 0);
@@ -409,7 +433,7 @@ class AlertDispatchServiceTest {
     @Test
     void events_without_an_id_are_skipped() throws Exception {
         tenantOwns("ns", "t1");
-        when(channels.resolve("ops-mail")).thenReturn(channel("ops-mail", null, true));
+        when(channels.resolveEnabled("ops-mail")).thenReturn(channel("ops-mail", null, true));
         bindingFrom("app-rules", List.of("u1"));
 
         PlatformAlertEvent noId = event(1, "ns", "{\"platform_notify\":\"ops-mail\"}", "firing");

@@ -114,6 +114,40 @@ class NotificationChannelServiceTest {
         assertThat(svc.defaultFor("t2")).isNull();
     }
 
+    /**
+     * 停用 = 发送时不可用，但**绑定校验仍要认它**（resolve）——
+     * 否则编辑一条早就绑定了该渠道的规则会莫名报「通知方式不存在」。
+     */
+    @Test
+    void a_disabled_channel_is_resolvable_but_not_usable_for_sending() {
+        NotificationChannel disabled = new NotificationChannel();
+        disabled.setCode("ops-mail");
+        disabled.setEnabled(false);
+        when(mapper.selectByCode("ops-mail")).thenReturn(disabled);
+
+        assertThat(svc.resolve("ops-mail")).isNotNull();
+        assertThat(svc.resolveEnabled("ops-mail")).isNull();
+    }
+
+    /** 停用的租户默认跳过、继续回落全局默认；全局默认也停用则没有默认。 */
+    @Test
+    void a_disabled_default_is_skipped_in_favour_of_the_next_fallback() {
+        NotificationChannel tenantDefault = new NotificationChannel();
+        tenantDefault.setCode("t1-mail");
+        tenantDefault.setEnabled(false);
+        when(mapper.selectTenantDefault("t1")).thenReturn(tenantDefault);
+
+        NotificationChannel global = new NotificationChannel();
+        global.setCode("global-mail");
+        global.setEnabled(true);
+        when(mapper.selectGlobalDefault()).thenReturn(global);
+
+        assertThat(svc.defaultFor("t1").getCode()).isEqualTo("global-mail");
+
+        global.setEnabled(false);
+        assertThat(svc.defaultFor("t1")).isNull();
+    }
+
     /** 解出来的配置里，password 是明文（发送时用），且不含 passwordEnc。 */
     @Test
     void decrypted_config_exposes_the_plain_password_for_sending() {

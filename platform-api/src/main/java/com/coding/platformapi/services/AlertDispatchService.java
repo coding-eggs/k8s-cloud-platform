@@ -29,13 +29,16 @@ import java.util.Set;
 /**
  * 告警投递引擎：告警落库后决定「用哪个渠道、发给谁、发没发出去」。
  *
- * <p>三个不变量，每个都对应一类「错了不会报错、只会静默少发」的事故：
+ * <p>四条不变量，每条都对应一类「错了不会报错、只会静默少发」的事故：
  * <ol>
  *   <li><b>幂等</b>：{@code platform_alert_delivery} 的唯一键是去重键。Alertmanager 的
  *       {@code repeat_interval} 会重推同一条告警，第二次必须什么都不发。</li>
  *   <li><b>不跨租户</b>：规则租户 ≠ 渠道租户（且渠道非全局）时回落默认渠道，绝不把 A 租户的
  *       告警发到 B 租户配置的收件人那里。</li>
- *   <li><b>不静默</b>：没有渠道 / 没有收件人 / 发送失败都落一条 FAILED 记录，
+ *   <li><b>停用 = 关闭</b>：只有「存在且启用」的渠道算可用（{@code resolveEnabled}）；绑定的渠道
+ *       停用后回落默认，默认也停用/未配置就<b>整条不投递、也不写 FAILED</b> —— 这是用户主动
+ *       「暂时关闭告警」的形态，不是故障。</li>
+ *   <li><b>不静默（在有渠道的前提下）</b>：没有收件人 / 发送失败都落一条 FAILED 记录，
  *       失败原因进 {@code last_error} —— 「以为发了」比「没发」更难查。</li>
  * </ol>
  *
@@ -119,9 +122,11 @@ public class AlertDispatchService {
 
         // 1) 决定每条告警走哪个渠道
         Map<String, List<PlatformAlertEvent>> byChannel = new LinkedHashMap<>();
+        int noUsableChannel = 0;
         for (PlatformAlertEvent e : toSend) {
             String tenantId = context.tenantId(e.getId());
-            NotificationChannel c = channels.resolve(mapValue(e.getLabels(), "platform_notify"));
+            // 停用的渠道等于不存在：已绑定的规则也不再走它
+            NotificationChannel c = channels.resolveEnabled(mapValue(e.getLabels(), "platform_notify"));
             // 跨租户：规则租户与渠道租户不一致（且渠道非全局）→ 不允许，回落默认
             if (c != null && StringUtils.hasText(c.getTenantId()) && !c.getTenantId().equals(tenantId)) {
                 log.warn("规则绑定了其他租户的通知方式，回落默认（code={} tenant={}）", c.getCode(), tenantId);
@@ -131,18 +136,25 @@ public class AlertDispatchService {
                 c = channels.defaultFor(tenantId);
             }
             if (c == null) {
-                markFail(e, "", "未配置通知渠道");
+                // 没有可用的通知方式 = 用户主动关掉了告警通知。**不写 FAILED** ——
+                // 否则告警列表会为每一条告警报一次「未配置通知渠道」，把主动关闭演成故障。
+                noUsableChannel++;
                 continue;
             }
             byChannel.computeIfAbsent(c.getCode(), k -> new ArrayList<>()).add(e);
         }
+        if (noUsableChannel > 0) {
+            log.info("集群 {} 有 {} 条告警没有可用的通知方式（未配置或已全部停用），按「暂时关闭告警」跳过投递",
+                    clusterId, noUsableChannel);
+        }
 
         // 2) 按渠道合并发送
         for (Map.Entry<String, List<PlatformAlertEvent>> entry : byChannel.entrySet()) {
-            NotificationChannel channel = channels.resolve(entry.getKey());
             List<PlatformAlertEvent> batch = entry.getValue();
-            if (channel == null) {                       // 理论上不会：上面刚解析过
-                batch.forEach(e -> markFail(e, entry.getKey(), "通知方式不存在: " + entry.getKey()));
+            // 本轮内被停用/删除：按「没有可用的通知方式」处理，同样不记投递
+            NotificationChannel channel = channels.resolveEnabled(entry.getKey());
+            if (channel == null) {
+                log.info("通知方式 {} 已不可用，跳过 {} 条告警", entry.getKey(), batch.size());
                 continue;
             }
 
@@ -213,19 +225,6 @@ public class AlertDispatchService {
                 int n = attempts;
                 claimed.forEach(d -> deliveries.markFailed(d.getId(), msg, n));
             }
-        }
-    }
-
-    /** 连渠道都没有：直接落一条 FAILED（channel_code 用空串占位），失败也要看得见。 */
-    private void markFail(PlatformAlertEvent e, String channelCode, String error) {
-        AlertDelivery d = new AlertDelivery();
-        d.setEventId(e.getId());
-        d.setChannelCode(channelCode == null ? "" : channelCode);
-        d.setAlertStatus(e.getStatus());
-        d.setStatus("FAILED");
-        d.setCreatedAt(new Date());
-        if (deliveries.insertIfAbsent(d) == 1) {
-            deliveries.markFailed(d.getId(), error, 0);
         }
     }
 

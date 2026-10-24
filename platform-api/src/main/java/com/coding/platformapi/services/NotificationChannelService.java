@@ -103,18 +103,32 @@ public class NotificationChannelService {
         mapper.deleteByCode(code);
     }
 
-    /** 发送时按 code 取渠道（不解密）。 */
+    /** 按 code 取渠道（不解密）。**不看 enabled** —— 绑定校验用它，停用不该让规则编辑报「不存在」。 */
     public NotificationChannel resolve(String code) {
         return StringUtils.hasText(code) ? mapper.selectByCode(code) : null;
     }
 
-    /** 未绑定时的默认渠道：租户默认 → 全局默认。 */
+    /**
+     * 发送时可用 = **存在且启用**。停用的语义是「不再发送」，即便规则早就绑定了它；
+     * 调用方拿到 null 就当作「没有这个渠道」，继续回落默认。
+     */
+    public NotificationChannel resolveEnabled(String code) {
+        NotificationChannel c = resolve(code);
+        return isEnabled(c) ? c : null;
+    }
+
+    /** 未绑定时的默认渠道：租户默认 → 全局默认；**停用的默认跳过**（继续往下回落，都没有返回 null）。 */
     public NotificationChannel defaultFor(String tenantId) {
         if (StringUtils.hasText(tenantId)) {
             NotificationChannel c = mapper.selectTenantDefault(tenantId);
-            if (c != null) return c;
+            if (isEnabled(c)) return c;
         }
-        return mapper.selectGlobalDefault();
+        NotificationChannel global = mapper.selectGlobalDefault();
+        return isEnabled(global) ? global : null;
+    }
+
+    private static boolean isEnabled(NotificationChannel c) {
+        return c != null && !Boolean.FALSE.equals(c.getEnabled());
     }
 
     /** 发送用：把 passwordEnc 解成 password，去掉 passwordEnc。 */

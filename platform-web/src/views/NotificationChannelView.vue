@@ -136,10 +136,11 @@ onMounted(async () => {
     <EmptyState
       v-if="rows.length === 0 && !loading"
       title="还没有通知方式"
-      description="先建一个邮件渠道并设为默认；没有绑定通知方式的规则会走它。"
+      description="先建一个邮件渠道并设为默认；没有绑定通知方式的规则会走它。在此之前告警只记录、不发送通知。"
     />
 
     <div v-else class="panel table-panel">
+      <div class="notice-tip">停用的通知方式不再发送（已绑定的规则回落默认渠道）；没有任何启用的通知方式时，告警只记录、不发送通知。</div>
       <el-table v-loading="loading" :data="rows" stripe>
         <el-table-column prop="name" label="名称" min-width="160" />
         <el-table-column prop="code" label="code" width="180">
@@ -224,7 +225,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="启用">
           <el-switch v-model="form.enabled" />
-          <div class="form-tip">停用只影响「新选择」；已绑定它的规则照常发送</div>
+          <div class="form-tip">停用后不再发送：已绑定它的规则也不再走它（回落默认渠道）</div>
         </el-form-item>
       </el-form>
       <div class="form-actions">
@@ -241,6 +242,12 @@ onMounted(async () => {
 }
 .muted {
   color: var(--el-text-color-placeholder);
+}
+.notice-tip {
+  padding: 8px 8px 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
 }
 .res-name {
   font-family: var(--el-font-family-mono, monospace);

@@ -16,10 +16,10 @@ public interface NotificationChannelMapper {
     /** 规则编辑页候选：全局 + 本租户，且 enabled=1 */
     List<NotificationChannel> selectAvailable(@Param("tenantId") String tenantId);
 
-    /** 该租户的默认渠道（tenant_id 精确匹配且 is_default=1） */
+    /** 该租户的默认渠道（tenant_id 精确匹配且 is_default=1）；是否启用由 service 判定 */
     NotificationChannel selectTenantDefault(@Param("tenantId") String tenantId);
 
-    /** 全局默认渠道（tenant_id is null 且 is_default=1） */
+    /** 全局默认渠道（tenant_id is null 且 is_default=1）；是否启用由 service 判定 */
     NotificationChannel selectGlobalDefault();
 
     int insert(NotificationChannel c);

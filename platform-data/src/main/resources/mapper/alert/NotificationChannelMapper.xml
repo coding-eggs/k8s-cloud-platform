@@ -35,9 +35,9 @@
     order by tenant_id is not null desc, code
   </select>
 
-  <!-- ⚠️ 默认渠道**不看 enabled**：停用的语义是「不再作为新选择」（selectAvailable 那个查询才过滤），
-       已绑定的规则与所有未绑定的内置规则照常走它。在这里加 enabled=1 会让「停用一次」
-       直接演成「所有未绑定规则静默不再发送」。 -->
+  <!-- ⚠️ 这两个查询只回答「谁是默认」，**不看 enabled**：可用性判定在
+       NotificationChannelService#defaultFor —— 停用的默认会被跳过、继续回落全局默认。
+       停用的语义是「不再发送」，但 SQL 里加 enabled=1 会让「查询默认」与「判断可用」混成一件事。 -->
   <select id="selectTenantDefault" resultMap="BaseResultMap">
     select <include refid="Base_Cols" /> from platform_notification_channel
     where tenant_id = #{tenantId,jdbcType=VARCHAR} and is_default = 1 limit 1
