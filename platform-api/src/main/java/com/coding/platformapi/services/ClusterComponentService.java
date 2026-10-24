@@ -353,6 +353,7 @@ public class ClusterComponentService {
         cur.setMasterReplicas(asInt(m.get("masterReplicas")));
         cur.setVolumeReplicas(asInt(m.get("volumeReplicas")));
         cur.setS3Replicas(asInt(m.get("s3Replicas")));
+        cur.setAdminEnabled(m.get("adminEnabled") instanceof Boolean b ? b : null);
         return cur;
     }
 

@@ -525,10 +525,9 @@ public class ComponentRecipeCatalog {
                             "createClusterRole", false,
                             // 组件间加密暂不开；S3 的 AK/SK 校验在 s3.enableAuth
                             "enableSecurity", false)),
-                    // S3 网关是这个组件的意义所在；admin 面板不装（平台不需要第二个管理面）
+                    // S3 网关是这个组件的意义所在；admin 管理台由安装表单决定（默认不装，见 applySeaweedValues）
                     "s3", Map.of("enabled", true, "enableAuth", true,
                             "resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
-                    "admin", Map.of("enabled", false),
                     "master", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
                     "volume", Map.of("resources", seaweedResources("100m", "256Mi", "1", "1Gi")),
                     "filer", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi"))),

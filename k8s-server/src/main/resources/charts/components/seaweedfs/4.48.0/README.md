@@ -13,6 +13,9 @@
     升级 chart 前必须先在 registry 上确认 tag 存在（`curl -o /dev/null -w '%{http_code}' https://hub.docker.com/v2/repositories/chrislusf/seaweedfs/tags/<tag>`）；
   - `s3.createBuckets` 已支持声明式建桶（后续做桶分配可以走 values）；
   - `global.seaweedfs.enableSecurity` 默认 false；`s3.enableAuth` 才是 S3 的 AK/SK 开关，两者独立；
+  - **admin 管理台**（可选，`admin.enabled`）：端口 **23646**、gRPC 33646；绑定 `0.0.0.0`（探针需要）时
+    **必须有口令**，否则容器直接退出 —— 平台用 `admin.secret.existingSecret` 引用生成的
+    `platform-seaweedfs-admin`（见组件级 README §3.1）；管理台数据盘默认 emptyDir；
   - 渲染出的对象（平台 values）：SA / ConfigMap / 5 个 Service / `seaweedfs-s3` Deployment /
     master、volume、filer 三个 StatefulSet / `seaweedfs-s3-secret`；**关掉 `createClusterRole` 后
     没有 ClusterRole/ClusterRoleBinding**；

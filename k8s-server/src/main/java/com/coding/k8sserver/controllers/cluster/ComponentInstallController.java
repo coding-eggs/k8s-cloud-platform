@@ -12,6 +12,7 @@ import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
 import com.coding.common.models.k8s.dto.OtelTelemetryStateDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.system.ResponseData;
@@ -22,6 +23,7 @@ import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ExternalGatewayObjects;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
+import com.coding.k8sserver.components.SeaweedAdminSecretObjects;
 import com.coding.k8sserver.components.OtelEsSecretObjects;
 import com.coding.k8sserver.components.OtelServiceMonitorObjects;
 import com.coding.k8sserver.components.OtelTelemetryObjects;
@@ -290,6 +292,32 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 .build();
         client.secrets().inNamespace(request.getTargetNamespace())
                 .resource(target)
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>();
+    }
+
+    /**
+     * SeaweedFS admin 管理台的登录凭证 Secret（S3.6）：不存在则生成随机口令，已存在则原样保留。
+     *
+     * <p>口令只在集群内生成与保存，不经过 platform-api；values 里只用
+     * {@code admin.secret.existingSecret} 引用它，因此不会进操作记录的 values 快照。
+     */
+    @PostMapping("/seaweed-admin-secret")
+    @Operation(summary = "确保 SeaweedFS admin 凭证 Secret 存在（随机口令，已存在不轮换）",
+            description = "幂等；由 platform-api 在安装/升级开启 admin 管理台的 SeaweedFS 前调用")
+    public ResponseData<Void> seaweedAdminSecret(@RequestBody SeaweedAdminSecretRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "SeaweedFS admin Secret 参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        Secret existing = client.secrets().inNamespace(request.getNamespace())
+                .withName(request.getSecretName()).get();
+        if (existing != null && SeaweedAdminSecretObjects.hasCredentials(existing.getData())) {
+            return new ResponseData<>();   // 已存在：升级/重装沿用原口令，不轮换
+        }
+        client.secrets().inNamespace(request.getNamespace())
+                .resource(SeaweedAdminSecretObjects.build(request.getNamespace(), request.getSecretName()))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>();
     }

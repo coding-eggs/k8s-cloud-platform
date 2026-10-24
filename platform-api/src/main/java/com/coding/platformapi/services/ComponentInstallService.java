@@ -73,6 +73,9 @@ public class ComponentInstallService {
     /** Thanos chart 的 global.objstore.secretName（recipe 里固定为它） */
     private static final String THANOS_OBJSTORE_SECRET = "platform-thanos-objstore";
 
+    /** SeaweedFS admin 管理台的口令 Secret：口令由 k8s-server 生成，platform-api 只传名字 */
+    private static final String SEAWEED_ADMIN_SECRET = "platform-seaweedfs-admin";
+
     /** Calico 支持的封装方式（Installation CR 的 calicoNetwork.ipPools[].encapsulation） */
     private static final List<String> CALICO_ENCAPSULATIONS =
             List.of("IPIP", "VXLAN", "IPIPCrossSubnet", "VXLANCrossSubnet", "None");
@@ -235,7 +238,8 @@ public class ComponentInstallService {
         String authorization = K8sServerGateway.currentAuthorization();
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos, otel)));
+                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos, otel,
+                        seaweed)));
         return id;
     }
 
@@ -512,6 +516,7 @@ public class ComponentInstallService {
             s.put("masterReplicas", seaweed.getMasterReplicas());
             s.put("volumeReplicas", seaweed.getVolumeReplicas());
             s.put("s3Replicas", seaweed.getS3Replicas());
+            s.put("adminEnabled", seaweed.getAdminEnabled());
             platform.put("seaweed", s);
         }
         if (!platform.isEmpty()) {
@@ -838,6 +843,8 @@ public class ComponentInstallService {
                 positiveOrNull(prev.get("volumeReplicas")), 1));
         out.setS3Replicas(firstPositive(requested == null ? null : requested.getS3Replicas(),
                 positiveOrNull(prev.get("s3Replicas")), 1));
+        out.setAdminEnabled(firstBoolean(requested == null ? null : requested.getAdminEnabled(),
+                prev.get("adminEnabled") instanceof Boolean b ? b : null, false));
         return out;
     }
 
@@ -897,6 +904,18 @@ public class ComponentInstallService {
         values.put("filer", Map.of("data", pvcValues(s.getFilerSize(), s.getStorageClass())));
         values.put("s3", Map.of("replicas", s.getS3Replicas()));
 
+        // admin 管理台：默认不装；打开时**必须**引用平台生成的凭证 Secret ——
+        // chart 从 4.46 起，admin 绑定非 loopback 地址（0.0.0.0）而没有口令时会直接退出
+        Map<String, Object> admin = new LinkedHashMap<>();
+        admin.put("enabled", Boolean.TRUE.equals(s.getAdminEnabled()));
+        if (Boolean.TRUE.equals(s.getAdminEnabled())) {
+            admin.put("secret", Map.of(
+                    "existingSecret", SEAWEED_ADMIN_SECRET,
+                    "userKey", "username",
+                    "pwKey", "password"));
+        }
+        values.put("admin", admin);
+
         List<ReleaseSpec> out = new ArrayList<>(releases.size());
         for (ReleaseSpec r : releases) {
             out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(), r.chartVersion(),
@@ -922,6 +941,19 @@ public class ComponentInstallService {
             return requested;
         }
         return previous != null && previous > 0 ? previous : fallback;
+    }
+
+    private static Boolean firstBoolean(Boolean requested, Boolean previous, boolean fallback) {
+        if (requested != null) {
+            return requested;
+        }
+        return previous != null ? previous : fallback;
+    }
+
+    /** 组件本体（主 release）所在的命名空间；没有主标记时退回第一个 */
+    private static String releaseNamespace(List<ReleaseSpec> releases) {
+        return releases.stream().filter(ReleaseSpec::primary).findFirst()
+                .orElse(releases.get(0)).namespace();
     }
 
     private static Map<String, Map<String, Object>> parseSnapshot(String json) {
@@ -959,7 +991,8 @@ public class ComponentInstallService {
 
     private void run(Long id, String clusterId, String componentCode, String action,
                      List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl,
-                     ThanosInstallRequest thanos, OtelInstallRequest otel) {
+                     ThanosInstallRequest thanos, OtelInstallRequest otel,
+                     SeaweedInstallRequest seaweed) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
@@ -983,6 +1016,11 @@ public class ComponentInstallService {
                 client.applyThanosObjstore(clusterId, thanos.getNamespace(), thanos.getSecretName(),
                         thanos.getEndpoint(), thanos.getBucket(), thanos.isInsecureSkipVerify(),
                         thanosReleaseNamespace(releases), THANOS_OBJSTORE_SECRET);
+            }
+            // SeaweedFS 的 admin 管理台必须带鉴权（chart 绑定 0.0.0.0 时无密码会直接退出）：
+            // 平台先确保一个随机口令的 Secret 存在（已存在则原样保留，升级不轮换），再用 values 引用它。
+            if (seaweed != null && Boolean.TRUE.equals(seaweed.getAdminEnabled())) {
+                client.applySeaweedAdminSecret(clusterId, releaseNamespace(releases), SEAWEED_ADMIN_SECRET);
             }
             ComponentInstallResultDTO result =
                     client.applyComponent(clusterId, componentCode, action, toDtos(releases));

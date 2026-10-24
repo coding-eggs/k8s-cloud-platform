@@ -467,6 +467,7 @@ const EMPTY_SEAWEED: K8sSeaweedInstall = {
   masterReplicas: 1,
   volumeReplicas: 1,
   s3Replicas: 1,
+  adminEnabled: false,
 }
 
 /** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
@@ -627,10 +628,18 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   // 凭证 Secret 只能放 monitor（表单不提供命名空间选择）；旧快照里别的命名空间值在这里归一
   otel.tempoStorage.credentialSecret.namespace = OTEL_NAMESPACE
   otel.es.credentialSecret.namespace = OTEL_NAMESPACE
-  // 对象存储：编辑时回填上次成功的参数（容量/副本数可改）；StorageClass 没记录时保持空、必须重选
-  const seaweed: K8sSeaweedInstall = editing && row.seaweedCurrent
+  // 对象存储：编辑时回填上次成功的参数（容量/副本数/管理台可改）；StorageClass 没记录时保持空、必须重选
+  const seaweedMerged: K8sSeaweedInstall = editing && row.seaweedCurrent
     ? { ...EMPTY_SEAWEED, ...row.seaweedCurrent }
     : { ...EMPTY_SEAWEED }
+  // 后端快照里缺省字段是 null（不是 undefined），统一收敛成默认值，开关与数字控件才不会显示空
+  const seaweed: K8sSeaweedInstall = {
+    ...seaweedMerged,
+    masterReplicas: seaweedMerged.masterReplicas ?? EMPTY_SEAWEED.masterReplicas,
+    volumeReplicas: seaweedMerged.volumeReplicas ?? EMPTY_SEAWEED.volumeReplicas,
+    s3Replicas: seaweedMerged.s3Replicas ?? EMPTY_SEAWEED.s3Replicas,
+    adminEnabled: seaweedMerged.adminEnabled ?? false,
+  }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, chartVersion: componentChartVersion(row) ?? '',
@@ -1274,48 +1283,70 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         <span class="cc-form-label">StorageClass</span>
         <div class="cc-form-control">
           <el-select v-model="applyDialog.seaweed.storageClass" filterable allow-create
-                     placeholder="选择集群的 StorageClass" style="width: 100%">
+                     placeholder="选择集群的 StorageClass" class="cc-sf-select">
             <el-option v-for="sc in applyDialog.storageClasses" :key="sc" :label="sc" :value="sc" />
           </el-select>
           <div class="cc-form-hint">
-            三块 PVC（master 的 Raft 数据 / volume 数据盘 / filer 元数据）都用它；
-            集群没有默认 StorageClass 时必须在这里选，留空会装出一组永远 Pending 的卷
+            三块 PVC（master 的 Raft 数据 / volume 数据盘 / filer 元数据）共用；
+            必须选，留空会装出一组永远 Pending 的卷
           </div>
         </div>
       </div>
       <div v-if="applyDialog.showSeaweed" class="cc-form-row">
-        <span class="cc-form-label">容量</span>
+        <span class="cc-form-label">卷容量</span>
         <div class="cc-form-control">
-          <div class="cc-inline">
-            <span class="cc-inline-label">volume 数据盘</span>
-            <el-input v-model="applyDialog.seaweed.volumeSize" style="width: 110px" />
-            <span class="cc-inline-label">filer 元数据</span>
-            <el-input v-model="applyDialog.seaweed.filerSize" style="width: 100px" />
-            <span class="cc-inline-label">master</span>
-            <el-input v-model="applyDialog.seaweed.masterSize" style="width: 90px" />
+          <div class="cc-sf-grid">
+            <div class="cc-sf-item">
+              <span class="cc-sf-label">volume 数据盘</span>
+              <el-input v-model="applyDialog.seaweed.volumeSize" class="cc-sf-input" placeholder="30Gi" />
+            </div>
+            <div class="cc-sf-item">
+              <span class="cc-sf-label">filer 元数据</span>
+              <el-input v-model="applyDialog.seaweed.filerSize" class="cc-sf-input" placeholder="10Gi" />
+            </div>
+            <div class="cc-sf-item">
+              <span class="cc-sf-label">master（Raft）</span>
+              <el-input v-model="applyDialog.seaweed.masterSize" class="cc-sf-input" placeholder="1Gi" />
+            </div>
           </div>
           <div class="cc-form-hint">
-            形如 30Gi / 10Gi。数据盘是每个 volume server 一块；master 存 Raft 日志与集群身份，必须持久化
+            格式 30Gi / 200Mi。数据盘是每个 volume server 一块；master 存 Raft 日志与集群身份，必须持久化
           </div>
         </div>
       </div>
       <div v-if="applyDialog.showSeaweed" class="cc-form-row">
         <span class="cc-form-label">副本数</span>
         <div class="cc-form-control">
-          <div class="cc-inline">
-            <span class="cc-inline-label">master</span>
-            <el-input-number v-model="applyDialog.seaweed.masterReplicas" :min="1" :max="3" :step="2"
-                             controls-position="right" style="width: 110px" />
-            <span class="cc-inline-label">volume</span>
-            <el-input-number v-model="applyDialog.seaweed.volumeReplicas" :min="1" :max="20"
-                             controls-position="right" style="width: 110px" />
-            <span class="cc-inline-label">S3 网关</span>
-            <el-input-number v-model="applyDialog.seaweed.s3Replicas" :min="1" :max="10"
-                             controls-position="right" style="width: 110px" />
+          <div class="cc-sf-grid">
+            <div class="cc-sf-item">
+              <span class="cc-sf-label">master（1 或 3）</span>
+              <el-input-number v-model="applyDialog.seaweed.masterReplicas" :min="1" :max="3" :step="2"
+                               controls-position="right" class="cc-sf-input" />
+            </div>
+            <div class="cc-sf-item">
+              <span class="cc-sf-label">volume</span>
+              <el-input-number v-model="applyDialog.seaweed.volumeReplicas" :min="1" :max="20"
+                               controls-position="right" class="cc-sf-input" />
+            </div>
+            <div class="cc-sf-item">
+              <span class="cc-sf-label">S3 网关</span>
+              <el-input-number v-model="applyDialog.seaweed.s3Replicas" :min="1" :max="10"
+                               controls-position="right" class="cc-sf-input" />
+            </div>
           </div>
           <div class="cc-form-hint">
-            Raft 要奇数成员（1 或 3，默认 1）；装好后集群内 S3 入口是
-            <code>seaweedfs-s3.platform-storage:8333</code>（凭据在 Secret <code>seaweedfs-s3-secret</code>）
+            Raft 要奇数成员（默认 1）；集群内 S3 入口
+            <code>seaweedfs-s3.platform-storage:8333</code>，凭据在 Secret <code>seaweedfs-s3-secret</code>
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showSeaweed" class="cc-form-row">
+        <span class="cc-form-label">管理台</span>
+        <div class="cc-form-control">
+          <el-switch v-model="applyDialog.seaweed.adminEnabled" active-text="安装 admin UI（端口 23646）" />
+          <div class="cc-form-hint">
+            登录口令由平台生成并写入 Secret <code>platform-seaweedfs-admin</code>（键 username / password），
+            升级不轮换；只看集群/卷状态用 master UI（9333）也可以
           </div>
         </div>
       </div>
@@ -1657,8 +1688,12 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-section-title:first-of-type { margin-top: 4px; }
 .cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
 .cc-form-control { flex: 1 1 auto; min-width: 300px; }
-.cc-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cc-inline-label { font-size: 12.5px; color: var(--text-3); }
+.cc-sf-select { max-width: 360px; width: 100%; }
+/* 对象存储表单：三列字段，label 在上、控件在下，宽度统一 */
+.cc-sf-grid { display: flex; flex-wrap: wrap; gap: 16px 24px; }
+.cc-sf-item { display: flex; flex-direction: column; gap: 4px; }
+.cc-sf-label { font-size: 12px; color: var(--text-3); }
+.cc-sf-input { width: 140px; }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .cc-resources { display: flex; flex-direction: column; gap: 8px; }
 .cc-resource-line { display: flex; align-items: center; gap: 8px; }

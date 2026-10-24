@@ -998,7 +998,7 @@ class ComponentInstallServiceTest {
 
         svc.apply(new ComponentApplyRequest("c1", "seaweedfs", "INSTALL", null, Map.of(), null, null, null,
                 null, null, null, new com.coding.platformapi.models.SeaweedInstallRequest(
-                        "nfs-client", "2Gi", "50Gi", "20Gi", 1, 2, 1)), "admin");
+                        "nfs-client", "2Gi", "50Gi", "20Gi", 1, 2, 1, false)), "admin");
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
@@ -1015,7 +1015,44 @@ class ComponentInstallServiceTest {
                 // 副本数来自表单，不被契约值压掉
                 .contains("replicas=2")
                 .contains("volume={")
+                // 默认不装管理台
+                .contains("admin={enabled=false}")
                 .contains("fullnameOverride=seaweedfs");
+    }
+
+    @Test
+    void enablingTheSeaweedfsAdminUiCreatesItsSecretAndReferencesIt() {
+        // chart 4.46+ 的 admin 绑 0.0.0.0 时没有口令会直接退出 —— 平台先生成凭证 Secret 再引用
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "seaweedfs")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("seaweedfs", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-seaweedfs", "platform-storage", "seaweedfs", "4.48.0",
+                                Map.of("fullnameOverride", "seaweedfs"), Map.of())), List.of(),
+                        false, false, false, false, null, false, null, true));
+
+        ComponentInstallService svc = service(catalog);
+
+        svc.apply(new ComponentApplyRequest("c1", "seaweedfs", "INSTALL", null, Map.of(), null, null, null,
+                null, null, null, new com.coding.platformapi.models.SeaweedInstallRequest(
+                        "nfs-client", "1Gi", "30Gi", "10Gi", 1, 1, 1, true)), "admin");
+
+        // 凭证 Secret 必须在 helm 之前就位
+        verify(client, timeout(5000)).applySeaweedAdminSecret("c1", "platform-storage",
+                "platform-seaweedfs-admin");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), captor.capture());
+        assertThat(captor.getValue().get(0).getValues().toString())
+                .contains("admin={enabled=true")
+                .contains("existingSecret=platform-seaweedfs-admin")
+                .contains("userKey=username")
+                .contains("pwKey=password");
     }
 
     @Test

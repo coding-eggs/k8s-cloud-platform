@@ -10,6 +10,7 @@ import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
 import com.coding.common.models.k8s.dto.OtelTelemetryStateDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeRequestDTO;
@@ -107,6 +108,19 @@ public class K8sComponentClient {
         body.setTargetNamespace(targetNamespace);
         body.setTargetSecretName(targetSecretName);
         gateway.exchange(HttpMethod.POST, "/components/thanos-objstore", null, body,
+                gateway.responseType(Void.class));
+    }
+
+    /**
+     * SeaweedFS admin 管理台的凭证 Secret：不存在时由 k8s-server 生成随机口令（已存在不轮换）。
+     * 口令不经过本层，也不会进 values 快照。
+     */
+    public void applySeaweedAdminSecret(String clusterId, String namespace, String secretName) {
+        SeaweedAdminSecretRequestDTO body = new SeaweedAdminSecretRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setSecretName(secretName);
+        gateway.exchange(HttpMethod.POST, "/components/seaweed-admin-secret", null, body,
                 gateway.responseType(Void.class));
     }
 

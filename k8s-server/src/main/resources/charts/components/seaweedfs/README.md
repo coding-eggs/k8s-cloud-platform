@@ -15,6 +15,7 @@
 | 平台功能 | `object-storage`（桶/凭据分配见 §6） |
 | 集群内 S3 入口 | `http://seaweedfs-s3.platform-storage:8333` |
 | 凭据 | Secret `seaweedfs-s3-secret`（`admin_access_key_id` / `admin_secret_access_key` / `read_*`） |
+| 管理台（可选） | admin UI，`23646`；凭据 Secret `platform-seaweedfs-admin`（见 §3.1） |
 
 **模型**：集群级**一套服务 + 多个桶**，不是每租户一个实例。四个组件：
 
@@ -36,12 +37,12 @@ global:
 s3:
   enabled: true
   enableAuth: true
-admin:
-  enabled: false
 master: { resources: {...} }
 volume: { resources: {...} }
 filer:  { resources: {...} }
 ```
+
+> `admin` 不写进契约：**是否装管理台由安装表单决定**（默认不装），见 §3.1。
 
 | 值 | 为什么是契约 / 来源 |
 |---|---|
@@ -50,7 +51,6 @@ filer:  { resources: {...} }
 | `s3.enableAuth: true` | 关掉 = S3 匿名可写。凭据由 chart 生成进 `seaweedfs-s3-secret`（`helm.sh/hook` + `resource-policy: keep`，升级不重建） |
 | `global.seaweedfs.createClusterRole: false` | chart 默认给 S3 网关 SA 一个**集群级**「任意 Pod 读写」角色（Cloud Drive 用）。平台只当 S3 用，不给存储组件这种权限 |
 | `global.seaweedfs.enableSecurity: false` | 组件间 mTLS/JWT 暂不开（内网、平台自用）；**S3 的 AK/SK 校验是独立开关，已开** |
-| `admin.enabled: false` | 平台不需要第二个管理面；admin UI 还会引入 worker 等额外工作负载 |
 | 四个组件的 resources | 显式钉住，避免存储组件无 requests 把节点挤爆（也就不会撞命名空间配额） |
 
 ### 2.1 镜像版本 = chart 的 appVersion（升级前必须验证）
@@ -75,12 +75,41 @@ chart 的 `seaweedfs.image` helper 是 `default .Chart.AppVersion .Values.image.
 | `masterReplicas` | `1` | Raft 要奇数（1 或 3）；HA 至少 3 |
 | `volumeReplicas` | `1` | 数据节点数 |
 | `s3Replicas` | `1` | S3 网关副本 |
+| `adminEnabled` | `false` | 是否装 admin 管理台（见 §3.1） |
 
 > 为什么不用 `editableValues`：这些值落在嵌套结构里（`volume.dataDirs` 是 list、`*.data` 是 map），
 > 而 editableValues 的模型是「路径 → 标量」。后端在 `mergeValues` 之后用
 > `applySeaweedValues` 把它们拼进 values，并把整组参数记进操作快照的 `__platform.seaweed`（编辑表单回填）。
 
 ⚠️ **容量必须带单位**（`10Gi` / `200Mi` / `1Ti`）：后端用正则校验，裸数字会被拒（避免「30」被当成 30 字节）。
+
+### 3.1 admin 管理台（可选）
+
+打开 `adminEnabled` 后多一个 `seaweedfs-admin` StatefulSet（端口 `23646`，数据盘用 emptyDir ——
+管理台的配置/任务记录随 Pod 重启丢失，不影响存储数据）。
+
+**为什么必须带凭证**：chart 从 4.46 起，admin 绑定非 loopback 地址（`0.0.0.0`，健康探针需要）
+而**没有口令时会直接退出**。所以装的时候平台：
+
+1. 在 helm 之前调 k8s-server 的 `/components/seaweed-admin-secret`，**生成随机口令**写进
+   Secret `platform-seaweedfs-admin`（键 `username` / `password`，已存在则原样保留、升级不轮换）；
+2. values 里只用 `admin.secret.existingSecret` 引用它 —— **口令不经过 platform-api，也不进 values 快照**。
+
+查看口令 / 访问：
+
+```bash
+kubectl -n platform-storage get secret platform-seaweedfs-admin \
+  -o jsonpath='{.data.username}' | base64 -d; echo
+kubectl -n platform-storage get secret platform-seaweedfs-admin \
+  -o jsonpath='{.data.password}' | base64 -d; echo
+
+# 管理台只有 ClusterIP，用 port-forward 访问
+kubectl -n platform-storage port-forward svc/seaweedfs-admin 23646:23646
+# 浏览器打开 http://localhost:23646
+```
+
+> 侧门：master UI（9333）与 filer UI（8888）是 chart 自带、**没有鉴权**的页面，只能留在集群内；
+> 要往外暴露请先开 `enableSecurity`（mTLS/JWT）或走带鉴权的网关。
 
 ## 4. 装完之后
 

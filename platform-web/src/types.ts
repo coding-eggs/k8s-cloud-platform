@@ -1033,6 +1033,8 @@ export interface K8sSeaweedInstall {
   masterReplicas: number
   volumeReplicas: number
   s3Replicas: number
+  /** 是否装 admin 管理台（口令由平台生成进 Secret platform-seaweedfs-admin） */
+  adminEnabled?: boolean
 }
 
 /** Calico 网络参数（安装表单） */
