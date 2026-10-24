@@ -1,7 +1,7 @@
 # 对象存储（SeaweedFS，集群组件）
 
 > **这是组件级 README（跨版本）**：平台怎么装、约定是什么、踩过哪些坑、加新版本要改哪里。
-> 具体 chart 版本的来源/版本号在版本目录：`<version>/README.md`（当前 `4.49.0/`）。
+> 具体 chart 版本的来源/版本号在版本目录：`<version>/README.md`（当前 `4.48.0/`）。
 > 选型背景：MinIO 社区版已归档（无安全补丁），需求稿 §5.4 对比后选 SeaweedFS（Apache-2.0）。
 
 ## 1. 概览
@@ -52,6 +52,17 @@ filer:  { resources: {...} }
 | `global.seaweedfs.enableSecurity: false` | 组件间 mTLS/JWT 暂不开（内网、平台自用）；**S3 的 AK/SK 校验是独立开关，已开** |
 | `admin.enabled: false` | 平台不需要第二个管理面；admin UI 还会引入 worker 等额外工作负载 |
 | 四个组件的 resources | 显式钉住，避免存储组件无 requests 把节点挤爆（也就不会撞命名空间配额） |
+
+### 2.1 镜像版本 = chart 的 appVersion（升级前必须验证）
+
+chart 的 `seaweedfs.image` helper 是 `default .Chart.AppVersion .Values.image.tag` —— **不写 `image.tag` 时，
+镜像 tag 就是 Chart.yaml 的 appVersion**。所以：
+
+- chart 版本与镜像版本**不是一回事**，且发布节奏会脱节：chart `4.49.0` 的 appVersion 是 `4.49`，
+  但 Docker Hub 上 `chrislusf/seaweedfs:4.49` **没有发布**（只有 `4.49_large_disk_foundationdb`），
+  装上去就是 `manifest unknown`（2026-10-24 用户实装报错，因此当前钉 4.48.0 / 镜像 4.48）；
+- 升级 chart 前的必检项：`curl -o /dev/null -w '%{http_code}' https://hub.docker.com/v2/repositories/chrislusf/seaweedfs/tags/<appVersion>`
+  必须 200；不是 200 时要么换一个 chart 版本，要么在契约里显式钉 `image.tag`（并在版本 README 写明偏差）。
 
 ## 3. 安装参数（表单，⚙️）
 
@@ -104,10 +115,11 @@ kubectl -n platform-storage get secret seaweedfs-s3-secret -o jsonpath='{.data}'
 
 1. `helm pull seaweedfs --repo https://seaweedfs.github.io/seaweedfs/helm --version <x.y.z> --untar`
    → 入库 `seaweedfs/<x.y.z>/chart/` + `provenance.yaml` + `<x.y.z>/README.md`；
-2. 改 `ComponentRecipeCatalog.SEAWEEDFS_RELEASES` 的 `chartVersion` / `appVersion`（**顺序新→旧**）；
-3. 核对 values 字段是否改名（本次用到：`fullnameOverride`、`global.seaweedfs.*`、`s3.enabled/enableAuth/port`、
+2. **先验证镜像存在**（§2.1）：chart 的 appVersion 必须能在 Docker Hub 拉到；
+3. 改 `ComponentRecipeCatalog.SEAWEEDFS_RELEASES` 的 `chartVersion` / `appVersion`（**顺序新→旧**）；
+4. 核对 values 字段是否改名（本次用到：`fullnameOverride`、`global.seaweedfs.*`、`s3.enabled/enableAuth/port`、
    `master/volume/filer.data(.size/.storageClass)`、`volume.dataDirs`）；改名要同步
    `ComponentInstallService.applySeaweedValues`；
-4. `helm template` + `kubectl apply --dry-run=server` 过一遍（会校验 PVC 模板与资源字段）；
-5. 真集群装一次，按 §4 验证（Pods Ready、匿名 403、Secret 有 key、建一个桶删一个桶）；
-6. 重建 k8s-server + platform-api + platform-web（chart 在 k8s-server 的 resources 里）。
+5. `helm template` + `kubectl apply --dry-run=server` 过一遍（会校验 PVC 模板与资源字段）；
+6. 真集群装一次，按 §4 验证（Pods Ready、匿名 403、Secret 有 key、建一个桶删一个桶）；
+7. 重建 k8s-server + platform-api + platform-web（chart 在 k8s-server 的 resources 里）。

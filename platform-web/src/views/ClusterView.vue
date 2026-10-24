@@ -234,7 +234,7 @@ onMounted(load)
           <code class="res-name name-link" @click="goDetail(row)">{{ row.clusterName }}</code>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column label="状态" width="150">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status).type">{{ statusTag(row.status).text }}</el-tag>
         </template>

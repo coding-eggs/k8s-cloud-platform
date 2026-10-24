@@ -494,6 +494,11 @@ public class ComponentRecipeCatalog {
      * SeaweedFS：集群级一套对象存储服务（master / volume / filer / s3 网关），
      * **不是**每租户一个实例 —— 桶与 AK/SK 后续由平台分配，应用只拿 endpoint + 桶名 + 凭据。
      *
+     * <p>⚠️ **版本 4.48.0 是有意的**：chart 的镜像 tag 直接取 {@code Chart.yaml} 的 appVersion，
+     * 而 Docker Hub 上 {@code chrislusf/seaweedfs:4.49} 至今没有发布（只有 {@code 4.49_large_disk_foundationdb}），
+     * 装 4.49.0 会 {@code manifest unknown}（2026-10-24 用户实装报错）。升级 chart 前先确认
+     * appVersion 对应的镜像 tag 在 registry 上存在。
+     *
      * <p>名字钉 {@code fullnameOverride: seaweedfs}：组件探测认工作负载 {@code seaweedfs-master}，
      * release 名（{@code platform-seaweedfs}）变了也不影响探测。
      *
@@ -513,7 +518,7 @@ public class ComponentRecipeCatalog {
     }
 
     private static final List<ReleaseSpec> SEAWEEDFS_RELEASES = List.of(new ReleaseSpec(
-            "platform-seaweedfs", "platform-storage", "seaweedfs", "4.49.0",
+            "platform-seaweedfs", "platform-storage", "seaweedfs", "4.48.0",
             Map.of(
                     "fullnameOverride", "seaweedfs",
                     "global", Map.of("seaweedfs", Map.of(
@@ -527,7 +532,7 @@ public class ComponentRecipeCatalog {
                     "master", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
                     "volume", Map.of("resources", seaweedResources("100m", "256Mi", "1", "1Gi")),
                     "filer", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi"))),
-            Map.of()).asPrimary().withAppVersion("4.49"));
+            Map.of()).asPrimary().withAppVersion("4.48"));
 
     // ==================== 汇总 ====================
 

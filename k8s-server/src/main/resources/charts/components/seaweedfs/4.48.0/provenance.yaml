@@ -1,0 +1,14 @@
+source: https://github.com/seaweedfs/seaweedfs
+helm_repo: https://seaweedfs.github.io/seaweedfs/helm
+chart: seaweedfs
+version: 4.48.0
+appVersion: "4.48"
+fetched_at: 2026-10-24
+fetch_command: helm pull seaweedfs --repo https://seaweedfs.github.io/seaweedfs/helm --version 4.48.0 --untar
+digest: fa9beb4b68ee1e56129779643194968210381a33caf47fc177fd17d43efb686e
+note: >-
+  官方 chart 原样入库（仅删掉 ci/ 目录），**未修改任何模板**。平台的定制全部通过 recipe 的
+  contract 值 + 安装表单（StorageClass / 容量 / 副本数）完成。
+  ⚠️ 为什么是 4.48.0 而不是更新的 4.49.0：chart 的镜像 tag 直接取 **Chart.yaml 的 appVersion**，
+  而 Docker Hub 上 `chrislusf/seaweedfs:4.49` 至今没有发布（只有 `4.49_large_disk_foundationdb`），
+  装 4.49.0 会 `manifest unknown`。升级 chart 前务必先确认 appVersion 对应的镜像 tag 在 registry 上存在。
