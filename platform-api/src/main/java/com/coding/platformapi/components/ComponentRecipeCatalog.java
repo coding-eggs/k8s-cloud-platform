@@ -488,6 +488,47 @@ public class ComponentRecipeCatalog {
                             "enabled", true, "storageClassName", "nfs-client", "size", "20Gi")),
             Map.of(), true).withAppVersion("3.1.0");
 
+    // ==================== 对象存储（SeaweedFS） ====================
+
+    /**
+     * SeaweedFS：集群级一套对象存储服务（master / volume / filer / s3 网关），
+     * **不是**每租户一个实例 —— 桶与 AK/SK 后续由平台分配，应用只拿 endpoint + 桶名 + 凭据。
+     *
+     * <p>名字钉 {@code fullnameOverride: seaweedfs}：组件探测认工作负载 {@code seaweedfs-master}，
+     * release 名（{@code platform-seaweedfs}）变了也不影响探测。
+     *
+     * <p>{@code createClusterRole=false}：chart 默认给 S3 网关的 ServiceAccount 一个**集群级**
+     * 「任意 Pod 读写」角色（Cloud Drive 场景用）。平台只把它当 S3 用，不给存储组件这种权限。
+     *
+     * <p>{@code enableSecurity=false}：组件间 mTLS / JWT 暂不开（内网、平台自用）；
+     * <b>S3 凭据校验另由 {@code s3.enableAuth=true} 控制，必须开</b> —— 不开就是匿名可写。
+     *
+     * <p>StorageClass / 容量 / 副本数不在这里：它们落在 {@code volume.dataDirs}（list）与
+     * {@code *.data}（map）里，由安装表单参数拼出（见 {@code SeaweedInstallRequest}）。
+     */
+    private static Map<String, Object> seaweedResources(String cpuRequest, String memRequest,
+                                                        String cpuLimit, String memLimit) {
+        return Map.of("requests", Map.of("cpu", cpuRequest, "memory", memRequest),
+                "limits", Map.of("cpu", cpuLimit, "memory", memLimit));
+    }
+
+    private static final List<ReleaseSpec> SEAWEEDFS_RELEASES = List.of(new ReleaseSpec(
+            "platform-seaweedfs", "platform-storage", "seaweedfs", "4.49.0",
+            Map.of(
+                    "fullnameOverride", "seaweedfs",
+                    "global", Map.of("seaweedfs", Map.of(
+                            "createClusterRole", false,
+                            // 组件间加密暂不开；S3 的 AK/SK 校验在 s3.enableAuth
+                            "enableSecurity", false)),
+                    // S3 网关是这个组件的意义所在；admin 面板不装（平台不需要第二个管理面）
+                    "s3", Map.of("enabled", true, "enableAuth", true,
+                            "resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
+                    "admin", Map.of("enabled", false),
+                    "master", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
+                    "volume", Map.of("resources", seaweedResources("100m", "256Mi", "1", "1Gi")),
+                    "filer", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi"))),
+            Map.of()).asPrimary().withAppVersion("4.49"));
+
     // ==================== 汇总 ====================
 
     private static final Map<String, Map<String, ComponentRecipe>> RECIPES = Map.ofEntries(
@@ -513,6 +554,12 @@ public class ComponentRecipeCatalog {
                     BUSINESS, new ComponentRecipe(BUSINESS, CALICO_RELEASES, List.of(), false, false, false, true),
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, CALICO_RELEASES, List.of(), false, false, false, true))),
             Map.entry("cert-manager", profiles(CERT_MANAGER_RELEASES, List.of())),
+            // 对象存储：安装表单带 StorageClass/容量/副本数（seaweedStorage=true）
+            Map.entry("seaweedfs", Map.of(
+                    BUSINESS, new ComponentRecipe(BUSINESS, SEAWEEDFS_RELEASES, List.of(),
+                            false, false, false, false, null, false, null, true),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, SEAWEEDFS_RELEASES, List.of(),
+                            false, false, false, false, null, false, null, true))),
             // OTel 采集栈：operator 两遍 + Tempo（管理集群）。Tempo 夹在两遍 operator 之间，
             // 第一遍先落 CRD，Tempo 作为后端就绪后再下发 Instrumentation/collector。
             Map.entry("otel-operator", Map.of(

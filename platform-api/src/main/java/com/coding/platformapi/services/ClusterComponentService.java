@@ -20,6 +20,7 @@ import com.coding.platformapi.models.EditableFieldDTO;
 import com.coding.platformapi.models.EsConfig;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
+import com.coding.platformapi.models.SeaweedInstallRequest;
 import com.coding.platformapi.models.TempoStorageConfig;
 import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
@@ -243,6 +244,9 @@ public class ClusterComponentService {
             if (s.isOtelInstrumentation()) {
                 s.setOtelInstallCurrent(otelInstallOf(platform));
             }
+            if (s.isSeaweedStorage()) {
+                s.setSeaweedCurrent(seaweedOf(platform));
+            }
             applyCurrentEditableValues(s, snapshot, profile);
         }
     }
@@ -336,8 +340,23 @@ public class ClusterComponentService {
         return cur;
     }
 
-    /** {@code __platform.otel} → 编辑表单的当前值；没有记录返回 null */
-    private static OtelInstallRequest otelInstallOf(Map<String, Object> platform) {
+    /** {@code __platform.seaweed} → 编辑表单的当前值；没有记录返回 null（表单退回默认容量/副本数） */
+    private static SeaweedInstallRequest seaweedOf(Map<String, Object> platform) {
+        if (!(platform.get("seaweed") instanceof Map<?, ?> m)) {
+            return null;
+        }
+        SeaweedInstallRequest cur = new SeaweedInstallRequest();
+        cur.setStorageClass(asString(m.get("storageClass")));
+        cur.setMasterSize(asString(m.get("masterSize")));
+        cur.setVolumeSize(asString(m.get("volumeSize")));
+        cur.setFilerSize(asString(m.get("filerSize")));
+        cur.setMasterReplicas(asInt(m.get("masterReplicas")));
+        cur.setVolumeReplicas(asInt(m.get("volumeReplicas")));
+        cur.setS3Replicas(asInt(m.get("s3Replicas")));
+        return cur;
+    }
+
+    /** {@code __platform.otel} → 编辑表单的当前值；没有记录返回 null */    private static OtelInstallRequest otelInstallOf(Map<String, Object> platform) {
         if (!(platform.get("otel") instanceof Map<?, ?> m)) {
             return null;
         }
@@ -544,6 +563,7 @@ public class ClusterComponentService {
         s.setTempoInstall(otel != null && otel.tempoInstall());
         s.setTempoRemoteWrite(otel != null && otel.tempoRemoteWrite());
         s.setDefaultTempoEndpoint(otel == null ? null : otel.tempoEndpointDefault());
+        s.setSeaweedStorage(recipe != null && recipe.seaweedStorage());
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对将来可能出现的"只有工作负载判据"的组件同样成立，否则同一集群里会出现

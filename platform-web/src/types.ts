@@ -1018,6 +1018,21 @@ export interface K8sComponentStatus {
   tempoEndpoint?: string | null
   /** 当前生效的 OTel 安装参数（上次成功快照）—— 编辑表单预填 */
   otelInstallCurrent?: K8sOtelInstall | null
+  /** 安装时是否要选对象存储（SeaweedFS）的 StorageClass / 容量 / 副本数 */
+  seaweedStorage?: boolean
+  /** 当前生效的对象存储参数（上次成功快照）—— 编辑表单预填 */
+  seaweedCurrent?: K8sSeaweedInstall | null
+}
+
+/** 对象存储（SeaweedFS）安装参数：StorageClass 必填，容量是带单位的 quantity */
+export interface K8sSeaweedInstall {
+  storageClass: string
+  masterSize: string
+  volumeSize: string
+  filerSize: string
+  masterReplicas: number
+  volumeReplicas: number
+  s3Replicas: number
 }
 
 /** Calico 网络参数（安装表单） */

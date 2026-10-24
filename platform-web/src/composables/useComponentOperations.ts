@@ -1,6 +1,8 @@
 import { ref, watch, type Ref } from 'vue'
 import { clusterApi } from '@/api'
-import type { K8sCalicoInstall, K8sComponentOperation, K8sOtelInstall, K8sThanosInstall } from '@/types'
+import type {
+  K8sCalicoInstall, K8sComponentOperation, K8sOtelInstall, K8sSeaweedInstall, K8sThanosInstall,
+} from '@/types'
 
 /**
  * 组件安装/升级操作（S3.6）。
@@ -41,12 +43,13 @@ export function useComponentOperations(clusterId: Ref<string | null | undefined>
     calicoInstall?: K8sCalicoInstall,
     tektonProfile?: string,
     otel?: K8sOtelInstall,
+    seaweed?: K8sSeaweedInstall,
   ): Promise<number> {
     const id = clusterId.value
     if (!id) throw new Error('缺少集群上下文')
     const operationId = await clusterApi.componentApply({
       clusterId: id, componentCode, action, targetVersion, editableValues,
-      alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, tektonProfile, otel,
+      alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, tektonProfile, otel, seaweed,
     })
     await load()
     return operationId

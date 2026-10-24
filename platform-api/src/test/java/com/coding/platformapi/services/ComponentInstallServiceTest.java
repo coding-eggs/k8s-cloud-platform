@@ -958,6 +958,67 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void aSeaweedfsInstallWithoutStorageClassIsRejectedBeforeHelm() {
+        // chart 无条件渲染 storageClassName；空串在 K8s 里是「不用动态供给」，装完是一组永远 Pending 的 PVC，
+        // 而 helm 会显示成功 —— 必须在下发前拒
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("seaweedfs", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-seaweedfs", "platform-storage", "seaweedfs", "4.49.0",
+                                Map.of(), Map.of())), List.of(),
+                        false, false, false, false, null, false, null, true));
+
+        ComponentInstallService svc = service(catalog);
+
+        assertThatThrownBy(() -> svc.apply(new ComponentApplyRequest(
+                "c1", "seaweedfs", "INSTALL", null, Map.of()), "admin"))
+                .hasMessageContaining("StorageClass");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void theSeaweedfsFormIsTurnedIntoPvcAndReplicaValues() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "seaweedfs")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("seaweedfs", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-seaweedfs", "platform-storage", "seaweedfs", "4.49.0",
+                                Map.of("fullnameOverride", "seaweedfs"), Map.of())), List.of(),
+                        false, false, false, false, null, false, null, true));
+
+        ComponentInstallService svc = service(catalog);
+
+        svc.apply(new ComponentApplyRequest("c1", "seaweedfs", "INSTALL", null, Map.of(), null, null, null,
+                null, null, null, new com.coding.platformapi.models.SeaweedInstallRequest(
+                        "nfs-client", "2Gi", "50Gi", "20Gi", 1, 2, 1)), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), captor.capture());
+        String values = captor.getValue().get(0).getValues().toString();
+        // 三块 PVC 都是 dynamic provisioning + 同一个 StorageClass；volume 的数据盘是 list
+        assertThat(values)
+                .contains("persistentVolumeClaim")
+                .contains("nfs-client")
+                .contains("50Gi")
+                .contains("20Gi")
+                .contains("2Gi")
+                .contains("maxVolumes=0")
+                // 副本数来自表单，不被契约值压掉
+                .contains("replicas=2")
+                .contains("volume={")
+                .contains("fullnameOverride=seaweedfs");
+    }
+
+    @Test
     void aMissingCalicoCidrIsRejectedBeforeInstalling() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         com.coding.platformapi.components.ComponentRecipeCatalog catalog =

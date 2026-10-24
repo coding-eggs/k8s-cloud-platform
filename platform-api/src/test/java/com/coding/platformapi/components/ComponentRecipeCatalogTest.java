@@ -49,8 +49,21 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
-    void anUnknownComponentOrProfileHasNoRecipe() {
-        assertThat(catalog.recipeOf("no-such", "BUSINESS")).isNull();
+    void seaweedfsPinsTheProbeNameAndKeepsS3AuthOn() {
+        // fullnameOverride 钉成 seaweedfs：ClusterComponentCatalog 探的就是 StatefulSet seaweedfs-master
+        // （release 名是 platform-seaweedfs，不钉名字探测永远"未安装"）
+        ReleaseSpec spec = catalog.recipeOf("seaweedfs", "BUSINESS").releases().get(0);
+        assertThat(spec.releaseName()).isEqualTo("platform-seaweedfs");
+        assertThat(spec.namespace()).isEqualTo("platform-storage");
+        assertThat(spec.contractValues().get("fullnameOverride")).isEqualTo("seaweedfs");
+        String contract = spec.contractValues().toString();
+        // S3 网关必须开、且必须带凭据校验（不开 = 匿名可写）；集群级 Pod 读写角色是 Cloud Drive 用的，平台不要
+        assertThat(contract).contains("enableAuth=true").contains("createClusterRole=false");
+        assertThat(catalog.recipeOf("seaweedfs", "BUSINESS").seaweedStorage()).isTrue();
+    }
+
+    @Test
+    void anUnknownComponentOrProfileHasNoRecipe() {        assertThat(catalog.recipeOf("no-such", "BUSINESS")).isNull();
         assertThat(catalog.supports("metrics-server")).isTrue();
     }
 
@@ -138,11 +151,18 @@ class ComponentRecipeCatalogTest {
 
     private static String appVersionOf(Path chart) {
         try {
-            return Files.readAllLines(chart).stream()
+            String raw = Files.readAllLines(chart).stream()
                     .filter(line -> line.startsWith("appVersion:"))
                     .findFirst()
                     .map(line -> line.substring("appVersion:".length()).trim())
                     .orElse(null);
+            // Chart.yaml 里 appVersion 可能写成 "4.49"（带引号，如 seaweedfs）；recipe 里存的是展示值
+            if (raw != null && raw.length() >= 2
+                    && (raw.startsWith("\"") && raw.endsWith("\"")
+                    || raw.startsWith("'") && raw.endsWith("'"))) {
+                return raw.substring(1, raw.length() - 1);
+            }
+            return raw;
         } catch (java.io.IOException e) {
             throw new java.io.UncheckedIOException(e);
         }

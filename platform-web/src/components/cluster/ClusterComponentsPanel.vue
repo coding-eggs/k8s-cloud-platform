@@ -17,7 +17,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type {
   K8sCalicoInstall, K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
-  K8sEsConfig, K8sOtelInstall, K8sTempoStorage, K8sThanosInstall, SecretRefOption,
+  K8sEsConfig, K8sOtelInstall, K8sSeaweedInstall, K8sTempoStorage, K8sThanosInstall, SecretRefOption,
 } from '@/types'
 
 const props = defineProps<{
@@ -53,6 +53,8 @@ const emit = defineEmits<{
     tektonProfile?: string
     /** OTel 采集栈参数（仅 otelInstrumentation 的组件） */
     otel?: K8sOtelInstall
+    /** 对象存储参数（仅 seaweedStorage 的组件：StorageClass / 容量 / 副本数） */
+    seaweed?: K8sSeaweedInstall
   }): void
   /** 中止一条进行中的操作（由页面调接口并刷新操作列表） */
   (e: 'abandon', id: number): void
@@ -83,6 +85,7 @@ const FEATURE_LABELS: Record<string, string> = {
   ipam: 'IPAM',
   'gateway-tls': '网关 TLS 证书',
   'otel-collection': 'OTel 采集',
+  'object-storage': '对象存储',
 }
 function featureLabel(code: string): string {
   return FEATURE_LABELS[code] ?? code
@@ -184,6 +187,10 @@ interface ApplyDialog {
   showTempoInstall: boolean
   otel: OtelForm
   initialOtel: string
+  /** 该组件是否是对象存储（SeaweedFS：StorageClass / 容量 / 副本数） */
+  showSeaweed: boolean
+  seaweed: K8sSeaweedInstall
+  initialSeaweed: string
 }
 
 /** OTel 表单里两个嵌套对象始终存在（后端可以为空，但表单控件需要可绑定） */
@@ -447,6 +454,21 @@ const EMPTY_THANOS: K8sThanosInstall = {
   namespace: 'monitor', secretName: '', endpoint: '', bucket: '', insecureSkipVerify: false,
 }
 
+/**
+ * 对象存储（SeaweedFS）表单默认值。
+ * StorageClass 有意留空（必须由用户从集群下拉里选）—— 空串会被后端拒，
+ * 否则 chart 会把空串原样写进 storageClassName（K8s 里 = 不用动态供给 → PVC 永远 Pending）。
+ */
+const EMPTY_SEAWEED: K8sSeaweedInstall = {
+  storageClass: '',
+  masterSize: '1Gi',
+  volumeSize: '30Gi',
+  filerSize: '10Gi',
+  masterReplicas: 1,
+  volumeReplicas: 1,
+  s3Replicas: 1,
+}
+
 /** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
 function emptyOtel(): OtelForm {
   return {
@@ -482,6 +504,7 @@ const applyDialog = ref<ApplyDialog>({
   initialCalico: '',
   showTektonProfile: false, tektonProfile: 'all', initialTektonProfile: 'all',
   showOtel: false, showTempoInstall: false, otel: emptyOtel(), initialOtel: JSON.stringify(emptyOtel()),
+  showSeaweed: false, seaweed: { ...EMPTY_SEAWEED }, initialSeaweed: JSON.stringify(EMPTY_SEAWEED),
 })
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
@@ -604,6 +627,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   // 凭证 Secret 只能放 monitor（表单不提供命名空间选择）；旧快照里别的命名空间值在这里归一
   otel.tempoStorage.credentialSecret.namespace = OTEL_NAMESPACE
   otel.es.credentialSecret.namespace = OTEL_NAMESPACE
+  // 对象存储：编辑时回填上次成功的参数（容量/副本数可改）；StorageClass 没记录时保持空、必须重选
+  const seaweed: K8sSeaweedInstall = editing && row.seaweedCurrent
+    ? { ...EMPTY_SEAWEED, ...row.seaweedCurrent }
+    : { ...EMPTY_SEAWEED }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, chartVersion: componentChartVersion(row) ?? '',
@@ -630,11 +657,14 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     showTempoInstall: !!row.tempoInstall,
     otel,
     initialOtel: JSON.stringify(otel),
+    showSeaweed: !!row.seaweedStorage,
+    seaweed,
+    initialSeaweed: JSON.stringify(seaweed),
   }
   if (row.thanosInstall) {
     void loadThanosOptions()
   }
-  if (fields.some((f) => f.type === 'storageClass')) {
+  if (row.seaweedStorage || fields.some((f) => f.type === 'storageClass')) {
     void loadStorageClassOptions()
   }
   if (fields.some((f) => f.key === 'service.ports')) {
@@ -716,6 +746,11 @@ async function loadStorageClassOptions(): Promise<void> {
 
 function confirmApply(): void {
   const d = applyDialog.value
+  // 对象存储：StorageClass 必填（后端也会拒；这里先挡一下，省一次往返）
+  if (d.showSeaweed && !d.seaweed.storageClass) {
+    ElMessage.error('请选择对象存储的 StorageClass（PVC 需要动态供给）')
+    return
+  }
   const editable: Record<string, unknown> = {}
   for (const f of d.fields) {
     if (f.type === 'resources') {
@@ -818,6 +853,9 @@ function confirmApply(): void {
     // OTel：安装时整组下发（表单就是默认值的来源）；编辑时只发改动过的，没改的沿用上次快照
     otel: d.showOtel && (d.action === 'INSTALL' || JSON.stringify(d.otel) !== d.initialOtel)
       ? JSON.parse(JSON.stringify(d.otel)) as K8sOtelInstall : undefined,
+    // 对象存储：安装时整组下发；编辑时只发改动过的（没改的由后端沿用上次快照）
+    seaweed: d.showSeaweed && (d.action === 'INSTALL' || JSON.stringify(d.seaweed) !== d.initialSeaweed)
+      ? { ...d.seaweed } : undefined,
   })
 }
 
@@ -1231,6 +1269,56 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+      <div v-if="applyDialog.showSeaweed" class="cc-section-title">对象存储（SeaweedFS）</div>
+      <div v-if="applyDialog.showSeaweed" class="cc-form-row">
+        <span class="cc-form-label">StorageClass</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.seaweed.storageClass" filterable allow-create
+                     placeholder="选择集群的 StorageClass" style="width: 100%">
+            <el-option v-for="sc in applyDialog.storageClasses" :key="sc" :label="sc" :value="sc" />
+          </el-select>
+          <div class="cc-form-hint">
+            三块 PVC（master 的 Raft 数据 / volume 数据盘 / filer 元数据）都用它；
+            集群没有默认 StorageClass 时必须在这里选，留空会装出一组永远 Pending 的卷
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showSeaweed" class="cc-form-row">
+        <span class="cc-form-label">容量</span>
+        <div class="cc-form-control">
+          <div class="cc-inline">
+            <span class="cc-inline-label">volume 数据盘</span>
+            <el-input v-model="applyDialog.seaweed.volumeSize" style="width: 110px" />
+            <span class="cc-inline-label">filer 元数据</span>
+            <el-input v-model="applyDialog.seaweed.filerSize" style="width: 100px" />
+            <span class="cc-inline-label">master</span>
+            <el-input v-model="applyDialog.seaweed.masterSize" style="width: 90px" />
+          </div>
+          <div class="cc-form-hint">
+            形如 30Gi / 10Gi。数据盘是每个 volume server 一块；master 存 Raft 日志与集群身份，必须持久化
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showSeaweed" class="cc-form-row">
+        <span class="cc-form-label">副本数</span>
+        <div class="cc-form-control">
+          <div class="cc-inline">
+            <span class="cc-inline-label">master</span>
+            <el-input-number v-model="applyDialog.seaweed.masterReplicas" :min="1" :max="3" :step="2"
+                             controls-position="right" style="width: 110px" />
+            <span class="cc-inline-label">volume</span>
+            <el-input-number v-model="applyDialog.seaweed.volumeReplicas" :min="1" :max="20"
+                             controls-position="right" style="width: 110px" />
+            <span class="cc-inline-label">S3 网关</span>
+            <el-input-number v-model="applyDialog.seaweed.s3Replicas" :min="1" :max="10"
+                             controls-position="right" style="width: 110px" />
+          </div>
+          <div class="cc-form-hint">
+            Raft 要奇数成员（1 或 3，默认 1）；装好后集群内 S3 入口是
+            <code>seaweedfs-s3.platform-storage:8333</code>（凭据在 Secret <code>seaweedfs-s3-secret</code>）
+          </div>
+        </div>
+      </div>
       <div v-if="applyDialog.showOtel" class="cc-section-title">OTel 采集栈</div>
       <!-- OpenTelemetry 采集栈：Tempo 地址 + 采样/副本/日志 + MinIO/ES -->
       <div v-if="applyDialog.showOtel" class="cc-form-row">
@@ -1473,7 +1561,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </div>
       <div v-if="!applyDialog.fields.length && !applyDialog.showWebhook && !applyDialog.showThanos
                 && !applyDialog.showThanosInstall && !applyDialog.showCalico
-                && !applyDialog.showTektonProfile && !applyDialog.showOtel
+                && !applyDialog.showTektonProfile && !applyDialog.showOtel && !applyDialog.showSeaweed
                 && applyDialog.action === 'INSTALL'"
            class="cc-upgrade-tip">
         该组件没有可编辑配置，将使用平台默认值安装。
@@ -1569,6 +1657,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-section-title:first-of-type { margin-top: 4px; }
 .cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
 .cc-form-control { flex: 1 1 auto; min-width: 300px; }
+.cc-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cc-inline-label { font-size: 12.5px; color: var(--text-3); }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .cc-resources { display: flex; flex-direction: column; gap: 8px; }
 .cc-resource-line { display: flex; align-items: center; gap: 8px; }

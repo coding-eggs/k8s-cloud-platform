@@ -23,6 +23,7 @@ import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EsConfig;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
+import com.coding.platformapi.models.SeaweedInstallRequest;
 import com.coding.platformapi.models.TempoStorageConfig;
 import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
@@ -173,6 +174,14 @@ public class ComponentInstallService {
         // OTel 采集栈：表单 > 上次成功 > 默认；Tempo 地址为空直接拒（装完才失败的话，traces 永远发不出去）
         OtelInstallRequest otel = recipe.otel() == null ? null
                 : resolveOtel(req.getOtel(), previousPlatform.get("otel"), recipe.otel());
+        // 对象存储（SeaweedFS）：StorageClass 必填 —— chart 把 storageClass 无条件写进
+        // storageClassName，空串在 K8s 里是「不用动态供给」，会装出一组永远 Pending 的 PVC
+        SeaweedInstallRequest seaweed = recipe.seaweedStorage()
+                ? resolveSeaweed(req.getSeaweed(), previousPlatform.get("seaweed"))
+                : null;
+        if (recipe.seaweedStorage()) {
+            requireSeaweed(seaweed);
+        }
 
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管。
         // ⚠️「平台装过但没成功」（FAILED / UNKNOWN）仍算平台装的：release 是平台建的，
@@ -187,6 +196,10 @@ public class ComponentInstallService {
         // spec §3.3：升级复用上次成功操作里的 values（本次显式传入的字段覆盖它）
         List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
                 parseSnapshot(last == null ? null : last.getValuesSnapshot()));
+        // 对象存储的 PVC / 副本数落在嵌套结构里（volume.dataDirs 是 list），由表单参数拼进来
+        if (seaweed != null) {
+            merged = applySeaweedValues(merged, seaweed);
+        }
         // 占位符（${cluster.name} / ${thanos.receive.url} / ${tempo.endpoint}）在落库前解析
         List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico, tektonProfile, otel);
         // Thanos compactor 的保留期下限（raw ≥ 40h、5m ≥ 10d）：违反时 helm 照样成功，
@@ -205,7 +218,7 @@ public class ComponentInstallService {
                 effective.stream().map(ReleaseSpec::releaseName).distinct().toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
                 snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico,
-                        tektonProfile, otel)));
+                        tektonProfile, otel, seaweed)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -459,7 +472,8 @@ public class ComponentInstallService {
                                                                   ThanosInstallRequest thanos,
                                                                   CalicoInstallRequest calico,
                                                                   String tektonProfile,
-                                                                  OtelInstallRequest otel) {
+                                                                  OtelInstallRequest otel,
+                                                                  SeaweedInstallRequest seaweed) {
         Map<String, Object> snapshot = snapshotOf(releases);
         Map<String, Object> platform = new LinkedHashMap<>();
         if (recipe.platformAlerting() && alertWebhookUrl != null) {
@@ -488,6 +502,17 @@ public class ComponentInstallService {
         }
         if (otel != null) {
             platform.put("otel", otelSnapshot(otel));
+        }
+        if (recipe.seaweedStorage() && seaweed != null) {
+            Map<String, Object> s = new LinkedHashMap<>();
+            s.put("storageClass", seaweed.getStorageClass());
+            s.put("masterSize", seaweed.getMasterSize());
+            s.put("volumeSize", seaweed.getVolumeSize());
+            s.put("filerSize", seaweed.getFilerSize());
+            s.put("masterReplicas", seaweed.getMasterReplicas());
+            s.put("volumeReplicas", seaweed.getVolumeReplicas());
+            s.put("s3Replicas", seaweed.getS3Replicas());
+            platform.put("seaweed", s);
         }
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
@@ -786,6 +811,117 @@ public class ComponentInstallService {
 
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    // ==================== 对象存储（SeaweedFS） ====================
+
+    /** 容量格式：10Gi / 200Mi / 1Ti（不接受裸数字，避免 30 被当成 30 字节） */
+    private static final java.util.regex.Pattern SEAWEED_SIZE =
+            java.util.regex.Pattern.compile("^[1-9]\\d*(Mi|Gi|Ti)$");
+
+    /** 表单 > 上次成功 > 默认；StorageClass 没有默认（没选就由 {@link #requireSeaweed} 拒） */
+    @SuppressWarnings("unchecked")
+    private SeaweedInstallRequest resolveSeaweed(SeaweedInstallRequest requested, Object previous) {
+        Map<String, Object> prev = previous instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+        SeaweedInstallRequest out = new SeaweedInstallRequest();
+        out.setStorageClass(firstNonBlank(requested == null ? null : requested.getStorageClass(),
+                asString(prev.get("storageClass"))));
+        out.setMasterSize(firstNonBlank(requested == null ? null : requested.getMasterSize(),
+                asString(prev.get("masterSize")), "1Gi"));
+        out.setVolumeSize(firstNonBlank(requested == null ? null : requested.getVolumeSize(),
+                asString(prev.get("volumeSize")), "30Gi"));
+        out.setFilerSize(firstNonBlank(requested == null ? null : requested.getFilerSize(),
+                asString(prev.get("filerSize")), "10Gi"));
+        out.setMasterReplicas(firstPositive(requested == null ? null : requested.getMasterReplicas(),
+                positiveOrNull(prev.get("masterReplicas")), 1));
+        out.setVolumeReplicas(firstPositive(requested == null ? null : requested.getVolumeReplicas(),
+                positiveOrNull(prev.get("volumeReplicas")), 1));
+        out.setS3Replicas(firstPositive(requested == null ? null : requested.getS3Replicas(),
+                positiveOrNull(prev.get("s3Replicas")), 1));
+        return out;
+    }
+
+    /**
+     * 对象存储的必填/取值边界。
+     *
+     * <p>⭐ StorageClass 必须非空：chart 的模板无条件渲染 {@code storageClassName: {{ .Values.*.storageClass }}}，
+     * 空串在 K8s 里是「不用动态供给」，装完是一组永远 Pending 的 PVC —— 而 helm 会显示成功。
+     * 这与 editableValues 里「空串跳过」的语义不同（那边是标量路径，可以真的省略这个键）。
+     */
+    private void requireSeaweed(SeaweedInstallRequest s) {
+        if (s == null || isBlank(s.getStorageClass())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请选择对象存储的 StorageClass（PVC 需要动态供给，留空会装出一组永远 Pending 的卷）");
+        }
+        requireSeaweedSize("master（raft 日志/快照）", s.getMasterSize());
+        requireSeaweedSize("volume（数据盘）", s.getVolumeSize());
+        requireSeaweedSize("filer（元数据）", s.getFilerSize());
+        // Raft 要奇数成员，平台只放开 1/3；volume/s3 是普通副本
+        requireSeaweedReplicas("master", s.getMasterReplicas(), 1, 3);
+        requireSeaweedReplicas("volume", s.getVolumeReplicas(), 1, 20);
+        requireSeaweedReplicas("s3 网关", s.getS3Replicas(), 1, 10);
+    }
+
+    private void requireSeaweedSize(String label, String size) {
+        if (isBlank(size) || !SEAWEED_SIZE.matcher(size).matches()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "对象存储的 " + label + " 容量格式不对（应形如 10Gi / 200Mi）：" + size);
+        }
+    }
+
+    private void requireSeaweedReplicas(String label, Integer replicas, int min, int max) {
+        if (replicas == null || replicas < min || replicas > max) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "对象存储的 " + label + " 副本数必须在 " + min + "~" + max + " 之间");
+        }
+    }
+
+    /**
+     * 把表单参数拼成 chart 的嵌套 values。
+     *
+     * <p>本方法在 {@code mergeValues} 之后执行，所以覆盖的是「契约值合并完」的结果；
+     * SeaweedFS 的 recipe 有意不在契约里写这几块（否则契约会压掉用户的选择）。
+     */
+    private static List<ReleaseSpec> applySeaweedValues(List<ReleaseSpec> releases, SeaweedInstallRequest s) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("master", Map.of("replicas", s.getMasterReplicas(),
+                "data", pvcValues(s.getMasterSize(), s.getStorageClass())));
+        values.put("volume", Map.of("replicas", s.getVolumeReplicas(),
+                "dataDirs", List.of(Map.of(
+                        "name", "data",
+                        "type", "persistentVolumeClaim",
+                        "size", s.getVolumeSize(),
+                        "storageClass", s.getStorageClass(),
+                        // 0 = 按磁盘自动算每个盘能放多少个卷（chart 文档的推荐做法）
+                        "maxVolumes", 0))));
+        values.put("filer", Map.of("data", pvcValues(s.getFilerSize(), s.getStorageClass())));
+        values.put("s3", Map.of("replicas", s.getS3Replicas()));
+
+        List<ReleaseSpec> out = new ArrayList<>(releases.size());
+        for (ReleaseSpec r : releases) {
+            out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(), r.chartVersion(),
+                    DeepMerge.merge(r.contractValues(), values), r.editableValues(),
+                    r.preserveUnknownPlaceholders(), r.primary(), r.appVersion(), r.applyMode()));
+        }
+        return out;
+    }
+
+    private static Map<String, Object> pvcValues(String size, String storageClass) {
+        return Map.of("type", "persistentVolumeClaim", "size", size, "storageClass", storageClass);
+    }
+
+    private static Integer positiveOrNull(Object value) {
+        if (value instanceof Number n) {
+            return n.intValue() > 0 ? n.intValue() : null;
+        }
+        return null;
+    }
+
+    private static Integer firstPositive(Integer requested, Integer previous, Integer fallback) {
+        if (requested != null && requested > 0) {
+            return requested;
+        }
+        return previous != null && previous > 0 ? previous : fallback;
     }
 
     private static Map<String, Map<String, Object>> parseSnapshot(String json) {

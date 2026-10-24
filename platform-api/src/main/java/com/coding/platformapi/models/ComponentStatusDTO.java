@@ -88,4 +88,9 @@ public class ComponentStatusDTO {
     private String tempoEndpoint;
     /** **当前生效**的 OTel 安装参数（上次成功操作快照）；无记录 → null */
     private OtelInstallRequest otelInstallCurrent;
+
+    /** 安装时是否要选对象存储（SeaweedFS）的 StorageClass / 容量 / 副本数 */
+    private boolean seaweedStorage;
+    /** **当前生效**的对象存储参数（上次成功操作的 {@code __platform.seaweed}）；无记录 → null */
+    private SeaweedInstallRequest seaweedCurrent;
 }

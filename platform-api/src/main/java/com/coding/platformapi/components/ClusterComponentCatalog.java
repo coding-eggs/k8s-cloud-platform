@@ -70,7 +70,14 @@ public class ClusterComponentCatalog {
             new ComponentDef("otel-operator", "OpenTelemetry Operator", "opentelemetry.io",
                     List.of(new ComponentProbe("opentelemetry-operator-system", "deployment",
                             "opentelemetry-operator/opentelemetry-operator", null)),
-                    List.of("otel-collection")));
+                    List.of("otel-collection")),
+            // 对象存储：集群级一套服务（master / volume / filer / s3 网关），桶与 AK/SK 后续按租户分配。
+            // 没有 CRD：chart 直接下发工作负载，所以判据只有活的工作负载 —— 认 StatefulSet seaweedfs-master
+            // （chart 的 fullnameOverride 钉成 seaweedfs，release 名变了也不影响探测）。
+            new ComponentDef("seaweedfs", "对象存储（SeaweedFS）", null,
+                    List.of(new ComponentProbe("platform-storage", "statefulset",
+                            "chrislusf/seaweedfs", "seaweedfs-master")),
+                    List.of("object-storage")));
 
     public List<ComponentDef> all() {
         return COMPONENTS;

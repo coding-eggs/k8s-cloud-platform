@@ -18,6 +18,7 @@ import type {
   K8sComponentOperation,
   K8sComponentStatus,
   K8sOtelInstall,
+  K8sSeaweedInstall,
   K8sThanosInstall,
   TraceDetail,
   TraceSummary,
@@ -159,6 +160,8 @@ export const clusterApi = {
     tektonProfile?: string
     /** OTel 采集栈参数（仅 otel-operator 组件） */
     otel?: K8sOtelInstall
+    /** 对象存储参数（仅 seaweedStorage 的组件：StorageClass / 容量 / 副本数） */
+    seaweed?: K8sSeaweedInstall
   }) => http.post<never, number>('/cluster/components/apply', payload),
   /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
   componentOperation: (payload: {

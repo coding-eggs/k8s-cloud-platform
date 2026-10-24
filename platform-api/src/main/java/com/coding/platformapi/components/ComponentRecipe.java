@@ -19,11 +19,23 @@ import java.util.List;
  * @param tektonProfile     安装时是否让用户选 Tekton 的 profile（lite / basic / all，默认 all）。
  *                          值通过占位符 {@code ${tekton.profile}} 落进 TektonConfig。
  * @param otel              OTel 采集栈的表单开关；非 OTel 组件为 null。
+ * @param seaweedStorage    对象存储（SeaweedFS）的安装参数：StorageClass + 三个组件的容量与副本数。
+ *                          这些值落在**嵌套结构**里（{@code volume.dataDirs} 是 list），
+ *                          editableValues 的「路径 → 标量」模型表达不了，故按表单参数单独传。
  */
 public record ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                               boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                               boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile,
-                              OtelRecipe otel) {
+                              OtelRecipe otel, boolean seaweedStorage) {
+
+    /** 保留 10 参形态（不含 seaweedStorage）：现有调用点不必改动 */
+    public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
+                           boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
+                           boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile,
+                           OtelRecipe otel) {
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall,
+                calicoNetwork, thanosReceiveDefault, tektonProfile, otel, false);
+    }
 
     /** 默认既不联动告警、也不上报 Thanos 的简写 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires) {
