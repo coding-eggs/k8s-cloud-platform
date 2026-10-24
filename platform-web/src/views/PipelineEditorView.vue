@@ -683,7 +683,9 @@ async function removePipeline() {
           </template>
 
           <Background :gap="18" :size="1.4" pattern-color="var(--border-strong)" />
-          <Controls position="bottom-right" />
+          <!-- ⚠️ 缩放按钮放左下：小地图默认也在右下角（节点 >4 才出现），两个都放右下会叠住 ——
+               小地图后渲染、同 z-index，会把缩放按钮整个盖掉（2026-10-23 用户报「右下角缩放的格子没了」） -->
+          <Controls position="bottom-left" />
           <MiniMap v-if="nodes.length > 4" pannable zoomable :node-color="() => '#2563eb'" />
         </VueFlow>
 
@@ -815,6 +817,17 @@ async function removePipeline() {
 .canvas {
   flex: 1;
   min-width: 0;
+}
+/* 小地图：Vue Flow 默认是**白底**（theme 里写死的 #fff），暗色主题下像一块白板，
+   而且默认遮罩 rgba(240,240,240,.6) 会把蓝色的迷你节点糊成一片灰白 —— 看着就是「全白」。
+   底色跟画布走，遮罩压低不透明度，节点（#2563eb）才看得清。 */
+.canvas :deep(.vue-flow__minimap) {
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.canvas :deep(.vue-flow__minimap-mask) {
+  fill: color-mix(in srgb, var(--bg) 45%, transparent);
 }
 /* ---- 右键菜单（贴画布容器定位；二级菜单悬停展开）---- */
 .ctx-backdrop {
