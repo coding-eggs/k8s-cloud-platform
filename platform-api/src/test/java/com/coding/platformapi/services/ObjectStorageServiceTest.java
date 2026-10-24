@@ -6,6 +6,7 @@ import com.coding.data.mapper.system.PlatformObjectCredentialMapper;
 import com.coding.data.mapper.system.PlatformObjectQuotaMapper;
 import com.coding.data.models.system.PlatformObjectBucket;
 import com.coding.data.models.system.PlatformObjectQuota;
+import com.coding.platformapi.configs.ObjectStorageProperties;
 import com.coding.platformapi.k8s.K8sObjectStorageClient;
 import com.coding.platformapi.models.ObjectStorageCreateBucket;
 import com.coding.platformapi.models.ObjectStorageQuery;
@@ -31,6 +32,7 @@ class ObjectStorageServiceTest {
     private PlatformObjectQuotaMapper quotas;
     private K8sObjectStorageClient s3;
     private ClusterComponentService components;
+    private ObjectStorageProperties properties;
     private ObjectStorageService service;
 
     @BeforeEach
@@ -41,7 +43,8 @@ class ObjectStorageServiceTest {
         s3 = mock(K8sObjectStorageClient.class);
         components = mock(ClusterComponentService.class);
         when(components.seaweedEndpoint("c1")).thenReturn("http://seaweedfs-s3.platform-storage:8333");
-        service = new ObjectStorageService(buckets, credentials, quotas, s3, components);
+        properties = new ObjectStorageProperties();
+        service = new ObjectStorageService(buckets, credentials, quotas, s3, components, properties);
     }
 
     @Test
@@ -69,7 +72,7 @@ class ObjectStorageServiceTest {
     void createBucketUsesTheDefaultQuotaWhenNoRowExists() {
         // 没有配额行 = 默认 10；用量 10 时拒绝
         when(buckets.countActiveByTenant("c1", "t_acme"))
-                .thenReturn(ObjectStorageService.DEFAULT_MAX_BUCKETS);
+                .thenReturn(properties.getDefaultMaxBuckets());
 
         assertThatThrownBy(() -> service.createBucket(
                 new ObjectStorageCreateBucket("c1", "t_acme", "logs", null), "admin"))
@@ -136,7 +139,7 @@ class ObjectStorageServiceTest {
         when(buckets.countActiveByTenant("c1", "t_acme")).thenReturn(3);
         var view = service.quota("c1", "t_acme");
         assertThat(view.getUsed()).isEqualTo(3);
-        assertThat(view.getMaxBuckets()).isEqualTo(ObjectStorageService.DEFAULT_MAX_BUCKETS);
+        assertThat(view.getMaxBuckets()).isEqualTo(properties.getDefaultMaxBuckets());
     }
 
     @Test

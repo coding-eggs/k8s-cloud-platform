@@ -78,7 +78,7 @@ chart 的 `seaweedfs.image` helper 是 `default .Chart.AppVersion .Values.image.
 | `volumeReplicas` | `1` | 数据节点数 |
 | `s3Replicas` | `1` | S3 网关副本 |
 | `adminEnabled` | `false` | 是否装 admin 管理台（见 §3.1） |
-| `s3Endpoint` | `http://seaweedfs-s3.platform-storage:8333` | **平台后端**访问 S3 的地址（对象存储页面会用它建桶/列对象）。业务集群或平台跑在集群外时必须改成暴露后的地址 |
+| `s3Endpoint` | 取 `platform.object-storage.default-endpoint`（默认 `http://seaweedfs-s3.platform-storage:8333`） | **平台后端**访问 S3 的地址（对象存储页面会用它建桶/列对象）。业务集群或平台跑在集群外时必须改成暴露后的地址 |
 
 > 为什么不用 `editableValues`：这些值落在嵌套结构里（`volume.dataDirs` 是 list、`*.data` 是 map），
 > 而 editableValues 的模型是「路径 → 标量」。后端在 `mergeValues` 之后用

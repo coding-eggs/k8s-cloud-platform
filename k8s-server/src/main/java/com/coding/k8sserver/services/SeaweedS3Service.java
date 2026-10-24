@@ -10,6 +10,7 @@ import com.coding.common.models.objectstorage.ObjectStatDTO;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.SeaweedS3ConfigObjects;
+import com.coding.k8sserver.configs.ObjectStorageProperties;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.api.model.apps.Deployment;
@@ -55,19 +56,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SeaweedS3Service {
 
-    /** 组件安装的命名空间（与 ComponentRecipeCatalog.SEAWEEDFS_RELEASES 一致） */
-    public static final String NAMESPACE = "platform-storage";
-    /** 平台接管的 S3 identities 配置文件（chart 的 s3.existingConfigSecret） */
-    public static final String CONFIG_SECRET = "platform-seaweedfs-s3-config";
-    /** chart 里 S3 网关的 Deployment 名（fullnameOverride=seaweedfs） */
-    static final String S3_DEPLOYMENT = "seaweedfs-s3";
-    /** 集群内默认地址 */
-    public static final String DEFAULT_ENDPOINT = "http://seaweedfs-s3.platform-storage:8333";
-
     static final String ACCESS_KEY = "access_key";
     static final String SECRET_KEY = "secret_key";
 
     private final KubernetesClientFactory clientFactory;
+
+    /** 命名空间 / 配置 Secret / Deployment 名 / 默认地址（见 application.yml 的 platform.object-storage） */
+    private final ObjectStorageProperties properties;
 
     // ==================== 配置文件 ====================
 
@@ -77,24 +72,24 @@ public class SeaweedS3Service {
     }
 
     private void ensureConfig(KubernetesClient client) {
-        Secret existing = client.secrets().inNamespace(NAMESPACE).withName(CONFIG_SECRET).get();
+        Secret existing = client.secrets().inNamespace(properties.getNamespace()).withName(properties.getConfigSecret()).get();
         if (existing != null && existing.getData() != null
                 && existing.getData().containsKey(SeaweedS3ConfigObjects.CONFIG_KEY)) {
             return;
         }
         String json = SeaweedS3ConfigObjects.adminOnly(
                 SeaweedS3ConfigObjects.randomAccessKey(), SeaweedS3ConfigObjects.randomSecretKey());
-        applySecret(client, CONFIG_SECRET, SeaweedS3ConfigObjects.CONFIG_KEY, json,
+        applySecret(client, properties.getConfigSecret(), SeaweedS3ConfigObjects.CONFIG_KEY, json,
                 "platform.coding/component", "seaweedfs");
-        log.info("对象存储：已初始化平台 S3 配置文件 {}/{}", NAMESPACE, CONFIG_SECRET);
+        log.info("对象存储：已初始化平台 S3 配置文件 {}/{}", properties.getNamespace(), properties.getConfigSecret());
     }
 
     private String configJson(KubernetesClient client) {
-        Secret secret = client.secrets().inNamespace(NAMESPACE).withName(CONFIG_SECRET).get();
+        Secret secret = client.secrets().inNamespace(properties.getNamespace()).withName(properties.getConfigSecret()).get();
         if (secret == null || secret.getData() == null
                 || !secret.getData().containsKey(SeaweedS3ConfigObjects.CONFIG_KEY)) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "对象存储的 S3 配置文件不存在（" + NAMESPACE + "/" + CONFIG_SECRET
+                    "对象存储的 S3 配置文件不存在（" + properties.getNamespace() + "/" + properties.getConfigSecret()
                             + "）：请先在「集群组件」里安装/重放对象存储");
         }
         return new String(Base64.getDecoder().decode(secret.getData().get(SeaweedS3ConfigObjects.CONFIG_KEY)),
@@ -109,16 +104,16 @@ public class SeaweedS3Service {
      * 而不是让用户看到「凭据发了但不生效」。
      */
     void assertPlatformConfigMounted(KubernetesClient client) {
-        Deployment dep = client.apps().deployments().inNamespace(NAMESPACE).withName(S3_DEPLOYMENT).get();
+        Deployment dep = client.apps().deployments().inNamespace(properties.getNamespace()).withName(properties.getS3Deployment()).get();
         if (dep == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "对象存储未安装（" + NAMESPACE + "/" + S3_DEPLOYMENT + " 不存在）");
+                    "对象存储未安装（" + properties.getNamespace() + "/" + properties.getS3Deployment() + " 不存在）");
         }
         boolean mounted = dep.getSpec() != null && dep.getSpec().getTemplate() != null
                 && dep.getSpec().getTemplate().getSpec() != null
                 && dep.getSpec().getTemplate().getSpec().getVolumes() != null
                 && dep.getSpec().getTemplate().getSpec().getVolumes().stream().anyMatch(v ->
-                v.getSecret() != null && CONFIG_SECRET.equals(v.getSecret().getSecretName()));
+                v.getSecret() != null && properties.getConfigSecret().equals(v.getSecret().getSecretName()));
         if (!mounted) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "对象存储仍在使用 chart 自带的 S3 配置；请先在「集群组件」里对对象存储执行一次"
@@ -135,7 +130,7 @@ public class SeaweedS3Service {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "S3 配置里缺少 " + SeaweedS3ConfigObjects.ADMIN_IDENTITY + " 身份");
         }
-        String url = endpoint == null || endpoint.isBlank() ? DEFAULT_ENDPOINT : endpoint.trim();
+        String url = endpoint == null || endpoint.isBlank() ? properties.getDefaultEndpoint() : endpoint.trim();
         return MinioClient.builder().endpoint(url).credentials(admin[0], admin[1]).build();
     }
 
@@ -260,13 +255,13 @@ public class SeaweedS3Service {
         String secretKey = SeaweedS3ConfigObjects.randomSecretKey();
         String updated = SeaweedS3ConfigObjects.upsertIdentity(configJson(k8s), identityName,
                 accessKey, secretKey, actions);
-        applySecret(k8s, CONFIG_SECRET, SeaweedS3ConfigObjects.CONFIG_KEY, updated,
+        applySecret(k8s, properties.getConfigSecret(), SeaweedS3ConfigObjects.CONFIG_KEY, updated,
                 "platform.coding/component", "seaweedfs");
 
         Secret secret = new SecretBuilder()
                 .withNewMetadata()
                 .withName(secretName)
-                .withNamespace(NAMESPACE)
+                .withNamespace(properties.getNamespace())
                 .addToLabels("platform.coding/managed", "true")
                 .addToLabels("platform.coding/component", "seaweedfs")
                 .endMetadata()
@@ -274,7 +269,7 @@ public class SeaweedS3Service {
                 .addToStringData(ACCESS_KEY, accessKey)
                 .addToStringData(SECRET_KEY, secretKey)
                 .build();
-        k8s.secrets().inNamespace(NAMESPACE).resource(secret)
+        k8s.secrets().inNamespace(properties.getNamespace()).resource(secret)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
 
         rollS3(k8s);
@@ -284,11 +279,11 @@ public class SeaweedS3Service {
     /** 读取凭据（AK/SK）；Secret 不存在 → 报错（说明已被清理） */
     public ObjectCredentialDTO readCredential(String clusterId, String secretName) {
         KubernetesClient k8s = clientFactory.getAdminClient(clusterId);
-        Secret secret = k8s.secrets().inNamespace(NAMESPACE).withName(secretName).get();
+        Secret secret = k8s.secrets().inNamespace(properties.getNamespace()).withName(secretName).get();
         if (secret == null || secret.getData() == null
                 || !secret.getData().containsKey(ACCESS_KEY) || !secret.getData().containsKey(SECRET_KEY)) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "凭据 Secret 不存在或已被清理：" + NAMESPACE + "/" + secretName);
+                    "凭据 Secret 不存在或已被清理：" + properties.getNamespace() + "/" + secretName);
         }
         return new ObjectCredentialDTO(decode(secret, ACCESS_KEY), decode(secret, SECRET_KEY));
     }
@@ -299,12 +294,12 @@ public class SeaweedS3Service {
         // 配置可能本来就缺失（组件被重装过）：不因此阻止吊销，Secret 仍要清掉
         try {
             String updated = SeaweedS3ConfigObjects.removeIdentity(configJson(k8s), identityName);
-            applySecret(k8s, CONFIG_SECRET, SeaweedS3ConfigObjects.CONFIG_KEY, updated,
+            applySecret(k8s, properties.getConfigSecret(), SeaweedS3ConfigObjects.CONFIG_KEY, updated,
                     "platform.coding/component", "seaweedfs");
         } catch (CloudPlatformException e) {
             log.warn("吊销凭据时读取 S3 配置失败，仅清理 Secret: {}", e.getMessage());
         }
-        k8s.secrets().inNamespace(NAMESPACE).withName(secretName).delete();
+        k8s.secrets().inNamespace(properties.getNamespace()).withName(secretName).delete();
         rollS3(k8s);
     }
 
@@ -315,26 +310,26 @@ public class SeaweedS3Service {
         Secret secret = new SecretBuilder()
                 .withNewMetadata()
                 .withName(name)
-                .withNamespace(NAMESPACE)
+                .withNamespace(properties.getNamespace())
                 .addToLabels("platform.coding/managed", "true")
                 .addToLabels(labelKey, labelValue)
                 .endMetadata()
                 .withType("Opaque")
                 .addToStringData(key, value)
                 .build();
-        client.secrets().inNamespace(NAMESPACE).resource(secret)
+        client.secrets().inNamespace(properties.getNamespace()).resource(secret)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
     }
 
     /** 滚动 S3 网关：容器只在启动时读配置，所以改完必须重启（无状态，秒级） */
     private void rollS3(KubernetesClient client) {
-        Deployment dep = client.apps().deployments().inNamespace(NAMESPACE).withName(S3_DEPLOYMENT).get();
+        Deployment dep = client.apps().deployments().inNamespace(properties.getNamespace()).withName(properties.getS3Deployment()).get();
         if (dep == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "对象存储未安装（" + NAMESPACE + "/" + S3_DEPLOYMENT + " 不存在）");
+                    "对象存储未安装（" + properties.getNamespace() + "/" + properties.getS3Deployment() + " 不存在）");
         }
         String stamp = String.valueOf(System.currentTimeMillis());
-        client.apps().deployments().inNamespace(NAMESPACE).withName(S3_DEPLOYMENT)
+        client.apps().deployments().inNamespace(properties.getNamespace()).withName(properties.getS3Deployment())
                 .edit(d -> new DeploymentBuilder(d)
                         .editSpec().editTemplate().editMetadata()
                         .addToAnnotations("platform.coding/restartedAt", stamp)

@@ -75,6 +75,22 @@
    `ObjectStorageService.reconcile` 提供「S3 有、台账没有」的检查（v1 只报告，不自动接管）；
 5. **凭据轮换**：吊销会立刻让使用方 403，滚动完成后生效；没有过期时间与自动轮换。
 
+## 6.1 配置项（application.yaml）
+
+两端都有 `platform.object-storage`，都可用环境变量覆盖：
+
+| 模块 | 配置 | 默认 | 用途 |
+|---|---|---|---|
+| platform-api | `default-endpoint` | `http://seaweedfs-s3.platform-storage:8333` | 组件表单 `s3Endpoint` 的默认值 |
+| platform-api | `default-max-buckets` | `10` | 未给租户单独设置时的桶数上限 |
+| platform-api | `max-download-mb` | `100` | 控制台单次下载上限 |
+| k8s-server | `namespace` / `config-secret` / `s3-deployment` | `platform-storage` / `platform-seaweedfs-s3-config` / `seaweedfs-s3` | 集群侧定位 SeaweedFS 组件 |
+| k8s-server | `default-endpoint` | 同上 | 上游没带 endpoint 时的兜底 |
+
+环境变量：`OBJECT_STORAGE_S3_ENDPOINT` / `OBJECT_STORAGE_DEFAULT_MAX_BUCKETS` /
+`OBJECT_STORAGE_MAX_DOWNLOAD_MB` / `OBJECT_STORAGE_NAMESPACE` / `OBJECT_STORAGE_CONFIG_SECRET` /
+`OBJECT_STORAGE_S3_DEPLOYMENT`。
+
 ## 7. 部署
 
 1. 重放 `V2026_10_24_1__object_storage.sql`（表 + 页面码 + 权限行 + 角色绑定）；

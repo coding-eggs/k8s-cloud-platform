@@ -12,6 +12,7 @@ import com.coding.data.mapper.system.PlatformObjectQuotaMapper;
 import com.coding.data.models.system.PlatformObjectBucket;
 import com.coding.data.models.system.PlatformObjectCredential;
 import com.coding.data.models.system.PlatformObjectQuota;
+import com.coding.platformapi.configs.ObjectStorageProperties;
 import com.coding.platformapi.k8s.K8sObjectStorageClient;
 import com.coding.platformapi.models.ObjectStorageBucketRef;
 import com.coding.platformapi.models.ObjectStorageBucketView;
@@ -51,10 +52,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class ObjectStorageService {
 
-    /** 未单独设置时每个租户的桶数上限 */
-    public static final int DEFAULT_MAX_BUCKETS = 10;
-    /** 控制台单次下载上限（超过请用 SDK/客户端直连） */
-    static final long MAX_DOWNLOAD_BYTES = 100L * 1024 * 1024;
     /** 用户可读的名字部分：小写字母/数字/连字符，3~30 位 */
     private static final Pattern NAME = Pattern.compile("^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$");
 
@@ -63,6 +60,8 @@ public class ObjectStorageService {
     private final PlatformObjectQuotaMapper quotas;
     private final K8sObjectStorageClient s3;
     private final ClusterComponentService components;
+    /** 默认上限 / 下载上限（见 application.yaml 的 platform.object-storage） */
+    private final ObjectStorageProperties properties;
 
     // ==================== 桶 ====================
 
@@ -144,7 +143,7 @@ public class ObjectStorageService {
         PlatformObjectQuota row = quotas.selectByClusterTenant(clusterId, tenantId);
         int used = buckets.countActiveByTenant(clusterId, tenantId);
         return new ObjectStorageQuotaView(tenantId, used,
-                row == null ? DEFAULT_MAX_BUCKETS : row.getMaxBuckets(),
+                row == null ? properties.getDefaultMaxBuckets() : row.getMaxBuckets(),
                 row == null ? null : row.getUpdatedBy(),
                 row == null ? null : row.getUpdatedAt());
     }
@@ -252,9 +251,9 @@ public class ObjectStorageService {
         PlatformObjectBucket bucket = requireBucket(req.getBucketId(), tenantId);
         ObjectStatDTO stat = s3.statObject(bucket.getClusterId(), endpoint(bucket.getClusterId()),
                 bucket.getBucket(), req.getKey());
-        if (stat != null && stat.getSize() > MAX_DOWNLOAD_BYTES) {
+        if (stat != null && stat.getSize() > maxDownloadBytes()) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "对象超过 " + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + "MB，控制台不支持下载，请用 SDK/客户端直连");
+                    "对象超过 " + properties.getMaxDownloadMb() + "MB，控制台不支持下载，请用 SDK/客户端直连");
         }
         return stat;
     }
@@ -315,7 +314,7 @@ public class ObjectStorageService {
 
     private int maxBuckets(String clusterId, String tenantId) {
         PlatformObjectQuota row = quotas.selectByClusterTenant(clusterId, tenantId);
-        return row == null || row.getMaxBuckets() == null ? DEFAULT_MAX_BUCKETS : row.getMaxBuckets();
+        return row == null || row.getMaxBuckets() == null ? properties.getDefaultMaxBuckets() : row.getMaxBuckets();
     }
 
     /**
@@ -348,6 +347,10 @@ public class ObjectStorageService {
         return new ObjectStorageBucketView(row.getId(), row.getClusterId(), row.getBucket(),
                 row.getTenantId(), row.getDisplayName(), row.getStatus(), row.getCreatedBy(),
                 row.getCreatedAt(), credentialCount);
+    }
+
+    private long maxDownloadBytes() {
+        return properties.getMaxDownloadMb() * 1024L * 1024L;
     }
 
     private static boolean isBlank(String value) {

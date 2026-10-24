@@ -17,6 +17,14 @@ thanos:
 platform:
   tempo:
     query-url: http://192.168.31.80:21746
+  object-storage:
+    # 对象存储（SeaweedFS 集群组件）：平台后端访问 S3 的默认地址。
+    # 组件安装表单里的「S3 地址」会覆盖它；业务集群或平台跑在集群外时这里通常是外部地址。
+    default-endpoint: ${OBJECT_STORAGE_S3_ENDPOINT:http://seaweedfs-s3.platform-storage:8333}
+    # 未给某租户单独设置时，每租户的桶数上限（页面里可单独调整）
+    default-max-buckets: ${OBJECT_STORAGE_DEFAULT_MAX_BUCKETS:10}
+    # 控制台单次下载上限（MB），超过提示用 SDK 直连
+    max-download-mb: ${OBJECT_STORAGE_MAX_DOWNLOAD_MB:100}
   alert:
     webhook:
       # Alertmanager 的 webhook receiver 打到 /alert/webhook 时带的共享密钥（Bearer，带不带前缀都认）。

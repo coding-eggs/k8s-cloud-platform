@@ -57,7 +57,9 @@ class ComponentInstallServiceTest {
     }
 
     private ComponentInstallService service(ComponentRecipeCatalog catalog) {
-        return new ComponentInstallService(mapper, client, catalog, clusterService, components);
+        return new ComponentInstallService(mapper, client,
+                new com.coding.platformapi.configs.ObjectStorageProperties(),
+                catalog, clusterService, components);
     }
 
     @Test

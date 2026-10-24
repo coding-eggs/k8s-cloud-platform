@@ -15,6 +15,7 @@ import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.components.ThanosRetention;
 import com.coding.platformapi.components.ValueTemplate;
+import com.coding.platformapi.configs.ObjectStorageProperties;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
@@ -76,9 +77,6 @@ public class ComponentInstallService {
     /** SeaweedFS admin 管理台的口令 Secret：口令由 k8s-server 生成，platform-api 只传名字 */
     private static final String SEAWEED_ADMIN_SECRET = "platform-seaweedfs-admin";
 
-    /** S3 网关的默认地址（平台与 SeaweedFS 同集群时可用；业务集群要改成暴露后的地址） */
-    public static final String DEFAULT_SEAWEED_S3_ENDPOINT =
-            "http://seaweedfs-s3.platform-storage:8333";
 
     /** Calico 支持的封装方式（Installation CR 的 calicoNetwork.ipPools[].encapsulation） */
     private static final List<String> CALICO_ENCAPSULATIONS =
@@ -104,6 +102,7 @@ public class ComponentInstallService {
 
     private final PlatformComponentOperationMapper mapper;
     private final K8sComponentClient client;
+    private final ObjectStorageProperties objectStorage;
     private final ComponentRecipeCatalog recipes;
     private final ClusterService clusterService;
     private final ClusterComponentService components;
@@ -851,7 +850,7 @@ public class ComponentInstallService {
         out.setAdminEnabled(firstBoolean(requested == null ? null : requested.getAdminEnabled(),
                 prev.get("adminEnabled") instanceof Boolean b ? b : null, false));
         out.setS3Endpoint(firstNonBlank(requested == null ? null : requested.getS3Endpoint(),
-                asString(prev.get("s3Endpoint")), DEFAULT_SEAWEED_S3_ENDPOINT));
+                asString(prev.get("s3Endpoint")), objectStorage.getDefaultEndpoint()));
         return out;
     }
 
