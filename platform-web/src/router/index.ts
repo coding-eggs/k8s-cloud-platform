@@ -53,6 +53,8 @@ const router = createRouter({
         { path: 'credentials', name: 'credentials', component: () => import('@/views/CredentialView.vue'), meta: { title: '凭据管理', group: '平台管理', requiresPerm: [pageCodes.credential] } },
         { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', group: '资源管理', requiresPerm: [pageCodes.registry] } },
         { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', group: '应用交付', requiresPerm: [pageCodes.app] } },
+        // 实例列表单独一页：与商店同码（同一件事的两面：商店管清单与 Operator，本页管已建实例）
+        { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', group: '应用交付', requiresPerm: [pageCodes.app] } },
         { path: 'apps/:id', name: 'middleware-detail', component: () => import('@/views/MiddlewareDetailView.vue'), meta: { title: '中间件详情', group: '应用交付', requiresPerm: [pageCodes.app] } },
         // CI（流水线）：四个路由共用**一个**页面码 —— 列表/画布/运行历史/运行详情是同一件事的四步
         { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },

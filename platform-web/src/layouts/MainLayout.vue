@@ -227,6 +227,11 @@ async function handleLogout(): Promise<void> {
           <el-icon><Grid /></el-icon>
           <template #title>中间件</template>
         </el-menu-item>
+        <!-- 实例列表与商店共用 pageCodes.app：商店管清单与 Operator，这条管已建实例 -->
+        <el-menu-item v-if="can(pageCodes.app)" index="/apps/instances">
+          <el-icon><Files /></el-icon>
+          <template #title>中间件实例</template>
+        </el-menu-item>
 
         <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list) || can(pageCodes.registry)" class="menu-group">配置管理</div>
         <el-menu-item v-if="can(pageCodes.configmap.list)" index="/resources/configmaps">

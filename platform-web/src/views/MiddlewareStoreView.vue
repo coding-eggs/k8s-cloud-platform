@@ -2,29 +2,29 @@
 /**
  * 中间件商店（批①-1：固定清单 + Redis 实例链）。
  *
- * <p>三块：商店卡片（Operator 未装则禁用）、实例列表（统一展示）、Operator（管理员安装）。
+ * <p>两块：商店卡片（Operator 未装则禁用）、Operator（管理员安装）。
  * 卡片点「创建实例」→ 手写表单（字段来自 middlewareForms.ts）→ 提交 → 轮询操作记录。
+ * **已建实例的列表在独立页面 `/apps/instances`**（原先是本页的一个 tab）。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { clusterApi, middlewareApi, resourceContextApi } from '@/api'
+import { middlewareApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import MiddlewareIcon from '@/components/middleware/MiddlewareIcon.vue'
+import MiddlewareConnectionDialog from '@/components/middleware/MiddlewareConnectionDialog.vue'
+import { loadMiddlewareClusters } from '@/components/middleware/middlewareClusters'
 import { MIDDLEWARE_FIELDS, toQuantity } from '@/components/middleware/middlewareForms'
 import type { MiddlewareField } from '@/components/middleware/middlewareForms'
-import type { K8sCluster, MiddlewareCatalogItem, MiddlewareConnection, MiddlewareInstance } from '@/types'
+import type { K8sCluster, MiddlewareCatalogItem } from '@/types'
 
 const perm = usePermission()
 const router = useRouter()
 
-const tab = ref<'store' | 'instances' | 'operator'>('store')
+const tab = ref<'store' | 'operator'>('store')
 const clusters = ref<K8sCluster[]>([])
 const clusterId = ref('')
 const catalog = ref<MiddlewareCatalogItem[]>([])
-const instances = ref<MiddlewareInstance[]>([])
-/** 实例列表的类型过滤（空 = 全部）：按类型查，避免一次把所有类型的实时状态都拉一遍 */
-const instanceCode = ref('')
 const loading = ref(false)
 const operating = ref('')
 
@@ -66,57 +66,22 @@ const showReplicasPerShard = computed(
 )
 
 // ---------------- 连接方式 ----------------
+// 创建成功后把连接方式就地弹给用户（地址不依赖实例是否已就绪）；实例列表页也有同一入口
 const connectionVisible = ref(false)
-const connection = ref<MiddlewareConnection | null>(null)
+const connectionId = ref<string | null>(null)
 
-async function showConnection(instanceId: string): Promise<void> {
-  try {
-    connection.value = await middlewareApi.connection(instanceId)
-    connectionVisible.value = true
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '获取连接方式失败')
-  }
+function showConnection(instanceId: string): void {
+  connectionId.value = instanceId
+  connectionVisible.value = true
 }
 
 // Operator 页只列真正需要装 Operator 的条目（Nacos 走 chart，没有 Operator 可装）
 const operatorCatalog = computed(() => catalog.value.filter((i) => !i.chartBacked))
 
-// ---------------- 删除 ----------------
-const deleteVisible = ref(false)
-const deleting = ref(false)
-const deleteTarget = ref<MiddlewareInstance | null>(null)
-const keepPvc = ref(true)
-
 const pollTimer = ref<number | null>(null)
 
-const STATUS_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
-  CREATING: { label: '创建中', type: 'warning' },
-  READY: { label: '运行中', type: 'success' },
-  DEGRADED: { label: '降级', type: 'warning' },
-  FAILED: { label: '失败', type: 'danger' },
-  DELETING: { label: '删除中', type: 'info' },
-}
-
-function nameOf(code: string): string {
-  return catalog.value.find((c) => c.code === code)?.name ?? code
-}
-
 async function loadClusters(): Promise<void> {
-  if (perm.isAdmin) {
-    clusters.value = (await clusterApi.list()) ?? []
-  } else {
-    // 租户没有 platform:cluster:manage（/cluster/list 会 403）：从 /context 的分配表取集群
-    const ctx = await resourceContextApi.get()
-    const seen = new Map<string, K8sCluster>()
-    for (const t of ctx?.tenants ?? []) {
-      for (const c of t.clusters ?? []) {
-        if (!seen.has(c.clusterId)) {
-          seen.set(c.clusterId, { clusterId: c.clusterId, clusterName: c.clusterName } as unknown as K8sCluster)
-        }
-      }
-    }
-    clusters.value = [...seen.values()]
-  }
+  clusters.value = await loadMiddlewareClusters(perm.isAdmin)
   const firstEnabled = clusters.value.find((c) => c.enabled === 1)
   clusterId.value = firstEnabled?.clusterId ?? clusters.value[0]?.clusterId ?? ''
 }
@@ -129,25 +94,10 @@ async function loadCatalog(): Promise<void> {
   catalog.value = (await middlewareApi.catalog(clusterId.value)) ?? []
 }
 
-async function loadInstances(): Promise<void> {
-  if (!clusterId.value) {
-    instances.value = []
-    return
-  }
-  instances.value = (await middlewareApi.instanceList(
-    clusterId.value,
-    instanceCode.value || undefined,
-  )) ?? []
-}
-
-function onInstanceCodeChange(): void {
-  void loadInstances()
-}
-
 async function refresh(): Promise<void> {
   loading.value = true
   try {
-    await Promise.all([loadCatalog(), loadInstances()])
+    await loadCatalog()
   } finally {
     loading.value = false
   }
@@ -291,31 +241,6 @@ async function submitCreate(): Promise<void> {
   }
 }
 
-// ---------------- 删除 ----------------
-function openDelete(row: MiddlewareInstance): void {
-  deleteTarget.value = row
-  keepPvc.value = true
-  deleteVisible.value = true
-}
-
-async function submitDelete(): Promise<void> {
-  if (!deleteTarget.value) return
-  deleting.value = true
-  try {
-    const opId = await middlewareApi.remove({
-      instanceId: deleteTarget.value.id,
-      keepPvc: keepPvc.value,
-    })
-    deleteVisible.value = false
-    ElMessage.success('已提交删除')
-    poll(opId)
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '删除失败')
-  } finally {
-    deleting.value = false
-  }
-}
-
 // ---------------- Operator ----------------
 async function installOperator(item: MiddlewareCatalogItem): Promise<void> {
   if (!clusterId.value) return
@@ -395,6 +320,7 @@ onBeforeUnmount(() => {
           <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
         </el-select>
         <el-button :disabled="!clusterId" @click="refresh">刷新</el-button>
+        <el-button @click="router.push('/apps/instances')">实例列表</el-button>
       </div>
     </div>
 
@@ -445,48 +371,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-      </el-tab-pane>
-
-      <!-- ============ 实例 ============ -->
-      <el-tab-pane label="实例" name="instances">
-        <div class="mw-filter">
-          <span class="mw-filter-label">类型</span>
-          <el-select v-model="instanceCode" clearable placeholder="全部" style="width: 180px" @change="onInstanceCodeChange">
-            <el-option v-for="i in catalog" :key="i.code" :label="i.name" :value="i.code" />
-          </el-select>
-          <span class="mw-form-help">按类型查询，只拉这一类实例的实时状态</span>
-        </div>
-        <el-table :data="instances" class="panel" empty-text="这个集群还没有中间件实例">
-          <el-table-column label="类型" width="140">
-            <template #default="{ row }">{{ nameOf(row.code) }}</template>
-          </el-table-column>
-          <el-table-column label="名称" min-width="160">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="router.push(`/apps/${row.id}`)">
-                {{ row.displayName || row.name }}
-              </el-button>
-            </template>
-          </el-table-column>
-          <el-table-column prop="namespace" label="命名空间" width="140" />
-          <el-table-column prop="mode" label="形态" width="120" />
-          <el-table-column prop="version" label="版本" width="100" />
-          <el-table-column label="状态" width="110">
-            <template #default="{ row }">
-              <el-tag size="small" :type="STATUS_TAG[row.status]?.type ?? 'info'">
-                {{ STATUS_TAG[row.status]?.label ?? row.status }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="createdAt" label="创建时间" width="170" />
-          <el-table-column label="操作" width="220" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="router.push(`/apps/${row.id}`)">详情</el-button>
-              <el-button link type="primary" @click="router.push({ path: `/apps/${row.id}`, query: { edit: '1' } })">编辑</el-button>
-              <el-button link type="primary" @click="showConnection(row.id)">连接</el-button>
-              <el-button link type="danger" @click="openDelete(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
       </el-tab-pane>
 
       <!-- ============ Operator（管理员） ============ -->
@@ -650,40 +534,8 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <!-- ============ 连接方式 ============ -->
-    <el-dialog v-model="connectionVisible" title="连接方式" width="680px">
-      <p class="mw-conn-title">{{ connection?.namespace }} / {{ connection?.instanceName }}</p>
-      <div class="mw-conn-block">
-        <div class="mw-conn-label">访问地址（集群内）</div>
-        <div v-for="l in connection?.endpoints ?? []" :key="l.label" class="mw-conn-line">
-          <span class="mw-conn-key">{{ l.label }}</span>
-          <code class="mw-conn-value">{{ l.value }}</code>
-        </div>
-      </div>
-      <div v-if="connection?.credentials?.length" class="mw-conn-block">
-        <div class="mw-conn-label">凭据</div>
-        <div v-for="l in connection?.credentials ?? []" :key="l.label" class="mw-conn-line">
-          <span class="mw-conn-key">{{ l.label }}</span>
-          <span class="mw-conn-value">{{ l.value }}</span>
-        </div>
-      </div>
-      <p class="mw-form-note">{{ connection?.note }}</p>
-      <template #footer>
-        <el-button type="primary" @click="connectionVisible = false">知道了</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- ============ 删除 ============ -->
-    <el-dialog v-model="deleteVisible" title="删除实例" width="480px" :close-on-click-modal="false">
-      <p class="mw-delete-text">
-        删除「{{ deleteTarget?.displayName }}」（{{ deleteTarget?.namespace }}/{{ deleteTarget?.name }}）？
-      </p>
-      <el-checkbox v-model="keepPvc">保留数据卷（PVC 不删除，数据可留待恢复）</el-checkbox>
-      <template #footer>
-        <el-button @click="deleteVisible = false">取消</el-button>
-        <el-button type="danger" :loading="deleting" @click="submitDelete">删除</el-button>
-      </template>
-    </el-dialog>
+    <!-- ============ 连接方式（创建成功后自动弹） ============ -->
+    <MiddlewareConnectionDialog v-model="connectionVisible" :instance-id="connectionId" />
   </div>
 </template>
 
@@ -698,8 +550,6 @@ onBeforeUnmount(() => {
 .ph-desc { margin: 4px 0 0; font-size: 12.5px; color: var(--text-3); }
 .ph-actions { display: flex; gap: 10px; align-items: center; }
 .mw-tabs { margin-top: -4px; }
-.mw-filter { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.mw-filter-label { color: var(--text-3); font-size: 12.5px; }
 .mw-resource-row { display: flex; align-items: center; gap: 8px; }
 /* 表单统一左对齐：label 顶格、控件从同一列开始 */
 .mw-create-form :deep(.el-form-item__label) { justify-content: flex-start; text-align: left; }
@@ -710,12 +560,6 @@ onBeforeUnmount(() => {
 .mw-create-form :deep(.el-form-item__content > .el-input) { width: 100%; }
 .mw-unit { color: var(--text-3); font-size: 12.5px; }
 .mw-unit-select { width: 80px; }
-.mw-conn-title { margin: 0 0 12px; color: var(--text-2); font-size: 13px; }
-.mw-conn-block { margin-bottom: 14px; }
-.mw-conn-label { font-size: 12.5px; color: var(--text-3); margin-bottom: 6px; }
-.mw-conn-line { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; }
-.mw-conn-key { color: var(--text-3); min-width: 120px; }
-.mw-conn-value { color: var(--text-1); word-break: break-all; }
 
 .mw-grid {
   display: grid;
@@ -766,5 +610,4 @@ onBeforeUnmount(() => {
 .mw-form-help { margin-top: 4px; font-size: 12px; color: var(--text-3); line-height: 1.5; }
 .mw-mode-wrap { display: flex; flex-direction: column; gap: 2px; }
 .mw-form-note { margin: 4px 0 0; font-size: 12px; color: var(--text-3); line-height: 1.6; }
-.mw-delete-text { margin: 0 0 12px; font-size: 13px; color: var(--text-1); }
 </style>
