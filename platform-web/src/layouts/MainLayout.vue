@@ -252,7 +252,7 @@ async function handleLogout(): Promise<void> {
           <template #title>流水线</template>
         </el-menu-item>
 
-        <div v-if="can(pageCodes.pvc.list) || can(pageCodes.persistentVolume.list) || can(pageCodes.storageClass.list)" class="menu-group">存储</div>
+        <div v-if="can(pageCodes.pvc.list) || can(pageCodes.persistentVolume.list) || can(pageCodes.storageClass.list) || can(pageCodes.objectStorage)" class="menu-group">存储</div>
         <el-menu-item v-if="can(pageCodes.pvc.list)" index="/resources/pvcs">
           <el-icon><Coin /></el-icon>
           <template #title>PVC</template>
@@ -266,6 +266,11 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.storageClass.list)" index="/resources/storageclasses">
           <el-icon><Files /></el-icon>
           <template #title>存储类</template>
+        </el-menu-item>
+        <!-- 对象存储：租户看自己名下的桶；管理员可代建、设配额 -->
+        <el-menu-item v-if="can(pageCodes.objectStorage)" index="/object-storage">
+          <el-icon><Cloudy /></el-icon>
+          <template #title>对象存储</template>
         </el-menu-item>
 
         <div v-if="can(pageCodes.serviceMonitor.list) || can(pageCodes.podMonitor.list) || can(pageCodes.prometheusRule.list) || can(pageCodes.alert) || can(pageCodes.notifyChannel)" class="menu-group">监控告警</div>

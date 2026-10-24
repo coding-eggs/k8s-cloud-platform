@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformObjectBucketMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformObjectBucket">
+    <id     column="id"           jdbcType="VARCHAR"   property="id" />
+    <result column="cluster_id"   jdbcType="VARCHAR"   property="clusterId" />
+    <result column="bucket"       jdbcType="VARCHAR"   property="bucket" />
+    <result column="tenant_id"    jdbcType="VARCHAR"   property="tenantId" />
+    <result column="display_name" jdbcType="VARCHAR"   property="displayName" />
+    <result column="status"       jdbcType="VARCHAR"   property="status" />
+    <result column="created_by"   jdbcType="VARCHAR"   property="createdBy" />
+    <result column="created_at"   jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at"   jdbcType="TIMESTAMP" property="updatedAt" />
+    <result column="deleted_at"   jdbcType="TIMESTAMP" property="deletedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, bucket, tenant_id, display_name, `status`, created_by, created_at, updated_at, deleted_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformObjectBucket">
+    insert into platform_object_bucket (id, cluster_id, bucket, tenant_id, display_name, `status`,
+      created_by, created_at, updated_at, deleted_at)
+    values (#{id,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR}, #{bucket,jdbcType=VARCHAR},
+      #{tenantId,jdbcType=VARCHAR}, #{displayName,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
+      #{createdBy,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP},
+      #{deletedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <select id="selectById" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_object_bucket where id = #{id}
+  </select>
+
+  <select id="selectByCluster" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_object_bucket
+    where cluster_id = #{clusterId} and deleted_at is null
+    order by created_at desc
+  </select>
+
+  <select id="selectByTenant" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_object_bucket
+    where cluster_id = #{clusterId} and tenant_id = #{tenantId} and deleted_at is null
+    order by created_at desc
+  </select>
+
+  <select id="selectActiveByBucket" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_object_bucket
+    where cluster_id = #{clusterId} and bucket = #{bucket} and deleted_at is null
+  </select>
+
+  <select id="countActiveByTenant" resultType="int">
+    select count(1) from platform_object_bucket
+    where cluster_id = #{clusterId} and tenant_id = #{tenantId} and deleted_at is null
+  </select>
+
+  <update id="softDelete">
+    update platform_object_bucket
+    set `status` = 'DELETED', deleted_at = #{deletedAt}, updated_at = #{deletedAt}
+    where id = #{id} and deleted_at is null
+  </update>
+
+</mapper>

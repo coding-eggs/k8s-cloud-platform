@@ -468,6 +468,7 @@ const EMPTY_SEAWEED: K8sSeaweedInstall = {
   volumeReplicas: 1,
   s3Replicas: 1,
   adminEnabled: false,
+  s3Endpoint: 'http://seaweedfs-s3.platform-storage:8333',
 }
 
 /** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
@@ -639,6 +640,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     volumeReplicas: seaweedMerged.volumeReplicas ?? EMPTY_SEAWEED.volumeReplicas,
     s3Replicas: seaweedMerged.s3Replicas ?? EMPTY_SEAWEED.s3Replicas,
     adminEnabled: seaweedMerged.adminEnabled ?? false,
+    s3Endpoint: seaweedMerged.s3Endpoint || EMPTY_SEAWEED.s3Endpoint,
   }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
@@ -1341,6 +1343,16 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </div>
       </div>
       <div v-if="applyDialog.showSeaweed" class="cc-form-row">
+        <span class="cc-form-label">S3 地址</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.seaweed.s3Endpoint" class="cc-sf-endpoint" spellcheck="false" />
+          <div class="cc-form-hint">
+            平台后端访问 S3 用的地址（不是给应用用的展示地址）。平台与 SeaweedFS 同集群时保持默认；
+            业务集群或平台跑在集群外时，先把 S3 暴露成 NodePort/LB，再填外部地址
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showSeaweed" class="cc-form-row">
         <span class="cc-form-label">管理台</span>
         <div class="cc-form-control">
           <el-switch v-model="applyDialog.seaweed.adminEnabled" active-text="安装 admin UI（端口 23646）" />
@@ -1694,6 +1706,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 .cc-sf-item { display: flex; flex-direction: column; gap: 4px; }
 .cc-sf-label { font-size: 12px; color: var(--text-3); }
 .cc-sf-input { width: 140px; }
+.cc-sf-endpoint { max-width: 420px; }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .cc-resources { display: flex; flex-direction: column; gap: 8px; }
 .cc-resource-line { display: flex; align-items: center; gap: 8px; }

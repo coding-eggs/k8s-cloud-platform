@@ -47,6 +47,8 @@ export const pageCodes = {
   registry: 'tenant:page:registry',
   /** 中间件商店（租户可达；管理员持 tenant 族码，同一个页面） */
   app: 'tenant:page:app',
+  /** 对象存储（SeaweedFS 桶 / 凭据 / 对象浏览） */
+  objectStorage: 'tenant:page:object-storage',
 
   // ---- 资源管理（租户可达；storageClass 因无命名空间维度归平台管理员）----
   workload: {

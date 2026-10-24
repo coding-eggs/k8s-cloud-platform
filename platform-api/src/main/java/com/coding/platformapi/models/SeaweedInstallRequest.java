@@ -33,12 +33,14 @@ public class SeaweedInstallRequest {
     private Integer volumeReplicas;
     /** S3 网关副本数，默认 1 */
     private Integer s3Replicas;
-    /**
-     * 是否安装 admin 管理台（chart 的 {@code admin} 组件，端口 23646）。
-     *
-     * <p>默认不装：多一个管理面 + 一块数据盘。装的时候**必须带鉴权** —— admin 从 4.46 起
-     * 绑定非 loopback 地址（0.0.0.0）时没有密码会直接退出，所以平台会先生成一个随机口令的
-     * Secret（{@code <release 命名空间>/platform-seaweedfs-admin}）再引用它，口令不经过 values/快照。
-     */
+    /** 是否安装 admin 管理台（chart 的 {@code admin} 组件，端口 23646）。 */
     private Boolean adminEnabled;
+    /**
+     * S3 网关地址（平台后端访问 S3 用的地址，不是给应用用的展示地址）。
+     *
+     * <p>默认 {@code http://seaweedfs-s3.platform-storage:8333}（平台与 SeaweedFS 同集群时可用）。
+     * **业务集群或平台跑在集群外时必须改**：k8s-server 是按 kubeconfig 访问的，pod 网络不一定可达
+     * 目标集群的 ClusterIP —— 把 S3 暴露成 NodePort/LB（或本地 port-forward）后填这里。
+     */
+    private String s3Endpoint;
 }

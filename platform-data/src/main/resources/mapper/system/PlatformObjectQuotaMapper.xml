@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformObjectQuotaMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformObjectQuota">
+    <result column="cluster_id"  jdbcType="VARCHAR"   property="clusterId" />
+    <result column="tenant_id"   jdbcType="VARCHAR"   property="tenantId" />
+    <result column="max_buckets" jdbcType="INTEGER"   property="maxBuckets" />
+    <result column="updated_by"  jdbcType="VARCHAR"   property="updatedBy" />
+    <result column="updated_at"  jdbcType="TIMESTAMP" property="updatedAt" />
+  </resultMap>
+
+  <select id="selectByClusterTenant" resultMap="BaseResultMap">
+    select cluster_id, tenant_id, max_buckets, updated_by, updated_at
+    from platform_object_quota
+    where cluster_id = #{clusterId} and tenant_id = #{tenantId}
+  </select>
+
+  <insert id="upsert" parameterType="com.coding.data.models.system.PlatformObjectQuota">
+    insert into platform_object_quota (cluster_id, tenant_id, max_buckets, updated_by, updated_at)
+    values (#{clusterId,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{maxBuckets,jdbcType=INTEGER},
+      #{updatedBy,jdbcType=VARCHAR}, #{updatedAt,jdbcType=TIMESTAMP})
+    on duplicate key update
+      max_buckets = values(max_buckets),
+      updated_by  = values(updated_by),
+      updated_at  = values(updated_at)
+  </insert>
+
+</mapper>

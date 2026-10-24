@@ -526,7 +526,10 @@ public class ComponentRecipeCatalog {
                             // 组件间加密暂不开；S3 的 AK/SK 校验在 s3.enableAuth
                             "enableSecurity", false)),
                     // S3 网关是这个组件的意义所在；admin 管理台由安装表单决定（默认不装，见 applySeaweedValues）
+                    // identities 配置由平台接管（SeaweedS3Service 在 helm 之前创建 platform-seaweedfs-s3-config）：
+                    // 只有这样平台才能按桶发 AK/SK（bucket-scoped actions）
                     "s3", Map.of("enabled", true, "enableAuth", true,
+                            "existingConfigSecret", "platform-seaweedfs-s3-config",
                             "resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
                     "master", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
                     "volume", Map.of("resources", seaweedResources("100m", "256Mi", "1", "1Gi")),

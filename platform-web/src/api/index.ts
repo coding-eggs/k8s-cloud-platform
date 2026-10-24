@@ -90,6 +90,12 @@ import type {
   TenantMemberView,
   TokenUserInfo,
   MiddlewareCatalogItem,
+  ObjectStorageBucket,
+  ObjectStorageCredential,
+  ObjectStorageCredentialSecret,
+  ObjectStorageObjectPage,
+  ObjectStorageObjectStat,
+  ObjectStorageQuota,
   MiddlewareConnection,
   MiddlewareFormOptions,
   MiddlewareInstanceDetail,
@@ -928,6 +934,37 @@ export const pipelineApi = {
    */
   clearCache: (clusterId: string, namespace: string, tenantId?: string) =>
     http.post<never, void>('/pipeline/cache/clear', { clusterId, namespace, tenantId }),
+}
+
+/** 对象存储（SeaweedFS 组件：桶 / 凭据 / 对象浏览；对象级写操作 v1 不做） */
+export const objectStorageApi = {
+  listBuckets: (payload: { clusterId: string; tenantId?: string }) =>
+    http.post<never, ObjectStorageBucket[]>('/object-storage/buckets/list', payload),
+  createBucket: (payload: { clusterId: string; tenantId: string; name: string; displayName?: string }) =>
+    http.post<never, ObjectStorageBucket>('/object-storage/buckets/create', payload),
+  deleteBucket: (payload: { clusterId: string; tenantId?: string; bucketId: string }) =>
+    http.post<never, void>('/object-storage/buckets/delete', payload),
+  quota: (payload: { clusterId: string; tenantId?: string }) =>
+    http.post<never, ObjectStorageQuota>('/object-storage/quota/get', payload),
+  setQuota: (payload: { clusterId: string; tenantId: string; maxBuckets: number }) =>
+    http.post<never, void>('/object-storage/quota/set', payload),
+  credentials: (payload: { clusterId: string; tenantId?: string; bucketId: string }) =>
+    http.post<never, ObjectStorageCredential[]>('/object-storage/credentials/list', payload),
+  issueCredential: (payload: { clusterId: string; tenantId?: string; bucketId: string }) =>
+    http.post<never, ObjectStorageCredentialSecret>('/object-storage/credentials/issue', payload),
+  viewCredential: (payload: { clusterId: string; tenantId?: string; credentialId: string }) =>
+    http.post<never, ObjectStorageCredentialSecret>('/object-storage/credentials/get', payload),
+  revokeCredential: (payload: { clusterId: string; tenantId?: string; credentialId: string }) =>
+    http.post<never, void>('/object-storage/credentials/revoke', payload),
+  objects: (payload: {
+    clusterId: string; tenantId?: string; bucketId: string
+    prefix?: string; after?: string; maxKeys?: number
+  }) => http.post<never, ObjectStorageObjectPage>('/object-storage/objects/list', payload),
+  statObject: (payload: { clusterId: string; tenantId?: string; bucketId: string; key: string }) =>
+    http.post<never, ObjectStorageObjectStat>('/object-storage/objects/stat', payload),
+  /** 下载对象（≤100MB）：返回二进制流，调用方自己 blob 化 */
+  downloadObject: (payload: { clusterId: string; tenantId?: string; bucketId: string; key: string }) =>
+    http.post<never, Blob>('/object-storage/objects/download', payload, { responseType: 'blob' }),
 }
 
 /** 中间件商店（固定清单 + Operator 实例） */

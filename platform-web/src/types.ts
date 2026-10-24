@@ -1024,6 +1024,68 @@ export interface K8sComponentStatus {
   seaweedCurrent?: K8sSeaweedInstall | null
 }
 
+// ===== 对象存储（S3 桶 / 凭据 / 对象浏览） =====
+
+/** 平台台账里的一个桶 */
+export interface ObjectStorageBucket {
+  id: string
+  clusterId: string
+  bucket: string
+  tenantId: string
+  displayName?: string | null
+  status: string
+  createdBy?: string | null
+  createdAt?: string | null
+  /** 当前有效凭据数 */
+  credentialCount: number
+}
+
+/** 一组访问凭据（secretKey 只在发放/查看时返回，不落库） */
+export interface ObjectStorageCredential {
+  id: string
+  bucketId: string
+  identityName: string
+  accessKey: string
+  status: string
+  createdBy?: string | null
+  createdAt?: string | null
+}
+
+export interface ObjectStorageCredentialSecret {
+  accessKey: string
+  secretKey?: string | null
+}
+
+/** 某租户的桶配额与用量 */
+export interface ObjectStorageQuota {
+  tenantId: string
+  used: number
+  maxBuckets: number
+  updatedBy?: string | null
+  updatedAt?: string | null
+}
+
+export interface ObjectStorageObjectItem {
+  key: string
+  size: number
+  lastModified?: string | null
+  etag?: string | null
+}
+
+export interface ObjectStorageObjectPage {
+  items: ObjectStorageObjectItem[]
+  /** 下一页游标；null = 已到末尾 */
+  nextToken?: string | null
+}
+
+export interface ObjectStorageObjectStat {
+  key: string
+  size: number
+  etag?: string | null
+  contentType?: string | null
+  lastModified?: string | null
+}
+
 /** 对象存储（SeaweedFS）安装参数：StorageClass 必填，容量是带单位的 quantity */
 export interface K8sSeaweedInstall {
   storageClass: string
@@ -1035,6 +1097,8 @@ export interface K8sSeaweedInstall {
   s3Replicas: number
   /** 是否装 admin 管理台（口令由平台生成进 Secret platform-seaweedfs-admin） */
   adminEnabled?: boolean
+  /** 平台后端访问 S3 的地址（默认集群内地址；业务集群/平台在集群外时要填暴露后的地址） */
+  s3Endpoint?: string
 }
 
 /** Calico 网络参数（安装表单） */

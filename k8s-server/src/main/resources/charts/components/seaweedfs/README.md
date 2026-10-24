@@ -37,6 +37,7 @@ global:
 s3:
   enabled: true
   enableAuth: true
+  existingConfigSecret: platform-seaweedfs-s3-config   # 平台接管 identities（见 §3.2）
 master: { resources: {...} }
 volume: { resources: {...} }
 filer:  { resources: {...} }
@@ -48,7 +49,8 @@ filer:  { resources: {...} }
 |---|---|
 | `fullnameOverride: seaweedfs` | 探测认 StatefulSet `seaweedfs-master`；不钉名字，release 名一变面板就永远「未安装」（与 metrics-server 同款坑） |
 | `s3.enabled: true` | 不开 S3 只是一个 filer，应用拿不到 endpoint —— 这个组件就没有意义 |
-| `s3.enableAuth: true` | 关掉 = S3 匿名可写。凭据由 chart 生成进 `seaweedfs-s3-secret`（`helm.sh/hook` + `resource-policy: keep`，升级不重建） |
+| `s3.enableAuth: true` | 关掉 = S3 匿名可写 |
+| `s3.existingConfigSecret: platform-seaweedfs-s3-config` | **identities 配置由平台接管**（见 §3.2）：只有这样平台才能按桶发 AK/SK（bucket-scoped actions）。chart 自带的 `seaweedfs-s3-secret` 不再生成 |
 | `global.seaweedfs.createClusterRole: false` | chart 默认给 S3 网关 SA 一个**集群级**「任意 Pod 读写」角色（Cloud Drive 用）。平台只当 S3 用，不给存储组件这种权限 |
 | `global.seaweedfs.enableSecurity: false` | 组件间 mTLS/JWT 暂不开（内网、平台自用）；**S3 的 AK/SK 校验是独立开关，已开** |
 | 四个组件的 resources | 显式钉住，避免存储组件无 requests 把节点挤爆（也就不会撞命名空间配额） |
@@ -76,12 +78,32 @@ chart 的 `seaweedfs.image` helper 是 `default .Chart.AppVersion .Values.image.
 | `volumeReplicas` | `1` | 数据节点数 |
 | `s3Replicas` | `1` | S3 网关副本 |
 | `adminEnabled` | `false` | 是否装 admin 管理台（见 §3.1） |
+| `s3Endpoint` | `http://seaweedfs-s3.platform-storage:8333` | **平台后端**访问 S3 的地址（对象存储页面会用它建桶/列对象）。业务集群或平台跑在集群外时必须改成暴露后的地址 |
 
 > 为什么不用 `editableValues`：这些值落在嵌套结构里（`volume.dataDirs` 是 list、`*.data` 是 map），
 > 而 editableValues 的模型是「路径 → 标量」。后端在 `mergeValues` 之后用
 > `applySeaweedValues` 把它们拼进 values，并把整组参数记进操作快照的 `__platform.seaweed`（编辑表单回填）。
 
 ⚠️ **容量必须带单位**（`10Gi` / `200Mi` / `1Ti`）：后端用正则校验，裸数字会被拒（避免「30」被当成 30 字节）。
+
+### 3.2 S3 配置由平台接管（桶与凭据的基础）
+
+平台用 chart 的 `s3.existingConfigSecret` 指向自己的 Secret **`platform-seaweedfs-s3-config`**
+（key `seaweedfs_s3_config`，挂在 `/etc/sw/`）。安装前由 k8s-server 生成，里面有两类身份：
+
+| 身份 | actions | 用途 |
+|---|---|---|
+| `platform-admin` | `["Admin"]` | **只给平台后端**：建/删桶、ListBuckets、对账 |
+| `bucket-<桶名>-<8位>` | `Read/Write/List/Tagging:<桶名>` | 发给租户/应用，**只能碰这一个桶** |
+
+- 凭据（AK/SK）由 k8s-server 生成：SK 写进 Secret `platform-seaweedfs-cred-*`，platform-api 侧台账只存
+  accessKey + Secret 名，**secretKey 不落库**；
+- 改配置后的生效方式：k8s-server 给 `seaweedfs-s3` Deployment 打 `restartedAt` 注解触发滚动（秒级、无状态）。
+  滚动期间单副本会短暂 503，需要零中断就把 `s3Replicas` 调到 2；
+- ⚠️ **静态配置优先级最高、完全覆盖 filer 里的动态身份** —— 在 admin UI 的 Users 页手工建的账号
+  **不会生效**（会被平台的配置文件盖掉）。凭据只能由平台「对象存储」页发；
+- ⚠️ 升级前装的旧部署挂的是 chart 自带配置：**先在组件页「编辑/重放」一次**切到平台配置，
+  否则平台发凭据不会生效（对象存储页面会直接提示这一点）。
 
 ### 3.1 admin 管理台（可选）
 

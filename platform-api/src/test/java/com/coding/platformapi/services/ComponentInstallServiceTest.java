@@ -998,7 +998,7 @@ class ComponentInstallServiceTest {
 
         svc.apply(new ComponentApplyRequest("c1", "seaweedfs", "INSTALL", null, Map.of(), null, null, null,
                 null, null, null, new com.coding.platformapi.models.SeaweedInstallRequest(
-                        "nfs-client", "2Gi", "50Gi", "20Gi", 1, 2, 1, false)), "admin");
+                        "nfs-client", "2Gi", "50Gi", "20Gi", 1, 2, 1, false, null)), "admin");
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
@@ -1040,7 +1040,7 @@ class ComponentInstallServiceTest {
 
         svc.apply(new ComponentApplyRequest("c1", "seaweedfs", "INSTALL", null, Map.of(), null, null, null,
                 null, null, null, new com.coding.platformapi.models.SeaweedInstallRequest(
-                        "nfs-client", "1Gi", "30Gi", "10Gi", 1, 1, 1, true)), "admin");
+                        "nfs-client", "1Gi", "30Gi", "10Gi", 1, 1, 1, true, null)), "admin");
 
         // 凭证 Secret 必须在 helm 之前就位
         verify(client, timeout(5000)).applySeaweedAdminSecret("c1", "platform-storage",

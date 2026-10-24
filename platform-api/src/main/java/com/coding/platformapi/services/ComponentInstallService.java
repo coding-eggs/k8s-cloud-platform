@@ -76,6 +76,10 @@ public class ComponentInstallService {
     /** SeaweedFS admin 管理台的口令 Secret：口令由 k8s-server 生成，platform-api 只传名字 */
     private static final String SEAWEED_ADMIN_SECRET = "platform-seaweedfs-admin";
 
+    /** S3 网关的默认地址（平台与 SeaweedFS 同集群时可用；业务集群要改成暴露后的地址） */
+    public static final String DEFAULT_SEAWEED_S3_ENDPOINT =
+            "http://seaweedfs-s3.platform-storage:8333";
+
     /** Calico 支持的封装方式（Installation CR 的 calicoNetwork.ipPools[].encapsulation） */
     private static final List<String> CALICO_ENCAPSULATIONS =
             List.of("IPIP", "VXLAN", "IPIPCrossSubnet", "VXLANCrossSubnet", "None");
@@ -517,6 +521,7 @@ public class ComponentInstallService {
             s.put("volumeReplicas", seaweed.getVolumeReplicas());
             s.put("s3Replicas", seaweed.getS3Replicas());
             s.put("adminEnabled", seaweed.getAdminEnabled());
+            s.put("s3Endpoint", seaweed.getS3Endpoint());
             platform.put("seaweed", s);
         }
         if (!platform.isEmpty()) {
@@ -845,6 +850,8 @@ public class ComponentInstallService {
                 positiveOrNull(prev.get("s3Replicas")), 1));
         out.setAdminEnabled(firstBoolean(requested == null ? null : requested.getAdminEnabled(),
                 prev.get("adminEnabled") instanceof Boolean b ? b : null, false));
+        out.setS3Endpoint(firstNonBlank(requested == null ? null : requested.getS3Endpoint(),
+                asString(prev.get("s3Endpoint")), DEFAULT_SEAWEED_S3_ENDPOINT));
         return out;
     }
 
@@ -1021,6 +1028,11 @@ public class ComponentInstallService {
             // 平台先确保一个随机口令的 Secret 存在（已存在则原样保留，升级不轮换），再用 values 引用它。
             if (seaweed != null && Boolean.TRUE.equals(seaweed.getAdminEnabled())) {
                 client.applySeaweedAdminSecret(clusterId, releaseNamespace(releases), SEAWEED_ADMIN_SECRET);
+            }
+            // S3 的 identities 配置由平台接管（recipe 的 s3.existingConfigSecret）：
+            // helm 之前必须已有 platform-admin 身份，否则 S3 网关起不来 / 平台读不到配置。
+            if (seaweed != null) {
+                client.ensureSeaweedS3Config(clusterId);
             }
             ComponentInstallResultDTO result =
                     client.applyComponent(clusterId, componentCode, action, toDtos(releases));

@@ -47,6 +47,16 @@
             <artifactId>jackson-dataformat-yaml</artifactId>
         </dependency>
 
+        <!-- 对象存储（SeaweedFS）：S3 控制面操作（建/删桶、列对象、下载）。
+             MinIO SDK 专为 S3 兼容存储写，签名/分页/错误码不用自己造；
+             ⚠️ 它带 Jackson 2（com.fasterxml）—— 本模块经 fabric8 的 yaml 解析已经同时存在
+             Jackson 2 与 Jackson 3，两者包名不同、互不覆盖。 -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>8.5.17</version>
+        </dependency>
+
         <!--Pod exec 终端：WebSocket 握手走既有 JWT 安全链（token 可走 query）-->
         <dependency>
             <groupId>org.springframework.boot</groupId>

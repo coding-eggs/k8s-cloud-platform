@@ -123,6 +123,26 @@ public final class AuditAction {
     /** 安装/升级中间件 Operator（管理员） */
     public static final String MIDDLEWARE_OPERATOR_INSTALL = "middleware:operator:install";
 
+    // ===== 对象存储（SeaweedFS 组件）=====
+
+    /** 建桶（管理员代建） */
+    public static final String OBJECT_BUCKET_CREATE = "object-bucket:create";
+
+    /** 删桶 */
+    public static final String OBJECT_BUCKET_DELETE = "object-bucket:delete";
+
+    /** 设置租户的桶数上限 */
+    public static final String OBJECT_QUOTA_SET = "object-quota:set";
+
+    /** 发放访问凭据（每桶一组 AK/SK） */
+    public static final String OBJECT_CREDENTIAL_ISSUE = "object-credential:issue";
+
+    /** 查看凭据（读取 secretKey 是敏感动作，留痕） */
+    public static final String OBJECT_CREDENTIAL_VIEW = "object-credential:view";
+
+    /** 吊销凭据 */
+    public static final String OBJECT_CREDENTIAL_REVOKE = "object-credential:revoke";
+
     // ---- 凭据（S0.2，4 个写端点全量）----
 
     public static final String CREDENTIAL_CREATE = "credential:create";

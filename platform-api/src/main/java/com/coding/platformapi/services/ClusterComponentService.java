@@ -340,6 +340,21 @@ public class ClusterComponentService {
         return cur;
     }
 
+    /**
+     * 对象存储的 S3 网关地址（平台后端用）：取最近一次成功安装快照里的 {@code __platform.seaweed.s3Endpoint}。
+     *
+     * <p>没有记录 / 字段缺失 → null（调用方回落到默认集群内地址）。**只读一次快照**，
+     * 不触发组件探测（对象存储页面每次打开都调它）。
+     */
+    public String seaweedEndpoint(String clusterId) {
+        PlatformComponentOperation last = operationMapper.selectLatestSuccess(clusterId, "seaweedfs");
+        if (last == null) {
+            return null;
+        }
+        Map<String, Object> platform = platformOf(parseSnapshot(last.getValuesSnapshot()));
+        return platform.get("seaweed") instanceof Map<?, ?> m ? asString(m.get("s3Endpoint")) : null;
+    }
+
     /** {@code __platform.seaweed} → 编辑表单的当前值；没有记录返回 null（表单退回默认容量/副本数） */
     private static SeaweedInstallRequest seaweedOf(Map<String, Object> platform) {
         if (!(platform.get("seaweed") instanceof Map<?, ?> m)) {
@@ -354,6 +369,7 @@ public class ClusterComponentService {
         cur.setVolumeReplicas(asInt(m.get("volumeReplicas")));
         cur.setS3Replicas(asInt(m.get("s3Replicas")));
         cur.setAdminEnabled(m.get("adminEnabled") instanceof Boolean b ? b : null);
+        cur.setS3Endpoint(asString(m.get("s3Endpoint")));
         return cur;
     }
 

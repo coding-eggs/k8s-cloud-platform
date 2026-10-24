@@ -96,6 +96,8 @@ const router = createRouter({
         { path: 'resources/pvcs', name: 'pvcs', component: () => import('@/views/resource/PvcView.vue'), meta: { title: 'PVC', group: '存储', context: 'full', requiresPerm: [pageCodes.pvc.list] } },
         { path: 'resources/persistentvolumes', name: 'persistentvolumes', component: () => import('@/views/resource/PersistentVolumeView.vue'), meta: { title: '持久卷', group: '存储', context: 'full', requiresPerm: [pageCodes.persistentVolume.list] } },
         { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', group: '存储', context: 'full', requiresPerm: [pageCodes.storageClass.list] } },
+        // 对象存储（SeaweedFS 集群组件）：桶 / 凭据 / 对象浏览，集群级、无命名空间维度
+        { path: 'object-storage', name: 'object-storage', component: () => import('@/views/ObjectStorageView.vue'), meta: { title: '对象存储', group: '存储', requiresPerm: [pageCodes.objectStorage] } },
 
         // 监控告警
         { path: 'resources/servicemonitors', name: 'servicemonitors', component: () => import('@/views/resource/ServiceMonitorView.vue'), meta: { title: 'ServiceMonitor', group: '监控告警', context: 'full', requiresPerm: [pageCodes.serviceMonitor.list] } },

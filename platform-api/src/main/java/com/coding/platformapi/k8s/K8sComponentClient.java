@@ -11,6 +11,7 @@ import com.coding.common.models.k8s.dto.OtelTelemetryStateDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
+import com.coding.common.models.objectstorage.SeaweedS3ConfigRequestDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeRequestDTO;
@@ -108,6 +109,17 @@ public class K8sComponentClient {
         body.setTargetNamespace(targetNamespace);
         body.setTargetSecretName(targetSecretName);
         gateway.exchange(HttpMethod.POST, "/components/thanos-objstore", null, body,
+                gateway.responseType(Void.class));
+    }
+
+    /**
+     * SeaweedFS 的 S3 identities 配置文件：安装/重放前必须存在（含 platform-admin 身份）。
+     * 配置内容（AK/SK）由 k8s-server 在集群内维护，platform-api 不接触。
+     */
+    public void ensureSeaweedS3Config(String clusterId) {
+        SeaweedS3ConfigRequestDTO body = new SeaweedS3ConfigRequestDTO();
+        body.setClusterId(clusterId);
+        gateway.exchange(HttpMethod.POST, "/object-storage/config/ensure", null, body,
                 gateway.responseType(Void.class));
     }
 
