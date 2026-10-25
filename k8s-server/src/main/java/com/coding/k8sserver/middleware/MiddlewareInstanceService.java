@@ -368,9 +368,17 @@ public class MiddlewareInstanceService {
 
         MiddlewareAdapter adapter = adapter(req.getCode());
         List<MiddlewareAdapter.CrSpec> created = new ArrayList<>();
+        String extraSecret = adapter.extraSecretName(req.getName());
         try {
             if (adapter.usesPlatformPassword()) {
                 writeSecret(client, req);
+            }
+            if (extraSecret != null) {
+                Map<String, String> data = adapter.extraSecretData(req);
+                if (data.isEmpty()) {
+                    throw new CloudPlatformException(EnumResponseType.ERROR, "缺少对象存储凭据");
+                }
+                writeDataSecret(client, req.getNamespace(), extraSecret, data, req.getInstanceId());
             }
             for (MiddlewareAdapter.CrSpec spec : adapter.buildCreate(req)) {
                 client.genericKubernetesResources(spec.context())
@@ -386,6 +394,9 @@ public class MiddlewareInstanceService {
                     s.resource().getMetadata().getName()));
             if (adapter.usesPlatformPassword()) {
                 deleteSecretQuietly(client, req.getNamespace(), secretName(req));
+            }
+            if (extraSecret != null) {
+                deleteSecretQuietly(client, req.getNamespace(), extraSecret);
             }
             throw e;
         }
@@ -534,6 +545,11 @@ public class MiddlewareInstanceService {
                     .delete();
             if (adapter.usesPlatformPassword()) {
                 deleteSecretQuietly(client, req.getNamespace(), secretName(req));
+            }
+            // 外部存储的凭据 Secret（Milvus）：与 PVC 同生命周期
+            String extraSecret = adapter.extraSecretName(req.getName());
+            if (extraSecret != null) {
+                deleteSecretQuietly(client, req.getNamespace(), extraSecret);
             }
         }
         // keepPvc=true 时保留 Secret：数据卷还在，凭据也还给它留着
@@ -727,6 +743,20 @@ public class MiddlewareInstanceService {
                 .addToStringData("password", req.getPassword())
                 .build();
         client.secrets().inNamespace(req.getNamespace()).resource(secret).createOrReplace();
+    }
+
+    /** 写一组字符串键值 Secret（带平台受管标签，便于跟随实例清理）。 */
+    private void writeDataSecret(KubernetesClient client, String namespace, String name,
+                                 Map<String, String> data, String instanceId) {
+        SecretBuilder builder = new SecretBuilder()
+                .withNewMetadata()
+                .withName(name)
+                .withNamespace(namespace)
+                .addToLabels("platform.coding/managed-by", "middleware")
+                .addToLabels("platform.coding/middleware-instance", instanceId == null ? "-" : instanceId)
+                .endMetadata();
+        data.forEach(builder::addToStringData);
+        client.secrets().inNamespace(namespace).resource(builder.build()).createOrReplace();
     }
 
     private void deleteSecretQuietly(KubernetesClient client, String namespace, String name) {
