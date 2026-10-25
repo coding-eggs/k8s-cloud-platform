@@ -66,14 +66,15 @@ spec:
       ssl:
         enabled: false            # 影响 operator 的 StorageReady 探测
   config:
-    milvus:
-      minio:
-        bucketName: <桶名>
-        useVirtualHost: false     # SeaweedFS 必须路径风格
-        useSSL: false             # ← 真正影响 Milvus 客户端的是这里，不是 storage.ssl
+    minio:                        # Milvus 配置是**顶层**键（operator 直接把 spec.config 并进 milvus.yaml）
+      bucketName: <桶名>
+      useVirtualHost: false       # SeaweedFS 必须路径风格
+      useSSL: false               # ← 真正影响 Milvus 客户端的是这里，不是 storage.ssl
 ```
 
-> ⚠️ **`useSSL` 要写两处**：`dependencies.storage.ssl.enabled` 给 operator 做就绪探测，`config.milvus.minio.useSSL` 才是 Milvus 客户端的开关。两处不一致会出现"探测说通、Milvus 连不上"。
+> ⚠️ **`useSSL` 要写两处**：`dependencies.storage.ssl.enabled` 给 operator 做就绪探测，`config.minio.useSSL` 才是 Milvus 客户端的开关。两处不一致会出现"探测说通、Milvus 连不上"。
+>
+> ⚠️ **`config` 下不要包 `milvus:` 层**：operator 把 `spec.config` 直接合并进 `milvus.yaml`（源码 `updateConfigMap` → `util.MergeValues(conf, mc.Spec.Conf.Data)`），而 `GetMinioSecure()` 读的也是顶层的 `minio.useSSL`。上游 `milvus_cluster_minimum.yaml` 里那种 `config.milvus.*` 写法在 1.3.12 下不生效。
 
 ### 2.5 平台侧既有能力（复用，不新建）
 
@@ -189,11 +190,10 @@ spec:
       secretRef: <name>-milvus-storage
       ssl: {enabled: <bool>}
   config:
-    milvus:
-      minio:
-        bucketName: <桶名>
-        useVirtualHost: false
-        useSSL: <bool>
+    minio:
+      bucketName: <桶名>
+      useVirtualHost: false
+      useSSL: <bool>
 ```
 
 ### 5.3 集群 CR（`mode: cluster`）
