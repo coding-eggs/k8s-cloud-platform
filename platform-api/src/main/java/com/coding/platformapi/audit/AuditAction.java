@@ -212,6 +212,17 @@ public final class AuditAction {
      */
     public static final String PIPELINE_RETRY_WORKSPACE_CLEAR = "pipeline:retry-workspace-clear";
 
+    // ---- 应用编排（画布）----
+
+    public static final String APPLICATION_CREATE = "application:create";
+
+    public static final String APPLICATION_UPDATE = "application:update";
+
+    public static final String APPLICATION_DELETE = "application:delete";
+
+    /** 部署 / 升级 / 回滚历史版本都走这一个动作（版本号记在 target 里） */
+    public static final String APPLICATION_DEPLOY = "application:deploy";
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *
