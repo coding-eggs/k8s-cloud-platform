@@ -471,7 +471,50 @@ public class MiddlewareService {
         out.setEndpoints(endpoints);
         out.setCredentials(credentials);
         out.setNote(note);
+        out.setInfo(connInfoOf(instance));
         return out;
+    }
+
+    /**
+     * 机器可用的连接信息。**只在用这里**：应用编排的注入会直接消费它，
+     * 在别处再拼一遍 Service 名/端口/Secret 键，两处一漂移就注入到不存在的地址。
+     */
+    private MiddlewareConnectionDTO.ConnInfo connInfoOf(PlatformMiddlewareInstance instance) {
+        String ns = instance.getNamespace();
+        String name = instance.getName();
+        return switch (instance.getCode()) {
+            case "redis" -> switch (instance.getMode() == null ? "" : instance.getMode()) {
+                case "SENTINEL" -> MiddlewareConnectionDTO.ConnInfo
+                        .of("redis", host(ns, name + "-master"), 6379)
+                        .secret(name + "-credentials", null, "password").build();
+                case "CLUSTER" -> MiddlewareConnectionDTO.ConnInfo
+                        .of("redis", host(ns, name + "-leader"), 6379)
+                        .secret(name + "-credentials", null, "password").build();
+                default -> MiddlewareConnectionDTO.ConnInfo.of("redis", host(ns, name), 6379)
+                        .secret(name + "-credentials", null, "password").build();
+            };
+            case "mysql" -> MiddlewareConnectionDTO.ConnInfo.of("mysql", host(ns, name + "-haproxy"), 3306)
+                    .secret(name + "-secrets", "root", "root").build();
+            // Kafka 是集群内 PLAINTEXT，无认证
+            case "kafka" -> MiddlewareConnectionDTO.ConnInfo
+                    .of("kafka", host(ns, name + "-kafka-bootstrap"), 9092).build();
+            case "elasticsearch" -> MiddlewareConnectionDTO.ConnInfo
+                    .of("elasticsearch", host(ns, name + "-es-http"), 9200)
+                    .secret(name + "-es-elastic-user", null, "elastic").build();
+            case "postgresql" -> MiddlewareConnectionDTO.ConnInfo
+                    .of("postgresql", host(ns, name + "-rw"), 5432)
+                    .secret(name + "-app", "username", "password").build();
+            case "rabbitmq" -> MiddlewareConnectionDTO.ConnInfo.of("rabbitmq", host(ns, name), 5672)
+                    .secret(name + "-default-user", "username", "password").build();
+            case "nacos" -> MiddlewareConnectionDTO.ConnInfo.of("nacos", host(ns, "nacos-cs"), 8848).build();
+            case "milvus" -> MiddlewareConnectionDTO.ConnInfo.of("milvus", host(ns, name + "-milvus"), 19530)
+                    .secret(name + "-milvus-storage", "accesskey", "secretkey").build();
+            default -> null;
+        };
+    }
+
+    private static String host(String namespace, String service) {
+        return service + "." + namespace + ".svc.cluster.local";
     }
 
     /** 实例规格里的 TLS 开关（缺省视为开启；老实例没有这个键） */
