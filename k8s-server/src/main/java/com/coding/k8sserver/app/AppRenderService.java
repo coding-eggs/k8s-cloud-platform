@@ -68,8 +68,11 @@ public class AppRenderService {
                     problems.add(AppProblemDTO.error(node.getKey(), "不支持的节点类型：" + node.getKind()));
                     continue;
                 }
+                java.util.List<com.coding.common.models.app.AppInjectDTO> inject =
+                        req.getInjectByNode() == null ? java.util.List.of()
+                                : req.getInjectByNode().getOrDefault(node.getKey(), java.util.List.of());
                 values = writeValues(AppWorkloadValues.build(req.getAppId(), req.getAppSlug(),
-                        req.getRevision() == null ? 0 : req.getRevision(), node));
+                        req.getRevision() == null ? 0 : req.getRevision(), node, inject));
                 HelmResult rendered;
                 try {
                     rendered = helm.render(kubeconfig, chartDir, values, req.getNamespace());

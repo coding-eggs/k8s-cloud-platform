@@ -2,6 +2,7 @@ package com.coding.k8sserver.app;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.app.AppInjectDTO;
 import com.coding.common.models.app.AppNodeDTO;
 
 import java.util.ArrayList;
@@ -24,6 +25,11 @@ public final class AppWorkloadValues {
     }
 
     public static Map<String, Object> build(String appId, String slug, int revision, AppNodeDTO node) {
+        return build(appId, slug, revision, node, List.of());
+    }
+
+    public static Map<String, Object> build(String appId, String slug, int revision, AppNodeDTO node,
+                                            List<AppInjectDTO> inject) {
         Map<String, Object> params = node.getParams() == null ? Map.of() : node.getParams();
         String image = str(params.get("image"));
         if (image.isBlank()) {
@@ -42,8 +48,8 @@ public final class AppWorkloadValues {
         workload.put("replicas", num(params.get("replicas"), 1));
         workload.put("command", strings(params.get("command")));
         workload.put("args", strings(params.get("args")));
-        workload.put("env", plainEnv(params));
-        workload.put("secretEnv", secretRefs(params));
+        workload.put("env", mergedEnv(params, inject));
+        workload.put("secretEnv", mergedSecretEnv(params, inject));
         workload.put("resources", resources(params));
         workload.put("persistence", persistence(params, worker));
         workload.put("autoscaling", autoscaling(params));
@@ -63,6 +69,29 @@ public final class AppWorkloadValues {
         app.put("slug", slug);
         app.put("revision", revision);
         return Map.of("app", app, "workload", workload);
+    }
+
+    /** 用户手填的普通变量 + 依赖注入的普通值。 */
+    static List<Map<String, Object>> mergedEnv(Map<String, Object> params, List<AppInjectDTO> inject) {
+        List<Map<String, Object>> out = new ArrayList<>(plainEnv(params));
+        for (AppInjectDTO d : inject == null ? List.<AppInjectDTO>of() : inject) {
+            if (d.getSecretName() == null || d.getSecretName().isBlank()) {
+                out.add(Map.of("name", d.getName(), "value", d.getValue() == null ? "" : d.getValue()));
+            }
+        }
+        return out;
+    }
+
+    /** 用户引用的 Secret + 依赖注入的凭据引用；都不带口令本体。 */
+    static List<Map<String, Object>> mergedSecretEnv(Map<String, Object> params, List<AppInjectDTO> inject) {
+        List<Map<String, Object>> out = new ArrayList<>(secretRefs(params));
+        for (AppInjectDTO d : inject == null ? List.<AppInjectDTO>of() : inject) {
+            if (d.getSecretName() != null && !d.getSecretName().isBlank()) {
+                out.add(Map.of("name", d.getName(), "secretName", d.getSecretName(),
+                        "secretKey", d.getSecretKey() == null ? d.getName() : d.getSecretKey()));
+            }
+        }
+        return out;
     }
 
     @SuppressWarnings("unchecked")
