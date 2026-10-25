@@ -2,12 +2,15 @@
 import type { Component } from 'vue'
 import { Coin, Connection, Cpu, Monitor } from '@element-plus/icons-vue'
 import type { AppNodeKind } from '@/types'
+import { APP_NODE_MIME } from './appCanvasDrag'
 
 /**
  * 画布左侧的节点面板。
  *
  * <p>四张卡片的颜色与画布上的节点卡片一一对应（服务蓝/后台进程紫/中间件绿/外部服务橙），
  * 让人在点之前就知道加出来的是什么。描述来自后端的节点目录，最长两行，超出用 tooltip。
+ *
+ * <p>两种加入方式：点一下（自动分层落位），或拖到画布上的指定位置（位置会被钉住）。
  */
 defineProps<{
   kinds: Array<{ kind: AppNodeKind; name: string; description: string }>
@@ -21,13 +24,20 @@ const KIND_ICONS: Record<AppNodeKind, Component> = {
   MIDDLEWARE: Coin,
   EXTERNAL: Connection,
 }
+
+function onDragStart(event: DragEvent, kind: AppNodeKind) {
+  event.dataTransfer?.setData(APP_NODE_MIME, kind)
+  // 有些浏览器只在设了 text/plain 时才肯发起拖拽
+  event.dataTransfer?.setData('text/plain', kind)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'copy'
+}
 </script>
 
 <template>
   <aside class="palette">
     <div class="palette__head">
       <span class="palette__title">添加节点</span>
-      <span class="palette__hint">点击加入画布</span>
+      <span class="palette__hint">点击或拖到画布</span>
     </div>
 
     <button
@@ -37,6 +47,8 @@ const KIND_ICONS: Record<AppNodeKind, Component> = {
       class="node-pick"
       :class="`node-pick--${k.kind.toLowerCase()}`"
       :title="k.description"
+      draggable="true"
+      @dragstart="onDragStart($event, k.kind)"
       @click="emit('add', k.kind)"
     >
       <span class="node-pick__badge">
@@ -94,7 +106,8 @@ const KIND_ICONS: Record<AppNodeKind, Component> = {
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: grab;
+  user-select: none;
   transition: border-color 0.15s, background 0.15s, transform 0.1s;
 }
 .node-pick:hover {
@@ -102,6 +115,7 @@ const KIND_ICONS: Record<AppNodeKind, Component> = {
   background: var(--el-fill-color);
 }
 .node-pick:active {
+  cursor: grabbing;
   transform: scale(0.985);
 }
 .node-pick--service {

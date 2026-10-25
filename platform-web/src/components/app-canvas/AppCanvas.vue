@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, useId } from 'vue'
+import { nextTick, ref, useId } from 'vue'
 import { MarkerType, VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -8,6 +8,10 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import AppNodeCard from './AppNodeCard.vue'
+import { APP_NODE_MIME } from './appCanvasDrag'
+import { NODE_HEIGHT, NODE_WIDTH } from './appCanvasLayout'
+import type { Point } from './appCanvasLayout'
+import type { AppNodeKind } from '@/types'
 
 /**
  * 画布本身（只负责呈现与交互，不管数据从哪来）。
@@ -28,10 +32,48 @@ const emit = defineEmits<{
   nodeClick: [Node]
   nodesChange: [NodeChange[]]
   edgesChange: [EdgeChange[]]
+  dropNode: [AppNodeKind, Point]
 }>()
 
 const flowId = useId()
-const { fitView } = useVueFlow(flowId)
+const { fitView, screenToFlowCoordinate } = useVueFlow(flowId)
+
+/** 从左侧面板拖过来时高亮画布；用计数抵消 dragleave 在子元素上的抖动 */
+const dropActive = ref(false)
+let dragDepth = 0
+
+function carriesNode(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer?.types ?? []).includes(APP_NODE_MIME)
+}
+
+function onDragEnter(e: DragEvent) {
+  if (!carriesNode(e)) return
+  dragDepth++
+  dropActive.value = true
+}
+
+function onDragOver(e: DragEvent) {
+  if (!carriesNode(e)) return
+  // 不 preventDefault 浏览器不会派发 drop
+  e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onDragLeave() {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (!dragDepth) dropActive.value = false
+}
+
+function onDrop(e: DragEvent) {
+  dragDepth = 0
+  dropActive.value = false
+  const kind = e.dataTransfer?.getData(APP_NODE_MIME) as AppNodeKind | undefined
+  if (!kind) return
+  e.preventDefault()
+  // 光标落在卡片中心：先换算成画布坐标，再减半个卡片
+  const point = screenToFlowCoordinate({ x: e.clientX, y: e.clientY })
+  emit('dropNode', kind, { x: point.x - NODE_WIDTH / 2, y: point.y - NODE_HEIGHT / 2 })
+}
 
 /** 只在节点第一次量好尺寸时取景：此时才拿得到真实宽高，之后加节点不抢用户调好的视角 */
 let fitted = false
@@ -56,7 +98,14 @@ const defaultEdgeOptions = {
 </script>
 
 <template>
-  <div class="app-canvas">
+  <div
+    class="app-canvas"
+    :class="{ 'app-canvas--drop': dropActive }"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <VueFlow
       :id="flowId"
       :nodes="nodes"
@@ -85,6 +134,10 @@ const defaultEdgeOptions = {
       <div class="app-canvas__empty-hint">
         从服务卡片左边的圆点拖到它依赖的中间件：箭头指向被使用的一方。
       </div>
+    </div>
+
+    <div v-if="dropActive" class="app-canvas__drop">
+      <span>放到这里</span>
     </div>
   </div>
 </template>
@@ -115,6 +168,21 @@ const defaultEdgeOptions = {
 .app-canvas__empty-hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.app-canvas--drop {
+  border-color: var(--el-color-primary);
+}
+.app-canvas__drop {
+  position: absolute;
+  inset: 8px;
+  display: grid;
+  place-items: center;
+  /* 不要填底色：实心色块会把画布上的节点和连线整片盖掉 */
+  border: 2px dashed var(--el-color-primary-light-5);
+  border-radius: 8px;
+  color: var(--el-color-primary);
+  font-size: 12px;
+  pointer-events: none;
 }
 /* 缩略控件默认是白底方块，在深色主题里很跳，跟着主题走 */
 .app-canvas :deep(.vue-flow__controls) {

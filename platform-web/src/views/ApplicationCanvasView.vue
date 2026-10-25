@@ -107,13 +107,20 @@ function relayout() {
   })
 }
 
-function addNode(kind: AppNodeKind) {
+/**
+ * 加节点。带 position = 从面板拖过来的，落在松手的位置并钉住；
+ * 不带 position = 点面板加的，交给自动分层落位。
+ */
+function addNode(kind: AppNodeKind, position?: Point) {
   const key = nextKey(kind)
+  if (position) {
+    pins.value = { ...pins.value, [key]: { x: position.x, y: position.y } }
+  }
   nodes.value = [...nodes.value, {
     id: key,
     type: 'app',
     deletable: false,
-    position: { x: 0, y: 0 },
+    position: position ?? { x: 0, y: 0 },
     data: { key, kind, params: defaultParams(kind) },
   }]
   selectedKey.value = key
@@ -357,6 +364,7 @@ onUnmounted(() => window.clearInterval(timer))
           @node-click="onNodeClick"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
+          @drop-node="addNode"
         />
       </div>
 
