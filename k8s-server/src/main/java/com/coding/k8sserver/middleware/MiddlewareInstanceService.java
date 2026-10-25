@@ -594,9 +594,14 @@ public class MiddlewareInstanceService {
             dto.setReadyReplicas((int) ready);
             // 判定同时看 Pod 数与 CR 信号：只看「现存 Pod 是否全就绪」会把
             // 「3 个 broker 只起来 2 个」判成 READY（真集群验证踩过）
+            String failure = crFailureMessage(live);
+            if (failure == null) {
+                // Milvus 的条件是 StorageReady/EtcdReady/...，共享规则匹配不到
+                failure = adapter.crProblem(live);
+            }
             var verdict = MiddlewareStatusEvaluator.evaluate(pods.size(), ready,
                     adapter.desiredPods(live, live.getKind()),
-                    crInitializing(live), crFailureMessage(live));
+                    crInitializing(live), failure);
             dto.setStatus(verdict.status());
             dto.setMessage(verdict.message());
             // 附属组件（如 Kibana）出问题 → 降级，不谎报运行中
