@@ -30,6 +30,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   connect: [Connection]
   nodeClick: [Node]
+  nodeContextMenu: [Node, MouseEvent | TouchEvent]
   nodesChange: [NodeChange[]]
   edgesChange: [EdgeChange[]]
   dropNode: [AppNodeKind, Point]
@@ -118,6 +119,7 @@ const defaultEdgeOptions = {
       :max-zoom="1.4"
       @connect="emit('connect', $event)"
       @node-click="emit('nodeClick', $event.node)"
+      @node-context-menu="emit('nodeContextMenu', $event.node, $event.event)"
       @nodes-change="emit('nodesChange', $event)"
       @edges-change="emit('edgesChange', $event)"
       @nodes-initialized="onNodesInitialized"

@@ -18,7 +18,8 @@ import type {
 } from '@/types'
 import AppCanvas from '@/components/app-canvas/AppCanvas.vue'
 import AppNodePalette from '@/components/app-canvas/AppNodePalette.vue'
-import { layeredLayout } from '@/components/app-canvas/appCanvasLayout'
+import AppNodeContextMenu from '@/components/app-canvas/AppNodeContextMenu.vue'
+import { NODE_WIDTH, layeredLayout } from '@/components/app-canvas/appCanvasLayout'
 import type { Point } from '@/components/app-canvas/appCanvasLayout'
 import AppNodeInspector from '@/components/app-canvas/AppNodeInspector.vue'
 import AppDeployDrawer from '@/components/app-canvas/AppDeployDrawer.vue'
@@ -55,6 +56,13 @@ const pins = ref<Record<string, Point>>({})
 const canvasRef = ref<InstanceType<typeof AppCanvas>>()
 const selectedKey = ref('')
 const saving = ref(false)
+
+/** 节点右键菜单（视口坐标） */
+const menu = ref<{ open: boolean; x: number; y: number; key: string }>({ open: false, x: 0, y: 0, key: '' })
+const menuEdgeCount = computed(() => {
+  const key = menu.value.key
+  return key ? edges.value.filter((e) => e.source === key || e.target === key).length : 0
+})
 
 const preview = ref<ApplicationPreview | null>(null)
 const previewVisible = ref(false)
@@ -187,6 +195,60 @@ function onEdgesChange(changes: EdgeChange[]) {
 
 function onNodeClick(node: Node) {
   selectedKey.value = node.id
+  closeMenu()
+}
+
+function onNodeContextMenu(node: Node, event: MouseEvent | TouchEvent) {
+  // Vue Flow 只转发事件、不阻止默认行为，不自己 preventDefault 会同时弹出浏览器菜单
+  event.preventDefault()
+  // 触屏上 contextmenu 是长按来的 TouchEvent，没有 clientX/Y
+  const point = 'clientX' in event
+    ? { x: event.clientX, y: event.clientY }
+    : { x: event.touches[0]?.clientX ?? 0, y: event.touches[0]?.clientY ?? 0 }
+  selectedKey.value = node.id
+  menu.value = { open: true, x: point.x, y: point.y, key: node.id }
+}
+
+function closeMenu() {
+  if (menu.value.open) menu.value = { ...menu.value, open: false }
+}
+
+/** 复制节点：新 key、参数深拷贝、落在原节点右边并钉住（复制出来的位置是用户看得见的地方） */
+function duplicateNode(key: string) {
+  const source = nodes.value.find((n) => n.id === key)
+  closeMenu()
+  if (!source) return
+  const newKey = nextKey(source.data.kind)
+  const position = { x: source.position.x + NODE_WIDTH + 40, y: source.position.y }
+  pins.value = { ...pins.value, [newKey]: position }
+  nodes.value = [...nodes.value, {
+    id: newKey,
+    type: 'app',
+    deletable: false,
+    position,
+    data: {
+      key: newKey,
+      kind: source.data.kind,
+      params: JSON.parse(JSON.stringify(source.data.params)) as Record<string, unknown>,
+    },
+  }]
+  selectedKey.value = newKey
+  relayout()
+}
+
+function disconnectNode(key: string) {
+  const before = edges.value.length
+  edges.value = edges.value.filter((e) => e.source !== key && e.target !== key)
+  const removed = before - edges.value.length
+  closeMenu()
+  if (!removed) return
+  relayout()
+  ElMessage.success(`已断开 ${removed} 条连线`)
+}
+
+async function menuRemove(key: string) {
+  closeMenu()
+  await removeNode(key)
 }
 
 function updateParams(key: string, params: Record<string, unknown>) {
@@ -329,8 +391,18 @@ async function retry() {
   poll(operationId)
 }
 
-onMounted(load)
-onUnmounted(() => window.clearInterval(timer))
+function onKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') closeMenu()
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  load()
+})
+onUnmounted(() => {
+  window.clearInterval(timer)
+  window.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
@@ -362,6 +434,7 @@ onUnmounted(() => window.clearInterval(timer))
           :empty="!nodes.length"
           @connect="onConnect"
           @node-click="onNodeClick"
+          @node-context-menu="onNodeContextMenu"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
           @drop-node="addNode"
@@ -379,6 +452,17 @@ onUnmounted(() => window.clearInterval(timer))
         />
       </aside>
     </div>
+
+    <AppNodeContextMenu
+      :open="menu.open"
+      :x="menu.x"
+      :y="menu.y"
+      :edge-count="menuEdgeCount"
+      @close="closeMenu"
+      @duplicate="duplicateNode(menu.key)"
+      @disconnect="disconnectNode(menu.key)"
+      @remove="menuRemove(menu.key)"
+    />
 
     <AppDeployDrawer v-model="drawerVisible" :operation="operation" @retry="retry" />
 
