@@ -53,6 +53,30 @@ public class MiddlewareCreateRequestDTO {
      */
     private Boolean metricsEnabled;
 
+    /** Milvus：etcd 节点数（1~3；null = 单节点 1、集群 3） */
+    private Integer etcdReplicas;
+
+    /** Milvus：对象存储来源，PLATFORM / CUSTOM */
+    private String objectStorageType;
+
+    /** Milvus：S3 endpoint（CUSTOM 由用户填；PLATFORM 由平台填集群内地址） */
+    private String objectStorageEndpoint;
+
+    /** Milvus：桶名（PLATFORM 由平台填；CUSTOM 由用户填） */
+    private String objectStorageBucket;
+
+    /** Milvus：S3 AccessKey（只用于写 Secret，不落库） */
+    private String objectStorageAccessKey;
+
+    /** Milvus：S3 SecretKey（只用于写 Secret，不落库） */
+    private String objectStorageSecretKey;
+
+    /** Milvus：S3 是否走 TLS（null/false = 明文） */
+    private Boolean objectStorageUseSsl;
+
+    /** Milvus：单节点本地数据盘（默认 10Gi；集群形态不使用） */
+    private String localStorageSize;
+
     /** 平台生成的初始密码；只用于创建 Secret，不落库、不记日志 */
     private String password;
 

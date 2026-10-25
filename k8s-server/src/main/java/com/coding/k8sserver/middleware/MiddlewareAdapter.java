@@ -7,6 +7,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 一款中间件的 CR 适配器：表单规格 → CR，以及状态判定所需的 selector。
@@ -52,6 +53,27 @@ public interface MiddlewareAdapter {
      */
     default boolean usesPlatformPassword() {
         return true;
+    }
+
+    /**
+     * 平台要额外写的凭据 Secret 名（不属于"初始口令"；目前只有 Milvus 的对象存储 AK/SK）。
+     * <p>null = 本中间件不需要。
+     */
+    default String extraSecretName(String name) {
+        return null;
+    }
+
+    /** extraSecretName 非空时写入的键值；返回空 map = 请求缺必填字段（调用方报错）。 */
+    default Map<String, String> extraSecretData(MiddlewareCreateRequestDTO req) {
+        return Map.of();
+    }
+
+    /**
+     * 本中间件自己的 CR 异常判定（共享的 crFailureMessage 只认 Ready/Available condition）。
+     * <p>返回 null = 没发现问题。
+     */
+    default String crProblem(GenericKubernetesResource live) {
+        return null;
     }
 
     /**
