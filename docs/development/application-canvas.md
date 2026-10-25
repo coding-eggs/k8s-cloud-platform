@@ -32,7 +32,8 @@ v1 的节点只有两种：`SERVICE`（有端口，可建 Service）与 `WORKER`
 | `WORKER` | 镜像、副本、环境变量 | 只有 Deployment（无端口、无 Service、无探针） |
 
 默认值：requests `100m/128Mi`、limits `1/1Gi`、副本 1、探针 HTTP GET `/`、HPA CPU 60%（1–10）、
-ServiceMonitor `/metrics`。对象名 = `<应用slug>-<节点key>`，slug 由应用名归一化（小写、连字符、≤30）。
+ServiceMonitor `/metrics`。**探针可以在节点里关掉、路径可改** —— 非 HTTP 服务（gRPC/只监听 TCP）
+必须关，否则 Pod 永远 NotReady、部署必然超时。对象名 = `<应用slug>-<节点key>`，slug 由应用名归一化（小写、连字符、≤30）。
 
 ## 4. 部署阶段机
 
@@ -51,8 +52,16 @@ PRECHECK → RENDER → CONFLICT → APPLY → PRUNE → HEALTH → DONE
 
 - 推进器：`ApplicationOperationWorker`，3 秒一拍（`platform.application.worker-delay-ms`），
   **一次只推进一条活操作** —— 并发推进会与 PRUNE 的差集打架。假定 platform-api 单副本。
+- **凭据**：worker 线程没有请求上下文，k8s-server 对匿名调用一律拒绝。发起部署时把当次请求的
+  Authorization 记在内存（`ApplicationDeployCredentials`），worker 用 `runAs` 带过去；
+  **重启后凭据没了 → 操作以「凭据已失效，请重新部署」失败**（不把用户 token 写进数据库）。
+- 阶段进度是持久化的，但「重启续跑」只对**同一进程内**的中断成立（token 未过期时）。
+- **PRUNE 的基线是上次成功部署的版本**（`app.current_revision`），不是 `rev-1` ——
+  中间失败的版本没有台账行，用 rev-1 会把它们当基线、差集永远算空。
 - 失败**停住等人工重试**（不自动回滚）：重试从失败阶段继续；已成功阶段不重跑。
-- 升级 = 新 revision；回滚 = 重放某个历史 revision（部署入参带 `revision`）。
+- 升级 = 新 revision；**回滚 = 复制历史版本的 spec 建一个新 revision**（`action=ROLLBACK`），
+  版本历史里能看出来；`current_revision` 只在部署成功后前移。
+- revision 状态：`PENDING → RENDERED → APPLIED → DEPLOYED / FAILED`。
 
 ## 5. 敏感值
 
@@ -78,6 +87,10 @@ PRECHECK → RENDER → CONFLICT → APPLY → PRUNE → HEALTH → DONE
 | 页面码 | `tenant:page:application` |
 | 读 | `tenant:application:read`（列表/详情/预览/轮询/版本/选项） |
 | 写 | `tenant:application:write`（建/改/删/部署） |
+
+**归属校验**：除列表（管理员可看全部）外，每个端点都按应用归属过滤；轮询按「操作所属的应用」判。
+**命名空间**：建应用/改图都过 `NamespaceAccessGuard`（分配表是安全边界，前端下拉只是提示）。
+管理员在平台视图（无租户帽）下**不能建应用**，需先切到某个租户。
 
 端点与权限行一一对应，由 `ApplicationPermissionMigrationTest` 单测钉住（漏一行应用启动即 fail-closed）。
 审计动作：`application:create` / `application:update` / `application:delete` / `application:deploy`。
