@@ -47,6 +47,20 @@ class MiddlewareOperatorCatalogTest {
     }
 
     @Test
+    void milvusShipsCrdsInTemplatesAndDisablesWebhook() {
+        var entry = catalog.require("milvus");
+        assertThat(entry.chartVersion()).isEqualTo("1.3.12");
+        assertThat(entry.requiredCrds()).containsExactly(
+                "milvuses.milvus.io", "milvusclusters.milvus.io", "milvusupgrades.milvus.io");
+        // CRD 在 templates/ 里：Helm 会给它们打 release 注解，重装时按"本 release 的 CRD"接管
+        assertThat(entry.crdsShipInCrdsDir()).isFalse();
+        assertThat(entry.helmValues())
+                .contains("enableWebhook: false")
+                .contains("installCRDs: true")
+                .contains("tag: v1.3.12");
+    }
+
+    @Test
     void unknownCodeIsRejected() {
         assertThatThrownBy(() -> catalog.require("minio")).hasMessageContaining("不支持");
     }

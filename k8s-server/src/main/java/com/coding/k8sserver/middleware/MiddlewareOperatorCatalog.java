@@ -84,6 +84,16 @@ public class MiddlewareOperatorCatalog {
                         + "  registry: docker.io\n"
                         + "  repository: library/rabbitmq\n"
                         + "  tag: 4.1.3\n", true));
+        m.put("milvus", new Entry("milvus", "1.3.12",
+                List.of("milvuses.milvus.io", "milvusclusters.milvus.io", "milvusupgrades.milvus.io"),
+                // webhook 关掉：不需要 cert-manager，controller 内部自己补默认值。
+                // CRD 在 templates/crds.yaml（不是 crds/ 目录），所以 crdsShipInCrdsDir=false。
+                "enableWebhook: false\n"
+                        + "installCRDs: true\n"
+                        + "image:\n"
+                        + "  repository: milvusdb/milvus-operator\n"
+                        + "  pullPolicy: IfNotPresent\n"
+                        + "  tag: v1.3.12\n", false));
         ENTRIES = Map.copyOf(m);
     }
 
