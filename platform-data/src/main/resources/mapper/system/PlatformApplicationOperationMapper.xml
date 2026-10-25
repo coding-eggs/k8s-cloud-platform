@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformApplicationOperationMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformApplicationOperation">
+    <id     column="id"               jdbcType="BIGINT"    property="id" />
+    <result column="app_id"           jdbcType="VARCHAR"   property="appId" />
+    <result column="revision"         jdbcType="INTEGER"   property="revision" />
+    <result column="action"           jdbcType="VARCHAR"   property="action" />
+    <result column="status"           jdbcType="VARCHAR"   property="status" />
+    <result column="current_step"     jdbcType="VARCHAR"   property="currentStep" />
+    <result column="node_states_json" jdbcType="VARCHAR"   property="nodeStatesJson" />
+    <result column="message"          jdbcType="VARCHAR"   property="message" />
+    <result column="started_at"       jdbcType="TIMESTAMP" property="startedAt" />
+    <result column="finished_at"      jdbcType="TIMESTAMP" property="finishedAt" />
+    <result column="created_by"       jdbcType="VARCHAR"   property="createdBy" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, app_id, revision, `action`, `status`, current_step, node_states_json, message,
+    started_at, finished_at, created_by
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformApplicationOperation"
+          useGeneratedKeys="true" keyProperty="id">
+    insert into platform_application_operation
+      (app_id, revision, `action`, `status`, current_step, node_states_json, message,
+       started_at, finished_at, created_by)
+    values
+      (#{appId,jdbcType=VARCHAR}, #{revision,jdbcType=INTEGER}, #{action,jdbcType=VARCHAR},
+       #{status,jdbcType=VARCHAR}, #{currentStep,jdbcType=VARCHAR}, #{nodeStatesJson,jdbcType=VARCHAR},
+       #{message,jdbcType=VARCHAR}, #{startedAt,jdbcType=TIMESTAMP}, #{finishedAt,jdbcType=TIMESTAMP},
+       #{createdBy,jdbcType=VARCHAR})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformApplicationOperation">
+    update platform_application_operation
+    <set>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="currentStep != null">current_step = #{currentStep,jdbcType=VARCHAR},</if>
+      <if test="nodeStatesJson != null">node_states_json = #{nodeStatesJson,jdbcType=VARCHAR},</if>
+      <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>
+      <if test="finishedAt != null">finished_at = #{finishedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <select id="selectById" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_application_operation
+    where id = #{id,jdbcType=BIGINT}
+  </select>
+
+  <select id="selectActiveByApp" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_application_operation
+    where app_id = #{appId,jdbcType=VARCHAR}
+      and `status` in ('PENDING', 'RUNNING')
+    order by id asc
+    limit 1
+  </select>
+
+  <select id="selectFirstActive" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_application_operation
+    where `status` in ('PENDING', 'RUNNING')
+    order by id asc
+    limit 1
+  </select>
+
+</mapper>
