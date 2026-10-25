@@ -677,6 +677,23 @@
 > `/app/**`（异步安装/升级/卸载 + 预览 + 轮询）、应用商店页（管理员安装向导）。
 > **真集群安装验证待部署新构建后执行**；租户自助在计划②，Operator 视图在计划③。
 
+> **📌 2026-10-22 改判 + 2026-10-24 收口 —— S3.3 / S3.4 已结束，S3.2 仍未开发**
+>
+> 2026-10-21 的 spec（`2026-10-21-app-store-and-operator-design.md`）把 **S3.3 与 S3.4 合为一个模块**；
+> 2026-10-22 该模块改成固定清单的「中间件商店」；2026-10-24 用户明确「标记为完成」，V1 收口
+> （`de5ab489` / `868da778` / `4df9084d`，实况见记忆 `middleware-store-batch1`）。三条各自的终局：
+> - **S3.3 Helm Chart 商店** → **否决**：不做通用 chart 货架、来源搜索、租户自选目录；
+> - **S3.4 Operator 管理** → 由中间件商店交付：管理员在商店页「Operator」tab 安装/重装/升级 6 个 Operator。
+>   「集群里所有 Operator + 各自提供哪些 CRD + 各有多少实例」那个**独立视图随通用商店一起砍掉**（有意）；
+> - **S3.2 应用级交付 → 仍未开发**（2026-10-25 用户现场纠正；它不因上面两条结案而消失）。
+>   2026-10-21 计划①做过的 `/app/**`（`platform_app*` 三表 + 7 条权限行）在 2026-10-22 随通用商店一起下线
+>   （`V2026_10_22_2__drop_app_store_legacy.sql`），所以现在**没有任何「应用」这一层**：
+>   仍是逐资源创建，没有「一组资源一起建 + 升级/回滚 + 渲染历史 + 漂移处理」。
+> - `k8s-server` 的 `chart/*`（`ChartFetcher` / `ManifestInspector` / `ClusterScopeIndex` /
+>   `ChartInstallService`）**仍在用**：中间件商店的 Nacos 与 S3.6 组件安装都走它，不是死代码，别删。
+> - 日后开工 S3.2 可直接复用这条路（`helm template` 渲染 + 复用 SSA apply），选型依据见
+>   gap-analysis §6.4（2026-10-12 已裁定「自研薄应用层」）。
+
 #### S3.5 CI（Tekton）｜ 规模 XL ｜ 前置：S0.2
 > 已定全部关键需求：自由 DAG、内置/自定义节点、条件分支 + finally、**只手动触发**。
 > 详见分析文档 §7.4.1–§7.4.3。
@@ -999,9 +1016,9 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ✅ **已完成（2026-10-19）**。部署：**先重放 `V2026_10_19_6` + `V2026_10_19_7`**，重建 platform-api + k8s-server + platform-web；集群侧配 ES 连接与 `monitor` 内的 ES 凭证 Secret。采集 = otel-operator 组件（operator + Tempo + collector + sidecar），查询 = 日志查询中心 + 链路追踪（租户按分配表收窄） | [spec](superpowers/specs/2026-10-18-otel-observability-design.md) · 组件文档在 `k8s-server/src/main/resources/charts/components/<chart>/<version>/README.md` |
 | **S2.4** | 服务网格可视化 | — | M-L | ✅ **已实施待部署**（2026-10-17，含 S2.4.5 Service 页补网格信息）。部署：**platform-api + platform-web**，先重放 `V2026_10_17_2`（S2.4.5 本身只动前端，随 platform-web 一起发）。S2.4.4 **已实测回答**；**S2.4.3 链路追踪后期会做**（集群里现在没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) · [plan](superpowers/plans/2026-10-17-mesh-topology.md) |
 | **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
-| **S3.2** | 应用级交付 | D1 | L | ⬜ 未开始 | — |
-| **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⬜ 未开始 | — |
-| **S3.4** | Operator 管理 | S1.2、D1 | L | ⬜ 未开始 | — |
+| **S3.2** | 应用级交付 | D1 | L | ⬜ **未开始**（2026-10-25 用户确认：chart 商店 / op 管理已收口，**应用级交付还没做**；计划①的 `/app/**` 已随通用商店下线） | — |
+| **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⛔ **否决（2026-10-22）** —— 不做通用 chart 商店；并入中间件商店 | — |
+| **S3.4** | Operator 管理 | S1.2、D1 | L | ✅ **已完成（2026-10-24）** —— 交付为中间件商店的「Operator」tab；无独立 Operator 视图（有意） | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
 | **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | ✅ **已完成（2026-10-22）**：批①+批②（引擎 + 11 条组件 recipe + 组件文档），**功能级验收 7/7**（calico 2026-10-22 在业务集群 test-work-cluster/k8s 1.37 真装通过）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-22 的 calico 修复三项与 k8s-server 镜像里的 kubectl 都在这一批）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
@@ -1017,8 +1034,8 @@ S0.2 凭据/连接（git + registry 两类）
         ├──▶ S3.1 镜像仓库（同一条 registry 连接）──▶ (S3.5 CI 的产物去向)
         ├──▶ S3.3 Helm 商店（复用同一个 Harbor 连接）
         └──▶ S3.5 CI（git 凭据 + 注入构建 Pod）
-S3.2 应用级交付 ──▶ S3.3 Helm 商店
-S1.2 集群组件展示 ──▶ S3.4 Operator 管理（另需 D1）
+S3.2 应用级交付 ──▶ S3.3 Helm 商店        ← S3.3 已否决；S3.2 仍未开发，见 §S3.2
+S1.2 集群组件展示 ──▶ S3.4 Operator 管理（另需 D1）  ← 已由中间件商店交付
 （其余各批互不依赖）
 ```
 
