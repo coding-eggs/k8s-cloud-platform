@@ -7,6 +7,8 @@ const emit = defineEmits<{ 'update:modelValue': [boolean]; retry: [] }>()
 
 const steps = [
   { key: 'PRECHECK', label: '预检' },
+  { key: 'MIDDLEWARE', label: '中间件' },
+  { key: 'INIT', label: '初始化' },
   { key: 'RENDER', label: '渲染' },
   { key: 'CONFLICT', label: '冲突检查' },
   { key: 'APPLY', label: '写入集群' },

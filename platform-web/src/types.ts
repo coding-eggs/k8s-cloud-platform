@@ -2625,7 +2625,7 @@ export interface MiddlewareOperatorStatus {
 
 // ---------------- 应用编排（画布） ----------------
 
-export type AppNodeKind = 'SERVICE' | 'WORKER'
+export type AppNodeKind = 'SERVICE' | 'WORKER' | 'MIDDLEWARE' | 'EXTERNAL'
 
 export interface AppNode {
   key: string

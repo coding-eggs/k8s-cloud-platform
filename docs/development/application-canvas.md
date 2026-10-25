@@ -8,8 +8,9 @@
 **应用 = 一张类型化的拓扑图**。图画在画布上，真相源是平台的 spec JSON；平台把图翻译成
 「资源清单 + 分阶段部署流程」。用户只表达意图，K8s 资源由平台生成。
 
-v1 的节点只有两种：`SERVICE`（有端口，可建 Service）与 `WORKER`（无端口）。
-中间件节点、依赖注入、初始化 SQL、引用守卫在**计划②**。
+节点类型：`SERVICE`（有端口，可建 Service）、`WORKER`（无端口）、`MIDDLEWARE`（6 款中间件，
+三种来源）、`EXTERNAL`（集群外的数据库/消息队列）。中间件的依赖注入、初始化脚本与引用守卫
+见 §4.1–§4.3。
 
 ## 2. 数据与真相源
 
@@ -30,6 +31,8 @@ v1 的节点只有两种：`SERVICE`（有端口，可建 Service）与 `WORKER`
 |---|---|---|
 | `SERVICE` | 镜像、端口、副本、环境变量、（可选）持久化/自动伸缩/监控/暴露方式 | Deployment（勾持久化则 StatefulSet + Headless Service）+ Service + ConfigMap + HPA/ServiceMonitor（勾选时） |
 | `WORKER` | 镜像、副本、环境变量 | 只有 Deployment（无端口、无 Service、无探针） |
+| `MIDDLEWARE` | 类型 + 来源（平台创建 / 绑定已有实例 / 链接外部）+ 形态 + 初始化脚本 | `CREATE` → 调中间件商店建实例并等 Ready；`BIND` → 只登记引用；`EXTERNAL` → 只产连接信息 |
+| `EXTERNAL` | 协议、地址、端口、Secret 名与键 | 什么都不建，只产出注入用的连接信息 |
 
 默认值：requests `100m/128Mi`、limits `1/1Gi`、副本 1、探针 HTTP GET `/`、HPA CPU 60%（1–10）、
 ServiceMonitor `/metrics`。**探针可以在节点里关掉、路径可改** —— 非 HTTP 服务（gRPC/只监听 TCP）
@@ -38,13 +41,15 @@ ServiceMonitor `/metrics`。**探针可以在节点里关掉、路径可改** �
 ## 4. 部署阶段机
 
 ```
-PRECHECK → RENDER → CONFLICT → APPLY → PRUNE → HEALTH → DONE
+PRECHECK → MIDDLEWARE → INIT → RENDER → CONFLICT → APPLY → PRUNE → HEALTH → DONE
 ```
 
 | 阶段 | 做什么 | 失败表现 |
 |---|---|---|
-| PRECHECK | 应用未删、版本存在、命名空间非空 | 直接 FAILED，不写集群 |
-| RENDER | 调 k8s-server 渲染 + 静态检查（禁集群级对象/hostPath/特权） | 有问题就 FAILED |
+| PRECHECK | 应用未删、版本存在、图合法（至少一个节点、命名空间非空） | 直接 FAILED，不写集群 |
+| MIDDLEWARE | 逐个中间件节点：CREATE 建实例并等 Ready（15 分钟超时）、BIND 校验同命名空间同租户、EXTERNAL 取节点参数 | 停在该节点；已建实例保留，重试继续 |
+| INIT | 按节点的初始化脚本跑一次性 Job（失败即整体失败，日志进操作记录） | 停在该节点 |
+| RENDER | 用解析出的连接信息做注入，调 k8s-server 渲染 + 静态检查 | 有问题就 FAILED |
 | CONFLICT | 读集群：要写的对象已存在但**不在本应用历史台账**里 → 拒绝 | 「对象已存在且不属于本应用」 |
 | APPLY | SSA 写一份合并清单（fieldManager=platform-app），落对象台账 | 写入失败 |
 | PRUNE | 删「上一版本有、本版本无」的对象；**PVC 默认跳过** | 清理失败 |
@@ -62,6 +67,36 @@ PRECHECK → RENDER → CONFLICT → APPLY → PRUNE → HEALTH → DONE
 - 升级 = 新 revision；**回滚 = 复制历史版本的 spec 建一个新 revision**（`action=ROLLBACK`），
   版本历史里能看出来；`current_revision` 只在部署成功后前移。
 - revision 状态：`PENDING → RENDERED → APPLIED → DEPLOYED / FAILED`。
+
+## 4.1 依赖注入
+
+连线语义只有一种：**「谁使用谁」**（只有服务和后台进程可以发起连线）。平台按目标节点产出变量：
+
+| 目标 | 注入的变量 |
+|---|---|
+| MySQL / PostgreSQL / Redis / RabbitMQ / Milvus | `<节点KEY>_<协议>_HOST`、`_PORT`、`_USER`、`_PASSWORD`（后两个是 `secretKeyRef`） |
+| Kafka | `<节点KEY>_KAFKA_BOOTSTRAP` |
+| Elasticsearch / Nacos | `<节点KEY>_<协议>_URL` |
+
+`<节点KEY>` = 节点 key 大写、连字符变下划线。**凭据永远只给 Secret 名 + 键**，渲染清单里没有口令。
+
+## 4.2 初始化动作
+
+节点上填的脚本/命令按中间件类型以**一次性 Job** 执行（脚本正文放 ConfigMap，Job 只引用它）：
+
+| 类型 | payload 形状 |
+|---|---|
+| mysql / postgresql | SQL 文本 |
+| redis | 命令序列（每行一条） |
+| kafka | 每行 `topic:分区:副本`（`--if-not-exists`，可重试） |
+| elasticsearch | JSON 请求体（PUT 到 `$URL$PATH`） |
+
+`backoffLimit: 0`：失败由平台重试（用户能看到日志），不让 K8s 反复跑 SQL。跑完 1 小时自动清理。
+
+## 4.3 引用守卫
+
+应用对实例的引用落 `platform_application_reference`。被引用的实例在「中间件实例」页删除时会被拒，
+报错里列出引用它的应用名；要删先去画布里移除依赖。应用删除时引用一并清理。
 
 ## 5. 敏感值
 
@@ -104,9 +139,8 @@ PRECHECK → RENDER → CONFLICT → APPLY → PRUNE → HEALTH → DONE
    `kubectl -n <ns> get deploy,svc,cm` 能看到 `<slug>-<key>`；
 4. 改镜像再部署 → 预览无新增删除 → 滚动；删节点再部署 → 预览显示将删除的对象 → 对象消失。
 
-## 9. 计划②要补的
+## 9. 还没做的
 
-- 中间件节点（平台创建 / 绑定已有实例 / 链接外部）+ 连接信息注入（标准变量名 + secretKeyRef）；
-- 初始化动作（MySQL/PostgreSQL SQL、Redis 命令、Kafka topic、ES index）以一次性 Job 执行；
-- 引用守卫（被应用引用的实例不能删）；
-- 暴露节点（HTTPRoute，等 S4.2 的入口候选定案）、自定义清单节点。
+- 暴露节点（HTTPRoute）—— 等 S4.2「租户可挂哪些入口 Gateway」定案；
+- 自定义清单节点（整块 YAML 的逃生口）；
+- 预览里展示注入变量的摘要（当前只在部署时生效）。

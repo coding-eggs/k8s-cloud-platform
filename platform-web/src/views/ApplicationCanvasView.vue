@@ -9,7 +9,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import type { Connection, Edge, Node, NodeChange } from '@vue-flow/core'
-import { applicationApi } from '@/api'
+import { applicationApi, middlewareApi } from '@/api'
 import type {
   ApplicationOperation,
   ApplicationOptions,
@@ -18,6 +18,8 @@ import type {
   AppNode,
   AppNodeKind,
   AppSpec,
+  MiddlewareCatalogItem,
+  MiddlewareInstance,
 } from '@/types'
 import AppNodeCard from '@/components/app-canvas/AppNodeCard.vue'
 import AppNodeInspector from '@/components/app-canvas/AppNodeInspector.vue'
@@ -44,6 +46,8 @@ const { fitView } = useVueFlow()
 
 const app = ref<ApplicationView>()
 const options = ref<ApplicationOptions>({ nodeKinds: [], namespaces: [] })
+const middlewareCatalog = ref<MiddlewareCatalogItem[]>([])
+const middlewareInstances = ref<MiddlewareInstance[]>([])
 const nodes = ref<FlowNodeView[]>([])
 const edges = ref<FlowEdgeView[]>([])
 const selectedKey = ref('')
@@ -66,13 +70,21 @@ const hasBlockingProblem = computed(() =>
 const appId = computed(() => String(route.params.id || ''))
 
 function defaultParams(kind: AppNodeKind): Record<string, unknown> {
+  if (kind === 'MIDDLEWARE') {
+    return { code: 'mysql', provisionMode: 'CREATE', shape: '', initPayload: '', metricsEnabled: false }
+  }
+  if (kind === 'EXTERNAL') {
+    return { code: 'mysql', host: '', port: 3306, secretName: '', usernameKey: '', passwordKey: '' }
+  }
   return kind === 'SERVICE'
     ? { image: '', port: 8080, replicas: 1, expose: 'none', env: [] }
     : { image: '', replicas: 1, env: [] }
 }
 
 function nextKey(kind: AppNodeKind): string {
-  const base = kind === 'SERVICE' ? 'service' : 'worker'
+  const base = kind === 'SERVICE' ? 'service'
+    : kind === 'WORKER' ? 'worker'
+      : kind === 'MIDDLEWARE' ? 'db' : 'ext'
   const used = new Set(nodes.value.map((n) => n.id))
   let i = 1
   while (used.has(`${base}-${i}`)) i++
@@ -97,6 +109,11 @@ function addNode(kind: AppNodeKind) {
 function onConnect(connection: Connection) {
   if (connection.source === connection.target) {
     ElMessage.warning('连线不能指向自己')
+    return
+  }
+  const source = nodes.value.find((n) => n.id === connection.source)
+  if (source && source.data.kind !== 'SERVICE' && source.data.kind !== 'WORKER') {
+    ElMessage.warning('只有服务和后台进程可以发起连线（中间件/外部服务只能被使用）')
     return
   }
   const id = `${connection.source}->${connection.target}`
@@ -147,6 +164,7 @@ function toSpec(): AppSpec {
 async function load() {
   app.value = await applicationApi.get(appId.value)
   options.value = await applicationApi.options(app.value.clusterId)
+  loadMiddlewareOptions()
   nodes.value = app.value.spec.nodes.map((n, i) => ({
     id: n.key,
     type: 'app',
@@ -156,6 +174,18 @@ async function load() {
   edges.value = (app.value.spec.edges ?? []).map((e) => ({
     id: `${e.from}->${e.to}`, source: e.from, target: e.to, type: 'smoothstep',
   }))
+}
+
+async function loadMiddlewareOptions() {
+  try {
+    const clusterId = app.value?.clusterId ?? ''
+    middlewareCatalog.value = await middlewareApi.catalog(clusterId)
+    middlewareInstances.value = await middlewareApi.instanceList(clusterId)
+  } catch {
+    // 没有中间件模块权限时画布仍然可用，只是选不了中间件节点
+    middlewareCatalog.value = []
+    middlewareInstances.value = []
+  }
 }
 
 async function save(): Promise<boolean> {
@@ -295,6 +325,9 @@ onUnmounted(() => window.clearInterval(timer))
       <aside v-if="selectedNode" class="inspector-pane">
         <AppNodeInspector
           :node="{ key: selectedNode.id, kind: selectedNode.data.kind, params: selectedNode.data.params }"
+          :catalog="middlewareCatalog"
+          :instances="middlewareInstances"
+          :namespace="app.namespace"
           @update="updateParams(selectedNode!.id, $event)"
           @remove="removeNode(selectedNode!.id)"
         />
