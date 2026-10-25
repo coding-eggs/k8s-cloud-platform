@@ -1,6 +1,8 @@
 package com.coding.platformapi.k8s;
 
 import com.coding.common.models.app.AppApplyRequestDTO;
+import com.coding.common.models.app.AppInitRequestDTO;
+import com.coding.common.models.app.AppInitResultDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
@@ -34,6 +36,11 @@ public class K8sAppClient {
     public Integer prune(AppPruneRequestDTO body) {
         return gateway.exchange(HttpMethod.POST, "/application/prune", Map.of(), body,
                 gateway.responseType(Integer.class));
+    }
+
+    public AppInitResultDTO init(AppInitRequestDTO body) {
+        return gateway.exchange(HttpMethod.POST, "/application/init", Map.of(), body,
+                gateway.responseType(AppInitResultDTO.class));
     }
 
     public AppStatusResultDTO status(AppStatusRequestDTO body) {

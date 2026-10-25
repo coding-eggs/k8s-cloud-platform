@@ -245,6 +245,41 @@ public class HelmRunner {
         }
     }
 
+    /** 等一个 Job 跑完（初始化动作）；超时或失败返回 ok=false。 */
+    public HelmResult waitJob(String kubeconfig, String job, String namespace, Duration timeout) {
+        Path kubeconfigFile = null;
+        try {
+            kubeconfigFile = writeTemp(kubeconfig);
+            List<String> args = List.of(
+                    "wait", "--for=condition=complete", "job/" + job,
+                    "--namespace", namespace,
+                    "--timeout=" + timeout.toSeconds() + "s",
+                    "--kubeconfig", kubeconfigFile.toString());
+            return run(toolCommand(args), args);
+        } catch (Exception e) {
+            return new HelmResult(false, -1, "kubectl 执行失败: " + e.getMessage());
+        } finally {
+            deleteQuietly(kubeconfigFile);
+        }
+    }
+
+    /** 取 Job 日志尾（初始化失败时给人看）；取不到返回空串，不抛。 */
+    public String jobLogs(String kubeconfig, String job, String namespace) {
+        Path kubeconfigFile = null;
+        try {
+            kubeconfigFile = writeTemp(kubeconfig);
+            List<String> args = List.of(
+                    "logs", "job/" + job, "--namespace", namespace, "--tail=100",
+                    "--kubeconfig", kubeconfigFile.toString());
+            HelmResult r = run(toolCommand(args), args);
+            return r.ok() ? r.output() : "";
+        } catch (Exception e) {
+            return "";
+        } finally {
+            deleteQuietly(kubeconfigFile);
+        }
+    }
+
     /** 等 CRD 真的 Established 再装下一个 release（否则 CR 仍然 {@code no matches for kind}） */
     public HelmResult waitCrdsEstablished(String kubeconfig, List<String> crds) {
         Path kubeconfigFile = null;

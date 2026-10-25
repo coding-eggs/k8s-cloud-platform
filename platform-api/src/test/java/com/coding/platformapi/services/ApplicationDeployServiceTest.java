@@ -34,6 +34,7 @@ class ApplicationDeployServiceTest {
     private PlatformApplicationResourceMapper resources;
     private K8sAppClient client;
     private ApplicationDeployCredentials credentials;
+    private ApplicationMiddlewareService middleware;
     private ApplicationDeployService service;
 
     @BeforeEach
@@ -44,7 +45,9 @@ class ApplicationDeployServiceTest {
         resources = mock(PlatformApplicationResourceMapper.class);
         client = mock(K8sAppClient.class);
         credentials = mock(ApplicationDeployCredentials.class);
-        service = new ApplicationDeployService(apps, revisions, operations, resources, client, credentials);
+        middleware = mock(ApplicationMiddlewareService.class);
+        service = new ApplicationDeployService(apps, revisions, operations, resources, client,
+                credentials, middleware);
     }
 
     private static PlatformApplication app() {

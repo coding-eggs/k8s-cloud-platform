@@ -3,6 +3,13 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.app.AppApplyRequestDTO;
+import com.coding.common.models.app.AppInitRequestDTO;
+import com.coding.common.models.app.AppInitResultDTO;
+import com.coding.common.models.app.AppInjectDTO;
+import com.coding.common.models.app.AppNodeDTO;
+import com.coding.common.models.middleware.MiddlewareConnectionDTO;
+import com.coding.platformapi.app.AppDependencyResolver;
+import com.coding.platformapi.app.AppInitSupport;
 import com.coding.common.models.app.AppObjectRefDTO;
 import com.coding.common.models.app.AppObjectStatusDTO;
 import com.coding.common.models.app.AppProblemDTO;
@@ -52,12 +59,14 @@ import java.util.stream.Collectors;
 public class ApplicationDeployService {
 
     /** 阶段顺序；最后一步之后进入 DONE（由 finish 收尾）。 */
-    static final List<String> STEPS =
-            List.of("PRECHECK", "RENDER", "CONFLICT", "APPLY", "PRUNE", "HEALTH");
+    static final List<String> STEPS = List.of(
+            "PRECHECK", "MIDDLEWARE", "INIT", "RENDER", "CONFLICT", "APPLY", "PRUNE", "HEALTH");
 
     private static final ObjectMapper JSON = JsonMapper.builder().build();
     private static final JavaType OBJECT_LIST =
             JSON.getTypeFactory().constructCollectionType(List.class, AppObjectRefDTO.class);
+    private static final JavaType CONN_MAP = JSON.getTypeFactory()
+            .constructMapType(Map.class, String.class, MiddlewareConnectionDTO.ConnInfo.class);
 
     /** 整个部署操作的超时：超过仍未就绪就判失败，避免 worker 无限重试。 */
     @Value("${platform.application.timeout-minutes:30}")
@@ -69,19 +78,22 @@ public class ApplicationDeployService {
     private final PlatformApplicationResourceMapper resources;
     private final K8sAppClient client;
     private final ApplicationDeployCredentials credentials;
+    private final ApplicationMiddlewareService middlewareService;
 
     public ApplicationDeployService(PlatformApplicationMapper apps,
                                     PlatformApplicationRevisionMapper revisions,
                                     PlatformApplicationOperationMapper operations,
                                     PlatformApplicationResourceMapper resources,
                                     K8sAppClient client,
-                                    ApplicationDeployCredentials credentials) {
+                                    ApplicationDeployCredentials credentials,
+                                    ApplicationMiddlewareService middlewareService) {
         this.apps = apps;
         this.revisions = revisions;
         this.operations = operations;
         this.resources = resources;
         this.client = client;
         this.credentials = credentials;
+        this.middlewareService = middlewareService;
     }
 
     /**
@@ -141,6 +153,8 @@ public class ApplicationDeployService {
             while (true) {
                 step = switch (step) {
                     case "PRECHECK" -> precheck(op);
+                    case "MIDDLEWARE" -> middleware(op);
+                    case "INIT" -> init(op);
                     case "RENDER" -> render(op);
                     case "CONFLICT" -> conflict(op);
                     case "APPLY" -> apply(op);
@@ -193,7 +207,83 @@ public class ApplicationDeployService {
         if (!errors.isEmpty()) {
             throw new CloudPlatformException(EnumResponseType.ERROR, errors);
         }
+        return "MIDDLEWARE";
+    }
+
+    /**
+     * 中间件阶段：CREATE 就地建实例并等 Ready、BIND 校验归属、EXTERNAL 用节点参数；
+     * 结果（连接信息，无口令）存进 resolvedJson，供 INIT 与 RENDER 复用。
+     */
+    private String middleware(PlatformApplicationOperation op) {
+        PlatformApplication app = requireApp(op.getAppId(), null);
+        PlatformApplicationRevision rev = revisions.selectByRevision(op.getAppId(), op.getRevision());
+        AppSpecDTO spec = readSpec(rev.getSpecJson());
+        boolean hasMiddleware = spec.getNodes() != null && spec.getNodes().stream()
+                .anyMatch(n -> "MIDDLEWARE".equals(n.getKind()));
+        if (!hasMiddleware) {
+            return "RENDER";   // 没有中间件节点：跳过 INIT，直接渲染
+        }
+        Map<String, MiddlewareConnectionDTO.ConnInfo> conns =
+                middlewareService.ensure(spec, app, op.getCreatedBy());
+        rev.setResolvedJson(JSON.writeValueAsString(conns));
+        revisions.updateById(rev);
+        return "INIT";
+    }
+
+    /** 初始化阶段：按节点上填的脚本跑一次性 Job；失败即整体失败（已建实例保留，重试可继续）。 */
+    private String init(PlatformApplicationOperation op) {
+        PlatformApplication app = requireApp(op.getAppId(), null);
+        PlatformApplicationRevision rev = revisions.selectByRevision(op.getAppId(), op.getRevision());
+        AppSpecDTO spec = readSpec(rev.getSpecJson());
+        Map<String, MiddlewareConnectionDTO.ConnInfo> conns = readResolved(rev.getResolvedJson());
+        for (AppNodeDTO node : spec.getNodes() == null ? List.<AppNodeDTO>of() : spec.getNodes()) {
+            if (!"MIDDLEWARE".equals(node.getKind())) {
+                continue;
+            }
+            Map<String, Object> params = node.getParams() == null ? Map.of() : node.getParams();
+            String code = String.valueOf(params.getOrDefault("code", ""));
+            String payload = String.valueOf(params.getOrDefault("initPayload", ""));
+            if (payload.isBlank() || !AppInitSupport.supports(code)) {
+                continue;
+            }
+            AppInitResultDTO result = client.init(buildInitRequest(app, op, node, code, payload,
+                    conns.get(node.getKey())));
+            if (!result.isOk()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "初始化失败（" + node.getKey() + "）：" + result.getMessage());
+            }
+        }
         return "RENDER";
+    }
+
+    private AppInitRequestDTO buildInitRequest(PlatformApplication app, PlatformApplicationOperation op,
+                                               AppNodeDTO node, String code, String payload,
+                                               MiddlewareConnectionDTO.ConnInfo info) {
+        AppInitRequestDTO req = new AppInitRequestDTO();
+        req.setClusterId(app.getClusterId());
+        req.setNamespace(app.getNamespace());
+        req.setJobName(app.getSlug() + "-" + node.getKey() + "-init-" + op.getRevision());
+        req.setCode(code);
+        req.setPayload(payload);
+        if (info != null) {
+            req.setSecretName(info.getSecretName());
+            req.setPasswordKey(info.getPasswordKey());
+            Map<String, String> env = new LinkedHashMap<>();
+            env.put("HOST", info.getHost());
+            if (info.getPort() != null) {
+                env.put("PORT", String.valueOf(info.getPort()));
+                env.put("BOOTSTRAP", info.getHost() + ":" + info.getPort());
+                env.put("URL", "http://" + info.getHost() + ":" + info.getPort());
+            }
+            req.setEnv(env);
+            // mysql 的用户名是根账号 root；postgres/rabbitmq 的用户名在 Secret 里
+            if ("mysql".equals(code)) {
+                req.setUsername("root");
+            } else if ("postgresql".equals(code) || "rabbitmq".equals(code)) {
+                req.setUsernameKey(info.getUsernameKey());
+            }
+        }
+        return req;
     }
 
     private String render(PlatformApplicationOperation op) {
@@ -208,7 +298,15 @@ public class ApplicationDeployService {
         req.setAppId(app.getId());
         req.setAppSlug(app.getSlug());
         req.setRevision(rev.getRevision());
-        req.setSpec(readSpec(rev.getSpecJson()));
+        AppSpecDTO spec = readSpec(rev.getSpecJson());
+        req.setSpec(spec);
+        Map<String, MiddlewareConnectionDTO.ConnInfo> conns = readResolved(rev.getResolvedJson());
+        List<AppDependencyResolver.Injection> injections = AppDependencyResolver.resolve(spec, conns);
+        Map<String, List<AppInjectDTO>> injectByNode = new LinkedHashMap<>();
+        for (AppDependencyResolver.Injection inj : injections) {
+            injectByNode.put(inj.nodeKey(), new ArrayList<>(inj.byName().values()));
+        }
+        req.setInjectByNode(injectByNode);
 
         AppRenderResultDTO rendered = client.render(req);
         String error = rendered.getProblems() == null ? null : rendered.getProblems().stream()
@@ -413,6 +511,13 @@ public class ApplicationDeployService {
         }
         app.setUpdatedAt(new Date());
         apps.updateById(app);
+    }
+
+    static Map<String, MiddlewareConnectionDTO.ConnInfo> readResolved(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        return JSON.readValue(json, CONN_MAP);
     }
 
     private static AppSpecDTO readSpec(String json) {

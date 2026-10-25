@@ -1,6 +1,8 @@
 package com.coding.k8sserver.controllers.app;
 
 import com.coding.common.models.app.AppApplyRequestDTO;
+import com.coding.common.models.app.AppInitRequestDTO;
+import com.coding.common.models.app.AppInitResultDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
@@ -8,6 +10,7 @@ import com.coding.common.models.app.AppStatusRequestDTO;
 import com.coding.common.models.app.AppStatusResultDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8sserver.app.AppApplyService;
+import com.coding.k8sserver.app.AppInitService;
 import com.coding.k8sserver.app.AppRenderService;
 import com.coding.k8sserver.app.AppStatusService;
 import com.coding.k8sserver.components.AccessBoundary;
@@ -30,11 +33,14 @@ public class AppController implements AccessBoundaryAware {
     private final AppRenderService render;
     private final AppApplyService apply;
     private final AppStatusService status;
+    private final AppInitService init;
 
-    public AppController(AppRenderService render, AppApplyService apply, AppStatusService status) {
+    public AppController(AppRenderService render, AppApplyService apply, AppStatusService status,
+                         AppInitService init) {
         this.render = render;
         this.apply = apply;
         this.status = status;
+        this.init = init;
     }
 
     @Override
@@ -59,6 +65,12 @@ public class AppController implements AccessBoundaryAware {
     @Operation(summary = "删除差集对象（PVC 默认跳过）")
     public ResponseData<Integer> prune(@RequestBody AppPruneRequestDTO request) {
         return new ResponseData<>(apply.prune(request));
+    }
+
+    @PostMapping("/init")
+    @Operation(summary = "跑一次中间件初始化（一次性 Job，等完成并取日志）")
+    public ResponseData<AppInitResultDTO> init(@RequestBody AppInitRequestDTO request) {
+        return new ResponseData<>(init.run(request));
     }
 
     @PostMapping("/status")
