@@ -221,10 +221,10 @@ public class ApplicationService {
     public ApplicationOptionsView options(String clusterId, String tenantId) {
         ApplicationOptionsView out = new ApplicationOptionsView();
         out.setNodeKinds(List.of(
-                nodeKind("SERVICE", "服务", "有端口的无状态/有状态服务"),
-                nodeKind("WORKER", "后台进程", "无端口、不建 Service"),
-                nodeKind("MIDDLEWARE", "中间件", "MySQL / Redis / Kafka / MQ / ES（平台建 / 绑已有 / 连外部）"),
-                nodeKind("EXTERNAL", "外部服务", "集群外的数据库或消息队列")));
+                nodeKind("SERVICE", "服务", "有端口，自动建 Service"),
+                nodeKind("WORKER", "后台进程", "无端口，不建 Service"),
+                nodeKind("MIDDLEWARE", "中间件", "MySQL / Redis / Kafka 等"),
+                nodeKind("EXTERNAL", "外部服务", "集群外的数据库或 MQ")));
         out.setNamespaces(allocations.listByCluster(clusterId).stream()
                 .filter(a -> tenantId == null || tenantId.equals(a.getTenantId()))
                 .map(PlatformTenantNamespace::getNamespace)

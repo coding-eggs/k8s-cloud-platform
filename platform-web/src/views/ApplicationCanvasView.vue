@@ -17,6 +17,7 @@ import type {
   MiddlewareInstance,
 } from '@/types'
 import AppCanvas from '@/components/app-canvas/AppCanvas.vue'
+import AppNodePalette from '@/components/app-canvas/AppNodePalette.vue'
 import { layeredLayout } from '@/components/app-canvas/appCanvasLayout'
 import type { Point } from '@/components/app-canvas/appCanvasLayout'
 import AppNodeInspector from '@/components/app-canvas/AppNodeInspector.vue'
@@ -70,13 +71,6 @@ const hasBlockingProblem = computed(() =>
   (preview.value?.problems ?? []).some((p) => p.severity === 'ERROR'))
 
 const appId = computed(() => String(route.params.id || ''))
-
-const legend = [
-  { name: '服务', color: '#3b7dd8' },
-  { name: '后台进程', color: '#7a5af5' },
-  { name: '中间件', color: '#23925f' },
-  { name: '外部服务', color: '#d9822b' },
-]
 
 function defaultParams(kind: AppNodeKind): Record<string, unknown> {
   if (kind === 'MIDDLEWARE') {
@@ -350,29 +344,7 @@ onUnmounted(() => window.clearInterval(timer))
     </div>
 
     <div class="canvas-page__body">
-      <aside class="palette">
-        <div class="palette__title">节点</div>
-        <el-button
-          v-for="k in options.nodeKinds"
-          :key="k.kind"
-          class="palette__item"
-          @click="addNode(k.kind)"
-        >
-          <div>
-            <div class="palette__name">{{ k.name }}</div>
-            <div class="palette__desc">{{ k.description }}</div>
-          </div>
-        </el-button>
-
-        <div class="legend">
-          <div class="legend__title">图例</div>
-          <div v-for="l in legend" :key="l.name" class="legend__item">
-            <span class="legend__dot" :style="{ background: l.color }" />
-            {{ l.name }}
-          </div>
-          <p class="legend__hint">箭头从使用者指向被使用的资源；虚线框表示资源在集群外。</p>
-        </div>
-      </aside>
+      <AppNodePalette :kinds="options.nodeKinds" @add="addNode" />
 
       <div class="canvas">
         <AppCanvas
@@ -466,68 +438,14 @@ onUnmounted(() => window.clearInterval(timer))
 }
 .canvas-page__body {
   display: grid;
-  grid-template-columns: 180px 1fr auto;
+  grid-template-columns: 240px 1fr auto;
   gap: 12px;
   flex: 1;
   min-height: 0;
 }
-.palette {
-  border: 1px solid var(--el-border-color);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--el-bg-color);
-}
-.palette__title {
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.palette__item {
-  width: 100%;
-  margin-bottom: 8px;
-  justify-content: flex-start;
-  height: auto;
-  padding: 8px;
-  white-space: normal;
-  text-align: left;
-}
-.palette__name {
-  font-size: 13px;
-}
-.palette__desc {
-  font-size: 11px;
-  color: var(--el-text-color-secondary);
-}
 .canvas {
   position: relative;
   min-width: 0;
-}
-.legend {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
-}
-.legend__title {
-  margin-bottom: 6px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-}
-.legend__item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 20px;
-  font-size: 12px;
-}
-.legend__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-}
-.legend__hint {
-  margin: 6px 0 0;
-  color: var(--el-text-color-placeholder);
-  font-size: 11px;
-  line-height: 1.5;
 }
 .inspector-pane {
   width: 340px;
