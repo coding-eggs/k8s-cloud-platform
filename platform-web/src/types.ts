@@ -2622,3 +2622,79 @@ export interface MiddlewareOperatorStatus {
   chartVersion?: string | null
   message?: string | null
 }
+
+// ---------------- 应用编排（画布） ----------------
+
+export type AppNodeKind = 'SERVICE' | 'WORKER'
+
+export interface AppNode {
+  key: string
+  kind: AppNodeKind
+  params: Record<string, unknown>
+}
+
+export interface AppEdge {
+  from: string
+  to: string
+}
+
+export interface AppSpec {
+  namespace: string
+  settings?: Record<string, unknown>
+  nodes: AppNode[]
+  edges: AppEdge[]
+}
+
+export interface AppProblem {
+  severity: 'ERROR' | 'WARN'
+  nodeKey?: string | null
+  message: string
+}
+
+export interface AppObjectRef {
+  apiVersion: string
+  kind: string
+  namespace: string
+  name: string
+}
+
+export interface ApplicationView {
+  id: string
+  clusterId: string
+  namespace: string
+  name: string
+  slug: string
+  displayName?: string | null
+  description?: string | null
+  status: string
+  currentRevision: number
+  spec: AppSpec
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
+export interface ApplicationPreview {
+  manifest: string
+  objects: AppObjectRef[]
+  problems: AppProblem[]
+  added: string[]
+  removed: string[]
+}
+
+export interface ApplicationOperation {
+  id: number
+  appId: string
+  revision: number
+  action: string
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED'
+  currentStep: string
+  nodeStatesJson?: string | null
+  message?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+export interface ApplicationOptions {
+  nodeKinds: Array<{ kind: AppNodeKind; name: string; description: string }>
+  namespaces: string[]
+}

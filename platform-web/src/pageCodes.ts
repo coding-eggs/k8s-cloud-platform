@@ -49,6 +49,8 @@ export const pageCodes = {
   app: 'tenant:page:app',
   /** 对象存储（SeaweedFS 桶 / 凭据 / 对象浏览） */
   objectStorage: 'tenant:page:object-storage',
+  /** 应用编排（画布）：与中间件商店（tenant:page:app）是两件事 */
+  application: 'tenant:page:application',
 
   // ---- 资源管理（租户可达；storageClass 因无命名空间维度归平台管理员）----
   workload: {
