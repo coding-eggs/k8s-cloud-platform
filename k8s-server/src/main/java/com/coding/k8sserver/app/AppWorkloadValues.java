@@ -30,6 +30,7 @@ public final class AppWorkloadValues {
             throw new CloudPlatformException(EnumResponseType.ERROR, "请填写镜像：" + node.getKey());
         }
         boolean worker = "WORKER".equalsIgnoreCase(node.getKind());
+        assertSecretRefs(params, node.getKey());
         String mode = worker ? "worker" : "service";
 
         Map<String, Object> workload = new LinkedHashMap<>();
@@ -63,7 +64,7 @@ public final class AppWorkloadValues {
     @SuppressWarnings("unchecked")
     public static List<Map<String, Object>> plainEnv(Map<String, Object> params) {
         return envList(params).stream()
-                .filter(e -> str(e.get("secretName")).isBlank())
+                .filter(e -> !bool(e.get("secret")))
                 .map(e -> Map.<String, Object>of("name", str(e.get("name")), "value", str(e.get("value"))))
                 .toList();
     }
@@ -73,16 +74,25 @@ public final class AppWorkloadValues {
     public static List<Map<String, Object>> secretRefs(Map<String, Object> params) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> e : envList(params)) {
-            String secretName = str(e.get("secretName"));
-            if (secretName.isBlank()) {
+            if (!bool(e.get("secret"))) {
                 continue;
             }
             out.add(Map.of(
                     "name", str(e.get("name")),
-                    "secretName", secretName,
+                    "secretName", str(e.get("secretName")),
                     "secretKey", strOrDefault(e.get("secretKey"), str(e.get("name")))));
         }
         return out;
+    }
+
+    /** 勾了「引用 Secret」却没填 Secret 名 → 直接报错，别静默变成一个空值的普通变量。 */
+    private static void assertSecretRefs(Map<String, Object> params, String nodeKey) {
+        for (Map<String, Object> e : envList(params)) {
+            if (bool(e.get("secret")) && str(e.get("secretName")).isBlank()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "环境变量 " + str(e.get("name")) + " 引用了 Secret 但没填 Secret 名（节点 " + nodeKey + "）");
+            }
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -44,12 +44,23 @@ class AppWorkloadValuesTest {
                 "image", "nginx",
                 "env", List.of(
                         Map.of("name", "MODE", "value", "prod"),
-                        Map.of("name", "DB_PASSWORD", "secretName", "demo-db", "secretKey", "password"))));
+                        Map.of("name", "DB_PASSWORD", "secret", true, "secretName", "demo-db", "secretKey", "password"))));
         Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1, n));
 
         assertThat((List<Object>) w.get("env")).containsExactly(Map.of("name", "MODE", "value", "prod"));
         assertThat((List<Object>) w.get("secretEnv")).containsExactly(
                 Map.of("name", "DB_PASSWORD", "secretName", "demo-db", "secretKey", "password"));
+    }
+
+    @Test
+    void rejectsSecretRefWithoutSecretName() {
+        AppNodeDTO n = node(Map.of(
+                "image", "nginx",
+                "env", List.of(Map.of("name", "DB_PASSWORD", "secret", true))));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> AppWorkloadValues.build("app_1", "demo", 1, n))
+                .hasMessageContaining("没填 Secret 名");
     }
 
     @Test
