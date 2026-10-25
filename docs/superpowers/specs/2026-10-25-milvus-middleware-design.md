@@ -99,7 +99,7 @@ spec:
 | k8s-server | `MiddlewareOperatorCatalog` 条目；`MilvusMiddlewareAdapter`；`MiddlewareAdapter` 新增一个默认方法；`MiddlewareInstanceService` 调用该默认方法 |
 | platform-api | `MiddlewareCatalog` 条目 + 指标定义；`MiddlewareService` 创建/删除与对象存储协同；`MiddlewareFormOptionsDTO` 新字段 |
 | platform-web | `MIDDLEWARE_FIELDS.milvus`、商店页 Milvus 专属表单项、图标映射 |
-| 迁移 | `V2026_10_25_7__milvus_tenant_rbac.sql` |
+| 迁移 | `V2026_10_25_8__milvus_tenant_rbac.sql` |
 | 文档 | 组件级 README、`docs/development/middleware-store.md` 补一节 |
 
 ### 3.2 明确不做
@@ -455,7 +455,7 @@ Milvus 专属（`v-if="createItem?.code === 'milvus'"`）：
 
 ## 13. 权限与迁移
 
-新迁移 `V2026_10_25_7__milvus_tenant_rbac.sql`（照 `V2026_10_22_5` 的写法：每条 UPDATE 自带 `NOT LIKE` 守卫、`--` 后必须有空白）：
+新迁移 `V2026_10_25_8__milvus_tenant_rbac.sql`（照 `V2026_10_22_5` 的写法：每条 UPDATE 自带 `NOT LIKE` 守卫、`--` 后必须有空白）：
 
 ```sql
 UPDATE platform_rbac_template
@@ -509,7 +509,7 @@ WHERE built_in = 1
 
 ## 16. 部署步骤（本批）
 
-1. 重放 `V2026_10_25_7__milvus_tenant_rbac.sql`；
+1. 重放 `V2026_10_25_8__milvus_tenant_rbac.sql`；
 2. 调 `POST /rbacTemplate/sync-all`（重下发全部模板）；
 3. 重建并发布 `k8s-server` / `platform-api` / `platform-web`；
 4. 管理员在中间件商店装 Milvus Operator；

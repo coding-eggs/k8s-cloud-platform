@@ -18,6 +18,7 @@
 | Nacos | **Chart**（不是 Operator） | 1.2.0（appVersion 3.2.4） | 单节点 / 集群（内嵌 JRaft 存储） | chart 默认不鉴权 |
 | PostgreSQL | Operator（CloudNativePG） | 0.29.1（appVersion 1.30.1） | 单实例 / 主备（instances ≥3，自动 failover） | Operator 生成 → `<名称>-app` |
 | RabbitMQ | Operator（官方 Cluster Operator，Bitnami 打包） | 4.4.34（appVersion 2.16.1） | 单节点 / 集群（replicas ≥3） | Operator 生成 → `<名称>-default-user` |
+| Milvus | Operator（milvus-operator） | 1.3.12（Milvus 2.6.25） | 单节点 / 集群（woodpecker WAL） | 无（默认不鉴权）；对象存储 AK/SK → `<名称>-milvus-storage` |
 
 > Nacos 3.x 集群模式使用内嵌 JRaft 存储，**不需要外置 MySQL**。
 
@@ -196,6 +197,7 @@
 | Nacos 一直 Pending | 存储未配（`persistence.enabled=false` 时用 emptyDir）或镜像拉不到 |
 | Nacos 第二个实例安装失败 | chart 的 Service/ConfigMap 名固定为 `nacos-cs`，同一命名空间只允许一个实例 |
 | 实例一直「创建中」 | 先看 CR 的 `status.conditions`；Operator 拒绝规格（版本不支持等）时不会建 Pod |
+| 租户创建 Milvus 报 403 | 内置 RBAC 模板缺 `milvus.io`，或重放了 `V2026_10_25_8` 但没「重下发全部模板」 |
 
 ## 5. 已知限制
 

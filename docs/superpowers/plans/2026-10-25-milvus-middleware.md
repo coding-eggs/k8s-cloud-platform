@@ -99,7 +99,7 @@ grep -c 'kind: CustomResourceDefinition' k8s-server/src/main/resources/charts/mi
 - **PVC 标签**：单节点本地盘（`<实例名>-data`）与 etcd PVC 都带同一个 `platform.coding/middleware-instance`，
   删实例且 `keepPvc=false` 时平台按它回收；
 - **资源**：Milvus 组件与 etcd **必须**写 requests + limits（租户命名空间有 quota）；
-- **租户 RBAC**：模板需要 `milvus.io`（`V2026_10_25_7`）+ **重下发全部模板**；
+- **租户 RBAC**：模板需要 `milvus.io`（`V2026_10_25_8`）+ **重下发全部模板**；
 - **状态**：Pod 选择器 `app.kubernetes.io/instance=<实例名>,app.kubernetes.io/name=milvus`。
 
 ## 3. 形态与 CR 对应
@@ -1923,7 +1923,7 @@ git commit -m "feat(milvus): 商店表单、图标与详情只读项"
 ## Task 8: 租户 RBAC 迁移与文档
 
 **Files:**
-- Create: `platform-data/src/main/resources/db/migration/V2026_10_25_7__milvus_tenant_rbac.sql`
+- Create: `platform-data/src/main/resources/db/migration/V2026_10_25_8__milvus_tenant_rbac.sql`
 - Modify: `docs/development/middleware-store.md`（§1 的「可用的中间件」表、§4「常见失败」表）
 
 **Interfaces:**
@@ -1955,7 +1955,7 @@ WHERE built_in = 1
 - [ ] **Step 2: 自查 SQL**
 
 ```bash
-grep -n "milvus.io\|NOT LIKE" platform-data/src/main/resources/db/migration/V2026_10_25_7__milvus_tenant_rbac.sql
+grep -n "milvus.io\|NOT LIKE" platform-data/src/main/resources/db/migration/V2026_10_25_8__milvus_tenant_rbac.sql
 ```
 
 Expected: 两处都出现；`--` 后都有空格。
@@ -1971,13 +1971,13 @@ Expected: 两处都出现；`--` 后都有空格。
 **§4「常见失败」表**追加一行：
 
 ```markdown
-| 租户创建 Milvus 报 403 | 内置 RBAC 模板缺 `milvus.io`，或重放了 `V2026_10_25_7` 但没「重下发全部模板」 |
+| 租户创建 Milvus 报 403 | 内置 RBAC 模板缺 `milvus.io`，或重放了 `V2026_10_25_8` 但没「重下发全部模板」 |
 ```
 
 - [ ] **Step 4: 提交**
 
 ```bash
-git add platform-data/src/main/resources/db/migration/V2026_10_25_7__milvus_tenant_rbac.sql \
+git add platform-data/src/main/resources/db/migration/V2026_10_25_8__milvus_tenant_rbac.sql \
         docs/development/middleware-store.md
 git commit -m "feat(milvus): 租户 RBAC 模板补 milvus.io + 文档"
 ```
@@ -2021,7 +2021,7 @@ Expected: 只有本计划涉及的文件；没有误提交 `docs/task-ledger-202
 
 - [ ] **Step 1: 部署前提**
 
-1. 重放 `V2026_10_25_7__milvus_tenant_rbac.sql`；
+1. 重放 `V2026_10_25_8__milvus_tenant_rbac.sql`；
 2. 调 `POST /rbacTemplate/sync-all`；
 3. 重建并发布 `k8s-server` / `platform-api` / `platform-web`。
 

@@ -24,7 +24,7 @@
 - **PVC 标签**：单节点本地盘（`<实例名>-data`）与 etcd PVC 都带同一个 `platform.coding/middleware-instance`，
   删实例且 `keepPvc=false` 时平台按它回收；
 - **资源**：Milvus 组件与 etcd **必须**写 requests + limits（租户命名空间有 quota）；
-- **租户 RBAC**：模板需要 `milvus.io`（`V2026_10_25_7`）+ **重下发全部模板**；
+- **租户 RBAC**：模板需要 `milvus.io`（`V2026_10_25_8`）+ **重下发全部模板**；
 - **状态**：Pod 选择器 `app.kubernetes.io/instance=<实例名>,app.kubernetes.io/name=milvus`。
 
 ## 3. 形态与 CR 对应
