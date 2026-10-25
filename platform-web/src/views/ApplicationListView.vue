@@ -2,16 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { applicationApi, clusterApi } from '@/api'
+import { applicationApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
-import type { ApplicationOptions, ApplicationView, K8sClusterOption } from '@/types'
+import type { ApplicationOptions, ApplicationView } from '@/types'
 
 const router = useRouter()
 
-const { tenantId, clusterId, setCluster, ensure } = useApplicationContext()
-const clusters = ref<K8sClusterOption[]>([])
-/** 下拉框的本地值：跟随顶栏，改了写回顶栏（与中间件页同一套） */
-const selectedCluster = ref('')
+// 集群/租户都跟随顶栏级联（context: 'full'），页面不再自己维护一份
+const { tenantId, clusterId, ensure } = useApplicationContext()
 const apps = ref<ApplicationView[]>([])
 const loading = ref(false)
 const options = ref<ApplicationOptions>({ nodeKinds: [], namespaces: [] })
@@ -29,16 +27,6 @@ const statusMeta: Record<string, { text: string; type: 'info' | 'primary' | 'suc
 
 const canCreate = computed(() => !!clusterId.value && !!form.value.name.trim()
   && !!form.value.namespace)
-
-async function loadClusters() {
-  clusters.value = await clusterApi.options()
-  selectedCluster.value = clusterId.value ?? ''
-}
-
-function onClusterChange(id: string) {
-  selectedCluster.value = id
-  setCluster(id)
-}
 
 async function load() {
   if (!clusterId.value) {
@@ -121,7 +109,6 @@ watch([tenantId, clusterId], () => {
 
 onMounted(async () => {
   await ensure()
-  await loadClusters()
   await load()
 })
 </script>
@@ -134,14 +121,7 @@ onMounted(async () => {
         <p class="page__hint">在一张画布上组合服务与后台进程，平台生成资源并分阶段部署。</p>
       </div>
       <div class="page__actions">
-        <el-select
-          :model-value="selectedCluster"
-          placeholder="选择集群"
-          style="width: 200px"
-          @update:model-value="onClusterChange"
-        >
-          <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
-        </el-select>
+        <!-- 集群/租户由顶栏级联决定，页面不再放自己的集群下拉 -->
         <el-button type="primary" :disabled="!clusterId" @click="openCreate">新建应用</el-button>
       </div>
     </div>
