@@ -1006,8 +1006,9 @@ export const objectStorageApi = {
 
 /** 中间件商店（固定清单 + Operator 实例） */
 export const middlewareApi = {
-  catalog: (clusterId: string) =>
-    http.post<never, MiddlewareCatalogItem[]>('/middleware/catalog', { clusterId }),
+  /** 商店卡片：tenantId 是顶栏租户作用域（代管轨），决定实例计数与后续创建的归属 */
+  catalog: (clusterId: string, tenantId?: string) =>
+    http.post<never, MiddlewareCatalogItem[]>('/middleware/catalog', { clusterId, tenantId }),
   /** 实例的连接方式（集群内地址 + 凭据位置），创建成功后弹给用户 */
   connection: (instanceId: string, tenantId?: string) =>
     http.post<never, MiddlewareConnection>('/middleware/instance/connection', { instanceId, tenantId }),

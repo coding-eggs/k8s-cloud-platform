@@ -828,60 +828,13 @@ class MiddlewareServiceTest {
     }
 
     @Test
-    void platformStorageFromPlatformViewUsesTheNamespacesTenant() {
-        // 管理员在平台视图建 Milvus（token 没有租户上下文）：桶归属按所选命名空间的分配记录反查，
-        // 否则"平台桶必须有主人"这条规则会把管理员挡在门外
+    void platformStorageNeedsATenantFromTheTopBar() {
+        // 平台桶必须有主人：tenantId 由前端从顶栏（资源上下文）带过来；
+        // 平台视图且确实没有可用租户时，前端会禁用「平台对象存储」
         when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
-        when(client.create(anyString(), any())).thenReturn(true);
-        when(components.seaweedInstalled("c1")).thenReturn(true);
-        when(objectStorage.s3Endpoint("c1"))
-                .thenReturn("http://platform-seaweedfs-s3.platform-storage:8333");
-        PlatformTenantNamespace alloc = new PlatformTenantNamespace();
-        alloc.setTenantId("t9");
-        alloc.setNamespace("demo");
-        when(allocations.selectByClusterAndNs("c1", "demo")).thenReturn(List.of(alloc));
-        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
-        bucket.setId("obk_1");
-        bucket.setBucket("t-9999-milvus-mw-milvus-abc12345");
-        when(objectStorage.createBucket(any(), anyString())).thenReturn(bucket);
-        when(objectStorage.issueCredential(any(), anyString()))
-                .thenReturn(new ObjectCredentialDTO("AK", "SK"));
-
-        service.create(milvusRequest("PLATFORM"), "admin", null);
-
-        ArgumentCaptor<ObjectStorageCreateBucket> body =
-                ArgumentCaptor.forClass(ObjectStorageCreateBucket.class);
-        verify(objectStorage).createBucket(body.capture(), anyString());
-        assertThat(body.getValue().getTenantId()).isEqualTo("t9");
-
-        // 台账仍归平台（管理员代建），不能因为桶归属把实例改成租户的
-        ArgumentCaptor<PlatformMiddlewareInstance> saved =
-                ArgumentCaptor.forClass(PlatformMiddlewareInstance.class);
-        verify(instances).insert(saved.capture());
-        assertThat(saved.getValue().getTenantId()).isNull();
-    }
-
-    @Test
-    void platformStorageRejectedWhenNamespaceHasNoTenant() {
-        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
-        when(allocations.selectByClusterAndNs("c1", "demo")).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.create(milvusRequest("PLATFORM"), "admin", null))
-                .hasMessageContaining("命名空间");
-        verify(objectStorage, never()).createBucket(any(), anyString());
-    }
-
-    @Test
-    void platformStorageRejectedWhenNamespaceBelongsToSeveralTenants() {
-        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
-        PlatformTenantNamespace a = new PlatformTenantNamespace();
-        a.setTenantId("t1");
-        PlatformTenantNamespace b = new PlatformTenantNamespace();
-        b.setTenantId("t2");
-        when(allocations.selectByClusterAndNs("c1", "demo")).thenReturn(List.of(a, b));
-
-        assertThatThrownBy(() -> service.create(milvusRequest("PLATFORM"), "admin", null))
-                .hasMessageContaining("多个租户");
+                .hasMessageContaining("顶栏");
         verify(objectStorage, never()).createBucket(any(), anyString());
     }
 

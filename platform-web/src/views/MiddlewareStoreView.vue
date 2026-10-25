@@ -6,7 +6,7 @@
  * 卡片点「创建实例」→ 手写表单（字段来自 middlewareForms.ts）→ 提交 → 轮询操作记录。
  * **已建实例的列表在独立页面 `/apps/instances`**（原先是本页的一个 tab）。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { middlewareApi } from '@/api'
@@ -14,12 +14,15 @@ import { usePermission } from '@/stores/permission'
 import MiddlewareIcon from '@/components/middleware/MiddlewareIcon.vue'
 import MiddlewareConnectionDialog from '@/components/middleware/MiddlewareConnectionDialog.vue'
 import { loadMiddlewareClusters } from '@/components/middleware/middlewareClusters'
+import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
 import { MIDDLEWARE_FIELDS, toQuantity } from '@/components/middleware/middlewareForms'
 import type { MiddlewareField } from '@/components/middleware/middlewareForms'
 import type { K8sCluster, MiddlewareCatalogItem } from '@/types'
 
 const perm = usePermission()
 const router = useRouter()
+// 租户作用域直接取顶栏（资源上下文）：平台桶的归属、实例可见范围都跟着它走
+const { tenantId, ensure: ensureTenant } = useMiddlewareTenant()
 
 const tab = ref<'store' | 'operator'>('store')
 const clusters = ref<K8sCluster[]>([])
@@ -98,7 +101,7 @@ async function loadCatalog(): Promise<void> {
     catalog.value = []
     return
   }
-  catalog.value = (await middlewareApi.catalog(clusterId.value)) ?? []
+  catalog.value = (await middlewareApi.catalog(clusterId.value, tenantId.value)) ?? []
 }
 
 async function refresh(): Promise<void> {
@@ -156,15 +159,16 @@ async function loadFormOptions(): Promise<void> {
     return
   }
   try {
-    const options = await middlewareApi.formOptions(clusterId.value)
+    const options = await middlewareApi.formOptions(clusterId.value, tenantId.value)
     formOptions.value = {
       namespaces: options?.namespaces ?? [],
       storageClasses: options?.storageClasses ?? [],
       objectStorageAvailable: options?.objectStorageAvailable ?? false,
     }
-    // Milvus：有对象存储组件时默认用平台桶，否则只能自带 S3
+    // Milvus：有对象存储组件 + 有租户上下文时默认用平台桶，否则只能自带 S3
     if (createItem.value?.code === 'milvus' && !form.value.objectStorageType) {
-      form.value.objectStorageType = formOptions.value.objectStorageAvailable ? 'PLATFORM' : 'CUSTOM'
+      form.value.objectStorageType =
+        formOptions.value.objectStorageAvailable && !!tenantId.value ? 'PLATFORM' : 'CUSTOM'
     }
   } catch {
     formOptions.value = { namespaces: [], storageClasses: [], objectStorageAvailable: false }
@@ -227,6 +231,10 @@ async function submitCreate(): Promise<void> {
   }
   creating.value = true
   try {
+    if (createItem.value.code === 'milvus' && form.value.objectStorageType === 'PLATFORM' && !tenantId.value) {
+      ElMessage.error('平台对象存储需要租户上下文：请先在顶栏选择租户，或改用「自带 S3」')
+      return
+    }
     const fields: MiddlewareField[] = createFields.value
     const payload: Record<string, any> = {
       clusterId: clusterId.value,
@@ -240,6 +248,8 @@ async function submitCreate(): Promise<void> {
       tls: createItem.value.code === 'elasticsearch' ? !!form.value.tls : undefined,
       ik: createItem.value.code === 'elasticsearch' ? !!form.value.ik : undefined,
       metricsEnabled: !!form.value.metricsEnabled,
+      // 顶栏的租户（代管轨）：实例归属与平台桶归属都靠它；租户用户后端会以 token 为准
+      tenantId: tenantId.value,
       replicasPerShard: createItem.value.code === 'redis' && createMode.value === 'CLUSTER'
         ? (form.value.replicasPerShard ?? 1)
         : undefined,
@@ -332,8 +342,16 @@ function poll(operationId: number): void {
 }
 
 onMounted(async () => {
+  // 先等顶栏的租户上下文（ensureDefaults 会落到第一个可用租户），再按它查目录
+  await ensureTenant()
   await loadClusters()
   await refresh()
+})
+
+// 顶栏切租户：目录计数、命名空间可选项都要跟着换
+watch(tenantId, () => {
+  void refresh()
+  if (createVisible.value) void loadFormOptions()
 })
 
 onBeforeUnmount(() => {
@@ -555,11 +573,14 @@ onBeforeUnmount(() => {
           </el-form-item>
           <el-form-item label="对象存储来源" required>
             <el-radio-group v-model="form.objectStorageType">
-              <el-radio value="PLATFORM" :disabled="!formOptions.objectStorageAvailable">平台对象存储</el-radio>
+              <el-radio value="PLATFORM" :disabled="!formOptions.objectStorageAvailable || !tenantId">平台对象存储</el-radio>
               <el-radio value="CUSTOM">自带 S3</el-radio>
             </el-radio-group>
             <div v-if="!formOptions.objectStorageAvailable" class="mw-form-help">
               本集群未安装对象存储组件，只能用「自带 S3」
+            </div>
+            <div v-else-if="!tenantId" class="mw-form-help">
+              平台桶必须归属某个租户：请先在顶栏选择租户，或改用「自带 S3」
             </div>
           </el-form-item>
           <template v-if="form.objectStorageType === 'CUSTOM'">

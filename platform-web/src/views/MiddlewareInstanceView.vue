@@ -5,17 +5,20 @@
  * <p>与「中间件商店」分家：商店只管清单、创建与 Operator 安装，本页只管**已建实例**的
  * 查看 / 编辑 / 连接 / 删除。原先它是商店页里的一个 tab，实例一多就要在两个 tab 之间来回跳。
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { middlewareApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import MiddlewareConnectionDialog from '@/components/middleware/MiddlewareConnectionDialog.vue'
 import { loadMiddlewareClusters } from '@/components/middleware/middlewareClusters'
+import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
 import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/types'
 
 const perm = usePermission()
 const router = useRouter()
+// 租户作用域直接取顶栏（资源上下文）：列表可见范围与代操作身份都跟着它
+const { tenantId, ensure: ensureTenant } = useMiddlewareTenant()
 
 const clusters = ref<K8sCluster[]>([])
 const clusterId = ref('')
@@ -50,7 +53,7 @@ async function loadCatalog(): Promise<void> {
     catalog.value = []
     return
   }
-  catalog.value = (await middlewareApi.catalog(clusterId.value)) ?? []
+  catalog.value = (await middlewareApi.catalog(clusterId.value, tenantId.value)) ?? []
 }
 
 async function loadInstances(): Promise<void> {
@@ -58,7 +61,8 @@ async function loadInstances(): Promise<void> {
     instances.value = []
     return
   }
-  instances.value = (await middlewareApi.instanceList(clusterId.value, code.value || undefined)) ?? []
+  instances.value = (await middlewareApi.instanceList(
+    clusterId.value, code.value || undefined, tenantId.value)) ?? []
 }
 
 async function refresh(): Promise<void> {
@@ -100,6 +104,7 @@ async function submitDelete(): Promise<void> {
     const opId = await middlewareApi.remove({
       instanceId: deleteTarget.value.id,
       keepPvc: keepPvc.value,
+      tenantId: tenantId.value,
     })
     deleteVisible.value = false
     ElMessage.success('已提交删除')
@@ -145,9 +150,14 @@ function poll(operationId: number): void {
 }
 
 onMounted(async () => {
+  // 先等顶栏的租户上下文（ensureDefaults 会落到第一个可用租户），再按它查列表
+  await ensureTenant()
   await loadClusters()
   await refresh()
 })
+
+// 顶栏切租户：当前列表是旧视角，重查
+watch(tenantId, () => void refresh())
 
 onBeforeUnmount(() => {
   if (pollTimer.value !== null) window.clearTimeout(pollTimer.value)
@@ -213,7 +223,7 @@ onBeforeUnmount(() => {
       </el-table-column>
     </el-table>
 
-    <MiddlewareConnectionDialog v-model="connectionVisible" :instance-id="connectionId" />
+    <MiddlewareConnectionDialog v-model="connectionVisible" :instance-id="connectionId" :tenant-id="tenantId" />
 
     <el-dialog v-model="deleteVisible" title="删除实例" width="480px" :close-on-click-modal="false">
       <p class="mw-delete-text">

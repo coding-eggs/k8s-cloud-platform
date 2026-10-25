@@ -6,18 +6,21 @@
  * `/middleware/instance/operations`。编辑只做「副本数 + 资源 + 显示名」——形态与存储不可改，
  * 与后端 scale 的语义一致（Nacos 走 chart，只能改显示名）。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { middlewareApi } from '@/api'
 import YamlBlock from '@/components/YamlBlock.vue'
 import MiddlewareMetricsPanel from '@/components/middleware/MiddlewareMetricsPanel.vue'
+import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
 import { useResourceContext } from '@/stores/context'
 import type { MiddlewareInstanceDetail, MiddlewareOperation } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const ctx = useResourceContext()
+// 租户作用域直接取顶栏（资源上下文）：详情/指标/代操作的身份都跟着它
+const { tenantId, ensure: ensureTenant } = useMiddlewareTenant()
 const instanceId = computed(() => String(route.params.id))
 
 const detail = ref<MiddlewareInstanceDetail | null>(null)
@@ -88,8 +91,8 @@ const goSecret = (name: string) => goResource(`/resources/secrets?open=${encodeU
 async function load(): Promise<void> {
   loading.value = true
   try {
-    detail.value = await middlewareApi.instanceDetail(instanceId.value)
-    operations.value = (await middlewareApi.instanceOperations(instanceId.value)) ?? []
+    detail.value = await middlewareApi.instanceDetail(instanceId.value, tenantId.value)
+    operations.value = (await middlewareApi.instanceOperations(instanceId.value, tenantId.value)) ?? []
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载实例详情失败')
   } finally {
@@ -180,7 +183,11 @@ async function submitEdit(): Promise<void> {
   saving.value = true
   try {
     if (editForm.value.displayName.trim() && editForm.value.displayName !== instance.value.displayName) {
-      await middlewareApi.rename({ instanceId: instanceId.value, displayName: editForm.value.displayName.trim() })
+      await middlewareApi.rename({
+        instanceId: instanceId.value,
+        displayName: editForm.value.displayName.trim(),
+        tenantId: tenantId.value,
+      })
     }
     // 业务指标是单向开启：已开启就不再发；Nacos 也走这个通道（只带 metricsEnabled）
     const enableMetrics = editForm.value.metricsEnabled && !metricsInstalled.value
@@ -200,6 +207,7 @@ async function submitEdit(): Promise<void> {
         // IK 是单向的：只有「从没装过」才发；已装的不再发（开关也置灰）
         ik: editForm.value.ik && !ikInstalled.value ? true : undefined,
         metricsEnabled: enableMetrics ? true : undefined,
+        tenantId: tenantId.value,
       })
     }
     ElMessage.success('已提交')
@@ -225,7 +233,7 @@ async function remove(): Promise<void> {
     return
   }
   try {
-    await middlewareApi.remove({ instanceId: instanceId.value, keepPvc: true })
+    await middlewareApi.remove({ instanceId: instanceId.value, keepPvc: true, tenantId: tenantId.value })
     ElMessage.success('已提交删除')
     router.push('/apps')
   } catch (e) {
@@ -234,6 +242,8 @@ async function remove(): Promise<void> {
 }
 
 onMounted(async () => {
+  // 先等顶栏的租户上下文（ensureDefaults 会落到第一个可用租户），再按它查详情
+  await ensureTenant()
   await load()
   // 列表行的「编辑」→ /apps/:id?edit=1：进来直接打开编辑弹窗，然后把 query 去掉（刷新不再弹）
   if (route.query.edit === '1' && instance.value) {
@@ -241,6 +251,9 @@ onMounted(async () => {
     void router.replace({ path: route.path })
   }
 })
+
+// 顶栏切租户：详情是旧视角，重查（实例若不在新租户下，后端会按归属拒）
+watch(tenantId, () => void load())
 </script>
 
 <template>
@@ -323,7 +336,7 @@ onMounted(async () => {
           v-if="instance"
           class="panel"
           :instance-id="instance.id"
-          :tenant-id="instance.tenantId ?? null"
+          :tenant-id="tenantId"
           :cpu-limit="cpuLimitNum"
           :memory-limit="memoryLimitBytes"
           :metrics-enabled="detail?.spec?.metricsEnabled === true"

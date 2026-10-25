@@ -52,10 +52,10 @@ const router = createRouter({
         { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '审计日志', group: '平台管理', requiresPerm: [pageCodes.audit] } },
         { path: 'credentials', name: 'credentials', component: () => import('@/views/CredentialView.vue'), meta: { title: '凭据管理', group: '平台管理', requiresPerm: [pageCodes.credential] } },
         { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', group: '资源管理', requiresPerm: [pageCodes.registry] } },
-        { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', group: '应用交付', requiresPerm: [pageCodes.app] } },
+        { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', group: '应用交付', requiresPerm: [pageCodes.app], context: 'full' } },
         // 实例列表单独一页：与商店同码（同一件事的两面：商店管清单与 Operator，本页管已建实例）
-        { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', group: '应用交付', requiresPerm: [pageCodes.app] } },
-        { path: 'apps/:id', name: 'middleware-detail', component: () => import('@/views/MiddlewareDetailView.vue'), meta: { title: '中间件详情', group: '应用交付', requiresPerm: [pageCodes.app] } },
+        { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', group: '应用交付', requiresPerm: [pageCodes.app], context: 'full' } },
+        { path: 'apps/:id', name: 'middleware-detail', component: () => import('@/views/MiddlewareDetailView.vue'), meta: { title: '中间件详情', group: '应用交付', requiresPerm: [pageCodes.app], context: 'full' } },
         // 应用编排（画布）：与中间件商店是两件事，页面码独立
         { path: 'applications', name: 'applications', component: () => import('@/views/ApplicationListView.vue'), meta: { title: '应用编排', group: '应用交付', requiresPerm: [pageCodes.application] } },
         { path: 'applications/:id', name: 'application-canvas', component: () => import('@/views/ApplicationCanvasView.vue'), meta: { title: '应用画布', group: '应用交付', requiresPerm: [pageCodes.application] } },
