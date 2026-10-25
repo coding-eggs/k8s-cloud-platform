@@ -27,8 +27,14 @@ public final class AppSpecValidator {
 
     private static final Pattern KEY = Pattern.compile("^[a-z][a-z0-9-]{0,19}$");
 
-    /** v1 的节点类型；CronJob 平台不支持，遇到即报错（不静默忽略）。 */
-    private static final Set<String> KINDS = Set.of("SERVICE", "WORKER");
+    /** 节点类型；CronJob 平台不支持，遇到即报错（不静默忽略）。 */
+    private static final Set<String> KINDS = Set.of("SERVICE", "WORKER", "MIDDLEWARE", "EXTERNAL");
+
+    /** 中间件节点的来源方式 */
+    private static final Set<String> PROVISION_MODES = Set.of("CREATE", "BIND", "EXTERNAL");
+
+    private static final Set<String> MIDDLEWARE_CODES =
+            Set.of("mysql", "redis", "kafka", "rabbitmq", "postgresql", "elasticsearch", "nacos", "milvus");
 
     private AppSpecValidator() {
     }
@@ -74,6 +80,13 @@ public final class AppSpecValidator {
             if (!KINDS.contains(kind)) {
                 out.add(AppProblemDTO.error(key, "不支持的节点类型：" + kind + "（平台不支持 CronJob）"));
             }
+            Map<String, Object> params = n.getParams() == null ? Map.of() : n.getParams();
+            if ("MIDDLEWARE".equals(kind)) {
+                validateMiddlewareNode(out, key, params);
+            }
+            if ("EXTERNAL".equals(kind) && str(params.get("host")).isBlank()) {
+                out.add(AppProblemDTO.error(key, "外部服务必须填写地址：" + key));
+            }
         }
 
         List<AppEdgeDTO> edges = spec.getEdges() == null ? List.of() : spec.getEdges();
@@ -89,6 +102,17 @@ public final class AppSpecValidator {
                 out.add(AppProblemDTO.error(from, "连线指向不存在的节点：" + from + " → " + to));
                 continue;
             }
+            String fromKind = byKey.get(from).getKind();
+            String toKind = byKey.get(to).getKind();
+            if ("MIDDLEWARE".equals(fromKind) && "MIDDLEWARE".equals(toKind)) {
+                out.add(AppProblemDTO.error(from, "中间件之间不能连线：" + from + " → " + to));
+                continue;
+            }
+            if ("MIDDLEWARE".equals(fromKind) || "EXTERNAL".equals(fromKind)) {
+                // 中间件/外部服务只能被使用，不能去「使用」别人
+                out.add(AppProblemDTO.error(from, "只有服务和后台进程可以发起连线：" + from + " → " + to));
+                continue;
+            }
             outEdges.computeIfAbsent(from, k -> new ArrayList<>()).add(to);
         }
         String cycle = firstCycle(byKey.keySet(), outEdges);
@@ -96,6 +120,31 @@ public final class AppSpecValidator {
             out.add(AppProblemDTO.error(null, "检测到循环依赖：" + cycle));
         }
         return out;
+    }
+
+    private static void validateMiddlewareNode(List<AppProblemDTO> out, String key, Map<String, Object> params) {
+        if (!MIDDLEWARE_CODES.contains(str(params.get("code")))) {
+            out.add(AppProblemDTO.error(key, "中间件节点必须选择中间件类型：" + key));
+        }
+        String mode = str(params.get("provisionMode"));
+        if (mode.isBlank()) {
+            out.add(AppProblemDTO.error(key, "中间件节点必须选择来源：平台创建 / 绑定已有实例 / 链接外部"));
+            return;
+        }
+        if (!PROVISION_MODES.contains(mode)) {
+            out.add(AppProblemDTO.error(key, "不支持的来源方式：" + mode));
+            return;
+        }
+        if ("BIND".equals(mode) && str(params.get("instanceId")).isBlank()) {
+            out.add(AppProblemDTO.error(key, "绑定已有实例需要选择一个实例"));
+        }
+        if ("EXTERNAL".equals(mode) && str(params.get("host")).isBlank()) {
+            out.add(AppProblemDTO.error(key, "外部中间件必须填写地址"));
+        }
+    }
+
+    private static String str(Object o) {
+        return o == null ? "" : String.valueOf(o);
     }
 
     /** DFS 找一条环（返回 {@code a → b → a}），没有环返回 null。 */
