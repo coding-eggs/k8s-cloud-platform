@@ -37,6 +37,7 @@ const form = reactive({
   ipStack: 'IPV4' as K8sCluster['ipStack'],
   prometheusUrl: '',
   grafanaUrl: '',
+  objectStorageUrl: '',
   clusterRole: 'BUSINESS' as 'MANAGEMENT' | 'BUSINESS',
 })
 
@@ -52,6 +53,7 @@ function resetForm(): void {
   form.ipStack = 'IPV4'
   form.prometheusUrl = ''
   form.grafanaUrl = ''
+  form.objectStorageUrl = ''
   form.clusterRole = 'BUSINESS'
 }
 
@@ -74,6 +76,7 @@ function openEdit(row: K8sCluster): void {
   form.ipStack = row.ipStack ?? 'IPV4'
   form.prometheusUrl = row.prometheusUrl ?? ''
   form.grafanaUrl = row.grafanaUrl ?? ''
+  form.objectStorageUrl = row.objectStorageUrl ?? ''
   form.clusterRole = row.clusterRole ?? 'BUSINESS'
   // kubeconfig 留空 = 保留原值
   dialogVisible.value = true
@@ -90,6 +93,8 @@ function commonPayload() {
     ipStack: form.ipStack,
     prometheusUrl: form.prometheusUrl || undefined,
     grafanaUrl: form.grafanaUrl || undefined,
+    // 空串 = 显式清空（回到「按组件安装位置推导集群内地址」），所以这里不给 undefined
+    objectStorageUrl: form.objectStorageUrl.trim(),
     clusterRole: form.clusterRole,
   }
 }
@@ -351,6 +356,18 @@ onMounted(load)
         <el-form-item label="Grafana">
           <el-input v-model="form.grafanaUrl" placeholder="例如 http://grafana.monitor:3000" />
         </el-form-item>
+
+        <el-divider content-position="left">对象存储</el-divider>
+        <el-form-item label="对象存储地址">
+          <el-input v-model="form.objectStorageUrl"
+                    placeholder="留空 = 推导为集群内 http://seaweedfs-s3.platform-storage:8333" />
+          <div class="form-hint">
+            平台（platform-api → k8s-server）访问本集群 SeaweedFS S3 的地址。
+            平台在集群外、或本集群够不着 ClusterIP 时填暴露后的地址（NodePort / port-forward，如
+            <code>http://192.168.31.80:38333</code>）；留空则按组件安装位置推导集群内地址。
+            与组件安装表单里的「S3 对外地址」是两件事：那个是给应用/其它集群用的入口。
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -372,4 +389,11 @@ onMounted(load)
 .res-name { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 13px; }
 .name-link { cursor: pointer; color: var(--accent); }
 .name-link:hover { text-decoration: underline; }
+/* 表单项下的说明文字（字段含义比标签长，放输入框下面，不挤占标签宽度） */
+.form-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
 </style>

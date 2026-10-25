@@ -19,7 +19,11 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -32,6 +36,7 @@ class ObjectStorageServiceTest {
     private PlatformObjectQuotaMapper quotas;
     private K8sObjectStorageClient s3;
     private ClusterComponentService components;
+    private ClusterService clusters;
     private ObjectStorageProperties properties;
     private ObjectStorageService service;
 
@@ -42,9 +47,12 @@ class ObjectStorageServiceTest {
         quotas = mock(PlatformObjectQuotaMapper.class);
         s3 = mock(K8sObjectStorageClient.class);
         components = mock(ClusterComponentService.class);
-        when(components.seaweedEndpoint("c1")).thenReturn("http://seaweedfs-s3.platform-storage:8333");
+        when(components.seaweedInstalled("c1")).thenReturn(true);
+        clusters = mock(ClusterService.class);
+        // 默认：集群没单独配地址 → 按组件安装位置推导（集群内 DNS）
+        when(clusters.objectStorageUrl("c1")).thenReturn(null);
         properties = new ObjectStorageProperties();
-        service = new ObjectStorageService(buckets, credentials, quotas, s3, components, properties);
+        service = new ObjectStorageService(buckets, credentials, quotas, s3, components, clusters, properties);
     }
 
     @Test
@@ -62,7 +70,7 @@ class ObjectStorageServiceTest {
         when(quotas.selectByClusterTenant("c1", "t_acme")).thenReturn(quota("t_acme", 2));
 
         assertThatThrownBy(() -> service.createBucket(
-                new ObjectStorageCreateBucket("c1", "t_acme", "logs", null), "admin"))
+                new ObjectStorageCreateBucket("c1", "t_acme", "logs", null, null), "admin"))
                 .hasMessageContaining("上限");
         verify(s3, never()).createBucket(anyString(), anyString(), anyString());
         verify(buckets, never()).insert(any());
@@ -75,14 +83,14 @@ class ObjectStorageServiceTest {
                 .thenReturn(properties.getDefaultMaxBuckets());
 
         assertThatThrownBy(() -> service.createBucket(
-                new ObjectStorageCreateBucket("c1", "t_acme", "logs", null), "admin"))
+                new ObjectStorageCreateBucket("c1", "t_acme", "logs", null, null), "admin"))
                 .hasMessageContaining("上限");
     }
 
     @Test
     void createBucketCreatesRemotelyThenWritesTheLedger() {
         when(buckets.countActiveByTenant("c1", "t_acme")).thenReturn(0);
-        service.createBucket(new ObjectStorageCreateBucket("c1", "t_acme", "logs", "日志"), "admin");
+        service.createBucket(new ObjectStorageCreateBucket("c1", "t_acme", "logs", "日志", null), "admin");
 
         verify(s3).createBucket("c1", "http://seaweedfs-s3.platform-storage:8333",
                 ObjectStorageService.bucketName("t_acme", "logs"));
@@ -94,12 +102,37 @@ class ObjectStorageServiceTest {
     }
 
     @Test
+    void platformDialsTheClustersOwnObjectStorageAddress() {
+        // 集群管理里填了地址 → 用它（平台在集群外、或业务集群时的暴露地址）
+        when(clusters.objectStorageUrl("c1")).thenReturn("http://192.168.31.80:38333");
+        when(buckets.countActiveByTenant("c1", "t_acme")).thenReturn(0);
+
+        service.createBucket(new ObjectStorageCreateBucket("c1", "t_acme", "logs", null, null), "admin");
+
+        verify(s3).createBucket("c1", "http://192.168.31.80:38333",
+                ObjectStorageService.bucketName("t_acme", "logs"));
+    }
+
+    @Test
+    void platformFallsBackToTheDerivedInClusterAddress() {
+        // 没配 → 按组件安装位置推导（release 的 fullnameOverride + 命名空间）
+        when(clusters.objectStorageUrl("c1")).thenReturn("  ");
+        when(buckets.countActiveByTenant("c1", "t_acme")).thenReturn(0);
+
+        service.createBucket(new ObjectStorageCreateBucket("c1", "t_acme", "logs", null, null), "admin");
+
+        verify(s3).createBucket("c1",
+                com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
+                ObjectStorageService.bucketName("t_acme", "logs"));
+    }
+
+    @Test
     void createBucketNeedsAClusterNotInstalledErrorIsActionable() {
-        when(components.seaweedEndpoint("c1")).thenReturn(null);
+        when(components.seaweedInstalled("c1")).thenReturn(false);
         when(buckets.countActiveByTenant("c1", "t_acme")).thenReturn(0);
 
         assertThatThrownBy(() -> service.createBucket(
-                new ObjectStorageCreateBucket("c1", "t_acme", "logs", null), "admin"))
+                new ObjectStorageCreateBucket("c1", "t_acme", "logs", null, null), "admin"))
                 .hasMessageContaining("集群组件");
     }
 
@@ -128,10 +161,157 @@ class ObjectStorageServiceTest {
         when(buckets.selectById("obk1")).thenReturn(other);
 
         assertThatThrownBy(() -> service.listObjects(
-                new com.coding.platformapi.models.ObjectStorageObjectQuery("c1", "t_acme", "obk1", null, null, 50),
+                new com.coding.platformapi.models.ObjectStorageObjectQuery(
+                        "c1", "t_acme", "obk1", null, null, 50, null),
                 "t_acme"))
                 .hasMessageContaining("无权");
-        verify(s3, never()).listObjects(anyString(), anyString(), anyString(), any(), any(), any());
+        verify(s3, never()).listObjects(anyString(), anyString(), anyString(), any(), any(), any(), any());
+    }
+
+    @Test
+    void adminCanChangeAnExistingBucketsQuota() {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+
+        service.setBucketQuota(new com.coding.platformapi.models.ObjectStorageBucketQuota(
+                "obk1", null, 2147483648L), null, "admin");
+
+        verify(s3).setBucketQuota("c1",
+                com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
+                "t-aaaa-logs", 2147483648L);
+        verify(buckets).updateQuota(eq("obk1"), eq(2147483648L), any());
+    }
+
+    @Test
+    void clearingTheQuotaSendsZeroToSeaweedfsAndNullToTheLedger() {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+
+        service.setBucketQuota(new com.coding.platformapi.models.ObjectStorageBucketQuota(
+                "obk1", null, null), null, "admin");
+
+        verify(s3).setBucketQuota("c1",
+                com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
+                "t-aaaa-logs", 0L);
+        verify(buckets).updateQuota(eq("obk1"), isNull(), any());
+    }
+
+    @Test
+    void createBucketPushesTheQuotaToSeaweedfsAndStoresItInTheLedger() {
+        when(buckets.countActiveByTenant("c1", "t_acme")).thenReturn(0);
+
+        service.createBucket(new ObjectStorageCreateBucket(
+                "c1", "t_acme", "logs", null, 1073741824L), "admin");
+
+        String remote = ObjectStorageService.bucketName("t_acme", "logs");
+        String ep = com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint();
+        verify(s3).setBucketQuota("c1", ep, remote, 1073741824L);
+        ArgumentCaptor<PlatformObjectBucket> captor = ArgumentCaptor.forClass(PlatformObjectBucket.class);
+        verify(buckets).insert(captor.capture());
+        assertThat(captor.getValue().getQuotaBytes()).isEqualTo(1073741824L);
+    }
+
+    @Test
+    void createBucketRollsBackWhenTheQuotaCannotBeApplied() {
+        when(buckets.countActiveByTenant("c1", "t_acme")).thenReturn(0);
+        doThrow(new RuntimeException("boom")).when(s3)
+                .setBucketQuota(anyString(), anyString(), anyString(), anyLong());
+
+        assertThatThrownBy(() -> service.createBucket(
+                new ObjectStorageCreateBucket("c1", "t_acme", "logs", null, 1024L), "admin"))
+                .hasMessageContaining("已回滚");
+        verify(s3).deleteBucket("c1",
+                com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
+                ObjectStorageService.bucketName("t_acme", "logs"));
+        verify(buckets, never()).insert(any());
+    }
+
+    @Test
+    void uploadRejectsOversizeBeforeReadingTheStream() {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+
+        assertThatThrownBy(() -> service.uploadObject(
+                new com.coding.platformapi.models.ObjectStorageObjectUpload(
+                        "obk1", "big.bin", 200L * 1024 * 1024, null),
+                "t_acme", 0L, java.io.InputStream.nullInputStream()))
+                .hasMessageContaining("100MB");
+        verify(s3, never()).uploadObject(anyString(), anyString(), anyString(), anyString(),
+                any(), anyLong(), any());
+    }
+
+    @Test
+    void uploadRejectsWhenTheHttpBodyItselfExceedsTheLimit() {
+        // 声明 10 字节、实际 Content-Length 很大：两者任一超限都拒
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+
+        assertThatThrownBy(() -> service.uploadObject(
+                new com.coding.platformapi.models.ObjectStorageObjectUpload("obk1", "x.bin", 10L, null),
+                "t_acme", 200L * 1024 * 1024, java.io.InputStream.nullInputStream()))
+                .hasMessageContaining("100MB");
+    }
+
+    @Test
+    void uploadNormalisesTheKeyAndPassesTheDeclaredSize() {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+        java.io.InputStream in = java.io.InputStream.nullInputStream();
+
+        service.uploadObject(new com.coding.platformapi.models.ObjectStorageObjectUpload(
+                "obk1", "/logs/a.txt", 10L, "text/plain"), "t_acme", 10L, in);
+
+        verify(s3).uploadObject("c1",
+                com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
+                "t-aaaa-logs", "logs/a.txt", "text/plain", 10L, in);
+    }
+
+    @Test
+    void tenantsCanDeleteObjectsInTheirOwnBucket() {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+
+        service.deleteObject(new com.coding.platformapi.models.ObjectStorageObjectRef(
+                null, "t_acme", "obk1", "logs/a.txt"), "t_acme");
+
+        verify(s3).deleteObject("c1",
+                com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
+                "t-aaaa-logs", "logs/a.txt");
+    }
+
+    @Test
+    void tenantsCannotDeleteObjectsInSomeoneElsesBucket() {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_beta", "t-bbbb-logs"));
+
+        assertThatThrownBy(() -> service.deleteObject(
+                new com.coding.platformapi.models.ObjectStorageObjectRef(null, "t_acme", "obk1", "a.txt"),
+                "t_acme"))
+                .hasMessageContaining("无权");
+        verify(s3, never()).deleteObject(anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void bucketStatsOnlyCountsBucketsTheTenantOwns() {
+        // 桶名可猜（t-<租户短码>-<名字>）：前端传了别人的桶名也不查
+        when(buckets.selectByTenant("c1", "t_acme"))
+                .thenReturn(List.of(row("obk1", "t_acme", "t-aaaa-logs")));
+        when(s3.bucketStats(anyString(), anyString(), any())).thenReturn(List.of());
+
+        service.bucketStats("c1", "t_acme", List.of("t-aaaa-logs", "t-bbbb-evil"));
+
+        verify(s3).bucketStats("c1",
+                com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
+                List.of("t-aaaa-logs"));
+    }
+
+    @Test
+    void objectListingPassesTheDelimiterThroughSoTheConsoleCanDrillIntoFolders() {
+        PlatformObjectBucket mine = row("obk1", "t_acme", "t-aaaa-logs");
+        when(buckets.selectById("obk1")).thenReturn(mine);
+        when(s3.listObjects(anyString(), anyString(), anyString(), any(), any(), any(), any()))
+                .thenReturn(new com.coding.common.models.objectstorage.ObjectListResultDTO(
+                        java.util.Collections.emptyList(), List.of("logs/"), null));
+
+        service.listObjects(new com.coding.platformapi.models.ObjectStorageObjectQuery(
+                "c1", "t_acme", "obk1", "", null, 200, "/"), "t_acme");
+
+        verify(s3).listObjects("c1", com.coding.platformapi.components.ComponentRecipeCatalog
+                        .seaweedS3InClusterEndpoint(),
+                "t-aaaa-logs", "", null, 200, "/");
     }
 
     @Test
@@ -145,7 +325,7 @@ class ObjectStorageServiceTest {
     @Test
     void invalidBucketNamesAreRejectedBeforeTouchingS3() {
         assertThatThrownBy(() -> service.createBucket(
-                new ObjectStorageCreateBucket("c1", "t_acme", "Bad_Name", null), "admin"))
+                new ObjectStorageCreateBucket("c1", "t_acme", "Bad_Name", null, null), "admin"))
                 .hasMessageContaining("小写字母");
         verify(s3, never()).createBucket(anyString(), anyString(), anyString());
     }

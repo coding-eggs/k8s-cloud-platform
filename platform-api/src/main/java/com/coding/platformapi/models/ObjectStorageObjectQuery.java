@@ -16,4 +16,6 @@ public class ObjectStorageObjectQuery {
     /** 上一页最后一个 key */
     private String after;
     private Integer maxKeys;
+    /** 分组分隔符（"/" = 按目录下钻；空 = 扁平递归） */
+    private String delimiter;
 }

@@ -1343,12 +1343,14 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </div>
       </div>
       <div v-if="applyDialog.showSeaweed" class="cc-form-row">
-        <span class="cc-form-label">S3 地址</span>
+        <span class="cc-form-label">S3 对外地址</span>
         <div class="cc-form-control">
           <el-input v-model="applyDialog.seaweed.s3Endpoint" class="cc-sf-endpoint" spellcheck="false" />
           <div class="cc-form-hint">
-            平台后端访问 S3 用的地址（不是给应用用的展示地址）。平台与 SeaweedFS 同集群时保持默认；
-            业务集群或平台跑在集群外时，先把 S3 暴露成 NodePort/LB，再填外部地址
+            这个 S3 对外提供服务的地址（给应用、给其它集群的组件引用）。集群内用默认值；要让集群外访问，
+            先把 <code>seaweedfs-s3</code> 暴露成 NodePort/LB 再填这里。
+            <strong>平台自己连 S3 不走这个值</strong>，走部署配置
+            <code>platform.object-storage.default-endpoint</code>（环境变量 <code>OBJECT_STORAGE_S3_ENDPOINT</code>）
           </div>
         </div>
       </div>

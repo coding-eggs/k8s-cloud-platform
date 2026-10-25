@@ -28,6 +28,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
@@ -35,11 +36,12 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * 对象存储（S3 桶 / 凭据 / 对象浏览）。
+ * 对象存储（S3 桶 / 凭据 / 对象读写）。
  *
- * <p>租户看自己的桶；管理员可以代建、设配额、看全部。**对象级写操作 v1 不做**。
+ * <p>租户可读写**自己桶里**的对象；管理员可以代建桶、设配额、看全部。
+ * v1 的对象写操作只有「上传单个对象」和「删除单个对象」—— 不做按前缀批量删、不做建目录（S3 没有目录）。
  */
-@Tag(name = "对象存储", description = "桶 / 凭据 / 对象浏览（只读）")
+@Tag(name = "对象存储", description = "桶 / 凭据 / 对象读写")
 @RestController
 @RequestMapping("/object-storage")
 public class ObjectStorageController {
@@ -60,11 +62,28 @@ public class ObjectStorageController {
                 auth.effectiveTenantId(request.getTenantId())));
     }
 
+    @PostMapping("/buckets/stats")
+    @Operation(summary = "桶的当前用量（对象数/字节数；超列举上限时是下限）")
+    public ResponseData<List<com.coding.common.models.objectstorage.ObjectBucketStatDTO>> bucketStats(
+            @RequestBody com.coding.platformapi.models.ObjectStorageStatsQuery request) {
+        return new ResponseData<>(service.bucketStats(request.getClusterId(),
+                auth.effectiveTenantId(request.getTenantId()), request.getBuckets()));
+    }
+
     @PostMapping("/buckets/create")
     @Auditable(action = AuditAction.OBJECT_BUCKET_CREATE, target = "#request.name")
     @Operation(summary = "建桶（仅管理员；桶名 = t-<租户短码>-<name>）")
     public ResponseData<ObjectStorageBucketView> create(@RequestBody ObjectStorageCreateBucket request) {
         return new ResponseData<>(service.createBucket(request, operator()));
+    }
+
+    @PostMapping("/buckets/quota")
+    @Auditable(action = AuditAction.OBJECT_BUCKET_QUOTA_SET, target = "#request.bucketId")
+    @Operation(summary = "修改桶的容量上限（null = 不限；仅管理员）")
+    public ResponseData<Void> setBucketQuota(
+            @RequestBody com.coding.platformapi.models.ObjectStorageBucketQuota request) {
+        service.setBucketQuota(request, auth.effectiveTenantId(request.getTenantId()), operator());
+        return new ResponseData<>();
     }
 
     @PostMapping("/buckets/delete")
@@ -132,6 +151,35 @@ public class ObjectStorageController {
     public ResponseData<ObjectStatDTO> stat(@RequestBody ObjectStorageObjectRef request) {
         return new ResponseData<>(service.statObject(request,
                 auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    /**
+     * 上传单个对象（请求体 = 原始字节流，不 multipart、不缓冲）。
+     *
+     * <p>{@code size} 必带：平台据此在**读流之前**拒超限，同时它是下游 MinIO putObject 需要的对象长度。
+     * 同名 key 直接覆盖（S3 语义）。
+     */
+    @PostMapping("/objects/upload")
+    @Auditable(action = AuditAction.OBJECT_UPLOAD, target = "#key")
+    @Operation(summary = "上传单个对象（≤100MB；请求体为原始字节流）")
+    public ResponseData<Void> upload(@RequestParam String bucketId,
+                                     @RequestParam String key,
+                                     @RequestParam Long size,
+                                     @RequestParam(required = false) String contentType,
+                                     @RequestParam(required = false) String tenantId,
+                                     jakarta.servlet.http.HttpServletRequest request) throws java.io.IOException {
+        service.uploadObject(new com.coding.platformapi.models.ObjectStorageObjectUpload(
+                        bucketId, key, size, contentType),
+                auth.effectiveTenantId(tenantId), request.getContentLengthLong(), request.getInputStream());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/objects/delete")
+    @Auditable(action = AuditAction.OBJECT_DELETE, target = "#request.key")
+    @Operation(summary = "删除单个对象（租户可删自己桶里的）")
+    public ResponseData<Void> deleteObject(@RequestBody ObjectStorageObjectRef request) {
+        service.deleteObject(request, auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>();
     }
 
     /**

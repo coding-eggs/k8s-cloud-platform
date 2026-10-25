@@ -31,4 +31,7 @@ public class PlatformObjectBucket {
 
     /** 软删时间；同名桶可以在删除后重建 */
     private Date deletedAt;
+
+    /** 桶容量上限（字节）；null = 不限。真正的执行在 SeaweedFS（每桶 quota），这里只是声明值 */
+    private Long quotaBytes;
 }

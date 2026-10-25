@@ -31,6 +31,8 @@ export interface K8sCluster {
   containerRuntime?: string | null
   prometheusUrl?: string | null
   grafanaUrl?: string | null
+  /** 平台访问该集群对象存储(S3)的地址；空 = 按组件安装位置推导集群内地址 */
+  objectStorageUrl?: string | null
   description?: string | null
   ipStack?: 'IPV4' | 'IPV6' | 'IPV4_AND_IPV6' | null
   status?: 'CONNECTED' | 'DISCONNECTED' | 'CONNECTING' | 'ERROR' | null
@@ -1038,10 +1040,19 @@ export interface ObjectStorageBucket {
   createdAt?: string | null
   /** 当前有效凭据数 */
   credentialCount: number
+  /** 桶容量上限（字节）；null/未设 = 不限（由 SeaweedFS 每桶 quota 执行） */
+  quotaBytes?: number | null
 }
 
-/** 一组访问凭据（secretKey 只在发放/查看时返回，不落库） */
-export interface ObjectStorageCredential {
+/** 桶的当前用量（S3 没有桶大小 API：由后端列举求和，超上限时 truncated=true，展示成「≥」） */
+export interface ObjectStorageBucketStat {
+  bucket: string
+  bytes: number
+  objectCount: number
+  truncated: boolean
+}
+
+/** 一组访问凭据（secretKey 只在发放/查看时返回，不落库） */export interface ObjectStorageCredential {
   id: string
   bucketId: string
   identityName: string
@@ -1074,6 +1085,8 @@ export interface ObjectStorageObjectItem {
 
 export interface ObjectStorageObjectPage {
   items: ObjectStorageObjectItem[]
+  /** 当前前缀下的子目录（S3 CommonPrefixes，以 / 结尾）：文件浏览器逐层下钻用 */
+  folders?: string[] | null
   /** 下一页游标；null = 已到末尾 */
   nextToken?: string | null
 }

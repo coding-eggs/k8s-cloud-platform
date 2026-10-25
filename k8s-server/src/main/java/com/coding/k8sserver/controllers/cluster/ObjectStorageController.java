@@ -1,11 +1,15 @@
 package com.coding.k8sserver.controllers.cluster;
 
 import com.coding.common.models.objectstorage.ObjectBucketDTO;
+import com.coding.common.models.objectstorage.ObjectBucketQuotaRequestDTO;
 import com.coding.common.models.objectstorage.ObjectBucketRequestDTO;
+import com.coding.common.models.objectstorage.ObjectBucketStatDTO;
+import com.coding.common.models.objectstorage.ObjectBucketStatsRequestDTO;
 import com.coding.common.models.objectstorage.ObjectCredentialDTO;
 import com.coding.common.models.objectstorage.ObjectCredentialGetRequestDTO;
 import com.coding.common.models.objectstorage.ObjectCredentialRequestDTO;
 import com.coding.common.models.objectstorage.ObjectCredentialRevokeRequestDTO;
+import com.coding.common.models.objectstorage.ObjectDeleteRequestDTO;
 import com.coding.common.models.objectstorage.ObjectListRequestDTO;
 import com.coding.common.models.objectstorage.ObjectListResultDTO;
 import com.coding.common.models.objectstorage.ObjectStatDTO;
@@ -79,6 +83,24 @@ public class ObjectStorageController implements AccessBoundaryAware {
         return new ResponseData<>(service.listBuckets(request.getClusterId(), request.getEndpoint()));
     }
 
+    @PostMapping("/buckets/stats")
+    @Operation(summary = "桶的当前用量（列举有上限，到顶标 truncated）")
+    public ResponseData<List<ObjectBucketStatDTO>> bucketStats(@RequestBody ObjectBucketStatsRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        return new ResponseData<>(service.bucketStats(request.getClusterId(),
+                request.getEndpoint(), request.getBuckets()));
+    }
+
+
+    @PostMapping("/buckets/quota")
+    @Operation(summary = "设置桶容量上限（SeaweedFS ?seaweedfs-quota；<=0 = 清除）")
+    public ResponseData<Void> setBucketQuota(@RequestBody ObjectBucketQuotaRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        service.setBucketQuota(request.getClusterId(), request.getEndpoint(), request.getBucket(),
+                request.getQuotaBytes() == null ? 0 : request.getQuotaBytes());
+        return new ResponseData<>();
+    }
+
     @PostMapping("/buckets/create")
     @Operation(summary = "建桶（幂等）")
     public ResponseData<Void> createBucket(@RequestBody ObjectBucketRequestDTO request) {
@@ -100,7 +122,37 @@ public class ObjectStorageController implements AccessBoundaryAware {
     public ResponseData<ObjectListResultDTO> listObjects(@RequestBody ObjectListRequestDTO request) {
         accessResolver.assertClusterAccess(request.getClusterId());
         return new ResponseData<>(service.listObjects(request.getClusterId(), request.getEndpoint(),
-                request.getBucket(), request.getPrefix(), request.getAfter(), request.getMaxKeys()));
+                request.getBucket(), request.getPrefix(), request.getAfter(), request.getMaxKeys(),
+                request.getDelimiter()));
+    }
+
+    /**
+     * 上传单个对象：请求体是原始字节流（不是 JSON / multipart）。
+     *
+     * <p>{@code size} 必带 —— MinIO 的 putObject 需要对象长度；不缓冲、不落临时文件。
+     */
+    @PostMapping("/objects/upload")
+    @Operation(summary = "上传单个对象（原始字节流）")
+    public ResponseData<Void> upload(@RequestParam String clusterId,
+                                     @RequestParam String endpoint,
+                                     @RequestParam String bucket,
+                                     @RequestParam String key,
+                                     @RequestParam long size,
+                                     @RequestParam(required = false) String contentType,
+                                     jakarta.servlet.http.HttpServletRequest request)
+            throws java.io.IOException {
+        accessResolver.assertClusterAccess(clusterId);
+        service.putObject(clusterId, endpoint, bucket, key, contentType, size, request.getInputStream());
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/objects/delete")
+    @Operation(summary = "删除单个对象")
+    public ResponseData<Void> deleteObject(@RequestBody ObjectDeleteRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        service.removeObject(request.getClusterId(), request.getEndpoint(),
+                request.getBucket(), request.getKey());
+        return new ResponseData<>();
     }
 
     @PostMapping("/objects/stat")

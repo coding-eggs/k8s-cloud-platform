@@ -18,4 +18,10 @@ public class ObjectStorageCreateBucket {
     /** 用户可读的名字部分（小写字母/数字/连字符） */
     private String name;
     private String displayName;
+    /**
+     * 桶容量上限（字节）；null = 不限。
+     *
+     * <p>真正的执行在 SeaweedFS（每桶 quota，超限写入 403）；这里存声明值，便于页面展示与重建。
+     */
+    private Long quotaBytes;
 }

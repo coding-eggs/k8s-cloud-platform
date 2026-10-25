@@ -96,6 +96,7 @@ public class ClusterService {
         cluster.setIpStack(req.getIpStack() != null ? req.getIpStack() : K8sCluster.IPStack.IPV4);
         cluster.setPrometheusUrl(req.getPrometheusUrl());
         cluster.setGrafanaUrl(req.getGrafanaUrl());
+        cluster.setObjectStorageUrl(req.getObjectStorageUrl());
         cluster.setStatus(K8sCluster.ClusterStatus.CONNECTED);
         cluster.setEnabled(1);
         cluster.setClusterRole(role);
@@ -196,6 +197,8 @@ public class ClusterService {
         upd.setIpStack(req.getIpStack());
         upd.setPrometheusUrl(req.getPrometheusUrl());
         upd.setGrafanaUrl(req.getGrafanaUrl());
+        // 空串 = 显式清空（回到「按组件安装位置推导」），null = 该字段没传、保持原值
+        upd.setObjectStorageUrl(req.getObjectStorageUrl() == null ? null : req.getObjectStorageUrl().trim());
         upd.setUpdatedAt(new Date(System.currentTimeMillis()));
         clusterMapper.updateByPrimaryKeySelective(upd);
         // kubeconfig 变化 → 旧连接作废，显式失效缓存（不依赖下面的能力探测是否成功）；能力可能变则附带重探
@@ -437,6 +440,16 @@ public class ClusterService {
         } catch (Exception e) {
             log.warn("集群 {} client 缓存失效失败（下次访问/重启后自愈）：{}", clusterId, e.getMessage());
         }
+    }
+
+    /**
+     * 平台访问该集群对象存储（S3）的地址；**空 = 没配**，调用方按组件安装位置推导。
+     *
+     * <p>为什么是每集群一条而不是全局配置/安装表单：地址取决于「哪个集群 + 平台从哪一侧访问」，
+     * 平台在集群内用 ClusterIP、在集群外用节点暴露地址。与 {@code prometheus_url} 同形。
+     */
+    public String objectStorageUrl(String clusterId) {
+        return require(clusterId).getObjectStorageUrl();
     }
 
     private K8sCluster require(String clusterId) {

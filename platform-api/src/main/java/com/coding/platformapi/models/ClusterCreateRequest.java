@@ -38,6 +38,10 @@ public class ClusterCreateRequest {
     @Schema(description = "Grafana 地址（仅记录）")
     private String grafanaUrl;
 
+    @Schema(description = "平台访问该集群对象存储(S3)的地址；留空 = 按组件安装位置推导集群内地址",
+            example = "http://192.168.31.80:38333")
+    private String objectStorageUrl;
+
     @Schema(description = "集群画像：MANAGEMENT(平台自身所在集群) / BUSINESS(业务集群，默认)",
             example = "BUSINESS")
     private String clusterRole;

@@ -24,6 +24,6 @@ public class ObjectStorageProperties {
     /** chart 里 S3 网关的 Deployment 名（fullnameOverride=seaweedfs） */
     private String s3Deployment = "seaweedfs-s3";
 
-    /** 集群内默认地址（platform-api 会带 endpoint 过来，这里只在缺省时兜底） */
-    private String defaultEndpoint = "http://seaweedfs-s3.platform-storage:8333";
+    // 注意：S3 的**地址**不在这里。它是调用方（platform-api）按集群配置下发的参数；
+    // 本服务不自己决定连哪个 S3（k8s-server 是按 kubeconfig 干活的适配层，零业务语义）。
 }

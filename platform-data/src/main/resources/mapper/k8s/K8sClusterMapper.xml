@@ -11,6 +11,7 @@
     <result column="container_runtime" jdbcType="VARCHAR" property="containerRuntime" />
     <result column="prometheus_url" jdbcType="VARCHAR" property="prometheusUrl" />
     <result column="grafana_url" jdbcType="VARCHAR" property="grafanaUrl" />
+    <result column="object_storage_url" jdbcType="VARCHAR" property="objectStorageUrl" />
     <result column="description" jdbcType="VARCHAR" property="description" />
     <result column="ip_stack" jdbcType="VARCHAR" property="ipStack" />
     <result column="status" jdbcType="VARCHAR" property="status" />
@@ -24,7 +25,7 @@
   </resultMap>
   <sql id="Base_Column_List">
     cluster_id, cluster_name, kubeconfig, version, istio_version, calico_version, container_runtime,
-    prometheus_url, grafana_url, description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at, capability, cluster_role
+    prometheus_url, grafana_url, object_storage_url, description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at, capability, cluster_role
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
@@ -43,13 +44,13 @@
        useGeneratedKeys 对非自增主键不生效，写上只会让人误以为主键由库生成 —— 所以不写。 -->
   <insert id="insert" parameterType="com.coding.data.models.k8s.K8sCluster">
     insert into k8s_cluster (cluster_id, cluster_name, kubeconfig, version,
-      istio_version, calico_version, container_runtime, prometheus_url, grafana_url,
+      istio_version, calico_version, container_runtime, prometheus_url, grafana_url, object_storage_url,
       description, ip_stack, `status`,
       enabled, last_heartbeat_time, created_at,
       updated_at, capability, cluster_role)
     values (#{clusterId,jdbcType=VARCHAR}, #{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR},
       #{istioVersion,jdbcType=VARCHAR}, #{calicoVersion,jdbcType=VARCHAR}, #{containerRuntime,jdbcType=VARCHAR},
-      #{prometheusUrl,jdbcType=VARCHAR}, #{grafanaUrl,jdbcType=VARCHAR},
+      #{prometheusUrl,jdbcType=VARCHAR}, #{grafanaUrl,jdbcType=VARCHAR}, #{objectStorageUrl,jdbcType=VARCHAR},
       #{description,jdbcType=VARCHAR}, #{ipStack,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
       #{enabled,jdbcType=BOOLEAN}, #{lastHeartbeatTime,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP},
       #{updatedAt,jdbcType=TIMESTAMP}, #{capability,jdbcType=VARCHAR}, #{clusterRole,jdbcType=VARCHAR})
@@ -83,6 +84,9 @@
       </if>
       <if test="grafanaUrl != null">
         grafana_url,
+      </if>
+      <if test="objectStorageUrl != null">
+        object_storage_url,
       </if>
       <if test="description != null">
         description,
@@ -140,6 +144,9 @@
       <if test="grafanaUrl != null">
         #{grafanaUrl,jdbcType=VARCHAR},
       </if>
+      <if test="objectStorageUrl != null">
+        #{objectStorageUrl,jdbcType=VARCHAR},
+      </if>
       <if test="description != null">
         #{description,jdbcType=VARCHAR},
       </if>
@@ -196,6 +203,9 @@
       <if test="grafanaUrl != null">
         grafana_url = #{grafanaUrl,jdbcType=VARCHAR},
       </if>
+      <if test="objectStorageUrl != null">
+        object_storage_url = #{objectStorageUrl,jdbcType=VARCHAR},
+      </if>
       <if test="description != null">
         description = #{description,jdbcType=VARCHAR},
       </if>
@@ -236,6 +246,7 @@
       container_runtime = #{containerRuntime,jdbcType=VARCHAR},
       prometheus_url = #{prometheusUrl,jdbcType=VARCHAR},
       grafana_url = #{grafanaUrl,jdbcType=VARCHAR},
+      object_storage_url = #{objectStorageUrl,jdbcType=VARCHAR},
       description = #{description,jdbcType=VARCHAR},
       ip_stack = #{ipStack,jdbcType=VARCHAR},
       `status` = #{status,jdbcType=VARCHAR},

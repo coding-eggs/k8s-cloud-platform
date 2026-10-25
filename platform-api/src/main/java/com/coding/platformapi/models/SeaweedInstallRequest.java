@@ -36,11 +36,14 @@ public class SeaweedInstallRequest {
     /** 是否安装 admin 管理台（chart 的 {@code admin} 组件，端口 23646）。 */
     private Boolean adminEnabled;
     /**
-     * S3 网关地址（平台后端访问 S3 用的地址，不是给应用用的展示地址）。
+     * 这个 S3 **对外提供服务**的地址（给应用、给别的集群的组件引用），随安装声明进操作快照。
      *
-     * <p>默认 {@code http://seaweedfs-s3.platform-storage:8333}（平台与 SeaweedFS 同集群时可用）。
-     * **业务集群或平台跑在集群外时必须改**：k8s-server 是按 kubeconfig 访问的，pod 网络不一定可达
-     * 目标集群的 ClusterIP —— 把 S3 暴露成 NodePort/LB（或本地 port-forward）后填这里。
+     * <p>⚠️ 它**不是**平台后端自己的拨号地址：平台连 S3 用集群管理里的「对象存储地址」
+     * （{@code k8s_cluster.object_storage_url}），没配则按组件安装位置推导集群内地址。
+     * 开发时平台往往走一条 port-forward，上线后是另一个地址，两者互不影响。
+     *
+     * <p>默认 {@code http://seaweedfs-s3.platform-storage:8333}（集群内地址）。要让集群外访问，
+     * 先把这个 Service 暴露成 NodePort/LB，再把这里填成暴露后的地址。
      */
     private String s3Endpoint;
 }

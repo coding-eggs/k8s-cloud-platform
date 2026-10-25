@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.objectstorage.ObjectBucketStatDTO;
 import com.coding.common.models.objectstorage.ObjectCredentialDTO;
 import com.coding.common.models.objectstorage.ObjectListItemDTO;
 import com.coding.common.models.objectstorage.ObjectListResultDTO;
@@ -12,26 +13,32 @@ import com.coding.data.mapper.system.PlatformObjectQuotaMapper;
 import com.coding.data.models.system.PlatformObjectBucket;
 import com.coding.data.models.system.PlatformObjectCredential;
 import com.coding.data.models.system.PlatformObjectQuota;
+import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.configs.ObjectStorageProperties;
 import com.coding.platformapi.k8s.K8sObjectStorageClient;
 import com.coding.platformapi.models.ObjectStorageBucketRef;
+import com.coding.platformapi.models.ObjectStorageBucketQuota;
 import com.coding.platformapi.models.ObjectStorageBucketView;
 import com.coding.platformapi.models.ObjectStorageCreateBucket;
 import com.coding.platformapi.models.ObjectStorageCredentialRef;
 import com.coding.platformapi.models.ObjectStorageCredentialView;
 import com.coding.platformapi.models.ObjectStorageObjectQuery;
 import com.coding.platformapi.models.ObjectStorageObjectRef;
+import com.coding.platformapi.models.ObjectStorageObjectUpload;
 import com.coding.platformapi.models.ObjectStorageQuotaSet;
 import com.coding.platformapi.models.ObjectStorageQuotaView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 对象存储（SeaweedFS）的业务编排。
@@ -60,6 +67,8 @@ public class ObjectStorageService {
     private final PlatformObjectQuotaMapper quotas;
     private final K8sObjectStorageClient s3;
     private final ClusterComponentService components;
+    /** 每集群的对象存储地址（没配则推导，见 {@link #endpoint(String)}） */
+    private final ClusterService clusterService;
     /** 默认上限 / 下载上限（见 application.yaml 的 platform.object-storage） */
     private final ObjectStorageProperties properties;
 
@@ -95,7 +104,28 @@ public class ObjectStorageService {
                     "该租户的桶数已达上限（" + used + "/" + max + "），请先删除不用的桶或调整上限");
         }
 
+        if (req.getQuotaBytes() != null && req.getQuotaBytes() <= 0) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "容量上限必须大于 0（留空 = 不限）");
+        }
+
         s3.createBucket(req.getClusterId(), endpoint(req.getClusterId()), bucket);
+
+        // 容量上限由 SeaweedFS 自己执行（每桶 quota，超限写入 403）：建桶后立刻写进去。
+        // 写失败就回滚刚建的空桶 —— 不要留一个"说了有限额、实际没限"的桶。
+        if (req.getQuotaBytes() != null) {
+            try {
+                s3.setBucketQuota(req.getClusterId(), endpoint(req.getClusterId()), bucket, req.getQuotaBytes());
+            } catch (RuntimeException e) {
+                try {
+                    s3.deleteBucket(req.getClusterId(), endpoint(req.getClusterId()), bucket);
+                } catch (RuntimeException cleanup) {
+                    log.warn("回滚刚建的桶 {} 失败（需人工清理）：{}", bucket, cleanup.getMessage());
+                }
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "容量上限设置失败，已回滚本次建桶：" + e.getMessage());
+            }
+        }
 
         PlatformObjectBucket row = new PlatformObjectBucket();
         row.setId("obk_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
@@ -107,10 +137,34 @@ public class ObjectStorageService {
         row.setCreatedBy(operator);
         row.setCreatedAt(new Date());
         row.setUpdatedAt(new Date());
+        row.setQuotaBytes(req.getQuotaBytes());
         buckets.insert(row);
         log.info("对象存储：租户 {} 在集群 {} 建桶 {}（操作者 {}）",
                 req.getTenantId(), req.getClusterId(), bucket, operator);
         return toView(row, 0);
+    }
+
+    /**
+     * 桶的当前用量。只统计**调用方有权看到**的桶 —— 桶名是可猜的（`t-<租户短码>-<名字>`），
+     * 不能前端传什么就查什么。
+     *
+     * <p>S3 没有"桶大小"API，k8s-server 会递归列举求和，并有对象数上限（到顶 truncated → 页面显示「≥」）。
+     */
+    public List<ObjectBucketStatDTO> bucketStats(String clusterId, String tenantId, List<String> bucketNames) {
+        requireCluster(clusterId);
+        if (bucketNames == null || bucketNames.isEmpty()) {
+            return List.of();
+        }
+        List<PlatformObjectBucket> rows = tenantId == null || tenantId.isBlank()
+                ? buckets.selectByCluster(clusterId)
+                : buckets.selectByTenant(clusterId, tenantId);
+        Set<String> allowed = rows.stream()
+                .filter(b -> b.getDeletedAt() == null && "ACTIVE".equals(b.getStatus()))
+                .map(PlatformObjectBucket::getBucket)
+                .collect(Collectors.toSet());
+        // 单次最多统计 50 个桶：每桶是一次递归列举，别让一个请求把网关拖死
+        List<String> target = bucketNames.stream().distinct().filter(allowed::contains).limit(50).toList();
+        return target.isEmpty() ? List.of() : s3.bucketStats(clusterId, endpoint(clusterId), target);
     }
 
     public void deleteBucket(ObjectStorageBucketRef req, String operator) {
@@ -234,7 +288,52 @@ public class ObjectStorageService {
     public ObjectListResultDTO listObjects(ObjectStorageObjectQuery req, String tenantId) {
         PlatformObjectBucket bucket = requireBucket(req.getBucketId(), tenantId);
         return s3.listObjects(bucket.getClusterId(), endpoint(bucket.getClusterId()), bucket.getBucket(),
-                req.getPrefix(), req.getAfter(), req.getMaxKeys());
+                req.getPrefix(), req.getAfter(), req.getMaxKeys(), req.getDelimiter());
+    }
+
+    /**
+     * 上传单个对象。**大小与归属校验在读流之前完成**：超限直接拒，不会写进去半个文件。
+     *
+     * <p>{@code size} 是调用方声明的对象长度（MinIO 需要）；{@code contentLength} 是 HTTP 实际长度
+     * —— 两者任一超限都拒，避免"声明 1 字节、实际灌 1GB"这种绕过。
+     * 同名 key 直接覆盖（S3 语义），前端负责提示。
+     */
+    public void uploadObject(ObjectStorageObjectUpload req, String tenantId,
+                             long contentLength, InputStream in) {
+        PlatformObjectBucket bucket = requireBucket(req.getBucketId(), tenantId);
+        long size = req.getSize() == null ? -1 : req.getSize();
+        if (size <= 0) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "文件为空或大小未知，无法上传");
+        }
+        if (size > maxUploadBytes() || contentLength > maxUploadBytes()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "文件超过 " + properties.getMaxUploadMb() + "MB，控制台不支持上传，请用 SDK/客户端直连");
+        }
+        s3.uploadObject(bucket.getClusterId(), endpoint(bucket.getClusterId()), bucket.getBucket(),
+                requireKey(req.getKey()), req.getContentType(), size, in);
+    }
+
+    /**
+     * 改某个已有桶的容量上限（null / &lt;= 0 = 清除）。
+     *
+     * <p>顺序很重要：**先改 S3**（真正生效的地方，加配额/清除 readOnly 都在它那侧），
+     * 成功后再更新台账；S3 失败就不动台账，避免页面显示一个并未生效的上限。
+     */
+    public void setBucketQuota(ObjectStorageBucketQuota req, String tenantId, String operator) {
+        PlatformObjectBucket bucket = requireBucket(req.getBucketId(), tenantId);
+        Long quotaBytes = req.getQuotaBytes() != null && req.getQuotaBytes() > 0 ? req.getQuotaBytes() : null;
+        s3.setBucketQuota(bucket.getClusterId(), endpoint(bucket.getClusterId()),
+                bucket.getBucket(), quotaBytes == null ? 0 : quotaBytes);
+        buckets.updateQuota(bucket.getId(), quotaBytes, new Date());
+        log.info("对象存储：桶 {} 的容量上限改为 {}（操作者 {}）",
+                bucket.getBucket(), quotaBytes == null ? "不限" : quotaBytes + " 字节", operator);
+    }
+
+    /** 删除单个对象（v1 不做按前缀批量删：S3 的"目录"只是前缀，误点会删一片） */
+    public void deleteObject(ObjectStorageObjectRef req, String tenantId) {
+        PlatformObjectBucket bucket = requireBucket(req.getBucketId(), tenantId);
+        s3.deleteObject(bucket.getClusterId(), endpoint(bucket.getClusterId()),
+                bucket.getBucket(), requireKey(req.getKey()));
     }
 
     public ObjectStatDTO statObject(ObjectStorageObjectRef req, String tenantId) {
@@ -318,18 +417,25 @@ public class ObjectStorageService {
     }
 
     /**
-     * S3 网关地址：取组件最近一次成功安装的快照。
+     * 平台后端访问 S3 的地址：**每集群一条连接配置**，没配就按组件安装位置推导。
      *
-     * <p>没有记录 = 组件从未按「平台配置」装过 —— 这时直接用默认地址也没意义（配置 Secret 不存在），
-     * 所以提前给出可执行的提示。
+     * <ol>
+     *   <li>{@code k8s_cluster.object_storage_url}（集群管理里填）—— 平台在集群外、业务集群时用；</li>
+     *   <li>空 → {@link ComponentRecipeCatalog#seaweedS3InClusterEndpoint()}（集群内地址）。</li>
+     * </ol>
+     *
+     * <p>为什么不在组件安装表单里：那个字段声明的是「这个 S3 对外的入口」，且绑在操作快照上
+     * （改地址要重放、老快照缺字段还会把页面卡住）。连接地址是部署事实，按集群配置才说得清。
      */
     private String endpoint(String clusterId) {
-        String endpoint = components.seaweedEndpoint(clusterId);
-        if (isBlank(endpoint)) {
+        if (!components.seaweedInstalled(clusterId)) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "对象存储组件尚未按平台配置安装：请先在「集群组件」里安装（或重放）对象存储");
+                    "对象存储组件尚未安装：请先在「集群组件」里安装对象存储");
         }
-        return endpoint;
+        String configured = clusterService.objectStorageUrl(clusterId);
+        return isBlank(configured)
+                ? ComponentRecipeCatalog.seaweedS3InClusterEndpoint()
+                : configured.trim();
     }
 
     private static void requireCluster(String clusterId) {
@@ -346,11 +452,27 @@ public class ObjectStorageService {
     private static ObjectStorageBucketView toView(PlatformObjectBucket row, int credentialCount) {
         return new ObjectStorageBucketView(row.getId(), row.getClusterId(), row.getBucket(),
                 row.getTenantId(), row.getDisplayName(), row.getStatus(), row.getCreatedBy(),
-                row.getCreatedAt(), credentialCount);
+                row.getCreatedAt(), credentialCount, row.getQuotaBytes());
     }
 
     private long maxDownloadBytes() {
         return properties.getMaxDownloadMb() * 1024L * 1024L;
+    }
+
+    private long maxUploadBytes() {
+        return properties.getMaxUploadMb() * 1024L * 1024L;
+    }
+
+    /** 对象 key 合法性：不能空、不能以 / 结尾（那是"目录标记"），去掉开头的 / */
+    static String requireKey(String key) {
+        String k = key == null ? "" : key.trim();
+        while (k.startsWith("/")) {
+            k = k.substring(1);
+        }
+        if (k.isEmpty() || k.endsWith("/")) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "对象名不合法（不能为空或以 / 结尾）");
+        }
+        return k;
     }
 
     private static boolean isBlank(String value) {

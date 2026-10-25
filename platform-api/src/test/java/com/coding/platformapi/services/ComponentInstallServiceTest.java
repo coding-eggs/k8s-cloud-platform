@@ -57,9 +57,7 @@ class ComponentInstallServiceTest {
     }
 
     private ComponentInstallService service(ComponentRecipeCatalog catalog) {
-        return new ComponentInstallService(mapper, client,
-                new com.coding.platformapi.configs.ObjectStorageProperties(),
-                catalog, clusterService, components);
+        return new ComponentInstallService(mapper, client, catalog, clusterService, components);
     }
 
     @Test
@@ -1020,6 +1018,35 @@ class ComponentInstallServiceTest {
                 // 默认不装管理台
                 .contains("admin={enabled=false}")
                 .contains("fullnameOverride=seaweedfs");
+    }
+
+    @Test
+    void theSeaweedfsFormDoesNotCarryThePlatformDialAddress() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "seaweedfs")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("seaweedfs", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-seaweedfs", "platform-storage", "seaweedfs", "4.48.0",
+                                Map.of("fullnameOverride", "seaweedfs"), Map.of())), List.of(),
+                        false, false, false, false, null, false, null, true));
+
+        service(catalog).apply(new ComponentApplyRequest("c1", "seaweedfs", "INSTALL", null, Map.of(),
+                null, null, null, null, null, null,
+                new com.coding.platformapi.models.SeaweedInstallRequest(
+                        "nfs-client", "1Gi", "10Gi", "1Gi", 1, 1, 1, false, null)), "admin");
+
+        ArgumentCaptor<PlatformComponentOperation> op = ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper).insert(op.capture());
+        // 表单留空 = 集群内地址（release 的 ns + fullnameOverride 决定）；平台的拨号地址不参与
+        assertThat(op.getValue().getValuesSnapshot())
+                .contains("\"s3Endpoint\":\""
+                        + com.coding.platformapi.components.ComponentRecipeCatalog
+                                .seaweedS3InClusterEndpoint() + "\"");
     }
 
     @Test

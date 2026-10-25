@@ -56,6 +56,14 @@ public class K8sCluster {
     private String grafanaUrl;
 
     /**
+     * 平台访问该集群对象存储（S3）的地址，例如 http://192.168.31.80:38333。
+     *
+     * <p>空 = 按组件安装位置推导集群内地址（见 {@code ComponentRecipeCatalog}）。
+     * 只有平台够不到该集群的 ClusterIP 时（平台在集群外、或业务集群）才需要填。
+     */
+    private String objectStorageUrl;
+
+    /**
      * 集群描述
      */
     private String description;

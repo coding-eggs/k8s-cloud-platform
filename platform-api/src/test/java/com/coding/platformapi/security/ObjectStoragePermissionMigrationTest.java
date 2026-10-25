@@ -29,7 +29,13 @@ class ObjectStoragePermissionMigrationTest {
     private static final List<Path> SQL_FILES = List.of(
             Path.of("../platform-data/src/main/resources/db/migration/V2026_10_24_1__object_storage.sql"),
             Path.of("../platform-data/src/main/resources/db/migration/"
-                    + "V2026_10_24_2__object_storage_credentials_list_permission.sql"));
+                    + "V2026_10_24_2__object_storage_credentials_list_permission.sql"),
+            Path.of("../platform-data/src/main/resources/db/migration/"
+                    + "V2026_10_25_2__object_storage_write.sql"),
+            Path.of("../platform-data/src/main/resources/db/migration/"
+                    + "V2026_10_25_3__object_storage_bucket_stats_permission.sql"),
+            Path.of("../platform-data/src/main/resources/db/migration/"
+                    + "V2026_10_25_5__object_storage_bucket_quota_set_permission.sql"));
 
     /** SQL 里 'API' 行的 (METHOD PATH) 集合 */
     private static final Pattern API_ROW = Pattern.compile(

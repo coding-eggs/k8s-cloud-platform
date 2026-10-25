@@ -132,34 +132,77 @@ public class K8sServerGateway {
                 spec = spec.contentType(MediaType.APPLICATION_JSON).body(body);
             }
             //不用 retrieve()：401/403 也带 ResponseData JSON，统一按 body.code 判定
-            return spec.exchange((request, response) -> {
-                int status = response.getStatusCode().value();
-                ResponsePreviewStream in = new ResponsePreviewStream(response.getBody());
-                ResponseData<T> resp;
-                try {
-                    resp = jsonMapper.readValue(in, respType);
-                } catch (Exception e) {
-                    if (in.totalBytes() == 0) {
-                        log.error("k8s-server {} 返回空响应，HTTP {}", path, status);
-                        throw new CloudPlatformException(EnumResponseType.ERROR,
-                                "k8s-server 返回空响应 (HTTP " + status + ")");
-                    }
-                    log.error("解析 k8s-server {} 响应失败（HTTP {}，共 {} 字节，前 8KB：{}）",
-                            path, status, in.totalBytes(), in.previewText(), e);
-                    throw new CloudPlatformException(EnumResponseType.ERROR, "k8s-server 响应解析失败");
-                }
-                if (resp == null || resp.getCode() == null || !resp.getCode().equals(EnumResponseType.SUCCESS.getCode())) {
-                    Integer code = resp != null && resp.getCode() != null ? resp.getCode() : EnumResponseType.ERROR.getCode();
-                    String msg = resp != null && resp.getMsg() != null ? resp.getMsg() : "k8s-server 调用失败";
-                    throw new CloudPlatformException(code, msg);
-                }
-                return resp.getData();
-            });
+            return spec.exchange((request, response) -> readResponse(path, response, respType));
         } catch (CloudPlatformException e) {
             throw e;
         } catch (Exception e) {
             log.error("调用 k8s-server {} {} 失败", method, path, e);
             throw new CloudPlatformException(EnumResponseType.ERROR, "调用 k8s-server 失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 带**请求体流**的 POST：请求体不缓冲（浏览器上传走这条），Content-Length 由调用方给出。
+     *
+     * <p>为什么不用 JSON / multipart：上传的大头就是文件本身，multipart 会在两端各解析一次；
+     * 这里直接把输入流接到 HTTP 输出流，配合 {@code size} 参数让下游知道长度（MinIO 的 putObject 需要）。
+     */
+    public <T> T exchangeStreamBody(String path, Map<String, String> params,
+                                    InputStream in, long contentLength, JavaType respType) {
+        String uri = buildUri(path, params);
+        try {
+            return streamRestClient.method(HttpMethod.POST)
+                    .uri(uri)
+                    .headers(this::passThroughAuthorization)
+                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                    .body(new SizedInputStreamResource(in, contentLength))
+                    .exchange((request, response) -> readResponse(path, response, respType));
+        } catch (CloudPlatformException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("调用 k8s-server 上传接口 {} 失败", path, e);
+            throw new CloudPlatformException(EnumResponseType.ERROR, "调用 k8s-server 失败: " + e.getMessage());
+        }
+    }
+
+    /** 解析 ResponseData 信封：code≠200 抛 CloudPlatformException，成功返回 data */
+    private <T> T readResponse(String path, org.springframework.http.client.ClientHttpResponse response,
+                               JavaType respType) throws IOException {
+        int status = response.getStatusCode().value();
+        ResponsePreviewStream in = new ResponsePreviewStream(response.getBody());
+        ResponseData<T> resp;
+        try {
+            resp = jsonMapper.readValue(in, respType);
+        } catch (Exception e) {
+            if (in.totalBytes() == 0) {
+                log.error("k8s-server {} 返回空响应，HTTP {}", path, status);
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "k8s-server 返回空响应 (HTTP " + status + ")");
+            }
+            log.error("解析 k8s-server {} 响应失败（HTTP {}，共 {} 字节，前 8KB：{}）",
+                    path, status, in.totalBytes(), in.previewText(), e);
+            throw new CloudPlatformException(EnumResponseType.ERROR, "k8s-server 响应解析失败");
+        }
+        if (resp == null || resp.getCode() == null || !resp.getCode().equals(EnumResponseType.SUCCESS.getCode())) {
+            Integer code = resp != null && resp.getCode() != null ? resp.getCode() : EnumResponseType.ERROR.getCode();
+            String msg = resp != null && resp.getMsg() != null ? resp.getMsg() : "k8s-server 调用失败";
+            throw new CloudPlatformException(code, msg);
+        }
+        return resp.getData();
+    }
+
+    /** 已知长度的输入流：告诉 HTTP 客户端 Content-Length（InputStreamResource 默认会把流读一遍来数长度） */
+    private static final class SizedInputStreamResource extends org.springframework.core.io.InputStreamResource {
+        private final long length;
+
+        private SizedInputStreamResource(InputStream in, long length) {
+            super(in);
+            this.length = length;
+        }
+
+        @Override
+        public long contentLength() {
+            return length;
         }
     }
 

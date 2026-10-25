@@ -19,4 +19,6 @@ public class ObjectStorageBucketView {
     private java.util.Date createdAt;
     /** 当前有效凭据数 */
     private int credentialCount;
+    /** 桶容量上限（字节）；null = 不限 */
+    private Long quotaBytes;
 }

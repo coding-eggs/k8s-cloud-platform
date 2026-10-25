@@ -29,4 +29,8 @@ public interface PlatformObjectBucketMapper {
                             @Param("tenantId") String tenantId);
 
     int softDelete(@Param("id") String id, @Param("deletedAt") Date deletedAt);
+
+    /** 改桶容量上限（null = 不限）；只动台账，S3 侧由调用方先行设置 */
+    int updateQuota(@Param("id") String id, @Param("quotaBytes") Long quotaBytes,
+                    @Param("updatedAt") Date updatedAt);
 }

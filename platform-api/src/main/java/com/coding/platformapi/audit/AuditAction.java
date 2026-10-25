@@ -134,6 +134,9 @@ public final class AuditAction {
     /** 设置租户的桶数上限 */
     public static final String OBJECT_QUOTA_SET = "object-quota:set";
 
+    /** 修改某个桶的容量上限（SeaweedFS 每桶 quota） */
+    public static final String OBJECT_BUCKET_QUOTA_SET = "object-bucket:quota";
+
     /** 发放访问凭据（每桶一组 AK/SK） */
     public static final String OBJECT_CREDENTIAL_ISSUE = "object-credential:issue";
 
@@ -142,6 +145,12 @@ public final class AuditAction {
 
     /** 吊销凭据 */
     public static final String OBJECT_CREDENTIAL_REVOKE = "object-credential:revoke";
+
+    /** 上传对象（只记 key，不记内容） */
+    public static final String OBJECT_UPLOAD = "object:upload";
+
+    /** 删除单个对象 */
+    public static final String OBJECT_DELETE = "object:delete";
 
     // ---- 凭据（S0.2，4 个写端点全量）----
 

@@ -15,7 +15,6 @@ import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.components.ThanosRetention;
 import com.coding.platformapi.components.ValueTemplate;
-import com.coding.platformapi.configs.ObjectStorageProperties;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
@@ -102,7 +101,6 @@ public class ComponentInstallService {
 
     private final PlatformComponentOperationMapper mapper;
     private final K8sComponentClient client;
-    private final ObjectStorageProperties objectStorage;
     private final ComponentRecipeCatalog recipes;
     private final ClusterService clusterService;
     private final ClusterComponentService components;
@@ -850,7 +848,10 @@ public class ComponentInstallService {
         out.setAdminEnabled(firstBoolean(requested == null ? null : requested.getAdminEnabled(),
                 prev.get("adminEnabled") instanceof Boolean b ? b : null, false));
         out.setS3Endpoint(firstNonBlank(requested == null ? null : requested.getS3Endpoint(),
-                asString(prev.get("s3Endpoint")), objectStorage.getDefaultEndpoint()));
+                asString(prev.get("s3Endpoint")),
+                // 表单默认值 = 集群内地址；**不能**拿平台的拨号配置当默认值（开发环境那条 port-forward
+                // 一旦被写进快照，就变成「别的集群来连这个 S3」的声明值了）
+                ComponentRecipeCatalog.seaweedS3InClusterEndpoint()));
         return out;
     }
 

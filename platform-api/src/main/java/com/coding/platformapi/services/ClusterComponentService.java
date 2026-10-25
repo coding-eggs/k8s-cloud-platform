@@ -341,18 +341,15 @@ public class ClusterComponentService {
     }
 
     /**
-     * 对象存储的 S3 网关地址（平台后端用）：取最近一次成功安装快照里的 {@code __platform.seaweed.s3Endpoint}。
+     * 对象存储是否已由平台装过（有成功操作记录）。
      *
-     * <p>没有记录 / 字段缺失 → null（调用方回落到默认集群内地址）。**只读一次快照**，
-     * 不触发组件探测（对象存储页面每次打开都调它）。
+     * <p>⚠️ 只回答「装没装」，**不回答「平台该连哪个地址」**：那是每集群一条连接配置
+     * （{@code k8s_cluster.object_storage_url}，空则按组件安装位置推导）。
+     * 组件安装表单里的 {@code s3Endpoint} 是「这个 S3 对外提供服务、别的集群/应用来连」的声明值，
+     * 不能拿来当平台自己的拨号地址。
      */
-    public String seaweedEndpoint(String clusterId) {
-        PlatformComponentOperation last = operationMapper.selectLatestSuccess(clusterId, "seaweedfs");
-        if (last == null) {
-            return null;
-        }
-        Map<String, Object> platform = platformOf(parseSnapshot(last.getValuesSnapshot()));
-        return platform.get("seaweed") instanceof Map<?, ?> m ? asString(m.get("s3Endpoint")) : null;
+    public boolean seaweedInstalled(String clusterId) {
+        return operationMapper.selectLatestSuccess(clusterId, "seaweedfs") != null;
     }
 
     /** {@code __platform.seaweed} → 编辑表单的当前值；没有记录返回 null（表单退回默认容量/副本数） */

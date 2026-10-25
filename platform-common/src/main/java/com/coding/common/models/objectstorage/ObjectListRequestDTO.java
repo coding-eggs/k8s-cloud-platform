@@ -23,4 +23,9 @@ public class ObjectListRequestDTO {
     private String after;
     /** 每页条数，服务端夹在 1..1000 */
     private Integer maxKeys;
+    /**
+     * 分组分隔符（一般传 "/"）：给了就按「目录」列 —— 当前层的文件进 items，
+     * 下一层目录进 {@code folders}（S3 CommonPrefixes）；为空 = 递归列出所有 key（扁平）。
+     */
+    private String delimiter;
 }

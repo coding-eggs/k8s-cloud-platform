@@ -91,6 +91,7 @@ import type {
   TokenUserInfo,
   MiddlewareCatalogItem,
   ObjectStorageBucket,
+  ObjectStorageBucketStat,
   ObjectStorageCredential,
   ObjectStorageCredentialSecret,
   ObjectStorageObjectPage,
@@ -120,12 +121,12 @@ export const clusterApi = {
   create: (payload: {
     clusterName: string; kubeconfig: string; description?: string
     version?: string; istioVersion?: string; calicoVersion?: string; containerRuntime?: string
-    ipStack?: K8sCluster['ipStack']; prometheusUrl?: string; grafanaUrl?: string
+    ipStack?: K8sCluster['ipStack']; prometheusUrl?: string; grafanaUrl?: string; objectStorageUrl?: string
   }) => http.post<never, K8sCluster>('/cluster/create', payload),
   update: (payload: {
     clusterId: string; clusterName?: string; description?: string; kubeconfig?: string
     version?: string; istioVersion?: string; calicoVersion?: string; containerRuntime?: string
-    ipStack?: K8sCluster['ipStack']; prometheusUrl?: string; grafanaUrl?: string
+    ipStack?: K8sCluster['ipStack']; prometheusUrl?: string; grafanaUrl?: string; objectStorageUrl?: string
   }) => http.post<never, K8sCluster>('/cluster/update', payload),
   toggleEnabled: (clusterId: string, enabled: number) =>
     http.post<never, K8sCluster>('/cluster/toggleEnabled', { clusterId, enabled }),
@@ -936,14 +937,21 @@ export const pipelineApi = {
     http.post<never, void>('/pipeline/cache/clear', { clusterId, namespace, tenantId }),
 }
 
-/** 对象存储（SeaweedFS 组件：桶 / 凭据 / 对象浏览；对象级写操作 v1 不做） */
+/** 对象存储（SeaweedFS 组件：桶 / 凭据 / 对象读写） */
 export const objectStorageApi = {
   listBuckets: (payload: { clusterId: string; tenantId?: string }) =>
     http.post<never, ObjectStorageBucket[]>('/object-storage/buckets/list', payload),
-  createBucket: (payload: { clusterId: string; tenantId: string; name: string; displayName?: string }) =>
+  createBucket: (payload: {
+    clusterId: string; tenantId: string; name: string; displayName?: string
+    /** 容量上限（字节）；不传 = 不限 */
+    quotaBytes?: number
+  }) =>
     http.post<never, ObjectStorageBucket>('/object-storage/buckets/create', payload),
   deleteBucket: (payload: { clusterId: string; tenantId?: string; bucketId: string }) =>
     http.post<never, void>('/object-storage/buckets/delete', payload),
+  /** 修改桶的容量上限（null = 不限；仅管理员） */
+  setBucketQuota: (payload: { bucketId: string; tenantId?: string; quotaBytes: number | null }) =>
+    http.post<never, void>('/object-storage/buckets/quota', payload),
   quota: (payload: { clusterId: string; tenantId?: string }) =>
     http.post<never, ObjectStorageQuota>('/object-storage/quota/get', payload),
   setQuota: (payload: { clusterId: string; tenantId: string; maxBuckets: number }) =>
@@ -959,9 +967,30 @@ export const objectStorageApi = {
   objects: (payload: {
     clusterId: string; tenantId?: string; bucketId: string
     prefix?: string; after?: string; maxKeys?: number
+    /** "/" = 按目录下钻（返回 folders）；不传 = 扁平递归 */
+    delimiter?: string
   }) => http.post<never, ObjectStorageObjectPage>('/object-storage/objects/list', payload),
   statObject: (payload: { clusterId: string; tenantId?: string; bucketId: string; key: string }) =>
     http.post<never, ObjectStorageObjectStat>('/object-storage/objects/stat', payload),
+  /**
+   * 上传单个对象（≤100MB）。请求体是文件的原始字节（不是 multipart），
+   * size 必须给：平台在读流之前据此拒超限，下游也要用它做对象长度。
+   */
+  uploadObject: (
+    params: { bucketId: string; key: string; size: number; contentType?: string; tenantId?: string },
+    file: Blob,
+    onProgress?: (percent: number) => void,
+  ) => http.post<never, void>('/object-storage/objects/upload', file, {
+    params,
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    onUploadProgress: (e) => onProgress?.(e.total ? Math.round((e.loaded / e.total) * 100) : 0),
+  }),
+  /** 批量查桶的当前用量（后端列举求和，有上限） */
+  bucketStats: (payload: { clusterId: string; tenantId?: string; buckets: string[] }) =>
+    http.post<never, ObjectStorageBucketStat[]>('/object-storage/buckets/stats', payload),
+  /** 删除单个对象（不做按前缀批量删） */
+  deleteObject: (payload: { bucketId: string; key: string; tenantId?: string }) =>
+    http.post<never, void>('/object-storage/objects/delete', payload),
   /** 下载对象（≤100MB）：返回二进制流，调用方自己 blob 化 */
   downloadObject: (payload: { clusterId: string; tenantId?: string; bucketId: string; key: string }) =>
     http.post<never, Blob>('/object-storage/objects/download', payload, { responseType: 'blob' }),

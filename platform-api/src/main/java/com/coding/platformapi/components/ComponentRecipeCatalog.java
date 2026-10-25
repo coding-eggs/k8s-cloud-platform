@@ -517,6 +517,22 @@ public class ComponentRecipeCatalog {
                 "limits", Map.of("cpu", cpuLimit, "memory", memLimit));
     }
 
+    /**
+     * S3 网关的**集群内**地址：由主 release 的 {@code fullnameOverride} + 命名空间决定
+     * （chart 的 S3 端口默认 8333）。
+     *
+     * <p>用途：集群没配 {@code k8s_cluster.object_storage_url} 时的推导值，以及安装表单
+     * 「S3 对外地址」的默认值。⚠️ 只有当平台**够得着**该集群的 ClusterIP 时这个推导才成立；
+     * 平台在集群外/业务集群时要在集群配置里填暴露后的地址。
+     */
+    public static String seaweedS3InClusterEndpoint() {
+        ReleaseSpec seaweed = SEAWEEDFS_RELEASES.stream().filter(ReleaseSpec::primary).findFirst()
+                .orElse(SEAWEEDFS_RELEASES.get(0));
+        Object fullname = seaweed.contractValues().get("fullnameOverride");
+        String name = fullname instanceof String s && !s.isBlank() ? s : "seaweedfs";
+        return "http://" + name + "-s3." + seaweed.namespace() + ":8333";
+    }
+
     private static final List<ReleaseSpec> SEAWEEDFS_RELEASES = List.of(new ReleaseSpec(
             "platform-seaweedfs", "platform-storage", "seaweedfs", "4.48.0",
             Map.of(
