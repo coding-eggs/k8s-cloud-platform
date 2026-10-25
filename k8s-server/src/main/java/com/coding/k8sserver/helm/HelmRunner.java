@@ -219,6 +219,32 @@ public class HelmRunner {
         }
     }
 
+    /**
+     * 删除 manifest 里列出的对象；不存在的对象不算失败（与 S3 删除语义一致）。
+     *
+     * <p>为什么用 kubectl 而不是 generic client：删除需要 kind → plural 的映射，平台没有维护全量 kind 表；
+     * 交给 kubectl 就绕开了这件事，且与 {@link #applyServerSide} 走同一把 kubeconfig 与临时文件规矩。
+     */
+    public HelmResult deleteManifest(String kubeconfig, String manifest) {
+        Path manifestFile = null;
+        Path kubeconfigFile = null;
+        try {
+            manifestFile = Files.createTempFile(tempDir, "delete-", ".yaml");
+            Files.writeString(manifestFile, manifest, StandardCharsets.UTF_8);
+            kubeconfigFile = writeTemp(kubeconfig);
+            List<String> args = List.of(
+                    "delete", "-f", manifestFile.toString(),
+                    "--ignore-not-found",
+                    "--kubeconfig", kubeconfigFile.toString());
+            return run(toolCommand(args), args);
+        } catch (Exception e) {
+            return new HelmResult(false, -1, "kubectl 执行失败: " + e.getMessage());
+        } finally {
+            deleteQuietly(manifestFile);
+            deleteQuietly(kubeconfigFile);
+        }
+    }
+
     /** 等 CRD 真的 Established 再装下一个 release（否则 CR 仍然 {@code no matches for kind}） */
     public HelmResult waitCrdsEstablished(String kubeconfig, List<String> crds) {
         Path kubeconfigFile = null;
