@@ -247,6 +247,9 @@ spec:
 
 **前置**：`ClusterComponentService.seaweedInstalled(clusterId)` 为真；否则表单禁用该选项（`form-options` 返回 `objectStorageAvailable=false` 并在 UI 里提示"请先在集群组件里安装对象存储"）。
 
+> ⚠️ 该判据是**"本集群装过对象存储组件"**（最新一条成功安装记录），**不是健康态**。组件被卸载或挂掉时选项仍会出现，
+> 错误推迟到建桶那一刻（报底层 S3 错误）。这是对象存储页共用的既有语义，本模块不另做健康探测。
+
 **创建**：
 
 1. `createBucket(clusterId, tenantId, name="milvus-<实例名>", quotaBytes=<storageSize>)`（走租户桶配额与命名规则）；

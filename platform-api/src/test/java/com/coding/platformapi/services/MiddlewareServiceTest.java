@@ -868,4 +868,66 @@ class MiddlewareServiceTest {
 
         verify(objectStorage, never()).deleteBucket(any(), anyString());
     }
+
+    @Test
+    void createRejectsEtcdReplicasOutOfRangeBeforeCreatingBucket() {
+        // 校验要在建桶之前：否则越界值会先建出一个空桶、再被 k8s-server 拒
+        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
+        var r = milvusRequest("PLATFORM");
+        r.setEtcdReplicas(4);
+
+        assertThatThrownBy(() -> service.create(r, "admin", "t1"))
+                .hasMessageContaining("etcd");
+        verify(objectStorage, never()).createBucket(any(), anyString());
+    }
+
+    @Test
+    void createDeletesBucketWhenLedgerInsertFails() {
+        // 建桶之后、调 k8s 之前失败 = 确定没建成，可以安全回收（连同凭据）
+        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
+        when(components.seaweedInstalled("c1")).thenReturn(true);
+        when(objectStorage.s3Endpoint("c1"))
+                .thenReturn("http://platform-seaweedfs-s3.platform-storage:8333");
+        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
+        bucket.setId("obk_1");
+        bucket.setBucket("t-1234abcd-milvus-mw-milvus-abc12345");
+        when(objectStorage.createBucket(any(), anyString())).thenReturn(bucket);
+        when(objectStorage.issueCredential(any(), anyString()))
+                .thenReturn(new ObjectCredentialDTO("AK", "SK"));
+        when(instances.insert(any())).thenThrow(new RuntimeException("db down"));
+
+        assertThatThrownBy(() -> service.create(milvusRequest("PLATFORM"), "admin", "t1"))
+                .hasMessageContaining("db down");
+
+        ArgumentCaptor<ObjectStorageBucketRef> ref = ArgumentCaptor.forClass(ObjectStorageBucketRef.class);
+        verify(objectStorage).deleteBucket(ref.capture(), anyString());
+        assertThat(ref.getValue().getBucketId()).isEqualTo("obk_1");
+        verify(client, never()).create(anyString(), any());
+    }
+
+    @Test
+    void milvusConnectionShowsPlatformBucket() {
+        PlatformMiddlewareInstance i = instance("milvus", "STANDALONE");
+        i.setSpecJson("{\"objectStorageType\":\"PLATFORM\","
+                + "\"objectStorageBucket\":\"t-1234abcd-milvus-mw-milvus-abc12345\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var conn = service.connection("mwi_1", null);
+
+        assertThat(conn.getCredentials()).extracting(MiddlewareConnectionDTO.Line::value)
+                .anyMatch(v -> v.contains("t-1234abcd-milvus-mw-milvus-abc12345"));
+    }
+
+    @Test
+    void milvusConnectionShowsCustomS3Endpoint() {
+        PlatformMiddlewareInstance i = instance("milvus", "STANDALONE");
+        i.setSpecJson("{\"objectStorageType\":\"CUSTOM\","
+                + "\"objectStorageEndpoint\":\"s3.example.com:9000\",\"objectStorageBucket\":\"my-bucket\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var conn = service.connection("mwi_1", null);
+
+        assertThat(conn.getCredentials()).extracting(MiddlewareConnectionDTO.Line::value)
+                .anyMatch(v -> v.contains("s3.example.com:9000") && v.contains("my-bucket"));
+    }
 }

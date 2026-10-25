@@ -43,7 +43,10 @@
 4. **SeaweedFS 用路径风格**：`config.minio.useVirtualHost=false`；
 5. **etcd chart 默认不写 resources**：平台必须补，否则租户 quota 直接拒；
 6. **单节点本地盘 PVC 没有 OwnerReference**：删 CR 不会带走它，必须靠标签回收；
-7. **`installCRDs: true` 且 CRD 在 `templates/`**：手工卸载 release 会连 CRD 与全部实例一起删，平台不提供卸载入口。
+7. **`installCRDs: true` 且 CRD 在 `templates/`**：手工卸载 release 会连 CRD 与全部实例一起删，平台不提供卸载入口；
+8. **「平台对象存储」的判据是"装过"不是"健康"**：`ClusterComponentService.seaweedInstalled` 看的是本集群最新一条
+   成功的组件安装记录。组件被卸载或挂掉时选项仍在，错误会推迟到建桶那一刻（报底层 S3 错误）；
+   这是对象存储页共用的既有语义，平台侧没有做健康探测。
 
 ## 5. 业务指标
 

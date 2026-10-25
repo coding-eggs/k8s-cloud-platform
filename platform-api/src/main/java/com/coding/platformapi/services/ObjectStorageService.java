@@ -440,6 +440,11 @@ public class ObjectStorageService {
         return row == null || row.getMaxBuckets() == null ? properties.getDefaultMaxBuckets() : row.getMaxBuckets();
     }
 
+    /** 本集群对象存储的 S3 地址（含 scheme；未装组件时抛出）。供其它模块（如中间件）拼 CR 用。 */
+    public String s3Endpoint(String clusterId) {
+        return endpoint(clusterId);
+    }
+
     /**
      * 平台后端访问 S3 的地址：**每集群一条连接配置**，没配就按组件安装位置推导。
      *
@@ -451,11 +456,6 @@ public class ObjectStorageService {
      * <p>为什么不在组件安装表单里：那个字段声明的是「这个 S3 对外的入口」，且绑在操作快照上
      * （改地址要重放、老快照缺字段还会把页面卡住）。连接地址是部署事实，按集群配置才说得清。
      */
-    /** 本集群对象存储的 S3 地址（含 scheme；未装组件时抛出）。供其它模块（如中间件）拼 CR 用。 */
-    public String s3Endpoint(String clusterId) {
-        return endpoint(clusterId);
-    }
-
     private String endpoint(String clusterId) {
         if (!components.seaweedInstalled(clusterId)) {
             throw new CloudPlatformException(EnumResponseType.ERROR,

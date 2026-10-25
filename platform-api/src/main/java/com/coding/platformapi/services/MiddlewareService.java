@@ -290,6 +290,11 @@ public class MiddlewareService {
         if (!isChartBacked(req.getCode())) {
             requireOperatorReady(req.getClusterId(), req.getCode(), item.name());
         }
+        // 输入校验要在建桶之前：越界值先被拒，别先建出一个空桶再被 k8s-server 打回
+        if ("milvus".equals(req.getCode()) && req.getEtcdReplicas() != null
+                && (req.getEtcdReplicas() < 1 || req.getEtcdReplicas() > 3)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "etcd 节点数只能是 1~3");
+        }
 
         String name = "mw-" + req.getCode() + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         // Milvus：对象存储只能是外部。PLATFORM 要先把桶和凭据准备好，k8s-server 才拿得到 AK/SK
@@ -305,16 +310,20 @@ public class MiddlewareService {
         instance.setDisplayName(isBlank(req.getDisplayName()) ? item.name() + "-" + name.substring(name.length() - 4)
                 : req.getDisplayName());
         instance.setVersion(req.getVersion() == null ? "" : req.getVersion());
-        instance.setSpecJson(toSpecJson(req, grant));
         instance.setStatus("CREATING");
         instance.setTenantId(tenantId);
         instance.setCreatedBy(operator);
         instance.setCreatedAt(new Date());
         instance.setUpdatedAt(new Date());
-        instances.insert(instance);
 
-        PlatformMiddlewareOperation op = newOperation(instance, "CREATE", operator);
+        PlatformMiddlewareOperation op = null;
+        boolean inserted = false;
+        boolean k8sCalled = false;
         try {
+            instance.setSpecJson(toSpecJson(req, grant));
+            instances.insert(instance);
+            inserted = true;
+            op = newOperation(instance, "CREATE", operator);
             MiddlewareCreateRequestDTO dto = new MiddlewareCreateRequestDTO();
             dto.setInstanceId(instance.getId());
             dto.setClusterId(instance.getClusterId());
@@ -348,23 +357,33 @@ public class MiddlewareService {
             }
             dto.setPassword(randomPassword());
             dto.setTenantId(tenantId);
+            k8sCalled = true;
             client.create(req.getCode(), dto);
             finish(op, "SUCCESS", null);
         } catch (RuntimeException e) {
-            instance.setStatus("FAILED");
-            instance.setMessage(e.getMessage());
-            instance.setUpdatedAt(new Date());
-            // 创建失败 = 实例从未存在：软删台账，否则失败后重试会在列表里留下一条幽灵记录
-            //（真集群实测：配额不足 -> 调小规格重试 -> 列表出现两条 MySQL）
-            instance.setDeletedAt(new Date());
-            instances.updateById(instance);
-            if (grant != null && grant.bucketId() != null) {
-                // 不能在这里删桶：网关把传输层异常也包成 CloudPlatformException，CR 可能已经建成、
-                // Pod 正在跑 —— 删桶就是删掉实例唯一的数据。留桶给运维核对（失败的操作记录里有实例与错误）。
-                log.warn("Milvus 实例创建失败，保留对象存储桶 {}（集群侧可能已经建成），请人工核对",
-                        grant.bucket());
+            if (inserted) {
+                instance.setStatus("FAILED");
+                instance.setMessage(e.getMessage());
+                instance.setUpdatedAt(new Date());
+                // 创建失败 = 实例从未存在：软删台账，否则失败后重试会在列表里留下一条幽灵记录
+                //（真集群实测：配额不足 -> 调小规格重试 -> 列表出现两条 MySQL）
+                instance.setDeletedAt(new Date());
+                instances.updateById(instance);
             }
-            finish(op, "FAILED", e.getMessage());
+            if (grant != null && grant.bucketId() != null) {
+                if (k8sCalled) {
+                    // 不能在这里删桶：网关把传输层异常也包成 CloudPlatformException，CR 可能已经建成、
+                    // Pod 正在跑 —— 删桶就是删掉实例唯一的数据。留桶给运维核对（失败的操作记录里有实例与错误）。
+                    log.warn("Milvus 实例创建失败，保留对象存储桶 {}（集群侧可能已经建成），请人工核对",
+                            grant.bucket());
+                } else {
+                    // 还没调 k8s = 确定没建成，可以安全回收（deleteBucket 会连带吊销刚发的凭据）
+                    deleteBucketQuietly(grant.bucketId(), operator);
+                }
+            }
+            if (op != null) {
+                finish(op, "FAILED", e.getMessage());
+            }
             throw e;
         }
         return op.getId();
@@ -434,8 +453,13 @@ public class MiddlewareService {
             case "milvus" -> {
                 endpoints.add(line("gRPC", svc(ns, name + "-milvus", 19530)));
                 endpoints.add(line("指标 / 健康检查", svc(ns, name + "-milvus", 9091)));
-                credentials.add(line("对象存储凭据",
-                        "Secret " + name + "-milvus-storage，键 accesskey / secretkey"));
+                Map<String, Object> spec = parseSpec(instance.getSpecJson());
+                String bucket = text(spec.get("objectStorageBucket"));
+                String storage = "CUSTOM".equals(text(spec.get("objectStorageType")))
+                        ? "自带 S3 " + text(spec.get("objectStorageEndpoint")) + " / 桶 " + bucket
+                        : (bucket == null ? "平台对象存储" : "平台桶 " + bucket);
+                credentials.add(line("对象存储", storage
+                        + "；凭据在 Secret " + name + "-milvus-storage（accesskey / secretkey）"));
                 note = "Milvus 默认未开启鉴权；对外暴露前请用命名空间或网格策略控制访问。";
             }
             default -> note = "该中间件暂未提供连接方式说明。";
