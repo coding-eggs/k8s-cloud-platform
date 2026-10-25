@@ -213,6 +213,7 @@ spec:
     msgStreamType: woodpecker
     etcd:
       inCluster:
+        deletionPolicy: Delete      # CRD 默认 Retain，会让删 CR 后 etcd 的 release/Pod 留下
         values:
           replicaCount: <1..3，默认 3>
           persistence: {size: 5Gi, storageClass: <可选>}
@@ -258,7 +259,10 @@ spec:
 - `keepPvc=false` → `deleteBucket`（连带吊销凭据）；失败只记 WARN，不阻塞实例删除（桶可在对象存储页手工清理）；
 - `keepPvc=true` → 桶与凭据保留，台账软删，供用户接管数据。
 
-**回滚**：实例创建失败 → 删桶 + 吊销凭据（`deleteBucket` 已包含），再软删台账（沿用 2026-10-22 设计的"失败不留幽灵记录"）。
+**回滚（2026-10-25 评审后修正）**：实例创建失败时**不删桶**，只打 WARN 提示人工核对，再软删台账（沿用 2026-10-22 设计的"失败不留幽灵记录"）。
+
+> 原因：网关把**传输层异常**也包成 `CloudPlatformException`（`K8sServerGateway` 的 "调用 k8s-server 失败"、读超时可达 30 分钟），
+> 此时 CR 与 Pod 可能**已经建成**——删桶就是删掉实例唯一的数据。空桶的泄漏可以人工清理，误删的数据不能恢复。
 
 ### 6.2 CUSTOM（用户自带 S3）
 
@@ -370,7 +374,7 @@ default String crProblem(GenericKubernetesResource live) {
 ## 9. 状态判定
 
 - Pod 选择器：`app.kubernetes.io/instance=<CR 名>,app.kubernetes.io/name=milvus`（覆盖全部组件，也覆盖 standalone）。
-- `desiredPods`：从 CR 的 `components` 里把**有 `replicas` 的组件**求和（standalone 只算 `standalone.replicas`；集群算 proxy/mixcoord/datanode/querynode/streamingnode，值为 0 的跳过）。读不到返回 null（退回"现存 Pod 全就绪"判定）。
+- `desiredPods`：**按 `spec.mode` 取白名单**再求和（单节点只算 `standalone.replicas`；集群算 proxy/mixCoord/dataNode/queryNode/streamingNode 等），负值（`-1` = operator/HPA 管）跳过。不按"所有带 replicas 的键"求和——CR 里常残留另一形态的组件键。读不到返回 null（退回"现存 Pod 全就绪"判定）。
 - `crProblem(live)`：
   1. `status.status` 为 `Unhealthy` / `Stopped` → `"Milvus 状态 " + value`；
   2. 按优先级检查 conditions：`StorageReady` → `EtcdReady` → `MsgStreamReady` → `MilvusReady`，遇到 `status=False` 且 message 非空即返回（前缀标注是哪一项）。
@@ -481,7 +485,8 @@ WHERE built_in = 1
   - 缺省值（etcdReplicas、localStorageSize、版本）；
   - `statusSelector`、`desiredPods`（standalone=1；cluster=5+queryNode 增量）；
   - `crProblem`（Unhealthy、StorageReady=False 带消息、消息为空不误报）。
-- `MiddlewareServiceTest`：建桶 → k8s 失败 → 删桶回滚；删除时 `keepPvc` 两种分支；`objectStorageAvailable` 读失败降级 false。
+- `MiddlewareServiceTest`：建桶 → k8s 失败 → **桶保留**（不误删数据）；删除时 `keepPvc` 两种分支；`objectStorageAvailable` 读失败降级 false。
+- 指标模板必须能用 3 个实参格式化（`MetricsService.businessMetric` 只传 cluster/namespace/pod；重复引用用 `%1$s/%2$s/%3$s`）。
 
 ### 14.2 真集群验证（实施完成的判据）
 
