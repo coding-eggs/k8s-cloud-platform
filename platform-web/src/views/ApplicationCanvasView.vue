@@ -35,6 +35,7 @@ interface FlowEdgeView {
   id: string
   source: string
   target: string
+  type?: string
 }
 
 const route = useRoute()
@@ -100,7 +101,8 @@ function onConnect(connection: Connection) {
   }
   const id = `${connection.source}->${connection.target}`
   if (edges.value.some((e) => e.id === id)) return
-  edges.value.push({ id, source: connection.source!, target: connection.target! })
+  // smoothstep：默认贝塞尔在两个节点高度相近时会绕出大圈，看起来像连错了
+  edges.value.push({ id, source: connection.source!, target: connection.target!, type: 'smoothstep' })
 }
 
 /**
@@ -152,7 +154,7 @@ async function load() {
     data: { key: n.key, kind: n.kind, params: n.params ?? {}, state: 'PENDING' },
   }))
   edges.value = (app.value.spec.edges ?? []).map((e) => ({
-    id: `${e.from}->${e.to}`, source: e.from, target: e.to,
+    id: `${e.from}->${e.to}`, source: e.from, target: e.to, type: 'smoothstep',
   }))
 }
 
