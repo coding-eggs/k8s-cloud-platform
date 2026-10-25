@@ -16,6 +16,10 @@ import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
+import com.coding.common.models.objectstorage.ObjectCredentialDTO;
+import com.coding.platformapi.models.ObjectStorageBucketRef;
+import com.coding.platformapi.models.ObjectStorageBucketView;
+import com.coding.platformapi.models.ObjectStorageCreateBucket;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.mapper.system.PlatformMiddlewareOperationMapper;
@@ -57,6 +61,7 @@ import java.util.UUID;
  * 台账的 {@code spec_json} 与审计都不含密码。
  */
 @Service
+@lombok.extern.slf4j.Slf4j
 public class MiddlewareService {
 
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -287,6 +292,9 @@ public class MiddlewareService {
         }
 
         String name = "mw-" + req.getCode() + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        // Milvus：对象存储只能是外部。PLATFORM 要先把桶和凭据准备好，k8s-server 才拿得到 AK/SK
+        StorageGrant grant = "milvus".equals(req.getCode())
+                ? prepareObjectStorage(req, operator, tenantId, name) : null;
         PlatformMiddlewareInstance instance = new PlatformMiddlewareInstance();
         instance.setId("mwi_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
         instance.setClusterId(req.getClusterId());
@@ -297,7 +305,7 @@ public class MiddlewareService {
         instance.setDisplayName(isBlank(req.getDisplayName()) ? item.name() + "-" + name.substring(name.length() - 4)
                 : req.getDisplayName());
         instance.setVersion(req.getVersion() == null ? "" : req.getVersion());
-        instance.setSpecJson(toSpecJson(req));
+        instance.setSpecJson(toSpecJson(req, grant));
         instance.setStatus("CREATING");
         instance.setTenantId(tenantId);
         instance.setCreatedBy(operator);
@@ -328,6 +336,16 @@ public class MiddlewareService {
             dto.setTls(!Boolean.FALSE.equals(req.getTls()));   // 缺省开
             dto.setIk(Boolean.TRUE.equals(req.getIk()));
             dto.setMetricsEnabled(Boolean.TRUE.equals(req.getMetricsEnabled()));
+            dto.setEtcdReplicas(req.getEtcdReplicas());
+            dto.setLocalStorageSize(req.getLocalStorageSize());
+            if (grant != null) {
+                dto.setObjectStorageType(grant.type());
+                dto.setObjectStorageEndpoint(grant.endpoint());
+                dto.setObjectStorageBucket(grant.bucket());
+                dto.setObjectStorageAccessKey(grant.accessKey());
+                dto.setObjectStorageSecretKey(grant.secretKey());
+                dto.setObjectStorageUseSsl(grant.useSsl());
+            }
             dto.setPassword(randomPassword());
             dto.setTenantId(tenantId);
             client.create(req.getCode(), dto);
@@ -340,6 +358,9 @@ public class MiddlewareService {
             //（真集群实测：配额不足 -> 调小规格重试 -> 列表出现两条 MySQL）
             instance.setDeletedAt(new Date());
             instances.updateById(instance);
+            if (grant != null && grant.bucketId() != null) {
+                deleteBucketQuietly(grant.bucketId(), operator);
+            }
             finish(op, "FAILED", e.getMessage());
             throw e;
         }
@@ -665,6 +686,13 @@ public class MiddlewareService {
             dto.setTenantId(tenantId);
             client.delete(instance.getCode(), dto);
 
+            // 实例已经删掉，再清外部对象存储（仅平台桶；用户自带的桶不碰）；失败只记日志
+            Map<String, Object> spec = parseSpec(instance.getSpecJson());
+            if (!req.isKeepPvc() && spec.get("objectStorageBucketId") instanceof String bucketId
+                    && !bucketId.isBlank()) {
+                deleteBucketQuietly(bucketId, operator);
+            }
+
             instance.setStatus("DELETING");
             instance.setUpdatedAt(new Date());
             instance.setDeletedAt(new Date());
@@ -805,6 +833,10 @@ public class MiddlewareService {
     }
 
     private String toSpecJson(MiddlewareCreateRequest req) {
+        return toSpecJson(req, null);
+    }
+
+    private String toSpecJson(MiddlewareCreateRequest req, StorageGrant grant) {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("mode", req.getMode());
         spec.put("replicas", req.getReplicas());
@@ -821,7 +853,115 @@ public class MiddlewareService {
         spec.put("metricsEnabled", Boolean.TRUE.equals(req.getMetricsEnabled()));
         // IK 分词器（只有 ES 用得到）：编辑弹窗靠它回显「已安装」
         spec.put("ik", Boolean.TRUE.equals(req.getIk()));
+        if (grant != null) {
+            spec.put("etcdReplicas", req.getEtcdReplicas());
+            spec.put("localStorageSize", req.getLocalStorageSize());
+            spec.put("objectStorageType", grant.type());
+            spec.put("objectStorageBucket", grant.bucket());
+            spec.put("objectStorageBucketId", grant.bucketId());
+            spec.put("objectStorageEndpoint", grant.endpoint());
+            // AK/SK 不落库
+        }
         return jsonMapper.writeValueAsString(spec);
+    }
+
+    /** Milvus 外部对象存储的下发参数（AK/SK 只在内存里过一遍，不落库）。 */
+    private record StorageGrant(String type, String endpoint, String bucket, String bucketId,
+                                String accessKey, String secretKey, boolean useSsl) {
+    }
+
+    /** Milvus 的对象存储：PLATFORM 建桶 + 发凭据，CUSTOM 直接用请求里的参数。 */
+    private StorageGrant prepareObjectStorage(MiddlewareCreateRequest req, String operator,
+                                              String tenantId, String name) {
+        String type = req.getObjectStorageType();
+        if (isBlank(type)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "请选择对象存储来源");
+        }
+        if ("CUSTOM".equals(type)) {
+            if (isBlank(req.getObjectStorageEndpoint()) || isBlank(req.getObjectStorageBucket())
+                    || isBlank(req.getObjectStorageAccessKey()) || isBlank(req.getObjectStorageSecretKey())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "自带 S3 需要填 endpoint / 桶名 / AccessKey / SecretKey");
+            }
+            return new StorageGrant(type, hostPort(req.getObjectStorageEndpoint()),
+                    req.getObjectStorageBucket(), null,
+                    req.getObjectStorageAccessKey(), req.getObjectStorageSecretKey(),
+                    Boolean.TRUE.equals(req.getObjectStorageUseSsl()));
+        }
+        if (!"PLATFORM".equals(type)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "不支持的对象存储来源：" + type);
+        }
+        if (isBlank(tenantId)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "平台对象存储的桶必须归属某个租户，请先选择租户");
+        }
+        if (!components.seaweedInstalled(req.getClusterId())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "对象存储组件尚未安装：请先在「集群组件」里安装对象存储");
+        }
+        ObjectStorageCreateBucket body = new ObjectStorageCreateBucket();
+        body.setClusterId(req.getClusterId());
+        body.setTenantId(tenantId);
+        body.setName("milvus-" + name);
+        body.setDisplayName("Milvus " + name);
+        long quota = quantityBytes(req.getStorageSize());
+        // 0 = 没填/识别不了；createBucket 对 <=0 会直接拒，所以转成 null（= 桶不限容量）
+        body.setQuotaBytes(quota <= 0 ? null : quota);
+        ObjectStorageBucketView bucket = objectStorage.createBucket(body, operator);
+        ObjectStorageBucketRef ref = new ObjectStorageBucketRef();
+        ref.setBucketId(bucket.getId());
+        ObjectCredentialDTO credential = objectStorage.issueCredential(ref, operator);
+        String raw = objectStorage.s3Endpoint(req.getClusterId());
+        // CR 里的 endpoint 只能是 host:port（operator 自己按 useSSL 补默认端口）；scheme 只用来定 TLS
+        return new StorageGrant(type, hostPort(raw), bucket.getBucket(), bucket.getId(),
+                credential.getAccessKey(), credential.getSecretKey(), raw.startsWith("https://"));
+    }
+
+    /** "http://host:8333/x" / "host:8333" → "host:8333"（与 k8s-server 适配器的规整规则一致）。 */
+    static String hostPort(String endpoint) {
+        String s = endpoint == null ? "" : endpoint.trim();
+        int scheme = s.indexOf("://");
+        if (scheme >= 0) {
+            s = s.substring(scheme + 3);
+        }
+        int slash = s.indexOf('/');
+        if (slash >= 0) {
+            s = s.substring(0, slash);
+        }
+        return s;
+    }
+
+    /** "20Gi" / "512Mi" → 字节（桶配额要 long）；识别不了返回 0（= 不限）。 */
+    static long quantityBytes(String quantity) {
+        if (isBlank(quantity)) {
+            return 0;
+        }
+        String s = quantity.trim();
+        long mul = 1;
+        if (s.endsWith("Gi")) {
+            mul = 1024L * 1024 * 1024;
+            s = s.substring(0, s.length() - 2);
+        } else if (s.endsWith("Mi")) {
+            mul = 1024L * 1024;
+            s = s.substring(0, s.length() - 2);
+        } else if (s.endsWith("Ki")) {
+            mul = 1024L;
+            s = s.substring(0, s.length() - 2);
+        }
+        try {
+            return (long) (Double.parseDouble(s.trim()) * mul);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    private void deleteBucketQuietly(String bucketId, String operator) {
+        try {
+            ObjectStorageBucketRef ref = new ObjectStorageBucketRef();
+            ref.setBucketId(bucketId);
+            objectStorage.deleteBucket(ref, operator);
+        } catch (RuntimeException e) {
+            log.warn("删除 Milvus 对象存储桶 {} 失败（需在对象存储页手工清理）：{}", bucketId, e.getMessage());
+        }
     }
 
     private static String randomPassword() {

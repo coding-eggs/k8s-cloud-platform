@@ -17,6 +17,11 @@ import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sMiddlewareClient;
 import com.coding.platformapi.middleware.MiddlewareCatalog;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
+import com.coding.platformapi.models.MiddlewareDeleteRequest;
+import com.coding.platformapi.models.ObjectStorageBucketRef;
+import com.coding.platformapi.models.ObjectStorageBucketView;
+import com.coding.platformapi.models.ObjectStorageCreateBucket;
+import com.coding.common.models.objectstorage.ObjectCredentialDTO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -30,6 +35,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -705,5 +711,147 @@ class MiddlewareServiceTest {
 
         when(components.seaweedInstalled("c1")).thenThrow(new RuntimeException("boom"));
         assertThat(service.formOptions("c1", null).isObjectStorageAvailable()).isFalse();
+    }
+
+    private MiddlewareCreateRequest milvusRequest(String storageType) {
+        MiddlewareCreateRequest r = new MiddlewareCreateRequest();
+        r.setClusterId("c1");
+        r.setCode("milvus");
+        r.setMode("STANDALONE");
+        r.setNamespace("demo");
+        r.setReplicas(1);
+        r.setVersion("2.6.25");
+        r.setCpuRequest("500m");
+        r.setCpuLimit("2");
+        r.setMemoryRequest("2Gi");
+        r.setMemoryLimit("4Gi");
+        r.setStorageSize("20Gi");
+        r.setLocalStorageSize("10Gi");
+        r.setEtcdReplicas(1);
+        r.setObjectStorageType(storageType);
+        if ("CUSTOM".equals(storageType)) {
+            r.setObjectStorageEndpoint("s3.example.com:9000");
+            r.setObjectStorageBucket("my-bucket");
+            r.setObjectStorageAccessKey("AK");
+            r.setObjectStorageSecretKey("SK");
+        }
+        return r;
+    }
+
+    @Test
+    void milvusPlatformStorageCreatesBucketAndPassesCredentials() {
+        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
+        when(client.create(anyString(), any())).thenReturn(true);
+        when(components.seaweedInstalled("c1")).thenReturn(true);
+        when(objectStorage.s3Endpoint("c1"))
+                .thenReturn("http://platform-seaweedfs-s3.platform-storage:8333");
+
+        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
+        bucket.setId("obk_1");
+        bucket.setBucket("t-1234abcd-milvus-mw-milvus-abc12345");
+        when(objectStorage.createBucket(any(), anyString())).thenReturn(bucket);
+        when(objectStorage.issueCredential(any(), anyString()))
+                .thenReturn(new ObjectCredentialDTO("AK_PLATFORM", "SK_PLATFORM"));
+
+        service.create(milvusRequest("PLATFORM"), "admin", "t1");
+
+        ArgumentCaptor<ObjectStorageCreateBucket> bucketBody =
+                ArgumentCaptor.forClass(ObjectStorageCreateBucket.class);
+        verify(objectStorage).createBucket(bucketBody.capture(), anyString());
+        assertThat(bucketBody.getValue().getTenantId()).isEqualTo("t1");
+        assertThat(bucketBody.getValue().getName()).startsWith("milvus-mw-milvus-");
+        assertThat(bucketBody.getValue().getQuotaBytes()).isEqualTo(20L * 1024 * 1024 * 1024);
+
+        ArgumentCaptor<MiddlewareCreateRequestDTO> sent =
+                ArgumentCaptor.forClass(MiddlewareCreateRequestDTO.class);
+        verify(client).create(anyString(), sent.capture());
+        assertThat(sent.getValue().getObjectStorageEndpoint())
+                .isEqualTo("platform-seaweedfs-s3.platform-storage:8333");
+        assertThat(sent.getValue().getObjectStorageBucket()).isEqualTo(bucket.getBucket());
+        assertThat(sent.getValue().getObjectStorageAccessKey()).isEqualTo("AK_PLATFORM");
+        assertThat(sent.getValue().getObjectStorageSecretKey()).isEqualTo("SK_PLATFORM");
+
+        ArgumentCaptor<PlatformMiddlewareInstance> saved =
+                ArgumentCaptor.forClass(PlatformMiddlewareInstance.class);
+        verify(instances).insert(saved.capture());
+        assertThat(saved.getValue().getSpecJson())
+                .contains("obk_1")
+                .doesNotContain("AK_PLATFORM")
+                .doesNotContain("SK_PLATFORM");
+    }
+
+    @Test
+    void milvusCreateFailureDeletesTheBucket() {
+        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
+        when(client.create(anyString(), any())).thenThrow(new CloudPlatformException(
+                com.coding.common.exception.EnumResponseType.ERROR, "配额不足"));
+        when(components.seaweedInstalled("c1")).thenReturn(true);
+        when(objectStorage.s3Endpoint("c1"))
+                .thenReturn("http://platform-seaweedfs-s3.platform-storage:8333");
+        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
+        bucket.setId("obk_1");
+        bucket.setBucket("t-1234abcd-milvus-mw-milvus-abc12345");
+        when(objectStorage.createBucket(any(), anyString())).thenReturn(bucket);
+        when(objectStorage.issueCredential(any(), anyString()))
+                .thenReturn(new ObjectCredentialDTO("AK", "SK"));
+
+        assertThatThrownBy(() -> service.create(milvusRequest("PLATFORM"), "admin", "t1"))
+                .hasMessageContaining("配额");
+
+        ArgumentCaptor<ObjectStorageBucketRef> ref = ArgumentCaptor.forClass(ObjectStorageBucketRef.class);
+        verify(objectStorage).deleteBucket(ref.capture(), anyString());
+        assertThat(ref.getValue().getBucketId()).isEqualTo("obk_1");
+    }
+
+    @Test
+    void createRejectsCustomStorageWithoutCredentials() {
+        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
+        var r = milvusRequest("CUSTOM");
+        r.setObjectStorageSecretKey("");
+
+        assertThatThrownBy(() -> service.create(r, "admin", "t1"))
+                .hasMessageContaining("AccessKey");
+    }
+
+    @Test
+    void createRejectsPlatformStorageWithoutTenant() {
+        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
+
+        assertThatThrownBy(() -> service.create(milvusRequest("PLATFORM"), "admin", null))
+                .hasMessageContaining("租户");
+    }
+
+    @Test
+    void deleteWithoutKeepPvcDeletesPlatformBucket() {
+        PlatformMiddlewareInstance i = instance("milvus", "CLUSTER");
+        i.setTenantId("t1");
+        i.setSpecJson("{\"objectStorageType\":\"PLATFORM\",\"objectStorageBucketId\":\"obk_1\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.delete(anyString(), any())).thenReturn(true);
+
+        var req = new MiddlewareDeleteRequest();
+        req.setInstanceId("mwi_1");
+        req.setKeepPvc(false);
+        service.delete(req, "admin", "t1");
+
+        ArgumentCaptor<ObjectStorageBucketRef> ref = ArgumentCaptor.forClass(ObjectStorageBucketRef.class);
+        verify(objectStorage).deleteBucket(ref.capture(), anyString());
+        assertThat(ref.getValue().getBucketId()).isEqualTo("obk_1");
+    }
+
+    @Test
+    void deleteWithKeepPvcKeepsBucket() {
+        PlatformMiddlewareInstance i = instance("milvus", "CLUSTER");
+        i.setTenantId("t1");
+        i.setSpecJson("{\"objectStorageType\":\"PLATFORM\",\"objectStorageBucketId\":\"obk_1\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.delete(anyString(), any())).thenReturn(true);
+
+        var req = new MiddlewareDeleteRequest();
+        req.setInstanceId("mwi_1");
+        req.setKeepPvc(true);
+        service.delete(req, "admin", "t1");
+
+        verify(objectStorage, never()).deleteBucket(any(), anyString());
     }
 }
