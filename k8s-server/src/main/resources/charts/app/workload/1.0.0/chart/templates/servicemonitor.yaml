@@ -1,0 +1,16 @@
+{{- if and .Values.workload.metrics.enabled (eq .Values.workload.mode "service") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "app.name" . | quote }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "app.selector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: {{ .Values.workload.metrics.path }}
+      interval: 30s
+{{- end }}

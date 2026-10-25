@@ -1,0 +1,22 @@
+{{- if .Values.workload.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "app.name" . | quote }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: {{ if and (eq .Values.workload.mode "service") .Values.workload.persistence.enabled }}StatefulSet{{ else }}Deployment{{ end }}
+    name: {{ include "app.name" . | quote }}
+  minReplicas: {{ .Values.workload.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.workload.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.workload.autoscaling.targetCpu }}
+{{- end }}

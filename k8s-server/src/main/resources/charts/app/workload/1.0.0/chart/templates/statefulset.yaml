@@ -1,0 +1,75 @@
+{{- if and (eq .Values.workload.mode "service") .Values.workload.persistence.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "app.name" . | quote }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    {{- include "app.revision" . | nindent 4 }}
+spec:
+  serviceName: {{ printf "%s-headless" (include "app.name" .) | quote }}
+  replicas: {{ .Values.workload.replicas }}
+  selector:
+    matchLabels:
+      {{- include "app.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selector" . | nindent 8 }}
+      annotations:
+        {{- include "app.revision" . | nindent 8 }}
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.workload.image | quote }}
+          imagePullPolicy: {{ .Values.workload.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.workload.port }}
+          {{- with .Values.workload.command }}
+          command: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.workload.args }}
+          args: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.workload.env .Values.workload.secretEnv }}
+          env:
+            {{- range .Values.workload.env }}
+            - name: {{ .name }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "app.name" $ }}-env
+                  key: {{ .name }}
+            {{- end }}
+            {{- range .Values.workload.secretEnv }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .secretKey }}
+            {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.workload.persistence.mountPath }}
+          resources:
+            {{- toYaml .Values.workload.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.workload.persistence.storageClass }}
+        storageClassName: {{ .Values.workload.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.workload.persistence.size }}
+{{- end }}

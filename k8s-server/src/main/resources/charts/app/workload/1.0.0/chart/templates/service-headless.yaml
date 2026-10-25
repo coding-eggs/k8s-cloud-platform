@@ -1,0 +1,16 @@
+{{- if and (eq .Values.workload.mode "service") .Values.workload.persistence.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-headless" (include "app.name" .) | quote }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "app.selector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.workload.port }}
+      targetPort: http
+{{- end }}

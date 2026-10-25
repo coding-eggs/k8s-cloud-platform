@@ -1,0 +1,71 @@
+{{- $stateful := and (eq .Values.workload.mode "service") .Values.workload.persistence.enabled -}}
+{{- if not $stateful }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "app.name" . | quote }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    {{- include "app.revision" . | nindent 4 }}
+spec:
+  replicas: {{ if .Values.workload.autoscaling.enabled }}1{{ else }}{{ .Values.workload.replicas }}{{ end }}
+  selector:
+    matchLabels:
+      {{- include "app.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selector" . | nindent 8 }}
+      annotations:
+        {{- include "app.revision" . | nindent 8 }}
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.workload.image | quote }}
+          imagePullPolicy: {{ .Values.workload.imagePullPolicy }}
+          {{- if eq .Values.workload.mode "service" }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.workload.port }}
+          {{- end }}
+          {{- with .Values.workload.command }}
+          command: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.workload.args }}
+          args: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.workload.env .Values.workload.secretEnv }}
+          env:
+            {{- range .Values.workload.env }}
+            - name: {{ .name }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "app.name" $ }}-env
+                  key: {{ .name }}
+            {{- end }}
+            {{- range .Values.workload.secretEnv }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .secretKey }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.workload.resources | nindent 12 }}
+          {{- if eq .Values.workload.mode "service" }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            failureThreshold: 3
+          {{- end }}
+{{- end }}

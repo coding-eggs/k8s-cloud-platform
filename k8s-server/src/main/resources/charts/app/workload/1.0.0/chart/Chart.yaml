@@ -1,0 +1,6 @@
+apiVersion: v2
+name: app-workload
+description: 平台应用编排的「服务 / 后台进程」节点模板（内部使用，不对外发布）
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

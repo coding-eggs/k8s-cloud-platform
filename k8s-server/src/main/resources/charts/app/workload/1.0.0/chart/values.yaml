@@ -1,0 +1,40 @@
+app:
+  id: ""
+  slug: ""
+  revision: 0
+
+workload:
+  key: ""
+  # service = 有端口、可建 Service；worker = 无端口、不建 Service
+  mode: service
+  image: ""
+  imagePullPolicy: IfNotPresent
+  port: 8080
+  replicas: 1
+  command: []
+  args: []
+  # 普通环境变量：[{name, value}] → ConfigMap
+  env: []
+  # 引用已有 Secret：[{name, secretName, secretKey}] → valueFrom.secretKeyRef
+  # 平台不接收明文敏感值（spec/快照/清单里都不能出现密码），要敏感就先用「Secret」页建好再引用
+  secretEnv: []
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+    mountPath: /data
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCpu: 60
+  metrics:
+    enabled: false
+    path: /metrics
+  expose:
+    # none（仅集群内 ClusterIP）/ nodeport
+    type: none
+    port: 8080
