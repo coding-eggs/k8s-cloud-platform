@@ -1046,6 +1046,17 @@ export const middlewareApi = {
     ik?: boolean
     /** 采集业务指标（默认关） */
     metricsEnabled?: boolean
+    /** Milvus：etcd 节点数 1~3 */
+    etcdReplicas?: number
+    /** Milvus：PLATFORM（平台 SeaweedFS 桶）/ CUSTOM（自带 S3） */
+    objectStorageType?: string
+    objectStorageEndpoint?: string
+    objectStorageBucket?: string
+    objectStorageAccessKey?: string
+    objectStorageSecretKey?: string
+    objectStorageUseSsl?: boolean
+    /** Milvus：单节点本地数据盘 */
+    localStorageSize?: string
     tenantId?: string
   }) => http.post<never, number>('/middleware/instance/create', payload),
   scale: (payload: {

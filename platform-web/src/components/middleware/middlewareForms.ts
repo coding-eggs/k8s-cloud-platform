@@ -114,6 +114,23 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 1 },
     { key: 'storageSize', label: '存储大小', type: 'number', unit: 'size', unitDefault: 'Gi', default: 10, help: '每个节点一块 PVC' },
   ],
+  milvus: [
+    {
+      key: 'replicas', label: '节点数', type: 'number', unit: 'count', default: 1, min: 1, max: 9,
+    },
+    { key: 'cpuRequest', label: 'CPU 请求', type: 'number', unit: 'cpu', default: 0.5, step: 0.1, min: 0.1 },
+    { key: 'cpuLimit', label: 'CPU 上限', type: 'number', unit: 'cpu', default: 2, step: 0.1, min: 0.1 },
+    { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 2 },
+    { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4 },
+    {
+      key: 'localStorageSize', label: '本地数据盘', type: 'number', unit: 'size', unitDefault: 'Gi',
+      default: 10, min: 1, help: '单节点形态的 WAL/临时目录；集群形态不使用',
+    },
+    {
+      key: 'storageSize', label: '对象存储容量', type: 'number', unit: 'size', unitDefault: 'Gi',
+      default: 20, min: 1, help: '仅「平台对象存储」生效（作为桶配额）；自带 S3 时忽略',
+    },
+  ],
 }
 
 /** 数字 + 单位 → K8s quantity 字符串；CPU 直接写核数（"0.5" 就是 500m） */

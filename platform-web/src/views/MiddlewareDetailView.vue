@@ -307,6 +307,14 @@ onMounted(async () => {
               </el-descriptions-item>
               <el-descriptions-item label="存储">{{ detail?.spec?.storageSize || '—' }}</el-descriptions-item>
               <el-descriptions-item label="StorageClass">{{ detail?.spec?.storageClass || '集群默认' }}</el-descriptions-item>
+              <el-descriptions-item v-if="instance?.code === 'milvus'" label="对象存储">
+                {{ detail?.spec?.objectStorageType === 'CUSTOM'
+                    ? `自带 S3：${detail?.spec?.objectStorageEndpoint ?? '—'}`
+                    : `平台桶：${detail?.spec?.objectStorageBucket ?? '—'}` }}
+              </el-descriptions-item>
+              <el-descriptions-item v-if="instance?.code === 'milvus'" label="etcd 节点数">
+                {{ detail?.spec?.etcdReplicas ?? '—' }}
+              </el-descriptions-item>
             </el-descriptions>
           </el-card>
         </div>

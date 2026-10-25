@@ -37,14 +37,21 @@ const createMode = ref('')
 /** 内存/存储的单位（与 form 里的数字分开存；提交时拼成 quantity） */
 const formUnits = ref<Record<string, string>>({})
 /** 命名空间与 StorageClass 都由后端按租户/权限算好 */
-const formOptions = ref<{ namespaces: string[]; storageClasses: string[] }>({
+const formOptions = ref<{ namespaces: string[]; storageClasses: string[]; objectStorageAvailable: boolean }>({
   namespaces: [],
   storageClasses: [],
+  objectStorageAvailable: false,
 })
 
-const createFields = computed(() =>
-  createItem.value ? (MIDDLEWARE_FIELDS[createItem.value.code] ?? []) : [],
-)
+const createFields = computed(() => {
+  const all = createItem.value ? (MIDDLEWARE_FIELDS[createItem.value.code] ?? []) : []
+  if (createItem.value?.code !== 'milvus') return all
+  return all.filter((f) => {
+    if (f.key === 'localStorageSize') return createMode.value === 'STANDALONE'
+    if (f.key === 'storageSize') return form.value.objectStorageType !== 'CUSTOM'
+    return true
+  })
+})
 
 const modeMinReplicas = computed(
   () => createItem.value?.modes.find((m) => m.mode === createMode.value)?.minReplicas ?? 1,
@@ -113,6 +120,14 @@ function resetForm(item: MiddlewareCatalogItem): void {
     storageClass: '',
     // Redis 集群形态：每个主节点配几个副本（默认 1）
     replicasPerShard: 1,
+    // Milvus：etcd 节点数与对象存储来源（来源的默认值在 form-options 回来后定）
+    etcdReplicas: 1,
+    objectStorageType: '',
+    objectStorageEndpoint: '',
+    objectStorageBucket: '',
+    objectStorageAccessKey: '',
+    objectStorageSecretKey: '',
+    objectStorageUseSsl: false,
   }
   const units: Record<string, string> = {}
   for (const field of MIDDLEWARE_FIELDS[item.code] ?? []) {
@@ -137,7 +152,7 @@ function resetForm(item: MiddlewareCatalogItem): void {
 
 async function loadFormOptions(): Promise<void> {
   if (!clusterId.value) {
-    formOptions.value = { namespaces: [], storageClasses: [] }
+    formOptions.value = { namespaces: [], storageClasses: [], objectStorageAvailable: false }
     return
   }
   try {
@@ -145,9 +160,14 @@ async function loadFormOptions(): Promise<void> {
     formOptions.value = {
       namespaces: options?.namespaces ?? [],
       storageClasses: options?.storageClasses ?? [],
+      objectStorageAvailable: options?.objectStorageAvailable ?? false,
+    }
+    // Milvus：有对象存储组件时默认用平台桶，否则只能自带 S3
+    if (createItem.value?.code === 'milvus' && !form.value.objectStorageType) {
+      form.value.objectStorageType = formOptions.value.objectStorageAvailable ? 'PLATFORM' : 'CUSTOM'
     }
   } catch {
-    formOptions.value = { namespaces: [], storageClasses: [] }
+    formOptions.value = { namespaces: [], storageClasses: [], objectStorageAvailable: false }
   }
 }
 
@@ -178,6 +198,10 @@ function changeUnit(field: MiddlewareField, next: 'Mi' | 'Gi'): void {
 }
 
 function onModeChange(): void {
+  // Milvus：etcd 节点数跟形态走（单节点 1 / 集群 3），用户仍可在 1~3 内改
+  if (createItem.value?.code === 'milvus') {
+    form.value.etcdReplicas = createMode.value === 'CLUSTER' ? 3 : 1
+  }
   // 固定节点数的形态直接钉死；可变形态不满足下限时抬到下限
   if (modeFixedReplicas.value !== null) {
     form.value.replicas = modeFixedReplicas.value
@@ -203,7 +227,7 @@ async function submitCreate(): Promise<void> {
   }
   creating.value = true
   try {
-    const fields: MiddlewareField[] = MIDDLEWARE_FIELDS[createItem.value.code] ?? []
+    const fields: MiddlewareField[] = createFields.value
     const payload: Record<string, any> = {
       clusterId: clusterId.value,
       code: createItem.value.code,
@@ -222,6 +246,17 @@ async function submitCreate(): Promise<void> {
     }
     for (const field of fields) {
       payload[field.key] = toQuantity(field, form.value[field.key], formUnits.value[field.key])
+    }
+    if (createItem.value.code === 'milvus') {
+      payload.etcdReplicas = form.value.etcdReplicas
+      payload.objectStorageType = form.value.objectStorageType
+      if (form.value.objectStorageType === 'CUSTOM') {
+        payload.objectStorageEndpoint = form.value.objectStorageEndpoint?.trim() || undefined
+        payload.objectStorageBucket = form.value.objectStorageBucket?.trim() || undefined
+        payload.objectStorageAccessKey = form.value.objectStorageAccessKey?.trim() || undefined
+        payload.objectStorageSecretKey = form.value.objectStorageSecretKey || undefined
+        payload.objectStorageUseSsl = !!form.value.objectStorageUseSsl
+      }
     }
     const opId = await middlewareApi.create(payload as any)
     createVisible.value = false
@@ -513,6 +548,40 @@ onBeforeUnmount(() => {
           <el-switch v-model="form.kibana" active-text="同时部署 Kibana" />
           <div class="mw-form-help">（勾选后平台会额外创建一个 Kibana 实例，指向当前 ES）</div>
         </el-form-item>
+        <template v-if="createItem?.code === 'milvus'">
+          <el-form-item label="etcd 节点数">
+            <el-input-number v-model="form.etcdReplicas" :min="1" :max="3" />
+            <div class="mw-form-help">1~3；单节点默认 1、集群默认 3；创建后不可修改</div>
+          </el-form-item>
+          <el-form-item label="对象存储来源" required>
+            <el-radio-group v-model="form.objectStorageType">
+              <el-radio value="PLATFORM" :disabled="!formOptions.objectStorageAvailable">平台对象存储</el-radio>
+              <el-radio value="CUSTOM">自带 S3</el-radio>
+            </el-radio-group>
+            <div v-if="!formOptions.objectStorageAvailable" class="mw-form-help">
+              本集群未安装对象存储组件，只能用「自带 S3」
+            </div>
+          </el-form-item>
+          <template v-if="form.objectStorageType === 'CUSTOM'">
+            <el-form-item label="S3 Endpoint" required>
+              <el-input v-model="form.objectStorageEndpoint" spellcheck="false"
+                        placeholder="s3.example.com:9000（http:// 前缀可有可无）" />
+            </el-form-item>
+            <el-form-item label="桶名" required>
+              <el-input v-model="form.objectStorageBucket" spellcheck="false" placeholder="milvus-data" />
+            </el-form-item>
+            <el-form-item label="AccessKey" required>
+              <el-input v-model="form.objectStorageAccessKey" spellcheck="false" autocomplete="off" />
+            </el-form-item>
+            <el-form-item label="SecretKey" required>
+              <el-input v-model="form.objectStorageSecretKey" type="password" show-password
+                        autocomplete="new-password" />
+            </el-form-item>
+            <el-form-item label="HTTPS">
+              <el-switch v-model="form.objectStorageUseSsl" active-text="S3 使用 TLS" />
+            </el-form-item>
+          </template>
+        </template>
       </el-form>
       <p class="mw-form-note">
         <template v-if="createItem?.code === 'redis'">
@@ -523,6 +592,9 @@ onBeforeUnmount(() => {
         </template>
         <template v-else-if="createItem?.code === 'kafka'">
           Kafka 监听器为集群内 plain（9092），未开启认证，没有初始凭据。
+        </template>
+        <template v-else-if="createItem?.code === 'milvus'">
+          Milvus 默认未开启鉴权；对象存储的 AK/SK 会写进同命名空间的 Secret（&lt;名称&gt;-milvus-storage）。
         </template>
         <template v-else>
           凭据由对应 Operator 生成，可在实例命名空间查看（MySQL：&lt;名称&gt;-secrets；Elasticsearch：&lt;名称&gt;-es-elastic-user；PostgreSQL：&lt;名称&gt;-app；RabbitMQ：&lt;名称&gt;-default-user）。

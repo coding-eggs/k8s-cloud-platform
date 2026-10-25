@@ -37,6 +37,7 @@ const KNOWN: Array<{ keys: string[]; icon: Component; color: string }> = [
   { keys: ['grafana'], icon: TrendCharts, color: '#f46800' },
   { keys: ['tempo', 'jaeger', 'zipkin'], icon: Timer, color: '#f4a261' },
   { keys: ['elasticsearch', 'opensearch', 'kibana', 'loki'], icon: Search, color: '#005571' },
+  { keys: ['milvus'], icon: DataLine, color: '#00a1ea' },
   { keys: ['redis'], icon: Coin, color: '#d82c20' },
   { keys: ['mysql'], icon: Coin, color: '#00758f' },
   { keys: ['postgres'], icon: Coin, color: '#336791' },

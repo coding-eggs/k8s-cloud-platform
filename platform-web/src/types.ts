@@ -2559,6 +2559,8 @@ export interface MiddlewareInstanceLive {
 export interface MiddlewareFormOptions {
   namespaces: string[]
   storageClasses: string[]
+  /** 本集群是否已装对象存储组件（Milvus 的「平台对象存储」选项要它） */
+  objectStorageAvailable: boolean
 }
 
 /** 中间件实例四张图（一次请求返回，跨该实例全部 Pod 聚合） */
