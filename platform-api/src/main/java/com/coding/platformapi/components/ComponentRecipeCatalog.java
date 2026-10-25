@@ -221,7 +221,12 @@ public class ComponentRecipeCatalog {
                             // ambient 模式必须由 istiod 显式开启（官方 profile-ambient.yaml 的等价物）。
                             // 不开时 ztunnel 连 15012 会被直接拒绝："ztunnel requires PILOT_ENABLE_AMBIENT=true"
                             // （2026-10-20 实锤）。HBONE metadata 给 waypoint（Envoy）用。
-                            "pilot", Map.of("env", Map.of("PILOT_ENABLE_AMBIENT", "true")),
+                            // TCP/TLS/UDP Route 是 Istio 的 alpha 能力：不开 ALPHA_GATEWAY_API 时，
+                            // Gateway 里的 TCP listener 会被判 UnsupportedProtocol（Accepted=False），
+                            // Envoy 根本不监听该端口 —— 表现是 nodePort 连接被拒（2026-10-26 实锤：milvus 19530）。
+                            "pilot", Map.of("env", Map.of(
+                                    "PILOT_ENABLE_AMBIENT", "true",
+                                    "PILOT_ENABLE_ALPHA_GATEWAY_API", "true")),
                             // 批次二：网格侧 tracing 的 provider（ingress/waypoint 的 Telemetry 引用它）。
                             // collector 不在时 Envoy 只丢 span，不影响流量
                             "meshConfig", Map.of(

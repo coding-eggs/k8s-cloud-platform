@@ -485,6 +485,19 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void istioIstiodEnablesAlphaGatewayApiForTcpRoutes() {
+        // TCPRoute / TLSRoute / UDPRoute 在 Istio 里属于 alpha：不开这个开关，Gateway 里的 TCP listener
+        // 会被 istiod 判 UnsupportedProtocol（Accepted=False），Envoy 根本不监听那个端口，
+        // 节点侧看到的就是 nodePort 连接被拒（2026-10-26 真集群实锤：milvus 19530）。
+        var istiod = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .filter(r -> r.releaseName().equals("istiod")).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pilot = (Map<String, Object>) istiod.contractValues().get("pilot");
+        assertThat((Map<String, Object>) pilot.get("env"))
+                .containsEntry("PILOT_ENABLE_ALPHA_GATEWAY_API", "true");
+    }
+
+    @Test
     void externalGatewayExposesServiceTypeAndPortsAsEditableValues() {
         // 对外入口的 Service 必须可配：默认 LoadBalancer + 80/443/15021；
         // 端口列表写进 recipe 默认值意味着每次重放都显式声明整组端口（Helm 的 list 是整体替换）

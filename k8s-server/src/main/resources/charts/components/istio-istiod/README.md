@@ -7,6 +7,7 @@
 ## 契约与可编辑项（摘要）
 
 - 契约：`global.meshID=platform-mesh`、`pilot.env.PILOT_ENABLE_AMBIENT=true`、
+  `pilot.env.PILOT_ENABLE_ALPHA_GATEWAY_API=true`（TCP/TLS/UDP Route 的前提）、
   `meshConfig.enableTracing=true` + `extensionProviders[platform-otel]`、不设 `revision`；
 - 可编辑：`replicaCount` / `autoscaleEnabled` / `resources`；
 - `meshID` 与 `revision` **有意不进表单**（前者破坏性、后者与平台"重放即升级"冲突）。
