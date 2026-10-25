@@ -33,6 +33,15 @@ public class ComponentStatusDTO {
      */
     private List<String> availableVersions;
     /**
+     * **当前已装**的 chart 版本（组件本体 = 主 release），取自该组件最近一次**成功**操作记录的
+     * {@code toVersion}；没有记录（外部安装 / 从未操作）→ null。
+     *
+     * <p>⚠️ 与 {@link #availableVersions} 是两件事：前者是"现在装着什么"（页面「版本 → chart」行），
+     * 后者是"平台能装什么"（升级按钮的目标）。recipe 升版后，一个还没重放的集群必须继续显示旧版本 ——
+     * 否则用户会以为已经升过了（2026-10-26 用户指出）。
+     */
+    private String installedChartVersion;
+    /**
      * 组件包含的**每一个 release** 的 chart / 应用版本（含主 release 标记）。
      * 单 release 组件只有一条；Istio 这类多 chart 安装单元按安装顺序列全。
      */

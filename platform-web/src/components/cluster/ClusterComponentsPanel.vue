@@ -102,31 +102,21 @@ function installable(row: K8sComponentStatus): boolean {
 }
 
 /**
- * 线上 chart 版本 —— 只有「平台装成功的最后一次操作」知道。
- * 最近一次操作失败时无法确定，按未知处理（此时允许升级重试）。
- */
-function installedChartVersion(code: string): string | null {
-  const op = props.operations[code]
-  return op && op.status === 'SUCCESS' ? (op.toVersion ?? null) : null
-}
-
-/**
- * 组件本体的 chart 版本 = 主 release 的版本（列表「chart」行显示它）。
+ * **已装**的 chart 版本（组件本体 = 主 release），后端从该组件最近一次**成功**操作记录里带出来。
+ * 没有记录（外部安装 / 从未操作）→ null，页面显示「—」。
  *
- * <p>为什么不直接用操作记录的 {@code toVersion}：存量记录可能记着历史错误版本
- * （Istio 曾把 Gateway API 的 1.6.2 记成组件版本，2026-10-20 用户指出）。
- * 没有平台操作记录（外部安装 / 从未操作）→ null，照旧显示「—」。
- * 升级判定仍用 {@link installedChartVersion}（记录里的真实安装版本）。
+ * <p>⚠️ 不要用 {@code row.releases} 顶替：那是 recipe 的**平台内置**版本，回答的是"能装什么"。
+ * recipe 升到 1.31.3 之后，一个还停在 1.30.6 的集群若照它显示，用户会以为已经升过了
+ * —— 2026-10-26 用户就是这么被误导的（这条原本为了绕开一条脏记录才读 recipe，方向反了）。
+ * 脏记录（历史 bug 把随附 chart 的版本记成组件版本）由后端识别后返回 null。
  */
-function componentChartVersion(row: K8sComponentStatus): string | null {
-  if (!props.operations[row.code]) return null
-  const primary = row.releases?.find((r) => r.primary)
-  return primary?.chartVersion ?? installedChartVersion(row.code)
+function installedChartVersion(row: K8sComponentStatus): string | null {
+  return row.installedChartVersion ?? null
 }
 
-/** 可升级到的版本：recipe 里除当前版本之外的 —— 只有一个版本时不出现升级按钮 */
+/** 可升级到的版本：recipe 里除已装版本之外的 —— 只有一个版本时不出现升级按钮 */
 function upgradeTargets(row: K8sComponentStatus): string[] {
-  const current = installedChartVersion(row.code)
+  const current = installedChartVersion(row)
   return (row.availableVersions ?? []).filter((v) => v !== current)
 }
 
@@ -644,7 +634,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
-    version: versions[0] ?? '', versions, chartVersion: componentChartVersion(row) ?? '',
+    version: versions[0] ?? '', versions, chartVersion: installedChartVersion(row) ?? '',
     fields, values, jsonText, portRows, initial,
     showWebhook: !!row.platformAlerting,
     webhookUrl: webhookInitial,
@@ -1017,7 +1007,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <span class="cc-ver-head">
             版本
             <el-tooltip placement="top"
-                        content="应用 version 来自集群探测（镜像 tag / 版本标签）；chart 是组件本体（主 release）的 chart 版本。kube-prometheus-stack 这类 chart 版本与应用版本是两套编号；多 chart 组件点「N 个 chart」看逐项版本">
+                        content="应用 version 来自集群探测（镜像 tag / 版本标签）；chart 是已装的 chart 版本（组件本体 / 主 release，取最近一次成功记录，不是平台内置的版本）。kube-prometheus-stack 这类 chart 版本与应用版本是两套编号；多 chart 组件点「N 个 chart」看逐项版本">
               <el-icon class="cc-ver-help"><QuestionFilled /></el-icon>
             </el-tooltip>
           </span>
@@ -1032,11 +1022,11 @@ const anyUnknown = computed(() => unknownCount.value > 0)
             </span>
             <span class="cc-ver-line">
               <span class="cc-ver-kind">chart</span>
-              <el-tooltip v-if="!componentChartVersion(row)" placement="top"
-                          content="非平台安装，或最近一次操作未成功——chart 版本无从得知">
+              <el-tooltip v-if="!installedChartVersion(row)" placement="top"
+                          content="非平台安装，或没有成功记录——已装的 chart 版本无从得知">
                 <code class="mono cc-ver-unknown">—</code>
               </el-tooltip>
-              <code v-else class="mono">{{ componentChartVersion(row) }}</code>
+              <code v-else class="mono">{{ installedChartVersion(row) }}</code>
             </span>
             <!-- 多 chart 组件（Istio 六个、Prometheus 管理集群两个）逐个声明版本 -->
             <span v-if="(row.releases?.length ?? 0) > 1" class="cc-ver-line">

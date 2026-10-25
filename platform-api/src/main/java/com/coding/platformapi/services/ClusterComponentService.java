@@ -224,6 +224,8 @@ public class ClusterComponentService {
             if (op == null) {
                 continue;
             }
+            // 「版本 → chart」显示已装版本（这条记录的 toVersion），不是 recipe 的当前版本
+            s.setInstalledChartVersion(installedChartVersionOf(recipes.recipeOf(s.getCode(), profile), op));
             Map<String, Object> snapshot = parseSnapshot(op.getValuesSnapshot());
             Map<String, Object> platform = platformOf(snapshot);
             if (s.isPlatformAlerting() && platform.get("alertWebhookUrl") instanceof String url) {
@@ -249,6 +251,29 @@ public class ClusterComponentService {
             }
             applyCurrentEditableValues(s, snapshot, profile);
         }
+    }
+
+    /**
+     * 已装 chart 版本 = 最近一次成功操作记的 {@code toVersion}；只有一处例外：
+     * 那个值与**随附 release** 的 chart 版本恰好相同、又不是主 release 的版本 —— 这是历史 bug 的形状
+     * （2026-10-20 前 Istio 的 toVersion 记的是第一个 release = Gateway API 的 1.6.2，用户当场指出）。
+     * 这种记录按"未知"处理（页面显示「—」），不能把别的 chart 的版本号冒充成组件版本。
+     *
+     * <p>升级后旧版本（如 1.30.6）不在 recipe 里了，属于正常情况：只要它不等于任何一个随附 release 的
+     * 版本，就照实显示 —— 否则用户看不出这个小版本跟平台内置版本的差别。
+     */
+    private static String installedChartVersionOf(ComponentRecipe recipe, PlatformComponentOperation op) {
+        String recorded = op.getToVersion();
+        if (recipe == null || recipe.releases().isEmpty() || recorded == null || recorded.isBlank()) {
+            return recorded;
+        }
+        if (recorded.equals(ReleaseSpec.primaryChartVersion(recipe.releases()))) {
+            return recorded;
+        }
+        boolean looksLikeAnotherChart = recipe.releases().stream()
+                .filter(r -> !r.primary())
+                .anyMatch(r -> recorded.equals(r.chartVersion()));
+        return looksLikeAnotherChart ? null : recorded;
     }
 
     /**

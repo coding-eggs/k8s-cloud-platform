@@ -977,6 +977,11 @@ export interface K8sComponentStatus {
   features: string[]
   /** 平台可安装的 chart 版本（空 = 没有 recipe，不支持安装）；⚠️ chart 版本，与上面 version 不是一套编号 */
   availableVersions?: string[]
+  /**
+   * **已装**的 chart 版本（组件本体 = 主 release），来自最近一次成功操作记录；
+   * 无记录 / 记录是历史脏数据 → 空。「版本 → chart」行显示它，不是 availableVersions。
+   */
+  installedChartVersion?: string | null
   /** 组件包含的每个 release 的 chart / 应用版本（单 release 组件只有一条；Istio 六个） */
   releases?: K8sComponentRelease[]
   /** 可编辑配置项（⚙️，来自 recipe）；契约值（🔒）不在其中 */

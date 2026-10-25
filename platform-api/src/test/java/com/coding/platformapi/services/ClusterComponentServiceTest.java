@@ -364,6 +364,55 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void theInstalledChartVersionComesFromTheLastSuccessNotTheRecipe() {
+        // 集群组件页「版本 → chart」显示的是**已装**版本（最近一次成功操作记的 toVersion），
+        // 不是 recipe 里"现在能装"的版本。recipe 升到 1.31.3 之后，一个还停在 1.30.6 的集群
+        // 若显示成 1.31.3，用户会以为已经升过了（2026-10-26 用户指出这条读错了）。
+        PlatformComponentOperation op = new PlatformComponentOperation();
+        op.setComponentCode("istio");
+        op.setStatus("SUCCESS");
+        op.setToVersion("1.30.6");
+        PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
+
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService business = mock(ClusterService.class);
+        when(business.requireProfile("c1")).thenReturn("BUSINESS");
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), business,
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        var istio = find(svc.status("c1"), "istio");
+
+        assertThat(istio.getInstalledChartVersion()).isEqualTo("1.30.6");
+        assertThat(istio.getAvailableVersions()).containsExactly("1.31.3");
+    }
+
+    @Test
+    void aRecordedVersionThatBelongsToAnotherChartIsReportedAsUnknown() {
+        // 存量脏数据：2026-10-20 之前 Istio 的 toVersion 记的是第一个 release（Gateway API 的 1.6.2）。
+        // 这种值与组件无关，不能冒充成「已装 chart 版本」——返回 null（页面显示「—」），
+        // 等下次重放写入正确的值。
+        PlatformComponentOperation op = new PlatformComponentOperation();
+        op.setComponentCode("istio");
+        op.setStatus("SUCCESS");
+        op.setToVersion("1.6.2");
+        PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
+
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService business = mock(ClusterService.class);
+        when(business.requireProfile("c1")).thenReturn("BUSINESS");
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), business,
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        assertThat(find(svc.status("c1"), "istio").getInstalledChartVersion()).isNull();
+    }
+
+    @Test
     void externalGatewayServiceTypeAndPortsGetDedicatedWidgets() {
         // Service 类型走下拉（不是自由文本）；端口列表走表格编辑器（不是 JSON 文本域）
         ClusterComponentService svc = svc(List.of());
