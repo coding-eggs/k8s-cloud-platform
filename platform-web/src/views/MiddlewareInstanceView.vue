@@ -17,8 +17,8 @@ import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/ty
 
 const perm = usePermission()
 const router = useRouter()
-// 租户作用域直接取顶栏（资源上下文）：列表可见范围与代操作身份都跟着它
-const { tenantId, ensure: ensureTenant } = useMiddlewareTenant()
+// 租户/集群作用域直接取顶栏（资源上下文）：列表可见范围、代操作身份、按哪个集群查都跟着它
+const { tenantId, clusterId: ctxClusterId, setCluster, ensure: ensureTenant } = useMiddlewareTenant()
 
 const clusters = ref<K8sCluster[]>([])
 const clusterId = ref('')
@@ -27,6 +27,8 @@ const instances = ref<MiddlewareInstance[]>([])
 /** 类型过滤（空 = 全部）：按类型查，避免一次把所有类型的实时状态都拉一遍 */
 const code = ref('')
 const loading = ref(false)
+/** 首轮加载完成前不响应顶栏变化（onMounted 自己会按上下文加载一次） */
+const ready = ref(false)
 
 const STATUS_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
   CREATING: { label: '创建中', type: 'warning' },
@@ -43,8 +45,23 @@ function nameOf(itemCode: string): string {
 // ---------------- 列表 ----------------
 async function loadClusters(): Promise<void> {
   clusters.value = await loadMiddlewareClusters(perm.isAdmin)
+  // 顶栏已经选了集群就用它（中间件的「当前集群」跟顶栏是同一个值）
+  const preferred = ctxClusterId.value
+  if (preferred && clusters.value.some((c) => c.clusterId === preferred)) {
+    clusterId.value = preferred
+    return
+  }
   const firstEnabled = clusters.value.find((c) => c.enabled === 1)
   clusterId.value = firstEnabled?.clusterId ?? clusters.value[0]?.clusterId ?? ''
+}
+
+/** 页面上的集群下拉只是顶栏的另一个入口：写回上下文，由 watch 统一重查 */
+function onClusterChange(id: string): void {
+  if (id === ctxClusterId.value) {
+    void refresh()
+    return
+  }
+  setCluster(id)
 }
 
 /** 目录只用来把 code 翻成名字、以及「类型」下拉的选项，跟着集群走 */
@@ -69,6 +86,11 @@ async function refresh(): Promise<void> {
   loading.value = true
   try {
     await Promise.all([loadCatalog(), loadInstances()])
+  } catch {
+    // 切租户/集群后请求可能因归属或权限失败（http 层已弹提示）：
+    // 别把上一个视角的行留在屏幕上 —— 那既是「没刷新」的错觉，也是跨租户的数据残留
+    instances.value = []
+    catalog.value = []
   } finally {
     loading.value = false
   }
@@ -154,10 +176,19 @@ onMounted(async () => {
   await ensureTenant()
   await loadClusters()
   await refresh()
+  ready.value = true
 })
 
-// 顶栏切租户：当前列表是旧视角，重查
-watch(tenantId, () => void refresh())
+// 顶栏切租户或集群：先清掉旧视角的数据，再按新上下文重查。
+// ready 之前不响应：首轮 onMounted 自己会加载，否则 watch 会在集群列表还没到手时白查一次
+watch([tenantId, ctxClusterId], async ([, cid]) => {
+  if (!ready.value) return
+  instances.value = []
+  if (cid && clusters.value.some((c) => c.clusterId === cid)) {
+    clusterId.value = cid
+  }
+  await refresh()
+})
 
 onBeforeUnmount(() => {
   if (pollTimer.value !== null) window.clearTimeout(pollTimer.value)
@@ -172,7 +203,7 @@ onBeforeUnmount(() => {
         <p class="ph-desc">已创建的中间件实例：查看详情、修改规格、取连接方式、删除</p>
       </div>
       <div class="ph-actions">
-        <el-select v-model="clusterId" placeholder="选择集群" style="width: 220px" @change="refresh">
+        <el-select v-model="clusterId" placeholder="选择集群" style="width: 220px" @change="onClusterChange">
           <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
         </el-select>
         <el-button :disabled="!clusterId" @click="refresh">刷新</el-button>
