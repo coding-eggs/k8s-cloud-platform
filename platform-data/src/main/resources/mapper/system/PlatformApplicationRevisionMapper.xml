@@ -8,6 +8,7 @@
     <result column="revision"      jdbcType="INTEGER"     property="revision" />
     <result column="spec_json"     jdbcType="LONGVARCHAR" property="specJson" />
     <result column="resolved_json" jdbcType="LONGVARCHAR" property="resolvedJson" />
+    <result column="objects_json"  jdbcType="LONGVARCHAR" property="objectsJson" />
     <result column="manifest"      jdbcType="LONGVARCHAR" property="manifest" />
     <result column="status"        jdbcType="VARCHAR"     property="status" />
     <result column="message"       jdbcType="VARCHAR"     property="message" />
@@ -16,16 +17,17 @@
   </resultMap>
 
   <sql id="Base_Column_List">
-    id, app_id, revision, spec_json, resolved_json, manifest, `status`, message, created_by, created_at
+    id, app_id, revision, spec_json, resolved_json, objects_json, manifest, `status`, message, created_by, created_at
   </sql>
 
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformApplicationRevision"
           useGeneratedKeys="true" keyProperty="id">
     insert into platform_application_revision
-      (app_id, revision, spec_json, resolved_json, manifest, `status`, message, created_by, created_at)
+      (app_id, revision, spec_json, resolved_json, objects_json, manifest, `status`, message, created_by, created_at)
     values
       (#{appId,jdbcType=VARCHAR}, #{revision,jdbcType=INTEGER}, #{specJson,jdbcType=LONGVARCHAR},
-       #{resolvedJson,jdbcType=LONGVARCHAR}, #{manifest,jdbcType=LONGVARCHAR}, #{status,jdbcType=VARCHAR},
+       #{resolvedJson,jdbcType=LONGVARCHAR}, #{objectsJson,jdbcType=LONGVARCHAR},
+       #{manifest,jdbcType=LONGVARCHAR}, #{status,jdbcType=VARCHAR},
        #{message,jdbcType=VARCHAR}, #{createdBy,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP})
   </insert>
 
@@ -34,6 +36,7 @@
     <set>
       <if test="specJson != null">spec_json = #{specJson,jdbcType=LONGVARCHAR},</if>
       <if test="resolvedJson != null">resolved_json = #{resolvedJson,jdbcType=LONGVARCHAR},</if>
+      <if test="objectsJson != null">objects_json = #{objectsJson,jdbcType=LONGVARCHAR},</if>
       <if test="manifest != null">manifest = #{manifest,jdbcType=LONGVARCHAR},</if>
       <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
       <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>

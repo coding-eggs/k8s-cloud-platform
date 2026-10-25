@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS platform_application_revision (
   revision      int          NOT NULL,
   spec_json     MEDIUMTEXT   NOT NULL,
   resolved_json MEDIUMTEXT   NULL COMMENT '解析后的注入上下文（不含任何密码明文）',
+  objects_json  MEDIUMTEXT   NULL COMMENT '渲染出的对象清单（JSON，供 apply/prune/健康检查复用）',
   manifest      MEDIUMTEXT   NULL COMMENT '渲染后的多文档 YAML',
   status        varchar(16)  NOT NULL DEFAULT 'RENDERED' COMMENT 'RENDERED / DEPLOYED / FAILED',
   message       varchar(1024) NULL,

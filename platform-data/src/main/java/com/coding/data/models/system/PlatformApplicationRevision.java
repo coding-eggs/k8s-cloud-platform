@@ -19,6 +19,9 @@ public class PlatformApplicationRevision {
     /** 解析后的注入上下文（不含任何密码明文） */
     private String resolvedJson;
 
+    /** 渲染出的对象清单（JSON）；platform-api 不解析 YAML，apply/prune/健康检查都读它 */
+    private String objectsJson;
+
     /** 渲染出的多文档 YAML；续跑时直接复用，不重复渲染 */
     private String manifest;
 
