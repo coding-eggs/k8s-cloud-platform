@@ -10,6 +10,7 @@ import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import type { Connection, Edge, Node, NodeChange } from '@vue-flow/core'
 import { applicationApi, middlewareApi } from '@/api'
+import { useApplicationContext } from '@/composables/useApplicationContext'
 import type {
   ApplicationOperation,
   ApplicationOptions,
@@ -42,6 +43,7 @@ interface FlowEdgeView {
 
 const route = useRoute()
 const router = useRouter()
+const { tenantId, ensure } = useApplicationContext()
 const { fitView } = useVueFlow()
 
 const app = ref<ApplicationView>()
@@ -162,7 +164,8 @@ function toSpec(): AppSpec {
 }
 
 async function load() {
-  app.value = await applicationApi.get(appId.value)
+  await ensure()
+  app.value = await applicationApi.get(appId.value, tenantId.value)
   options.value = await applicationApi.options(app.value.clusterId)
   loadMiddlewareOptions()
   nodes.value = app.value.spec.nodes.map((n, i) => ({
@@ -191,7 +194,9 @@ async function loadMiddlewareOptions() {
 async function save(): Promise<boolean> {
   saving.value = true
   try {
-    app.value = await applicationApi.update({ appId: appId.value, spec: toSpec() })
+    app.value = await applicationApi.update({
+      appId: appId.value, spec: toSpec(), tenantId: tenantId.value,
+    })
     ElMessage.success('已保存')
     return true
   } finally {
@@ -202,7 +207,9 @@ async function save(): Promise<boolean> {
 async function openPreview() {
   previewing.value = true
   try {
-    preview.value = await applicationApi.preview({ appId: appId.value, spec: toSpec() })
+    preview.value = await applicationApi.preview({
+      appId: appId.value, spec: toSpec(), tenantId: tenantId.value,
+    })
     previewVisible.value = true
   } finally {
     previewing.value = false
@@ -212,7 +219,7 @@ async function openPreview() {
 async function deploy() {
   if (!(await save())) return
   previewVisible.value = false
-  const operationId = await applicationApi.deploy({ appId: appId.value })
+  const operationId = await applicationApi.deploy({ appId: appId.value, tenantId: tenantId.value })
   drawerVisible.value = true
   poll(operationId)
 }
@@ -221,14 +228,14 @@ function poll(operationId: number) {
   window.clearInterval(timer)
   timer = window.setInterval(async () => {
     try {
-      const op = await applicationApi.operation(operationId)
+      const op = await applicationApi.operation(operationId, tenantId.value)
       operation.value = op
       applyNodeStates(op)
       if (op.status === 'SUCCESS' || op.status === 'FAILED') {
         window.clearInterval(timer)
         if (op.status === 'SUCCESS') {
           ElMessage.success('部署完成')
-          app.value = await applicationApi.get(appId.value)
+          app.value = await applicationApi.get(appId.value, tenantId.value)
         } else {
           ElMessage.error(`部署失败：${op.message ?? ''}`)
         }
@@ -257,7 +264,7 @@ function applyNodeStates(op: ApplicationOperation) {
 async function retry() {
   if (!operation.value) return
   const operationId = await applicationApi.deploy({
-    appId: appId.value, revision: operation.value.revision,
+    appId: appId.value, revision: operation.value.revision, tenantId: tenantId.value,
   })
   poll(operationId)
 }

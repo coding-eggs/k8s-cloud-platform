@@ -57,8 +57,9 @@ const router = createRouter({
         { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', group: '应用交付', requiresPerm: [pageCodes.app], context: 'full' } },
         { path: 'apps/:id', name: 'middleware-detail', component: () => import('@/views/MiddlewareDetailView.vue'), meta: { title: '中间件详情', group: '应用交付', requiresPerm: [pageCodes.app], context: 'full' } },
         // 应用编排（画布）：与中间件商店是两件事，页面码独立
-        { path: 'applications', name: 'applications', component: () => import('@/views/ApplicationListView.vue'), meta: { title: '应用编排', group: '应用交付', requiresPerm: [pageCodes.application] } },
-        { path: 'applications/:id', name: 'application-canvas', component: () => import('@/views/ApplicationCanvasView.vue'), meta: { title: '应用画布', group: '应用交付', requiresPerm: [pageCodes.application] } },
+        // context: 'full' → 顶栏出现租户/集群级联；应用归属租户，创建时由页面带上顶栏租户
+        { path: 'applications', name: 'applications', component: () => import('@/views/ApplicationListView.vue'), meta: { title: '应用编排', group: '应用交付', context: 'full', requiresPerm: [pageCodes.application] } },
+        { path: 'applications/:id', name: 'application-canvas', component: () => import('@/views/ApplicationCanvasView.vue'), meta: { title: '应用画布', group: '应用交付', context: 'full', requiresPerm: [pageCodes.application] } },
         // CI（流水线）：四个路由共用**一个**页面码 —— 列表/画布/运行历史/运行详情是同一件事的四步
         { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },
         { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', group: '资源管理', context: 'full', requiresPerm: [pageCodes.pipeline] } },

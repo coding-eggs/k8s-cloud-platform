@@ -1100,17 +1100,19 @@ export const applicationApi = {
   }) => http.post<never, ApplicationView>('/application/create', payload),
   update: (payload: {
     appId: string; name?: string; displayName?: string; description?: string; spec?: AppSpec
+    tenantId?: string
   }) => http.post<never, ApplicationView>('/application/update', payload),
-  remove: (appId: string) => http.post<never, void>('/application/delete', { appId }),
+  remove: (appId: string, tenantId?: string) =>
+    http.post<never, void>('/application/delete', { appId, tenantId }),
   preview: (payload: { appId: string; spec?: AppSpec; tenantId?: string }) =>
     http.post<never, ApplicationPreview>('/application/preview', payload),
-  deploy: (payload: { appId: string; revision?: number }) =>
+  deploy: (payload: { appId: string; revision?: number; tenantId?: string }) =>
     http.post<never, number>('/application/deploy', payload),
-  operation: (operationId: number) =>
-    http.post<never, ApplicationOperation>('/application/operation/get', { operationId }),
-  revisions: (appId: string) =>
+  operation: (operationId: number, tenantId?: string) =>
+    http.post<never, ApplicationOperation>('/application/operation/get', { operationId, tenantId }),
+  revisions: (appId: string, tenantId?: string) =>
     http.post<never, Array<{ revision: number; status: string; message?: string; createdAt?: string }>>(
-      '/application/revision/list', { appId }),
+      '/application/revision/list', { appId, tenantId }),
   options: (clusterId: string, tenantId?: string) =>
     http.post<never, ApplicationOptions>('/application/options', { clusterId, tenantId }),
 }

@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applicationApi, clusterApi } from '@/api'
+import { useApplicationContext } from '@/composables/useApplicationContext'
 import type { ApplicationOptions, ApplicationView, K8sClusterOption } from '@/types'
 
 const router = useRouter()
 
+const { tenantId, clusterId, setCluster, ensure } = useApplicationContext()
 const clusters = ref<K8sClusterOption[]>([])
-const clusterId = ref('')
+/** 下拉框的本地值：跟随顶栏，改了写回顶栏（与中间件页同一套） */
+const selectedCluster = ref('')
 const apps = ref<ApplicationView[]>([])
 const loading = ref(false)
 const options = ref<ApplicationOptions>({ nodeKinds: [], namespaces: [] })
@@ -29,25 +32,39 @@ const canCreate = computed(() => !!clusterId.value && !!form.value.name.trim()
 
 async function loadClusters() {
   clusters.value = await clusterApi.options()
-  const first = clusters.value[0]
-  if (!clusterId.value && first) {
-    clusterId.value = first.clusterId
-  }
+  selectedCluster.value = clusterId.value ?? ''
+}
+
+function onClusterChange(id: string) {
+  selectedCluster.value = id
+  setCluster(id)
 }
 
 async function load() {
-  if (!clusterId.value) return
+  if (!clusterId.value) {
+    apps.value = []
+    return
+  }
   loading.value = true
   try {
-    apps.value = await applicationApi.list(clusterId.value)
+    apps.value = await applicationApi.list(clusterId.value, tenantId.value)
   } finally {
     loading.value = false
   }
 }
 
 async function openCreate() {
+  if (!tenantId.value) {
+    ElMessage.warning('请先在顶栏选择租户：应用归属租户')
+    return
+  }
+  const cid = clusterId.value
+  if (!cid) {
+    ElMessage.warning('请先在顶栏选择集群')
+    return
+  }
   form.value = { name: '', namespace: '', displayName: '', description: '' }
-  options.value = await applicationApi.options(clusterId.value)
+  options.value = await applicationApi.options(cid, tenantId.value)
   const only = options.value.namespaces[0]
   if (options.value.namespaces.length === 1 && only) {
     form.value.namespace = only
@@ -60,14 +77,20 @@ async function create() {
     ElMessage.warning('请填写应用名并选择命名空间')
     return
   }
+  const cid = clusterId.value
+  if (!cid) {
+    ElMessage.warning('请先在顶栏选择集群')
+    return
+  }
   creating.value = true
   try {
     const created = await applicationApi.create({
-      clusterId: clusterId.value,
+      clusterId: cid,
       namespace: form.value.namespace,
       name: form.value.name.trim(),
       displayName: form.value.displayName || undefined,
       description: form.value.description || undefined,
+      tenantId: tenantId.value,
       spec: { namespace: form.value.namespace, nodes: [], edges: [] },
     })
     dialogVisible.value = false
@@ -83,7 +106,7 @@ async function remove(row: ApplicationView) {
     '删除应用',
     { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
   )
-  await applicationApi.remove(row.id)
+  await applicationApi.remove(row.id, tenantId.value)
   ElMessage.success('已删除')
   await load()
 }
@@ -92,7 +115,12 @@ function openCanvas(row: ApplicationView) {
   router.push(`/applications/${row.id}`)
 }
 
+watch([tenantId, clusterId], () => {
+  load()
+})
+
 onMounted(async () => {
+  await ensure()
   await loadClusters()
   await load()
 })
@@ -106,7 +134,12 @@ onMounted(async () => {
         <p class="page__hint">在一张画布上组合服务与后台进程，平台生成资源并分阶段部署。</p>
       </div>
       <div class="page__actions">
-        <el-select v-model="clusterId" placeholder="选择集群" style="width: 200px" @change="load">
+        <el-select
+          :model-value="selectedCluster"
+          placeholder="选择集群"
+          style="width: 200px"
+          @update:model-value="onClusterChange"
+        >
           <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
         </el-select>
         <el-button type="primary" :disabled="!clusterId" @click="openCreate">新建应用</el-button>
