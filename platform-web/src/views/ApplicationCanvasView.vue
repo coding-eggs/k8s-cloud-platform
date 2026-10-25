@@ -1,14 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { VueFlow, useVueFlow } from '@vue-flow/core'
-import { Background } from '@vue-flow/background'
-import { Controls } from '@vue-flow/controls'
-import '@vue-flow/core/dist/style.css'
-import '@vue-flow/core/dist/theme-default.css'
-import '@vue-flow/controls/dist/style.css'
-import type { Connection, Edge, Node, NodeChange } from '@vue-flow/core'
+import type { Connection, Edge, EdgeChange, Node, NodeChange } from '@vue-flow/core'
 import { applicationApi, middlewareApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
 import type {
@@ -22,7 +16,9 @@ import type {
   MiddlewareCatalogItem,
   MiddlewareInstance,
 } from '@/types'
-import AppNodeCard from '@/components/app-canvas/AppNodeCard.vue'
+import AppCanvas from '@/components/app-canvas/AppCanvas.vue'
+import { layeredLayout } from '@/components/app-canvas/appCanvasLayout'
+import type { Point } from '@/components/app-canvas/appCanvasLayout'
 import AppNodeInspector from '@/components/app-canvas/AppNodeInspector.vue'
 import AppDeployDrawer from '@/components/app-canvas/AppDeployDrawer.vue'
 import YamlBlock from '@/components/YamlBlock.vue'
@@ -31,6 +27,8 @@ import YamlBlock from '@/components/YamlBlock.vue'
 interface FlowNodeView {
   id: string
   type: string
+  /** false = Delete 键不会删节点（移除节点走检查器的确认框） */
+  deletable: boolean
   position: { x: number; y: number }
   data: { key: string; kind: AppNodeKind; params: Record<string, unknown>; state?: string }
 }
@@ -44,7 +42,6 @@ interface FlowEdgeView {
 const route = useRoute()
 const router = useRouter()
 const { tenantId, ensure } = useApplicationContext()
-const { fitView } = useVueFlow()
 
 const app = ref<ApplicationView>()
 const options = ref<ApplicationOptions>({ nodeKinds: [], namespaces: [] })
@@ -52,6 +49,9 @@ const middlewareCatalog = ref<MiddlewareCatalogItem[]>([])
 const middlewareInstances = ref<MiddlewareInstance[]>([])
 const nodes = ref<FlowNodeView[]>([])
 const edges = ref<FlowEdgeView[]>([])
+/** 用户手拖过的节点坐标（钉住）。没钉的节点每次都按依赖自动分层，图一改就重新排齐。 */
+const pins = ref<Record<string, Point>>({})
+const canvasRef = ref<InstanceType<typeof AppCanvas>>()
 const selectedKey = ref('')
 const saving = ref(false)
 
@@ -70,6 +70,13 @@ const hasBlockingProblem = computed(() =>
   (preview.value?.problems ?? []).some((p) => p.severity === 'ERROR'))
 
 const appId = computed(() => String(route.params.id || ''))
+
+const legend = [
+  { name: '服务', color: '#3b7dd8' },
+  { name: '后台进程', color: '#7a5af5' },
+  { name: '中间件', color: '#23925f' },
+  { name: '外部服务', color: '#d9822b' },
+]
 
 function defaultParams(kind: AppNodeKind): Record<string, unknown> {
   if (kind === 'MIDDLEWARE') {
@@ -93,19 +100,49 @@ function nextKey(kind: AppNodeKind): string {
   return `${base}-${i}`
 }
 
-function layout(index: number) {
-  return { x: 80 + (index % 4) * 220, y: 60 + Math.floor(index / 4) * 150 }
+/** 画布坐标 = 按依赖分层 + 手工钉住的位置（钉住的优先） */
+function relayout() {
+  const auto = layeredLayout(
+    nodes.value.map((n) => ({ key: n.id, kind: n.data.kind })),
+    edges.value.map((e) => ({ from: e.source, to: e.target })),
+  )
+  nodes.value = nodes.value.map((n) => {
+    const pinned = pins.value[n.id]
+    const position: Point = pinned ? { x: pinned.x, y: pinned.y } : (auto[n.id] ?? n.position)
+    return { ...n, position }
+  })
 }
 
 function addNode(kind: AppNodeKind) {
   const key = nextKey(kind)
-  nodes.value.push({
+  nodes.value = [...nodes.value, {
     id: key,
     type: 'app',
-    position: layout(nodes.value.length),
+    deletable: false,
+    position: { x: 0, y: 0 },
     data: { key, kind, params: defaultParams(kind) },
-  })
+  }]
   selectedKey.value = key
+  relayout()
+}
+
+/** 清掉所有手工位置，按当前依赖重新排一遍 */
+function autoArrange() {
+  pins.value = {}
+  relayout()
+  nextTick(() => canvasRef.value?.fit())
+}
+
+/** 从草稿里读回上次保存的坐标；形状不对就当作没有，别让一个脏值把画布画坏 */
+function savedPins(spec: AppSpec | undefined): Record<string, Point> {
+  const raw = spec?.settings?.layout
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, Point> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const p = value as { x?: unknown; y?: unknown } | null
+    if (p && typeof p.x === 'number' && typeof p.y === 'number') out[key] = { x: p.x, y: p.y }
+  }
+  return out
 }
 
 function onConnect(connection: Connection) {
@@ -120,25 +157,35 @@ function onConnect(connection: Connection) {
   }
   const id = `${connection.source}->${connection.target}`
   if (edges.value.some((e) => e.id === id)) return
-  // smoothstep：默认贝塞尔在两个节点高度相近时会绕出大圈，看起来像连错了
-  edges.value.push({ id, source: connection.source!, target: connection.target!, type: 'smoothstep' })
+  edges.value = [...edges.value, { id, source: connection.source!, target: connection.target!, type: 'smoothstep' }]
+  // 依赖变了就重排：新连线两端的层级可能要挪，用户钉住的节点不动
+  relayout()
 }
 
 /**
- * 拖动位置只保存在本数组里（不落 spec，刷新按网格重排）。
- * 必须收这个事件：否则每次状态轮询把 props 打回去时，节点会被拽回初始位置。
+ * 拖动会把这个节点钉住（写进 spec.settings.layout），之后结构变化也不再挪它。
+ * 只认带 dragging 标记的位置变化：relayout 自己写坐标时不该反过来把节点全钉死。
  */
 function onNodesChange(changes: NodeChange[]) {
   for (const c of changes) {
-    if (c.type === 'position' && c.position) {
-      const node = nodes.value.find((n) => n.id === c.id)
-      if (node) node.position = { ...c.position }
-    }
+    if (c.type !== 'position' || !c.position || c.dragging === undefined) continue
+    const node = nodes.value.find((n) => n.id === c.id)
+    if (!node) continue
+    node.position = { ...c.position }
+    pins.value = { ...pins.value, [c.id]: { ...c.position } }
   }
 }
 
-function onNodeClick(payload: { node: Node }) {
-  selectedKey.value = payload.node.id
+/** 选中边按 Delete 删除：:edges 是单向绑定，得自己把数组同步回来，否则那边又冒出来 */
+function onEdgesChange(changes: EdgeChange[]) {
+  const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id)
+  if (!removed.length) return
+  edges.value = edges.value.filter((e) => !removed.includes(e.id))
+  relayout()
+}
+
+function onNodeClick(node: Node) {
+  selectedKey.value = node.id
 }
 
 function updateParams(key: string, params: Record<string, unknown>) {
@@ -151,13 +198,18 @@ async function removeNode(key: string) {
     '移除节点', { type: 'warning' })
   nodes.value = nodes.value.filter((n) => n.id !== key)
   edges.value = edges.value.filter((e) => e.source !== key && e.target !== key)
+  const next = { ...pins.value }
+  delete next[key]
+  pins.value = next
   if (selectedKey.value === key) selectedKey.value = ''
+  relayout()
 }
 
 function toSpec(): AppSpec {
   return {
     namespace: app.value!.namespace,
-    settings: {},
+    // settings 里的其它键原样带回；layout 存的是用户钉住的坐标，不参与渲染和部署
+    settings: { ...(app.value?.spec.settings ?? {}), layout: pins.value },
     nodes: nodes.value.map<AppNode>((n) => ({ key: n.id, kind: n.data.kind, params: n.data.params })),
     edges: edges.value.map((e) => ({ from: e.source, to: e.target })),
   }
@@ -168,15 +220,22 @@ async function load() {
   app.value = await applicationApi.get(appId.value, tenantId.value)
   options.value = await applicationApi.options(app.value.clusterId)
   loadMiddlewareOptions()
-  nodes.value = app.value.spec.nodes.map((n, i) => ({
+  const spec = app.value.spec
+  const specNodes = spec.nodes ?? []
+  const specEdges = spec.edges ?? []
+  pins.value = savedPins(spec)
+  nodes.value = specNodes.map((n) => ({
     id: n.key,
     type: 'app',
-    position: layout(i),
+    deletable: false,
+    position: { x: 0, y: 0 },
     data: { key: n.key, kind: n.kind, params: n.params ?? {}, state: 'PENDING' },
   }))
-  edges.value = (app.value.spec.edges ?? []).map((e) => ({
+  edges.value = specEdges.map((e) => ({
     id: `${e.from}->${e.to}`, source: e.from, target: e.to, type: 'smoothstep',
   }))
+  // 没有钉住记录的节点按依赖自动落位
+  relayout()
 }
 
 async function loadMiddlewareOptions() {
@@ -283,6 +342,7 @@ onUnmounted(() => window.clearInterval(timer))
         <el-tag effect="plain" size="small" type="info">v{{ app.currentRevision }}</el-tag>
       </div>
       <div class="canvas-page__actions">
+        <el-button @click="autoArrange">自动整理</el-button>
         <el-button :loading="saving" @click="save">保存</el-button>
         <el-button :loading="previewing" @click="openPreview">预览</el-button>
         <el-button type="primary" @click="deploy">部署</el-button>
@@ -303,30 +363,29 @@ onUnmounted(() => window.clearInterval(timer))
             <div class="palette__desc">{{ k.description }}</div>
           </div>
         </el-button>
+
+        <div class="legend">
+          <div class="legend__title">图例</div>
+          <div v-for="l in legend" :key="l.name" class="legend__item">
+            <span class="legend__dot" :style="{ background: l.color }" />
+            {{ l.name }}
+          </div>
+          <p class="legend__hint">箭头从使用者指向被使用的资源；虚线框表示资源在集群外。</p>
+        </div>
       </aside>
 
       <div class="canvas">
-        <VueFlow
+        <AppCanvas
+          ref="canvasRef"
           :nodes="flowNodes"
           :edges="flowEdges"
-          :delete-key-code="null"
-          fit-view-on-init
+          :selected-key="selectedKey"
+          :empty="!nodes.length"
           @connect="onConnect"
           @node-click="onNodeClick"
           @nodes-change="onNodesChange"
-        >
-          <template #node-app="nodeProps">
-            <AppNodeCard
-              :data="nodeProps.data"
-              :selected="nodeProps.id === selectedKey"
-            />
-          </template>
-          <Background :gap="18" :size="1.4" />
-          <Controls position="bottom-left" />
-        </VueFlow>
-        <div v-if="!nodes.length" class="canvas__empty">
-          从左侧添加节点开始画：拖一条线表示「谁使用谁」。
-        </div>
+          @edges-change="onEdgesChange"
+        />
       </div>
 
       <aside v-if="selectedNode" class="inspector-pane">
@@ -440,19 +499,35 @@ onUnmounted(() => window.clearInterval(timer))
 }
 .canvas {
   position: relative;
-  border: 1px solid var(--el-border-color);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--el-fill-color-lighter);
+  min-width: 0;
 }
-.canvas__empty {
-  position: absolute;
-  inset: 0;
+.legend {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.legend__title {
+  margin-bottom: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.legend__item {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: var(--el-text-color-secondary);
-  pointer-events: none;
+  gap: 6px;
+  height: 20px;
+  font-size: 12px;
+}
+.legend__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.legend__hint {
+  margin: 6px 0 0;
+  color: var(--el-text-color-placeholder);
+  font-size: 11px;
+  line-height: 1.5;
 }
 .inspector-pane {
   width: 340px;
