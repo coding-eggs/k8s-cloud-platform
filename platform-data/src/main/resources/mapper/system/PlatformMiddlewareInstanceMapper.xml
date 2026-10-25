@@ -15,6 +15,8 @@
     <result column="status"       jdbcType="VARCHAR"   property="status" />
     <result column="message"      jdbcType="VARCHAR"   property="message" />
     <result column="tenant_id"    jdbcType="VARCHAR"   property="tenantId" />
+    <result column="app_id"       jdbcType="VARCHAR"   property="appId" />
+    <result column="app_node_id"  jdbcType="VARCHAR"   property="appNodeId" />
     <result column="created_by"   jdbcType="VARCHAR"   property="createdBy" />
     <result column="created_at"   jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at"   jdbcType="TIMESTAMP" property="updatedAt" />
@@ -23,18 +25,18 @@
 
   <sql id="Base_Column_List">
     id, cluster_id, `namespace`, code, `mode`, `name`, display_name, `version`, spec_json,
-    `status`, message, tenant_id, created_by, created_at, updated_at, deleted_at
+    `status`, message, tenant_id, app_id, app_node_id, created_by, created_at, updated_at, deleted_at
   </sql>
 
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformMiddlewareInstance">
     insert into platform_middleware_instance (id, cluster_id, `namespace`, code, `mode`, `name`,
-      display_name, `version`, spec_json, `status`, message, tenant_id, created_by, created_at,
-      updated_at, deleted_at)
+      display_name, `version`, spec_json, `status`, message, tenant_id, app_id, app_node_id,
+      created_by, created_at, updated_at, deleted_at)
     values (#{id,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR}, #{namespace,jdbcType=VARCHAR},
       #{code,jdbcType=VARCHAR}, #{mode,jdbcType=VARCHAR}, #{name,jdbcType=VARCHAR},
       #{displayName,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR}, #{specJson,jdbcType=LONGVARCHAR},
       #{status,jdbcType=VARCHAR}, #{message,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR},
-      #{createdBy,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP},
+      #{appId,jdbcType=VARCHAR}, #{appNodeId,jdbcType=VARCHAR}, #{createdBy,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP},
       #{deletedAt,jdbcType=TIMESTAMP})
   </insert>
 

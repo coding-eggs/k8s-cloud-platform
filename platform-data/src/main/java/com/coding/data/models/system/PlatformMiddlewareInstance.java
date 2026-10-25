@@ -37,6 +37,12 @@ public class PlatformMiddlewareInstance {
 
     private String tenantId;
 
+    /** 创建它的应用（画布建的实例才有）；空 = 中间件商店直接建的 */
+    private String appId;
+
+    /** 应用里的节点 key */
+    private String appNodeId;
+
     private String createdBy;
 
     private Date createdAt;
