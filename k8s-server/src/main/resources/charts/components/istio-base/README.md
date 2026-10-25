@@ -3,7 +3,8 @@
 > **这是组件级 README（跨版本）**：平台怎么装、约定是什么、踩过哪些坑、加新版本要改哪里。
 > Istio 不是单个 chart：`gateway-api`、`istio-base`、`istio-istiod`、`istio-cni`、`istio-ztunnel`、
 > `istio-gateway` 六个 release 组成一个安装单元，本文放在 `istio-base` 下作为**组件总文档**。
-> 本次安装的 chart 版本与来源见版本目录：`<version>/README.md`（当前 `1.30.6/`；
+> 本次安装的 chart 版本与来源见版本目录：`<version>/README.md`（当前 `1.31.3/`；
+> `1.30.6/` 保留作历史记录，recipe 已不再引用；
 > 每个 chart 目录另有自己的 `provenance.yaml`）。
 
 ## 1. 概览
@@ -66,7 +67,7 @@ istiod 被删、CRD 残留时会把整个组件判成「已安装」。Gateway A
 |---|---|---|
 | `platform-gateway-api` | 无（experimental CRD chart，版本见版本目录） | TCP/TLS/UDP Route 只在 experimental 通道里 |
 | `istio-base` | 无（CRD 在 templates 里，走 `istio.labels`） | CRD 由 chart 自管理；Istio 官方推荐用模板升级 CRD |
-| `istiod` | `global.meshID=platform-mesh`；`pilot.env.PILOT_ENABLE_AMBIENT=true`；`meshConfig.defaultConfig.proxyMetadata.ISTIO_META_ENABLE_HBONE=true`；`meshConfig.enableTracing=true` + `extensionProviders[platform-otel]` 指向 `platform-otel-gateway-collector.monitor.svc:4317`；不设 `revision` | meshID 全局一致（装完再改是破坏性操作）；ambient 必须由 istiod 显式开启，否则 ztunnel 连 15012 被拒（§6）；HBONE metadata 给 waypoint（Envoy）；ingress/waypoint 的 `Telemetry` 引用该 provider；不做按 revision 的灰度 |
+| `istiod` | `global.meshID=platform-mesh`；`pilot.env.PILOT_ENABLE_AMBIENT=true`；`pilot.env.PILOT_ENABLE_ALPHA_GATEWAY_API=true`（1.30 的 TCP listener 门控；**1.31 起已是多余项**，留着只为回退）；`meshConfig.defaultConfig.proxyMetadata.ISTIO_META_ENABLE_HBONE=true`；`meshConfig.enableTracing=true` + `extensionProviders[platform-otel]` 指向 `platform-otel-gateway-collector.monitor.svc:4317`；不设 `revision` | meshID 全局一致（装完再改是破坏性操作）；ambient 必须由 istiod 显式开启，否则 ztunnel 连 15012 被拒（§6）；HBONE metadata 给 waypoint（Envoy）；ingress/waypoint 的 `Telemetry` 引用该 provider；不做按 revision 的灰度 |
 | `istio-cni` | `ambient.enabled=true` | 平台默认 ambient |
 | `ztunnel` | 无 | 由 cni/istiod 的 ambient 开关驱动 |
 | `external-gateway` | `name=external-gateway` | 集群对外入口名固定（网关对象、文档、平台 Telemetry 都按它引用） |
@@ -167,12 +168,12 @@ spec:
 - 已存在的 CR 会被这组 listeners **整体覆盖**（组件拥有它，以表单为准）。手工改 CR 只能在重放前生效；
 - Gateway API CRD 不存在时跳过（返回 false，不影响安装结果）；走 SSA，fieldManager 与其它平台对象一致；
 - **TCP / TLS / UDP listener 的版本差异（2026-10-26 核实）**：
-  - **1.30.x**（平台当前 1.30.6）：`TCP` listener 受 `PILOT_ENABLE_ALPHA_GATEWAY_API` 门控（recipe 已开）；
+  - **1.30.x**（平台曾钉 1.30.6）：`TCP` listener 受 `PILOT_ENABLE_ALPHA_GATEWAY_API` 门控；
     但 **TCPRoute 只认 `v1alpha2`** —— Gateway API 1.6 的 CRD 虽然同时提供 v1/v1alpha2，
     平台页面写的是 **v1**，1.30 的 controller 不监听 v1，所以 `attachedRoutes` 永远是 0。
-    要走这条路只能把 TCPRoute 建成 `gateway.networking.k8s.io/v1alpha2`。
-  - **1.31+**：`TCP` listener 不再受该开关控制，TCPRoute 直接消费 **v1**（`route_collections.go` 用 `gatewayv1.TCPRoute`），
-    开箱即用。**升级到 1.31 是 TCPRoute 的正解**。
+  - **1.31+**（平台当前钉 1.31.3）：`TCP` listener 不再受该开关控制，TCPRoute 直接消费 **v1**
+    （`route_collections.go` 用 `gatewayv1.TCPRoute`），开箱即用。**这就是升到 1.31 的原因**：
+    存量集群从 1.30 升级到 1.31 后，已存在的 v1 TCPRoute 会自动挂上，不必重建。
   - **UDPRoute：Istio 一直不支持**（1.31 的 `supported_features.go` 显式 `Delete(UDPRouteFeature)`，
     注释 "Istio does not support UDPRoute"），网关页面把它列为可选类型是误导。
   - **TLSRoute**：1.30 与 1.31 都用 **v1**（Gateway API 1.5 起 TLSRoute 转正），不受影响。
@@ -230,6 +231,12 @@ Gateway 列表的「状态」列就是 `Programmed` 条件：
   修法见 §3；**存量集群必须重放一次 Istio 组件**（istiod 滚动重启）listener 才会被接受。
   ⚠️ 后续核实：1.30.6 即使开了开关，也只监听 **v1alpha2** 的 TCPRoute（issue #60744 / PR #60766，只在 1.31 修），
   而平台页面创建的是 v1 —— 1.30 上要真正跑通需把 TCPRoute 建成 v1alpha2；正解是升到 1.31.x（见 §5.2）。
+- **2026-10-26**：recipe 升到 **Istio 1.31.3**（chart 入库在 `1.31.3/`，`1.30.6/` 保留但不再被引用）。
+  两件事必须知道：① **镜像 hub 变了** —— 1.31 的默认值从 `registry.istio.io/release` 换成
+  `docker.io/istio`，集群不能直连 Docker Hub 就会 istiod/ztunnel/install-cni 全部 ImagePullBackOff
+  （需要提前配镜像加速或代理）；② 1.31 起 TCPRoute 消费 **v1**，存量集群重放一次 Istio 后
+  Gateway 的 `attachedRoutes` 应从 0 变 1、Envoy 开始监听 19530（这正是本次升级的目的）。
+  Gateway API 不随升（Istio 1.31 的 go.mod 是 v1.6.0，平台入库的 CRD 是 1.6.2）。
 
 ## 7. 验证
 
@@ -288,6 +295,9 @@ kubectl -n istio-system get telemetry platform-tracing-ingress
 
 1. 分别拉取 `gateway-api` 与五个 Istio chart 的新版本，入库到各自 `<version>/chart/` + `provenance.yaml`，
    并在**版本目录**写 `<version>/README.md`（六个 chart 的版本表 + 来源 + 本版本变化）；
+   Istio 的 helm repo 是 **`https://blob.istio.io/istio-release/charts`**（308 → `istio-release.r2.istio.io`）——
+   旧地址 `https://istio-release.storage.googleapis.com/charts` 的 index 停在 `1.30.7`/`1.31.0-rc.0`，
+   取不到 1.31 稳定版（2026-10-26 实测）；
 2. `ComponentRecipeCatalog.ISTIO_RELEASES` 按 release 顺序更新版本；
    Gateway API 仍排第一；给新 release 补 `asPrimary()`（istiod）与 `withAppVersion(...)`；
 3. 检查 `extensionProviders` 的 schema（Istio 新版本可能改 API）；

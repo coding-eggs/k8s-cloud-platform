@@ -1,0 +1,10 @@
+source: https://github.com/istio/istio
+chart: cni
+version: 1.31.3
+appVersion: 1.31.3
+fetched_at: 2026-10-26
+fetch_command: curl -L https://blob.istio.io/istio-release/charts/cni-1.31.3.tgz
+digest: a505c3e41117eaf8f44e70e3d2ed786ae16db908e7219dd2ea94f914be6827ec
+note: >-
+  Istio 官方 chart（ambient 数据面）；sha256 与 repo index.yaml 的 digest 一致；原样入库。
+

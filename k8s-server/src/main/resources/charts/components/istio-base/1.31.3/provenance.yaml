@@ -1,0 +1,11 @@
+source: https://github.com/istio/istio
+chart: base
+version: 1.31.3
+appVersion: 1.31.3
+fetched_at: 2026-10-26
+fetch_command: curl -L https://blob.istio.io/istio-release/charts/base-1.31.3.tgz
+digest: 3c961f652760a521278bd2bb9e0d2b03c67b3b760e3198b5e65e871c02f15e98
+note: >-
+  Istio 官方 chart（helm repo https://blob.istio.io/istio-release/charts，即原
+  istio-release.storage.googleapis.com 的新地址）；sha256 与 repo index.yaml 的 digest 一致；原样入库。
+

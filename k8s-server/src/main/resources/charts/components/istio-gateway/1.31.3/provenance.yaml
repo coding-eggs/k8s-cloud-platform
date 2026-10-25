@@ -1,0 +1,10 @@
+source: https://github.com/istio/istio
+chart: gateway
+version: 1.31.3
+appVersion: 1.31.3
+fetched_at: 2026-10-26
+fetch_command: curl -L https://blob.istio.io/istio-release/charts/gateway-1.31.3.tgz
+digest: 147cba51799edf7e1c61f099cab0a1d3c2672e64545df1e315670d00a0470644
+note: >-
+  Istio 官方 chart；对外入口 release 名固定 external-gateway；sha256 与 repo index.yaml 的 digest 一致；原样入库。
+

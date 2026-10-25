@@ -211,19 +211,21 @@ public class ComponentRecipeCatalog {
     private static final List<ReleaseSpec> ISTIO_RELEASES = List.of(
             new ReleaseSpec("platform-gateway-api", "kube-system", "gateway-api", "1.6.2",
                     Map.of(), Map.of()).withAppVersion("1.6.2"),
-            new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.30.6", Map.of(), Map.of())
-                    .withAppVersion("1.30.6"),
+            new ReleaseSpec("istio-base", "istio-system", "istio-base", "1.31.3", Map.of(), Map.of())
+                    .withAppVersion("1.31.3"),
             // meshID 全局一致：管理平台下的所有集群共用同一个网格 ID（装完再改是破坏性操作）
             // revision 有意不设：平台的升级不做按 revision 的灰度，设了反而要求命名空间打 istio.io/rev 标签
-            new ReleaseSpec("istiod", "istio-system", "istio-istiod", "1.30.6",
+            new ReleaseSpec("istiod", "istio-system", "istio-istiod", "1.31.3",
                     Map.of(
                             "global", Map.of("meshID", "platform-mesh"),
                             // ambient 模式必须由 istiod 显式开启（官方 profile-ambient.yaml 的等价物）。
                             // 不开时 ztunnel 连 15012 会被直接拒绝："ztunnel requires PILOT_ENABLE_AMBIENT=true"
                             // （2026-10-20 实锤）。HBONE metadata 给 waypoint（Envoy）用。
-                            // TCP/TLS/UDP Route 是 Istio 的 alpha 能力：不开 ALPHA_GATEWAY_API 时，
-                            // Gateway 里的 TCP listener 会被判 UnsupportedProtocol（Accepted=False），
-                            // Envoy 根本不监听该端口 —— 表现是 nodePort 连接被拒（2026-10-26 实锤：milvus 19530）。
+                            // ALPHA_GATEWAY_API：1.30.x 上 TCP/TLS/UDP listener 受它门控（不开时 Gateway 的
+                            // TCP listener 判 UnsupportedProtocol，Envoy 不监听该端口 —— 2026-10-26 实锤：milvus
+                            // 19530），1.31 起 TCP listener 已转正、该开关不再需要；留着是为了回退 1.30 时仍可用。
+                            // ⚠️ 1.30 即使开了也没用：它只监听 v1alpha2 的 TCPRoute，而平台写的是 v1（issue #60744，
+                            // 修在 1.31）。这才是升 1.31 的真正原因。
                             "pilot", Map.of("env", Map.of(
                                     "PILOT_ENABLE_AMBIENT", "true",
                                     "PILOT_ENABLE_ALPHA_GATEWAY_API", "true")),
@@ -244,16 +246,16 @@ public class ComponentRecipeCatalog {
                             "resources", Map.of(
                                     "requests", Map.of("cpu", "100m", "memory", "256Mi"),
                                     "limits", Map.of("cpu", "1", "memory", "1Gi"))))
-                    .asPrimary().withAppVersion("1.30.6"),
-            new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.30.6",
-                    Map.of("ambient", Map.of("enabled", true)), Map.of()).withAppVersion("1.30.6"),
-            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.30.6", Map.of(), Map.of())
-                    .withAppVersion("1.30.6"),
-            new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.30.6",
+                    .asPrimary().withAppVersion("1.31.3"),
+            new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.31.3",
+                    Map.of("ambient", Map.of("enabled", true)), Map.of()).withAppVersion("1.31.3"),
+            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.31.3", Map.of(), Map.of())
+                    .withAppVersion("1.31.3"),
+            new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.31.3",
                     Map.of("name", "external-gateway"),
                     // 对外入口的 Service：类型 + 端口列表都可在「编辑」表单里改
                     Map.of("service.type", "LoadBalancer",
-                            "service.ports", GATEWAY_SERVICE_PORTS)).withAppVersion("1.30.6"));
+                            "service.ports", GATEWAY_SERVICE_PORTS)).withAppVersion("1.31.3"));
 
     // ==================== tekton ====================
 

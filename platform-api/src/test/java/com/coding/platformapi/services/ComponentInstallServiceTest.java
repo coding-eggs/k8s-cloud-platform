@@ -71,7 +71,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void istioOperationRecordsThePrimaryChartVersionNotGatewayApi() {
-        // Istio 的第一个 release 是 Gateway API（1.6.2），组件本体是 istiod（1.30.6）。
+        // Istio 的第一个 release 是 Gateway API（1.6.2），组件本体是 istiod（1.31.3）。
         // mergeValues 重建 ReleaseSpec 时必须保留 primary 标记，否则操作记录会写成 1.6.2，
         // 页面此后一直显示「可升级」（2026-10-20 用户指出）
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
@@ -83,7 +83,7 @@ class ComponentInstallServiceTest {
         service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null, Map.of()), "admin");
 
         verify(mapper).insert(inserted.capture());
-        assertThat(inserted.getValue().getToVersion()).isEqualTo("1.30.6");
+        assertThat(inserted.getValue().getToVersion()).isEqualTo("1.31.3");
     }
 
     @Test

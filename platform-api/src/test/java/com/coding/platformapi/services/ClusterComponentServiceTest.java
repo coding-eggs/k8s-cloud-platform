@@ -335,13 +335,13 @@ class ClusterComponentServiceTest {
 
     @Test
     void istioDeclaresEveryChartAndItsApplicationVersion() {
-        // Istio 是 6 个 release 的安装单元：组件版本只认主 release istiod（1.30.6），
+        // Istio 是 6 个 release 的安装单元：组件版本只认主 release istiod（1.31.3），
         // Gateway API（1.6.2）是随附依赖。之前"取第一个 release"会把组件版本报成 1.6.2。
         ClusterComponentService svc = svc(List.of());
 
         var istio = find(svc.status("c1"), "istio");
 
-        assertThat(istio.getAvailableVersions()).containsExactly("1.30.6");
+        assertThat(istio.getAvailableVersions()).containsExactly("1.31.3");
         assertThat(istio.getReleases())
                 .extracting(com.coding.platformapi.models.ComponentReleaseDTO::getReleaseName)
                 .containsExactly("platform-gateway-api", "istio-base", "istiod",
@@ -351,8 +351,8 @@ class ClusterComponentServiceTest {
                 .singleElement()
                 .satisfies(r -> {
                     assertThat(r.getReleaseName()).isEqualTo("istiod");
-                    assertThat(r.getChartVersion()).isEqualTo("1.30.6");
-                    assertThat(r.getAppVersion()).isEqualTo("1.30.6");
+                    assertThat(r.getChartVersion()).isEqualTo("1.31.3");
+                    assertThat(r.getAppVersion()).isEqualTo("1.31.3");
                 });
         assertThat(istio.getReleases())
                 .filteredOn(r -> r.getReleaseName().equals("platform-gateway-api"))

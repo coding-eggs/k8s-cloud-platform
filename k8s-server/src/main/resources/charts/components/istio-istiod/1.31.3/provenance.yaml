@@ -1,0 +1,10 @@
+source: https://github.com/istio/istio
+chart: istiod
+version: 1.31.3
+appVersion: 1.31.3
+fetched_at: 2026-10-26
+fetch_command: curl -L https://blob.istio.io/istio-release/charts/istiod-1.31.3.tgz
+digest: 7555a8c699f6c3581d6b1e696d0ba01c65c0ae25d1b0e793e1c65e8071bcc8c9
+note: >-
+  Istio 官方 chart；sha256 与 repo index.yaml 的 digest 一致；原样入库。
+

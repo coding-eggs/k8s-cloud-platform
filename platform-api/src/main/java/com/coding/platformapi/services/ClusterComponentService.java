@@ -448,7 +448,7 @@ public class ClusterComponentService {
      * 平台可安装的 chart 版本：**只取主 release**（组件本体）。
      *
      * <p>其余 release 是随附底座或依赖（管理集群的 Prometheus = platform-kps 92.10.1
-     * + platform-thanos 0.47.2；Istio = istiod 1.30.6 + Gateway API 1.6.2）。把它们的版本混进来，
+     * + platform-thanos 0.47.2；Istio = istiod 1.31.3 + Gateway API 1.6.2）。把它们的版本混进来，
      * UI 会显示「已装 92.10.1，可升级到 0.47.2」「Istio 1.6.2」—— 不同 chart 的版本根本不可比
      * （2026-10-18 / 2026-10-20 两次实锤）。主 release 由 recipe 的 {@code asPrimary()} 显式标记。
      */
