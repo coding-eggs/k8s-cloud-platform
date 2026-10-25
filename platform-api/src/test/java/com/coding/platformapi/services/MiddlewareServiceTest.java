@@ -44,12 +44,15 @@ class MiddlewareServiceTest {
     private final RedisJsonCache cache = mock(RedisJsonCache.class);
     private final com.coding.platformapi.metrics.MetricsService metricsService =
             mock(com.coding.platformapi.metrics.MetricsService.class);
+    private final ObjectStorageService objectStorage = mock(ObjectStorageService.class);
+    private final ClusterComponentService components = mock(ClusterComponentService.class);
 
     private final MiddlewareCatalog catalog = new MiddlewareCatalog();
 
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, catalog,
-            JsonMapper.builder().build(), k8s, allocations, cache, metricsService);
+            JsonMapper.builder().build(), k8s, allocations, cache, metricsService,
+            objectStorage, components);
 
     @BeforeEach
     void opsGetIds() {
@@ -664,5 +667,43 @@ class MiddlewareServiceTest {
         assertThat(dto.getValue().getStorageClass()).isEqualTo("nfs-client");
         assertThat(dto.getValue().getReplicas()).isEqualTo(1);
         assertThat(dto.getValue().getCpuRequest()).isEqualTo("200m");
+    }
+
+    @Test
+    void catalogListsMilvusWithModesAndVersion() {
+        when(client.operatorStatus(any())).thenReturn(List.of());
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of());
+
+        var item = service.catalog("c1", null).stream()
+                .filter(i -> "milvus".equals(i.getCode())).findFirst().orElseThrow();
+
+        assertThat(item.isChartBacked()).isFalse();
+        assertThat(item.getVersions()).containsExactly("2.6.25");
+        assertThat(item.getModes()).extracting(m -> m.getMode())
+                .containsExactly("STANDALONE", "CLUSTER");
+    }
+
+    @Test
+    void milvusConnectionPointsAtServicePortsAndStorageSecret() {
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("milvus", "CLUSTER"));
+
+        var conn = service.connection("mwi_1", null);
+
+        assertThat(conn.getEndpoints()).extracting(MiddlewareConnectionDTO.Line::value)
+                .contains("mw-milvus-abcdefgh-milvus.demo.svc.cluster.local:19530",
+                        "mw-milvus-abcdefgh-milvus.demo.svc.cluster.local:9091");
+        assertThat(conn.getCredentials()).extracting(MiddlewareConnectionDTO.Line::value)
+                .anyMatch(v -> v.contains("mw-milvus-abcdefgh-milvus-storage"));
+    }
+
+    @Test
+    void formOptionsReportsObjectStorageAvailability() {
+        when(allocations.listByCluster("c1")).thenReturn(List.of());
+        when(components.seaweedInstalled("c1")).thenReturn(true);
+
+        assertThat(service.formOptions("c1", null).isObjectStorageAvailable()).isTrue();
+
+        when(components.seaweedInstalled("c1")).thenThrow(new RuntimeException("boom"));
+        assertThat(service.formOptions("c1", null).isObjectStorageAvailable()).isFalse();
     }
 }

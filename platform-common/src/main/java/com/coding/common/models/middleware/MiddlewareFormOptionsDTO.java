@@ -18,4 +18,7 @@ public class MiddlewareFormOptionsDTO {
 
     /** 集群里可选的 StorageClass 名（不含"用集群默认"这一项，前端用空值表达） */
     private List<String> storageClasses;
+
+    /** 本集群是否已装对象存储组件（Milvus 的「平台对象存储」选项要它） */
+    private boolean objectStorageAvailable;
 }

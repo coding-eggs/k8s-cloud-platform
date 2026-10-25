@@ -283,6 +283,36 @@ public class MiddlewareCatalog {
                             + " + sum(rabbitmq_alarms_free_disk_space_watermark{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})",
                     false, "正常", "有告警"));
 
+    private static final List<Mode> MILVUS_MODES = List.of(
+            new Mode("STANDALONE", "单节点", 1, 1, "节点数",
+                    "开发/测试；1 个 Milvus Pod + 内置 etcd（固定 1 个 Milvus 节点）"),
+            new Mode("CLUSTER", "集群", 1, null, "查询节点数",
+                    "proxy/mixcoord/datanode/querynode/streamingnode 各 1 个；WAL 用内嵌 woodpecker"));
+
+    /** Milvus 各组件自带 Prometheus（9091 /metrics）；名字取自 v2.6.25 的 pkg/metrics */
+    private static final List<MetricDef> MILVUS_METRICS = List.of(
+            MetricDef.chart("req", "请求/秒", "次/秒",
+                    "sum(rate(milvus_proxy_req_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+            MetricDef.stat("latency", "平均延迟", "秒",
+                    "sum(rate(milvus_proxy_req_latency_sum{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
+                            + " / clamp_min(sum(rate(milvus_proxy_req_latency_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
+            MetricDef.chart("insert_vectors", "写入向量/秒", "个/秒",
+                    "sum(rate(milvus_proxy_insert_vectors_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+            MetricDef.chart("delete_vectors", "删除向量/秒", "个/秒",
+                    "sum(rate(milvus_proxy_delete_vectors_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+            MetricDef.stat("collections", "集合数", "个",
+                    "max(milvus_rootcoord_collection_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
+            MetricDef.stat("entities", "实体数", "个",
+                    "max(milvus_rootcoord_entity_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
+            MetricDef.stat("qn_entities", "查询节点实体数", "个",
+                    "sum(milvus_querynode_entity_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
+            MetricDef.chart("sq_req", "查询/秒", "次/秒",
+                    "sum(rate(milvus_querynode_sq_req_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+            MetricDef.chart("rows", "行写入/秒", "行/秒",
+                    "sum(rate(milvus_datanode_msg_rows_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+            MetricDef.chart("flush_bytes", "刷盘速率", "字节/秒",
+                    "sum(rate(milvus_datanode_flushed_data_size{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"));
+
     private static final List<Item> ITEMS = List.of(
             new Item("redis", "Redis", "内存键值存储：缓存、会话、分布式锁", REDIS_MODES, List.of(), REDIS_METRICS),
             new Item("mysql", "MySQL", "关系型数据库（Percona Operator）", MYSQL_MODES, List.of(), MYSQL_METRICS),
@@ -296,7 +326,9 @@ public class MiddlewareCatalog {
                     POSTGRESQL_METRICS),
             new Item("rabbitmq", "RabbitMQ", "消息队列（官方 Cluster Operator）", RABBITMQ_MODES, List.of(),
                     RABBITMQ_METRICS),
-            new Item("nacos", "Nacos", "注册中心与配置中心（chart）", NACOS_MODES, List.of(), NACOS_METRICS));
+            new Item("nacos", "Nacos", "注册中心与配置中心（chart）", NACOS_MODES, List.of(), NACOS_METRICS),
+            new Item("milvus", "Milvus", "向量数据库（milvus-operator）", MILVUS_MODES,
+                    List.of("2.6.25"), MILVUS_METRICS));
 
     /** chart 安装的条目（不走 Operator） */
     public boolean chartBacked(String code) {

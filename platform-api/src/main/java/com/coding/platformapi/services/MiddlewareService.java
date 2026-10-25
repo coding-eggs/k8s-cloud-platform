@@ -71,6 +71,8 @@ public class MiddlewareService {
     private final PlatformTenantNamespaceMapper allocations;
     private final RedisJsonCache cache;
     private final com.coding.platformapi.metrics.MetricsService metrics;
+    private final ObjectStorageService objectStorage;
+    private final ClusterComponentService components;
 
     public MiddlewareService(PlatformMiddlewareInstanceMapper instances,
                              PlatformMiddlewareOperationMapper operations,
@@ -81,7 +83,9 @@ public class MiddlewareService {
                              K8sClient k8s,
                              PlatformTenantNamespaceMapper allocations,
                              RedisJsonCache cache,
-                             com.coding.platformapi.metrics.MetricsService metrics) {
+                             com.coding.platformapi.metrics.MetricsService metrics,
+                             ObjectStorageService objectStorage,
+                             ClusterComponentService components) {
         this.instances = instances;
         this.operations = operations;
         this.operators = operators;
@@ -92,6 +96,8 @@ public class MiddlewareService {
         this.allocations = allocations;
         this.cache = cache;
         this.metrics = metrics;
+        this.objectStorage = objectStorage;
+        this.components = components;
     }
 
     // ==================== 目录 ====================
@@ -155,6 +161,11 @@ public class MiddlewareService {
                     .sorted().toList());
         } catch (RuntimeException e) {
             out.setStorageClasses(List.of());
+        }
+        try {
+            out.setObjectStorageAvailable(components.seaweedInstalled(clusterId));
+        } catch (RuntimeException e) {
+            out.setObjectStorageAvailable(false);
         }
         return out;
     }
@@ -395,6 +406,13 @@ public class MiddlewareService {
                 endpoints.add(line("HTTP 控制台 / 接口", svc(ns, "nacos-cs", 8848)));
                 endpoints.add(line("gRPC（2.x 客户端）", svc(ns, "nacos-cs", 9848)));
                 note = "Nacos chart 默认未开启鉴权；对外暴露前请自行配置。";
+            }
+            case "milvus" -> {
+                endpoints.add(line("gRPC", svc(ns, name + "-milvus", 19530)));
+                endpoints.add(line("指标 / 健康检查", svc(ns, name + "-milvus", 9091)));
+                credentials.add(line("对象存储凭据",
+                        "Secret " + name + "-milvus-storage，键 accesskey / secretkey"));
+                note = "Milvus 默认未开启鉴权；对外暴露前请用命名空间或网格策略控制访问。";
             }
             default -> note = "该中间件暂未提供连接方式说明。";
         }
