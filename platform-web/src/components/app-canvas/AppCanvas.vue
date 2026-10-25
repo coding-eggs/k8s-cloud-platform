@@ -31,6 +31,7 @@ const emit = defineEmits<{
   connect: [Connection]
   nodeClick: [Node]
   nodeContextMenu: [Node, MouseEvent | TouchEvent]
+  edgeContextMenu: [Edge, MouseEvent | TouchEvent]
   nodesChange: [NodeChange[]]
   edgesChange: [EdgeChange[]]
   dropNode: [AppNodeKind, Point]
@@ -120,6 +121,7 @@ const defaultEdgeOptions = {
       @connect="emit('connect', $event)"
       @node-click="emit('nodeClick', $event.node)"
       @node-context-menu="emit('nodeContextMenu', $event.node, $event.event)"
+      @edge-context-menu="emit('edgeContextMenu', $event.edge, $event.event)"
       @nodes-change="emit('nodesChange', $event)"
       @edges-change="emit('edgesChange', $event)"
       @nodes-initialized="onNodesInitialized"

@@ -18,7 +18,7 @@ import type {
 } from '@/types'
 import AppCanvas from '@/components/app-canvas/AppCanvas.vue'
 import AppNodePalette from '@/components/app-canvas/AppNodePalette.vue'
-import AppNodeContextMenu from '@/components/app-canvas/AppNodeContextMenu.vue'
+import AppCanvasContextMenu from '@/components/app-canvas/AppCanvasContextMenu.vue'
 import { NODE_WIDTH, layeredLayout } from '@/components/app-canvas/appCanvasLayout'
 import type { Point } from '@/components/app-canvas/appCanvasLayout'
 import AppNodeInspector from '@/components/app-canvas/AppNodeInspector.vue'
@@ -57,11 +57,28 @@ const canvasRef = ref<InstanceType<typeof AppCanvas>>()
 const selectedKey = ref('')
 const saving = ref(false)
 
-/** 节点右键菜单（视口坐标） */
-const menu = ref<{ open: boolean; x: number; y: number; key: string }>({ open: false, x: 0, y: 0, key: '' })
+/** 右键菜单：节点和连线共用一个壳，条目按 targetKind 区分。坐标是视口坐标。 */
+const menu = ref<{
+  open: boolean
+  x: number
+  y: number
+  targetKind: 'node' | 'edge'
+  /** 节点 key */
+  key: string
+  /** 连线（targetKind = edge 时有值） */
+  edge: { id: string; from: string; to: string } | null
+}>({ open: false, x: 0, y: 0, targetKind: 'node', key: '', edge: null })
+
 const menuEdgeCount = computed(() => {
   const key = menu.value.key
-  return key ? edges.value.filter((e) => e.source === key || e.target === key).length : 0
+  return menu.value.targetKind === 'node' && key
+    ? edges.value.filter((e) => e.source === key || e.target === key).length
+    : 0
+})
+
+const menuEdgeLabel = computed(() => {
+  const edge = menu.value.edge
+  return edge ? `${edge.from} → ${edge.to}` : ''
 })
 
 const preview = ref<ApplicationPreview | null>(null)
@@ -198,15 +215,28 @@ function onNodeClick(node: Node) {
   closeMenu()
 }
 
+/** 触屏上 contextmenu 是长按来的 TouchEvent，没有 clientX/Y */
+function eventPoint(event: MouseEvent | TouchEvent): { x: number; y: number } {
+  if ('clientX' in event) return { x: event.clientX, y: event.clientY }
+  return { x: event.touches[0]?.clientX ?? 0, y: event.touches[0]?.clientY ?? 0 }
+}
+
 function onNodeContextMenu(node: Node, event: MouseEvent | TouchEvent) {
   // Vue Flow 只转发事件、不阻止默认行为，不自己 preventDefault 会同时弹出浏览器菜单
   event.preventDefault()
-  // 触屏上 contextmenu 是长按来的 TouchEvent，没有 clientX/Y
-  const point = 'clientX' in event
-    ? { x: event.clientX, y: event.clientY }
-    : { x: event.touches[0]?.clientX ?? 0, y: event.touches[0]?.clientY ?? 0 }
   selectedKey.value = node.id
-  menu.value = { open: true, x: point.x, y: point.y, key: node.id }
+  menu.value = { open: true, ...eventPoint(event), targetKind: 'node', key: node.id, edge: null }
+}
+
+function onEdgeContextMenu(edge: Edge, event: MouseEvent | TouchEvent) {
+  event.preventDefault()
+  menu.value = {
+    open: true,
+    ...eventPoint(event),
+    targetKind: 'edge',
+    key: '',
+    edge: { id: edge.id, from: edge.source, to: edge.target },
+  }
 }
 
 function closeMenu() {
@@ -249,6 +279,15 @@ function disconnectNode(key: string) {
 async function menuRemove(key: string) {
   closeMenu()
   await removeNode(key)
+}
+
+/** 删掉右键的那条连线；依赖变了要重排 */
+function removeEdge() {
+  const id = menu.value.edge?.id
+  closeMenu()
+  if (!id) return
+  edges.value = edges.value.filter((e) => e.id !== id)
+  relayout()
 }
 
 function updateParams(key: string, params: Record<string, unknown>) {
@@ -435,6 +474,7 @@ onUnmounted(() => {
           @connect="onConnect"
           @node-click="onNodeClick"
           @node-context-menu="onNodeContextMenu"
+          @edge-context-menu="onEdgeContextMenu"
           @nodes-change="onNodesChange"
           @edges-change="onEdgesChange"
           @drop-node="addNode"
@@ -453,15 +493,18 @@ onUnmounted(() => {
       </aside>
     </div>
 
-    <AppNodeContextMenu
+    <AppCanvasContextMenu
       :open="menu.open"
       :x="menu.x"
       :y="menu.y"
+      :target-kind="menu.targetKind"
       :edge-count="menuEdgeCount"
+      :edge-label="menuEdgeLabel"
       @close="closeMenu"
       @duplicate="duplicateNode(menu.key)"
       @disconnect="disconnectNode(menu.key)"
       @remove="menuRemove(menu.key)"
+      @remove-edge="removeEdge"
     />
 
     <AppDeployDrawer v-model="drawerVisible" :operation="operation" @retry="retry" />
