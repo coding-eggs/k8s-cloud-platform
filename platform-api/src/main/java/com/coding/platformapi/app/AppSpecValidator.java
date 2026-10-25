@@ -33,7 +33,17 @@ public final class AppSpecValidator {
     private AppSpecValidator() {
     }
 
+    /** 部署前校验：还要求至少一个节点。 */
     public static List<AppProblemDTO> validate(AppSpecDTO spec) {
+        return validate(spec, true);
+    }
+
+    /** 草稿校验（建/改应用时）：允许暂时没有节点 —— 画布是先建应用再往上加的。 */
+    public static List<AppProblemDTO> validateDraft(AppSpecDTO spec) {
+        return validate(spec, false);
+    }
+
+    static List<AppProblemDTO> validate(AppSpecDTO spec, boolean requireNodes) {
         List<AppProblemDTO> out = new ArrayList<>();
         if (spec == null) {
             out.add(AppProblemDTO.error(null, "应用定义为空"));
@@ -43,7 +53,7 @@ public final class AppSpecValidator {
             out.add(AppProblemDTO.error(null, "未选择命名空间"));
         }
         List<AppNodeDTO> nodes = spec.getNodes() == null ? List.of() : spec.getNodes();
-        if (nodes.isEmpty()) {
+        if (requireNodes && nodes.isEmpty()) {
             out.add(AppProblemDTO.error(null, "应用里至少要有一个节点"));
         }
         if (nodes.size() > MAX_NODES) {

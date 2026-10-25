@@ -9,6 +9,6 @@ metadata:
     {{- include "app.revision" . | nindent 4 }}
 data:
   {{- range .Values.workload.env }}
-  {{ .name }}: {{ .value | quote }}
+  {{ .name | quote }}: {{ .value | quote }}
   {{- end }}
 {{- end }}

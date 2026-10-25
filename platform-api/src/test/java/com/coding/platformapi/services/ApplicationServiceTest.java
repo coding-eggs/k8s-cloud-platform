@@ -37,6 +37,7 @@ class ApplicationServiceTest {
     private PlatformApplicationOperationMapper operations;
     private PlatformApplicationResourceMapper resources;
     private PlatformTenantNamespaceMapper allocations;
+    private NamespaceAccessGuard namespaceGuard;
     private K8sAppClient client;
     private ApplicationService service;
 
@@ -47,8 +48,10 @@ class ApplicationServiceTest {
         operations = mock(PlatformApplicationOperationMapper.class);
         resources = mock(PlatformApplicationResourceMapper.class);
         allocations = mock(PlatformTenantNamespaceMapper.class);
+        namespaceGuard = mock(NamespaceAccessGuard.class);
         client = mock(K8sAppClient.class);
-        service = new ApplicationService(apps, revisions, operations, resources, allocations, client);
+        service = new ApplicationService(apps, revisions, operations, resources, allocations,
+                namespaceGuard, client);
     }
 
     private static ApplicationCreateRequest req(AppSpecDTO spec) {
@@ -133,6 +136,26 @@ class ApplicationServiceTest {
     }
 
     @Test
+    void createAllowsEmptyGraphForCanvasDraft() {
+        AppSpecDTO empty = new AppSpecDTO();
+        empty.setNamespace("demo");
+        empty.setNodes(List.of());
+        empty.setEdges(List.of());
+
+        service.create(req(empty), "admin", "t1");
+
+        verify(apps).insert(any());
+        verify(namespaceGuard).assertAccessible("c1", "demo");
+    }
+
+    @Test
+    void createRequiresTenantEvenForAdmin() {
+        assertThatThrownBy(() -> service.create(req(spec()), "admin", null))
+                .hasMessageContaining("请先切换到某个租户");
+        verify(apps, never()).insert(any());
+    }
+
+    @Test
     void getHidesOtherTenantsApplications() {
         when(apps.selectById("app_1")).thenReturn(row());
 
@@ -150,7 +173,7 @@ class ApplicationServiceTest {
 
         ApplicationDeleteRequest req = new ApplicationDeleteRequest();
         req.setAppId("app_1");
-        service.delete(req, "admin");
+        service.delete(req, "admin", null);
 
         ArgumentCaptor<AppPruneRequestDTO> cap = ArgumentCaptor.forClass(AppPruneRequestDTO.class);
         verify(client).prune(cap.capture());
@@ -168,7 +191,7 @@ class ApplicationServiceTest {
         ApplicationDeleteRequest req = new ApplicationDeleteRequest();
         req.setAppId("app_1");
 
-        assertThatThrownBy(() -> service.delete(req, "admin")).hasMessageContaining("正在部署");
+        assertThatThrownBy(() -> service.delete(req, "admin", null)).hasMessageContaining("正在部署");
         verify(apps, never()).softDelete(any(), any());
     }
 }

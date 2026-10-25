@@ -9,6 +9,9 @@ public class ApplicationUpdateRequest {
 
     private String appId;
 
+    /** 管理员代管轨显式指定租户；租户轨以 token 为准（以 effectiveTenantId 收口） */
+    private String tenantId;
+
     private String name;
 
     private String displayName;

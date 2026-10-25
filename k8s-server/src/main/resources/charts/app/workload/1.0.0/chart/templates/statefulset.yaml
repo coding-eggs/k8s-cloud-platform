@@ -17,8 +17,6 @@ spec:
     metadata:
       labels:
         {{- include "app.selector" . | nindent 8 }}
-      annotations:
-        {{- include "app.revision" . | nindent 8 }}
     spec:
       containers:
         - name: app
@@ -55,12 +53,14 @@ spec:
               mountPath: {{ .Values.workload.persistence.mountPath }}
           resources:
             {{- toYaml .Values.workload.resources | nindent 12 }}
+          {{- if .Values.workload.probe.enabled }}
           readinessProbe:
             httpGet:
-              path: /
+              path: {{ .Values.workload.probe.path }}
               port: http
             initialDelaySeconds: 10
             failureThreshold: 3
+          {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data

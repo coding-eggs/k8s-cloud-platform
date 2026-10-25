@@ -70,7 +70,13 @@ public class AppRenderService {
                 }
                 values = writeValues(AppWorkloadValues.build(req.getAppId(), req.getAppSlug(),
                         req.getRevision() == null ? 0 : req.getRevision(), node));
-                HelmResult rendered = helm.render(kubeconfig, chartDir, values, req.getNamespace());
+                HelmResult rendered;
+                try {
+                    rendered = helm.render(kubeconfig, chartDir, values, req.getNamespace());
+                } finally {
+                    deleteQuietly(values);   // 每个节点都要删，否则 20 节点会在 /tmp 留 19 份 values
+                    values = null;
+                }
                 if (!rendered.ok()) {
                     problems.add(AppProblemDTO.error(node.getKey(), "渲染失败：" + rendered.output()));
                     continue;

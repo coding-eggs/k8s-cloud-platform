@@ -1,6 +1,9 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.models.app.AppObjectRefDTO;
+import com.coding.common.models.app.AppProblemDTO;
+import com.coding.common.models.app.AppSpecDTO;
+import com.coding.platformapi.app.AppSpecValidator;
 import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
@@ -47,7 +50,7 @@ public class ApplicationPreviewService {
         ApplicationPreview out = diff(previousObjects(app), rendered);
         out.setManifest(rendered.getManifest());
         out.setObjects(rendered.getObjects());
-        out.setProblems(rendered.getProblems());
+        out.setProblems(withGraphProblems(renderReq.getSpec(), app.getNamespace(), rendered.getProblems()));
         return out;
     }
 
@@ -61,6 +64,20 @@ public class ApplicationPreviewService {
         p.setAdded(after.stream().filter(x -> !before.contains(x)).toList());
         p.setRemoved(before.stream().filter(x -> !after.contains(x)).toList());
         return p;
+    }
+
+    /** 预览也要报图本身的问题（循环依赖/非法 key），否则用户要等「保存」才知道。 */
+    private List<AppProblemDTO> withGraphProblems(AppSpecDTO spec, String namespace,
+                                                 List<AppProblemDTO> rendered) {
+        List<AppProblemDTO> out = new java.util.ArrayList<>(AppSpecValidator.validateDraft(spec));
+        if (spec != null && spec.getNamespace() != null && !spec.getNamespace().isBlank()
+                && !spec.getNamespace().equals(namespace)) {
+            out.add(AppProblemDTO.error(null, "应用不能换命名空间：" + spec.getNamespace()));
+        }
+        if (rendered != null) {
+            out.addAll(rendered);
+        }
+        return out;
     }
 
     private List<AppObjectRefDTO> previousObjects(ApplicationView app) {

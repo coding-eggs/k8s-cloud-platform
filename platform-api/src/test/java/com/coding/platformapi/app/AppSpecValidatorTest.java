@@ -81,6 +81,13 @@ class AppSpecValidatorTest {
     }
 
     @Test
+    void draftAllowsEmptyGraphButDeployDoesNot() {
+        AppSpecDTO empty = spec(List.of(), List.of());
+        assertThat(AppSpecValidator.validateDraft(empty)).isEmpty();
+        assertThat(errors(empty)).anySatisfy(m -> assertThat(m).contains("至少要有一个节点"));
+    }
+
+    @Test
     void rejectsTooManyNodesAndMissingNamespace() {
         List<AppNodeDTO> nodes = new ArrayList<>();
         for (int i = 0; i < 21; i++) {

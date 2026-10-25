@@ -63,7 +63,9 @@
     select <include refid="Base_Column_List" />
     from platform_application
     where deleted_at is null
+    <if test="tenantId != null and tenantId != ''">
       and tenant_id = #{tenantId,jdbcType=VARCHAR}
+    </if>
     <if test="clusterId != null and clusterId != ''">
       and cluster_id = #{clusterId,jdbcType=VARCHAR}
     </if>

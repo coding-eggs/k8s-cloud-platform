@@ -47,6 +47,10 @@ public final class AppWorkloadValues {
         workload.put("resources", resources(params));
         workload.put("persistence", persistence(params, worker));
         workload.put("autoscaling", autoscaling(params));
+        // 默认开：HTTP 服务需要探针；非 HTTP 服务由用户在节点里关掉
+        workload.put("probe", Map.of(
+                "enabled", !Boolean.FALSE.equals(params.get("probeEnabled")),
+                "path", strOrDefault(params.get("probePath"), "/")));
         workload.put("metrics", Map.of(
                 "enabled", bool(params.get("metricsEnabled")),
                 "path", strOrDefault(params.get("metricsPath"), "/metrics")));

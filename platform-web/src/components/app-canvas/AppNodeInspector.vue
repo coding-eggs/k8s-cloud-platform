@@ -91,6 +91,19 @@ function toggles(flag: string): boolean {
 
       <el-divider content-position="left">高级</el-divider>
 
+      <el-form-item v-if="isService" label="健康探针">
+        <el-switch
+          :model-value="node.params.probeEnabled !== false"
+          @update:model-value="set('probeEnabled', $event)"
+        />
+      </el-form-item>
+      <el-form-item v-if="isService && node.params.probeEnabled !== false" label="探针路径">
+        <el-input
+          :model-value="String(node.params.probePath ?? '/')"
+          @update:model-value="set('probePath', $event)"
+        />
+      </el-form-item>
+
       <el-form-item v-if="isService" label="持久化">
         <el-switch
           :model-value="toggles('persistenceEnabled')"

@@ -82,7 +82,7 @@ public class AppStatusService {
                 s.setState(statefulSetState(want, have));
                 s.setMessage("就绪副本 " + have + "/" + want);
             }
-            default -> s.setState(exists(client, ref) ? "READY" : "MISSING");
+            default -> s.setState(exists(client, ref));
         }
         return s;
     }
@@ -99,9 +99,14 @@ public class AppStatusService {
         return ready >= want ? "READY" : "PENDING";
     }
 
-    /** 我们生成的其余对象都只有「存在/不存在」两种有意义的状态。 */
-    private static boolean exists(KubernetesClient client, AppObjectRefDTO ref) {
-        return switch (ref.getKind()) {
+    /**
+     * 我们生成的其余对象都只有「存在/不存在」两种有意义的状态。
+     *
+     * <p>不认识的 kind 返回 {@code UNKNOWN}（不是「存在」也不是「不存在」）：CONFLICT 阶段会忽略
+     * UNKNOWN，HEALTH 阶段按未就绪处理。返回「存在」会让新加的节点类型一律被误判成别人的对象。
+     */
+    private static String exists(KubernetesClient client, AppObjectRefDTO ref) {
+        Boolean present = switch (ref.getKind()) {
             case "Service" -> client.services()
                     .inNamespace(ref.getNamespace()).withName(ref.getName()).get() != null;
             case "ConfigMap" -> client.configMaps()
@@ -112,8 +117,12 @@ public class AppStatusService {
                     .inNamespace(ref.getNamespace()).withName(ref.getName()).get() != null;
             case "ServiceMonitor" -> client.genericKubernetesResources(SERVICE_MONITOR)
                     .inNamespace(ref.getNamespace()).withName(ref.getName()).get() != null;
-            // 未知 kind 当作存在：宁可让冲突检查保持保守（不误拦），也不谎报对象缺失
-            default -> true;
+            // 不认识的 kind：既不敢说存在也不敢说不存在
+            default -> null;
         };
+        if (present == null) {
+            return "UNKNOWN";
+        }
+        return present ? "READY" : "MISSING";
     }
 }

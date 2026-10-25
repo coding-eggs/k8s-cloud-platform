@@ -11,7 +11,7 @@
 
 CREATE TABLE IF NOT EXISTS platform_application (
   id               varchar(64)  NOT NULL,
-  tenant_id        varchar(64)  NOT NULL,
+  tenant_id        varchar(64)  NULL COMMENT '归属租户；创建时必填，列可空只为兼容旧数据与管理员视图',
   cluster_id       varchar(64)  NOT NULL,
   namespace        varchar(128) NOT NULL,
   name             varchar(128) NOT NULL,

@@ -64,6 +64,17 @@ class AppWorkloadValuesTest {
     }
 
     @Test
+    void probeDefaultsOnAndCanBeDisabled() {
+        Map<String, Object> on = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx"))));
+        assertThat((Map<String, Object>) on.get("probe")).containsEntry("enabled", true);
+
+        Map<String, Object> off = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "probeEnabled", false))));
+        assertThat((Map<String, Object>) off.get("probe")).containsEntry("enabled", false);
+    }
+
+    @Test
     void rejectsMissingImage() {
         org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> AppWorkloadValues.build("app_1", "demo", 1, node(Map.of())))

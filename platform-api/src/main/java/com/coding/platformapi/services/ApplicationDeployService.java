@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.app.AppApplyRequestDTO;
 import com.coding.common.models.app.AppObjectRefDTO;
 import com.coding.common.models.app.AppObjectStatusDTO;
+import com.coding.common.models.app.AppProblemDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
@@ -19,7 +20,9 @@ import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationOperation;
 import com.coding.data.models.system.PlatformApplicationResource;
 import com.coding.data.models.system.PlatformApplicationRevision;
+import com.coding.platformapi.app.AppSpecValidator;
 import com.coding.platformapi.k8s.K8sAppClient;
+import com.coding.platformapi.k8s.K8sServerGateway;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JavaType;
@@ -38,8 +41,12 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 部署的阶段机。每一步成功后把 {@code current_step} 落库，异常 → FAILED；
- * worker 下一次节拍从落库的那一步继续，所以 platform-api 重启不会把操作永远留在 RUNNING。
+ * 部署的阶段机。每一步成功后把 {@code current_step} 落库；异常 → FAILED；
+ * worker 下一次节拍从落库的那一步继续。
+ *
+ * <p><b>续跑的边界</b>：阶段进度是持久化的，但调用 k8s-server 的凭据只在内存里
+ * （{@link ApplicationDeployCredentials}）。platform-api 重启后仍在运行的操作会以
+ * 「凭据已失效，请重新部署」失败 —— 这比把用户 access token 写进数据库安全得多。
  */
 @Service
 public class ApplicationDeployService {
@@ -61,46 +68,63 @@ public class ApplicationDeployService {
     private final PlatformApplicationOperationMapper operations;
     private final PlatformApplicationResourceMapper resources;
     private final K8sAppClient client;
+    private final ApplicationDeployCredentials credentials;
 
     public ApplicationDeployService(PlatformApplicationMapper apps,
                                     PlatformApplicationRevisionMapper revisions,
                                     PlatformApplicationOperationMapper operations,
                                     PlatformApplicationResourceMapper resources,
-                                    K8sAppClient client) {
+                                    K8sAppClient client,
+                                    ApplicationDeployCredentials credentials) {
         this.apps = apps;
         this.revisions = revisions;
         this.operations = operations;
         this.resources = resources;
         this.client = client;
+        this.credentials = credentials;
     }
 
-    public Long start(String appId, Integer revision, String operator) {
-        PlatformApplication app = requireApp(appId);
+    /**
+     * 发起部署 / 升级 / 回滚。
+     *
+     * @param revision 非空 = 回滚到该历史版本：**新建一个 revision**（复制它的 spec），
+     *                 版本历史里能看出来发生过回滚，而不是把旧版本号重新「跑一遍」
+     */
+    public Long start(String appId, Integer revision, String operator, String tenantId) {
+        PlatformApplication app = requireApp(appId, tenantId);
+
         PlatformApplicationOperation active = operations.selectActiveByApp(appId);
         if (active != null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "该应用已有进行中的部署，请等它结束或先重试");
         }
+
         PlatformApplicationRevision rev;
+        String action;
         if (revision != null) {
-            rev = revisions.selectByRevision(appId, revision);
-            if (rev == null) {
+            PlatformApplicationRevision source = revisions.selectByRevision(appId, revision);
+            if (source == null) {
                 throw new CloudPlatformException(EnumResponseType.ERROR, "找不到版本：" + revision);
             }
+            rev = newRevision(app, nextRevision(appId), operator, source.getSpecJson(),
+                    "回滚自 rev " + revision);
+            action = "ROLLBACK";
         } else {
-            rev = newRevision(app, nextRevision(appId), operator);
+            rev = newRevision(app, nextRevision(appId), operator, app.getSpecJson(), null);
+            action = Integer.valueOf(0).equals(app.getCurrentRevision()) ? "DEPLOY" : "UPGRADE";
         }
 
         PlatformApplicationOperation op = new PlatformApplicationOperation();
         op.setAppId(appId);
         op.setRevision(rev.getRevision());
-        op.setAction(revision != null ? "RETRY"
-                : (Integer.valueOf(0).equals(app.getCurrentRevision()) ? "DEPLOY" : "UPGRADE"));
+        op.setAction(action);
         op.setStatus("PENDING");
         op.setCurrentStep("PRECHECK");
         op.setNodeStatesJson("{}");
         op.setStartedAt(new Date());
         op.setCreatedBy(operator);
         operations.insert(op);
+        // 异步阶段机没有请求上下文：把发起人的 Authorization 留给 worker（内存，不落库）
+        credentials.remember(op.getId(), K8sServerGateway.currentAuthorization());
 
         app.setStatus("DEPLOYING");
         app.setUpdatedAt(new Date());
@@ -138,21 +162,36 @@ public class ApplicationDeployService {
         }
     }
 
-    public PlatformApplicationOperation operation(Long operationId) {
+    /** 重启后凭据已失效：明确失败，而不是让操作永远停在 RUNNING。 */
+    public void failWithoutCredentials(PlatformApplicationOperation op) {
+        finish(op, "FAILED", "平台重启导致部署凭据失效，请重新发起部署");
+    }
+
+    public PlatformApplicationOperation operation(Long operationId, String tenantId) {
         PlatformApplicationOperation op = operations.selectById(operationId);
         if (op == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "操作记录不存在");
         }
+        // 操作里没有租户列，归属按它所属的应用判 —— 否则自增 id 顺序枚举就能读到别家的操作
+        requireApp(op.getAppId(), tenantId);
         return op;
     }
 
     private String precheck(PlatformApplicationOperation op) {
-        PlatformApplication app = requireApp(op.getAppId());
+        PlatformApplication app = requireApp(op.getAppId(), null);
         if (app.getNamespace() == null || app.getNamespace().isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用没有命名空间");
         }
-        if (revisions.selectByRevision(op.getAppId(), op.getRevision()) == null) {
+        PlatformApplicationRevision rev = revisions.selectByRevision(op.getAppId(), op.getRevision());
+        if (rev == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "版本不存在：" + op.getRevision());
+        }
+        String errors = AppSpecValidator.validate(readSpec(rev.getSpecJson())).stream()
+                .filter(p -> "ERROR".equals(p.getSeverity()))
+                .map(AppProblemDTO::getMessage)
+                .collect(Collectors.joining("；"));
+        if (!errors.isEmpty()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, errors);
         }
         return "RENDER";
     }
@@ -162,7 +201,7 @@ public class ApplicationDeployService {
         if (rev.getManifest() != null && !rev.getManifest().isBlank()) {
             return "CONFLICT";   // 续跑：清单已渲染过，直接进冲突检查
         }
-        PlatformApplication app = requireApp(op.getAppId());
+        PlatformApplication app = requireApp(op.getAppId(), null);
         AppRenderRequestDTO req = new AppRenderRequestDTO();
         req.setClusterId(app.getClusterId());
         req.setNamespace(app.getNamespace());
@@ -174,7 +213,7 @@ public class ApplicationDeployService {
         AppRenderResultDTO rendered = client.render(req);
         String error = rendered.getProblems() == null ? null : rendered.getProblems().stream()
                 .filter(p -> "ERROR".equals(p.getSeverity()))
-                .map(com.coding.common.models.app.AppProblemDTO::getMessage)
+                .map(AppProblemDTO::getMessage)
                 .findFirst().orElse(null);
         if (error != null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, error);
@@ -193,7 +232,7 @@ public class ApplicationDeployService {
      * 用户收不到任何提示，而下次 prune 还可能把它删掉。
      */
     private String conflict(PlatformApplicationOperation op) {
-        PlatformApplication app = requireApp(op.getAppId());
+        PlatformApplication app = requireApp(op.getAppId(), null);
         PlatformApplicationRevision rev = revisions.selectByRevision(op.getAppId(), op.getRevision());
         AppStatusRequestDTO req = new AppStatusRequestDTO();
         req.setClusterId(app.getClusterId());
@@ -216,7 +255,7 @@ public class ApplicationDeployService {
     }
 
     private String apply(PlatformApplicationOperation op) {
-        PlatformApplication app = requireApp(op.getAppId());
+        PlatformApplication app = requireApp(op.getAppId(), null);
         PlatformApplicationRevision rev = revisions.selectByRevision(op.getAppId(), op.getRevision());
         AppApplyRequestDTO req = new AppApplyRequestDTO();
         req.setClusterId(app.getClusterId());
@@ -225,18 +264,27 @@ public class ApplicationDeployService {
 
         // 先删本 revision 旧记录再写，保证重试幂等
         resources.deleteByAppRevision(op.getAppId(), op.getRevision());
+        String prefix = app.getSlug() + "-";
         List<PlatformApplicationResource> rows = objectsOf(rev.getObjectsJson()).stream()
-                .map(ref -> toResource(op, ref))
+                .map(ref -> toResource(op, ref, nodeKeyOf(ref.getName(), prefix)))
                 .toList();
         if (!rows.isEmpty()) {
             resources.batchInsert(rows);
         }
+        rev.setStatus("APPLIED");
+        revisions.updateById(rev);
         return "PRUNE";
     }
 
+    /**
+     * 清理基线 = **上次成功部署的版本**（{@code app.currentRevision}），不是 {@code rev-1}。
+     *
+     * <p>中间那些「建了 revision 但没走到 APPLY」的号码没有台账行，用 rev-1 会把它们当基线，
+     * 差集永远算空 —— 删掉的节点对象就再也清不掉。
+     */
     private String prune(PlatformApplicationOperation op) {
-        PlatformApplication app = requireApp(op.getAppId());
-        int previous = op.getRevision() - 1;
+        PlatformApplication app = requireApp(op.getAppId(), null);
+        int previous = app.getCurrentRevision() == null ? 0 : app.getCurrentRevision();
         if (previous < 1) {
             return "HEALTH";
         }
@@ -258,7 +306,7 @@ public class ApplicationDeployService {
     }
 
     private String health(PlatformApplicationOperation op) {
-        PlatformApplication app = requireApp(op.getAppId());
+        PlatformApplication app = requireApp(op.getAppId(), null);
         AppStatusRequestDTO req = new AppStatusRequestDTO();
         req.setClusterId(app.getClusterId());
         req.setObjects(objectsOf(objectsJsonOf(op)));
@@ -293,7 +341,7 @@ public class ApplicationDeployService {
         return "DONE";
     }
 
-    /** 对象名 = &lt;slug&gt;-&lt;nodeKey&gt;；headless Service 与 env ConfigMap 归到同一节点。 */
+    /** 对象名 = &lt;slug&gt;-&lt;nodeKey&gt;；headless Service / env ConfigMap 归到同一节点。 */
     static String nodeKeyOf(String objectName, String slugPrefix) {
         String key = objectName != null && objectName.startsWith(slugPrefix)
                 ? objectName.substring(slugPrefix.length()) : objectName;
@@ -311,9 +359,12 @@ public class ApplicationDeployService {
         return rev == null ? null : rev.getObjectsJson();
     }
 
-    private PlatformApplication requireApp(String appId) {
+    private PlatformApplication requireApp(String appId, String tenantId) {
         PlatformApplication app = apps.selectById(appId);
         if (app == null || app.getDeletedAt() != null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "应用不存在或已删除");
+        }
+        if (tenantId != null && !tenantId.equals(app.getTenantId())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用不存在或已删除");
         }
         return app;
@@ -324,12 +375,14 @@ public class ApplicationDeployService {
         return max == null ? 1 : max + 1;
     }
 
-    private PlatformApplicationRevision newRevision(PlatformApplication app, int revision, String operator) {
+    private PlatformApplicationRevision newRevision(PlatformApplication app, int revision,
+                                                    String operator, String specJson, String message) {
         PlatformApplicationRevision rev = new PlatformApplicationRevision();
         rev.setAppId(app.getId());
         rev.setRevision(revision);
-        rev.setSpecJson(app.getSpecJson());
-        rev.setStatus("RENDERED");
+        rev.setSpecJson(specJson);
+        rev.setStatus("PENDING");
+        rev.setMessage(message);
         rev.setCreatedBy(operator);
         rev.setCreatedAt(new Date());
         revisions.insert(rev);
@@ -341,6 +394,15 @@ public class ApplicationDeployService {
         op.setMessage(message);
         op.setFinishedAt(new Date());
         operations.updateById(op);
+        credentials.forget(op.getId());
+
+        PlatformApplicationRevision rev = revisions.selectByRevision(op.getAppId(), op.getRevision());
+        if (rev != null) {
+            rev.setStatus("SUCCESS".equals(status) ? "DEPLOYED" : "FAILED");
+            rev.setMessage(message);
+            revisions.updateById(rev);
+        }
+
         PlatformApplication app = apps.selectById(op.getAppId());
         if (app == null) {
             return;
@@ -365,7 +427,8 @@ public class ApplicationDeployService {
         return JSON.readValue(objectsJson, OBJECT_LIST);
     }
 
-    private static PlatformApplicationResource toResource(PlatformApplicationOperation op, AppObjectRefDTO ref) {
+    private static PlatformApplicationResource toResource(PlatformApplicationOperation op,
+                                                          AppObjectRefDTO ref, String nodeKey) {
         PlatformApplicationResource r = new PlatformApplicationResource();
         r.setAppId(op.getAppId());
         r.setRevision(op.getRevision());
@@ -373,6 +436,7 @@ public class ApplicationDeployService {
         r.setKind(ref.getKind());
         r.setNamespace(ref.getNamespace());
         r.setName(ref.getName());
+        r.setNodeKey(nodeKey);
         r.setCreatedAt(new Date());
         return r;
     }

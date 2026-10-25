@@ -74,14 +74,15 @@ public class ApplicationController {
     @Auditable(action = AuditAction.APPLICATION_UPDATE, target = "#request.appId")
     @Operation(summary = "编辑应用（部署进行中拒绝）")
     public ResponseData<ApplicationView> update(@RequestBody ApplicationUpdateRequest request) {
-        return new ResponseData<>(service.update(request, operator()));
+        return new ResponseData<>(service.update(request, operator(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/delete")
     @Auditable(action = AuditAction.APPLICATION_DELETE, target = "#request.appId")
     @Operation(summary = "删除应用（先删集群对象，PVC 保留）")
     public ResponseData<Void> delete(@RequestBody ApplicationDeleteRequest request) {
-        service.delete(request, operator());
+        service.delete(request, operator(), auth.effectiveTenantId(request.getTenantId()));
         return new ResponseData<>();
     }
 
@@ -96,19 +97,22 @@ public class ApplicationController {
     @Auditable(action = AuditAction.APPLICATION_DEPLOY, target = "#request.appId")
     @Operation(summary = "部署 / 升级 / 重放历史版本（异步，返回操作 id）")
     public ResponseData<Long> deploy(@RequestBody ApplicationDeployRequest request) {
-        return new ResponseData<>(deploy.start(request.getAppId(), request.getRevision(), operator()));
+        return new ResponseData<>(deploy.start(request.getAppId(), request.getRevision(), operator(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/operation/get")
     @Operation(summary = "操作轮询（阶段 + 每节点状态）")
     public ResponseData<PlatformApplicationOperation> operation(@RequestBody ApplicationQueryRequest request) {
-        return new ResponseData<>(deploy.operation(request.getOperationId()));
+        return new ResponseData<>(deploy.operation(request.getOperationId(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/revision/list")
     @Operation(summary = "版本历史")
     public ResponseData<List<ApplicationRevisionView>> revisions(@RequestBody ApplicationQueryRequest request) {
-        return new ResponseData<>(service.revisions(request.getAppId()));
+        return new ResponseData<>(service.revisions(request.getAppId(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/options")

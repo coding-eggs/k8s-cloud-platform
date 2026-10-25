@@ -31,6 +31,10 @@ workload:
     minReplicas: 1
     maxReplicas: 10
     targetCpu: 60
+  probe:
+    # 关掉探针：非 HTTP 服务（gRPC / 只监听 TCP）必须关，否则 Pod 永远 NotReady
+    enabled: true
+    path: /
   metrics:
     enabled: false
     path: /metrics

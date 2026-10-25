@@ -8,7 +8,7 @@ import { Controls } from '@vue-flow/controls'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
-import type { Connection, Edge, Node } from '@vue-flow/core'
+import type { Connection, Edge, Node, NodeChange } from '@vue-flow/core'
 import { applicationApi } from '@/api'
 import type {
   ApplicationOperation,
@@ -101,6 +101,19 @@ function onConnect(connection: Connection) {
   const id = `${connection.source}->${connection.target}`
   if (edges.value.some((e) => e.id === id)) return
   edges.value.push({ id, source: connection.source!, target: connection.target! })
+}
+
+/**
+ * 拖动位置只保存在本数组里（不落 spec，刷新按网格重排）。
+ * 必须收这个事件：否则每次状态轮询把 props 打回去时，节点会被拽回初始位置。
+ */
+function onNodesChange(changes: NodeChange[]) {
+  for (const c of changes) {
+    if (c.type === 'position' && c.position) {
+      const node = nodes.value.find((n) => n.id === c.id)
+      if (node) node.position = { ...c.position }
+    }
+  }
 }
 
 function onNodeClick(payload: { node: Node }) {
@@ -261,6 +274,7 @@ onUnmounted(() => window.clearInterval(timer))
           fit-view-on-init
           @connect="onConnect"
           @node-click="onNodeClick"
+          @nodes-change="onNodesChange"
         >
           <template #node-app="nodeProps">
             <AppNodeCard

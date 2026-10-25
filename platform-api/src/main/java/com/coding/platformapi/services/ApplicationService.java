@@ -3,27 +3,27 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.app.AppObjectRefDTO;
-import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.common.models.app.AppProblemDTO;
+import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.common.models.app.AppSpecDTO;
+import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformApplicationOperationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
 import com.coding.data.mapper.system.PlatformApplicationRevisionMapper;
-import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
+import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationResource;
-import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppSpecValidator;
 import com.coding.platformapi.k8s.K8sAppClient;
 import com.coding.platformapi.models.ApplicationCreateRequest;
 import com.coding.platformapi.models.ApplicationDeleteRequest;
 import com.coding.platformapi.models.ApplicationOptionsView;
-import com.coding.platformapi.models.ApplicationQueryRequest;
 import com.coding.platformapi.models.ApplicationRevisionView;
 import com.coding.platformapi.models.ApplicationUpdateRequest;
 import com.coding.platformapi.models.ApplicationView;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -48,6 +48,7 @@ public class ApplicationService {
     private final PlatformApplicationOperationMapper operations;
     private final PlatformApplicationResourceMapper resources;
     private final PlatformTenantNamespaceMapper allocations;
+    private final NamespaceAccessGuard namespaceGuard;
     private final K8sAppClient client;
 
     public ApplicationService(PlatformApplicationMapper apps,
@@ -55,17 +56,26 @@ public class ApplicationService {
                               PlatformApplicationOperationMapper operations,
                               PlatformApplicationResourceMapper resources,
                               PlatformTenantNamespaceMapper allocations,
+                              NamespaceAccessGuard namespaceGuard,
                               K8sAppClient client) {
         this.apps = apps;
         this.revisions = revisions;
         this.operations = operations;
         this.resources = resources;
         this.allocations = allocations;
+        this.namespaceGuard = namespaceGuard;
         this.client = client;
     }
 
     public ApplicationView create(ApplicationCreateRequest req, String operator, String tenantId) {
-        assertValid(req.getSpec(), req.getNamespace());
+        if (tenantId == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请先切换到某个租户（或显式指定 tenantId）再创建应用");
+        }
+        assertValidDraft(req.getSpec(), req.getNamespace());
+        // 分配表是安全边界：前端下拉只列本租户命名空间，接口层同样要挡
+        namespaceGuard.assertAccessible(req.getClusterId(), req.getSpec().getNamespace());
+
         PlatformApplication row = new PlatformApplication();
         row.setId("app_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
         row.setTenantId(tenantId);
@@ -81,7 +91,13 @@ public class ApplicationService {
         row.setCreatedBy(operator);
         row.setCreatedAt(new Date());
         row.setUpdatedAt(new Date());
-        apps.insert(row);
+        try {
+            apps.insert(row);
+        } catch (DuplicateKeyException e) {
+            // 生成列 active_key 的唯一键：同集群同命名空间下不许重名
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "该命名空间下已有同名应用：" + row.getName());
+        }
         return view(row);
     }
 
@@ -90,17 +106,22 @@ public class ApplicationService {
     }
 
     public List<ApplicationView> list(String clusterId, String tenantId) {
+        // 管理员（tenantId 为 null）= 看全部；mapper 里按需拼 tenant 条件
         return apps.selectByTenant(tenantId, clusterId).stream().map(this::view).toList();
     }
 
-    public ApplicationView update(ApplicationUpdateRequest req, String operator) {
-        PlatformApplication row = require(req.getAppId(), null);
+    public ApplicationView update(ApplicationUpdateRequest req, String operator, String tenantId) {
+        PlatformApplication row = require(req.getAppId(), tenantId);
         if (!"DRAFT".equals(row.getStatus()) && !"READY".equals(row.getStatus())
                 && !"FAILED".equals(row.getStatus())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "部署进行中，不能改图");
         }
         if (req.getSpec() != null) {
-            assertValid(req.getSpec(), row.getNamespace());
+            assertValidDraft(req.getSpec(), row.getNamespace());
+            if (!row.getNamespace().equals(req.getSpec().getNamespace())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, "应用不能换命名空间");
+            }
+            namespaceGuard.assertAccessible(row.getClusterId(), row.getNamespace());
             row.setSpecJson(JSON.writeValueAsString(req.getSpec()));
         }
         if (req.getName() != null && !req.getName().isBlank()) {
@@ -124,10 +145,13 @@ public class ApplicationService {
      * <p>为什么同步删而不是排一个操作：对象数量受 20 节点上限约束，删除是幂等的，
      * 而「台账没了但对象还在」会让这些资源永远失去归属。
      */
-    public void delete(ApplicationDeleteRequest req, String operator) {
+    public void delete(ApplicationDeleteRequest req, String operator, String tenantId) {
         PlatformApplication row = apps.selectById(req.getAppId());
         if (row == null || row.getDeletedAt() != null) {
             return;
+        }
+        if (tenantId != null && !tenantId.equals(row.getTenantId())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "应用不存在或已删除");
         }
         if (operations.selectActiveByApp(req.getAppId()) != null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用正在部署，不能删除");
@@ -143,7 +167,8 @@ public class ApplicationService {
         apps.softDelete(req.getAppId(), new Date());
     }
 
-    public List<ApplicationRevisionView> revisions(String appId) {
+    public List<ApplicationRevisionView> revisions(String appId, String tenantId) {
+        require(appId, tenantId);
         return revisions.selectByApp(appId).stream().map(r -> {
             ApplicationRevisionView v = new ApplicationRevisionView();
             v.setRevision(r.getRevision());
@@ -193,7 +218,7 @@ public class ApplicationService {
         return ref;
     }
 
-    private void assertValid(AppSpecDTO spec, String requestNamespace) {
+    private void assertValidDraft(AppSpecDTO spec, String requestNamespace) {
         if (spec == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用定义为空");
         }
@@ -201,7 +226,7 @@ public class ApplicationService {
                 && !requestNamespace.equals(spec.getNamespace())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "请求命名空间与应用定义里的命名空间不一致");
         }
-        String errors = AppSpecValidator.validate(spec).stream()
+        String errors = AppSpecValidator.validateDraft(spec).stream()
                 .filter(p -> "ERROR".equals(p.getSeverity()))
                 .map(AppProblemDTO::getMessage)
                 .collect(Collectors.joining("；"));

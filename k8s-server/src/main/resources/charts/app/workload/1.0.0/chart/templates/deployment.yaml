@@ -17,8 +17,6 @@ spec:
     metadata:
       labels:
         {{- include "app.selector" . | nindent 8 }}
-      annotations:
-        {{- include "app.revision" . | nindent 8 }}
     spec:
       containers:
         - name: app
@@ -54,16 +52,16 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.workload.resources | nindent 12 }}
-          {{- if eq .Values.workload.mode "service" }}
+          {{- if and (eq .Values.workload.mode "service") .Values.workload.probe.enabled }}
           readinessProbe:
             httpGet:
-              path: /
+              path: {{ .Values.workload.probe.path }}
               port: http
             initialDelaySeconds: 10
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /
+              path: {{ .Values.workload.probe.path }}
               port: http
             initialDelaySeconds: 30
             failureThreshold: 3
