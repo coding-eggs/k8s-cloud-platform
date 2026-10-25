@@ -59,6 +59,16 @@
     where id = #{id,jdbcType=VARCHAR}
   </select>
 
+  <select id="selectLatestByAppNode" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_instance
+    where app_id = #{appId,jdbcType=VARCHAR}
+      and app_node_id = #{appNodeId,jdbcType=VARCHAR}
+      and deleted_at is null
+    order by created_at desc, id desc
+    limit 1
+  </select>
+
   <select id="selectByCluster" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_middleware_instance

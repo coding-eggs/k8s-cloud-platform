@@ -312,6 +312,8 @@ public class MiddlewareService {
         instance.setVersion(req.getVersion() == null ? "" : req.getVersion());
         instance.setStatus("CREATING");
         instance.setTenantId(tenantId);
+        instance.setAppId(req.getAppId());
+        instance.setAppNodeId(req.getAppNodeId());
         instance.setCreatedBy(operator);
         instance.setCreatedAt(new Date());
         instance.setUpdatedAt(new Date());
@@ -825,6 +827,22 @@ public class MiddlewareService {
     }
 
     // ==================== 内部 ====================
+
+    /** 该中间件的默认形态（画布建实例时没选形态就用它）。 */
+    public String defaultMode(String code) {
+        var item = catalog.require(code);
+        return item.modes().isEmpty() ? null : item.modes().get(0).mode();
+    }
+
+    /** 现读一个实例的状态（应用编排等它 Ready 用）；实例已被删返回 DELETED。 */
+    public String statusOf(String instanceId) {
+        PlatformMiddlewareInstance instance = instances.selectByPrimaryKey(instanceId);
+        if (instance == null || instance.getDeletedAt() != null) {
+            return "DELETED";
+        }
+        refreshGroup(java.util.List.of(instance));
+        return instance.getStatus();
+    }
 
     private PlatformMiddlewareInstance requireInstance(String instanceId, String tenantId) {
         return get(instanceId, tenantId);

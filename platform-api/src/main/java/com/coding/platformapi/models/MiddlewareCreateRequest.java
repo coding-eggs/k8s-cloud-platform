@@ -9,6 +9,11 @@ public class MiddlewareCreateRequest {
     private String code;
     private String mode;
     private String namespace;
+
+    /** 由应用画布创建时：来源应用与节点 key；商店直接创建时为空 */
+    private String appId;
+
+    private String appNodeId;
     private String displayName;
     private String version;
     private Integer replicas;
