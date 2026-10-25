@@ -22,7 +22,7 @@ import type { K8sCluster, MiddlewareCatalogItem } from '@/types'
 const perm = usePermission()
 const router = useRouter()
 // 租户/集群作用域直接取顶栏（资源上下文）：平台桶的归属、实例计数、按哪个集群查都跟着它
-const { tenantId, clusterId: ctxClusterId, setCluster, ensure: ensureTenant } = useMiddlewareTenant()
+const { tenantId, clusterId: ctxClusterId, ensure: ensureTenant } = useMiddlewareTenant()
 
 const tab = ref<'store' | 'operator'>('store')
 const clusters = ref<K8sCluster[]>([])
@@ -102,15 +102,6 @@ async function loadClusters(): Promise<void> {
   }
   const firstEnabled = clusters.value.find((c) => c.enabled === 1)
   clusterId.value = firstEnabled?.clusterId ?? clusters.value[0]?.clusterId ?? ''
-}
-
-/** 页面上的集群下拉只是顶栏的另一个入口：写回上下文，由 watch 统一重查 */
-function onClusterChange(id: string): void {
-  if (id === ctxClusterId.value) {
-    void refresh()
-    return
-  }
-  setCluster(id)
 }
 
 async function loadCatalog(): Promise<void> {
@@ -391,9 +382,6 @@ onBeforeUnmount(() => {
         <p class="ph-desc">固定清单：Operator 中间件由平台维护，实例由管理员与租户创建</p>
       </div>
       <div class="ph-actions">
-        <el-select v-model="clusterId" placeholder="选择集群" style="width: 220px" @change="onClusterChange">
-          <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
-        </el-select>
         <el-button :disabled="!clusterId" @click="refresh">刷新</el-button>
         <el-button @click="router.push('/apps/instances')">实例列表</el-button>
       </div>
