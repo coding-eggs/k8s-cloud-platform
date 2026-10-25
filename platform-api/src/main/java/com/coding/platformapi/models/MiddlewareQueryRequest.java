@@ -11,4 +11,6 @@ public class MiddlewareQueryRequest {
     private Long operationId;
     /** 仅管理员代管轨使用 */
     private String tenantId;
+    /** 列表按命名空间收窄（空 = 该集群下全部）；顶栏级联选中的那一层 */
+    private String namespace;
 }

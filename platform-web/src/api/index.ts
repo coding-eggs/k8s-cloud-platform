@@ -1015,8 +1015,8 @@ export const middlewareApi = {
   /** 创建表单的可选项（本租户命名空间 / 集群 StorageClass），由后端按租户收窄 */
   formOptions: (clusterId: string, tenantId?: string) =>
     http.post<never, MiddlewareFormOptions>('/middleware/form-options', { clusterId, tenantId }),
-  instanceList: (clusterId: string, code?: string, tenantId?: string) =>
-    http.post<never, MiddlewareInstance[]>('/middleware/instance/list', { clusterId, code, tenantId }),
+  instanceList: (clusterId: string, code?: string, tenantId?: string, namespace?: string) =>
+    http.post<never, MiddlewareInstance[]>('/middleware/instance/list', { clusterId, code, tenantId, namespace }),
   instanceGet: (instanceId: string, tenantId?: string) =>
     http.post<never, MiddlewareInstance>('/middleware/instance/get', { instanceId, tenantId }),
   /** 详情页聚合：台账 + 规格 + 连接方式 + 集群实时对象 */

@@ -597,8 +597,27 @@ class MiddlewareServiceTest {
         other.setTenantId("t2");
         when(instances.selectByCluster("c1", null)).thenReturn(List.of(mine, other));
 
-        assertThat(service.list("c1", null, "t1"))
+        assertThat(service.list("c1", null, "t1", null))
                 .extracting(PlatformMiddlewareInstance::getId).containsExactly("mwi_1");
+    }
+
+    @Test
+    void listNarrowsToTheNamespaceChosenInTheTopBar() {
+        PlatformMiddlewareInstance movie = new PlatformMiddlewareInstance();
+        movie.setId("mwi_1");
+        movie.setTenantId("t1");
+        movie.setNamespace("movie");
+        PlatformMiddlewareInstance demo = new PlatformMiddlewareInstance();
+        demo.setId("mwi_2");
+        demo.setTenantId("t1");
+        demo.setNamespace("demo");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(movie, demo));
+
+        // 顶栏的命名空间层：选了就只看这个 ns，清空 = 该集群下全部
+        assertThat(service.list("c1", null, "t1", "demo"))
+                .extracting(PlatformMiddlewareInstance::getId).containsExactly("mwi_2");
+        assertThat(service.list("c1", null, "t1", null))
+                .extracting(PlatformMiddlewareInstance::getId).containsExactly("mwi_1", "mwi_2");
     }
 
     @Test

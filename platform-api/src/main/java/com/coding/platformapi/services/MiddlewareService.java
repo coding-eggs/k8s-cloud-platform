@@ -196,10 +196,11 @@ public class MiddlewareService {
 
     // ==================== 实例 ====================
 
-    public List<PlatformMiddlewareInstance> list(String clusterId, String code, String tenantId) {
+    public List<PlatformMiddlewareInstance> list(String clusterId, String code, String tenantId, String namespace) {
         requireCluster(clusterId);
         List<PlatformMiddlewareInstance> rows = instances.selectByCluster(clusterId, code).stream()
                 .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
+                .filter(i -> isBlank(namespace) || namespace.equals(i.getNamespace()))
                 .toList();
         // 台账里的状态是"提交时"的快照；列表按 k8s 实时状态覆盖（不写库，读失败则保留台账值）。
         // 按 (code, namespace) 分组批量查，避免每行一次往返。

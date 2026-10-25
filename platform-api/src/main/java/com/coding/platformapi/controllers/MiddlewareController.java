@@ -63,7 +63,7 @@ public class MiddlewareController {
     @Operation(summary = "实例列表（租户按归属收窄）")
     public ResponseData<List<PlatformMiddlewareInstance>> list(@RequestBody MiddlewareQueryRequest request) {
         return new ResponseData<>(service.list(request.getClusterId(), request.getCode(),
-                auth.effectiveTenantId(request.getTenantId())));
+                auth.effectiveTenantId(request.getTenantId()), request.getNamespace()));
     }
 
     @PostMapping("/instance/get")
