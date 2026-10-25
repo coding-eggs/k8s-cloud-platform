@@ -222,7 +222,7 @@ async function handleLogout(): Promise<void> {
           <template #title>Service</template>
         </el-menu-item>
 
-        <div v-if="can(pageCodes.app)" class="menu-group">应用交付</div>
+        <div v-if="can(pageCodes.app) || can(pageCodes.application)" class="menu-group">应用交付</div>
         <el-menu-item v-if="can(pageCodes.app)" index="/apps">
           <el-icon><Grid /></el-icon>
           <template #title>中间件</template>
@@ -231,6 +231,11 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.app)" index="/apps/instances">
           <el-icon><Files /></el-icon>
           <template #title>中间件实例</template>
+        </el-menu-item>
+        <!-- 应用编排（画布）：与中间件商店是两件事，页面码独立 -->
+        <el-menu-item v-if="can(pageCodes.application)" index="/applications">
+          <el-icon><Connection /></el-icon>
+          <template #title>应用编排</template>
         </el-menu-item>
 
         <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list) || can(pageCodes.registry)" class="menu-group">配置管理</div>
