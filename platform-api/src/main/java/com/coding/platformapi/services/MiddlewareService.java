@@ -359,7 +359,10 @@ public class MiddlewareService {
             instance.setDeletedAt(new Date());
             instances.updateById(instance);
             if (grant != null && grant.bucketId() != null) {
-                deleteBucketQuietly(grant.bucketId(), operator);
+                // 不能在这里删桶：网关把传输层异常也包成 CloudPlatformException，CR 可能已经建成、
+                // Pod 正在跑 —— 删桶就是删掉实例唯一的数据。留桶给运维核对（失败的操作记录里有实例与错误）。
+                log.warn("Milvus 实例创建失败，保留对象存储桶 {}（集群侧可能已经建成），请人工核对",
+                        grant.bucket());
             }
             finish(op, "FAILED", e.getMessage());
             throw e;

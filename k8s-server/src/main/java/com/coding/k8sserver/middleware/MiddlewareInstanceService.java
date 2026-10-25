@@ -904,9 +904,17 @@ public class MiddlewareInstanceService {
         }
     }
 
-    /** 实际要起的 Pod 数：MySQL 每个数据节点还带一个 HAProxy；哨兵另加固定 3 个哨兵。 */
-    private static int quotaPodCount(MiddlewareCreateRequestDTO req) {
+    /**
+     * 实际要起的 Pod 数：MySQL 每个数据节点还带一个 HAProxy；哨兵另加固定 3 个哨兵；
+     * Milvus 集群形态每类组件各一个（queryNode 按用户节点数）+ operator 另起的 etcd。
+     */
+    static int quotaPodCount(MiddlewareCreateRequestDTO req) {
         int base = replicas(req);
+        if ("milvus".equals(req.getCode())) {
+            // proxy + mixCoord + dataNode + streamingNode（各 1）+ queryNode×N
+            int components = "CLUSTER".equals(req.getMode()) ? 4 + base : 1;
+            return components + milvusEtcdReplicas(req);
+        }
         if ("SENTINEL".equals(req.getMode())) {
             return base + 3;
         }
@@ -914,6 +922,15 @@ public class MiddlewareInstanceService {
             return base * 2;
         }
         return base;
+    }
+
+    /** 配额估算用的 etcd 副本数（与适配器同规则；越界留给适配器报错）。 */
+    private static int milvusEtcdReplicas(MiddlewareCreateRequestDTO req) {
+        Integer n = req.getEtcdReplicas();
+        if (n == null) {
+            return "CLUSTER".equals(req.getMode()) ? 3 : 1;
+        }
+        return Math.max(1, Math.min(3, n));
     }
 
     private static void checkQuota(Quantity hard, Quantity used, BigDecimal need, String label) {

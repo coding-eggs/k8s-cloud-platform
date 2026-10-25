@@ -130,8 +130,8 @@ public class MiddlewareCatalog {
             MetricDef.stat("connections", "连接数", "个",
                     "sum(mysql_global_status_threads_connected{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
             MetricDef.stat("conn_usage", "连接使用率", "%",
-                    "100 * sum(mysql_global_status_threads_connected{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"
-                            + " / clamp_min(sum(mysql_global_variables_max_connections{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}), 1)"),
+                    "100 * sum(mysql_global_status_threads_connected{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"})"
+                            + " / clamp_min(sum(mysql_global_variables_max_connections{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}), 1)"),
             MetricDef.chart("qps", "查询/秒", "次/秒",
                     "sum(rate(mysql_global_status_questions{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.stat("running", "活跃线程", "个",
@@ -139,8 +139,8 @@ public class MiddlewareCatalog {
             MetricDef.chart("slow", "慢查询/秒", "次/秒",
                     "sum(rate(mysql_global_status_slow_queries{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.stat("buffer_hit", "InnoDB 缓冲池命中率", "%",
-                    "100 * (1 - sum(rate(mysql_global_status_innodb_buffer_pool_reads{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
-                            + " / clamp_min(sum(rate(mysql_global_status_innodb_buffer_pool_read_requests{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001))"),
+                    "100 * (1 - sum(rate(mysql_global_status_innodb_buffer_pool_reads{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " / clamp_min(sum(rate(mysql_global_status_innodb_buffer_pool_read_requests{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m])), 0.001))"),
             MetricDef.chart("lock_waits", "行锁等待/秒", "次/秒",
                     "sum(rate(mysql_global_status_innodb_row_lock_waits{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.chart("aborted", "连接中断/秒", "次/秒",
@@ -169,8 +169,8 @@ public class MiddlewareCatalog {
             MetricDef.chart("http", "HTTP 请求/秒", "次/秒",
                     "sum(rate(http_server_requests_seconds_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.chart("http_rt", "HTTP 平均响应时间", "秒",
-                    "sum(rate(http_server_requests_seconds_sum{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
-                            + " / clamp_min(sum(rate(http_server_requests_seconds_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
+                    "sum(rate(http_server_requests_seconds_sum{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " / clamp_min(sum(rate(http_server_requests_seconds_count{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m])), 0.001)"),
             MetricDef.stat("cpu", "进程 CPU", "%",
                     "100 * sum(process_cpu_usage{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
             MetricDef.stat("load", "系统负载（1m）", "个",
@@ -214,9 +214,9 @@ public class MiddlewareCatalog {
             MetricDef.stat("memory", "内存使用", "字节",
                     "sum(redis_memory_used_bytes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
             MetricDef.chart("hit_ratio", "命中率", "%",
-                    "100 * sum(rate(redis_keyspace_hits_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
-                            + " / clamp_min(sum(rate(redis_keyspace_hits_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
-                            + " + sum(rate(redis_keyspace_misses_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
+                    "100 * sum(rate(redis_keyspace_hits_total{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " / clamp_min(sum(rate(redis_keyspace_hits_total{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " + sum(rate(redis_keyspace_misses_total{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m])), 0.001)"),
             MetricDef.chart("commands", "命令/秒", "个/秒",
                     "sum(rate(redis_commands_processed_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.stat("keys", "键数量", "个",
@@ -248,9 +248,9 @@ public class MiddlewareCatalog {
             MetricDef.chart("deadlocks", "死锁/秒", "个/秒",
                     "sum(rate(cnpg_pg_stat_database_deadlocks{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.chart("cache_hit", "缓存命中率", "%",
-                    "100 * sum(rate(cnpg_pg_stat_database_blks_hit{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
-                            + " / clamp_min(sum(rate(cnpg_pg_stat_database_blks_hit{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
-                            + " + sum(rate(cnpg_pg_stat_database_blks_read{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
+                    "100 * sum(rate(cnpg_pg_stat_database_blks_hit{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " / clamp_min(sum(rate(cnpg_pg_stat_database_blks_hit{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " + sum(rate(cnpg_pg_stat_database_blks_read{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m])), 0.001)"),
             MetricDef.stat("max_tx", "最长事务时长", "秒",
                     "max(cnpg_backends_max_tx_duration_seconds{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
             MetricDef.stat("replag", "复制延迟", "秒",
@@ -279,8 +279,8 @@ public class MiddlewareCatalog {
             MetricDef.chart("redeliver", "重投/秒", "条/秒",
                     "sum(rate(rabbitmq_global_messages_redelivered_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.state("alarms", "资源告警", "个",
-                    "sum(rabbitmq_alarms_memory_used_watermark{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"
-                            + " + sum(rabbitmq_alarms_free_disk_space_watermark{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})",
+                    "sum(rabbitmq_alarms_memory_used_watermark{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"})"
+                            + " + sum(rabbitmq_alarms_free_disk_space_watermark{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"})",
                     false, "正常", "有告警"));
 
     private static final List<Mode> MILVUS_MODES = List.of(
@@ -294,8 +294,10 @@ public class MiddlewareCatalog {
             MetricDef.chart("req", "请求/秒", "次/秒",
                     "sum(rate(milvus_proxy_req_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.stat("latency", "平均延迟", "秒",
-                    "sum(rate(milvus_proxy_req_latency_sum{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"
-                            + " / clamp_min(sum(rate(milvus_proxy_req_latency_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m])), 0.001)"),
+                    // 同一条 PromQL 里要引用三次维度：用显式参数下标（%1$s/%2$s/%3$s），
+                    // 因为 MetricsService 只传 cluster/namespace/pod 三个实参
+                    "sum(rate(milvus_proxy_req_latency_sum{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " / clamp_min(sum(rate(milvus_proxy_req_latency_count{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m])), 0.001)"),
             MetricDef.chart("insert_vectors", "写入向量/秒", "个/秒",
                     "sum(rate(milvus_proxy_insert_vectors_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.chart("delete_vectors", "删除向量/秒", "个/秒",

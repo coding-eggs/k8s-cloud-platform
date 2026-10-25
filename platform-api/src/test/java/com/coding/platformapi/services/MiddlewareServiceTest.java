@@ -30,6 +30,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -713,6 +714,19 @@ class MiddlewareServiceTest {
         assertThat(service.formOptions("c1", null).isObjectStorageAvailable()).isFalse();
     }
 
+    @Test
+    void everyMetricTemplateFormatsWithThreeArguments() {
+        // MetricsService.businessMetric 只传 cluster/namespace/pod 三个参数；
+        // 模板里出现第 4 个 %s 会让 String.format 抛异常，整块业务指标 + 资源图一起 500。
+        for (var item : catalog.items()) {
+            for (var def : item.metrics()) {
+                assertThatCode(() -> String.format(def.query(), "c1", "demo", "pod-.*"))
+                        .as(item.code() + "." + def.key())
+                        .doesNotThrowAnyException();
+            }
+        }
+    }
+
     private MiddlewareCreateRequest milvusRequest(String storageType) {
         MiddlewareCreateRequest r = new MiddlewareCreateRequest();
         r.setClusterId("c1");
@@ -781,10 +795,12 @@ class MiddlewareServiceTest {
     }
 
     @Test
-    void milvusCreateFailureDeletesTheBucket() {
+    void milvusCreateFailureKeepsTheBucketToAvoidDeletingLiveData() {
+        // 网关把传输层异常也包成 CloudPlatformException：CR 可能已经建成、Pod 正在跑，
+        // 这时删桶 = 删掉实例唯一的数据。宁可留一个空桶让运维核对，也不能误删。
         when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
         when(client.create(anyString(), any())).thenThrow(new CloudPlatformException(
-                com.coding.common.exception.EnumResponseType.ERROR, "配额不足"));
+                com.coding.common.exception.EnumResponseType.ERROR, "调用 k8s-server 失败: timeout"));
         when(components.seaweedInstalled("c1")).thenReturn(true);
         when(objectStorage.s3Endpoint("c1"))
                 .thenReturn("http://platform-seaweedfs-s3.platform-storage:8333");
@@ -796,11 +812,9 @@ class MiddlewareServiceTest {
                 .thenReturn(new ObjectCredentialDTO("AK", "SK"));
 
         assertThatThrownBy(() -> service.create(milvusRequest("PLATFORM"), "admin", "t1"))
-                .hasMessageContaining("配额");
+                .hasMessageContaining("timeout");
 
-        ArgumentCaptor<ObjectStorageBucketRef> ref = ArgumentCaptor.forClass(ObjectStorageBucketRef.class);
-        verify(objectStorage).deleteBucket(ref.capture(), anyString());
-        assertThat(ref.getValue().getBucketId()).isEqualTo("obk_1");
+        verify(objectStorage, never()).deleteBucket(any(), anyString());
     }
 
     @Test

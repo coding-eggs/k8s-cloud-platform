@@ -151,16 +151,29 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
 
     @Override
     public Integer desiredPods(GenericKubernetesResource live, String kind) {
-        Object components = specOf(live).get("components");
+        Map<String, Object> spec = specOf(live);
+        Object components = spec.get("components");
         if (!(components instanceof Map<?, ?> m)) {
             return null;
         }
+        // 只数当前形态真正会起的组件：集群形态的 CR 里常带着 standalone.replicas=0，
+        // 单节点形态也可能残留集群组件键 —— 一律按 mode 取白名单，别把别的形态的副本数算进来。
+        boolean cluster = "cluster".equals(spec.get("mode"));
+        List<String> keys = cluster
+                ? List.of("proxy", "mixCoord", "rootCoord", "indexCoord", "dataCoord", "queryCoord",
+                "dataNode", "queryNode", "streamingNode", "indexNode")
+                : List.of("standalone");
         int sum = 0;
         boolean any = false;
-        for (Object value : m.values()) {
-            if (value instanceof Map<?, ?> c && c.get("replicas") instanceof Number n) {
+        for (String key : keys) {
+            Object component = m.get(key);
+            if (component instanceof Map<?, ?> c && c.get("replicas") instanceof Number n) {
+                int replicas = n.intValue();
+                if (replicas < 0) {
+                    continue;   // -1 = 交给 operator/HPA 管，不能从求和里减掉
+                }
                 any = true;
-                sum += n.intValue();
+                sum += replicas;
             }
         }
         return any && sum > 0 ? sum : null;
@@ -273,7 +286,12 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
             // 2.6 的 WAL 跑在 Milvus 进程内、直接写对象存储：不需要 PVC，也不拉 Pulsar/Kafka
             dependencies.put("msgStreamType", "woodpecker");
         }
-        dependencies.put("etcd", Map.of("inCluster", Map.of("values", etcdValues)));
+        // CRD 默认 deletionPolicy=Retain：不改的话删 CR 后 etcd 的 Helm release/Pod 会留下来。
+        // PVC 不交给 operator 级联删（pvcDeletion 保持默认 false）—— keepPvc 语义由平台按标签处理。
+        Map<String, Object> inCluster = new LinkedHashMap<>();
+        inCluster.put("deletionPolicy", "Delete");
+        inCluster.put("values", etcdValues);
+        dependencies.put("etcd", Map.of("inCluster", inCluster));
         dependencies.put("storage", storage);
         return dependencies;
     }

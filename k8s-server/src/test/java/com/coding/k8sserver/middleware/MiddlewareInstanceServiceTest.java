@@ -1,5 +1,6 @@
 package com.coding.k8sserver.middleware;
 
+import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ManagedFieldsEntry;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
@@ -11,6 +12,31 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class MiddlewareInstanceServiceTest {
+
+    @Test
+    void milvusQuotaCountIncludesEveryComponentAndEtcd() {
+        // 配额预检按"主组件资源 × Pod 数"估算；Milvus 集群形态有 5 类组件 + 用户选的 etcd 副本
+        var single = new MiddlewareCreateRequestDTO();
+        single.setCode("milvus");
+        single.setMode("STANDALONE");
+        single.setReplicas(1);
+        single.setEtcdReplicas(2);
+        assertThat(MiddlewareInstanceService.quotaPodCount(single)).isEqualTo(3);
+
+        var cluster = new MiddlewareCreateRequestDTO();
+        cluster.setCode("milvus");
+        cluster.setMode("CLUSTER");
+        cluster.setReplicas(3);
+        cluster.setEtcdReplicas(3);
+        // proxy + mixCoord + dataNode + streamingNode + queryNode×3 + etcd×3
+        assertThat(MiddlewareInstanceService.quotaPodCount(cluster)).isEqualTo(10);
+
+        var defaultEtcd = new MiddlewareCreateRequestDTO();
+        defaultEtcd.setCode("milvus");
+        defaultEtcd.setMode("CLUSTER");
+        defaultEtcd.setReplicas(1);
+        assertThat(MiddlewareInstanceService.quotaPodCount(defaultEtcd)).isEqualTo(8);
+    }
 
     @Test
     void stripApplyMetadataRemovesManagedFields() {

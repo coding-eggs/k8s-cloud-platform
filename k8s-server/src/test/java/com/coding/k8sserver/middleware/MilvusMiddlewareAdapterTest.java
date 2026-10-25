@@ -181,21 +181,59 @@ class MilvusMiddlewareAdapterTest {
     }
 
     @Test
-    void desiredPodsSumsComponentReplicas() {
+    void desiredPodsOnlyCountsTheComponentsOfTheCurrentMode() {
         GenericKubernetesResource live = new GenericKubernetesResource();
         Map<String, Object> qn = new LinkedHashMap<>();
         qn.put("replicas", 3);
         Map<String, Object> components = new LinkedHashMap<>();
         components.put("image", "milvusdb/milvus:v2.6.25");
         components.put("proxy", Map.of("replicas", 1));
-        components.put("mixcoord", Map.of("replicas", 1));
-        components.put("datanode", Map.of("replicas", 1));
+        components.put("mixCoord", Map.of("replicas", 1));
+        components.put("dataNode", Map.of("replicas", 1));
         components.put("queryNode", qn);
-        components.put("streamingnode", Map.of("replicas", 1));
+        components.put("streamingNode", Map.of("replicas", 1));
+        // operator 在集群形态会给 standalone 写 0；不能因为存在这个键就把单节点的数算进来
         components.put("standalone", Map.of("replicas", 0));
-        live.setAdditionalProperty("spec", Map.of("components", components));
+        live.setAdditionalProperty("spec", Map.of("mode", "cluster", "components", components));
 
         assertThat(adapter.desiredPods(live, "Milvus")).isEqualTo(7);
+    }
+
+    @Test
+    void desiredPodsIgnoresClusterComponentsInStandaloneMode() {
+        GenericKubernetesResource live = new GenericKubernetesResource();
+        Map<String, Object> components = new LinkedHashMap<>();
+        components.put("standalone", Map.of("replicas", 1));
+        // 脏数据：同时存在集群组件时，单节点形态只认 standalone
+        components.put("proxy", Map.of("replicas", 1));
+        components.put("queryNode", Map.of("replicas", 2));
+        live.setAdditionalProperty("spec", Map.of("mode", "standalone", "components", components));
+
+        assertThat(adapter.desiredPods(live, "Milvus")).isEqualTo(1);
+    }
+
+    @Test
+    void desiredPodsSkipsNegativeReplicas() {
+        // -1 = 交给 operator/HPA 管，不能从求和里减去
+        GenericKubernetesResource live = new GenericKubernetesResource();
+        Map<String, Object> components = new LinkedHashMap<>();
+        components.put("proxy", Map.of("replicas", 1));
+        components.put("queryNode", Map.of("replicas", -1));
+        live.setAdditionalProperty("spec", Map.of("mode", "cluster", "components", components));
+
+        assertThat(adapter.desiredPods(live, "Milvus")).isEqualTo(1);
+    }
+
+    @Test
+    void etcdReleaseIsDeletedWithTheCrSoNothingIsLeftRunning() {
+        // CRD 默认 deletionPolicy=Retain：不显式改成 Delete，删 CR 后 etcd 的 Helm release 会留下
+        var res = adapter.buildCreate(req("STANDALONE")).get(0).resource();
+        Map<String, Object> etcd = map(map(map(spec(res).get("dependencies")).get("etcd")).get("inCluster"));
+
+        assertThat(map(etcd.get("values"))).containsEntry("replicaCount", 1);
+        assertThat(etcd).containsEntry("deletionPolicy", "Delete");
+        // PVC 是否回收仍由平台按标签做（keepPvc 语义），所以不能打开 operator 的级联删 PVC
+        assertThat(etcd).doesNotContainEntry("pvcDeletion", true);
     }
 
     @Test
