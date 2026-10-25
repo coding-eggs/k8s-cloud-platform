@@ -169,6 +169,31 @@ class ObjectStorageServiceTest {
     }
 
     @Test
+    void adminCanPublishABucketForAnonymousRead() {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+
+        service.setAnonymousRead(new com.coding.platformapi.models.ObjectStorageBucketAnonymous(
+                "obk1", null, true), null, "admin");
+
+        verify(s3).setAnonymousRead("c1", "t-aaaa-logs", true);
+        verify(buckets).updateAnonymousRead(eq("obk1"), eq(true), any());
+    }
+
+    @Test
+    void deletingABucketAlsoDropsItsAnonymousRead() {
+        PlatformObjectBucket row = row("obk1", "t_acme", "t-aaaa-logs");
+        row.setAnonymousRead(true);
+        when(buckets.selectById("obk1")).thenReturn(row);
+        when(credentials.selectActiveByBucket("obk1")).thenReturn(List.of());
+
+        service.deleteBucket(new com.coding.platformapi.models.ObjectStorageBucketRef(
+                null, null, "obk1"), "admin");
+
+        // 桶删了还留着匿名读的话，同名桶重建后会莫名其妙是公开的
+        verify(s3).setAnonymousRead("c1", "t-aaaa-logs", false);
+    }
+
+    @Test
     void adminCanChangeAnExistingBucketsQuota() {
         when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
 

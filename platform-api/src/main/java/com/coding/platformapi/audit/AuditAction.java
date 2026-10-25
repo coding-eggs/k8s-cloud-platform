@@ -137,6 +137,9 @@ public final class AuditAction {
     /** 修改某个桶的容量上限（SeaweedFS 每桶 quota） */
     public static final String OBJECT_BUCKET_QUOTA_SET = "object-bucket:quota";
 
+    /** 开/关桶的匿名读（等于把该桶的读取公开） */
+    public static final String OBJECT_BUCKET_ANONYMOUS_SET = "object-bucket:anonymous";
+
     /** 发放访问凭据（每桶一组 AK/SK） */
     public static final String OBJECT_CREDENTIAL_ISSUE = "object-credential:issue";
 

@@ -1,6 +1,7 @@
 package com.coding.k8sserver.controllers.cluster;
 
 import com.coding.common.models.objectstorage.ObjectBucketDTO;
+import com.coding.common.models.objectstorage.ObjectBucketAnonymousRequestDTO;
 import com.coding.common.models.objectstorage.ObjectBucketQuotaRequestDTO;
 import com.coding.common.models.objectstorage.ObjectBucketRequestDTO;
 import com.coding.common.models.objectstorage.ObjectBucketStatDTO;
@@ -91,6 +92,15 @@ public class ObjectStorageController implements AccessBoundaryAware {
                 request.getEndpoint(), request.getBuckets()));
     }
 
+
+    @PostMapping("/buckets/anonymous")
+    @Operation(summary = "开/关桶的匿名读（改 S3 的 anonymous 身份；会滚动网关）")
+    public ResponseData<Void> setAnonymousRead(@RequestBody ObjectBucketAnonymousRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        service.setAnonymousRead(request.getClusterId(), request.getBucket(),
+                Boolean.TRUE.equals(request.getAnonymousRead()));
+        return new ResponseData<>();
+    }
 
     @PostMapping("/buckets/quota")
     @Operation(summary = "设置桶容量上限（SeaweedFS ?seaweedfs-quota；<=0 = 清除）")

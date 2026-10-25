@@ -33,4 +33,8 @@ public interface PlatformObjectBucketMapper {
     /** 改桶容量上限（null = 不限）；只动台账，S3 侧由调用方先行设置 */
     int updateQuota(@Param("id") String id, @Param("quotaBytes") Long quotaBytes,
                     @Param("updatedAt") Date updatedAt);
+
+    /** 改桶的匿名读标记；只动台账，S3 侧由调用方先行设置 */
+    int updateAnonymousRead(@Param("id") String id, @Param("anonymousRead") boolean anonymousRead,
+                            @Param("updatedAt") Date updatedAt);
 }

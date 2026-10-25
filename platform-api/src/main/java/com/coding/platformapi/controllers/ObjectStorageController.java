@@ -77,6 +77,15 @@ public class ObjectStorageController {
         return new ResponseData<>(service.createBucket(request, operator()));
     }
 
+    @PostMapping("/buckets/anonymous")
+    @Auditable(action = AuditAction.OBJECT_BUCKET_ANONYMOUS_SET, target = "#request.bucketId")
+    @Operation(summary = "开/关桶的匿名读（仅管理员；只给读，不给列目录）")
+    public ResponseData<Void> setAnonymousRead(
+            @RequestBody com.coding.platformapi.models.ObjectStorageBucketAnonymous request) {
+        service.setAnonymousRead(request, auth.effectiveTenantId(request.getTenantId()), operator());
+        return new ResponseData<>();
+    }
+
     @PostMapping("/buckets/quota")
     @Auditable(action = AuditAction.OBJECT_BUCKET_QUOTA_SET, target = "#request.bucketId")
     @Operation(summary = "修改桶的容量上限（null = 不限；仅管理员）")

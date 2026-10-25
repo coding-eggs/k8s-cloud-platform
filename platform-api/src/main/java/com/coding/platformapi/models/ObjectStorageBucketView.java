@@ -21,4 +21,6 @@ public class ObjectStorageBucketView {
     private int credentialCount;
     /** 桶容量上限（字节）；null = 不限 */
     private Long quotaBytes;
+    /** 是否允许匿名读（知道完整路径即可下载，不能列目录） */
+    private boolean anonymousRead;
 }

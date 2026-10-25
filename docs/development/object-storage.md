@@ -15,6 +15,7 @@
 **谁能做什么**（v1）：
 
 - 建桶 / 删桶 / 设配额 / 发凭据 / 吊销凭据 = **平台管理员**（`platform:object-storage:manage`）；
+- **开/关桶的匿名读** = 平台管理员（同上）——只给 `Read`，不给列目录；
 - 看自己名下的桶与对象、取自己桶的凭据 = **租户**（`tenant:object-storage:read`）；
 - 上传 / 删除**单个对象**（自己名下的桶）= **租户**（`tenant:object-storage:write`，2026-10-25 定）——
   写码与读码分开，「能看」不等于「能改」；
@@ -49,6 +50,7 @@
 | `POST /buckets/list` | read | 租户按归属收窄；管理员不传 tenantId 看全部 |
 | `POST /buckets/stats` | read | 批量查桶用量（对象数/字节数）。S3 没有桶大小 API → 列举求和，单桶 5000 对象上限，到顶 `truncated=true`（页面显示「≥」） |
 | `POST /buckets/quota` | manage | 改桶的**容量**上限（`null` = 不限）；**先写 S3 成功再更新台账**，避免页面显示一个没生效的上限 |
+| `POST /buckets/anonymous` | manage | 开/关桶的**匿名读**：往 S3 的 `anonymous` 身份里加/删 `Read:<桶>`，然后滚动网关。只给读、不给列目录；只影响该桶 |
 | `POST /buckets/create` | manage | 桶名 = `t-<租户短码>-<name>`；先校验配额再建 S3 桶；可带 `quotaBytes`（容量上限）——建桶后立刻写进 SeaweedFS，写失败会回滚刚建的空桶 |
 | `POST /buckets/delete` | manage | 非空桶由 S3 拒绝；成功后排队的凭据一并吊销并软删台账 |
 | `POST /quota/get` · `/quota/set` | read · manage | 租户的**桶数**配额（不是容量）；容量上限是每桶一条 |
@@ -72,7 +74,7 @@
 - 租户：只看自己名下的桶 → 点桶名进入**文件浏览器**（目录下钻 + 面包屑 + 上一级 + 分页 + 下载）；
   有写权限时可**上传到当前目录**、**删除单个文件**；看/取自己的凭据；
 - 管理员：全部租户的桶、**当前大小 / 容量上限**（`50.00 MiB / 1.00 GiB`，未设上限只显示用量）、
-  代建桶（可填容量上限）、行内「配额」改已有桶的上限、设每租户的**桶数**上限、发/吊销凭据、删除桶。
+  代建桶（可填容量上限）、行内「配额」改已有桶的上限、行内「公开读」开关、设每租户的**桶数**上限、发/吊销凭据、删除桶。
 
 ## 6. 限制与已知问题
 
@@ -93,7 +95,11 @@
      平台不使用它。要让集群外访问，先把 `seaweedfs-s3` 暴露成 NodePort/LB 再填这里。
 5. **台账 vs S3 漂移**：别人用 admin 身份直接建/删桶时，平台页面看不出来；
    `ObjectStorageService.reconcile` 提供「S3 有、台账没有」的检查（v1 只报告，不自动接管）；
-6. **凭据轮换**：吊销会立刻让使用方 403，滚动完成后生效；没有过期时间与自动轮换。
+6. **凭据轮换**：吊销会立刻让使用方 403，滚动完成后生效；没有过期时间与自动轮换；
+7. **匿名读只能到桶级、只有 Read**：SeaweedFS 的 `anonymous` 身份是全局唯一一条，靠 actions 里的
+   `Read:<桶>` 决定哪些桶公开；**没有按前缀公开**的写法。设/取消都要滚动一次 S3 网关（秒级），
+   删桶时平台会自动把该桶的 `Read` 摘掉（免得同名桶重建后莫名其妙是公开的）。匿名可读等于
+   「知道完整对象路径即可下载」，文件名有规律时基本等同公开，敏感桶别开。
 
 ## 6.1 配置项
 
@@ -121,7 +127,8 @@ application.yaml 里只剩平台策略（两端都有 `platform.object-storage`�
    `V2026_10_25_2__object_storage_write.sql`（上传/删除端点的权限行）、
    `V2026_10_25_3__object_storage_bucket_stats_permission.sql`（桶用量端点）、
    `V2026_10_25_4__object_bucket_quota.sql`（桶容量上限列）、
-   `V2026_10_25_5__object_storage_bucket_quota_set_permission.sql`（改配额的端点），
+   `V2026_10_25_5__object_storage_bucket_quota_set_permission.sql`（改配额的端点）、
+   `V2026_10_25_6__object_bucket_anonymous_read.sql`（匿名读列 + 端点），
    再重放 `V2026_10_24_1__object_storage.sql`（表 + 页面码 + 权限行 + 角色绑定）与
    `V2026_10_24_2__object_storage_credentials_list_permission.sql`（补「凭据列表」端点）；
    ⚠️ **漏任何一条端点权限行，platform-api 启动期会 fail-closed**（`PermissionCrossCheckRunner`），

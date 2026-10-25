@@ -34,4 +34,7 @@ public class PlatformObjectBucket {
 
     /** 桶容量上限（字节）；null = 不限。真正的执行在 SeaweedFS（每桶 quota），这里只是声明值 */
     private Long quotaBytes;
+
+    /** 是否允许匿名读（S3 的 anonymous 身份里有 {@code Read:<桶>}）；只给 Read，不给列目录 */
+    private Boolean anonymousRead;
 }

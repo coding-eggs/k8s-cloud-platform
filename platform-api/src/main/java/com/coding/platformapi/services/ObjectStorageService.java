@@ -16,6 +16,7 @@ import com.coding.data.models.system.PlatformObjectQuota;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.configs.ObjectStorageProperties;
 import com.coding.platformapi.k8s.K8sObjectStorageClient;
+import com.coding.platformapi.models.ObjectStorageBucketAnonymous;
 import com.coding.platformapi.models.ObjectStorageBucketRef;
 import com.coding.platformapi.models.ObjectStorageBucketQuota;
 import com.coding.platformapi.models.ObjectStorageBucketView;
@@ -138,6 +139,7 @@ public class ObjectStorageService {
         row.setCreatedAt(new Date());
         row.setUpdatedAt(new Date());
         row.setQuotaBytes(req.getQuotaBytes());
+        row.setAnonymousRead(false);
         buckets.insert(row);
         log.info("对象存储：租户 {} 在集群 {} 建桶 {}（操作者 {}）",
                 req.getTenantId(), req.getClusterId(), bucket, operator);
@@ -182,6 +184,14 @@ public class ObjectStorageService {
                 log.warn("删桶 {} 时吊销凭据 {} 失败: {}", bucket.getBucket(), credential.getId(), e.getMessage());
             }
             credentials.revoke(credential.getId(), new Date());
+        }
+        // 桶删了就把匿名读也摘掉：否则同名桶重建后会莫名其妙地是公开的
+        if (Boolean.TRUE.equals(bucket.getAnonymousRead())) {
+            try {
+                s3.setAnonymousRead(bucket.getClusterId(), bucket.getBucket(), false);
+            } catch (Exception e) {
+                log.warn("删桶 {} 时关闭匿名读失败: {}", bucket.getBucket(), e.getMessage());
+            }
         }
         buckets.softDelete(bucket.getId(), new Date());
         log.info("对象存储：删除桶 {}（操作者 {}）", bucket.getBucket(), operator);
@@ -311,6 +321,20 @@ public class ObjectStorageService {
         }
         s3.uploadObject(bucket.getClusterId(), endpoint(bucket.getClusterId()), bucket.getBucket(),
                 requireKey(req.getKey()), req.getContentType(), size, in);
+    }
+
+    /**
+     * 开/关某个桶的匿名读。**先改 S3 成功，再更新台账**（同配额）。
+     *
+     * <p>只影响该桶：S3 配置里那条 {@code anonymous} 身份只认 actions 里列出的桶；
+     * 只给 Read，知道完整 key 才能下载，列不出目录。
+     */
+    public void setAnonymousRead(ObjectStorageBucketAnonymous req, String tenantId, String operator) {
+        PlatformObjectBucket bucket = requireBucket(req.getBucketId(), tenantId);
+        boolean enabled = Boolean.TRUE.equals(req.getAnonymousRead());
+        s3.setAnonymousRead(bucket.getClusterId(), bucket.getBucket(), enabled);
+        buckets.updateAnonymousRead(bucket.getId(), enabled, new Date());
+        log.info("对象存储：桶 {} 匿名读 -> {}（操作者 {}）", bucket.getBucket(), enabled, operator);
     }
 
     /**
@@ -452,7 +476,8 @@ public class ObjectStorageService {
     private static ObjectStorageBucketView toView(PlatformObjectBucket row, int credentialCount) {
         return new ObjectStorageBucketView(row.getId(), row.getClusterId(), row.getBucket(),
                 row.getTenantId(), row.getDisplayName(), row.getStatus(), row.getCreatedBy(),
-                row.getCreatedAt(), credentialCount, row.getQuotaBytes());
+                row.getCreatedAt(), credentialCount, row.getQuotaBytes(),
+                Boolean.TRUE.equals(row.getAnonymousRead()));
     }
 
     private long maxDownloadBytes() {

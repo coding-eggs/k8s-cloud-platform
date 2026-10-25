@@ -233,8 +233,25 @@ public class SeaweedS3Service {
         return out;
     }
 
-    // ==================== 桶配额（SeaweedFS S3 扩展） ====================
+    // ==================== 桶的匿名读 ====================
 
+    /**
+     * 开/关某个桶的匿名读：改 S3 配置里的 {@code anonymous} 身份，然后滚动网关（配置只在启动时读）。
+     *
+     * <p>只影响这一个桶：其它桶不在该身份的 actions 里，照旧要签名。
+     * 只给 {@code Read}，不给 {@code List} —— 知道完整 key 才能下载，列不出目录。
+     */
+    public void setAnonymousRead(String clusterId, String bucket, boolean enabled) {
+        KubernetesClient k8s = clientFactory.getAdminClient(clusterId);
+        assertPlatformConfigMounted(k8s);
+        String updated = SeaweedS3ConfigObjects.setAnonymousRead(configJson(k8s), bucket, enabled);
+        applySecret(k8s, properties.getConfigSecret(), SeaweedS3ConfigObjects.CONFIG_KEY, updated,
+                "platform.coding/component", "seaweedfs");
+        rollS3(k8s);
+        log.info("对象存储：桶 {} 匿名读 -> {}", bucket, enabled);
+    }
+
+    // ==================== 桶配额（SeaweedFS S3 扩展） ====================
     /**
      * 设置/清除桶容量上限：{@code PUT /{bucket}?seaweedfs-quota}（SeaweedFS 扩展，SigV4 签名）。
      *

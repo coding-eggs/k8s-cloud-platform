@@ -552,6 +552,37 @@ async function submitQuotaEdit(): Promise<void> {
   }
 }
 
+// ---------------- 匿名读（管理员） ----------------
+
+/**
+ * 开/关匿名读：把该桶的 Read 加进 S3 的 anonymous 身份（只给读，不给列目录）。
+ * 改完网关会滚动一次，所以弹窗里要提前说明。
+ */
+async function toggleAnonymous(row: ObjectStorageBucket): Promise<void> {
+  const enable = !row.anonymousRead
+  if (enable) {
+    try {
+      await ElMessageBox.confirm(
+        `把桶「${row.bucket}」设为匿名可读？\n` +
+        '之后任何能访问 S3 地址的人，只要知道完整对象路径就能下载（仍然列不出目录）。\n' +
+        '保存后 S3 网关会滚动一次，秒级。',
+        '设为公开读', { type: 'warning', confirmButtonText: '设为公开', cancelButtonText: '取消' },
+      )
+    } catch {
+      return
+    }
+  }
+  try {
+    await objectStorageApi.setAnonymousRead({
+      bucketId: row.id, tenantId: scopedTenantId(), anonymousRead: enable,
+    })
+    ElMessage.success(enable ? '已设为匿名可读' : '已取消匿名读')
+    await refresh()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '设置失败')
+  }
+}
+
 onMounted(async () => {
   await loadClusters()
   await loadTenants()
@@ -596,6 +627,7 @@ onMounted(async () => {
         <template #default="{ row }">
           <div class="os-bucket">
             <el-button link type="primary" @click="openObjects(row)">{{ row.bucket }}</el-button>
+            <el-tag v-if="row.anonymousRead" size="small" type="warning" effect="plain">公开读</el-tag>
             <span v-if="row.displayName && row.displayName !== row.bucket" class="os-bucket-alias">
               {{ row.displayName }}
             </span>
@@ -618,11 +650,14 @@ onMounted(async () => {
       </el-table-column>
       <el-table-column prop="createdBy" label="创建人" width="120" />
       <el-table-column prop="createdAt" label="创建时间" width="170" />
-      <el-table-column label="操作" width="270" fixed="right">
+      <el-table-column label="操作" width="340" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openObjects(row)">浏览</el-button>
           <el-button link type="primary" @click="openCredentials(row)">凭据</el-button>
           <el-button v-if="perm.isAdmin" link type="primary" @click="openQuotaEdit(row)">配额</el-button>
+          <el-button v-if="perm.isAdmin" link type="primary" @click="toggleAnonymous(row)">
+            {{ row.anonymousRead ? '取消公开' : '公开读' }}
+          </el-button>
           <el-button v-if="perm.isAdmin" link type="danger" @click="removeBucket(row)">删除</el-button>
         </template>
       </el-table-column>

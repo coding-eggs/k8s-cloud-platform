@@ -1042,6 +1042,8 @@ export interface ObjectStorageBucket {
   credentialCount: number
   /** 桶容量上限（字节）；null/未设 = 不限（由 SeaweedFS 每桶 quota 执行） */
   quotaBytes?: number | null
+  /** 是否允许匿名读（知道完整路径即可下载，列不出目录） */
+  anonymousRead?: boolean
 }
 
 /** 桶的当前用量（S3 没有桶大小 API：由后端列举求和，超上限时 truncated=true，展示成「≥」） */

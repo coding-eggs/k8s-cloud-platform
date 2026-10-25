@@ -35,7 +35,9 @@ class ObjectStoragePermissionMigrationTest {
             Path.of("../platform-data/src/main/resources/db/migration/"
                     + "V2026_10_25_3__object_storage_bucket_stats_permission.sql"),
             Path.of("../platform-data/src/main/resources/db/migration/"
-                    + "V2026_10_25_5__object_storage_bucket_quota_set_permission.sql"));
+                    + "V2026_10_25_5__object_storage_bucket_quota_set_permission.sql"),
+            Path.of("../platform-data/src/main/resources/db/migration/"
+                    + "V2026_10_25_6__object_bucket_anonymous_read.sql"));
 
     /** SQL 里 'API' 行的 (METHOD PATH) 集合 */
     private static final Pattern API_ROW = Pattern.compile(

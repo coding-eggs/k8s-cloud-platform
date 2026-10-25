@@ -1,5 +1,6 @@
 package com.coding.platformapi.k8s;
 
+import com.coding.common.models.objectstorage.ObjectBucketAnonymousRequestDTO;
 import com.coding.common.models.objectstorage.ObjectBucketDTO;
 import com.coding.common.models.objectstorage.ObjectBucketRequestDTO;
 import com.coding.common.models.objectstorage.ObjectBucketQuotaRequestDTO;
@@ -60,6 +61,13 @@ public class K8sObjectStorageClient {
     }
 
     /** 设置桶容量上限（SeaweedFS 的每桶 quota；null/<=0 = 清除） */
+    /** 开/关桶的匿名读（改 S3 的 anonymous 身份；会滚动网关） */
+    public void setAnonymousRead(String clusterId, String bucket, boolean enabled) {
+        gateway.exchange(HttpMethod.POST, "/object-storage/buckets/anonymous", null,
+                new ObjectBucketAnonymousRequestDTO(clusterId, bucket, enabled),
+                gateway.responseType(Void.class));
+    }
+
     public void setBucketQuota(String clusterId, String endpoint, String bucket, Long quotaBytes) {
         gateway.exchange(HttpMethod.POST, "/object-storage/buckets/quota", null,
                 new ObjectBucketQuotaRequestDTO(clusterId, endpoint, bucket, quotaBytes),

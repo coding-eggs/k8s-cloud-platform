@@ -952,6 +952,9 @@ export const objectStorageApi = {
   /** 修改桶的容量上限（null = 不限；仅管理员） */
   setBucketQuota: (payload: { bucketId: string; tenantId?: string; quotaBytes: number | null }) =>
     http.post<never, void>('/object-storage/buckets/quota', payload),
+  /** 开/关桶的匿名读（仅管理员；只给读，不给列目录） */
+  setAnonymousRead: (payload: { bucketId: string; tenantId?: string; anonymousRead: boolean }) =>
+    http.post<never, void>('/object-storage/buckets/anonymous', payload),
   quota: (payload: { clusterId: string; tenantId?: string }) =>
     http.post<never, ObjectStorageQuota>('/object-storage/quota/get', payload),
   setQuota: (payload: { clusterId: string; tenantId: string; maxBuckets: number }) =>
