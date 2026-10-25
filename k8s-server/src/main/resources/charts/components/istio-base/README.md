@@ -166,10 +166,16 @@ spec:
 - `Terminate` 带 `certificateRefs`（Secret 同 `istio-system`），`Passthrough` 只写 `mode`；
 - 已存在的 CR 会被这组 listeners **整体覆盖**（组件拥有它，以表单为准）。手工改 CR 只能在重放前生效；
 - Gateway API CRD 不存在时跳过（返回 false，不影响安装结果）；走 SSA，fieldManager 与其它平台对象一致；
-- **TCP / TLS / UDP listener 是 Istio 的 alpha 能力**：istiod 必须带 `PILOT_ENABLE_ALPHA_GATEWAY_API=true`
-  （recipe 已在 `pilot.env` 里声明）。否则 listener 会被判 `Accepted=False / UnsupportedProtocol`，
-  Envoy 不监听该端口，外部表现是 nodePort 连接被拒；TCPRoute 也因此永远 `attachedRoutes: 0`。
-  老集群升级平台后必须**重放一次 Istio 组件**，否则 istiod 仍跑旧参数。
+- **TCP / TLS / UDP listener 的版本差异（2026-10-26 核实）**：
+  - **1.30.x**（平台当前 1.30.6）：`TCP` listener 受 `PILOT_ENABLE_ALPHA_GATEWAY_API` 门控（recipe 已开）；
+    但 **TCPRoute 只认 `v1alpha2`** —— Gateway API 1.6 的 CRD 虽然同时提供 v1/v1alpha2，
+    平台页面写的是 **v1**，1.30 的 controller 不监听 v1，所以 `attachedRoutes` 永远是 0。
+    要走这条路只能把 TCPRoute 建成 `gateway.networking.k8s.io/v1alpha2`。
+  - **1.31+**：`TCP` listener 不再受该开关控制，TCPRoute 直接消费 **v1**（`route_collections.go` 用 `gatewayv1.TCPRoute`），
+    开箱即用。**升级到 1.31 是 TCPRoute 的正解**。
+  - **UDPRoute：Istio 一直不支持**（1.31 的 `supported_features.go` 显式 `Delete(UDPRouteFeature)`，
+    注释 "Istio does not support UDPRoute"），网关页面把它列为可选类型是误导。
+  - **TLSRoute**：1.30 与 1.31 都用 **v1**（Gateway API 1.5 起 TLSRoute 转正），不受影响。
 
 ### 5.3 与路由、Telemetry 的关系
 
@@ -222,6 +228,8 @@ Gateway 列表的「状态」列就是 `Programmed` 条件：
   `attachedRoutes: 0`、Envoy 未监听 19530，而 nodePort 的 DNAT 是好的（同节点 80/39091 正常）。
   根因：recipe 只给 istiod 开了 `PILOT_ENABLE_AMBIENT`，漏了 alpha Gateway API 开关。
   修法见 §3；**存量集群必须重放一次 Istio 组件**（istiod 滚动重启）listener 才会被接受。
+  ⚠️ 后续核实：1.30.6 即使开了开关，也只监听 **v1alpha2** 的 TCPRoute（issue #60744 / PR #60766，只在 1.31 修），
+  而平台页面创建的是 v1 —— 1.30 上要真正跑通需把 TCPRoute 建成 v1alpha2；正解是升到 1.31.x（见 §5.2）。
 
 ## 7. 验证
 
