@@ -59,7 +59,7 @@ class MiddlewareServiceTest {
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, catalog,
             JsonMapper.builder().build(), k8s, allocations, cache, metricsService,
-            objectStorage, components);
+            objectStorage, components, mock(ApplicationReferenceGuard.class));
 
     @BeforeEach
     void opsGetIds() {

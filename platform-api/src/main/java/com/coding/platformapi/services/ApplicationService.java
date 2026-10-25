@@ -5,15 +5,18 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.app.AppObjectRefDTO;
 import com.coding.common.models.app.AppProblemDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
+import com.coding.common.models.app.AppNodeDTO;
 import com.coding.common.models.app.AppSpecDTO;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformApplicationOperationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
 import com.coding.data.mapper.system.PlatformApplicationRevisionMapper;
+import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationResource;
+import com.coding.data.models.system.PlatformMiddlewareInstance;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppSpecValidator;
 import com.coding.platformapi.k8s.K8sAppClient;
@@ -49,6 +52,8 @@ public class ApplicationService {
     private final PlatformApplicationResourceMapper resources;
     private final PlatformTenantNamespaceMapper allocations;
     private final NamespaceAccessGuard namespaceGuard;
+    private final ApplicationReferenceGuard referenceGuard;
+    private final PlatformMiddlewareInstanceMapper middlewareInstances;
     private final K8sAppClient client;
 
     public ApplicationService(PlatformApplicationMapper apps,
@@ -57,6 +62,8 @@ public class ApplicationService {
                               PlatformApplicationResourceMapper resources,
                               PlatformTenantNamespaceMapper allocations,
                               NamespaceAccessGuard namespaceGuard,
+                              ApplicationReferenceGuard referenceGuard,
+                              PlatformMiddlewareInstanceMapper middlewareInstances,
                               K8sAppClient client) {
         this.apps = apps;
         this.revisions = revisions;
@@ -64,6 +71,8 @@ public class ApplicationService {
         this.resources = resources;
         this.allocations = allocations;
         this.namespaceGuard = namespaceGuard;
+        this.referenceGuard = referenceGuard;
+        this.middlewareInstances = middlewareInstances;
         this.client = client;
     }
 
@@ -98,6 +107,7 @@ public class ApplicationService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "该命名空间下已有同名应用：" + row.getName());
         }
+        rebuildReferences(row, req.getSpec());
         return view(row);
     }
 
@@ -136,7 +146,35 @@ public class ApplicationService {
         }
         row.setUpdatedAt(new Date());
         apps.updateById(row);
+        if (req.getSpec() != null) {
+            rebuildReferences(row, req.getSpec());
+        }
         return view(row);
+    }
+
+    /**
+     * 重建「应用 ↔ 中间件实例」的引用：BIND 取节点参数里的实例 id，
+     * CREATE 取该节点建过的最新实例（还没部署过就没有），EXTERNAL 不引用平台对象。
+     */
+    private void rebuildReferences(PlatformApplication app, AppSpecDTO spec) {
+        List<ApplicationReferenceGuard.Ref> refs = new ArrayList<>();
+        for (AppNodeDTO node : spec.getNodes() == null ? List.<AppNodeDTO>of() : spec.getNodes()) {
+            if (!"MIDDLEWARE".equals(node.getKind())) {
+                continue;
+            }
+            Map<String, Object> params = node.getParams() == null ? Map.of() : node.getParams();
+            String mode = String.valueOf(params.getOrDefault("provisionMode", ""));
+            String instanceId = null;
+            if ("BIND".equals(mode)) {
+                instanceId = String.valueOf(params.getOrDefault("instanceId", ""));
+            } else if ("CREATE".equals(mode)) {
+                PlatformMiddlewareInstance created = middlewareInstances
+                        .selectLatestByAppNode(app.getId(), node.getKey());
+                instanceId = created == null ? null : created.getId();
+            }
+            refs.add(new ApplicationReferenceGuard.Ref(node.getKey(), instanceId));
+        }
+        referenceGuard.replace(app.getId(), refs);
     }
 
     /**

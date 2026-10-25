@@ -79,6 +79,9 @@ public class MiddlewareService {
     private final ObjectStorageService objectStorage;
     private final ClusterComponentService components;
 
+    /** 引用守卫：被应用引用的实例不能删 */
+    private final ApplicationReferenceGuard referenceGuard;
+
     public MiddlewareService(PlatformMiddlewareInstanceMapper instances,
                              PlatformMiddlewareOperationMapper operations,
                              PlatformMiddlewareOperatorMapper operators,
@@ -90,7 +93,8 @@ public class MiddlewareService {
                              RedisJsonCache cache,
                              com.coding.platformapi.metrics.MetricsService metrics,
                              ObjectStorageService objectStorage,
-                             ClusterComponentService components) {
+                             ClusterComponentService components,
+                             ApplicationReferenceGuard referenceGuard) {
         this.instances = instances;
         this.operations = operations;
         this.operators = operators;
@@ -103,6 +107,7 @@ public class MiddlewareService {
         this.metrics = metrics;
         this.objectStorage = objectStorage;
         this.components = components;
+        this.referenceGuard = referenceGuard;
     }
 
     // ==================== 目录 ====================
@@ -746,6 +751,8 @@ public class MiddlewareService {
 
     public Long delete(MiddlewareDeleteRequest req, String operator, String tenantId) {
         PlatformMiddlewareInstance instance = requireInstance(req.getInstanceId(), tenantId);
+        // 被应用引用时拒绝：删掉它会让正在跑的应用连不上库
+        referenceGuard.assertNotReferenced(instance.getId());
         PlatformMiddlewareOperation op = newOperation(instance, "DELETE", operator);
         try {
             MiddlewareDeleteRequestDTO dto = new MiddlewareDeleteRequestDTO();

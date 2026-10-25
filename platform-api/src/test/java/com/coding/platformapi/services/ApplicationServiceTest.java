@@ -8,6 +8,7 @@ import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformApplicationOperationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
 import com.coding.data.mapper.system.PlatformApplicationRevisionMapper;
+import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationResource;
@@ -38,6 +39,8 @@ class ApplicationServiceTest {
     private PlatformApplicationResourceMapper resources;
     private PlatformTenantNamespaceMapper allocations;
     private NamespaceAccessGuard namespaceGuard;
+    private ApplicationReferenceGuard referenceGuard;
+    private PlatformMiddlewareInstanceMapper middlewareInstances;
     private K8sAppClient client;
     private ApplicationService service;
 
@@ -49,9 +52,11 @@ class ApplicationServiceTest {
         resources = mock(PlatformApplicationResourceMapper.class);
         allocations = mock(PlatformTenantNamespaceMapper.class);
         namespaceGuard = mock(NamespaceAccessGuard.class);
+        referenceGuard = mock(ApplicationReferenceGuard.class);
+        middlewareInstances = mock(PlatformMiddlewareInstanceMapper.class);
         client = mock(K8sAppClient.class);
         service = new ApplicationService(apps, revisions, operations, resources, allocations,
-                namespaceGuard, client);
+                namespaceGuard, referenceGuard, middlewareInstances, client);
     }
 
     private static ApplicationCreateRequest req(AppSpecDTO spec) {
