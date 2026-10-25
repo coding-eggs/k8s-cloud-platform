@@ -961,8 +961,12 @@ public class MiddlewareService {
         if (!"PLATFORM".equals(type)) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "不支持的对象存储来源：" + type);
         }
-        if (isBlank(tenantId)) {
-            throw new CloudPlatformException(EnumResponseType.ERROR, "平台对象存储的桶必须归属某个租户，请先选择租户");
+        // 平台桶必须挂在租户名下：租户视图直接用 token 的租户；管理员在平台视图（token 无租户上下文）
+        // 创建时，按所选命名空间的分配记录反查 —— 桶名与配额都跟着这个租户走。
+        String owner = isBlank(tenantId) ? tenantOfNamespace(req.getClusterId(), req.getNamespace()) : tenantId;
+        if (isBlank(owner)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "无法确定平台桶的归属租户：请选择已分配给租户的命名空间，或改用「自带 S3」");
         }
         if (!components.seaweedInstalled(req.getClusterId())) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
@@ -970,7 +974,7 @@ public class MiddlewareService {
         }
         ObjectStorageCreateBucket body = new ObjectStorageCreateBucket();
         body.setClusterId(req.getClusterId());
-        body.setTenantId(tenantId);
+        body.setTenantId(owner);
         body.setName("milvus-" + name);
         body.setDisplayName("Milvus " + name);
         long quota = quantityBytes(req.getStorageSize());
@@ -984,6 +988,29 @@ public class MiddlewareService {
         // CR 里的 endpoint 只能是 host:port（operator 自己按 useSSL 补默认端口）；scheme 只用来定 TLS
         return new StorageGrant(type, hostPort(raw), bucket.getBucket(), bucket.getId(),
                 credential.getAccessKey(), credential.getSecretKey(), raw.startsWith("https://"));
+    }
+
+    /**
+     * 管理员在平台视图创建时：按命名空间的分配记录反查平台桶的归属租户。
+     *
+     * <p>0 条 = 该命名空间还没分配给租户（返回 null，由调用方报错）；多条（同一命名空间分给了多个租户）
+     * 直接拒 —— 桶归属不能猜，猜错就是把 A 租户的数据记到 B 租户的配额上。
+     */
+    private String tenantOfNamespace(String clusterId, String namespace) {
+        List<PlatformTenantNamespace> rows = allocations.selectByClusterAndNs(clusterId, namespace);
+        java.util.LinkedHashSet<String> tenants = new java.util.LinkedHashSet<>();
+        if (rows != null) {
+            for (PlatformTenantNamespace row : rows) {
+                if (row.getTenantId() != null) {
+                    tenants.add(row.getTenantId());
+                }
+            }
+        }
+        if (tenants.size() > 1) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "命名空间 " + namespace + " 分配给了多个租户，无法确定平台桶的归属；请切到租户视图创建，或改用「自带 S3」");
+        }
+        return tenants.isEmpty() ? null : tenants.iterator().next();
     }
 
     /** "http://host:8333/x" / "host:8333" → "host:8333"（与 k8s-server 适配器的规整规则一致）。 */
