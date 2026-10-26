@@ -409,7 +409,7 @@ async function remove(): Promise<void> {
   try {
     await middlewareApi.remove({ instanceId: instanceId.value, keepPvc: true, tenantId: tenantId.value })
     ElMessage.success('已提交删除')
-    router.push('/apps')
+    router.push('/apps/instances')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '删除失败')
   }
@@ -434,7 +434,7 @@ watch(tenantId, () => void load())
   <div v-loading="loading" class="mw-detail">
     <div class="page-header">
       <div>
-        <el-button link @click="router.push('/apps')">← 返回中间件</el-button>
+        <el-button link @click="router.push('/apps/instances')">← 返回实例列表</el-button>
         <h2 class="mw-title">
           {{ instance?.displayName || instance?.name || '实例详情' }}
           <el-tag v-if="instance" size="small" :type="STATUS_TAG[instance.status]?.type ?? 'info'">
