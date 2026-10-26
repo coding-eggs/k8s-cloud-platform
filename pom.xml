@@ -20,7 +20,6 @@
         <pageHelper.version>4.1.0</pageHelper.version>
         <fabric8.kubernetes-client.version>7.9.0</fabric8.kubernetes-client.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <spring.aop.version>3.5.13</spring.aop.version>
         <nimbus.version>10.4</nimbus.version>
         <spring-cloud.version>2025.1.1</spring-cloud.version>
         <crypto.tink.version>1.21.0</crypto.tink.version>
@@ -47,11 +46,11 @@
                 <scope>import</scope>
             </dependency>
 
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-starter-aop</artifactId>
-                <version>${spring.aop.version}</version>
-            </dependency>
+            <!-- AOP 启动器：Spring Boot 4 把它从 spring-boot-starter-aop 改名成
+                 spring-boot-starter-aspectj（Boot 3.5 起的名字已不在 4.x 的 BOM 里）。
+                 版本由上面导入的 spring-boot-dependencies BOM 管理，这里不再单列 —— 曾经钉过
+                 一个 3.5.13 的老坐标，能跑只是因为 spring-aop/aspectjweaver 的版本被 BOM 兜住了，
+                 等于把 Boot 3 的启动器 POM 引进 Boot 4 应用。 -->
 
         </dependencies>
     </dependencyManagement>
@@ -114,6 +113,22 @@
                             </exclude>
                         </excludes>
                     </configuration>
+                    <!-- ⚠️ 本父 POM 用的是 spring-boot-dependencies（BOM import），**不是**
+                         spring-boot-starter-parent —— 后者才会把 repackage 绑到 package 阶段。
+                         不在这里显式绑 execution 的话，`mvn package` 只跑 maven-jar-plugin，
+                         产物是普通瘦 jar（MANIFEST 里没有 Main-Class、没有 BOOT-INF/），
+                         镜像里 `java -jar /app/app.jar` 会直接报
+                         "no main manifest attribute, in /app/app.jar"。
+                         放在 pluginManagement 里 = 三个服务模块（声明了该插件的）统一生效；
+                         库模块（platform-common / platform-data / k8s-core）没声明，不受影响。 -->
+                    <executions>
+                        <execution>
+                            <id>repackage</id>
+                            <goals>
+                                <goal>repackage</goal>
+                            </goals>
+                        </execution>
+                    </executions>
                 </plugin>
             </plugins>
         </pluginManagement>

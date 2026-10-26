@@ -10,7 +10,8 @@
         <relativePath>../pom.xml</relativePath>
     </parent>
     <artifactId>platform-api</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <!-- 版本继承父 POM（1.0.0），与本仓其余模块一致；以前单独写 0.0.1-SNAPSHOT，
+         产物名/镜像 tag 跟别人对不上，排查时容易误判。 -->
     <name>platform-api</name>
     <description>platform-api</description>
 
@@ -68,7 +69,7 @@
         <!-- S0.1 审计日志：@Auditable + AuditAspect 需要 Spring AOP -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
+            <artifactId>spring-boot-starter-aspectj</artifactId>
         </dependency>
 
         <!-- 业务/DB 模块；K8s 侧动作全部经 k8s-server HTTP（/admin/**），本服务不依赖 k8s-core/fabric8 -->

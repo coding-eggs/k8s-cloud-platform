@@ -270,7 +270,7 @@ mvn -pl platform-api -am package
 运行 `com.coding.platformapi.PlatformApiApplication`，或：
 
 ```bash
-java -jar platform-api/target/platform-api-0.0.1-SNAPSHOT.jar
+java -jar platform-api/target/platform-api-1.0.0.jar
 ```
 
 访问：`http://127.0.0.1:8081/doc.html`（Knife4j）。
