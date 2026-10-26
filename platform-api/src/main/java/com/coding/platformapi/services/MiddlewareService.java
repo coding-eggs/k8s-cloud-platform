@@ -355,6 +355,7 @@ public class MiddlewareService {
             dto.setMetricsEnabled(Boolean.TRUE.equals(req.getMetricsEnabled()));
             dto.setEtcdReplicas(req.getEtcdReplicas());
             dto.setLocalStorageSize(req.getLocalStorageSize());
+            dto.setAuthEnabled(Boolean.TRUE.equals(req.getAuthEnabled()));
             if (grant != null) {
                 dto.setObjectStorageType(grant.type());
                 dto.setObjectStorageEndpoint(grant.endpoint());
@@ -468,7 +469,14 @@ public class MiddlewareService {
                         : (bucket == null ? "平台对象存储" : "平台桶 " + bucket);
                 credentials.add(line("对象存储", storage
                         + "；凭据在 Secret " + name + "-milvus-storage（accesskey / secretkey）"));
-                note = "Milvus 默认未开启鉴权；对外暴露前请用命名空间或网格策略控制访问。";
+                boolean auth = Boolean.TRUE.equals(spec.get("authEnabled"));
+                if (auth) {
+                    credentials.add(line("用户名 / 密码",
+                            "root；Secret " + name + "-milvus-auth（键 username / password）"));
+                }
+                note = auth
+                        ? "已开启鉴权：客户端连接需带 root 口令（见上面的 Secret）。"
+                        : "Milvus 默认未开启鉴权；对外暴露前请用命名空间或网格策略控制访问。";
             }
             default -> note = "该中间件暂未提供连接方式说明。";
         }
@@ -515,8 +523,15 @@ public class MiddlewareService {
             case "rabbitmq" -> MiddlewareConnectionDTO.ConnInfo.of("rabbitmq", host(ns, name), 5672)
                     .secret(name + "-default-user", "username", "password").build();
             case "nacos" -> MiddlewareConnectionDTO.ConnInfo.of("nacos", host(ns, "nacos-cs"), 8848).build();
-            case "milvus" -> MiddlewareConnectionDTO.ConnInfo.of("milvus", host(ns, name + "-milvus"), 19530)
-                    .secret(name + "-milvus-storage", "accesskey", "secretkey").build();
+            case "milvus" -> {
+                // 开了鉴权就是 root 口令；没开时唯一凭据是对象存储的 AK/SK
+                boolean auth = Boolean.TRUE.equals(parseSpec(instance.getSpecJson()).get("authEnabled"));
+                yield MiddlewareConnectionDTO.ConnInfo.of("milvus", host(ns, name + "-milvus"), 19530)
+                        .secret(auth ? name + "-milvus-auth" : name + "-milvus-storage",
+                                auth ? "username" : "accesskey",
+                                auth ? "password" : "secretkey")
+                        .build();
+            }
             default -> null;
         };
     }
@@ -956,6 +971,8 @@ public class MiddlewareService {
             spec.put("objectStorageBucket", grant.bucket());
             spec.put("objectStorageBucketId", grant.bucketId());
             spec.put("objectStorageEndpoint", grant.endpoint());
+            // 开没开鉴权决定详情页怎么描述连接方式（root 口令本身不落库）
+            spec.put("authEnabled", Boolean.TRUE.equals(req.getAuthEnabled()));
             // AK/SK 不落库
         }
         return jsonMapper.writeValueAsString(spec);

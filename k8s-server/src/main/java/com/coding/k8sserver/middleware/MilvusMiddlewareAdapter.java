@@ -30,6 +30,17 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
     static final String DEFAULT_VERSION = "2.6.25";
     static final String IMAGE_PREFIX = "milvusdb/milvus:v";
     static final String STORAGE_SECRET_SUFFIX = "-milvus-storage";
+    /** 开启鉴权时平台写的 root 凭据 Secret 后缀（键 username / password） */
+    static final String AUTH_SECRET_SUFFIX = "-milvus-auth";
+    /** Milvus 的 root 用户名固定：鉴权只能在首次初始化时建 root，改不了 */
+    static final String AUTH_USERNAME = "root";
+    /**
+     * root 口令的配置项：{@code common.security.defaultRootPassword}。
+     * <p>用环境变量注入而不是写进 {@code spec.config} —— CR 是明文可读的，密码不能落在 CR 里。
+     * Milvus 的 env 覆盖规则是「转小写 + 去掉 . 和 _」，所以这个名字等价于那条配置项
+     * （v2.6 的 {@code pkg/config/env_source.go} + {@code base_table.go} 的 key formatter）。
+     */
+    static final String ROOT_PASSWORD_ENV = "COMMON_SECURITY_DEFAULTROOTPASSWORD";
     static final int METRICS_PORT = 9091;
     static final String ETCD_STORAGE = "5Gi";
     static final String INSTANCE_LABEL = "platform.coding/middleware-instance";
@@ -67,6 +78,23 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
                 "secretkey", req.getObjectStorageSecretKey());
     }
 
+    /** root 凭据 Secret：只在勾了「开启鉴权」时写（见 {@link #authSecretData}） */
+    @Override
+    public String authSecretName(String name) {
+        return name + AUTH_SECRET_SUFFIX;
+    }
+
+    @Override
+    public Map<String, String> authSecretData(MiddlewareCreateRequestDTO req) {
+        if (!Boolean.TRUE.equals(req.getAuthEnabled())) {
+            return Map.of();
+        }
+        if (isBlank(req.getPassword())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "开启鉴权时缺少 root 口令");
+        }
+        return Map.of("username", AUTH_USERNAME, "password", req.getPassword());
+    }
+
     @Override
     public List<CrSpec> buildCreate(MiddlewareCreateRequestDTO req) {
         if (isBlank(req.getObjectStorageEndpoint()) || isBlank(req.getObjectStorageBucket())) {
@@ -75,6 +103,7 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
         }
         boolean cluster = "CLUSTER".equals(req.getMode());
         boolean ssl = Boolean.TRUE.equals(req.getObjectStorageUseSsl());
+        boolean auth = Boolean.TRUE.equals(req.getAuthEnabled());
 
         Map<String, Object> components = new LinkedHashMap<>();
         components.put("image", IMAGE_PREFIX + versionOf(req));
@@ -83,6 +112,14 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
             Map<String, Object> queryNode = new LinkedHashMap<>();
             queryNode.put("replicas", Math.max(1, req.getReplicas() == null ? 1 : req.getReplicas()));
             components.put("queryNode", queryNode);
+        }
+        if (auth) {
+            // 口令从平台写的 Secret 注入：CR 里只有 secretKeyRef，密码不落 CR
+            components.put("env", List.of(Map.of(
+                    "name", ROOT_PASSWORD_ENV,
+                    "valueFrom", Map.of("secretKeyRef", Map.of(
+                            "name", req.getName() + AUTH_SECRET_SUFFIX,
+                            "key", "password")))));
         }
 
         Map<String, Object> spec = new LinkedHashMap<>();
@@ -93,10 +130,16 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
         }
         spec.put("dependencies", dependenciesOf(req, cluster));
         // spec.config 直接并进 milvus.yaml：minio 是顶层键，**不要**再包一层 milvus
-        spec.put("config", Map.of("minio", Map.of(
+        Map<String, Object> config = new LinkedHashMap<>();
+        config.put("minio", Map.of(
                 "bucketName", req.getObjectStorageBucket(),
                 "useVirtualHost", false,   // SeaweedFS 只支持路径风格
-                "useSSL", ssl)));
+                "useSSL", ssl));
+        if (auth) {
+            // 开鉴权（root 口令见上面 components.env）
+            config.put("common", Map.of("security", Map.of("authorizationEnabled", true)));
+        }
+        spec.put("config", config);
 
         GenericKubernetesResource res = new GenericKubernetesResource();
         res.setApiVersion(GROUP + "/" + VERSION);

@@ -723,6 +723,55 @@ class MiddlewareServiceTest {
     }
 
     @Test
+    void milvusConnectionSwitchesToAuthSecretWhenEnabled() {
+        // 开了鉴权，凭据就是 root 口令（Secret <名称>-milvus-auth）；没开时才回落到对象存储的 AK/SK
+        PlatformMiddlewareInstance i = instance("milvus", "CLUSTER");
+        i.setSpecJson("{\"objectStorageBucket\":\"b\",\"authEnabled\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var conn = service.connection("mwi_1", null);
+
+        assertThat(conn.getCredentials()).extracting(MiddlewareConnectionDTO.Line::value)
+                .anyMatch(v -> v.contains("mw-milvus-abcdefgh-milvus-auth"))
+                .anyMatch(v -> v.startsWith("root"));
+        assertThat(conn.getNote()).contains("已开启鉴权");
+        assertThat(conn.getInfo().getSecretName()).isEqualTo("mw-milvus-abcdefgh-milvus-auth");
+        assertThat(conn.getInfo().getUsernameKey()).isEqualTo("username");
+        assertThat(conn.getInfo().getPasswordKey()).isEqualTo("password");
+    }
+
+    @Test
+    void milvusAuthEnabledReachesK8sAndIsRecordedWithoutThePassword() {
+        when(client.operatorStatus(any())).thenReturn(List.of(status("milvus", true, true)));
+        when(client.create(anyString(), any())).thenReturn(true);
+        when(components.seaweedInstalled("c1")).thenReturn(true);
+        when(objectStorage.s3Endpoint("c1")).thenReturn("http://s3:8333");
+        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
+        bucket.setId("obk_1");
+        bucket.setBucket("t-1234abcd-milvus-x");
+        when(objectStorage.createBucket(any(), anyString())).thenReturn(bucket);
+        when(objectStorage.issueCredential(any(), anyString()))
+                .thenReturn(new ObjectCredentialDTO("AK", "SK"));
+
+        MiddlewareCreateRequest r = milvusRequest("PLATFORM");
+        r.setAuthEnabled(true);
+        service.create(r, "admin", "t1");
+
+        ArgumentCaptor<MiddlewareCreateRequestDTO> sent =
+                ArgumentCaptor.forClass(MiddlewareCreateRequestDTO.class);
+        verify(client).create(anyString(), sent.capture());
+        assertThat(sent.getValue().getAuthEnabled()).isTrue();
+        assertThat(sent.getValue().getPassword()).isNotBlank();
+
+        ArgumentCaptor<PlatformMiddlewareInstance> saved =
+                ArgumentCaptor.forClass(PlatformMiddlewareInstance.class);
+        verify(instances).insert(saved.capture());
+        assertThat(saved.getValue().getSpecJson())
+                .contains("\"authEnabled\":true")
+                .doesNotContain(sent.getValue().getPassword());
+    }
+
+    @Test
     void formOptionsReportsObjectStorageAvailability() {
         when(allocations.listByCluster("c1")).thenReturn(List.of());
         when(components.seaweedInstalled("c1")).thenReturn(true);

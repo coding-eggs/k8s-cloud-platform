@@ -61,6 +61,12 @@ public class MiddlewareCreateRequest {
 
     /** Milvus：单节点本地数据盘（默认 10Gi；集群形态不使用） */
     private String localStorageSize;
+
+    /**
+     * Milvus：是否开启鉴权（默认关）。root 口令由平台生成（不落库，
+     * 只在 Kubernetes 的 Secret {@code <名称>-milvus-auth} 里），用户名固定 {@code root}。
+     */
+    private Boolean authEnabled;
     /** 仅管理员代管轨使用；租户轨以 token 为准 */
     private String tenantId;
 }

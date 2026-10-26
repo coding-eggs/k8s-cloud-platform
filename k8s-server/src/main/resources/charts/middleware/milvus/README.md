@@ -13,7 +13,7 @@
 | 实例形态 | `STANDALONE`（1 个 Milvus Pod）/ `CLUSTER`（proxy/mixcoord/datanode/querynode/streamingnode） |
 | 数据存储 | **外部对象存储**（平台 SeaweedFS 桶 / 用户自带 S3）；集群里不拉起 minio/silo |
 | etcd | Operator 在租户命名空间拉起，1–3 节点（表单选择，创建后不可改） |
-| 凭据 | 无（Milvus 默认不开鉴权）；对象存储 AK/SK 写在 `<实例名>-milvus-storage` |
+| 凭据 | **可选**（创建时勾「开启鉴权」）：用户名固定 `root`，口令平台生成，写在 `<实例名>-milvus-auth`（`username` / `password`）；对象存储 AK/SK 写在 `<实例名>-milvus-storage`（`accesskey` / `secretkey`） |
 | 端口 | gRPC 19530；指标/健康 9091 |
 | 业务指标 | 各组件自带 Prometheus（9091 `/metrics`），平台只建 Service + ServiceMonitor |
 
@@ -43,11 +43,20 @@
 4. **SeaweedFS 用路径风格**：`config.minio.useVirtualHost=false`；
 5. **etcd chart 默认不写 resources**：平台必须补，否则租户 quota 直接拒；
 6. **单节点本地盘 PVC 没有 OwnerReference**：删 CR 不会带走它，必须靠标签回收；
-7. **`installCRDs: true` 且 CRD 在 `templates/`**：手工卸载 release 会连 CRD 与全部实例一起删，平台不提供卸载入口；
-8. **「平台对象存储」的判据是"装过"不是"健康"**：`ClusterComponentService.seaweedInstalled` 看的是本集群最新一条
+7. **鉴权（2026-10-26 新增）**：勾了「开启鉴权」才写 ——
+   - `spec.config.common.security.authorizationEnabled: true`（非敏感，直接进 milvus.yaml）；
+   - root 口令**不进 CR**：`spec.components.env` 里放 `COMMON_SECURITY_DEFAULTROOTPASSWORD`，
+     值用 `valueFrom.secretKeyRef` 指向 `<实例名>-milvus-auth` 的 `password` 键。
+     Milvus 的 env 覆盖规则是「转小写 + 去掉 `.` 和 `_`」（`pkg/config/env_source.go` + `base_table.go`），
+     所以这个变量名等价于 `common.security.defaultRootPassword`；
+   - 用户名不能自定义：Milvus 只在首次初始化时建 root（`common.security.superUsers` 另说），
+     所以平台固定写 `root`，改密码要用 Milvus 客户端（`update_password`），平台不提供改密入口；
+   - 关闭鉴权的实例与旧实例完全不受影响（不写 Secret、不写 env）；
+8. **`installCRDs: true` 且 CRD 在 `templates/`**：手工卸载 release 会连 CRD 与全部实例一起删，平台不提供卸载入口；
+9. **「平台对象存储」的判据是"装过"不是"健康"**：`ClusterComponentService.seaweedInstalled` 看的是本集群最新一条
    成功的组件安装记录。组件被卸载或挂掉时选项仍在，错误会推迟到建桶那一刻（报底层 S3 错误）；
    这是对象存储页共用的既有语义，平台侧没有做健康探测。
-9. **平台桶的归属租户**：租户作用域统一取**顶栏**（资源上下文 store）。中间件三页都带 `meta.context: 'full'`，
+10. **平台桶的归属租户**：租户作用域统一取**顶栏**（资源上下文 store）。中间件三页都带 `meta.context: 'full'`，
    顶栏级联的 `ensureDefaults` 会把平台视图落到第一个可用租户；没有可用租户时表单禁用「平台对象存储」。
    实例台账的 `tenant_id` 保持请求值（管理员平台视图 = null）——**桶归租户、实例归平台**。
 

@@ -69,6 +69,20 @@ public interface MiddlewareAdapter {
     }
 
     /**
+     * 实例<b>鉴权凭据</b> Secret 名（与 {@link #extraSecretName} 分开：那是对象存储之类的外部依赖凭据）。
+     * <p>null = 本中间件不启用实例鉴权。目前只有 Milvus 会用（用户按实例勾选「开启鉴权」）。
+     * <p>创建时只在 {@link #authSecretData} 非空才真正写；删除时按名静默清理（不存在也无妨）。
+     */
+    default String authSecretName(String name) {
+        return null;
+    }
+
+    /** 鉴权凭据的键值；返回空 map = 本次创建不启用鉴权，不写 Secret。 */
+    default Map<String, String> authSecretData(MiddlewareCreateRequestDTO req) {
+        return Map.of();
+    }
+
+    /**
      * 本中间件自己的 CR 异常判定（共享的 crFailureMessage 只认 Ready/Available condition）。
      * <p>返回 null = 没发现问题。
      */

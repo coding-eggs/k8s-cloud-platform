@@ -171,6 +171,57 @@ class MilvusMiddlewareAdapterTest {
     }
 
     @Test
+    void authEnabledTurnsOnAuthorizationAndReadsThePasswordFromASecret() {
+        // 密码不能落进 CR（CR 是人可读的）：CR 里只放 secretKeyRef，值在平台写的 Secret 里
+        var r = req("STANDALONE");
+        r.setAuthEnabled(true);
+        r.setPassword("s3cret-generated");
+
+        var res = adapter.buildCreate(r).get(0).resource();
+
+        Map<String, Object> config = map(spec(res).get("config"));
+        assertThat(map(map(config.get("common")).get("security")))
+                .containsEntry("authorizationEnabled", true);
+        assertThat(config).doesNotContainKey("password");
+
+        List<?> env = (List<?>) map(spec(res).get("components")).get("env");
+        assertThat(env).hasSize(1);
+        Map<String, Object> item = map(env.get(0));
+        assertThat(item).containsEntry("name", "COMMON_SECURITY_DEFAULTROOTPASSWORD");
+        assertThat(map(map(item.get("valueFrom")).get("secretKeyRef")))
+                .containsEntry("name", "mw-milvus-abc12345-milvus-auth")
+                .containsEntry("key", "password");
+        // CR 里不能出现口令本身
+        assertThat(String.valueOf(res.getAdditionalProperties()))
+                .doesNotContain("s3cret-generated");
+    }
+
+    @Test
+    void authDisabledKeepsTheCrWithoutSecurityOrEnv() {
+        var res = adapter.buildCreate(req("STANDALONE")).get(0).resource();
+
+        assertThat(map(spec(res).get("config"))).doesNotContainKey("common");
+        assertThat(map(spec(res).get("components"))).doesNotContainKey("env");
+        assertThat(adapter.authSecretData(req("STANDALONE"))).isEmpty();
+    }
+
+    @Test
+    void authSecretCarriesRootUsernameAndTheGeneratedPassword() {
+        assertThat(adapter.authSecretName("mw-milvus-abc12345"))
+                .isEqualTo("mw-milvus-abc12345-milvus-auth");
+        var r = req("STANDALONE");
+        r.setAuthEnabled(true);
+        r.setPassword("s3cret-generated");
+        assertThat(adapter.authSecretData(r))
+                .isEqualTo(Map.of("username", "root", "password", "s3cret-generated"));
+
+        var noPassword = req("STANDALONE");
+        noPassword.setAuthEnabled(true);
+        assertThatThrownBy(() -> adapter.authSecretData(noPassword))
+                .hasMessageContaining("root 口令");
+    }
+
+    @Test
     void statusSelectorAndMetricsMatchOperatorLabels() {
         assertThat(adapter.statusSelector("mw-milvus-abc12345", "Milvus"))
                 .isEqualTo("app.kubernetes.io/instance=mw-milvus-abc12345,app.kubernetes.io/name=milvus");

@@ -139,6 +139,8 @@ function resetForm(item: MiddlewareCatalogItem): void {
     objectStorageAccessKey: '',
     objectStorageSecretKey: '',
     objectStorageUseSsl: false,
+    // Milvus：是否开启鉴权（root 口令由平台生成，落 Secret <名称>-milvus-auth）
+    authEnabled: false,
   }
   const units: Record<string, string> = {}
   for (const field of MIDDLEWARE_FIELDS[item.code] ?? []) {
@@ -267,6 +269,7 @@ async function submitCreate(): Promise<void> {
     }
     if (createItem.value.code === 'milvus') {
       payload.etcdReplicas = form.value.etcdReplicas
+      payload.authEnabled = !!form.value.authEnabled
       payload.objectStorageType = form.value.objectStorageType
       if (form.value.objectStorageType === 'CUSTOM') {
         payload.objectStorageEndpoint = form.value.objectStorageEndpoint?.trim() || undefined
@@ -581,6 +584,14 @@ onBeforeUnmount(() => {
             <el-input-number v-model="form.etcdReplicas" :min="1" :max="3" />
             <div class="mw-form-help">1~3；单节点默认 1、集群默认 3；创建后不可修改</div>
           </el-form-item>
+          <el-form-item label="鉴权">
+            <el-switch v-model="form.authEnabled" active-text="开启鉴权（root 口令由平台生成）" />
+            <div class="mw-form-help">
+              开启后用户名固定 <code>root</code>，口令由平台生成并写进同命名空间的 Secret
+              <code>&lt;名称&gt;-milvus-auth</code>（键 username / password）—— 平台不保存、不回显明文；
+              连接方式里会给出 Secret 名。创建后不可关闭。
+            </div>
+          </el-form-item>
           <el-form-item label="对象存储来源" required>
             <el-radio-group v-model="form.objectStorageType">
               <el-radio value="PLATFORM" :disabled="!formOptions.objectStorageAvailable || !tenantId">平台对象存储</el-radio>
@@ -625,7 +636,8 @@ onBeforeUnmount(() => {
           Kafka 监听器为集群内 plain（9092），未开启认证，没有初始凭据。
         </template>
         <template v-else-if="createItem?.code === 'milvus'">
-          Milvus 默认未开启鉴权；对象存储的 AK/SK 会写进同命名空间的 Secret（&lt;名称&gt;-milvus-storage）。
+          Milvus 默认未开启鉴权（可在创建时打开）；对象存储的 AK/SK 会写进同命名空间的 Secret（&lt;名称&gt;-milvus-storage），
+          开启鉴权时 root 口令写进 &lt;名称&gt;-milvus-auth。
         </template>
         <template v-else>
           凭据由对应 Operator 生成，可在实例命名空间查看（MySQL：&lt;名称&gt;-secrets；Elasticsearch：&lt;名称&gt;-es-elastic-user；PostgreSQL：&lt;名称&gt;-app；RabbitMQ：&lt;名称&gt;-default-user）。

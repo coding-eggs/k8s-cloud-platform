@@ -369,6 +369,8 @@ public class MiddlewareInstanceService {
         MiddlewareAdapter adapter = adapter(req.getCode());
         List<MiddlewareAdapter.CrSpec> created = new ArrayList<>();
         String extraSecret = adapter.extraSecretName(req.getName());
+        String authSecret = adapter.authSecretName(req.getName());
+        Map<String, String> authData = authSecret == null ? Map.of() : adapter.authSecretData(req);
         try {
             if (adapter.usesPlatformPassword()) {
                 writeSecret(client, req);
@@ -379,6 +381,10 @@ public class MiddlewareInstanceService {
                     throw new CloudPlatformException(EnumResponseType.ERROR, "缺少对象存储凭据");
                 }
                 writeDataSecret(client, req.getNamespace(), extraSecret, data, req.getInstanceId());
+            }
+            // 实例鉴权凭据（Milvus 勾了「开启鉴权」）：必须在 CR 之前落地，CR 里的 env 引用它
+            if (!authData.isEmpty()) {
+                writeDataSecret(client, req.getNamespace(), authSecret, authData, req.getInstanceId());
             }
             for (MiddlewareAdapter.CrSpec spec : adapter.buildCreate(req)) {
                 client.genericKubernetesResources(spec.context())
@@ -397,6 +403,9 @@ public class MiddlewareInstanceService {
             }
             if (extraSecret != null) {
                 deleteSecretQuietly(client, req.getNamespace(), extraSecret);
+            }
+            if (authSecret != null) {
+                deleteSecretQuietly(client, req.getNamespace(), authSecret);
             }
             throw e;
         }
@@ -550,6 +559,11 @@ public class MiddlewareInstanceService {
             String extraSecret = adapter.extraSecretName(req.getName());
             if (extraSecret != null) {
                 deleteSecretQuietly(client, req.getNamespace(), extraSecret);
+            }
+            // 实例鉴权凭据（Milvus 开了鉴权才有；没开就是空删，静默）
+            String authSecret = adapter.authSecretName(req.getName());
+            if (authSecret != null) {
+                deleteSecretQuietly(client, req.getNamespace(), authSecret);
             }
         }
         // keepPvc=true 时保留 Secret：数据卷还在，凭据也还给它留着

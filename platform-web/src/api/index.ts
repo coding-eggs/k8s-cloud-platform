@@ -1063,6 +1063,8 @@ export const middlewareApi = {
     objectStorageUseSsl?: boolean
     /** Milvus：单节点本地数据盘 */
     localStorageSize?: string
+    /** Milvus：开启鉴权（root 口令由平台生成，存在 Secret <名称>-milvus-auth） */
+    authEnabled?: boolean
     tenantId?: string
   }) => http.post<never, number>('/middleware/instance/create', payload),
   scale: (payload: {

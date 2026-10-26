@@ -77,6 +77,13 @@ public class MiddlewareCreateRequestDTO {
     /** Milvus：单节点本地数据盘（默认 10Gi；集群形态不使用） */
     private String localStorageSize;
 
+    /**
+     * Milvus：是否开启鉴权（默认关）。开启后 root 口令取 {@link #password}，
+     * 由 k8s-server 写进 Secret {@code <名称>-milvus-auth}（键 username / password），
+     * CR 只引用 Secret（密码不落 CR）。
+     */
+    private Boolean authEnabled;
+
     /** 平台生成的初始密码；只用于创建 Secret，不落库、不记日志 */
     private String password;
 
