@@ -72,6 +72,16 @@ class NacosChartInstallerTest {
     }
 
     @Test
+    void authSwitchRendersOnlyWhenEnabled() {
+        var off = req("STANDALONE", 1);
+        assertThat(installer.valuesFor(off)).doesNotContain("  auth:");
+
+        var on = req("STANDALONE", 1);
+        on.setAuthEnabled(true);
+        assertThat(installer.valuesFor(on)).contains("  auth:\n    enabled: true\n");
+    }
+
+    @Test
     void metricsEndpointIsOptIn() {
         // 默认关：不打开 actuator 的 prometheus 端点
         assertThat(installer.valuesFor(req("STANDALONE", 1)))
