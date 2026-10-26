@@ -123,6 +123,11 @@ public final class AuditAction {
     /** 改中间件实例的鉴权口令（Milvus；新口令由平台生成或用户填写） */
     public static final String MIDDLEWARE_PASSWORD = "middleware:password";
 
+    /** 中间件实例的账号管理：新增用户 / 改口令 / 删除 */
+    public static final String MIDDLEWARE_USER_CREATE = "middleware:user:create";
+    public static final String MIDDLEWARE_USER_PASSWORD = "middleware:user:password";
+    public static final String MIDDLEWARE_USER_DELETE = "middleware:user:delete";
+
     /** 安装/升级中间件 Operator（管理员） */
     public static final String MIDDLEWARE_OPERATOR_INSTALL = "middleware:operator:install";
 
