@@ -3,7 +3,9 @@
 > 计划：[2026-10-26-middleware-user-management.md](2026-10-26-middleware-user-management.md)
 > spec：[2026-10-26-middleware-user-management-design.md](../specs/2026-10-26-middleware-user-management-design.md)
 >
-> **部署顺序**：重放 `V2026_10_26_2__kafka_user_rbac.sql` → 重建 k8s-server / platform-api / platform-web →
+> **部署顺序**：重放 `V2026_10_26_2__kafka_user_rbac.sql` + `V2026_10_26_3__middleware_user_permissions.sql`
+> （**必须先于 platform-api 重启**，否则启动期 `[RBAC] 以下 endpoint 既无权限行…` 直接起不来）→
+> 重建 k8s-server / platform-api / platform-web →
 > 「租户 RBAC 模板」页点一次**重下发全部模板** → 存量 Kafka / Nacos 实例各重放一次。
 
 本清单按"每家一张表"写：**建 → 连 → 改 → 连 → 删 → 连不上**。
