@@ -82,3 +82,11 @@ service:
 4. 注意大版本差异：**3.x 才用内嵌 JRaft**；如果回退到 2.x，集群模式会重新需要外置 MySQL —— 那是另一个形态，
    要同时改表单、适配器与文档；
 5. 真集群验证：standalone + cluster 各建一个、开指标看端点 200、删实例确认 PVC 按要求保留/清理。
+
+## 用户管理（2026-10-26）
+
+- 创建时勾「开启鉴权」→ values 写 `nacos.auth.enabled: true`（chart 1.2.0 原生支持）；
+  管理员凭据由平台生成写 `<实例名>-nacos-admin`（username 固定 `nacos`），删除实例时一并清。
+- 用户走 v3 auth API：登录拿 accessToken 后 users 增删改查；角色只给「管理员」。
+- ⚠️ Nacos 3.x 的管理员口令初始化路径按小版本有差异：真集群验收不过就把 `nacos` 从支持清单去掉。
+- 存量实例要重放一次才带上 `auth.enabled`。

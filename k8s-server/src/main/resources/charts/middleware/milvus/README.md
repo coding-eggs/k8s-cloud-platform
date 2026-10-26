@@ -85,3 +85,11 @@
 4. 跑测试 → 真集群装一次 → 建单节点/集群各一个 → 看 9091 出数。
 
 **升级 Milvus 版本**：改平台版本清单 + 适配器默认值；大版本（2.x → 3.x）先按官方兼容表在测试集群验证 CRD 字段。
+
+## 用户管理（2026-10-26）
+
+- 改 root 口令沿用 `MilvusPasswordClient`（`/v2/vectordb/users/update_password`）。
+- 增删用户：`users/create` + `roles/grant_role`、`users/drop`（RESTful v2）。
+- 角色**现查** `roles/list`：实测只有 `admin` / `public`，`public` 无任何权限所以不给选；
+  只读/读写要自建角色 + 授 privilege，不在本批。
+- 前提：实例创建时勾了「开启鉴权」（Secret `<实例名>-milvus-auth`）。

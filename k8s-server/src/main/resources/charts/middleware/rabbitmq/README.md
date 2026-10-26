@@ -77,3 +77,10 @@
 **升级 Broker（RabbitMQ）版本**：`rabbitmqImage.tag`（现在是 `library/rabbitmq:4.1.3`）。
 大版本升级（如 3.x → 4.x）有 Erlang/特性兼容问题，要先在测试集群按 Operator 官方步骤滚动升级，
 平台不提供入口；存量实例不会自动换镜像。
+
+## 用户管理（2026-10-26）
+
+- 通道：Management API（`http://<实例名>.<ns>.svc:15672`），凭据取 `<实例名>-default-user`。
+- 角色：`只读`（read=.* 其余空）/ `读写`（三项全 .*）/ `管理员`（再加 administrator tag）；
+  vhost 固定 `/`。
+- 改口令保留原有 tag（丢了内置账号会丢管理权限）。

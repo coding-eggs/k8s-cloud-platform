@@ -79,3 +79,13 @@
 
 > ⚠️ 存量实例的 Kafka 版本不会因为清单变化而自动升级；改 `spec.kafka.version` 属于滚动升级，
 > 平台目前不提供这个入口（删实例重建）。
+
+## 用户管理（2026-10-26）
+
+- CR 里新增第二个 listener `scram:9093`（SCRAM-SHA-512）；`plain:9092` 原样保留，存量客户端不受影响。
+- **有意不开 `kafka.authorization`**：一开授权，走 PLAINTEXT 的客户端（匿名用户）会被全拒；
+  所以角色只有一个 `client`，UI 上写明"实例未启用授权，所有用户全权"。
+- 用户 = `kafkausers.kafka.strimzi.io` CR（`strimzi.io/cluster` 标签必须打，否则 operator 不生成凭据）；
+  口令由 operator 生成，适配器把它**回传**给平台写入 `<实例名>-users`。
+- 改口令 = 删 CR 重建（Strimzi 只在创建时生成 SCRAM 凭据）。
+- 迁移 `V2026_10_26_2` 给租户模板补 `kafkausers`（只读），跑完要**重下发全部模板**；存量实例重放一次才有 9093。

@@ -88,3 +88,9 @@
 
 **加新形态**：需要同时改 `MiddlewareCatalog` 的 modes、adapter 的 CR 构造与 status 判定、
 `MiddlewareScaleRequestDTO` 的校验，以及本文件 §3 的表格。
+
+## 用户管理（2026-10-26）
+
+- **只支持改口令**（opstree 不管理 ACL 用户）。
+- 改 `<实例名>-credentials` 的 `password` → 按平台标签/名字前缀滚动重启 STS。
+- ⚠️ 真集群要验 operator 会不会把 Secret 回写成旧值；回写就把 redis 从支持清单去掉。

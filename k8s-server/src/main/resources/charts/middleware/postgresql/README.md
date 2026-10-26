@@ -78,3 +78,12 @@
 换大版本是 Operator 升级 + 实例滚动升级，属于 DBA 级操作，平台目前不提供入口。
 
 **加形态**：需要同时改 `MiddlewareCatalog.POSTGRESQL_MODES`、`instancesOf()`、状态判定的期望副本数。
+
+## 用户管理（2026-10-26）
+
+- 通道：**全声明式**（不连数据库）。用户 = `databaseroles.postgresql.cnpg.io` CR：
+  `login: true` + `passwordSecret` + `inRoles`；口令存每用户一个 `kubernetes.io/basic-auth` Secret，
+  CNPG 负责 reconcile 到数据库。
+- 内置账号 = operator 的应用账号（`<实例名>-app`）；改它之前先验 operator 会不会回写。
+- 角色：`只读` → `pg_read_all_data`；`读写` → 再加 `pg_write_all_data`。
+- 删除只把 `ensure` 置 `absent`（CR 留着可回滚），同时删该用户的 Secret。

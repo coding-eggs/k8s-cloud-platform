@@ -89,3 +89,11 @@ HTTPS 开关（默认开）、IK 分词器开关（默认关）、同时部署 K
 4. 跑测试 → 真集群装一次 → 起一个 ES 实例验证。
 
 > ⚠️ ES 的大版本升级（如 8→9）不是改个 tag：需要走滚动升级流程并评估索引兼容性，平台不提供入口。
+
+## 用户管理（2026-10-26）
+
+- 通道：`_security` API；TLS 用 `<实例名>-es-http-ca-internal` 的 `ca.crt` 建信任链（**不** trust-all），
+  没有 CA 说明实例没开 TLS，走 http。
+- 用户名空间全局：平台建的账号加 `platform_` 前缀，列表剥前缀显示；只展示 `elastic` 与 `platform_*`。
+- 角色：只读 → `viewer`、读写 → `editor`、管理员 → `superuser`。
+- 改 `elastic` 口令后写回 `<实例名>-es-elastic-user`。

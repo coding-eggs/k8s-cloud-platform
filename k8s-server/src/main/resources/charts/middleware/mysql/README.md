@@ -81,3 +81,12 @@
 
 **加形态**（如多主 / 异步主从）：不是加 mode 就行 —— PS 的异步主从是 tech preview 明确不进表单；
 真要做要换 Operator（Moco / PXC），等于新增一个中间件 code。
+
+## 用户管理（2026-10-26）
+
+- 通道：**Pod exec**（ps-operator 的 CR 没有声明式用户字段，只能 SQL）。
+  口令从 stdin 读进 `MYSQL_PWD`，**不上命令行**；SQL 只带用户名与授权。
+- 内置 `root`：改口令后写回 `<实例名>-secrets` 的 `root` 键；不允许删除或重建。
+- 平台建的账号：`<实例名>-users`（key = 用户名，口令；`role.<用户名>` = 角色）。
+- 角色：`只读` → `SELECT ON *.*`；`读写` → `ALL PRIVILEGES ON *.*`（不按库细分）。
+- 前提：k8s-server 能用 admin client exec 到 `<实例名>-mysql-0` 的 `mysql` 容器。
