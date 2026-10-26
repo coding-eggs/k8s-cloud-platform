@@ -27,16 +27,19 @@
 
 ## 2. 受什么限制
 
-- 工作负载（Deployment / StatefulSet / DaemonSet / Job / CronJob / ReplicaSet / Pod）：
+- 工作负载（Deployment / StatefulSet / DaemonSet / Job / CronJob / ReplicaSet）：
   **编辑、伸缩、暂停/恢复、改镜像、回滚、删除**全部拒绝；
+- **Pod 例外**：删除 Pod **不受**限制（含 Operator / 中间件 / 平台组件工作负载的 Pod）——
+  删 Pod 等于"重启一个副本"，控制器会按原模板重建，不改变任何配置；工作负载本身的写入仍被上一条拦住。
+  Pod 本来就没有 create/update；
 - 其它命名空间资源（Service / ConfigMap / Secret / Ingress(Gateway、Route) / PVC / HPA 等）：
   **更新、删除**拒绝；
 - 后端返回错误码 `10048`（`RESOURCE_MANAGED_BY_PLATFORM`），前端统一提示"不能在本页修改"。
 
 ## 3. 前端表现
 
-- 列表行内菜单：受管行多一条禁用项「由平台组件管理，请到「集群组件」页操作」/「由中间件实例管理，请到「中间件」页操作」；
-  编辑、删除等写操作项置灰；
+- 列表行内菜单：受管行多一条禁用项「由平台组件管理，请到「集群组件」页操作」/「由中间件实例管理，请到「中间件」页操作」，
+  写操作项置灰；**Pod 列表是例外：只显示日志/Exec/Yaml/删除，「删除」不置灰**（与 §2 一致）；
 - 工作负载列表/详情：原本按 `ownerReferences` 判断"由 Operator 管理"，现在**同时**看 `managedBy`；
 - CR 浏览页保持只读（与本次无关）。
 
@@ -44,6 +47,8 @@
 
 - 实例 / 组件的删除请到「中间件」或「集群组件」页（那里直接调 k8s 客户端，不经过本闸）；
 - 进入 Pod 的日志 / Exec 是只读动作，不受限制；
+- **删除 Pod 不受限制**：`PodController` 覆写 `assertDeletable` 留空（k8s-server 侧），
+  前端 Pod 列表/工作负载详情的「删除」也不置灰 —— 这是唯一一个"受管对象仍可写"的动词；
 - 创建 HPA 本身允许，但**目标工作负载受管时会被拒**（否则等于绕开伸缩禁令）。
 
 ## 5. 已知限制

@@ -197,9 +197,21 @@ public abstract class AbstractNamespacedResourceController<T extends BaseResourc
                                      @RequestParam String clusterId,
                                      @RequestParam String namespace) {
         AccessContext ctx = resolve(tenantId, clusterId, namespace);
-        assertNotManaged(ctx, clusterId, namespace, name);
+        assertDeletable(ctx, clusterId, namespace, name);
         ops(ctx, clusterId).delete(namespace, name);
         return new ResponseData<>();
+    }
+
+    /**
+     * 删除前的受管校验，默认与 {@link #update} 同口径（受管则拒）。
+     *
+     * <p>之所以单独成一个钩子而不是直接在 {@code delete} 里调 {@link #assertNotManaged}：
+     * Pod 有意放行 —— 删 Pod 是"重启"，控制器会立刻重建，<b>不改变</b>工作负载的任何配置；
+     * 而工作负载本身的编辑/伸缩/暂停/改镜像/回滚/删除仍由 update 与 WorkloadController 的
+     * {@code assertNotManaged} 拦住。理由见 {@code PodController#assertDeletable}。
+     */
+    protected void assertDeletable(AccessContext ctx, String clusterId, String namespace, String name) {
+        assertNotManaged(ctx, clusterId, namespace, name);
     }
 
     /**按 {@link #accessBoundary()} 选择解析入口：TENANT → 分配表边界；PLATFORM → 仅集群可达性 */

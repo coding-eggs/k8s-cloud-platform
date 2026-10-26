@@ -34,6 +34,9 @@ import java.nio.charset.StandardCharsets;
  * Pod 由工作负载控制器管理：只读 list/get/yaml + delete，无 create/update（基类端点覆写为拒绝）；
  * 日志走 HTTP 流式透传（follow=true 时连接保持到客户端断开/Pod 终止）。
  * <p>
+ * <b>delete 是受管资源保护的一个例外</b>：受管（Operator / 中间件 / 平台组件）工作负载的 Pod 也能删 ——
+ * 删除只是让控制器按原模板重建副本，不改配置；见 {@link #assertDeletable}。
+ * <p>
  * <b>本资源支持跨命名空间列举</b>（{@code /list-all}）：这是 Pod 唯一的全局视图入口 —— 单命名空间 list
  * 给不出"集群里现在有哪些 Pod"，而按节点看（{@code /nodes/{name}/pods}）要求先知道落在哪个节点。
  * 能力在 {@code CoreV1PodOperations#listAll}，授权码在 platform-api 侧独立为 {@code platform:pod:list-all}。
@@ -68,6 +71,19 @@ public class PodController extends AbstractNamespacedResourceController<PodDTO> 
     @Override
     public ResponseData<PodDTO> update(String name, String tenantId, String clusterId, PodDTO body) {
         throw new CloudPlatformException(EnumResponseType.OPERATION_NOT_SUPPORTED);
+    }
+
+    /**
+     * Pod 删除<b>不受</b>「受管资源保护」限制（包括 Operator / 中间件实例 / 平台组件创建的 Pod）。
+     *
+     * <p>理由：删 Pod 是"重启一个副本"——控制器（ReplicaSet / StatefulSet / Operator）会按原模板
+     * 立刻重建，它<b>不改变</b>工作负载的任何配置，也不会把受管对象改坏。真正需要保护的写入
+     * （改镜像、伸缩、暂停、回滚、删工作负载本身）走的仍是 {@code update} 与
+     * {@code WorkloadController#assertNotManaged}，照旧拒绝。
+     */
+    @Override
+    protected void assertDeletable(AccessContext ctx, String clusterId, String namespace, String name) {
+        // 有意留空：删除 Pod 恒放行
     }
 
     @GetMapping(value = "/{name}/logs")
