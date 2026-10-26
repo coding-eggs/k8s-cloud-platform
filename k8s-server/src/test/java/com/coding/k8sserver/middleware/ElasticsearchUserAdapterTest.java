@@ -1,10 +1,13 @@
 package com.coding.k8sserver.middleware;
 
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Elasticsearch 的纯函数部分：内置角色映射 / 用户体 / 平台账号前缀。
@@ -50,5 +53,42 @@ class ElasticsearchUserAdapterTest {
                         () -> ElasticsearchUserAdapter.esRoles("admin"))
                 .isInstanceOf(com.coding.common.exception.CloudPlatformException.class)
                 .hasMessageContaining("不支持的角色");
+    }
+
+    // ---------- TLS：CA 从哪个 Secret、哪个键取 ----------
+
+    /**
+     * 2026-10-26 真集群实锤：ECK 的 {@code <名>-es-http-ca-internal} 里是 **CA 的密钥对**
+     * （{@code tls.crt} / {@code tls.key}），公钥证书 {@code ca.crt} 在
+     * {@code <名>-es-http-certs-public} 里。读错 Secret 的后果不是"连不上"，而是
+     * 判定成没开 TLS 去连 TLS 端口。
+     */
+    @Test
+    void caPemIsReadFromThePublicCertsSecret() {
+        Secret publicCerts = secret(Map.of("ca.crt", "Q0E=", "tls.crt", "Q1JU"));
+        Secret caKeyPair = secret(Map.of("tls.crt", "Q1JU", "tls.key", "S0VZ"));
+
+        assertThat(ElasticsearchUserAdapter.caPem(publicCerts, caKeyPair)).isEqualTo("Q0E=");
+    }
+
+    @Test
+    void noTlsSecretsMeansPlainHttp() {
+        assertThat(ElasticsearchUserAdapter.caPem(null, null)).isNull();
+    }
+
+    @Test
+    void tlsInstanceWithoutUsableCaIsRejectedInsteadOfSilentlyUsingHttp() {
+        // 开了 TLS 却找不到 ca.crt：宁可报错，也不要静默退回 http 去撞 TLS 端口
+        assertThatThrownBy(() -> ElasticsearchUserAdapter.caPem(
+                null, secret(Map.of("tls.crt", "Q1JU", "tls.key", "S0VZ"))))
+                .isInstanceOf(com.coding.common.exception.CloudPlatformException.class)
+                .hasMessageContaining("ca.crt");
+
+        assertThatThrownBy(() -> ElasticsearchUserAdapter.caPem(secret(Map.of("tls.crt", "Q1JU")), null))
+                .hasMessageContaining("ca.crt");
+    }
+
+    private static Secret secret(Map<String, String> data) {
+        return new SecretBuilder().withNewMetadata().withName("s").endMetadata().withData(data).build();
     }
 }

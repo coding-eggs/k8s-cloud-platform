@@ -34,8 +34,12 @@ import java.util.Map;
  * <p><b>用户名空间是全局的</b>：平台建的账号统一加 {@code platform_} 前缀，列表再剥掉显示；
  * 只展示 {@code elastic} 与 {@code platform_} 开头的账号。
  *
- * <p><b>TLS</b>：从 {@code <实例名>-es-http-ca-internal} 的 {@code ca.crt} 建信任链
- * （**不** trust-all）；这个 Secret 不存在说明实例没开 TLS，走 http。
+ * <p><b>TLS</b>：从 {@code <实例名>-es-http-certs-public} 的 {@code ca.crt} 建信任链
+ * （**不** trust-all）；两个 TLS Secret 都不存在才说明实例没开 TLS，走 http。
+ *
+ * <p>⚠️ 别去 {@code -es-http-ca-internal} 找 {@code ca.crt}：ECK 那个 Secret 装的是 **CA 自己的
+ * 密钥对**（{@code tls.crt} / {@code tls.key}），公钥证书在 {@code -es-http-certs-public}。
+ * 读错地方的后果不是"连不上"，而是误判成没开 TLS、拿 http 去撞 TLS 端口（真集群实锤，2026-10-26）。
  */
 @Component
 public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
@@ -43,7 +47,11 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
     static final String PLATFORM_PREFIX = "platform_";
     static final String BUILTIN = "elastic";
     static final String ELASTIC_SECRET_SUFFIX = "-es-elastic-user";
-    static final String CA_SECRET_SUFFIX = "-es-http-ca-internal";
+    /** 公钥证书：{@code ca.crt} 在这里 */
+    static final String CA_SECRET_SUFFIX = "-es-http-certs-public";
+    /** CA 的密钥对（只有 tls.crt / tls.key）—— 仅用来判断"实例开了 TLS" */
+    static final String CA_KEYPAIR_SUFFIX = "-es-http-ca-internal";
+    static final String CA_KEY = "ca.crt";
     static final String SERVICE_SUFFIX = "-es-http";
     static final List<String> ROLES = List.of("只读", "读写", "管理员");
 
@@ -171,9 +179,12 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "找不到 Elasticsearch 的超管凭据 Secret：" + ref.instanceName() + ELASTIC_SECRET_SUFFIX);
         }
-        Secret ca = client.secrets().inNamespace(ref.namespace())
+        Secret publicCerts = client.secrets().inNamespace(ref.namespace())
                 .withName(ref.instanceName() + CA_SECRET_SUFFIX).get();
-        boolean https = ca != null && ca.getData() != null && ca.getData().get("ca.crt") != null;
+        Secret caKeyPair = client.secrets().inNamespace(ref.namespace())
+                .withName(ref.instanceName() + CA_KEYPAIR_SUFFIX).get();
+        String caPem = caPem(publicCerts, caKeyPair);
+        boolean https = caPem != null;
 
         String base = (https ? "https://" : "http://")
                 + ref.instanceName() + SERVICE_SUFFIX + "." + ref.namespace() + ".svc:9200";
@@ -187,7 +198,7 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
         try {
             HttpClient http = https
                     ? HttpClient.newBuilder().connectTimeout(TIMEOUT)
-                            .sslContext(sslContext(ca.getData().get("ca.crt"))).build()
+                            .sslContext(sslContext(caPem)).build()
                     : HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
             HttpRequest request = switch (method) {
                 case "GET" -> builder.GET().build();
@@ -208,6 +219,27 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "调用 Elasticsearch 接口失败（" + base + "）：" + e.getMessage());
         }
+    }
+
+    /**
+     * 取实例的 CA（Base64 PEM）：有 TLS 返回 CA，明确没开 TLS 返回 null。
+     *
+     * <p>开了 TLS 却拿不到 {@code ca.crt} 时直接报错 —— 静默退回 http 只会得到一个没有任何
+     * 线索的 {@code null}。
+     */
+    static String caPem(Secret publicCerts, Secret caKeyPair) {
+        String ca = publicCerts == null || publicCerts.getData() == null
+                ? null : publicCerts.getData().get(CA_KEY);
+        if (ca != null && !ca.isBlank()) {
+            return ca;
+        }
+        if (publicCerts != null || caKeyPair != null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "该 Elasticsearch 实例开了 HTTP TLS，但找不到 CA 证书：期望 Secret <实例名>"
+                            + CA_SECRET_SUFFIX + " 里有 " + CA_KEY
+                            + "（ECK 把 CA 公钥放这里，" + CA_KEYPAIR_SUFFIX + " 里只有 tls.crt/tls.key）");
+        }
+        return null;
     }
 
     /** 只用实例自己的 CA 建信任链（PEM 里可能有多张证书）。 */

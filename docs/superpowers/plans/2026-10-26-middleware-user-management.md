@@ -614,7 +614,7 @@ void onlyElasticAndPlatformPrefixAreShown() {
 - [ ] **Step 3: 实现**
 
 - 凭据：`<实例名>-es-elastic-user` 的 `elastic` 键；
-- Scheme：读 ES CR `spec.http.tls` 是否存在 → https（CA 从 `<实例名>-es-http-ca-internal` 的 `ca.crt` 建 `SSLContext`；只信这张 CA，**不 trust-all**）；
+- Scheme：读 ES CR `spec.http.tls` 是否存在 → https（CA 从 `<实例名>-es-http-certs-public` 的 `ca.crt` 建 `SSLContext`；只信这张 CA，**不 trust-all**）；
 - base URL：`https://<实例名>-es-http.<ns>.svc:9200`（`tls=false` 时 `http://`）；
 - 端点：列表 `GET /_security/user`、新增 `POST /_security/user/<u>`、删除 `DELETE /_security/user/<u>`、改口令 `POST /_security/user/<u>/_password`；
 - 用户命名：平台建的账号加前缀 `platform-`（spec §6.5）；UI 展示时去掉前缀；

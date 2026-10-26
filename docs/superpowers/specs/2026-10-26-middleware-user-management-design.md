@@ -42,7 +42,7 @@
 核对依据（2026-10-26）：
 - CRD：`databaseroles.postgresql.cnpg.io` 存在，`spec` 含 `login` / `passwordSecret` / `inRoles` / `ensure`；
   `perconaservermysqls.ps.percona.com` 的 `spec` 只有 `secretsName` / `sslSecretName`，**没有**声明式用户字段 → MySQL 只能走 SQL；
-- ES 实例 `spec.http.tls.certificate` 已配置（HTTPS），CA 在 `<名称>-es-http-ca-internal`；
+- ES 实例 `spec.http.tls.certificate` 已配置（HTTPS），CA 在 `<名称>-es-http-certs-public` 的 `ca.crt`；
 - Milvus 的 `update_password` 路由与用法已在 `MilvusPasswordClient` 里验证过（`/v2/vectordb/users/update_password`）；
 - Kafka：`kafkausers.kafka.strimzi.io` CRD 存在；现适配器只有 `plain` listener（9092、`tls:false`、无 authentication）；
 - Nacos：内置 chart 1.2.0（Nacos 3.2.4）支持 `nacos.auth.enabled`（null = 继承镜像默认）并会自动生成
@@ -203,7 +203,8 @@ public interface MiddlewareUserAdapter {
 - 列表 `GET /_security/user`（只列 `platform-` 前缀 + `elastic`）；
 - 新增 `POST /_security/user/<u>`（`{password, roles:[内置角色]}`）；删除 `DELETE /_security/user/<u>`；
 - 改口令 `POST /_security/user/<u>/_password` → 内置 `elastic` 时同时写回 Secret；
-- TLS：从 `<名称>-es-http-ca-internal` 取 CA（`ca.crt`）建 SSLContext；实例 `tls=false` 时走 http。
+- TLS：从 `<名称>-es-http-certs-public` 取 CA（`ca.crt`）建 SSLContext；实例 `tls=false` 时走 http。
+  （`-es-http-ca-internal` 里是 CA 的密钥对 `tls.crt`/`tls.key`，读它会误判成没开 TLS —— 2026-10-26 真集群实锤）
 
 ### 6.6 Milvus（补增删）
 
