@@ -57,9 +57,10 @@ public class MysqlUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+    public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         requireNotBuiltin(username);
         execSql(client, ref, createSql(username, password, role));
+        return password;
     }
 
     @Override
@@ -69,12 +70,13 @@ public class MysqlUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
+    public String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
         execSql(client, ref, alterPasswordSql(username, newPassword));
         if (BUILTIN.equals(username)) {
             // 内置账号的"事实来源"是 operator 的 Secret，改完要写回去
             writeCredentialSecret(client, ref, BUILTIN, newPassword);
         }
+        return newPassword;
     }
 
     @Override

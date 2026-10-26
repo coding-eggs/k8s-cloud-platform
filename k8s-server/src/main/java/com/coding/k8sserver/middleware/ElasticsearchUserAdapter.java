@@ -81,8 +81,9 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+    public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         call(client, ref, "PUT", "/_security/user/" + esUsername(username), userBody(password, role));
+        return password;
     }
 
     @Override
@@ -91,7 +92,7 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
+    public String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
         String esName = BUILTIN.equals(username) ? BUILTIN : esUsername(username);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("password", newPassword);
@@ -99,6 +100,7 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
         if (BUILTIN.equals(username)) {
             writeSecret(client, ref, ref.instanceName() + ELASTIC_SECRET_SUFFIX, BUILTIN, newPassword);
         }
+        return newPassword;
     }
 
     @Override

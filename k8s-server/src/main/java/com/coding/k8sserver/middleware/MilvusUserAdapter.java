@@ -61,10 +61,11 @@ public class MilvusUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+    public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         String base = baseUrl(ref.instanceName(), ref.namespace());
         MilvusRest.post(base, CREATE_PATH, createBody(username, password));
         MilvusRest.post(base, GRANT_PATH, grantBody(role, username));
+        return password;
     }
 
     @Override
@@ -73,7 +74,7 @@ public class MilvusUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
+    public String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
         String old = BUILTIN.equals(username)
                 ? builtinPassword(client, ref)
                 : UsersSecret.passwords(UsersSecret.read(client, ref.namespace(), ref.instanceName()))
@@ -82,6 +83,7 @@ public class MilvusUserAdapter implements MiddlewareUserAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR, "找不到账号 " + username + " 的当前口令");
         }
         MilvusPasswordClient.update(baseUrl(ref.instanceName(), ref.namespace()), username, old, newPassword);
+        return newPassword;
     }
 
     @Override

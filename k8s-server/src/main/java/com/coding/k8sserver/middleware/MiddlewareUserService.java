@@ -52,17 +52,19 @@ public class MiddlewareUserService {
         MiddlewareUserRules.requirePasswordLength(req.getPassword());
 
         KubernetesClient client = client(req.getClusterId());
-        adapter.create(client, ref(req.getName(), req.getNamespace(), req.getInstanceId()),
+        // 适配器返回"生效的口令"：Kafka 是 operator 生成的，和传进去的不一样
+        String effective = adapter.create(client, ref(req.getName(), req.getNamespace(), req.getInstanceId()),
                 req.getUsername(), req.getPassword(), req.getRole());
+        String password = effective == null || effective.isBlank() ? req.getPassword() : effective;
         // 账号已经建出来了：Secret 写不进去只能显式报错让人工补，不回滚账号
         try {
             UsersSecret.put(client, req.getNamespace(), req.getName(),
-                    req.getUsername(), req.getPassword(), req.getRole());
+                    req.getUsername(), password, req.getRole());
         } catch (RuntimeException e) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "账号已创建，但 Secret " + UsersSecret.name(req.getName()) + " 未更新：" + e.getMessage());
         }
-        return credential(req.getName(), req.getUsername(), req.getPassword());
+        return credential(req.getName(), req.getUsername(), password);
     }
 
     public MiddlewareUserCredentialDTO changePassword(String code, MiddlewareUserPasswordRequestDTO req) {
@@ -72,19 +74,20 @@ public class MiddlewareUserService {
 
         KubernetesClient client = client(req.getClusterId());
         MiddlewareUserRef ref = ref(req.getName(), req.getNamespace(), req.getInstanceId());
-        adapter.changePassword(client, ref, req.getUsername(), req.getNewPassword());
+        String effective = adapter.changePassword(client, ref, req.getUsername(), req.getNewPassword());
+        String password = effective == null || effective.isBlank() ? req.getNewPassword() : effective;
         // 只有平台建的账号才进 -users；内置账号的口令由适配器写回各家自己的 Secret
         if (UsersSecret.passwords(UsersSecret.read(client, req.getNamespace(), req.getName()))
                 .containsKey(req.getUsername())) {
             try {
                 UsersSecret.putPassword(client, req.getNamespace(), req.getName(),
-                        req.getUsername(), req.getNewPassword());
+                        req.getUsername(), password);
             } catch (RuntimeException e) {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "口令已生效，但 Secret " + UsersSecret.name(req.getName()) + " 未更新：" + e.getMessage());
             }
         }
-        return credential(req.getName(), req.getUsername(), req.getNewPassword());
+        return credential(req.getName(), req.getUsername(), password);
     }
 
     public List<String> roles(String code, MiddlewareUserListRequestDTO req) {

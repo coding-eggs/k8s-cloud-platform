@@ -80,8 +80,7 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
         int rf = Math.min(replicas, 3);
         Map<String, Object> kafka = new LinkedHashMap<>();
         kafka.put("version", kafkaVersion);
-        kafka.put("listeners", List.of(Map.of(
-                "name", "plain", "port", 9092, "type", "internal", "tls", false)));
+        kafka.put("listeners", listeners());
         // 业务指标（默认关）：Strimzi 1.3 的 Metrics Reporter（不用 ConfigMap，也不额外加边车），指标在 9404
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
             kafka.put("metricsConfig", Map.of("type", "strimziMetricsReporter"));
@@ -100,6 +99,28 @@ public class KafkaMiddlewareAdapter implements MiddlewareAdapter {
         kafkaRes.getMetadata().setAnnotations(Map.of("strimzi.io/node-pools", "enabled"));
 
         return List.of(new CrSpec(NODE_POOL, poolRes), new CrSpec(KAFKA, kafkaRes));
+    }
+
+    /**
+     * 两条监听器：{@code plain}（9092，保持原样，存量客户端不受影响）+ {@code scram}（9093，
+     * SCRAM-SHA-512 认证）。用户管理只认第二条 —— 走明文的那条没有"用户"这一说。
+     *
+     * <p>有意**不**开 {@code kafka.authorization}：一开授权，现有走 PLAINTEXT 的客户端（匿名用户）
+     * 会被全部拒掉；那是接入迁移，不在本批。
+     */
+    static List<Map<String, Object>> listeners() {
+        Map<String, Object> plain = new LinkedHashMap<>();
+        plain.put("name", "plain");
+        plain.put("port", 9092);
+        plain.put("type", "internal");
+        plain.put("tls", false);
+        Map<String, Object> scram = new LinkedHashMap<>();
+        scram.put("name", "scram");
+        scram.put("port", 9093);
+        scram.put("type", "internal");
+        scram.put("tls", false);
+        scram.put("authentication", Map.of("type", "scram-sha-512"));
+        return List.of(plain, scram);
     }
 
     /** 编辑时补开业务指标：给 Kafka CR 补上 metricsConfig（幂等，Pod 会滚动重启）。 */

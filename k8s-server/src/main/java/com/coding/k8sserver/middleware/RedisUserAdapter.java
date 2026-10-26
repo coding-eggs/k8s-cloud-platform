@@ -41,7 +41,7 @@ public class RedisUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+    public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         throw new CloudPlatformException(EnumResponseType.ERROR, "Redis 只支持修改口令，不支持新增用户");
     }
 
@@ -51,7 +51,7 @@ public class RedisUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
+    public String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
         if (!BUILTIN.equals(username)) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Redis 只有内置账号 " + BUILTIN + "，没有账号：" + username);
@@ -68,6 +68,7 @@ public class RedisUserAdapter implements MiddlewareUserAdapter {
         client.secrets().inNamespace(ref.namespace())
                 .resource(new SecretBuilder(current).withData(data).build()).createOrReplace();
         restartWorkloads(client, ref);
+        return newPassword;
     }
 
     static List<MiddlewareUserView> builtinUsers() {

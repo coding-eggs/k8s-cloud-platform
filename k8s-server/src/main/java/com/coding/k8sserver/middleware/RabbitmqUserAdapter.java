@@ -65,9 +65,10 @@ public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+    public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         call(client, ref, "PUT", "/api/users/" + username, userBody(password, role));
         call(client, ref, "PUT", "/api/permissions/" + VHOST_PATH + "/" + username, permissions(role));
+        return password;
     }
 
     @Override
@@ -76,13 +77,14 @@ public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
+    public String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
         // 保留原有 tag（内置账号是 administrator，丢了会丢管理权限）
         String tags = tagsOf(call(client, ref, "GET", "/api/users/" + username, null));
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("password", newPassword);
         body.put("tags", tags);
         call(client, ref, "PUT", "/api/users/" + username, body);
+        return newPassword;
     }
 
     @Override

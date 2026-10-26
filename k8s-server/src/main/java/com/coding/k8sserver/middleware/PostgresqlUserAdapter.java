@@ -68,12 +68,13 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+    public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         String secretName = userSecretName(ref.instanceName(), username);
         client.secrets().inNamespace(ref.namespace())
                 .resource(userSecret(secretName, username, password)).createOrReplace();
         client.genericKubernetesResources(ROLE_CRD).inNamespace(ref.namespace())
                 .resource(databaseRole(username, ref.instanceName(), secretName, role)).create();
+        return password;
     }
 
     @Override
@@ -93,7 +94,7 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public void changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
+    public String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
         String secretName = appUsername(client, ref).equals(username)
                 ? ref.instanceName() + APP_SECRET_SUFFIX
                 : userSecretName(ref.instanceName(), username);
@@ -106,6 +107,7 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
         data.put("password", Base64.getEncoder().encodeToString(newPassword.getBytes(StandardCharsets.UTF_8)));
         client.secrets().inNamespace(ref.namespace())
                 .resource(new SecretBuilder(current).withData(data).build()).createOrReplace();
+        return newPassword;
     }
 
     @Override

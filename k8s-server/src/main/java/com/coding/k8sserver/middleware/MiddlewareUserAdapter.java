@@ -19,11 +19,16 @@ public interface MiddlewareUserAdapter {
     /** 账号列表（内置账号 + 平台建的）；不返回明文口令 */
     List<MiddlewareUserView> list(KubernetesClient client, MiddlewareUserRef ref);
 
-    void create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role);
+    /**
+     * 建账号，返回**生效的口令**：多数中间件就是传入的那个；
+     * Kafka 是 operator 生成的（平台传入的会被忽略），必须回传真实的那个。
+     */
+    String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role);
 
     void drop(KubernetesClient client, MiddlewareUserRef ref, String username);
 
-    void changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword);
+    /** 改口令，返回**生效的口令**（同 {@link #create} 的约定）。 */
+    String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword);
 
     /** 可选角色（只读 / 读写 / 管理员…）；没有角色概念的实例返回空列表 */
     default List<String> roles(MiddlewareUserRef ref) {
