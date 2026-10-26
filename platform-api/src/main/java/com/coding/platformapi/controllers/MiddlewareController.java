@@ -16,6 +16,13 @@ import com.coding.platformapi.models.MiddlewareInstanceDetail;
 import com.coding.platformapi.models.MiddlewareMetricsRequest;
 import com.coding.platformapi.models.MiddlewareOptionsRequest;
 import com.coding.platformapi.models.MiddlewarePasswordChangeRequest;
+import com.coding.common.models.middleware.MiddlewareUserCreateRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserCredentialDTO;
+import com.coding.common.models.middleware.MiddlewareUserDeleteRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserListRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserPasswordRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserView;
+import com.coding.platformapi.services.MiddlewareUserService;
 import com.coding.platformapi.models.MiddlewareRenameRequest;
 import com.coding.platformapi.models.MiddlewareQueryRequest;
 import com.coding.platformapi.models.MiddlewareScaleRequest;
@@ -38,12 +45,14 @@ import java.util.List;
 public class MiddlewareController {
 
     private final MiddlewareService service;
+    private final MiddlewareUserService users;
 
     @Autowired
     private AuthContext auth;
 
-    public MiddlewareController(MiddlewareService service) {
+    public MiddlewareController(MiddlewareService service, MiddlewareUserService users) {
         this.service = service;
+        this.users = users;
     }
 
     @PostMapping("/catalog")
@@ -109,6 +118,44 @@ public class MiddlewareController {
     public ResponseData<PlatformMiddlewareInstance> rename(@RequestBody MiddlewareRenameRequest request) {
         return new ResponseData<>(service.rename(request.getInstanceId(), request.getDisplayName(),
                 auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/users")
+    @Operation(summary = "实例的账号列表（内置账号 + 平台建的账号）")
+    public ResponseData<List<MiddlewareUserView>> listUsers(@RequestBody MiddlewareUserListRequestDTO request) {
+        return new ResponseData<>(users.list(request, auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/users/roles")
+    @Operation(summary = "该实例可选的账号角色")
+    public ResponseData<List<String>> userRoles(@RequestBody MiddlewareUserListRequestDTO request) {
+        return new ResponseData<>(users.roles(request.getInstanceId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/users/create")
+    @Auditable(action = AuditAction.MIDDLEWARE_USER_CREATE, target = "#request.instanceId")
+    @Operation(summary = "新增实例账号（返回一次性明文口令）")
+    public ResponseData<MiddlewareUserCredentialDTO> createUser(
+            @RequestBody MiddlewareUserCreateRequestDTO request) {
+        return new ResponseData<>(users.create(request, auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/users/password")
+    @Auditable(action = AuditAction.MIDDLEWARE_USER_PASSWORD, target = "#request.instanceId")
+    @Operation(summary = "改实例账号口令（返回一次性明文口令）")
+    public ResponseData<MiddlewareUserCredentialDTO> changeUserPassword(
+            @RequestBody MiddlewareUserPasswordRequestDTO request) {
+        return new ResponseData<>(users.changePassword(request,
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/users/delete")
+    @Auditable(action = AuditAction.MIDDLEWARE_USER_DELETE, target = "#request.instanceId")
+    @Operation(summary = "删除实例账号（内置账号拒绝）")
+    public ResponseData<Boolean> deleteUser(@RequestBody MiddlewareUserDeleteRequestDTO request) {
+        users.drop(request, auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>(true);
     }
 
     @PostMapping("/instance/password")

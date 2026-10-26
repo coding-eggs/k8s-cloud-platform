@@ -95,6 +95,13 @@ public class MiddlewareInstanceController implements AccessBoundaryAware {
         return new ResponseData<>(users.list(code, request));
     }
 
+    @PostMapping("/{code}/instances/users/roles")
+    @Operation(summary = "该实例可选的账号角色（有的实例是现查的，如 Milvus）")
+    public ResponseData<List<String>> userRoles(@PathVariable("code") String code,
+                                                @RequestBody MiddlewareUserListRequestDTO request) {
+        return new ResponseData<>(users.roles(code, request));
+    }
+
     @PostMapping("/{code}/instances/users/create")
     @Operation(summary = "新增实例账号（返回一次性明文口令）")
     public ResponseData<MiddlewareUserCredentialDTO> createUser(@PathVariable("code") String code,

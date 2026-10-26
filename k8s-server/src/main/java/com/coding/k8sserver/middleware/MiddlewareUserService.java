@@ -87,6 +87,11 @@ public class MiddlewareUserService {
         return credential(req.getName(), req.getUsername(), req.getNewPassword());
     }
 
+    public List<String> roles(String code, MiddlewareUserListRequestDTO req) {
+        MiddlewareUserAdapter adapter = adapterFor(code);
+        return adapter.roles(ref(req.getName(), req.getNamespace(), req.getInstanceId()));
+    }
+
     public void drop(String code, MiddlewareUserDeleteRequestDTO req) {
         MiddlewareUserAdapter adapter = adapterFor(code);
         requireDeletable(code);

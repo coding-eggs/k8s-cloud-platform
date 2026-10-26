@@ -8,6 +8,12 @@ import com.coding.common.models.middleware.MiddlewareOperatorInstallRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserCreateRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserCredentialDTO;
+import com.coding.common.models.middleware.MiddlewareUserDeleteRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserListRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserPasswordRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserView;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
@@ -54,6 +60,33 @@ public class K8sMiddlewareClient {
     public Boolean changePassword(String code, MiddlewarePasswordRequestDTO body) {
         return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/password", null, body,
                 gateway.responseType(Boolean.class));
+    }
+
+    // ---------- 用户管理 ----------
+
+    public List<MiddlewareUserView> listUsers(String code, MiddlewareUserListRequestDTO body) {
+        return gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/instances/users", null, body,
+                gateway.listResponseType(MiddlewareUserView.class));
+    }
+
+    public MiddlewareUserCredentialDTO createUser(String code, MiddlewareUserCreateRequestDTO body) {
+        return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/users/create",
+                null, body, gateway.responseType(MiddlewareUserCredentialDTO.class));
+    }
+
+    public MiddlewareUserCredentialDTO changeUserPassword(String code, MiddlewareUserPasswordRequestDTO body) {
+        return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/users/password",
+                null, body, gateway.responseType(MiddlewareUserCredentialDTO.class));
+    }
+
+    public Boolean deleteUser(String code, MiddlewareUserDeleteRequestDTO body) {
+        return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/users/delete",
+                null, body, gateway.responseType(Boolean.class));
+    }
+
+    public List<String> userRoles(String code, MiddlewareUserListRequestDTO body) {
+        return gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/instances/users/roles", null, body,
+                gateway.listResponseType(String.class));
     }
 
     public MiddlewareInstanceLiveDTO detail(String code, MiddlewareDetailRequestDTO body) {
