@@ -22,7 +22,7 @@
 | 2 | 租户作用域 | **走顶栏**（资源上下文 store），与中间件其余端点一致；实例归属校验不变 |
 | 3 | 口令来源 | 表单填（8~72 位）；留空 = 平台生成（与创建实例的随机口令同源） |
 | 4 | 口令存储 | 统一写 Secret `<实例名>-users`（key = 用户名）；内置账号仍写各家**自己**的 Secret（见 §4） |
-| 5 | Kafka / Nacos | **不做**：Kafka 监听器是 PLAINTEXT（没有认证就没有"用户"）、Nacos chart 默认关鉴权；都要先动认证方案，另开 |
+| 5 | Kafka / Nacos | **分两批做**。它们都有用户体系，只是平台现在把鉴权关着：Kafka 是 PLAINTEXT 监听器、Nacos 的 Client API 鉴权默认关。要做就得先改实例的接入方式，见 §12（批次 B） |
 
 ---
 
@@ -36,8 +36,8 @@
 | `rabbitmq` | `user`；Secret `<名称>-default-user`（`username`/`password`） | Management API `PUT /api/users/<u>` | 同 API `PUT /api/permissions/%2F/<u>` / `DELETE` | 两项都做（HTTP 15672） |
 | `elasticsearch`（ECK 3.5） | `elastic`；Secret `<名称>-es-elastic-user`（key `elastic`） | `POST /_security/user/elastic/_password` | `POST/DELETE /_security/user/<u>`（内置角色 viewer/editor/superuser） | 两项都做（HTTPS + CA） |
 | `milvus` | `root`；Secret `<名称>-milvus-auth`（`username`/`password`） | **已实现** `update_password` | `users/create` + `users/grant_role`（只有内置 `admin`）/ `users/drop` | 改口令已有；本批补增删，**角色只给 admin** |
-| `kafka`（Strimzi） | 无（PLAINTEXT 9092） | — | — | 不做（见 §1-5） |
-| `nacos`（chart） | 无（默认无鉴权） | — | — | 不做 |
+| `kafka`（Strimzi） | 无（当前只有 PLAINTEXT 9092） | 加 SASL listener 后：删 `KafkaUser` 重建（operator 重新生成 SCRAM 口令） | 加第二个 `scram-sha-512` listener + `KafkaUser` CR | **批次 B**（§12.1） |
+| `nacos`（chart 1.2.0 / Nacos 3.2.4） | 平台还没接管管理员口令（Client API 鉴权默认关，3.3+ 才默认开） | 开启鉴权后：v3 auth API 改口令 + 写回 Secret | 同 API（用户 / 角色 / 权限） | **批次 B**（§12.2） |
 
 核对依据（2026-10-26）：
 - CRD：`databaseroles.postgresql.cnpg.io` 存在，`spec` 含 `login` / `passwordSecret` / `inRoles` / `ensure`；
@@ -51,7 +51,7 @@
 
 ### 3.1 页面
 
-实例详情页新增「用户」页签（只对 §2 里"做"的中间件显示）：
+实例详情页新增「用户」页签（批次 A 六家直接显示；批次 B 的 Kafka / Nacos 只在实例已开启鉴权时显示，见 §12）：
 
 ```
 用户名        角色            类型      操作
@@ -205,7 +205,7 @@ public interface MiddlewareUserAdapter {
 - 只列出 `root` + 平台建的（`<名称>-users` 里有 key 的），避免暴露别人建的账号；
 - ⚠️ 角色选项**运行时从实例读**（`POST /v2/vectordb/roles/list`），实测只有 `admin` / `public`：
   `public` 默认无任何权限，所以下拉里只出现 `admin`；将来实例里出现别的可用角色会自动出现，不硬编码。
-- 只读/读写对 Milvus 意味着"建平台预设角色 + 授一组 privilege"，属于细粒度授权，**不在本批**（§12）。
+- 只读/读写对 Milvus 意味着"建平台预设角色 + 授一组 privilege"，属于细粒度授权，**不在本批**（§13）。
 
 ---
 
@@ -279,18 +279,71 @@ public interface MiddlewareUserAdapter {
 
 ---
 
-## 12. 不在本批
+## 12. 批次 B：Kafka 与 Nacos（要先改实例的接入方式）
+
+这两家**不是没有用户体系**，而是平台现在把鉴权关着。做用户管理要先让实例具备"认证"，
+会改 CR / chart values 与连接方式，影响面比批次 A 大，所以单列一批。
+
+### 12.1 Kafka（Strimzi）
+
+- 现状：适配器只建一个 `plain` listener（9092，`tls: false`，没有 authentication）→ 不存在"用户"；
+- 做法：**加第二个 listener**，不动现有 plain 接入（存量客户端继续用 9092）：
+  ```yaml
+  listeners:
+    - { name: plain, port: 9092, type: internal, tls: false }                 # 保持
+    - { name: scram, port: 9093, type: internal, tls: false,
+        authentication: { type: scram-sha-512 } }                            # 新增
+  ```
+- 用户 = **`kafkausers.kafka.strimzi.io` CR**（`spec.authentication.type: scram-sha-512`）；
+  operator 生成同名 Secret（含 `password`），平台读出来写进 `<实例名>-users`；
+- 改口令 = 删 `KafkaUser` 再建（Strimzi 重新生成 SCRAM 凭据）；列表/删除 = 列/删 CR；
+- ⚠️ **授权**：不开 `spec.kafka.authorization` 时所有认证用户**都是全权**，角色只有一个"client"。
+  真要只读/读写得开 `authorization.type: simple` 按用户写 ACL，但**一开授权，现有 PLAINTEXT 客户端
+  （匿名用户）会被拒**，除非给 `User:ANONYMOUS` 放行。这是接入迁移决定 —— 批次 B 只做
+  **认证 + 用户增删改查**，不碰授权，UI 上角色列直接写"实例未启用授权，所有用户全权"。
+- 连接方式加一行：SCRAM listener `9093` + 用户名 + 口令（Secret `<实例名>-users`）。
+
+### 12.2 Nacos（chart 1.2.0 / Nacos 3.2.4）
+
+- 现状：`nacos.auth.enabled` 为 null（继承镜像默认）；3.2 的 **Client API 鉴权默认关**，
+  Console/Admin API 鉴权是独立开关；平台没接管管理员口令；
+- 做法：实例创建时加「开启鉴权」选项（与 Milvus 同形）：
+  - `nacos.auth.enabled: true` —— chart 已支持，会自动生成 token / identity Secret；
+  - 首次启动初始化管理员口令：平台生成 → 写 Secret `<实例名>-nacos-admin`（`username` / `password`）；
+- 用户/角色：登录拿 accessToken 后走 v3 auth API（`/nacos/v3/auth/user`、`/nacos/v3/auth/role`）；
+  角色简化：`只读` / `读写` / `管理员` → Nacos 的 role + permission；
+- ⚠️ 管理员口令初始化在不同小版本上有差异（3.x 首次登录要初始化），**实施第一步先按镜像实测**；
+  验不通就把 Nacos 降级为"不支持"。
+
+### 12.3 这一批的代价
+
+- Kafka：CR 加 listener → 连接信息多一行；租户 RBAC 模板要补 `kafkausers` 的权限行（否则租户建不了用户）；
+- Nacos：chart values 加 `auth.enabled` → 存量实例要重放一次；管理员凭据进 Secret 并纳入连接信息；
+- 两家都要按"实例是否已开启鉴权"决定详情页是否显示「用户」页签。
+
+---
+
+## 13. 不在本批
 
 - 细粒度权限编辑（按库/表/collection 授权）、角色自定义；
-- Kafka 用户管理（需先把监听器换成 SASL_SSL + 引入 `KafkaUser`，是独立一批）；
-- Nacos 鉴权（chart 默认关闭，开了才有用户）；
+- Kafka 的 ACL 授权（会打断现有 PLAINTEXT 客户端，需单独做接入迁移）；
+- Milvus 的只读/读写（要先建平台预设角色并授一组 privilege）；
 - 用户操作的历史台账（只记审计日志，不建表）。
 
 ---
 
-## 13. 部署步骤（本批）
+## 14. 部署步骤
+
+**批次 A（六家）**
 
 1. 后端：`k8s-server`（新适配器 + exec 工具）、`platform-api`（服务/控制器/审计）、`platform-common`（DTO）；
 2. 前端：`platform-web`（详情页用户页签 + 弹窗）；
 3. **无 SQL 迁移**（用户口令存 Secret，不落库）；
 4. 真集群按 §10 的清单逐家验；不通过的降级为"不支持"。
+
+**批次 B（Kafka / Nacos，验收完 A 再排）**
+
+5. Kafka：适配器加 `scram` listener + 租户 RBAC 模板补 `kafkausers`（`V2026_10_26_x`）+ 重下发模板；
+   存量实例重放一次才有 9093；
+6. Nacos：chart values 加 `nacos.auth.enabled`（创建表单开关）+ 管理员口令 Secret；存量实例重放或重建；
+7. 两家都要单独一轮真集群验收（Kafka：SASL 客户端能连、plain 客户端不受影响；Nacos：登录拿 token 后能建用户）。
