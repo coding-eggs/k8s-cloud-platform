@@ -43,6 +43,7 @@ class ComponentInstallServiceTest {
     private final K8sComponentClient client = mock(K8sComponentClient.class);
     private final ClusterService clusterService = mock(ClusterService.class);
     private final ClusterComponentService components = mock(ClusterComponentService.class);
+    private final HarborRegistryService harborRegistry = mock(HarborRegistryService.class);
 
     @BeforeEach
     void insertReturnsAnId() {
@@ -51,6 +52,10 @@ class ComponentInstallServiceTest {
             inv.getArgument(0, PlatformComponentOperation.class).setId(1L);
             return 1;
         }).when(mapper).insert(any());
+        // 默认：Harbor 的租户项目同步成功（单个用例要失败时再覆盖）
+        when(harborRegistry.ensureAll(anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenReturn(new HarborRegistryService.SyncResult("c1", "harbor.example.com",
+                        List.of(), 0));
     }
 
     private ComponentInstallService service() {
@@ -58,7 +63,8 @@ class ComponentInstallServiceTest {
     }
 
     private ComponentInstallService service(ComponentRecipeCatalog catalog) {
-        return new ComponentInstallService(mapper, client, catalog, clusterService, components);
+        return new ComponentInstallService(mapper, client, catalog, clusterService, components,
+                harborRegistry);
     }
 
     @Test
@@ -1542,6 +1548,50 @@ class ComponentInstallServiceTest {
                 .contains("harbor.example.com")
                 .doesNotContain("${harbor.host}");
         verify(client, timeout(3000)).applyHarborSecrets("c1", "harbor", "platform-harbor-secrets");
+    }
+
+    @Test
+    void harborInstallTriggersTheRegistrySync() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(harborRegistry.ensureAll("c1", true)).thenReturn(new HarborRegistryService.SyncResult(
+                "c1", "harbor.example.com", List.of(), 0));
+
+        ComponentApplyRequest req = new ComponentApplyRequest();
+        req.setClusterId("c1");
+        req.setComponentCode("harbor");
+        req.setAction("INSTALL");
+        req.setHarbor(new HarborInstallRequest("harbor.example.com"));
+        service().apply(req, "admin");
+
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", true);
+    }
+
+    @Test
+    void harborSyncFailureMarksTheOperationFailedButSaysTheComponentIsInstalled() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(harborRegistry.ensureAll("c1", true)).thenThrow(new IllegalStateException("harbor unreachable"));
+
+        ComponentApplyRequest req = new ComponentApplyRequest();
+        req.setClusterId("c1");
+        req.setComponentCode("harbor");
+        req.setAction("INSTALL");
+        req.setHarbor(new HarborInstallRequest("harbor.example.com"));
+        service().apply(req, "admin");
+
+        // worker 先写 RUNNING 再写 FAILED：timeout 要等到「那一条 FAILED」而不是第一次 updateById
+        verify(mapper, timeout(3000)).updateById(org.mockito.ArgumentMatchers.argThat(o ->
+                "FAILED".equals(o.getStatus())
+                        && o.getMessage() != null
+                        && o.getMessage().contains("组件已安装")
+                        && o.getMessage().contains("harbor unreachable")));
     }
 
     private static OtelInstallRequest baseOtel() {

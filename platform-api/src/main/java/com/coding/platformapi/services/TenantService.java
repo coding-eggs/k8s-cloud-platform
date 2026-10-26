@@ -38,6 +38,7 @@ public class TenantService {
     private final K8sProvisioningService provisioning;
     private final K8sLifecycleClient adminClient;
     private final TenantMemberService memberSvc;
+    private final HarborRegistryService harborRegistry;
 
     public PlatformTenant create(TenantCreateRequest req) {
         if (!StringUtils.hasText(req.getName())) {
@@ -71,6 +72,15 @@ public class TenantService {
         if (tenant.getStatus() == 1) {
             provisionTenantSas(tenant.getId());
         }
+        // Harbor 项目/凭据：best-effort，失败不阻塞建租户（可在集群组件面板手动同步）。
+        // 停用状态建的租户不同步 —— 凭据会被同步流程跳过。
+        if (tenant.getStatus() == 1) {
+            try {
+                harborRegistry.ensureForTenantOnInstalledClusters(tenant.getId());
+            } catch (Exception e) {
+                log.warn("租户 {} 的 Harbor 项目同步失败（不阻塞创建）：{}", tenant.getId(), e.getMessage());
+            }
+        }
         return tenant;
     }
 
@@ -95,6 +105,15 @@ public class TenantService {
         }
         upd.setUpdatedAt(new Date());
         tenantMapper.updateByPrimaryKeySelective(upd);
+
+        // 停用/启用租户 → Harbor 凭据开关跟随（停用后流水线选不到）
+        if (req.getStatus() != null) {
+            try {
+                harborRegistry.onTenantStatusChanged(req.getId(), req.getStatus() == 1);
+            } catch (Exception e) {
+                log.warn("租户 {} 的 Harbor 凭据状态同步失败：{}", req.getId(), e.getMessage());
+            }
+        }
 
         // 重新启用 → 补建各集群 SA（幂等）
         if (req.getStatus() != null && req.getStatus() == 1 && existing.getStatus() != null && existing.getStatus() != 1) {
@@ -132,6 +151,11 @@ public class TenantService {
         }
         cleanup.setSaClusterIds(List.copyOf(saClusterIds));
         adminClient.cleanupTenant(cleanup);
+        try {
+            harborRegistry.onTenantDeleted(tenant.getId());
+        } catch (Exception e) {
+            log.warn("租户 {} 的 Harbor 项目/凭据回收失败：{}", tenant.getId(), e.getMessage());
+        }
         log.info("租户 {} 已删除并清理 K8s 侧对象", tenant.getId());
     }
 

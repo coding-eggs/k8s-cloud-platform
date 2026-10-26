@@ -231,6 +231,14 @@ public final class AuditAction {
     /** 部署 / 升级 / 回滚历史版本都走这一个动作（版本号记在 target 里） */
     public static final String APPLICATION_DEPLOY = "application:deploy";
 
+    // ---- 镜像仓库（Harbor 租户项目）----
+
+    /** 同步全部租户的 Harbor 项目与机器人账号 */
+    public static final String REGISTRY_SYNC_PROJECTS = "registry:sync-projects";
+
+    /** 重建单个租户（或平台共享）的 Harbor 机器人账号 */
+    public static final String REGISTRY_REBUILD_PROJECT = "registry:rebuild-project";
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *

@@ -105,6 +105,7 @@ public class ComponentInstallService {
     private final ComponentRecipeCatalog recipes;
     private final ClusterService clusterService;
     private final ClusterComponentService components;
+    private final HarborRegistryService harborRegistry;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -1132,6 +1133,22 @@ public class ComponentInstallService {
                 } catch (Exception e) {
                     log.warn("组件 {} 安装成功但 ingress Telemetry 下发失败（不影响操作结果）: {}",
                             id, e.getMessage());
+                }
+            }
+            // Harbor 装好后立刻把租户接进去（建 project / robot / 凭据）。
+            // 失败时整条操作记 FAILED：组件本身已装好，但流水线还推不了镜像 —— 必须让人看见。
+            if (result.isSuccess() && "harbor".equals(componentCode)) {
+                try {
+                    // INSTALL 强制重建：手工卸载后同地址重装时，旧凭据还在但新 Harbor 里没有那个 robot
+                    HarborRegistryService.SyncResult sync =
+                            harborRegistry.ensureAll(clusterId, "INSTALL".equals(action));
+                    if (sync.failed() > 0) {
+                        throw new IllegalStateException(
+                                sync.failed() + " 个租户同步失败（见镜像项目面板）");
+                    }
+                } catch (Exception e) {
+                    throw new IllegalStateException(
+                            "组件已安装，但镜像项目/凭据同步失败：" + e.getMessage(), e);
                 }
             }
             PlatformComponentOperation done = new PlatformComponentOperation();
