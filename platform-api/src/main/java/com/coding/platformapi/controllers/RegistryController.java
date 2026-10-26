@@ -6,6 +6,7 @@ import com.coding.platformapi.models.RegistryConnectionView;
 import com.coding.platformapi.models.RegistrySuggestRequest;
 import com.coding.platformapi.models.RegistrySuggestResponse;
 import com.coding.platformapi.registry.BrowseResult;
+import com.coding.platformapi.security.AuthContext;
 import com.coding.platformapi.services.RegistryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -36,12 +37,15 @@ public class RegistryController {
 
     private final RegistryService registryService;
 
+    /** 租户帽：把「别人家的 Harbor 凭据」过滤掉（管理员 base token 为 null = 全量） */
+    private final AuthContext auth;
+
     @Operation(summary = "镜像候选值",
             description = "入参是输入框里的整串。返回**要填进去的完整字符串**，前端整段替换。"
                     + "匹配不到已配连接时返回空且不发请求；对端失败静默降级为空，不弹错")
     @PostMapping("/suggest")
     public ResponseData<RegistrySuggestResponse> suggest(@RequestBody RegistrySuggestRequest request) {
-        return new ResponseData<>(registryService.suggest(request.getImagePrefix()));
+        return new ResponseData<>(registryService.suggest(request.getImagePrefix(), auth.hatTenantId()));
     }
 
     @Operation(summary = "浏览一层",
@@ -49,7 +53,7 @@ public class RegistryController {
                     + "失败**会报错**（与 suggest 姿态不同）")
     @PostMapping("/browse")
     public ResponseData<BrowseResult> browse(@RequestBody RegistryBrowseRequest request) {
-        return new ResponseData<>(registryService.browse(request));
+        return new ResponseData<>(registryService.browse(request, auth.hatTenantId()));
     }
 
     @Operation(summary = "可浏览的连接",
@@ -57,6 +61,6 @@ public class RegistryController {
                     + "不复用 /credential/list —— 那个要平台管理员的码，租户进页面就会 403")
     @PostMapping("/connections")
     public ResponseData<List<RegistryConnectionView>> connections() {
-        return new ResponseData<>(registryService.connections());
+        return new ResponseData<>(registryService.connections(auth.hatTenantId()));
     }
 }

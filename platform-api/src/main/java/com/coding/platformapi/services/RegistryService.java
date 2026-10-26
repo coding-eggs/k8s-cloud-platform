@@ -91,7 +91,11 @@ public class RegistryService {
      * 内置档（开关开着才有）+ 启用的镜像仓库凭据。
      */
     public List<RegistryConnectionView> connections() {
-        return allSources().stream()
+        return connections(null);
+    }
+
+    public List<RegistryConnectionView> connections(String hatTenantId) {
+        return allSources(hatTenantId).stream()
                 .map(s -> new RegistryConnectionView(s.id(), s.name(), s.type(), s.endpoint()))
                 .toList();
     }
@@ -110,11 +114,15 @@ public class RegistryService {
      * 聚合把「猜哪条」换成「都给」，那个只能猜的歧义就没有了。
      */
     public RegistrySuggestResponse suggest(String imagePrefix) {
+        return suggest(imagePrefix, null);
+    }
+
+    public RegistrySuggestResponse suggest(String imagePrefix, String hatTenantId) {
         if (!StringUtils.hasText(imagePrefix)) {
             return new RegistrySuggestResponse(List.of());
         }
         String prefix = imagePrefix.trim();
-        List<Source> sources = allSources();
+        List<Source> sources = allSources(hatTenantId);
         if (sources.isEmpty()) {
             // ⚠️ 这条以前是**静默**的：「一个来源都没有」与「有来源但对端没回应」在日志里
             // 长得一模一样（后者至少还有 WARN），排查时只能去查库 —— 2026-10-14 真发生过。
@@ -190,9 +198,13 @@ public class RegistryService {
 
     /** 浏览。**不吞错** —— 用户在页面上主动点了一层，失败要说（spec §5.3）。 */
     public BrowseResult browse(RegistryBrowseRequest req) {
+        return browse(req, null);
+    }
+
+    public BrowseResult browse(RegistryBrowseRequest req, String hatTenantId) {
         // ⚠️ 在 allSources() 里找，**不是** mapper.selectById —— 内置档没有凭据行，
         // 它是用合成 id（builtin:dockerhub）从下拉里点进来的
-        Source source = allSources().stream()
+        Source source = allSources(hatTenantId).stream()
                 .filter(s -> s.id().equals(req.getCredentialId()))
                 .findFirst()
                 .orElseThrow(() -> new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
@@ -209,14 +221,16 @@ public class RegistryService {
      * 不需要知道有「内置」这回事。散成两处就是第二个真相源
      * （S3.1 终审删掉 {@code REGISTRY_TYPES} 时反对的那个形状）。
      */
-    private List<Source> allSources() {
+    private List<Source> allSources(String hatTenantId) {
         List<Source> out = new ArrayList<>();
         if (dockerHubEnabled) {
             out.add(Source.builtin(BuiltinRegistry.DOCKER_HUB));
         }
-        // 凭据表里启用的镜像仓库行。**不解密** —— 明文只在真正要用时（toRef）才解
+        // 凭据表里启用的镜像仓库行。**不解密** —— 明文只在真正要用时（toRef）才解。
+        // 租户帽下只给「自己的 + 手工平台级」——见 CredentialService.visibleTo（Harbor 租户隔离）
         mapper.selectAll().stream()
                 .filter(c -> isRegistry(c) && enabled(c))
+                .filter(c -> CredentialService.visibleTo(c, hatTenantId))
                 .map(Source::from)
                 .forEach(out::add);
         return out;

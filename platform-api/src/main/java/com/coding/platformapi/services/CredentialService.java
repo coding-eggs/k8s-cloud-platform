@@ -443,14 +443,50 @@ public class CredentialService {
      * （那个端点要 {@code platform:credential:read}），所以不能复用 {@code /credential/list}。
      */
     public List<ConnectionView> pipelineUsableConnections(String type) {
+        return pipelineUsableConnections(type, null);
+    }
+
+    /**
+     * @param hatTenantId 请求的租户帽；null = 平台管理员（看全量）。
+     *                    租户只看自己名下的 + 手工建的平台级凭据（规则见 {@link #visibleTo}）。
+     */
+    public List<ConnectionView> pipelineUsableConnections(String type, String hatTenantId) {
+        Map<String, String> projectByCredential = projectByCredential();
         return mapper.selectAll().stream()
                 .filter(c -> type.equals(c.getType()))
                 .filter(c -> c.getUsableByPipelines() != null && c.getUsableByPipelines() == 1)
                 .filter(c -> c.getEnabled() != null && c.getEnabled() == 1)
+                .filter(c -> visibleTo(c, hatTenantId))
                 .sorted(Comparator.comparing(PlatformCredential::getName,
                         Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(c -> new ConnectionView(c.getId(), c.getName(), c.getEndpoint()))
+                .map(c -> new ConnectionView(c.getId(), c.getName(), c.getEndpoint(),
+                        projectByCredential.get(c.getId())))
                 .toList();
+    }
+
+    /**
+     * 凭据对当前请求是否可见。
+     *
+     * <p>规则：管理员（无租户帽）看全量；租户看**自己的** + **手工建的平台级**凭据。
+     * ⚠️ `source=HARBOR` 且 `tenant_id=null` 的是平台 `platform` 项目的机器人账号，
+     * 只给管理员用 —— 不能因为「平台级」就下发给租户。
+     */
+    static boolean visibleTo(PlatformCredential c, String hatTenantId) {
+        if (hatTenantId == null) {
+            return true;
+        }
+        if (hatTenantId.equals(c.getTenantId())) {
+            return true;
+        }
+        return c.getTenantId() == null && "MANUAL".equals(c.getSource());
+    }
+
+    /** 凭据 id → 镜像项目名（流水线下拉展示用；量小，一次全取） */
+    private Map<String, String> projectByCredential() {
+        return projectMapper.selectAll().stream()
+                .filter(p -> p.getCredentialId() != null)
+                .collect(Collectors.toMap(PlatformRegistryProject::getCredentialId,
+                        PlatformRegistryProject::getProjectName, (a, b) -> a));
     }
 
     /**
@@ -462,6 +498,11 @@ public class CredentialService {
      *                     它不关心对方是 Harbor 还是别的方言）
      */
     public void assertUsableByPipelines(String id, String expectedType) {
+        assertUsableByPipelines(id, expectedType, null);
+    }
+
+    /** 带租户帽的版本：别家的凭据、平台共享的 HARBOR 凭据一律拒（见 {@link #visibleTo}） */
+    public void assertUsableByPipelines(String id, String expectedType, String hatTenantId) {
         PlatformCredential c = id == null ? null : mapper.selectById(id);
         if (c == null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
@@ -475,6 +516,10 @@ public class CredentialService {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                     "该连接未授权在流水线里使用：" + c.getName());
         }
+        if (!visibleTo(c, hatTenantId)) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "该连接未授权在流水线里使用：" + c.getName());
+        }
     }
 
     /**
@@ -483,13 +528,20 @@ public class CredentialService {
      * <p>与 git 那条同一形状、同一 code：都是「列出可在流水线里使用的连接」，只是面向的节点不同。
      */
     public List<ConnectionView> pipelineUsableRegistryConnections() {
+        return pipelineUsableRegistryConnections(null);
+    }
+
+    public List<ConnectionView> pipelineUsableRegistryConnections(String hatTenantId) {
+        Map<String, String> projectByCredential = projectByCredential();
         return mapper.selectAll().stream()
                 .filter(c -> !"GIT".equals(c.getType()))
                 .filter(c -> c.getUsableByPipelines() != null && c.getUsableByPipelines() == 1)
                 .filter(c -> c.getEnabled() != null && c.getEnabled() == 1)
+                .filter(c -> visibleTo(c, hatTenantId))
                 .sorted(Comparator.comparing(PlatformCredential::getName,
                         Comparator.nullsLast(Comparator.naturalOrder())))
-                .map(c -> new ConnectionView(c.getId(), c.getName(), c.getEndpoint()))
+                .map(c -> new ConnectionView(c.getId(), c.getName(), c.getEndpoint(),
+                        projectByCredential.get(c.getId())))
                 .toList();
     }
 
@@ -509,7 +561,13 @@ public class CredentialService {
      */
     public com.coding.common.models.pipeline.PipelineConnectionRef endpointOnlyRef(String id,
                                                                                   String expectedType) {
-        assertUsableByPipelines(id, expectedType);
+        return endpointOnlyRef(id, expectedType, null);
+    }
+
+    public com.coding.common.models.pipeline.PipelineConnectionRef endpointOnlyRef(String id,
+                                                                                  String expectedType,
+                                                                                  String hatTenantId) {
+        assertUsableByPipelines(id, expectedType, hatTenantId);
         PlatformCredential c = mapper.selectById(id);
         return new com.coding.common.models.pipeline.PipelineConnectionRef(
                 c.getId(), c.getEndpoint(), null, null);
@@ -517,14 +575,26 @@ public class CredentialService {
 
     public com.coding.common.models.pipeline.PipelineConnectionRef resolveForPipeline(String id,
                                                                                        String expectedType) {
-        assertUsableByPipelines(id, expectedType);
+        return resolveForPipeline(id, expectedType, null);
+    }
+
+    public com.coding.common.models.pipeline.PipelineConnectionRef resolveForPipeline(String id,
+                                                                                       String expectedType,
+                                                                                       String hatTenantId) {
+        assertUsableByPipelines(id, expectedType, hatTenantId);
         PlatformCredential c = mapper.selectById(id);
         CredentialSecret secret = resolveSecret(id);
         return new com.coding.common.models.pipeline.PipelineConnectionRef(
                 c.getId(), c.getEndpoint(), secret.getUsername(), secret.getSecret());
     }
 
-    /** 窄投影：只有身份与地址，**没有认证方式的任何痕迹**。 */
-    public record ConnectionView(String id, String name, String endpoint) {
+    /**
+     * 窄投影：身份、地址与镜像项目名（Harbor 自动凭据才有），**没有认证方式的任何痕迹**。
+     * 老调用/测试用 3 参构造（project 为 null）。
+     */
+    public record ConnectionView(String id, String name, String endpoint, String project) {
+        public ConnectionView(String id, String name, String endpoint) {
+            this(id, name, endpoint, null);
+        }
     }
 }

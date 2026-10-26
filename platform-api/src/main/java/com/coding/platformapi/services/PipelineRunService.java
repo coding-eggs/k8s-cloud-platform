@@ -112,7 +112,7 @@ public class PipelineRunService {
 
         // ① 解析连接：**逐条校授权 + 解密**（绕过前端直接打接口也一样）。
         //    只解析**本次真要跑**的子画布 —— 被屏蔽节点的连接不要求授权（它这次不跑）。
-        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(toRun);
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(toRun, ctx.tenantId());
 
         // ② 先生成名字：**幂等键从源头就有**
         String runName = generateRunName(pipeline.getName());
@@ -219,7 +219,7 @@ public class PipelineRunService {
         Set<String> toRun = finallyTarget ? Set.of(nodeId) : plan.runNodeIds();
         String trimmed = PipelineCanvasMask.trim(parent.getCanvasJson(), toRun,
                 finallyTarget ? nodeId : null);
-        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(trimmed);
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(trimmed, ctx.tenantId());
 
         Set<String> reused = new LinkedHashSet<>();
         status.forEach((id, st) -> {
@@ -681,10 +681,10 @@ public class PipelineRunService {
      * 所以在这里读懂它是合适的，与「不碰 fabric8」那条边界无关。
      */
     private List<com.coding.common.models.pipeline.PipelineConnectionRef> resolveConnections(
-            String canvasJson) {
+            String canvasJson, String tenantId) {
         List<com.coding.common.models.pipeline.PipelineConnectionRef> out = new ArrayList<>();
         for (PipelineCanvasRefs.Ref ref : PipelineCanvasRefs.scan(canvasJson)) {
-            out.add(credentials.resolveForPipeline(ref.id(), ref.expectedType()));
+            out.add(credentials.resolveForPipeline(ref.id(), ref.expectedType(), tenantId));
         }
         return out;
     }

@@ -145,7 +145,7 @@ public class PipelineController {
     @Operation(summary = "可在流水线里使用的 git 连接（窄投影：只回 id/name/endpoint）",
             description = "只含被管理员勾了「允许在流水线里使用」且已启用的连接")
     public ResponseData<List<CredentialService.ConnectionView>> gitConnections() {
-        return new ResponseData<>(credentialService.pipelineUsableConnections("GIT"));
+        return new ResponseData<>(credentialService.pipelineUsableConnections("GIT", auth.hatTenantId()));
     }
 
     @PostMapping("/create")
@@ -181,7 +181,7 @@ public class PipelineController {
     @PostMapping("/registry-connections")
     @Operation(summary = "可在流水线里使用的镜像仓库连接（窄投影：只回 id/name/endpoint）")
     public ResponseData<List<CredentialService.ConnectionView>> registryConnections() {
-        return new ResponseData<>(credentialService.pipelineUsableRegistryConnections());
+        return new ResponseData<>(credentialService.pipelineUsableRegistryConnections(auth.hatTenantId()));
     }
 
     /**

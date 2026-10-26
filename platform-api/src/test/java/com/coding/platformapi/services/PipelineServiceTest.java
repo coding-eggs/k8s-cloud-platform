@@ -260,7 +260,7 @@ class PipelineServiceTest {
     void previewSendsTheReferencedConnectionAsEndpointOnly() {
         // ⭐ 这一条钉住两件事：①镜像节点渲染要连接；②交上去的 ref **不带凭据内容**
         //（预览页会把渲染结果原样给用户看）
-        when(credentials.endpointOnlyRef("reg-1", null))
+        when(credentials.endpointOnlyRef("reg-1", null, null))
                 .thenReturn(endpointOnly("reg-1", "harbor.example.com"));
         when(k8s.render(eq(CANVAS_WITH_IMAGE_NODE), anyList())).thenReturn("kind: PipelineSpec\n");
 
@@ -280,7 +280,7 @@ class PipelineServiceTest {
     @Test
     void savingRejectsAnUnauthorizedConnectionBeforeItEverReachesTheCluster() {
         // 未授权的连接**保存时就被拒** —— 不用等用户点了运行才发现（运行那条路还会再校一次）
-        when(credentials.endpointOnlyRef("reg-1", null)).thenThrow(
+        when(credentials.endpointOnlyRef("reg-1", null, null)).thenThrow(
                 new CloudPlatformException(10030, "该连接未授权在流水线里使用：reg-1"));
 
         PipelineDTO withImageNode = req("good-name", "ns1");

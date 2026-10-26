@@ -598,12 +598,13 @@ class CredentialServiceTest {
     }
 
     @Test
-    void theProjectionCarriesOnlyThreeFields() {
+    void theProjectionCarriesOnlyIdNameEndpointAndProject() {
         when(mapper.selectAll()).thenReturn(List.of(
                 storedWithPipelineFlag("c1", "git-a", "GIT", "https://a.example.com", true)));
         CredentialService.ConnectionView v = svc.pipelineUsableConnections("GIT").get(0);
-        // 只有 id/name/endpoint —— 与 S3.1 的 /registry/connections 同一形状
-        assertThat(v.getClass().getDeclaredFields()).hasSize(3);
+        // id/name/endpoint + 项目名（Harbor 自动凭据才有；手工凭据为 null）
+        assertThat(v.getClass().getDeclaredFields()).hasSize(4);
+        assertThat(v.project()).isNull();
     }
 
     @Test
@@ -660,5 +661,48 @@ class CredentialServiceTest {
         assertThat(saved.getEnabled()).isEqualTo(1);
         assertThat(saved.getSecretEncrypted()).startsWith("v1:");
         assertThat(id).isEqualTo(saved.getId());
+    }
+
+    @Test
+    void tenantSeesItsOwnHarborCredentialButNotAnotherTenants() {
+        PlatformCredential mine = registryCredential("c1", "tenant-1", "HARBOR", "Harbor t-acme@c1");
+        PlatformCredential other = registryCredential("c2", "t-other", "HARBOR", "Harbor t-other@c1");
+        PlatformCredential manual = registryCredential("c3", null, "MANUAL", "dockerhub");
+        PlatformCredential platformHarbor = registryCredential("c4", null, "HARBOR", "Harbor platform@c1");
+        when(mapper.selectAll()).thenReturn(List.of(mine, other, manual, platformHarbor));
+
+        assertThat(svc.pipelineUsableRegistryConnections("tenant-1"))
+                .extracting(CredentialService.ConnectionView::name)
+                .containsExactly("Harbor t-acme@c1", "dockerhub");
+        // 管理员（无帽）看全量
+        assertThat(svc.pipelineUsableRegistryConnections(null)).hasSize(4);
+    }
+
+    @Test
+    void anotherTenantsCredentialCannotBeReferencedByHand() {
+        when(mapper.selectById("c2")).thenReturn(
+                registryCredential("c2", "t-other", "HARBOR", "Harbor t-other@c1"));
+        assertThatThrownBy(() -> svc.assertUsableByPipelines("c2", null, "tenant-1"))
+                .hasMessageContaining("未授权");
+        when(mapper.selectById("c4")).thenReturn(
+                registryCredential("c4", null, "HARBOR", "Harbor platform@c1"));
+        assertThatThrownBy(() -> svc.assertUsableByPipelines("c4", null, "tenant-1"))
+                .hasMessageContaining("未授权");   // 平台共享的 HARBOR 凭据也不给租户
+    }
+
+    private static PlatformCredential registryCredential(String id, String tenantId,
+                                                         String source, String name) {
+        PlatformCredential c = new PlatformCredential();
+        c.setId(id);
+        c.setName(name);
+        c.setType("HARBOR");
+        c.setEndpoint("harbor.example.com");
+        c.setAuthType("BASIC");
+        c.setEnabled(1);
+        c.setUsableByPipelines(1);
+        c.setSecretEncrypted("v1:x");
+        c.setTenantId(tenantId);
+        c.setSource(source);
+        return c;
     }
 }

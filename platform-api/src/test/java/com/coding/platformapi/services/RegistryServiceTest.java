@@ -535,6 +535,35 @@ class RegistryServiceTest {
         assertThat(cache.keys).isEmpty();
     }
 
+    @Test
+    void tenantCannotBrowseWithAnotherTenantsCredential() {
+        PlatformCredential other = row("c2", "harbor-other", "HARBOR", "harbor.example.com", 1);
+        other.setTenantId("t-other");
+        other.setSource("HARBOR");
+        other.setUsableByPipelines(1);
+        when(mapper.selectAll()).thenReturn(List.of(other));
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("c2");
+        req.setPath(List.of());
+        assertThatThrownBy(() -> svc.browse(req, "tenant-1"))
+                .hasMessageContaining("不存在或已停用");
+    }
+
+    @Test
+    void tenantCanBrowseWithItsOwnCredential() {
+        PlatformCredential own = row("c2", "harbor-own", "HARBOR", "harbor.example.com", 1);
+        own.setTenantId("tenant-1");
+        own.setSource("HARBOR");
+        own.setUsableByPipelines(1);
+        when(mapper.selectAll()).thenReturn(List.of(own));
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("c2");
+        req.setPath(List.of());
+        assertThat(svc.browse(req, "tenant-1").children()).isEmpty();
+    }
+
     private static List<String> connectionViewFields() {
         return Arrays.stream(RegistryConnectionView.class.getDeclaredFields())
                 .map(Field::getName).toList();

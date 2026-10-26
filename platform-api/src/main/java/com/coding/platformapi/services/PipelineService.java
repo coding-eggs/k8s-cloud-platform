@@ -187,7 +187,7 @@ public class PipelineService {
             String canvasJson) {
         List<com.coding.common.models.pipeline.PipelineConnectionRef> out = new ArrayList<>();
         for (PipelineCanvasRefs.Ref ref : PipelineCanvasRefs.scan(canvasJson)) {
-            out.add(credentials.endpointOnlyRef(ref.id(), ref.expectedType()));
+            out.add(credentials.endpointOnlyRef(ref.id(), ref.expectedType(), auth.hatTenantId()));
         }
         return out;
     }
