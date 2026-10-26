@@ -21,6 +21,8 @@ import AppNodePalette from '@/components/app-canvas/AppNodePalette.vue'
 import AppCanvasContextMenu from '@/components/app-canvas/AppCanvasContextMenu.vue'
 import { NODE_WIDTH, layeredLayout } from '@/components/app-canvas/appCanvasLayout'
 import type { Point } from '@/components/app-canvas/appCanvasLayout'
+import { DEFAULT_SIDES, normalizeConnection } from '@/components/app-canvas/appCanvasEdges'
+import type { Side } from '@/components/app-canvas/appCanvasEdges'
 import AppNodeInspector from '@/components/app-canvas/AppNodeInspector.vue'
 import AppDeployDrawer from '@/components/app-canvas/AppDeployDrawer.vue'
 import YamlBlock from '@/components/YamlBlock.vue'
@@ -34,11 +36,15 @@ interface FlowNodeView {
   position: { x: number; y: number }
   data: { key: string; kind: AppNodeKind; params: Record<string, unknown>; state?: string }
 }
+
 interface FlowEdgeView {
   id: string
   source: string
   target: string
   type?: string
+  /** 连线两端用的是哪一侧的锚点（不存的话刷新后一律回落到左出右入） */
+  sourceHandle?: Side
+  targetHandle?: Side
 }
 
 const route = useRoute()
@@ -53,6 +59,8 @@ const nodes = ref<FlowNodeView[]>([])
 const edges = ref<FlowEdgeView[]>([])
 /** 用户手拖过的节点坐标（钉住）。没钉的节点每次都按依赖自动分层，图一改就重新排齐。 */
 const pins = ref<Record<string, Point>>({})
+/** 连线两端用的锚点侧，存进 spec.settings.edgeSides（纯画布信息） */
+const edgeSides = ref<Record<string, { s: Side; t: Side }>>({})
 const canvasRef = ref<InstanceType<typeof AppCanvas>>()
 const selectedKey = ref('')
 const saving = ref(false)
@@ -171,19 +179,42 @@ function savedPins(spec: AppSpec | undefined): Record<string, Point> {
   return out
 }
 
+function kindOf(key: string): AppNodeKind | undefined {
+  return nodes.value.find((n) => n.id === key)?.data.kind
+}
+
+/**
+ * 连线：两端锚点随便拖（左侧/右侧的出口和入口都能起、都能落），线就画在你选的两个锚点上。
+ * 归一（含反向拖拽翻转、默认锚点）在 appCanvasEdges.normalizeConnection 里，纯函数。
+ */
 function onConnect(connection: Connection) {
-  if (connection.source === connection.target) {
-    ElMessage.warning('连线不能指向自己')
+  const normalized = normalizeConnection(
+    {
+      source: connection.source ?? '',
+      target: connection.target ?? '',
+      sourceHandle: connection.sourceHandle,
+      targetHandle: connection.targetHandle,
+    },
+    kindOf,
+  )
+  if (!normalized.ok) {
+    if (normalized.reason === 'self') {
+      ElMessage.warning('连线不能指向自己')
+    } else if (normalized.reason === 'both-providers') {
+      ElMessage.warning('中间件和外部服务都只能被使用，它们之间不需要连线')
+    }
     return
   }
-  const source = nodes.value.find((n) => n.id === connection.source)
-  if (source && source.data.kind !== 'SERVICE' && source.data.kind !== 'WORKER') {
-    ElMessage.warning('只有服务和后台进程可以发起连线（中间件/外部服务只能被使用）')
-    return
-  }
-  const id = `${connection.source}->${connection.target}`
+
+  const { from, to, sides } = normalized
+  const id = `${from}->${to}`
   if (edges.value.some((e) => e.id === id)) return
-  edges.value = [...edges.value, { id, source: connection.source!, target: connection.target!, type: 'smoothstep' }]
+
+  edgeSides.value = { ...edgeSides.value, [id]: sides }
+  edges.value = [...edges.value, {
+    id, source: from, target: to, type: 'smoothstep',
+    sourceHandle: sides.s, targetHandle: sides.t,
+  }]
   // 依赖变了就重排：新连线两端的层级可能要挪，用户钉住的节点不动
   relayout()
 }
@@ -207,6 +238,7 @@ function onEdgesChange(changes: EdgeChange[]) {
   const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id)
   if (!removed.length) return
   edges.value = edges.value.filter((e) => !removed.includes(e.id))
+  forgetSides(removed)
   relayout()
 }
 
@@ -267,13 +299,13 @@ function duplicateNode(key: string) {
 }
 
 function disconnectNode(key: string) {
-  const before = edges.value.length
-  edges.value = edges.value.filter((e) => e.source !== key && e.target !== key)
-  const removed = before - edges.value.length
+  const removed = edges.value.filter((e) => e.source === key || e.target === key).map((e) => e.id)
   closeMenu()
-  if (!removed) return
+  if (!removed.length) return
+  edges.value = edges.value.filter((e) => !removed.includes(e.id))
+  forgetSides(removed)
   relayout()
-  ElMessage.success(`已断开 ${removed} 条连线`)
+  ElMessage.success(`已断开 ${removed.length} 条连线`)
 }
 
 async function menuRemove(key: string) {
@@ -287,6 +319,7 @@ function removeEdge() {
   closeMenu()
   if (!id) return
   edges.value = edges.value.filter((e) => e.id !== id)
+  forgetSides([id])
   relayout()
 }
 
@@ -299,7 +332,9 @@ async function removeNode(key: string) {
   await ElMessageBox.confirm(`移除节点「${key}」？保存并部署后，它创建的资源会被清理（PVC 保留）。`,
     '移除节点', { type: 'warning' })
   nodes.value = nodes.value.filter((n) => n.id !== key)
+  const droppedEdges = edges.value.filter((e) => e.source === key || e.target === key).map((e) => e.id)
   edges.value = edges.value.filter((e) => e.source !== key && e.target !== key)
+  forgetSides(droppedEdges)
   const next = { ...pins.value }
   delete next[key]
   pins.value = next
@@ -310,11 +345,33 @@ async function removeNode(key: string) {
 function toSpec(): AppSpec {
   return {
     namespace: app.value!.namespace,
-    // settings 里的其它键原样带回；layout 存的是用户钉住的坐标，不参与渲染和部署
-    settings: { ...(app.value?.spec.settings ?? {}), layout: pins.value },
+    // settings 里的其它键原样带回；layout / edgeSides 都是纯画布信息，渲染和部署都不读
+    settings: { ...(app.value?.spec.settings ?? {}), layout: pins.value, edgeSides: edgeSides.value },
     nodes: nodes.value.map<AppNode>((n) => ({ key: n.id, kind: n.data.kind, params: n.data.params })),
     edges: edges.value.map((e) => ({ from: e.source, to: e.target })),
   }
+}
+
+/** 从草稿里读回每条连线用的锚点侧；形状不对就当作没有 */
+function savedSides(spec: AppSpec | undefined): Record<string, { s: Side; t: Side }> {
+  const raw = spec?.settings?.edgeSides
+  if (!raw || typeof raw !== 'object') return {}
+  const out: Record<string, { s: Side; t: Side }> = {}
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    const side = value as { s?: unknown; t?: unknown } | null
+    const s = side?.s
+    const t = side?.t
+    if ((s === 'l' || s === 'r') && (t === 'l' || t === 'r')) out[id] = { s, t }
+  }
+  return out
+}
+
+/** 连线没了，它的锚点记录也一起清掉，别让 settings 里堆死数据 */
+function forgetSides(removedIds: string[]) {
+  if (!removedIds.length) return
+  const next = { ...edgeSides.value }
+  for (const id of removedIds) delete next[id]
+  edgeSides.value = next
 }
 
 async function load() {
@@ -326,6 +383,7 @@ async function load() {
   const specNodes = spec.nodes ?? []
   const specEdges = spec.edges ?? []
   pins.value = savedPins(spec)
+  edgeSides.value = savedSides(spec)
   nodes.value = specNodes.map((n) => ({
     id: n.key,
     type: 'app',
@@ -333,9 +391,14 @@ async function load() {
     position: { x: 0, y: 0 },
     data: { key: n.key, kind: n.kind, params: n.params ?? {}, state: 'PENDING' },
   }))
-  edges.value = specEdges.map((e) => ({
-    id: `${e.from}->${e.to}`, source: e.from, target: e.to, type: 'smoothstep',
-  }))
+  edges.value = specEdges.map((e) => {
+    const id = `${e.from}->${e.to}`
+    const sides = edgeSides.value[id] ?? DEFAULT_SIDES
+    return {
+      id, source: e.from, target: e.to, type: 'smoothstep',
+      sourceHandle: sides.s, targetHandle: sides.t,
+    }
+  })
   // 没有钉住记录的节点按依赖自动落位
   relayout()
 }

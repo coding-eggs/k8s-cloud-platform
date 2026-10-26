@@ -72,7 +72,17 @@ const subtitle = computed(() => {
     class="app-node"
     :class="[kindClass, { 'app-node--selected': selected, 'app-node--failed': state === 'failed' }]"
   >
-    <Handle type="target" :position="Position.Right" />
+    <!--
+      锚点：左右各一个 source、一个 target，上下错开不重叠。
+      任意一侧都能起、都能落 —— 线就画在你选的两个锚点之间，方向由布局和你摆的位置决定，
+      不再被「左出右入」锁死。中间件/外部服务没有 source，仍然拖不出线。
+    -->
+    <template v-if="isCompute">
+      <Handle id="l" type="source" :position="Position.Left" class="port port--out" />
+      <Handle id="r" type="source" :position="Position.Right" class="port port--out" />
+    </template>
+    <Handle id="r" type="target" :position="Position.Right" class="port port--in" />
+    <Handle id="l" type="target" :position="Position.Left" class="port port--in" />
 
     <div class="app-node__badge">
       <el-icon v-if="isCompute" :size="17"><component :is="icon" /></el-icon>
@@ -87,8 +97,6 @@ const subtitle = computed(() => {
       </div>
       <div class="app-node__meta" :title="meta">{{ meta }}</div>
     </div>
-
-    <Handle v-if="isCompute" type="source" :position="Position.Left" />
   </div>
 </template>
 
@@ -213,6 +221,18 @@ const subtitle = computed(() => {
   background: var(--el-bg-color);
   opacity: 0.5;
   transition: opacity 0.15s, transform 0.15s;
+}
+/* 同一侧有出/入两个锚点时上下错开，不叠在一起 */
+.app-node :deep(.vue-flow__handle.port--out) {
+  top: 32%;
+}
+.app-node :deep(.vue-flow__handle.port--in) {
+  top: 70%;
+}
+/* 中间件/外部只有入口，居中放更好看 */
+.app-node--middleware :deep(.vue-flow__handle.port--in),
+.app-node--external :deep(.vue-flow__handle.port--in) {
+  top: 50%;
 }
 .app-node:hover :deep(.vue-flow__handle),
 .app-node--selected :deep(.vue-flow__handle) {

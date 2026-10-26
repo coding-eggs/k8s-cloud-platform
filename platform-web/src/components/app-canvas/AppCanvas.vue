@@ -136,7 +136,7 @@ const defaultEdgeOptions = {
     <div v-if="empty" class="app-canvas__empty">
       <div class="app-canvas__empty-title">从左侧添加节点开始画</div>
       <div class="app-canvas__empty-hint">
-        从服务卡片左边的圆点拖到它依赖的中间件：箭头指向被使用的一方。
+        从服务卡片任意一侧的圆点拖到它依赖的资源（左右都能起、都能落）：箭头指向被使用的一方。
       </div>
     </div>
 
