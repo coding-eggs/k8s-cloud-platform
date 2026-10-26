@@ -185,6 +185,12 @@ logstash_format: { enabled: true, prefix_separator: "-", date_format: "%Y.%m.%d"
 9. **文件日志没数据** —— 注解里的路径必须是容器内绝对路径且是具体文件，不能是目录。
 10. **日志开关置灰** —— OTel 组件没开日志采集时，工作负载日志开关不可用（有意）。
 11. **操作卡 RUNNING** —— 15 分钟标 UNKNOWN；管理员可中止（只改记录，不杀 helm），修好重试。
+12. **换了 ES 凭证但 collector 还在用旧凭证（401）** —— 2026-10-26 一并修了：collector 的 Pod 是
+    operator 从 `OpenTelemetryCollector` CR 生成的，**给那个 Deployment 打注解会被 reconcile 改回去**，
+    所以平台改的是 CR 的 `spec.podAnnotations["platform.coding/config-hash"]`，由 operator 自己滚动。
+    幂等（哈希一致就不动）；没装 operator / 没开日志时找不到 CR 就静默跳过。
+    ES 地址走 values（`${otel.es.endpoint}`），那条路 helm 会自己滚，本来就没问题。
+
 
 ## 8. 使用
 

@@ -92,6 +92,11 @@ persistence: { enabled: true, storageClassName: nfs-client, size: 20Gi }
 
 Secret 命名空间不是 `monitor` 时安装前直接拒绝（跨 ns 读 Secret 无产品必要）。
 
+**换凭证会自动滚动 Tempo**（2026-10-26）：凭证走 `extraEnvFrom` + `-config.expand-env=true`，
+进程只在启动时展开 env —— 只改 Secret 不会让 chart 的 `checksum/config` 变（它只算 ConfigMap），
+所以由 k8s-server 写 Secret 后按 Pod 模板上的 `platform.coding/config-hash` 注解做对齐（一致则不动）。
+改地址 / 传输方式 / 桶走的是 ConfigMap，那条路 helm 自己会滚。同一机制见 thanos README §3 末尾。
+
 ## 5. 验证
 
 ```bash

@@ -1420,7 +1420,7 @@ class ComponentInstallServiceTest {
         inOrder.verify(client).applyTempoObjstore("c1", "monitor", "minio-creds",
                 "monitor", "platform-tempo-objstore");
         inOrder.verify(client).applyOtelEsSecret("c1", "monitor", "es-es-elastic-user",
-                "monitor", "platform-otel-es");
+                "monitor", "platform-otel-es", "platform-otel-gateway");
         inOrder.verify(client).applyComponent(anyString(), anyString(), anyString(), any());
     }
 

@@ -20,4 +20,9 @@ public class OtelEsSecretRequestDTO {
     private String targetNamespace;
     /** 目标 Secret 名（collector 的 env 指向它） */
     private String targetSecretName;
+    /**
+     * collector 的 {@code OpenTelemetryCollector} CR 名。换凭证后平台改它的
+     * {@code spec.podAnnotations} 让 operator 滚动 Pod —— 直接改 operator 生成的 Deployment 会被 reconcile 回去。
+     */
+    private String collectorName;
 }

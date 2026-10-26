@@ -23,6 +23,7 @@ import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ExternalGatewayObjects;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
+import com.coding.k8sserver.components.SecretConsumers;
 import com.coding.k8sserver.components.SeaweedAdminSecretObjects;
 import com.coding.k8sserver.components.OtelEsSecretObjects;
 import com.coding.k8sserver.components.OtelServiceMonitorObjects;
@@ -37,6 +38,7 @@ import com.coding.k8sserver.helm.HelmResult;
 import com.coding.k8sserver.helm.HelmRunner;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -65,6 +67,7 @@ import java.util.Map;
  * 前一个失败还继续装第二个只会留下半个栈。
  */
 @Tag(name = "集群域-组件安装", description = "安装/升级集群组件（helm，平台管理员）")
+@Slf4j
 @RestController
 @RequestMapping("/components")
 public class ComponentInstallController implements AccessBoundaryAware {
@@ -293,7 +296,34 @@ public class ComponentInstallController implements AccessBoundaryAware {
         client.secrets().inNamespace(request.getTargetNamespace())
                 .resource(target)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+
+        // 改了 S3 地址 / 桶 / 凭证 → 消费方（compactor / receive / storegateway）必须重启：
+        // 它们只在启动时读 --objstore.config-file，而 chart 的 checksum 注解算的是
+        // global.objstore.config（平台没设，恒为默认值），helm upgrade 因此不会滚动 Pod。
+        // 2026-10-26 用户实报：改完地址 helm 成功、Pod 没动，compactor/receive 继续往旧桶写。
+        rollSecretConsumers(client, request.getTargetNamespace(), request.getTargetSecretName(),
+                SecretConsumers.hashOf(objstore));
         return new ResponseData<>();
+    }
+
+    /**
+     * 配置 Secret 写完后让读它的工作负载重新读一次（幂等：模板上的 config-hash 已等于本次内容时不动；
+     * 没有这个注解的旧 Pod 会被纠一次）。
+     *
+     * <p>失败**不吞**：Secret 已经是新配置而 Pod 还是旧的，正是"改了不生效"那种最难查的状态。
+     */
+    private static void rollSecretConsumers(KubernetesClient client, String namespace, String secretName,
+                                            String contentHash) {
+        List<String> rolled;
+        try {
+            rolled = SecretConsumers.alignConsumers(client, namespace, secretName, contentHash);
+        } catch (Exception e) {
+            throw new CloudPlatformException(EnumResponseType.ERROR.getCode(),
+                    "配置 Secret 已更新，但滚动消费方失败（Pod 仍在跑旧配置，需人工处理）：" + e.getMessage(), e);
+        }
+        if (!rolled.isEmpty()) {
+            log.info("配置 Secret 变更，已滚动重启消费方（{}/{}）：{}", namespace, secretName, rolled);
+        }
     }
 
     /**
@@ -355,6 +385,12 @@ public class ComponentInstallController implements AccessBoundaryAware {
         client.secrets().inNamespace(request.getTargetNamespace())
                 .resource(target)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        // Tempo 的凭证走 extraEnvFrom（`-config.expand-env=true` 在启动时展开），换凭证同样要滚动；
+        // 改 endpoint 走的是 ConfigMap（chart 有 checksum/config），那条路 helm 自己会滚。
+        rollSecretConsumers(client, request.getTargetNamespace(), request.getTargetSecretName(),
+                SecretConsumers.hashOf(Map.of(
+                        TempoObjstoreObjects.ACCESS_KEY, credentials[0],
+                        TempoObjstoreObjects.SECRET_KEY, credentials[1])));
         return new ResponseData<>();
     }
 
@@ -390,6 +426,22 @@ public class ComponentInstallController implements AccessBoundaryAware {
         client.secrets().inNamespace(request.getTargetNamespace())
                 .resource(target)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        // collector 的 Pod 由 otel-operator 从 CR 生成：给那个 Deployment 打注解会被 reconcile 改回去，
+        // 正确的手柄是 CR 的 spec.podAnnotations（collector 同样只在启动时读环境变量）。
+        try {
+            if (SecretConsumers.alignCollector(client, request.getTargetNamespace(),
+                    request.getCollectorName(), request.getTargetSecretName(),
+                    SecretConsumers.hashOf(Map.of(
+                            OtelEsSecretObjects.USERNAME_KEY, username,
+                            OtelEsSecretObjects.PASSWORD_KEY, password)))) {
+                log.info("ES 凭证变更，已让 otel-operator 滚动 collector（{}/{}）",
+                        request.getTargetNamespace(), request.getCollectorName());
+            }
+        } catch (Exception e) {
+            throw new CloudPlatformException(EnumResponseType.ERROR.getCode(),
+                    "ES 凭证 Secret 已更新，但滚动 collector 失败（Pod 仍在跑旧凭证，需人工处理）："
+                            + e.getMessage(), e);
+        }
         return new ResponseData<>();
     }
 

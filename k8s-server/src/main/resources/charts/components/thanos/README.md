@@ -93,6 +93,14 @@ Thanos v0.42.4 `cmd/thanos/compact.go`（降采样默认开启，本平台不暴
 
 任一项缺失，组件安装前直接拒绝（不会装完才失败）。
 
+**改完这些字段重放组件时，消费方会被自动滚动重启**（compactor / receive / storegateway）：
+Thanos 只在启动时读 `--objstore.config-file`，而 chart 的 `checksum/objstore-configuration`
+算的是 `global.objstore.config`（平台从不设置，恒为默认值）——**光改 Secret 不会让 helm 动 Pod 模板**。
+平台的做法：写 Secret 后比对 Pod 模板上的 `platform.coding/config-hash` 注解，与本次内容哈希
+（`<secretName>:<sha256(objstore.yml)>`）不一致才改写注解（改写即触发滚动），一致则跳过。
+所以重放是幂等的；**没有这个注解的旧集群**（本次修复之前装的）会在部署新 k8s-server 后
+第一次重放组件时被纠一次，不需要人工 `rollout restart`。见 §6 第 8 条。
+
 ## 4. 实锤（来自历史对话）
 
 - **2026-10-18 用户指出端口写错**：
@@ -119,6 +127,10 @@ Thanos v0.42.4 `cmd/thanos/compact.go`（降采样默认开启，本平台不暴
 kubectl -n monitor get sts,svc | grep thanos
 kubectl -n monitor get secret platform-thanos-objstore
 kubectl -n monitor logs statefulset/platform-thanos-receive --tail=50
+# 改了 S3 地址后：先确认 Pod 是新的（消费方应带 config-hash 注解），再确认连的是新地址
+kubectl -n monitor get pods -l app.kubernetes.io/part-of=thanos
+kubectl -n monitor get sts platform-thanos-compactor \
+  -o jsonpath='{.spec.template.metadata.annotations.platform\.coding/config-hash}{"\n"}'
 ```
 
 平台侧：管理集群的监控曲线有数据；`count(up{cluster_name="<业务集群>"}) > 0`。
@@ -135,6 +147,18 @@ kubectl -n monitor logs statefulset/platform-thanos-receive --tail=50
 7. **compactor CrashLoopBackOff，日志 `raw resolution must be higher than ... (40 hours)`** ——
    保留期写到了下限以下（raw < 40h 或 5m < 10d）；`helm` 是成功的，只有 Pod 起不来。
    改成 `>= 40h` / `>= 10d`（或留空）后重放组件，见 §2.1。
+8. **改了 S3 地址但不生效，compactor / receive 还在往旧桶写** —— 2026-10-26 用户实报。
+   根因：对象存储配置在 Secret 里而不在 values 里，chart 的 checksum 注解看不到它的内容变化，
+   `helm upgrade` 因此不改 Pod 模板、不滚动 Pod；进程又只在启动时读一次配置文件。
+   **实测证据**（管理集群，改地址那次操作 `UPGRADE SUCCESS`）：Secret 与 Pod 内挂载的
+   `/etc/thanos/objstore.yml` 都已是新地址，但 `cat /proc/net/tcp` 里 compactor / receive
+   的 S3 连接仍指向旧的 `192.168.31.80:9002`，Pod 启动时间停在改地址之前。
+   现在由 k8s-server 写 Secret 后自动滚动消费方（§3 末尾）。**修复不能只看"helm 成功"** ——
+   装完要核对 Pod 是新的：`kubectl -n monitor get pods -l app.kubernetes.io/part-of=thanos`。
+   平台上还没升级到这版 k8s-server 的集群，先手工纠一次：
+   ```bash
+   kubectl -n monitor rollout restart statefulset/platform-thanos-compactor statefulset/platform-thanos-receive statefulset/platform-thanos-storegateway
+   ```
 
 ## 7. 新增版本
 

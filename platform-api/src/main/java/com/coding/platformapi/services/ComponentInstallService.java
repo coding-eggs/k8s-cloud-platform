@@ -1016,7 +1016,7 @@ public class ComponentInstallService {
                 EsConfig e = otel.getEs();
                 client.applyOtelEsSecret(clusterId,
                         e.getCredentialSecret().getNamespace(), e.getCredentialSecret().getName(),
-                        OTEL_NAMESPACE, "platform-otel-es");
+                        OTEL_NAMESPACE, "platform-otel-es", OtelObjects.GATEWAY);
             }
             // Thanos 的对象存储 Secret 必须在 helm 之前就位（Pod 会挂载它）
             if (thanos != null) {
