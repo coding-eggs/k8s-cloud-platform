@@ -1,0 +1,14 @@
+source: https://github.com/goharbor/harbor-helm
+helm_repo: https://helm.goharbor.io
+chart: harbor
+version: 1.19.4
+appVersion: "2.15.4"
+fetched_at: 2026-10-27
+fetch_command: helm pull harbor --repo https://helm.goharbor.io --version 1.19.4 --untar
+digest: 759872bbabaf05524268096b9d551a480d3f6814d13ed08723036e2673859182
+note: >-
+  官方 chart 原样入库，**未修改任何模板**。平台的定制全部通过 recipe 的契约值 +
+  安装表单（host / StorageClass / 容量 / Trivy 开关）完成。
+  ⚠️ 1.19.x 把 database / redis / registry / jobservice / portal / core 的模板都放在
+  本 chart 内（无子 chart）；`expose.type=route` 时不部署 nginx，HTTPRoute 直接指向
+  harbor-core / harbor-portal 的 ClusterIP Service。
