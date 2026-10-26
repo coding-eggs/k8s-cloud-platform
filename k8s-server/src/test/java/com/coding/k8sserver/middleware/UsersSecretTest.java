@@ -46,6 +46,26 @@ class UsersSecretTest {
         assertThat(UsersSecret.without(current, "alice")).containsOnlyKeys("bob");
     }
 
+    @Test
+    void rolesLiveUnderDotPrefixedKeysAndAreNotMistakenForPasswords() {
+        // 角色不落库：和口令放同一个 Secret，用 role.<用户名> 前缀区分
+        Secret s = new SecretBuilder()
+                .addToData("alice", b64("pw"))
+                .addToData("role.alice", b64("只读"))
+                .build();
+
+        assertThat(UsersSecret.passwords(s)).containsOnlyKeys("alice");
+        assertThat(UsersSecret.roles(s)).containsEntry("alice", "只读");
+    }
+
+    @Test
+    void mergeWritesPasswordAndRoleTogetherAndRemoveDropsBoth() {
+        var merged = UsersSecret.merge(java.util.Map.of(), "alice", "pw-123456", "读写");
+        assertThat(merged).containsKeys("alice", "role.alice");
+
+        assertThat(UsersSecret.without(merged, "alice")).isEmpty();
+    }
+
     private static String b64(String v) {
         return Base64.getEncoder().encodeToString(v.getBytes(StandardCharsets.UTF_8));
     }

@@ -56,7 +56,8 @@ public class MiddlewareUserService {
                 req.getUsername(), req.getPassword(), req.getRole());
         // 账号已经建出来了：Secret 写不进去只能显式报错让人工补，不回滚账号
         try {
-            UsersSecret.put(client, req.getNamespace(), req.getName(), req.getUsername(), req.getPassword());
+            UsersSecret.put(client, req.getNamespace(), req.getName(),
+                    req.getUsername(), req.getPassword(), req.getRole());
         } catch (RuntimeException e) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "账号已创建，但 Secret " + UsersSecret.name(req.getName()) + " 未更新：" + e.getMessage());
@@ -76,7 +77,8 @@ public class MiddlewareUserService {
         if (UsersSecret.passwords(UsersSecret.read(client, req.getNamespace(), req.getName()))
                 .containsKey(req.getUsername())) {
             try {
-                UsersSecret.put(client, req.getNamespace(), req.getName(), req.getUsername(), req.getNewPassword());
+                UsersSecret.putPassword(client, req.getNamespace(), req.getName(),
+                        req.getUsername(), req.getNewPassword());
             } catch (RuntimeException e) {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "口令已生效，但 Secret " + UsersSecret.name(req.getName()) + " 未更新：" + e.getMessage());
