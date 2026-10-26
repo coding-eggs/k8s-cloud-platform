@@ -290,30 +290,46 @@ public class MiddlewareCatalog {
                     "proxy/mixcoord/datanode/querynode/streamingnode 各 1 个；WAL 用内嵌 woodpecker"));
 
     /** Milvus 各组件自带 Prometheus（9091 /metrics）；名字取自 v2.6.25 的 pkg/metrics */
+    /**
+     * 业务指标（2026-10-26 按 **Milvus 2.6.25 实际暴露的指标名**重写）。
+     *
+     * <p>旧定义里 {@code milvus_proxy_insert_vectors_count} / {@code milvus_datanode_*} /
+     * {@code milvus_querynode_sq_req_count} 等都**不存在**（真集群 9091 抓取 + Thanos 核对），
+     * 于是除「请求/秒」外全是空面板。这里的名字全部在 standalone 实例上验证过能查出一根序列。
+     *
+     * <p>⚠️ 两条口径：
+     * <ul>
+     *   <li>{@code milvus_proxy_req_count} 同时带 {@code status="success"} 与 {@code status="total"}，
+     *       不过滤会**双倍计数**；</li>
+     *   <li>集合数/分区数这类静息值是 0（没有 collection 就是 0），不是"没数据"。</li>
+     * </ul>
+     */
     private static final List<MetricDef> MILVUS_METRICS = List.of(
             MetricDef.chart("req", "请求/秒", "次/秒",
-                    "sum(rate(milvus_proxy_req_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+                    "sum(rate(milvus_proxy_req_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\","
+                            + "status=\"total\"}[2m]))"),
             MetricDef.stat("latency", "平均延迟", "秒",
                     // 同一条 PromQL 里要引用三次维度：用显式参数下标（%1$s/%2$s/%3$s），
                     // 因为 MetricsService 只传 cluster/namespace/pod 三个实参
-                    "sum(rate(milvus_proxy_req_latency_sum{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
-                            + " / clamp_min(sum(rate(milvus_proxy_req_latency_count{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m])), 0.001)"),
-            MetricDef.chart("insert_vectors", "写入向量/秒", "个/秒",
-                    "sum(rate(milvus_proxy_insert_vectors_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            MetricDef.chart("delete_vectors", "删除向量/秒", "个/秒",
-                    "sum(rate(milvus_proxy_delete_vectors_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+                    "sum(rate(milvus_proxy_grpc_latency_sum{cluster_name=\"%1$s\",namespace=\"%2$s\",pod=~\"%3$s\"}[2m]))"
+                            + " / clamp_min(sum(rate(milvus_proxy_grpc_latency_count{cluster_name=\"%1$s\","
+                            + "namespace=\"%2$s\",pod=~\"%3$s\"}[2m])), 0.001)"),
+            MetricDef.chart("insert_rows", "写入行/秒", "行/秒",
+                    "sum(rate(milvus_wal_insert_rows_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+            MetricDef.chart("delete_rows", "删除行/秒", "行/秒",
+                    "sum(rate(milvus_wal_delete_rows_total{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
+            MetricDef.chart("wal_bytes", "WAL 写入带宽", "字节/秒",
+                    "sum(rate(milvus_wal_insert_bytes{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
             MetricDef.stat("collections", "集合数", "个",
                     "max(milvus_rootcoord_collection_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            MetricDef.stat("entities", "实体数", "个",
-                    "max(milvus_rootcoord_entity_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            MetricDef.stat("qn_entities", "查询节点实体数", "个",
-                    "sum(milvus_querynode_entity_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
-            MetricDef.chart("sq_req", "查询/秒", "次/秒",
-                    "sum(rate(milvus_querynode_sq_req_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            MetricDef.chart("rows", "行写入/秒", "行/秒",
-                    "sum(rate(milvus_datanode_msg_rows_count{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"),
-            MetricDef.chart("flush_bytes", "刷盘速率", "字节/秒",
-                    "sum(rate(milvus_datanode_flushed_data_size{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"}[2m]))"));
+            MetricDef.stat("partitions", "分区数", "个",
+                    "max(milvus_rootcoord_partition_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
+            MetricDef.stat("querynodes", "查询节点数", "个",
+                    "max(milvus_querycoord_querynode_num{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
+            MetricDef.stat("ready_nq", "待处理查询量", "NQ",
+                    "sum(milvus_querynode_read_task_ready_nq{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"),
+            MetricDef.stat("qn_disk", "查询节点磁盘占用", "字节",
+                    "sum(milvus_querynode_disk_used_size{cluster_name=\"%s\",namespace=\"%s\",pod=~\"%s\"})"));
 
     private static final List<Item> ITEMS = List.of(
             new Item("redis", "Redis", "内存键值存储：缓存、会话、分布式锁", REDIS_MODES, List.of(), REDIS_METRICS),

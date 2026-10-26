@@ -18,7 +18,7 @@ import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/ty
 const perm = usePermission()
 const router = useRouter()
 // 租户/集群作用域直接取顶栏（资源上下文）：列表可见范围、代操作身份、按哪个集群/命名空间查都跟着它
-const { tenantId, clusterId: ctxClusterId, namespace: ctxNamespace, namespaces,
+const { tenantId, clusterId: ctxClusterId, namespace: ctxNamespace,
   ensure: ensureTenant } = useMiddlewareTenant()
 
 const clusters = ref<K8sCluster[]>([])
@@ -27,8 +27,6 @@ const catalog = ref<MiddlewareCatalogItem[]>([])
 const instances = ref<MiddlewareInstance[]>([])
 /** 类型过滤（空 = 全部）：按类型查，避免一次把所有类型的实时状态都拉一遍 */
 const code = ref('')
-/** 命名空间过滤（空 = 全部）：跟随顶栏级联的命名空间层，也可在本页放宽 */
-const namespaceFilter = ref('')
 const loading = ref(false)
 /** 首轮加载完成前不响应顶栏变化（onMounted 自己会按上下文加载一次） */
 const ready = ref(false)
@@ -72,9 +70,10 @@ async function loadInstances(): Promise<void> {
     instances.value = []
     return
   }
+  // 命名空间只跟顶栏（页面上不再单独给下拉）：顶栏选到哪层就查哪层，没选就是全部
   instances.value = (await middlewareApi.instanceList(
     clusterId.value, code.value || undefined, tenantId.value,
-    namespaceFilter.value || undefined)) ?? []
+    ctxNamespace.value || undefined)) ?? []
 }
 
 async function refresh(): Promise<void> {
@@ -169,7 +168,6 @@ function poll(operationId: number): void {
 onMounted(async () => {
   // 先等顶栏的租户上下文（ensureDefaults 会落到第一个可用租户），再按它查列表
   await ensureTenant()
-  namespaceFilter.value = ctxNamespace.value ?? ''
   await loadClusters()
   await refresh()
   ready.value = true
@@ -177,26 +175,13 @@ onMounted(async () => {
 
 // 顶栏切租户/集群/命名空间：先清掉旧视角的数据，再按新上下文重查。
 // ready 之前不响应：首轮 onMounted 自己会加载，否则 watch 会在集群列表还没到手时白查一次
-watch([tenantId, ctxClusterId, ctxNamespace], async ([, cid, ns]) => {
+watch([tenantId, ctxClusterId, ctxNamespace], async ([, cid]) => {
   if (!ready.value) return
   instances.value = []
   if (cid && clusters.value.some((c) => c.clusterId === cid)) {
     clusterId.value = cid
   }
-  const nextNs = ns ?? ''
-  if (nextNs !== namespaceFilter.value) {
-    // 交给 namespaceFilter 的 watch 触发重查（避免同一次切换查两遍）
-    namespaceFilter.value = nextNs
-    return
-  }
   await refresh()
-})
-
-// 页面上的命名空间筛选（含"全部"）：用户放宽/收窄后重查
-watch(namespaceFilter, () => {
-  if (!ready.value) return
-  instances.value = []
-  void refresh()
 })
 
 onBeforeUnmount(() => {
@@ -218,10 +203,6 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="mw-filter">
-      <span class="mw-filter-label">命名空间</span>
-      <el-select v-model="namespaceFilter" clearable placeholder="全部" style="width: 180px">
-        <el-option v-for="ns in namespaces" :key="ns" :label="ns" :value="ns" />
-      </el-select>
       <span class="mw-filter-label">类型</span>
       <el-select v-model="code" clearable placeholder="全部" style="width: 180px" @change="refresh">
         <el-option v-for="i in catalog" :key="i.code" :label="i.name" :value="i.code" />
