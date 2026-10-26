@@ -48,10 +48,6 @@ import java.util.stream.Collectors;
 @Slf4j
 public class MiddlewareInstanceService {
 
-    /** Nacos 开启鉴权时平台生成的管理员凭据（chart 实例没有 adapter，只能在这里写） */
-    static final String NACOS_ADMIN_SECRET_SUFFIX = "-nacos-admin";
-    static final String NACOS_ADMIN_USER = "nacos";
-
     private final ResourceAccessResolver accessResolver;
     private final KubernetesClientFactory clients;
     private final NacosChartInstaller nacos;
@@ -367,12 +363,6 @@ public class MiddlewareInstanceService {
 
         if (isNacos(req.getCode())) {
             nacos.create(req);
-            if (Boolean.TRUE.equals(req.getAuthEnabled())) {
-                // 开了鉴权才需要管理员凭据：用户名固定 nacos，口令用平台生成的那个
-                writeDataSecret(client, req.getNamespace(), req.getName() + NACOS_ADMIN_SECRET_SUFFIX,
-                        Map.of("username", NACOS_ADMIN_USER, "password", req.getPassword()),
-                        req.getInstanceId());
-            }
             createNacosMetricsResources(client, req);
             return;
         }
@@ -539,9 +529,6 @@ public class MiddlewareInstanceService {
         if (isNacos(req.getCode())) {
             nacos.delete(req.getClusterId(), req.getNamespace(), req.getName());
             deleteMetricsResourcesQuietly(client, req.getNamespace(), req.getName());
-            if (!req.isKeepPvc()) {
-                deleteSecretQuietly(client, req.getNamespace(), req.getName() + NACOS_ADMIN_SECRET_SUFFIX);
-            }
             if (!req.isKeepPvc()) {
                 // chart 的 PVC 没有 labels（volumeClaimTemplates 只写了 name），只能按名字前缀找：
                 // STS 卷名 = <claimName>-<stsName>-<ordinal>，claimName 固定是 data

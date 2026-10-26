@@ -267,9 +267,6 @@ async function submitCreate(): Promise<void> {
     for (const field of fields) {
       payload[field.key] = toQuantity(field, form.value[field.key], formUnits.value[field.key])
     }
-    if (createItem.value.code === 'nacos') {
-      payload.authEnabled = !!form.value.authEnabled
-    }
     if (createItem.value.code === 'milvus') {
       payload.etcdReplicas = form.value.etcdReplicas
       payload.authEnabled = !!form.value.authEnabled
@@ -582,16 +579,6 @@ onBeforeUnmount(() => {
           <el-switch v-model="form.kibana" active-text="同时部署 Kibana" />
           <div class="mw-form-help">（勾选后平台会额外创建一个 Kibana 实例，指向当前 ES）</div>
         </el-form-item>
-        <template v-if="createItem?.code === 'nacos'">
-          <el-form-item label="鉴权">
-            <el-switch v-model="form.authEnabled" active-text="开启鉴权（管理员账号 nacos，口令由平台生成）" />
-            <div class="mw-form-help">
-              开启后才能在实例里管理用户；管理员口令写进 Secret
-              <code>&lt;名称&gt;-nacos-admin</code>（键 username / password），平台不保存明文。
-              存量实例需要重放一次才生效。
-            </div>
-          </el-form-item>
-        </template>
         <template v-if="createItem?.code === 'milvus'">
           <el-form-item label="etcd 节点数">
             <el-input-number v-model="form.etcdReplicas" :min="1" :max="3" />

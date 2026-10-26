@@ -29,15 +29,26 @@ final class MilvusRest {
     }
 
     static JsonNode post(String baseUrl, String path, Map<String, Object> body) {
+        return post(baseUrl, path, body, null);
+    }
+
+    /**
+     * @param bearer 形如 {@code Base64("root:口令")}；null = 不带认证（实例没开鉴权）
+     */
+    static JsonNode post(String baseUrl, String path, Map<String, Object> body, String bearer) {
         String payload;
         try {
             payload = JSON.writeValueAsString(body == null ? new LinkedHashMap<>() : body);
         } catch (Exception e) {
             throw new IllegalStateException("拼 Milvus 请求体失败", e);
         }
-        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + path))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(TIMEOUT)
-                .header("Content-Type", "application/json")
+                .header("Content-Type", "application/json");
+        if (bearer != null && !bearer.isBlank()) {
+            builder.header("Authorization", "Bearer " + bearer);
+        }
+        HttpRequest request = builder
                 .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
                 .build();
         HttpResponse<String> response;

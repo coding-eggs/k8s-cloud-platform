@@ -56,4 +56,12 @@ class MysqlUserAdapterTest {
         assertThat(MysqlUserAdapter.parseUsers("root\nalice\nmysql.sys\n\nbob"))
                 .containsExactly("root", "alice", "bob");
     }
+
+    @Test
+    void redactRemovesThePasswordFromAnErrorMessage() {
+        // mysql 的报错可能回显语句片段；这条消息会被审计 errorMsg 收走
+        assertThat(MysqlUserAdapter.redact("Error at 'IDENTIFIED BY 'pw-SECRET-1''", "pw-SECRET-1"))
+                .doesNotContain("pw-SECRET-1")
+                .contains("***");
+    }
 }

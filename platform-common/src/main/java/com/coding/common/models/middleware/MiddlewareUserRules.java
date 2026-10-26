@@ -14,9 +14,14 @@ import java.util.regex.Pattern;
  */
 public final class MiddlewareUserRules {
 
-    /** 能做用户管理的中间件（Redis 只支持改口令，由调用方按 code 单独判断） */
+    /**
+     * 能做用户管理的中间件（Redis 只支持改口令，由调用方按 code 单独判断）。
+     *
+     * <p><b>nacos 暂不在列</b>：Nacos 3.x 的管理员口令初始化路径、role/permission API 都要按镜像实测才能钉住，
+     * 而 chart 1.2.0 也没有管理员口令入口 —— 按 spec §6.8 的降级规则先关掉，等真集群验通过再加回来。
+     */
     public static final Set<String> SUPPORTED_CODES = Set.of(
-            "mysql", "postgresql", "redis", "rabbitmq", "elasticsearch", "milvus", "kafka", "nacos");
+            "mysql", "postgresql", "redis", "rabbitmq", "elasticsearch", "milvus", "kafka");
 
     public static final int MIN_PASSWORD = 8;
     /** 72 = Milvus common.security.defaultRootPassword 的上限，全平台按它卡 */

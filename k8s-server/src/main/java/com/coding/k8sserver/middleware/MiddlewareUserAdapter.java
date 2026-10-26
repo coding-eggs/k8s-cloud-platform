@@ -31,7 +31,7 @@ public interface MiddlewareUserAdapter {
     String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword);
 
     /** 可选角色（只读 / 读写 / 管理员…）；没有角色概念的实例返回空列表 */
-    default List<String> roles(MiddlewareUserRef ref) {
+    default List<String> roles(KubernetesClient client, MiddlewareUserRef ref) {
         return List.of();
     }
 }

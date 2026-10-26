@@ -42,7 +42,10 @@ public class MiddlewareUserService {
             "mysql", Set.of("root"),
             "milvus", Set.of("root"),
             "elasticsearch", Set.of("elastic"),
-            "redis", Set.of("default"));
+            "redis", Set.of("default"),
+            // bitnami cluster operator 的默认用户；它同时是平台调 management API 的凭据，
+            // 被改名/删掉 = 平台再也管不了这个实例
+            "rabbitmq", Set.of("user"));
 
     private static final SecureRandom RANDOM = new SecureRandom();
 

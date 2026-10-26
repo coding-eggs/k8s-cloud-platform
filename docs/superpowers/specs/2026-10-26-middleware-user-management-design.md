@@ -234,7 +234,11 @@ public interface MiddlewareUserAdapter {
 - 连接方式加一行：SCRAM listener `9093` + 用户名 + 口令（Secret `<实例名>-users`）；
 - 租户 RBAC 模板要补 `kafkausers`（否则租户建不了用户），且需重下发一次模板。
 
-### 6.8 Nacos（chart 1.2.0 / Nacos 3.2.4）
+### 6.8 Nacos（chart 1.2.0 / Nacos 3.2.4）—— **实施结论：暂缓（2026-10-26）**
+
+> 代码评审后按本节末尾的降级规则**先不做**：chart 没有管理员口令入口、Nacos 3.x 的管理员口令初始化
+> 与 role/permission API 必须在真集群上实测才能钉住。创建期「开启鉴权」开关一并回退
+> （没有管理员凭据时打开它只会把控制台锁住）。本节保留为重新开启时的设计依据。
 
 - 现状：`nacos.auth.enabled` 为 null（继承镜像默认）；3.2 的 Client API 鉴权默认关（3.3+ 才默认开），
   Console/Admin 鉴权是独立开关；平台没接管管理员口令；

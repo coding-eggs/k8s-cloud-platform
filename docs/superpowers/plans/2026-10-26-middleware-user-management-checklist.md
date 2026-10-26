@@ -95,7 +95,18 @@
 | 改口令 | 页面改口令 | CR 被删除重建，返回新的 operator 口令 |
 | 删除 | 页面删除 | KafkaUser 消失 |
 
-## 8. Nacos（需先重放一次才有 auth.enabled）
+## 8. Nacos —— **本批暂缓，不在验收范围**
+
+Nacos 用户管理已按 spec §6.8 的降级规则回退（chart 无管理员口令入口、3.x 初始化与 role API 未实测）。
+重新开启时按下面这几条先验，全过再加回 `MiddlewareUserRules.SUPPORTED_CODES`：
+
+| 步骤 | 命令 | 期望 |
+|---|---|---|
+| 管理员初始化 | `curl -X POST 'http://nacos-cs.<ns>.svc:8848/nacos/v3/auth/user/admin' -d 'password=<口令>'` | 200，随后能登录 |
+| 登录 | `curl -X POST '…/nacos/v3/auth/user/login' -d 'username=nacos&password=<口令>'` | 返回 `accessToken` |
+| 建用户 + 绑角色 | 建完用户再调 role/permission 接口 | 用户登录后能看到相应权限 |
+
+### 8.1 归档：原 Nacos 验收步骤（重新开启时用）
 
 | 步骤 | 命令 | 期望 |
 |---|---|---|
@@ -120,7 +131,7 @@
 | elasticsearch | ✅ / ❌ | CA 信任链 |
 | milvus | ✅ / ❌ | |
 | kafka | ✅ / ❌ | plain 客户端是否受影响 |
-| nacos | ✅ / ❌ | 管理员口令初始化路径 |
+| ~~nacos~~ | 暂缓 | 本批未做（spec §6.8 降级） |
 
 验不过的那家：把 code 从 `MiddlewareUserRules.SUPPORTED_CODES` 去掉（platform-api 与前端各一份清单由后端下发，
 后端去掉即可让 UI 不显示用户页签）。

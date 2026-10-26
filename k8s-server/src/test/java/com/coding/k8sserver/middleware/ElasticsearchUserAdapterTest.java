@@ -43,4 +43,12 @@ class ElasticsearchUserAdapterTest {
         assertThat(ElasticsearchUserAdapter.displayName("platform_alice")).isEqualTo("alice");
         assertThat(ElasticsearchUserAdapter.displayName("elastic")).isEqualTo("elastic");
     }
+
+    @Test
+    void unknownRoleIsRejectedInsteadOfFallingBack() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> ElasticsearchUserAdapter.esRoles("admin"))
+                .isInstanceOf(com.coding.common.exception.CloudPlatformException.class)
+                .hasMessageContaining("不支持的角色");
+    }
 }

@@ -34,6 +34,11 @@ public class KafkaUserAdapter implements MiddlewareUserAdapter {
             .withPlural("kafkausers").withKind("KafkaUser").withScope("Namespaced")
             .build();
 
+    static final CustomResourceDefinitionContext KAFKA_CRD = new CustomResourceDefinitionContext.Builder()
+            .withGroup(GROUP).withVersion(VERSION)
+            .withPlural("kafkas").withKind("Kafka").withScope("Namespaced")
+            .build();
+
     /** 等 operator 生成用户 Secret 的上限（秒） */
     private static final int SECRET_WAIT_SECONDS = 10;
 
@@ -44,17 +49,25 @@ public class KafkaUserAdapter implements MiddlewareUserAdapter {
 
     @Override
     public List<MiddlewareUserView> list(KubernetesClient client, MiddlewareUserRef ref) {
+        Map<String, String> platformUsers = UsersSecret.passwords(
+                UsersSecret.read(client, ref.namespace(), ref.instanceName()));
+
         List<MiddlewareUserView> out = new ArrayList<>();
         for (GenericKubernetesResource cr : client.genericKubernetesResources(USER_CRD)
                 .inNamespace(ref.namespace()).withLabel(CLUSTER_LABEL, ref.instanceName())
                 .list().getItems()) {
-            out.add(view(cr.getMetadata().getName(), ref));
+            String name = cr.getMetadata().getName();
+            if (!platformUsers.containsKey(name)) {
+                continue;   // 运维手工建的 KafkaUser 不接管（也不能删）
+            }
+            out.add(view(name, ref));
         }
         return out;
     }
 
     @Override
     public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+        requireScramListener(client, ref);
         client.genericKubernetesResources(USER_CRD).inNamespace(ref.namespace())
                 .resource(userCr(username, ref.instanceName())).create();
         // 口令由 operator 生成（平台传入的被忽略），必须回传真实的那个，否则写进 -users 的是错的
@@ -70,6 +83,7 @@ public class KafkaUserAdapter implements MiddlewareUserAdapter {
     @Override
     public String changePassword(KubernetesClient client, MiddlewareUserRef ref, String username, String newPassword) {
         // Strimzi 只在创建时生成 SCRAM 凭据：删了重建就是"重置口令"（新口令也是 operator 生成）
+        requireScramListener(client, ref);
         client.genericKubernetesResources(USER_CRD).inNamespace(ref.namespace())
                 .withName(username).delete();
         awaitGone(client, ref, username);
@@ -79,7 +93,7 @@ public class KafkaUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public List<String> roles(MiddlewareUserRef ref) {
+    public List<String> roles(KubernetesClient client, MiddlewareUserRef ref) {
         return ROLES;
     }
 
@@ -109,6 +123,39 @@ public class KafkaUserAdapter implements MiddlewareUserAdapter {
     }
 
     // ---------- 内部 ----------
+
+    /**
+     * 存量实例可能还没有 {@code scram} listener（本批之前的 CR 只有 plain）—— 那种情况下
+     * operator 仍会生成凭据，但 9093 根本不存在，用户拿到的口令连不上。这里直接拒绝，别产出"假的可用"。
+     */
+    private static void requireScramListener(KubernetesClient client, MiddlewareUserRef ref) {
+        GenericKubernetesResource kafka = client.genericKubernetesResources(KAFKA_CRD)
+                .inNamespace(ref.namespace()).withName(ref.instanceName()).get();
+        if (kafka != null && hasScramListener(kafka)) {
+            return;
+        }
+        throw new CloudPlatformException(EnumResponseType.ERROR,
+                "该 Kafka 实例还没有 SASL listener（scram:9093）：请在组件页重放一次实例，再管理用户");
+    }
+
+    /** 纯函数：CR 里是否有一条 listener 用 scram-sha-512 认证 */
+    static boolean hasScramListener(GenericKubernetesResource kafka) {
+        Object spec = kafka.getAdditionalProperties() == null ? null : kafka.getAdditionalProperties().get("spec");
+        if (!(spec instanceof Map<?, ?> specMap) || !(specMap.get("kafka") instanceof Map<?, ?> kafkaMap)) {
+            return false;
+        }
+        if (!(kafkaMap.get("listeners") instanceof List<?> listeners)) {
+            return false;
+        }
+        for (Object item : listeners) {
+            if (item instanceof Map<?, ?> listener
+                    && listener.get("authentication") instanceof Map<?, ?> auth
+                    && "scram-sha-512".equals(auth.get("type"))) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /** 等 operator 生成凭据 Secret，返回里面的明文口令。 */
     private static String awaitSecret(KubernetesClient client, MiddlewareUserRef ref, String username) {

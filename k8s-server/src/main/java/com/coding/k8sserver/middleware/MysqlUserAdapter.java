@@ -59,6 +59,7 @@ public class MysqlUserAdapter implements MiddlewareUserAdapter {
     @Override
     public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         requireNotBuiltin(username);
+        requireRole(role);
         execSql(client, ref, createSql(username, password, role));
         return password;
     }
@@ -80,7 +81,7 @@ public class MysqlUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public List<String> roles(MiddlewareUserRef ref) {
+    public List<String> roles(KubernetesClient client, MiddlewareUserRef ref) {
         return ROLES;
     }
 
@@ -105,6 +106,13 @@ public class MysqlUserAdapter implements MiddlewareUserAdapter {
     static String quote(String value) {
         String escaped = value == null ? "" : value.replace("\\", "\\\\").replace("'", "''");
         return "'" + escaped + "'";
+    }
+
+    static void requireRole(String role) {
+        if (!ROLES.contains(role)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的角色：" + role + "（可选：" + String.join(" / ", ROLES) + "）");
+        }
     }
 
     static void requireNotBuiltin(String username) {
@@ -134,13 +142,27 @@ public class MysqlUserAdapter implements MiddlewareUserAdapter {
     }
 
     /**
-     * 跑一条 SQL：口令从 stdin 读进 {@code MYSQL_PWD}，SQL 作为 {@code $1} 传参。
+     * 跑一条 SQL：**口令与语句都走 stdin** —— 第一行被 {@code read} 吃进 {@code MYSQL_PWD}，
+     * 剩下的 stdin 交给 mysql 当语句。命令行里既没有口令也没有 SQL（`ps` 与 apiserver 的 exec 审计都看不到）。
      */
     private String execSql(KubernetesClient client, MiddlewareUserRef ref, String sql) {
         String password = readRootPassword(client, ref);
-        return PodExec.run(client, ref.namespace(), ref.instanceName() + "-mysql-0", "mysql",
-                password + "\n",
-                "sh", "-c", "read -r P; export MYSQL_PWD=\"$P\"; exec mysql -uroot -N -B -e \"$1\"", "--", sql);
+        try {
+            return PodExec.run(client, ref.namespace(), ref.instanceName() + "-mysql-0", "mysql",
+                    password + "\n" + sql + "\n",
+                    "sh", "-c", "read -r P; export MYSQL_PWD=\"$P\"; exec mysql -uroot -N -B");
+        } catch (CloudPlatformException e) {
+            // mysql 的报错可能回显语句片段；口令会被 AuditAspect 写进审计 errorMsg，必须先抹掉
+            throw new CloudPlatformException(EnumResponseType.ERROR, redact(e.getMessage(), password));
+        }
+    }
+
+    /** 把消息里的口令替换成 ***（public 供单测）。 */
+    static String redact(String message, String secret) {
+        if (message == null || secret == null || secret.isEmpty()) {
+            return message;
+        }
+        return message.replace(secret, "***");
     }
 
     private static String readRootPassword(KubernetesClient client, MiddlewareUserRef ref) {

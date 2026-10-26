@@ -42,7 +42,26 @@ class KafkaUserAdapterTest {
 
     @Test
     void onlyTheClientRoleIsOfferedBecauseAuthorizationIsOff() {
-        assertThat(adapter.roles(new MiddlewareUserRef("mw-kafka-abcdefgh", "demo", "mwi_1")))
+        assertThat(adapter.roles(null, new MiddlewareUserRef("mw-kafka-abcdefgh", "demo", "mwi_1")))
                 .containsExactly("client");
+    }
+
+    @Test
+    void hasScramListenerReadsTheKafkaCr() {
+        var withScram = cr(java.util.Map.of("name", "scram", "port", 9093,
+                "authentication", java.util.Map.of("type", "scram-sha-512")));
+        var plainOnly = cr(java.util.Map.of("name", "plain", "port", 9092, "tls", false));
+
+        assertThat(KafkaUserAdapter.hasScramListener(withScram)).isTrue();
+        assertThat(KafkaUserAdapter.hasScramListener(plainOnly)).isFalse();
+        assertThat(KafkaUserAdapter.hasScramListener(new io.fabric8.kubernetes.api.model.GenericKubernetesResource()))
+                .isFalse();
+    }
+
+    private static io.fabric8.kubernetes.api.model.GenericKubernetesResource cr(java.util.Map<String, Object> listener) {
+        var cr = new io.fabric8.kubernetes.api.model.GenericKubernetesResource();
+        cr.setAdditionalProperties(java.util.Map.of("spec",
+                java.util.Map.of("kafka", java.util.Map.of("listeners", List.of(listener)))));
+        return cr;
     }
 }

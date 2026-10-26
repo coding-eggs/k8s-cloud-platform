@@ -32,6 +32,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
 
     static final String DEFAULT_USER_SECRET_SUFFIX = "-default-user";
+    /** bitnami cluster operator 的默认用户：同时是平台调 management API 的凭据 */
+    static final String BUILTIN = "user";
     static final String PORT_SUFFIX = ".svc:15672";
     static final String VHOST_PATH = "%2F";
     static final List<String> ROLES = List.of("只读", "读写", "管理员");
@@ -66,6 +68,8 @@ public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
 
     @Override
     public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+        requireNotBuiltin(username);
+        requireRole(role);
         call(client, ref, "PUT", "/api/users/" + username, userBody(password, role));
         call(client, ref, "PUT", "/api/permissions/" + VHOST_PATH + "/" + username, permissions(role));
         return password;
@@ -73,6 +77,7 @@ public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
 
     @Override
     public void drop(KubernetesClient client, MiddlewareUserRef ref, String username) {
+        requireNotBuiltin(username);
         call(client, ref, "DELETE", "/api/users/" + username, null);
     }
 
@@ -84,17 +89,22 @@ public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
         body.put("password", newPassword);
         body.put("tags", tags);
         call(client, ref, "PUT", "/api/users/" + username, body);
+        if (BUILTIN.equals(username)) {
+            // 内置账号的"事实来源"是 <实例名>-default-user：不写回，下一次调用就是 401
+            writeSecret(client, ref, ref.instanceName() + DEFAULT_USER_SECRET_SUFFIX, "password", newPassword);
+        }
         return newPassword;
     }
 
     @Override
-    public List<String> roles(MiddlewareUserRef ref) {
+    public List<String> roles(KubernetesClient client, MiddlewareUserRef ref) {
         return ROLES;
     }
 
     // ---------- 纯函数 ----------
 
     static Map<String, Object> permissions(String role) {
+        requireRole(role);
         Map<String, Object> m = new LinkedHashMap<>();
         boolean readOnly = "只读".equals(role);
         m.put("configure", readOnly ? "" : ".*");
@@ -104,10 +114,25 @@ public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
     }
 
     static Map<String, Object> userBody(String password, String role) {
+        requireRole(role);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("password", password);
         m.put("tags", "管理员".equals(role) ? "administrator" : "");
         return m;
+    }
+
+    static void requireRole(String role) {
+        if (!ROLES.contains(role)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的角色：" + role + "（可选：" + String.join(" / ", ROLES) + "）");
+        }
+    }
+
+    static void requireNotBuiltin(String username) {
+        if (BUILTIN.equals(username)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "内置账号 " + BUILTIN + " 不允许新建或删除（它是平台调管理接口的凭据）");
+        }
     }
 
     static boolean isInternal(String username) {
@@ -204,6 +229,21 @@ public class RabbitmqUserAdapter implements MiddlewareUserAdapter {
 
     private static String decode(String base64) {
         return base64 == null ? "" : new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
+    }
+
+    /** 改内置账号口令后写回 operator 的 Secret（保留其它键与元数据）。 */
+    private static void writeSecret(KubernetesClient client, MiddlewareUserRef ref,
+                                    String secretName, String key, String value) {
+        var current = client.secrets().inNamespace(ref.namespace()).withName(secretName).get();
+        if (current == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "找不到凭据 Secret：" + secretName);
+        }
+        Map<String, String> data = current.getData() == null
+                ? new LinkedHashMap<>() : new LinkedHashMap<>(current.getData());
+        data.put(key, Base64.getEncoder().encodeToString(value.getBytes(StandardCharsets.UTF_8)));
+        client.secrets().inNamespace(ref.namespace())
+                .resource(new io.fabric8.kubernetes.api.model.SecretBuilder(current).withData(data).build())
+                .createOrReplace();
     }
 
     private static String brief(String body) {

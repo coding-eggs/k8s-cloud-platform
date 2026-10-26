@@ -108,7 +108,7 @@ const memoryLimitBytes = computed(() => {
 
 // ---------------- 用户管理 ----------------
 /** 能做用户管理的中间件；Kafka/Nacos 还要求实例已开启鉴权 */
-const USER_CODES = ['mysql', 'postgresql', 'redis', 'rabbitmq', 'elasticsearch', 'milvus', 'kafka', 'nacos']
+const USER_CODES = ['mysql', 'postgresql', 'redis', 'rabbitmq', 'elasticsearch', 'milvus', 'kafka']
 
 const users = ref<MiddlewareUser[]>([])
 const usersLoading = ref(false)
@@ -158,6 +158,10 @@ function openUserPassword(username: string): void {
 async function submitUser(): Promise<void> {
   if (!userDialog.username.trim()) {
     ElMessage.warning('用户名不能为空')
+    return
+  }
+  if (userDialog.mode === 'create' && userRoles.value.length && !userDialog.role) {
+    ElMessage.warning('请选择角色')
     return
   }
   userSaving.value = true
@@ -689,7 +693,7 @@ watch(tenantId, () => void load())
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="用户" name="users" lazy>
+      <el-tab-pane v-if="showUsers" label="用户" name="users" lazy>
         <div class="mw-users">
           <div class="mw-users-actions">
             <el-button type="primary" size="small" @click="openCreateUser">新增用户</el-button>
@@ -830,7 +834,8 @@ watch(tenantId, () => void load())
     </el-dialog>
 
     <!-- ============ 一次性明文口令 ============ -->
-    <el-dialog v-model="credential.visible" title="口令只显示这一次" width="520px" append-to-body>
+    <el-dialog v-model="credential.visible" title="口令只显示这一次" width="520px" append-to-body
+               @close="clearCredential">
       <p class="mw-cred-line mono">{{ credential.username }} / {{ credential.password }}</p>
       <el-button size="small" @click="copyText(credential.password)">复制口令</el-button>
       <p class="mw-form-help">

@@ -125,12 +125,6 @@ public class NacosChartInstaller {
         sb.append("    tag: ").append(IMAGE_TAG).append('\n');
         sb.append("  storage:\n");
         sb.append("    type: embedded\n");
-        if (Boolean.TRUE.equals(req.getAuthEnabled())) {
-            // chart 1.2.0 支持 nacos.auth.enabled；开了之后才会自动生成 token / identity 的 Secret。
-            // 不写这行 = 继承镜像默认（3.2 是关的，3.3+ 才默认开）。
-            sb.append("  auth:\n");
-            sb.append("    enabled: true\n");
-        }
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
             // 打开 Spring Boot actuator 的 prometheus 端点（chart 原生支持 nacos.extraEnv，不用改模板）。
             // Nacos 3 的 context-path 是 /nacos → 指标地址是 /nacos/actuator/prometheus。

@@ -45,4 +45,19 @@ class RabbitmqUserAdapterTest {
         assertThat(RabbitmqUserAdapter.parseUsers(json))
                 .containsExactly("user", "alice");
     }
+
+    @Test
+    void builtinUserCannotBeCreatedOrDropped() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> RabbitmqUserAdapter.requireNotBuiltin("user"))
+                .isInstanceOf(com.coding.common.exception.CloudPlatformException.class)
+                .hasMessageContaining("内置账号");
+    }
+
+    @Test
+    void unknownRoleIsRejected() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> RabbitmqUserAdapter.userBody("pw-123456", "admin"))
+                .hasMessageContaining("不支持的角色");
+    }
 }

@@ -82,6 +82,7 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
 
     @Override
     public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+        requireRole(role);
         call(client, ref, "PUT", "/_security/user/" + esUsername(username), userBody(password, role));
         return password;
     }
@@ -104,7 +105,7 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public List<String> roles(MiddlewareUserRef ref) {
+    public List<String> roles(KubernetesClient client, MiddlewareUserRef ref) {
         return ROLES;
     }
 
@@ -115,8 +116,14 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
             case "只读" -> List.of("viewer");
             case "读写" -> List.of("editor");
             case "管理员" -> List.of("superuser");
-            default -> List.of("viewer");
+            // 非法角色不能落回最宽或最窄的默认值：直接拒绝
+            default -> throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的角色：" + role + "（可选：" + String.join(" / ", ROLES) + "）");
         };
+    }
+
+    static void requireRole(String role) {
+        esRoles(role);   // 只做校验
     }
 
     static Map<String, Object> userBody(String password, String role) {

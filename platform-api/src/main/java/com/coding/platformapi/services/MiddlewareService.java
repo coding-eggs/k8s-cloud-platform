@@ -1004,10 +1004,10 @@ public class MiddlewareService {
             spec.put("objectStorageBucket", grant.bucket());
             spec.put("objectStorageBucketId", grant.bucketId());
             spec.put("objectStorageEndpoint", grant.endpoint());
-            // 开没开鉴权决定详情页怎么描述连接方式（root 口令本身不落库）
-            spec.put("authEnabled", Boolean.TRUE.equals(req.getAuthEnabled()));
             // AK/SK 不落库
         }
+        // 开没开鉴权决定详情页怎么描述连接方式、用户页签是否出现 —— 与对象存储无关，任何 code 都要记
+        spec.put("authEnabled", Boolean.TRUE.equals(req.getAuthEnabled()));
         return jsonMapper.writeValueAsString(spec);
     }
 

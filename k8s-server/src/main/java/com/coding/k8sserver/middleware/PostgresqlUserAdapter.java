@@ -69,6 +69,11 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
 
     @Override
     public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
+        requireRole(role);
+        // 内置应用账号名是 operator 生成的（默认 app），不能用它新建
+        if (appUsername(client, ref).equals(username)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "内置应用账号不允许重建：" + username);
+        }
         String secretName = userSecretName(ref.instanceName(), username);
         client.secrets().inNamespace(ref.namespace())
                 .resource(userSecret(secretName, username, password)).createOrReplace();
@@ -79,6 +84,9 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
 
     @Override
     public void drop(KubernetesClient client, MiddlewareUserRef ref, String username) {
+        if (appUsername(client, ref).equals(username)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "内置应用账号不允许删除：" + username);
+        }
         var live = client.genericKubernetesResources(ROLE_CRD).inNamespace(ref.namespace())
                 .withName(username).get();
         if (live == null) {
@@ -111,7 +119,7 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
     }
 
     @Override
-    public List<String> roles(MiddlewareUserRef ref) {
+    public List<String> roles(KubernetesClient client, MiddlewareUserRef ref) {
         return ROLES;
     }
 
@@ -157,6 +165,13 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
                 .addToStringData("username", username)
                 .addToStringData("password", password)
                 .build();
+    }
+
+    static void requireRole(String role) {
+        if (!ROLES.contains(role)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的角色：" + role + "（可选：" + String.join(" / ", ROLES) + "）");
+        }
     }
 
     static String userSecretName(String instanceName, String username) {

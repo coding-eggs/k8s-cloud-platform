@@ -92,13 +92,20 @@ public class MiddlewareUserService {
 
     public List<String> roles(String code, MiddlewareUserListRequestDTO req) {
         MiddlewareUserAdapter adapter = adapterFor(code);
-        return adapter.roles(ref(req.getName(), req.getNamespace(), req.getInstanceId()));
+        return adapter.roles(client(req.getClusterId()),
+                ref(req.getName(), req.getNamespace(), req.getInstanceId()));
     }
 
     public void drop(String code, MiddlewareUserDeleteRequestDTO req) {
         MiddlewareUserAdapter adapter = adapterFor(code);
         requireDeletable(code);
         KubernetesClient client = client(req.getClusterId());
+        // 只删平台建的账号：不在 -users 里的（内置账号、别人手工建的）平台不接管
+        if (!UsersSecret.passwords(UsersSecret.read(client, req.getNamespace(), req.getName()))
+                .containsKey(req.getUsername())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "账号 " + req.getUsername() + " 不是平台创建的，平台不接管（内置账号只能改口令）");
+        }
         adapter.drop(client, ref(req.getName(), req.getNamespace(), req.getInstanceId()), req.getUsername());
         UsersSecret.remove(client, req.getNamespace(), req.getName(), req.getUsername());
     }

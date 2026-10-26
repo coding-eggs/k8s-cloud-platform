@@ -105,13 +105,13 @@ class MiddlewareUserServiceTest {
     }
 
     @Test
-    void nacosWithoutAuthRejectsUserManagement() {
-        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("nacos", "t1", "{\"authEnabled\":false}"));
+    void nacosUserManagementIsDeferredForNow() {
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("nacos", "t1", null));
 
         var q = new com.coding.common.models.middleware.MiddlewareUserListRequestDTO();
         q.setInstanceId("mwi_1");
         assertThatThrownBy(() -> service.list(q, "t1"))
-                .hasMessageContaining("没有开启鉴权");
+                .hasMessageContaining("暂不支持用户管理");
     }
 
     @Test

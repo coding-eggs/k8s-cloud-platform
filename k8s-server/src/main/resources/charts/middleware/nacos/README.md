@@ -83,10 +83,16 @@ service:
    要同时改表单、适配器与文档；
 5. 真集群验证：standalone + cluster 各建一个、开指标看端点 200、删实例确认 PVC 按要求保留/清理。
 
-## 用户管理（2026-10-26）
+## 用户管理（2026-10-26，**暂缓**）
 
-- 创建时勾「开启鉴权」→ values 写 `nacos.auth.enabled: true`（chart 1.2.0 原生支持）；
-  管理员凭据由平台生成写 `<实例名>-nacos-admin`（username 固定 `nacos`），删除实例时一并清。
-- 用户走 v3 auth API：登录拿 accessToken 后 users 增删改查；角色只给「管理员」。
-- ⚠️ Nacos 3.x 的管理员口令初始化路径按小版本有差异：真集群验收不过就把 `nacos` 从支持清单去掉。
-- 存量实例要重放一次才带上 `auth.enabled`。
+按 spec §6.8 的降级规则**先不做**，代码与创建期「开启鉴权」开关都已回退。两条原因都要真集群才能钉住：
+
+1. **管理员口令**：chart 1.2.0 的 values 只有 `nacos.auth.enabled` / `existingSecret` /
+   token+identity 三个键，**没有管理员口令入口**；Nacos 3.x 的管理员口令要在首次登录时初始化
+   （`/nacos/v3/auth/user/admin`），不同小版本路径有差异。平台凭空写一份 `<名称>-nacos-admin`
+   只会给出一个 Nacos 认识的假口令。
+2. **角色/权限**：Nacos 的用户默认没有任何 role；"只读/读写/管理员"要靠 role + permission 组合，
+   接口在 3.x 上还没实测。
+
+要重启这块：先在一个真 Nacos 3.x 实例上把「初始化管理员口令 + 建用户 + 绑 role」三条 curl 走通，
+再把 `nacos` 加回 `MiddlewareUserRules.SUPPORTED_CODES`、恢复 `NacosUserAdapter` 与创建期开关。

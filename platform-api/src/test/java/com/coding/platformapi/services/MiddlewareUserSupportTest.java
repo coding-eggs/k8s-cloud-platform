@@ -14,9 +14,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MiddlewareUserSupportTest {
 
     @Test
-    void supportedCodesCoverTheEightMiddlewares() {
+    void supportedCodesCoverTheSevenImplementedMiddlewares() {
         assertThat(MiddlewareUserService.SUPPORTED_CODES).containsExactlyInAnyOrder(
-                "mysql", "postgresql", "redis", "rabbitmq", "elasticsearch", "milvus", "kafka", "nacos");
+                "mysql", "postgresql", "redis", "rabbitmq", "elasticsearch", "milvus", "kafka");
+    }
+
+    @Test
+    void nacosStaysOutUntilItsAdminAndRoleApisAreVerified() {
+        // chart 没有管理员口令入口、3.x 初始化与 role API 未实测 —— 支持清单里不能有它，
+        // 否则 UI 会给出一个登不进去的用户页签（spec §6.8 降级）
+        assertThat(MiddlewareUserService.SUPPORTED_CODES).doesNotContain("nacos");
     }
 
     @Test
