@@ -38,4 +38,13 @@ public interface PlatformCredentialMapper {
                            @Param("ok") boolean ok,
                            @Param("error") String error,
                            @Param("at") Date at);
+
+    /** 租户停用/启用时跟随：只动该租户的 Harbor 自动凭据 */
+    int updateEnabledByTenantAndSource(@Param("tenantId") String tenantId,
+                                       @Param("source") String source,
+                                       @Param("enabled") int enabled);
+
+    /** 删租户时回收它名下的 Harbor 自动凭据 */
+    int deleteByTenantAndSource(@Param("tenantId") String tenantId,
+                                @Param("source") String source);
 }

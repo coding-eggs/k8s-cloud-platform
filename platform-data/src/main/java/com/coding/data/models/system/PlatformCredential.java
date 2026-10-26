@@ -58,6 +58,18 @@ public class PlatformCredential {
     /** 上次测试的失败原因；成功则 NULL */
     private String lastVerifyError;
 
+    /**
+     * 归属租户；null = 平台级（现有全局凭据语义：所有租户可用）。
+     * 只有 {@code source=HARBOR} 的行会写它。
+     */
+    private String tenantId;
+
+    /**
+     * MANUAL（手工建的）/ HARBOR（Harbor 组件同步维护）。
+     * HARBOR 行在凭据页只读：改 endpoint 或删掉会让流水线静默失效。
+     */
+    private String source;
+
     private Date createdAt;
 
     private Date updatedAt;

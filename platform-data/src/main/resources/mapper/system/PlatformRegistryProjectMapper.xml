@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformRegistryProjectMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformRegistryProject">
+    <id     column="id"             jdbcType="VARCHAR"   property="id" />
+    <result column="cluster_id"     jdbcType="VARCHAR"   property="clusterId" />
+    <result column="tenant_id"      jdbcType="VARCHAR"   property="tenantId" />
+    <result column="host"           jdbcType="VARCHAR"   property="host" />
+    <result column="project_name"   jdbcType="VARCHAR"   property="projectName" />
+    <result column="credential_id"  jdbcType="VARCHAR"   property="credentialId" />
+    <result column="robot_id"       jdbcType="BIGINT"    property="robotId" />
+    <result column="status"         jdbcType="VARCHAR"   property="status" />
+    <result column="message"        jdbcType="VARCHAR"   property="message" />
+    <result column="last_synced_at" jdbcType="TIMESTAMP" property="lastSyncedAt" />
+    <result column="created_at"     jdbcType="TIMESTAMP" property="createdAt" />
+    <result column="updated_at"     jdbcType="TIMESTAMP" property="updatedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, cluster_id, tenant_id, host, project_name, credential_id, robot_id,
+    `status`, message, last_synced_at, created_at, updated_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformRegistryProject">
+    insert into platform_registry_project (id, cluster_id, tenant_id, host, project_name,
+      credential_id, robot_id, `status`, message, last_synced_at, created_at, updated_at)
+    values (#{id,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR},
+      #{host,jdbcType=VARCHAR}, #{projectName,jdbcType=VARCHAR}, #{credentialId,jdbcType=VARCHAR},
+      #{robotId,jdbcType=BIGINT}, #{status,jdbcType=VARCHAR}, #{message,jdbcType=VARCHAR},
+      #{lastSyncedAt,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateResult" parameterType="com.coding.data.models.system.PlatformRegistryProject">
+    update platform_registry_project
+    set host = #{host,jdbcType=VARCHAR},
+        project_name = #{projectName,jdbcType=VARCHAR},
+        credential_id = #{credentialId,jdbcType=VARCHAR},
+        robot_id = #{robotId,jdbcType=BIGINT},
+        `status` = #{status,jdbcType=VARCHAR},
+        message = #{message,jdbcType=VARCHAR},
+        last_synced_at = #{lastSyncedAt,jdbcType=TIMESTAMP},
+        updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <select id="selectById" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_registry_project where id = #{id}
+  </select>
+
+  <select id="selectByCluster" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_registry_project
+    where cluster_id = #{clusterId} order by project_name
+  </select>
+
+  <select id="selectByClusterAndTenant" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_registry_project
+    where cluster_id = #{clusterId}
+    <choose>
+      <when test="tenantId == null">and tenant_id is null</when>
+      <otherwise>and tenant_id = #{tenantId}</otherwise>
+    </choose>
+  </select>
+
+  <select id="selectByClusterAndProject" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_registry_project
+    where cluster_id = #{clusterId} and project_name = #{projectName}
+  </select>
+
+  <select id="selectByCredentialId" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_registry_project
+    where credential_id = #{credentialId}
+  </select>
+
+  <select id="selectByTenant" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_registry_project
+    where tenant_id = #{tenantId}
+  </select>
+
+  <select id="selectAll" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" /> from platform_registry_project
+  </select>
+
+  <delete id="deleteById">
+    delete from platform_registry_project where id = #{id,jdbcType=VARCHAR}
+  </delete>
+
+</mapper>
