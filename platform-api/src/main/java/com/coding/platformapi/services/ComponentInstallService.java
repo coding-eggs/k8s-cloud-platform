@@ -21,6 +21,7 @@ import com.coding.platformapi.models.ComponentApplyRequest;
 import com.coding.platformapi.models.CalicoInstallRequest;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EsConfig;
+import com.coding.platformapi.models.HarborInstallRequest;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
 import com.coding.platformapi.models.SeaweedInstallRequest;
@@ -186,6 +187,13 @@ public class ComponentInstallService {
         if (recipe.seaweedStorage()) {
             requireSeaweed(seaweed);
         }
+        // Harbor：host 必填 —— 它同时是 route 的 hostnames 与 externalURL
+        HarborInstallRequest harbor = recipe.harborRegistry()
+                ? resolveHarbor(req.getHarbor(), previousPlatform.get("harbor"))
+                : null;
+        if (recipe.harborRegistry()) {
+            requireHarborHost(harbor);
+        }
 
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管。
         // ⚠️「平台装过但没成功」（FAILED / UNKNOWN）仍算平台装的：release 是平台建的，
@@ -205,7 +213,8 @@ public class ComponentInstallService {
             merged = applySeaweedValues(merged, seaweed);
         }
         // 占位符（${cluster.name} / ${thanos.receive.url} / ${tempo.endpoint}）在落库前解析
-        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico, tektonProfile, otel);
+        List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico,
+                tektonProfile, otel, harbor);
         // Thanos compactor 的保留期下限（raw ≥ 40h、5m ≥ 10d）：违反时 helm 照样成功，
         // 但 compactor 启动即 CrashLoopBackOff —— 必须在下发之前拒（2026-10-20 实锤）
         validateThanosRetention(effective);
@@ -222,7 +231,7 @@ public class ComponentInstallService {
                 effective.stream().map(ReleaseSpec::releaseName).distinct().toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
                 snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico,
-                        tektonProfile, otel, seaweed)));
+                        tektonProfile, otel, seaweed, harbor)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -240,7 +249,7 @@ public class ComponentInstallService {
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
                         List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos, otel,
-                        seaweed)));
+                        seaweed, harbor)));
         return id;
     }
 
@@ -346,9 +355,10 @@ public class ComponentInstallService {
     @SuppressWarnings("unchecked")
     private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId, String thanosUrl,
                                             CalicoInstallRequest calico, String tektonProfile,
-                                            OtelInstallRequest otel) {
+                                            OtelInstallRequest otel, HarborInstallRequest harbor) {
         Map<String, String> context = new LinkedHashMap<>();
         context.put("cluster.name", clusterService.requireName(clusterId));
+        context.put("harbor.host", harbor != null && harbor.getHost() != null ? harbor.getHost() : "");
         context.put("thanos.receive.url", thanosUrl == null ? "" : thanosUrl);
         context.put("calico.podCidr", calico != null && calico.getPodCidr() != null
                 ? calico.getPodCidr() : "");
@@ -478,7 +488,8 @@ public class ComponentInstallService {
                                                                   CalicoInstallRequest calico,
                                                                   String tektonProfile,
                                                                   OtelInstallRequest otel,
-                                                                  SeaweedInstallRequest seaweed) {
+                                                                  SeaweedInstallRequest seaweed,
+                                                                  HarborInstallRequest harbor) {
         Map<String, Object> snapshot = snapshotOf(releases);
         Map<String, Object> platform = new LinkedHashMap<>();
         if (recipe.platformAlerting() && alertWebhookUrl != null) {
@@ -520,6 +531,9 @@ public class ComponentInstallService {
             s.put("adminEnabled", seaweed.getAdminEnabled());
             s.put("s3Endpoint", seaweed.getS3Endpoint());
             platform.put("seaweed", s);
+        }
+        if (recipe.harborRegistry() && harbor != null) {
+            platform.put("harbor", Map.of("host", harbor.getHost() == null ? "" : harbor.getHost()));
         }
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
@@ -820,6 +834,36 @@ public class ComponentInstallService {
         return value == null || value.isBlank();
     }
 
+    // ==================== Harbor（镜像仓库） ====================
+
+    /** 访问域名：host[:port]，不带 scheme/path、全小写 */
+    private static final java.util.regex.Pattern HARBOR_HOST =
+            java.util.regex.Pattern.compile("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$");
+
+    /** 表单 > 上次成功；统一 trim（空串交给 {@link #requireHarborHost} 拒） */
+    @SuppressWarnings("unchecked")
+    private static HarborInstallRequest resolveHarbor(HarborInstallRequest requested, Object previous) {
+        Map<String, Object> prev = previous instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+        String host = firstNonBlank(requested == null ? null : requested.getHost(),
+                asString(prev.get("host")));
+        return new HarborInstallRequest(host == null ? null : host.trim());
+    }
+
+    /**
+     * Harbor 访问域名必填且格式严格。
+     *
+     * <p>这个值同时写进 HTTPRoute 的 hostnames 与 {@code externalURL}（Harbor token 服务按后者
+     * 返回给 docker 客户端）。写成 {@code http://harbor.example.com} 会得到 {@code http://http://...}，
+     * 装出来的 Harbor 能启动但 push 全失败。
+     */
+    private static void requireHarborHost(HarborInstallRequest harbor) {
+        String host = harbor == null ? null : harbor.getHost();
+        if (host == null || host.isBlank() || !HARBOR_HOST.matcher(host.trim()).matches()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "请填写 Harbor 访问域名（如 harbor.example.com，不带 http:// 与路径）");
+        }
+    }
+
     // ==================== 对象存储（SeaweedFS） ====================
 
     /** 容量格式：10Gi / 200Mi / 1Ti（不接受裸数字，避免 30 被当成 30 字节） */
@@ -999,7 +1043,7 @@ public class ComponentInstallService {
     private void run(Long id, String clusterId, String componentCode, String action,
                      List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl,
                      ThanosInstallRequest thanos, OtelInstallRequest otel,
-                     SeaweedInstallRequest seaweed) {
+                     SeaweedInstallRequest seaweed, HarborInstallRequest harbor) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
@@ -1033,6 +1077,10 @@ public class ComponentInstallService {
             // helm 之前必须已有 platform-admin 身份，否则 S3 网关起不来 / 平台读不到配置。
             if (seaweed != null) {
                 client.ensureSeaweedS3Config(clusterId);
+            }
+            // Harbor 的管理口令与 secretKey 必须在 helm 之前就位；values 里只引用 Secret 名
+            if (harbor != null) {
+                client.applyHarborSecrets(clusterId, "harbor", "platform-harbor-secrets");
             }
             ComponentInstallResultDTO result =
                     client.applyComponent(clusterId, componentCode, action, toDtos(releases));

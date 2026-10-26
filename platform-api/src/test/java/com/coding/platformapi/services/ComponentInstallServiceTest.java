@@ -10,6 +10,7 @@ import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentApplyRequest;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EsConfig;
+import com.coding.platformapi.models.HarborInstallRequest;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
 import com.coding.platformapi.models.TempoStorageConfig;
@@ -1498,6 +1499,49 @@ class ComponentInstallServiceTest {
         s.setCode(code);
         s.setState(ClusterComponentService.HEALTHY);
         return s;
+    }
+
+    // ==================== Harbor（2026-10-27） ====================
+
+    @Test
+    void harborRequiresAHostWithoutSchemeOrPath() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
+        for (String bad : new String[]{"", "http://harbor.example.com", "harbor.example.com/foo",
+                "Harbor.Example.com", "harbor .example.com"}) {
+            ComponentApplyRequest req = new ComponentApplyRequest();
+            req.setClusterId("c1");
+            req.setComponentCode("harbor");
+            req.setAction("INSTALL");
+            req.setHarbor(new HarborInstallRequest(bad));
+            assertThatThrownBy(() -> service().apply(req, "admin"))
+                    .as(bad).hasMessageContaining("Harbor 访问域名");
+        }
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void harborHostIsResolvedIntoTheRouteAndExternalUrl() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        ComponentApplyRequest req = new ComponentApplyRequest();
+        req.setClusterId("c1");
+        req.setComponentCode("harbor");
+        req.setAction("INSTALL");
+        req.setHarbor(new HarborInstallRequest("harbor.example.com"));
+        service().apply(req, "admin");
+
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        String values = specs.getValue().get(0).getValues().toString();
+        assertThat(values)
+                .contains("harbor.example.com")
+                .doesNotContain("${harbor.host}");
+        verify(client, timeout(3000)).applyHarborSecrets("c1", "harbor", "platform-harbor-secrets");
     }
 
     private static OtelInstallRequest baseOtel() {

@@ -10,6 +10,7 @@ import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
 import com.coding.common.models.k8s.dto.OtelTelemetryStateDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.HarborSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
 import com.coding.common.models.objectstorage.SeaweedS3ConfigRequestDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
@@ -133,6 +134,19 @@ public class K8sComponentClient {
         body.setNamespace(namespace);
         body.setSecretName(secretName);
         gateway.exchange(HttpMethod.POST, "/components/seaweed-admin-secret", null, body,
+                gateway.responseType(Void.class));
+    }
+
+    /**
+     * Harbor 的管理口令与 secretKey：首次安装时由 k8s-server 生成随机值（已存在不轮换）。
+     * 口令不经过本层，也不会进 values 快照。
+     */
+    public void applyHarborSecrets(String clusterId, String namespace, String secretName) {
+        HarborSecretsRequestDTO body = new HarborSecretsRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setSecretName(secretName);
+        gateway.exchange(HttpMethod.POST, "/components/harbor-secrets", null, body,
                 gateway.responseType(Void.class));
     }
 

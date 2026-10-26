@@ -49,11 +49,14 @@ public class ComponentApplyRequest {
     /** 对象存储参数（仅 seaweedfs 组件用：StorageClass / 容量 / 副本数） */
     private SeaweedInstallRequest seaweed;
 
+    /** Harbor 安装参数（仅 harborRegistry 的组件：访问域名） */
+    private HarborInstallRequest harbor;
+
     /** 兼容旧调用（不含告警地址与 Thanos 地址） */
     public ComponentApplyRequest(String clusterId, String componentCode, String action,
                                  String targetVersion, Map<String, Object> editableValues) {
         this(clusterId, componentCode, action, targetVersion, editableValues, null, null, null, null, null, null,
-                null);
+                null, null);
     }
 
     /** 兼容只带告警地址的调用 */
@@ -61,7 +64,7 @@ public class ComponentApplyRequest {
                                  String targetVersion, Map<String, Object> editableValues,
                                  String alertWebhookUrl) {
         this(clusterId, componentCode, action, targetVersion, editableValues, alertWebhookUrl,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
     }
 
     /** 兼容带两个地址的调用 */
@@ -69,7 +72,7 @@ public class ComponentApplyRequest {
                                  String targetVersion, Map<String, Object> editableValues,
                                  String alertWebhookUrl, String thanosReceiveUrl) {
         this(clusterId, componentCode, action, targetVersion, editableValues,
-                alertWebhookUrl, thanosReceiveUrl, null, null, null, null, null);
+                alertWebhookUrl, thanosReceiveUrl, null, null, null, null, null, null);
     }
 
     /** 兼容带 Thanos 安装参数的调用 */
@@ -78,7 +81,7 @@ public class ComponentApplyRequest {
                                  String alertWebhookUrl, String thanosReceiveUrl,
                                  ThanosInstallRequest thanosInstall) {
         this(clusterId, componentCode, action, targetVersion, editableValues,
-                alertWebhookUrl, thanosReceiveUrl, thanosInstall, null, null, null, null);
+                alertWebhookUrl, thanosReceiveUrl, thanosInstall, null, null, null, null, null);
     }
 
     /** 兼容带 Calico 参数的调用（不含 tektonProfile） */
@@ -87,6 +90,18 @@ public class ComponentApplyRequest {
                                  String alertWebhookUrl, String thanosReceiveUrl,
                                  ThanosInstallRequest thanosInstall, CalicoInstallRequest calicoInstall) {
         this(clusterId, componentCode, action, targetVersion, editableValues,
-                alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, null, null, null);
+                alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, null, null, null, null);
+    }
+
+    /** 兼容带 OTel / 对象存储参数的调用（不含 harbor） */
+    public ComponentApplyRequest(String clusterId, String componentCode, String action,
+                                 String targetVersion, Map<String, Object> editableValues,
+                                 String alertWebhookUrl, String thanosReceiveUrl,
+                                 ThanosInstallRequest thanosInstall, CalicoInstallRequest calicoInstall,
+                                 String tektonProfile, OtelInstallRequest otel,
+                                 SeaweedInstallRequest seaweed) {
+        this(clusterId, componentCode, action, targetVersion, editableValues,
+                alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, tektonProfile, otel,
+                seaweed, null);
     }
 }

@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.ExternalGatewayRequestDTO;
 import com.coding.common.models.k8s.dto.GatewayListenerDTO;
+import com.coding.common.models.k8s.dto.HarborSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
 import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
@@ -21,6 +22,7 @@ import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ExternalGatewayObjects;
+import com.coding.k8sserver.components.HarborSecretObjects;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.components.SecretConsumers;
@@ -348,6 +350,40 @@ public class ComponentInstallController implements AccessBoundaryAware {
         }
         client.secrets().inNamespace(request.getNamespace())
                 .resource(SeaweedAdminSecretObjects.build(request.getNamespace(), request.getSecretName()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>();
+    }
+
+    /**
+     * Harbor 的管理口令与 secretKey（S3.6）：首次安装时生成随机值，已存在则原样保留。
+     *
+     * <p>⚠️ 已初始化（{@code harbor-core} 存在）但 Secret 缺失时**拒绝**：
+     * 重新生成的口令与 Harbor 库里的哈希不一致（secretKey 还牵连库里已加密字段），
+     * 同步必然 401。这时只能人工按 Harbor 官方方式重置后再安装。
+     */
+    @PostMapping("/harbor-secrets")
+    @Operation(summary = "确保 Harbor 管理口令 Secret 存在（首次生成，已初始化后丢失则拒绝）",
+            description = "幂等；由 platform-api 在安装/升级 Harbor 前调用")
+    public ResponseData<Void> harborSecrets(@RequestBody HarborSecretsRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "Harbor Secret 参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        Secret existing = client.secrets().inNamespace(request.getNamespace())
+                .withName(request.getSecretName()).get();
+        if (existing != null && HarborSecretObjects.hasAllKeys(existing.getData())) {
+            return new ResponseData<>();   // 已存在：升级/重装沿用原口令，不轮换
+        }
+        boolean initialized = client.apps().deployments()
+                .inNamespace(request.getNamespace()).withName("harbor-core").get() != null;
+        if (initialized) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "管理口令 Secret 丢失，Harbor 已初始化：重新生成的口令与库里的哈希不一致。"
+                            + "请人工按 Harbor 官方方式重置管理员口令 / secretKey 后再安装");
+        }
+        client.secrets().inNamespace(request.getNamespace())
+                .resource(HarborSecretObjects.build(request.getNamespace(), request.getSecretName()))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>();
     }
