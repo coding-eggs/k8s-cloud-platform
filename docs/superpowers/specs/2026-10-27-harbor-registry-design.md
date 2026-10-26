@@ -223,6 +223,10 @@ CREATE TABLE IF NOT EXISTS platform_registry_project (
 
 **重建账号**（`force`）：跳过第 3 步，删 robot → 建新 robot → 覆盖凭据密文。用于口令泄露或凭据被手工改坏。
 
+**安装动作（INSTALL）一律按 force 同步**：手工卸载后用同一地址重装时，旧凭据行看起来仍然可用，
+但新 Harbor 里并没有那个 robot —— 不强制重建会一路 skip，流水线 push 全 401。
+另外，台账里的 `host` 与当前集群 Harbor 地址不一致时也按 force 处理。升级/编辑重放（UPGRADE）用普通同步。
+
 **并发**：同进程内按 `clusterId` 加互斥锁；平台当前单副本部署，跨实例并发不在本期保证（写进已知限制）。
 
 ### 4.5 触发时机与失败语义
@@ -246,7 +250,12 @@ CREATE TABLE IF NOT EXISTS platform_registry_project (
 
 改动：
 
-- 新增统一判据：`visibleTo(c, hatTenantId) := c.tenantId == null || c.tenantId.equals(hatTenantId)`。
+- 新增统一判据：
+  `visibleTo(c, hatTenantId) := hatTenantId == null`
+  `|| (c.tenantId == null && "MANUAL".equals(c.source))`
+  `|| hatTenantId.equals(c.tenantId)`。
+  ⚠️ 平台级（`tenant_id IS NULL`）只放行**手工**凭据（沿用今天的全局语义）；
+  `source=HARBOR` 的平台共享凭据是 `platform` 项目用的管理员账号，**不给租户**。
 - `pipelineUsableRegistryConnections(hatTenantId)`、`pipelineUsableConnections(type, hatTenantId)` 用它过滤；
 - `assertUsableByPipelines(id, expectedType, hatTenantId)` 同样校验（防止手填别家的 id）；
 - `RegistryService.allSources(hatTenantId)` 只换这一个真相源（补全/浏览/连接列表都从它来），
@@ -325,7 +334,7 @@ CREATE TABLE IF NOT EXISTS platform_registry_project (
   时视为失败、非 2xx 转业务码且消息含状态码。
 - 新增 `HarborRegistryServiceTest`：首次同步建项目/robot/凭据；第二次同步零创建请求（幂等）；
   `force` 重建会先删后建并覆盖密文；失败时台账 `ERROR` 且不回滚项目。
-- 扩展 `CredentialServiceTest`：租户过滤（自己的 + 平台级可见、别人的不可见）；
+- 扩展 `CredentialServiceTest`：租户过滤（自己的 + 手工平台级可见、别家的与 HARBOR 平台共享凭据不可见）；
   `assertUsableByPipelines` 对别人的租户凭据抛错。
 - 扩展 `RegistryServiceTest`：`allSources` 过滤后，租户 A 用 B 的 credentialId 浏览得到「不存在或已停用」。
 
