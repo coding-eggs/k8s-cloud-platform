@@ -1561,8 +1561,16 @@ public class WorkloadConverter {
     }
 
     /**
-     * 汇总工作负载「为什么不成功」：status.conditions 中非 True 的条件（如 Progressing=False / Available=False），
-     * 逐条拼成 "Type reason: message"。全为 True（健康）时返回 null → 前端不显示悬浮提示。
+     * 方向相反的条件：**status=True 才是出问题**。Deployment 的 {@code ReplicaFailure} 就是这一类
+     * （控制器建不出 Pod 时被置 True）。把它的 True 当成"健康"跳过，用户看到的就是"镜像改了、Pod 没重建，
+     * 平台一句话都不说"——2026-10-26 实报：新 Pod 被命名空间配额拒（exceeded quota: limits.memory）。
+     */
+    private static final Set<String> NEGATIVE_WHEN_TRUE = Set.of("ReplicaFailure");
+
+    /**
+     * 汇总工作负载「为什么不成功」：status.conditions 中异常的条件（如 Progressing=False / Available=False，
+     * 以及 {@link #NEGATIVE_WHEN_TRUE} 里 True 才算异常的类型），
+     * 逐条拼成 "Type reason: message"。没有异常时返回 null → 前端不显示悬浮提示。
      * 三种 kind 的条件类型不同但访问器一致，故用泛型 + 方法引用复用。
      */
     private static <T> String conditionsReason(List<T> conds,
@@ -1571,8 +1579,9 @@ public class WorkloadConverter {
         List<String> lines = new ArrayList<>();
         if (conds != null) {
             for (T c : conds) {
-                if ("True".equals(status.apply(c))) continue;
-                String line = condLine(type.apply(c), reason.apply(c), message.apply(c));
+                String conditionType = type.apply(c);
+                if ("True".equals(status.apply(c)) && !NEGATIVE_WHEN_TRUE.contains(conditionType)) continue;
+                String line = condLine(conditionType, reason.apply(c), message.apply(c));
                 if (line != null) lines.add(line);
             }
         }
