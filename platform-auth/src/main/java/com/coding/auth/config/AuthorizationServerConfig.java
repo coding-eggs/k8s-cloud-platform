@@ -421,9 +421,7 @@ public class AuthorizationServerConfig {
 
     @Bean
     public AuthorizationServerSettings authorizationServerSettings() {
-        return AuthorizationServerSettings.builder()
-                .issuer(jwtProperties.getIssuer())
-                .build();
+        return AuthorizationServerSettings.builder().build();
     }
 
     @Bean
