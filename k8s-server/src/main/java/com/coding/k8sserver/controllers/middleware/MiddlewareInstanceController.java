@@ -8,10 +8,17 @@ import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
+import com.coding.common.models.middleware.MiddlewareUserCreateRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserCredentialDTO;
+import com.coding.common.models.middleware.MiddlewareUserDeleteRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserListRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserPasswordRequestDTO;
+import com.coding.common.models.middleware.MiddlewareUserView;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.middleware.MiddlewareInstanceService;
+import com.coding.k8sserver.middleware.MiddlewareUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,9 +39,11 @@ import java.util.List;
 public class MiddlewareInstanceController implements AccessBoundaryAware {
 
     private final MiddlewareInstanceService service;
+    private final MiddlewareUserService users;
 
-    public MiddlewareInstanceController(MiddlewareInstanceService service) {
+    public MiddlewareInstanceController(MiddlewareInstanceService service, MiddlewareUserService users) {
         this.service = service;
+        this.users = users;
     }
 
     @Override
@@ -76,6 +85,35 @@ public class MiddlewareInstanceController implements AccessBoundaryAware {
                                                 @RequestBody MiddlewarePasswordRequestDTO request) {
         request.setCode(code);
         service.changePassword(request);
+        return new ResponseData<>(true);
+    }
+
+    @PostMapping("/{code}/instances/users")
+    @Operation(summary = "实例的账号列表（平台建的内置账号 + 平台建的普通账号）")
+    public ResponseData<List<MiddlewareUserView>> listUsers(@PathVariable("code") String code,
+                                                            @RequestBody MiddlewareUserListRequestDTO request) {
+        return new ResponseData<>(users.list(code, request));
+    }
+
+    @PostMapping("/{code}/instances/users/create")
+    @Operation(summary = "新增实例账号（返回一次性明文口令）")
+    public ResponseData<MiddlewareUserCredentialDTO> createUser(@PathVariable("code") String code,
+                                                                @RequestBody MiddlewareUserCreateRequestDTO request) {
+        return new ResponseData<>(users.create(code, request));
+    }
+
+    @PostMapping("/{code}/instances/users/password")
+    @Operation(summary = "改实例账号口令（返回一次性明文口令）")
+    public ResponseData<MiddlewareUserCredentialDTO> changeUserPassword(
+            @PathVariable("code") String code, @RequestBody MiddlewareUserPasswordRequestDTO request) {
+        return new ResponseData<>(users.changePassword(code, request));
+    }
+
+    @PostMapping("/{code}/instances/users/delete")
+    @Operation(summary = "删除实例账号（内置账号拒绝）")
+    public ResponseData<Boolean> deleteUser(@PathVariable("code") String code,
+                                            @RequestBody MiddlewareUserDeleteRequestDTO request) {
+        users.drop(code, request);
         return new ResponseData<>(true);
     }
 
