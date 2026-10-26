@@ -2467,7 +2467,7 @@ git commit -m "feat(registry): 凭据托管写入与 Harbor 租户项目同步�
 **Files:**
 - Modify: `platform-api/src/main/java/com/coding/platformapi/services/ComponentInstallService.java`
 - Modify: `platform-api/src/main/java/com/coding/platformapi/services/TenantService.java`
-- Modify: `platform-api/src/main/java/com/coding/platformapi/controllers/RegistryController.java`
+- Create: `platform-api/src/main/java/com/coding/platformapi/controllers/RegistryProjectController.java`
 - Modify: `platform-api/src/main/java/com/coding/platformapi/audit/AuditAction.java`
 - Create: `platform-api/src/main/java/com/coding/platformapi/models/RegistryProjectRequest.java`
 - Test: `platform-api/src/test/java/com/coding/platformapi/services/ComponentInstallServiceTest.java`
@@ -2638,23 +2638,55 @@ public class RegistryProjectRequest {
 }
 ```
 
-`RegistryController` 加依赖与端点：
+**不要动 `RegistryController`**：它有一条结构性钉子 `RegistryControllerTest.noneOfTheEntriesIsAudited()`
+（三个只读入口都不得标审计）。管理员写入口单开一个 controller，路径前缀同为 `/registry`：
+
+`RegistryProjectController.java`：
 
 ```java
+package com.coding.platformapi.controllers;
+
+import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.audit.AuditAction;
+import com.coding.platformapi.audit.Auditable;
+import com.coding.platformapi.models.RegistryProjectRequest;
+import com.coding.platformapi.models.RegistryProjectView;
+import com.coding.platformapi.services.HarborRegistryService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+/**
+ * Harbor 的租户镜像项目管理（**平台管理员**）。与 {@code RegistryController} 分开：
+ * 那三个是租户只读入口、**有意不标审计**（有结构性钉子钉着）；这三个是写操作，必须留痕。
+ *
+ * <p>权限行见迁移 {@code V2026_10_27_1}：list → {@code platform:registry:project:read}，
+ * sync / rebuild → {@code platform:registry:project:manage}。
+ */
+@Tag(name = "镜像仓库-租户项目", description = "Harbor 的租户 project / robot 账号 / 凭据同步（平台管理员）")
+@RestController
+@RequestMapping("/registry/projects")
+@RequiredArgsConstructor
+public class RegistryProjectController {
+
     private final HarborRegistryService harborRegistry;
-```
 
-```java
     @Operation(summary = "租户镜像项目列表",
             description = "管理员视图：每个租户/平台共享在集群 Harbor 上的 project、凭据与上次同步结果")
-    @PostMapping("/projects/list")
+    @PostMapping("/list")
     public ResponseData<List<RegistryProjectView>> projects(@RequestBody RegistryProjectRequest request) {
         return new ResponseData<>(harborRegistry.list(request.getClusterId()));
     }
 
     @Operation(summary = "同步全部租户的 Harbor 项目",
             description = "全量对账：缺的补、host 变了的重建；返回逐租户结果（含失败原因）")
-    @PostMapping("/projects/sync")
+    @PostMapping("/sync")
     @Auditable(action = AuditAction.REGISTRY_SYNC_PROJECTS, target = "#request.clusterId")
     public ResponseData<HarborRegistryService.SyncResult> syncProjects(
             @RequestBody RegistryProjectRequest request) {
@@ -2663,15 +2695,14 @@ public class RegistryProjectRequest {
 
     @Operation(summary = "重建某个租户的 Harbor 机器人账号",
             description = "tenantId 为空 = 平台共享项目。先删旧 robot 再建新的，凭据密文同步覆盖")
-    @PostMapping("/projects/rebuild")
+    @PostMapping("/rebuild")
     @Auditable(action = AuditAction.REGISTRY_REBUILD_PROJECT, target = "#request.tenantId")
     public ResponseData<HarborRegistryService.SyncItem> rebuildProject(
             @RequestBody RegistryProjectRequest request) {
         return new ResponseData<>(harborRegistry.rebuild(request.getClusterId(), request.getTenantId()));
     }
+}
 ```
-
-补 import：`AuditAction`、`Auditable`、`HarborRegistryService`、`RegistryProjectRequest`、`RegistryProjectView`。
 
 - [ ] **Step 6: 跑测试**
 
@@ -2688,7 +2719,7 @@ Expected: PASS。
 ```bash
 git add platform-api/src/main/java/com/coding/platformapi/services/ComponentInstallService.java \
         platform-api/src/main/java/com/coding/platformapi/services/TenantService.java \
-        platform-api/src/main/java/com/coding/platformapi/controllers/RegistryController.java \
+        platform-api/src/main/java/com/coding/platformapi/controllers/RegistryProjectController.java \
         platform-api/src/main/java/com/coding/platformapi/audit/AuditAction.java \
         platform-api/src/main/java/com/coding/platformapi/models/RegistryProjectRequest.java \
         platform-api/src/test/java/com/coding/platformapi/services/ComponentInstallServiceTest.java
@@ -3148,6 +3179,12 @@ const EMPTY_HARBOR: K8sHarborInstall = { host: '' }
 5. `applyDialog` 初始值与类型（`ApplyDialog` 接口）加：
 
 ```ts
+// ApplyDialog 接口里：
+  showHarbor: boolean
+  harbor: K8sHarborInstall
+  initialHarbor: string
+
+// applyDialog 的初始值里：
   showHarbor: false, harbor: { ...EMPTY_HARBOR }, initialHarbor: JSON.stringify(EMPTY_HARBOR),
 ```
 
@@ -3206,7 +3243,8 @@ const HARBOR_HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$/
 9. 行操作区（「编辑」按钮旁）加：
 
 ```vue
-              <el-button v-if="row.code === 'harbor'"
+              <el-button v-if="row.code === 'harbor'
+                               && (row.state === 'INSTALLED_HEALTHY' || row.state === 'INSTALLED_UNHEALTHY')"
                          link type="primary" @click="openHarborProjects()">
                 镜像项目
               </el-button>
@@ -3240,6 +3278,7 @@ function openHarborProjects(): void {
 import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { registryApi } from '@/api'
+import { fmtDate } from '@/utils/format'
 import type { K8sRegistryProject } from '@/types'
 
 const props = defineProps<{ visible: boolean; clusterId: string }>()
@@ -3328,7 +3367,7 @@ function close(): void {
         <template #default="{ row }">{{ row.message || '—' }}</template>
       </el-table-column>
       <el-table-column label="上次同步" width="160">
-        <template #default="{ row }">{{ row.lastSyncedAt || '—' }}</template>
+        <template #default="{ row }">{{ row.lastSyncedAt ? fmtDate(row.lastSyncedAt) : '—' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
@@ -3358,9 +3397,11 @@ function close(): void {
 1. 表格加两列（`名称` 之后）：
 
 ```vue
-      <el-table-column label="归属" width="120">
+      <el-table-column label="归属" width="160">
         <template #default="{ row }">
-          <span v-if="row.source === 'HARBOR'">Harbor 自动</span>
+          <span v-if="row.source === 'HARBOR'">
+            {{ row.tenantName ? `${row.tenantName}（Harbor 自动）` : '平台（Harbor 自动）' }}
+          </span>
           <span v-else-if="row.tenantName">{{ row.tenantName }}</span>
           <span v-else class="dim">平台</span>
         </template>
@@ -3465,6 +3506,9 @@ Expected: 通过。
    ```
    期望：core/portal/registry/jobservice/db/redis 全部 Running；HTTPRoute `Accepted=True`、`AttachedRoutes=1`；Secret 有 `HARBOR_ADMIN_PASSWORD` 与 `secretKey`。
 5. 组件行「镜像项目」→「同步全部」：Harbor 里能看到 `platform` 与每个租户的 `t-<sa>` 项目、`robot$t-<sa>+ci`；凭据页出现归属为「Harbor 自动」的行。
+   ⚠️ 这一步同时是 **Harbor REST API 字段的实机核对**（spec §4.7）：在建项目 / 建 robot 的响应上确认
+   `project_id`、`robots[].id/name/secret`、`duration=-1` 的语义与 Task 5 的假设一致。
+   不一致就改 `HarborAdminClient` 与 `HarborAdminClientTest`，重跑 Task 5 的测试再继续。
 6. 租户 A 登录 → 流水线编辑器 → 镜像节点：只看到自己的连接（label 带项目名）；保存运行，确认镜像 push 到 `<host>/t-<sa>/<repo>:<tag>`。
 7. 租户 B 登录：看不到 A 的连接；用 A 的 credentialId 直接调 `/registry/browse` 返回「不存在或已停用」。
 8. 停用租户 A → 凭据页该行变「停用」；启用后恢复。
@@ -3472,7 +3516,15 @@ Expected: 通过。
 
 - [ ] **Step 4: 更新部署说明并提交计划勾选**
 
-在组件 README 的「装完之后」补一条「平台镜像项目同步」指向组件面板；把本计划的勾选项更新后提交：
+在组件 README 的「装完之后」补一条「平台镜像项目同步」指向组件面板；`docs/development/cluster-prerequisites.md`
+里「目标仓库优先用**集群内可达的 Harbor**」那句后面补：
+
+```markdown
+（Harbor 可由平台在「集群组件」里直接安装，并在该组件的「镜像项目」面板按租户自动建 project
+与 robot 账号 —— 见 `charts/components/harbor/README.md`。装之前先确认访问域名三边可解析。）
+```
+
+然后提交：
 
 ```bash
 git add docs/development/cluster-prerequisites.md \
