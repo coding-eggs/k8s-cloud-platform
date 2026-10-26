@@ -55,6 +55,15 @@ public class CredentialView {
     @Schema(description = "上次测试的失败原因；成功则 null")
     private String lastVerifyError;
 
+    /** 归属租户；null = 平台级 */
+    private String tenantId;
+
+    /** 租户名（列表展示用；平台级为 null） */
+    private String tenantName;
+
+    /** MANUAL / HARBOR（Harbor 自动维护，页面只读） */
+    private String source;
+
     private Date createdAt;
 
     private Date updatedAt;

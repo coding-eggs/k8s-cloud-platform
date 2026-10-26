@@ -1,7 +1,9 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.data.mapper.auth.PlatformTenantMapper;
 import com.coding.data.mapper.system.PlatformCredentialMapper;
+import com.coding.data.mapper.system.PlatformRegistryProjectMapper;
 import com.coding.data.models.system.PlatformCredential;
 import com.coding.platformapi.credential.CredentialCipher;
 import com.coding.platformapi.credential.CredentialProbeClient;
@@ -47,13 +49,15 @@ class CredentialServiceTest {
     private static final String KEY = "test-only-master-key-0123456789abcdef";
 
     PlatformCredentialMapper mapper = mock(PlatformCredentialMapper.class);
+    PlatformTenantMapper tenantMapper = mock(PlatformTenantMapper.class);
+    PlatformRegistryProjectMapper projectMapper = mock(PlatformRegistryProjectMapper.class);
     CredentialProbeClient probeClient = mock(CredentialProbeClient.class);
     CredentialCipher cipher = new CredentialCipher(KEY);
     /** 校验「该类型允许哪种认证方式」要问它 —— 见 CredentialService.allowedAuthTypes */
     RegistryDialectRegistry dialects = new RegistryDialectRegistry(
             List.of(new HarborDialect(mock(RegistryHttpClient.class)),
                     new DockerHubDialect(mock(RegistryHttpClient.class))));
-    CredentialService svc = new CredentialService(mapper, cipher, probeClient, dialects);
+    CredentialService svc = new CredentialService(mapper, cipher, probeClient, dialects, tenantMapper, projectMapper);
 
     private PlatformCredential stored(String id, String name, String type, String endpoint,
                                      String username, String secret) {
@@ -637,5 +641,24 @@ class CredentialServiceTest {
 
         assertThat(svc.list()).singleElement()
                 .satisfies(v -> assertThat(v.getUsableByPipelines()).isEqualTo(1));
+    }
+
+    @Test
+    void managedRegistryCredentialIsHarborSourcedTenantScopedAndPipelineUsable() {
+        when(mapper.selectByName("Harbor t-acme@c1")).thenReturn(null);
+        String id = svc.upsertManagedRegistry("Harbor t-acme@c1", "harbor.example.com", "tenant-1",
+                "robot$t-acme+ci", "s3cr3t", "Harbor 自动创建");
+
+        ArgumentCaptor<PlatformCredential> captor = ArgumentCaptor.forClass(PlatformCredential.class);
+        verify(mapper).insert(captor.capture());
+        PlatformCredential saved = captor.getValue();
+        assertThat(saved.getType()).isEqualTo("HARBOR");
+        assertThat(saved.getAuthType()).isEqualTo("BASIC");
+        assertThat(saved.getSource()).isEqualTo("HARBOR");
+        assertThat(saved.getTenantId()).isEqualTo("tenant-1");
+        assertThat(saved.getUsableByPipelines()).isEqualTo(1);
+        assertThat(saved.getEnabled()).isEqualTo(1);
+        assertThat(saved.getSecretEncrypted()).startsWith("v1:");
+        assertThat(id).isEqualTo(saved.getId());
     }
 }

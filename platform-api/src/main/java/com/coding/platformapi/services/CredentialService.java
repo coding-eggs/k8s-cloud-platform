@@ -3,8 +3,12 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.utils.ULIDGenerator;
+import com.coding.data.mapper.auth.PlatformTenantMapper;
 import com.coding.data.mapper.system.PlatformCredentialMapper;
+import com.coding.data.mapper.system.PlatformRegistryProjectMapper;
+import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.system.PlatformCredential;
+import com.coding.data.models.system.PlatformRegistryProject;
 import com.coding.platformapi.credential.CredentialCipher;
 import com.coding.platformapi.credential.CredentialProbeClient;
 import com.coding.platformapi.credential.CredentialSecret;
@@ -26,8 +30,10 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.Date;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 凭据库。设计见 docs/superpowers/specs/2026-10-13-credential-management-design.md。
@@ -88,10 +94,22 @@ public class CredentialService {
     /** 「该类型允许哪种认证方式」要问它 —— 见 {@link #allowedAuthTypes}。 */
     private final RegistryDialectRegistry dialects;
 
+    /** 凭据页展示「归属租户」与流水线连接展示「项目名」用 */
+    private final PlatformTenantMapper tenantMapper;
+
+    private final PlatformRegistryProjectMapper projectMapper;
+
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     public List<CredentialView> list() {
-        return mapper.selectAll().stream().map(CredentialService::toView).toList();
+        Map<String, String> names = tenantMapper.listAll().stream()
+                .collect(Collectors.toMap(PlatformTenant::getId, PlatformTenant::getName,
+                        (a, b) -> a));
+        List<CredentialView> out = mapper.selectAll().stream().map(CredentialService::toView).toList();
+        for (CredentialView v : out) {
+            v.setTenantName(v.getTenantId() == null ? null : names.get(v.getTenantId()));
+        }
+        return out;
     }
 
     public CredentialView create(CredentialCreateRequest req) {
@@ -121,6 +139,9 @@ public class CredentialService {
         c.setEnabled(req.getEnabled() == null || req.getEnabled() ? 1 : 0);
         // **默认关**：逐条显式授权（spec §5.3）。不传就是不授权。
         c.setUsableByPipelines(req.getUsableByPipelines() != null && req.getUsableByPipelines() ? 1 : 0);
+        // 手工建的凭据恒为平台级；租户归属只由 Harbor 同步写入
+        c.setSource("MANUAL");
+        c.setTenantId(null);
 
         mapper.insert(c);
         return toView(c);
@@ -157,6 +178,9 @@ public class CredentialService {
         c.setUsableByPipelines(req.getUsableByPipelines() == null
                 ? (old.getUsableByPipelines() == null ? 0 : old.getUsableByPipelines())
                 : (req.getUsableByPipelines() ? 1 : 0));
+        // 归属与来源不随表单变化：手工编辑不得把 Harbor 自动行“改成”平台级手工凭据
+        c.setTenantId(old.getTenantId());
+        c.setSource(old.getSource());
 
         applyAuth(old, c, req);
 
@@ -368,9 +392,47 @@ public class CredentialService {
         v.setUsableByPipelines(c.getUsableByPipelines() == null ? 0 : c.getUsableByPipelines());
         v.setLastVerifiedAt(c.getLastVerifiedAt());
         v.setLastVerifyError(c.getLastVerifyError());
+        v.setTenantId(c.getTenantId());
+        v.setSource(c.getSource());
         v.setCreatedAt(c.getCreatedAt());
         v.setUpdatedAt(c.getUpdatedAt());
         return v;
+    }
+
+    /**
+     * Harbor 组件托管的镜像仓库凭据（source=HARBOR）：按 name 存在则覆盖密文与地址，
+     * 否则新建。只被 {@code HarborRegistryService} 调用。
+     *
+     * <p>{@code tenantId} 为 null = 平台共享（`platform` 项目）。调用方负责保证
+     * name/endpoint/robot 名来自 Harbor 的真实响应。
+     *
+     * @return 凭据 id
+     */
+    public String upsertManagedRegistry(String name, String endpoint, String tenantId,
+                                        String username, String secret, String description) {
+        PlatformCredential existing = mapper.selectByName(name);
+        PlatformCredential c = existing != null ? existing : new PlatformCredential();
+        if (existing == null) {
+            c.setId(ULIDGenerator.generateULID());
+            c.setName(name);
+        }
+        c.setType("HARBOR");
+        c.setEndpoint(normalizeEndpoint("HARBOR", endpoint));
+        c.setAuthType(AUTH_BASIC);
+        String json = toJson(new CredentialSecret(username, secret));
+        c.setSecretEncrypted(cipher.encrypt(json));
+        c.setSecretFingerprint(CredentialCipher.fingerprint(json));
+        c.setDescription(description);
+        c.setEnabled(1);
+        c.setUsableByPipelines(1);
+        c.setTenantId(tenantId);
+        c.setSource("HARBOR");
+        if (existing == null) {
+            mapper.insert(c);
+        } else {
+            mapper.update(c);
+        }
+        return c.getId();
     }
 
     // ---- 流水线里的逐条授权（spec §5.3）----
