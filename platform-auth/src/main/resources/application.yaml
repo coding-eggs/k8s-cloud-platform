@@ -1,5 +1,12 @@
 server:
   port: 9527
+  # 采信反向代理带来的 X-Forwarded-*（platform-web 的 nginx 已在发 X-Forwarded-Proto / -For，
+  # 见 platform-web/nginx.conf）。issuer 与 OIDC metadata 的端点地址是按请求的 host+scheme
+  # 现算的，不配这项时 https 前门会被推成 http://（2026-10-26 实测）。
+  # ⚠️ 前提是前面确有一层可信代理、且用 proxy_set_header **赋值**覆盖这两个头（nginx.conf 是赋值，
+  #    不是追加）；若本端口直接暴露到公网，开这个等于允许客户端自报 scheme/host。
+  # 直连访问（不经代理、没有转发头）行为不变。
+  forward-headers-strategy: framework
 
 # MyBatis 配置
 mybatis:
