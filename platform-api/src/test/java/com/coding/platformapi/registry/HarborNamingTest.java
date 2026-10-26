@@ -28,6 +28,13 @@ class HarborNamingTest {
     }
 
     @Test
+    void consecutiveDashesAreCollapsedForHarborProjectGrammar() {
+        // serviceAccount 是 RFC1123（允许连续 '-'），Harbor 项目名不允许
+        assertThat(HarborNaming.projectName("team--dev")).isEqualTo("t-team-dev");
+        assertThat(HarborNaming.projectName("-team-")).isEqualTo("t-team");
+    }
+
+    @Test
     void robotNameInHarborFollowsThePrefixAndPlusConvention() {
         assertThat(HarborNaming.robotNameInHarbor("t-acme")).isEqualTo("robot$t-acme+ci");
     }

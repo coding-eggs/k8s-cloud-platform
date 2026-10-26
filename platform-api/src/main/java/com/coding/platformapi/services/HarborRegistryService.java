@@ -91,14 +91,23 @@ public class HarborRegistryService {
         return ensureAll(clusterId, false);
     }
 
+    public SyncResult ensureAll(String clusterId, boolean force) {
+        return ensureAll(clusterId, requireHost(clusterId), force);
+    }
+
     /**
+     * @param host  Harbor 访问地址。**安装流程必须显式传**：钩子在写 SUCCESS 之前执行，
+     *              这时 {@link #harborHost} 还读不到本集群的安装记录（首次安装会永久自锁）。
      * @param force true = 即使凭据存在也删掉 robot 重建。**首次安装（INSTALL）用 true**：
      *              手工卸载后用同一地址重装时，旧凭据看起来仍然可用，但新 Harbor 里没有那个 robot
      *              —— 不强制重建就会一路 skip，流水线 push 全 401。
      *              升级/编辑重放用 false，避免每次改配置都轮换口令。
      */
-    public SyncResult ensureAll(String clusterId, boolean force) {
-        String host = requireHost(clusterId);
+    public SyncResult ensureAll(String clusterId, String host, boolean force) {
+        if (host == null || host.isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "Harbor 访问域名为空：无法同步租户镜像项目");
+        }
         synchronized (LOCK) {
             Basic auth = adminOf(clusterId);
             List<SyncItem> items = new ArrayList<>();
@@ -157,9 +166,17 @@ public class HarborRegistryService {
         for (PlatformRegistryProject row : projects.selectByTenant(tenantId)) {
             try {
                 String host = harborHost(row.getClusterId());
-                if (host != null && row.getRobotId() != null) {
+                if (host != null) {
                     Basic auth = adminOf(row.getClusterId());
-                    harbor.deleteRobot(base(host), auth.user(), auth.pass(), row.getRobotId());
+                    String baseUrl = base(host);
+                    // 按 project + 名字删，不用台账里的 robot_id：Harbor 重装后 id 会复用，
+                    // 拿陈旧 id 去删可能删到别的账号
+                    Long projectId = harbor.findProjectId(baseUrl, auth.user(), auth.pass(),
+                            row.getProjectName());
+                    if (projectId != null) {
+                        harbor.deleteRobotByName(baseUrl, auth.user(), auth.pass(), projectId,
+                                HarborNaming.robotNameInHarbor(row.getProjectName()));
+                    }
                 }
             } catch (Exception e) {
                 log.warn("删除租户 {} 的 Harbor 机器人失败（保留台账待人工清理）：{}",
@@ -212,13 +229,11 @@ public class HarborRegistryService {
                 touch(row);
                 return new SyncItem(tenantId, tenantName, project, "READY", "已是最新");
             }
-            // 旧 robot 先删：Harbor 不返回已存在账号的 secret，只能删后重建
-            if (row != null && row.getRobotId() != null) {
-                harbor.deleteRobot(baseUrl, auth.user(), auth.pass(), row.getRobotId());
-            } else {
-                harbor.deleteRobotByName(baseUrl, auth.user(), auth.pass(), projectId,
-                        HarborNaming.robotNameInHarbor(project));
-            }
+            // 旧 robot 先删：Harbor 不返回已存在账号的 secret，只能删后重建。
+            // ⚠️ 一律按 project + 名字删，**不用台账里的 robot_id** —— Harbor 重装后 id 会复用，
+            // 陈旧 id 可能正好是刚建好的平台/别的租户账号（评审 C/I1）。
+            harbor.deleteRobotByName(baseUrl, auth.user(), auth.pass(), projectId,
+                    HarborNaming.robotNameInHarbor(project));
             HarborAdminClient.HarborRobot robot =
                     harbor.createRobot(baseUrl, auth.user(), auth.pass(), project);
             String credentialId = credentialService.upsertManagedRegistry(

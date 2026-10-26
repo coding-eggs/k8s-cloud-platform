@@ -5,6 +5,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.http.HttpMethod.DELETE;
 import static org.springframework.http.HttpMethod.GET;
 import static org.springframework.http.HttpMethod.POST;
@@ -66,6 +67,54 @@ class HarborAdminClientTest {
         assertThat(robot.id()).isEqualTo(42L);
         assertThat(robot.name()).isEqualTo("robot$t-acme+ci");
         assertThat(robot.secret()).isEqualTo("s3cr3t");
+    }
+
+    @Test
+    void projectConflictOnCreateIsResolvedByReadingItBack() {
+        server.expect(requestTo(BASE + "/api/v2.0/projects/" + PROJECT))
+                .andExpect(method(GET))
+                .andRespond(withStatus(NOT_FOUND));
+        server.expect(requestTo(BASE + "/api/v2.0/projects"))
+                .andExpect(method(POST))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.CONFLICT));
+        server.expect(requestTo(BASE + "/api/v2.0/projects/" + PROJECT))
+                .andExpect(method(GET))
+                .andRespond(withSuccess("{\"project_id\":11,\"name\":\"t-acme\"}", APPLICATION_JSON));
+
+        assertThat(client.ensureProject(BASE, "admin", "pw", PROJECT)).isEqualTo(11L);
+    }
+
+    @Test
+    void findProjectIdReturnsNullInsteadOfCreating() {
+        server.expect(requestTo(BASE + "/api/v2.0/projects/" + PROJECT))
+                .andExpect(method(GET))
+                .andRespond(withStatus(NOT_FOUND));
+
+        assertThat(client.findProjectId(BASE, "admin", "pw", PROJECT)).isNull();
+        server.verify();   // 没有 POST：删租户回收账号时不应顺手建项目
+    }
+
+    @Test
+    void robotResponseWithoutSecretIsRejected() {
+        server.expect(requestTo(BASE + "/api/v2.0/robots"))
+                .andExpect(method(POST))
+                .andRespond(withSuccess("{\"id\":42,\"name\":\"robot$t-acme+ci\"}",
+                        APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.createRobot(BASE, "admin", "pw", PROJECT))
+                .hasMessageContaining("secret");
+    }
+
+    @Test
+    void non2xxCarriesTheStatusButNotTheBody() {
+        server.expect(requestTo(BASE + "/api/v2.0/robots"))
+                .andExpect(method(POST))
+                .andRespond(withStatus(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body("{\"secret\":\"leaked\"}"));
+
+        assertThatThrownBy(() -> client.createRobot(BASE, "admin", "pw", PROJECT))
+                .hasMessageContaining("HTTP 500")
+                .hasMessageNotContaining("leaked");
     }
 
     @Test

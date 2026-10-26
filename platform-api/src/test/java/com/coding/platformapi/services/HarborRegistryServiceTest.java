@@ -120,9 +120,12 @@ class HarborRegistryServiceTest {
 
         HarborRegistryService.SyncItem item = svc.ensureTenant("c1", "tenant-1", false);
 
-        // 上一次失败的行不能因为「凭据行还在」就跳过：旧 robot 可能已经删掉了
+        // 上一次失败的行不能因为「凭据行还在」就跳过：旧 robot 可能已经删掉了。
+        // ⭐ 删除一律按 project + 名字（Harbor 重装后 id 会复用，陈旧 id 会误删）
         assertThat(item.status()).isEqualTo("READY");
-        verify(harbor).deleteRobot(anyString(), anyString(), anyString(), eq(42L));
+        verify(harbor).deleteRobotByName(anyString(), anyString(), anyString(), eq(7L),
+                eq("robot$t-acme+ci"));
+        verify(harbor, never()).deleteRobot(anyString(), anyString(), anyString(), eq(42L));
         verify(harbor).createRobot(anyString(), anyString(), anyString(), eq("t-acme"));
     }
 
@@ -149,10 +152,35 @@ class HarborRegistryServiceTest {
         HarborRegistryService.SyncItem item = svc.rebuild("c1", "tenant-1");
 
         assertThat(item.status()).isEqualTo("READY");
-        verify(harbor).deleteRobot(anyString(), anyString(), anyString(), eq(42L));
+        verify(harbor).deleteRobotByName(anyString(), anyString(), anyString(), eq(7L),
+                eq("robot$t-acme+ci"));
+        verify(harbor, never()).deleteRobot(anyString(), anyString(), anyString(), eq(42L));
         verify(harbor).createRobot(anyString(), anyString(), anyString(), eq("t-acme"));
         verify(credentialService).upsertManagedRegistry(anyString(), anyString(), anyString(),
                 anyString(), eq("new-secret"), anyString());
+    }
+
+    @Test
+    void explicitHostIsUsedEvenBeforeTheSuccessRecordExists() {
+        // 首次安装：钩子在写 SUCCESS 之前跑，selectLatestSuccess 还查不到本集群
+        when(operations.selectLatestSuccess("c1", "harbor")).thenReturn(null);
+        when(tenants.listAll()).thenReturn(List.of(tenant("tenant-1", "acme")));
+        when(projects.selectByClusterAndTenant("c1", "tenant-1")).thenReturn(null);
+        when(harbor.ensureProject(anyString(), anyString(), anyString(), eq("t-acme"))).thenReturn(7L);
+        when(harbor.createRobot(anyString(), anyString(), anyString(), eq("t-acme")))
+                .thenReturn(new HarborAdminClient.HarborRobot(42L, "robot$t-acme+ci", "s3cr3t"));
+        when(credentialService.upsertManagedRegistry(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString())).thenReturn("cred-1");
+
+        // 平台共享项目在 setUp 里已就绪（host 一致），走普通同步即可
+        HarborRegistryService.SyncResult result =
+                svc.ensureAll("c1", "harbor.example.com", false);
+
+        assertThat(result.failed()).isZero();
+        assertThat(result.host()).isEqualTo("harbor.example.com");
+        verify(credentialService).upsertManagedRegistry(eq("Harbor t-acme@c1"),
+                eq("harbor.example.com"), eq("tenant-1"), eq("robot$t-acme+ci"), eq("s3cr3t"),
+                anyString());
     }
 
     private static PlatformTenant tenant(String id, String sa) {

@@ -115,9 +115,14 @@ public class TenantService {
             }
         }
 
-        // 重新启用 → 补建各集群 SA（幂等）
+        // 重新启用 → 补建各集群 SA（幂等）+ 补建 Harbor 项目/凭据（停用期间建的租户没有行）
         if (req.getStatus() != null && req.getStatus() == 1 && existing.getStatus() != null && existing.getStatus() != 1) {
             provisionTenantSas(req.getId());
+            try {
+                harborRegistry.ensureForTenantOnInstalledClusters(req.getId());
+            } catch (Exception e) {
+                log.warn("租户 {} 启用后 Harbor 项目同步失败：{}", req.getId(), e.getMessage());
+            }
         }
         return tenantMapper.selectByPrimaryKey(req.getId());
     }

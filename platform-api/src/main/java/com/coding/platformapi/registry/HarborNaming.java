@@ -14,9 +14,19 @@ public final class HarborNaming {
     private HarborNaming() {
     }
 
-    /** 租户项目：serviceAccount 已全局唯一且是小写 K8s 名 */
+    /**
+     * 租户项目：`t-<serviceAccount>`。
+     *
+     * <p>⚠️ serviceAccount 是 RFC1123（允许**连续**连字符），而 Harbor 的项目名文法不允许
+     * 连续分隔符（`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`）—— `team--dev` 会让建项目 400。
+     * 这里折叠连续分隔符并去掉首尾分隔符（评审 I2）。
+     */
     public static String projectName(String serviceAccount) {
-        return "t-" + serviceAccount;
+        String safe = serviceAccount == null ? "" : serviceAccount.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9._-]+", "-")
+                .replaceAll("[-._]{2,}", "-")
+                .replaceAll("^[-._]+|[-._]+$", "");
+        return "t-" + safe;
     }
 
     public static String robotNameInHarbor(String projectName) {

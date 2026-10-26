@@ -53,7 +53,8 @@ class ComponentInstallServiceTest {
             return 1;
         }).when(mapper).insert(any());
         // 默认：Harbor 的租户项目同步成功（单个用例要失败时再覆盖）
-        when(harborRegistry.ensureAll(anyString(), org.mockito.ArgumentMatchers.anyBoolean()))
+        when(harborRegistry.ensureAll(anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(new HarborRegistryService.SyncResult("c1", "harbor.example.com",
                         List.of(), 0));
     }
@@ -1557,8 +1558,9 @@ class ComponentInstallServiceTest {
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(components.status("c1")).thenReturn(List.of(healthy("istio")));
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(harborRegistry.ensureAll("c1", true)).thenReturn(new HarborRegistryService.SyncResult(
-                "c1", "harbor.example.com", List.of(), 0));
+        when(harborRegistry.ensureAll("c1", "harbor.example.com", true))
+                .thenReturn(new HarborRegistryService.SyncResult(
+                        "c1", "harbor.example.com", List.of(), 0));
 
         ComponentApplyRequest req = new ComponentApplyRequest();
         req.setClusterId("c1");
@@ -1567,7 +1569,8 @@ class ComponentInstallServiceTest {
         req.setHarbor(new HarborInstallRequest("harbor.example.com"));
         service().apply(req, "admin");
 
-        verify(harborRegistry, timeout(3000)).ensureAll("c1", true);
+        // ⭐ 钩子在写 SUCCESS 之前跑，必须把本次安装的 host 显式传下去（评审 C1）
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", "harbor.example.com", true);
     }
 
     @Test
@@ -1577,7 +1580,8 @@ class ComponentInstallServiceTest {
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(components.status("c1")).thenReturn(List.of(healthy("istio")));
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(harborRegistry.ensureAll("c1", true)).thenThrow(new IllegalStateException("harbor unreachable"));
+        when(harborRegistry.ensureAll("c1", "harbor.example.com", true))
+                .thenThrow(new IllegalStateException("harbor unreachable"));
 
         ComponentApplyRequest req = new ComponentApplyRequest();
         req.setClusterId("c1");

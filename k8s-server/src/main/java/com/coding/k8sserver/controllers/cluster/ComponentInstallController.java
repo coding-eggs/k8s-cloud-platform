@@ -32,6 +32,7 @@ import com.coding.k8sserver.components.OtelServiceMonitorObjects;
 import com.coding.k8sserver.components.OtelTelemetryObjects;
 import com.coding.k8sserver.components.TempoObjstoreObjects;
 import com.coding.k8sserver.components.ThanosObjstoreObjects;
+import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -377,6 +378,12 @@ public class ComponentInstallController implements AccessBoundaryAware {
         }
         boolean initialized = client.apps().deployments()
                 .inNamespace(request.getNamespace()).withName("harbor-core").get() != null;
+        // 首次安装时 helm 还没跑（--create-namespace 还没建 ns），Secret 写不进去会挡住整个安装
+        if (client.namespaces().withName(request.getNamespace()).get() == null) {
+            client.namespaces().resource(new NamespaceBuilder()
+                            .withNewMetadata().withName(request.getNamespace()).endMetadata().build())
+                    .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        }
         if (initialized) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "管理口令 Secret 丢失，Harbor 已初始化：重新生成的口令与库里的哈希不一致。"

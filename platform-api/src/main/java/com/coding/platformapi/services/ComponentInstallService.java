@@ -1139,9 +1139,10 @@ public class ComponentInstallService {
             // 失败时整条操作记 FAILED：组件本身已装好，但流水线还推不了镜像 —— 必须让人看见。
             if (result.isSuccess() && "harbor".equals(componentCode)) {
                 try {
+                    // host 直接来自本次安装参数：钩子在写 SUCCESS 之前跑，harborHost() 还读不到记录
                     // INSTALL 强制重建：手工卸载后同地址重装时，旧凭据还在但新 Harbor 里没有那个 robot
-                    HarborRegistryService.SyncResult sync =
-                            harborRegistry.ensureAll(clusterId, "INSTALL".equals(action));
+                    HarborRegistryService.SyncResult sync = harborRegistry.ensureAll(
+                            clusterId, harbor.getHost(), "INSTALL".equals(action));
                     if (sync.failed() > 0) {
                         throw new IllegalStateException(
                                 sync.failed() + " 个租户同步失败（见镜像项目面板）");

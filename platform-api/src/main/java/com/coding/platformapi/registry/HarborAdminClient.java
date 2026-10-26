@@ -90,6 +90,11 @@ public class HarborAdminClient {
         return created;
     }
 
+    /** 只查项目 id（404 → null，**不创建**）：删租户回收账号时用，避免顺手把项目建出来 */
+    public Long findProjectId(String baseUrl, String user, String pass, String projectName) {
+        return projectId(baseUrl, user, pass, projectName);
+    }
+
     /** 建机器人账号（project 级，push+pull，不过期）。返回的 secret **只出现这一次**。 */
     public HarborRobot createRobot(String baseUrl, String user, String pass, String projectName) {
         Map<String, Object> body = Map.of(
@@ -120,8 +125,10 @@ public class HarborAdminClient {
         } catch (CloudPlatformException e) {
             throw e;
         } catch (Exception e) {
+            // ⚠️ 不带 e.getMessage()：Jackson 的解析异常里会带被解析的原文（含一次性 secret），
+            // 这条消息会被写进台账并打日志（评审 Minor #3）
             throw new CloudPlatformException(EnumResponseType.ERROR.getCode(),
-                    "解析 Harbor 机器人账号响应失败：" + e.getMessage(), e);
+                    "解析 Harbor 机器人账号响应失败（响应体可能含一次性 secret，已省略）", e);
         }
     }
 
