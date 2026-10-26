@@ -101,7 +101,7 @@ class PipelineRunServiceTest {
         // ⭐ Review Focus #4：绕过前端直接打接口，引用一条没被授权的连接也要被拒
         svc.run(pipeline(canvas("conn-1")), "alice", ctx);
 
-        verify(credentials).resolveForPipeline("conn-1", "GIT");
+        verify(credentials).resolveForPipeline("conn-1", "GIT", "t1");
     }
 
     @Test
@@ -125,7 +125,7 @@ class PipelineRunServiceTest {
         svc.run(pipeline(withImage), "alice", ctx);
 
         // null = 不校验类型：镜像节点只要求「是一条被授权的 registry 连接」
-        verify(credentials).resolveForPipeline("reg-9", null);
+        verify(credentials).resolveForPipeline("reg-9", null, "t1");
     }
 
     @Test
@@ -205,7 +205,7 @@ class PipelineRunServiceTest {
     private void doThrowUnauthorized() {
         org.mockito.Mockito.doThrow(new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                         "该连接未授权在流水线里使用：conn-1"))
-                .when(credentials).resolveForPipeline(any(), any());
+                .when(credentials).resolveForPipeline(any(), any(), any());
     }
 
     // ---- 日志（两种数据源，分界线是「归档了没有」）----
@@ -706,8 +706,8 @@ class PipelineRunServiceTest {
 
         svc.run(pipeline(canvas), "alice", ctx, List.of("b"));
 
-        verify(credentials).resolveForPipeline("conn-1", "GIT");
-        verify(credentials, never()).resolveForPipeline("conn-2", "GIT");
+        verify(credentials).resolveForPipeline("conn-1", "GIT", "t1");
+        verify(credentials, never()).resolveForPipeline("conn-2", "GIT", "t1");
     }
 
     @Test

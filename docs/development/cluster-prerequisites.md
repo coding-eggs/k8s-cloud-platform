@@ -84,6 +84,8 @@ kubectl -n tekton-pipelines patch configmap config-defaults --type merge -p \
 
 对策：节点 schema 里带**代理**字段（git 克隆 / 构建并推送镜像两个节点的高级区），
 或集群级给 Tekton 注入 `default-pod-template` 的 `HTTPS_PROXY`；目标仓库优先用**集群内可达的 Harbor**。
+（Harbor 可由平台在「集群组件」里直接安装，并在该组件的「镜像项目」面板按租户自动建 project
+与 robot 账号 —— 见 `charts/components/harbor/README.md`。装之前先确认访问域名三边可解析。）
 
 ### 1.5 构建镜像**不需要** fuse / privileged（平台侧已在脚本里绕开）
 
