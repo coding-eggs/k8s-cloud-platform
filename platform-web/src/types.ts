@@ -2700,6 +2700,6 @@ export interface ApplicationOperation {
 }
 
 export interface ApplicationOptions {
-  nodeKinds: Array<{ kind: AppNodeKind; name: string; description: string }>
+  nodeKinds: Array<{ kind: AppNodeKind; name: string; description: string; detail?: string }>
   namespaces: string[]
 }

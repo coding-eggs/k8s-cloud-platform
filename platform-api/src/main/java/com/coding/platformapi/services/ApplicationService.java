@@ -221,10 +221,17 @@ public class ApplicationService {
     public ApplicationOptionsView options(String clusterId, String tenantId) {
         ApplicationOptionsView out = new ApplicationOptionsView();
         out.setNodeKinds(List.of(
-                nodeKind("SERVICE", "服务", "有端口，自动建 Service"),
-                nodeKind("WORKER", "后台进程", "无端口，不建 Service"),
-                nodeKind("MIDDLEWARE", "中间件", "MySQL / Redis / Kafka 等"),
-                nodeKind("EXTERNAL", "外部服务", "集群外的数据库或 MQ")));
+                nodeKind("SERVICE", "服务", "有端口，自动建 Service",
+                        "生成 Deployment（勾了持久化则 StatefulSet + Headless Service）、Service、ConfigMap；"
+                                + "勾选时再加 HPA 和 ServiceMonitor。"),
+                nodeKind("WORKER", "后台进程", "无端口，不建 Service",
+                        "只生成 Deployment：没有端口、不建 Service、不配探针。适合消费队列等常驻后台进程。"),
+                nodeKind("MIDDLEWARE", "中间件", "MySQL / Redis / Kafka 等",
+                        "三种来源：平台创建（建实例并等 Ready）、绑定已有实例、链接外部；"
+                                + "可填初始化脚本，部署时以一次性 Job 执行。"),
+                nodeKind("EXTERNAL", "外部服务", "集群外的数据库或 MQ",
+                        "什么都不部署，只产出连接信息（地址、端口、Secret 键），"
+                                + "供依赖它的服务注入环境变量。")));
         out.setNamespaces(allocations.listByCluster(clusterId).stream()
                 .filter(a -> tenantId == null || tenantId.equals(a.getTenantId()))
                 .map(PlatformTenantNamespace::getNamespace)
@@ -233,11 +240,12 @@ public class ApplicationService {
         return out;
     }
 
-    private static Map<String, Object> nodeKind(String kind, String name, String description) {
+    private static Map<String, Object> nodeKind(String kind, String name, String description, String detail) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("kind", kind);
         m.put("name", name);
         m.put("description", description);
+        m.put("detail", detail);
         return m;
     }
 

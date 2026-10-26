@@ -140,20 +140,15 @@ function relayout() {
   })
 }
 
-/**
- * 加节点。带 position = 从面板拖过来的，落在松手的位置并钉住；
- * 不带 position = 点面板加的，交给自动分层落位。
- */
-function addNode(kind: AppNodeKind, position?: Point) {
+/** 从左侧面板拖过来的节点：落在松手的位置，并且钉住（用户选了位置就别再自动挪走） */
+function addNode(kind: AppNodeKind, position: Point) {
   const key = nextKey(kind)
-  if (position) {
-    pins.value = { ...pins.value, [key]: { x: position.x, y: position.y } }
-  }
+  pins.value = { ...pins.value, [key]: { x: position.x, y: position.y } }
   nodes.value = [...nodes.value, {
     id: key,
     type: 'app',
     deletable: false,
-    position: position ?? { x: 0, y: 0 },
+    position: { x: position.x, y: position.y },
     data: { key, kind, params: defaultParams(kind) },
   }]
   selectedKey.value = key
@@ -525,7 +520,7 @@ onUnmounted(() => {
     </div>
 
     <div class="canvas-page__body">
-      <AppNodePalette :kinds="options.nodeKinds" @add="addNode" />
+      <AppNodePalette :kinds="options.nodeKinds" />
 
       <div class="canvas">
         <AppCanvas
