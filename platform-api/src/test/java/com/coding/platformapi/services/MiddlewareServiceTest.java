@@ -3,6 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
+import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
@@ -18,6 +19,7 @@ import com.coding.platformapi.k8s.K8sMiddlewareClient;
 import com.coding.platformapi.middleware.MiddlewareCatalog;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
+import com.coding.platformapi.models.MiddlewarePasswordChangeRequest;
 import com.coding.platformapi.models.ObjectStorageBucketRef;
 import com.coding.platformapi.models.ObjectStorageBucketView;
 import com.coding.platformapi.models.ObjectStorageCreateBucket;
@@ -769,6 +771,83 @@ class MiddlewareServiceTest {
         assertThat(saved.getValue().getSpecJson())
                 .contains("\"authEnabled\":true")
                 .doesNotContain(sent.getValue().getPassword());
+    }
+
+    @Test
+    void milvusPasswordChangeGeneratesAPasswordWhenTheUserLeavesItEmpty() {
+        PlatformMiddlewareInstance i = instance("milvus", "STANDALONE");
+        i.setTenantId("t1");
+        i.setSpecJson("{\"authEnabled\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.changePassword(anyString(), any())).thenReturn(true);
+
+        MiddlewarePasswordChangeRequest req = new MiddlewarePasswordChangeRequest();
+        req.setInstanceId("mwi_1");
+        service.changePassword(req, "t1");
+
+        ArgumentCaptor<MiddlewarePasswordRequestDTO> sent =
+                ArgumentCaptor.forClass(MiddlewarePasswordRequestDTO.class);
+        verify(client).changePassword(anyString(), sent.capture());
+        assertThat(sent.getValue().getNewPassword()).hasSizeGreaterThanOrEqualTo(8);
+        assertThat(sent.getValue().getName()).isEqualTo("mw-milvus-abcdefgh");
+        assertThat(sent.getValue().getNamespace()).isEqualTo("demo");
+        assertThat(sent.getValue().getInstanceId()).isEqualTo("mwi_1");
+        assertThat(sent.getValue().getTenantId()).isEqualTo("t1");
+    }
+
+    @Test
+    void milvusPasswordChangeKeepsACustomPassword() {
+        PlatformMiddlewareInstance i = instance("milvus", "STANDALONE");
+        i.setTenantId("t1");
+        i.setSpecJson("{\"authEnabled\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.changePassword(anyString(), any())).thenReturn(true);
+
+        MiddlewarePasswordChangeRequest req = new MiddlewarePasswordChangeRequest();
+        req.setInstanceId("mwi_1");
+        req.setNewPassword("  my-own-pw-123  ");
+        service.changePassword(req, "t1");
+
+        ArgumentCaptor<MiddlewarePasswordRequestDTO> sent =
+                ArgumentCaptor.forClass(MiddlewarePasswordRequestDTO.class);
+        verify(client).changePassword(anyString(), sent.capture());
+        assertThat(sent.getValue().getNewPassword()).isEqualTo("my-own-pw-123");
+    }
+
+    @Test
+    void milvusPasswordChangeRefusesInstancesWithoutAuth() {
+        PlatformMiddlewareInstance i = instance("milvus", "STANDALONE");
+        i.setTenantId("t1");
+        i.setSpecJson("{\"authEnabled\":false}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        MiddlewarePasswordChangeRequest req = new MiddlewarePasswordChangeRequest();
+        req.setInstanceId("mwi_1");
+
+        assertThatThrownBy(() -> service.changePassword(req, "t1"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("没有开启鉴权");
+        verify(client, never()).changePassword(anyString(), any());
+    }
+
+    @Test
+    void milvusPasswordChangeRefusesOtherMiddlewaresAndShortPasswords() {
+        PlatformMiddlewareInstance redis = instance("redis", "SENTINEL");
+        redis.setTenantId("t1");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(redis);
+        MiddlewarePasswordChangeRequest req = new MiddlewarePasswordChangeRequest();
+        req.setInstanceId("mwi_1");
+        assertThatThrownBy(() -> service.changePassword(req, "t1"))
+                .hasMessageContaining("不支持改密码");
+
+        PlatformMiddlewareInstance milvus = instance("milvus", "STANDALONE");
+        milvus.setTenantId("t1");
+        milvus.setSpecJson("{\"authEnabled\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(milvus);
+        req.setNewPassword("short");
+        assertThatThrownBy(() -> service.changePassword(req, "t1"))
+                .hasMessageContaining("8~72");
+        verify(client, never()).changePassword(anyString(), any());
     }
 
     @Test

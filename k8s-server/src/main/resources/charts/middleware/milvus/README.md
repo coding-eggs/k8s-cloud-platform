@@ -59,6 +59,15 @@
 10. **平台桶的归属租户**：租户作用域统一取**顶栏**（资源上下文 store）。中间件三页都带 `meta.context: 'full'`，
    顶栏级联的 `ensureDefaults` 会把平台视图落到第一个可用租户；没有可用租户时表单禁用「平台对象存储」。
    实例台账的 `tenant_id` 保持请求值（管理员平台视图 = null）——**桶归租户、实例归平台**。
+11. **改密码只能走 Milvus 接口**（2026-10-26）：改 CR 的 `defaultRootPassword`、改 Secret、重启 ——
+    **都不会改密码**（`MetaTable.InitCredential` 查到 root 已存在就直接返回，那条配置只在首次初始化生效）。
+    平台的「改密码」是：k8s-server 从 Secret 读旧口令 → `POST /v2/vectordb/users/update_password`
+    （`http://<实例名>-milvus.<ns>.svc:19530`）→ 成功后再写回 Secret。
+    ⚠️ 地址是集群内 Service，和 `SeaweedS3Service` 一样要求 **k8s-server 能连到目标集群的业务网段**
+    （平台主集群满足；跨集群托管且网络不通时会在第一次尝试就报连接失败）。
+12. **用户/角色管理没有开放**：Milvus 本身支持（RESTful `/v2/vectordb/users/{create,list,drop,grant_role}`、
+    `/v2/vectordb/roles/*`），平台目前只提供 root 一个账号 + 改口令。要加用户得决定口令怎么发、
+    权限怎么在 UI 上表达，属于下一批的事。
 
 ## 5. 业务指标
 

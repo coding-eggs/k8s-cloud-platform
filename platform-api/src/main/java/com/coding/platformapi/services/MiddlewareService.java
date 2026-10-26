@@ -13,6 +13,7 @@ import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
 import com.coding.common.models.middleware.MiddlewareModeDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorInstallRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
+import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
@@ -36,6 +37,7 @@ import com.coding.platformapi.models.MiddlewareCreateRequest;
 import com.coding.platformapi.models.MiddlewareInstanceDetail;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
 import com.coding.platformapi.models.MiddlewareMetricsRequest;
+import com.coding.platformapi.models.MiddlewarePasswordChangeRequest;
 import com.coding.platformapi.models.MiddlewareScaleRequest;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -667,6 +669,37 @@ public class MiddlewareService {
     /** Prometheus 是 RE2：没有 {@code \Q..\E}，这里手工转义元字符（Pod 名本是 DNS label）。 */
     private static String escapeRegex(String s) {
         return s.replaceAll("([\\\\.^$*+?()\\[\\]{}|])", "\\\\$1");
+    }
+
+    /**
+     * 改实例的 root 口令（目前只有 Milvus，且实例必须已开启鉴权）。
+     *
+     * <p>新口令留空 = 平台生成（与创建同一套随机口令）；**不回显**，用户去 Secret
+     * {@code <实例名>-milvus-auth} 的 {@code password} 键取。旧口令由 k8s-server 从 Secret 读，
+     * 平台全程不接触。
+     */
+    public void changePassword(MiddlewarePasswordChangeRequest req, String tenantId) {
+        PlatformMiddlewareInstance instance = requireInstance(req.getInstanceId(), tenantId);
+        if (!"milvus".equals(instance.getCode())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "该中间件不支持改密码");
+        }
+        if (!Boolean.TRUE.equals(parseSpec(instance.getSpecJson()).get("authEnabled"))) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "实例没有开启鉴权，没有口令可改（要鉴权请按「开启鉴权」重建）");
+        }
+        String password = isBlank(req.getNewPassword()) ? randomPassword() : req.getNewPassword().trim();
+        if (password.length() < 8 || password.length() > 72) {
+            // 72 = Milvus common.security.defaultRootPassword 的长度上限
+            throw new CloudPlatformException(EnumResponseType.ERROR, "新口令长度需在 8~72 位之间");
+        }
+        MiddlewarePasswordRequestDTO dto = new MiddlewarePasswordRequestDTO();
+        dto.setClusterId(instance.getClusterId());
+        dto.setNamespace(instance.getNamespace());
+        dto.setName(instance.getName());
+        dto.setInstanceId(instance.getId());
+        dto.setNewPassword(password);
+        dto.setTenantId(tenantId);
+        client.changePassword(instance.getCode(), dto);
     }
 
     /** 只改显示名（台账字段），不动集群对象；重名不拦（显示名不唯一）。 */

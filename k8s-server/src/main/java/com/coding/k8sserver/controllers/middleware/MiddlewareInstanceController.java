@@ -5,6 +5,7 @@ import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
 import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
+import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
 import com.coding.common.models.system.ResponseData;
@@ -65,6 +66,16 @@ public class MiddlewareInstanceController implements AccessBoundaryAware {
                                         @RequestBody MiddlewareDeleteRequestDTO request) {
         request.setCode(code);
         service.delete(request);
+        return new ResponseData<>(true);
+    }
+
+    @PostMapping("/{code}/instances/password")
+    @Operation(summary = "改实例的鉴权口令（Milvus）",
+            description = "旧口令由 k8s-server 从鉴权 Secret 读；先调 Milvus 的 update_password，成功后写回 Secret")
+    public ResponseData<Boolean> changePassword(@PathVariable("code") String code,
+                                                @RequestBody MiddlewarePasswordRequestDTO request) {
+        request.setCode(code);
+        service.changePassword(request);
         return new ResponseData<>(true);
     }
 

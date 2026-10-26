@@ -58,6 +58,47 @@ const fixedReplicas = computed(() => {
 })
 const canScale = computed(() => instance.value?.code !== 'nacos')
 
+/** 只有 Milvus 且创建时开了鉴权才有 root 口令可改 */
+const canChangePassword = computed(() =>
+  instance.value?.code === 'milvus' && detail.value?.spec?.authEnabled === true)
+
+/**
+ * 改 root 口令：留空 = 平台生成。
+ *
+ * <p>旧口令不用用户提供 —— 后端从 Secret 里读；改完 Secret 会同步更新（Milvus 只在首次初始化时
+ * 读 defaultRootPassword，改配置/重启都不会改密码）。
+ */
+async function changePassword(): Promise<void> {
+  const inst = instance.value
+  if (!inst) return
+  let input = ''
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `新口令（8~72 位）。留空 = 平台生成 32 位随机口令，之后到 Secret ${inst.name}-milvus-auth 的 password 键取。`,
+      '改 root 口令',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        inputType: 'password',
+        inputPlaceholder: '留空 = 平台生成',
+        inputValidator: (v: string) => !v || (v.length >= 8 && v.length <= 72) || '长度需在 8~72 位之间',
+      },
+    )
+    input = (value ?? '').trim()
+  } catch {
+    return   // 用户取消
+  }
+  try {
+    await middlewareApi.changePassword({ instanceId: inst.id, newPassword: input || undefined, tenantId: tenantId.value })
+    ElMessage.success(input
+      ? '口令已更新（Milvus 与 Secret 已同步）'
+      : `已改用平台生成的口令：到 Secret ${inst.name}-milvus-auth 的 password 键取`)
+    await load()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
 /** 监控图的百分比上限：CPU 核数 / 内存字节（spec 里是 K8s quantity 字符串） */
 const cpuLimitNum = computed(() => parseCpu(detail.value?.spec?.cpuLimit))
 const memoryLimitBytes = computed(() => {
@@ -273,6 +314,7 @@ watch(tenantId, () => void load())
         </p>
       </div>
       <div class="ph-actions">
+        <el-button v-if="canChangePassword" @click="changePassword">改密码</el-button>
         <el-button @click="openEdit">编辑</el-button>
         <el-button type="danger" plain @click="remove">删除</el-button>
       </div>

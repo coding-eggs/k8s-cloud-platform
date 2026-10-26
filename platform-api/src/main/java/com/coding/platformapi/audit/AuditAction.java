@@ -120,6 +120,9 @@ public final class AuditAction {
     /** 修改中间件实例显示名（只改台账） */
     public static final String MIDDLEWARE_RENAME = "middleware:rename";
 
+    /** 改中间件实例的鉴权口令（Milvus；新口令由平台生成或用户填写） */
+    public static final String MIDDLEWARE_PASSWORD = "middleware:password";
+
     /** 安装/升级中间件 Operator（管理员） */
     public static final String MIDDLEWARE_OPERATOR_INSTALL = "middleware:operator:install";
 

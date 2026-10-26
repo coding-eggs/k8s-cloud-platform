@@ -1029,6 +1029,9 @@ export const middlewareApi = {
     http.post<never, MiddlewareOperation[]>('/middleware/instance/operations', { instanceId, tenantId }),
   rename: (payload: { instanceId: string; displayName: string; tenantId?: string }) =>
     http.post<never, MiddlewareInstance>('/middleware/instance/rename', payload),
+  /** 改实例的鉴权口令（Milvus）：新口令留空 = 平台生成；口令不回显，去 Secret <名称>-milvus-auth 取 */
+  changePassword: (payload: { instanceId: string; newPassword?: string; tenantId?: string }) =>
+    http.post<never, boolean>('/middleware/instance/password', payload),
   create: (payload: {
     clusterId: string
     code: string

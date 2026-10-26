@@ -6,6 +6,7 @@ import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
 import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
+import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
@@ -567,6 +568,55 @@ public class MiddlewareInstanceService {
             }
         }
         // keepPvc=true 时保留 Secret：数据卷还在，凭据也还给它留着
+    }
+
+    /**
+     * 改实例的 root 口令（Milvus；实例必须已开启鉴权）。
+     *
+     * <p><b>顺序不能反</b>：先调 Milvus 的口令接口，成功后再写回 Secret。反过来的话，
+     * Milvus 拒绝时 Secret 已经变了 —— 集群里再没有任何地方知道真实口令。
+     *
+     * <p>旧口令从 Secret 里读（不经过 platform-api），调用方只需要给新口令。
+     */
+    public void changePassword(MiddlewarePasswordRequestDTO req) {
+        if (!notBlank(req.getName()) || !notBlank(req.getNamespace()) || !notBlank(req.getNewPassword())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "改密码参数不完整");
+        }
+        var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
+                req.getTenantId(), req.getClusterId(), req.getNamespace());
+        KubernetesClient client = clientOf(req.getClusterId(), ctx);
+        String authSecret = req.getName() + MilvusMiddlewareAdapter.AUTH_SECRET_SUFFIX;
+        Secret secret = client.secrets().inNamespace(req.getNamespace()).withName(authSecret).get();
+        if (secret == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "实例没有开启鉴权（找不到 Secret " + authSecret + "），无法改密码");
+        }
+        String username = decoded(secret, "username");
+        String oldPassword = decoded(secret, "password");
+        if (!notBlank(oldPassword)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "鉴权 Secret 缺少 password 键（" + authSecret + "），请人工核对");
+        }
+        String endpoint = "http://" + req.getName() + "-milvus." + req.getNamespace() + ".svc:19530";
+        MilvusPasswordClient.update(endpoint, notBlank(username) ? username : "root",
+                oldPassword, req.getNewPassword());
+        // Milvus 已经改成功：Secret 必须跟着变，否则连接信息给出的还是旧口令
+        Map<String, String> data = new java.util.LinkedHashMap<>();
+        data.put("username", notBlank(username) ? username : "root");
+        data.put("password", req.getNewPassword());
+        writeDataSecret(client, req.getNamespace(), authSecret, data, req.getInstanceId());
+    }
+
+    /** Secret 的某个键（base64 解出来的明文）；缺失返回 null */
+    private static String decoded(Secret secret, String key) {
+        if (secret == null || secret.getData() == null) {
+            return null;
+        }
+        String value = secret.getData().get(key);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return new String(java.util.Base64.getDecoder().decode(value), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public List<MiddlewareStatusResultDTO> status(MiddlewareStatusRequestDTO req) {

@@ -7,6 +7,7 @@ import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorInstallRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusRequestDTO;
+import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusRequestDTO;
 import com.coding.common.models.middleware.MiddlewareStatusResultDTO;
@@ -47,6 +48,11 @@ public class K8sMiddlewareClient {
 
     public Boolean delete(String code, MiddlewareDeleteRequestDTO body) {
         return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/delete", null, body,
+                gateway.responseType(Boolean.class));
+    }
+
+    public Boolean changePassword(String code, MiddlewarePasswordRequestDTO body) {
+        return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/password", null, body,
                 gateway.responseType(Boolean.class));
     }
 

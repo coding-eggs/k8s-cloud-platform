@@ -15,6 +15,7 @@ import com.coding.platformapi.models.MiddlewareOperatorInstallRequest;
 import com.coding.platformapi.models.MiddlewareInstanceDetail;
 import com.coding.platformapi.models.MiddlewareMetricsRequest;
 import com.coding.platformapi.models.MiddlewareOptionsRequest;
+import com.coding.platformapi.models.MiddlewarePasswordChangeRequest;
 import com.coding.platformapi.models.MiddlewareRenameRequest;
 import com.coding.platformapi.models.MiddlewareQueryRequest;
 import com.coding.platformapi.models.MiddlewareScaleRequest;
@@ -108,6 +109,15 @@ public class MiddlewareController {
     public ResponseData<PlatformMiddlewareInstance> rename(@RequestBody MiddlewareRenameRequest request) {
         return new ResponseData<>(service.rename(request.getInstanceId(), request.getDisplayName(),
                 auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/password")
+    @Auditable(action = AuditAction.MIDDLEWARE_PASSWORD, target = "#request.instanceId")
+    @Operation(summary = "改实例的鉴权口令（Milvus）",
+            description = "旧口令由 k8s-server 从 Secret 读；新口令留空则平台生成。口令不回显，去 Secret 取")
+    public ResponseData<Boolean> changePassword(@RequestBody MiddlewarePasswordChangeRequest request) {
+        service.changePassword(request, auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>(true);
     }
 
     @PostMapping("/instance/metrics")
