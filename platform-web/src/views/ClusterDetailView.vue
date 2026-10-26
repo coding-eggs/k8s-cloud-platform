@@ -88,6 +88,7 @@ async function onApply(p: {
   tektonProfile?: string
   otel?: import('@/types').K8sOtelInstall
   seaweed?: import('@/types').K8sSeaweedInstall
+  harbor?: import('@/types').K8sHarborInstall
 }): Promise<void> {
   const target = components.statusOf(p.code)
   try {
@@ -111,7 +112,7 @@ async function onApply(p: {
   try {
     const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues,
       p.alertWebhookUrl, p.thanosReceiveUrl, p.thanosInstall, p.calicoInstall, p.tektonProfile, p.otel,
-      p.seaweed)
+      p.seaweed, p.harbor)
     const op = await operations.wait(id)
     if (op.status === 'SUCCESS') {
       ElMessage.success('操作完成，正在刷新探测…')
@@ -738,6 +739,7 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
              （概览摘要要用），lazy 这里只保证面板自身不额外触发请求。 -->
         <el-tab-pane label="集群组件" name="components" lazy>
           <ClusterComponentsPanel
+            :cluster-id="clusterId"
             :statuses="components.statuses.value"
             :loading="components.statusesLoading.value"
             :can-refresh="components.canManage.value"

@@ -1,7 +1,8 @@
 import { ref, watch, type Ref } from 'vue'
 import { clusterApi } from '@/api'
 import type {
-  K8sCalicoInstall, K8sComponentOperation, K8sOtelInstall, K8sSeaweedInstall, K8sThanosInstall,
+  K8sCalicoInstall, K8sComponentOperation, K8sHarborInstall, K8sOtelInstall, K8sSeaweedInstall,
+  K8sThanosInstall,
 } from '@/types'
 
 /**
@@ -44,12 +45,14 @@ export function useComponentOperations(clusterId: Ref<string | null | undefined>
     tektonProfile?: string,
     otel?: K8sOtelInstall,
     seaweed?: K8sSeaweedInstall,
+    harbor?: K8sHarborInstall,
   ): Promise<number> {
     const id = clusterId.value
     if (!id) throw new Error('缺少集群上下文')
     const operationId = await clusterApi.componentApply({
       clusterId: id, componentCode, action, targetVersion, editableValues,
       alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, tektonProfile, otel, seaweed,
+      harbor,
     })
     await load()
     return operationId

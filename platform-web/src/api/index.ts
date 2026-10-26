@@ -23,6 +23,8 @@ import type {
   K8sComponentOperation,
   K8sComponentStatus,
   K8sOtelInstall,
+  K8sHarborInstall,
+  K8sRegistryProject,
   K8sSeaweedInstall,
   K8sThanosInstall,
   TraceDetail,
@@ -176,6 +178,8 @@ export const clusterApi = {
     otel?: K8sOtelInstall
     /** 对象存储参数（仅 seaweedStorage 的组件：StorageClass / 容量 / 副本数） */
     seaweed?: K8sSeaweedInstall
+    /** Harbor 安装参数（仅 harborRegistry 的组件：访问域名） */
+    harbor?: K8sHarborInstall
   }) => http.post<never, number>('/cluster/components/apply', payload),
   /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
   componentOperation: (payload: {
@@ -863,6 +867,22 @@ export const registryApi = {
    */
   suggest: (imagePrefix: string) =>
     http.post<never, RegistrySuggestResponse>('/registry/suggest', { imagePrefix }, { silent403: true }),
+
+  /** 租户镜像项目（管理员） */
+  projects: (clusterId: string) =>
+    http.post<never, K8sRegistryProject[]>('/registry/projects/list', { clusterId }),
+  /** 同步全部租户（安装后 / 新增租户后的手动兜底） */
+  syncProjects: (clusterId: string) =>
+    http.post<never, {
+      clusterId: string
+      host: string
+      failed: number
+      items: { tenantId: string | null; tenantName: string; project: string; status: string; message: string }[]
+    }>('/registry/projects/sync', { clusterId }),
+  /** 重建单个租户（tenantId 空 = 平台共享） */
+  rebuildProject: (clusterId: string, tenantId: string | null) =>
+    http.post<never, { status: string; message: string }>('/registry/projects/rebuild',
+      { clusterId, tenantId }),
 }
 
 

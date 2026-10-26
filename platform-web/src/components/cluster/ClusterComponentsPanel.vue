@@ -17,10 +17,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type {
   K8sCalicoInstall, K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
-  K8sEsConfig, K8sOtelInstall, K8sSeaweedInstall, K8sTempoStorage, K8sThanosInstall, SecretRefOption,
+  K8sEsConfig, K8sHarborInstall, K8sOtelInstall, K8sSeaweedInstall, K8sTempoStorage,
+  K8sThanosInstall, SecretRefOption,
 } from '@/types'
+import HarborProjectsDialog from './HarborProjectsDialog.vue'
 
 const props = defineProps<{
+  /** 集群 id（Harbor 镜像项目弹窗要它） */
+  clusterId: string
   statuses: K8sComponentStatus[]
   loading: boolean
   /** 「重新探测」需要 platform:cluster:manage（写操作） */
@@ -55,6 +59,8 @@ const emit = defineEmits<{
     otel?: K8sOtelInstall
     /** 对象存储参数（仅 seaweedStorage 的组件：StorageClass / 容量 / 副本数） */
     seaweed?: K8sSeaweedInstall
+    /** Harbor 安装参数（仅 harborRegistry 的组件：访问域名） */
+    harbor?: K8sHarborInstall
   }): void
   /** 中止一条进行中的操作（由页面调接口并刷新操作列表） */
   (e: 'abandon', id: number): void
@@ -86,6 +92,7 @@ const FEATURE_LABELS: Record<string, string> = {
   'gateway-tls': '网关 TLS 证书',
   'otel-collection': 'OTel 采集',
   'object-storage': '对象存储',
+  'container-registry': '镜像仓库',
 }
 function featureLabel(code: string): string {
   return FEATURE_LABELS[code] ?? code
@@ -181,6 +188,10 @@ interface ApplyDialog {
   showSeaweed: boolean
   seaweed: K8sSeaweedInstall
   initialSeaweed: string
+  /** 该组件是否是 Harbor（访问域名） */
+  showHarbor: boolean
+  harbor: K8sHarborInstall
+  initialHarbor: string
 }
 
 /** OTel 表单里两个嵌套对象始终存在（后端可以为空，但表单控件需要可绑定） */
@@ -248,6 +259,8 @@ const ACTION_LABEL: Record<ApplyDialog['action'], string> = {
 
 /** 容量写法（K8s quantity）：50Gi / 500Mi / 1Ti；不带单位按字节，几乎不会是本意，所以默认要求带单位 */
 const SIZE_RE = /^[1-9]\d*(\.\d+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$/
+/** Harbor 访问域名：host[:port]，不带 scheme/path（与后端 HARBOR_HOST 同一条） */
+const HARBOR_HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$/
 
 /** 资源限制表单：requests/limits × cpu/memory 四格，提交时拼回 K8s 的 ResourceRequirements */
 interface ResourceFormValues {
@@ -461,6 +474,9 @@ const EMPTY_SEAWEED: K8sSeaweedInstall = {
   s3Endpoint: 'http://seaweedfs-s3.platform-storage:8333',
 }
 
+/** Harbor 表单默认值：host 必填（同时决定 route hostnames 与 externalURL） */
+const EMPTY_HARBOR: K8sHarborInstall = { host: '' }
+
 /** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
 function emptyOtel(): OtelForm {
   return {
@@ -483,6 +499,11 @@ function emptyOtel(): OtelForm {
   }
 }
 
+const harborProjects = ref(false)
+function openHarborProjects(): void {
+  harborProjects.value = true
+}
+
 const applyDialog = ref<ApplyDialog>({
   visible: false, code: '', name: '', action: 'INSTALL',
   version: '', versions: [], chartVersion: '', fields: [], values: {}, jsonText: {}, portRows: {}, initial: {},
@@ -497,6 +518,7 @@ const applyDialog = ref<ApplyDialog>({
   showTektonProfile: false, tektonProfile: 'all', initialTektonProfile: 'all',
   showOtel: false, showTempoInstall: false, otel: emptyOtel(), initialOtel: JSON.stringify(emptyOtel()),
   showSeaweed: false, seaweed: { ...EMPTY_SEAWEED }, initialSeaweed: JSON.stringify(EMPTY_SEAWEED),
+  showHarbor: false, harbor: { ...EMPTY_HARBOR }, initialHarbor: JSON.stringify(EMPTY_HARBOR),
 })
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
@@ -632,6 +654,11 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     adminEnabled: seaweedMerged.adminEnabled ?? false,
     s3Endpoint: seaweedMerged.s3Endpoint || EMPTY_SEAWEED.s3Endpoint,
   }
+  // Harbor：编辑时回填上次成功的域名；安装时留空必填
+  const harborMerged: K8sHarborInstall = editing && row.harborCurrent
+    ? { ...EMPTY_HARBOR, ...row.harborCurrent }
+    : { ...EMPTY_HARBOR }
+  const harbor: K8sHarborInstall = { host: harborMerged.host || '' }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, chartVersion: installedChartVersion(row) ?? '',
@@ -661,6 +688,9 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     showSeaweed: !!row.seaweedStorage,
     seaweed,
     initialSeaweed: JSON.stringify(seaweed),
+    showHarbor: !!row.harborRegistry,
+    harbor,
+    initialHarbor: JSON.stringify(harbor),
   }
   if (row.thanosInstall) {
     void loadThanosOptions()
@@ -751,6 +781,13 @@ function confirmApply(): void {
   if (d.showSeaweed && !d.seaweed.storageClass) {
     ElMessage.error('请选择对象存储的 StorageClass（PVC 需要动态供给）')
     return
+  }
+  if (d.showHarbor) {
+    const host = d.harbor.host.trim()
+    if (!HARBOR_HOST_RE.test(host)) {
+      ElMessage.error('Harbor 访问域名形如 harbor.example.com（不带 http:// 与路径）')
+      return
+    }
   }
   const editable: Record<string, unknown> = {}
   for (const f of d.fields) {
@@ -857,6 +894,9 @@ function confirmApply(): void {
     // 对象存储：安装时整组下发；编辑时只发改动过的（没改的由后端沿用上次快照）
     seaweed: d.showSeaweed && (d.action === 'INSTALL' || JSON.stringify(d.seaweed) !== d.initialSeaweed)
       ? { ...d.seaweed } : undefined,
+    // Harbor：安装时整组下发；编辑时只发改动过的
+    harbor: d.showHarbor && (d.action === 'INSTALL' || JSON.stringify(d.harbor) !== d.initialHarbor)
+      ? { host: d.harbor.host.trim() } : undefined,
   })
 }
 
@@ -1111,6 +1151,10 @@ const anyUnknown = computed(() => unknownCount.value > 0)
               <el-tooltip v-else content="平台内置的就是当前版本，暂无可升级版本" placement="top">
                 <span class="cc-readonly">已是最新</span>
               </el-tooltip>
+              <el-button v-if="row.code === 'harbor'" link type="primary"
+                         @click="openHarborProjects()">
+                镜像项目
+              </el-button>
             </template>
           </template>
           <!-- UNKNOWN / 无 recipe：不给装 —— "不知道"不是"没有"；没有 recipe 就明确说"暂不支持" -->
@@ -1267,6 +1311,18 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </el-select>
           <div class="cc-form-hint">
             Tekton Operator 按 profile 安装对应组件；默认 all（完整 Tekton）
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor" class="cc-section-title">镜像仓库（Harbor）</div>
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">访问域名</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.harbor.host"
+                    placeholder="harbor.example.com" spellcheck="false" />
+          <div class="cc-form-hint">
+            不带 <code>http://</code> 与路径。它同时是 HTTPRoute 的 hostname 与 Harbor 的
+            <code>externalURL</code>；必须能从集群内 Pod、平台、外部 docker 客户端三边解析
           </div>
         </div>
       </div>
@@ -1637,6 +1693,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </template>
     </el-dialog>
   </div>
+    <HarborProjectsDialog v-model:visible="harborProjects" :cluster-id="props.clusterId" />
 </template>
 
 <style scoped>

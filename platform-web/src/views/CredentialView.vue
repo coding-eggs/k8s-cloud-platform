@@ -251,7 +251,7 @@ onMounted(load)
       :closable="false"
       show-icon
       title="凭据内容永不回显"
-      description="列表与详情只显示「是否已配置」与指纹。编辑时输入框留空表示保持不变。凭据是平台级的：用它做的操作在 GitLab / Harbor 侧都记在平台名下，租户间的仓库隔离请靠对端各自的 token / robot account 权限。"
+      description="列表与详情只显示「是否已配置」与指纹。编辑时输入框留空表示保持不变。凭据是平台级的：用它做的操作在 GitLab / Harbor 侧都记在平台名下，租户间的仓库隔离请靠对端各自的 token / robot account 权限。Harbor 自动创建的租户凭据（归属列显示「Harbor 自动」）只读，请在集群组件面板的「镜像项目」里同步或重建。"
       class="hint"
     />
 
@@ -261,6 +261,15 @@ onMounted(load)
         <template #default="{ row }">{{ typeLabel(row.type) }}</template>
       </el-table-column>
       <el-table-column prop="endpoint" label="地址" min-width="220" show-overflow-tooltip />
+      <el-table-column label="归属" width="160">
+        <template #default="{ row }">
+          <span v-if="row.source === 'HARBOR'">
+            {{ row.tenantName ? `${row.tenantName}（Harbor 自动）` : '平台（Harbor 自动）' }}
+          </span>
+          <span v-else-if="row.tenantName">{{ row.tenantName }}</span>
+          <span v-else class="dim">平台</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="authType" label="认证方式" width="100" />
       <el-table-column label="指纹" width="150">
         <template #default="{ row }">
@@ -291,10 +300,14 @@ onMounted(load)
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openTest(row)">测试连接</el-button>
-          <el-button link type="primary" :disabled="!perm.has(apiCodes.credentialWrite)" @click="openEdit(row)">
+          <el-button link type="primary"
+                     :disabled="row.source === 'HARBOR' || !perm.has(apiCodes.credentialWrite)"
+                     @click="openEdit(row)">
             编辑
           </el-button>
-          <el-button link type="danger" :disabled="!perm.has(apiCodes.credentialWrite)" @click="remove(row)">
+          <el-button link type="danger"
+                     :disabled="row.source === 'HARBOR' || !perm.has(apiCodes.credentialWrite)"
+                     @click="remove(row)">
             删除
           </el-button>
         </template>

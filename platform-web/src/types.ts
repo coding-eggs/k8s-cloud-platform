@@ -1029,6 +1029,10 @@ export interface K8sComponentStatus {
   seaweedStorage?: boolean
   /** 当前生效的对象存储参数（上次成功快照）—— 编辑表单预填 */
   seaweedCurrent?: K8sSeaweedInstall | null
+  /** 安装时是否要填 Harbor 访问域名 */
+  harborRegistry?: boolean
+  /** 当前生效的 Harbor 参数（上次成功操作快照） */
+  harborCurrent?: K8sHarborInstall | null
 }
 
 // ===== 对象存储（S3 桶 / 凭据 / 对象浏览） =====
@@ -1107,6 +1111,26 @@ export interface ObjectStorageObjectStat {
 }
 
 /** 对象存储（SeaweedFS）安装参数：StorageClass 必填，容量是带单位的 quantity */
+/** Harbor 安装参数（仅 harborRegistry 的组件） */
+export interface K8sHarborInstall {
+  /** 访问域名，host[:port]，不带 scheme/path */
+  host: string
+}
+
+/** 租户镜像项目（Harbor 组件面板） */
+export interface K8sRegistryProject {
+  id: string
+  clusterId: string
+  tenantId?: string | null
+  tenantName: string
+  host: string
+  projectName: string
+  credentialId?: string | null
+  status: 'READY' | 'ERROR'
+  message?: string | null
+  lastSyncedAt?: string | null
+}
+
 export interface K8sSeaweedInstall {
   storageClass: string
   masterSize: string
@@ -2136,6 +2160,12 @@ export interface CredentialView {
   lastVerifiedAt?: string | null
   /** 上次测试的失败原因；成功则 null */
   lastVerifyError?: string | null
+  /** 归属租户；null = 平台级 */
+  tenantId?: string | null
+  /** 租户名（列表展示用；平台级为 null） */
+  tenantName?: string | null
+  /** MANUAL / HARBOR（Harbor 自动维护，页面只读） */
+  source?: 'MANUAL' | 'HARBOR'
   createdAt?: string | null
   updatedAt?: string | null
 }
@@ -2454,6 +2484,8 @@ export interface PipelineConnection {
   id: string
   name: string
   endpoint: string
+  /** 租户镜像项目名（Harbor 自动凭据才有；手工凭据为 null） */
+  project?: string | null
 }
 
 // ---------- S2.2.4 通知方式 ----------

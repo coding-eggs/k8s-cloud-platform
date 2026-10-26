@@ -184,7 +184,8 @@ function setWhen(v: string) {
           style="width: 100%"
           @update:model-value="(v: string) => setValue(f.key, v ?? '')"
         >
-          <el-option v-for="c in registryConnections" :key="c.id" :label="c.name" :value="c.id" />
+          <el-option v-for="c in registryConnections" :key="c.id"
+                     :label="c.project ? `${c.name}（项目 ${c.project}）` : c.name" :value="c.id" />
         </el-select>
 
         <el-select
