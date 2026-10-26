@@ -77,7 +77,12 @@ public class ClusterComponentCatalog {
             new ComponentDef("seaweedfs", "对象存储（SeaweedFS）", null,
                     List.of(new ComponentProbe("platform-storage", "statefulset",
                             "chrislusf/seaweedfs", "seaweedfs-master")),
-                    List.of("object-storage")));
+                    List.of("object-storage")),
+            // 镜像仓库：chart 直接下发工作负载，判据只有活的工作负载。
+            // 认 Deployment harbor-core（chart 的 fullnameOverride 钉成 harbor，release 名变了也不影响探测）。
+            new ComponentDef("harbor", "Harbor（镜像仓库）", null,
+                    List.of(new ComponentProbe("harbor", "deployment", "goharbor/harbor-core", "harbor-core")),
+                    List.of("container-registry")));
 
     public List<ComponentDef> all() {
         return COMPONENTS;

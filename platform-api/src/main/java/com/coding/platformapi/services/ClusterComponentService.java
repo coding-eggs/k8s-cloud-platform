@@ -18,6 +18,7 @@ import com.coding.platformapi.models.ComponentReleaseDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.models.EditableFieldDTO;
 import com.coding.platformapi.models.EsConfig;
+import com.coding.platformapi.models.HarborInstallRequest;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
 import com.coding.platformapi.models.SeaweedInstallRequest;
@@ -249,6 +250,9 @@ public class ClusterComponentService {
             if (s.isSeaweedStorage()) {
                 s.setSeaweedCurrent(seaweedOf(platform));
             }
+            if (s.isHarborRegistry()) {
+                s.setHarborCurrent(harborOf(platform));
+            }
             applyCurrentEditableValues(s, snapshot, profile);
         }
     }
@@ -393,6 +397,14 @@ public class ClusterComponentService {
         cur.setAdminEnabled(m.get("adminEnabled") instanceof Boolean b ? b : null);
         cur.setS3Endpoint(asString(m.get("s3Endpoint")));
         return cur;
+    }
+
+    /** {@code __platform.harbor} → 编辑表单的当前值；没有记录返回 null */
+    private static HarborInstallRequest harborOf(Map<String, Object> platform) {
+        if (!(platform.get("harbor") instanceof Map<?, ?> m)) {
+            return null;
+        }
+        return new HarborInstallRequest(asString(m.get("host")));
     }
 
     /** {@code __platform.otel} → 编辑表单的当前值；没有记录返回 null */    private static OtelInstallRequest otelInstallOf(Map<String, Object> platform) {
@@ -543,6 +555,13 @@ public class ClusterComponentService {
         if (key.endsWith(".storageClassName")) {
             return "storageClass";
         }
+        // Harbor 的 PVC 字段名是 chart 原生键（storageClass / size），与 Prometheus 那套不同
+        if (key.endsWith(".storageClass")) {
+            return "storageClass";
+        }
+        if (key.endsWith(".size")) {
+            return "size";
+        }
         if (key.endsWith(".requests.storage")) {
             return "size";
         }
@@ -603,6 +622,7 @@ public class ClusterComponentService {
         s.setTempoRemoteWrite(otel != null && otel.tempoRemoteWrite());
         s.setDefaultTempoEndpoint(otel == null ? null : otel.tempoEndpointDefault());
         s.setSeaweedStorage(recipe != null && recipe.seaweedStorage());
+        s.setHarborRegistry(recipe != null && recipe.harborRegistry());
 
         // capability 列为空 = 未探测（既有口径）—— 不猜"没装"。这是**全局**判据：
         // 它对将来可能出现的"只有工作负载判据"的组件同样成立，否则同一集群里会出现

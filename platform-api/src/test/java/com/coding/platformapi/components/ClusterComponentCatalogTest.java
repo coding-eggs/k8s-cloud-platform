@@ -22,7 +22,7 @@ class ClusterComponentCatalogTest {
         // gateway-api 于 2026-10-19 并入 istio（同一个安装单元，避免漏装）。
         assertThat(catalog.all()).extracting(ComponentDef::code).containsExactly(
                 "metrics-server", "prometheus-operator", "istio",
-                "tekton", "calico", "cert-manager", "otel-operator", "seaweedfs");
+                "tekton", "calico", "cert-manager", "otel-operator", "seaweedfs", "harbor");
     }
 
     @Test

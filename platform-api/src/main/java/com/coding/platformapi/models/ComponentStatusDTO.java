@@ -102,4 +102,9 @@ public class ComponentStatusDTO {
     private boolean seaweedStorage;
     /** **当前生效**的对象存储参数（上次成功操作的 {@code __platform.seaweed}）；无记录 → null */
     private SeaweedInstallRequest seaweedCurrent;
+
+    /** 安装时是否要填 Harbor 的访问域名（host） */
+    private boolean harborRegistry;
+    /** **当前生效**的 Harbor 参数（上次成功操作的 {@code __platform.harbor}）；无记录 → null */
+    private HarborInstallRequest harborCurrent;
 }

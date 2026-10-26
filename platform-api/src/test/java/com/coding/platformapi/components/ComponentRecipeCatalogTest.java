@@ -149,6 +149,29 @@ class ComponentRecipeCatalogTest {
                 .containsEntry("compactor.retention.resolution1h", "365d");
     }
 
+    @Test
+    void harborUsesTheRouteExposureAndPinsTheProbeName() {
+        ReleaseSpec spec = catalog.recipeOf("harbor", "BUSINESS").releases().get(0);
+        assertThat(spec.releaseName()).isEqualTo("platform-harbor");
+        assertThat(spec.namespace()).isEqualTo("harbor");
+        assertThat(spec.primary()).isTrue();
+        assertThat(spec.contractValues().get("fullnameOverride")).isEqualTo("harbor");
+        assertThat(spec.contractValues().get("externalURL")).isEqualTo("http://${harbor.host}");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> expose = (Map<String, Object>) spec.contractValues().get("expose");
+        assertThat(expose).containsEntry("type", "route");
+        assertThat(expose.get("route").toString())
+                .contains("external-gateway").contains("${harbor.host}");
+        // 管理口令与 secretKey 都走平台生成的 Secret，不落 values
+        assertThat(spec.contractValues())
+                .containsEntry("existingSecretAdminPassword", "platform-harbor-secrets")
+                .containsEntry("existingSecretSecretKey", "platform-harbor-secrets");
+        assertThat(catalog.recipeOf("harbor", "BUSINESS").harborRegistry()).isTrue();
+        assertThat(catalog.recipeOf("harbor", "BUSINESS").requires()).containsExactly("istio");
+        // Trivy 默认不装（内网拉不到漏洞库）
+        assertThat(spec.editableValues()).containsEntry("trivy.enabled", false);
+    }
+
     private static String appVersionOf(Path chart) {
         try {
             String raw = Files.readAllLines(chart).stream()

@@ -29,7 +29,7 @@ public final class ProbeNamespaces {
     public static final String DEFAULT_CSV =
             "kube-system,istio-system,monitor,tekton-pipelines,tekton-operator,"
                     + "cert-manager,calico-system,tigera-operator,opentelemetry-operator-system,"
-                    + "platform-storage";
+                    + "platform-storage,harbor";
 
     /** 供代码侧比较用（如 platform-api 的目录一致性测试） */
     public static final List<String> DEFAULT = List.of(DEFAULT_CSV.split(","));

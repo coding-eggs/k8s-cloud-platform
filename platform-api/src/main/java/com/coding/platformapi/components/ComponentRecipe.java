@@ -22,61 +22,74 @@ import java.util.List;
  * @param seaweedStorage    对象存储（SeaweedFS）的安装参数：StorageClass + 三个组件的容量与副本数。
  *                          这些值落在**嵌套结构**里（{@code volume.dataDirs} 是 list），
  *                          editableValues 的「路径 → 标量」模型表达不了，故按表单参数单独传。
+ * @param harborRegistry    Harbor 的安装参数：访问域名（host）。它同时决定 HTTPRoute 的
+ *                          hostnames 与 {@code externalURL}，走占位符 {@code ${harbor.host}}。
  */
 public record ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                               boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                               boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile,
-                              OtelRecipe otel, boolean seaweedStorage) {
+                              OtelRecipe otel, boolean seaweedStorage, boolean harborRegistry) {
 
-    /** 保留 10 参形态（不含 seaweedStorage）：现有调用点不必改动 */
+    /** 保留 11 参形态（不含 harborRegistry）：现有调用点不必改动 */
+    public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
+                           boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
+                           boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile,
+                           OtelRecipe otel, boolean seaweedStorage) {
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall,
+                calicoNetwork, thanosReceiveDefault, tektonProfile, otel, seaweedStorage, false);
+    }
+
+    /** 保留 10 参形态（不含 seaweedStorage / harborRegistry）：现有调用点不必改动 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                            boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile,
                            OtelRecipe otel) {
         this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall,
-                calicoNetwork, thanosReceiveDefault, tektonProfile, otel, false);
+                calicoNetwork, thanosReceiveDefault, tektonProfile, otel, false, false);
     }
 
     /** 默认既不联动告警、也不上报 Thanos 的简写 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires) {
-        this(profile, releases, requires, false, false, false, false, null, false, null);
+        this(profile, releases, requires, false, false, false, false, null, false, null, false, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting) {
-        this(profile, releases, requires, platformAlerting, false, false, false, null, false, null);
+        this(profile, releases, requires, platformAlerting, false, false, false, null, false, null,
+                false, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false, false, null, false, null);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, false, false, null, false,
+                null, false, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, false, null, false,
-                null);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, false, null,
+                false, null, false, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                            boolean calicoNetwork) {
-        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork, null,
-                false, null);
+        this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork,
+                null, false, null, false, false);
     }
 
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                            boolean calicoNetwork, String thanosReceiveDefault) {
         this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork,
-                thanosReceiveDefault, false, null);
+                thanosReceiveDefault, false, null, false, false);
     }
 
-    /** 保留 9 参形态（不含 otel）：现有调用点不必改动 */
+    /** 保留 9 参形态（不含 otel / seaweedStorage / harborRegistry）：现有调用点不必改动 */
     public ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                            boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,
                            boolean calicoNetwork, String thanosReceiveDefault, boolean tektonProfile) {
         this(profile, releases, requires, platformAlerting, thanosRemoteWrite, thanosInstall, calicoNetwork,
-                thanosReceiveDefault, tektonProfile, null);
+                thanosReceiveDefault, tektonProfile, null, false, false);
     }
 }

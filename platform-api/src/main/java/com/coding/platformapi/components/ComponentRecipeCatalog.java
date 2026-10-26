@@ -559,6 +559,72 @@ public class ComponentRecipeCatalog {
                     "filer", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi"))),
             Map.of()).asPrimary().withAppVersion("4.48"));
 
+    // ==================== Harbor（镜像仓库） ====================
+
+    /**
+     * Harbor 作为可安装组件。
+     *
+     * <p>暴露走 Gateway API HTTPRoute（{@code expose.type=route}）：chart 在 route 模式下**不部署 nginx**，
+     * 直接把 core / portal 的 ClusterIP Service 挂到 {@code istio-system/external-gateway}。
+     * 前置组件 istio 是硬要求 —— 没有 Gateway，装了也访问不到。
+     *
+     * <p>管理口令与 secretKey 由平台生成进 Secret {@code platform-harbor-secrets}，
+     * values 里只引用名字，因此不会进操作记录的 values 快照。
+     */
+    private static final List<ReleaseSpec> HARBOR_RELEASES = List.of(new ReleaseSpec(
+            "platform-harbor", "harbor", "harbor", "1.19.4",
+            harborContract(), harborEditable()).asPrimary().withAppVersion("2.15.4"));
+
+    private static Map<String, Object> harborContract() {
+        Map<String, Object> expose = new LinkedHashMap<>();
+        expose.put("type", "route");
+        expose.put("tls", Map.of("enabled", false));
+        expose.put("route", Map.of(
+                "parentRefs", List.of(Map.of("name", "external-gateway", "namespace", "istio-system")),
+                "hosts", List.of("${harbor.host}")));
+
+        Map<String, Object> contract = new LinkedHashMap<>();
+        contract.put("fullnameOverride", "harbor");
+        contract.put("expose", expose);
+        contract.put("externalURL", "http://${harbor.host}");
+        contract.put("existingSecretAdminPassword", "platform-harbor-secrets");
+        contract.put("existingSecretSecretKey", "platform-harbor-secrets");
+        contract.put("persistence", Map.of("enabled", true, "resourcePolicy", "keep"));
+        contract.put("database", Map.of("type", "internal",
+                "internal", Map.of("resources", harborResources("100m", "256Mi", "1", "1Gi"))));
+        contract.put("redis", Map.of("type", "internal",
+                "internal", Map.of("resources", harborResources("50m", "128Mi", "500m", "256Mi"))));
+        contract.put("core", Map.of("resources", harborResources("100m", "256Mi", "1", "1Gi")));
+        contract.put("portal", Map.of("resources", harborResources("50m", "128Mi", "500m", "256Mi")));
+        contract.put("registry", Map.of("resources", harborResources("100m", "256Mi", "1", "1Gi")));
+        contract.put("jobservice", Map.of("resources", harborResources("100m", "256Mi", "1", "1Gi")));
+        contract.put("trivy", Map.of("resources", harborResources("100m", "256Mi", "1", "1Gi")));
+        return contract;
+    }
+
+    private static Map<String, Object> harborResources(String cpuRequest, String memRequest,
+                                                       String cpuLimit, String memLimit) {
+        return Map.of("requests", Map.of("cpu", cpuRequest, "memory", memRequest),
+                "limits", Map.of("cpu", cpuLimit, "memory", memLimit));
+    }
+
+    /** Harbor 的 PVC 字段是 chart 原生命名（`*.storageClass` / `*.size`），不是 Prometheus 那套 */
+    private static Map<String, Object> harborEditable() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("persistence.persistentVolumeClaim.registry.storageClass", "");
+        out.put("persistence.persistentVolumeClaim.registry.size", "20Gi");
+        out.put("persistence.persistentVolumeClaim.jobservice.jobLog.storageClass", "");
+        out.put("persistence.persistentVolumeClaim.jobservice.jobLog.size", "1Gi");
+        out.put("persistence.persistentVolumeClaim.database.storageClass", "");
+        out.put("persistence.persistentVolumeClaim.database.size", "5Gi");
+        out.put("persistence.persistentVolumeClaim.redis.storageClass", "");
+        out.put("persistence.persistentVolumeClaim.redis.size", "1Gi");
+        out.put("persistence.persistentVolumeClaim.trivy.storageClass", "");
+        out.put("persistence.persistentVolumeClaim.trivy.size", "5Gi");
+        out.put("trivy.enabled", false);
+        return out;
+    }
+
     // ==================== 汇总 ====================
 
     private static final Map<String, Map<String, ComponentRecipe>> RECIPES = Map.ofEntries(
@@ -590,6 +656,12 @@ public class ComponentRecipeCatalog {
                             false, false, false, false, null, false, null, true),
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, SEAWEEDFS_RELEASES, List.of(),
                             false, false, false, false, null, false, null, true))),
+            // 镜像仓库：route 暴露依赖 istio 的 external-gateway（requires 是硬门禁）
+            Map.entry("harbor", Map.of(
+                    BUSINESS, new ComponentRecipe(BUSINESS, HARBOR_RELEASES, List.of("istio"),
+                            false, false, false, false, null, false, null, false, true),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, HARBOR_RELEASES, List.of("istio"),
+                            false, false, false, false, null, false, null, false, true))),
             // OTel 采集栈：operator 两遍 + Tempo（管理集群）。Tempo 夹在两遍 operator 之间，
             // 第一遍先落 CRD，Tempo 作为后端就绪后再下发 Instrumentation/collector。
             Map.entry("otel-operator", Map.of(
@@ -642,6 +714,17 @@ public class ComponentRecipeCatalog {
             Map.entry("compactor.retention.resolutionRaw", "原始数据保留期"),
             Map.entry("compactor.retention.resolution5m", "5m 降采样保留期"),
             Map.entry("compactor.retention.resolution1h", "1h 降采样保留期"),
+            Map.entry("persistence.persistentVolumeClaim.registry.storageClass", "镜像存储类"),
+            Map.entry("persistence.persistentVolumeClaim.registry.size", "镜像存储容量"),
+            Map.entry("persistence.persistentVolumeClaim.jobservice.jobLog.storageClass", "作业日志存储类"),
+            Map.entry("persistence.persistentVolumeClaim.jobservice.jobLog.size", "作业日志容量"),
+            Map.entry("persistence.persistentVolumeClaim.database.storageClass", "数据库存储类"),
+            Map.entry("persistence.persistentVolumeClaim.database.size", "数据库容量"),
+            Map.entry("persistence.persistentVolumeClaim.redis.storageClass", "Redis 存储类"),
+            Map.entry("persistence.persistentVolumeClaim.redis.size", "Redis 容量"),
+            Map.entry("persistence.persistentVolumeClaim.trivy.storageClass", "扫描器存储类"),
+            Map.entry("persistence.persistentVolumeClaim.trivy.size", "扫描器容量"),
+            Map.entry("trivy.enabled", "安装 Trivy 镜像扫描"),
             Map.entry("replicas", "副本数"));
 
     /**
@@ -666,7 +749,18 @@ public class ComponentRecipeCatalog {
             Map.entry("service.ports", "对外入口（external-gateway）"),
             Map.entry("compactor.retention.resolutionRaw", "Thanos 对象存储（管理集群）"),
             Map.entry("compactor.retention.resolution5m", "Thanos 对象存储（管理集群）"),
-            Map.entry("compactor.retention.resolution1h", "Thanos 对象存储（管理集群）"));
+            Map.entry("compactor.retention.resolution1h", "Thanos 对象存储（管理集群）"),
+            Map.entry("persistence.persistentVolumeClaim.registry.storageClass", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.registry.size", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.jobservice.jobLog.storageClass", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.jobservice.jobLog.size", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.database.storageClass", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.database.size", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.redis.storageClass", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.redis.size", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.trivy.storageClass", "存储（Harbor）"),
+            Map.entry("persistence.persistentVolumeClaim.trivy.size", "存储（Harbor）"),
+            Map.entry("trivy.enabled", "镜像扫描"));
 
     public static String groupOf(String key) {
         return EDITABLE_GROUPS.getOrDefault(key, "其他配置");
