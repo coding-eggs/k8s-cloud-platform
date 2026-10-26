@@ -26,8 +26,32 @@ export function fmtAge(v?: number | string | null): string {
 
 export type BadgeType = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
-/** 工作负载状态：由副本就绪情况推导（列表 / 详情页共用） */
+/**
+ * 工作负载状态：由副本就绪情况推导（列表 / 详情页共用）。
+ *
+ * <p>`statusReason` 非空 = 控制器自报了异常（后端把 {@code Progressing=False}、{@code Available=False}
+ * 以及「True 才是坏事」的 {@code ReplicaFailure} 都收进这个字段）。此时**不能只看 ready**：
+ * 发版被配额/准入拒绝时，旧版本的 Pod 还在撑着 `ready >= desired`，按副本数看是绿色 Running，
+ * 用户只会觉得"镜像改了但没生效"（2026-10-26 实报：movie-server 超 limits.memory 配额）。
+ */
 export function workloadStatus(
+  kind: string | null | undefined,
+  replicas?: number | null,
+  readyReplicas?: number | null,
+  statusReason?: string | null,
+): { label: string; type: BadgeType } {
+  const base = baseWorkloadStatus(kind, replicas, readyReplicas)
+  if (!statusReason) return base
+  const desired = replicas ?? 0
+  // 副本是满的、却报了异常 → 满的那份是旧版本，新版本没起来
+  if (desired > 0 && (readyReplicas ?? 0) >= desired) {
+    return { label: '更新受阻', type: 'warning' }
+  }
+  return { label: base.label, type: 'warning' }
+}
+
+/** 只看副本数的基线判定（不掺 statusReason，保持纯函数） */
+function baseWorkloadStatus(
   kind: string | null | undefined,
   replicas?: number | null,
   readyReplicas?: number | null,

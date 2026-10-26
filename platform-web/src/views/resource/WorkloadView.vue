@@ -255,6 +255,31 @@ function openImageEdit(row: K8sWorkload, containerName: string, image: string): 
   imgVisible.value = true
 }
 
+/** 提交后的观察窗口：5 次 × 2 秒（控制器建 ReplicaSet/Pod 要一拍才出 ReplicaFailure） */
+const ROLLOUT_WATCH_TRIES = 5
+const ROLLOUT_WATCH_INTERVAL_MS = 2000
+
+/**
+ * 发版有没有被拒（配额 / 准入）——命中返回原因首行，10 秒内没命中返回 null。
+ *
+ * <p>不复用 {@link refresh}：那会给整张表打上 loading（窗口 5 次 = 闪 5 下），这里只要列表数据。
+ */
+async function watchRolloutFailure(name: string): Promise<string | null> {
+  for (let i = 0; i < ROLLOUT_WATCH_TRIES; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, ROLLOUT_WATCH_INTERVAL_MS))
+    try {
+      const ws = await workloadApi.list(ctxParams.value)
+      const reason = ws.find((w) => w.name === name)?.statusReason
+      if (reason && /ReplicaFailure|FailedCreate/.test(reason)) {
+        return reason.split('\n')[0] ?? reason
+      }
+    } catch {
+      /* 观察失败不打扰用户：发版已提交，下次刷新照样能看到状态 */
+    }
+  }
+  return null
+}
+
 /**
  * 提交镜像：只改这一个容器的 image（后端读回线上对象改完再写回，未建模字段不会因此丢），
  * 因为改的是 pod template → 控制器会滚一次新版本。
@@ -270,9 +295,16 @@ async function submitImage(): Promise<void> {
   imgSaving.value = true
   try {
     await workloadApi.updateImage(row.name, { ...ctxParams.value, containerName: imgForm.containerName, image })
-    ElMessage.success(`已提交 ${imgForm.containerName} → ${image}，工作负载将滚动更新`)
     imgVisible.value = false
     await refresh()
+    ElMessage.success(`已提交 ${imgForm.containerName} → ${image}，正在滚动更新`)
+    // 控制器是异步的：提交那一刻还没有 ReplicaFailure。补一次观察 ——
+    // 被配额/准入拒绝时当场说清楚，别让用户对着「绿着但没生效」的列表发愣（2026-10-26 实报）
+    void watchRolloutFailure(row.name).then((failure) => {
+      if (!failure) return
+      ElMessage({ type: 'error', duration: 8000, showClose: true,
+        message: `新版本没有起来：${failure}` })
+    })
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -645,7 +677,7 @@ const contextDesc = computed(() => {
 
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
-            <StatusBadgeTip :label="workloadStatus(row.kind, row.replicas, row.readyReplicas).label" :type="workloadStatus(row.kind, row.replicas, row.readyReplicas).type" :reason="row.statusReason" />
+            <StatusBadgeTip :label="workloadStatus(row.kind, row.replicas, row.readyReplicas, row.statusReason).label" :type="workloadStatus(row.kind, row.replicas, row.readyReplicas, row.statusReason).type" :reason="row.statusReason" />
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="160">

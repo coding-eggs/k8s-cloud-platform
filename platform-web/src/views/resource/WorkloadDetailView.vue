@@ -235,7 +235,8 @@ const kindLabel = computed(() => {
     default: return detail.value?.kind ?? '—'
   }
 })
-const status = computed(() => workloadStatus(detail.value?.kind, detail.value?.replicas, detail.value?.readyReplicas))
+const status = computed(() => workloadStatus(detail.value?.kind, detail.value?.replicas, detail.value?.readyReplicas,
+  detail.value?.statusReason))
 
 /** 服务网格两个保留 label（pod template 上；缺省 = 跟随命名空间，不是"未纳入"） */
 const meshDataplaneMode = computed(() => detail.value?.podTemplate?.labels?.[LABEL_DATAPLANE_MODE] ?? '')
