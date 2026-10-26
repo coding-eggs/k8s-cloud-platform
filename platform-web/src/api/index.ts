@@ -109,6 +109,8 @@ import type {
   MiddlewareMetrics,
   MiddlewareOperation,
   MiddlewareOperatorStatus,
+  MiddlewareUser,
+  MiddlewareUserCredential,
 } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
@@ -1032,6 +1034,20 @@ export const middlewareApi = {
   /** 改实例的鉴权口令（Milvus）：新口令留空 = 平台生成；口令不回显，去 Secret <名称>-milvus-auth 取 */
   changePassword: (payload: { instanceId: string; newPassword?: string; tenantId?: string }) =>
     http.post<never, boolean>('/middleware/instance/password', payload),
+  /** 用户页签：账号列表（内置 + 平台建的） */
+  users: (instanceId: string, tenantId?: string) =>
+    http.post<never, MiddlewareUser[]>('/middleware/instance/users', { instanceId, tenantId }),
+  /** 该实例可选的角色（Milvus 是实例里现查的） */
+  userRoles: (instanceId: string, tenantId?: string) =>
+    http.post<never, string[]>('/middleware/instance/users/roles', { instanceId, tenantId }),
+  /** 新增账号：口令留空 = 平台生成；返回一次性明文 */
+  createUser: (payload: { instanceId: string; username: string; password?: string; role: string; tenantId?: string }) =>
+    http.post<never, MiddlewareUserCredential>('/middleware/instance/users/create', payload),
+  /** 改账号口令：返回一次性明文 */
+  changeUserPassword: (payload: { instanceId: string; username: string; newPassword?: string; tenantId?: string }) =>
+    http.post<never, MiddlewareUserCredential>('/middleware/instance/users/password', payload),
+  deleteUser: (payload: { instanceId: string; username: string; tenantId?: string }) =>
+    http.post<never, boolean>('/middleware/instance/users/delete', payload),
   create: (payload: {
     clusterId: string
     code: string

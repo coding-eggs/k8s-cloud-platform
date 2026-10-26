@@ -6,7 +6,7 @@
  * `/middleware/instance/operations`。编辑只做「副本数 + 资源 + 显示名」——形态与存储不可改，
  * 与后端 scale 的语义一致（Nacos 走 chart，只能改显示名）。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { middlewareApi } from '@/api'
@@ -14,7 +14,7 @@ import YamlBlock from '@/components/YamlBlock.vue'
 import MiddlewareMetricsPanel from '@/components/middleware/MiddlewareMetricsPanel.vue'
 import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
 import { useResourceContext } from '@/stores/context'
-import type { MiddlewareInstanceDetail, MiddlewareOperation } from '@/types'
+import type { MiddlewareInstanceDetail, MiddlewareOperation, MiddlewareUser, MiddlewareUserCredential } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -104,6 +104,135 @@ const cpuLimitNum = computed(() => parseCpu(detail.value?.spec?.cpuLimit))
 const memoryLimitBytes = computed(() => {
   const m = parseMemory(detail.value?.spec?.memoryLimit)
   return m.value == null ? null : m.value * (m.unit === 'Gi' ? 1024 ** 3 : 1024 ** 2)
+})
+
+// ---------------- 用户管理 ----------------
+/** 能做用户管理的中间件；Kafka/Nacos 还要求实例已开启鉴权 */
+const USER_CODES = ['mysql', 'postgresql', 'redis', 'rabbitmq', 'elasticsearch', 'milvus', 'kafka', 'nacos']
+
+const users = ref<MiddlewareUser[]>([])
+const usersLoading = ref(false)
+const userRoles = ref<string[]>([])
+const userSaving = ref(false)
+const userDialog = reactive({ visible: false, mode: 'create' as 'create' | 'password',
+  username: '', password: '', role: '' })
+/** 一次性明文：只存在这个 reactive 里，关掉就清空，不进 store */
+const credential = reactive({ visible: false, username: '', password: '', secretName: '', secretKey: '' })
+
+const showUsers = computed(() => {
+  const code = instance.value?.code
+  if (!code || !USER_CODES.includes(code)) return false
+  if (code === 'kafka' || code === 'nacos') return detail.value?.spec?.authEnabled === true
+  return true
+})
+
+async function loadUsers(): Promise<void> {
+  if (!showUsers.value) return
+  usersLoading.value = true
+  try {
+    users.value = (await middlewareApi.users(instanceId.value, tenantId.value)) ?? []
+    userRoles.value = (await middlewareApi.userRoles(instanceId.value, tenantId.value)) ?? []
+  } catch {
+    users.value = []
+  } finally {
+    usersLoading.value = false
+  }
+}
+
+function openCreateUser(): void {
+  userDialog.mode = 'create'
+  userDialog.username = ''
+  userDialog.password = ''
+  userDialog.role = userRoles.value[0] ?? ''
+  userDialog.visible = true
+}
+
+function openUserPassword(username: string): void {
+  userDialog.mode = 'password'
+  userDialog.username = username
+  userDialog.password = ''
+  userDialog.role = ''
+  userDialog.visible = true
+}
+
+async function submitUser(): Promise<void> {
+  if (!userDialog.username.trim()) {
+    ElMessage.warning('用户名不能为空')
+    return
+  }
+  userSaving.value = true
+  try {
+    const credentialOut = userDialog.mode === 'create'
+      ? await middlewareApi.createUser({
+          instanceId: instanceId.value,
+          username: userDialog.username.trim(),
+          password: userDialog.password || undefined,
+          role: userDialog.role,
+          tenantId: tenantId.value,
+        })
+      : await middlewareApi.changeUserPassword({
+          instanceId: instanceId.value,
+          username: userDialog.username,
+          newPassword: userDialog.password || undefined,
+          tenantId: tenantId.value,
+        })
+    userDialog.visible = false
+    showCredential(credentialOut)
+    await loadUsers()
+  } catch {
+    /* 拦截器已提示 */
+  } finally {
+    userSaving.value = false
+  }
+}
+
+async function removeUser(username: string): Promise<void> {
+  try {
+    await ElMessageBox.confirm(`删除账号 ${username}？它的权限会一并消失。`, '删除账号',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+  } catch {
+    return
+  }
+  try {
+    await middlewareApi.deleteUser({ instanceId: instanceId.value, username, tenantId: tenantId.value })
+    ElMessage.success('账号已删除')
+    await loadUsers()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+function showCredential(out: MiddlewareUserCredential): void {
+  credential.visible = true
+  credential.username = out.username
+  credential.password = out.password
+  credential.secretName = out.secretName ?? ''
+  credential.secretKey = out.secretKey ?? ''
+}
+
+function clearCredential(): void {
+  credential.visible = false
+  credential.password = ''
+}
+
+/** 内网 http 下 navigator.clipboard 可能不存在：必须带 execCommand 兜底 */
+function copyText(text: string): void {
+  if (navigator.clipboard?.writeText) {
+    void navigator.clipboard.writeText(text)
+    ElMessage.success('已复制')
+    return
+  }
+  const el = document.createElement('textarea')
+  el.value = text
+  document.body.appendChild(el)
+  el.select()
+  document.execCommand('copy')
+  document.body.removeChild(el)
+  ElMessage.success('已复制')
+}
+
+watch(tab, (value) => {
+  if (value === 'users') void loadUsers()
 })
 
 // ---------------- 资源跳转 ----------------
@@ -560,6 +689,39 @@ watch(tenantId, () => void load())
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="用户" name="users" lazy>
+        <div class="mw-users">
+          <div class="mw-users-actions">
+            <el-button type="primary" size="small" @click="openCreateUser">新增用户</el-button>
+            <span class="mw-form-help">内置账号只能改口令；平台建的账号可改可删。口令不明文展示，只在这里显示一次。</span>
+          </div>
+          <el-table :data="users" v-loading="usersLoading" size="small">
+            <el-table-column prop="username" label="用户名" min-width="160" />
+            <el-table-column label="角色" width="120">
+              <template #default="{ row }">{{ row.role || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="类型" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.builtin ? 'info' : 'success'">
+                  {{ row.builtin ? '内置' : '平台创建' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="口令位置" min-width="240">
+              <template #default="{ row }">
+                <code class="mono">{{ row.secretName }} / {{ row.secretKey }}</code>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openUserPassword(row.username)">改口令</el-button>
+                <el-button v-if="!row.builtin" link type="danger" @click="removeUser(row.username)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="操作记录" name="operations">
         <el-table :data="operations" class="panel" size="small" empty-text="还没有操作记录">
           <el-table-column label="操作" width="90">
@@ -642,6 +804,42 @@ watch(tenantId, () => void load())
         <el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- ============ 用户管理：新增 / 改口令 ============ -->
+    <el-dialog v-model="userDialog.visible" width="520px" append-to-body
+               :title="userDialog.mode === 'create' ? '新增用户' : '改口令'">
+      <el-form label-width="90px">
+        <el-form-item label="用户名">
+          <el-input v-model="userDialog.username" :disabled="userDialog.mode === 'password'" spellcheck="false" />
+          <div class="mw-form-help">3~32 位小写字母/数字/下划线；内置账号名不可用</div>
+        </el-form-item>
+        <el-form-item v-if="userDialog.mode === 'create'" label="角色">
+          <el-select v-model="userDialog.role" style="width: 100%" :placeholder="userRoles.length ? '选择角色' : '该实例暂无可用角色'">
+            <el-option v-for="r in userRoles" :key="r" :label="r" :value="r" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="口令">
+          <el-input v-model="userDialog.password" type="password" show-password placeholder="留空 = 平台生成" />
+          <div class="mw-form-help">8~72 位</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="userDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="userSaving" @click="submitUser">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ============ 一次性明文口令 ============ -->
+    <el-dialog v-model="credential.visible" title="口令只显示这一次" width="520px" append-to-body>
+      <p class="mw-cred-line mono">{{ credential.username }} / {{ credential.password }}</p>
+      <el-button size="small" @click="copyText(credential.password)">复制口令</el-button>
+      <p class="mw-form-help">
+        已写入 Secret <code>{{ credential.secretName }}</code> 的 <code>{{ credential.secretKey }}</code> 键；关闭后不再显示。
+      </p>
+      <template #footer>
+        <el-button type="primary" @click="clearCredential">知道了</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -668,4 +866,6 @@ watch(tenantId, () => void load())
 .mw-unit-select { width: 80px; margin-left: 8px; }
 .mw-edit-form :deep(.el-form-item__label) { justify-content: flex-start; text-align: left; }
 .mw-edit-form :deep(.el-form-item__content) { flex-wrap: wrap; justify-content: flex-start; }
+.mw-users-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.mw-cred-line { font-size: 15px; word-break: break-all; margin: 0 0 10px; }
 </style>

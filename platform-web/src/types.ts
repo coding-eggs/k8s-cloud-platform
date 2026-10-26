@@ -2703,3 +2703,20 @@ export interface ApplicationOptions {
   nodeKinds: Array<{ kind: AppNodeKind; name: string; description: string; detail?: string }>
   namespaces: string[]
 }
+
+/** 中间件实例里的一个账号（用户页签） */
+export interface MiddlewareUser {
+  username: string
+  role?: string | null
+  builtin: boolean
+  secretName?: string | null
+  secretKey?: string | null
+}
+
+/** 创建用户 / 改口令的返回：明文口令只出现这一次 */
+export interface MiddlewareUserCredential {
+  username: string
+  password: string
+  secretName?: string | null
+  secretKey?: string | null
+}
