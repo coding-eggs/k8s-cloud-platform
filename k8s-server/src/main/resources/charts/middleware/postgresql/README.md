@@ -28,6 +28,11 @@
 - **不写平台口令**：`usesPlatformPassword=false`，凭据全由 Operator 生成（写一个没人引用的 Secret 只会误导）；
 - **状态**：Pod 选择器是 `cnpg.io/cluster=<实例名>,cnpg.io/podRole=instance` —— **必须带 `podRole=instance`**，
   否则 initdb / join 的 Job Pod 也会被算进去（真集群：3 实例被数成 5 个，"永远未就绪"）。
+- **默认账号有 CREATEDB**：CNPG 的 `app` 账号**不是 superuser**、默认也没有 CREATEDB，用户拿平台给的默认
+  凭据 `CREATE DATABASE` 会得到 `permission denied to create database`（2026-10-27 实报）。平台在
+  `bootstrap.initdb.postInitSQL` 里补一条 `ALTER ROLE app CREATEDB;`（那是 CNPG 少数几个以 superuser
+  身份执行的位置），**只给 CREATEDB、不摊开 superuser**（`enableSuperuserAccess` 保持默认 false）。
+  库名/属主显式写成 `app`，保证 ALTER ROLE 的对象与 operator 生成的账号一致。
 
 ## 3. 形态与 CR 的对应关系
 
@@ -54,6 +59,10 @@
 4. **删除时 PVC 的处置**：保留 PVC = 数据还在，下次同名实例可复用；不保留则 PVC 一起删。
    CNPG 的 PVC 名是 `pgdata-<实例名>-<序号>`，平台按实例标签清理。
 5. 存储与形态**不能在线改**（CNPG 支持扩容 PVC，但平台没开放这个入口）；要改删实例重建。
+6. **`bootstrap` 只在建库时执行一次**：`postInitSQL` 里的 CREATEDB 授权对**存量实例不生效**
+   （CR 的 bootstrap 不可变）。存量实例手工补一次：
+   `kubectl -n <ns> exec -it $(kubectl -n <ns> get cluster <实例名> -o jsonpath='{.status.currentPrimary}') -c postgres -- psql -U postgres -c 'ALTER ROLE app CREATEDB'`
+   （`enableSuperuserAccess` 关闭时 `postgres` 仍可走本地 socket 免密登录）。
 
 ## 6. 业务指标
 

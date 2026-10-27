@@ -33,6 +33,9 @@ public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
     private static final String GROUP = "postgresql.cnpg.io";
     private static final String VERSION = "v1";
 
+    /** CNPG 默认库名/属主（= 应用账号名），平台不改它 */
+    static final String APP_DATABASE = "app";
+
     static final CustomResourceDefinitionContext CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION)
             .withKind("Cluster").withPlural("clusters")
@@ -51,6 +54,7 @@ public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
     @Override
     public List<CrSpec> buildCreate(MiddlewareCreateRequestDTO req) {
         Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("bootstrap", bootstrap());
         spec.put("instances", instancesOf(req));
         spec.put("storage", storageOf(req));
         spec.put("resources", resourcesOf(req));
@@ -111,6 +115,24 @@ public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
     }
 
     // ==================== 内部 ====================
+
+    /**
+     * 应用账号（CNPG 由 {@code initdb} 建出来的默认账号）要有 CREATEDB。
+     *
+     * <p>CNPG 的 {@code app} 账号**不是 superuser**，默认也没有 CREATEDB —— 用户拿平台给的默认凭据
+     * 连上去 {@code CREATE DATABASE} 直接 {@code permission denied to create database}
+     * （2026-10-27 实报）。中间件实例连库都建不了就没法用。
+     *
+     * <p>{@code postInitSQL} 是 CNPG 里少数几条**以 superuser 身份**执行的地方（只在 initdb 后跑一次），
+     * 用它授 CREATEDB；不摊开 superuser（{@code enableSuperuserAccess} 保持默认 false）。
+     * 库名与属主显式写死，保证 ALTER ROLE 的对象与 operator 生成的账号一致。
+     */
+    private static Map<String, Object> bootstrap() {
+        return Map.of("initdb", Map.of(
+                "database", APP_DATABASE,
+                "owner", APP_DATABASE,
+                "postInitSQL", List.of("ALTER ROLE " + APP_DATABASE + " CREATEDB;")));
+    }
 
     private static int instancesOf(MiddlewareCreateRequestDTO req) {
         int replicas = req.getReplicas() == null ? 1 : req.getReplicas();
