@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.GatewayListenerDTO;
+import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
@@ -15,6 +16,7 @@ import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
 import com.coding.platformapi.components.ThanosRetention;
 import com.coding.platformapi.components.ValueTemplate;
+import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.ComponentApplyRequest;
@@ -106,6 +108,7 @@ public class ComponentInstallService {
     private final ClusterService clusterService;
     private final ClusterComponentService components;
     private final HarborRegistryService harborRegistry;
+    private final K8sClient k8s;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -221,6 +224,9 @@ public class ComponentInstallService {
         // Harbor 的暴露方式 / Service 端口 / externalURL 落在嵌套结构里，由表单参数拼进来
         if (harbor != null) {
             merged = applyHarborValues(merged, harbor);
+            // 盘是「重装也不删」的（chart 的 resourcePolicy=keep）：先把存储类对齐到集群上那份，
+            // 否则表单留空会被 SSA 抹成 null → PVC spec 不可变，直接 Forbidden（2026-10-27 实锤）
+            alignHarborStorageClasses(req.getClusterId(), harbor, merged);
         }
         // 占位符（${cluster.name} / ${thanos.receive.url} / ${tempo.endpoint}）在落库前解析
         List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico,
@@ -1132,6 +1138,104 @@ public class ComponentInstallService {
                     r.preserveUnknownPlaceholders(), r.primary(), r.appVersion(), r.applyMode()));
         }
         return out;
+    }
+
+    /**
+     * 把 Harbor 的存储类对齐到集群上**已经存在的盘**。
+     *
+     * <p>为什么必须对齐：chart 给 PVC 打了 {@code helm.sh/resource-policy: keep}，上次安装失败
+     * （helm 回滚 = uninstall）后盘会留下。PVC 的 {@code storageClassName} 创建后不可变，而表单
+     * 留空 = 跟随集群默认 = manifest 里没有这个字段 —— helm 4 的 SSA 会把它抹成 null，直接
+     * {@code Forbidden: spec is immutable after creation}（2026-10-27 真集群上就是这么失败的）。
+     *
+     * <p>规则：表单留空 → 填回盘上的存储类（复用旧盘，重试就能装成）；表单显式选了别的 →
+     * 直接拒并说清怎么办（改不了，只能删盘或改回）。读不到 PVC（没权限 / 集群不可达）就跳过 ——
+     * 让 helm 自己报错，别因为对齐失败挡住安装。
+     */
+    private void alignHarborStorageClasses(String clusterId, HarborInstallRequest harbor,
+                                           List<ReleaseSpec> releases) {
+        ReleaseSpec target = releases.stream()
+                .filter(r -> "platform-harbor".equals(r.releaseName())).findFirst().orElse(null);
+        if (target == null) {
+            return;
+        }
+        Map<String, String> bound = existingStorageClasses(clusterId, target.namespace());
+        if (bound.isEmpty()) {
+            return;
+        }
+        Map<String, Object> values = target.contractValues();
+        for (Map.Entry<String, String> e : harborPvcKeys(harbor, values).entrySet()) {
+            String existing = bound.get(e.getValue());
+            if (existing == null || existing.isBlank()) {
+                continue;
+            }
+            Object requested = readPath(values, e.getKey());
+            String wanted = requested instanceof String s ? s.trim() : "";
+            if (wanted.isEmpty()) {
+                putPath(values, e.getKey(), existing);
+                log.info("Harbor 复用遗留 PVC {}：存储类按盘上的 {} 填回", e.getValue(), existing);
+            } else if (!wanted.equals(existing)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "命名空间 " + target.namespace() + " 已存在 PVC " + e.getValue()
+                                + "（存储类 " + existing + "）—— 上次安装失败后保留下来的。"
+                                + "PVC 的存储类创建后不可改：把存储类填成 " + existing
+                                + " 复用这块盘，或先在集群侧删掉这个 PVC 再装");
+            }
+        }
+    }
+
+    /**
+     * 字段路径 → chart 渲染出来的 PVC 名（{@code fullnameOverride=harbor} 是契约）。
+     * 只列这次真的会创建的盘：外部库 / 关掉 Trivy 时对应的 PVC 不渲染。
+     */
+    private static Map<String, String> harborPvcKeys(HarborInstallRequest harbor,
+                                                     Map<String, Object> values) {
+        Map<String, String> keys = new LinkedHashMap<>();
+        keys.put("persistence.persistentVolumeClaim.registry.storageClass", "harbor-registry");
+        keys.put("persistence.persistentVolumeClaim.jobservice.jobLog.storageClass", "harbor-jobservice");
+        if (!"external".equals(harbor.getDatabaseMode())) {
+            keys.put("persistence.persistentVolumeClaim.database.storageClass",
+                    "database-data-harbor-database-0");
+        }
+        if (!"external".equals(harbor.getRedisMode())) {
+            keys.put("persistence.persistentVolumeClaim.redis.storageClass", "data-harbor-redis-0");
+        }
+        if (Boolean.TRUE.equals(readPath(values, "trivy.enabled"))) {
+            keys.put("persistence.persistentVolumeClaim.trivy.storageClass", "data-harbor-trivy-0");
+        }
+        return keys;
+    }
+
+    /** 命名空间里已存在的 PVC → 存储类。读失败当作「没有」并留日志：不能因为对齐失败挡住安装 */
+    private Map<String, String> existingStorageClasses(String clusterId, String namespace) {
+        PersistentVolumeClaimDTO query = new PersistentVolumeClaimDTO();
+        query.setClusterId(clusterId);
+        query.setNamespace(namespace);
+        try {
+            List<PersistentVolumeClaimDTO> list = k8s.list(query);
+            Map<String, String> out = new LinkedHashMap<>();
+            for (PersistentVolumeClaimDTO pvc : list == null ? List.<PersistentVolumeClaimDTO>of() : list) {
+                if (pvc.getName() != null && pvc.getStorageClassName() != null) {
+                    out.put(pvc.getName(), pvc.getStorageClassName());
+                }
+            }
+            return out;
+        } catch (Exception ex) {
+            log.warn("读取命名空间 {} 的 PVC 失败，跳过 Harbor 存储类对齐：{}", namespace, ex.getMessage());
+            return Map.of();
+        }
+    }
+
+    /** 按点路径读嵌套 Map（读不到返回 null） */
+    private static Object readPath(Map<String, Object> root, String path) {
+        Object cursor = root;
+        for (String part : path.split("\\.")) {
+            if (!(cursor instanceof Map<?, ?> map)) {
+                return null;
+            }
+            cursor = map.get(part);
+        }
+        return cursor;
     }
 
     // ==================== 对象存储（SeaweedFS） ====================

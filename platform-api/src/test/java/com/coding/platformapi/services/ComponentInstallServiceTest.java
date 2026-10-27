@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.GatewayListenerDTO;
+import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
@@ -44,6 +45,8 @@ class ComponentInstallServiceTest {
     private final ClusterService clusterService = mock(ClusterService.class);
     private final ClusterComponentService components = mock(ClusterComponentService.class);
     private final HarborRegistryService harborRegistry = mock(HarborRegistryService.class);
+    private final com.coding.platformapi.k8s.K8sClient k8s =
+            mock(com.coding.platformapi.k8s.K8sClient.class);
 
     @BeforeEach
     void insertReturnsAnId() {
@@ -65,7 +68,7 @@ class ComponentInstallServiceTest {
 
     private ComponentInstallService service(ComponentRecipeCatalog catalog) {
         return new ComponentInstallService(mapper, client, catalog, clusterService, components,
-                harborRegistry);
+                harborRegistry, k8s);
     }
 
     @Test
@@ -1585,8 +1588,49 @@ class ComponentInstallServiceTest {
     }
 
     @Test
-    void harborLoadBalancerModeUsesTheExternalPort() {
-        String values = capturedHarborValues(
+    void harborReusesTheStorageClassOfAPvcLeftByAFailedInstall() {
+        // chart 给 PVC 打了 resource-policy=keep：装失败后盘会留下。PVC 的存储类不可变，
+        // 表单留空（跟随集群默认）时必须按盘上的值填回去 —— 否则 helm 的 SSA 把它抹成 null，
+        // 直接 "spec is immutable after creation"（2026-10-27 真集群上就是这么失败的）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        PersistentVolumeClaimDTO jobservice = new PersistentVolumeClaimDTO();
+        jobservice.setName("harbor-jobservice");
+        jobservice.setStorageClassName("nfs-client");
+        when(k8s.list(any(PersistentVolumeClaimDTO.class))).thenReturn(List.of(jobservice));
+
+        service().apply(harborRequest(new HarborInstallRequest("10.0.0.5")), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        assertThat(specs.getValue().get(0).getValues().toString()).contains("nfs-client");
+    }
+
+    @Test
+    void harborRejectsAStorageClassThatDiffersFromTheLeftoverPvc() {
+        // 盘上已经是 nfs-client，表单却选了 cephfs：改不了，只能删盘或改回 —— 必须在下发前拒
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        PersistentVolumeClaimDTO registry = new PersistentVolumeClaimDTO();
+        registry.setName("harbor-registry");
+        registry.setStorageClassName("nfs-client");
+        when(k8s.list(any(PersistentVolumeClaimDTO.class))).thenReturn(List.of(registry));
+
+        ComponentApplyRequest req = harborRequest(new HarborInstallRequest("10.0.0.5"));
+        req.setEditableValues(Map.of(
+                "persistence.persistentVolumeClaim.registry.storageClass", "cephfs"));
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("harbor-registry")
+                .hasMessageContaining("nfs-client");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void harborLoadBalancerModeUsesTheExternalPort() {        String values = capturedHarborValues(
                 new HarborInstallRequest("loadBalancer", "10.0.0.6", 30002, 8080));
 
         assertThat(values)

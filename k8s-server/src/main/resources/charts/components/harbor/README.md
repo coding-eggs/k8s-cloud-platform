@@ -90,6 +90,18 @@ redis: { type: internal }
   **容量**（只能调大；StorageClass 必须开 `allowVolumeExpansion`，缩容会被 API server 拒）；
   `storageClassName` 不可改。
 
+**盘是「重装也不删」的**：契约里 `persistence.resourcePolicy: keep`，所以上次安装失败
+（helm 回滚 = uninstall）后 PVC 会留在 `harbor` 命名空间。PVC 的 `storageClassName` 创建后
+不可变，而表单留空 = 跟随集群默认 = manifest 里没有这个字段 —— helm 4 的 SSA 会把它抹成
+null，直接报 `spec is immutable after creation`（2026-10-27 真集群撞到的就是这条）。
+
+平台在下发前会读一遍命名空间里已有的 PVC 并对齐（`ComponentInstallService.alignHarborStorageClasses`）：
+
+- 表单留空 → 按**盘上的**存储类填回 values（复用旧盘，重试就能装成）；
+- 表单显式选了别的 → 直接拒，并说出盘上实际的存储类（改不了，只能删盘或改回）。
+
+读不到 PVC（没权限 / 集群不可达）时跳过对齐，让 helm 自己报错。
+
 ### 4.1 外部数据库 / Redis（可选）
 
 外部模式下 chart 不建 `harbor-database` / `harbor-redis`，平台在 helm 之前写两个 Secret：
