@@ -117,21 +117,23 @@ public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
     // ==================== 内部 ====================
 
     /**
-     * 应用账号（CNPG 由 {@code initdb} 建出来的默认账号）要有 CREATEDB。
+     * 默认账号（CNPG 由 {@code initdb} 建出来的 {@code app}）提为 SUPERUSER。
      *
      * <p>CNPG 的 {@code app} 账号**不是 superuser**，默认也没有 CREATEDB —— 用户拿平台给的默认凭据
      * 连上去 {@code CREATE DATABASE} 直接 {@code permission denied to create database}
-     * （2026-10-27 实报）。中间件实例连库都建不了就没法用。
+     * （2026-10-27 实报）。实例是租户自己建的，默认账号就给最高权限（2026-10-27 用户明确要求），
+     * 能建库/建角色/装扩展，不用再逐项补。
      *
-     * <p>{@code postInitSQL} 是 CNPG 里少数几条**以 superuser 身份**执行的地方（只在 initdb 后跑一次），
-     * 用它授 CREATEDB；不摊开 superuser（{@code enableSuperuserAccess} 保持默认 false）。
+     * <p>{@code postInitSQL} 是 CNPG 里少数几条**以 superuser 身份**执行的地方（只在 initdb 后跑一次）。
      * 库名与属主显式写死，保证 ALTER ROLE 的对象与 operator 生成的账号一致。
+     * （{@code enableSuperuserAccess} 仍保持默认 false：那是 operator 给 {@code postgres} 单独发口令的
+     * 开关，与这里无关，开了反而多一个平台不管的账号。）
      */
     private static Map<String, Object> bootstrap() {
         return Map.of("initdb", Map.of(
                 "database", APP_DATABASE,
                 "owner", APP_DATABASE,
-                "postInitSQL", List.of("ALTER ROLE " + APP_DATABASE + " CREATEDB;")));
+                "postInitSQL", List.of("ALTER ROLE " + APP_DATABASE + " SUPERUSER;")));
     }
 
     private static int instancesOf(MiddlewareCreateRequestDTO req) {

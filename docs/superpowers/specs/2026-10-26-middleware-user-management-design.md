@@ -73,7 +73,7 @@ alice         只读            平台创建   改口令 | 删除
 | 中间件 | 预设角色 → 实际授权 |
 |---|---|
 | mysql | `只读` → `SELECT ON *.*`；`读写` → `ALL PRIVILEGES ON *.*` |
-| postgresql | `只读` → `inRoles: [pg_read_all_data]`；`读写` → `[pg_read_all_data, pg_write_all_data]` |
+| postgresql | `只读` → `inRoles: [pg_read_all_data]`；`读写` → `[pg_read_all_data, pg_write_all_data]`；`管理员` → `superuser: true`（2026-10-27 补，与 ES/Milvus 口径一致） |
 | rabbitmq | `只读` → 权限 `configure="" / write="" / read=".*"`；`读写` → 三项全 `.*`；`管理员` → 再加 `administrator` tag |
 | elasticsearch | `只读` → 内置角色 `viewer`；`读写` → `editor`；`管理员` → `superuser` |
 | milvus | 只有 `管理员` → 内置角色 `admin`（实测该实例 `roles/list` 只有 `admin` / `public`，没有 `db_ro`/`db_rw`；做只读/读写要先自建角色并授一组 privilege，本批不做） |

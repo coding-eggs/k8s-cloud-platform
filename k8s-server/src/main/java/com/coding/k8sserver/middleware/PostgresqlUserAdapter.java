@@ -34,7 +34,8 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
     static final String VERSION = "v1";
     static final String APP_SECRET_SUFFIX = "-app";
     static final String USER_SECRET_INFIX = "-user-";
-    static final List<String> ROLES = List.of("只读", "读写");
+    /** 「管理员」= 数据库 superuser（与 ES / Milvus 的管理员口径一致） */
+    static final List<String> ROLES = List.of("只读", "读写", "管理员");
 
     static final CustomResourceDefinitionContext ROLE_CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION)
@@ -144,9 +145,14 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
             spec.put("passwordSecret", Map.of("name", secretName));
         }
         if (role != null) {
-            spec.put("inRoles", "只读".equals(role)
-                    ? List.of("pg_read_all_data")
-                    : List.of("pg_read_all_data", "pg_write_all_data"));
+            if ("管理员".equals(role)) {
+                // superuser 已覆盖读写，不再叠 inRoles（叠了也只是噪音）
+                spec.put("superuser", true);
+            } else {
+                spec.put("inRoles", "只读".equals(role)
+                        ? List.of("pg_read_all_data")
+                        : List.of("pg_read_all_data", "pg_write_all_data"));
+            }
         }
         GenericKubernetesResource cr = new GenericKubernetesResource();
         cr.setApiVersion(GROUP + "/" + VERSION);

@@ -119,11 +119,12 @@ class PostgresqlMiddlewareAdapterTest {
     /**
      * 2026-10-27 用户实报：拿平台给的默认账号（{@code app}）`CREATE DATABASE` 报
      * `permission denied to create database` —— CNPG 的应用账号不是 superuser，也没 CREATEDB。
-     * 中间件实例的默认账号连库都建不了就没法用，故 bootstrap 时补一条授权
-     * （只给 CREATEDB，不摊开 superuser）。
+     *
+     * <p>用户明确「实例是租户自己建的，就给最高权限」：默认账号直接 SUPERUSER
+     * （SUPERUSER 已含 CREATEDB/CREATEROLE），不再逐项补。
      */
     @Test
-    void appUserIsGrantedCreatedbAtBootstrap() {
+    void appUserIsSuperuserAtBootstrap() {
         var res = adapter.buildCreate(req("SINGLE", 1)).get(0).resource();
 
         @SuppressWarnings("unchecked")
@@ -135,6 +136,6 @@ class PostgresqlMiddlewareAdapterTest {
         // 库名与属主写死成 app：下面那条 ALTER ROLE 的对象必须与 operator 生成的应用账号一致
         assertThat(initdb).containsEntry("database", "app").containsEntry("owner", "app");
         assertThat(initdb.get("postInitSQL"))
-                .isEqualTo(java.util.List.of("ALTER ROLE app CREATEDB;"));
+                .isEqualTo(java.util.List.of("ALTER ROLE app SUPERUSER;"));
     }
 }

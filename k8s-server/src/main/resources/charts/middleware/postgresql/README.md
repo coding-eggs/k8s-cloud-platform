@@ -28,11 +28,13 @@
 - **不写平台口令**：`usesPlatformPassword=false`，凭据全由 Operator 生成（写一个没人引用的 Secret 只会误导）；
 - **状态**：Pod 选择器是 `cnpg.io/cluster=<实例名>,cnpg.io/podRole=instance` —— **必须带 `podRole=instance`**，
   否则 initdb / join 的 Job Pod 也会被算进去（真集群：3 实例被数成 5 个，"永远未就绪"）。
-- **默认账号有 CREATEDB**：CNPG 的 `app` 账号**不是 superuser**、默认也没有 CREATEDB，用户拿平台给的默认
-  凭据 `CREATE DATABASE` 会得到 `permission denied to create database`（2026-10-27 实报）。平台在
-  `bootstrap.initdb.postInitSQL` 里补一条 `ALTER ROLE app CREATEDB;`（那是 CNPG 少数几个以 superuser
-  身份执行的位置），**只给 CREATEDB、不摊开 superuser**（`enableSuperuserAccess` 保持默认 false）。
-  库名/属主显式写成 `app`，保证 ALTER ROLE 的对象与 operator 生成的账号一致。
+- **默认账号是 SUPERUSER**：CNPG 的 `app` 账号**不是 superuser**、默认也没有 CREATEDB，用户拿平台给的
+  默认凭据 `CREATE DATABASE` 会得到 `permission denied to create database`（2026-10-27 实报）。
+  实例是租户自己建的，**默认账号给最高权限**（2026-10-27 用户明确要求）：平台在
+  `bootstrap.initdb.postInitSQL` 里执行 `ALTER ROLE app SUPERUSER;`（那是 CNPG 少数几个以 superuser
+  身份执行的位置），建库/建角色/装扩展都能做。库名/属主显式写成 `app`，保证 ALTER ROLE 的对象与
+  operator 生成的账号一致。`enableSuperuserAccess` 仍保持默认 false —— 那是给 `postgres` 单独发口令的
+  开关，与默认账号无关，开了反而多一个平台不管的账号。
 
 ## 3. 形态与 CR 的对应关系
 
@@ -59,9 +61,9 @@
 4. **删除时 PVC 的处置**：保留 PVC = 数据还在，下次同名实例可复用；不保留则 PVC 一起删。
    CNPG 的 PVC 名是 `pgdata-<实例名>-<序号>`，平台按实例标签清理。
 5. 存储与形态**不能在线改**（CNPG 支持扩容 PVC，但平台没开放这个入口）；要改删实例重建。
-6. **`bootstrap` 只在建库时执行一次**：`postInitSQL` 里的 CREATEDB 授权对**存量实例不生效**
+6. **`bootstrap` 只在建库时执行一次**：`postInitSQL` 里的提权对**存量实例不生效**
    （CR 的 bootstrap 不可变）。存量实例手工补一次：
-   `kubectl -n <ns> exec -it $(kubectl -n <ns> get cluster <实例名> -o jsonpath='{.status.currentPrimary}') -c postgres -- psql -U postgres -c 'ALTER ROLE app CREATEDB'`
+   `kubectl -n <ns> exec -it $(kubectl -n <ns> get cluster <实例名> -o jsonpath='{.status.currentPrimary}') -c postgres -- psql -U postgres -c 'ALTER ROLE app SUPERUSER'`
    （`enableSuperuserAccess` 关闭时 `postgres` 仍可走本地 socket 免密登录）。
 
 ## 6. 业务指标
@@ -94,5 +96,6 @@
   `login: true` + `passwordSecret` + `inRoles`；口令存每用户一个 `kubernetes.io/basic-auth` Secret，
   CNPG 负责 reconcile 到数据库。
 - 内置账号 = operator 的应用账号（`<实例名>-app`）；改它之前先验 operator 会不会回写。
-- 角色：`只读` → `pg_read_all_data`；`读写` → 再加 `pg_write_all_data`。
+- 角色：`只读` → `pg_read_all_data`；`读写` → 再加 `pg_write_all_data`；`管理员` → DatabaseRole 的
+  `superuser: true`（与 ES / Milvus 的管理员口径一致，建它的账号本身得是 superuser —— 默认账号已提为 SUPERUSER）。
 - 删除只把 `ensure` 置 `absent`（CR 留着可回滚），同时删该用户的 Secret。

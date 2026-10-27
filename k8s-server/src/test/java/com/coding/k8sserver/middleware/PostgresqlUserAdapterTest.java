@@ -63,4 +63,17 @@ class PostgresqlUserAdapterTest {
         assertThat(PostgresqlUserAdapter.userSecretName("mw-pg-abcdefgh", "alice"))
                 .isEqualTo("mw-pg-abcdefgh-user-alice");
     }
+
+    /**
+     * 「管理员」= 数据库里的 superuser（与 ES / Milvus 的管理员口径一致）。
+     * CNPG 的 DatabaseRole 有 `superuser` 字段；建它的账号自己得是 superuser，
+     * 而默认账号 app 在 bootstrap 时已提为 SUPERUSER。
+     */
+    @Test
+    void adminRoleCreatesASuperuserWithoutInRoles() {
+        var spec = spec(PostgresqlUserAdapter.databaseRole("alice", "c", "s", "管理员"));
+
+        assertThat(spec).containsEntry("superuser", true);
+        assertThat(spec).doesNotContainKey("inRoles");
+    }
 }
