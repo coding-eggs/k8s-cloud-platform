@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareUserView;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -34,12 +35,16 @@ import java.util.Map;
  * <p><b>用户名空间是全局的</b>：平台建的账号统一加 {@code platform_} 前缀，列表再剥掉显示；
  * 只展示 {@code elastic} 与 {@code platform_} 开头的账号。
  *
- * <p><b>TLS</b>：从 {@code <实例名>-es-http-certs-public} 的 {@code ca.crt} 建信任链
- * （**不** trust-all）；两个 TLS Secret 都不存在才说明实例没开 TLS，走 http。
+ * <p><b>走 http 还是 https，只看 CR</b>：{@code spec.http.tls.selfSignedCertificate.disabled=true}
+ * 就是明文（与业务指标 exporter 同一条规则，见 {@link ElasticsearchMiddlewareAdapter#tlsEnabled}）。
  *
- * <p>⚠️ 别去 {@code -es-http-ca-internal} 找 {@code ca.crt}：ECK 那个 Secret 装的是 **CA 自己的
- * 密钥对**（{@code tls.crt} / {@code tls.key}），公钥证书在 {@code -es-http-certs-public}。
- * 读错地方的后果不是"连不上"，而是误判成没开 TLS、拿 http 去撞 TLS 端口（真集群实锤，2026-10-26）。
+ * <p>⚠️ 别拿"有没有 TLS Secret"当判据：实例关掉 TLS 后 ECK **照样**生成
+ * {@code -es-http-certs-public} 与 {@code -es-http-ca-internal}（真集群实锤 2026-10-27，
+ * 拿 Secret 判定会让客户端拿 https 去连明文端口：{@code Unrecognized SSL message}）。
+ *
+ * <p><b>https 的 CA</b>：{@code <实例名>-es-http-certs-public} 的 {@code ca.crt}，只信这张（**不** trust-all）。
+ * 别去 {@code -es-http-ca-internal} 找 {@code ca.crt} —— 那里装的是 CA 自己的密钥对
+ * （{@code tls.crt} / {@code tls.key}）。
  */
 @Component
 public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
@@ -179,12 +184,15 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "找不到 Elasticsearch 的超管凭据 Secret：" + ref.instanceName() + ELASTIC_SECRET_SUFFIX);
         }
-        Secret publicCerts = client.secrets().inNamespace(ref.namespace())
-                .withName(ref.instanceName() + CA_SECRET_SUFFIX).get();
-        Secret caKeyPair = client.secrets().inNamespace(ref.namespace())
-                .withName(ref.instanceName() + CA_KEYPAIR_SUFFIX).get();
-        String caPem = caPem(publicCerts, caKeyPair);
-        boolean https = caPem != null;
+        boolean https = https(esSpec(client, ref));
+        String caPem = null;
+        if (https) {
+            Secret publicCerts = client.secrets().inNamespace(ref.namespace())
+                    .withName(ref.instanceName() + CA_SECRET_SUFFIX).get();
+            Secret caKeyPair = client.secrets().inNamespace(ref.namespace())
+                    .withName(ref.instanceName() + CA_KEYPAIR_SUFFIX).get();
+            caPem = caPem(publicCerts, caKeyPair);
+        }
 
         String base = (https ? "https://" : "http://")
                 + ref.instanceName() + SERVICE_SUFFIX + "." + ref.namespace() + ".svc:9200";
@@ -219,6 +227,24 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "调用 Elasticsearch 接口失败（" + base + "）：" + e.getMessage());
         }
+    }
+
+    /** 线上 CR 决定 scheme：与业务指标 exporter 共用一条规则，别在这里另发明一套。 */
+    static boolean https(Map<String, Object> esSpec) {
+        return ElasticsearchMiddlewareAdapter.tlsEnabled(esSpec == null ? Map.of() : esSpec);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> esSpec(KubernetesClient client, MiddlewareUserRef ref) {
+        GenericKubernetesResource es = client
+                .genericKubernetesResources(ElasticsearchMiddlewareAdapter.CRD)
+                .inNamespace(ref.namespace()).withName(ref.instanceName()).get();
+        if (es == null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "读不到 Elasticsearch 实例的 CR：" + ref.namespace() + "/" + ref.instanceName());
+        }
+        Object spec = es.getAdditionalProperties() == null ? null : es.getAdditionalProperties().get("spec");
+        return spec instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
     }
 
     /**

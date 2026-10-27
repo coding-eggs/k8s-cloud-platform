@@ -92,7 +92,9 @@ HTTPS 开关（默认开）、IK 分词器开关（默认关）、同时部署 K
 
 ## 用户管理（2026-10-26）
 
-- 通道：`_security` API；TLS 用 `<实例名>-es-http-certs-public` 的 `ca.crt` 建信任链（**不** trust-all；
+- 通道：`_security` API；**scheme 只看 CR**（`http.tls.selfSignedCertificate.disabled=true` 即 http，
+  与指标 exporter 同一条规则 —— 关掉 TLS 后 ECK 照样生成 cert Secret，拿 Secret 判定会拿 https 去连明文端口），
+  https 时用 `<实例名>-es-http-certs-public` 的 `ca.crt` 建信任链（**不** trust-all；
   别读 `-es-http-ca-internal`，那里只有 CA 的 `tls.crt`/`tls.key`），
   没有 CA 说明实例没开 TLS，走 http。
 - 用户名空间全局：平台建的账号加 `platform_` 前缀，列表剥前缀显示；只展示 `elastic` 与 `platform_*`。

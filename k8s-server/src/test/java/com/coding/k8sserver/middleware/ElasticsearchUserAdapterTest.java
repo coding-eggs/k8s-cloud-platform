@@ -55,6 +55,31 @@ class ElasticsearchUserAdapterTest {
                 .hasMessageContaining("不支持的角色");
     }
 
+    // ---------- 到底走 http 还是 https：判据在 CR 上，不在 Secret 上 ----------
+
+    /**
+     * 2026-10-27 真集群实锤：实例 `http.tls.selfSignedCertificate.disabled: true` 时 ES 的
+     * {@code xpack.security.http.ssl.enabled} 是 false（明文），但 ECK **照样**生成
+     * {@code -es-http-certs-public} / {@code -es-http-ca-internal} 两个 Secret。
+     * 拿"Secret 在不在"当 TLS 判据 → 拿 https 去连明文端口
+     * （`Unrecognized SSL message, plaintext connection?`）。
+     */
+    @Test
+    void plaintextInstanceIsDecidedByTheCrNotByCertSecrets() {
+        Map<String, Object> spec = Map.of("http", Map.of("tls", Map.of(
+                "selfSignedCertificate", Map.of("disabled", true))));
+
+        assertThat(ElasticsearchUserAdapter.https(spec)).isFalse();
+    }
+
+    @Test
+    void tlsInstanceIsHttps() {
+        assertThat(ElasticsearchUserAdapter.https(Map.of())).isTrue();
+        assertThat(ElasticsearchUserAdapter.https(null)).isTrue();
+        assertThat(ElasticsearchUserAdapter.https(Map.of("http", Map.of("tls", Map.of(
+                "certificate", Map.of("secretName", "my-cert")))))).isTrue();
+    }
+
     // ---------- TLS：CA 从哪个 Secret、哪个键取 ----------
 
     /**

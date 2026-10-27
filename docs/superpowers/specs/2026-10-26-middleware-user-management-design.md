@@ -203,8 +203,10 @@ public interface MiddlewareUserAdapter {
 - 列表 `GET /_security/user`（只列 `platform-` 前缀 + `elastic`）；
 - 新增 `POST /_security/user/<u>`（`{password, roles:[内置角色]}`）；删除 `DELETE /_security/user/<u>`；
 - 改口令 `POST /_security/user/<u>/_password` → 内置 `elastic` 时同时写回 Secret；
-- TLS：从 `<名称>-es-http-certs-public` 取 CA（`ca.crt`）建 SSLContext；实例 `tls=false` 时走 http。
-  （`-es-http-ca-internal` 里是 CA 的密钥对 `tls.crt`/`tls.key`，读它会误判成没开 TLS —— 2026-10-26 真集群实锤）
+- scheme 只看 CR：`spec.http.tls.selfSignedCertificate.disabled=true` → http（与业务指标 exporter 同一条规则）。
+  **不能拿 TLS Secret 在不在当判据** —— 关掉 TLS 后 ECK 照样生成 cert Secret（2026-10-27 真集群实锤）。
+- https 时从 `<名称>-es-http-certs-public` 取 CA（`ca.crt`）建 SSLContext；`-es-http-ca-internal` 里是
+  CA 的密钥对 `tls.crt`/`tls.key`，读它会误判成没开 TLS（2026-10-26 真集群实锤）。
 
 ### 6.6 Milvus（补增删）
 
