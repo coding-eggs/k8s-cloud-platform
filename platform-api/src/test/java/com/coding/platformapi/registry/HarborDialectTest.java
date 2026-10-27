@@ -280,6 +280,19 @@ class HarborDialectTest {
     }
 
     @Test
+    void browseFirstLevelUsesTheKnownProjectWithoutListingAllProjects() {
+        // 平台建的 robot 是**项目级**的：没有列出全部 project 的权限，GET /projects 会 403
+        // （页面上的「凭据不通过，或该凭据无权访问此仓库」，2026-10-27 用户撞到）。
+        // 归属已知时直接用台账里的 project，一个请求都不发。
+        CredentialRef scoped = new CredentialRef("c2", "Harbor t-acme@c1", "HARBOR",
+                "http://harbor.example.com", "robot$ci", "pw", "t-acme");
+
+        assertThat(dialect.browse(scoped, List.of()).children())
+                .extracting(BrowseResult.Node::name).containsExactly("t-acme");
+        server.verify();
+    }
+
+    @Test
     void browseThirdLevelListsTagsWithCopyText() {
         server.expect(requestTo(
                         "https://harbor.example.com/api/v2.0/projects/proj/repositories/app/artifacts?page_size=100"))

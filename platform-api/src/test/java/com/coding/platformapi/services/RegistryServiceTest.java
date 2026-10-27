@@ -59,6 +59,8 @@ class RegistryServiceTest {
     PassthroughCache cache = new PassthroughCache();
 
     PlatformCredentialMapper mapper = mock(PlatformCredentialMapper.class);
+    com.coding.data.mapper.system.PlatformRegistryProjectMapper projectMapper =
+            mock(com.coding.data.mapper.system.PlatformRegistryProjectMapper.class);
     CredentialCipher cipher = new CredentialCipher(KEY);
 
     /**
@@ -91,7 +93,8 @@ class RegistryServiceTest {
 
     /** 显式带 builtin 开关 —— 「这条用例到底开没开内置 Docker Hub」必须一眼看得出来。 */
     private RegistryService service(RegistryDialectRegistry d, boolean builtin) {
-        return new RegistryService(mapper, cipher, d, cache, new RegistrySuggestExecutor(), builtin);
+        return new RegistryService(mapper, projectMapper, cipher, d, cache,
+                new RegistrySuggestExecutor(), builtin);
     }
 
     RegistryService svc = service(new RegistryDialectRegistry(List.of(spyDialect)), false);
@@ -468,6 +471,36 @@ class RegistryServiceTest {
         svc.browse(req);
 
         assertThat(calls).containsExactly("browse:[myproj]");
+    }
+
+    @Test
+    void browseCarriesTheHarborProjectOfAPlatformManagedCredential() {
+        // 项目级 robot 没有「列出全部 project」的权限，Harbor 的浏览第一层要用台账里的 project
+        // （见 CredentialRef#project）—— 不带的话会去调 GET /projects 被 403
+        when(mapper.selectAll()).thenReturn(
+                List.of(row("c1", "Harbor t-acme@c1", "HARBOR", "http://harbor.example.com", 1)));
+        com.coding.data.models.system.PlatformRegistryProject p =
+                new com.coding.data.models.system.PlatformRegistryProject();
+        p.setCredentialId("c1");
+        p.setProjectName("t-acme");
+        when(projectMapper.selectAll()).thenReturn(List.of(p));
+        RegistryDialect capture = new RegistryDialect() {
+            @Override public String type() { return "HARBOR"; }
+            @Override public Set<String> authTypes() { return Set.of("BASIC", "NONE"); }
+            @Override public ProbeSpec probeSpec(CredentialRef c) { return new ProbeSpec("x", "x"); }
+            @Override public List<String> suggest(CredentialRef c, String prefix) { return List.of(); }
+            @Override public BrowseResult browse(CredentialRef c, List<String> path) {
+                calls.add("project:" + c.project());
+                return new BrowseResult(List.of(), List.of());
+            }
+        };
+        RegistryService svc = service(new RegistryDialectRegistry(List.of(capture)), false);
+
+        RegistryBrowseRequest req = new RegistryBrowseRequest();
+        req.setCredentialId("c1");
+        svc.browse(req);
+
+        assertThat(calls).containsExactly("project:t-acme");
     }
 
     @Test

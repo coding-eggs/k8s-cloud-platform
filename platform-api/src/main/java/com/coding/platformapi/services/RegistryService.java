@@ -3,7 +3,9 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.data.mapper.system.PlatformCredentialMapper;
+import com.coding.data.mapper.system.PlatformRegistryProjectMapper;
 import com.coding.data.models.system.PlatformCredential;
+import com.coding.data.models.system.PlatformRegistryProject;
 import com.coding.platformapi.cache.RedisJsonCache;
 import com.coding.platformapi.credential.CredentialCipher;
 import com.coding.platformapi.credential.CredentialSecret;
@@ -26,7 +28,9 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 /**
@@ -54,6 +58,9 @@ public class RegistryService {
 
     private final PlatformCredentialMapper mapper;
 
+    /** 镜像项目台账：凭据 → Harbor project（项目级 robot 浏览第一层要用它，见 CredentialRef#project） */
+    private final PlatformRegistryProjectMapper projectMapper;
+
     private final CredentialCipher cipher;
 
     private final RegistryDialectRegistry dialects;
@@ -73,12 +80,14 @@ public class RegistryService {
     private final boolean dockerHubEnabled;
 
     public RegistryService(PlatformCredentialMapper mapper,
+                           PlatformRegistryProjectMapper projectMapper,
                            CredentialCipher cipher,
                            RegistryDialectRegistry dialects,
                            RedisJsonCache cache,
                            RegistrySuggestExecutor suggestExecutor,
                            @Value("${platform.registry.dockerhub.enabled:true}") boolean dockerHubEnabled) {
         this.mapper = mapper;
+        this.projectMapper = projectMapper;
         this.cipher = cipher;
         this.dialects = dialects;
         this.cache = cache;
@@ -228,10 +237,11 @@ public class RegistryService {
         }
         // 凭据表里启用的镜像仓库行。**不解密** —— 明文只在真正要用时（toRef）才解。
         // 租户帽下只给「自己的 + 手工平台级」——见 CredentialService.visibleTo（Harbor 租户隔离）
+        Map<String, String> projectByCredential = projectByCredential();
         mapper.selectAll().stream()
                 .filter(c -> isRegistry(c) && enabled(c))
                 .filter(c -> CredentialService.visibleTo(c, hatTenantId))
-                .map(Source::from)
+                .map(c -> Source.from(c, projectByCredential.get(c.getId())))
                 .forEach(out::add);
         return out;
     }
@@ -241,20 +251,38 @@ public class RegistryService {
      *
      * @param ciphertext 凭据行的密文；**内置档恒为 null**（它没有凭据可言）
      */
-    private record Source(String id, String name, String type, String endpoint, String ciphertext) {
+    private record Source(String id, String name, String type, String endpoint, String ciphertext,
+                          /** 凭据归属的 Harbor project（平台建的租户项目才有；手工连接为 null） */
+                          String project) {
 
         static Source builtin(BuiltinRegistry b) {
-            return new Source(b.id(), b.displayName(), b.type(), b.endpoint(), null);
+            return new Source(b.id(), b.displayName(), b.type(), b.endpoint(), null, null);
         }
 
-        static Source from(PlatformCredential c) {
+        static Source from(PlatformCredential c, String project) {
             return new Source(c.getId(), c.getName(), c.getType(), c.getEndpoint(),
-                    c.getSecretEncrypted());
+                    c.getSecretEncrypted(), project);
         }
 
         /** 只带匹配需要的字段（id / name / type / endpoint）的轻量 ref，**不含明文**。 */
         CredentialRef plainRef() {
-            return new CredentialRef(id, name, type, endpoint, null, null);
+            return new CredentialRef(id, name, type, endpoint, null, null, project);
+        }
+    }
+
+    /** credentialId → Harbor project（镜像项目台账）。读不到按「无归属」处理，不影响其它来源 */
+    private Map<String, String> projectByCredential() {
+        try {
+            Map<String, String> out = new LinkedHashMap<>();
+            for (PlatformRegistryProject p : projectMapper.selectAll()) {
+                if (p.getCredentialId() != null && p.getProjectName() != null) {
+                    out.put(p.getCredentialId(), p.getProjectName());
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("读取镜像项目台账失败（浏览将退回列全部 project）: {}", e.getMessage());
+            return Map.of();
         }
     }
 
@@ -268,11 +296,11 @@ public class RegistryService {
     private CredentialRef toRef(Source source) {
         if (!StringUtils.hasText(source.ciphertext())) {
             return new CredentialRef(source.id(), source.name(), source.type(), source.endpoint(),
-                    null, null);
+                    null, null, source.project());
         }
         CredentialSecret s = fromJson(cipher.decrypt(source.ciphertext()));
         return new CredentialRef(source.id(), source.name(), source.type(), source.endpoint(),
-                s.getUsername(), s.getSecret());
+                s.getUsername(), s.getSecret(), source.project());
     }
 
     /**

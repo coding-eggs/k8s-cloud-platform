@@ -129,6 +129,13 @@ public class HarborDialect implements RegistryDialect {
     public BrowseResult browse(CredentialRef cred, List<String> path) {
         // 浏览**不吞错**：用户在页面上主动点了一层，什么都不说等于页面坏了（spec §5.3）
         if (path == null || path.isEmpty()) {
+            // ⚠️ 平台建的 robot 是**项目级**的：只有该 project 的 repository 权限，没有列出全部
+            // project 的权限 —— 去调 GET /projects 会被 Harbor 拒成 403，页面上就是
+            // 「凭据不通过，或该凭据无权访问此仓库」（2026-10-27 用户撞到）。
+            // 归属已知（台账里有这条凭据对应的 project）就直接给它自己那个，不发请求也点得进去。
+            if (cred.project() != null && !cred.project().isBlank()) {
+                return mapProjects(cred, List.of(cred.project()));
+            }
             return mapProjects(cred, parseProjectNames(http.get(cred, projectsUrl(cred))));
         }
         if (path.size() == 1) {
