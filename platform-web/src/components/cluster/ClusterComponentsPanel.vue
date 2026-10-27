@@ -1559,7 +1559,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                                :storage-class-disabled="applyDialog.action === 'EDIT'"
                                :size-disabled="applyDialog.action === 'EDIT'"
                                size-placeholder="5Gi"
-                               hint="不创建外部库时，Harbor 用这块 PVC 存元数据" />
+                               hint="不创建外部库时，Harbor 用这块 PVC 存元数据"
+                               @update:storage-class="(v: string) => setHv(hk.dbSc, v)"
+                               @update:size="(v: string) => setHv(hk.dbSize, v)" />
           <div class="cc-form-hint">
             外部库要先建好库（默认 registry）与账号并授权，不再创建内置 PostgreSQL 的 StatefulSet 与 PVC。
             来源只能在首次安装时选，编辑时锁定（内置 ↔ 外部需要迁移数据）。
@@ -1591,7 +1593,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                                :options="applyDialog.storageClasses"
                                :storage-class-disabled="applyDialog.action === 'EDIT'"
                                :size-disabled="applyDialog.action === 'EDIT'"
-                               size-placeholder="1Gi" />
+                               size-placeholder="1Gi"
+                               @update:storage-class="(v: string) => setHv(hk.redisSc, v)"
+                               @update:size="(v: string) => setHv(hk.redisSize, v)" />
           <div class="cc-form-hint">
             外部 Redis 用独立 DB index（0/1/2/5），不要和别的应用共用；sentinel 暂不支持。
             不再创建内置 Redis 的 StatefulSet 与 PVC。口令同样由平台写进 Secret
@@ -1609,7 +1613,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                                :storage-class-disabled="applyDialog.action === 'EDIT'"
                                :size-disabled="false"
                                size-placeholder="20Gi"
-                               hint="registry 的数据盘：所有镜像层都在这里" />
+                               hint="registry 的数据盘：所有镜像层都在这里"
+                               @update:storage-class="(v: string) => setHv(hk.registrySc, v)"
+                               @update:size="(v: string) => setHv(hk.registrySize, v)" />
         </div>
       </div>
       <div v-if="applyDialog.showHarbor" class="cc-form-row">
@@ -1620,7 +1626,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                                :options="applyDialog.storageClasses"
                                :storage-class-disabled="applyDialog.action === 'EDIT'"
                                :size-disabled="false"
-                               size-placeholder="1Gi" />
+                               size-placeholder="1Gi"
+                               @update:storage-class="(v: string) => setHv(hk.jobserviceSc, v)"
+                               @update:size="(v: string) => setHv(hk.jobserviceSize, v)" />
         </div>
       </div>
 
@@ -1637,7 +1645,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                                :storage-class-disabled="applyDialog.action === 'EDIT'"
                                :size-disabled="applyDialog.action === 'EDIT'"
                                size-placeholder="5Gi"
-                               hint="漏洞库缓存；内网需能访问漏洞库源" />
+                               hint="漏洞库缓存；内网需能访问漏洞库源"
+                               @update:storage-class="(v: string) => setHv(hk.trivySc, v)"
+                               @update:size="(v: string) => setHv(hk.trivySize, v)" />
           <div class="cc-form-hint">
             Trivy 需要下载漏洞库：内网/无外网时可能一直报错，所以默认不装
           </div>
