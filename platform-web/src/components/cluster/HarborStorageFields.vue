@@ -11,8 +11,14 @@ defineProps<{
   storageClass: string
   size: string
   options: string[]
-  /** 编辑态：StatefulSet 的 volumeClaimTemplates 不可变，只读展示 */
-  disabled: boolean
+  /** 编辑态：PVC 的 storageClassName 不可变，只读展示 */
+  storageClassDisabled: boolean
+  /**
+   * 编辑态是否禁止改容量。
+   * StatefulSet 的 volumeClaimTemplates 不可变 → true；
+   * registry / jobservice 是独立 PVC，升级时可调大（需 SC 支持扩容）→ false。
+   */
+  sizeDisabled: boolean
   sizePlaceholder?: string
   hint?: string
 }>()
@@ -28,11 +34,11 @@ const emit = defineEmits<{
     <span class="hs-label">{{ label }}</span>
     <div class="hs-controls">
       <el-select :model-value="storageClass" filterable allow-create clearable
-                 :disabled="disabled" placeholder="跟随集群默认存储类"
+                 :disabled="storageClassDisabled" placeholder="跟随集群默认存储类"
                  @update:model-value="(v: string) => emit('update:storageClass', v ?? '')">
         <el-option v-for="sc in options" :key="sc" :label="sc" :value="sc" />
       </el-select>
-      <el-input :model-value="size" :disabled="disabled" spellcheck="false"
+      <el-input :model-value="size" :disabled="sizeDisabled" spellcheck="false"
                 :placeholder="sizePlaceholder ?? '如 5Gi'"
                 @update:model-value="(v: string) => emit('update:size', v)" />
     </div>

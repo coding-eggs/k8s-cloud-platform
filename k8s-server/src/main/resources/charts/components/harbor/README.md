@@ -82,6 +82,14 @@ redis: { type: internal }
 平台调 Harbor API 与写进租户凭据的 endpoint 用**同一个** authority（nodePort/LB 带端口），
 快照里记在 `__platform.harbor.externalHost`。
 
+### 4.0 存储容量的可改性（编辑时）
+
+- **数据库 / Redis / 扫描器**：chart 用 StatefulSet 的 `volumeClaimTemplates`，**不可变** ——
+  表单在编辑时只读展示。
+- **镜像数据（registry）/ 作业日志（jobservice）**：chart 建的是**独立 PVC**，编辑时可以调
+  **容量**（只能调大；StorageClass 必须开 `allowVolumeExpansion`，缩容会被 API server 拒）；
+  `storageClassName` 不可改。
+
 ### 4.1 外部数据库 / Redis（可选）
 
 外部模式下 chart 不建 `harbor-database` / `harbor-redis`，平台在 helm 之前写两个 Secret：

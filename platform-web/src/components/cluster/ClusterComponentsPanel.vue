@@ -601,6 +601,19 @@ function isFieldIrrelevant(key: string): boolean {
   return false
 }
 
+/** "20Gi" → 字节；不认识返回 null（判不了就不拦） */
+function sizeBytes(value: string): number | null {
+  const m = /^(\d+)(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$/.exec(value.trim())
+  if (!m) return null
+  const mult: Record<string, number> = {
+    Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, Pi: 1024 ** 5, Ei: 1024 ** 6,
+    k: 1e3, M: 1e6, G: 1e9, T: 1e12, P: 1e15, E: 1e18,
+  }
+  const amount = Number(m[1] ?? 0)
+  const unit = m[2]
+  return amount * (unit ? (mult[unit] ?? 1) : 1)
+}
+
 function fieldsOf(group: string): K8sEditableField[] {
   return applyDialog.value.fields.filter(
     (f) => (f.group || '其他配置') === group && !isHarborCustomField(f.key))
@@ -981,6 +994,18 @@ function confirmApply(): void {
       if (!SIZE_RE.test(value)) {
         ElMessage.error(`「${f.label}」需要写成 50Gi、500Mi 这样的容量`)
         return
+      }
+      // 独立 PVC（镜像数据 / 作业日志）编辑时只能调大：缩容会被 API server 直接拒
+      if (d.action === 'EDIT' && (f.key === hk.registrySize || f.key === hk.jobserviceSize)) {
+        // initial 里存的是 JSON.stringify(初值)，先还原成裸字符串再比大小
+        let beforeText = String(d.initial[f.key] ?? '')
+        try { beforeText = String(JSON.parse(d.initial[f.key] ?? '""')) } catch { /* 保留原文 */ }
+        const before = sizeBytes(beforeText)
+        const after = sizeBytes(value)
+        if (before !== null && after !== null && after < before) {
+          ElMessage.error(`「${f.label}」只能调大（当前 ${beforeText}），缩容会被集群拒绝`)
+          return
+        }
       }
       editable[f.key] = value
     } else {
@@ -1531,7 +1556,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <HarborStorageFields v-else label="内置 PostgreSQL 存储"
                                :storage-class="hv(hk.dbSc)" :size="hv(hk.dbSize)"
                                :options="applyDialog.storageClasses"
-                               :disabled="applyDialog.action === 'EDIT'"
+                               :storage-class-disabled="applyDialog.action === 'EDIT'"
+                               :size-disabled="applyDialog.action === 'EDIT'"
                                size-placeholder="5Gi"
                                hint="不创建外部库时，Harbor 用这块 PVC 存元数据" />
           <div class="cc-form-hint">
@@ -1563,7 +1589,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <HarborStorageFields v-else label="内置 Redis 存储"
                                :storage-class="hv(hk.redisSc)" :size="hv(hk.redisSize)"
                                :options="applyDialog.storageClasses"
-                               :disabled="applyDialog.action === 'EDIT'"
+                               :storage-class-disabled="applyDialog.action === 'EDIT'"
+                               :size-disabled="applyDialog.action === 'EDIT'"
                                size-placeholder="1Gi" />
           <div class="cc-form-hint">
             外部 Redis 用独立 DB index（0/1/2/5），不要和别的应用共用；sentinel 暂不支持。
@@ -1579,7 +1606,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <HarborStorageFields label="镜像数据"
                                :storage-class="hv(hk.registrySc)" :size="hv(hk.registrySize)"
                                :options="applyDialog.storageClasses"
-                               :disabled="applyDialog.action === 'EDIT'"
+                               :storage-class-disabled="applyDialog.action === 'EDIT'"
+                               :size-disabled="false"
                                size-placeholder="20Gi"
                                hint="registry 的数据盘：所有镜像层都在这里" />
         </div>
@@ -1590,7 +1618,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <HarborStorageFields label="jobservice 日志"
                                :storage-class="hv(hk.jobserviceSc)" :size="hv(hk.jobserviceSize)"
                                :options="applyDialog.storageClasses"
-                               :disabled="applyDialog.action === 'EDIT'"
+                               :storage-class-disabled="applyDialog.action === 'EDIT'"
+                               :size-disabled="false"
                                size-placeholder="1Gi" />
         </div>
       </div>
@@ -1605,7 +1634,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           <HarborStorageFields v-if="applyDialog.values[hk.trivyEnabled]" label="扫描器数据"
                                :storage-class="hv(hk.trivySc)" :size="hv(hk.trivySize)"
                                :options="applyDialog.storageClasses"
-                               :disabled="applyDialog.action === 'EDIT'"
+                               :storage-class-disabled="applyDialog.action === 'EDIT'"
+                               :size-disabled="applyDialog.action === 'EDIT'"
                                size-placeholder="5Gi"
                                hint="漏洞库缓存；内网需能访问漏洞库源" />
           <div class="cc-form-hint">
@@ -1614,8 +1644,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </div>
       </div>
       <div v-if="applyDialog.showHarbor && applyDialog.action === 'EDIT'" class="cc-form-hint">
-        存储类与容量不能在这里改：StatefulSet 的 volumeClaimTemplates 不可变；
-        扩容需 StorageClass 支持并在集群侧操作 PVC
+        数据库 / Redis / 扫描器的存储不能在这里改（StatefulSet 的 volumeClaimTemplates 不可变）。
+        镜像数据与作业日志是独立 PVC：容量只能调大，且需要 StorageClass 开了 allowVolumeExpansion；
+        存储类本身不可改，缩容会被集群拒绝
       </div>
 
       <div v-if="applyDialog.showSeaweed" class="cc-section-title">对象存储（SeaweedFS）</div>
