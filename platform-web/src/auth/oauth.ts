@@ -5,6 +5,8 @@
  *   - 令牌端点 {issuer}/oauth2/token
  */
 
+import { sha256 } from './sha256'
+
 const ISSUER = import.meta.env.VITE_OAUTH_ISSUER
 const CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID
 const REDIRECT_URI = import.meta.env.VITE_OAUTH_REDIRECT_URI
@@ -63,10 +65,19 @@ function generateCodeVerifier(length = 64): string {
   return base64UrlEncode(bytes)
 }
 
-/** SHA-256 → base64url（S256 code_challenge） */
+/** SHA-256 → base64url（S256 code_challenge）
+ *
+ * ⚠️ `crypto.subtle` 只在安全上下文（https / localhost / 127.0.0.1）才存在：本平台按内网 http
+ * 部署，用局域网 IP 打开时它是 `undefined`，直接调用会报
+ * `Cannot read properties of undefined (reading 'digest')` 并让「登录」按钮彻底没用。
+ * 故不安全上下文退到纯 JS 实现（见 ./sha256.ts）。
+ */
 async function sha256Challenge(verifier: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))
-  return base64UrlEncode(new Uint8Array(digest))
+  const bytes = new TextEncoder().encode(verifier)
+  const digest = crypto.subtle
+    ? new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+    : sha256(bytes)
+  return base64UrlEncode(digest)
 }
 
 /** 生成随机 state（防 CSRF） */
