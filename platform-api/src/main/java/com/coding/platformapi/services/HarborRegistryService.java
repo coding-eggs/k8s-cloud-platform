@@ -228,7 +228,8 @@ public class HarborRegistryService {
             boolean hostChanged = row != null && !host.equals(row.getHost());
             // ⚠️ 上一次失败（status=ERROR）的行不能 skip：可能旧 robot 已删、凭据行却还在
             if (!force && !hostChanged && row != null && "READY".equals(row.getStatus())
-                    && row.getCredentialId() != null && credentialUsable(row.getCredentialId())) {
+                    && row.getCredentialId() != null
+                    && credentialMatches(row.getCredentialId(), baseUrl)) {
                 touch(row);
                 return new SyncItem(tenantId, tenantName, project, "READY", "已是最新");
             }
@@ -239,8 +240,11 @@ public class HarborRegistryService {
                     HarborNaming.robotNameInHarbor(project));
             HarborAdminClient.HarborRobot robot =
                     harbor.createRobot(baseUrl, auth.user(), auth.pass(), project);
+            // 端点带 scheme：平台装的 Harbor 只有 HTTP（chart 的 tls.enabled=false），
+            // 而 HarborDialect 对无 scheme 的端点默认补 https → 浏览镜像仓库时报
+            // "Unrecognized SSL message, plaintext connection"（2026-10-27 用户撞到）
             String credentialId = credentialService.upsertManagedRegistry(
-                    HarborNaming.credentialName(project, clusterId), host, tenantId,
+                    HarborNaming.credentialName(project, clusterId), baseUrl, tenantId,
                     robot.name(), robot.secret(),
                     "Harbor 自动创建：" + clusterNameOf(clusterId) + " / project " + project);
             save(clusterId, tenantId, host, project, credentialId, robot.id(),
@@ -254,10 +258,19 @@ public class HarborRegistryService {
         }
     }
 
-    private boolean credentialUsable(String credentialId) {
+    /**
+     * 凭据行可用**且端点对得上**。
+     *
+     * <p>端点也要比：早期版本存的是 {@code host:port}（没有 scheme），而 {@code HarborDialect}
+     * 对无 scheme 的端点默认补 {@code https://} —— 平台装的 Harbor 只有 HTTP，于是浏览镜像仓库
+     * 时报 {@code Unrecognized SSL message, plaintext connection}（2026-10-27 用户撞到）。
+     * 对不上就重做一次，把端点修成 {@code http://host:port}。
+     */
+    private boolean credentialMatches(String credentialId, String endpoint) {
         PlatformCredential c = credentials.selectById(credentialId);
         return c != null && c.getSecretEncrypted() != null && !c.getSecretEncrypted().isBlank()
-                && c.getEnabled() != null && c.getEnabled() == 1;
+                && c.getEnabled() != null && c.getEnabled() == 1
+                && endpoint.equals(c.getEndpoint());
     }
 
     private void touch(PlatformRegistryProject row) {

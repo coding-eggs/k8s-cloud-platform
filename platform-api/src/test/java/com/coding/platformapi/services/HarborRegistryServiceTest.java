@@ -69,7 +69,8 @@ class HarborRegistryServiceTest {
 
         assertThat(result.failed()).isZero();
         verify(harbor).createRobot(anyString(), anyString(), anyString(), eq("t-acme"));
-        verify(credentialService).upsertManagedRegistry(eq("Harbor t-acme@c1"), eq("harbor.example.com"),
+        verify(credentialService).upsertManagedRegistry(eq("Harbor t-acme@c1"),
+                eq("http://harbor.example.com"),
                 eq("tenant-1"), eq("robot$t-acme+ci"), eq("s3cr3t"), anyString());
         verify(projects).insert(any());
     }
@@ -91,6 +92,7 @@ class HarborRegistryServiceTest {
         cred.setId("cred-1");
         cred.setSecretEncrypted("v1:xxx");
         cred.setEnabled(1);
+        cred.setEndpoint("http://harbor.example.com");
         when(credentials.selectById("cred-1")).thenReturn(cred);
 
         HarborRegistryService.SyncResult result = svc.ensureAll("c1");
@@ -99,6 +101,42 @@ class HarborRegistryServiceTest {
         verify(harbor, never()).createRobot(anyString(), anyString(), anyString(), anyString());
         verify(credentialService, never()).upsertManagedRegistry(anyString(), anyString(), anyString(),
                 anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void aSchemeLessEndpointIsRepairedSoBrowsingStopsUsingHttps() {
+        // 早期写的是 host:port（没有 scheme），HarborDialect 对无 scheme 的端点默认补 https，
+        // 而平台装的 Harbor 只有 HTTP → 浏览镜像仓库报
+        // "Unrecognized SSL message, plaintext connection"（2026-10-27 用户撞到）。
+        // 行是 READY、凭据也可用，只有端点旧 —— 必须重做一次把端点修掉。
+        PlatformRegistryProject row = new PlatformRegistryProject();
+        row.setId("p1");
+        row.setClusterId("c1");
+        row.setTenantId("tenant-1");
+        row.setProjectName("t-acme");
+        row.setCredentialId("cred-1");
+        row.setRobotId(42L);
+        row.setStatus("READY");
+        row.setHost("harbor.example.com");
+        when(tenants.listAll()).thenReturn(List.of(tenant("tenant-1", "acme")));
+        when(projects.selectByClusterAndTenant("c1", "tenant-1")).thenReturn(row);
+        PlatformCredential old = new PlatformCredential();
+        old.setId("cred-1");
+        old.setSecretEncrypted("v1:xxx");
+        old.setEnabled(1);
+        old.setEndpoint("harbor.example.com");
+        when(credentials.selectById("cred-1")).thenReturn(old);
+        when(harbor.ensureProject(anyString(), anyString(), anyString(), eq("t-acme"))).thenReturn(7L);
+        when(harbor.createRobot(anyString(), anyString(), anyString(), eq("t-acme")))
+                .thenReturn(new HarborAdminClient.HarborRobot(43L, "robot$t-acme+ci", "new"));
+        when(credentialService.upsertManagedRegistry(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString())).thenReturn("cred-1");
+
+        svc.ensureAll("c1");
+
+        verify(credentialService).upsertManagedRegistry(eq("Harbor t-acme@c1"),
+                eq("http://harbor.example.com"), eq("tenant-1"),
+                eq("robot$t-acme+ci"), eq("new"), anyString());
     }
 
     @Test
@@ -191,8 +229,8 @@ class HarborRegistryServiceTest {
         assertThat(result.failed()).isZero();
         assertThat(result.host()).isEqualTo("harbor.example.com");
         verify(credentialService).upsertManagedRegistry(eq("Harbor t-acme@c1"),
-                eq("harbor.example.com"), eq("tenant-1"), eq("robot$t-acme+ci"), eq("s3cr3t"),
-                anyString());
+                eq("http://harbor.example.com"), eq("tenant-1"), eq("robot$t-acme+ci"),
+                eq("s3cr3t"), anyString());
     }
 
     private static PlatformTenant tenant(String id, String sa) {
@@ -231,6 +269,8 @@ class HarborRegistryServiceTest {
         c.setId(id);
         c.setSecretEncrypted("v1:x");
         c.setEnabled(1);
+        // 端点必须与 HarborRegistryService 现在写的一致（带 scheme），否则会被当成旧数据重做
+        c.setEndpoint("http://harbor.example.com");
         return c;
     }
 }
