@@ -64,10 +64,14 @@ k8s-server 对每个 release 依次：
 1. `helm template`（客户端渲染）—— **硬门禁**；
 2. `helm upgrade --install --dry-run=server` —— **只记警告**。同一份 manifest 同时有 CRD 和 CR 时
    （kube-prometheus-stack、TektonConfig、OTel CR）会报「CRD 尚不存在」的假阴性；
-3. `helm upgrade --install --rollback-on-failure --force-conflicts --timeout 10m`。
+3. `helm upgrade --install --force-conflicts --timeout 10m` + 一个失败开关：
+   - release **已经成功部署过** → `--rollback-on-failure`（升级失败回滚到上一个成功版本）；
+   - **首次安装** → `--wait`（失败**不卸载**，release 与已建对象留在集群里，重试就是 upgrade）。
 
 - 多个 release **顺序执行、失败即停**（Tekton / OTel 的两阶段靠这个）；
-- Helm 4 没有 `--atomic`，回滚用 `--rollback-on-failure`；
+- Helm 4 没有 `--atomic`；`--rollback-on-failure` 对 **install** 的语义是 uninstall，
+  所以首次安装不用它 —— 否则装到一半的 PVC/Service 会被拆掉（带 `resource-policy: keep`
+  的盘还得手工删了才能重试），2026-10-27 就这么撞过一次。
 - `--force-conflicts` 接管手工 `helm install` 残留的 CRD；
 - 平台**不提供卸载**；手工 `helm uninstall` 不删 CRD，CRD 残留不等于组件还在跑。
 

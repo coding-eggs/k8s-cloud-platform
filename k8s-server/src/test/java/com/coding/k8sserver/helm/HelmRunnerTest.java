@@ -42,7 +42,7 @@ class HelmRunnerTest {
     }
 
     @Test
-    void applyUsesInstallUpgradeRollbackOnFailureAndLabels() throws Exception {
+    void applyUsesInstallUpgradeAndLabelsWithoutUninstallingOnFailure() throws Exception {
         Path log = tmp.resolve("argv.log");
         Path values = tmp.resolve("values.yaml");
         Files.writeString(values, "replicas: 1\n");
@@ -60,14 +60,39 @@ class HelmRunnerTest {
         assertThat(argv).contains("--create-namespace");
         assertThat(argv).contains("kube-system");
         assertThat(argv).contains("platform-metrics-server");
-        // ⭐ Helm 4：不是 --atomic
-        assertThat(argv).contains("--rollback-on-failure");
+        // ⭐ 首次安装失败**不能卸载**（2026-10-27 用户定）：Helm 4 的 rollback-on-failure
+        //   对 install 就是 uninstall，装到一半的 PVC/Service 会被拆掉，重试还得先删盘。
+        //   这里只等就绪，失败后现场留着，再点一次「安装」就是 upgrade。
+        assertThat(argv).contains("--wait");
+        assertThat(argv).doesNotContain("--rollback-on-failure");
         assertThat(argv).doesNotContain("--atomic");
         // ⭐ 接管手工 release 残留的 CRD：旧 manager 是 helm/Update，新装用 SSA 会报
         //   "Apply failed with 3 conflicts: conflicts with \"helm\""，必须显式 force
         assertThat(argv).contains("--force-conflicts");
         assertThat(argv).contains("platform.coding/managed=true");
         assertThat(argv).contains("--timeout");
+    }
+
+    @Test
+    void anAlreadyDeployedReleaseRollsBackOnAFailedUpgrade() throws Exception {
+        Path log = tmp.resolve("argv.log");
+        Path values = tmp.resolve("values.yaml");
+        Files.writeString(values, "replicas: 1\n");
+        // 假 helm 的 stdout = 「这个 release 已经有成功部署的版本」
+        Path listOut = tmp.resolve("list.txt");
+        Files.writeString(listOut, "platform-metrics-server\n");
+
+        HelmResult r = runner(log, 0, Map.of("FAKE_HELM_STDOUT_FILE", listOut.toString()),
+                Duration.ofMinutes(15))
+                .apply("apiVersion: v1\nkind: Config\n", chart(), values,
+                        "platform-metrics-server", "kube-system",
+                        Map.of("platform.coding/managed", "true"));
+
+        assertThat(r.ok()).isTrue();
+        String argv = Files.readString(log);
+        // 升级失败要回滚到上一个成功版本（--rollback-on-failure 同时把 wait 默认成 watcher）
+        assertThat(argv).contains("--rollback-on-failure");
+        assertThat(argv).doesNotContain("--wait");
     }
 
     @Test

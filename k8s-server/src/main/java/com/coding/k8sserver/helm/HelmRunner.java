@@ -24,7 +24,8 @@ import java.util.concurrent.TimeUnit;
  * <p><b>安全</b>：helm 需要 kubeconfig 文件 —— 明文只落在 0600 的临时文件里，方法返回前删除；
  * 日志绝不打印内容。
  *
- * <p><b>Helm 4</b>：失败回滚用 {@code --rollback-on-failure}（3.x 的 {@code --atomic} 已不存在）。
+ * <p><b>Helm 4</b>：升级失败回滚用 {@code --rollback-on-failure}（3.x 的 {@code --atomic} 已不存在）；
+ * 首次安装失败**不卸载**，用 {@code --wait} 等就绪、把现场留下（见 {@code apply}）。
  *
  * <p><b>预检分级</b>：{@link #render} 是硬门禁（不连集群）；{@link #dryRunServer} 由调用方按警告处理
  * （chart 同时装 CRD 与 CR 时会报假阴性）。
@@ -143,7 +144,18 @@ public class HelmRunner {
 
     /**
      * 安装或升级。幂等：同一 release 上重复调用就是 upgrade。
-     * {@code --rollback-on-failure} 在 Helm 4 里同时把 wait 默认成 watcher。
+     *
+     * <p><b>失败时的行为按「有没有成功部署过」分两种</b>（2026-10-27 用户定）：
+     * <ul>
+     *   <li>**已经成功部署过** → {@code --rollback-on-failure}：升级失败回滚到上一个成功版本，
+     *       别把能用的组件升成半截；</li>
+     *   <li>**第一次装**（含上次失败留下的 failed release）→ 只用 {@code --wait}：失败**不卸载**，
+     *       release 与已建出来的对象留在集群里。以前这里也加 rollback-on-failure，Helm 4 对
+     *       install 的语义就是「失败即 uninstall」：装到一半的 PVC / Service 被拆掉，
+     *       带 {@code resource-policy: keep} 的盘还得手工删了才能重试。留着现场再点一次
+     *       「安装」走的就是 upgrade，能接着装。</li>
+     * </ul>
+     * 两种都会等资源就绪（Helm 4 里 {@code --rollback-on-failure} 也把 wait 默认成 watcher）。
      *
      * <p><b>{@code --force-conflicts}</b>：Helm 4 用 SSA 装 chart 里的 {@code crds/}，而
      * 手工 {@code helm install} 过的集群会留下 manager=helm、operation=Update 的 CRD ——
@@ -164,12 +176,13 @@ public class HelmRunner {
 
     public HelmResult apply(String kubeconfig, Path chartPath, Path valuesFile,
                             String release, String namespace, InstallOptions options) {
+        boolean deployed = hasDeployedRevision(kubeconfig, release, namespace);
         List<String> args = new ArrayList<>(List.of(
                 "upgrade", "--install", release, chartPath.toString(),
                 "--namespace", namespace,
                 "--create-namespace",
                 "--values", valuesFile.toString(),
-                "--rollback-on-failure",
+                deployed ? "--rollback-on-failure" : "--wait",
                 "--force-conflicts",
                 "--timeout", "10m"));
         if (options.skipCrds()) {
@@ -185,6 +198,18 @@ public class HelmRunner {
             args.add(String.join(",", kv));
         }
         return exec(kubeconfig, args);
+    }
+
+    /**
+     * 这个 release 现在有没有**成功部署过**的版本（决定失败时回滚还是留现场）。
+     *
+     * <p>用 {@code helm list --deployed -q --filter ^name$} 而不是 {@code helm status}：
+     * 只要一个布尔，不必解析 JSON；release 不存在时列表为空，等价于 false。
+     */
+    private boolean hasDeployedRevision(String kubeconfig, String release, String namespace) {
+        HelmResult r = exec(kubeconfig, List.of("list", "--namespace", namespace,
+                "--deployed", "--filter", "^" + release + "$", "--short"));
+        return r.ok() && r.output() != null && !r.output().isBlank();
     }
 
     /**
