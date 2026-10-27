@@ -46,8 +46,14 @@ async function refresh(): Promise<void> {
   }
 }
 
+/**
+ * 返回：本页入口不止一个（Pod 列表 / 工作负载详情 / 节点详情 / 集群概览 / 中间件详情 / 容器详情），
+ * 硬编码任何一页都会把别的入口带来的用户送错地方，所以有站内上一页就原路返回；
+ * 直接打开（新标签页、无历史）时回 Pod 列表 —— 它是本页的主列表。
+ */
 function goBack(): void {
-  router.push('/resources/workloads')
+  if (window.history.state?.back) router.back()
+  else router.push('/resources/pods')
 }
 function goContainer(c: PodContainerDetail): void {
   if (!c.name) return

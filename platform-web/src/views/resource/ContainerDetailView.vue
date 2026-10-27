@@ -47,8 +47,11 @@ const container = computed<PodContainerDetail | null>(() =>
   (pod.value?.containerDetails ?? []).find((c) => c.name === containerName.value) ?? null,
 )
 
+/** 返回 Pod 详情：本页只从 Pod 详情进入 → 原路返回（push 会再压一条记录，连点两次「返回」就在
+ *  Pod / 容器之间来回弹）；直接打开（无历史）时按 query 回退到该 Pod 详情 */
 function goBack(): void {
-  router.push(`/resources/pods/detail?name=${encodeURIComponent(podName.value)}&namespace=${encodeURIComponent(ns.value)}`)
+  if (window.history.state?.back) router.back()
+  else router.push(`/resources/pods/detail?name=${encodeURIComponent(podName.value)}&namespace=${encodeURIComponent(ns.value)}`)
 }
 
 // ---------- 展示辅助 ----------

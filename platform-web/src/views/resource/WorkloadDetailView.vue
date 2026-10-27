@@ -82,8 +82,14 @@ async function refresh(): Promise<void> {
   }
 }
 
+/**
+ * 返回：本页入口不止一个（工作负载列表 / 中间件详情的「所属工作负载」跳转），
+ * 硬编码回列表会把从中间件详情来的人送错地方 —— 有站内上一页就原路返回，
+ * 直接打开（新标签页、无历史）时回工作负载列表。
+ */
 function goBack(): void {
-  router.push('/resources/workloads')
+  if (window.history.state?.back) router.back()
+  else router.push('/resources/workloads')
 }
 
 /** 全局刷新：工作负载 + Pod 列表 + 监控指标一起重取（顶栏按钮 / 自动刷新用）。
