@@ -2,7 +2,6 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
-import com.coding.common.models.k8s.dto.SecretDTO;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.auth.PlatformTenantMapper;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
@@ -54,7 +53,7 @@ public class HarborRegistryService {
     private final PlatformRegistryProjectMapper projects;
     private final PlatformCredentialMapper credentials;
     private final CredentialService credentialService;
-    private final SecretService secrets;
+    private final com.coding.platformapi.k8s.K8sComponentClient components;
     private final K8sProvisioningService provisioning;
     private final HarborAdminClient harbor;
 
@@ -314,10 +313,12 @@ public class HarborRegistryService {
         return host;
     }
 
+    /**
+     * Harbor 管理账号的 Basic 头。口令由 k8s-server 生成、只存在集群的 Secret 里，
+     * 这里经 PLATFORM 端点读回来（组件命名空间不在租户分配表里，通用 /secrets 读不到）。
+     */
     private Basic adminOf(String clusterId) {
-        SecretDTO secret = secrets.get(SECRET_NAME, null, clusterId, NAMESPACE);
-        String pass = secret == null || secret.getData() == null
-                ? null : secret.getData().get("HARBOR_ADMIN_PASSWORD");
+        String pass = components.harborAdminPassword(clusterId, NAMESPACE, SECRET_NAME);
         if (pass == null || pass.isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Harbor 管理口令 Secret 不可用：" + NAMESPACE + "/" + SECRET_NAME);

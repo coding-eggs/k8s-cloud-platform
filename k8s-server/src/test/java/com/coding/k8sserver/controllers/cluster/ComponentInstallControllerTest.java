@@ -146,6 +146,54 @@ class ComponentInstallControllerTest {
               name: default
             """;
 
+    @Test
+    void theHarborAdminPasswordEndpointReturnsOnlyThePassword() {
+        // Harbor 的组件命名空间（harbor）不在租户分配表里：走通用 GET /secrets（命名空间域，
+        // 要求显式 tenantId + 分配关系）会被边界拒成「管理员代操作需显式指定 tenantId」。
+        // 平台侧读自己组件的口令，只能走这扇 PLATFORM 小门，而且只回口令这一个键。
+        String encoded = java.util.Base64.getEncoder().encodeToString(
+                "s3cret".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        var secret = new io.fabric8.kubernetes.api.model.SecretBuilder()
+                .addToData("HARBOR_ADMIN_PASSWORD", encoded)
+                .addToData("secretKey", encoded)
+                .build();
+
+        assertThat(controller(mock(HelmRunner.class), kubeWithHarborSecret(secret))
+                .harborAdminPassword(harborSecrets()).getData()).isEqualTo("s3cret");
+    }
+
+    @Test
+    void aMissingHarborSecretYieldsNoPasswordRatherThanAnError() {
+        assertThat(controller(mock(HelmRunner.class), kubeWithHarborSecret(null))
+                .harborAdminPassword(harborSecrets()).getData()).isNull();
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static io.fabric8.kubernetes.client.KubernetesClient kubeWithHarborSecret(
+            io.fabric8.kubernetes.api.model.Secret secret) {
+        io.fabric8.kubernetes.client.KubernetesClient client = kubeClient("1", "35");
+        io.fabric8.kubernetes.client.dsl.MixedOperation secrets =
+                mock(io.fabric8.kubernetes.client.dsl.MixedOperation.class);
+        io.fabric8.kubernetes.client.dsl.NonNamespaceOperation namespaceOp =
+                mock(io.fabric8.kubernetes.client.dsl.NonNamespaceOperation.class);
+        io.fabric8.kubernetes.client.dsl.Resource named =
+                mock(io.fabric8.kubernetes.client.dsl.Resource.class);
+        when(client.secrets()).thenReturn(secrets);
+        when(secrets.inNamespace("harbor")).thenReturn(namespaceOp);
+        when(namespaceOp.withName("platform-harbor-secrets")).thenReturn(named);
+        when(named.get()).thenReturn(secret);
+        return client;
+    }
+
+    private static com.coding.common.models.k8s.dto.HarborSecretsRequestDTO harborSecrets() {
+        com.coding.common.models.k8s.dto.HarborSecretsRequestDTO req =
+                new com.coding.common.models.k8s.dto.HarborSecretsRequestDTO();
+        req.setClusterId("c1");
+        req.setNamespace("harbor");
+        req.setSecretName("platform-harbor-secrets");
+        return req;
+    }
+
     /** 模拟集群发现：k8s 1.3x 只提供 MutatingAdmissionPolicy 的 v1 */
     private static io.fabric8.kubernetes.client.KubernetesClient kubeClient(String major, String minor) {
         io.fabric8.kubernetes.client.KubernetesClient client =

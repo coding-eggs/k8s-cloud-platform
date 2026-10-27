@@ -31,7 +31,8 @@ class HarborRegistryServiceTest {
     private final PlatformRegistryProjectMapper projects = mock(PlatformRegistryProjectMapper.class);
     private final PlatformCredentialMapper credentials = mock(PlatformCredentialMapper.class);
     private final CredentialService credentialService = mock(CredentialService.class);
-    private final SecretService secrets = mock(SecretService.class);
+    private final com.coding.platformapi.k8s.K8sComponentClient components =
+            mock(com.coding.platformapi.k8s.K8sComponentClient.class);
     private final K8sProvisioningService provisioning = mock(K8sProvisioningService.class);
     private final HarborAdminClient harbor = mock(HarborAdminClient.class);
 
@@ -40,14 +41,15 @@ class HarborRegistryServiceTest {
     @BeforeEach
     void setUp() {
         svc = new HarborRegistryService(operations, tenants, projects, credentials, credentialService,
-                secrets, provisioning, harbor);
+                components, provisioning, harbor);
         when(operations.selectLatestSuccess("c1", "harbor")).thenReturn(successOperation());
         K8sCluster cluster = new K8sCluster();
         cluster.setClusterId("c1");
         cluster.setClusterName("test-cluster");
         when(provisioning.enabledClusters()).thenReturn(List.of(cluster));
-        when(secrets.get("platform-harbor-secrets", null, "c1", "harbor"))
-                .thenReturn(secretWithPassword());
+        // harbor 是组件命名空间、不在租户分配表里：口令只能走 PLATFORM 端点读回
+        when(components.harborAdminPassword("c1", "harbor", "platform-harbor-secrets"))
+                .thenReturn("pw");
         // 平台共享项目默认已就绪：这些用例只关心租户路径
         when(projects.selectByClusterAndTenant("c1", null)).thenReturn(platformRow());
         when(credentials.selectById("cred-platform")).thenReturn(usableCredential("cred-platform"));
@@ -209,12 +211,6 @@ class HarborRegistryServiceTest {
         op.setStatus("SUCCESS");
         op.setValuesSnapshot("{\"__platform\":{\"harbor\":{\"host\":\"harbor.example.com\"}}}");
         return op;
-    }
-
-    private static com.coding.common.models.k8s.dto.SecretDTO secretWithPassword() {
-        var dto = new com.coding.common.models.k8s.dto.SecretDTO();
-        dto.setData(java.util.Map.of("HARBOR_ADMIN_PASSWORD", "pw", "secretKey", "0123456789abcdef"));
-        return dto;
     }
 
     private static PlatformRegistryProject platformRow() {

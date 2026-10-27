@@ -52,9 +52,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -390,6 +392,34 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 .resource(HarborSecretObjects.build(request.getNamespace(), request.getSecretName()))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>();
+    }
+
+    /**
+     * 读 Harbor 的管理口令（平台侧自用）。
+     *
+     * <p>为什么单独开一个端点：{@code harbor} 是**组件命名空间**，不在租户分配表里 ——
+     * 走通用 {@code GET /secrets/{name}}（命名空间域，要求显式 tenantId + 分配关系）会被
+     * {@link ResourceAccessResolver} 拒成「管理员代操作需显式指定 tenantId」。
+     * 这扇 PLATFORM 小门只回口令本身，不回整个 Secret。
+     */
+    @PostMapping("/harbor-admin-password")
+    @Operation(summary = "读取 Harbor 管理口令（平台侧专用，只回口令）",
+            description = "组件命名空间不在租户分配表里，通用 /secrets 读不到")
+    public ResponseData<String> harborAdminPassword(@RequestBody HarborSecretsRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "Harbor Secret 参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        Secret secret = client.secrets().inNamespace(request.getNamespace())
+                .withName(request.getSecretName()).get();
+        String encoded = secret == null || secret.getData() == null
+                ? null : secret.getData().get(HarborSecretObjects.ADMIN_PASSWORD_KEY);
+        if (encoded == null || encoded.isBlank()) {
+            return new ResponseData<>(null);
+        }
+        return new ResponseData<>(
+                new String(Base64.getDecoder().decode(encoded), StandardCharsets.UTF_8));
     }
 
     /**

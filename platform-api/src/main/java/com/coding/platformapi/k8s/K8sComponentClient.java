@@ -152,6 +152,21 @@ public class K8sComponentClient {
     }
 
     /**
+     * 读 Harbor 的管理口令（组件自用，只在内存里拼 Basic 头）。
+     *
+     * <p>不能走通用的 {@code GET /secrets/{name}}：{@code harbor} 是组件命名空间，不在租户
+     * 分配表里，命名空间域端点会被边界拒成「管理员代操作需显式指定 tenantId」。
+     */
+    public String harborAdminPassword(String clusterId, String namespace, String secretName) {
+        HarborSecretsRequestDTO body = new HarborSecretsRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setSecretName(secretName);
+        return gateway.exchange(HttpMethod.POST, "/components/harbor-admin-password", null, body,
+                gateway.responseType(String.class));
+    }
+
+    /**
      * Harbor 外部 PostgreSQL / Redis 的口令 Secret：口令只走这条通道，不经过 values。
      * 口令传 null 表示沿用已有 Secret（k8s-server 会校验它存在）。
      */
