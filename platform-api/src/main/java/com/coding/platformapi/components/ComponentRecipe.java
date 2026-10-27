@@ -22,8 +22,8 @@ import java.util.List;
  * @param seaweedStorage    对象存储（SeaweedFS）的安装参数：StorageClass + 三个组件的容量与副本数。
  *                          这些值落在**嵌套结构**里（{@code volume.dataDirs} 是 list），
  *                          editableValues 的「路径 → 标量」模型表达不了，故按表单参数单独传。
- * @param harborRegistry    Harbor 的安装参数：访问域名（host）。它同时决定 HTTPRoute 的
- *                          hostnames 与 {@code externalURL}，走占位符 {@code ${harbor.host}}。
+ * @param harborRegistry    Harbor 的安装参数：暴露方式 + 访问地址 + 端口。暴露方式决定
+ *                          Service/HTTPRoute 的形态与 {@code externalURL}（见 {@code applyHarborValues}）。
  */
 public record ComponentRecipe(String profile, List<ReleaseSpec> releases, List<String> requires,
                               boolean platformAlerting, boolean thanosRemoteWrite, boolean thanosInstall,

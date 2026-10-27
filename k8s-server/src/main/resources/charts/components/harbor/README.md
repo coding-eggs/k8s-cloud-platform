@@ -12,13 +12,13 @@
 | release / namespace | `platform-harbor` / `harbor` |
 | 探测判据 | `harbor` Deployment `harbor-core`（镜像含 `goharbor/harbor-core`） |
 | 平台功能 | `container-registry` |
-| 暴露 | `istio-system/external-gateway` 的 HTTPRoute（HTTP） |
+| 暴露 | 三选一（默认 `nodePort`）：`nodePort` / `loadBalancer` / `route`（HTTPRoute） |
 | 管理口令 | Secret `platform-harbor-secrets`（`HARBOR_ADMIN_PASSWORD` / `secretKey`） |
-| 前置组件 | `istio`（route 必须有 Gateway） |
+| 前置组件 | 仅 `route` 模式需要 `istio`（external-gateway）；另两种不要求 |
 
-## 2. 装之前必须确认（DNS）
+## 2. 装之前必须确认
 
-`host` 必须**同时**能被以下三边解析：
+`host` 必须**同时**能被以下三边访问：
 
 1. 集群内 Pod（流水线的 push/pull）；
 2. 平台所在机器（仓库浏览与租户项目同步）；
@@ -27,17 +27,13 @@
 Harbor 的 token 服务按 `externalURL` 返回地址；三边不一致的典型症状是
 「登录成功但 push 到错误地址 / 解析失败」。
 
+**IP 直连**：只能用 `nodePort` 或 `loadBalancer`。`route` 模式走 Gateway API 的
+`HTTPRoute.hostnames`，那份规范明确**不允许 IP**（也不接受端口）—— 用 IP 会被拒或路由挂不上。
+
 ## 3. 契约 values（🔒）
 
 ```yaml
 fullnameOverride: harbor
-expose:
-  type: route
-  tls: { enabled: false }
-  route:
-    parentRefs: [{ name: external-gateway, namespace: istio-system }]
-    hosts: ["${harbor.host}"]
-externalURL: "http://${harbor.host}"
 existingSecretAdminPassword: platform-harbor-secrets
 existingSecretSecretKey: platform-harbor-secrets
 persistence: { enabled: true, resourcePolicy: keep }
@@ -49,13 +45,35 @@ redis: { type: internal }
 - `resourcePolicy: keep`：卸载 release 不删镜像与数据库 PVC。
 - `database/redis: internal`：内网单集群，本期不接外部中间件。
 
+**`expose.*` 与 `externalURL` 不在契约里**：由安装表单按暴露方式拼（见 §4）。
+三种模式都只走 HTTP（`expose.tls.enabled=false`），客户端要配 `insecure-registries`：
+
+```toml
+# /etc/docker/daemon.json（或 /etc/containers/registries.conf 的 insecure = true）
+{ "insecure-registries": ["10.0.0.5:30002"] }
+```
+
 ## 4. 安装参数（表单，⚙️）
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `host` | 无（必填） | 不带 scheme/path；写进 `externalURL` 与 route hosts |
+| `exposeMode` | `nodePort` | `nodePort` / `loadBalancer` / `route` |
+| `host` | 无（必填） | 不带 scheme/path/端口。route = 域名；另两种 = 节点/LB 的 IP 或域名 |
+| `nodePort` | `30002` | 仅 nodePort 模式；K8s 默认范围 30000-32767 |
+| `port` | `80` | 仅 loadBalancer 模式；Service 端口 |
 | 5 块 PVC 的 StorageClass / 容量 | 空 / 20Gi、1Gi、5Gi、1Gi、5Gi | StorageClass 空 = 跟随集群默认 |
 | `trivy.enabled` | `false` | 内网拉不到漏洞库，默认不装 |
+
+生成的 values：
+
+| 模式 | `expose` | `externalURL` |
+|---|---|---|
+| `nodePort` | `type: nodePort`，http 端口 80→`nodePort` | `http://<host>:<nodePort>` |
+| `loadBalancer` | `type: loadBalancer`，`ports.httpPort=<port>` | `http://<host>[:<port>]`（80 省略） |
+| `route` | `type: route`，hosts=[host]，parentRefs=`istio-system/external-gateway` | `http://<host>` |
+
+平台调 Harbor API 与写进租户凭据的 endpoint 用**同一个** authority（nodePort/LB 带端口），
+快照里记在 `__platform.harbor.externalHost`。
 
 ## 5. 装完之后
 
@@ -65,7 +83,8 @@ kubectl -n harbor get httproute
 kubectl -n harbor get secret platform-harbor-secrets -o jsonpath='{.data}' | jq 'keys'
 ```
 
-- HTTPRoute `Accepted=True` 且 `AttachedRoutes=1`；
+- route 模式：HTTPRoute `Accepted=True` 且 `AttachedRoutes=1`；
+- nodePort/loadBalancer 模式：`kubectl -n harbor get svc` 的端口与 `externalURL` 一致；
 - 平台「集群组件」页 Harbor 行 →「镜像项目」能看到每租户的 project 与凭据状态，
   装完 Harbor 与新建租户时平台会自动同步（失败可在该面板重试/重建）。
 

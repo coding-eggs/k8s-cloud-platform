@@ -50,7 +50,7 @@
 | 入库路径 | `k8s-server/src/main/resources/charts/components/harbor/1.19.4/chart/`（官方 chart 原样，不改模板） |
 | release / namespace | `platform-harbor` / `harbor`（Helm `--create-namespace`） |
 | 探测判据 | `harbor` 命名空间 Deployment `harbor-core`，镜像含 `goharbor/harbor-core` |
-| 前置组件 | `istio`（route 暴露依赖 external-gateway） |
+| 前置组件 | 仅 `route` 模式需要 `istio`（external-gateway）；另两种不要求 |
 | 平台功能 code | `container-registry` |
 
 chart 自带 PostgreSQL / Redis / registry / jobservice / portal / core 的模板（1.19.x 无子 chart），
@@ -60,16 +60,6 @@ chart 自带 PostgreSQL / Redis / registry / jobservice / portal / core 的模�
 
 ```yaml
 fullnameOverride: harbor                 # 探测认 harbor-core；release 名可变不影响
-expose:
-  type: route                            # Gateway API HTTPRoute；不部署 nginx
-  tls:
-    enabled: false                       # TLS 在网关上终止，Harbor 自身 HTTP
-  route:
-    parentRefs:
-      - name: external-gateway
-        namespace: istio-system
-    hosts: ["${harbor.host}"]
-externalURL: "http://${harbor.host}"
 existingSecretAdminPassword: platform-harbor-secrets   # 键 HARBOR_ADMIN_PASSWORD
 existingSecretSecretKey: platform-harbor-secrets       # 键 secretKey（Harbor 要求 16 字符）
 persistence:
@@ -79,6 +69,10 @@ database: { type: internal }
 redis: { type: internal }
 # core / portal / registry / jobservice / database / redis / trivy 的 resources 显式钉住
 ```
+
+**`expose.*` 与 `externalURL` 不在契约里**：由安装表单按暴露方式拼（见 §3.3 / §3.6），
+与 SeaweedFS 的 `applySeaweedValues` 同一做法（`mergeValues` 之后覆盖）。
+三种模式都只走 HTTP（`expose.tls.enabled=false`），客户端需配 `insecure-registries`。
 
 | 值 | 为什么是契约 |
 |---|---|
@@ -93,11 +87,14 @@ redis: { type: internal }
 
 ### 3.3 表单（⚙️）
 
-专属字段只有一个：
+专属字段：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `host` | 无（必填） | 如 `harbor.example.com`，不带 scheme/path；校验后写进 `externalURL` 与 `expose.route.hosts` |
+| `exposeMode` | `nodePort` | `nodePort` / `loadBalancer` / `route` |
+| `host` | 无（必填） | 不带 scheme/path/**端口**。route = 域名；另两种 = 节点/LB 的 IP 或域名 |
+| `nodePort` | `30002` | 仅 nodePort 模式；K8s 默认范围 30000-32767 |
+| `port` | `80` | 仅 loadBalancer 模式的 Service 端口 |
 
 其余用 `editableValues` 的「路径 → 标量」模型（前端按现有分组渲染）：
 
@@ -113,8 +110,8 @@ redis: { type: internal }
 StorageClass 空串按现有语义**跳过**（跟随集群默认存储类）；K8s 里 `storageClassName: ""` 表示
 「不用动态供给」，会装出一组永远 Pending 的 PVC。
 
-`expose.route.hosts` 是 list，`editableValues` 表达不了，故 `host` 走专属表单 + 占位符
-`${harbor.host}`（`ValueTemplate` 递归解析，list 里也能替换）。
+`expose.*` 是嵌套结构（`route.hosts` 是 list、`nodePort.ports` 是 map），`editableValues`
+的「路径 → 标量」表达不了，故整块由表单参数在 `applyHarborValues` 里拼出来。
 
 ### 3.4 管理口令 Secret
 
@@ -144,10 +141,22 @@ platform-api 在 helm 之前调用。口令不经过 platform-api 的 values 快
 
 ### 3.6 暴露链路与运维前提
 
-HTTPRoute（`harbor` 命名空间）→ `harbor-core` / `harbor-portal` 的 ClusterIP Service；
-parentRef 指向 `istio-system/external-gateway`，其 listener 的 `allowedRoutes.namespaces.from=All`。
+三种模式（表单里选，**默认 nodePort**）：
 
-⚠️ **`host` 必须能被三边解析**：集群内 Pod（流水线 push/pull）、平台所在机器（仓库浏览/同步）、
+| 模式 | chart values | `externalURL` | 说明 |
+|---|---|---|---|
+| `nodePort` | `expose.type=nodePort`，`ports.http.port=80`、`nodePort=<n>` | `http://<host>:<n>` | 无需 istio；裸金属/无 LB 场景 |
+| `loadBalancer` | `expose.type=loadBalancer`，`ports.httpPort=<p>` | `http://<host>[:<p>]`（80 省略） | 需集群有 LB 实现 |
+| `route` | `expose.type=route`，hosts=[host]，parentRefs=`istio-system/external-gateway` | `http://<host>` | 需 istio；**host 必须是域名** |
+
+- `route` 模式走 Gateway API 的 `HTTPRoute.hostnames`，该规范明确**不允许 IP**、也不接受端口；
+  用 IP 只能选 `nodePort` / `loadBalancer`。
+- `route` 的 HTTPRoute 在 `harbor` 命名空间，backend 是同命名空间的 `harbor-core` /
+  `harbor-portal` Service；gateway 的 `allowedRoutes.namespaces.from=All` 允许跨命名空间挂载。
+- 平台调 Harbor API 与租户凭据 endpoint 都用**同一个 authority**（nodePort / LB 带端口），
+  记在快照的 `__platform.harbor.externalHost`。
+
+⚠️ **`host` 必须能被三边访问**：集群内 Pod（流水线 push/pull）、平台所在机器（仓库浏览/同步）、
 外部 docker 客户端。Harbor 的 token 服务按 `externalURL` 返回地址，三边不一致时表现为
 「登录成功但 push 到错误地址 / 解析失败」。这条写进组件 README 的「装之前必须确认」。
 

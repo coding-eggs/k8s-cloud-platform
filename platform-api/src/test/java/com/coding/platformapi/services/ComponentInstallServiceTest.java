@@ -1508,68 +1508,103 @@ class ComponentInstallServiceTest {
         return s;
     }
 
-    // ==================== Harbor（2026-10-27） ====================
+    // ==================== Harbor（2026-10-27；暴露方式 2026-10-27） ====================
+
+    private static ComponentApplyRequest harborRequest(HarborInstallRequest install) {
+        ComponentApplyRequest req = new ComponentApplyRequest();
+        req.setClusterId("c1");
+        req.setComponentCode("harbor");
+        req.setAction("INSTALL");
+        req.setHarbor(install);
+        return req;
+    }
+
+    private String capturedHarborValues(HarborInstallRequest install) {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        service().apply(harborRequest(install), "admin");
+
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        return specs.getValue().get(0).getValues().toString();
+    }
 
     @Test
     void harborRequiresAHostWithoutSchemeOrPath() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
-        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
         for (String bad : new String[]{"", "http://harbor.example.com", "harbor.example.com/foo",
                 "Harbor.Example.com", "harbor .example.com"}) {
-            ComponentApplyRequest req = new ComponentApplyRequest();
-            req.setClusterId("c1");
-            req.setComponentCode("harbor");
-            req.setAction("INSTALL");
-            req.setHarbor(new HarborInstallRequest(bad));
+            ComponentApplyRequest req = harborRequest(
+                    new HarborInstallRequest("nodePort", bad, 30002, 80));
             assertThatThrownBy(() -> service().apply(req, "admin"))
-                    .as(bad).hasMessageContaining("Harbor 访问域名");
+                    .as(bad).hasMessageContaining("Harbor 访问地址");
         }
         verify(mapper, never()).insert(any());
     }
 
     @Test
-    void harborHostIsResolvedIntoTheRouteAndExternalUrl() {
+    void harborRouteModeRejectsIpAndPort() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
-        when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
-        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
-        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        ComponentApplyRequest req = new ComponentApplyRequest();
-        req.setClusterId("c1");
-        req.setComponentCode("harbor");
-        req.setAction("INSTALL");
-        req.setHarbor(new HarborInstallRequest("harbor.example.com"));
-        service().apply(req, "admin");
-
-        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
-        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
-        String values = specs.getValue().get(0).getValues().toString();
-        assertThat(values)
-                .contains("harbor.example.com")
-                .doesNotContain("${harbor.host}");
-        verify(client, timeout(3000)).applyHarborSecrets("c1", "harbor", "platform-harbor-secrets");
+        assertThatThrownBy(() -> service().apply(harborRequest(
+                new HarborInstallRequest("route", "10.0.0.5", 30002, 80)), "admin"))
+                .hasMessageContaining("route 模式必须用域名");
+        assertThatThrownBy(() -> service().apply(harborRequest(
+                new HarborInstallRequest("route", "harbor.example.com:8080", 30002, 80)), "admin"))
+                .hasMessageContaining("域名不能带端口");
     }
 
     @Test
-    void harborInstallTriggersTheRegistrySync() {
+    void harborRouteModeRequiresIstio() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
-        when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
-        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
-        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(harborRegistry.ensureAll("c1", "harbor.example.com", true))
-                .thenReturn(new HarborRegistryService.SyncResult(
-                        "c1", "harbor.example.com", List.of(), 0));
+        when(components.status("c1")).thenReturn(List.of());
+        assertThatThrownBy(() -> service().apply(harborRequest(
+                new HarborInstallRequest("route", "harbor.example.com", 30002, 80)), "admin"))
+                .hasMessageContaining("route 模式需要先安装 istio");
+        verify(mapper, never()).insert(any());
+    }
 
-        ComponentApplyRequest req = new ComponentApplyRequest();
-        req.setClusterId("c1");
-        req.setComponentCode("harbor");
-        req.setAction("INSTALL");
-        req.setHarbor(new HarborInstallRequest("harbor.example.com"));
-        service().apply(req, "admin");
+    @Test
+    void harborNodePortIsTheDefaultAndBuildsTheExternalUrl() {
+        // 1 参构造 = nodePort 默认模式 + NodePort 30002
+        String values = capturedHarborValues(new HarborInstallRequest("10.0.0.5"));
 
-        // ⭐ 钩子在写 SUCCESS 之前跑，必须把本次安装的 host 显式传下去（评审 C1）
+        assertThat(values)
+                .contains("type=nodePort")
+                .contains("http://10.0.0.5:30002")
+                .contains("30002")
+                .doesNotContain("${harbor.host}");
+        verify(client, timeout(3000)).applyHarborSecrets("c1", "harbor", "platform-harbor-secrets");
+        // 平台调 Harbor API / 凭据 endpoint 都必须带端口
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", "10.0.0.5:30002", true);
+    }
+
+    @Test
+    void harborLoadBalancerModeUsesTheExternalPort() {
+        String values = capturedHarborValues(
+                new HarborInstallRequest("loadBalancer", "10.0.0.6", 30002, 8080));
+
+        assertThat(values)
+                .contains("type=loadBalancer")
+                .contains("http://10.0.0.6:8080")
+                .contains("8080");
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", "10.0.0.6:8080", true);
+    }
+
+    @Test
+    void harborRouteModeBuildsTheGatewayApiRoute() {
+        String values = capturedHarborValues(
+                new HarborInstallRequest("route", "harbor.example.com", 30002, 80));
+
+        assertThat(values)
+                .contains("type=route")
+                .contains("http://harbor.example.com")
+                .contains("external-gateway");
         verify(harborRegistry, timeout(3000)).ensureAll("c1", "harbor.example.com", true);
     }
 
@@ -1578,17 +1613,11 @@ class ComponentInstallServiceTest {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
-        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(harborRegistry.ensureAll("c1", "harbor.example.com", true))
+        when(harborRegistry.ensureAll("c1", "10.0.0.5:30002", true))
                 .thenThrow(new IllegalStateException("harbor unreachable"));
 
-        ComponentApplyRequest req = new ComponentApplyRequest();
-        req.setClusterId("c1");
-        req.setComponentCode("harbor");
-        req.setAction("INSTALL");
-        req.setHarbor(new HarborInstallRequest("harbor.example.com"));
-        service().apply(req, "admin");
+        service().apply(harborRequest(new HarborInstallRequest("10.0.0.5")), "admin");
 
         // worker 先写 RUNNING 再写 FAILED：timeout 要等到「那一条 FAILED」而不是第一次 updateById
         verify(mapper, timeout(3000)).updateById(org.mockito.ArgumentMatchers.argThat(o ->

@@ -259,8 +259,9 @@ const ACTION_LABEL: Record<ApplyDialog['action'], string> = {
 
 /** 容量写法（K8s quantity）：50Gi / 500Mi / 1Ti；不带单位按字节，几乎不会是本意，所以默认要求带单位 */
 const SIZE_RE = /^[1-9]\d*(\.\d+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$/
-/** Harbor 访问域名：host[:port]，不带 scheme/path（与后端 HARBOR_HOST 同一条） */
-const HARBOR_HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$/
+/** Harbor 访问地址：IP 或域名，不带 scheme/path/端口（与后端 HARBOR_HOST 同一条） */
+const HARBOR_HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
+const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/
 
 /** 资源限制表单：requests/limits × cpu/memory 四格，提交时拼回 K8s 的 ResourceRequirements */
 interface ResourceFormValues {
@@ -474,8 +475,10 @@ const EMPTY_SEAWEED: K8sSeaweedInstall = {
   s3Endpoint: 'http://seaweedfs-s3.platform-storage:8333',
 }
 
-/** Harbor 表单默认值：host 必填（同时决定 route hostnames 与 externalURL） */
-const EMPTY_HARBOR: K8sHarborInstall = { host: '' }
+/** Harbor 表单默认值：默认 nodePort（无需 istio，可直接用 IP） */
+const EMPTY_HARBOR: K8sHarborInstall = {
+  exposeMode: 'nodePort', host: '', nodePort: 30002, port: 80,
+}
 
 /** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
 function emptyOtel(): OtelForm {
@@ -658,7 +661,12 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   const harborMerged: K8sHarborInstall = editing && row.harborCurrent
     ? { ...EMPTY_HARBOR, ...row.harborCurrent }
     : { ...EMPTY_HARBOR }
-  const harbor: K8sHarborInstall = { host: harborMerged.host || '' }
+  const harbor: K8sHarborInstall = {
+    exposeMode: harborMerged.exposeMode || 'nodePort',
+    host: harborMerged.host || '',
+    nodePort: harborMerged.nodePort ?? 30002,
+    port: harborMerged.port ?? 80,
+  }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
     version: versions[0] ?? '', versions, chartVersion: installedChartVersion(row) ?? '',
@@ -783,9 +791,28 @@ function confirmApply(): void {
     return
   }
   if (d.showHarbor) {
-    const host = d.harbor.host.trim()
+    const h = d.harbor
+    const host = h.host.trim()
     if (!HARBOR_HOST_RE.test(host)) {
-      ElMessage.error('Harbor 访问域名形如 harbor.example.com（不带 http:// 与路径）')
+      ElMessage.error('Harbor 访问地址填 IP 或域名（不带 http://、路径与端口）')
+      return
+    }
+    if (h.exposeMode === 'route') {
+      if (host.includes(':')) {
+        ElMessage.error('route 模式的域名不能带端口')
+        return
+      }
+      if (IPV4_RE.test(host)) {
+        ElMessage.error('route 模式必须用域名（Gateway API 不允许 IP）；IP 直连请选 NodePort / LoadBalancer')
+        return
+      }
+    }
+    if (h.exposeMode === 'nodePort' && (!h.nodePort || h.nodePort < 1 || h.nodePort > 65535)) {
+      ElMessage.error('NodePort 必须在 1~65535（默认 30002）')
+      return
+    }
+    if (h.exposeMode === 'loadBalancer' && (!h.port || h.port < 1 || h.port > 65535)) {
+      ElMessage.error('Service 端口必须在 1~65535（默认 80）')
       return
     }
   }
@@ -896,7 +923,7 @@ function confirmApply(): void {
       ? { ...d.seaweed } : undefined,
     // Harbor：安装时整组下发；编辑时只发改动过的
     harbor: d.showHarbor && (d.action === 'INSTALL' || JSON.stringify(d.harbor) !== d.initialHarbor)
-      ? { host: d.harbor.host.trim() } : undefined,
+      ? { ...d.harbor, host: d.harbor.host.trim() } : undefined,
   })
 }
 
@@ -1316,13 +1343,62 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       </div>
       <div v-if="applyDialog.showHarbor" class="cc-section-title">镜像仓库（Harbor）</div>
       <div v-if="applyDialog.showHarbor" class="cc-form-row">
-        <span class="cc-form-label">访问域名</span>
+        <span class="cc-form-label">暴露方式</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.harbor.exposeMode" style="width: 100%">
+            <el-option label="NodePort（节点 IP + 端口，不需要 istio）" value="nodePort" />
+            <el-option label="LoadBalancer（外部地址，不需要 istio）" value="loadBalancer" />
+            <el-option label="HTTPRoute（域名，经 istio external-gateway）" value="route" />
+          </el-select>
+          <div class="cc-form-hint">
+            三种都只走 HTTP（<code>tls.enabled=false</code>）：docker/podman 客户端要配
+            <code>insecure-registries</code>。route 模式必须用域名，不能是 IP
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">{{ applyDialog.harbor.exposeMode === 'route' ? '域名'
+          : (applyDialog.harbor.exposeMode === 'nodePort' ? '节点地址' : '外部地址') }}</span>
         <div class="cc-form-control">
           <el-input v-model="applyDialog.harbor.host"
-                    placeholder="harbor.example.com" spellcheck="false" />
+                    :placeholder="applyDialog.harbor.exposeMode === 'route' ? 'harbor.example.com' : '10.0.0.5'"
+                    spellcheck="false" />
           <div class="cc-form-hint">
-            不带 <code>http://</code> 与路径。它同时是 HTTPRoute 的 hostname 与 Harbor 的
-            <code>externalURL</code>；必须能从集群内 Pod、平台、外部 docker 客户端三边解析
+            不带 <code>http://</code>、路径与端口（端口在下面单独填）。它决定 Harbor 的
+            <code>externalURL</code>（token 服务返回给 docker 客户端的地址），必须能从集群内 Pod、
+            平台、外部 docker 客户端三边访问
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'nodePort'"
+           class="cc-form-row">
+        <span class="cc-form-label">NodePort</span>
+        <div class="cc-form-control">
+          <el-input-number v-model="applyDialog.harbor.nodePort" :min="1" :max="65535"
+                           controls-position="right" />
+          <div class="cc-form-hint">
+            默认 30002（K8s 默认 NodePort 范围 30000-32767）。实际访问地址是
+            <code>http://&lt;节点地址&gt;:&lt;NodePort&gt;</code>
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'loadBalancer'"
+           class="cc-form-row">
+        <span class="cc-form-label">Service 端口</span>
+        <div class="cc-form-control">
+          <el-input-number v-model="applyDialog.harbor.port" :min="1" :max="65535"
+                           controls-position="right" />
+          <div class="cc-form-hint">
+            默认 80。集群需有 LoadBalancer 实现，否则 EXTERNAL-IP 一直 pending
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'route'"
+           class="cc-form-row">
+        <span class="cc-form-label">路由</span>
+        <div class="cc-form-control">
+          <div class="cc-form-hint">
+            走 <code>istio-system/external-gateway</code> 的 HTTPRoute；集群必须先装 istio 且健康
           </div>
         </div>
       </div>

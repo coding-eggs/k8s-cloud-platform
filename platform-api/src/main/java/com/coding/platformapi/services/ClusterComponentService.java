@@ -404,7 +404,12 @@ public class ClusterComponentService {
         if (!(platform.get("harbor") instanceof Map<?, ?> m)) {
             return null;
         }
-        return new HarborInstallRequest(asString(m.get("host")));
+        HarborInstallRequest cur = new HarborInstallRequest();
+        cur.setExposeMode(asString(m.get("exposeMode")));
+        cur.setHost(asString(m.get("host")));
+        cur.setNodePort(asInt(m.get("nodePort")));
+        cur.setPort(asInt(m.get("port")));
+        return cur;
     }
 
     /** {@code __platform.otel} → 编辑表单的当前值；没有记录返回 null */    private static OtelInstallRequest otelInstallOf(Map<String, Object> platform) {

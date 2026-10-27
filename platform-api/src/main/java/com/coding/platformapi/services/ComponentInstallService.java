@@ -188,12 +188,15 @@ public class ComponentInstallService {
         if (recipe.seaweedStorage()) {
             requireSeaweed(seaweed);
         }
-        // Harbor：host 必填 —— 它同时是 route 的 hostnames 与 externalURL
+        // Harbor：暴露方式 + 访问地址；route 模式额外要求 istio（HTTPRoute 挂在 external-gateway 上）
         HarborInstallRequest harbor = recipe.harborRegistry()
                 ? resolveHarbor(req.getHarbor(), previousPlatform.get("harbor"))
                 : null;
         if (recipe.harborRegistry()) {
-            requireHarborHost(harbor);
+            requireHarbor(harbor);
+            if ("route".equals(harbor.getExposeMode())) {
+                requireHarborRouteDependency(req.getClusterId());
+            }
         }
 
         // spec 决策 10：只升级平台自己装的 release，手工装的一律不接管。
@@ -213,9 +216,13 @@ public class ComponentInstallService {
         if (seaweed != null) {
             merged = applySeaweedValues(merged, seaweed);
         }
+        // Harbor 的暴露方式 / Service 端口 / externalURL 落在嵌套结构里，由表单参数拼进来
+        if (harbor != null) {
+            merged = applyHarborValues(merged, harbor);
+        }
         // 占位符（${cluster.name} / ${thanos.receive.url} / ${tempo.endpoint}）在落库前解析
         List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico,
-                tektonProfile, otel, harbor);
+                tektonProfile, otel);
         // Thanos compactor 的保留期下限（raw ≥ 40h、5m ≥ 10d）：违反时 helm 照样成功，
         // 但 compactor 启动即 CrashLoopBackOff —— 必须在下发之前拒（2026-10-20 实锤）
         validateThanosRetention(effective);
@@ -356,10 +363,9 @@ public class ComponentInstallService {
     @SuppressWarnings("unchecked")
     private List<ReleaseSpec> resolveValues(List<ReleaseSpec> releases, String clusterId, String thanosUrl,
                                             CalicoInstallRequest calico, String tektonProfile,
-                                            OtelInstallRequest otel, HarborInstallRequest harbor) {
+                                            OtelInstallRequest otel) {
         Map<String, String> context = new LinkedHashMap<>();
         context.put("cluster.name", clusterService.requireName(clusterId));
-        context.put("harbor.host", harbor != null && harbor.getHost() != null ? harbor.getHost() : "");
         context.put("thanos.receive.url", thanosUrl == null ? "" : thanosUrl);
         context.put("calico.podCidr", calico != null && calico.getPodCidr() != null
                 ? calico.getPodCidr() : "");
@@ -534,7 +540,14 @@ public class ComponentInstallService {
             platform.put("seaweed", s);
         }
         if (recipe.harborRegistry() && harbor != null) {
-            platform.put("harbor", Map.of("host", harbor.getHost() == null ? "" : harbor.getHost()));
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("exposeMode", harbor.getExposeMode());
+            h.put("host", harbor.getHost() == null ? "" : harbor.getHost());
+            h.put("nodePort", harbor.getNodePort());
+            h.put("port", harbor.getPort());
+            // 平台调 Harbor API / 凭据 endpoint 用的完整 authority（nodePort/LB 要带端口）
+            h.put("externalHost", harborAuthority(harbor));
+            platform.put("harbor", h);
         }
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
@@ -837,32 +850,147 @@ public class ComponentInstallService {
 
     // ==================== Harbor（镜像仓库） ====================
 
-    /** 访问域名：host[:port]，不带 scheme/path、全小写 */
-    private static final java.util.regex.Pattern HARBOR_HOST =
-            java.util.regex.Pattern.compile("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$");
+    private static final java.util.Set<String> HARBOR_MODES =
+            java.util.Set.of("route", "loadBalancer", "nodePort");
+    private static final int DEFAULT_HARBOR_NODE_PORT = 30002;
+    private static final int DEFAULT_HARBOR_PORT = 80;
 
-    /** 表单 > 上次成功；统一 trim（空串交给 {@link #requireHarborHost} 拒） */
+    /** 访问地址：不带 scheme/path/端口（端口在各自的独立字段里），全小写 */
+    private static final java.util.regex.Pattern HARBOR_HOST =
+            java.util.regex.Pattern.compile("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$");
+
+    private static final java.util.regex.Pattern IPV4 =
+            java.util.regex.Pattern.compile("^\\d{1,3}(\\.\\d{1,3}){3}$");
+
+    /** 表单 > 上次成功 > 默认（nodePort / 30002 / 80） */
     @SuppressWarnings("unchecked")
     private static HarborInstallRequest resolveHarbor(HarborInstallRequest requested, Object previous) {
         Map<String, Object> prev = previous instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+        String mode = firstNonBlank(requested == null ? null : requested.getExposeMode(),
+                asString(prev.get("exposeMode")), "nodePort");
         String host = firstNonBlank(requested == null ? null : requested.getHost(),
                 asString(prev.get("host")));
-        return new HarborInstallRequest(host == null ? null : host.trim());
+        Integer nodePort = firstNonNullInt(requested == null ? null : requested.getNodePort(),
+                prev.get("nodePort"), DEFAULT_HARBOR_NODE_PORT);
+        Integer port = firstNonNullInt(requested == null ? null : requested.getPort(),
+                prev.get("port"), DEFAULT_HARBOR_PORT);
+        return new HarborInstallRequest(mode, host == null ? null : host.trim(), nodePort, port);
+    }
+
+    private static Integer firstNonNullInt(Integer requested, Object previous, int fallback) {
+        if (requested != null) {
+            return requested;
+        }
+        if (previous instanceof Number n) {
+            return n.intValue();
+        }
+        if (previous instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
     }
 
     /**
-     * Harbor 访问域名必填且格式严格。
+     * Harbor 暴露方式与访问地址必填，且按模式校验。
      *
-     * <p>这个值同时写进 HTTPRoute 的 hostnames 与 {@code externalURL}（Harbor token 服务按后者
-     * 返回给 docker 客户端）。写成 {@code http://harbor.example.com} 会得到 {@code http://http://...}，
-     * 装出来的 Harbor 能启动但 push 全失败。
+     * <p>route 模式的 host 会写进 HTTPRoute 的 hostnames —— Gateway API 明确**不允许 IP**，
+     * 也不接受端口；IP 直连必须选 loadBalancer / nodePort。
      */
-    private static void requireHarborHost(HarborInstallRequest harbor) {
-        String host = harbor == null ? null : harbor.getHost();
+    private static void requireHarbor(HarborInstallRequest harbor) {
+        String mode = harbor == null ? null : harbor.getExposeMode();
+        if (mode == null || !HARBOR_MODES.contains(mode)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的 Harbor 暴露方式：" + mode + "（可选 route / loadBalancer / nodePort）");
+        }
+        String host = harbor.getHost();
+        if ("route".equals(mode) && host != null && host.contains(":")) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "route 模式的域名不能带端口（端口由 external-gateway 的 listener 决定）");
+        }
+        if ("route".equals(mode) && host != null && IPV4.matcher(host.trim()).matches()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "route 模式必须用域名（Gateway API 不允许 IP；IP 直连请选 loadBalancer / nodePort）");
+        }
         if (host == null || host.isBlank() || !HARBOR_HOST.matcher(host.trim()).matches()) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "请填写 Harbor 访问域名（如 harbor.example.com，不带 http:// 与路径）");
+                    "请填写 Harbor 访问地址（IP 或域名，不带 http:// 与路径）");
         }
+        if ("nodePort".equals(mode)) {
+            Integer nodePort = harbor.getNodePort();
+            if (nodePort == null || nodePort < 1 || nodePort > 65535) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "NodePort 必须在 1~65535 之间（默认 30002）");
+            }
+        }
+        if ("loadBalancer".equals(mode)) {
+            Integer port = harbor.getPort();
+            if (port == null || port < 1 || port > 65535) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "Service 端口必须在 1~65535 之间（默认 80）");
+            }
+        }
+    }
+
+    /** route 模式必须已有健康的 istio（external-gateway）；另两种模式不要求 */
+    private void requireHarborRouteDependency(String clusterId) {
+        Map<String, String> states = components.status(clusterId).stream()
+                .collect(Collectors.toMap(ComponentStatusDTO::getCode, ComponentStatusDTO::getState,
+                        (a, b) -> a));
+        if (!ClusterComponentService.HEALTHY.equals(states.get("istio"))) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "route 模式需要先安装 istio（external-gateway）；或改用 loadBalancer / nodePort 暴露");
+        }
+    }
+
+    /**
+     * 平台访问 Harbor 的完整 authority（host[:port]）：
+     * route 用域名；loadBalancer 端口非 80 时带端口；nodePort 恒带 NodePort。
+     */
+    static String harborAuthority(HarborInstallRequest harbor) {
+        String host = harbor.getHost();
+        if ("nodePort".equals(harbor.getExposeMode())) {
+            return host + ":" + harbor.getNodePort();
+        }
+        if ("loadBalancer".equals(harbor.getExposeMode())) {
+            Integer port = harbor.getPort();
+            return port == null || port == 80 ? host : host + ":" + port;
+        }
+        return host;
+    }
+
+    /**
+     * 按暴露方式拼 chart 的 {@code expose.*} 与 {@code externalURL}。
+     *
+     * <p>三种模式都只走 HTTP（{@code tls.enabled=false}）；HTTPS 不在本期。
+     * route 的 {@code parentRefs} 固定指 {@code istio-system/external-gateway}。
+     */
+    private static List<ReleaseSpec> applyHarborValues(List<ReleaseSpec> releases, HarborInstallRequest h) {
+        Map<String, Object> expose = new LinkedHashMap<>();
+        expose.put("type", h.getExposeMode());
+        expose.put("tls", Map.of("enabled", false));
+        expose.put("route", Map.of(
+                "parentRefs", List.of(Map.of("name", "external-gateway", "namespace", "istio-system")),
+                "hosts", List.of(h.getHost())));
+        expose.put("nodePort", Map.of("name", "harbor", "ports", Map.of("http",
+                Map.of("port", 80, "nodePort", h.getNodePort()))));
+        expose.put("loadBalancer", Map.of("name", "harbor", "ports",
+                Map.of("httpPort", h.getPort())));
+
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("expose", expose);
+        values.put("externalURL", "http://" + harborAuthority(h));
+
+        List<ReleaseSpec> out = new ArrayList<>(releases.size());
+        for (ReleaseSpec r : releases) {
+            out.add(new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(), r.chartVersion(),
+                    DeepMerge.merge(r.contractValues(), values), r.editableValues(),
+                    r.preserveUnknownPlaceholders(), r.primary(), r.appVersion(), r.applyMode()));
+        }
+        return out;
     }
 
     // ==================== 对象存储（SeaweedFS） ====================
@@ -1142,7 +1270,7 @@ public class ComponentInstallService {
                     // host 直接来自本次安装参数：钩子在写 SUCCESS 之前跑，harborHost() 还读不到记录
                     // INSTALL 强制重建：手工卸载后同地址重装时，旧凭据还在但新 Harbor 里没有那个 robot
                     HarborRegistryService.SyncResult sync = harborRegistry.ensureAll(
-                            clusterId, harbor.getHost(), "INSTALL".equals(action));
+                            clusterId, harborAuthority(harbor), "INSTALL".equals(action));
                     if (sync.failed() > 0) {
                         throw new IllegalStateException(
                                 sync.failed() + " 个租户同步失败（见镜像项目面板）");

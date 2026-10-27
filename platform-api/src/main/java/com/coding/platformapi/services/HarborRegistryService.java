@@ -78,8 +78,12 @@ public class HarborRegistryService {
                     || !(platform.get("harbor") instanceof Map<?, ?> harbor)) {
                 return null;
             }
-            Object host = harbor.get("host");
-            return host instanceof String s && !s.isBlank() ? s : null;
+            // externalHost = 拼好端口的 authority（nodePort/LB 必须带端口）
+            Object host = harbor.get("externalHost");
+            if (!(host instanceof String s) || s.isBlank()) {
+                host = harbor.get("host");
+            }
+            return host instanceof String authority && !authority.isBlank() ? authority : null;
         } catch (Exception e) {
             log.warn("集群 {} 的 Harbor 安装快照无法解析：{}", clusterId, e.getMessage());
             return null;

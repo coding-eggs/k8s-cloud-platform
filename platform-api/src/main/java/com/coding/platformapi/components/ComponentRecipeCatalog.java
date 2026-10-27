@@ -576,17 +576,9 @@ public class ComponentRecipeCatalog {
             harborContract(), harborEditable()).asPrimary().withAppVersion("2.15.4"));
 
     private static Map<String, Object> harborContract() {
-        Map<String, Object> expose = new LinkedHashMap<>();
-        expose.put("type", "route");
-        expose.put("tls", Map.of("enabled", false));
-        expose.put("route", Map.of(
-                "parentRefs", List.of(Map.of("name", "external-gateway", "namespace", "istio-system")),
-                "hosts", List.of("${harbor.host}")));
-
         Map<String, Object> contract = new LinkedHashMap<>();
         contract.put("fullnameOverride", "harbor");
-        contract.put("expose", expose);
-        contract.put("externalURL", "http://${harbor.host}");
+        // 暴露方式（route / loadBalancer / nodePort）与 externalURL 由安装表单拼接（applyHarborValues）
         contract.put("existingSecretAdminPassword", "platform-harbor-secrets");
         contract.put("existingSecretSecretKey", "platform-harbor-secrets");
         contract.put("persistence", Map.of("enabled", true, "resourcePolicy", "keep"));
@@ -658,9 +650,9 @@ public class ComponentRecipeCatalog {
                             false, false, false, false, null, false, null, true))),
             // 镜像仓库：route 暴露依赖 istio 的 external-gateway（requires 是硬门禁）
             Map.entry("harbor", Map.of(
-                    BUSINESS, new ComponentRecipe(BUSINESS, HARBOR_RELEASES, List.of("istio"),
+                    BUSINESS, new ComponentRecipe(BUSINESS, HARBOR_RELEASES, List.of(),
                             false, false, false, false, null, false, null, false, true),
-                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, HARBOR_RELEASES, List.of("istio"),
+                    MANAGEMENT, new ComponentRecipe(MANAGEMENT, HARBOR_RELEASES, List.of(),
                             false, false, false, false, null, false, null, false, true))),
             // OTel 采集栈：operator 两遍 + Tempo（管理集群）。Tempo 夹在两遍 operator 之间，
             // 第一遍先落 CRD，Tempo 作为后端就绪后再下发 Instrumentation/collector。

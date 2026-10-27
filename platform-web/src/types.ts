@@ -1113,8 +1113,14 @@ export interface ObjectStorageObjectStat {
 /** 对象存储（SeaweedFS）安装参数：StorageClass 必填，容量是带单位的 quantity */
 /** Harbor 安装参数（仅 harborRegistry 的组件） */
 export interface K8sHarborInstall {
-  /** 访问域名，host[:port]，不带 scheme/path */
+  /** route 走 istio external-gateway（必须域名）；另两种可直接用 IP */
+  exposeMode: 'route' | 'loadBalancer' | 'nodePort'
+  /** 访问地址（不带 scheme/path/端口）：route 用域名；另两种用节点/LB 的 IP 或域名 */
   host: string
+  /** nodePort 模式（默认 30002） */
+  nodePort?: number | null
+  /** loadBalancer 模式（默认 80） */
+  port?: number | null
 }
 
 /** 租户镜像项目（Harbor 组件面板） */

@@ -161,6 +161,16 @@ class HarborRegistryServiceTest {
     }
 
     @Test
+    void harborHostPrefersTheComposedExternalHostWithPort() {
+        PlatformComponentOperation op = successOperation();
+        op.setValuesSnapshot("{\"__platform\":{\"harbor\":{\"exposeMode\":\"nodePort\","
+                + "\"host\":\"10.0.0.5\",\"nodePort\":30002,\"externalHost\":\"10.0.0.5:30002\"}}}");
+        when(operations.selectLatestSuccess("c1", "harbor")).thenReturn(op);
+
+        assertThat(svc.harborHost("c1")).isEqualTo("10.0.0.5:30002");
+    }
+
+    @Test
     void explicitHostIsUsedEvenBeforeTheSuccessRecordExists() {
         // 首次安装：钩子在写 SUCCESS 之前跑，selectLatestSuccess 还查不到本集群
         when(operations.selectLatestSuccess("c1", "harbor")).thenReturn(null);
