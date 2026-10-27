@@ -538,6 +538,7 @@ const THANOS_GROUP = 'Thanos 对象存储（管理集群）'
 const genericGroups = computed(() => {
   const groups: string[] = []
   for (const f of applyDialog.value.fields) {
+    if (isFieldHidden(f.key)) continue
     const g = f.group || '其他配置'
     if (g === THANOS_GROUP) continue // 跟 Thanos 凭据块一起渲染
     if (!groups.includes(g)) groups.push(g)
@@ -545,8 +546,27 @@ const genericGroups = computed(() => {
   return groups
 })
 
+/**
+ * 依赖外部实例 / 已关闭的组件，其 PVC 字段在表单里没有意义，直接不渲染（也不提交）：
+ * - 数据库/Redis 选外部 → 不创建内置 StatefulSet 与 PVC
+ * - Trivy 未开启 → 没有扫描器数据盘
+ */
+function isFieldHidden(key: string): boolean {
+  const d = applyDialog.value
+  if (!d.showHarbor) return false
+  if (d.harbor.databaseMode === 'external'
+      && key.startsWith('persistence.persistentVolumeClaim.database.')) return true
+  if (d.harbor.redisMode === 'external'
+      && key.startsWith('persistence.persistentVolumeClaim.redis.')) return true
+  if (key.startsWith('persistence.persistentVolumeClaim.trivy.') && !d.values['trivy.enabled']) {
+    return true
+  }
+  return false
+}
+
 function fieldsOf(group: string): K8sEditableField[] {
-  return applyDialog.value.fields.filter((f) => (f.group || '其他配置') === group)
+  return applyDialog.value.fields.filter(
+    (f) => (f.group || '其他配置') === group && !isFieldHidden(f.key))
 }
 
 /** Thanos 保留期（compactor.retention.*）：放在 Thanos 凭据块之后 */
@@ -856,6 +876,7 @@ function confirmApply(): void {
   }
   const editable: Record<string, unknown> = {}
   for (const f of d.fields) {
+    if (isFieldHidden(f.key)) continue   // 外部库/Redis、未开 Trivy：这些 PVC 字段不提交
     if (f.type === 'resources') {
       const form: ResourceFormValues = {
         requestsCpu: String(d.values[`${f.key}.requestsCpu`] ?? ''),
@@ -1467,8 +1488,9 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                       :placeholder="applyDialog.action === 'INSTALL' ? '数据库口令（必填）' : '留空 = 不改'" />
           </div>
           <div class="cc-form-hint">
-            外部库要先建好库（默认 registry）与账号并授权。来源只能在首次安装时选，编辑时锁定
-            （内置 ↔ 外部需要迁移数据）。口令由平台写进 Secret，不进 values 快照
+            外部库要先建好库（默认 registry）与账号并授权，不再创建内置 PostgreSQL 的 StatefulSet 与 PVC。
+            来源只能在首次安装时选，编辑时锁定（内置 ↔ 外部需要迁移数据）。
+            口令由平台写进 Secret，不进 values 快照
           </div>
         </div>
       </div>
@@ -1491,7 +1513,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
           <div class="cc-form-hint">
             外部 Redis 用独立 DB index（0/1/2/5），不要和别的应用共用；sentinel 暂不支持。
-            口令同样由平台写进 Secret
+            不再创建内置 Redis 的 StatefulSet 与 PVC。口令同样由平台写进 Secret
           </div>
         </div>
       </div>
