@@ -13,14 +13,17 @@
 #     -e MYSQL_URL='jdbc:mysql://mysql:3306/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true' \
 #     -e MYSQL_USERNAME=root -e MYSQL_PASSWORD=*** \
 #     -e REDIS_HOST=redis -e REDIS_PASSWORD=*** \
-#     -e OAUTH2_SERVER=http://platform-auth:9527/oauth2/jwks \
+#     -e OAUTH2_SERVER=http://platform-auth:9527 \
 #     k8s-cloud-platform/platform-auth:latest
 #
 # ⚠️ 容器里的 127.0.0.1 是**容器自己**，不是宿主机 —— 凡是默认值写成 127.0.0.1 / 192.168.x 的
 #    依赖地址（MySQL / Redis / OAUTH2_SERVER / K8S_SERVER_URL）在容器里都要显式覆盖。
+# ⚠️ 本服务有 **server.servlet.context-path=/auth**：所有端点都在 /auth 下
+#    （/auth/oauth2/**、/auth/session/**、/auth/login.html、/auth/user/**、/auth/.well-known/**）。
+#    因此 platform-api / k8s-server 的 OAUTH2_SERVER 必须写成 …:9527/auth/oauth2/jwks。
 # ⚠️ 前端（platform-web）与**本服务必须同源**才能登录：SPA 的 origin、issuer、redirect_uri
 #    三者必须同 host 字符串（同源铁律），否则会话 Cookie 不随 fetch 发、续期全 302。
-#    做法见 platform-web/nginx.conf（它把 /oauth2 与 /session 转发到这里）。
+#    做法见 platform-web/nginx.conf（它把 /auth/** 整块转发到这里）。
 
 FROM eclipse-temurin:21-jre
 

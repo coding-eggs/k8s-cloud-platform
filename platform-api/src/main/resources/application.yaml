@@ -175,7 +175,9 @@ spring:
       resourceserver:
         jwt:
           # 不校验 audience：平台管理端接受 auth server 签发的任意客户端 token
-          jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/oauth2/jwks}
+          # ⚠️ platform-auth 有 server.servlet.context-path=/auth，端点整体在 /auth 下。
+          #    部署时若覆盖 OAUTH2_SERVER，务必带上 /auth，否则拉不到密钥 → 全站 401。
+          jwk-set-uri: ${OAUTH2_SERVER:http://192.168.31.80:9527/auth/oauth2/jwks}
           type: JWS
           # 若 auth server 使用对称签名，可改为：
           #   jws:

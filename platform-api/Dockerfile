@@ -25,7 +25,7 @@
 #     -e MYSQL_USERNAME=root -e MYSQL_PASSWORD=*** \
 #     -e REDIS_HOST=redis -e REDIS_PASSWORD=*** \
 #     -e K8S_SERVER_URL=http://k8s-server:8080 \
-#     -e OAUTH2_SERVER=http://platform-auth:9527/oauth2/jwks \
+#     -e OAUTH2_SERVER=http://platform-auth:9527/auth/oauth2/jwks \
 #     -e CREDENTIAL_AES_KEY=*** -e KUBECONFIG_AES_KEY=*** \
 #     k8s-cloud-platform/platform-api:latest
 #

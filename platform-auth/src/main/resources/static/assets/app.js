@@ -48,9 +48,11 @@ api.interceptors.response.use(
                 msg = '未登录或登录已过期，请重新登录';
                 ElementPlus.ElMessage.warning(msg);
                 // 跳转到登录页（保留当前路径供登录后返回）
+                // ⚠️ 用**相对路径**：platform-auth 有 server.servlet.context-path=/auth，
+                //    页面都在 /auth/ 下，写死 "/login.html" 会跑到根的 404 上。
                 const currentPath = window.location.pathname + window.location.search;
                 if (!window.location.pathname.includes('/login.html')) {
-                    window.location.href = '/login.html?redirect=' + encodeURIComponent(currentPath);
+                    window.location.href = 'login.html?redirect=' + encodeURIComponent(currentPath);
                 }
                 break;
             case 403:

@@ -283,7 +283,8 @@ createApp({
             try {
                 api({
                     method: 'post',
-                    url: "/user/login",
+                    // ⚠️ 相对路径：本页在 context path（/auth/）下，写死 "/user/login" 会打到根上 404
+                    url: "user/login",
                     data: formData,
                     headers : {
                         'Content-Type' : 'application/x-www-form-urlencoded;charset=UTF-8'
@@ -311,7 +312,7 @@ createApp({
         // function doFormLogin() {
         //     const form = document.createElement('form');
         //     form.method = 'POST';
-        //     form.action = '/user/login';
+        //     form.action = 'user/login';
         //
         //     const uInput = document.createElement('input');
         //     uInput.type = 'hidden';

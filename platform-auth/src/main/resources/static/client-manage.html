@@ -514,11 +514,13 @@ createApp({
         }
 
         // ==================== API 调用 ====================
+        // ⚠️ 全部用**相对路径**：platform-auth 有 server.servlet.context-path=/auth，本页在 /auth/ 下，
+        //    写死 "/clients/xxx" 会打到根上 404。
         // 从后端获取客户端列表
         async function fetchList() {
             loading.value = true;
             try {
-                const data = await api.get('/clients/list');
+                const data = await api.get('clients/list');
                 clientList.value = data || [];
             } finally {
                 loading.value = false;
@@ -528,7 +530,7 @@ createApp({
         // 从后端加载可选的权限范围列表（scope options），失败则使用默认值
         async function loadScopeOptions() {
             try {
-                const data = await api.get('/clients/scope-list');
+                const data = await api.get('clients/scope-list');
                 if (Array.isArray(data)) {
                     scopeOptions.value = data.map(s => ({
                         name: s.name,
@@ -634,7 +636,7 @@ _formRaw.jwsSecret = row.jwsSecret || null;   // JWS 对称签名密钥（密文
        // 从服务端获取用于加密的公钥（JWK 格式）
        // 这个密钥由 Spring Authorization Server 管理，用于对客户端输入的对称密钥做非对称加密
        async function fetchEncryptionKey() {
-            const response = await axios.get("/oauth2/jwks");
+            const response = await axios.get("oauth2/jwks");
 
             // 筛选出用途为 encryption 的密钥（签名密钥 use=sign 不能用来加密）
             const candidates = response.data.keys.filter(
@@ -887,10 +889,10 @@ _formRaw.jwsSecret = row.jwsSecret || null;   // JWS 对称签名密钥（密文
                 console.log(payload)
                 // 4. 根据编辑/新建模式调用不同接口
                 if (isEdit.value) {
-                    await api.post('/clients/update', payload);
+                    await api.post('clients/update', payload);
                     ElMessage.success('更新成功');
                 } else {
-                    await api.post('/clients/create', payload);
+                    await api.post('clients/create', payload);
                     ElMessage.success('创建成功');
                 }
                 // 5. 关闭弹窗并刷新列表
@@ -905,7 +907,7 @@ _formRaw.jwsSecret = row.jwsSecret || null;   // JWS 对称签名密钥（密文
         // 删除客户端：确认后调用删除接口并刷新列表
         async function handleDelete(id) {
             try {
-                await api.delete('/clients/delete?id=' + id);
+                await api.delete('clients/delete?id=' + id);
                 ElMessage.success('删除成功');
                 fetchList();
             } catch (e) {

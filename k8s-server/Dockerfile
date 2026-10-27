@@ -12,7 +12,7 @@
 #   docker run --rm -p 8080:8080 \
 #     -e MYSQL_URL='jdbc:mysql://mysql:3306/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true' \
 #     -e MYSQL_USERNAME=root -e MYSQL_PASSWORD=*** \
-#     -e OAUTH2_SERVER=http://platform-auth:9527/oauth2/jwks \
+#     -e OAUTH2_SERVER=http://platform-auth:9527/auth/oauth2/jwks \
 #     k8s-cloud-platform/k8s-server:latest
 #
 # ⚠️ 依赖地址在容器里必须显式覆盖（容器里的 127.0.0.1 是容器自己）：

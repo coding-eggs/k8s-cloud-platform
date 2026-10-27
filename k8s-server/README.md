@@ -220,7 +220,7 @@ k8s-server/src/main/java/com/coding/k8sserver/
 | `server.port` | `8080` | 服务端口 |
 | `k8s.cloud.kubeconfig.aes-key` | 内置值 | kubeconfig 落库解密密钥，**必须与 `platform-api` 一致**，否则解不开集群凭据 |
 | `spring.datasource.*` | MySQL `192.168.31.80:1234/k8s_cloud_platform` | 只读边界所需的表：`k8s_cluster`、`platform_tenant`、`platform_tenant_namespace`、`platform_rbac_template`（可用 `MYSQL_URL/USERNAME/PASSWORD` 覆盖） |
-| `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | `${OAUTH2_SERVER:http://127.0.0.1:9527/oauth2/jwks}` | 验签密钥源 |
+| `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | `${OAUTH2_SERVER:http://127.0.0.1:9527/auth/oauth2/jwks}` | 验签密钥源 |
 | `…jwt.audiences` | `gateway-code-client` | ⚠️ 见下方注意事项 |
 | `…jwt.type` / `jwe` | `JWS` | JWE 为对称密钥 / 非对称（非对称仍留 TODO） |
 | `spring.security.ignore-urls` | 见 yaml | 免登录放行（actuator、文档、静态资源等） |

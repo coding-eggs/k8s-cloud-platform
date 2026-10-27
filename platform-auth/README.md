@@ -3,7 +3,11 @@
 K8s 云平台的**统一身份认证与授权服务**：基于 Spring Authorization Server（SAS）实现的 OAuth2 / OIDC 授权服务器，负责用户登录、客户端（RegisteredClient）管理、令牌签发（支持按客户端自定义 JWS/JWE 编码）、JWK 密钥管理，以及一个为 **PKCE 公共客户端**量身打造的**会话续期（session-renewal）自定义授权类型**。
 
 - **运行端口**：`9527`
-- **Issuer（默认）**：`http://127.0.0.1:9527`（可用 `OAUTH2_SERVER` 覆盖）
+- **上下文路径**：`/auth`（`server.servlet.context-path`）——**所有端点都在 `/auth/` 下**：
+  `/auth/oauth2/**`、`/auth/session/**`、`/auth/login.html`、`/auth/user/**`、`/auth/assets/**`、`/auth/.well-known/**`。
+  前端与反代因此只需一条 `/auth/` 前缀转发；配套改动见 `platform-web/.env` 与本文件末尾的「入口」。
+- **Issuer（默认）**：按请求现算 = `scheme://host[:port]/auth`（代码里的 `AuthorizationServerSettings` 未固定 issuer）；
+  yaml 里的 `spring.security.oauth2.authorizationserver.issuer` 只是兜底配置项
 - **技术栈**：Java 21 · Spring Boot 4.0.6 · Spring Authorization Server 7.x · Spring Session 4.x · MyBatis · Redis
 
 ---
@@ -246,7 +250,8 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 | 配置 | 默认值 | 说明 |
 |------|--------|------|
 | `server.port` | `9527` | 服务端口 |
-| `spring.security.oauth2.authorizationserver.issuer` | `${OAUTH2_SERVER:http://127.0.0.1:9527}` | issuer，必须与访问地址一致 |
+| `server.servlet.context-path` | `/auth` | 全局上下文路径；前端 `VITE_OAUTH_ISSUER=/auth`、platform-api/k8s-server 的 `OAUTH2_SERVER` 都要带这个前缀 |
+| `spring.security.oauth2.authorizationserver.issuer` | `${OAUTH2_SERVER:http://127.0.0.1:9527}` | 兜底配置项；实际 issuer 由 `AuthorizationServerSettings`（未固定）按请求现算，含 `/auth` |
 | `spring.datasource.*` | MySQL `192.168.31.80:1234/k8s_cloud_platform` | 用户/角色/客户端/授权/JWK 持久化（可用 `MYSQL_URL/USERNAME/PASSWORD` 覆盖） |
 | `spring.data.redis.*` | `192.168.31.80:6379`, database `1` | Redis 会话存储（可用 `REDIS_HOST/PORT/PASSWORD` 覆盖） |
 | `jwt.enabled` / `jwt.issuer` / `jwt.data-key` | `true` / 同 issuer / `data` | JWT 组件开关、issuer、自定义用户 claim 的键名 |
@@ -300,9 +305,9 @@ mvn -pl platform-auth -am compile
 
 访问：
 
-- 客户端管理页：`http://127.0.0.1:9527/`（先登录）
-- 接口文档（Knife4j）：`http://127.0.0.1:9527/doc.html`
-- OIDC 发现：`http://127.0.0.1:9527/.well-known/oauth-authorization-server`
+- 客户端管理页：`http://127.0.0.1:9527/auth/`（先登录）
+- 接口文档（Knife4j）：`http://127.0.0.1:9527/auth/doc.html`
+- OIDC 发现：`http://127.0.0.1:9527/auth/.well-known/oauth-authorization-server`
 
 > **本地 Maven 仓库**在本环境为 `D:\repository`（非默认 `~/.m2`）；属性名存疑时优先「写代码 → 编译」验证，`javap`/`unzip` 在这套 Windows 环境有摩擦。
 

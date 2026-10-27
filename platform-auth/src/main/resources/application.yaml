@@ -1,11 +1,30 @@
 server:
   port: 9527
+  # 全局上下文路径：**所有端点**都在 /auth 下（/auth/oauth2/**、/auth/session/**、/auth/login.html、
+  # /auth/user/**、/auth/assets/**、/auth/.well-known/**），于是前端/反代只需一条 `/auth/` 前缀转发，
+  # 新增端点也不用再改代理白名单。
+  # ⚠️ 2026-10-27 实测，四处必须一起对齐：
+  #   · 前端 VITE_OAUTH_ISSUER=/auth（拼出 /auth/oauth2/authorize 等相对路径）
+  #   · platform-api / k8s-server 的 jwk-set-uri 要带 /auth（否则拉不到验签密钥，全站 401）
+  #   · 静态页面（login.html / consent.html / client-manage.html）里的接口地址必须是**相对路径**
+  #   · 探针与文档入口随之变成 /auth/actuator/**、/auth/doc.html、/auth/.well-known/…
+  # ⚠️ issuer 也随之变成 http://<host>/auth（SAS 按请求现算时会带上 context path；实测
+  #    Location 为 http://host:port/auth/login.html、issuer 为 http://host:port/auth）。
+  servlet:
+    context-path: /auth
   # 采信反向代理带来的 X-Forwarded-*（platform-web 的 nginx 已在发 X-Forwarded-Proto / -For，
   # 见 platform-web/nginx.conf）。issuer 与 OIDC metadata 的端点地址是按请求的 host+scheme
   # 现算的，不配这项时 https 前门会被推成 http://（2026-10-26 实测）。
   # ⚠️ 前提是前面确有一层可信代理、且用 proxy_set_header **赋值**覆盖这两个头（nginx.conf 是赋值，
   #    不是追加）；若本端口直接暴露到公网，开这个等于允许客户端自报 scheme/host。
   # 直连访问（不经代理、没有转发头）行为不变。
+  # ⚠️ 没有转发头时**不做任何改写**：scheme/host/port 就用这条连接的事实（host、port 取自 Host 头；
+  #    Host 里没写端口就按协议的默认端口 80/443 —— 2026-10-27 实测：Host=192.168.85.1:5173 → 带 :5173，
+  #    Host=192.168.85.1 → 端口消失）。所以反代若用 nginx 的 `$host`（不含端口）赋 Host，
+  #    在前门不是 80/443 时必须补 X-Forwarded-Port，否则 issuer 与登录跳转会掉到默认端口。
+  #    另一种选择是关掉本项：Tomcat 直接从 Host 头取 host+port（实测带端口），前端就不用发
+  #    X-Forwarded-Port —— 代价是 scheme 恒为实际连接协议，TLS 终止在前面的部署会被算成 http://，
+  #    故保留本项。两处必须成对理解，见 platform-web/nginx.conf 的认证段落。
   forward-headers-strategy: framework
 
 # MyBatis 配置

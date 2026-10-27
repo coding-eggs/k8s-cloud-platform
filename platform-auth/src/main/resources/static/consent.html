@@ -262,7 +262,8 @@ createApp({
                 qs.append('client_id', clientId);
                 qs.append('scope', scopeParam);
 
-                const data = await api({ method: 'get', url: '/consent/details?' + qs.toString() });
+                // ⚠️ 相对路径：本页在 context path（/auth/）下
+                const data = await api({ method: 'get', url: 'consent/details?' + qs.toString() });
 
                 // API 返回 { unChoseScopeList: [{name,description}], choseScopeList: [...] }
                 if (data.unChoseScopeList) {
@@ -298,7 +299,8 @@ createApp({
 
             const form = document.createElement('form');
             form.method  = 'POST';
-            form.action  = userCode.value ? '/oauth2/device_verification' : '/oauth2/authorize';
+            // ⚠️ 相对路径：本页在 context path（/auth/）下
+            form.action  = userCode.value ? 'oauth2/device_verification' : 'oauth2/authorize';
             form.style.display = 'none';
 
             addHidden(form, 'client_id', clientId);

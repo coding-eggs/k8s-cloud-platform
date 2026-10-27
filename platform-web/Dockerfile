@@ -7,10 +7,14 @@
 # 用法（**两步，与流水线的两个节点一一对应**）：
 #   1) 先在 platform-web/ 里构建（产出 dist/）。⚠️ 那三个 VITE_* 是**构建期**被 Vite 内联进 JS 的，
 #      所以它们现在由**构建命令**给（不再是 --build-arg）：
-#        VITE_OAUTH_ISSUER=http://your-host \
+#        VITE_OAUTH_ISSUER=/auth \
 #        VITE_OAUTH_CLIENT_ID=platform-web-client \
 #        VITE_OAUTH_REDIRECT_URI=http://your-host/callback \
 #        npm ci && npm run build-only
+#      ⚠️ VITE_OAUTH_ISSUER **只写上下文路径 /auth**（platform-auth 的 server.servlet.context-path），
+#        代码拼出来的是 /auth/oauth2/... 这类相对路径，跟着本 nginx 的 origin 走，auth 由 nginx
+#        整块转发（见 nginx.conf 的 /auth/，auth 部署在远端也照此）。写死具体 host 会退化成跨站，
+#        续期/登出用的会话 Cookie（SameSite=Lax）就不随 fetch 发了。
 #      （也可以把这三行写进 platform-web/.env.production —— Vite 会读它，优先级高于仓库里的 .env）
 #   2) 再打包镜像，**上下文是模块目录**：
 #        docker build -f platform-web/Dockerfile -t k8s-cloud-platform/web:latest platform-web
@@ -31,6 +35,7 @@
 #
 # 代理规则写在同一目录的 nginx.conf：/api/** → platform-api（去 /api 前缀），
 # /oauth2 与 /session → platform-auth。服务名不同就改那个文件（或挂载覆盖）。
+# TLS 由本镜像的 nginx 终止时，改用同目录的 nginx-https.conf 覆盖（用法见它的文件头）。
 
 FROM nginx:1.27-alpine
 
