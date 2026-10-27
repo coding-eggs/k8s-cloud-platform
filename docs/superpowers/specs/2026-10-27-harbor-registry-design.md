@@ -65,8 +65,8 @@ existingSecretSecretKey: platform-harbor-secrets       # 键 secretKey（Harbor 
 persistence:
   enabled: true
   resourcePolicy: keep
-database: { type: internal }
-redis: { type: internal }
+database: { type: internal }     # 默认内置；外部模式由表单拼 type=external + existingSecret
+redis: { type: internal }        # 同上
 # core / portal / registry / jobservice / database / redis / trivy 的 resources 显式钉住
 ```
 
@@ -95,6 +95,15 @@ redis: { type: internal }
 | `host` | 无（必填） | 不带 scheme/path/**端口**。route = 域名；另两种 = 节点/LB 的 IP 或域名 |
 | `nodePort` | `30002` | 仅 nodePort 模式；K8s 默认范围 30000-32767 |
 | `port` | `80` | 仅 loadBalancer 模式的 Service 端口 |
+| `databaseMode` / `redisMode` | `internal` | 外部 PostgreSQL / Redis；**只能在首次安装时选** |
+| `dbHost` / `dbPort` / `dbUsername` / `dbName` / `dbSslMode` | 空 / 5432 / 空 / `registry` / `disable` | 仅外部数据库 |
+| `dbPassword` / `redisPassword` | 空 | 只作入参：首次安装必填，编辑留空 = 沿用已有 Secret |
+| `redisAddr` / `redisUsername` | 空 | 仅外部 Redis：`host:port`（不支持 sentinel）、ACL 用户名可空 |
+
+外部模式在 helm 之前由 k8s-server 写两个 Secret（`platform-harbor-external-db` 键 `password`；
+`platform-harbor-external-redis` 键 `REDIS_PASSWORD`（可选 REDIS_USERNAME）），values 里只引用
+`existingSecret`；口令不进 values 快照、不回显。来源（内置 ↔ 外部）编辑时锁定 ——
+切换需要迁移内库数据，不是一次 upgrade 能完成的。
 
 其余用 `editableValues` 的「路径 → 标量」模型（前端按现有分组渲染）：
 

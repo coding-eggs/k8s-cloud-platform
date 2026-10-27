@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.ExternalGatewayRequestDTO;
 import com.coding.common.models.k8s.dto.GatewayListenerDTO;
+import com.coding.common.models.k8s.dto.HarborExternalSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.HarborSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.OtelEsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.OtelServiceMonitorRequestDTO;
@@ -22,6 +23,7 @@ import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ExternalGatewayObjects;
+import com.coding.k8sserver.components.HarborExternalSecretObjects;
 import com.coding.k8sserver.components.HarborSecretObjects;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
 import com.coding.k8sserver.components.ResourceAccessResolver;
@@ -378,12 +380,7 @@ public class ComponentInstallController implements AccessBoundaryAware {
         }
         boolean initialized = client.apps().deployments()
                 .inNamespace(request.getNamespace()).withName("harbor-core").get() != null;
-        // 首次安装时 helm 还没跑（--create-namespace 还没建 ns），Secret 写不进去会挡住整个安装
-        if (client.namespaces().withName(request.getNamespace()).get() == null) {
-            client.namespaces().resource(new NamespaceBuilder()
-                            .withNewMetadata().withName(request.getNamespace()).endMetadata().build())
-                    .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
-        }
+        ensureNamespace(client, request.getNamespace());
         if (initialized) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "管理口令 Secret 丢失，Harbor 已初始化：重新生成的口令与库里的哈希不一致。"
@@ -393,6 +390,79 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 .resource(HarborSecretObjects.build(request.getNamespace(), request.getSecretName()))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>();
+    }
+
+    /**
+     * Harbor 外部 PostgreSQL / Redis 的口令 Secret（S3.6）。
+     *
+     * <p>口令由 platform-api 随安装请求传入；这里只写 Secret，**不进 values**。
+     * 口令留空 = 沿用已有 Secret；此时 Secret 必须已存在，否则拒绝（否则 helm 会渲染出
+     * 空口令或直接因 Secret 缺失失败）。
+     */
+    @PostMapping("/harbor-external-secrets")
+    @Operation(summary = "下发 Harbor 外部数据库/Redis 口令 Secret",
+            description = "幂等 SSA；口令留空 = 沿用已有 Secret，Secret 不存在则拒绝")
+    public ResponseData<Void> harborExternalSecrets(
+            @RequestBody HarborExternalSecretsRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "Harbor 外部依赖参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        ensureNamespace(client, request.getNamespace());
+
+        if (request.isDatabaseExternal()) {
+            if (isBlank(request.getDatabaseSecretName())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, "Harbor 外部数据库 Secret 名不完整");
+            }
+            if (isBlank(request.getDatabasePassword())) {
+                Secret existing = client.secrets().inNamespace(request.getNamespace())
+                        .withName(request.getDatabaseSecretName()).get();
+                if (!HarborExternalSecretObjects.hasValue(existing,
+                        HarborExternalSecretObjects.DB_PASSWORD_KEY)) {
+                    throw new CloudPlatformException(EnumResponseType.ERROR,
+                            "外部数据库口令为空且 Secret 不存在：" + request.getNamespace() + "/"
+                                    + request.getDatabaseSecretName() + "（首次安装必须填写口令）");
+                }
+            } else {
+                client.secrets().inNamespace(request.getNamespace())
+                        .resource(HarborExternalSecretObjects.buildDatabase(request.getNamespace(),
+                                request.getDatabaseSecretName(), request.getDatabasePassword()))
+                        .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+            }
+        }
+
+        if (request.isRedisExternal()) {
+            if (isBlank(request.getRedisSecretName())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, "Harbor 外部 Redis Secret 名不完整");
+            }
+            if (isBlank(request.getRedisPassword())) {
+                Secret existing = client.secrets().inNamespace(request.getNamespace())
+                        .withName(request.getRedisSecretName()).get();
+                if (!HarborExternalSecretObjects.hasValue(existing,
+                        HarborExternalSecretObjects.REDIS_PASSWORD_KEY)) {
+                    throw new CloudPlatformException(EnumResponseType.ERROR,
+                            "外部 Redis 口令为空且 Secret 不存在：" + request.getNamespace() + "/"
+                                    + request.getRedisSecretName() + "（首次安装必须填写口令）");
+                }
+            } else {
+                client.secrets().inNamespace(request.getNamespace())
+                        .resource(HarborExternalSecretObjects.buildRedis(request.getNamespace(),
+                                request.getRedisSecretName(), request.getRedisUsername(),
+                                request.getRedisPassword()))
+                        .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+            }
+        }
+        return new ResponseData<>();
+    }
+
+    /** 首次安装时 helm --create-namespace 还没跑：平台要写的 Secret 会因命名空间不存在而失败 */
+    private static void ensureNamespace(KubernetesClient client, String namespace) {
+        if (client.namespaces().withName(namespace).get() == null) {
+            client.namespaces().resource(new NamespaceBuilder()
+                            .withNewMetadata().withName(namespace).endMetadata().build())
+                    .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        }
     }
 
     /**

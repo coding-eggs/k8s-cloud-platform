@@ -409,6 +409,15 @@ public class ClusterComponentService {
         cur.setHost(asString(m.get("host")));
         cur.setNodePort(asInt(m.get("nodePort")));
         cur.setPort(asInt(m.get("port")));
+        cur.setDatabaseMode(asString(m.get("databaseMode")));
+        cur.setDbHost(asString(m.get("dbHost")));
+        cur.setDbPort(asInt(m.get("dbPort")));
+        cur.setDbUsername(asString(m.get("dbUsername")));
+        cur.setDbName(asString(m.get("dbName")));
+        cur.setDbSslMode(asString(m.get("dbSslMode")));
+        cur.setRedisMode(asString(m.get("redisMode")));
+        cur.setRedisAddr(asString(m.get("redisAddr")));
+        cur.setRedisUsername(asString(m.get("redisUsername")));
         return cur;
     }
 

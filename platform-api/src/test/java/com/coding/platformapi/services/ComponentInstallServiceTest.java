@@ -1627,6 +1627,106 @@ class ComponentInstallServiceTest {
                         && o.getMessage().contains("harbor unreachable")));
     }
 
+    @Test
+    void harborExternalDatabaseAndRedisAreRenderedWithPlatformSecrets() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        HarborInstallRequest install = new HarborInstallRequest("10.0.0.5");
+        install.setDatabaseMode("external");
+        install.setDbHost("pg.internal");
+        install.setDbPort(5432);
+        install.setDbUsername("harbor");
+        install.setDbName("registry");
+        install.setDbSslMode("require");
+        install.setDbPassword("db-pw");
+        install.setRedisMode("external");
+        install.setRedisAddr("redis.internal:6379");
+        install.setRedisUsername("harbor");
+        install.setRedisPassword("redis-pw");
+
+        service().apply(harborRequest(install), "admin");
+
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        String values = specs.getValue().get(0).getValues().toString();
+        assertThat(values)
+                .contains("type=external")
+                .contains("pg.internal")
+                .contains("platform-harbor-external-db")
+                .contains("redis.internal:6379")
+                .contains("platform-harbor-external-redis")
+                .contains("sslmode=require");
+        verify(client, timeout(3000)).applyHarborExternalSecrets("c1", "harbor",
+                true, "platform-harbor-external-db", "db-pw",
+                true, "platform-harbor-external-redis", "harbor", "redis-pw");
+    }
+
+    @Test
+    void harborExternalRequiresCredentialsOnInstall() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+
+        HarborInstallRequest dbNoPw = new HarborInstallRequest("10.0.0.5");
+        dbNoPw.setDatabaseMode("external");
+        dbNoPw.setDbHost("pg.internal");
+        dbNoPw.setDbUsername("harbor");
+        assertThatThrownBy(() -> service().apply(harborRequest(dbNoPw), "admin"))
+                .hasMessageContaining("外部数据库口令");
+
+        HarborInstallRequest redisNoPw = new HarborInstallRequest("10.0.0.5");
+        redisNoPw.setRedisMode("external");
+        redisNoPw.setRedisAddr("redis.internal:6379");
+        assertThatThrownBy(() -> service().apply(harborRequest(redisNoPw), "admin"))
+                .hasMessageContaining("外部 Redis 口令");
+    }
+
+    @Test
+    void harborExternalAddressesAreValidated() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+
+        HarborInstallRequest noHost = new HarborInstallRequest("10.0.0.5");
+        noHost.setDatabaseMode("external");
+        noHost.setDbUsername("harbor");
+        noHost.setDbPassword("pw");
+        assertThatThrownBy(() -> service().apply(harborRequest(noHost), "admin"))
+                .hasMessageContaining("外部数据库地址");
+
+        HarborInstallRequest badAddr = new HarborInstallRequest("10.0.0.5");
+        badAddr.setRedisMode("external");
+        badAddr.setRedisAddr("redis.internal");
+        badAddr.setRedisPassword("pw");
+        assertThatThrownBy(() -> service().apply(harborRequest(badAddr), "admin"))
+                .hasMessageContaining("外部 Redis 地址");
+    }
+
+    @Test
+    void harborSourceCannotSwitchOnUpgrade() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        PlatformComponentOperation last = new PlatformComponentOperation();
+        last.setStatus("SUCCESS");
+        last.setToVersion("1.19.4");
+        last.setValuesSnapshot("{\"__platform\":{\"harbor\":{\"exposeMode\":\"nodePort\","
+                + "\"host\":\"10.0.0.5\",\"nodePort\":30002,\"port\":80,"
+                + "\"databaseMode\":\"internal\",\"redisMode\":\"internal\"}}}");
+        when(mapper.selectLatestSuccess("c1", "harbor")).thenReturn(last);
+
+        HarborInstallRequest install = new HarborInstallRequest("10.0.0.5");
+        install.setDatabaseMode("external");
+        install.setDbHost("pg.internal");
+        install.setDbUsername("harbor");
+        install.setDbPassword("pw");
+        ComponentApplyRequest req = harborRequest(install);
+        req.setAction("UPGRADE");
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("只能在首次安装时选择");
+    }
+
     private static OtelInstallRequest baseOtel() {
         OtelInstallRequest o = new OtelInstallRequest();
         o.setTempoEndpoint("platform-tempo.monitor.svc:4317");

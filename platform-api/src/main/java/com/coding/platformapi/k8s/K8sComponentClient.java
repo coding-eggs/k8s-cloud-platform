@@ -10,6 +10,7 @@ import com.coding.common.models.k8s.dto.OtelTelemetryRequestDTO;
 import com.coding.common.models.k8s.dto.OtelTelemetryStateDTO;
 import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.HarborExternalSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.HarborSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
 import com.coding.common.models.objectstorage.SeaweedS3ConfigRequestDTO;
@@ -147,6 +148,29 @@ public class K8sComponentClient {
         body.setNamespace(namespace);
         body.setSecretName(secretName);
         gateway.exchange(HttpMethod.POST, "/components/harbor-secrets", null, body,
+                gateway.responseType(Void.class));
+    }
+
+    /**
+     * Harbor 外部 PostgreSQL / Redis 的口令 Secret：口令只走这条通道，不经过 values。
+     * 口令传 null 表示沿用已有 Secret（k8s-server 会校验它存在）。
+     */
+    public void applyHarborExternalSecrets(String clusterId, String namespace,
+                                           boolean databaseExternal, String databaseSecretName,
+                                           String databasePassword,
+                                           boolean redisExternal, String redisSecretName,
+                                           String redisUsername, String redisPassword) {
+        HarborExternalSecretsRequestDTO body = new HarborExternalSecretsRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setDatabaseExternal(databaseExternal);
+        body.setDatabaseSecretName(databaseSecretName);
+        body.setDatabasePassword(databasePassword);
+        body.setRedisExternal(redisExternal);
+        body.setRedisSecretName(redisSecretName);
+        body.setRedisUsername(redisUsername);
+        body.setRedisPassword(redisPassword);
+        gateway.exchange(HttpMethod.POST, "/components/harbor-external-secrets", null, body,
                 gateway.responseType(Void.class));
     }
 

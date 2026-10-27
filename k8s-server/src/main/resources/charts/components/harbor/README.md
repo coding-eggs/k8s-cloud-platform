@@ -43,7 +43,8 @@ redis: { type: internal }
 
 - `fullnameOverride`：探测认 `harbor-core`，不钉名字 release 名一变就永远「未安装」。
 - `resourcePolicy: keep`：卸载 release 不删镜像与数据库 PVC。
-- `database/redis: internal`：内网单集群，本期不接外部中间件。
+- `database/redis`：**默认 internal**；安装表单可选外部（见 §4.1），外部时由表单拼
+  `type: external` 与 `existingSecret`，口令不进 values。
 
 **`expose.*` 与 `externalURL` 不在契约里**：由安装表单按暴露方式拼（见 §4）。
 三种模式都只走 HTTP（`expose.tls.enabled=false`），客户端要配 `insecure-registries`：
@@ -61,6 +62,12 @@ redis: { type: internal }
 | `host` | 无（必填） | 不带 scheme/path/端口。route = 域名；另两种 = 节点/LB 的 IP 或域名 |
 | `nodePort` | `30002` | 仅 nodePort 模式；K8s 默认范围 30000-32767 |
 | `port` | `80` | 仅 loadBalancer 模式；Service 端口 |
+| `databaseMode` | `internal` | `internal` / `external`；**只能在首次安装时选** |
+| `dbHost` / `dbPort` / `dbUsername` / `dbName` / `dbSslMode` | 空 / 5432 / 空 / `registry` / `disable` | 仅外部数据库 |
+| `dbPassword` | 空 | 仅入参：首次安装必填；编辑留空 = 不改（沿用已有 Secret） |
+| `redisMode` | `internal` | `internal` / `external`；**只能在首次安装时选** |
+| `redisAddr` / `redisUsername` | 空 | 仅外部 Redis：`host:port`（sentinel 暂不支持）、ACL 用户名可空 |
+| `redisPassword` | 空 | 仅入参：首次安装必填；编辑留空 = 不改 |
 | 5 块 PVC 的 StorageClass / 容量 | 空 / 20Gi、1Gi、5Gi、1Gi、5Gi | StorageClass 空 = 跟随集群默认 |
 | `trivy.enabled` | `false` | 内网拉不到漏洞库，默认不装 |
 
@@ -75,6 +82,26 @@ redis: { type: internal }
 平台调 Harbor API 与写进租户凭据的 endpoint 用**同一个** authority（nodePort/LB 带端口），
 快照里记在 `__platform.harbor.externalHost`。
 
+### 4.1 外部数据库 / Redis（可选）
+
+外部模式下 chart 不建 `harbor-database` / `harbor-redis`，平台在 helm 之前写两个 Secret：
+
+| Secret | 键 | 用途 |
+|---|---|---|
+| `platform-harbor-external-db` | `password` | chart 映射成 `POSTGRESQL_PASSWORD` |
+| `platform-harbor-external-redis` | `REDIS_PASSWORD`（可选 `REDIS_USERNAME`） | chart 用 helm `lookup` 读它，所以必须先于 helm 存在 |
+
+前提与限制：
+
+- **PostgreSQL**：先建好库（默认 `registry`）与账号并授权；Harbor 会自己建表。
+- **Redis**：单实例 `host:port`（**sentinel 列表暂不支持**）；Harbor 固定用 DB index
+  `0/1/2/5`，不要与别的应用共用实例里的这几个库。
+- **来源（内置/外部）只能在首次安装时选**：从内置切外部需要迁移内库数据，不是一次
+  helm upgrade 能完成的，所以编辑时锁定。
+- 口令由 platform-api 随安装请求传给 k8s-server 写 Secret，**不进 values 快照、不回显**；
+  编辑时留空 = 沿用已有 Secret（Secret 不存在会被拒）。
+- 平台不做连通性预检（平台机不一定能到你的库），只校验地址/端口格式。
+
 ## 5. 装完之后
 
 ```bash
@@ -85,6 +112,7 @@ kubectl -n harbor get secret platform-harbor-secrets -o jsonpath='{.data}' | jq 
 
 - route 模式：HTTPRoute `Accepted=True` 且 `AttachedRoutes=1`；
 - nodePort/loadBalancer 模式：`kubectl -n harbor get svc` 的端口与 `externalURL` 一致；
+- 外部依赖：`kubectl -n harbor get secret platform-harbor-external-db platform-harbor-external-redis`；
 - 平台「集群组件」页 Harbor 行 →「镜像项目」能看到每租户的 project 与凭据状态，
   装完 Harbor 与新建租户时平台会自动同步（失败可在该面板重试/重建）。
 

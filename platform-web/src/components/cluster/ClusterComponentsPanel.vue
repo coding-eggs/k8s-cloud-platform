@@ -262,6 +262,8 @@ const SIZE_RE = /^[1-9]\d*(\.\d+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$/
 /** Harbor 访问地址：IP 或域名，不带 scheme/path/端口（与后端 HARBOR_HOST 同一条） */
 const HARBOR_HOST_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/
 const IPV4_RE = /^\d{1,3}(\.\d{1,3}){3}$/
+/** 外部 Redis 单实例地址 host:port（与后端 HARBOR_REDIS_ADDR 同一条） */
+const REDIS_ADDR_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?:[0-9]{1,5}$/
 
 /** 资源限制表单：requests/limits × cpu/memory 四格，提交时拼回 K8s 的 ResourceRequirements */
 interface ResourceFormValues {
@@ -478,6 +480,8 @@ const EMPTY_SEAWEED: K8sSeaweedInstall = {
 /** Harbor 表单默认值：默认 nodePort（无需 istio，可直接用 IP） */
 const EMPTY_HARBOR: K8sHarborInstall = {
   exposeMode: 'nodePort', host: '', nodePort: 30002, port: 80,
+  databaseMode: 'internal', dbPort: 5432, dbName: 'registry', dbSslMode: 'disable',
+  redisMode: 'internal',
 }
 
 /** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
@@ -662,10 +666,16 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     ? { ...EMPTY_HARBOR, ...row.harborCurrent }
     : { ...EMPTY_HARBOR }
   const harbor: K8sHarborInstall = {
+    ...harborMerged,
     exposeMode: harborMerged.exposeMode || 'nodePort',
     host: harborMerged.host || '',
     nodePort: harborMerged.nodePort ?? 30002,
     port: harborMerged.port ?? 80,
+    databaseMode: harborMerged.databaseMode || 'internal',
+    dbPort: harborMerged.dbPort ?? 5432,
+    dbName: harborMerged.dbName || 'registry',
+    dbSslMode: harborMerged.dbSslMode || 'disable',
+    redisMode: harborMerged.redisMode || 'internal',
   }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
@@ -814,6 +824,34 @@ function confirmApply(): void {
     if (h.exposeMode === 'loadBalancer' && (!h.port || h.port < 1 || h.port > 65535)) {
       ElMessage.error('Service 端口必须在 1~65535（默认 80）')
       return
+    }
+    if (h.databaseMode === 'external') {
+      if (!h.dbHost || !HARBOR_HOST_RE.test(h.dbHost.trim())) {
+        ElMessage.error('外部数据库地址填 IP 或域名（不带端口）')
+        return
+      }
+      if (!h.dbPort || h.dbPort < 1 || h.dbPort > 65535) {
+        ElMessage.error('外部数据库端口必须在 1~65535（默认 5432）')
+        return
+      }
+      if (!h.dbUsername?.trim()) {
+        ElMessage.error('请填写外部数据库用户名')
+        return
+      }
+      if (!h.dbPassword && d.action === 'INSTALL') {
+        ElMessage.error('首次安装必须填写外部数据库口令（编辑时留空 = 不改）')
+        return
+      }
+    }
+    if (h.redisMode === 'external') {
+      if (!h.redisAddr || !REDIS_ADDR_RE.test(h.redisAddr.trim())) {
+        ElMessage.error('外部 Redis 地址应形如 redis.internal:6379')
+        return
+      }
+      if (!h.redisPassword && d.action === 'INSTALL') {
+        ElMessage.error('首次安装必须填写外部 Redis 口令（编辑时留空 = 不改）')
+        return
+      }
     }
   }
   const editable: Record<string, unknown> = {}
@@ -1402,6 +1440,61 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">数据库</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.harbor.databaseMode" style="width: 100%"
+                     :disabled="applyDialog.action !== 'INSTALL'">
+            <el-option label="Chart 内置 PostgreSQL（默认）" value="internal" />
+            <el-option label="外部 PostgreSQL" value="external" />
+          </el-select>
+          <div v-if="applyDialog.harbor.databaseMode === 'external'" class="cc-harbor-ext">
+            <el-input v-model="applyDialog.harbor.dbHost" placeholder="pg.internal（IP 或域名）"
+                      spellcheck="false" />
+            <el-input-number v-model="applyDialog.harbor.dbPort" :min="1" :max="65535"
+                             controls-position="right" />
+            <el-input v-model="applyDialog.harbor.dbUsername" placeholder="用户名" spellcheck="false" />
+            <el-input v-model="applyDialog.harbor.dbName" placeholder="库名（默认 registry）"
+                      spellcheck="false" />
+            <el-select v-model="applyDialog.harbor.dbSslMode" style="width: 100%">
+              <el-option label="disable（不加密）" value="disable" />
+              <el-option label="require（要 SSL，不校验证书）" value="require" />
+              <el-option label="verify-ca（校验证书 CA）" value="verify-ca" />
+              <el-option label="verify-full（校验证书与主机名）" value="verify-full" />
+            </el-select>
+            <el-input v-model="applyDialog.harbor.dbPassword" type="password" show-password
+                      spellcheck="false"
+                      :placeholder="applyDialog.action === 'INSTALL' ? '数据库口令（必填）' : '留空 = 不改'" />
+          </div>
+          <div class="cc-form-hint">
+            外部库要先建好库（默认 registry）与账号并授权。来源只能在首次安装时选，编辑时锁定
+            （内置 ↔ 外部需要迁移数据）。口令由平台写进 Secret，不进 values 快照
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">Redis</span>
+        <div class="cc-form-control">
+          <el-select v-model="applyDialog.harbor.redisMode" style="width: 100%"
+                     :disabled="applyDialog.action !== 'INSTALL'">
+            <el-option label="Chart 内置 Redis（默认）" value="internal" />
+            <el-option label="外部 Redis" value="external" />
+          </el-select>
+          <div v-if="applyDialog.harbor.redisMode === 'external'" class="cc-harbor-ext">
+            <el-input v-model="applyDialog.harbor.redisAddr" placeholder="redis.internal:6379"
+                      spellcheck="false" />
+            <el-input v-model="applyDialog.harbor.redisUsername" placeholder="ACL 用户名（可空）"
+                      spellcheck="false" />
+            <el-input v-model="applyDialog.harbor.redisPassword" type="password" show-password
+                      spellcheck="false"
+                      :placeholder="applyDialog.action === 'INSTALL' ? 'Redis 口令（必填）' : '留空 = 不改'" />
+          </div>
+          <div class="cc-form-hint">
+            外部 Redis 用独立 DB index（0/1/2/5），不要和别的应用共用；sentinel 暂不支持。
+            口令同样由平台写进 Secret
+          </div>
+        </div>
+      </div>
       <div v-if="applyDialog.showSeaweed" class="cc-section-title">对象存储（SeaweedFS）</div>
       <div v-if="applyDialog.showSeaweed" class="cc-form-row">
         <span class="cc-form-label">StorageClass</span>
@@ -1773,6 +1866,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
 </template>
 
 <style scoped>
+.cc-harbor-ext { display: grid; gap: 8px; margin-top: 8px; }
 .cc-panel { display: flex; flex-direction: column; gap: 10px; }
 .cc-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .cc-summary { font-size: 13px; color: var(--text-2); }

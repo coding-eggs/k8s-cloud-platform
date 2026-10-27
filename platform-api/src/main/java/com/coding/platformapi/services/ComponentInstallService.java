@@ -194,6 +194,8 @@ public class ComponentInstallService {
                 : null;
         if (recipe.harborRegistry()) {
             requireHarbor(harbor);
+            requireHarborSource(harbor, previousPlatform,
+                    req.getAction() == null ? "INSTALL" : req.getAction());
             if ("route".equals(harbor.getExposeMode())) {
                 requireHarborRouteDependency(req.getClusterId());
             }
@@ -547,6 +549,15 @@ public class ComponentInstallService {
             h.put("port", harbor.getPort());
             // 平台调 Harbor API / 凭据 endpoint 用的完整 authority（nodePort/LB 要带端口）
             h.put("externalHost", harborAuthority(harbor));
+            h.put("databaseMode", harbor.getDatabaseMode());
+            h.put("dbHost", harbor.getDbHost());
+            h.put("dbPort", harbor.getDbPort());
+            h.put("dbUsername", harbor.getDbUsername());
+            h.put("dbName", harbor.getDbName());
+            h.put("dbSslMode", harbor.getDbSslMode());
+            h.put("redisMode", harbor.getRedisMode());
+            h.put("redisAddr", harbor.getRedisAddr());
+            h.put("redisUsername", harbor.getRedisUsername());
             platform.put("harbor", h);
         }
         if (!platform.isEmpty()) {
@@ -854,6 +865,17 @@ public class ComponentInstallService {
             java.util.Set.of("route", "loadBalancer", "nodePort");
     private static final int DEFAULT_HARBOR_NODE_PORT = 30002;
     private static final int DEFAULT_HARBOR_PORT = 80;
+    private static final int DEFAULT_HARBOR_DB_PORT = 5432;
+    private static final String DEFAULT_HARBOR_DB_NAME = "registry";
+    private static final String DEFAULT_HARBOR_DB_SSLMODE = "disable";
+    /** 外部数据库 / Redis 的口令 Secret（键：password / REDIS_PASSWORD[+REDIS_USERNAME]） */
+    static final String HARBOR_EXTERNAL_DB_SECRET = "platform-harbor-external-db";
+    static final String HARBOR_EXTERNAL_REDIS_SECRET = "platform-harbor-external-redis";
+    private static final java.util.Set<String> HARBOR_DB_SSL_MODES =
+            java.util.Set.of("disable", "require", "verify-ca", "verify-full");
+    /** 外部 Redis 单实例地址 host:port（sentinel 列表暂不支持） */
+    private static final java.util.regex.Pattern HARBOR_REDIS_ADDR =
+            java.util.regex.Pattern.compile("^[a-z0-9]([a-z0-9.-]*[a-z0-9])?:[0-9]{1,5}$");
 
     /** 访问地址：不带 scheme/path/端口（端口在各自的独立字段里），全小写 */
     private static final java.util.regex.Pattern HARBOR_HOST =
@@ -874,7 +896,31 @@ public class ComponentInstallService {
                 prev.get("nodePort"), DEFAULT_HARBOR_NODE_PORT);
         Integer port = firstNonNullInt(requested == null ? null : requested.getPort(),
                 prev.get("port"), DEFAULT_HARBOR_PORT);
-        return new HarborInstallRequest(mode, host == null ? null : host.trim(), nodePort, port);
+
+        HarborInstallRequest out = new HarborInstallRequest(mode,
+                host == null ? null : host.trim(), nodePort, port);
+        // 来源只能来自表单/上次快照；口令**只**来自本次请求（快照里不存）
+        out.setDatabaseMode(firstNonBlank(requested == null ? null : requested.getDatabaseMode(),
+                asString(prev.get("databaseMode")), "internal"));
+        out.setDbHost(firstNonBlank(requested == null ? null : requested.getDbHost(),
+                asString(prev.get("dbHost"))));
+        out.setDbPort(firstNonNullInt(requested == null ? null : requested.getDbPort(),
+                prev.get("dbPort"), DEFAULT_HARBOR_DB_PORT));
+        out.setDbUsername(firstNonBlank(requested == null ? null : requested.getDbUsername(),
+                asString(prev.get("dbUsername"))));
+        out.setDbName(firstNonBlank(requested == null ? null : requested.getDbName(),
+                asString(prev.get("dbName")), DEFAULT_HARBOR_DB_NAME));
+        out.setDbSslMode(firstNonBlank(requested == null ? null : requested.getDbSslMode(),
+                asString(prev.get("dbSslMode")), DEFAULT_HARBOR_DB_SSLMODE));
+        out.setDbPassword(requested == null ? null : requested.getDbPassword());
+        out.setRedisMode(firstNonBlank(requested == null ? null : requested.getRedisMode(),
+                asString(prev.get("redisMode")), "internal"));
+        out.setRedisAddr(firstNonBlank(requested == null ? null : requested.getRedisAddr(),
+                asString(prev.get("redisAddr"))));
+        out.setRedisUsername(firstNonBlank(requested == null ? null : requested.getRedisUsername(),
+                asString(prev.get("redisUsername"))));
+        out.setRedisPassword(requested == null ? null : requested.getRedisPassword());
+        return out;
     }
 
     private static Integer firstNonNullInt(Integer requested, Object previous, int fallback) {
@@ -935,6 +981,79 @@ public class ComponentInstallService {
         }
     }
 
+    /**
+     * 数据库 / Redis 来源与外部连接信息。
+     *
+     * <p>来源（内置 ↔ 外部）**只能在首次安装时选**：从内置切外部不是一次 helm upgrade
+     * 能完成的（内库数据要迁移），放开会让操作"成功"但项目/镜像元数据留在旧库。
+     *
+     * <p>口令：首次安装必填；编辑时留空 = 沿用已有 Secret（由 k8s-server 校验 Secret 是否存在）。
+     */
+    @SuppressWarnings("unchecked")
+    private static void requireHarborSource(HarborInstallRequest h, Map<String, Object> previousPlatform,
+                                            String action) {
+        String dbMode = h.getDatabaseMode();
+        String redisMode = h.getRedisMode();
+        if (!"internal".equals(dbMode) && !"external".equals(dbMode)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的 Harbor 数据库来源：" + dbMode + "（internal / external）");
+        }
+        if (!"internal".equals(redisMode) && !"external".equals(redisMode)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "不支持的 Harbor Redis 来源：" + redisMode + "（internal / external）");
+        }
+        if (!"INSTALL".equals(action) && previousPlatform.get("harbor") instanceof Map<?, ?> prev) {
+            String prevDb = asString(prev.get("databaseMode"));
+            if (prevDb != null && !prevDb.equals(dbMode)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "数据库来源只能在首次安装时选择（内置 ↔ 外部需要迁移数据）");
+            }
+            String prevRedis = asString(prev.get("redisMode"));
+            if (prevRedis != null && !prevRedis.equals(redisMode)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "Redis 来源只能在首次安装时选择（内置 ↔ 外部需要迁移数据）");
+            }
+        }
+        boolean install = "INSTALL".equals(action);
+        if ("external".equals(dbMode)) {
+            if (h.getDbHost() == null || h.getDbHost().isBlank()
+                    || !HARBOR_HOST.matcher(h.getDbHost()).matches()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "请填写外部数据库地址（IP 或域名，不带 http:// 与端口；端口单独填）");
+            }
+            if (h.getDbPort() == null || h.getDbPort() < 1 || h.getDbPort() > 65535) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "外部数据库端口必须在 1~65535 之间（默认 5432）");
+            }
+            if (h.getDbUsername() == null || h.getDbUsername().isBlank()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "请填写外部数据库用户名");
+            }
+            if (h.getDbName() == null || h.getDbName().isBlank()) {
+                h.setDbName(DEFAULT_HARBOR_DB_NAME);
+            }
+            if (!HARBOR_DB_SSL_MODES.contains(h.getDbSslMode())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "外部数据库 sslmode 只能是 disable / require / verify-ca / verify-full");
+            }
+            if (install && (h.getDbPassword() == null || h.getDbPassword().isBlank())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "请填写外部数据库口令（首次安装必须填；编辑时留空 = 不改）");
+            }
+        }
+        if ("external".equals(redisMode)) {
+            if (h.getRedisAddr() == null || h.getRedisAddr().isBlank()
+                    || !HARBOR_REDIS_ADDR.matcher(h.getRedisAddr().trim()).matches()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "外部 Redis 地址应形如 redis.internal:6379（sentinel 列表暂不支持）");
+            }
+            if (install && (h.getRedisPassword() == null || h.getRedisPassword().isBlank())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "请填写外部 Redis 口令（首次安装必须填；编辑时留空 = 不改）");
+            }
+        }
+    }
+
     /** route 模式必须已有健康的 istio（external-gateway）；另两种模式不要求 */
     private void requireHarborRouteDependency(String clusterId) {
         Map<String, String> states = components.status(clusterId).stream()
@@ -983,6 +1102,28 @@ public class ComponentInstallService {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("expose", expose);
         values.put("externalURL", "http://" + harborAuthority(h));
+
+        // 外部数据库：口令走 Secret（键 password），values 里只引用名字
+        if ("external".equals(h.getDatabaseMode())) {
+            Map<String, Object> ext = new LinkedHashMap<>();
+            ext.put("host", h.getDbHost());
+            ext.put("port", String.valueOf(h.getDbPort()));
+            ext.put("username", h.getDbUsername());
+            ext.put("coreDatabase", h.getDbName());
+            ext.put("sslmode", h.getDbSslMode());
+            ext.put("existingSecret", HARBOR_EXTERNAL_DB_SECRET);
+            values.put("database", Map.of("type", "external", "external", ext));
+        }
+        // 外部 Redis：chart 的 helper 用 lookup 读 Secret（REDIS_PASSWORD / REDIS_USERNAME）
+        if ("external".equals(h.getRedisMode())) {
+            Map<String, Object> ext = new LinkedHashMap<>();
+            ext.put("addr", h.getRedisAddr());
+            if (h.getRedisUsername() != null && !h.getRedisUsername().isBlank()) {
+                ext.put("username", h.getRedisUsername());
+            }
+            ext.put("existingSecret", HARBOR_EXTERNAL_REDIS_SECRET);
+            values.put("redis", Map.of("type", "external", "external", ext));
+        }
 
         List<ReleaseSpec> out = new ArrayList<>(releases.size());
         for (ReleaseSpec r : releases) {
@@ -1210,6 +1351,18 @@ public class ComponentInstallService {
             // Harbor 的管理口令与 secretKey 必须在 helm 之前就位；values 里只引用 Secret 名
             if (harbor != null) {
                 client.applyHarborSecrets(clusterId, "harbor", "platform-harbor-secrets");
+                boolean dbExternal = "external".equals(harbor.getDatabaseMode());
+                boolean redisExternal = "external".equals(harbor.getRedisMode());
+                if (dbExternal || redisExternal) {
+                    // 外部库/Redis 的口令由 k8s-server 写成 Secret（键 password / REDIS_PASSWORD）；
+                    // chart 的 redis 用 lookup 读 Secret，所以必须赶在 helm 之前
+                    client.applyHarborExternalSecrets(clusterId, "harbor",
+                            dbExternal, HARBOR_EXTERNAL_DB_SECRET,
+                            dbExternal ? harbor.getDbPassword() : null,
+                            redisExternal, HARBOR_EXTERNAL_REDIS_SECRET,
+                            redisExternal ? harbor.getRedisUsername() : null,
+                            redisExternal ? harbor.getRedisPassword() : null);
+                }
             }
             ComponentInstallResultDTO result =
                     client.applyComponent(clusterId, componentCode, action, toDtos(releases));
