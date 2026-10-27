@@ -1653,7 +1653,10 @@ class ComponentInstallServiceTest {
     }
 
     @Test
-    void harborSyncFailureMarksTheOperationFailedButSaysTheComponentIsInstalled() {
+    void aFailedHarborTenantSyncStillRecordsTheInstallAsSuccess() {
+        // 组件确实装好了（helm 成功、探测已装）。记成 FAILED 会让「上次成功」为空 ——
+        // 编辑表单读不到当前值、版本列显示「—」（2026-10-27 用户撞到）。
+        // 同步失败写进消息 + 日志，镜像项目面板里每个租户还有一行 ERROR，可单独重试
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
@@ -1663,11 +1666,10 @@ class ComponentInstallServiceTest {
 
         service().apply(harborRequest(new HarborInstallRequest("10.0.0.5")), "admin");
 
-        // worker 先写 RUNNING 再写 FAILED：timeout 要等到「那一条 FAILED」而不是第一次 updateById
         verify(mapper, timeout(3000)).updateById(org.mockito.ArgumentMatchers.argThat(o ->
-                "FAILED".equals(o.getStatus())
+                "SUCCESS".equals(o.getStatus())
                         && o.getMessage() != null
-                        && o.getMessage().contains("组件已安装")
+                        && o.getMessage().contains("镜像项目/凭据同步失败")
                         && o.getMessage().contains("harbor unreachable")));
     }
 

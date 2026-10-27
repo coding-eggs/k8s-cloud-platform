@@ -1521,7 +1521,10 @@ public class ComponentInstallService {
                 }
             }
             // Harbor 装好后立刻把租户接进去（建 project / robot / 凭据）。
-            // 失败时整条操作记 FAILED：组件本身已装好，但流水线还推不了镜像 —— 必须让人看见。
+            // ⚠️ 同步失败**不改变安装结论**：helm 已经成功、组件确实装好了。把它记成 FAILED 会让
+            //    「上次成功」为空 —— 编辑表单读不到当前值、版本列显示「—」（2026-10-27 用户撞到）。
+            //    失败写进操作消息，镜像项目面板里每个租户还有一行 ERROR，可以单独重试。
+            String postInstallNote = null;
             if (result.isSuccess() && "harbor".equals(componentCode)) {
                 try {
                     // host 直接来自本次安装参数：钩子在写 SUCCESS 之前跑，harborHost() 还读不到记录
@@ -1529,18 +1532,19 @@ public class ComponentInstallService {
                     HarborRegistryService.SyncResult sync = harborRegistry.ensureAll(
                             clusterId, harborAuthority(harbor), "INSTALL".equals(action));
                     if (sync.failed() > 0) {
-                        throw new IllegalStateException(
-                                sync.failed() + " 个租户同步失败（见镜像项目面板）");
+                        postInstallNote = sync.failed()
+                                + " 个租户的镜像项目/凭据同步失败（见「镜像项目」面板，可重试）";
                     }
                 } catch (Exception e) {
-                    throw new IllegalStateException(
-                            "组件已安装，但镜像项目/凭据同步失败：" + e.getMessage(), e);
+                    postInstallNote = "镜像项目/凭据同步失败：" + e.getMessage()
+                            + "（见「镜像项目」面板，可重试）";
+                    log.warn("组件 {} 安装成功，但 Harbor 租户同步失败: {}", id, e.getMessage());
                 }
             }
             PlatformComponentOperation done = new PlatformComponentOperation();
             done.setId(id);
             done.setStatus(result.isSuccess() ? SUCCESS : FAILED);
-            done.setMessage(truncate(result.getMessage(), 1000));
+            done.setMessage(truncate(messageWith(result, postInstallNote), 1000));
             done.setLogTail(tailOf(result));
             done.setFinishedAt(new Date());
             mapper.updateById(done);
@@ -1885,6 +1889,15 @@ public class ComponentInstallService {
     }
 
     /** message 列是 VARCHAR(1024)：helm 原始输出可能很长，落库前截断（完整输出在 log_tail） */
+    /** 操作消息 = helm 结果 + 后置集成警告（组件装好了但同步失败时，两件事都要留下） */
+    private static String messageWith(ComponentInstallResultDTO result, String note) {
+        if (note == null) {
+            return result.getMessage();
+        }
+        String base = result.getMessage();
+        return base == null || base.isBlank() ? note : base + "；" + note;
+    }
+
     private static String truncate(String value, int max) {
         if (value == null) {
             return null;
