@@ -131,10 +131,15 @@ public class ComponentInstallService {
 
         PlatformComponentOperation last =
                 mapper.selectLatestSuccess(req.getClusterId(), req.getComponentCode());
+        // 表单预填用的是「最近一次提交」（成功或失败，见 ClusterComponentService），这里的兜底必须同源：
+        // 前端对「没改动」的字段（Harbor 整组、webhook 等）是**不下发**的，没有成功记录时后端若还
+        // 只看成功记录，就会拿不到值 —— 原封不动点确定被拒成「请填写 Harbor 访问地址」（2026-10-27 撞到）。
+        PlatformComponentOperation baseline = last != null ? last
+                : mapper.selectLatestAttempt(req.getClusterId(), req.getComponentCode());
 
-        // 告警回调地址 / Thanos Receive：表单值 > 上次成功操作里记的值 > 平台配置。
+        // 告警回调地址 / Thanos Receive：表单值 > 上次提交里记的值 > 平台配置。
         // platformAlerting / thanosRemoteWrite 的组件没有地址就直接拒（别装完才失败）
-        Map<String, Object> previousPlatform = platformInputsOf(last);
+        Map<String, Object> previousPlatform = platformInputsOf(baseline);
         String alertWebhookUrl = resolveAlertWebhookUrl(
                 req.getAlertWebhookUrl(), asString(previousPlatform.get("alertWebhookUrl")));
         if (recipe.platformAlerting() && (alertWebhookUrl == null || alertWebhookUrl.isBlank())) {
@@ -216,7 +221,7 @@ public class ComponentInstallService {
 
         // spec §3.3：升级复用上次成功操作里的 values（本次显式传入的字段覆盖它）
         List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
-                parseSnapshot(last == null ? null : last.getValuesSnapshot()));
+                parseSnapshot(baseline == null ? null : baseline.getValuesSnapshot()));
         // 对象存储的 PVC / 副本数落在嵌套结构里（volume.dataDirs 是 list），由表单参数拼进来
         if (seaweed != null) {
             merged = applySeaweedValues(merged, seaweed);

@@ -34,6 +34,14 @@ public interface PlatformComponentOperationMapper {
      */
     List<PlatformComponentOperation> selectLatestAttempts(@Param("clusterId") String clusterId);
 
+    /**
+     * 某组件最近一次操作（**任何状态**）。
+     *
+     * <p>没有成功记录时当「上次提交的参数」兜底用：前端「没改动就不下发」的字段要靠它补回来。
+     */
+    PlatformComponentOperation selectLatestAttempt(@Param("clusterId") String clusterId,
+                                                   @Param("componentCode") String componentCode);
+
     /** 最近一次成功的操作（升级时用它取 fromVersion） */
     PlatformComponentOperation selectLatestSuccess(@Param("clusterId") String clusterId,
                                                    @Param("componentCode") String componentCode);

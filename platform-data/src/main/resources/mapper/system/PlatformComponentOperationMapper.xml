@@ -92,8 +92,16 @@
     limit 1
   </select>
 
-  <select id="countRunning" resultType="int">
-    select count(*) from platform_component_operation
+  <select id="selectLatestAttempt" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_component_operation
+    where cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and component_code = #{componentCode,jdbcType=VARCHAR}
+    order by id desc
+    limit 1
+  </select>
+
+  <select id="countRunning" resultType="int">    select count(*) from platform_component_operation
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
       and component_code = #{componentCode,jdbcType=VARCHAR}
       and `status` in ('PENDING', 'RUNNING')

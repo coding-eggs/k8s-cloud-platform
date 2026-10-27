@@ -1550,6 +1550,30 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void anUnchangedHarborFormReusesTheLastSubmittedParametersWhenNoSuccessExists() {
+        // 前端「没改动就不下发」Harbor 整组；没有成功记录时后端必须拿**上次提交**的参数兜底，
+        // 否则原封不动点确定会被拒成「请填写 Harbor 访问地址」（2026-10-27 用户撞到）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        PlatformComponentOperation failed = new PlatformComponentOperation();
+        failed.setComponentCode("harbor");
+        failed.setStatus("FAILED");
+        failed.setValuesSnapshot("{\"__platform\":{\"harbor\":{\"exposeMode\":\"nodePort\","
+                + "\"host\":\"10.0.0.5\",\"nodePort\":30002,\"port\":80,"
+                + "\"databaseMode\":\"internal\",\"redisMode\":\"internal\"}}}");
+        when(mapper.selectLatestAttempt("c1", "harbor")).thenReturn(failed);
+
+        service().apply(harborRequest(null), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        assertThat(specs.getValue().get(0).getValues().toString()).contains("http://10.0.0.5:30002");
+    }
+
+    @Test
     void harborRouteModeRejectsIpAndPort() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
