@@ -21,6 +21,7 @@ import type {
   K8sThanosInstall, SecretRefOption,
 } from '@/types'
 import HarborProjectsDialog from './HarborProjectsDialog.vue'
+import HarborStorageFields from './HarborStorageFields.vue'
 
 const props = defineProps<{
   /** 集群 id（Harbor 镜像项目弹窗要它） */
@@ -484,6 +485,36 @@ const EMPTY_HARBOR: K8sHarborInstall = {
   redisMode: 'internal',
 }
 
+/**
+ * Harbor 的可编辑字段 key。它们**不进通用「存储」分组**，而是在 Harbor 区里紧挨着
+ * 各自的开关渲染（内置 PostgreSQL / 内置 Redis / 镜像数据 / 作业日志 / 扫描器）。
+ */
+const HARBOR_PVC = 'persistence.persistentVolumeClaim.'
+const hk = {
+  registrySc: `${HARBOR_PVC}registry.storageClass`,
+  registrySize: `${HARBOR_PVC}registry.size`,
+  jobserviceSc: `${HARBOR_PVC}jobservice.jobLog.storageClass`,
+  jobserviceSize: `${HARBOR_PVC}jobservice.jobLog.size`,
+  dbSc: `${HARBOR_PVC}database.storageClass`,
+  dbSize: `${HARBOR_PVC}database.size`,
+  redisSc: `${HARBOR_PVC}redis.storageClass`,
+  redisSize: `${HARBOR_PVC}redis.size`,
+  trivySc: `${HARBOR_PVC}trivy.storageClass`,
+  trivySize: `${HARBOR_PVC}trivy.size`,
+  trivyEnabled: 'trivy.enabled',
+}
+const HARBOR_CUSTOM_FIELDS = new Set(Object.values(hk))
+
+/** 读一个可编辑字段的当前值（storageClass/size 都是字符串） */
+function hv(key: string): string {
+  return String(applyDialog.value.values[key] ?? '')
+}
+
+/** 写一个可编辑字段的当前值（提交时仍由 confirmApply 统一收集） */
+function setHv(key: string, value: string | boolean): void {
+  applyDialog.value.values[key] = value
+}
+
 /** OTel 表单的默认值：地址只做预填，全部可改（spec §6.2） */
 function emptyOtel(): OtelForm {
   return {
@@ -538,7 +569,7 @@ const THANOS_GROUP = 'Thanos 对象存储（管理集群）'
 const genericGroups = computed(() => {
   const groups: string[] = []
   for (const f of applyDialog.value.fields) {
-    if (isFieldHidden(f.key)) continue
+    if (isHarborCustomField(f.key)) continue
     const g = f.group || '其他配置'
     if (g === THANOS_GROUP) continue // 跟 Thanos 凭据块一起渲染
     if (!groups.includes(g)) groups.push(g)
@@ -547,26 +578,32 @@ const genericGroups = computed(() => {
 })
 
 /**
- * 依赖外部实例 / 已关闭的组件，其 PVC 字段在表单里没有意义，直接不渲染（也不提交）：
+ * Harbor 的 PVC / 扫描开关**不进通用「存储」分组**：它们由 Harbor 区自己按开关渲染，
+ * 这样「内置数据库」和它的存储设置就在一起，不会出现上一块下一块。
+ */
+function isHarborCustomField(key: string): boolean {
+  return applyDialog.value.showHarbor && HARBOR_CUSTOM_FIELDS.has(key)
+}
+
+/**
+ * 这些字段当前没有意义，**提交时跳过**：
  * - 数据库/Redis 选外部 → 不创建内置 StatefulSet 与 PVC
  * - Trivy 未开启 → 没有扫描器数据盘
  */
-function isFieldHidden(key: string): boolean {
+function isFieldIrrelevant(key: string): boolean {
   const d = applyDialog.value
   if (!d.showHarbor) return false
   if (d.harbor.databaseMode === 'external'
-      && key.startsWith('persistence.persistentVolumeClaim.database.')) return true
+      && key.startsWith(`${HARBOR_PVC}database.`)) return true
   if (d.harbor.redisMode === 'external'
-      && key.startsWith('persistence.persistentVolumeClaim.redis.')) return true
-  if (key.startsWith('persistence.persistentVolumeClaim.trivy.') && !d.values['trivy.enabled']) {
-    return true
-  }
+      && key.startsWith(`${HARBOR_PVC}redis.`)) return true
+  if (key.startsWith(`${HARBOR_PVC}trivy.`) && !d.values[hk.trivyEnabled]) return true
   return false
 }
 
 function fieldsOf(group: string): K8sEditableField[] {
   return applyDialog.value.fields.filter(
-    (f) => (f.group || '其他配置') === group && !isFieldHidden(f.key))
+    (f) => (f.group || '其他配置') === group && !isHarborCustomField(f.key))
 }
 
 /** Thanos 保留期（compactor.retention.*）：放在 Thanos 凭据块之后 */
@@ -876,7 +913,7 @@ function confirmApply(): void {
   }
   const editable: Record<string, unknown> = {}
   for (const f of d.fields) {
-    if (isFieldHidden(f.key)) continue   // 外部库/Redis、未开 Trivy：这些 PVC 字段不提交
+    if (isFieldIrrelevant(f.key)) continue   // 外部库/Redis、未开 Trivy：这些 PVC 字段不提交
     if (f.type === 'resources') {
       const form: ResourceFormValues = {
         requestsCpu: String(d.values[`${f.key}.requestsCpu`] ?? ''),
@@ -1401,6 +1438,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
         </div>
       </div>
       <div v-if="applyDialog.showHarbor" class="cc-section-title">镜像仓库（Harbor）</div>
+
+      <!-- 1. 暴露方式 -->
       <div v-if="applyDialog.showHarbor" class="cc-form-row">
         <span class="cc-form-label">暴露方式</span>
         <div class="cc-form-control">
@@ -1461,6 +1500,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+
+      <!-- 2. 数据库（内置时存储设置紧跟在这里） -->
       <div v-if="applyDialog.showHarbor" class="cc-form-row">
         <span class="cc-form-label">数据库</span>
         <div class="cc-form-control">
@@ -1487,6 +1528,12 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                       spellcheck="false"
                       :placeholder="applyDialog.action === 'INSTALL' ? '数据库口令（必填）' : '留空 = 不改'" />
           </div>
+          <HarborStorageFields v-else label="内置 PostgreSQL 存储"
+                               :storage-class="hv(hk.dbSc)" :size="hv(hk.dbSize)"
+                               :options="applyDialog.storageClasses"
+                               :disabled="applyDialog.action === 'EDIT'"
+                               size-placeholder="5Gi"
+                               hint="不创建外部库时，Harbor 用这块 PVC 存元数据" />
           <div class="cc-form-hint">
             外部库要先建好库（默认 registry）与账号并授权，不再创建内置 PostgreSQL 的 StatefulSet 与 PVC。
             来源只能在首次安装时选，编辑时锁定（内置 ↔ 外部需要迁移数据）。
@@ -1494,6 +1541,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+
+      <!-- 3. Redis（内置时存储设置紧跟在这里） -->
       <div v-if="applyDialog.showHarbor" class="cc-form-row">
         <span class="cc-form-label">Redis</span>
         <div class="cc-form-control">
@@ -1511,12 +1560,64 @@ const anyUnknown = computed(() => unknownCount.value > 0)
                       spellcheck="false"
                       :placeholder="applyDialog.action === 'INSTALL' ? 'Redis 口令（必填）' : '留空 = 不改'" />
           </div>
+          <HarborStorageFields v-else label="内置 Redis 存储"
+                               :storage-class="hv(hk.redisSc)" :size="hv(hk.redisSize)"
+                               :options="applyDialog.storageClasses"
+                               :disabled="applyDialog.action === 'EDIT'"
+                               size-placeholder="1Gi" />
           <div class="cc-form-hint">
             外部 Redis 用独立 DB index（0/1/2/5），不要和别的应用共用；sentinel 暂不支持。
             不再创建内置 Redis 的 StatefulSet 与 PVC。口令同样由平台写进 Secret
           </div>
         </div>
       </div>
+
+      <!-- 4. 镜像数据与作业日志（永远存在） -->
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">镜像存储</span>
+        <div class="cc-form-control">
+          <HarborStorageFields label="镜像数据"
+                               :storage-class="hv(hk.registrySc)" :size="hv(hk.registrySize)"
+                               :options="applyDialog.storageClasses"
+                               :disabled="applyDialog.action === 'EDIT'"
+                               size-placeholder="20Gi"
+                               hint="registry 的数据盘：所有镜像层都在这里" />
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">作业日志</span>
+        <div class="cc-form-control">
+          <HarborStorageFields label="jobservice 日志"
+                               :storage-class="hv(hk.jobserviceSc)" :size="hv(hk.jobserviceSize)"
+                               :options="applyDialog.storageClasses"
+                               :disabled="applyDialog.action === 'EDIT'"
+                               size-placeholder="1Gi" />
+        </div>
+      </div>
+
+      <!-- 5. 镜像扫描 -->
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">镜像扫描</span>
+        <div class="cc-form-control">
+          <el-switch :model-value="Boolean(applyDialog.values[hk.trivyEnabled])"
+                     active-text="安装 Trivy 镜像扫描"
+                     @update:model-value="(v: boolean) => setHv(hk.trivyEnabled, v)" />
+          <HarborStorageFields v-if="applyDialog.values[hk.trivyEnabled]" label="扫描器数据"
+                               :storage-class="hv(hk.trivySc)" :size="hv(hk.trivySize)"
+                               :options="applyDialog.storageClasses"
+                               :disabled="applyDialog.action === 'EDIT'"
+                               size-placeholder="5Gi"
+                               hint="漏洞库缓存；内网需能访问漏洞库源" />
+          <div class="cc-form-hint">
+            Trivy 需要下载漏洞库：内网/无外网时可能一直报错，所以默认不装
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor && applyDialog.action === 'EDIT'" class="cc-form-hint">
+        存储类与容量不能在这里改：StatefulSet 的 volumeClaimTemplates 不可变；
+        扩容需 StorageClass 支持并在集群侧操作 PVC
+      </div>
+
       <div v-if="applyDialog.showSeaweed" class="cc-section-title">对象存储（SeaweedFS）</div>
       <div v-if="applyDialog.showSeaweed" class="cc-form-row">
         <span class="cc-form-label">StorageClass</span>
