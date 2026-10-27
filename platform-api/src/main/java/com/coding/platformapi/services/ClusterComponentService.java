@@ -211,8 +211,13 @@ public class ClusterComponentService {
      */
     private void applyEffectivePlatformInputs(List<ComponentStatusDTO> statuses, String clusterId, String profile) {
         Map<String, PlatformComponentOperation> latest;
+        Map<String, PlatformComponentOperation> attempts;
         try {
             latest = operationMapper.selectLatestSuccesses(clusterId).stream()
+                    .collect(Collectors.toMap(PlatformComponentOperation::getComponentCode,
+                            o -> o, (a, b) -> a));
+            // 任何状态的最近一次：只给表单预填兜底，判断「已装版本」仍然只看成功记录
+            attempts = operationMapper.selectLatestAttempts(clusterId).stream()
                     .collect(Collectors.toMap(PlatformComponentOperation::getComponentCode,
                             o -> o, (a, b) -> a));
         } catch (Exception e) {
@@ -223,38 +228,48 @@ public class ClusterComponentService {
         for (ComponentStatusDTO s : statuses) {
             PlatformComponentOperation op = latest.get(s.getCode());
             if (op == null) {
+                // 没有成功记录 → 退回「最近一次提交」（任何状态），**只做表单预填**。
+                // 否则装失败后表单全变默认值，用户得凭记忆重填一遍（2026-10-27 用户撞到）。
+                PlatformComponentOperation attempt = attempts.get(s.getCode());
+                if (attempt != null) {
+                    prefillFrom(s, parseSnapshot(attempt.getValuesSnapshot()), profile);
+                }
                 continue;
             }
             // 「版本 → chart」显示已装版本（这条记录的 toVersion），不是 recipe 的当前版本
             s.setInstalledChartVersion(installedChartVersionOf(recipes.recipeOf(s.getCode(), profile), op));
-            Map<String, Object> snapshot = parseSnapshot(op.getValuesSnapshot());
-            Map<String, Object> platform = platformOf(snapshot);
-            if (s.isPlatformAlerting() && platform.get("alertWebhookUrl") instanceof String url) {
-                s.setAlertWebhookUrl(url);
-            }
-            if (s.isThanosRemoteWrite() && platform.get("thanosReceiveUrl") instanceof String url) {
-                s.setThanosReceiveUrl(url);
-            }
-            if (s.isThanosInstall()) {
-                s.setThanosInstallCurrent(thanosInstallOf(platform));
-            }
-            if (s.isTektonProfile() && platform.get("tektonProfile") instanceof String p) {
-                s.setTektonProfileCurrent(p);
-            }
-            if (s.isTempoRemoteWrite() && platform.get("otel") instanceof Map<?, ?> otelMap) {
-                s.setTempoEndpoint(asString(((Map<?, ?>) otelMap).get("tempoEndpoint")));
-            }
-            if (s.isOtelInstrumentation()) {
-                s.setOtelInstallCurrent(otelInstallOf(platform));
-            }
-            if (s.isSeaweedStorage()) {
-                s.setSeaweedCurrent(seaweedOf(platform));
-            }
-            if (s.isHarborRegistry()) {
-                s.setHarborCurrent(harborOf(platform));
-            }
-            applyCurrentEditableValues(s, snapshot, profile);
+            prefillFrom(s, parseSnapshot(op.getValuesSnapshot()), profile);
         }
+    }
+
+    /** 把一份 values 快照里的平台输入 / 可编辑当前值填回状态（成功与失败记录共用） */
+    private void prefillFrom(ComponentStatusDTO s, Map<String, Object> snapshot, String profile) {
+        Map<String, Object> platform = platformOf(snapshot);
+        if (s.isPlatformAlerting() && platform.get("alertWebhookUrl") instanceof String url) {
+            s.setAlertWebhookUrl(url);
+        }
+        if (s.isThanosRemoteWrite() && platform.get("thanosReceiveUrl") instanceof String url) {
+            s.setThanosReceiveUrl(url);
+        }
+        if (s.isThanosInstall()) {
+            s.setThanosInstallCurrent(thanosInstallOf(platform));
+        }
+        if (s.isTektonProfile() && platform.get("tektonProfile") instanceof String p) {
+            s.setTektonProfileCurrent(p);
+        }
+        if (s.isTempoRemoteWrite() && platform.get("otel") instanceof Map<?, ?> otelMap) {
+            s.setTempoEndpoint(asString(((Map<?, ?>) otelMap).get("tempoEndpoint")));
+        }
+        if (s.isOtelInstrumentation()) {
+            s.setOtelInstallCurrent(otelInstallOf(platform));
+        }
+        if (s.isSeaweedStorage()) {
+            s.setSeaweedCurrent(seaweedOf(platform));
+        }
+        if (s.isHarborRegistry()) {
+            s.setHarborCurrent(harborOf(platform));
+        }
+        applyCurrentEditableValues(s, snapshot, profile);
     }
 
     /**

@@ -390,6 +390,34 @@ class ClusterComponentServiceTest {
     }
 
     @Test
+    void aFailedAttemptStillPrefillsTheEditFormButNotTheInstalledVersion() {
+        // 装失败（Harbor 装完但同步挂了就是这种）时，操作记录里**有**提交过的参数：
+        // 编辑表单要按它预填，否则地址/端口全变默认值，用户得凭记忆重填（2026-10-27 用户撞到）。
+        // 但「已装版本」不能拿失败记录顶 —— 那会把失败显示成装好了。
+        PlatformComponentOperation failed = new PlatformComponentOperation();
+        failed.setComponentCode("harbor");
+        failed.setStatus("FAILED");
+        failed.setToVersion("1.19.4");
+        failed.setValuesSnapshot("{\"__platform\":{\"harbor\":{\"exposeMode\":\"nodePort\","
+                + "\"host\":\"10.0.0.5\",\"nodePort\":30002,\"port\":80,"
+                + "\"databaseMode\":\"internal\",\"redisMode\":\"internal\"}}}");
+        PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of());
+        when(ops.selectLatestAttempts("c1")).thenReturn(List.of(failed));
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), profileService(),
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        var harbor = find(svc.status("c1"), "harbor");
+
+        assertThat(harbor.getHarborCurrent()).isNotNull();
+        assertThat(harbor.getHarborCurrent().getHost()).isEqualTo("10.0.0.5");
+        assertThat(harbor.getInstalledChartVersion()).isNull();
+    }
+
+    @Test
     void aRecordedVersionThatBelongsToAnotherChartIsReportedAsUnknown() {
         // 存量脏数据：2026-10-20 之前 Istio 的 toVersion 记的是第一个 release（Gateway API 的 1.6.2）。
         // 这种值与组件无关，不能冒充成「已装 chart 版本」——返回 null（页面显示「—」），

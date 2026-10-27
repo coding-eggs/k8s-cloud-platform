@@ -26,6 +26,14 @@ public interface PlatformComponentOperationMapper {
      */
     List<PlatformComponentOperation> selectLatestSuccesses(@Param("clusterId") String clusterId);
 
+    /**
+     * 每个组件最近一次操作（**任何状态**）。
+     *
+     * <p>只用来给编辑表单预填「上次提交过的参数」—— 装失败后表单不应该全变默认值。
+     * <b>不能</b>拿它判断「已装版本 / 升级基线」，那两件事只看成功记录。
+     */
+    List<PlatformComponentOperation> selectLatestAttempts(@Param("clusterId") String clusterId);
+
     /** 最近一次成功的操作（升级时用它取 fromVersion） */
     PlatformComponentOperation selectLatestSuccess(@Param("clusterId") String clusterId,
                                                    @Param("componentCode") String componentCode);
