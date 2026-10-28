@@ -20,9 +20,10 @@
     [2026-10-28-harbor-tls-renewal-design.md](../specs/2026-10-28-harbor-tls-renewal-design.md)；
     实际域名由运维填进配置，本文用 `<域名>` 占位）
   - 项目：`platform`（已存在，私有，空）；`library` 是公开项目
-  - **端口形态（本批）**：Harbor 用 nodePort 暴露 HTTPS（默认 `30443`），镜像地址形如
-    `harbor.ackcp.cloud:30443/platform/...`；将来若在 `external-gateway` 加 443 listener，
-    地址变成 `harbor.ackcp.cloud/platform/...`（只改配置，不改代码）
+  - **端口形态（本批，2026-10-28 定为 B 方案）**：Harbor 走 `expose.type=route`，
+    TLS 在 `istio-system/external-gateway` 的 **443 / HTTPS listener** 终止，镜像地址**不带端口**：
+    `harbor.ackcp.cloud/platform/...`
+  - **前置**：集群必须已装 istio（与 grafana / 平台入口同一条路，平台已有这个前置检查）
   - 节点侧前提：能解析 `harbor.ackcp.cloud` → Harbor 入口 IP（**节点自己的解析器**，不是 CoreDNS）
   - **节点不需要任何 containerd 改动**：公信证书在默认根池里，节点只要能解析该域名即可
   - 平台后端调 Harbor API 的 scheme 从写死的 `http://` 改成配置（默认 `https`），见 Task 3
@@ -120,10 +121,15 @@ git commit -m "feat(images): 集群镜像仓库列 + 镜像清单端点权限"
 - Produces：`applyHarborValues` 在 `https=true` 时
   ```yaml
   expose:
-    tls: { enabled: true, certSource: secret, secret: { secretName: harbor-tls } }
-    nodePort: { ports: { https: { port: 443, nodePort: 30443 } } }
-  externalURL: https://<域名>
+    type: route
+    tls: { enabled: false }              # TLS 在网关终止，Harbor 自身仍是 HTTP
+    route:
+      parentRefs: [{ name: external-gateway, namespace: istio-system, sectionName: harbor-https }]
+      hosts: [harbor.ackcp.cloud]
+  externalURL: https://harbor.ackcp.cloud
   ```
+  平台另外保证：`external-gateway` 上有 `harbor-https` listener（443 / HTTPS / Terminate，
+  `certificateRefs` → `istio-system/harbor-tls`）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -146,8 +152,14 @@ void harborHttpsRequiresADomain() {
 ```
 
 - [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现**（本环境取值：`host=harbor.ackcp.cloud`、`httpsNodePort=30443`、
-  证书 = `cert/harbor.ackcp.cloud.pem`（含中间证书的 fullchain）、私钥 = `cert/harbor.ackcp.cloud.key`）
+- [ ] **Step 3: 实现**（本环境取值：`host=harbor.ackcp.cloud`、
+  证书 = `cert/harbor.ackcp.cloud.pem`（含中间证书的 fullchain）+ `cert/harbor.ackcp.cloud.key`）
+  - **证书 Secret 必须放 `istio-system`**：Gateway API 的 `certificateRefs` 只能引用与 Gateway
+    同命名空间的 Secret（跨命名空间要 ReferenceGrant，没必要）；名字用 `harbor-tls`
+  - **listener 上 `sectionName: harbor-https`**：不写的话 HTTPRoute 会挂到这个 Gateway 的**所有**
+    HTTP listener 上（80 / 9527 / 5601…），Harbor 就在明文 80 上也可达了
+  - 前置检查：`https=true` 且 expose=route 时，若集群没有 `external-gateway` 直接拒
+    （「Harbor 的 HTTPS 依赖 istio 的 external-gateway」）
   - 校验：`https=true` 时 `host` 不得是 IP（`InetAddressUtil`/正则）；`tlsCert`/`tlsKey` 至少有一个非空
     **或**集群里已存在 `harbor-tls`（编辑重放时允许留空沿用）
   - `applyHarborValues`：按上面的结构写 values；`externalURL` 的 scheme 跟 `https` 走
