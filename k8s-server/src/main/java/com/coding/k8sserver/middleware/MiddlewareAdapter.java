@@ -2,7 +2,9 @@ package com.coding.k8sserver.middleware;
 
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
+import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
+import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
 
@@ -168,6 +170,67 @@ public interface MiddlewareAdapter {
     /** 供单测断言：selector 字符串 → map（Service 的 spec.selector）。 */
     static java.util.Map<String, String> parseSelector(String selector) {
         return MetricsResources.parseSelector(selector);
+    }
+
+    /**
+     * 实例<b>实际部署</b>的版本（列表 / 详情「版本」列的数据源）。
+     *
+     * <p>平台只给 ES / Kafka / Milvus 做版本下拉，台账里记的就是它；其余中间件（Redis / MySQL / PG /
+     * RabbitMQ / Nacos）的版本由 Operator 或 chart 决定，台账里没有，只能看线上。默认取第一个 Pod
+     * 首个容器的镜像 tag —— Pod 的 containers 顺序是主容器在前、exporter 之类边车在后。
+     *
+     * @param pods 该实例的 Pod（调用方已按 statusSelector 列出，可能为空）
+     * @return null = 推不出来（还没有 Pod / 镜像没有 tag），调用方保留台账值
+     */
+    default String deployedVersion(GenericKubernetesResource live, List<Pod> pods) {
+        return imageTag(firstImage(pods));
+    }
+
+    /** 第一个有容器镜像的 Pod 的首个容器镜像（Pod 的 containers 顺序 = 主容器在前）。 */
+    static String firstImage(List<Pod> pods) {
+        if (pods == null) {
+            return null;
+        }
+        for (Pod pod : pods) {
+            if (pod.getSpec() == null || pod.getSpec().getContainers() == null) {
+                continue;
+            }
+            for (Container c : pod.getSpec().getContainers()) {
+                String image = c.getImage();
+                if (image != null && !image.isBlank()) {
+                    return image;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 镜像串 → 版本：{@code repo/app:1.2.3} → {@code 1.2.3}，{@code repo/app:1.2.3@sha256:…} → {@code 1.2.3}。
+     * 去掉开头的 {@code v}（chart 常用 {@code v2.4.3}，与台账里 {@code 2.4.3} 的写法统一）。
+     *
+     * <p>没有 tag（{@code repo/app}、{@code registry:5000/app}）或只有 digest 时返回 null。
+     */
+    static String imageTag(String image) {
+        if (image == null) {
+            return null;
+        }
+        String ref = image.trim();
+        int at = ref.indexOf('@');
+        if (at >= 0) {
+            ref = ref.substring(0, at);   // 去掉 @sha256:…
+        }
+        int colon = ref.lastIndexOf(':');
+        if (colon <= ref.lastIndexOf('/')) {
+            return null;   // 冒号在最后一段之前 = 端口号，不是 tag
+        }
+        String tag = ref.substring(colon + 1).trim();
+        if (tag.isEmpty()) {
+            return null;
+        }
+        // chart 的 appVersion 常带 v：v2.4.3 → 2.4.3；只认「v + 带点号的三段版本」，其它（v2-canary、latest）原样保留
+        return tag.length() > 1 && (tag.charAt(0) == 'v' || tag.charAt(0) == 'V')
+                && tag.substring(1).matches("\\d+\\.\\d+.*") ? tag.substring(1) : tag;
     }
 
     /**

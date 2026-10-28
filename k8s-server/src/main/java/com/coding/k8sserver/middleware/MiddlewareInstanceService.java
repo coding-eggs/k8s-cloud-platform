@@ -660,6 +660,8 @@ public class MiddlewareInstanceService {
             long ready = pods.stream().filter(MiddlewareInstanceService::podReady).count();
             dto.setReplicas(pods.size());
             dto.setReadyReplicas((int) ready);
+            // 版本：台账里没记的那几款（Redis/MySQL/PG/RabbitMQ）只能从线上推，见 MiddlewareAdapter#deployedVersion
+            dto.setVersion(adapter.deployedVersion(live, pods));
             // 判定同时看 Pod 数与 CR 信号：只看「现存 Pod 是否全就绪」会把
             // 「3 个 broker 只起来 2 个」判成 READY（真集群验证踩过）
             String failure = crFailureMessage(live);
@@ -768,6 +770,8 @@ public class MiddlewareInstanceService {
             long ready = pods.stream().filter(MiddlewareInstanceService::podReady).count();
             dto.setReplicas(pods.size());
             dto.setReadyReplicas((int) ready);
+            // chart 实例的版本同样只能看线上（STS 的镜像 tag）
+            dto.setVersion(MiddlewareAdapter.imageTag(MiddlewareAdapter.firstImage(pods)));
             if (pods.isEmpty()) {
                 dto.setStatus("CREATING");
                 dto.setMessage("等待 Pod 创建");

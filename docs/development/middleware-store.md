@@ -100,6 +100,10 @@
 - 实例列表（`/apps/instances`）：列 = 类型 / 名称 / 命名空间 / 形态 / 版本 / 状态 / 创建人 / 创建时间（设计 §5.4）；
   可按类型筛选（`instance/list` 的 `code` 参数），只拉这一类实例的实时状态；创建人取台账 `created_by`
   （创建时写入的操作者，租户与平台账号同一字段）。
+- **「版本」列有两个来源**：表单里选了版本的（ES / Kafka / Milvus）取台账（创建时写入、不会被覆盖）；
+  版本由 Operator/chart 固定的（Redis / MySQL / PG / RabbitMQ / Nacos）台账里没有，按状态接口
+  现读的**首个 Pod 主容器镜像 tag** 补上（`MiddlewareAdapter#deployedVersion`，`v2.4.3` → `2.4.3`）。
+  两处都拿不到时显示「—」（Pod 还没起来就是这样，起来后的下一次刷新会补上）。
 
 ## 1.3 Operator 状态
 

@@ -241,6 +241,11 @@ public class MiddlewareService {
                 if (s != null) {
                     row.setStatus(mapK8sStatus(row.getStatus(), s.getStatus()));
                     row.setMessage(s.getMessage());
+                    // 版本由 Operator/chart 固定、台账里没记的那几款（Redis/MySQL/PG/RabbitMQ/Nacos）
+                    // 用线上推出来的补上；台账已有版本的不覆盖 —— ES/Kafka/Milvus 记的是用户选的版本
+                    if (isBlank(row.getVersion()) && !isBlank(s.getVersion())) {
+                        row.setVersion(s.getVersion());
+                    }
                 }
             }
         } catch (RuntimeException ignored) {

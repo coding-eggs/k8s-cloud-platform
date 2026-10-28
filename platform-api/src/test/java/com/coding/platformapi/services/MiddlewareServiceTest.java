@@ -1145,4 +1145,53 @@ class MiddlewareServiceTest {
         assertThat(c.getEndpoints()).extracting(MiddlewareConnectionDTO.Line::label)
                 .containsExactly("HTTPS 接口", "Kibana");
     }
+
+    // ==================== 「版本」列 ====================
+
+    @Test
+    void listFillsVersionFromClusterWhenLedgerHasNone() {
+        // Redis 这类版本由 Operator 固定、表单没有下拉 → 台账一直是空的，只能按线上镜像 tag 补
+        PlatformMiddlewareInstance redis = instance("redis", "STANDALONE");
+        redis.setVersion("");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(redis));
+        var live = new com.coding.common.models.middleware.MiddlewareStatusResultDTO();
+        live.setName(redis.getName());
+        live.setStatus("READY");
+        live.setVersion("7.2.5");
+        when(client.status(org.mockito.ArgumentMatchers.eq("redis"), any())).thenReturn(List.of(live));
+
+        assertThat(service.list("c1", null, null, null))
+                .extracting(PlatformMiddlewareInstance::getVersion).containsExactly("7.2.5");
+    }
+
+    @Test
+    void listKeepsTheVersionPickedInTheForm() {
+        // ES/Kafka/Milvus 的版本是用户在表单里选的，台账已有 → 不被线上值覆盖
+        PlatformMiddlewareInstance es = instance("elasticsearch", "CLUSTER");
+        es.setVersion("9.5.0");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(es));
+        var live = new com.coding.common.models.middleware.MiddlewareStatusResultDTO();
+        live.setName(es.getName());
+        live.setStatus("READY");
+        live.setVersion("9.5.1");
+        when(client.status(org.mockito.ArgumentMatchers.eq("elasticsearch"), any())).thenReturn(List.of(live));
+
+        assertThat(service.list("c1", null, null, null))
+                .extracting(PlatformMiddlewareInstance::getVersion).containsExactly("9.5.0");
+    }
+
+    @Test
+    void listKeepsVersionWhenClusterCannotTell() {
+        // 集群读不到版本（Pod 还没起来）→ 台账值原样保留，不要写一个空串进去
+        PlatformMiddlewareInstance mysql = instance("mysql", "SINGLE");
+        mysql.setVersion("8.0.36");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(mysql));
+        var live = new com.coding.common.models.middleware.MiddlewareStatusResultDTO();
+        live.setName(mysql.getName());
+        live.setStatus("CREATING");
+        when(client.status(org.mockito.ArgumentMatchers.eq("mysql"), any())).thenReturn(List.of(live));
+
+        assertThat(service.list("c1", null, null, null))
+                .extracting(PlatformMiddlewareInstance::getVersion).containsExactly("8.0.36");
+    }
 }
