@@ -444,6 +444,13 @@ class ImageCatalogGuardTest {
 
 ## Task 5: 组件安装接入（请求字段 + 改写调用 + 快照）
 
+> **⚠️ 计划偏差（2026-10-28 实施时发现并改方案）**：原计划「在 platform-api 改写 contractValues」是错的 ——
+> **镜像绝大多数来自 chart 自带的 values.yaml**，platform-api 传下去的 values 里根本没有 image 字段
+> （单测抓出来的实际 values 只有 replicas/args 这几项）。chart 文件只随 k8s-server 分发，所以改写必须
+> 落在 k8s-server：新增 `ChartImageOverlay` —— 读 chart 默认 values、改写镜像、**只输出变化的叶子路径**
+> 作为 overlay，与平台 values 合并（平台值优先）后再交给 helm。platform-api 只负责把
+> `imageRegistryHost/Project` 传给每个 release。
+
 **Files:**
 - Modify: `platform-api/src/main/java/com/coding/platformapi/models/ComponentApplyRequest.java`（加 `imageSource`）
 - Modify: `platform-api/src/main/java/com/coding/platformapi/services/ComponentInstallService.java`

@@ -49,6 +49,8 @@ class ComponentInstallServiceTest {
     private final HarborRegistryService harborRegistry = mock(HarborRegistryService.class);
     private final ObjectStorageService objectStorage = mock(ObjectStorageService.class);
     private final TenantService tenantService = mock(TenantService.class);
+    private final com.coding.platformapi.images.ImageRegistryService imageRegistry =
+            mock(com.coding.platformapi.images.ImageRegistryService.class);
     private final com.coding.platformapi.k8s.K8sClient k8s =
             mock(com.coding.platformapi.k8s.K8sClient.class);
 
@@ -60,6 +62,9 @@ class ComponentInstallServiceTest {
             return 1;
         }).when(mapper).insert(any());
         // 默认：Harbor 的租户项目同步成功（单个用例要失败时再覆盖）
+        // 默认：镜像仓库未配置 → 不改写（既有用例的期望值保持不变；要测改写时单独 stub）
+        when(imageRegistry.resolve(anyString()))
+                .thenReturn(com.coding.platformapi.images.ImageRegistry.OFFICIAL);
         when(harborRegistry.ensureAll(anyString(), anyString(),
                 org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(new HarborRegistryService.SyncResult("c1", "harbor.example.com",
@@ -72,7 +77,7 @@ class ComponentInstallServiceTest {
 
     private ComponentInstallService service(ComponentRecipeCatalog catalog) {
         return new ComponentInstallService(mapper, client, catalog, clusterService, components,
-                harborRegistry, objectStorage, tenantService, k8s);
+                harborRegistry, objectStorage, tenantService, imageRegistry, k8s);
     }
 
     @Test
@@ -1515,6 +1520,71 @@ class ComponentInstallServiceTest {
         s.setCode(code);
         s.setState(ClusterComponentService.HEALTHY);
         return s;
+    }
+
+    // ==================== 镜像来源（2026-10-28） ====================
+
+    /** 装上指定组件并抓它下发给 k8s-server 的 release 规格 */
+    private List<ReleaseInstallSpecDTO> capturedComponentSpecs(String componentCode, String imageSource) {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", componentCode)).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", componentCode, "INSTALL", null, Map.of());
+        req.setImageSource(imageSource);
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        return specs.getValue();
+    }
+
+    private static final com.coding.platformapi.images.ImageRegistry HARBOR_REGISTRY =
+            new com.coding.platformapi.images.ImageRegistry("harbor.ackcp.cloud", "platform");
+
+    @Test
+    void componentSpecsCarryThePlatformRegistryWhenSelected() {
+        when(imageRegistry.resolve("c1")).thenReturn(HARBOR_REGISTRY);
+
+        List<ReleaseInstallSpecDTO> specs = capturedComponentSpecs("metrics-server", "PLATFORM");
+
+        // 改写发生在 k8s-server（chart 默认 values 在那里）：这边只把仓库地址传下去
+        assertThat(specs).allSatisfy(s -> {
+            assertThat(s.getImageRegistryHost()).isEqualTo("harbor.ackcp.cloud");
+            assertThat(s.getImageRegistryProject()).isEqualTo("platform");
+        });
+    }
+
+    @Test
+    void officialImageSourceSendsNoRegistry() {
+        when(imageRegistry.resolve("c1")).thenReturn(HARBOR_REGISTRY);
+
+        List<ReleaseInstallSpecDTO> specs = capturedComponentSpecs("metrics-server", "OFFICIAL");
+
+        assertThat(specs).allSatisfy(s -> assertThat(s.getImageRegistryHost()).isNull());
+    }
+
+    @Test
+    void harborComponentAlwaysUsesOfficialImages() {
+        // Harbor 的镜像不可能从 Harbor 自己拉：即使选了平台仓库也不带 registry
+        when(imageRegistry.resolve("c1")).thenReturn(HARBOR_REGISTRY);
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("istio")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        ComponentApplyRequest req = harborRequest(new HarborInstallRequest("harbor.example.com"));
+        req.setImageSource("PLATFORM");
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        assertThat(specs.getValue()).allSatisfy(s -> assertThat(s.getImageRegistryHost()).isNull());
     }
 
     // ==================== Harbor（2026-10-27；暴露方式 2026-10-27） ====================

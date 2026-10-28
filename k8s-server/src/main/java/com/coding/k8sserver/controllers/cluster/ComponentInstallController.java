@@ -23,6 +23,7 @@ import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
+import com.coding.k8sserver.components.ChartImageOverlay;
 import com.coding.k8sserver.components.ExternalGatewayObjects;
 import com.coding.k8sserver.components.HarborExternalSecretObjects;
 import com.coding.k8sserver.components.HarborSecretObjects;
@@ -130,7 +131,17 @@ public class ComponentInstallController implements AccessBoundaryAware {
             Path valuesFile = null;
             try {
                 Path chartDir = charts.chartDir(spec.getChartCode(), spec.getChartVersion());
-                valuesFile = writeValues(spec.getValues());
+                // 镜像来源：chart 自带的 values.yaml 里才是绝大多数镜像的来源，把它改写后以
+                // **最小 overlay** 并入平台 values（平台值优先），再交给 helm
+                Map<String, Object> effectiveValues = spec.getValues();
+                if (!isBlank(spec.getImageRegistryHost())) {
+                    Map<String, Object> overlay = ChartImageOverlay.of(chartDir,
+                            spec.getImageRegistryHost(), spec.getImageRegistryProject());
+                    if (!overlay.isEmpty()) {
+                        effectiveValues = ChartImageOverlay.merge(overlay, effectiveValues);
+                    }
+                }
+                valuesFile = writeValues(effectiveValues);
 
                 // 超大 chart 的清单要**完整**：它会被原样写进集群，截断（64KB）会静默少装对象。
                 // 同时必须按**集群真实**的 kube/API 版本渲染：helm template 默认用 helm 自带的

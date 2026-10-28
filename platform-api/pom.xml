@@ -19,6 +19,13 @@
         <java.version>21</java.version>
     </properties>
     <dependencies>
+        <!-- 镜像纳管的护栏测试要读内置 chart 的 values.yaml（Jackson 3，版本由 Spring Boot BOM 管理） -->
+        <dependency>
+            <groupId>tools.jackson.dataformat</groupId>
+            <artifactId>jackson-dataformat-yaml</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>

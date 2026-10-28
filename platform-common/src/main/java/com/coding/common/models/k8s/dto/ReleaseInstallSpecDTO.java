@@ -22,6 +22,16 @@ public class ReleaseInstallSpecDTO {
      */
     private String applyMode;
 
+    /**
+     * 镜像仓库（host[:端口]，不带 scheme）与项目：非空时 k8s-server 会把 **chart 自带 values.yaml** 里的
+     * 镜像改写到这个仓库，再与 {@link #values} 合并。
+     *
+     * <p>为什么改写发生在 k8s-server：镜像绝大多数来自 chart 的默认 values（不在平台 values 里），
+     * 而 chart 文件只随 k8s-server 分发 —— platform-api 看不到它们。
+     */
+    private String imageRegistryHost;
+    private String imageRegistryProject;
+
     /** {@link #applyMode} 的取值：渲染结果直接落盘，不建 Helm release */
     public static final String APPLY_SERVER_SIDE = "SERVER_SIDE_APPLY";
 }

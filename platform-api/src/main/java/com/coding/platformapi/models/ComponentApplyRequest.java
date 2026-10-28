@@ -104,4 +104,25 @@ public class ComponentApplyRequest {
                 alertWebhookUrl, thanosReceiveUrl, thanosInstall, calicoInstall, tektonProfile, otel,
                 seaweed, null);
     }
+
+    /**
+     * 镜像来源：{@code PLATFORM}（默认，平台 Harbor）/ {@code OFFICIAL}（上游官方）。
+     *
+     * <p>只对「平台渲染出来的镜像」生效；harbor 组件本身永远走官方（先有鸡还是先有蛋）。
+     */
+    private String imageSource;
+
+    /**
+     * 13 参构造（与 {@code @AllArgsConstructor} 相比只少 {@code imageSource}）：老调用方不必改，
+     * 镜像来源默认 {@code null} = PLATFORM。
+     */
+    public ComponentApplyRequest(String clusterId, String componentCode, String action,
+                                 String targetVersion, Map<String, Object> editableValues,
+                                 String alertWebhookUrl, String thanosReceiveUrl,
+                                 ThanosInstallRequest thanosInstall, CalicoInstallRequest calicoInstall,
+                                 String tektonProfile, OtelInstallRequest otel,
+                                 SeaweedInstallRequest seaweed, HarborInstallRequest harbor) {
+        this(clusterId, componentCode, action, targetVersion, editableValues, alertWebhookUrl,
+                thanosReceiveUrl, thanosInstall, calicoInstall, tektonProfile, otel, seaweed, harbor, null);
+    }
 }

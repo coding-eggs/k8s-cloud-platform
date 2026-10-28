@@ -126,6 +126,8 @@ public class ComponentInstallService {
     /** Tempo 的「平台对象存储」模式：解析集群 S3 地址、确保桶存在、发放凭据 */
     private final ObjectStorageService objectStorage;
     private final TenantService tenantService;
+    /** 镜像来源：解析该集群的镜像仓库，并把 values 里的镜像改写到平台 Harbor */
+    private final com.coding.platformapi.images.ImageRegistryService imageRegistry;
     private final K8sClient k8s;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -256,10 +258,20 @@ public class ComponentInstallService {
         // 占位符（${cluster.name} / ${thanos.receive.url} / ${tempo.endpoint}）在落库前解析
         List<ReleaseSpec> effective = resolveValues(merged, req.getClusterId(), thanosUrl, calico,
                 tektonProfile, otel);
+        // 镜像来源：只把「仓库地址」传给 k8s-server，由它在写 values 之前把 **chart 默认 values** 里的
+        // 镜像改写掉（chart 文件在 k8s-server 里，platform-api 看不到）。harbor 组件例外 —— 永远走官方。
+        com.coding.platformapi.images.ImageSource imageSource =
+                com.coding.platformapi.images.ImageSource.of(req.getImageSource());
+        com.coding.platformapi.images.ImageRegistry imageRegistryOfThisInstall =
+                "harbor".equals(req.getComponentCode())
+                        || imageSource != com.coding.platformapi.images.ImageSource.PLATFORM
+                        ? com.coding.platformapi.images.ImageRegistry.OFFICIAL
+                        : imageRegistry.resolve(req.getClusterId());
+        final List<ReleaseSpec> releases = effective;
         // Thanos compactor 的保留期下限（raw ≥ 40h、5m ≥ 10d）：违反时 helm 照样成功，
         // 但 compactor 启动即 CrashLoopBackOff —— 必须在下发之前拒（2026-10-20 实锤）
-        validateThanosRetention(effective);
-        String targetVersion = resolveTargetVersion(effective, req.getTargetVersion());
+        validateThanosRetention(releases);
+        String targetVersion = resolveTargetVersion(releases, req.getTargetVersion());
 
         PlatformComponentOperation op = new PlatformComponentOperation();
         op.setClusterId(req.getClusterId());
@@ -271,8 +283,8 @@ public class ComponentInstallService {
         op.setReleaseNames(JSON.writeValueAsString(
                 effective.stream().map(ReleaseSpec::releaseName).distinct().toList()));
         op.setValuesSnapshot(JSON.writeValueAsString(
-                snapshotWithPlatformInputs(effective, recipe, alertWebhookUrl, thanosUrl, thanos, calico,
-                        tektonProfile, otel, seaweed, harbor)));
+                snapshotWithPlatformInputs(releases, recipe, alertWebhookUrl, thanosUrl, thanos, calico,
+                        tektonProfile, otel, seaweed, harbor, imageSource)));
         op.setStatus(PENDING);
         op.setOperator(operator);
         op.setStartedAt(new Date());
@@ -289,9 +301,10 @@ public class ComponentInstallService {
         String authorization = K8sServerGateway.currentAuthorization();
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                        List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos, otel,
+                        List.copyOf(releases), recipe.platformAlerting(), alertWebhookUrl, thanos, otel,
                         seaweed, harbor,
-                        resolvedOtel == null ? null : resolvedOtel.tempoPlatform())));
+                        resolvedOtel == null ? null : resolvedOtel.tempoPlatform(),
+                        imageRegistryOfThisInstall)));
         return id;
     }
 
@@ -530,7 +543,8 @@ public class ComponentInstallService {
                                                                   String tektonProfile,
                                                                   OtelInstallRequest otel,
                                                                   SeaweedInstallRequest seaweed,
-                                                                  HarborInstallRequest harbor) {
+                                                                  HarborInstallRequest harbor,
+                                                                  com.coding.platformapi.images.ImageSource imageSource) {
         Map<String, Object> snapshot = snapshotOf(releases);
         Map<String, Object> platform = new LinkedHashMap<>();
         if (recipe.platformAlerting() && alertWebhookUrl != null) {
@@ -596,6 +610,8 @@ public class ComponentInstallService {
             h.put("httpsNodePort", harbor.getHttpsNodePort());
             platform.put("harbor", h);
         }
+        // 镜像来源每次都记：切回官方时表单要回填，排障时也要知道这次装的是哪边
+        platform.put("imageSource", imageSource.name());
         if (!platform.isEmpty()) {
             snapshot.put("__platform", platform);
         }
@@ -1600,7 +1616,9 @@ public class ComponentInstallService {
                      List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl,
                      ThanosInstallRequest thanos, OtelInstallRequest otel,
                      SeaweedInstallRequest seaweed, HarborInstallRequest harbor,
-                     TempoPlatformStorage tempoPlatform) {
+                     TempoPlatformStorage tempoPlatform,
+                     com.coding.platformapi.images.ImageRegistry registry) {
+        com.coding.platformapi.images.ImageRegistry registryForRun = registry;
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
@@ -1667,7 +1685,7 @@ public class ComponentInstallService {
                 }
             }
             ComponentInstallResultDTO result =
-                    client.applyComponent(clusterId, componentCode, action, toDtos(releases));
+                    client.applyComponent(clusterId, componentCode, action, toDtos(releases, registryForRun));
             // 告警联动在写 SUCCESS 之前做：失败则整条操作记 FAILED（消息里说明组件本身已装好）
             if (result.isSuccess() && platformAlerting) {
                 try {
@@ -1862,7 +1880,8 @@ public class ComponentInstallService {
         return value != null && value.startsWith("Bearer ") ? value.substring(7) : value;
     }
 
-    private static List<ReleaseInstallSpecDTO> toDtos(List<ReleaseSpec> releases) {
+    private static List<ReleaseInstallSpecDTO> toDtos(
+            List<ReleaseSpec> releases, com.coding.platformapi.images.ImageRegistry registry) {
         List<ReleaseInstallSpecDTO> out = new ArrayList<>();
         for (ReleaseSpec r : releases) {
             ReleaseInstallSpecDTO dto = new ReleaseInstallSpecDTO();
@@ -1876,6 +1895,10 @@ public class ComponentInstallService {
             dto.setValues("istio-gateway".equals(r.chartCode())
                     ? withoutGatewayListenerFields(r.contractValues())
                     : r.contractValues());
+            if (registry != null && registry.enabled()) {
+                dto.setImageRegistryHost(registry.host());
+                dto.setImageRegistryProject(registry.project());
+            }
             out.add(dto);
         }
         return out;
