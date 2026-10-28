@@ -22,9 +22,54 @@
 ## 3. Harbor 侧：把镜像搬进来（复制规则）
 
 平台**不搬运镜像**：k8s-server 只改写地址，镜像得先在 Harbor 里存在。搬运靠 Harbor 的
-**Replication（复制）规则**，一条规则对一个上游。
+**Replication（复制）规则**。
 
-### 3.1 规则怎么配
+> ⚠️ 一条规则只能管**一个仓库**：Harbor 的资源过滤器是 **AND** 语义 —— 一条策略里放两个
+> name 过滤器就什么都匹配不到（2026-10-28 实测：2 个 name → 0 个任务；`opstree/*` 通配也不匹配）。
+> 所以「一条规则一个上游」不成立，规则数是仓库数量级（当前 46 条）。
+
+### 3.0 一键脚本（推荐）
+
+```bash
+export HARBOR_URL=http://192.168.31.80:30002
+export HARBOR_ADMIN_PASSWORD='...'   # 平台生成，见 Secret harbor/platform-harbor-secrets
+python3 scripts/harbor-replication.py --all            # 项目 + endpoint + 规则（幂等）
+python3 scripts/harbor-replication.py --dry-run        # 只看会做什么
+python3 scripts/harbor-replication.py --only quay.io --trigger
+python3 scripts/harbor-replication.py --status         # 最近的复制执行结果
+```
+
+脚本做四件事，都幂等（已存在就跳过/更新，不重复建）：
+
+1. 建 6 个上游项目并设**公开读**；
+2. 建 6 个上游 registry endpoint（同名或同 URL 已有就复用）；
+3. 按「一个仓库一条规则」建复制策略：
+   `dest_namespace = 上游主机`、`dest_namespace_replace_count = 0`、tag 过滤器 = 表里列的版本；
+4. `--trigger` 时立刻触发一次复制。
+
+**维护（加版本 / 加组件时）**：改脚本顶部的 `IMAGES` 表 —— 新增一行 `仓库:tag`，
+或给已有仓库补一个 tag，然后重跑 `--all`；只会新增缺失的那条规则。
+
+```python
+IMAGES = {
+    'quay.io': [
+        'opstree/redis:v7.0.15',
+        'strimzi/operator:1.3.0',
+        # 新版本 → 加一行（或改成新 tag，旧规则会被更新）
+        'strimzi/operator:1.4.0',
+    ],
+    ...
+}
+```
+
+写 tag 的几条规矩：
+
+- **必须写 tag**：不写就复制该仓库的全部 tag（几百个、几十 GB）；
+- 中间件允许创建新版本（ES / Milvus）时，把新版本加一行 —— 脚本按 tag 精确复制；
+- 同一仓库需要很多 tag 时会自动拆成多条规则（单条策略的过滤器上限是 20）；
+- 规则名 = `mirror-<上游>-<仓库>-tN`，删规则/endpoint 脚本**不做**（避免误删），要删在 Harbor UI 里删。
+
+### 3.1 规则怎么配（手工等价操作）
 
 Harbor → `Administration → Replications → New Replication Rule`：
 
@@ -60,6 +105,8 @@ Endpoint 地址：
 ### 3.2 基础集：需要复制到 `platform` 的仓库
 
 下面是**内置 chart 默认值 + 中间件实例**真正会拉的仓库（平台改写后都在 `<上游主机>/…` 项目里）。
+**这张表与 `scripts/harbor-replication.py` 的 `IMAGES` 是同一份**：动手时改脚本那张表（执行用的权威表），
+这里跟着同步。
 
 **Kubernetes / Istio / 监控栈**
 
@@ -118,7 +165,7 @@ Endpoint 地址：
 
 ### 3.4 首次全量 + 核对
 
-1. 按 §3.2 建好规则后，在 `Replications` 里对每条规则点 **REPLICATE**（或建一条 `Manual` 触发的批量任务）。
+1. `python3 scripts/harbor-replication.py --all --trigger`（或在 `Replications` 里对每条规则点 **REPLICATE**）。
 2. 核对：`GET /v2/<repo>/manifests/<tag>`（用 Harbor 凭据）返回 200；或直接看 `Projects → platform → Repositories` 的仓库数。
 3. 平台页面上的「镜像清单」抽屉（组件页 → 镜像清单）列的是**当前内置 chart 能识别的上游镜像**，
    可以用来生成过滤器的 Name 列表；它与改写共用同一套规则，但看不到「Operator 运行时才决定」的那两处（见 §3.3）。
