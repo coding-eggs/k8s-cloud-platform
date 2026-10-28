@@ -213,13 +213,34 @@ class ElasticsearchMiddlewareAdapterTest {
         assertThat(inits).hasSize(1);
         assertThat(inits.get(0)).containsEntry("name", "install-ik");
         assertThat(inits.get(0).get("image")).isEqualTo("docker.elastic.co/elasticsearch/elasticsearch:9.5.0");
+        // 分词器从平台对象存储的弹性插件桶取（匿名可读），不再直连第三方站点
         assertThat((String) inits.get(0).get("command").toString())
-                .contains("get.infini.cloud/elasticsearch/analysis-ik/9.5.0");
+                .contains("t-25c6a969-elastic-plugins/analysis-ik/9.5.0.zip");
         assertThat(inits.get(0).get("resources")).isNotNull();   // 配额要求 init 容器也有资源
         assertThat((List<?>) pod.get("volumes")).hasSize(1);
         @SuppressWarnings("unchecked")
         var containers = (List<Map<String, Object>>) pod.get("containers");
         assertThat(containers.get(0).get("volumeMounts")).isNotNull();
+    }
+
+    @Test
+    void ikDownloadPrefixIsConfigurable() {
+        adapter.ikDownloadPrefixOverride = "https://mirror.internal/ik";   // 不带结尾斜杠
+        var r = req(1);
+        r.setIk(true);
+
+        @SuppressWarnings("unchecked")
+        var spec = (Map<String, Object>) adapter.buildCreate(r).get(0).resource()
+                .getAdditionalProperties().get("spec");
+        @SuppressWarnings("unchecked")
+        var ns = (Map<String, Object>) ((List<?>) spec.get("nodeSets")).get(0);
+        @SuppressWarnings("unchecked")
+        var podSpec = (Map<String, Object>) ((Map<String, Object>) ns.get("podTemplate")).get("spec");
+        @SuppressWarnings("unchecked")
+        var inits = (List<Map<String, Object>>) podSpec.get("initContainers");
+
+        assertThat((String) inits.get(0).get("command").toString())
+                .contains("https://mirror.internal/ik/9.5.0.zip");
     }
 
     @Test

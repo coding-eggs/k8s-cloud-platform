@@ -8,6 +8,7 @@ import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.base.CustomResourceDefinitionContext;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -33,8 +34,19 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
 
     /** ES 官方镜像前缀（initContainer 装插件用，必须与实例同版本） */
     private static final String ES_IMAGE_PREFIX = "docker.elastic.co/elasticsearch/elasticsearch:";
-    /** IK 官方分发地址（infinilabs），路径末尾拼 ES 版本 */
-    static final String IK_DOWNLOAD_PREFIX = "https://get.infini.cloud/elasticsearch/analysis-ik/";
+    /**
+     * IK zip 的分发根：平台对象存储的「弹性插件桶」（匿名可读），URL = 前缀 + {@code <ES 版本>.zip}。
+     *
+     * <p>为什么不直连上游：{@code get.infini.cloud} 是第三方站点，内网/断网环境根本下不到；
+     * 仓库里每升一次 ES 版本就往桶里放一份对应版本的 IK（见 elasticsearch README §2.3），
+     * 分发点跟着平台走。
+     */
+    static final String DEFAULT_IK_DOWNLOAD_PREFIX =
+            "http://seaweedfs-s3.platform-storage:8333/t-25c6a969-elastic-plugins/analysis-ik/";
+
+    /** 覆盖分发根（别的部署桶名/地址不同）：{@code platform.middleware.es.ik-download-prefix}，留空用默认 */
+    @Value("${platform.middleware.es.ik-download-prefix:}")
+    String ikDownloadPrefixOverride = "";
     static final String PLUGINS_VOLUME = "elasticsearch-plugins";
     /** initContainer 也要写资源：命名空间有 limits 配额时，没资源的容器会被直接拒 */
     static final Map<String, Object> INIT_CONTAINER_RESOURCES = Map.of(
@@ -51,7 +63,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
      * @return true = 本次新加了；false = 已经装过（编辑时重复提交不会重复加）
      */
     @SuppressWarnings("unchecked")
-    private static boolean ensureIk(Map<String, Object> podSpec, Map<String, Object> esContainer, String version) {
+    private boolean ensureIk(Map<String, Object> podSpec, Map<String, Object> esContainer, String version) {
         List<Object> inits = podSpec.get("initContainers") instanceof List<?> list
                 ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
         boolean installed = inits.stream().anyMatch(o ->
@@ -66,7 +78,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         init.put("image", ES_IMAGE_PREFIX + version);
         init.put("command", List.of("sh", "-c",
                 "set -e; cd /usr/share/elasticsearch/plugins; "
-                        + "curl -fsSL --retry 3 -o ik.zip " + IK_DOWNLOAD_PREFIX + version + "; "
+                        + "curl -fsSL --retry 3 -o ik.zip " + ikDownloadPrefix() + version + ".zip; "
                         + "mkdir -p analysis-ik; unzip -q -o ik.zip -d analysis-ik; rm -f ik.zip"));
         init.put("resources", INIT_CONTAINER_RESOURCES);
         init.put("volumeMounts", new java.util.ArrayList<>(List.of(pluginsMount)));
@@ -83,6 +95,15 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         mounts.add(pluginsMount);
         esContainer.put("volumeMounts", mounts);
         return true;
+    }
+
+    /** 实际使用的分发根（带结尾斜杠）；配置为空时用 {@link #DEFAULT_IK_DOWNLOAD_PREFIX} */
+    String ikDownloadPrefix() {
+        String prefix = ikDownloadPrefixOverride == null ? "" : ikDownloadPrefixOverride.trim();
+        if (prefix.isEmpty()) {
+            prefix = DEFAULT_IK_DOWNLOAD_PREFIX;
+        }
+        return prefix.endsWith("/") ? prefix : prefix + "/";
     }
 
     /**

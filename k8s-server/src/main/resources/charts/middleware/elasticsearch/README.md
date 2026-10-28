@@ -30,6 +30,44 @@
 - **资源**：ES 9.x **至少给 3Gi 内存**，2Gi 会 OOMKilled（真集群实锤）；改资源会触发滚动重启，
   期间 DEGRADED 是正常的。
 
+## 2.3 IK 分词器的分发（平台对象存储）
+
+IK 不随官方镜像发布，也不能用 `bin/elasticsearch-plugin install`（见 §5.1），所以平台自己分发：
+
+| 项 | 值 |
+|---|---|
+| 分发根 | 配置项 `platform.middleware.es.ik-download-prefix`；默认 `http://seaweedfs-s3.platform-storage:8333/t-25c6a969-elastic-plugins/analysis-ik/` |
+| 实际 URL | 分发根 + `<ES 版本>.zip`（例：`…/analysis-ik/9.5.0.zip`） |
+| 桶 | 对象存储页的 `t-25c6a969-elastic-plugins`（**开了匿名读**，initContainer 不带凭据） |
+| 已入库 | `analysis-ik/9.5.0.zip`（4 619 762 B，与上游 `get.infini.cloud` 同一份） |
+
+**为什么不自取**：`get.infini.cloud` 是第三方站点，内网/断网环境根本下不到。仓库里每加一个 ES 版本，
+就往桶里放一份同名 zip —— 分发点跟着平台走，集群只要能访问对象存储即可。
+
+**放新版本**（在能访问集群 S3 的机器上做；`38333` 是本集群对象存储的对外 S3 入口，端口按实际环境换）：
+
+```bash
+ver=9.5.0                       # 要放的 ES 版本
+curl -fsSL -o analysis-ik-$ver.zip "https://get.infini.cloud/elasticsearch/analysis-ik/$ver"
+# ak/sk = 该桶的凭据（对象存储 → 桶 → 发放凭据，或看 Secret platform-seaweedfs-cred-*）
+curl -fsS -T analysis-ik-$ver.zip --aws-sigv4 "aws:amz:us-east-1:s3" -u "$ak:$sk" \
+  "http://192.168.31.80:38333/t-25c6a969-elastic-plugins/analysis-ik/$ver.zip"
+```
+
+**校验**（两处都要 200、大小一致）：
+
+```bash
+curl -o /dev/null -w '%{http_code} %{size_download}\n' \
+  http://192.168.31.80:38333/t-25c6a969-elastic-plugins/analysis-ik/$ver.zip
+kubectl -n platform-storage exec deploy/seaweedfs-s3 -- curl -o /dev/null \
+  -w '%{http_code} %{size_download}\n' \
+  http://seaweedfs-s3.platform-storage:8333/t-25c6a969-elastic-plugins/analysis-ik/$ver.zip
+```
+
+> 分发根写死在默认值里是因为桶名带租户短码（`t-25c6a969-`）；换个部署就改
+> `platform.middleware.es.ik-download-prefix`（环境变量 `PLATFORM_MIDDLEWARE_ES_IK_DOWNLOAD_PREFIX`），
+> 不用改代码。
+
 ## 3. 形态、TLS 与可选能力
 
 | 能力 | 说明 |
@@ -37,7 +75,7 @@
 | 节点数 | 一个 `nodeSet` 的 `count`，≥1；生产建议 ≥3 |
 | HTTPS（默认开） | 关闭时给 ES/Kibana 的 CR 写 `spec.http.tls.selfSignedCertificate.disabled: true`（只关 HTTP 层，transport 仍加密）。**ECK 仍会生成 `es-http-certs-*` Secret，属正常残留** |
 | Kibana（可选） | 额外建一个同名 `Kibana` CR，`elasticsearchRef` 指向 ES；跟随 ES 的 http/https |
-| IK 中文分词器（可选） | initContainer 下载 zip 解压到共享 emptyDir 的 `plugins/analysis-ik`；**单向，不支持在线卸载** |
+| IK 中文分词器（可选） | initContainer 从**平台对象存储**下载 zip 解压到共享 emptyDir 的 `plugins/analysis-ik`（见 §2.3）；**单向，不支持在线卸载** |
 
 ## 4. 表单字段
 
@@ -48,8 +86,8 @@ HTTPS 开关（默认开）、IK 分词器开关（默认关）、同时部署 K
 
 1. **IK 不能用 `bin/elasticsearch-plugin install`**：它要对 config 目录 chown，ECK 默认
    `runAsNonRoot` + drop ALL，实测 `Operation not permitted`。必须用 initContainer `curl` 下载 zip + `unzip`
-   到共享 emptyDir；initContainer **必须写 resources**（否则撞配额），下载源
-   `https://get.infini.cloud/elasticsearch/analysis-ik/<版本>`（集群需能访问）。
+   到共享 emptyDir；initContainer **必须写 resources**（否则撞配额）。下载源是**平台对象存储**的
+   插件桶（§2.3），不再是 `get.infini.cloud` —— 那个站点内网/断网环境拿不到。
 2. **Kibana 的 Pod 必须显式给容器 resources**：真集群事件 `must specify limits.cpu for: kibana`
    （命名空间有 limits 配额时，ECK 不会给 Kibana 容器补默认值）。
 3. **ES 9.x 内存**：2Gi 会 OOMKilled，至少 3Gi；改资源会滚动重启。
@@ -78,8 +116,10 @@ HTTPS 开关（默认开）、IK 分词器开关（默认关）、同时部署 K
 
 1. 在 `MiddlewareCatalog` 的 ES 版本清单里加（目前 `List.of("9.5.0")`，顺序即展示顺序）；
 2. 确认 ECK 版本支持该 ES 版本（不支持会在 CR 上报错，实例永远不起 Pod）；
-3. 真集群建一个该版本实例：确认 Pod 起来、green、`_cluster/health` 正常、exporter 指标出数；
-4. 更新本文件 §1 的「版本」行与 §3 的注意事项（新大版本的 TLS/API 变化）。
+3. **往插件桶里放对应版本的 IK**：`analysis-ik/<新版本>.zip`（做法见 §2.3）。
+   漏了这一步，勾了 IK 的实例会卡在 initContainer 的 `curl: 404`；
+4. 真集群建一个该版本实例：确认 Pod 起来、green、`_cluster/health` 正常、exporter 指标出数；
+5. 更新本文件 §1 的「版本」行与 §3 的注意事项（新大版本的 TLS/API 变化）。
 
 **升级 ECK Operator chart**：
 
