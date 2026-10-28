@@ -1730,6 +1730,22 @@ class ComponentInstallServiceTest {
         assertThat(snapshot).doesNotContain("BEGIN CERTIFICATE").doesNotContain("PRIVATE KEY");
     }
 
+    /** 出网代理要真的写进 chart values，并且记进快照（否则下次没改动的重放会把它丢掉） */
+    @Test
+    void harborProxyReachesTheValuesAndTheSnapshot() {
+        HarborInstallRequest install = new HarborInstallRequest("10.0.0.5");
+        install.setHttpProxy("http://192.168.31.239:7890");
+
+        String values = capturedHarborValues(install);
+        assertThat(values).contains("httpProxy=http://192.168.31.239:7890")
+                .contains("192.168.0.0/16");   // noProxy 留空时自动补内网
+
+        ArgumentCaptor<PlatformComponentOperation> op = ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper, timeout(3000)).insert(op.capture());
+        assertThat(op.getValue().getValuesSnapshot())
+                .contains("\"httpProxy\":\"http://192.168.31.239:7890\"");
+    }
+
     @Test
     void harborRouteModeRequiresIstio() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");

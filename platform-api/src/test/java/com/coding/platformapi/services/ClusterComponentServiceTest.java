@@ -400,6 +400,9 @@ class ClusterComponentServiceTest {
         failed.setToVersion("1.19.4");
         failed.setValuesSnapshot("{\"__platform\":{\"harbor\":{\"exposeMode\":\"nodePort\","
                 + "\"host\":\"10.0.0.5\",\"nodePort\":30002,\"port\":80,"
+                + "\"https\":true,\"httpsPort\":443,\"httpsNodePort\":30443,"
+                + "\"httpProxy\":\"http://192.168.31.239:7890\","
+                + "\"noProxy\":\"127.0.0.1,localhost\","
                 + "\"databaseMode\":\"internal\",\"redisMode\":\"internal\"}}}");
         PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
         when(ops.selectLatestSuccesses("c1")).thenReturn(List.of());
@@ -414,6 +417,12 @@ class ClusterComponentServiceTest {
 
         assertThat(harbor.getHarborCurrent()).isNotNull();
         assertThat(harbor.getHarborCurrent().getHost()).isEqualTo("10.0.0.5");
+        // HTTPS 与代理必须回显：漏了的话表单看着像没填，重放还可能把它们丢掉
+        assertThat(harbor.getHarborCurrent().getHttps()).isTrue();
+        assertThat(harbor.getHarborCurrent().getHttpsPort()).isEqualTo(443);
+        assertThat(harbor.getHarborCurrent().getHttpsNodePort()).isEqualTo(30443);
+        assertThat(harbor.getHarborCurrent().getHttpProxy()).isEqualTo("http://192.168.31.239:7890");
+        assertThat(harbor.getHarborCurrent().getNoProxy()).isEqualTo("127.0.0.1,localhost");
         assertThat(harbor.getInstalledChartVersion()).isNull();
     }
 

@@ -83,6 +83,13 @@ redis: { type: internal }
 | `tls-cert-file` | `HARBOR_TLS_CERT_FILE` | 空（例：`/app/cert/harbor.ackcp.cloud.pem`） |
 | `tls-key-file` | `HARBOR_TLS_KEY_FILE` | 空（例：`/app/cert/harbor.ackcp.cloud.key`） |
 
+**加新表单字段要改三处**（漏一处就出过一次事故）：
+1. `HarborInstallRequest` 加字段；
+2. `ComponentInstallService.resolveHarbor` 里把值**拷进解析结果**（漏了 = 永远不生效，
+   代理就是栽在这里：表单填了、values 里没有）；
+3. 快照 `__platform.harbor` 写进去 + `ClusterComponentService.harborOf` 读出来
+   （漏了 = 表单回显丢失、下次「没改动」的重放还会把它丢掉）。
+
 `cert/` 在 `.gitignore` 里，证书不会进镜像 —— 部署时挂载目录并设这两个环境变量，或第一次安装时在表单里粘一次
 （之后证书进了 `harbor-tls` Secret，重放留空即可）。
 

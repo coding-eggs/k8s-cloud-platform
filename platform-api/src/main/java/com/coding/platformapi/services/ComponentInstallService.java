@@ -620,6 +620,10 @@ public class ComponentInstallService {
             h.put("https", Boolean.TRUE.equals(harbor.getHttps()));
             h.put("httpsPort", harbor.getHttpsPort());
             h.put("httpsNodePort", harbor.getHttpsNodePort());
+            // 出网代理也要记：不记的话下一次「没改动」的重放会把代理丢掉，复制立刻断
+            h.put("httpProxy", harbor.getHttpProxy());
+            h.put("httpsProxy", harbor.getHttpsProxy());
+            h.put("noProxy", harbor.getNoProxy());
             platform.put("harbor", h);
         }
         // 镜像来源每次都记：切回官方时表单要回填，排障时也要知道这次装的是哪边
@@ -1112,6 +1116,16 @@ public class ComponentInstallService {
                 prev.get("httpsNodePort"), DEFAULT_HARBOR_HTTPS_NODE_PORT));
         out.setTlsCert(requested == null ? null : requested.getTlsCert());
         out.setTlsKey(requested == null ? null : requested.getTlsKey());
+        // 出网代理：表单给了就以表单为准（空串 = 显式清掉），没给就沿用上次快照
+        if (requested != null) {
+            out.setHttpProxy(requested.getHttpProxy());
+            out.setHttpsProxy(requested.getHttpsProxy());
+            out.setNoProxy(requested.getNoProxy());
+        } else {
+            out.setHttpProxy(asString(prev.get("httpProxy")));
+            out.setHttpsProxy(asString(prev.get("httpsProxy")));
+            out.setNoProxy(asString(prev.get("noProxy")));
+        }
         applyHarborDefaults(out);
         if (https) {
             // 证书只对域名有效：拿 IP 开 HTTPS，客户端一定会 x509 失败

@@ -433,6 +433,13 @@ public class ClusterComponentService {
         cur.setRedisMode(asString(m.get("redisMode")));
         cur.setRedisAddr(asString(m.get("redisAddr")));
         cur.setRedisUsername(asString(m.get("redisUsername")));
+        // 这几个漏过：表单回显时会「填了又变回去」，重放还可能把 https/代理丢掉
+        cur.setHttps(Boolean.TRUE.equals(m.get("https")));
+        cur.setHttpsPort(asInt(m.get("httpsPort")));
+        cur.setHttpsNodePort(asInt(m.get("httpsNodePort")));
+        cur.setHttpProxy(asString(m.get("httpProxy")));
+        cur.setHttpsProxy(asString(m.get("httpsProxy")));
+        cur.setNoProxy(asString(m.get("noProxy")));
         return cur;
     }
 
