@@ -1316,7 +1316,13 @@ public class ComponentInstallService {
         return s.isEmpty() ? null : s;
     }
 
-    private static List<ReleaseSpec> applyHarborValues(List<ReleaseSpec> releases, HarborInstallRequest h) {
+    /**
+     * Harbor 的 {@code expose} 段：三种暴露方式**只写选中的那一段**。
+     *
+     * <p>早先三种都写进 values，走 route（istio）时快照里仍带着 {@code expose.nodePort.ports.https.nodePort}，
+     * 看 values 的人会以为还要开 NodePort。chart 只按 {@code expose.type} 渲染，所以那是纯噪声。
+     */
+    static Map<String, Object> harborExposeValues(HarborInstallRequest h) {
         boolean https = Boolean.TRUE.equals(h.getHttps());
         boolean viaGateway = https && "route".equals(h.getExposeMode());
         Map<String, Object> expose = new LinkedHashMap<>();
@@ -1330,28 +1336,38 @@ public class ComponentInstallService {
         } else {
             expose.put("tls", Map.of("enabled", false));
         }
-        // route：HTTPS 时把 HTTPRoute 绑到 443 的那条 listener（不写 sectionName 会挂到所有 HTTP listener 上）
-        Map<String, Object> parent = new LinkedHashMap<>();
-        parent.put("name", "external-gateway");
-        parent.put("namespace", "istio-system");
-        if (https) {
-            parent.put("sectionName", HARBOR_HTTPS_LISTENER);
+        String mode = h.getExposeMode();
+        if ("route".equals(mode)) {
+            // HTTPS 时把 HTTPRoute 绑到 443 的那条 listener（不写 sectionName 会挂到所有 HTTP listener 上）
+            Map<String, Object> parent = new LinkedHashMap<>();
+            parent.put("name", "external-gateway");
+            parent.put("namespace", "istio-system");
+            if (https) {
+                parent.put("sectionName", HARBOR_HTTPS_LISTENER);
+            }
+            expose.put("route", Map.of(
+                    "parentRefs", List.of(parent),
+                    "hosts", List.of(h.getHost())));
+        } else if ("loadBalancer".equals(mode)) {
+            expose.put("loadBalancer", Map.of("name", "harbor", "ports", https
+                    ? Map.of("httpPort", h.getPort(), "httpsPort", h.getHttpsPort())
+                    : Map.of("httpPort", h.getPort())));
+        } else {
+            Map<String, Object> nodePorts = new LinkedHashMap<>();
+            nodePorts.put("http", Map.of("port", 80, "nodePort", h.getNodePort()));
+            if (https) {
+                nodePorts.put("https", Map.of("port", 443, "nodePort", h.getHttpsNodePort()));
+            }
+            expose.put("nodePort", Map.of("name", "harbor", "ports", nodePorts));
         }
-        expose.put("route", Map.of(
-                "parentRefs", List.of(parent),
-                "hosts", List.of(h.getHost())));
-        Map<String, Object> nodePorts = new LinkedHashMap<>();
-        nodePorts.put("http", Map.of("port", 80, "nodePort", h.getNodePort()));
-        if (https) {
-            nodePorts.put("https", Map.of("port", 443, "nodePort", h.getHttpsNodePort()));
-        }
-        expose.put("nodePort", Map.of("name", "harbor", "ports", nodePorts));
-        expose.put("loadBalancer", Map.of("name", "harbor", "ports", https
-                ? Map.of("httpPort", h.getPort(), "httpsPort", h.getHttpsPort())
-                : Map.of("httpPort", h.getPort())));
+        return expose;
+    }
+
+    private static List<ReleaseSpec> applyHarborValues(List<ReleaseSpec> releases, HarborInstallRequest h) {
+        boolean https = Boolean.TRUE.equals(h.getHttps());
 
         Map<String, Object> values = new LinkedHashMap<>();
-        values.put("expose", expose);
+        values.put("expose", harborExposeValues(h));
         values.put("externalURL", (https ? "https://" : "http://") + harborAuthority(h));
         Map<String, Object> proxy = harborProxyValues(h);
         if (!proxy.isEmpty()) {

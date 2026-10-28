@@ -2060,4 +2060,28 @@ class ComponentInstallServiceTest {
 
         assertThat(ComponentInstallService.harborProxyValues(new HarborInstallRequest())).isEmpty();
     }
+
+    /** 走 istio（route）时不该再带 NodePort 段：三种暴露方式只写选中的那一段 */
+    @Test
+    void harborExposeValuesOnlyEmitTheSelectedMode() {
+        HarborInstallRequest route = new HarborInstallRequest();
+        route.setExposeMode("route");
+        route.setHost("harbor.ackcp.cloud");
+        route.setHttps(true);
+
+        Map<String, Object> expose = ComponentInstallService.harborExposeValues(route);
+
+        assertThat(expose).containsKeys("type", "tls", "route")
+                .doesNotContainKeys("nodePort", "loadBalancer");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> tls = (Map<String, Object>) expose.get("tls");
+        assertThat(tls).containsEntry("enabled", false);   // TLS 在网关终止，Harbor 自己仍是 HTTP
+        @SuppressWarnings("unchecked")
+        Map<String, Object> viaRoute = (Map<String, Object>) expose.get("route");
+        assertThat(viaRoute.toString()).contains("sectionName=harbor-https");
+
+        Map<String, Object> nodePort =
+                ComponentInstallService.harborExposeValues(new HarborInstallRequest("nodePort", "10.0.0.5", 30002, 80));
+        assertThat(nodePort).containsKeys("type", "nodePort").doesNotContainKeys("route", "loadBalancer");
+    }
 }

@@ -1547,8 +1547,8 @@ function copyImage(text: string): void {
             <el-option label="HTTPRoute（域名，经 istio external-gateway）" value="route" />
           </el-select>
           <div class="cc-form-hint">
-            三种都只走 HTTP（<code>tls.enabled=false</code>）：docker/podman 客户端要配
-            <code>insecure-registries</code>。route 模式必须用域名，不能是 IP
+            route 走 <code>istio-system/external-gateway</code>（必须是域名）；另两种直接用节点/LB 地址。
+            选 HTTP 时 docker/podman 客户端要配 <code>insecure-registries</code>
           </div>
         </div>
       </div>
