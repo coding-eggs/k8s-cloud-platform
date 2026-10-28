@@ -14,12 +14,13 @@
 
 - **镜像命名**（spec §5）：`<harborHost>/<project>/<上游主机>/<仓库路径>[:tag|@digest]`；
   无主机名的引用先归一化到 `docker.io`（单段仓库补 `library/`）。
-- **本环境实际参数**（2026-10-28 实测）：
-  - Harbor 入口：`192.168.85.180:30002`（NodePort，三个节点都通；**纯 HTTP，没上 TLS**）
+- **本环境实际参数**（2026-10-28 更新）：
+  - Harbor 入口：**`https://<域名>`**（公信证书，3 个月期，续期见
+    [2026-10-28-harbor-tls-renewal-design.md](../specs/2026-10-28-harbor-tls-renewal-design.md)；
+    实际域名由运维填进配置，本文用 `<域名>` 占位）
   - 项目：`platform`（已存在，私有，空）；`library` 是公开项目
-  - 平台组件跑在集群内，Pod 直接访问 NodePort 即可
-  - **前置**：每个节点的 containerd 必须把 `192.168.85.180:30002` 列进 insecure registry，否则 kubelet
-    拉 HTTP registry 直接失败（`http: server gave HTTP response to HTTPS client`）
+  - **节点不需要任何 containerd 改动**：公信证书在默认根池里，节点只要能解析该域名即可
+  - 平台后端调 Harbor API 的 scheme 从写死的 `http://` 改成配置（默认 `https`），见 Task 3
 - **不改写就等价于今天的行为**：`imageSource=OFFICIAL` 或 `platform.image-registry.enabled=false` 时，代码路径完全不变。
 - **Harbor 自身的镜像永远走官方**（先有鸡还是先有蛋），安装 `harbor` 组件时强制忽略 `PLATFORM`。
 - **新端点必须有权限行**（否则 `PermissionCrossCheckRunner` 启动失败）——本批新增 `/components/images`。
@@ -32,7 +33,8 @@
   `kibana.image`…），递归漏一层就是「拉一半镜像走公网」。
 - **Sub-chart 与 hooks**：cert-manager 的 `startupapicheck`、prometheus 的 admission webhook 等 Job 镜像也要改。
 - **最后一块拼图是 k8s-server 自己**：它是写 pull secret 的执行者，必须先把自己那 4 个镜像推上去。
-- **私有项目 + 无 TLS**：拉取失败的表现是 `ImagePullBackOff`，不是安装失败 —— 错误信息要能引导人来看这两条。
+- **私有项目 + 证书到期**：拉取失败的表现都是 `ImagePullBackOff`（`unauthorized` / `certificate has expired`），
+  不是安装失败 —— 错误信息要能引导人区分这两条。
 
 ---
 
@@ -248,8 +250,13 @@ class ImageRegistryServiceTest {
 ```
 
 - [ ] **Step 2: 跑 → FAIL（类不存在）**
-- [ ] **Step 3: 实现**（`@Value("${platform.image-registry.host:}")` 等三个字段；`ClusterService` 加两个查询方法，
-  用现有 `selectByPrimaryKey` 结果里的新字段）
+- [ ] **Step 3: 实现**（`@Value("${platform.image-registry.host:}")` 等字段；`ClusterService` 加两个查询方法，
+  用现有 `selectByPrimaryKey` 结果里的新字段）。同时把 Harbor API 的 scheme 从写死 http 改成配置：
+
+  - `HarborRegistryService` 里拼 Harbor API 地址的地方（当前 `return "http://" + host;`）改为
+    `return scheme + "://" + host;`，`scheme = ${platform.harbor.scheme:https}`；
+  - `HarborDialect` 对无 scheme 端点补 `https://` 的逻辑保持不变（现在两边口径一致了）；
+  - **镜像引用本身不带 scheme**（`host:port/...` 或 `域名/...`），所以改 HTTPS 不影响 Task 2 的映射函数。
 - [ ] **Step 4: 跑 → PASS**
 - [ ] **Step 5: 提交**
 
@@ -532,9 +539,10 @@ class ImagePullSecretsTest {
 
 ## Task 11: 真集群验证（验收清单）
 
-- [ ] 节点 containerd 已列 insecure registry：在任意节点 `crictl pull 192.168.85.180:30002/library/hello-world:latest` 成功
+- [ ] 节点能解析 Harbor 域名，且 `crictl pull <域名>/library/hello-world:latest` 成功（公信证书，无需改 containerd）
+- [ ] 平台后端能调通 Harbor API：`https://<域名>/api/v2.0/projects` 用 admin 凭据返回 200
 - [ ] Harbor `platform` 项目里已有试点镜像（先用 `metrics-server` 一个）
-- [ ] 平台上对 `metrics-server` 选「平台 Harbor」重装 → Pod 从 `192.168.85.180:30002/platform/registry.k8s.io/...` 拉起
+- [ ] 平台上对 `metrics-server` 选「平台 Harbor」重装 → Pod 从 `<域名>/platform/registry.k8s.io/...` 拉起
 - [ ] 切回「官方」重装 → 镜像地址回到 `registry.k8s.io/...`
 - [ ] 中间件：新建一个 Redis 实例（镜像最少），确认 CR 里 `image` 指向 Harbor
 - [ ] 断网模拟（可选）：临时阻断节点出网，重装一个组件仍成功
@@ -551,5 +559,6 @@ class ImagePullSecretsTest {
 ## 风险与回退
 
 - 任一环节出问题：`platform.image-registry.enabled=false`（或表单选「官方」）即回到现状，无需回滚代码。
-- Harbor 地址用节点 IP `192.168.85.180:30002` 是**临时形态**（节点换 IP 就全挂）。上生产前建议给 Harbor
-  配域名（或 NodePort + 固定 VIP），改 `platform.image-registry.host` 与集群两列即可，代码不用动。
+- Harbor 现在走域名 + 公信证书，节点侧没有额外配置；剩下的运维风险是**证书到期**（3 个月期），
+  自动续期方案见 [2026-10-28-harbor-tls-renewal-design.md](../specs/2026-10-28-harbor-tls-renewal-design.md)，
+  不随本批实施。

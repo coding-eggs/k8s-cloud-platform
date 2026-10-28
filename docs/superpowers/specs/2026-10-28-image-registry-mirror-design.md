@@ -78,7 +78,7 @@ docker.elastic.co、gcr.io 六个上游，约 50 个仓库），内网/断网环
 
 | 层 | 位置 | 说明 |
 |---|---|---|
-| 平台默认 | `application.yaml`：`platform.image-registry.*` | `host`、`project`（默认 `platform`）、`username`/`password`（Harbor robot，pull 权限）、`enabled` |
+| 平台默认 | `application.yaml`：`platform.image-registry.*` / `platform.harbor.scheme` | `host`（域名[:端口]，**不带 scheme**）、`project`（默认 `platform`）、`enabled`；Harbor API 的 scheme 默认 `https` |
 | 按集群覆盖 | 新列 `k8s_cluster.image_registry_host` / `image_registry_project`（迁移 `V2026_10_28_1`） | 业务集群连不到平台 Harbor 时各自指自己的；空 = 用平台默认 |
 | 每次安装的来源 | 组件/中间件请求里的 `imageSource = PLATFORM \| OFFICIAL` | 默认 `PLATFORM`；落进操作快照，EDIT 重放可切 |
 
@@ -151,6 +151,7 @@ platform-api / k8s-server / platform-web / platform-auth 的 Deployment 不在�
 | digest 引用（`@sha256:`） | 保留 digest：`<harbor>/platform/<host>/<path>@sha256:...`；同步时也必须按 digest 复制（Harbor 复制规则支持 tag+digest） |
 | 上游 chart 里写死了非标准镜像（如 `alpine/k8s` 这类 docker.io 简写） | 归一化到 `docker.io/library/...` 或 `docker.io/alpine/...`；护栏测试兜底 |
 | Harbor 的 replication 只拉「用过一次」的镜像 | 平台提供**镜像清单**（§11）供运维一次性触发同步/核对，避免装的时候才发现缺 |
+| **TLS 证书到期**（免费证书 3 个月） | 公信证书下节点无需任何配置；但证书一过期，**所有拉取**都会 `x509: certificate has expired`。续期属运维自动化，见 [2026-10-28-harbor-tls-renewal-design.md](2026-10-28-harbor-tls-renewal-design.md)，不随本批实施 |
 | 多集群 | 按集群配置（§6）；镜像清单按集群 + 组件维度给出 |
 
 ## 11. 镜像清单（只读端点 + 页面）
