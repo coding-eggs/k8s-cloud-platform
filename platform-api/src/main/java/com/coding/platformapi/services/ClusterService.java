@@ -199,6 +199,11 @@ public class ClusterService {
         upd.setGrafanaUrl(req.getGrafanaUrl());
         // 空串 = 显式清空（回到「按组件安装位置推导」），null = 该字段没传、保持原值
         upd.setObjectStorageUrl(req.getObjectStorageUrl() == null ? null : req.getObjectStorageUrl().trim());
+        // 镜像仓库：空串 = 清空（回退到 Harbor 安装记录/平台默认），null = 保持原值
+        upd.setImageRegistryHost(req.getImageRegistryHost() == null
+                ? null : req.getImageRegistryHost().trim());
+        upd.setImageRegistryProject(req.getImageRegistryProject() == null
+                ? null : req.getImageRegistryProject().trim());
         upd.setUpdatedAt(new Date(System.currentTimeMillis()));
         clusterMapper.updateByPrimaryKeySelective(upd);
         // kubeconfig 变化 → 旧连接作废，显式失效缓存（不依赖下面的能力探测是否成功）；能力可能变则附带重探

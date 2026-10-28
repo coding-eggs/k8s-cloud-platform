@@ -38,6 +38,8 @@ const form = reactive({
   prometheusUrl: '',
   grafanaUrl: '',
   objectStorageUrl: '',
+  imageRegistryHost: '',
+  imageRegistryProject: '',
   clusterRole: 'BUSINESS' as 'MANAGEMENT' | 'BUSINESS',
 })
 
@@ -54,6 +56,8 @@ function resetForm(): void {
   form.prometheusUrl = ''
   form.grafanaUrl = ''
   form.objectStorageUrl = ''
+  form.imageRegistryHost = ''
+  form.imageRegistryProject = ''
   form.clusterRole = 'BUSINESS'
 }
 
@@ -76,6 +80,8 @@ function openEdit(row: K8sCluster): void {
   form.ipStack = row.ipStack ?? 'IPV4'
   form.prometheusUrl = row.prometheusUrl ?? ''
   form.grafanaUrl = row.grafanaUrl ?? ''
+  form.imageRegistryHost = row.imageRegistryHost ?? ''
+  form.imageRegistryProject = row.imageRegistryProject ?? ''
   form.objectStorageUrl = row.objectStorageUrl ?? ''
   form.clusterRole = row.clusterRole ?? 'BUSINESS'
   // kubeconfig 留空 = 保留原值
@@ -95,6 +101,8 @@ function commonPayload() {
     grafanaUrl: form.grafanaUrl || undefined,
     // 空串 = 显式清空（回到「按组件安装位置推导集群内地址」），所以这里不给 undefined
     objectStorageUrl: form.objectStorageUrl.trim(),
+    imageRegistryHost: form.imageRegistryHost.trim(),
+    imageRegistryProject: form.imageRegistryProject.trim(),
     clusterRole: form.clusterRole,
   }
 }
@@ -355,6 +363,19 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="Grafana">
           <el-input v-model="form.grafanaUrl" placeholder="例如 http://grafana.monitor:3000" />
+        </el-form-item>
+
+        <el-divider content-position="left">镜像仓库</el-divider>
+        <el-form-item label="镜像仓库地址">
+          <el-input v-model="form.imageRegistryHost"
+                    placeholder="留空 = 用 Harbor 组件的安装地址（如 harbor.ackcp.cloud）" />
+          <div class="form-hint">
+            组件/中间件的镜像从这个仓库拉。留空时按「Harbor 组件安装记录 → 平台默认」解析；
+            业务集群连不到平台 Harbor 时填它自己的地址（<b>不带 http://</b>）
+          </div>
+        </el-form-item>
+        <el-form-item label="镜像项目">
+          <el-input v-model="form.imageRegistryProject" placeholder="留空 = platform" />
         </el-form-item>
 
         <el-divider content-position="left">对象存储</el-divider>

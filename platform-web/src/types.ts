@@ -33,6 +33,10 @@ export interface K8sCluster {
   grafanaUrl?: string | null
   /** 平台访问该集群对象存储(S3)的地址；空 = 按组件安装位置推导集群内地址 */
   objectStorageUrl?: string | null
+  /** 镜像仓库地址 host[:端口]；空 = 用 Harbor 安装记录/平台默认 */
+  imageRegistryHost?: string | null
+  /** 镜像仓库项目；空 = platform */
+  imageRegistryProject?: string | null
   description?: string | null
   ipStack?: 'IPV4' | 'IPV6' | 'IPV4_AND_IPV6' | null
   status?: 'CONNECTED' | 'DISCONNECTED' | 'CONNECTING' | 'ERROR' | null

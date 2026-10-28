@@ -48,4 +48,10 @@ public class ClusterUpdateRequest {
     @Schema(description = "集群画像：MANAGEMENT(平台自身所在集群) / BUSINESS(业务集群，默认)",
             example = "BUSINESS")
     private String clusterRole;
+
+    @Schema(description = "镜像仓库地址 host[:端口]（不带 scheme）；空串 = 清空（回退到 Harbor 安装记录/平台默认）")
+    private String imageRegistryHost;
+
+    @Schema(description = "镜像仓库项目（默认 platform）；空串 = 清空")
+    private String imageRegistryProject;
 }

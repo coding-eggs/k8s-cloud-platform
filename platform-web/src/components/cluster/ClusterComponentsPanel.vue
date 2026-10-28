@@ -16,10 +16,12 @@ import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type {
+  ComponentImageItem,
   K8sCalicoInstall, K8sComponentOperation, K8sComponentState, K8sComponentStatus, K8sEditableField,
   K8sEsConfig, K8sHarborInstall, K8sOtelInstall, K8sSeaweedInstall, K8sTempoStorage,
   K8sThanosInstall, SecretRefOption,
 } from '@/types'
+import { clusterApi } from '@/api'
 import HarborProjectsDialog from './HarborProjectsDialog.vue'
 import HarborStorageFields from './HarborStorageFields.vue'
 
@@ -1175,12 +1177,50 @@ const summary = computed(() => {
 })
 
 const anyUnknown = computed(() => unknownCount.value > 0)
+
+// ---------- 镜像清单（内置 chart 用到的镜像 + 平台 Harbor 地址） ----------
+const imageDialog = ref(false)
+const imageLoading = ref(false)
+const images = ref<ComponentImageItem[]>([])
+
+async function openImages(): Promise<void> {
+  imageDialog.value = true
+  imageLoading.value = true
+  try {
+    images.value = await clusterApi.componentImages({ clusterId: props.clusterId })
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  } finally {
+    imageLoading.value = false
+  }
+}
+
+/** 内网 http 下 navigator.clipboard 不存在，必须留 execCommand 兜底 */
+function copyImage(text: string): void {
+  const fallback = (): void => {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.position = 'fixed'
+    el.style.opacity = '0'
+    document.body.appendChild(el)
+    el.select()
+    try { document.execCommand('copy') } catch { /* 忽略 */ }
+    document.body.removeChild(el)
+  }
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => ElMessage.success('已复制')).catch(fallback)
+  } else {
+    fallback()
+    ElMessage.success('已复制')
+  }
+}
 </script>
 
 <template>
   <div class="cc-panel">
     <div class="cc-head">
       <span class="cc-summary">{{ summary }}</span>
+      <el-button size="small" @click="openImages">镜像清单</el-button>
       <el-button size="small" :loading="loading" :disabled="!canRefresh" @click="emit('refresh')">
         重新探测
       </el-button>
@@ -2105,6 +2145,22 @@ const anyUnknown = computed(() => unknownCount.value > 0)
     </el-dialog>
   </div>
     <HarborProjectsDialog v-model:visible="harborProjects" :cluster-id="props.clusterId" />
+  <el-drawer v-model="imageDialog" title="镜像清单（内置 chart）" size="62%" append-to-body>
+    <div class="cc-form-hint" style="margin-bottom: 10px">
+      组件与中间件实际会拉的镜像（harbor 组件本身除外）。「平台 Harbor」那列是改写后的地址，
+      拿去 Harbor 配复制规则、或核对哪些还没同步过来
+    </div>
+    <el-table v-loading="imageLoading" :data="images" height="calc(100vh - 170px)" size="small">
+      <el-table-column prop="chart" label="chart" min-width="200" show-overflow-tooltip />
+      <el-table-column prop="upstream" label="上游镜像" min-width="260" show-overflow-tooltip />
+      <el-table-column label="平台 Harbor" min-width="320">
+        <template #default="{ row }">
+          <code class="cc-img">{{ row.mirrored }}</code>
+          <el-button link type="primary" @click="copyImage(row.mirrored)">复制</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-drawer>
 </template>
 
 <style scoped>
@@ -2187,6 +2243,8 @@ const anyUnknown = computed(() => unknownCount.value > 0)
   display: flex; align-items: center; justify-content: space-between;
   font-size: 13px; color: var(--text-2); margin-bottom: 6px;
 }
+.cc-img { font-size: 12px; word-break: break-all; }
+
 .cc-op-log {
   max-height: 380px; overflow: auto; margin: 0; padding: 10px; border-radius: 6px;
   background: var(--bg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
