@@ -27,6 +27,11 @@ import com.coding.platformapi.models.HarborInstallRequest;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
 import com.coding.platformapi.models.SeaweedInstallRequest;
+import com.coding.common.models.objectstorage.ObjectCredentialDTO;
+import com.coding.data.models.auth.PlatformTenant;
+import com.coding.platformapi.models.ObjectStorageBucketRef;
+import com.coding.platformapi.models.ObjectStorageBucketView;
+import com.coding.platformapi.models.ObjectStorageCreateBucket;
 import com.coding.platformapi.models.TempoStorageConfig;
 import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
@@ -97,6 +102,8 @@ public class ComponentInstallService {
             List.of("plaintext", "tls", "tls-skip-verify");
     /** Tempo/collector 的命名空间：凭证 Secret 必须落在这里，Pod 才能挂到 */
     private static final String OTEL_NAMESPACE = "monitor";
+    /** Tempo chart 的 extraEnvFrom 指向它（平台两种存储模式都写这一个名字） */
+    private static final String TEMPO_OBJSTORE_SECRET = "platform-tempo-objstore";
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final TypeReference<Map<String, Map<String, Object>>> SNAPSHOT_TYPE =
@@ -108,6 +115,9 @@ public class ComponentInstallService {
     private final ClusterService clusterService;
     private final ClusterComponentService components;
     private final HarborRegistryService harborRegistry;
+    /** Tempo 的「平台对象存储」模式：解析集群 S3 地址、确保桶存在、发放凭据 */
+    private final ObjectStorageService objectStorage;
+    private final TenantService tenantService;
     private final K8sClient k8s;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
@@ -186,8 +196,10 @@ public class ComponentInstallService {
                 ? resolveTektonProfile(req.getTektonProfile(), asString(previousPlatform.get("tektonProfile")))
                 : null;
         // OTel 采集栈：表单 > 上次成功 > 默认；Tempo 地址为空直接拒（装完才失败的话，traces 永远发不出去）
-        OtelInstallRequest otel = recipe.otel() == null ? null
-                : resolveOtel(req.getOtel(), previousPlatform.get("otel"), recipe.otel());
+        ResolvedOtel resolvedOtel = recipe.otel() == null ? null
+                : resolveOtel(req.getClusterId(), operator, req.getOtel(),
+                        previousPlatform.get("otel"), recipe.otel());
+        OtelInstallRequest otel = resolvedOtel == null ? null : resolvedOtel.request();
         // 对象存储（SeaweedFS）：StorageClass 必填 —— chart 把 storageClass 无条件写进
         // storageClassName，空串在 K8s 里是「不用动态供给」，会装出一组永远 Pending 的 PVC
         SeaweedInstallRequest seaweed = recipe.seaweedStorage()
@@ -270,7 +282,8 @@ public class ComponentInstallService {
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
                         List.copyOf(effective), recipe.platformAlerting(), alertWebhookUrl, thanos, otel,
-                        seaweed, harbor)));
+                        seaweed, harbor,
+                        resolvedOtel == null ? null : resolvedOtel.tempoPlatform())));
         return id;
     }
 
@@ -591,7 +604,17 @@ public class ComponentInstallService {
 
     // ==================== OTel 参数解析 / 快照（批次一） ====================
 
-    private static OtelInstallRequest resolveOtel(OtelInstallRequest requested, Object previous, OtelRecipe recipe) {
+    /** 平台对象存储给 Tempo 的凭据：只在本次安装内传递，**绝不进 values / 快照** */
+    private record TempoPlatformStorage(String endpoint, String bucket,
+                                        String accessKey, String secretKey) {}
+
+    /** resolveOtel 的产物：可落库的配置 + 只在内存里的平台凭据 */
+    private record ResolvedOtel(OtelInstallRequest request, TempoPlatformStorage tempoPlatform) {}
+
+    private record ResolvedTempoStorage(TempoStorageConfig config, TempoPlatformStorage platform) {}
+
+    private ResolvedOtel resolveOtel(String clusterId, String operator, OtelInstallRequest requested,
+                                     Object previous, OtelRecipe recipe) {
         OtelInstallRequest req = requested == null ? new OtelInstallRequest() : requested;
         OtelInstallRequest prev = otelOf(previous);
 
@@ -629,15 +652,59 @@ public class ComponentInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Tempo TLS 模式只支持 " + String.join(" / ", TEMPO_TLS_MODES));
         }
-        out.setTempoStorage(recipe.tempoInstall()
-                ? resolveTempoStorage(req.getTempoStorage(), prev == null ? null : prev.getTempoStorage())
-                : null);
+        ResolvedTempoStorage storage = recipe.tempoInstall()
+                ? resolveTempoStorage(clusterId, operator,
+                        req.getTempoStorage(), prev == null ? null : prev.getTempoStorage())
+                : null;
+        out.setTempoStorage(storage == null ? null : storage.config());
         out.setEs(resolveEs(req.getEs(), prev == null ? null : prev.getEs(), logs));
-        return out;
+        return new ResolvedOtel(out, storage == null ? null : storage.platform());
     }
 
-    private static TempoStorageConfig resolveTempoStorage(TempoStorageConfig requested, TempoStorageConfig prev) {
+    /**
+     * Tempo 的存储：两种来源。
+     *
+     * <ul>
+     *   <li>{@link TempoStorageConfig#SOURCE_PLATFORM}（默认）—— 用平台对象存储：地址取集群 S3 连接地址、
+     *       桶按 {@code t-<租户短码>-<名字>} 解析（不存在就现建）、凭据由平台发放并写进
+     *       {@code monitor/platform-tempo-objstore}。表单只需要给桶名。</li>
+     *   <li>{@link TempoStorageConfig#SOURCE_EXTERNAL} —— 外部地址：endpoint / 桶 / 凭证 Secret 全手填，
+     *       与以前完全一致。</li>
+     * </ul>
+     */
+    private ResolvedTempoStorage resolveTempoStorage(String clusterId, String operator,
+                                                     TempoStorageConfig requested, TempoStorageConfig prev) {
         TempoStorageConfig out = new TempoStorageConfig();
+        String source = firstNonBlank(
+                requested == null ? null : requested.getSource(),
+                prev == null ? null : prev.getSource(),
+                TempoStorageConfig.SOURCE_PLATFORM);
+        if (!TempoStorageConfig.SOURCE_PLATFORM.equals(source)
+                && !TempoStorageConfig.SOURCE_EXTERNAL.equals(source)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "Tempo 存储来源只支持 " + TempoStorageConfig.SOURCE_PLATFORM + " / "
+                            + TempoStorageConfig.SOURCE_EXTERNAL + "（收到 " + source + "）");
+        }
+        out.setSource(source);
+
+        if (TempoStorageConfig.SOURCE_PLATFORM.equals(source)) {
+            String tenantId = requested != null && !isBlank(requested.getTenantId())
+                    ? requested.getTenantId()
+                    : prev == null ? null : prev.getTenantId();
+            // PLATFORM 下 bucket 是逻辑名（默认 tempo）—— 真实桶名由平台拼
+            String name = firstNonBlank(
+                    requested == null ? null : requested.getBucket(),
+                    prev == null ? null : prev.getBucket(), DEFAULT_MINIO_BUCKET);
+            TempoPlatformStorage platform = provisionTempoStorage(clusterId, operator, tenantId,
+                    name.trim().toLowerCase());
+            out.setEndpoint(tempoMinioHost(platform.endpoint()));
+            out.setBucket(platform.bucket());
+            out.setPlaintext(!platform.endpoint().startsWith("https://"));
+            out.setInsecureSkipVerify(true);
+            out.setCredentialSecret(new SecretRef(OTEL_NAMESPACE, TEMPO_OBJSTORE_SECRET));
+            return new ResolvedTempoStorage(out, platform);
+        }
+
         String endpoint = firstNonBlank(
                 requested == null ? null : requested.getEndpoint(),
                 prev == null ? null : prev.getEndpoint());
@@ -671,7 +738,54 @@ public class ComponentInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Tempo 的凭证 Secret 必须放在 " + OTEL_NAMESPACE + " 命名空间");
         }
-        return out;
+        return new ResolvedTempoStorage(out, null);
+    }
+
+    /**
+     * 平台对象存储：解析（必要时创建）桶并发放凭据。
+     *
+     * <p>桶名规则与对象存储页一致（{@code t-<租户短码>-<名字>}）：先按名字在集群里找现成的桶，
+     * 找到就复用（同一次部署的多次升级不会重复建）；没有才建，归属租户 = 指定的 &gt; default 租户。
+     * 每次安装都会发放一组新凭据 —— 旧凭据留着不动，Secret 被覆盖成新的，Tempo 随之滚动。
+     */
+    private TempoPlatformStorage provisionTempoStorage(String clusterId, String operator,
+                                                       String tenantId, String name) {
+        String raw = objectStorage.s3Endpoint(clusterId);   // 对象存储组件没装时这里就报错
+        if (isBlank(raw)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "集群还没有对象存储连接地址：请先在「集群组件」里安装对象存储（或改用外部地址）");
+        }
+        String wanted = isBlank(tenantId) ? null : ObjectStorageService.bucketName(tenantId, name);
+        ObjectStorageBucketView bucket = objectStorage.listBuckets(clusterId, tenantId).stream()
+                .filter(b -> wanted != null
+                        ? wanted.equals(b.getBucket())
+                        : b.getBucket().endsWith("-" + name))
+                .findFirst().orElse(null);
+        if (bucket == null) {
+            ObjectStorageCreateBucket body = new ObjectStorageCreateBucket();
+            body.setClusterId(clusterId);
+            body.setTenantId(isBlank(tenantId) ? defaultTenantId() : tenantId);
+            body.setName(name);
+            body.setDisplayName("Tempo " + name);
+            bucket = objectStorage.createBucket(body, operator);
+        }
+        ObjectStorageBucketRef ref = new ObjectStorageBucketRef();
+        ref.setBucketId(bucket.getId());
+        ObjectCredentialDTO credential = objectStorage.issueCredential(ref, operator);
+        log.info("Tempo 使用平台对象存储：集群 {} 桶 {}（操作者 {}）",
+                clusterId, bucket.getBucket(), operator);
+        return new TempoPlatformStorage(raw, bucket.getBucket(),
+                credential.getAccessKey(), credential.getSecretKey());
+    }
+
+    /** 平台桶必须挂在租户名下：没指定就落到 default 租户，没有 default 再取第一个。 */
+    private String defaultTenantId() {
+        List<PlatformTenant> tenants = tenantService.list();
+        return tenants.stream().filter(t -> "default".equals(t.getName())).findFirst()
+                .or(() -> tenants.stream().findFirst())
+                .map(PlatformTenant::getId)
+                .orElseThrow(() -> new CloudPlatformException(EnumResponseType.ERROR,
+                        "还没有任何租户：平台对象存储的桶必须归属某个租户，请先创建租户"));
     }
 
     private static EsConfig resolveEs(EsConfig requested, EsConfig prev, Boolean logs) {
@@ -1422,7 +1536,8 @@ public class ComponentInstallService {
     private void run(Long id, String clusterId, String componentCode, String action,
                      List<ReleaseSpec> releases, boolean platformAlerting, String alertWebhookUrl,
                      ThanosInstallRequest thanos, OtelInstallRequest otel,
-                     SeaweedInstallRequest seaweed, HarborInstallRequest harbor) {
+                     SeaweedInstallRequest seaweed, HarborInstallRequest harbor,
+                     TempoPlatformStorage tempoPlatform) {
         PlatformComponentOperation running = new PlatformComponentOperation();
         running.setId(id);
         running.setStatus(RUNNING);
@@ -1431,9 +1546,16 @@ public class ComponentInstallService {
             // Tempo 的凭证 Secret / collector 的 ES Secret 必须在 helm 之前就位（Pod 会挂载/引用它）
             if (otel != null && otel.getTempoStorage() != null) {
                 TempoStorageConfig s = otel.getTempoStorage();
-                client.applyTempoObjstore(clusterId,
-                        s.getCredentialSecret().getNamespace(), s.getCredentialSecret().getName(),
-                        OTEL_NAMESPACE, "platform-tempo-objstore");
+                if (tempoPlatform != null) {
+                    // 平台对象存储：凭据是本次解析时刚发放的，直接写进同一个 Secret
+                    client.applyTempoObjstore(clusterId, null, null, OTEL_NAMESPACE,
+                            TEMPO_OBJSTORE_SECRET,
+                            tempoPlatform.accessKey(), tempoPlatform.secretKey());
+                } else {
+                    client.applyTempoObjstore(clusterId,
+                            s.getCredentialSecret().getNamespace(), s.getCredentialSecret().getName(),
+                            OTEL_NAMESPACE, TEMPO_OBJSTORE_SECRET);
+                }
             }
             if (otel != null && Boolean.TRUE.equals(otel.getLogsEnabled())) {
                 EsConfig e = otel.getEs();

@@ -195,12 +195,25 @@ public class K8sComponentClient {
      */
     public void applyTempoObjstore(String clusterId, String namespace, String secretName,
                                    String targetNamespace, String targetSecretName) {
+        applyTempoObjstore(clusterId, namespace, secretName, targetNamespace, targetSecretName,
+                null, null);
+    }
+
+    /**
+     * Tempo 对象存储：{@code accessKey/secretKey} 非空时直接用这对凭据（平台对象存储模式 ——
+     * 凭据是 platform-api 刚发放的），否则按 {@code namespace/secretName} 从集群里读来源 Secret。
+     */
+    public void applyTempoObjstore(String clusterId, String namespace, String secretName,
+                                   String targetNamespace, String targetSecretName,
+                                   String accessKey, String secretKey) {
         TempoObjstoreRequestDTO body = new TempoObjstoreRequestDTO();
         body.setClusterId(clusterId);
         body.setNamespace(namespace);
         body.setSecretName(secretName);
         body.setTargetNamespace(targetNamespace);
         body.setTargetSecretName(targetSecretName);
+        body.setAccessKey(accessKey);
+        body.setSecretKey(secretKey);
         gateway.exchange(HttpMethod.POST, "/components/tempo-objstore", null, body,
                 gateway.responseType(Void.class));
     }

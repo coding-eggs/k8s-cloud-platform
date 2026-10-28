@@ -14,6 +14,8 @@ import com.coding.platformapi.models.EsConfig;
 import com.coding.platformapi.models.HarborInstallRequest;
 import com.coding.platformapi.models.OtelInstallRequest;
 import com.coding.platformapi.models.SecretRef;
+import com.coding.common.models.objectstorage.ObjectCredentialDTO;
+import com.coding.platformapi.models.ObjectStorageBucketView;
 import com.coding.platformapi.models.TempoStorageConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +47,8 @@ class ComponentInstallServiceTest {
     private final ClusterService clusterService = mock(ClusterService.class);
     private final ClusterComponentService components = mock(ClusterComponentService.class);
     private final HarborRegistryService harborRegistry = mock(HarborRegistryService.class);
+    private final ObjectStorageService objectStorage = mock(ObjectStorageService.class);
+    private final TenantService tenantService = mock(TenantService.class);
     private final com.coding.platformapi.k8s.K8sClient k8s =
             mock(com.coding.platformapi.k8s.K8sClient.class);
 
@@ -68,7 +72,7 @@ class ComponentInstallServiceTest {
 
     private ComponentInstallService service(ComponentRecipeCatalog catalog) {
         return new ComponentInstallService(mapper, client, catalog, clusterService, components,
-                harborRegistry, k8s);
+                harborRegistry, objectStorage, tenantService, k8s);
     }
 
     @Test
@@ -1339,7 +1343,8 @@ class ComponentInstallServiceTest {
 
     @Test
     void tempoStorageDefaultsToItsOwnBucketWithoutAPrefix() {
-        // Tempo 不跟 Thanos 共用桶：默认落到独立桶 tempo，且不写 prefix（直接写桶根）
+        // Tempo 不跟 Thanos 共用桶：外部地址模式下默认桶名就是 tempo，且不写 prefix（直接写桶根）
+        // （2026-10-27 起 source 的默认值改成 PLATFORM，这条路要显式声明 EXTERNAL）
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
         when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
@@ -1347,6 +1352,7 @@ class ComponentInstallServiceTest {
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
 
         TempoStorageConfig storage = new TempoStorageConfig();
+        storage.setSource(TempoStorageConfig.SOURCE_EXTERNAL);
         storage.setEndpoint("192.168.31.80:9002");
         storage.setCredentialSecret(new SecretRef("monitor", "minio-creds"));
         storage.setInsecureSkipVerify(true);
@@ -1824,5 +1830,77 @@ class ComponentInstallServiceTest {
         r.setMessage("预检失败：values path not found");
         r.getReleases().get(0).setStatus("FAILED");
         return r;
+    }
+
+    // ---------- Tempo 存储来源：平台对象存储（默认）/ 外部地址 ----------
+
+    @Test
+    void tempoStorageDefaultsToPlatformObjectStorage() {
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
+        bucket.setId("obk_tempo");
+        bucket.setClusterId("c1");
+        bucket.setBucket("t-25c6a969-tempo");
+        when(objectStorage.s3Endpoint("c1")).thenReturn("http://seaweedfs-s3.platform-storage:8333");
+        when(objectStorage.listBuckets(eq("c1"), any())).thenReturn(List.of(bucket));
+        when(objectStorage.issueCredential(any(), anyString()))
+                .thenReturn(new ObjectCredentialDTO("AK-TEMPO", "SK-TEMPO"));
+
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoStorage(new TempoStorageConfig());   // source 留空 = 默认平台对象存储
+        req.setOtel(otel);
+
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                eq("c1"), eq("otel-operator"), eq("INSTALL"), captor.capture());
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> s3 = captor.getValue().stream()
+                .map(r -> r.getValues())
+                .filter(v -> v.get("tempo") instanceof Map)
+                .map(v -> (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>)
+                        ((Map<String, Object>) v.get("tempo")).get("storage")).get("trace")).get("s3"))
+                .findFirst().orElseThrow();
+        // 地址取集群的 S3 连接地址（scheme 剥掉），桶是平台拼出来的全名，传输是明文
+        assertThat(s3).containsEntry("endpoint", "seaweedfs-s3.platform-storage:8333")
+                .containsEntry("bucket", "t-25c6a969-tempo")
+                .containsEntry("insecure", true);
+
+        // 凭据是本次刚发放的：直接下发，不去读来源 Secret；桶已存在就不再建
+        verify(client).applyTempoObjstore("c1", null, null, "monitor", "platform-tempo-objstore",
+                "AK-TEMPO", "SK-TEMPO");
+        verify(objectStorage, never()).createBucket(any(), anyString());
+    }
+
+    @Test
+    void tempoStorageExternalModeStillRequiresTheCredentialSecret() {
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        OtelInstallRequest otel = baseOtel();
+        TempoStorageConfig storage = new TempoStorageConfig();
+        storage.setSource(TempoStorageConfig.SOURCE_EXTERNAL);
+        storage.setEndpoint("192.168.31.80:9002");
+        storage.setBucket("tempo");
+        storage.setPlaintext(false);
+        otel.setTempoStorage(storage);
+        req.setOtel(otel);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("凭证 Secret");
     }
 }

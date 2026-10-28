@@ -506,23 +506,31 @@ public class ComponentInstallController implements AccessBoundaryAware {
             description = "幂等 SSA；由 platform-api 在管理集群安装 Tempo 前调用")
     public ResponseData<Void> tempoObjstore(@RequestBody TempoObjstoreRequestDTO request) {
         accessResolver.assertClusterAccess(request.getClusterId());
-        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())
-                || isBlank(request.getTargetNamespace()) || isBlank(request.getTargetSecretName())) {
+        if (isBlank(request.getTargetNamespace()) || isBlank(request.getTargetSecretName())) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "Tempo 对象存储参数不完整");
         }
+        String[] credentials;
+        if (!isBlank(request.getAccessKey()) && !isBlank(request.getSecretKey())) {
+            // 平台对象存储模式：platform-api 已经拿到了刚发放的凭据，不用再读来源 Secret
+            credentials = new String[]{request.getAccessKey(), request.getSecretKey()};
+        } else {
+            if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, "Tempo 对象存储参数不完整");
+            }
+            Secret source = clientFactory.getAdminClient(request.getClusterId()).secrets()
+                    .inNamespace(request.getNamespace()).withName(request.getSecretName()).get();
+            if (source == null) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "凭证 Secret 不存在：" + request.getNamespace() + "/" + request.getSecretName());
+            }
+            credentials = ThanosObjstoreObjects.findCredentials(source.getData());
+            if (credentials == null) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "凭证 Secret 缺少可识别的 access key / secret key（支持："
+                                + ThanosObjstoreObjects.supportedKeyPairs() + "）");
+            }
+        }
         var client = clientFactory.getAdminClient(request.getClusterId());
-        Secret source = client.secrets().inNamespace(request.getNamespace())
-                .withName(request.getSecretName()).get();
-        if (source == null) {
-            throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "凭证 Secret 不存在：" + request.getNamespace() + "/" + request.getSecretName());
-        }
-        String[] credentials = ThanosObjstoreObjects.findCredentials(source.getData());
-        if (credentials == null) {
-            throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "凭证 Secret 缺少可识别的 access key / secret key（支持："
-                            + ThanosObjstoreObjects.supportedKeyPairs() + "）");
-        }
         Secret target = TempoObjstoreObjects.build(credentials[0], credentials[1],
                 request.getTargetNamespace(), request.getTargetSecretName());
         client.secrets().inNamespace(request.getTargetNamespace())

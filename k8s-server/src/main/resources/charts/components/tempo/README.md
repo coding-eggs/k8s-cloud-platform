@@ -119,6 +119,24 @@ curl -s http://platform-tempo.monitor.svc:3200/ready
 7. **Tempo 查询 `durationMs` 缺失** —— `/api/search` 部分版本不返回顶层 `durationMs`，平台退回根 span 的
    `durationNanos`（这是 trace 客户端的事，不是 Tempo 装错）。
 
+## 6.1 存储来源：平台对象存储（默认）/ 外部地址（2026-10-28）
+
+安装表单的「Tempo 存储」多了一个**存储来源**选择：
+
+| 来源 | 表单要给什么 | 平台做什么 |
+|---|---|---|
+| `PLATFORM`（默认） | 只给**桶的逻辑名**（默认 `tempo`） | 地址取该集群的 S3 连接地址（`k8s_cluster.object_storage_url`，空则用集群内 `seaweedfs-s3.platform-storage:8333`）；桶按 `t-<租户短码>-<名字>` 找现成的、没有就建；凭据现发放并写 `monitor/platform-tempo-objstore` |
+| `EXTERNAL` | endpoint（host:port）+ 桶全名 + 凭证 Secret + 传输方式 | 原样使用，与以前一致 |
+
+几个要点：
+
+1. **平台模式的凭据是一次性的**：每次安装/升级都会新发放一组，写进同一个 Secret 并触发 Tempo 滚动；
+   旧凭据留在对象存储里不回收（不影响使用，介意的话在「对象存储 → 凭据」里手工吊销）。
+2. **桶归属租户**：优先复用同名桶的归属；都没有则落到 `default` 租户（没有 default 取第一个租户）。
+   桶名只填逻辑名 —— 平台模式下**不要**填 `t-xxx-` 前缀。
+3. **依赖对象存储组件**：未安装时直接报「对象存储组件尚未安装」，不会装出一个连不上 S3 的 Tempo。
+4. 外部地址模式仍然保留：接 MinIO / 云上 S3 时用，传输方式（HTTP/HTTPS）在表单里显式选。
+
 ## 7. 新增版本
 
 1. `helm pull tempo --repo https://grafana-community.github.io/helm-charts --version <x.y.z> --untar`；

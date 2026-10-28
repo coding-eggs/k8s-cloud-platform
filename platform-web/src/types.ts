@@ -1191,6 +1191,10 @@ export interface K8sSecretRef {
 
 /** Tempo 的 MinIO 存储参数（管理集群） */
 export interface K8sTempoStorage {
+  /** 存储来源：PLATFORM=平台对象存储（默认）/ EXTERNAL=自己填外部地址 */
+  source?: 'PLATFORM' | 'EXTERNAL'
+  /** PLATFORM 专用：桶归属租户（空 = 后端复用同名桶的归属，否则落到 default 租户） */
+  tenantId?: string
   endpoint: string
   /** 独立桶（默认 tempo，不与 Thanos 共用）；Tempo 的 block 直接落在桶根，没有前缀 */
   bucket: string

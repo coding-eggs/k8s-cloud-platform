@@ -525,9 +525,11 @@ function emptyOtel(): OtelForm {
     tempoRetention: '168h',
     tempoTlsMode: 'plaintext',
     tempoStorage: {
-      endpoint: '192.168.31.80:9002', bucket: 'tempo',
+      // 默认用平台对象存储：地址/凭据由平台给，表单只需要桶名（逻辑名，后端拼 t-<租户>-<名字>）
+      source: 'PLATFORM',
+      endpoint: '', bucket: 'tempo',
       credentialSecret: { namespace: 'monitor', name: '' },
-      insecureSkipVerify: true, plaintext: false,
+      insecureSkipVerify: true, plaintext: true,
     },
     es: {
       endpoint: 'https://es-es-http.default.svc:9200',
@@ -1791,14 +1793,30 @@ const anyUnknown = computed(() => unknownCount.value > 0)
       <div v-if="applyDialog.showOtel && applyDialog.showTempoInstall" class="cc-section-title">Tempo 存储</div>
       <template v-if="applyDialog.showOtel && applyDialog.showTempoInstall">
         <div class="cc-form-row">
-          <span class="cc-form-label">Tempo 对象存储</span>
+          <span class="cc-form-label">存储来源</span>
           <div class="cc-form-control">
+            <el-radio-group v-model="applyDialog.otel.tempoStorage.source">
+              <el-radio-button value="PLATFORM">平台对象存储</el-radio-button>
+              <el-radio-button value="EXTERNAL">外部地址</el-radio-button>
+            </el-radio-group>
             <div class="cc-form-hint">
-              Tempo 把 traces 写进 <b>MinIO</b>（S3 兼容）；凭证只在集群内转换成
+              Tempo 把 traces 写进 <b>S3 兼容存储</b>；凭证只在集群内转换成
               <code>platform-tempo-objstore</code>，密钥不经过 platform-api、不进操作记录。
             </div>
           </div>
         </div>
+        <div v-if="applyDialog.otel.tempoStorage.source === 'PLATFORM'" class="cc-form-row">
+          <span class="cc-form-label">Bucket</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.otel.tempoStorage.bucket" placeholder="tempo" spellcheck="false" />
+          </div>
+          <div class="cc-form-hint" style="flex-basis: 100%">
+            走<b>平台对象存储</b>：地址取集群的 S3 连接地址，桶按 <code>t-&lt;租户&gt;-&lt;名字&gt;</code>
+            自动查找（没有就现建），凭据由平台发放。这里只填<b>逻辑名</b>（默认 <code>tempo</code>），
+            Tempo 用独立桶，不要与 Thanos 的桶共用
+          </div>
+        </div>
+        <template v-if="applyDialog.otel.tempoStorage.source !== 'PLATFORM'">
         <div class="cc-form-row">
           <span class="cc-form-label">MinIO 地址</span>
           <div class="cc-form-control" style="display: flex; gap: 8px">
@@ -1847,6 +1865,7 @@ const anyUnknown = computed(() => unknownCount.value > 0)
             </div>
           </div>
         </div>
+        </template>
         <div class="cc-form-row">
           <span class="cc-form-label">Trace 保留期</span>
           <div class="cc-form-control">
