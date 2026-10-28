@@ -36,6 +36,16 @@
 
 - [ ] **内网解析方案定了**：用户正在调研能否改内网 DNS；能改就加一条 `harbor.ackcp.cloud → 192.168.31.80`，
       改不了就用节点 `/etc/hosts`（三台节点 + 开发机）。**这条不通，代码做完也拉不到镜像**，所以开工前先确认。
+      需要加的名字（都指向**同一个**入口 `192.168.31.80`，即 istio external-gateway 所在的 .31 侧地址）：
+
+      | 名字 | 用途 | 何时需要 |
+      |---|---|---|
+      | `harbor.ackcp.cloud` | Harbor（镜像仓库） | 本批必需 |
+      | `s3.ackcp.cloud` | 对象存储 S3 | 对象存储 HTTPS 化那批必需 |
+      | `ackcp.cloud` | 根域（将来放平台入口/官网） | 现在可不加 |
+
+      ⚠️ **443 目前是 closed**（NodePort 已声明但 Gateway CR 里没有 443 listener，envoy 没在监听）——
+      加完 listener 后才会通；80 和 30002 现在就是通的，可用于先验证解析。
 - [ ] Harbor 域名与证书就位（已有：`cert/harbor.ackcp.cloud.pem` / `.key`，DigiCert，2027-01-25 到期）
 - 对象存储 HTTPS 化排在**本批之后**：见
   [2026-10-28-object-storage-tls-design.md](../specs/2026-10-28-object-storage-tls-design.md)
