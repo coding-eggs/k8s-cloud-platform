@@ -43,13 +43,49 @@ public final class ExternalGatewayObjects {
 
     public static GenericKubernetesResource build(String namespace, String name, String serviceName,
                                                   List<GatewayListenerDTO> listeners) {
+        return buildWithSpecs(namespace, name, serviceName, listenerSpecs(listeners));
+    }
+
+    /** 把 listener DTO 转成 Gateway CR 的 listener 结构（纯函数，单测直接断言） */
+    public static List<Map<String, Object>> listenerSpecs(List<GatewayListenerDTO> listeners) {
         List<Map<String, Object>> specs = new ArrayList<>();
         for (GatewayListenerDTO l : listeners) {
+            Map<String, Object> m = listenerSpec(l);
+            specs.add(m);
+        }
+        return specs;
+    }
+
+    /**
+     * 按 listener 名合并：incoming 覆盖同名项，其余保留（顺序：先已有的，再新增的）。
+     *
+     * <p>组件们（Harbor 的 443、以后 S3 的 443）各自只带自己那一条，靠这个函数并进 Istio 的端口表。
+     */
+    public static List<Map<String, Object>> mergeByName(List<Map<String, Object>> existing,
+                                                        List<Map<String, Object>> incoming) {
+        Map<String, Map<String, Object>> merged = new LinkedHashMap<>();
+        if (existing != null) {
+            for (Map<String, Object> l : existing) {
+                merged.put(String.valueOf(l.get("name")), l);
+            }
+        }
+        if (incoming != null) {
+            for (Map<String, Object> l : incoming) {
+                merged.put(String.valueOf(l.get("name")), l);
+            }
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private static Map<String, Object> listenerSpec(GatewayListenerDTO l) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", l.getName());
             m.put("port", l.getPort());
             m.put("protocol", l.getProtocol());
             m.put("allowedRoutes", Map.of("namespaces", Map.of("from", "All")));
+            if (l.getHostname() != null && !l.getHostname().isBlank()) {
+                m.put("hostname", l.getHostname().trim());
+            }
             if ("HTTPS".equals(l.getProtocol()) || "TLS".equals(l.getProtocol())) {
                 String mode = l.getTlsMode();
                 if (mode == null || mode.isBlank()) {
@@ -67,9 +103,13 @@ public final class ExternalGatewayObjects {
                                     "name", l.getTlsSecret()))));
                 }
             }
-            specs.add(m);
-        }
+        return m;
+    }
 
+    /** 低层构建：listener 已经是要写进 CR 的结构（合并路径用） */
+    public static GenericKubernetesResource buildWithSpecs(String namespace, String name,
+                                                           String serviceName,
+                                                           List<Map<String, Object>> specs) {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("gatewayClassName", "istio");
         spec.put("addresses", List.of(Map.of(

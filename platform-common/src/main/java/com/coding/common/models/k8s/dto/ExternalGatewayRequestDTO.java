@@ -20,4 +20,13 @@ public class ExternalGatewayRequestDTO {
     /** 承载它的 Service 名（同 namespace） */
     private String serviceName;
     private List<GatewayListenerDTO> listeners;
+
+    /**
+     * true = 按名字**合并**进集群里已有的 Gateway（只增补/覆盖同名 listener，其余保留）；
+     * false/空 = 整份替换（Istio 安装/重放时的行为，能顺带裁掉端口表里删掉的项）。
+     *
+     * <p>组件（Harbor / S3 这类）只带自己那一条 listener 来，用 merge=true —— 否则它们会把
+     * Istio 的端口表整份覆盖掉。
+     */
+    private Boolean merge;
 }

@@ -81,6 +81,14 @@ public class ComponentInstallService {
     /** Thanos chart 的 global.objstore.secretName（recipe 里固定为它） */
     private static final String THANOS_OBJSTORE_SECRET = "platform-thanos-objstore";
 
+    /** Harbor 的 HTTPS 证书 Secret（route 模式必须放 istio-system：Gateway 的 certificateRefs 只能同命名空间） */
+    private static final String HARBOR_TLS_SECRET = "harbor-tls";
+    /** Harbor 在 443 上的 listener 名（HTTPRoute 用 sectionName 绑它，避免挂到别的 HTTP listener 上） */
+    private static final String HARBOR_HTTPS_LISTENER = "harbor-https";
+    /** 默认 HTTPS 端口 */
+    private static final int DEFAULT_HARBOR_HTTPS_PORT = 443;
+    private static final int DEFAULT_HARBOR_HTTPS_NODE_PORT = 30443;
+
     /** SeaweedFS admin 管理台的口令 Secret：口令由 k8s-server 生成，platform-api 只传名字 */
     private static final String SEAWEED_ADMIN_SECRET = "platform-seaweedfs-admin";
 
@@ -582,6 +590,10 @@ public class ComponentInstallService {
             h.put("redisMode", harbor.getRedisMode());
             h.put("redisAddr", harbor.getRedisAddr());
             h.put("redisUsername", harbor.getRedisUsername());
+            // HTTPS 开关要记：编辑表单回填用。证书/私钥**不记**（只在本次请求里流动）
+            h.put("https", Boolean.TRUE.equals(harbor.getHttps()));
+            h.put("httpsPort", harbor.getHttpsPort());
+            h.put("httpsNodePort", harbor.getHttpsNodePort());
             platform.put("harbor", h);
         }
         if (!platform.isEmpty()) {
@@ -1048,7 +1060,30 @@ public class ComponentInstallService {
         out.setRedisUsername(firstNonBlank(requested == null ? null : requested.getRedisUsername(),
                 asString(prev.get("redisUsername"))));
         out.setRedisPassword(requested == null ? null : requested.getRedisPassword());
+        // HTTPS：表单 > 上次快照；证书/私钥**只**来自本次请求（快照里没有）
+        boolean https = requested != null && requested.getHttps() != null
+                ? requested.getHttps()
+                : Boolean.TRUE.equals(prev.get("https"));
+        out.setHttps(https);
+        out.setHttpsPort(firstNonNullInt(requested == null ? null : requested.getHttpsPort(),
+                prev.get("httpsPort"), DEFAULT_HARBOR_HTTPS_PORT));
+        out.setHttpsNodePort(firstNonNullInt(requested == null ? null : requested.getHttpsNodePort(),
+                prev.get("httpsNodePort"), DEFAULT_HARBOR_HTTPS_NODE_PORT));
+        out.setTlsCert(requested == null ? null : requested.getTlsCert());
+        out.setTlsKey(requested == null ? null : requested.getTlsKey());
+        if (https) {
+            // 证书只对域名有效：拿 IP 开 HTTPS，客户端一定会 x509 失败
+            if (isBlank(out.getHost()) || isIpAddress(out.getHost())) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "Harbor 开 HTTPS 必须用域名（证书只对域名有效），当前是：" + out.getHost());
+            }
+        }
         return out;
+    }
+
+    /** 简易 IPv4 判断（HTTPS 只能用域名，用 IP 时直接拒） */
+    static boolean isIpAddress(String host) {
+        return host != null && host.matches("^\\d{1,3}(\\.\\d{1,3}){3}$");
     }
 
     private static Integer firstNonNullInt(Integer requested, Object previous, int fallback) {
@@ -1199,12 +1234,15 @@ public class ComponentInstallService {
      */
     static String harborAuthority(HarborInstallRequest harbor) {
         String host = harbor.getHost();
+        boolean https = Boolean.TRUE.equals(harbor.getHttps());
         if ("nodePort".equals(harbor.getExposeMode())) {
-            return host + ":" + harbor.getNodePort();
+            Integer nodePort = https ? harbor.getHttpsNodePort() : harbor.getNodePort();
+            return host + ":" + nodePort;
         }
         if ("loadBalancer".equals(harbor.getExposeMode())) {
-            Integer port = harbor.getPort();
-            return port == null || port == 80 ? host : host + ":" + port;
+            Integer port = https ? harbor.getHttpsPort() : harbor.getPort();
+            // 80/443 是默认端口，不写进 authority
+            return port == null || port == 80 || port == 443 ? host : host + ":" + port;
         }
         return host;
     }
@@ -1216,20 +1254,42 @@ public class ComponentInstallService {
      * route 的 {@code parentRefs} 固定指 {@code istio-system/external-gateway}。
      */
     private static List<ReleaseSpec> applyHarborValues(List<ReleaseSpec> releases, HarborInstallRequest h) {
+        boolean https = Boolean.TRUE.equals(h.getHttps());
+        boolean viaGateway = https && "route".equals(h.getExposeMode());
         Map<String, Object> expose = new LinkedHashMap<>();
         expose.put("type", h.getExposeMode());
-        expose.put("tls", Map.of("enabled", false));
+        if (viaGateway) {
+            // TLS 在网关终止：Harbor 自己仍是 HTTP
+            expose.put("tls", Map.of("enabled", false));
+        } else if (https) {
+            expose.put("tls", Map.of("enabled", true, "certSource", "secret",
+                    "secret", Map.of("secretName", HARBOR_TLS_SECRET)));
+        } else {
+            expose.put("tls", Map.of("enabled", false));
+        }
+        // route：HTTPS 时把 HTTPRoute 绑到 443 的那条 listener（不写 sectionName 会挂到所有 HTTP listener 上）
+        Map<String, Object> parent = new LinkedHashMap<>();
+        parent.put("name", "external-gateway");
+        parent.put("namespace", "istio-system");
+        if (https) {
+            parent.put("sectionName", HARBOR_HTTPS_LISTENER);
+        }
         expose.put("route", Map.of(
-                "parentRefs", List.of(Map.of("name", "external-gateway", "namespace", "istio-system")),
+                "parentRefs", List.of(parent),
                 "hosts", List.of(h.getHost())));
-        expose.put("nodePort", Map.of("name", "harbor", "ports", Map.of("http",
-                Map.of("port", 80, "nodePort", h.getNodePort()))));
-        expose.put("loadBalancer", Map.of("name", "harbor", "ports",
-                Map.of("httpPort", h.getPort())));
+        Map<String, Object> nodePorts = new LinkedHashMap<>();
+        nodePorts.put("http", Map.of("port", 80, "nodePort", h.getNodePort()));
+        if (https) {
+            nodePorts.put("https", Map.of("port", 443, "nodePort", h.getHttpsNodePort()));
+        }
+        expose.put("nodePort", Map.of("name", "harbor", "ports", nodePorts));
+        expose.put("loadBalancer", Map.of("name", "harbor", "ports", https
+                ? Map.of("httpPort", h.getPort(), "httpsPort", h.getHttpsPort())
+                : Map.of("httpPort", h.getPort())));
 
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("expose", expose);
-        values.put("externalURL", "http://" + harborAuthority(h));
+        values.put("externalURL", (https ? "https://" : "http://") + harborAuthority(h));
 
         // 外部数据库：口令走 Secret（键 password），values 里只引用名字
         if ("external".equals(h.getDatabaseMode())) {
@@ -1582,6 +1642,14 @@ public class ComponentInstallService {
             if (seaweed != null) {
                 client.ensureSeaweedS3Config(clusterId);
             }
+            // Harbor 的 HTTPS 证书必须在 helm 之前就位：chart 的 expose.tls 只是引用 Secret，
+            // 不存在的话 harbor-nginx 起不来。留空证书 = 沿用集群里已有的那份（编辑重放不重复上传）
+            if (harbor != null && Boolean.TRUE.equals(harbor.getHttps())
+                    && !isBlank(harbor.getTlsCert())) {
+                String ns = "route".equals(harbor.getExposeMode()) ? "istio-system" : "harbor";
+                client.applyTlsSecret(clusterId, ns, HARBOR_TLS_SECRET,
+                        harbor.getTlsCert(), harbor.getTlsKey());
+            }
             // Harbor 的管理口令与 secretKey 必须在 helm 之前就位；values 里只引用 Secret 名
             if (harbor != null) {
                 client.applyHarborSecrets(clusterId, "harbor", "platform-harbor-secrets");
@@ -1655,6 +1723,32 @@ public class ComponentInstallService {
             //    「上次成功」为空 —— 编辑表单读不到当前值、版本列显示「—」（2026-10-27 用户撞到）。
             //    失败写进操作消息，镜像项目面板里每个租户还有一行 ERROR，可以单独重试。
             String postInstallNote = null;
+            // Harbor 走 HTTPS + route 时，443 的 listener 必须并进 external-gateway
+            // （merge=true：只加自己这一条，不动 Istio 的端口表）。失败不改安装结论 —— helm 已成功，
+            // 但要在消息里写清楚，否则「装好了却连不上」
+            String gatewayNote = null;
+            if (result.isSuccess() && harbor != null && Boolean.TRUE.equals(harbor.getHttps())
+                    && "route".equals(harbor.getExposeMode())) {
+                try {
+                    GatewayListenerDTO listener = new GatewayListenerDTO();
+                    listener.setName(HARBOR_HTTPS_LISTENER);
+                    listener.setPort(DEFAULT_HARBOR_HTTPS_PORT);
+                    listener.setProtocol("HTTPS");
+                    listener.setTlsMode("Terminate");
+                    listener.setTlsSecret(HARBOR_TLS_SECRET);
+                    listener.setHostname(harbor.getHost());
+                    if (!client.ensureExternalGateway(clusterId, "istio-system", "external-gateway",
+                            "external-gateway", List.of(listener), true)) {
+                        gatewayNote = "Gateway API CRD 未就绪，443 listener 未下发";
+                    }
+                } catch (Exception e) {
+                    gatewayNote = "443 listener 下发失败：" + e.getMessage();
+                    log.warn("组件 {} 安装成功，但 Harbor 的 443 listener 下发失败: {}", id, e.getMessage());
+                }
+            }
+            if (gatewayNote != null && postInstallNote == null) {
+                postInstallNote = gatewayNote;
+            }
             if (result.isSuccess() && "harbor".equals(componentCode)) {
                 try {
                     // host 直接来自本次安装参数：钩子在写 SUCCESS 之前跑，harborHost() 还读不到记录

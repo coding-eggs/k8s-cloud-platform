@@ -19,4 +19,12 @@ public class GatewayListenerDTO {
     private String tlsMode;
     /** Terminate 用的证书 Secret 名（同 Gateway 命名空间）；Passthrough 不用 */
     private String tlsSecret;
+    /**
+     * listener 的 hostname（可空 = 该端口上接受任意 Host）。
+     *
+     * <p>同一端口放多条 HTTPS listener 时**必须**各自写 hostname：Gateway API 要求
+     * (port, hostname) 唯一，Envoy 也靠 SNI 选 listener 与证书。Harbor 与 S3 都要占 443，
+     * 就靠它区分。
+     */
+    private String hostname;
 }

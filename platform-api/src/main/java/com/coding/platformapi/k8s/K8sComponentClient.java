@@ -15,6 +15,7 @@ import com.coding.common.models.k8s.dto.HarborSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
 import com.coding.common.models.objectstorage.SeaweedS3ConfigRequestDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
+import com.coding.common.models.k8s.dto.TlsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeRequestDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
@@ -69,15 +70,40 @@ public class K8sComponentClient {
      */
     public boolean ensureExternalGateway(String clusterId, String namespace, String name,
                                          String serviceName, List<GatewayListenerDTO> listeners) {
+        return ensureExternalGateway(clusterId, namespace, name, serviceName, listeners, false);
+    }
+
+    /**
+     * @param merge true = 只把 listeners 并进已有 Gateway（按名字覆盖同名项，其余保留）。
+     *              Harbor / S3 这类组件各自只带自己的 443 listener 时必须用 true，
+     *              否则会把 Istio 的端口表整份覆盖掉。
+     */
+    public boolean ensureExternalGateway(String clusterId, String namespace, String name,
+                                         String serviceName, List<GatewayListenerDTO> listeners,
+                                         boolean merge) {
         ExternalGatewayRequestDTO body = new ExternalGatewayRequestDTO();
         body.setClusterId(clusterId);
         body.setNamespace(namespace);
         body.setName(name);
         body.setServiceName(serviceName);
         body.setListeners(listeners);
+        body.setMerge(merge);
         Boolean ok = gateway.exchange(HttpMethod.POST, "/components/external-gateway", null, body,
                 gateway.responseType(Boolean.class));
         return Boolean.TRUE.equals(ok);
+    }
+
+    /** 把一对 PEM 写成 {@code kubernetes.io/tls} Secret（Harbor 的 HTTPS 证书）。 */
+    public void applyTlsSecret(String clusterId, String namespace, String secretName,
+                               String certPem, String keyPem) {
+        TlsSecretRequestDTO body = new TlsSecretRequestDTO();
+        body.setClusterId(clusterId);
+        body.setNamespace(namespace);
+        body.setSecretName(secretName);
+        body.setCertPem(certPem);
+        body.setKeyPem(keyPem);
+        gateway.exchange(HttpMethod.POST, "/components/tls-secret", null, body,
+                gateway.responseType(Void.class));
     }
 
     /**

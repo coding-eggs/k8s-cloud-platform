@@ -187,7 +187,13 @@ void harborHttpsRequiresADomain() {
   - `applyHarborValues`：按上面的结构写 values；`externalURL` 的 scheme 跟 `https` 走
   - `run()` 里 helm 之前调 k8s-server 写 `harbor-tls`（证书/私钥走请求体，**不落 values / 不进快照**）
 - [ ] **Step 4: 跑 → PASS（原有 http 用例不回归）**
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**（已实现，2026-10-28）
+
+> 实现要点（与计划一致的三处补充）：
+> - k8s-server 新端点 `POST /components/tls-secret`：PEM → `kubernetes.io/tls` Secret（`TlsSecretObjects`，纯函数 + 单测）
+> - `GatewayListenerDTO` 加 `hostname`；`ExternalGatewayRequestDTO` 加 `merge`
+> - **merge=true**：组件只带自己那条 listener，k8s-server 按名字并进已有 Gateway（否则会把 Istio 端口表整份覆盖）
+> - 同一端口上 (port, hostname) 唯一性在 controller 校验（两条 443 必须各写 hostname）
 
 > 首装顺序：Certificate 形态的 Secret 必须先存在，否则 `harbor-nginx` 起不来 —— 平台在 helm 之前写，
 > 天然满足；失败时整条操作记 FAILED，不会留半个 Harbor。

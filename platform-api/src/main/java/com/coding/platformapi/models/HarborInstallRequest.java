@@ -26,6 +26,29 @@ public class HarborInstallRequest {
     /** loadBalancer 模式的 Service 端口（默认 80） */
     private Integer port;
 
+    /**
+     * 对外用 HTTPS（默认 false = HTTP，与既有部署一致）。
+     *
+     * <p>route 模式：TLS 在 {@code istio-system/external-gateway} 的 443 listener 终止，Harbor 自身仍是 HTTP；
+     * nodePort / loadBalancer 模式：Harbor 自己挂证书（chart 的 {@code expose.tls.certSource=secret}）。
+     */
+    private Boolean https;
+
+    /** HTTPS 的 Service 端口（默认 443） */
+    private Integer httpsPort;
+
+    /** HTTPS 的 NodePort（nodePort 模式用，默认 30443） */
+    private Integer httpsNodePort;
+
+    /**
+     * 证书链 PEM（**只作入参**：平台写成 Secret，不进 values、不进快照、不回显）。
+     * 留空 = 沿用集群里已有的 {@code harbor-tls}（编辑重放时不重复上传）。
+     */
+    private String tlsCert;
+
+    /** 私钥 PEM（同上） */
+    private String tlsKey;
+
     /** 数据库来源：internal / external（**只能在首次安装时选**） */
     private String databaseMode;
 

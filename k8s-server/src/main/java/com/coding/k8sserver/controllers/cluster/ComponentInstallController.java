@@ -16,6 +16,7 @@ import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
+import com.coding.common.models.k8s.dto.TlsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesClientFactory;
@@ -33,6 +34,7 @@ import com.coding.k8sserver.components.OtelEsSecretObjects;
 import com.coding.k8sserver.components.OtelServiceMonitorObjects;
 import com.coding.k8sserver.components.OtelTelemetryObjects;
 import com.coding.k8sserver.components.TempoObjstoreObjects;
+import com.coding.k8sserver.components.TlsSecretObjects;
 import com.coding.k8sserver.components.ThanosObjstoreObjects;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -501,6 +503,28 @@ public class ComponentInstallController implements AccessBoundaryAware {
      *
      * <p>与 Thanos 的 objstore 同一原则：凭证只在集群内转换。
      */
+    /**
+     * TLS 证书 Secret（Harbor 的 HTTPS）：把一对 PEM 写成 {@code kubernetes.io/tls}。
+     *
+     * <p>命名空间由调用方指定 —— 走 Gateway listener 时必须是 {@code istio-system}
+     * （Gateway API 的 certificateRefs 只能引用同命名空间的 Secret）。
+     */
+    @PostMapping("/tls-secret")
+    @Operation(summary = "下发 TLS 证书 Secret（幂等 SSA）",
+            description = "由 platform-api 在 Harbor 开 HTTPS 之前调用；证书不落 values、不进快照")
+    public ResponseData<Void> tlsSecret(@RequestBody TlsSecretRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        if (isBlank(request.getNamespace()) || isBlank(request.getSecretName())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "证书 Secret 参数不完整");
+        }
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        client.secrets().inNamespace(request.getNamespace())
+                .resource(TlsSecretObjects.build(request.getNamespace(), request.getSecretName(),
+                        request.getCertPem(), request.getKeyPem()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>();
+    }
+
     @PostMapping("/tempo-objstore")
     @Operation(summary = "下发 Tempo 对象存储凭证 Secret",
             description = "幂等 SSA；由 platform-api 在管理集群安装 Tempo 前调用")
@@ -641,11 +665,19 @@ public class ComponentInstallController implements AccessBoundaryAware {
             throw new CloudPlatformException(EnumResponseType.ERROR, "external-gateway 参数不完整");
         }
         java.util.Set<String> names = new java.util.HashSet<>();
+        java.util.Set<String> portHosts = new java.util.HashSet<>();
         for (GatewayListenerDTO l : request.getListeners()) {
             if (isBlank(l.getName()) || !names.add(l.getName())
                     || l.getPort() == null || l.getPort() < 1 || l.getPort() > 65535) {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "Gateway listener 名称/端口不合法：" + l.getName());
+            }
+            // Gateway API 要求 (port, hostname) 唯一：同一端口上放多条 listener 必须各写 hostname
+            String host = l.getHostname() == null ? "" : l.getHostname().trim().toLowerCase();
+            if (!portHosts.add(l.getPort() + "|" + host)) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "同一端口上的 listener 必须用不同的 hostname：port=" + l.getPort()
+                                + " host=" + (host.isEmpty() ? "(空)" : host));
             }
             String protocol = l.getProtocol() == null ? ""
                     : l.getProtocol().toUpperCase(java.util.Locale.ROOT);
@@ -682,10 +714,23 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 .withName(ExternalGatewayObjects.CRD_NAME).get() == null) {
             return new ResponseData<>(false);
         }
+        // merge=true：只把本次的 listener 并进已有 Gateway（组件专用），不整份覆盖 Istio 的端口表
+        List<Map<String, Object>> specs = ExternalGatewayObjects.listenerSpecs(request.getListeners());
+        if (Boolean.TRUE.equals(request.getMerge())) {
+            var existing = client.genericKubernetesResources(ExternalGatewayObjects.CRD)
+                    .inNamespace(request.getNamespace()).withName(request.getName()).get();
+            Object existingSpec = existing == null ? null
+                    : existing.getAdditionalProperties().get("spec");
+            Object existingListeners = existingSpec instanceof Map<?, ?> m ? m.get("listeners") : null;
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> current = existingListeners instanceof List<?> list
+                    ? (List<Map<String, Object>>) list : List.of();
+            specs = ExternalGatewayObjects.mergeByName(current, specs);
+        }
         client.genericKubernetesResources(ExternalGatewayObjects.CRD)
                 .inNamespace(request.getNamespace())
-                .resource(ExternalGatewayObjects.build(request.getNamespace(), request.getName(),
-                        request.getServiceName(), request.getListeners()))
+                .resource(ExternalGatewayObjects.buildWithSpecs(request.getNamespace(), request.getName(),
+                        request.getServiceName(), specs))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>(true);
     }

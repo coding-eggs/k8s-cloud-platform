@@ -1591,6 +1591,71 @@ class ComponentInstallServiceTest {
                 .hasMessageContaining("域名不能带端口");
     }
 
+    // ---------- Harbor HTTPS（2026-10-28） ----------
+
+    private static final String CRT_PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+    private static final String KEY_PEM = "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----";
+
+    @Test
+    void harborHttpsOnRouteTerminatesTlsAtTheGateway() {
+        HarborInstallRequest install = new HarborInstallRequest("route", "harbor.example.com", 30002, 80);
+        install.setHttps(true);
+        install.setTlsCert(CRT_PEM);
+        install.setTlsKey(KEY_PEM);
+
+        String values = capturedHarborValues(install);
+
+        // externalURL 必须是 https（写错 = 登录成功但推拉失败）
+        assertThat(values).contains("https://harbor.example.com");
+        // HTTPRoute 必须只绑 443 那条 listener，否则 Harbor 在明文 80 上也暴露
+        assertThat(values).contains("sectionName=harbor-https");
+        // TLS 在网关终止：chart 自己的 tls.enabled 应为 false
+        assertThat(values).contains("enabled=false");
+        // 证书在 helm 之前写成 istio-system 的 Secret（Gateway 的 certificateRefs 只能同命名空间）
+        verify(client, timeout(3000)).applyTlsSecret("c1", "istio-system", "harbor-tls", CRT_PEM, KEY_PEM);
+        // 443 listener 以 merge 方式并进 external-gateway
+        verify(client, timeout(3000)).ensureExternalGateway(
+                org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("istio-system"),
+                org.mockito.ArgumentMatchers.eq("external-gateway"),
+                org.mockito.ArgumentMatchers.eq("external-gateway"),
+                org.mockito.ArgumentMatchers.argThat(list -> list.size() == 1
+                        && "harbor-https".equals(list.get(0).getName())
+                        && Integer.valueOf(443).equals(list.get(0).getPort())
+                        && "harbor.example.com".equals(list.get(0).getHostname())
+                        && "harbor-tls".equals(list.get(0).getTlsSecret())),
+                org.mockito.ArgumentMatchers.eq(true));
+    }
+
+    @Test
+    void harborHttpsRejectsAnIpHost() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "harbor")).thenReturn(0);
+        HarborInstallRequest install = new HarborInstallRequest("nodePort", "10.0.0.5", 30002, 80);
+        install.setHttps(true);
+        install.setTlsCert(CRT_PEM);
+        install.setTlsKey(KEY_PEM);
+
+        assertThatThrownBy(() -> service().apply(harborRequest(install), "admin"))
+                .hasMessageContaining("必须用域名");
+    }
+
+    @Test
+    void harborHttpsCertificateNeverEntersTheSnapshot() {
+        HarborInstallRequest install = new HarborInstallRequest("route", "harbor.example.com", 30002, 80);
+        install.setHttps(true);
+        install.setTlsCert(CRT_PEM);
+        install.setTlsKey(KEY_PEM);
+        capturedHarborValues(install);
+
+        org.mockito.ArgumentCaptor<PlatformComponentOperation> op =
+                org.mockito.ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper, timeout(3000)).insert(op.capture());
+        String snapshot = op.getValue().getValuesSnapshot();
+        assertThat(snapshot).contains("\"https\":true");
+        assertThat(snapshot).doesNotContain("BEGIN CERTIFICATE").doesNotContain("PRIVATE KEY");
+    }
+
     @Test
     void harborRouteModeRequiresIstio() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");

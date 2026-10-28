@@ -54,4 +54,50 @@ class ExternalGatewayObjectsTest {
         assertThat(listeners).allSatisfy(l -> assertThat(l.get("allowedRoutes").toString())
                 .contains("All"));
     }
+
+    @Test
+    void hostnameIsEmittedOnTheListener() {
+        GatewayListenerDTO https = listener("harbor-https", 443, "HTTPS", "harbor-tls");
+        https.setHostname("harbor.ackcp.cloud");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> specs = ExternalGatewayObjects.listenerSpecs(List.of(https));
+
+        assertThat(specs.get(0)).containsEntry("hostname", "harbor.ackcp.cloud")
+                .containsEntry("port", 443);
+        // 没写 hostname 的 listener 不能凭空冒出一个 hostname 字段
+        assertThat(ExternalGatewayObjects.listenerSpecs(List.of(listener("http2", 80, "HTTP", null)))
+                .get(0)).doesNotContainKey("hostname");
+    }
+
+    @Test
+    void mergeByNameKeepsTheIstioPortTable() {
+        List<Map<String, Object>> existing = ExternalGatewayObjects.listenerSpecs(List.of(
+                listener("http2", 80, "HTTP", null),
+                listener("seaweedfs-s3", 38333, "HTTP", null)));
+        GatewayListenerDTO harbor = listener("harbor-https", 443, "HTTPS", "harbor-tls");
+        harbor.setHostname("harbor.ackcp.cloud");
+
+        List<Map<String, Object>> merged = ExternalGatewayObjects.mergeByName(
+                existing, ExternalGatewayObjects.listenerSpecs(List.of(harbor)));
+
+        assertThat(merged).hasSize(3);
+        assertThat(merged.stream().map(m -> m.get("name"))).containsExactly(
+                "http2", "seaweedfs-s3", "harbor-https");
+    }
+
+    @Test
+    void mergeByNameReplacesSameName() {
+        List<Map<String, Object>> existing = ExternalGatewayObjects.listenerSpecs(
+                List.of(listener("harbor-https", 443, "HTTPS", "old-cert")));
+        GatewayListenerDTO updated = listener("harbor-https", 443, "HTTPS", "new-cert");
+        updated.setHostname("harbor.ackcp.cloud");
+
+        List<Map<String, Object>> merged = ExternalGatewayObjects.mergeByName(
+                existing, ExternalGatewayObjects.listenerSpecs(List.of(updated)));
+
+        assertThat(merged).hasSize(1);
+        assertThat(merged.get(0).get("tls").toString()).contains("new-cert")
+                .doesNotContain("old-cert");
+    }
 }
