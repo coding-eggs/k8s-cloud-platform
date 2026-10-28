@@ -15,10 +15,15 @@
 - **镜像命名**（spec §5）：`<harborHost>/<project>/<上游主机>/<仓库路径>[:tag|@digest]`；
   无主机名的引用先归一化到 `docker.io`（单段仓库补 `library/`）。
 - **本环境实际参数**（2026-10-28 更新）：
-  - Harbor 入口：**`https://<域名>`**（公信证书，3 个月期，续期见
+  - Harbor 入口：**`https://harbor.ackcp.cloud`**（DigiCert 公信证书，2026-10-28 → 2027-01-25；
+    证书与私钥在仓库外的 `cert/harbor.ackcp.cloud.pem` / `.key`，**已被 .gitignore 挡住，绝不入库**）；续期见
     [2026-10-28-harbor-tls-renewal-design.md](../specs/2026-10-28-harbor-tls-renewal-design.md)；
     实际域名由运维填进配置，本文用 `<域名>` 占位）
   - 项目：`platform`（已存在，私有，空）；`library` 是公开项目
+  - **端口形态（本批）**：Harbor 用 nodePort 暴露 HTTPS（默认 `30443`），镜像地址形如
+    `harbor.ackcp.cloud:30443/platform/...`；将来若在 `external-gateway` 加 443 listener，
+    地址变成 `harbor.ackcp.cloud/platform/...`（只改配置，不改代码）
+  - 节点侧前提：能解析 `harbor.ackcp.cloud` → Harbor 入口 IP（**节点自己的解析器**，不是 CoreDNS）
   - **节点不需要任何 containerd 改动**：公信证书在默认根池里，节点只要能解析该域名即可
   - 平台后端调 Harbor API 的 scheme 从写死的 `http://` 改成配置（默认 `https`），见 Task 3
 - **不改写就等价于今天的行为**：`imageSource=OFFICIAL` 或 `platform.image-registry.enabled=false` 时，代码路径完全不变。
@@ -141,7 +146,8 @@ void harborHttpsRequiresADomain() {
 ```
 
 - [ ] **Step 2: 跑 → FAIL**
-- [ ] **Step 3: 实现**
+- [ ] **Step 3: 实现**（本环境取值：`host=harbor.ackcp.cloud`、`httpsNodePort=30443`、
+  证书 = `cert/harbor.ackcp.cloud.pem`（含中间证书的 fullchain）、私钥 = `cert/harbor.ackcp.cloud.key`）
   - 校验：`https=true` 时 `host` 不得是 IP（`InetAddressUtil`/正则）；`tlsCert`/`tlsKey` 至少有一个非空
     **或**集群里已存在 `harbor-tls`（编辑重放时允许留空沿用）
   - `applyHarborValues`：按上面的结构写 values；`externalURL` 的 scheme 跟 `https` 走
