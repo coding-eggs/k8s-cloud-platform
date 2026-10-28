@@ -68,6 +68,8 @@ IMAGES = {
 - 中间件允许创建新版本（ES / Milvus）时，把新版本加一行 —— 脚本按 tag 精确复制；
 - 同一仓库需要很多 tag 时会自动拆成多条规则（单条策略的过滤器上限是 20）；
 - 规则名 = `mirror-<上游>-<仓库>-tN`，删规则/endpoint 脚本**不做**（避免误删），要删在 Harbor UI 里删。
+- **删规则前先停掉没结束的执行**，否则 Harbor 报 `contains executions that aren't in final status`。
+  接口是 `PUT /api/v2.0/replication/executions/<id>` + `{"status":"Stopped"}`（**PATCH 会 405**）。
 
 ### 3.1 规则怎么配（手工等价操作）
 
