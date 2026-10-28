@@ -12,6 +12,8 @@
     <result column="prometheus_url" jdbcType="VARCHAR" property="prometheusUrl" />
     <result column="grafana_url" jdbcType="VARCHAR" property="grafanaUrl" />
     <result column="object_storage_url" jdbcType="VARCHAR" property="objectStorageUrl" />
+    <result column="image_registry_host" jdbcType="VARCHAR" property="imageRegistryHost" />
+    <result column="image_registry_project" jdbcType="VARCHAR" property="imageRegistryProject" />
     <result column="description" jdbcType="VARCHAR" property="description" />
     <result column="ip_stack" jdbcType="VARCHAR" property="ipStack" />
     <result column="status" jdbcType="VARCHAR" property="status" />
@@ -25,7 +27,8 @@
   </resultMap>
   <sql id="Base_Column_List">
     cluster_id, cluster_name, kubeconfig, version, istio_version, calico_version, container_runtime,
-    prometheus_url, grafana_url, object_storage_url, description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at, capability, cluster_role
+    prometheus_url, grafana_url, object_storage_url, image_registry_host, image_registry_project,
+    description, ip_stack, `status`, enabled, last_heartbeat_time, created_at, updated_at, deleted_at, capability, cluster_role
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
@@ -45,12 +48,14 @@
   <insert id="insert" parameterType="com.coding.data.models.k8s.K8sCluster">
     insert into k8s_cluster (cluster_id, cluster_name, kubeconfig, version,
       istio_version, calico_version, container_runtime, prometheus_url, grafana_url, object_storage_url,
+      image_registry_host, image_registry_project,
       description, ip_stack, `status`,
       enabled, last_heartbeat_time, created_at,
       updated_at, capability, cluster_role)
     values (#{clusterId,jdbcType=VARCHAR}, #{clusterName,jdbcType=VARCHAR}, #{kubeconfig,jdbcType=VARCHAR}, #{version,jdbcType=VARCHAR},
       #{istioVersion,jdbcType=VARCHAR}, #{calicoVersion,jdbcType=VARCHAR}, #{containerRuntime,jdbcType=VARCHAR},
       #{prometheusUrl,jdbcType=VARCHAR}, #{grafanaUrl,jdbcType=VARCHAR}, #{objectStorageUrl,jdbcType=VARCHAR},
+      #{imageRegistryHost,jdbcType=VARCHAR}, #{imageRegistryProject,jdbcType=VARCHAR},
       #{description,jdbcType=VARCHAR}, #{ipStack,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
       #{enabled,jdbcType=BOOLEAN}, #{lastHeartbeatTime,jdbcType=TIMESTAMP}, #{createdAt,jdbcType=TIMESTAMP},
       #{updatedAt,jdbcType=TIMESTAMP}, #{capability,jdbcType=VARCHAR}, #{clusterRole,jdbcType=VARCHAR})
@@ -205,6 +210,12 @@
       </if>
       <if test="objectStorageUrl != null">
         object_storage_url = #{objectStorageUrl,jdbcType=VARCHAR},
+      </if>
+      <if test="imageRegistryHost != null">
+        image_registry_host = #{imageRegistryHost,jdbcType=VARCHAR},
+      </if>
+      <if test="imageRegistryProject != null">
+        image_registry_project = #{imageRegistryProject,jdbcType=VARCHAR},
       </if>
       <if test="description != null">
         description = #{description,jdbcType=VARCHAR},

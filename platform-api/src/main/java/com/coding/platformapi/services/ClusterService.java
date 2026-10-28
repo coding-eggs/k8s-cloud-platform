@@ -452,6 +452,16 @@ public class ClusterService {
         return require(clusterId).getObjectStorageUrl();
     }
 
+    /** 该集群的镜像仓库地址（host[:端口]，不带 scheme）；空 = 交给上层回退到 Harbor 安装记录/平台默认 */
+    public String imageRegistryHost(String clusterId) {
+        return require(clusterId).getImageRegistryHost();
+    }
+
+    /** 该集群的镜像仓库项目；空 = 平台默认 */
+    public String imageRegistryProject(String clusterId) {
+        return require(clusterId).getImageRegistryProject();
+    }
+
     private K8sCluster require(String clusterId) {
         K8sCluster cluster = clusterMapper.selectByPrimaryKey(clusterId);
         if (cluster == null || cluster.getDeletedAt() != null) {

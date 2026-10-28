@@ -64,6 +64,15 @@ public class K8sCluster {
     private String objectStorageUrl;
 
     /**
+     * 镜像仓库地址（{@code host[:端口]}，不带 scheme）：空 = 用平台默认
+     * （{@code platform.image-registry.host}）或 Harbor 组件的安装记录。
+     */
+    private String imageRegistryHost;
+
+    /** 镜像仓库项目（默认 platform）：空 = 用平台默认 */
+    private String imageRegistryProject;
+
+    /**
      * 集群描述
      */
     private String description;
