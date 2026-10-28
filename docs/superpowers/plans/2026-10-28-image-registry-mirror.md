@@ -627,6 +627,9 @@ class ImagePullSecretsTest {
 ## Task 11: 真集群验证（验收清单）
 
 - [ ] 节点能解析 Harbor 域名，且 `crictl pull <域名>/library/hello-world:latest` 成功（公信证书，无需改 containerd）
+  - ⚠️ 2026-10-28 实测：公网权威 DNS 已有记录（223.5.5.5 / 8.8.8.8 都能查到 `192.168.31.61/62/80`），
+    但**内网解析器拒答**（路由器 `Query refused`，集群 Pod 里 `getent hosts` 同样失败）——
+    上机前必须先在**内网 DNS 加一条 A 记录**（或每台节点 `/etc/hosts`），否则拉镜像 `no such host`
 - [ ] 平台后端能调通 Harbor API：`https://<域名>/api/v2.0/projects` 用 admin 凭据返回 200
 - [ ] Harbor `platform` 项目里已有试点镜像（先用 `metrics-server` 一个）
 - [ ] 平台上对 `metrics-server` 选「平台 Harbor」重装 → Pod 从 `<域名>/platform/registry.k8s.io/...` 拉起
