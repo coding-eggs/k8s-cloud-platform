@@ -59,7 +59,10 @@ redis: { type: internal }
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `exposeMode` | `nodePort` | `nodePort` / `loadBalancer` / `route` |
-| `host` | 无（必填） | 不带 scheme/path/端口。route = 域名；另两种 = 节点/LB 的 IP 或域名 |
+| `host` | 空 = `platform.harbor.default-host` | 不带 scheme/path/端口。route = 域名；另两种 = 节点/LB 的 IP 或域名 |
+| `https` | `false` | route 模式 TLS 在网关 443 终止（Harbor 自己仍是 HTTP）；另两种由 Harbor 挂证书 |
+| `tlsCert` / `tlsKey` | 空 = `platform.harbor.tls-cert-file` / `tls-key-file` | 仅入参：PEM，不进 values、不进快照、不回显；都没有 = 沿用集群里已有的 `harbor-tls` |
+| `httpProxy` / `httpsProxy` / `noProxy` | 空 | 出网代理（复制/扫描是 Harbor 在集群里发起的）。`noProxy` 留空自动补集群内 + 内网 |
 | `nodePort` | `30002` | 仅 nodePort 模式；K8s 默认范围 30000-32767 |
 | `port` | `80` | 仅 loadBalancer 模式；Service 端口 |
 | `databaseMode` | `internal` | `internal` / `external`；**只能在首次安装时选** |
@@ -70,6 +73,18 @@ redis: { type: internal }
 | `redisPassword` | 空 | 仅入参：首次安装必填；编辑留空 = 不改 |
 | 5 块 PVC 的 StorageClass / 容量 | 空 / 20Gi、1Gi、5Gi、1Gi、5Gi | StorageClass 空 = 跟随集群默认 |
 | `trivy.enabled` | `false` | 内网拉不到漏洞库，默认不装 |
+
+**域名与证书可以留空**：生产里它们是固定的，每次重放都重新粘 PEM 既啰嗦又容易贴错。
+平台侧配置（`platform-api/application.yaml` → `platform.harbor.*`，都可用环境变量覆盖）：
+
+| 配置 | 环境变量 | 默认 |
+|---|---|---|
+| `default-host` | `HARBOR_DEFAULT_HOST` | `harbor.ackcp.cloud` |
+| `tls-cert-file` | `HARBOR_TLS_CERT_FILE` | 空（例：`/app/cert/harbor.ackcp.cloud.pem`） |
+| `tls-key-file` | `HARBOR_TLS_KEY_FILE` | 空（例：`/app/cert/harbor.ackcp.cloud.key`） |
+
+`cert/` 在 `.gitignore` 里，证书不会进镜像 —— 部署时挂载目录并设这两个环境变量，或第一次安装时在表单里粘一次
+（之后证书进了 `harbor-tls` Secret，重放留空即可）。
 
 生成的 values：
 

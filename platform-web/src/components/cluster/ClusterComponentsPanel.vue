@@ -893,7 +893,7 @@ function confirmApply(): void {
   if (d.showHarbor) {
     const h = d.harbor
     const host = h.host.trim()
-    if (!HARBOR_HOST_RE.test(host)) {
+    if (host && !HARBOR_HOST_RE.test(host)) {
       ElMessage.error('Harbor 访问地址填 IP 或域名（不带 http://、路径与端口）')
       return
     }
@@ -1557,7 +1557,8 @@ function copyImage(text: string): void {
           : (applyDialog.harbor.exposeMode === 'nodePort' ? '节点地址' : '外部地址') }}</span>
         <div class="cc-form-control">
           <el-input v-model="applyDialog.harbor.host"
-                    :placeholder="applyDialog.harbor.exposeMode === 'route' ? 'harbor.example.com' : '10.0.0.5'"
+                    :placeholder="applyDialog.harbor.exposeMode === 'route'
+                      ? '留空 = harbor.ackcp.cloud（平台配置）' : '留空 = 平台默认地址'"
                     spellcheck="false" />
           <div class="cc-form-hint">
             不带 <code>http://</code>、路径与端口（端口在下面单独填）。它决定 Harbor 的
@@ -1586,7 +1587,9 @@ function copyImage(text: string): void {
             <el-input v-model="applyDialog.harbor.tlsCert" type="textarea" :rows="3" spellcheck="false"
                       placeholder="-----BEGIN CERTIFICATE-----（含中间证书，域名证书在前）" />
             <div class="cc-form-hint">
-              留空 = 沿用集群里已有的 <code>harbor-tls</code>；证书只在本次请求里出现，不进 values、不进操作记录
+              留空 = 用平台配置的证书文件（<code>platform.harbor.tls-cert-file</code>，
+              默认 <code>cert/harbor.ackcp.cloud.pem</code>），再没有就沿用集群里已有的
+              <code>harbor-tls</code>；粘进来的证书只在本次请求里出现，不进 values、不进操作记录
             </div>
           </div>
         </div>

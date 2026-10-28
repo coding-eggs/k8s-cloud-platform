@@ -15,6 +15,14 @@ thanos:
     url: ${THANOS_QUERY_URL:http://192.168.31.80:19090}
 
 platform:
+  harbor:
+    # 「装 Harbor」表单的默认值：域名与证书在部署里是固定的，表单留空就取这里，
+    # 省得每次重放都重新粘一遍 PEM。
+    default-host: ${HARBOR_DEFAULT_HOST:harbor.ackcp.cloud}
+    # 证书/私钥（PEM）文件路径。表单里 HTTPS 证书留空时读它们；
+    # 两者都不配 = 沿用集群里已有的 harbor-tls Secret（升级重放不会重传）。
+    tls-cert-file: ${HARBOR_TLS_CERT_FILE:}
+    tls-key-file: ${HARBOR_TLS_KEY_FILE:}
   tempo:
     query-url: http://192.168.31.80:21746
   object-storage:

@@ -19,9 +19,12 @@ import com.coding.platformapi.models.ObjectStorageBucketView;
 import com.coding.platformapi.models.TempoStorageConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DuplicateKeyException;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -1615,7 +1618,8 @@ class ComponentInstallServiceTest {
     void harborRequiresAHostWithoutSchemeOrPath() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
-        for (String bad : new String[]{"", "http://harbor.example.com", "harbor.example.com/foo",
+        // 留空不再算错：会取 platform.harbor.default-host（见 harborDefaultsFillHostAndCertificateFromConfig）
+        for (String bad : new String[]{"http://harbor.example.com", "harbor.example.com/foo",
                 "Harbor.Example.com", "harbor .example.com"}) {
             ComponentApplyRequest req = harborRequest(
                     new HarborInstallRequest("nodePort", bad, 30002, 80));
@@ -2083,5 +2087,42 @@ class ComponentInstallServiceTest {
         Map<String, Object> nodePort =
                 ComponentInstallService.harborExposeValues(new HarborInstallRequest("nodePort", "10.0.0.5", 30002, 80));
         assertThat(nodePort).containsKeys("type", "nodePort").doesNotContainKeys("route", "loadBalancer");
+    }
+
+    /** 表单留空 = 用配置：域名取 default-host，证书取 tls-cert-file/tls-key-file */
+    @Test
+    void harborDefaultsFillHostAndCertificateFromConfig(@TempDir Path dir) throws Exception {
+        Path cert = dir.resolve("harbor.pem");
+        Path key = dir.resolve("harbor.key");
+        Files.writeString(cert, "CERT-PEM");
+        Files.writeString(key, "KEY-PEM");
+
+        ComponentInstallService svc = service();
+        svc.harborDefaultHost = "harbor.ackcp.cloud";
+        svc.harborTlsCertFile = cert.toString();
+        svc.harborTlsKeyFile = key.toString();
+
+        HarborInstallRequest out = new HarborInstallRequest();
+        out.setExposeMode("route");
+        out.setHttps(true);
+        svc.applyHarborDefaults(out);
+
+        assertThat(out.getHost()).isEqualTo("harbor.ackcp.cloud");
+        assertThat(out.getTlsCert()).isEqualTo("CERT-PEM");
+        assertThat(out.getTlsKey()).isEqualTo("KEY-PEM");
+    }
+
+    /** 证书文件配了却读不到：直接报路径，别等到 helm 那步才发现 Secret 没写上 */
+    @Test
+    void missingCertificateFileFailsWithThePath(@TempDir Path dir) {
+        ComponentInstallService svc = service();
+        svc.harborTlsCertFile = dir.resolve("nope.pem").toString();
+
+        HarborInstallRequest out = new HarborInstallRequest();
+        out.setExposeMode("route");
+        out.setHttps(true);
+
+        assertThatThrownBy(() -> svc.applyHarborDefaults(out))
+                .hasMessageContaining("nope.pem");
     }
 }

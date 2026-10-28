@@ -42,6 +42,8 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -1037,6 +1039,19 @@ public class ComponentInstallService {
     /** 外部数据库 / Redis 的口令 Secret（键：password / REDIS_PASSWORD[+REDIS_USERNAME]） */
     static final String HARBOR_EXTERNAL_DB_SECRET = "platform-harbor-external-db";
     static final String HARBOR_EXTERNAL_REDIS_SECRET = "platform-harbor-external-redis";
+    /**
+     * Harbor 的默认域名 / 证书文件。填了之后表单里可以留空 —— 域名与证书在生产里基本是固定的，
+     * 每次重放都让人重新粘 PEM 没有意义。
+     */
+    @Value("${platform.harbor.default-host:harbor.ackcp.cloud}")
+    String harborDefaultHost = "harbor.ackcp.cloud";
+
+    @Value("${platform.harbor.tls-cert-file:}")
+    String harborTlsCertFile = "";
+
+    @Value("${platform.harbor.tls-key-file:}")
+    String harborTlsKeyFile = "";
+
     private static final java.util.Set<String> HARBOR_DB_SSL_MODES =
             java.util.Set.of("disable", "require", "verify-ca", "verify-full");
     /** 外部 Redis 单实例地址 host:port（sentinel 列表暂不支持） */
@@ -1052,7 +1067,7 @@ public class ComponentInstallService {
 
     /** 表单 > 上次成功 > 默认（nodePort / 30002 / 80） */
     @SuppressWarnings("unchecked")
-    private static HarborInstallRequest resolveHarbor(HarborInstallRequest requested, Object previous) {
+    private HarborInstallRequest resolveHarbor(HarborInstallRequest requested, Object previous) {
         Map<String, Object> prev = previous instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
         String mode = firstNonBlank(requested == null ? null : requested.getExposeMode(),
                 asString(prev.get("exposeMode")), "nodePort");
@@ -1097,6 +1112,7 @@ public class ComponentInstallService {
                 prev.get("httpsNodePort"), DEFAULT_HARBOR_HTTPS_NODE_PORT));
         out.setTlsCert(requested == null ? null : requested.getTlsCert());
         out.setTlsKey(requested == null ? null : requested.getTlsKey());
+        applyHarborDefaults(out);
         if (https) {
             // 证书只对域名有效：拿 IP 开 HTTPS，客户端一定会 x509 失败
             if (isBlank(out.getHost()) || isIpAddress(out.getHost())) {
@@ -1105,6 +1121,39 @@ public class ComponentInstallService {
             }
         }
         return out;
+    }
+
+    /**
+     * 表单留空的项用配置补齐：域名取 {@code platform.harbor.default-host}，
+     * HTTPS 证书取 {@code platform.harbor.tls-cert-file} / {@code tls-key-file}。
+     *
+     * <p>为什么要有它：域名与证书在生产里是固定的，每次都让人重新粘 PEM 既啰嗦又容易贴错。
+     * 都没配时保持原样 —— 「留空 = 沿用集群里已有的 harbor-tls」这条仍然有效。
+     */
+    void applyHarborDefaults(HarborInstallRequest out) {
+        if (out == null) {
+            return;
+        }
+        if (isBlank(out.getHost())) {
+            out.setHost(harborDefaultHost);
+        }
+        if (Boolean.TRUE.equals(out.getHttps()) && isBlank(out.getTlsCert())
+                && !isBlank(harborTlsCertFile)) {
+            out.setTlsCert(readCertificateFile(harborTlsCertFile, "Harbor 证书"));
+            if (!isBlank(harborTlsKeyFile)) {
+                out.setTlsKey(readCertificateFile(harborTlsKeyFile, "Harbor 私钥"));
+            }
+        }
+    }
+
+    /** 读证书/私钥文件；读不到直接报清楚路径，别等到 helm 那步再说证书不存在 */
+    private static String readCertificateFile(String path, String what) {
+        try {
+            return Files.readString(Path.of(path.trim()));
+        } catch (Exception e) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    what + "文件读不到：" + path + "（" + e.getMessage() + "）");
+        }
     }
 
     /** 简易 IPv4 判断（HTTPS 只能用域名，用 IP 时直接拒） */
