@@ -54,6 +54,18 @@ class RegistryHttpClientTest {
     }
 
     @Test
+    void anAuthFailureNamesTheStatusAndPath() {
+        // 401（凭据不对）与 403（凭据对但没这个权限）原先被报成同一句话，排查时只能猜。
+        // 状态码与路径（不含凭据）要跟着一起出来。
+        server.expect(requestTo(PROJECTS_URL)).andRespond(withStatus(UNAUTHORIZED));
+
+        assertThatThrownBy(() -> client.get(CRED, PROJECTS_URL))
+                .hasMessageContaining("凭据不通过")
+                .hasMessageContaining("HTTP 401")
+                .hasMessageContaining("/api/v2.0/projects");
+    }
+
+    @Test
     void anonymousRefSendsNoAuthorizationHeader() {
         // 匿名（两字段都空）不能发出 `Basic Og==` —— 那是一个只有冒号的空 Basic，
         // 有些 registry 会因此把匿名请求判成「凭据错误」。

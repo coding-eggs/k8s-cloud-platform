@@ -94,7 +94,8 @@ public class RegistryHttpClient {
             } else if (hasCredential(cred)) {
                 spec.header(HttpHeaders.AUTHORIZATION, basic(cred));
             }
-            return send(spec, url, "凭据不通过，或该凭据无权访问此仓库");
+            return send(spec, url, "凭据不通过，或该凭据无权访问此仓库",
+                    cred == null ? null : cred.username());
         } catch (CloudPlatformException e) {
             throw e;
         } catch (IllegalArgumentException e) {
@@ -122,7 +123,7 @@ public class RegistryHttpClient {
         try {
             return send(restClient.post().uri(URI.create(url))
                             .contentType(MediaType.APPLICATION_JSON).body(body),
-                    url, unauthorizedMessage);
+                    url, unauthorizedMessage, null);
         } catch (CloudPlatformException e) {
             throw e;
         } catch (IllegalArgumentException e) {
@@ -144,16 +145,28 @@ public class RegistryHttpClient {
      * 反过来的话 401 会拿到「返回 401」而不是那句二义文案，
      * 而二义文案正是本模块最要防的误判（spec §5.4）。实测确认过。
      */
-    private String send(RestClient.RequestHeadersSpec<?> spec, String url, String unauthorizedMessage) {
+    private String send(RestClient.RequestHeadersSpec<?> spec, String url, String unauthorizedMessage,
+                        String username) {
         return spec.retrieve()
                 .onStatus(status -> status.value() == 401 || status.value() == 403, (req, res) -> {
-                    throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID, unauthorizedMessage);
+                    // 401（凭据不对）与 403（凭据对、但没这个权限）原先在同一句话里，
+                    // 排查时只能猜；把状态码与路径带上（路径里没有凭据，可以外露）
+                    int code = res.getStatusCode().value();
+                    log.warn("镜像仓库鉴权失败 status={} url={} user={}", code, url, username);
+                    throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                            unauthorizedMessage + authHint(code, url));
                 })
                 .onStatus(status -> !status.is2xxSuccessful(), (req, res) -> {
                     throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                             "镜像仓库返回 " + res.getStatusCode().value());
                 })
                 .body(String.class);
+    }
+
+    /** 鉴权失败时附上状态码与请求路径：401 和 403 要查的方向完全不同 */
+    private static String authHint(int status, String url) {
+        String path = url == null ? "" : url.replaceFirst("^https?://[^/]+", "");
+        return "（HTTP " + status + (path.isEmpty() ? "" : " · " + path) + "）";
     }
 
     /**
