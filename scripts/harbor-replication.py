@@ -155,14 +155,25 @@ class Harbor:
     # -- 上游 endpoint ------------------------------------------------------
     def ensure_registry(self, upstream):
         kind, url = REGISTRY_TYPES[upstream]
+        credential = credential_of(upstream)
         registries = self.call('GET', '/api/v2.0/registries') or []
         for r in registries:
             # 同名，或同一地址但早先手工起过别的名字（如 mirror-elastic）都算已有，免得出现两个
             if r.get('name') == endpoint_name(upstream)                     or (r.get('url') or '').rstrip('/') == url.rstrip('/'):
+                if credential and not (r.get('credential') or {}).get('access_key'):
+                    # 已存在的匿名 endpoint：补上凭据（Docker Hub 匿名限额按出口 IP，一打就满）
+                    self.call('PUT', f'/api/v2.0/registries/{r["id"]}', {
+                        'name': r['name'], 'type': r.get('type') or kind,
+                        'url': r.get('url') or url, 'insecure': False,
+                        'credential': credential,
+                    })
+                    return r['id'], 'credential-set'
                 return r['id'], 'ok'
 
-        self.call('POST', '/api/v2.0/registries',
-                  {'name': endpoint_name(upstream), 'type': kind, 'url': url, 'insecure': False})
+        body = {'name': endpoint_name(upstream), 'type': kind, 'url': url, 'insecure': False}
+        if credential:
+            body['credential'] = credential
+        self.call('POST', '/api/v2.0/registries', body)
         if self.dry_run:
             return -1, 'created'
         registries = self.call('GET', '/api/v2.0/registries') or []
@@ -196,10 +207,51 @@ class Harbor:
                 return True
         return False
 
+    def trigger_one(self, name, wait=True, timeout=1800, interval=5):
+        """触发一条规则；wait=True 时等它到终态再返回（配额紧张时分批跑用）。"""
+        if not self.trigger(name):
+            print(f'  {name}: 找不到规则，跳过')
+            return
+        if not wait:
+            print(f'  {name}: 已触发')
+            return
+        executions = self.call('GET', '/api/v2.0/replication/executions?page_size=100') or []
+        mine = [e for e in executions if e['policy_id'] == self.policy_id(name)]
+        if not mine:
+            print(f'  {name}: 触发后查不到执行记录')
+            return
+        execution = max(mine, key=lambda e: e['id'])
+        import time
+        waited = 0
+        while waited < timeout:
+            current = self.call('GET', f'/api/v2.0/replication/executions/{execution["id"]}')
+            status = (current or {}).get('status', '?')
+            if status in ('Succeed', 'Failed', 'Stopped'):
+                print(f'  {name}: {status} ok={current.get("succeed")} failed={current.get("failed")}')
+                return
+            time.sleep(interval)
+            waited += interval
+        print(f'  {name}: 等待超时（仍在 {status}）')
+
+    def policy_id(self, name):
+        for p in self.call('GET', '/api/v2.0/replication/policies') or []:
+            if p['name'] == name:
+                return p['id']
+        return -1
+
     def recent_executions(self, limit=15):
         executions = self.call('GET', '/api/v2.0/replication/executions') or []
         executions.sort(key=lambda e: e['id'], reverse=True)
         return executions[:limit]
+
+
+def credential_of(upstream):
+    """Docker Hub 的凭据来自环境变量（PAT 不进脚本、不进仓库）。"""
+    user = os.environ.get('DOCKERHUB_USER', '').strip()
+    token = os.environ.get('DOCKERHUB_PAT', '').strip()
+    if upstream == 'docker.io' and user and token:
+        return {'type': 'basic', 'access_key': user, 'access_secret': token}
+    return None
 
 
 def endpoint_name(upstream):
@@ -271,6 +323,8 @@ def main():
     parser.add_argument('--ensure-registries', action='store_true')
     parser.add_argument('--ensure-policies', action='store_true')
     parser.add_argument('--trigger', action='store_true', help='建完规则后立刻触发一次复制')
+    parser.add_argument('--sequential', action='store_true',
+                        help='配合 --trigger：一条跑完再触发下一条（Docker Hub 限额紧张时用）')
     parser.add_argument('--status', action='store_true', help='只看最近的执行结果')
     parser.add_argument('--only', metavar='UPSTREAM', help='只处理某个上游，如 quay.io')
     parser.add_argument('--dry-run', action='store_true')
@@ -305,7 +359,13 @@ def main():
         registry_id = None
         if do_all or args.ensure_registries:
             print(f'== 上游 endpoint：{up} ==')
-            registry_id, state = harbor.ensure_registry(up)
+            try:
+                registry_id, state = harbor.ensure_registry(up)
+            except RuntimeError as e:
+                # 最常见：Harbor 够不到上游（内网没代理）→ 建 endpoint 直接被拒。
+                # 一个上游失败不该中断其余的，跳过并说清楚。
+                print(f'  跳过 {up}：{e}')
+                continue
             print(f'  {endpoint_name(up)}: {state} (id={registry_id})')
         if not (do_all or args.ensure_policies):
             continue
@@ -324,9 +384,14 @@ def main():
         for name, state in harbor.ensure_policies(registry_id, policies):
             print(f'  {name}: {state}')
         if args.trigger:
-            for p in policies:
-                harbor.trigger(p['name'])
-            print(f'  已触发 {len(policies)} 条复制')
+            if args.sequential:
+                for p in policies:
+                    harbor.trigger_one(p['name'], wait=True)
+                print(f'  已串行跑完 {len(policies)} 条复制')
+            else:
+                for p in policies:
+                    harbor.trigger(p['name'])
+                print(f'  已触发 {len(policies)} 条复制')
 
     print('\n完成。核对：Harbor 的 Projects 里看各上游项目的仓库数，或用 --status 看执行结果。')
 

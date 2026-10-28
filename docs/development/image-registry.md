@@ -39,6 +39,19 @@ python3 scripts/harbor-replication.py --only quay.io --trigger
 python3 scripts/harbor-replication.py --status         # 最近的复制执行结果
 ```
 
+**Docker Hub 限流**：匿名拉取按**出口 IP** 限流（实测 `x-ratelimit-limit: 100;w=3600`），
+一批把十几条规则全触发会瞬间打满，表现是执行 `Failed` 但**零任务**（枚举 tag 那步就被挡）。
+两种对策，通常一起用：
+
+```bash
+# 1) 给 docker.io 的 endpoint 配账号（PAT 只走环境变量，不进脚本）
+export DOCKERHUB_USER=xxx DOCKERHUB_PAT=xxx
+# 2) 串行触发：一条跑完再下一条
+python3 scripts/harbor-replication.py --only docker.io --all --trigger --sequential
+```
+
+`--sequential` 会轮询每条直到 `Succeed/Failed/Stopped` 再继续，适合限额紧张时慢跑。
+
 脚本做四件事，都幂等（已存在就跳过/更新，不重复建）：
 
 1. 建 6 个上游项目并设**公开读**；
