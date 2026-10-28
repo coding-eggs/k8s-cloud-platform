@@ -83,6 +83,11 @@ class ImageCatalogGuardTest {
                 String key = String.valueOf(e.getKey());
                 Object value = e.getValue();
                 if (IMAGE_KEYS.contains(key) && value instanceof String s && !s.isBlank()) {
+                    // registry 与 image 是兄弟键的写法（tigera）：改写后 image 里存的是
+                    // 「上游主机/路径」，拼装由 registry 负责，这里不能当成完整引用来验
+                    if ("image".equals(key) && isMirroredRegistry(map.get("registry"))) {
+                        continue;
+                    }
                     verify(s, path + "." + key, problems, count);
                 } else {
                     collectAndCheck(value, path + "." + key, problems, count);
@@ -93,6 +98,10 @@ class ImageCatalogGuardTest {
                 collectAndCheck(list.get(i), path + "[" + i + "]", problems, count);
             }
         }
+    }
+
+    private static boolean isMirroredRegistry(Object registry) {
+        return registry instanceof String s && s.startsWith(HOST + "/");
     }
 
     private static void verify(String image, String where, List<String> problems, int[] count) {

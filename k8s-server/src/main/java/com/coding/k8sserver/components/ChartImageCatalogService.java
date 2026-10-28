@@ -71,6 +71,16 @@ public class ChartImageCatalogService {
                                         : ImageReference.parse(image).mirror(host, project);
                                 out.add(new ImageListItemDTO(chart, image, mirrored));
                             }
+                            // 镜像只写在模板里的 chart（tekton / seaweedfs）靠兜底表补齐
+                            for (String image : ChartImagePins.images(file.getParent())) {
+                                if (!seen.add(chart + "|" + image)) {
+                                    continue;
+                                }
+                                String mirrored = host == null || host.isBlank()
+                                        ? image
+                                        : ImageReference.parse(image).mirror(host, project);
+                                out.add(new ImageListItemDTO(chart, image, mirrored));
+                            }
                         } catch (Exception ignored) {
                             // 单个 values.yaml 解析失败不影响整份清单
                         }

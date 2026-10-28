@@ -99,4 +99,66 @@ class ImageRewriterTest {
         Map<String, Object> once = rewrite(values);
         assertThat(rewrite(once)).isEqualTo(once);
     }
+
+    /**
+     * tigera-operator 的写法：{@code registry} 与 {@code image} 是**兄弟键**，
+     * 模板拼 {@code {{registry}}/{{image}}:{{version}}}。只改 image 会拼出
+     * {@code quay.io/harbor.ackcp.cloud/...} 这种拉不到的地址。
+     */
+    @Test
+    void rewritesSiblingRegistryAndImageAsAPair() {
+        Map<String, Object> operator = new LinkedHashMap<>();
+        operator.put("image", "tigera/operator");
+        operator.put("version", "v1.44.0");
+        operator.put("registry", "quay.io");
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("tigeraOperator", operator);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rewritten = (Map<String, Object>) rewrite(values).get("tigeraOperator");
+
+        assertThat(rewritten).containsEntry("registry", "harbor.ackcp.cloud/platform")
+                .containsEntry("image", "quay.io/tigera/operator")
+                .containsEntry("version", "v1.44.0");
+        assertThat(rewrite(values).toString()).doesNotContain("quay.io/harbor.ackcp.cloud");
+    }
+
+    /** cert-manager：{@code imageRegistry} + {@code imageNamespace} + 每个组件的 {@code image.name}。 */
+    @Test
+    void rewritesImageRegistryAndNamespaceAsAPair() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("imageRegistry", "quay.io");
+        values.put("imageNamespace", "jetstack");
+        values.put("image", Map.of("name", "cert-manager-controller", "repository", ""));
+
+        Map<String, Object> rewritten = rewrite(values);
+
+        assertThat(rewritten).containsEntry("imageRegistry", "harbor.ackcp.cloud/platform")
+                .containsEntry("imageNamespace", "quay.io/jetstack");
+    }
+
+    /** Strimzi：{@code defaultImageRegistry} + {@code defaultImageRepository}（operator + broker 都走它）。 */
+    @Test
+    void rewritesDefaultImageRegistryAndRepositoryAsAPair() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("defaultImageRegistry", "quay.io");
+        values.put("defaultImageRepository", "strimzi");
+        values.put("image", Map.of("name", "operator"));
+
+        Map<String, Object> rewritten = rewrite(values);
+
+        assertThat(rewritten).containsEntry("defaultImageRegistry", "harbor.ackcp.cloud/platform")
+                .containsEntry("defaultImageRepository", "quay.io/strimzi");
+    }
+
+    @Test
+    void compositeRulesAreIdempotent() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("imageRegistry", "quay.io");
+        values.put("imageNamespace", "jetstack");
+        values.put("tigeraOperator", Map.of("image", "tigera/operator", "registry", "quay.io"));
+
+        Map<String, Object> once = rewrite(values);
+        assertThat(rewrite(once)).isEqualTo(once);
+    }
 }

@@ -1,7 +1,10 @@
 package com.coding.k8sserver.components;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,5 +64,64 @@ class ChartImageOverlayTest {
     void diffSkipsUnchangedLists() {
         assertThat(ChartImageOverlay.diff(List.of("a"), List.of("a"))).isNull();
         assertThat(ChartImageOverlay.diff(List.of("a"), List.of("b"))).isEqualTo(List.of("b"));
+    }
+
+    /**
+     * 子 chart 的镜像同样要改：helm 会把父 values 里同名的键合并进子 chart，
+     * 所以 overlay 必须按「依赖名（或 alias）」挂上去。
+     */
+    @Test
+    void overlayCoversSubchartValuesUnderTheDependencyKey(@TempDir Path dir) throws Exception {
+        Path chart = dir.resolve("chart");
+        Files.createDirectories(chart.resolve("charts/child"));
+        Files.writeString(chart.resolve("Chart.yaml"), """
+                apiVersion: v2
+                name: parent
+                version: 0.1.0
+                dependencies:
+                  - name: child
+                    alias: kid
+                """);
+        Files.writeString(chart.resolve("values.yaml"), """
+                image:
+                  repository: quay.io/acme/parent
+                  tag: "1.0"
+                """);
+        Files.writeString(chart.resolve("charts/child/Chart.yaml"), """
+                apiVersion: v2
+                name: child
+                version: 0.1.0
+                """);
+        Files.writeString(chart.resolve("charts/child/values.yaml"), """
+                image:
+                  registry: docker.io
+                  repository: bitnami/redis
+                  tag: "7.2"
+                """);
+
+        Map<String, Object> overlay = ChartImageOverlay.of(chart, "harbor.ackcp.cloud", "platform");
+
+        assertThat(overlay).containsKeys("image", "kid");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> child = (Map<String, Object>) overlay.get("kid");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> childImage = (Map<String, Object>) child.get("image");
+        assertThat(childImage).containsEntry("registry", "harbor.ackcp.cloud/platform")
+                .containsEntry("repository", "docker.io/bitnami/redis");
+    }
+
+    /** 镜像在模板里拼死的两个 chart：靠一张钉死的表补上（表与模板字面量由护栏测试对齐）。 */
+    @Test
+    void pinnedDefaultsCoverTemplateAssembledImages() throws Exception {
+        Map<String, Object> seaweed = ChartImageOverlay.of(
+                Path.of("src/main/resources/charts/components/seaweedfs/4.48.0/chart"),
+                "harbor.ackcp.cloud", "platform");
+        assertThat(seaweed.toString()).contains("harbor.ackcp.cloud/platform");
+
+        Map<String, Object> tekton = ChartImageOverlay.of(
+                Path.of("src/main/resources/charts/components/tekton-operator/0.81.2/chart"),
+                "harbor.ackcp.cloud", "platform");
+        assertThat(tekton.toString())
+                .contains("harbor.ackcp.cloud/platform/ghcr.io/tektoncd/operator/operator-");
     }
 }

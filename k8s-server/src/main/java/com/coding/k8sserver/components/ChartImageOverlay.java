@@ -5,6 +5,7 @@ import tools.jackson.core.type.TypeReference;
 import tools.jackson.dataformat.yaml.YAMLMapper;
 
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -28,18 +29,120 @@ public final class ChartImageOverlay {
     private ChartImageOverlay() {
     }
 
-    /** 读 {@code chartDir/values.yaml} 并生成 overlay；没有 values.yaml 就是空 overlay */
+    /**
+     * 读 chart 目录并生成 overlay：<b>顶层 values + 每一层子 chart 的 values + 模板写死的镜像</b>。
+     *
+     * <p>子 chart 那层不能漏：helm 只会用父 values 覆盖子 chart 的默认值，父 values 里没写的镜像
+     * 仍然来自 {@code charts/<sub>/values.yaml}（grafana、kube-state-metrics、node-exporter 都在这里）。
+     * 挂载的键取父 {@code Chart.yaml} 依赖里的 {@code alias}，没有 alias 才用依赖名/目录名。
+     */
     public static Map<String, Object> of(Path chartDir, String host, String project) throws IOException {
         if (chartDir == null || host == null || host.isBlank()) {
             return Map.of();
         }
+        Map<String, Object> out = new LinkedHashMap<>();
+        mergeInto(out, ownOverlay(chartDir, host, project));
+
+        Path subcharts = chartDir.resolve("charts");
+        if (Files.isDirectory(subcharts)) {
+            Map<String, String> keys = dependencyKeys(chartDir);
+            try (DirectoryStream<Path> dirs = Files.newDirectoryStream(subcharts, Files::isDirectory)) {
+                for (Path sub : dirs) {
+                    String name = chartName(sub);
+                    String key = keys.getOrDefault(name, sub.getFileName().toString());
+                    Map<String, Object> subOverlay = of(sub, host, project);
+                    if (subOverlay.isEmpty()) {
+                        continue;
+                    }
+                    Object existing = out.get(key);
+                    out.put(key, existing instanceof Map<?, ?> e
+                            ? merge(castMap(e), subOverlay) : subOverlay);
+                }
+            }
+        }
+
+        // 镜像只写在模板里的那几份 chart（tekton / seaweedfs），表在 ChartImagePins
+        mergeInto(out, ChartImagePins.overlay(chartDir, host, project));
+        return out;
+    }
+
+    /** 单个目录自己的 values.yaml → overlay */
+    private static Map<String, Object> ownOverlay(Path chartDir, String host, String project) throws IOException {
         Path values = chartDir.resolve("values.yaml");
         if (!Files.isRegularFile(values)) {
             return Map.of();
         }
-        Map<String, Object> defaults = YAML.readValue(Files.readString(values),
+        String content = Files.readString(values);
+        if (content.isBlank()) {
+            return Map.of();   // 子 chart（如 crds）会有空的 values.yaml
+        }
+        Map<String, Object> defaults = YAML.readValue(content,
                 new TypeReference<Map<String, Object>>() { });
-        return of(defaults, host, project);
+        Map<String, Object> overlay = of(defaults, host, project);
+        if (overlay.isEmpty() || !declaresInsecureImagesSwitch(defaults)) {
+            return overlay;
+        }
+        // bitnami 系 chart 会校验「渲染出来的镜像还是不是自家的」，我们一改写必然触发，
+        // 校验失败会让 helm 直接渲染不出来（rabbitmq 就是栽在这）。镜像替换本来就是本意，关掉它。
+        Map<String, Object> withSwitch = new LinkedHashMap<>(overlay);
+        Map<String, Object> global = withSwitch.get("global") instanceof Map<?, ?> g
+                ? castMap(g) : new LinkedHashMap<>();
+        withSwitch.put("global", merge(global, Map.of("security", Map.of("allowInsecureImages", true))));
+        return withSwitch;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void mergeInto(Map<String, Object> target, Map<String, Object> overlay) {
+        if (overlay == null || overlay.isEmpty()) {
+            return;
+        }
+        Map<String, Object> merged = merge(target, overlay);
+        target.clear();
+        target.putAll(merged);
+    }
+
+    /** 父 Chart.yaml 的依赖：子 chart 名 → values 里该用的键（有 alias 用 alias） */
+    private static Map<String, String> dependencyKeys(Path chartDir) throws IOException {
+        Path chartYaml = chartDir.resolve("Chart.yaml");
+        if (!Files.isRegularFile(chartYaml)) {
+            return Map.of();
+        }
+        Map<String, Object> chart = YAML.readValue(Files.readString(chartYaml),
+                new TypeReference<Map<String, Object>>() { });
+        Map<String, String> keys = new LinkedHashMap<>();
+        if (chart.get("dependencies") instanceof List<?> deps) {
+            for (Object dep : deps) {
+                if (dep instanceof Map<?, ?> d && d.get("name") instanceof String name) {
+                    Object alias = d.get("alias");
+                    keys.put(name, alias instanceof String a && !a.isBlank() ? a : name);
+                }
+            }
+        }
+        return keys;
+    }
+
+    private static String chartName(Path chartDir) throws IOException {
+        Path chartYaml = chartDir.resolve("Chart.yaml");
+        if (Files.isRegularFile(chartYaml)) {
+            Map<String, Object> chart = YAML.readValue(Files.readString(chartYaml),
+                    new TypeReference<Map<String, Object>>() { });
+            if (chart.get("name") instanceof String name && !name.isBlank()) {
+                return name;
+            }
+        }
+        return chartDir.getFileName().toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Map<?, ?> map) {
+        return (Map<String, Object>) map;
+    }
+
+    /** chart 自己声明了「是否允许非标准镜像」这个开关（bitnami 系） */
+    private static boolean declaresInsecureImagesSwitch(Map<String, Object> defaults) {
+        return defaults.get("global") instanceof Map<?, ?> global
+                && global.get("security") instanceof Map<?, ?> security
+                && security.containsKey("allowInsecureImages");
     }
 
     @SuppressWarnings("unchecked")
