@@ -756,10 +756,13 @@ public class ComponentInstallService {
                     "集群还没有对象存储连接地址：请先在「集群组件」里安装对象存储（或改用外部地址）");
         }
         String wanted = isBlank(tenantId) ? null : ObjectStorageService.bucketName(tenantId, name);
+        // 必须精确匹配 t-<8 位租户短码>-<名字>：只按后缀匹配会把别的租户的 `xxx-tempo` 认成自己的桶，
+        // Tempo 就会往别人的桶里写数据
+        String pattern = "^t-[0-9a-f]{8}-" + java.util.regex.Pattern.quote(name) + "$";
         ObjectStorageBucketView bucket = objectStorage.listBuckets(clusterId, tenantId).stream()
                 .filter(b -> wanted != null
                         ? wanted.equals(b.getBucket())
-                        : b.getBucket().endsWith("-" + name))
+                        : b.getBucket().matches(pattern))
                 .findFirst().orElse(null);
         if (bucket == null) {
             ObjectStorageCreateBucket body = new ObjectStorageCreateBucket();
