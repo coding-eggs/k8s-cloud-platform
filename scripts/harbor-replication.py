@@ -93,11 +93,9 @@ IMAGES = {
         'eck/eck-operator:3.5.0',
         'elasticsearch/elasticsearch:9.5.0',   # 中间件默认版本；建别的版本时把 tag 加到这里
     ],
-    'registry.istio.io': [
-        'release/install-cni:1.30.6',
-        'release/pilot:1.30.6',
-        'release/ztunnel:1.30.6',
-    ],
+    # registry.istio.io 已移除：Istio 1.31.3 起 chart 的 hub 改成 docker.io/istio
+    # （registry.istio.io 只有 1.30.x），内置 chart 里的 1.30.6 目录已无 recipe 引用。
+    # 真要支持 1.30.6 再把这行加回来，并先给上游建 endpoint（Harbor 得能连上 registry.istio.io）。
 }
 
 # 上游 endpoint 的类型（Harbor 对 docker.io / quay / ghcr 有专门适配器）
@@ -139,6 +137,21 @@ class Harbor:
             if e.code in allow:
                 return None
             raise RuntimeError(f'{method} {path} -> {e.code} {detail}') from None
+
+    def paged(self, path):
+        """翻页取全量。⚠️ Harbor 默认 page_size=10：列表接口不带分页就会只拿到前 10 条，
+        于是「规则已存在」被判成「不存在」→ POST 409 CONFLICT（2026-10-29 撞到）。"""
+        out, page = [], 1
+        while True:
+            sep = '&' if '?' in path else '?'
+            chunk = self.call('GET', f'{path}{sep}page={page}&page_size=100') or []
+            out.extend(chunk)
+            if len(chunk) < 100:
+                return out
+            page += 1
+
+    def policies(self):
+        return self.paged('/api/v2.0/replication/policies')
 
     # -- 项目 ---------------------------------------------------------------
     def ensure_project(self, name):
@@ -184,7 +197,7 @@ class Harbor:
 
     # -- 复制规则 ------------------------------------------------------------
     def ensure_policies(self, registry_id, policies):
-        existing = {p['name']: p for p in (self.call('GET', '/api/v2.0/replication/policies') or [])}
+        existing = {p['name']: p for p in self.policies()}
         out = []
         for policy in policies:
             cur = existing.get(policy['name'])
@@ -200,8 +213,7 @@ class Harbor:
         return out
 
     def trigger(self, name):
-        policies = self.call('GET', '/api/v2.0/replication/policies') or []
-        for p in policies:
+        for p in self.policies():
             if p['name'] == name:
                 self.call('POST', '/api/v2.0/replication/executions', {'policy_id': p['id']})
                 return True
@@ -215,7 +227,7 @@ class Harbor:
         if not wait:
             print(f'  {name}: 已触发')
             return
-        executions = self.call('GET', '/api/v2.0/replication/executions?page_size=100') or []
+        executions = self.paged('/api/v2.0/replication/executions')
         mine = [e for e in executions if e['policy_id'] == self.policy_id(name)]
         if not mine:
             print(f'  {name}: 触发后查不到执行记录')
@@ -234,13 +246,13 @@ class Harbor:
         print(f'  {name}: 等待超时（仍在 {status}）')
 
     def policy_id(self, name):
-        for p in self.call('GET', '/api/v2.0/replication/policies') or []:
+        for p in self.policies():
             if p['name'] == name:
                 return p['id']
         return -1
 
     def recent_executions(self, limit=15):
-        executions = self.call('GET', '/api/v2.0/replication/executions') or []
+        executions = self.paged('/api/v2.0/replication/executions')
         executions.sort(key=lambda e: e['id'], reverse=True)
         return executions[:limit]
 
@@ -315,7 +327,10 @@ def same_policy(current, desired):
             and current.get('dest_namespace_replace_count') == 0
             and filters(current) == filters(desired)
             and bool(current.get('enabled')) == desired['enabled']
-            and bool(current.get('override')) == desired['override'])
+            and bool(current.get('override')) == desired['override']
+            # copy_by_chunk 也要比：早先建的规则是 false，不比对就永远更新不到，
+            # 大镜像（elasticsearch）重触发时会照样整块失败
+            and bool(current.get('copy_by_chunk')) == desired['copy_by_chunk'])
 
 
 def main():

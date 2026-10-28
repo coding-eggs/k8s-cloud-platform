@@ -108,7 +108,10 @@ Endpoint 地址：
 | ghcr.io | `https://ghcr.io` |
 | registry.k8s.io | `https://registry.k8s.io` |
 | docker.elastic.co | `https://docker.elastic.co` |
-| registry.istio.io | `https://registry.istio.io` |
+
+> `registry.istio.io` 不在列表里：Istio 1.31.3 起 chart 的 `hub` 改成 `docker.io/istio`
+> （registry.istio.io 只有 1.30.x），内置 chart 里的 1.30.6 目录已无 recipe 引用。
+> 真要支持 1.30.6，先给上游建 endpoint（Harbor 得能连上）再把规则加回来。
 
 > **落点必须与改写规则一致**：平台把 `quay.io/opstree/redis` 改写成
 > `harbor.ackcp.cloud/quay.io/opstree/redis`，所以目标项目就是 `quay.io`，且
@@ -144,7 +147,6 @@ Endpoint 地址：
 | 上游仓库 | 用途 |
 |---|---|
 | `docker.io/istio/pilot`、`docker.io/istio/install-cni`、`docker.io/istio/ztunnel` | istiod / CNI / ztunnel（1.31.x） |
-| `registry.istio.io/release/pilot`、`.../install-cni`、`.../ztunnel` | 旧的 1.30.6 三件套 |
 | `quay.io/jetstack/cert-manager-controller`、`-cainjector`、`-webhook`、`-startupapicheck` | cert-manager |
 | `quay.io/tigera/operator` | Calico |
 | `quay.io/strimzi/operator` + `quay.io/strimzi/kafka` | Strimzi（operator 与 broker） |
