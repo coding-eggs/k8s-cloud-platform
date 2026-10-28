@@ -32,6 +32,14 @@
 - **新端点必须有权限行**（否则 `PermissionCrossCheckRunner` 启动失败）——本批新增 `/components/images`。
 - 迁移一律手工重放（本仓没有 Flyway）。
 
+## 实施前置（开工条件）
+
+- [ ] **内网解析方案定了**：用户正在调研能否改内网 DNS；能改就加一条 `harbor.ackcp.cloud → 192.168.31.80`，
+      改不了就用节点 `/etc/hosts`（三台节点 + 开发机）。**这条不通，代码做完也拉不到镜像**，所以开工前先确认。
+- [ ] Harbor 域名与证书就位（已有：`cert/harbor.ackcp.cloud.pem` / `.key`，DigiCert，2027-01-25 到期）
+- 对象存储 HTTPS 化排在**本批之后**：见
+  [2026-10-28-object-storage-tls-design.md](../specs/2026-10-28-object-storage-tls-design.md)
+
 ## Review Focus
 
 - **改写误伤**：values 里 `repository` 也可能是非镜像字段（如 Git 仓库地址）；`tag`/`digest` 这类键不能碰。
