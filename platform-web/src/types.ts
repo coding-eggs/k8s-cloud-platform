@@ -1138,6 +1138,21 @@ export interface K8sHarborInstall {
   redisUsername?: string
   /** 仅入参：首次安装必填，编辑留空 = 沿用已有 Secret */
   redisPassword?: string
+  /** 对外用 HTTPS：route 模式在网关 443 终止；另两种用 chart 自带 TLS */
+  https?: boolean
+  httpsPort?: number | null
+  httpsNodePort?: number | null
+  /** 仅入参：证书链 PEM（含中间证书）。留空 = 沿用集群里已有的 harbor-tls */
+  tlsCert?: string
+  /** 仅入参：私钥 PEM（无口令） */
+  tlsKey?: string
+}
+
+/** 镜像清单的一行：某个内置 chart 用到的镜像与它在平台 Harbor 的地址 */
+export interface ComponentImageItem {
+  chart: string
+  upstream: string
+  mirrored: string
 }
 
 /** 租户镜像项目（Harbor 组件面板） */

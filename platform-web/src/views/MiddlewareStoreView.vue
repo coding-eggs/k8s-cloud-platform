@@ -141,6 +141,8 @@ function resetForm(item: MiddlewareCatalogItem): void {
     objectStorageUseSsl: false,
     // Milvus：是否开启鉴权（root 口令由平台生成，落 Secret <名称>-milvus-auth）
     authEnabled: false,
+    // 镜像来源：默认平台 Harbor（platform 项目）；选官方则完全按上游拉
+    imageSource: 'PLATFORM',
   }
   const units: Record<string, string> = {}
   for (const field of MIDDLEWARE_FIELDS[item.code] ?? []) {
@@ -279,6 +281,7 @@ async function submitCreate(): Promise<void> {
         payload.objectStorageUseSsl = !!form.value.objectStorageUseSsl
       }
     }
+    payload.imageSource = form.value.imageSource
     const opId = await middlewareApi.create(payload as any)
     createVisible.value = false
     ElMessage.success('已提交创建')
@@ -513,6 +516,16 @@ onBeforeUnmount(() => {
             <el-option v-for="v in createItem.versions" :key="v" :label="v" :value="v" />
           </el-select>
           <div class="mw-form-help">只能从平台支持的版本里选</div>
+        </el-form-item>
+        <el-form-item label="镜像来源">
+          <el-radio-group v-model="form.imageSource">
+            <el-radio-button value="PLATFORM">平台 Harbor</el-radio-button>
+            <el-radio-button value="OFFICIAL">官方</el-radio-button>
+          </el-radio-group>
+          <div class="mw-form-help">
+            平台 Harbor 会把实例用到的镜像改写到 <code>harbor.ackcp.cloud/platform/…</code>；
+            选官方则按上游仓库拉取（Harbor 里还没有对应镜像时用它应急）
+          </div>
         </el-form-item>
         <el-form-item
           v-for="field in createFields"

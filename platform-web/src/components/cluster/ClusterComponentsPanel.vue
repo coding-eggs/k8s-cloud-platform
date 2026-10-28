@@ -60,6 +60,8 @@ const emit = defineEmits<{
     otel?: K8sOtelInstall
     /** 对象存储参数（仅 seaweedStorage 的组件：StorageClass / 容量 / 副本数） */
     seaweed?: K8sSeaweedInstall
+    /** 镜像来源：平台 Harbor（默认）/ 官方 */
+    imageSource?: 'PLATFORM' | 'OFFICIAL'
     /** Harbor 安装参数（仅 harborRegistry 的组件：访问域名） */
     harbor?: K8sHarborInstall
   }): void
@@ -193,6 +195,8 @@ interface ApplyDialog {
   showHarbor: boolean
   harbor: K8sHarborInstall
   initialHarbor: string
+  /** 镜像来源：平台 Harbor（默认）/ 官方；harbor 组件本身强制官方 */
+  imageSource: 'PLATFORM' | 'OFFICIAL'
 }
 
 /** OTel 表单里两个嵌套对象始终存在（后端可以为空，但表单控件需要可绑定） */
@@ -483,6 +487,7 @@ const EMPTY_HARBOR: K8sHarborInstall = {
   exposeMode: 'nodePort', host: '', nodePort: 30002, port: 80,
   databaseMode: 'internal', dbPort: 5432, dbName: 'registry', dbSslMode: 'disable',
   redisMode: 'internal',
+  https: false, httpsPort: 443, httpsNodePort: 30443, tlsCert: '', tlsKey: '',
 }
 
 /**
@@ -559,6 +564,7 @@ const applyDialog = ref<ApplyDialog>({
   showOtel: false, showTempoInstall: false, otel: emptyOtel(), initialOtel: JSON.stringify(emptyOtel()),
   showSeaweed: false, seaweed: { ...EMPTY_SEAWEED }, initialSeaweed: JSON.stringify(EMPTY_SEAWEED),
   showHarbor: false, harbor: { ...EMPTY_HARBOR }, initialHarbor: JSON.stringify(EMPTY_HARBOR),
+  imageSource: 'PLATFORM' as 'PLATFORM' | 'OFFICIAL',
 })
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
@@ -748,6 +754,11 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     dbName: harborMerged.dbName || 'registry',
     dbSslMode: harborMerged.dbSslMode || 'disable',
     redisMode: harborMerged.redisMode || 'internal',
+    https: !!harborMerged.https,
+    httpsPort: harborMerged.httpsPort ?? 443,
+    httpsNodePort: harborMerged.httpsNodePort ?? 30443,
+    tlsCert: '',   // 回填时永远是空：证书不回显，留空 = 沿用集群里已有的那份
+    tlsKey: '',
   }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
@@ -779,6 +790,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     seaweed,
     initialSeaweed: JSON.stringify(seaweed),
     showHarbor: !!row.harborRegistry,
+    imageSource: 'PLATFORM',
     harbor,
     initialHarbor: JSON.stringify(harbor),
   }
@@ -1047,6 +1059,8 @@ function confirmApply(): void {
     // Harbor：安装时整组下发；编辑时只发改动过的
     harbor: d.showHarbor && (d.action === 'INSTALL' || JSON.stringify(d.harbor) !== d.initialHarbor)
       ? { ...d.harbor, host: d.harbor.host.trim() } : undefined,
+    // 镜像来源：harbor 组件永远官方（后端也会强制），其余按表单
+    imageSource: d.showHarbor ? undefined : d.imageSource,
   })
 }
 
@@ -1464,6 +1478,19 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+      <div class="cc-form-row">
+        <span class="cc-form-label">镜像来源</span>
+        <div class="cc-form-control">
+          <el-radio-group v-model="applyDialog.imageSource" :disabled="applyDialog.showHarbor">
+            <el-radio-button value="PLATFORM">平台 Harbor</el-radio-button>
+            <el-radio-button value="OFFICIAL">官方</el-radio-button>
+          </el-radio-group>
+          <div class="cc-form-hint">
+            平台 Harbor 会把该组件用到的镜像改写到 <code>harbor.ackcp.cloud/platform/…</code>；
+            Harbor 组件本身永远走官方（镜像不可能从自己拉）
+          </div>
+        </div>
+      </div>
       <div v-if="applyDialog.showHarbor" class="cc-section-title">镜像仓库（Harbor）</div>
 
       <!-- 1. 暴露方式 -->
@@ -1495,6 +1522,38 @@ const anyUnknown = computed(() => unknownCount.value > 0)
           </div>
         </div>
       </div>
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">传输方式</span>
+        <div class="cc-form-control">
+          <el-radio-group v-model="applyDialog.harbor.https">
+            <el-radio-button :value="false">HTTP</el-radio-button>
+            <el-radio-button :value="true">HTTPS</el-radio-button>
+          </el-radio-group>
+          <div class="cc-form-hint">
+            HTTPS 要求上面填的是<b>域名</b>（证书只对域名有效）；route 模式下 TLS 在 external-gateway 的 443 终止，
+            nodePort / loadBalancer 模式则由 Harbor 自己挂证书
+          </div>
+        </div>
+      </div>
+      <template v-if="applyDialog.showHarbor && applyDialog.harbor.https">
+        <div class="cc-form-row">
+          <span class="cc-form-label">证书（PEM）</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.harbor.tlsCert" type="textarea" :rows="3" spellcheck="false"
+                      placeholder="-----BEGIN CERTIFICATE-----（含中间证书，域名证书在前）" />
+            <div class="cc-form-hint">
+              留空 = 沿用集群里已有的 <code>harbor-tls</code>；证书只在本次请求里出现，不进 values、不进操作记录
+            </div>
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">私钥（PEM）</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.harbor.tlsKey" type="textarea" :rows="3" spellcheck="false"
+                      placeholder="-----BEGIN PRIVATE KEY-----（不能带口令）" />
+          </div>
+        </div>
+      </template>
       <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'nodePort'"
            class="cc-form-row">
         <span class="cc-form-label">NodePort</span>

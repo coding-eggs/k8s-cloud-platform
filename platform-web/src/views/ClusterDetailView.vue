@@ -89,6 +89,7 @@ async function onApply(p: {
   otel?: import('@/types').K8sOtelInstall
   seaweed?: import('@/types').K8sSeaweedInstall
   harbor?: import('@/types').K8sHarborInstall
+  imageSource?: 'PLATFORM' | 'OFFICIAL'
 }): Promise<void> {
   const target = components.statusOf(p.code)
   try {
@@ -112,7 +113,7 @@ async function onApply(p: {
   try {
     const id = await operations.apply(p.code, p.action, p.targetVersion, p.editableValues,
       p.alertWebhookUrl, p.thanosReceiveUrl, p.thanosInstall, p.calicoInstall, p.tektonProfile, p.otel,
-      p.seaweed, p.harbor)
+      p.seaweed, p.harbor, p.imageSource)
     const op = await operations.wait(id)
     if (op.status === 'SUCCESS') {
       ElMessage.success('操作完成，正在刷新探测…')

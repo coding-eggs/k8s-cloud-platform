@@ -687,6 +687,34 @@ public void ensurePublicProject(String baseUrl, String user, String pass,
 
 ## Task 11: 真集群验证（验收清单）
 
+**前端已完成的部分**（2026-10-28）：组件安装表单的「镜像来源」（harbor 组件禁用）、
+Harbor 的「传输方式 HTTP/HTTPS + 证书/私钥」、中间件创建表单的「镜像来源」。
+**未做**（下一批）：镜像清单页签（端点已就绪 `POST /cluster/components/images`）、
+集群设置里的镜像仓库两栏（`k8s_cluster` 两列已就绪，缺 `/cluster/update` 的字段与表单）。
+
+### 验收步骤（按顺序）
+
+```bash
+# 0) 前置：节点能解析域名（containerd 用节点解析器，不是 CoreDNS）
+getent hosts harbor.ackcp.cloud
+
+# 1) 443 已由 Gateway listener 提供（装 Harbor 后）
+curl -kI https://harbor.ackcp.cloud/            # 期望 200 / 401（不再是 connection refused）
+
+# 2) platform 项目公开读 + 匿名拉取
+curl -s https://harbor.ackcp.cloud/api/v2.0/projects?name=platform -u admin:<pw>   # public=true
+curl -s -o /dev/null -w '%{http_code}
+' https://harbor.ackcp.cloud/v2/platform/<任一路径>/manifests/<tag>  # 不带凭据应 200
+```
+
+3. **组件试点（metrics-server）**：表单选「平台 Harbor」重装 → `kubectl -n kube-system get pod -o jsonpath` 里
+   镜像应为 `harbor.ackcp.cloud/platform/registry.k8s.io/metrics-server/metrics-server:<tag>`
+4. **回退**：改选「官方」重装 → 镜像回到 `registry.k8s.io/...`
+5. **中间件试点（Redis）**：新建实例 → CR 的 `kubernetesConfig.image` 指向 Harbor
+6. **断网模拟（可选）**：阻断节点出网后重装一个组件，仍成功
+7. 结果记进 `docs/development/image-registry.md` 的「同步记录」
+
+
 - [ ] 节点能解析 Harbor 域名，且 `crictl pull <域名>/library/hello-world:latest` 成功（公信证书，无需改 containerd）
   - ⚠️ 2026-10-28 实测：公网权威 DNS 已有记录（223.5.5.5 / 8.8.8.8 都能查到 `192.168.31.61/62/80`），
     但**内网解析器拒答**（路由器 `Query refused`，集群 Pod 里 `getent hosts` 同样失败）——

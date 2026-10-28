@@ -113,6 +113,7 @@ import type {
   MiddlewareOperatorStatus,
   MiddlewareUser,
   MiddlewareUserCredential,
+  ComponentImageItem,
 } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
@@ -180,7 +181,12 @@ export const clusterApi = {
     seaweed?: K8sSeaweedInstall
     /** Harbor 安装参数（仅 harborRegistry 的组件：访问域名） */
     harbor?: K8sHarborInstall
+    /** 镜像来源：PLATFORM（默认，平台 Harbor）/ OFFICIAL（上游官方）；harbor 组件永远官方 */
+    imageSource?: 'PLATFORM' | 'OFFICIAL'
   }) => http.post<never, number>('/cluster/components/apply', payload),
+  /** 内置 chart 的镜像清单（上游地址 + 平台 Harbor 地址） */
+  componentImages: (payload: { clusterId: string }) =>
+    http.post<never, ComponentImageItem[]>('/cluster/components/images', payload),
   /** 查一条操作（轮询）：按 operationId，或按 (clusterId, componentCode) 取最近一次成功的 */
   componentOperation: (payload: {
     operationId?: number
