@@ -226,7 +226,8 @@ class ComponentInstallControllerTest {
         when(factory.getAdminClient("c1")).thenReturn(kube);
         ChartBundle bundle = mock(ChartBundle.class);
         when(bundle.chartDir(anyString(), anyString())).thenReturn(Path.of("/tmp/chart"));
-        return new ComponentInstallController(helm, bundle, factory, mock(ResourceAccessResolver.class));
+        return new ComponentInstallController(helm, bundle, factory,
+                mock(ResourceAccessResolver.class), mock(com.coding.k8sserver.components.ChartImageCatalogService.class));
     }
 
     private static ComponentInstallRequestDTO request() {

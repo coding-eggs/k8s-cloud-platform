@@ -93,6 +93,21 @@ public class K8sComponentClient {
         return Boolean.TRUE.equals(ok);
     }
 
+    /** 内置 chart 的镜像清单（k8s-server 遍历它自己的 chart 目录）。 */
+    public List<com.coding.common.models.k8s.dto.ImageListItemDTO> listImages(
+            String clusterId, String imageRegistryHost, String imageRegistryProject) {
+        com.coding.common.models.k8s.dto.ImageRegistryQueryDTO body =
+                new com.coding.common.models.k8s.dto.ImageRegistryQueryDTO();
+        body.setClusterId(clusterId);
+        body.setImageRegistryHost(imageRegistryHost);
+        body.setImageRegistryProject(imageRegistryProject);
+        // 网关的 responseType 只接受 Class：用数组接再转 List
+        com.coding.common.models.k8s.dto.ImageListItemDTO[] items = gateway.exchange(
+                HttpMethod.POST, "/components/images", null, body,
+                gateway.responseType(com.coding.common.models.k8s.dto.ImageListItemDTO[].class));
+        return items == null ? List.of() : List.of(items);
+    }
+
     /** 把一对 PEM 写成 {@code kubernetes.io/tls} Secret（Harbor 的 HTTPS 证书）。 */
     public void applyTlsSecret(String clusterId, String namespace, String secretName,
                                String certPem, String keyPem) {

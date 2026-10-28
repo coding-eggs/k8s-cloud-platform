@@ -141,6 +141,13 @@ public class ClusterController {
         return new ResponseData<>(componentService.flags(request.getClusterId()));
     }
 
+    @PostMapping("/components/images")
+    @Operation(summary = "内置 chart 的镜像清单", description = "上游地址 + 平台 Harbor 地址，供运维核对同步")
+    public ResponseData<List<com.coding.common.models.k8s.dto.ImageListItemDTO>> componentImages(
+            @RequestBody ClusterKeyRequest request) {
+        return new ResponseData<>(componentInstallService.imageList(request.getClusterId()));
+    }
+
     @PostMapping("/components/refresh")
     @Auditable(action = AuditAction.CLUSTER_REFRESH_COMPONENTS, target = "#request.clusterId")
     @Operation(summary = "重新探测集群组件（探完覆写缓存）")

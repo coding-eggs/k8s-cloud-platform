@@ -16,6 +16,8 @@ import com.coding.common.models.k8s.dto.PlatformAlertingRequestDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
 import com.coding.common.models.k8s.dto.SeaweedAdminSecretRequestDTO;
 import com.coding.common.models.k8s.dto.TempoObjstoreRequestDTO;
+import com.coding.common.models.k8s.dto.ImageListItemDTO;
+import com.coding.common.models.k8s.dto.ImageRegistryQueryDTO;
 import com.coding.common.models.k8s.dto.TlsSecretRequestDTO;
 import com.coding.common.models.k8s.dto.ThanosObjstoreRequestDTO;
 import com.coding.common.models.system.ResponseData;
@@ -23,6 +25,7 @@ import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.operations.ServerSideApply;
 import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
+import com.coding.k8sserver.components.ChartImageCatalogService;
 import com.coding.k8sserver.components.ChartImageOverlay;
 import com.coding.k8sserver.components.ExternalGatewayObjects;
 import com.coding.k8sserver.components.HarborExternalSecretObjects;
@@ -95,14 +98,17 @@ public class ComponentInstallController implements AccessBoundaryAware {
     private final ChartBundle charts;
     private final KubernetesClientFactory clientFactory;
     private final ResourceAccessResolver accessResolver;
+    private final ChartImageCatalogService imageCatalog;
 
     public ComponentInstallController(HelmRunner helm, ChartBundle charts,
                                       KubernetesClientFactory clientFactory,
-                                      ResourceAccessResolver accessResolver) {
+                                      ResourceAccessResolver accessResolver,
+                                      ChartImageCatalogService imageCatalog) {
         this.helm = helm;
         this.charts = charts;
         this.clientFactory = clientFactory;
         this.accessResolver = accessResolver;
+        this.imageCatalog = imageCatalog;
     }
 
     @Override
@@ -520,6 +526,15 @@ public class ComponentInstallController implements AccessBoundaryAware {
      * <p>命名空间由调用方指定 —— 走 Gateway listener 时必须是 {@code istio-system}
      * （Gateway API 的 certificateRefs 只能引用同命名空间的 Secret）。
      */
+    @PostMapping("/images")
+    @Operation(summary = "内置 chart 的镜像清单",
+            description = "遍历内置 chart 的 values.yaml，返回上游镜像与平台 Harbor 地址；harbor 组件除外")
+    public ResponseData<List<ImageListItemDTO>> images(@RequestBody ImageRegistryQueryDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        return new ResponseData<>(imageCatalog.list(
+                request.getImageRegistryHost(), request.getImageRegistryProject()));
+    }
+
     @PostMapping("/tls-secret")
     @Operation(summary = "下发 TLS 证书 Secret（幂等 SSA）",
             description = "由 platform-api 在 Harbor 开 HTTPS 之前调用；证书不落 values、不进快照")

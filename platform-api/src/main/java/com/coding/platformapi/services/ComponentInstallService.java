@@ -308,6 +308,16 @@ public class ComponentInstallService {
         return id;
     }
 
+    /**
+     * 内置 chart 的镜像清单：上游地址 + 平台 Harbor 地址（未配置仓库时两者相同）。
+     *
+     * <p>数据来自 k8s-server（chart 文件在那边），这里只负责把该集群的镜像仓库传下去。
+     */
+    public List<com.coding.common.models.k8s.dto.ImageListItemDTO> imageList(String clusterId) {
+        com.coding.platformapi.images.ImageRegistry registry = imageRegistry.resolve(clusterId);
+        return client.listImages(clusterId, registry.host(), registry.project());
+    }
+
     /** 前置组件必须已 INSTALLED_HEALTHY（批① 的 metrics-server 无前置，批② 起生效） */
     /**
      * Thanos compactor 保留期的下限（raw ≥ 40h、5m ≥ 10d，见 {@link ThanosRetention}）。

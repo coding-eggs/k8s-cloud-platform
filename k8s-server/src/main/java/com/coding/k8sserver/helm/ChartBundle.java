@@ -50,6 +50,11 @@ public class ChartBundle {
         return configured;
     }
 
+    /** 内置 chart 的根目录（镜像清单要遍历它） */
+    public Path root() {
+        return root;
+    }
+
     public Path chartDir(String code, String version) {
         return chartDir("components", code, version);
     }
