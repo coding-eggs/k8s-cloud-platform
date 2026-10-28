@@ -100,6 +100,58 @@ git commit -m "feat(images): 集群镜像仓库列 + 镜像清单端点权限"
 
 ---
 
+## Task 1b: Harbor 组件支持可选 HTTPS（域名固定 + 证书由平台写 Secret）
+
+**Files:**
+- Modify: `platform-api/src/main/java/com/coding/platformapi/models/HarborInstallRequest.java`
+  （加 `https`、`tlsCert`、`tlsKey`、`httpsNodePort`）
+- Modify: `platform-api/.../services/ComponentInstallService.java`（`applyHarborValues` 生成 tls/ports/externalURL）
+- Modify: `platform-common/.../k8s/dto/HarborSecretsRequestDTO.java`（可选带 cert/key）
+- Modify: `k8s-server/.../controllers/cluster/ComponentInstallController.java` + `components/HarborSecrets.java`
+  （写 `harbor/harbor-tls`，键 `tls.crt` / `tls.key`，幂等 SSA）
+- Test: `platform-api/src/test/java/com/coding/platformapi/services/ComponentInstallServiceTest.java`
+
+**Interfaces:**
+- Produces：`applyHarborValues` 在 `https=true` 时
+  ```yaml
+  expose:
+    tls: { enabled: true, certSource: secret, secret: { secretName: harbor-tls } }
+    nodePort: { ports: { https: { port: 443, nodePort: 30443 } } }
+  externalURL: https://<域名>
+  ```
+
+- [ ] **Step 1: 写失败测试**
+
+```java
+@Test
+void harborHttpsRendersTlsAndHttpsExternalUrl() {
+    HarborInstallRequest h = new HarborInstallRequest("nodePort", "harbor.example.com", 30002, 80);
+    h.setHttps(true);
+    h.setHttpsNodePort(30443);
+    // 断言 applyComponent 的 values：expose.tls.enabled=true、certSource=secret、
+    // secretName=harbor-tls、ports.https.nodePort=30443、externalURL=https://harbor.example.com
+}
+
+@Test
+void harborHttpsRequiresADomain() {
+    HarborInstallRequest h = new HarborInstallRequest("nodePort", "192.168.85.180", 30002, 80);
+    h.setHttps(true);
+    // 直接拒：「HTTPS 必须用域名（证书只对域名有效）」
+}
+```
+
+- [ ] **Step 2: 跑 → FAIL**
+- [ ] **Step 3: 实现**
+  - 校验：`https=true` 时 `host` 不得是 IP（`InetAddressUtil`/正则）；`tlsCert`/`tlsKey` 至少有一个非空
+    **或**集群里已存在 `harbor-tls`（编辑重放时允许留空沿用）
+  - `applyHarborValues`：按上面的结构写 values；`externalURL` 的 scheme 跟 `https` 走
+  - `run()` 里 helm 之前调 k8s-server 写 `harbor-tls`（证书/私钥走请求体，**不落 values / 不进快照**）
+- [ ] **Step 4: 跑 → PASS（原有 http 用例不回归）**
+- [ ] **Step 5: 提交**
+
+> 首装顺序：Certificate 形态的 Secret 必须先存在，否则 `harbor-nginx` 起不来 —— 平台在 helm 之前写，
+> 天然满足；失败时整条操作记 FAILED，不会留半个 Harbor。
+
 ## Task 2: `ImageReference` —— 归一化与改写（纯函数）
 
 **Files:**
@@ -214,7 +266,10 @@ public record ImageReference(String registry, String repository, String tagOrDig
 **Interfaces:**
 - Produces:
   - `record ImageRegistry(String host, String project, boolean enabled)`；
-  - `ImageRegistry resolve(String clusterId)` → 集群列 > 平台默认；`enabled=false` 或 host 空时返回 `ImageRegistry.OFFICIAL`
+  - `ImageRegistry resolve(String clusterId)` → **集群列 > Harbor 安装记录的 externalURL > 平台默认**；
+    `enabled=false` 或地址为空时返回 `ImageRegistry.OFFICIAL`
+  - `String harborBaseUrl(String clusterId)` → 带 scheme 的 Harbor API 地址（供 `HarborRegistryService` 用，
+    取代写死的 `http://`）
   - `String rewrite(String clusterId, String image, ImageSource source)` — `PLATFORM` 且 enabled 才改写
   - enum `ImageSource { PLATFORM, OFFICIAL }`
 
@@ -250,13 +305,13 @@ class ImageRegistryServiceTest {
 ```
 
 - [ ] **Step 2: 跑 → FAIL（类不存在）**
-- [ ] **Step 3: 实现**（`@Value("${platform.image-registry.host:}")` 等字段；`ClusterService` 加两个查询方法，
-  用现有 `selectByPrimaryKey` 结果里的新字段）。同时把 Harbor API 的 scheme 从写死 http 改成配置：
-
-  - `HarborRegistryService` 里拼 Harbor API 地址的地方（当前 `return "http://" + host;`）改为
-    `return scheme + "://" + host;`，`scheme = ${platform.harbor.scheme:https}`；
-  - `HarborDialect` 对无 scheme 端点补 `https://` 的逻辑保持不变（现在两边口径一致了）；
-  - **镜像引用本身不带 scheme**（`host:port/...` 或 `域名/...`），所以改 HTTPS 不影响 Task 2 的映射函数。
+- [ ] **Step 3: 实现**
+  - `ClusterService` 加两个查询方法读新列；
+  - **地址优先取 Harbor 组件的安装记录**（Task 1b 的 `externalURL`，含 scheme）：`HarborRegistryService.harborHost()`
+    改为直接返回 `externalURL`（去尾斜杠），不再拼 `"http://"`；`harborBaseUrl()` 用它；
+  - `HarborDialect` 对无 scheme 端点补 `https://` 的兜底保留（老快照没有 scheme 时仍然能用），但**平台自己
+    产生的地址一律带 scheme**；
+  - 镜像引用本身不带 scheme（`域名[:端口]/...`），所以 Task 2 的映射函数不受影响。
 - [ ] **Step 4: 跑 → PASS**
 - [ ] **Step 5: 提交**
 
@@ -537,6 +592,20 @@ class ImagePullSecretsTest {
 
 ---
 
+## Task 10b: 镜像同步（Harbor 复制规则 + 首次全量 + 核对）
+
+**Files:**
+- Create: `docs/development/image-registry.md` 的「同步」章节（与 Task 10 同一份文档）
+- 运维动作（不在代码里）：Harbor 6 条 replication rule + 首次触发
+
+- [ ] **Step 1: 文档写清 6 条规则的字段**（每条：远端仓库地址、访问凭据、**Destination namespace = 上游主机名**、
+  触发方式=手动、带宽/覆盖策略）
+- [ ] **Step 2: 首次全量同步**：按 `/components/images` 的清单逐个触发（Harbor 复制的「复制」按钮），
+  或用 Harbor 的「批量复制」
+- [ ] **Step 3: 核对脚本**：对清单里每条镜像 `GET /v2/<repo>/manifests/<tag>`，200 即到位；
+  把结果贴进文档的「同步记录」
+- [ ] **Step 4: 提交文档**
+
 ## Task 11: 真集群验证（验收清单）
 
 - [ ] 节点能解析 Harbor 域名，且 `crictl pull <域名>/library/hello-world:latest` 成功（公信证书，无需改 containerd）
@@ -552,7 +621,8 @@ class ImagePullSecretsTest {
 
 ## 实施顺序建议
 
-1 → 2 → 3 → 4（护栏）→ 5（组件）→ 7+8（凭据）→ 6（中间件）→ 9（前端）→ 10（清单/文档）→ 11（验收）。
+1 → **1b（Harbor HTTPS）** → 2 → 3 → 4（护栏）→ 5（组件）→ 7+8（凭据）→ 6（中间件）→ 9（前端）→
+10（清单/文档）→ **10b（镜像同步）** → 11（验收）。
 
 4 之前不要动 `ComponentInstallService`：护栏测试是后面所有改写的安全网。
 

@@ -22,6 +22,43 @@ docker.elastic.co、gcr.io 六个上游，约 50 个仓库），内网/断网环
 | 已装 Harbor | 组件 `harbor`（chart 1.19.4），默认 nodePort 暴露，租户镜像项目 `t-<sa>`；平台自身还没有 `platform` 项目 |
 | 镜像清单 | 平台是唯一知道「装了哪些 chart、会拉哪些镜像」的一侧（chart 内置在 k8s-server 里） |
 
+## 2.5 本批范围（2026-10-28 追加）
+
+用户把三件事绑在一起做，缺一件都不成：
+
+| # | 事项 | 落点 |
+|---|---|---|
+| 1 | **Harbor 安装支持可选 HTTPS**（现状是写死 HTTP）：HTTPS 时**域名固定**、证书由平台后端写进 Secret | 组件 `harbor` 的安装参数与 values |
+| 2 | **镜像仓库功能调整**：浏览仓库/凭据/robot 那条链路要按实际 scheme 访问（现在 scheme 是写死的 `http://`） | `HarborRegistryService` / `HarborDialect` / `RegistryTargetResolver` |
+| 3 | **镜像同步**：把组件与中间件用到的镜像搬进 `platform` 项目（Harbor 复制规则 + 首次全量同步 + 清单核对） | 运维 + 平台的镜像清单端点 |
+
+### 2.5.1 Harbor 自身的 HTTPS（事项 1）
+
+- 表单新增「传输方式」：`HTTP`（默认，保持现有部署不变）/ `HTTPS`。
+- 选 HTTPS 时：
+  - `host` **必须是域名**（证书只对域名有意义；IP 直接拒）；
+  - 证书由**平台后端处理**：表单里粘贴证书链（PEM）与私钥（PEM），platform-api 交给 k8s-server 写成
+    `harbor/harbor-tls`（键 `tls.crt` / `tls.key`），chart 用 `expose.tls.certSource=secret` 引用；
+    **证书与私钥不进 values 快照、不回显**（与外部库口令同一条规矩：留空 = 沿用集群里已有的 Secret）；
+  - `expose.tls.enabled=true` + `expose.nodePort.ports` 增加 `https`（默认 30443）；
+  - `externalURL` 必须是 `https://<域名>` —— Harbor 的 token 服务用它回复 docker 客户端，写错就是
+    「登录成功但 push/pull 失败」。
+- 证书续期不在本批（见 [2026-10-28-harbor-tls-renewal-design.md](2026-10-28-harbor-tls-renewal-design.md)）。
+
+### 2.5.2 镜像仓库功能的 scheme（事项 2）
+
+现状：`HarborRegistryService` 拼 Harbor API 地址是写死的 `"http://" + host`，而 `HarborDialect` 对无
+scheme 端点默认补 `https://` —— 两套口径。改成**一个来源**：Harbor 安装记录里的 `externalURL`（含 scheme），
+`harborHost()` 直接返回它；`HarborDialect` 不再自己猜。
+
+### 2.5.3 镜像同步（事项 3）
+
+沿用已定方案（Harbor 侧复制规则），本批补三件具体东西：
+
+1. 6 条复制规则（每个上游一条，destination namespace = 上游主机名），文档给出逐条配置字段；
+2. 首次全量同步的触发方式与核对方法（按平台的镜像清单逐个确认 `manifest` 存在）；
+3. 平台「镜像清单」页上，每条镜像给出一键复制的 `docker pull/push` 命令，便于手工补漏。
+
 ## 3. 已定决策
 
 1. **命名**：保留上游路径 —— `harbor.x/platform/<上游主机>/<仓库路径>:<tag>`。
