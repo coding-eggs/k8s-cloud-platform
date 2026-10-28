@@ -53,6 +53,13 @@ class HarborRegistryServiceTest {
         // 平台共享项目默认已就绪：这些用例只关心租户路径
         when(projects.selectByClusterAndTenant("c1", null)).thenReturn(platformRow());
         when(credentials.selectById("cred-platform")).thenReturn(usableCredential("cred-platform"));
+        when(credentialService.resolveSecret("cred-platform"))
+                .thenReturn(new com.coding.platformapi.credential.CredentialSecret(
+                        "robot$platform+ci", "pw"));
+        // 默认 robot 可正常列仓库（需要「重建」的用例再覆盖）
+        when(credentialService.resolveSecret(anyString()))
+                .thenReturn(new com.coding.platformapi.credential.CredentialSecret("robot$any+ci", "pw"));
+        when(harbor.probeRobot(anyString(), anyString(), anyString(), anyString())).thenReturn(null);
     }
 
     @Test
@@ -137,6 +144,43 @@ class HarborRegistryServiceTest {
         verify(credentialService).upsertManagedRegistry(eq("Harbor t-acme@c1"),
                 eq("http://harbor.example.com"), eq("tenant-1"),
                 eq("robot$t-acme+ci"), eq("new"), anyString());
+    }
+
+    @Test
+    void aRobotThatCannotListItsProjectIsRebuilt() {
+        // robot 的权限是**建的时候定死的**：凭据行、端点都对，也可能列不出仓库（早期只给了
+        // pull/push）。同步要能自己发现并重建（新 robot 带 list 权限），
+        // 而不是等用户点开镜像仓库挨 403（2026-10-28 用户撞到）
+        PlatformRegistryProject row = new PlatformRegistryProject();
+        row.setId("p1");
+        row.setClusterId("c1");
+        row.setTenantId("tenant-1");
+        row.setProjectName("t-acme");
+        row.setCredentialId("cred-1");
+        row.setRobotId(42L);
+        row.setStatus("READY");
+        row.setHost("harbor.example.com");
+        when(projects.selectByClusterAndTenant("c1", "tenant-1")).thenReturn(row);
+        when(tenants.selectByPrimaryKey("tenant-1")).thenReturn(tenant("tenant-1", "acme"));
+        when(credentials.selectById("cred-1")).thenReturn(usableCredential("cred-1"));
+        when(credentialService.resolveSecret("cred-1"))
+                .thenReturn(new com.coding.platformapi.credential.CredentialSecret(
+                        "robot$t-acme+ci", "old"));
+        when(harbor.probeRobot(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn("HTTP 403");
+        when(harbor.ensureProject(anyString(), anyString(), anyString(), eq("t-acme"))).thenReturn(7L);
+        when(harbor.createRobot(anyString(), anyString(), anyString(), eq("t-acme")))
+                .thenReturn(new HarborAdminClient.HarborRobot(44L, "robot$t-acme+ci", "new"));
+        when(credentialService.upsertManagedRegistry(anyString(), anyString(), anyString(),
+                anyString(), anyString(), anyString())).thenReturn("cred-1");
+
+        HarborRegistryService.SyncItem item = svc.ensureTenant("c1", "tenant-1", false);
+
+        verify(harbor).deleteRobotByName(anyString(), anyString(), anyString(), eq(7L), anyString());
+        verify(harbor).createRobot(anyString(), anyString(), anyString(), eq("t-acme"));
+        // 新 robot 仍然列不出（桩一直 403）→ 台账记 ERROR 并写明原因，不再谎报 READY
+        assertThat(item.status()).isEqualTo("ERROR");
+        assertThat(item.message()).contains("HTTP 403");
     }
 
     @Test

@@ -12,6 +12,7 @@ import com.coding.data.models.k8s.K8sCluster;
 import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.data.models.system.PlatformCredential;
 import com.coding.data.models.system.PlatformRegistryProject;
+import com.coding.platformapi.credential.CredentialSecret;
 import com.coding.platformapi.models.RegistryProjectView;
 import com.coding.platformapi.registry.HarborAdminClient;
 import com.coding.platformapi.registry.HarborNaming;
@@ -229,7 +230,10 @@ public class HarborRegistryService {
             // ⚠️ 上一次失败（status=ERROR）的行不能 skip：可能旧 robot 已删、凭据行却还在
             if (!force && !hostChanged && row != null && "READY".equals(row.getStatus())
                     && row.getCredentialId() != null
-                    && credentialMatches(row.getCredentialId(), baseUrl)) {
+                    && credentialMatches(row.getCredentialId(), baseUrl)
+                    // 凭据行看着正常也可能**权限不够**（robot 的权限建的时候定死）：
+                    // 用 robot 自己的凭据真列一次仓库，失败就当"需要重建"
+                    && robotUsable(baseUrl, project, row.getCredentialId())) {
                 touch(row);
                 return new SyncItem(tenantId, tenantName, project, "READY", "已是最新");
             }
@@ -243,13 +247,18 @@ public class HarborRegistryService {
             // 端点带 scheme：平台装的 Harbor 只有 HTTP（chart 的 tls.enabled=false），
             // 而 HarborDialect 对无 scheme 的端点默认补 https → 浏览镜像仓库时报
             // "Unrecognized SSL message, plaintext connection"（2026-10-27 用户撞到）
+            // 建完就用它自己的凭据验一次：权限不够的话问题在这里就暴露，而不是等用户去点
+            String probeError = harbor.probeRobot(baseUrl, project, robot.name(), robot.secret());
             String credentialId = credentialService.upsertManagedRegistry(
                     HarborNaming.credentialName(project, clusterId), baseUrl, tenantId,
                     robot.name(), robot.secret(),
                     "Harbor 自动创建：" + clusterNameOf(clusterId) + " / project " + project);
-            save(clusterId, tenantId, host, project, credentialId, robot.id(),
-                    "READY", "已创建（project " + project + "）");
-            return new SyncItem(tenantId, tenantName, project, "READY", "已创建");
+            String status = probeError == null ? "READY" : "ERROR";
+            String message = probeError == null ? "已创建（project " + project + "）"
+                    : "robot 已创建，但列不出该 project 的仓库：" + probeError;
+            save(clusterId, tenantId, host, project, credentialId, robot.id(), status, message);
+            return new SyncItem(tenantId, tenantName, project, status,
+                    probeError == null ? "已创建" : message);
         } catch (Exception e) {
             String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
             save(clusterId, tenantId, host, project, null, null, "ERROR", truncate(message, 1000));
@@ -271,6 +280,20 @@ public class HarborRegistryService {
         return c != null && c.getSecretEncrypted() != null && !c.getSecretEncrypted().isBlank()
                 && c.getEnabled() != null && c.getEnabled() == 1
                 && endpoint.equals(c.getEndpoint());
+    }
+
+    /** 用 robot 自己的凭据试一次列仓库；拿不到凭据 / 调用失败都按「需要重建」处理 */
+    private boolean robotUsable(String baseUrl, String project, String credentialId) {
+        try {
+            CredentialSecret s = credentialService.resolveSecret(credentialId);
+            if (s == null || s.getSecret() == null) {
+                return false;
+            }
+            return harbor.probeRobot(baseUrl, project, s.getUsername(), s.getSecret()) == null;
+        } catch (Exception e) {
+            log.warn("校验 Harbor robot 能否列仓库时出错，按需要重建处理：{}", e.getMessage());
+            return false;
+        }
     }
 
     private void touch(PlatformRegistryProject row) {

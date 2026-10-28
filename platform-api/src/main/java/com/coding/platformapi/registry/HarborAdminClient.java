@@ -106,7 +106,13 @@ public class HarborAdminClient {
                         "namespace", projectName,
                         "access", List.of(
                                 Map.of("resource", "repository", "action", "push"),
-                                Map.of("resource", "repository", "action", "pull")))));
+                                Map.of("resource", "repository", "action", "pull"),
+                                // ⚠️ 平台要用这个 robot **浏览**镜像仓库：列仓库走的是
+                                //    GET /projects/{name}/repositories，Harbor 要求的动作是 `list`，
+                                //    只给 pull/push 会 403（2026-10-28 用户撞到）
+                                Map.of("resource", "repository", "action", "list"),
+                                // 第三层列 tag 走 artifacts 接口，同理要 artifact:list
+                                Map.of("resource", "artifact", "action", "list")))));
         try {
             String raw = restClient.post().uri(baseUrl + "/api/v2.0/robots")
                     .header(HttpHeaders.AUTHORIZATION, basic(user, pass))
@@ -151,6 +157,29 @@ public class HarborAdminClient {
                                   String harborRobotName) {
         for (long id : robotIds(baseUrl, user, pass, projectId, harborRobotName)) {
             deleteRobot(baseUrl, user, pass, id);
+        }
+    }
+
+    /**
+     * 用 **robot 自己的凭据**列一下它 project 里的仓库（只取 1 条）。
+     *
+     * <p>为什么值得多发一次请求：robot 的权限是**建的时候定死的**，凭据行看起来却一切正常；
+     * 权限不够要等用户点开镜像仓库才暴露（"凭据不通过，或该凭据无权访问此仓库"）。
+     * 这里提前问一次，同步就能自愈/至少把真实原因写进台账。
+     *
+     * @return {@code null} = 可用；否则是失败描述（如 {@code HTTP 403}）
+     */
+    public String probeRobot(String baseUrl, String project, String robotUser, String robotSecret) {
+        try {
+            restClient.get()
+                    .uri(baseUrl + "/api/v2.0/projects/" + project + "/repositories?page_size=1")
+                    .header(HttpHeaders.AUTHORIZATION, basic(robotUser, robotSecret))
+                    .retrieve().body(String.class);
+            return null;
+        } catch (RestClientResponseException e) {
+            return "HTTP " + e.getStatusCode().value();
+        } catch (Exception e) {
+            return e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
         }
     }
 

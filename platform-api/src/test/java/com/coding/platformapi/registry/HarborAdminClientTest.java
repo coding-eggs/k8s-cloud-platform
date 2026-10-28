@@ -59,7 +59,9 @@ class HarborAdminClientTest {
                         {"name":"ci","level":"project","duration":-1,
                          "permissions":[{"kind":"project","namespace":"t-acme",
                            "access":[{"resource":"repository","action":"push"},
-                                     {"resource":"repository","action":"pull"}]}]}"""))
+                                     {"resource":"repository","action":"pull"},
+                                     {"resource":"repository","action":"list"},
+                                     {"resource":"artifact","action":"list"}]}]}"""))
                 .andRespond(withSuccess("{\"id\":42,\"name\":\"robot$t-acme+ci\",\"secret\":\"s3cr3t\"}",
                         APPLICATION_JSON));
 
