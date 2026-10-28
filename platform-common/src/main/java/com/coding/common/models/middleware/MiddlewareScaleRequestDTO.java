@@ -29,6 +29,16 @@ public class MiddlewareScaleRequestDTO {
     /** Elasticsearch：是否安装 IK 分词器（幂等；null/false = 不处理） */
     private Boolean ik;
 
+    /**
+     * Elasticsearch：Kibana 附属实例的**三态**期望（唯一可双向的编辑项）。
+     * <ul>
+     *   <li>{@code null} = 不处理（缺省；老前端/其它中间件都走这条）</li>
+     *   <li>{@code true} = 确保存在 —— 不存在时按线上 ES CR 的版本/TLS 补建</li>
+     *   <li>{@code false} = 确保不存在 —— 存在则删除 Kibana CR（ES 与数据不受影响）</li>
+     * </ul>
+     */
+    private Boolean kibana;
+
     /** 实例台账 id（采集资源的平台标签要用） */
     private String instanceId;
 

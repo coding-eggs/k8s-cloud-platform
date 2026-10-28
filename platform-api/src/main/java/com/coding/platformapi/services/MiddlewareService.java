@@ -442,7 +442,10 @@ public class MiddlewareService {
             case "elasticsearch" -> {
                 String scheme = tlsEnabled(instance) ? "https" : "http";
                 endpoints.add(line(scheme.toUpperCase() + " 接口", scheme + "://" + svc(ns, name + "-es-http", 9200)));
-                endpoints.add(line("Kibana（创建时勾选才有）", scheme + "://" + svc(ns, name + "-kb-http", 5601)));
+                // Kibana 可在编辑里关掉：只有台账明确记了 false 才不列；老实例没有这个键 → 保持原样
+                if (!Boolean.FALSE.equals(specFlag(instance, "kibana"))) {
+                    endpoints.add(line("Kibana", scheme + "://" + svc(ns, name + "-kb-http", 5601)));
+                }
                 credentials.add(line("用户名", "elastic"));
                 credentials.add(line("密码", "Secret " + name + "-es-elastic-user，键 elastic"));
             }
@@ -568,6 +571,39 @@ public class MiddlewareService {
             instances.updateById(instance);
         } catch (RuntimeException e) {
             // 回写失败不影响已经装上的插件；规格没标记而已
+        }
+    }
+
+    /**
+     * 记下 Kibana 的存在与否（**双向**，与 IK 的单向回写不同）。
+     *
+     * <p>台账这份规格只用于回显与「连接方式要不要列 Kibana」；集群现状以 live.relatedCrs 为准。
+     */
+    private void markKibana(PlatformMiddlewareInstance instance, boolean installed) {
+        try {
+            Map<String, Object> spec = isBlank(instance.getSpecJson())
+                    ? new LinkedHashMap<>()
+                    : new LinkedHashMap<>(jsonMapper.readValue(instance.getSpecJson(), Map.class));
+            spec.put("kibana", installed);
+            instance.setSpecJson(jsonMapper.writeValueAsString(spec));
+            instance.setUpdatedAt(new Date());
+            instances.updateById(instance);
+        } catch (RuntimeException e) {
+            // 回写失败不影响集群里已经改好的 Kibana，只是台账标记旧了
+        }
+    }
+
+    /** 规格里的布尔开关；缺键 / 读不出 → null（老实例没有这个键，调用方按「不知道」处理）。 */
+    private Boolean specFlag(PlatformMiddlewareInstance instance, String key) {
+        String raw = instance.getSpecJson();
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            Object v = jsonMapper.readValue(raw, Map.class).get(key);
+            return v instanceof Boolean b ? b : null;
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 
@@ -746,6 +782,7 @@ public class MiddlewareService {
             dto.setMemoryLimit(req.getMemoryLimit());
             dto.setStorageSize(req.getStorageSize());
             dto.setIk(Boolean.TRUE.equals(req.getIk()));
+            dto.setKibana(req.getKibana());
             dto.setInstanceId(instance.getId());
             dto.setMetricsEnabled(enableMetrics);
             dto.setTenantId(tenantId);
@@ -769,6 +806,9 @@ public class MiddlewareService {
             }
             if (enableMetrics) {
                 markMetricsEnabled(instance);
+            }
+            if (req.getKibana() != null) {
+                markKibana(instance, req.getKibana());
             }
             finish(op, "SUCCESS", null);
         } catch (RuntimeException e) {
@@ -997,6 +1037,8 @@ public class MiddlewareService {
         spec.put("metricsEnabled", Boolean.TRUE.equals(req.getMetricsEnabled()));
         // IK 分词器（只有 ES 用得到）：编辑弹窗靠它回显「已安装」
         spec.put("ik", Boolean.TRUE.equals(req.getIk()));
+        // Kibana（只有 ES 用得到）：编辑里可开可关，所以是双向记录
+        spec.put("kibana", Boolean.TRUE.equals(req.getKibana()));
         if (grant != null) {
             spec.put("etcdReplicas", req.getEtcdReplicas());
             spec.put("localStorageSize", req.getLocalStorageSize());

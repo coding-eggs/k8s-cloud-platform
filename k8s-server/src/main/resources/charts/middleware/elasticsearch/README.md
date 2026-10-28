@@ -27,6 +27,10 @@
   勾 Kibana 时还要 `kibana.k8s.elastic.co`；
 - **状态**：ES 的 `status.health` 为准；装了 Kibana 时 **Kibana 非 green 会把实例判成 DEGRADED**
   并带原因（不会因为 ES 本身绿就报「运行中」）；
+- **Kibana 可在编辑里开关（唯一可双向的编辑项）**：关掉 = 删同名 Kibana CR（ES 与数据卷不动，
+  Kibana 也没有 PVC），再打开 = 按**线上 ES CR** 的 `spec.version` 与 TLS 补建 —— 不看台账，
+  台账版本可能落后于集群实际（ECK 升级/手工改过），版本对不上 Kibana 就起不来。
+  补建的 CR 与创建时同款（`kibanaSpec(...)`），**同样必须带 resources**；
 - **资源**：ES 9.x **至少给 3Gi 内存**，2Gi 会 OOMKilled（真集群实锤）；改资源会触发滚动重启，
   期间 DEGRADED 是正常的。
 
@@ -74,13 +78,14 @@ kubectl -n platform-storage exec deploy/seaweedfs-s3 -- curl -o /dev/null \
 |---|---|
 | 节点数 | 一个 `nodeSet` 的 `count`，≥1；生产建议 ≥3 |
 | HTTPS（默认开） | 关闭时给 ES/Kibana 的 CR 写 `spec.http.tls.selfSignedCertificate.disabled: true`（只关 HTTP 层，transport 仍加密）。**ECK 仍会生成 `es-http-certs-*` Secret，属正常残留** |
-| Kibana（可选） | 额外建一个同名 `Kibana` CR，`elasticsearchRef` 指向 ES；跟随 ES 的 http/https |
+| Kibana（可选） | 额外建一个同名 `Kibana` CR，`elasticsearchRef` 指向 ES；跟随 ES 的 http/https；**编辑里可关可开**（见 §2） |
 | IK 中文分词器（可选） | initContainer 从**平台对象存储**下载 zip 解压到共享 emptyDir 的 `plugins/analysis-ik`（见 §2.3）；**单向，不支持在线卸载** |
 
 ## 4. 表单字段
 
 命名空间、显示名、StorageClass、CPU/内存（≥3Gi）、存储、`replicas`（节点数）、版本下拉、
 HTTPS 开关（默认开）、IK 分词器开关（默认关）、同时部署 Kibana（默认不勾）、「采集业务指标」开关（默认关）。
+其中 **Kibana 在编辑里也能改（可关可开）**，其余开关是单向的（IK 只补装、业务指标只开启）。
 
 ## 5. 坑（真集群实锤，别回退）
 

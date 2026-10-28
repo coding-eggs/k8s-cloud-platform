@@ -468,6 +468,10 @@ public class MiddlewareInstanceService {
         if (!found) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
         }
+        // 附属组件（目前只有 ES 的 Kibana）：会增删 CR，不能混进上面按上下文 SSA 的循环
+        if (req.getKibana() != null) {
+            adapter.applyAccessory(client, req);
+        }
         if (enableMetrics) {
             ensureMetricsResources(client, adapter, req);
         }

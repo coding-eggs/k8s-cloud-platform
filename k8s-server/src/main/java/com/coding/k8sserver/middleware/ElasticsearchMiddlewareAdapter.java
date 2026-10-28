@@ -203,6 +203,73 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             .withGroup("kibana.k8s.elastic.co").withVersion(VERSION).withKind("Kibana")
             .withPlural("kibanas").withScope("Namespaced").build();
 
+    /**
+     * Kibana CR 的资源体（创建与编辑补建共用）：版本/TLS 由调用方按 ES 决定。
+     *
+     * <p>必须带资源：命名空间有 limits.* 配额时，没写 requests/limits 的容器会被 quota 直接拒掉
+     *（真集群验证：Kibana Pod 一直 Pending，事件是 must specify limits.cpu for: kibana）。
+     */
+    static Map<String, Object> kibanaSpec(String esName, String version, boolean tls) {
+        Map<String, Object> kibana = new LinkedHashMap<>();
+        kibana.put("version", version);
+        kibana.put("count", 1);
+        kibana.put("elasticsearchRef", Map.of("name", esName));
+        if (!tls) {
+            kibana.put("http", httpWithoutTls());   // Kibana 跟着 ES 一起走 http/https
+        }
+        Map<String, Object> kibanaContainer = new LinkedHashMap<>();
+        kibanaContainer.put("name", "kibana");
+        kibanaContainer.put("resources", KIBANA_RESOURCES);
+        kibana.put("podTemplate", Map.of("spec", Map.of("containers",
+                new java.util.ArrayList<>(List.of(kibanaContainer)))));
+        return kibana;
+    }
+
+    /** 线上 ES CR 的版本；CR 里没写就用平台默认（与创建时同一条兜底）。 */
+    static String esVersion(GenericKubernetesResource es) {
+        Object v = specOf(es).get("version");
+        return v == null || String.valueOf(v).isBlank() ? DEFAULT_ES_VERSION : String.valueOf(v);
+    }
+
+    /**
+     * 编辑时开/关 Kibana（{@code null} = 不处理）。
+     *
+     * <p>补建用**线上 ES CR** 的 version 与 TLS，不看台账：台账版本可能落后于集群实际
+     *（ECK 升级或手工改过 CR），补出来的 Kibana 版本跟 ES 对不上就起不来。
+     * 已存在时不动 —— 避免白白滚动重启一次。
+     */
+    @Override
+    public boolean applyAccessory(KubernetesClient client, MiddlewareScaleRequestDTO req) {
+        if (req.getKibana() == null) {
+            return false;
+        }
+        String ns = req.getNamespace();
+        String name = req.getName();
+        GenericKubernetesResource kibana = client.genericKubernetesResources(KIBANA)
+                .inNamespace(ns).withName(name).get();
+        if (!req.getKibana()) {
+            if (kibana == null) {
+                return false;   // 本来就没有：幂等
+            }
+            // 只删 Kibana CR（及其 Pod）；ES、数据卷、凭据都不受影响
+            client.genericKubernetesResources(KIBANA).inNamespace(ns).withName(name).delete();
+            return true;
+        }
+        if (kibana != null) {
+            return false;
+        }
+        GenericKubernetesResource es = client.genericKubernetesResources(CRD)
+                .inNamespace(ns).withName(name).get();
+        if (es == null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
+        }
+        client.genericKubernetesResources(KIBANA).inNamespace(ns)
+                .resource(resource(name, ns, req.getInstanceId(), "kibana.k8s.elastic.co/" + VERSION,
+                        "Kibana", kibanaSpec(name, esVersion(es), tlsEnabled(specOf(es)))))
+                .create();
+        return true;
+    }
+
     @Override
     public String code() {
         return "elasticsearch";
@@ -264,21 +331,8 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         out.add(new CrSpec(CRD, resource(req, GROUP + "/" + VERSION, "Elasticsearch", spec)));
 
         if (Boolean.TRUE.equals(req.getKibana())) {
-            Map<String, Object> kibana = new LinkedHashMap<>();
-            kibana.put("version", version);
-            kibana.put("count", 1);
-            kibana.put("elasticsearchRef", Map.of("name", req.getName()));
-            if (!tlsEnabled(req)) {
-                kibana.put("http", httpWithoutTls());   // Kibana 跟着 ES 一起走 http/https
-            }
-            // 必须带资源：命名空间有 limits.* 配额时，没写 requests/limits 的容器会被 quota 直接拒掉
-            //（真集群验证：Kibana Pod 一直 Pending，事件是 must specify limits.cpu for: kibana）
-            Map<String, Object> kibanaContainer = new LinkedHashMap<>();
-            kibanaContainer.put("name", "kibana");
-            kibanaContainer.put("resources", KIBANA_RESOURCES);
-            kibana.put("podTemplate", Map.of("spec", Map.of("containers",
-                    new java.util.ArrayList<>(List.of(kibanaContainer)))));
-            out.add(new CrSpec(KIBANA, resource(req, "kibana.k8s.elastic.co/" + VERSION, "Kibana", kibana)));
+            out.add(new CrSpec(KIBANA, resource(req, "kibana.k8s.elastic.co/" + VERSION, "Kibana",
+                    kibanaSpec(req.getName(), version, tlsEnabled(req)))));
         }
         return out;
     }
@@ -458,16 +512,22 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
 
     private GenericKubernetesResource resource(MiddlewareCreateRequestDTO req, String apiVersion, String kind,
                                                Map<String, Object> spec) {
+        return resource(req.getName(), req.getNamespace(), req.getInstanceId(), apiVersion, kind, spec);
+    }
+
+    /** 资源体（创建与编辑补建共用）：名字/命名空间 + 平台受管标签。 */
+    private static GenericKubernetesResource resource(String name, String namespace, String instanceId,
+                                                     String apiVersion, String kind,
+                                                     Map<String, Object> spec) {
         GenericKubernetesResource res = new GenericKubernetesResource();
         res.setApiVersion(apiVersion);
         res.setKind(kind);
         ObjectMeta meta = new ObjectMeta();
-        meta.setName(req.getName());
-        meta.setNamespace(req.getNamespace());
+        meta.setName(name);
+        meta.setNamespace(namespace);
         meta.setLabels(Map.of(
                 "platform.coding/managed-by", "middleware",
-                "platform.coding/middleware-instance",
-                req.getInstanceId() == null ? "-" : req.getInstanceId()));
+                "platform.coding/middleware-instance", instanceId == null ? "-" : instanceId));
         res.setMetadata(meta);
         res.setAdditionalProperty("spec", spec);
         return res;

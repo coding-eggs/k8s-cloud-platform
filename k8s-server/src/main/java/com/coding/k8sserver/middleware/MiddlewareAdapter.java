@@ -143,6 +143,19 @@ public interface MiddlewareAdapter {
     }
 
     /**
+     * 编辑时同步**附属组件**（目前只有 ES 的 Kibana）：
+     * {@code true} = 确保存在（缺则补建）、{@code false} = 确保不存在（有则删除）、{@code null} = 不处理。
+     *
+     * <p>与 {@link #applyScale} 分开：那个是对已存在的 CR 就地改字段，这个会**增删 CR** ——
+     * 混在同一个上下文循环里的话，刚删掉的 CR 又会被 SSA 写回去。
+     *
+     * @return true = 集群里确实发生了增删
+     */
+    default boolean applyAccessory(KubernetesClient client, MiddlewareScaleRequestDTO req) {
+        return false;
+    }
+
+    /**
      * 采集资源：`<名字>-platform-metrics` 的 Service + ServiceMonitor（实现见 {@link MetricsResources}）。
      *
      * <p>用 Service 而不是 PodMonitor：本集群的 PodMonitor CRD 没有 `targetPort`，只能引用容器端口名，

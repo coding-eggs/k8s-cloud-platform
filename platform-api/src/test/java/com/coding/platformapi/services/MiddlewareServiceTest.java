@@ -1080,4 +1080,69 @@ class MiddlewareServiceTest {
         assertThat(conn.getCredentials()).extracting(MiddlewareConnectionDTO.Line::value)
                 .anyMatch(v -> v.contains("s3.example.com:9000") && v.contains("my-bucket"));
     }
+
+    // ==================== ES 的 Kibana 开关（编辑可双向） ====================
+
+    @Test
+    void scalePassesKibanaExpectationAndRecordsIt() {
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        i.setSpecJson("{\"kibana\":true,\"tls\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var req = new com.coding.platformapi.models.MiddlewareScaleRequest();
+        req.setInstanceId("mwi_1");
+        req.setKibana(false);
+        service.scale(req, "admin", null);
+
+        var dto = ArgumentCaptor.forClass(com.coding.common.models.middleware.MiddlewareScaleRequestDTO.class);
+        verify(client).scale(org.mockito.ArgumentMatchers.eq("elasticsearch"), dto.capture());
+        // 三态必须原样透传：false 是「确保不存在」，不能被折成 null（那样就成了不处理）
+        assertThat(dto.getValue().getKibana()).isFalse();
+
+        var saved = ArgumentCaptor.forClass(PlatformMiddlewareInstance.class);
+        verify(instances).updateById(saved.capture());
+        assertThat(saved.getValue().getSpecJson()).contains("\"kibana\":false");
+    }
+
+    @Test
+    void scaleWithoutKibanaLeavesItAlone() {
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        i.setSpecJson("{\"kibana\":true}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var req = new com.coding.platformapi.models.MiddlewareScaleRequest();
+        req.setInstanceId("mwi_1");
+        req.setCpuRequest("1");
+        service.scale(req, "admin", null);
+
+        var dto = ArgumentCaptor.forClass(com.coding.common.models.middleware.MiddlewareScaleRequestDTO.class);
+        verify(client).scale(org.mockito.ArgumentMatchers.eq("elasticsearch"), dto.capture());
+        assertThat(dto.getValue().getKibana()).isNull();
+        verify(instances, never()).updateById(any());   // 没动 Kibana 就不回写台账
+    }
+
+    @Test
+    void connectionHidesKibanaWhenDisabledInSpec() {
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        i.setSpecJson("{\"kibana\":false}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var c = service.connection("mwi_1", null);
+
+        assertThat(c.getEndpoints()).extracting(MiddlewareConnectionDTO.Line::label)
+                .containsExactly("HTTPS 接口");
+    }
+
+    @Test
+    void connectionKeepsKibanaForInstancesWithoutTheFlag() {
+        // 老实例 spec_json 里没有 kibana 键 → 保持改动前的行为（照常列出）
+        PlatformMiddlewareInstance i = instance("elasticsearch", "CLUSTER");
+        i.setSpecJson("{\"mode\":\"CLUSTER\"}");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+
+        var c = service.connection("mwi_1", null);
+
+        assertThat(c.getEndpoints()).extracting(MiddlewareConnectionDTO.Line::label)
+                .containsExactly("HTTPS 接口", "Kibana");
+    }
 }

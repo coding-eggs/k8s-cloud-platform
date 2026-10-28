@@ -377,4 +377,57 @@ class ElasticsearchMiddlewareAdapterTest {
         assertThat(adapter.ensureMetrics(live, ElasticsearchMiddlewareAdapter.CRD, scaleReq)).isFalse();
     }
 
+    // ==================== 编辑时开/关 Kibana ====================
+    // applyAccessory 的集群 IO 很薄（读 → 删/建）；决定「补建成什么样」的是下面这些纯函数，
+    // 断言的正是「补出来的 CR 与创建时同款」。
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void kibanaSpecKeepsVersionTlsAndResourcesForRecreate() {
+        var spec = ElasticsearchMiddlewareAdapter.kibanaSpec("mw-es-abc12345", "9.6.1", true);
+
+        assertThat(spec).containsEntry("version", "9.6.1").containsEntry("count", 1);
+        assertThat((Map<String, Object>) spec.get("elasticsearchRef"))
+                .containsEntry("name", "mw-es-abc12345");
+        assertThat(spec).doesNotContainKey("http");   // 开 TLS 时不写 http（ECK 默认自签）
+        var pod = (Map<String, Object>) ((Map<String, Object>) spec.get("podTemplate")).get("spec");
+        var cs = (List<Map<String, Object>>) pod.get("containers");
+        assertThat(cs).hasSize(1);
+        assertThat(cs.get(0)).containsEntry("name", "kibana");
+        // 命名空间有 limits 配额时缺资源会被拒（真集群验证过），补建同样要带
+        assertThat((Map<String, Object>) cs.get(0).get("resources"))
+                .isEqualTo(ElasticsearchMiddlewareAdapter.KIBANA_RESOURCES);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void kibanaSpecFollowsEsHttpWhenTlsDisabled() {
+        var spec = ElasticsearchMiddlewareAdapter.kibanaSpec("mw-es-x", "9.5.0", false);
+
+        assertThat((Map<String, Object>) ((Map<String, Object>) spec.get("http")).get("tls"))
+                .containsKey("selfSignedCertificate");
+    }
+
+    @Test
+    void esVersionComesFromLiveCrWithAFallback() {
+        assertThat(ElasticsearchMiddlewareAdapter.esVersion(adapter.buildCreate(req(1)).get(0).resource()))
+                .isEqualTo("9.5.0");
+
+        var v = req(1);
+        v.setVersion("9.4.2");
+        assertThat(ElasticsearchMiddlewareAdapter.esVersion(adapter.buildCreate(v).get(0).resource()))
+                .isEqualTo("9.4.2");
+
+        // CR 里没写 version（被手工改过/剥离）→ 平台默认
+        var bare = new GenericKubernetesResource();
+        bare.setAdditionalProperty("spec", Map.of());
+        assertThat(ElasticsearchMiddlewareAdapter.esVersion(bare)).isEqualTo("9.5.0");
+    }
+
+    @Test
+    void applyAccessoryIgnoresNullExpectation() {
+        // null = 不处理：既不读也不写集群（其它中间件 / 老前端都走这条），因此 client 可以是 null
+        assertThat(adapter.applyAccessory(null, new MiddlewareScaleRequestDTO())).isFalse();
+    }
+
 }

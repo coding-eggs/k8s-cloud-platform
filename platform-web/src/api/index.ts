@@ -1116,6 +1116,8 @@ export const middlewareApi = {
     storageSize?: string
     /** Elasticsearch：安装 IK（单向，不在编辑里卸载） */
     ik?: boolean
+    /** Elasticsearch：Kibana 附属实例（可双向）—— true 确保存在（缺则补建）、false 确保删除 */
+    kibana?: boolean
     /** 业务指标：单向开启（装 exporter / 建采集资源） */
     metricsEnabled?: boolean
     tenantId?: string

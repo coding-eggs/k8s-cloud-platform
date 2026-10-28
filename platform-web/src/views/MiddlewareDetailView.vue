@@ -289,6 +289,8 @@ const editForm = ref<{
   ik: boolean
   /** 业务指标：单向开启（已开启时开关置灰） */
   metricsEnabled: boolean
+  /** Kibana（仅 ES）：**双向**开关，与现状不一致时才提交 */
+  kibana: boolean
 }>({
   displayName: '',
   replicas: null,
@@ -300,6 +302,7 @@ const editForm = ref<{
   memoryLimitUnit: 'Mi',
   ik: false,
   metricsEnabled: false,
+  kibana: false,
 })
 
 /**
@@ -310,6 +313,18 @@ const ikInstalled = computed(() =>
   detail.value?.live?.ikInstalled ?? (detail.value?.spec?.ik === true),
 )
 const supportsIk = computed(() => instance.value?.code === 'elasticsearch')
+const supportsKibana = computed(() => instance.value?.code === 'elasticsearch')
+/**
+ * Kibana 是否已部署：以集群里的附属 CR 为准（live.relatedCrs 里有 Kibana）——
+ * 编辑里可以关也可以再开，所以台账的 spec.kibana 只作为读不到实时对象时的兜底。
+ */
+const kibanaInstalled = computed(() => {
+  const crs = detail.value?.live?.relatedCrs
+  if (Array.isArray(crs) && crs.length > 0) {
+    return crs.some((c) => c.kind === 'Kibana')
+  }
+  return detail.value?.spec?.kibana === true
+})
 /** 业务指标是否已开启（只看台账：开启成功后会回写 spec_json） */
 const metricsInstalled = computed(() => detail.value?.spec?.metricsEnabled === true)
 
@@ -348,12 +363,26 @@ function openEdit(): void {
     // 已装的开关要如实回显（置灰且处于开启位），否则「已安装」的文案配一个关着的开关
     ik: ikInstalled.value,
     metricsEnabled: metricsInstalled.value,
+    kibana: kibanaInstalled.value,
   }
   editVisible.value = true
 }
 
 async function submitEdit(): Promise<void> {
   if (!instance.value) return
+  // Kibana 可双向：只有跟现状不一致才提交（避免每次保存都去碰一遍附属 CR）
+  const kibanaChanged = supportsKibana.value && editForm.value.kibana !== kibanaInstalled.value
+  if (kibanaChanged && !editForm.value.kibana) {
+    try {
+      await ElMessageBox.confirm(
+        `关闭后将删除 Kibana 附属实例（它的 Pod 会被回收）；Elasticsearch 本身与数据都不受影响。`,
+        '关闭 Kibana',
+        { type: 'warning', confirmButtonText: '关闭 Kibana', cancelButtonText: '取消' },
+      )
+    } catch {
+      return   // 用户在确认框里取消 = 整次保存中止
+    }
+  }
   saving.value = true
   try {
     if (editForm.value.displayName.trim() && editForm.value.displayName !== instance.value.displayName) {
@@ -365,7 +394,7 @@ async function submitEdit(): Promise<void> {
     }
     // 业务指标是单向开启：已开启就不再发；Nacos 也走这个通道（只带 metricsEnabled）
     const enableMetrics = editForm.value.metricsEnabled && !metricsInstalled.value
-    if (canScale.value || enableMetrics) {
+    if (canScale.value || enableMetrics || kibanaChanged) {
       const cpuReq = editForm.value.cpuRequest
       const cpuLim = editForm.value.cpuLimit
       await middlewareApi.scale({
@@ -380,6 +409,7 @@ async function submitEdit(): Promise<void> {
           ? `${editForm.value.memoryLimit}${editForm.value.memoryLimitUnit}` : undefined,
         // IK 是单向的：只有「从没装过」才发；已装的不再发（开关也置灰）
         ik: editForm.value.ik && !ikInstalled.value ? true : undefined,
+        kibana: kibanaChanged ? editForm.value.kibana : undefined,
         metricsEnabled: enableMetrics ? true : undefined,
         tenantId: tenantId.value,
       })
@@ -758,6 +788,13 @@ watch(tenantId, () => void load())
             {{ metricsInstalled
               ? '已开启（单向，不支持关闭）'
               : '开启后装 exporter 并建采集资源：PG/RabbitMQ 不重启，其余会滚动重启（Nacos 会重新 upgrade）' }}
+          </div>
+        </el-form-item>
+        <el-form-item v-if="supportsKibana" label="Kibana">
+          <el-switch v-model="editForm.kibana" active-text="部署 Kibana 控制台" />
+          <div class="mw-form-help">
+            Kibana 只是 ES 的可视化控制台：关掉会删除 Kibana 实例（Elasticsearch 与数据不受影响），
+            再打开会按当前 ES 版本补建。
           </div>
         </el-form-item>
         <template v-if="canScale">
