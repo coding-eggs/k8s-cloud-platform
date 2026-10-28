@@ -29,7 +29,7 @@
   - 平台后端调 Harbor API 的 scheme 从写死的 `http://` 改成配置（默认 `https`），见 Task 3
 - **不改写就等价于今天的行为**：`imageSource=OFFICIAL` 或 `platform.image-registry.enabled=false` 时，代码路径完全不变。
 - **Harbor 自身的镜像永远走官方**（先有鸡还是先有蛋），安装 `harbor` 组件时强制忽略 `PLATFORM`。
-- **新端点必须有权限行**（否则 `PermissionCrossCheckRunner` 启动失败）——本批新增 `/components/images`。
+- **新端点必须有权限行**（否则 `PermissionCrossCheckRunner` 启动失败）——本批新增 `/cluster/components/images`。
 - 迁移一律手工重放（本仓没有 Flyway）。
 
 ## 实施前置（开工条件）
@@ -72,7 +72,7 @@
 
 **Interfaces:**
 - Produces: `k8s_cluster.image_registry_host` / `image_registry_project`（可空）；权限行
-  `/components/images` → `platform:component:read`（与其它组件只读端点同码）。
+  `/cluster/components/images` → `platform:component:read`（与其它组件只读端点同码）。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -84,7 +84,7 @@ class ImageRegistryPermissionMigrationTest {
     @Test
     void imageListEndpointHasAPermissionRowBoundToAdmin() throws Exception {
         String sql = Files.readString(SQL);
-        assertThat(sql).contains("'/components/images'").contains("'platform:component:read'")
+        assertThat(sql).contains("'/cluster/components/images'").contains("'platform:component:read'")
                 .contains("'builtin_role_admin'");
     }
 }
@@ -104,7 +104,7 @@ ALTER TABLE k8s_cluster
   ADD COLUMN image_registry_project VARCHAR(64)  NULL COMMENT '镜像项目（空=平台默认 platform）';
 
 INSERT INTO platform_permission (id, domain, resource, action, code, description) VALUES
- ('perm_components_images','API','/components/images','POST','platform:component:read','组件/中间件的镜像清单')
+ ('perm_components_images','API','/cluster/components/images','POST','platform:component:read','组件/中间件的镜像清单')
 ON DUPLICATE KEY UPDATE code=VALUES(code), description=VALUES(description);
 
 INSERT INTO platform_role_permission (id, role_id, permission_id) VALUES
@@ -640,7 +640,7 @@ class ImagePullSecretsTest {
 
 - [ ] **Step 1: 文档写清 6 条规则的字段**（每条：远端仓库地址、访问凭据、**Destination namespace = 上游主机名**、
   触发方式=手动、带宽/覆盖策略）
-- [ ] **Step 2: 首次全量同步**：按 `/components/images` 的清单逐个触发（Harbor 复制的「复制」按钮），
+- [ ] **Step 2: 首次全量同步**：按 `/cluster/components/images` 的清单逐个触发（Harbor 复制的「复制」按钮），
   或用 Harbor 的「批量复制」
 - [ ] **Step 3: 核对脚本**：对清单里每条镜像 `GET /v2/<repo>/manifests/<tag>`，200 即到位；
   把结果贴进文档的「同步记录」
