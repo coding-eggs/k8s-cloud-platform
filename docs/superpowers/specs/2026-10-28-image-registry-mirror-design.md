@@ -154,18 +154,19 @@ Redis 的 `quay.io/opstree/*`、ES 的 `docker.elastic.co/*`、exporter 的 `qua
 - `helm --wait` 依赖的钩子镜像（同属 chart values，走 7.1 一起改）；
 - initContainer 复用主镜像的情况（ES 的 IK init 用 ES 主镜像）—— 7.1/7.2 改主镜像时一并生效。
 
-## 8. 拉取凭据
+## 8. 拉取凭据：**platform 项目设为公开读**（2026-10-28 改）
 
-Harbor 的 `platform` 项目默认私有。做法：
+原计划是「给每个目标命名空间发 `imagePullSecret` 并补 `default` ServiceAccount」。用户决定改成：
+**把 Harbor 的 `platform` 项目设为公开读**（`metadata.public=true`）—— 匿名可 pull、push 仍要账号。
 
-1. k8s-server 新端点 `POST /components/image-pull-secret`：按平台配置的 robot 账号生成
-   `<ns>/platform-harbor-pull`（`kubernetes.io/dockerconfigjson`），幂等 SSA；
-2. 同时 **patch 该命名空间的 `default` ServiceAccount**，把 secret 加进 `imagePullSecrets` ——
-   这样所有 chart 渲出来的 Pod 自动继承，不用逐个 chart 改 values（10+ 个 chart 各自写法不同，逐改会漏）；
-3. 调用时机：组件安装/升级前、中间件实例创建/重放前，对涉及的命名空间各调一次；
-4. 目标命名空间集合：组件 release 的 namespace（含 `platform-middleware-system`、`monitor`、
-   `platform-storage`、`istio-system`…）+ 中间件实例所在租户 namespace。
-5. 平台自身镜像：由部署清单自带 `imagePullSecrets`（见 §9）。
+- 平台侧：`HarborRegistryService.ensurePlatformPublic(clusterId)` 幂等确保项目存在且公开，
+  Harbor 组件安装成功后调用；本集群已手工切过一次（`platform` project id=2，`public=true`）。
+- 节点/命名空间：**不需要任何 imagePullSecret 配置**，也不需要默认 SA 补丁。
+- 推送：Harbor 复制规则用管理凭据，不受影响。
+- 代价：**能访问到 registry 的人都能拉 platform 里的镜像**（含平台组件镜像）。内网 Harbor 可接受。
+- 租户自己的项目不做平台干预（仍是私有 + 各自 robot）。
+
+> 如果以后要收紧：把项目改回私有，再补 imagePullSecret 那条链路（原设计的代码块留在计划 Task 7 里备查）。
 
 ## 9. 平台自身镜像
 

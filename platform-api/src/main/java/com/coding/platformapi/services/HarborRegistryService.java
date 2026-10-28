@@ -90,6 +90,27 @@ public class HarborRegistryService {
         }
     }
 
+    /** 平台镜像项目名：组件/中间件的镜像都放这里 */
+    public static final String PLATFORM_PROJECT = "platform";
+
+    /**
+     * 确保 {@code platform} 项目存在且**公开读**（匿名可 pull）。
+     *
+     * <p>这是「镜像来源纳管」的拉取侧前提：公开读之后节点不需要 imagePullSecret；
+     * 推送仍走 Harbor 复制规则/管理凭据，不受影响。幂等。
+     */
+    public void ensurePlatformPublic(String clusterId) {
+        String host = harborHost(clusterId);
+        if (host == null || host.isBlank()) {
+            return;   // 没装 Harbor / 没有成功记录：没得设，交给调用方决定要不要报错
+        }
+        Basic auth = adminOf(clusterId);
+        String baseUrl = base(host);
+        long projectId = harbor.ensureProject(baseUrl, auth.user(), auth.pass(), PLATFORM_PROJECT);
+        harbor.ensurePublicProject(baseUrl, auth.user(), auth.pass(), projectId, PLATFORM_PROJECT);
+        log.info("集群 {} 的 Harbor 项目 {} 已确保为公开读", clusterId, PLATFORM_PROJECT);
+    }
+
     /** 全量同步：平台共享 + 全部启用租户。装完后由组件安装流程调用。 */
     public SyncResult ensureAll(String clusterId) {
         return ensureAll(clusterId, false);

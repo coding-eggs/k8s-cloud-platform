@@ -546,7 +546,10 @@ class ImagesTest {
 
 ---
 
-## Task 7: k8s-server 下发 imagePullSecret（并补 default SA）
+## Task 7: ~~k8s-server 下发 imagePullSecret~~ —— **不做（2026-10-28 改）**
+
+用户决定 `platform` 项目设为**公开读**，节点匿名 pull，不需要 imagePullSecret。
+本任务整体取消（代码块留档，将来若改回私有项目可直接照做）。
 
 **Files:**
 - Create: `k8s-server/src/main/java/com/coding/k8sserver/components/ImagePullSecrets.java`
@@ -584,7 +587,30 @@ class ImagePullSecretsTest {
 
 ---
 
-## Task 8: Harbor `platform` 项目的拉取 robot
+## Task 8: 确保 `platform` 项目**公开读**（原「拉取 robot」取消）
+
+**Files:**
+- Modify: `platform-api/.../registry/HarborAdminClient.java`（`ensurePublicProject`）
+- Modify: `platform-api/.../services/HarborRegistryService.java`（`ensurePlatformPublic`）
+- Modify: `platform-api/.../services/ComponentInstallService.java`（Harbor 装完调用）
+
+- [x] **Step 1: 实现 + 编译**（2026-10-28）
+
+```java
+// HarborAdminClient
+public void ensurePublicProject(String baseUrl, String user, String pass,
+                                long projectId, String projectName) {
+    restClient.put().uri(baseUrl + "/api/v2.0/projects/" + projectId)
+            .header(HttpHeaders.AUTHORIZATION, basic(user, pass))
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(Map.of("metadata", Map.of("public", "true")))
+            .retrieve().toBodilessEntity();
+}
+```
+
+- [x] **Step 2: 本集群已手工切换并确认**：`platform` project id=2 → `public=true`（PUT 200）
+
+## ~~Task 8（原）Harbor `platform` 项目的拉取 robot~~
 
 **Files:**
 - Modify: `platform-api/src/main/java/com/coding/platformapi/services/HarborRegistryService.java`

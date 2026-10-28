@@ -91,6 +91,26 @@ public class HarborAdminClient {
     }
 
     /** 只查项目 id（404 → null，**不创建**）：删租户回收账号时用，避免顺手把项目建出来 */
+    /**
+     * 把项目设成「公开读」：匿名可以 pull，push 仍然要账号。
+     *
+     * <p>平台的 {@code platform} 项目放的是组件/中间件镜像。设成公开读之后，节点匿名拉取即可，
+     * 不用给每个命名空间发 {@code imagePullSecret}，也不用给平台机器人分发凭据 ——
+     * 少一条每次安装都要维护的链路。代价是**能访问到 registry 的人都能拉**（内网 Harbor 可接受）。
+     */
+    public void ensurePublicProject(String baseUrl, String user, String pass,
+                                    long projectId, String projectName) {
+        try {
+            restClient.put().uri(baseUrl + "/api/v2.0/projects/" + projectId)
+                    .header(HttpHeaders.AUTHORIZATION, basic(user, pass))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("metadata", Map.of("public", "true")))
+                    .retrieve().toBodilessEntity();
+        } catch (RestClientResponseException e) {
+            throw failure("设置 Harbor 项目为公开读失败", projectName, e);
+        }
+    }
+
     public Long findProjectId(String baseUrl, String user, String pass, String projectName) {
         return projectId(baseUrl, user, pass, projectName);
     }

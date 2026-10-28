@@ -1771,6 +1771,12 @@ public class ComponentInstallService {
                 try {
                     // host 直接来自本次安装参数：钩子在写 SUCCESS 之前跑，harborHost() 还读不到记录
                     // INSTALL 强制重建：手工卸载后同地址重装时，旧凭据还在但新 Harbor 里没有那个 robot
+                    // 镜像来源纳管：platform 项目要公开读（匿名 pull），否则节点还得配 imagePullSecret
+                    try {
+                        harborRegistry.ensurePlatformPublic(clusterId);
+                    } catch (Exception e) {
+                        log.warn("组件 {} 安装成功，但把 platform 项目设为公开读失败: {}", id, e.getMessage());
+                    }
                     HarborRegistryService.SyncResult sync = harborRegistry.ensureAll(
                             clusterId, harborAuthority(harbor), "INSTALL".equals(action));
                     if (sync.failed() > 0) {
