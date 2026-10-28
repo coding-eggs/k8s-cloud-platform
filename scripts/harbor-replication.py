@@ -302,7 +302,9 @@ def make_policy(upstream, repo, tag_filters, index):
         'enabled': True,
         'override': True,
         'speed': -1,
-        'copy_by_chunk': False,
+        # 分块复制：大镜像经代理/跨境链路传输时整块拉容易断，分块能重试续传
+        # （2026-10-28 实测：percona-server / nacos / milvus 这类整块复制反复失败，开分块就过了）
+        'copy_by_chunk': True,
     }
 
 
