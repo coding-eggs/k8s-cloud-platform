@@ -27,8 +27,9 @@ public class ImageRegistryService {
     @Value("${platform.image-registry.host:}")
     String defaultHost = "";
 
-    @Value("${platform.image-registry.project:platform}")
-    String defaultProject = "platform";
+    /** 额外路径前缀；**留空 = 一上游一项目**（镜像的项目名就是上游主机，如 quay.io） */
+    @Value("${platform.image-registry.project:}")
+    String defaultProject = "";
 
     @Value("${platform.image-registry.enabled:true}")
     boolean enabled = true;
@@ -46,7 +47,7 @@ public class ImageRegistryService {
             return ImageRegistry.OFFICIAL;
         }
         String project = firstNonBlank(clusterService.imageRegistryProject(clusterId), defaultProject);
-        return new ImageRegistry(stripScheme(host), project);
+        return new ImageRegistry(stripScheme(host), project == null ? "" : project);
     }
 
     /**

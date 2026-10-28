@@ -14,7 +14,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ImageRewriterTest {
 
     private static final String HOST = "harbor.ackcp.cloud";
-    private static final String PROJECT = "platform";
+    /** 默认：项目留空 = 一上游一项目（项目名就是上游主机） */
+    private static final String PROJECT = "";
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> rewrite(Map<String, Object> values) {
@@ -27,7 +28,7 @@ class ImageRewriterTest {
         values.put("image", "quay.io/opstree/redis:v7.0.15");
 
         assertThat(rewrite(values)).containsEntry("image",
-                "harbor.ackcp.cloud/platform/quay.io/opstree/redis:v7.0.15");
+                "harbor.ackcp.cloud/quay.io/opstree/redis:v7.0.15");
         // 不改调用方持有的对象
         assertThat(values).containsEntry("image", "quay.io/opstree/redis:v7.0.15");
     }
@@ -44,7 +45,7 @@ class ImageRewriterTest {
         Map<String, Object> rewritten = (Map<String, Object>) rewrite(values).get("image");
 
         assertThat(rewritten).containsEntry("repository",
-                        "harbor.ackcp.cloud/platform/docker.elastic.co/elasticsearch/elasticsearch")
+                        "harbor.ackcp.cloud/docker.elastic.co/elasticsearch/elasticsearch")
                 .containsEntry("tag", "9.5.0");
     }
 
@@ -61,7 +62,7 @@ class ImageRewriterTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> rewritten = (Map<String, Object>) rewrite(values).get("image");
 
-        assertThat(rewritten).containsEntry("registry", "harbor.ackcp.cloud/platform")
+        assertThat(rewritten).containsEntry("registry", "harbor.ackcp.cloud")
                 .containsEntry("repository", "docker.io/grafana/grafana")
                 .containsEntry("tag", "12.0.0");
     }
@@ -88,7 +89,7 @@ class ImageRewriterTest {
         values.put("podTemplate", Map.of("spec", podSpec));
 
         assertThat(rewrite(values).toString())
-                .contains("harbor.ackcp.cloud/platform/quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0");
+                .contains("harbor.ackcp.cloud/quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0");
     }
 
     @Test
@@ -117,7 +118,7 @@ class ImageRewriterTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> rewritten = (Map<String, Object>) rewrite(values).get("tigeraOperator");
 
-        assertThat(rewritten).containsEntry("registry", "harbor.ackcp.cloud/platform")
+        assertThat(rewritten).containsEntry("registry", "harbor.ackcp.cloud")
                 .containsEntry("image", "quay.io/tigera/operator")
                 .containsEntry("version", "v1.44.0");
         assertThat(rewrite(values).toString()).doesNotContain("quay.io/harbor.ackcp.cloud");
@@ -133,7 +134,7 @@ class ImageRewriterTest {
 
         Map<String, Object> rewritten = rewrite(values);
 
-        assertThat(rewritten).containsEntry("imageRegistry", "harbor.ackcp.cloud/platform")
+        assertThat(rewritten).containsEntry("imageRegistry", "harbor.ackcp.cloud")
                 .containsEntry("imageNamespace", "quay.io/jetstack");
     }
 
@@ -147,7 +148,7 @@ class ImageRewriterTest {
 
         Map<String, Object> rewritten = rewrite(values);
 
-        assertThat(rewritten).containsEntry("defaultImageRegistry", "harbor.ackcp.cloud/platform")
+        assertThat(rewritten).containsEntry("defaultImageRegistry", "harbor.ackcp.cloud")
                 .containsEntry("defaultImageRepository", "quay.io/strimzi");
     }
 
@@ -160,5 +161,22 @@ class ImageRewriterTest {
 
         Map<String, Object> once = rewrite(values);
         assertThat(rewrite(once)).isEqualTo(once);
+    }
+
+    /**
+     * 显式给了 project 就退回旧布局（多一段前缀）。这种布局 Harbor 的复制规则落不了，
+     * 只适合手工搬运 —— 留着是为了不改配置也能回到「单项目」。
+     */
+    @Test
+    void explicitProjectKeepsTheOlderLayout() {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("image", "quay.io/opstree/redis:v7.0.15");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rewritten =
+                (Map<String, Object>) ImageRewriter.rewrite(values, HOST, "platform");
+
+        assertThat(rewritten).containsEntry("image",
+                "harbor.ackcp.cloud/platform/quay.io/opstree/redis:v7.0.15");
     }
 }

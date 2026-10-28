@@ -56,7 +56,7 @@ final class ChartImagePins {
         Map<String, Object> out = new LinkedHashMap<>();
         for (Object pin : pins) {
             if (pin instanceof RegistryPin registry) {
-                put(out, registry.path(), host + "/" + project);
+                put(out, registry.path(), ImageReference.prefix(host, project));
             } else if (pin instanceof ImagePin image) {
                 put(out, image.path(), ImageReference.parse(image.upstreamImage()).mirror(host, project));
             }

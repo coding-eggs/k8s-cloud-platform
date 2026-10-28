@@ -58,7 +58,12 @@ public record ImageReference(String registry, String repository, String tagOrDig
     }
 
     /**
-     * 改写成本平台 Harbor 里的地址：{@code <harborHost>/<project>/<上游主机>/<仓库路径><tag|digest>}。
+     * 改写成本平台 Harbor 里的地址：{@code <harborHost>[/<project>]/<上游主机>/<仓库路径><tag|digest>}。
+     *
+     * <p>默认 {@code project} 为空 —— Harbor 的复制规则只能把镜像放进「项目/源仓库」，
+     * 没法在中间插一段上游主机名，所以**一个上游一个项目**（项目名就是上游主机，如 {@code quay.io}），
+     * 路径正好是 {@code harbor.ackcp.cloud/quay.io/opstree/redis}。
+     * 填了 {@code project} 就退化成 {@code <harbor>/<project>/<上游主机>/<仓库>}（这种布局只能手工搬）。
      *
      * @param harborHost 形如 {@code harbor.ackcp.cloud}（**不带 scheme**：镜像引用里没有 scheme）
      */
@@ -66,7 +71,17 @@ public record ImageReference(String registry, String repository, String tagOrDig
         if (harborHost == null || harborHost.isBlank() || registry.equalsIgnoreCase(harborHost)) {
             return original;   // 幂等：已经在我们自己的仓库里
         }
-        return harborHost + "/" + project + "/" + registry + "/" + repository + tagOrDigest;
+        // 上游主机直接当路径段（默认就是一上游一项目）；带端口的私有仓库要把冒号换掉，
+        // Harbor 的项目名/仓库路径都不允许冒号
+        return prefix(harborHost, project) + "/" + registry.replace(':', '_')
+                + "/" + repository + tagOrDigest;
+    }
+
+    /** {@code <host>} 或 {@code <host>/<project>}：项目留空 = 一上游一项目 */
+    public static String prefix(String harborHost, String project) {
+        String host = harborHost == null ? "" : harborHost.trim();
+        String p = project == null ? "" : project.trim();
+        return p.isEmpty() ? host : host + "/" + p;
     }
 
     /**

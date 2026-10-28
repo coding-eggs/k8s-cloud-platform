@@ -43,7 +43,7 @@ public final class ImageRewriter {
     }
 
     public static Object rewrite(Object node, String harborHost, String project) {
-        if (harborHost == null || harborHost.isBlank() || project == null || project.isBlank()) {
+        if (harborHost == null || harborHost.isBlank()) {
             return node;
         }
         return rewriteNode(node, harborHost.trim(), project.trim());
@@ -100,12 +100,12 @@ public final class ImageRewriter {
         if (r.isEmpty() || r.contains("/") || i.isEmpty() || !i.contains("/")) {
             return false;
         }
-        String prefix = host + "/" + project + "/";
+        String prefix = ImageReference.prefix(host, project) + "/";
         String mirrored = ImageReference.parse(r + "/" + i).mirror(host, project);
         if (!mirrored.startsWith(prefix)) {
             return false;
         }
-        map.put("registry", host + "/" + project);
+        map.put("registry", ImageReference.prefix(host, project));
         map.put("image", mirrored.substring(prefix.length()));
         return true;
     }
@@ -137,12 +137,12 @@ public final class ImageRewriter {
         if (r.isEmpty() || r.contains("/") || n.isEmpty()) {
             return;
         }
-        String prefix = host + "/" + project + "/";
+        String prefix = ImageReference.prefix(host, project) + "/";
         String mirrored = ImageReference.parse(r + "/" + n).mirror(host, project);
         if (!mirrored.startsWith(prefix)) {
             return;
         }
-        map.put(registryKey, host + "/" + project);
+        map.put(registryKey, ImageReference.prefix(host, project));
         map.put(namespaceKey, mirrored.substring(prefix.length()));
     }
 
@@ -171,10 +171,10 @@ public final class ImageRewriter {
         }
         String mirrored = ImageReference.parse(withoutTag).mirror(host, project);
         if (!registry.isEmpty()) {
-            String prefix = host + "/" + project + "/";
+            String prefix = ImageReference.prefix(host, project) + "/";
             if (mirrored.startsWith(prefix)) {
                 // registry 拆分写回：registry 指 Harbor 项目，repository 带上游主机名
-                map.put("registry", host + "/" + project);
+                map.put("registry", ImageReference.prefix(host, project));
                 map.put("repository", mirrored.substring(prefix.length()));
             }
             return;

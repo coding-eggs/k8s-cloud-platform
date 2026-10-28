@@ -20,12 +20,12 @@ class ChartImageCatalogServiceTest {
     @Test
     void listsImagesWithTheirMirroredAddress() {
         List<com.coding.common.models.k8s.dto.ImageListItemDTO> items =
-                service.list("harbor.ackcp.cloud", "platform");
+                service.list("harbor.ackcp.cloud", "");
 
         assertThat(items).as("内置 chart 至少有一批镜像").hasSizeGreaterThan(20);
         assertThat(items).allSatisfy(item -> {
             assertThat(item.getChart()).doesNotContain("/harbor/");   // harbor 自己永远官方
-            assertThat(item.getMirrored()).startsWith("harbor.ackcp.cloud/platform/");
+            assertThat(item.getMirrored()).startsWith("harbor.ackcp.cloud/");
         });
         assertThat(items.stream().map(com.coding.common.models.k8s.dto.ImageListItemDTO::getUpstream))
                 .anyMatch(u -> u.contains("registry.k8s.io/metrics-server"));

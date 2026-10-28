@@ -523,7 +523,7 @@ onBeforeUnmount(() => {
             <el-radio-button value="OFFICIAL">官方</el-radio-button>
           </el-radio-group>
           <div class="mw-form-help">
-            平台 Harbor 会把实例用到的镜像改写到 <code>harbor.ackcp.cloud/platform/…</code>；
+            平台 Harbor 会把实例用到的镜像改写到 <code>harbor.ackcp.cloud/&lt;上游主机&gt;/…</code>；
             选官方则按上游仓库拉取（Harbor 里还没有对应镜像时用它应急）
           </div>
         </el-form-item>

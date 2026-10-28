@@ -1279,6 +1279,43 @@ public class ComponentInstallService {
      * <p>三种模式都只走 HTTP（{@code tls.enabled=false}）；HTTPS 不在本期。
      * route 的 {@code parentRefs} 固定指 {@code istio-system/external-gateway}。
      */
+    /**
+     * Harbor 的出网代理（core / jobservice / trivy 用）。
+     *
+     * <p>复制与扫描都是 Harbor 在集群里发起的：节点够不到上游（典型是 docker.io）时，
+     * 不给它代理就只会得到「registry is unhealthy」。noProxy 留空时补一份「集群内 + 内网」，
+     * 否则 Harbor 连自己的 DB/Redis/PG 也会走代理。
+     */
+    static Map<String, Object> harborProxyValues(HarborInstallRequest h) {
+        String httpProxy = trimToNull(h.getHttpProxy());
+        String httpsProxy = trimToNull(h.getHttpsProxy());
+        if (httpProxy == null && httpsProxy == null) {
+            return Map.of();
+        }
+        Map<String, Object> proxy = new LinkedHashMap<>();
+        if (httpProxy != null) {
+            proxy.put("httpProxy", httpProxy);
+        }
+        if (httpsProxy != null) {
+            proxy.put("httpsProxy", httpsProxy);
+        }
+        String noProxy = trimToNull(h.getNoProxy());
+        if (noProxy == null) {
+            noProxy = "127.0.0.1,localhost,.local,.internal,.svc,.cluster.local,"
+                    + h.getHost() + ",192.168.0.0/16,10.0.0.0/8,172.16.0.0/12";
+        }
+        proxy.put("noProxy", noProxy);
+        return proxy;
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String s = value.trim();
+        return s.isEmpty() ? null : s;
+    }
+
     private static List<ReleaseSpec> applyHarborValues(List<ReleaseSpec> releases, HarborInstallRequest h) {
         boolean https = Boolean.TRUE.equals(h.getHttps());
         boolean viaGateway = https && "route".equals(h.getExposeMode());
@@ -1316,6 +1353,10 @@ public class ComponentInstallService {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("expose", expose);
         values.put("externalURL", (https ? "https://" : "http://") + harborAuthority(h));
+        Map<String, Object> proxy = harborProxyValues(h);
+        if (!proxy.isEmpty()) {
+            values.put("proxy", proxy);
+        }
 
         // 外部数据库：口令走 Secret（键 password），values 里只引用名字
         if ("external".equals(h.getDatabaseMode())) {

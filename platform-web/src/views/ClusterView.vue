@@ -375,7 +375,7 @@ onMounted(load)
           </div>
         </el-form-item>
         <el-form-item label="镜像项目">
-          <el-input v-model="form.imageRegistryProject" placeholder="留空 = platform" />
+          <el-input v-model="form.imageRegistryProject" placeholder="留空 = 一上游一项目（推荐）" />
         </el-form-item>
 
         <el-divider content-position="left">对象存储</el-divider>

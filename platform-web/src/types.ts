@@ -1150,6 +1150,11 @@ export interface K8sHarborInstall {
   tlsCert?: string
   /** 仅入参：私钥 PEM（无口令） */
   tlsKey?: string
+  /** 出网代理（http://host:port）：复制/扫描是 Harbor 在集群里发起的，节点够不到上游时必填 */
+  httpProxy?: string
+  httpsProxy?: string
+  /** 不走代理的地址（逗号分隔）；留空 = 平台补「集群内 + 内网」 */
+  noProxy?: string
 }
 
 /** 镜像清单的一行：某个内置 chart 用到的镜像与它在平台 Harbor 的地址 */

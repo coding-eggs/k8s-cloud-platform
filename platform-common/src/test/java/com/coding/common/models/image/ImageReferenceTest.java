@@ -12,33 +12,33 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ImageReferenceTest {
 
     private static final String HOST = "harbor.ackcp.cloud";
-    private static final String PROJECT = "platform";
+    private static final String PROJECT = "";   // 默认：一上游一项目
 
     @Test
     void normalizesDockerHubShorthand() {
         assertThat(ImageReference.parse("redis:7.2").mirror(HOST, PROJECT))
-                .isEqualTo("harbor.ackcp.cloud/platform/docker.io/library/redis:7.2");
+                .isEqualTo("harbor.ackcp.cloud/docker.io/library/redis:7.2");
         assertThat(ImageReference.parse("prometheus/prometheus:v2").mirror(HOST, PROJECT))
-                .isEqualTo("harbor.ackcp.cloud/platform/docker.io/prometheus/prometheus:v2");
+                .isEqualTo("harbor.ackcp.cloud/docker.io/prometheus/prometheus:v2");
     }
 
     @Test
     void keepsUpstreamHostAsTheFirstPathSegment() {
         assertThat(ImageReference.parse("quay.io/opstree/redis:v7.0.15").mirror(HOST, PROJECT))
-                .isEqualTo("harbor.ackcp.cloud/platform/quay.io/opstree/redis:v7.0.15");
+                .isEqualTo("harbor.ackcp.cloud/quay.io/opstree/redis:v7.0.15");
         assertThat(ImageReference.parse("docker.elastic.co/elasticsearch/elasticsearch:9.5.0")
                 .mirror(HOST, PROJECT))
-                .isEqualTo("harbor.ackcp.cloud/platform/docker.elastic.co/elasticsearch/elasticsearch:9.5.0");
-        // 带端口的主机：端口属于主机名，不能被当成 tag
+                .isEqualTo("harbor.ackcp.cloud/docker.elastic.co/elasticsearch/elasticsearch:9.5.0");
+        // 带端口的主机：端口属于主机名，不能被当成 tag；路径段里的冒号要换掉（Harbor 不允许）
         assertThat(ImageReference.parse("registry.local:5000/team/app:1.0").mirror(HOST, PROJECT))
-                .isEqualTo("harbor.ackcp.cloud/platform/registry.local:5000/team/app:1.0");
+                .isEqualTo("harbor.ackcp.cloud/registry.local_5000/team/app:1.0");
     }
 
     @Test
     void keepsDigest() {
         String digest = "@sha256:" + "a".repeat(64);
         assertThat(ImageReference.parse("quay.io/a/b" + digest).mirror(HOST, PROJECT))
-                .isEqualTo("harbor.ackcp.cloud/platform/quay.io/a/b" + digest);
+                .isEqualTo("harbor.ackcp.cloud/quay.io/a/b" + digest);
     }
 
     @Test
@@ -51,7 +51,7 @@ class ImageReferenceTest {
     @Test
     void untaggedImageKeepsNoTag() {
         assertThat(ImageReference.parse("alpine").mirror(HOST, PROJECT))
-                .isEqualTo("harbor.ackcp.cloud/platform/docker.io/library/alpine");
+                .isEqualTo("harbor.ackcp.cloud/docker.io/library/alpine");
     }
 
     @Test

@@ -50,7 +50,7 @@ class ChartImageRenderGuardTest {
 
         for (Path chartDir : charts) {
             String name = CHARTS.relativize(chartDir).toString().replace('\\', '/');
-            Map<String, Object> overlay = ChartImageOverlay.of(chartDir, HOST, "platform");
+            Map<String, Object> overlay = ChartImageOverlay.of(chartDir, HOST, "");
             List<String> command = new ArrayList<>(List.of("helm", "template", "t",
                     chartDir.toAbsolutePath().toString(),
                     "--namespace", "t-check"));

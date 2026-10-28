@@ -490,6 +490,7 @@ const EMPTY_HARBOR: K8sHarborInstall = {
   databaseMode: 'internal', dbPort: 5432, dbName: 'registry', dbSslMode: 'disable',
   redisMode: 'internal',
   https: false, httpsPort: 443, httpsNodePort: 30443, tlsCert: '', tlsKey: '',
+  httpProxy: '', httpsProxy: '', noProxy: '',
 }
 
 /**
@@ -761,6 +762,9 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     httpsNodePort: harborMerged.httpsNodePort ?? 30443,
     tlsCert: '',   // 回填时永远是空：证书不回显，留空 = 沿用集群里已有的那份
     tlsKey: '',
+    httpProxy: harborMerged.httpProxy ?? '',
+    httpsProxy: harborMerged.httpsProxy ?? '',
+    noProxy: harborMerged.noProxy ?? '',
   }
   applyDialog.value = {
     visible: true, code: row.code, name: row.name, action,
@@ -1526,7 +1530,7 @@ function copyImage(text: string): void {
             <el-radio-button value="OFFICIAL">官方</el-radio-button>
           </el-radio-group>
           <div class="cc-form-hint">
-            平台 Harbor 会把该组件用到的镜像改写到 <code>harbor.ackcp.cloud/platform/…</code>；
+            平台 Harbor 会把该组件用到的镜像改写到 <code>harbor.ackcp.cloud/&lt;上游主机&gt;/…</code>；
             Harbor 组件本身永远走官方（镜像不可能从自己拉）
           </div>
         </div>
@@ -1591,6 +1595,33 @@ function copyImage(text: string): void {
           <div class="cc-form-control">
             <el-input v-model="applyDialog.harbor.tlsKey" type="textarea" :rows="3" spellcheck="false"
                       placeholder="-----BEGIN PRIVATE KEY-----（不能带口令）" />
+          </div>
+        </div>
+      </template>
+      <div v-if="applyDialog.showHarbor" class="cc-form-row">
+        <span class="cc-form-label">出网代理</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.harbor.httpProxy" spellcheck="false"
+                    placeholder="http://192.168.31.239:7890（留空 = 不走代理）" />
+          <div class="cc-form-hint">
+            镜像复制与漏洞扫描是 <b>Harbor 在集群里</b>发起的：节点够不到上游（典型是 docker.io）时，
+            填这里让 core / jobservice / trivy 走代理。填了它就没法断网装了 —— 断网场景请先把镜像搬完。
+          </div>
+        </div>
+      </div>
+      <template v-if="applyDialog.showHarbor && applyDialog.harbor.httpProxy">
+        <div class="cc-form-row">
+          <span class="cc-form-label">HTTPS 代理</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.harbor.httpsProxy" spellcheck="false"
+                      placeholder="留空 = 与上面同一个地址" />
+          </div>
+        </div>
+        <div class="cc-form-row">
+          <span class="cc-form-label">不走代理</span>
+          <div class="cc-form-control">
+            <el-input v-model="applyDialog.harbor.noProxy" spellcheck="false"
+                      placeholder="留空 = 集群内 + 内网自动补全" />
           </div>
         </div>
       </template>

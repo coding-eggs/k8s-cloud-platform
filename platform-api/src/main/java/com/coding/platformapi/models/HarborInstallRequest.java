@@ -49,6 +49,21 @@ public class HarborInstallRequest {
     /** 私钥 PEM（同上） */
     private String tlsKey;
 
+    /**
+     * 出网代理（{@code http://host:port}）。
+     *
+     * <p>为什么要它：镜像复制、漏洞扫描都是 **Harbor 在集群里**发起的，节点直接够不到上游
+     * （典型是 docker.io 被墙）时，得让 core / jobservice / trivy 走代理。
+     * 留空 = 不配代理（chart 默认）。
+     */
+    private String httpProxy;
+
+    /** HTTPS 代理（一般是同一个地址；留空则只配 httpProxy） */
+    private String httpsProxy;
+
+    /** 不走代理的地址（逗号分隔）；留空 = 平台给一份「集群内 + 内网」的默认值 */
+    private String noProxy;
+
     /** 数据库来源：internal / external（**只能在首次安装时选**） */
     private String databaseMode;
 

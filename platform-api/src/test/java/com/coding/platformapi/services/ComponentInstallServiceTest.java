@@ -2038,4 +2038,26 @@ class ComponentInstallServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service().apply(req, "admin"))
                 .hasMessageContaining("凭证 Secret");
     }
+
+    /** Harbor 出网代理：给了代理就补一份 noProxy（集群内 + 内网），否则 Harbor 连自己的 DB 也走代理 */
+    @Test
+    void harborProxyValuesDefaultNoProxyToClusterAndIntranet() {
+        HarborInstallRequest req = new HarborInstallRequest();
+        req.setHost("harbor.ackcp.cloud");
+        req.setHttpProxy(" http://192.168.31.239:7890 ");
+        req.setHttpsProxy("http://192.168.31.239:7890");
+
+        Map<String, Object> proxy = ComponentInstallService.harborProxyValues(req);
+
+        assertThat(proxy).containsEntry("httpProxy", "http://192.168.31.239:7890")
+                .containsEntry("httpsProxy", "http://192.168.31.239:7890");
+        assertThat((String) proxy.get("noProxy"))
+                .contains("harbor.ackcp.cloud").contains(".cluster.local").contains("192.168.0.0/16");
+
+        req.setNoProxy("127.0.0.1,localhost");
+        assertThat(ComponentInstallService.harborProxyValues(req))
+                .containsEntry("noProxy", "127.0.0.1,localhost");
+
+        assertThat(ComponentInstallService.harborProxyValues(new HarborInstallRequest())).isEmpty();
+    }
 }

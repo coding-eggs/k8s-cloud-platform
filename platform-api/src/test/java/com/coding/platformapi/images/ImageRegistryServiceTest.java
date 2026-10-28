@@ -71,6 +71,15 @@ class ImageRegistryServiceTest {
     }
 
     @Test
+    void emptyProjectMeansOneProjectPerUpstream() {
+        when(cluster.imageRegistryHost("c1")).thenReturn(null);
+        when(harbor.harborHost("c1")).thenReturn("harbor.ackcp.cloud");
+
+        assertThat(service("", "", true).rewrite("c1", "quay.io/opstree/redis:v7.0.15", ImageSource.PLATFORM))
+                .isEqualTo("harbor.ackcp.cloud/quay.io/opstree/redis:v7.0.15");
+    }
+
+    @Test
     void httpSchemeOnTheRecordIsStripped() {
         when(cluster.imageRegistryHost("c1")).thenReturn("https://harbor.ackcp.cloud/");
         when(cluster.imageRegistryProject("c1")).thenReturn(null);

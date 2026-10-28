@@ -31,9 +31,9 @@ final class Images {
     }
 
     private static String mirror(String image, String host, String project) {
-        if (host == null || host.isBlank() || project == null || project.isBlank()) {
+        if (host == null || host.isBlank()) {
             return image;
         }
-        return ImageReference.parse(image).mirror(host.trim(), project.trim());
+        return ImageReference.parse(image).mirror(host.trim(), project);
     }
 }

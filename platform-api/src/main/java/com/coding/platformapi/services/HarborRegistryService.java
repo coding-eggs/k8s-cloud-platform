@@ -90,11 +90,22 @@ public class HarborRegistryService {
         }
     }
 
-    /** 平台镜像项目名：组件/中间件的镜像都放这里 */
+    /** 平台自己的镜像项目（平台自身构建产物；上游镜像按下面的 {@link #UPSTREAM_PROJECTS} 分） */
     public static final String PLATFORM_PROJECT = "platform";
 
     /**
-     * 确保 {@code platform} 项目存在且**公开读**（匿名可 pull）。
+     * 上游镜像的项目名 —— **一个上游一个项目**，项目名就是上游主机名。
+     *
+     * <p>为什么不能都塞进一个 {@code platform} 项目：Harbor 的复制规则只能把镜像放到
+     * 「目标项目/源仓库路径」，没法在中间插一段上游主机名。项目按上游分，路径就正好是
+     * {@code harbor.ackcp.cloud/quay.io/opstree/redis}，复制规则开箱即用。
+     */
+    public static final List<String> UPSTREAM_PROJECTS = List.of(
+            "docker.io", "quay.io", "ghcr.io", "registry.k8s.io",
+            "docker.elastic.co", "registry.istio.io");
+
+    /**
+     * 确保平台自己的项目与各上游项目都存在且**公开读**（匿名可 pull）。
      *
      * <p>这是「镜像来源纳管」的拉取侧前提：公开读之后节点不需要 imagePullSecret；
      * 推送仍走 Harbor 复制规则/管理凭据，不受影响。幂等。
@@ -106,9 +117,14 @@ public class HarborRegistryService {
         }
         Basic auth = adminOf(clusterId);
         String baseUrl = base(host);
-        long projectId = harbor.ensureProject(baseUrl, auth.user(), auth.pass(), PLATFORM_PROJECT);
-        harbor.ensurePublicProject(baseUrl, auth.user(), auth.pass(), projectId, PLATFORM_PROJECT);
-        log.info("集群 {} 的 Harbor 项目 {} 已确保为公开读", clusterId, PLATFORM_PROJECT);
+        List<String> projects = new ArrayList<>();
+        projects.add(PLATFORM_PROJECT);
+        projects.addAll(UPSTREAM_PROJECTS);
+        for (String project : projects) {
+            long projectId = harbor.ensureProject(baseUrl, auth.user(), auth.pass(), project);
+            harbor.ensurePublicProject(baseUrl, auth.user(), auth.pass(), projectId, project);
+        }
+        log.info("集群 {} 的 Harbor 项目 {} 已确保为公开读", clusterId, projects);
     }
 
     /** 全量同步：平台共享 + 全部启用租户。装完后由组件安装流程调用。 */

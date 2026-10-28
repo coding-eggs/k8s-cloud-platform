@@ -13,7 +13,7 @@
 | 项 | 值 |
 |---|---|
 | Harbor 入口 | `https://harbor.ackcp.cloud`（DigiCert 证书，2027-01-25 到期） |
-| 镜像前缀 | `harbor.ackcp.cloud/platform/<上游主机>/<仓库路径>:<tag>` |
+| 镜像前缀 | `harbor.ackcp.cloud/<上游主机>/<仓库路径>:<tag>`（**一个上游一个项目**，项目名就是上游主机） |
 | 拉取 | **项目已设公开读**（匿名可 pull），节点不需要 imagePullSecret |
 | 推送 | Harbor 的复制规则（用管理凭据）；租户项目仍是私有 + 各自 robot |
 
@@ -33,7 +33,8 @@ Harbor → `Administration → Replications → New Replication Rule`：
 | Name | `mirror-dockerio` / `mirror-quay` / … |
 | Replication mode | **Pull-based**（Harbor 主动去上游拉） |
 | Source registry | 该上游的 endpoint（下表） |
-| Destination namespace | **上游主机名**（`docker.io` / `quay.io` / `ghcr.io` / `registry.k8s.io` / `docker.elastic.co` / `registry.istio.io`） |
+| Destination namespace | **上游主机名**（`docker.io` / `quay.io` / `ghcr.io` / `registry.k8s.io` / `docker.elastic.co` / `registry.istio.io`）—— 也就是目标项目名 |
+| `dest_namespace_replace_count` | **必须设 0**。默认的 `-1`（legacy）会把源路径的第一段换成项目名：`opstree/redis-operator` → `quay.io/redis-operator`，丢掉 `opstree` |
 | Source resource filter | `Name` 填仓库路径，`Tag` 留空（`*`） |
 | Trigger mode | `Manual`（首次全量按需点）+ `Scheduled`（每日增量） |
 | Bandwidth / Override | 默认；勾 **Override**，否则上游重新打 tag 时不会更新 |
@@ -49,14 +50,16 @@ Endpoint 地址：
 | docker.elastic.co | `https://docker.elastic.co` |
 | registry.istio.io | `https://registry.istio.io` |
 
-> **Destination namespace 必须与改写规则一致**：平台把 `quay.io/opstree/redis` 改写成
-> `harbor.ackcp.cloud/platform/quay.io/opstree/redis`，所以复制目标的 namespace 就是 `quay.io`。
+> **落点必须与改写规则一致**：平台把 `quay.io/opstree/redis` 改写成
+> `harbor.ackcp.cloud/quay.io/opstree/redis`，所以目标项目就是 `quay.io`，且
+> `replace_count=0` 才能保留完整的 `opstree/redis`（2026-10-28 在真 Harbor 上验过：`-1` 会得到
+> `quay.io/redis-operator`，`0` 才是 `quay.io/opstree/redis-operator`）。
 > 私有上游（docker.io 的 library 镜像）需要 Harbor 管理员为 docker.io 配一个只读 robot 或允许匿名
 > —— 匿名拉 Docker Hub 有速率限制，正式环境建议配账号。
 
 ### 3.2 基础集：需要复制到 `platform` 的仓库
 
-下面是**内置 chart 默认值 + 中间件实例**真正会拉的仓库（平台改写后都在 `platform/<上游主机>/…`）。
+下面是**内置 chart 默认值 + 中间件实例**真正会拉的仓库（平台改写后都在 `<上游主机>/…` 项目里）。
 
 **Kubernetes / Istio / 监控栈**
 
@@ -122,8 +125,21 @@ Endpoint 地址：
 
 ### 3.5 不想用复制规则
 
-也可以 `docker pull` → `docker tag` → `docker push` 到 `harbor.ackcp.cloud/platform/<上游主机>/<仓库>`，
+也可以 `docker pull` → `docker tag` → `docker push` 到 `harbor.ackcp.cloud/<上游主机>/<仓库>`，
 脚本化时注意路径里**保留上游主机名**（`docker.io` 也要带上，`library/` 单段仓库要补全）。
+
+### 3.6 出网代理（节点够不到上游时必配）
+
+复制和漏洞扫描都是 **Harbor 在集群里**发起的。内网通常够不到 docker.io，表现是创建
+registry endpoint 时直接报 `the registry is unhealthy`。
+
+在组件页重放 Harbor 时填「出网代理」（`http://<代理地址>:<端口>`），平台会把它写进 chart 的
+`proxy.httpProxy / httpsProxy / noProxy`，作用于 `core`、`jobservice`、`trivy` 三个组件。
+`noProxy` 留空时平台自动补一份「集群内 + 内网」，否则 Harbor 连自己的 DB/Redis 也会走代理。
+
+> 代理挂在你自己的工作站上时：工作站关机/休眠，复制就会失败；正式环境建议放到常开的机器上。
+> 另外注意 —— 配了代理之后 Harbor 拉上游不再依赖节点直连，但**节点拉 Harbor 本身**仍然走内网，
+> 不受影响。
 
 
 ## 4. 平台配置
@@ -131,7 +147,7 @@ Endpoint 地址：
 | 配置 | 位置 | 说明 |
 |---|---|---|
 | `platform.image-registry.host` | platform-api `application.yaml` / 环境变量 | 默认镜像仓库（本集群可留空，平台会取 Harbor 安装记录） |
-| `platform.image-registry.project` | 同上 | 默认 `platform` |
+| `platform.image-registry.project` | 同上 | **默认留空** = 一上游一项目；填了会多一层前缀（`<harbor>/<project>/<上游主机>/…`），这种布局复制规则落不了，只能手工搬 |
 | `platform.image-registry.enabled` | 同上 | `false` = 全局关闭改写（回退开关） |
 | `k8s_cluster.image_registry_host/project` | 集群设置 | 按集群覆盖（业务集群连不到平台 Harbor 时用） |
 
@@ -149,6 +165,7 @@ Endpoint 地址：
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | Pod `ImagePullBackOff` + `manifest unknown` | 镜像还没被复制到 Harbor | 按 §3 触发复制 |
+| 建 registry endpoint 报 `the registry is unhealthy` | Harbor 自己够不到上游（典型是 docker.io） | 给 Harbor 配出网代理，见 §3.6 |
 | Pod `x509: certificate signed by unknown authority` | Harbor 证书链不完整（缺中间证书） | 重新下发完整 PEM（`tls.crt` 含中间证书） |
 | Pod `x509: certificate has expired` | Harbor 证书到期 | 见 [续期方案](../superpowers/specs/2026-10-28-harbor-tls-renewal-design.md) |
 | `no such host: harbor.ackcp.cloud` | 节点解析不到该域名 | 内网 DNS / 节点 hosts 加记录（**containerd 用节点解析器，不是 CoreDNS**） |
@@ -157,7 +174,7 @@ Endpoint 地址：
 ## 7. 平台自身镜像
 
 platform-api / k8s-server / platform-web / platform-auth 的 Deployment 不在本仓库里，平台只提供清单。
-**顺序很重要**：先把这 4 个镜像推到 `platform/<上游主机>/...`，再改部署清单的 image 与
+**顺序很重要**：先把这 4 个镜像推到 `platform/...`（平台自己的构建产物放 `platform` 项目），再改部署清单的 image 与
 `imagePullSecrets`（若项目仍是私有）——否则 k8s-server 起不来，连"下发 Secret"的机会都没有。
 
 ## 8. 改写覆盖到哪一层
