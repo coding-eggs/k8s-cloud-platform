@@ -28,24 +28,30 @@
 ## 3. 方案：TLS 在网关终止，SeaweedFS 内部保持 HTTP
 
 ```
-Pod/外部客户端 --https--> external-gateway (38443, 证书 s3.ackcp.cloud) --http--> seaweedfs-s3.platform-storage:8333
+Pod/外部客户端 --https(443, SNI=s3.ackcp.cloud)--> external-gateway --http--> seaweedfs-s3.platform-storage:8333
 ```
 
+- 443 上**按 hostname 分 listener**：`harbor-https`（hostname `harbor.ackcp.cloud`）与
+  `s3-https`（hostname `s3.ackcp.cloud`）各带自己的证书，Envoy 按 SNI 选；同一个端口可以并存。
+  （若将来签了通配符 `*.ackcp.cloud`，可以合成一个不带 hostname 的 listener，按 Host 路由。）
+
 - SeaweedFS 本身**不改**（不碰 `weed s3` 的证书参数、不给每个 Pod 挂证书）；
-- 只需把「S3 连接地址」改成 `https://s3.ackcp.cloud:38443`，四家消费方自动跟随；
-- **先新增 38443 与 38333 并存**，验证通过后再下线 38333（直接改会中断现有写入）。
+- 只需把「S3 连接地址」改成 `https://s3.ackcp.cloud`（443，不带端口），四家消费方自动跟随；
+- **过渡期 38333（HTTP）与 443（HTTPS）并存**，验证通过后再下线 38333（直接改会中断现有写入）。
 
 ## 4. 需要的东西
 
-1. **证书**：`s3.ackcp.cloud`（或通配符 `*.ackcp.cloud`，一次覆盖 harbor / s3 / 以后的服务）；
-2. **Gateway listener**：`s3-https` / 38443 / HTTPS / Terminate / `certificateRefs` → Secret（放 `istio-system`）；
-3. **平台配置**：`k8s_cluster.object_storage_url = https://s3.ackcp.cloud:38443`；
+1. **证书**：`s3.ackcp.cloud`（单域名即可，不需要 www；2026-10-28 用户已去申请）。
+   以后再要新服务，建议改签通配符 `*.ackcp.cloud`，一张覆盖全部子域、只续一次；
+2. **Gateway listener**：`s3-https` / **443** / HTTPS / Terminate / `hostname: s3.ackcp.cloud` /
+   `certificateRefs` → Secret（放 `istio-system`，与 harbor 的 listener 同端口不同 hostname）；
+3. **平台配置**：`k8s_cluster.object_storage_url = https://s3.ackcp.cloud`；
 4. **解析**：`s3.ackcp.cloud` 必须能被 **Pod 内**客户端解析（CoreDNS → 节点 DNS），不是只在节点上；
 5. **重放**：Thanos（objstore Secret 由平台重写）、Milvus（`useSSL` 变化 → CR 滚动）、Tempo（重装）。
 
 ## 5. 连锁后果
 
-- **HTTPS 后必须用域名访问**：证书是给 `s3.ackcp.cloud` 的，`https://192.168.31.80:38443` 会校验失败。
+- **HTTPS 后必须用域名访问**：证书是给 `s3.ackcp.cloud` 的，`https://192.168.31.80` 会校验失败。
   Milvus/Tempo 现在用的正是 IP，必须一起换成域名。
 - **IK 插件下载保持集群内 HTTP**（`http://seaweedfs-s3.platform-storage:8333/...`）：只读、匿名、不过网关，没必要绕一圈。
 - SeaweedFS 的 filer / 管理台 / `weed shell` 不受影响。
@@ -63,7 +69,7 @@ Pod/外部客户端 --https--> external-gateway (38443, 证书 s3.ackcp.cloud) -
 
 | 步骤 | 验收 |
 |---|---|
-| 证书 + listener | `curl -I https://s3.ackcp.cloud:38443/`（未签名 → 403，证明 TLS 通、S3 在应答） |
+| 证书 + listener | `curl -I https://s3.ackcp.cloud/`（未签名 → 403，证明 TLS 通、S3 在应答） |
 | 平台地址切换 | 平台「对象存储」页能列桶（走 https + SigV4） |
 | Thanos | compactor 日志无凭证/连接错误；`objstore.yml` 里 `insecure: false` |
 | Milvus | 实例 CR `useSSL: true`，Pod 正常、能读旧数据 |

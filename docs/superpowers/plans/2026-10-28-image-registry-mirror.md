@@ -136,8 +136,10 @@ git commit -m "feat(images): 集群镜像仓库列 + 镜像清单端点权限"
       hosts: [harbor.ackcp.cloud]
   externalURL: https://harbor.ackcp.cloud
   ```
-  平台另外保证：`external-gateway` 上有 `harbor-https` listener（443 / HTTPS / Terminate，
-  `certificateRefs` → `istio-system/harbor-tls`）。
+  平台另外保证：`external-gateway` 上有 `harbor-https` listener（**443 / HTTPS / Terminate /
+  `hostname: harbor.ackcp.cloud`**，`certificateRefs` → `istio-system/harbor-tls`）。
+  ⚠️ 443 上还会有 `s3-https`（hostname `s3.ackcp.cloud`）—— 同一端口多 listener 靠 **SNI + 各自证书**
+  区分，**必须写 hostname**，否则两个 hostname 会争同一条 listener。
 
 - [ ] **Step 1: 写失败测试**
 
