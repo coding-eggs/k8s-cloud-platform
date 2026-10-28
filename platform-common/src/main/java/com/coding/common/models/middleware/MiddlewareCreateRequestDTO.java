@@ -89,4 +89,12 @@ public class MiddlewareCreateRequestDTO {
 
     /** 管理员代管轨显式指定的租户；租户轨以 token 为准（k8s-server 会忽略不一致的值） */
     private String tenantId;
+
+    /**
+     * 镜像仓库（host[:端口]，不带 scheme）与项目：非空时把 CR 里的镜像改写到平台 Harbor。
+     *
+     * <p>由 platform-api 按租户/集群配置填入；空 = 用上游官方镜像（行为与纳管之前一致）。
+     */
+    private String imageRegistryHost;
+    private String imageRegistryProject;
 }

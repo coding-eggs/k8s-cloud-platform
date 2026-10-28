@@ -53,4 +53,8 @@ public class MiddlewareScaleRequestDTO {
 
     /** 管理员代管轨的租户 */
     private String tenantId;
+
+    /** 镜像仓库（同创建请求）：扩缩容重写 Pod 模板时不能把镜像丢回上游 */
+    private String imageRegistryHost;
+    private String imageRegistryProject;
 }

@@ -80,6 +80,8 @@ public class MiddlewareService {
     private final com.coding.platformapi.metrics.MetricsService metrics;
     private final ObjectStorageService objectStorage;
     private final ClusterComponentService components;
+    /** 镜像来源：把平台 Harbor 的地址填进下发给 k8s-server 的请求（CR 里改写由那边做） */
+    private final com.coding.platformapi.images.ImageRegistryService imageRegistry;
 
     /** 引用守卫：被应用引用的实例不能删 */
     private final ApplicationReferenceGuard referenceGuard;
@@ -96,7 +98,8 @@ public class MiddlewareService {
                              com.coding.platformapi.metrics.MetricsService metrics,
                              ObjectStorageService objectStorage,
                              ClusterComponentService components,
-                             ApplicationReferenceGuard referenceGuard) {
+                             ApplicationReferenceGuard referenceGuard,
+                             com.coding.platformapi.images.ImageRegistryService imageRegistry) {
         this.instances = instances;
         this.operations = operations;
         this.operators = operators;
@@ -110,6 +113,7 @@ public class MiddlewareService {
         this.objectStorage = objectStorage;
         this.components = components;
         this.referenceGuard = referenceGuard;
+        this.imageRegistry = imageRegistry;
     }
 
     // ==================== 目录 ====================
@@ -187,6 +191,11 @@ public class MiddlewareService {
         MiddlewareOperatorInstallRequestDTO req = new MiddlewareOperatorInstallRequestDTO();
         req.setClusterId(clusterId);
         req.setCode(code);
+        com.coding.platformapi.images.ImageRegistry registry = imageRegistry.resolve(clusterId);
+        if (registry.enabled()) {
+            req.setImageRegistryHost(registry.host());
+            req.setImageRegistryProject(registry.project());
+        }
         MiddlewareOperatorStatusDTO status = client.operatorInstall(req);
         persistOperator(clusterId, status);
         return status;
@@ -373,6 +382,7 @@ public class MiddlewareService {
             }
             dto.setPassword(randomPassword());
             dto.setTenantId(tenantId);
+            applyImageRegistry(dto, instance.getClusterId(), req.getImageSource());
             k8sCalled = true;
             client.create(req.getCode(), dto);
             finish(op, "SUCCESS", null);
@@ -775,6 +785,7 @@ public class MiddlewareService {
         PlatformMiddlewareOperation op = newOperation(instance, "SCALE", operator);
         try {
             MiddlewareScaleRequestDTO dto = new MiddlewareScaleRequestDTO();
+            applyImageRegistry(dto, instance.getClusterId(), null);
             dto.setClusterId(instance.getClusterId());
             dto.setCode(instance.getCode());
             dto.setNamespace(instance.getNamespace());
@@ -1019,6 +1030,29 @@ public class MiddlewareService {
             row.setUpdatedAt(now);
             operators.updateById(row);
         }
+    }
+
+    /** 扩缩容同款：重写 Pod 模板时镜像不能丢回上游 */
+    private void applyImageRegistry(MiddlewareScaleRequestDTO dto, String clusterId, String imageSource) {
+        com.coding.platformapi.images.ImageRegistry registry = imageRegistry.resolve(clusterId);
+        if (registry.enabled()) {
+            dto.setImageRegistryHost(registry.host());
+            dto.setImageRegistryProject(registry.project());
+        }
+    }
+
+    /** 镜像来源：PLATFORM 且仓库可用时才把地址带上；harbor 组件那套例外与组件侧一致 */
+    private void applyImageRegistry(MiddlewareCreateRequestDTO dto, String clusterId, String imageSource) {
+        if (com.coding.platformapi.images.ImageSource.of(imageSource)
+                != com.coding.platformapi.images.ImageSource.PLATFORM) {
+            return;
+        }
+        com.coding.platformapi.images.ImageRegistry registry = imageRegistry.resolve(clusterId);
+        if (!registry.enabled()) {
+            return;
+        }
+        dto.setImageRegistryHost(registry.host());
+        dto.setImageRegistryProject(registry.project());
     }
 
     private String toSpecJson(MiddlewareCreateRequest req) {

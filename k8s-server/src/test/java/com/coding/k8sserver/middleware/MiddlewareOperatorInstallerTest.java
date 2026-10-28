@@ -197,4 +197,29 @@ class MiddlewareOperatorInstallerTest {
         assertThatThrownBy(() -> installer.install("c1", "redis"))
                 .hasMessageContaining("chart requires kubeVersion");
     }
+
+    // ---------- 镜像来源（2026-10-28） ----------
+
+    @Test
+    void operatorValuesCarryTheMirroredWorkloadImage() throws Exception {
+        Path chart = Files.createTempDirectory("chart");
+        Files.writeString(chart.resolve("values.yaml"),
+                "rabbitmqImage:\n  registry: docker.io\n  repository: library/rabbitmq\n  tag: 4.1.0\n");
+        var entry = new MiddlewareOperatorCatalog().require("rabbitmq");
+
+        String values = installer.operatorValues(chart, entry, "harbor.ackcp.cloud", "platform");
+
+        // Operator chart 的 values 里也带着 workload 镜像 —— 只改 CR 里的镜像不够
+        assertThat(values).contains("harbor.ackcp.cloud/platform")
+                .contains("docker.io/library/rabbitmq");
+    }
+
+    @Test
+    void operatorValuesAreUntouchedWithoutARegistry() {
+        var entry = new MiddlewareOperatorCatalog().require("rabbitmq");
+        String base = entry.helmValues() == null ? "" : entry.helmValues();
+
+        assertThat(installer.operatorValues(Path.of("/nonexistent"), entry, null, null)).isEqualTo(base);
+        assertThat(installer.operatorValues(Path.of("/nonexistent"), entry, "", "")).isEqualTo(base);
+    }
 }

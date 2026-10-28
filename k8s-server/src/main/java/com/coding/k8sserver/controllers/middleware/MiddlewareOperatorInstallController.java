@@ -34,6 +34,7 @@ public class MiddlewareOperatorInstallController implements AccessBoundaryAware 
     @Operation(summary = "安装/升级 Operator（幂等，重复调用即 upgrade）")
     public ResponseData<MiddlewareOperatorStatusDTO> install(
             @RequestBody MiddlewareOperatorInstallRequestDTO request) {
-        return new ResponseData<>(installer.install(request.getClusterId(), request.getCode()));
+        return new ResponseData<>(installer.install(request.getClusterId(), request.getCode(),
+                request.getImageRegistryHost(), request.getImageRegistryProject()));
     }
 }

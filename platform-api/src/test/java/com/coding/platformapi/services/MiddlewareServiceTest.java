@@ -58,10 +58,19 @@ class MiddlewareServiceTest {
 
     private final MiddlewareCatalog catalog = new MiddlewareCatalog();
 
+    private final com.coding.platformapi.images.ImageRegistryService imageRegistry =
+            mock(com.coding.platformapi.images.ImageRegistryService.class);
+
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, catalog,
             JsonMapper.builder().build(), k8s, allocations, cache, metricsService,
-            objectStorage, components, mock(ApplicationReferenceGuard.class));
+            objectStorage, components, mock(ApplicationReferenceGuard.class), imageRegistry);
+
+    @BeforeEach
+    void noImageRegistryByDefault() {
+        when(imageRegistry.resolve(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(com.coding.platformapi.images.ImageRegistry.OFFICIAL);
+    }
 
     @BeforeEach
     void opsGetIds() {

@@ -106,7 +106,7 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
         boolean auth = Boolean.TRUE.equals(req.getAuthEnabled());
 
         Map<String, Object> components = new LinkedHashMap<>();
-        components.put("image", IMAGE_PREFIX + versionOf(req));
+        components.put("image", Images.resolve(IMAGE_PREFIX + versionOf(req), req));
         components.put("resources", resourcesOf(req));
         if (cluster) {
             Map<String, Object> queryNode = new LinkedHashMap<>();

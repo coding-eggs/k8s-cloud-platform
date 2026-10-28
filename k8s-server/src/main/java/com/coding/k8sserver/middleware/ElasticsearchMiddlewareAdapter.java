@@ -63,7 +63,8 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
      * @return true = 本次新加了；false = 已经装过（编辑时重复提交不会重复加）
      */
     @SuppressWarnings("unchecked")
-    private boolean ensureIk(Map<String, Object> podSpec, Map<String, Object> esContainer, String version) {
+    private boolean ensureIk(Map<String, Object> podSpec, Map<String, Object> esContainer,
+                             String version, String initImage) {
         List<Object> inits = podSpec.get("initContainers") instanceof List<?> list
                 ? new java.util.ArrayList<>((List<Object>) list) : new java.util.ArrayList<>();
         boolean installed = inits.stream().anyMatch(o ->
@@ -75,7 +76,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
                 "mountPath", "/usr/share/elasticsearch/plugins");
         Map<String, Object> init = new LinkedHashMap<>();
         init.put("name", "install-ik");
-        init.put("image", ES_IMAGE_PREFIX + version);
+        init.put("image", initImage);
         init.put("command", List.of("sh", "-c",
                 "set -e; cd /usr/share/elasticsearch/plugins; "
                         + "curl -fsSL --retry 3 -o ik.zip " + ikDownloadPrefix() + version + ".zip; "
@@ -162,7 +163,8 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
 
     /** 把 exporter 容器挂进同一个 Pod（与 ES 容器共享网络，走 localhost 访问）。 */
     @SuppressWarnings("unchecked")
-    static void addExporterSidecar(Map<String, Object> podSpec, String name, boolean tls) {
+    static void addExporterSidecar(Map<String, Object> podSpec, String name, boolean tls,
+                                   String image) {
         // 地址/TLS 必须走命令行参数：实测该镜像不认 ES_URI/ES_SKIP_TLS_VERIFY 这两个 env
         //（日志里仍是 http://localhost:9200，且证书校验因 CN 不含 localhost 而失败）。
         // 用户名/密码走 env 是有效的。
@@ -177,7 +179,7 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
                 Map.of("name", name + "-es-elastic-user", "key", "elastic"))));
         Map<String, Object> exporter = new LinkedHashMap<>();
         exporter.put("name", "elasticsearch-exporter");
-        exporter.put("image", EXPORTER_IMAGE);
+        exporter.put("image", image);
         exporter.put("args", args);
         exporter.put("env", env);
         exporter.put("ports", List.of(Map.of(
@@ -301,10 +303,11 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> podSpec = new LinkedHashMap<>();
         podSpec.put("containers", new java.util.ArrayList<>(List.of(container)));
         if (Boolean.TRUE.equals(req.getIk())) {
-            ensureIk(podSpec, container, version);
+            ensureIk(podSpec, container, version, Images.resolve(ES_IMAGE_PREFIX + version, req));
         }
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
-            addExporterSidecar(podSpec, req.getName(), tlsEnabled(req));
+            addExporterSidecar(podSpec, req.getName(), tlsEnabled(req),
+                Images.resolve(EXPORTER_IMAGE, req));
         }
         Map<String, Object> podTemplate = new LinkedHashMap<>();
         podTemplate.put("spec", podSpec);
@@ -322,6 +325,11 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
 
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("version", version);
+        // ECK 默认用 docker.elastic.co 的官方镜像；指定 spec.image 才能整簇走平台 Harbor
+        String esImage = Images.resolve(ES_IMAGE_PREFIX + version, req);
+        if (!esImage.equals(ES_IMAGE_PREFIX + version)) {
+            spec.put("image", esImage);
+        }
         spec.put("nodeSets", new java.util.ArrayList<>(List.of(nodeSet)));
         if (!tlsEnabled(req)) {
             // 关掉自签证书 = HTTP 明文（ECS HTTP 层的 TLS 由 selfSignedCertificate 控制）
@@ -367,7 +375,8 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             return false;
         }
         podSpec.put("containers", containers);
-        addExporterSidecar(podSpec, live.getMetadata().getName(), tlsEnabled(spec));
+        addExporterSidecar(podSpec, live.getMetadata().getName(), tlsEnabled(spec),
+                Images.resolve(EXPORTER_IMAGE, req));
         podTemplate.put("spec", podSpec);
         nodeSet.put("podTemplate", podTemplate);
         return true;
@@ -419,8 +428,9 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
                     }
                     if (Boolean.TRUE.equals(req.getIk())) {
                         Object version = spec.get("version");
-                        ensureIk((Map<String, Object>) podSpec, esContainer,
-                                version == null ? DEFAULT_ES_VERSION : String.valueOf(version));
+                        String v = version == null ? DEFAULT_ES_VERSION : String.valueOf(version);
+                        ensureIk((Map<String, Object>) podSpec, esContainer, v,
+                                Images.resolve(ES_IMAGE_PREFIX + v, req));
                     }
                 }
             }

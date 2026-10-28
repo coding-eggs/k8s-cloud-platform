@@ -1,5 +1,7 @@
 package com.coding.k8sserver.middleware;
 
+import com.coding.common.models.image.ImageRewriter;
+
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
@@ -19,6 +21,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import com.coding.k8sserver.components.ChartImageOverlay;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.dataformat.yaml.YAMLMapper;
 
 /**
  * 中间件 Operator 的安装与状态判定。
@@ -52,19 +57,29 @@ public class MiddlewareOperatorInstaller {
     }
 
     public MiddlewareOperatorStatusDTO install(String clusterId, String code) {
-        installHelm(clusterId, code);
+        return install(clusterId, code, null, null);
+    }
+
+    public MiddlewareOperatorStatusDTO install(String clusterId, String code,
+                                               String imageRegistryHost, String imageRegistryProject) {
+        installHelm(clusterId, code, imageRegistryHost, imageRegistryProject);
         return status(clusterId, code);
     }
 
     /** 只做 helm 安装（拆出来是为了单测能避开 fabric8 的深度 mock）。 */
     void installHelm(String clusterId, String code) {
+        installHelm(clusterId, code, null, null);
+    }
+
+    void installHelm(String clusterId, String code, String imageRegistryHost, String imageRegistryProject) {
         var entry = catalog.require(code);
         assertCrdsNotForeign(clusterId, entry);
         Path chartDir = charts.chartDir("middleware", entry.code(), entry.chartVersion());
         Path values;
         try {
             values = Files.createTempFile("mw-operator-", ".yaml");
-            Files.writeString(values, entry.helmValues() == null ? "" : entry.helmValues());
+            Files.writeString(values, operatorValues(chartDir, entry,
+                    imageRegistryHost, imageRegistryProject));
         } catch (IOException e) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "无法创建临时 values：" + e.getMessage());
         }
@@ -84,6 +99,39 @@ public class MiddlewareOperatorInstaller {
             } catch (IOException ignored) {
                 // 临时文件删不掉不影响结果
             }
+        }
+    }
+
+    /**
+     * Operator 的 values：目录里那份 + （可选）镜像改写 overlay。
+     *
+     * <p>Operator chart 的 values 里也带着 **workload 镜像**（如 RabbitMQ 的 {@code rabbitmqImage}、
+     * cnpg 的镜像），只改 CR 里的镜像不够 —— 那些 Pod 由 operator 自己按默认镜像创建。
+     * overlay 以**最低优先级**并入（平台显式写的 values 仍然优先）。
+     */
+    String operatorValues(Path chartDir, MiddlewareOperatorCatalog.Entry entry,
+                          String imageRegistryHost, String imageRegistryProject) {
+        String base = entry.helmValues() == null ? "" : entry.helmValues();
+        if (imageRegistryHost == null || imageRegistryHost.isBlank()
+                || imageRegistryProject == null || imageRegistryProject.isBlank()) {
+            return base;
+        }
+        try {
+            Map<String, Object> overlay = ChartImageOverlay.of(chartDir, imageRegistryHost, imageRegistryProject);
+            // 平台显式写的 values 里也可能带镜像（如 RabbitMQ 目录里写死了 rabbitmqImage），同样要改写；
+            // 改完仍然优先于 chart 默认值的 overlay
+            Map<String, Object> explicit = base.isBlank() ? Map.of()
+                    : YAML.readValue(base, new TypeReference<Map<String, Object>>() { });
+            @SuppressWarnings("unchecked")
+            Map<String, Object> mirroredExplicit = (Map<String, Object>) ImageRewriter
+                    .rewrite(explicit, imageRegistryHost, imageRegistryProject);
+            if (overlay.isEmpty() && mirroredExplicit.equals(explicit)) {
+                return base;
+            }
+            return YAML.writeValueAsString(ChartImageOverlay.merge(overlay, mirroredExplicit));
+        } catch (Exception e) {
+            // 改写失败不该把 Operator 装不上：退回原始 values（镜像走上游，但功能可用）
+            return base;
         }
     }
 

@@ -69,4 +69,7 @@ public class MiddlewareCreateRequest {
     private Boolean authEnabled;
     /** 仅管理员代管轨使用；租户轨以 token 为准 */
     private String tenantId;
+
+    /** 镜像来源：PLATFORM（默认，平台 Harbor）/ OFFICIAL（上游官方） */
+    private String imageSource;
 }

@@ -73,7 +73,8 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         sentinelSpec.remove("redisExporter");   // 哨兵 Pod 没有 exporter，别让 operator 去装
         @SuppressWarnings("unchecked")
         Map<String, Object> sentinelKc = (Map<String, Object>) sentinelSpec.get("kubernetesConfig");
-        sentinelKc.put("image", SENTINEL_IMAGE);   // 数据节点仍是 redis，哨兵必须是 redis-sentinel
+        // 数据节点仍是 redis，哨兵必须是 redis-sentinel
+        sentinelKc.put("image", Images.resolve(SENTINEL_IMAGE, req));
         GenericKubernetesResource sentinel = resource(req, "RedisSentinel", sentinelSpec);
 
         List<CrSpec> out = new ArrayList<>();
@@ -104,7 +105,7 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
     /** 公共 spec：镜像、资源、密码 Secret 引用、持久化。 */
     private Map<String, Object> baseSpec(MiddlewareCreateRequestDTO req) {
         Map<String, Object> kc = new LinkedHashMap<>();
-        kc.put("image", DEFAULT_IMAGE);
+        kc.put("image", Images.resolve(DEFAULT_IMAGE, req));
         kc.put("imagePullPolicy", "IfNotPresent");
         Map<String, Object> resources = new LinkedHashMap<>();
         resources.put("requests", nonNullMap("cpu", req.getCpuRequest(), "memory", req.getMemoryRequest()));
@@ -117,7 +118,7 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         spec.put("podSecurityContext", Map.of("runAsUser", 1000, "fsGroup", 1000));
         // 业务指标（默认关）：redis-exporter 边车（9121）
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
-            spec.put("redisExporter", exporterSpec(req.getName()));
+            spec.put("redisExporter", exporterSpec(req.getName(), Images.resolve(EXPORTER_IMAGE, req)));
         }
         if (hasStorage(req)) {
             spec.put("storage", storageSpec(req));
@@ -162,10 +163,10 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
     }
 
     /** redis-exporter 边车定义（创建与「编辑时补开」共用）。 */
-    static Map<String, Object> exporterSpec(String name) {
+    static Map<String, Object> exporterSpec(String name, String image) {
         Map<String, Object> exporter = new LinkedHashMap<>();
         exporter.put("enabled", true);
-        exporter.put("image", EXPORTER_IMAGE);
+        exporter.put("image", image);
         exporter.put("port", EXPORTER_PORT);
         exporter.put("resources", Map.of(
                 "requests", Map.of("cpu", "50m", "memory", "64Mi"),
@@ -191,7 +192,7 @@ public class RedisMiddlewareAdapter implements MiddlewareAdapter {
         if (spec.containsKey("redisExporter")) {
             return false;
         }
-        spec.put("redisExporter", exporterSpec(req.getName()));
+        spec.put("redisExporter", exporterSpec(req.getName(), Images.resolve(EXPORTER_IMAGE, req)));
         return true;
     }
 

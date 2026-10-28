@@ -61,13 +61,14 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> mysql = new LinkedHashMap<>();
         mysql.put("clusterType", "group-replication");
         mysql.put("size", size);
-        mysql.put("image", IMAGE);
+        mysql.put("image", Images.resolve(IMAGE, req));
         mysql.put("resources", resourcesOf(req));
         mysql.put("volumeSpec", volumeSpecOf(req));
         // 业务指标（默认关）：Percona 只有 PMM，没有 Prometheus exporter → 平台挂 mysqld_exporter 边车。
         // 用 Operator 自己生成的 monitor 用户（<cr>-secrets 的 monitor 键，权限刚好够导出）。
         if (Boolean.TRUE.equals(req.getMetricsEnabled())) {
-            mysql.put("sidecars", List.of(exporterSidecar(req.getName())));
+            mysql.put("sidecars", List.of(exporterSidecar(req.getName(),
+                    Images.resolve(EXPORTER_IMAGE, req))));
         }
 
         // 可变结构：applyScale 会同步改 haproxy.size
@@ -75,7 +76,7 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         haproxy.put("enabled", true);
         haproxy.put("size", size);
         // CRD 校验要求启用 haproxy 时显式给 image（operator 本身不内置默认值）
-        haproxy.put("image", HAPROXY_IMAGE);
+        haproxy.put("image", Images.resolve(HAPROXY_IMAGE, req));
         // 配额要求每个容器都写 requests/limits（真集群验证：不写会被 quota 挡住，HAProxy Pod 起不来）
         haproxy.put("resources", resourcesOf(req));
         Map<String, Object> router = new LinkedHashMap<>();
@@ -116,7 +117,7 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
         if (present) {
             return false;
         }
-        sidecars.add(exporterSidecar(req.getName()));
+        sidecars.add(exporterSidecar(req.getName(), Images.resolve(EXPORTER_IMAGE, req)));
         mysql.put("sidecars", sidecars);
         return true;
     }
@@ -200,10 +201,10 @@ public class MysqlMiddlewareAdapter implements MiddlewareAdapter {
                 "app.kubernetes.io/instance=" + name + ",app.kubernetes.io/component=database");
     }
 
-    static Map<String, Object> exporterSidecar(String name) {
+    static Map<String, Object> exporterSidecar(String name, String image) {
         Map<String, Object> sidecar = new LinkedHashMap<>();
         sidecar.put("name", "mysqld-exporter");
-        sidecar.put("image", EXPORTER_IMAGE);
+        sidecar.put("image", image);
         sidecar.put("args", List.of("--mysqld.address=127.0.0.1:3306", "--mysqld.username=monitor"));
         sidecar.put("env", List.of(Map.of("name", "MYSQLD_EXPORTER_PASSWORD", "valueFrom",
                 Map.of("secretKeyRef", Map.of("name", name + "-secrets", "key", "monitor")))));

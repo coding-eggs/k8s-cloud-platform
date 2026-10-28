@@ -277,4 +277,15 @@ class RedisMiddlewareAdapterTest {
         assertThat(spec(live)).doesNotContainKey("redisExporter");
     }
 
+
+    @Test
+    void imagesFollowTheRegistryWhenConfigured() {
+        var req = req("STANDALONE", 1);
+        req.setImageRegistryHost("harbor.ackcp.cloud");
+        req.setImageRegistryProject("platform");
+
+        var spec = spec(adapter.buildCreate(req).get(0).resource());
+
+        assertThat(spec.toString()).contains("harbor.ackcp.cloud/platform/quay.io/opstree/redis:v7.0.15");
+    }
 }
