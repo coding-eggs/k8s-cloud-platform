@@ -35,6 +35,9 @@ export const apiCodes = {
   podListAll: 'platform:pod:list-all',
   /** 凭据写（新建/更新/删除）—— 页面内的写按钮置灰用 */
   credentialWrite: 'platform:credential:write',
+  /** 租户自管连接的写权限 —— 与上一个是**同一个按钮的 ANY-of**
+   *  （租户角色不能持 platform: 码，只认上面那个会把租户管理员的按钮一直灰着） */
+  credentialWriteTenant: 'tenant:credential:write',
   /** 镜像候选值与目录浏览（S3.1）—— 补全的可选拉取短路用 */
   registryCatalog: 'tenant:registry:catalog',
 

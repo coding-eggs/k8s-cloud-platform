@@ -153,7 +153,7 @@ async function handleLogout(): Promise<void> {
 
         <!-- 菜单显隐一律用 Page 域码（pageCodes.ts）。分组标题的 v-if 与其下菜单项同源，
              避免出现"有标题没条目"的空分组。 -->
-        <div v-if="can(pageCodes.cluster) || can(pageCodes.node.list) || can(pageCodes.namespace.list) || can(pageCodes.template) || can(pageCodes.audit) || can(pageCodes.credential)" class="menu-group">平台管理</div>
+        <div v-if="can(pageCodes.cluster) || can(pageCodes.node.list) || can(pageCodes.namespace.list) || can(pageCodes.template) || can(pageCodes.audit)" class="menu-group">平台管理</div>
         <el-menu-item v-if="can(pageCodes.cluster)" index="/clusters">
           <el-icon><Monitor /></el-icon>
           <template #title>集群管理</template>
@@ -173,10 +173,6 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.audit)" index="/audit">
           <el-icon><Document /></el-icon>
           <template #title>审计日志</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.credential)" index="/credentials">
-          <el-icon><Tickets /></el-icon>
-          <template #title>凭据管理</template>
         </el-menu-item>
 
         <div v-if="can(pageCodes.tenant.list) || can(pageCodes.tenant.self) || can(pageCodes.user) || can(pageCodes.role)" class="menu-group">用户与权限</div>
@@ -238,7 +234,22 @@ async function handleLogout(): Promise<void> {
           <template #title>应用编排</template>
         </el-menu-item>
 
-        <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list) || can(pageCodes.registry)" class="menu-group">配置管理</div>
+        <!-- 持续集成：源码凭据 → 构建 → 产物仓库（spec §2） -->
+        <div v-if="canAny([pageCodes.credential, pageCodes.credentialTenant]) || can(pageCodes.registry) || can(pageCodes.pipeline)" class="menu-group">持续集成</div>
+        <el-menu-item v-if="can(pageCodes.pipeline)" index="/pipelines">
+          <el-icon><Operation /></el-icon>
+          <template #title>流水线</template>
+        </el-menu-item>
+        <el-menu-item v-if="canAny([pageCodes.credential, pageCodes.credentialTenant])" index="/git-credentials">
+          <el-icon><Tickets /></el-icon>
+          <template #title>Git 凭据管理</template>
+        </el-menu-item>
+        <el-menu-item v-if="can(pageCodes.registry)" index="/registries">
+          <el-icon><Collection /></el-icon>
+          <template #title>镜像仓库</template>
+        </el-menu-item>
+
+        <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list)" class="menu-group">配置管理</div>
         <el-menu-item v-if="can(pageCodes.configmap.list)" index="/resources/configmaps">
           <el-icon><Document /></el-icon>
           <template #title>ConfigMap</template>
@@ -246,15 +257,6 @@ async function handleLogout(): Promise<void> {
         <el-menu-item v-if="can(pageCodes.secret.list)" index="/resources/secrets">
           <el-icon><Key /></el-icon>
           <template #title>Secret</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.registry)" index="/registries">
-          <el-icon><Collection /></el-icon>
-          <template #title>镜像仓库</template>
-        </el-menu-item>
-        <!-- CI：列表/画布/运行历史三个路由共用**一个**页面码，菜单只露一条 -->
-        <el-menu-item v-if="can(pageCodes.pipeline)" index="/pipelines">
-          <el-icon><Operation /></el-icon>
-          <template #title>流水线</template>
         </el-menu-item>
 
         <div v-if="can(pageCodes.pvc.list) || can(pageCodes.persistentVolume.list) || can(pageCodes.storageClass.list) || can(pageCodes.objectStorage)" class="menu-group">存储</div>

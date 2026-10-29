@@ -851,7 +851,8 @@ export const auditApi = {
 }
 
 export const credentialApi = {
-  list: () => http.post<never, CredentialView[]>('/credential/list'),
+  /** 可选过滤：GIT / HARBOR / DOCKERHUB。Git 凭据页传 'GIT'；镜像仓库页不传、自己按 host 分组 */
+  list: (type?: string) => http.post<never, CredentialView[]>('/credential/list', { type }),
   /** GIT 类型必须给 probeUrl：凭据是按 host 配的，能不能用取决于具体仓库的权限 */
   test: (id: string, probeUrl?: string) =>
     http.post<never, CredentialTestResult>('/credential/test', { id, probeUrl }),

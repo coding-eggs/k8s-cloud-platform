@@ -2203,6 +2203,8 @@ export interface CredentialView {
   type: 'GIT' | 'HARBOR' | 'DOCKERHUB'
   /** host 基址 */
   endpoint: string
+  /** endpoint 归一后的 host[:port]（后端算好，前端别再自己解析） */
+  host: string
   /** BASIC = 用户名+密码/令牌；NONE = 匿名（无凭据，出站不带 Authorization 头） */
   authType: 'BASIC' | 'NONE'
   hasSecret: boolean

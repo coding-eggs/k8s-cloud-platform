@@ -43,6 +43,8 @@ export const pageCodes = {
   audit: 'platform:page:audit',
   /** S0.2 凭据管理页（平台管理面，仅 admin） */
   credential: 'platform:page:credential',
+  /** Git 凭据页的租户码（与上一行同路由，任一持有即可见 —— 过渡态，见 spec §6.4） */
+  credentialTenant: 'tenant:page:credential',
   /** S3.1 镜像仓库浏览页（租户可达） */
   registry: 'tenant:page:registry',
   /** 中间件商店（租户可达；管理员持 tenant 族码，同一个页面） */

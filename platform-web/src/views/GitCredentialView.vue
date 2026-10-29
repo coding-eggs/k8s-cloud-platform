@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * Git 凭据管理（spec §3.2）。本页**只管 Git 连接** —— 镜像仓库类的连接在「镜像仓库」页，
+ * 那边按 host 归属到具体的仓库下面。
+ *
+ * <p>对租户开放：租户管理员可以给自己租户建连接（归属列显示自己的租户），平台级连接只读。
+ */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { credentialApi } from '@/api'
@@ -8,6 +14,13 @@ import { apiCodes } from '@/apiCodes'
 
 const perm = usePermission()
 
+/**
+ * 能不能写。**两个码 ANY-of**：租户角色不能持 platform: 码，只认它会把租户管理员的按钮一直灰着。
+ * 权威判定仍在后端。
+ */
+const canWrite = computed(() =>
+  perm.hasAny([apiCodes.credentialWrite, apiCodes.credentialWriteTenant]))
+
 const rows = ref<Credential[]>([])
 const loading = ref(false)
 
@@ -16,7 +29,6 @@ const form = reactive({
   visible: false,
   id: '',
   name: '',
-  type: 'GIT' as 'GIT' | 'HARBOR' | 'DOCKERHUB',
   endpoint: '',
   username: '',
   secret: '',
@@ -25,25 +37,10 @@ const form = reactive({
   /** 允许在流水线里使用（默认关）—— 逐条显式授权，不是权限码 */
   usableByPipelines: false,
 })
-/** 认证方式。NONE = 匿名（无凭据，出站不带 Authorization 头）—— 后端按类型校验可否 */
+/** 认证方式。NONE = 匿名（无凭据，出站不带 Authorization 头） */
 const authType = ref<'BASIC' | 'NONE'>('BASIC')
 
 const isEdit = computed(() => !!form.id)
-
-// ⚠️ 这里**没有 Docker Hub** —— 它 2026-10-14 改成了平台的**内置档**（BuiltinRegistry），
-// 不经凭据表：没有行、没有 authType、没有密文、没有启停状态，重放迁移后开箱即用。
-// 它的方言实现仍在，只是不再由凭据提供。
-const TYPE_OPTIONS = [
-  { value: 'GIT', label: 'Git 仓库' },
-  { value: 'HARBOR', label: 'Harbor 镜像仓库' },
-  // ⚠️ 这一项专指**私有**仓库（用户名 + PAT）。公共镜像的来源是平台的**内置档**，
-  // 不用配置、也不在这儿 —— 2026-10-15 用户撤销了 2026-10-14 那条「只允许匿名」的裁定
-  { value: 'DOCKERHUB', label: 'Docker Hub（私有仓库）' },
-]
-
-/** Docker Hub 的地址是恒定的：它没有"你自己的地址"，出站的两个站点由后端写死 */
-const DOCKER_HUB = 'DOCKERHUB'
-const isDockerHub = computed(() => form.type === DOCKER_HUB)
 
 const AUTH_OPTIONS = [
   { value: 'BASIC', label: '用户名 + 密码/令牌' },
@@ -51,36 +48,14 @@ const AUTH_OPTIONS = [
 ]
 
 /**
- * 这一档能选哪些认证方式。Docker Hub 只有 BASIC —— 匿名的那一份是**内置档**，
- * 在这儿再建一条匿名的，只会多出一个与它一模一样、候选完全重复的来源（后端也会拒）。
- */
-const authOptions = computed(() =>
-  isDockerHub.value ? AUTH_OPTIONS.filter((o) => o.value === 'BASIC') : AUTH_OPTIONS,
-)
-
-/** 换类型时的联动：Docker Hub 的地址恒定、且必须带认证 */
-function onTypeChange(v: string): void {
-  if (v === DOCKER_HUB) {
-    form.endpoint = 'docker.io'
-    authType.value = 'BASIC'
-  } else if (!form.endpoint.trim() || form.endpoint === 'docker.io') {
-    form.endpoint = ''
-  }
-}
-
-/**
  * 换认证方式时的联动：改成匿名就把已输入的凭据清掉 —— 那些输入框随即隐藏，
- * 留着只会让「保存」报一个用户没法处理的错（见 save 里的 body 注释）。
+ * 留着只会让「保存」报一个用户没法处理的错。
  */
 function onAuthTypeChange(v: 'BASIC' | 'NONE'): void {
   if (v === 'NONE') {
     form.username = ''
     form.secret = ''
   }
-}
-
-function typeLabel(t: string): string {
-  return TYPE_OPTIONS.find((o) => o.value === t)?.label ?? t
 }
 
 function fmtDate(v?: string | null): string {
@@ -94,7 +69,7 @@ function fmtDate(v?: string | null): string {
 async function load(): Promise<void> {
   loading.value = true
   try {
-    rows.value = await credentialApi.list()
+    rows.value = await credentialApi.list('GIT')
   } finally {
     loading.value = false
   }
@@ -105,12 +80,12 @@ function openCreate(): void {
     visible: true,
     id: '',
     name: '',
-    type: 'GIT',
     endpoint: '',
     username: '',
     secret: '',
     description: '',
     enabled: true,
+    usableByPipelines: false,
   })
   authType.value = 'BASIC'
 }
@@ -120,7 +95,6 @@ function openEdit(row: Credential): void {
     visible: true,
     id: row.id,
     name: row.name,
-    type: row.type,
     endpoint: row.endpoint,
     // 敏感字段永远是空的：后端不回显，所以「空」只能解读为「保持不变」
     username: '',
@@ -151,12 +125,11 @@ async function save(): Promise<void> {
 
   const body = {
     name: form.name.trim(),
-    type: form.type,
+    type: 'GIT' as const,
     endpoint: form.endpoint.trim(),
     authType: authType.value,
     // ⚠️ 匿名时**根本不发**这两个字段 —— 上面的 v-if 只卸载 DOM，用户此前输过的值仍留在
-    // reactive 里。带上去会被后端拒（这正是它要拒的），而那两个框此刻**用户看不到也删不掉**，
-    // 只能切回「用户名密码」手动清两次，或者关掉抽屉重来。
+    // reactive 里。带上去会被后端拒，而那两个框此刻用户看不到也删不掉。
     username: authType.value === 'NONE' ? undefined : form.username,
     secret: authType.value === 'NONE' ? undefined : form.secret,
     description: form.description.trim() || null,
@@ -195,31 +168,23 @@ const probeUrl = ref('')
 const testing = ref(false)
 const testResult = ref<CredentialTestResult | null>(null)
 
-/** GIT 需要用户给一个探测仓库地址；REGISTRY 直接打 /v2/，不需要额外输入 */
-const needsProbeUrl = computed(() => testRow.value?.type === 'GIT')
-
 function openTest(row: Credential): void {
   testRow.value = row
   probeUrl.value = ''
   testResult.value = null
-  // ⚠️ 两种类型都要开弹窗 —— 结果 alert 只在这个弹窗里，不开就等于点了没反应。
-  // （GIT 是「先填地址再点测试」，REGISTRY 是「开了就直接打」。）
   testVisible.value = true
-  if (!needsProbeUrl.value) {
-    void runTest()
-  }
 }
 
 async function runTest(): Promise<void> {
   if (!testRow.value) return
-  if (needsProbeUrl.value && !probeUrl.value.trim()) {
+  if (!probeUrl.value.trim()) {
     ElMessage.warning('请填写一个用于测试的仓库地址')
     return
   }
   testing.value = true
   testResult.value = null
   try {
-    testResult.value = await credentialApi.test(testRow.value.id, probeUrl.value.trim() || undefined)
+    testResult.value = await credentialApi.test(testRow.value.id, probeUrl.value.trim())
     await load()
   } finally {
     testing.value = false
@@ -240,8 +205,8 @@ onMounted(load)
 <template>
   <div class="credential-page">
     <div class="page-head">
-      <h2>凭据管理</h2>
-      <el-button type="primary" :disabled="!perm.has(apiCodes.credentialWrite)" @click="openCreate">
+      <h2>Git 凭据管理</h2>
+      <el-button type="primary" :disabled="!canWrite" @click="openCreate">
         新建凭据
       </el-button>
     </div>
@@ -251,22 +216,16 @@ onMounted(load)
       :closable="false"
       show-icon
       title="凭据内容永不回显"
-      description="列表与详情只显示「是否已配置」与指纹。编辑时输入框留空表示保持不变。凭据是平台级的：用它做的操作在 GitLab / Harbor 侧都记在平台名下，租户间的仓库隔离请靠对端各自的 token / robot account 权限。Harbor 自动创建的租户凭据（归属列显示「Harbor 自动」）只读，请在集群组件面板的「镜像项目」里同步或重建。"
+      description="列表与详情只显示「是否已配置」与指纹。编辑时输入框留空表示保持不变。镜像仓库的连接不在这里 —— 它们在「镜像仓库」页按仓库归属展示。"
       class="hint"
     />
 
     <el-table v-loading="loading" :data="rows" stripe>
       <el-table-column prop="name" label="名称" min-width="160" />
-      <el-table-column label="类型" width="110">
-        <template #default="{ row }">{{ typeLabel(row.type) }}</template>
-      </el-table-column>
       <el-table-column prop="endpoint" label="地址" min-width="220" show-overflow-tooltip />
       <el-table-column label="归属" width="160">
         <template #default="{ row }">
-          <span v-if="row.source === 'HARBOR'">
-            {{ row.tenantName ? `${row.tenantName}（Harbor 自动）` : '平台（Harbor 自动）' }}
-          </span>
-          <span v-else-if="row.tenantName">{{ row.tenantName }}</span>
+          <span v-if="row.tenantName">{{ row.tenantName }}</span>
           <span v-else class="dim">平台</span>
         </template>
       </el-table-column>
@@ -300,14 +259,10 @@ onMounted(load)
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openTest(row)">测试连接</el-button>
-          <el-button link type="primary"
-                     :disabled="row.source === 'HARBOR' || !perm.has(apiCodes.credentialWrite)"
-                     @click="openEdit(row)">
+          <el-button link type="primary" :disabled="!canWrite" @click="openEdit(row)">
             编辑
           </el-button>
-          <el-button link type="danger"
-                     :disabled="row.source === 'HARBOR' || !perm.has(apiCodes.credentialWrite)"
-                     @click="remove(row)">
+          <el-button link type="danger" :disabled="!canWrite" @click="remove(row)">
             删除
           </el-button>
         </template>
@@ -315,48 +270,30 @@ onMounted(load)
     </el-table>
 
     <!-- 新建 / 编辑 -->
-    <el-drawer v-model="form.visible" :title="isEdit ? '编辑凭据' : '新建凭据'" size="520px">
+    <el-drawer v-model="form.visible" :title="isEdit ? '编辑 Git 凭据' : '新建 Git 凭据'" size="520px">
       <el-form label-width="100px">
         <el-form-item label="名称" required>
-          <el-input v-model="form.name" placeholder="如 harbor-prod / gitlab-main" />
-        </el-form-item>
-        <el-form-item label="类型" required>
-          <el-select v-model="form.type" style="width: 100%" @change="onTypeChange">
-            <el-option v-for="o in TYPE_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
-          </el-select>
+          <el-input v-model="form.name" placeholder="如 gitlab-main" />
         </el-form-item>
         <el-form-item label="地址" required>
-          <el-input
-            v-model="form.endpoint"
-            :disabled="isDockerHub"
-            :placeholder="form.type === 'GIT' ? 'https://gitlab.example.com' : isDockerHub ? 'docker.io' : 'harbor.example.com'"
-          />
-          <div class="tip">填 host 基址（站点级），不是具体仓库或 project</div>
+          <el-input v-model="form.endpoint" placeholder="https://gitlab.example.com" />
+          <div class="tip">填 host 基址（站点级），不是具体仓库</div>
         </el-form-item>
         <el-form-item label="认证方式">
           <el-select v-model="authType" style="width: 100%" @change="onAuthTypeChange">
-            <el-option v-for="o in authOptions" :key="o.value" :label="o.label" :value="o.value" />
+            <el-option v-for="o in AUTH_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
           </el-select>
-          <div v-if="authType === 'NONE'" class="tip">匿名连接不带凭据，只能访问对端公开的资源</div>
-          <div v-if="isDockerHub" class="tip">
-            公共镜像由平台<b>内置</b>的 Docker Hub 提供（不用配、也不在这里）—— 这条连接只用于
-            <b>你自己的私有仓库</b>：候选补全、浏览、以及流水线推送。
-            <br />
-            令牌请用 <b>Access Token（PAT）</b>，不是登录密码。
-          </div>
+          <div v-if="authType === 'NONE'" class="tip">匿名连接不带凭据，只能访问对端公开的仓库</div>
         </el-form-item>
         <el-form-item v-if="authType === 'BASIC'" label="用户名">
-          <el-input
-            v-model="form.username"
-            :placeholder="isEdit ? '留空 = 保持不变' : isDockerHub ? 'Docker ID' : 'robot$platform+ci / ci-bot'"
-          />
+          <el-input v-model="form.username" :placeholder="isEdit ? '留空 = 保持不变' : 'ci-bot'" />
         </el-form-item>
         <el-form-item v-if="authType === 'BASIC'" label="密码/令牌">
           <el-input
             v-model="form.secret"
             type="password"
             show-password
-            :placeholder="isEdit ? '留空 = 保持不变' : 'PAT / robot account 密钥'"
+            :placeholder="isEdit ? '留空 = 保持不变' : 'PAT'"
           />
         </el-form-item>
         <el-form-item label="说明">
@@ -368,11 +305,8 @@ onMounted(load)
         <el-form-item label="允许在流水线里使用">
           <el-switch v-model="form.usableByPipelines" />
           <div class="tip">
-            开：租户的「{{ form.type === 'GIT' ? 'git 克隆' : '构建并推送镜像' }}」节点能从下拉里选到它。
+            开：流水线的「git 克隆」节点能从下拉里选到它。
             关（默认）：它只在这张凭据页里存在，流水线看不见它。
-            <br />
-            ⚠️ 这个开关是平台级的：开了之后<b>任意租户</b>的流水线都能引用它（引用按连接 id 走，
-            不按租户收窄）—— 请只对「大家共用的出站凭据」这类连接开。
           </div>
         </el-form-item>
       </el-form>
@@ -382,13 +316,9 @@ onMounted(load)
       </template>
     </el-drawer>
 
-    <!-- 测试连接：GIT 要先填探测地址，REGISTRY 打开即测 -->
-    <el-dialog
-      v-model="testVisible"
-      :title="needsProbeUrl ? '测试 Git 凭据' : '测试镜像仓库连接'"
-      width="560px"
-    >
-      <el-form v-if="needsProbeUrl" label-width="120px">
+    <!-- 测试连接：Git 要先填一个探测仓库地址 -->
+    <el-dialog v-model="testVisible" title="测试 Git 凭据" width="560px">
+      <el-form label-width="120px">
         <el-form-item label="探测仓库地址" required>
           <el-input
             v-model="probeUrl"
