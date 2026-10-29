@@ -52,6 +52,11 @@ python3 scripts/harbor-replication.py --only docker.io --all --trigger --sequent
 
 `--sequential` 会轮询每条直到 `Succeed/Failed/Stopped` 再继续，适合限额紧张时慢跑。
 
+**偶发 EOF 也会让整条失败**：经出网代理连上游时，Harbor 偶尔拿到
+`failed to list artifacts ... : EOF` 或者复制到一半断掉（执行记录里是 `Failed`、
+任务数是 0，或者只有部分 platform 的 manifest 落了但没打 tag）。**直接重触发一次**即可，
+不用改配置（2026-10-29 `calico/third-party-cni-plugins` 前两次都这样，第三次成功）。
+
 脚本做四件事，都幂等（已存在就跳过/更新，不重复建）：
 
 1. 建 6 个上游项目并设**公开读**；
