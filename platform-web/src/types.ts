@@ -2630,6 +2630,26 @@ export interface MiddlewareInstanceDetail {
   liveError?: string | null
 }
 
+/** ES 的一个索引（`_cat/indices` 的一行）。只读展示，平台不改也不删索引 */
+export interface EsIndexSummary {
+  name: string
+  health?: string | null
+  status?: string | null
+  primaries?: number | null
+  replicas?: number | null
+  docs?: number | null
+  storeSize?: string | null
+  createdAt?: string | null
+}
+
+/** 索引结构：三段都是后端格式化好的 JSON 文本，直接喂只读块 */
+export interface EsIndexDetail {
+  name: string
+  mapping: string
+  settings: string
+  aliases: string
+}
+
 export interface MiddlewareInstanceLive {
   kind?: string | null
   name?: string | null

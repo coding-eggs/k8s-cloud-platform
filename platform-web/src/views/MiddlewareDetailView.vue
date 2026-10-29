@@ -14,7 +14,7 @@ import YamlBlock from '@/components/YamlBlock.vue'
 import MiddlewareMetricsPanel from '@/components/middleware/MiddlewareMetricsPanel.vue'
 import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
 import { useResourceContext } from '@/stores/context'
-import type { MiddlewareInstanceDetail, MiddlewareOperation, MiddlewareUser, MiddlewareUserCredential } from '@/types'
+import type { EsIndexDetail, EsIndexSummary, MiddlewareInstanceDetail, MiddlewareOperation, MiddlewareUser, MiddlewareUserCredential } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -124,6 +124,86 @@ const showUsers = computed(() => {
   if (!code || !USER_CODES.includes(code)) return false
   if (code === 'kafka' || code === 'nacos') return detail.value?.spec?.authEnabled === true
   return true
+})
+
+// ---------------- 索引（Elasticsearch） ----------------
+/**
+ * 索引不是 K8s 对象，集群里列不出来 —— 由后端到 ES 里现查（`_cat/indices`）。
+ * 只读：平台不改也不删索引，改结构/删数据属于用户自己的运维动作。
+ */
+const showIndices = computed(() => instance.value?.code === 'elasticsearch')
+
+const esIndices = ref<EsIndexSummary[]>([])
+const esLoading = ref(false)
+const esError = ref('')
+const esKeyword = ref('')
+/** 默认隐藏 `.` 开头的系统索引：那是 ES / Kibana 自己的账本，不是用户建的 */
+const hideSystemIndices = ref(true)
+
+const visibleIndices = computed(() => {
+  const kw = esKeyword.value.trim().toLowerCase()
+  return esIndices.value.filter((row) => {
+    if (hideSystemIndices.value && row.name.startsWith('.')) return false
+    return !kw || row.name.toLowerCase().includes(kw)
+  })
+})
+const hiddenSystemCount = computed(() =>
+  hideSystemIndices.value ? esIndices.value.filter((row) => row.name.startsWith('.')).length : 0)
+
+/** 健康色：ES 的 red 是「有主分片没分配」，不是「实例挂了」—— 列表里按索引逐行看 */
+const ES_HEALTH_TAG: Record<string, 'success' | 'warning' | 'danger'> = {
+  green: 'success',
+  yellow: 'warning',
+  red: 'danger',
+}
+
+const esDetail = reactive({
+  visible: false,
+  name: '',
+  loading: false,
+  error: '',
+  detail: null as EsIndexDetail | null,
+})
+const esDetailTab = ref<'mapping' | 'settings' | 'aliases'>('mapping')
+
+async function loadIndices(): Promise<void> {
+  const inst = instance.value
+  if (!inst) return
+  esLoading.value = true
+  esError.value = ''
+  try {
+    esIndices.value = await middlewareApi.esIndices(inst.id, tenantId.value)
+  } catch (e) {
+    esIndices.value = []
+    esError.value = e instanceof Error ? e.message : '读取索引失败'
+  } finally {
+    esLoading.value = false
+  }
+}
+
+async function openIndex(name: string): Promise<void> {
+  const inst = instance.value
+  if (!inst) return
+  esDetail.visible = true
+  esDetail.name = name
+  esDetail.detail = null
+  esDetail.error = ''
+  esDetail.loading = true
+  esDetailTab.value = 'mapping'
+  try {
+    esDetail.detail = await middlewareApi.esIndex(inst.id, name, tenantId.value)
+  } catch (e) {
+    esDetail.error = e instanceof Error ? e.message : '读取索引结构失败'
+  } finally {
+    esDetail.loading = false
+  }
+}
+
+// 页签是 lazy 的：切过去才拉，避免每次打开详情都多打一次 ES
+watch(tab, (value) => {
+  if (value === 'indices' && showIndices.value && !esIndices.value.length && !esLoading.value) {
+    void loadIndices()
+  }
 })
 
 async function loadUsers(): Promise<void> {
@@ -716,6 +796,47 @@ watch(tenantId, () => void load())
         </el-card>
       </el-tab-pane>
 
+      <el-tab-pane v-if="showIndices" label="索引" name="indices" lazy>
+        <div class="mw-indices">
+          <div class="mw-indices-actions">
+            <el-input v-model="esKeyword" placeholder="按名称过滤" clearable style="width: 220px" />
+            <el-checkbox v-model="hideSystemIndices">隐藏系统索引（. 开头）</el-checkbox>
+            <span v-if="hiddenSystemCount" class="mw-form-help">已隐藏 {{ hiddenSystemCount }} 个</span>
+            <el-button size="small" :loading="esLoading" @click="loadIndices">刷新</el-button>
+            <span class="mw-form-help">
+              共 {{ esIndices.length }} 个索引；只读，点索引名看 mapping / settings / aliases
+            </span>
+          </div>
+          <el-alert v-if="esError" :title="esError" type="error" :closable="false" show-icon class="mw-indices-error" />
+          <el-table :data="visibleIndices" v-loading="esLoading" size="small"
+                    empty-text="没有索引（或都被过滤掉了）">
+            <el-table-column label="索引" min-width="260">
+              <template #default="{ row }">
+                <el-button link type="primary" class="mono" @click="openIndex(row.name)">{{ row.name }}</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="健康" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="ES_HEALTH_TAG[row.health] ?? 'info'">{{ row.health ?? '—' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column label="主/副本" width="100">
+              <template #default="{ row }">{{ row.primaries ?? '—' }} / {{ row.replicas ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="文档数" width="120">
+              <template #default="{ row }">{{ row.docs == null ? '—' : row.docs.toLocaleString() }}</template>
+            </el-table-column>
+            <el-table-column label="存储" width="100">
+              <template #default="{ row }">{{ row.storeSize ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="创建时间" width="210">
+              <template #default="{ row }">{{ row.createdAt ?? '—' }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="YAML" name="yaml">
         <div class="panel">
           <YamlBlock v-if="yamlText" :yaml="yamlText" />
@@ -775,6 +896,28 @@ watch(tenantId, () => void load())
         </el-table>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- ============ 索引结构（ES） ============ -->
+    <!-- JSON 是 YAML 的子集，这里沿用全站唯一的只读块，不再另造一个 JSON 查看器 -->
+    <el-drawer v-model="esDetail.visible" :title="`索引 ${esDetail.name}`" size="60%">
+      <div v-loading="esDetail.loading" class="mw-index-detail">
+        <el-alert v-if="esDetail.error" :title="esDetail.error" type="error" :closable="false" show-icon />
+        <el-tabs v-model="esDetailTab">
+          <el-tab-pane label="Mapping" name="mapping">
+            <YamlBlock v-if="esDetail.detail" :yaml="esDetail.detail.mapping" max-height="65vh" />
+          </el-tab-pane>
+          <el-tab-pane label="Settings" name="settings">
+            <YamlBlock v-if="esDetail.detail" :yaml="esDetail.detail.settings" max-height="65vh" />
+          </el-tab-pane>
+          <el-tab-pane label="Aliases / Filter" name="aliases">
+            <YamlBlock v-if="esDetail.detail" :yaml="esDetail.detail.aliases" max-height="65vh" />
+            <div class="mw-form-help">
+              别名的 filter 就是「这个名字下能看到哪些文档」；没有别名的索引这里会显示 <code>{}</code>。
+            </div>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </el-drawer>
 
     <!-- ============ 编辑 ============ -->
     <el-dialog v-model="editVisible" title="编辑实例" width="560px" :close-on-click-modal="false">
@@ -909,5 +1052,7 @@ watch(tenantId, () => void load())
 .mw-edit-form :deep(.el-form-item__label) { justify-content: flex-start; text-align: left; }
 .mw-edit-form :deep(.el-form-item__content) { flex-wrap: wrap; justify-content: flex-start; }
 .mw-users-actions { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.mw-indices-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.mw-indices-error { margin-bottom: 10px; }
 .mw-cred-line { font-size: 15px; word-break: break-all; margin: 0 0 10px; }
 </style>

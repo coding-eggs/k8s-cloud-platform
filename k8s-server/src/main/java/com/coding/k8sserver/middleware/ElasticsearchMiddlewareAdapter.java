@@ -382,9 +382,9 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         return true;
     }
 
-    /** 线上 CR 当前是否开着 HTTP TLS（关掉时 exporter 走 http://）。 */
+    /** 线上 CR 当前是否开着 HTTP TLS（关掉时 exporter 走 http://）。{@code null} = 读不到 spec，按默认（开）。 */
     static boolean tlsEnabled(Map<String, Object> spec) {
-        Object http = spec.get("http");
+        Object http = spec == null ? null : spec.get("http");
         if (http instanceof Map<?, ?> h && h.get("tls") instanceof Map<?, ?> t
                 && t.get("selfSignedCertificate") instanceof Map<?, ?> s
                 && Boolean.TRUE.equals(s.get("disabled"))) {
@@ -471,6 +471,35 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
             }
         }
         return "Kibana 健康状况 " + st.get("health");
+    }
+
+    /**
+     * ECK 报 {@code health=red} 时补上**归因**：red 只说明「有主分片没分配」，是哪几个、为什么，
+     * 只有 ES 自己知道（{@code _cat/shards}）。
+     *
+     * <p>不补的话用户看到的是一句「Operator 报告健康状况为 red」—— 那天真集群上的实例一直降级，
+     * 原因其实是三个 Kibana 系统索引的副本全没了，业务索引一个都没坏，而这句话一个字都没提。
+     * 这类实例往往业务完全可用，消息必须让人能判断「要不要管」。
+     *
+     * <p>先看 CR 上的 health 再决定要不要打网络：green/yellow 不进这里，绝大多数刷新零开销。
+     */
+    @Override
+    public String dataProblem(KubernetesClient client, String namespace, String name,
+                              GenericKubernetesResource live) {
+        Object status = live.getAdditionalProperties().get("status");
+        if (!(status instanceof Map<?, ?> st) || !"red".equals(st.get("health"))) {
+            return null;
+        }
+        String detail;
+        try {
+            detail = ElasticsearchRest.redSummary(client, namespace, name, live);
+        } catch (RuntimeException e) {
+            // ES 连不上/超时：仍然是 red，只是说不出细节 —— 别把整条状态判成「读失败」
+            String why = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            return "Operator 报告健康状况为 red（读取分片明细失败：" + why + "）";
+        }
+        return detail == null ? "Operator 报告健康状况为 red"
+                : "Operator 报告健康状况为 red：" + detail;
     }
 
     @Override

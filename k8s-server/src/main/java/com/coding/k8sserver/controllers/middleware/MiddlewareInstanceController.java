@@ -1,7 +1,10 @@
 package com.coding.k8sserver.controllers.middleware;
 
+import com.coding.common.models.middleware.EsIndexDetailDTO;
+import com.coding.common.models.middleware.EsIndexSummaryDTO;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
+import com.coding.common.models.middleware.MiddlewareIndexRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
 import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
@@ -138,5 +141,23 @@ public class MiddlewareInstanceController implements AccessBoundaryAware {
                                                                 @RequestBody MiddlewareStatusRequestDTO request) {
         request.setCode(code);
         return new ResponseData<>(service.status(request));
+    }
+
+    @PostMapping("/{code}/instances/indexes")
+    @Operation(summary = "实例的索引列表（Elasticsearch，只读）",
+            description = "索引不是 K8s 对象，直接问 ES 自己（_cat/indices）；应用层已按访问边界校验")
+    public ResponseData<List<EsIndexSummaryDTO>> indices(@PathVariable("code") String code,
+                                                         @RequestBody MiddlewareIndexRequestDTO request) {
+        request.setCode(code);
+        return new ResponseData<>(service.indices(request));
+    }
+
+    @PostMapping("/{code}/instances/index")
+    @Operation(summary = "单个索引的 mapping / settings / aliases（Elasticsearch，只读）",
+            description = "aliases 里带各自的 filter —— 「这个别名看得见哪些文档」就在这里")
+    public ResponseData<EsIndexDetailDTO> index(@PathVariable("code") String code,
+                                                @RequestBody MiddlewareIndexRequestDTO request) {
+        request.setCode(code);
+        return new ResponseData<>(service.indexDetail(request));
     }
 }

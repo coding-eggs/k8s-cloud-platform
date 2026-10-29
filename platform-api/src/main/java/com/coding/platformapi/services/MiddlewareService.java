@@ -3,9 +3,12 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.middleware.EsIndexDetailDTO;
+import com.coding.common.models.middleware.EsIndexSummaryDTO;
 import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
+import com.coding.common.models.middleware.MiddlewareIndexRequestDTO;
 import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
@@ -661,6 +664,49 @@ public class MiddlewareService {
     public List<PlatformMiddlewareOperation> operations(String instanceId, String tenantId) {
         requireInstance(instanceId, tenantId);
         return operations.selectByInstance(instanceId);
+    }
+
+    /**
+     * 实例的**索引列表**（Elasticsearch）。
+     *
+     * <p>台账给身份与坐标（集群/命名空间/CR 名），索引本身由 k8s-server 到 ES 里现查 ——
+     * 它不是 K8s 对象，集群里没有对应的资源可以列。
+     */
+    public List<EsIndexSummaryDTO> indices(String instanceId, String tenantId) {
+        PlatformMiddlewareInstance instance = requireIndexableInstance(instanceId, tenantId);
+        return client.indices(instance.getCode(), indexRequest(instance));
+    }
+
+    /** 单个索引的 mapping / settings / aliases（aliases 里带各自的 filter）。 */
+    public EsIndexDetailDTO index(String instanceId, String index, String tenantId) {
+        PlatformMiddlewareInstance instance = requireIndexableInstance(instanceId, tenantId);
+        if (index == null || index.isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "缺少索引名");
+        }
+        MiddlewareIndexRequestDTO req = indexRequest(instance);
+        req.setIndex(index);
+        return client.index(instance.getCode(), req);
+    }
+
+    /** 台账定位 + 能力判断：只有 ES 有索引这个概念，其余直接拒，不白跑一次集群调用。 */
+    private PlatformMiddlewareInstance requireIndexableInstance(String instanceId, String tenantId) {
+        PlatformMiddlewareInstance instance = requireInstance(instanceId, tenantId);
+        if (!"elasticsearch".equals(instance.getCode())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "只有 Elasticsearch 实例支持索引查询");
+        }
+        return instance;
+    }
+
+    private static MiddlewareIndexRequestDTO indexRequest(PlatformMiddlewareInstance instance) {
+        MiddlewareIndexRequestDTO req = new MiddlewareIndexRequestDTO();
+        req.setClusterId(instance.getClusterId());
+        req.setCode(instance.getCode());
+        req.setNamespace(instance.getNamespace());
+        req.setName(instance.getName());
+        req.setInstanceId(instance.getId());
+        req.setTenantId(instance.getTenantId());
+        return req;
     }
 
     /**

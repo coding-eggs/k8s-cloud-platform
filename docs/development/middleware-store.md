@@ -97,6 +97,10 @@
   **Kibana（唯一双向）**——ES 实例可以在编辑里关掉 Kibana（删除附属 CR）或再打开（按线上 ES 版本补建），
   提交时会先弹一次确认；形态与存储仍不可在线改（后端 scale 语义如此）；
   Nacos 走 chart，只允许改显示名；列表行与详情页右上角都有「编辑」入口；
+- **ES 详情页多一个「索引」页签**（2026-10-29）：索引列表（名称/健康/状态/主副本/文档数/存储/创建时间，
+  默认隐藏 `.` 开头的系统索引）+ 点索引名看 mapping / settings / aliases（别名里的 filter 也在）。
+  **只读**；数据由 k8s-server 直接问 ES（`_cat/indices`、`GET /<索引>`），索引不是 K8s 对象，集群里列不出来。
+  连接逻辑与用户管理共用一份（`ElasticsearchRest`），见 `charts/middleware/elasticsearch/README.md` §8；
 - 实例列表（`/apps/instances`）：列 = 类型 / 名称 / 命名空间 / 形态 / 版本 / 状态 / 创建人 / 创建时间（设计 §5.4）；
   可按类型筛选（`instance/list` 的 `code` 参数），只拉这一类实例的实时状态；创建人取台账 `created_by`
   （创建时写入的操作者，租户与平台账号同一字段）。
@@ -171,6 +175,9 @@
 - 详情页的「事件」块要在租户 RBAC 模板里有 core/v1 `events`（只读），见 `V2026_10_23_5`；
 - 业务指标的采集资源要能建 ServiceMonitor，租户模板补 `monitoring.coreos.com/servicemonitors`，见 `V2026_10_23_7`；
 - 概览监控曲线的端点见 `V2026_10_23_6`（`tenant:middleware:read`），重放后无需重下发模板；
+- ES 索引页签的两个只读端点（`/middleware/instance/indexes`、`/middleware/instance/index`）见
+  **`V2026_10_29_1`**，都挂 `tenant:middleware:read`（三条内置角色全绑）。**必须先重放它再重建
+  platform-api** —— 表驱动授权下缺行会在启动期 fail-closed，platform-api 直接起不来；
 - **重放后必须点一次「重下发全部模板」**，否则租户创建实例会 403（含采集资源）、详情页的事件也读不到；
 - 重建 k8s-server + platform-api + platform-web；
 - Operator 安装时平台会下发"监听全部命名空间"的 values（Percona `watchAllNamespaces`、Strimzi
@@ -205,6 +212,7 @@
 | Nacos 一直 Pending | 存储未配（`persistence.enabled=false` 时用 emptyDir）或镜像拉不到 |
 | Nacos 第二个实例安装失败 | chart 的 Service/ConfigMap 名固定为 `nacos-cs`，同一命名空间只允许一个实例 |
 | 实例一直「创建中」 | 先看 CR 的 `status.conditions`；Operator 拒绝规格（版本不支持等）时不会建 Pod |
+| ES 降级，消息是「…健康状况为 red：N 个主分片未分配：<索引>（<原因>）」 | 那个索引有一部分数据不可读（red 只由**主分片**未分配引起）。点名的若是 `.kibana_*` 之类的系统索引、业务索引全绿，删掉这些孤儿索引即可回 green；`NO_VALID_SHARD_COPY` = 三台节点都没有有效副本，ES 不会自愈，只能删索引或从快照恢复 |
 | 租户创建 Milvus 报 403 | 内置 RBAC 模板缺 `milvus.io`，或重放了 `V2026_10_25_8` 但没「重下发全部模板」 |
 
 ## 5. 已知限制

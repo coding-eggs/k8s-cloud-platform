@@ -2,9 +2,12 @@ package com.coding.k8sserver.middleware;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.middleware.EsIndexDetailDTO;
+import com.coding.common.models.middleware.EsIndexSummaryDTO;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
+import com.coding.common.models.middleware.MiddlewareIndexRequestDTO;
 import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewarePasswordRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
@@ -664,7 +667,14 @@ public class MiddlewareInstanceService {
             dto.setVersion(adapter.deployedVersion(live, pods));
             // 判定同时看 Pod 数与 CR 信号：只看「现存 Pod 是否全就绪」会把
             // 「3 个 broker 只起来 2 个」判成 READY（真集群验证踩过）
-            String failure = crFailureMessage(live);
+            // 先问适配器「数据层面有没有问题」：ES 的 health=red 只有它能说出是哪个索引、
+            // 为什么（一次 ES 调用）。它答不上来时，下面的通用规则仍然兜底成「健康状况 red」。
+            // ⚠️ 只在有 Pod 时才问：Pod 都没有时 ES 必然连不上，白等一个超时。
+            String failure = pods.isEmpty()
+                    ? null : adapter.dataProblem(client, req.getNamespace(), name, live);
+            if (failure == null) {
+                failure = crFailureMessage(live);
+            }
             if (failure == null) {
                 // Milvus 的条件是 StorageReady/EtcdReady/...，共享规则匹配不到
                 failure = adapter.crProblem(live);
@@ -683,6 +693,41 @@ public class MiddlewareInstanceService {
             out.add(dto);
         }
         return out;
+    }
+
+    /**
+     * ES 的索引列表（**只读**）。
+     *
+     * <p>为什么放在实例面而不是「资源对象」里：索引不是 K8s 对象，集群里查不到，只能问 ES 自己。
+     * 身份与分配表校验走同一个 {@code accessResolver}，实例名也用 CR 名 —— 与 detail / status 同口径，
+     * 免得出现「详情说实例在、索引页说实例不存在」。
+     *
+     * <p>不做平台侧缓存：索引是用户随时在写的东西，缓存只会让人看到过期结构；一次
+     * {@code _cat/indices} 在内网是毫秒级。
+     */
+    public List<EsIndexSummaryDTO> indices(MiddlewareIndexRequestDTO req) {
+        KubernetesClient client = clientForEs(req);
+        return ElasticsearchRest.listIndices(client, req.getNamespace(), req.getName());
+    }
+
+    /** 一个索引的 mapping / settings / aliases（aliases 里带各自的 filter）。 */
+    public EsIndexDetailDTO indexDetail(MiddlewareIndexRequestDTO req) {
+        if (req.getIndex() == null || req.getIndex().isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "缺少索引名");
+        }
+        KubernetesClient client = clientForEs(req);
+        return ElasticsearchRest.indexDetail(client, req.getNamespace(), req.getName(), req.getIndex());
+    }
+
+    /** 索引类接口的公共前置：只支持 ES，且先过访问边界。 */
+    private KubernetesClient clientForEs(MiddlewareIndexRequestDTO req) {
+        if (!"elasticsearch".equals(req.getCode())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "只有 Elasticsearch 实例支持索引查询");
+        }
+        var ctx = accessResolver.resolveNamespacedAccessOrPlatform(
+                req.getTenantId(), req.getClusterId(), req.getNamespace());
+        return clientOf(req.getClusterId(), ctx);
     }
 
     /** 从 CR 的 status 里读硬失败：ECK 的 health=red、以及各类 Operator 的 Ready/Available=False condition。 */

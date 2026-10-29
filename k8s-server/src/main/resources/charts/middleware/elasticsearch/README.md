@@ -27,6 +27,8 @@
   勾 Kibana 时还要 `kibana.k8s.elastic.co`；
 - **状态**：ES 的 `status.health` 为准；装了 Kibana 时 **Kibana 非 green 会把实例判成 DEGRADED**
   并带原因（不会因为 ES 本身绿就报「运行中」）；
+  health=red 时平台会再问一次 ES（`_cat/shards`），把「几个主分片未分配、是哪几个索引、什么原因」
+  写进消息 —— 只给一个 `red` 的话，用户分不清是业务数据坏了还是 Kibana 的记账本坏了（见 §8）；
 - **Kibana 可在编辑里开关（唯一可双向的编辑项）**：关掉 = 删同名 Kibana CR（ES 与数据卷不动，
   Kibana 也没有 PVC），再打开 = 按**线上 ES CR** 的 `spec.version` 与 TLS 补建 —— 不看台账，
   台账版本可能落后于集群实际（ECK 升级/手工改过），版本对不上 Kibana 就起不来。
@@ -145,3 +147,37 @@ HTTPS 开关（默认开）、IK 分词器开关（默认关）、同时部署 K
 - 用户名空间全局：平台建的账号加 `platform_` 前缀，列表剥前缀显示；只展示 `elastic` 与 `platform_*`。
 - 角色：只读 → `viewer`、读写 → `editor`、管理员 → `superuser`。
 - 改 `elastic` 口令后写回 `<实例名>-es-elastic-user`。
+
+## 8. 索引浏览与「red 的归因」（2026-10-29）
+
+### 8.1 详情页「索引」页签
+
+- **索引不是 K8s 对象**：`kubectl get` 看不到，只能问 ES（`_cat/indices`）。所以这条数据链路是
+  platform-web → platform-api → k8s-server → ES，k8s-server 里由 `ElasticsearchRest` 发请求。
+- 列表字段：名称 / 健康 / 状态 / 主分片 / 副本 / 文档数 / 存储 / 创建时间；前端默认隐藏 `.` 开头的系统索引。
+- 点索引名 → 抽屉展示 **mapping / settings / aliases**。三段来自同一个 `GET /<索引>`，
+  别名里的 `filter` 就是「这个别名看得见哪些文档」，查询的人十次有九次在找它。
+- **只读**：平台不改 mapping、不删索引。改结构/删数据是用户自己的运维动作（涉及 ILM、数据流、
+  reindex），平台替用户做只会做错。
+- 连接与凭据复用用户管理那一套（见上一节）：`<实例名>-es-http.<ns>.svc:9200`、scheme 看 CR、
+  https 只信实例自己的 CA。**不要再写第二份连接逻辑** —— 三个判断（scheme / CA / 凭据）各分叉一次
+  就是三类故障。
+
+### 8.2 降级消息带归因
+
+`health=red` 只说「有主分片没分配」，不说是哪个。平台在 red 时额外查一次
+`_cat/shards`，消息变成：
+
+```
+Operator 报告健康状况为 red：3 个主分片未分配：.kibana_task_manager_9.5.0_001（CLUSTER_RECOVERED）、…
+```
+
+- 只数 **`prirep=p` 且 `state=UNASSIGNED`** 的行：副本没分配只是 yellow（少一份冗余），
+  主分片没分配才让数据不可读 —— 混在一起数会把 yellow 说成 red。
+- 实现挂在 `MiddlewareAdapter.dataProblem(...)`（不是 `crProblem`）：它需要访问实例 API，
+  和「只看 CR 就能判的 crProblem」不是一类。通用规则里那条 `health=red` 的兜底**保留**，
+  所以 ES 连不上时消息退化成原样，不会变成「读失败」。
+- **只在 red 时才发请求**，green/yellow 的状态刷新零开销；超时 3s，宁可退化成 `red`
+  也不拖慢列表。
+
+执行 `CAT_SHARDS` 的解释工作全在 `ElasticsearchRest.redSummary(JsonNode)`（纯函数，有单测）。

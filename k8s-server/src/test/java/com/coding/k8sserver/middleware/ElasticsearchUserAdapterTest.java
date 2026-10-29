@@ -69,14 +69,16 @@ class ElasticsearchUserAdapterTest {
         Map<String, Object> spec = Map.of("http", Map.of("tls", Map.of(
                 "selfSignedCertificate", Map.of("disabled", true))));
 
-        assertThat(ElasticsearchUserAdapter.https(spec)).isFalse();
+        // scheme 由 CR 决定（判据只在 ElasticsearchMiddlewareAdapter.tlsEnabled 一处，
+        // ElasticsearchRest 与用户管理都读它）
+        assertThat(ElasticsearchMiddlewareAdapter.tlsEnabled(spec)).isFalse();
     }
 
     @Test
     void tlsInstanceIsHttps() {
-        assertThat(ElasticsearchUserAdapter.https(Map.of())).isTrue();
-        assertThat(ElasticsearchUserAdapter.https(null)).isTrue();
-        assertThat(ElasticsearchUserAdapter.https(Map.of("http", Map.of("tls", Map.of(
+        assertThat(ElasticsearchMiddlewareAdapter.tlsEnabled(Map.of())).isTrue();
+        assertThat(ElasticsearchMiddlewareAdapter.tlsEnabled(null)).isTrue();
+        assertThat(ElasticsearchMiddlewareAdapter.tlsEnabled(Map.of("http", Map.of("tls", Map.of(
                 "certificate", Map.of("secretName", "my-cert")))))).isTrue();
     }
 

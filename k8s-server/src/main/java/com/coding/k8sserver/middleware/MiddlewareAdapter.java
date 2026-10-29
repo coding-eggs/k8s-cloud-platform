@@ -93,6 +93,22 @@ public interface MiddlewareAdapter {
     }
 
     /**
+     * <b>数据层面</b>的问题：CR 本身没报错、但实例里的数据不完整（目前只有 ES 的
+     * 「集群健康 red = 有主分片未分配」）。
+     *
+     * <p>与 {@link #crProblem} 分开：这个要**访问实例自己的 API** 才说得清是哪个索引、为什么，
+     * 拿到的是细节而不是一个 `red`。共享的 crFailureMessage 里那条兜底仍然保留 —— 本方法返回 null
+     * （例如 ES 连不上）时它照样会给出「健康状况 red」。
+     *
+     * <p>⚠️ 这个方法在**每次状态刷新**里都可能被调用，实现里必须先用 CR 上的廉价信号
+     * （如 {@code status.health}）判掉绝大多数情形，别无条件打网络。
+     */
+    default String dataProblem(KubernetesClient client, String namespace, String name,
+                               GenericKubernetesResource live) {
+        return null;
+    }
+
+    /**
      * 附属组件的异常（典型：ES 勾选的 Kibana）。返回非空时实例状态降级 ——
      * 主实例的全部 Pod 就绪不代表附属组件可用，不能报「运行中」。
      */

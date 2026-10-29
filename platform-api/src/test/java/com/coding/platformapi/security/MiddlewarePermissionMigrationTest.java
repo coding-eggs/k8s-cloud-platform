@@ -36,7 +36,8 @@ class MiddlewarePermissionMigrationTest {
             Path.of(MIGRATIONS + "V2026_10_23_3__middleware_connection_permission.sql"),
             Path.of(MIGRATIONS + "V2026_10_23_4__middleware_detail_permissions.sql"),
             Path.of(MIGRATIONS + "V2026_10_23_6__middleware_metrics_permission.sql"),
-            Path.of(MIGRATIONS + "V2026_10_26_3__middleware_user_permissions.sql"));
+            Path.of(MIGRATIONS + "V2026_10_26_3__middleware_user_permissions.sql"),
+            Path.of(MIGRATIONS + "V2026_10_29_1__middleware_es_index_permissions.sql"));
 
     /** SQL 里 'API' 行的 (METHOD PATH) 集合 */
     private static final Pattern API_ROW = Pattern.compile(
@@ -91,5 +92,20 @@ class MiddlewarePermissionMigrationTest {
                 .doesNotContain("rp_tmember_mw_user_password")
                 .doesNotContain("rp_tmember_mw_user_delete")
                 .doesNotContain("rp_tmember_mw_instance_password");
+    }
+
+    @Test
+    void indexBrowsingIsReadOnlyForEveryoneWhoCanSeeTheInstance() throws Exception {
+        String sql = Files.readString(SQL_FILES.get(6));
+
+        // 索引列表 / 索引结构都是只读：两行都挂 read，成员可用（与实例详情、监控曲线一致）
+        assertThat(sql).contains("'/middleware/instance/indexes'");
+        assertThat(sql).contains("'/middleware/instance/index'");
+        assertThat(sql).contains("'tenant:middleware:read'");
+        assertThat(sql).doesNotContain("tenant:middleware:write");
+
+        assertThat(sql).contains("'builtin_role_admin'")
+                .contains("'builtin_role_tenant_admin'")
+                .contains("'builtin_role_tenant_member'");
     }
 }

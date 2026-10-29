@@ -1,8 +1,11 @@
 package com.coding.platformapi.k8s;
 
+import com.coding.common.models.middleware.EsIndexDetailDTO;
+import com.coding.common.models.middleware.EsIndexSummaryDTO;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDeleteRequestDTO;
 import com.coding.common.models.middleware.MiddlewareDetailRequestDTO;
+import com.coding.common.models.middleware.MiddlewareIndexRequestDTO;
 import com.coding.common.models.middleware.MiddlewareInstanceLiveDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorInstallRequestDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
@@ -97,5 +100,17 @@ public class K8sMiddlewareClient {
     public List<MiddlewareStatusResultDTO> status(String code, MiddlewareStatusRequestDTO body) {
         return gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/status", null, body,
                 gateway.listResponseType(MiddlewareStatusResultDTO.class));
+    }
+
+    /** 索引列表（Elasticsearch）：索引不是 K8s 对象，只能由 k8s-server 去问 ES。 */
+    public List<EsIndexSummaryDTO> indices(String code, MiddlewareIndexRequestDTO body) {
+        return gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/instances/indexes", null, body,
+                gateway.listResponseType(EsIndexSummaryDTO.class));
+    }
+
+    /** 单个索引的 mapping / settings / aliases。 */
+    public EsIndexDetailDTO index(String code, MiddlewareIndexRequestDTO body) {
+        return gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/instances/index", null, body,
+                gateway.responseType(EsIndexDetailDTO.class));
     }
 }

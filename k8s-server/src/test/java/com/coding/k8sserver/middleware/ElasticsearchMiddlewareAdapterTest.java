@@ -430,4 +430,21 @@ class ElasticsearchMiddlewareAdapterTest {
         assertThat(adapter.applyAccessory(null, new MiddlewareScaleRequestDTO())).isFalse();
     }
 
+    @Test
+    void dataProblemStaysSilentUnlessClusterHealthIsRed() {
+        // 状态刷新会反复调它：green / yellow / 拿不到 health 时**不许碰网络**，
+        // 所以这里故意传 null client —— 真发请求就会 NPE，测试立刻红
+        for (String health : new String[]{"green", "yellow", "unknown", null}) {
+            assertThat(adapter.dataProblem(null, "demo", "mw-es-x", liveWithHealth(health))).isNull();
+        }
+        // CR 上根本没有 status（刚创建）也不问
+        assertThat(adapter.dataProblem(null, "demo", "mw-es-x", new GenericKubernetesResource())).isNull();
+    }
+
+    private static GenericKubernetesResource liveWithHealth(String health) {
+        var res = new GenericKubernetesResource();
+        res.setAdditionalProperty("status", health == null ? Map.of() : Map.of("health", health));
+        return res;
+    }
+
 }

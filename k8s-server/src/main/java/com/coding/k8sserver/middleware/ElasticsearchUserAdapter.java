@@ -4,7 +4,6 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareUserView;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -13,10 +12,6 @@ import org.springframework.stereotype.Component;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import java.io.ByteArrayInputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.security.cert.Certificate;
@@ -174,81 +169,19 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
         return v;
     }
 
+    /**
+     * 发一次 ES 请求。
+     * <p>连接逻辑（Service 名、scheme、CA、凭据）全部在 {@link ElasticsearchRest#call} ——
+     * 索引浏览也要用同一套，复制一份只会让两边慢慢分叉。
+     */
     private String call(KubernetesClient client, MiddlewareUserRef ref,
                         String method, String path, Object body) {
-        Secret elastic = client.secrets().inNamespace(ref.namespace())
-                .withName(ref.instanceName() + ELASTIC_SECRET_SUFFIX).get();
-        String password = elastic == null || elastic.getData() == null
-                ? null : decode(elastic.getData().get(BUILTIN));
-        if (password == null || password.isBlank()) {
-            throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "找不到 Elasticsearch 的超管凭据 Secret：" + ref.instanceName() + ELASTIC_SECRET_SUFFIX);
-        }
-        boolean https = https(esSpec(client, ref));
-        String caPem = null;
-        if (https) {
-            Secret publicCerts = client.secrets().inNamespace(ref.namespace())
-                    .withName(ref.instanceName() + CA_SECRET_SUFFIX).get();
-            Secret caKeyPair = client.secrets().inNamespace(ref.namespace())
-                    .withName(ref.instanceName() + CA_KEYPAIR_SUFFIX).get();
-            caPem = caPem(publicCerts, caKeyPair);
-        }
-
-        String base = (https ? "https://" : "http://")
-                + ref.instanceName() + SERVICE_SUFFIX + "." + ref.namespace() + ".svc:9200";
-        String auth = Base64.getEncoder().encodeToString(
-                (BUILTIN + ":" + password).getBytes(StandardCharsets.UTF_8));
-
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(base + path))
-                .timeout(TIMEOUT)
-                .header("Authorization", "Basic " + auth)
-                .header("Content-Type", "application/json");
-        try {
-            HttpClient http = https
-                    ? HttpClient.newBuilder().connectTimeout(TIMEOUT)
-                            .sslContext(sslContext(caPem)).build()
-                    : HttpClient.newBuilder().connectTimeout(TIMEOUT).build();
-            HttpRequest request = switch (method) {
-                case "GET" -> builder.GET().build();
-                case "DELETE" -> builder.DELETE().build();
-                default -> builder.method(method, HttpRequest.BodyPublishers.ofString(
-                        body == null ? "" : JSON.writeValueAsString(body), StandardCharsets.UTF_8)).build();
-            };
-            HttpResponse<String> response = http.send(request,
-                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() / 100 != 2) {
-                throw new CloudPlatformException(EnumResponseType.ERROR,
-                        "Elasticsearch 拒绝了请求（HTTP " + response.statusCode() + "）：" + brief(response.body()));
-            }
-            return response.body();
-        } catch (CloudPlatformException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "调用 Elasticsearch 接口失败（" + base + "）：" + e.getMessage());
-        }
-    }
-
-    /** 线上 CR 决定 scheme：与业务指标 exporter 共用一条规则，别在这里另发明一套。 */
-    static boolean https(Map<String, Object> esSpec) {
-        return ElasticsearchMiddlewareAdapter.tlsEnabled(esSpec == null ? Map.of() : esSpec);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> esSpec(KubernetesClient client, MiddlewareUserRef ref) {
-        GenericKubernetesResource es = client
-                .genericKubernetesResources(ElasticsearchMiddlewareAdapter.CRD)
-                .inNamespace(ref.namespace()).withName(ref.instanceName()).get();
-        if (es == null) {
-            throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "读不到 Elasticsearch 实例的 CR：" + ref.namespace() + "/" + ref.instanceName());
-        }
-        Object spec = es.getAdditionalProperties() == null ? null : es.getAdditionalProperties().get("spec");
-        return spec instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
+        return ElasticsearchRest.call(client, ref.namespace(), ref.instanceName(),
+                null, method, path, body, TIMEOUT);
     }
 
     /**
-     * 取实例的 CA（Base64 PEM）：有 TLS 返回 CA，明确没开 TLS 返回 null。
+     * 实例自己的 CA（Base64 PEM）：有 TLS 返回 CA，明确没开 TLS 返回 null。
      *
      * <p>开了 TLS 却拿不到 {@code ca.crt} 时直接报错 —— 静默退回 http 只会得到一个没有任何
      * 线索的 {@code null}。
@@ -298,17 +231,5 @@ public class ElasticsearchUserAdapter implements MiddlewareUserAdapter {
                         .endMetadata().withData(data).build()
                 : new SecretBuilder(current).withData(data).build();
         client.secrets().inNamespace(ref.namespace()).resource(target).createOrReplace();
-    }
-
-    private static String decode(String base64) {
-        return base64 == null ? "" : new String(Base64.getDecoder().decode(base64), StandardCharsets.UTF_8);
-    }
-
-    private static String brief(String body) {
-        if (body == null) {
-            return "";
-        }
-        String oneLine = body.replaceAll("\\s+", " ").trim();
-        return oneLine.length() <= 300 ? oneLine : oneLine.substring(0, 300) + "…";
     }
 }

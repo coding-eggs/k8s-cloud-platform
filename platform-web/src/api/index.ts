@@ -97,6 +97,8 @@ import type {
   TenantMemberView,
   TokenUserInfo,
   MiddlewareCatalogItem,
+  EsIndexDetail,
+  EsIndexSummary,
   ObjectStorageBucket,
   ObjectStorageBucketStat,
   ObjectStorageCredential,
@@ -1055,6 +1057,12 @@ export const middlewareApi = {
     http.post<never, MiddlewareMetrics>('/middleware/instance/metrics', { instanceId, start, end, tenantId }),
   instanceOperations: (instanceId: string, tenantId?: string) =>
     http.post<never, MiddlewareOperation[]>('/middleware/instance/operations', { instanceId, tenantId }),
+  /** 索引页签（Elasticsearch）：索引不是 K8s 对象，后端去 ES 现查 */
+  esIndices: (instanceId: string, tenantId?: string) =>
+    http.post<never, EsIndexSummary[]>('/middleware/instance/indexes', { instanceId, tenantId }),
+  /** 单个索引的 mapping / settings / aliases（aliases 里带 filter） */
+  esIndex: (instanceId: string, index: string, tenantId?: string) =>
+    http.post<never, EsIndexDetail>('/middleware/instance/index', { instanceId, index, tenantId }),
   rename: (payload: { instanceId: string; displayName: string; tenantId?: string }) =>
     http.post<never, MiddlewareInstance>('/middleware/instance/rename', payload),
   /** 改实例的鉴权口令（Milvus）：新口令留空 = 平台生成；口令不回显，去 Secret <名称>-milvus-auth 取 */

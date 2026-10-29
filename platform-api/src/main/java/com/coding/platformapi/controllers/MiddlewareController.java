@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.models.middleware.EsIndexDetailDTO;
+import com.coding.common.models.middleware.EsIndexSummaryDTO;
 import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
@@ -11,6 +13,7 @@ import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.models.MiddlewareCreateRequest;
 import com.coding.platformapi.models.MiddlewareDeleteRequest;
+import com.coding.platformapi.models.MiddlewareIndexRequest;
 import com.coding.platformapi.models.MiddlewareOperatorInstallRequest;
 import com.coding.platformapi.models.MiddlewareInstanceDetail;
 import com.coding.platformapi.models.MiddlewareMetricsRequest;
@@ -109,6 +112,22 @@ public class MiddlewareController {
     @Operation(summary = "实例的操作记录")
     public ResponseData<List<PlatformMiddlewareOperation>> operations(@RequestBody MiddlewareQueryRequest request) {
         return new ResponseData<>(service.operations(request.getInstanceId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/indexes")
+    @Operation(summary = "实例的索引列表（Elasticsearch，只读）",
+            description = "索引不是 K8s 对象：由 k8s-server 到 ES 里现查（_cat/indices）")
+    public ResponseData<List<EsIndexSummaryDTO>> indices(@RequestBody MiddlewareIndexRequest request) {
+        return new ResponseData<>(service.indices(request.getInstanceId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/index")
+    @Operation(summary = "单个索引的 mapping / settings / aliases（Elasticsearch，只读）",
+            description = "aliases 里带各自的 filter —— 「这个别名看得见哪些文档」就在这里")
+    public ResponseData<EsIndexDetailDTO> index(@RequestBody MiddlewareIndexRequest request) {
+        return new ResponseData<>(service.index(request.getInstanceId(), request.getIndex(),
                 auth.effectiveTenantId(request.getTenantId())));
     }
 
