@@ -78,14 +78,21 @@ const addableKeys = computed(() => {
 const hydrating = ref(false)
 
 /**
- * 切到固定类型时按规格重建行：只保留 ①该类型必需 key（带值）②当前行里属于该类型 optional 的
- * （如 tls 的 ca.crt）。上一种类型留下的行一律丢掉 —— 否则 basic-auth → tls 会剩下四行。
+ * 切类型时按目标类型整理行：
+ * - 切到固定类型：只保留 ①该类型必需 key（值按 key 带过来）②当前行里属于该类型 optional 的
+ *   （如 tls 的 ca.crt）。上一种类型留下的行一律丢掉 —— 否则 basic-auth → tls 会剩下四行。
+ * - 切到自由类型（Opaque 等）：行原样保留（改 key 名要用），但把「key 有、value 空」的空壳行清掉 ——
+ *   那是上一种类型铺出来的（basic-auth 的 username/password），留着等于凭空塞两个空 key 进对象。
  * 回填不走这里（见 hydrating）：线上多出来的 key 由「不重建」本身保住，不需要靠留底。
  */
 watch(() => form.type, (t) => {
   if (hydrating.value) return
   const spec = SECRET_FIXED_KEYS[t]
-  if (!spec) return
+  if (!spec) {
+    const kept = form.rows.filter((r) => r.key.trim() && r.value !== '')
+    form.rows = kept.length ? kept : newRows()
+    return
+  }
   const values = new Map(form.rows.map((r) => [r.key.trim(), r.value]))
   const rows: KvRow[] = spec.required.map((k) => ({ key: k, value: values.get(k) ?? '' }))
   for (const r of form.rows) {
