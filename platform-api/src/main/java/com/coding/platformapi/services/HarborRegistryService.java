@@ -4,22 +4,20 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.auth.PlatformTenantMapper;
-import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.mapper.system.PlatformCredentialMapper;
 import com.coding.data.mapper.system.PlatformRegistryProjectMapper;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.data.models.system.PlatformCredential;
 import com.coding.data.models.system.PlatformRegistryProject;
 import com.coding.platformapi.credential.CredentialSecret;
 import com.coding.platformapi.models.RegistryProjectView;
 import com.coding.platformapi.registry.HarborAdminClient;
+import com.coding.platformapi.registry.HarborInstallLocator;
 import com.coding.platformapi.registry.HarborNaming;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -45,17 +43,17 @@ public class HarborRegistryService {
     static final String ADMIN_USER = "admin";
     static final String SOURCE = "HARBOR";
 
-    private static final JsonMapper JSON = JsonMapper.builder().build();
     /** 同进程内的同步互斥；平台当前单副本部署（跨实例并发不在本期保证） */
     private static final Object LOCK = new Object();
 
-    private final PlatformComponentOperationMapper operations;
     private final PlatformTenantMapper tenants;
     private final PlatformRegistryProjectMapper projects;
     private final PlatformCredentialMapper credentials;
     private final CredentialService credentialService;
     private final com.coding.platformapi.k8s.K8sComponentClient components;
     private final K8sProvisioningService provisioning;
+    /** 「Harbor 装在哪、地址是什么」的唯一真相源 */
+    private final HarborInstallLocator harborInstalls;
     private final HarborAdminClient harbor;
 
     public record SyncItem(String tenantId, String tenantName, String project, String status,
@@ -65,17 +63,9 @@ public class HarborRegistryService {
     public record SyncResult(String clusterId, String host, List<SyncItem> items, int failed) {
     }
 
-    /** Harbor 的访问方式：地址（可能带端口）+ 是否 HTTPS */
-    public record Access(String host, boolean https) {
-        /** 带 scheme 的基址，例如 {@code https://harbor.ackcp.cloud} */
-        public String baseUrl() {
-            return (https ? "https://" : "http://") + host;
-        }
-    }
-
     /** 该集群上次成功安装 Harbor 的访问地址（**不带 scheme**，镜像路径要用它）；没装/无记录 → null */
     public String harborHost(String clusterId) {
-        Access access = harborAccess(clusterId);
+        HarborInstallLocator.Access access = harborAccess(clusterId);
         return access == null ? null : access.host();
     }
 
@@ -85,32 +75,12 @@ public class HarborRegistryService {
      * <p>⚠️ scheme 不能一律拼 {@code http}：Harbor 换成 route / loadBalancer 暴露后走的是 443
      * （TLS 在网关上终结），旧写法会连到一个早就关掉的 nodePort 上 —— 镜像仓库页与流水线推送
      * 都因此失效（2026-10-29 用户撞到）。以安装快照里的 {@code https} 开关为准。
+     *
+     * <p>解析本身在 {@link HarborInstallLocator} —— 那个类是「Harbor 装在哪」的唯一真相源
+     * （{@code CredentialService} 也要用它拒掉指向平台 Harbor 的手工新建）。
      */
-    public Access harborAccess(String clusterId) {
-        PlatformComponentOperation op = operations.selectLatestSuccess(clusterId, COMPONENT);
-        if (op == null || op.getValuesSnapshot() == null) {
-            return null;
-        }
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> snapshot = JSON.readValue(op.getValuesSnapshot(), Map.class);
-            if (!(snapshot.get("__platform") instanceof Map<?, ?> platform)
-                    || !(platform.get("harbor") instanceof Map<?, ?> harbor)) {
-                return null;
-            }
-            // externalHost = 拼好端口的 authority（nodePort/LB 必须带端口）
-            Object host = harbor.get("externalHost");
-            if (!(host instanceof String s) || s.isBlank()) {
-                host = harbor.get("host");
-            }
-            if (!(host instanceof String authority) || authority.isBlank()) {
-                return null;
-            }
-            return new Access(authority, Boolean.TRUE.equals(harbor.get("https")));
-        } catch (Exception e) {
-            log.warn("集群 {} 的 Harbor 安装快照无法解析：{}", clusterId, e.getMessage());
-            return null;
-        }
+    public HarborInstallLocator.Access harborAccess(String clusterId) {
+        return harborInstalls.access(clusterId);
     }
 
     /** 平台自己的镜像项目（平台自身构建产物；上游镜像按下面的 {@link #UPSTREAM_PROJECTS} 分） */
@@ -147,7 +117,7 @@ public class HarborRegistryService {
      * 推送仍走 Harbor 复制规则/管理凭据，不受影响。幂等。
      */
     public void ensurePlatformPublic(String clusterId) {
-        Access access = harborAccess(clusterId);
+        HarborInstallLocator.Access access = harborAccess(clusterId);
         if (access == null) {
             return;   // 没装 Harbor / 没有成功记录：没得设，交给调用方决定要不要报错
         }
@@ -185,10 +155,10 @@ public class HarborRegistryService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Harbor 访问域名为空：无法同步租户镜像项目");
         }
-        return ensureAll(clusterId, new Access(host, https), force);
+        return ensureAll(clusterId, new HarborInstallLocator.Access(host, https), force);
     }
 
-    private SyncResult ensureAll(String clusterId, Access access, boolean force) {
+    private SyncResult ensureAll(String clusterId, HarborInstallLocator.Access access, boolean force) {
         synchronized (LOCK) {
             Basic auth = adminOf(clusterId);
             List<SyncItem> items = new ArrayList<>();
@@ -204,7 +174,7 @@ public class HarborRegistryService {
 
     /** 某个集群上单租户同步（tenantId 为 null = 平台共享） */
     public SyncItem ensureTenant(String clusterId, String tenantId, boolean force) {
-        Access access = requireAccess(clusterId);
+        HarborInstallLocator.Access access = requireAccess(clusterId);
         synchronized (LOCK) {
             Basic auth = adminOf(clusterId);
             if (tenantId == null) {
@@ -246,7 +216,7 @@ public class HarborRegistryService {
     public void onTenantDeleted(String tenantId) {
         for (PlatformRegistryProject row : projects.selectByTenant(tenantId)) {
             try {
-                Access access = harborAccess(row.getClusterId());
+                HarborInstallLocator.Access access = harborAccess(row.getClusterId());
                 if (access != null) {
                     Basic auth = adminOf(row.getClusterId());
                     String baseUrl = access.baseUrl();
@@ -297,7 +267,7 @@ public class HarborRegistryService {
     }
 
     private SyncItem ensureOne(String clusterId, String tenantId, String project, String tenantName,
-                               Access access, Basic auth, boolean force) {
+                               HarborInstallLocator.Access access, Basic auth, boolean force) {
         String host = access.host();
         String baseUrl = access.baseUrl();
         try {
@@ -418,8 +388,8 @@ public class HarborRegistryService {
         }
     }
 
-    private Access requireAccess(String clusterId) {
-        Access access = harborAccess(clusterId);
+    private HarborInstallLocator.Access requireAccess(String clusterId) {
+        HarborInstallLocator.Access access = harborAccess(clusterId);
         if (access == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "该集群没有可用的 Harbor 安装记录（请先安装 Harbor 组件）");

@@ -40,8 +40,11 @@ class HarborRegistryServiceTest {
 
     @BeforeEach
     void setUp() {
-        svc = new HarborRegistryService(operations, tenants, projects, credentials, credentialService,
-                components, provisioning, harbor);
+        // 安装快照的解析已移到 HarborInstallLocator；这里仍用同一个 operations 桩喂它
+        svc = new HarborRegistryService(tenants, projects, credentials, credentialService,
+                components, provisioning,
+                new com.coding.platformapi.registry.HarborInstallLocator(operations, provisioning),
+                harbor);
         when(operations.selectLatestSuccess("c1", "harbor")).thenReturn(successOperation());
         K8sCluster cluster = new K8sCluster();
         cluster.setClusterId("c1");
