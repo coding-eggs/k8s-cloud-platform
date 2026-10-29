@@ -410,7 +410,7 @@ class ClusterComponentServiceTest {
         K8sComponentClient client = mock(K8sComponentClient.class);
         when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
         ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
-                capability(DEFAULT_GROUPS), client, cache(), profileService(),
+                capability(DEFAULT_GROUPS), client, cache(), profileService("MANAGEMENT"),
                 new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
 
         var harbor = find(svc.status("c1"), "harbor");
@@ -746,9 +746,36 @@ class ClusterComponentServiceTest {
     }
 
     /** 画像：测试固定 BUSINESS（metrics-server 的 recipe 两个画像相同，但版本列表要走画像取） */
+    @Test
+    void harborIsNotListedOnBusinessClusters() {
+        // Harbor **只在管理集群装**：业务集群的镜像来源自动回退到管理集群那一个。
+        // 业务集群上列出来会显示「缺它 → 镜像仓库不可用」，而那句话在业务集群上是错的（2026-10-29 用户定）
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+
+        ClusterComponentService biz = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), profileService("BUSINESS"),
+                new com.coding.platformapi.components.ComponentRecipeCatalog(),
+                mock(PlatformComponentOperationMapper.class));
+        assertThat(biz.status("c1")).extracting(ComponentStatusDTO::getCode)
+                .doesNotContain("harbor")
+                .contains("metrics-server");
+
+        ClusterComponentService mgmt = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), profileService("MANAGEMENT"),
+                new com.coding.platformapi.components.ComponentRecipeCatalog(),
+                mock(PlatformComponentOperationMapper.class));
+        assertThat(mgmt.status("c1")).extracting(ComponentStatusDTO::getCode)
+                .contains("harbor");
+    }
+
     private static ClusterService profileService() {
+        return profileService("BUSINESS");
+    }
+
+    private static ClusterService profileService(String profile) {
         ClusterService s = mock(ClusterService.class);
-        when(s.requireProfile("c1")).thenReturn("BUSINESS");
+        when(s.requireProfile("c1")).thenReturn(profile);
         return s;
     }
 

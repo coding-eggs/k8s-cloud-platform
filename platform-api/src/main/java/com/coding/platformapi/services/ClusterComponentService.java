@@ -198,7 +198,14 @@ public class ClusterComponentService {
             }
         }
         List<ComponentStatusDTO> statuses = catalog.all().stream()
-                .map(d -> compose(d, byCode, groups, profile)).toList();
+                .map(d -> compose(d, byCode, groups, profile))
+                // **画像专属组件**在本画像下不列：Harbor 只在管理集群装（业务集群的镜像来源自动回退到
+                // 管理集群那一个）。列出来的话它会显示「缺它 → 镜像仓库不可用」，那句话是错的。
+                // 画像读不出来时不做这个判断（全列，版本列自然为空）。
+                .filter(s -> profile == null || profile.isBlank()
+                        || !recipes.supports(s.getCode())
+                        || recipes.supportsProfile(s.getCode(), profile))
+                .toList();
         applyEffectivePlatformInputs(statuses, clusterId, profile);
         return statuses;
     }

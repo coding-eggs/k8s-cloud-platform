@@ -15,9 +15,18 @@ class ComponentRecipeCatalogTest {
 
     @Test
     void everyCatalogComponentHasARecipeForBothProfiles() {
-        // tigera-operator 已从目录移除（随 calico 的 release 一起安装），所以每个组件都必须有 recipe
+        // tigera-operator 已从目录移除（随 calico 的 release 一起安装），所以每个组件都必须有 recipe。
+        // 例外是**画像专属**组件：Harbor 只在管理集群装（业务集群的镜像来源回退到管理集群那一个），
+        // 它在业务集群的组件列表里也不会出现（ClusterComponentService 按 supportsProfile 过滤）
+        java.util.Set<String> managementOnly = java.util.Set.of("harbor");
         for (ComponentDef def : new ClusterComponentCatalog().all()) {
             assertThat(catalog.supports(def.code())).as(def.code()).isTrue();
+            if (managementOnly.contains(def.code())) {
+                assertThat(catalog.recipeOf(def.code(), "MANAGEMENT")).as(def.code()).isNotNull();
+                assertThat(catalog.recipeOf(def.code(), "BUSINESS"))
+                        .as("%s 是画像专属，业务集群不该有 recipe", def.code()).isNull();
+                continue;
+            }
             for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
                 assertThat(catalog.recipeOf(def.code(), profile))
                         .as("%s / %s", def.code(), profile).isNotNull();
@@ -72,7 +81,11 @@ class ComponentRecipeCatalogTest {
         // ⭐ 跨模块一致性：recipe 指向的 (chartCode, chartVersion) 必须真的在 k8s-server 的内置 chart 里
         for (String code : catalog.codes()) {
             for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
-                for (ReleaseSpec r : catalog.recipeOf(code, profile).releases()) {
+                ComponentRecipe recipe = catalog.recipeOf(code, profile);
+                if (recipe == null) {
+                    continue;   // 画像专属组件（Harbor 只在管理集群），另一个画像下没有 recipe
+                }
+                for (ReleaseSpec r : recipe.releases()) {
                     Path chart = Path.of("../k8s-server/src/main/resources/charts/components/"
                             + r.chartCode() + "/" + r.chartVersion() + "/chart/Chart.yaml");
                     assertThat(Files.exists(chart))
@@ -96,7 +109,11 @@ class ComponentRecipeCatalogTest {
     @Test
     void everyDependencyHasItsOwnRecipe() {
         for (String code : catalog.codes()) {
-            for (String dep : catalog.recipeOf(code, "BUSINESS").requires()) {
+            ComponentRecipe recipe = catalog.recipeOf(code, "BUSINESS");
+            if (recipe == null) {
+                continue;   // 画像专属（Harbor 只在管理集群）
+            }
+            for (String dep : recipe.requires()) {
                 assertThat(catalog.supports(dep)).as("%s 依赖 %s", code, dep).isTrue();
             }
         }
@@ -109,7 +126,11 @@ class ComponentRecipeCatalogTest {
         // 且与内置 chart 的 Chart.yaml 一致（跨模块校验，防止入库后忘记同步）。
         for (String code : catalog.codes()) {
             for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
-                for (ReleaseSpec r : catalog.recipeOf(code, profile).releases()) {
+                ComponentRecipe recipe = catalog.recipeOf(code, profile);
+                if (recipe == null) {
+                    continue;   // 画像专属组件（Harbor 只在管理集群），另一个画像下没有 recipe
+                }
+                for (ReleaseSpec r : recipe.releases()) {
                     Path chart = Path.of("../k8s-server/src/main/resources/charts/components/"
                             + r.chartCode() + "/" + r.chartVersion() + "/chart/Chart.yaml");
                     assertThat(r.appVersion())
@@ -126,7 +147,11 @@ class ComponentRecipeCatalogTest {
         // 同名 release 的多遍安装（tekton / otel）算同一个。
         for (String code : catalog.codes()) {
             for (String profile : List.of("BUSINESS", "MANAGEMENT")) {
-                var primaryNames = catalog.recipeOf(code, profile).releases().stream()
+                ComponentRecipe recipe = catalog.recipeOf(code, profile);
+                if (recipe == null) {
+                    continue;   // 画像专属组件（Harbor 只在管理集群），另一个画像下没有 recipe
+                }
+                var primaryNames = recipe.releases().stream()
                         .filter(ReleaseSpec::primary)
                         .map(ReleaseSpec::releaseName)
                         .distinct()
@@ -151,7 +176,7 @@ class ComponentRecipeCatalogTest {
 
     @Test
     void harborPinsTheProbeNameAndLeavesExposureToTheForm() {
-        ReleaseSpec spec = catalog.recipeOf("harbor", "BUSINESS").releases().get(0);
+        ReleaseSpec spec = catalog.recipeOf("harbor", "MANAGEMENT").releases().get(0);
         assertThat(spec.releaseName()).isEqualTo("platform-harbor");
         assertThat(spec.namespace()).isEqualTo("harbor");
         assertThat(spec.primary()).isTrue();
@@ -161,11 +186,14 @@ class ComponentRecipeCatalogTest {
         assertThat(spec.contractValues())
                 .containsEntry("existingSecretAdminPassword", "platform-harbor-secrets")
                 .containsEntry("existingSecretSecretKey", "platform-harbor-secrets");
-        assertThat(catalog.recipeOf("harbor", "BUSINESS").harborRegistry()).isTrue();
+        assertThat(catalog.recipeOf("harbor", "MANAGEMENT").harborRegistry()).isTrue();
         // route 模式才需要 istio：依赖按模式在 apply 时校验，recipe 不写死
-        assertThat(catalog.recipeOf("harbor", "BUSINESS").requires()).isEmpty();
+        assertThat(catalog.recipeOf("harbor", "MANAGEMENT").requires()).isEmpty();
         // Trivy 默认不装（内网拉不到漏洞库）
         assertThat(spec.editableValues()).containsEntry("trivy.enabled", false);
+        // 业务集群**没有** Harbor 的 recipe：镜像来源自动回退到管理集群那一个，
+        // 组件列表里也不列（2026-10-29 用户定）
+        assertThat(catalog.recipeOf("harbor", "BUSINESS")).isNull();
     }
 
     private static String appVersionOf(Path chart) {
@@ -326,7 +354,11 @@ class ComponentRecipeCatalogTest {
         assertThat(catalog.recipeOf("prometheus-operator", "BUSINESS").platformAlerting()).isTrue();
         for (String code : catalog.codes()) {
             if (!code.equals("prometheus-operator")) {
-                assertThat(catalog.recipeOf(code, "BUSINESS").platformAlerting()).as(code).isFalse();
+                ComponentRecipe recipe = catalog.recipeOf(code, "BUSINESS");
+                if (recipe == null) {
+                    continue;   // 画像专属（Harbor 只在管理集群）
+                }
+                assertThat(recipe.platformAlerting()).as(code).isFalse();
             }
         }
     }

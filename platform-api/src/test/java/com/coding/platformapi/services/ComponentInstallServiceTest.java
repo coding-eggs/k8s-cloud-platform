@@ -1603,7 +1603,7 @@ class ComponentInstallServiceTest {
     void harborComponentAlwaysUsesOfficialImages() {
         // Harbor 的镜像不可能从 Harbor 自己拉：即使选了平台仓库也不带 registry
         when(imageRegistry.resolve("c1")).thenReturn(HARBOR_REGISTRY);
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(components.status("c1")).thenReturn(List.of(healthy("istio")));
@@ -1631,7 +1631,7 @@ class ComponentInstallServiceTest {
     }
 
     private String capturedHarborValues(HarborInstallRequest install) {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(components.status("c1")).thenReturn(List.of(healthy("istio")));
@@ -1645,7 +1645,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborRequiresAHostWithoutSchemeOrPath() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         // 留空不再算错：会取 platform.harbor.default-host（见 harborDefaultsFillHostAndCertificateFromConfig）
         for (String bad : new String[]{"http://harbor.example.com", "harbor.example.com/foo",
@@ -1662,7 +1662,7 @@ class ComponentInstallServiceTest {
     void anUnchangedHarborFormReusesTheLastSubmittedParametersWhenNoSuccessExists() {
         // 前端「没改动就不下发」Harbor 整组；没有成功记录时后端必须拿**上次提交**的参数兜底，
         // 否则原封不动点确定会被拒成「请填写 Harbor 访问地址」（2026-10-27 用户撞到）
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
@@ -1684,7 +1684,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborRouteModeRejectsIpAndPort() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         assertThatThrownBy(() -> service().apply(harborRequest(
                 new HarborInstallRequest("route", "10.0.0.5", 30002, 80)), "admin"))
@@ -1732,7 +1732,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborHttpsRejectsAnIpHost() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         HarborInstallRequest install = new HarborInstallRequest("nodePort", "10.0.0.5", 30002, 80);
         install.setHttps(true);
@@ -1777,7 +1777,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborRouteModeRequiresIstio() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(components.status("c1")).thenReturn(List.of());
         assertThatThrownBy(() -> service().apply(harborRequest(
@@ -1806,7 +1806,7 @@ class ComponentInstallServiceTest {
         // chart 给 PVC 打了 resource-policy=keep：装失败后盘会留下。PVC 的存储类不可变，
         // 表单留空（跟随集群默认）时必须按盘上的值填回去 —— 否则 helm 的 SSA 把它抹成 null，
         // 直接 "spec is immutable after creation"（2026-10-27 真集群上就是这么失败的）
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
@@ -1826,7 +1826,7 @@ class ComponentInstallServiceTest {
     @Test
     void harborRejectsAStorageClassThatDiffersFromTheLeftoverPvc() {
         // 盘上已经是 nfs-client，表单却选了 cephfs：改不了，只能删盘或改回 —— 必须在下发前拒
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         PersistentVolumeClaimDTO registry = new PersistentVolumeClaimDTO();
         registry.setName("harbor-registry");
@@ -1871,7 +1871,7 @@ class ComponentInstallServiceTest {
         // 组件确实装好了（helm 成功、探测已装）。记成 FAILED 会让「上次成功」为空 ——
         // 编辑表单读不到当前值、版本列显示「—」（2026-10-27 用户撞到）。
         // 同步失败写进消息 + 日志，镜像项目面板里每个租户还有一行 ERROR，可单独重试
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
@@ -1889,7 +1889,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborExternalDatabaseAndRedisAreRenderedWithPlatformSecrets() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
@@ -1926,7 +1926,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborExternalRequiresCredentialsOnInstall() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
 
         HarborInstallRequest dbNoPw = new HarborInstallRequest("10.0.0.5");
@@ -1945,7 +1945,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborExternalAddressesAreValidated() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
 
         HarborInstallRequest noHost = new HarborInstallRequest("10.0.0.5");
@@ -1965,7 +1965,7 @@ class ComponentInstallServiceTest {
 
     @Test
     void harborSourceCannotSwitchOnUpgrade() {
-        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         PlatformComponentOperation last = new PlatformComponentOperation();
         last.setStatus("SUCCESS");

@@ -648,10 +648,9 @@ public class ComponentRecipeCatalog {
                             false, false, false, false, null, false, null, true),
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, SEAWEEDFS_RELEASES, List.of(),
                             false, false, false, false, null, false, null, true))),
-            // 镜像仓库：route 暴露依赖 istio 的 external-gateway（requires 是硬门禁）
+            // 镜像仓库**只在管理集群装**（业务集群没有它，镜像来源自动回退到管理集群那一个），
+            // 所以这里只有 MANAGEMENT 一份 —— 业务集群的组件列表里不会出现它（用户 2026-10-29 定）
             Map.entry("harbor", Map.of(
-                    BUSINESS, new ComponentRecipe(BUSINESS, HARBOR_RELEASES, List.of(),
-                            false, false, false, false, null, false, null, false, true),
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, HARBOR_RELEASES, List.of(),
                             false, false, false, false, null, false, null, false, true))),
             // OTel 采集栈：operator 两遍 + Tempo（管理集群）。Tempo 夹在两遍 operator 之间，
@@ -783,6 +782,11 @@ public class ComponentRecipeCatalog {
 
     public boolean supports(String code) {
         return RECIPES.containsKey(code);
+    }
+
+    /** 这个组件有没有**该画像**的 recipe（画像专属组件在另一个画像下是 false） */
+    public boolean supportsProfile(String code, String profile) {
+        return recipeOf(code, profile) != null;
     }
 
     /** 支持安装的组件 code（测试与自检用） */
