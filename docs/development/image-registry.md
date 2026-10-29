@@ -154,7 +154,7 @@ Endpoint 地址：
 |---|---|
 | `docker.io/istio/pilot`、`docker.io/istio/install-cni`、`docker.io/istio/ztunnel`、`docker.io/istio/proxyv2` | istiod / CNI / ztunnel / 网关与注入的 sidecar（1.31.x）。**proxyv2 容易漏**：gateway 的 Deployment 写的是 `image: auto`，由 istiod 按 `global.hub` 拼成 `<hub>/proxyv2:<tag>` |
 | `quay.io/jetstack/cert-manager-controller`、`-cainjector`、`-webhook`、`-startupapicheck` | cert-manager |
-| `quay.io/tigera/operator` | Calico operator（chart 里的 Deployment） |
+| `quay.io/tigera/operator` | Calico operator —— **也不改写，走官方**（整份 chart 跳过，见下方） |
 | `quay.io/calico/calico`、`quay.io/calico/node`、`quay.io/calico/third-party-cni-plugins` | Calico **工作负载** —— **有意不纳管，固定走上游**（见下方） |
 | `quay.io/strimzi/operator` + `quay.io/strimzi/kafka` | Strimzi（operator 与 broker） |
 | `docker.io/chrislusf/seaweedfs` | 对象存储 |
@@ -192,9 +192,9 @@ Endpoint 地址：
 > `helm --wait` 900s 超时 → 平台按既有行为 `--rollback-on-failure` 回滚，改动被原样撤回。
 >
 > 本质是**自举问题**：换 CNI 的镜像，得先有 CNI。跟 Harbor 组件本身永远走官方是同一个道理。
-> 所以 `Installation.spec.registry` 一律不注入，`IMAGES` 表里也没有它的条目。
-> （chart 里能看到的那一个 `quay.io/tigera/operator` 仍然照常改写 —— 它是普通 Deployment，
-> 不是 CNI 本身，跟着 Harbor 走没有自举风险。）
+> 所以 **tigera-operator 整份 chart 都在 `ChartImagePins.NO_REWRITE` 里**：`Installation.spec.registry`
+> 不注入，连 chart 里那个 operator 的 Deployment 镜像也保持官方，`IMAGES` 表里也没有它的条目。
+> （后续交付方向是**离线部署 calico**，届时另行规划。）
 
 ### 3.3 不受这层改写管的三处
 
