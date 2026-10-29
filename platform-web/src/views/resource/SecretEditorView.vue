@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowDown } from '@element-plus/icons-vue'
@@ -72,10 +72,18 @@ const addableKeys = computed(() => {
 })
 
 /**
- * 切到固定类型时按规格重建行：必需 key 置顶，其余既有 key 原样留底。
- * 留底是必须的 —— update 是整对象替换，只按规格铺行会把线上多出来的 key 静默删掉。
+ * 回填期间为 true：此时 form.type 从 'Opaque' 变成对象真实类型，会触发下面的 watch，
+ * 但线上的行本来就该原样呈现（包括该类型以外的 key），不该被规格重排或修剪。
+ */
+const hydrating = ref(false)
+
+/**
+ * 切到固定类型时按规格重建行：只保留 ①该类型必需 key（带值）②当前行里属于该类型 optional 的
+ * （如 tls 的 ca.crt）。上一种类型留下的行一律丢掉 —— 否则 basic-auth → tls 会剩下四行。
+ * 回填不走这里（见 hydrating）：线上多出来的 key 由「不重建」本身保住，不需要靠留底。
  */
 watch(() => form.type, (t) => {
+  if (hydrating.value) return
   const spec = SECRET_FIXED_KEYS[t]
   if (!spec) return
   const values = new Map(form.rows.map((r) => [r.key.trim(), r.value]))
@@ -83,6 +91,7 @@ watch(() => form.type, (t) => {
   for (const r of form.rows) {
     const k = r.key.trim()
     if (!k || spec.required.includes(k) || rows.some((x) => x.key === k)) continue
+    if (!spec.optional.includes(k)) continue
     rows.push({ key: k, value: r.value })
   }
   form.rows = rows
@@ -144,6 +153,7 @@ const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 async function loadDetail(): Promise<void> {
   if (!editing.value || !ready.value) return
   detailState.value = 'loading'
+  hydrating.value = true
   try {
     const d = await secretApi.get(editing.value, {
       tenantId: state.tenantId!,
@@ -157,8 +167,12 @@ async function loadDetail(): Promise<void> {
     form.rows = entries.length ? entries.map(([key, value]) => ({ key, value })) : newRows()
     form.immutable = d.immutable === true
     originalImmutable.value = d.immutable === true
+    // 等 watch(flush: pre) 这一轮跑完再放开，回填才算真正结束
+    await nextTick()
+    hydrating.value = false
     detailState.value = 'loaded'
   } catch {
+    hydrating.value = false
     detailState.value = 'error'
   }
 }
