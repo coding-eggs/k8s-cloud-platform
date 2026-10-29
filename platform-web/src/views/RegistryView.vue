@@ -7,10 +7,9 @@
  * 前端再做一遍就是第二个真相源。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import type { Component } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Link, Lock, Platform, Share } from '@element-plus/icons-vue'
 import { credentialApi, registryApi } from '@/api'
+import RegistryKindMark from '@/components/registry/RegistryKindMark.vue'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import type {
@@ -35,20 +34,23 @@ const error = ref('')
 
 const selected = computed(() => warehouses.value.find((w) => w.id === selectedId.value) ?? null)
 
-/** 左栏每行的徽标：一眼看出这是谁的仓库、能不能动 */
-type Badge = { text: string; tag: 'primary' | 'success' | 'warning'; color: string; icon: Component }
+/**
+ * 行尾标签：**谁的仓库、能不能动**。类型（Docker / Harbor）由左边的图形标记表达，
+ * 两者分开，免得一个图标既要说明来源又要说明类型。
+ */
+type Badge = { text: string; tag: 'primary' | 'success' | 'warning' }
 
 function badgeOf(w: RegistryWarehouse): Badge {
   if (w.origin === 'INSTALLED') {
-    return { text: '平台', tag: 'primary', color: 'var(--el-color-primary)', icon: Platform }
+    return { text: '平台', tag: 'primary' }
   }
   if (w.origin === 'BUILTIN') {
-    return { text: '公共', tag: 'success', color: 'var(--el-color-success)', icon: Share }
+    return { text: '公共', tag: 'success' }
   }
   // 凭据行：Docker Hub 是自己的私有账号，外部 Harbor 是别人的仓库 —— 两者都不叫"公共"
   return w.kind === 'DOCKER'
-    ? { text: '私有', tag: 'warning', color: 'var(--el-color-warning)', icon: Lock }
-    : { text: '外部', tag: 'warning', color: 'var(--el-color-warning)', icon: Link }
+    ? { text: '私有', tag: 'warning' }
+    : { text: '外部', tag: 'warning' }
 }
 
 /** 左栏渲染用的行：仓库 + 它算好的徽标（每行只算一次） */
@@ -329,8 +331,8 @@ onMounted(loadWarehouses)
         <div v-for="row in warehouseRows" :key="row.w.id"
              class="wh-item" :class="{ active: row.w.id === selectedId }"
              @click="selectedId = row.w.id">
-          <div class="wh-icon" :style="{ color: row.badge.color }">
-            <el-icon :size="18"><component :is="row.badge.icon" /></el-icon>
+          <div class="wh-icon">
+            <RegistryKindMark :kind="row.w.kind" :size="20" />
           </div>
           <div class="wh-main">
             <div class="wh-name">
