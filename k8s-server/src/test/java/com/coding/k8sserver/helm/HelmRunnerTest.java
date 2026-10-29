@@ -74,6 +74,31 @@ class HelmRunnerTest {
     }
 
     @Test
+    void pendingReleaseIsRolledBackBeforeUpgrade() throws Exception {
+        // 「中止」把 helm 打断后 release 停在 pending-*，之后任何 upgrade 都会被
+        // "another operation (install/upgrade/rollback) is in progress" 拦死（2026-10-29 实测）。
+        // 现在 apply 会先查一眼状态，pending 就先回滚收尾再升级。
+        Path log = tmp.resolve("argv.log");
+        Path stdout = tmp.resolve("pending.json");
+        Files.writeString(stdout, "[{\"name\":\"platform-metrics-server\",\"namespace\":\"kube-system\","
+                + "\"revision\":1,\"status\":\"pending-install\"}]");
+        Path values = tmp.resolve("values.yaml");
+        Files.writeString(values, "replicas: 1\n");
+
+        HelmResult r = runner(log, 0, Map.of("FAKE_HELM_STDOUT_FILE", stdout.toString()),
+                Duration.ofMinutes(15))
+                .apply("apiVersion: v1\nkind: Config\n", chart(), values,
+                        "platform-metrics-server", "kube-system", Map.of());
+
+        assertThat(r.ok()).isTrue();
+        assertThat(r.output()).contains("pending-install").contains("已自动回滚");
+        String argv = Files.readString(log);
+        assertThat(argv).contains("rollback").contains("--force-conflicts");
+        assertThat(argv.indexOf("rollback")).as("回滚必须在 upgrade 之前")
+                .isLessThan(argv.indexOf("upgrade"));
+    }
+
+    @Test
     void anAlreadyDeployedReleaseRollsBackOnAFailedUpgrade() throws Exception {
         Path log = tmp.resolve("argv.log");
         Path values = tmp.resolve("values.yaml");

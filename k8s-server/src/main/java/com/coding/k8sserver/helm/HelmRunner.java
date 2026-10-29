@@ -1,10 +1,14 @@
 package com.coding.k8sserver.helm;
 
+import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
 import com.coding.k8score.operations.ServerSideApply;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -33,6 +37,8 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Component
 public class HelmRunner {
+
+    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final String binary;
     /** 直接落盘（server-side apply）用的 kubectl；超大 chart 不走 Helm release，见 {@link #applyServerSide} */
@@ -176,6 +182,9 @@ public class HelmRunner {
 
     public HelmResult apply(String kubeconfig, Path chartPath, Path valuesFile,
                             String release, String namespace, InstallOptions options) {
+        // 先把「中止/被杀打断」留下的 pending-* 收尾，否则下面这句 upgrade 一律被拒：
+        // Error: another operation (install/upgrade/rollback) is in progress
+        String recovered = recoverPendingRelease(kubeconfig, release, namespace);
         boolean deployed = hasDeployedRevision(kubeconfig, release, namespace);
         List<String> args = new ArrayList<>(List.of(
                 "upgrade", "--install", release, chartPath.toString(),
@@ -197,7 +206,77 @@ public class HelmRunner {
             args.add("--labels");
             args.add(String.join(",", kv));
         }
-        return exec(kubeconfig, args);
+        HelmResult result = exec(kubeconfig, args);
+        return recovered == null || result == null
+                ? result
+                : new HelmResult(result.ok(), result.exitCode(),
+                        recovered + "\n" + (result.output() == null ? "" : result.output()));
+    }
+
+    /**
+     * 把卡在 {@code pending-*} 的 release 收尾，免得下一次 upgrade 被
+     * {@code another operation (install/upgrade/rollback) is in progress} 拦死。
+     *
+     * <p>pending 是怎么来的：管理员点了「中止」，平台只释放自己的并发锁、**不接管 helm**
+     * （见 {@code ComponentInstallService.abort} 的提示），而被打断的 helm 进程不会把 release
+     * 状态改回去 —— 2026-10-29 metrics-server 就这么卡住，之后几次安装全失败在同一个报错上。
+     *
+     * <p>收尾规则：回滚到**最近一个部署成功过**的版本；一次都没有（首次安装被打断）就回滚到它
+     * 自己那一版，等于把那次安装补完。收尾失败直接抛 —— 让操作记录里写清楚原因，而不是留给
+     * 下一个人对着 "another operation" 发愣。
+     *
+     * @return 收尾说明（会拼进操作日志）；没做事返回 null
+     */
+    private String recoverPendingRelease(String kubeconfig, String release, String namespace) {
+        HelmResult list = exec(kubeconfig, List.of("list", "--namespace", namespace, "--all",
+                "--filter", "^" + release + "$", "-o", "json"));
+        if (!list.ok() || list.output() == null || list.output().isBlank()) {
+            return null;   // 查不到（release 不存在 / helm 出错）：交给后面的 upgrade 自己报
+        }
+        String state;
+        long revision;
+        try {
+            JsonNode items = JSON.readTree(list.output());
+            if (!items.isArray() || items.isEmpty()) {
+                return null;
+            }
+            JsonNode me = items.get(0);
+            state = me.path("status").asString("");
+            revision = me.path("revision").asLong(0);
+        } catch (Exception e) {
+            return null;   // 解析不了就别拦着装
+        }
+        if (state == null || !state.startsWith("pending")) {
+            return null;
+        }
+        long target = revision;
+        HelmResult history = exec(kubeconfig, List.of("history", release,
+                "--namespace", namespace, "-o", "json"));
+        if (history.ok() && history.output() != null) {
+            try {
+                long deployed = -1;
+                for (JsonNode node : JSON.readTree(history.output())) {
+                    String s = node.path("status").asString("");
+                    if ("deployed".equals(s) || "superseded".equals(s)) {
+                        deployed = Math.max(deployed, node.path("revision").asLong(0));
+                    }
+                }
+                if (deployed > 0) {
+                    target = deployed;
+                }
+            } catch (Exception ignored) {
+                // 解析失败就退回「回滚到当前版本」
+            }
+        }
+        HelmResult rollback = exec(kubeconfig, List.of("rollback", release, String.valueOf(target),
+                "--namespace", namespace, "--force-conflicts"));
+        if (!rollback.ok()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "release " + release + " 卡在 " + state + "，自动收尾失败（回滚到 rev " + target
+                            + "）：" + rollback.output());
+        }
+        log.warn("release {} 处于 {}，已自动回滚到 rev {} 再继续安装", release, state, target);
+        return "检测到 " + release + " 卡在 " + state + "（上次操作被中止），已自动回滚到 rev " + target;
     }
 
     /**

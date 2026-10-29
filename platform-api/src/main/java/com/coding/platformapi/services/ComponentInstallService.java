@@ -2265,7 +2265,7 @@ public class ComponentInstallService {
         upd.setId(id);
         upd.setStatus("CANCELED");
         upd.setMessage("管理员中止" + (isBlank(operator) ? "" : "（" + operator + "）")
-                + "；仅释放平台侧并发锁，若 helm 仍在运行请稍后确认 release 状态");
+                + "；仅释放平台侧并发锁。若 helm 被打断、release 停在 pending，下次安装会自动回滚收尾");
         upd.setFinishedAt(new Date());
         mapper.updateById(upd);
     }

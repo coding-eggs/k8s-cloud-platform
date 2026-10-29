@@ -27,7 +27,12 @@ public final class FakeHelm {
 
     public static void main(String[] args) throws Exception {
         String logPath = System.getenv("FAKE_HELM_LOG");
-        try (PrintWriter writer = new PrintWriter(logPath, StandardCharsets.UTF_8)) {
+        // **追加**而不是覆盖：一次 apply 现在会先调 list（收尾 pending）、再 upgrade，
+        // 断言「先后顺序」需要看到全部调用
+        try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(Path.of(logPath),
+                StandardCharsets.UTF_8,
+                java.nio.file.StandardOpenOption.CREATE,
+                java.nio.file.StandardOpenOption.APPEND))) {
             for (String arg : args) {
                 writer.println(arg);
             }
