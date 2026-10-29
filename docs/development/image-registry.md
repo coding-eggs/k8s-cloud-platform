@@ -110,8 +110,9 @@ Endpoint 地址：
 | docker.elastic.co | `https://docker.elastic.co` |
 
 > `registry.istio.io` 不在列表里：Istio 1.31.3 起 chart 的 `hub` 改成 `docker.io/istio`
-> （registry.istio.io 只有 1.30.x），内置 chart 里的 1.30.6 目录已无 recipe 引用。
-> 真要支持 1.30.6，先给上游建 endpoint（Harbor 得能连上）再把规则加回来。
+> （registry.istio.io 只有 1.30.x）。内置 chart 里的 1.30.6 目录**已于 2026-10-29 删除**
+> （没有 recipe 引用，留着只会让渲染护栏报一堆指向不存在仓库的镜像）。
+> 真要支持 1.30.6，先把 chart 目录加回来，再给上游建 endpoint（Harbor 得能连上）并补规则。
 
 > **落点必须与改写规则一致**：平台把 `quay.io/opstree/redis` 改写成
 > `harbor.ackcp.cloud/quay.io/opstree/redis`，所以目标项目就是 `quay.io`，且
