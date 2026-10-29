@@ -59,6 +59,29 @@ class CredentialServiceTest {
                     new DockerHubDialect(mock(RegistryHttpClient.class))));
     CredentialService svc = new CredentialService(mapper, cipher, probeClient, dialects, tenantMapper, projectMapper);
 
+    /**
+     * 平台建的 Harbor 凭据是**项目级** robot，项目名记录在镜像项目台账里。
+     * 渲染方（镜像节点）要靠它把 {@code <host>/<仓库>} 补成 {@code <host>/<项目>/<仓库>} ——
+     * 不补就是 2026-10-29 那次实报：推到 {@code harbor.x/k8s-server}，Harbor 当成项目 k8s-server，400。
+     */
+    @Test
+    void resolvedPipelineConnectionCarriesItsHarborProject() {
+        PlatformCredential c = stored("cred-1", "Harbor platform@c1", "HARBOR",
+                "https://harbor.ackcp.cloud", "robot$platform+ci", "s");
+        c.setUsableByPipelines(1);
+        c.setSource("HARBOR");
+        when(mapper.selectById("cred-1")).thenReturn(c);
+        var project = new com.coding.data.models.system.PlatformRegistryProject();
+        project.setCredentialId("cred-1");
+        project.setProjectName("platform");
+        when(projectMapper.selectAll()).thenReturn(List.of(project));
+
+        var ref = svc.resolveForPipeline("cred-1", "HARBOR", null);
+
+        assertThat(ref.project()).isEqualTo("platform");
+        assertThat(ref.host()).isEqualTo("harbor.ackcp.cloud");   // 镜像地址要的是 host，不是 URL
+    }
+
     private PlatformCredential stored(String id, String name, String type, String endpoint,
                                      String username, String secret) {
         PlatformCredential c = new PlatformCredential();

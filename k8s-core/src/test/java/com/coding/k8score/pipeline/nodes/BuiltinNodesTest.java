@@ -37,6 +37,15 @@ class BuiltinNodesTest {
                         id, endpoint, "u", "p")), at);
     }
 
+    /** 带项目段的连接（平台建的 Harbor 凭据就是这种：项目级 robot）。 */
+    private static NodeContext ctxWithProject(String type, Map<String, String> config,
+                                              String id, String endpoint, String project) {
+        return new NodeContext("n1", "n1", "ws",
+                new PipelineCanvas.CanvasNode("n1", type, null, config),
+                Map.of(id, new com.coding.common.models.pipeline.PipelineConnectionRef(
+                        id, endpoint, "u", "p", project)));
+    }
+
     @Test
     void noNodeFieldLeaksMarkdownIntoItsPlainTextText() {
         // ⭐ 表单里的 help / label / 下拉项 都是**纯文本**渲染的 —— 写进去的 markdown `**`
@@ -172,6 +181,44 @@ class BuiltinNodesTest {
         // 与既有那三种一样：**一个命令替换都不许有**
         // （`$$( )` 那次真跑过：这一版 Tekton 不把 `$$` 还原成 `$`，shell 就当进程号展开了）
         assertThat(step.steps().get(0).getScript()).doesNotContain("$(");
+    }
+
+    @Test
+    void imageReferenceGetsTheProjectPrefixFromTheConnection() {
+        // ⭐ 2026-10-29 真跑撞到：Harbor 的镜像名是 <host>/<项目>/<仓库>，用户只填了 k8s-server，
+        //    拼出来是 harbor.ackcp.cloud/k8s-server —— Harbor 把它当成一个叫 k8s-server 的项目，
+        //    推送直接 400。项目名是平台自己建的，本来就该由连接补上。
+        RenderedStep step = new ImagePushNode().render(ctxWithProject("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "k8s-server", "tagSource", "time"),
+                "reg-1", "https://harbor.ackcp.cloud", "platform"));
+
+        assertThat(step.steps().get(0).getScript())
+                .contains("harbor.ackcp.cloud/platform/k8s-server");
+    }
+
+    @Test
+    void projectPrefixIsNotDoubledWhenTheUserAlreadyWroteIt() {
+        // 老画布（以及习惯写全路径的人）写的是 platform/k8s-server —— 不能再补一次
+        RenderedStep step = new ImagePushNode().render(ctxWithProject("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "platform/k8s-server",
+                        "tagSource", "time"),
+                "reg-1", "https://harbor.ackcp.cloud", "platform"));
+
+        String script = step.steps().get(0).getScript();
+        assertThat(script).contains("harbor.ackcp.cloud/platform/k8s-server");
+        assertThat(script).doesNotContain("platform/platform");
+    }
+
+    @Test
+    void connectionsWithoutAProjectLeaveTheRepositoryPathAlone() {
+        // git / 手建凭据 / Docker Hub 这类没有"项目"概念：路径原样用
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "ailuoli/platform-api",
+                        "tagSource", "time"),
+                "reg-1", "https://registry-1.docker.io"));
+
+        assertThat(step.steps().get(0).getScript())
+                .contains("registry-1.docker.io/ailuoli/platform-api");
     }
 
     @Test

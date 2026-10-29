@@ -576,7 +576,7 @@ public class CredentialService {
         assertUsableByPipelines(id, expectedType, hatTenantId);
         PlatformCredential c = mapper.selectById(id);
         return new com.coding.common.models.pipeline.PipelineConnectionRef(
-                c.getId(), c.getEndpoint(), null, null);
+                c.getId(), c.getEndpoint(), null, null, projectOf(c.getId()));
     }
 
     public com.coding.common.models.pipeline.PipelineConnectionRef resolveForPipeline(String id,
@@ -591,7 +591,17 @@ public class CredentialService {
         PlatformCredential c = mapper.selectById(id);
         CredentialSecret secret = resolveSecret(id);
         return new com.coding.common.models.pipeline.PipelineConnectionRef(
-                c.getId(), c.getEndpoint(), secret.getUsername(), secret.getSecret());
+                c.getId(), c.getEndpoint(), secret.getUsername(), secret.getSecret(),
+                projectOf(c.getId()));
+    }
+
+    /**
+     * 凭据 → 它所属的 Harbor 项目（镜像项目台账）。没有就 null。
+     * <p>渲染方要用它补镜像地址里的项目段 —— 平台建的 Harbor 凭据是**项目级** robot，
+     * 那个项目名是平台自己起的，不该让用户再抄一遍。
+     */
+    private String projectOf(String credentialId) {
+        return credentialId == null ? null : projectByCredential().get(credentialId);
     }
 
     /**

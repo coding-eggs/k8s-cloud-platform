@@ -15,7 +15,39 @@ package com.coding.common.models.pipeline;
  * <p>它在**同机回环**上走一趟（platform-api → k8s-server），用的是已有那条带共享密钥之外的服务内通道；
  * 不落盘、不缓存。
  */
-public record PipelineConnectionRef(String id, String endpoint, String username, String secret) {
+public record PipelineConnectionRef(String id, String endpoint, String username, String secret,
+                                    /**
+                                     * 这条连接**固定的镜像项目**（Harbor 自动建的凭据才有，如 {@code platform}
+                                     * / {@code t-<sa>}）；null = 没有这个概念（git 连接、手建凭据、
+                                     * Docker Hub 这类扁平仓库）。
+                                     *
+                                     * <p>为什么给渲染方：Harbor 的镜像名是 {@code <host>/<项目>/<仓库>}，
+                                     * 项目是平台自己建出来的，让用户再手打一遍只会打错
+                                     * （2026-10-29 实报：漏了项目段 → {@code harbor.x/k8s-server}，
+                                     * Harbor 把它当成一个叫 {@code k8s-server} 的项目，直接拒）。
+                                     */
+                                    String project) {
+
+    /** 老形状（无项目）：测试与手建连接的兼容构造。 */
+    public PipelineConnectionRef(String id, String endpoint, String username, String secret) {
+        this(id, endpoint, username, secret, null);
+    }
+
+    /**
+     * 镜像引用里的项目段：{@code <host>} 后要接的那个名字。
+     * <p>没有项目、或用户已经自己写了项目段（{@code platform/xxx}）时返回 null ——
+     * 让调用方知道"不用再加"。
+     *
+     * @param repo 用户填的仓库路径（可能已带项目段）
+     */
+    public String missingProjectFor(String repo) {
+        String p = project == null ? "" : project.trim();
+        String r = repo == null ? "" : repo.trim();
+        if (p.isEmpty()) {
+            return null;
+        }
+        return r.equals(p) || r.startsWith(p + "/") ? null : p;
+    }
 
     /**
      * 这条连接对应的**主机名**（去掉 scheme 与路径）：镜像引用、{@code .netrc} 的 machine、

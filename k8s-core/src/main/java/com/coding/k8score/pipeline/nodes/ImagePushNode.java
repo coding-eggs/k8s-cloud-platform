@@ -93,6 +93,8 @@ public class ImagePushNode implements PipelineNode {
                 NodeField.text("registryConnectionId", "目标仓库（被授权的 registry 连接）", true),
                 NodeField.text("imageName", "镜像名（仓库路径，如 proj/app）", true,
                         "只填仓库路径，不要带 registry 地址与 tag —— 那两段由上面的连接和下面的 tag 来源拼出来。\n"
+                                + "连接自带 Harbor 项目时（平台建的凭据是项目级 robot，项目名如 platform、t-xxx），"
+                                + "项目段会自动补在仓库路径前面；自己写了也不会重复。\n"
                                 + "例：连接是 harbor.example.com、这里填 proj/app、tag 取 git 短 sha\n"
                                 + "    → 最终镜像 harbor.example.com/proj/app:a1b2c3d"),
                 NodeField.select("tagSource", "tag 来源",
@@ -161,7 +163,14 @@ public class ImagePushNode implements PipelineNode {
         // ⚠️ 用**主机名**而不是 endpoint：endpoint 是 URL（`https://harbor.x`），
         //    拼进镜像地址就是 `https://harbor.x/proj/app:tag` —— buildah 报 invalid reference format
         //    （2026-10-29 真跑撞到）。镜像引用里没有 scheme 这一层，见 PipelineConnectionRef#host()。
-        String image = GitCloneNode.shellQuote(registry.host() + "/" + repo);
+        //
+        // ⚠️ 项目段由**连接**补：Harbor 的镜像名是 <host>/<项目>/<仓库>，而平台建的 Harbor 凭据
+        //    本来就是项目级 robot（项目名 = platform / t-<sa>），那个名字是平台自己起的。
+        //    用户漏写就变成 harbor.x/k8s-server —— Harbor 把它当成一个叫 k8s-server 的项目，直接拒
+        //    （2026-10-29 实报：StatusCode 400）。用户自己写了项目段就不再加（不重复）。
+        String project = registry.missingProjectFor(repo);
+        String repository = project == null ? repo : project + "/" + repo;
+        String image = GitCloneNode.shellQuote(registry.host() + "/" + repository);
         String tagPrologue = tagPrologue(ctx.value("tagSource"), ctx.value("fixedTag"),
                 TAG_STAMP.format(ctx.renderedAt()));
 
