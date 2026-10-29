@@ -136,24 +136,20 @@ class ChartImageOverlayTest {
     }
 
     /**
-     * calico 的组件镜像**不由 chart 渲染**——operator 按自己内置的列表（或 ImageSet）创建
-     * DaemonSet/Deployment，helm template 里根本看不到。唯一能整体换前缀的开关是
-     * {@code Installation.spec.registry}，且 CRD 要求**结尾带 {@code /}**：
-     * 拼法是 {@code <registry><imagePath>/<imageName>:<tag>}，默认 imagePath 是 {@code calico/}。
+     * calico **有意不纳管**：它的组件镜像由 tigera-operator 运行时决定（chart 里没有），
+     * 要换前缀只能写 {@code Installation.spec.registry}，而那会让 operator 一次性滚动重建
+     * calico-node / typha / kube-controllers —— 单节点集群上 CNI 一断，新 Pod 起不来，
+     * helm --wait 超时后平台回滚，改动被原样撤回（2026-10-29 实测，详见 {@code ChartImagePins}）。
+     *
+     * <p>这条断言是**绊线**：真要重新纳管，会先在这里红一次，提醒回去看那段原因。
      */
     @Test
-    void calicoInstallationGetsTheUpstreamRegistryPrefix() throws Exception {
-        Path chart = Path.of("src/main/resources/charts/components/tigera-operator/v3.33.0/chart");
+    void calicoIsDeliberatelyNotMirrored() throws Exception {
+        Map<String, Object> overlay = ChartImageOverlay.of(
+                Path.of("src/main/resources/charts/components/tigera-operator/v3.33.0/chart"),
+                "harbor.ackcp.cloud", "");
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> blank = (Map<String, Object>)
-                ChartImageOverlay.of(chart, "harbor.ackcp.cloud", "").get("installation");
-        assertThat(blank).containsEntry("registry", "harbor.ackcp.cloud/quay.io/");
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> withProject = (Map<String, Object>)
-                ChartImageOverlay.of(chart, "harbor.ackcp.cloud", "platform").get("installation");
-        assertThat(withProject).containsEntry("registry", "harbor.ackcp.cloud/platform/quay.io/");
+        assertThat(overlay).doesNotContainKey("installation");
     }
 
     /** 镜像在模板里拼死的两个 chart：靠一张钉死的表补上（表与模板字面量由护栏测试对齐）。 */

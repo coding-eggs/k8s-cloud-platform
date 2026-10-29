@@ -43,23 +43,24 @@ final class ChartImagePins {
     private record UpstreamPathPin(String path, String upstreamImage) {
     }
 
-    /**
-     * values 里的路径 ← {@code <harbor 前缀>/<上游主机>/}（**结尾带斜杠**）。
+    /*
+     * ⚠️ calico 有意**不在这张表里**。
      *
-     * <p>给「组件镜像由 operator 运行时决定、chart 里根本没有」的 chart 用：calico 的
-     * {@code Installation.spec.registry} 就是这么个整体前缀，CRD 要求以 {@code /} 结尾，
-     * 拼法是 {@code <registry><imagePath>/<imagePath>...}，前缀换了就全换。
+     * 它的工作负载镜像由 tigera-operator 运行时决定（ImageSet / 内置列表），要整体换前缀只能写
+     * `Installation.spec.registry`。2026-10-29 试过，结论是不能这么做：
+     *
+     *   改 Installation → operator 把 calico-node / typha / kube-controllers 一次性滚动重建
+     *   → 单节点集群上 calico-node 一停，CNI 就断，新 Pod 的沙箱全卡住（kubelet 一直重试 CNI DEL）
+     *   → 新来的 tigera-operator Pod 自己也要 CNI，起不来 → helm --wait 900s 超时
+     *   → 平台按既有行为 `--rollback-on-failure` 回滚，改动被原样撤回。
+     *
+     * 本质是**自举问题**：换 CNI 镜像，得先有 CNI。跟 Harbor 组件自己永远走官方镜像是同一个道理
+     * （镜像仓库在它可用之前就得能起来）。所以 calico 固定走上游 quay.io，纳管边界到此为止。
      */
-    private record UpstreamRegistryPin(String path, String upstreamHost) {
-    }
-
     private static final Map<String, List<Object>> PINS = Map.of(
             "components/seaweedfs/4.48.0", List.of(
                     new RegistryPin("image.registry"),
                     new UpstreamPathPin("global.seaweedfs.image.name", "chrislusf/seaweedfs")),
-            // calico：tigera-operator 按内置列表创建 calico-node 等，镜像不进 helm 渲染
-            "components/tigera-operator/v3.33.0", List.of(
-                    new UpstreamRegistryPin("installation.registry", "quay.io")),
             "components/tekton-operator/0.81.2", List.of(
                     new ImagePin("operator.image.repository",
                             "ghcr.io/tektoncd/operator/operator-303303c315a48490ba6517859ef65b77"),
@@ -85,9 +86,6 @@ final class ChartImagePins {
             } else if (pin instanceof UpstreamPathPin path) {
                 ImageReference ref = ImageReference.parsePrefix(path.upstreamImage());
                 put(out, path.path(), ref.registry() + "/" + ref.repository());
-            } else if (pin instanceof UpstreamRegistryPin registry) {
-                put(out, registry.path(),
-                        ImageReference.prefix(host, project) + "/" + registry.upstreamHost() + "/");
             }
         }
         return out;

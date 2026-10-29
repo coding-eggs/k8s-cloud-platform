@@ -155,7 +155,7 @@ Endpoint 地址：
 | `docker.io/istio/pilot`、`docker.io/istio/install-cni`、`docker.io/istio/ztunnel`、`docker.io/istio/proxyv2` | istiod / CNI / ztunnel / 网关与注入的 sidecar（1.31.x）。**proxyv2 容易漏**：gateway 的 Deployment 写的是 `image: auto`，由 istiod 按 `global.hub` 拼成 `<hub>/proxyv2:<tag>` |
 | `quay.io/jetstack/cert-manager-controller`、`-cainjector`、`-webhook`、`-startupapicheck` | cert-manager |
 | `quay.io/tigera/operator` | Calico operator（chart 里的 Deployment） |
-| `quay.io/calico/calico`、`quay.io/calico/node`、`quay.io/calico/third-party-cni-plugins` | Calico **工作负载**（见下方「calico 的镜像不在 chart 里」） |
+| `quay.io/calico/calico`、`quay.io/calico/node`、`quay.io/calico/third-party-cni-plugins` | Calico **工作负载** —— **有意不纳管，固定走上游**（见下方） |
 | `quay.io/strimzi/operator` + `quay.io/strimzi/kafka` | Strimzi（operator 与 broker） |
 | `docker.io/chrislusf/seaweedfs` | 对象存储 |
 | `ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator` | otel operator |
@@ -179,13 +179,22 @@ Endpoint 地址：
 > 原来的 `bitnami/*` 已 `manifest unknown`。这条覆盖写在
 > `MiddlewareOperatorCatalog` 里，复制规则要照着它配。
 
-> **calico 的镜像不在 chart 里。** tigera-operator 按**编译在二进制里的列表**创建
-> calico-node 等对象，`helm template` 里根本看不到它们（`kubectl get imagesets` 也是空的）。
-> v3.33.0 实际只有三个：`calico/calico`、`calico/node`、`calico/third-party-cni-plugins`
-> —— cni / typha / csi / kube-controllers 在这一版并进了 `calico` 镜像。
-> 整体换前缀只能靠 `Installation.spec.registry`（由 `ChartImagePins` 的 `UpstreamRegistryPin`
-> 注入，值形如 `harbor.ackcp.cloud/quay.io/`，**结尾必须带 `/`**，CRD 要求）。
-> 升级 calico 时先看它到底拉哪些：`kubectl get pods -A -o jsonpath=… | grep calico`，再补 `IMAGES`。
+> **calico 的工作负载镜像有意不纳管，固定走上游 quay.io。**
+>
+> 它们的镜像由 tigera-operator **运行时**决定（chart 里没有，`helm template` 看不到，
+> `kubectl get imagesets` 也是空的；v3.33.0 实际只有 `calico/calico`、`calico/node`、
+> `calico/third-party-cni-plugins` 三个，cni/typha/csi/kube-controllers 并进了 `calico` 镜像）。
+> 要整体换前缀只能写 `Installation.spec.registry`。
+>
+> **2026-10-29 试过，结论是不要**：改 Installation → operator 把 calico-node / typha /
+> kube-controllers 一次性滚动重建 → calico-node 一停 CNI 就断，其余 Pod 的沙箱全卡住
+> （kubelet 反复重试 CNI DEL）→ 新来的 tigera-operator Pod 自己也要 CNI，起不来 →
+> `helm --wait` 900s 超时 → 平台按既有行为 `--rollback-on-failure` 回滚，改动被原样撤回。
+>
+> 本质是**自举问题**：换 CNI 的镜像，得先有 CNI。跟 Harbor 组件本身永远走官方是同一个道理。
+> 所以 `Installation.spec.registry` 一律不注入，`IMAGES` 表里也没有它的条目。
+> （chart 里能看到的那一个 `quay.io/tigera/operator` 仍然照常改写 —— 它是普通 Deployment，
+> 不是 CNI 本身，跟着 Harbor 走没有自举风险。）
 
 ### 3.3 不受这层改写管的三处
 
