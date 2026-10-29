@@ -146,7 +146,7 @@ Endpoint 地址：
 
 | 上游仓库 | 用途 |
 |---|---|
-| `docker.io/istio/pilot`、`docker.io/istio/install-cni`、`docker.io/istio/ztunnel` | istiod / CNI / ztunnel（1.31.x） |
+| `docker.io/istio/pilot`、`docker.io/istio/install-cni`、`docker.io/istio/ztunnel`、`docker.io/istio/proxyv2` | istiod / CNI / ztunnel / 网关与注入的 sidecar（1.31.x）。**proxyv2 容易漏**：gateway 的 Deployment 写的是 `image: auto`，由 istiod 按 `global.hub` 拼成 `<hub>/proxyv2:<tag>` |
 | `quay.io/jetstack/cert-manager-controller`、`-cainjector`、`-webhook`、`-startupapicheck` | cert-manager |
 | `quay.io/tigera/operator` | Calico |
 | `quay.io/strimzi/operator` + `quay.io/strimzi/kafka` | Strimzi（operator 与 broker） |
@@ -252,7 +252,7 @@ platform-api / k8s-server / platform-web / platform-auth 的 Deployment 不在�
 | `registry + image`（兄弟键） | tigera 的 `{registry: quay.io, image: tigera/operator}` | 两个键一起改，拼出来才是 Harbor 地址 |
 | `imageRegistry + imageNamespace` | cert-manager | `imageRegistry = <harbor>/<project>`、`imageNamespace = quay.io/jetstack` |
 | `defaultImageRegistry + defaultImageRepository` | Strimzi（operator 与 broker 都走它） | 同上 |
-| `hub` | Istio 的 `global.hub` | 整串改写 |
+| `hub` | Istio 的 `global.hub` | **只加前缀**（见下），`hub` 后面 chart 还会拼 `/pilot:tag` |
 | 模板里拼死的 | tekton 的 operator/webhook 镜像名 | 靠 `ChartImagePins` 的兜底表 |
 
 另外两条容易漏的：
@@ -262,6 +262,10 @@ platform-api / k8s-server / platform-web / platform-auth 的 Deployment 不在�
   依赖里的 `alias` 挂载（grafana / kube-state-metrics / node-exporter 就在这里）。
 - **bitnami 系的镜像校验**：替换镜像后 chart 会拒绝渲染（`allowInsecureImages`），
   overlay 里会自动关掉这个开关。
+- **`hub` 是路径前缀，不是完整镜像**：`docker.io/istio` 后面 chart 还要拼 `/pilot:1.31.3`。
+  按完整镜像解析会把 `istio` 当成单段仓库、补出 `library/`，拼成
+  `…/docker.io/library/istio/pilot:1.31.3` —— 这个路径 Harbor 里没有（2026-10-29 重建 Istio
+  时真撞到，Pod `ImagePullBackOff`）。所以 `hub` 走 `ImageReference.parsePrefix`，不做 library 补全。
 
 护栏是 `ChartImageRenderGuardTest`：对每份内置 chart 真跑一次 `helm template`（叠上 overlay），
 断言渲染出来的每个 `image:` 都在 Harbor 上。它需要本机有 helm，没有则跳过——所以它在开发机/流水线

@@ -67,7 +67,12 @@ public final class ImageRewriter {
                 }
                 Object value = out.get(key);
                 if (value instanceof String s && ImageReference.looksLikeImage(s)) {
-                    out.put(key, ImageReference.parse(s).mirror(host, project));
+                    // hub 是**路径前缀**（docker.io/istio + chart 拼的 /pilot:tag），
+                    // 按完整镜像解析会补出 library/，拼成 …/docker.io/library/istio/pilot
+                    ImageReference ref = "hub".equals(key)
+                            ? ImageReference.parsePrefix(s)
+                            : ImageReference.parse(s);
+                    out.put(key, ref.mirror(host, project));
                 }
             }
             return out;

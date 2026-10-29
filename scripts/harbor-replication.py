@@ -47,6 +47,9 @@ IMAGES = {
         'grafana/tempo:3.1.0',
         'istio/install-cni:1.31.3',
         'istio/pilot:1.31.3',
+        # proxyv2：istio-gateway 的 Deployment 写的是 `image: auto`，由 istiod 注入时
+        # 按 global.hub 拼成 <hub>/proxyv2:<tag> —— 不搬这个，网关 Pod 拉不到镜像
+        'istio/proxyv2:1.31.3',
         'istio/ztunnel:1.31.3',
         'library/busybox:latest',
         'library/rabbitmq:4.1.3',

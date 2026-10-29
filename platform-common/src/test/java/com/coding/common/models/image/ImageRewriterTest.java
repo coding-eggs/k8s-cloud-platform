@@ -68,6 +68,19 @@ class ImageRewriterTest {
     }
 
     @Test
+    void rewritesHubAsPrefixWithoutLibrarySegment() {
+        // istio：global.hub = docker.io/istio，chart 再拼 `/pilot:1.31.3`。
+        // hub 是**路径前缀**不是完整镜像 —— 按完整镜像解析会补出 docker.io/library/istio，
+        // 最终变成 .../docker.io/library/istio/pilot:1.31.3，Harbor 里根本没有这个路径
+        // （2026-10-29 真集群撞到：重建 istio 时 pilot 拉不到镜像）
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("hub", "docker.io/istio");
+
+        assertThat(rewrite(values)).containsEntry("hub",
+                "harbor.ackcp.cloud/docker.io/istio");
+    }
+
+    @Test
     void leavesNonImageValuesAlone() {
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("imagePullPolicy", "IfNotPresent");

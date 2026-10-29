@@ -26,6 +26,24 @@ public record ImageReference(String registry, String repository, String tagOrDig
             "registry.k8s.io", "docker.elastic.co", "gcr.io", "k8s.gcr.io");
 
     public static ImageReference parse(String image) {
+        return parse(image, true);
+    }
+
+    /**
+     * 解析一个**镜像路径前缀**，而不是完整镜像引用 —— 典型是 Istio 的
+     * {@code global.hub: docker.io/istio}：chart 还会在它后面拼 {@code /pilot:1.31.3}。
+     *
+     * <p>与 {@link #parse(String)} 唯一的区别是**不做 docker.io 的 {@code library/} 补全**。
+     * 按完整镜像解析 {@code docker.io/istio} 会把 {@code istio} 当成单段仓库，补出
+     * {@code docker.io/library/istio}，拼完就成了
+     * {@code harbor.ackcp.cloud/docker.io/library/istio/pilot:1.31.3}
+     * —— Harbor 里没有这个路径（2026-10-29 真集群撞到：重建 Istio 时 pilot 拉不到）。
+     */
+    public static ImageReference parsePrefix(String image) {
+        return parse(image, false);
+    }
+
+    static ImageReference parse(String image, boolean normalizeOfficial) {
         String s = image == null ? "" : image.trim();
         String tag = "";
         int at = s.indexOf('@');
@@ -51,7 +69,7 @@ public record ImageReference(String registry, String repository, String tagOrDig
             registry = "docker.io";
             repo = s;
         }
-        if ("docker.io".equals(registry) && !repo.contains("/")) {
+        if (normalizeOfficial && "docker.io".equals(registry) && !repo.contains("/")) {
             repo = "library/" + repo;
         }
         return new ImageReference(registry, repo, tag, image == null ? "" : image.trim());

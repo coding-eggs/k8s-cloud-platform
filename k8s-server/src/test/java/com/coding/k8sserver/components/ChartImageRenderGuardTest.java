@@ -80,6 +80,15 @@ class ChartImageRenderGuardTest {
                 seen[0]++;
                 if (!image.startsWith(HOST + "/")) {
                     problems.add(name + " -> " + image);
+                    continue;
+                }
+                // docker.io 的官方命名空间只有**一段**：`…/docker.io/library/x/y` 一定是拼错的
+                // （Istio 的 hub 是路径前缀，被当成完整镜像解析就会补出 library/，
+                // 最终变成 …/docker.io/library/istio/pilot:1.31.3）。2026-10-29 真集群撞到：
+                // 前缀检查抓不到它 —— 它确实以 Harbor 开头，只是那个路径不存在。
+                int lib = image.indexOf("/docker.io/library/");
+                if (lib >= 0 && image.indexOf('/', lib + "/docker.io/library/".length()) > 0) {
+                    problems.add(name + " -> " + image + "（library 下还有多段）");
                 }
             }
         }
