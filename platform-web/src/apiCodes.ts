@@ -40,6 +40,8 @@ export const apiCodes = {
   credentialWriteTenant: 'tenant:credential:write',
   /** 镜像候选值与目录浏览（S3.1）—— 补全的可选拉取短路用 */
   registryCatalog: 'tenant:registry:catalog',
+  /** Harbor 租户项目的同步 / 重建（平台管理员） */
+  registryProjectManage: 'platform:registry:project:manage',
 
   // ---- 租户族 ----
   /** 自管轨租户成员管理 */

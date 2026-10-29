@@ -13,6 +13,7 @@
  *    UNKNOWN 不给装：「不知道」不是「没有」。
  */
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import type {
@@ -22,8 +23,9 @@ import type {
   K8sThanosInstall, SecretRefOption,
 } from '@/types'
 import { clusterApi } from '@/api'
-import HarborProjectsDialog from './HarborProjectsDialog.vue'
 import HarborStorageFields from './HarborStorageFields.vue'
+
+const router = useRouter()
 
 const props = defineProps<{
   /** 集群 id（Harbor 镜像项目弹窗要它） */
@@ -547,11 +549,6 @@ function emptyOtel(): OtelForm {
       insecureSkipVerify: true,
     },
   }
-}
-
-const harborProjects = ref(false)
-function openHarborProjects(): void {
-  harborProjects.value = true
 }
 
 const applyDialog = ref<ApplyDialog>({
@@ -1365,8 +1362,8 @@ function copyImage(text: string): void {
                 <span class="cc-readonly">已是最新</span>
               </el-tooltip>
               <el-button v-if="row.code === 'harbor'" link type="primary"
-                         @click="openHarborProjects()">
-                镜像项目
+                         @click="router.push('/registries')">
+                管理项目与连接 →
               </el-button>
             </template>
           </template>
@@ -2191,7 +2188,6 @@ function copyImage(text: string): void {
       </template>
     </el-dialog>
   </div>
-    <HarborProjectsDialog v-model:visible="harborProjects" :cluster-id="props.clusterId" />
   <el-drawer v-model="imageDialog" title="镜像清单（内置 chart）" size="62%" append-to-body>
     <div class="cc-form-hint" style="margin-bottom: 10px">
       组件与中间件实际会拉的镜像（harbor 组件本身除外）。「平台 Harbor」那列是改写后的地址，
