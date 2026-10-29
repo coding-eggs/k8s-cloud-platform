@@ -1913,8 +1913,10 @@ public class ComponentInstallService {
                     } catch (Exception e) {
                         log.warn("组件 {} 安装成功，但把 platform 项目设为公开读失败: {}", id, e.getMessage());
                     }
+                    // https 也要传：route/LB 暴露时走 443，拼 http 会连到关掉的 nodePort（2026-10-29）
                     HarborRegistryService.SyncResult sync = harborRegistry.ensureAll(
-                            clusterId, harborAuthority(harbor), "INSTALL".equals(action));
+                            clusterId, harborAuthority(harbor), Boolean.TRUE.equals(harbor.getHttps()),
+                            "INSTALL".equals(action));
                     if (sync.failed() > 0) {
                         postInstallNote = sync.failed()
                                 + " 个租户的镜像项目/凭据同步失败（见「镜像项目」面板，可重试）";

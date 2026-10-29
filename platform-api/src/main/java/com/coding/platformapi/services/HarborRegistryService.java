@@ -65,8 +65,28 @@ public class HarborRegistryService {
     public record SyncResult(String clusterId, String host, List<SyncItem> items, int failed) {
     }
 
-    /** 该集群上次成功安装 Harbor 的访问地址；没装/无记录 → null */
+    /** Harbor 的访问方式：地址（可能带端口）+ 是否 HTTPS */
+    public record Access(String host, boolean https) {
+        /** 带 scheme 的基址，例如 {@code https://harbor.ackcp.cloud} */
+        public String baseUrl() {
+            return (https ? "https://" : "http://") + host;
+        }
+    }
+
+    /** 该集群上次成功安装 Harbor 的访问地址（**不带 scheme**，镜像路径要用它）；没装/无记录 → null */
     public String harborHost(String clusterId) {
+        Access access = harborAccess(clusterId);
+        return access == null ? null : access.host();
+    }
+
+    /**
+     * 该集群 Harbor 的访问方式（地址 + scheme）；没装/无记录 → null。
+     *
+     * <p>⚠️ scheme 不能一律拼 {@code http}：Harbor 换成 route / loadBalancer 暴露后走的是 443
+     * （TLS 在网关上终结），旧写法会连到一个早就关掉的 nodePort 上 —— 镜像仓库页与流水线推送
+     * 都因此失效（2026-10-29 用户撞到）。以安装快照里的 {@code https} 开关为准。
+     */
+    public Access harborAccess(String clusterId) {
         PlatformComponentOperation op = operations.selectLatestSuccess(clusterId, COMPONENT);
         if (op == null || op.getValuesSnapshot() == null) {
             return null;
@@ -83,7 +103,10 @@ public class HarborRegistryService {
             if (!(host instanceof String s) || s.isBlank()) {
                 host = harbor.get("host");
             }
-            return host instanceof String authority && !authority.isBlank() ? authority : null;
+            if (!(host instanceof String authority) || authority.isBlank()) {
+                return null;
+            }
+            return new Access(authority, Boolean.TRUE.equals(harbor.get("https")));
         } catch (Exception e) {
             log.warn("集群 {} 的 Harbor 安装快照无法解析：{}", clusterId, e.getMessage());
             return null;
@@ -105,18 +128,31 @@ public class HarborRegistryService {
             "docker.elastic.co", "registry.istio.io");
 
     /**
+     * 平台在 Harbor 里的**公共项目**（公开读）：自己的 {@code platform} + 各上游主机。
+     *
+     * <p>镜像仓库页要用它：租户凭据是**项目级** robot，Harbor 的 {@code /projects} 只会回它自己
+     * 那一个，而上游镜像全躺在这些公开读的项目里 —— 不补的话页面里看不到它们。
+     */
+    public static List<String> publicProjectNames() {
+        List<String> out = new ArrayList<>();
+        out.add(PLATFORM_PROJECT);
+        out.addAll(UPSTREAM_PROJECTS);
+        return out;
+    }
+
+    /**
      * 确保平台自己的项目与各上游项目都存在且**公开读**（匿名可 pull）。
      *
      * <p>这是「镜像来源纳管」的拉取侧前提：公开读之后节点不需要 imagePullSecret；
      * 推送仍走 Harbor 复制规则/管理凭据，不受影响。幂等。
      */
     public void ensurePlatformPublic(String clusterId) {
-        String host = harborHost(clusterId);
-        if (host == null || host.isBlank()) {
+        Access access = harborAccess(clusterId);
+        if (access == null) {
             return;   // 没装 Harbor / 没有成功记录：没得设，交给调用方决定要不要报错
         }
         Basic auth = adminOf(clusterId);
-        String baseUrl = base(host);
+        String baseUrl = access.baseUrl();
         List<String> projects = new ArrayList<>();
         projects.add(PLATFORM_PROJECT);
         projects.addAll(UPSTREAM_PROJECTS);
@@ -133,7 +169,7 @@ public class HarborRegistryService {
     }
 
     public SyncResult ensureAll(String clusterId, boolean force) {
-        return ensureAll(clusterId, requireHost(clusterId), force);
+        return ensureAll(clusterId, requireAccess(clusterId), force);
     }
 
     /**
@@ -144,38 +180,42 @@ public class HarborRegistryService {
      *              —— 不强制重建就会一路 skip，流水线 push 全 401。
      *              升级/编辑重放用 false，避免每次改配置都轮换口令。
      */
-    public SyncResult ensureAll(String clusterId, String host, boolean force) {
+    public SyncResult ensureAll(String clusterId, String host, boolean https, boolean force) {
         if (host == null || host.isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Harbor 访问域名为空：无法同步租户镜像项目");
         }
+        return ensureAll(clusterId, new Access(host, https), force);
+    }
+
+    private SyncResult ensureAll(String clusterId, Access access, boolean force) {
         synchronized (LOCK) {
             Basic auth = adminOf(clusterId);
             List<SyncItem> items = new ArrayList<>();
             items.add(ensureOne(clusterId, null, HarborNaming.PLATFORM_PROJECT, "platform",
-                    host, auth, force));
+                    access, auth, force));
             for (PlatformTenant t : enabledTenants()) {
-                items.add(ensureOne(clusterId, t.getId(), projectOf(t), t.getName(), host, auth, force));
+                items.add(ensureOne(clusterId, t.getId(), projectOf(t), t.getName(), access, auth, force));
             }
             int failed = (int) items.stream().filter(i -> "ERROR".equals(i.status())).count();
-            return new SyncResult(clusterId, host, items, failed);
+            return new SyncResult(clusterId, access.host(), items, failed);
         }
     }
 
     /** 某个集群上单租户同步（tenantId 为 null = 平台共享） */
     public SyncItem ensureTenant(String clusterId, String tenantId, boolean force) {
-        String host = requireHost(clusterId);
+        Access access = requireAccess(clusterId);
         synchronized (LOCK) {
             Basic auth = adminOf(clusterId);
             if (tenantId == null) {
                 return ensureOne(clusterId, null, HarborNaming.PLATFORM_PROJECT, "platform",
-                        host, auth, force);
+                        access, auth, force);
             }
             PlatformTenant t = tenants.selectByPrimaryKey(tenantId);
             if (t == null) {
                 throw new CloudPlatformException(EnumResponseType.TENANT_NOT_EXIST);
             }
-            return ensureOne(clusterId, tenantId, projectOf(t), t.getName(), host, auth, force);
+            return ensureOne(clusterId, tenantId, projectOf(t), t.getName(), access, auth, force);
         }
     }
 
@@ -206,10 +246,10 @@ public class HarborRegistryService {
     public void onTenantDeleted(String tenantId) {
         for (PlatformRegistryProject row : projects.selectByTenant(tenantId)) {
             try {
-                String host = harborHost(row.getClusterId());
-                if (host != null) {
+                Access access = harborAccess(row.getClusterId());
+                if (access != null) {
                     Basic auth = adminOf(row.getClusterId());
-                    String baseUrl = base(host);
+                    String baseUrl = access.baseUrl();
                     // 按 project + 名字删，不用台账里的 robot_id：Harbor 重装后 id 会复用，
                     // 拿陈旧 id 去删可能删到别的账号
                     Long projectId = harbor.findProjectId(baseUrl, auth.user(), auth.pass(),
@@ -257,8 +297,9 @@ public class HarborRegistryService {
     }
 
     private SyncItem ensureOne(String clusterId, String tenantId, String project, String tenantName,
-                               String host, Basic auth, boolean force) {
-        String baseUrl = base(host);
+                               Access access, Basic auth, boolean force) {
+        String host = access.host();
+        String baseUrl = access.baseUrl();
         try {
             long projectId = harbor.ensureProject(baseUrl, auth.user(), auth.pass(), project);
             PlatformRegistryProject row = projects.selectByClusterAndTenant(clusterId, tenantId);
@@ -377,13 +418,13 @@ public class HarborRegistryService {
         }
     }
 
-    private String requireHost(String clusterId) {
-        String host = harborHost(clusterId);
-        if (host == null) {
+    private Access requireAccess(String clusterId) {
+        Access access = harborAccess(clusterId);
+        if (access == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "该集群没有可用的 Harbor 安装记录（请先安装 Harbor 组件）");
         }
-        return host;
+        return access;
     }
 
     /**
@@ -397,10 +438,6 @@ public class HarborRegistryService {
                     "Harbor 管理口令 Secret 不可用：" + NAMESPACE + "/" + SECRET_NAME);
         }
         return new Basic(ADMIN_USER, pass);
-    }
-
-    private static String base(String host) {
-        return "http://" + host;
     }
 
     private static String projectOf(PlatformTenant t) {

@@ -31,7 +31,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.stream.Collectors;
 
 /**
  * 镜像仓库的三个只读入口。设计见 docs/superpowers/specs/2026-10-14-registry-design.md
@@ -219,7 +221,27 @@ public class RegistryService {
                 .orElseThrow(() -> new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
                         "镜像仓库连接不存在或已停用"));
         List<String> path = req.getPath() == null ? List.of() : req.getPath();
-        return dialects.of(source.type()).browse(toRef(source), path);
+        BrowseResult result = dialects.of(source.type()).browse(toRef(source), path);
+        // Harbor 的**根层**补上平台公共项目：租户凭据是项目级 robot，Harbor 的 /projects 只回它自己
+        // 那一个；而上游镜像都在 docker.io / quay.io 这些公开读的项目里 —— 不补就看不到它们
+        // （2026-10-29 用户指出：镜像仓库页里找不到那几个公共项目）
+        if (path.isEmpty() && "HARBOR".equalsIgnoreCase(source.type())) {
+            result = withPublicProjects(result);
+        }
+        return result;
+    }
+
+    /** 把平台公共项目并进根层（去重；它们由 {@code ensurePlatformPublic} 保证存在且公开读） */
+    private static BrowseResult withPublicProjects(BrowseResult result) {
+        Set<String> seen = result.children().stream()
+                .map(BrowseResult.Node::name).collect(Collectors.toSet());
+        List<BrowseResult.Node> children = new ArrayList<>(result.children());
+        for (String project : HarborRegistryService.publicProjectNames()) {
+            if (seen.add(project)) {
+                children.add(new BrowseResult.Node(project, true, null, List.of()));
+            }
+        }
+        return new BrowseResult(result.breadcrumb(), children);
     }
 
     /**

@@ -368,7 +368,9 @@ class RegistryServiceTest {
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("c1");
 
-        assertThat(echoSvc.browse(req).children()).isEmpty();   // 方言桩返回空，但**不能抛**
+        // 方言桩返回空，但**不能抛**；根层由平台补齐**公共项目**（2026-10-29）
+        assertThat(echoSvc.browse(req).children()).extracting(BrowseResult.Node::name)
+                .contains("platform", "docker.io", "quay.io");
     }
 
     // ---- 内置档（Docker Hub，2026-10-14 改成不进凭据表） ----
@@ -594,7 +596,9 @@ class RegistryServiceTest {
         RegistryBrowseRequest req = new RegistryBrowseRequest();
         req.setCredentialId("c2");
         req.setPath(List.of());
-        assertThat(svc.browse(req, "tenant-1").children()).isEmpty();
+        // 方言桩返回空；根层由平台补齐公共项目（租户 robot 是项目级的，看不到别人的公开项目）
+        assertThat(svc.browse(req, "tenant-1").children()).extracting(BrowseResult.Node::name)
+                .contains("platform", "docker.io");
     }
 
     private static List<String> connectionViewFields() {

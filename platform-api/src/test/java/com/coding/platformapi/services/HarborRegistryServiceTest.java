@@ -268,7 +268,7 @@ class HarborRegistryServiceTest {
 
         // 平台共享项目在 setUp 里已就绪（host 一致），走普通同步即可
         HarborRegistryService.SyncResult result =
-                svc.ensureAll("c1", "harbor.example.com", false);
+                svc.ensureAll("c1", "harbor.example.com", false, false);
 
         assertThat(result.failed()).isZero();
         assertThat(result.host()).isEqualTo("harbor.example.com");

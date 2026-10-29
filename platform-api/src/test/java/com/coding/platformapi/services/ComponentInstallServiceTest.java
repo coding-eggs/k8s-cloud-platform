@@ -69,6 +69,7 @@ class ComponentInstallServiceTest {
         when(imageRegistry.resolve(anyString()))
                 .thenReturn(com.coding.platformapi.images.ImageRegistry.OFFICIAL);
         when(harborRegistry.ensureAll(anyString(), anyString(),
+                org.mockito.ArgumentMatchers.anyBoolean(),
                 org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(new HarborRegistryService.SyncResult("c1", "harbor.example.com",
                         List.of(), 0));
@@ -1798,7 +1799,7 @@ class ComponentInstallServiceTest {
                 .doesNotContain("${harbor.host}");
         verify(client, timeout(3000)).applyHarborSecrets("c1", "harbor", "platform-harbor-secrets");
         // 平台调 Harbor API / 凭据 endpoint 都必须带端口
-        verify(harborRegistry, timeout(3000)).ensureAll("c1", "10.0.0.5:30002", true);
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", "10.0.0.5:30002", false, true);
     }
 
     @Test
@@ -1851,7 +1852,7 @@ class ComponentInstallServiceTest {
                 .contains("type=loadBalancer")
                 .contains("http://10.0.0.6:8080")
                 .contains("8080");
-        verify(harborRegistry, timeout(3000)).ensureAll("c1", "10.0.0.6:8080", true);
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", "10.0.0.6:8080", false, true);
     }
 
     @Test
@@ -1863,7 +1864,7 @@ class ComponentInstallServiceTest {
                 .contains("type=route")
                 .contains("http://harbor.example.com")
                 .contains("external-gateway");
-        verify(harborRegistry, timeout(3000)).ensureAll("c1", "harbor.example.com", true);
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", "harbor.example.com", false, true);
     }
 
     @Test
@@ -1875,7 +1876,7 @@ class ComponentInstallServiceTest {
         when(clusterService.requireName("c1")).thenReturn("test-cluster");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(harborRegistry.ensureAll("c1", "10.0.0.5:30002", true))
+        when(harborRegistry.ensureAll("c1", "10.0.0.5:30002", false, true))
                 .thenThrow(new IllegalStateException("harbor unreachable"));
 
         service().apply(harborRequest(new HarborInstallRequest("10.0.0.5")), "admin");
