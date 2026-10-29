@@ -542,6 +542,11 @@ onMounted(loadWarehouses)
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  /* 一点点间距：相邻两行的 hover / 选中底色挨在一起会糊成一片 */
+  margin-top: 4px;
+}
+.wh-item:first-child {
+  margin-top: 0;
 }
 .wh-item:hover {
   background: var(--el-fill-color-lighter);
