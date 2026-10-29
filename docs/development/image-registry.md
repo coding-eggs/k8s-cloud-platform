@@ -24,7 +24,7 @@
 平台**不搬运镜像**：k8s-server 只改写地址，镜像得先在 Harbor 里存在。搬运靠 Harbor 的
 **Replication（复制）规则**。
 
-> ⚠️ 一条规则只能管**一个仓库**：Harbor 的资源过滤器是 **AND** 语义 —— 一条策略里放两个
+> ⚠️ 一条规则只能管**一个仓库 + 一个 tag**：Harbor 的资源过滤器是 **AND** 语义（tag 也一样）—— 一条策略里放两个
 > name 过滤器就什么都匹配不到（2026-10-28 实测：2 个 name → 0 个任务；`opstree/*` 通配也不匹配）。
 > 所以「一条规则一个上游」不成立，规则数是仓库数量级（当前 46 条）。
 
@@ -84,7 +84,9 @@ IMAGES = {
 
 - **必须写 tag**：不写就复制该仓库的全部 tag（几百个、几十 GB）；
 - 中间件允许创建新版本（ES / Milvus）时，把新版本加一行 —— 脚本按 tag 精确复制；
-- 同一仓库需要很多 tag 时会自动拆成多条规则（单条策略的过滤器上限是 20）；
+- **一个 tag 一条规则**：tag 过滤器也是 AND，两个 tag 放同一条策略里匹配不到任何东西
+  （2026-10-29 实测：`library/golang` 带 `1.22` + `1.23-alpine` → 任务 0 item；只留一个就正常）。
+  脚本按 tag 数自动拆成 `-t1`、`-t2` … 多条规则；
 - 规则名 = `mirror-<上游>-<仓库>-tN`，删规则/endpoint 脚本**不做**（避免误删），要删在 Harbor UI 里删。
 - **删规则前先停掉没结束的执行**，否则 Harbor 报 `contains executions that aren't in final status`。
   接口是 `PUT /api/v2.0/replication/executions/<id>` + `{"status":"Stopped"}`（**PATCH 会 405**）。

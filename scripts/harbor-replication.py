@@ -7,8 +7,8 @@
   * 落点约定是 ``<harbor>/<上游主机>/<仓库>``，也就是「一个上游一个项目」，
     所以规则的 ``dest_namespace`` = 上游主机名，``dest_namespace_replace_count`` = 0
     （默认的 -1 会把源路径第一段替换掉）；
-  * Harbor 的资源过滤器是 **AND** 语义：一条规则里放两个 name 过滤器 = 什么都匹配不到，
-    因此本脚本**一个仓库一条规则**。
+  * Harbor 的资源过滤器是 **AND** 语义：一条规则里放两个 name（或两个 tag）过滤器
+    = 什么都匹配不到，因此本脚本**一个仓库 + 一个 tag 一条规则**。
 
 用法（在能访问 Harbor 的机器上跑，Python 3.8+，只用标准库）：
     export HARBOR_URL=http://192.168.31.80:30002
@@ -123,8 +123,9 @@ REGISTRY_TYPES = {
     'registry.istio.io': ('docker-registry', 'https://registry.istio.io'),
 }
 
-# Harbor 单条策略的过滤器上限（实测 20；一个 name + 19 个 tag 是安全的）
-MAX_FILTERS = 20
+# ⚠️ Harbor 的过滤器是 **AND** 语义，tag 也一样：一条策略里放两个 tag 过滤器 = 什么都匹配不到
+#    （2026-10-29 实测：library/golang 带 1.22 + 1.23-alpine 两个 tag → 任务里 0 item；
+#      只留 1.22 → 1 item 正常复制）。所以**一个 tag 一条规则**。
 
 
 class Harbor:
@@ -306,12 +307,11 @@ def build_policies(upstream):
     policies = []
     for repo, tags in sorted(pinned.items()):
         tags = sorted(set(tags))
-        room = MAX_FILTERS - 1
-        for i in range(0, len(tags), room):
-            chunk = tags[i:i + room]
+        # ⚠️ 一个 tag 一条规则：过滤器是 AND，两个 tag 放一起匹配不到任何东西
+        for i, tag in enumerate(tags):
             policies.append(make_policy(upstream, repo,
-                                        [{'type': 'tag', 'value': t} for t in chunk],
-                                        index=0 if i == 0 else i // room + 1))
+                                        [{'type': 'tag', 'value': tag}],
+                                        index=i))
     for repo in sorted(set(dynamic)):
         # 版本在创建时才定：复制全部 tag
         policies.append(make_policy(upstream, repo, [{'type': 'tag', 'value': '*'}], index=0))
