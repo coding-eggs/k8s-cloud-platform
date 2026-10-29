@@ -47,6 +47,45 @@ const form = reactive({
   immutable: false,
 })
 
+// ---------- 值：从本地文件导入（证书/私钥整段粘贴的替代） ----------
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const pendingRowIdx = ref(-1)
+
+function pickFile(idx: number): void {
+  pendingRowIdx.value = idx
+  const el = fileInputRef.value
+  if (!el) return
+  el.value = '' // 清空才能连续选同一个文件
+  el.click()
+}
+
+function readAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
+async function onFileChosen(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  const idx = pendingRowIdx.value
+  pendingRowIdx.value = -1
+  if (!file || idx < 0) return
+  const row = form.rows[idx]
+  if (!row) return
+  try {
+    row.value = await readAsText(file)
+    // 空 Key 用文件名兜底：TLS 的 key 本来就叫 tls.crt / tls.key
+    if (!row.key.trim()) row.key = file.name
+    ElMessage.success(`已导入「${file.name}」`)
+  } catch {
+    ElMessage.error(`读取文件「${file.name}」失败`)
+  }
+}
+
 // ---------- 编辑回填 ----------
 const detailState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
@@ -183,10 +222,30 @@ const contextDesc = computed(() => {
             <el-form-item label="data">
               <div class="kv-editor">
                 <div v-for="(row, idx) in form.rows" :key="idx" class="kv-row">
-                  <el-input v-model="row.key" placeholder="Key（如 username）" class="kv-key" :disabled="dataLocked || readOnly" />
-                  <el-input v-model="row.value" type="password" show-password placeholder="Value（明文提交，由 apiserver 加密存储）" :disabled="dataLocked || readOnly" />
-                  <el-button link type="danger" :disabled="(dataLocked || readOnly) || form.rows.length <= 1" @click="form.rows.splice(idx, 1)">删除</el-button>
+                  <div class="kv-row-head">
+                    <el-input v-model="row.key" placeholder="Key（如 username）" class="kv-key" :disabled="dataLocked || readOnly" />
+                    <div class="kv-actions">
+                      <el-button link type="primary" :disabled="dataLocked || readOnly" @click="pickFile(idx)">导入文件</el-button>
+                      <el-button link type="danger" :disabled="(dataLocked || readOnly) || form.rows.length <= 1" @click="form.rows.splice(idx, 1)">删除</el-button>
+                    </div>
+                  </div>
+                  <el-input
+                    v-model="row.value"
+                    type="textarea"
+                    :autosize="{ minRows: 1, maxRows: 10 }"
+                    spellcheck="false"
+                    class="kv-value"
+                    placeholder="Value（明文提交，由 apiserver 加密存储）；证书/私钥可整段粘贴，或点右上「导入文件」"
+                    :disabled="dataLocked || readOnly"
+                  />
                 </div>
+                <input
+                  ref="fileInputRef"
+                  type="file"
+                  hidden
+                  accept=".crt,.cer,.pem,.key,.json,.txt,.yaml,.yml,text/*,application/json"
+                  @change="onFileChosen"
+                />
                 <el-button class="add-row-btn" plain :disabled="dataLocked || readOnly" @click="form.rows.push({ key: '', value: '' })">+ 添加键值对</el-button>
               </div>
             </el-form-item>
@@ -232,17 +291,35 @@ const contextDesc = computed(() => {
   width: 100%;
 }
 .kv-editor {
-  width: 60rem;
+  width: 100%;
 }
 .kv-row {
+  margin-bottom: 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.kv-row-head {
   display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
   align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 .kv-key {
   width: 260px;
   flex-shrink: 0;
+}
+/* 长值（证书/私钥/JSON）按原样换行编辑，等宽字体与详情抽屉的 .kv-value 保持一致 */
+.kv-value :deep(.el-textarea__inner) {
+  font-family: Consolas, 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.kv-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  margin-left: auto;
 }
 .add-row-btn {
   width: auto;
