@@ -7,7 +7,9 @@
  * 前端再做一遍就是第二个真相源。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import type { Component } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Link, Lock, Platform, Share } from '@element-plus/icons-vue'
 import { credentialApi, registryApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
@@ -33,14 +35,38 @@ const error = ref('')
 
 const selected = computed(() => warehouses.value.find((w) => w.id === selectedId.value) ?? null)
 
+/** 左栏每行的徽标：一眼看出这是谁的仓库、能不能动 */
+type Badge = { text: string; tag: 'primary' | 'success' | 'warning'; color: string; icon: Component }
+
+function badgeOf(w: RegistryWarehouse): Badge {
+  if (w.origin === 'INSTALLED') {
+    return { text: '平台', tag: 'primary', color: 'var(--el-color-primary)', icon: Platform }
+  }
+  if (w.origin === 'BUILTIN') {
+    return { text: '公共', tag: 'success', color: 'var(--el-color-success)', icon: Share }
+  }
+  // 凭据行：Docker Hub 是自己的私有账号，外部 Harbor 是别人的仓库 —— 两者都不叫"公共"
+  return w.kind === 'DOCKER'
+    ? { text: '私有', tag: 'warning', color: 'var(--el-color-warning)', icon: Lock }
+    : { text: '外部', tag: 'warning', color: 'var(--el-color-warning)', icon: Link }
+}
+
+/** 左栏渲染用的行：仓库 + 它算好的徽标（每行只算一次） */
+const warehouseRows = computed(() => warehouses.value.map((w) => ({ w, badge: badgeOf(w) })))
+
 /**
  * 选中的仓库下、当前用户可见的连接（后端已按可见性过滤，这里只按 host 分组）。
- * ⚠️ 必须排除 GIT —— 同主机上的 Git 连接与镜像仓库无关。
+ *
+ * ⚠️ 内置档**恒为空**：它没有凭据可言（spec §3.3）。不清空的话，同 host 的
+ *    「私有 Docker Hub 账号」（endpoint 也是 docker.io）会被挂到「公共」这一行下面，
+ *    浏览时还会拿私有 token 去翻 —— 结果在「公共」里看得到自己的私有仓库（2026-10-29 实报）。
+ * ⚠️ 也必须排除 GIT —— 同主机上的 Git 连接与镜像仓库无关。
  */
-const selectedConnections = computed(() =>
-  connections.value.filter(
-    (c) => c.type !== 'GIT' && c.host === (selected.value?.host ?? ''),
-  ))
+const selectedConnections = computed(() => {
+  const w = selected.value
+  if (!w || w.origin === 'BUILTIN') return []
+  return connections.value.filter((c) => c.type !== 'GIT' && c.host === w.host)
+})
 
 /** 浏览用哪条连接：优先项目级 robot（它按项目收窄），否则第一条启用的 */
 const browseCredential = computed(() =>
@@ -252,9 +278,10 @@ async function loadDetail(): Promise<void> {
 
 /** 当前浏览用的来源 id；没有可用来源（例如装了 Harbor 但一条凭据都没有）时为空串 */
 function browseId(): string {
-  const c = browseCredential.value
-  if (c) return c.id
-  return selected.value?.origin === 'BUILTIN' ? selectedId.value : ''
+  // ⚠️ 内置档必须**先**判：它的 host 与「私有 Docker Hub 账号」同为 docker.io，
+  //    先走 browseCredential 就会拿私有 token 去翻公共档（看到自己的私有仓库）。
+  if (selected.value?.origin === 'BUILTIN') return selectedId.value
+  return browseCredential.value?.id ?? ''
 }
 
 /** 有没有东西可浏览 —— 没有就别渲染浏览块，免得点一下报「连接不存在」 */
@@ -299,23 +326,24 @@ onMounted(loadWarehouses)
 
     <div class="registry-body" v-loading="loading">
       <aside class="wh-list">
-        <div v-for="w in warehouses" :key="w.id"
-             class="wh-item" :class="{ active: w.id === selectedId }"
-             @click="selectedId = w.id">
-          <div class="wh-name">
-            {{ w.displayName }}
-            <el-tag size="small"
-                    :type="w.origin === 'INSTALLED' ? 'primary'
-                      : w.origin === 'BUILTIN' ? 'info' : 'warning'">
-              {{ w.origin === 'INSTALLED' ? '平台' : w.origin === 'BUILTIN' ? '公共' : '外部' }}
-            </el-tag>
+        <div v-for="row in warehouseRows" :key="row.w.id"
+             class="wh-item" :class="{ active: row.w.id === selectedId }"
+             @click="selectedId = row.w.id">
+          <div class="wh-icon" :style="{ color: row.badge.color }">
+            <el-icon :size="18"><component :is="row.badge.icon" /></el-icon>
           </div>
-          <div class="wh-host">{{ w.host }}</div>
-          <div class="wh-meta">
-            <span>{{ w.kind === 'DOCKER' ? 'Docker' : 'Harbor' }}</span>
-            <span v-if="w.connectionCount">{{ w.connectionCount }} 个连接</span>
-            <span v-if="w.projectCount">{{ w.projectCount }} 个项目</span>
-            <el-tag v-if="w.health === 'ERROR'" size="small" type="danger">异常</el-tag>
+          <div class="wh-main">
+            <div class="wh-name">
+              {{ row.w.displayName }}
+              <el-tag size="small" :type="row.badge.tag">{{ row.badge.text }}</el-tag>
+            </div>
+            <div class="wh-host">{{ row.w.host }}</div>
+            <div class="wh-meta">
+              <span>{{ row.w.kind === 'DOCKER' ? 'Docker' : 'Harbor' }}</span>
+              <span v-if="row.w.connectionCount">{{ row.w.connectionCount }} 个连接</span>
+              <span v-if="row.w.projectCount">{{ row.w.projectCount }} 个项目</span>
+              <el-tag v-if="row.w.health === 'ERROR'" size="small" type="danger">异常</el-tag>
+            </div>
           </div>
         </div>
         <el-empty v-if="!loading && !warehouses.length" description="还没有可用的镜像仓库" />
@@ -325,6 +353,8 @@ onMounted(loadWarehouses)
         <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" />
 
         <template v-if="selected">
+          <!-- 内置档没有连接（spec §3.3），整块不渲染 -->
+          <template v-if="selected.origin !== 'BUILTIN'">
           <div class="block-head">
             <h3>连接</h3>
             <div>
@@ -370,6 +400,7 @@ onMounted(loadWarehouses)
               </template>
             </el-table-column>
           </el-table>
+          </template>
 
           <template v-if="projects.length">
             <h3>项目</h3>
@@ -506,9 +537,30 @@ onMounted(loadWarehouses)
   padding: 10px 12px;
   border-radius: 6px;
   cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.wh-item:hover {
+  background: var(--el-fill-color-lighter);
 }
 .wh-item.active {
   background: var(--el-color-primary-light-9);
+}
+.wh-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--el-fill-color-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+}
+.wh-main {
+  flex: 1;
+  min-width: 0;
 }
 .wh-name {
   font-weight: 600;
