@@ -30,6 +30,14 @@ public class CredentialView {
     @Schema(description = "host 基址")
     private String endpoint;
 
+    /**
+     * endpoint 归一后的 {@code host[:port]}（去 scheme、去路径）。
+     *
+     * <p>派生字段、不含任何凭据内容 —— 镜像仓库页靠它把连接挂到左栏的仓库行上，
+     * 省得前端再实现一遍归一规则（那就成了第二个真相源）。
+     */
+    private String host;
+
     /** BASIC */
     private String authType;
 

@@ -5,10 +5,12 @@ import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.models.CredentialCreateRequest;
 import com.coding.platformapi.models.CredentialIdRequest;
+import com.coding.platformapi.models.CredentialListRequest;
 import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialTestResult;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
+import com.coding.platformapi.security.AuthContext;
 import com.coding.platformapi.services.CredentialService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -21,13 +23,13 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 凭据管理（平台管理面，仅 admin）。本层只做 HTTP 绑定与 {@link ResponseData} 包装；
+ * 凭据管理。本层只做 HTTP 绑定与 {@link ResponseData} 包装；
  * 业务在 {@link CredentialService}（分层约定见 docs/development/backend-layering.md）。
  *
- * <p>权限行见 V2026_10_13_3：{@code /credential/list} 与 {@code /credential/test} →
- * {@code platform:credential:read}；create / update / delete → {@code platform:credential:write}。
- * **五个端点都必须有行**，否则启动期交叉校验拒启。测试连接与列表**有意共用 read**
- * （能看即能测，spec §6.2）。
+ * <p>权限行见 V2026_10_13_3 与 V2026_10_29_3：五个端点各有两条行 ——
+ * {@code platform:credential:*} 给平台视图的管理员，{@code tenant:credential:*} 给租户
+ * （同端点多码，授权 ANY-of）。**五个端点都必须有行**，否则启动期交叉校验拒启。
+ * 测试连接与列表**有意共用 read**（能看即能测，spec §6.2）。
  *
  * <p><b>审计只标写操作与测试连接</b>：列表是纯读，不标。测试连接要标 ——
  * 它真的解密凭据并出站打对端，是本批唯一的「使用」路径（spec §7）。
@@ -46,10 +48,17 @@ public class CredentialController {
 
     private final CredentialService credentialService;
 
-    @Operation(summary = "凭据列表", description = "按 type、name 排序；**不含凭据内容**，只有是否已配置与指纹")
+    /** 租户帽：列表与写操作的归属都按调用者判（与流水线连接可见性同一套） */
+    private final AuthContext auth;
+
+    @Operation(summary = "凭据列表",
+            description = "按 type、name 排序；**不含凭据内容**。租户只看得到自己可见的那些"
+                    + "（自己的 + 平台级手工连接；平台共享 Harbor robot 不下发）")
     @PostMapping("/list")
-    public ResponseData<List<CredentialView>> list() {
-        return new ResponseData<>(credentialService.list());
+    public ResponseData<List<CredentialView>> list(
+            @RequestBody(required = false) CredentialListRequest request) {
+        return new ResponseData<>(credentialService.list(
+                request == null ? null : request.getType(), auth.hatTenantId()));
     }
 
     @Operation(summary = "测试连接",

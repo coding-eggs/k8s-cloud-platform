@@ -19,6 +19,7 @@ import com.coding.platformapi.models.CredentialTestResult;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
 import com.coding.platformapi.registry.CredentialRef;
+import com.coding.platformapi.registry.HarborInstallLocator;
 import com.coding.platformapi.registry.ProbeSpec;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import lombok.RequiredArgsConstructor;
@@ -102,10 +103,21 @@ public class CredentialService {
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     public List<CredentialView> list() {
+        return list(null, null);
+    }
+
+    /**
+     * @param type        只要这一类型；null = 全类型
+     * @param hatTenantId 请求的租户帽；null = 平台管理员（全量）
+     */
+    public List<CredentialView> list(String type, String hatTenantId) {
         Map<String, String> names = tenantMapper.listAll().stream()
                 .collect(Collectors.toMap(PlatformTenant::getId, PlatformTenant::getName,
                         (a, b) -> a));
-        List<CredentialView> out = mapper.selectAll().stream().map(CredentialService::toView).toList();
+        List<CredentialView> out = mapper.selectAll().stream()
+                .filter(c -> type == null || type.equals(c.getType()))
+                .filter(c -> visibleTo(c, hatTenantId))
+                .map(CredentialService::toView).toList();
         for (CredentialView v : out) {
             v.setTenantName(v.getTenantId() == null ? null : names.get(v.getTenantId()));
         }
@@ -384,6 +396,7 @@ public class CredentialService {
         v.setName(c.getName());
         v.setType(c.getType());
         v.setEndpoint(c.getEndpoint());
+        v.setHost(HarborInstallLocator.hostOf(c.getEndpoint()));
         v.setAuthType(c.getAuthType());
         v.setHasSecret(StringUtils.hasText(c.getSecretEncrypted()));
         v.setFingerprint(c.getSecretFingerprint());
