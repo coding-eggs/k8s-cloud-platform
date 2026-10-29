@@ -21,14 +21,12 @@ public final class PipelineBaseImages {
     /** mvn —— Java 构建节点的默认，也是 {@code java-build / java-test} 预设的镜像 */
     public static final String MAVEN = DOCKER + "/library/maven:3.9-eclipse-temurin-21";
 
-    /** {@code go-build / go-test} 预设用的 */
-    public static final String GOLANG = DOCKER + "/library/golang:1.22";
-    /** Go 构建节点的默认（与预设的 tag 不同，历史原因；两个都得搬） */
-    public static final String GOLANG_ALPINE = DOCKER + "/library/golang:1.23-alpine";
+    /** Go：预设与节点默认**统一**用 alpine（体积小、只有 linux 平台，复制/拉取都省事） */
+    public static final String GOLANG = DOCKER + "/library/golang:1.23-alpine";
 
     /** {@code node-build / node-test} 预设用的 */
     public static final String NODE = DOCKER + "/library/node:20";
-    /** Node 构建节点的默认（同上，tag 不同） */
+    /** Node 构建节点的默认（tag 与预设不同，历史原因；两个都在 Harbor 里） */
     public static final String NODE_ALPINE = DOCKER + "/library/node:20-alpine";
 
     /** Python 构建节点的默认 */

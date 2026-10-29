@@ -54,8 +54,8 @@ IMAGES = {
         'library/busybox:latest',
         # 流水线预设节点的默认镜像（BuildStep / BuildPreset / GitCloneNode / ImagePushNode 里写死的那几个）
         'alpine/git:2.45.2',
-        'library/golang:1.22',        # BuildPreset 用（go-build / go-test）
-        'library/golang:1.23-alpine',  # GoBuildNode 的默认
+        # go 只有这一个：预设与节点默认统一用 alpine（1.22 那个又大又慢，已弃用）
+        'library/golang:1.23-alpine',
         'library/maven:3.9-eclipse-temurin-21',
         'library/node:20',            # BuildPreset 用（node-build / node-test）
         'library/node:20-alpine',     # NodeBuildNode 的默认

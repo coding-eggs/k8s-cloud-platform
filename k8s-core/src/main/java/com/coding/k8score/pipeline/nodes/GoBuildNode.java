@@ -20,7 +20,7 @@ import java.util.List;
 @Component
 public class GoBuildNode implements PipelineNode {
 
-    private static final String DEFAULT_IMAGE = PipelineBaseImages.GOLANG_ALPINE;
+    private static final String DEFAULT_IMAGE = PipelineBaseImages.GOLANG;
     private static final String DEFAULT_COMMAND = "go build ./...";
 
     /** 见类注释：默认值不是可有可无的美化，是这个集群能不能拉到依赖的分界线。 */

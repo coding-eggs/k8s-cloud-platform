@@ -203,8 +203,8 @@ Endpoint 地址：
 
 > **流水线预设节点的默认镜像也指向 Harbor**（`k8score.pipeline.PipelineBaseImages`）。
 > 涉及：git 克隆（`alpine/git`）、构建并推送（`quay.io/buildah/stable`）、四个构建节点的默认
-> （maven / golang / node / python）以及 Java/Go/Node 的预设 —— 注意**预设和节点默认的 tag 不一样**
-> （`golang:1.22` vs `golang:1.23-alpine`、`node:20` vs `node:20-alpine`），两个都得搬。
+> （maven / golang / node / python）以及 Java/Go/Node 的预设 —— node 的预设与节点默认 tag 不同
+> （`node:20` vs `node:20-alpine`），两个都得搬；go 已经统一到 `golang:1.23-alpine`。
 >
 > 这些是**写死的 Harbor 地址**，渲染期不做任何改写：用户改了镜像就用他填的那个（镜像框带候选补全，
 > 候选来自**镜像仓库连接**，与工作负载的镜像框是同一套 `useImageSuggest`），不会被强行改回 Harbor。
