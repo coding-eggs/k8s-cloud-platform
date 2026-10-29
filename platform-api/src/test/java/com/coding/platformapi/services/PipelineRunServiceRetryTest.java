@@ -33,8 +33,10 @@ class PipelineRunServiceRetryTest {
     private final K8sPipelineClient k8s = mock(K8sPipelineClient.class);
     private final CredentialService credentials = mock(CredentialService.class);
     private final NamespaceAccessGuard access = mock(NamespaceAccessGuard.class);
+    private final com.coding.platformapi.security.AuthContext auth =
+            mock(com.coding.platformapi.security.AuthContext.class);
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, logMapper, k8s, credentials, access);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, access, auth);
 
     private final PipelineRunContext ctx = new PipelineRunContext("c1", "ns1", "t1");
 

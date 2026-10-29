@@ -514,11 +514,17 @@ public class CredentialService {
         }
         if (c.getUsableByPipelines() == null || c.getUsableByPipelines() != 1) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                    "该连接未授权在流水线里使用：" + c.getName());
+                    "该连接未授权在流水线里使用：" + c.getName()
+                            + "（凭据上没有开「允许流水线使用」）");
         }
         if (!visibleTo(c, hatTenantId)) {
+            // 两种拒因给不同的话：这条路径上「平台共享 HARBOR 凭据」是最常见的撞墙方式，
+            // 只说"未授权"会让人以为是自己漏了勾选（2026-10-29 实报）
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                    "该连接未授权在流水线里使用：" + c.getName());
+                    "该连接未授权在流水线里使用：" + c.getName()
+                            + ("HARBOR".equals(c.getType()) && c.getTenantId() == null
+                                    ? "（平台共享的 Harbor 凭据仅管理员可用；租户请用自己项目的那条 Harbor 连接）"
+                                    : "（这条连接属于别的租户）"));
         }
     }
 

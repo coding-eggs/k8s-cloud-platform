@@ -76,17 +76,24 @@ public class PipelineRunService {
     private final K8sPipelineClient k8s;
     private final CredentialService credentials;
     private final NamespaceAccessGuard access;
+    /**
+     * 只用来取「**调用者是谁**」—— 连接授权按它判（见 {@link #resolveConnections}）。
+     * K8s 侧的身份仍然用 {@code ctx.tenantId()}，两者不能混。
+     */
+    private final com.coding.platformapi.security.AuthContext auth;
 
     public PipelineRunService(PlatformPipelineRunMapper runMapper,
                               PlatformPipelineRunLogMapper logMapper,
                               K8sPipelineClient k8s,
                               CredentialService credentials,
-                              NamespaceAccessGuard access) {
+                              NamespaceAccessGuard access,
+                              com.coding.platformapi.security.AuthContext auth) {
         this.runMapper = runMapper;
         this.logMapper = logMapper;
         this.k8s = k8s;
         this.credentials = credentials;
         this.access = access;
+        this.auth = auth;
     }
 
     /** 兼容旧调用点：不屏蔽任何节点。 */
@@ -112,7 +119,8 @@ public class PipelineRunService {
 
         // ① 解析连接：**逐条校授权 + 解密**（绕过前端直接打接口也一样）。
         //    只解析**本次真要跑**的子画布 —— 被屏蔽节点的连接不要求授权（它这次不跑）。
-        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(toRun, ctx.tenantId());
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections =
+                resolveConnections(toRun, auth.hatTenantId());
 
         // ② 先生成名字：**幂等键从源头就有**
         String runName = generateRunName(pipeline.getName());
@@ -219,7 +227,8 @@ public class PipelineRunService {
         Set<String> toRun = finallyTarget ? Set.of(nodeId) : plan.runNodeIds();
         String trimmed = PipelineCanvasMask.trim(parent.getCanvasJson(), toRun,
                 finallyTarget ? nodeId : null);
-        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections = resolveConnections(trimmed, ctx.tenantId());
+        List<com.coding.common.models.pipeline.PipelineConnectionRef> connections =
+                resolveConnections(trimmed, auth.hatTenantId());
 
         Set<String> reused = new LinkedHashSet<>();
         status.forEach((id, st) -> {
@@ -679,12 +688,19 @@ public class PipelineRunService {
      *
      * <p>画布是平台自己的数据（`{nodes:[{id,type,config}]}`），不是 Tekton 的结构 ——
      * 所以在这里读懂它是合适的，与「不碰 fabric8」那条边界无关。
+     *
+     * @param callerTenantId <b>调用者</b>的租户帽（{@code auth.hatTenantId()}），**不是**
+     *     {@code ctx.tenantId()}。后者是「这次以哪个租户身份操作 K8s」，代管轨下它是请求里带的
+     *     目标租户，拿它判凭据可见性会和另外两处打架：下拉（{@code /pipeline/registry-connections}）
+     *     与预览都用调用者身份，于是管理员能选中 `Harbor platform@…` 却在运行期被判未授权
+     *     （2026-10-29 实报：平台自己那条 `platform-system` 流水线跑不起来）。
+     *     租户自己跑时两者本来就相等，改判据不影响租户边界。
      */
     private List<com.coding.common.models.pipeline.PipelineConnectionRef> resolveConnections(
-            String canvasJson, String tenantId) {
+            String canvasJson, String callerTenantId) {
         List<com.coding.common.models.pipeline.PipelineConnectionRef> out = new ArrayList<>();
         for (PipelineCanvasRefs.Ref ref : PipelineCanvasRefs.scan(canvasJson)) {
-            out.add(credentials.resolveForPipeline(ref.id(), ref.expectedType(), tenantId));
+            out.add(credentials.resolveForPipeline(ref.id(), ref.expectedType(), callerTenantId));
         }
         return out;
     }

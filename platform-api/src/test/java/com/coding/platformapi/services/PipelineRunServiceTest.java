@@ -40,8 +40,11 @@ class PipelineRunServiceTest {
 
     private final PlatformPipelineRunLogMapper logMapper = mock(PlatformPipelineRunLogMapper.class);
 
+    private final com.coding.platformapi.security.AuthContext auth =
+            mock(com.coding.platformapi.security.AuthContext.class);
+
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, logMapper, k8s, credentials, access);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, access, auth);
 
     private final PipelineRunContext ctx = new PipelineRunContext("c1", "ns1", "t1");
 
@@ -99,9 +102,29 @@ class PipelineRunServiceTest {
     @Test
     void everyConnectionTheCanvasReferencesMustBeAuthorized() {
         // ⭐ Review Focus #4：绕过前端直接打接口，引用一条没被授权的连接也要被拒
+        when(auth.hatTenantId()).thenReturn("t1");   // 租户自己跑：按他自己的租户判
         svc.run(pipeline(canvas("conn-1")), "alice", ctx);
 
         verify(credentials).resolveForPipeline("conn-1", "GIT", "t1");
+    }
+
+    /**
+     * 平台管理员（无租户帽）跑平台命名空间里的流水线：请求里带的「生效租户」是 t1
+     * （前端顶栏选的），但**连接可见性要按调用者判**。
+     *
+     * <p>2026-10-29 实报：`Harbor platform@<集群>` 这种平台共享凭据在下拉与预览里都出现
+     * （那两处用的就是 hat=null），运行期却按目标租户判 → 「该连接未授权在流水线里使用」。
+     * 三处口径必须一致，否则用户配得出来、跑不起来。
+     */
+    @Test
+    void connectionVisibilityFollowsTheCallerNotTheTargetTenant() {
+        when(auth.hatTenantId()).thenReturn(null);   // 平台管理员
+
+        svc.run(pipeline(canvas("harbor-platform")), "admin", ctx);   // ctx 的租户是 t1
+
+        ArgumentCaptor<String> tenantId = ArgumentCaptor.forClass(String.class);
+        verify(credentials).resolveForPipeline(eq("harbor-platform"), any(), tenantId.capture());
+        assertThat(tenantId.getValue()).as("按调用者（无租户帽）判，而不是 ctx 里的 t1").isNull();
     }
 
     @Test
@@ -121,6 +144,7 @@ class PipelineRunServiceTest {
         String withImage = """
                 {"nodes":[{"id":"build","type":"image","config":{"registryConnectionId":"reg-9"}}],
                  "edges":[]}""";
+        when(auth.hatTenantId()).thenReturn("t1");
 
         svc.run(pipeline(withImage), "alice", ctx);
 
@@ -703,6 +727,7 @@ class PipelineRunServiceTest {
                   {"id":"a","type":"git","config":{"connectionId":"conn-1"}},
                   {"id":"b","type":"git","config":{"connectionId":"conn-2"}}
                 ],"edges":[]}""";
+        when(auth.hatTenantId()).thenReturn("t1");
 
         svc.run(pipeline(canvas), "alice", ctx, List.of("b"));
 
