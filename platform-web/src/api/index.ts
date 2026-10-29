@@ -91,6 +91,7 @@ import type {
   RbacTemplate,
   RegistryBrowseResult,
   RegistryConnectionView,
+  RegistryWarehouse,
   RegistrySuggestResponse,
   ResourceContext,
   SecretRefOption,
@@ -864,6 +865,8 @@ export const credentialApi = {
 export const registryApi = {
   /** 窄投影，浏览页的连接下拉 */
   connections: () => http.post<never, RegistryConnectionView[]>('/registry/connections'),
+  /** 仓库清单：安装记录 ∪ 凭据行 ∪ 内置档，按 host 聚合的只读视图 */
+  warehouses: () => http.post<never, RegistryWarehouse[]>('/registry/warehouses'),
   /** path 为空 = 第一层 */
   browse: (credentialId: string, path: string[]) =>
     http.post<never, RegistryBrowseResult>('/registry/browse', { credentialId, path }),

@@ -2278,6 +2278,24 @@ export interface RegistryConnectionView {
   endpoint: string
 }
 
+/**
+ * 镜像仓库页左栏的一行。一个 host[:port]（内置档 id 是 builtin:dockerhub）。
+ * 后端把「安装记录 ∪ 凭据行 ∪ 内置档」聚合好，前端不再做任何推导。
+ */
+export interface RegistryWarehouse {
+  id: string
+  host: string
+  kind: 'HARBOR' | 'DOCKER'
+  origin: 'INSTALLED' | 'CREDENTIAL' | 'BUILTIN'
+  displayName: string
+  clusterId?: string | null
+  exposeMode?: string | null
+  connectionCount: number
+  projectCount: number
+  health: 'OK' | 'ERROR'
+  message?: string | null
+}
+
 /** 浏览结果的一节面包屑。path 是累积路径，点击即回到该层。 */
 export interface RegistryCrumb {
   label: string
