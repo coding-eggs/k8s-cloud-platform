@@ -136,20 +136,20 @@ class ChartImageOverlayTest {
     }
 
     /**
-     * calico **有意不纳管**：它的组件镜像由 tigera-operator 运行时决定（chart 里没有），
-     * 要换前缀只能写 {@code Installation.spec.registry}，而那会让 operator 一次性滚动重建
-     * calico-node / typha / kube-controllers —— 单节点集群上 CNI 一断，新 Pod 起不来，
-     * helm --wait 超时后平台回滚，改动被原样撤回（2026-10-29 实测，详见 {@code ChartImagePins}）。
+     * calico **整份 chart 不参与镜像改写**：它是 CNI 本身，镜像必须能先于镜像仓库可用。
+     * 改 {@code Installation.spec.registry} 会让 operator 一次性滚动重建 calico-node 等，
+     * 单节点集群上 CNI 一断，新 Pod 起不来，helm --wait 超时后平台回滚，改动被原样撤回
+     * （2026-10-29 实测，详见 {@code ChartImagePins}）。
      *
      * <p>这条断言是**绊线**：真要重新纳管，会先在这里红一次，提醒回去看那段原因。
      */
     @Test
-    void calicoIsDeliberatelyNotMirrored() throws Exception {
+    void calicoChartIsNotRewrittenAtAll() throws Exception {
         Map<String, Object> overlay = ChartImageOverlay.of(
                 Path.of("src/main/resources/charts/components/tigera-operator/v3.33.0/chart"),
                 "harbor.ackcp.cloud", "");
 
-        assertThat(overlay).doesNotContainKey("installation");
+        assertThat(overlay).isEmpty();   // operator 的 Deployment 镜像也一起保持官方
     }
 
     /** 镜像在模板里拼死的两个 chart：靠一张钉死的表补上（表与模板字面量由护栏测试对齐）。 */

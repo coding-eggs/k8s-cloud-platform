@@ -40,6 +40,9 @@ public final class ChartImageOverlay {
         if (chartDir == null || host == null || host.isBlank()) {
             return Map.of();
         }
+        if (ChartImagePins.skipRewrite(chartDir)) {
+            return Map.of();   // 自举类组件（calico）：镜像固定走上游，一个字都不改
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         mergeInto(out, ownOverlay(chartDir, host, project));
 

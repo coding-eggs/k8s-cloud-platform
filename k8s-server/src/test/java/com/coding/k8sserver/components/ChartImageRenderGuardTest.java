@@ -107,7 +107,7 @@ class ChartImageRenderGuardTest {
                 .isGreaterThan(30);
     }
 
-    /** 顶层 chart：{@code charts/<kind>/<name>/<version>/chart}，harbor 自己排除 */
+    /** 顶层 chart：{@code charts/<kind>/<name>/<version>/chart}，自举类与 harbor 自己排除 */
     private static List<Path> chartDirs() throws Exception {
         try (Stream<Path> files = Files.walk(CHARTS, 5)) {
             return files
@@ -115,7 +115,10 @@ class ChartImageRenderGuardTest {
                     .map(Path::getParent)
                     .filter(p -> {
                         String path = CHARTS.relativize(p).toString().replace('\\', '/');
-                        return path.split("/").length == 4 && !path.contains("/harbor/");
+                        return path.split("/").length == 4
+                                // harbor 永远官方；calico 是 CNI（自举），整份不改写
+                                && !path.contains("/harbor/")
+                                && !path.contains("/tigera-operator/");
                     })
                     .sorted()
                     .toList();

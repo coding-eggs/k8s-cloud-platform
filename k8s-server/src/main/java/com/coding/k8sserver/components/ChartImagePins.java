@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 镜像**只存在于模板里**的那几份 chart 的兜底表。
@@ -31,6 +32,19 @@ final class ChartImagePins {
 
     /** values 里的路径 ← 平台 Harbor 前缀（{@code <host>/<project>}），给「registry 单独一个键」的 chart 用 */
     private record RegistryPin(String path) {
+    }
+
+    /**
+     * 整份 chart **不做任何改写** —— 镜像必须能先于镜像仓库可用的组件（自举）。
+     *
+     * <p>目前只有 calico：它是 CNI 本身，换成 Harbor 地址后一旦安装或升级中途失败，
+     * 整个节点的网络都起不来（详见下面那段时间线）。
+     */
+    private static final Set<String> NO_REWRITE = Set.of("components/tigera-operator/v3.33.0");
+
+    /** 这份 chart 是否整份跳过镜像改写（含 values 与模板里写死的镜像） */
+    static boolean skipRewrite(Path chartDir) {
+        return NO_REWRITE.contains(chartKey(chartDir));
     }
 
     /**
