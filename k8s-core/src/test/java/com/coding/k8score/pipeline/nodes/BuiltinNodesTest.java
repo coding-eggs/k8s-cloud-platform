@@ -175,6 +175,22 @@ class BuiltinNodesTest {
     }
 
     @Test
+    void imageReferenceNeverCarriesTheEndpointScheme() {
+        // ⭐ 2026-10-29 真跑撞到：Harbor 的 endpoint 改成 `https://harbor.ackcp.cloud` 之后，
+        //    目标镜像被拼成 `https://harbor.ackcp.cloud/platform/k8s-server:<tag>`，
+        //    buildah 直接 `Error: tag …: invalid reference format`（镜像引用里没有 scheme 这一层）。
+        //    连接地址是 URL，镜像引用只要 host —— 两回事，拼的时候必须剥掉 scheme 与尾斜杠。
+        RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "platform/k8s-server",
+                        "tagSource", "time"),
+                "reg-1", "https://harbor.ackcp.cloud/"));
+
+        String script = step.steps().get(0).getScript();
+        assertThat(script).contains("harbor.ackcp.cloud/platform/k8s-server");
+        assertThat(script).doesNotContain("https://");
+    }
+
+    @Test
     void imageNodeRendersABuildahStepWithTheResolvedImageReference() {
         RenderedStep step = new ImagePushNode().render(ctxWithConnection("image",
                 Map.of("registryConnectionId", "reg-1", "imageName", "proj/app",

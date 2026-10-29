@@ -158,7 +158,10 @@ public class ImagePushNode implements PipelineNode {
         String dockerfile = ctx.value("dockerfile").isEmpty() ? "Dockerfile" : ctx.value("dockerfile");
         String context = ctx.value("context").isEmpty() ? "." : ctx.value("context");
 
-        String image = GitCloneNode.shellQuote(registry.endpoint() + "/" + repo);
+        // ⚠️ 用**主机名**而不是 endpoint：endpoint 是 URL（`https://harbor.x`），
+        //    拼进镜像地址就是 `https://harbor.x/proj/app:tag` —— buildah 报 invalid reference format
+        //    （2026-10-29 真跑撞到）。镜像引用里没有 scheme 这一层，见 PipelineConnectionRef#host()。
+        String image = GitCloneNode.shellQuote(registry.host() + "/" + repo);
         String tagPrologue = tagPrologue(ctx.value("tagSource"), ctx.value("fixedTag"),
                 TAG_STAMP.format(ctx.renderedAt()));
 

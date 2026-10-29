@@ -563,15 +563,12 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         return out.toString();
     }
 
-    /** endpoint → host（可能是 `https://gitlab.example.com`，也可能是裸的 `harbor.example.com`）。 */
+    /**
+     * endpoint → host（可能是 `https://gitlab.example.com`，也可能是裸的 `harbor.example.com`）。
+     * <p>实现只有一份，在 {@link PipelineConnectionRef#hostOf} —— 镜像节点拼镜像地址时也要用同一套。
+     */
     static String hostOf(String endpoint) {
-        String e = endpoint == null ? "" : endpoint.trim();
-        int scheme = e.indexOf("://");
-        if (scheme >= 0) {
-            e = e.substring(scheme + 3);
-        }
-        int slash = e.indexOf('/');
-        return slash >= 0 ? e.substring(0, slash) : e;
+        return PipelineConnectionRef.hostOf(endpoint);
     }
 
     /**
