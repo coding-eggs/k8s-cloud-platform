@@ -149,7 +149,8 @@ Endpoint 地址：
 |---|---|
 | `docker.io/istio/pilot`、`docker.io/istio/install-cni`、`docker.io/istio/ztunnel`、`docker.io/istio/proxyv2` | istiod / CNI / ztunnel / 网关与注入的 sidecar（1.31.x）。**proxyv2 容易漏**：gateway 的 Deployment 写的是 `image: auto`，由 istiod 按 `global.hub` 拼成 `<hub>/proxyv2:<tag>` |
 | `quay.io/jetstack/cert-manager-controller`、`-cainjector`、`-webhook`、`-startupapicheck` | cert-manager |
-| `quay.io/tigera/operator` | Calico |
+| `quay.io/tigera/operator` | Calico operator（chart 里的 Deployment） |
+| `quay.io/calico/calico`、`quay.io/calico/node`、`quay.io/calico/third-party-cni-plugins` | Calico **工作负载**（见下方「calico 的镜像不在 chart 里」） |
 | `quay.io/strimzi/operator` + `quay.io/strimzi/kafka` | Strimzi（operator 与 broker） |
 | `docker.io/chrislusf/seaweedfs` | 对象存储 |
 | `ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator` | otel operator |
@@ -172,6 +173,14 @@ Endpoint 地址：
 > **RabbitMQ 用的是 `bitnamilegacy`**：Bitnami 2025 起把历史 tag 挪到了 `bitnamilegacy/*`，
 > 原来的 `bitnami/*` 已 `manifest unknown`。这条覆盖写在
 > `MiddlewareOperatorCatalog` 里，复制规则要照着它配。
+
+> **calico 的镜像不在 chart 里。** tigera-operator 按**编译在二进制里的列表**创建
+> calico-node 等对象，`helm template` 里根本看不到它们（`kubectl get imagesets` 也是空的）。
+> v3.33.0 实际只有三个：`calico/calico`、`calico/node`、`calico/third-party-cni-plugins`
+> —— cni / typha / csi / kube-controllers 在这一版并进了 `calico` 镜像。
+> 整体换前缀只能靠 `Installation.spec.registry`（由 `ChartImagePins` 的 `UpstreamRegistryPin`
+> 注入，值形如 `harbor.ackcp.cloud/quay.io/`，**结尾必须带 `/`**，CRD 要求）。
+> 升级 calico 时先看它到底拉哪些：`kubectl get pods -A -o jsonpath=… | grep calico`，再补 `IMAGES`。
 
 ### 3.3 不受这层改写管的三处
 

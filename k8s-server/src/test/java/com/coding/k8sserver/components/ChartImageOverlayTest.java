@@ -135,6 +135,27 @@ class ChartImageOverlayTest {
         assertThat(name).containsEntry("name", "docker.io/chrislusf/seaweedfs");
     }
 
+    /**
+     * calico 的组件镜像**不由 chart 渲染**——operator 按自己内置的列表（或 ImageSet）创建
+     * DaemonSet/Deployment，helm template 里根本看不到。唯一能整体换前缀的开关是
+     * {@code Installation.spec.registry}，且 CRD 要求**结尾带 {@code /}**：
+     * 拼法是 {@code <registry><imagePath>/<imageName>:<tag>}，默认 imagePath 是 {@code calico/}。
+     */
+    @Test
+    void calicoInstallationGetsTheUpstreamRegistryPrefix() throws Exception {
+        Path chart = Path.of("src/main/resources/charts/components/tigera-operator/v3.33.0/chart");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> blank = (Map<String, Object>)
+                ChartImageOverlay.of(chart, "harbor.ackcp.cloud", "").get("installation");
+        assertThat(blank).containsEntry("registry", "harbor.ackcp.cloud/quay.io/");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> withProject = (Map<String, Object>)
+                ChartImageOverlay.of(chart, "harbor.ackcp.cloud", "platform").get("installation");
+        assertThat(withProject).containsEntry("registry", "harbor.ackcp.cloud/platform/quay.io/");
+    }
+
     /** 镜像在模板里拼死的两个 chart：靠一张钉死的表补上（表与模板字面量由护栏测试对齐）。 */
     @Test
     void pinnedDefaultsCoverTemplateAssembledImages() throws Exception {

@@ -62,6 +62,11 @@ IMAGES = {
         'prom/mysqld-exporter:v0.15.1',
     ],
     'quay.io': [
+        # calico v3.33.0 只有这三个镜像（cni/typha/csi/kube-controllers 在 3.33 里并进了 calico）；
+        # 这些**不在 chart 里**，由 tigera-operator 按内置列表创建，靠 Installation.spec.registry 指过来
+        'calico/calico:v3.33.0',
+        'calico/node:v3.33.0',
+        'calico/third-party-cni-plugins:v3.33.0',
         'jetstack/cert-manager-cainjector:v1.21.2',
         'jetstack/cert-manager-controller:v1.21.2',
         'jetstack/cert-manager-startupapicheck:v1.21.2',

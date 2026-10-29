@@ -43,10 +43,23 @@ final class ChartImagePins {
     private record UpstreamPathPin(String path, String upstreamImage) {
     }
 
+    /**
+     * values 里的路径 ← {@code <harbor 前缀>/<上游主机>/}（**结尾带斜杠**）。
+     *
+     * <p>给「组件镜像由 operator 运行时决定、chart 里根本没有」的 chart 用：calico 的
+     * {@code Installation.spec.registry} 就是这么个整体前缀，CRD 要求以 {@code /} 结尾，
+     * 拼法是 {@code <registry><imagePath>/<imagePath>...}，前缀换了就全换。
+     */
+    private record UpstreamRegistryPin(String path, String upstreamHost) {
+    }
+
     private static final Map<String, List<Object>> PINS = Map.of(
             "components/seaweedfs/4.48.0", List.of(
                     new RegistryPin("image.registry"),
                     new UpstreamPathPin("global.seaweedfs.image.name", "chrislusf/seaweedfs")),
+            // calico：tigera-operator 按内置列表创建 calico-node 等，镜像不进 helm 渲染
+            "components/tigera-operator/v3.33.0", List.of(
+                    new UpstreamRegistryPin("installation.registry", "quay.io")),
             "components/tekton-operator/0.81.2", List.of(
                     new ImagePin("operator.image.repository",
                             "ghcr.io/tektoncd/operator/operator-303303c315a48490ba6517859ef65b77"),
@@ -72,6 +85,9 @@ final class ChartImagePins {
             } else if (pin instanceof UpstreamPathPin path) {
                 ImageReference ref = ImageReference.parsePrefix(path.upstreamImage());
                 put(out, path.path(), ref.registry() + "/" + ref.repository());
+            } else if (pin instanceof UpstreamRegistryPin registry) {
+                put(out, registry.path(),
+                        ImageReference.prefix(host, project) + "/" + registry.upstreamHost() + "/");
             }
         }
         return out;
