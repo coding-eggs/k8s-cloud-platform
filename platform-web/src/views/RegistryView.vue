@@ -407,7 +407,16 @@ onMounted(loadWarehouses)
           <template v-if="projects.length">
             <h3>项目</h3>
             <el-table :data="projects" size="small" stripe>
-              <el-table-column prop="tenantName" label="归属" min-width="120" />
+              <el-table-column label="归属" min-width="150">
+                <template #default="{ row }">
+                  <!-- 公共库 = 平台自己的项目（platform 与各上游镜像项目）；
+                       租户库 = t-<sa>。两者混在一张表里，靠颜色和文字一眼分开 -->
+                  <el-tag size="small" :type="row.tenantId ? 'info' : 'success'">
+                    {{ row.tenantId ? '租户' : '公共' }}
+                  </el-tag>
+                  <span v-if="row.tenantId" class="owner-name">{{ row.tenantName }}</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="projectName" label="项目" min-width="160" />
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
@@ -613,6 +622,9 @@ onMounted(loadWarehouses)
 .sep {
   color: var(--el-text-color-placeholder);
   margin: 0 2px;
+}
+.owner-name {
+  margin-left: 6px;
 }
 </style>
 
