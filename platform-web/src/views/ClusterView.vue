@@ -370,8 +370,9 @@ onMounted(load)
           <el-input v-model="form.imageRegistryHost"
                     placeholder="留空 = 用 Harbor 组件的安装地址（如 harbor.ackcp.cloud）" />
           <div class="form-hint">
-            组件/中间件的镜像从这个仓库拉。留空时按「Harbor 组件安装记录 → 平台默认」解析；
-            业务集群连不到平台 Harbor 时填它自己的地址（<b>不带 http://</b>）
+            组件/中间件的镜像从这个仓库拉。<b>一般留空</b>：按「本集群 Harbor 安装记录 →
+            管理集群上的 Harbor → 平台默认」解析 —— 业务集群装不了 Harbor，会自动用管理集群那一个。
+            只有要指向<u>别的</u>仓库时才填（<b>不带 http://</b>）
           </div>
         </el-form-item>
         <el-form-item label="镜像项目">

@@ -10,12 +10,15 @@ import org.springframework.stereotype.Service;
 /**
  * 镜像来源（平台 Harbor / 官方）的解析与改写入口。
  *
- * <p>地址解析顺序：**集群列**（{@code k8s_cluster.image_registry_host}）→ **Harbor 组件的安装记录**
- * （上一次成功安装的 externalHost）→ **平台默认**（{@code platform.image-registry.host}）。
- * 三者都空、或 {@code platform.image-registry.enabled=false} 时视为「官方」，改写是恒等函数。
+ * <p>地址解析顺序：**集群列**（{@code k8s_cluster.image_registry_host}）→ **本集群 Harbor 组件的安装记录**
+ * （上一次成功安装的 externalHost）→ **管理集群（MANAGEMENT）上 Harbor 的安装记录**
+ * → **平台默认**（{@code platform.image-registry.host}）。
+ * 都空、或 {@code platform.image-registry.enabled=false} 时视为「官方」，改写是恒等函数。
  *
  * <p>为什么地址不是单独配一份：镜像仓库就是 Harbor，装在哪、用的什么域名，安装记录里已经有了；
  * 再让管理员配一遍必然漂移（历史上 {@code object_storage_url} 就吃过这个亏）。
+ * 第四步单独存在，是因为**业务集群装不了 Harbor**：不自动回退到管理集群那一个的话，
+ * 每个业务集群都要手工填地址，忘了就静默走官方源。
  */
 @Service
 @RequiredArgsConstructor
@@ -42,12 +45,27 @@ public class ImageRegistryService {
         String host = firstNonBlank(
                 clusterService.imageRegistryHost(clusterId),
                 harborRegistry.harborHost(clusterId),
+                managementHarborHost(),
                 defaultHost);
         if (host == null || host.isBlank()) {
             return ImageRegistry.OFFICIAL;
         }
         String project = firstNonBlank(clusterService.imageRegistryProject(clusterId), defaultProject);
         return new ImageRegistry(stripScheme(host), project == null ? "" : project);
+    }
+
+    /**
+     * 平台自身所在集群（{@code MANAGEMENT}）上装的那个 Harbor。
+     *
+     * <p>业务集群**装不了 Harbor** —— 只有管理集群有。不回退到这里的话，每上一个业务集群都得
+     * 手工把地址填一遍，不填就静默退回官方源（2026-10-29 calico 一直从 quay.io 拉就是这个原因）。
+     */
+    private String managementHarborHost() {
+        String management = clusterService.managementClusterId();
+        if (management == null || management.isBlank()) {
+            return null;
+        }
+        return harborRegistry.harborHost(management);
     }
 
     /**

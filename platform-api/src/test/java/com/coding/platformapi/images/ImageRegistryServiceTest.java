@@ -45,6 +45,21 @@ class ImageRegistryServiceTest {
     }
 
     @Test
+    void businessClustersFallBackToTheManagementClustersHarbor() {
+        // 业务集群**装不了 Harbor**（Harbor 只在平台自身所在集群上），所以它的镜像来源
+        // 必须能从 MANAGEMENT 集群的安装记录推导出来，否则每个业务集群都得手工填一次地址
+        when(cluster.imageRegistryHost("biz")).thenReturn(null);
+        when(harbor.harborHost("biz")).thenReturn(null);
+        when(cluster.managementClusterId()).thenReturn("mgmt");
+        when(harbor.harborHost("mgmt")).thenReturn("harbor.ackcp.cloud");
+
+        ImageRegistry registry = service("", "", true).resolve("biz");
+
+        assertThat(registry.host()).isEqualTo("harbor.ackcp.cloud");
+        assertThat(registry.project()).isEmpty();   // 留空 = 一上游一项目
+    }
+
+    @Test
     void disabledOrUnconfiguredMeansNoRewrite() {
         when(cluster.imageRegistryHost("c1")).thenReturn(null);
         when(harbor.harborHost("c1")).thenReturn(null);

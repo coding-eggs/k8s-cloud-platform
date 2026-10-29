@@ -225,12 +225,16 @@ registry endpoint 时直接报 `the registry is unhealthy`。
 
 | 配置 | 位置 | 说明 |
 |---|---|---|
-| `platform.image-registry.host` | platform-api `application.yaml` / 环境变量 | 默认镜像仓库（本集群可留空，平台会取 Harbor 安装记录） |
+| `platform.image-registry.host` | platform-api `application.yaml` / 环境变量 | 默认镜像仓库（一般留空：平台先取本集群、再取管理集群的 Harbor 安装记录） |
 | `platform.image-registry.project` | 同上 | **默认留空** = 一上游一项目；填了会多一层前缀（`<harbor>/<project>/<上游主机>/…`），这种布局复制规则落不了，只能手工搬 |
 | `platform.image-registry.enabled` | 同上 | `false` = 全局关闭改写（回退开关） |
 | `k8s_cluster.image_registry_host/project` | 集群设置 | 按集群覆盖（业务集群连不到平台 Harbor 时用） |
 
-地址解析顺序：**集群列 → Harbor 组件安装记录 → 平台默认**；三者都没有 → 视为未配置，不改写。
+地址解析顺序：**集群列 → 本集群 Harbor 安装记录 → 管理集群（MANAGEMENT）上的 Harbor 安装记录 →
+平台默认**；都没有 → 视为未配置，不改写。
+
+第三项是给业务集群的：**业务集群装不了 Harbor**（Harbor 组件只在 MANAGEMENT 画像里有），
+所以它的地址自动取管理集群那一个，不用手工填。手工填只在要指向**别的**仓库时才用。
 
 ## 5. 切换与回退
 

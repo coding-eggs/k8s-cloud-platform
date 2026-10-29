@@ -467,6 +467,20 @@ public class ClusterService {
         return require(clusterId).getImageRegistryProject();
     }
 
+    /**
+     * 平台自身所在集群（画像 {@code MANAGEMENT}，全局唯一）；没有则 null。
+     *
+     * <p>业务集群**装不了 Harbor**，所以「镜像从哪来」这件事要回退到这台集群上装的那一个。
+     */
+    public String managementClusterId() {
+        return clusterMapper.listAll().stream()
+                .filter(c -> c.getDeletedAt() == null)
+                .filter(c -> "MANAGEMENT".equalsIgnoreCase(c.getClusterRole()))
+                .map(K8sCluster::getClusterId)
+                .findFirst()
+                .orElse(null);
+    }
+
     private K8sCluster require(String clusterId) {
         K8sCluster cluster = clusterMapper.selectByPrimaryKey(clusterId);
         if (cluster == null || cluster.getDeletedAt() != null) {
