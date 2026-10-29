@@ -242,27 +242,26 @@ POST /registry/warehouses
 
 #### 6.4.1 可见性与可写性
 
-`CredentialService.visibleTo(c, hatTenantId)` 已有，本批把它真正用到列表上
-（今天只在流水线路径里用）。
+`CredentialService.visibleTo(c, hatTenantId)`：**管理员看全量，租户只看自己租户的**。
 
 | 来源 | 租户可见 | 租户可改 | 说明 |
 |---|---|---|---|
 | **自己租户的** `source=HARBOR`（平台建项目时发的 robot） | ✓ 只读 | ✗ | 流水线选它推镜像；重建由管理员触发 |
-| **平台级 `MANUAL`**（公共读的那几个仓库） | ✓ 只读 | ✗ | 平台统一配的公共仓库；`usableByPipelines` 由管理员定 |
 | **自己建的**（`tenant_id=自己` 且 `source=MANUAL`） | ✓ | ✓ | Git / 外部 Harbor / Docker Hub 账号 |
 | **公共 Docker Hub**（`builtin:dockerhub`） | ✓ 只读 | ✗ | 没有凭据行，固定 `docker.io`，匿名 |
-| 平台级 `source=HARBOR`（`platform` 共享 robot） | ✗ | ✗ | 只给管理员 |
+| 平台级 `MANUAL`（管理员在平台视图下建的） | ✗ | ✗ | 只有管理员 |
+| 平台级 `source=HARBOR`（`platform` 共享 robot） | ✗ | ✗ | 只有管理员 |
 | 其他租户的行 | ✗ | ✗ | |
 
 管理员：全部可见；`source=HARBOR` 的行仍不可手改（只能同步 / 重建）。
 
-> ⚠️ 「平台级 `MANUAL` 可见」而「平台级 `HARBOR` 不可见」不是笔误 —— 前者是平台统一配的
-> **公共读**仓库（大家都能拉），后者是平台自建项目的**写**账号（能往 `platform` 项目推镜像）。
-> 两件事，别合并判定。
-
-> 「公共读」今天**没有单独的开关**：判据就是 `tenant_id = null` 且 `source = MANUAL`，
-> 也就是**所有平台级手建连接都对租户可见（只读）**。如果只想公开其中几条，得加一列
-> `public_read`，见 §8。
+> **2026-10-30 收紧（本节最初写的不是这样）**：原规则是「平台级 `MANUAL` 对租户只读可见」，
+> 即"公共读"。但它没有开关，等于 **平台级 = 公开** —— 管理员建的私有 Docker Hub /
+> 外部 Harbor 会作为只读行漏进每个租户的镜像仓库页。现在改为**严格按归属隔离**：
+> 平台级只剩**内置的 Docker Hub**（不是凭据行）对所有人可见。
+>
+> 连带影响：`assertUsableByPipelines` 也走 `visibleTo`，所以平台级连接**不再**能被租户的
+> 流水线引用，`usableByPipelines` 的含义收窄成「本租户可用」。
 
 #### 6.4.2 写侧的三条校验
 
@@ -297,11 +296,11 @@ POST /registry/warehouses
 `DOCKER_HUB` 一个实例，每加一个都要配一份方言与搜索实现，而它们大多没有"列仓库 / 列 tag"
 的公开 API。留在镜像补全的候选里即可。
 
-### 平台级连接要不要"只公开一部分"
+### 平台级连接要不要"只公开一部分" —— 已决：不做
 
-今天的判据是 `tenant_id = null 且 source = MANUAL` —— 平台级手建连接**一律**对租户可见（只读）。
-若只想公开其中几条，加一列 `platform_credential.public_read`（默认 0），
-可见性判据改成 `public_read = 1`。本期按"全部公开"实现，不加列。
+2026-10-30 定：**不加 `public_read` 列**，平台级连接一律只给管理员。
+共享给租户的办法是"在那个租户名下建一条"（或让租户自己建），
+而不是把平台级连接标成公开 —— 一本账一个主人（见 §6.4.1）。
 
 ## 9. 不做的事
 

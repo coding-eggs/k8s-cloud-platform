@@ -2212,7 +2212,11 @@ export interface CredentialView {
   fingerprint?: string | null
   description?: string | null
   enabled: boolean
-  /** 1 = 允许在流水线里使用（**默认 0/关**）。它不是凭据内容，可以回显（就是个开关） */
+  /**
+   * 1 = 允许在流水线里使用（**默认 0/关**）。它不是凭据内容，可以回显（就是个开关）。
+   * ⚠️ 2026-10-30 起按归属隔离：只有**本租户**的流水线能引用它；
+   * 平台级连接只有管理员看得见、用得上（平台级只剩内置 Docker Hub 对所有人可见）
+   */
   usableByPipelines?: number | null
   /** 上次测试通过的时刻；测失败不改它 */
   lastVerifiedAt?: string | null
@@ -2241,7 +2245,7 @@ export interface CredentialCreateBody {
   secret?: string
   description?: string | null
   enabled?: boolean
-  /** 允许在流水线里使用（默认关）。开了之后**任意租户**的流水线都能引用它 */
+  /** 允许在流水线里使用（默认关）。⚠️ 连接按归属隔离：只有**本租户**的流水线能引用它 */
   usableByPipelines?: boolean
 }
 

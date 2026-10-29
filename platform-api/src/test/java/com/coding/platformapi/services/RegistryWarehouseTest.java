@@ -132,6 +132,22 @@ class RegistryWarehouseTest {
         assertThat(service(false).warehouses(null).get(0).projectCount()).isEqualTo(2);
     }
 
+    /**
+     * 平台级只剩**内置的默认 Docker Hub** 对租户可见 —— 管理员建的平台级连接不出现。
+     */
+    @Test
+    void tenantSeesTheBuiltinDockerHubButNoPlatformLevelConnections() {
+        when(locator.all()).thenReturn(List.of());
+        when(projectMapper.selectAll()).thenReturn(List.of());
+        when(mapper.selectAll()).thenReturn(List.of(
+                cred("pub", "corp-hub", "HARBOR", "harbor.corp.x", null, "MANUAL"),
+                cred("hub", "my-dockerhub", "DOCKERHUB", "docker.io", null, "MANUAL")));
+
+        assertThat(service(true).warehouses("t1"))
+                .extracting(RegistryWarehouseView::origin)
+                .containsExactly("BUILTIN");
+    }
+
     @Test
     void builtinDockerHubAppearsOnlyWhenItsSwitchIsOn() {
         when(locator.all()).thenReturn(List.of());

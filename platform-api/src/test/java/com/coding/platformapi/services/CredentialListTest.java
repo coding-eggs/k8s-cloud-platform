@@ -61,8 +61,14 @@ class CredentialListTest {
         assertThat(git).extracting(CredentialView::getId).containsExactly("g1");
     }
 
+    /**
+     * 租户**只看自己租户的**行 —— 平台级（`tenant_id = null`）是管理员的，不下发给租户。
+     *
+     * <p>2026-10-30 收紧：之前「平台级手工建的凭据对所有租户只读可见」，
+     * 于是管理员建的私有 Docker Hub / 外部 Harbor 会漏进每个租户的镜像仓库页。
+     */
     @Test
-    void tenantSeesItsOwnPlusPlatformManualButNotTheSharedRobot() {
+    void tenantSeesOnlyItsOwnRows() {
         when(tenantMapper.listAll()).thenReturn(List.of());
         when(projectMapper.selectAll()).thenReturn(List.of());
         when(mapper.selectAll()).thenReturn(List.of(
@@ -72,7 +78,7 @@ class CredentialListTest {
                 cred("other", "HARBOR", "other.corp", "t2", "MANUAL")));
 
         assertThat(svc.list(null, "t1")).extracting(CredentialView::getId)
-                .containsExactlyInAnyOrder("mine", "public");
+                .containsExactly("mine");
         assertThat(svc.list(null, null)).hasSize(4);
     }
 

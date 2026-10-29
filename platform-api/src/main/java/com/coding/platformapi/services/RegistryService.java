@@ -327,7 +327,7 @@ public class RegistryService {
             out.add(Source.builtin(BuiltinRegistry.DOCKER_HUB));
         }
         // 凭据表里启用的镜像仓库行。**不解密** —— 明文只在真正要用时（toRef）才解。
-        // 租户帽下只给「自己的 + 手工平台级」——见 CredentialService.visibleTo（Harbor 租户隔离）
+        // 租户帽下只给自己的那些 —— 见 CredentialService.visibleTo
         Map<String, String> projectByCredential = projectByCredential();
         mapper.selectAll().stream()
                 .filter(c -> isRegistry(c) && enabled(c))

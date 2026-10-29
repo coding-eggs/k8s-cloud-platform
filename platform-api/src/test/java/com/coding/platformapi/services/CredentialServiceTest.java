@@ -687,8 +687,15 @@ class CredentialServiceTest {
         assertThat(id).isEqualTo(saved.getId());
     }
 
+    /**
+     * 租户只看自己租户的。
+     *
+     * <p>2026-10-30 收紧：平台级（`tenant_id = null`）的连接是管理员的，**不再**对租户可见 ——
+     * 旧的"公共读"规则会让管理员建的私有 Docker Hub / 外部 Harbor 漏进每个租户。
+     * 平台级只剩内置的 Docker Hub（不是凭据行，不走这里）。
+     */
     @Test
-    void tenantSeesItsOwnHarborCredentialButNotAnotherTenants() {
+    void tenantSeesOnlyItsOwnRegistryCredentials() {
         PlatformCredential mine = registryCredential("c1", "tenant-1", "HARBOR", "Harbor t-acme@c1");
         PlatformCredential other = registryCredential("c2", "t-other", "HARBOR", "Harbor t-other@c1");
         PlatformCredential manual = registryCredential("c3", null, "MANUAL", "dockerhub");
@@ -697,7 +704,7 @@ class CredentialServiceTest {
 
         assertThat(svc.pipelineUsableRegistryConnections("tenant-1"))
                 .extracting(CredentialService.ConnectionView::name)
-                .containsExactly("Harbor t-acme@c1", "dockerhub");
+                .containsExactly("Harbor t-acme@c1");
         // 管理员（无帽）看全量
         assertThat(svc.pipelineUsableRegistryConnections(null)).hasSize(4);
     }

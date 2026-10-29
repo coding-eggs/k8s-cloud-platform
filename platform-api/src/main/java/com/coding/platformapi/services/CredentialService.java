@@ -236,7 +236,7 @@ public class CredentialService {
      * 这行能不能被当前请求改 / 删。
      *
      * <p>两条：{@code source=HARBOR} 的是同步写出来的（换口令走「重建」，不是改表单）；
-     * 租户只能动自己租户的行（平台级 MANUAL 对租户可见但只读，见 {@link #visibleTo}）。
+     * 租户只能动自己租户的行（平台级连接只有管理员能碰，见 {@link #visibleTo}）。
      */
     private static void assertTangible(PlatformCredential c, String hatTenantId) {
         if ("HARBOR".equals(c.getSource())) {
@@ -246,7 +246,9 @@ public class CredentialService {
         }
         if (hatTenantId != null && !hatTenantId.equals(c.getTenantId())) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
-                    "这条连接属于别的租户，只能修改或删除自己租户的连接");
+                    c.getTenantId() == null
+                            ? "平台级连接只有管理员能修改或删除"
+                            : "这条连接属于别的租户，只能修改或删除自己租户的连接");
         }
     }
 
@@ -533,7 +535,7 @@ public class CredentialService {
 
     /**
      * @param hatTenantId 请求的租户帽；null = 平台管理员（看全量）。
-     *                    租户只看自己名下的 + 手工建的平台级凭据（规则见 {@link #visibleTo}）。
+     *                    租户只看自己租户的（规则见 {@link #visibleTo}）。
      */
     public List<ConnectionView> pipelineUsableConnections(String type, String hatTenantId) {
         Map<String, String> projectByCredential = projectByCredential();
@@ -550,20 +552,18 @@ public class CredentialService {
     }
 
     /**
-     * 凭据对当前请求是否可见。
+     * 凭据对当前请求是否可见：**管理员看全量，租户只看自己租户的**。
      *
-     * <p>规则：管理员（无租户帽）看全量；租户看**自己的** + **手工建的平台级**凭据。
-     * ⚠️ `source=HARBOR` 且 `tenant_id=null` 的是平台 `platform` 项目的机器人账号，
-     * 只给管理员用 —— 不能因为「平台级」就下发给租户。
+     * <p>⚠️ 这里曾有一条「平台级手工建的凭据对所有租户只读可见」的规则（当时的"公共读"），
+     * 2026-10-30 去掉：它没有开关，等于"平台级 = 公开"，于是管理员建的私有 Docker Hub /
+     * 外部 Harbor 会漏进每个租户的镜像仓库页。
+     * 现在平台级只剩**内置的 Docker Hub**（{@code BuiltinRegistry}，不是凭据行）对所有人可见。
      */
     static boolean visibleTo(PlatformCredential c, String hatTenantId) {
         if (hatTenantId == null) {
             return true;
         }
-        if (hatTenantId.equals(c.getTenantId())) {
-            return true;
-        }
-        return c.getTenantId() == null && "MANUAL".equals(c.getSource());
+        return hatTenantId.equals(c.getTenantId());
     }
 
     /** 凭据 id → 镜像项目名（流水线下拉展示用；量小，一次全取） */
@@ -603,12 +603,12 @@ public class CredentialService {
                             + "（凭据上没有开「允许流水线使用」）");
         }
         if (!visibleTo(c, hatTenantId)) {
-            // 两种拒因给不同的话：这条路径上「平台共享 HARBOR 凭据」是最常见的撞墙方式，
-            // 只说"未授权"会让人以为是自己漏了勾选（2026-10-29 实报）
+            // 两种拒因给不同的话：平台级连接是最常见的撞墙方式
+            // （管理员在平台视图下配的，租户在自己的流水线里引用不到）
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                     "该连接未授权在流水线里使用：" + c.getName()
-                            + ("HARBOR".equals(c.getType()) && c.getTenantId() == null
-                                    ? "（平台共享的 Harbor 凭据仅管理员可用；租户请用自己项目的那条 Harbor 连接）"
+                            + (c.getTenantId() == null
+                                    ? "（平台级连接仅管理员可用；租户请用自己租户的连接）"
                                     : "（这条连接属于别的租户）"));
         }
     }
