@@ -8,6 +8,7 @@ import com.coding.data.models.system.PlatformCredential;
 import com.coding.platformapi.credential.CredentialCipher;
 import com.coding.platformapi.credential.CredentialProbeClient;
 import com.coding.platformapi.models.CredentialCreateRequest;
+import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.registry.DockerHubDialect;
 import com.coding.platformapi.registry.HarborDialect;
@@ -34,10 +35,11 @@ class CredentialWriteScopeTest {
     PlatformTenantMapper tenantMapper = mock(PlatformTenantMapper.class);
     PlatformRegistryProjectMapper projectMapper = mock(PlatformRegistryProjectMapper.class);
     HarborInstallLocator locator = mock(HarborInstallLocator.class);
+    CredentialProbeClient probeClient = mock(CredentialProbeClient.class);
     CredentialCipher cipher = new CredentialCipher("test-only-master-key-0123456789abcdef");
     CredentialService svc = new CredentialService(mapper,
             cipher,
-            mock(CredentialProbeClient.class),
+            probeClient,
             new RegistryDialectRegistry(List.of(new HarborDialect(mock(RegistryHttpClient.class)),
                     new DockerHubDialect(mock(RegistryHttpClient.class)))),
             tenantMapper, projectMapper, locator);
@@ -138,8 +140,7 @@ class CredentialWriteScopeTest {
     }
 
     @Test
-    void updateKeepsTheOriginalOwnerEvenWhenTheBodyOmitsEverything() {
-        when(mapper.selectById("c1")).thenReturn(existing("c1", "t1", "MANUAL"));
+    void updateKeepsTheOriginalOwnerEvenWhenTheBodyOmitsEverything() {        when(mapper.selectById("c1")).thenReturn(existing("c1", "t1", "MANUAL"));
         when(mapper.selectByName("old")).thenReturn(existing("c1", "t1", "MANUAL"));
         when(locator.isPlatformHost(any())).thenReturn(false);
 
@@ -149,5 +150,22 @@ class CredentialWriteScopeTest {
         verify(mapper).update(saved.capture());
         assertThat(saved.getValue().getTenantId()).isEqualTo("t1");
         assertThat(saved.getValue().getUsableByPipelines()).isEqualTo(1);
+    }
+
+    /**
+     * 测试连接会把解出来的口令塞进 Basic 头发给**调用者指定的 URL** ——
+     * 所以它必须和 update / delete 同一套归属校验，否则租户成员可以拿平台级凭据去自己服务器上收口令。
+     */
+    @Test
+    void refusesToTestAnotherTenantsRow() {
+        when(mapper.selectById("c1")).thenReturn(existing("c1", null, "MANUAL"));
+        CredentialTestRequest req = new CredentialTestRequest();
+        req.setId("c1");
+        req.setProbeUrl("http://evil.example/repo.git");
+
+        assertThatThrownBy(() -> svc.test(req, "t1"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("只能测试自己租户的连接");
+        verify(probeClient, never()).probeGit(any(), any(), any());
     }
 }

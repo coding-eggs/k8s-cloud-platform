@@ -298,6 +298,32 @@ class HarborRegistryServiceTest {
         return op;
     }
 
+    /**
+     * 租户也要能在镜像仓库页看到自己的项目（spec §6.4.1）——
+     * 端点对租户开放后，服务端必须按租户帽收窄，否则等于把别家的项目台账也发下去。
+     */
+    @Test
+    void listFiltersByTenantWhenAHatIsPresent() {
+        PlatformRegistryProject mine = platformRow();
+        mine.setId("mine");
+        mine.setTenantId("tenant-1");
+        mine.setProjectName("t-team-a");
+        PlatformRegistryProject other = platformRow();
+        other.setId("other");
+        other.setTenantId("tenant-2");
+        other.setProjectName("t-team-b");
+        when(projects.selectByCluster("c1")).thenReturn(List.of(mine, other));
+        PlatformTenant t1 = new PlatformTenant();
+        t1.setId("tenant-1");
+        t1.setName("团队一");
+        when(tenants.selectByPrimaryKey("tenant-1")).thenReturn(t1);
+
+        assertThat(svc.list("c1", "tenant-1"))
+                .extracting(com.coding.platformapi.models.RegistryProjectView::getId)
+                .containsExactly("mine");
+        assertThat(svc.list("c1", null)).hasSize(2);
+    }
+
     private static PlatformRegistryProject platformRow() {
         PlatformRegistryProject row = new PlatformRegistryProject();
         row.setId("platform-row");

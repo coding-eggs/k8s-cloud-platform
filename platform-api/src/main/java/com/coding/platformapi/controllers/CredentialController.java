@@ -67,7 +67,7 @@ public class CredentialController {
     @PostMapping("/test")
     @Auditable(action = AuditAction.CREDENTIAL_TEST, target = "#request.id")
     public ResponseData<CredentialTestResult> test(@RequestBody CredentialTestRequest request) {
-        return new ResponseData<>(credentialService.test(request));
+        return new ResponseData<>(credentialService.test(request, auth.hatTenantId()));
     }
 
     @Operation(summary = "新建凭据", description = "凭据明文落库即加密，此后永不回显")

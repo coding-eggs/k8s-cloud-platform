@@ -84,6 +84,18 @@ class HarborInstallLocatorTest {
     }
 
     @Test
+    void isPlatformHostTreatsDefaultPortsAsTheSameHost() {
+        when(provisioning.enabledClusters()).thenReturn(List.of(cluster("c1", "主集群")));
+        when(operations.selectLatestSuccess("c1", "harbor"))
+                .thenReturn(op("{\"__platform\":{\"harbor\":{\"host\":\"harbor.ackcp.cloud\",\"https\":true}}}"));
+
+        // route 暴露时安装记录里不带端口；用户填 :443 其实还是同一台，不能放行成"外部连接"
+        assertThat(locator.isPlatformHost("https://harbor.ackcp.cloud:443")).isTrue();
+        // 非默认端口是另一回事，照旧不算同一台
+        assertThat(locator.isPlatformHost("harbor.ackcp.cloud:8443")).isFalse();
+    }
+
+    @Test
     void hostOfStripsSchemeAndPath() {
         assertThat(HarborInstallLocator.hostOf("https://harbor.x:8443/a/b")).isEqualTo("harbor.x:8443");
         assertThat(HarborInstallLocator.hostOf("harbor.x")).isEqualTo("harbor.x");

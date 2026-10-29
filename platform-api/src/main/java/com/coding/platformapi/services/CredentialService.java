@@ -264,9 +264,25 @@ public class CredentialService {
     }
 
     public CredentialTestResult test(CredentialTestRequest req) {
+        return test(req, null);
+    }
+
+    /**
+     * 测试连接。
+     *
+     * <p>⚠️ <b>必须带归属校验</b>：GIT 分支会把解出来的用户名/口令塞进 Basic 头，
+     * 发给**调用者指定的** {@code probeUrl}。租户能看平台级 MANUAL 行（只读），
+     * 若不拦，租户成员只要填自己的服务器就能把平台账号的口令原文收走
+     * —— 一条 {@code usableByPipelines=0} 的连接也能被这样"用"。
+     */
+    public CredentialTestResult test(CredentialTestRequest req, String hatTenantId) {
         PlatformCredential c = mapper.selectById(req.getId());
         if (c == null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST);
+        }
+        if (hatTenantId != null && !hatTenantId.equals(c.getTenantId())) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "只能测试自己租户的连接");
         }
         CredentialSecret s = resolveSecret(req.getId());
 

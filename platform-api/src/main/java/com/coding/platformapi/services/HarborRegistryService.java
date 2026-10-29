@@ -244,7 +244,17 @@ public class HarborRegistryService {
     }
 
     public List<RegistryProjectView> list(String clusterId) {
-        return projects.selectByCluster(clusterId).stream().map(row -> {
+        return list(clusterId, null);
+    }
+
+    /**
+     * @param hatTenantId 租户帽；null = 平台管理员（全量）。租户**只看自己租户那几行** ——
+     *                    端点对租户开放后不收窄，等于把别家的项目台账也发下去。
+     */
+    public List<RegistryProjectView> list(String clusterId, String hatTenantId) {
+        return projects.selectByCluster(clusterId).stream()
+                .filter(row -> hatTenantId == null || hatTenantId.equals(row.getTenantId()))
+                .map(row -> {
             RegistryProjectView v = new RegistryProjectView();
             v.setId(row.getId());
             v.setClusterId(row.getClusterId());

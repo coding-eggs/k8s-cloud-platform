@@ -5,6 +5,7 @@ import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.models.RegistryProjectRequest;
 import com.coding.platformapi.models.RegistryProjectView;
+import com.coding.platformapi.security.AuthContext;
 import com.coding.platformapi.services.HarborRegistryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,11 +32,15 @@ public class RegistryProjectController {
 
     private final HarborRegistryService harborRegistry;
 
+    /** 租户帽：list 按它收窄（同步 / 重建仍只给管理员） */
+    private final AuthContext auth;
+
     @Operation(summary = "租户镜像项目列表",
-            description = "管理员视图：每个租户/平台共享在集群 Harbor 上的 project、凭据与上次同步结果")
+            description = "每个租户/平台共享在集群 Harbor 上的 project、凭据与上次同步结果。"
+                    + "租户只看到自己那几行（V2026_10_29_4 起对租户开放）")
     @PostMapping("/list")
     public ResponseData<List<RegistryProjectView>> projects(@RequestBody RegistryProjectRequest request) {
-        return new ResponseData<>(harborRegistry.list(request.getClusterId()));
+        return new ResponseData<>(harborRegistry.list(request.getClusterId(), auth.hatTenantId()));
     }
 
     @Operation(summary = "同步全部租户的 Harbor 项目",

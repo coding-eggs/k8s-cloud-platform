@@ -66,6 +66,8 @@ const form = reactive({
   name: '',
   type: 'HARBOR' as 'HARBOR' | 'DOCKERHUB',
   endpoint: '',
+  /** 认证方式：Harbor 支持匿名；Docker Hub 只接受用户名+令牌（方言决定） */
+  authType: 'BASIC' as 'BASIC' | 'NONE',
   username: '',
   secret: '',
   description: '',
@@ -82,6 +84,7 @@ function openCreate(): void {
     // 平台 Harbor 那条走不到这里（按钮不出现）；能新建的一定是外部仓库
     type: selected.value?.kind === 'DOCKER' ? 'DOCKERHUB' : 'HARBOR',
     endpoint: selected.value?.kind === 'DOCKER' ? 'docker.io' : '',
+    authType: 'BASIC',
     username: '',
     secret: '',
     description: '',
@@ -98,6 +101,9 @@ function openEdit(row: CredentialView): void {
     // form.type 只有两档，收窄一次（本表里本来就不会有 GIT）
     type: row.type === 'DOCKERHUB' ? 'DOCKERHUB' : 'HARBOR',
     endpoint: row.endpoint,
+    // ⚠️ 必须回填：写死 BASIC 会把匿名连接悄悄改成"必须有口令"，
+    //    用户只改了个说明就保存失败，而且页面上没有任何地方能切回匿名
+    authType: row.authType,
     username: '',
     secret: '',
     description: row.description ?? '',
@@ -107,14 +113,16 @@ function openEdit(row: CredentialView): void {
 }
 
 async function save(): Promise<void> {
+  const authType = form.type === 'DOCKERHUB' ? 'BASIC' as const : form.authType
   try {
     const body = {
       name: form.name.trim(),
       type: form.type,
       endpoint: form.endpoint.trim(),
-      authType: 'BASIC' as const,
-      username: form.username || undefined,
-      secret: form.secret || undefined,
+      authType,
+      // 匿名时根本不发这两个字段（后端会拒「匿名 + 带凭据」）
+      username: authType === 'NONE' ? undefined : form.username || undefined,
+      secret: authType === 'NONE' ? undefined : form.secret || undefined,
       description: form.description.trim() || null,
       enabled: form.enabled,
       usableByPipelines: form.usableByPipelines,
@@ -123,6 +131,22 @@ async function save(): Promise<void> {
     else await credentialApi.create(body)
     ElMessage.success('已保存')
     form.visible = false
+    await loadDetail()
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  }
+}
+
+/** 能不能测这条连接：管理员随便测；租户只能测自己租户的行（后端同一口径） */
+function canTest(row: CredentialView): boolean {
+  return canManageProjects.value || !!row.tenantId
+}
+
+async function testConn(row: CredentialView): Promise<void> {
+  try {
+    const r = await credentialApi.test(row.id)
+    if (r.ok) ElMessage.success('连接成功')
+    else ElMessage.error(r.suggestedUrl ? `${r.message}（建议改用 ${r.suggestedUrl}）` : r.message)
     await loadDetail()
   } catch (e) {
     ElMessage.error((e as Error).message)
@@ -200,26 +224,41 @@ async function loadDetail(): Promise<void> {
   error.value = ''
   result.value = null
   path.value = []
+
+  // 三块分属三个权限域（tenant:credential:read / tenant:registry:project:read /
+  // tenant:registry:catalog），各自 try/catch —— 一处 403 不能连带打死另外两块。
   try {
-    // 连接：一次取全部可见的（量小），按 host 过滤 —— 免得为「按 host 查连接」再造一个端点
     connections.value = await credentialApi.list()
-    projects.value = w.clusterId ? await registryApi.projects(w.clusterId) : []
-    const browseId = browseCredential.value?.id
-      ?? (w.origin === 'BUILTIN' ? w.id : null)
-    if (browseId) {
-      result.value = await registryApi.browse(browseId, [])
-    }
   } catch (e) {
+    connections.value = []
     error.value = (e as Error).message
-  } finally {
-    detailLoading.value = false
   }
+  try {
+    projects.value = w.clusterId ? await registryApi.projects(w.clusterId) : []
+  } catch {
+    // 项目台账是附加信息：租户没有平台 Harbor 的项目时它就是空，不该挡住浏览
+    projects.value = []
+  }
+  const id = browseId()
+  if (id) {
+    try {
+      result.value = await registryApi.browse(id, [])
+    } catch (e) {
+      error.value = (e as Error).message
+    }
+  }
+  detailLoading.value = false
 }
 
-/** 当前浏览用的来源 id */
+/** 当前浏览用的来源 id；没有可用来源（例如装了 Harbor 但一条凭据都没有）时为空串 */
 function browseId(): string {
-  return browseCredential.value?.id ?? selectedId.value
+  const c = browseCredential.value
+  if (c) return c.id
+  return selected.value?.origin === 'BUILTIN' ? selectedId.value : ''
 }
+
+/** 有没有东西可浏览 —— 没有就别渲染浏览块，免得点一下报「连接不存在」 */
+const canBrowse = computed(() => !!browseId())
 
 async function browse(id: string, p: string[]): Promise<void> {
   path.value = p
@@ -312,12 +351,20 @@ onMounted(loadWarehouses)
             <el-table-column label="流水线可用" width="110">
               <template #default="{ row }">{{ row.usableByPipelines ? '是' : '否' }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="140" fixed="right">
+            <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" :disabled="!canWriteConnections" @click="openEdit(row)">
+                <el-button link type="primary" :disabled="!canTest(row)" @click="testConn(row)">
+                  测试
+                </el-button>
+                <!-- 平台 robot 行只读：换口令走「重建」，不是改表单（后端也会拒） -->
+                <el-button link type="primary"
+                           :disabled="!canWriteConnections || row.source === 'HARBOR'"
+                           @click="openEdit(row)">
                   编辑
                 </el-button>
-                <el-button link type="danger" :disabled="!canWriteConnections" @click="remove(row)">
+                <el-button link type="danger"
+                           :disabled="!canWriteConnections || row.source === 'HARBOR'"
+                           @click="remove(row)">
                   删除
                 </el-button>
               </template>
@@ -347,37 +394,39 @@ onMounted(loadWarehouses)
             </el-table>
           </template>
 
-          <h3>浏览</h3>
-          <div class="crumbs">
-            <el-button link @click="goTo([])">{{ selected.displayName }}</el-button>
-            <template v-for="(c, i) in result?.breadcrumb ?? []" :key="i">
-              <span class="sep">/</span>
-              <el-button link @click="goTo(c.path)">{{ c.label }}</el-button>
-            </template>
-          </div>
-          <el-table :data="result?.children ?? []" size="small" stripe>
-            <el-table-column label="名称" min-width="220">
-              <template #default="{ row }">
-                <el-button v-if="row.hasChildren" link type="primary" @click="drillInto(row)">
-                  {{ row.name }}
-                </el-button>
-                <span v-else>{{ row.name }}</span>
+          <template v-if="canBrowse">
+            <h3>浏览</h3>
+            <div class="crumbs">
+              <el-button link @click="goTo([])">{{ selected.displayName }}</el-button>
+              <template v-for="(c, i) in result?.breadcrumb ?? []" :key="i">
+                <span class="sep">/</span>
+                <el-button link @click="goTo(c.path)">{{ c.label }}</el-button>
               </template>
-            </el-table-column>
-            <el-table-column v-for="d in result?.children?.[0]?.details ?? []" :key="d.label"
-                             :label="d.label" min-width="140">
-              <template #default="{ row }">
-                {{ row.details.find((x: { label: string }) => x.label === d.label)?.value ?? '' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="130" fixed="right">
-              <template #default="{ row }">
-                <el-button v-if="row.copyText" link type="primary" @click="copyImage(row)">
-                  复制地址
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+            </div>
+            <el-table :data="result?.children ?? []" size="small" stripe>
+              <el-table-column label="名称" min-width="220">
+                <template #default="{ row }">
+                  <el-button v-if="row.hasChildren" link type="primary" @click="drillInto(row)">
+                    {{ row.name }}
+                  </el-button>
+                  <span v-else>{{ row.name }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-for="d in result?.children?.[0]?.details ?? []" :key="d.label"
+                               :label="d.label" min-width="140">
+                <template #default="{ row }">
+                  {{ row.details.find((x: { label: string }) => x.label === d.label)?.value ?? '' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="130" fixed="right">
+                <template #default="{ row }">
+                  <el-button v-if="row.copyText" link type="primary" @click="copyImage(row)">
+                    复制地址
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
         </template>
       </section>
     </div>
@@ -402,8 +451,19 @@ onMounted(loadWarehouses)
           <el-input model-value="docker.io" disabled />
           <div class="tip">Docker Hub 的地址是固定的，不用填</div>
         </el-form-item>
-        <el-form-item label="用户名"><el-input v-model="form.username" /></el-form-item>
-        <el-form-item :label="isEdit ? '密码/令牌（留空不改）' : '密码/令牌'">
+        <el-form-item label="认证方式">
+          <!-- Docker Hub 只接受用户名 + 令牌（方言决定），匿名那一份是平台内置档 -->
+          <el-select v-if="form.type === 'HARBOR'" v-model="form.authType" style="width: 100%">
+            <el-option value="BASIC" label="用户名 + 密码/令牌" />
+            <el-option value="NONE" label="匿名（不使用凭据）" />
+          </el-select>
+          <el-input v-else model-value="用户名 + 令牌" disabled />
+        </el-form-item>
+        <el-form-item v-if="form.type === 'DOCKERHUB' || form.authType === 'BASIC'" label="用户名">
+          <el-input v-model="form.username" :placeholder="isEdit ? '留空 = 保持不变' : 'robot$project+ci / Docker ID'" />
+        </el-form-item>
+        <el-form-item v-if="form.type === 'DOCKERHUB' || form.authType === 'BASIC'"
+                      :label="isEdit ? '密码/令牌（留空不改）' : '密码/令牌'">
           <el-input v-model="form.secret" type="password" show-password />
         </el-form-item>
         <el-form-item label="说明">

@@ -81,11 +81,28 @@ public class HarborInstallLocator {
      * 用户输入的形态不受控，直接比字符串必然漏。
      */
     public boolean isPlatformHost(String endpoint) {
-        String h = hostOf(endpoint);
+        String h = canonicalHost(endpoint);
         if (h.isEmpty()) {
             return false;
         }
-        return all().stream().anyMatch(i -> h.equalsIgnoreCase(i.access().host()));
+        return all().stream().anyMatch(i -> h.equalsIgnoreCase(canonicalHost(i.access().host())));
+    }
+
+    /**
+     * 比较用的 host 归一：在 {@link #hostOf} 之上再去掉**默认端口**。
+     * <p>route 暴露时安装记录里写的是 {@code harbor.ackcp.cloud}（不带端口），
+     * 而用户手填 {@code https://harbor.ackcp.cloud:443} 是同一台机器 —— 不归一就会长出一条
+     * spec §3.3 明说要拒的"假的平台连接"。
+     */
+    private static String canonicalHost(String endpoint) {
+        String h = hostOf(endpoint);
+        if (h.endsWith(":443")) {
+            return h.substring(0, h.length() - 4);
+        }
+        if (h.endsWith(":80")) {
+            return h.substring(0, h.length() - 3);
+        }
+        return h;
     }
 
     /** endpoint → {@code host[:port]}；容错到「喂什么都返回一个字符串」 */
