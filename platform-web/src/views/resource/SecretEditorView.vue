@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { ArrowDown } from '@element-plus/icons-vue'
 import { secretApi } from '@/api'
 import type { K8sSecret } from '@/types'
 import { useResourceContext } from '@/stores/context'
@@ -46,6 +47,57 @@ const form = reactive({
   rows: newRows() as KvRow[],
   immutable: false,
 })
+
+/**
+ * 固定 key 的标准类型（apiserver 按类型校验 data 的 key，见 k8s core/v1 validation）：
+ * required = 必配，Key 不可改不可删；optional = 可选，经「+ 添加键值对」从下拉里补。
+ * 不在表里的类型（Opaque、service-account-token、bootstrap token、平台不支持的类型）保持自由输入。
+ */
+const SECRET_FIXED_KEYS: Record<string, { required: string[]; optional: string[] }> = {
+  'kubernetes.io/tls': { required: ['tls.crt', 'tls.key'], optional: ['ca.crt'] },
+  'kubernetes.io/basic-auth': { required: ['username', 'password'], optional: [] },
+  'kubernetes.io/dockerconfigjson': { required: ['.dockerconfigjson'], optional: [] },
+}
+
+/** 当前类型的固定 key 规格；null = 自由输入 */
+const fixedSpec = computed(() => SECRET_FIXED_KEYS[form.type] ?? null)
+/** 固定类型下 Key 列只读：新增 key 只能从 optional 里选，杜绝手敲出 apiserver 不认的 key */
+const keyLocked = computed(() => !!fixedSpec.value)
+/** 还没被占用的可选 key */
+const addableKeys = computed(() => {
+  const spec = fixedSpec.value
+  if (!spec) return []
+  const used = new Set(form.rows.map((r) => r.key.trim()))
+  return spec.optional.filter((k) => !used.has(k))
+})
+
+/**
+ * 切到固定类型时按规格重建行：必需 key 置顶，其余既有 key 原样留底。
+ * 留底是必须的 —— update 是整对象替换，只按规格铺行会把线上多出来的 key 静默删掉。
+ */
+watch(() => form.type, (t) => {
+  const spec = SECRET_FIXED_KEYS[t]
+  if (!spec) return
+  const values = new Map(form.rows.map((r) => [r.key.trim(), r.value]))
+  const rows: KvRow[] = spec.required.map((k) => ({ key: k, value: values.get(k) ?? '' }))
+  for (const r of form.rows) {
+    const k = r.key.trim()
+    if (!k || spec.required.includes(k) || rows.some((x) => x.key === k)) continue
+    rows.push({ key: k, value: r.value })
+  }
+  form.rows = rows
+})
+
+function addFixedRow(key: string): void {
+  form.rows.push({ key, value: '' })
+}
+
+/** 必需 key 不可删；自由类型至少留一行 */
+function canDeleteRow(row: KvRow): boolean {
+  const spec = fixedSpec.value
+  if (spec) return !spec.required.includes(row.key.trim())
+  return form.rows.length > 1
+}
 
 // ---------- 值：从本地文件导入（证书/私钥整段粘贴的替代） ----------
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -152,6 +204,16 @@ async function submit(): Promise<void> {
     data[key] = row.value
   }
 
+  // 固定类型的必配 key 必须非空：少了 apiserver 会回 422，这里先给出能对得上现场的提示
+  const spec = fixedSpec.value
+  if (spec) {
+    const missing = spec.required.filter((k) => !data[k])
+    if (missing.length) {
+      ElMessage.warning(`「${form.type}」类型必须填写 ${missing.join('、')} 的值`)
+      return
+    }
+  }
+
   saving.value = true
   try {
     const ctx2 = { tenantId: state.tenantId!, clusterId: state.clusterId! }
@@ -211,6 +273,7 @@ const contextDesc = computed(() => {
                 <el-option v-for="t in typeOptions" :key="t" :label="t" :value="t" />
               </el-select>
               <div class="form-tip">{{ SECRET_TYPE_DESC[form.type] }}</div>
+              <div v-if="fixedSpec" class="form-tip">该类型的 Key 已固定，无需手填；可选 key 通过「+ 添加键值对」补。</div>
             </el-form-item>
             <el-form-item label="标签">
               <LabelEditor v-model="form.labels" :disabled="readOnly" class="sub-editor" style="max-width: 520px" />
@@ -223,10 +286,15 @@ const contextDesc = computed(() => {
               <div class="kv-editor">
                 <div v-for="(row, idx) in form.rows" :key="idx" class="kv-row">
                   <div class="kv-row-head">
-                    <el-input v-model="row.key" placeholder="Key（如 username）" class="kv-key" :disabled="dataLocked || readOnly" />
+                    <el-input
+                      v-model="row.key"
+                      placeholder="Key（如 username）"
+                      class="kv-key"
+                      :disabled="dataLocked || readOnly || keyLocked"
+                    />
                     <div class="kv-actions">
                       <el-button link type="primary" :disabled="dataLocked || readOnly" @click="pickFile(idx)">导入文件</el-button>
-                      <el-button link type="danger" :disabled="(dataLocked || readOnly) || form.rows.length <= 1" @click="form.rows.splice(idx, 1)">删除</el-button>
+                      <el-button link type="danger" :disabled="(dataLocked || readOnly) || !canDeleteRow(row)" @click="form.rows.splice(idx, 1)">删除</el-button>
                     </div>
                   </div>
                   <el-input
@@ -246,7 +314,22 @@ const contextDesc = computed(() => {
                   accept=".crt,.cer,.pem,.key,.json,.txt,.yaml,.yml,text/*,application/json"
                   @change="onFileChosen"
                 />
-                <el-button class="add-row-btn" plain :disabled="dataLocked || readOnly" @click="form.rows.push({ key: '', value: '' })">+ 添加键值对</el-button>
+                <el-dropdown
+                  v-if="fixedSpec && addableKeys.length"
+                  trigger="click"
+                  :disabled="dataLocked || readOnly"
+                  @command="addFixedRow"
+                >
+                  <el-button plain :disabled="dataLocked || readOnly">
+                    + 添加键值对<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item v-for="k in addableKeys" :key="k" :command="k">{{ k }}</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+                <el-button v-else-if="!fixedSpec" class="add-row-btn" plain :disabled="dataLocked || readOnly" @click="form.rows.push({ key: '', value: '' })">+ 添加键值对</el-button>
               </div>
             </el-form-item>
           </el-form>
