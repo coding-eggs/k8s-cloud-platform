@@ -1,5 +1,6 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.models.image.ImageMirroring;
 import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
@@ -649,6 +650,10 @@ public class ClusterComponentService {
         s.setDefaultThanosReceiveUrl(!thanosRemoteWrite ? null : recipe.thanosReceiveDefault());
         s.setThanosInstall(recipe != null && recipe.thanosInstall());
         s.setCalicoNetwork(recipe != null && recipe.calicoNetwork());
+        // 镜像能否指到平台 Harbor：自举类组件（calico）固定官方，安装表单里不给「平台 Harbor」这个选项。
+        // 名单与 k8s-server 的改写跳过是同一个来源 —— ImageMirroring
+        s.setImageMirroring(recipe == null || recipe.releases().stream()
+                .noneMatch(r -> ImageMirroring.officialOnlyChart(r.chartCode())));
         s.setTektonProfile(recipe != null && recipe.tektonProfile());
         s.setDefaultTektonProfile(recipe != null && recipe.tektonProfile()
                 ? ComponentRecipeCatalog.DEFAULT_TEKTON_PROFILE : null);

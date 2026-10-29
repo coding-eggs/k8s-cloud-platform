@@ -1,12 +1,12 @@
 package com.coding.k8sserver.components;
 
+import com.coding.common.models.image.ImageMirroring;
 import com.coding.common.models.image.ImageReference;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 镜像**只存在于模板里**的那几份 chart 的兜底表。
@@ -34,17 +34,11 @@ final class ChartImagePins {
     private record RegistryPin(String path) {
     }
 
-    /**
-     * 整份 chart **不做任何改写** —— 镜像必须能先于镜像仓库可用的组件（自举）。
-     *
-     * <p>目前只有 calico：它是 CNI 本身，换成 Harbor 地址后一旦安装或升级中途失败，
-     * 整个节点的网络都起不来（详见下面那段时间线）。
-     */
-    private static final Set<String> NO_REWRITE = Set.of("components/tigera-operator/v3.33.0");
-
-    /** 这份 chart 是否整份跳过镜像改写（含 values 与模板里写死的镜像） */
+    /** 这份 chart 是否整份跳过镜像改写（含 values 与模板里写死的镜像）：名单在 {@link ImageMirroring} */
     static boolean skipRewrite(Path chartDir) {
-        return NO_REWRITE.contains(chartKey(chartDir));
+        Path version = chartDir.getParent();
+        Path name = version == null ? null : version.getParent();
+        return name != null && ImageMirroring.officialOnlyChart(name.getFileName().toString());
     }
 
     /**
@@ -58,18 +52,9 @@ final class ChartImagePins {
     }
 
     /*
-     * ⚠️ calico 有意**不在这张表里**。
-     *
-     * 它的工作负载镜像由 tigera-operator 运行时决定（ImageSet / 内置列表），要整体换前缀只能写
-     * `Installation.spec.registry`。2026-10-29 试过，结论是不能这么做：
-     *
-     *   改 Installation → operator 把 calico-node / typha / kube-controllers 一次性滚动重建
-     *   → 单节点集群上 calico-node 一停，CNI 就断，新 Pod 的沙箱全卡住（kubelet 一直重试 CNI DEL）
-     *   → 新来的 tigera-operator Pod 自己也要 CNI，起不来 → helm --wait 900s 超时
-     *   → 平台按既有行为 `--rollback-on-failure` 回滚，改动被原样撤回。
-     *
-     * 本质是**自举问题**：换 CNI 镜像，得先有 CNI。跟 Harbor 组件自己永远走官方镜像是同一个道理
-     * （镜像仓库在它可用之前就得能起来）。所以 calico 固定走上游 quay.io，纳管边界到此为止。
+     * ⚠️ calico（chart {@code tigera-operator}）有意**不在这张表里**，整份 chart 在
+     * {@link #skipRewrite} 里被直接跳过 —— 名单与原因见 {@link ImageMirroring}：
+     * 它是 CNI 本身，换镜像前缀会让整个节点的网络在滚动期间起不来。
      */
     private static final Map<String, List<Object>> PINS = Map.of(
             "components/seaweedfs/4.48.0", List.of(

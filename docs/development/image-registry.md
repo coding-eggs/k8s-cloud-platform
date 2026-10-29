@@ -192,8 +192,11 @@ Endpoint 地址：
 > `helm --wait` 900s 超时 → 平台按既有行为 `--rollback-on-failure` 回滚，改动被原样撤回。
 >
 > 本质是**自举问题**：换 CNI 的镜像，得先有 CNI。跟 Harbor 组件本身永远走官方是同一个道理。
-> 所以 **tigera-operator 整份 chart 都在 `ChartImagePins.NO_REWRITE` 里**：`Installation.spec.registry`
+> 所以 **tigera-operator 整份 chart 被直接跳过**（`ChartImagePins.skipRewrite`）：`Installation.spec.registry`
 > 不注入，连 chart 里那个 operator 的 Deployment 镜像也保持官方，`IMAGES` 表里也没有它的条目。
+> **安装表单里也不再给「平台 Harbor」这个选项**（`ComponentStatusDTO.imageMirroring=false`）——
+> 判据只有一处：`platform-common` 的 `ImageMirroring`，三边（k8s-server 改写 / platform-api 传参 /
+> 前端表单）都读它。
 > （后续交付方向是**离线部署 calico**，届时另行规划。）
 
 ### 3.3 不受这层改写管的三处

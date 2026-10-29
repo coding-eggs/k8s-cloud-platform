@@ -75,6 +75,13 @@ public class ComponentStatusDTO {
     private ThanosInstallRequest thanosInstallCurrent;
     /** 安装时是否要填 Calico 的 Pod CIDR / 封装方式 */
     private boolean calicoNetwork;
+    /**
+     * 镜像能否指向平台 Harbor（{@code false} = 固定走上游官方，安装表单里不给出该选项）。
+     *
+     * <p>判据在 {@code ImageMirroring}：自举类组件（calico，CNI 本身）换镜像前缀会让整个节点的
+     * 网络在滚动期间起不来，所以直接不给这个开关 —— 而不是给了再在后台悄悄忽略。
+     */
+    private boolean imageMirroring = true;
     /** Calico 默认值（表单预填） */
     private String defaultPodCidr;
     private String defaultEncapsulation;

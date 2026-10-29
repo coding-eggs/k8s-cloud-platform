@@ -264,8 +264,14 @@ public class ComponentInstallService {
         // 镜像改写掉（chart 文件在 k8s-server 里，platform-api 看不到）。harbor 组件例外 —— 永远走官方。
         com.coding.platformapi.images.ImageSource imageSource =
                 com.coding.platformapi.images.ImageSource.of(req.getImageSource());
+        // 自举类组件（calico）：chart 在 k8s-server 里整份跳过改写，这里也不必解析仓库地址。
+        // 名单来源与改写侧一致 —— ImageMirroring（表单里也不会给出「平台 Harbor」这个选项）
+        boolean officialOnlyChart = effective.stream()
+                .anyMatch(r -> com.coding.common.models.image.ImageMirroring
+                        .officialOnlyChart(r.chartCode()));
         com.coding.platformapi.images.ImageRegistry imageRegistryOfThisInstall =
                 "harbor".equals(req.getComponentCode())
+                        || officialOnlyChart
                         || imageSource != com.coding.platformapi.images.ImageSource.PLATFORM
                         ? com.coding.platformapi.images.ImageRegistry.OFFICIAL
                         : imageRegistry.resolve(req.getClusterId());

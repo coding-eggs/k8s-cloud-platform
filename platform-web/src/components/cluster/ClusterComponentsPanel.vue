@@ -199,6 +199,8 @@ interface ApplyDialog {
   initialHarbor: string
   /** 镜像来源：平台 Harbor（默认）/ 官方；harbor 组件本身强制官方 */
   imageSource: 'PLATFORM' | 'OFFICIAL'
+  /** 镜像能不能指到平台 Harbor（false = 自举类组件，固定官方；判据在后端） */
+  imageMirroring: boolean
 }
 
 /** OTel 表单里两个嵌套对象始终存在（后端可以为空，但表单控件需要可绑定） */
@@ -568,6 +570,7 @@ const applyDialog = ref<ApplyDialog>({
   showSeaweed: false, seaweed: { ...EMPTY_SEAWEED }, initialSeaweed: JSON.stringify(EMPTY_SEAWEED),
   showHarbor: false, harbor: { ...EMPTY_HARBOR }, initialHarbor: JSON.stringify(EMPTY_HARBOR),
   imageSource: 'PLATFORM' as 'PLATFORM' | 'OFFICIAL',
+  imageMirroring: true,
 })
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
@@ -797,6 +800,8 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     initialSeaweed: JSON.stringify(seaweed),
     showHarbor: !!row.harborRegistry,
     imageSource: 'PLATFORM',
+    // 自举类组件（calico）固定官方：表单里不给「平台 Harbor」选项
+    imageMirroring: row.imageMirroring !== false,
     harbor,
     initialHarbor: JSON.stringify(harbor),
   }
@@ -1065,8 +1070,8 @@ function confirmApply(): void {
     // Harbor：安装时整组下发；编辑时只发改动过的
     harbor: d.showHarbor && (d.action === 'INSTALL' || JSON.stringify(d.harbor) !== d.initialHarbor)
       ? { ...d.harbor, host: d.harbor.host.trim() } : undefined,
-    // 镜像来源：harbor 组件永远官方（后端也会强制），其余按表单
-    imageSource: d.showHarbor ? undefined : d.imageSource,
+    // 镜像来源：harbor 组件永远官方（后端也会强制）；自举类组件（calico）同理，不给改写
+    imageSource: d.showHarbor || !d.imageMirroring ? 'OFFICIAL' : d.imageSource,
   })
 }
 
@@ -1525,13 +1530,21 @@ function copyImage(text: string): void {
       <div class="cc-form-row">
         <span class="cc-form-label">镜像来源</span>
         <div class="cc-form-control">
-          <el-radio-group v-model="applyDialog.imageSource" :disabled="applyDialog.showHarbor">
+          <el-radio-group v-model="applyDialog.imageSource"
+                          :disabled="applyDialog.showHarbor || !applyDialog.imageMirroring">
             <el-radio-button value="PLATFORM">平台 Harbor</el-radio-button>
             <el-radio-button value="OFFICIAL">官方</el-radio-button>
           </el-radio-group>
           <div class="cc-form-hint">
-            平台 Harbor 会把该组件用到的镜像改写到 <code>harbor.ackcp.cloud/&lt;上游主机&gt;/…</code>；
-            Harbor 组件本身永远走官方（镜像不可能从自己拉）
+            <template v-if="applyDialog.showHarbor">
+              Harbor 组件本身永远走官方（镜像不可能从自己拉）
+            </template>
+            <template v-else-if="!applyDialog.imageMirroring">
+              该组件固定走官方：它必须在镜像仓库可用之前就能起来（CNI / 镜像仓库这类自举组件）
+            </template>
+            <template v-else>
+              平台 Harbor 会把该组件用到的镜像改写到 <code>harbor.ackcp.cloud/&lt;上游主机&gt;/…</code>
+            </template>
           </div>
         </div>
       </div>

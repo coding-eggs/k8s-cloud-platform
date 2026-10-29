@@ -1035,6 +1035,11 @@ export interface K8sComponentStatus {
   seaweedCurrent?: K8sSeaweedInstall | null
   /** 安装时是否要填 Harbor 访问域名 */
   harborRegistry?: boolean
+  /**
+   * 镜像能否指向平台 Harbor。`false` = 该组件固定走上游官方（calico 这类自举组件），
+   * 安装表单里不给这个选项 —— 判据在后端 `ImageMirroring`，前端不要自己按 code 判断。
+   */
+  imageMirroring?: boolean
   /** 当前生效的 Harbor 参数（上次成功操作快照） */
   harborCurrent?: K8sHarborInstall | null
 }

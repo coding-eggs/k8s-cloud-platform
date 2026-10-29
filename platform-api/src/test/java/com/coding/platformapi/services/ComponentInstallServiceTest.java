@@ -981,6 +981,35 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void calicoAlwaysUsesOfficialImagesEvenIfTheFormSaysPlatform() {
+        // CNI 自举：calico 固定走官方 —— 即使表单传了「平台 Harbor」，也不把仓库地址交给渲染方。
+        // k8s-server 那边 ChartImageOverlay 也会整份跳过；两处判据同一个来源（ImageMirroring）
+        when(imageRegistry.resolve("c1")).thenReturn(HARBOR_REGISTRY);
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "calico")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        com.coding.platformapi.components.ComponentRecipeCatalog catalog =
+                mock(com.coding.platformapi.components.ComponentRecipeCatalog.class);
+        when(catalog.recipeOf("calico", "BUSINESS")).thenReturn(
+                new com.coding.platformapi.components.ComponentRecipe("BUSINESS", List.of(
+                        new com.coding.platformapi.components.ReleaseSpec(
+                                "platform-tigera-operator", "tigera-operator", "tigera-operator", "v3.33.0",
+                                Map.of(), Map.of())), List.of(), false, false, false, true));
+
+        ComponentApplyRequest req = new ComponentApplyRequest("c1", "calico", "INSTALL", null, Map.of(),
+                null, null, null,
+                new com.coding.platformapi.models.CalicoInstallRequest("172.16.0.0/16", "IPIP"));
+        req.setImageSource("PLATFORM");
+        service(catalog).apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), captor.capture());
+        assertThat(captor.getValue()).allSatisfy(s -> assertThat(s.getImageRegistryHost()).isNull());
+    }
+
+    @Test
     void aSeaweedfsInstallWithoutStorageClassIsRejectedBeforeHelm() {
         // chart 无条件渲染 storageClassName；空串在 K8s 里是「不用动态供给」，装完是一组永远 Pending 的 PVC，
         // 而 helm 会显示成功 —— 必须在下发前拒
