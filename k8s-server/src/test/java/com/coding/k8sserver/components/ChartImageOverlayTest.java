@@ -110,6 +110,31 @@ class ChartImageOverlayTest {
                 .containsEntry("repository", "docker.io/bitnami/redis");
     }
 
+    /**
+     * seaweedfs 的拼法是 {@code registry + "/" + global.seaweedfs.image.name}：
+     * registry 已经是 Harbor 前缀，name 就只能放**上游路径**。
+     * 两边都带 Harbor 前缀会拼出 {@code harbor.ackcp.cloud/harbor.ackcp.cloud/docker.io/...}
+     * （2026-10-29 审计发现：渲染出来是个根本不存在的路径）。
+     */
+    @Test
+    void seaweedRegistryPinAndNamePinDoNotDoublePrefix() throws Exception {
+        Map<String, Object> overlay = ChartImageOverlay.of(
+                Path.of("src/main/resources/charts/components/seaweedfs/4.48.0/chart"),
+                "harbor.ackcp.cloud", "platform");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> image = (Map<String, Object>) overlay.get("image");
+        assertThat(image).containsEntry("registry", "harbor.ackcp.cloud/platform");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> global = (Map<String, Object>) overlay.get("global");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> seaweedfs = (Map<String, Object>) global.get("seaweedfs");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> name = (Map<String, Object>) seaweedfs.get("image");
+        assertThat(name).containsEntry("name", "docker.io/chrislusf/seaweedfs");
+    }
+
     /** 镜像在模板里拼死的两个 chart：靠一张钉死的表补上（表与模板字面量由护栏测试对齐）。 */
     @Test
     void pinnedDefaultsCoverTemplateAssembledImages() throws Exception {

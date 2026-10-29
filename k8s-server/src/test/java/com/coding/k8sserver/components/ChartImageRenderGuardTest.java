@@ -43,6 +43,7 @@ class ChartImageRenderGuardTest {
         assumeTrue(helmAvailable(), "本机没有 helm，跳过渲染护栏");
 
         List<String> problems = new ArrayList<>();
+        List<String> rendered = new ArrayList<>();
         int[] seen = {0};
         List<Path> charts = chartDirs();
 
@@ -78,6 +79,7 @@ class ChartImageRenderGuardTest {
                     continue;
                 }
                 seen[0]++;
+                rendered.add(name + "\t" + image);
                 if (!image.startsWith(HOST + "/")) {
                     problems.add(name + " -> " + image);
                     continue;
@@ -91,6 +93,13 @@ class ChartImageRenderGuardTest {
                     problems.add(name + " -> " + image + "（library 下还有多段）");
                 }
             }
+        }
+
+        // 排查用：把渲染出的镜像落一份清单（配合 Harbor 侧核对「这个路径到底存不存在」——
+        // 前缀检查只能证明「以 Harbor 开头」，证明不了那个仓库真的搬进来了）
+        String dump = System.getenv("IMAGE_GUARD_DUMP");
+        if (dump != null && !dump.isBlank()) {
+            Files.write(Path.of(dump), rendered);
         }
 
         assertThat(problems).as("PLATFORM 模式下仍会从上游拉的镜像").isEmpty();

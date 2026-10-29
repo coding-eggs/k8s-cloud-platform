@@ -112,8 +112,10 @@ public class MiddlewareOperatorInstaller {
     String operatorValues(Path chartDir, MiddlewareOperatorCatalog.Entry entry,
                           String imageRegistryHost, String imageRegistryProject) {
         String base = entry.helmValues() == null ? "" : entry.helmValues();
-        if (imageRegistryHost == null || imageRegistryHost.isBlank()
-                || imageRegistryProject == null || imageRegistryProject.isBlank()) {
+        // 启用开关只有 host：project 为空是**常态**（「一个上游一个项目」，项目名就是上游主机，
+        // 见 ImageReference.mirror）。早先要求 project 也非空，于是空白 project 下这里直接 return
+        // base —— 中间件 operator 的镜像全部没改写，装出来还是从 docker.io 拉（2026-10-29 审计发现）
+        if (imageRegistryHost == null || imageRegistryHost.isBlank()) {
             return base;
         }
         try {

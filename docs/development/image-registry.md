@@ -271,3 +271,14 @@ platform-api / k8s-server / platform-web / platform-auth 的 Deployment 不在�
 断言渲染出来的每个 `image:` 都在 Harbor 上。它需要本机有 helm，没有则跳过——所以它在开发机/流水线
 里跑才有意义，在容器里跑会静默跳过。
 
+> **前缀通过 ≠ 路径存在。** 护栏只能证明「以 `harbor.ackcp.cloud/` 开头」，证明不了那个仓库真的
+> 搬进来了 —— `docker.io/library/istio/pilot`（hub 被当完整镜像）和 seaweedfs 的双前缀都是这么漏的。
+> 要真核对，把渲染清单落盘再跟 Harbor 比：
+>
+> ```bash
+> IMAGE_GUARD_DUMP=D:/tmp/rendered-images.txt mvn -pl k8s-server -am test -Dtest=ChartImageRenderGuardTest
+> ```
+>
+> 然后对文件里每一行取 `<项目>/<仓库>`（项目 = 第一段），逐个查 Harbor 的
+> `/api/v2.0/projects/{项目}/repositories` 里有没有。
+

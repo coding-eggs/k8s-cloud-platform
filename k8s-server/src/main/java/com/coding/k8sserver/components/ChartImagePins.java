@@ -33,10 +33,20 @@ final class ChartImagePins {
     private record RegistryPin(String path) {
     }
 
+    /**
+     * values 里的路径 ← 「上游主机/仓库路径」，**不带** Harbor 前缀。
+     *
+     * <p>给「registry 与 name 各占一个键、模板里 {@code registry + "/" + name} 拼」的 chart 用：
+     * registry 那个键已经由 {@link RegistryPin} 给了 Harbor 前缀，name 再带一遍就会拼成
+     * {@code harbor.ackcp.cloud/harbor.ackcp.cloud/docker.io/...}。
+     */
+    private record UpstreamPathPin(String path, String upstreamImage) {
+    }
+
     private static final Map<String, List<Object>> PINS = Map.of(
             "components/seaweedfs/4.48.0", List.of(
                     new RegistryPin("image.registry"),
-                    new ImagePin("global.seaweedfs.image.name", "chrislusf/seaweedfs")),
+                    new UpstreamPathPin("global.seaweedfs.image.name", "chrislusf/seaweedfs")),
             "components/tekton-operator/0.81.2", List.of(
                     new ImagePin("operator.image.repository",
                             "ghcr.io/tektoncd/operator/operator-303303c315a48490ba6517859ef65b77"),
@@ -59,6 +69,9 @@ final class ChartImagePins {
                 put(out, registry.path(), ImageReference.prefix(host, project));
             } else if (pin instanceof ImagePin image) {
                 put(out, image.path(), ImageReference.parse(image.upstreamImage()).mirror(host, project));
+            } else if (pin instanceof UpstreamPathPin path) {
+                ImageReference ref = ImageReference.parsePrefix(path.upstreamImage());
+                put(out, path.path(), ref.registry() + "/" + ref.repository());
             }
         }
         return out;

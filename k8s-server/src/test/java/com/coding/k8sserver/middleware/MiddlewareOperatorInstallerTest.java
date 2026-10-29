@@ -215,6 +215,21 @@ class MiddlewareOperatorInstallerTest {
     }
 
     @Test
+    void operatorValuesAreMirroredEvenWhenProjectIsBlank() throws Exception {
+        // 「一个上游一个项目」之后 project 常态就是空串，**启用开关只有 host**。
+        // 之前把 project 也当开关，中间件 operator 的镜像在空 project 下全部没改写
+        // —— 装出来的 operator 还是从 docker.io 拉（2026-10-29 审计发现）
+        Path chart = Files.createTempDirectory("chart");
+        Files.writeString(chart.resolve("values.yaml"),
+                "rabbitmqImage:\n  registry: docker.io\n  repository: library/rabbitmq\n  tag: 4.1.0\n");
+        var entry = new MiddlewareOperatorCatalog().require("rabbitmq");
+
+        String values = installer.operatorValues(chart, entry, "harbor.ackcp.cloud", "");
+
+        assertThat(values).contains("harbor.ackcp.cloud").contains("docker.io/library/rabbitmq");
+    }
+
+    @Test
     void operatorValuesAreUntouchedWithoutARegistry() {
         var entry = new MiddlewareOperatorCatalog().require("rabbitmq");
         String base = entry.helmValues() == null ? "" : entry.helmValues();
