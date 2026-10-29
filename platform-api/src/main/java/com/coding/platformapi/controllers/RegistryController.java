@@ -5,6 +5,7 @@ import com.coding.platformapi.models.RegistryBrowseRequest;
 import com.coding.platformapi.models.RegistryConnectionView;
 import com.coding.platformapi.models.RegistrySuggestRequest;
 import com.coding.platformapi.models.RegistrySuggestResponse;
+import com.coding.platformapi.models.RegistryWarehouseView;
 import com.coding.platformapi.registry.BrowseResult;
 import com.coding.platformapi.security.AuthContext;
 import com.coding.platformapi.services.RegistryService;
@@ -19,12 +20,12 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 镜像仓库的三个只读入口（租户可达）。本层只做 HTTP 绑定与 {@link ResponseData} 包装；
+ * 镜像仓库的四个只读入口（租户可达）。本层只做 HTTP 绑定与 {@link ResponseData} 包装；
  * 业务与两条硬边界在 {@link RegistryService}（分层约定见 docs/development/backend-layering.md）。
  *
- * <p>权限行见 V2026_10_14_1：三个端点**共用** {@code tenant:registry:catalog}
- * （它们是同一件事「看镜像目录」的三个入口，都只读、都归同一页面同一批人）。
- * **三个都必须有行**，否则启动期交叉校验拒启。
+ * <p>权限行见 V2026_10_14_1 与 V2026_10_29_2：四个端点**共用** {@code tenant:registry:catalog}
+ * （它们是同一件事「看镜像目录」的四个入口，都只读、都归同一页面同一批人）。
+ * **四个都必须有行**，否则启动期交叉校验拒启。
  *
  * <p><b>审计：三个都不标</b> —— 补全是每按键一次的高频只读动作，逐次写审计等于淹掉审计表；
  * 浏览同理。见 spec §8（有意不做，勿当缺口）。这条由 {@code RegistryControllerTest} 钉着。
@@ -62,5 +63,13 @@ public class RegistryController {
     @PostMapping("/connections")
     public ResponseData<List<RegistryConnectionView>> connections() {
         return new ResponseData<>(registryService.connections(auth.hatTenantId()));
+    }
+
+    @Operation(summary = "仓库清单",
+            description = "按 host 聚合的只读视图：安装记录 ∪ 凭据行 ∪ 内置 Docker Hub。"
+                    + "租户只看得到自己可见的那些（与 /registry/connections 同一套可见性规则）")
+    @PostMapping("/warehouses")
+    public ResponseData<List<RegistryWarehouseView>> warehouses() {
+        return new ResponseData<>(registryService.warehouses(auth.hatTenantId()));
     }
 }

@@ -12,9 +12,11 @@ import com.coding.platformapi.credential.CredentialSecret;
 import com.coding.platformapi.models.RegistryBrowseRequest;
 import com.coding.platformapi.models.RegistryConnectionView;
 import com.coding.platformapi.models.RegistrySuggestResponse;
+import com.coding.platformapi.models.RegistryWarehouseView;
 import com.coding.platformapi.registry.BrowseResult;
 import com.coding.platformapi.registry.BuiltinRegistry;
 import com.coding.platformapi.registry.CredentialRef;
+import com.coding.platformapi.registry.HarborInstallLocator;
 import com.coding.platformapi.registry.RegistryDialectRegistry;
 import com.coding.platformapi.registry.RegistrySuggestExecutor;
 import com.coding.platformapi.registry.RegistryTargetResolver;
@@ -31,6 +33,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -81,13 +84,17 @@ public class RegistryService {
      */
     private final boolean dockerHubEnabled;
 
+    /** 「Harbor 装在哪些集群、地址是什么」—— 仓库清单要它标 INSTALLED 与 clusterId */
+    private final HarborInstallLocator harborInstalls;
+
     public RegistryService(PlatformCredentialMapper mapper,
                            PlatformRegistryProjectMapper projectMapper,
                            CredentialCipher cipher,
                            RegistryDialectRegistry dialects,
                            RedisJsonCache cache,
                            RegistrySuggestExecutor suggestExecutor,
-                           @Value("${platform.registry.dockerhub.enabled:true}") boolean dockerHubEnabled) {
+                           @Value("${platform.registry.dockerhub.enabled:true}") boolean dockerHubEnabled,
+                           HarborInstallLocator harborInstalls) {
         this.mapper = mapper;
         this.projectMapper = projectMapper;
         this.cipher = cipher;
@@ -95,6 +102,7 @@ public class RegistryService {
         this.cache = cache;
         this.suggestExecutor = suggestExecutor;
         this.dockerHubEnabled = dockerHubEnabled;
+        this.harborInstalls = harborInstalls;
     }
 
     /**
@@ -109,6 +117,67 @@ public class RegistryService {
         return allSources(hatTenantId).stream()
                 .map(s -> new RegistryConnectionView(s.id(), s.name(), s.type(), s.endpoint()))
                 .toList();
+    }
+
+    /**
+     * 仓库清单（spec §3.3 / §6.1）：一个 {@code host[:port]} 一行。
+     *
+     * <p>起点是 {@link #allSources}（已经过 {@code visibleTo} 过滤、已含内置档），
+     * 所以租户天然看不到别人的仓库与平台共享 robot。管理员**额外**看到
+     * 「装了 Harbor 但还没同步出任何凭据」的集群 —— 否则管理员没有入口去触发同步。
+     */
+    public List<RegistryWarehouseView> warehouses(String hatTenantId) {
+        Map<String, List<Source>> byHost = new LinkedHashMap<>();
+        for (Source s : allSources(hatTenantId)) {
+            String key = BuiltinRegistry.DOCKER_HUB.id().equals(s.id())
+                    ? BuiltinRegistry.DOCKER_HUB.id()
+                    : HarborInstallLocator.hostOf(s.endpoint());
+            byHost.computeIfAbsent(key, k -> new ArrayList<>()).add(s);
+        }
+
+        Map<String, HarborInstallLocator.InstalledHarbor> installedByHost = new LinkedHashMap<>();
+        for (HarborInstallLocator.InstalledHarbor i : harborInstalls.all()) {
+            installedByHost.put(i.access().host(), i);
+        }
+        if (hatTenantId == null) {
+            installedByHost.keySet().forEach(h -> byHost.computeIfAbsent(h, k -> new ArrayList<>()));
+        }
+
+        // 项目台账：租户只数自己的，管理员数全部（spec §6.4.1）
+        List<PlatformRegistryProject> projects = projectMapper.selectAll().stream()
+                .filter(p -> hatTenantId == null || hatTenantId.equals(p.getTenantId()))
+                .toList();
+
+        return byHost.entrySet().stream()
+                .map(e -> toWarehouse(e.getKey(), e.getValue(), installedByHost, projects))
+                .toList();
+    }
+
+    private static RegistryWarehouseView toWarehouse(
+            String key, List<Source> sources,
+            Map<String, HarborInstallLocator.InstalledHarbor> installedByHost,
+            List<PlatformRegistryProject> projects) {
+        boolean builtin = BuiltinRegistry.DOCKER_HUB.id().equals(key);
+        HarborInstallLocator.InstalledHarbor inst = builtin ? null : installedByHost.get(key);
+        Source first = sources.isEmpty() ? null : sources.get(0);
+
+        String host = builtin ? BuiltinRegistry.DOCKER_HUB.endpoint() : key;
+        String kind = builtin || (first != null && "DOCKERHUB".equals(first.type()))
+                ? "DOCKER" : "HARBOR";
+        String origin = builtin ? "BUILTIN" : (inst != null ? "INSTALLED" : "CREDENTIAL");
+        String displayName = builtin ? BuiltinRegistry.DOCKER_HUB.displayName()
+                : inst != null ? "Harbor · " + inst.clusterName() : host;
+        int projectCount = (int) projects.stream()
+                .filter(p -> key.equalsIgnoreCase(HarborInstallLocator.hostOf(p.getHost())))
+                .count();
+        // connectionCount：没有凭据行的不计（内置档恒 0）
+        String message = sources.stream()
+                .map(Source::verifyError).filter(Objects::nonNull).findFirst().orElse(null);
+        return new RegistryWarehouseView(key, host, kind, origin, displayName,
+                inst == null ? null : inst.clusterId(),
+                inst == null ? null : inst.exposeMode(),
+                sources.size(), projectCount,
+                message == null ? "OK" : "ERROR", message);
     }
 
     /**
@@ -275,15 +344,17 @@ public class RegistryService {
      */
     private record Source(String id, String name, String type, String endpoint, String ciphertext,
                           /** 凭据归属的 Harbor project（平台建的租户项目才有；手工连接为 null） */
-                          String project) {
+                          String project,
+                          /** 上次测试连接的失败原因；成功或内置档为 null（仓库清单的健康判定要用） */
+                          String verifyError) {
 
         static Source builtin(BuiltinRegistry b) {
-            return new Source(b.id(), b.displayName(), b.type(), b.endpoint(), null, null);
+            return new Source(b.id(), b.displayName(), b.type(), b.endpoint(), null, null, null);
         }
 
         static Source from(PlatformCredential c, String project) {
             return new Source(c.getId(), c.getName(), c.getType(), c.getEndpoint(),
-                    c.getSecretEncrypted(), project);
+                    c.getSecretEncrypted(), project, c.getLastVerifyError());
         }
 
         /** 只带匹配需要的字段（id / name / type / endpoint）的轻量 ref，**不含明文**。 */

@@ -94,7 +94,8 @@ class RegistryServiceTest {
     /** 显式带 builtin 开关 —— 「这条用例到底开没开内置 Docker Hub」必须一眼看得出来。 */
     private RegistryService service(RegistryDialectRegistry d, boolean builtin) {
         return new RegistryService(mapper, projectMapper, cipher, d, cache,
-                new RegistrySuggestExecutor(), builtin);
+                new RegistrySuggestExecutor(), builtin,
+                org.mockito.Mockito.mock(com.coding.platformapi.registry.HarborInstallLocator.class));
     }
 
     RegistryService svc = service(new RegistryDialectRegistry(List.of(spyDialect)), false);
