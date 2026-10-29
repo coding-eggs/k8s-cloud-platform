@@ -1,6 +1,7 @@
 package com.coding.k8score.pipeline.nodes;
 
 import com.coding.k8score.pipeline.NodeContext;
+import com.coding.k8score.pipeline.PipelineBaseImages;
 import com.coding.k8score.pipeline.NodeField;
 import com.coding.k8score.pipeline.NodeSchema;
 import com.coding.k8score.pipeline.PipelineNode;
@@ -19,7 +20,7 @@ import java.util.List;
 @Component
 public class GoBuildNode implements PipelineNode {
 
-    private static final String DEFAULT_IMAGE = "golang:1.23-alpine";
+    private static final String DEFAULT_IMAGE = PipelineBaseImages.GOLANG_ALPINE;
     private static final String DEFAULT_COMMAND = "go build ./...";
 
     /** 见类注释：默认值不是可有可无的美化，是这个集群能不能拉到依赖的分界线。 */

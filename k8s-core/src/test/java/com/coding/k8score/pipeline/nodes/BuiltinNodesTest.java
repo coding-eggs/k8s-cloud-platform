@@ -102,7 +102,10 @@ class BuiltinNodesTest {
         // 选了 java-build 预设但没改任何字段 → 用的是预设的镜像与命令
         RenderedStep step = new ShellNode().render(ctx("shell",
                 Map.of("preset", "java-build", "image", "", "command", "", "workDir", "")));
-        assertThat(step.steps().get(0).getImage()).isEqualTo("maven:3.9-eclipse-temurin-21");
+        // 默认镜像指向平台 Harbor（用户 2026-10-29 定）：节点默认值就是 Harbor 地址，
+        // 渲染期不做任何改写 —— 用户在表单里看到的就是真正会拉的那个
+        assertThat(step.steps().get(0).getImage())
+                .isEqualTo("harbor.ackcp.cloud/docker.io/library/maven:3.9-eclipse-temurin-21");
         assertThat(step.steps().get(0).getScript()).contains("mvn");
     }
 

@@ -13,12 +13,12 @@ import java.util.Optional;
 public record BuildPreset(String key, String label, String image, String command) {
 
     private static final List<BuildPreset> ALL = List.of(
-            new BuildPreset("java-build", "Java · 构建", "maven:3.9-eclipse-temurin-21", "mvn -B -DskipTests package"),
-            new BuildPreset("java-test", "Java · 测试", "maven:3.9-eclipse-temurin-21", "mvn -B test"),
-            new BuildPreset("go-build", "Go · 构建", "golang:1.22", "go build ./..."),
-            new BuildPreset("go-test", "Go · 测试", "golang:1.22", "go test ./..."),
-            new BuildPreset("node-build", "Node · 构建", "node:20", "npm ci && npm run build"),
-            new BuildPreset("node-test", "Node · 测试", "node:20", "npm test"),
+            new BuildPreset("java-build", "Java · 构建", PipelineBaseImages.MAVEN, "mvn -B -DskipTests package"),
+            new BuildPreset("java-test", "Java · 测试", PipelineBaseImages.MAVEN, "mvn -B test"),
+            new BuildPreset("go-build", "Go · 构建", PipelineBaseImages.GOLANG, "go build ./..."),
+            new BuildPreset("go-test", "Go · 测试", PipelineBaseImages.GOLANG, "go test ./..."),
+            new BuildPreset("node-build", "Node · 构建", PipelineBaseImages.NODE, "npm ci && npm run build"),
+            new BuildPreset("node-test", "Node · 测试", PipelineBaseImages.NODE, "npm test"),
             new BuildPreset("custom", "自定义", "", ""));
 
     public static List<BuildPreset> all() {

@@ -111,7 +111,7 @@ public class GitCloneNode implements PipelineNode {
 
         Step step = new Step();
         step.setName("clone");
-        step.setImage("alpine/git:2.45.2");
+        step.setImage(PipelineBaseImages.GIT);
         step.setWorkingDir(WS);
         step.setScript(script.toString());
         // 代理（留空 = 直连，一个变量都不加）—— GitHub 的 pack 下载实测会在 10MiB 处卡死，

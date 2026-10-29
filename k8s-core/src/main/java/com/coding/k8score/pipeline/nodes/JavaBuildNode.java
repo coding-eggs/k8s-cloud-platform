@@ -1,6 +1,7 @@
 package com.coding.k8score.pipeline.nodes;
 
 import com.coding.k8score.pipeline.NodeContext;
+import com.coding.k8score.pipeline.PipelineBaseImages;
 import com.coding.k8score.pipeline.NodeSchema;
 import com.coding.k8score.pipeline.PipelineNode;
 import com.coding.k8score.pipeline.RenderedStep;
@@ -19,7 +20,7 @@ import java.util.List;
 @Component
 public class JavaBuildNode implements PipelineNode {
 
-    private static final String DEFAULT_IMAGE = "maven:3.9-eclipse-temurin-21";
+    private static final String DEFAULT_IMAGE = PipelineBaseImages.MAVEN;
     private static final String DEFAULT_COMMAND = "mvn -B -DskipTests package";
 
     @Override

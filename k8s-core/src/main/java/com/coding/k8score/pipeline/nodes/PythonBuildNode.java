@@ -1,6 +1,7 @@
 package com.coding.k8score.pipeline.nodes;
 
 import com.coding.k8score.pipeline.NodeContext;
+import com.coding.k8score.pipeline.PipelineBaseImages;
 import com.coding.k8score.pipeline.NodeField;
 import com.coding.k8score.pipeline.NodeSchema;
 import com.coding.k8score.pipeline.PipelineNode;
@@ -20,7 +21,7 @@ import java.util.List;
 @Component
 public class PythonBuildNode implements PipelineNode {
 
-    private static final String DEFAULT_IMAGE = "python:3.12-slim";
+    private static final String DEFAULT_IMAGE = PipelineBaseImages.PYTHON;
     private static final String DEFAULT_COMMAND = "pip install -r requirements.txt";
 
     @Override

@@ -1,6 +1,7 @@
 package com.coding.k8score.pipeline.nodes;
 
 import com.coding.k8score.pipeline.NodeContext;
+import com.coding.k8score.pipeline.PipelineBaseImages;
 import com.coding.k8score.pipeline.NodeSchema;
 import com.coding.k8score.pipeline.PipelineNode;
 import com.coding.k8score.pipeline.RenderedStep;
@@ -17,7 +18,7 @@ import java.util.List;
 @Component
 public class NodeBuildNode implements PipelineNode {
 
-    private static final String DEFAULT_IMAGE = "node:20-alpine";
+    private static final String DEFAULT_IMAGE = PipelineBaseImages.NODE_ALPINE;
     private static final String DEFAULT_COMMAND = "npm ci && npm run build";
 
     @Override

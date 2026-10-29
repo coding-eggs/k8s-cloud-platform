@@ -184,7 +184,7 @@ public class ImagePushNode implements PipelineNode {
 
         Step step = new Step();
         step.setName("build-and-push");
-        step.setImage("quay.io/buildah/stable:v1.35");
+        step.setImage(PipelineBaseImages.BUILDAH);
         step.setWorkingDir(WS);
         step.setScript(script);
         // 推送凭据以文件形式挂进来（k8s-server 按 platform-api 给的连接建 Secret）——

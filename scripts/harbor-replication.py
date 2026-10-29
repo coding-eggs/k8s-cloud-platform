@@ -52,6 +52,14 @@ IMAGES = {
         'istio/proxyv2:1.31.3',
         'istio/ztunnel:1.31.3',
         'library/busybox:latest',
+        # 流水线预设节点的默认镜像（BuildStep / BuildPreset / GitCloneNode / ImagePushNode 里写死的那几个）
+        'alpine/git:2.45.2',
+        'library/golang:1.22',        # BuildPreset 用（go-build / go-test）
+        'library/golang:1.23-alpine',  # GoBuildNode 的默认
+        'library/maven:3.9-eclipse-temurin-21',
+        'library/node:20',            # BuildPreset 用（node-build / node-test）
+        'library/node:20-alpine',     # NodeBuildNode 的默认
+        'library/python:3.12-slim',
         'library/rabbitmq:4.1.3',
         'milvusdb/milvus:v2.6.25',   # 中间件默认版本；建别的版本时把 tag 加到这里
         'milvusdb/milvus-operator:v1.3.12',
@@ -62,6 +70,8 @@ IMAGES = {
         'prom/mysqld-exporter:v0.15.1',
     ],
     'quay.io': [
+        # 流水线「构建并推送」节点的默认镜像（ImagePushNode 里写死）
+        'buildah/stable:v1.35',
         # calico **不纳管**：它必须能先于镜像仓库可用（换 CNI 镜像得先有 CNI），固定走上游 quay.io。
         # 原因见 ChartImagePins 里那段注释；`quay.io` 项目下残留的 calico/* 仓库可以随手清掉。
         'jetstack/cert-manager-cainjector:v1.21.2',
