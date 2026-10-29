@@ -74,7 +74,7 @@ public class CredentialController {
     @PostMapping("/create")
     @Auditable(action = AuditAction.CREDENTIAL_CREATE, target = "#request.name")
     public ResponseData<CredentialView> create(@RequestBody CredentialCreateRequest request) {
-        return new ResponseData<>(credentialService.create(request));
+        return new ResponseData<>(credentialService.create(request, auth.hatTenantId()));
     }
 
     @Operation(summary = "更新凭据",
@@ -82,14 +82,14 @@ public class CredentialController {
     @PostMapping("/update")
     @Auditable(action = AuditAction.CREDENTIAL_UPDATE, target = "#request.id")
     public ResponseData<CredentialView> update(@RequestBody CredentialUpdateRequest request) {
-        return new ResponseData<>(credentialService.update(request));
+        return new ResponseData<>(credentialService.update(request, auth.hatTenantId()));
     }
 
     @Operation(summary = "删除凭据", description = "硬删除。被流水线引用时不做保护（不加外键是既定原则）")
     @PostMapping("/delete")
     @Auditable(action = AuditAction.CREDENTIAL_DELETE, target = "#request.id")
     public ResponseData<Void> delete(@RequestBody CredentialIdRequest request) {
-        credentialService.delete(request.getId());
+        credentialService.delete(request.getId(), auth.hatTenantId());
         return new ResponseData<>(null);
     }
 }

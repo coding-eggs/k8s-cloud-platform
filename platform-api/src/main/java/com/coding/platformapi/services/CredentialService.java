@@ -100,6 +100,9 @@ public class CredentialService {
 
     private final PlatformRegistryProjectMapper projectMapper;
 
+    /** 「平台自己装的那台 Harbor 在哪」—— 写侧要拒掉指向它的手工新建 */
+    private final HarborInstallLocator harborInstalls;
+
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
     public List<CredentialView> list() {
@@ -125,8 +128,18 @@ public class CredentialService {
     }
 
     public CredentialView create(CredentialCreateRequest req) {
+        return create(req, null);
+    }
+
+    /**
+     * @param hatTenantId 请求的租户帽；null = 平台管理员。
+     *                    **归属由它决定，请求体里的 tenantId 一律忽略** —— 与
+     *                    {@code PipelineRunService} 那次修的是同一个原则：用调用者身份，不用目标租户。
+     */
+    public CredentialView create(CredentialCreateRequest req, String hatTenantId) {
         validateCommon(req.getName(), req.getType(), req.getEndpoint());
         validateAuthOnCreate(req.getType(), req.getAuthType(), req.getUsername(), req.getSecret());
+        assertNotPlatformHarbor(req.getType(), req.getEndpoint());
         if (mapper.selectByName(req.getName()) != null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NAME_EXIST);
         }
@@ -151,9 +164,9 @@ public class CredentialService {
         c.setEnabled(req.getEnabled() == null || req.getEnabled() ? 1 : 0);
         // **默认关**：逐条显式授权（spec §5.3）。不传就是不授权。
         c.setUsableByPipelines(req.getUsableByPipelines() != null && req.getUsableByPipelines() ? 1 : 0);
-        // 手工建的凭据恒为平台级；租户归属只由 Harbor 同步写入
+        // 手工建的凭据来源恒为 MANUAL；归属由调用者身份决定（租户自建 → 该租户，管理员 → 平台级）
         c.setSource("MANUAL");
-        c.setTenantId(null);
+        c.setTenantId(hatTenantId);
 
         mapper.insert(c);
         return toView(c);
@@ -166,10 +179,16 @@ public class CredentialService {
      * <p>{@code authType} 变更时**必须重填**：密文是绑 authType 解释的 JSON，跨类型沿用语义会对不上。
      */
     public CredentialView update(CredentialUpdateRequest req) {
+        return update(req, null);
+    }
+
+    public CredentialView update(CredentialUpdateRequest req, String hatTenantId) {
         PlatformCredential old = mapper.selectById(req.getId());
         if (old == null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST);
         }
+        assertTangible(old, hatTenantId);
+        assertNotPlatformHarbor(req.getType(), req.getEndpoint());
         validateCommon(req.getName(), req.getType(), req.getEndpoint());
 
         PlatformCredential byName = mapper.selectByName(req.getName());
@@ -201,10 +220,47 @@ public class CredentialService {
     }
 
     public void delete(String id) {
-        if (mapper.selectById(id) == null) {
+        delete(id, null);
+    }
+
+    public void delete(String id, String hatTenantId) {
+        PlatformCredential old = mapper.selectById(id);
+        if (old == null) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST);
         }
+        assertTangible(old, hatTenantId);
         mapper.deleteById(id);
+    }
+
+    /**
+     * 这行能不能被当前请求改 / 删。
+     *
+     * <p>两条：{@code source=HARBOR} 的是同步写出来的（换口令走「重建」，不是改表单）；
+     * 租户只能动自己租户的行（平台级 MANUAL 对租户可见但只读，见 {@link #visibleTo}）。
+     */
+    private static void assertTangible(PlatformCredential c, String hatTenantId) {
+        if ("HARBOR".equals(c.getSource())) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "这条连接由 Harbor 组件自动维护，不能手工修改或删除"
+                            + "（需要换口令请在镜像仓库页「重建」）");
+        }
+        if (hatTenantId != null && !hatTenantId.equals(c.getTenantId())) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "这条连接属于别的租户，只能修改或删除自己租户的连接");
+        }
+    }
+
+    /**
+     * 平台 Harbor 不接受手工新建的连接 —— 那是建租户项目时由同步自动发的 robot。
+     *
+     * <p>不拦的话会多出一条与 robot 长得不一样、{@code credentialMatches} 也认不出来的行，
+     * 之后同步会不断地把它当成「已有凭据」而跳过或覆盖。
+     */
+    private void assertNotPlatformHarbor(String type, String endpoint) {
+        if ("HARBOR".equals(type) && harborInstalls.isPlatformHost(endpoint)) {
+            throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
+                    "该地址是平台 Harbor，其连接由同步自动创建，不能手工新建");
+        }
     }
 
     public CredentialTestResult test(CredentialTestRequest req) {

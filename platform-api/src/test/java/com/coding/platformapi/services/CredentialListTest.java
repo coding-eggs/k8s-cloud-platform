@@ -30,7 +30,8 @@ class CredentialListTest {
             mock(CredentialProbeClient.class),
             new RegistryDialectRegistry(List.of(new HarborDialect(mock(RegistryHttpClient.class)),
                     new DockerHubDialect(mock(RegistryHttpClient.class)))),
-            tenantMapper, projectMapper);
+            tenantMapper, projectMapper,
+            mock(com.coding.platformapi.registry.HarborInstallLocator.class));
 
     private static PlatformCredential cred(String id, String type, String endpoint,
                                            String tenantId, String source) {

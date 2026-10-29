@@ -57,7 +57,8 @@ class CredentialServiceTest {
     RegistryDialectRegistry dialects = new RegistryDialectRegistry(
             List.of(new HarborDialect(mock(RegistryHttpClient.class)),
                     new DockerHubDialect(mock(RegistryHttpClient.class))));
-    CredentialService svc = new CredentialService(mapper, cipher, probeClient, dialects, tenantMapper, projectMapper);
+    CredentialService svc = new CredentialService(mapper, cipher, probeClient, dialects, tenantMapper, projectMapper,
+            mock(com.coding.platformapi.registry.HarborInstallLocator.class));
 
     /**
      * 平台建的 Harbor 凭据是**项目级** robot，项目名记录在镜像项目台账里。
