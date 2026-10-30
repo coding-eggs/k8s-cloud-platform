@@ -6,23 +6,70 @@ import { getTheme, toggleTheme } from '@/utils/theme'
 import ContextSelector from '@/components/ContextSelector.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
 import { usePermission } from '@/stores/permission'
-import { pageCodes } from '@/pageCodes'
+import { buildNav, resolveDomain, type NavDomain, type NavDomainKey, type NavFace } from '@/nav'
 
 const route = useRoute()
 const router = useRouter()
 const theme = ref(getTheme())
 const perm = usePermission()
 
-/** 菜单项显隐：按 **Page 域** 权限点过滤（与路由 meta.requiresPerm 同码，唯一来源 pageCodes.ts）。
- *  这里决定"菜单露不露"，不是"接口能不能调"——后者是 API 域码，权威判定在后端。 */
-function can(code: string): boolean {
-  return perm.has(code)
+// ---------- 导航：域 → 菜单项，全部来自 nav.ts ----------
+// 菜单不再手写：显隐与归属由路由上的 meta（domain / platformDomain / icon / order / nav）
+// 加当前视图推导，见 src/nav.ts。
+const face = computed<NavFace>(() => (perm.currentTenant ? 'tenant' : 'platform'))
+
+/**
+ * 当前视图的域列表。
+ * 当前页所属域若不在本视图的域集合里（管理员在租户视图直接打开收藏的平台页），
+ * 把它的域补到末尾并高亮 —— 深链不该把人扔进一个空侧栏。
+ */
+const domains = computed<NavDomain[]>(() => {
+  const list = buildNav(face.value, perm)
+  const cur = resolveDomain(face.value, route.path)
+  if (cur && !list.some((d) => d.key === cur)) {
+    const other: NavFace = face.value === 'tenant' ? 'platform' : 'tenant'
+    const extra = buildNav(other, perm).find((d) => d.key === cur)
+    if (extra) list.push(extra)
+  }
+  return list
+})
+
+const activeDomain = computed<NavDomain | null>(() => {
+  const key = resolveDomain(face.value, route.path)
+  return key ? (domains.value.find((d) => d.key === key) ?? null) : null
+})
+
+const activeItems = computed(() => activeDomain.value?.items ?? [])
+
+/** 域 tab：回到该域上次停留的页面；记录已失效（权限被收）则回落到第一项 */
+function goDomain(key: NavDomainKey): void {
+  const domain = domains.value.find((d) => d.key === key)
+  if (!domain) return
+  let stored: string | null = null
+  try {
+    stored = localStorage.getItem(`platform_nav_last:${face.value}:${key}`)
+  } catch {
+    /* localStorage 不可用（隐私模式）：忽略记忆，直接取第一项 */
+  }
+  const target = stored && domain.items.some((i) => i.path === stored) ? stored : domain.items[0]?.path
+  if (target && target !== route.path) void router.push(target)
 }
 
-/** 同一个页面在平台态 / 租户态用不同页代码时（如链路追踪），命中任一即可见 */
-function canAny(codes: string[]): boolean {
-  return perm.hasAny(codes)
-}
+/** 记住每个域最后停留的菜单页。详情页不记：它通常依赖 query，回到裸路径是坏页。 */
+watch(
+  () => route.path,
+  (path) => {
+    if (route.meta.nav === 'hidden') return
+    const key = resolveDomain(face.value, path)
+    if (!key) return
+    try {
+      localStorage.setItem(`platform_nav_last:${face.value}:${key}`, path)
+    } catch {
+      /* 隐私模式 / 配额满：不记忆即可，不影响导航 */
+    }
+  },
+  { immediate: true },
+)
 
 onMounted(() => {
   // 会话恢复接线（Task 17 carry）：刷新页面时 handleCallback 不会重跑，
@@ -150,218 +197,13 @@ async function handleLogout(): Promise<void> {
           <template #title>总览</template>
         </el-menu-item>
 
-        <!-- 菜单显隐一律用 Page 域码（pageCodes.ts）。分组标题的 v-if 与其下菜单项同源，
-             避免出现"有标题没条目"的空分组。 -->
-        <div v-if="can(pageCodes.cluster) || can(pageCodes.node.list) || can(pageCodes.namespace.list) || can(pageCodes.template) || can(pageCodes.audit)" class="menu-group">平台管理</div>
-        <el-menu-item v-if="can(pageCodes.cluster)" index="/clusters">
-          <el-icon><Monitor /></el-icon>
-          <template #title>集群管理</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.node.list)" index="/nodes">
-          <el-icon><Cpu /></el-icon>
-          <template #title>节点管理</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.namespace.list)" index="/namespaces">
-          <el-icon><FolderOpened /></el-icon>
-          <template #title>命名空间管理</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.template)" index="/templates">
-          <el-icon><CollectionTag /></el-icon>
-          <template #title>RBAC 模板</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.audit)" index="/audit">
-          <el-icon><Document /></el-icon>
-          <template #title>审计日志</template>
+        <!-- 域名（当前视图的一个域）；折叠态退化为分隔线 -->
+        <div v-if="activeDomain" class="menu-domain">{{ activeDomain.label }}</div>
+        <el-menu-item v-for="item in activeItems" :key="item.path" :index="item.path">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <template #title>{{ item.title }}</template>
         </el-menu-item>
 
-        <div v-if="can(pageCodes.tenant.list) || can(pageCodes.tenant.self) || can(pageCodes.user) || can(pageCodes.role)" class="menu-group">用户与权限</div>
-        <el-menu-item v-if="can(pageCodes.tenant.list)" index="/tenants">
-          <el-icon><OfficeBuilding /></el-icon>
-          <template #title>租户管理</template>
-        </el-menu-item>
-        <!-- 自管轨：租户 hat 内、无代管权的成员 → 「我的租户」入口 -->
-        <el-menu-item v-if="can(pageCodes.tenant.self)" index="/tenants/detail">
-          <el-icon><OfficeBuilding /></el-icon>
-          <template #title>我的租户</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.user)" index="/users">
-          <el-icon><User /></el-icon>
-          <template #title>用户管理</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.role)" index="/roles">
-          <el-icon><Lock /></el-icon>
-          <template #title>角色与权限</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.permission)" index="/permissions">
-          <el-icon><Key /></el-icon>
-          <template #title>权限点</template>
-        </el-menu-item>
-
-        <div v-if="can(pageCodes.workload.list) || can(pageCodes.pod.list) || can(pageCodes.hpa.list)" class="menu-group">工作负载</div>
-        <el-menu-item v-if="can(pageCodes.workload.list)" index="/resources/workloads">
-          <el-icon><Box /></el-icon>
-          <template #title>工作负载</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.pod.list)" index="/resources/pods">
-          <el-icon><Cpu /></el-icon>
-          <template #title>Pod</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.hpa.list)" index="/resources/hpas">
-          <el-icon><TrendCharts /></el-icon>
-          <template #title>HPA</template>
-        </el-menu-item>
-
-        <div v-if="can(pageCodes.service.list)" class="menu-group">服务发现</div>
-        <el-menu-item v-if="can(pageCodes.service.list)" index="/resources/services">
-          <el-icon><Link /></el-icon>
-          <template #title>Service</template>
-        </el-menu-item>
-
-        <div v-if="can(pageCodes.app) || can(pageCodes.application)" class="menu-group">应用交付</div>
-        <el-menu-item v-if="can(pageCodes.app)" index="/apps">
-          <el-icon><Grid /></el-icon>
-          <template #title>中间件</template>
-        </el-menu-item>
-        <!-- 实例列表与商店共用 pageCodes.app：商店管清单与 Operator，这条管已建实例 -->
-        <el-menu-item v-if="can(pageCodes.app)" index="/apps/instances">
-          <el-icon><Files /></el-icon>
-          <template #title>中间件实例</template>
-        </el-menu-item>
-        <!-- 应用编排（画布）：与中间件商店是两件事，页面码独立 -->
-        <el-menu-item v-if="can(pageCodes.application)" index="/applications">
-          <el-icon><Connection /></el-icon>
-          <template #title>应用编排</template>
-        </el-menu-item>
-
-        <!-- 持续集成：源码凭据 → 构建 → 产物仓库（spec §2） -->
-        <div v-if="canAny([pageCodes.credential, pageCodes.credentialTenant]) || can(pageCodes.registry) || can(pageCodes.pipeline)" class="menu-group">持续集成</div>
-        <el-menu-item v-if="can(pageCodes.pipeline)" index="/pipelines">
-          <el-icon><Operation /></el-icon>
-          <template #title>流水线</template>
-        </el-menu-item>
-        <el-menu-item v-if="canAny([pageCodes.credential, pageCodes.credentialTenant])" index="/git-credentials">
-          <el-icon><Tickets /></el-icon>
-          <template #title>Git 凭据管理</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.registry)" index="/registries">
-          <el-icon><Collection /></el-icon>
-          <template #title>镜像仓库</template>
-        </el-menu-item>
-
-        <div v-if="can(pageCodes.configmap.list) || can(pageCodes.secret.list)" class="menu-group">配置管理</div>
-        <el-menu-item v-if="can(pageCodes.configmap.list)" index="/resources/configmaps">
-          <el-icon><Document /></el-icon>
-          <template #title>ConfigMap</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.secret.list)" index="/resources/secrets">
-          <el-icon><Key /></el-icon>
-          <template #title>Secret</template>
-        </el-menu-item>
-
-        <div v-if="can(pageCodes.pvc.list) || can(pageCodes.persistentVolume.list) || can(pageCodes.storageClass.list) || can(pageCodes.objectStorage)" class="menu-group">存储</div>
-        <el-menu-item v-if="can(pageCodes.pvc.list)" index="/resources/pvcs">
-          <el-icon><Coin /></el-icon>
-          <template #title>PVC</template>
-        </el-menu-item>
-        <!-- 持久卷：租户只见绑定到本租户已分配命名空间的 PV（后端按 claimRef.namespace 收窄） -->
-        <el-menu-item v-if="can(pageCodes.persistentVolume.list)" index="/resources/persistentvolumes">
-          <el-icon><Box /></el-icon>
-          <template #title>持久卷</template>
-        </el-menu-item>
-        <!-- 存储类：集群级、无命名空间维度，仅平台管理员 -->
-        <el-menu-item v-if="can(pageCodes.storageClass.list)" index="/resources/storageclasses">
-          <el-icon><Files /></el-icon>
-          <template #title>存储类</template>
-        </el-menu-item>
-        <!-- 对象存储：租户看自己名下的桶；管理员可代建、设配额 -->
-        <el-menu-item v-if="can(pageCodes.objectStorage)" index="/object-storage">
-          <el-icon><Cloudy /></el-icon>
-          <template #title>对象存储</template>
-        </el-menu-item>
-
-        <div v-if="can(pageCodes.serviceMonitor.list) || can(pageCodes.podMonitor.list) || can(pageCodes.prometheusRule.list) || can(pageCodes.alert) || can(pageCodes.notifyChannel)" class="menu-group">监控告警</div>
-        <el-menu-item v-if="can(pageCodes.serviceMonitor.list)" index="/resources/servicemonitors">
-          <el-icon><DataLine /></el-icon>
-          <template #title>ServiceMonitor</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.podMonitor.list)" index="/resources/podmonitors">
-          <el-icon><DataLine /></el-icon>
-          <template #title>PodMonitor</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.prometheusRule.list)" index="/resources/prometheusrules">
-          <el-icon><Tickets /></el-icon>
-          <template #title>PrometheusRule</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.alert)" index="/alerts">
-          <el-icon><Bell /></el-icon>
-          <template #title>告警</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.notifyChannel)" index="/notification-channels">
-          <el-icon><Message /></el-icon>
-          <template #title>通知方式</template>
-        </el-menu-item>
-
-        <!-- 集群运维（Calico）。入口按 Page 域码收敛（原先写死 perm.isAdmin）：
-             页面可见性从此可分配——内置 admin 由 seed 兜底持有全部 Page 码，行为不变。 -->
-        <div v-if="can(pageCodes.ops.ippool.list) || can(pageCodes.ops.bgpConfiguration.list)" class="menu-group">集群运维</div>
-        <el-menu-item v-if="can(pageCodes.ops.ippool.list)" index="/ops/ippools">
-          <el-icon><Grid /></el-icon>
-          <template #title>地址池</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.ops.ipReservation.list)" index="/ops/ipreservations">
-          <el-icon><Lock /></el-icon>
-          <template #title>保留 IP</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.ops.bgpConfiguration.list)" index="/ops/bgpconfigurations">
-          <el-icon><Connection /></el-icon>
-          <template #title>BGP 配置</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.ops.bgpPeer.list)" index="/ops/bgppeers">
-          <el-icon><Share /></el-icon>
-          <template #title>BGP 对等体</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.ops.bgpFilter.list)" index="/ops/bgpfilters">
-          <el-icon><Filter /></el-icon>
-          <template #title>BGP 过滤器</template>
-        </el-menu-item>
-
-        <!-- 可观测（跨上下文）：链路追踪 = 平台/租户两套页代码（租户侧后端按分配表收窄）；日志查询 = 平台/租户都可达 -->
-        <div v-if="canAny([pageCodes.mesh.trace, pageCodes.mesh.traceTenant]) || can(pageCodes.observability.logs)" class="menu-group">可观测</div>
-        <el-menu-item v-if="canAny([pageCodes.mesh.trace, pageCodes.mesh.traceTenant])" index="/mesh/traces">
-          <el-icon><Timer /></el-icon>
-          <template #title>链路追踪</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.observability.logs)" index="/observability/logs">
-          <el-icon><Document /></el-icon>
-          <template #title>日志查询</template>
-        </el-menu-item>
-
-        <!-- 服务网格（Gateway API）。跨两上下文：GatewayClass = 集群级平台管理（storageClass 先例），
-             Gateway / HTTPRoute = 租户资源面（命名空间来自顶栏级联，同 ServiceMonitor）。 -->
-        <div v-if="can(pageCodes.mesh.gatewayClass.list) || can(pageCodes.mesh.gateway.list) || can(pageCodes.mesh.httpRoute.list)
-          || can(pageCodes.mesh.grpcRoute.list) || can(pageCodes.mesh.tcpRoute.list) || can(pageCodes.mesh.tlsRoute.list) || can(pageCodes.mesh.udpRoute.list)"
-          class="menu-group">服务网格</div>
-        <el-menu-item v-if="can(pageCodes.mesh.gatewayClass.list)" index="/mesh/gatewayclasses">
-          <el-icon><Guide /></el-icon>
-          <template #title>GatewayClass</template>
-        </el-menu-item>
-        <el-menu-item v-if="can(pageCodes.mesh.gateway.list)" index="/resources/gateways">
-          <el-icon><Promotion /></el-icon>
-          <template #title>Gateway</template>
-        </el-menu-item>
-        <!-- 网格拓扑（S2.4）：与 Gateway 共用一个码 —— 能看 Gateway 的人就能看拓扑 -->
-        <el-menu-item v-if="can(pageCodes.mesh.gateway.list)" index="/mesh/topology">
-          <el-icon><DataLine /></el-icon>
-          <template #title>网格拓扑</template>
-        </el-menu-item>
-        <!-- 路由策略（Route 五合一）：5 种 route 一个页面。requiresPerm/菜单同源：5 个 list 码任一 -->
-        <el-menu-item
-          v-if="can(pageCodes.mesh.httpRoute.list) || can(pageCodes.mesh.grpcRoute.list) || can(pageCodes.mesh.tcpRoute.list) || can(pageCodes.mesh.tlsRoute.list) || can(pageCodes.mesh.udpRoute.list)"
-          index="/routes"
-        >
-          <el-icon><Share /></el-icon>
-          <template #title>路由策略</template>
-        </el-menu-item>
       </el-menu>
     </aside>
 
@@ -371,6 +213,20 @@ async function handleLogout(): Promise<void> {
     <!-- 主体：显式纵向（el-container 仅识别 el-header/el-footer 子组件才自动转纵，普通标签不触发） -->
     <el-container class="body" direction="vertical">
       <header class="topbar">
+        <!-- 域 tab：当前视图的域集合（平台 4 / 租户 7）；点一下回到该域上次停留的页面 -->
+        <nav v-if="domains.length" class="domain-tabs">
+          <button
+            v-for="d in domains"
+            :key="d.key"
+            type="button"
+            class="domain-tab"
+            :class="{ 'is-active': activeDomain?.key === d.key }"
+            @click="goDomain(d.key)"
+          >
+            {{ d.label }}
+          </button>
+        </nav>
+
         <ContextSelector v-if="showContextSelector" />
 
         <div class="topbar-right">
@@ -547,15 +403,15 @@ async function handleLogout(): Promise<void> {
   display: none;
 }
 
-.menu-group {
+/* 侧栏当前域名（折叠态退化为一条分隔线） */
+.menu-domain {
   font-size: 11px;
   color: var(--text-3);
   letter-spacing: .12em;
   padding: 14px 12px 6px;
   user-select: none;
 }
-/* 折叠态：分组标题退化为一条分隔线 */
-.sidebar.is-collapsed .menu-group {
+.sidebar.is-collapsed .menu-domain {
   font-size: 0;
   letter-spacing: 0;
   padding: 8px 0 2px;
@@ -573,9 +429,52 @@ async function handleLogout(): Promise<void> {
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 20px;
-  padding: 0 24px;
+  gap: 16px;
+  padding: 0 16px 0 6px;
   flex-shrink: 0;
+}
+/* ---------- 域 tab ---------- */
+.domain-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto; /* 7 个域 + 360px 上下文级联在 1280px 下放不下，横向滚动兜底 */
+  scrollbar-width: none;
+}
+.domain-tabs::-webkit-scrollbar {
+  display: none;
+}
+.domain-tab {
+  flex-shrink: 0;
+  height: 64px;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  position: relative;
+  transition: color .15s;
+}
+.domain-tab:hover {
+  color: var(--text-1);
+}
+.domain-tab.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.domain-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent-grad);
 }
 /* 深色：顶栏加一点抬升感（微渐变 + 软阴影），避免与内容区平贴成一片黑 */
 :global(html.dark) .topbar {
