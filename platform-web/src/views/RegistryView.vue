@@ -409,10 +409,10 @@ onMounted(loadWarehouses)
             <el-table :data="projects" size="small" stripe>
               <el-table-column label="归属" min-width="150">
                 <template #default="{ row }">
-                  <!-- 公共库 = 平台自己的项目（platform 与各上游镜像项目）；
-                       租户库 = t-<sa>。两者混在一张表里，靠颜色和文字一眼分开 -->
+                  <!-- 公开读 = 平台自己的项目（platform 与各上游镜像项目），Harbor 侧设成了公开可拉；
+                       租户项目 = t-<sa>，只有该租户的 robot 能看 -->
                   <el-tag size="small" :type="row.tenantId ? 'info' : 'success'">
-                    {{ row.tenantId ? '租户' : '公共' }}
+                    {{ row.tenantId ? '租户' : '公开读' }}
                   </el-tag>
                   <span v-if="row.tenantId" class="owner-name">{{ row.tenantName }}</span>
                 </template>
