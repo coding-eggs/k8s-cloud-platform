@@ -39,6 +39,8 @@ const props = defineProps<{
   /** 集群的 OTel 采集栈是否开了「应用日志」；false 时日志开关不能打开（gateway 没有 logs 管道） */
   logsAvailable?: boolean
   logsUnavailableReason?: string
+  /** 主容器当前的 OTEL_TRACES_SAMPLER_ARG（如 "0.1"）；有值说明设过工作负载级采样率 */
+  samplerArg?: string
 }>()
 const emit = defineEmits<{
   (e: 'update:visible', v: boolean): void
@@ -59,6 +61,8 @@ const logMode = ref<'app' | 'file'>('app')
 const logFile = ref('/var/log/nginx/access.log')
 const serviceName = ref('')
 const containerName = ref('')
+/** 工作负载级采样率（百分比）；null = 跟随组件默认（会移除这两个 env） */
+const sampling = ref<number | null>(null)
 const saving = ref(false)
 
 /**
@@ -98,6 +102,9 @@ function init(): void {
   tracing.value = value.endsWith('platform-instrumentation') || value.endsWith('-all')
   serviceName.value = props.workloadName
   containerName.value = props.containers[0] ?? ''
+  // 工作负载级采样率回填：env 里存的是比例（0.1），表单用百分比
+  const ratio = Number.parseFloat(props.samplerArg ?? '')
+  sampling.value = Number.isFinite(ratio) ? Math.round(ratio * 100) : null
 }
 
 async function submit(): Promise<void> {
@@ -124,6 +131,8 @@ async function submit(): Promise<void> {
       logs: logs.value,
       serviceName: serviceName.value.trim() || undefined,
       containerName: containerName.value || undefined,
+      // 只追踪时才有意义；null/空 = 交给后端移除 env、回到组件默认采样率
+      sampling: tracing.value && sampling.value != null ? sampling.value : undefined,
       logMode: logs.value ? logMode.value : undefined,
       logFile: logs.value && logMode.value === 'file' ? logFile.value.trim() : undefined,
     })
@@ -159,6 +168,15 @@ async function submit(): Promise<void> {
       <el-form-item label="追踪">
         <el-switch v-model="tracing" />
         <span class="wl-otel-hint">traces 写入 Tempo</span>
+      </el-form-item>
+      <el-form-item v-if="tracing" label="采样率">
+        <el-input-number v-model="sampling" :min="1" :max="100" :step="10"
+                         :value-on-clear="null" placeholder="跟随组件" style="width: 160px" />
+        <span class="wl-otel-hint">%，留空 = 跟随组件的全局采样率</span>
+        <div class="wl-otel-hint wl-otel-block">
+          写在本工作负载上（OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG），<b>优先级高于</b>组件侧采样率。
+          这是按整条 trace 的决定（错误不会被单独保留）；留空并保存会移除这两个变量，回到组件默认
+        </div>
       </el-form-item>
       <el-form-item label="日志采集">
         <el-switch v-model="logs" :disabled="logsAvailable === false && !logs" />

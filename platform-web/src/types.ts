@@ -1227,6 +1227,11 @@ export interface K8sTempoStorage {
   endpoint: string
   /** 独立桶（默认 tempo，不与 Thanos 共用）；Tempo 的 block 直接落在桶根，没有前缀 */
   bucket: string
+  /**
+   * PLATFORM 专用：表单里填的**逻辑桶名**（如 tempo）。`bucket` 此时是后端拼出的真实全名
+   * （t-<租户短码>-<名字>），编辑回填必须用逻辑名，否则再保存会建出一个新桶。
+   */
+  bucketName?: string
   credentialSecret: K8sSecretRef
   insecureSkipVerify: boolean
   /** 明文 HTTP（表单的「传输方式」）；null/缺省时后端按 endpoint 的 scheme 推断 */
@@ -1251,6 +1256,11 @@ export interface K8sOtelInstall {
   tempoRetention?: string
   /** collector → Tempo 传输：plaintext / tls / tls-skip-verify */
   tempoTlsMode?: string
+  /** collector gateway 的资源限制（四个 quantity；空 = 平台默认 200m/256Mi → 1/1Gi） */
+  gatewayCpuRequest?: string
+  gatewayMemoryRequest?: string
+  gatewayCpuLimit?: string
+  gatewayMemoryLimit?: string
   tempoStorage?: K8sTempoStorage
   es?: K8sEsConfig
 }

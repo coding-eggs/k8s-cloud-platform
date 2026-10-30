@@ -181,6 +181,12 @@ const observabilityLogDirectory = computed(() => {
   }
   return undefined
 })
+/** 主容器上的工作负载级采样率（OTEL_TRACES_SAMPLER_ARG，如 "0.1"）；弹窗回填用 */
+const observabilitySamplerArg = computed(() => {
+  const container = detail.value?.podTemplate?.spec?.containers?.[0]
+  const env = (container?.envs ?? []).find((e) => e.name === 'OTEL_TRACES_SAMPLER_ARG')
+  return env?.value ?? undefined
+})
 
 function openLogs(row: K8sPod): void {
   logPod.value = row
@@ -656,6 +662,7 @@ const contextDesc = computed(() => {
       :annotations="detail.podTemplate?.annotations"
       :containers="observabilityContainers"
       :file-log-directory="observabilityLogDirectory"
+      :sampler-arg="observabilitySamplerArg"
       :otel-available="otelAvailable"
       :otel-unavailable-reason="otelReason"
       :logs-available="otelLogsAvailable"

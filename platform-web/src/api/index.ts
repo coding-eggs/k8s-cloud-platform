@@ -506,6 +506,8 @@ export const workloadApi = {
     logMode?: 'app' | 'file'
     /** 文件日志的具体文件（容器内绝对路径；支持 access.log* 这类 glob） */
     logFile?: string
+    /** 工作负载级采样率（1–100，百分比）；空 = 跟随组件默认（移除 OTEL_TRACES_SAMPLER/_ARG） */
+    sampling?: number
   }) => http.post<never, WorkloadDetail>(
     `/workloads/${encodeURIComponent(name)}/observability`, { ...ctx, name }),
   /**

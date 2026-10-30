@@ -206,11 +206,18 @@ interface ApplyDialog {
 }
 
 /** OTel 表单里两个嵌套对象始终存在（后端可以为空，但表单控件需要可绑定） */
-type OtelForm = Omit<K8sOtelInstall, 'tempoStorage' | 'es' | 'tempoRetention' | 'tempoTlsMode'> & {
+type OtelForm = Omit<K8sOtelInstall,
+  'tempoStorage' | 'es' | 'tempoRetention' | 'tempoTlsMode'
+  | 'gatewayCpuRequest' | 'gatewayMemoryRequest' | 'gatewayCpuLimit' | 'gatewayMemoryLimit'> & {
   tempoStorage: K8sTempoStorage
   es: K8sEsConfig
   tempoRetention: string
   tempoTlsMode: 'plaintext' | 'tls' | 'tls-skip-verify'
+  /** collector gateway 的资源限制（四个输入框，始终有值） */
+  gatewayCpuRequest: string
+  gatewayMemoryRequest: string
+  gatewayCpuLimit: string
+  gatewayMemoryLimit: string
 }
 
 /**
@@ -533,6 +540,10 @@ function emptyOtel(): OtelForm {
     tempoEndpoint: '',
     samplingPercentage: 10,
     gatewayReplicas: 1,
+    gatewayCpuRequest: '200m',
+    gatewayMemoryRequest: '256Mi',
+    gatewayCpuLimit: '1',
+    gatewayMemoryLimit: '1Gi',
     logsEnabled: false,
     tempoRetention: '168h',
     tempoTlsMode: 'plaintext',
@@ -549,6 +560,16 @@ function emptyOtel(): OtelForm {
       insecureSkipVerify: true,
     },
   }
+}
+
+/**
+ * 平台模式快照里的 `bucket` 是后端拼出的真实全名（t-<8 位短码>-<逻辑名>）。
+ * 表单只认逻辑名 —— 直接把全名回填再保存，后端会拼出 t-xxx-t-xxx-tempo 的新桶。
+ * 与后端 `TempoStorageConfig.logicalBucket` 同一条规则。
+ */
+function logicalTempoBucket(bucket?: string | null): string {
+  const m = /^t-[0-9a-fA-F]{8}-(.+)$/.exec((bucket ?? '').trim())
+  return m?.[1] ?? (bucket ?? '')
 }
 
 const applyDialog = ref<ApplyDialog>({
@@ -581,12 +602,17 @@ const genericGroups = computed(() => {
   const groups: string[] = []
   for (const f of applyDialog.value.fields) {
     if (isHarborCustomField(f.key)) continue
+    if (f.type === 'resources') continue // 资源限制单独成块，放表单最后
     const g = f.group || '其他配置'
     if (g === THANOS_GROUP) continue // 跟 Thanos 凭据块一起渲染
     if (!groups.includes(g)) groups.push(g)
   }
   return groups
 })
+
+/** 资源限制（CPU/内存）：和业务配置分开，统一渲染在表单最后 */
+const resourceFields = computed(() =>
+  applyDialog.value.fields.filter((f) => f.type === 'resources'))
 
 /**
  * Harbor 的 PVC / 扫描开关**不进通用「存储」分组**：它们由 Harbor 区自己按开关渲染，
@@ -627,7 +653,8 @@ function sizeBytes(value: string): number | null {
 
 function fieldsOf(group: string): K8sEditableField[] {
   return applyDialog.value.fields.filter(
-    (f) => (f.group || '其他配置') === group && !isHarborCustomField(f.key))
+    (f) => (f.group || '其他配置') === group && !isHarborCustomField(f.key)
+      && f.type !== 'resources')
 }
 
 /** Thanos 保留期（compactor.retention.*）：放在 Thanos 凭据块之后 */
@@ -716,14 +743,32 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
   // OTel：编辑时回填上次成功操作的值；安装时用默认值预填（地址/桶/索引都可改）
   const baseOtel = emptyOtel()
   const otelCurrent = editing ? row.otelInstallCurrent : null
+  // 存储来源要显式兜底：老快照没有 source（后端已按凭证/桶名反推），
+  // 但 JSON 里的 null 会盖掉默认值 —— 否则编辑表单会落进「外部地址」分支（用户实报 2026-10-30）
+  const storageCurrent = otelCurrent?.tempoStorage
+  const storageSource = storageCurrent?.source ?? baseOtel.tempoStorage.source
+  // 平台模式的桶要显示逻辑名（回填真实全名再保存 = 建出一个新桶，历史 trace 全丢）
+  const storageBucket = storageCurrent?.bucketName
+    ?? (storageSource === 'PLATFORM'
+      ? logicalTempoBucket(storageCurrent?.bucket)
+      : storageCurrent?.bucket)
   const otel: OtelForm = {
     tempoEndpoint: ((editing ? row.tempoEndpoint ?? row.defaultTempoEndpoint : row.defaultTempoEndpoint) ?? ''),
     samplingPercentage: otelCurrent?.samplingPercentage ?? baseOtel.samplingPercentage,
     gatewayReplicas: otelCurrent?.gatewayReplicas ?? baseOtel.gatewayReplicas,
+    gatewayCpuRequest: otelCurrent?.gatewayCpuRequest ?? baseOtel.gatewayCpuRequest,
+    gatewayMemoryRequest: otelCurrent?.gatewayMemoryRequest ?? baseOtel.gatewayMemoryRequest,
+    gatewayCpuLimit: otelCurrent?.gatewayCpuLimit ?? baseOtel.gatewayCpuLimit,
+    gatewayMemoryLimit: otelCurrent?.gatewayMemoryLimit ?? baseOtel.gatewayMemoryLimit,
     logsEnabled: otelCurrent?.logsEnabled ?? baseOtel.logsEnabled,
     tempoRetention: otelCurrent?.tempoRetention ?? baseOtel.tempoRetention,
     tempoTlsMode: (otelCurrent?.tempoTlsMode as OtelForm['tempoTlsMode']) ?? baseOtel.tempoTlsMode,
-    tempoStorage: { ...baseOtel.tempoStorage, ...(otelCurrent?.tempoStorage ?? {}) },
+    tempoStorage: {
+      ...baseOtel.tempoStorage,
+      ...(storageCurrent ?? {}),
+      source: storageSource,
+      bucket: storageBucket || baseOtel.tempoStorage.bucket,
+    },
     es: { ...baseOtel.es, ...(otelCurrent?.es ?? {}) },
   }
   // 凭证 Secret 只能放 monitor（表单不提供命名空间选择）；旧快照里别的命名空间值在这里归一
@@ -966,6 +1011,15 @@ function confirmApply(): void {
         ElMessage.error(`「${f.label}」的内存需要写成 256Mi、1Gi 这样的值`)
         return
       }
+      // S3 网关的读缓冲预算是固定的 256MiB（-readerCacheSizeMB）：内存 limit 再小就会
+      // 重演 2026-10-30 的 OOMKilled（网关反复重启 → Tempo 查询 500）
+      if (f.key === 's3.resources') {
+        const limitBytes = sizeBytes(form.limitsMemory)
+        if (limitBytes != null && limitBytes < 512 * 1024 ** 2) {
+          ElMessage.error('「S3 网关」的内存 limit 至少 512Mi（读缓冲预算本身就占 256MiB）')
+          return
+        }
+      }
       const value = fromResourceForm(form)
       if (JSON.stringify(value) === d.initial[f.key]) continue
       editable[f.key] = value
@@ -1034,6 +1088,21 @@ function confirmApply(): void {
       const value = typeof d.values[f.key] === 'string' ? d.values[f.key].trim() : d.values[f.key]
       if (JSON.stringify(value) === d.initial[f.key]) continue
       editable[f.key] = value
+    }
+  }
+  // collector gateway 的四格资源：前端先校验格式（后端还会再校验一次）
+  if (d.showOtel) {
+    const checks: Array<[string, string]> = [
+      ['CPU', d.otel.gatewayCpuRequest],
+      ['内存', d.otel.gatewayMemoryRequest],
+      ['CPU', d.otel.gatewayCpuLimit],
+      ['内存', d.otel.gatewayMemoryLimit],
+    ]
+    for (const [label, value] of checks) {
+      if (!QUANTITY_RE.test(String(value ?? '').trim())) {
+        ElMessage.error(`「Gateway 资源」的${label}写法不合法（如 200m / 1 / 256Mi / 1Gi）`)
+        return
+      }
     }
   }
   d.visible = false
@@ -2145,6 +2214,60 @@ function copyImage(text: string): void {
           </div>
         </div>
       </div>
+      <!-- 资源限制：和业务配置分开，统一放表单最后 -->
+      <template v-if="resourceFields.length || applyDialog.showOtel">
+        <div class="cc-section-title">资源限制</div>
+        <div class="cc-form-hint" style="margin-bottom: 8px">
+          各组件的 CPU / 内存配额（写法：CPU 100m / 0.5 / 1，内存 256Mi / 1Gi）。
+          通常保持默认即可；内存 limit 不要低于实测常驻，否则会 OOM
+        </div>
+        <div v-if="applyDialog.showOtel" class="cc-form-row">
+          <span class="cc-form-label">Collector 网关</span>
+          <div class="cc-form-control">
+            <div class="cc-resources">
+              <div class="cc-resource-line">
+                <span class="cc-resource-label">requests</span>
+                <el-input v-model="applyDialog.otel.gatewayCpuRequest"
+                          placeholder="CPU，如 200m" spellcheck="false" />
+                <el-input v-model="applyDialog.otel.gatewayMemoryRequest"
+                          placeholder="内存，如 256Mi" spellcheck="false" />
+              </div>
+              <div class="cc-resource-line">
+                <span class="cc-resource-label">limits</span>
+                <el-input v-model="applyDialog.otel.gatewayCpuLimit"
+                          placeholder="CPU，如 1" spellcheck="false" />
+                <el-input v-model="applyDialog.otel.gatewayMemoryLimit"
+                          placeholder="内存，如 1Gi" spellcheck="false" />
+              </div>
+              <div class="cc-form-hint">
+                collector gateway（Deployment）的 CPU / 内存。追踪或日志量大时调大内存；
+                调小可能 OOM，collector 重启期间 traces 会丢
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-for="f in resourceFields" :key="f.key" class="cc-form-row">
+          <span class="cc-form-label">{{ f.label }}</span>
+          <div class="cc-form-control">
+            <div class="cc-resources">
+              <div class="cc-resource-line">
+                <span class="cc-resource-label">requests</span>
+                <el-input v-model="applyDialog.values[f.key + '.requestsCpu']"
+                          placeholder="CPU，如 100m" spellcheck="false" />
+                <el-input v-model="applyDialog.values[f.key + '.requestsMemory']"
+                          placeholder="内存，如 256Mi" spellcheck="false" />
+              </div>
+              <div class="cc-resource-line">
+                <span class="cc-resource-label">limits</span>
+                <el-input v-model="applyDialog.values[f.key + '.limitsCpu']"
+                          placeholder="CPU，如 1" spellcheck="false" />
+                <el-input v-model="applyDialog.values[f.key + '.limitsMemory']"
+                          placeholder="内存，如 1Gi" spellcheck="false" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
       <div v-if="!applyDialog.fields.length && !applyDialog.showWebhook && !applyDialog.showThanos
                 && !applyDialog.showThanosInstall && !applyDialog.showCalico
                 && !applyDialog.showTektonProfile && !applyDialog.showOtel && !applyDialog.showSeaweed
