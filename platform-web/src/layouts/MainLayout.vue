@@ -258,7 +258,7 @@ async function handleLogout(): Promise<void> {
         <nav class="domain-tabs">
           <button
             type="button"
-            class="domain-tab domain-tab--home"
+            class="domain-tab"
             :class="{ 'is-active': route.path === '/overview' }"
             @click="router.push('/overview')"
           >
@@ -492,10 +492,10 @@ async function handleLogout(): Promise<void> {
 .domain-tabs {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto; /* 7 个域 + 360px 上下文级联在 1280px 下放不下，横向滚动兜底 */
+  overflow-x: auto; /* 域多 + 360px 上下文级联在 1280px 下放不下，横向滚动兜底 */
   scrollbar-width: none;
 }
 .domain-tabs::-webkit-scrollbar {
@@ -509,38 +509,47 @@ async function handleLogout(): Promise<void> {
   margin: 0 6px;
   background: var(--border);
 }
-.domain-tab--home {
-  padding-left: 8px;
-}
 .domain-tab {
   flex-shrink: 0;
   height: 64px;
-  padding: 0 14px;
+  padding: 0 11px;
   border: none;
   background: transparent;
   color: var(--text-2);
   font: inherit;
-  font-size: 14px;
+  font-size: 13.5px;
   cursor: pointer;
   position: relative;
-  transition: color .15s;
+  transition: color .15s ease, background-color .15s ease;
 }
+/* 悬停给整列一层浅底：这些是页面级的 tab，得看得出能点 */
 .domain-tab:hover {
   color: var(--text-1);
+  background: var(--panel-hover);
 }
+.domain-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+/* 选中：主色字 + 自下而上的微光 + 2px 渐变指示线，三样是一件事而不是三种装饰 */
 .domain-tab.is-active {
   color: var(--accent);
   font-weight: 600;
+  background: linear-gradient(180deg, transparent 35%, color-mix(in srgb, var(--accent) 14%, transparent) 100%);
+}
+.domain-tab.is-active:hover {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent) 35%, color-mix(in srgb, var(--accent) 18%, transparent) 100%);
 }
 .domain-tab.is-active::after {
   content: '';
   position: absolute;
-  left: 10px;
-  right: 10px;
+  left: 6px;
+  right: 6px;
   bottom: 0;
   height: 2px;
   border-radius: 2px 2px 0 0;
   background: var(--accent-grad);
+  box-shadow: 0 -2px 10px -2px color-mix(in srgb, var(--accent) 70%, transparent);
 }
 /* 深色：顶栏加一点抬升感（微渐变 + 软阴影），避免与内容区平贴成一片黑 */
 :global(html.dark) .topbar {
