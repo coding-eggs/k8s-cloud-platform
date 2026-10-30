@@ -57,7 +57,7 @@ const router = createRouter({
         { path: 'namespaces', name: 'namespaces', component: () => import('@/views/NamespaceView.vue'), meta: { title: '命名空间管理', domain: 'cluster', icon: 'FolderOpened', order: 3, requiresPerm: [pageCodes.namespace.list] } },
         { path: 'namespaces/editor', name: 'namespace-editor', component: () => import('@/views/NamespaceEditorView.vue'), meta: { title: '命名空间编辑', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.namespace.edit] } },
         { path: 'namespaces/detail', name: 'namespace-detail', component: () => import('@/views/NamespaceDetailView.vue'), meta: { title: '命名空间概览', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.namespace.detail] } },
-        { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', domain: 'cluster', icon: 'Files', order: 4, requiresPerm: [pageCodes.storageClass.list] } },
+        { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', domain: 'cluster', icon: 'Files', order: 4, context: 'full', requiresPerm: [pageCodes.storageClass.list] } },
 
         // ============ 平台视图 · 网络 ============
         { path: 'mesh/gatewayclasses', name: 'gatewayclasses', component: () => import('@/views/mesh/GatewayClassView.vue'), meta: { title: 'GatewayClass', domain: 'network', icon: 'Guide', order: 1, requiresPerm: [pageCodes.mesh.gatewayClass.list] } },
@@ -89,7 +89,7 @@ const router = createRouter({
         // Git 凭据：两族页面码都能进（平台级凭据 / 租户自建连接），故出现在两个视图里；
         // 租户视图归「交付」，平台视图改归「运维」。
         { path: 'git-credentials', name: 'git-credentials', component: () => import('@/views/GitCredentialView.vue'), meta: { title: 'Git 凭据', domain: 'build', platformDomain: 'ops', icon: 'Tickets', order: 2, requiresPerm: [pageCodes.credential, pageCodes.credentialTenant] } },
-        { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', domain: 'ops', icon: 'Message', order: 3, requiresPerm: [pageCodes.notifyChannel] } },
+        { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', domain: 'ops', icon: 'Message', order: 3, context: 'full', requiresPerm: [pageCodes.notifyChannel] } },
         // 链路追踪：平台自研链路（数据源 = 中心 Tempo），平台/租户两套页代码，同上归两个视图
         { path: 'mesh/traces', name: 'mesh-traces', component: () => import('@/views/mesh/TraceView.vue'), meta: { title: '链路追踪', domain: 'observe', platformDomain: 'ops', icon: 'Timer', order: 6, context: 'full', requiresPerm: [pageCodes.mesh.trace, pageCodes.mesh.traceTenant] } },
 

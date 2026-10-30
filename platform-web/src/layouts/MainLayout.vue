@@ -7,7 +7,7 @@ import ContextSelector from '@/components/ContextSelector.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import { usePermission } from '@/stores/permission'
-import { buildNav, resolveDomain, type NavDomain, type NavDomainKey, type NavFace } from '@/nav'
+import { buildNav, labelOf, resolveNavLocation, type NavDomain, type NavDomainKey, type NavFace } from '@/nav'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,20 +24,39 @@ const face = computed<NavFace>(() => (perm.currentTenant ? 'tenant' : 'platform'
  * 当前页所属域若不在本视图的域集合里（管理员在租户视图直接打开收藏的平台页），
  * 把它的域补到末尾并高亮 —— 深链不该把人扔进一个空侧栏。
  */
+const location = computed(() => resolveNavLocation(face.value, route.path))
+
+/**
+ * 顶栏域 tab 列表。
+ * - 当前页属于本面时正常列出；若它所属的域当前没有任何可见菜单项（例如角色只持某个 detail 码），
+ *   仍补一个只有域名的空域 —— 否则 tab 与侧栏标题会一起消失。
+ * - 当前页来自另一个面时（管理员深链到平台页），用**对面那一份**替换同 key 的域：
+ *   两侧的「网络 / 组织」同名，沿用本面会把另一套菜单顶上来，当前页高亮不到。
+ */
 const domains = computed<NavDomain[]>(() => {
-  const list = buildNav(face.value, perm)
-  const cur = resolveDomain(face.value, route.path)
-  if (cur && !list.some((d) => d.key === cur)) {
-    const other: NavFace = face.value === 'tenant' ? 'platform' : 'tenant'
-    const extra = buildNav(other, perm).find((d) => d.key === cur)
-    if (extra) list.push(extra)
+  const base = buildNav(face.value, perm)
+  const loc = location.value
+  if (!loc) return base
+
+  if (!loc.otherFace) {
+    return base.some((d) => d.key === loc.domain)
+      ? base
+      : [...base, { key: loc.domain, label: labelOf(loc.domain), items: [] }]
   }
-  return list
+
+  const other: NavFace = face.value === 'tenant' ? 'platform' : 'tenant'
+  const extra = buildNav(other, perm).find((d) => d.key === loc.domain)
+  if (!extra) return base
+  const index = base.findIndex((d) => d.key === loc.domain)
+  if (index < 0) return [...base, extra]
+  const replaced = [...base]
+  replaced[index] = extra
+  return replaced
 })
 
 const activeDomain = computed<NavDomain | null>(() => {
-  const key = resolveDomain(face.value, route.path)
-  return key ? (domains.value.find((d) => d.key === key) ?? null) : null
+  const loc = location.value
+  return loc ? (domains.value.find((d) => d.key === loc.domain) ?? null) : null
 })
 
 const activeItems = computed(() => activeDomain.value?.items ?? [])
@@ -71,10 +90,10 @@ watch(
   () => route.path,
   (path) => {
     if (route.meta.nav === 'hidden') return
-    const key = resolveDomain(face.value, path)
-    if (!key) return
+    const loc = resolveNavLocation(face.value, path)
+    if (!loc || loc.otherFace) return // 另一个面的页面不记进本面的域记忆
     try {
-      localStorage.setItem(`platform_nav_last:${face.value}:${key}`, path)
+      localStorage.setItem(`platform_nav_last:${face.value}:${loc.domain}`, path)
     } catch {
       /* 隐私模式 / 配额满：不记忆即可，不影响导航 */
     }
@@ -205,11 +224,6 @@ async function handleLogout(): Promise<void> {
       </button>
 
       <el-menu :default-active="route.path" router class="menu" :collapse="collapsed" @select="onMenuSelect">
-        <el-menu-item index="/overview">
-          <el-icon><Odometer /></el-icon>
-          <template #title>总览</template>
-        </el-menu-item>
-
         <!-- 域名（当前视图的一个域）；折叠态退化为分隔线 -->
         <div v-if="activeDomain" class="menu-domain">{{ activeDomain.label }}</div>
         <el-menu-item v-for="item in activeItems" :key="item.path" :index="item.path">
@@ -238,8 +252,17 @@ async function handleLogout(): Promise<void> {
     <!-- 主体：显式纵向（el-container 仅识别 el-header/el-footer 子组件才自动转纵，普通标签不触发） -->
     <el-container class="body" direction="vertical">
       <header class="topbar">
-        <!-- 域 tab：当前视图的域集合（平台 4 / 租户 7）；点一下回到该域上次停留的页面 -->
-        <nav v-if="domains.length" class="domain-tabs">
+        <!-- 域 tab：总览固定在最左，其后是当前视图的域集合（平台 4 / 租户 7） -->
+        <nav class="domain-tabs">
+          <button
+            type="button"
+            class="domain-tab domain-tab--home"
+            :class="{ 'is-active': route.path === '/overview' }"
+            @click="router.push('/overview')"
+          >
+            总览
+          </button>
+          <span class="domain-sep" aria-hidden="true" />
           <button
             v-for="d in domains"
             :key="d.key"
@@ -510,6 +533,17 @@ async function handleLogout(): Promise<void> {
 }
 .domain-tabs::-webkit-scrollbar {
   display: none;
+}
+/* 总览与域 tab 之间的分隔线 */
+.domain-sep {
+  flex-shrink: 0;
+  width: 1px;
+  height: 18px;
+  margin: 0 6px;
+  background: var(--border);
+}
+.domain-tab--home {
+  padding-left: 8px;
 }
 .domain-tab {
   flex-shrink: 0;

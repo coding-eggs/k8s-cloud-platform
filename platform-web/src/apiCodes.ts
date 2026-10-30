@@ -21,6 +21,9 @@ export const apiCodes = {
   /** 命名空间分配写（创建/编辑/删除、配额与限制范围 upsert） */
   allocationManage: 'platform:allocation:manage',
   tenantRead: 'platform:tenant:read',
+  /** 租户概览快照/明细（`/tenant/overview**`）—— 自管轨的租户族码。
+   *  与 `allocationList` 是 ANY-of：租户成员持它、平台管理员持分配读，两边都能取数。 */
+  tenantOverviewView: 'tenant:overview:view',
   userManage: 'platform:user:manage',
   roleRead: 'platform:role:read',
   roleManage: 'platform:role:manage',

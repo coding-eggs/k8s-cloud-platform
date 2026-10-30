@@ -10,6 +10,7 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { tenantApi } from '@/api'
+import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
 import RecentVisits from '@/components/RecentVisits.vue'
@@ -25,9 +26,16 @@ const overview = ref<K8sTenantOverview | null>(null)
 const tenantId = computed(() => perm.currentTenant?.tenantId ?? null)
 const tenantName = computed(() => perm.currentTenant?.tenantName ?? perm.currentTenant?.tenantId ?? '当前租户')
 
+/**
+ * `/tenant/overview` 的授权是 ANY-of `tenant:overview:view` / `platform:allocation:list`。
+ * 自定义的最小权限角色（例如只持 `tenant:page:workload.list`）两者都没有 —— 不门控就会
+ * 每次进总览吃一个 403 红条，还会被下面的告警误说成「可稍后重试」。这里先判能力再发请求。
+ */
+const canView = computed(() => perm.has(apiCodes.tenantOverviewView) || perm.has(apiCodes.allocationList))
+
 async function load(): Promise<void> {
   const target = tenantId.value
-  if (!target) return
+  if (!target || !canView.value) return
   loading.value = true
   loadError.value = false
   try {
@@ -110,41 +118,47 @@ onMounted(load)
       <el-button @click="load">刷新</el-button>
     </div>
 
-    <el-alert
-      v-if="loadError"
-      class="load-error"
-      type="warning"
-      :closable="false"
-      title="概览数据暂时取不到"
-      description="可能是集群不可用或聚合未就绪。其余页面不受影响，可稍后重试。"
-    />
+    <div v-if="!canView" class="panel no-perm">
+      当前角色没有查看租户概览的权限 —— 下面的常用操作与最近访问照常可用。
+    </div>
 
-    <div class="stat-grid">
-      <div v-for="c in cards" :key="c.label" class="panel stat-card">
-        <div class="stat-value">{{ c.value }}</div>
-        <div class="stat-label">{{ c.label }}</div>
+    <template v-if="canView">
+      <el-alert
+        v-if="loadError"
+        class="load-error"
+        type="warning"
+        :closable="false"
+        title="概览数据暂时取不到"
+        description="可能是集群不可用或聚合未就绪。其余页面不受影响，可稍后重试。"
+      />
+
+      <div class="stat-grid">
+        <div v-for="c in cards" :key="c.label" class="panel stat-card">
+          <div class="stat-value">{{ c.value }}</div>
+          <div class="stat-label">{{ c.label }}</div>
+        </div>
       </div>
-    </div>
 
-    <h3 class="section-title">需要关注</h3>
-    <div class="panel watch-panel">
-      <template v-if="podReasons.length || unhealthy.length || quotaGaps.length">
-        <div v-if="podReasons.length" class="watch-row">
-          <span class="watch-label">异常 Pod</span>
-          <span class="watch-value">{{ podReasons.join(' · ') }}</span>
-        </div>
-        <div v-if="unhealthy.length" class="watch-row">
-          <span class="watch-label">不健康工作负载</span>
-          <span class="watch-value">{{ unhealthy.join(' · ') }}</span>
-        </div>
-        <div v-if="quotaGaps.length" class="watch-row">
-          <span class="watch-label">配额缺口</span>
-          <span class="watch-value">{{ quotaGaps.join(' · ') }}</span>
-        </div>
-      </template>
-      <p v-else-if="overview" class="watch-ok">一切正常 —— 没有异常 Pod、不健康工作负载或配额缺口。</p>
-      <p v-else-if="!loading" class="watch-ok">暂无数据。</p>
-    </div>
+      <h3 class="section-title">需要关注</h3>
+      <div class="panel watch-panel">
+        <template v-if="podReasons.length || unhealthy.length || quotaGaps.length">
+          <div v-if="podReasons.length" class="watch-row">
+            <span class="watch-label">异常 Pod</span>
+            <span class="watch-value">{{ podReasons.join(' · ') }}</span>
+          </div>
+          <div v-if="unhealthy.length" class="watch-row">
+            <span class="watch-label">不健康工作负载</span>
+            <span class="watch-value">{{ unhealthy.join(' · ') }}</span>
+          </div>
+          <div v-if="quotaGaps.length" class="watch-row">
+            <span class="watch-label">配额缺口</span>
+            <span class="watch-value">{{ quotaGaps.join(' · ') }}</span>
+          </div>
+        </template>
+        <p v-else-if="overview" class="watch-ok">一切正常 —— 没有异常 Pod、不健康工作负载或配额缺口。</p>
+        <p v-else-if="!loading" class="watch-ok">暂无数据。</p>
+      </div>
+    </template>
 
     <h3 class="section-title">常用操作</h3>
     <div class="shortcut-grid">
@@ -179,6 +193,11 @@ onMounted(load)
 }
 .load-error {
   margin-bottom: 14px;
+}
+.no-perm {
+  padding: 18px;
+  font-size: 13px;
+  color: var(--text-3);
 }
 .stat-grid {
   display: grid;

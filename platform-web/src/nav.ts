@@ -120,10 +120,27 @@ export function buildNav(face: NavFace, perm: PermissionFacade): NavDomain[] {
     .filter((d) => d.items.length > 0)
 }
 
-/** 当前路径落在哪个域；没有 `domain` 元数据的页面（总览）返回 null。不看 nav 标记 —— 详情页也要能高亮。 */
-export function resolveDomain(face: NavFace, path: string): NavDomainKey | null {
+export interface NavLocation {
+  domain: NavDomainKey
+  /**
+   * 这条路由属于**另一个面**（例如管理员在租户视图打开了 `/ops/ippools`）。
+   * 两侧的域 key 会撞名（两边都有 `network` / `org`），所以此时绝不能沿用本面同名域的菜单
+   * —— 必须改用对方面的那一份，否则侧栏列的是另一套页面、当前页高亮不到。
+   */
+  otherFace: boolean
+}
+
+/**
+ * 当前路径落在哪个域、是否来自另一个面。没有 `domain` 元数据的页面（总览）返回 null。
+ * 不看 nav 标记 —— 详情/编辑页也要能高亮它所属的域。
+ */
+export function resolveNavLocation(face: NavFace, path: string): NavLocation | null {
   const meta = router.resolve(path).matched.at(-1)?.meta
-  return meta ? (domainOf(meta, face) ?? null) : null
+  if (!meta) return null
+  const domain = domainOf(meta, face)
+  if (!domain) return null
+  const itemFace = faceOf(meta.requiresPerm)
+  return { domain, otherFace: itemFace !== 'both' && itemFace !== face }
 }
 
 /**

@@ -7,7 +7,7 @@
  * 写入点在 `router.afterEach`，因此必须在 `app.use(router)` 之后安装（见 main.ts）。
  */
 import type { RouteLocationNormalized, Router } from 'vue-router'
-import { labelOf, resolveDomain, type NavDomainKey, type NavFace } from '@/nav'
+import { labelOf, resolveNavLocation, type NavDomainKey, type NavFace } from '@/nav'
 import { usePermission } from '@/stores/permission'
 
 const STORAGE_KEY = 'platform_nav_recent'
@@ -56,18 +56,21 @@ function recordVisit(to: RouteLocationNormalized): void {
 
   const perm = usePermission()
   const face: NavFace = perm.currentTenant ? 'tenant' : 'platform'
-  const domain = resolveDomain(face, to.path)
-  if (!domain) return
+  const loc = resolveNavLocation(face, to.path)
+  // 来自另一个面的页面（管理员深链到平台页）不记：它不属于本面的域，记进来会在
+  // 本面的「最近访问」里出现一条点进去是另一面页面的条目。
+  if (!loc || loc.otherFace) return
 
   const next: RecentVisit = {
     path: to.path,
     title: (to.meta.title as string) ?? to.path,
-    domain,
-    domainLabel: labelOf(domain),
+    domain: loc.domain,
+    domainLabel: labelOf(loc.domain),
     face,
     ts: Date.now(),
   }
-  const rest = readRecentVisits().filter((v) => v.path !== next.path)
+  // 去重键是 path + face：both 面的页面（Git 凭据、链路追踪）在两个视图各算一条
+  const rest = readRecentVisits().filter((v) => !(v.path === next.path && v.face === next.face))
   writeRecentVisits([next, ...rest].slice(0, MAX_ITEMS))
 }
 
