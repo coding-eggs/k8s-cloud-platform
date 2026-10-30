@@ -354,7 +354,7 @@ onMounted(loadWarehouses)
             </div>
             <div class="wh-host">{{ row.w.host }}</div>
             <div class="wh-meta">
-              <span>{{ row.w.kind === 'DOCKER' ? 'Docker' : 'Harbor' }}</span>
+              <!-- 类型已经由左边的鲸鱼 / 锚图标表达了，这里不再重复文字 -->
               <span v-if="row.w.connectionCount">{{ row.w.connectionCount }} 个连接</span>
               <span v-if="row.w.projectCount">{{ row.w.projectCount }} 个项目</span>
               <el-tag v-if="row.w.health === 'ERROR'" size="small" type="danger">异常</el-tag>

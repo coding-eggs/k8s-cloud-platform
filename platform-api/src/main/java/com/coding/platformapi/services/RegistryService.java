@@ -165,8 +165,9 @@ public class RegistryService {
         String kind = builtin || (first != null && "DOCKERHUB".equals(first.type()))
                 ? "DOCKER" : "HARBOR";
         String origin = builtin ? "BUILTIN" : (inst != null ? "INSTALLED" : "CREDENTIAL");
+        // 平台 Harbor 全局只有一个，**用 host 区分就够了** —— 名字里再带集群名只会把行撑长
         String displayName = builtin ? BuiltinRegistry.DOCKER_HUB.displayName()
-                : inst != null ? "Harbor · " + inst.clusterName() : host;
+                : inst != null ? "Harbor" : host;
         int projectCount = (int) projects.stream()
                 .filter(p -> key.equalsIgnoreCase(HarborInstallLocator.hostOf(p.getHost())))
                 .count();
