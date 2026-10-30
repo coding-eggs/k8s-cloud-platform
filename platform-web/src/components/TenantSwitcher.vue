@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 顶栏租户切换器（自管轨，spec §4.4/§4.5）：
+ * 顶栏「当前视图 / 租户」切换器（自管轨，spec §4.4/§4.5）：
  * 数据源 POST /user/my-tenants（登录即端点，只返回**我所属**的租户）；选择 → switchTenant 重签含租户上下文的 token。
  * - 「平台视图」= base token（tenantId null），**仅平台管理员可见**（2026-10-08 起）：非管理员没有平台视图，
  *   只在自己所属的租户之间切换（bootstrap 已保证他们进来就落在某个租户里）；
@@ -9,6 +9,10 @@
  *   但随后的整页重载会重跑 bootstrap，把他放回第一个可用租户。
  * admin 代管轨用 ContextSelector 筛选器（不碰 token），与本组件并存互不干扰；
  * 我的租户为 0 个时整组隐藏（管理员常态停在平台视图；非管理员则确实无处可去）。
+ *
+ * 形态：不是 el-select。这里回答的是「我现在以什么身份在看」，不是「从表单里选一个值」，
+ * 所以做成 scope chip（标识方块 + 名称 + caret）+ 自定义浮层，与顶栏其余控件同一套语言。
+ * 无切换余地时（非管理员且只有一个租户）退化为静态标签，不给一个点了没反应的控件。
  */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -23,16 +27,32 @@ const perm = usePermission()
 const tenants = ref<PlatformTenant[]>([])
 const loading = ref(false)
 const switching = ref(false)
+const open = ref(false)
 
 /** my-tenants 非空即显示（0 个→隐藏，平台视图即其常态，spec §4.5） */
 const visible = computed(() => tenants.value.length > 0)
 
-/** 当前选中项：平台视图用空串当 el-select 的 value。
- *  EP 默认把 '' 也算「空值」（emptyValues 含 ''/null/undefined）→ 会显示 placeholder 而非「平台视图」，
- *  故下方显式 :empty-values="[null, undefined]" 让 '' 成为一个正常可显示的选项值。
- *  非管理员没有 '' 这个选项，极短的无上下文瞬间（base token，bootstrap 尚未落进租户）会显示
- *  placeholder「选择租户」，而不是一片空白。 */
-const modelValue = computed(() => perm.currentTenant?.tenantId ?? '')
+/** 当前租户 id；平台视图是 '' */
+const currentId = computed(() => perm.currentTenant?.tenantId ?? '')
+const isPlatformView = computed(() => perm.currentTenant == null)
+
+/** 有切换余地才给交互：管理员总能回平台视图；非管理员只有多于一个租户时才有意义 */
+const canSwitch = computed(() => perm.isAdmin || tenants.value.length > 1)
+
+/** 非管理员在 base token 的极短瞬间（bootstrap 尚未落进租户）不谎称「平台视图」 */
+const displayName = computed(() => {
+  if (isPlatformView.value) return perm.isAdmin ? '平台视图' : '选择租户'
+  return perm.currentTenant?.tenantName ?? perm.currentTenant?.tenantId ?? ''
+})
+
+/** 标识方块里的字：租户取名字首字；平台视图用图标（见模板） */
+const tenantMark = computed(() => {
+  if (isPlatformView.value) return ''
+  const name = displayName.value.trim()
+  return name ? name.charAt(0).toUpperCase() : '租'
+})
+
+const chipTitle = computed(() => (canSwitch.value ? '切换视图 / 租户' : displayName.value))
 
 async function loadTenants(): Promise<void> {
   loading.value = true
@@ -45,15 +65,20 @@ async function loadTenants(): Promise<void> {
   }
 }
 
+function choose(value: string): void {
+  open.value = false
+  void onSwitch(value)
+}
+
 async function onSwitch(value: string): Promise<void> {
   if (switching.value) return
-  if (value === (perm.currentTenant?.tenantId ?? '')) return // 未变化（含重复点平台视图）
-  const beforeTenant = perm.currentTenant?.tenantId ?? ''
+  if (value === currentId.value) return // 未变化（含重复点平台视图）
+  const beforeTenant = currentId.value
   const target = tenants.value.find((t) => t.id === value)
   switching.value = true
   try {
     if (value === '') {
-      // 只有平台管理员能走到这里（模板里该选项对非管理员不渲染）
+      // 只有平台管理员能走到这里（浮层里该选项对非管理员不渲染）
       if (await switchTenant(null)) {
         reloadIntoContext('已切换到平台视图')
       } else {
@@ -105,52 +130,223 @@ onMounted(() => {
 </script>
 
 <template>
-  <el-select
+  <el-popover
     v-if="visible"
-    :model-value="modelValue"
-    class="tenant-switcher"
-    popper-class="tenant-switcher-dropdown"
-    :loading="loading"
-    :disabled="switching"
-    :empty-values="[null, undefined]"
-    :placeholder="perm.isAdmin ? '' : '选择租户'"
-    size="small"
-    @update:model-value="onSwitch(String($event))"
+    v-model:visible="open"
+    placement="bottom-end"
+    :width="260"
+    :offset="8"
+    :show-arrow="false"
+    trigger="click"
+    popper-class="scope-popper"
+    :disabled="!canSwitch || switching || loading"
   >
-    <template #prefix>
-      <el-icon><OfficeBuilding /></el-icon>
+    <template #reference>
+      <button
+        type="button"
+        class="scope-chip"
+        :class="{ 'is-static': !canSwitch }"
+        :disabled="!canSwitch || switching || loading"
+        :title="chipTitle"
+      >
+        <span class="scope-mark" :class="{ 'is-platform': isPlatformView }">
+          <el-icon v-if="isPlatformView"><Grid /></el-icon>
+          <template v-else>{{ tenantMark }}</template>
+        </span>
+        <span class="scope-name">{{ displayName }}</span>
+        <el-icon v-if="switching" class="scope-caret is-spinning"><Loading /></el-icon>
+        <el-icon v-else-if="canSwitch" class="scope-caret"><ArrowDown /></el-icon>
+      </button>
     </template>
-    <!-- 平台视图只属于平台管理员：非管理员没有这个选项，只能在自己所属的租户之间切换 -->
-    <el-option v-if="perm.isAdmin" label="平台视图" value="">
-      <span class="opt-platform">平台视图</span>
-      <span class="opt-hint">（租户管理 / 集群管理）</span>
-    </el-option>
-    <el-option
-      v-for="t in tenants"
-      :key="t.id"
-      :label="t.name"
-      :value="t.id"
-      :disabled="t.status !== 1"
-    >
-      <span :class="{ 'opt-disabled': t.status !== 1 }">{{ t.name }}</span>
-      <span v-if="t.status !== 1" class="opt-hint">（已禁用）</span>
-    </el-option>
-  </el-select>
+
+    <div class="scope-menu">
+      <!-- 平台视图只属于平台管理员：非管理员没有这个选项，只能在自己所属的租户之间切换 -->
+      <template v-if="perm.isAdmin">
+        <button
+          type="button"
+          class="scope-item"
+          :class="{ 'is-active': isPlatformView }"
+          @click="choose('')"
+        >
+          <span class="scope-mark is-platform"><el-icon><Grid /></el-icon></span>
+          <span class="scope-item-body">
+            <span class="scope-item-name">平台视图</span>
+            <span class="scope-item-hint">集群 · 租户 · 权限 · 运维</span>
+          </span>
+          <el-icon v-if="isPlatformView" class="scope-check"><Check /></el-icon>
+        </button>
+        <div class="scope-divider" />
+        <div class="scope-section">我的租户</div>
+      </template>
+
+      <button
+        v-for="t in tenants"
+        :key="t.id"
+        type="button"
+        class="scope-item"
+        :class="{ 'is-active': t.id === currentId, 'is-disabled': t.status !== 1 }"
+        :disabled="t.status !== 1"
+        @click="choose(t.id)"
+      >
+        <span class="scope-mark">{{ t.name.trim().charAt(0).toUpperCase() || '租' }}</span>
+        <span class="scope-item-body">
+          <span class="scope-item-name">{{ t.name }}</span>
+          <span v-if="t.status !== 1" class="scope-item-hint">已禁用</span>
+        </span>
+        <el-icon v-if="t.id === currentId" class="scope-check"><Check /></el-icon>
+      </button>
+    </div>
+  </el-popover>
 </template>
 
 <style>
-/* 不用 scoped：el-select 内部节点（含 popper 里的选项）拿不到本组件 data-v，
-   scoped :deep() 匹配不到（memory「Element Plus 弹窗 scoped CSS 坑」同源）。
-   触发器样式挂 .tenant-switcher，下拉项样式挂 popper-class（弹层 teleport 到 body，不在 .tenant-switcher 内） */
-.tenant-switcher {
-  width: 190px;
+/* 不用 scoped：popover 内容被 teleport 到 body，拿不到本组件 data-v
+   （memory「Element Plus 弹窗 scoped CSS 坑」同源）。类名全局唯一，直接全局写。 */
+
+/* ---------- 触发器：范围胶囊 ---------- */
+.scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+  height: 34px;
+  padding: 0 10px 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
 }
-.tenant-switcher-dropdown .opt-hint {
-  margin-left: 8px;
+.scope-chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--panel-hover);
+}
+.scope-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.scope-chip:disabled {
+  cursor: default;
+}
+/* 无切换余地：保留完整对比度，只是不再像控件 */
+.scope-chip.is-static {
+  border-color: transparent;
+  background: transparent;
+  padding-right: 7px;
+}
+.scope-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.scope-mark.is-platform {
+  background: var(--accent-grad);
+  color: #fff;
+  font-size: 11px;
+}
+.scope-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-caret {
   font-size: 12px;
   color: var(--text-3);
+  flex-shrink: 0;
 }
-.tenant-switcher-dropdown .opt-disabled {
+.scope-caret.is-spinning {
+  animation: scope-spin 1s linear infinite;
+}
+@keyframes scope-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- 浮层 ---------- */
+.scope-popper {
+  padding: 6px !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--bg-elevated) !important;
+  box-shadow: 0 24px 48px -20px rgba(0, 0, 0, .8) !important;
+}
+.scope-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.scope-section {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  letter-spacing: .1em;
   color: var(--text-3);
+  user-select: none;
+}
+.scope-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.scope-item:hover:not(:disabled) {
+  background: var(--panel-hover);
+}
+.scope-item.is-active {
+  background: var(--accent-soft);
+}
+.scope-item.is-active .scope-item-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.scope-item.is-disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+.scope-item-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.scope-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scope-item-hint {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.scope-check {
+  font-size: 14px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.scope-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
 }
 </style>
