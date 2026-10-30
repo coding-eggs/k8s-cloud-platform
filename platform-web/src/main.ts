@@ -11,6 +11,7 @@ import * as Icons from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 import { initTheme } from './utils/theme'
+import { installRecentVisitsTracking } from './composables/useRecentVisits'
 
 // 尽早应用主题，避免首屏闪烁（默认深色）
 initTheme()
@@ -24,6 +25,10 @@ for (const [name, component] of Object.entries(Icons)) {
 
 app.use(ElementPlus, { locale: zhCn })
 app.use(router)
+
+// 最近访问记录（localStorage，纯前端）。必须在 app.use(router) 之后安装，
+// 否则首次导航的 afterEach 钩子还没挂上。
+installRecentVisitsTracking(router)
 
 // 开发期导航一致性检查：菜单页缺 domain/icon 或域 key 拼错时当场报出来。
 // 生产构建里 import.meta.env.DEV 为 false，整段被 tree-shake 掉；
