@@ -88,7 +88,7 @@ const router = createRouter({
         { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '审计日志', domain: 'ops', icon: 'Document', order: 1, requiresPerm: [pageCodes.audit] } },
         // Git 凭据：两族页面码都能进（平台级凭据 / 租户自建连接），故出现在两个视图里；
         // 租户视图归「交付」，平台视图改归「运维」。
-        { path: 'git-credentials', name: 'git-credentials', component: () => import('@/views/GitCredentialView.vue'), meta: { title: 'Git 凭据', domain: 'build', platformDomain: 'ops', icon: 'Tickets', order: 2, requiresPerm: [pageCodes.credential, pageCodes.credentialTenant] } },
+        { path: 'git-credentials', name: 'git-credentials', component: () => import('@/views/GitCredentialView.vue'), meta: { title: 'Git 凭据', domain: 'app', platformDomain: 'ops', icon: 'Tickets', order: 5, requiresPerm: [pageCodes.credential, pageCodes.credentialTenant] } },
         { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', domain: 'ops', icon: 'Message', order: 3, context: 'full', requiresPerm: [pageCodes.notifyChannel] } },
         // 链路追踪：平台自研链路（数据源 = 中心 Tempo），平台/租户两套页代码，同上归两个视图
         { path: 'mesh/traces', name: 'mesh-traces', component: () => import('@/views/mesh/TraceView.vue'), meta: { title: '链路追踪', domain: 'observe', platformDomain: 'ops', icon: 'Timer', order: 6, context: 'full', requiresPerm: [pageCodes.mesh.trace, pageCodes.mesh.traceTenant] } },
@@ -101,13 +101,13 @@ const router = createRouter({
         { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', domain: 'app', icon: 'Files', order: 3, context: 'full', requiresPerm: [pageCodes.app] } },
         { path: 'apps/:id', name: 'middleware-detail', component: () => import('@/views/MiddlewareDetailView.vue'), meta: { title: '中间件详情', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.app] } },
 
-        // ============ 租户视图 · 交付 ============
-        { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', domain: 'build', icon: 'Operation', order: 1, context: 'full', requiresPerm: [pageCodes.pipeline] } },
-        { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', domain: 'build', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
-        { path: 'pipelines/runs', name: 'pipeline-runs', component: () => import('@/views/PipelineRunView.vue'), meta: { title: '流水线运行', domain: 'build', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        // —— 同一「应用」域的后半段：从源码到制品（流水线 → 凭据 → 镜像仓库） ——
+        { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', domain: 'app', icon: 'Operation', order: 4, context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        { path: 'pipelines/runs', name: 'pipeline-runs', component: () => import('@/views/PipelineRunView.vue'), meta: { title: '流水线运行', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
         // 一次运行的详情：单独一页（原先挤在列表右侧 560px 那一栏里，DAG 与日志都没法看）
-        { path: 'pipelines/run', name: 'pipeline-run-detail', component: () => import('@/views/PipelineRunDetailView.vue'), meta: { title: '运行详情', domain: 'build', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
-        { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', domain: 'build', icon: 'Collection', order: 3, requiresPerm: [pageCodes.registry] } },
+        { path: 'pipelines/run', name: 'pipeline-run-detail', component: () => import('@/views/PipelineRunDetailView.vue'), meta: { title: '运行详情', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', domain: 'app', icon: 'Collection', order: 6, requiresPerm: [pageCodes.registry] } },
 
         // ============ 租户视图 · 资源 ============
         { path: 'resources/workloads', name: 'workloads', component: () => import('@/views/resource/WorkloadView.vue'), meta: { title: '工作负载', domain: 'resource', icon: 'Box', order: 1, context: 'full', requiresPerm: [pageCodes.workload.list] } },

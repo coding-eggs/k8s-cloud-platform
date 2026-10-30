@@ -79,12 +79,13 @@ GatewayClass 归「网络」，只是因为非管理员持不到对应的页面�
 | `org` | **组织** | 租户管理 · 用户管理 · 角色与权限 · 权限点 · RBAC 模板 |
 | `ops` | **运维** | 审计日志 · 通知方式 · Git 凭据 · 链路追踪 |
 
-### 4.2 租户视图（7 域 / 25 项）
+### 4.2 租户视图（6 域 / 25 项）
+
+> 2026-10-30 变更：原「应用」「交付」两域合并为一个「应用」域（用户决定）。理由见 §4.3 末条。
 
 | 域 key | 域 | 页面 |
 |---|---|---|
-| `app` | **应用** | 应用编排 · 中间件 · 中间件实例 |
-| `build` | **交付** | 流水线 · Git 凭据 · 镜像仓库 |
+| `app` | **应用** | 应用编排 · 中间件 · 中间件实例 · 流水线 · Git 凭据 · 镜像仓库 |
 | `resource` | **资源** | 工作负载 · Pod · HPA · ConfigMap · Secret |
 | `storage` | **存储** | PVC · 持久卷 · 对象存储 |
 | `network` | **网络** | Service · Gateway · 路由策略 · 网格拓扑 |
@@ -106,6 +107,10 @@ GatewayClass 归「网络」，只是因为非管理员持不到对应的页面�
   管理员看到 6 项（`tenant:page:tenant.self` 只有租户侧角色持有）。
 - **「运维」域是平台视图的横切工具区**：审计、通知方式、Git 凭据、链路追踪四者都以
   "平台管理员单独使用"为主，不属于任何租户资源域。不单开「观测」域是因为平台视图下它只剩链路追踪一项（违反 R2 的精神）。
+- **「应用」与「交付」合成一个域**（2026-10-30 用户决定，覆盖 §4.2 原先的两域切法）：
+  应用编排 / 中间件 / 中间件实例 → 流水线 / Git 凭据 / 镜像仓库，是"把东西造出来并跑起来"的一条线。
+  合并后 6 项，仍在单域上限内；租户视图从 7 个域降到 6 个，顶栏在 1280px 下也更松。
+  组内顺序按"先应用、后构建链"排：应用编排 → 中间件 → 中间件实例 → 流水线 → Git 凭据 → 镜像仓库。
 
 ## 5. 页面归属总表
 
@@ -145,18 +150,18 @@ GatewayClass 归「网络」，只是因为非管理员持不到对应的页面�
 | `/templates` | RBAC 模板 | platform | — / `org` | `pageCodes.template` | ✓ |
 | `/audit` | 审计日志 | platform | — / `ops` | `pageCodes.audit` | ✓ |
 | `/notification-channels` | 通知方式 | platform | — / `ops` | `pageCodes.notifyChannel` | ✓ |
-| `/git-credentials` | Git 凭据 | both | `build` / `ops` | `pageCodes.credential`, `pageCodes.credentialTenant` | ✓ |
+| `/git-credentials` | Git 凭据 | both | `app` / `ops` | `pageCodes.credential`, `pageCodes.credentialTenant` | ✓ |
 | `/mesh/traces` | 链路追踪 | both | `observe` / `ops` | `pageCodes.mesh.trace`, `pageCodes.mesh.traceTenant` | ✓ |
 | `/applications` | 应用编排 | tenant | `app` | `pageCodes.application` | ✓ |
 | `/applications/:id` | 应用画布 | tenant | `app` | `pageCodes.application` | hidden |
 | `/apps` | 中间件 | tenant | `app` | `pageCodes.app` | ✓ |
 | `/apps/instances` | 中间件实例 | tenant | `app` | `pageCodes.app` | ✓ |
 | `/apps/:id` | 中间件详情 | tenant | `app` | `pageCodes.app` | hidden |
-| `/pipelines` | 流水线 | tenant | `build` | `pageCodes.pipeline` | ✓ |
-| `/pipelines/editor` | 流水线编辑 | tenant | `build` | `pageCodes.pipeline` | hidden |
-| `/pipelines/runs` | 流水线运行 | tenant | `build` | `pageCodes.pipeline` | hidden |
-| `/pipelines/run` | 运行详情 | tenant | `build` | `pageCodes.pipeline` | hidden |
-| `/registries` | 镜像仓库 | tenant | `build` | `pageCodes.registry` | ✓ |
+| `/pipelines` | 流水线 | tenant | `app` | `pageCodes.pipeline` | ✓ |
+| `/pipelines/editor` | 流水线编辑 | tenant | `app` | `pageCodes.pipeline` | hidden |
+| `/pipelines/runs` | 流水线运行 | tenant | `app` | `pageCodes.pipeline` | hidden |
+| `/pipelines/run` | 运行详情 | tenant | `app` | `pageCodes.pipeline` | hidden |
+| `/registries` | 镜像仓库 | tenant | `app` | `pageCodes.registry` | ✓ |
 | `/resources/workloads` | 工作负载 | tenant | `resource` | `pageCodes.workload.list` | ✓ |
 | `/resources/workloads/detail` | 工作负载详情 | tenant | `resource` | `pageCodes.workload.detail` | hidden |
 | `/resources/workloads/editor` | 工作负载编辑 | tenant | `resource` | `pageCodes.workload.edit` | hidden |
@@ -197,7 +202,7 @@ GatewayClass 归「网络」，只是因为非管理员持不到对应的页面�
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ ◆ K8s 云平台 │ 总览 │ 应用  交付  资源  存储  网络  观测  组织 │ 租户 acme ▾ 集群 ▾ │ ☀ │ (头像) │
+│ ◆ K8s 云平台 │ 总览 │ 应用  资源  存储  网络  观测  组织 │ 租户 acme ▾ 集群 ▾ │ ☀ │ (头像) │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -331,7 +336,7 @@ interface RouteMeta {
 
 ```ts
 export type NavFace = 'platform' | 'tenant'
-export type NavDomainKey = 'cluster'|'network'|'org'|'ops'|'app'|'build'|'resource'|'storage'|'observe'
+export type NavDomainKey = 'cluster'|'network'|'org'|'ops'|'app'|'resource'|'storage'|'observe'
 
 export interface NavItem { title: string; path: string; icon: string; codes: string[] }
 export interface NavDomain { key: NavDomainKey; label: string; items: NavItem[] }
@@ -395,7 +400,7 @@ export function faceOf(codes: string[] | undefined): 'platform' | 'tenant' | 'bo
 | 变化 | 影响 | 处置 |
 |---|---|---|
 | 租户视图不再出现平台运维页 | 管理员切到租户视图后看不到「集群」域 | 顶栏切换器常驻；切回平台视图落到平台总览。**这是本次最显眼的行为变化，需在验收时确认** |
-| Git 凭据、链路追踪在两个视图都在，但归属域不同 | 平台视图在「运维」，租户视图在「交付」/「观测」 | 由 `meta.platformDomain` 表达 |
+| Git 凭据、链路追踪在两个视图都在，但归属域不同 | 平台视图在「运维」，租户视图在「应用」/「观测」 | 由 `meta.platformDomain` 表达 |
 | 菜单不再手写 | 新增页面只需在路由上加 `domain` / `icon` / `order` | 开发期断言兜底 |
 | URL 全部不变 | 收藏、外部链接、审计日志里的 path 全部继续有效 | — |
 | `/overview` 仍无页面码 | 守卫回落目标不变 | 不动 |
@@ -408,7 +413,7 @@ localStorage 新增两个 key：`platform_nav_last:<face>:<domain>`、`platform_
 1. **构建**：`npm run build`（含 `vue-tsc`）通过。
 2. **平台视图**：顶栏恰好 4 个域 tab（集群/网络/组织/运维）+ 总览；每个域的侧栏项与 §4.1 一致；
    总览显示集群状态表与三种快捷操作。
-3. **租户视图**：顶栏恰好 7 个域 tab；无「集群」域；总览四张卡有值（用真集群数据），
+3. **租户视图**：顶栏恰好 6 个域 tab（应用/资源/存储/网络/观测/组织）+ 总览；无「集群」域；总览四张卡有值（用真集群数据），
    「需要关注」在存在异常 Pod 时列出 reason。
 4. **按帽子分家**：管理员在租户视图手输 `/clusters` 能进（不重定向），侧栏临时出现「集群」域并高亮。
 5. **命令面板**：Ctrl/Cmd+K 打开，输入「日志」能跨域命中「日志查询」；Enter 跳转；Esc 关闭。

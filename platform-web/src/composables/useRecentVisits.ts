@@ -10,7 +10,9 @@ import type { RouteLocationNormalized, Router } from 'vue-router'
 import { labelOf, resolveNavLocation, type NavDomainKey, type NavFace } from '@/nav'
 import { usePermission } from '@/stores/permission'
 
-const STORAGE_KEY = 'platform_nav_recent'
+/** v2：2026-10-30「应用」「交付」两域合并，旧记录里带着已不存在的域 key 与旧域名（「交付」），
+ *  直接换键丢弃，避免总览的最近访问里冒出已经不存在的域标签。 */
+const STORAGE_KEY = 'platform_nav_recent_v2'
 const MAX_ITEMS = 8
 
 export interface RecentVisit {

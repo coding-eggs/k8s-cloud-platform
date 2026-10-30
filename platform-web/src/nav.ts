@@ -18,7 +18,6 @@ export type NavDomainKey =
   | 'org'
   | 'ops'
   | 'app'
-  | 'build'
   | 'resource'
   | 'storage'
   | 'observe'
@@ -47,17 +46,18 @@ const LABELS: Record<NavDomainKey, string> = {
   network: '网络',
   org: '组织',
   ops: '运维',
+  /** 「应用」与「交付」合成一个域（2026-10-30）：应用编排 / 中间件 → 流水线 / 凭据 / 镜像仓库，
+   *  正好是「把东西造出来并跑起来」的一条线，6 项，仍在一屏之内。 */
   app: '应用',
-  build: '交付',
   resource: '资源',
   storage: '存储',
   observe: '观测',
 }
 
-/** 两个视图各自的域顺序（租户视图 7 域、平台视图 4 域） */
+/** 两个视图各自的域顺序（租户视图 6 域、平台视图 4 域） */
 const DOMAIN_LAYOUT: Record<NavFace, NavDomainKey[]> = {
   platform: ['cluster', 'network', 'org', 'ops'],
-  tenant: ['app', 'build', 'resource', 'storage', 'network', 'observe', 'org'],
+  tenant: ['app', 'resource', 'storage', 'network', 'observe', 'org'],
 }
 
 const VALID_DOMAINS = new Set<string>(Object.keys(LABELS))
