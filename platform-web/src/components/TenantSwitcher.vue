@@ -7,6 +7,9 @@
  * - status≠1 的禁用租户置灰不可选（强切服务端会 invalid_grant，前端先挡住）；
  * - 切换失败（invalid_grant=无权进入/会话失效等）→ 回落 base token 这一确定态；非管理员那一刻没有上下文，
  *   但随后的整页重载会重跑 bootstrap，把他放回第一个可用租户。
+ * - **换视图（平台↔租户）一律落到该视图的默认页（/overview）**：管理员切到平台视图后平台角色持有的
+ *   租户族码仍在闭包里，路由守卫不会拦「当前页不属于这个视图」，不主动走开就会停在上一视图的页面上。
+ *   同一视图内换租户则保留当前页（同类页面换个租户看）。
  * admin 代管轨用 ContextSelector 筛选器（不碰 token），与本组件并存互不干扰；
  * 我的租户为 0 个时整组隐藏（管理员常态停在平台视图；非管理员则确实无处可去）。
  *
@@ -80,7 +83,9 @@ async function onSwitch(value: string): Promise<void> {
     if (value === '') {
       // 只有平台管理员能走到这里（浮层里该选项对非管理员不渲染）
       if (await switchTenant(null)) {
-        reloadIntoContext('已切换到平台视图')
+        // 切视图必须离开当前页：管理员切到平台视图后，平台角色持有的租户族码仍在闭包里，
+        // 守卫不会认为 /pipelines 越权 —— 不主动走开就会停在一个「不属于这个视图」的页面上。
+        leaveTo('已切换到平台视图', '/overview')
       } else {
         ElMessage.error('切换失败，请稍后重试')
       }
@@ -92,7 +97,9 @@ async function onSwitch(value: string): Promise<void> {
     }
     const ok = await switchTenant(target.id, target.name)
     if (ok && perm.currentTenant?.tenantId === target.id && target.status === 1) {
-      reloadIntoContext(`已进入租户「${target.name}」`)
+      // 从平台视图进入租户 = 换视图 → 落到租户工作台；租户之间互切保留当前页（同类页面换个租户看）
+      const enteringView = beforeTenant === ''
+      leaveTo(`已进入租户「${target.name}」`, enteringView ? '/overview' : undefined)
       return
     }
     // 进入失败（invalid_grant=被移出/租户禁用 / 网络 / 签发与上下文不一致的竞态残余）：
@@ -101,9 +108,9 @@ async function onSwitch(value: string): Promise<void> {
     const fell = await switchTenant(null)
     await perm.load()
     const message = fell ? `无权进入租户「${target.name}」，已回落平台视图` : '切换失败，请稍后重试'
-    // 上下文实际变了（原本在租户里）→ 页面数据是旧视角，整页重载复位；原本就在平台视图则只提示
+    // 上下文实际变了（原本在租户里）→ 页面数据是旧视角，必须离开；离开租户 = 换视图 → 回总览
     if (fell && beforeTenant !== '') {
-      reloadIntoContext(message, true)
+      leaveTo(message, '/overview', true)
     } else {
       ElMessage.warning(message)
     }
@@ -113,15 +120,27 @@ async function onSwitch(value: string): Promise<void> {
 }
 
 /**
- * 上下文变更（切换成功 / 回落）→ 整页重载：token 变了，但资源上下文 store（/context 的
+ * 上下文变更（切换成功 / 回落）→ 整页离开：token 变了，但资源上下文 store（/context 的
  * 租户→集群→ns 树）与各页已加载数据仍是旧 token 视角（base/admin 全量 vs 成员限定）。
- * 整页重载是最小且正确的复位方式——守卫会 await bootstrap（O(1) 空转）后各页用新 token 重拉。
- * toast 先打出来，300ms 后重载（reload 会清掉消息，留一瞬让用户看清切换落点）。
+ * 整页导航是最小且正确的复位方式——守卫会 await bootstrap（O(1) 空转）后各页用新 token 重拉。
+ *
+ * `path` 有值 = 换视图（平台↔租户），落到该视图的默认页；缺省 = 原地重载（同一视图内换租户）。
+ * 换视图必须显式离开：平台角色同时持有租户族码，守卫不会因为「这一页不属于当前视图」而拦人。
+ *
+ * toast 先打出来，300ms 后离开（导航会清掉消息，留一瞬让用户看清切换落点）。
  */
-function reloadIntoContext(message: string, warning = false): void {
+function leaveTo(message: string, path?: string, warning = false): void {
   if (warning) ElMessage.warning(message)
   else ElMessage.success(message)
-  window.setTimeout(() => window.location.reload(), 300)
+  window.setTimeout(() => {
+    if (!path) {
+      window.location.reload()
+      return
+    }
+    // 已经在目标页：赋值同一 URL 在部分浏览器里是 no-op，token 就白换了 —— 显式 reload
+    if (window.location.pathname === path) window.location.reload()
+    else window.location.href = path
+  }, 300)
 }
 
 onMounted(() => {
