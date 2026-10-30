@@ -38,6 +38,15 @@ public class CredentialView {
      */
     private String host;
 
+    /**
+     * 这条连接固定的 Harbor 项目（平台建的租户 robot 才有，如 {@code platform} / {@code t-xxx}）。
+     *
+     * <p>镜像仓库页的浏览要它：根层每一行项目对应一条 robot，点进去得换成**那个项目自己的**
+     * 凭据 —— 平台 robot 没有别家项目的权限。只有 {@code /credential/list} 会填它
+     * （创建/更新的响应里是 null，页面保存后本来就会重新拉列表）。
+     */
+    private String project;
+
     /** BASIC */
     private String authType;
 

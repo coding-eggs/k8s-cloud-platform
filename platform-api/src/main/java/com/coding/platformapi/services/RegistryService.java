@@ -284,20 +284,44 @@ public class RegistryService {
     public BrowseResult browse(RegistryBrowseRequest req, String hatTenantId) {
         // ⚠️ 在 allSources() 里找，**不是** mapper.selectById —— 内置档没有凭据行，
         // 它是用合成 id（builtin:dockerhub）从下拉里点进来的
-        Source source = allSources(hatTenantId).stream()
+        List<Source> sources = allSources(hatTenantId);
+        Source source = sources.stream()
                 .filter(s -> s.id().equals(req.getCredentialId()))
                 .findFirst()
                 .orElseThrow(() -> new CloudPlatformException(EnumResponseType.CREDENTIAL_NOT_EXIST,
                         "镜像仓库连接不存在或已停用"));
         List<String> path = req.getPath() == null ? List.of() : req.getPath();
         BrowseResult result = dialects.of(source.type()).browse(toRef(source), path);
-        // Harbor 的**根层**补上平台公共项目：租户凭据是项目级 robot，Harbor 的 /projects 只回它自己
-        // 那一个；而上游镜像都在 docker.io / quay.io 这些公开读的项目里 —— 不补就看不到它们
-        // （2026-10-29 用户指出：镜像仓库页里找不到那几个公共项目）
+        // Harbor 的**根层**要补两类项目，否则看不见也点不进去：
+        //   1. 平台公共项目（platform + 各上游）—— 项目级 robot 的 /projects 只回它自己那一个；
+        //   2. **各租户自己的项目** —— 同理，平台 robot 没有别家项目的权限。
         if (path.isEmpty() && "HARBOR".equalsIgnoreCase(source.type())) {
-            result = withPublicProjects(result);
+            result = withTenantProjects(withPublicProjects(result), sources);
         }
         return result;
+    }
+
+    /**
+     * 把**当前调用者可见的**租户项目并进根层。
+     *
+     * <p>可见性直接借 {@link #allSources}（已过 {@code visibleTo}）：租户只看得到自己的，
+     * 管理员看全量。每行的名字就是它的 Harbor project，前端据此换成**那个项目自己的 robot**
+     * 再往里翻 —— 平台 robot 点不进别人的项目。
+     */
+    private static BrowseResult withTenantProjects(BrowseResult result, List<Source> sources) {
+        Map<String, BrowseResult.Node> byName = new LinkedHashMap<>();
+        for (BrowseResult.Node n : result.children()) {
+            byName.put(n.name(), n);
+        }
+        for (Source s : sources) {
+            String project = s.project();
+            if (!"HARBOR".equalsIgnoreCase(s.type()) || project == null || project.isBlank()) {
+                continue;
+            }
+            // 已经在里的（公开读那批）不覆盖
+            byName.putIfAbsent(project, new BrowseResult.Node(project, true, null, List.of(), "租户"));
+        }
+        return new BrowseResult(result.breadcrumb(), new ArrayList<>(byName.values()));
     }
 
     /** 平台公开读项目的归属标记（前端据此在浏览列表里打 tag） */

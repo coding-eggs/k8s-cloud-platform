@@ -121,8 +121,10 @@ public class CredentialService {
                 .filter(c -> type == null || type.equals(c.getType()))
                 .filter(c -> visibleTo(c, hatTenantId))
                 .map(CredentialService::toView).toList();
+        Map<String, String> projects = projectByCredential();
         for (CredentialView v : out) {
             v.setTenantName(v.getTenantId() == null ? null : names.get(v.getTenantId()));
+            v.setProject(projects.get(v.getId()));
         }
         return out;
     }

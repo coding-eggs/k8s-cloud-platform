@@ -302,13 +302,25 @@ async function browse(id: string, p: string[]): Promise<void> {
   }
 }
 
+/**
+ * 进某个项目要用**它自己那条** robot：平台 robot 只有 platform 的权限，
+ * 拿它去翻 t-xxx 会被 Harbor 拒。找不到对应凭据就退回默认那条。
+ */
+function credentialForProject(project: string): string {
+  const own = selectedConnections.value.find(
+    (c) => c.enabled && c.source === 'HARBOR' && c.project === project)
+  return own?.id ?? browseId()
+}
+
 function drillInto(node: RegistryNode): void {
   if (!node.hasChildren) return
-  void browse(browseId(), [...path.value, node.name])
+  void browse(credentialForProject(node.name), [...path.value, node.name])
 }
 
 function goTo(p: string[]): void {
-  void browse(browseId(), p)
+  // 回到根层用默认凭据；下钻到某个项目用它自己的
+  const id = p.length ? credentialForProject(p[0]!) : browseId()
+  void browse(id, p)
 }
 
 async function copyImage(node: RegistryNode): Promise<void> {

@@ -2205,6 +2205,11 @@ export interface CredentialView {
   endpoint: string
   /** endpoint 归一后的 host[:port]（后端算好，前端别再自己解析） */
   host: string
+  /**
+   * 这条连接固定的 Harbor 项目（平台建的租户 robot 才有，如 platform / t-xxx）。
+   * 浏览根层每一行项目对应一条 robot，点进去要换成**那个项目自己的**凭据。
+   */
+  project?: string | null
   /** BASIC = 用户名+密码/令牌；NONE = 匿名（无凭据，出站不带 Authorization 头） */
   authType: 'BASIC' | 'NONE'
   hasSecret: boolean
