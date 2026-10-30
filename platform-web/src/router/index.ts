@@ -89,7 +89,9 @@ const router = createRouter({
         // Git 凭据：两族页面码都能进（平台级凭据 / 租户自建连接），故出现在两个视图里；
         // 租户视图归「交付」，平台视图改归「运维」。
         { path: 'git-credentials', name: 'git-credentials', component: () => import('@/views/GitCredentialView.vue'), meta: { title: 'Git 凭据', domain: 'app', platformDomain: 'ops', icon: 'Tickets', order: 5, requiresPerm: [pageCodes.credential, pageCodes.credentialTenant] } },
-        { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', domain: 'ops', icon: 'Message', order: 3, context: 'full', requiresPerm: [pageCodes.notifyChannel] } },
+        // 通知方式：平台全局对象（渠道可留空=所有租户可用），页面不用资源上下文 ——
+        // 不挂 context:'full'，否则顶栏会显示一个选了也不影响任何东西的“租户/集群/命名空间”级联。
+        { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', domain: 'ops', icon: 'Message', order: 3, requiresPerm: [pageCodes.notifyChannel] } },
         // 链路追踪：平台自研链路（数据源 = 中心 Tempo），平台/租户两套页代码，同上归两个视图
         { path: 'mesh/traces', name: 'mesh-traces', component: () => import('@/views/mesh/TraceView.vue'), meta: { title: '链路追踪', domain: 'observe', platformDomain: 'ops', icon: 'Timer', order: 6, context: 'full', requiresPerm: [pageCodes.mesh.trace, pageCodes.mesh.traceTenant] } },
 
