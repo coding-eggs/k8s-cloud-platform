@@ -65,7 +65,8 @@ public class ShellNode implements PipelineNode {
                         "把 Maven / npm / Go / pip 的缓存目录指到 /cache —— 跨运行保留，\n"
                                 + "第二次构建就不用再下一遍依赖（10Gi 的共享卷，按命名空间一块）。\n"
                                 + "没跑到的工具会忽略自己那几个变量，所以选了 java 预设也不影响。\n"
-                                + "⚠️ 这个集群的存储若不支持共享卷，缓存会自动关掉（照样能跑，只是每次重下）")));
+                                + "⚠️ 这个集群的存储若不支持共享卷，缓存会自动关掉（照样能跑，只是每次重下）"),
+                BuildStep.memoryField()));
     }
 
     @Override
@@ -88,6 +89,8 @@ public class ShellNode implements PipelineNode {
         step.setImage(image);
         step.setWorkingDir(BuildStep.workDir(ctx.value("workDir")));
         step.setScript(script);
+        // 资源上限：留空 = 一个字都不写（集群默认照旧生效）
+        step.setComputeResources(BuildStep.resources(ctx.value("memory")));
         // 依赖缓存（可选）：环境变量 + 一个 cache workspace，挂载与卷的来源由渲染/绑定层决定
         if ("true".equals(ctx.value("cache"))) {
             step.setEnv(CacheEnv.of());

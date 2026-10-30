@@ -156,14 +156,25 @@ final class BuildStep {
                 "只在「这个集群出不去」时才填；留空 = 直连。\n"
                         + "例：http://192.168.85.1:7890\n"
                         + "下载依赖会走它；集群内网地址（.svc、内网网段）自动直连。"));
-        fields.add(NodeField.advancedNumber("memory", "内存上限（高级）", "Mi",
-                "只填数字，单位固定 Mi（如 2048）。\n"
-                        + "留空 = 用集群给构建容器的那档默认（真集群是 1024Mi —— 前端构建常常不够，"
-                        + "npm run build 里的 vue-tsc 会「Reached heap limit」）。\n"
-                        + "⚠️ 填了之后 CPU 上限与 requests 由平台补一组小的兜底值（少了它们会被命名空间配额拒）。\n"
-                        + "⚠️ 命名空间配额按「所有容器求和」算（一个构建 Pod 约 3 个容器），填大之前先看还剩多少。"));
+        fields.add(memoryField());
         fields.addAll(extraAdvanced);
         return new NodeSchema(List.copyOf(fields));
+    }
+
+    /**
+     * 「内存上限」这一个字段的**唯一定义** —— 四个构建节点之外的节点（git 克隆 / 镜像推送 / 命令）
+     * 也用它，保证"资源"这个概念只有一处文案、一套校验。
+     *
+     * <p>为什么不止构建节点要它（2026-10-31）：一个流水线 Pod 里有好几个容器，瓶颈不一定在编译那一步 ——
+     * 拉大仓库、推大镜像层、命令节点跑 npm 都可能顶到 CPU/内存，而它们此前连个填写的地方都没有。
+     */
+    static NodeField memoryField() {
+        return NodeField.advancedNumber("memory", "内存上限（高级）", "Mi",
+                "只填数字，单位固定 Mi（如 2048）。\n"
+                        + "留空 = 用集群给流水线容器的那档默认（真集群是 1024Mi —— 前端构建常常不够，"
+                        + "npm run build 里的 vue-tsc 会「Reached heap limit」）。\n"
+                        + "⚠️ 填了之后 CPU 上限与 requests 由平台补一组小的兜底值（少了它们会被命名空间配额拒）。\n"
+                        + "⚠️ 命名空间配额按「所有容器求和」算（一个流水线 Pod 约 3 个容器），填大之前先看还剩多少。");
     }
 
     /**

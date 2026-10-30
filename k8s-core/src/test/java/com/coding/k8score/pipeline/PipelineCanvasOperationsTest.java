@@ -33,7 +33,7 @@ class PipelineCanvasOperationsTest {
         PipelineNodeTypeView shell = types.stream()
                 .filter(t -> t.type().equals("shell")).findFirst().orElseThrow();
         assertThat(shell.fields()).extracting(NodeField::key)
-                .containsExactly("preset", "image", "command", "workDir", "cache");
+                .containsExactly("preset", "image", "command", "workDir", "cache", "memory");
         assertThat(shell.presets()).isNotEmpty();
     }
 

@@ -139,7 +139,8 @@ public class ImagePushNode implements PipelineNode {
                         "只在「这个集群拉不到基础镜像 / 推不到目标仓库」时才填；留空 = 直连。\n"
                                 + "例：http://192.168.85.1:7890\n"
                                 + "buildah 取基础镜像与 push 都会走它；集群内网地址（.svc、内网网段）自动直连。\n"
-                                + "⚠️ 不支持带账号密码的代理 —— 那属于凭据，要单独建凭据，别写在这里")));
+                                + "⚠️ 不支持带账号密码的代理 —— 那属于凭据，要单独建凭据，别写在这里"),
+                BuildStep.memoryField()));
     }
 
     @Override
@@ -199,6 +200,9 @@ public class ImagePushNode implements PipelineNode {
         step.setImage(PipelineBaseImages.BUILDAH);
         step.setWorkingDir(WS);
         step.setScript(script);
+        // 资源上限：留空 = 一个字都不写（集群默认照旧生效）。
+        // 推送这一步常常卡在"层多 + vfs 驱动逐层拷"，也就是 CPU/磁盘，而不只是网络。
+        step.setComputeResources(BuildStep.resources(ctx.value("memory")));
         // 推送凭据以文件形式挂进来（k8s-server 按 platform-api 给的连接建 Secret）——
         // buildah 认 REGISTRY_AUTH_FILE 这个环境变量
         // ⚠️ 代理是**加进这个列表**，不是替换它：冲掉 REGISTRY_AUTH_FILE = 推送 401

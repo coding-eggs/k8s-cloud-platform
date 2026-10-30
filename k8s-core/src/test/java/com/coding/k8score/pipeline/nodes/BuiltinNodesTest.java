@@ -589,6 +589,66 @@ class BuiltinNodesTest {
         }
     }
 
+    // ---- 资源：不止构建节点，克隆 / 推送 / 命令节点同样要给（2026-10-31）----
+    //
+    // 理由：一个构建 Pod 里有好几个容器，瓶颈不一定在「构建」那一步 —— 推送大层、拉大仓库、
+    // 命令节点跑 npm 都可能顶到 CPU/内存。字段与语义和构建节点完全一致（同一个 BuildStep.memoryField）。
+
+    @Test
+    void everyContainerNodeOffersTheMemoryField() {
+        for (PipelineNode node : List.of(new GitCloneNode(), new ImagePushNode(), new ShellNode(),
+                new JavaBuildNode(), new NodeBuildNode(), new GoBuildNode(), new PythonBuildNode())) {
+            NodeField f = node.formSchema().fields().stream()
+                    .filter(x -> "memory".equals(x.key())).findFirst()
+                    .orElseThrow(() -> new AssertionError(node.type() + " 少了 memory 字段"));
+            assertThat(f.type()).as(node.type()).isEqualTo(NodeField.FieldType.NUMBER);
+            assertThat(f.unit()).as(node.type()).isEqualTo("Mi");
+        }
+    }
+
+    @Test
+    void nonBuildNodesHonourTheMemoryLimit() {
+        RenderedStep git = new GitCloneNode().render(ctx("git", Map.of(
+                "repo", "https://gitlab.example.com/g/r.git", "revision", "main", "dir", "src",
+                "memory", "2048")));
+        assertCompleteResourceBlock(git, "git");
+
+        RenderedStep shell = new ShellNode().render(ctx("shell", Map.of(
+                "image", "alpine:3", "command", "echo hi", "workDir", "", "memory", "2048")));
+        assertCompleteResourceBlock(shell, "shell");
+
+        RenderedStep push = new ImagePushNode().render(ctxWithConnectionAt("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app",
+                        "tagSource", "time", "memory", "2048"),
+                "reg-1", "harbor.example.com", LocalDateTime.of(2026, 10, 31, 9, 0, 0)));
+        assertCompleteResourceBlock(push, "image");
+    }
+
+    @Test
+    void nonBuildNodesWriteNoResourcesWhenLeftBlank() {
+        // 留空 = 一个字都不写，集群那套默认照旧生效 —— 老画布渲染结果与本次改动之前逐字节一致
+        assertThat(new GitCloneNode().render(ctx("git", Map.of(
+                "repo", "https://gitlab.example.com/g/r.git", "revision", "main", "dir", "src")))
+                .steps().get(0).getComputeResources()).isNull();
+        assertThat(new ShellNode().render(ctx("shell", Map.of(
+                "image", "alpine:3", "command", "echo hi", "workDir", "")))
+                .steps().get(0).getComputeResources()).isNull();
+        assertThat(new ImagePushNode().render(ctxWithConnectionAt("image",
+                Map.of("registryConnectionId", "reg-1", "imageName", "proj/app", "tagSource", "time"),
+                "reg-1", "harbor.example.com", LocalDateTime.of(2026, 10, 31, 9, 0, 0)))
+                .steps().get(0).getComputeResources()).isNull();
+    }
+
+    /** 四个字段必须一起写（少一个就被命名空间配额拒），且用户只填数字、单位由平台补 Mi。 */
+    private static void assertCompleteResourceBlock(RenderedStep step, String type) {
+        ResourceRequirements res = step.steps().get(0).getComputeResources();
+        assertThat(res).as(type + " 填了内存就该写一整组").isNotNull();
+        assertThat(res.getRequests()).containsOnlyKeys("cpu", "memory");
+        assertThat(res.getLimits()).containsOnlyKeys("cpu", "memory");
+        assertThat(res.getLimits().get("memory")).isEqualTo(Quantity.parse("2048Mi"));
+        assertThat(res.getLimits().get("cpu")).isEqualTo(Quantity.parse("1"));
+    }
+
     @Test
     void everyBuildNodesCommandFieldAsksForTheWholeCommand() {
         // ⭐ 2026-10-16 用户被这个字段误导：Java 节点上它**曾叫「Maven 参数」**，

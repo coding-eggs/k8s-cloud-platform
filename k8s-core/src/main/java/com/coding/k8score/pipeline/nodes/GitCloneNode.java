@@ -81,7 +81,8 @@ public class GitCloneNode implements PipelineNode {
                                 + "例：http://192.168.85.1:7890\n"
                                 + "写进 step 的环境变量，所以同一步里别的下载器也一起走它；\n"
                                 + "集群内网地址（.svc、内网网段）自动直连，不绕代理。\n"
-                                + "⚠️ 不支持带账号密码的代理 —— 那属于凭据，要单独建凭据，别写在这里")));
+                                + "⚠️ 不支持带账号密码的代理 —— 那属于凭据，要单独建凭据，别写在这里"),
+                BuildStep.memoryField()));
     }
 
     @Override
@@ -114,6 +115,8 @@ public class GitCloneNode implements PipelineNode {
         step.setImage(PipelineBaseImages.GIT);
         step.setWorkingDir(WS);
         step.setScript(script.toString());
+        // 资源上限：留空 = 一个字都不写（集群默认照旧生效）
+        step.setComputeResources(BuildStep.resources(ctx.value("memory")));
         // 代理（留空 = 直连，一个变量都不加）—— GitHub 的 pack 下载实测会在 10MiB 处卡死，
         // 真出不去时这一步就是"能不能拉代码"的分界线
         List<EnvVar> env = ProxyEnv.of(ctx.value("proxy"));
