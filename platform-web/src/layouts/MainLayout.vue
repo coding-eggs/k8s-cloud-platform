@@ -6,6 +6,7 @@ import { getTheme, toggleTheme } from '@/utils/theme'
 import ContextSelector from '@/components/ContextSelector.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
+import SearchFab from '@/components/SearchFab.vue'
 import { usePermission } from '@/stores/permission'
 import { buildNav, labelOf, resolveNavLocation, type NavDomain, type NavDomainKey, type NavFace } from '@/nav'
 
@@ -318,18 +319,8 @@ async function handleLogout(): Promise<void> {
     </el-container>
   </el-container>
 
-  <!-- 悬浮搜索入口：玻璃胶囊，窄屏收成圆形。唯一的“亮点”是那枚键帽，其余克制。 -->
-  <button
-    type="button"
-    class="search-fab"
-    aria-label="搜索页面（Ctrl K）"
-    title="搜索页面（Ctrl K）"
-    @click="paletteOpen = true"
-  >
-    <el-icon class="search-fab-icon"><Search /></el-icon>
-    <span class="search-fab-text">搜索</span>
-    <kbd class="search-fab-kbd">Ctrl K</kbd>
-  </button>
+  <!-- 悬浮搜索入口（可拖动）：自身管理位置与拖拽，这里只接打开事件 -->
+  <SearchFab @open="paletteOpen = true" />
 
   <CommandPalette v-model="paletteOpen" />
 </template>
@@ -481,103 +472,6 @@ async function handleLogout(): Promise<void> {
   padding: 8px 0 2px;
   margin: 4px 12px 0;
   border-top: 1px solid var(--border);
-}
-
-/* ---------- 悬浮搜索入口 ---------- */
-/* 玻璃胶囊：默认安静，悬停才亮。唯一的强调元素是右侧那枚键帽。 */
-.search-fab {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 1400; /* 低于命令面板(3000)与 EP 弹层(2000+) */
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 9px 0 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
-  backdrop-filter: blur(14px) saturate(140%);
-  color: var(--text-1);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  box-shadow:
-    0 10px 30px -14px rgba(0, 0, 0, .75),
-    inset 0 1px 0 color-mix(in srgb, #fff 7%, transparent);
-  transition: border-color .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease;
-  animation: search-fab-in .28s cubic-bezier(.2, .8, .3, 1) both;
-}
-@keyframes search-fab-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.search-fab:hover {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow:
-    0 16px 36px -14px color-mix(in srgb, var(--accent) 50%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent);
-  transform: translateY(-1px);
-}
-.search-fab:active {
-  transform: translateY(0) scale(.985);
-}
-.search-fab:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.search-fab-icon {
-  font-size: 15px;
-  color: var(--accent);
-}
-.search-fab-text {
-  font-weight: 500;
-}
-.search-fab-kbd {
-  font: inherit;
-  font-size: 10.5px;
-  letter-spacing: .02em;
-  color: var(--text-3);
-  border: 1px solid var(--border);
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  padding: 0 5px 1px;
-  transition: color .18s ease, border-color .18s ease;
-}
-.search-fab:hover .search-fab-kbd {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
-}
-/* 窄屏：收起文字与键帽，只剩圆形图标，别挡内容 */
-@media (max-width: 1279px) {
-  .search-fab {
-    right: 16px;
-    bottom: 16px;
-    width: 46px;
-    height: 46px;
-    padding: 0;
-    justify-content: center;
-    border-radius: 50%;
-  }
-  .search-fab-text,
-  .search-fab-kbd {
-    display: none;
-  }
-  .search-fab-icon {
-    font-size: 17px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .search-fab {
-    animation: none;
-    transition: border-color .18s ease, color .18s ease;
-  }
-  .search-fab:hover,
-  .search-fab:active {
-    transform: none;
-  }
 }
 
 /* ---------- 顶栏 ---------- */
