@@ -15,7 +15,7 @@
 -- ---------------------------------------------------------------------------
 -- SELECT id, name, endpoint, type, source, usable_by_pipelines
 --   FROM platform_credential
---  WHERE tenant_id IS NULL AND type = 'DOCKERHUB' AND deleted_at IS NULL;
+--  WHERE tenant_id IS NULL AND type = 'DOCKERHUB';
 --
 -- ② 有没有 default 以外的租户在引用（镜像节点在 canvas_json 里存 credentialId）：
 -- SELECT a.tenant_id, p.cluster_id, p.namespace, p.name
@@ -29,14 +29,14 @@
 
 -- ---------------------------------------------------------------------------
 -- ③ 归属
+--    platform_credential 是**硬删**，没有 deleted_at 列；platform_tenant 也不假设有软删列
+--    （service_account 上有唯一索引，标量子查询必得一行）。
 -- ---------------------------------------------------------------------------
 UPDATE platform_credential
-   SET tenant_id = (SELECT id FROM platform_tenant
-                     WHERE service_account = 'default' AND deleted_at IS NULL)
+   SET tenant_id = (SELECT id FROM platform_tenant WHERE service_account = 'default')
  WHERE tenant_id IS NULL
-   AND type = 'DOCKERHUB'
-   AND deleted_at IS NULL;
+   AND type = 'DOCKERHUB';
 
 -- ④ 复核：应返回 0 行
 -- SELECT COUNT(*) FROM platform_credential
---  WHERE tenant_id IS NULL AND type = 'DOCKERHUB' AND deleted_at IS NULL;
+--  WHERE tenant_id IS NULL AND type = 'DOCKERHUB';

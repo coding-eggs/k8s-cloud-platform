@@ -18,7 +18,7 @@
 -- ---------------------------------------------------------------------------
 -- SELECT id, name, endpoint, type, source
 --   FROM platform_credential
---  WHERE tenant_id IS NULL AND type = 'GIT' AND deleted_at IS NULL;
+--  WHERE tenant_id IS NULL AND type = 'GIT';
 --
 -- ② 有没有**别的租户**的流水线在引用这些连接（canvas_json 里存的是 credentialId，
 --    流水线表没有 tenant_id，租户由分配表推出）：
@@ -34,14 +34,14 @@
 
 -- ---------------------------------------------------------------------------
 -- ③ 归属
+--    platform_credential 是**硬删**，没有 deleted_at 列；platform_tenant 也不假设有软删列
+--    （service_account 上有唯一索引，标量子查询必得一行）。
 -- ---------------------------------------------------------------------------
 UPDATE platform_credential
-   SET tenant_id = (SELECT id FROM platform_tenant
-                     WHERE service_account = 'default' AND deleted_at IS NULL)
+   SET tenant_id = (SELECT id FROM platform_tenant WHERE service_account = 'default')
  WHERE tenant_id IS NULL
-   AND type = 'GIT'
-   AND deleted_at IS NULL;
+   AND type = 'GIT';
 
 -- ④ 复核：应返回 0 行
 -- SELECT COUNT(*) FROM platform_credential
---  WHERE tenant_id IS NULL AND type = 'GIT' AND deleted_at IS NULL;
+--  WHERE tenant_id IS NULL AND type = 'GIT';
