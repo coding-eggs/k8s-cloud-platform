@@ -94,8 +94,7 @@ const sidebarTitle = computed(() =>
 )
 
 // ---------- 顶栏 ----------
-const pageTitle = computed(() => (route.meta.title as string) ?? '')
-const pageGroup = computed(() => (route.meta.group as string) ?? '')
+// 顶栏不再显示面包屑：域 tab + 侧栏当前项已经回答了「我在哪」（见 docs/superpowers/specs/2026-10-30-frontend-navigation-ia-design.md §6.1）
 // 资源管理页在顶栏展示全局上下文级联（租户→集群→命名空间）
 const showContextSelector = computed(() => route.meta.context === 'full')
 
@@ -372,12 +371,6 @@ async function handleLogout(): Promise<void> {
     <!-- 主体：显式纵向（el-container 仅识别 el-header/el-footer 子组件才自动转纵，普通标签不触发） -->
     <el-container class="body" direction="vertical">
       <header class="topbar">
-<!--        <div class="crumb">-->
-<!--          <span v-if="pageGroup" class="crumb-group">{{ pageGroup }}</span>-->
-<!--          <span v-if="pageGroup" class="crumb-sep">/</span>-->
-<!--          <span class="crumb-title">{{ pageTitle }}</span>-->
-<!--        </div>-->
-
         <ContextSelector v-if="showContextSelector" />
 
         <div class="topbar-right">
@@ -588,34 +581,6 @@ async function handleLogout(): Promise<void> {
 :global(html.dark) .topbar {
   background: linear-gradient(180deg, #13203c 0%, var(--bg-elevated) 92%);
   box-shadow: 0 10px 24px -14px rgba(0, 0, 0, .6);
-}
-.crumb {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-  flex-shrink: 1; /* 空间不足时优先压缩面包屑 */
-}
-.crumb-group {
-  font-size: 13px;
-  color: var(--text-3);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-.crumb-sep {
-  color: var(--text-3);
-  opacity: .5;
-  flex-shrink: 0;
-}
-.crumb-title {
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: .01em;
-  color: var(--text-1);
-  /* 防 CJK 逐字竖排：不换行 + 溢出省略 */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .topbar-right {
   margin-left: auto;

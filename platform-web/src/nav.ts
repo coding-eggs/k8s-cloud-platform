@@ -1,0 +1,146 @@
+/**
+ * 导航数据源：把 `router.getRoutes()` 的路由元数据折叠成「域 → 菜单项」。
+ *
+ * 顶栏域 tab、侧栏菜单、总览快捷入口、命令面板全部消费这里的结果，**不再有第二份菜单清单**。
+ * 加一个页面 = 在路由上补 `meta.domain` / `meta.icon` / `meta.order`，菜单自动出现。
+ *
+ * ⚠️ 本模块 import 了 `@/router`，而 `router/index.ts` → `MainLayout.vue` → 本模块构成环。
+ * ESM 活绑定下这是安全的，前提是**模块顶层不得访问 `router`**（只能在函数体里用）。
+ */
+import router from '@/router'
+import type { RouteRecordNormalized } from 'vue-router'
+
+export type NavFace = 'platform' | 'tenant'
+
+export type NavDomainKey =
+  | 'cluster'
+  | 'network'
+  | 'org'
+  | 'ops'
+  | 'app'
+  | 'build'
+  | 'resource'
+  | 'storage'
+  | 'observe'
+
+export interface NavItem {
+  title: string
+  path: string
+  icon: string
+  codes: string[]
+}
+
+export interface NavDomain {
+  key: NavDomainKey
+  label: string
+  items: NavItem[]
+}
+
+/** `buildNav` 需要的权限判断；`usePermission()` 的返回值在结构上满足它 */
+export interface PermissionFacade {
+  has: (code: string) => boolean
+  hasAny: (codes: string[]) => boolean
+}
+
+const LABELS: Record<NavDomainKey, string> = {
+  cluster: '集群',
+  network: '网络',
+  org: '组织',
+  ops: '运维',
+  app: '应用',
+  build: '交付',
+  resource: '资源',
+  storage: '存储',
+  observe: '观测',
+}
+
+/** 两个视图各自的域顺序（租户视图 7 域、平台视图 4 域） */
+const DOMAIN_LAYOUT: Record<NavFace, NavDomainKey[]> = {
+  platform: ['cluster', 'network', 'org', 'ops'],
+  tenant: ['app', 'build', 'resource', 'storage', 'network', 'observe', 'org'],
+}
+
+const VALID_DOMAINS = new Set<string>(Object.keys(LABELS))
+
+export function labelOf(key: NavDomainKey): string {
+  return LABELS[key]
+}
+
+/**
+ * 页面码 → 面（这个页面归哪个视图）。
+ * 两族都有 = both；没有页面码的页面（总览 / 个人中心）按 both 处理 ——
+ * 它们没有 `domain`，不会进导航，这里只是给调用方一个确定值。
+ */
+export function faceOf(codes: string[] | undefined): 'platform' | 'tenant' | 'both' {
+  if (!codes?.length) return 'both'
+  const p = codes.some((c) => c.startsWith('platform:'))
+  const t = codes.some((c) => c.startsWith('tenant:'))
+  if (p && t) return 'both'
+  return p ? 'platform' : 'tenant'
+}
+
+function faceMatches(itemFace: 'platform' | 'tenant' | 'both', face: NavFace): boolean {
+  return itemFace === 'both' || itemFace === face
+}
+
+/** 这条路由在当前视图下归哪个域（both 面的页面允许在平台视图改归另一个域） */
+function domainOf(meta: RouteRecordNormalized['meta'], face: NavFace): NavDomainKey | undefined {
+  return (face === 'platform' ? meta.platformDomain : undefined) ?? meta.domain
+}
+
+/** 构建当前视图的导航；无可见项的域已被剔除 */
+export function buildNav(face: NavFace, perm: PermissionFacade): NavDomain[] {
+  const layout = DOMAIN_LAYOUT[face]
+  const buckets = new Map<NavDomainKey, Array<{ item: NavItem; order: number }>>()
+
+  for (const route of router.getRoutes()) {
+    const meta = route.meta
+    if (meta.nav === 'hidden') continue
+    const codes = meta.requiresPerm
+    if (!codes?.length) continue
+    if (!faceMatches(faceOf(codes), face)) continue
+    if (!perm.hasAny(codes)) continue
+    const key = domainOf(meta, face)
+    if (!key || !layout.includes(key)) continue
+    const bucket = buckets.get(key) ?? []
+    bucket.push({
+      order: meta.order ?? 999,
+      item: { title: meta.title ?? route.path, path: route.path, icon: meta.icon ?? 'Menu', codes },
+    })
+    buckets.set(key, bucket)
+  }
+
+  return layout
+    .map((key) => {
+      const items = (buckets.get(key) ?? [])
+        .sort((a, b) => a.order - b.order || a.item.title.localeCompare(b.item.title, 'zh-CN'))
+        .map((e) => e.item)
+      return { key, label: LABELS[key], items }
+    })
+    .filter((d) => d.items.length > 0)
+}
+
+/** 当前路径落在哪个域；没有 `domain` 元数据的页面（总览）返回 null。不看 nav 标记 —— 详情页也要能高亮。 */
+export function resolveDomain(face: NavFace, path: string): NavDomainKey | null {
+  const meta = router.resolve(path).matched.at(-1)?.meta
+  return meta ? (domainOf(meta, face) ?? null) : null
+}
+
+/**
+ * 开发期一致性检查：菜单页必须有合法 `domain` 与 `icon`。返回问题清单，空数组 = 通过。
+ * 生产构建里由调用方按 `import.meta.env.DEV` 跳过。
+ */
+export function navIntegrityProblems(): string[] {
+  const problems: string[] = []
+  for (const route of router.getRoutes()) {
+    const meta = route.meta
+    if (!meta.requiresPerm?.length) continue
+    if (meta.domain && !VALID_DOMAINS.has(meta.domain)) {
+      problems.push(`${route.path}: 未知域 "${meta.domain}"`)
+    }
+    if (meta.nav === 'hidden') continue
+    if (!meta.domain) problems.push(`${route.path}: 菜单页缺 meta.domain`)
+    if (!meta.icon) problems.push(`${route.path}: 菜单页缺 meta.icon`)
+  }
+  return problems
+}
