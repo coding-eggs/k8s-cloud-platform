@@ -5,6 +5,7 @@ import { getAccessToken, getUserInfo, logout, startSessionMaintenance } from '@/
 import { getTheme, toggleTheme } from '@/utils/theme'
 import ContextSelector from '@/components/ContextSelector.vue'
 import TenantSwitcher from '@/components/TenantSwitcher.vue'
+import CommandPalette from '@/components/CommandPalette.vue'
 import { usePermission } from '@/stores/permission'
 import { buildNav, resolveDomain, type NavDomain, type NavDomainKey, type NavFace } from '@/nav'
 
@@ -40,6 +41,16 @@ const activeDomain = computed<NavDomain | null>(() => {
 })
 
 const activeItems = computed(() => activeDomain.value?.items ?? [])
+
+// ---------- 命令面板（Ctrl / Cmd + K） ----------
+const paletteOpen = ref(false)
+
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault()
+    paletteOpen.value = !paletteOpen.value
+  }
+}
 
 /** 域 tab：回到该域上次停留的页面；记录已失效（权限被收）则回落到第一项 */
 function goDomain(key: NavDomainKey): void {
@@ -80,6 +91,7 @@ onMounted(() => {
   if (getAccessToken()) {
     startSessionMaintenance()
   }
+  window.addEventListener('keydown', onGlobalKeydown)
 })
 
 function onToggleTheme(): void {
@@ -106,6 +118,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   mql?.removeEventListener('change', onBreakpoint)
+  window.removeEventListener('keydown', onGlobalKeydown)
 })
 // 进入窄屏时收起可能开着的 drawer
 watch(narrow, (isNarrow) => {
@@ -205,6 +218,18 @@ async function handleLogout(): Promise<void> {
         </el-menu-item>
 
       </el-menu>
+
+      <!-- 搜索入口固定在侧栏底部；折叠态只留图标 -->
+      <button
+        type="button"
+        class="menu-search"
+        :title="collapsed ? '搜索页面（Ctrl K）' : undefined"
+        @click="paletteOpen = true"
+      >
+        <el-icon><Search /></el-icon>
+        <span v-if="!collapsed" class="menu-search-text">搜索页面</span>
+        <kbd v-if="!collapsed" class="menu-search-kbd">Ctrl K</kbd>
+      </button>
     </aside>
 
     <!-- 窄屏 drawer 遮罩：点击收起（最上层，压在 sidebar 之下） -->
@@ -268,6 +293,8 @@ async function handleLogout(): Promise<void> {
       </main>
     </el-container>
   </el-container>
+
+  <CommandPalette v-model="paletteOpen" />
 </template>
 
 <style scoped>
@@ -417,6 +444,44 @@ async function handleLogout(): Promise<void> {
   padding: 8px 0 2px;
   margin: 4px 12px 0;
   border-top: 1px solid var(--border);
+}
+
+/* 侧栏搜索入口（折叠态只留图标） */
+.menu-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all .15s;
+}
+.menu-search:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sidebar.is-collapsed .menu-search {
+  justify-content: center;
+  padding: 9px 0;
+  margin: 8px 6px;
+}
+.menu-search-text {
+  flex: 1;
+  text-align: left;
+}
+.menu-search-kbd {
+  font-size: 10.5px;
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 
 /* ---------- 顶栏 ---------- */
