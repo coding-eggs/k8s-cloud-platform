@@ -224,13 +224,26 @@ async function handleLogout(): Promise<void> {
       </button>
 
       <el-menu :default-active="route.path" router class="menu" :collapse="collapsed" @select="onMenuSelect">
-        <!-- 域名（当前视图的一个域）；折叠态退化为分隔线 -->
-        <div v-if="activeDomain" class="menu-domain">{{ activeDomain.label }}</div>
-        <el-menu-item v-for="item in activeItems" :key="item.path" :index="item.path">
-          <el-icon><component :is="item.icon" /></el-icon>
-          <template #title>{{ item.title }}</template>
-        </el-menu-item>
-
+        <!-- 在某个域里：只列该域（域名作分组标题）。总览页不属于任何域 → 侧栏退化为完整目录
+             （按域分组），否则登录后默认落在总览，侧栏会是一个菜单项都没有的空壳。 -->
+        <template v-if="activeDomain">
+          <div class="menu-domain">{{ activeDomain.label }}</div>
+          <el-menu-item v-for="item in activeItems" :key="item.path" :index="item.path">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <template #title>{{ item.title }}</template>
+          </el-menu-item>
+        </template>
+        <template v-else>
+          <template v-for="d in domains" :key="d.key">
+            <template v-if="d.items.length">
+              <div class="menu-domain">{{ d.label }}</div>
+              <el-menu-item v-for="item in d.items" :key="item.path" :index="item.path">
+                <el-icon><component :is="item.icon" /></el-icon>
+                <template #title>{{ item.title }}</template>
+              </el-menu-item>
+            </template>
+          </template>
+        </template>
       </el-menu>
 
       <!-- 搜索入口固定在侧栏底部；折叠态只留图标 -->
