@@ -238,7 +238,7 @@ public class CredentialService {
      * 这行能不能被当前请求改 / 删。
      *
      * <p>两条：{@code source=HARBOR} 的是同步写出来的（换口令走「重建」，不是改表单）；
-     * 租户只能动自己租户的行（平台级连接只有管理员能碰，见 {@link #visibleTo}）。
+     * 租户只能动自己租户的行（平台级连接只能在平台视图里碰 —— 无租户帽时，见 {@link #visibleTo}）。
      */
     private static void assertTangible(PlatformCredential c, String hatTenantId) {
         if ("HARBOR".equals(c.getSource())) {
@@ -249,7 +249,7 @@ public class CredentialService {
         if (hatTenantId != null && !hatTenantId.equals(c.getTenantId())) {
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                     c.getTenantId() == null
-                            ? "平台级连接只有管理员能修改或删除"
+                            ? "平台级连接只能在平台视图下修改或删除"
                             : "这条连接属于别的租户，只能修改或删除自己租户的连接");
         }
     }
@@ -606,11 +606,11 @@ public class CredentialService {
         }
         if (!visibleTo(c, hatTenantId)) {
             // 两种拒因给不同的话：平台级连接是最常见的撞墙方式
-            // （管理员在平台视图下配的，租户在自己的流水线里引用不到）
+            // （在平台视图下配的，戴上任一个租户的帽子就引用不到 —— 管理员也一样，判据是帽子不是角色）
             throw new CloudPlatformException(EnumResponseType.CREDENTIAL_INVALID,
                     "该连接未授权在流水线里使用：" + c.getName()
                             + (c.getTenantId() == null
-                                    ? "（平台级连接仅管理员可用；租户请用自己租户的连接）"
+                                    ? "（平台级连接只能在平台视图里使用；租户请用自己租户的连接）"
                                     : "（这条连接属于别的租户）"));
         }
     }
