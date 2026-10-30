@@ -87,7 +87,7 @@ onMounted(load)
     <h3 class="section-title">集群状态</h3>
     <el-table :data="clusters" class="panel" empty-text="还没有接入集群">
       <el-table-column prop="clusterName" label="名称" min-width="180" />
-      <el-table-column label="状态" width="120">
+      <el-table-column label="状态" width="150">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status).type" size="small" effect="plain">{{ statusTag(row.status).text }}</el-tag>
         </template>
