@@ -8,6 +8,7 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowRight, HomeFilled } from '@element-plus/icons-vue'
 import { credentialApi, registryApi } from '@/api'
 import RegistryKindMark from '@/components/registry/RegistryKindMark.vue'
 import { usePermission } from '@/stores/permission'
@@ -451,10 +452,24 @@ onMounted(loadWarehouses)
           <template v-if="canBrowse">
             <h3>浏览</h3>
             <div class="crumbs">
-              <el-button link @click="goTo([])">{{ selected.displayName }}</el-button>
+              <!-- 根层：已经在这一层时就是纯文字，否则是蓝色可点的链接 -->
+              <template v-if="!path.length">
+                <el-icon class="crumb-icon"><HomeFilled /></el-icon>
+                <span class="crumb-current">{{ selected.displayName }}</span>
+              </template>
+              <el-button v-else link type="primary" class="crumb" @click="goTo([])">
+                <el-icon><HomeFilled /></el-icon>
+                <span class="crumb-label">{{ selected.displayName }}</span>
+              </el-button>
               <template v-for="(c, i) in result?.breadcrumb ?? []" :key="i">
-                <span class="sep">/</span>
-                <el-button link @click="goTo(c.path)">{{ c.label }}</el-button>
+                <el-icon class="sep"><ArrowRight /></el-icon>
+                <!-- 最后一段是当前层，不做成可点的 -->
+                <span v-if="i === (result?.breadcrumb?.length ?? 0) - 1" class="crumb-current">
+                  {{ c.label }}
+                </span>
+                <el-button v-else link type="primary" class="crumb" @click="goTo(c.path)">
+                  {{ c.label }}
+                </el-button>
               </template>
             </div>
             <el-table :data="result?.children ?? []" size="small" stripe>
@@ -634,10 +649,36 @@ onMounted(loadWarehouses)
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+}
+/* 可点的层级：蓝色 + 悬停下划线，别让人猜 */
+.crumbs .crumb {
+  padding: 0 4px;
+  height: auto;
+  font-weight: 500;
+}
+.crumbs .crumb:hover {
+  text-decoration: underline;
+}
+.crumb-label {
+  margin-left: 4px;
+}
+/* 当前层：纯文字、加粗，不能点 */
+.crumb-current {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+  padding: 0 4px;
+}
+.crumb-icon {
+  color: var(--el-text-color-secondary);
 }
 .sep {
   color: var(--el-text-color-placeholder);
+  font-size: 12px;
   margin: 0 2px;
 }
 .owner-name {
