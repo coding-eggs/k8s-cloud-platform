@@ -23,8 +23,16 @@ public record BrowseResult(List<Crumb> breadcrumb, List<Node> children) {
      * @param hasChildren 前端据此决定这一行能不能点进去
      * @param copyText    非空 = 这一行可「复制镜像地址」（叶子节点才有）
      * @param details     [{label, value}]，**前端表格的列由它决定**，不写死
+     * @param badge       归属标记：Harbor 根层的项目是「公开读」还是「租户」；
+     *                    其它层级与其它方言为 null（不要为了对齐硬塞空串）
      */
-    public record Node(String name, boolean hasChildren, String copyText, List<Detail> details) {
+    public record Node(String name, boolean hasChildren, String copyText, List<Detail> details,
+                       String badge) {
+
+        /** 老形状（无标记）：非项目层级与其它方言都用它。 */
+        public Node(String name, boolean hasChildren, String copyText, List<Detail> details) {
+            this(name, hasChildren, copyText, details, null);
+        }
     }
 
     public record Detail(String label, String value) {

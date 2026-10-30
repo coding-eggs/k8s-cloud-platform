@@ -2313,6 +2313,8 @@ export interface RegistryNode {
   /** 非空 = 这一行可「复制镜像地址」 */
   copyText?: string | null
   details: { label: string; value: string }[]
+  /** 归属标记：Harbor 根层的项目是「公开读」还是「租户」；其它层级没有 */
+  badge?: string | null
 }
 
 export interface RegistryBrowseResult {

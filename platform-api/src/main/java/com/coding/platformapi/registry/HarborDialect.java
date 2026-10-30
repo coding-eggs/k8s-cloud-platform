@@ -134,7 +134,7 @@ public class HarborDialect implements RegistryDialect {
             // 「凭据不通过，或该凭据无权访问此仓库」（2026-10-27 用户撞到）。
             // 归属已知（台账里有这条凭据对应的 project）就直接给它自己那个，不发请求也点得进去。
             if (cred.project() != null && !cred.project().isBlank()) {
-                return mapProjects(cred, List.of(cred.project()));
+                return mapProjects(cred, List.of(cred.project()), "租户");
             }
             return mapProjects(cred, parseProjectNames(http.get(cred, projectsUrl(cred))));
         }
@@ -358,8 +358,13 @@ public class HarborDialect implements RegistryDialect {
     // ==================== 浏览映射（纯） ====================
 
     public static BrowseResult mapProjects(CredentialRef c, List<String> names) {
+        return mapProjects(c, names, null);
+    }
+
+    /** @param badge 归属标记（项目级 robot 自己那个项目是「租户」）；null = 不打标 */
+    public static BrowseResult mapProjects(CredentialRef c, List<String> names, String badge) {
         List<BrowseResult.Node> nodes = names.stream()
-                .map(n -> new BrowseResult.Node(n, true, null, List.of()))
+                .map(n -> new BrowseResult.Node(n, true, null, List.of(), badge))
                 .toList();
         return new BrowseResult(List.of(), nodes);
     }

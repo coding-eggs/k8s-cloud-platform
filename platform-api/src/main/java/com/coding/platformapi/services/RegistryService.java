@@ -300,17 +300,30 @@ public class RegistryService {
         return result;
     }
 
-    /** 把平台公共项目并进根层（去重；它们由 {@code ensurePlatformPublic} 保证存在且公开读） */
+    /** 平台公开读项目的归属标记（前端据此在浏览列表里打 tag） */
+    static final String PUBLIC_BADGE = "公开读";
+
+    /**
+     * 把平台公共项目并进根层（去重；它们由 {@code ensurePlatformPublic} 保证存在且公开读）。
+     *
+     * <p>**归属标记在这里打**：这批项目是平台并进去的，不是 Harbor 回的，
+     * 别处没有信息能判断某个项目是不是公开读。已经在列表里的同名项（例如平台 robot
+     * 自己的 {@code platform} 项目）也要**改标**成公开读 —— 它本来就是。
+     */
     private static BrowseResult withPublicProjects(BrowseResult result) {
-        Set<String> seen = result.children().stream()
-                .map(BrowseResult.Node::name).collect(Collectors.toSet());
-        List<BrowseResult.Node> children = new ArrayList<>(result.children());
-        for (String project : HarborRegistryService.publicProjectNames()) {
-            if (seen.add(project)) {
-                children.add(new BrowseResult.Node(project, true, null, List.of()));
-            }
+        Map<String, BrowseResult.Node> byName = new LinkedHashMap<>();
+        for (BrowseResult.Node n : result.children()) {
+            byName.put(n.name(), n);
         }
-        return new BrowseResult(result.breadcrumb(), children);
+        for (String project : HarborRegistryService.publicProjectNames()) {
+            BrowseResult.Node existing = byName.get(project);
+            byName.put(project, new BrowseResult.Node(project,
+                    existing == null || existing.hasChildren(),
+                    existing == null ? null : existing.copyText(),
+                    existing == null ? List.of() : existing.details(),
+                    PUBLIC_BADGE));
+        }
+        return new BrowseResult(result.breadcrumb(), new ArrayList<>(byName.values()));
     }
 
     /**

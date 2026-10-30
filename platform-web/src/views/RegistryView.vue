@@ -452,6 +452,11 @@ onMounted(loadWarehouses)
                     {{ row.name }}
                   </el-button>
                   <span v-else>{{ row.name }}</span>
+                  <!-- 根层项目：一眼分出公开读还是某个租户的 -->
+                  <el-tag v-if="row.badge" size="small" class="row-badge"
+                          :type="row.badge === '公开读' ? 'success' : 'info'">
+                    {{ row.badge }}
+                  </el-tag>
                 </template>
               </el-table-column>
               <el-table-column v-for="d in result?.children?.[0]?.details ?? []" :key="d.label"
@@ -624,6 +629,9 @@ onMounted(loadWarehouses)
   margin: 0 2px;
 }
 .owner-name {
+  margin-left: 6px;
+}
+.row-badge {
   margin-left: 6px;
 }
 </style>
