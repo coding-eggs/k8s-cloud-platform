@@ -470,6 +470,19 @@ public class ComponentRecipeCatalog {
      * ⚠️ 不写 {@code prefix}：Tempo 用独立桶（默认 {@code tempo}），block 直接落在桶根，
      *    不与 Thanos 的 {@code thanos} 桶/前缀混用。
      */
+    /** Tempo 的可编辑默认值：资源 + 持久化（持久化只在首次安装时可选，见 README §3） */
+    private static Map<String, Object> tempoEditable() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tempo.resources", Map.of(
+                "requests", Map.of("cpu", "200m", "memory", "512Mi"),
+                "limits", Map.of("cpu", "1", "memory", "2Gi")));
+        // ⚠️ 这两个是 StatefulSet 的 volumeClaimTemplates：K8s 不允许改既有 STS 的模板，
+        //    所以只对新装生效；ComponentInstallService 对「已装实例上改动」会直接拒绝
+        out.put("persistence.storageClassName", "nfs-client");
+        out.put("persistence.size", "20Gi");
+        return out;
+    }
+
     private static final ReleaseSpec TEMPO_RELEASE = new ReleaseSpec(
             "platform-tempo", "monitor", "tempo", "3.2.0",
             Map.of(
@@ -487,13 +500,12 @@ public class ComponentRecipeCatalog {
                                     Map.of("name", "platform-tempo-objstore"))),
                             // 内网部署：不发 usage report；保留期由安装表单覆盖（默认 168h）
                             "reportingEnabled", false,
-                            "retention", "168h",
-                            "resources", Map.of(
-                                    "requests", Map.of("cpu", "200m", "memory", "512Mi"),
-                                    "limits", Map.of("cpu", "1", "memory", "2Gi"))),
-                    "persistence", Map.of(
-                            "enabled", true, "storageClassName", "nfs-client", "size", "20Gi")),
-            Map.of(), true).withAppVersion("3.1.0");
+                            "retention", "168h"),
+                    // 持久化的 storageClassName / size 在 editableValues（表单可改），这里只钉「要持久化」
+                    "persistence", Map.of("enabled", true)),
+            // 资源限制与持久化走 editableValues：契约值最后压，放这里用户才改得动
+            tempoEditable(),
+            true).withAppVersion("3.1.0");
 
     // ==================== 对象存储（SeaweedFS） ====================
 
@@ -540,6 +552,20 @@ public class ComponentRecipeCatalog {
         return "http://" + name + "-s3." + seaweed.namespace() + ":8333";
     }
 
+    /** SeaweedFS 四个工作负载的资源限制默认值（表单的「资源限制」组，可改） */
+    private static Map<String, Object> seaweedEditable() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        // s3 网关：常驻 ~50Mi，但并发 GET 的读缓冲会瞬时吃几百 MiB（-readerCacheSizeMB=256MiB 是上限）；
+        // 512Mi 实测被 OOMKilled，给 1Gi
+        out.put("s3.resources", seaweedResources("50m", "128Mi", "500m", "1Gi"));
+        // filer：leveldb 缓存常驻 ~450Mi，512Mi 贴着上限
+        out.put("filer.resources", seaweedResources("50m", "128Mi", "500m", "1Gi"));
+        // volume：11 天的 chunk 常驻 ~900Mi
+        out.put("volume.resources", seaweedResources("100m", "256Mi", "1", "2Gi"));
+        out.put("master.resources", seaweedResources("50m", "128Mi", "500m", "512Mi"));
+        return out;
+    }
+
     private static final List<ReleaseSpec> SEAWEEDFS_RELEASES = List.of(new ReleaseSpec(
             "platform-seaweedfs", "platform-storage", "seaweedfs", "4.48.0",
             Map.of(
@@ -551,13 +577,19 @@ public class ComponentRecipeCatalog {
                     // S3 网关是这个组件的意义所在；admin 管理台由安装表单决定（默认不装，见 applySeaweedValues）
                     // identities 配置由平台接管（SeaweedS3Service 在 helm 之前创建 platform-seaweedfs-s3-config）：
                     // 只有这样平台才能按桶发 AK/SK（bucket-scoped actions）
+                    //
+                    // ⚠️ readerCacheSizeMB 必须显式给：weed s3 的默认值是 0 = **不限**读缓冲，
+                    //    Tempo/Milvus 并发 GET 时网关内存会一路涨到 OOM（2026-10-30 实测：
+                    //    OOMKilled 连发 20+ 次，S3 不可用 → Tempo 查询 500 "no healthy upstream"）。
+                    //    256MiB 是上游 ReaderCacheBudget 自己的默认预算，够用且把上界钉死。
+                    //    **不进表单**：0 的语义是「不限」，交给用户等于把这次的炸点交出去。
                     "s3", Map.of("enabled", true, "enableAuth", true,
                             "existingConfigSecret", "platform-seaweedfs-s3-config",
-                            "resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
-                    "master", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi")),
-                    "volume", Map.of("resources", seaweedResources("100m", "256Mi", "1", "1Gi")),
-                    "filer", Map.of("resources", seaweedResources("50m", "128Mi", "500m", "512Mi"))),
-            Map.of()).asPrimary().withAppVersion("4.48"));
+                            "extraArgs", List.of("-readerCacheSizeMB=256"))),
+            // ⚠️ 资源限制必须在 editableValues（而不是 contractValues）：mergeValues 里
+            //    契约值最后压、用户值压不动它，放错地方的表单改了也不生效
+            seaweedEditable()).asPrimary().withAppVersion("4.48"));
+
 
     // ==================== Harbor（镜像仓库） ====================
 
@@ -716,7 +748,16 @@ public class ComponentRecipeCatalog {
             Map.entry("persistence.persistentVolumeClaim.trivy.storageClass", "扫描器存储类"),
             Map.entry("persistence.persistentVolumeClaim.trivy.size", "扫描器容量"),
             Map.entry("trivy.enabled", "安装 Trivy 镜像扫描"),
-            Map.entry("replicas", "副本数"));
+            Map.entry("replicas", "副本数"),
+            // SeaweedFS 四个工作负载 / Tempo：表单里一行一个，label 只写组件名
+            Map.entry("s3.resources", "S3 网关"),
+            Map.entry("filer.resources", "Filer"),
+            Map.entry("volume.resources", "Volume"),
+            Map.entry("master.resources", "Master"),
+            Map.entry("tempo.resources", "Tempo"),
+            // Tempo 的持久化（StatefulSet volumeClaimTemplates；只在首次安装时可选）
+            Map.entry("persistence.storageClassName", "存储类"),
+            Map.entry("persistence.size", "容量"));
 
     /**
      * 可编辑字段的分组（前端按组渲染小节标题，顺序 = 字段首次出现顺序）。
@@ -751,7 +792,15 @@ public class ComponentRecipeCatalog {
             Map.entry("persistence.persistentVolumeClaim.redis.size", "存储（Harbor）"),
             Map.entry("persistence.persistentVolumeClaim.trivy.storageClass", "存储（Harbor）"),
             Map.entry("persistence.persistentVolumeClaim.trivy.size", "存储（Harbor）"),
-            Map.entry("trivy.enabled", "镜像扫描"));
+            Map.entry("trivy.enabled", "镜像扫描"),
+            // SeaweedFS / Tempo 的资源：一个组件一组，四行（各工作负载）共用小节
+            Map.entry("s3.resources", "资源限制"),
+            Map.entry("filer.resources", "资源限制"),
+            Map.entry("volume.resources", "资源限制"),
+            Map.entry("master.resources", "资源限制"),
+            Map.entry("tempo.resources", "资源限制"),
+            Map.entry("persistence.storageClassName", "Tempo 存储（持久化）"),
+            Map.entry("persistence.size", "Tempo 存储（持久化）"));
 
     public static String groupOf(String key) {
         return EDITABLE_GROUPS.getOrDefault(key, "其他配置");

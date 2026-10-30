@@ -38,9 +38,7 @@ s3:
   enabled: true
   enableAuth: true
   existingConfigSecret: platform-seaweedfs-s3-config   # 平台接管 identities（见 §3.2）
-master: { resources: {...} }
-volume: { resources: {...} }
-filer:  { resources: {...} }
+  extraArgs: ["-readerCacheSizeMB=256"]                # 读缓冲预算，见下表
 ```
 
 > `admin` 不写进契约：**是否装管理台由安装表单决定**（默认不装），见 §3.1。
@@ -53,9 +51,20 @@ filer:  { resources: {...} }
 | `s3.existingConfigSecret: platform-seaweedfs-s3-config` | **identities 配置由平台接管**（见 §3.2）：只有这样平台才能按桶发 AK/SK（bucket-scoped actions）。chart 自带的 `seaweedfs-s3-secret` 不再生成 |
 | `global.seaweedfs.createClusterRole: false` | chart 默认给 S3 网关 SA 一个**集群级**「任意 Pod 读写」角色（Cloud Drive 用）。平台只当 S3 用，不给存储组件这种权限 |
 | `global.seaweedfs.enableSecurity: false` | 组件间 mTLS/JWT 暂不开（内网、平台自用）；**S3 的 AK/SK 校验是独立开关，已开** |
-| 四个组件的 resources | 显式钉住，避免存储组件无 requests 把节点挤爆（也就不会撞命名空间配额） |
+| `s3.extraArgs: -readerCacheSizeMB=256` | **必须显式给**：`weed s3` 默认 0 = **不限**读缓冲（256 个下载槽 × ~4MiB 在途 chunk ≈ 1GiB 上界）。2026-10-30 实锤：并发 GET 把 512Mi 限额顶穿，S3 网关 OOMKilled 20+ 次 → Tempo 查询 500 `no healthy upstream`。256MiB 是上游 `ReaderCacheBudget` 自己的默认预算；**不进表单**（0 的语义是"不限"） |
 
-### 2.1 镜像版本 = chart 的 appVersion（升级前必须验证）
+### 2.1 四个工作负载的资源限制（⚙️ 可改）
+
+`s3` / `filer` / `volume` / `master` 的 `resources` 放在**可编辑默认值**里（组件编辑表单的
+「资源限制」组），不是契约值 —— 契约值在 `mergeValues` 里最后压，放进去用户就改不动。
+默认：s3 `50m/128Mi → 500m/1Gi`、filer 同上、volume `100m/256Mi → 1/2Gi`、master `50m/128Mi → 500m/512Mi`。
+
+⚠️ 改这些值前看实测：filer 常驻 ~450Mi（leveldb 缓存）、volume 常驻 ~900Mi（chunk 增长）；
+s3 平时 ~50Mi，但读缓冲会瞬时吃几百 MiB（见上表的 `-readerCacheSizeMB`）。
+**s3 的内存限额不要低于 512Mi**，否则读缓冲预算（256MiB）+ 基础占用就会撞限额。
+
+
+### 2.2 镜像版本 = chart 的 appVersion（升级前必须验证）
 
 chart 的 `seaweedfs.image` helper 是 `default .Chart.AppVersion .Values.image.tag` —— **不写 `image.tag` 时，
 镜像 tag 就是 Chart.yaml 的 appVersion**。所以：

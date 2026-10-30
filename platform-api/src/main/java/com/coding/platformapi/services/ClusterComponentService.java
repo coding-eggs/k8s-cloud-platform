@@ -462,6 +462,11 @@ public class ClusterComponentService {
         cur.setLogsEnabled(m.get("logsEnabled") instanceof Boolean b ? b : null);
         cur.setTempoRetention(asString(m.get("tempoRetention")));
         cur.setTempoTlsMode(asString(m.get("tempoTlsMode")));
+        // collector 网关的资源（表单回填）
+        cur.setGatewayCpuRequest(asString(m.get("gatewayCpuRequest")));
+        cur.setGatewayMemoryRequest(asString(m.get("gatewayMemoryRequest")));
+        cur.setGatewayCpuLimit(asString(m.get("gatewayCpuLimit")));
+        cur.setGatewayMemoryLimit(asString(m.get("gatewayMemoryLimit")));
         cur.setTempoStorage(tempoStorageOf(m.get("tempoStorage")));
         cur.setEs(esOf(m.get("es")));
         return cur;
@@ -472,6 +477,12 @@ public class ClusterComponentService {
             return null;
         }
         TempoStorageConfig out = new TempoStorageConfig();
+        // 编辑表单要按 source 决定显示「平台对象存储」还是「外部地址」；旧快照没有这个字段，
+        // 由 TempoStorageConfig.sourceOf 按凭证 Secret + 桶名形状反推
+        out.setSource(TempoStorageConfig.sourceOf(m));
+        // 回填的桶名必须是逻辑名（t-xxx-tempo 要显示成 tempo），否则再保存会建出一个新桶
+        out.setBucketName(TempoStorageConfig.logicalBucket(out.getSource(),
+                m.get("bucketName"), m.get("bucket")));
         out.setEndpoint(asString(m.get("endpoint")));
         out.setBucket(asString(m.get("bucket")));
         out.setCredentialSecret(secretRefOf(m.get("credentialSecret")));

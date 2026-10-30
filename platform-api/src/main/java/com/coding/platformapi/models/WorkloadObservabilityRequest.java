@@ -55,6 +55,17 @@ public class WorkloadObservabilityRequest {
     @Schema(description = "OTEL_SERVICE_NAME；空 = 工作负载名")
     private String serviceName;
 
+    /**
+     * 工作负载级采样率（百分比 1–100）；{@code null} = 跟随 OTel 组件的全局采样率。
+     *
+     * <p>非空时平台在容器上写 {@code OTEL_TRACES_SAMPLER=parentbased_traceidratio} +
+     * {@code OTEL_TRACES_SAMPLER_ARG=<比例>} —— operator 只在容器**没有**同名 env 时才注入
+     * 组件级的 sampler（v0.161.0 `internal/instrumentation/sdk.go`），所以这两个 env 会覆盖全局值。
+     * 为空时移除这两个 env，回到组件默认。
+     */
+    @Schema(description = "工作负载级采样率百分比（1–100）；空 = 跟随组件默认")
+    private Integer sampling;
+
     @Schema(description = "写 OTEL_SERVICE_NAME 的容器；空 = 第一个容器")
     private String containerName;
 }

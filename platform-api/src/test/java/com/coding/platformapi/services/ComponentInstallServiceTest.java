@@ -1074,6 +1074,34 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void seaweedfsResourceValuesFromTheFormOverrideTheDefaults() {
+        // 资源限制挪到 editableValues 才改得动：mergeValues 里契约值最后压（2026-10-30 加表单）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "seaweedfs")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        Map<String, Object> s3Resources = Map.of(
+                "requests", Map.of("cpu", "100m", "memory", "256Mi"),
+                "limits", Map.of("cpu", "2", "memory", "3Gi"));
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "seaweedfs", "INSTALL", null, Map.of("s3.resources", s3Resources));
+        req.setSeaweed(new com.coding.platformapi.models.SeaweedInstallRequest(
+                "nfs-client", "2Gi", "50Gi", "20Gi", 1, 1, 1, false, null));
+
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(client, timeout(5000)).applyComponent(anyString(), anyString(), anyString(), captor.capture());
+        String values = captor.getValue().get(0).getValues().toString();
+        assertThat(values)
+                .contains("memory=3Gi")          // 表单值压过默认 1Gi
+                .contains("-readerCacheSizeMB=256")   // 契约值仍是防 OOM 的护栏
+                .contains("memory=1Gi");         // 没动的 filer 仍是默认
+    }
+
+    @Test
     void theSeaweedfsFormDoesNotCarryThePlatformDialAddress() {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
@@ -1416,8 +1444,82 @@ class ComponentInstallServiceTest {
     }
 
     @Test
-    void tempoRetentionAndTlsModeGoIntoTheReleaseValues() {
+    void theCollectorGatewayResourcesComeFromTheForm() {
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "tempo",
+                new SecretRef("monitor", "minio-creds"), true, false));
+        otel.setGatewayCpuRequest("100m");
+        otel.setGatewayMemoryRequest("128Mi");
+        otel.setGatewayCpuLimit("2");
+        otel.setGatewayMemoryLimit("3Gi");
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        service().apply(req, "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(eq("c1"), eq("otel-operator"), eq("INSTALL"),
+                captor.capture());
+        // 第二遍 operator release 带 extraObjects（gateway CR）
+        String extraObjects = captor.getValue().get(2).getValues().get("extraObjects").toString();
+        assertThat(extraObjects).contains("cpu=100m").contains("memory=128Mi")
+                .contains("cpu=2").contains("memory=3Gi");
+    }
+
+    @Test
+    void anInvalidCollectorGatewayResourceIsRejectedBeforeHelm() {
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+
+        OtelInstallRequest otel = baseOtel();
+        otel.setGatewayMemoryLimit("1G B");
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("资源写法不合法");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void tempoPersistenceCannotChangeOnAnInstalledCluster() {
+        // StatefulSet 的 volumeClaimTemplates 不可变：改存储类/容量会让下发失败，这里先拒
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+
+        PlatformComponentOperation prev = new PlatformComponentOperation();
+        prev.setStatus("SUCCESS");
+        prev.setValuesSnapshot("{\"platform-tempo\":{\"persistence\":{\"enabled\":true,"
+                + "\"storageClassName\":\"nfs-client\",\"size\":\"20Gi\"}}}");
+        when(mapper.selectLatestSuccess("c1", "otel-operator")).thenReturn(prev);
+
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoStorage(new TempoStorageConfig("192.168.31.80:9002", "tempo",
+                new SecretRef("monitor", "minio-creds"), true, false));
+        ComponentApplyRequest req = new ComponentApplyRequest("c1", "otel-operator", "EDIT", null,
+                Map.of("persistence.size", "50Gi"));
+        req.setOtel(otel);
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("volumeClaimTemplates");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void tempoRetentionAndTlsModeGoIntoTheReleaseValues() {        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
         when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
         when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
@@ -2065,6 +2167,89 @@ class ComponentInstallServiceTest {
         verify(client).applyTempoObjstore("c1", null, null, "monitor", "platform-tempo-objstore",
                 "AK-TEMPO", "SK-TEMPO");
         verify(objectStorage, never()).createBucket(any(), anyString());
+    }
+
+    @Test
+    void tempoPlatformStorageSnapshotKeepsSourceAndTheLogicalBucket() {
+        // 编辑表单靠 __platform.otel.tempoStorage.source 决定显示「平台对象存储」还是「外部地址」；
+        // 漏记 source 会让表单回填成外部地址（2026-10-30 用户实报）。
+        // 桶要分开记：bucketName 是表单用的逻辑名（tempo），bucket 是平台拼出的真实全名。
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
+        bucket.setId("obk_tempo");
+        bucket.setBucket("t-25c6a969-tempo");
+        when(objectStorage.s3Endpoint("c1")).thenReturn("http://seaweedfs-s3.platform-storage:8333");
+        when(objectStorage.listBuckets(eq("c1"), any())).thenReturn(List.of(bucket));
+        when(objectStorage.issueCredential(any(), anyString()))
+                .thenReturn(new ObjectCredentialDTO("AK-TEMPO", "SK-TEMPO"));
+
+        OtelInstallRequest otel = baseOtel();
+        otel.setTempoStorage(new TempoStorageConfig());
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "INSTALL", null, Map.of());
+        req.setOtel(otel);
+
+        service().apply(req, "admin");
+
+        ArgumentCaptor<PlatformComponentOperation> captor =
+                ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper).insert(captor.capture());
+        assertThat(captor.getValue().getValuesSnapshot())
+                .contains("\"source\":\"PLATFORM\"")
+                .contains("\"bucketName\":\"tempo\"")
+                .contains("\"bucket\":\"t-25c6a969-tempo\"");
+    }
+
+    @Test
+    void aLegacySnapshotWithoutSourceStillResolvesThePlatformBucket() {
+        // 2026-10-30 之前的快照没有 source / bucketName：只能按「凭证是平台发的 + 桶名是平台拼的」反推。
+        // 反推后必须用剥掉前缀的逻辑名去找桶 —— 把全名当逻辑名会建出 t-xxx-t-xxx-tempo 的新桶，
+        // Tempo 指向新桶 = 历史 trace 全"消失"。
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);
+        when(components.status("c1")).thenReturn(List.of(healthy("cert-manager")));
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        PlatformComponentOperation prev = new PlatformComponentOperation();
+        prev.setStatus("SUCCESS");
+        prev.setValuesSnapshot("{\"__platform\":{\"otel\":{"
+                + "\"tempoEndpoint\":\"platform-tempo.monitor.svc:4317\","
+                + "\"samplingPercentage\":10,\"gatewayReplicas\":1,\"logsEnabled\":false,"
+                + "\"tempoStorage\":{\"endpoint\":\"seaweedfs-s3.platform-storage:8333\","
+                + "\"bucket\":\"t-25c6a969-tempo\","
+                + "\"credentialSecret\":{\"namespace\":\"monitor\",\"name\":\"platform-tempo-objstore\"},"
+                + "\"insecureSkipVerify\":true,\"plaintext\":true},"
+                + "\"es\":{\"endpoint\":\"https://es:9200\"}}}}");
+        when(mapper.selectLatestSuccess("c1", "otel-operator")).thenReturn(prev);
+
+        ObjectStorageBucketView bucket = new ObjectStorageBucketView();
+        bucket.setId("obk_tempo");
+        bucket.setBucket("t-25c6a969-tempo");
+        when(objectStorage.s3Endpoint("c1")).thenReturn("http://seaweedfs-s3.platform-storage:8333");
+        when(objectStorage.listBuckets(eq("c1"), any())).thenReturn(List.of(bucket));
+        when(objectStorage.issueCredential(any(), anyString()))
+                .thenReturn(new ObjectCredentialDTO("AK-TEMPO", "SK-TEMPO"));
+
+        // 没改动的编辑：表单不会下发 otel，后端只用上次成功的快照
+        ComponentApplyRequest req = new ComponentApplyRequest(
+                "c1", "otel-operator", "EDIT", null, Map.of());
+
+        service().apply(req, "admin");
+
+        verify(objectStorage, never()).createBucket(any(), anyString());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> captor = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(
+                eq("c1"), eq("otel-operator"), eq("EDIT"), captor.capture());
+        assertThat(captor.getValue().get(1).getValues().toString())
+                .contains("t-25c6a969-tempo")
+                .doesNotContain("t-25c6a969-t-25c6a969-tempo");
     }
 
     @Test

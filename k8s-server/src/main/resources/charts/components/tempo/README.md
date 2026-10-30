@@ -65,9 +65,11 @@ tempo:
   extraEnvFrom: [{ secretRef: { name: platform-tempo-objstore } }]
   reportingEnabled: false
   retention: 168h
-  resources: { requests: {cpu: 200m, memory: 512Mi}, limits: {cpu: "1", memory: 2Gi} }
 persistence: { enabled: true, storageClassName: nfs-client, size: 20Gi }
 ```
+
+> `tempo.resources` **不在契约值里**：它是可编辑默认值（组件编辑表单「资源限制」组），默认
+> `requests 200m/512Mi`、`limits 1/2Gi`。放在契约里会被 `mergeValues` 最后压住，表单改了不生效。
 
 | 值 | 为什么 / 来源 |
 |---|---|
@@ -89,6 +91,7 @@ persistence: { enabled: true, storageClassName: nfs-client, size: 20Gi }
 | 凭证 Secret | 是 | 必须在 `monitor`；支持 `access-key/secret-key`、`accessKey/secretKey`、`ACCESS_KEY/SECRET_KEY`、`MINIO_ACCESS_KEY/MINIO_SECRET_KEY`、`minio-access-key/minio-secret-key`、`AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY` |
 | 跳过 TLS 校验 | 否 | 仅 HTTPS + 自签证书；选 HTTP 时置灰 |
 | 保留期 | 否 | Go duration，默认 `168h` |
+| 资源限制（CPU/内存） | 否 | 不在上面这块里，而是表单顶部的「资源限制」组（通用可编辑字段）；默认 `200m/512Mi → 1/2Gi`，实测常驻 ~450Mi |
 
 Secret 命名空间不是 `monitor` 时安装前直接拒绝（跨 ns 读 Secret 无产品必要）。
 

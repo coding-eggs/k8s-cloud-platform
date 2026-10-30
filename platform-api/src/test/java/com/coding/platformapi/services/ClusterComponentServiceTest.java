@@ -11,6 +11,8 @@ import com.coding.platformapi.components.ComponentProbe;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentStatusDTO;
+import com.coding.platformapi.models.EditableFieldDTO;
+import com.coding.platformapi.models.TempoStorageConfig;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -629,6 +631,13 @@ class ClusterComponentServiceTest {
         op.setValuesSnapshot("{\"__platform\":{\"otel\":{"
                 + "\"tempoEndpoint\":\"tempo.example:4317\","
                 + "\"samplingPercentage\":25,\"gatewayReplicas\":2,\"logsEnabled\":true,"
+                // 旧快照没有 source / bucketName：编辑表单要按凭证与桶名形状反推回平台对象存储，
+                // 并把桶回填成逻辑名（tempo），否则再保存会建出一个新桶
+                + "\"tempoStorage\":{\"endpoint\":\"seaweedfs-s3.platform-storage:8333\","
+                + "\"bucket\":\"t-25c6a969-tempo\","
+                + "\"credentialSecret\":{\"namespace\":\"monitor\",\"name\":\"platform-tempo-objstore\"},"
+                + "\"insecureSkipVerify\":true,\"plaintext\":true},"
+                + "\"gatewayCpuLimit\":\"2\",\"gatewayMemoryLimit\":\"3Gi\","
                 + "\"es\":{\"endpoint\":\"https://es:9200\","
                 + "\"credentialSecret\":{\"namespace\":\"monitor\",\"name\":\"es-es-elastic-user\"},"
                 + "\"insecureSkipVerify\":true}}}}");
@@ -653,6 +662,54 @@ class ClusterComponentServiceTest {
         assertThat(otel.getOtelInstallCurrent().getSamplingPercentage()).isEqualTo(25);
         assertThat(otel.getOtelInstallCurrent().getEs().getCredentialSecret().getName())
                 .isEqualTo("es-es-elastic-user");
+        // 编辑表单的存储来源/桶名回填：source 必须是 PLATFORM（否则前端落进「外部地址」），
+        // bucketName 是逻辑名、bucket 保留平台拼出的全名
+        assertThat(otel.getOtelInstallCurrent().getTempoStorage().getSource())
+                .isEqualTo(TempoStorageConfig.SOURCE_PLATFORM);
+        assertThat(otel.getOtelInstallCurrent().getTempoStorage().getBucketName()).isEqualTo("tempo");
+        assertThat(otel.getOtelInstallCurrent().getTempoStorage().getBucket())
+                .isEqualTo("t-25c6a969-tempo");
+        // collector 网关的资源也要能回填（表单四个输入框）
+        assertThat(otel.getOtelInstallCurrent().getGatewayCpuLimit()).isEqualTo("2");
+        assertThat(otel.getOtelInstallCurrent().getGatewayMemoryLimit()).isEqualTo("3Gi");
+
+        // Tempo 的资源限制也进表单（MANAGEMENT 才有 Tempo）：默认值来自 recipe
+        EditableFieldDTO tempoResources = otel.getEditableFields().stream()
+                .filter(f -> "tempo.resources".equals(f.getKey())).findFirst().orElseThrow();
+        assertThat(tempoResources.getType()).isEqualTo("resources");
+        assertThat(tempoResources.getGroup()).isEqualTo("资源限制");
+        assertThat(tempoResources.getDefaultValue().toString()).contains("memory=2Gi");
+    }
+
+    @Test
+    void theSeaweedfsRowExposesItsResourceFieldsForEditing() {
+        // SeaweedFS 四个工作负载的资源限制（表单「资源限制」组）；当前值取上次成功的 values 快照
+        PlatformComponentOperation op = new PlatformComponentOperation();
+        op.setComponentCode("seaweedfs");
+        op.setStatus("SUCCESS");
+        op.setValuesSnapshot("{\"platform-seaweedfs\":{\"s3\":{\"resources\":{"
+                + "\"requests\":{\"cpu\":\"100m\",\"memory\":\"256Mi\"},"
+                + "\"limits\":{\"cpu\":\"2\",\"memory\":\"3Gi\"}}}}}");
+        PlatformComponentOperationMapper ops = mock(PlatformComponentOperationMapper.class);
+        when(ops.selectLatestSuccesses("c1")).thenReturn(List.of(op));
+
+        K8sComponentClient client = mock(K8sComponentClient.class);
+        when(client.probe(anyString(), any())).thenReturn(aligned(List.of()));
+        ClusterService management = mock(ClusterService.class);
+        when(management.requireProfile("c1")).thenReturn("MANAGEMENT");
+        ClusterComponentService svc = new ClusterComponentService(new ClusterComponentCatalog(),
+                capability(DEFAULT_GROUPS), client, cache(), management,
+                new com.coding.platformapi.components.ComponentRecipeCatalog(), ops);
+
+        ComponentStatusDTO seaweed = find(svc.status("c1"), "seaweedfs");
+        EditableFieldDTO s3 = seaweed.getEditableFields().stream()
+                .filter(f -> "s3.resources".equals(f.getKey())).findFirst().orElseThrow();
+        assertThat(s3.getType()).isEqualTo("resources");
+        assertThat(s3.getGroup()).isEqualTo("资源限制");
+        assertThat(s3.getLabel()).isEqualTo("S3 网关");
+        assertThat(s3.getCurrentValue().toString()).contains("memory=3Gi");
+        assertThat(seaweed.getEditableFields()).extracting(EditableFieldDTO::getKey)
+                .contains("filer.resources", "volume.resources", "master.resources");
     }
 
     @Test

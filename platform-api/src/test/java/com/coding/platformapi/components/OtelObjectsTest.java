@@ -68,13 +68,22 @@ class OtelObjectsTest {
     }
 
     @Test
-    void theGatewayUsesTheContribImageAndAllThreePorts() {
+    void theGatewayOnlyExposesTheOtlpPorts() {
         Map<?, ?> gateway = OtelObjects.build(true, 2, "plaintext").get(3);
         Map<?, ?> spec = (Map<?, ?>) gateway.get("spec");
         assertThat(spec.get("image").toString()).endsWith("opentelemetry-collector-contrib:0.161.0");
-        assertThat(spec.get("ports").toString()).contains("4317").contains("4318").contains("8889");
+        // 指标不走 OTel（平台指标走 Prometheus/ServiceMonitor）：没有 8889 / prometheus exporter / metrics 管道
+        assertThat(spec.get("ports").toString()).contains("4317").contains("4318").doesNotContain("8889");
+        assertThat(spec.toString()).doesNotContain("prometheus").doesNotContain("metrics=");
         // replicas 必须是整数：ValueTemplate 只能产出字符串，CRD 会拒
         assertThat(spec.get("replicas")).isEqualTo(2);
+    }
+
+    @Test
+    void theInstrumentationTurnsOffTheSdkMetricExporter() {
+        // gateway 没有 metrics 管道了，agent 再推指标只会白耗带宽、刷 "no pipeline" 错误
+        String instrumentation = OtelObjects.build(false, 1, "plaintext").get(0).toString();
+        assertThat(instrumentation).contains("OTEL_METRICS_EXPORTER").contains("none");
     }
 
     @Test

@@ -171,6 +171,53 @@ class WorkloadServiceObservabilityTest {
                 .hasMessageContaining("同名卷");
     }
 
+    // ==================== 工作负载级采样率 ====================
+
+    @Test
+    void aWorkloadLevelSamplingRateOverridesTheComponentDefault() {
+        // 两个 env 必须一起写：operator 发现容器里已有 OTEL_TRACES_SAMPLER 就整块跳过组件级 sampler
+        WorkloadObservabilityRequest req = request("java", true, false, null);
+        req.setSampling(50);
+
+        WorkloadDTO updated = apply(workload(), req);
+
+        assertThat(envOf(updated, "OTEL_TRACES_SAMPLER")).isEqualTo("parentbased_traceidratio");
+        assertThat(envOf(updated, "OTEL_TRACES_SAMPLER_ARG")).isEqualTo("0.5");
+        // 用户自己的 env 仍然保留
+        assertThat(envOf(updated, "EXISTING")).isEqualTo("v");
+    }
+
+    @Test
+    void anOddPercentageBecomesACleanRatio() {
+        WorkloadObservabilityRequest req = request("java", true, false, null);
+        req.setSampling(33);
+
+        assertThat(envOf(apply(workload(), req), "OTEL_TRACES_SAMPLER_ARG")).isEqualTo("0.33");
+    }
+
+    @Test
+    void clearingTheSamplingRateFallsBackToTheComponentDefault() {
+        WorkloadObservabilityRequest withRate = request("java", true, false, null);
+        withRate.setSampling(10);
+        WorkloadDTO existing = workload();
+        apply(existing, withRate);
+        clearInvocations(k8s);
+
+        WorkloadDTO updated = apply(existing, request("java", true, false, null));
+
+        assertThat(envOf(updated, "OTEL_TRACES_SAMPLER")).isNull();
+        assertThat(envOf(updated, "OTEL_TRACES_SAMPLER_ARG")).isNull();
+    }
+
+    @Test
+    void theSamplingRateIsAPercentage() {
+        WorkloadObservabilityRequest req = request("java", true, false, null);
+        req.setSampling(0);
+        assertThatThrownBy(() -> svc.observability(req)).hasMessageContaining("1..100");
+        req.setSampling(101);
+        assertThatThrownBy(() -> svc.observability(req)).hasMessageContaining("1..100");
+    }
+
     // ==================== 夹具 ====================
 
     private static WorkloadObservabilityRequest fileLogReq(String file) {

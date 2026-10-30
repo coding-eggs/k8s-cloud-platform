@@ -4,6 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.Map;
+
 /**
  * Tempo 的 MinIO 存储参数（管理集群）。
  *
@@ -22,6 +24,12 @@ public class TempoStorageConfig {
     /** 用外部地址：endpoint / 桶 / 凭证 Secret 由表单手填 */
     public static final String SOURCE_EXTERNAL = "EXTERNAL";
 
+    /** PLATFORM 模式下平台写进 {@code monitor} 的凭证 Secret 名（外部地址模式不会用它） */
+    public static final String PLATFORM_CREDENTIAL_SECRET = "platform-tempo-objstore";
+
+    /** 平台拼出的真实桶名形状：{@code t-<8 位十六进制租户短码>-<逻辑名>} */
+    private static final String PLATFORM_BUCKET_PATTERN = "t-[0-9a-fA-F]{8}-.+";
+
     /**
      * 存储来源（PLATFORM / EXTERNAL，空 = PLATFORM）。
      *
@@ -38,6 +46,15 @@ public class TempoStorageConfig {
     private String endpoint;
     /** 桶名，默认 tempo（与 Thanos 的 thanos 桶分开） */
     private String bucket;
+    /**
+     * PLATFORM 专用：表单里填的**逻辑桶名**（如 {@code tempo}），与 {@link #bucket} 解析出的
+     * 真实全名（{@code t-<租户短码>-<名字>}）分开存。
+     *
+     * <p>为什么要单独存：编辑表单回填的必须是逻辑名 —— 把真实全名再提交一次会被当成逻辑名，
+     * 拼出 {@code t-xxx-t-xxx-tempo} 的新桶，Tempo 指向新桶 = 历史 trace 全"消失"。
+     * 快照里记一份，EXTERNAL 模式为 null。
+     */
+    private String bucketName;
     /** 含 access key / secret key 的 Secret */
     private SecretRef credentialSecret;
     /** 自签证书 / HTTPS 时跳过证书校验 */
@@ -62,5 +79,49 @@ public class TempoStorageConfig {
         this.credentialSecret = credentialSecret;
         this.insecureSkipVerify = insecureSkipVerify;
         this.plaintext = plaintext;
+    }
+
+    /**
+     * 从 {@code __platform.otel.tempoStorage} 快照判定存储来源。
+     *
+     * <p>2026-10-30 之前的快照**没有 source 字段**（{@code otelSnapshot} 漏写）：那种快照
+     * 只能按两个特征反推 —— 凭证 Secret 是平台发的 {@link #PLATFORM_CREDENTIAL_SECRET}，
+     * 且桶名是平台拼的形状。两个都满足才认定 PLATFORM，避免把手工填的外部桶误判成平台桶。
+     */
+    public static String sourceOf(Object snapshot) {
+        if (!(snapshot instanceof Map<?, ?> map)) {
+            return SOURCE_EXTERNAL;
+        }
+        String source = text(map.get("source"));
+        if (source != null) {
+            return source;
+        }
+        String bucket = text(map.get("bucket"));
+        Object secret = map.get("credentialSecret");
+        String secretName = secret instanceof Map<?, ?> s ? text(s.get("name")) : null;
+        return PLATFORM_CREDENTIAL_SECRET.equals(secretName) && bucket != null
+                && bucket.matches(PLATFORM_BUCKET_PATTERN) ? SOURCE_PLATFORM : SOURCE_EXTERNAL;
+    }
+
+    /**
+     * 表单要回填的桶名：PLATFORM 是**逻辑名**，EXTERNAL 是原样的桶名。
+     *
+     * <p>优先用快照里单独记的 {@code bucketName}；旧快照没有时从真实全名里剥掉
+     * {@code t-<短码>-} 前缀 —— 直接回填全名会在下次提交时被当成逻辑名再拼一次。
+     */
+    public static String logicalBucket(String source, Object bucketName, Object bucket) {
+        String name = text(bucketName);
+        if (name != null) {
+            return name;
+        }
+        String full = text(bucket);
+        if (SOURCE_PLATFORM.equals(source) && full != null && full.matches(PLATFORM_BUCKET_PATTERN)) {
+            return full.substring(full.indexOf('-', 2) + 1);
+        }
+        return full;
+    }
+
+    private static String text(Object value) {
+        return value instanceof String s && !s.isBlank() ? s : null;
     }
 }

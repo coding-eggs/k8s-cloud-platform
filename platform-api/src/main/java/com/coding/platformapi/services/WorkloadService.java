@@ -66,6 +66,10 @@ public class WorkloadService {
             "java", OTEL_INJECT_PREFIX + "java",
             "python", OTEL_INJECT_PREFIX + "python");
     private static final String OTEL_SERVICE_NAME_ENV = "OTEL_SERVICE_NAME";
+    /** 工作负载级采样率：这两个 env 会覆盖 Instrumentation 里的全局 sampler */
+    private static final String OTEL_TRACES_SAMPLER_ENV = "OTEL_TRACES_SAMPLER";
+    private static final String OTEL_TRACES_SAMPLER_ARG_ENV = "OTEL_TRACES_SAMPLER_ARG";
+    private static final String OTEL_SAMPLER_TYPE = "parentbased_traceidratio";
     /** Instrumentation 所在命名空间（平台固定） */
     private static final String OTEL_NAMESPACE = "monitor";
     /** 文件日志：sidecar 注入注解与平台固定卷名（与 OtelObjects 的 sidecar CR 一致） */
@@ -341,6 +345,12 @@ public class WorkloadService {
             logDir = logFile.substring(0, slash);
             logFileName = logFile.substring(slash + 1);
         }
+        // 采样率：空 = 跟随组件默认；给了就必须是 1..100
+        Integer sampling = req.getSampling();
+        if (sampling != null && (sampling < 1 || sampling > 100)) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "采样率必须在 1..100 之间（收到 " + sampling + "）");
+        }
 
         WorkloadDTO query = dto(req.getName(), req.getTenantId(), req.getClusterId(), req.getNamespace());
         query.setKind(req.getKind());
@@ -390,6 +400,8 @@ public class WorkloadService {
                     ? req.getServiceName().trim() : req.getName();
             setServiceNameEnv(existing, req.getContainerName(), serviceName);
         }
+        // 采样率：非空写工作负载级 env（覆盖组件默认），空则移除，回到组件采样率
+        setSamplingEnvs(existing, req.getContainerName(), req.isTracing() ? sampling : null);
         return k8s.update(existing);
     }
 
@@ -429,8 +441,40 @@ public class WorkloadService {
         container.setEnvs(envs);
     }
 
-    /** 文件日志的平台卷（emptyDir）；同名卷不是 emptyDir → 拒绝，避免覆盖用户卷 */
-    private static void ensureLogVolume(PodTemplateDTO podTemplate) {
+    /**
+     * 工作负载级采样率：写 {@code OTEL_TRACES_SAMPLER=parentbased_traceidratio} +
+     * {@code OTEL_TRACES_SAMPLER_ARG=<比例>}；{@code sampling == null} 时移除这两个 env。
+     *
+     * <p>为什么这样能覆盖组件默认：operator 注入 Instrumentation 的 sampler 时，
+     * **容器里已有同名 env 就整块跳过**（v0.161.0 {@code internal/instrumentation/sdk.go}）。
+     */
+    private static void setSamplingEnvs(WorkloadDTO workload, String containerName, Integer sampling) {
+        ContainerDTO container = targetContainer(workload, containerName);
+        List<EnvDTO> envs = container.getEnvs() == null
+                ? new ArrayList<>() : new ArrayList<>(container.getEnvs());
+        envs.removeIf(env -> OTEL_TRACES_SAMPLER_ENV.equals(env.getName())
+                || OTEL_TRACES_SAMPLER_ARG_ENV.equals(env.getName()));
+        if (sampling != null) {
+            envs.add(otelEnv(OTEL_TRACES_SAMPLER_ENV, OTEL_SAMPLER_TYPE));
+            envs.add(otelEnv(OTEL_TRACES_SAMPLER_ARG_ENV, samplingRatio(sampling)));
+        }
+        container.setEnvs(envs);
+    }
+
+    private static EnvDTO otelEnv(String name, String value) {
+        EnvDTO env = new EnvDTO();
+        env.setName(name);
+        env.setValue(value);
+        return env;
+    }
+
+    /** 20 → "0.2"、1 → "0.01"、100 → "1"（BigDecimal 免得出现 0.30000000000000004） */
+    private static String samplingRatio(int percent) {
+        return java.math.BigDecimal.valueOf(percent).movePointLeft(2)
+                .stripTrailingZeros().toPlainString();
+    }
+
+    /** 文件日志的平台卷（emptyDir）；同名卷不是 emptyDir → 拒绝，避免覆盖用户卷 */    private static void ensureLogVolume(PodTemplateDTO podTemplate) {
         PodSpecDTO spec = podTemplate.getSpec();
         if (spec == null) {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,

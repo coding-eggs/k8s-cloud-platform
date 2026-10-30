@@ -103,6 +103,9 @@ public class ComponentInstallService {
 
     private static final int DEFAULT_OTEL_SAMPLING = 10;
     private static final int DEFAULT_OTEL_REPLICAS = 1;
+    /** K8s quantity 的轻量校验（CPU：200m / 1；内存：256Mi / 1Gi） */
+    private static final java.util.regex.Pattern QUANTITY =
+            java.util.regex.Pattern.compile("\\d+(\\.\\d+)?(m|k|M|G|T|P|E|Ki|Mi|Gi|Ti|Pi|Ei)?");
     private static final String DEFAULT_ES_ENDPOINT = "https://es-es-http.default.svc:9200";
     /** Tempo 用独立桶，不与 Thanos 共用（Thanos 的桶是 thanos） */
     private static final String DEFAULT_MINIO_BUCKET = "tempo";
@@ -246,6 +249,9 @@ public class ComponentInstallService {
         // spec §3.3：升级复用上次成功操作里的 values（本次显式传入的字段覆盖它）
         List<ReleaseSpec> merged = mergeValues(recipe.releases(), req.getEditableValues(),
                 parseSnapshot(baseline == null ? null : baseline.getValuesSnapshot()));
+        // Tempo 的持久化是 STS 的 volumeClaimTemplates（不可变）：已装实例上改会在下发时被拒。
+        // 只拿**成功**记录比：失败记录里的值还没真正落成 STS，不该挡用户改
+        validateTempoPersistence(merged, last);
         // 对象存储的 PVC / 副本数落在嵌套结构里（volume.dataDirs 是 list），由表单参数拼进来
         if (seaweed != null) {
             merged = applySeaweedValues(merged, seaweed);
@@ -389,6 +395,42 @@ public class ComponentInstallService {
     }
 
     /**
+     * Tempo 的持久化是 StatefulSet 的 {@code volumeClaimTemplates} —— K8s **不允许**修改既有 STS 的
+     * 这一项。已装实例上改存储类/容量会让下发在中途被拒（操作停在 FAILED，错误信息很难读），
+     * 这里先给出人话。
+     */
+    private static void validateTempoPersistence(List<ReleaseSpec> releases,
+                                                 PlatformComponentOperation lastSuccess) {
+        if (lastSuccess == null) {
+            return; // 首次安装
+        }
+        Map<String, Map<String, Object>> previous = parseSnapshot(lastSuccess.getValuesSnapshot());
+        for (ReleaseSpec release : releases) {
+            if (!"tempo".equals(release.chartCode())) {
+                continue;
+            }
+            Map<String, Object> prevValues = previous.get(release.releaseName());
+            if (prevValues == null) {
+                continue;
+            }
+            if (!(prevValues.get("persistence") instanceof Map<?, ?> before)
+                    || !(release.contractValues().get("persistence") instanceof Map<?, ?> after)) {
+                continue;
+            }
+            for (String key : List.of("storageClassName", "size")) {
+                Object oldValue = before.get(key);
+                Object newValue = after.get(key);
+                if (oldValue != null && newValue != null && !oldValue.equals(newValue)) {
+                    throw new CloudPlatformException(EnumResponseType.ERROR,
+                            "Tempo 的持久化（存储类/容量）在已安装的实例上不能修改："
+                                    + "StatefulSet 的 volumeClaimTemplates 不可变。"
+                                    + "扩容请直接调整 PVC，换存储类需要重建 Tempo");
+                }
+            }
+        }
+    }
+
+    /**
      * 可编辑字段按路径声明，这里转成嵌套 Map —— 只接受 recipe 声明过的 key。
      *
      * <p><b>空值 / 空串跳过</b>：StorageClass 的空串表示"跟随集群默认存储类"，而
@@ -468,7 +510,10 @@ public class ComponentInstallService {
                 Map<String, Object> copy = new LinkedHashMap<>(values);
                 copy.put("extraObjects", OtelObjects.build(
                         Boolean.TRUE.equals(otel.getLogsEnabled()), otel.getGatewayReplicas(),
-                        otel.getTempoTlsMode()));
+                        otel.getTempoTlsMode(),
+                        new OtelObjects.GatewayResources(otel.getGatewayCpuRequest(),
+                                otel.getGatewayMemoryRequest(), otel.getGatewayCpuLimit(),
+                                otel.getGatewayMemoryLimit())));
                 values = copy;
             }
             // Tempo 保留期按表单注入（chart 默认只有 24h）
@@ -509,6 +554,17 @@ public class ComponentInstallService {
     /** 旧调用兜底：endpoint 带 {@code http://} 前缀视为明文（新表单用 plaintext 字段显式选择） */
     private static boolean tempoMinioPlaintext(String endpoint) {
         return endpoint != null && endpoint.trim().startsWith("http://");
+    }
+
+    /**
+     * 从平台拼出的真实桶名（{@code t-<8 位租户短码>-<逻辑名>}）里剥回逻辑名。
+     *
+     * <p>旧快照只记了真实全名；编辑表单/升级重放会把它当逻辑名再拼一次，得到
+     * {@code t-xxx-t-xxx-tempo} 的新桶。判定规则与建桶时同一条（见
+     * {@link TempoStorageConfig#logicalBucket}）。
+     */
+    private static String logicalTempoBucket(String bucket) {
+        return TempoStorageConfig.logicalBucket(TempoStorageConfig.SOURCE_PLATFORM, null, bucket);
     }
 
     /**
@@ -702,6 +758,11 @@ public class ComponentInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Tempo TLS 模式只支持 " + String.join(" / ", TEMPO_TLS_MODES));
         }
+        OtelObjects.GatewayResources gatewayResources = resolveGatewayResources(req, prev);
+        out.setGatewayCpuRequest(gatewayResources.cpuRequest());
+        out.setGatewayMemoryRequest(gatewayResources.memoryRequest());
+        out.setGatewayCpuLimit(gatewayResources.cpuLimit());
+        out.setGatewayMemoryLimit(gatewayResources.memoryLimit());
         ResolvedTempoStorage storage = recipe.tempoInstall()
                 ? resolveTempoStorage(clusterId, operator,
                         req.getTempoStorage(), prev == null ? null : prev.getTempoStorage())
@@ -709,6 +770,30 @@ public class ComponentInstallService {
         out.setTempoStorage(storage == null ? null : storage.config());
         out.setEs(resolveEs(req.getEs(), prev == null ? null : prev.getEs(), logs));
         return new ResolvedOtel(out, storage == null ? null : storage.platform());
+    }
+
+    /**
+     * collector gateway 的资源限制：表单 &gt; 上次成功 &gt; 平台默认；四个都必须是合法 quantity
+     * （写错时 K8s 会拒绝整个 CR，装到一半失败，不如在这里先拒）。
+     */
+    private static OtelObjects.GatewayResources resolveGatewayResources(OtelInstallRequest req,
+                                                                        OtelInstallRequest prev) {
+        OtelObjects.GatewayResources defaults = OtelObjects.GatewayResources.DEFAULT;
+        String cpuRequest = firstNonBlank(req.getGatewayCpuRequest(),
+                prev == null ? null : prev.getGatewayCpuRequest(), defaults.cpuRequest());
+        String memoryRequest = firstNonBlank(req.getGatewayMemoryRequest(),
+                prev == null ? null : prev.getGatewayMemoryRequest(), defaults.memoryRequest());
+        String cpuLimit = firstNonBlank(req.getGatewayCpuLimit(),
+                prev == null ? null : prev.getGatewayCpuLimit(), defaults.cpuLimit());
+        String memoryLimit = firstNonBlank(req.getGatewayMemoryLimit(),
+                prev == null ? null : prev.getGatewayMemoryLimit(), defaults.memoryLimit());
+        for (String value : List.of(cpuRequest, memoryRequest, cpuLimit, memoryLimit)) {
+            if (value == null || !QUANTITY.matcher(value).matches()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "collector 网关的资源写法不合法（CPU 如 200m / 1，内存如 256Mi / 1Gi）：" + value);
+            }
+        }
+        return new OtelObjects.GatewayResources(cpuRequest, memoryRequest, cpuLimit, memoryLimit);
     }
 
     /**
@@ -741,12 +826,18 @@ public class ComponentInstallService {
             String tenantId = requested != null && !isBlank(requested.getTenantId())
                     ? requested.getTenantId()
                     : prev == null ? null : prev.getTenantId();
-            // PLATFORM 下 bucket 是逻辑名（默认 tempo）—— 真实桶名由平台拼
+            // PLATFORM 下 bucket 是逻辑名（默认 tempo）—— 真实桶名由平台拼。
+            // 逻辑名优先取 bucketName；没有（旧快照、直接调 API）就从真实全名里剥掉 t-<8 位短码>-，
+            // 否则把全名再拼一次会得到 t-xxx-t-xxx-tempo 的新桶（编辑一次 = 历史 trace 全丢）。
             String name = firstNonBlank(
-                    requested == null ? null : requested.getBucket(),
-                    prev == null ? null : prev.getBucket(), DEFAULT_MINIO_BUCKET);
+                    requested == null ? null : requested.getBucketName(),
+                    logicalTempoBucket(requested == null ? null : requested.getBucket()),
+                    prev == null ? null : firstNonBlank(prev.getBucketName(),
+                            logicalTempoBucket(prev.getBucket())),
+                    DEFAULT_MINIO_BUCKET);
             TempoPlatformStorage platform = provisionTempoStorage(clusterId, operator, tenantId,
                     name.trim().toLowerCase());
+            out.setBucketName(name.trim().toLowerCase());
             out.setEndpoint(tempoMinioHost(platform.endpoint()));
             out.setBucket(platform.bucket());
             out.setPlaintext(!platform.endpoint().startsWith("https://"));
@@ -878,9 +969,19 @@ public class ComponentInstallService {
         out.put("logsEnabled", Boolean.TRUE.equals(otel.getLogsEnabled()));
         out.put("tempoRetention", otel.getTempoRetention());
         out.put("tempoTlsMode", otel.getTempoTlsMode());
+        // collector 网关的资源（表单可改）：编辑表单要能回填
+        out.put("gatewayCpuRequest", otel.getGatewayCpuRequest());
+        out.put("gatewayMemoryRequest", otel.getGatewayMemoryRequest());
+        out.put("gatewayCpuLimit", otel.getGatewayCpuLimit());
+        out.put("gatewayMemoryLimit", otel.getGatewayMemoryLimit());
         if (otel.getTempoStorage() != null) {
             TempoStorageConfig s = otel.getTempoStorage();
             Map<String, Object> t = new LinkedHashMap<>();
+            // source 必须记：不记的话编辑表单分不清「平台对象存储 / 外部地址」，
+            // 回填时 source 为 null → 前端落进「外部地址」分支（2026-10-30 用户实报）
+            t.put("source", s.getSource());
+            // 逻辑桶名单独记：bucket 是平台拼出的真实全名，直接回填会拼成 t-xxx-t-xxx-xxx
+            t.put("bucketName", s.getBucketName());
             t.put("endpoint", s.getEndpoint());
             t.put("bucket", s.getBucket());
             t.put("credentialSecret", secretRefSnapshot(s.getCredentialSecret()));
@@ -918,6 +1019,14 @@ public class ComponentInstallService {
         out.setSamplingPercentage(asInt(map.get("samplingPercentage")));
         out.setGatewayReplicas(asInt(map.get("gatewayReplicas")));
         out.setLogsEnabled(map.get("logsEnabled") instanceof Boolean b ? b : null);
+        // 快照里缺这两个字段时（老记录）会回落到默认值 —— 但新快照必须读，否则
+        // 「只改了别的表单项、otel 没下发」时会悄悄把保留期/TLS 模式重置（2026-10-30 补）
+        out.setTempoRetention(asString(map.get("tempoRetention")));
+        out.setTempoTlsMode(asString(map.get("tempoTlsMode")));
+        out.setGatewayCpuRequest(asString(map.get("gatewayCpuRequest")));
+        out.setGatewayMemoryRequest(asString(map.get("gatewayMemoryRequest")));
+        out.setGatewayCpuLimit(asString(map.get("gatewayCpuLimit")));
+        out.setGatewayMemoryLimit(asString(map.get("gatewayMemoryLimit")));
         out.setTempoStorage(tempoStorageOf(map.get("tempoStorage")));
         out.setEs(esOf(map.get("es")));
         return out;
@@ -928,6 +1037,9 @@ public class ComponentInstallService {
             return null;
         }
         TempoStorageConfig out = new TempoStorageConfig();
+        out.setSource(TempoStorageConfig.sourceOf(map));
+        out.setBucketName(TempoStorageConfig.logicalBucket(out.getSource(),
+                map.get("bucketName"), map.get("bucket")));
         out.setEndpoint(asString(map.get("endpoint")));
         out.setBucket(asString(map.get("bucket")));
         out.setCredentialSecret(secretRefOf(map.get("credentialSecret")));

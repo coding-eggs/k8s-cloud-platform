@@ -158,8 +158,12 @@ logstash_format: { enabled: true, prefix_separator: "-", date_format: "%Y.%m.%d"
 
 ### 6.3 gateway / sidecar
 
-- gateway：Deployment，4317（gRPC）/4318（HTTP）/8889（prometheus），`resource` processor 统一
+- gateway：Deployment，4317（gRPC）/4318（HTTP），`resource` processor 统一
   upsert `cluster.name`；traces→Tempo，logs→ES（仅日志开关打开时）；
+- **指标不走 OTel**（2026-10-30）：原来有一条 `otlp → prometheus(:8889)` 管道，但没有任何
+  ServiceMonitor 抓 8889，应用推上来的指标点收进来就丢。已连同端口一起移除，并在三个
+  `Instrumentation` 上设 `OTEL_METRICS_EXPORTER=none`（不然 agent 还会白推、gateway 刷
+  "no pipeline" 错误）。应用指标统一由 Prometheus + ServiceMonitor 采集；
 - sidecar：文件日志用，只有工作负载显式开启时注入；卷 `platform-otel-logs`（emptyDir）；
   采哪个文件由 Pod 注解 `platform.coding/otel-log-file` 经 downward API 注入 `OTEL_FILELOG_INCLUDE`；
   sidecar 不跑 k8sattributes（Pod SA 权限不够），由 gateway 按 Pod IP 补齐。

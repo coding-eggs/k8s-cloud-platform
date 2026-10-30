@@ -17,9 +17,12 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Tempo 的 HTTP 查询（平台自研 trace 查看的数据源）。
@@ -34,6 +37,16 @@ import java.util.Map;
 public class TempoTraceClient {
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
+
+    /**
+     * 单条 TraceQL 的字符预算。Tempo 3.1 的解析器在 query 约 2KB 时开始出现
+     * {@code parse error … unexpected $end}（2026-10-30 用 21 个命名空间的租户复现），
+     * 这里留足余量；超出就把租户范围切批查，再在平台侧合并。
+     */
+    private static final int MAX_SCOPE_QUERY_CHARS = 1400;
+
+    /** 一条范围条件里最多塞多少个命名空间（控制单段正则的长度） */
+    private static final int MAX_NAMESPACES_PER_CLAUSE = 24;
 
     private final RestClient restClient;
     private final String baseUrl;
@@ -64,8 +77,14 @@ public class TempoTraceClient {
     }
 
     /**
-     * @param scopes 租户可见范围（{@code empty} = 平台管理员，不加条件）；非空时拼成
-     *               {@code (cluster && namespace) || ...} 交给 Tempo 服务端过滤
+     * @param scopes 租户可见范围（{@code empty} = 平台管理员，不加条件）；非空时按集群压成
+     *               {@code cluster && namespace =~ "a|b|c"} 交给 Tempo 服务端过滤。
+     *
+     *               <p>⚠️ 不能展开成 {@code (cluster && namespace="a") || (cluster && namespace="b") ...}：
+     *               21 个命名空间的租户会拼出 2KB+ 的 TraceQL，Tempo 3.1 的解析器在这种长度上会
+     *               直接回 {@code 400 … parse error … unexpected $end}（2026-10-30 实报，压成
+     *               590 字符的正则写法就正常）。范围再大时按 {@link #MAX_SCOPE_QUERY_CHARS}
+     *               切批，多次查询在平台侧合并。
      */
     public List<TraceSummaryDTO> search(TraceSearchRequest req, List<TraceScope> scopes) {
         TraceSearchRequest r = req == null ? new TraceSearchRequest() : req;
@@ -77,26 +96,41 @@ public class TempoTraceClient {
         }
         int limit = r.getLimit() == null ? 20 : Math.max(1, Math.min(200, r.getLimit()));
 
-        URI uri = UriComponentsBuilder.fromUriString(baseUrl)
-                .path("/api/search")
-                .queryParam("q", traceQl(r.getClusterName(), r.getNamespace(), r.getServiceName(),
-                        r.getErrorsOnly(), r.getMinDurationMs(), scopes))
-                .queryParam("start", start)
-                .queryParam("end", end)
-                .queryParam("limit", limit)
-                .build().encode().toUri();
-
-        JsonNode body = getJson(uri);
+        List<String> queries = traceQlVariants(r.getClusterName(), r.getNamespace(), r.getServiceName(),
+                r.getErrorsOnly(), r.getMinDurationMs(), scopes);
         List<TraceSummaryDTO> out = new ArrayList<>();
-        for (JsonNode t : body.path("traces")) {
-            out.add(new TraceSummaryDTO(
-                    text(t.path("traceID")),
-                    text(t.path("rootServiceName")),
-                    text(t.path("rootTraceName")),
-                    text(t.path("startTimeUnixNano")),
-                    durationMs(t),
-                    serviceCount(t),
-                    spanCount(t)));
+        Set<String> seen = new HashSet<>();
+        for (String q : queries) {
+            URI uri = UriComponentsBuilder.fromUriString(baseUrl)
+                    .path("/api/search")
+                    .queryParam("q", q)
+                    .queryParam("start", start)
+                    .queryParam("end", end)
+                    .queryParam("limit", limit)
+                    .build().encode().toUri();
+            JsonNode body = getJson(uri);
+            for (JsonNode t : body.path("traces")) {
+                String traceId = text(t.path("traceID"));
+                if (traceId != null && !seen.add(traceId)) {
+                    continue; // 切批后同一条 trace 可能被两批都命中
+                }
+                out.add(new TraceSummaryDTO(
+                        traceId,
+                        text(t.path("rootServiceName")),
+                        text(t.path("rootTraceName")),
+                        text(t.path("startTimeUnixNano")),
+                        durationMs(t),
+                        serviceCount(t),
+                        spanCount(t)));
+            }
+        }
+        if (queries.size() > 1) {
+            // 多批结果要自己按时间倒序再截断（单批保持 Tempo 返回的顺序）
+            out.sort(Comparator.comparing((TraceSummaryDTO d) ->
+                    d.getStartTimeUnixNano() == null ? "" : d.getStartTimeUnixNano()).reversed());
+            if (out.size() > limit) {
+                out = new ArrayList<>(out.subList(0, limit));
+            }
         }
         return out;
     }
@@ -158,23 +192,24 @@ public class TempoTraceClient {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
                     "trace 查询的时间范围不合法（start 必须早于 end）");
         }
-        URI uri = UriComponentsBuilder.fromUriString(baseUrl)
-                .path("/api/v2/search/tag/resource.service.name/values")
-                .queryParam("q", traceQl(clusterName, namespace, null, null, null, scopes))
-                .queryParam("start", from)
-                .queryParam("end", to)
-                .build().encode().toUri();
-
-        JsonNode body = getJson(uri);
-        List<String> out = new ArrayList<>();
-        for (JsonNode item : body.path("tagValues")) {
-            String value = text(item.path("value"));
-            if (value != null && !value.isBlank()) {
-                out.add(value);
+        // 租户范围可能被切批（见 search 的注释）：候选值取并集
+        Set<String> values = new TreeSet<>();
+        for (String q : traceQlVariants(clusterName, namespace, null, null, null, scopes)) {
+            URI uri = UriComponentsBuilder.fromUriString(baseUrl)
+                    .path("/api/v2/search/tag/resource.service.name/values")
+                    .queryParam("q", q)
+                    .queryParam("start", from)
+                    .queryParam("end", to)
+                    .build().encode().toUri();
+            JsonNode body = getJson(uri);
+            for (JsonNode item : body.path("tagValues")) {
+                String value = text(item.path("value"));
+                if (value != null && !value.isBlank()) {
+                    values.add(value);
+                }
             }
         }
-        out.sort(String::compareTo);
-        return out;
+        return new ArrayList<>(values);
     }
 
     /** 按 traceId 取完整调用链，拍平成按开始时间排序的 span 列表。 */
@@ -225,15 +260,23 @@ public class TempoTraceClient {
     private JsonNode getJson(URI uri, String notFoundMessage) {
         String text;
         try {
-            text = restClient.get().uri(uri).accept(MediaType.APPLICATION_JSON)
-                    .retrieve().body(String.class);
+            text = restClient.get()
+                    .uri(uri)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .body(String.class);
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();
             if (status == 404 && notFoundMessage != null) {
                 throw new CloudPlatformException(EnumResponseType.ERROR, notFoundMessage);
             }
+            // 把 Tempo 的响应体带出来：400 多半是 TraceQL 解析错误，正文里就是出错位置
+            // （只报「HTTP 400」时排障得自己去集群里捞日志，2026-10-30 踩过）
+            String detail = e.getResponseBodyAsString();
+            String suffix = detail == null || detail.isBlank()
+                    ? "" : "（" + ellipsis(detail.replaceAll("\\s+", " ").trim(), 300) + "）";
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "Tempo 查询失败：HTTP " + status);
+                    "Tempo 查询失败：HTTP " + status + suffix);
         } catch (Exception e) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "Tempo 不可达：" + e.getMessage());
@@ -295,12 +338,15 @@ public class TempoTraceClient {
     }
 
     /**
-     * 租户范围作为**一个**条件加入（内部是 OR 的 (集群, 命名空间) 对），与集群/命名空间/服务/
+     * 租户范围作为**一个**条件加入（按集群压成 {@code namespace =~ "a|b|c"}），与集群/命名空间/服务/
      * 错误/耗时条件之间仍是 AND —— 租户即使用别人的集群名筛，也只会得到空结果。
+     *
+     * <p>范围大到超过 {@link #MAX_SCOPE_QUERY_CHARS} 时返回多个 query（调用方逐批查询再合并）：
+     * Tempo 3.1 的 TraceQL 解析器在 2KB 左右会 400（见 {@code search} 的注释）。
      */
-    private static String traceQl(String cluster, String namespace, String service,
-                                  Boolean errorsOnly, Integer minDurationMs,
-                                  List<TraceScope> scopes) {
+    private static List<String> traceQlVariants(String cluster, String namespace, String service,
+                                                Boolean errorsOnly, Integer minDurationMs,
+                                                List<TraceScope> scopes) {
         List<String> conditions = new ArrayList<>();
         if (StringUtils.hasText(cluster)) {
             conditions.add("resource.cluster.name = \"" + escape(cluster) + "\"");
@@ -317,19 +363,80 @@ public class TempoTraceClient {
         if (minDurationMs != null && minDurationMs > 0) {
             conditions.add("duration > " + minDurationMs + "ms");
         }
-        if (scopes != null && !scopes.isEmpty()) {
-            List<String> pairs = new ArrayList<>();
-            for (TraceScope scope : scopes) {
-                pairs.add("(resource.cluster.name = \"" + escape(scope.clusterName())
-                        + "\" && resource.k8s.namespace.name = \"" + escape(scope.namespace()) + "\")");
-            }
-            conditions.add("(" + String.join(" || ", pairs) + ")");
+        String base = conditions.isEmpty() ? "" : String.join(" && ", conditions);
+        List<String> clauses = scopeClauses(scopes);
+        if (clauses.isEmpty()) {
+            return List.of(base.isEmpty() ? "{}" : "{ " + base + " }");
         }
-        return conditions.isEmpty() ? "{}" : "{ " + String.join(" && ", conditions) + " }";
+        // 按字符预算把范围条件分批，每批都是「基础条件 && (范围1 || 范围2 ...)」
+        List<String> out = new ArrayList<>();
+        List<String> batch = new ArrayList<>();
+        int budget = MAX_SCOPE_QUERY_CHARS - base.length();
+        for (String clause : clauses) {
+            int added = clause.length() + (batch.isEmpty() ? 0 : 4);
+            if (!batch.isEmpty() && added > budget) {
+                out.add(join(base, batch));
+                batch = new ArrayList<>();
+                budget = MAX_SCOPE_QUERY_CHARS - base.length();
+                added = clause.length();
+            }
+            batch.add(clause);
+            budget -= added;
+        }
+        if (!batch.isEmpty()) {
+            out.add(join(base, batch));
+        }
+        return out;
+    }
+
+    private static String join(String base, List<String> clauses) {
+        String scope = "(" + String.join(" || ", clauses) + ")";
+        return "{ " + (base.isEmpty() ? scope : base + " && " + scope) + " }";
+    }
+
+    /**
+     * 租户范围 → TraceQL 片段。**同一集群的命名空间合成一条正则**（TraceQL 的 {@code =~} 是全匹配，
+     * 不存在子串误命中的问题），避免每个命名空间都写一对 {@code (cluster && namespace)}。
+     * 单个集群的命名空间再多也按 {@link #MAX_NAMESPACES_PER_CLAUSE} 再切，控制单段长度。
+     */
+    private static List<String> scopeClauses(List<TraceScope> scopes) {
+        if (scopes == null || scopes.isEmpty()) {
+            return List.of();
+        }
+        Map<String, List<String>> byCluster = new LinkedHashMap<>();
+        for (TraceScope scope : scopes) {
+            byCluster.computeIfAbsent(scope.clusterName(), k -> new ArrayList<>()).add(scope.namespace());
+        }
+        List<String> clauses = new ArrayList<>();
+        for (Map.Entry<String, List<String>> entry : byCluster.entrySet()) {
+            List<String> names = entry.getValue();
+            for (int i = 0; i < names.size(); i += MAX_NAMESPACES_PER_CLAUSE) {
+                List<String> slice = names.subList(i, Math.min(i + MAX_NAMESPACES_PER_CLAUSE, names.size()));
+                StringBuilder regex = new StringBuilder();
+                for (String name : slice) {
+                    if (regex.length() > 0) {
+                        regex.append('|');
+                    }
+                    regex.append(regexEscape(name));
+                }
+                clauses.add("(resource.cluster.name = \"" + escape(entry.getKey())
+                        + "\" && resource.k8s.namespace.name =~ \"" + regex + "\")");
+            }
+        }
+        return clauses;
+    }
+
+    /** 命名空间是 DNS 标签，本不需要转义；这里仍按正则元字符转义，避免将来放宽命名规则时出错 */
+    private static String regexEscape(String value) {
+        return value.replaceAll("([\\\\.^$|?*+()\\[\\]{}])", "\\\\$1");
     }
 
     private static String escape(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static String ellipsis(String value, int max) {
+        return value.length() <= max ? value : value.substring(0, max) + "…";
     }
 
     private static long parseLong(String value) {

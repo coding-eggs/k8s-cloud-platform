@@ -35,16 +35,33 @@ public final class OtelObjects {
     }
 
     /**
+     * collector gateway 的资源限制（表单可改）。默认值与原先写死的值一致，行为不变。
+     */
+    public record GatewayResources(String cpuRequest, String memoryRequest,
+                                   String cpuLimit, String memoryLimit) {
+        public static final GatewayResources DEFAULT =
+                new GatewayResources("200m", "256Mi", "1", "1Gi");
+    }
+
+    public static List<Map<String, Object>> build(boolean logsEnabled, int gatewayReplicas,
+                                                  String tempoTlsMode) {
+        return build(logsEnabled, gatewayReplicas, tempoTlsMode, GatewayResources.DEFAULT);
+    }
+
+    /**
      * @param logsEnabled    是否渲染 logs 管道与 ES exporter（关闭时连 ES 的环境变量都不出现，
      *                       否则会引用一个不存在的 Secret，Pod 起不来）
      * @param gatewayReplicas collector Deployment 副本数（表单值）
+     * @param resources      collector Deployment 的 requests/limits（表单值，空用默认）
      */
-    public static List<Map<String, Object>> build(boolean logsEnabled, int gatewayReplicas, String tempoTlsMode) {
+    public static List<Map<String, Object>> build(boolean logsEnabled, int gatewayReplicas,
+                                                  String tempoTlsMode, GatewayResources resources) {
         return List.of(
                 instrumentation("platform-instrumentation", true, false),
                 instrumentation("platform-instrumentation-logs", false, true),
                 instrumentation("platform-instrumentation-all", true, true),
-                gateway(logsEnabled, gatewayReplicas, tempoTlsMode),
+                gateway(logsEnabled, gatewayReplicas, tempoTlsMode,
+                        resources == null ? GatewayResources.DEFAULT : resources),
                 sidecar());
     }
 
@@ -114,6 +131,9 @@ public final class OtelObjects {
     private static Map<String, Object> instrumentation(String name, boolean tracing, boolean logs) {
         List<Map<String, Object>> env = new ArrayList<>();
         env.add(Map.of("name", "OTEL_EXPORTER_OTLP_PROTOCOL", "value", "http/protobuf"));
+        // 指标不走 OTel（平台指标由 Prometheus/ServiceMonitor 负责）：显式关掉 SDK 的 metric exporter，
+        // 否则 agent 会往 gateway 推指标、而 gateway 没有 metrics 管道，白费带宽还刷错误日志
+        env.add(Map.of("name", "OTEL_METRICS_EXPORTER", "value", "none"));
         if (logs) {
             env.add(Map.of("name", "OTEL_LOGS_EXPORTER", "value", "otlp"));
         }
@@ -141,7 +161,8 @@ public final class OtelObjects {
                 "spec", spec);
     }
 
-    private static Map<String, Object> gateway(boolean logsEnabled, int replicas, String tempoTlsMode) {
+    private static Map<String, Object> gateway(boolean logsEnabled, int replicas, String tempoTlsMode,
+                                               GatewayResources resources) {
         Map<String, Object> exporters = new LinkedHashMap<>();
         Map<String, Object> tempoExporter = new LinkedHashMap<>();
         tempoExporter.put("endpoint", "${env:TEMPO_ENDPOINT}");
@@ -153,9 +174,6 @@ public final class OtelObjects {
             default -> tempoExporter.put("tls", Map.of("insecure", true));
         }
         exporters.put("otlp/tempo", tempoExporter);
-        exporters.put("prometheus", Map.of(
-                "endpoint", "0.0.0.0:8889",
-                "resource_to_telemetry_conversion", Map.of("enabled", true)));
         if (logsEnabled) {
             exporters.put("elasticsearch", Map.of(
                     "endpoints", List.of("${env:ES_ENDPOINT}"),
@@ -179,10 +197,9 @@ public final class OtelObjects {
                 "receivers", List.of("otlp"),
                 "processors", List.of("memory_limiter", "resource", "k8sattributes", "batch"),
                 "exporters", List.of("otlp/tempo")));
-        pipelines.put("metrics", Map.of(
-                "receivers", List.of("otlp"),
-                "processors", List.of("memory_limiter", "resource", "k8sattributes", "batch"),
-                "exporters", List.of("prometheus")));
+        // 指标不走 OTel：平台的应用指标由 Prometheus + ServiceMonitor 抓（见 README §2.3）。
+        // 之前那条 otlp→prometheus(:8889) 管道没有任何 ServiceMonitor 抓取，指标点收进来就丢，
+        // 已连同 Instrumentation 的 OTEL_METRICS_EXPORTER=none 一起移除（2026-10-30）。
         if (logsEnabled) {
             pipelines.put("logs", Map.of(
                     "receivers", List.of("otlp"),
@@ -222,12 +239,11 @@ public final class OtelObjects {
         spec.put("image", CONTRIB_IMAGE);
         spec.put("ports", List.of(
                 Map.of("name", "otlp-grpc", "port", 4317, "protocol", "TCP"),
-                Map.of("name", "otlp-http", "port", 4318, "protocol", "TCP"),
-                Map.of("name", "prometheus", "port", 8889, "protocol", "TCP")));
+                Map.of("name", "otlp-http", "port", 4318, "protocol", "TCP")));
         spec.put("env", gatewayEnv(logsEnabled));
         spec.put("resources", Map.of(
-                "requests", Map.of("cpu", "200m", "memory", "256Mi"),
-                "limits", Map.of("cpu", "1", "memory", "1Gi")));
+                "requests", Map.of("cpu", resources.cpuRequest(), "memory", resources.memoryRequest()),
+                "limits", Map.of("cpu", resources.cpuLimit(), "memory", resources.memoryLimit())));
         spec.put("config", config);
 
         return Map.of(

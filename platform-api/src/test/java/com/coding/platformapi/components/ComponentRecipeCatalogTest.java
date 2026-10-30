@@ -72,6 +72,53 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void seaweedfsS3GatewayBoundsItsReadCacheAndHasMemoryHeadroom() {
+        // 2026-10-30 实锤：weed s3 的 -readerCacheSizeMB 默认 0 = **不限**读缓冲，
+        // Tempo/Milvus 并发 GET 时网关内存无上界 → 512Mi 限额下 OOMKilled 循环，
+        // S3 不可用 → Tempo 查询 500「no healthy upstream」。这里把两件事都钉住：
+        // 读缓冲有上界 + 网关限额有余量。
+        ReleaseSpec spec = catalog.recipeOf("seaweedfs", "MANAGEMENT").releases().get(0);
+        Map<?, ?> s3 = (Map<?, ?>) spec.contractValues().get("s3");
+        assertThat(s3.get("extraArgs").toString()).contains("-readerCacheSizeMB=256");
+        // 资源限额在 editableValues（表单可改），默认 1Gi
+        assertThat(((Map<?, ?>) spec.editableValues().get("s3.resources")).get("limits").toString())
+                .contains("memory=1Gi");
+    }
+
+    @Test
+    void seaweedfsAndTempoResourcesAreEditableNotContract() {
+        // mergeValues 的规则是「契约值最后压」：资源若留在 contractValues，表单改了也不生效。
+        // 这四个工作负载 + Tempo 的资源都要在 editableValues 里。
+        ReleaseSpec seaweed = catalog.recipeOf("seaweedfs", "BUSINESS").releases().get(0);
+        assertThat(seaweed.contractValues().toString()).doesNotContain("resources");
+        assertThat(seaweed.editableValues().keySet().toString())
+                .contains("s3.resources").contains("filer.resources")
+                .contains("volume.resources").contains("master.resources");
+        assertThat(seaweed.editableValues().get("s3.resources").toString())
+                .contains("memory=1Gi");
+
+        ReleaseSpec tempo = catalog.recipeOf("otel-operator", "MANAGEMENT").releases().stream()
+                .filter(r -> "platform-tempo".equals(r.releaseName()))
+                .findFirst().orElseThrow();
+        assertThat(tempo.contractValues().toString()).doesNotContain("resources");
+        assertThat(tempo.editableValues()).containsKey("tempo.resources");
+        assertThat(tempo.editableValues().get("tempo.resources").toString())
+                .contains("memory=512Mi").contains("memory=2Gi");
+        // 持久化同样是可编辑默认值（契约里只留 enabled）；只在首次安装时可选
+        assertThat(tempo.editableValues()).containsKeys("persistence.storageClassName", "persistence.size");
+        assertThat(tempo.contractValues().get("persistence").toString())
+                .contains("enabled=true").doesNotContain("storageClassName");
+    }
+
+    @Test
+    void theS3GatewayKeepsItsReaderCacheBudgetOutOfTheForm() {
+        // -readerCacheSizeMB 的 0 = 不限；它是防 OOM 的护栏，不能进表单让用户配成 0
+        ReleaseSpec seaweed = catalog.recipeOf("seaweedfs", "BUSINESS").releases().get(0);
+        assertThat(seaweed.contractValues().get("s3").toString()).contains("-readerCacheSizeMB=256");
+        assertThat(seaweed.editableValues().keySet().toString()).doesNotContain("readerCache");
+    }
+
+    @Test
     void anUnknownComponentOrProfileHasNoRecipe() {        assertThat(catalog.recipeOf("no-such", "BUSINESS")).isNull();
         assertThat(catalog.supports("metrics-server")).isTrue();
     }

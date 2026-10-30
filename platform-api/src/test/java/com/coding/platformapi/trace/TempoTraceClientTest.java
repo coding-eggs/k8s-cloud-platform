@@ -170,15 +170,18 @@ class TempoTraceClientTest {
     }
 
     @Test
-    void tenantScopesBecomeOrEdTraceQlConditions() {
+    void tenantScopesAreCompressedIntoOneRegexPerCluster() {
+        // 每个命名空间写一对 (cluster && namespace) 会把 query 顶到 2KB，Tempo 3.1 直接 400；
+        // 同一集群的命名空间压成 =~ "a|b|c"（TraceQL 的 =~ 是全匹配，不会子串误命中）
         server.expect(request -> {
                     String query = java.net.URLDecoder.decode(
                             String.valueOf(request.getURI().getRawQuery()),
                             java.nio.charset.StandardCharsets.UTF_8);
                     assertThat(query)
-                            .contains("(resource.cluster.name = \"coding-cluster\" && resource.k8s.namespace.name = \"movie-ns\")")
-                            .contains(" || ")
-                            .contains("resource.k8s.namespace.name = \"shared\"");
+                            .contains("(resource.cluster.name = \"coding-cluster\""
+                                    + " && resource.k8s.namespace.name =~ \"movie-ns|shared\")")
+                            .contains("resource.k8s.namespace.name =~ \"solo\"")
+                            .doesNotContain("resource.k8s.namespace.name = \"shared\"");
                 })
                 .andRespond(withSuccess("{\"traces\":[]}", MediaType.APPLICATION_JSON));
 
@@ -187,8 +190,50 @@ class TempoTraceClientTest {
         req.setEnd(2000L);
         client.search(req, java.util.List.of(
                 new TraceScope("coding-cluster", "movie-ns"),
-                new TraceScope("coding-cluster", "shared")));
+                new TraceScope("coding-cluster", "shared"),
+                new TraceScope("other-cluster", "solo")));
 
+        server.verify();
+    }
+
+    @Test
+    void aLargeTenantScopeIsSplitIntoSeveralTempoQueriesAndMerged() {
+        // 60 个长命名空间 → 单条 query 超预算 → 切批。两批结果按 traceID 去重、按开始时间倒序
+        String suffix = "x".repeat(24);
+        java.util.List<TraceScope> scopes = java.util.stream.IntStream.range(0, 48)
+                .mapToObj(i -> new TraceScope("coding-cluster", String.format("ns-%02d-%s", i, suffix)))
+                .toList();
+
+        server.expect(request -> {
+                    String query = java.net.URLDecoder.decode(
+                            String.valueOf(request.getURI().getRawQuery()),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    assertThat(query).contains("ns-00-").doesNotContain("ns-47-");
+                })
+                .andRespond(withSuccess("""
+                        {"traces":[{"traceID":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","startTimeUnixNano":"100"},
+                        {"traceID":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","startTimeUnixNano":"200"}]}
+                        """, MediaType.APPLICATION_JSON));
+        server.expect(request -> {
+                    String query = java.net.URLDecoder.decode(
+                            String.valueOf(request.getURI().getRawQuery()),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                    assertThat(query).contains("ns-47-");
+                })
+                .andRespond(withSuccess("""
+                        {"traces":[{"traceID":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","startTimeUnixNano":"200"},
+                        {"traceID":"cccccccccccccccccccccccccccccccc","startTimeUnixNano":"300"}]}
+                        """, MediaType.APPLICATION_JSON));
+
+        TraceSearchRequest req = new TraceSearchRequest();
+        req.setStart(1000L);
+        req.setEnd(2000L);
+        var out = client.search(req, scopes);
+
+        assertThat(out).extracting(TraceSummaryDTO::getTraceId).containsExactly(
+                "cccccccccccccccccccccccccccccccc",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         server.verify();
     }
 
@@ -198,7 +243,7 @@ class TempoTraceClientTest {
                     String query = java.net.URLDecoder.decode(
                             String.valueOf(request.getURI().getRawQuery()),
                             java.nio.charset.StandardCharsets.UTF_8);
-                    assertThat(query).contains("resource.k8s.namespace.name = \"movie-ns\"");
+                    assertThat(query).contains("resource.k8s.namespace.name =~ \"movie-ns\"");
                 })
                 .andRespond(withSuccess("{\"tagValues\":[]}", MediaType.APPLICATION_JSON));
 
@@ -206,6 +251,23 @@ class TempoTraceClientTest {
                 java.util.List.of(new TraceScope("coding-cluster", "movie-ns")));
 
         server.verify();
+    }
+
+    @Test
+    void aTempo400CarriesItsResponseBodyInTheMessage() {
+        // 只报「HTTP 400」等于把排障线索扔掉：Tempo 的正文才是 TraceQL 出错位置
+        server.expect(request -> { })
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .body("parse error at line 1, col 2049: syntax error: unexpected $end"));
+
+        TraceSearchRequest req = new TraceSearchRequest();
+        req.setStart(1000L);
+        req.setEnd(2000L);
+
+        assertThatThrownBy(() -> client.search(req))
+                .hasMessageContaining("HTTP 400")
+                .hasMessageContaining("unexpected $end");
     }
 
     @Test

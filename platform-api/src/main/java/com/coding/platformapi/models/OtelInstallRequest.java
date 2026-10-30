@@ -26,6 +26,11 @@ public class OtelInstallRequest {
     private String tempoRetention;
     /** collector → Tempo 的传输模式：plaintext / tls / tls-skip-verify */
     private String tempoTlsMode;
+    /** collector gateway 的资源限制（四个 quantity；空 = 平台默认 200m / 256Mi → 1 / 1Gi） */
+    private String gatewayCpuRequest;
+    private String gatewayMemoryRequest;
+    private String gatewayCpuLimit;
+    private String gatewayMemoryLimit;
     /** Tempo 的 MinIO 参数（仅 MANAGEMENT） */
     private TempoStorageConfig tempoStorage;
     /** ES 参数（logsEnabled 时必填） */
