@@ -10,8 +10,8 @@ declare module 'vue-router' {
     /** 免登录页 */
     public?: boolean
     title?: string
-    /** 顶栏上下文控件：'full' = 租户→集群→命名空间级联；'cluster' = 只到集群（集群级资源，如存储类） */
-    context?: 'full' | 'cluster'
+    /** 顶栏上下文控件：'full' = 租户→集群→命名空间级联 */
+    context?: 'full'
     /** 进入该页所需的权限点 code，ANY-of（命中任一即放行）；缺则守卫跳总览、菜单隐藏。
      *
      *  ⚠️ 只放 **Page 域** 码（pageCodes.ts）。页面可见性与接口授权是两件事：这里的码决定"能不能进这个页面"，
@@ -57,8 +57,9 @@ const router = createRouter({
         { path: 'namespaces', name: 'namespaces', component: () => import('@/views/NamespaceView.vue'), meta: { title: '命名空间管理', domain: 'cluster', icon: 'FolderOpened', order: 3, requiresPerm: [pageCodes.namespace.list] } },
         { path: 'namespaces/editor', name: 'namespace-editor', component: () => import('@/views/NamespaceEditorView.vue'), meta: { title: '命名空间编辑', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.namespace.edit] } },
         { path: 'namespaces/detail', name: 'namespace-detail', component: () => import('@/views/NamespaceDetailView.vue'), meta: { title: '命名空间概览', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.namespace.detail] } },
-        // 存储类：集群级资源，没有命名空间维度 —— 顶栏只给到集群（'cluster'），不要命名空间那段
-        { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', domain: 'cluster', icon: 'Files', order: 4, context: 'cluster', requiresPerm: [pageCodes.storageClass.list] } },
+        // 存储类：集群级、只读，**不挂顶栏上下文** —— 页面自己带一个集群选择器。
+        // 它既不需要命名空间，也不需要顶栏那一套“租户/集群”记忆。
+        { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', domain: 'cluster', icon: 'Files', order: 4, requiresPerm: [pageCodes.storageClass.list] } },
 
         // ============ 平台视图 · 网络 ============
         { path: 'mesh/gatewayclasses', name: 'gatewayclasses', component: () => import('@/views/mesh/GatewayClassView.vue'), meta: { title: 'GatewayClass', domain: 'network', icon: 'Guide', order: 1, requiresPerm: [pageCodes.mesh.gatewayClass.list] } },

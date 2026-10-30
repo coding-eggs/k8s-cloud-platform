@@ -18,7 +18,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
 import YamlBlock from '@/components/YamlBlock.vue'
 
-const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const { state, ready, currentTenant, currentCluster, load, setTenant, setCluster } = useResourceContext()
 
 const loading = ref(false)
 const list = ref<K8sStorageClass[]>([])
@@ -26,6 +26,33 @@ const list = ref<K8sStorageClass[]>([])
 /**集群级资源只需两级上下文（无 namespace），故不直接用 ready */
 const clusterReady = computed(() => !!(state.loaded && state.tenantId && state.clusterId))
 const ctx2 = computed(() => ({ tenantId: state.tenantId!, clusterId: state.clusterId! }))
+
+/**
+ * 页面自带的集群选择器：本页是集群级、只读，不需要命名空间，
+ * 也就不该占用顶栏那套「租户/集群/命名空间」级联 —— 顶栏在别的资源页才是对的。
+ *
+ * 选项把各租户下的集群摊平去重（存储类本身是整集群共享的），选定后顺带把归属租户写回上下文，
+ * 接口要的 tenantId 因此不用用户再选一次。
+ */
+const clusterOptions = computed(() => {
+  const seen = new Map<string, { clusterId: string; clusterName: string; tenantId: string }>()
+  for (const t of state.tenants) {
+    for (const c of t.clusters) {
+      if (!seen.has(c.clusterId)) {
+        seen.set(c.clusterId, { clusterId: c.clusterId, clusterName: c.clusterName, tenantId: t.tenantId })
+      }
+    }
+  }
+  return [...seen.values()]
+})
+
+function onClusterChange(clusterId: string): void {
+  const opt = clusterOptions.value.find((o) => o.clusterId === clusterId)
+  if (!opt) return
+  // 先租户后集群：setTenant 会把 cluster/namespace 清空
+  setTenant(opt.tenantId)
+  setCluster(opt.clusterId)
+}
 
 async function refresh(): Promise<void> {
   if (!clusterReady.value) return
@@ -68,7 +95,7 @@ watch(
 )
 
 const contextDesc = computed(() => {
-  if (!clusterReady.value) return '请在顶栏选择租户 / 集群'
+  if (!clusterReady.value) return '请先选择集群'
   return `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''}`
 })
 </script>
@@ -76,6 +103,22 @@ const contextDesc = computed(() => {
 <template>
   <div>
     <PageHeader title="存储类" :description="contextDesc">
+      <el-select
+        :model-value="state.clusterId ?? ''"
+        placeholder="选择集群"
+        class="cluster-picker"
+        @update:model-value="onClusterChange(String($event))"
+      >
+        <template #prefix>
+          <el-icon><Monitor /></el-icon>
+        </template>
+        <el-option
+          v-for="c in clusterOptions"
+          :key="c.clusterId"
+          :label="c.clusterName"
+          :value="c.clusterId"
+        />
+      </el-select>
       <el-button @click="refresh" :disabled="!clusterReady">刷新</el-button>
     </PageHeader>
 
@@ -201,5 +244,10 @@ const contextDesc = computed(() => {
   margin-top: 4px;
   font-size: 12px;
   line-height: 1.7;
+}
+/* 页面自带的集群选择器：放在页头操作区，宽度够放下集群名 */
+.cluster-picker {
+  width: 200px;
+  margin-right: 8px;
 }
 </style>

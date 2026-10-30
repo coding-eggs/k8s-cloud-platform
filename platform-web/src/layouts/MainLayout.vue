@@ -175,12 +175,8 @@ const sidebarTitle = computed(() =>
 
 // ---------- 顶栏 ----------
 // 顶栏不再显示面包屑：域 tab + 侧栏当前项已经回答了「我在哪」（见 docs/superpowers/specs/2026-10-30-frontend-navigation-ia-design.md §6.1）
-// 资源管理页在顶栏展示全局上下文级联（租户→集群→命名空间）。
-// 集群级资源页（存储类）只需要到集群，用 'cluster' 档，别多给一级用不上的命名空间。
-const contextDepth = computed<'full' | 'cluster' | null>(() => {
-  const c = route.meta.context
-  return c === 'full' || c === 'cluster' ? c : null
-})
+// 资源管理页在顶栏展示全局上下文级联（租户→集群→命名空间）
+const showContextSelector = computed(() => route.meta.context === 'full')
 
 // 用户按钮：头像 + 名称，下拉里展示角色与退出
 const userInfo = getUserInfo()
@@ -281,7 +277,7 @@ async function handleLogout(): Promise<void> {
           </button>
         </nav>
 
-        <ContextSelector v-if="contextDepth" :depth="contextDepth" />
+        <ContextSelector v-if="showContextSelector" />
 
         <div class="topbar-right">
           <!-- 租户切换器（自管轨）：my-tenants 非空即显示；admin 代管用 ContextSelector 筛选器（spec §4.4） -->
