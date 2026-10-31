@@ -43,13 +43,30 @@ public class NamespaceAllocationService {
     private final NamespaceService namespaceService;
     private final AuthContext authContext;
 
+    /** 分配完就把拉取凭据铺好 —— 租户拿到这个 ns 的第一刻起就该能拉自己的镜像（spec §6.6） */
+    private final RegistryPullSecretService pullSecrets;
+
+    /** 「这个命名空间已经归谁了」—— 冲突文案要指名道姓，否则管理员只能去库里翻 */
+    private String describeHolder(PlatformTenantNamespace row) {
+        String tenantId = row.getTenantId();
+        PlatformTenant t = tenantId == null ? null : tenantMapper.selectByPrimaryKey(tenantId);
+        String name = t != null && t.getName() != null ? t.getName() : tenantId;
+        return "租户「" + name + "」—— 一个命名空间只能归属一个租户，请先取消那边的分配";
+    }
+
     public PlatformTenantNamespace create(AllocationCreateRequest req) {
         PlatformTenant tenant = requireEnabledTenant(req.getTenantId());
         requireEnabledCluster(req.getClusterId());
         PlatformRbacTemplate template = resolveTemplate(req.getRoleTemplateId());
 
-        if (allocationMapper.selectByTenantClusterNs(req.getTenantId(), req.getClusterId(), req.getNamespace()) != null) {
-            throw new CloudPlatformException(EnumResponseType.NAMESPACE_ALREADY_ALLOCATED);
+        // 一个命名空间只能归属一个租户（spec 2026-10-31 §3.2）。原来这里只挡"同一租户重复分配"，
+        // 唯一键 V2026_10_31_3 才是真正的兜底 —— 但它要手工重放，所以代码里也先判一次：
+        // 否则用户撞上的是 SQL 的 Duplicate entry，既看不懂、也定位不到是哪一步。
+        List<PlatformTenantNamespace> holders =
+                allocationMapper.selectByClusterAndNs(req.getClusterId(), req.getNamespace());
+        if (!holders.isEmpty()) {
+            throw new CloudPlatformException(EnumResponseType.NAMESPACE_ALREADY_ALLOCATED,
+                    "命名空间「" + req.getNamespace() + "」已分配给" + describeHolder(holders.get(0)));
         }
         K8sNaming.validateRawName(req.getNamespace(), "", "namespace");
 
@@ -72,6 +89,8 @@ public class NamespaceAllocationService {
             adminClient.ensureTenantSa(req.getClusterId(), tenant.getServiceAccount());
             provisioning.ensureRoleBinding(req.getClusterId(), tenant.getId(), req.getNamespace(),
                     tenant.getServiceAccount(), template.getName());
+            // 默认拉取凭据：best-effort，失败只告警（没有 Harbor / 凭据还没建好时也走到这里）
+            pullSecrets.ensureQuietly(req.getClusterId(), tenant.getId(), req.getNamespace());
         } catch (Exception e) {
             allocationMapper.deleteByPrimaryKey(row.getId()); // 回滚分配行
             throw e;

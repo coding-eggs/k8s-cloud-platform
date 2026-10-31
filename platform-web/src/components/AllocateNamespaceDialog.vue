@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { clusterApi, namespaceApi, templateApi, tenantApi } from '@/api'
-import type { K8sCluster, PlatformTenant, RbacTemplate } from '@/types'
+import type { K8sCluster, NamespaceAllocation, PlatformTenant, RbacTemplate } from '@/types'
 
 const props = defineProps<{
   /** 预设租户（从租户管理页打开时传入；不传则对话框内可选） */
@@ -38,7 +38,13 @@ async function loadNsOptions(): Promise<void> {
   }
   nsLoading.value = true
   try {
-    nsOptions.value = (await namespaceApi.list(form.clusterId)).map((n) => n.name)
+    // 一个命名空间只能归属一个租户：已分配的直接从候选里去掉（后端也会拒，这里是省一次白跑）
+    const [all, allocated] = await Promise.all([
+      namespaceApi.list(form.clusterId),
+      tenantApi.namespaceList({ clusterId: form.clusterId }).catch(() => [] as NamespaceAllocation[]),
+    ])
+    const taken = new Set((allocated ?? []).map((a) => a.namespace))
+    nsOptions.value = all.map((n) => n.name).filter((n) => !taken.has(n))
   } catch {
     nsOptions.value = [] // 拉取失败退化为纯手填（拦截器已提示）
   } finally {
@@ -129,7 +135,10 @@ async function submit(): Promise<void> {
             :disabled="SYSTEM_NAMESPACES.includes(n)"
           />
         </el-select>
-        <div class="form-tip">已有命名空间可直接选择；新名字不存在时自动创建（打 managed-by 标签）；内置系统命名空间不可分配</div>
+        <div class="form-tip">
+          已有命名空间可直接选择；<b>已分配给其他租户的不再列出</b>（一个命名空间只能归属一个租户）。
+          新名字不存在时自动创建（打 managed-by 标签）
+        </div>
       </el-form-item>
       <el-form-item label="RBAC 模板">
         <el-select v-model="form.roleTemplateId" style="width: 100%">
