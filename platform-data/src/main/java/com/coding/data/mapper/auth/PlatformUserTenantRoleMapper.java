@@ -23,12 +23,6 @@ public interface PlatformUserTenantRoleMapper {
     List<String> selectRoleIdsByUserAndTenant(@Param("userId") String userId, @Param("tenantId") String tenantId);
 
     /**
-     * 不变量 3 守卫专用：count + FOR UPDATE，在调用方事务内锁住该 (tenant,role) 的行区间，
-     * 使"最后一个 tenant-admin"的 count-then-delete 串行化（并发 revoke/remove 互相阻塞）。
-     */
-    int countByTenantAndRoleForUpdate(@Param("tenantId") String tenantId, @Param("roleId") String roleId);
-
-    /**
      * 该租户下持指定角色 code 的用户 id（投递引擎用它找默认收件人 = tenant-admin）。
      * 过滤已删/停用的角色，口径同 {@link #selectRoleIdsByUserAndTenant}。
      */

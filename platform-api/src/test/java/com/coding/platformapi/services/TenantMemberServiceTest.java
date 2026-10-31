@@ -46,30 +46,12 @@ class TenantMemberServiceTest {
             .isEqualTo(EnumResponseType.TENANT_MEMBER_NOT_FOUND.getCode());
     }
 
-    @Test void cannot_revoke_last_admin() {
+    @Test void revoking_the_last_admin_is_allowed() {
+        // 2026-10-31 撤销不变量 3：零管理员是合法状态（建租户时 owner 可选、平台可全权代管），
+        // 只在移除侧拦会自相矛盾，而且只能"先加一个再删"。提醒改由前端弹确认。
         var svc = memberSvc();
-        when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
-        when(utr.countByTenantAndRoleForUpdate("t1", "adminRole")).thenReturn(1);
-        assertThatThrownBy(() -> svc.revokeRole("t1", "u1", "adminRole"))
-            .isInstanceOf(CloudPlatformException.class)
-            .extracting(e -> ((CloudPlatformException) e).getCode())
-            .isEqualTo(EnumResponseType.TENANT_ADMIN_REQUIRED.getCode());
-    }
-
-    @Test void revoke_admin_with_second_admin_proceeds() {
-        var svc = memberSvc();
-        when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
-        when(utr.countByTenantAndRoleForUpdate("t1", "adminRole")).thenReturn(2);
         assertThatCode(() -> svc.revokeRole("t1", "u1", "adminRole")).doesNotThrowAnyException();
         verify(utr).delete("u1", "t1", "adminRole");
-    }
-
-    @Test void revoke_non_admin_skips_admin_check() {
-        var svc = memberSvc();
-        when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
-        assertThatCode(() -> svc.revokeRole("t1", "u1", "roleX")).doesNotThrowAnyException();
-        verify(utr, never()).countByTenantAndRoleForUpdate(any(), any());
-        verify(utr).delete("u1", "t1", "roleX");
     }
 
     @Test void add_member_is_idempotent_when_existing() {
@@ -125,16 +107,13 @@ class TenantMemberServiceTest {
         verify(utr, never()).insert(any());
     }
 
-    @Test void cannot_remove_last_admin() {
+    @Test void removing_the_last_admin_is_allowed() {
         var svc = memberSvc();
-        when(roleMapper.selectByCode("tenant-admin")).thenReturn(adminRole());
         when(utr.selectByTenantAndUser("t1", "u1")).thenReturn(List.of(utrRow("u1", "adminRole")));
-        when(utr.countByTenantAndRoleForUpdate("t1", "adminRole")).thenReturn(1);
-        assertThatThrownBy(() -> svc.removeMember("t1", "u1"))
-            .isInstanceOf(CloudPlatformException.class)
-            .extracting(e -> ((CloudPlatformException) e).getCode())
-            .isEqualTo(EnumResponseType.TENANT_ADMIN_REQUIRED.getCode());
-        verify(utm, never()).deleteByUserAndTenant(any(), any());
+
+        assertThatCode(() -> svc.removeMember("t1", "u1")).doesNotThrowAnyException();
+        verify(utr).deleteByUserAndTenant("u1", "t1");
+        verify(utm).deleteByUserAndTenant("u1", "t1");
     }
 
     @Test void remove_member_cascades_roles() {
@@ -172,10 +151,9 @@ class TenantMemberServiceTest {
 
     @Test void missing_builtin_admin_role_fails_fast() {
         var svc = memberSvc();
-        when(utm.exists("u1", "t1")).thenReturn(true);
         when(roleMapper.selectByCode("tenant-admin")).thenReturn(null);
-        // grantRole 本身不需要 admin 角色，但 revoke/list 需要 → 用 revoke 验证 seed 缺失快速失败
-        assertThatThrownBy(() -> svc.revokeRole("t1", "u1", "roleX"))
+        // 现在只有 listMembers 还需要它（判 owner）；grant/revoke 已不依赖 admin 角色
+        assertThatThrownBy(() -> svc.listMembers("t1"))
             .isInstanceOf(IllegalStateException.class);
     }
 

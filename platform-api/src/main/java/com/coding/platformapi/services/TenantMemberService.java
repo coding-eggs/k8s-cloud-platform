@@ -23,10 +23,12 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * 租户成员管理（不变量 2/3）：
+ * 租户成员管理：
  * <ul>
  *   <li>不变量 2：授予租户角色前必须已是该租户成员（user_tenant 行存在），否则 TENANT_MEMBER_NOT_FOUND</li>
- *   <li>不变量 3：任何路径（回收角色 / 移除成员）都不得让租户失去最后一个 tenant-admin，否则 TENANT_ADMIN_REQUIRED</li>
+ *   <li>不变量 3（<b>2026-10-31 撤销</b>）：原「任何路径都不得让租户失去最后一个 tenant-admin」。
+ *       撤销理由：建租户时 owner 是可选的，平台侧又能全权代管 —— 零管理员本来就是合法状态；
+ *       只在移除侧拦会自相矛盾，且只能"先加一个再删"。提醒改由前端弹确认。</li>
  * </ul>
  * 每个写方法各自 {@code @Transactional}（方法级原子；uk_user_tenant / uk_user_tenant_role 唯一索引兜并发幂等）。
  */
@@ -117,25 +119,22 @@ public class TenantMemberService {
         RoleValidations.requireRoleOfScope(roleMapper, roleId, RoleScope.TENANT);
     }
 
-    /** 回收租户角色：回收 tenant-admin 时守不变量 3（FOR UPDATE count，事务内串行化防竞态）。回收本身宽松（按键删）。 */
+    /**
+     * 回收租户角色：按键删除。
+     *
+     * <p>⚠️ 2026-10-31 起**不再拦"最后一个 tenant-admin"**。理由：建租户时 {@code ownerUserId} 本来就是
+     * 可选的（不填就建出零成员的租户），平台侧又能全权代管 —— "零管理员"是系统本来就接受的合法状态，
+     * 只在移除这一侧拦就自相矛盾，而且没有别的绕法（只能先加一个管理员再删，纯属折腾）。
+     * 提醒放在前端：移除/降级最后一名管理员时弹更重的确认，说清"之后只能由平台代管"。
+     */
     @Transactional
     public void revokeRole(String tenantId, String userId, String roleId) {
-        String adminRoleId = requireAdminRoleId();
-        if (roleId.equals(adminRoleId) && utrMapper.countByTenantAndRoleForUpdate(tenantId, adminRoleId) <= 1) {
-            throw new CloudPlatformException(EnumResponseType.TENANT_ADMIN_REQUIRED);
-        }
         utrMapper.delete(userId, tenantId, roleId);
     }
 
-    /** 移除成员：级联删其租户角色；被移者持 tenant-admin 时守不变量 3（FOR UPDATE count 防竞态）。 */
+    /** 移除成员：级联删其租户角色。同上，不再拦"最后一个管理员"。 */
     @Transactional
     public void removeMember(String tenantId, String userId) {
-        String adminRoleId = requireAdminRoleId();
-        boolean isAdmin = utrMapper.selectByTenantAndUser(tenantId, userId).stream()
-                .anyMatch(x -> x.getRoleId().equals(adminRoleId));
-        if (isAdmin && utrMapper.countByTenantAndRoleForUpdate(tenantId, adminRoleId) <= 1) {
-            throw new CloudPlatformException(EnumResponseType.TENANT_ADMIN_REQUIRED);
-        }
         utrMapper.deleteByUserAndTenant(userId, tenantId);
         utMapper.deleteByUserAndTenant(userId, tenantId);
     }

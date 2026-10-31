@@ -99,6 +99,8 @@ async function onDeallocate(row: NamespaceAllocation): Promise<void> {
 // ==================== 成员与角色 tab ====================
 const memberLoading = ref(false)
 const members = ref<TenantMemberView[]>([])
+/** 该租户还有几个租户管理员 —— 移除/降级最后一名时弹更重的确认（后端 2026-10-31 起不再拦） */
+const ownerCount = computed(() => members.value.filter((m) => m.owner).length)
 /** TENANT 族角色目录：代管轨可读（admin 有 platform:role:read）；自管轨 403 → null=不可用 */
 const tenantRoles = ref<PlatformRole[] | null>([])
 const roleCatalogFailed = computed(() => tenantRoles.value === null)
@@ -210,6 +212,19 @@ async function onGrantRole(row: TenantMemberView): Promise<void> {
 }
 
 async function onRevokeRole(row: TenantMemberView, roleId: string): Promise<void> {
+  // 前端不知道哪个 roleId 是 tenant-admin，只知道"这个人是不是 owner" ——
+  // 最后一名 owner 回收任意角色都提醒一次，措辞把前提说清，不假装知道回收的是哪一个。
+  if (row.owner && ownerCount.value <= 1) {
+    try {
+      await ElMessageBox.confirm(
+        `「${row.username ?? row.userId}」是该租户唯一的租户管理员。\n\n若回收的是管理员角色，该租户将没有任何管理员，只能由平台代管。继续？`,
+        '注意',
+        { type: 'warning', confirmButtonText: '继续回收' },
+      )
+    } catch {
+      return
+    }
+  }
   memberBusy.value = row.userId
   try {
     await tenantApi.memberRoleRevoke({ tenantId: props.tenantId, userId: row.userId, roleId })
@@ -223,11 +238,15 @@ async function onRevokeRole(row: TenantMemberView, roleId: string): Promise<void
 }
 
 async function onRemoveMember(row: TenantMemberView): Promise<void> {
+  const who = row.username ?? row.userId
+  const lastAdmin = row.owner && ownerCount.value <= 1
   try {
     await ElMessageBox.confirm(
-      `确认将成员「${row.username ?? row.userId}」移出租户「${props.tenantName}」？级联删除其在本租户的角色。`,
-      '提示',
-      { type: 'warning' },
+      lastAdmin
+        ? `「${who}」是该租户唯一的租户管理员。\n\n移除后这个租户将没有任何管理员，只能由平台代管 —— 租户自己的成员将无法再管理成员与角色。确定移除？`
+        : `确认将成员「${who}」移出租户「${props.tenantName}」？级联删除其在本租户的角色。`,
+      lastAdmin ? '该租户将没有管理员' : '提示',
+      { type: 'warning', confirmButtonText: lastAdmin ? '仍然移除' : '确定' },
     )
   } catch {
     return
