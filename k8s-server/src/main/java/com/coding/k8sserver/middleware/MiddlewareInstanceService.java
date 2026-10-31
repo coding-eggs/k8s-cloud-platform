@@ -390,11 +390,14 @@ public class MiddlewareInstanceService {
             if (!authData.isEmpty()) {
                 writeDataSecret(client, req.getNamespace(), authSecret, authData, req.getInstanceId());
             }
+            // 建 CR 也走 SSA、用平台统一的 fieldManager：否则 owner 落成 fabric8 的客户端身份，
+            // 以后平台再 SSA 更新这个 CR 时，按 key 合并的列表条目（容器 / env / 端口…）删不掉。
+            // 详见 {@link ServerSideApply} 的类注释。
             for (MiddlewareAdapter.CrSpec spec : adapter.buildCreate(req)) {
                 client.genericKubernetesResources(spec.context())
                         .inNamespace(req.getNamespace())
                         .resource(spec.resource())
-                        .create();
+                        .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
                 created.add(spec);
             }
             createMetricsResources(client, adapter, req, created);
@@ -929,7 +932,7 @@ public class MiddlewareInstanceService {
         try {
             for (MiddlewareAdapter.CrSpec s : adapter.buildMetricsResources(req, spec)) {
                 client.genericKubernetesResources(s.context())
-                        .inNamespace(req.getNamespace()).resource(s.resource()).create();
+                        .inNamespace(req.getNamespace()).resource(s.resource()).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
                 made.add(s);
             }
             created.addAll(made);
@@ -956,7 +959,7 @@ public class MiddlewareInstanceService {
         try {
             for (MiddlewareAdapter.CrSpec s : MetricsResources.build(req, spec)) {
                 client.genericKubernetesResources(s.context())
-                        .inNamespace(req.getNamespace()).resource(s.resource()).create();
+                        .inNamespace(req.getNamespace()).resource(s.resource()).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
                 made.add(s);
             }
         } catch (RuntimeException e) {
