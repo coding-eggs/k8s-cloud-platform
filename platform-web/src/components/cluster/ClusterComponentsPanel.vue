@@ -1984,12 +1984,25 @@ function copyImage(text: string): void {
         </div>
       </div>
       <div v-if="applyDialog.showOtel" class="cc-form-row">
-        <span class="cc-form-label">采样率 / 副本数</span>
-        <div class="cc-form-control" style="display: flex; align-items: center; gap: 10px; padding-top: 2px">
-          <el-input-number v-model="applyDialog.otel.samplingPercentage" :min="1" :max="100" />
-          <span class="cc-form-hint">% 采样</span>
-          <el-input-number v-model="applyDialog.otel.gatewayReplicas" :min="1" :max="10" />
-          <span class="cc-form-hint">collector 副本</span>
+        <span class="cc-form-label">全局采样率</span>
+        <div class="cc-form-control">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <el-input-number v-model="applyDialog.otel.samplingPercentage" :min="1" :max="100" />
+            <span class="cc-form-hint">%</span>
+          </div>
+          <div class="cc-form-hint">
+            SDK 侧按<b>整条 trace</b> 决定采不采（错误不会被单独保留）。改完要<b>重启被埋点的应用 Pod</b> 才生效；
+            只影响注入 agent 的应用，网格（Envoy）span 不受此值影响
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showOtel" class="cc-form-row">
+        <span class="cc-form-label">Collector 副本</span>
+        <div class="cc-form-control">
+          <div style="display: flex; align-items: center; gap: 10px">
+            <el-input-number v-model="applyDialog.otel.gatewayReplicas" :min="1" :max="10" />
+            <span class="cc-form-hint">gateway Deployment 副本数</span>
+          </div>
         </div>
       </div>
       <div v-if="applyDialog.showOtel" class="cc-form-row">
