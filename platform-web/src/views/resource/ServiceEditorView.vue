@@ -303,6 +303,37 @@ async function submit(): Promise<void> {
     }
     body.ports = ports
 
+    // K8s 侧的三条硬约束，在这里先拦 —— 否则要等 API Server 拒了才知道，而用户只看得到「服务端异常」：
+    //   ① 多端口时每个端口必须有 name（K8s 原文：must be specified when there are multiple ports）
+    //   ② (协议, port) 唯一 —— spec.ports 在服务端是按 port 合并的 map list，重复即冲突
+    //   ③ 同一 Service 内 (协议, nodePort) 唯一 —— 否则 apiserver 报 duplicate nodePort: {TCP 25358}
+    if (ports.length > 1) {
+      const unnamed = ports.findIndex((p) => !p.name)
+      if (unnamed >= 0) {
+        ElMessage.warning(`第 ${unnamed + 1} 个端口没有名称：多个端口时每个端口都必须填名称`)
+        return
+      }
+    }
+    const portKeys = new Set<string>()
+    for (const p of ports) {
+      const k = `${p.protocol ?? 'TCP'}/${p.port}`
+      if (portKeys.has(k)) {
+        ElMessage.warning(`端口重复：${k} —— 同一个 Service 内协议 + 端口号必须唯一`)
+        return
+      }
+      portKeys.add(k)
+    }
+    const nodePortKeys = new Set<string>()
+    for (const p of ports) {
+      if (p.nodePort == null) continue
+      const k = `${p.protocol ?? 'TCP'}/${p.nodePort}`
+      if (nodePortKeys.has(k)) {
+        ElMessage.warning(`NodePort 重复：${k} —— 同一个 Service 内同一协议的 NodePort 必须唯一（集群会报 duplicate nodePort）`)
+        return
+      }
+      nodePortKeys.add(k)
+    }
+
     // 网络 / IP
     const primary = form.clusterIp.trim()
     if (dualMode.value) {

@@ -2,6 +2,7 @@ package com.coding.k8sserver.configs;
 
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.system.ResponseData;
+import io.fabric8.kubernetes.api.model.StatusBuilder;
 import io.fabric8.kubernetes.client.KubernetesClientException;
 import org.junit.jupiter.api.Test;
 
@@ -41,15 +42,38 @@ class GlobalExceptionHandlerTest {
     }
 
     /**
-     * 只翻译 403。其它码（404/409/422…）维持原样 —— 它们不是权限问题，
-     * 硬套一句「检查 RBAC 模板」会把排障引到错的方向。
+     * 非 403 也要把集群的原话交回去。
+     *
+     * <p>以前这类异常整条交给 {@code handleOtherError}，响应 msg 只剩「服务端异常」——
+     * 2026-10-31「更新 Service 的端口」就撞在这个形态上（apiserver 说
+     * {@code duplicate nodePort: {TCP 25358}}，界面一个字都没透出来，只能翻服务端日志）。
+     *
+     * <p>也不套 RBAC 措辞：404/409/422/500 的成因五花八门，硬说「检查 RBAC 模板」会把排障引到错的方向。
      */
     @Test
-    void otherClusterErrorsKeepTheGenericBehaviour() {
+    void otherClusterErrorsSurfaceTheApiserverMessage() {
+        var status = new StatusBuilder().withMessage("duplicate nodePort: {TCP 25358}").build();
+        var e = new KubernetesClientException(
+                "Failure executing: PATCH at: https://10.0.0.1:6443/api/v1/namespaces/platform-system/services/x",
+                500, status);
+
+        ResponseData<String> resp = handler.handleKubernetesClientException(e);
+
+        assertThat(resp.getCode()).isEqualTo(EnumResponseType.ERROR.getCode());
+        // 取的是 status.message（一句原因），不是整段 "Failure executing: PATCH at: ..."
+        assertThat(resp.getMsg())
+                .contains("duplicate nodePort: {TCP 25358}")
+                .doesNotContain("Failure executing")
+                // 不能被误标成权限问题
+                .doesNotContain("RBAC");
+    }
+
+    /** 没有 status 的构造（客户端侧异常）：退回 e.getMessage()，同样不能回到「服务端异常」。 */
+    @Test
+    void clusterErrorsWithoutAStatusStillCarryTheirOwnMessage() {
         ResponseData<String> resp = handler.handleKubernetesClientException(
                 new KubernetesClientException("boom", 404, null));
 
-        assertThat(resp.getCode()).isEqualTo(EnumResponseType.ERROR.getCode());
-        assertThat(resp.getMsg()).isEqualTo(EnumResponseType.ERROR.getMsg());
+        assertThat(resp.getMsg()).contains("boom");
     }
 }

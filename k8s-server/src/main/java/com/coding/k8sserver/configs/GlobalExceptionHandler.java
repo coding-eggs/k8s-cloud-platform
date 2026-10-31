@@ -46,7 +46,7 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 集群侧 403：翻译成一句能照着做的话。
+     * 集群侧拒绝：翻译成一句能照着做的话。
      *
      * <p>为什么值得单独一个 handler：{@link KubernetesClientException} 原先落进 {@link #handleOtherError}，
      * 响应里只剩 code=5000 /「服务端异常」，而 apiserver 原文 ——
@@ -54,22 +54,35 @@ public class GlobalExceptionHandler {
      * "servicemonitors" in API group "monitoring.coreos.com"} —— 是<b>唯一</b>能指出缺哪条规则的信息，被整个吞掉了。
      * 租户 2026-10-17 报的「CRD 页面全打不开」就卡在这里：界面说不出缺什么，运维也就无从下手。
      *
-     * <p>修在这一层（而不是前端逐页写 403 文案）是因为前端本来就在渲染 {@code body.msg}
-     * （{@code api/http.ts} 的响应拦截器），所有页面一次覆盖。
+     * <p><b>403 → 套 RBAC 措辞</b>（缺规则是唯一成因，指错方向的风险低）。
      *
-     * <p><b>只翻译 403</b>，其余码原样交回 {@link #handleOtherError} —— 404/409/422 不是权限问题，
-     * 一律套「检查 RBAC 模板」会把排障引到错的方向。
+     * <p><b>其余码 → 不套 RBAC 措辞，但也不再吞</b>：原样透出 apiserver 的 {@code status.message}。
+     * 2026-10-31 的「更新 Service 端口报 duplicate nodePort: {TCP 25358}」就是这样 ——
+     * 异常原文在服务端日志里有，界面只剩「服务端异常」，用户根本不知道该改哪里。
+     * 404/409/422/500 的原因五花八门（名字重复、端点冲突、字段不合法），
+     * 套「检查 RBAC 模板」会误导，但把原话交回去永远比四个字有用。
+     *
+     * <p>修在这一层（而不是前端逐页写文案）是因为前端本来就在渲染 {@code body.msg}
+     * （{@code api/http.ts} 的响应拦截器），所有页面一次覆盖。
      */
     @ResponseBody
     @ExceptionHandler(value = KubernetesClientException.class)
     public ResponseData<String> handleKubernetesClientException(KubernetesClientException e) {
-        if (e.getCode() != 403) {
-            return handleOtherError(e);
+        if (e.getCode() == 403) {
+            //集群原文要进日志（它是排障依据），也要进 msg（用户/运维看得到）
+            log.error(ERROR_STRING, e.getClass().getName(), EnumResponseType.K8S_RBAC_FORBIDDEN.getCode(), e.getMessage());
+            return new ResponseData<>(EnumResponseType.K8S_RBAC_FORBIDDEN.getCode(),
+                    EnumResponseType.K8S_RBAC_FORBIDDEN.getMsg() + e.getMessage(), null);
         }
-        //集群原文要进日志（它是排障依据），也要进 msg（用户/运维看得到）
-        log.error(ERROR_STRING, e.getClass().getName(), EnumResponseType.K8S_RBAC_FORBIDDEN.getCode(), e.getMessage());
-        return new ResponseData<>(EnumResponseType.K8S_RBAC_FORBIDDEN.getCode(),
-                EnumResponseType.K8S_RBAC_FORBIDDEN.getMsg() + e.getMessage(), null);
+        // 优先取 status.message —— 它只有一句原因（"duplicate nodePort: {TCP 25358}"）；
+        // e.getMessage() 则是整段 "Failure executing: PATCH at: https://... "，塞进提示里全是噪音。
+        String detail = e.getStatus() != null && e.getStatus().getMessage() != null
+                && !e.getStatus().getMessage().isBlank()
+                ? e.getStatus().getMessage()
+                : e.getMessage();
+        log.error("【集群拒绝操作】：", e);
+        return new ResponseData<>(EnumResponseType.ERROR.getCode(),
+                "集群拒绝了该操作：" + detail, null);
     }
 
 
