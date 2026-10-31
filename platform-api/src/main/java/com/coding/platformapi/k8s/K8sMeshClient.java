@@ -2,6 +2,7 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.GatewayDTO;
+import com.coding.common.models.k8s.dto.ParentGatewayRefDTO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
@@ -72,6 +73,30 @@ public class K8sMeshClient {
         params.put("namespace", namespace);
         return gateway.exchange(HttpMethod.POST, "/mesh/gateways", params, null,
                 gateway.listResponseType(GatewayDTO.class));
+    }
+
+    /**
+     * 路由父引用候选（窄投影）：POST /parent-gateways?clusterId&namespace&targetNamespace[&tenantId]。
+     *
+     * <p>与 {@link #namespaceGateways} 的区别只有一条，但很关键：**这个端点租户可调**。
+     * 白名单（{@code istio-system}）写死在 k8s-server，调用方只能连带读自己的命名空间
+     * （spec §5.1 的四条规范）。
+     *
+     * @param namespace       路由所在命名空间（**边界**：租户必须对它有一条分配行）
+     * @param targetNamespace 父引用指向的命名空间（读取目标）
+     */
+    public List<ParentGatewayRefDTO> parentGateways(String tenantId, String clusterId,
+                                                    String namespace, String targetNamespace) {
+        Map<String, String> params = new LinkedHashMap<>(queryOf(clusterId));
+        params.put("namespace", namespace);
+        if (targetNamespace != null && !targetNamespace.isBlank()) {
+            params.put("targetNamespace", targetNamespace);
+        }
+        if (tenantId != null && !tenantId.isBlank()) {
+            params.put("tenantId", tenantId);
+        }
+        return gateway.exchange(HttpMethod.POST, "/parent-gateways", params, null,
+                gateway.listResponseType(ParentGatewayRefDTO.class));
     }
 
     private Map<String, String> queryOf(String clusterId) {

@@ -2,6 +2,7 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
+import com.coding.common.models.k8s.dto.ParentGatewayRefDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.metrics.MetricsService;
@@ -28,8 +29,9 @@ import java.util.List;
  * 服务网格（集群级，平台管理面）：GatewayClass CRUD + 网格状态 + 租户只读引用投影。
  * <p>面向前端的顶层前缀 {@code /mesh/**}；委托 {@link MeshService}，再经 K8sMeshClient 打 k8s-server
  * 的无前缀端点 {@code /gatewayclasses/**}、{@code /mesh/**}。
- * <p>除 {@code /mesh/gatewayclass-refs}（豁免，纯候选值）外，每个端点都须有权限行
- * （{@code platform:cluster:manage}），否则 PermissionCrossCheckRunner 启动 brick（见 Flyway V2026_10_08_4）。
+ * <p>除 {@code /mesh/gatewayclass-refs}（豁免，纯候选值）外，每个端点都须有权限行：平台管理面的是
+ * {@code platform:cluster:manage}；{@code /mesh/parent-gateways} 是<b>租户可调</b>的窄投影，
+ * 用 {@code tenant:gateway:list}（见 Flyway V2026_10_31_4）。缺行时 PermissionCrossCheckRunner 启动 brick。
  * <p>命名空间级的 Gateway / HTTPRoute <b>不在这里</b> —— 它们是标准六操作 + 租户域，各自独立 controller。
  */
 @Tag(name = "服务网格", description = "GatewayClass（集群级、平台管理）+ 网格状态探测")
@@ -111,6 +113,23 @@ public class MeshController {
                     + "走本端点而非租户域 /gateways：命名空间是平台侧资源，平台管理员无租户上下文。")
     public ResponseData<List<WaypointRefDTO>> waypointCandidates(@RequestParam String clusterId, @RequestParam String namespace) {
         return new ResponseData<>(mesh.waypointCandidates(clusterId, namespace));
+    }
+
+    /**
+     * 路由父引用候选（spec §5.3）。
+     *
+     * <p>⚠️ 这个端点<b>租户可调</b>，权限码是 {@code tenant:gateway:list}（不是上面那些 {@code platform:cluster:manage}）——
+     * 它存在的理由就是"租户要把路由挂到平台代管的对外网关上，而租户对那个 ns 没有任何 K8s 权限"。
+     * 白名单与字段投影都在 k8s-server 写死。
+     */
+    @PostMapping("/parent-gateways")
+    @Operation(summary = "路由父引用候选（自己命名空间 + 平台网关白名单，窄投影）",
+            description = "供 HTTPRoute / TCPRoute 等编辑器的 parentRefs 下拉。只回 name/namespace/listenerNames/waypointFor。")
+    public ResponseData<List<ParentGatewayRefDTO>> parentGateways(@RequestParam(required = false) String tenantId,
+                                                                 @RequestParam String clusterId,
+                                                                 @RequestParam String namespace,
+                                                                 @RequestParam(required = false) String targetNamespace) {
+        return new ResponseData<>(mesh.parentGateways(tenantId, clusterId, namespace, targetNamespace));
     }
 
     // ==================== waypoint 链路追踪（批次二） ====================

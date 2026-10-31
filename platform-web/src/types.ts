@@ -1888,6 +1888,22 @@ export interface K8sGateway {
   labels?: Record<string, string> | null
 }
 
+/**
+ * 路由父引用（parentRefs）的 Gateway 候选 —— **窄投影**（后端 `ParentGatewayRefDTO`）。
+ *
+ * <p>与 {@link K8sGateway} 的区别：只有这四个字段。候选里会包含**平台代管**的
+ * `istio-system/external-gateway`（对外网关），而租户对那个命名空间没有任何 K8s 权限 ——
+ * 所以后端刻意不回 TLS 引用 / status / addresses。
+ */
+export interface ParentGatewayRef {
+  name: string
+  namespace: string
+  /** parentRef.sectionName 的候选；空 = 该网关没有具名监听器 */
+  listenerNames: string[]
+  /** istio.io/waypoint-for 标签值（无则 null）—— 前端据此标 waypoint 后缀 */
+  waypointFor: string | null
+}
+
 /** Route → 父资源引用（spec.parentRefs[]；HTTP/GRPC/TCP/TLS/UDP 共用） */
 export interface K8sRouteParentRef {
   group?: string | null

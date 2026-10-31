@@ -36,6 +36,7 @@ import type {
   K8sTenantOverview,
   K8sConfigMap,
   K8sGateway,
+  ParentGatewayRef,
   WaypointRef,
   K8sGatewayClass,
   K8sGrpcRoute,
@@ -626,6 +627,16 @@ export const meshApi = {
    *  故不能走 gatewayApi.list。必须带 waypoint-for：命名空间级只能指向能处理服务流量的（service/all）。 */
   namespaceWaypoints: (clusterId: string, namespace: string) =>
     http.post<never, WaypointRef[]>('/mesh/gateways', null, { params: { clusterId, namespace } }),
+  /** 路由父引用候选（自己命名空间 + 平台网关白名单，窄投影）。
+   *  与 namespaceWaypoints 的区别只有一条但很关键：**这个端点租户可调** —— 租户要把路由挂到
+   *  平台代管的 istio-system/external-gateway，而他对那个 ns 没有任何 K8s 权限。
+   *  `namespace` 是**路由自己**的命名空间（边界），`targetNamespace` 才是要列 Gateway 的那个。 */
+  parentGateways: (ctx: {
+    tenantId?: string
+    clusterId: string
+    namespace: string
+    targetNamespace: string
+  }) => http.post<never, ParentGatewayRef[]>('/mesh/parent-gateways', null, { params: ctx }),
   /** waypoint 链路追踪：读 */
   waypointTracing: (ctx: { tenantId: string; clusterId: string; namespace: string; gatewayName: string }) =>
     http.get<never, boolean>('/mesh/waypoints/tracing', { params: ctx }),

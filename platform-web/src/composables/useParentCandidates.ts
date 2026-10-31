@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
-import { gatewayApi, serviceApi } from '@/api'
+import { meshApi, serviceApi } from '@/api'
 import { useResourceContext } from '@/stores/context'
-import type { K8sGateway, K8sService } from '@/types'
+import type { K8sService, ParentGatewayRef } from '@/types'
 
 /**
  * Route 父引用（parentRefs）的**名称候选**目录：按 `(kind, 命名空间)` 缓存。
@@ -69,12 +69,18 @@ function keyOf(kind: string, namespace: string): string {
   return `${state.clusterId ?? ''}|${state.tenantId ?? ''}|${kind}|${namespace}`
 }
 
-function gatewayCandidate(g: K8sGateway): ParentCandidate {
-  const names = (g.listeners ?? []).map((l) => l.name?.trim() ?? '').filter(Boolean)
+/**
+ * Gateway 候选走 `/mesh/parent-gateways`，**不是**租户域的 `/gateways/list`。
+ *
+ * 候选里必须包含平台代管的 `istio-system/external-gateway`（对外网关），而租户对那个命名空间
+ * 没有任何 K8s 权限 —— 走租户端点它永远不会出现，用户只能手打名字，打错还静默不挂载。
+ * 白名单（固定 `istio-system`）与字段投影都在后端写死，见 spec 2026-10-31 §5.3。
+ */
+function gatewayCandidate(g: ParentGatewayRef): ParentCandidate {
   return {
     name: g.name,
-    waypointFor: g.labels?.['istio.io/waypoint-for'] ?? null,
-    listeners: [...new Set(names)],
+    waypointFor: g.waypointFor ?? null,
+    listeners: [...new Set(g.listenerNames ?? [])],
     namedPorts: [],
     ports: [],
   }
@@ -144,8 +150,20 @@ export function useParentCandidates() {
           b.loading = false
         })
     } else {
-      gatewayApi
-        .list(ctx)
+      // namespace 参数是**父引用指向**的命名空间；路由自己那个（边界）在 state.namespace 上。
+      // 两者不能混：混了就等于拿"自己有分配行的 ns"当通行证去读任意命名空间。
+      const routeNs = state.namespace
+      if (!routeNs) {
+        b.loading = false
+        return
+      }
+      meshApi
+        .parentGateways({
+          tenantId: state.tenantId ?? undefined,
+          clusterId: state.clusterId!,
+          namespace: routeNs,
+          targetNamespace: namespace,
+        })
         .then((items) => {
           b.list = items.map(gatewayCandidate)
           b.failed = false

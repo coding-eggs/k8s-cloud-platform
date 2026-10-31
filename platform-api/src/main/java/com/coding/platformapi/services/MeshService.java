@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
+import com.coding.common.models.k8s.dto.ParentGatewayRefDTO;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.platformapi.k8s.K8sComponentClient;
 import com.coding.platformapi.k8s.K8sMeshClient;
@@ -179,6 +180,17 @@ public class MeshService {
      */
     public List<WaypointRefDTO> waypointCandidates(String clusterId, String namespace) {
         return GatewayService.waypointRefsOf(k8s.namespaceGateways(clusterId, namespace));
+    }
+
+    /**
+     * 路由父引用候选（spec §5.3）：调用方所在命名空间 + 平台网关白名单，窄投影。
+     *
+     * <p><b>租户可调</b> —— 这是它存在的全部理由。白名单与"只回四个字段"都在 k8s-server 侧写死，
+     * 这里只是透传，不加工（加工会形成第二份口径）。
+     */
+    public List<ParentGatewayRefDTO> parentGateways(String tenantId, String clusterId,
+                                                    String namespace, String targetNamespace) {
+        return k8s.parentGateways(tenantId, clusterId, namespace, targetNamespace);
     }
 
     // ==================== waypoint 链路追踪（批次二） ====================
