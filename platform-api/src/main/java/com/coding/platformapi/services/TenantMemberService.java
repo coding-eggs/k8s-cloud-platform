@@ -29,6 +29,8 @@ import java.util.List;
  *   <li>不变量 3（<b>2026-10-31 撤销</b>）：原「任何路径都不得让租户失去最后一个 tenant-admin」。
  *       撤销理由：建租户时 owner 是可选的，平台侧又能全权代管 —— 零管理员本来就是合法状态；
  *       只在移除侧拦会自相矛盾，且只能"先加一个再删"。提醒改由前端弹确认。</li>
+ *   <li>默认角色：加入成员时顺带授予内置「租户成员」（{@code tenant-member}，租户内只读边界），
+ *       省掉"加进来 → 再手动授一次角色"的两步操作。额外权限仍由操作者显式授予。</li>
  * </ul>
  * 每个写方法各自 {@code @Transactional}（方法级原子；uk_user_tenant / uk_user_tenant_role 唯一索引兜并发幂等）。
  */
@@ -38,6 +40,9 @@ public class TenantMemberService {
 
     /** 内置租户管理员角色 code（seed 保证存在） */
     public static final String TENANT_ADMIN_CODE = "tenant-admin";
+
+    /** 内置租户成员角色 code（seed 保证存在）—— 新加成员的默认角色 */
+    public static final String TENANT_MEMBER_CODE = "tenant-member";
 
     private final PlatformUserTenantMapper utMapper;
     private final PlatformUserTenantRoleMapper utrMapper;
@@ -66,7 +71,12 @@ public class TenantMemberService {
         }
     }
 
-    /** 加入成员：已存在则幂等返回（uk_user_tenant 兜并发重复）。 */
+    /**
+     * 加入成员：已存在则幂等返回（uk_user_tenant 兜并发重复）。
+     *
+     * <p>新成员顺带授予内置「租户成员」角色 —— 加入即具备租户内只读边界，不必再多点一次「授予」。
+     * 幂等路径（已是成员）**不补授**：否则"添加"就变成了"重置角色"，把操作者后来回收过的角色悄悄加回来。
+     */
     @Transactional
     public void addMember(String tenantId, String userId) {
         boolean exists = utMapper.exists(userId, tenantId);
@@ -82,8 +92,9 @@ public class TenantMemberService {
         try {
             utMapper.insert(r);
         } catch (DuplicateKeyException e) {
-            // 并发下另一请求已插入 → 视为已存在
+            // 并发下另一请求已插入 → 视为已存在（下面按默认角色补授，两边幂等）
         }
+        grantRole(tenantId, userId, requireMemberRoleId());
     }
 
     /** 授予租户角色：不变量 2 前置校验 + 角色域校验（CRITICAL 1：仅可授存在的、启用的 TENANT 族角色，
@@ -162,6 +173,15 @@ public class TenantMemberService {
         PlatformRole r = roleMapper.selectByCode(TENANT_ADMIN_CODE);
         if (r == null) {
             throw new IllegalStateException("内置角色 tenant-admin 缺失（seed 未执行）");
+        }
+        return r.getId();
+    }
+
+    /** 内置 tenant-member 角色 id（加入成员时的默认角色）；seed 缺失属部署错误，快速失败。 */
+    public String requireMemberRoleId() {
+        PlatformRole r = roleMapper.selectByCode(TENANT_MEMBER_CODE);
+        if (r == null) {
+            throw new IllegalStateException("内置角色 tenant-member 缺失（seed 未执行）");
         }
         return r.getId();
     }

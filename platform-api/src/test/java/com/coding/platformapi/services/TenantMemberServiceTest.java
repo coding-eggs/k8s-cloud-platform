@@ -19,14 +19,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 不变量 2（先有成员再授角色）与不变量 3（不能移空最后一个租户管理员）的锁测试，
- * 外加 owner 标记（持有 tenant-admin 角色 → owner=true）与成员移除级联。
+ * 不变量 2（先有成员再授角色）、不变量 3 的撤销（2026-10-31 起零管理员合法）、
+ * 加入成员默认授予「租户成员」、owner 标记（持有 tenant-admin → owner=true）与成员移除级联。
  */
 class TenantMemberServiceTest {
     PlatformUserTenantMapper utm = mock(PlatformUserTenantMapper.class);
@@ -58,12 +59,39 @@ class TenantMemberServiceTest {
         when(utm.exists("u1", "t1")).thenReturn(true);
         assertThatCode(() -> memberSvc().addMember("t1", "u1")).doesNotThrowAnyException();
         verify(utm, never()).insert(any());
+        // 已是成员时不补授默认角色 —— 否则「添加」会变成「重置角色」，
+        // 把操作者后来回收过的角色悄悄加回来
+        verify(utr, never()).insert(any());
     }
 
     @Test void add_member_inserts_when_absent() {
-        when(utm.exists("u1", "t1")).thenReturn(false);
+        // 第一次 exists=false（→ 插成员行），第二次 exists=true（grantRole 的前置校验看到刚插的行）
+        when(utm.exists("u1", "t1")).thenReturn(false, true);
+        when(roleMapper.selectByCode("tenant-member")).thenReturn(memberRole());
+        when(roleMapper.selectByPrimaryKey("memberRole")).thenReturn(memberRole());
+        when(utr.selectByTenantAndUser("t1", "u1")).thenReturn(List.of());
         memberSvc().addMember("t1", "u1");
         verify(utm).insert(any(PlatformUserTenant.class));
+    }
+
+    @Test void add_member_grants_tenant_member_by_default() {
+        // 加入即具备租户内只读边界，不必再多点一次「授予」
+        when(utm.exists("u1", "t1")).thenReturn(false, true);
+        when(roleMapper.selectByCode("tenant-member")).thenReturn(memberRole());
+        when(roleMapper.selectByPrimaryKey("memberRole")).thenReturn(memberRole());
+        when(utr.selectByTenantAndUser("t1", "u1")).thenReturn(List.of());
+
+        memberSvc().addMember("t1", "u1");
+
+        verify(utr).insert(argThat((PlatformUserTenantRole r) -> "memberRole".equals(r.getRoleId())));
+    }
+
+    @Test void missing_builtin_member_role_fails_fast() {
+        when(utm.exists("u1", "t1")).thenReturn(false);
+        when(roleMapper.selectByCode("tenant-member")).thenReturn(null);
+        assertThatThrownBy(() -> memberSvc().addMember("t1", "u1"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("tenant-member");
     }
 
     @Test void grant_duplicate_role_is_idempotent() {
@@ -163,6 +191,16 @@ class TenantMemberServiceTest {
         r.setCode("tenant-admin");
         r.setScope("TENANT");
         r.setBuiltIn((byte) 1);
+        return r;
+    }
+
+    private static PlatformRole memberRole() {
+        var r = new PlatformRole();
+        r.setId("memberRole");
+        r.setCode("tenant-member");
+        r.setScope("TENANT");
+        r.setBuiltIn((byte) 1);
+        r.setStatus((byte) 1);
         return r;
     }
 

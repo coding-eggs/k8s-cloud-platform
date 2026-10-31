@@ -63,8 +63,9 @@ public class TenantService {
         tenantMapper.insert(tenant);
 
         // owner 两表写（成员 + tenant-admin 角色）：TenantMemberService 的方法各自 @Transactional，
-        // 这里经注入的服务 bean 调用（走 Spring 代理，事务生效）。跨调用失败最多留下
-        // “有成员无角色”——不变量 2 的反面（成员不必持角色）合法，可经 /tenant/member/role/grant 补授。
+        // 这里经注入的服务 bean 调用（走 Spring 代理，事务生效）。addMember 已顺带授予默认角色
+        // 「租户成员」，这里再补 tenant-admin；跨调用失败最多留下"有成员、角色不全"，
+        // 可经 /tenant/member/role/grant 补授。
         // ownerUserId 不做存在性校验（平台原则：不加外键；非法 id 只会留下无害悬挂行，v1 接受，见 report）。
         if (StringUtils.hasText(req.getOwnerUserId())) {
             memberSvc.addMember(tenant.getId(), req.getOwnerUserId());

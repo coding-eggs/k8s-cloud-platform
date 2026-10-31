@@ -114,7 +114,7 @@ public class TenantController {
     // 生效租户统一由 TenantContextResolver 裁决：自管锁定 token 租户，代管必须显式传 tenantId。
 
     @PostMapping("/member/add")
-    @Operation(summary = "加入租户成员", description = "已存在则幂等；不变量：授予角色前必须先是成员")
+    @Operation(summary = "加入租户成员", description = "已存在则幂等；新成员默认授予内置角色「租户成员」")
     public ResponseData<Void> memberAdd(@RequestBody MemberAddRequest request) {
         String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
         memberSvc.addMember(tid, request.getUserId());
@@ -122,7 +122,7 @@ public class TenantController {
     }
 
     @PostMapping("/member/remove")
-    @Operation(summary = "移除租户成员", description = "级联删该成员在本租户的角色；不能移除最后一个 tenant-admin")
+    @Operation(summary = "移除租户成员", description = "级联删除该成员在本租户的全部角色，无需先逐个回收")
     public ResponseData<Void> memberRemove(@RequestBody MemberRemoveRequest request) {
         String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
         memberSvc.removeMember(tid, request.getUserId());
@@ -138,7 +138,7 @@ public class TenantController {
     }
 
     @PostMapping("/member/role/revoke")
-    @Operation(summary = "回收租户角色", description = "回收 tenant-admin 时校验租户至少保留一名管理员（不变量 3）")
+    @Operation(summary = "回收租户角色", description = "按 (用户, 租户, 角色) 删除；不拦最后一个管理员（零管理员是合法状态）")
     public ResponseData<Void> memberRoleRevoke(@RequestBody MemberRoleRequest request) {
         String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
         memberSvc.revokeRole(tid, request.getUserId(), request.getRoleId());

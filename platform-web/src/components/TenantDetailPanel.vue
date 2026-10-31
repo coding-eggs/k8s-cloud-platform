@@ -179,8 +179,8 @@ async function onAddMember(u: PlatformUser): Promise<void> {
   memberBusy.value = u.id
   try {
     await tenantApi.memberAdd({ tenantId: props.tenantId, userId: u.id })
-    ElMessage.success(`已加入成员 ${u.username}`)
-    // 角色目录可用时顺手不落默认角色 —— 由操作者显式授予（避免替用户决定权限面）
+    // 后端加入成员时已默认授予内置「租户成员」（租户内只读边界），额外权限再显式授予
+    ElMessage.success(`已加入成员 ${u.username}（默认角色：租户成员）`)
     addDialogVisible.value = false
     await loadMembers()
   } catch {
@@ -240,11 +240,14 @@ async function onRevokeRole(row: TenantMemberView, roleId: string): Promise<void
 async function onRemoveMember(row: TenantMemberView): Promise<void> {
   const who = row.username ?? row.userId
   const lastAdmin = row.owner && ownerCount.value <= 1
+  // 移除会级联删除其在本租户的全部角色，不必先一个个回收
+  const roleCount = (row.roleIds ?? []).length
+  const cascade = roleCount ? `\n\n将同时删除其在本租户的 ${roleCount} 个角色。` : ''
   try {
     await ElMessageBox.confirm(
       lastAdmin
-        ? `「${who}」是该租户唯一的租户管理员。\n\n移除后这个租户将没有任何管理员，只能由平台代管 —— 租户自己的成员将无法再管理成员与角色。确定移除？`
-        : `确认将成员「${who}」移出租户「${props.tenantName}」？级联删除其在本租户的角色。`,
+        ? `「${who}」是该租户唯一的租户管理员。\n\n移除后这个租户将没有任何管理员，只能由平台代管 —— 租户自己的成员将无法再管理成员与角色。确定移除？${cascade}`
+        : `确认将成员「${who}」移出租户「${props.tenantName}」？${cascade}`,
       lastAdmin ? '该租户将没有管理员' : '提示',
       { type: 'warning', confirmButtonText: lastAdmin ? '仍然移除' : '确定' },
     )
@@ -391,7 +394,6 @@ watch(activeTab, (t) => {
                 link
                 type="danger"
                 size="small"
-                :disabled="row.owner"
                 :loading="memberBusy === row.userId"
                 @click="onRemoveMember(row)"
                 >移出</el-button
