@@ -8,6 +8,7 @@ import type { K8sConfigMap } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
+import { pageCodes } from '@/pageCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
@@ -38,6 +39,8 @@ const perm = usePermission()
 /** 平台侧全局视图开关（默认关）。只有持 platform:configmap:list-all 的人看得见这个开关。 */
 const allNs = ref(false)
 const canListAll = computed(() => perm.has(apiCodes.configmapListAll))
+/** 「创建 ConfigMap」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canCreate = computed(() => perm.has(pageCodes.configmap.edit))
 
 async function refresh(): Promise<void> {
   if (!ready.value) return
@@ -135,7 +138,7 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="ConfigMap" >
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="goEditor(null)">创建 ConfigMap</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goEditor(null)">创建 ConfigMap</el-button>
     </PageHeader>
 
     <EmptyState
@@ -143,7 +146,9 @@ const contextDesc = computed(() => {
       :title="allNs ? '该集群下暂无 ConfigMap' : '该命名空间下暂无 ConfigMap'"
       :description="allNs
         ? '全局视图列出该集群全部命名空间（含不属于任何租户的）的 ConfigMap。'
-        : '点击右上「创建 ConfigMap」新建，或到顶栏切换上下文查看其他命名空间。'"
+        : canCreate
+          ? '点击右上「创建 ConfigMap」新建，或到顶栏切换上下文查看其他命名空间。'
+          : '当前账号在该租户内没有创建 ConfigMap 的权限，只能查看。'"
     />
 
     <div v-else class="panel table-panel">

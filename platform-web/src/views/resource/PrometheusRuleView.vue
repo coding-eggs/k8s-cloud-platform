@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { prometheusRuleApi } from '@/api'
 import type { K8sPrometheusRule } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
@@ -12,6 +14,9 @@ import { MoreFilled } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const perm = usePermission()
+/** 「创建 PrometheusRule」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canCreate = computed(() => perm.has(pageCodes.prometheusRule.edit))
 
 const loading = ref(false)
 const list = ref<K8sPrometheusRule[]>([])
@@ -101,7 +106,7 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="PrometheusRule" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="goCreate">创建 PrometheusRule</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goCreate">创建 PrometheusRule</el-button>
     </PageHeader>
 
     <EmptyState

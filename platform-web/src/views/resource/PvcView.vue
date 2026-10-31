@@ -76,6 +76,8 @@ function phaseType(phase?: string | null): 'success' | 'warning' | 'danger' | 'i
 const perm = usePermission()
 /** 扩容要 `tenant:pvc:update` —— 与创建/删除分开，因为扩容是唯一能改 spec 的动作 */
 const canResize = computed(() => perm.has(apiCodes.pvcUpdate))
+/** 创建 PVC 是列表页内的对话框（没有独立编辑器页）→ 只能挂动词码；只读角色不渲染按钮 */
+const canCreate = computed(() => perm.has(apiCodes.pvcCreate))
 
 /**
  * 扩容的**中间态**。⚠️ 它不在 `phase` 上：扩容期间 `phase` 一直是 `Bound`，
@@ -356,13 +358,17 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="PVC" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="openCreate">创建 PVC</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="openCreate">创建 PVC</el-button>
     </PageHeader>
 
     <EmptyState
       v-if="ready && list.length === 0 && !loading"
       title="该命名空间下暂无 PVC"
-      description="点击右上「创建 PVC」新建；容量之后可以调大（行操作里的「调整容量」），但 K8s 不支持缩容，要变小只能删了重建。"
+      :description="
+        canCreate
+          ? '点击右上「创建 PVC」新建；容量之后可以调大（行操作里的「调整容量」），但 K8s 不支持缩容，要变小只能删了重建。'
+          : '当前账号在该租户内没有创建 PVC 的权限，只能查看。'
+      "
     />
 
     <div v-else class="panel table-panel">

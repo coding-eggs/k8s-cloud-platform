@@ -10,6 +10,8 @@ import MeshStatusBanner from '@/components/mesh/MeshStatusBanner.vue'
 import { gatewayApi } from '@/api'
 import { useMeshStatus } from '@/composables/useMeshStatus'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
 import type { K8sCondition, K8sGateway, K8sGatewayListener, K8sGatewayRouteGroupKind } from '@/types'
 import { fmtDate } from '@/utils/format'
 import YamlBlock from '@/components/YamlBlock.vue'
@@ -19,6 +21,7 @@ import YamlBlock from '@/components/YamlBlock.vue'
  */
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const perm = usePermission()
 
 const ctxParams = computed(() => ({
   tenantId: state.tenantId!,
@@ -29,6 +32,8 @@ const ctxParams = computed(() => ({
 /** 网格状态（横幅 + create 门禁）：租户侧沿能力快照派生，ambient 仅在平台侧可知 */
 const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
 const canCreate = computed(() => mesh.hasGatewayApi.value)
+/** 写权限：创建 Gateway/Waypoint = 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canWrite = computed(() => perm.has(pageCodes.mesh.gateway.edit))
 
 const loading = ref(false)
 const rows = ref<K8sGateway[]>([])
@@ -132,8 +137,8 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="Gateway" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button :disabled="!ready || !canCreate" @click="goCreateWaypoint">创建 Waypoint</el-button>
-      <el-button type="primary" :disabled="!ready || !canCreate" @click="goCreate">创建 Gateway</el-button>
+      <el-button v-if="canWrite" :disabled="!ready || !canCreate" @click="goCreateWaypoint">创建 Waypoint</el-button>
+      <el-button v-if="canWrite" type="primary" :disabled="!ready || !canCreate" @click="goCreate">创建 Gateway</el-button>
     </PageHeader>
 
     <MeshStatusBanner

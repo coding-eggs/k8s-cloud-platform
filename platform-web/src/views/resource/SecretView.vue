@@ -6,6 +6,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { secretApi } from '@/api'
 import type { K8sSecret } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
@@ -15,6 +17,9 @@ import YamlBlock from '@/components/YamlBlock.vue'
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
 const route = useRoute()
+const perm = usePermission()
+/** 「创建 Secret」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canCreate = computed(() => perm.has(pageCodes.secret.edit))
 /** ?open=<name> 只消费一次（避免每次刷新都重新弹详情） */
 let autoOpened = false
 
@@ -157,13 +162,17 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="Secret" >
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="goEditor(null)">创建 Secret</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goEditor(null)">创建 Secret</el-button>
     </PageHeader>
 
     <EmptyState
       v-if="ready && list.length === 0 && !loading"
       title="该命名空间下暂无 Secret"
-      description="点击右上「创建 Secret」新建，或到顶栏切换上下文查看其他命名空间。"
+      :description="
+        canCreate
+          ? '点击右上「创建 Secret」新建，或到顶栏切换上下文查看其他命名空间。'
+          : '当前账号在该租户内没有创建 Secret 的权限，只能查看。'
+      "
     />
 
     <div v-else class="panel table-panel">

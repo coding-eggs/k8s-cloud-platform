@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { serviceMonitorApi } from '@/api'
 import type { K8sServiceMonitor } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
@@ -13,6 +15,9 @@ import YamlBlock from '@/components/YamlBlock.vue'
 
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const perm = usePermission()
+/** 「创建 ServiceMonitor」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canCreate = computed(() => perm.has(pageCodes.serviceMonitor.edit))
 
 const loading = ref(false)
 const list = ref<K8sServiceMonitor[]>([])
@@ -105,7 +110,7 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="ServiceMonitor" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="goCreate">创建 ServiceMonitor</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goCreate">创建 ServiceMonitor</el-button>
     </PageHeader>
 
     <EmptyState

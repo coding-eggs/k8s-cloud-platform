@@ -10,6 +10,7 @@ import { useResourceContext } from '@/stores/context'
 import { useClusterComponents } from '@/composables/useClusterComponents'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
+import { pageCodes } from '@/pageCodes'
 import { useMeshStatus } from '@/composables/useMeshStatus'
 import { useImageSuggest } from '@/composables/useImageSuggest'
 import { nodeHost, useNodeAddresses } from '@/composables/useNodeAddresses'
@@ -430,6 +431,12 @@ const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
 const meshAvailable = computed(() => mesh.hasIstio.value)
 /** 工作负载写权限：编辑/伸缩/网格开关/改镜像/回滚共用同一个动词码 */
 const canWrite = computed(() => perm.has(apiCodes.workloadUpdate))
+/**
+ * 「创建工作负载」= 进入编辑器页，门禁与路由 `requiresPerm` **同源**（pageCodes.workload.edit）。
+ * 用 API 码 `tenant:workload:create` 会漏掉"有 API 码但没页面码"的组合 —— 那种情况点下去会被守卫弹回总览。
+ * 只读角色（tenant-member）没有这个码：按钮不渲染，而不是渲染成一个点了没用的按钮。
+ */
+const canCreate = computed(() => perm.has(pageCodes.workload.edit))
 
 /**
  * 网格菜单项是否可点：**与「编辑」同口径** —— 由 Operator/Helm 管理的对象（有 ownerReferences）不写。
@@ -600,7 +607,7 @@ const contextDesc = computed(() => {
 <template>
   <div>
     <PageHeader title="工作负载" >
-      <el-button type="primary" :disabled="!ready" @click="goEditor(null)">创建工作负载</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goEditor(null)">创建工作负载</el-button>
     </PageHeader>
 
     <div v-if="ready" class="panel table-panel">
@@ -619,7 +626,11 @@ const contextDesc = computed(() => {
       <EmptyState
         v-if="filtered.length === 0 && !loading"
         title="该命名空间下暂无工作负载"
-        description="点击右上「创建工作负载」新建 Deployment / StatefulSet / DaemonSet。"
+        :description="
+          canCreate
+            ? '点击右上「创建工作负载」新建 Deployment / StatefulSet / DaemonSet。'
+            : '当前账号在该租户内没有创建工作负载的权限，只能查看。'
+        "
       />
       <el-table v-else v-loading="loading || !ready" :data="filtered" stripe>
         <el-table-column label="类型" width="110">

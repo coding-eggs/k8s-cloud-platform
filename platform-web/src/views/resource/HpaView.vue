@@ -7,6 +7,8 @@ import { MoreFilled } from '@element-plus/icons-vue'
 import { hpaApi } from '@/api'
 import type { K8sHpa, K8sHpaMetricTarget } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
 import { useClusterCapability } from '@/composables/useClusterCapability'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -15,6 +17,9 @@ import YamlBlock from '@/components/YamlBlock.vue'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
+const perm = usePermission()
+/** 「创建 HPA」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canCreate = computed(() => perm.has(pageCodes.hpa.edit))
 
 const loading = ref(false)
 const list = ref<K8sHpa[]>([])
@@ -136,7 +141,7 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="HPA" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready || !cap.metricsAvailable.value" @click="goCreate">创建 HPA</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready || !cap.metricsAvailable.value" @click="goCreate">创建 HPA</el-button>
     </PageHeader>
 
     <!-- 能力门禁提示（探测过且三类 metrics 全无 → 禁创建；未探测 → 软提示） -->
@@ -170,7 +175,9 @@ const contextDesc = computed(() => {
     <EmptyState
       v-if="ready && list.length === 0 && !loading"
       title="该命名空间下暂无 HPA"
-      description="点击右上「创建 HPA」为工作负载配置自动扩缩容。"
+      :description="
+        canCreate ? '点击右上「创建 HPA」为工作负载配置自动扩缩容。' : '当前账号在该租户内没有创建 HPA 的权限，只能查看。'
+      "
     />
 
     <div v-else class="panel table-panel">

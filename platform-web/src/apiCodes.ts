@@ -52,6 +52,8 @@ export const apiCodes = {
   configmapList: 'tenant:configmap:list',
   secretList: 'tenant:secret:list',
   pvcList: 'tenant:pvc:list',
+  /** 创建 PVC（编辑器是列表页内的对话框，没有独立页面码 → 只能挂动词码） */
+  pvcCreate: 'tenant:pvc:create',
   /** 改容量（扩容）—— 与创建/删除分开，扩容是唯一能改 spec 的动作 */
   pvcUpdate: 'tenant:pvc:update',
   /** 集群 API 能力快照只读（V2026_10_07_2 起租户可读；refresh 仍独占 platform:cluster:manage） */

@@ -6,6 +6,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { serviceApi, workloadApi } from '@/api'
 import type { K8sService } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
 import { useMeshStatus } from '@/composables/useMeshStatus'
 import { meshLabelState } from '@/utils/waypoint'
 import PageHeader from '@/components/PageHeader.vue'
@@ -17,6 +19,9 @@ import YamlBlock from '@/components/YamlBlock.vue'
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
 const route = useRoute()
+const perm = usePermission()
+/** 「创建 Service」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canCreate = computed(() => perm.has(pageCodes.service.edit))
 /** 从工作负载详情跳来（?open=）时，首次加载后自动打开对应抽屉 */
 let autoOpened = false
 
@@ -221,13 +226,17 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="Service" >
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="goEditor(null)">创建 Service</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goEditor(null)">创建 Service</el-button>
     </PageHeader>
 
     <EmptyState
       v-if="ready && list.length === 0 && !loading"
       title="该命名空间下暂无 Service"
-      description="点击右上「创建 Service」新建，或到顶栏切换上下文查看其他命名空间。"
+      :description="
+        canCreate
+          ? '点击右上「创建 Service」新建，或到顶栏切换上下文查看其他命名空间。'
+          : '当前账号在该租户内没有创建 Service 的权限，只能查看。'
+      "
     />
 
     <div v-else class="panel table-panel">

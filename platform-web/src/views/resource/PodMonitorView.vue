@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { podMonitorApi } from '@/api'
 import type { K8sPodMonitor } from '@/types'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
@@ -13,6 +15,9 @@ import YamlBlock from '@/components/YamlBlock.vue'
 
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+const perm = usePermission()
+/** 「创建 PodMonitor」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
+const canCreate = computed(() => perm.has(pageCodes.podMonitor.edit))
 
 const loading = ref(false)
 const list = ref<K8sPodMonitor[]>([])
@@ -105,7 +110,7 @@ const contextDesc = computed(() => {
   <div>
     <PageHeader title="PodMonitor" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button type="primary" :disabled="!ready" @click="goCreate">创建 PodMonitor</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goCreate">创建 PodMonitor</el-button>
     </PageHeader>
 
     <EmptyState
