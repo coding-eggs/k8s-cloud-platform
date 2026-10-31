@@ -8,9 +8,10 @@ import com.coding.k8score.operations.NamespacedOperations;
 import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.Service;
-import io.fabric8.kubernetes.api.model.ServiceBuilder;
 import io.fabric8.kubernetes.api.model.ServicePort;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.base.PatchContext;
+import io.fabric8.kubernetes.client.dsl.base.PatchType;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,6 +19,7 @@ import org.springframework.util.StringUtils;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -105,7 +107,7 @@ public class CoreV1ServiceOperations implements NamespacedOperations<ServiceDTO>
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
         }
         Service in = converter.convert(service);
-        adoptPortsIfStale(namespace, name, in.getSpec() == null ? null : in.getSpec().getPorts());
+        replaceStalePortsIfAny(namespace, name, in.getSpec() == null ? null : in.getSpec().getPorts());
         Service updated = client.services()
                 .inNamespace(namespace)
                 .resource(in)
@@ -119,16 +121,22 @@ public class CoreV1ServiceOperations implements NamespacedOperations<ServiceDTO>
      * <b>只对本 manager 拥有的条目生效</b> —— 别的 manager 写下的条目不会被删掉。
      *
      * <p>而本平台的 {@link #create} 走的是普通 POST（fabric8 的 {@code create()} 不会在 URL 上带
-     * {@code fieldManager}，apiserver 只能按 User-Agent 记 manager），Helm / kubectl 建的 Service
-     * 同理。于是把一个端口的 {@code port} 改号（如 6379 → 16379）时，旧条目留在原地、新条目被加上，
-     * 同一个 Service 出现两条同 nodePort 的端口，apiserver 报
-     * {@code duplicate nodePort: {TCP 25358}}（2026-10-31 实测）。
+     * {@code fieldManager}，见 {@code OperationSupport.handleCreate}），manager 落成
+     * {@code fabric8-kubernetes-client}；Helm / kubectl 建的 Service 同理。于是把端口的
+     * {@code port} 改号时，旧条目留在原地、新条目被加上，同一个 Service 出现两条同 nodePort、
+     * 同名的端口，apiserver 报 {@code duplicate nodePort: {TCP 25358}} 或
+     * {@code spec.ports[1].name: Duplicate value: "redis"}（2026-10-31 / 11-01 实测）。
      *
-     * <p>修法：先把线上的端口条目<b>原样</b> apply 一次（apply-config 只带 metadata + spec.ports），
-     * 把它们收归 {@code platform-system}；随后的常规 apply 因为「已拥有」，就能把不再提交的旧条目删掉。
-     * 只在确实存在陈旧条目时才多打这一次 —— 改名称/标签/选择器之类的日常编辑没有额外开销。
+     * <p><b>不能靠「先按线上值 apply 一次把条目收归自己」</b>——试过了，无效：SSA 的 force 只在
+     * <b>值冲突</b>时才转移归属；apply 的值和线上完全一样时对方仍然拥有该条目，条目就不会被后续
+     * apply 删掉（本集群实测 managedFields 里 {@code fabric8-kubernetes-client} 依旧持有
+     * {@code k:{"port":3306}}）。
+     *
+     * <p>所以改用 JSON merge patch：<b>merge patch 对数组是原子替换</b>，不看 field manager，
+     * 一次就把 ports 换成期望的那几条。只替换 {@code spec.ports}，spec 里其它字段（含本 DTO 没建模的）
+     * 与 metadata 原样保留。只在确实存在陈旧条目时才多打这一次，日常编辑没有额外开销。
      */
-    private void adoptPortsIfStale(String namespace, String name, List<ServicePort> desired) {
+    private void replaceStalePortsIfAny(String namespace, String name, List<ServicePort> desired) {
         if (desired == null || desired.isEmpty()) {
             return; // ExternalName 等无端口场景：不碰线上端口
         }
@@ -140,12 +148,9 @@ public class CoreV1ServiceOperations implements NamespacedOperations<ServiceDTO>
         if (livePorts == null || livePorts.isEmpty() || !hasStalePorts(livePorts, desired)) {
             return;
         }
-        Service adopt = new ServiceBuilder()
-                .withNewMetadata().withName(name).withNamespace(namespace).endMetadata()
-                .withNewSpec().withPorts(livePorts).endSpec()
-                .build();
-        client.services().inNamespace(namespace).resource(adopt)
-                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        Map<String, Object> patch = Map.of("spec", Map.of("ports", desired));
+        client.services().inNamespace(namespace).withName(name)
+                .patch(PatchContext.of(PatchType.JSON_MERGE), Serialization.asJson(patch));
     }
 
     /**
