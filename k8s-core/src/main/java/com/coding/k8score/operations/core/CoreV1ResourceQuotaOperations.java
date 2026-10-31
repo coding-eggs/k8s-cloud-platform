@@ -95,7 +95,7 @@ public class CoreV1ResourceQuotaOperations implements NamespacedOperations<Resou
         ResourceQuota created = client.resourceQuotas()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

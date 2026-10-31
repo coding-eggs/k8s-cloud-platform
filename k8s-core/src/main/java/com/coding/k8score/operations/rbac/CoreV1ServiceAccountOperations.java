@@ -90,7 +90,7 @@ public class CoreV1ServiceAccountOperations implements NamespacedOperations<Serv
         ServiceAccount created = client.serviceAccounts()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

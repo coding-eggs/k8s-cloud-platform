@@ -85,7 +85,7 @@ public class HpaV1Operations implements NamespacedOperations<HpaDTO> {
         }
         HorizontalPodAutoscaler in = converter.convert(dto);
         HorizontalPodAutoscaler created = client.autoscaling().v1().horizontalPodAutoscalers()
-                .inNamespace(namespace).resource(in).create();
+                .inNamespace(namespace).resource(in).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

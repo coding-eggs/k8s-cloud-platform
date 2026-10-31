@@ -66,7 +66,7 @@ public class RbacV1ClusterRoleOperations implements ClusterOperations<ClusterRol
             throw new CloudPlatformException(EnumResponseType.RESOURCE_EXIST);
         }
         ClusterRole in = converter.convert(dto);
-        ClusterRole created = client.rbac().clusterRoles().resource(in).create();
+        ClusterRole created = client.rbac().clusterRoles().resource(in).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

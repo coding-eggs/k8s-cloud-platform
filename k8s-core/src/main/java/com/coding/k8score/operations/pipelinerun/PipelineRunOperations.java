@@ -235,6 +235,8 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         pvc.getMetadata().setLabels(managedLabels(Map.of()));
         pvc.setSpec(spec);
         try {
+            // 有意保留 create()（其余 Operations 已统一改 SSA，见 ServerSideApply）：
+            // 这里要的是「必须新建」——409 AlreadyExists 是并发下的正常分支，不是 upsert。
             return client.persistentVolumeClaims().inNamespace(namespace).resource(pvc).create();
         } catch (KubernetesClientException e) {
             if (e.getCode() == 409) {
@@ -406,6 +408,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                 //    这个事实由入口（controller）用 admin 凭据探好放进 dto，见 beforeCreate。
                 pr = buildRun(dto, dto.isCacheWorkspaceAllowed() ? ensureCachePvc(dto.getNamespace()) : null);
             }
+            // 同上：一次运行就是一条新对象，重名要先报错而不是把旧运行改掉。
             created = client.resources(PipelineRun.class).inNamespace(dto.getNamespace())
                     .resource(pr).create();
         } catch (KubernetesClientException e) {
@@ -656,6 +659,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
         spec.setAccessModes(List.of("ReadWriteOnce"));
         spec.setResources(res);
         pvc.setSpec(spec);
+        // 同上：工作区 PVC 的 claimName 由本次运行生成，存在即冲突，不能 apply 覆盖。
         client.persistentVolumeClaims().inNamespace(namespace).resource(pvc).create();
         return true;
     }

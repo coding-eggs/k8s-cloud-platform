@@ -143,7 +143,7 @@ public class CoreV1PersistentVolumeClaimOperations implements NamespacedOperatio
         PersistentVolumeClaim created = client.persistentVolumeClaims()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

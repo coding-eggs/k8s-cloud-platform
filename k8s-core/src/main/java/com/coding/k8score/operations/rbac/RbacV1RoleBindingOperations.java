@@ -92,7 +92,7 @@ public class RbacV1RoleBindingOperations implements NamespacedOperations<RoleBin
         RoleBinding created = client.rbac().roleBindings()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

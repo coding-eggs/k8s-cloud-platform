@@ -60,7 +60,7 @@ public class CoreV1NamespaceOperations implements ClusterOperations<NamespaceDTO
         if (checkExist(dto.getName())) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_EXIST);
         }
-        Namespace created = client.namespaces().resource(converter.convert(dto)).create();
+        Namespace created = client.namespaces().resource(converter.convert(dto)).fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

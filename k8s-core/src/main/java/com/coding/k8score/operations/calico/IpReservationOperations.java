@@ -82,7 +82,7 @@ public class IpReservationOperations implements ClusterOperations<IpReservationD
         GenericKubernetesResource in = converter.convert(reservation);
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

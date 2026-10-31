@@ -85,7 +85,7 @@ public class GatewayClassOperations implements ClusterOperations<GatewayClassDTO
         GenericKubernetesResource in = converter.convert(gc);
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

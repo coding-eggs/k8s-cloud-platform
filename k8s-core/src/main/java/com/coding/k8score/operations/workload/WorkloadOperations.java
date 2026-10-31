@@ -122,7 +122,7 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
                 Deployment created = client.apps().deployments()
                         .inNamespace(namespace)
                         .resource(converter.convertDeployment(workload))
-                        .create();
+                        .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
                 return converter.revert(created);
             }
             case WorkloadConverter.KIND_STATEFULSET -> {
@@ -132,7 +132,7 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
                 StatefulSet created = client.apps().statefulSets()
                         .inNamespace(namespace)
                         .resource(converter.convertStatefulSet(workload))
-                        .create();
+                        .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
                 return converter.revert(created);
             }
             default -> {
@@ -142,7 +142,7 @@ public class WorkloadOperations implements NamespacedOperations<WorkloadDTO> {
                 DaemonSet created = client.apps().daemonSets()
                         .inNamespace(namespace)
                         .resource(converter.convertDaemonSet(workload))
-                        .create();
+                        .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
                 return converter.revert(created);
             }
         }

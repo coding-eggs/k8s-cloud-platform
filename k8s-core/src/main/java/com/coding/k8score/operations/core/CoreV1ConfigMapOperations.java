@@ -95,7 +95,7 @@ public class CoreV1ConfigMapOperations implements NamespacedOperations<ConfigMap
         ConfigMap created = client.configMaps()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

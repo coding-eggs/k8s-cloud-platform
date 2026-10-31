@@ -95,7 +95,7 @@ public class CoreV1LimitRangeOperations implements NamespacedOperations<LimitRan
         LimitRange created = client.limitRanges()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

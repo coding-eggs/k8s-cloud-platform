@@ -92,7 +92,7 @@ public class BgpFilterOperations implements ClusterOperations<BgpFilterDTO> {
         GenericKubernetesResource in = converter.convert(resource);
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

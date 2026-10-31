@@ -95,7 +95,7 @@ public class CoreV1ServiceOperations implements NamespacedOperations<ServiceDTO>
         Service created = client.services()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

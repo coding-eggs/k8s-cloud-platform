@@ -104,7 +104,7 @@ public class HttpRouteOperations implements NamespacedOperations<HttpRouteDTO> {
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

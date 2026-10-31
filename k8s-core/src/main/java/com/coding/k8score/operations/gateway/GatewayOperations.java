@@ -114,7 +114,7 @@ public class GatewayOperations implements NamespacedOperations<GatewayDTO> {
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

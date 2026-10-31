@@ -94,7 +94,7 @@ public class BgpConfigurationOperations implements ClusterOperations<BgpConfigur
         GenericKubernetesResource in = converter.convert(resource);
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

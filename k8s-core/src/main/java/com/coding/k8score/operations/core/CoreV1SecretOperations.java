@@ -77,7 +77,7 @@ public class CoreV1SecretOperations implements NamespacedOperations<SecretDTO> {
         Secret created = client.secrets()
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

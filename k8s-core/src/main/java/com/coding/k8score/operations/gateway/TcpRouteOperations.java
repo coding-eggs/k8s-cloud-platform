@@ -108,7 +108,7 @@ public class TcpRouteOperations implements NamespacedOperations<TcpRouteDTO> {
         GenericKubernetesResource created = client.genericKubernetesResources(crd)
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

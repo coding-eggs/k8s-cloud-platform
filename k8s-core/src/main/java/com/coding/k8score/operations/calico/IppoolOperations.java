@@ -82,7 +82,7 @@ public class IppoolOperations implements ClusterOperations<IpoolDTO> {
         GenericKubernetesResource in = converter.convert(pool);
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 

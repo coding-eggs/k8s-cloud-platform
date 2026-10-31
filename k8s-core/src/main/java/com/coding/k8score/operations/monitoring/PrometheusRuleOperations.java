@@ -101,7 +101,7 @@ public class PrometheusRuleOperations implements NamespacedOperations<Prometheus
         GenericKubernetesResource created = client.genericKubernetesResources(CRD)
                 .inNamespace(namespace)
                 .resource(in)
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return converter.revert(created);
     }
 
