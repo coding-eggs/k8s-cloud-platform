@@ -62,15 +62,28 @@ public class AuthContext {
     }
 
     /**
+     * 是不是平台侧身份（{@code data.platformRoles} 非空）。
+     *
+     * <p>与 k8s-server 的 {@code PLATFORM_SCOPE} 权限同源（签发期都按 {@code platform_role.scope='PLATFORM'}
+     * 过滤），是「平台能不能碰这个资源」的唯一判据 —— **与有没有租户帽无关**：
+     * 管理员戴帽只是"替谁做"的标注，不该因此降级成租户权限（2026-10-31）。
+     */
+    public boolean isPlatformSide() {
+        TokenUserInfo info = current();
+        return info != null && info.getPlatformRoles() != null && !info.getPlatformRoles().isEmpty();
+    }
+
+    /**
      * 这次调用**以哪个租户的身份**去问 k8s-server（调有租户维度的资源时必须给一个）。
      *
      * <p>两条轨，与前端 {@code api/index.ts} 那条约定（"tenantId 为生效租户 id"）同一条规矩：
      * <ul>
      *   <li><b>自管轨</b>（token 带 tenantInfo）→ **以 token 为准**。请求里传别人的，k8s-server 会判
      *       {@code TENANT_MISMATCH}；这里干脆忽略请求值，不给它机会。</li>
-     *   <li><b>代管轨</b>（平台管理员 base token，{@link #hatTenantId()} 为 null）→ 用**请求里显式指定的**
-     *       那个租户（前端顶栏级联里选的那个）。k8s-server 的 "管理员代操作需显式指定 tenantId"
-     *       就是为这一轨准备的；没传就保持 null，让 k8s-server 照旧拒 —— **不在这里猜一个租户**。</li>
+     *   <li><b>代管轨</b>（平台侧身份，{@link #hatTenantId()} 为 null）→ 用**请求里显式指定的**
+     *       那个租户（前端顶栏级联里选的那个）。没传就保持 null —— k8s-server 会按
+     *       (cluster, namespace) 反查归属表补上（2026-10-31 起不再要求显式传参），
+     *       这里**不猜一个租户**。</li>
      * </ul>
      */
     public String effectiveTenantId(String requestedTenantId) {

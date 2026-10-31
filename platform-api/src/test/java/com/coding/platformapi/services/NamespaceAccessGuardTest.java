@@ -55,4 +55,16 @@ class NamespaceAccessGuardTest {
         assertThatCode(() -> guard.assertAccessible("c1", "ns1")).doesNotThrowAnyException();
         verify(allocationMapper, never()).selectByTenantClusterNs(any(), anyString(), anyString());
     }
+
+    @Test
+    void aPlatformAdminWearingAHatIsStillNotBoundByTheAllocationTable() {
+        // ⭐ 2026-10-31 平台身份优先：帽子只决定「替谁做」的标注，不决定权限。
+        //    否则管理员切到租户视图后会被归属表挡住 —— 而修那张表恰恰是他的工作。
+        when(auth.isPlatformSide()).thenReturn(true);
+        when(auth.hatTenantId()).thenReturn("t1");
+        when(allocationMapper.selectByTenantClusterNs("t1", "c1", "ns1")).thenReturn(null);
+
+        assertThatCode(() -> guard.assertAccessible("c1", "ns1")).doesNotThrowAnyException();
+        verify(allocationMapper, never()).selectByTenantClusterNs(any(), anyString(), anyString());
+    }
 }

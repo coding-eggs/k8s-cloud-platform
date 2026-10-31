@@ -21,16 +21,20 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * 资源访问统一解析（命名空间域 + 集群域边界）。
  * <p>
- * 双模身份：
+ * 双模身份（<b>平台身份优先</b>，2026-10-31 起）：
  * <ul>
- *   <li>租户 token（带 tenantInfo claim）：tenantId 以签名字段为唯一来源，客户端不可伪造；
- *       显式参数若传入必须与 token 一致，否则 TENANT_MISMATCH</li>
- *   <li>admin token（无租户 claim）：tenantId 必须显式传参——代操作"替谁说话"；
- *       调用方还必须是<b>平台侧身份</b>（见 {@link #assertPlatformSide}）</li>
+ *   <li><b>平台侧身份</b>（token 的 {@code data.platformRoles} 非空，见 {@link #isPlatformSide}）：
+ *       一律走 admin client。有没有 {@code tenantInfo}（"租户帽子"）<b>不影响</b> client 的选择，
+ *       帽子只作归属标注。边界只有一条：clusterId 必须是平台已登记的集群 ——
+ *       <b>不查分配表</b>：能不能碰一个 ns 由身份决定，不由那张归属表决定</li>
+ *   <li>租户 token（带 tenantInfo claim，且无平台侧身份）：tenantId 以签名字段为唯一来源，
+ *       客户端不可伪造；显式参数若传入必须与 token 一致，否则 TENANT_MISMATCH；
+ *       <b>必须过分配表三元组</b>，client = 租户 SA</li>
  * </ul>
- * 边界校验两种模式统一且不可跳过：
+ * 边界校验：
  * <ul>
- *   <li>命名空间域：分配表三元组 (tenantId, clusterId, namespace) 必须存在</li>
+ *   <li>命名空间域：<b>租户路径</b>校验分配表三元组 (tenantId, clusterId, namespace)；
+ *       平台路径只校验集群可达</li>
  *   <li>集群域：clusterId 必须是平台已登记的集群</li>
  * </ul>
  * client 选择由 {@link AccessContext#adminMode()} 决定：租户→tenant client（最小权限，K8s RBAC 第二道闸），
@@ -70,38 +74,53 @@ public class ResourceAccessResolver {
      */
     public AccessContext resolveNamespacedAccess(Authentication auth, String explicitTenantId, String clusterId, String namespace) {
         String tokenTenantId = tokenTenantIdFrom(auth);
-        String tenantId;
-        boolean adminMode;
-        if (tokenTenantId != null) {
-            //租户模式：token 为权威身份源（即使 token 同时带 admin authority，也以 token 租户为准）
-            if (StringUtils.hasText(explicitTenantId) && !tokenTenantId.equals(explicitTenantId)) {
-                log.warn("Tenant mismatch: token={}, request={}", tokenTenantId, explicitTenantId);
-                throw new CloudPlatformException(EnumResponseType.TENANT_MISMATCH);
-            }
-            tenantId = tokenTenantId;
-            adminMode = false;
-        } else {
-            //admin 模式：显式参数是唯一身份来源 —— 但前提是调用方确实是平台侧身份，否则任何
-            //"无 tenantInfo 的 token"都能自称代任意租户操作并拿到 admin client（cluster-admin 凭据）。
-            assertPlatformSide(auth);
-            if (!StringUtils.hasText(explicitTenantId)) {
-                throw new CloudPlatformException(EnumResponseType.ERROR, "管理员代操作需显式指定 tenantId");
-            }
-            tenantId = explicitTenantId;
-            adminMode = true;
+
+        //① 平台身份优先（2026-10-31）：只要 token 带 PLATFORM_SCOPE 就用 admin client，
+        //  **戴不戴租户帽子都一样**。旧顺序是「有帽子就以租户为准」，那让管理员切到租户视图后
+        //  降级成租户 SA —— 租户把角色模板改坏、RoleBinding 误删时管理员也被一起锁在外面，
+        //  而"进去把它修好"恰恰是管理员存在的意义。
+        //  帽子此时只作**归属标注**（审计 / 列表展示用），不参与授权判定。
+        //  平台侧也不再查分配表：能不能碰一个 ns 由身份决定，不由那张归属表决定。
+        if (isPlatformSide(auth)) {
+            assertClusterAccess(clusterId);
+            String tenantId = StringUtils.hasText(tokenTenantId) ? tokenTenantId
+                    : StringUtils.hasText(explicitTenantId) ? explicitTenantId
+                    : platformTenantMapper.selectTenantIdByClusterAndNs(clusterId, namespace);
+            return new AccessContext(tenantId, true);
         }
-        assertNamespacedAccess(tenantId, clusterId, namespace);
-        return new AccessContext(tenantId, adminMode);
+
+        //② 租户路径：身份以签名为准，边界 = 分配表三元组（行为完全不变）
+        if (tokenTenantId == null) {
+            throw new CloudPlatformException(EnumResponseType.NON_AUTH_ENTRY_POINT);
+        }
+        if (StringUtils.hasText(explicitTenantId) && !tokenTenantId.equals(explicitTenantId)) {
+            log.warn("Tenant mismatch: token={}, request={}", tokenTenantId, explicitTenantId);
+            throw new CloudPlatformException(EnumResponseType.TENANT_MISMATCH);
+        }
+        assertNamespacedAccess(tokenTenantId, clusterId, namespace);
+        return new AccessContext(tokenTenantId, false);
     }
 
     /**命名空间边界：(tenantId, clusterId, namespace) 三元组必须在分配表中存在 */
-    public void assertNamespacedAccess(String tenantId, String clusterId, String namespace) {        if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(clusterId) || !StringUtils.hasText(namespace)) {
+    public void assertNamespacedAccess(String tenantId, String clusterId, String namespace) {
+        if (!StringUtils.hasText(tenantId) || !StringUtils.hasText(clusterId) || !StringUtils.hasText(namespace)) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "缺少租户/集群/命名空间参数");
         }
         if (!platformTenantMapper.hasNamespaceAccess(tenantId, clusterId, namespace)) {
             log.warn("Blocked: tenant {} has no allocation for ns {} in cluster {}", tenantId, namespace, clusterId);
             throw new CloudPlatformException(EnumResponseType.NAMESPACE_NOT_ACCESSIBLE);
         }
+    }
+
+    /**
+     * 只问不做：这个租户对这个命名空间有没有分配行。
+     *
+     * <p>供「候选类」端点判可读 —— 不可读时返回空列表，不该抛错（候选是便利，不是保存的前提）。
+     * 与 {@link #assertNamespacedAccess} 走的是**同一条查询**：判定只能有一处，否则两跳迟早漂移。
+     */
+    public boolean mayAccessNamespace(String tenantId, String clusterId, String namespace) {
+        return StringUtils.hasText(tenantId) && StringUtils.hasText(clusterId) && StringUtils.hasText(namespace)
+                && platformTenantMapper.hasNamespaceAccess(tenantId, clusterId, namespace);
     }
 
     /**集群域边界：clusterId 必须是平台已登记的集群 */
@@ -115,10 +134,11 @@ public class ResourceAccessResolver {
      * 中间件实例用的"租户优先、平台兜底"解析。
      *
      * <ul>
-     *   <li>调用方带租户身份（token 的 tenantInfo 或显式 tenantId）→ 走
-     *       {@link #resolveNamespacedAccess}：分配表校验 + 租户 client；</li>
+     *   <li>带租户上下文（token 的 tenantInfo 或显式 tenantId）→ 走
+     *       {@link #resolveNamespacedAccess}：<b>平台侧身份仍得 admin client</b>；
+     *       只有真正的租户才走分配表 + 租户 client（见该方法的两条分支）；</li>
      *   <li>平台管理员且没有指定租户（平台视图）→ 走 {@link #resolvePlatformNamespacedAccess}：
-     *       不做分配表校验、用 admin client。这与「分配表只管租户」一致（spec §2.2）。</li>
+     *       同样不做分配表校验、用 admin client。这与「分配表只管租户」一致（spec §2.2）。</li>
      * </ul>
      */
     public AccessContext resolveNamespacedAccessOrPlatform(String explicitTenantId, String clusterId,
@@ -135,8 +155,9 @@ public class ResourceAccessResolver {
 
     /**
      * 平台级命名空间访问解析：<b>不做分配表校验</b>，只校验集群已登记，返回无租户身份的 admin 模式。     * <p>
-     * 专供命名空间自身的约束资源（ResourceQuota / LimitRange）——这类对象由平台在「尚未分配给任何租户」
-     * 的命名空间上创建，走 {@link #resolveNamespacedAccess} 的租户边界会被分配表直接拒。
+     * 两种用法：① 命名空间自身的约束资源（ResourceQuota / LimitRange）—— 这类对象由平台在
+     * 「尚未分配给任何租户」的命名空间上创建；② 平台视图里**没有指定租户**的代操作。
+     * 两者都不该被归属表拦住。
      * <p>
      * <b>谁能进入此模式</b>：调用方必须是平台侧身份（{@link #assertPlatformSide}）；对应的
      * {@code ResourceQuotaController} / {@code LimitRangeController} 还声明了
@@ -161,14 +182,23 @@ public class ResourceAccessResolver {
         if (auth == null || !auth.isAuthenticated()) {
             throw new CloudPlatformException(EnumResponseType.USER_UN_LOGIN);
         }
-        boolean platformSide = auth.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .anyMatch(PlatformJwtAuthenticationConverter.PLATFORM_SCOPE_AUTHORITY::equals);
-        if (!platformSide) {
+        if (!isPlatformSide(auth)) {
             log.warn("Blocked: user={} 无平台侧身份（data.platformRoles 为空），不得进入 admin 代操作模式",
                     auth.getName());
             throw new CloudPlatformException(EnumResponseType.NON_AUTH_ENTRY_POINT);
         }
+    }
+
+    /**
+     * 是不是平台侧身份（= token 的 {@code data.platformRoles} 非空，签发期已按 {@code scope='PLATFORM'} 过滤）。
+     *
+     * <p>抽出来是因为它现在有<b>两个</b>用途：断言（保留原语义）与分叉（平台身份优先）。
+     * 判据仍然只有这一处 —— 分开写两份迟早漂移，而这是「谁能拿到 admin client」的唯一依据。
+     */
+    private boolean isPlatformSide(Authentication auth) {
+        return auth != null && auth.isAuthenticated() && auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(PlatformJwtAuthenticationConverter.PLATFORM_SCOPE_AUTHORITY::equals);
     }
 
     /**从给定 Authentication 的 JWT data claim 提取租户身份；admin token / 无 claim → null（走 admin 模式）。
