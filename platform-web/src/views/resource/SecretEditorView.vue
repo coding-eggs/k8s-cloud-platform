@@ -127,6 +127,34 @@ function pickFile(idx: number): void {
   el.click()
 }
 
+/**
+ * 这个值是不是 docker config JSON（`.dockerconfigjson`）。
+ *
+ * <p>为什么只认这个 key：docker config 是**压缩成一行的长 JSON**，不格式化基本没法看；
+ * 而其它 key（证书、私钥、普通配置）格式化成 JSON 要么没意义、要么直接失败。
+ */
+function isJsonRow(row: KvRow): boolean {
+  return row.key.trim() === '.dockerconfigjson'
+}
+
+/**
+ * 把 JSON 值按 2 空格缩进排开，方便查看/核对 auths 里有哪些 host。
+ *
+ * <p>⚠️ 这只改**空白**，JSON 语义一个字都不变 —— 保存后 Secret 的内容与原值等价。
+ * 解析失败就原样不动并提示，绝不吞掉用户粘贴的东西。
+ */
+function formatJsonRow(idx: number): void {
+  const row = form.rows[idx]
+  if (!row) return
+  const raw = row.value.trim()
+  if (!raw) return
+  try {
+    row.value = JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    ElMessage.error('这段内容不是合法的 JSON，无法格式化（原值未改动）')
+  }
+}
+
 function readAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -314,6 +342,9 @@ const contextDesc = computed(() => {
                       :disabled="dataLocked || readOnly || keyLocked"
                     />
                     <div class="kv-actions">
+                      <el-button v-if="isJsonRow(row)" link type="primary"
+                                 :disabled="dataLocked || readOnly || !row.value.trim()"
+                                 @click="formatJsonRow(idx)">格式化 JSON</el-button>
                       <el-button link type="primary" :disabled="dataLocked || readOnly" @click="pickFile(idx)">导入文件</el-button>
                       <el-button link type="danger" :disabled="(dataLocked || readOnly) || !canDeleteRow(row)" @click="form.rows.splice(idx, 1)">删除</el-button>
                     </div>

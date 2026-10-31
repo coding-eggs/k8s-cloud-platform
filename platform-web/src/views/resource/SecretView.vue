@@ -95,6 +95,28 @@ const yamlText = ref('')
 const detailTab = ref('data')
 const showPlain = ref(false)
 
+/**
+ * docker config 是**压成一行的长 JSON**，不排开基本没法核对 auths 里有哪些 host。
+ * 只认 `.dockerconfigjson` 这一个 key；解析失败（用户塞了别的东西）返回 null，按原文显示。
+ */
+function prettyJson(key: string, value: string): string | null {
+  if (key.trim() !== '.dockerconfigjson') return null
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return null
+  }
+}
+
+/** 详情抽屉的行数据（值默认掩码；展开明文时 JSON 值会排开） */
+const detailRows = computed(() =>
+  Object.entries(detail.value?.data ?? {}).map(([key, value]) => ({
+    key,
+    value,
+    json: prettyJson(key, value),
+  })),
+)
+
 async function openDetail(row: K8sSecret): Promise<void> {
   detail.value = row
   yamlText.value = ''
@@ -196,13 +218,15 @@ const contextDesc = computed(() => {
           <div class="mask-bar">
             <el-switch v-model="showPlain" inline-prompt active-text="显示明文" inactive-text="掩码" />
           </div>
-          <el-table :data="Object.entries(detail?.data ?? {}).map(([key, value]) => ({ key, value }))" stripe>
+          <el-table :data="detailRows" stripe>
             <el-table-column prop="key" label="Key" min-width="160">
               <template #default="{ row }"><code class="res-name">{{ row.key }}</code></template>
             </el-table-column>
             <el-table-column prop="value" label="Value" min-width="240">
               <template #default="{ row }">
-                <span class="kv-value">{{ showPlain ? row.value : '••••••••' }}</span>
+                <span v-if="!showPlain" class="kv-value">••••••••</span>
+                <pre v-else-if="row.json" class="kv-json">{{ row.json }}</pre>
+                <span v-else class="kv-value">{{ row.value }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -249,5 +273,17 @@ const contextDesc = computed(() => {
   font-size: 12.5px;
   word-break: break-all;
   white-space: pre-wrap;
+}
+/* docker config 排开后的样子：等宽、保留缩进、过长时在格子里滚动而不是把表格撑开 */
+.kv-json {
+  margin: 0;
+  padding: 4px 0;
+  font-family: Consolas, 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
 }
 </style>
