@@ -39,6 +39,8 @@ public class TenantService {
     private final K8sLifecycleClient adminClient;
     private final TenantMemberService memberSvc;
     private final HarborRegistryService harborRegistry;
+    /** 租户启用后把拉取凭据补铺到它各集群的命名空间（spec 2026-10-31 §6.6） */
+    private final RegistryPullSecretService pullSecrets;
 
     public PlatformTenant create(TenantCreateRequest req) {
         if (!StringUtils.hasText(req.getName())) {
@@ -122,6 +124,12 @@ public class TenantService {
                 harborRegistry.ensureForTenantOnInstalledClusters(req.getId());
             } catch (Exception e) {
                 log.warn("租户 {} 启用后 Harbor 项目同步失败：{}", req.getId(), e.getMessage());
+            }
+            // 停用期间建的 Harbor 项目 / 凭据没有任何东西去铺设命名空间 —— 这里补一次
+            try {
+                pullSecrets.resyncTenantEverywhere(req.getId());
+            } catch (Exception e) {
+                log.warn("租户 {} 启用后拉取凭据下发失败：{}", req.getId(), e.getMessage());
             }
         }
         return tenantMapper.selectByPrimaryKey(req.getId());

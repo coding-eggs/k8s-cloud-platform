@@ -7,6 +7,7 @@ import com.coding.platformapi.models.RegistryProjectRequest;
 import com.coding.platformapi.models.RegistryProjectView;
 import com.coding.platformapi.security.AuthContext;
 import com.coding.platformapi.services.HarborRegistryService;
+import com.coding.platformapi.services.RegistryPullSecretService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,9 @@ import java.util.List;
 public class RegistryProjectController {
 
     private final HarborRegistryService harborRegistry;
+
+    /** 命名空间默认拉取凭据的重下发（spec 2026-10-31 §6.6） */
+    private final RegistryPullSecretService pullSecrets;
 
     /** 租户帽：list 按它收窄（同步 / 重建仍只给管理员） */
     private final AuthContext auth;
@@ -59,5 +63,23 @@ public class RegistryProjectController {
     public ResponseData<HarborRegistryService.SyncItem> rebuildProject(
             @RequestBody RegistryProjectRequest request) {
         return new ResponseData<>(harborRegistry.rebuild(request.getClusterId(), request.getTenantId()));
+    }
+
+    /**
+     * 重下发该集群**所有**命名空间的默认拉取凭据（spec 2026-10-31 §6.6）。
+     *
+     * <p>为什么需要它：存量命名空间不会因为升级就拥有那个 Secret —— 命名空间是集群里的对象，SQL 碰不到
+     * 它们。第一次上线、robot 轮换后没自动重下发成功、Secret 被误删，都靠它补。
+     *
+     * <p>只覆盖分配表里存在的命名空间，不去扫集群全部 ns：kube-system 这类塞进去是噪音。
+     */
+    @Operation(summary = "重下发全部命名空间的默认拉取凭据",
+            description = "把每个租户的 registry 凭据写进其各命名空间的 platform-registry-pull，并挂到 default SA。"
+                    + "返回成功/失败数与失败明细。存量 Pod 需重建才生效。")
+    @PostMapping("/pull-secret/sync")
+    @Auditable(action = AuditAction.REGISTRY_SYNC_PULL_SECRET, target = "#request.clusterId")
+    public ResponseData<RegistryPullSecretService.ResyncResult> syncPullSecrets(
+            @RequestBody RegistryProjectRequest request) {
+        return new ResponseData<>(pullSecrets.resyncCluster(request.getClusterId()));
     }
 }

@@ -908,6 +908,13 @@ export const registryApi = {
   rebuildProject: (clusterId: string, tenantId: string | null) =>
     http.post<never, { status: string; message: string }>('/registry/projects/rebuild',
       { clusterId, tenantId }),
+  /**
+   * 重下发全部命名空间的默认拉取凭据（`platform-registry-pull` + default SA 的 imagePullSecrets）。
+   * 存量命名空间不会因为升级自动拥有它 —— 第一次上线、robot 轮换没自动补上、Secret 被误删，都靠它。
+   */
+  syncPullSecrets: (clusterId: string) =>
+    http.post<never, { applied: number; failed: number; failures: string[] }>(
+      '/registry/projects/pull-secret/sync', { clusterId }),
 }
 
 

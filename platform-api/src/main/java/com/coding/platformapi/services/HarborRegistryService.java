@@ -55,6 +55,8 @@ public class HarborRegistryService {
     /** 「Harbor 装在哪、地址是什么」的唯一真相源 */
     private final HarborInstallLocator harborInstalls;
     private final HarborAdminClient harbor;
+    /** robot 轮换后要把新口令铺到各命名空间的拉取凭据上（spec §6.6） */
+    private final RegistryPullSecretService pullSecrets;
 
     public record SyncItem(String tenantId, String tenantName, String project, String status,
                            String message) {
@@ -315,6 +317,11 @@ public class HarborRegistryService {
             String message = probeError == null ? "已创建（project " + project + "）"
                     : "robot 已创建，但列不出该 project 的仓库：" + probeError;
             save(clusterId, tenantId, host, project, credentialId, robot.id(), status, message);
+            // robot 重建 ⇒ 口令变了：各命名空间的 platform-registry-pull 必须跟着换。
+            // 不换的后果是拉取 401，而现象和"没配凭据"一模一样 —— 极难查（spec §6.6）。
+            if (tenantId != null) {
+                pullSecrets.resyncTenant(clusterId, tenantId);
+            }
             return new SyncItem(tenantId, tenantName, project, status,
                     probeError == null ? "已创建" : message);
         } catch (Exception e) {

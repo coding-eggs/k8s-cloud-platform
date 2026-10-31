@@ -33,6 +33,14 @@ public interface PlatformCredentialMapper {
 
     List<PlatformCredential> selectAll();
 
+    /**
+     * 该租户**启用的 registry 凭据**（{@code HARBOR} / {@code DOCKERHUB}）。
+     *
+     * <p>用途：拼命名空间的默认拉取凭据（spec 2026-10-31 §6.3）。
+     * {@code GIT} 与停用的行不算 —— 它们不是拉镜像用的。
+     */
+    List<PlatformCredential> listEnabledRegistryByTenant(@Param("tenantId") String tenantId);
+
     /** 测试结果回写：ok=true 时置 last_verified_at 并清空 error，ok=false 时只写 error */
     int updateVerifyResult(@Param("id") String id,
                            @Param("ok") boolean ok,

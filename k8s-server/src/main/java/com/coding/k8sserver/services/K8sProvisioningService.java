@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.constants.SystemConstant;
 import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.ClusterRoleDTO;
+import com.coding.common.models.k8s.dto.ImagePullSecretRefDTO;
 import com.coding.common.models.k8s.dto.PolicyRuleDTO;
 import com.coding.common.models.k8s.dto.RoleBindingDTO;
 import com.coding.common.models.k8s.dto.RulesPayload;
@@ -24,16 +25,23 @@ import io.fabric8.kubernetes.api.model.APIGroup;
 import io.fabric8.kubernetes.api.model.GroupVersionForDiscovery;
 import io.fabric8.kubernetes.api.model.Namespace;
 import io.fabric8.kubernetes.api.model.NamespaceBuilder;
+import io.fabric8.kubernetes.api.model.Secret;
+import io.fabric8.kubernetes.api.model.SecretBuilder;
 import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -154,10 +162,78 @@ public class K8sProvisioningService {
         }
     }
 
+    /** 平台的 Pod 不指定 serviceAccountName 时用的那个 SA —— 拉取凭据就挂在它身上 */
+    private static final String DEFAULT_SERVICE_ACCOUNT = "default";
+
+    /**
+     * 确保命名空间里有一个 registry 拉取凭据，并把它挂到 {@code default} ServiceAccount 上。
+     *
+     * <p>幂等：Secret 用 {@code createOrReplace}（重建 / 重投不会因为"已存在"失败）；
+     * SA 的列表是**合并去重**而不是整段覆盖 —— 用户手工挂给 default 的别项必须原样保留，
+     * 平台那条追加在末尾（同一 host 冲突时 Pod 自己写的先被 containerd 尝试）。
+     *
+     * <p>⚠️ 这里只做落盘，**不做任何业务判断**：该用哪些凭据、拼出来长什么样，全部在 platform-api。
+     * 本方法收一个已经拼好的 dockerconfigjson。
+     *
+     * <p>⚠️ 走 admin client：分配命名空间时 RoleBinding 是同一个事务里才建好的，裸建命名空间则根本没有
+     * 租户上下文 —— 两种情况下用调用方身份都写不进去（spec 2026-10-31 §6.5）。
+     */
+    public void ensureRegistryPullSecret(String clusterId, String namespace, String secretName,
+                                         String dockerConfigJson) {
+        if (!StringUtils.hasText(namespace) || !StringUtils.hasText(secretName)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "缺少命名空间或 Secret 名");
+        }
+
+        Secret secret = new SecretBuilder()
+                .withNewMetadata()
+                    .withName(secretName)
+                    .withNamespace(namespace)
+                    .withLabels(Map.of(KubernetesClientFactory.MANAGED_BY_LABEL,
+                            KubernetesClientFactory.MANAGED_BY_VALUE))
+                .endMetadata()
+                .withType("kubernetes.io/dockerconfigjson")
+                .addToData(".dockerconfigjson", Base64.getEncoder()
+                        .encodeToString(dockerConfigJson.getBytes(StandardCharsets.UTF_8)))
+                .build();
+        clientFactory.getAdminClient(clusterId).secrets()
+                .inNamespace(namespace).resource(secret).createOrReplace();
+
+        NamespacedOperations<ServiceAccountDTO> ops =
+                operationsFactory.getAdminNamespacedOperation(ResourceType.SERVICE_ACCOUNT, clusterId);
+        ServiceAccountDTO current = ops.get(namespace, DEFAULT_SERVICE_ACCOUNT);
+
+        List<ImagePullSecretRefDTO> merged = new ArrayList<>();
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        if (current != null && current.getImagePullSecrets() != null) {
+            for (ImagePullSecretRefDTO ref : current.getImagePullSecrets()) {
+                if (ref.getName() != null && seen.add(ref.getName())) {
+                    merged.add(ref);
+                }
+            }
+        }
+        if (seen.add(secretName)) {
+            ImagePullSecretRefDTO ref = new ImagePullSecretRefDTO();
+            ref.setName(secretName);
+            merged.add(ref);
+        }
+
+        ServiceAccountDTO upd = new ServiceAccountDTO();
+        upd.setClusterId(clusterId);
+        upd.setNamespace(namespace);
+        upd.setName(DEFAULT_SERVICE_ACCOUNT);
+        upd.setImagePullSecrets(merged);
+        if (current == null) {
+            ops.create(upd);
+        } else {
+            ops.update(upd);
+        }
+        log.info("集群 {} 命名空间 {} 的拉取凭据 {} 已就绪（default SA 上共 {} 条）",
+                clusterId, namespace, secretName, merged.size());
+    }
+
     /**
      * 同步模板对应的 ClusterRole（不存在则创建，存在则整体覆盖为传入规则）。
-     * 仅供开通 / 分配流程内部使用；单点 CRUD 走 /clusterroles 通用端点。
-     */
+     * 仅供开通 / 分配流程内部使用；单点 CRUD 走 /clusterroles 通用端点。     */
     private void syncTemplateClusterRole(String clusterId, String templateName, List<PolicyRuleDTO> rules) {
         ClusterOperations<ClusterRoleDTO> ops = operationsFactory.getClusterOperation(
                 ResourceType.CLUSTER_ROLE, clusterId);

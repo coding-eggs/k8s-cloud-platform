@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.ServiceType;
 import com.coding.common.models.k8s.dto.ContainerDTO;
 import com.coding.common.models.k8s.dto.EmptyDirVolumeDTO;
 import com.coding.common.models.k8s.dto.EnvDTO;
+import com.coding.common.models.k8s.dto.ImagePullSecretRefDTO;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.k8s.dto.PodSpecDTO;
 import com.coding.common.models.k8s.dto.PodTemplateDTO;
@@ -235,13 +236,54 @@ public class WorkloadService {
 
     public WorkloadDTO create(WorkloadDTO dto) {
         validator.validate(dto);
+        ensureRegistryPullSecret(dto.getPodTemplate());
         return k8s.create(dto);
     }
 
     public WorkloadDTO update(WorkloadDTO dto) {
         if (dto.getPodTemplate() == null) graftExistingSpec(dto); // 仅伸缩快捷（无 Pod 模板）：先取现有规格，否则校验会以「缺少 Pod 模板」拒绝
         validator.validate(dto);
+        ensureRegistryPullSecret(dto.getPodTemplate());
         return k8s.update(dto);
+    }
+
+    /** 平台的默认拉取凭据 Secret 名（与 {@link RegistryPullSecretService} 同一个，别各写一份） */
+    private static final String PULL_SECRET_NAME = RegistryPullSecretService.SECRET_NAME;
+
+    private static final String DEFAULT_SERVICE_ACCOUNT = "default";
+
+    /**
+     * 兜底：显式指定了**别的** ServiceAccount 时，把平台的拉取凭据补进 pod 模板。
+     *
+     * <p>为什么是"别的 SA 才补"：ServiceAccount admission 只合并 **Pod 所用那个 SA** 的
+     * imagePullSecrets，`default` 上挂的那条继承不到。
+     *
+     * <p>为什么这条几乎触发不到：平台没有 ServiceAccount 管理页，租户在命名空间里建不了 SA，
+     * 填任何名字 Pod 都起不来（编辑器里的输入框已去掉）。留着是为了将来应用编排 chart
+     * 自带 SA 时不至于拉不下来镜像。
+     *
+     * <p>不需要在这里判 helm 托管：那类工作负载由 k8s-server 的 {@code ManagedResourceGuard}
+     * 在写入前直接拒掉 —— 能走到写入的，正好就是该注入的那些。
+     */
+    static void ensureRegistryPullSecret(PodTemplateDTO podTemplate) {
+        PodSpecDTO spec = podTemplate == null ? null : podTemplate.getSpec();
+        if (spec == null) {
+            return;
+        }
+        String sa = spec.getServiceAccountName();
+        if (!StringUtils.hasText(sa) || DEFAULT_SERVICE_ACCOUNT.equals(sa)) {
+            return;
+        }
+
+        List<ImagePullSecretRefDTO> refs = spec.getImagePullSecrets();
+        if (refs != null && refs.stream().anyMatch(r -> PULL_SECRET_NAME.equals(r.getName()))) {
+            return;   // 幂等：已经有平台那条
+        }
+        List<ImagePullSecretRefDTO> next = new ArrayList<>(refs == null ? List.of() : refs);
+        ImagePullSecretRefDTO ref = new ImagePullSecretRefDTO();
+        ref.setName(PULL_SECRET_NAME);
+        next.add(ref);
+        spec.setImagePullSecrets(next);
     }
 
     /**暂停/恢复 Deployment 更新（spec.paused）。编排在本层：取完整对象 → 翻 paused → 走 update（保留 replicas/minReadySeconds 等，不误缩放）。仅 Deployment 支持。 */

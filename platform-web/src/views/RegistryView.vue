@@ -212,6 +212,27 @@ async function syncAll(): Promise<void> {
   }
 }
 
+/**
+ * 重下发全部命名空间的默认拉取凭据。
+ *
+ * <p>与「同步全部」不是一回事：那个对账的是 Harbor 侧的项目/robot，这个铺的是**集群里的 Secret**。
+ * 存量命名空间不会因为升级自动拥有它 —— 第一次上线、robot 轮换没自动补上、Secret 被误删，都靠它。
+ */
+async function syncPullSecrets(): Promise<void> {
+  const clusterId = selected.value?.clusterId
+  if (!clusterId) return
+  try {
+    const r = await registryApi.syncPullSecrets(clusterId)
+    if (r.failed > 0) {
+      ElMessage.warning(`已下发 ${r.applied} 个命名空间，${r.failed} 个失败（明细见后端日志）`)
+    } else {
+      ElMessage.success(`已下发 ${r.applied} 个命名空间（存量 Pod 需重建才生效）`)
+    }
+  } catch (e) {
+    ElMessage.error((e as Error).message)
+  }
+}
+
 async function rebuild(row: K8sRegistryProject): Promise<void> {
   const clusterId = selected.value?.clusterId
   if (!clusterId) return
@@ -378,6 +399,8 @@ onMounted(loadWarehouses)
                          type="primary" size="small" @click="openCreate">新建连接</el-button>
               <el-button v-if="canManageProjects && selectedIsInstalled"
                          size="small" @click="syncAll">同步全部</el-button>
+              <el-button v-if="canManageProjects && selectedIsInstalled"
+                         size="small" @click="syncPullSecrets">重下发拉取凭据</el-button>
             </div>
           </div>
           <el-table :data="selectedConnections" size="small" stripe>

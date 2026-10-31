@@ -239,6 +239,9 @@ public final class AuditAction {
     /** 重建单个租户（或平台共享）的 Harbor 机器人账号 */
     public static final String REGISTRY_REBUILD_PROJECT = "registry:rebuild-project";
 
+    /** 重下发某集群全部命名空间的默认拉取凭据（租户镜像能不能拉） */
+    public static final String REGISTRY_SYNC_PULL_SECRET = "registry:sync-pull-secret";
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *

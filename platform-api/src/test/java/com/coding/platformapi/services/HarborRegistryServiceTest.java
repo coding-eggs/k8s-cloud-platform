@@ -35,6 +35,8 @@ class HarborRegistryServiceTest {
             mock(com.coding.platformapi.k8s.K8sComponentClient.class);
     private final K8sProvisioningService provisioning = mock(K8sProvisioningService.class);
     private final HarborAdminClient harbor = mock(HarborAdminClient.class);
+    /** robot 轮换后的拉取凭据重下发：这些用例只关心 Harbor 侧，重下发本身在它自己的测试里钉 */
+    private final RegistryPullSecretService pullSecrets = mock(RegistryPullSecretService.class);
 
     private HarborRegistryService svc;
 
@@ -44,7 +46,7 @@ class HarborRegistryServiceTest {
         svc = new HarborRegistryService(tenants, projects, credentials, credentialService,
                 components, provisioning,
                 new com.coding.platformapi.registry.HarborInstallLocator(operations, provisioning),
-                harbor);
+                harbor, pullSecrets);
         when(operations.selectLatestSuccess("c1", "harbor")).thenReturn(successOperation());
         K8sCluster cluster = new K8sCluster();
         cluster.setClusterId("c1");

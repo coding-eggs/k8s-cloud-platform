@@ -1,6 +1,7 @@
 package com.coding.k8sserver.controllers.cluster;
 
 import com.coding.common.models.k8s.dto.admin.AdminCleanupRequest;
+import com.coding.common.models.k8s.dto.admin.AdminRegistryPullEnsureRequest;
 import com.coding.common.models.k8s.dto.admin.AdminSaEnsureRequest;
 import com.coding.common.models.system.ResponseData;
 import com.coding.k8sserver.components.AccessBoundary;
@@ -37,6 +38,23 @@ public class TenantAdminController implements AccessBoundaryAware {
     @Operation(summary = "补建单租户 SA（幂等）", description = "platform-system 下创建 tn-<serviceAccount>")
     public ResponseData<Void> ensureTenantSa(@RequestBody AdminSaEnsureRequest req) {
         provisioning.ensureTenantSa(req.getClusterId(), req.getServiceAccount());
+        return new ResponseData<>();
+    }
+
+    /**
+     * 确保命名空间的 registry 拉取凭据（幂等）。
+     *
+     * <p>为什么是平台侧的 admin 端点而不是走通用 {@code /secrets} + {@code /serviceaccounts}：
+     * 触发点里有"分配命名空间"和"裸建命名空间"两种，前者 RoleBinding 与分配行同一个事务里才建好、
+     * 后者根本没有租户上下文 —— 用调用方身份都写不进去（spec 2026-10-31 §6.5）。
+     */
+    @PostMapping("/registry-pull/ensure")
+    @Operation(summary = "确保命名空间的 registry 拉取凭据（幂等）",
+            description = "写 Secret（kubernetes.io/dockerconfigjson）并合并进 default ServiceAccount 的 imagePullSecrets。"
+                    + "dockerConfigJson 由 platform-api 组装，本层只落盘。")
+    public ResponseData<Void> ensureRegistryPullSecret(@RequestBody AdminRegistryPullEnsureRequest req) {
+        provisioning.ensureRegistryPullSecret(req.getClusterId(), req.getNamespace(),
+                req.getSecretName(), req.getDockerConfigJson());
         return new ResponseData<>();
     }
 

@@ -7,6 +7,7 @@ import com.coding.common.models.k8s.dto.admin.AdminNamespaceKeyRequest;
 import com.coding.common.models.k8s.dto.admin.AdminProbeRequest;
 import com.coding.common.models.k8s.dto.admin.AdminProbeResult;
 import com.coding.common.models.k8s.dto.admin.AdminProvisionRequest;
+import com.coding.common.models.k8s.dto.admin.AdminRegistryPullEnsureRequest;
 import com.coding.common.models.k8s.dto.admin.AdminSaEnsureRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpMethod;
@@ -77,6 +78,23 @@ public class K8sLifecycleClient {
         req.setClusterId(clusterId);
         req.setServiceAccount(serviceAccount);
         gateway.exchange(HttpMethod.POST, "/tenant/sa/ensure", null, req, gateway.responseType(Void.class));
+    }
+
+    /**
+     * 确保命名空间的 registry 拉取凭据（幂等）。
+     *
+     * <p>k8s-server 侧写 Secret 并合并进 {@code default} SA 的 imagePullSecrets。
+     * {@code dockerConfigJson} 是 platform-api 拼好的明文 —— **不要打日志**。
+     */
+    public void ensureRegistryPullSecret(String clusterId, String namespace, String secretName,
+                                         String dockerConfigJson) {
+        AdminRegistryPullEnsureRequest req = new AdminRegistryPullEnsureRequest();
+        req.setClusterId(clusterId);
+        req.setNamespace(namespace);
+        req.setSecretName(secretName);
+        req.setDockerConfigJson(dockerConfigJson);
+        gateway.exchange(HttpMethod.POST, "/tenant/registry-pull/ensure", null, req,
+                gateway.responseType(Void.class));
     }
 
     /**创建命名空间（幂等，打 managed-by 标签） */

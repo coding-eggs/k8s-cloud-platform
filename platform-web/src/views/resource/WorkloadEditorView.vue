@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { workloadApi, calicoApi, namespaceApi, clusterApi, gatewayApi } from '@/api'
+import { workloadApi, calicoApi, namespaceApi, clusterApi, gatewayApi, secretApi } from '@/api'
 import type {
   Affinity,
   ContainerDef,
@@ -460,11 +460,6 @@ const initContainers = computed<ContainerDef[] | undefined>({
   set: (v) => { ensureSpec().initContainers = v },
 })
 
-const serviceAccountName = computed<string>({
-  get: () => form.podTemplate?.spec.serviceAccountName ?? '',
-  set: (v) => { ensureSpec().serviceAccountName = v || null },
-})
-
 const nodeName = computed<string>({
   get: () => form.podTemplate?.spec.nodeName ?? '',
   set: (v) => { ensureSpec().nodeName = v || null },
@@ -498,6 +493,51 @@ const imagePullSecretsList = computed<{ name: string }[]>({
 
 function addImagePullSecret(): void {
   imagePullSecretsList.value = [...imagePullSecretsList.value, { name: '' }]
+}
+
+/**
+ * 改一行。
+ *
+ * ⚠️ 不能直接 `v-model="row.name"`：上面 getter 在 null 时返回的是**临时数组**，
+ * 改它不会回写到 form —— 必须走 setter 整体替换（与增删同一个理由）。
+ */
+function updateImagePullSecret(i: number, name: string): void {
+  const next = [...imagePullSecretsList.value]
+  next[i] = { name }
+  imagePullSecretsList.value = next
+}
+
+// ---------- 拉取凭据候选：本命名空间里的 dockerconfigjson Secret ----------
+const pullSecretOptions = ref<string[]>([])
+const pullSecretLoading = ref(false)
+
+/**
+ * 候选 = 本命名空间里**能当 imagePullSecrets 用**的 Secret（dockerconfigjson / 旧版 dockercfg）。
+ * 其它类型（Opaque 等）K8s 不认，列进去只会让人选错。
+ *
+ * <p>拉取失败只置空数组 —— 下拉开了 allow-create，仍可手输，不因为一个候选接口失败卡住编辑。
+ */
+async function loadPullSecretOptions(): Promise<void> {
+  if (!state.clusterId || !state.namespace) {
+    pullSecretOptions.value = []
+    return
+  }
+  pullSecretLoading.value = true
+  try {
+    const list = await secretApi.list({
+      tenantId: state.tenantId!,
+      clusterId: state.clusterId,
+      namespace: state.namespace,
+    })
+    pullSecretOptions.value = (list ?? [])
+      .filter((s) => s.type === 'kubernetes.io/dockerconfigjson' || s.type === 'kubernetes.io/dockercfg')
+      .map((s) => s.name)
+      .sort()
+  } catch {
+    pullSecretOptions.value = []
+  } finally {
+    pullSecretLoading.value = false
+  }
 }
 
 function removeImagePullSecret(i: number): void {
@@ -589,7 +629,12 @@ async function loadDetail(): Promise<void> {
 }
 
 onMounted(() => {
-  void load()
+  // 候选依赖上下文（集群 + 命名空间），必须等 load() 完成；ready 早已为真时 watch 不会触发，
+  // 所以这里也要主动拉一次（两处都调是幂等的：失败置空数组，不报错）
+  void (async () => {
+    await load()
+    await loadPullSecretOptions()
+  })()
   refreshNodes()
   if (editing.value && ready.value) void loadDetail()
   mql.addEventListener('change', onBreakpointChange)
@@ -600,6 +645,7 @@ onBeforeUnmount(() => {
 // 上下文晚于挂载才选齐（未持久化上次选择）时补拉详情
 watch(ready, (r) => {
   if (r && editing.value && detailState.value === 'idle') void loadDetail()
+  if (r) void loadPullSecretOptions()
 })
 
 const formVisible = computed(() => !editing.value || detailState.value === 'loaded')
@@ -628,6 +674,15 @@ function normalizeForSubmit(): void {
 
   const spec = form.podTemplate?.spec
   if (!spec) return
+
+  // 镜像拉取凭据：空名行剔除；全空 → null。不剔的话会提交 {name:""}，K8s 直接拒（"name required"）
+  if (spec.imagePullSecrets) {
+    const kept = spec.imagePullSecrets
+      .map((s) => ({ name: (s.name ?? '').trim() }))
+      .filter((s) => s.name)
+    spec.imagePullSecrets = kept.length > 0 ? kept : null
+  }
+
   for (const c of [...spec.containers, ...(spec.initContainers ?? [])]) {
     if (c.imagePullPolicy === '') c.imagePullPolicy = null
     for (const k of ['livenessProbe', 'readinessProbe', 'startupProbe'] as const) {
@@ -844,6 +899,39 @@ const contextDesc = computed(() => {
                         <el-option v-for="p in ['IfNotPresent', 'Always', 'Never']" :key="p" :label="p" :value="p" />
                       </el-select>
                     </el-form-item>
+                    <!-- 拉取凭据紧随拉取策略：同一个话题。虽然它是 Pod 级字段（不是容器级），
+                         但用户找它的时候就是在这附近找 —— 放「调度策略」里没人会想到去看。 -->
+                    <el-form-item>
+                      <template #label>
+                        镜像拉取凭据
+                        <FieldHelp tip="Pod 级字段 imagePullSecrets（Secret 名列表）。留空即可 —— 命名空间的 default ServiceAccount 上已经挂着平台自动配好的租户仓库凭据。" />
+                      </template>
+                      <div class="pull-secret-block">
+                        <div v-for="(s, i) in imagePullSecretsList" :key="i" class="pull-secret-row">
+                          <el-select
+                            :model-value="s.name"
+                            filterable
+                            allow-create
+                            default-first-option
+                            clearable
+                            :loading="pullSecretLoading"
+                            placeholder="选本命名空间的 dockerconfigjson Secret，或输入名字"
+                            style="width: 360px"
+                            @update:model-value="(v: string) => updateImagePullSecret(i, v)"
+                          >
+                            <el-option v-for="n in pullSecretOptions" :key="n" :label="n" :value="n" />
+                          </el-select>
+                          <el-button link type="danger" @click="removeImagePullSecret(i)">删除</el-button>
+                        </div>
+                        <el-button plain size="small" @click="addImagePullSecret">+ 添加</el-button>
+                        <div class="form-tip">
+                          通常<b>不用填</b>：平台已经在命名空间的 default ServiceAccount 上挂好了租户自己的镜像仓库凭据，
+                          没写 serviceAccountName 的 Pod 会自动继承。这里加的用于<b>额外</b>的私有仓库 —— 它们排在继承那条之前，
+                          同一个仓库有两条凭据时以这里填的为准。
+                          下拉里是本命名空间中类型为 dockerconfigjson 的 Secret；没有就去「资源 → Secret」建一个。
+                        </div>
+                      </div>
+                    </el-form-item>
 
 
                   <!-- #6 端口在镜像和命令中间 -->
@@ -964,11 +1052,6 @@ const contextDesc = computed(() => {
                 <el-form-item v-if="form.kind === 'statefulset'">
                   <template #label>编号起始值 <FieldHelp tip="ordinals.start：StatefulSet 副本编号的起始值（Pod 名 -0、-1…）。默认 0。" /></template>
                   <el-input-number v-model="ordinalsStart" :min="0" controls-position="right" placeholder="默认 0" />
-                </el-form-item>
-
-                <el-form-item>
-                  <template #label>ServiceAccount <FieldHelp tip="Pod 使用的 ServiceAccount，决定其访问 K8s API 的权限；留空默认 default。" /></template>
-                  <el-input v-model="serviceAccountName" placeholder="可选，默认 default" style="width: 360px" />
                 </el-form-item>
               </el-form>
             </el-card>
@@ -1275,6 +1358,18 @@ const contextDesc = computed(() => {
 }
 .form-tip.warn {
   color: var(--el-color-warning);
+}
+/* 镜像拉取凭据：一行一个 Secret 名 + 删除 */
+.pull-secret-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.pull-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .static-ip-warn {
   margin-top: 6px;
