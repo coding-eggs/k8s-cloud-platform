@@ -7,6 +7,7 @@ import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.system.UserTenantInfo;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -24,6 +25,7 @@ import java.util.List;
  * {@code com.coding.common.components.jwt.PermissionClosureService}；仅当回滚开关
  * {@code platform.jwt.permissions-in-token=true} 时，token customizer 才会再往 claim 里写一份。
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TokenExtrasService {
@@ -59,13 +61,25 @@ public class TokenExtrasService {
 
         // 平台侧身份兜底：角色非空 + 租户存在且启用
         PlatformUser user = userMapper.selectByUsername(username);
-        if (user == null) return null;
+        if (user == null) {
+            log.warn("平台身份切换租户被拒：用户不存在 username={}", username);
+            return null;
+        }
         List<String> roles = platformRoleCodes(user.getId());
-        if (roles == null || roles.isEmpty()) return null;
+        if (roles == null || roles.isEmpty()) {
+            return null;   // 普通租户用户：不是成员就是不能进，不刷日志（误切很常见）
+        }
 
         PlatformTenant tenant = tenantMapper.selectByPrimaryKey(tenantId);
-        if (tenant == null || tenant.getDeletedAt() != null) return null;
-        if (tenant.getStatus() == null || tenant.getStatus() != 1) return null;
+        if (tenant == null || tenant.getDeletedAt() != null) {
+            log.warn("平台身份切换租户被拒：租户不存在或已删除 tenantId={} user={}", tenantId, username);
+            return null;
+        }
+        if (tenant.getStatus() == null || tenant.getStatus() != 1) {
+            log.warn("平台身份切换租户被拒：租户未启用 tenantId={} status={} user={}",
+                    tenantId, tenant.getStatus(), username);
+            return null;
+        }
 
         UserTenantInfo info = new UserTenantInfo();
         info.setUserId(user.getId());
