@@ -3,6 +3,7 @@ package com.coding.k8sserver.middleware;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareUserView;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -76,11 +77,25 @@ public class PostgresqlUserAdapter implements MiddlewareUserAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR, "内置应用账号不允许重建：" + username);
         }
         String secretName = userSecretName(ref.instanceName(), username);
+        // ⚠️ 必须排在写 Secret 之前：重名时先写 Secret 就等于悄悄把别人的口令换掉了
+        requireUserAbsent(client, ref, username);
         client.secrets().inNamespace(ref.namespace())
                 .resource(userSecret(secretName, username, password)).createOrReplace();
         client.genericKubernetesResources(ROLE_CRD).inNamespace(ref.namespace())
-                .resource(databaseRole(username, ref.instanceName(), secretName, role)).create();
+                .resource(databaseRole(username, ref.instanceName(), secretName, role))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return password;
+    }
+
+    /**
+     * 「新增用户」必须真的新建：DatabaseRole CR 走 SSA 就是 upsert，重名会把同名角色覆盖掉，
+     * 于是「加一个已存在的用户」变成「悄悄改了别人的角色/口令」并返回成功。
+     */
+    private static void requireUserAbsent(KubernetesClient client, MiddlewareUserRef ref, String username) {
+        if (client.genericKubernetesResources(ROLE_CRD).inNamespace(ref.namespace())
+                .withName(username).get() != null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_EXIST, "用户已存在：" + username);
+        }
     }
 
     @Override

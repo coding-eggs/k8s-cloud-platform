@@ -4,6 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -265,10 +266,12 @@ public class ElasticsearchMiddlewareAdapter implements MiddlewareAdapter {
         if (es == null) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
         }
+        // 上面已判过 kibana == null，这里换成 SSA 也不会覆盖别人的对象；用平台统一 fieldManager，
+        // 以后平台再改这个 Kibana CR 时按 key 合并的列表条目才删得掉（见 ServerSideApply）。
         client.genericKubernetesResources(KIBANA).inNamespace(ns)
                 .resource(resource(name, ns, req.getInstanceId(), "kibana.k8s.elastic.co/" + VERSION,
                         "Kibana", kibanaSpec(name, esVersion(es), tlsEnabled(specOf(es)))))
-                .create();
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return true;
     }
 

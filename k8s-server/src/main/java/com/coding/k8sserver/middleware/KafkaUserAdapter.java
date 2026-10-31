@@ -3,6 +3,7 @@ package com.coding.k8sserver.middleware;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.middleware.MiddlewareUserView;
+import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -68,10 +69,26 @@ public class KafkaUserAdapter implements MiddlewareUserAdapter {
     @Override
     public String create(KubernetesClient client, MiddlewareUserRef ref, String username, String password, String role) {
         requireScramListener(client, ref);
+        requireUserAbsent(client, ref, username);
         client.genericKubernetesResources(USER_CRD).inNamespace(ref.namespace())
-                .resource(userCr(username, ref.instanceName())).create();
+                .resource(userCr(username, ref.instanceName()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         // 口令由 operator 生成（平台传入的被忽略），必须回传真实的那个，否则写进 -users 的是错的
         return awaitSecret(client, ref, username);
+    }
+
+    /**
+     * 「新增用户」必须真的新建。
+     *
+     * <p>建 CR 走 SSA 之后它是 upsert —— 重名不会报错，而是把同名 KafkaUser 覆盖掉，
+     * 于是「加一个已存在的用户」变成「悄悄重置他的 SCRAM 凭据」并且返回成功。
+     * 所以新增路径自己先判存在；{@link #changePassword} 那边靠「删完等它真的没了」保证，无需再查。
+     */
+    private static void requireUserAbsent(KubernetesClient client, MiddlewareUserRef ref, String username) {
+        if (client.genericKubernetesResources(USER_CRD).inNamespace(ref.namespace())
+                .withName(username).get() != null) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_EXIST, "用户已存在：" + username);
+        }
     }
 
     @Override
@@ -88,7 +105,8 @@ public class KafkaUserAdapter implements MiddlewareUserAdapter {
                 .withName(username).delete();
         awaitGone(client, ref, username);
         client.genericKubernetesResources(USER_CRD).inNamespace(ref.namespace())
-                .resource(userCr(username, ref.instanceName())).create();
+                .resource(userCr(username, ref.instanceName()))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return awaitSecret(client, ref, username);
     }
 
