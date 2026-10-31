@@ -124,10 +124,16 @@ async function submitRoleAction(kind: 'grant' | 'revoke', roleId: string): Promi
   acting.value = { kind, roleId }
   try {
     const payload = { userId: roleTarget.value.id, roleId }
-    if (kind === 'grant') await platformUserApi.platformRoleGrant(payload)
-    else await platformUserApi.platformRoleRevoke(payload)
-    ElMessage.success(kind === 'grant' ? '已授予' : '已回收')
-    if (kind === 'grant') grantRoleId.value = ''
+    if (kind === 'grant') {
+      // 返回的是提示语（通常是"该用户还是 X、Y 的租户成员……"），不是错误
+      const notes = await platformUserApi.platformRoleGrant(payload)
+      ElMessage.success('已授予')
+      for (const n of notes ?? []) ElMessage.warning({ message: n, duration: 8000, showClose: true })
+      grantRoleId.value = ''
+    } else {
+      await platformUserApi.platformRoleRevoke(payload)
+      ElMessage.success('已回收')
+    }
     await reloadHeld()
   } catch {
     /* 拦截器提示 */

@@ -44,14 +44,33 @@ public class CurrentUserQuery {
         return t;
     }
 
-    /** 当前用户所属的未删除租户列表（前端租户切换器）。 */
+    /**
+     * 切换器里的租户列表。
+     *
+     * <p><b>平台侧身份不靠成员关系</b>（spec 2026-10-31 §3.2）：管理员能切进**任何启用租户**的视图。
+     * 否则"平台代管"就得先把管理员加成该租户的成员 —— 那会把成员表变成切换器开关，
+     * 而成员表本来的含义是"这个租户有哪些人"。
+     *
+     * <p>与 platform-auth 的 {@code TokenExtrasService.resolveTenant} 是**同一套判据的两半**：
+     * 这里决定"列哪些"，那里决定"能不能真切过去"。改一处必须改另一处，否则切换器里点得动、切不过去。
+     */
     public List<PlatformTenant> myTenants() {
         TokenUserInfo t = currentOrThrow();
         PlatformUser u = userMapper.selectByUsername(t.getUsername());
         if (u == null) {
             throw new CloudPlatformException(EnumResponseType.USER_UN_LOGIN);
         }
+        if (isPlatformSide(t)) {
+            return tenantMapper.listAll().stream()
+                    .filter(x -> x.getStatus() != null && x.getStatus() == 1)
+                    .toList();
+        }
         return tenantMapper.listTenantsByUser(u.getId());
+    }
+
+    /** 与 k8s-server 的 {@code PLATFORM_SCOPE}、{@code AuthContext.isPlatformSide} 同一判据：平台角色非空 */
+    private static boolean isPlatformSide(TokenUserInfo t) {
+        return t.getPlatformRoles() != null && !t.getPlatformRoles().isEmpty();
     }
 
     /** 只做"有没有 claim"的判定，不触发权限解析（my-tenants 不需要闭包）。 */

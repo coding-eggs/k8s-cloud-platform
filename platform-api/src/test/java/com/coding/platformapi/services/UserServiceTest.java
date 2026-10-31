@@ -24,8 +24,10 @@ class UserServiceTest {
     PlatformUserMapper userMapper = mock(PlatformUserMapper.class);
     PlatformUserRoleMapper urMapper = mock(PlatformUserRoleMapper.class);
     PlatformRoleMapper roleMapper = mock(PlatformRoleMapper.class);
+    com.coding.data.mapper.auth.PlatformTenantMapper tenantMapper =
+            mock(com.coding.data.mapper.auth.PlatformTenantMapper.class);
     PasswordEncoder encoder = mock(PasswordEncoder.class);
-    UserService svc = new UserService(userMapper, urMapper, roleMapper, encoder);
+    UserService svc = new UserService(userMapper, urMapper, roleMapper, tenantMapper, encoder);
 
     @Test void duplicate_username_rejected() {
         when(userMapper.selectByUsername("bob")).thenReturn(new PlatformUser());

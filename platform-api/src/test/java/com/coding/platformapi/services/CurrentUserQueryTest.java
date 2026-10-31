@@ -17,6 +17,8 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -90,5 +92,29 @@ class CurrentUserQueryTest {
             .isInstanceOf(CloudPlatformException.class)
             .extracting(e -> ((CloudPlatformException) e).getCode())
             .isEqualTo(EnumResponseType.USER_UN_LOGIN.getCode());
+    }
+
+    /**
+     * 平台侧身份不看成员关系（spec 2026-10-31 §3.2）：全部**启用**租户都进切换器。
+     * 这条和 platform-auth 的 {@code TokenExtrasService.resolveTenant} 是同一套判据的两半 ——
+     * 只改一半的话，切换器里点得动、切过去 400。
+     */
+    @Test void a_platform_admin_sees_every_enabled_tenant_without_membership() {
+        when(auth.current()).thenReturn(TokenUserInfo.builder().username("admin")
+                .platformRoles(List.of("admin")).build());
+        PlatformUser u = new PlatformUser();
+        u.setId("u1");
+        when(userMapper.selectByUsername("admin")).thenReturn(u);
+
+        PlatformTenant enabled = new PlatformTenant();
+        enabled.setId("t1");
+        enabled.setStatus((byte) 1);
+        PlatformTenant disabled = new PlatformTenant();
+        disabled.setId("t2");
+        disabled.setStatus((byte) 0);
+        when(tenantMapper.listAll()).thenReturn(List.of(enabled, disabled));
+
+        assertThat(svc.myTenants()).extracting(PlatformTenant::getId).containsExactly("t1");
+        verify(tenantMapper, never()).listTenantsByUser(org.mockito.ArgumentMatchers.anyString());
     }
 }

@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.auth.PlatformRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
+import com.coding.data.mapper.auth.PlatformUserRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantRoleMapper;
 import com.coding.data.models.auth.PlatformRole;
@@ -40,21 +41,46 @@ public class TenantMemberService {
     private final PlatformUserTenantRoleMapper utrMapper;
     private final PlatformRoleMapper roleMapper;
     private final PlatformUserMapper userMapper;
+    private final PlatformUserRoleMapper userRoleMapper;
+
+    /**
+     * 平台侧身份不得**新增**为租户成员、也不得**新授予**租户角色（spec 2026-10-31 §3.2）。
+     *
+     * <p>为什么：平台用户的权限不来自租户角色 —— admin 的平台角色本身就持有全部 {@code tenant:*} 码。
+     * 把他加进成员表只会让"这个租户有哪些人"变脏，而且租户管理员还能反过来给平台用户授/撤租户角色，
+     * 语义完全倒挂。
+     *
+     * <p>⚠️ 只挡**新增**（{@code alreadyLinked} 为真 = 历史数据，幂等路径不报错）：
+     * 已有的历史行一律保留 —— 撤销平台角色后要能回到原状态，删掉就等于把降级做成不可逆。
+     */
+    private void rejectPlatformSideWhenNew(String userId, boolean alreadyLinked, String action) {
+        if (alreadyLinked) {
+            return;
+        }
+        List<String> roles = userRoleMapper.selectRoleCodesByUser(userId);
+        if (roles != null && !roles.isEmpty()) {
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "该用户持有平台角色，不能" + action + "：平台身份不通过租户授权获得（切换器里已能看到全部租户）");
+        }
+    }
 
     /** 加入成员：已存在则幂等返回（uk_user_tenant 兜并发重复）。 */
     @Transactional
     public void addMember(String tenantId, String userId) {
-        if (!utMapper.exists(userId, tenantId)) {
-            PlatformUserTenant r = new PlatformUserTenant();
-            r.setId(ULIDGenerator.generateULID());
-            r.setUserId(userId);
-            r.setTenantId(tenantId);
-            r.setCreatedAt(new Date());
-            try {
-                utMapper.insert(r);
-            } catch (DuplicateKeyException e) {
-                // 并发下另一请求已插入 → 视为已存在
-            }
+        boolean exists = utMapper.exists(userId, tenantId);
+        rejectPlatformSideWhenNew(userId, exists, "加入该租户");
+        if (exists) {
+            return;
+        }
+        PlatformUserTenant r = new PlatformUserTenant();
+        r.setId(ULIDGenerator.generateULID());
+        r.setUserId(userId);
+        r.setTenantId(tenantId);
+        r.setCreatedAt(new Date());
+        try {
+            utMapper.insert(r);
+        } catch (DuplicateKeyException e) {
+            // 并发下另一请求已插入 → 视为已存在
         }
     }
 
@@ -71,6 +97,8 @@ public class TenantMemberService {
         if (already) {
             return;
         }
+        // 平台身份的权限不来自租户角色 —— 新授予一律拒（历史行保留，所以放在 already 之后）
+        rejectPlatformSideWhenNew(userId, false, "授予租户角色");
         PlatformUserTenantRole r = new PlatformUserTenantRole();
         r.setId(ULIDGenerator.generateULID());
         r.setUserId(userId);

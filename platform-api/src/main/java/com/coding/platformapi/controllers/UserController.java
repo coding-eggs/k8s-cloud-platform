@@ -64,10 +64,11 @@ public class UserController {
     }
 
     @PostMapping("/platformRole/grant")
-    @Operation(summary = "授予平台角色", description = "uk_user_role 唯一索引兜幂等，重复授予不报错")
-    public ResponseData<Void> grant(@RequestBody UserRoleGrantRequest request) {
-        userService.grantPlatformRole(request.getUserId(), request.getRoleId());
-        return new ResponseData<>();
+    @Operation(summary = "授予平台角色",
+            description = "uk_user_role 唯一索引兜幂等，重复授予不报错。返回提示语（该用户若仍是某些租户的成员，"
+                    + "说清那些关系现在只影响切换器的可见范围）")
+    public ResponseData<List<String>> grant(@RequestBody UserRoleGrantRequest request) {
+        return new ResponseData<>(userService.grantPlatformRole(request.getUserId(), request.getRoleId()));
     }
 
     @PostMapping("/platformRole/revoke")

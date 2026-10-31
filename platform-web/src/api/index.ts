@@ -369,7 +369,7 @@ export const platformUserApi = {
     http.post<never, PlatformUser>('/user/create', payload),
   get: (id: string) => http.post<never, PlatformUser>('/user/get', { id }),
   platformRoleGrant: (payload: { userId: string; roleId: string }) =>
-    http.post<never, void>('/user/platformRole/grant', payload),
+    http.post<never, string[]>('/user/platformRole/grant', payload),
   platformRoleRevoke: (payload: { userId: string; roleId: string }) =>
     http.post<never, void>('/user/platformRole/revoke', payload),
   /** 用户已持平台角色回显（仅启用 + 未删除 + PLATFORM 族） */

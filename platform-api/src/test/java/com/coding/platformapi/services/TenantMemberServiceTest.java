@@ -33,6 +33,9 @@ class TenantMemberServiceTest {
     PlatformUserTenantRoleMapper utr = mock(PlatformUserTenantRoleMapper.class);
     PlatformRoleMapper roleMapper = mock(PlatformRoleMapper.class);
     PlatformUserMapper userMapper = mock(PlatformUserMapper.class);
+    /** 平台角色查询：默认返回 null（= 非平台用户），需要时按用例打桩 */
+    com.coding.data.mapper.auth.PlatformUserRoleMapper userRoleMapper =
+            mock(com.coding.data.mapper.auth.PlatformUserRoleMapper.class);
 
     @Test void add_member_without_tenant_row_rejected() {
         when(utm.exists("u1", "t1")).thenReturn(false);
@@ -218,6 +221,39 @@ class TenantMemberServiceTest {
     }
 
     private TenantMemberService memberSvc() {
-        return new TenantMemberService(utm, utr, roleMapper, userMapper);
+        return new TenantMemberService(utm, utr, roleMapper, userMapper, userRoleMapper);
+    }
+
+    // ---------- 平台侧身份不走租户授权（spec 2026-10-31 §3.2） ----------
+
+    @Test void a_platform_user_cannot_be_added_as_a_new_member() {
+        // 否则成员表就变成了"切换器开关"：管理员要靠被分配进租户才能切视图
+        when(utm.exists("u1", "t1")).thenReturn(false);
+        when(userRoleMapper.selectRoleCodesByUser("u1")).thenReturn(List.of("admin"));
+
+        assertThatThrownBy(() -> memberSvc().addMember("t1", "u1"))
+            .isInstanceOf(CloudPlatformException.class)
+            .hasMessageContaining("平台角色");
+        verify(utm, never()).insert(any());
+    }
+
+    @Test void an_existing_membership_of_a_platform_user_stays_idempotent() {
+        // 历史行一律保留：撤销平台角色后要能回到原状态，删掉等于把降级做成不可逆
+        when(utm.exists("u1", "t1")).thenReturn(true);
+
+        assertThatCode(() -> memberSvc().addMember("t1", "u1")).doesNotThrowAnyException();
+        verify(utm, never()).insert(any());
+    }
+
+    @Test void a_platform_user_cannot_be_granted_a_new_tenant_role() {
+        when(utm.exists("u1", "t1")).thenReturn(true);
+        when(roleMapper.selectByPrimaryKey("roleX")).thenReturn(tenantRole("roleX"));
+        when(utr.selectByTenantAndUser("t1", "u1")).thenReturn(List.of());
+        when(userRoleMapper.selectRoleCodesByUser("u1")).thenReturn(List.of("admin"));
+
+        assertThatThrownBy(() -> memberSvc().grantRole("t1", "u1", "roleX"))
+            .isInstanceOf(CloudPlatformException.class)
+            .hasMessageContaining("平台角色");
+        verify(utr, never()).insert(any());
     }
 }
