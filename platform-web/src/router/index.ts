@@ -99,7 +99,8 @@ const router = createRouter({
 
         // ============ 租户视图 · 应用 ============
         { path: 'applications', name: 'applications', component: () => import('@/views/ApplicationListView.vue'), meta: { title: '应用编排', domain: 'app', icon: 'Connection', order: 1, context: 'full', requiresPerm: [pageCodes.application] } },
-        { path: 'applications/:id', name: 'application-canvas', component: () => import('@/views/ApplicationCanvasView.vue'), meta: { title: '应用画布', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.application] } },
+        { path: 'applications/:id', name: 'application-detail', component: () => import('@/views/ApplicationDetailView.vue'), meta: { title: '应用', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.application] } },
+        { path: 'applications/:id/services/:key', name: 'application-service', component: () => import('@/views/ApplicationServiceView.vue'), meta: { title: '服务配置', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.application] } },
         { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', domain: 'app', icon: 'Grid', order: 2, context: 'full', requiresPerm: [pageCodes.app] } },
         // 实例列表与商店共用 pageCodes.app：商店管清单与 Operator，这条管已建实例
         { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', domain: 'app', icon: 'Files', order: 3, context: 'full', requiresPerm: [pageCodes.app] } },

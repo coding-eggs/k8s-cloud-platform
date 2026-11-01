@@ -306,6 +306,7 @@ public class ApplicationService {
         v.setDescription(row.getDescription());
         v.setStatus(row.getStatus());
         v.setCurrentRevision(row.getCurrentRevision());
+        v.setLiveReleaseNo(row.getLiveReleaseNo());
         v.setSpec(JSON.readValue(row.getSpecJson(), AppSpecDTO.class));
         v.setCreatedAt(row.getCreatedAt());
         v.setUpdatedAt(row.getUpdatedAt());

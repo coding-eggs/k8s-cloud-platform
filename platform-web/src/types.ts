@@ -2865,9 +2865,107 @@ export interface ApplicationView {
   description?: string | null
   status: string
   currentRevision: number
+  /** 线上发布号；0/空 = 尚未发布 */
+  liveReleaseNo?: number | null
   spec: AppSpec
   createdAt?: string | null
   updatedAt?: string | null
+}
+
+/** 发布流程的执行进度（overview.activeExecution / lastExecution） */
+export interface AppExecution {
+  id: number
+  appId: string
+  releaseNo: number
+  status: string
+  stage?: string | null
+  message?: string | null
+  startedBy?: string | null
+  startedAt?: string | null
+  finishedAt?: string | null
+}
+
+/** 环境变量行：LITERAL/REF 用 value（REF=含 ${依赖.字段}），SECRET 用 secretName+secretKey */
+export interface AppEnvRow {
+  name: string
+  kind: 'LITERAL' | 'REF' | 'SECRET'
+  value?: string
+  secretName?: string
+  secretKey?: string
+}
+
+/** 服务期望配置（desired_json）。后端白名单，未知字段会被拒绝 */
+export interface AppServiceDesired {
+  imageRepo: string
+  imageTag: string
+  port?: number | null
+  replicas?: number | null
+  env?: AppEnvRow[]
+  command?: string[]
+  args?: string[]
+  imagePullPolicy?: string
+  cpuRequest?: string
+  memoryRequest?: string
+  cpuLimit?: string
+  memoryLimit?: string
+  persistenceEnabled?: boolean
+  storageSize?: string
+  storageClass?: string
+  mountPath?: string
+  autoscalingEnabled?: boolean
+  minReplicas?: number
+  maxReplicas?: number
+  targetCpu?: number
+  probeEnabled?: boolean
+  probePath?: string
+  metricsEnabled?: boolean
+  metricsPath?: string
+  expose?: unknown
+  [k: string]: unknown
+}
+
+/** READY/PENDING/FAILED/MISSING/UNKNOWN 为线上现读；NOT_RELEASED=只在期望配置里、尚未发布 */
+export type AppServiceState = 'READY' | 'PENDING' | 'FAILED' | 'MISSING' | 'UNKNOWN' | 'NOT_RELEASED'
+
+export interface AppServiceRow {
+  key: string
+  kind: 'SERVICE' | 'WORKER'
+  image: string
+  liveImage?: string | null
+  replicas?: number | null
+  state: AppServiceState
+  /** ADDED / CHANGED / DELETED / null */
+  pending?: 'ADDED' | 'CHANGED' | 'DELETED' | null
+  desired: AppServiceDesired
+  /** 孤儿服务（线上有、台账无行）为 null：不能保存，只能勾选删除 */
+  version: number | null
+}
+
+export interface AppDependencyRow {
+  key: string
+  type: string
+  ownership: string
+  instanceId?: string | null
+  status?: string | null
+}
+
+export interface AppOverview {
+  appId: string
+  status: string
+  liveReleaseNo?: number | null
+  services: AppServiceRow[]
+  dependencies: AppDependencyRow[]
+  pendingKeys: string[]
+  activeExecution?: AppExecution | null
+  lastExecution?: AppExecution | null
+}
+
+export interface AppServiceView {
+  key: string
+  kind: string
+  desired: AppServiceDesired
+  pendingDelete: boolean
+  version: number
 }
 
 export interface ApplicationPreview {

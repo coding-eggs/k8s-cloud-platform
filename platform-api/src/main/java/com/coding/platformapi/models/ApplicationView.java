@@ -27,6 +27,9 @@ public class ApplicationView {
 
     private Integer currentRevision;
 
+    /** 线上发布号；0 或空 = 尚未发布 */
+    private Integer liveReleaseNo;
+
     private AppSpecDTO spec;
 
     private Date createdAt;

@@ -1,5 +1,8 @@
 import http from './http'
 import type {
+  AppOverview,
+  AppServiceDesired,
+  AppServiceView,
   ApplicationOperation,
   ApplicationOptions,
   ApplicationPreview,
@@ -1203,4 +1206,18 @@ export const applicationApi = {
       '/application/revision/list', { appId, tenantId }),
   options: (clusterId: string, tenantId?: string) =>
     http.post<never, ApplicationOptions>('/application/options', { clusterId, tenantId }),
+}
+
+/** 应用服务配置与概览（去画布版，/application/service/*、/application/overview） */
+export const appServiceApi = {
+  overview: (appId: string, tenantId?: string) =>
+    http.post<never, AppOverview>('/application/overview', { appId, tenantId }),
+  create: (payload: { appId: string; serviceKey: string; desired: AppServiceDesired; tenantId?: string }) =>
+    http.post<never, AppServiceView>('/application/service/create', payload),
+  /** version 是读到的乐观锁；陈旧会返回「配置冲突」 */
+  update: (payload: {
+    appId: string; serviceKey: string; desired: AppServiceDesired; version: number; tenantId?: string
+  }) => http.post<never, AppServiceView>('/application/service/update', payload),
+  remove: (payload: { appId: string; serviceKey: string; version: number; tenantId?: string }) =>
+    http.post<never, void>('/application/service/remove', payload),
 }
