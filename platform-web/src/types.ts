@@ -330,6 +330,33 @@ export interface PlatformPermission {
   createdAt?: string | number | null
 }
 
+/** 权限点目录中的一条规则行（/permission/catalog；带 id 供行级编辑/删除） */
+export interface PermissionRuleView {
+  id: string
+  /** API 域 = URL 模式；Page 域 = 前端路由 path */
+  resource?: string | null
+  /** API 域 = HTTP 方法；Page 域 = VIEW */
+  action?: string | null
+  /** 行级说明（同 code 的多行各写各的，不合并） */
+  description?: string | null
+}
+
+/** 同一权限码（code）覆盖的全部规则行 —— 目录 / 反查 / 角色勾选共用的分组单位 */
+export interface PermissionGroup {
+  code: string
+  domain?: string | null
+  rules: PermissionRuleView[]
+}
+
+/** 按实际请求反查的结果（/permission/match；判据与运行时判权同源） */
+export interface PermissionMatchResult {
+  method: string
+  path: string
+  /** 命中规则总数（= matched 各组 rules 之和） */
+  totalRules: number
+  matched: PermissionGroup[]
+}
+
 /** 平台用户（/user/list|get 响应 password 已置 null，不外泄 hash） */
 export interface PlatformUser {
   id: string

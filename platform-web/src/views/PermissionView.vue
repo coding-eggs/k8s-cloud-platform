@@ -1,131 +1,130 @@
 <script setup lang="ts">
 /**
- * 权限点目录（platform_permission）：一行 = 一条 URL 规则/一条页面码；code 不唯一（ANY-of）。
- * 读 /permission/list = platform:role:read；写 create/update/delete/reload = platform:role:manage。
+ * 权限点目录（platform_permission）。
  *
- * <p><b>按域分 tab 展示</b>：API / K8S / Page 三个域的语义完全不同（资源列分别是 URL 模式 / 资源名 /
- * 前端路由 path），混在一张表里既读不出重点、也让「域」列占了宽度却零信息量。tab 一次只看一个域，
- * 表格里就不再需要「域」列，URL 模式那一列得以放宽。
+ * <p>展示单位是**权限码（code）**：一行 = 一个 code 覆盖的全部规则，默认折叠；
+ * 展开后才渲染行级规则（编辑/删除仍按行）。这样 ~268 条规则变成 ~177 组，首屏 DOM 大幅下降。
  *
- * <p>表格只把相邻同 code 行的「权限点」列纵向合并 —— 一眼看出"哪个权限码覆盖哪些 URL"。
- * <b>「说明」列不合并</b>：它是**行级**字段（`platform_permission.description`，每条 URL 规则/页面码各一值），
- * 合并后只会显示组内第一行的值、其余行的说明被吞掉（2026-10-08 修正）。
- * 后端写前裸端点校验（会删空活端点覆盖即拒绝，错误经 http 拦截器统一弹错）+ 提交后热加载即时生效。
+ * <p>排障反查：顶部「按 URL 反查」输入实际请求的方法 + 路径，调 `/permission/match`
+ * （判据与运行时鉴权 `PermissionRegistry.requiredCodes` 同源），列出覆盖它的码与规则。
+ * 纯子串搜索做不到这一点 —— `/workloads/{name}` 这类模式也要能命中 `/workloads/list`。
+ *
+ * <p>读 `/permission/catalog|match` = platform:role:read；写 create/update/delete/reload = platform:role:manage。
+ * 写操作后失效共享缓存并重拉目录；后端提交后已热加载运行时规则。
  */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { MoreFilled } from '@element-plus/icons-vue'
+import { Search } from '@element-plus/icons-vue'
 import { permissionApi } from '@/api'
-import type { PlatformPermission } from '@/types'
+import type { PermissionGroup, PermissionMatchResult, PermissionRuleView } from '@/types'
+import { invalidatePermissionCaches, usePermissionCatalog } from '@/composables/usePermissionCatalog'
+import { usePermissionSearch } from '@/composables/usePermissionSearch'
+import PermissionGroupList from '@/components/permission/PermissionGroupList.vue'
+import PageHeader from '@/components/PageHeader.vue'
+import EmptyState from '@/components/EmptyState.vue'
 
-const loading = ref(false)
-const list = ref<PlatformPermission[]>([])
+const { groups, loading, ensure, refresh } = usePermissionCatalog()
 
-/** tab 顺序即此数组顺序；与创建对话框的域下拉同源 */
-const DOMAINS = [
-    'API'
-  // , 'K8S'
-  , 'Page']
-/** 当前 tab。默认 API —— 它是唯一的鉴权来源，行数也最多 */
+/** tab 顺序即此数组顺序；与创建对话框的域下拉同源（K8S 为预留域，不展示） */
+const DOMAINS = ['API', 'Page']
 const activeDomain = ref('API')
 
-/** 每域行数（tab 上的角标）。缺省域（domain 为 null 的脏数据）按 API 计，与下方分组口径一致 */
+const keyword = ref('')
+const { active: searchActive, groupMatches } = usePermissionSearch(keyword)
+
+/** 每域的组数（tab 角标）；domain 为空的脏数据按 API 计 */
 const countByDomain = computed(() => {
   const m: Record<string, number> = {}
-  for (const p of list.value) {
-    const d = p.domain ?? 'API'
+  for (const g of groups.value ?? []) {
+    const d = g.domain ?? 'API'
     m[d] = (m[d] ?? 0) + 1
   }
   return m
 })
 
-/** 当前 tab 的行。⚠️ span-merge 的行索引必须基于它而非 list —— 否则合并区间会错位 */
-const shownRows = computed(() => list.value.filter((p) => (p.domain ?? 'API') === activeDomain.value))
+const domainGroups = computed(() => (groups.value ?? []).filter((g) => (g.domain ?? 'API') === activeDomain.value))
+const filteredGroups = computed(() => domainGroups.value.filter(groupMatches))
+const totalRules = computed(() => (groups.value ?? []).reduce((n, g) => n + g.rules.length, 0))
+const totalCodes = computed(() => groups.value?.length ?? 0)
 
-/** 每域的读法提示：resource 列在不同域下含义不同，别让用户自己猜。
- *  ⚠️ 走 {{ }} 插值，不支持 markdown —— 要加粗请用 &lt;b&gt; 或换行，别写 **。 */
 const DOMAIN_HINTS: Record<string, string> = {
-  API: 'resource 是 k8s-server / platform-api 的 URL 模式，action 是 HTTP 方法。这是唯一的接口鉴权来源 —— 表驱动授权按（方法, 路径）命中这里的行。',
-  K8S: '预留域，当前无运行时消费者（不进 URL 规则表）。',
-  Page: 'resource 是前端路由 path，action 固定 VIEW。决定侧边栏入口与路由能否进入，与接口授权相互独立；这些行不进 URL 规则表。页面清单与命名规则见 src/pageCodes.ts。',
+  API: 'resource 是 platform-api 的 URL 模式，action 是 HTTP 方法 —— 这是接口鉴权的唯一来源。',
+  Page: 'resource 是前端路由 path，action 固定 VIEW；只决定菜单与路由能否进入，不参与接口鉴权。',
 }
 const domainHint = computed(() => DOMAIN_HINTS[activeDomain.value] ?? '')
 
-/** resource 列的标题随域变化（Page 下它不是 URL 模式） */
-const resourceColumnLabel = computed(() =>
-  activeDomain.value === 'Page' ? '路由 path (resource)' : 'URL 模式 (resource)',
-)
+// ---------------- 按 URL 反查 ----------------
 
-/** 动作列的 tag 配色：按语义分色（读=绿 / 写=蓝 / 改=橙 / 删=红 / 通配=灰），
- *  Page 域的 VIEW 与 GET 同为只读，也走绿。未知值兜底 info（不隐藏，脏数据要看得见）。 */
-const ACTION_TAG_TYPE: Record<string, 'primary' | 'success' | 'warning' | 'danger' | 'info'> = {
-  GET: 'success',
-  VIEW: 'success',
-  POST: 'primary',
-  PUT: 'warning',
-  PATCH: 'warning',
-  DELETE: 'danger',
-  '*': 'info',
-}
-function actionTagType(action?: string | null): 'primary' | 'success' | 'warning' | 'danger' | 'info' {
-  return ACTION_TAG_TYPE[(action ?? '').toUpperCase()] ?? 'info'
-}
+const lookupOpen = ref(false)
+const lookupMethod = ref('GET')
+const lookupPath = ref('')
+const matchLoading = ref(false)
+const match = ref<PermissionMatchResult | null>(null)
 
-async function load(): Promise<void> {
-  loading.value = true
-  try {
-    const rows = await permissionApi.list()
-    // 服务端 order by domain, code；此处按 domain（tab 顺序）→ code → resource 稳定重排：
-    // 同域内同 code 行相邻，才能让 span-merge 正确合并
-    const order = new Map(DOMAINS.map((d, i) => [d, i]))
-    list.value = [...rows].sort(
-      (a, b) =>
-        (order.get(a.domain ?? 'API') ?? 99) - (order.get(b.domain ?? 'API') ?? 99) ||
-        a.code.localeCompare(b.code) ||
-        (a.resource ?? '').localeCompare(b.resource ?? ''),
-    )
-  } finally {
-    loading.value = false
+const LOOKUP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+
+function toggleLookup(): void {
+  lookupOpen.value = !lookupOpen.value
+  if (!lookupOpen.value) {
+    match.value = null
+    lookupPath.value = ''
   }
 }
 
-/** 每个 code 组的起始行号与行数（span-method 合并依据），基于当前 tab 的行 */
-const codeGroups = computed(() => {
-  const groups = new Map<string, { index: number; size: number }>()
-  shownRows.value.forEach((p, i) => {
-    const g = groups.get(p.code)
-    if (!g) groups.set(p.code, { index: i, size: 1 })
-    else g.size += 1
-  })
-  return groups
-})
-
-/** 仅合并第 0 列（权限点）：组首行 rowspan=组大小，其余行隐藏。
- *  第 1 列（说明）**不合并** —— 它是行级字段，同 code 的各行说明本就不同，合并会吞掉除首行外的全部值 */
-function spanMethod({ row, rowIndex, columnIndex }: { row: PlatformPermission; rowIndex: number; columnIndex: number }): [number, number] {
-  if (columnIndex !== 0) return [1, 1]
-  const g = codeGroups.value.get(row.code)
-  if (!g) return [1, 1]
-  return rowIndex === g.index ? [g.size, 1] : [0, 1]
+/** 允许粘贴完整 URL：取 pathname，去掉 query/hash，补前导 /。 */
+function normalizePath(raw: string): string {
+  let s = raw.trim()
+  if (!s) return ''
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      s = new URL(s).pathname
+    } catch {
+      /* 保留原文，交给后端校验 */
+    }
+  }
+  s = s.split('#')[0]!.split('?')[0]!
+  // 平台前端的接口都走 /api 前缀（nginx/vite 转发时剥掉）；权限行里存的是剥掉后的
+  // platform-api 路径。粘贴浏览器地址栏 / DevTools 里的完整 URL 时，把这一层也去掉。
+  if (s === '/api') s = '/'
+  else if (s.startsWith('/api/')) s = s.slice(4)
+  if (!s.startsWith('/')) s = `/${s}`
+  return s
 }
 
-// ---- 创建 / 编辑对话框（共用，isEdit 切换） ----
+async function runMatch(): Promise<void> {
+  const path = normalizePath(lookupPath.value)
+  if (!path) {
+    ElMessage.warning('请输入请求路径')
+    return
+  }
+  if (path.length > 2048) {
+    ElMessage.warning('路径过长（上限 2048）')
+    return
+  }
+  matchLoading.value = true
+  try {
+    match.value = await permissionApi.match({ method: lookupMethod.value, path })
+  } catch {
+    /* 拦截器提示 */
+  } finally {
+    matchLoading.value = false
+  }
+}
+
+// ---------------- 创建 / 编辑对话框 ----------------
+
 const dialogVisible = ref(false)
 const saving = ref(false)
 const isEdit = ref(false)
 const form = reactive({ id: '', domain: 'API', resource: '', action: 'POST', code: '', description: '' })
 
-/** API/K8S 域动作 = HTTP 方法（表驱动授权把 action 直接当 method 匹配） */
 const API_ACTIONS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', '*']
-/** Page 域动作 = 前端路由可见性动词，与 HTTP 无关（后端 PermissionService.PAGE_ACTIONS 同口径） */
 const PAGE_ACTIONS = ['VIEW']
-/** 当前域可用的动作列表：切换域名时收敛，避免造出后端会拒的组合 */
 const actionsForDomain = computed(() => (form.domain === 'Page' ? PAGE_ACTIONS : API_ACTIONS))
 
 function openCreate(): void {
   isEdit.value = false
   form.id = ''
-  // 新建时预填当前 tab 的域 —— 在 Page tab 点「创建权限点」多半是要加一个页面码
   form.domain = activeDomain.value
   form.resource = ''
   form.action = actionsForDomain.value[0] === 'VIEW' ? 'VIEW' : 'POST'
@@ -134,25 +133,23 @@ function openCreate(): void {
   dialogVisible.value = true
 }
 
-function openEdit(row: PlatformPermission): void {
+function openEdit(group: PermissionGroup, rule: PermissionRuleView): void {
   isEdit.value = true
-  form.id = row.id
-  form.domain = row.domain ?? 'API'
-  form.resource = row.resource ?? ''
-  form.action = row.action ?? 'POST'
-  form.code = row.code
-  form.description = row.description ?? ''
+  form.id = rule.id
+  form.domain = group.domain ?? 'API'
+  form.resource = rule.resource ?? ''
+  form.action = rule.action ?? 'POST'
+  form.code = group.code
+  form.description = rule.description ?? ''
   dialogVisible.value = true
 }
 
-/** 切换权限域：动作取值随之收敛（Page 只有一个合法动作 view） */
 function onDomainChange(d: string): void {
   if (d === 'Page') form.action = 'VIEW'
   else if (!API_ACTIONS.includes(form.action)) form.action = 'POST'
 }
 
 async function submit(): Promise<void> {
-  // 手动校验（与后端 PermissionService.validateFields 同口径，后端仍会兜底）
   const code = form.code.trim()
   if (!code || !(code.startsWith('platform:') || code.startsWith('tenant:'))) {
     ElMessage.warning('权限码必填，且须以 platform: 或 tenant: 开头')
@@ -163,7 +160,7 @@ async function submit(): Promise<void> {
     ElMessage.warning('请输入资源（API 域为 URL 模式；Page 域为前端路由 path）')
     return
   }
-  if ((form.domain === 'API' || form.domain === 'Page') && !resource.startsWith('/')) {
+  if (!resource.startsWith('/')) {
     ElMessage.warning(`${form.domain} 域的 resource 须以 / 开头（API 如 /xxx/**；Page 如 /resources/workloads）`)
     return
   }
@@ -183,9 +180,10 @@ async function submit(): Promise<void> {
     }
     ElMessage.success('已保存，授权规则已实时生效')
     dialogVisible.value = false
-    // 切到该行所属域的 tab 再刷新：在 Page tab 里新建/改域后，不切 tab 会看不到刚存的行
-    activeDomain.value = payload.domain
-    await load()
+    activeDomain.value = form.domain
+    keyword.value = '' // 清掉搜索，确保刚保存的组可见
+    invalidatePermissionCaches()
+    await refresh()
   } catch {
     /* 拦截器提示（含裸端点保护拒绝的端点清单） */
   } finally {
@@ -193,11 +191,12 @@ async function submit(): Promise<void> {
   }
 }
 
-// ---- 行操作 ----
-async function onDelete(row: PlatformPermission): Promise<void> {
+// ---------------- 行操作 / 刷新 ----------------
+
+async function onDelete(group: PermissionGroup, rule: PermissionRuleView): Promise<void> {
   try {
     await ElMessageBox.confirm(
-      `确认删除权限行「${row.resource ?? '-'}（${row.action ?? '-'}）」？若它是某端点的唯一覆盖行，后端会拒绝并列出受影响端点。`,
+      `确认删除权限行「${rule.resource ?? '-'}（${rule.action ?? '-'}）」？若它是某端点的唯一覆盖行，后端会拒绝并列出受影响端点。`,
       '提示',
       { type: 'warning' },
     )
@@ -205,22 +204,23 @@ async function onDelete(row: PlatformPermission): Promise<void> {
     return
   }
   try {
-    await permissionApi.delete(row.id)
+    await permissionApi.delete(rule.id)
     ElMessage.success('已删除，授权规则已实时生效')
-    await load()
+    invalidatePermissionCaches()
+    await refresh()
   } catch {
     /* 拦截器提示 */
   }
 }
 
-// ---- 重载规则（SQL 直接改库后的对齐入口；CRUD 本身自动生效） ----
 const reloading = ref(false)
 async function onReload(): Promise<void> {
   reloading.value = true
   try {
     await permissionApi.reload()
     ElMessage.success('运行时规则已与数据库对齐')
-    await load()
+    invalidatePermissionCaches()
+    await refresh()
   } catch {
     /* 拦截器提示 */
   } finally {
@@ -228,79 +228,143 @@ async function onReload(): Promise<void> {
   }
 }
 
-onMounted(load)
+async function onRefresh(): Promise<void> {
+  invalidatePermissionCaches()
+  await refresh()
+}
+
+// ---------------- 键盘 ----------------
+
+const searchInput = ref<{ focus: () => void } | null>(null)
+
+function onKeydown(e: KeyboardEvent): void {
+  const t = e.target as HTMLElement | null
+  const typing =
+    !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)
+  if (e.key === '/' && !typing) {
+    e.preventDefault()
+    searchInput.value?.focus()
+    return
+  }
+  if (e.key === 'Escape') {
+    if (match.value) {
+      match.value = null
+      return
+    }
+    if (keyword.value) {
+      keyword.value = ''
+      return
+    }
+    if (lookupOpen.value) lookupOpen.value = false
+  }
+}
+
+onMounted(() => {
+  void ensure()
+  window.addEventListener('keydown', onKeydown)
+})
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
   <div>
-    <div class="head-row">
-      <!-- 域 tab：一次只看一个域（三个域的 resource 语义完全不同，混在一起读不出重点） -->
+    <PageHeader title="权限点" description="按权限码折叠；排障时可输入实际请求路径反查覆盖关系">
+      <el-button type="primary" @click="openCreate">创建权限点</el-button>
+      <el-button @click="onRefresh">刷新</el-button>
+      <el-button :loading="reloading" @click="onReload">重载规则</el-button>
+    </PageHeader>
+
+    <div class="toolbar">
+      <el-input
+        ref="searchInput"
+        v-model="keyword"
+        clearable
+        class="search"
+        placeholder="搜索权限码 / URL 模式 / 说明（空格分隔=同时满足）"
+      >
+        <template #prefix>
+          <el-icon><Search /></el-icon>
+        </template>
+      </el-input>
       <el-tabs v-model="activeDomain" class="domain-tabs">
         <el-tab-pane v-for="d in DOMAINS" :key="d" :name="d">
           <template #label>
             <span class="tab-label">
               {{ d }}
-              <span class="tab-count" :class="{ 'is-zero': !(countByDomain[d] ?? 0) }">{{ countByDomain[d] ?? 0 }}</span>
+              <span class="tab-count" :class="{ 'is-zero': !(countByDomain[d] ?? 0) }">
+                {{ countByDomain[d] ?? 0 }} 组
+              </span>
             </span>
           </template>
         </el-tab-pane>
       </el-tabs>
-      <div class="toolbar">
-        <el-button type="primary" @click="openCreate">创建权限点</el-button>
-        <el-button @click="load">刷新</el-button>
-        <el-button :loading="reloading" @click="onReload">重载规则</el-button>
-      </div>
+      <el-button plain :type="lookupOpen ? 'primary' : undefined" @click="toggleLookup">按 URL 反查</el-button>
+    </div>
+
+    <div v-if="lookupOpen" class="lookup">
+      <el-select v-model="lookupMethod" class="lookup-method">
+        <el-option v-for="m in LOOKUP_METHODS" :key="m" :label="m" :value="m" />
+      </el-select>
+      <el-input
+        v-model="lookupPath"
+        class="lookup-path"
+        placeholder="/workloads/list（也可粘贴完整 URL）"
+        @keyup.enter="runMatch"
+      />
+      <el-button type="primary" :loading="matchLoading" @click="runMatch">反查</el-button>
+      <span class="lookup-hint">按 Ant 模式匹配，与运行时判权同口径</span>
     </div>
 
     <div class="domain-hint">{{ domainHint }}</div>
 
-    <el-table v-loading="loading" :data="shownRows" stripe :span-method="spanMethod">
-      <el-table-column prop="code" label="权限点 (code)" min-width="200">
-        <template #default="{ row }">
-          <span class="mono">{{ row.code }}</span>
-        </template>
-      </el-table-column>
+    <div v-if="match" class="match-banner">
+      <span>
+        <b class="mono">{{ match.method }} {{ match.path }}</b>
+        · 命中 {{ match.totalRules }} 条规则 / {{ match.matched.length }} 个权限码
+      </span>
+      <el-button link type="primary" @click="match = null">返回目录</el-button>
+    </div>
 
-      <!-- 「域」列已由上方 tab 表达，去掉后把宽度让给 resource -->
-      <el-table-column :label="resourceColumnLabel" min-width="200">
-        <template #default="{ row }">
-          <span class="mono">{{ row.resource ?? '-' }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="方法 (action)" width="110">
-        <template #default="{ row }">
-          <el-tag size="small" effect="plain" :type="actionTagType(row.action)" class="mono">
-            {{ row.action ?? '-' }}
-          </el-tag>
-        </template>
-      </el-table-column>
+    <div v-else class="summary">
+      <span>共 {{ totalRules }} 条规则 · {{ totalCodes }} 个权限码</span>
+      <span v-if="searchActive">命中 {{ filteredGroups.length }} 组 · 已自动展开</span>
+      <el-button v-if="keyword" link type="primary" @click="keyword = ''">清空搜索</el-button>
+    </div>
 
-      <!-- 说明是**行级**的（每条 URL 规则/页面码一个值），故不参与 code 合并：
-     同 code 的多行各自显示自己的说明，而不是只露组内第一行 -->
-      <el-table-column prop="description" label="说明" min-width="260">
-        <template #default="{ row }">
-          <span>{{ row.description || '-' }}</span>
-        </template>
-      </el-table-column>
+    <div v-loading="loading" class="list-area">
+      <template v-if="match">
+        <EmptyState
+          v-if="!match.totalRules"
+          title="没有权限行匹配该请求"
+          description="可能端点尚未注册、方法不匹配，或该请求走的是豁免路径。"
+        />
+        <PermissionGroupList v-else :groups="match.matched" expand-all :match-path="match.path" />
+      </template>
 
-      <el-table-column width="64" fixed="right">
-        <template #default="{ row }">
-          <el-dropdown trigger="click">
-            <el-button link type="primary" :icon="MoreFilled" />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item @click="openEdit(row)">
-                  <el-button link type="primary">编辑</el-button>
-                </el-dropdown-item>
-                <el-dropdown-item divided style="color: var(--el-color-danger)" @click="onDelete(row)">
-                  <el-button link type="danger">删除</el-button>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </template>
-      </el-table-column>
-    </el-table>
+      <template v-else>
+        <EmptyState
+          v-if="!loading && !filteredGroups.length"
+          :title="keyword ? '没有匹配的权限点' : '该域暂无权限点'"
+          :description="keyword ? '试试 URL 片段（workloads）、权限码（platform:role）或说明关键词。' : undefined"
+        >
+          <el-button v-if="keyword" @click="keyword = ''">清空搜索</el-button>
+          <el-button type="primary" @click="openCreate">创建权限点</el-button>
+        </EmptyState>
+        <PermissionGroupList
+          v-else
+          :groups="filteredGroups"
+          :keyword="keyword"
+          rule-actions
+          @edit-rule="openEdit"
+          @delete-rule="onDelete"
+        />
+      </template>
+    </div>
+
+    <div v-if="!match && !loading && filteredGroups.length" class="foot">
+      <span>已显示 {{ filteredGroups.length }} 组 / 共 {{ domainGroups.length }} 组</span>
+      <span class="foot-hint">默认折叠；搜索命中时自动展开</span>
+    </div>
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑权限点' : '创建权限点'" width="520px">
       <el-form label-width="130px">
@@ -309,18 +373,13 @@ onMounted(load)
             <el-option v-for="d in DOMAINS" :key="d" :label="d" :value="d" />
           </el-select>
           <div class="form-tip">
-            API = 后端接口授权（resource 是 URL 模式，唯一的鉴权来源）；Page = 前端页面可见性（resource 是路由 path，不进 URL 规则表）；
-            K8S = 预留域，当前无运行时消费者。
+            API = 后端接口授权（resource 是 URL 模式，唯一的鉴权来源）；Page = 前端页面可见性（resource 是路由 path，不进 URL 规则表）。
           </div>
         </el-form-item>
         <el-form-item label="资源 (resource)" required>
           <el-input
             v-model="form.resource"
-            :placeholder="form.domain === 'Page'
-              ? '前端路由 path，例如 /resources/workloads'
-              : form.domain === 'API'
-                ? 'URL 模式，例如 /tenant/**'
-                : '资源名'"
+            :placeholder="form.domain === 'Page' ? '前端路由 path，例如 /resources/workloads' : 'URL 模式，例如 /tenant/**'"
           />
         </el-form-item>
         <el-form-item label="方法 (action)" required>
@@ -332,14 +391,12 @@ onMounted(load)
         <el-form-item label="权限码 (code)" required>
           <el-input v-model="form.code" placeholder="例如 platform:role:manage" />
           <div class="form-tip">
-            须以 platform:（平台族）或 tenant:（租户族）开头；同 code 可覆盖多条 URL 规则（ANY-of），角色勾选按 code 展开全部行
+            须以 platform:（平台族）或 tenant:（租户族）开头；同 code 可覆盖多条 URL 规则（ANY-of），角色勾选按 code 展开全部行。
           </div>
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="form.description" placeholder="例如 新建权限点" />
-          <div class="form-tip">
-            说明属于这一行（该 URL 规则 / 页面码），与 code 无关：同 code 的多行各写各的，列表逐行显示、不合并。
-          </div>
+          <div class="form-tip">说明属于这一行（该 URL 规则 / 页面码），与 code 无关：同 code 的多行各写各的。</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -351,20 +408,21 @@ onMounted(load)
 </template>
 
 <style scoped>
-/* tab 与操作按钮同排：省一层竖向空间，且"当前域"与"对该域的操作"在视觉上成组。
-   ⚠️ 必须允许换行：窄窗口（含预览面板）下若不换行，toolbar 的 flex-shrink:0 会把 tab 压到 65px
-   并把按钮顶出视口（实测 280px 宽时 toolbar 右边界 355 > 视口 280）。 */
-.head-row {
+.toolbar {
   display: flex;
   align-items: center;
   gap: 10px 16px;
   flex-wrap: wrap;
 }
+.search {
+  flex: 1 1 280px;
+  min-width: 220px;
+  max-width: 520px;
+}
 .domain-tabs {
-  flex: 1 1 260px;
+  flex: 1 1 220px;
   min-width: 0;
 }
-/* EP 的 tab header 默认带 15px 下边距；同排布局下会导致 tab 与按钮不同轴 */
 .domain-tabs :deep(.el-tabs__header) {
   margin: 0;
 }
@@ -386,26 +444,70 @@ onMounted(load)
   font-weight: 400;
 }
 .tab-count.is-zero {
-  opacity: .45;
+  opacity: 0.45;
+}
+.lookup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.lookup-method {
+  width: 108px;
+  flex-shrink: 0;
+}
+.lookup-path {
+  flex: 1 1 260px;
+  min-width: 180px;
+}
+.lookup-hint {
+  color: var(--text-3);
+  font-size: 11.5px;
 }
 .domain-hint {
-  margin: 10px 0 14px;
+  margin: 10px 0 12px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-3);
 }
-.toolbar {
-  /* flex:0 1 auto（可收缩）而非 0 0 auto：后者按 max-content 定宽，内部 flex-wrap 永远不会触发，
-     三个按钮会整体溢出容器。允许收缩后，容器不够宽时按钮才会换到第二行。 */
-  flex: 0 1 auto;
-  margin-left: auto;
+.summary {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 0;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--text-3);
 }
-/* flex + gap 下 EP 自带的 12px 相邻按钮外边距会叠加，收敛为 8px */
-.toolbar :deep(.el-button + .el-button) {
-  margin-left: 8px;
+.match-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--accent-soft);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.list-area {
+  min-height: 120px;
+}
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.foot-hint {
+  margin-left: auto;
 }
 .form-tip {
   color: var(--text-3);
@@ -414,6 +516,5 @@ onMounted(load)
 }
 .mono {
   font-family: ui-monospace, monospace;
-  font-size: 12.5px;
 }
 </style>

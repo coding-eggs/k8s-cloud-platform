@@ -5,7 +5,11 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.models.auth.PlatformPermission;
+import com.coding.platformapi.models.PermissionGroup;
+import com.coding.platformapi.models.PermissionMatchRequest;
+import com.coding.platformapi.models.PermissionMatchResponse;
 import com.coding.platformapi.models.PermissionPointRequest;
+import com.coding.platformapi.models.PermissionRuleView;
 import com.coding.platformapi.security.PermissionCrossCheck;
 import com.coding.platformapi.security.PermissionRegistry;
 import lombok.RequiredArgsConstructor;
@@ -15,8 +19,11 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -38,6 +45,9 @@ public class PermissionService {
     /**Page 域动作 = 前端路由的可见性动词 VIEW，与 HTTP 无关（不进 URL 规则表，见 rulesOf 的 domain 过滤）。
      // ⚠️ 必须大写：validateFields 先 toUpperCase 再比对；DB 里也统一大写（与 API 域行一致） */
     private static final Set<String> PAGE_ACTIONS = Set.of("VIEW");
+    /** 按 URL 反查接受的请求方法（与运行时可命中的动词一致；* 不是运行时通配，故不接受）。 */
+    private static final Set<String> MATCH_METHODS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH");
+    private static final int MAX_MATCH_PATH_LENGTH = 2048;
 
     private final PlatformPermissionMapper permMapper;
     private final PermissionRowWriter writer;
@@ -46,6 +56,73 @@ public class PermissionService {
 
     public List<PlatformPermission> list() {
         return permMapper.selectAllActive();
+    }
+
+    /**
+     * 权限点目录：同一 code 的全部规则行聚成一组（/permission/catalog）。
+     *
+     * <p>顺序是契约：组按 domain → code 升序，组内按 resource → action 升序。
+     * 前端依赖它做稳定的折叠列表，不能交给 DB 的隐式行序。
+     * 行 id 与说明原样带出 —— 编辑/删除仍按行进行。
+     */
+    public List<PermissionGroup> catalog() {
+        return groupRows(permMapper.selectAllActive());
+    }
+
+    /**
+     * 按 URL 反查：给定**实际请求**的方法与路径，返回覆盖它的规则行（按 code 分组）。
+     *
+     * <p>判据只此一处：{@link PermissionRegistry#runtimeMatches}，与运行时鉴权
+     * {@link PermissionRegistry#requiredCodes} 同源 —— 反查若比真实放行更宽松，排障时就会误导。
+     * 只扫 API 域行；Page/K8S 域不参与 URL 匹配。
+     */
+    public PermissionMatchResponse match(PermissionMatchRequest req) {
+        String method = trimToEmpty(req.getMethod()).toUpperCase();
+        if (!MATCH_METHODS.contains(method))
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "方法须为 GET / POST / PUT / DELETE / PATCH");
+        String path = trimToEmpty(req.getPath());
+        if (!path.startsWith("/"))
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "路径须以 / 开头（可粘贴完整 URL，由前端取出 pathname）");
+        if (path.length() > MAX_MATCH_PATH_LENGTH)
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "路径长度不能超过 " + MAX_MATCH_PATH_LENGTH);
+
+        List<PlatformPermission> matched = permMapper.selectAllActive().stream()
+                .filter(p -> "API".equals(p.getDomain()))
+                .filter(p -> p.getAction() != null && p.getResource() != null)
+                .filter(p -> registry.runtimeMatches(
+                        new PermissionRegistry.Rule(p.getAction(), p.getResource(), p.getCode()), method, path))
+                .toList();
+
+        List<PermissionGroup> groups = groupRows(matched);
+        int totalRules = groups.stream().mapToInt(g -> g.rules().size()).sum();
+        return new PermissionMatchResponse(method, path, totalRules, groups);
+    }
+
+    /** 目录分组：组按 domain → code，组内按 resource → action。两处读接口共用，顺序是前端契约。 */
+    private static List<PermissionGroup> groupRows(List<PlatformPermission> rows) {
+        Map<GroupKey, List<PlatformPermission>> byGroup = new LinkedHashMap<>();
+        for (PlatformPermission p : rows)
+            byGroup.computeIfAbsent(new GroupKey(p.getDomain(), p.getCode()), k -> new ArrayList<>()).add(p);
+
+        List<PermissionGroup> groups = new ArrayList<>(byGroup.size());
+        for (Map.Entry<GroupKey, List<PlatformPermission>> e : byGroup.entrySet()) {
+            List<PermissionRuleView> rules = e.getValue().stream()
+                    .sorted(Comparator.comparing(PlatformPermission::getResource, Comparator.nullsFirst(String::compareTo))
+                            .thenComparing(PlatformPermission::getAction, Comparator.nullsFirst(String::compareTo)))
+                    .map(p -> new PermissionRuleView(p.getId(), p.getResource(), p.getAction(), p.getDescription()))
+                    .toList();
+            groups.add(new PermissionGroup(e.getKey().code(), e.getKey().domain(), rules));
+        }
+        groups.sort(Comparator.comparing(PermissionGroup::domain, Comparator.nullsFirst(String::compareTo))
+                .thenComparing(PermissionGroup::code, Comparator.nullsFirst(String::compareTo)));
+        return groups;
+    }
+
+    /** 目录分组键：code 不唯一，但同一个 code 不应跨域；按 (domain, code) 分组以防脏数据把两域混在一起。 */
+    private record GroupKey(String domain, String code) {
     }
 
     public PlatformPermission create(PermissionPointRequest req) {

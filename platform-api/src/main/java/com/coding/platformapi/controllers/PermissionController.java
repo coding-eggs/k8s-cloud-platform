@@ -2,7 +2,10 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.auth.PlatformPermission;
+import com.coding.platformapi.models.PermissionGroup;
 import com.coding.platformapi.models.PermissionKeyRequest;
+import com.coding.platformapi.models.PermissionMatchRequest;
+import com.coding.platformapi.models.PermissionMatchResponse;
 import com.coding.platformapi.models.PermissionPointRequest;
 import com.coding.platformapi.services.PermissionService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -32,6 +35,18 @@ public class PermissionController {
     @PostMapping("/list")
     public ResponseData<List<PlatformPermission>> list() {
         return new ResponseData<>(permissionService.list());
+    }
+
+    @Operation(summary = "权限点目录（按 code 分组，供折叠列表）")
+    @PostMapping("/catalog")
+    public ResponseData<List<PermissionGroup>> catalog() {
+        return new ResponseData<>(permissionService.catalog());
+    }
+
+    @Operation(summary = "按实际 URL 反查权限覆盖（与运行时判权同口径）")
+    @PostMapping("/match")
+    public ResponseData<PermissionMatchResponse> match(@RequestBody PermissionMatchRequest r) {
+        return new ResponseData<>(permissionService.match(r));
     }
 
     @Operation(summary = "新建权限点（写前裸端点校验，提交后热加载即时生效）")

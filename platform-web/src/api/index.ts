@@ -85,6 +85,8 @@ import type {
   NodeDrainResult,
   NodeEvent,
   NodeTaint,
+  PermissionGroup,
+  PermissionMatchResult,
   PlatformPermission,
   PlatformRole,
   PlatformTenant,
@@ -396,6 +398,11 @@ export const roleApi = {
  * code 不唯一 —— 一行 = 一个 URL 规则，前端按 code 聚合；后端写前裸端点校验 + 提交后热加载即时生效） */
 export const permissionApi = {
   list: () => http.post<never, PlatformPermission[]>('/permission/list'),
+  /** 分组目录：同 code 的规则行聚成一组（服务端已按 domain→code、resource→action 排好序） */
+  catalog: () => http.post<never, PermissionGroup[]>('/permission/catalog'),
+  /** 按实际请求（方法 + 路径）反查覆盖它的权限行；判据与运行时判权同源 */
+  match: (payload: { method: string; path: string }) =>
+    http.post<never, PermissionMatchResult>('/permission/match', payload),
   create: (payload: { domain: string; resource: string; action: string; code: string; description?: string }) =>
     http.post<never, PlatformPermission>('/permission/create', payload),
   update: (payload: { id: string; domain: string; resource: string; action: string; code: string; description?: string }) =>
