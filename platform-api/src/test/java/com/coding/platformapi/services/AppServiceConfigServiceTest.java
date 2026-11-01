@@ -2,6 +2,8 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.data.mapper.system.PlatformAppDependencyMapper;
+import com.coding.data.mapper.system.PlatformAppExecutionMapper;
+import com.coding.data.models.system.PlatformAppExecution;
 import com.coding.data.mapper.system.PlatformAppReleaseMapper;
 import com.coding.data.mapper.system.PlatformAppServiceMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
@@ -36,6 +38,7 @@ class AppServiceConfigServiceTest {
     private PlatformAppServiceMapper services;
     private PlatformAppDependencyMapper deps;
     private PlatformAppReleaseMapper releases;
+    private PlatformAppExecutionMapper executions;
     private AppServiceConfigService service;
     private PlatformApplication app;
 
@@ -45,7 +48,8 @@ class AppServiceConfigServiceTest {
         services = mock(PlatformAppServiceMapper.class);
         deps = mock(PlatformAppDependencyMapper.class);
         releases = mock(PlatformAppReleaseMapper.class);
-        service = new AppServiceConfigService(apps, services, deps, releases);
+        executions = mock(PlatformAppExecutionMapper.class);
+        service = new AppServiceConfigService(apps, services, deps, releases, executions);
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -120,14 +124,34 @@ class AppServiceConfigServiceTest {
     }
 
     @Test
-    void createRejectsPasswordFieldsAndPlainSecretLiterals() {
+    void createRejectsUnknownPasswordField() {
         Map<String, Object> d = web("1");
         d.put("password", "hunter2");
         assertThatThrownBy(() -> service.create(req("api", d), "t1")).isInstanceOf(CloudPlatformException.class);
+        verify(services, never()).insert(any());
+    }
 
-        Map<String, Object> e = web("1");
-        e.put("env", List.of(Map.of("name", "DB_PASSWORD", "kind", "LITERAL", "value", "hunter2")));
-        assertThatThrownBy(() -> service.create(req("api", e), "t1")).isInstanceOf(CloudPlatformException.class);
+    @Test
+    void credentialLikeLiteralIsSavedNotRejected() {
+        String[][] cases = {{"DB_PASSWORD", "hunter2"}, {"TOKEN_TTL", "3600"},
+                {"MAX_TOKENS", "4096"}, {"PASSWORD_MIN_LENGTH", "8"}};
+        int i = 0;
+        for (String[] kv : cases) {
+            Map<String, Object> d = web("1");
+            d.put("env", List.of(Map.of("name", kv[0], "kind", "LITERAL", "value", kv[1])));
+            service.create(req("api" + (i++), d), "t1");
+        }
+        verify(services, org.mockito.Mockito.times(4)).insert(any());
+    }
+
+    @Test
+    void malformedReferenceIsRejectedNotSilentlyMarkedRef() {
+        for (String bad : List.of("${db.host", "${nodot}", "x${}y", "${a.b}${")) {
+            Map<String, Object> d = web("1");
+            d.put("env", List.of(Map.of("name", "X", "kind", "LITERAL", "value", bad)));
+            assertThatThrownBy(() -> service.create(req("api", d), "t1")).as(bad)
+                    .isInstanceOf(CloudPlatformException.class);
+        }
         verify(services, never()).insert(any());
     }
 
@@ -183,7 +207,9 @@ class AppServiceConfigServiceTest {
     void removeNeverReleasedDeletesRow() {
         when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 0));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", web("1"), 0)));
-        service.remove(req("api", null), "t1");
+        AppServiceRequest r = req("api", null);
+        r.setVersion(0);
+        service.remove(r, "t1");
         verify(services).deleteById(7L);
     }
 
@@ -197,7 +223,9 @@ class AppServiceConfigServiceTest {
         when(services.selectByKey("app1", "api")).thenReturn(r);
         when(services.selectByApp("app1")).thenReturn(List.of(r));
         when(services.updateWithVersion(any())).thenReturn(1);
-        service.remove(req("api", null), "t1");
+        AppServiceRequest rq = req("api", null);
+        rq.setVersion(4);
+        service.remove(rq, "t1");
         ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
         verify(services).updateWithVersion(cap.capture());
         assertThat(cap.getValue().getPendingDelete()).isTrue();
@@ -211,8 +239,52 @@ class AppServiceConfigServiceTest {
         PlatformAppService api = row("api", web("1"), 0);
         when(services.selectByKey("app1", "api")).thenReturn(api);
         when(services.selectByApp("app1")).thenReturn(List.of(api, row("cli", client, 0)));
-        assertThatThrownBy(() -> service.remove(req("api", null), "t1"))
+        AppServiceRequest rq = req("api", null);
+        rq.setVersion(0);
+        assertThatThrownBy(() -> service.remove(rq, "t1"))
                 .isInstanceOf(CloudPlatformException.class).hasMessageContaining("cli");
         verify(services, never()).deleteById(any());
+    }
+
+    @Test
+    void removeWhileFirstReleaseIsRunningMarksPendingDeleteInsteadOfDeleting() {
+        // 线上还没有发布（live=0），但第一次发布正在跑，快照里已有 api
+        PlatformAppExecution active = new PlatformAppExecution();
+        active.setAppId("app1");
+        active.setReleaseNo(1);
+        active.setStatus("RUNNING");
+        when(executions.selectActiveByApp("app1")).thenReturn(active);
+        PlatformAppRelease first = new PlatformAppRelease();
+        first.setSnapshotJson("{\"services\":{\"api\":" + JSON.writeValueAsString(web("1"))
+                + "},\"dependencies\":[]}");
+        when(releases.selectByNo("app1", 1)).thenReturn(first);
+        PlatformAppService r = row("api", web("1"), 2);
+        when(services.selectByKey("app1", "api")).thenReturn(r);
+        when(services.selectByApp("app1")).thenReturn(List.of(r));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        AppServiceRequest rq = req("api", null);
+        rq.setVersion(2);
+
+        service.remove(rq, "t1");
+
+        ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).updateWithVersion(cap.capture());
+        assertThat(cap.getValue().getPendingDelete()).isTrue();
+        verify(services, never()).deleteById(any());
+    }
+
+    @Test
+    void removeWithStaleVersionIsConflict() {
+        PlatformAppService r = row("api", web("1"), 5);
+        when(services.selectByKey("app1", "api")).thenReturn(r);
+        when(services.selectByApp("app1")).thenReturn(List.of(r));
+        AppServiceRequest rq = req("api", null);
+        rq.setVersion(4);
+        assertThatThrownBy(() -> service.remove(rq, "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("冲突");
+        AppServiceRequest none = req("api", null);
+        assertThatThrownBy(() -> service.remove(none, "t1")).isInstanceOf(CloudPlatformException.class);
+        verify(services, never()).deleteById(any());
+        verify(services, never()).updateWithVersion(any());
     }
 }

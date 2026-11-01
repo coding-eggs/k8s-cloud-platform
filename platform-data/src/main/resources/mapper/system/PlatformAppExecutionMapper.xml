@@ -31,6 +31,16 @@
      where id = #{id,jdbcType=BIGINT}
   </update>
 
+  <update id="supersedeInterrupted">
+    update platform_app_execution
+       set `status` = 'FAILED',
+           message = #{message,jdbcType=VARCHAR},
+           finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+           lease_until = null
+     where id = #{id,jdbcType=BIGINT}
+       and `status` = 'INTERRUPTED'
+  </update>
+
   <update id="reopen">
     update platform_app_execution
        set `status` = #{status,jdbcType=VARCHAR},

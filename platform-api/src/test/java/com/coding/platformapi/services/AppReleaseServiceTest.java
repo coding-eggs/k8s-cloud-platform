@@ -182,10 +182,22 @@ class AppReleaseServiceTest {
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
         when(releases.selectMaxNo("app1")).thenReturn(null);
         service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
-        String snap = createdSnapshot();
-        // 发布中用户又改了 desired：已落库的快照是字符串，不会跟着变
-        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
-        assertThat(snap).contains("\"imageTag\":\"1\"").doesNotContain("\"imageTag\":\"2\"");
+        ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
+        verify(releases).insert(cap.capture());
+        PlatformAppRelease release = cap.getValue();
+        release.setReleaseNo(1);
+
+        // 发布中用户又改了 desired（标签 2、端口、变量都变）：执行器渲染用的是快照，不是 desired
+        Map<String, Object> edited = svc("2", "MODE", "debug");
+        edited.put("port", 9999);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", edited, false)));
+
+        AppRenderRequestDTO req = pipeline.build(app, release);
+        var node = req.getSpec().getNodes().get(0);
+        assertThat(node.getParams()).containsEntry("image", "harbor.local/demo/x:1");
+        assertThat(node.getParams()).containsEntry("port", 8080);
+        assertThat(req.getInjectByNode().get("api")).noneMatch(i -> "MODE".equals(i.getName())
+                && "debug".equals(i.getValue()));
     }
 
     @Test
@@ -264,14 +276,173 @@ class AppReleaseServiceTest {
         old.setReleaseNo(1);
         when(executions.selectActiveByApp("app1")).thenReturn(old);
         when(releases.selectMaxNo("app1")).thenReturn(1);
+        when(executions.supersedeInterrupted(org.mockito.ArgumentMatchers.eq(5L),
+                org.mockito.ArgumentMatchers.eq("被新发布取代"), any())).thenReturn(1);
 
         service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
 
-        ArgumentCaptor<PlatformAppExecution> upd = ArgumentCaptor.forClass(PlatformAppExecution.class);
-        verify(executions).updateById(upd.capture());
-        assertThat(upd.getValue().getStatus()).isEqualTo("FAILED");
-        assertThat(upd.getValue().getMessage()).isEqualTo("被新发布取代");
+        verify(executions).supersedeInterrupted(org.mockito.ArgumentMatchers.eq(5L),
+                org.mockito.ArgumentMatchers.eq("被新发布取代"), any());
         verify(executions).insert(any());
+    }
+
+    @Test
+    void supersedeLosingTheRaceRejectsAndWritesNothing() {
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        PlatformAppExecution old = new PlatformAppExecution();
+        old.setId(5L);
+        old.setStatus("INTERRUPTED");
+        when(executions.selectActiveByApp("app1")).thenReturn(old);
+        when(executions.supersedeInterrupted(any(), any(), any())).thenReturn(0);   // 用户刚好点了继续
+
+        assertThatThrownBy(() -> service.create("app1", List.of("api"), Map.of(), null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(releases, never()).insert(any());
+        verify(executions, never()).insert(any());
+    }
+
+    @Test
+    void unreferencedNotReadyDependencyDoesNotBlockRelease() {
+        PlatformAppDependency cache = new PlatformAppDependency();
+        cache.setAppId("app1");
+        cache.setDepKey("cache");
+        cache.setType("MIDDLEWARE");
+        cache.setInstanceId("mw9");
+        when(depRows.selectByApp("app1")).thenReturn(List.of(cache));
+        when(middleware.statusOf("mw9")).thenReturn("CREATING");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1", "MODE", "info"), false)));
+
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");   // 不应因 cache 抛错
+        ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
+        verify(releases).insert(cap.capture());
+        PlatformAppRelease release = cap.getValue();
+        release.setReleaseNo(1);
+        when(releases.selectByNo("app1", 1)).thenReturn(release);
+        PlatformAppExecution exec = new PlatformAppExecution();
+        exec.setAppId("app1");
+        exec.setReleaseNo(1);
+
+        pipeline.check(exec);   // 不抛
+        verify(middleware, never()).connection(any(), any());
+        verify(middleware, never()).statusOf("mw9");
+    }
+
+    @Test
+    void liveOnlyServiceWithoutRowIsPendingDeleteAndListedInOverview() {
+        live(1, Map.of("api", svc("1"), "ghost", svc("1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+
+        AppReleasePreviewView v = service.preview("app1", List.of("ghost"), Map.of(), "t1");
+        assertThat(v.pendingKeys()).containsExactly("ghost");
+        assertThat(v.changes().get(0).type()).isEqualTo("DELETED");
+        assertThat(v.problems()).isEmpty();
+
+        var overview = service.overview("app1", "t1");
+        assertThat(overview.services()).anySatisfy(s -> {
+            assertThat(s.key()).isEqualTo("ghost");
+            assertThat(s.pending()).isEqualTo("DELETED");
+            assertThat(s.version()).isNull();
+            assertThat(s.desired()).isNotNull();
+        });
+
+        service.create("app1", List.of("ghost"), Map.of(), null, "bob", "t1");
+        assertThat(JSON.readTree(createdSnapshot()).get("services").has("ghost")).isFalse();
+    }
+
+    @Test
+    void overviewCarriesDesiredAndVersionAndNotReleased() {
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        var overview = service.overview("app1", "t1");
+        var s = overview.services().get(0);
+        assertThat(s.state()).isEqualTo("NOT_RELEASED");
+        assertThat(s.version()).isEqualTo(1);
+        assertThat(s.desired()).containsEntry("imageTag", "1");
+    }
+
+    @Test
+    void liveReleaseChangedInsideTransactionIsRejected() {
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        PlatformApplication moved = new PlatformApplication();
+        moved.setId("app1");
+        moved.setTenantId("t1");
+        moved.setLiveReleaseNo(7);
+        when(apps.selectById("app1")).thenReturn(app, moved);   // 第一次校验归属，第二次事务内重读
+
+        assertThatThrownBy(() -> service.create("app1", List.of("api"), Map.of(), null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("线上已变化");
+        verify(releases, never()).insert(any());
+        verify(executions, never()).insert(any());
+    }
+
+    @Test
+    void imageOverrideWorksWhenDesiredEqualsLive() {
+        live(1, Map.of("api", svc("1.4.2")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1.4.2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        AppReleasePreviewView v = service.preview("app1", List.of("api"), Map.of("api", "1.4.3"), "t1");
+        assertThat(v.problems()).isEmpty();
+        assertThat(v.changes()).singleElement().satisfies(c -> {
+            assertThat(c.type()).isEqualTo("CHANGED");
+            assertThat(c.fields()).contains("imageTag");
+            assertThat(c.fromImage()).endsWith(":1.4.2");
+            assertThat(c.toImage()).endsWith(":1.4.3");
+        });
+        verify(services, never()).updateWithVersion(any());   // 预览不落库
+
+        service.create("app1", List.of("api"), Map.of("api", "1.4.3"), null, "bob", "t1");
+        ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).updateWithVersion(cap.capture());
+        assertThat(cap.getValue().getDesiredJson()).contains("\"imageTag\":\"1.4.3\"");
+        assertThat(cap.getValue().getVersion()).isEqualTo(1);
+        assertThat(createdSnapshot()).contains("\"imageTag\":\"1.4.3\"");
+    }
+
+    @Test
+    void imageOverrideLosingOptimisticLockIsConflictAndNoRelease() {
+        live(1, Map.of("api", svc("1.4.2")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1.4.2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.create("app1", List.of("api"), Map.of("api", "1.4.3"), null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("冲突");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void imageOverrideForUnselectedServiceIsAnError() {
+        live(1, Map.of("api", svc("1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        assertThatThrownBy(() -> service.create("app1", List.of(), Map.of("api", "2"), null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void credentialsAreForgottenWhenTransactionBodyFails() {
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        org.mockito.Mockito.doAnswer(inv -> {
+            ((PlatformAppExecution) inv.getArgument(0)).setId(55L);
+            return 1;
+        }).when(executions).insert(any());
+        org.mockito.Mockito.doThrow(new IllegalStateException("db down")).when(apps).updateById(any());
+
+        assertThatThrownBy(() -> service.create("app1", List.of("api"), Map.of(), null, "bob", "t1"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(credentials.getExecution(55L)).isNull();
+    }
+
+    @Test
+    void credentialLikeLiteralWarnsInPreviewButNeverBlocks() {
+        Map<String, Object> d = svc("1", "DB_PASSWORD", "hunter2", "TOKEN_TTL", "3600");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", d, false)));
+
+        AppReleasePreviewView v = service.preview("app1", List.of("api"), Map.of(), "t1");
+        assertThat(v.warnings()).hasSize(1);
+        assertThat(v.warnings().get(0)).contains("DB_PASSWORD");
+        assertThat(v.problems()).isEmpty();
+
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");   // 不阻断
+        verify(releases).insert(any());
     }
 
     @Test

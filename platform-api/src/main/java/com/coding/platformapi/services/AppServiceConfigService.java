@@ -3,6 +3,8 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.data.mapper.system.PlatformAppDependencyMapper;
+import com.coding.data.mapper.system.PlatformAppExecutionMapper;
+import com.coding.data.models.system.PlatformAppExecution;
 import com.coding.data.mapper.system.PlatformAppReleaseMapper;
 import com.coding.data.mapper.system.PlatformAppServiceMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
@@ -42,12 +44,16 @@ public class AppServiceConfigService {
     private final PlatformAppDependencyMapper dependencies;
     private final PlatformAppReleaseMapper releases;
 
+    private final PlatformAppExecutionMapper executions;
+
     public AppServiceConfigService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
-                                   PlatformAppDependencyMapper dependencies, PlatformAppReleaseMapper releases) {
+                                   PlatformAppDependencyMapper dependencies, PlatformAppReleaseMapper releases,
+                                   PlatformAppExecutionMapper executions) {
         this.apps = apps;
         this.services = services;
         this.dependencies = dependencies;
         this.releases = releases;
+        this.executions = executions;
     }
 
     public AppServiceView create(AppServiceRequest req, String tenantId) {
@@ -62,7 +68,7 @@ public class AppServiceConfigService {
         PlatformAppService existing = services.selectByKey(app.getId(), key);
         if (existing != null) {
             // 待删除且从未发布过的残行没有任何意义，让位给新服务
-            if (Boolean.TRUE.equals(existing.getPendingDelete()) && !isLive(app, key)) {
+            if (Boolean.TRUE.equals(existing.getPendingDelete()) && !isPublished(app, key)) {
                 services.deleteById(existing.getId());
             } else {
                 throw error("服务 " + key + " 已存在");
@@ -106,6 +112,9 @@ public class AppServiceConfigService {
         PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppService row = require(app, req.getServiceKey());
         String key = row.getServiceKey();
+        if (req.getVersion() == null || !req.getVersion().equals(row.getVersion())) {
+            throw conflict();
+        }
         for (PlatformAppService other : services.selectByApp(app.getId())) {
             if (other.getServiceKey().equals(key) || Boolean.TRUE.equals(other.getPendingDelete())) {
                 continue;
@@ -114,7 +123,7 @@ public class AppServiceConfigService {
                 throw error("服务 " + key + " 仍被服务 " + other.getServiceKey() + " 引用，请先去掉引用");
             }
         }
-        if (!isLive(app, key)) {
+        if (!isPublished(app, key)) {
             services.deleteById(row.getId());
             return;
         }
@@ -136,13 +145,24 @@ public class AppServiceConfigService {
         return row;
     }
 
-    private boolean isLive(PlatformApplication app, String key) {
-        int no = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
-        if (no <= 0) {
+    /**
+     * 已发布 = 在线上快照里，或在进行中（PENDING/RUNNING/INTERRUPTED）那次发布的快照里。
+     * 后者必须算：首次发布还没跑完时直接删行，成功后线上就有一个台账里没有的孤儿服务。
+     */
+    private boolean isPublished(PlatformApplication app, String key) {
+        if (inRelease(app.getId(), app.getLiveReleaseNo(), key)) {
+            return true;
+        }
+        PlatformAppExecution active = executions.selectActiveByApp(app.getId());
+        return active != null && inRelease(app.getId(), active.getReleaseNo(), key);
+    }
+
+    private boolean inRelease(String appId, Integer releaseNo, String key) {
+        if (releaseNo == null || releaseNo <= 0) {
             return false;
         }
-        PlatformAppRelease live = releases.selectByNo(app.getId(), no);
-        return live != null && AppSnapshot.parse(live.getSnapshotJson()).services().containsKey(key);
+        PlatformAppRelease release = releases.selectByNo(appId, releaseNo);
+        return release != null && AppSnapshot.parse(release.getSnapshotJson()).services().containsKey(key);
     }
 
     private static void assertValidKey(String key) {

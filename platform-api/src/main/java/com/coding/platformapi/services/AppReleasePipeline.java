@@ -10,6 +10,7 @@ import com.coding.common.models.app.AppSpecDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO.ConnInfo;
 import com.coding.data.mapper.system.PlatformAppReleaseMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
+import com.coding.data.models.system.PlatformAppDependency;
 import com.coding.data.models.system.PlatformAppExecution;
 import com.coding.data.models.system.PlatformAppRelease;
 import com.coding.data.models.system.PlatformApplication;
@@ -57,7 +58,8 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
             throw error("发布或应用不存在");
         }
         AppSnapshot snapshot = AppSnapshot.parse(release.getSnapshotJson());
-        List<String> notReady = dependencies.notReady(snapshot.dependencies());
+        // 只看被引用的依赖：没人用的依赖还在创建中，不该挡住别的服务发布
+        List<String> notReady = dependencies.notReady(referencedDependencies(snapshot));
         if (!notReady.isEmpty()) {
             throw error(String.join("；", notReady));
         }
@@ -145,13 +147,21 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
     }
 
     private Context context(PlatformApplication app, AppSnapshot snapshot) {
-        Map<String, ConnInfo> conns = dependencies.connectionsOf(snapshot.dependencies(), app.getTenantId());
+        Map<String, ConnInfo> conns = dependencies.connectionsOf(referencedDependencies(snapshot),
+                app.getTenantId());
         Map<String, ServiceAddr> addrs = snapshot.services().entrySet().stream()
                 .filter(e -> AppServiceDesired.port(e.getValue()) != null)
                 .collect(Collectors.toMap(Map.Entry::getKey,
                         e -> new ServiceAddr(AppObjectNames.objectName(app.getSlug(), e.getKey()),
                                 AppServiceDesired.port(e.getValue()))));
         return new Context(conns, addrs);
+    }
+
+    /** 快照内服务的环境变量引用到的依赖（就绪检查与连接信息都只针对它们）。 */
+    static List<PlatformAppDependency> referencedDependencies(AppSnapshot snapshot) {
+        Set<String> refs = new java.util.HashSet<>();
+        snapshot.services().values().forEach(d -> refs.addAll(AppServiceDesired.references(d)));
+        return snapshot.dependencies().stream().filter(d -> refs.contains(d.getDepKey())).toList();
     }
 
     private static CloudPlatformException error(String message) {

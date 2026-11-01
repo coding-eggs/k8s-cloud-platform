@@ -11,6 +11,13 @@ import java.util.List;
 @Repository
 public interface PlatformAppExecutionMapper {
 
+    /**
+     * 被新发布取代：仅当仍是 INTERRUPTED 时置 FAILED。返回 0 表示状态已变（用户刚好点了继续）。
+     */
+    int supersedeInterrupted(@Param("id") Long id, @Param("message") String message,
+                             @Param("finishedAt") Date finishedAt);
+
+
     /** 全部活动执行（PENDING / RUNNING / INTERRUPTED），按 id 升序 */
     List<PlatformAppExecution> selectActive();
 

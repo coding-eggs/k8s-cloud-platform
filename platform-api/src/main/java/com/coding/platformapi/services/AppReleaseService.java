@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -125,14 +126,26 @@ public class AppReleaseService {
         }
         List<AppReleasePreviewView.Change> changes = plan.changes.stream()
                 .map(c -> toChange(c, plan)).toList();
+        List<String> warnings = new ArrayList<>();
+        for (String key : plan.selected) {
+            Map<String, Object> d = plan.next.services().get(key);
+            if (d != null) {
+                AppServiceDesired.warnings(d).forEach(w -> warnings.add("服务 " + key + "：" + w));
+            }
+        }
         return new AppReleasePreviewView(changes,
                 plan.changes.stream().map(AppPending.Change::key).toList(),
-                plan.selected, plan.required, added, removed, problems);
+                plan.selected, plan.required, added, removed, problems, warnings);
     }
 
     // ------------------------------------------------------------------ 创建
 
-    /** 创建发布 + 执行（同一事务）；返回执行 id。 */
+    /**
+     * 创建发布 + 执行（同一事务）；返回执行 id。
+     *
+     * <p>事务内：校验线上发布号没变、写镜像 tag 覆盖、取代 INTERRUPTED、写发布与执行、记凭据、置 DEPLOYING。
+     * 凭据在执行行插入之后、提交之前记下：worker 只能看到已提交的行，那时凭据一定在；回滚则一并忘掉。
+     */
     public Long create(String appId, List<String> selectedKeys, Map<String, String> images, String note,
                        String operator, String tenantId) {
         PlatformApplication app = AppGuard.require(apps, appId, tenantId);
@@ -140,6 +153,11 @@ public class AppReleaseService {
         if (authorization == null || authorization.isBlank()) {
             throw error("当前请求没有可用的凭据");
         }
+        PlatformAppExecution running = executions.selectActiveByApp(app.getId());
+        if (running != null && !"INTERRUPTED".equals(running.getStatus())) {
+            throw error("该应用已有进行中的发布，请等它结束后再发布");
+        }
+        int plannedLive = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
         Plan plan = plan(app, selectedKeys, images);
         if (plan.selected.isEmpty()) {
             throw error("请至少勾选一项改动");
@@ -155,51 +173,62 @@ public class AppReleaseService {
             throw error(String.join("；", problems));
         }
 
-        Long executionId = tx.execute(status -> {
-            for (PlatformAppService row : plan.overridden) {
-                if (services.updateWithVersion(row) == 0) {
-                    throw error("配置冲突：服务 " + row.getServiceKey() + " 已被他人修改，请刷新后重试");
+        AtomicReference<Long> remembered = new AtomicReference<>();
+        try {
+            return tx.execute(status -> {
+                // 计划基于的线上版本在这期间被别的发布推进了：快照会基于过期的线上服务，必须重来
+                PlatformApplication fresh = apps.selectById(app.getId());
+                int liveNow = fresh == null || fresh.getLiveReleaseNo() == null ? 0 : fresh.getLiveReleaseNo();
+                if (liveNow != plannedLive) {
+                    throw error("线上已变化，请刷新后重试");
                 }
-            }
-            supersedeInterrupted(app.getId());
-            int releaseNo = nextReleaseNo(app.getId());
+                for (PlatformAppService row : plan.overridden) {
+                    if (services.updateWithVersion(row) == 0) {
+                        throw error("配置冲突：服务 " + row.getServiceKey() + " 已被他人修改，请刷新后重试");
+                    }
+                }
+                supersedeInterrupted(app.getId());
+                int releaseNo = nextReleaseNo(app.getId());
 
-            PlatformAppRelease release = new PlatformAppRelease();
-            release.setAppId(app.getId());
-            release.setReleaseNo(releaseNo);
-            release.setSnapshotJson(plan.next.toJson());
-            release.setType("NORMAL");
-            release.setNote(note == null ? null : (note.length() > NOTE_MAX ? note.substring(0, NOTE_MAX) : note));
-            release.setStatus("RENDERED");
-            release.setCreatedBy(operator);
-            release.setCreatedAt(new Date());
-            PlatformAppExecution execution = new PlatformAppExecution();
-            execution.setAppId(app.getId());
-            execution.setReleaseNo(releaseNo);
-            execution.setStatus("PENDING");
-            execution.setStage("PRECHECK");
-            execution.setStartedBy(operator);
-            execution.setStartedAt(new Date());
-            try {
-                releases.insert(release);
-                executions.insert(execution);
-            } catch (DuplicateKeyException e) {
-                throw error("该应用已有进行中的发布，或发布号冲突，请刷新后重试");
-            }
-            return execution.getId();
-        });
-
-        // 提交之后再记凭据、改状态：事务回滚时不留下孤儿凭据
-        credentials.rememberExecution(executionId, authorization);
-        PlatformApplication patch = new PlatformApplication();
-        patch.setId(app.getId());
-        patch.setStatus("DEPLOYING");
-        patch.setUpdatedAt(new Date());
-        apps.updateById(patch);
-        return executionId;
+                PlatformAppRelease release = new PlatformAppRelease();
+                release.setAppId(app.getId());
+                release.setReleaseNo(releaseNo);
+                release.setSnapshotJson(plan.next.toJson());
+                release.setType("NORMAL");
+                release.setNote(note == null ? null
+                        : (note.length() > NOTE_MAX ? note.substring(0, NOTE_MAX) : note));
+                release.setStatus("RENDERED");
+                release.setCreatedBy(operator);
+                release.setCreatedAt(new Date());
+                PlatformAppExecution execution = new PlatformAppExecution();
+                execution.setAppId(app.getId());
+                execution.setReleaseNo(releaseNo);
+                execution.setStatus("PENDING");
+                execution.setStage("PRECHECK");
+                execution.setStartedBy(operator);
+                execution.setStartedAt(new Date());
+                try {
+                    releases.insert(release);
+                    executions.insert(execution);
+                } catch (DuplicateKeyException e) {
+                    throw error("该应用已有进行中的发布，或发布号冲突，请刷新后重试");
+                }
+                credentials.rememberExecution(execution.getId(), authorization);
+                remembered.set(execution.getId());
+                PlatformApplication patch = new PlatformApplication();
+                patch.setId(app.getId());
+                patch.setStatus("DEPLOYING");
+                patch.setUpdatedAt(new Date());
+                apps.updateById(patch);
+                return execution.getId();
+            });
+        } catch (RuntimeException e) {
+            credentials.forgetExecution(remembered.get());   // 回滚了就不留凭据
+            throw e;
+        }
     }
 
-    /** INTERRUPTED 在等用户点继续，新发布取代它；PENDING / RUNNING 正在推进，拒绝。 */
+    /** INTERRUPTED 在等用户点继续，新发布取代它；PENDING / RUNNING 正在推进，拒绝。条件更新，输了就拒绝。 */
     private void supersedeInterrupted(String appId) {
         PlatformAppExecution active = executions.selectActiveByApp(appId);
         if (active == null) {
@@ -208,12 +237,9 @@ public class AppReleaseService {
         if (!"INTERRUPTED".equals(active.getStatus())) {
             throw error("该应用已有进行中的发布，请等它结束后再发布");
         }
-        PlatformAppExecution patch = new PlatformAppExecution();
-        patch.setId(active.getId());
-        patch.setStatus("FAILED");
-        patch.setMessage("被新发布取代");
-        patch.setFinishedAt(new Date());
-        executions.updateById(patch);
+        if (executions.supersedeInterrupted(active.getId(), "被新发布取代", new Date()) == 0) {
+            throw error("执行状态已变化，请刷新后重试");
+        }
         credentials.forgetExecution(active.getId());
         PlatformAppRelease old = releases.selectByNo(appId, active.getReleaseNo());
         if (old != null) {
@@ -279,7 +305,20 @@ public class AppReleaseService {
                     AppServiceDesired.image(desired),
                     liveDesired == null ? null : AppServiceDesired.image(liveDesired),
                     desired.get("replicas") instanceof Number n ? n.intValue() : null,
-                    state, change == null ? null : change.type()));
+                    state, change == null ? null : change.type(), desired, row.getVersion()));
+        }
+        // 线上有、台账无行的孤儿服务（待删除）：照样列出来，才有地方勾选删除
+        Set<String> rowKeys = rows.stream().map(PlatformAppService::getServiceKey).collect(Collectors.toSet());
+        for (AppPending.Change c : changes) {
+            if (!"DELETED".equals(c.type()) || rowKeys.contains(c.key())) {
+                continue;
+            }
+            Map<String, Object> liveDesired = live.services().get(c.key());
+            String objectName = AppObjectNames.objectName(app.getSlug(), c.key());
+            serviceRows.add(new AppOverviewView.ServiceRow(c.key(), AppServiceDesired.kindOf(liveDesired),
+                    AppServiceDesired.image(liveDesired), AppServiceDesired.image(liveDesired),
+                    liveDesired.get("replicas") instanceof Number n ? n.intValue() : null,
+                    states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null));
         }
         Map<String, String> depStatus = dependencies.statusOf(dependencyRows.selectByApp(app.getId()));
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
@@ -301,26 +340,62 @@ public class AppReleaseService {
 
     private Plan plan(PlatformApplication app, List<String> selectedKeys, Map<String, String> images) {
         AppSnapshot live = liveSnapshot(app);
-        List<PlatformAppService> rows = services.selectByApp(app.getId());
-        List<AppPending.Change> changes = AppPending.compute(live.services(), rows);
-        Map<String, AppPending.Change> byKey = new LinkedHashMap<>();
-        changes.forEach(c -> byKey.put(c.key(), c));
-        Map<String, PlatformAppService> rowByKey = new HashMap<>();
-        rows.forEach(r -> rowByKey.put(r.getServiceKey(), r));
+        List<PlatformAppService> stored = services.selectByApp(app.getId());
+        Map<String, PlatformAppService> storedByKey = new HashMap<>();
+        stored.forEach(r -> storedByKey.put(r.getServiceKey(), r));
 
         List<String> selected = selectedKeys == null ? List.of()
                 : selectedKeys.stream().filter(k -> k != null && !k.isBlank()).distinct().toList();
         Map<String, String> tags = images == null ? Map.of() : images;
         List<String> errors = new ArrayList<>();
-        for (String key : selected) {
-            if (!byKey.containsKey(key)) {
-                errors.add("服务 " + key + " 没有待发布的改动");
+
+        // 镜像 tag 覆盖先于「有没有改动」的判断：desired 与线上相同、只想换 tag 发布也成立
+        List<PlatformAppService> rows = new ArrayList<>();
+        List<PlatformAppService> overridden = new ArrayList<>();
+        for (PlatformAppService row : stored) {
+            String tag = tags.get(row.getServiceKey());
+            if (tag == null || tag.isBlank() || !selected.contains(row.getServiceKey())
+                    || Boolean.TRUE.equals(row.getPendingDelete())) {
+                rows.add(row);
+                continue;
+            }
+            Map<String, Object> current = AppSnapshot.parseMap(row.getDesiredJson());
+            Map<String, Object> desired = new LinkedHashMap<>(current);
+            desired.put("imageTag", tag.trim());
+            desired = AppServiceDesired.normalize(desired);
+            PlatformAppService effective = new PlatformAppService();
+            effective.setId(row.getId());
+            effective.setAppId(row.getAppId());
+            effective.setServiceKey(row.getServiceKey());
+            effective.setPendingDelete(row.getPendingDelete());
+            effective.setVersion(row.getVersion());
+            effective.setDesiredJson(JSON.writeValueAsString(desired));
+            rows.add(effective);
+            if (!AppPending.changedFields(current, desired).isEmpty()) {
+                PlatformAppService patch = new PlatformAppService();
+                patch.setId(row.getId());
+                patch.setServiceKey(row.getServiceKey());
+                patch.setVersion(row.getVersion());
+                patch.setDesiredJson(effective.getDesiredJson());
+                patch.setUpdatedAt(new Date());
+                overridden.add(patch);
             }
         }
         for (String key : tags.keySet()) {
-            AppPending.Change c = byKey.get(key);
-            if (!selected.contains(key) || c == null || "DELETED".equals(c.type())) {
+            PlatformAppService row = storedByKey.get(key);
+            if (!selected.contains(key) || row == null || Boolean.TRUE.equals(row.getPendingDelete())) {
                 errors.add("镜像 tag 只能用于本次勾选的、非删除的服务：" + key);
+            }
+        }
+
+        List<AppPending.Change> changes = AppPending.compute(live.services(), rows);
+        Map<String, AppPending.Change> byKey = new LinkedHashMap<>();
+        changes.forEach(c -> byKey.put(c.key(), c));
+        Map<String, PlatformAppService> rowByKey = new HashMap<>();
+        rows.forEach(r -> rowByKey.put(r.getServiceKey(), r));
+        for (String key : selected) {
+            if (!byKey.containsKey(key)) {
+                errors.add("服务 " + key + " 没有待发布的改动");
             }
         }
 
@@ -332,7 +407,6 @@ public class AppReleaseService {
                 desiredByKey.put(c.key(), AppSnapshot.parseMap(rowByKey.get(c.key()).getDesiredJson()));
             }
         }
-        List<PlatformAppService> overridden = new ArrayList<>();
         for (String key : selected) {
             AppPending.Change c = byKey.get(key);
             if (c == null) {
@@ -340,24 +414,9 @@ public class AppReleaseService {
             }
             if ("DELETED".equals(c.type())) {
                 next.remove(key);
-                continue;
+            } else {
+                next.put(key, desiredByKey.get(key));
             }
-            PlatformAppService row = rowByKey.get(key);
-            Map<String, Object> desired = desiredByKey.get(key);
-            String tag = tags.get(key);
-            if (tag != null && !tag.isBlank()) {
-                desired.put("imageTag", tag.trim());
-                desired = AppServiceDesired.normalize(desired);
-                PlatformAppService patch = new PlatformAppService();
-                patch.setId(row.getId());
-                patch.setServiceKey(key);
-                patch.setVersion(row.getVersion());
-                patch.setDesiredJson(JSON.writeValueAsString(desired));
-                patch.setUpdatedAt(new Date());
-                overridden.add(patch);
-            }
-            desiredByKey.put(key, desired);
-            next.put(key, desired);
         }
 
         Set<String> unreleased = byKey.values().stream()

@@ -133,6 +133,16 @@ public final class AppEnvResolver {
         return new Result(env, problems);
     }
 
+    /** 值里是否含合法的 {@code ${x.y}} 引用。 */
+    public static boolean hasReference(String value) {
+        return value != null && REF.matcher(value).find();
+    }
+
+    /** 去掉合法引用后剩下的字面文本；用来判断一个「引用」值里是否夹带了明文。 */
+    public static String stripReferences(String value) {
+        return value == null ? "" : REF.matcher(value).replaceAll("");
+    }
+
     /** 被引用的依赖/服务 key（供「使用方」反查与拓扑）。SECRET 行不含引用。 */
     public static Set<String> references(List<AppEnvRow> rows) {
         Set<String> out = new LinkedHashSet<>();

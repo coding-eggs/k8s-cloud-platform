@@ -17,7 +17,8 @@ import java.util.regex.Pattern;
  *
  * <p>白名单：未知字段一律拒绝，而不是悄悄丢弃或放行 —— 快照会原样存库，
  * 放行一个叫 password 的字段就等于把口令写进了不可变的发布记录。
- * 环境变量里凭据只能是 Secret 名 + 键，或 {@code ${依赖.字段}} 引用。
+ * 环境变量里凭据应是 Secret 名 + 键，或 {@code ${依赖.字段}} 引用；
+ * 按名字猜出的「疑似明文凭据」只给 {@link #warnings} 提示，不阻断保存和发布。
  */
 public final class AppServiceDesired {
 
@@ -32,8 +33,7 @@ public final class AppServiceDesired {
     private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env");
 
     private static final Pattern ENV_NAME = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
-    private static final Pattern SENSITIVE_NAME = Pattern.compile(
-            "(?i).*(PASSWORD|PASSWD|PWD|SECRET|TOKEN|API_?KEY|PRIVATE_?KEY).*");
+    private static final Set<String> SENSITIVE_LAST = Set.of("PASSWORD", "PWD", "PASSWD", "SECRET", "TOKEN", "APIKEY");
 
     private AppServiceDesired() {
     }
@@ -120,10 +120,13 @@ public final class AppServiceDesired {
                 }
                 case "LITERAL", "REF" -> {
                     String value = m.get("value") == null ? "" : String.valueOf(m.get("value"));
-                    if (SENSITIVE_NAME.matcher(name).matches() && !value.isEmpty() && !value.contains("${")) {
-                        throw bad("环境变量 " + name + " 看起来是凭据，不能写明文：请引用依赖（${依赖.password}）或已有 Secret");
+                    // 含 "${" 却没有一个合法引用、或去掉合法引用后还残留 "${"：写错了，不能悄悄当字面值或引用存下去
+                    if (value.contains("${")
+                            && (!AppEnvResolver.hasReference(value)
+                            || AppEnvResolver.stripReferences(value).contains("${"))) {
+                        throw bad("环境变量 " + name + " 的引用格式不正确，应为 ${依赖.字段}");
                     }
-                    row.put("kind", value.contains("${") ? "REF" : "LITERAL");
+                    row.put("kind", AppEnvResolver.hasReference(value) ? "REF" : "LITERAL");
                     row.put("value", value);
                 }
                 default -> throw bad("环境变量 " + name + " 的类型不支持：" + kind);
@@ -131,6 +134,33 @@ public final class AppServiceDesired {
             out.add(row);
         }
         return out;
+    }
+
+    /**
+     * 提示（WARN，不阻断发布）：名字以 PASSWORD / PWD / PASSWD / SECRET / TOKEN / API_KEY 结尾、
+     * 且值里除合法 {@code ${x.y}} 引用外还有字面文本的变量。按 {@code _} 分词看末尾词，
+     * 所以 TOKEN_TTL、MAX_TOKENS、PASSWORD_MIN_LENGTH 不会误报。
+     */
+    public static List<String> warnings(Map<String, Object> desired) {
+        List<String> out = new ArrayList<>();
+        for (AppEnvRow row : envRows(desired)) {
+            if ("SECRET".equals(row.kind()) || !looksSensitive(row.name())) {
+                continue;
+            }
+            if (!AppEnvResolver.stripReferences(row.value()).isEmpty()) {
+                out.add("环境变量 " + row.name() + " 看起来是凭据却写了明文，建议改用依赖引用（${依赖.password}）或已有 Secret");
+            }
+        }
+        return out;
+    }
+
+    static boolean looksSensitive(String name) {
+        String[] t = name.toUpperCase().split("_");
+        String last = t[t.length - 1];
+        if (SENSITIVE_LAST.contains(last)) {
+            return true;
+        }
+        return t.length >= 2 && "KEY".equals(last) && "API".equals(t[t.length - 2]);
     }
 
     /** 有端口 → SERVICE，没有 → WORKER。原样传给 k8s-server。 */
