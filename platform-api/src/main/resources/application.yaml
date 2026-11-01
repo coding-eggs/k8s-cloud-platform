@@ -146,7 +146,7 @@ spring:
   data:
     redis:
       host: ${REDIS_HOST:192.168.31.80}
-      port: ${REDIS_PORT:6379}
+      port: ${REDIS_PORT:25358}
       password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
       database: ${REDIS_CACHE_DATABASE:1}
       timeout: 2s                # 卡住时不要拖慢请求路径（超时即直查源）
