@@ -20,7 +20,7 @@ public interface PlatformAppReleaseMapper {
 
     int insert(PlatformAppRelease record);
 
-    /** 回填渲染结果，只写一次（manifest 已有值时不动），保持发布内容不可变。 */
+    /** 回填渲染结果，只写一次（manifest 为 null 或空白才写，已有值时不动），保持发布内容不可变。 */
     int updateRendered(@Param("id") Long id, @Param("manifest") String manifest,
                        @Param("objectsJson") String objectsJson);
 

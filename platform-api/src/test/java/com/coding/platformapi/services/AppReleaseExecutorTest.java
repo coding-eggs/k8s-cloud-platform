@@ -188,6 +188,7 @@ class AppReleaseExecutorTest {
         ref.setName("demo-web");
         rendered.setObjects(List.of(ref));
         when(client.render(req)).thenReturn(rendered);
+        when(releases.updateRendered(eq(50L), any(), any())).thenReturn(1);
 
         executor.advance(at("RENDER"));
 
@@ -273,9 +274,9 @@ class AppReleaseExecutorTest {
     }
 
     @Test
-    void pruneBaselineIsTheLiveReleaseLedgerAndKeepsPvc() {
+    void pruneBaselineIsEveryLedgerRowFromLiveUpToButExcludingTheCurrentReleaseAndKeepsPvc() {
         app.setLiveReleaseNo(2);
-        when(resources.selectByRevision("app_1", 2)).thenReturn(List.of(
+        when(resources.selectByRevisionRange("app_1", 2, 3)).thenReturn(List.of(
                 ledger("Deployment", "demo-web"), ledger("Deployment", "demo-old")));
 
         executor.advance(at("PRUNE"));
@@ -288,12 +289,107 @@ class AppReleaseExecutorTest {
     }
 
     @Test
-    void pruneSkipsWhenNothingIsLive() {
+    void objectsFromAFailedReleaseArePrunedByTheNextHealthyRelease() {
+        // live=1，发布 2 失败（留下 demo-half），发布 3 健康：基线必须覆盖 [1,3)
+        app.setLiveReleaseNo(1);
+        when(resources.selectByRevisionRange("app_1", 1, 3)).thenReturn(List.of(
+                ledger("Deployment", "demo-web"), ledger("Deployment", "demo-half")));
+
         executor.advance(at("PRUNE"));
 
-        verify(resources, never()).selectByRevision(anyString(), anyInt());
+        ArgumentCaptor<AppPruneRequestDTO> req = ArgumentCaptor.forClass(AppPruneRequestDTO.class);
+        verify(client).prune(req.capture());
+        assertThat(req.getValue().getObjects()).extracting(AppObjectRefDTO::getName).containsExactly("demo-half");
+    }
+
+    @Test
+    void pruneWithNothingLiveStillCoversEarlierFailedAttempts() {
+        when(resources.selectByRevisionRange("app_1", 0, 3)).thenReturn(List.of(
+                ledger("Deployment", "demo-half")));
+
+        executor.advance(at("PRUNE"));
+
+        ArgumentCaptor<AppPruneRequestDTO> req = ArgumentCaptor.forClass(AppPruneRequestDTO.class);
+        verify(client).prune(req.capture());
+        assertThat(req.getValue().getObjects()).extracting(AppObjectRefDTO::getName).containsExactly("demo-half");
+    }
+
+    @Test
+    void pruneSkipsWhenThereIsNothingStale() {
+        executor.advance(at("PRUNE"));
+
         verify(client, never()).prune(any());
         assertThat(lastSaved().getStage()).isEqualTo("DONE");
+    }
+
+    @Test
+    void transientStatusFailureDuringHealthKeepsWaiting() {
+        when(client.status(any())).thenThrow(new CloudPlatformException(EnumResponseType.ERROR, "502 bad gateway"));
+
+        PlatformAppExecution e = at("HEALTH");
+        executor.advance(e);
+
+        assertThat(e.getStage()).isEqualTo("HEALTH");
+        assertThat(e.getStatus()).isEqualTo("RUNNING");
+        verify(client, never()).prune(any());
+    }
+
+    @Test
+    void persistentStatusFailureDuringHealthStillEndsAtTheTimeout() {
+        when(client.status(any())).thenThrow(new CloudPlatformException(EnumResponseType.ERROR, "502 bad gateway"));
+        PlatformAppExecution e = at("HEALTH");
+        e.setStartedAt(Date.from(Instant.now().minus(Duration.ofMinutes(31))));
+
+        executor.advance(e);
+
+        assertThat(lastSaved().getStatus()).isEqualTo("FAILED");
+        assertThat(lastSaved().getMessage()).contains("30");
+    }
+
+    @Test
+    void status401DuringHealthStillInterrupts() {
+        when(client.status(any())).thenThrow(new K8sServerUnauthorizedException(401, "401"));
+
+        PlatformAppExecution e = at("HEALTH");
+        executor.advance(e);
+
+        assertThat(lastSaved().getStatus()).isEqualTo("INTERRUPTED");
+    }
+
+    @Test
+    void emptyObjectListNeverPrunes() {
+        app.setLiveReleaseNo(2);
+        release.setObjectsJson("[]");
+
+        executor.advance(at("PRUNE"));
+
+        verify(client, never()).prune(any());
+        assertThat(lastSaved().getStatus()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void emptyObjectListFailsBeforeHealth() {
+        release.setObjectsJson(null);
+
+        executor.advance(at("HEALTH"));
+
+        verify(client, never()).status(any());
+        assertThat(lastSaved().getStatus()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void renderFailsWhenNoRowWasUpdatedAndStillNoManifest() {
+        release.setManifest("");
+        AppRenderRequestDTO req = new AppRenderRequestDTO();
+        when(renderer.build(app, release)).thenReturn(req);
+        AppRenderResultDTO rendered = new AppRenderResultDTO();
+        rendered.setManifest("kind: Deployment");
+        when(client.render(req)).thenReturn(rendered);
+        when(releases.updateRendered(eq(50L), any(), any())).thenReturn(0);
+
+        executor.advance(at("RENDER"));
+
+        assertThat(lastSaved().getStatus()).isEqualTo("FAILED");
     }
 
     @Test

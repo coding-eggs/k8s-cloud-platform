@@ -210,8 +210,14 @@ public class AppReleaseExecutor {
         if (error != null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, error);
         }
-        releases.updateRendered(release.getId(), rendered.getManifest(),
-                JSON.writeValueAsString(rendered.getObjects()));
+        if (releases.updateRendered(release.getId(), rendered.getManifest(),
+                JSON.writeValueAsString(rendered.getObjects())) == 0) {
+            // 0 行：要么别的副本刚写过（正常），要么条件没命中而行里仍没有清单（必须失败，不能带着空清单往下走）
+            PlatformAppRelease fresh = releases.selectByNo(execution.getAppId(), execution.getReleaseNo());
+            if (fresh == null || fresh.getManifest() == null || fresh.getManifest().isBlank()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, "渲染结果未能写入发布记录");
+            }
+        }
         return "CONFLICT";
     }
 
@@ -241,6 +247,7 @@ public class AppReleaseExecutor {
     private String apply(PlatformAppExecution execution) {
         PlatformApplication app = requireApp(execution);
         PlatformAppRelease release = requireRelease(execution);
+        requireObjects(release);
         resources.deleteByAppRevision(execution.getAppId(), execution.getReleaseNo());
         String prefix = app.getSlug() + "-";
         List<PlatformApplicationResource> rows = objectsOf(release).stream()
@@ -259,8 +266,17 @@ public class AppReleaseExecutor {
     /** 必须清单里每个对象都明确 READY；状态缺失不能当就绪，否则会误删旧版本。返回 null = 留在本阶段。 */
     private String health(PlatformAppExecution execution) {
         PlatformApplication app = requireApp(execution);
-        List<AppObjectRefDTO> objects = objectsOf(requireRelease(execution));
-        AppStatusResultDTO status = statusOf(app, objects);
+        List<AppObjectRefDTO> objects = requireObjects(requireRelease(execution));
+        AppStatusResultDTO status = null;
+        try {
+            status = statusOf(app, objects);
+        } catch (RuntimeException e) {
+            if (isUnauthorized(e)) {
+                throw e;
+            }
+            // 瞬时故障算「未就绪」，由下面的超时兜底
+            log.warn("发布执行 {} 查询对象状态失败，按未就绪处理：{}", execution.getId(), e.getMessage());
+        }
         Map<String, String> states = new HashMap<>();
         if (status != null && status.getObjects() != null) {
             status.getObjects().forEach(s -> states.put(s.getKind() + "/" + s.getName(), s.getState()));
@@ -279,17 +295,18 @@ public class AppReleaseExecutor {
         return null;
     }
 
-    /** 基线 = 线上发布的台账，不是「发布号 - 1」：中间可能有没走到 APPLY 的发布号。PVC 承载数据，不删。 */
+    /**
+     * 基线 = 台账中 [live, 当前发布号) 的所有行（live 为 0 时是此前全部行），减去当前发布的对象。
+     * 不能只看 live：中间失败的发布可能已 apply 了一部分对象，必须等后续发布健康后一并清掉。PVC 承载数据，不删。
+     */
     private String prune(PlatformAppExecution execution) {
         PlatformApplication app = requireApp(execution);
         int live = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
-        if (live < 1) {
-            return "DONE";
-        }
-        Set<String> current = objectsOf(requireRelease(execution)).stream()
+        // 清单为空时 current 为空集，会把线上对象全部判成多余：必须先拦住
+        Set<String> current = requireObjects(requireRelease(execution)).stream()
                 .map(r -> r.getKind() + "/" + r.getName())
                 .collect(Collectors.toSet());
-        List<AppObjectRefDTO> stale = resources.selectByRevision(execution.getAppId(), live).stream()
+        List<AppObjectRefDTO> stale = resources.selectByRevisionRange(execution.getAppId(), live, execution.getReleaseNo()).stream()
                 .filter(r -> !current.contains(r.getKind() + "/" + r.getName()))
                 .map(AppReleaseExecutor::toRef)
                 .toList();
@@ -401,6 +418,15 @@ public class AppReleaseExecutor {
             throw new CloudPlatformException(EnumResponseType.ERROR, "发布不存在：" + execution.getReleaseNo());
         }
         return release;
+    }
+
+    /** 有清单却解析不出对象 = 数据异常；继续会让健康检查空转通过、prune 删光线上对象。 */
+    private static List<AppObjectRefDTO> requireObjects(PlatformAppRelease release) {
+        List<AppObjectRefDTO> objects = objectsOf(release);
+        if (objects.isEmpty() && release.getManifest() != null && !release.getManifest().isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "发布有清单但对象列表为空，拒绝继续以免误删线上对象");
+        }
+        return objects;
     }
 
     private static List<AppObjectRefDTO> objectsOf(PlatformAppRelease release) {

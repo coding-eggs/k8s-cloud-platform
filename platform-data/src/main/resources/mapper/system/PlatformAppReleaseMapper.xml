@@ -57,7 +57,7 @@
        set manifest = #{manifest,jdbcType=LONGVARCHAR},
            objects_json = #{objectsJson,jdbcType=LONGVARCHAR}
      where id = #{id,jdbcType=BIGINT}
-       and manifest is null
+       and (manifest is null or trim(manifest) = '')
   </update>
 
   <update id="updateById" parameterType="com.coding.data.models.system.PlatformAppRelease">
