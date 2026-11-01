@@ -36,4 +36,10 @@ class AppServiceDesiredTest {
     void pureReferenceDoesNotWarn() {
         assertThat(AppServiceDesired.warnings(with("DB_PASSWORD", "${db.password}"))).isEmpty();
     }
+
+    @Test
+    void underscoreOnlyNamesDoNotThrow() {
+        assertThat(AppServiceDesired.warnings(with("_", "x"))).isEmpty();
+        assertThat(AppServiceDesired.warnings(with("__", "x"))).isEmpty();
+    }
 }

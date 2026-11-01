@@ -25,6 +25,7 @@ import com.coding.platformapi.k8s.K8sServerUnauthorizedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JavaType;
 import tools.jackson.databind.ObjectMapper;
@@ -133,7 +134,18 @@ public class AppReleaseExecutor {
         }
         // 先记凭据再重开：否则 worker 可能抢在中间，因没有凭据又把它打回 INTERRUPTED
         credentials.rememberExecution(executionId, authorization);
-        if (executions.reopen(executionId, PENDING, new Date()) == 0) {
+        int reopened;
+        try {
+            reopened = executions.reopen(executionId, PENDING, new Date());
+        } catch (DuplicateKeyException e) {
+            // 与新发布的取代撞车：uk_app_exec_active 保证同一应用只有一条活动执行
+            credentials.forgetExecution(executionId);
+            throw reject("该应用已有新的发布在进行，不能继续旧发布");
+        } catch (RuntimeException e) {
+            credentials.forgetExecution(executionId);
+            throw e;
+        }
+        if (reopened == 0) {
             credentials.forgetExecution(executionId);
             throw reject("执行状态已变化，请刷新后重试");
         }

@@ -42,7 +42,8 @@ public interface PlatformAppExecutionMapper {
     /**
      * 续跑：仅 FAILED / INTERRUPTED 可重开；清 finished_at / message / lease_until。
      * started_at 重置为 startedAt，因为 HEALTH 超时按它计时，不重置的话中断久了一续跑就判超时。
-     * 返回 0 表示状态已变（并发续跑）。
+     * 同一条语句里还要求它仍是该应用最新的执行（派生表绕开 MySQL 的 1093），否则返回 0。
+     * 返回 0 表示状态已变（并发续跑）或已不是最新。
      */
     int reopen(@Param("id") Long id, @Param("status") String status, @Param("startedAt") Date startedAt);
 }

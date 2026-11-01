@@ -627,4 +627,18 @@ class AppReleaseExecutorTest {
         assertThatThrownBy(() -> executor.resume(7L, "alice")).isInstanceOf(CloudPlatformException.class);
         assertThat(credentials.getExecution(7L)).isNull();
     }
+
+    @Test
+    void resumeRacingWithSupersedeSurfacesBusinessErrorAndLeavesNoToken() {
+        stored("FAILED", "APPLY");
+        when(executions.reopen(eq(7L), eq("PENDING"), any()))
+                .thenThrow(new org.springframework.dao.DuplicateKeyException("uk_app_exec_active"));
+        requestWithToken("Bearer fresh");
+
+        assertThatThrownBy(() -> executor.resume(7L, "alice"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("新的发布");
+        assertThat(credentials.getExecution(7L)).isNull();
+        verify(releases, never()).updateById(any());
+        verify(apps, never()).updateById(any());
+    }
 }

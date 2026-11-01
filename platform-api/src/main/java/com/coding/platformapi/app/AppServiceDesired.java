@@ -156,6 +156,9 @@ public final class AppServiceDesired {
 
     static boolean looksSensitive(String name) {
         String[] t = name.toUpperCase().split("_");
+        if (t.length == 0) {
+            return false;   // 只由下划线组成的名字，split 得到空数组
+        }
         String last = t[t.length - 1];
         if (SENSITIVE_LAST.contains(last)) {
             return true;
