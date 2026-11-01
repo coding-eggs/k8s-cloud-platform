@@ -3,8 +3,22 @@
 面向**多集群 Kubernetes** 的 Web 管理平台。平台管理员负责纳管集群、网络与组织；租户在自己的命名空间里
 做应用交付、资源管理、中间件与观测。仓库是 **Maven 多模块后端 + Vue 3 单页前端**，四个可部署服务、三个库模块。
 
+![平台总览：集群健康、平台对象与快捷操作](docs/images/platform-overview.png)
+
 > 平台自己也是"有状态"的：数据库迁移要**手工重放**、两个 AES 主密钥必须与库中密文一致、
 > 认证服务必须先于其它服务启动。这几条都在 [§7 注意事项](#7-必须知道的约定与注意事项) 里，部署前请先读。
+
+### 产品特点
+
+- **两个视图，各司其职**：平台视图管集群、网络、组织与运维；租户视图只看自己的命名空间，做应用、资源、存储和观测。
+- **多租户隔离分四层**：权限表、端点边界、资源边界、K8s RBAC 层层把关，默认拒绝；权限行漏配时应用直接拒启。
+- **应用交付一条线**：画布编排应用，Tekton 流水线构建，内置 Harbor 组件与镜像来源纳管。
+- **中间件开箱即用**：Redis、MySQL、PostgreSQL、Kafka、RabbitMQ、Elasticsearch、Nacos、Milvus 八款，支持创建实例、改规格、查连接方式。
+- **集群组件一键安装**：仓库内置 Helm chart，Istio、Calico、Prometheus、Thanos、Tempo、SeaweedFS 等可直接从页面安装。
+- **观测闭环**：指标、告警、日志、链路集中在同一套界面，日志可一键跳转到对应链路，还有基于 Istio 指标的网格拓扑。
+- **网络能力到位**：Gateway API 七类对象、Istio ambient、Calico 地址池与 BGP 都有可视化管理。
+- **操作可追溯**：写操作和被拒绝的请求都进审计日志；权限点可按 URL 反查覆盖关系，排障直接定位到权限码。
+- **深浅双主题**：顶栏一键切换，本文截图均为浅色模式。
 
 ---
 
@@ -111,7 +125,7 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 |---|---|
 | **集群** | 集群注册与探活、节点管理（cordon/驱逐/详情）、集群概览（资源总量、per-ns 明细、健康摘要）、命名空间管理（配额/限制范围/描述/受保护 ns）、存储类 |
 | **网络** | Service、Gateway API 七类对象（GatewayClass / Gateway / HTTP·GRPC·TCP·TLS·UDPRoute）、路由五合一页面、网格拓扑、Calico（IPPool / IPReservation / BGP 配置·对等体·过滤器 / IPAM 浏览）、静态 IP 绑定 |
-| **应用** | 应用编排画布（服务/后台进程/中间件/外部依赖，分阶段部署）、中间件商店与实例（7 款 + 用户管理）、流水线（Tekton：编辑、运行、日志、重试）、Git 凭据、镜像仓库与镜像来源纳管 |
+| **应用** | 应用编排画布（服务/后台进程/中间件/外部依赖，分阶段部署）、中间件商店与实例（8 款 + 用户管理）、流水线（Tekton：编辑、运行、日志、重试）、Git 凭据、镜像仓库与镜像来源纳管 |
 | **资源** | 工作负载（Deployment/StatefulSet/DaemonSet/Job 等，回滚/副本/重启/历史）、Pod（日志、Exec 终端）、HPA、ConfigMap、Secret、PVC、持久卷 |
 | **存储** | PVC / PV、对象存储（SeaweedFS 桶、凭据、对象读写、桶配额、匿名读） |
 | **观测** | 告警（PrometheusRule、告警列表、通知渠道）、ServiceMonitor / PodMonitor、日志查询（ES）、链路追踪（Tempo） |
@@ -119,6 +133,48 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 | **运维** | 审计日志、通知方式、个人中心 |
 
 平台域与租户域使用**两套权限码**（`platform:*` / `tenant:*`）；管理员可持两族，租户角色只能持 `tenant:*`。
+
+### 3.1 界面预览
+
+截图来自测试环境，内网 IP 已打码。
+
+#### 平台视图
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/cluster-metrics.png" alt="集群资源用量"><br><b>集群概览</b>：可分配量、requests、实时用量对照，超卖一眼可见</td>
+    <td width="50%"><img src="docs/images/calico-ippools.png" alt="Calico 地址池"><br><b>Calico 地址池</b>：CIDR、块大小、NAT 与 IPAM 分配水位</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/object-storage.png" alt="对象存储"><br><b>对象存储</b>：SeaweedFS 桶、用量配额、凭据与公开读</td>
+    <td><img src="docs/images/permissions.png" alt="权限点"><br><b>权限点</b>：按权限码分组折叠，支持关键词搜索和 URL 反查</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/audit.png" alt="审计日志"><br><b>审计日志</b>：记录写操作与 403 拒绝，可按人、集群、命名空间筛选</td>
+    <td></td>
+  </tr>
+</table>
+
+#### 租户视图
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/tenant-overview.png" alt="租户工作台"><br><b>租户工作台</b>：配额占用、异常 Pod、需要关注的事项与常用入口</td>
+    <td width="50%"><img src="docs/images/app-canvas.png" alt="应用编排画布"><br><b>应用编排</b>：把服务、后台进程、中间件、外部服务拖上画布，连线表达依赖</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/middleware-store.png" alt="中间件商店"><br><b>中间件商店</b>：八款中间件，按单节点、集群等形态创建实例</td>
+    <td><img src="docs/images/workloads.png" alt="工作负载"><br><b>工作负载</b>：按类型筛选，副本、状态、镜像集中展示，受 Operator 管理的对象带 <code>op</code> 标记</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/mesh-topology.png" alt="网格拓扑"><br><b>网格拓扑</b>：节点是工作负载，边是调用，线型区分 L7 / L4</td>
+    <td><img src="docs/images/routes.png" alt="路由策略"><br><b>路由策略</b>：HTTP、TCP 等路由集中管理，并探测集群的 Istio 与 Gateway API 能力</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/logs.png" alt="日志查询"><br><b>日志查询</b>：按工作负载、Pod、关键词、级别过滤，可跳转到对应链路</td>
+    <td><img src="docs/images/traces.png" alt="链路追踪"><br><b>链路追踪</b>：基于 Tempo 查询调用链，范围按租户收窄</td>
+  </tr>
+</table>
 
 ---
 
@@ -239,9 +295,8 @@ k8s-cloud-platform/
 ├── platform-common/     JWT、响应码、通用模型
 ├── platform-data/       MyBatis Mapper/实体 + resources/db/migration（**手工重放**）
 ├── platform-web/        Vue 3 SPA；nginx.conf / nginx-https.conf
-├── docs/                设计与运维文档（见 §8）
+├── docs/                设计与运维文档（见 §8）；images/ 放 README 截图
 ├── scripts/             harbor-replication.py（把组件镜像同步进平台 Harbor）
-├── prototype/           早期原型页面
 └── k8s_cloud_platform.sql   早期全量 DB dump（基线，不含后续迁移）
 ```
 
