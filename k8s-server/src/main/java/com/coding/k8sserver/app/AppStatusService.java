@@ -66,8 +66,10 @@ public class AppStatusService {
                         && d.getStatus().getObservedGeneration() != null
                         && d.getMetadata().getGeneration() != null
                         && d.getStatus().getObservedGeneration() >= d.getMetadata().getGeneration();
-                s.setState(deploymentState(want, have, observed));
-                s.setMessage("可用副本 " + have + "/" + want);
+                int updated = d.getStatus() == null || d.getStatus().getUpdatedReplicas() == null
+                        ? 0 : d.getStatus().getUpdatedReplicas();
+                s.setState(deploymentState(want, have, updated, observed));
+                s.setMessage("可用副本 " + have + "/" + want + "，已更新 " + updated + "/" + want);
             }
             case "StatefulSet" -> {
                 StatefulSet sts = client.apps().statefulSets()
@@ -79,8 +81,16 @@ public class AppStatusService {
                 int want = sts.getSpec().getReplicas() == null ? 1 : sts.getSpec().getReplicas();
                 int have = sts.getStatus() == null || sts.getStatus().getReadyReplicas() == null
                         ? 0 : sts.getStatus().getReadyReplicas();
-                s.setState(statefulSetState(want, have));
-                s.setMessage("就绪副本 " + have + "/" + want);
+                int updated = sts.getStatus() == null || sts.getStatus().getUpdatedReplicas() == null
+                        ? 0 : sts.getStatus().getUpdatedReplicas();
+                boolean observed = sts.getStatus() != null
+                        && sts.getStatus().getObservedGeneration() != null
+                        && sts.getMetadata().getGeneration() != null
+                        && sts.getStatus().getObservedGeneration() >= sts.getMetadata().getGeneration();
+                boolean settled = sts.getStatus() != null && revisionSettled(
+                        sts.getStatus().getCurrentRevision(), sts.getStatus().getUpdateRevision(), updated, want);
+                s.setState(statefulSetState(want, have, settled, observed));
+                s.setMessage("就绪副本 " + have + "/" + want + "，已更新 " + updated + "/" + want);
             }
             default -> s.setState(exists(client, ref));
         }
@@ -88,15 +98,26 @@ public class AppStatusService {
     }
 
     /**
-     * Deployment：既要副本数够，也要控制器已经观测到这一代 spec —— 否则升级刚提交时
-     * 旧副本还满员，会被误判成 READY。
+     * Deployment：控制器已观测到这一代 spec、副本数够、且全部副本都已更新到新模板。
+     * 只看 available 会在滚动中被旧副本蒙混过关（旧副本仍满员）。
      */
-    static String deploymentState(int want, int available, boolean observed) {
-        return observed && available >= want ? "READY" : "PENDING";
+    static String deploymentState(int want, int available, int updated, boolean observed) {
+        return observed && available >= want && updated >= want ? "READY" : "PENDING";
     }
 
-    static String statefulSetState(int want, int ready) {
-        return ready >= want ? "READY" : "PENDING";
+    static String statefulSetState(int want, int ready, boolean revisionSettled, boolean observed) {
+        return observed && revisionSettled && ready >= want ? "READY" : "PENDING";
+    }
+
+    /**
+     * currentRevision 等于 updateRevision 即收敛；或 updatedReplicas 已达期望数
+     * （部分 K8s 版本滚动完成后不更新 currentRevision，不能只比较 revision）。
+     */
+    static boolean revisionSettled(String currentRevision, String updateRevision, int updatedReplicas, int want) {
+        if (updatedReplicas >= want) {
+            return true;
+        }
+        return currentRevision != null && currentRevision.equals(updateRevision);
     }
 
     /**

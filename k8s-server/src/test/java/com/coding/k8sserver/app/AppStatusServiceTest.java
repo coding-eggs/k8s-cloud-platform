@@ -8,16 +8,36 @@ class AppStatusServiceTest {
 
     @Test
     void deploymentRequiresObservedGenerationAndEnoughReplicas() {
-        assertThat(AppStatusService.deploymentState(2, 2, true)).isEqualTo("READY");
-        assertThat(AppStatusService.deploymentState(2, 1, true)).isEqualTo("PENDING");
+        assertThat(AppStatusService.deploymentState(2, 2, 2, true)).isEqualTo("READY");
+        assertThat(AppStatusService.deploymentState(2, 1, 2, true)).isEqualTo("PENDING");
         // 代际还没被控制器观测到：即便副本数暂时对得上也不能算就绪
-        assertThat(AppStatusService.deploymentState(2, 2, false)).isEqualTo("PENDING");
+        assertThat(AppStatusService.deploymentState(2, 2, 2, false)).isEqualTo("PENDING");
     }
 
     @Test
-    void statefulSetOnlyLooksAtReadyReplicas() {
-        assertThat(AppStatusService.statefulSetState(3, 3)).isEqualTo("READY");
-        assertThat(AppStatusService.statefulSetState(3, 2)).isEqualTo("PENDING");
-        assertThat(AppStatusService.statefulSetState(1, 0)).isEqualTo("PENDING");
+    void deploymentIsPendingWhileRollingEvenIfOldReplicasAreAvailable() {
+        // 滚动中：旧副本仍 available=3，但只有 1 个已更新到新模板
+        assertThat(AppStatusService.deploymentState(3, 3, 1, true)).isEqualTo("PENDING");
+        assertThat(AppStatusService.deploymentState(3, 3, 3, true)).isEqualTo("READY");
+    }
+
+    @Test
+    void statefulSetRequiresReadyReplicasAndSettledRevision() {
+        assertThat(AppStatusService.statefulSetState(3, 3, true, true)).isEqualTo("READY");
+        assertThat(AppStatusService.statefulSetState(3, 2, true, true)).isEqualTo("PENDING");
+        assertThat(AppStatusService.statefulSetState(1, 0, true, true)).isEqualTo("PENDING");
+        // revision 未收敛（滚动更新中）
+        assertThat(AppStatusService.statefulSetState(3, 3, false, true)).isEqualTo("PENDING");
+        // 代际未观测
+        assertThat(AppStatusService.statefulSetState(3, 3, true, false)).isEqualTo("PENDING");
+    }
+
+    @Test
+    void statefulSetRevisionSettledRule() {
+        assertThat(AppStatusService.revisionSettled("a", "a", 0, 3)).isTrue();
+        assertThat(AppStatusService.revisionSettled("a", "b", 1, 3)).isFalse();
+        // 部分 K8s 版本滚动完成后不更新 currentRevision，以 updatedReplicas 为准
+        assertThat(AppStatusService.revisionSettled("a", "b", 3, 3)).isTrue();
+        assertThat(AppStatusService.revisionSettled(null, null, 0, 3)).isFalse();
     }
 }
