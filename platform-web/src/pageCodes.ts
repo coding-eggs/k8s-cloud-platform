@@ -51,6 +51,15 @@ export const pageCodes = {
   app: 'tenant:page:app',
   /** 对象存储（SeaweedFS 桶 / 凭据 / 对象浏览） */
   objectStorage: 'tenant:page:object-storage',
+  /**
+   * 同一个页面在**平台视图**的入口码。
+   * 该页是集群级（路由无 `context`，自带集群选择器），且管理员分支能看全部租户的桶、
+   * 代建桶、设每租户上限、发/吊销凭据 —— 之前只有 tenant 族码，`faceOf()` 按前缀判面，
+   * 于是它只出现在租户视图，管理员得先切进某个租户才能用。
+   * 路由的 `requiresPerm` 同时列两族（ANY-of）→ `faceOf()` 判 both，两个视图都出现。
+   * 先例同链路追踪（`pageCodes.mesh.trace` + `traceTenant`）。
+   */
+  objectStoragePlatform: 'platform:page:object-storage',
   /** 应用编排（画布）：与中间件商店（tenant:page:app）是两件事 */
   application: 'tenant:page:application',
 

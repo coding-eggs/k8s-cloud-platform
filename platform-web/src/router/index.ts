@@ -132,7 +132,9 @@ const router = createRouter({
         // 持久卷：租户只见绑定到本租户已分配命名空间的 PV（后端按 claimRef.namespace 收窄）
         { path: 'resources/persistentvolumes', name: 'persistentvolumes', component: () => import('@/views/resource/PersistentVolumeView.vue'), meta: { title: '持久卷', domain: 'storage', icon: 'Box', order: 2, context: 'full', requiresPerm: [pageCodes.persistentVolume.list] } },
         // 对象存储（SeaweedFS 集群组件）：桶 / 凭据 / 对象浏览，集群级、无命名空间维度
-        { path: 'object-storage', name: 'object-storage', component: () => import('@/views/ObjectStorageView.vue'), meta: { title: '对象存储', domain: 'storage', icon: 'Cloudy', order: 3, requiresPerm: [pageCodes.objectStorage] } },
+        // 两面可见：页面码同时列 platform 与 tenant 两族 → nav 的 faceOf() 判 both。
+        // 平台视图落「集群」域（与存储类并列），租户视图仍在「存储」域。
+        { path: 'object-storage', name: 'object-storage', component: () => import('@/views/ObjectStorageView.vue'), meta: { title: '对象存储', domain: 'storage', platformDomain: 'cluster', icon: 'Cloudy', order: 3, requiresPerm: [pageCodes.objectStoragePlatform, pageCodes.objectStorage] } },
 
         // ============ 租户视图 · 网络 ============
         { path: 'resources/services', name: 'services', component: () => import('@/views/resource/ServiceView.vue'), meta: { title: 'Service', domain: 'network', icon: 'Link', order: 1, context: 'full', requiresPerm: [pageCodes.service.list] } },
