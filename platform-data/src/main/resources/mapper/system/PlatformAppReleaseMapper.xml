@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformAppReleaseMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformAppRelease">
+    <id     column="id"                jdbcType="BIGINT"      property="id" />
+    <result column="app_id"            jdbcType="VARCHAR"     property="appId" />
+    <result column="release_no"        jdbcType="INTEGER"     property="releaseNo" />
+    <result column="snapshot_json"     jdbcType="LONGVARCHAR" property="snapshotJson" />
+    <result column="objects_json"      jdbcType="LONGVARCHAR" property="objectsJson" />
+    <result column="manifest"          jdbcType="LONGVARCHAR" property="manifest" />
+    <result column="type"              jdbcType="VARCHAR"     property="type" />
+    <result column="source_release_no" jdbcType="INTEGER"     property="sourceReleaseNo" />
+    <result column="note"              jdbcType="VARCHAR"     property="note" />
+    <result column="status"            jdbcType="VARCHAR"     property="status" />
+    <result column="created_by"        jdbcType="VARCHAR"     property="createdBy" />
+    <result column="created_at"        jdbcType="TIMESTAMP"   property="createdAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, app_id, release_no, snapshot_json, objects_json, manifest, `type`, source_release_no,
+    note, `status`, created_by, created_at
+  </sql>
+
+  <select id="selectByNo" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_release
+    where app_id = #{appId,jdbcType=VARCHAR} and release_no = #{releaseNo,jdbcType=INTEGER}
+  </select>
+
+  <select id="selectByApp" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_release
+    where app_id = #{appId,jdbcType=VARCHAR}
+    order by release_no desc
+  </select>
+
+  <select id="selectMaxNo" resultType="java.lang.Integer">
+    select max(release_no) from platform_app_release
+    where app_id = #{appId,jdbcType=VARCHAR}
+  </select>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformAppRelease"
+          useGeneratedKeys="true" keyProperty="id">
+    insert into platform_app_release
+      (app_id, release_no, snapshot_json, objects_json, manifest, `type`, source_release_no,
+       note, `status`, created_by, created_at)
+    values
+      (#{appId,jdbcType=VARCHAR}, #{releaseNo,jdbcType=INTEGER}, #{snapshotJson,jdbcType=LONGVARCHAR},
+       #{objectsJson,jdbcType=LONGVARCHAR}, #{manifest,jdbcType=LONGVARCHAR}, #{type,jdbcType=VARCHAR},
+       #{sourceReleaseNo,jdbcType=INTEGER}, #{note,jdbcType=VARCHAR}, #{status,jdbcType=VARCHAR},
+       #{createdBy,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformAppRelease">
+    update platform_app_release
+    <set>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="note != null">note = #{note,jdbcType=VARCHAR},</if>
+    </set>
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+</mapper>

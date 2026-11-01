@@ -33,6 +33,9 @@ public class PlatformApplication {
 
     private Integer currentRevision;
 
+    /** 线上发布号；0 = 尚未发布（发布模型，见 platform_app_release） */
+    private Integer liveReleaseNo;
+
     private String createdBy;
 
     private Date createdAt;
