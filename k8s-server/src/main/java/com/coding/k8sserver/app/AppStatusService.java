@@ -68,7 +68,9 @@ public class AppStatusService {
                         && d.getStatus().getObservedGeneration() >= d.getMetadata().getGeneration();
                 int updated = d.getStatus() == null || d.getStatus().getUpdatedReplicas() == null
                         ? 0 : d.getStatus().getUpdatedReplicas();
-                s.setState(deploymentState(want, have, updated, observed));
+                int total = d.getStatus() == null || d.getStatus().getReplicas() == null
+                        ? 0 : d.getStatus().getReplicas();
+                s.setState(deploymentState(want, have, updated, total, observed));
                 s.setMessage("可用副本 " + have + "/" + want + "，已更新 " + updated + "/" + want);
             }
             case "StatefulSet" -> {
@@ -101,8 +103,9 @@ public class AppStatusService {
      * Deployment：控制器已观测到这一代 spec、副本数够、且全部副本都已更新到新模板。
      * 只看 available 会在滚动中被旧副本蒙混过关（旧副本仍满员）。
      */
-    static String deploymentState(int want, int available, int updated, boolean observed) {
-        return observed && available >= want && updated >= want ? "READY" : "PENDING";
+    static String deploymentState(int want, int available, int updated, int total, boolean observed) {
+        // total == updated：没有旧副本残留（新 Pod 起不来时旧 Pod 仍 available，total > updated）
+        return observed && available >= want && updated >= want && total == updated ? "READY" : "PENDING";
     }
 
     static String statefulSetState(int want, int ready, boolean revisionSettled, boolean observed) {

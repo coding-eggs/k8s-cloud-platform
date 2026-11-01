@@ -8,17 +8,28 @@ class AppStatusServiceTest {
 
     @Test
     void deploymentRequiresObservedGenerationAndEnoughReplicas() {
-        assertThat(AppStatusService.deploymentState(2, 2, 2, true)).isEqualTo("READY");
-        assertThat(AppStatusService.deploymentState(2, 1, 2, true)).isEqualTo("PENDING");
+        assertThat(AppStatusService.deploymentState(2, 2, 2, 2, true)).isEqualTo("READY");
+        assertThat(AppStatusService.deploymentState(2, 1, 2, 2, true)).isEqualTo("PENDING");
         // 代际还没被控制器观测到：即便副本数暂时对得上也不能算就绪
-        assertThat(AppStatusService.deploymentState(2, 2, 2, false)).isEqualTo("PENDING");
+        assertThat(AppStatusService.deploymentState(2, 2, 2, 2, false)).isEqualTo("PENDING");
     }
 
     @Test
     void deploymentIsPendingWhileRollingEvenIfOldReplicasAreAvailable() {
         // 滚动中：旧副本仍 available=3，但只有 1 个已更新到新模板
-        assertThat(AppStatusService.deploymentState(3, 3, 1, true)).isEqualTo("PENDING");
-        assertThat(AppStatusService.deploymentState(3, 3, 3, true)).isEqualTo("READY");
+        assertThat(AppStatusService.deploymentState(3, 3, 1, 3, true)).isEqualTo("PENDING");
+        assertThat(AppStatusService.deploymentState(3, 3, 3, 3, true)).isEqualTo("READY");
+    }
+
+    @Test
+    void singleReplicaBadImageStaysPending() {
+        // 旧 Pod 仍 available，新 Pod ImagePullBackOff：available=1, updated=1, total=2
+        assertThat(AppStatusService.deploymentState(1, 1, 1, 2, true)).isEqualTo("PENDING");
+    }
+
+    @Test
+    void deploymentReadyWhenAllReplicasUpdatedAndAvailable() {
+        assertThat(AppStatusService.deploymentState(3, 3, 3, 3, true)).isEqualTo("READY");
     }
 
     @Test
