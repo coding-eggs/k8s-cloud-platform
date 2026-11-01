@@ -18,6 +18,9 @@ public class AppInjectDTO {
 
     private String secretKey;
 
+    /** true：{@code value} 含 {@code $(_REF_n)}，渲染时必须直接写进容器 env（不进 ConfigMap）。 */
+    private boolean inline;
+
     public static AppInjectDTO value(String name, String value) {
         AppInjectDTO d = new AppInjectDTO();
         d.setName(name);
