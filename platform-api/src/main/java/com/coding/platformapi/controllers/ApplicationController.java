@@ -4,6 +4,15 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformApplicationOperation;
 import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.Auditable;
+import com.coding.platformapi.models.AppExecutionView;
+import com.coding.platformapi.models.AppOverviewView;
+import com.coding.platformapi.models.AppReleasePreviewView;
+import com.coding.platformapi.models.AppReleaseRequest;
+import com.coding.platformapi.models.AppReleaseView;
+import com.coding.platformapi.models.AppServiceRequest;
+import com.coding.platformapi.models.AppServiceView;
+import com.coding.platformapi.services.AppReleaseService;
+import com.coding.platformapi.services.AppServiceConfigService;
 import com.coding.platformapi.models.ApplicationCreateRequest;
 import com.coding.platformapi.models.ApplicationDeleteRequest;
 import com.coding.platformapi.models.ApplicationDeployRequest;
@@ -41,11 +50,17 @@ public class ApplicationController {
     @Autowired
     private AuthContext auth;
 
+    private final AppServiceConfigService serviceConfig;
+    private final AppReleaseService release;
+
     public ApplicationController(ApplicationService service, ApplicationPreviewService preview,
-                                 ApplicationDeployService deploy) {
+                                 ApplicationDeployService deploy, AppServiceConfigService serviceConfig,
+                                 AppReleaseService release) {
         this.service = service;
         this.preview = preview;
         this.deploy = deploy;
+        this.serviceConfig = serviceConfig;
+        this.release = release;
     }
 
     @PostMapping("/list")
@@ -120,6 +135,80 @@ public class ApplicationController {
     public ResponseData<ApplicationOptionsView> options(@RequestBody ApplicationQueryRequest request) {
         return new ResponseData<>(service.options(request.getClusterId(),
                 auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    // ---- 服务配置与发布（去画布版；与上面的旧接口并存，路径不重叠）----
+
+    @PostMapping("/service/create")
+    @Auditable(action = AuditAction.APPLICATION_SERVICE_CREATE, target = "#request.appId + '/' + #request.serviceKey")
+    @Operation(summary = "添加服务（只写期望配置，不发布）")
+    public ResponseData<AppServiceView> serviceCreate(@RequestBody AppServiceRequest request) {
+        return new ResponseData<>(serviceConfig.create(request, auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/service/update")
+    @Auditable(action = AuditAction.APPLICATION_SERVICE_UPDATE, target = "#request.appId + '/' + #request.serviceKey")
+    @Operation(summary = "修改服务期望配置（version 乐观锁；key 不可改）")
+    public ResponseData<AppServiceView> serviceUpdate(@RequestBody AppServiceRequest request) {
+        return new ResponseData<>(serviceConfig.update(request, auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/service/remove")
+    @Auditable(action = AuditAction.APPLICATION_SERVICE_REMOVE, target = "#request.appId + '/' + #request.serviceKey")
+    @Operation(summary = "移除服务（已发布过的标记待删除，下次发布勾选后生效）")
+    public ResponseData<Void> serviceRemove(@RequestBody AppServiceRequest request) {
+        serviceConfig.remove(request, auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/overview")
+    @Operation(summary = "应用概览：服务现读状态、依赖、待发布与执行进度")
+    public ResponseData<AppOverviewView> overview(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.overview(request.getAppId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/release/preview")
+    @Operation(summary = "发布预览：待发布改动、需一并勾选的服务、对象增删（不写集群）")
+    public ResponseData<AppReleasePreviewView> releasePreview(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.preview(request.getAppId(), request.getServiceKeys(),
+                request.getImages(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/release/create")
+    @Auditable(action = AuditAction.APPLICATION_RELEASE_CREATE, target = "#request.appId")
+    @Operation(summary = "创建发布（异步执行，返回执行 id）")
+    public ResponseData<Long> releaseCreate(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.create(request.getAppId(), request.getServiceKeys(), request.getImages(),
+                request.getNote(), operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/release/list")
+    @Operation(summary = "发布记录（新到旧）")
+    public ResponseData<List<AppReleaseView>> releaseList(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.list(request.getAppId(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/release/get")
+    @Operation(summary = "发布详情（快照 + 对象清单）")
+    public ResponseData<AppReleaseView> releaseGet(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.get(request.getAppId(), request.getReleaseNo(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/execution/active")
+    @Operation(summary = "当前活动执行（无则 data 为空）")
+    public ResponseData<AppExecutionView> executionActive(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.activeExecution(request.getAppId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/execution/resume")
+    @Auditable(action = AuditAction.APPLICATION_EXECUTION_RESUME, target = "#request.executionId")
+    @Operation(summary = "继续失败或中断的执行（用当前登录身份接着跑）")
+    public ResponseData<Void> executionResume(@RequestBody AppReleaseRequest request) {
+        release.resume(request.getExecutionId(), operator(), auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>();
     }
 
     private String operator() {

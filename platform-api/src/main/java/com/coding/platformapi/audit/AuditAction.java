@@ -231,6 +231,19 @@ public final class AuditAction {
     /** 部署 / 升级 / 回滚历史版本都走这一个动作（版本号记在 target 里） */
     public static final String APPLICATION_DEPLOY = "application:deploy";
 
+    // ---- 应用发布（服务配置 / 发布 / 续跑）----
+
+    public static final String APPLICATION_SERVICE_CREATE = "application:service-create";
+
+    public static final String APPLICATION_SERVICE_UPDATE = "application:service-update";
+
+    public static final String APPLICATION_SERVICE_REMOVE = "application:service-remove";
+
+    /** 创建发布（勾选的服务 key 记在 target 里） */
+    public static final String APPLICATION_RELEASE_CREATE = "application:release-create";
+
+    public static final String APPLICATION_EXECUTION_RESUME = "application:execution-resume";
+
     // ---- 镜像仓库（Harbor 租户项目）----
 
     /** 同步全部租户的 Harbor 项目与机器人账号 */

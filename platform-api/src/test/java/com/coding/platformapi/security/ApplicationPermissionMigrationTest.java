@@ -31,8 +31,11 @@ class ApplicationPermissionMigrationTest {
             }
         }
 
+        // 旧画布接口在 V2026_10_25_7，去画布版的发布接口在 V2026_11_01_3
         String sql = Files.readString(Path.of(
-                "../platform-data/src/main/resources/db/migration/V2026_10_25_7__application.sql"));
+                "../platform-data/src/main/resources/db/migration/V2026_10_25_7__application.sql"))
+                + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
+                + "V2026_11_01_3__application_release_permissions.sql"));
 
         assertThat(endpoints).isNotEmpty();
         for (String endpoint : endpoints) {
