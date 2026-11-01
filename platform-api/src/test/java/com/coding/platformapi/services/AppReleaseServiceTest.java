@@ -539,4 +539,236 @@ class AppReleaseServiceTest {
             assertThat(i.getValue()).isEqualTo("redis.demo.svc:6379");
         });
     }
+
+    // ---------- 回滚 ----------
+
+    private PlatformAppRelease history(int no, String status, Map<String, Map<String, Object>> svcs,
+                                       List<PlatformAppDependency> deps) {
+        PlatformAppRelease r = new PlatformAppRelease();
+        r.setId((long) no);
+        r.setAppId("app1");
+        r.setReleaseNo(no);
+        r.setStatus(status);
+        r.setSnapshotJson(new com.coding.platformapi.app.AppSnapshot(new java.util.TreeMap<>(svcs), deps).toJson());
+        when(releases.selectByNo("app1", no)).thenReturn(r);
+        return r;
+    }
+
+    private PlatformAppDependency mwDep(String key, String instanceId) {
+        PlatformAppDependency d = new PlatformAppDependency();
+        d.setAppId("app1");
+        d.setDepKey(key);
+        d.setType("MIDDLEWARE");
+        d.setInstanceId(instanceId);
+        return d;
+    }
+
+    private PlatformAppRelease inserted() {
+        ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
+        verify(releases).insert(cap.capture());
+        return cap.getValue();
+    }
+
+    @Test
+    void rollbackCreatesRollbackReleaseFromSourceSnapshot() {
+        live(3, Map.of("api", svc("2")));
+        PlatformAppRelease source = history(1, "DEPLOYED", Map.of("api", svc("1")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+        org.mockito.Mockito.doAnswer(inv -> {
+            ((PlatformAppExecution) inv.getArgument(0)).setId(77L);
+            return 1;
+        }).when(executions).insert(any());
+
+        Long id = service.rollback("app1", 1, "回退", "bob", "t1");
+
+        assertThat(id).isEqualTo(77L);
+        PlatformAppRelease r = inserted();
+        assertThat(r.getType()).isEqualTo("ROLLBACK");
+        assertThat(r.getSourceReleaseNo()).isEqualTo(1);
+        assertThat(r.getReleaseNo()).isEqualTo(4);
+        assertThat(r.getSnapshotJson()).isEqualTo(source.getSnapshotJson());
+        assertThat(r.getNote()).isEqualTo("回退");
+        ArgumentCaptor<PlatformAppExecution> ex = ArgumentCaptor.forClass(PlatformAppExecution.class);
+        verify(executions).insert(ex.capture());
+        assertThat(ex.getValue().getReleaseNo()).isEqualTo(4);
+        assertThat(credentials.getExecution(77L)).isEqualTo("Bearer tok");
+        ArgumentCaptor<PlatformApplication> st = ArgumentCaptor.forClass(PlatformApplication.class);
+        verify(apps).updateById(st.capture());
+        assertThat(st.getValue().getStatus()).isEqualTo("DEPLOYING");
+    }
+
+    @Test
+    void rollbackSyncsUneditedServicesAndKeepsEditedOnes() {
+        live(3, Map.of("api", svc("2"), "web", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1"), "web", svc("1")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(
+                row("api", svc("2"), false),     // 无未发布编辑：同步为旧快照
+                row("web", svc("9"), false)));   // 有未发布编辑：保留
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        service.rollback("app1", 1, null, "bob", "t1");
+
+        ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).updateWithVersion(cap.capture());
+        assertThat(cap.getValue().getServiceKey()).isEqualTo("api");
+        assertThat(cap.getValue().getDesiredJson()).contains("\"imageTag\":\"1\"");
+        assertThat(cap.getValue().getVersion()).isEqualTo(1);
+        verify(services, never()).insert(any());
+    }
+
+    @Test
+    void rollbackRebuildsRowsForServicesTheOldSnapshotHasButCurrentLacks() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1"), "job", svc("1"), "old", svc("1")), List.of());
+        // job：行被硬删；old：留着已发布后被移除的待删除行
+        when(services.selectByApp("app1")).thenReturn(List.of(
+                row("api", svc("2"), false), row("old", svc("5"), true)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        service.rollback("app1", 1, null, "bob", "t1");
+
+        ArgumentCaptor<PlatformAppService> ins = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).insert(ins.capture());
+        assertThat(ins.getValue().getServiceKey()).isEqualTo("job");
+        assertThat(ins.getValue().getPendingDelete()).isFalse();
+        assertThat(ins.getValue().getDesiredJson()).contains("\"imageTag\":\"1\"");
+        ArgumentCaptor<PlatformAppService> upd = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services, org.mockito.Mockito.times(2)).updateWithVersion(upd.capture());
+        PlatformAppService old = upd.getAllValues().stream()
+                .filter(x -> "old".equals(x.getServiceKey())).findFirst().orElseThrow();
+        assertThat(old.getPendingDelete()).isFalse();   // 复活：不再是待删除
+        assertThat(old.getDesiredJson()).contains("\"imageTag\":\"1\"");
+    }
+
+    @Test
+    void rollbackKeepsPendingDeleteOfAServiceThatIsStillLive() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), true)));
+
+        service.rollback("app1", 1, null, "bob", "t1");
+
+        verify(services, never()).updateWithVersion(any());   // 用户要删它的意图保留，继续显示待删除
+        verify(services, never()).insert(any());
+        verify(releases).insert(any());
+    }
+
+    @Test
+    void rollbackRefusesWhenOldReleaseReferencesDeletedInstanceAndTouchesNothing() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")),
+                List.of(mwDep("db", "mw1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(middleware.statusOf("mw1")).thenReturn("DELETED");
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db");
+        verify(releases, never()).insert(any());
+        verify(executions, never()).insert(any());
+        verify(services, never()).updateWithVersion(any());
+        verify(services, never()).insert(any());
+        verify(apps, never()).updateById(any());
+    }
+
+    @Test
+    void rollbackIgnoresDeletedInstanceNobodyReferences() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1")), List.of(mwDep("cache", "mw9")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(middleware.statusOf("mw9")).thenReturn("DELETED");
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        service.rollback("app1", 1, null, "bob", "t1");
+        verify(releases).insert(any());
+    }
+
+    @Test
+    void rollbackRejectsBadSources() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "FAILED", Map.of("api", svc("1")), List.of());
+        history(3, "DEPLOYED", Map.of("api", svc("2")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+
+        assertThatThrownBy(() -> service.rollback("app1", 99, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class);
+        assertThatThrownBy(() -> service.rollback("app1", null, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class);
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))   // 从未成功上线
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("成功");
+        assertThatThrownBy(() -> service.rollback("app1", 3, null, "bob", "t1"))   // 就是线上版本
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("线上");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void rollbackRejectsWhileAnotherExecutionIsActive() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1")), List.of());
+        PlatformAppExecution active = new PlatformAppExecution();
+        active.setId(5L);
+        active.setStatus("RUNNING");
+        when(executions.selectActiveByApp("app1")).thenReturn(active);
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void rollbackRefusesToRebuildRowWhoseKeyIsNowADependency() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1"), "cache", svc("1")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(depRows.selectByApp("app1")).thenReturn(List.of(mwDep("cache", "mw1")));
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("cache");
+        verify(releases, never()).insert(any());
+        verify(services, never()).insert(any());
+    }
+
+    @Test
+    void rollbackLosingOptimisticLockWritesNoRelease() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("冲突");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void rollbackSupersedesInterruptedExecutionAndForgetsCredentialOnFailure() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        PlatformAppExecution old = new PlatformAppExecution();
+        old.setId(5L);
+        old.setStatus("INTERRUPTED");
+        old.setReleaseNo(4);
+        when(executions.selectActiveByApp("app1")).thenReturn(old);
+        when(executions.supersedeInterrupted(org.mockito.ArgumentMatchers.eq(5L), any(), any())).thenReturn(1);
+        org.mockito.Mockito.doAnswer(inv -> {
+            ((PlatformAppExecution) inv.getArgument(0)).setId(66L);
+            return 1;
+        }).when(executions).insert(any());
+        org.mockito.Mockito.doThrow(new IllegalStateException("db down")).when(apps).updateById(any());
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(IllegalStateException.class);
+        verify(executions).supersedeInterrupted(org.mockito.ArgumentMatchers.eq(5L), any(), any());
+        assertThat(credentials.getExecution(66L)).isNull();
+    }
+
+    @Test
+    void rollbackOtherTenantCannotAccess() {
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t2"))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(releases, never()).insert(any());
+    }
 }

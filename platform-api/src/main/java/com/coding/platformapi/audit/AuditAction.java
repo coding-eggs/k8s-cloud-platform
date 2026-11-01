@@ -242,6 +242,9 @@ public final class AuditAction {
     /** 创建发布（勾选的服务 key 记在 target 里） */
     public static final String APPLICATION_RELEASE_CREATE = "application:release-create";
 
+    /** 回滚到历史发布（源发布号记在 target 里） */
+    public static final String APPLICATION_RELEASE_ROLLBACK = "application:release-rollback";
+
     public static final String APPLICATION_EXECUTION_RESUME = "application:execution-resume";
 
     // ---- 镜像仓库（Harbor 租户项目）----

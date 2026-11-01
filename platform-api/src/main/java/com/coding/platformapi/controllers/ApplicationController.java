@@ -183,6 +183,15 @@ public class ApplicationController {
                 request.getNote(), operator(), auth.effectiveTenantId(request.getTenantId())));
     }
 
+    @PostMapping("/release/rollback")
+    @Auditable(action = AuditAction.APPLICATION_RELEASE_ROLLBACK,
+            target = "#request.appId + '@' + #request.releaseNo")
+    @Operation(summary = "回滚：以历史发布的快照生成一条新发布（异步执行，返回执行 id）")
+    public ResponseData<Long> releaseRollback(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.rollback(request.getAppId(), request.getReleaseNo(), request.getNote(),
+                operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
     @PostMapping("/release/list")
     @Operation(summary = "发布记录（新到旧）")
     public ResponseData<List<AppReleaseView>> releaseList(@RequestBody AppReleaseRequest request) {

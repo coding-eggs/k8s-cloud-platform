@@ -173,6 +173,24 @@ public class AppReleaseService {
             throw error(String.join("；", problems));
         }
 
+        return launch(app, authorization, plannedLive, plan.next.toJson(), "NORMAL", null, note, operator, () -> {
+            for (PlatformAppService row : plan.overridden) {
+                if (services.updateWithVersion(row) == 0) {
+                    throw error("配置冲突：服务 " + row.getServiceKey() + " 已被他人修改，请刷新后重试");
+                }
+            }
+        });
+    }
+
+    /**
+     * 写发布与执行的公共事务（创建与回滚共用）。
+     *
+     * <p>事务内：校验线上发布号没变、执行调用方的 {@code writes}（desired 的写入）、取代 INTERRUPTED、写发布与执行、
+     * 记凭据、置 DEPLOYING。凭据在执行行插入之后、提交之前记下：worker 只能看到已提交的行，那时凭据一定在；
+     * 回滚则一并忘掉。
+     */
+    private Long launch(PlatformApplication app, String authorization, int plannedLive, String snapshotJson,
+                        String type, Integer sourceNo, String note, String operator, Runnable writes) {
         AtomicReference<Long> remembered = new AtomicReference<>();
         try {
             return tx.execute(status -> {
@@ -182,19 +200,16 @@ public class AppReleaseService {
                 if (liveNow != plannedLive) {
                     throw error("线上已变化，请刷新后重试");
                 }
-                for (PlatformAppService row : plan.overridden) {
-                    if (services.updateWithVersion(row) == 0) {
-                        throw error("配置冲突：服务 " + row.getServiceKey() + " 已被他人修改，请刷新后重试");
-                    }
-                }
+                writes.run();
                 supersedeInterrupted(app.getId());
                 int releaseNo = nextReleaseNo(app.getId());
 
                 PlatformAppRelease release = new PlatformAppRelease();
                 release.setAppId(app.getId());
                 release.setReleaseNo(releaseNo);
-                release.setSnapshotJson(plan.next.toJson());
-                release.setType("NORMAL");
+                release.setSnapshotJson(snapshotJson);
+                release.setType(type);
+                release.setSourceReleaseNo(sourceNo);
                 release.setNote(note == null ? null
                         : (note.length() > NOTE_MAX ? note.substring(0, NOTE_MAX) : note));
                 release.setStatus("RENDERED");
@@ -226,6 +241,141 @@ public class AppReleaseService {
             credentials.forgetExecution(remembered.get());   // 回滚了就不留凭据
             throw e;
         }
+    }
+
+    // ------------------------------------------------------------------ 回滚
+
+    /**
+     * 回滚 = 以历史快照为内容生成一条新发布（type=ROLLBACK），走与创建相同的执行路径；不倒回状态，也不改旧记录。
+     *
+     * <p>快照原样取自源发布；引用在 RENDER 时重新解析，所以旧版本引用的实例已删除、或依赖未就绪，都在这里（校验）
+     * 或 PRECHECK 拦下，线上不变。
+     *
+     * <p>期望配置（desired）的处理：以「当前线上快照 vs 当前行」判断有没有未发布编辑——
+     * <ul>
+     *   <li>没有编辑的服务：desired 同步为旧快照；</li>
+     *   <li>有编辑的服务（含已标待删除且仍在线上的）：保留，回滚后继续显示为待发布；</li>
+     *   <li>旧快照有、当前没有行的服务（行被硬删）：按旧快照重建行；</li>
+     *   <li>旧快照有、当前只剩「待删除且已不在线上」的残留行：复活（清待删除，desired 取旧快照）；</li>
+     *   <li>旧快照里没有、当前线上有的服务：行不动，回滚后因线上不再有而显示为待发布的新增。</li>
+     * </ul>
+     * 要重建或复活的 key 若已被依赖占用，拒绝（同一应用内 key 唯一）。
+     */
+    public Long rollback(String appId, Integer sourceReleaseNo, String note, String operator, String tenantId) {
+        PlatformApplication app = AppGuard.require(apps, appId, tenantId);
+        String authorization = K8sServerGateway.currentAuthorization();
+        if (authorization == null || authorization.isBlank()) {
+            throw error("当前请求没有可用的凭据");
+        }
+        PlatformAppRelease source = sourceReleaseNo == null ? null : releases.selectByNo(app.getId(), sourceReleaseNo);
+        if (source == null) {
+            throw error("发布不存在：" + sourceReleaseNo);
+        }
+        if (!"DEPLOYED".equals(source.getStatus())) {
+            throw error("只能回滚到成功上线过的发布（发布 " + sourceReleaseNo + " 的状态是 " + source.getStatus() + "）");
+        }
+        int plannedLive = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
+        if (plannedLive == sourceReleaseNo) {
+            throw error("发布 " + sourceReleaseNo + " 已经是线上版本");
+        }
+        PlatformAppExecution running = executions.selectActiveByApp(app.getId());
+        if (running != null && !"INTERRUPTED".equals(running.getStatus())) {
+            throw error("该应用已有进行中的发布，请等它结束后再发布");
+        }
+        AppSnapshot target = AppSnapshot.parse(source.getSnapshotJson());
+        if (target.services().isEmpty()) {
+            throw error("发布 " + sourceReleaseNo + " 不含任何服务，无法回滚");
+        }
+        List<String> problems = new ArrayList<>(deletedDependencies(target));
+        if (problems.isEmpty()) {
+            problems.addAll(pipeline.problems(app, target));
+        }
+        if (!problems.isEmpty()) {
+            throw error("无法回滚到发布 " + sourceReleaseNo + "：" + String.join("；", problems));
+        }
+        DesiredSync sync = syncDesired(app, target);
+        return launch(app, authorization, plannedLive, target.toJson(), "ROLLBACK", sourceReleaseNo, note, operator,
+                () -> {
+                    for (PlatformAppService row : sync.updates) {
+                        if (services.updateWithVersion(row) == 0) {
+                            throw error("配置冲突：服务 " + row.getServiceKey() + " 已被他人修改，请刷新后重试");
+                        }
+                    }
+                    for (PlatformAppService row : sync.inserts) {
+                        try {
+                            services.insert(row);
+                        } catch (DuplicateKeyException e) {
+                            throw error("配置冲突：服务 " + row.getServiceKey() + " 已被他人创建，请刷新后重试");
+                        }
+                    }
+                });
+    }
+
+    /** 快照里被引用、实例已删除的中间件依赖，每条点名。未被任何服务引用的不挡。 */
+    private List<String> deletedDependencies(AppSnapshot target) {
+        List<String> out = new ArrayList<>();
+        Map<String, String> status = dependencies.statusOf(AppReleasePipeline.referencedDependencies(target));
+        status.forEach((key, st) -> {
+            if ("DELETED".equals(st)) {
+                out.add("依赖 " + key + " 引用的实例已删除");
+            }
+        });
+        return out;
+    }
+
+    private record DesiredSync(List<PlatformAppService> updates, List<PlatformAppService> inserts) {
+    }
+
+    private DesiredSync syncDesired(PlatformApplication app, AppSnapshot target) {
+        AppSnapshot live = liveSnapshot(app);
+        List<PlatformAppService> rows = services.selectByApp(app.getId());
+        Map<String, PlatformAppService> byKey = new HashMap<>();
+        rows.forEach(r -> byKey.put(r.getServiceKey(), r));
+        Set<String> edited = AppPending.compute(live.services(), rows).stream()
+                .map(AppPending.Change::key).collect(Collectors.toSet());
+        Set<String> depKeys = dependencyRows.selectByApp(app.getId()).stream()
+                .map(PlatformAppDependency::getDepKey).collect(Collectors.toSet());
+
+        List<PlatformAppService> updates = new ArrayList<>();
+        List<PlatformAppService> inserts = new ArrayList<>();
+        Date now = new Date();
+        for (Map.Entry<String, Map<String, Object>> e : target.services().entrySet()) {
+            String key = e.getKey();
+            String desiredJson = JSON.writeValueAsString(e.getValue());
+            PlatformAppService row = byKey.get(key);
+            boolean leftover = row != null && Boolean.TRUE.equals(row.getPendingDelete())
+                    && !live.services().containsKey(key);
+            if ((row == null || leftover) && depKeys.contains(key)) {
+                throw error("无法回滚：服务 " + key + " 的名字现在被依赖占用（同一应用内 key 唯一），请先处理该依赖");
+            }
+            if (row == null) {
+                PlatformAppService fresh = new PlatformAppService();
+                fresh.setAppId(app.getId());
+                fresh.setServiceKey(key);
+                fresh.setDesiredJson(desiredJson);
+                fresh.setPendingDelete(false);
+                fresh.setCreatedAt(now);
+                fresh.setUpdatedAt(now);
+                inserts.add(fresh);
+                continue;
+            }
+            if (!leftover && edited.contains(key)) {
+                continue;   // 有未发布编辑（含仍在线上的待删除）：保留
+            }
+            if (!leftover && AppPending.changedFields(AppSnapshot.parseMap(row.getDesiredJson()),
+                    e.getValue()).isEmpty()) {
+                continue;   // 本就一致
+            }
+            PlatformAppService patch = new PlatformAppService();
+            patch.setId(row.getId());
+            patch.setServiceKey(key);
+            patch.setVersion(row.getVersion());
+            patch.setDesiredJson(desiredJson);
+            patch.setPendingDelete(false);
+            patch.setUpdatedAt(now);
+            updates.add(patch);
+        }
+        return new DesiredSync(updates, inserts);
     }
 
     /** INTERRUPTED 在等用户点继续，新发布取代它；PENDING / RUNNING 正在推进，拒绝。条件更新，输了就拒绝。 */
