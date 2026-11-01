@@ -174,6 +174,10 @@ public class K8sServerGateway {
         try {
             resp = jsonMapper.readValue(in, respType);
         } catch (Exception e) {
+            if (status == 401) {
+                throw new K8sServerUnauthorizedException(EnumResponseType.USER_UN_LOGIN.getCode(),
+                        "k8s-server 拒绝了凭据 (HTTP 401)");
+            }
             if (in.totalBytes() == 0) {
                 log.error("k8s-server {} 返回空响应，HTTP {}", path, status);
                 throw new CloudPlatformException(EnumResponseType.ERROR,
@@ -186,6 +190,9 @@ public class K8sServerGateway {
         if (resp == null || resp.getCode() == null || !resp.getCode().equals(EnumResponseType.SUCCESS.getCode())) {
             Integer code = resp != null && resp.getCode() != null ? resp.getCode() : EnumResponseType.ERROR.getCode();
             String msg = resp != null && resp.getMsg() != null ? resp.getMsg() : "k8s-server 调用失败";
+            if (status == 401) {
+                throw new K8sServerUnauthorizedException(code, msg);
+            }
             throw new CloudPlatformException(code, msg);
         }
         return resp.getData();

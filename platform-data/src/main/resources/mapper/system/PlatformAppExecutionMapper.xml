@@ -19,6 +19,29 @@
     id, app_id, release_no, `status`, stage, message, lease_until, started_by, started_at, finished_at
   </sql>
 
+  <select id="selectById" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_execution
+    where id = #{id,jdbcType=BIGINT}
+  </select>
+
+  <update id="releaseLease">
+    update platform_app_execution
+       set lease_until = null
+     where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <update id="reopen">
+    update platform_app_execution
+       set `status` = #{status,jdbcType=VARCHAR},
+           started_at = #{startedAt,jdbcType=TIMESTAMP},
+           finished_at = null,
+           message = null,
+           lease_until = null
+     where id = #{id,jdbcType=BIGINT}
+       and `status` in ('FAILED', 'INTERRUPTED')
+  </update>
+
   <select id="selectActive" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_app_execution

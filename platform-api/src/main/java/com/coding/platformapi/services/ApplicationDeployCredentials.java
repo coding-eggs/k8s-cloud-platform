@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ApplicationDeployCredentials {
 
     private final Map<Long, String> byOperation = new ConcurrentHashMap<>();
+    private final Map<Long, String> byExecution = new ConcurrentHashMap<>();
 
     public void remember(Long operationId, String authorization) {
         if (operationId != null && authorization != null && !authorization.isBlank()) {
@@ -33,6 +34,24 @@ public class ApplicationDeployCredentials {
     public void forget(Long operationId) {
         if (operationId != null) {
             byOperation.remove(operationId);
+        }
+    }
+
+    // 发布执行单独一张 map：执行 id 和旧操作 id 来自两张表，同号时共用会互相覆盖、互相清除。
+
+    public void rememberExecution(Long executionId, String authorization) {
+        if (executionId != null && authorization != null && !authorization.isBlank()) {
+            byExecution.put(executionId, authorization);
+        }
+    }
+
+    public String getExecution(Long executionId) {
+        return executionId == null ? null : byExecution.get(executionId);
+    }
+
+    public void forgetExecution(Long executionId) {
+        if (executionId != null) {
+            byExecution.remove(executionId);
         }
     }
 }

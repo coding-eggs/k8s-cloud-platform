@@ -50,6 +50,52 @@ class K8sServerGatewayTest {
         gateway.exchange(HttpMethod.GET, "/ping", null, null, gateway.responseType(Object.class));
     }
 
+    private void respondOn(String path, int status, String json) {
+        server.createContext(path, exchange -> {
+            byte[] body = json.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
+            if (body.length > 0) {
+                exchange.getResponseBody().write(body);
+            }
+            exchange.close();
+        });
+    }
+
+    private void call(String path) {
+        gateway.exchange(HttpMethod.GET, path, null, null, gateway.responseType(Object.class));
+    }
+
+    /** k8s-server 的 401 信封里 code 是 4003 不是 401，只有 HTTP 状态码可靠。 */
+    @Test
+    void http401WithJsonBodyIsUnauthorized() {
+        respondOn("/json401", 401, "{\"code\":4003,\"msg\":\"未登录\",\"data\":null}");
+
+        assertThatThrownBy(() -> call("/json401"))
+                .isInstanceOf(K8sServerUnauthorizedException.class)
+                .hasMessage("未登录");
+    }
+
+    @Test
+    void http401WithEmptyBodyIsUnauthorized() {
+        respondOn("/empty401", 401, "");
+
+        assertThatThrownBy(() -> call("/empty401")).isInstanceOf(K8sServerUnauthorizedException.class);
+    }
+
+    @Test
+    void otherErrorsAreNotUnauthorized() {
+        respondOn("/kube", 200, "{\"code\":4004,\"msg\":\"kube config 不存在\",\"data\":null}");
+        respondOn("/empty500", 500, "");
+
+        assertThatThrownBy(() -> call("/kube"))
+                .isInstanceOf(com.coding.common.exception.CloudPlatformException.class)
+                .isNotInstanceOf(K8sServerUnauthorizedException.class);
+        assertThatThrownBy(() -> call("/empty500"))
+                .isInstanceOf(com.coding.common.exception.CloudPlatformException.class)
+                .isNotInstanceOf(K8sServerUnauthorizedException.class);
+    }
+
     @Test
     void aDelegatedAuthorizationIsUsedWhenThereIsNoRequestContext() {
         K8sServerGateway.runAs("Bearer test-token", this::ping);

@@ -20,6 +20,10 @@ public interface PlatformAppReleaseMapper {
 
     int insert(PlatformAppRelease record);
 
+    /** 回填渲染结果，只写一次（manifest 已有值时不动），保持发布内容不可变。 */
+    int updateRendered(@Param("id") Long id, @Param("manifest") String manifest,
+                       @Param("objectsJson") String objectsJson);
+
     /** 只更新 status / note，其余内容不可变。 */
     int updateById(PlatformAppRelease record);
 }

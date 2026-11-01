@@ -26,4 +26,16 @@ public interface PlatformAppExecutionMapper {
 
     /** 抢租约：仅当 lease_until 为空或早于 now 时成功；返回 0 表示被别人持有。 */
     int claim(@Param("id") Long id, @Param("now") Date now, @Param("leaseUntil") Date leaseUntil);
+
+    PlatformAppExecution selectById(@Param("id") Long id);
+
+    /** 清租约（updateById 写不了 null）。每步结束调用，不必等过期。 */
+    int releaseLease(@Param("id") Long id);
+
+    /**
+     * 续跑：仅 FAILED / INTERRUPTED 可重开；清 finished_at / message / lease_until。
+     * started_at 重置为 startedAt，因为 HEALTH 超时按它计时，不重置的话中断久了一续跑就判超时。
+     * 返回 0 表示状态已变（并发续跑）。
+     */
+    int reopen(@Param("id") Long id, @Param("status") String status, @Param("startedAt") Date startedAt);
 }
