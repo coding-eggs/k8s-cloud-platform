@@ -17,7 +17,17 @@ spec:
     metadata:
       labels:
         {{- include "app.selector" . | nindent 8 }}
+      {{- with .Values.workload.configHash }}
+      annotations:
+        platform.coding/config-hash: {{ . | quote }}
+      {{- end }}
     spec:
+      {{- with .Values.workload.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: app
           image: {{ .Values.workload.image | quote }}
@@ -31,7 +41,7 @@ spec:
           {{- with .Values.workload.args }}
           args: {{ toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or .Values.workload.env .Values.workload.secretEnv }}
+          {{- if or .Values.workload.env .Values.workload.secretEnv .Values.workload.inlineEnv }}
           env:
             {{- range .Values.workload.env }}
             - name: {{ .name }}
@@ -46,6 +56,10 @@ spec:
                 secretKeyRef:
                   name: {{ .secretName }}
                   key: {{ .secretKey }}
+            {{- end }}
+            {{- range .Values.workload.inlineEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
             {{- end }}
           {{- end }}
           volumeMounts:

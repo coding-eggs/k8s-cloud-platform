@@ -94,4 +94,58 @@ class AppWorkloadValuesTest {
         assertThat((Map<String, Object>) w.get("persistence")).containsEntry("enabled", false);
         assertThat((Map<String, Object>) w.get("expose")).containsEntry("type", "none");
     }
+
+    private static com.coding.common.models.app.AppInjectDTO inline(String name, String value) {
+        com.coding.common.models.app.AppInjectDTO d = com.coding.common.models.app.AppInjectDTO.value(name, value);
+        d.setInline(true);
+        return d;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void inlineInjectGoesToInlineEnvNotConfigMapEnv() {
+        List<com.coding.common.models.app.AppInjectDTO> inject = List.of(
+                com.coding.common.models.app.AppInjectDTO.secret("_REF_0", "demo-db", "password"),
+                inline("DB_URL", "jdbc://u:$(_REF_0)@h"),
+                com.coding.common.models.app.AppInjectDTO.value("PLAIN", "x"));
+        Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx")), inject));
+
+        assertThat((List<Object>) w.get("inlineEnv")).containsExactly(
+                Map.of("name", "DB_URL", "value", "jdbc://u:$(_REF_0)@h"));
+        assertThat((List<Object>) w.get("env")).containsExactly(Map.of("name", "PLAIN", "value", "x"));
+        assertThat((List<Object>) w.get("secretEnv")).hasSize(1);
+    }
+
+    private static String hash(int revision, String envValue) {
+        AppNodeDTO n = node(Map.of("image", "nginx", "env", List.of(Map.of("name", "A", "value", envValue))));
+        return (String) workload(AppWorkloadValues.build("app_1", "demo", revision, n)).get("configHash");
+    }
+
+    @Test
+    void configHashFollowsEnvButNotRevision() {
+        assertThat(hash(1, "a")).isNotBlank().isEqualTo(hash(2, "a"));
+        assertThat(hash(1, "a")).isNotEqualTo(hash(1, "b"));
+    }
+
+    @Test
+    void configHashCoversInlineAndSecretRefs() {
+        AppNodeDTO n = node(Map.of("image", "nginx"));
+        String base = (String) workload(AppWorkloadValues.build("a", "d", 1, n)).get("configHash");
+        String withInline = (String) workload(AppWorkloadValues.build("a", "d", 1, n,
+                List.of(inline("U", "v")))).get("configHash");
+        String withRef = (String) workload(AppWorkloadValues.build("a", "d", 1, n,
+                List.of(com.coding.common.models.app.AppInjectDTO.secret("P", "s", "k")))).get("configHash");
+        assertThat(List.of(base, withInline, withRef)).doesNotHaveDuplicates();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void imagePullSecretsPassThrough() {
+        Map<String, Object> w = workload(AppWorkloadValues.build("a", "d", 1,
+                node(Map.of("image", "nginx", "imagePullSecrets", List.of("harbor-cred")))));
+        assertThat((List<Object>) w.get("imagePullSecrets")).containsExactly("harbor-cred");
+        assertThat((List<Object>) workload(AppWorkloadValues.build("a", "d", 1,
+                node(Map.of("image", "nginx")))).get("imagePullSecrets")).isEmpty();
+    }
 }
