@@ -661,6 +661,7 @@ class AppReleaseServiceTest {
         history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")),
                 List.of(mwDep("db", "mw1")));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(depRows.selectByApp("app1")).thenReturn(List.of(mwDep("db", "mw1")));
         when(middleware.statusOf("mw1")).thenReturn("DELETED");
 
         assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
@@ -690,6 +691,7 @@ class AppReleaseServiceTest {
         history(1, "FAILED", Map.of("api", svc("1")), List.of());
         history(3, "DEPLOYED", Map.of("api", svc("2")), List.of());
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(3);
 
         assertThatThrownBy(() -> service.rollback("app1", 99, null, "bob", "t1"))
                 .isInstanceOf(CloudPlatformException.class);
@@ -770,5 +772,85 @@ class AppReleaseServiceTest {
         assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t2"))
                 .isInstanceOf(CloudPlatformException.class);
         verify(releases, never()).insert(any());
+    }
+
+    // ---------- 回滚：第一轮修复 ----------
+
+    private static final String TAG_2 = "\"imageTag\":\"2\"";
+
+    @Test
+    void rollbackToLiveReleaseIsAllowedWhenANewerReleaseFailed() {
+        live(3, Map.of("api", svc("2")));
+        history(3, "DEPLOYED", Map.of("api", svc("2")), List.of());
+        history(4, "FAILED", Map.of("api", svc("3")), List.of());   // 4 在 HEALTH 失败，线上仍是 3
+        when(releases.selectMaxNo("app1")).thenReturn(4);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("3"), false)));   // desired = 失败的 4
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        service.rollback("app1", 3, null, "bob", "t1");
+
+        PlatformAppRelease r = inserted();
+        assertThat(r.getType()).isEqualTo("ROLLBACK");
+        assertThat(r.getSourceReleaseNo()).isEqualTo(3);
+        assertThat(r.getReleaseNo()).isEqualTo(5);
+    }
+
+    @Test
+    void desiredEqualToLatestReleaseSnapshotCountsAsUnedited() {
+        // 线上 3；回滚到 1 的那次发布（5）失败了，desired 已被同步成 1 的配置
+        live(3, Map.of("api", svc("2")));
+        history(3, "DEPLOYED", Map.of("api", svc("2")), List.of());
+        history(5, "FAILED", Map.of("api", svc("1")), List.of());
+        when(releases.selectMaxNo("app1")).thenReturn(5);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        service.rollback("app1", 3, null, "bob", "t1");
+
+        ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).updateWithVersion(cap.capture());
+        assertThat(cap.getValue().getDesiredJson()).contains(TAG_2);   // desired 回到 3 的配置
+    }
+
+    @Test
+    void genuineEditDifferentFromLiveAndLatestIsPreserved() {
+        live(3, Map.of("api", svc("2")));
+        history(3, "DEPLOYED", Map.of("api", svc("2")), List.of());
+        history(5, "FAILED", Map.of("api", svc("1")), List.of());
+        when(releases.selectMaxNo("app1")).thenReturn(5);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("9"), false)));
+
+        service.rollback("app1", 3, null, "bob", "t1");
+
+        verify(services, never()).updateWithVersion(any());
+        verify(releases).insert(any());
+    }
+
+    @Test
+    void rollbackRejectsWhenReferencedDependencyWasRemoved() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")), List.of(mwDep("db", "mw1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(depRows.selectByApp("app1")).thenReturn(List.of());
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db");
+        verify(releases, never()).insert(any());
+        verify(services, never()).updateWithVersion(any());
+        verify(apps, never()).updateById(any());
+    }
+
+    @Test
+    void rollbackRejectsWhenReferencedDependencyNowPointsToAnotherInstance() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")), List.of(mwDep("db", "mw1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(depRows.selectByApp("app1")).thenReturn(List.of(mwDep("db", "mw2")));
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db");
+        verify(releases, never()).insert(any());
+        verify(services, never()).updateWithVersion(any());
+        verify(apps, never()).updateById(any());
     }
 }

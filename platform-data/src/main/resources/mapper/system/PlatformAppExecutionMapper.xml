@@ -51,9 +51,10 @@
      where id = #{id,jdbcType=BIGINT}
        and `status` in ('FAILED', 'INTERRUPTED')
        and id = (select t.max_id from (
-                   select max(e2.id) as max_id from platform_app_execution e2
-                    where e2.app_id = (select e1.app_id from platform_app_execution e1
-                                        where e1.id = #{id,jdbcType=BIGINT})
+                   select max(e2.id) as max_id
+                     from platform_app_execution e1
+                     join platform_app_execution e2 on e2.app_id = e1.app_id
+                    where e1.id = #{id,jdbcType=BIGINT}
                  ) t)
   </update>
 

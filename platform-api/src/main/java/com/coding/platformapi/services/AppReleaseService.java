@@ -44,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -153,10 +154,7 @@ public class AppReleaseService {
         if (authorization == null || authorization.isBlank()) {
             throw error("当前请求没有可用的凭据");
         }
-        PlatformAppExecution running = executions.selectActiveByApp(app.getId());
-        if (running != null && !"INTERRUPTED".equals(running.getStatus())) {
-            throw error("该应用已有进行中的发布，请等它结束后再发布");
-        }
+        requireNoRunningExecution(app.getId());
         int plannedLive = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
         Plan plan = plan(app, selectedKeys, images);
         if (plan.selected.isEmpty()) {
@@ -275,18 +273,20 @@ public class AppReleaseService {
             throw error("只能回滚到成功上线过的发布（发布 " + sourceReleaseNo + " 的状态是 " + source.getStatus() + "）");
         }
         int plannedLive = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
-        if (plannedLive == sourceReleaseNo) {
+        Integer maxNo = releases.selectMaxNo(app.getId());
+        // 线上就是最新发布时回滚到它没有意义；有更新的（失败 / 中断）发布时，回到线上版本是合法的收尾
+        if (plannedLive == sourceReleaseNo && (maxNo == null || maxNo == plannedLive)) {
             throw error("发布 " + sourceReleaseNo + " 已经是线上版本");
         }
-        PlatformAppExecution running = executions.selectActiveByApp(app.getId());
-        if (running != null && !"INTERRUPTED".equals(running.getStatus())) {
-            throw error("该应用已有进行中的发布，请等它结束后再发布");
-        }
+        requireNoRunningExecution(app.getId());
         AppSnapshot target = AppSnapshot.parse(source.getSnapshotJson());
         if (target.services().isEmpty()) {
             throw error("发布 " + sourceReleaseNo + " 不含任何服务，无法回滚");
         }
-        List<String> problems = new ArrayList<>(deletedDependencies(target));
+        List<String> problems = new ArrayList<>(changedDependencies(app, target));
+        if (problems.isEmpty()) {
+            problems.addAll(deletedDependencies(target));
+        }
         if (problems.isEmpty()) {
             problems.addAll(pipeline.problems(app, target));
         }
@@ -311,6 +311,34 @@ public class AppReleaseService {
                 });
     }
 
+    /** PENDING / RUNNING 正在推进，拒绝；INTERRUPTED 在等用户点继续，新发布会取代它。 */
+    private void requireNoRunningExecution(String appId) {
+        PlatformAppExecution running = executions.selectActiveByApp(appId);
+        if (running != null && !"INTERRUPTED".equals(running.getStatus())) {
+            throw error("该应用已有进行中的发布，请等它结束后再发布");
+        }
+    }
+
+    /**
+     * 快照服务引用到的依赖，在当前台账里必须还有同 key、同类型、同实例的行：
+     * 被移除、或已改指向别的实例，都说明旧版本的连接信息不再是现在的依赖。
+     */
+    private List<String> changedDependencies(PlatformApplication app, AppSnapshot target) {
+        Map<String, PlatformAppDependency> current = new HashMap<>();
+        dependencyRows.selectByApp(app.getId()).forEach(d -> current.put(d.getDepKey(), d));
+        List<String> out = new ArrayList<>();
+        for (PlatformAppDependency old : AppReleasePipeline.referencedDependencies(target)) {
+            PlatformAppDependency now = current.get(old.getDepKey());
+            if (now == null) {
+                out.add("依赖 " + old.getDepKey() + " 已被移除");
+            } else if (!Objects.equals(now.getType(), old.getType())
+                    || !Objects.equals(now.getInstanceId(), old.getInstanceId())) {
+                out.add("依赖 " + old.getDepKey() + " 现在指向不同的实例或类型");
+            }
+        }
+        return out;
+    }
+
     /** 快照里被引用、实例已删除的中间件依赖，每条点名。未被任何服务引用的不挡。 */
     private List<String> deletedDependencies(AppSnapshot target) {
         List<String> out = new ArrayList<>();
@@ -326,13 +354,34 @@ public class AppReleaseService {
     private record DesiredSync(List<PlatformAppService> updates, List<PlatformAppService> inserts) {
     }
 
+    /**
+     * 未发布编辑 = 与线上快照有差异、且与最新一次发布的快照也有差异。
+     * desired 等于最新发布的配置，说明它是某次未成功（失败 / 中断 / 回滚失败）的发布留下的，不是用户另外的改动。
+     * 待删除是用户意图，不是配置，只要仍在线上就算编辑。两处差异都用 {@link AppPending} 的同一套判定。
+     */
+    private Set<String> editedKeys(PlatformApplication app, AppSnapshot live, List<PlatformAppService> rows) {
+        Set<String> vsLive = AppPending.compute(live.services(), rows).stream()
+                .map(AppPending.Change::key).collect(Collectors.toCollection(LinkedHashSet::new));
+        Integer maxNo = releases.selectMaxNo(app.getId());
+        int liveNo = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
+        PlatformAppRelease latest = maxNo == null || maxNo == liveNo ? null : releases.selectByNo(app.getId(), maxNo);
+        if (latest == null) {
+            return vsLive;
+        }
+        Set<String> vsLatest = AppPending.compute(AppSnapshot.parse(latest.getSnapshotJson()).services(), rows)
+                .stream().map(AppPending.Change::key).collect(Collectors.toSet());
+        Set<String> pendingDelete = rows.stream().filter(r -> Boolean.TRUE.equals(r.getPendingDelete()))
+                .map(PlatformAppService::getServiceKey).collect(Collectors.toSet());
+        vsLive.removeIf(k -> !pendingDelete.contains(k) && !vsLatest.contains(k));
+        return vsLive;
+    }
+
     private DesiredSync syncDesired(PlatformApplication app, AppSnapshot target) {
         AppSnapshot live = liveSnapshot(app);
         List<PlatformAppService> rows = services.selectByApp(app.getId());
         Map<String, PlatformAppService> byKey = new HashMap<>();
         rows.forEach(r -> byKey.put(r.getServiceKey(), r));
-        Set<String> edited = AppPending.compute(live.services(), rows).stream()
-                .map(AppPending.Change::key).collect(Collectors.toSet());
+        Set<String> edited = editedKeys(app, live, rows);
         Set<String> depKeys = dependencyRows.selectByApp(app.getId()).stream()
                 .map(PlatformAppDependency::getDepKey).collect(Collectors.toSet());
 
