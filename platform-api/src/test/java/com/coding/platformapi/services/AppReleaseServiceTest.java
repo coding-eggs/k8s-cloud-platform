@@ -665,7 +665,8 @@ class AppReleaseServiceTest {
         when(middleware.statusOf("mw1")).thenReturn("DELETED");
 
         assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
-                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db");
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db")
+                .hasMessageContaining("已删除");
         verify(releases, never()).insert(any());
         verify(executions, never()).insert(any());
         verify(services, never()).updateWithVersion(any());
@@ -832,9 +833,11 @@ class AppReleaseServiceTest {
         history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")), List.of(mwDep("db", "mw1")));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
         when(depRows.selectByApp("app1")).thenReturn(List.of());
+        healthyInstance("mw1");
 
         assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
-                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db");
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db")
+                .hasMessageContaining("已被移除");
         verify(releases, never()).insert(any());
         verify(services, never()).updateWithVersion(any());
         verify(apps, never()).updateById(any());
@@ -846,11 +849,53 @@ class AppReleaseServiceTest {
         history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")), List.of(mwDep("db", "mw1")));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
         when(depRows.selectByApp("app1")).thenReturn(List.of(mwDep("db", "mw2")));
+        healthyInstance("mw1");
+        healthyInstance("mw2");
 
         assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
-                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db");
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db")
+                .hasMessageContaining("指向不同的实例或类型");
         verify(releases, never()).insert(any());
         verify(services, never()).updateWithVersion(any());
         verify(apps, never()).updateById(any());
+    }
+
+    @Test
+    void rollbackRejectsWhenReferencedDependencyChangedTypeButKeptTheInstance() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")), List.of(mwDep("db", "mw1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        PlatformAppDependency external = mwDep("db", "mw1");
+        external.setType("EXTERNAL");
+        when(depRows.selectByApp("app1")).thenReturn(List.of(external));
+        healthyInstance("mw1");
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("db")
+                .hasMessageContaining("指向不同的实例或类型");
+        verify(releases, never()).insert(any());
+        verify(services, never()).updateWithVersion(any());
+        verify(apps, never()).updateById(any());
+    }
+
+    @Test
+    void rollbackSucceedsWhenReferencedDependencyStillMatches() {
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", svc("1", "DB", "${db.host}")), List.of(mwDep("db", "mw1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(depRows.selectByApp("app1")).thenReturn(List.of(mwDep("db", "mw1")));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        healthyInstance("mw1");
+
+        service.rollback("app1", 1, null, "bob", "t1");
+
+        assertThat(inserted().getSourceReleaseNo()).isEqualTo(1);
+    }
+
+    private void healthyInstance(String instanceId) {
+        when(middleware.statusOf(instanceId)).thenReturn("READY");
+        MiddlewareConnectionDTO dto = new MiddlewareConnectionDTO();
+        dto.setInfo(ConnInfo.of("mysql", "db.demo.svc", 3306).build());
+        when(middleware.connection(instanceId, "t1")).thenReturn(dto);
     }
 }
