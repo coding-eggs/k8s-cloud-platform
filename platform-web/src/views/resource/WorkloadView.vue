@@ -7,6 +7,8 @@ import { workloadApi, hpaApi, gatewayApi, podApi } from '@/api'
 import type { K8sGateway, K8sWorkload, K8sHpa, K8sPod, WaypointRef } from '@/types'
 import type { WorkloadKind, WorkloadDetail } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
+import AppOwnerLink from '@/components/app-release/AppOwnerLink.vue'
+import { appIdOf } from '@/components/app-release/appOwner'
 import { useClusterComponents } from '@/composables/useClusterComponents'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
@@ -641,6 +643,7 @@ const contextDesc = computed(() => {
         <el-table-column label="名称" width="320">
           <template #default="{ row }">
             <code class="res-name name-link" @click="goDetail(row.name)">{{ row.name }}</code>
+            <AppOwnerLink v-if="appIdOf(row.labels)" :app-id="appIdOf(row.labels)" :cluster-id="state.clusterId" :tenant-id="state.tenantId" />
             <el-tooltip v-if="isOpManaged(row)" :content="isManaged(row) ? managedReason(row) : '由 Operator 管理，不可编辑'" placement="top">
               <el-tag type="warning" size="small" effect="plain" class="op-tag">op</el-tag>
             </el-tooltip>

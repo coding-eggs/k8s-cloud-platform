@@ -14,6 +14,7 @@
     <result column="status"           jdbcType="VARCHAR"   property="status" />
     <result column="spec_json"        jdbcType="LONGVARCHAR" property="specJson" />
     <result column="current_revision" jdbcType="INTEGER"   property="currentRevision" />
+    <result column="live_release_no"  jdbcType="INTEGER"   property="liveReleaseNo" />
     <result column="created_by"       jdbcType="VARCHAR"   property="createdBy" />
     <result column="created_at"       jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at"       jdbcType="TIMESTAMP" property="updatedAt" />
@@ -22,7 +23,7 @@
 
   <sql id="Base_Column_List">
     id, tenant_id, cluster_id, `namespace`, `name`, slug, display_name, description, `status`,
-    spec_json, current_revision, created_by, created_at, updated_at, deleted_at
+    spec_json, current_revision, live_release_no, created_by, created_at, updated_at, deleted_at
   </sql>
 
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformApplication">
@@ -48,6 +49,7 @@
       <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
       <if test="specJson != null">spec_json = #{specJson,jdbcType=LONGVARCHAR},</if>
       <if test="currentRevision != null">current_revision = #{currentRevision,jdbcType=INTEGER},</if>
+      <if test="liveReleaseNo != null">live_release_no = #{liveReleaseNo,jdbcType=INTEGER},</if>
       updated_at = #{updatedAt,jdbcType=TIMESTAMP}
     </set>
     where id = #{id,jdbcType=VARCHAR}

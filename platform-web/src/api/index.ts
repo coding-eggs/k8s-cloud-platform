@@ -1,10 +1,15 @@
 import http from './http'
 import type {
-  ApplicationOperation,
+  AppExecution,
+  AppDependencyRequest,
+  AppDependencyRow,
+  AppOverview,
+  AppRelease,
+  AppReleasePreview,
+  AppServiceDesired,
+  AppServiceView,
   ApplicationOptions,
-  ApplicationPreview,
   ApplicationView,
-  AppSpec,
   AuditLog,
   AuditQuery,
   BgpConfiguration,
@@ -1178,32 +1183,66 @@ export const middlewareApi = {
     http.post<never, MiddlewareOperatorStatus>('/middleware/operator/install', { clusterId, code }),
 }
 
-// ---------------- 应用编排（画布） ----------------
+// ---------------- 应用 ----------------
 
+/** 应用台账（/application/list、get、create、delete、options） */
 export const applicationApi = {
-  list: (clusterId: string, tenantId?: string) =>
-    http.post<never, ApplicationView[]>('/application/list', { clusterId, tenantId }),
+  /** `silent` 用于附带性查询（资源页「所属应用」）：失败不弹红条 */
+  list: (clusterId: string, tenantId?: string, silent = false) =>
+    http.post<never, ApplicationView[]>('/application/list', { clusterId, tenantId },
+      silent ? { silent403: true } : undefined),
   get: (appId: string, tenantId?: string) =>
     http.post<never, ApplicationView>('/application/get', { appId, tenantId }),
   create: (payload: {
     clusterId: string; namespace: string; name: string
-    displayName?: string; description?: string; spec: AppSpec; tenantId?: string
+    displayName?: string; description?: string; tenantId?: string
   }) => http.post<never, ApplicationView>('/application/create', payload),
-  update: (payload: {
-    appId: string; name?: string; displayName?: string; description?: string; spec?: AppSpec
-    tenantId?: string
-  }) => http.post<never, ApplicationView>('/application/update', payload),
   remove: (appId: string, tenantId?: string) =>
     http.post<never, void>('/application/delete', { appId, tenantId }),
-  preview: (payload: { appId: string; spec?: AppSpec; tenantId?: string }) =>
-    http.post<never, ApplicationPreview>('/application/preview', payload),
-  deploy: (payload: { appId: string; revision?: number; tenantId?: string }) =>
-    http.post<never, number>('/application/deploy', payload),
-  operation: (operationId: number, tenantId?: string) =>
-    http.post<never, ApplicationOperation>('/application/operation/get', { operationId, tenantId }),
-  revisions: (appId: string, tenantId?: string) =>
-    http.post<never, Array<{ revision: number; status: string; message?: string; createdAt?: string }>>(
-      '/application/revision/list', { appId, tenantId }),
   options: (clusterId: string, tenantId?: string) =>
     http.post<never, ApplicationOptions>('/application/options', { clusterId, tenantId }),
+}
+
+/** 应用服务配置与概览（/application/service/*、/application/overview） */
+export const appServiceApi = {
+  overview: (appId: string, tenantId?: string) =>
+    http.post<never, AppOverview>('/application/overview', { appId, tenantId }),
+  create: (payload: { appId: string; serviceKey: string; desired: AppServiceDesired; tenantId?: string }) =>
+    http.post<never, AppServiceView>('/application/service/create', payload),
+  /** version 是读到的乐观锁；陈旧会返回「配置冲突」 */
+  update: (payload: {
+    appId: string; serviceKey: string; desired: AppServiceDesired; version: number; tenantId?: string
+  }) => http.post<never, AppServiceView>('/application/service/update', payload),
+  remove: (payload: { appId: string; serviceKey: string; version: number; tenantId?: string }) =>
+    http.post<never, void>('/application/service/remove', payload),
+}
+
+/** 应用依赖（/application/dependency/*）：添加（新建 / 绑定 / 外部）、移除、初始化 */
+export const appDependencyApi = {
+  add: (payload: AppDependencyRequest) =>
+    http.post<never, AppDependencyRow>('/application/dependency/add', payload),
+  remove: (payload: AppDependencyRequest) =>
+    http.post<never, void>('/application/dependency/remove', payload),
+  init: (payload: AppDependencyRequest) =>
+    http.post<never, void>('/application/dependency/init', payload),
+}
+
+/** 发布、执行与回滚（/application/release/*、/application/execution/*） */
+export const appReleaseApi = {
+  /** images：服务 key → 本次要用的镜像 tag（只传与期望配置不同的） */
+  preview: (payload: { appId: string; serviceKeys: string[]; images?: Record<string, string>; tenantId?: string }) =>
+    http.post<never, AppReleasePreview>('/application/release/preview', payload),
+  create: (payload: {
+    appId: string; serviceKeys: string[]; images?: Record<string, string>; note?: string; tenantId?: string
+  }) => http.post<never, number>('/application/release/create', payload),
+  rollback: (payload: { appId: string; releaseNo: number; note?: string; tenantId?: string }) =>
+    http.post<never, number>('/application/release/rollback', payload),
+  list: (appId: string, tenantId?: string) =>
+    http.post<never, AppRelease[]>('/application/release/list', { appId, tenantId }),
+  get: (appId: string, releaseNo: number, tenantId?: string) =>
+    http.post<never, AppRelease>('/application/release/get', { appId, releaseNo, tenantId }),
+  activeExecution: (appId: string, tenantId?: string) =>
+    http.post<never, AppExecution | null>('/application/execution/active', { appId, tenantId }),
+  resume: (executionId: number, tenantId?: string) =>
+    http.post<never, void>('/application/execution/resume', { executionId, tenantId }),
 }

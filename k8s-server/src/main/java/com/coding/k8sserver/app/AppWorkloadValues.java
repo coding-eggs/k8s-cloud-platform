@@ -48,8 +48,18 @@ public final class AppWorkloadValues {
         workload.put("replicas", num(params.get("replicas"), 1));
         workload.put("command", strings(params.get("command")));
         workload.put("args", strings(params.get("args")));
-        workload.put("env", mergedEnv(params, inject));
-        workload.put("secretEnv", mergedSecretEnv(params, inject));
+        List<Map<String, Object>> env = mergedEnv(params, inject);
+        List<Map<String, Object>> secretEnv = mergedSecretEnv(params, inject);
+        List<Map<String, Object>> inlineEnv = inlineEnv(inject);
+        workload.put("env", env);
+        workload.put("secretEnv", secretEnv);
+        workload.put("inlineEnv", inlineEnv);
+        workload.put("imagePullSecrets", strings(params.get("imagePullSecrets")));
+        List<Map<String, Object>> files = configFiles(params);
+        workload.put("configFiles", files);
+        // 只覆盖「会进容器的配置」，不含 revision：revision 每次发布都变，会让没改配置的发布也滚动。
+        // 配置文件以 subPath 挂载，ConfigMap 改了容器里也不会更新，必须靠这个哈希滚动 Pod
+        workload.put("configHash", configHash(env, secretEnv, inlineEnv, files));
         workload.put("resources", resources(params));
         workload.put("persistence", persistence(params, worker));
         workload.put("autoscaling", autoscaling(params));
@@ -75,11 +85,71 @@ public final class AppWorkloadValues {
     static List<Map<String, Object>> mergedEnv(Map<String, Object> params, List<AppInjectDTO> inject) {
         List<Map<String, Object>> out = new ArrayList<>(plainEnv(params));
         for (AppInjectDTO d : inject == null ? List.<AppInjectDTO>of() : inject) {
-            if (d.getSecretName() == null || d.getSecretName().isBlank()) {
+            if (!d.isInline() && (d.getSecretName() == null || d.getSecretName().isBlank())) {
                 out.add(Map.of("name", d.getName(), "value", d.getValue() == null ? "" : d.getValue()));
             }
         }
         return out;
+    }
+
+    /** 含 {@code $(_REF_n)} 的拼接值：直接写进容器 env，且必须排在 secretEnv 之后（K8s 只展开先定义的变量）。 */
+    static List<Map<String, Object>> inlineEnv(List<AppInjectDTO> inject) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AppInjectDTO d : inject == null ? List.<AppInjectDTO>of() : inject) {
+            if (d.isInline()) {
+                out.add(Map.of("name", d.getName(), "value", d.getValue() == null ? "" : d.getValue()));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 配置文件 → {@code [{key, path, content}]}，key 作 {@code <name>-files} ConfigMap 的键与 subPath。
+     * 路径与内容由 platform-api 校验并替换好引用，这里只编号。
+     */
+    static List<Map<String, Object>> configFiles(Map<String, Object> params) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (!(params.get("configFiles") instanceof List<?> list)) {
+            return out;
+        }
+        for (Object o : list) {
+            if (o instanceof Map<?, ?> m) {
+                out.add(Map.of("key", "file-" + out.size(), "path", str(m.get("path")),
+                        "content", str(m.get("content"))));
+            }
+        }
+        return out;
+    }
+
+    private static String configHash(List<Map<String, Object>> env, List<Map<String, Object>> secretEnv,
+                                     List<Map<String, Object>> inlineEnv, List<Map<String, Object>> files) {
+        StringBuilder sb = new StringBuilder();
+        append(sb, "env", env);
+        append(sb, "secretEnv", secretEnv);
+        append(sb, "inlineEnv", inlineEnv);
+        if (!files.isEmpty()) {
+            append(sb, "files", files);   // 没有配置文件时哈希与之前一致，不让既有服务因升级而滚动
+        }
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.HexFormat.of().formatHex(d).substring(0, 32);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static void append(StringBuilder sb, String tag, List<Map<String, Object>> list) {
+        sb.append(tag).append('[');
+        for (Map<String, Object> m : list) {
+            // 长度前缀，避免「a|bc」与「ab|c」拼出同一串
+            m.keySet().stream().sorted().forEach(k -> {
+                String v = String.valueOf(m.get(k));
+                sb.append(k).append('=').append(v.length()).append(':').append(v).append(';');
+            });
+            sb.append('|');
+        }
+        sb.append(']');
     }
 
     /** 用户引用的 Secret + 依赖注入的凭据引用；都不带口令本体。 */

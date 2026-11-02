@@ -1,14 +1,9 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
-import com.coding.common.models.app.AppNodeDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
-import com.coding.common.models.app.AppSpecDTO;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
-import com.coding.data.mapper.system.PlatformApplicationOperationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
-import com.coding.data.mapper.system.PlatformApplicationRevisionMapper;
-import com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationResource;
@@ -20,7 +15,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -34,50 +28,33 @@ import static org.mockito.Mockito.when;
 class ApplicationServiceTest {
 
     private PlatformApplicationMapper apps;
-    private PlatformApplicationRevisionMapper revisions;
-    private PlatformApplicationOperationMapper operations;
     private PlatformApplicationResourceMapper resources;
     private PlatformTenantNamespaceMapper allocations;
     private NamespaceAccessGuard namespaceGuard;
-    private ApplicationReferenceGuard referenceGuard;
-    private PlatformMiddlewareInstanceMapper middlewareInstances;
     private K8sAppClient client;
+    private AppDependencyService appDependencies;
+    private com.coding.data.mapper.system.PlatformAppExecutionMapper appExecutions;
     private ApplicationService service;
 
     @BeforeEach
     void setUp() {
         apps = mock(PlatformApplicationMapper.class);
-        revisions = mock(PlatformApplicationRevisionMapper.class);
-        operations = mock(PlatformApplicationOperationMapper.class);
         resources = mock(PlatformApplicationResourceMapper.class);
         allocations = mock(PlatformTenantNamespaceMapper.class);
         namespaceGuard = mock(NamespaceAccessGuard.class);
-        referenceGuard = mock(ApplicationReferenceGuard.class);
-        middlewareInstances = mock(PlatformMiddlewareInstanceMapper.class);
         client = mock(K8sAppClient.class);
-        service = new ApplicationService(apps, revisions, operations, resources, allocations,
-                namespaceGuard, referenceGuard, middlewareInstances, client);
+        appDependencies = mock(AppDependencyService.class);
+        appExecutions = mock(com.coding.data.mapper.system.PlatformAppExecutionMapper.class);
+        service = new ApplicationService(apps, resources, allocations, namespaceGuard, client, appDependencies,
+                appExecutions);
     }
 
-    private static ApplicationCreateRequest req(AppSpecDTO spec) {
+    private static ApplicationCreateRequest req() {
         ApplicationCreateRequest r = new ApplicationCreateRequest();
         r.setClusterId("c1");
         r.setNamespace("demo");
         r.setName("Demo App");
-        r.setSpec(spec);
         return r;
-    }
-
-    private static AppSpecDTO spec() {
-        AppNodeDTO n = new AppNodeDTO();
-        n.setKey("web");
-        n.setKind("SERVICE");
-        n.setParams(Map.of("image", "nginx"));
-        AppSpecDTO s = new AppSpecDTO();
-        s.setNamespace("demo");
-        s.setNodes(List.of(n));
-        s.setEdges(List.of());
-        return s;
     }
 
     private static PlatformApplication row() {
@@ -90,9 +67,6 @@ class ApplicationServiceTest {
         a.setSlug("demo-app");
         a.setStatus("READY");
         a.setCurrentRevision(1);
-        a.setSpecJson("""
-                {"namespace":"demo","nodes":[{"key":"web","kind":"SERVICE","params":{"image":"nginx"}}],"edges":[]}
-                """);
         return a;
     }
 
@@ -108,54 +82,43 @@ class ApplicationServiceTest {
     }
 
     @Test
-    void createRejectsInvalidGraphBeforeTouchingDb() {
-        AppSpecDTO bad = spec();
-        bad.getNodes().get(0).setKind("CRONJOB");
-
-        assertThatThrownBy(() -> service.create(req(bad), "admin", "t1"))
-                .isInstanceOf(CloudPlatformException.class)
-                .hasMessageContaining("不支持的节点类型");
-        verify(apps, never()).insert(any());
-    }
-
-    @Test
-    void createPersistsSlugAndSpec() {
-        service.create(req(spec()), "admin", "t1");
+    void createPersistsSlugWithoutAnyCanvasSpec() {
+        service.create(req(), "admin", "t1");
 
         ArgumentCaptor<PlatformApplication> cap = ArgumentCaptor.forClass(PlatformApplication.class);
         verify(apps).insert(cap.capture());
         PlatformApplication saved = cap.getValue();
         assertThat(saved.getSlug()).isEqualTo("demo-app");
         assertThat(saved.getStatus()).isEqualTo("DRAFT");
-        assertThat(saved.getSpecJson()).contains("\"web\"");
+        assertThat(saved.getNamespace()).isEqualTo("demo");
+        assertThat(saved.getSpecJson()).isNull();
         assertThat(saved.getTenantId()).isEqualTo("t1");
-    }
-
-    @Test
-    void namespaceMismatchBetweenSpecAndRequestIsRejected() {
-        ApplicationCreateRequest r = req(spec());
-        r.setNamespace("other");
-
-        assertThatThrownBy(() -> service.create(r, "admin", "t1"))
-                .hasMessageContaining("命名空间不一致");
-    }
-
-    @Test
-    void createAllowsEmptyGraphForCanvasDraft() {
-        AppSpecDTO empty = new AppSpecDTO();
-        empty.setNamespace("demo");
-        empty.setNodes(List.of());
-        empty.setEdges(List.of());
-
-        service.create(req(empty), "admin", "t1");
-
-        verify(apps).insert(any());
         verify(namespaceGuard).assertAccessible("c1", "demo");
     }
 
     @Test
+    void createRequiresNamespaceAndName() {
+        ApplicationCreateRequest noNs = req();
+        noNs.setNamespace(" ");
+        assertThatThrownBy(() -> service.create(noNs, "admin", "t1")).hasMessageContaining("命名空间");
+        ApplicationCreateRequest noName = req();
+        noName.setName("");
+        assertThatThrownBy(() -> service.create(noName, "admin", "t1")).hasMessageContaining("应用名");
+        verify(apps, never()).insert(any());
+    }
+
+    @Test
+    void createRefusesNamespacesOutsideTheTenantsAllocation() {
+        org.mockito.Mockito.doThrow(new CloudPlatformException(
+                com.coding.common.exception.EnumResponseType.ERROR, "无权访问命名空间"))
+                .when(namespaceGuard).assertAccessible("c1", "demo");
+        assertThatThrownBy(() -> service.create(req(), "admin", "t1")).hasMessageContaining("无权");
+        verify(apps, never()).insert(any());
+    }
+
+    @Test
     void createRequiresTenantEvenForAdmin() {
-        assertThatThrownBy(() -> service.create(req(spec()), "admin", null))
+        assertThatThrownBy(() -> service.create(req(), "admin", null))
                 .hasMessageContaining("请先切换到某个租户");
         verify(apps, never()).insert(any());
     }
@@ -171,7 +134,6 @@ class ApplicationServiceTest {
     @Test
     void deletePrunesOwnedObjectsButKeepsData() {
         when(apps.selectById("app_1")).thenReturn(row());
-        when(operations.selectActiveByApp("app_1")).thenReturn(null);
         when(resources.selectByApp("app_1")).thenReturn(List.of(
                 resource("Service", "demo-app-web"),
                 resource("PersistentVolumeClaim", "demo-app-web-data")));
@@ -188,15 +150,36 @@ class ApplicationServiceTest {
     }
 
     @Test
-    void deleteRefusesWhileDeploying() {
+    void deleteDetachesDependenciesAndRefusesDuringActiveRelease() {
         when(apps.selectById("app_1")).thenReturn(row());
-        when(operations.selectActiveByApp("app_1"))
-                .thenReturn(new com.coding.data.models.system.PlatformApplicationOperation());
+        when(appExecutions.selectActiveByApp("app_1"))
+                .thenReturn(new com.coding.data.models.system.PlatformAppExecution());
+        ApplicationDeleteRequest req = new ApplicationDeleteRequest();
+        req.setAppId("app_1");
+        assertThatThrownBy(() -> service.delete(req, "admin", null)).hasMessageContaining("发布");
+        verify(appDependencies, never()).detachForAppDelete(any());
+
+        when(appExecutions.selectActiveByApp("app_1")).thenReturn(null);
+        service.delete(req, "admin", null);
+        verify(appDependencies).detachForAppDelete("app_1");
+    }
+
+    @Test
+    void deleteOfALegacyCanvasAppPrunesItsObjectsAndHandsInstancesBack() {
+        // 旧画布应用：没有服务/依赖行，也没有新执行；对象只在资源台账里
+        PlatformApplication legacy = row();
+        legacy.setLiveReleaseNo(0);
+        legacy.setSpecJson("{\"nodes\":[]}");
+        when(apps.selectById("app_1")).thenReturn(legacy);
+        when(resources.selectByApp("app_1")).thenReturn(List.of(resource("Deployment", "demo-app-web")));
+        assertThat(service.get("app_1", "t1").isLegacy()).isTrue();   // 前端据此只给「删除」
 
         ApplicationDeleteRequest req = new ApplicationDeleteRequest();
         req.setAppId("app_1");
+        service.delete(req, "admin", "t1");
 
-        assertThatThrownBy(() -> service.delete(req, "admin", null)).hasMessageContaining("正在部署");
-        verify(apps, never()).softDelete(any(), any());
+        verify(client).prune(any());
+        verify(apps).softDelete(eq("app_1"), any());
+        verify(appDependencies).detachForAppDelete("app_1");
     }
 }

@@ -2798,6 +2798,10 @@ export interface MiddlewareInstance {
   status: 'CREATING' | 'READY' | 'DEGRADED' | 'FAILED' | 'DELETING'
   message?: string | null
   tenantId?: string | null
+  /** 创建它的应用 id；空 = 商店直接创建 */
+  appId?: string | null
+  /** 来源应用名；应用已删除时为空（appId 可能还在） */
+  appName?: string | null
   createdBy?: string | null
   createdAt?: string | null
 }
@@ -2822,34 +2826,12 @@ export interface MiddlewareOperatorStatus {
   message?: string | null
 }
 
-// ---------------- 应用编排（画布） ----------------
+// ---------------- 应用 ----------------
 
+/** 拓扑节点种类：服务 / 后台进程 / 中间件依赖 / 外部连接 */
 export type AppNodeKind = 'SERVICE' | 'WORKER' | 'MIDDLEWARE' | 'EXTERNAL'
 
-export interface AppNode {
-  key: string
-  kind: AppNodeKind
-  params: Record<string, unknown>
-}
-
-export interface AppEdge {
-  from: string
-  to: string
-}
-
-export interface AppSpec {
-  namespace: string
-  settings?: Record<string, unknown>
-  nodes: AppNode[]
-  edges: AppEdge[]
-}
-
-export interface AppProblem {
-  severity: 'ERROR' | 'WARN'
-  nodeKey?: string | null
-  message: string
-}
-
+/** 发布记录的对象清单项 */
 export interface AppObjectRef {
   apiVersion: string
   kind: string
@@ -2866,35 +2848,213 @@ export interface ApplicationView {
   displayName?: string | null
   description?: string | null
   status: string
+  /** 旧画布版本号，已不再使用 */
   currentRevision: number
-  spec: AppSpec
+  /** 线上发布号；0/空 = 尚未发布 */
+  liveReleaseNo?: number | null
+  /** 旧模型应用（画布时代建的）：只读，只能删除 */
+  legacy?: boolean
   createdAt?: string | null
   updatedAt?: string | null
 }
 
-export interface ApplicationPreview {
-  manifest: string
-  objects: AppObjectRef[]
-  problems: AppProblem[]
-  added: string[]
-  removed: string[]
-}
-
-export interface ApplicationOperation {
+/** 发布流程的执行进度（overview.activeExecution / lastExecution） */
+export interface AppExecution {
   id: number
   appId: string
-  revision: number
-  action: string
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED'
-  currentStep: string
-  nodeStatesJson?: string | null
+  releaseNo: number
+  status: string
+  stage?: string | null
   message?: string | null
+  startedBy?: string | null
   startedAt?: string | null
   finishedAt?: string | null
 }
 
+/** 服务的一个配置文件（ConfigMap 卷，subPath 只读挂载） */
+export interface AppConfigFile {
+  path: string
+  content: string
+}
+
+/** 环境变量行：LITERAL/REF 用 value（REF=含 ${依赖.字段}），SECRET 用 secretName+secretKey */
+export interface AppEnvRow {
+  name: string
+  kind: 'LITERAL' | 'REF' | 'SECRET'
+  value?: string
+  secretName?: string
+  secretKey?: string
+}
+
+/** 服务期望配置（desired_json）。后端白名单，未知字段会被拒绝 */
+export interface AppServiceDesired {
+  imageRepo: string
+  imageTag: string
+  port?: number | null
+  replicas?: number | null
+  env?: AppEnvRow[]
+  /** 配置文件：每个文件只读挂到 path；content 可引用 ${x.host|port|address|url}，不能引用凭据 */
+  configFiles?: AppConfigFile[]
+  command?: string[]
+  args?: string[]
+  imagePullPolicy?: string
+  cpuRequest?: string
+  memoryRequest?: string
+  cpuLimit?: string
+  memoryLimit?: string
+  persistenceEnabled?: boolean
+  storageSize?: string
+  storageClass?: string
+  mountPath?: string
+  autoscalingEnabled?: boolean
+  minReplicas?: number
+  maxReplicas?: number
+  targetCpu?: number
+  probeEnabled?: boolean
+  probePath?: string
+  metricsEnabled?: boolean
+  metricsPath?: string
+  expose?: unknown
+  [k: string]: unknown
+}
+
+/** READY/PENDING/FAILED/MISSING/UNKNOWN 为线上现读；NOT_RELEASED=只在期望配置里、尚未发布 */
+export type AppServiceState = 'READY' | 'PENDING' | 'FAILED' | 'MISSING' | 'UNKNOWN' | 'NOT_RELEASED'
+
+export interface AppServiceRow {
+  key: string
+  kind: 'SERVICE' | 'WORKER'
+  image: string
+  liveImage?: string | null
+  replicas?: number | null
+  state: AppServiceState
+  /** ADDED / CHANGED / DELETED / null */
+  pending?: 'ADDED' | 'CHANGED' | 'DELETED' | null
+  desired: AppServiceDesired
+  /** 孤儿服务（线上有、台账无行）为 null：不能保存，只能勾选删除 */
+  version: number | null
+  /** 镜像仓库里比线上 tag 更晚推送的 tag；没有、非 Harbor 镜像或查询失败为空 */
+  newTag?: string | null
+}
+
+export interface AppDependencyRow {
+  key: string
+  /** MIDDLEWARE / EXTERNAL */
+  type: string
+  /** CREATED / BOUND；EXTERNAL 为空 */
+  ownership?: string | null
+  instanceId?: string | null
+  /** 中间件实例状态（READY / CREATING ...）；EXTERNAL 恒为 'EXTERNAL'；取不到为 UNKNOWN / NO_INSTANCE */
+  status?: string | null
+  /** 最近一次初始化：RUNNING / SUCCESS / FAILED；没跑过为空 */
+  initStatus?: string | null
+  /** 初始化日志尾部（Job 原始输出，最多约 4000 字符） */
+  initLog?: string | null
+  /** EXTERNAL 的连接信息：只有地址与 Secret 名/键，永远没有口令 */
+  external?: AppExternalConn | null
+  /** 中间件依赖的实例类型（mysql / redis ...）；EXTERNAL 或实例读不到为空 */
+  code?: string | null
+}
+
+export interface AppExternalConn {
+  protocol?: string
+  host?: string
+  port?: number | null
+  secretName?: string | null
+  usernameKey?: string | null
+  passwordKey?: string | null
+}
+
+/** /application/dependency/add|remove|init 的入参（后端同一个 DTO；多余字段会被拒） */
+export interface AppDependencyRequest {
+  appId: string
+  tenantId?: string
+  key: string
+  /** add */
+  type?: 'MIDDLEWARE' | 'EXTERNAL'
+  source?: 'CREATE' | 'BIND'
+  code?: string
+  shape?: string
+  version?: string
+  replicas?: number
+  cpuRequest?: string
+  cpuLimit?: string
+  memoryRequest?: string
+  memoryLimit?: string
+  storageSize?: string
+  storageClass?: string
+  instanceId?: string
+  external?: AppExternalConn
+  /** remove：CREATED 依赖是否同时删除实例（缺省保留） */
+  deleteInstance?: boolean
+  /** init */
+  initPayload?: string
+  initPath?: string
+  confirm?: boolean
+}
+
+export interface AppOverview {
+  appId: string
+  status: string
+  liveReleaseNo?: number | null
+  /** 旧模型应用（画布时代建的）：只读，只能删除 */
+  legacy?: boolean
+  services: AppServiceRow[]
+  dependencies: AppDependencyRow[]
+  pendingKeys: string[]
+  activeExecution?: AppExecution | null
+  lastExecution?: AppExecution | null
+}
+
+/** 发布预览（/application/release/preview）。problems 阻断发布；warnings 只提示 */
+export interface AppReleasePreviewChange {
+  key: string
+  /** ADDED / CHANGED / DELETED */
+  type: 'ADDED' | 'CHANGED' | 'DELETED'
+  fields?: string[] | null
+  fromImage?: string | null
+  toImage?: string | null
+}
+export interface AppReleasePreview {
+  changes: AppReleasePreviewChange[]
+  pendingKeys: string[]
+  selectedKeys: string[]
+  /** 勾选项引用了、却尚未发布也没勾选的服务 */
+  requiredKeys: string[]
+  addedObjects: string[]
+  removedObjects: string[]
+  problems: string[]
+  warnings: string[]
+}
+
+/** 一次发布。snapshot / objects 只在 release/get 里返回；快照不含口令 */
+export interface AppRelease {
+  releaseNo: number
+  /** NORMAL / ROLLBACK */
+  type: string
+  sourceReleaseNo?: number | null
+  note?: string | null
+  /** RENDERED（执行中）/ DEPLOYED / FAILED */
+  status: string
+  createdBy?: string | null
+  createdAt?: string | null
+  live: boolean
+  snapshot?: {
+    services?: Record<string, AppServiceDesired>
+    dependencies?: Array<{ key: string; type: string; ownership?: string | null; instanceId?: string | null; external?: Record<string, unknown> | null }>
+  } | null
+  objects?: AppObjectRef[] | null
+}
+
+export interface AppServiceView {
+  key: string
+  kind: string
+  desired: AppServiceDesired
+  pendingDelete: boolean
+  version: number
+}
+
 export interface ApplicationOptions {
-  nodeKinds: Array<{ kind: AppNodeKind; name: string; description: string; detail?: string }>
   namespaces: string[]
 }
 

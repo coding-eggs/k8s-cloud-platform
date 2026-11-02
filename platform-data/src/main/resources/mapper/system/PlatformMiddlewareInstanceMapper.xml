@@ -80,6 +80,18 @@
     order by created_at desc
   </select>
 
+  <update id="clearApp">
+    update platform_middleware_instance
+    set app_id = null, app_node_id = null, updated_at = now()
+    where id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <update id="clearByApp">
+    update platform_middleware_instance
+    set app_id = null, app_node_id = null, updated_at = now()
+    where app_id = #{appId,jdbcType=VARCHAR}
+  </update>
+
   <update id="softDelete">
     update platform_middleware_instance
     set deleted_at = now(), updated_at = now()

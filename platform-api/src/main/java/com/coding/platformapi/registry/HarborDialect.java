@@ -151,6 +151,121 @@ public class HarborDialect implements RegistryDialect {
         return new BrowseResult(List.of(), List.of());
     }
 
+    // ==================== 新版本提示 ====================
+
+    /**
+     * 一个 artifact 的全部 tag 与推送时间（只给新版本判断用；{@link #parseArtifacts} 只取 tags[0]，
+     * 在「同一个 artifact 挂着 latest 和 1.1.0」时会丢信息）。
+     */
+    public record Pushed(List<String> tags, java.time.Instant pushedAt) {
+    }
+
+    @Override
+    public java.util.Optional<String> newerTag(CredentialRef cred, String repository, String liveTag) {
+        int slash = repository == null ? -1 : repository.indexOf('/');
+        if (slash <= 0 || slash == repository.length() - 1 || liveTag == null || liveTag.isBlank()) {
+            return java.util.Optional.empty();   // 不是 project/repo 形态：不是 Harbor 路径
+        }
+        String json = http.get(cred, artifactsNewestUrl(cred, repository.substring(0, slash),
+                repository.substring(slash + 1)));
+        return java.util.Optional.ofNullable(newerTagOf(parsePushed(json), liveTag, pageIsFull(json)));
+    }
+
+    /** 这一页是不是满的（满 = 可能还有更旧的 artifact 没取回来，线上 tag 找不到不代表它不存在）。 */
+    static boolean pageIsFull(String json) {
+        try {
+            return JSON.readTree(json).size() >= PAGE_SIZE;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 推送时间倒序：仓库 tag 超过一页（100）时，最新的也一定在第一页里。 */
+    public static String artifactsNewestUrl(CredentialRef c, String project, String repository) {
+        return artifactsUrl(c, project, repository) + "&sort=-push_time";
+    }
+
+    /** 解析失败 / 没有 tag / 推送时间缺失或不可解析的行都丢掉（无法参与「谁更新」的比较）。 */
+    public static List<Pushed> parsePushed(String json) {
+        try {
+            HarborArtifact[] arr = JSON.readValue(json, HarborArtifact[].class);
+            List<Pushed> out = new ArrayList<>();
+            for (HarborArtifact a : arr) {
+                if (a.tags == null || a.tags.length == 0 || a.push_time == null) {
+                    continue;
+                }
+                java.time.Instant at;
+                try {
+                    at = java.time.Instant.parse(a.push_time);
+                } catch (java.time.format.DateTimeParseException e) {
+                    continue;
+                }
+                List<String> names = Arrays.stream(a.tags).map(t -> t.name)
+                        .filter(Objects::nonNull).toList();
+                if (!names.isEmpty()) {
+                    out.add(new Pushed(names, at));
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("解析 Harbor artifacts 响应失败，按空处理", e);
+            return List.of();
+        }
+    }
+
+    /**
+     * 「更新」的定义：**推送时间严格晚于线上 tag 那次推送**的 artifact 里，推得最晚的那个。
+     *
+     * <ul>
+     *   <li>不比 tag 字面顺序 —— {@code 1.10.0} 排在 {@code 1.9.0} 前，{@code latest} 没有顺序；</li>
+     *   <li>线上 tag 找不到：页没满 = 已被删，无法比较，不提示；页满（100）= 多半是太旧而不在这一页，
+     *       提示最新那个；</li>
+     *   <li>该 artifact 同时挂着多个 tag 时，优先给不是 {@code latest} 的那个（latest 会移动，
+     *       发出去就不可复现），只有 {@code latest} 时才给它；</li>
+     *   <li>线上跑的是移动别名（如 {@code latest}）时，别名被新推送「抢走」后，线上 tag 指向的
+     *       就是最新那个 artifact，于是不提示 —— 这是该写法固有的限制。</li>
+     * </ul>
+     */
+    public static String newerTagOf(List<Pushed> artifacts, String liveTag) {
+        return newerTagOf(artifacts, liveTag, false);
+    }
+
+    /**
+     * @param pageFull 取回的这一页是满的：线上 tag 找不到时它多半比这一页里所有 artifact 都旧，
+     *                 此时直接提示最新那个；页没满而找不到 = 线上 tag 确已被删，仍不提示。
+     */
+    public static String newerTagOf(List<Pushed> artifacts, String liveTag, boolean pageFull) {
+        java.time.Instant live = artifacts.stream()
+                .filter(a -> a.tags().contains(liveTag))
+                .map(Pushed::pushedAt).max(java.util.Comparator.naturalOrder()).orElse(null);
+        if (live == null && !pageFull) {
+            return null;
+        }
+        Pushed latest = artifacts.stream()
+                .max(java.util.Comparator.comparing(Pushed::pushedAt)).orElse(null);
+        if (latest == null || (live != null && !latest.pushedAt().isAfter(live))) {
+            return null;
+        }
+        return pickTag(latest.tags());
+    }
+
+    private static final java.util.regex.Pattern SEMVER_LIKE =
+            java.util.regex.Pattern.compile("^v?[0-9]+(\\.[0-9]+)+.*");
+
+    /**
+     * 同一 artifact 挂多个 tag 时确定性地选一个：非 latest 优先；其中类 semver 的优先，
+     * 再取最长的（1.4.3 比 1.4 具体），最后按字典序。Harbor 返回的 tag 顺序不保证稳定。
+     */
+    static String pickTag(List<String> tags) {
+        return tags.stream()
+                .sorted(java.util.Comparator
+                        .comparing((String t) -> "latest".equalsIgnoreCase(t))
+                        .thenComparing(t -> !SEMVER_LIKE.matcher(t).matches())
+                        .thenComparing(java.util.Comparator.comparingInt(String::length).reversed())
+                        .thenComparing(java.util.Comparator.naturalOrder()))
+                .findFirst().orElse(tags.get(0));
+    }
+
     // ==================== 响应映射（纯） ====================
 
     public static List<String> parseProjectNames(String json) {

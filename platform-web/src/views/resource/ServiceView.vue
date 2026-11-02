@@ -15,6 +15,8 @@ import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
 import {MoreFilled, Search} from "@element-plus/icons-vue";
 import YamlBlock from '@/components/YamlBlock.vue'
+import AppOwnerLink from '@/components/app-release/AppOwnerLink.vue'
+import { appIdOf } from '@/components/app-release/appOwner'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
@@ -247,6 +249,7 @@ const contextDesc = computed(() => {
         <el-table-column label="名称" width="300">
           <template #default="{ row }">
             <code class="res-name name-link"  @click="openDetail(row)">{{ row.name }}</code>
+            <AppOwnerLink v-if="appIdOf(row.labels)" :app-id="appIdOf(row.labels)" :cluster-id="state.clusterId" :tenant-id="state.tenantId" />
           </template>
         </el-table-column>
         <el-table-column label="类型" width="150">

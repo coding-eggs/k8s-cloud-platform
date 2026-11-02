@@ -15,6 +15,11 @@ public interface PlatformApplicationResourceMapper {
     List<PlatformApplicationResource> selectByRevision(@Param("appId") String appId,
                                                        @Param("revision") Integer revision);
 
+    /** 台账中 fromRevision <= revision < toRevision 的行（上界不含）。 */
+    List<PlatformApplicationResource> selectByRevisionRange(@Param("appId") String appId,
+                                                            @Param("fromRevision") Integer fromRevision,
+                                                            @Param("toRevision") Integer toRevision);
+
     /** 本应用历史上写过的所有对象（用于「对象已存在但不是我们的」冲突判定） */
     List<PlatformApplicationResource> selectByApp(@Param("appId") String appId);
 

@@ -4,25 +4,31 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applicationApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import type { ApplicationOptions, ApplicationView } from '@/types'
 
 const router = useRouter()
+const perm = usePermission()
+const canWrite = computed(() => perm.has(apiCodes.applicationWrite))
 
 // 集群/租户都跟随顶栏级联（context: 'full'），页面不再自己维护一份
 const { tenantId, clusterId, ensure } = useApplicationContext()
 const apps = ref<ApplicationView[]>([])
 const loading = ref(false)
-const options = ref<ApplicationOptions>({ nodeKinds: [], namespaces: [] })
+const options = ref<ApplicationOptions>({ namespaces: [] })
 
 const dialogVisible = ref(false)
 const creating = ref(false)
 const form = ref({ name: '', namespace: '', displayName: '', description: '' })
 
+// 台账状态（发布执行器写入）：没发布过 → 未发布；线上服务的逐个健康在应用页现读
 const statusMeta: Record<string, { text: string; type: 'info' | 'primary' | 'success' | 'danger' }> = {
-  DRAFT: { text: '草稿', type: 'info' },
-  DEPLOYING: { text: '部署中', type: 'primary' },
-  READY: { text: '已就绪', type: 'success' },
-  FAILED: { text: '失败', type: 'danger' },
+  DRAFT: { text: '未发布', type: 'info' },
+  DEPLOYING: { text: '发布中', type: 'primary' },
+  READY: { text: '运行正常', type: 'success' },
+  FAILED: { text: '发布失败', type: 'danger' },
+  INTERRUPTED: { text: '已中断', type: 'danger' },
 }
 
 const canCreate = computed(() => !!clusterId.value && !!form.value.name.trim()
@@ -79,7 +85,6 @@ async function create() {
       displayName: form.value.displayName || undefined,
       description: form.value.description || undefined,
       tenantId: tenantId.value,
-      spec: { namespace: form.value.namespace, nodes: [], edges: [] },
     })
     dialogVisible.value = false
     router.push(`/applications/${created.id}`)
@@ -99,7 +104,7 @@ async function remove(row: ApplicationView) {
   await load()
 }
 
-function openCanvas(row: ApplicationView) {
+function openApp(row: ApplicationView) {
   router.push(`/applications/${row.id}`)
 }
 
@@ -117,19 +122,20 @@ onMounted(async () => {
   <div class="page">
     <div class="page__header">
       <div>
-        <h2>应用编排</h2>
-        <p class="page__hint">在一张画布上组合服务与后台进程，平台生成资源并分阶段部署。</p>
+        <h2>应用</h2>
+        <p class="page__hint">应用是平台上可发布的单位：配置服务与依赖，按服务勾选发布，随时回滚。</p>
       </div>
       <div class="page__actions">
         <!-- 集群/租户由顶栏级联决定，页面不再放自己的集群下拉 -->
-        <el-button type="primary" :disabled="!clusterId" @click="openCreate">新建应用</el-button>
+        <el-button type="primary" :disabled="!clusterId || !canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openCreate">新建应用</el-button>
       </div>
     </div>
 
     <el-table v-loading="loading" :data="apps" class="panel" empty-text="还没有应用">
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
-          <el-link type="primary" @click="openCanvas(row)">{{ row.displayName || row.name }}</el-link>
+          <el-link type="primary" @click="openApp(row)">{{ row.displayName || row.name }}</el-link>
+          <el-tag v-if="row.legacy" class="app-list__legacy" type="warning" size="small" effect="plain" title="画布时代创建的应用，只能删除">旧模型</el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="namespace" label="命名空间" width="180" />
@@ -140,14 +146,17 @@ onMounted(async () => {
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="版本" width="90">
-        <template #default="{ row }">v{{ row.currentRevision }}</template>
+      <el-table-column label="线上发布" width="110">
+        <template #default="{ row }">
+          <span v-if="row.liveReleaseNo">#{{ row.liveReleaseNo }}</span>
+          <span v-else class="muted">未发布</span>
+        </template>
       </el-table-column>
       <el-table-column prop="updatedAt" label="更新时间" width="190" />
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openCanvas(row)">打开画布</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button link type="primary" @click="openApp(row)">管理</el-button>
+          <el-button v-if="canWrite" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -172,7 +181,7 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="creating" :disabled="!canCreate" @click="create">
-          创建并打开画布
+          创建并进入
         </el-button>
       </template>
     </el-dialog>
@@ -180,6 +189,9 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.app-list__legacy {
+  margin-left: 6px;
+}
 .page__header {
   display: flex;
   align-items: flex-start;
@@ -191,6 +203,9 @@ onMounted(async () => {
   margin: 4px 0 0;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+.muted {
+  color: var(--el-text-color-secondary);
 }
 .page__actions {
   display: flex;

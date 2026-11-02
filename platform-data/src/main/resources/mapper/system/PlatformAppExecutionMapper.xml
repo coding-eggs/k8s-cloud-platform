@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformAppExecutionMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformAppExecution">
+    <id     column="id"          jdbcType="BIGINT"    property="id" />
+    <result column="app_id"      jdbcType="VARCHAR"   property="appId" />
+    <result column="release_no"  jdbcType="INTEGER"   property="releaseNo" />
+    <result column="status"      jdbcType="VARCHAR"   property="status" />
+    <result column="stage"       jdbcType="VARCHAR"   property="stage" />
+    <result column="message"     jdbcType="VARCHAR"   property="message" />
+    <result column="lease_until" jdbcType="TIMESTAMP" property="leaseUntil" />
+    <result column="started_by"  jdbcType="VARCHAR"   property="startedBy" />
+    <result column="started_at"  jdbcType="TIMESTAMP" property="startedAt" />
+    <result column="finished_at" jdbcType="TIMESTAMP" property="finishedAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, app_id, release_no, `status`, stage, message, lease_until, started_by, started_at, finished_at
+  </sql>
+
+  <select id="selectById" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_execution
+    where id = #{id,jdbcType=BIGINT}
+  </select>
+
+  <update id="releaseLease">
+    update platform_app_execution
+       set lease_until = null
+     where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <update id="supersedeInterrupted">
+    update platform_app_execution
+       set `status` = 'FAILED',
+           message = #{message,jdbcType=VARCHAR},
+           finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+           lease_until = null
+     where id = #{id,jdbcType=BIGINT}
+       and `status` = 'INTERRUPTED'
+  </update>
+
+  <update id="reopen">
+    update platform_app_execution
+       set `status` = #{status,jdbcType=VARCHAR},
+           started_at = #{startedAt,jdbcType=TIMESTAMP},
+           finished_at = null,
+           message = null,
+           lease_until = null
+     where id = #{id,jdbcType=BIGINT}
+       and `status` in ('FAILED', 'INTERRUPTED')
+       and id = (select t.max_id from (
+                   select max(e2.id) as max_id
+                     from platform_app_execution e1
+                     join platform_app_execution e2 on e2.app_id = e1.app_id
+                    where e1.id = #{id,jdbcType=BIGINT}
+                 ) t)
+  </update>
+
+  <select id="selectActive" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_execution
+    where `status` in ('PENDING', 'RUNNING', 'INTERRUPTED')
+    order by id asc
+  </select>
+
+  <select id="selectActiveByApp" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_execution
+    where app_id = #{appId,jdbcType=VARCHAR}
+      and `status` in ('PENDING', 'RUNNING', 'INTERRUPTED')
+    order by id asc
+    limit 1
+  </select>
+
+  <select id="selectLatestByApp" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_execution
+    where app_id = #{appId,jdbcType=VARCHAR}
+    order by id desc
+    limit 1
+  </select>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformAppExecution"
+          useGeneratedKeys="true" keyProperty="id">
+    insert into platform_app_execution
+      (app_id, release_no, `status`, stage, message, lease_until, started_by, started_at, finished_at)
+    values
+      (#{appId,jdbcType=VARCHAR}, #{releaseNo,jdbcType=INTEGER}, #{status,jdbcType=VARCHAR},
+       #{stage,jdbcType=VARCHAR}, #{message,jdbcType=VARCHAR}, #{leaseUntil,jdbcType=TIMESTAMP},
+       #{startedBy,jdbcType=VARCHAR}, #{startedAt,jdbcType=TIMESTAMP}, #{finishedAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <update id="updateById" parameterType="com.coding.data.models.system.PlatformAppExecution">
+    update platform_app_execution
+    <set>
+      <if test="releaseNo != null">release_no = #{releaseNo,jdbcType=INTEGER},</if>
+      <if test="status != null">`status` = #{status,jdbcType=VARCHAR},</if>
+      <if test="stage != null">stage = #{stage,jdbcType=VARCHAR},</if>
+      <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>
+      <if test="leaseUntil != null">lease_until = #{leaseUntil,jdbcType=TIMESTAMP},</if>
+      <if test="finishedAt != null">finished_at = #{finishedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=BIGINT}
+  </update>
+
+  <update id="claim">
+    update platform_app_execution
+       set lease_until = #{leaseUntil,jdbcType=TIMESTAMP}
+     where id = #{id,jdbcType=BIGINT}
+       and (lease_until is null or lease_until &lt; #{now,jdbcType=TIMESTAMP})
+  </update>
+
+</mapper>

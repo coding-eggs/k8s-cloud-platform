@@ -17,7 +17,23 @@ spec:
     metadata:
       labels:
         {{- include "app.selector" . | nindent 8 }}
+      {{- with .Values.workload.configHash }}
+      annotations:
+        platform.coding/config-hash: {{ . | quote }}
+      {{- end }}
     spec:
+      {{- with .Values.workload.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if .Values.workload.configFiles }}
+      volumes:
+        - name: config-files
+          configMap:
+            name: {{ include "app.name" . }}-files
+      {{- end }}
       containers:
         - name: app
           image: {{ .Values.workload.image | quote }}
@@ -31,7 +47,7 @@ spec:
           {{- with .Values.workload.args }}
           args: {{ toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or .Values.workload.env .Values.workload.secretEnv }}
+          {{- if or .Values.workload.env .Values.workload.secretEnv .Values.workload.inlineEnv }}
           env:
             {{- range .Values.workload.env }}
             - name: {{ .name }}
@@ -47,10 +63,20 @@ spec:
                   name: {{ .secretName }}
                   key: {{ .secretKey }}
             {{- end }}
+            {{- range .Values.workload.inlineEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: data
               mountPath: {{ .Values.workload.persistence.mountPath }}
+          {{- range .Values.workload.configFiles }}
+            - name: config-files
+              mountPath: {{ .path | quote }}
+              subPath: {{ .key | quote }}
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.workload.resources | nindent 12 }}
           {{- if .Values.workload.probe.enabled }}

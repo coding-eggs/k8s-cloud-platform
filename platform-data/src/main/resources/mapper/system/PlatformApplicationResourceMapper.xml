@@ -37,6 +37,14 @@
       and revision = #{revision,jdbcType=INTEGER}
   </select>
 
+  <select id="selectByRevisionRange" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_application_resource
+    where app_id = #{appId,jdbcType=VARCHAR}
+      and revision &gt;= #{fromRevision,jdbcType=INTEGER}
+      and revision &lt; #{toRevision,jdbcType=INTEGER}
+  </select>
+
   <select id="selectByApp" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_application_resource
