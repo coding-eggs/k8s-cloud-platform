@@ -61,6 +61,9 @@ const router = createRouter({
         // 它既不需要命名空间，也不需要顶栏那一套“租户/集群”记忆。
         { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', domain: 'cluster', icon: 'Files', order: 4, requiresPerm: [pageCodes.storageClass.list] } },
 
+        // 快照类与快照内容（S4.3）：集群级、只读、仅平台管理员；页面自带集群选择器（与存储类同形）
+        { path: 'volume-snapshot-cluster', name: 'volume-snapshot-cluster', component: () => import('@/views/resource/VolumeSnapshotClusterView.vue'), meta: { title: '卷快照', domain: 'cluster', icon: 'CopyDocument', order: 4.5, requiresPerm: [pageCodes.volumeSnapshotCluster] } },
+
         // ============ 平台视图 · 网络 ============
         { path: 'mesh/gatewayclasses', name: 'gatewayclasses', component: () => import('@/views/mesh/GatewayClassView.vue'), meta: { title: 'GatewayClass', domain: 'network', icon: 'Guide', order: 1, requiresPerm: [pageCodes.mesh.gatewayClass.list] } },
         { path: 'mesh/gatewayclasses/editor', name: 'gatewayclass-editor', component: () => import('@/views/mesh/GatewayClassEditorView.vue'), meta: { title: 'GatewayClass 编辑', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.mesh.gatewayClass.edit] } },
@@ -130,6 +133,8 @@ const router = createRouter({
 
         // ============ 租户视图 · 存储 ============
         { path: 'resources/pvcs', name: 'pvcs', component: () => import('@/views/resource/PvcView.vue'), meta: { title: 'PVC', domain: 'storage', icon: 'Coin', order: 1, context: 'full', requiresPerm: [pageCodes.pvc.list] } },
+        // 卷快照（S4.3）：门控在页面内（每个集群不同，要调接口才知道），菜单不随能力隐藏
+        { path: 'resources/volumesnapshots', name: 'volumesnapshots', component: () => import('@/views/resource/VolumeSnapshotView.vue'), meta: { title: '卷快照', domain: 'storage', icon: 'CopyDocument', order: 1.5, context: 'full', requiresPerm: [pageCodes.volumeSnapshot] } },
         // 持久卷：租户只见绑定到本租户已分配命名空间的 PV（后端按 claimRef.namespace 收窄）
         { path: 'resources/persistentvolumes', name: 'persistentvolumes', component: () => import('@/views/resource/PersistentVolumeView.vue'), meta: { title: '持久卷', domain: 'storage', icon: 'Box', order: 2, context: 'full', requiresPerm: [pageCodes.persistentVolume.list] } },
         // 对象存储（SeaweedFS 集群组件）：桶 / 凭据 / 对象浏览，集群级、无命名空间维度
