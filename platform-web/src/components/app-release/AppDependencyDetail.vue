@@ -6,12 +6,12 @@
  *   只有后端知道，移除时以后端的拒绝原文为准）。
  * - 初始化：只在实例 READY 后可用，且只对支持初始化的中间件。脚本只是文本，不会被前端解析。
  *   成功过的依赖再次执行需要确认（后端要 confirm=true）；ES 必须给目标路径。
- *   只在状态为 RUNNING 时轮询（通知父组件刷新概览），其它状态不轮询。
+ *   状态为 RUNNING 时由页面级轮询刷新概览（只在 RUNNING / 实例创建中轮询）。
  *   日志是初始化 Job 的原始输出，页面上明确提示。
  * - 移除：后端在仍被引用时拒绝并点名服务，原文原样显示。CREATED 依赖让用户选保留实例（默认）或删除实例。
  * 口令在这里的任何位置都不会出现。
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { appDependencyApi, middlewareApi } from '@/api'
@@ -66,7 +66,7 @@ function openService(key: string): void {
 }
 
 // ---------------- 初始化 ----------------
-const code = computed(() => instance.value?.code ?? '')
+const code = computed(() => props.dep?.code ?? '')
 const initSupported = computed(() => props.dep?.type === 'MIDDLEWARE' && INIT_CODES.includes(code.value))
 const initPayload = ref('')
 const initPath = ref('')
@@ -127,23 +127,7 @@ async function runInit(): Promise<void> {
   }
 }
 
-// 只在 RUNNING 时轮询：通知父组件刷新概览，状态一变就停
-let timer: number | null = null
-function stopPoll(): void {
-  if (timer !== null) {
-    window.clearInterval(timer)
-    timer = null
-  }
-}
-watch(
-  () => visible.value && running.value,
-  (on) => {
-    stopPoll()
-    if (on) timer = window.setInterval(() => emit('refresh'), 3000)
-  },
-  { immediate: true },
-)
-onBeforeUnmount(stopPoll)
+// 初始化进行中的轮询在页面级（ApplicationDetailView）：抽屉关了表格也照样更新
 
 // ---------------- 移除 ----------------
 const removeVisible = ref(false)

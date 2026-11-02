@@ -706,7 +706,20 @@ public class AppDependencyService {
     private AppOverviewView.DependencyRow view(PlatformAppDependency d) {
         return new AppOverviewView.DependencyRow(d.getDepKey(), d.getType(), d.getOwnership(), d.getInstanceId(),
                 statusOf(d), d.getInitStatus(), tail(d.getInitLog()),
-                AppSnapshot.scrubExternal(d.getExternalJson()));
+                AppSnapshot.scrubExternal(d.getExternalJson()), codeOf(d));
+    }
+
+    /** 中间件依赖的实例类型；EXTERNAL、无实例、实例已删或读不到都是 null（概览不能因此失败）。 */
+    public String codeOf(PlatformAppDependency dep) {
+        if (!MIDDLEWARE.equals(dep.getType()) || dep.getInstanceId() == null || dep.getInstanceId().isBlank()) {
+            return null;
+        }
+        try {
+            PlatformMiddlewareInstance inst = instances.selectByPrimaryKey(dep.getInstanceId());
+            return inst == null || inst.getDeletedAt() != null ? null : inst.getCode();
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     static String tail(String log) {

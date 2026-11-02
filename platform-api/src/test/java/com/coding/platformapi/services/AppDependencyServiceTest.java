@@ -717,6 +717,21 @@ class AppDependencyServiceTest {
         assertThat(service.add(bindReq("db", "mwi_9"), "alice", "t1").status()).isEqualTo("READY");
     }
 
+    @Test
+    void dependencyRowCarriesMiddlewareCodeAndExternalHasNone() {
+        PlatformMiddlewareInstance redis = instance("mwi_9", "t1", "demo", null);
+        redis.setCode("redis");
+        when(instances.selectByPrimaryKey("mwi_9")).thenReturn(redis);
+        when(middleware.statusOf("mwi_9")).thenReturn("READY");
+
+        assertThat(service.add(bindReq("db", "mwi_9"), "alice", "t1").code()).isEqualTo("redis");
+
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("protocol", "mysql");
+        m.put("host", "db.example.com");
+        assertThat(service.add(externalReq(m), "alice", "t1").code()).isNull();
+    }
+
     // ---- ES 初始化
 
     void readyElasticsearch(String scheme) {

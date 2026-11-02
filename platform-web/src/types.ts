@@ -2960,6 +2960,8 @@ export interface AppDependencyRow {
   initLog?: string | null
   /** EXTERNAL 的连接信息：只有地址与 Secret 名/键，永远没有口令 */
   external?: AppExternalConn | null
+  /** 中间件依赖的实例类型（mysql / redis ...）；EXTERNAL 或实例读不到为空 */
+  code?: string | null
 }
 
 export interface AppExternalConn {

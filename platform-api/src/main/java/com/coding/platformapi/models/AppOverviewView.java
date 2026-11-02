@@ -20,9 +20,11 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
 
     /**
      * initStatus / initLog：最近一次初始化的状态与日志（没跑过为 null）；
-     * external：EXTERNAL 依赖的连接信息（只含地址与 Secret 名/键，不含口令）。
+     * external：EXTERNAL 依赖的连接信息（只含地址与 Secret 名/键，不含口令）；
+     * code：中间件依赖的实例类型（mysql / redis ...，实例读不到时为 null），EXTERNAL 恒为 null——
+     * 前端据此判断该依赖有哪些可引用字段、能否初始化。
      */
     public record DependencyRow(String key, String type, String ownership, String instanceId, String status,
-                                String initStatus, String initLog, Map<String, Object> external) {
+                                String initStatus, String initLog, Map<String, Object> external, String code) {
     }
 }

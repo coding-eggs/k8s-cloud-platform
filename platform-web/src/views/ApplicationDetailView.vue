@@ -134,6 +134,7 @@ const addForm = ref({ key: '', imageRepo: '', imageTag: '', port: undefined as n
 const keyHint = computed(() => {
   const k = addForm.value.key
   if (!k) return ''
+  if ((overview.value?.dependencies ?? []).some((d) => d.key === k)) return '名称已被依赖占用（依赖与服务共用一个命名空间）'
   if (!/^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/.test(k)) return '至多 20 位，小写字母、数字、连字符，字母开头，不以连字符结尾'
   if (/-(env|secret|headless)$/.test(k)) return '不能以 -env、-secret、-headless 结尾（平台保留）'
   return ''
@@ -238,10 +239,10 @@ async function afterDepRemoved(): Promise<void> {
   await load(true)
 }
 
-// 实例创建中：低频刷新概览，让状态走到「运行正常」（其它状态不轮询）
+// 实例创建中 / 初始化执行中：低频刷新概览，让状态走到终态（其它状态不轮询；抽屉关了表格也更新）
 let depTimer: number | null = null
 watch(
-  () => (overview.value?.dependencies ?? []).some((d) => d.status === 'CREATING'),
+  () => (overview.value?.dependencies ?? []).some((d) => d.status === 'CREATING' || d.initStatus === 'RUNNING'),
   (creating) => {
     if (depTimer !== null) {
       window.clearInterval(depTimer)

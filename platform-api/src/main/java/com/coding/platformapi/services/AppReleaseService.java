@@ -523,7 +523,8 @@ public class AppReleaseService {
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
                 .map(d -> new AppOverviewView.DependencyRow(d.getDepKey(), d.getType(), d.getOwnership(),
                         d.getInstanceId(), depStatus.get(d.getDepKey()), d.getInitStatus(),
-                        AppDependencyService.tail(d.getInitLog()), AppSnapshot.scrubExternal(d.getExternalJson())))
+                        AppDependencyService.tail(d.getInitLog()), AppSnapshot.scrubExternal(d.getExternalJson()),
+                        dependencies.codeOf(d)))
                 .toList();
         return new AppOverviewView(app.getId(), app.getStatus(), app.getLiveReleaseNo(), serviceRows, depRows,
                 changes.stream().map(AppPending.Change::key).toList(),

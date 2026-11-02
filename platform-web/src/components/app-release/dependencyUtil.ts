@@ -46,12 +46,32 @@ export const SVC_FIELD_LABEL: Record<string, string> = {
 export const SVC_FIELDS = Object.keys(SVC_FIELD_LABEL)
 
 /**
- * 依赖可引用的字段。EXTERNAL 能从登记信息判断有没有端口 / 用户名 / 密码键；
- * 中间件要等连接信息，这里全部列出（实例没有某字段时，发布预览会点名）。
+ * 各中间件有哪些凭据字段，镜像后端 `MiddlewareService.connInfoOf`（platform-api，约 526-561 行）的
+ * `.secret(name, usernameKey, passwordKey)`：键为 null 的字段，`AppEnvResolver` 会判为「没有该字段」。
+ * connInfoOf 改了这里要一起改。host / port / address / url 对所有中间件都有。
+ * redis、elasticsearch：只有密码；kafka、nacos：没有凭据；其余：用户名 + 密码。
+ */
+export const MIDDLEWARE_CREDENTIALS: Record<string, { username: boolean; password: boolean }> = {
+  mysql: { username: true, password: true },
+  postgresql: { username: true, password: true },
+  rabbitmq: { username: true, password: true },
+  milvus: { username: true, password: true },
+  redis: { username: false, password: true },
+  elasticsearch: { username: false, password: true },
+  kafka: { username: false, password: false },
+  nacos: { username: false, password: false },
+}
+
+/**
+ * 依赖可引用的字段。EXTERNAL 看登记信息有没有端口 / 用户名 / 密码键；
+ * 中间件看实例类型（`dep.code`）；类型未知时只给无凭据的四个字段，宁缺毋滥。
  */
 export function depFields(dep: AppDependencyRow): string[] {
   const all = Object.keys(DEP_FIELD_LABEL)
-  if (dep.type !== 'EXTERNAL') return all
+  if (dep.type !== 'EXTERNAL') {
+    const cred = MIDDLEWARE_CREDENTIALS[dep.code ?? '']
+    return all.filter((f) => (f === 'username' ? !!cred?.username : f === 'password' ? !!cred?.password : true))
+  }
   const e = dep.external
   return all.filter((f) => {
     if (f === 'port') return e?.port != null

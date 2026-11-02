@@ -156,7 +156,8 @@ const STATUS_TEXT: Record<string, string> = {
   CREATING: '创建中', READY: '运行中', DEGRADED: '降级', FAILED: '失败',
 }
 function instLabel(i: MiddlewareInstance): string {
-  return `${i.displayName || i.name}（${i.code} · ${STATUS_TEXT[i.status] ?? i.status}）`
+  const from = i.appId && i.appName ? ` · 来自应用 ${i.appName}` : ''
+  return `${i.displayName || i.name}（${i.code} · ${STATUS_TEXT[i.status] ?? i.status}${from}）`
 }
 
 // ---------------- 外部 ----------------
