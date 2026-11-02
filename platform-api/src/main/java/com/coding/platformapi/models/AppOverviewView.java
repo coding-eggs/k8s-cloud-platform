@@ -5,10 +5,8 @@ import java.util.Map;
 
 /**
  * 应用页首屏：服务（现读状态）、依赖、待发布与执行进度。
- *
- * <p>legacy：旧模型应用（画布时代建的）—— 只读，只能删除。
  */
-public record AppOverviewView(String appId, String status, Integer liveReleaseNo, boolean legacy,
+public record AppOverviewView(String appId, String status, Integer liveReleaseNo,
                               List<ServiceRow> services,
                               List<DependencyRow> dependencies, List<String> pendingKeys,
                               AppExecutionView activeExecution, AppExecutionView lastExecution) {

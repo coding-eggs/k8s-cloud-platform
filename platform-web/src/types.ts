@@ -2848,12 +2848,8 @@ export interface ApplicationView {
   displayName?: string | null
   description?: string | null
   status: string
-  /** 旧画布版本号，已不再使用 */
-  currentRevision: number
   /** 线上发布号；0/空 = 尚未发布 */
   liveReleaseNo?: number | null
-  /** 旧模型应用（画布时代建的）：只读，只能删除 */
-  legacy?: boolean
   createdAt?: string | null
   updatedAt?: string | null
 }
@@ -2997,8 +2993,6 @@ export interface AppOverview {
   appId: string
   status: string
   liveReleaseNo?: number | null
-  /** 旧模型应用（画布时代建的）：只读，只能删除 */
-  legacy?: boolean
   services: AppServiceRow[]
   dependencies: AppDependencyRow[]
   pendingKeys: string[]

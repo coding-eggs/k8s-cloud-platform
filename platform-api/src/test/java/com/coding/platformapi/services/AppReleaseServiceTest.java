@@ -1034,29 +1034,4 @@ class AppReleaseServiceTest {
                 .isInstanceOf(CloudPlatformException.class).hasMessageContaining("${db.password}");
         assertThat(pipeline.problems(app, snapshot)).anySatisfy(p -> assertThat(p).contains("api"));
     }
-
-    // ---- 旧模型应用只读 ----
-
-    @Test
-    void legacyAppRejectsReleaseRollbackResume() {
-        app.setSpecJson("{\"nodes\":[]}");
-        PlatformAppExecution exec = new PlatformAppExecution();
-        exec.setId(9L);
-        exec.setAppId("app1");
-        when(executions.selectById(9L)).thenReturn(exec);
-
-        assertThatThrownBy(() -> service.create("app1", List.of("web"), Map.of(), null, "bob", "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
-        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
-        assertThatThrownBy(() -> service.resume(9L, "bob", "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
-        verify(executor, never()).resume(any(), any());
-        verify(releases, never()).insert(any(com.coding.data.models.system.PlatformAppRelease.class));
-        verify(executions, never()).insert(any(PlatformAppExecution.class));
-    }
-
-    @Test
-    void overviewMarksLegacyApp() {
-        assertThat(service.overview("app1", "t1").legacy()).isFalse();
-        app.setSpecJson("{\"nodes\":[]}");
-        assertThat(service.overview("app1", "t1").legacy()).isTrue();
-    }
 }

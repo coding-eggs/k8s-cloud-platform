@@ -135,7 +135,6 @@ onMounted(async () => {
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
           <el-link type="primary" @click="openApp(row)">{{ row.displayName || row.name }}</el-link>
-          <el-tag v-if="row.legacy" class="app-list__legacy" type="warning" size="small" effect="plain" title="画布时代创建的应用，只能删除">旧模型</el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="namespace" label="命名空间" width="180" />
@@ -189,9 +188,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.app-list__legacy {
-  margin-left: 6px;
-}
 .page__header {
   display: flex;
   align-items: flex-start;

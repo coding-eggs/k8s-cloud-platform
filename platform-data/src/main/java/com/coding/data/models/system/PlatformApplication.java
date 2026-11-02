@@ -7,8 +7,7 @@ import java.util.Date;
 /**
  * 一个应用（表 platform_application）。
  *
- * <p>{@code spec_json} 只有旧模型应用（画布时代建的）才非空：这类应用只读、只能删除；
- * 新应用的服务、依赖、发布分别在 platform_app_service / _dependency / _release。
+ * <p>服务、依赖、发布分别在 platform_app_service / _dependency / _release。
  */
 @Data
 public class PlatformApplication {
@@ -32,11 +31,6 @@ public class PlatformApplication {
 
     /** DRAFT / DEPLOYING / READY / FAILED / DELETING */
     private String status;
-
-    /** 图定义（AppSpecDTO 的 JSON） */
-    private String specJson;
-
-    private Integer currentRevision;
 
     /** 线上发布号；0 = 尚未发布（发布模型，见 platform_app_release） */
     private Integer liveReleaseNo;

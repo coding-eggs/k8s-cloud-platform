@@ -151,7 +151,7 @@ public class AppReleaseService {
      */
     public Long create(String appId, List<String> selectedKeys, Map<String, String> images, String note,
                        String operator, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, appId, tenantId);
+        PlatformApplication app = AppGuard.require(apps, appId, tenantId);
         String authorization = K8sServerGateway.currentAuthorization();
         if (authorization == null || authorization.isBlank()) {
             throw error("当前请求没有可用的凭据");
@@ -262,7 +262,7 @@ public class AppReleaseService {
      * 要重建或复活的 key 若已被依赖占用，拒绝（同一应用内 key 唯一）。
      */
     public Long rollback(String appId, Integer sourceReleaseNo, String note, String operator, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, appId, tenantId);
+        PlatformApplication app = AppGuard.require(apps, appId, tenantId);
         String authorization = K8sServerGateway.currentAuthorization();
         if (authorization == null || authorization.isBlank()) {
             throw error("当前请求没有可用的凭据");
@@ -478,7 +478,7 @@ public class AppReleaseService {
         if (execution == null) {
             throw error("执行记录不存在");
         }
-        AppGuard.requireWritable(apps, execution.getAppId(), tenantId);
+        AppGuard.require(apps, execution.getAppId(), tenantId);
         executor.resume(executionId, operator);
     }
 
@@ -530,7 +530,7 @@ public class AppReleaseService {
                         AppDependencyService.tail(d.getInitLog()), AppSnapshot.scrubExternal(d.getExternalJson()),
                         dependencies.codeOf(d)))
                 .toList();
-        return new AppOverviewView(app.getId(), app.getStatus(), app.getLiveReleaseNo(), AppGuard.isLegacy(app),
+        return new AppOverviewView(app.getId(), app.getStatus(), app.getLiveReleaseNo(),
                 serviceRows, depRows,
                 changes.stream().map(AppPending.Change::key).toList(),
                 executionView(executions.selectActiveByApp(app.getId())),

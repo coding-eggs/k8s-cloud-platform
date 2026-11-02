@@ -85,7 +85,7 @@ public class AppServiceConfigService {
     }
 
     public AppServiceView create(AppServiceRequest req, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, req.getAppId(), tenantId);
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         String key = req.getServiceKey();
         assertValidKey(key);
         Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
@@ -118,7 +118,7 @@ public class AppServiceConfigService {
     }
 
     public AppServiceView update(AppServiceRequest req, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, req.getAppId(), tenantId);
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppService row = require(app, req.getServiceKey());
         if (Boolean.TRUE.equals(row.getPendingDelete())) {
             throw error("服务 " + row.getServiceKey() + " 已标记删除，不能再改");
@@ -137,7 +137,7 @@ public class AppServiceConfigService {
 
     /** 从未发布过的直接删行；已发布过的标记待删除，下次发布勾选后才真正移除。 */
     public void remove(AppServiceRequest req, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, req.getAppId(), tenantId);
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppService row = require(app, req.getServiceKey());
         String key = row.getServiceKey();
         if (req.getVersion() == null || !req.getVersion().equals(row.getVersion())) {

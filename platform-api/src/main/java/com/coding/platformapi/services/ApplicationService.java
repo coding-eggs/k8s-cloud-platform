@@ -83,8 +83,6 @@ public class ApplicationService {
         row.setDisplayName(isBlank(req.getDisplayName()) ? row.getName() : req.getDisplayName());
         row.setDescription(req.getDescription());
         row.setStatus("DRAFT");
-        row.setSpecJson(null);   // 旧画布 spec，已不再使用（列已改可空）
-        row.setCurrentRevision(0);
         row.setCreatedBy(operator);
         row.setCreatedAt(new Date());
         row.setUpdatedAt(new Date());
@@ -189,9 +187,7 @@ public class ApplicationService {
         v.setDisplayName(row.getDisplayName());
         v.setDescription(row.getDescription());
         v.setStatus(row.getStatus());
-        v.setCurrentRevision(row.getCurrentRevision());
         v.setLiveReleaseNo(row.getLiveReleaseNo());
-        v.setLegacy(AppGuard.isLegacy(row));
         v.setCreatedAt(row.getCreatedAt());
         v.setUpdatedAt(row.getUpdatedAt());
         return v;

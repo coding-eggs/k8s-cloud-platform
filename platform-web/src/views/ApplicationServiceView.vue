@@ -63,9 +63,7 @@ const PENDING_TEXT: Record<string, string> = { ADDED: '新增，待发布', CHAN
 const orphan = computed(() => !!row.value && row.value.version == null)
 /** 待删除的服务后端拒绝修改；没有写权限同样只读 */
 const pendingDelete = computed(() => row.value?.pending === 'DELETED')
-/** 旧模型应用只能删除（后端同样拒绝） */
-const legacy = computed(() => !!app.value?.legacy)
-const readonly = computed(() => orphan.value || pendingDelete.value || legacy.value || !canWrite.value)
+const readonly = computed(() => orphan.value || pendingDelete.value || !canWrite.value)
 const workloadName = computed(() => (app.value ? `${app.value.slug}-${key.value}` : ''))
 
 // ---------- 表单 ----------

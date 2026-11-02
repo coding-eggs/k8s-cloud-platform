@@ -56,16 +56,23 @@ key 不能以它结尾。
 
 按顺序执行，**迁移与代码必须同批**。
 
-1. **上线前在平台库查旧应用**（设计 §11：不迁移旧应用）：
+1. **上线前在平台库查旧应用，并用线上现有构建删掉部署过的**（设计 §11：不迁移旧应用）：
    ```sql
-   SELECT id, name, namespace, status, spec_json IS NOT NULL AS legacy
-     FROM platform_application WHERE deleted_at IS NULL;
+   SELECT id, name, namespace, status, current_revision,
+          EXISTS (SELECT 1 FROM platform_application_resource r WHERE r.app_id = a.id) AS has_objects
+     FROM platform_application a
+    WHERE deleted_at IS NULL AND spec_json IS NOT NULL AND spec_json <> '';
    ```
-   `legacy=1` 的是旧模型应用。上线后它们**只读、只能删除**（§4），不必赶在上线前删；
-   但它们不能转成新模型，要继续用就得删除后按新方式重建 —— 提前和使用方确认。
+   `current_revision > 0` 或 `has_objects = 1` 的是**部署过的旧画布应用**，必须在升级前用线上现有构建的页面删除
+   （会 prune 它建过的对象，PVC 与中间件实例保留）。新构建已没有「旧模型只读」守卫，这类应用留到升级后会被当成
+   新应用放行发布，它在资源台账里的旧对象从此无人认领。其余（从未部署过的）由清理迁移转成新模型的空应用，无需处理。
+   提前和使用方确认要删的应用。
 2. **手工重放迁移**（本仓没有 Flyway，启动日志不会有 Migrating schema），按文件名顺序：
    `V2026_11_02_10__application_release` → `V2026_11_02_11__application_release_permissions` →
-   `V2026_11_02_12__application_release_rollback_permission` → `V2026_11_02_13__application_dependency_permissions`。
+   `V2026_11_02_12__application_release_rollback_permission` → `V2026_11_02_13__application_dependency_permissions` →
+   `V2026_11_02_14__drop_application_canvas_legacy`。最后这条是画布遗留清理（§3.1），**第 0 步报
+   「存在已部署的旧画布应用…」表不存在就说明第 1 步没做干净**：回到第 1 步删掉后再重放本条（它会跳过所有结构改动，
+   可重复执行）。
    main 上的 `V2026_11_01_1__object_storage_platform_page`、`V2026_11_01_2` 与本批无关，照各自说明重放。
 3. **上线前在真 MySQL 上各跑一次两条条件更新**（单测只覆盖了 mock）：执行表 mapper 的 `reopen`
    （继续已中断的执行）和 `supersedeInterrupted`（新发布取代已中断的执行）。用一条手工造的
@@ -82,28 +89,24 @@ key 不能以它结尾。
    （命名空间分配时下发；渲染时不再注入）。没挂的命名空间发布会卡在拉镜像。
 7. **重新登录**：权限行有新增，旧会话拿不到新码。
 
-### 3.1 旧权限行
+### 3.1 画布遗留清理（V2026_11_02_14）
 
-`V2026_10_25_7` 为旧接口（`/application/update`、`/application/preview`、`/application/deploy`、
-`/application/operation/get`、`/application/revision/list`）建的权限行**保留不删**：接口已不存在，
-这些行只是匹配不到请求，无害。设计和迁移都没有要求清理；以后统一清权限表时再删。旧的
-`platform_application_revision` / `platform_application_operation` 两张表和 mapper 也保留，只是不再写入。
+画布模型的遗留在代码和库里都已删除：
 
-## 4. 旧模型应用上线后的样子
+- 库：`platform_application.spec_json` / `current_revision` 两列，`platform_application_revision` /
+  `platform_application_operation` 两张表，旧接口（`/application/update`、`/application/preview`、
+  `/application/deploy`、`/application/operation/get`、`/application/revision/list`）的 5 条权限行及其角色绑定。
+- 代码：对应实体与 mapper、`AppGuard` 的「旧模型应用只读」守卫、`ApplicationView` / 概览的 `legacy` 字段、
+  前端的「旧模型」标签与提示条。
+- **保留**：`platform_application_resource`（新发布也记账）、`platform_application_reference` 与
+  `platform_middleware_instance.app_id` / `app_node_id`（新依赖也用）。
 
-旧应用（画布时代建的，`spec_json` 非空）不迁移：
+迁移对从未部署过的旧应用：状态改回 `DRAFT`、画布建的中间件实例解除归属（回到中间件商店）、画布引用行删除。
+部署过的旧应用**不能**交给迁移处理，见 §3 第 1 步。
 
-- 列表里照常显示，名称旁带「旧模型」标签，状态是它最后的旧状态；`ApplicationView` 与概览都带
-  `legacy=true`。打开应用页顶部是「旧模型应用，只能删除」提示，没有服务，「线上」显示「未发布」，
-  添加服务 / 发布 / 回滚 / 继续 / 添加或移除依赖 / 初始化按钮全部禁用。
-- **后端同样只读**：服务新增 / 修改 / 移除、依赖添加 / 移除 / 初始化、发布、回滚、继续执行这 9 个写入口
-  都经 `AppGuard.requireWritable`，旧模型应用一律拒绝「旧模型应用只能删除，请删除后按新方式重建」。
-  原因：旧应用的对象台账按旧修订号记账，新发布 apply 时按同一修订号 `deleteByAppRevision` 覆写台账，
-  会把画布建的对象变成孤儿（删除应用时再也清理不到）。
-- 旧接口（update / preview / deploy / operation / revision）已删除。
-- **删除**照常可用：按 `platform_application_resource` 台账 prune 它建过的 K8s 对象（不删 PVC）；
-  依赖侧 `detachForAppDelete` 清掉中间件实例上的来源应用和引用行，实例**保留**，变成独立实例，
-  需要时到中间件实例页删除。旧的进行中操作记录不再挡删除（只有新模型的进行中发布会挡）。
+## 4. 旧模型应用
+
+上线后不再有「旧模型应用」：部署过的已在升级前删除，没部署过的成了新模型的空应用，照常添加服务、发布。
 
 ## 5. 验收清单（未验证，部署后由使用者在真集群执行）
 
@@ -120,7 +123,7 @@ key 不能以它结尾。
 - [ ] 口令不出现在快照、清单和接口响应中。
 - [ ] 依赖初始化：MySQL / PostgreSQL / Redis / ES / Kafka 各成功一次、各故意失败一次，失败时状态为失败且日志可读。
 - [ ] Harbor 选 tag、新版本提示、资源页跳转在真实 Harbor 上可用。
-- [ ] 旧模型应用：写入口（如 `/application/service/create`）被拒绝；删除后对象被清理，实例保留且可在实例页删除。
+- [ ] 清理迁移：有部署过的旧应用时第 0 步报错且表结构不变；删掉后重放，两列两表与 5 条权限行消失，未部署的旧应用变成可发布的空应用。
 
 ## 6. 已知限制
 

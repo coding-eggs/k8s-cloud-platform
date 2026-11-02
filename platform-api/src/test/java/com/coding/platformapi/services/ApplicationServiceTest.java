@@ -66,7 +66,6 @@ class ApplicationServiceTest {
         a.setName("Demo App");
         a.setSlug("demo-app");
         a.setStatus("READY");
-        a.setCurrentRevision(1);
         return a;
     }
 
@@ -82,7 +81,7 @@ class ApplicationServiceTest {
     }
 
     @Test
-    void createPersistsSlugWithoutAnyCanvasSpec() {
+    void createPersistsSlugAndDraftStatus() {
         service.create(req(), "admin", "t1");
 
         ArgumentCaptor<PlatformApplication> cap = ArgumentCaptor.forClass(PlatformApplication.class);
@@ -91,7 +90,6 @@ class ApplicationServiceTest {
         assertThat(saved.getSlug()).isEqualTo("demo-app");
         assertThat(saved.getStatus()).isEqualTo("DRAFT");
         assertThat(saved.getNamespace()).isEqualTo("demo");
-        assertThat(saved.getSpecJson()).isNull();
         assertThat(saved.getTenantId()).isEqualTo("t1");
         verify(namespaceGuard).assertAccessible("c1", "demo");
     }
@@ -165,14 +163,11 @@ class ApplicationServiceTest {
     }
 
     @Test
-    void deleteOfALegacyCanvasAppPrunesItsObjectsAndHandsInstancesBack() {
-        // 旧画布应用：没有服务/依赖行，也没有新执行；对象只在资源台账里
-        PlatformApplication legacy = row();
-        legacy.setLiveReleaseNo(0);
-        legacy.setSpecJson("{\"nodes\":[]}");
-        when(apps.selectById("app_1")).thenReturn(legacy);
+    void deletePrunesEveryObjectInTheResourceLedger() {
+        PlatformApplication app = row();
+        app.setLiveReleaseNo(1);
+        when(apps.selectById("app_1")).thenReturn(app);
         when(resources.selectByApp("app_1")).thenReturn(List.of(resource("Deployment", "demo-app-web")));
-        assertThat(service.get("app_1", "t1").isLegacy()).isTrue();   // 前端据此只给「删除」
 
         ApplicationDeleteRequest req = new ApplicationDeleteRequest();
         req.setAppId("app_1");

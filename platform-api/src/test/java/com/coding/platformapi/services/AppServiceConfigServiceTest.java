@@ -361,15 +361,4 @@ class AppServiceConfigServiceTest {
         assertThat(updatedDesired().get("configFiles")).isEqualTo(files);
         assertThat(view.desired().get("configFiles")).isEqualTo(files);
     }
-
-    // ---- 旧模型应用只读 ----
-
-    @Test
-    void legacyAppRejectsServiceCreateUpdateRemove() {
-        app.setSpecJson("{\"nodes\":[]}");
-        assertThatThrownBy(() -> service.create(req("web", web("1")), "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
-        assertThatThrownBy(() -> service.update(req("web", web("1")), "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
-        assertThatThrownBy(() -> service.remove(req("web", web("1")), "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
-        verifyNoInteractions(services, releases, executions);
-    }
 }

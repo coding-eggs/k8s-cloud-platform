@@ -239,7 +239,7 @@ public class AppDependencyService {
     // ================================================================== 添加
 
     public AppOverviewView.DependencyRow add(AppDependencyRequest req, String operator, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, req.getAppId(), tenantId);
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         String key = req.getKey();
         assertValidKey(key);
         assertKeyFree(app, key);
@@ -475,7 +475,7 @@ public class AppDependencyService {
     // ================================================================== 移除
 
     public void remove(AppDependencyRequest req, String operator, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, req.getAppId(), tenantId);
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppDependency row = req.getKey() == null ? null : dependencies.selectByKey(app.getId(), req.getKey());
         if (row == null) {
             throw error("依赖不存在：" + req.getKey());
@@ -572,7 +572,7 @@ public class AppDependencyService {
      * 发起人的 Authorization 只放在局部变量里，由线程闭包持有，不落库。
      */
     public void init(AppDependencyRequest req, String operator, String tenantId) {
-        PlatformApplication app = AppGuard.requireWritable(apps, req.getAppId(), tenantId);
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppDependency row = req.getKey() == null ? null : dependencies.selectByKey(app.getId(), req.getKey());
         if (row == null) {
             throw error("依赖不存在：" + req.getKey());

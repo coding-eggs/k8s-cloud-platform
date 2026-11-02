@@ -62,10 +62,8 @@ const APP_STATUS: Record<string, { text: string; type: 'success' | 'warning' | '
   INTERRUPTED: { text: '已中断', type: 'danger' },
 }
 
-/** 旧模型应用（画布时代建的）：后端拒绝一切编辑、发布与依赖操作，只能删除 */
-const legacy = computed(() => !!(overview.value?.legacy ?? app.value?.legacy))
-const editable = computed(() => canWrite.value && !legacy.value)
-const blockedReason = computed(() => (legacy.value ? '旧模型应用只能删除' : canWrite.value ? '' : '没有应用写权限'))
+const editable = computed(() => canWrite.value)
+const blockedReason = computed(() => (canWrite.value ? '' : '没有应用写权限'))
 
 const pendingCount = computed(() => overview.value?.pendingKeys.length ?? 0)
 const live = computed(() => overview.value?.liveReleaseNo ?? app.value?.liveReleaseNo ?? 0)
@@ -301,16 +299,6 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
         <span v-if="app.description" class="muted">{{ app.description }}</span>
       </div>
 
-      <el-alert
-        v-if="legacy"
-        class="app-detail__legacy"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="旧模型应用，只能删除"
-        description="这是画布时代创建的应用，不能再编辑、发布或管理依赖。请回到应用列表删除它（会清理它建过的对象，中间件实例保留），再按新方式重建。"
-      />
-
       <AppExecutionPanel
         v-if="panelExecution"
         :app-id="appId"
@@ -502,9 +490,6 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 </template>
 
 <style scoped>
-.app-detail__legacy {
-  margin-bottom: 12px;
-}
 .muted { color: var(--text-3); }
 .app-detail__meta {
   display: flex;
