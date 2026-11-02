@@ -29,6 +29,8 @@ import com.coding.common.models.k8s.dto.SecretDTO;
 import com.coding.common.models.k8s.dto.ServiceAccountDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServiceMonitorDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotClassDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotContentDTO;
 import com.coding.common.models.k8s.dto.VolumeSnapshotDTO;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.k8s.dto.TcpRouteDTO;
@@ -81,7 +83,9 @@ public enum ResourceType {
     // 平台自己的流水线定义不在集群里（spec §3.2）。
     PIPELINE_RUN(PipelineRunDTO.class),
     // —— 卷快照（S4.3）。VolumeSnapshot 命名空间级、租户域；快照类与快照内容集群级、平台只读。
-    VOLUME_SNAPSHOT(VolumeSnapshotDTO.class)
+    VOLUME_SNAPSHOT(VolumeSnapshotDTO.class),
+    VOLUME_SNAPSHOT_CLASS(VolumeSnapshotClassDTO.class),
+    VOLUME_SNAPSHOT_CONTENT(VolumeSnapshotContentDTO.class)
     ;
 
     private final Class<?> clazz;
