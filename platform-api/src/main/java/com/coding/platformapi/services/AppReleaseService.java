@@ -75,6 +75,7 @@ public class AppReleaseService {
     private final AppReleaseExecutor executor;
     private final ApplicationDeployCredentials credentials;
     private final K8sAppClient client;
+    private final AppImageUpdates imageUpdates;
     private final TransactionTemplate tx;
 
     public AppReleaseService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
@@ -82,7 +83,7 @@ public class AppReleaseService {
                              PlatformAppExecutionMapper executions, AppDependencyService dependencies,
                              AppReleasePipeline pipeline, AppReleaseExecutor executor,
                              ApplicationDeployCredentials credentials, K8sAppClient client,
-                             PlatformTransactionManager transactionManager) {
+                             AppImageUpdates imageUpdates, PlatformTransactionManager transactionManager) {
         this.apps = apps;
         this.services = services;
         this.dependencyRows = dependencyRows;
@@ -93,6 +94,7 @@ public class AppReleaseService {
         this.executor = executor;
         this.credentials = credentials;
         this.client = client;
+        this.imageUpdates = imageUpdates;
         this.tx = new TransactionTemplate(transactionManager);
     }
 
@@ -488,6 +490,7 @@ public class AppReleaseService {
         Map<String, AppPending.Change> byKey = changes.stream()
                 .collect(Collectors.toMap(AppPending.Change::key, c -> c, (a, b) -> a));
         Map<String, String> states = liveStates(app);
+        Map<String, String> newTags = newTags(live, byKey, tenantId);
 
         List<AppOverviewView.ServiceRow> serviceRows = new ArrayList<>();
         for (PlatformAppService row : rows) {
@@ -504,7 +507,8 @@ public class AppReleaseService {
                     AppServiceDesired.image(desired),
                     liveDesired == null ? null : AppServiceDesired.image(liveDesired),
                     desired.get("replicas") instanceof Number n ? n.intValue() : null,
-                    state, change == null ? null : change.type(), desired, row.getVersion()));
+                    state, change == null ? null : change.type(), desired, row.getVersion(),
+                    newTags.get(row.getServiceKey())));
         }
         // 线上有、台账无行的孤儿服务（待删除）：照样列出来，才有地方勾选删除
         Set<String> rowKeys = rows.stream().map(PlatformAppService::getServiceKey).collect(Collectors.toSet());
@@ -517,7 +521,7 @@ public class AppReleaseService {
             serviceRows.add(new AppOverviewView.ServiceRow(c.key(), AppServiceDesired.kindOf(liveDesired),
                     AppServiceDesired.image(liveDesired), AppServiceDesired.image(liveDesired),
                     liveDesired.get("replicas") instanceof Number n ? n.intValue() : null,
-                    states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null));
+                    states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null, null));
         }
         Map<String, String> depStatus = dependencies.statusOf(dependencyRows.selectByApp(app.getId()));
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
@@ -530,6 +534,29 @@ public class AppReleaseService {
                 changes.stream().map(AppPending.Change::key).toList(),
                 executionView(executions.selectActiveByApp(app.getId())),
                 executionView(executions.selectLatestByApp(app.getId())));
+    }
+
+    /**
+     * 线上已发布服务的「新版本」。只探线上跑的镜像（线上 tag），待删除的不探。
+     * 提示是锦上添花：任何失败都只丢提示，绝不让概览失败。
+     */
+    private Map<String, String> newTags(AppSnapshot live, Map<String, AppPending.Change> byKey, String tenantId) {
+        try {
+            Map<String, AppImageUpdates.Probe> probes = new LinkedHashMap<>();
+            live.services().forEach((key, d) -> {
+                AppPending.Change c = byKey.get(key);
+                Object repo = d.get("imageRepo");
+                Object tag = d.get("imageTag");
+                if ((c == null || !"DELETED".equals(c.type())) && repo != null && tag != null) {
+                    probes.put(key, new AppImageUpdates.Probe(String.valueOf(repo), String.valueOf(tag)));
+                }
+            });
+            Map<String, String> out = imageUpdates.newTags(probes, tenantId);
+            return out == null ? Map.of() : out;
+        } catch (RuntimeException e) {
+            log.warn("新版本提示查询失败（忽略）：{}", e.getMessage());
+            return Map.of();
+        }
     }
 
     // ------------------------------------------------------------------ 计划

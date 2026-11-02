@@ -2943,6 +2943,8 @@ export interface AppServiceRow {
   desired: AppServiceDesired
   /** 孤儿服务（线上有、台账无行）为 null：不能保存，只能勾选删除 */
   version: number | null
+  /** 镜像仓库里比线上 tag 更晚推送的 tag；没有、非 Harbor 镜像或查询失败为空 */
+  newTag?: string | null
 }
 
 export interface AppDependencyRow {

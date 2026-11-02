@@ -13,9 +13,11 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
      * NOT_RELEASED 表示该服务只存在于期望配置，还没有发布到线上。
      * pending：ADDED / CHANGED / DELETED / null。
      * desired / version：编辑表单的初值与乐观锁；线上有、台账无行的孤儿服务 desired 取线上快照，version 为 null。
+     * newTag：镜像仓库里比线上 tag 更晚推送的 tag（见 AppImageUpdates）；没有、不适用或没查成为 null。
      */
     public record ServiceRow(String key, String kind, String image, String liveImage, Integer replicas,
-                             String state, String pending, Map<String, Object> desired, Integer version) {
+                             String state, String pending, Map<String, Object> desired, Integer version,
+                             String newTag) {
     }
 
     /**

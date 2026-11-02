@@ -25,6 +25,7 @@ import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import AppEnvEditor from '@/components/app-release/AppEnvEditor.vue'
 import StringListEditor from '@/components/app-release/StringListEditor.vue'
+import AppTagInput from '@/components/app-release/AppTagInput.vue'
 import { useResourceContext } from '@/stores/context'
 import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
@@ -331,7 +332,13 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           <el-tab-pane label="基本" name="basic">
             <el-form label-width="110px" :disabled="readonly" @submit.prevent>
               <el-form-item label="镜像仓库" required><el-input v-model="form.imageRepo" placeholder="不含 tag" /></el-form-item>
-              <el-form-item label="镜像 tag" required><el-input v-model="form.imageTag" /></el-form-item>
+              <el-form-item label="镜像 tag" required>
+                <AppTagInput v-model="form.imageTag" :repo="form.imageRepo" />
+                <div v-if="row?.newTag && row.newTag !== form.imageTag" class="app-svc__newtag">
+                  镜像仓库里有更晚推送的 tag「{{ row.newTag }}」
+                  <el-link type="warning" :underline="false" :disabled="readonly" @click="form.imageTag = row.newTag">采用</el-link>
+                </div>
+              </el-form-item>
               <el-form-item label="端口">
                 <el-input-number v-model="form.port" :min="1" :max="65535" :controls="false" placeholder="留空" />
                 <span class="app-svc__tip">填了端口就是服务，清空则变为后台进程</span>
@@ -457,4 +464,5 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 .app-svc__tip { margin-left: 10px; color: var(--text-3); font-size: 12px; }
 .app-svc__save { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
 .app-svc__bar { display: flex; gap: 8px; margin-bottom: 10px; }
+.app-svc__newtag { width: 100%; font-size: 12px; color: var(--el-color-warning); margin-top: 4px; }
 </style>

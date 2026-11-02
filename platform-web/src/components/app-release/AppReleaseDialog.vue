@@ -12,6 +12,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
+import AppTagInput from './AppTagInput.vue'
 import type { AppReleasePreview, AppServiceRow } from '@/types'
 import { errMsg, imageTag } from './releaseUtil'
 
@@ -178,13 +179,21 @@ async function submit(): Promise<void> {
       <el-table-column label="发布 tag" width="200">
         <template #default="{ row }">
           <span v-if="isDeleted(row)" class="app-rel-dlg__muted">将从集群删除</span>
-          <el-input
+          <AppTagInput
             v-else
-            v-model="tags[row.key]"
+            :model-value="tags[row.key] ?? ''"
+            @update:model-value="(v: string) => { tags[row.key] = v }"
+            :repo="row.desired?.imageRepo ?? ''"
             size="small"
-            placeholder="镜像 tag"
             :class="{ 'is-edited': tagEdited(row) }"
           />
+          <el-link
+            v-if="!isDeleted(row) && row.newTag && (tags[row.key] ?? '').trim() !== row.newTag"
+            type="warning"
+            :underline="false"
+            class="app-rel-dlg__newtag"
+            @click="tags[row.key] = row.newTag ?? ''"
+          >● 有新版本 {{ row.newTag }}，采用</el-link>
         </template>
       </el-table-column>
     </el-table>
@@ -254,6 +263,7 @@ async function submit(): Promise<void> {
 /* el-dialog 内部节点没有 data-v-*，scoped 打不到；唯一前缀 app-rel-dlg */
 .app-rel-dlg .app-rel-dlg__lead { color: var(--el-text-color-secondary); font-size: 13px; margin-bottom: 10px; }
 .app-rel-dlg .app-rel-dlg__tag { margin-left: 8px; }
+.app-rel-dlg .app-rel-dlg__newtag { display: block; font-size: 12px; margin-top: 2px; }
 .app-rel-dlg .app-rel-dlg__muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .app-rel-dlg .app-rel-dlg__empty { margin: 10px 0; color: var(--el-text-color-secondary); font-size: 13px; }
 .app-rel-dlg .app-rel-dlg__preview { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 24px; }

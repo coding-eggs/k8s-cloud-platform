@@ -318,7 +318,12 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
             </template>
           </el-table-column>
           <el-table-column label="镜像 tag" min-width="170">
-            <template #default="{ row }"><code>{{ tagCell(row) }}</code></template>
+            <template #default="{ row }">
+              <code>{{ tagCell(row) }}</code>
+              <el-tooltip v-if="row.newTag && row.pending !== 'DELETED'" :content="`镜像仓库里有更晚推送的 tag「${row.newTag}」，点「发布」可直接采用`" placement="top">
+                <el-tag type="warning" size="small" effect="light" class="app-detail__newtag">● 有新版本 {{ row.newTag }}</el-tag>
+              </el-tooltip>
+            </template>
           </el-table-column>
           <el-table-column label="副本" width="80">
             <template #default="{ row }">{{ row.replicas ?? '—' }}</template>
@@ -491,6 +496,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 }
 .app-detail__sec-head h3 { margin: 0; font-size: 15px; }
 .app-detail__kind { margin-left: 8px; }
+.app-detail__newtag { margin-left: 8px; }
 .app-detail__tabs { margin: 0 4px; }
 </style>
 

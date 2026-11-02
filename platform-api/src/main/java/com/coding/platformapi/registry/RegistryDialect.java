@@ -39,6 +39,20 @@ public interface RegistryDialect {
     BrowseResult browse(CredentialRef cred, List<String> path);
 
     /**
+     * 应用发布的「新版本提示」：这个仓库里有没有比 {@code liveTag} **更晚推送**的 tag。
+     *
+     * <p>默认空：只有会给出推送时间的档（Harbor）才实现，其余档（Docker Hub 等）不提示。
+     * 与 {@link #suggest} 相反，**失败要抛** —— 调用方要区分「没有新版本」与「没查成」
+     * （前者可以缓存得久一些，后者要稍后重试）。
+     *
+     * @param repository 去掉 host 之后的仓库路径（Harbor 是 {@code project/repo}）
+     * @return 新 tag；没有更新或无法比较时为空
+     */
+    default java.util.Optional<String> newerTag(CredentialRef cred, String repository, String liveTag) {
+        return java.util.Optional.empty();
+    }
+
+    /**
      * 本档允许的认证方式。{@code NONE} = 匿名。
      *
      * <p>声明在**各档自己**这里，是为了守住「加一档只动一处」——

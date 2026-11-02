@@ -277,6 +277,52 @@ public class RegistryService {
                 () -> dialects.of(cred.type()).suggest(cred, prefix));
     }
 
+    /** 新版本提示最多换几条连接重试（同 host 的连接通常只有租户自己的 robot + 手工连接，很少超过 2 条） */
+    private static final int NEWER_TAG_MAX_ATTEMPTS = 3;
+
+    /**
+     * 应用发布的「新版本提示」：{@code imageRepo}（不含 tag）里有没有比 {@code liveTag} 更晚推送的 tag。
+     *
+     * <p>只用调用者**可见**的连接（{@link #allSources} 已过租户帽，与浏览同一套可见性）；
+     * 项目级 robot 只问它自己的项目 —— 租户不会借别人的 robot，也不会越过自己的项目。
+     * 没有 host（隐式 Docker Hub）、host 匹配不上、方言不给推送时间（非 Harbor）：返回 null 且零请求。
+     * 候选连接按「项目绑定的优先」排序，前一条失败才换下一条；全部失败则**抛**最后一个异常，
+     * 让调用方把「没查成」和「没有新版本」分开（见 AppImageUpdates）。
+     *
+     * @return 新 tag；没有更新、无法比较或不适用时为 null
+     */
+    public String newerTag(String imageRepo, String liveTag, String hatTenantId) {
+        if (!StringUtils.hasText(imageRepo) || !StringUtils.hasText(liveTag)
+                || RegistryTargetResolver.hostOf(imageRepo).isEmpty()) {
+            return null;
+        }
+        String path = imageRepo.trim();
+        int slash = path.indexOf('/');
+        String repository = slash < 0 ? "" : path.substring(slash + 1);
+        int second = repository.indexOf('/');
+        String imageProject = second < 0 ? "" : repository.substring(0, second);
+
+        List<Source> candidates = allSources(hatTenantId).stream()
+                .filter(s -> RegistryTargetResolver.match(path, List.of(s.plainRef())) != null)
+                // 项目级 robot：只对它自己的项目有意义
+                .filter(s -> !StringUtils.hasText(s.project()) || s.project().equals(imageProject))
+                .sorted(Comparator.comparing((Source s) -> !StringUtils.hasText(s.project())))
+                .limit(NEWER_TAG_MAX_ATTEMPTS)
+                .toList();
+        RuntimeException last = null;
+        for (Source s : candidates) {
+            try {
+                return dialects.of(s.type()).newerTag(toRef(s), repository, liveTag).orElse(null);
+            } catch (RuntimeException e) {
+                last = e;
+            }
+        }
+        if (last != null) {
+            throw last;
+        }
+        return null;
+    }
+
     /** 浏览。**不吞错** —— 用户在页面上主动点了一层，失败要说（spec §5.3）。 */
     public BrowseResult browse(RegistryBrowseRequest req) {
         return browse(req, null);

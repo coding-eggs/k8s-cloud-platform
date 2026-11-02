@@ -15,6 +15,7 @@ import com.coding.data.models.system.PlatformAppExecution;
 import com.coding.data.models.system.PlatformAppRelease;
 import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
+import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.k8s.K8sAppClient;
 import com.coding.platformapi.models.AppReleasePreviewView;
 import org.junit.jupiter.api.AfterEach;
@@ -56,6 +57,9 @@ class AppReleaseServiceTest {
     private AppReleaseService service;
     private AppReleasePipeline pipeline;
     private PlatformApplication app;
+    private com.coding.platformapi.registry.HarborInstallLocator harbor;
+    private RegistryPullSecretService pullSecrets;
+    private AppImageUpdates imageUpdates;
 
     @BeforeEach
     void setUp() {
@@ -72,9 +76,12 @@ class AppReleaseServiceTest {
                 mock(com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper.class),
                 mock(com.coding.data.mapper.system.PlatformApplicationReferenceMapper.class), middleware, client,
                 Runnable::run);
-        pipeline = new AppReleasePipeline(apps, releases, dependencies);
+        harbor = mock(com.coding.platformapi.registry.HarborInstallLocator.class);
+        pullSecrets = mock(RegistryPullSecretService.class);
+        imageUpdates = mock(AppImageUpdates.class);
+        pipeline = new AppReleasePipeline(apps, releases, dependencies, harbor, pullSecrets);
         service = new AppReleaseService(apps, services, depRows, releases, executions, dependencies,
-                pipeline, executor, credentials, client, mock(PlatformTransactionManager.class));
+                pipeline, executor, credentials, client, imageUpdates, mock(PlatformTransactionManager.class));
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -905,6 +912,147 @@ class AppReleaseServiceTest {
         service.rollback("app1", 1, null, "bob", "t1");
 
         assertThat(inserted().getSourceReleaseNo()).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------ Harbor：新版本提示与拉取凭据
+
+    @Test
+    void overviewOffersNewTagOnlyForDeployedServicesAndOnlyProbesThem() {
+        live(1, Map.of("api", svc("1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(
+                row("api", svc("1"), false), row("job", svc("5"), false)));
+        when(imageUpdates.newTags(any(), org.mockito.ArgumentMatchers.eq("t1")))
+                .thenReturn(Map.of("api", "2"));
+
+        var overview = service.overview("app1", "t1");
+
+        assertThat(overview.services()).filteredOn(s -> s.key().equals("api"))
+                .singleElement().satisfies(s -> assertThat(s.newTag()).isEqualTo("2"));
+        assertThat(overview.services()).filteredOn(s -> s.key().equals("job"))
+                .singleElement().satisfies(s -> assertThat(s.newTag()).isNull());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, AppImageUpdates.Probe>> cap = ArgumentCaptor.forClass(Map.class);
+        verify(imageUpdates).newTags(cap.capture(), any());
+        // 探的是线上的镜像（线上 tag 1）；未发布的 job 不探
+        assertThat(cap.getValue()).containsOnlyKeys("api");
+        assertThat(cap.getValue().get("api")).isEqualTo(new AppImageUpdates.Probe("harbor.local/demo/x", "1"));
+    }
+
+    @Test
+    void overviewNeverFailsBecauseOfTheNewTagLookup() {
+        live(1, Map.of("api", svc("1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        when(imageUpdates.newTags(any(), any())).thenThrow(new IllegalStateException("harbor exploded"));
+
+        var overview = service.overview("app1", "t1");
+
+        assertThat(overview.services()).hasSize(1);
+        assertThat(overview.services().get(0).newTag()).isNull();
+    }
+
+    @SafeVarargs
+    private AppSnapshot snapshotOf(Map<String, Object>... svcs) {
+        Map<String, Object> all = new LinkedHashMap<>();
+        for (int i = 0; i < svcs.length; i++) {
+            all.put("s" + i, svcs[i]);
+        }
+        return AppSnapshot.parse(JSON.writeValueAsString(Map.of("services", all, "dependencies", List.of())));
+    }
+
+    private static Object pullSecretsOf(AppRenderRequestDTO req) {
+        return req.getSpec().getNodes().get(0).getParams().get("imagePullSecrets");
+    }
+
+    @Test
+    void renderAddsThePlatformPullSecretForPlatformHarborImagesAndKeepsUserEntries() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+        Map<String, Object> d = svc("1");
+        d.put("imagePullSecrets", List.of("mine", "platform-registry-pull"));
+
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 1, snapshotOf(d));
+
+        // 用户的在前、平台的补在后，且不重复
+        assertThat(pullSecretsOf(req)).isEqualTo(List.of("mine", "platform-registry-pull"));
+    }
+
+    @Test
+    void renderAddsPullSecretEvenWhenTheUserSetNothing() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 1, snapshotOf(svc("1")));
+
+        assertThat(pullSecretsOf(req)).isEqualTo(List.of("platform-registry-pull"));
+    }
+
+    @Test
+    void renderLeavesNonPlatformImagesAlone() {
+        when(harbor.isPlatformHost(any())).thenReturn(false);
+        Map<String, Object> custom = svc("1");
+        custom.put("imagePullSecrets", List.of("mine"));
+        Map<String, Object> hub = svc("1");
+        hub.put("imageRepo", "nginx");   // 无 host 的 Docker Hub 写法
+
+        assertThat(pullSecretsOf(pipeline.buildRequest(app, 1, snapshotOf(svc("1"))))).isNull();
+        assertThat(pullSecretsOf(pipeline.buildRequest(app, 1, snapshotOf(custom)))).isEqualTo(List.of("mine"));
+        assertThat(pullSecretsOf(pipeline.buildRequest(app, 1, snapshotOf(hub)))).isNull();
+    }
+
+    @Test
+    void thePullSecretIsAddedAtRenderTimeAndNeverStoredInTheSnapshot() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
+
+        assertThat(createdSnapshot()).doesNotContain("platform-registry-pull").doesNotContain("imagePullSecrets");
+    }
+
+    @Test
+    void rollbackOfAnOldSnapshotStillGetsThePullSecret() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+        PlatformAppRelease old = new PlatformAppRelease();
+        old.setReleaseNo(3);
+        old.setSnapshotJson(JSON.writeValueAsString(
+                Map.of("services", Map.of("api", svc("1")), "dependencies", List.of())));
+
+        AppRenderRequestDTO req = pipeline.build(app, old);
+
+        assertThat(pullSecretsOf(req)).isEqualTo(List.of("platform-registry-pull"));
+    }
+
+    private PlatformAppExecution executionOfCreatedRelease() {
+        ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
+        verify(releases).insert(cap.capture());
+        PlatformAppRelease release = cap.getValue();
+        release.setReleaseNo(1);
+        when(releases.selectByNo("app1", 1)).thenReturn(release);
+        PlatformAppExecution exec = new PlatformAppExecution();
+        exec.setAppId("app1");
+        exec.setReleaseNo(1);
+        return exec;
+    }
+
+    @Test
+    void precheckSyncsThePullSecretOnceForPlatformHarborReleases() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+        when(services.selectByApp("app1")).thenReturn(List.of(
+                row("api", svc("1"), false), row("job", svc("1"), false)));
+        service.create("app1", List.of("api", "job"), Map.of(), null, "bob", "t1");
+
+        pipeline.check(executionOfCreatedRelease());
+
+        verify(pullSecrets, org.mockito.Mockito.times(1)).ensureQuietly("c1", "t1", "demo");
+    }
+
+    @Test
+    void precheckDoesNotTouchPullSecretsForOtherImages() {
+        when(harbor.isPlatformHost(any())).thenReturn(false);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
+
+        pipeline.check(executionOfCreatedRelease());
+
+        verify(pullSecrets, never()).ensureQuietly(any(), any(), any());
     }
 
     private void healthyInstance(String instanceId) {
