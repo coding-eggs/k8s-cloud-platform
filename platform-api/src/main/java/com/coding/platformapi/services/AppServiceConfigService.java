@@ -23,6 +23,8 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import com.coding.platformapi.registry.HarborInstallLocator;
+import com.coding.platformapi.registry.RegistryTargetResolver;
 import java.util.regex.Pattern;
 
 /**
@@ -45,22 +47,48 @@ public class AppServiceConfigService {
     private final PlatformAppReleaseMapper releases;
 
     private final PlatformAppExecutionMapper executions;
+    private final HarborInstallLocator harbor;
 
     public AppServiceConfigService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
                                    PlatformAppDependencyMapper dependencies, PlatformAppReleaseMapper releases,
-                                   PlatformAppExecutionMapper executions) {
+                                   PlatformAppExecutionMapper executions,
+                                   HarborInstallLocator harbor) {
         this.apps = apps;
         this.services = services;
         this.dependencies = dependencies;
         this.releases = releases;
         this.executions = executions;
+        this.harbor = harbor;
+    }
+
+    /**
+     * 用户自己设了 imagePullSecrets、且镜像在平台 Harbor 上时，把平台托管的 {@code platform-registry-pull}
+     * 并进去（用户的在前，去重）。保存时合并而不是渲染时注入：它成为存进快照、随勾选发布的一次真实改动，
+     * 回滚逐字还原，也不会因为 Harbor 状态变化让未勾选的服务被重启。列表为空 / 非平台 Harbor 镜像原样不动
+     * （空列表时 Pod 走 default SA，SA 上本来就挂着这个 Secret）。
+     */
+    Map<String, Object> withPlatformPullSecret(Map<String, Object> desired) {
+        if (!(desired.get("imagePullSecrets") instanceof List<?> user) || user.isEmpty()) {
+            return desired;
+        }
+        String host = RegistryTargetResolver.hostOf(String.valueOf(desired.get("imageRepo")));
+        if (host.isEmpty() || !harbor.isPlatformHost(host)) {
+            return desired;
+        }
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        user.forEach(o -> names.add(String.valueOf(o)));
+        names.add(RegistryPullSecretService.SECRET_NAME);
+        List<String> merged = new java.util.ArrayList<>(names);
+        Map<String, Object> out = new java.util.LinkedHashMap<>(desired);
+        out.put("imagePullSecrets", merged);
+        return out;
     }
 
     public AppServiceView create(AppServiceRequest req, String tenantId) {
         PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         String key = req.getServiceKey();
         assertValidKey(key);
-        Map<String, Object> desired = AppServiceDesired.normalize(req.getDesired());
+        Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
 
         if (dependencies.selectByKey(app.getId(), key) != null) {
             throw error("名称 " + key + " 已被依赖占用");
@@ -98,7 +126,7 @@ public class AppServiceConfigService {
         if (req.getVersion() == null || !req.getVersion().equals(row.getVersion())) {
             throw conflict();
         }
-        Map<String, Object> desired = AppServiceDesired.normalize(req.getDesired());
+        Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
         row.setDesiredJson(JSON.writeValueAsString(desired));
         row.setUpdatedAt(new Date());
         if (services.updateWithVersion(row) == 0) {

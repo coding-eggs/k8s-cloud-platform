@@ -1186,8 +1186,10 @@ export const middlewareApi = {
 // ---------------- 应用编排（画布） ----------------
 
 export const applicationApi = {
-  list: (clusterId: string, tenantId?: string) =>
-    http.post<never, ApplicationView[]>('/application/list', { clusterId, tenantId }),
+  /** `silent` 用于附带性查询（资源页「所属应用」）：失败不弹红条 */
+  list: (clusterId: string, tenantId?: string, silent = false) =>
+    http.post<never, ApplicationView[]>('/application/list', { clusterId, tenantId },
+      silent ? { silent403: true } : undefined),
   get: (appId: string, tenantId?: string) =>
     http.post<never, ApplicationView>('/application/get', { appId, tenantId }),
   create: (payload: {

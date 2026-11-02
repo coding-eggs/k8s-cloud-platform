@@ -24,7 +24,10 @@ function fetchTags(query: string, cb: (items: TagItem[]) => void): void {
     .then((r) => {
       const seen = new Set<string>()
       const out: TagItem[] = []
+      const head = `${repo}:`.toLowerCase()
       for (const it of r.items ?? []) {
+        // 无 host 的输入会问全部来源，候选可能是别的仓库的：只收 `<本仓库>:tag`
+        if (!it.value.toLowerCase().startsWith(head)) continue
         const tag = it.value.slice(it.value.lastIndexOf(':') + 1)
         if (tag && !seen.has(tag)) { seen.add(tag); out.push({ value: tag, connectionName: it.connectionName }) }
       }

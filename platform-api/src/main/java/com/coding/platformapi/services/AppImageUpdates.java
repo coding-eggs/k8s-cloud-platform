@@ -86,8 +86,15 @@ public class AppImageUpdates {
             for (String k : missKeys) {
                 Probe p = byKey.get(k);
                 tasks.add(() -> {
-                    String tag = registry.newerTag(p.imageRepo(), p.liveTag(), hatTenantId);
-                    return tag == null ? List.<String>of() : List.of(tag);
+                    try {
+                        String tag = registry.newerTag(p.imageRepo(), p.liveTag(), hatTenantId);
+                        return tag == null ? List.<String>of() : List.of(tag);
+                    } catch (RuntimeException e) {
+                        // 一行、不带堆栈；结果按「没有新版本」缓存，TTL 内不再重试
+                        log.warn("新版本提示：查询镜像仓库失败 repo={}（{} 内不再重试）：{}",
+                                p.imageRepo(), TTL, e.getMessage());
+                        return List.<String>of();
+                    }
                 });
             }
             List<List<String>> results = executor.allOf(tasks);

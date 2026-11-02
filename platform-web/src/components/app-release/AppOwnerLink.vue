@@ -4,7 +4,7 @@
  * 正好是 `/applications/:id` 的路由参数，所以不需要任何反查就能跳转）。
  *
  * 名称用整页**一次**应用列表请求解出来（模块级按 租户+集群 缓存 60 秒，列表里 N 行共享同一个 Promise，
- * 不会 N+1）；没有应用页权限、请求失败或应用已删除时退回通用文案「所属应用」，链接照样可用。
+ * 不会 N+1）；没有应用页权限、请求失败或应用已删除时该 id 解析不到可见应用时不渲染链接（避免死链接）；附带查询静默，不弹红条。
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { pageCodes } from '@/pageCodes'
@@ -15,6 +15,8 @@ const props = defineProps<{ appId: string; clusterId?: string | null; tenantId?:
 const perm = usePermission()
 const name = ref('')
 const allowed = computed(() => perm.has(pageCodes.application))
+/** 只有 id 解析到一个当前可见的应用才渲染：没权限 / 已删除 / 查询失败都不放死链接 */
+const visible = computed(() => allowed.value && !!name.value)
 
 async function resolve(): Promise<void> {
   name.value = ''
@@ -36,7 +38,7 @@ function namesOf(clusterId: string, tenantId?: string): Promise<Map<string, stri
   const key = `${tenantId ?? ''}|${clusterId}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < TTL_MS) return hit.p
-  const p = api.list(clusterId, tenantId)
+  const p = api.list(clusterId, tenantId, true)
     .then((rows) => new Map((rows ?? []).map((a) => [a.id, a.displayName || a.name] as [string, string])))
     .catch(() => {
       cache.delete(key)
@@ -49,13 +51,13 @@ function namesOf(clusterId: string, tenantId?: string): Promise<Map<string, stri
 
 <template>
   <router-link
-    v-if="allowed"
+    v-if="visible"
     :to="{ name: 'application-detail', params: { id: appId } }"
     class="app-owner-link"
-    :title="'所属应用' + (name ? '：' + name : '')"
+    :title="'所属应用：' + name"
     @click.stop
   >
-    <el-tag size="small" type="success" effect="plain">应用 · {{ name || '所属应用' }}</el-tag>
+    <el-tag size="small" type="success" effect="plain">所属应用 · {{ name }}</el-tag>
   </router-link>
 </template>
 

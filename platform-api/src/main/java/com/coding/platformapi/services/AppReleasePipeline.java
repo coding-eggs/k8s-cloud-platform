@@ -19,8 +19,6 @@ import com.coding.platformapi.app.AppEnvResolver.ServiceAddr;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppServiceDesired;
 import com.coding.platformapi.app.AppSnapshot;
-import com.coding.platformapi.registry.HarborInstallLocator;
-import com.coding.platformapi.registry.RegistryTargetResolver;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -44,17 +42,12 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
     private final PlatformApplicationMapper apps;
     private final PlatformAppReleaseMapper releases;
     private final AppDependencyService dependencies;
-    private final HarborInstallLocator harbor;
-    private final RegistryPullSecretService pullSecrets;
 
     public AppReleasePipeline(PlatformApplicationMapper apps, PlatformAppReleaseMapper releases,
-                              AppDependencyService dependencies, HarborInstallLocator harbor,
-                              RegistryPullSecretService pullSecrets) {
+                              AppDependencyService dependencies) {
         this.apps = apps;
         this.releases = releases;
         this.dependencies = dependencies;
-        this.harbor = harbor;
-        this.pullSecrets = pullSecrets;
     }
 
     @Override
@@ -73,11 +66,6 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         List<String> problems = problems(app, snapshot);
         if (!problems.isEmpty()) {
             throw error(String.join("；", problems));
-        }
-        // 平台 Harbor 的镜像要靠命名空间里的拉取凭据：幂等补一次（只读库里凭据、写 Secret，不调 Harbor 管理接口；
-        // 失败只告警 —— 公开镜像照样能拉，私有镜像会在 Pod 事件里报 ImagePullBackOff）
-        if (snapshot.services().values().stream().anyMatch(this::inPlatformHarbor)) {
-            pullSecrets.ensureQuietly(app.getClusterId(), app.getTenantId(), app.getNamespace());
         }
     }
 
@@ -108,10 +96,9 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
                 }
             });
             params.put("image", AppServiceDesired.image(desired));
-            // 渲染时才补、不进快照：快照只记用户意图，回滚旧快照同样会带上
-            if (inPlatformHarbor(desired)) {
-                params.put("imagePullSecrets", withPlatformPullSecret(desired.get("imagePullSecrets")));
-            }
+            // 拉取权限不在这里补：imagePullSecrets 只取自快照（用户意图，回滚才能逐字还原）。
+            // 平台 Harbor 的拉取凭据靠命名空间 default SA 上挂着的 platform-registry-pull —— 它在分配命名空间时
+            // 下发，也可由「重下发全部模板」补；chart 不设 serviceAccountName，Pod 走 default SA，由 SA 准入带上。
             AppNodeDTO node = new AppNodeDTO();
             node.setKey(e.getKey());
             node.setKind(AppServiceDesired.kindOf(desired));   // 原样发给 k8s-server
@@ -136,30 +123,6 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         req.setSpec(spec);
         req.setInjectByNode(inject);
         return req;
-    }
-
-    /** 镜像是否在平台自己装的 Harbor 上（无 host 的 Docker Hub 写法不是）。 */
-    private boolean inPlatformHarbor(Map<String, Object> desired) {
-        Object repo = desired.get("imageRepo");
-        if (repo == null) {
-            return false;
-        }
-        String host = RegistryTargetResolver.hostOf(String.valueOf(repo));
-        return !host.isEmpty() && harbor.isPlatformHost(host);
-    }
-
-    /** 用户已设的在前，平台托管的 Secret 名补在后，去重。 */
-    static List<String> withPlatformPullSecret(Object userSet) {
-        List<String> out = new ArrayList<>();
-        if (userSet instanceof List<?> l) {
-            l.forEach(o -> out.add(String.valueOf(o)));
-        } else if (userSet instanceof String str && !str.isBlank()) {
-            out.add(str);
-        }
-        if (!out.contains(RegistryPullSecretService.SECRET_NAME)) {
-            out.add(RegistryPullSecretService.SECRET_NAME);
-        }
-        return out;
     }
 
     /** 快照里所有引用能否解析；每条问题带服务名。连接信息取不到时只报这一条。 */

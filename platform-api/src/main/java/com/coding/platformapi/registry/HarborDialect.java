@@ -168,7 +168,16 @@ public class HarborDialect implements RegistryDialect {
         }
         String json = http.get(cred, artifactsNewestUrl(cred, repository.substring(0, slash),
                 repository.substring(slash + 1)));
-        return java.util.Optional.ofNullable(newerTagOf(parsePushed(json), liveTag));
+        return java.util.Optional.ofNullable(newerTagOf(parsePushed(json), liveTag, pageIsFull(json)));
+    }
+
+    /** 这一页是不是满的（满 = 可能还有更旧的 artifact 没取回来，线上 tag 找不到不代表它不存在）。 */
+    static boolean pageIsFull(String json) {
+        try {
+            return JSON.readTree(json).size() >= PAGE_SIZE;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** 推送时间倒序：仓库 tag 超过一页（100）时，最新的也一定在第一页里。 */
@@ -209,7 +218,8 @@ public class HarborDialect implements RegistryDialect {
      *
      * <ul>
      *   <li>不比 tag 字面顺序 —— {@code 1.10.0} 排在 {@code 1.9.0} 前，{@code latest} 没有顺序；</li>
-     *   <li>线上 tag 找不到（被删，或不在最近一页）→ 无法比较，不提示；</li>
+     *   <li>线上 tag 找不到：页没满 = 已被删，无法比较，不提示；页满（100）= 多半是太旧而不在这一页，
+     *       提示最新那个；</li>
      *   <li>该 artifact 同时挂着多个 tag 时，优先给不是 {@code latest} 的那个（latest 会移动，
      *       发出去就不可复现），只有 {@code latest} 时才给它；</li>
      *   <li>线上跑的是移动别名（如 {@code latest}）时，别名被新推送「抢走」后，线上 tag 指向的
@@ -217,19 +227,43 @@ public class HarborDialect implements RegistryDialect {
      * </ul>
      */
     public static String newerTagOf(List<Pushed> artifacts, String liveTag) {
+        return newerTagOf(artifacts, liveTag, false);
+    }
+
+    /**
+     * @param pageFull 取回的这一页是满的：线上 tag 找不到时它多半比这一页里所有 artifact 都旧，
+     *                 此时直接提示最新那个；页没满而找不到 = 线上 tag 确已被删，仍不提示。
+     */
+    public static String newerTagOf(List<Pushed> artifacts, String liveTag, boolean pageFull) {
         java.time.Instant live = artifacts.stream()
                 .filter(a -> a.tags().contains(liveTag))
                 .map(Pushed::pushedAt).max(java.util.Comparator.naturalOrder()).orElse(null);
-        if (live == null) {
+        if (live == null && !pageFull) {
             return null;
         }
         Pushed latest = artifacts.stream()
                 .max(java.util.Comparator.comparing(Pushed::pushedAt)).orElse(null);
-        if (latest == null || !latest.pushedAt().isAfter(live)) {
+        if (latest == null || (live != null && !latest.pushedAt().isAfter(live))) {
             return null;
         }
-        return latest.tags().stream().filter(t -> !"latest".equalsIgnoreCase(t)).findFirst()
-                .orElse(latest.tags().get(0));
+        return pickTag(latest.tags());
+    }
+
+    private static final java.util.regex.Pattern SEMVER_LIKE =
+            java.util.regex.Pattern.compile("^v?[0-9]+(\\.[0-9]+)+.*");
+
+    /**
+     * 同一 artifact 挂多个 tag 时确定性地选一个：非 latest 优先；其中类 semver 的优先，
+     * 再取最长的（1.4.3 比 1.4 具体），最后按字典序。Harbor 返回的 tag 顺序不保证稳定。
+     */
+    static String pickTag(List<String> tags) {
+        return tags.stream()
+                .sorted(java.util.Comparator
+                        .comparing((String t) -> "latest".equalsIgnoreCase(t))
+                        .thenComparing(t -> !SEMVER_LIKE.matcher(t).matches())
+                        .thenComparing(java.util.Comparator.comparingInt(String::length).reversed())
+                        .thenComparing(java.util.Comparator.naturalOrder()))
+                .findFirst().orElse(tags.get(0));
     }
 
     // ==================== 响应映射（纯） ====================

@@ -117,4 +117,32 @@ class HarborDialectNewerTagTest {
         assertThatThrownBy(() -> new HarborDialect(http).newerTag(CRED, "proj/app", "1"))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void aFullPageWithoutTheLiveTagOffersTheNewestArtifact() {
+        var arts = HarborDialect.parsePushed(artifacts(art("2026-02-01T00:00:00.000Z", "1.9.0")));
+        assertThat(HarborDialect.newerTagOf(arts, "0.1.0", true)).isEqualTo("1.9.0");
+        assertThat(HarborDialect.newerTagOf(arts, "0.1.0", false)).isNull();
+    }
+
+    @Test
+    void pageFullnessIsDetectedFromTheRawArray() {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < 100; i++) {
+            sb.append(i == 0 ? "" : ",").append("{}");
+        }
+        assertThat(HarborDialect.pageIsFull(sb + "]")).isTrue();
+        assertThat(HarborDialect.pageIsFull("[{}]")).isFalse();
+        assertThat(HarborDialect.pageIsFull("garbage")).isFalse();
+    }
+
+    @Test
+    void severalTagsOnOneArtifactPickDeterministically() {
+        // 非 latest 优先；类 semver 优先；更长优先；最后字典序 —— 与 Harbor 返回顺序无关
+        assertThat(HarborDialect.pickTag(List.of("latest", "1.4", "1.4.3", "stable"))).isEqualTo("1.4.3");
+        assertThat(HarborDialect.pickTag(List.of("stable", "1.4.3", "latest", "1.4"))).isEqualTo("1.4.3");
+        assertThat(HarborDialect.pickTag(List.of("zeta", "alpha", "latest"))).isEqualTo("alpha");
+        assertThat(HarborDialect.pickTag(List.of("1.4.4", "1.4.3"))).isEqualTo("1.4.3");
+        assertThat(HarborDialect.pickTag(List.of("latest"))).isEqualTo("latest");
+    }
 }

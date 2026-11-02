@@ -41,6 +41,7 @@ class AppServiceConfigServiceTest {
     private PlatformAppExecutionMapper executions;
     private AppServiceConfigService service;
     private PlatformApplication app;
+    private com.coding.platformapi.registry.HarborInstallLocator harbor;
 
     @BeforeEach
     void setUp() {
@@ -49,7 +50,8 @@ class AppServiceConfigServiceTest {
         deps = mock(PlatformAppDependencyMapper.class);
         releases = mock(PlatformAppReleaseMapper.class);
         executions = mock(PlatformAppExecutionMapper.class);
-        service = new AppServiceConfigService(apps, services, deps, releases, executions);
+        harbor = mock(com.coding.platformapi.registry.HarborInstallLocator.class);
+        service = new AppServiceConfigService(apps, services, deps, releases, executions, harbor);
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -286,5 +288,38 @@ class AppServiceConfigServiceTest {
         assertThatThrownBy(() -> service.remove(none, "t1")).isInstanceOf(CloudPlatformException.class);
         verify(services, never()).deleteById(any());
         verify(services, never()).updateWithVersion(any());
+    }
+
+    private Map<String, Object> savedDesired() {
+        org.mockito.ArgumentCaptor<PlatformAppService> cap = org.mockito.ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).insert(cap.capture());
+        return JSON.readValue(cap.getValue().getDesiredJson(), new tools.jackson.core.type.TypeReference<Map<String, Object>>() { });
+    }
+
+    @Test
+    void saveMergesPlatformPullSecretIntoAUserSetListOnAPlatformHarborImage() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+        Map<String, Object> d = web("1");
+        d.put("imagePullSecrets", List.of("mine", "mine", "platform-registry-pull"));
+
+        service.create(req("web", d), "t1");
+
+        assertThat(savedDesired().get("imagePullSecrets")).isEqualTo(List.of("mine", "platform-registry-pull"));
+    }
+
+    @Test
+    void saveLeavesNonHarborImagesAndEmptyListsAlone() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(false);
+        Map<String, Object> other = web("1");
+        other.put("imagePullSecrets", List.of("mine"));
+        service.create(req("web", other), "t1");
+        assertThat(savedDesired().get("imagePullSecrets")).isEqualTo(List.of("mine"));
+    }
+
+    @Test
+    void saveDoesNotInventAListWhenTheUserSetNone() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+        service.create(req("web", web("1")), "t1");
+        assertThat(savedDesired()).doesNotContainKey("imagePullSecrets");
     }
 }

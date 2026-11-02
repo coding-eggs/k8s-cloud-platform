@@ -57,8 +57,6 @@ class AppReleaseServiceTest {
     private AppReleaseService service;
     private AppReleasePipeline pipeline;
     private PlatformApplication app;
-    private com.coding.platformapi.registry.HarborInstallLocator harbor;
-    private RegistryPullSecretService pullSecrets;
     private AppImageUpdates imageUpdates;
 
     @BeforeEach
@@ -76,10 +74,8 @@ class AppReleaseServiceTest {
                 mock(com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper.class),
                 mock(com.coding.data.mapper.system.PlatformApplicationReferenceMapper.class), middleware, client,
                 Runnable::run);
-        harbor = mock(com.coding.platformapi.registry.HarborInstallLocator.class);
-        pullSecrets = mock(RegistryPullSecretService.class);
         imageUpdates = mock(AppImageUpdates.class);
-        pipeline = new AppReleasePipeline(apps, releases, dependencies, harbor, pullSecrets);
+        pipeline = new AppReleasePipeline(apps, releases, dependencies);
         service = new AppReleaseService(apps, services, depRows, releases, executions, dependencies,
                 pipeline, executor, credentials, client, imageUpdates, mock(PlatformTransactionManager.class));
         app = new PlatformApplication();
@@ -964,95 +960,35 @@ class AppReleaseServiceTest {
     }
 
     @Test
-    void renderAddsThePlatformPullSecretForPlatformHarborImagesAndKeepsUserEntries() {
-        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
-        Map<String, Object> d = svc("1");
-        d.put("imagePullSecrets", List.of("mine", "platform-registry-pull"));
-
-        AppRenderRequestDTO req = pipeline.buildRequest(app, 1, snapshotOf(d));
-
-        // 用户的在前、平台的补在后，且不重复
-        assertThat(pullSecretsOf(req)).isEqualTo(List.of("mine", "platform-registry-pull"));
-    }
-
-    @Test
-    void renderAddsPullSecretEvenWhenTheUserSetNothing() {
-        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
-
-        AppRenderRequestDTO req = pipeline.buildRequest(app, 1, snapshotOf(svc("1")));
-
-        assertThat(pullSecretsOf(req)).isEqualTo(List.of("platform-registry-pull"));
-    }
-
-    @Test
-    void renderLeavesNonPlatformImagesAlone() {
-        when(harbor.isPlatformHost(any())).thenReturn(false);
+    void renderTakesImagePullSecretsOnlyFromTheSnapshot() {
         Map<String, Object> custom = svc("1");
         custom.put("imagePullSecrets", List.of("mine"));
-        Map<String, Object> hub = svc("1");
-        hub.put("imageRepo", "nginx");   // 无 host 的 Docker Hub 写法
 
         assertThat(pullSecretsOf(pipeline.buildRequest(app, 1, snapshotOf(svc("1"))))).isNull();
         assertThat(pullSecretsOf(pipeline.buildRequest(app, 1, snapshotOf(custom)))).isEqualTo(List.of("mine"));
-        assertThat(pullSecretsOf(pipeline.buildRequest(app, 1, snapshotOf(hub)))).isNull();
     }
 
     @Test
-    void thePullSecretIsAddedAtRenderTimeAndNeverStoredInTheSnapshot() {
-        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
-        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+    void anUnselectedLiveServiceRendersIdenticalParamsAcrossReleases() {
+        // 平台 Harbor 镜像、没设 imagePullSecrets：渲染不得因 Harbor 状态而多出东西（否则未勾选的服务也会被重启）
+        Map<String, Object> d = svc("1");
+        AppRenderRequestDTO r1 = pipeline.buildRequest(app, 1, snapshotOf(d));
+        AppRenderRequestDTO r2 = pipeline.buildRequest(app, 2, snapshotOf(d));
 
-        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
-
-        assertThat(createdSnapshot()).doesNotContain("platform-registry-pull").doesNotContain("imagePullSecrets");
+        assertThat(r2.getSpec().getNodes().get(0).getParams()).isEqualTo(r1.getSpec().getNodes().get(0).getParams());
+        assertThat(r1.getSpec().getNodes().get(0).getParams()).doesNotContainKey("imagePullSecrets");
     }
 
     @Test
-    void rollbackOfAnOldSnapshotStillGetsThePullSecret() {
-        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+    void rollbackRendersTheOldSnapshotsListExactly() {
+        Map<String, Object> d = svc("1");
+        d.put("imagePullSecrets", List.of("mine", "platform-registry-pull"));
         PlatformAppRelease old = new PlatformAppRelease();
         old.setReleaseNo(3);
         old.setSnapshotJson(JSON.writeValueAsString(
-                Map.of("services", Map.of("api", svc("1")), "dependencies", List.of())));
+                Map.of("services", Map.of("api", d), "dependencies", List.of())));
 
-        AppRenderRequestDTO req = pipeline.build(app, old);
-
-        assertThat(pullSecretsOf(req)).isEqualTo(List.of("platform-registry-pull"));
-    }
-
-    private PlatformAppExecution executionOfCreatedRelease() {
-        ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
-        verify(releases).insert(cap.capture());
-        PlatformAppRelease release = cap.getValue();
-        release.setReleaseNo(1);
-        when(releases.selectByNo("app1", 1)).thenReturn(release);
-        PlatformAppExecution exec = new PlatformAppExecution();
-        exec.setAppId("app1");
-        exec.setReleaseNo(1);
-        return exec;
-    }
-
-    @Test
-    void precheckSyncsThePullSecretOnceForPlatformHarborReleases() {
-        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
-        when(services.selectByApp("app1")).thenReturn(List.of(
-                row("api", svc("1"), false), row("job", svc("1"), false)));
-        service.create("app1", List.of("api", "job"), Map.of(), null, "bob", "t1");
-
-        pipeline.check(executionOfCreatedRelease());
-
-        verify(pullSecrets, org.mockito.Mockito.times(1)).ensureQuietly("c1", "t1", "demo");
-    }
-
-    @Test
-    void precheckDoesNotTouchPullSecretsForOtherImages() {
-        when(harbor.isPlatformHost(any())).thenReturn(false);
-        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
-        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
-
-        pipeline.check(executionOfCreatedRelease());
-
-        verify(pullSecrets, never()).ensureQuietly(any(), any(), any());
+        assertThat(pullSecretsOf(pipeline.build(app, old))).isEqualTo(List.of("mine", "platform-registry-pull"));
     }
 
     private void healthyInstance(String instanceId) {
