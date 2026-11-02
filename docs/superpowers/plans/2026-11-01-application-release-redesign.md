@@ -35,7 +35,7 @@
 ### Task 1: 迁移与数据层
 
 **Files:**
-- Create: `platform-data/src/main/resources/db/migration/V2026_11_01_1__application_release.sql`
+- Create: `platform-data/src/main/resources/db/migration/V2026_11_01_1__application_release.sql`（Task 13 已改名为 `V2026_11_02_10__application_release.sql`，权限三份为 `_11` / `_12` / `_13`）
 - Create（各含 model / mapper / XML，放 `com.coding.data.*.system` 与 `resources/mapper/system`）：`PlatformAppService`、`PlatformAppDependency`、`PlatformAppRelease`、`PlatformAppExecution`
 - Test: `platform-api/src/test/java/com/coding/platformapi/app/ApplicationReleaseMigrationTest.java`（仿 `ApplicationMigrationTest`）
 
@@ -283,5 +283,5 @@
 - [ ] 实现挂载和只读拓扑（节点跳详情，禁拖拽连线）。
 - [ ] 删除旧代码和旧接口，`grep` 确认无残留引用。
 - [ ] `mvn test` 全绿；`npm run build` 通过。
-- [ ] 按 spec §11 写上线步骤，迁移顺序 `V2026_11_01_1` → `_2`；按 spec §12 完成全部真集群验收。
+- [ ] 按 spec §11 写上线步骤，迁移顺序 `V2026_11_02_10` → `_11` → `_12` → `_13`（已改名，见 docs/development/application-release.md §3）；按 spec §12 完成全部真集群验收。
 - [ ] 提交 `refactor(app): 移除画布与旧部署链路`。

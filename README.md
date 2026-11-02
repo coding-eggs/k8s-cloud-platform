@@ -12,7 +12,7 @@
 
 - **两个视图，各司其职**：平台视图管集群、网络、组织与运维；租户视图只看自己的命名空间，做应用、资源、存储和观测。
 - **多租户隔离分四层**：权限表、端点边界、资源边界、K8s RBAC 层层把关，默认拒绝；权限行漏配时应用直接拒启。
-- **应用交付一条线**：画布编排应用，Tekton 流水线构建，内置 Harbor 组件与镜像来源纳管。
+- **应用交付一条线**：服务 + 依赖 + 不可变发布（可回滚），Tekton 流水线构建，内置 Harbor 组件与镜像来源纳管。
 - **中间件开箱即用**：Redis、MySQL、PostgreSQL、Kafka、RabbitMQ、Elasticsearch、Nacos、Milvus 八款，支持创建实例、改规格、查连接方式。
 - **集群组件一键安装**：仓库内置 Helm chart，Istio、Calico、Prometheus、Thanos、Tempo、SeaweedFS 等可直接从页面安装。
 - **观测闭环**：指标、告警、日志、链路集中在同一套界面，日志可一键跳转到对应链路，还有基于 Istio 指标的网格拓扑。
@@ -83,7 +83,7 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 | Element Plus | 2.9 | UI 组件库 |
 | Tailwind CSS | 3.4 | 原子化样式 |
 | ECharts | 5.6 | 指标曲线、拓扑 |
-| Vue Flow | 1.48 | 应用编排画布 |
+| Vue Flow | 1.48 | 应用拓扑、流水线画布 |
 | xterm.js | 6 | 容器终端 |
 | highlight.js | 11 | YAML 展示与高亮 |
 | axios | 1.7 | HTTP 客户端 |
@@ -125,7 +125,7 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 |---|---|
 | **集群** | 集群注册与探活、节点管理（cordon/驱逐/详情）、集群概览（资源总量、per-ns 明细、健康摘要）、命名空间管理（配额/限制范围/描述/受保护 ns）、存储类 |
 | **网络** | Service、Gateway API 七类对象（GatewayClass / Gateway / HTTP·GRPC·TCP·TLS·UDPRoute）、路由五合一页面、网格拓扑、Calico（IPPool / IPReservation / BGP 配置·对等体·过滤器 / IPAM 浏览）、静态 IP 绑定 |
-| **应用** | 应用编排画布（服务/后台进程/中间件/外部依赖，分阶段部署）、中间件商店与实例（8 款 + 用户管理）、流水线（Tekton：编辑、运行、日志、重试）、Git 凭据、镜像仓库与镜像来源纳管 |
+| **应用** | 应用发布（服务/后台进程 + 中间件/外部依赖，变量引用、待发布改动、发布与回滚、只读拓扑）、中间件商店与实例（8 款 + 用户管理）、流水线（Tekton：编辑、运行、日志、重试）、Git 凭据、镜像仓库与镜像来源纳管 |
 | **资源** | 工作负载（Deployment/StatefulSet/DaemonSet/Job 等，回滚/副本/重启/历史）、Pod（日志、Exec 终端）、HPA、ConfigMap、Secret、PVC、持久卷 |
 | **存储** | PVC / PV、对象存储（SeaweedFS 桶、凭据、对象读写、桶配额、匿名读） |
 | **观测** | 告警（PrometheusRule、告警列表、通知渠道）、ServiceMonitor / PodMonitor、日志查询（ES）、链路追踪（Tempo） |
@@ -160,7 +160,7 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 <table>
   <tr>
     <td width="50%"><img src="docs/images/tenant-overview.png" alt="租户工作台"><br><b>租户工作台</b>：配额占用、异常 Pod、需要关注的事项与常用入口</td>
-    <td width="50%"><img src="docs/images/app-canvas.png" alt="应用编排画布"><br><b>应用编排</b>：把服务、后台进程、中间件、外部服务拖上画布，连线表达依赖</td>
+    <td width="50%"></td>
   </tr>
   <tr>
     <td><img src="docs/images/middleware-store.png" alt="中间件商店"><br><b>中间件商店</b>：八款中间件，按单节点、集群等形态创建实例</td>
@@ -396,7 +396,7 @@ K8s `Quantity` 在 DTO 层统一为 **`BigDecimal` 基础单位**：CPU = 核数
 | [docs/development/cluster-prerequisites.md](docs/development/cluster-prerequisites.md) | 纳管集群的集群侧前提（Tekton、配额、存储、网格指标、告警链路） |
 | [docs/development/middleware-store.md](docs/development/middleware-store.md) | 中间件商店：可用条目、实例形态、指标接入 |
 | [docs/development/object-storage.md](docs/development/object-storage.md) | 对象存储：桶、凭据、权限、限制 |
-| [docs/development/application-canvas.md](docs/development/application-canvas.md) | 应用编排：spec JSON、节点类型、分阶段部署 |
+| [docs/development/application-release.md](docs/development/application-release.md) | 应用发布：模型、变量引用、配置文件、上线步骤、验收清单 |
 | [docs/development/image-registry.md](docs/development/image-registry.md) | 镜像来源纳管与 Harbor 复制规则 |
 | [docs/development/resource-protection.md](docs/development/resource-protection.md) | 受管资源保护（组件/中间件实例不可误删） |
 | [k8s-server/README.md](k8s-server/README.md) | 执行面设计原则、端点边界、模块协作 |
