@@ -78,6 +78,10 @@ export const pageCodes = {
   secret: { list: 'tenant:page:secret.list', edit: 'tenant:page:secret.edit' },
   service: { list: 'tenant:page:service.list', edit: 'tenant:page:service.edit' },
   pvc: { list: 'tenant:page:pvc.list' },
+  /** S4.3 卷快照（租户视图；门控在页面内，菜单不随集群能力隐藏） */
+  volumeSnapshot: 'tenant:page:volume-snapshots',
+  /** 快照类与快照内容（平台视图只读，仅 admin） */
+  volumeSnapshotCluster: 'platform:page:volume-snapshot-cluster',
   /** CI：流水线（列表 / 画布编辑 / 运行历史）共用一个页面码 —— 三者是同一件事的三步，
    *  而 DB 里也只有一行 `tenant:page:pipeline`（V2026_10_15_1）。 */
   pipeline: 'tenant:page:pipeline',

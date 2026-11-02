@@ -56,6 +56,10 @@ export const apiCodes = {
   pvcCreate: 'tenant:pvc:create',
   /** 改容量（扩容）—— 与创建/删除分开，扩容是唯一能改 spec 的动作 */
   pvcUpdate: 'tenant:pvc:update',
+  /** 卷快照：读（含 capability 门控）/ 建 / 删。恢复走 pvcCreate */
+  volumeSnapshotRead: 'tenant:volumesnapshot:read',
+  volumeSnapshotCreate: 'tenant:volumesnapshot:create',
+  volumeSnapshotDelete: 'tenant:volumesnapshot:delete',
   /** 集群 API 能力快照只读（V2026_10_07_2 起租户可读；refresh 仍独占 platform:cluster:manage） */
   clusterCapabilityView: 'tenant:cluster:capability:view',
   /** 应用写（V2026_11_02_11 / V2026_10_25_7：创建/删除应用、服务增删改、创建发布、继续执行） */

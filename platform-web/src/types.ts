@@ -587,6 +587,72 @@ export interface K8sPvc {
   creationTime?: string | null
 }
 
+/** VolumeSnapshot（snapshot.storage.k8s.io/v1）。写入只用 sourcePvcName / volumeSnapshotClassName，其余只读 */
+export interface K8sVolumeSnapshot {
+  name: string
+  namespace: string
+  labels?: Record<string, string> | null
+  sourcePvcName?: string | null
+  volumeSnapshotClassName?: string | null
+  /** status 还没出现时为 null */
+  readyToUse?: boolean | null
+  /** 字节；驱动可能不报（null）或报 0 */
+  restoreSize?: number | null
+  errorMessage?: string | null
+  errorTime?: string | null
+  boundContentName?: string | null
+  /** 存储后端真正打下快照的时间（status.creationTime） */
+  snapshotTime?: string | null
+  creationTime?: string | null
+  /** 非空 = 正在删除 */
+  deletionTimestamp?: string | null
+}
+
+/** 快照类窄投影（租户可读；不含 parameters） */
+export interface VolumeSnapshotClassOption {
+  name: string
+  driver?: string | null
+  /** Delete / Retain */
+  deletionPolicy?: string | null
+  isDefault?: boolean | null
+}
+
+/** POST /volumesnapshots/capability：门控 + 表单候选 */
+export interface VolumeSnapshotCapability {
+  available: boolean
+  /** NO_CRD / NO_CLASS；可用时为 null */
+  reason?: 'NO_CRD' | 'NO_CLASS' | null
+  classes: VolumeSnapshotClassOption[]
+  /** 每个存储类按 provisioner == driver 匹配到的快照类；snapshotClasses 为空 = 不支持快照 */
+  storageClasses: { name: string; provisioner?: string | null; snapshotClasses: string[] }[]
+}
+
+/** VolumeSnapshotClass（平台只读，完整对象） */
+export interface K8sVolumeSnapshotClass {
+  name: string
+  driver?: string | null
+  deletionPolicy?: string | null
+  isDefault?: boolean | null
+  parameters?: Record<string, string> | null
+  creationTime?: string | null
+}
+
+/** VolumeSnapshotContent（平台只读） */
+export interface K8sVolumeSnapshotContent {
+  name: string
+  driver?: string | null
+  deletionPolicy?: string | null
+  volumeSnapshotClassName?: string | null
+  snapshotName?: string | null
+  snapshotNamespace?: string | null
+  readyToUse?: boolean | null
+  restoreSize?: number | null
+  snapshotHandle?: string | null
+  /** 指向的快照已不存在；后端对照失败时为 null（不标） */
+  orphan?: boolean | null
+  creationTime?: string | null
+}
+
 /** StorageClass（集群级，只读：供工作负载编辑器下拉选择 storageClassName） */
 export interface K8sStorageClass {
   name: string
