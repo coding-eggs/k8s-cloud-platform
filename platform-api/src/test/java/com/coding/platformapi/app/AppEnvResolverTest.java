@@ -109,6 +109,22 @@ class AppEnvResolverTest {
     }
 
     @Test
+    void esUrlFollowsSchemeFromConnectionInfo() {
+        ConnInfo on = ConnInfo.of("elasticsearch", "es.demo.svc", 9200).extra(Map.of("scheme", "https")).build();
+        ConnInfo off = ConnInfo.of("elasticsearch", "es.demo.svc", 9200).extra(Map.of("scheme", "http")).build();
+        ConnInfo other = ConnInfo.of("redis", "r.demo.svc", 6379).extra(Map.of("scheme", "https")).build();
+        Result r = run(List.of(lit("A", "${on.url}"), lit("B", "${off.url}"), lit("C", "${other.url}")),
+                Map.of("on", on, "off", off, "other", other), Map.of());
+        assertThat(r.problems()).isEmpty();
+        assertThat(r.env().get(0).getValue()).isEqualTo("https://es.demo.svc:9200");
+        assertThat(r.env().get(1).getValue()).isEqualTo("http://es.demo.svc:9200");
+        assertThat(r.env().get(2).getValue()).isEqualTo("http://r.demo.svc:6379");
+        AppEnvResolver.TextResult t = AppEnvResolver.resolveText("/etc/a.yaml", "es: ${on.url}\n",
+                Map.of("on", on), Map.of());
+        assertThat(t.value()).isEqualTo("es: https://es.demo.svc:9200\n");
+    }
+
+    @Test
     void esTlsUrl() {
         ConnInfo es = ConnInfo.of("elasticsearch", "https://es.demo.svc", 9200).build();
         ConnInfo plain = ConnInfo.of("elasticsearch", "es.demo.svc", 9200).build();

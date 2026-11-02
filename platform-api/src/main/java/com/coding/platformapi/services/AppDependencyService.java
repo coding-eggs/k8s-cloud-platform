@@ -76,7 +76,7 @@ public class AppDependencyService {
     private static final long CREATE_IN_FLIGHT_MILLIS = 5 * 60 * 1000L;
     private static final int LOG_MAX = 20_000;
     private static final int LOG_VIEW = 4_000;
-    /** 初始化最长等 10 分钟：超过这个时长还是 RUNNING 的一定是丢了 worker。 */
+    /** 初始化最长约 10 分钟，再留 5 分钟余量：超过 15 分钟还是 RUNNING 的一定是丢了 worker。 */
     private static final long STALE_MILLIS = 15 * 60 * 1000L;
 
     private final PlatformApplicationMapper apps;

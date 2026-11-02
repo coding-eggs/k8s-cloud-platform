@@ -242,6 +242,34 @@ class AppReleaseExecutorTest {
     }
 
     @Test
+    void healthWaitingMessageNamesNotReadyObjects() {
+        AppStatusResultDTO s = statusOf("PENDING");
+        s.getObjects().get(0).setMessage("0/2 副本就绪");
+        when(client.status(any())).thenReturn(s);
+
+        PlatformAppExecution e = at("HEALTH");
+        executor.advance(e);
+
+        assertThat(e.getMessage()).contains("Deployment/demo-web").contains("PENDING").contains("0/2 副本就绪");
+        assertThat(lastSaved().getMessage()).contains("Deployment/demo-web");
+    }
+
+    @Test
+    void healthTimeoutMessageNamesNotReadyObjectsAndStaysWithinColumn() {
+        AppStatusResultDTO s = statusOf("FAILED");
+        s.getObjects().get(0).setMessage("x".repeat(3000));
+        when(client.status(any())).thenReturn(s);
+        PlatformAppExecution e = at("HEALTH");
+        e.setStartedAt(Date.from(Instant.now().minus(Duration.ofMinutes(31))));
+
+        executor.advance(e);
+
+        assertThat(lastSaved().getStatus()).isEqualTo("FAILED");
+        assertThat(lastSaved().getMessage()).contains("Deployment/demo-web").contains("FAILED");
+        assertThat(lastSaved().getMessage().length()).isLessThanOrEqualTo(1024);
+    }
+
+    @Test
     void healthWithoutAnswerForEveryObjectIsNotReady() {
         when(client.status(any())).thenReturn(new AppStatusResultDTO());
 

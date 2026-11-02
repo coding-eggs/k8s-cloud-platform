@@ -113,7 +113,7 @@ export function ownershipText(d: { type: string; ownership?: string | null }): s
 }
 
 /** 与后端 AppEnvResolver.REF 同一写法：${key.field} */
-const REF = /\$\{([^.${}]+)\.([^${}]+)\}/g
+export const REF = /\$\{([^.${}]+)\.([^${}]+)\}/g
 
 /** 期望配置引用到的依赖 / 服务 key：环境变量（SECRET 行除外）+ 配置文件内容。与后端 AppServiceDesired.references 一致 */
 export function refsOf(desired?: AppServiceDesired | null): string[] {

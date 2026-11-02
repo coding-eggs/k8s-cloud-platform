@@ -13,6 +13,7 @@
  */
 import { ref } from 'vue'
 import type { AppDependencyRow, AppEnvRow } from '@/types'
+import { REF } from './dependencyUtil'
 import AppRefPicker from './AppRefPicker.vue'
 import AppEnvImportDialog from './AppEnvImportDialog.vue'
 
@@ -58,7 +59,7 @@ function insertRef(i: number, token: string): void {
 function refProblem(r: AppEnvRow): string {
   const v = r.value ?? ''
   if (!v.includes('${')) return ''
-  const stripped = v.replace(/\$\{[a-z0-9-]+\.[a-z]+\}/g, '')
+  const stripped = v.replace(REF, '')
   return stripped.includes('${') ? '引用格式应为 ${依赖.字段}' : ''
 }
 function nameProblem(r: AppEnvRow, i: number): string {

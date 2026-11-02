@@ -17,7 +17,8 @@
 | 对象台账 | `platform_application_resource` | 平台建过的 K8s 对象；prune 差集、冲突判定、删除应用时清理 |
 
 **待发布改动代替草稿**：服务页保存只改 `desired`；应用页列出「与线上不同」的服务，勾选后发布。
-未勾选的服务不渲染、不滚动。
+未勾选的服务不会带着自己的待发布改动上线，但仍会从线上快照重新渲染；
+若它引用的服务端口或依赖的连接信息变了，其 configHash 随之变化，也会滚动重启。
 
 ### 1.1 变量引用代替连线
 
@@ -72,6 +73,9 @@ key 不能以它结尾。
    写错了不会在启动或普通发布时暴露，只会在第一次「继续已中断的执行」或「新发布取代已中断的执行」时
    才报错 —— 那正是用户最需要它们的时候。
 4. **重建** k8s-server、platform-api、platform-web（platform-data / platform-common 作为依赖一起构建）。
+   **k8s-server 必须先于 platform-api 部署，且升级窗口内不要发布**：新 platform-api 对旧 k8s-server 会写出
+   未展开的 `$(_REF_n)` 值、丢掉 configFiles，并沿用旧的就绪判定。另外先让仍在进行的旧画布部署操作跑完再升级，
+   它们的 worker 随升级一并删除，不会再被续跑。
 5. **platform-api 只能单副本**：执行器的进度、依赖初始化的恢复、「重启后进入已中断」都假设只有一个实例；
    多副本会出现两个实例同时推进同一个执行。
 6. **「重下发全部模板」**：私有镜像拉取依赖命名空间 default SA 已挂 `platform-registry-pull`
@@ -127,6 +131,13 @@ key 不能以它结尾。
 - Harbor 镜像下，用户自填的 `imagePullSecrets` 列表里删不掉平台 Secret（保存时会再并入）；
   字符串形式的 `imagePullSecrets` 不合并；之前已自填列表的服务需要再保存一次才会并入平台 Secret。
 - 发布列表的运行状态取台账而非实时探测。
+- 只读成员除了在界面上，也能通过 API（`overview.desired`、`release/get`）看到环境变量的字面值；
+  敏感值请用 Secret 引用而不是字面值。
+- 一个 EXTERNAL 依赖被删除后又以新地址重新添加：回滚会部署旧快照里的旧地址，而概览显示的是新地址。
+- `${依赖.url}` 对非 HTTP 类型依赖拼出的是 `http://host:port`，只对说 HTTP 的依赖有意义
+  （ES 按实例 TLS 开关取 http/https）。
+- HEALTH 等待应用内**所有**服务：未勾选的服务若不健康，会挡住其他服务的发布，直到它修好；
+  执行记录的消息（进行中与超时失败）会点名未就绪的对象。
 - 回滚没有单独的预览接口：前端用 `release/get` 读两份快照对比。
 - **快照 / 清单列的容量**：`platform_app_release` 的 `snapshot_json`、`manifest` 是 MEDIUMTEXT（16MiB）。
   配置文件每服务至多 512KiB，内容同时进快照和清单（ConfigMap），所以一次发布里配置文件大的服务

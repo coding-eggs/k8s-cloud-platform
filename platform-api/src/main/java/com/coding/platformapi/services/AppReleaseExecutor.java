@@ -33,6 +33,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -293,18 +294,37 @@ public class AppReleaseExecutor {
         if (status != null && status.getObjects() != null) {
             status.getObjects().forEach(s -> states.put(s.getKind() + "/" + s.getName(), s.getState()));
         }
-        boolean ready = objects.stream()
-                .allMatch(o -> "READY".equals(states.get(o.getKind() + "/" + o.getName())));
-        if (ready) {
+        Map<String, String> notes = new HashMap<>();
+        if (status != null && status.getObjects() != null) {
+            status.getObjects().forEach(s -> notes.put(s.getKind() + "/" + s.getName(), s.getMessage()));
+        }
+        List<String> notReady = new ArrayList<>();
+        for (AppObjectRefDTO o : objects) {
+            String key = o.getKind() + "/" + o.getName();
+            String state = states.get(key);
+            if (!"READY".equals(state)) {
+                String note = notes.get(key);
+                notReady.add(key + "（" + (state == null ? "无状态" : state)
+                        + (note == null || note.isBlank() ? "" : "：" + (note.length() > 200 ? note.substring(0, 200) + "…" : note)) + "）");
+            }
+        }
+        if (notReady.isEmpty()) {
+            execution.setMessage("");
             return "PRUNE";
         }
         if (execution.getStartedAt() != null
                 && Duration.between(execution.getStartedAt().toInstant(), Instant.now())
                 .compareTo(Duration.ofMinutes(timeoutMinutes)) > 0) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
-                    "发布超时（" + timeoutMinutes + " 分钟）：仍有对象未就绪");
+                    clip("发布超时（" + timeoutMinutes + " 分钟）：仍有对象未就绪：" + String.join("；", notReady)));
         }
+        execution.setMessage(clip("等待就绪：" + String.join("；", notReady)));
         return null;
+    }
+
+    /** message 列宽 1024：超出则截断并以省略号收尾。 */
+    private static String clip(String s) {
+        return s.length() <= MESSAGE_MAX ? s : s.substring(0, MESSAGE_MAX - 1) + "…";
     }
 
     /**
@@ -361,7 +381,7 @@ public class AppReleaseExecutor {
         log.warn("发布执行 {} 在阶段 {} 失败", execution.getId(), execution.getStage(), e);
         String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
         execution.setStatus(FAILED);
-        execution.setMessage(message.length() > MESSAGE_MAX ? message.substring(0, MESSAGE_MAX) : message);
+        execution.setMessage(clip(message));
         execution.setFinishedAt(new Date());
         save(execution);
         credentials.forgetExecution(execution.getId());

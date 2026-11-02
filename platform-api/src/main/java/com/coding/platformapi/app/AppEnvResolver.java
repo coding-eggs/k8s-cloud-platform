@@ -269,7 +269,10 @@ public final class AppEnvResolver {
         if (isUrl(c.getHost())) {
             return c.getHost();
         }
-        return "http://" + c.getHost() + (c.getPort() == null ? "" : ":" + c.getPort());
+        // ES 的协议取自连接信息（实例 TLS 开关）；其它类型一律 http
+        String scheme = "elasticsearch".equals(c.getProtocol()) && c.getExtra() != null
+                && "https".equals(c.getExtra().get("scheme")) ? "https" : "http";
+        return scheme + "://" + c.getHost() + (c.getPort() == null ? "" : ":" + c.getPort());
     }
 
     /** host:port；host 若是完整 URL 则去掉协议与路径，已带端口就不再追加。 */
