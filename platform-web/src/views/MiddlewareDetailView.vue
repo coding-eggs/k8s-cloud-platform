@@ -559,7 +559,10 @@ watch(tenantId, () => void load())
       <div class="ph-actions">
         <el-button v-if="canChangePassword" @click="changePassword">改密码</el-button>
         <el-button @click="openEdit">编辑</el-button>
-        <el-button type="danger" plain @click="remove">删除</el-button>
+        <el-button v-if="!instance?.appName" type="danger" plain @click="remove">删除</el-button>
+        <el-tooltip v-else content="该实例由应用创建，请在应用的依赖里移除并选择删除实例" placement="bottom">
+          <el-button type="danger" plain disabled>删除</el-button>
+        </el-tooltip>
       </div>
     </div>
 

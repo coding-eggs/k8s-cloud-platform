@@ -8,15 +8,17 @@
  * - Secret：已有 Secret 名 + 键。
  * 凭据请用 `${依赖.password}` 或 Secret，不要直接填明文（后端只对疑似明文给提示，不拦截）。
  *
- * 可引用字段按「依赖」和「有端口的其他服务」列出；具体哪些字段有值取决于依赖的协议，
- * 引用了没有的字段时保存可以通过，发布前会被校验拦下。
+ * 可引用字段按「依赖」和「有端口的其他服务」列出（AppRefPicker）；具体哪些字段有值取决于依赖的协议，
+ * 引用了没有的字段时保存可以通过，发布前会被校验拦下。「从依赖导入」一次追加一组引用行（AppEnvImportDialog）。
  */
-import { computed } from 'vue'
-import type { AppEnvRow } from '@/types'
+import { ref } from 'vue'
+import type { AppDependencyRow, AppEnvRow } from '@/types'
+import AppRefPicker from './AppRefPicker.vue'
+import AppEnvImportDialog from './AppEnvImportDialog.vue'
 
-const props = defineProps<{
-  /** 可被引用的依赖 key */
-  dependencyKeys?: string[]
+defineProps<{
+  /** 可被引用的依赖（带登记信息，用来判断有哪些字段） */
+  dependencies?: AppDependencyRow[]
   /** 可被引用的服务 key（仅有端口的，且不含自己） */
   serviceKeys?: string[]
   /** 只读：所有输入、下拉、按钮都真正禁用（不能靠 Tab 改） */
@@ -25,19 +27,10 @@ const props = defineProps<{
 
 const model = defineModel<AppEnvRow[]>({ default: () => [] })
 
-const DEP_FIELDS = ['host', 'port', 'address', 'username', 'password', 'url']
-const SVC_FIELDS = ['host', 'port', 'url']
-
-const refGroups = computed(() => {
-  const groups: { label: string; items: string[] }[] = []
-  for (const k of props.dependencyKeys ?? []) {
-    groups.push({ label: `依赖 ${k}`, items: DEP_FIELDS.map((f) => `\${${k}.${f}}`) })
-  }
-  for (const k of props.serviceKeys ?? []) {
-    groups.push({ label: `服务 ${k}`, items: SVC_FIELDS.map((f) => `\${${k}.${f}}`) })
-  }
-  return groups
-})
+const importVisible = ref(false)
+function appendImported(rows: AppEnvRow[]): void {
+  model.value = [...model.value, ...rows]
+}
 
 function add(): void {
   model.value = [...model.value, { name: '', kind: 'LITERAL', value: '' }]
@@ -107,25 +100,17 @@ function nameProblem(r: AppEnvRow, i: number): string {
         />
         <div v-if="refProblem(r)" class="app-env__err">{{ refProblem(r) }}</div>
       </div>
-      <el-dropdown v-if="!isSecret(r)" trigger="click" :disabled="disabled || !refGroups.length" @command="(t: string) => insertRef(i, t)">
-        <el-button :disabled="disabled || !refGroups.length">插入引用</el-button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <template v-for="g in refGroups" :key="g.label">
-              <el-dropdown-item disabled class="app-env__group">{{ g.label }}</el-dropdown-item>
-              <el-dropdown-item v-for="t in g.items" :key="t" :command="t">{{ t }}</el-dropdown-item>
-            </template>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      <AppRefPicker v-if="!isSecret(r)" :dependencies="dependencies" :service-keys="serviceKeys" :disabled="disabled" @pick="(t: string) => insertRef(i, t)" />
       <span v-else class="app-env__noref" />
       <el-button link type="danger" :disabled="disabled" @click="remove(i)">删除</el-button>
     </div>
     <div class="app-env__foot">
       <el-button :disabled="disabled" @click="add">+ 添加变量</el-button>
-      <span v-if="!refGroups.length" class="app-env__hint">暂无可引用的依赖或服务；依赖在应用页添加。</span>
+      <el-button :disabled="disabled || !(dependencies ?? []).length" :title="(dependencies ?? []).length ? '' : '应用还没有依赖'" @click="importVisible = true">从依赖导入</el-button>
+      <span v-if="!(dependencies ?? []).length && !(serviceKeys ?? []).length" class="app-env__hint">暂无可引用的依赖或服务；依赖在应用页添加。</span>
       <span v-else class="app-env__hint">凭据请用 ${依赖.password} 或 Secret，不要直接写明文。</span>
     </div>
+    <AppEnvImportDialog v-model="importVisible" :dependencies="dependencies ?? []" :existing-names="model.map((r) => r.name)" @import="appendImported" />
   </div>
 </template>
 
@@ -159,14 +144,5 @@ function nameProblem(r: AppEnvRow, i: number): string {
 .app-env__hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);
-}
-</style>
-
-<style>
-/* el-dropdown 菜单挂在 body 下，scoped 打不到；唯一前缀 app-env__ */
-.el-dropdown-menu__item.app-env__group {
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 1;
 }
 </style>

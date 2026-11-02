@@ -233,6 +233,13 @@ onBeforeUnmount(() => {
           </el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="来源应用" width="150">
+        <template #default="{ row }">
+          <el-button v-if="row.appName" link type="primary" @click="router.push(`/applications/${row.appId}`)">{{ row.appName }}</el-button>
+          <span v-else-if="row.appId" class="mw-src-gone" title="创建它的应用已删除，现在可以在这里删除实例">应用已删除</span>
+          <span v-else class="mw-src-gone">—</span>
+        </template>
+      </el-table-column>
       <el-table-column label="创建人" width="120">
         <template #default="{ row }">{{ row.createdBy || '—' }}</template>
       </el-table-column>
@@ -242,7 +249,9 @@ onBeforeUnmount(() => {
           <el-button link type="primary" @click="router.push(`/apps/${row.id}`)">详情</el-button>
           <el-button link type="primary" @click="router.push({ path: `/apps/${row.id}`, query: { edit: '1' } })">编辑</el-button>
           <el-button link type="primary" @click="showConnection(row)">连接</el-button>
-          <el-button link type="danger" @click="openDelete(row)">删除</el-button>
+          <!-- 应用创建的实例归应用管：要在应用的依赖里移除并选择删除实例；来源应用已删除则可以直接删 -->
+          <el-button v-if="!row.appName" link type="danger" @click="openDelete(row)">删除</el-button>
+          <span v-else class="mw-src-gone" title="该实例由应用创建，请在应用的依赖里移除并选择删除实例">由应用管理</span>
         </template>
       </el-table-column>
     </el-table>
@@ -275,5 +284,6 @@ onBeforeUnmount(() => {
 .mw-filter { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .mw-filter-label { color: var(--text-3); font-size: 12.5px; }
 .mw-form-help { margin-top: 4px; font-size: 12px; color: var(--text-3); line-height: 1.5; }
+.mw-src-gone { color: var(--text-3); font-size: 12.5px; }
 .mw-delete-text { margin: 0 0 12px; font-size: 13px; color: var(--text-1); }
 </style>

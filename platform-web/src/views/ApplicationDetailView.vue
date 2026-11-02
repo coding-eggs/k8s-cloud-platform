@@ -7,7 +7,7 @@
  * 发布对话框、进度面板、发布记录、回滚在 components/app-release/。
  * 进度由 AppExecutionPanel 轮询 execution/active（只在执行进行中），每次轮询回调 load(true) 刷新服务状态。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { appServiceApi, applicationApi } from '@/api'
@@ -21,8 +21,11 @@ import AppReleaseDialog from '@/components/app-release/AppReleaseDialog.vue'
 import AppRollbackDialog from '@/components/app-release/AppRollbackDialog.vue'
 import AppExecutionPanel from '@/components/app-release/AppExecutionPanel.vue'
 import AppReleaseHistory from '@/components/app-release/AppReleaseHistory.vue'
+import AppDependencyDialog from '@/components/app-release/AppDependencyDialog.vue'
+import AppDependencyDetail from '@/components/app-release/AppDependencyDetail.vue'
+import { INIT_STATUS, depStatus, ownershipText, usersOf } from '@/components/app-release/dependencyUtil'
 import { isRunning } from '@/components/app-release/releaseUtil'
-import type { AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
+import type { AppDependencyRow, AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -208,17 +211,48 @@ function tagCell(row: AppServiceRow): string {
   const cur = imageTag(row.liveImage)
   return cur && cur !== want ? `${cur} → ${want}` : want
 }
-function ownershipText(d: { type: string; ownership?: string | null }): string {
-  if (d.type === 'EXTERNAL') return '外部连接'
-  if (d.ownership === 'CREATED') return '应用创建'
-  if (d.ownership === 'BOUND') return '绑定'
-  return '—'
+
+// ---------- 依赖 ----------
+const depAddVisible = ref(false)
+const depDetailVisible = ref(false)
+const depDetailKey = ref('')
+const depDetail = computed<AppDependencyRow | null>(
+  () => overview.value?.dependencies.find((d) => d.key === depDetailKey.value) ?? null,
+)
+/** 依赖名与服务名共用一个命名空间 */
+const usedKeys = computed(() => [
+  ...(overview.value?.dependencies ?? []).map((d) => d.key),
+  ...(overview.value?.services ?? []).map((s) => s.key),
+])
+const usedInstanceIds = computed(() =>
+  (overview.value?.dependencies ?? []).map((d) => d.instanceId).filter((i): i is string => !!i))
+
+function openDepDetail(d: AppDependencyRow): void {
+  depDetailKey.value = d.key
+  depDetailVisible.value = true
 }
-function usedBy(depKey: string): string[] {
-  return (overview.value?.services ?? [])
-    .filter((s) => (s.desired.env ?? []).some((e) => (e.value ?? '').includes('${' + depKey + '.')))
-    .map((s) => s.key)
+async function afterDepAdded(): Promise<void> {
+  await load(true)
 }
+async function afterDepRemoved(): Promise<void> {
+  await load(true)
+}
+
+// 实例创建中：低频刷新概览，让状态走到「运行正常」（其它状态不轮询）
+let depTimer: number | null = null
+watch(
+  () => (overview.value?.dependencies ?? []).some((d) => d.status === 'CREATING'),
+  (creating) => {
+    if (depTimer !== null) {
+      window.clearInterval(depTimer)
+      depTimer = null
+    }
+    if (creating) depTimer = window.setInterval(() => void load(true), 5000)
+  },
+)
+onBeforeUnmount(() => {
+  if (depTimer !== null) window.clearInterval(depTimer)
+})
 
 const bottomTab = ref('releases')
 
@@ -313,24 +347,36 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       <section class="panel app-detail__sec">
         <div class="app-detail__sec-head">
           <h3>依赖</h3>
-          <!-- 依赖的新建 / 绑定 / 外部连接由后续任务提供 -->
-          <el-button plain disabled title="依赖管理将在后续版本提供">+ 添加依赖</el-button>
+          <el-button type="primary" plain :disabled="!canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="depAddVisible = true">+ 添加依赖</el-button>
         </div>
         <EmptyState v-if="!overview.dependencies.length" title="暂无依赖" description="数据库、缓存等依赖在这里统一管理，服务通过 ${依赖名.host} 引用。" />
         <el-table v-else :data="overview.dependencies">
-          <el-table-column prop="key" label="名称" min-width="140" />
-          <el-table-column prop="type" label="类型" width="120" />
-          <el-table-column label="来源" width="100">
+          <el-table-column label="名称" min-width="140">
+            <template #default="{ row }"><el-link type="primary" @click="openDepDetail(row)">{{ row.key }}</el-link></template>
+          </el-table-column>
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ row.type === 'EXTERNAL' ? '外部连接' : '中间件' }}</template>
+          </el-table-column>
+          <el-table-column label="来源" width="120">
             <template #default="{ row }">{{ ownershipText(row) }}</template>
           </el-table-column>
           <el-table-column label="状态" width="120">
-            <template #default="{ row }">{{ row.status || '—' }}</template>
+            <template #default="{ row }"><StatusBadge :label="depStatus(row).text" :type="depStatus(row).type" /></template>
+          </el-table-column>
+          <el-table-column label="初始化" width="110">
+            <template #default="{ row }">
+              <StatusBadge v-if="row.initStatus" :label="INIT_STATUS[row.initStatus]?.text ?? row.initStatus" :type="INIT_STATUS[row.initStatus]?.type ?? 'neutral'" />
+              <span v-else class="muted">—</span>
+            </template>
           </el-table-column>
           <el-table-column label="使用方" min-width="160">
             <template #default="{ row }">
-              <template v-if="usedBy(row.key).length">被 {{ usedBy(row.key).join('、') }} 使用</template>
+              <template v-if="usersOf(overview.services, row.key).length">被 {{ usersOf(overview.services, row.key).join('、') }} 使用</template>
               <span v-else class="muted">暂无引用</span>
             </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }"><el-button link type="primary" @click="openDepDetail(row)">详情</el-button></template>
           </el-table-column>
         </el-table>
       </section>
@@ -371,6 +417,28 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       :target-no="rollbackTarget"
       :live-no="live || null"
       @rolled-back="afterExecutionChange"
+    />
+
+    <AppDependencyDialog
+      v-if="app"
+      v-model="depAddVisible"
+      :app-id="appId"
+      :tenant-id="tenantId"
+      :cluster-id="app.clusterId"
+      :namespace="app.namespace"
+      :used-keys="usedKeys"
+      :used-instance-ids="usedInstanceIds"
+      @added="afterDepAdded"
+    />
+    <AppDependencyDetail
+      v-model="depDetailVisible"
+      :dep="depDetail"
+      :services="overview?.services ?? []"
+      :app-id="appId"
+      :tenant-id="tenantId"
+      :can-write="canWrite"
+      @refresh="load(true)"
+      @removed="afterDepRemoved"
     />
 
     <el-dialog v-model="addVisible" title="添加服务" width="520px" class="app-svc-dlg" destroy-on-close>

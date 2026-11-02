@@ -2796,6 +2796,10 @@ export interface MiddlewareInstance {
   status: 'CREATING' | 'READY' | 'DEGRADED' | 'FAILED' | 'DELETING'
   message?: string | null
   tenantId?: string | null
+  /** 创建它的应用 id；空 = 商店直接创建 */
+  appId?: string | null
+  /** 来源应用名；应用已删除时为空（appId 可能还在） */
+  appName?: string | null
   createdBy?: string | null
   createdAt?: string | null
 }
@@ -2943,10 +2947,56 @@ export interface AppServiceRow {
 
 export interface AppDependencyRow {
   key: string
+  /** MIDDLEWARE / EXTERNAL */
   type: string
+  /** CREATED / BOUND；EXTERNAL 为空 */
   ownership?: string | null
   instanceId?: string | null
+  /** 中间件实例状态（READY / CREATING ...）；EXTERNAL 恒为 'EXTERNAL'；取不到为 UNKNOWN / NO_INSTANCE */
   status?: string | null
+  /** 最近一次初始化：RUNNING / SUCCESS / FAILED；没跑过为空 */
+  initStatus?: string | null
+  /** 初始化日志尾部（Job 原始输出，最多约 4000 字符） */
+  initLog?: string | null
+  /** EXTERNAL 的连接信息：只有地址与 Secret 名/键，永远没有口令 */
+  external?: AppExternalConn | null
+}
+
+export interface AppExternalConn {
+  protocol?: string
+  host?: string
+  port?: number | null
+  secretName?: string | null
+  usernameKey?: string | null
+  passwordKey?: string | null
+}
+
+/** /application/dependency/add|remove|init 的入参（后端同一个 DTO；多余字段会被拒） */
+export interface AppDependencyRequest {
+  appId: string
+  tenantId?: string
+  key: string
+  /** add */
+  type?: 'MIDDLEWARE' | 'EXTERNAL'
+  source?: 'CREATE' | 'BIND'
+  code?: string
+  shape?: string
+  version?: string
+  replicas?: number
+  cpuRequest?: string
+  cpuLimit?: string
+  memoryRequest?: string
+  memoryLimit?: string
+  storageSize?: string
+  storageClass?: string
+  instanceId?: string
+  external?: AppExternalConn
+  /** remove：CREATED 依赖是否同时删除实例（缺省保留） */
+  deleteInstance?: boolean
+  /** init */
+  initPayload?: string
+  initPath?: string
+  confirm?: boolean
 }
 
 export interface AppOverview {

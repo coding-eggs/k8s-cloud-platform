@@ -1,6 +1,8 @@
 import http from './http'
 import type {
   AppExecution,
+  AppDependencyRequest,
+  AppDependencyRow,
   AppOverview,
   AppRelease,
   AppReleasePreview,
@@ -1223,6 +1225,16 @@ export const appServiceApi = {
   }) => http.post<never, AppServiceView>('/application/service/update', payload),
   remove: (payload: { appId: string; serviceKey: string; version: number; tenantId?: string }) =>
     http.post<never, void>('/application/service/remove', payload),
+}
+
+/** 应用依赖（/application/dependency/*）：添加（新建 / 绑定 / 外部）、移除、初始化 */
+export const appDependencyApi = {
+  add: (payload: AppDependencyRequest) =>
+    http.post<never, AppDependencyRow>('/application/dependency/add', payload),
+  remove: (payload: AppDependencyRequest) =>
+    http.post<never, void>('/application/dependency/remove', payload),
+  init: (payload: AppDependencyRequest) =>
+    http.post<never, void>('/application/dependency/init', payload),
 }
 
 /** 发布、执行与回滚（/application/release/*、/application/execution/*） */

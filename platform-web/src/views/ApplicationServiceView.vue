@@ -26,7 +26,7 @@ import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import AppEnvEditor from '@/components/app-release/AppEnvEditor.vue'
 import StringListEditor from '@/components/app-release/StringListEditor.vue'
 import { useResourceContext } from '@/stores/context'
-import type { AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
+import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
 
 const route = useRoute()
@@ -43,7 +43,7 @@ const app = ref<ApplicationView | null>(null)
 const row = ref<AppServiceRow | null>(null)
 const pendingKeys = ref<string[]>([])
 const allRows = ref<AppServiceRow[]>([])
-const depKeys = ref<string[]>([])
+const deps = ref<AppDependencyRow[]>([])
 const loading = ref(false)
 const notFound = ref(false)
 
@@ -125,7 +125,7 @@ async function load(opts: { keepForm?: boolean } = {}): Promise<void> {
     app.value = a
     allRows.value = o.services
     pendingKeys.value = o.pendingKeys
-    depKeys.value = o.dependencies.map((d) => d.key)
+    deps.value = o.dependencies
     const r = o.services.find((s) => s.key === target) ?? null
     row.value = r
     if (!r) { notFound.value = true; return }
@@ -341,7 +341,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           </el-tab-pane>
 
           <el-tab-pane label="环境变量" name="env">
-            <AppEnvEditor v-model="form.env" :dependency-keys="depKeys" :service-keys="selfRefs" :disabled="readonly" />
+            <AppEnvEditor v-model="form.env" :dependencies="deps" :service-keys="selfRefs" :disabled="readonly" />
           </el-tab-pane>
 
           <el-tab-pane label="资源与命令" name="resources">
