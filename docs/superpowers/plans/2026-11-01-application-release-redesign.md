@@ -141,7 +141,7 @@
 - Create: `platform-api/.../services/AppServiceConfigService.java`、`AppReleaseService.java`
 - Create: `platform-api/.../models/` 下对应 Request / View（`AppReleasePreviewView`、`AppOverviewView` 等）
 - Modify: `ApplicationController.java`、`AuditAction.java`
-- Create: `db/migration/V2026_11_01_2__application_release_permissions.sql`
+- Create: `db/migration/V2026_11_02_11__application_release_permissions.sql`（原计划名 `V2026_11_01_2`，实施时为 `_3`，Task 13 统一改名）
 - Test: `AppServiceConfigServiceTest.java`、`AppReleaseServiceTest.java`
 
 **Interfaces:**

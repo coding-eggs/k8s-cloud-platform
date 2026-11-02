@@ -191,6 +191,7 @@ public class ApplicationService {
         v.setStatus(row.getStatus());
         v.setCurrentRevision(row.getCurrentRevision());
         v.setLiveReleaseNo(row.getLiveReleaseNo());
+        v.setLegacy(AppGuard.isLegacy(row));
         v.setCreatedAt(row.getCreatedAt());
         v.setUpdatedAt(row.getUpdatedAt());
         return v;

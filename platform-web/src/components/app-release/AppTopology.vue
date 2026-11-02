@@ -41,7 +41,7 @@ function depState(d: AppDependencyRow): string {
 }
 
 const graph = computed(() => {
-  const nodes: Array<{ key: string; kind: 'SERVICE' | 'WORKER' | 'MIDDLEWARE' | 'EXTERNAL'; params: Record<string, unknown>; state: string }> = []
+  const nodes: Array<{ key: string; kind: 'SERVICE' | 'WORKER' | 'MIDDLEWARE' | 'EXTERNAL'; params: Record<string, unknown>; state: string; removing?: boolean }> = []
   for (const d of props.dependencies) {
     nodes.push({
       key: d.key,
@@ -58,6 +58,8 @@ const graph = computed(() => {
       kind: s.kind,
       params: { image: s.image, port: s.desired?.port, replicas: s.replicas ?? s.desired?.replicas },
       state: SERVICE_STATE[s.state] ?? 'pending',
+      // 待删除：下次发布就会下线，淡化显示
+      removing: s.pending === 'DELETED',
     })
   }
   const present = new Set(nodes.map((n) => n.key))

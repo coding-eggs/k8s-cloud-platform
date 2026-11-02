@@ -10,7 +10,7 @@ import { Cpu, Monitor } from '@element-plus/icons-vue'
  * 锚点只是连线的落点（拓扑由变量引用生成，不能拖线），所以隐藏不显示：左侧出（使用方指向被使用的一方），右侧入。
  */
 const props = defineProps<{
-  data: { key: string; kind: string; params: Record<string, unknown>; state?: string }
+  data: { key: string; kind: string; params: Record<string, unknown>; state?: string; removing?: boolean }
   selected?: boolean
 }>()
 
@@ -66,7 +66,8 @@ const subtitle = computed(() => {
 <template>
   <div
     class="app-node"
-    :class="[kindClass, { 'app-node--selected': selected, 'app-node--failed': state === 'failed' }]"
+    :class="[kindClass, { 'app-node--selected': selected, 'app-node--failed': state === 'failed', 'app-node--removing': data.removing }]"
+    :title="data.removing ? '待删除：下次发布时下线' : undefined"
   >
     <Handle v-if="isCompute" id="l" type="source" :position="Position.Left" :connectable="false" class="port" />
     <Handle id="r" type="target" :position="Position.Right" :connectable="false" class="port" />
@@ -128,6 +129,10 @@ const subtitle = computed(() => {
 }
 .app-node--failed {
   border-color: var(--el-color-danger);
+}
+.app-node--removing {
+  border-style: dashed;
+  opacity: 0.45;
 }
 
 .app-node__badge {

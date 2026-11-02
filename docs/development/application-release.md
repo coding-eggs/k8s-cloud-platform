@@ -60,14 +60,17 @@ key 不能以它结尾。
    SELECT id, name, namespace, status, spec_json IS NOT NULL AS legacy
      FROM platform_application WHERE deleted_at IS NULL;
    ```
-   有结果时优先用旧版本删除；来不及也可以上线后删，行为见 §4。
+   `legacy=1` 的是旧模型应用。上线后它们**只读、只能删除**（§4），不必赶在上线前删；
+   但它们不能转成新模型，要继续用就得删除后按新方式重建 —— 提前和使用方确认。
 2. **手工重放迁移**（本仓没有 Flyway，启动日志不会有 Migrating schema），按文件名顺序：
    `V2026_11_02_10__application_release` → `V2026_11_02_11__application_release_permissions` →
    `V2026_11_02_12__application_release_rollback_permission` → `V2026_11_02_13__application_dependency_permissions`。
    main 上的 `V2026_11_01_1__object_storage_platform_page`、`V2026_11_01_2` 与本批无关，照各自说明重放。
-3. **在真 MySQL 上各跑一次两条条件更新**（单测只覆盖了 mock）：执行表的 `reopen`（继续已中断的执行）
-   和 `supersedeInterrupted`（新发布取代已中断的执行），确认语法与影响行数符合预期。最省事的做法是
-   上线后在 §5 验收里各触发一次。
+3. **上线前在真 MySQL 上各跑一次两条条件更新**（单测只覆盖了 mock）：执行表 mapper 的 `reopen`
+   （继续已中断的执行）和 `supersedeInterrupted`（新发布取代已中断的执行）。用一条手工造的
+   `INTERRUPTED` 执行行跑一遍，确认语法与影响行数后删掉这行。**不要留到上线后**：这两条 SQL 平时不走，
+   写错了不会在启动或普通发布时暴露，只会在第一次「继续已中断的执行」或「新发布取代已中断的执行」时
+   才报错 —— 那正是用户最需要它们的时候。
 4. **重建** k8s-server、platform-api、platform-web（platform-data / platform-common 作为依赖一起构建）。
 5. **platform-api 只能单副本**：执行器的进度、依赖初始化的恢复、「重启后进入已中断」都假设只有一个实例；
    多副本会出现两个实例同时推进同一个执行。
@@ -86,8 +89,14 @@ key 不能以它结尾。
 
 旧应用（画布时代建的，`spec_json` 非空）不迁移：
 
-- 列表里照常显示，状态是它最后的旧状态；打开应用页没有服务，「线上」显示「未发布」。
-- 旧接口已关闭，**不能再编辑或部署**，只能删除。
+- 列表里照常显示，名称旁带「旧模型」标签，状态是它最后的旧状态；`ApplicationView` 与概览都带
+  `legacy=true`。打开应用页顶部是「旧模型应用，只能删除」提示，没有服务，「线上」显示「未发布」，
+  添加服务 / 发布 / 回滚 / 继续 / 添加或移除依赖 / 初始化按钮全部禁用。
+- **后端同样只读**：服务新增 / 修改 / 移除、依赖添加 / 移除 / 初始化、发布、回滚、继续执行这 9 个写入口
+  都经 `AppGuard.requireWritable`，旧模型应用一律拒绝「旧模型应用只能删除，请删除后按新方式重建」。
+  原因：旧应用的对象台账按旧修订号记账，新发布 apply 时按同一修订号 `deleteByAppRevision` 覆写台账，
+  会把画布建的对象变成孤儿（删除应用时再也清理不到）。
+- 旧接口（update / preview / deploy / operation / revision）已删除。
 - **删除**照常可用：按 `platform_application_resource` 台账 prune 它建过的 K8s 对象（不删 PVC）；
   依赖侧 `detachForAppDelete` 清掉中间件实例上的来源应用和引用行，实例**保留**，变成独立实例，
   需要时到中间件实例页删除。旧的进行中操作记录不再挡删除（只有新模型的进行中发布会挡）。
@@ -107,7 +116,7 @@ key 不能以它结尾。
 - [ ] 口令不出现在快照、清单和接口响应中。
 - [ ] 依赖初始化：MySQL / PostgreSQL / Redis / ES / Kafka 各成功一次、各故意失败一次，失败时状态为失败且日志可读。
 - [ ] Harbor 选 tag、新版本提示、资源页跳转在真实 Harbor 上可用。
-- [ ] 删除一个旧模型应用：对象被清理，实例保留且可在实例页删除。
+- [ ] 旧模型应用：写入口（如 `/application/service/create`）被拒绝；删除后对象被清理，实例保留且可在实例页删除。
 
 ## 6. 已知限制
 
@@ -119,3 +128,10 @@ key 不能以它结尾。
   字符串形式的 `imagePullSecrets` 不合并；之前已自填列表的服务需要再保存一次才会并入平台 Secret。
 - 发布列表的运行状态取台账而非实时探测。
 - 回滚没有单独的预览接口：前端用 `release/get` 读两份快照对比。
+- **快照 / 清单列的容量**：`platform_app_release` 的 `snapshot_json`、`manifest` 是 MEDIUMTEXT（16MiB）。
+  配置文件每服务至多 512KiB，内容同时进快照和清单（ConfigMap），所以一次发布里配置文件大的服务
+  一多（十几个服务都接近上限）就可能写不进去，发布在建记录时失败。真遇到再改 LONGTEXT 或给每次发布设总量上限。
+- **`-env` / `-files` ConfigMap 在 APPLY 阶段就被覆写**，早于 HEALTH：发布失败停在 HEALTH 时旧 Pod 仍在跑
+  旧配置（环境变量启动时读一次、subPath 不跟随更新），但这期间任何旧 Pod 重启（崩溃、驱逐、节点故障）
+  都会读到**新**的环境变量和配置文件，配旧镜像。ConfigMap 名不带版本号，是有意的取舍（不留历史 ConfigMap）；
+  发布失败后尽快修复再发，或回滚。

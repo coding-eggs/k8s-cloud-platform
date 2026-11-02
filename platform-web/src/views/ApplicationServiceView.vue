@@ -63,7 +63,9 @@ const PENDING_TEXT: Record<string, string> = { ADDED: '新增，待发布', CHAN
 const orphan = computed(() => !!row.value && row.value.version == null)
 /** 待删除的服务后端拒绝修改；没有写权限同样只读 */
 const pendingDelete = computed(() => row.value?.pending === 'DELETED')
-const readonly = computed(() => orphan.value || pendingDelete.value || !canWrite.value)
+/** 旧模型应用只能删除（后端同样拒绝） */
+const legacy = computed(() => !!app.value?.legacy)
+const readonly = computed(() => orphan.value || pendingDelete.value || legacy.value || !canWrite.value)
 const workloadName = computed(() => (app.value ? `${app.value.slug}-${key.value}` : ''))
 
 // ---------- 表单 ----------
@@ -120,8 +122,18 @@ function buildDesired(): AppServiceDesired {
 }
 
 // ---------- 配置文件 ----------
-/** 软校验（权威校验在后端 AppServiceDesired）：路径形状、重复 / 嵌套、凭据引用 */
-const CRED_REF = /\$\{[^.${}]+\.(username|password)\}/
+/**
+ * 软校验，与后端 AppServiceDesired.normalizeConfigFiles 同一套规则（权威校验在后端）：
+ * 路径形状与字符集、长度、重复 / 嵌套、与持久化挂载路径冲突、引用只能是 FILE_REF_FIELDS。
+ */
+const PATH_SEGMENT = /^[A-Za-z0-9._@+=,-]+$/
+const FILE_REF = /\$\{([^.${}]+)\.([^${}]+)\}/g
+/** 持久化数据卷挂载点：只有「有端口 + 开持久化」才有，默认 /data（同后端 dataMountPath） */
+const dataMount = computed(() => {
+  if (!form.value.port || !form.value.persistenceEnabled) return null
+  const p = (form.value.mountPath ?? '').trim() || '/data'
+  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p
+})
 function fileProblem(i: number): string {
   const list = form.value.configFiles ?? []
   const f = list[i]
@@ -129,14 +141,24 @@ function fileProblem(i: number): string {
   const path = (f.path ?? '').trim()
   if (!path) return f.content ? '请填写路径' : ''
   if (!path.startsWith('/')) return '路径必须以 / 开头'
+  if (path.length > 255) return '路径过长（最多 255 个字符）'
   if (path.endsWith('/')) return '路径要指向文件，不能以 / 结尾'
-  if (path.split('/').slice(1).some((seg) => seg === '' || seg === '.' || seg === '..')) return '路径不能有空段、. 或 ..'
+  if (path.split('/').slice(1).some((seg) => seg === '' || seg === '.' || seg === '..' || !PATH_SEGMENT.test(seg))) {
+    return '路径只允许字母、数字和 . _ - @ + = ,，不能有空段、. 或 ..'
+  }
   const others = list.filter((_, j) => j !== i).map((o) => (o.path ?? '').trim()).filter(Boolean)
   if (others.includes(path)) return '路径重复'
   const nested = others.find((o) => path.startsWith(`${o}/`) || o.startsWith(`${path}/`))
   if (nested) return `与 ${nested} 互相嵌套`
-  const m = CRED_REF.exec(f.content ?? '')
-  if (m) return `${m[0]} 是凭据，配置文件会明文写进 ConfigMap，不能引用；凭据请用环境变量`
+  const mount = dataMount.value
+  if (mount && (path === mount || path.startsWith(`${mount}/`) || mount.startsWith(`${path}/`))) {
+    return `与持久化挂载路径 ${mount} 冲突`
+  }
+  for (const m of (f.content ?? '').matchAll(FILE_REF)) {
+    if (!FILE_REF_FIELDS.includes(m[2] ?? '')) {
+      return `${m[0]} 不能用在配置文件里：内容会明文写进 ConfigMap，只能引用 ${FILE_REF_FIELDS.join(' / ')}；凭据请用环境变量`
+    }
+  }
   return ''
 }
 const fileProblems = computed(() => (form.value.configFiles ?? []).map((_, i) => fileProblem(i)))

@@ -62,6 +62,11 @@ const APP_STATUS: Record<string, { text: string; type: 'success' | 'warning' | '
   INTERRUPTED: { text: '已中断', type: 'danger' },
 }
 
+/** 旧模型应用（画布时代建的）：后端拒绝一切编辑、发布与依赖操作，只能删除 */
+const legacy = computed(() => !!(overview.value?.legacy ?? app.value?.legacy))
+const editable = computed(() => canWrite.value && !legacy.value)
+const blockedReason = computed(() => (legacy.value ? '旧模型应用只能删除' : canWrite.value ? '' : '没有应用写权限'))
+
 const pendingCount = computed(() => overview.value?.pendingKeys.length ?? 0)
 const live = computed(() => overview.value?.liveReleaseNo ?? app.value?.liveReleaseNo ?? 0)
 const statusMeta = computed(() => APP_STATUS[overview.value?.status ?? app.value?.status ?? ''] ?? { text: '未知', type: 'neutral' as const })
@@ -276,8 +281,8 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       <el-button :loading="loading" @click="load()">刷新</el-button>
       <el-button
         type="primary"
-        :disabled="!overview || !canWrite || publishing"
-        :title="!canWrite ? '没有应用写权限' : publishing ? '有进行中的发布，结束后才能再次发布' : ''"
+        :disabled="!overview || !editable || publishing"
+        :title="blockedReason || (publishing ? '有进行中的发布，结束后才能再次发布' : '')"
         @click="openRelease"
       >
         发布{{ pendingCount ? ` · ${pendingCount} 项改动` : '' }}
@@ -296,6 +301,16 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
         <span v-if="app.description" class="muted">{{ app.description }}</span>
       </div>
 
+      <el-alert
+        v-if="legacy"
+        class="app-detail__legacy"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="旧模型应用，只能删除"
+        description="这是画布时代创建的应用，不能再编辑、发布或管理依赖。请回到应用列表删除它（会清理它建过的对象，中间件实例保留），再按新方式重建。"
+      />
+
       <AppExecutionPanel
         v-if="panelExecution"
         :app-id="appId"
@@ -303,7 +318,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
         :execution="panelExecution"
         :services="overview.services"
         :live-no="live"
-        :can-write="canWrite"
+        :can-write="editable"
         @tick="load(true)"
         @changed="afterExecutionChange"
         @rollback="openRollback(live)"
@@ -312,7 +327,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       <section class="panel app-detail__sec">
         <div class="app-detail__sec-head">
           <h3>服务</h3>
-          <el-button type="primary" plain :disabled="!canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openAdd">+ 添加服务</el-button>
+          <el-button type="primary" plain :disabled="!editable" :title="blockedReason" @click="openAdd">+ 添加服务</el-button>
         </div>
         <EmptyState v-if="!overview.services.length" title="还没有服务" description="添加一个服务：填镜像和端口，填了端口就是服务，不填就是后台进程。" />
         <el-table v-else :data="overview.services" size="default">
@@ -349,7 +364,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
           <el-table-column label="操作" width="130" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openService(row)">配置</el-button>
-              <el-button link type="danger" :disabled="!canWrite || row.pending === 'DELETED'" @click="removeService(row)">移除</el-button>
+              <el-button link type="danger" :disabled="!editable || row.pending === 'DELETED'" @click="removeService(row)">移除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -358,7 +373,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       <section class="panel app-detail__sec">
         <div class="app-detail__sec-head">
           <h3>依赖</h3>
-          <el-button type="primary" plain :disabled="!canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="depAddVisible = true">+ 添加依赖</el-button>
+          <el-button type="primary" plain :disabled="!editable" :title="blockedReason" @click="depAddVisible = true">+ 添加依赖</el-button>
         </div>
         <EmptyState v-if="!overview.dependencies.length" title="暂无依赖" description="数据库、缓存等依赖在这里统一管理，服务通过 ${依赖名.host} 引用。" />
         <el-table v-else :data="overview.dependencies">
@@ -398,7 +413,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
             :app-id="appId"
             :tenant-id="tenantId"
             :live-no="live"
-            :can-write="canWrite"
+            :can-write="editable"
             :busy="publishing"
             :reload-key="historyKey"
             @rollback="openRollback"
@@ -452,7 +467,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       :services="overview?.services ?? []"
       :app-id="appId"
       :tenant-id="tenantId"
-      :can-write="canWrite"
+      :can-write="editable"
       @refresh="load(true)"
       @removed="afterDepRemoved"
     />
@@ -487,6 +502,9 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 </template>
 
 <style scoped>
+.app-detail__legacy {
+  margin-bottom: 12px;
+}
 .muted { color: var(--text-3); }
 .app-detail__meta {
   display: flex;

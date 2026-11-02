@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -817,5 +818,16 @@ class AppDependencyServiceTest {
         new AppDependencyService(apps, services, deps, releases, executions, instances, refs, middleware, client,
                 pool).shutdown();
         verify(pool).shutdownNow();
+    }
+
+    // ---- 旧模型应用只读 ----
+
+    @Test
+    void legacyAppRejectsDependencyAddRemoveInit() {
+        app.setSpecJson("{\"nodes\":[]}");
+        assertThatThrownBy(() -> service.add(req("db"), "bob", "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
+        assertThatThrownBy(() -> service.remove(req("db"), "bob", "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
+        assertThatThrownBy(() -> service.init(req("db"), "bob", "t1")).hasMessage("旧模型应用只能删除，请删除后按新方式重建");
+        verifyNoInteractions(deps, instances, refs, middleware, client);
     }
 }

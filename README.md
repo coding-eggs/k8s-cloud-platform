@@ -160,19 +160,19 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 <table>
   <tr>
     <td width="50%"><img src="docs/images/tenant-overview.png" alt="租户工作台"><br><b>租户工作台</b>：配额占用、异常 Pod、需要关注的事项与常用入口</td>
-    <td width="50%"></td>
+    <td width="50%"><img src="docs/images/middleware-store.png" alt="中间件商店"><br><b>中间件商店</b>：八款中间件，按单节点、集群等形态创建实例</td>
   </tr>
   <tr>
-    <td><img src="docs/images/middleware-store.png" alt="中间件商店"><br><b>中间件商店</b>：八款中间件，按单节点、集群等形态创建实例</td>
     <td><img src="docs/images/workloads.png" alt="工作负载"><br><b>工作负载</b>：按类型筛选，副本、状态、镜像集中展示，受 Operator 管理的对象带 <code>op</code> 标记</td>
-  </tr>
-  <tr>
     <td><img src="docs/images/mesh-topology.png" alt="网格拓扑"><br><b>网格拓扑</b>：节点是工作负载，边是调用，线型区分 L7 / L4</td>
-    <td><img src="docs/images/routes.png" alt="路由策略"><br><b>路由策略</b>：HTTP、TCP 等路由集中管理，并探测集群的 Istio 与 Gateway API 能力</td>
   </tr>
   <tr>
+    <td><img src="docs/images/routes.png" alt="路由策略"><br><b>路由策略</b>：HTTP、TCP 等路由集中管理，并探测集群的 Istio 与 Gateway API 能力</td>
     <td><img src="docs/images/logs.png" alt="日志查询"><br><b>日志查询</b>：按工作负载、Pod、关键词、级别过滤，可跳转到对应链路</td>
+  </tr>
+  <tr>
     <td><img src="docs/images/traces.png" alt="链路追踪"><br><b>链路追踪</b>：基于 Tempo 查询调用链，范围按租户收窄</td>
+    <td></td>
   </tr>
 </table>
 

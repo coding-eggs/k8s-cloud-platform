@@ -169,8 +169,10 @@ class ApplicationServiceTest {
         // 旧画布应用：没有服务/依赖行，也没有新执行；对象只在资源台账里
         PlatformApplication legacy = row();
         legacy.setLiveReleaseNo(0);
+        legacy.setSpecJson("{\"nodes\":[]}");
         when(apps.selectById("app_1")).thenReturn(legacy);
         when(resources.selectByApp("app_1")).thenReturn(List.of(resource("Deployment", "demo-app-web")));
+        assertThat(service.get("app_1", "t1").isLegacy()).isTrue();   // 前端据此只给「删除」
 
         ApplicationDeleteRequest req = new ApplicationDeleteRequest();
         req.setAppId("app_1");
