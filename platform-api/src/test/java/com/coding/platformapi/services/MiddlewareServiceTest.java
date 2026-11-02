@@ -61,10 +61,12 @@ class MiddlewareServiceTest {
     private final com.coding.platformapi.images.ImageRegistryService imageRegistry =
             mock(com.coding.platformapi.images.ImageRegistryService.class);
 
+    private final ApplicationReferenceGuard referenceGuard = mock(ApplicationReferenceGuard.class);
+
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, catalog,
             JsonMapper.builder().build(), k8s, allocations, cache, metricsService,
-            objectStorage, components, mock(ApplicationReferenceGuard.class), imageRegistry);
+            objectStorage, components, referenceGuard, imageRegistry);
 
     @BeforeEach
     void noImageRegistryByDefault() {
@@ -1010,6 +1012,53 @@ class MiddlewareServiceTest {
         ArgumentCaptor<ObjectStorageBucketRef> ref = ArgumentCaptor.forClass(ObjectStorageBucketRef.class);
         verify(objectStorage).deleteBucket(ref.capture(), anyString());
         assertThat(ref.getValue().getBucketId()).isEqualTo("obk_1");
+    }
+
+    @Test
+    void instancePageCannotDeleteAnApplicationCreatedInstance() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setTenantId("t1");
+        i.setAppId("app1");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(referenceGuard.appNames(any())).thenReturn(java.util.Map.of("app1", "商城"));
+
+        var req = new MiddlewareDeleteRequest();
+        req.setInstanceId("mwi_1");
+        assertThatThrownBy(() -> service.delete(req, "admin", "t1"))
+                .hasMessageContaining("商城").hasMessageContaining("依赖");
+        verify(client, never()).delete(anyString(), any());
+    }
+
+    @Test
+    void applicationCanDeleteItsOwnInstanceButNotAnotherApplicationsOrAPlainOne() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setTenantId("t1");
+        i.setAppId("app1");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(client.delete(anyString(), any())).thenReturn(true);
+
+        service.deleteForApp("mwi_1", "app1", "alice", "t1");
+
+        verify(referenceGuard).assertNotReferencedExcept("mwi_1", "app1");
+        verify(client).delete(anyString(), any());
+        i.setDeletedAt(null);   // 上面的删除把同一个对象标成了已删
+        assertThatThrownBy(() -> service.deleteForApp("mwi_1", "app2", "alice", "t1"))
+                .hasMessageContaining("不是由此应用创建");
+        i.setAppId(null);
+        assertThatThrownBy(() -> service.deleteForApp("mwi_1", "app1", "alice", "t1"))
+                .hasMessageContaining("不是由此应用创建");
+    }
+
+    @Test
+    void listShowsTheSourceApplicationName() {
+        PlatformMiddlewareInstance fromApp = instance("redis", "STANDALONE");
+        fromApp.setTenantId("t1");
+        fromApp.setAppId("app1");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(fromApp));
+        when(referenceGuard.appNames(any())).thenReturn(java.util.Map.of("app1", "商城"));
+
+        assertThat(service.list("c1", null, "t1", null)).singleElement()
+                .extracting(PlatformMiddlewareInstance::getAppName).isEqualTo("商城");
     }
 
     @Test

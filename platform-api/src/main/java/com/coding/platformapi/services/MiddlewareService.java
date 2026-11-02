@@ -225,6 +225,7 @@ public class MiddlewareService {
                         java.util.stream.Collectors.toList()))
                 .values()
                 .forEach(this::refreshGroup);
+        fillAppNames(rows);
         return rows;
     }
 
@@ -642,6 +643,7 @@ public class MiddlewareService {
         // 台账的 status 只在创建时写过 CREATING，之后没人回写（列表是每次现读的）。
         // 详情页也必须现读一次，否则实例已经跑起来了还显示「创建中」。
         refreshGroup(java.util.List.of(instance));
+        fillAppNames(java.util.List.of(instance));
         MiddlewareInstanceDetail out = new MiddlewareInstanceDetail();
         out.setInstance(instance);
         out.setSpec(parseSpec(instance.getSpecJson()));
@@ -900,10 +902,43 @@ public class MiddlewareService {
         return o == null ? null : String.valueOf(o);
     }
 
+    /** 实例页删除：应用创建的实例归应用管，要在应用里移除依赖时选择删除。 */
     public Long delete(MiddlewareDeleteRequest req, String operator, String tenantId) {
         PlatformMiddlewareInstance instance = requireInstance(req.getInstanceId(), tenantId);
+        if (!isBlank(instance.getAppId())) {
+            String name = referenceGuard.appNames(java.util.List.of(instance.getAppId())).get(instance.getAppId());
+            throw new CloudPlatformException(EnumResponseType.ERROR, "该实例由应用"
+                    + (name == null ? "" : " " + name) + " 创建，请在应用的依赖里移除并选择删除实例");
+        }
         // 被应用引用时拒绝：删掉它会让正在跑的应用连不上库
         referenceGuard.assertNotReferenced(instance.getId());
+        return doDelete(instance, req, operator, tenantId);
+    }
+
+    /** 应用侧删除自己创建的实例（移除 CREATED 依赖并选择删除）：不过实例页的来源守卫，其它应用的引用仍然拦。 */
+    public Long deleteForApp(String instanceId, String appId, String operator, String tenantId) {
+        PlatformMiddlewareInstance instance = requireInstance(instanceId, tenantId);
+        if (!appId.equals(instance.getAppId())) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "该实例不是由此应用创建的");
+        }
+        referenceGuard.assertNotReferencedExcept(instance.getId(), appId);
+        MiddlewareDeleteRequest req = new MiddlewareDeleteRequest();
+        req.setInstanceId(instanceId);
+        return doDelete(instance, req, operator, tenantId);
+    }
+
+    private void fillAppNames(List<PlatformMiddlewareInstance> rows) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        rows.stream().map(PlatformMiddlewareInstance::getAppId).filter(i -> !isBlank(i)).forEach(ids::add);
+        if (ids.isEmpty()) {
+            return;
+        }
+        java.util.Map<String, String> names = referenceGuard.appNames(ids);
+        rows.forEach(r -> r.setAppName(isBlank(r.getAppId()) ? null : names.get(r.getAppId())));
+    }
+
+    private Long doDelete(PlatformMiddlewareInstance instance, MiddlewareDeleteRequest req, String operator,
+                          String tenantId) {
         PlatformMiddlewareOperation op = newOperation(instance, "DELETE", operator);
         try {
             MiddlewareDeleteRequestDTO dto = new MiddlewareDeleteRequestDTO();

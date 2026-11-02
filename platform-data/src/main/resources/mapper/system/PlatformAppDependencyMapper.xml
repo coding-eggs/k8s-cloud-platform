@@ -61,6 +61,33 @@
     where id = #{id,jdbcType=BIGINT}
   </update>
 
+  <update id="startInit">
+    update platform_app_dependency
+    set init_status = 'RUNNING', init_log = null, updated_at = #{now,jdbcType=TIMESTAMP}
+    where id = #{id,jdbcType=BIGINT}
+      and (init_status is null or init_status &lt;&gt; 'RUNNING')
+  </update>
+
+  <update id="finishInit">
+    update platform_app_dependency
+    set init_status = #{status,jdbcType=VARCHAR},
+        init_hash = coalesce(#{hash,jdbcType=VARCHAR}, init_hash),
+        init_log = #{log,jdbcType=LONGVARCHAR},
+        updated_at = #{now,jdbcType=TIMESTAMP}
+    where id = #{id,jdbcType=BIGINT}
+      and init_status = 'RUNNING'
+  </update>
+
+  <update id="failRunningInit">
+    update platform_app_dependency
+    set init_status = 'FAILED', init_log = #{message,jdbcType=LONGVARCHAR},
+        updated_at = #{now,jdbcType=TIMESTAMP}
+    where init_status = 'RUNNING'
+    <if test="before != null">
+      and updated_at &lt; #{before,jdbcType=TIMESTAMP}
+    </if>
+  </update>
+
   <delete id="deleteById">
     delete from platform_app_dependency where id = #{id,jdbcType=BIGINT}
   </delete>

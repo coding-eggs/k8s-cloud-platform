@@ -68,7 +68,10 @@ class AppReleaseServiceTest {
         executor = mock(AppReleaseExecutor.class);
         credentials = new ApplicationDeployCredentials();
         client = mock(K8sAppClient.class);
-        AppDependencyService dependencies = new AppDependencyService(depRows, middleware);
+        AppDependencyService dependencies = new AppDependencyService(apps, services, depRows, releases, executions,
+                mock(com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper.class),
+                mock(com.coding.data.mapper.system.PlatformApplicationReferenceMapper.class), middleware, client,
+                Runnable::run);
         pipeline = new AppReleasePipeline(apps, releases, dependencies);
         service = new AppReleaseService(apps, services, depRows, releases, executions, dependencies,
                 pipeline, executor, credentials, client, mock(PlatformTransactionManager.class));
@@ -135,6 +138,18 @@ class AppReleaseServiceTest {
         ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
         verify(releases).insert(cap.capture());
         return cap.getValue().getSnapshotJson();
+    }
+
+    @Test
+    void releasesNeverCreateInstancesOrRunInit() {
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", svc("1"), false));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
+        service.create("app1", List.of("api"), Map.of("api", "2"), null, "bob", "t1");
+
+        verify(middleware, never()).create(any(), any(), any());
+        verify(client, never()).init(any());
     }
 
     @Test

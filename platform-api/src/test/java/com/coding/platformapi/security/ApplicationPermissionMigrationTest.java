@@ -37,7 +37,9 @@ class ApplicationPermissionMigrationTest {
                 + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
                 + "V2026_11_01_3__application_release_permissions.sql"))
                 + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
-                + "V2026_11_01_4__application_release_rollback_permission.sql"));
+                + "V2026_11_01_4__application_release_rollback_permission.sql"))
+                + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
+                + "V2026_11_02_1__application_dependency_permissions.sql"));
 
         assertThat(endpoints).isNotEmpty();
         for (String endpoint : endpoints) {

@@ -42,6 +42,8 @@ class ApplicationServiceTest {
     private ApplicationReferenceGuard referenceGuard;
     private PlatformMiddlewareInstanceMapper middlewareInstances;
     private K8sAppClient client;
+    private AppDependencyService appDependencies;
+    private com.coding.data.mapper.system.PlatformAppExecutionMapper appExecutions;
     private ApplicationService service;
 
     @BeforeEach
@@ -55,8 +57,10 @@ class ApplicationServiceTest {
         referenceGuard = mock(ApplicationReferenceGuard.class);
         middlewareInstances = mock(PlatformMiddlewareInstanceMapper.class);
         client = mock(K8sAppClient.class);
+        appDependencies = mock(AppDependencyService.class);
+        appExecutions = mock(com.coding.data.mapper.system.PlatformAppExecutionMapper.class);
         service = new ApplicationService(apps, revisions, operations, resources, allocations,
-                namespaceGuard, referenceGuard, middlewareInstances, client);
+                namespaceGuard, referenceGuard, middlewareInstances, client, appDependencies, appExecutions);
     }
 
     private static ApplicationCreateRequest req(AppSpecDTO spec) {
@@ -185,6 +189,21 @@ class ApplicationServiceTest {
         assertThat(cap.getValue().isDeletePvc()).isFalse();
         assertThat(cap.getValue().getObjects()).hasSize(2);
         verify(apps).softDelete(eq("app_1"), any());
+    }
+
+    @Test
+    void deleteDetachesDependenciesAndRefusesDuringActiveRelease() {
+        when(apps.selectById("app_1")).thenReturn(row());
+        when(appExecutions.selectActiveByApp("app_1"))
+                .thenReturn(new com.coding.data.models.system.PlatformAppExecution());
+        ApplicationDeleteRequest req = new ApplicationDeleteRequest();
+        req.setAppId("app_1");
+        assertThatThrownBy(() -> service.delete(req, "admin", null)).hasMessageContaining("发布");
+        verify(appDependencies, never()).detachForAppDelete(any());
+
+        when(appExecutions.selectActiveByApp("app_1")).thenReturn(null);
+        service.delete(req, "admin", null);
+        verify(appDependencies).detachForAppDelete("app_1");
     }
 
     @Test

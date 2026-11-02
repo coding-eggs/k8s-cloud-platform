@@ -50,8 +50,13 @@ public class ApplicationReferenceGuard {
 
     /** 被应用引用时拒绝删除，并列出引用它的应用名（用户才知道去哪个画布移除）。 */
     public void assertNotReferenced(String instanceId) {
-        List<PlatformApplicationReference> refs =
-                references.selectByRef(MIDDLEWARE_INSTANCE, instanceId);
+        assertNotReferencedExcept(instanceId, null);
+    }
+
+    /** 同上，但不把 exceptAppId 自己的引用算进去（应用移除自己的依赖并删除实例时用）。 */
+    public void assertNotReferencedExcept(String instanceId, String exceptAppId) {
+        List<PlatformApplicationReference> refs = references.selectByRef(MIDDLEWARE_INSTANCE, instanceId)
+                .stream().filter(r -> exceptAppId == null || !exceptAppId.equals(r.getAppId())).toList();
         if (refs.isEmpty()) {
             return;
         }
@@ -61,6 +66,18 @@ public class ApplicationReferenceGuard {
         }).distinct().collect(Collectors.joining("、"));
         throw new CloudPlatformException(EnumResponseType.ERROR,
                 "该实例被应用 " + apps + " 使用，请先在应用里移除依赖");
+    }
+
+    /** 应用 id → 应用名（实例视图标注来源用）；查不到的 id 不出现在结果里。 */
+    public java.util.Map<String, String> appNames(java.util.Collection<String> appIds) {
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        for (String id : appIds) {
+            PlatformApplication a = id == null ? null : applications.selectById(id);
+            if (a != null && a.getDeletedAt() == null) {
+                out.put(id, a.getName());
+            }
+        }
+        return out;
     }
 
     /** 一条引用：应用里的节点 key → 平台对象 id。 */

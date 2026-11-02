@@ -25,6 +25,13 @@
     delete from platform_application_reference where app_id = #{appId,jdbcType=VARCHAR}
   </delete>
 
+  <delete id="deleteByAppAndRef">
+    delete from platform_application_reference
+    where app_id = #{appId,jdbcType=VARCHAR}
+      and ref_type = #{refType,jdbcType=VARCHAR}
+      and ref_id = #{refId,jdbcType=VARCHAR}
+  </delete>
+
   <select id="selectByApp" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_application_reference

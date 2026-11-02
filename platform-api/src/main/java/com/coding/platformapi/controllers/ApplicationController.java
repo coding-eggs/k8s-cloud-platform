@@ -4,6 +4,7 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformApplicationOperation;
 import com.coding.platformapi.audit.AuditAction;
 import com.coding.platformapi.audit.Auditable;
+import com.coding.platformapi.models.AppDependencyRequest;
 import com.coding.platformapi.models.AppExecutionView;
 import com.coding.platformapi.models.AppOverviewView;
 import com.coding.platformapi.models.AppReleasePreviewView;
@@ -11,6 +12,7 @@ import com.coding.platformapi.models.AppReleaseRequest;
 import com.coding.platformapi.models.AppReleaseView;
 import com.coding.platformapi.models.AppServiceRequest;
 import com.coding.platformapi.models.AppServiceView;
+import com.coding.platformapi.services.AppDependencyService;
 import com.coding.platformapi.services.AppReleaseService;
 import com.coding.platformapi.services.AppServiceConfigService;
 import com.coding.platformapi.models.ApplicationCreateRequest;
@@ -52,15 +54,17 @@ public class ApplicationController {
 
     private final AppServiceConfigService serviceConfig;
     private final AppReleaseService release;
+    private final AppDependencyService dependency;
 
     public ApplicationController(ApplicationService service, ApplicationPreviewService preview,
                                  ApplicationDeployService deploy, AppServiceConfigService serviceConfig,
-                                 AppReleaseService release) {
+                                 AppReleaseService release, AppDependencyService dependency) {
         this.service = service;
         this.preview = preview;
         this.deploy = deploy;
         this.serviceConfig = serviceConfig;
         this.release = release;
+        this.dependency = dependency;
     }
 
     @PostMapping("/list")
@@ -158,6 +162,29 @@ public class ApplicationController {
     @Operation(summary = "移除服务（已发布过的标记待删除，下次发布勾选后生效）")
     public ResponseData<Void> serviceRemove(@RequestBody AppServiceRequest request) {
         serviceConfig.remove(request, auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/dependency/add")
+    @Auditable(action = AuditAction.APPLICATION_DEPENDENCY_ADD, target = "#request.appId + '/' + #request.key")
+    @Operation(summary = "添加依赖：新建 / 绑定中间件实例，或登记外部连接（只收 Secret 引用，不收明文口令）")
+    public ResponseData<AppOverviewView.DependencyRow> dependencyAdd(@RequestBody AppDependencyRequest request) {
+        return new ResponseData<>(dependency.add(request, operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/dependency/remove")
+    @Auditable(action = AuditAction.APPLICATION_DEPENDENCY_REMOVE, target = "#request.appId + '/' + #request.key")
+    @Operation(summary = "移除依赖（仍被引用时拒绝；CREATED 实例可选删除，默认保留）")
+    public ResponseData<Void> dependencyRemove(@RequestBody AppDependencyRequest request) {
+        dependency.remove(request, operator(), auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/dependency/init")
+    @Auditable(action = AuditAction.APPLICATION_DEPENDENCY_INIT, target = "#request.appId + '/' + #request.key")
+    @Operation(summary = "手动触发依赖初始化（实例就绪后；异步，状态与日志见 overview）")
+    public ResponseData<Void> dependencyInit(@RequestBody AppDependencyRequest request) {
+        dependency.init(request, operator(), auth.effectiveTenantId(request.getTenantId()));
         return new ResponseData<>();
     }
 

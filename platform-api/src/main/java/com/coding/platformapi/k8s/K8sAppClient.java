@@ -39,7 +39,8 @@ public class K8sAppClient {
     }
 
     public AppInitResultDTO init(AppInitRequestDTO body) {
-        return gateway.exchange(HttpMethod.POST, "/application/init", Map.of(), body,
+        // 初始化最长等 10 分钟，常规通道的 120s 读超时会提前掐断
+        return gateway.exchangeSlow(HttpMethod.POST, "/application/init", Map.of(), body,
                 gateway.responseType(AppInitResultDTO.class));
     }
 

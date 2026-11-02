@@ -24,5 +24,8 @@ public interface PlatformMiddlewareInstanceMapper {
     List<PlatformMiddlewareInstance> selectByCluster(@Param("clusterId") String clusterId,
                                                      @Param("code") String code);
 
+    /** 清掉应用来源（app_id / app_node_id）：实例转交中间件模块管理。updateById 不能置空列，所以单独一条。 */
+    int clearApp(@Param("id") String id);
+
     int softDelete(@Param("id") String id);
 }

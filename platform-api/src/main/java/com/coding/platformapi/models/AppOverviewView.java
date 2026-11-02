@@ -18,6 +18,11 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
                              String state, String pending, Map<String, Object> desired, Integer version) {
     }
 
-    public record DependencyRow(String key, String type, String ownership, String instanceId, String status) {
+    /**
+     * initStatus / initLog：最近一次初始化的状态与日志（没跑过为 null）；
+     * external：EXTERNAL 依赖的连接信息（只含地址与 Secret 名/键，不含口令）。
+     */
+    public record DependencyRow(String key, String type, String ownership, String instanceId, String status,
+                                String initStatus, String initLog, Map<String, Object> external) {
     }
 }

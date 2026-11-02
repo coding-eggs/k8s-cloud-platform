@@ -8,6 +8,7 @@ import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.common.models.app.AppNodeDTO;
 import com.coding.common.models.app.AppSpecDTO;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
+import com.coding.data.mapper.system.PlatformAppExecutionMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformApplicationOperationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
@@ -55,6 +56,8 @@ public class ApplicationService {
     private final ApplicationReferenceGuard referenceGuard;
     private final PlatformMiddlewareInstanceMapper middlewareInstances;
     private final K8sAppClient client;
+    private final AppDependencyService appDependencies;
+    private final PlatformAppExecutionMapper appExecutions;
 
     public ApplicationService(PlatformApplicationMapper apps,
                               PlatformApplicationRevisionMapper revisions,
@@ -64,7 +67,9 @@ public class ApplicationService {
                               NamespaceAccessGuard namespaceGuard,
                               ApplicationReferenceGuard referenceGuard,
                               PlatformMiddlewareInstanceMapper middlewareInstances,
-                              K8sAppClient client) {
+                              K8sAppClient client,
+                              AppDependencyService appDependencies,
+                              PlatformAppExecutionMapper appExecutions) {
         this.apps = apps;
         this.revisions = revisions;
         this.operations = operations;
@@ -74,6 +79,8 @@ public class ApplicationService {
         this.referenceGuard = referenceGuard;
         this.middlewareInstances = middlewareInstances;
         this.client = client;
+        this.appDependencies = appDependencies;
+        this.appExecutions = appExecutions;
     }
 
     public ApplicationView create(ApplicationCreateRequest req, String operator, String tenantId) {
@@ -194,6 +201,9 @@ public class ApplicationService {
         if (operations.selectActiveByApp(req.getAppId()) != null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用正在部署，不能删除");
         }
+        if (appExecutions.selectActiveByApp(req.getAppId()) != null) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "应用有进行中的发布，不能删除");
+        }
         List<AppObjectRefDTO> stale = wholeOwnedObjects(req.getAppId());
         if (!stale.isEmpty()) {
             AppPruneRequestDTO prune = new AppPruneRequestDTO();
@@ -203,6 +213,9 @@ public class ApplicationService {
             client.prune(prune);
         }
         apps.softDelete(req.getAppId(), new Date());
+        // 依赖：CREATED 实例保留并转交中间件模块（删应用不静默删数据），引用行与依赖行清掉，
+        // 否则实例会被一个已删除的应用永远占着、实例页也删不掉
+        appDependencies.detachForAppDelete(req.getAppId());
     }
 
     public List<ApplicationRevisionView> revisions(String appId, String tenantId) {

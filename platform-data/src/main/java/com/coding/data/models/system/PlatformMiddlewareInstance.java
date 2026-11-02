@@ -43,6 +43,9 @@ public class PlatformMiddlewareInstance {
     /** 应用里的节点 key */
     private String appNodeId;
 
+    /** 来源应用名（非列：查询时按 appId 补，实例页展示用） */
+    private String appName;
+
     private String createdBy;
 
     private Date createdAt;

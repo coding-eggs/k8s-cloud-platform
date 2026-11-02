@@ -522,7 +522,8 @@ public class AppReleaseService {
         Map<String, String> depStatus = dependencies.statusOf(dependencyRows.selectByApp(app.getId()));
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
                 .map(d -> new AppOverviewView.DependencyRow(d.getDepKey(), d.getType(), d.getOwnership(),
-                        d.getInstanceId(), depStatus.get(d.getDepKey())))
+                        d.getInstanceId(), depStatus.get(d.getDepKey()), d.getInitStatus(),
+                        AppDependencyService.tail(d.getInitLog()), AppSnapshot.scrubExternal(d.getExternalJson())))
                 .toList();
         return new AppOverviewView(app.getId(), app.getStatus(), app.getLiveReleaseNo(), serviceRows, depRows,
                 changes.stream().map(AppPending.Change::key).toList(),
