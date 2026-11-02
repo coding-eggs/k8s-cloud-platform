@@ -11,6 +11,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { appServiceApi, applicationApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -19,6 +21,9 @@ import type { AppOverview, AppServiceRow, AppServiceState, ApplicationView } fro
 const route = useRoute()
 const router = useRouter()
 const { tenantId, ensure } = useApplicationContext()
+const perm = usePermission()
+/** 写操作（添加/移除服务、发布）要 tenant:application:write；后端同样会拒，这里只是不让用户点注定失败的按钮 */
+const canWrite = computed(() => perm.has(apiCodes.applicationWrite))
 
 const appId = computed(() => String(route.params.id ?? ''))
 const app = ref<ApplicationView | null>(null)
@@ -47,7 +52,7 @@ const APP_STATUS: Record<string, { text: string; type: 'success' | 'warning' | '
   INTERRUPTED: { text: '已中断', type: 'danger' },
 }
 const EXEC_STAGE: Record<string, string> = {
-  PRECHECK: '预检', RENDER: '渲染', CONFLICT: '冲突检查', APPLY: '下发', HEALTH: '健康检查', PRUNE: '清理旧对象',
+  DONE: '完成', PRECHECK: '预检', RENDER: '渲染', CONFLICT: '冲突检查', APPLY: '下发', HEALTH: '健康检查', PRUNE: '清理旧对象',
 }
 
 const pendingCount = computed(() => overview.value?.pendingKeys.length ?? 0)
@@ -112,7 +117,9 @@ const addForm = ref({ key: '', imageRepo: '', imageTag: '', port: undefined as n
 const keyHint = computed(() => {
   const k = addForm.value.key
   if (!k) return ''
-  return /^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/.test(k) ? '' : '2-20 位小写字母、数字、连字符，字母开头，不以连字符结尾'
+  if (!/^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/.test(k)) return '至多 20 位，小写字母、数字、连字符，字母开头，不以连字符结尾'
+  if (/-(env|secret|headless)$/.test(k)) return '不能以 -env、-secret、-headless 结尾（平台保留）'
+  return ''
 })
 const canAdd = computed(() => !!addForm.value.key && !keyHint.value && !!addForm.value.imageRepo.trim() && !!addForm.value.imageTag.trim())
 
@@ -169,7 +176,8 @@ async function removeService(row: AppServiceRow): Promise<void> {
   }
   try {
     await appServiceApi.remove({ appId: appId.value, serviceKey: row.key, version: row.version, tenantId: tenantId.value })
-    ElMessage.success(published ? '已标记待删除' : '已移除')
+    // 接口不返回走了哪条路径（直接删行 / 标记待删除），文案对两种都成立
+    ElMessage.success('已移除；若该服务已发布过，需在下次发布时勾选才会从集群删除')
   } catch {
     // 冲突等错误拦截器已提示；刷新让用户看到最新版本
   }
@@ -185,6 +193,12 @@ function tagCell(row: AppServiceRow): string {
   const want = imageTag(row.image)
   const cur = imageTag(row.liveImage)
   return cur && cur !== want ? `${cur} → ${want}` : want
+}
+function ownershipText(d: { type: string; ownership?: string | null }): string {
+  if (d.type === 'EXTERNAL') return '外部连接'
+  if (d.ownership === 'CREATED') return '应用创建'
+  if (d.ownership === 'BOUND') return '绑定'
+  return '—'
 }
 function usedBy(depKey: string): string[] {
   return (overview.value?.services ?? [])
@@ -206,7 +220,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
     <PageHeader :title="app?.displayName || app?.name || '应用'">
       <el-button @click="goList">返回列表</el-button>
       <el-button :loading="loading" @click="load()">刷新</el-button>
-      <el-button type="primary" :disabled="!overview" @click="openRelease">
+      <el-button type="primary" :disabled="!overview || !canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openRelease">
         发布{{ pendingCount ? ` · ${pendingCount} 项改动` : '' }}
       </el-button>
     </PageHeader>
@@ -245,7 +259,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       <section class="panel app-detail__sec">
         <div class="app-detail__sec-head">
           <h3>服务</h3>
-          <el-button type="primary" plain @click="openAdd">+ 添加服务</el-button>
+          <el-button type="primary" plain :disabled="!canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openAdd">+ 添加服务</el-button>
         </div>
         <EmptyState v-if="!overview.services.length" title="还没有服务" description="添加一个服务：填镜像和端口，填了端口就是服务，不填就是后台进程。" />
         <el-table v-else :data="overview.services" size="default">
@@ -277,7 +291,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
           <el-table-column label="操作" width="130" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openService(row)">配置</el-button>
-              <el-button link type="danger" :disabled="row.pending === 'DELETED'" @click="removeService(row)">移除</el-button>
+              <el-button link type="danger" :disabled="!canWrite || row.pending === 'DELETED'" @click="removeService(row)">移除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -294,7 +308,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
           <el-table-column prop="key" label="名称" min-width="140" />
           <el-table-column prop="type" label="类型" width="120" />
           <el-table-column label="来源" width="100">
-            <template #default="{ row }">{{ row.ownership === 'CREATED' ? '应用创建' : '绑定' }}</template>
+            <template #default="{ row }">{{ ownershipText(row) }}</template>
           </el-table-column>
           <el-table-column label="状态" width="120">
             <template #default="{ row }">{{ row.status || '—' }}</template>

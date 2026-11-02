@@ -4,9 +4,13 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applicationApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import type { ApplicationOptions, ApplicationView } from '@/types'
 
 const router = useRouter()
+const perm = usePermission()
+const canWrite = computed(() => perm.has(apiCodes.applicationWrite))
 
 // 集群/租户都跟随顶栏级联（context: 'full'），页面不再自己维护一份
 const { tenantId, clusterId, ensure } = useApplicationContext()
@@ -124,7 +128,7 @@ onMounted(async () => {
       </div>
       <div class="page__actions">
         <!-- 集群/租户由顶栏级联决定，页面不再放自己的集群下拉 -->
-        <el-button type="primary" :disabled="!clusterId" @click="openCreate">新建应用</el-button>
+        <el-button type="primary" :disabled="!clusterId || !canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openCreate">新建应用</el-button>
       </div>
     </div>
 
@@ -152,7 +156,7 @@ onMounted(async () => {
       <el-table-column label="操作" width="150" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openApp(row)">管理</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
+          <el-button v-if="canWrite" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

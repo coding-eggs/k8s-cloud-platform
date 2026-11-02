@@ -2944,7 +2944,7 @@ export interface AppServiceRow {
 export interface AppDependencyRow {
   key: string
   type: string
-  ownership: string
+  ownership?: string | null
   instanceId?: string | null
   status?: string | null
 }

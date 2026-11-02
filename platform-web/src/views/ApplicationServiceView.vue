@@ -12,6 +12,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { appServiceApi, applicationApi, podApi, workloadApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import { podLabelSelector } from '@/utils/podSelector'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
@@ -22,6 +24,7 @@ import PodLogDialog from '@/components/PodLogDialog.vue'
 import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import AppEnvEditor from '@/components/app-release/AppEnvEditor.vue'
+import StringListEditor from '@/components/app-release/StringListEditor.vue'
 import { useResourceContext } from '@/stores/context'
 import type { AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
@@ -30,6 +33,8 @@ const route = useRoute()
 const router = useRouter()
 const { tenantId, ensure } = useApplicationContext()
 const { setNamespace } = useResourceContext()
+const perm = usePermission()
+const canWrite = computed(() => perm.has(apiCodes.applicationWrite))
 
 const appId = computed(() => String(route.params.id ?? ''))
 const key = computed(() => String(route.params.key ?? ''))
@@ -54,15 +59,15 @@ const PENDING_TEXT: Record<string, string> = { ADDED: '新增，待发布', CHAN
 
 /** 孤儿服务（线上有、台账无行）：version 为 null，配置只读 */
 const orphan = computed(() => !!row.value && row.value.version == null)
+/** 待删除的服务后端拒绝修改；没有写权限同样只读 */
+const pendingDelete = computed(() => row.value?.pending === 'DELETED')
+const readonly = computed(() => orphan.value || pendingDelete.value || !canWrite.value)
 const workloadName = computed(() => (app.value ? `${app.value.slug}-${key.value}` : ''))
 
 // ---------- 表单 ----------
 const form = ref<AppServiceDesired>({ imageRepo: '', imageTag: '' })
 const baseline = ref('')
 const version = ref<number | null>(null)
-/** 命令 / 参数在表单里按行编辑，保存时再拆回数组 */
-const commandText = ref('')
-const argsText = ref('')
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
@@ -74,22 +79,15 @@ function fillForm(d: AppServiceDesired): void {
   const c = clone(d)
   c.env = (c.env ?? []).map((e) => ({ ...e }))
   form.value = c
-  commandText.value = (c.command ?? []).join('\n')
-  argsText.value = (c.args ?? []).join('\n')
   baseline.value = snapshotOf()
 }
 const dirty = computed(() => !!row.value && snapshotOf() !== baseline.value)
 
-function lines(t: string): string[] {
-  return t.split('\n').map((s) => s.trim()).filter(Boolean)
-}
 /** 组装要提交的 desired：未识别的字段原样保留（后端白名单，不认的会拒绝，所以只带读到的）；空串不发 */
 function buildDesired(): AppServiceDesired {
   const d: AppServiceDesired = clone(form.value)
   d.imageRepo = (d.imageRepo ?? '').trim()
   d.imageTag = (d.imageTag ?? '').trim()
-  d.command = lines(commandText.value)
-  d.args = lines(argsText.value)
   for (const k of Object.keys(d)) {
     const v = d[k]
     if (v === '' || v == null || (Array.isArray(v) && v.length === 0 && k !== 'env')) delete d[k]
@@ -103,6 +101,7 @@ function buildDesired(): AppServiceDesired {
 }
 
 async function load(opts: { keepForm?: boolean } = {}): Promise<void> {
+  if (!appId.value || !key.value) return
   loading.value = true
   notFound.value = false
   const target = key.value
@@ -198,10 +197,12 @@ async function remove(): Promise<void> {
   } catch { return }
   try {
     await appServiceApi.remove({ appId: appId.value, serviceKey: r.key, version: r.version, tenantId: tenantId.value })
-    ElMessage.success(published ? '已标记待删除' : '已移除')
+    // 接口不返回走了哪条路径（直接删行 / 标记待删除），文案对两种都成立
+    ElMessage.success('已移除；若该服务已发布过，需在下次发布时勾选才会从集群删除')
     back()
   } catch {
-    await load()
+    // 失败（多半是冲突）不能清掉表单里没保存的输入
+    await load({ keepForm: true })
   }
 }
 
@@ -263,7 +264,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
   <div class="app-svc" v-loading="loading && !row">
     <PageHeader :title="`服务 ${key}`" :description="app ? `${app.displayName || app.name} · ${app.namespace}` : undefined">
       <el-button @click="back">返回应用</el-button>
-      <el-button type="danger" plain :disabled="!row || orphan || row.pending === 'DELETED'" @click="remove">移除服务</el-button>
+      <el-button type="danger" plain :disabled="!row || readonly" @click="remove">移除服务</el-button>
     </PageHeader>
 
     <EmptyState v-if="notFound" title="服务不存在" description="它可能已被移除，或应用中没有这个名称。">
@@ -301,6 +302,10 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
       <el-tab-pane label="配置" name="config">
         <el-alert v-if="orphan" class="app-svc__alert" type="warning" :closable="false" show-icon
                   title="孤儿服务：配置来自线上快照，只读，不能保存。" />
+        <el-alert v-else-if="pendingDelete" class="app-svc__alert" type="warning" :closable="false" show-icon
+                  title="该服务已标记待删除，配置只读；下次发布勾选后会从集群移除。" />
+        <el-alert v-else-if="!canWrite" class="app-svc__alert" type="info" :closable="false" show-icon
+                  title="你没有应用写权限，配置只读。" />
         <el-alert v-if="conflict" class="app-svc__alert" type="error" :closable="false" show-icon
                   title="配置冲突：服务已被他人修改">
           <div>你的修改还在表单里，没有丢。可以载入最新版本（放弃你的修改），或保留你的修改并取得最新版本号后再次保存（会覆盖对方的改动）。</div>
@@ -313,7 +318,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 
         <el-tabs v-model="cfgTab" type="card" class="app-svc__cfg">
           <el-tab-pane label="基本" name="basic">
-            <el-form label-width="110px" :disabled="orphan" @submit.prevent>
+            <el-form label-width="110px" :disabled="readonly" @submit.prevent>
               <el-form-item label="镜像仓库" required><el-input v-model="form.imageRepo" placeholder="不含 tag" /></el-form-item>
               <el-form-item label="镜像 tag" required><el-input v-model="form.imageTag" /></el-form-item>
               <el-form-item label="端口">
@@ -325,17 +330,17 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           </el-tab-pane>
 
           <el-tab-pane label="环境变量" name="env">
-            <AppEnvEditor v-model="form.env" :dependency-keys="depKeys" :service-keys="selfRefs" :class="{ 'is-disabled': orphan }" />
+            <AppEnvEditor v-model="form.env" :dependency-keys="depKeys" :service-keys="selfRefs" :class="{ 'is-disabled': readonly }" />
           </el-tab-pane>
 
           <el-tab-pane label="资源与命令" name="resources">
-            <el-form label-width="110px" :disabled="orphan" @submit.prevent>
+            <el-form label-width="110px" :disabled="readonly" @submit.prevent>
               <el-form-item label="CPU 请求"><el-input v-model="form.cpuRequest" placeholder="如 100m" /></el-form-item>
               <el-form-item label="CPU 上限"><el-input v-model="form.cpuLimit" placeholder="如 1" /></el-form-item>
               <el-form-item label="内存请求"><el-input v-model="form.memoryRequest" placeholder="如 128Mi" /></el-form-item>
               <el-form-item label="内存上限"><el-input v-model="form.memoryLimit" placeholder="如 512Mi" /></el-form-item>
-              <el-form-item label="启动命令"><el-input v-model="commandText" type="textarea" :rows="3" placeholder="每行一个参数，留空使用镜像默认" /></el-form-item>
-              <el-form-item label="启动参数"><el-input v-model="argsText" type="textarea" :rows="3" placeholder="每行一个参数" /></el-form-item>
+              <el-form-item label="启动命令"><StringListEditor v-model="form.command" :disabled="readonly" placeholder="一个参数，如 sh；留空则用镜像默认" /></el-form-item>
+              <el-form-item label="启动参数"><StringListEditor v-model="form.args" :disabled="readonly" placeholder="一个参数，如 -c" /></el-form-item>
               <el-form-item label="拉取策略">
                 <el-select v-model="form.imagePullPolicy" clearable placeholder="跟随默认" style="width: 200px">
                   <el-option label="Always" value="Always" />
@@ -347,9 +352,9 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           </el-tab-pane>
 
           <el-tab-pane label="高级" name="advanced">
-            <el-form label-width="110px" :disabled="orphan" @submit.prevent>
-              <el-form-item label="持久化"><el-switch v-model="form.persistenceEnabled" /></el-form-item>
-              <template v-if="form.persistenceEnabled">
+            <el-form label-width="110px" :disabled="readonly" @submit.prevent>
+              <el-form-item v-if="form.port" label="持久化"><el-switch v-model="form.persistenceEnabled" /></el-form-item>
+              <template v-if="form.port && form.persistenceEnabled">
                 <el-form-item label="存储大小"><el-input v-model="form.storageSize" placeholder="如 10Gi" /></el-form-item>
                 <el-form-item label="存储类"><el-input v-model="form.storageClass" placeholder="留空使用默认" /></el-form-item>
                 <el-form-item label="挂载路径"><el-input v-model="form.mountPath" placeholder="如 /data" /></el-form-item>
@@ -360,8 +365,11 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
                 <el-form-item label="最大副本"><el-input-number v-model="form.maxReplicas" :min="1" /></el-form-item>
                 <el-form-item label="目标 CPU %"><el-input-number v-model="form.targetCpu" :min="1" :max="100" /></el-form-item>
               </template>
-              <el-form-item label="健康探针"><el-switch v-model="form.probeEnabled" /></el-form-item>
-              <el-form-item v-if="form.probeEnabled" label="探针路径"><el-input v-model="form.probePath" placeholder="如 /healthz" /></el-form-item>
+              <!-- 后端缺省=开启（!FALSE.equals）：没写 probeEnabled 就是开；切换时一律写显式 true/false -->
+              <el-form-item label="健康探针">
+                <el-switch :model-value="form.probeEnabled !== false" @update:model-value="(v: string | number | boolean) => (form.probeEnabled = v === true)" />
+              </el-form-item>
+              <el-form-item v-if="form.probeEnabled !== false" label="探针路径"><el-input v-model="form.probePath" placeholder="默认 /，如 /healthz" /></el-form-item>
               <el-form-item label="暴露指标"><el-switch v-model="form.metricsEnabled" /></el-form-item>
               <el-form-item v-if="form.metricsEnabled" label="指标路径"><el-input v-model="form.metricsPath" placeholder="如 /metrics" /></el-form-item>
             </el-form>
@@ -369,8 +377,8 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
         </el-tabs>
 
         <div class="app-svc__save">
-          <el-button type="primary" :loading="saving" :disabled="orphan || !dirty" @click="save">保存</el-button>
-          <el-button :disabled="!dirty" @click="resetForm">还原</el-button>
+          <el-button type="primary" :loading="saving" :disabled="readonly || !dirty" @click="save">保存</el-button>
+          <el-button :disabled="readonly || !dirty" @click="resetForm">还原</el-button>
           <span class="muted">保存只改期望配置，发布后才会生效到集群。</span>
         </div>
       </el-tab-pane>
