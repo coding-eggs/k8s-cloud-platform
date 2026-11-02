@@ -17,7 +17,7 @@ class ApplicationReleasePermissionMigrationTest {
     private static String read() {
         try {
             return Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
-                    + "V2026_11_01_3__application_release_permissions.sql"));
+                    + "V2026_11_02_11__application_release_permissions.sql"));
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }

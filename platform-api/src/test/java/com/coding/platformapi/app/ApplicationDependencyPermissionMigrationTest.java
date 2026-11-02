@@ -16,7 +16,7 @@ class ApplicationDependencyPermissionMigrationTest {
     private static String read() {
         try {
             return Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
-                    + "V2026_11_02_1__application_dependency_permissions.sql"));
+                    + "V2026_11_02_13__application_dependency_permissions.sql"));
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }

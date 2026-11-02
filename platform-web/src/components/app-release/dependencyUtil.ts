@@ -3,11 +3,11 @@
  * 规则与后端一致（AppServiceConfigService / AppDependencyService 的 KEY、RESERVED_SUFFIXES、HOST、INDEX_PATH；
  * AppEnvResolver 的字段集合）。前端只做软校验，权威校验在后端。
  */
-import type { AppDependencyRow, AppServiceRow } from '@/types'
+import type { AppDependencyRow, AppServiceDesired, AppServiceRow } from '@/types'
 import type { Tone } from './releaseUtil'
 
 export const KEY_PATTERN = /^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/
-export const RESERVED_SUFFIXES = ['-env', '-secret', '-headless']
+export const RESERVED_SUFFIXES = ['-env', '-secret', '-headless', '-files']
 export const HOST_PATTERN = /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/
 export const INDEX_PATH_PATTERN = /^\/[A-Za-z0-9._~:,*+@=%/-]*$/
 export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -112,13 +112,29 @@ export function ownershipText(d: { type: string; ownership?: string | null }): s
   return '—'
 }
 
-/** 引用了这个依赖的服务（来自期望配置的环境变量；待删除的服务不算，与后端移除校验一致） */
+/** 与后端 AppEnvResolver.REF 同一写法：${key.field} */
+const REF = /\$\{([^.${}]+)\.([^${}]+)\}/g
+
+/** 期望配置引用到的依赖 / 服务 key：环境变量（SECRET 行除外）+ 配置文件内容。与后端 AppServiceDesired.references 一致 */
+export function refsOf(desired?: AppServiceDesired | null): string[] {
+  const out = new Set<string>()
+  const scan = (text?: string | null) => {
+    for (const m of (text ?? '').matchAll(REF)) out.add(m[1] as string)
+  }
+  for (const e of desired?.env ?? []) if (e.kind !== 'SECRET') scan(e.value)
+  for (const f of desired?.configFiles ?? []) scan(f.content)
+  return [...out]
+}
+
+/** 引用了这个依赖的服务（来自期望配置；待删除的服务不算，与后端移除校验一致） */
 export function usersOf(services: AppServiceRow[], depKey: string): string[] {
-  const needle = '${' + depKey + '.'
   return services
-    .filter((s) => s.pending !== 'DELETED' && (s.desired?.env ?? []).some((e) => e.kind !== 'SECRET' && (e.value ?? '').includes(needle)))
+    .filter((s) => s.pending !== 'DELETED' && refsOf(s.desired).includes(depKey))
     .map((s) => s.key)
 }
+
+/** 配置文件内容可引用的字段（会明文进 ConfigMap，凭据不行）。与后端 AppServiceDesired.FILE_REF_FIELDS 一致 */
+export const FILE_REF_FIELDS = ['host', 'port', 'address', 'url']
 
 /** 依赖 key → 环境变量名前缀：order-db → ORDER_DB */
 export function envPrefix(key: string): string {

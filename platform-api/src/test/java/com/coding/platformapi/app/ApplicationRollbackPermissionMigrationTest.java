@@ -16,7 +16,7 @@ class ApplicationRollbackPermissionMigrationTest {
     private static String read() {
         try {
             return Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
-                    + "V2026_11_01_4__application_release_rollback_permission.sql"));
+                    + "V2026_11_02_12__application_release_rollback_permission.sql"));
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }

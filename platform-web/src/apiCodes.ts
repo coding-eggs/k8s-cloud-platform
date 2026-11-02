@@ -58,7 +58,7 @@ export const apiCodes = {
   pvcUpdate: 'tenant:pvc:update',
   /** 集群 API 能力快照只读（V2026_10_07_2 起租户可读；refresh 仍独占 platform:cluster:manage） */
   clusterCapabilityView: 'tenant:cluster:capability:view',
-  /** 应用写（V2026_11_01_3 / V2026_10_25_7：创建/删除应用、服务增删改、创建发布、继续执行） */
+  /** 应用写（V2026_11_02_11 / V2026_10_25_7：创建/删除应用、服务增删改、创建发布、继续执行） */
   applicationWrite: 'tenant:application:write',
   /** 工作负载写（编辑/伸缩/暂停/ambient 开关共享该动词码）—— ambient 开关与 pause 同挂此码 */
   workloadUpdate: 'tenant:workload:update',

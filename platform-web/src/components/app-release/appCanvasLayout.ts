@@ -1,6 +1,6 @@
 import type { AppNodeKind } from '@/types'
 
-/** 画布布局计算（纯函数）：把「谁使用谁」画成从左往右的依赖分层。 */
+/** 拓扑布局计算（纯函数）：把「谁使用谁」画成从左往右的依赖分层。 */
 
 export interface CanvasNode {
   key: string
@@ -61,7 +61,7 @@ export function layeredLayout(nodes: CanvasNode[], edges: CanvasEdge[]): Record<
 
   const out: Record<string, Point> = {}
   for (const [col, list] of columns) {
-    // 列内顺序沿用节点在 spec 里的顺序：加节点只往后排，不会把已有节点重新洗一遍
+    // 列内顺序沿用传入顺序：加节点只往后排，不会把已有节点重新洗一遍
     const box = list.length * NODE_HEIGHT + (list.length - 1) * ROW_GAP
     // 每列在自己的高度里垂直居中，短列不会顶在最上面
     const top = ORIGIN_Y + (tallestBox - box) / 2
@@ -78,7 +78,7 @@ function levels(keys: string[], outEdges: Map<string, string[]>): Map<string, nu
   const levelOf = (key: string): number => {
     const cached = memo.get(key)
     if (cached !== undefined) return cached
-    // 环在保存时就被 AppSpecValidator 拒了；这里只是防止图画坏了把页面递归炸掉
+    // 服务之间的引用可能成环（a 引用 b、b 也引用 a）：遇环按 0 层处理，防止递归炸掉页面
     if (onPath.has(key)) return 0
     onPath.add(key)
     let level = 0

@@ -16,7 +16,7 @@ class ApplicationReleaseMigrationTest {
     private static String read() {
         try {
             return Files.readString(Path.of(
-                    "../platform-data/src/main/resources/db/migration/V2026_11_01_1__application_release.sql"));
+                    "../platform-data/src/main/resources/db/migration/V2026_11_02_10__application_release.sql"));
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }

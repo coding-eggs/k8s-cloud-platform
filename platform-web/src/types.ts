@@ -2824,34 +2824,12 @@ export interface MiddlewareOperatorStatus {
   message?: string | null
 }
 
-// ---------------- 应用编排（画布） ----------------
+// ---------------- 应用 ----------------
 
+/** 拓扑节点种类：服务 / 后台进程 / 中间件依赖 / 外部连接 */
 export type AppNodeKind = 'SERVICE' | 'WORKER' | 'MIDDLEWARE' | 'EXTERNAL'
 
-export interface AppNode {
-  key: string
-  kind: AppNodeKind
-  params: Record<string, unknown>
-}
-
-export interface AppEdge {
-  from: string
-  to: string
-}
-
-export interface AppSpec {
-  namespace: string
-  settings?: Record<string, unknown>
-  nodes: AppNode[]
-  edges: AppEdge[]
-}
-
-export interface AppProblem {
-  severity: 'ERROR' | 'WARN'
-  nodeKey?: string | null
-  message: string
-}
-
+/** 发布记录的对象清单项 */
 export interface AppObjectRef {
   apiVersion: string
   kind: string
@@ -2868,10 +2846,10 @@ export interface ApplicationView {
   displayName?: string | null
   description?: string | null
   status: string
+  /** 旧画布版本号，已不再使用 */
   currentRevision: number
   /** 线上发布号；0/空 = 尚未发布 */
   liveReleaseNo?: number | null
-  spec: AppSpec
   createdAt?: string | null
   updatedAt?: string | null
 }
@@ -2887,6 +2865,12 @@ export interface AppExecution {
   startedBy?: string | null
   startedAt?: string | null
   finishedAt?: string | null
+}
+
+/** 服务的一个配置文件（ConfigMap 卷，subPath 只读挂载） */
+export interface AppConfigFile {
+  path: string
+  content: string
 }
 
 /** 环境变量行：LITERAL/REF 用 value（REF=含 ${依赖.字段}），SECRET 用 secretName+secretKey */
@@ -2905,6 +2889,8 @@ export interface AppServiceDesired {
   port?: number | null
   replicas?: number | null
   env?: AppEnvRow[]
+  /** 配置文件：每个文件只读挂到 path；content 可引用 ${x.host|port|address|url}，不能引用凭据 */
+  configFiles?: AppConfigFile[]
   command?: string[]
   args?: string[]
   imagePullPolicy?: string
@@ -3062,29 +3048,7 @@ export interface AppServiceView {
   version: number
 }
 
-export interface ApplicationPreview {
-  manifest: string
-  objects: AppObjectRef[]
-  problems: AppProblem[]
-  added: string[]
-  removed: string[]
-}
-
-export interface ApplicationOperation {
-  id: number
-  appId: string
-  revision: number
-  action: string
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED'
-  currentStep: string
-  nodeStatesJson?: string | null
-  message?: string | null
-  startedAt?: string | null
-  finishedAt?: string | null
-}
-
 export interface ApplicationOptions {
-  nodeKinds: Array<{ kind: AppNodeKind; name: string; description: string; detail?: string }>
   namespaces: string[]
 }
 

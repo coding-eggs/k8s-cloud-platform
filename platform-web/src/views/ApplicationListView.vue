@@ -16,7 +16,7 @@ const canWrite = computed(() => perm.has(apiCodes.applicationWrite))
 const { tenantId, clusterId, ensure } = useApplicationContext()
 const apps = ref<ApplicationView[]>([])
 const loading = ref(false)
-const options = ref<ApplicationOptions>({ nodeKinds: [], namespaces: [] })
+const options = ref<ApplicationOptions>({ namespaces: [] })
 
 const dialogVisible = ref(false)
 const creating = ref(false)
@@ -85,7 +85,6 @@ async function create() {
       displayName: form.value.displayName || undefined,
       description: form.value.description || undefined,
       tenantId: tenantId.value,
-      spec: { namespace: form.value.namespace, nodes: [], edges: [] },
     })
     dialogVisible.value = false
     router.push(`/applications/${created.id}`)

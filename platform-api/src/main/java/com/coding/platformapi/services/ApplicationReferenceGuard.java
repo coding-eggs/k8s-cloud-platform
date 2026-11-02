@@ -8,13 +8,13 @@ import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationReference;
 import org.springframework.stereotype.Service;
 
-import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
 
 /**
  * 应用对平台对象（目前只有中间件实例）的引用守卫 —— 与 {@code NamespaceAccessGuard} 同形：
- * 一条安全规则只要一处实现。
+ * 一条安全规则只要一处实现。引用行由 {@link AppDependencyService} 在添加 / 移除依赖时维护；
+ * 旧画布的「整体替换」入口随 /application/update 一起删除（它会清掉依赖写下的引用行）。
  */
 @Service
 public class ApplicationReferenceGuard {
@@ -30,25 +30,7 @@ public class ApplicationReferenceGuard {
         this.applications = applications;
     }
 
-    /** 用一批引用整体替换某个应用的引用（建/改图时调用；部署时补 CREATE 的实例）。 */
-    public void replace(String appId, List<Ref> refs) {
-        references.deleteByApp(appId);
-        Date now = new Date();
-        for (Ref r : refs) {
-            if (r.refId() == null || r.refId().isBlank()) {
-                continue;   // CREATE 还没部署过 → 暂无实例可引用
-            }
-            PlatformApplicationReference row = new PlatformApplicationReference();
-            row.setAppId(appId);
-            row.setNodeId(r.nodeKey());
-            row.setRefType(MIDDLEWARE_INSTANCE);
-            row.setRefId(r.refId());
-            row.setCreatedAt(now);
-            references.insert(row);
-        }
-    }
-
-    /** 被应用引用时拒绝删除，并列出引用它的应用名（用户才知道去哪个画布移除）。 */
+    /** 被应用引用时拒绝删除，并列出引用它的应用名（用户才知道去哪个应用移除依赖）。 */
     public void assertNotReferenced(String instanceId) {
         assertNotReferencedExcept(instanceId, null);
     }
@@ -78,9 +60,5 @@ public class ApplicationReferenceGuard {
             }
         }
         return out;
-    }
-
-    /** 一条引用：应用里的节点 key → 平台对象 id。 */
-    public record Ref(String nodeKey, String refId) {
     }
 }

@@ -4,7 +4,7 @@
  *
  * 数据只有一个来源：`/application/overview`（服务现读状态 + 期望配置 + 乐观锁版本）。
  * 待发布改动由后端比较「期望配置 vs 线上快照」得出，这里不另存草稿。
- * 发布对话框、进度面板、发布记录、回滚在 components/app-release/。
+ * 发布对话框、进度面板、发布记录、回滚、拓扑在 components/app-release/。
  * 进度由 AppExecutionPanel 轮询 execution/active（只在执行进行中），每次轮询回调 load(true) 刷新服务状态。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -23,6 +23,7 @@ import AppExecutionPanel from '@/components/app-release/AppExecutionPanel.vue'
 import AppReleaseHistory from '@/components/app-release/AppReleaseHistory.vue'
 import AppDependencyDialog from '@/components/app-release/AppDependencyDialog.vue'
 import AppDependencyDetail from '@/components/app-release/AppDependencyDetail.vue'
+import AppTopology from '@/components/app-release/AppTopology.vue'
 import { INIT_STATUS, depStatus, ownershipText, usersOf } from '@/components/app-release/dependencyUtil'
 import { isRunning } from '@/components/app-release/releaseUtil'
 import type { AppDependencyRow, AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
@@ -136,7 +137,7 @@ const keyHint = computed(() => {
   if (!k) return ''
   if ((overview.value?.dependencies ?? []).some((d) => d.key === k)) return '名称已被依赖占用（依赖与服务共用一个命名空间）'
   if (!/^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/.test(k)) return '至多 20 位，小写字母、数字、连字符，字母开头，不以连字符结尾'
-  if (/-(env|secret|headless)$/.test(k)) return '不能以 -env、-secret、-headless 结尾（平台保留）'
+  if (/-(env|secret|headless|files)$/.test(k)) return '不能以 -env、-secret、-headless、-files 结尾（平台保留）'
   return ''
 })
 const canAdd = computed(() => !!addForm.value.key && !keyHint.value && !!addForm.value.imageRepo.trim() && !!addForm.value.imageTag.trim())
@@ -231,6 +232,10 @@ const usedInstanceIds = computed(() =>
 function openDepDetail(d: AppDependencyRow): void {
   depDetailKey.value = d.key
   depDetailVisible.value = true
+}
+function openDepByKey(key: string): void {
+  const d = overview.value?.dependencies.find((x) => x.key === key)
+  if (d) openDepDetail(d)
 }
 async function afterDepAdded(): Promise<void> {
   await load(true)
@@ -400,7 +405,12 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
           />
         </el-tab-pane>
         <el-tab-pane label="拓扑" name="topology" lazy>
-          <EmptyState title="拓扑" description="由变量引用生成的只读依赖图，将在后续版本提供。" />
+          <AppTopology
+            :app-id="appId"
+            :services="overview.services"
+            :dependencies="overview.dependencies"
+            @open-dependency="openDepByKey"
+          />
         </el-tab-pane>
         <el-tab-pane label="事件" name="events" lazy>
           <EmptyState title="事件" description="应用事件将在后续版本提供。" />

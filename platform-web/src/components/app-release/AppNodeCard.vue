@@ -4,15 +4,10 @@ import { Handle, Position } from '@vue-flow/core'
 import { Cpu, Monitor } from '@element-plus/icons-vue'
 
 /**
- * 画布上的节点卡片。
+ * 拓扑图上的节点卡片（只读）。
  *
- * <p>两种「形态」由数据决定，不是装饰：
- * <ul>
- *   <li>只有服务和后台进程有左侧 source 端口（连线的起点）。布局把被依赖的资源放在左边，
- *       所以「出」在左、「入」在右；从中间件往外拖线物理上拖不出来，
- *       比事后弹一句「只有服务和后台进程可以发起连线」更早地表达了规则；</li>
- *   <li>外部服务的边框是虚线，表示它不在这个集群里。</li>
- * </ul>
+ * <p>形态由数据决定：服务 / 后台进程用图标，中间件 / 外部连接用两字母品类码；外部连接虚线边框，表示不在这个集群里。
+ * 锚点只是连线的落点（拓扑由变量引用生成，不能拖线），所以隐藏不显示：左侧出（使用方指向被使用的一方），右侧入。
  */
 const props = defineProps<{
   data: { key: string; kind: string; params: Record<string, unknown>; state?: string }
@@ -30,30 +25,31 @@ const CODES: Record<string, { name: string; badge: string }> = {
   milvus: { name: 'Milvus', badge: 'MV' },
 }
 
-const MODES: Record<string, string> = { CREATE: '平台创建', BIND: '绑定已有', EXTERNAL: '链接外部' }
+const OWNERSHIP: Record<string, string> = { CREATED: '应用创建', BOUND: '绑定已有' }
 
 const kind = computed(() => String(props.data.kind))
 const params = computed(() => props.data.params ?? {})
 const isService = computed(() => kind.value === 'SERVICE')
 const isCompute = computed(() => isService.value || kind.value === 'WORKER')
-const state = computed(() => String(props.data.state ?? 'PENDING').toLowerCase())
+const state = computed(() => String(props.data.state ?? 'pending').toLowerCase())
 const kindClass = computed(() => `app-node--${kind.value.toLowerCase()}`)
 
 const code = computed(() => String(params.value.code ?? ''))
-const codeMeta = computed(() => CODES[code.value] ?? { name: code.value.toUpperCase(), badge: code.value.slice(0, 2).toUpperCase() })
+const codeMeta = computed(() => CODES[code.value] ?? {
+  name: code.value ? code.value.toUpperCase() : (kind.value === 'EXTERNAL' ? '外部连接' : '中间件'),
+  badge: code.value ? code.value.slice(0, 2).toUpperCase() : (kind.value === 'EXTERNAL' ? 'EX' : 'MW'),
+})
 
-/** 徽标：计算节点用图标，中间件/外部服务用两字母品类码 */
 const badgeText = computed(() => (isCompute.value ? '' : codeMeta.value.badge))
 const icon = computed(() => (isService.value ? Monitor : Cpu))
-
-const replicas = computed(() => Number(params.value.replicas ?? 1))
 
 const meta = computed(() => {
   const p = params.value
   if (isCompute.value) return String(p.image || '未填写镜像')
   const name = codeMeta.value.name
   if (kind.value === 'MIDDLEWARE') {
-    return `${name} · ${MODES[String(p.provisionMode ?? 'CREATE')] ?? '平台创建'}`
+    const own = OWNERSHIP[String(p.ownership ?? '')]
+    return own ? `${name} · ${own}` : name
   }
   const port = p.port ? `:${p.port}` : ''
   return `${name} · ${p.host || '未填写地址'}${port}`
@@ -61,9 +57,9 @@ const meta = computed(() => {
 
 const subtitle = computed(() => {
   if (!isCompute.value) return ''
-  return isService.value && params.value.port
-    ? `${params.value.port} · ${replicas.value} 副本`
-    : `${replicas.value} 副本`
+  const r = params.value.replicas
+  const replicas = r == null ? '' : `${r} 副本`
+  return isService.value && params.value.port ? [params.value.port, replicas].filter(Boolean).join(' · ') : replicas
 })
 </script>
 
@@ -72,17 +68,8 @@ const subtitle = computed(() => {
     class="app-node"
     :class="[kindClass, { 'app-node--selected': selected, 'app-node--failed': state === 'failed' }]"
   >
-    <!--
-      锚点：左右各一个 source、一个 target，上下错开不重叠。
-      任意一侧都能起、都能落 —— 线就画在你选的两个锚点之间，方向由布局和你摆的位置决定，
-      不再被「左出右入」锁死。中间件/外部服务没有 source，仍然拖不出线。
-    -->
-    <template v-if="isCompute">
-      <Handle id="l" type="source" :position="Position.Left" class="port port--out" />
-      <Handle id="r" type="source" :position="Position.Right" class="port port--out" />
-    </template>
-    <Handle id="r" type="target" :position="Position.Right" class="port port--in" />
-    <Handle id="l" type="target" :position="Position.Left" class="port port--in" />
+    <Handle v-if="isCompute" id="l" type="source" :position="Position.Left" :connectable="false" class="port" />
+    <Handle id="r" type="target" :position="Position.Right" :connectable="false" class="port" />
 
     <div class="app-node__badge">
       <el-icon v-if="isCompute" :size="17"><component :is="icon" /></el-icon>
@@ -212,33 +199,21 @@ const subtitle = computed(() => {
   white-space: nowrap;
 }
 
-/* 端口：从节点根元素派生尺寸/颜色；默认半透明，指到节点上才亮起来 */
+/* 锚点只作连线落点，不可交互，也不显示 */
 .app-node :deep(.vue-flow__handle) {
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--kind);
-  border-radius: 50%;
-  background: var(--el-bg-color);
-  opacity: 0.5;
-  transition: opacity 0.15s, transform 0.15s;
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: none;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
 }
-/* 同一侧有出/入两个锚点时上下错开，不叠在一起 */
-.app-node :deep(.vue-flow__handle.port--out) {
-  top: 32%;
+.app-node {
+  cursor: pointer;
 }
-.app-node :deep(.vue-flow__handle.port--in) {
-  top: 70%;
-}
-/* 中间件/外部只有入口，居中放更好看 */
-.app-node--middleware :deep(.vue-flow__handle.port--in),
-.app-node--external :deep(.vue-flow__handle.port--in) {
-  top: 50%;
-}
-.app-node:hover :deep(.vue-flow__handle),
-.app-node--selected :deep(.vue-flow__handle) {
-  opacity: 1;
-}
-.app-node :deep(.vue-flow__handle:hover) {
-  transform: scale(1.3);
+.app-node:hover {
+  border-color: var(--kind);
 }
 </style>

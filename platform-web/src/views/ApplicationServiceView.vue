@@ -26,6 +26,7 @@ import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import AppEnvEditor from '@/components/app-release/AppEnvEditor.vue'
 import StringListEditor from '@/components/app-release/StringListEditor.vue'
 import AppTagInput from '@/components/app-release/AppTagInput.vue'
+import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
 import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
@@ -109,7 +110,48 @@ function buildDesired(): AppServiceDesired {
     if (o.kind !== 'SECRET') { delete o.secretName; delete o.secretKey } else { delete o.value }
     return o
   })
+  // 配置文件：路径去首尾空白；路径和内容都空的新行丢掉；没有文件就不带这个键（后端同样不存空列表）
+  const files = (form.value.configFiles ?? [])
+    .map((f) => ({ path: (f.path ?? '').trim(), content: f.content ?? '' }))
+    .filter((f) => f.path || f.content)
+  if (files.length) d.configFiles = files
+  else delete d.configFiles
   return d
+}
+
+// ---------- 配置文件 ----------
+/** 软校验（权威校验在后端 AppServiceDesired）：路径形状、重复 / 嵌套、凭据引用 */
+const CRED_REF = /\$\{[^.${}]+\.(username|password)\}/
+function fileProblem(i: number): string {
+  const list = form.value.configFiles ?? []
+  const f = list[i]
+  if (!f) return ''
+  const path = (f.path ?? '').trim()
+  if (!path) return f.content ? '请填写路径' : ''
+  if (!path.startsWith('/')) return '路径必须以 / 开头'
+  if (path.endsWith('/')) return '路径要指向文件，不能以 / 结尾'
+  if (path.split('/').slice(1).some((seg) => seg === '' || seg === '.' || seg === '..')) return '路径不能有空段、. 或 ..'
+  const others = list.filter((_, j) => j !== i).map((o) => (o.path ?? '').trim()).filter(Boolean)
+  if (others.includes(path)) return '路径重复'
+  const nested = others.find((o) => path.startsWith(`${o}/`) || o.startsWith(`${path}/`))
+  if (nested) return `与 ${nested} 互相嵌套`
+  const m = CRED_REF.exec(f.content ?? '')
+  if (m) return `${m[0]} 是凭据，配置文件会明文写进 ConfigMap，不能引用；凭据请用环境变量`
+  return ''
+}
+const fileProblems = computed(() => (form.value.configFiles ?? []).map((_, i) => fileProblem(i)))
+const filesInvalid = computed(() => fileProblems.value.some(Boolean))
+const fileRefHint = computed(() => {
+  const keys = [...deps.value.map((d) => d.key), ...selfRefs.value]
+  const sample = keys[0] ? refToken(keys[0], 'host') : '${order-db.host}'
+  return `内容可引用 ${FILE_REF_FIELDS.map((f) => `.${f}`).join(' / ')}，如 ${sample}；发布时替换成实际值。`
+    + '不能引用 username / password（文件明文进 ConfigMap），凭据请用环境变量。'
+})
+function addFile(): void {
+  form.value.configFiles = [...(form.value.configFiles ?? []), { path: '', content: '' }]
+}
+function removeFile(i: number): void {
+  form.value.configFiles = (form.value.configFiles ?? []).filter((_, j) => j !== i)
 }
 
 async function load(opts: { keepForm?: boolean } = {}): Promise<void> {
@@ -351,6 +393,30 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <AppEnvEditor v-model="form.env" :dependencies="deps" :service-keys="selfRefs" :disabled="readonly" />
           </el-tab-pane>
 
+          <el-tab-pane label="配置文件" name="files">
+            <div class="app-svc__files-hint">
+              每个文件以只读方式挂载到容器里的指定路径（ConfigMap 卷，按文件挂，不覆盖所在目录的其他文件）；内容改了发布时会滚动 Pod。
+              {{ fileRefHint }}
+            </div>
+            <div v-for="(f, i) in form.configFiles ?? []" :key="i" class="app-svc__file">
+              <div class="app-svc__file-head">
+                <el-input v-model="f.path" :disabled="readonly" placeholder="容器内绝对路径，如 /etc/app/application.yaml" />
+                <el-button link type="danger" :disabled="readonly" @click="removeFile(i)">删除</el-button>
+              </div>
+              <el-input
+                v-model="f.content"
+                type="textarea"
+                :disabled="readonly"
+                :autosize="{ minRows: 4, maxRows: 16 }"
+                class="app-svc__file-body"
+                placeholder="文件内容"
+              />
+              <div v-if="fileProblems[i]" class="app-svc__file-err">{{ fileProblems[i] }}</div>
+            </div>
+            <EmptyState v-if="!(form.configFiles ?? []).length" title="没有配置文件" description="需要把配置文件放进容器时在这里添加，例如 nginx.conf、application.yaml。" />
+            <el-button v-if="!readonly" plain class="app-svc__file-add" @click="addFile">+ 添加配置文件</el-button>
+          </el-tab-pane>
+
           <el-tab-pane label="资源与命令" name="resources">
             <el-form label-width="110px" :disabled="readonly" @submit.prevent>
               <el-form-item label="CPU 请求"><el-input v-model="form.cpuRequest" placeholder="如 100m" /></el-form-item>
@@ -395,7 +461,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
         </el-tabs>
 
         <div class="app-svc__save">
-          <el-button type="primary" :loading="saving" :disabled="readonly || !dirty" @click="save">保存</el-button>
+          <el-button type="primary" :loading="saving" :disabled="readonly || !dirty || filesInvalid" :title="filesInvalid ? '配置文件有问题，见「配置文件」页签' : ''" @click="save">保存</el-button>
           <el-button :disabled="readonly || !dirty" @click="resetForm">还原</el-button>
           <span class="muted">保存只改期望配置，发布后才会生效到集群。</span>
         </div>
@@ -464,5 +530,11 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 .app-svc__tip { margin-left: 10px; color: var(--text-3); font-size: 12px; }
 .app-svc__save { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
 .app-svc__bar { display: flex; gap: 8px; margin-bottom: 10px; }
+.app-svc__files-hint { margin-bottom: 12px; color: var(--text-3); font-size: 12.5px; line-height: 1.6; }
+.app-svc__file { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; }
+.app-svc__file-head { display: flex; align-items: center; gap: 10px; }
+.app-svc__file-body { margin-top: 8px; font-family: var(--el-font-family-mono, monospace); }
+.app-svc__file-err { margin-top: 6px; color: var(--el-color-danger); font-size: 12px; }
+.app-svc__file-add { margin-top: 4px; }
 .app-svc__newtag { width: 100%; font-size: 12px; color: var(--el-color-warning); margin-top: 4px; }
 </style>

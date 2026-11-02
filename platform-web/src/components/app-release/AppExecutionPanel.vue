@@ -17,7 +17,7 @@ import { ElMessage } from 'element-plus'
 import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
 import type { AppExecution, AppServiceRow, AppServiceState } from '@/types'
-import { errMsg, EXEC_STAGE, EXEC_STATUS, isRunning, STAGE_ORDER } from './releaseUtil'
+import { errMsg, EXEC_STAGE, EXEC_STATUS, isRunning, STAGE_ORDER, stageStep } from './releaseUtil'
 
 const props = defineProps<{
   appId: string
@@ -76,7 +76,7 @@ const running = computed(() => isRunning(exec.value?.status))
 const interrupted = computed(() => exec.value?.status === 'INTERRUPTED')
 const failed = computed(() => exec.value?.status === 'FAILED')
 const statusMeta = computed(() => EXEC_STATUS[exec.value?.status ?? ''] ?? { text: exec.value?.status ?? '', type: 'neutral' as const })
-const stageIndex = computed(() => Math.max(0, STAGE_ORDER.indexOf(exec.value?.stage ?? '')))
+const stageIndex = computed(() => stageStep(exec.value?.stage))
 const stepStatus = computed(() => (failed.value || interrupted.value ? 'error' : 'process'))
 /** 只列有线上对象或本次相关的服务；NOT_RELEASED 的服务没有健康可言 */
 const healthRows = computed(() => props.services.filter((s) => s.state !== 'NOT_RELEASED'))

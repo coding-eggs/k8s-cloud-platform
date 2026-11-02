@@ -220,16 +220,13 @@ public final class AuditAction {
      */
     public static final String PIPELINE_RETRY_WORKSPACE_CLEAR = "pipeline:retry-workspace-clear";
 
-    // ---- 应用编排（画布）----
+    // ---- 应用台账 ----
 
     public static final String APPLICATION_CREATE = "application:create";
 
-    public static final String APPLICATION_UPDATE = "application:update";
-
     public static final String APPLICATION_DELETE = "application:delete";
 
-    /** 部署 / 升级 / 回滚历史版本都走这一个动作（版本号记在 target 里） */
-    public static final String APPLICATION_DEPLOY = "application:deploy";
+    // 旧画布的 application:update / application:deploy 接口已移除；历史审计记录里仍可能出现这两个动作值
 
     // ---- 应用发布（服务配置 / 发布 / 续跑）----
 

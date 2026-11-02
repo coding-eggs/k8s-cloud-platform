@@ -1,9 +1,8 @@
 package com.coding.platformapi.models;
 
-import com.coding.common.models.app.AppSpecDTO;
 import lombok.Data;
 
-/** 创建应用：只落 spec，不部署。 */
+/** 创建应用：只建台账；服务与依赖创建后在应用页添加。 */
 @Data
 public class ApplicationCreateRequest {
 
@@ -16,8 +15,6 @@ public class ApplicationCreateRequest {
     private String displayName;
 
     private String description;
-
-    private AppSpecDTO spec;
 
     /** 管理员代管轨显式指定租户；租户轨以 token 为准。 */
     private String tenantId;

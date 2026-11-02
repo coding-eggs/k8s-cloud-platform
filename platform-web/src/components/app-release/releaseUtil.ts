@@ -33,8 +33,16 @@ export const EXEC_STATUS: Record<string, { text: string; type: Tone }> = {
   RUNNING: { text: '执行中', type: 'warning' },
   INTERRUPTED: { text: '已中断', type: 'danger' },
   FAILED: { text: '失败', type: 'danger' },
+  /** 执行器写入的成功终态 */
+  SUCCESS: { text: '完成', type: 'success' },
   DONE: { text: '完成', type: 'success' },
   SUCCEEDED: { text: '完成', type: 'success' },
+}
+
+/** 进度条位置：DONE（全部阶段走完）= 步骤总数，所有步骤都显示完成；未知阶段停在第一步 */
+export function stageStep(stage?: string | null): number {
+  if (stage === 'DONE') return STAGE_ORDER.length
+  return Math.max(0, STAGE_ORDER.indexOf(stage ?? ''))
 }
 
 export const RELEASE_STATUS: Record<string, { text: string; type: Tone }> = {
@@ -56,7 +64,7 @@ export function canRollbackTo(r: AppRelease, liveNo: number, maxNo: number): boo
 // ---------------------------------------------------------------- 快照差异
 
 const FIELD_LABEL: Record<string, string> = {
-  imageRepo: '镜像仓库', imageTag: '镜像 tag', port: '端口', replicas: '副本数', env: '环境变量',
+  imageRepo: '镜像仓库', imageTag: '镜像 tag', port: '端口', replicas: '副本数', env: '环境变量', configFiles: '配置文件',
   command: '启动命令', args: '命令参数', imagePullPolicy: '拉取策略',
   cpuRequest: 'CPU 请求', memoryRequest: '内存请求', cpuLimit: 'CPU 限制', memoryLimit: '内存限制',
   persistenceEnabled: '持久化', storageSize: '存储大小', storageClass: '存储类', mountPath: '挂载路径',

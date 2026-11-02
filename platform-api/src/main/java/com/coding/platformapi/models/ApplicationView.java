@@ -1,6 +1,5 @@
 package com.coding.platformapi.models;
 
-import com.coding.common.models.app.AppSpecDTO;
 import lombok.Data;
 
 import java.util.Date;
@@ -25,12 +24,11 @@ public class ApplicationView {
 
     private String status;
 
+    /** 旧画布的版本号，已不再使用；新模型看 liveReleaseNo */
     private Integer currentRevision;
 
     /** 线上发布号；0 或空 = 尚未发布 */
     private Integer liveReleaseNo;
-
-    private AppSpecDTO spec;
 
     private Date createdAt;
 

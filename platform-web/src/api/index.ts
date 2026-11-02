@@ -8,11 +8,8 @@ import type {
   AppReleasePreview,
   AppServiceDesired,
   AppServiceView,
-  ApplicationOperation,
   ApplicationOptions,
-  ApplicationPreview,
   ApplicationView,
-  AppSpec,
   AuditLog,
   AuditQuery,
   BgpConfiguration,
@@ -1183,8 +1180,9 @@ export const middlewareApi = {
     http.post<never, MiddlewareOperatorStatus>('/middleware/operator/install', { clusterId, code }),
 }
 
-// ---------------- 应用编排（画布） ----------------
+// ---------------- 应用 ----------------
 
+/** 应用台账（/application/list、get、create、delete、options） */
 export const applicationApi = {
   /** `silent` 用于附带性查询（资源页「所属应用」）：失败不弹红条 */
   list: (clusterId: string, tenantId?: string, silent = false) =>
@@ -1194,28 +1192,15 @@ export const applicationApi = {
     http.post<never, ApplicationView>('/application/get', { appId, tenantId }),
   create: (payload: {
     clusterId: string; namespace: string; name: string
-    displayName?: string; description?: string; spec: AppSpec; tenantId?: string
+    displayName?: string; description?: string; tenantId?: string
   }) => http.post<never, ApplicationView>('/application/create', payload),
-  update: (payload: {
-    appId: string; name?: string; displayName?: string; description?: string; spec?: AppSpec
-    tenantId?: string
-  }) => http.post<never, ApplicationView>('/application/update', payload),
   remove: (appId: string, tenantId?: string) =>
     http.post<never, void>('/application/delete', { appId, tenantId }),
-  preview: (payload: { appId: string; spec?: AppSpec; tenantId?: string }) =>
-    http.post<never, ApplicationPreview>('/application/preview', payload),
-  deploy: (payload: { appId: string; revision?: number; tenantId?: string }) =>
-    http.post<never, number>('/application/deploy', payload),
-  operation: (operationId: number, tenantId?: string) =>
-    http.post<never, ApplicationOperation>('/application/operation/get', { operationId, tenantId }),
-  revisions: (appId: string, tenantId?: string) =>
-    http.post<never, Array<{ revision: number; status: string; message?: string; createdAt?: string }>>(
-      '/application/revision/list', { appId, tenantId }),
   options: (clusterId: string, tenantId?: string) =>
     http.post<never, ApplicationOptions>('/application/options', { clusterId, tenantId }),
 }
 
-/** 应用服务配置与概览（去画布版，/application/service/*、/application/overview） */
+/** 应用服务配置与概览（/application/service/*、/application/overview） */
 export const appServiceApi = {
   overview: (appId: string, tenantId?: string) =>
     http.post<never, AppOverview>('/application/overview', { appId, tenantId }),
