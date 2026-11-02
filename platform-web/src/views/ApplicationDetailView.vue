@@ -4,9 +4,10 @@
  *
  * 数据只有一个来源：`/application/overview`（服务现读状态 + 期望配置 + 乐观锁版本）。
  * 待发布改动由后端比较「期望配置 vs 线上快照」得出，这里不另存草稿。
- * 发布对话框 / 发布记录属于后续任务，入口先留位（见 openRelease）。
+ * 发布对话框、进度面板、发布记录、回滚在 components/app-release/。
+ * 进度由 AppExecutionPanel 轮询 execution/active（只在执行进行中），每次轮询回调 load(true) 刷新服务状态。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { appServiceApi, applicationApi } from '@/api'
@@ -16,6 +17,11 @@ import { apiCodes } from '@/apiCodes'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import AppReleaseDialog from '@/components/app-release/AppReleaseDialog.vue'
+import AppRollbackDialog from '@/components/app-release/AppRollbackDialog.vue'
+import AppExecutionPanel from '@/components/app-release/AppExecutionPanel.vue'
+import AppReleaseHistory from '@/components/app-release/AppReleaseHistory.vue'
+import { isRunning } from '@/components/app-release/releaseUtil'
 import type { AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
 
 const route = useRoute()
@@ -51,9 +57,6 @@ const APP_STATUS: Record<string, { text: string; type: 'success' | 'warning' | '
   FAILED: { text: '发布失败', type: 'danger' },
   INTERRUPTED: { text: '已中断', type: 'danger' },
 }
-const EXEC_STAGE: Record<string, string> = {
-  DONE: '完成', PRECHECK: '预检', RENDER: '渲染', CONFLICT: '冲突检查', APPLY: '下发', HEALTH: '健康检查', PRUNE: '清理旧对象',
-}
 
 const pendingCount = computed(() => overview.value?.pendingKeys.length ?? 0)
 const live = computed(() => overview.value?.liveReleaseNo ?? app.value?.liveReleaseNo ?? 0)
@@ -63,6 +66,10 @@ const lastFailed = computed(() => {
   const e = overview.value?.lastExecution
   return e && !overview.value?.activeExecution && (e.status === 'FAILED' || e.status === 'INTERRUPTED') ? e : null
 })
+/** 进度面板展示：活动执行（含 INTERRUPTED）优先，否则是最近一次失败 */
+const panelExecution = computed(() => active.value ?? lastFailed.value)
+/** PENDING / RUNNING 在推进，不能再发布；INTERRUPTED 可以（新发布取代它） */
+const publishing = computed(() => isRunning(active.value?.status))
 
 async function load(silent = false): Promise<void> {
   if (!appId.value) return
@@ -85,17 +92,6 @@ async function load(silent = false): Promise<void> {
   }
 }
 
-// 有活动执行时每 5s 刷新一次进度，结束后停
-let timer: number | null = null
-function stopPoll(): void {
-  if (timer != null) { window.clearInterval(timer); timer = null }
-}
-watch(active, (e) => {
-  stopPoll()
-  if (e) timer = window.setInterval(() => { void load(true) }, 5000)
-}, { immediate: true })
-onBeforeUnmount(stopPoll)
-
 function goList(): void {
   router.push('/applications')
 }
@@ -103,10 +99,28 @@ function openService(row: AppServiceRow): void {
   router.push(`/applications/${appId.value}/services/${encodeURIComponent(row.key)}`)
 }
 
-/** 发布对话框由后续任务提供：此处只保留入口，避免页面空转 */
+// ---------- 发布 / 回滚 ----------
+const releaseVisible = ref(false)
+const rollbackVisible = ref(false)
+const rollbackTarget = ref<number | null>(null)
+/** 递增 → 发布记录重新加载 */
+const historyKey = ref(0)
+
 function openRelease(): void {
-  ElMessage.info('发布对话框将在后续版本提供')
+  releaseVisible.value = true
 }
+function openRollback(releaseNo: number): void {
+  rollbackTarget.value = releaseNo
+  rollbackVisible.value = true
+}
+async function afterExecutionChange(): Promise<void> {
+  await load(true)
+  historyKey.value++
+}
+// 执行状态变了（结束 / 失败 / 中断）→ 发布记录跟着刷新；轮询期间状态不变就不重复拉
+watch(() => `${overview.value?.lastExecution?.id ?? ''}:${active.value?.id ?? ''}:${panelExecution.value?.status ?? ''}`, (now, old) => {
+  if (old !== undefined && now !== old) historyKey.value++
+})
 
 // ---------- 添加服务 ----------
 const addVisible = ref(false)
@@ -220,7 +234,12 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
     <PageHeader :title="app?.displayName || app?.name || '应用'">
       <el-button @click="goList">返回列表</el-button>
       <el-button :loading="loading" @click="load()">刷新</el-button>
-      <el-button type="primary" :disabled="!overview || !canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openRelease">
+      <el-button
+        type="primary"
+        :disabled="!overview || !canWrite || publishing"
+        :title="!canWrite ? '没有应用写权限' : publishing ? '有进行中的发布，结束后才能再次发布' : ''"
+        @click="openRelease"
+      >
         发布{{ pendingCount ? ` · ${pendingCount} 项改动` : '' }}
       </el-button>
     </PageHeader>
@@ -237,23 +256,17 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
         <span v-if="app.description" class="muted">{{ app.description }}</span>
       </div>
 
-      <el-alert
-        v-if="active"
-        class="app-detail__banner"
-        type="info"
-        :closable="false"
-        show-icon
-        :title="`发布 #${active.releaseNo} 进行中：${EXEC_STAGE[active.stage ?? ''] ?? active.stage ?? active.status}`"
-        :description="active.message || undefined"
-      />
-      <el-alert
-        v-else-if="lastFailed"
-        class="app-detail__banner"
-        type="error"
-        :closable="false"
-        show-icon
-        :title="`发布 #${lastFailed.releaseNo} ${lastFailed.status === 'INTERRUPTED' ? '已中断' : '失败'}`"
-        :description="lastFailed.message || '重新执行、继续与回滚入口将在发布记录中提供。'"
+      <AppExecutionPanel
+        v-if="panelExecution"
+        :app-id="appId"
+        :tenant-id="tenantId"
+        :execution="panelExecution"
+        :services="overview.services"
+        :live-no="live"
+        :can-write="canWrite"
+        @tick="load(true)"
+        @changed="afterExecutionChange"
+        @rollback="openRollback(live)"
       />
 
       <section class="panel app-detail__sec">
@@ -324,7 +337,15 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 
       <el-tabs v-model="bottomTab" class="app-detail__tabs">
         <el-tab-pane label="发布记录" name="releases" lazy>
-          <EmptyState title="发布记录" description="发布记录与回滚将在后续版本提供。" />
+          <AppReleaseHistory
+            :app-id="appId"
+            :tenant-id="tenantId"
+            :live-no="live"
+            :can-write="canWrite"
+            :busy="publishing"
+            :reload-key="historyKey"
+            @rollback="openRollback"
+          />
         </el-tab-pane>
         <el-tab-pane label="拓扑" name="topology" lazy>
           <EmptyState title="拓扑" description="由变量引用生成的只读依赖图，将在后续版本提供。" />
@@ -334,6 +355,23 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
         </el-tab-pane>
       </el-tabs>
     </template>
+
+    <AppReleaseDialog
+      v-model="releaseVisible"
+      :app-id="appId"
+      :tenant-id="tenantId"
+      :services="overview?.services ?? []"
+      :pending-keys="overview?.pendingKeys ?? []"
+      @published="afterExecutionChange"
+    />
+    <AppRollbackDialog
+      v-model="rollbackVisible"
+      :app-id="appId"
+      :tenant-id="tenantId"
+      :target-no="rollbackTarget"
+      :live-no="live || null"
+      @rolled-back="afterExecutionChange"
+    />
 
     <el-dialog v-model="addVisible" title="添加服务" width="520px" class="app-svc-dlg" destroy-on-close>
       <el-form label-width="90px" @submit.prevent>

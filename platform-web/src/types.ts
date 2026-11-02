@@ -2960,6 +2960,46 @@ export interface AppOverview {
   lastExecution?: AppExecution | null
 }
 
+/** 发布预览（/application/release/preview）。problems 阻断发布；warnings 只提示 */
+export interface AppReleasePreviewChange {
+  key: string
+  /** ADDED / CHANGED / DELETED */
+  type: 'ADDED' | 'CHANGED' | 'DELETED'
+  fields?: string[] | null
+  fromImage?: string | null
+  toImage?: string | null
+}
+export interface AppReleasePreview {
+  changes: AppReleasePreviewChange[]
+  pendingKeys: string[]
+  selectedKeys: string[]
+  /** 勾选项引用了、却尚未发布也没勾选的服务 */
+  requiredKeys: string[]
+  addedObjects: string[]
+  removedObjects: string[]
+  problems: string[]
+  warnings: string[]
+}
+
+/** 一次发布。snapshot / objects 只在 release/get 里返回；快照不含口令 */
+export interface AppRelease {
+  releaseNo: number
+  /** NORMAL / ROLLBACK */
+  type: string
+  sourceReleaseNo?: number | null
+  note?: string | null
+  /** RENDERED（执行中）/ DEPLOYED / FAILED */
+  status: string
+  createdBy?: string | null
+  createdAt?: string | null
+  live: boolean
+  snapshot?: {
+    services?: Record<string, AppServiceDesired>
+    dependencies?: Array<{ key: string; type: string; ownership?: string | null; instanceId?: string | null; external?: Record<string, unknown> | null }>
+  } | null
+  objects?: AppObjectRef[] | null
+}
+
 export interface AppServiceView {
   key: string
   kind: string

@@ -1,6 +1,9 @@
 import http from './http'
 import type {
+  AppExecution,
   AppOverview,
+  AppRelease,
+  AppReleasePreview,
   AppServiceDesired,
   AppServiceView,
   ApplicationOperation,
@@ -1220,4 +1223,24 @@ export const appServiceApi = {
   }) => http.post<never, AppServiceView>('/application/service/update', payload),
   remove: (payload: { appId: string; serviceKey: string; version: number; tenantId?: string }) =>
     http.post<never, void>('/application/service/remove', payload),
+}
+
+/** 发布、执行与回滚（/application/release/*、/application/execution/*） */
+export const appReleaseApi = {
+  /** images：服务 key → 本次要用的镜像 tag（只传与期望配置不同的） */
+  preview: (payload: { appId: string; serviceKeys: string[]; images?: Record<string, string>; tenantId?: string }) =>
+    http.post<never, AppReleasePreview>('/application/release/preview', payload),
+  create: (payload: {
+    appId: string; serviceKeys: string[]; images?: Record<string, string>; note?: string; tenantId?: string
+  }) => http.post<never, number>('/application/release/create', payload),
+  rollback: (payload: { appId: string; releaseNo: number; note?: string; tenantId?: string }) =>
+    http.post<never, number>('/application/release/rollback', payload),
+  list: (appId: string, tenantId?: string) =>
+    http.post<never, AppRelease[]>('/application/release/list', { appId, tenantId }),
+  get: (appId: string, releaseNo: number, tenantId?: string) =>
+    http.post<never, AppRelease>('/application/release/get', { appId, releaseNo, tenantId }),
+  activeExecution: (appId: string, tenantId?: string) =>
+    http.post<never, AppExecution | null>('/application/execution/active', { appId, tenantId }),
+  resume: (executionId: number, tenantId?: string) =>
+    http.post<never, void>('/application/execution/resume', { executionId, tenantId }),
 }
