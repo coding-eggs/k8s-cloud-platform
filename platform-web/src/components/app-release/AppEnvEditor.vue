@@ -19,6 +19,8 @@ const props = defineProps<{
   dependencyKeys?: string[]
   /** 可被引用的服务 key（仅有端口的，且不含自己） */
   serviceKeys?: string[]
+  /** 只读：所有输入、下拉、按钮都真正禁用（不能靠 Tab 改） */
+  disabled?: boolean
 }>()
 
 const model = defineModel<AppEnvRow[]>({ default: () => [] })
@@ -79,12 +81,13 @@ function nameProblem(r: AppEnvRow, i: number): string {
     <div v-if="!model.length" class="app-env__empty">还没有环境变量</div>
     <div v-for="(r, i) in model" :key="i" class="app-env__row">
       <div class="app-env__cell app-env__cell--name">
-        <el-input :model-value="r.name" placeholder="变量名，如 DB_URL" @update:model-value="(v: string) => patch(i, { name: v })" />
+        <el-input :model-value="r.name" :disabled="disabled" placeholder="变量名，如 DB_URL" @update:model-value="(v: string) => patch(i, { name: v })" />
         <div v-if="nameProblem(r, i)" class="app-env__err">{{ nameProblem(r, i) }}</div>
       </div>
       <el-select
         :model-value="isSecret(r) ? 'secret' : 'value'"
         class="app-env__src"
+        :disabled="disabled"
         placeholder="来源"
         @update:model-value="(v: 'value' | 'secret') => setSource(i, v)"
       >
@@ -92,19 +95,20 @@ function nameProblem(r: AppEnvRow, i: number): string {
         <el-option label="Secret" value="secret" />
       </el-select>
       <template v-if="isSecret(r)">
-        <el-input :model-value="r.secretName" class="app-env__half" placeholder="Secret 名" @update:model-value="(v: string) => patch(i, { secretName: v })" />
-        <el-input :model-value="r.secretKey" class="app-env__half" placeholder="键" @update:model-value="(v: string) => patch(i, { secretKey: v })" />
+        <el-input :model-value="r.secretName" :disabled="disabled" class="app-env__half" placeholder="Secret 名" @update:model-value="(v: string) => patch(i, { secretName: v })" />
+        <el-input :model-value="r.secretKey" :disabled="disabled" class="app-env__half" placeholder="键" @update:model-value="(v: string) => patch(i, { secretKey: v })" />
       </template>
       <div v-else class="app-env__cell app-env__cell--value">
         <el-input
           :model-value="r.value"
+          :disabled="disabled"
           placeholder="字面值，或 ${order-db.host} 这样的引用"
           @update:model-value="(v: string) => patch(i, { value: v, kind: v.includes('${') ? 'REF' : 'LITERAL' })"
         />
         <div v-if="refProblem(r)" class="app-env__err">{{ refProblem(r) }}</div>
       </div>
-      <el-dropdown v-if="!isSecret(r)" trigger="click" :disabled="!refGroups.length" @command="(t: string) => insertRef(i, t)">
-        <el-button :disabled="!refGroups.length">插入引用</el-button>
+      <el-dropdown v-if="!isSecret(r)" trigger="click" :disabled="disabled || !refGroups.length" @command="(t: string) => insertRef(i, t)">
+        <el-button :disabled="disabled || !refGroups.length">插入引用</el-button>
         <template #dropdown>
           <el-dropdown-menu>
             <template v-for="g in refGroups" :key="g.label">
@@ -115,10 +119,10 @@ function nameProblem(r: AppEnvRow, i: number): string {
         </template>
       </el-dropdown>
       <span v-else class="app-env__noref" />
-      <el-button link type="danger" @click="remove(i)">删除</el-button>
+      <el-button link type="danger" :disabled="disabled" @click="remove(i)">删除</el-button>
     </div>
     <div class="app-env__foot">
-      <el-button @click="add">+ 添加变量</el-button>
+      <el-button :disabled="disabled" @click="add">+ 添加变量</el-button>
       <span v-if="!refGroups.length" class="app-env__hint">暂无可引用的依赖或服务；依赖在应用页添加。</span>
       <span v-else class="app-env__hint">凭据请用 ${依赖.password} 或 Secret，不要直接写明文。</span>
     </div>

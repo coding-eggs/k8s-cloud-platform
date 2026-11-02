@@ -67,6 +67,8 @@ const workloadName = computed(() => (app.value ? `${app.value.slug}-${key.value}
 // ---------- 表单 ----------
 const form = ref<AppServiceDesired>({ imageRepo: '', imageTag: '' })
 const baseline = ref('')
+/** 读到/保存后的期望配置原样副本：用来区分「原本就有的空串参数」和「用户新加了没填的空行」 */
+let original: AppServiceDesired = { imageRepo: '', imageTag: '' }
 const version = ref<number | null>(null)
 
 function clone<T>(v: T): T {
@@ -76,6 +78,7 @@ function snapshotOf(): string {
   return JSON.stringify(buildDesired())
 }
 function fillForm(d: AppServiceDesired): void {
+  original = clone(d)
   const c = clone(d)
   c.env = (c.env ?? []).map((e) => ({ ...e }))
   form.value = c
@@ -88,6 +91,14 @@ function buildDesired(): AppServiceDesired {
   const d: AppServiceDesired = clone(form.value)
   d.imageRepo = (d.imageRepo ?? '').trim()
   d.imageTag = (d.imageTag ?? '').trim()
+  // 命令 / 参数：用户新加了没填的空项在保存时丢掉；原本就有的空串（按个数）原样保留
+  for (const k of ['command', 'args'] as const) {
+    const list = d[k]
+    if (!Array.isArray(list)) continue
+    const orig = original[k]
+    let allowed = Array.isArray(orig) ? orig.filter((x) => x === '').length : 0
+    d[k] = list.filter((x) => x !== '' || allowed-- > 0)
+  }
   for (const k of Object.keys(d)) {
     const v = d[k]
     if (v === '' || v == null || (Array.isArray(v) && v.length === 0 && k !== 'env')) delete d[k]
@@ -330,7 +341,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           </el-tab-pane>
 
           <el-tab-pane label="环境变量" name="env">
-            <AppEnvEditor v-model="form.env" :dependency-keys="depKeys" :service-keys="selfRefs" :class="{ 'is-disabled': readonly }" />
+            <AppEnvEditor v-model="form.env" :dependency-keys="depKeys" :service-keys="selfRefs" :disabled="readonly" />
           </el-tab-pane>
 
           <el-tab-pane label="资源与命令" name="resources">
@@ -446,5 +457,4 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 .app-svc__tip { margin-left: 10px; color: var(--text-3); font-size: 12px; }
 .app-svc__save { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
 .app-svc__bar { display: flex; gap: 8px; margin-bottom: 10px; }
-.is-disabled { pointer-events: none; opacity: 0.6; }
 </style>
