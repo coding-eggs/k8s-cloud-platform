@@ -76,6 +76,9 @@ public enum EnumResponseType {
     K8S_RBAC_FORBIDDEN(10043, "集群侧 RBAC 拒绝了该操作。若这是租户操作，请检查「RBAC 模板」是否覆盖该资源的 apiGroup，并在改动后重下发。集群返回: "),
 
     /** 资源由平台组件或中间件实例管理：通用资源页不允许修改/删除（spec §7） */
+    /** 卷快照创建 / 从快照恢复的校验失败（PVC 未绑定、存储类不支持、快照未就绪等，msg 给具体原因） */
+    VOLUME_SNAPSHOT_INVALID(10049, "卷快照参数非法"),
+
     RESOURCE_MANAGED_BY_PLATFORM(10048, "该资源由平台组件或中间件实例管理，不能在通用资源页修改或删除；请到对应页面操作"),
 
     /** PrometheusRule 内容不合法（alert/record 二选一、expr 必填、组名必填） */
