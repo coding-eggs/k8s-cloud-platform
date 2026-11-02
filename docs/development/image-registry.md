@@ -160,6 +160,7 @@ Endpoint 地址：
 | `quay.io/calico/calico`、`quay.io/calico/node`、`quay.io/calico/third-party-cni-plugins` | Calico **工作负载** —— **有意不纳管，固定走上游**（见下方） |
 | `quay.io/strimzi/operator` + `quay.io/strimzi/kafka` | Strimzi（operator 与 broker） |
 | `docker.io/chrislusf/seaweedfs` | 对象存储 |
+| `registry.k8s.io/sig-storage/nfsplugin`、`csi-provisioner`、`csi-resizer`、`csi-snapshotter`、`livenessprobe`、`csi-node-driver-registrar`、`snapshot-controller` | NFS CSI 驱动（卷快照）。**snapshot-controller 容易漏**：chart 默认不渲染它，渲染护栏看不到 |
 | `ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator` | otel operator |
 | `docker.io/grafana/tempo` | Tempo |
 | `ghcr.io/tektoncd/operator/operator-303303c315a48490ba6517859ef65b77`、`.../webhook-f2bb711aa8f0c0892856a4cbf6d9ddd8` | Tekton（名字带内容哈希，随 chart 版本变） |

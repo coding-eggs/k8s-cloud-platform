@@ -82,7 +82,13 @@ public class ClusterComponentCatalog {
             // 认 Deployment harbor-core（chart 的 fullnameOverride 钉成 harbor，release 名变了也不影响探测）。
             new ComponentDef("harbor", "Harbor（镜像仓库）", null,
                     List.of(new ComponentProbe("harbor", "deployment", "goharbor/harbor-core", "harbor-core")),
-                    List.of("container-registry")));
+                    List.of("container-registry")),
+            // NFS 的 CSI 驱动 + 快照控制器（同一个安装单元，不单列 snapshot-controller）。
+            // 没有 fullnameOverride：chart 里 Deployment 名字本来就是固定的 csi-nfs-controller。
+            // apiGroup 只是附带信息：CRD 由 helm 下发后不随卸载消失，「装没装」看活的 Deployment
+            new ComponentDef("csi-driver-nfs", "NFS CSI 驱动（卷快照）", "snapshot.storage.k8s.io",
+                    List.of(new ComponentProbe("kube-system", "deployment", "sig-storage/nfsplugin", "csi-nfs-controller")),
+                    List.of("volume-snapshot")));
 
     public List<ComponentDef> all() {
         return COMPONENTS;

@@ -39,6 +39,27 @@ class ChartImageOverlayTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void csiDriverNfsPinsEveryBaseRepoImage() throws Exception {
+        // snapshot-controller 默认不渲染（externalSnapshotter.enabled=false），渲染护栏看不到它，这里单独钉
+        Map<String, Object> overlay = ChartImageOverlay.of(
+                Path.of("src/main/resources/charts/components/csi-driver-nfs/4.13.6/chart"),
+                "harbor.ackcp.cloud", "");
+
+        Map<String, Object> image = (Map<String, Object>) overlay.get("image");
+        for (String[] pin : List.of(
+                new String[] {"csiProvisioner", "csi-provisioner"},
+                new String[] {"csiResizer", "csi-resizer"},
+                new String[] {"csiSnapshotter", "csi-snapshotter"},
+                new String[] {"livenessProbe", "livenessprobe"},
+                new String[] {"nodeDriverRegistrar", "csi-node-driver-registrar"},
+                new String[] {"externalSnapshotter", "snapshot-controller"})) {
+            assertThat(((Map<String, Object>) image.get(pin[0])).get("repository"))
+                    .isEqualTo("harbor.ackcp.cloud/registry.k8s.io/sig-storage/" + pin[1]);
+        }
+    }
+
+    @Test
     void overlayIsEmptyWhenNothingLooksLikeAnImage() {
         Map<String, Object> defaults = new LinkedHashMap<>();
         defaults.put("imagePullPolicy", "IfNotPresent");

@@ -154,6 +154,12 @@ public class KubernetesOperationsFactory {
         return new CoreV1NodeOperations(client, new CoreV1NodeConverter());
     }
 
+    /** 存储类默认开关（集群级，admin client）：设/取消默认要跨 SC 清注解，非标准 CRUD，独立返回具体类型。 */
+    public CoreV1StorageClassOperations getStorageClassOperation(String clusterId) {
+        KubernetesClient client = clientFactory.getAdminClient(clusterId);
+        return new CoreV1StorageClassOperations(client, new CoreV1StorageClassConverter());
+    }
+
     /**
      * 工作负载专用操作（列表页行内动作：改镜像 / 历史版本 / 回滚）。
      * 非六端点 CRUD，故独立返回具体类型（同 {@link #getNodeOperation}）。

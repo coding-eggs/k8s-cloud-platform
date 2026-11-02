@@ -2,6 +2,8 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.audit.AuditAction;
+import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.services.StorageClassService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -17,15 +19,16 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 资源管理 - StorageClass（集群级，只读，<b>仅平台管理员</b>）。
+ * 资源管理 - StorageClass（集群级，<b>仅平台管理员</b>）。
  * <p>
- * 供工作负载编辑器下拉选择 storageClassName；存储类本身由集群/基础设施管理，本层不暴露写操作。
+ * 供工作负载编辑器下拉选择 storageClassName；存储类本身由集群/基础设施管理，本层不暴露创建/编辑/删除。
+ * 唯一写操作是「设为/取消集群默认」（改注解 is-default-class；设时清掉该集群其它已默认的 SC，单默认）。
  * <p>
- * <b>访问面</b>：StorageClass 无命名空间维度，无法按租户收窄，故三个端点的权限码
- * （V2026_10_07_3）由 {@code tenant:storageclass:*} 收为 {@code platform:cluster:manage}。
+ * <b>访问面</b>：StorageClass 无命名空间维度，无法按租户收窄，故各端点的权限码
+ * （V2026_10_07_3 / V2026_11_02_1）均为 {@code platform:cluster:manage}。
  * 业务与 k8s-server 调用在 {@link StorageClassService}（分层约定见 docs/development/backend-layering.md）。
  */
-@Tag(name = "资源管理-StorageClass", description = "集群级存储类（只读，平台管理员）")
+@Tag(name = "资源管理-StorageClass", description = "集群级存储类（平台管理员；写操作仅设/取消默认）")
 @RestController
 @RequestMapping("/storageclasses")
 @RequiredArgsConstructor
@@ -54,6 +57,17 @@ public class StorageClassController {
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId) {
         return new ResponseData<>(storageClassService.yaml(name, tenantId, clusterId));
+    }
+
+    @PostMapping("/{name}/default")
+    @Operation(summary = "设为/取消集群默认存储类",
+            description = "改注解 storageclass.kubernetes.io/is-default-class；isDefault=true 时清掉该集群其它已默认的 SC（单默认）。仅平台管理员。")
+    @Auditable(action = AuditAction.STORAGECLASS_SET_DEFAULT)
+    public ResponseData<StorageClassDTO> setDefault(@PathVariable String name,
+                                                    @RequestParam boolean isDefault,
+                                                    @RequestParam String tenantId,
+                                                    @RequestParam String clusterId) {
+        return new ResponseData<>(storageClassService.setDefault(name, isDefault, tenantId, clusterId));
     }
 
 }

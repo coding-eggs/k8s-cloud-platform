@@ -473,11 +473,14 @@ export const pvcApi = {
     http.post<never, K8sPvc>(`/pvcs/${encodeURIComponent(name)}/resize`, { ...ctx, storage }),
 }
 
-/** StorageClass /storageclasses（集群级，只读：供下拉选择 storageClassName；无 namespace） */
+/** StorageClass /storageclasses（集群级；无 namespace。设为/取消默认是管理员动作） */
 export const storageClassApi = {
   list: (ctx: Ctx2) => http.post<never, K8sStorageClass[]>('/storageclasses/list', ctx),
   get: (name: string, ctx: Ctx2) => http.get<never, K8sStorageClass>(`/storageclasses/${encodeURIComponent(name)}`, { params: ctx }),
   getYaml: (name: string, ctx: Ctx2) => http.get<never, string>(`/storageclasses/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+  /** 设为/取消集群默认（isDefault=false = 取消）。设为默认时后端会清掉该集群其它已默认的 SC（单默认） */
+  setDefault: (name: string, ctx: Ctx2, isDefault: boolean) =>
+    http.post<never, K8sStorageClass>(`/storageclasses/${encodeURIComponent(name)}/default`, null, { params: { ...ctx, isDefault } }),
 }
 
 /** PersistentVolume /persistentvolumes（集群级，只读：供 PVC 详情查看绑定的 PV；无 namespace） */

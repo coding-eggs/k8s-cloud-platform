@@ -143,6 +143,30 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void csiNfsCreatesTheSnapshotClassOnlyInTheSecondPass() {
+        // CRD 在 templates 里：同一份 manifest 带 VolumeSnapshotClass 会报 no matches for kind
+        List<ReleaseSpec> releases = catalog.recipeOf("csi-driver-nfs", "BUSINESS").releases();
+        assertThat(releases).hasSize(2);
+        Map<String, Object> first = (Map<String, Object>) releases.get(0).contractValues().get("volumeSnapshotClass");
+        Map<String, Object> second = (Map<String, Object>) releases.get(1).contractValues().get("volumeSnapshotClass");
+        assertThat(first).doesNotContainKey("create");
+        assertThat(second).containsEntry("create", true);
+        assertThat(releases.get(0).primary()).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void csiNfsNeverBecomesTheDefaultStorageClass() {
+        // 新旧存储类并存：现有 PVC 和没写存储类的新 PVC 都不受这次安装影响
+        for (ReleaseSpec r : catalog.recipeOf("csi-driver-nfs", "MANAGEMENT").releases()) {
+            Map<String, Object> sc = (Map<String, Object>) r.contractValues().get("storageClass");
+            assertThat(sc).containsEntry("name", "nfs-csi").doesNotContainKey("annotations");
+            assertThat(r.editableValues()).containsEntry("storageClass.reclaimPolicy", "Retain");
+        }
+    }
+
+    @Test
     void dependenciesAreDeclared() {
         // spec §5：ambient 依赖控制面、otel 依赖 cert-manager、tekton 由 operator 安装。
         // calico 不再依赖 tigera-operator —— 它自己就把 operator 一起装了

@@ -25,6 +25,7 @@ charts/components/<chart>/
 | `cert-manager` | [cert-manager/README.md](cert-manager/README.md) |
 | `seaweedfs`（对象存储） | [seaweedfs/README.md](seaweedfs/README.md) |
 | `harbor`（镜像仓库） | [harbor/README.md](harbor/README.md) |
+| `csi-driver-nfs`（卷快照） | [csi-driver-nfs/README.md](csi-driver-nfs/README.md) |
 
 > `gateway-api` 于 2026-10-19 并入 `istio` 组件（同一个安装单元），没有独立组件行；
 > 它的 chart 级说明在 `gateway-api/README.md`，组件总文档仍在 `istio-base/README.md`。

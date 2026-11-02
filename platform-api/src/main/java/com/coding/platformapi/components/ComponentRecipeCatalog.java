@@ -649,6 +649,60 @@ public class ComponentRecipeCatalog {
         return out;
     }
 
+    // ==================== NFS CSI 驱动（卷快照） ====================
+
+    /** 新建的存储类名：避开集群上已有的 nfs-subdir 存储类（如 nfs-client），两者并存、互不影响 */
+    public static final String CSI_NFS_STORAGE_CLASS = "nfs-csi";
+
+    public static final String CSI_NFS_SERVER_KEY = "storageClass.parameters.server";
+    public static final String CSI_NFS_SHARE_KEY = "storageClass.parameters.share";
+    public static final String CSI_NFS_RECLAIM_KEY = "storageClass.reclaimPolicy";
+
+    /**
+     * NFS 地址 / 导出目录必须由表单给（默认空串，{@code ComponentInstallService} 校验必填）。
+     * 回收策略默认 Retain：这个存储类要用来承接迁移数据，误删 PVC 不该连带删数据。
+     */
+    private static Map<String, Object> csiNfsEditable() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put(CSI_NFS_SERVER_KEY, "");
+        out.put(CSI_NFS_SHARE_KEY, "");
+        out.put(CSI_NFS_RECLAIM_KEY, "Retain");
+        out.put("volumeSnapshotClass.deletionPolicy", "Delete");
+        return out;
+    }
+
+    /**
+     * 两遍共用的契约值。{@code volumeSnapshotClass.create} <b>有意不写在这里</b>：
+     * 第一遍新装时取 chart 默认 false；重装/编辑时从快照继承 true，
+     * 这样升级不会先删掉快照类再建回来（写死 false 就会）。
+     *
+     * <p>不设默认存储类：是否切默认由管理员迁移完数据后自己决定。
+     * 不设 mountOptions：让客户端和 NFS 服务端自己协商协议版本。
+     */
+    private static Map<String, Object> csiNfsContract() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("externalSnapshotter", Map.of("enabled", true,
+                "customResourceDefinitions", Map.of("enabled", true)));
+        out.put("controller", Map.of("enableSnapshotter", true));
+        out.put("storageClass", Map.of("create", true, "name", CSI_NFS_STORAGE_CLASS,
+                "volumeBindingMode", "Immediate"));
+        out.put("volumeSnapshotClass", Map.of("name", "nfs-csi-snapclass"));
+        return out;
+    }
+
+    /**
+     * 第一遍：驱动 + 快照控制器 + CRD + 存储类。
+     * 第二遍才建 VolumeSnapshotClass：CRD 在 templates 里，同一份 manifest 里带 CR 会报
+     * {@code no matches for kind}（与 Tekton / OTel 同一个坑）。
+     */
+    private static final List<ReleaseSpec> CSI_NFS_RELEASES = List.of(
+            new ReleaseSpec("platform-csi-driver-nfs", "kube-system", "csi-driver-nfs", "4.13.6",
+                    csiNfsContract(), csiNfsEditable()).asPrimary().withAppVersion("4.13.6"),
+            new ReleaseSpec("platform-csi-driver-nfs", "kube-system", "csi-driver-nfs", "4.13.6",
+                    DeepMerge.merge(csiNfsContract(),
+                            Map.of("volumeSnapshotClass", Map.of("create", true))),
+                    csiNfsEditable()).withAppVersion("4.13.6"));
+
     // ==================== 汇总 ====================
 
     private static final Map<String, Map<String, ComponentRecipe>> RECIPES = Map.ofEntries(
@@ -674,6 +728,7 @@ public class ComponentRecipeCatalog {
                     BUSINESS, new ComponentRecipe(BUSINESS, CALICO_RELEASES, List.of(), false, false, false, true),
                     MANAGEMENT, new ComponentRecipe(MANAGEMENT, CALICO_RELEASES, List.of(), false, false, false, true))),
             Map.entry("cert-manager", profiles(CERT_MANAGER_RELEASES, List.of())),
+            Map.entry("csi-driver-nfs", profiles(CSI_NFS_RELEASES, List.of())),
             // 对象存储：安装表单带 StorageClass/容量/副本数（seaweedStorage=true）
             Map.entry("seaweedfs", Map.of(
                     BUSINESS, new ComponentRecipe(BUSINESS, SEAWEEDFS_RELEASES, List.of(),
@@ -749,6 +804,10 @@ public class ComponentRecipeCatalog {
             Map.entry("persistence.persistentVolumeClaim.trivy.size", "扫描器容量"),
             Map.entry("trivy.enabled", "安装 Trivy 镜像扫描"),
             Map.entry("replicas", "副本数"),
+            Map.entry(CSI_NFS_SERVER_KEY, "NFS 服务地址（必填，安装后不可改）"),
+            Map.entry(CSI_NFS_SHARE_KEY, "NFS 导出目录（必填，安装后不可改）"),
+            Map.entry(CSI_NFS_RECLAIM_KEY, "PVC 删除后的数据（安装后不可改）"),
+            Map.entry("volumeSnapshotClass.deletionPolicy", "快照删除后的数据"),
             // SeaweedFS 四个工作负载 / Tempo：表单里一行一个，label 只写组件名
             Map.entry("s3.resources", "S3 网关"),
             Map.entry("filer.resources", "Filer"),
@@ -793,6 +852,10 @@ public class ComponentRecipeCatalog {
             Map.entry("persistence.persistentVolumeClaim.trivy.storageClass", "存储（Harbor）"),
             Map.entry("persistence.persistentVolumeClaim.trivy.size", "存储（Harbor）"),
             Map.entry("trivy.enabled", "镜像扫描"),
+            Map.entry(CSI_NFS_SERVER_KEY, "存储类 nfs-csi"),
+            Map.entry(CSI_NFS_SHARE_KEY, "存储类 nfs-csi"),
+            Map.entry(CSI_NFS_RECLAIM_KEY, "存储类 nfs-csi"),
+            Map.entry("volumeSnapshotClass.deletionPolicy", "卷快照"),
             // SeaweedFS / Tempo 的资源：一个组件一组，四行（各工作负载）共用小节
             Map.entry("s3.resources", "资源限制"),
             Map.entry("filer.resources", "资源限制"),
@@ -810,7 +873,9 @@ public class ComponentRecipeCatalog {
      * 枚举型可编辑字段的候选值（前端渲染成下拉）。没有列在这里的按默认值的 Java 类型推断控件。
      */
     private static final Map<String, List<String>> EDITABLE_OPTIONS = Map.of(
-            "service.type", List.of("LoadBalancer", "NodePort", "ClusterIP"));
+            "service.type", List.of("LoadBalancer", "NodePort", "ClusterIP"),
+            CSI_NFS_RECLAIM_KEY, List.of("Retain", "Delete"),
+            "volumeSnapshotClass.deletionPolicy", List.of("Delete", "Retain"));
 
     public static String labelOf(String key) {
         return EDITABLE_LABELS.getOrDefault(key, key);

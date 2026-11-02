@@ -37,6 +37,7 @@ import com.coding.platformapi.models.ThanosInstallRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.util.StringUtils;
 import org.springframework.stereotype.Service;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
@@ -49,6 +50,7 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -252,6 +254,7 @@ public class ComponentInstallService {
         // Tempo 的持久化是 STS 的 volumeClaimTemplates（不可变）：已装实例上改会在下发时被拒。
         // 只拿**成功**记录比：失败记录里的值还没真正落成 STS，不该挡用户改
         validateTempoPersistence(merged, last);
+        validateCsiNfsStorageClass(merged, last);
         // 对象存储的 PVC / 副本数落在嵌套结构里（volume.dataDirs 是 list），由表单参数拼进来
         if (seaweed != null) {
             merged = applySeaweedValues(merged, seaweed);
@@ -426,6 +429,45 @@ public class ComponentInstallService {
                                     + "StatefulSet 的 volumeClaimTemplates 不可变。"
                                     + "扩容请直接调整 PVC，换存储类需要重建 Tempo");
                 }
+            }
+        }
+    }
+
+    /**
+     * {@code nfs-csi} 存储类的两条规则，都要赶在 helm 之前说人话：
+     * <ul>
+     *   <li>NFS 地址 / 导出目录必填：空值下 chart 能渲染成功，但建出来的存储类永远开不出卷；</li>
+     *   <li>已装实例上不能改：StorageClass 的 parameters / reclaimPolicy 不可变，
+     *       改了 helm 会在中途被 API server 拒。</li>
+     * </ul>
+     */
+    @SuppressWarnings("unchecked")
+    private static void validateCsiNfsStorageClass(List<ReleaseSpec> releases,
+                                                   PlatformComponentOperation lastSuccess) {
+        Map<String, Map<String, Object>> previous = lastSuccess == null
+                ? Map.of() : parseSnapshot(lastSuccess.getValuesSnapshot());
+        for (ReleaseSpec release : releases) {
+            if (!"csi-driver-nfs".equals(release.chartCode())
+                    || !(release.contractValues().get("storageClass") instanceof Map<?, ?> sc)) {
+                continue;
+            }
+            Map<String, Object> params = sc.get("parameters") instanceof Map<?, ?> p
+                    ? (Map<String, Object>) p : Map.of();
+            if (!StringUtils.hasText(String.valueOf(params.getOrDefault("server", "")))
+                    || !StringUtils.hasText(String.valueOf(params.getOrDefault("share", "")))) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "请填写 NFS 服务地址和导出目录");
+            }
+            Map<String, Object> prevValues = previous.get(release.releaseName());
+            if (prevValues == null || !(prevValues.get("storageClass") instanceof Map<?, ?> before)) {
+                continue;
+            }
+            Map<String, Object> prevParams = before.get("parameters") instanceof Map<?, ?> p
+                    ? (Map<String, Object>) p : Map.of();
+            if (!params.equals(prevParams) || !Objects.equals(sc.get("reclaimPolicy"), before.get("reclaimPolicy"))) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "存储类 " + ComponentRecipeCatalog.CSI_NFS_STORAGE_CLASS
+                                + " 的 NFS 地址、导出目录和回收策略在已安装的实例上不能修改：StorageClass 这几项不可变");
             }
         }
     }

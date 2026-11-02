@@ -5,17 +5,23 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.k8s.dto.VolumeExpansion;
 import com.coding.k8score.converter.CommonConverter;
+import com.coding.k8score.converter.impl.core.CoreV1StorageClassConverter;
 import com.coding.k8score.operations.ClusterOperations;
 import com.coding.k8score.operations.ServerSideApply;
 import io.fabric8.kubernetes.api.model.ListOptions;
 import io.fabric8.kubernetes.api.model.storage.StorageClass;
 import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.base.PatchContext;
+import io.fabric8.kubernetes.client.dsl.base.PatchType;
 import io.fabric8.kubernetes.client.utils.Serialization;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.StringUtils;
 
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -127,6 +133,69 @@ public class CoreV1StorageClassOperations implements ClusterOperations<StorageCl
         StorageClass in = converter.convert(dto);
         return converter.revert(client.storage().v1().storageClasses().resource(in)
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply());
+    }
+
+    /**
+     * 设 / 取消集群默认存储类：改注解 {@link CoreV1StorageClassConverter#DEFAULT_CLASS_ANNOTATION}。
+     *
+     * <p><b>单默认不变式</b>（用户约定）：设为默认时，先把该集群里<b>其它</b>带此注解的 SC 清掉，再给目标打上；
+     * 取消只删目标自己。用 JSON merge patch（值 {@code null} = 删 key），<b>不挑 field owner</b> —— 这些注解常是
+     * 集群工具（CSI / 云厂商 controller）设的，SSA 删不掉别人拥有的 key。返回重读后的对象，{@code isDefault}
+     * 与 {@code expansion} 都是新值。
+     */
+    public StorageClassDTO setDefault(String name, boolean isDefault) {
+        if (!StringUtils.hasText(name)) {
+            throw new CloudPlatformException(EnumResponseType.SEARCH_K8S_REQUIRE_NAME_AND_NAMESPACE);
+        }
+        if (!checkExist(name)) {
+            throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
+        }
+        if (isDefault) {
+            Map<String, Boolean> current = new LinkedHashMap<>();
+            for (StorageClass sc : client.storage().v1().storageClasses().list().getItems()) {
+                if (sc.getMetadata() == null || sc.getMetadata().getName() == null) {
+                    continue;
+                }
+                current.put(sc.getMetadata().getName(), hasDefaultAnnotation(sc));
+            }
+            for (String other : othersToClear(name, current)) {
+                patchDefaultAnnotation(other, false);
+            }
+        }
+        patchDefaultAnnotation(name, isDefault);
+        return get(name);
+    }
+
+    /**
+     * 纯逻辑（单测判据）：设 {@code targetName} 为默认时，需要<b>清掉</b>注解的其它 SC 名单 ——
+     * 当前已默认、且不是目标的那些。保持"一个集群至多一个默认"。取消默认不走这里（只删目标自己）。
+     */
+    static Set<String> othersToClear(String targetName, Map<String, Boolean> current) {
+        Set<String> toClear = new LinkedHashSet<>();
+        for (Map.Entry<String, Boolean> e : current.entrySet()) {
+            if (Boolean.TRUE.equals(e.getValue()) && !e.getKey().equals(targetName)) {
+                toClear.add(e.getKey());
+            }
+        }
+        return toClear;
+    }
+
+    private boolean hasDefaultAnnotation(StorageClass sc) {
+        Map<String, String> annotations = sc.getMetadata() == null ? null : sc.getMetadata().getAnnotations();
+        return annotations != null
+                && "true".equalsIgnoreCase(annotations.get(CoreV1StorageClassConverter.DEFAULT_CLASS_ANNOTATION));
+    }
+
+    /**
+     * merge patch 打 / 删默认注解：{@code isDefault=true} 置 {@code "true"}（无则新建 annotations map），
+     * {@code false} 置 {@code null}（删 key）。显式拼 JSON 而非走序列化器 —— 确保删除分支真的产出
+     * {@code "key":null}（某些 Jackson 配置会吞掉 null，那样就删不掉、悄悄变成 no-op）。
+     */
+    private void patchDefaultAnnotation(String name, boolean isDefault) {
+        String json = "{\"metadata\":{\"annotations\":{\"" + CoreV1StorageClassConverter.DEFAULT_CLASS_ANNOTATION
+                + "\":" + (isDefault ? "\"true\"" : "null") + "}}}";
+        client.storage().v1().storageClasses().withName(name)
+                .patch(PatchContext.of(PatchType.JSON_MERGE), json);
     }
 
     @Override

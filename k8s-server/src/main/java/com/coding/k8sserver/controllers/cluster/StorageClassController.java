@@ -2,11 +2,16 @@ package com.coding.k8sserver.controllers.cluster;
 
 import com.coding.common.models.k8s.ResourceType;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
+import com.coding.common.models.system.ResponseData;
 import com.coding.k8score.factory.KubernetesOperationsFactory;
 import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.controllers.base.AbstractClusterResourceController;
+import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -26,6 +31,24 @@ public class StorageClassController extends AbstractClusterResourceController<St
     @Override
     protected ResourceType resourceType() {
         return ResourceType.STORAGE_CLASS;
+    }
+
+    /**
+     * 设为 / 取消集群默认存储类（管理员）。改注解 {@code storageclass.kubernetes.io/is-default-class}；
+     * {@code isDefault=true} 时先清掉该集群其它已默认的 SC 再设目标（单默认），false 只删目标自己。
+     */
+    @PostMapping("/{name}/default")
+    @Operation(summary = "设为/取消集群默认存储类",
+            description = "改注解 storageclass.kubernetes.io/is-default-class；isDefault=true 时清掉该集群其它已默认的 SC（单默认）。")
+    public ResponseData<StorageClassDTO> setDefault(@PathVariable String name,
+                                                    @RequestParam String clusterId,
+                                                    @RequestParam boolean isDefault) {
+        accessResolver.assertClusterAccess(clusterId);
+        StorageClassDTO item = operationsFactory.getStorageClassOperation(clusterId).setDefault(name, isDefault);
+        if (item != null) {
+            item.setClusterId(clusterId);
+        }
+        return new ResponseData<>(item);
     }
 
 }

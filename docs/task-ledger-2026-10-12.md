@@ -1023,7 +1023,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | ✅ **已完成（2026-10-22）**：批①+批②（引擎 + 11 条组件 recipe + 组件文档），**功能级验收 7/7**（calico 2026-10-22 在业务集群 test-work-cluster/k8s 1.37 真装通过）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-22 的 calico 修复三项与 k8s-server 镜像里的 kubectl 都在这一批）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
-| **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始 | — |
+| **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始（设计待评审） | [spec](superpowers/specs/2026-11-01-volume-snapshot-design.md) |
 
 ### 依赖图
 

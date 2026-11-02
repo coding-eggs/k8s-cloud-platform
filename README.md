@@ -108,7 +108,7 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 
 `k8s-server/src/main/resources/charts/` 下是平台"集群组件安装"和"中间件商店"直接使用的 chart：
 
-- **components**：cert-manager、gateway-api、harbor、istio（base/cni/istiod/ztunnel/gateway）、metrics-server、
+- **components**：cert-manager、csi-driver-nfs、gateway-api、harbor、istio（base/cni/istiod/ztunnel/gateway）、metrics-server、
   otel-operator、prometheus-operator、projectcalico-crds、tigera-operator、seaweedfs、tekton-operator、tempo、thanos
 - **middleware**：redis、mysql、postgresql、kafka、rabbitmq、elasticsearch、nacos、milvus
 - **app**：应用编排生成的资源模板

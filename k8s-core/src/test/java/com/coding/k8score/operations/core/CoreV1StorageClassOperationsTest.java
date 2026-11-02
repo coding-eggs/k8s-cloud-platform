@@ -4,6 +4,8 @@ import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.k8s.dto.VolumeExpansion;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,5 +57,38 @@ class CoreV1StorageClassOperationsTest {
         // 字段没写（null）也是"没有允许" —— 别把它当成 true
         assertThat(verdict(null, "ebs.csi.aws.com", Set.of("ebs.csi.aws.com")))
                 .isEqualTo(VolumeExpansion.UNSUPPORTED);
+    }
+
+    // ==================== 单默认不变式：设 A 为默认时清掉哪些其它 SC ====================
+
+    @Test
+    void settingDefaultClearsOnlyTheOtherDefaults() {
+        // 目标 a 设为默认：清掉当前已默认的 b、c；不动没默认的 d，也不动目标自己（它本来就没默认）
+        Map<String, Boolean> current = new LinkedHashMap<>();
+        current.put("a", false);
+        current.put("b", true);
+        current.put("c", true);
+        current.put("d", false);
+        assertThat(CoreV1StorageClassOperations.othersToClear("a", current))
+                .containsExactlyInAnyOrder("b", "c");
+    }
+
+    @Test
+    void settingAlreadyDefaultTargetClearsOthersButNotItself() {
+        // 目标 a 已是默认、重新设：清掉其它默认 b，但 a 自己不在清除名单里（由打注解那步重打）
+        Map<String, Boolean> current = new LinkedHashMap<>();
+        current.put("a", true);
+        current.put("b", true);
+        assertThat(CoreV1StorageClassOperations.othersToClear("a", current))
+                .containsExactlyInAnyOrder("b");
+    }
+
+    @Test
+    void noOtherDefaultsMeansNothingToClear() {
+        // 集群里除了目标没有别的默认 → 什么都不用清（幂等：重复设同一个默认是 no-op）
+        Map<String, Boolean> current = new LinkedHashMap<>();
+        current.put("a", false);
+        current.put("d", false);
+        assertThat(CoreV1StorageClassOperations.othersToClear("a", current)).isEmpty();
     }
 }

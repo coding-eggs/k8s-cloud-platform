@@ -2,6 +2,8 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.audit.AuditAction;
+import com.coding.platformapi.audit.Auditable;
 import com.coding.platformapi.models.PvcResizeRequest;
 import com.coding.platformapi.services.PvcService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -57,6 +59,7 @@ public class PvcController {
 
     @PostMapping
     @Operation(summary = "创建 PVC")
+    @Auditable(action = AuditAction.PVC_CREATE)
     public ResponseData<PersistentVolumeClaimDTO> create(@RequestBody PersistentVolumeClaimDTO body) {
         return new ResponseData<>(pvcService.create(body));
     }
@@ -65,6 +68,7 @@ public class PvcController {
     @Operation(summary = "更新 PVC（**仅同步标签**）",
             description = "容量改不了 —— 带上变化的 storage 会明确报错并指向 /{name}/resize。"
                     + "其余字段取线上现值回写（未建模字段不丢）。")
+    @Auditable(action = AuditAction.PVC_UPDATE)
     public ResponseData<PersistentVolumeClaimDTO> update(@PathVariable String name,
                                                          @RequestBody PersistentVolumeClaimDTO body) {
         body.setName(name);
@@ -78,6 +82,7 @@ public class PvcController {
                     + "中间态在 status.conditions（Resizing / FileSystemResizePending），不在 phase 上。"
                     + "⚠️ 与 PUT /{name} 分开成两个端点：那个同步标签，这个是动存储后端、不可逆的操作 —— "
                     + "合成一个入口会让权限与审计都说不清（与工作负载改镜像/暂停单独成端点同一个理由）。")
+    @Auditable(action = AuditAction.PVC_RESIZE)
     public ResponseData<PersistentVolumeClaimDTO> resize(@PathVariable String name,
                                                          @RequestBody PvcResizeRequest body) {
         return new ResponseData<>(pvcService.resize(name, body));
@@ -85,6 +90,7 @@ public class PvcController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 PVC")
+    @Auditable(action = AuditAction.PVC_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

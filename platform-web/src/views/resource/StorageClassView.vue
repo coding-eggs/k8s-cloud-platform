@@ -7,9 +7,11 @@
  * 三个端点的码在 V2026_10_07_3 从 tenant:storageclass:* 改为 platform:cluster:manage。
  * 前端对应地用 Page 域码 platform:page:storageclass.list 收敛菜单与路由。
  *
- * <p>存储类由集群/基础设施管理，本页不提供创建/编辑/删除入口。
+ * <p>存储类由集群/基础设施管理，本页不提供创建/编辑/删除入口。唯一的管理员动作是「设为/取消集群默认」
+ * （改注解 storageclass.kubernetes.io/is-default-class；设时清掉该集群其它已默认的 SC，单默认）。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { storageClassApi } from '@/api'
 import type { K8sStorageClass } from '@/types'
 import { useResourceContext } from '@/stores/context'
@@ -61,6 +63,36 @@ async function refresh(): Promise<void> {
     list.value = await storageClassApi.list(ctx2.value)
   } finally {
     loading.value = false
+  }
+}
+
+// ---------- 设为/取消集群默认（管理员动作；本页仅平台管理员可见，其天然持有 platform:cluster:manage） ----------
+const settingDefault = ref('')
+
+async function onToggleDefault(row: K8sStorageClass): Promise<void> {
+  if (row.isDefault !== true) {
+    // 设为默认有副作用（会清掉当前默认的注解），二次确认；取消默认直接执行
+    const other = list.value.find((s) => s.isDefault === true && s.name !== row.name)
+    try {
+      await ElMessageBox.confirm(
+        other
+          ? `将「${row.name}」设为集群默认？当前默认「${other.name}」会被同时取消（一个集群只有一个默认）。`
+          : `将「${row.name}」设为集群默认？`,
+        '设默认存储类',
+        { type: 'warning' },
+      )
+    } catch { return }
+  }
+  settingDefault.value = row.name
+  try {
+    await storageClassApi.setDefault(row.name, ctx2.value, row.isDefault !== true)
+    ElMessage.success(row.isDefault === true ? '已取消默认' : '已设为默认')
+    await refresh()
+    if (detail.value?.name === row.name) {
+      detail.value = list.value.find((s) => s.name === row.name) ?? null
+    }
+  } catch { /* 拦截器提示 */ } finally {
+    settingDefault.value = ''
   }
 }
 
@@ -133,6 +165,12 @@ const contextDesc = computed(() => {
         <el-table-column label="名称" min-width="220">
           <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code></template>
         </el-table-column>
+        <el-table-column label="默认" width="90">
+          <template #default="{ row }">
+            <el-tag v-if="row.isDefault === true" size="small" type="success">默认</el-tag>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="供应方（provisioner）" min-width="240">
           <template #default="{ row }">{{ row.provisioner ?? '—' }}</template>
         </el-table-column>
@@ -163,6 +201,18 @@ const contextDesc = computed(() => {
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ fmtDate(row.creationTime) }}</template>
         </el-table-column>
+        <el-table-column label="操作" width="110">
+          <template #default="{ row }">
+            <el-button
+              link
+              type="primary"
+              size="small"
+              :loading="settingDefault === row.name"
+              :disabled="!clusterReady || (settingDefault !== '' && settingDefault !== row.name)"
+              @click="onToggleDefault(row)"
+            >{{ row.isDefault === true ? '取消默认' : '设为默认' }}</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
 
@@ -171,6 +221,13 @@ const contextDesc = computed(() => {
       <el-tabs v-model="detailTab">
         <el-tab-pane label="概览" name="info">
           <el-descriptions :column="1" border>
+            <el-descriptions-item label="集群默认">
+              <template v-if="detail?.isDefault === true">
+                <span class="yes">是</span>
+                <div class="muted expansion-note">PVC 不写 storageClassName 时落到这个存储类；一个集群只有一个。</div>
+              </template>
+              <span v-else class="muted">否</span>
+            </el-descriptions-item>
             <el-descriptions-item label="供应方">{{ detail?.provisioner ?? '—' }}</el-descriptions-item>
             <el-descriptions-item label="回收策略">{{ detail?.reclaimPolicy ?? '—' }}</el-descriptions-item>
             <el-descriptions-item label="允许扩容">

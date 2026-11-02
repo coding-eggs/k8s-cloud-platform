@@ -27,7 +27,16 @@ import java.util.Map;
 final class ChartImagePins {
 
     /** values 里的路径 ← 一个上游镜像（会被改写成平台 Harbor 地址） */
-    private record ImagePin(String path, String upstreamImage) {
+    private record ImagePin(String path, String upstreamImage, String listTag) {
+        /** 上游镜像名里自带内容哈希（tekton），清单不需要 tag */
+        ImagePin(String path, String upstreamImage) {
+            this(path, upstreamImage, null);
+        }
+
+        /** 镜像清单里的写法：tag 单独放在 values 里的 chart 要带上它，否则清单没法拿来同步 Harbor */
+        String listed() {
+            return listTag == null ? upstreamImage : upstreamImage + ":" + listTag;
+        }
     }
 
     /** values 里的路径 ← 平台 Harbor 前缀（{@code <host>/<project>}），给「registry 单独一个键」的 chart 用 */
@@ -57,6 +66,21 @@ final class ChartImagePins {
      * 它是 CNI 本身，换镜像前缀会让整个节点的网络在滚动期间起不来。
      */
     private static final Map<String, List<Object>> PINS = Map.of(
+            // repository 以 / 开头时模板拼 baseRepo，baseRepo 又不是完整镜像，通用改写认不出来。
+            // 改成不带 / 的完整路径后，模板走另一个分支直接用它（nfs 那一项本来就是这么写的）
+            "components/csi-driver-nfs/4.13.6", List.of(
+                    new ImagePin("image.csiProvisioner.repository",
+                            "registry.k8s.io/sig-storage/csi-provisioner", "v6.3.0"),
+                    new ImagePin("image.csiResizer.repository",
+                            "registry.k8s.io/sig-storage/csi-resizer", "v2.2.1"),
+                    new ImagePin("image.csiSnapshotter.repository",
+                            "registry.k8s.io/sig-storage/csi-snapshotter", "v8.6.0"),
+                    new ImagePin("image.livenessProbe.repository",
+                            "registry.k8s.io/sig-storage/livenessprobe", "v2.19.0"),
+                    new ImagePin("image.nodeDriverRegistrar.repository",
+                            "registry.k8s.io/sig-storage/csi-node-driver-registrar", "v2.17.0"),
+                    new ImagePin("image.externalSnapshotter.repository",
+                            "registry.k8s.io/sig-storage/snapshot-controller", "v8.6.0")),
             "components/seaweedfs/4.48.0", List.of(
                     new RegistryPin("image.registry"),
                     new UpstreamPathPin("global.seaweedfs.image.name", "chrislusf/seaweedfs")),
@@ -99,7 +123,7 @@ final class ChartImagePins {
         return pins.stream()
                 .filter(ImagePin.class::isInstance)
                 .map(ImagePin.class::cast)
-                .map(ImagePin::upstreamImage)
+                .map(ImagePin::listed)
                 .toList();
     }
 

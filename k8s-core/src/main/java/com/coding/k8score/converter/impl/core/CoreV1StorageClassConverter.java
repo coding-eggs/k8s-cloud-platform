@@ -12,6 +12,9 @@ import java.util.Map;
  */
 public class CoreV1StorageClassConverter implements CommonConverter<StorageClass, StorageClassDTO> {
 
+    /** 集群默认存储类注解：PVC 未指定 {@code storageClassName} 时用它。一个集群至多一个（平台设置时清掉其它）。 */
+    public static final String DEFAULT_CLASS_ANNOTATION = "storageclass.kubernetes.io/is-default-class";
+
     @Override
     public StorageClass convert(StorageClassDTO dto) {
         StorageClass sc = new StorageClass();
@@ -35,6 +38,8 @@ public class CoreV1StorageClassConverter implements CommonConverter<StorageClass
         if (metadata != null) {
             dto.setName(metadata.getName());
             dto.setLabels(metadata.getLabels() != null ? Map.copyOf(metadata.getLabels()) : Map.of());
+            Map<String, String> annotations = metadata.getAnnotations();
+            dto.setIsDefault(annotations != null && "true".equalsIgnoreCase(annotations.get(DEFAULT_CLASS_ANNOTATION)));
             if (metadata.getCreationTimestamp() != null) {
                 dto.setCreationTime(metadata.getCreationTimestamp());
             }

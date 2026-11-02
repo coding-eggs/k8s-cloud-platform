@@ -4,6 +4,7 @@ import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
 import com.coding.platformapi.k8s.K8sPipelineClient;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.k8s.K8sStorageClassClient;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +25,7 @@ public class StorageClassService {
 
     private final K8sClient k8s;
     private final K8sPipelineClient pipeline;
+    private final K8sStorageClassClient storageClassClient;
 
     public List<StorageClassDTO> list(StorageClassDTO query) {
         return k8s.list(query);
@@ -55,6 +57,11 @@ public class StorageClassService {
 
     public String yaml(String name, String tenantId, String clusterId) {
         return k8s.yaml(dto(name, tenantId, clusterId));
+    }
+
+    /**设为 / 取消集群默认存储类（管理员）。透传 k8s-server；"设时清掉其它已默认的 SC（单默认）"逻辑在 k8s-core。 */
+    public StorageClassDTO setDefault(String name, boolean isDefault, String tenantId, String clusterId) {
+        return storageClassClient.setDefault(name, tenantId, clusterId, isDefault);
     }
 
     /**查询 DTO：apiPath 内置于 DTO（集群级，无 namespace） */

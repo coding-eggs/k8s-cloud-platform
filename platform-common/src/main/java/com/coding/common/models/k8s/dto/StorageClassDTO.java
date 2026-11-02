@@ -34,6 +34,12 @@ public class StorageClassDTO extends BaseResources {
      */
     private String expansion;
 
+    /**
+     * 是否为集群默认存储类（仅查询返回）—— 注解 {@code storageclass.kubernetes.io/is-default-class} = "true"。
+     * PVC 不写 {@code storageClassName} 时落到它；一个集群至多一个（平台在设置时清掉其它）。
+     */
+    private Boolean isDefault;
+
     /** 创建时间（仅查询返回，ISO-8601 字符串） */
     private String creationTime;
 

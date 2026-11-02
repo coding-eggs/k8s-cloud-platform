@@ -1,0 +1,11 @@
+source: https://github.com/kubernetes-csi/csi-driver-nfs/tree/master/charts
+helm_repo: https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+chart: csi-driver-nfs
+version: 4.13.6
+appVersion: 4.13.6
+digest: 4b471fb134bfea4fcaa3dc3342a67acd646431b746c673c978327353db5d22da
+fetched_at: 2026-11-01
+fetch_command: helm pull csi-driver-nfs --repo https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts --version 4.13.6 --untar
+note: >-
+  官方 chart 原样入库，**未修改任何模板**。平台的定制全部通过 recipe 的 values 完成，
+  升级时重新 helm pull 同一来源的新版本即可。

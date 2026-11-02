@@ -11,7 +11,7 @@
     = 什么都匹配不到，因此本脚本**一个仓库 + 一个 tag 一条规则**。
 
 用法（在能访问 Harbor 的机器上跑，Python 3.8+，只用标准库）：
-    export HARBOR_URL=http://192.168.31.80:30002
+    export HARBOR_URL=https://harbor.ackcp.cloud
     export HARBOR_ADMIN_PASSWORD='...'          # 平台生成的，存在 Secret harbor/platform-harbor-secrets
     python3 scripts/harbor-replication.py --all
     python3 scripts/harbor-replication.py --dry-run            # 只看会做什么
@@ -103,6 +103,14 @@ IMAGES = {
     'registry.k8s.io': [
         'kube-state-metrics/kube-state-metrics:v2.20.0',
         'metrics-server/metrics-server:v0.9.0',
+        # csi-driver-nfs（含 snapshot-controller）
+        'sig-storage/csi-node-driver-registrar:v2.17.0',
+        'sig-storage/csi-provisioner:v6.3.0',
+        'sig-storage/csi-resizer:v2.2.1',
+        'sig-storage/csi-snapshotter:v8.6.0',
+        'sig-storage/livenessprobe:v2.19.0',
+        'sig-storage/nfsplugin:v4.13.6',
+        'sig-storage/snapshot-controller:v8.6.0',
     ],
     'docker.elastic.co': [
         'eck/eck-operator:3.5.0',

@@ -47,6 +47,24 @@ public final class AuditAction {
     /** 开/关 OTel 可观测接入（注入注解 + OTEL_SERVICE_NAME） */
     public static final String WORKLOAD_TOGGLE_OBSERVABILITY = "workload:toggle-observability";
 
+    // ---- 存储类（1 个写端点）----
+
+    /** 设为 / 取消集群默认存储类（设时清掉其它已默认的 SC，单默认） */
+    public static final String STORAGECLASS_SET_DEFAULT = "storageclass:set-default";
+
+    // ---- PVC（4 个写端点全量）----
+
+    /** 含从快照恢复：恢复走同一个端点，审计不存请求体，所以这条记录分不出是不是恢复 */
+    public static final String PVC_CREATE = "pvc:create";
+
+    /** 只同步标签；容量变更走 {@link #PVC_RESIZE} */
+    public static final String PVC_UPDATE = "pvc:update";
+
+    /** 在线扩容：动存储后端，不可逆 */
+    public static final String PVC_RESIZE = "pvc:resize";
+
+    public static final String PVC_DELETE = "pvc:delete";
+
     // ---- 命名空间（7 个写端点全量）----
 
     public static final String NAMESPACE_CREATE = "namespace:create";

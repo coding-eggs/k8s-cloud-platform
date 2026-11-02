@@ -32,6 +32,18 @@ class ChartImageCatalogServiceTest {
     }
 
     @Test
+    void csiDriverNfsImagesAreListedWithTheirHostAndTag() {
+        // repository 写成 /sig-storage/x、主机在 image.baseRepo：不拼回去，清单就没法拿来同步 Harbor
+        List<String> upstream = service.list("harbor.ackcp.cloud", "").stream()
+                .filter(item -> item.getChart().contains("csi-driver-nfs"))
+                .map(com.coding.common.models.k8s.dto.ImageListItemDTO::getUpstream)
+                .toList();
+
+        assertThat(upstream).hasSize(7).allMatch(u -> u.startsWith("registry.k8s.io/sig-storage/") && u.contains(":"));
+        assertThat(upstream).contains("registry.k8s.io/sig-storage/snapshot-controller:v8.6.0");
+    }
+
+    @Test
     void withoutARegistryMirroredEqualsUpstream() {
         List<com.coding.common.models.k8s.dto.ImageListItemDTO> items = service.list(null, null);
 

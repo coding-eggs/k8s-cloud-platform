@@ -1519,6 +1519,64 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void csiNfsRequiresTheServerAndShare() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "csi-driver-nfs")).thenReturn(0);
+
+        ComponentApplyRequest req = new ComponentApplyRequest("c1", "csi-driver-nfs", "INSTALL", null,
+                Map.of("storageClass.parameters.server", "192.168.31.80"));
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("NFS 服务地址和导出目录");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void csiNfsStorageClassCannotChangeOnAnInstalledCluster() {
+        // StorageClass 的 parameters / reclaimPolicy 不可变：不先拒，helm 会在中途失败
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "csi-driver-nfs")).thenReturn(0);
+
+        PlatformComponentOperation prev = new PlatformComponentOperation();
+        prev.setStatus("SUCCESS");
+        prev.setValuesSnapshot("{\"platform-csi-driver-nfs\":{\"storageClass\":{\"reclaimPolicy\":\"Retain\","
+                + "\"parameters\":{\"server\":\"192.168.31.80\",\"share\":\"/data\"}}}}");
+        when(mapper.selectLatestSuccess("c1", "csi-driver-nfs")).thenReturn(prev);
+
+        ComponentApplyRequest req = new ComponentApplyRequest("c1", "csi-driver-nfs", "EDIT", null,
+                Map.of("storageClass.parameters.share", "/other"));
+
+        assertThatThrownBy(() -> service().apply(req, "admin"))
+                .hasMessageContaining("不能修改");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void csiNfsKeepsTheSnapshotClassOnReinstall() {
+        // 第一遍不能写死 create=false：否则每次编辑都会先删快照类再建回来
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(clusterService.requireName("c1")).thenReturn("coding-cluster");
+        when(mapper.countRunning("c1", "csi-driver-nfs")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+
+        PlatformComponentOperation prev = new PlatformComponentOperation();
+        prev.setStatus("SUCCESS");
+        prev.setToVersion("4.13.6");
+        prev.setValuesSnapshot("{\"platform-csi-driver-nfs\":{\"volumeSnapshotClass\":{\"create\":true},"
+                + "\"storageClass\":{\"reclaimPolicy\":\"Retain\","
+                + "\"parameters\":{\"server\":\"192.168.31.80\",\"share\":\"/data\"}}}}");
+        when(mapper.selectLatestSuccess("c1", "csi-driver-nfs")).thenReturn(prev);
+
+        ComponentApplyRequest req = new ComponentApplyRequest("c1", "csi-driver-nfs", "EDIT", null, Map.of());
+        service().apply(req, "admin");
+
+        org.mockito.ArgumentCaptor<PlatformComponentOperation> op =
+                org.mockito.ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper).insert(op.capture());
+        assertThat(op.getValue().getValuesSnapshot()).contains("\"create\":true");
+    }
+
+    @Test
     void tempoRetentionAndTlsModeGoIntoTheReleaseValues() {        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
         when(mapper.countRunning("c1", "otel-operator")).thenReturn(0);

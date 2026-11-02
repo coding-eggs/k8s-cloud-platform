@@ -100,6 +100,7 @@ const FEATURE_LABELS: Record<string, string> = {
   'otel-collection': 'OTel 采集',
   'object-storage': '对象存储',
   'container-registry': '镜像仓库',
+  'volume-snapshot': '卷快照',
 }
 function featureLabel(code: string): string {
   return FEATURE_LABELS[code] ?? code

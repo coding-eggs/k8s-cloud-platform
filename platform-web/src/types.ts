@@ -599,6 +599,8 @@ export interface K8sStorageClass {
    * （nfs-subdir、local-path）改了也只会把请求改大，status.capacity 一动不动。
    */
   expansion?: string | null
+  /** 是否集群默认存储类（注解 storageclass.kubernetes.io/is-default-class = "true"）；一个集群至多一个 */
+  isDefault?: boolean | null
   creationTime?: string | null
 }
 
