@@ -1030,6 +1030,33 @@ class MiddlewareServiceTest {
     }
 
     @Test
+    void instanceWithStaleAppIdCanBeDeletedFromTheInstancePage() {
+        // 来源应用已软删除 / app_id 残留（旧画布建的实例没有依赖行）：appNames 查不到 → 不拦
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setTenantId("t1");
+        i.setAppId("app_deleted");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
+        when(referenceGuard.appNames(any())).thenReturn(java.util.Map.of());
+        when(client.delete(anyString(), any())).thenReturn(true);
+
+        var req = new MiddlewareDeleteRequest();
+        req.setInstanceId("mwi_1");
+        service.delete(req, "admin", "t1");
+
+        verify(client).delete(anyString(), any());
+    }
+
+    @Test
+    void elasticsearchConnectionInfoCarriesTheSchemeFromTheTlsSwitch() {
+        PlatformMiddlewareInstance tls = instance("elasticsearch", "CLUSTER");
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(tls);
+        assertThat(service.connection("mwi_1", null).getInfo().getExtra()).containsEntry("scheme", "https");
+
+        tls.setSpecJson("{\"tls\":false}");
+        assertThat(service.connection("mwi_1", null).getInfo().getExtra()).containsEntry("scheme", "http");
+    }
+
+    @Test
     void applicationCanDeleteItsOwnInstanceButNotAnotherApplicationsOrAPlainOne() {
         PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
         i.setTenantId("t1");

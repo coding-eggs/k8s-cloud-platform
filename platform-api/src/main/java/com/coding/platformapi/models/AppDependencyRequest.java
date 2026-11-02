@@ -69,6 +69,9 @@ public class AppDependencyRequest {
     /** 初始化内容（SQL / 命令 / JSON，进 ConfigMap） */
     private String initPayload;
 
+    /** Elasticsearch 初始化的目标路径（以 / 开头），payload 以 PUT 方式提交到它 */
+    private String initPath;
+
     /** 已成功执行过时，再次执行必须带 true */
     private Boolean confirm;
 }

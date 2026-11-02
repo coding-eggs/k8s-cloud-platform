@@ -540,7 +540,8 @@ public class MiddlewareService {
                     .of("kafka", host(ns, name + "-kafka-bootstrap"), 9092).build();
             case "elasticsearch" -> MiddlewareConnectionDTO.ConnInfo
                     .of("elasticsearch", host(ns, name + "-es-http"), 9200)
-                    .secret(name + "-es-elastic-user", null, "elastic").build();
+                    .secret(name + "-es-elastic-user", null, "elastic")
+                    .extra(Map.of("scheme", tlsEnabled(instance) ? "https" : "http")).build();
             case "postgresql" -> MiddlewareConnectionDTO.ConnInfo
                     .of("postgresql", host(ns, name + "-rw"), 5432)
                     .secret(name + "-app", "username", "password").build();
@@ -906,9 +907,12 @@ public class MiddlewareService {
     public Long delete(MiddlewareDeleteRequest req, String operator, String tenantId) {
         PlatformMiddlewareInstance instance = requireInstance(req.getInstanceId(), tenantId);
         if (!isBlank(instance.getAppId())) {
+            // 来源应用已删除（或 app_id 残留）时没人能在应用里管它了，不拦：否则它永远删不掉
             String name = referenceGuard.appNames(java.util.List.of(instance.getAppId())).get(instance.getAppId());
-            throw new CloudPlatformException(EnumResponseType.ERROR, "该实例由应用"
-                    + (name == null ? "" : " " + name) + " 创建，请在应用的依赖里移除并选择删除实例");
+            if (name != null) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "该实例由应用 " + name + " 创建，请在应用的依赖里移除并选择删除实例");
+            }
         }
         // 被应用引用时拒绝：删掉它会让正在跑的应用连不上库
         referenceGuard.assertNotReferenced(instance.getId());

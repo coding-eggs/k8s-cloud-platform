@@ -52,29 +52,42 @@ public final class AppInitScripts {
         switch (req.getCode() == null ? "" : req.getCode()) {
             case "mysql" -> {
                 image = "mysql:8.4";
-                shell = "mysql -h \"$HOST\" -P \"${PORT:-3306}\" -u \"${USER_NAME:-root}\" < /init/payload";
+                // 口令走 MYSQL_PWD（客户端只认它，认不到 $PASSWORD）；mysql 遇到第一条错误就非零退出
+                shell = "MYSQL_PWD=\"$PASSWORD\" mysql -h \"$HOST\" -P \"${PORT:-3306}\" "
+                        + "-u \"${USER_NAME:-root}\" < /init/payload";
             }
             case "postgresql" -> {
                 image = "postgres:16";
-                shell = "psql -h \"$HOST\" -p \"${PORT:-5432}\" -U \"$USER_NAME\" -d postgres -f /init/payload";
+                // psql 默认出错也继续并以 0 退出，ON_ERROR_STOP 才会让失败变成非零；口令走 PGPASSWORD
+                shell = "PGPASSWORD=\"$PASSWORD\" psql -v ON_ERROR_STOP=1 -h \"$HOST\" -p \"${PORT:-5432}\" "
+                        + "-U \"$USER_NAME\" -d postgres -f /init/payload";
             }
             case "redis" -> {
                 image = "redis:7";
-                shell = "redis-cli -h \"$HOST\" -p \"${PORT:-6379}\" --no-auth-warning -a \"$PASSWORD\" < /init/payload";
+                // 从标准输入喂命令时 redis-cli 即使命令报错也以 0 退出：必须自己扫输出里的错误行
+                shell = "out=$(redis-cli -h \"$HOST\" -p \"${PORT:-6379}\" --no-auth-warning -a \"$PASSWORD\" "
+                        + "< /init/payload 2>&1); rc=$?; echo \"$out\"; [ $rc -eq 0 ] && "
+                        + "! echo \"$out\" | grep -qE '^(\\(error\\) )?(ERR|NOAUTH|WRONGPASS|WRONGTYPE|NOPERM|READONLY|MISCONF|LOADING|EXECABORT)'";
             }
             case "elasticsearch" -> {
                 image = "curlimages/curl:8.10.1";
-                shell = "curl -sS -u \"elastic:$PASSWORD\" -X PUT \"$URL$PATH\" "
+                // 目标路径放 INDEX_PATH：env 叫 PATH 会覆盖容器的可执行文件搜索路径，curl 都找不到。
+                // -f：HTTP 4xx/5xx 让 curl 非零退出（否则报错也是 0，Job 会显示成功）。
+                // https 时加 -k：ES 的 http 证书是 ECK 为集群内服务自签的，Job 里没有这张 CA，
+                // 流量只在集群内；URL 的协议取自实例的 TLS 开关，不写死。
+                shell = "K=\"\"; case \"$URL\" in https://*) K=\"-k\";; esac; "
+                        + "curl -fsS $K -u \"elastic:$PASSWORD\" -X PUT \"$URL$INDEX_PATH\" "
                         + "-H 'Content-Type: application/json' -d @/init/payload";
             }
             case "kafka" -> {
                 image = "apache/kafka:3.9.0";
                 // 每行 topic:partitions:replicas；--if-not-exists 保证可重试
-                shell = "while IFS=: read -r t p r; do "
+                // 循环的退出码只是最后一条命令的：前面的 topic 失败会被吞掉，所以逐条记下来最后统一退出
+                shell = "rc=0; while IFS=: read -r t p r; do "
                         + "[ -z \"$t\" ] && continue; "
                         + "kafka-topics.sh --bootstrap-server \"$BOOTSTRAP\" --create --if-not-exists "
-                        + "--topic \"$t\" --partitions \"${p:-1}\" --replication-factor \"${r:-1}\"; "
-                        + "done < /init/payload";
+                        + "--topic \"$t\" --partitions \"${p:-1}\" --replication-factor \"${r:-1}\" || rc=1; "
+                        + "done < /init/payload; exit $rc";
             }
             default -> throw new IllegalArgumentException("不支持初始化：" + req.getCode());
         }

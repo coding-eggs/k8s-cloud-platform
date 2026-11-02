@@ -48,6 +48,36 @@ class AppInitScriptsTest {
         assertThat(job).contains("demo-db-init-3-sql");
     }
 
+    private static AppInitRequestDTO esReq(String url) {
+        AppInitRequestDTO r = req("elasticsearch", "{\"settings\":{}}");
+        r.setEnv(Map.of("HOST", "es.demo.svc", "PORT", "9200", "URL", url, "INDEX_PATH", "/orders"));
+        return r;
+    }
+
+    @Test
+    void elasticsearchScriptUsesIndexPathFailsOnHttpErrorsAndTrustsSelfSignedOnlyForHttps() {
+        for (String url : new String[]{"https://es.demo.svc:9200", "http://es.demo.svc:9200"}) {
+            String job = AppInitScripts.jobFor(esReq(url));
+            // 不再有名为 PATH 的 env（它会覆盖可执行文件搜索路径）
+            assertThat(job).doesNotContain("name: PATH").doesNotContain("$PATH");
+            assertThat(job).contains("name: INDEX_PATH").contains("\"/orders\"").contains("$INDEX_PATH");
+            assertThat(job).contains("curl -fsS");
+            // -k 由 URL 协议决定，脚本里不写死协议
+            assertThat(job).contains("https://*) K=").contains("$K");
+            assertThat(job).contains("value: \"" + url + "\"");
+        }
+    }
+
+    @Test
+    void otherScriptsFailOnErrorsAndPassCredentialsInWaysTheClientsUnderstand() {
+        assertThat(AppInitScripts.jobFor(req("mysql", "x"))).contains("MYSQL_PWD=");
+        assertThat(AppInitScripts.jobFor(req("postgresql", "x"))).contains("ON_ERROR_STOP=1").contains("PGPASSWORD=");
+        // redis-cli 喂标准输入时报错也退 0：必须扫输出
+        assertThat(AppInitScripts.jobFor(req("redis", "x"))).contains("grep -qE").contains("NOAUTH");
+        // kafka 逐条记失败，不被循环最后一条的退出码覆盖
+        assertThat(AppInitScripts.jobFor(req("kafka", "x"))).contains("rc=0;").contains("|| rc=1;").contains("exit $rc");
+    }
+
     @Test
     void kafkaCreatesTopics() {
         String job = AppInitScripts.jobFor(req("kafka", "orders:3:1"));

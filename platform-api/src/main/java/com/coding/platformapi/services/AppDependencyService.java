@@ -43,7 +43,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
 /**
@@ -60,11 +64,16 @@ public class AppDependencyService {
     static final String EXTERNAL = "EXTERNAL";
 
     private static final Pattern KEY = Pattern.compile("^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$");
+    private static final Pattern HOST = Pattern.compile(
+            "^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$");
+    private static final Pattern INDEX_PATH = Pattern.compile("^/[A-Za-z0-9._~:,*+@=%/-]*$");
     private static final List<String> RESERVED_SUFFIXES = List.of("-env", "-secret", "-headless");
     private static final Set<String> PROTOCOLS = Set.of(
             "mysql", "postgresql", "redis", "kafka", "rabbitmq", "elasticsearch", "nacos", "milvus");
     private static final Set<String> EXTERNAL_FIELDS = Set.of(
             "protocol", "host", "port", "secretName", "usernameKey", "passwordKey");
+    /** 占位行创建后多久内算「创建请求可能还在飞」 */
+    private static final long CREATE_IN_FLIGHT_MILLIS = 5 * 60 * 1000L;
     private static final int LOG_MAX = 20_000;
     private static final int LOG_VIEW = 4_000;
     /** 初始化最长等 10 分钟：超过这个时长还是 RUNNING 的一定是丢了 worker。 */
@@ -80,6 +89,8 @@ public class AppDependencyService {
     private final MiddlewareService middleware;
     private final K8sAppClient client;
     private final Executor initExecutor;
+    /** 自己建的线程池（测试注入的 Executor 不归我们关） */
+    private final ExecutorService ownedPool;
 
     @Autowired
     public AppDependencyService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
@@ -88,7 +99,25 @@ public class AppDependencyService {
                                 PlatformApplicationReferenceMapper references, MiddlewareService middleware,
                                 K8sAppClient client) {
         this(apps, services, dependencies, releases, executions, instances, references, middleware, client,
-                Executors.newVirtualThreadPerTaskExecutor());
+                newInitPool());
+    }
+
+    /** 全局并发上限 4、排队 16，再多直接拒绝：每个初始化最长占一个线程 10 分钟。 */
+    private static ThreadPoolExecutor newInitPool() {
+        java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+        return new ThreadPoolExecutor(4, 4, 0L, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(16), r -> {
+            Thread t = new Thread(r, "app-dependency-init-" + n.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @jakarta.annotation.PreDestroy
+    void shutdown() {
+        if (ownedPool != null) {
+            // 正在跑的初始化会被打断；遗留的 RUNNING 由下次启动的 recoverInterrupted 置失败
+            ownedPool.shutdownNow();
+        }
     }
 
     AppDependencyService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
@@ -106,6 +135,7 @@ public class AppDependencyService {
         this.middleware = middleware;
         this.client = client;
         this.initExecutor = initExecutor;
+        this.ownedPool = initExecutor instanceof ExecutorService es ? es : null;
     }
 
     public List<PlatformAppDependency> list(String appId) {
@@ -297,15 +327,27 @@ public class AppDependencyService {
             removePlaceholder(row);
             throw e;
         }
-        PlatformMiddlewareInstance created = instances.selectLatestByAppNode(app.getId(), key);
+        PlatformMiddlewareInstance created = createdInstanceOf(app.getId(), key);
         if (created == null) {
-            throw error("实例创建后没有台账记录；依赖 " + key + " 已占位，请移除后重试");
+            // 不能让用户据此重新添加：再建一个就是第二个实例。移除依赖时会按「应用+依赖名」找回这个实例。
+            throw error("实例创建请求已提交，但暂时没有查到台账记录。依赖 " + key
+                    + " 保持占位，请稍后刷新；不要重新添加同名依赖，需要放弃时直接移除它（会一并处理已创建的实例）");
         }
         row.setInstanceId(created.getId());
         row.setUpdatedAt(new Date());
-        dependencies.updateById(row);
+        if (dependencies.updateById(row) == 0) {
+            // 占位行在创建期间被移除：实例已经建出来了，转交中间件模块，别留一个带应用来源却删不掉的实例
+            instances.clearApp(created.getId());
+            throw error("依赖 " + key + " 在创建期间被移除；已创建的实例 " + created.getId()
+                    + " 已转交中间件模块管理，可在实例页使用或删除");
+        }
         addReference(app.getId(), key, created.getId());
         return view(row);
+    }
+
+    /** 按「应用 + 依赖名」找 CREATED 依赖建出的实例（add 收尾与 remove 兜底共用）。 */
+    private PlatformMiddlewareInstance createdInstanceOf(String appId, String key) {
+        return instances.selectLatestByAppNode(appId, key);
     }
 
     private void removePlaceholder(PlatformAppDependency row) {
@@ -388,14 +430,20 @@ public class AppDependencyService {
             throw error("不支持的字段：" + field);
         }
         Map<String, Object> out = new LinkedHashMap<>();
+        if (!(raw.get("protocol") instanceof String) || !(raw.get("host") instanceof String)) {
+            throw error("protocol 与 host 需为字符串");
+        }
         String protocol = str(raw.get("protocol"));
         if (!PROTOCOLS.contains(protocol)) {
             throw error("protocol 只能是 " + String.join(" / ", new TreeSet<>(PROTOCOLS)));
         }
         out.put("protocol", protocol);
-        String host = str(raw.get("host"));
+        String host = str(raw.get("host")).trim();
         if (host.isBlank()) {
             throw error("请填写外部地址 host");
+        }
+        if (!HOST.matcher(host).matches()) {
+            throw error("host 只能是主机名或 IPv4 地址，不要带协议、端口、路径或 user:pass@");
         }
         out.put("host", host);
         if (raw.get("port") != null) {
@@ -430,6 +478,23 @@ public class AppDependencyService {
             throw error("依赖不存在：" + req.getKey());
         }
         String key = row.getDepKey();
+        if ("RUNNING".equals(row.getInitStatus())) {
+            throw error("依赖 " + key + " 正在初始化，请等它结束再移除");
+        }
+        String instanceId = row.getInstanceId();
+        if (MIDDLEWARE.equals(row.getType()) && "CREATED".equals(row.getOwnership()) && instanceId == null) {
+            // 没写 instance_id 有两种可能：创建请求还在飞，或者创建成功但回填失败。
+            // 以占位行的创建时间判断：窗口内当作在飞（中间件创建是同步调用，几十秒内结束），拒绝；
+            // 窗口外按「应用+依赖名」找回实例，当作已关联处理。
+            if (row.getCreatedAt() != null
+                    && System.currentTimeMillis() - row.getCreatedAt().getTime() < CREATE_IN_FLIGHT_MILLIS) {
+                throw error("依赖 " + key + " 正在创建中（创建请求发出不足 5 分钟、尚未关联实例），请稍后再移除");
+            }
+            PlatformMiddlewareInstance found = createdInstanceOf(app.getId(), key);
+            if (found != null) {
+                instanceId = found.getId();
+            }
+        }
         TreeSet<String> users = new TreeSet<>();
         for (var svc : services.selectByApp(app.getId())) {
             if (!Boolean.TRUE.equals(svc.getPendingDelete())
@@ -448,27 +513,30 @@ public class AppDependencyService {
             throw error("依赖 " + key + " 仍被服务 " + String.join("、", users)
                     + " 引用（期望配置、线上或进行中的发布），请先去掉引用并发布");
         }
-        if (MIDDLEWARE.equals(row.getType()) && row.getInstanceId() != null) {
+        if (MIDDLEWARE.equals(row.getType()) && instanceId != null) {
             if ("CREATED".equals(row.getOwnership())) {
-                if (Boolean.TRUE.equals(req.getDeleteInstance())) {
-                    middleware.deleteForApp(row.getInstanceId(), app.getId(), operator, app.getTenantId());
+                PlatformMiddlewareInstance inst = instances.selectByPrimaryKey(instanceId);
+                boolean alreadyGone = inst == null || inst.getDeletedAt() != null;
+                if (alreadyGone) {
+                    // 实例已经被删（中间件页或上一次移除只做了一半）：目标状态已达成，继续清依赖行
+                    log.info("依赖 {} 的实例 {} 已不存在，跳过删除", key, instanceId);
+                } else if (Boolean.TRUE.equals(req.getDeleteInstance())) {
+                    middleware.deleteForApp(instanceId, app.getId(), operator, app.getTenantId());
                 } else {
                     // 先转交再删行：反过来的话转交失败会留下一个谁也删不掉的实例
-                    instances.clearApp(row.getInstanceId());
+                    instances.clearApp(instanceId);
                 }
             }
-            references.deleteByAppAndRef(app.getId(), ApplicationReferenceGuard.MIDDLEWARE_INSTANCE,
-                    row.getInstanceId());
+            references.deleteByAppAndRef(app.getId(), ApplicationReferenceGuard.MIDDLEWARE_INSTANCE, instanceId);
         }
         dependencies.deleteById(row.getId());
     }
 
     /** 删除应用时：CREATED 实例保留并转交中间件模块（不静默删数据），清引用行与依赖行。 */
     public void detachForAppDelete(String appId) {
+        // 按 app_id 一条语句清：旧画布建的、没有依赖行的实例，和占位后没回填 instance_id 的实例也一并转交
+        instances.clearByApp(appId);
         for (PlatformAppDependency dep : dependencies.selectByApp(appId)) {
-            if ("CREATED".equals(dep.getOwnership()) && dep.getInstanceId() != null) {
-                instances.clearApp(dep.getInstanceId());
-            }
             dependencies.deleteById(dep.getId());
         }
         references.deleteByApp(appId);
@@ -530,7 +598,11 @@ public class AppDependencyService {
             throw error("缺少登录凭据，无法发起初始化");
         }
         ConnInfo info = middleware.connection(row.getInstanceId(), app.getTenantId()).getInfo();
-        AppInitRequestDTO dto = buildInitRequest(app, row, inst.getCode(), payload, info);
+        String indexPath = req.getInitPath() == null ? "" : req.getInitPath().trim();
+        if ("elasticsearch".equals(inst.getCode()) && !INDEX_PATH.matcher(indexPath).matches()) {
+            throw error("Elasticsearch 初始化需要填写目标路径（以 / 开头，例如 /my-index 或 /_index_template/x）");
+        }
+        AppInitRequestDTO dto = buildInitRequest(app, row, inst.getCode(), payload, info, indexPath);
         String hash = sha256(payload);
         if (dependencies.startInit(row.getId(), new Date()) == 0) {
             throw error("依赖 " + row.getDepKey() + " 正在初始化，请等它结束");
@@ -538,6 +610,9 @@ public class AppDependencyService {
         try {
             initExecutor.execute(() -> K8sServerGateway.runAs(authorization,
                     () -> runInit(row.getId(), dto, hash)));
+        } catch (RejectedExecutionException e) {
+            dependencies.finishInit(row.getId(), "FAILED", null, "初始化任务过多，未能提交", new Date());
+            throw error("当前初始化任务过多，请稍后再试");
         } catch (RuntimeException e) {
             dependencies.finishInit(row.getId(), "FAILED", null, "初始化任务提交失败：" + e.getMessage(), new Date());
             throw e;
@@ -566,7 +641,7 @@ public class AppDependencyService {
     }
 
     private AppInitRequestDTO buildInitRequest(PlatformApplication app, PlatformAppDependency row, String code,
-                                               String payload, ConnInfo info) {
+                                               String payload, ConnInfo info, String indexPath) {
         AppInitRequestDTO dto = new AppInitRequestDTO();
         dto.setClusterId(app.getClusterId());
         dto.setNamespace(app.getNamespace());
@@ -580,8 +655,16 @@ public class AppDependencyService {
             env.put("HOST", info.getHost());
             if (info.getPort() != null) {
                 env.put("PORT", String.valueOf(info.getPort()));
-                env.put("BOOTSTRAP", info.getHost() + ":" + info.getPort());
-                env.put("URL", "http://" + info.getHost() + ":" + info.getPort());
+                if ("kafka".equals(code)) {
+                    env.put("BOOTSTRAP", info.getHost() + ":" + info.getPort());
+                }
+                if ("elasticsearch".equals(code)) {
+                    // 协议取自连接信息（实例的 TLS 开关）；缺省按 ES 实例默认开 TLS
+                    String scheme = info.getExtra() == null ? null : info.getExtra().get("scheme");
+                    env.put("URL", ("http".equals(scheme) ? "http" : "https") + "://" + info.getHost() + ":"
+                            + info.getPort());
+                    env.put("INDEX_PATH", indexPath);
+                }
             }
             dto.setEnv(env);
             if ("mysql".equals(code)) {
@@ -622,7 +705,7 @@ public class AppDependencyService {
 
     private AppOverviewView.DependencyRow view(PlatformAppDependency d) {
         return new AppOverviewView.DependencyRow(d.getDepKey(), d.getType(), d.getOwnership(), d.getInstanceId(),
-                EXTERNAL.equals(d.getType()) ? "EXTERNAL" : "CREATING", d.getInitStatus(), tail(d.getInitLog()),
+                statusOf(d), d.getInitStatus(), tail(d.getInitLog()),
                 AppSnapshot.scrubExternal(d.getExternalJson()));
     }
 

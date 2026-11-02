@@ -73,6 +73,7 @@ class AppDependencyServiceTest {
         app.setSlug("shop");
         app.setLiveReleaseNo(0);
         when(apps.selectById("app1")).thenReturn(app);
+        when(deps.updateById(any())).thenReturn(1);
     }
 
     AppDependencyRequest req(String key) {
@@ -350,6 +351,7 @@ class AppDependencyServiceTest {
     @Test
     void removeRejectedWhileDesiredServiceReferencesItAndListsServices() {
         when(deps.selectByKey("app1", "db")).thenReturn(depRow("db", "CREATED", "mwi_1"));
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("mwi_1", "t1", "demo", "app1"));
         when(services.selectByApp("app1")).thenReturn(List.of(
                 svcRow("api", "${db.host}", false), svcRow("worker", "${db.port}", false),
                 svcRow("web", "plain", false)));
@@ -400,6 +402,7 @@ class AppDependencyServiceTest {
     @Test
     void removeCreatedWithDeleteCallsMiddlewareDelete() {
         when(deps.selectByKey("app1", "db")).thenReturn(depRow("db", "CREATED", "mwi_1"));
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("mwi_1", "t1", "demo", "app1"));
 
         service.remove(removeReq("db", true), "alice", "t1");
 
@@ -412,6 +415,7 @@ class AppDependencyServiceTest {
     @Test
     void removeCreatedDefaultKeepsInstanceAndClearsItsAppSource() {
         when(deps.selectByKey("app1", "db")).thenReturn(depRow("db", "CREATED", "mwi_1"));
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("mwi_1", "t1", "demo", "app1"));
 
         service.remove(removeReq("db", null), "alice", "t1");
 
@@ -423,6 +427,7 @@ class AppDependencyServiceTest {
     @Test
     void failedInstanceDeleteKeepsDependencyRow() {
         when(deps.selectByKey("app1", "db")).thenReturn(depRow("db", "CREATED", "mwi_1"));
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(instance("mwi_1", "t1", "demo", "app1"));
         when(middleware.deleteForApp(anyString(), anyString(), anyString(), anyString()))
                 .thenThrow(new CloudPlatformException(com.coding.common.exception.EnumResponseType.ERROR, "k8s 失败"));
 
@@ -452,8 +457,9 @@ class AppDependencyServiceTest {
 
         service.detachForAppDelete("app1");
 
-        verify(instances).clearApp("mwi_1");
-        verify(instances, never()).clearApp("mwi_2");
+        // 一条语句按 app_id 转交：旧画布建的、没有依赖行的实例也在内
+        verify(instances).clearByApp("app1");
+        verify(instances, never()).clearApp(anyString());
         verify(deps).deleteById(5L);
         verify(deps).deleteById(6L);
         verify(refs).deleteByApp("app1");
@@ -585,5 +591,216 @@ class AppDependencyServiceTest {
 
         verify(deps).failRunningInit(org.mockito.ArgumentMatchers.contains("重启"),
                 org.mockito.ArgumentMatchers.isNull(), any());
+    }
+
+    // ------------------------------------------------------------------ 修复轮 1
+
+    @Test
+    void createSucceedsButPlaceholderGoneHandsInstanceOverAndWritesNoReference() {
+        when(middleware.defaultMode("mysql")).thenReturn("SINGLE");
+        when(instances.selectLatestByAppNode("app1", "db")).thenReturn(instance("mwi_1", "t1", "demo", "app1"));
+        when(deps.updateById(any())).thenReturn(0);   // 占位行已被并发移除
+
+        assertThatThrownBy(() -> service.add(createReq("db"), "alice", "t1"))
+                .hasMessageContaining("转交");
+
+        verify(instances).clearApp("mwi_1");
+        verify(refs, never()).insert(any());
+    }
+
+    @Test
+    void missingLedgerRowAfterCreateDoesNotTellUserToAddAgain() {
+        when(middleware.defaultMode("mysql")).thenReturn("SINGLE");
+        when(instances.selectLatestByAppNode("app1", "db")).thenReturn(null);
+
+        assertThatThrownBy(() -> service.add(createReq("db"), "alice", "t1"))
+                .hasMessageContaining("不要重新添加")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("请移除后重试"));
+        verify(deps, never()).deleteById(any());
+    }
+
+    PlatformAppDependency unlinkedCreated(long ageMillis) {
+        PlatformAppDependency d = depRow("db", "CREATED", null);
+        d.setCreatedAt(new java.util.Date(System.currentTimeMillis() - ageMillis));
+        when(deps.selectByKey("app1", "db")).thenReturn(d);
+        return d;
+    }
+
+    @Test
+    void removeRejectedWhileCreateIsPossiblyInFlight() {
+        unlinkedCreated(10_000);
+
+        assertThatThrownBy(() -> service.remove(removeReq("db", true), "alice", "t1"))
+                .hasMessageContaining("正在创建");
+        verify(deps, never()).deleteById(any());
+        verify(middleware, never()).deleteForApp(anyString(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void removeResolvesAnUnlinkedCreatedInstanceByAppAndKey() {
+        unlinkedCreated(10 * 60_000L);
+        when(instances.selectLatestByAppNode("app1", "db")).thenReturn(instance("mwi_7", "t1", "demo", "app1"));
+        when(instances.selectByPrimaryKey("mwi_7")).thenReturn(instance("mwi_7", "t1", "demo", "app1"));
+
+        service.remove(removeReq("db", true), "alice", "t1");
+        verify(middleware).deleteForApp("mwi_7", "app1", "alice", "t1");
+        verify(refs).deleteByAppAndRef("app1", "MIDDLEWARE_INSTANCE", "mwi_7");
+        verify(deps).deleteById(5L);
+
+        service.remove(removeReq("db", null), "alice", "t1");
+        verify(instances).clearApp("mwi_7");
+    }
+
+    @Test
+    void removeUnlinkedCreatedWithNoInstanceJustDropsTheRow() {
+        unlinkedCreated(10 * 60_000L);
+        when(instances.selectLatestByAppNode("app1", "db")).thenReturn(null);
+
+        service.remove(removeReq("db", true), "alice", "t1");
+
+        verify(deps).deleteById(5L);
+        verify(middleware, never()).deleteForApp(anyString(), anyString(), anyString(), anyString());
+        verify(instances, never()).clearApp(anyString());
+    }
+
+    @Test
+    void removeTreatsAnAlreadyDeletedInstanceAsSuccess() {
+        when(deps.selectByKey("app1", "db")).thenReturn(depRow("db", "CREATED", "mwi_1"));
+        PlatformMiddlewareInstance gone = instance("mwi_1", "t1", "demo", "app1");
+        gone.setDeletedAt(new java.util.Date());
+        when(instances.selectByPrimaryKey("mwi_1")).thenReturn(gone);
+
+        service.remove(removeReq("db", true), "alice", "t1");
+
+        verify(middleware, never()).deleteForApp(anyString(), anyString(), anyString(), anyString());
+        verify(deps).deleteById(5L);
+        verify(refs).deleteByAppAndRef("app1", "MIDDLEWARE_INSTANCE", "mwi_1");
+    }
+
+    @Test
+    void removeRejectedWhileInitIsRunning() {
+        PlatformAppDependency d = depRow("db", "BOUND", "mwi_1");
+        d.setInitStatus("RUNNING");
+        when(deps.selectByKey("app1", "db")).thenReturn(d);
+
+        assertThatThrownBy(() -> service.remove(removeReq("db", null), "alice", "t1"))
+                .hasMessageContaining("正在初始化");
+        verify(deps, never()).deleteById(any());
+    }
+
+    @Test
+    void externalHostMustBeAPlainHostnameOrAddress() {
+        for (String bad : List.of("user:pass@db.corp", "http://db.corp", "db.corp:3306", "db corp", "db.corp/x",
+                "-db", "db..corp")) {
+            Map<String, Object> m = goodExternal();
+            m.put("host", bad);
+            assertThatThrownBy(() -> service.add(externalReq(m), "alice", "t1")).as(bad)
+                    .isInstanceOf(CloudPlatformException.class)
+                    .satisfies(e -> assertThat(e.getMessage()).doesNotContain(bad));
+        }
+        Map<String, Object> nonString = goodExternal();
+        nonString.put("host", 12345);
+        assertThatThrownBy(() -> service.add(externalReq(nonString), "alice", "t1"))
+                .isInstanceOf(CloudPlatformException.class);
+        for (String ok : List.of("10.0.0.5", "mysql.demo.svc.cluster.local", "db")) {
+            Map<String, Object> m = goodExternal();
+            m.put("host", ok);
+            service.add(externalReq(m), "alice", "t1");
+        }
+    }
+
+    @Test
+    void addedBoundDependencyReportsItsRealStatusNotCreating() {
+        when(instances.selectByPrimaryKey("mwi_9")).thenReturn(instance("mwi_9", "t1", "demo", null));
+        when(middleware.statusOf("mwi_9")).thenReturn("READY");
+
+        assertThat(service.add(bindReq("db", "mwi_9"), "alice", "t1").status()).isEqualTo("READY");
+    }
+
+    // ---- ES 初始化
+
+    void readyElasticsearch(String scheme) {
+        readyMysqlDependency(null, null);
+        PlatformMiddlewareInstance es = instance("mwi_1", "t1", "demo", "app1");
+        es.setCode("elasticsearch");
+        when(middleware.get("mwi_1", "t1")).thenReturn(es);
+        ConnInfo info = new ConnInfo();
+        info.setHost("es.demo.svc");
+        info.setPort(9200);
+        info.setSecretName("es-user");
+        info.setPasswordKey("elastic");
+        info.setExtra(scheme == null ? Map.of() : Map.of("scheme", scheme));
+        MiddlewareConnectionDTO dto = new MiddlewareConnectionDTO();
+        dto.setInfo(info);
+        when(middleware.connection("mwi_1", "t1")).thenReturn(dto);
+        when(client.init(any())).thenReturn(new com.coding.common.models.app.AppInitResultDTO());
+    }
+
+    Map<String, String> esEnv(String scheme) {
+        readyElasticsearch(scheme);
+        AppDependencyRequest r = initReq(null);
+        r.setInitPath("/orders");
+        service.init(r, "alice", "t1");
+        ArgumentCaptor<com.coding.common.models.app.AppInitRequestDTO> dto =
+                ArgumentCaptor.forClass(com.coding.common.models.app.AppInitRequestDTO.class);
+        verify(client).init(dto.capture());
+        return dto.getValue().getEnv();
+    }
+
+    @Test
+    void elasticsearchInitUsesTheInstancesSchemeAndTheRequestedPath() {
+        assertThat(esEnv("https")).containsEntry("URL", "https://es.demo.svc:9200")
+                .containsEntry("INDEX_PATH", "/orders").doesNotContainKey("PATH");
+    }
+
+    @Test
+    void elasticsearchInitUsesHttpWhenTlsIsOff() {
+        assertThat(esEnv("http")).containsEntry("URL", "http://es.demo.svc:9200");
+    }
+
+    @Test
+    void elasticsearchInitRequiresAValidPath() {
+        readyElasticsearch("https");
+        for (String bad : new String[]{null, "", "orders", "/a b", "/x';rm"}) {
+            AppDependencyRequest r = initReq(null);
+            r.setInitPath(bad);
+            assertThatThrownBy(() -> service.init(r, "alice", "t1")).as(String.valueOf(bad))
+                    .isInstanceOf(CloudPlatformException.class);
+        }
+        verify(client, never()).init(any());
+    }
+
+    @Test
+    void nonElasticsearchEnvHasNoUrlOrIndexPath() {
+        readyMysqlDependency(null, null);
+        when(client.init(any())).thenReturn(new com.coding.common.models.app.AppInitResultDTO());
+        service.init(initReq(null), "alice", "t1");
+        ArgumentCaptor<com.coding.common.models.app.AppInitRequestDTO> dto =
+                ArgumentCaptor.forClass(com.coding.common.models.app.AppInitRequestDTO.class);
+        verify(client).init(dto.capture());
+        assertThat(dto.getValue().getEnv()).containsOnlyKeys("HOST", "PORT");
+    }
+
+    // ---- 并发上限与关闭
+
+    @Test
+    void rejectedSubmissionMarksFailedAndTellsUserToRetryLater() {
+        readyMysqlDependency(null, null);
+        AppDependencyService busy = new AppDependencyService(apps, services, deps, releases, executions, instances,
+                refs, middleware, client, r -> {
+                    throw new java.util.concurrent.RejectedExecutionException("full");
+                });
+
+        assertThatThrownBy(() -> busy.init(initReq(null), "alice", "t1")).hasMessageContaining("过多");
+        verify(deps).finishInit(org.mockito.ArgumentMatchers.eq(5L), org.mockito.ArgumentMatchers.eq("FAILED"),
+                org.mockito.ArgumentMatchers.isNull(), anyString(), any());
+    }
+
+    @Test
+    void ownedPoolIsShutDownOnClose() {
+        java.util.concurrent.ExecutorService pool = mock(java.util.concurrent.ExecutorService.class);
+        new AppDependencyService(apps, services, deps, releases, executions, instances, refs, middleware, client,
+                pool).shutdown();
+        verify(pool).shutdownNow();
     }
 }

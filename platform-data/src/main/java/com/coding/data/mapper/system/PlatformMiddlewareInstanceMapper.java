@@ -27,5 +27,8 @@ public interface PlatformMiddlewareInstanceMapper {
     /** 清掉应用来源（app_id / app_node_id）：实例转交中间件模块管理。updateById 不能置空列，所以单独一条。 */
     int clearApp(@Param("id") String id);
 
+    /** 删除应用时一条语句转交它名下全部实例（含没有依赖行的旧实例） */
+    int clearByApp(@Param("appId") String appId);
+
     int softDelete(@Param("id") String id);
 }
