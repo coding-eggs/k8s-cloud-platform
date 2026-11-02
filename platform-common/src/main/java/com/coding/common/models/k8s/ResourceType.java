@@ -29,6 +29,7 @@ import com.coding.common.models.k8s.dto.SecretDTO;
 import com.coding.common.models.k8s.dto.ServiceAccountDTO;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.k8s.dto.ServiceMonitorDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotDTO;
 import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.common.models.k8s.dto.TcpRouteDTO;
 import com.coding.common.models.k8s.dto.TlsRouteDTO;
@@ -78,7 +79,9 @@ public enum ResourceType {
     UDP_ROUTE(UdpRouteDTO.class),
     // —— CI（Tekton）。命名空间级、租户域（分配表边界）；PipelineRun 是集群对象，
     // 平台自己的流水线定义不在集群里（spec §3.2）。
-    PIPELINE_RUN(PipelineRunDTO.class)
+    PIPELINE_RUN(PipelineRunDTO.class),
+    // —— 卷快照（S4.3）。VolumeSnapshot 命名空间级、租户域；快照类与快照内容集群级、平台只读。
+    VOLUME_SNAPSHOT(VolumeSnapshotDTO.class)
     ;
 
     private final Class<?> clazz;
