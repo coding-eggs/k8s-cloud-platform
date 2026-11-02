@@ -49,6 +49,11 @@ const pvcs = ref<K8sPvc[]>([])
 const now = ref(Date.now())
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+/**
+ * 每次 refresh / 卸载都加一：在途请求回来时代数变了就丢弃结果、也不再续轮询。
+ * 否则离开页面时恰好在途的那次轮询会重新 setInterval，没人清。
+ */
+let generation = 0
 
 function stopPolling(): void {
   if (pollTimer) {
@@ -67,11 +72,14 @@ function syncPolling(): void {
 }
 
 async function reloadList(): Promise<void> {
+  const gen = generation
   try {
-    list.value = await volumeSnapshotApi.list(ctx3.value)
+    const snaps = await volumeSnapshotApi.list(ctx3.value)
+    if (gen !== generation) return
+    list.value = snaps
     now.value = Date.now()
   } catch {
-    stopPolling()
+    if (gen === generation) stopPolling()
     return
   }
   syncPolling()
@@ -79,13 +87,17 @@ async function reloadList(): Promise<void> {
 
 async function refresh(): Promise<void> {
   if (!ready.value) return
+  const gen = ++generation
   loading.value = true
   probeFailed.value = false
   stopPolling()
   try {
     try {
-      capability.value = await volumeSnapshotApi.capability(ctx2.value)
+      const cap = await volumeSnapshotApi.capability(ctx2.value)
+      if (gen !== generation) return
+      capability.value = cap
     } catch {
+      if (gen !== generation) return
       capability.value = null
       probeFailed.value = true
       return
@@ -94,7 +106,12 @@ async function refresh(): Promise<void> {
       list.value = []
       return
     }
-    const [snaps, claims] = await Promise.all([volumeSnapshotApi.list(ctx3.value), pvcApi.list(ctx3.value)])
+    // PVC 列表只给两个弹窗用：没有 PVC 列表权限（或请求失败）不能把快照列表也拖空
+    const [snaps, claims] = await Promise.all([
+      volumeSnapshotApi.list(ctx3.value),
+      pvcApi.list(ctx3.value).catch(() => [] as K8sPvc[]),
+    ])
+    if (gen !== generation) return
     list.value = snaps
     pvcs.value = claims
     now.value = Date.now()
@@ -102,7 +119,7 @@ async function refresh(): Promise<void> {
   } catch {
     /* 拦截器已提示 */
   } finally {
-    loading.value = false
+    if (gen === generation) loading.value = false
   }
 }
 
@@ -187,7 +204,10 @@ onMounted(() => {
   void load()
   void refresh()
 })
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  generation++
+  stopPolling()
+})
 watch(
   [() => [state.tenantId, state.clusterId, state.namespace], ready],
   () => {
