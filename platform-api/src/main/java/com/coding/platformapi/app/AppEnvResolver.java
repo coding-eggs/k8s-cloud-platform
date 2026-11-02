@@ -34,6 +34,65 @@ public final class AppEnvResolver {
     public record Result(List<AppInjectDTO> env, List<AppProblemDTO> problems) {
     }
 
+    /** 文本替换结果：有问题时 value 为 null。 */
+    public record TextResult(String value, List<AppProblemDTO> problems) {
+    }
+
+    /**
+     * 把整段文本（配置文件内容）里的 {@code ${x.y}} 原地替换成值。文本会明文进 ConfigMap，
+     * 所以只认解析成普通值的字段；解析成 Secret 位置的（username / password）一律报错，不展开。
+     */
+    public static TextResult resolveText(String label, String text, Map<String, ConnInfo> deps,
+                                         Map<String, ServiceAddr> services) {
+        String value = text == null ? "" : text;
+        List<AppProblemDTO> problems = new ArrayList<>();
+        Map<String, ConnInfo> d = deps == null ? Map.of() : deps;
+        Map<String, ServiceAddr> s = services == null ? Map.of() : services;
+        Matcher m = REF.matcher(value);
+        StringBuilder sb = new StringBuilder();
+        int last = 0;
+        while (m.find()) {
+            sb.append(value, last, m.start());
+            last = m.end();
+            Resolved r = lookup("配置文件 " + label, m.group(1), m.group(2), d, s, problems);
+            if (r == null) {
+                continue;
+            }
+            if (r.isSecret()) {
+                problems.add(AppProblemDTO.error(null, "配置文件 " + label + "：" + m.group()
+                        + " 是凭据，配置文件内容会明文写进 ConfigMap，不能引用；凭据请用环境变量"));
+                continue;
+            }
+            sb.append(r.value());
+        }
+        sb.append(value.substring(last));
+        return new TextResult(problems.isEmpty() ? sb.toString() : null, problems);
+    }
+
+    /** 文本里引用到的依赖/服务 key。 */
+    public static Set<String> referencesIn(String text) {
+        Set<String> out = new LinkedHashSet<>();
+        if (text != null) {
+            Matcher m = REF.matcher(text);
+            while (m.find()) {
+                out.add(m.group(1));
+            }
+        }
+        return out;
+    }
+
+    /** 文本里的全部引用 {@code [key, field]}，按出现顺序。 */
+    public static List<String[]> referenceParts(String text) {
+        List<String[]> out = new ArrayList<>();
+        if (text != null) {
+            Matcher m = REF.matcher(text);
+            while (m.find()) {
+                out.add(new String[]{m.group(1), m.group(2)});
+            }
+        }
+        return out;
+    }
+
     static final String HIDDEN_PREFIX = "_REF_";
 
     private static final Pattern REF = Pattern.compile("\\$\\{([^.${}]+)\\.([^${}]+)}");
@@ -82,7 +141,7 @@ public final class AppEnvResolver {
             List<int[]> spans = new ArrayList<>();
             boolean failed = false;
             while (m.find()) {
-                Resolved r = lookup(name, m.group(1), m.group(2), d, s, problems);
+                Resolved r = lookup("环境变量 " + name, m.group(1), m.group(2), d, s, problems);
                 if (r == null) {
                     failed = true;
                     continue;
@@ -158,13 +217,13 @@ public final class AppEnvResolver {
         return out;
     }
 
-    private static Resolved lookup(String varName, String dep, String field, Map<String, ConnInfo> deps,
+    private static Resolved lookup(String who, String dep, String field, Map<String, ConnInfo> deps,
                                    Map<String, ServiceAddr> services, List<AppProblemDTO> problems) {
         ConnInfo c = deps.get(dep);
         if (c != null) {
             Resolved r = connField(c, field);
             if (r == null) {
-                problems.add(AppProblemDTO.error(null, "环境变量 " + varName + "：依赖 " + dep + " 没有字段 " + field
+                problems.add(AppProblemDTO.error(null, who + "：依赖 " + dep + " 没有字段 " + field
                         + "（或该字段无值）"));
             }
             return r;
@@ -178,11 +237,11 @@ public final class AppEnvResolver {
                 default -> null;
             };
             if (r == null) {
-                problems.add(AppProblemDTO.error(null, "环境变量 " + varName + "：服务 " + dep + " 没有字段 " + field));
+                problems.add(AppProblemDTO.error(null, who + "：服务 " + dep + " 没有字段 " + field));
             }
             return r;
         }
-        problems.add(AppProblemDTO.error(null, "环境变量 " + varName + "：引用了不存在的依赖或服务 " + dep));
+        problems.add(AppProblemDTO.error(null, who + "：引用了不存在的依赖或服务 " + dep));
         return null;
     }
 

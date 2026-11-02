@@ -141,4 +141,37 @@ class AppEnvResolverTest {
         assertThat(AppEnvResolver.references(List.of(lit("A", "${db.host}:${cache.port}"), lit("B", "x"),
                 new AppEnvRow("S", "SECRET", null, "s", "k")))).containsExactlyInAnyOrder("db", "cache");
     }
+
+    // ---------------------------------------------------------------- 配置文件内容
+
+    @Test
+    void textResolvesAddressFieldsInPlace() {
+        AppEnvResolver.TextResult r = AppEnvResolver.resolveText("/etc/app.yaml",
+                "db: ${db.address}\nurl: ${api.url}\nport: ${cache.port}\n",
+                DEPS, Map.of("api", new ServiceAddr("shop-api", 8080)));
+        assertThat(r.problems()).isEmpty();
+        assertThat(r.value()).isEqualTo(
+                "db: db.demo.svc.cluster.local:3306\nurl: http://shop-api:8080\nport: 6379\n");
+    }
+
+    @Test
+    void textRefusesCredentialFieldsAndUnknownTargets() {
+        AppEnvResolver.TextResult secret = AppEnvResolver.resolveText("/etc/app.yaml",
+                "pw: ${db.password}", DEPS, Map.of());
+        assertThat(secret.value()).isNull();
+        assertThat(secret.problems()).singleElement()
+                .satisfies(p -> assertThat(p.getMessage()).contains("/etc/app.yaml").contains("${db.password}"));
+
+        AppEnvResolver.TextResult missing = AppEnvResolver.resolveText("/etc/app.yaml",
+                "x: ${nope.host}", DEPS, Map.of());
+        assertThat(missing.problems()).singleElement()
+                .satisfies(p -> assertThat(p.getMessage()).contains("nope"));
+    }
+
+    @Test
+    void textWithoutReferencesIsReturnedVerbatim() {
+        AppEnvResolver.TextResult r = AppEnvResolver.resolveText("/etc/a", "plain $(NOT_A_REF) text", DEPS, Map.of());
+        assertThat(r.problems()).isEmpty();
+        assertThat(r.value()).isEqualTo("plain $(NOT_A_REF) text");
+    }
 }

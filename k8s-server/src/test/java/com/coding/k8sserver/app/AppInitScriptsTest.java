@@ -61,7 +61,9 @@ class AppInitScriptsTest {
             // 不再有名为 PATH 的 env（它会覆盖可执行文件搜索路径）
             assertThat(job).doesNotContain("name: PATH").doesNotContain("$PATH");
             assertThat(job).contains("name: INDEX_PATH").contains("\"/orders\"").contains("$INDEX_PATH");
-            assertThat(job).contains("curl -fsS");
+            // --fail-with-body：4xx/5xx 非零退出且保留 ES 的错误正文进 init_log；--data-binary 原样发送（-d 会去掉换行）
+            assertThat(job).contains("curl -sS --fail-with-body").doesNotContain("curl -fsS");
+            assertThat(job).contains("--data-binary @/init/payload").doesNotContain(" -d @");
             // -k 由 URL 协议决定，脚本里不写死协议
             assertThat(job).contains("https://*) K=").contains("$K");
             assertThat(job).contains("value: \"" + url + "\"");
@@ -96,5 +98,32 @@ class AppInitScriptsTest {
         assertThat(AppInitScripts.supports("redis")).isTrue();
         assertThat(AppInitScripts.supports("elasticsearch")).isTrue();
         assertThat(AppInitScripts.supports("kafka")).isTrue();
+    }
+
+    @Test
+    void redisPassesThePasswordThroughTheEnvironmentNotTheCommandLine() {
+        String job = AppInitScripts.jobFor(req("redis", "x"));
+        // 脚本在 Job 清单里是 JSON 转义过的串，只看关键片段
+        assertThat(job).contains("export REDISCLI_AUTH=").doesNotContain(" -a ").doesNotContain("--no-auth-warning");
+    }
+
+    @Test
+    void redisErrorPatternCatchesEveryServerErrorPrefixButNotOrdinaryValues() {
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(AppInitScripts.REDIS_ERROR_PATTERN);
+        for (String line : new String[]{
+                "(error) ERR unknown command 'FOO'", "ERR syntax error", "NOAUTH Authentication required.",
+                "WRONGPASS invalid username-password pair", "(error) WRONGTYPE Operation against a key",
+                "NOPERM this user has no permissions", "READONLY You can't write against a read only replica.",
+                "MISCONF Redis is configured to save RDB snapshots", "LOADING Redis is loading the dataset",
+                "EXECABORT Transaction discarded", "OOM command not allowed when used memory > 'maxmemory'.",
+                "(error) BUSYKEY Target key name already exists.", "NOSCRIPT No matching script.",
+                "BUSYGROUP Consumer Group name already exists", "CROSSSLOT Keys in request don't hash to the same slot",
+                "(error) MOVED 3999 10.0.0.1:6381", "ASK 3999 10.0.0.1:6381", "NOREPLICAS Not enough good replicas",
+                "AUTH failed: WRONGPASS invalid username-password pair or user is disabled."}) {
+            assertThat(p.matcher(line).find()).as(line).isTrue();
+        }
+        for (String line : new String[]{"OK", "ASKING_PRICE", "ERRATA", "(integer) 1", "\"MOVEDAWAY\"", "QUEUED"}) {
+            assertThat(p.matcher(line).find()).as(line).isFalse();
+        }
     }
 }

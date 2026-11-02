@@ -1,0 +1,14 @@
+{{- if .Values.workload.configFiles }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "app.name" . }}-files
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    {{- include "app.revision" . | nindent 4 }}
+data:
+  {{- range .Values.workload.configFiles }}
+  {{ .key | quote }}: {{ .content | quote }}
+  {{- end }}
+{{- end }}

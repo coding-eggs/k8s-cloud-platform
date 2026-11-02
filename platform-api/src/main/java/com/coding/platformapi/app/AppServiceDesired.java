@@ -30,7 +30,16 @@ public final class AppServiceDesired {
             "autoscalingEnabled", "minReplicas", "maxReplicas", "targetCpu",
             "probeEnabled", "probePath", "metricsEnabled", "metricsPath", "expose");
 
-    private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env");
+    private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env", "configFiles");
+
+    /** 配置文件内容可引用的字段：都解析成普通值。username / password 是 Secret 位置，进不了 ConfigMap。 */
+    public static final List<String> FILE_REF_FIELDS = List.of("host", "port", "address", "url");
+
+    /** 一个路径段：不含空白、引号、反斜杠等，避免挂载路径被 shell / YAML 误读。 */
+    private static final Pattern PATH_SEGMENT = Pattern.compile("^[A-Za-z0-9._@+=,-]+$");
+    private static final int FILES_MAX = 20;
+    /** 配置文件总大小上限：ConfigMap 硬上限 1MiB，快照与清单里还要各存一份 */
+    private static final int FILES_TOTAL_BYTES_MAX = 512 * 1024;
 
     private static final Pattern ENV_NAME = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final Set<String> SENSITIVE_LAST = Set.of("PASSWORD", "PWD", "PASSWD", "SECRET", "TOKEN", "APIKEY");
@@ -69,6 +78,10 @@ public final class AppServiceDesired {
         }
         out.put("replicas", replicas);
         out.put("env", normalizeEnv(raw.get("env")));
+        List<Map<String, Object>> files = normalizeConfigFiles(raw.get("configFiles"), dataMountPath(raw, port));
+        if (!files.isEmpty()) {
+            out.put("configFiles", files);   // 空列表不存：否则「没有 vs 空」会被当成待发布改动
+        }
         for (Map.Entry<String, Object> e : raw.entrySet()) {
             String k = e.getKey();
             if (CORE.contains(k)) {
@@ -136,6 +149,107 @@ public final class AppServiceDesired {
         return out;
     }
 
+    /** 持久化数据卷的挂载点；只有「有端口 + 开持久化」才会建 StatefulSet 数据卷，其余返回 null。 */
+    private static String dataMountPath(Map<String, Object> raw, Integer port) {
+        if (port == null || !Boolean.TRUE.equals(raw.get("persistenceEnabled"))) {
+            return null;
+        }
+        String p = text(raw.get("mountPath"));
+        return p.isEmpty() ? "/data" : p;
+    }
+
+    /**
+     * 配置文件：每个文件以只读 subPath 挂到容器里。路径必须是绝对路径、指向文件（不以 / 结尾）、
+     * 不含 . / .. / 空段；同一服务内不能重复、不能一个是另一个的上级目录，也不能落在持久化数据卷里。
+     * 内容可引用 {@code ${x.host|port|address|url}}，渲染时替换；不能引用凭据。
+     */
+    private static List<Map<String, Object>> normalizeConfigFiles(Object raw, String dataMount) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (raw == null) {
+            return out;
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw bad("配置文件必须是列表");
+        }
+        if (list.size() > FILES_MAX) {
+            throw bad("配置文件最多 " + FILES_MAX + " 个");
+        }
+        List<String> paths = new ArrayList<>();
+        long total = 0;
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                throw bad("配置文件格式错误");
+            }
+            String path = text(m.get("path"));
+            String content = m.get("content") == null ? "" : String.valueOf(m.get("content"));
+            assertFilePath(path);
+            if (paths.contains(path)) {
+                throw bad("配置文件路径重复：" + path);
+            }
+            for (String other : paths) {
+                if (path.startsWith(other + "/") || other.startsWith(path + "/")) {
+                    throw bad("配置文件 " + path + " 与 " + other + " 互相嵌套：文件不能放在另一个文件的路径下");
+                }
+            }
+            if (dataMount != null) {
+                String mount = dataMount.endsWith("/") && dataMount.length() > 1
+                        ? dataMount.substring(0, dataMount.length() - 1) : dataMount;
+                if (path.equals(mount) || path.startsWith(mount + "/") || mount.startsWith(path + "/")) {
+                    throw bad("配置文件 " + path + " 与持久化挂载路径 " + mount + " 冲突");
+                }
+            }
+            assertFileContent(path, content);
+            total += content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            paths.add(path);
+            Map<String, Object> f = new LinkedHashMap<>();
+            f.put("path", path);
+            f.put("content", content);
+            out.add(f);
+        }
+        if (total > FILES_TOTAL_BYTES_MAX) {
+            throw bad("配置文件总大小不能超过 " + FILES_TOTAL_BYTES_MAX / 1024 + " KiB");
+        }
+        return out;
+    }
+
+    private static void assertFilePath(String path) {
+        if (path.isEmpty()) {
+            throw bad("请填写配置文件路径");
+        }
+        if (!path.startsWith("/")) {
+            throw bad("配置文件路径必须是绝对路径（以 / 开头）：" + path);
+        }
+        if (path.length() > 255) {
+            throw bad("配置文件路径过长：" + path);
+        }
+        if (path.endsWith("/")) {
+            throw bad("配置文件路径要指向文件，不能以 / 结尾：" + path);
+        }
+        for (String seg : path.substring(1).split("/", -1)) {
+            if (seg.equals("..")) {
+                throw bad("配置文件路径不能包含 ..：" + path);
+            }
+            if (seg.isEmpty() || seg.equals(".") || !PATH_SEGMENT.matcher(seg).matches()) {
+                throw bad("配置文件路径不合法（只允许字母、数字和 . _ - @ + = ,，不能有空段或 .）：" + path);
+            }
+        }
+    }
+
+    private static void assertFileContent(String path, String content) {
+        if (!content.contains("${")) {
+            return;
+        }
+        if (AppEnvResolver.stripReferences(content).contains("${")) {
+            throw bad("配置文件 " + path + " 的引用格式不正确，应为 ${依赖.字段}");
+        }
+        for (String[] ref : AppEnvResolver.referenceParts(content)) {
+            if (!FILE_REF_FIELDS.contains(ref[1])) {
+                throw bad("配置文件 " + path + " 引用了 ${" + ref[0] + "." + ref[1] + "}：配置文件内容会明文写进 ConfigMap，"
+                        + "只能引用 " + String.join("、", FILE_REF_FIELDS) + "；用户名、密码等凭据请用环境变量引用");
+            }
+        }
+    }
+
     /**
      * 提示（WARN，不阻断发布）：名字以 PASSWORD / PWD / PASSWD / SECRET / TOKEN / API_KEY 结尾、
      * 且值里除合法 {@code ${x.y}} 引用外还有字面文本的变量。按 {@code _} 分词看末尾词，
@@ -193,8 +307,25 @@ public final class AppServiceDesired {
         return rows;
     }
 
+    /** 配置文件 [{path, content}]（原文，引用未替换）；没有则为空列表。 */
+    public static List<Map<String, String>> configFiles(Map<String, Object> desired) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (desired != null && desired.get("configFiles") instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m) {
+                    out.add(Map.of("path", text(m.get("path")),
+                            "content", m.get("content") == null ? "" : String.valueOf(m.get("content"))));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 被引用的依赖/服务 key：环境变量 + 配置文件内容（供使用方反查、移除守卫、拓扑与就绪检查）。 */
     public static Set<String> references(Map<String, Object> desired) {
-        return AppEnvResolver.references(envRows(desired));
+        Set<String> out = new LinkedHashSet<>(AppEnvResolver.references(envRows(desired)));
+        configFiles(desired).forEach(f -> out.addAll(AppEnvResolver.referencesIn(f.get("content"))));
+        return out;
     }
 
     private static Integer integer(Object o, String label) {

@@ -449,14 +449,14 @@ public class AppReleaseExecutor {
         return JSON.readValue(json, OBJECT_LIST);
     }
 
-    /** 对象名 = &lt;slug&gt;-&lt;key&gt;；headless Service / env ConfigMap 归到同一个 key。 */
+    /** 对象名 = &lt;slug&gt;-&lt;key&gt;；headless Service / env、files ConfigMap 归到同一个 key。 */
     private static String nodeKeyOf(String objectName, String slugPrefix) {
         String key = objectName != null && objectName.startsWith(slugPrefix)
                 ? objectName.substring(slugPrefix.length()) : objectName;
         if (key != null && key.endsWith("-headless")) {
             key = key.substring(0, key.length() - "-headless".length());
         }
-        if (key != null && (key.endsWith("-env") || key.endsWith("-secret"))) {
+        if (key != null && (key.endsWith("-env") || key.endsWith("-secret") || key.endsWith("-files"))) {
             key = key.substring(0, key.lastIndexOf('-'));
         }
         return key;

@@ -55,8 +55,11 @@ public final class AppWorkloadValues {
         workload.put("secretEnv", secretEnv);
         workload.put("inlineEnv", inlineEnv);
         workload.put("imagePullSecrets", strings(params.get("imagePullSecrets")));
-        // 只覆盖「会进容器的配置」，不含 revision：revision 每次发布都变，会让没改配置的发布也滚动
-        workload.put("configHash", configHash(env, secretEnv, inlineEnv));
+        List<Map<String, Object>> files = configFiles(params);
+        workload.put("configFiles", files);
+        // 只覆盖「会进容器的配置」，不含 revision：revision 每次发布都变，会让没改配置的发布也滚动。
+        // 配置文件以 subPath 挂载，ConfigMap 改了容器里也不会更新，必须靠这个哈希滚动 Pod
+        workload.put("configHash", configHash(env, secretEnv, inlineEnv, files));
         workload.put("resources", resources(params));
         workload.put("persistence", persistence(params, worker));
         workload.put("autoscaling", autoscaling(params));
@@ -100,12 +103,33 @@ public final class AppWorkloadValues {
         return out;
     }
 
+    /**
+     * 配置文件 → {@code [{key, path, content}]}，key 作 {@code <name>-files} ConfigMap 的键与 subPath。
+     * 路径与内容由 platform-api 校验并替换好引用，这里只编号。
+     */
+    static List<Map<String, Object>> configFiles(Map<String, Object> params) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (!(params.get("configFiles") instanceof List<?> list)) {
+            return out;
+        }
+        for (Object o : list) {
+            if (o instanceof Map<?, ?> m) {
+                out.add(Map.of("key", "file-" + out.size(), "path", str(m.get("path")),
+                        "content", str(m.get("content"))));
+            }
+        }
+        return out;
+    }
+
     private static String configHash(List<Map<String, Object>> env, List<Map<String, Object>> secretEnv,
-                                     List<Map<String, Object>> inlineEnv) {
+                                     List<Map<String, Object>> inlineEnv, List<Map<String, Object>> files) {
         StringBuilder sb = new StringBuilder();
         append(sb, "env", env);
         append(sb, "secretEnv", secretEnv);
         append(sb, "inlineEnv", inlineEnv);
+        if (!files.isEmpty()) {
+            append(sb, "files", files);   // 没有配置文件时哈希与之前一致，不让既有服务因升级而滚动
+        }
         try {
             byte[] d = java.security.MessageDigest.getInstance("SHA-256")
                     .digest(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));

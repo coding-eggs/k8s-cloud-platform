@@ -18,6 +18,9 @@ workload:
   # 引用已有 Secret：[{name, secretName, secretKey}] → valueFrom.secretKeyRef
   # 平台不接收明文敏感值（spec/快照/清单里都不能出现密码），要敏感就先用「Secret」页建好再引用
   secretEnv: []
+  # 配置文件：[{key, path, content}] → ConfigMap `<name>-files`，每个文件以只读 subPath 挂到 path
+  # 内容不含凭据（platform-api 保存时拒绝 ${x.username|password}）；改内容靠 configHash 滚动 Pod
+  configFiles: []
   resources:
     requests: { cpu: 100m, memory: 128Mi }
     limits: { cpu: "1", memory: 1Gi }

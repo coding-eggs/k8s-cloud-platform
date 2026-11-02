@@ -67,7 +67,7 @@ public class AppDependencyService {
     private static final Pattern HOST = Pattern.compile(
             "^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$");
     private static final Pattern INDEX_PATH = Pattern.compile("^/[A-Za-z0-9._~:,*+@=%/-]*$");
-    private static final List<String> RESERVED_SUFFIXES = List.of("-env", "-secret", "-headless");
+    private static final List<String> RESERVED_SUFFIXES = List.of("-env", "-secret", "-headless", "-files");
     private static final Set<String> PROTOCOLS = Set.of(
             "mysql", "postgresql", "redis", "kafka", "rabbitmq", "elasticsearch", "nacos", "milvus");
     private static final Set<String> EXTERNAL_FIELDS = Set.of(
@@ -89,7 +89,10 @@ public class AppDependencyService {
     private final MiddlewareService middleware;
     private final K8sAppClient client;
     private final Executor initExecutor;
-    /** 自己建的线程池（测试注入的 Executor 不归我们关） */
+    /**
+     * 销毁时要关的线程池：注入的 Executor 是 ExecutorService 就关（生产路径由 newInitPool 创建，归本 bean 所有）；
+     * 测试注入的 Runnable::run 不是 ExecutorService，为 null，不关。
+     */
     private final ExecutorService ownedPool;
 
     @Autowired

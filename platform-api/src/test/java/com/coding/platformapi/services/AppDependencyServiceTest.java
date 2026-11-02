@@ -178,7 +178,7 @@ class AppDependencyServiceTest {
 
     @Test
     void badAndReservedKeysAreRejected() {
-        for (String bad : List.of("DB", "1db", "db-env", "db-secret", "db-headless", "a".repeat(21))) {
+        for (String bad : List.of("DB", "1db", "db-env", "db-secret", "db-headless", "db-files", "a".repeat(21))) {
             assertThatThrownBy(() -> service.add(createReq(bad), "alice", "t1")).as(bad)
                     .isInstanceOf(CloudPlatformException.class);
         }

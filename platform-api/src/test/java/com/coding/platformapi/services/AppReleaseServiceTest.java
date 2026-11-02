@@ -997,4 +997,41 @@ class AppReleaseServiceTest {
         dto.setInfo(ConnInfo.of("mysql", "db.demo.svc", 3306).build());
         when(middleware.connection(instanceId, "t1")).thenReturn(dto);
     }
+
+    // ---------------------------------------------------------------- 配置文件
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void renderResolvesConfigFileReferencesIntoParams() {
+        Map<String, Object> d = svc("1");
+        d.put("configFiles", List.of(Map.of("path", "/etc/app.yaml", "content", "peer: ${s1.url}\n")));
+        Map<String, Object> peer = svc("1");
+
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 1, snapshotOf(d, peer));
+
+        assertThat((List<Map<String, Object>>) req.getSpec().getNodes().get(0).getParams().get("configFiles"))
+                .containsExactly(Map.of("path", "/etc/app.yaml", "content", "peer: http://shop-s1:8080\n"));
+        assertThat(req.getSpec().getNodes().get(1).getParams()).doesNotContainKey("configFiles");
+    }
+
+    @Test
+    void renderRejectsAConfigFileThatReferencesACredentialEvenIfItSlippedIntoASnapshot() {
+        PlatformAppDependency dep = new PlatformAppDependency();
+        dep.setAppId("app1");
+        dep.setDepKey("db");
+        dep.setType("MIDDLEWARE");
+        dep.setInstanceId("mw1");
+        MiddlewareConnectionDTO dto = new MiddlewareConnectionDTO();
+        dto.setInfo(ConnInfo.of("mysql", "db.demo.svc", 3306).secret("db-sec", "user", "pass").build());
+        when(middleware.connection("mw1", "t1")).thenReturn(dto);
+        Map<String, Object> d = svc("1");
+        d.put("configFiles", List.of(Map.of("path", "/etc/app.yaml", "content", "pw: ${db.password}")));
+        AppSnapshot snapshot = AppSnapshot.parse(JSON.writeValueAsString(Map.of(
+                "services", Map.of("api", d), "dependencies", List.of(Map.of(
+                        "key", "db", "type", "MIDDLEWARE", "instanceId", "mw1")))));
+
+        assertThatThrownBy(() -> pipeline.buildRequest(app, 1, snapshot))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("${db.password}");
+        assertThat(pipeline.problems(app, snapshot)).anySatisfy(p -> assertThat(p).contains("api"));
+    }
 }

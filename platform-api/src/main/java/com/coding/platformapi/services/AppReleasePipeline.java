@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
 @Component
 public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRenderer {
 
-    private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env");
+    private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env", "configFiles");
 
     private final PlatformApplicationMapper apps;
     private final PlatformAppReleaseMapper releases;
@@ -88,6 +88,7 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
                     ctx.connections, ctx.addrs);
             r.problems().forEach(p -> problems.add(e.getKey() + "：" + p.getMessage()));
             inject.put(e.getKey(), r.env());
+            List<Map<String, Object>> files = resolveFiles(e.getKey(), desired, ctx, problems);
 
             Map<String, Object> params = new LinkedHashMap<>();
             desired.forEach((k, v) -> {
@@ -96,6 +97,9 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
                 }
             });
             params.put("image", AppServiceDesired.image(desired));
+            if (!files.isEmpty()) {
+                params.put("configFiles", files);   // 引用已替换成值；没有配置文件就不带这个键（参数不变 = 不滚动）
+            }
             // 拉取权限不在这里补：imagePullSecrets 只取自快照（用户意图，回滚才能逐字还原）。
             // 平台 Harbor 的拉取凭据靠命名空间 default SA 上挂着的 platform-registry-pull —— 它在分配命名空间时
             // 下发，也可由「重下发全部模板」补；chart 不设 serviceAccountName，Pod 走 default SA，由 SA 准入带上。
@@ -142,6 +146,28 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
                     out.add(e.getKey() + "：" + p.getMessage());
                 }
             }
+            resolveFiles(e.getKey(), e.getValue(), ctx, out);
+        }
+        return out;
+    }
+
+    /**
+     * 配置文件内容里的引用替换成值（只认 host/port/address/url；保存时已拦过凭据，这里再拦一次，
+     * 防止手工改过的快照把凭据位置展开进 ConfigMap）。问题追加进 problems，带服务名。
+     */
+    private static List<Map<String, Object>> resolveFiles(String key, Map<String, Object> desired, Context ctx,
+                                                          List<String> problems) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, String> f : AppServiceDesired.configFiles(desired)) {
+            AppEnvResolver.TextResult t = AppEnvResolver.resolveText(f.get("path"), f.get("content"),
+                    ctx.connections, ctx.addrs);
+            t.problems().forEach(p -> problems.add(key + "：" + p.getMessage()));
+            if (t.value() != null) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("path", f.get("path"));
+                m.put("content", t.value());
+                out.add(m);
+            }
         }
         return out;
     }
@@ -160,7 +186,7 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         return new Context(conns, addrs);
     }
 
-    /** 快照内服务的环境变量引用到的依赖（就绪检查与连接信息都只针对它们）。 */
+    /** 快照内服务的环境变量与配置文件引用到的依赖（就绪检查与连接信息都只针对它们）。 */
     static List<PlatformAppDependency> referencedDependencies(AppSnapshot snapshot) {
         Set<String> refs = new java.util.HashSet<>();
         snapshot.services().values().forEach(d -> refs.addAll(AppServiceDesired.references(d)));

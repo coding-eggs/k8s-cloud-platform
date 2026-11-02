@@ -139,6 +139,41 @@ class AppWorkloadValuesTest {
         assertThat(List.of(base, withInline, withRef)).doesNotHaveDuplicates();
     }
 
+    private static Map<String, Object> withFiles(List<Map<String, Object>> files) {
+        return Map.of("image", "nginx", "configFiles", files);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void configFilesBecomeKeyedEntriesForTheFilesConfigMap() {
+        Map<String, Object> w = workload(AppWorkloadValues.build("a", "d", 1, node(withFiles(List.of(
+                Map.of("path", "/etc/app/app.yaml", "content", "a: 1\n"),
+                Map.of("path", "/etc/nginx/conf.d/default.conf", "content", "server {}"))))));
+
+        assertThat((List<Object>) w.get("configFiles")).containsExactly(
+                Map.of("key", "file-0", "path", "/etc/app/app.yaml", "content", "a: 1\n"),
+                Map.of("key", "file-1", "path", "/etc/nginx/conf.d/default.conf", "content", "server {}"));
+        assertThat((List<Object>) workload(AppWorkloadValues.build("a", "d", 1,
+                node(Map.of("image", "nginx")))).get("configFiles")).isEmpty();
+    }
+
+    @Test
+    void configHashCoversConfigFiles() {
+        String none = (String) workload(AppWorkloadValues.build("a", "d", 1,
+                node(Map.of("image", "nginx")))).get("configHash");
+        String v1 = (String) workload(AppWorkloadValues.build("a", "d", 1,
+                node(withFiles(List.of(Map.of("path", "/etc/a.conf", "content", "x=1")))))).get("configHash");
+        String v2 = (String) workload(AppWorkloadValues.build("a", "d", 1,
+                node(withFiles(List.of(Map.of("path", "/etc/a.conf", "content", "x=2")))))).get("configHash");
+        String moved = (String) workload(AppWorkloadValues.build("a", "d", 1,
+                node(withFiles(List.of(Map.of("path", "/etc/b.conf", "content", "x=1")))))).get("configHash");
+        String again = (String) workload(AppWorkloadValues.build("a", "d", 2,
+                node(withFiles(List.of(Map.of("path", "/etc/a.conf", "content", "x=1")))))).get("configHash");
+
+        assertThat(List.of(none, v1, v2, moved)).doesNotHaveDuplicates();
+        assertThat(again).isEqualTo(v1);
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void imagePullSecretsPassThrough() {

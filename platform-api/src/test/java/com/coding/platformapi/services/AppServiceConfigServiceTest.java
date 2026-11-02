@@ -91,7 +91,7 @@ class AppServiceConfigServiceTest {
 
     @Test
     void createRejectsBadKeys() {
-        for (String bad : List.of("Web", "1web", "web_x", "a-env", "a-secret", "a-headless", "", "x".repeat(21))) {
+        for (String bad : List.of("Web", "1web", "web_x", "a-env", "a-secret", "a-headless", "a-files", "", "x".repeat(21))) {
             assertThatThrownBy(() -> service.create(req(bad, web("1")), "t1"))
                     .as(bad).isInstanceOf(CloudPlatformException.class);
         }
@@ -321,5 +321,43 @@ class AppServiceConfigServiceTest {
         when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
         service.create(req("web", web("1")), "t1");
         assertThat(savedDesired()).doesNotContainKey("imagePullSecrets");
+    }
+
+    private Map<String, Object> updatedDesired() {
+        ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).updateWithVersion(cap.capture());
+        return JSON.readValue(cap.getValue().getDesiredJson(), new tools.jackson.core.type.TypeReference<Map<String, Object>>() { });
+    }
+
+    @Test
+    void updateAlsoMergesPlatformPullSecretIntoAUserSetList() {
+        when(harbor.isPlatformHost("harbor.local")).thenReturn(true);
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 3));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        Map<String, Object> d = web("2");
+        d.put("imagePullSecrets", List.of("mine"));
+        AppServiceRequest r = req("api", d);
+        r.setVersion(3);
+
+        var view = service.update(r, "t1");
+
+        assertThat(updatedDesired().get("imagePullSecrets")).isEqualTo(List.of("mine", "platform-registry-pull"));
+        assertThat(view.desired().get("imagePullSecrets")).isEqualTo(List.of("mine", "platform-registry-pull"));
+    }
+
+    @Test
+    void configFilesRoundTripThroughUpdateAndTheReturnedView() {
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 3));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        Map<String, Object> d = web("2");
+        List<Map<String, Object>> files = List.of(Map.of("path", "/etc/app/app.yaml", "content", "db: ${db.host}\n"));
+        d.put("configFiles", files);
+        AppServiceRequest r = req("api", d);
+        r.setVersion(3);
+
+        var view = service.update(r, "t1");
+
+        assertThat(updatedDesired().get("configFiles")).isEqualTo(files);
+        assertThat(view.desired().get("configFiles")).isEqualTo(files);
     }
 }

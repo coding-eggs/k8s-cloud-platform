@@ -19,6 +19,14 @@ public final class AppInitScripts {
     private static final Set<String> SUPPORTED =
             Set.of("mysql", "postgresql", "redis", "elasticsearch", "kafka");
 
+    /**
+     * redis-cli 输出里的错误行（ERE，脚本里用 grep -E）：服务端错误前缀后必须跟空格或行尾，
+     * 普通返回值（如 "ERRATA"、"ASKING"）不会误判；口令错误时 redis-cli 打印 "AUTH failed: ..." 后继续执行。
+     */
+    static final String REDIS_ERROR_PATTERN = "^(\\(error\\) )?((ERR|NOAUTH|WRONGPASS|WRONGTYPE|NOPERM|READONLY"
+            + "|MISCONF|LOADING|EXECABORT|OOM|BUSYKEY|NOSCRIPT|BUSYGROUP|CROSSSLOT|MOVED|ASK|NOREPLICAS)( |$)"
+            + "|AUTH failed)";
+
     private AppInitScripts() {
     }
 
@@ -64,20 +72,23 @@ public final class AppInitScripts {
             }
             case "redis" -> {
                 image = "redis:7";
-                // 从标准输入喂命令时 redis-cli 即使命令报错也以 0 退出：必须自己扫输出里的错误行
-                shell = "out=$(redis-cli -h \"$HOST\" -p \"${PORT:-6379}\" --no-auth-warning -a \"$PASSWORD\" "
+                // 从标准输入喂命令时 redis-cli 即使命令报错也以 0 退出：必须自己扫输出里的错误行。
+                // 口令走 REDISCLI_AUTH（不出现在进程命令行里）；空口令不设，否则会发一条 AUTH "" 而失败
+                shell = "[ -n \"$PASSWORD\" ] && export REDISCLI_AUTH=\"$PASSWORD\"; "
+                        + "out=$(redis-cli -h \"$HOST\" -p \"${PORT:-6379}\" "
                         + "< /init/payload 2>&1); rc=$?; echo \"$out\"; [ $rc -eq 0 ] && "
-                        + "! echo \"$out\" | grep -qE '^(\\(error\\) )?(ERR|NOAUTH|WRONGPASS|WRONGTYPE|NOPERM|READONLY|MISCONF|LOADING|EXECABORT)'";
+                        + "! echo \"$out\" | grep -qE '" + REDIS_ERROR_PATTERN + "'";
             }
             case "elasticsearch" -> {
                 image = "curlimages/curl:8.10.1";
                 // 目标路径放 INDEX_PATH：env 叫 PATH 会覆盖容器的可执行文件搜索路径，curl 都找不到。
-                // -f：HTTP 4xx/5xx 让 curl 非零退出（否则报错也是 0，Job 会显示成功）。
+                // --fail-with-body（与 -f 互斥）：HTTP 4xx/5xx 让 curl 非零退出（否则报错也是 0，Job 会显示成功），
+                // 同时保留 ES 的错误正文进 init_log。--data-binary 原样发送（-d 会删掉换行）。
                 // https 时加 -k：ES 的 http 证书是 ECK 为集群内服务自签的，Job 里没有这张 CA，
                 // 流量只在集群内；URL 的协议取自实例的 TLS 开关，不写死。
                 shell = "K=\"\"; case \"$URL\" in https://*) K=\"-k\";; esac; "
-                        + "curl -fsS $K -u \"elastic:$PASSWORD\" -X PUT \"$URL$INDEX_PATH\" "
-                        + "-H 'Content-Type: application/json' -d @/init/payload";
+                        + "curl -sS --fail-with-body $K -u \"elastic:$PASSWORD\" -X PUT \"$URL$INDEX_PATH\" "
+                        + "-H 'Content-Type: application/json' --data-binary @/init/payload";
             }
             case "kafka" -> {
                 image = "apache/kafka:3.9.0";
