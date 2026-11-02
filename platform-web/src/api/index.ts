@@ -58,6 +58,10 @@ import type {
   K8sHttpRoute,
   K8sNode,
   K8sPvc,
+  K8sVolumeSnapshot,
+  K8sVolumeSnapshotClass,
+  K8sVolumeSnapshotContent,
+  VolumeSnapshotCapability,
   K8sPersistentVolume,
   K8sPod,
   K8sPodMonitor,
@@ -486,6 +490,30 @@ export const storageClassApi = {
   /** 设为/取消集群默认（isDefault=false = 取消）。设为默认时后端会清掉该集群其它已默认的 SC（单默认） */
   setDefault: (name: string, ctx: Ctx2, isDefault: boolean) =>
     http.post<never, K8sStorageClass>(`/storageclasses/${encodeURIComponent(name)}/default`, null, { params: { ...ctx, isDefault } }),
+}
+
+/**
+ * 卷快照 /volumesnapshots（S4.3）。没有 update：快照 spec 不可变。
+ * 恢复不在这里 —— 走 `pvcApi.create` 带 dataSourceRef（kind=VolumeSnapshot）。
+ */
+export const volumeSnapshotApi = {
+  list: (ctx: ListCtx) => http.post<never, K8sVolumeSnapshot[]>('/volumesnapshots/list', ctx),
+  getYaml: (name: string, ctx: Ctx3) =>
+    http.get<never, string>(`/volumesnapshots/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+  create: (ctx: Ctx2, body: { name: string; namespace: string; sourcePvcName: string; volumeSnapshotClassName?: string | null }) =>
+    http.post<never, K8sVolumeSnapshot>('/volumesnapshots', { ...body, ...ctx }),
+  delete: (name: string, ctx: Ctx3) =>
+    http.delete<never, void>(`/volumesnapshots/${encodeURIComponent(name)}`, { params: ctx }),
+  /** 活探测：CRD 是否已装、有哪些快照类、每个存储类能用哪些。探测失败会报错，不会返回「不支持」 */
+  capability: (ctx: Ctx2) => http.post<never, VolumeSnapshotCapability>('/volumesnapshots/capability', ctx),
+}
+
+/** 快照类 / 快照内容（集群级，平台视图只读；clusterId 必填，无 namespace） */
+export const volumeSnapshotClusterApi = {
+  listClasses: (ctx: { clusterId: string }) =>
+    http.post<never, K8sVolumeSnapshotClass[]>('/volumesnapshotclasses/list', ctx),
+  listContents: (ctx: { clusterId: string }) =>
+    http.post<never, K8sVolumeSnapshotContent[]>('/volumesnapshotcontents/list', ctx),
 }
 
 /** PersistentVolume /persistentvolumes（集群级，只读：供 PVC 详情查看绑定的 PV；无 namespace） */

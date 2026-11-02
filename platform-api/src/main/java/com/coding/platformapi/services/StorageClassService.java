@@ -51,6 +51,14 @@ public class StorageClassService {
                 .orElse(null);
     }
 
+    /**
+     * 存储类窄投影全表（name / provisioner / 扩容能力）。与 {@link #expansionOf} 同一条 UPSTREAM 路径，
+     * 租户调得动；卷快照用它按 {@code provisioner == driver} 匹配快照类。
+     */
+    public List<StorageClassProvisionerDTO> provisioners(String clusterId) {
+        return pipeline.storageClassProvisioners(clusterId);
+    }
+
     public StorageClassDTO get(String name, String tenantId, String clusterId) {
         return k8s.get(dto(name, tenantId, clusterId));
     }

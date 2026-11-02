@@ -1007,11 +1007,13 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 > - [ ] S4.2.5（新）**入口可见性**：跨命名空间的入口 Gateway 候选从哪来 —— 见上面三个候选
 
 #### S4.3 VolumeSnapshot ｜ 规模 M ｜ 用户要求排最后
-- [ ] S4.3.1 capability 门控（`snapshot.storage.k8s.io` + 存在可用的 `VolumeSnapshotClass`；缺一整块隐藏）
-- [ ] S4.3.2 三 CRD 操作层（通用 CRD 范式；只写 `VolumeSnapshot`，另两个只读）
-- [ ] S4.3.3 快照列表 / 创建 / 删除页 + 权限点 + 迁移
-- [ ] S4.3.4 从快照恢复 PVC（`dataSourceRef` 已支持，补 UI 入口）
-- [ ] S4.3.5 三条语义写进 UI：快照 ≠ 备份 / `deletionPolicy` 的后果 / `restoreSize` 下限
+> **2026-11-02 已实施待部署**（分支 `feat/volume-snapshot`，11 任务；[spec](superpowers/specs/2026-11-01-volume-snapshot-design.md) · [plan](superpowers/plans/2026-11-01-volume-snapshot.md)）。
+> 部署：重放 `V2026_11_02_20` → 「重下发全部模板」（租户 SA 补 `volumesnapshots`）→ 重建 k8s-server / platform-api / platform-web → 重新登录。真集群验收未跑。
+- [x] S4.3.1 capability 门控 —— **活探测**（CRD 在不在 + 有没有快照类 + 按 driver 匹配存储类），不读组件状态；门控放在页内说明为什么用不了，不藏菜单；探测出错显示报错而不是「不支持」
+- [x] S4.3.2 三 CRD 操作层（只写 `VolumeSnapshot`，Class / Content 只读；租户侧拿快照类走 UPSTREAM 窄投影 `/volumesnapshotclasses/options`，不回 `parameters`）
+- [x] S4.3.3 快照列表 / 创建 / 删除页 + 权限点 + 迁移（另有平台侧只读页：快照类 + 快照内容，标出 Retain 留下的孤儿内容）
+- [x] S4.3.4 从快照恢复 PVC（快照行「恢复为新 PVC」+ PVC 表单数据源选快照；后端校验同 ns / 已就绪 / 容量 ≥ restoreSize / 驱动一致）
+- [x] S4.3.5 三条语义写进 UI：快照 ≠ 备份 / `deletionPolicy` 的后果 / `restoreSize` 下限
 
 ---
 
@@ -1036,7 +1038,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S3.6** | 组件生命周期（安装/升级） | S1.2 | L | ✅ **已完成（2026-10-22）**：批①+批②（引擎 + 11 条组件 recipe + 组件文档），**功能级验收 7/7**（calico 2026-10-22 在业务集群 test-work-cluster/k8s 1.37 真装通过）。部署：**先重放 `V2026_10_18_1`**，重建 k8s-server + platform-api + platform-web（2026-10-22 的 calico 修复三项与 k8s-server 镜像里的 kubectl 都在这一批）；istio 安装/重放会创建 `istio-system/external-gateway` Gateway CR | [spec](superpowers/specs/2026-10-17-component-lifecycle-design.md) · [plan①](superpowers/plans/2026-10-17-component-lifecycle-batch1.md) |
 | **S4.1** | PVC 扩容 | — | S | ✅ **已实施待部署**（2026-10-16 收口：门控·中间态·独立端点·列表列·文案，`0de9533`→`4b9eda0`） | — |
 | **S4.2** | Istio 表单补偿 | — | M | ⏸ **待定**（2026-10-16 用户裁定：先想清「对外暴露」的产品规划；现场勘查推翻原方案的两条，见 §S4.2） | — |
-| **S4.3** | VolumeSnapshot | — | M | ⬜ 未开始（设计待评审） | [spec](superpowers/specs/2026-11-01-volume-snapshot-design.md) |
+| **S4.3** | VolumeSnapshot | — | M | ✅ **已实施待部署**（2026-11-02，分支 `feat/volume-snapshot`）。部署：重放 `V2026_11_02_20` → 「重下发全部模板」→ 重建 k8s-server + platform-api + platform-web → **重新登录**；真集群验收未跑 | [spec](superpowers/specs/2026-11-01-volume-snapshot-design.md) · [plan](superpowers/plans/2026-11-01-volume-snapshot.md) |
 
 ### 依赖图
 
@@ -1055,9 +1057,9 @@ S1.2 集群组件展示 ──▶ S3.4 Operator 管理（另需 D1）  ← 已�
 ### 无依赖、可立即开工的批
 
 **S1.1 用户自助 · S1.2 集群组件展示 · S1.3 平台总览 ·
-S2.2 告警 · S4.3 VolumeSnapshot**
+S2.2 告警**
 
-> 已完成的从这份名单里划掉：S0.1 审计、S0.2 凭据、S2.1 工作负载级日志、S4.1 PVC 扩容、S2.4 服务网格可视化。
+> 已完成的从这份名单里划掉：S0.1 审计、S0.2 凭据、S2.1 工作负载级日志、S4.1 PVC 扩容、S2.4 服务网格可视化、S4.3 VolumeSnapshot。
 > S4.2 从「可立即开工」改为**待定**（用户要先想清「对外暴露」的产品规划）。
 
 > **S0.1（审计）建议最优先** —— 它是唯一「不做就补不回来」的，而且凭据使用、CI 触发、Operator 安装

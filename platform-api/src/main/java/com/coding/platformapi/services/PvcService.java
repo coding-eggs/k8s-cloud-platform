@@ -4,7 +4,11 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.VolumeExpansion;
+import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotClassOptionDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotDTO;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.k8s.VolumeSnapshotClassClient;
 import com.coding.platformapi.models.PvcResizeRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,8 +32,12 @@ import java.util.List;
 @RequiredArgsConstructor
 public class PvcService {
 
+    private static final String SNAPSHOT_KIND = "VolumeSnapshot";
+    private static final String SNAPSHOT_GROUP = "snapshot.storage.k8s.io";
+
     private final K8sClient k8s;
     private final StorageClassService storageClasses;
+    private final VolumeSnapshotClassClient snapshotClasses;
 
     public List<PersistentVolumeClaimDTO> list(PersistentVolumeClaimDTO query) {
         return k8s.list(query);
@@ -44,7 +52,75 @@ public class PvcService {
     }
 
     public PersistentVolumeClaimDTO create(PersistentVolumeClaimDTO body) {
+        PersistentVolumeClaimDTO.DataSourceRef ref = body.getDataSourceRef();
+        if (ref != null && SNAPSHOT_KIND.equals(ref.getKind())
+                && (ref.getApiGroup() == null || SNAPSHOT_GROUP.equals(ref.getApiGroup()))) {
+            validateRestore(body, ref);
+        }
         return k8s.create(body);
+    }
+
+    /**
+     * 从快照恢复（S4.3）的四条校验，在下发前给出看得懂的错误，而不是让 PVC 卡在 Pending、
+     * 只在事件里留一句 provisioner 的原话。
+     *
+     * <p>持 {@code tenant:pvc:create} 但没有快照读权限的角色也会经此读到快照状态 ——
+     * 只回校验结果、不回对象内容，spec §5.3 已接受。
+     */
+    private void validateRestore(PersistentVolumeClaimDTO body, PersistentVolumeClaimDTO.DataSourceRef ref) {
+        String snapshotName = ref.getName();
+        // ① 只允许同命名空间：跨命名空间恢复要集群开 CrossNamespaceVolumeDataSource，且会绕过分配表
+        if (ref.getNamespace() != null && !ref.getNamespace().isBlank()
+                && !ref.getNamespace().equals(body.getNamespace())) {
+            throw restoreInvalid("只能从同一命名空间的快照恢复：快照在 " + ref.getNamespace()
+                    + "，新 PVC 在 " + body.getNamespace() + "。");
+        }
+        VolumeSnapshotDTO query = new VolumeSnapshotDTO();
+        query.setName(snapshotName);
+        query.setTenantId(body.getTenantId());
+        query.setClusterId(body.getClusterId());
+        query.setNamespace(body.getNamespace());
+        VolumeSnapshotDTO snapshot = k8s.get(query);
+        // ② 快照存在、没在删除、已经可用
+        if (snapshot == null) {
+            throw restoreInvalid("快照不存在：" + snapshotName);
+        }
+        if (snapshot.getDeletionTimestamp() != null) {
+            throw restoreInvalid("快照 " + snapshotName + " 正在删除，不能用来恢复。");
+        }
+        if (!Boolean.TRUE.equals(snapshot.getReadyToUse())) {
+            throw restoreInvalid("快照 " + snapshotName + " 尚未可用，等它就绪后再恢复。");
+        }
+        // ③ 容量不能小于快照大小；驱动没报（null）或报 0 时不拦
+        BigDecimal restoreSize = snapshot.getRestoreSize();
+        if (restoreSize != null && restoreSize.signum() > 0 && body.getStorage() != null
+                && body.getStorage().compareTo(restoreSize) < 0) {
+            throw restoreInvalid("容量不能小于快照大小 " + size(restoreSize) + "（你填的是 "
+                    + size(body.getStorage()) + "）。");
+        }
+        // ④ 目标存储类的 provisioner 必须等于快照类的 driver；任一查不到就不拦，交给集群判断
+        String provisioner = body.getStorageClassName() == null ? null
+                : storageClasses.provisioners(body.getClusterId()).stream()
+                .filter(sc -> body.getStorageClassName().equals(sc.getName()))
+                .map(StorageClassProvisionerDTO::getProvisioner)
+                .findFirst()
+                .orElse(null);
+        List<VolumeSnapshotClassOptionDTO> classes = snapshot.getVolumeSnapshotClassName() == null ? null
+                : snapshotClasses.options(body.getClusterId()).getClasses();
+        String driver = classes == null ? null
+                : classes.stream()
+                .filter(c -> snapshot.getVolumeSnapshotClassName().equals(c.getName()))
+                .map(VolumeSnapshotClassOptionDTO::getDriver)
+                .findFirst()
+                .orElse(null);
+        if (provisioner != null && driver != null && !provisioner.equals(driver)) {
+            throw restoreInvalid("存储类 " + body.getStorageClassName() + " 的驱动是 " + provisioner
+                    + "，快照来自驱动 " + driver + "，只能恢复到同一驱动的存储类。");
+        }
+    }
+
+    private static CloudPlatformException restoreInvalid(String msg) {
+        return new CloudPlatformException(EnumResponseType.VOLUME_SNAPSHOT_INVALID, msg);
     }
 
     /**

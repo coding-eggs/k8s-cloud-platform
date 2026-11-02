@@ -3,10 +3,10 @@ import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import { pvcApi, persistentVolumeApi } from '@/api'
+import { pvcApi, persistentVolumeApi, volumeSnapshotApi } from '@/api'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
-import type { K8sPvc, K8sPersistentVolume } from '@/types'
+import type { K8sPvc, K8sPersistentVolume, K8sVolumeSnapshot, VolumeSnapshotCapability } from '@/types'
 import { useResourceContext } from '@/stores/context'
 import { useResourceOptions } from '@/composables/useResourceOptions'
 import PageHeader from '@/components/PageHeader.vue'
@@ -15,6 +15,8 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import { fmtDate } from '@/utils/format'
 import { formatBytes } from '@/utils/quantity'
 import YamlBlock from '@/components/YamlBlock.vue'
+import VolumeSnapshotCreateDialog from '@/components/storage/VolumeSnapshotCreateDialog.vue'
+import { UNSUPPORTED_TEXT } from '@/utils/volumeSnapshot'
 
 /** 容量展示：基础单位字节 → 人性化（16Gi…）；null → — */
 function fmtStorage(v?: number | null): string {
@@ -46,6 +48,7 @@ async function refresh(): Promise<void> {
   loading.value = true
   try {
     list.value = await pvcApi.list(ctxParams.value)
+    void loadSnapshotCapability()
     // ?open=<name>：从中间件详情等外部入口直达该 PVC 的详情抽屉；首次加载后清掉参数
     if (!autoOpened && route.query.open) {
       autoOpened = true
@@ -147,8 +150,41 @@ async function submitResize(): Promise<void> {
   }
 }
 
+// ---------- 卷快照入口（S4.3） ----------
+
+/** 集群支不支持快照；探测失败或没读权限时为 null —— 此时整个入口隐藏（门控说明在快照页） */
+const snapshotCapability = ref<VolumeSnapshotCapability | null>(null)
+const canSnapshot = computed(
+  () => perm.has(apiCodes.volumeSnapshotCreate) && snapshotCapability.value?.available === true,
+)
+
+async function loadSnapshotCapability(): Promise<void> {
+  if (!perm.has(apiCodes.volumeSnapshotRead)) return
+  try {
+    snapshotCapability.value = await volumeSnapshotApi.capability(ctx2.value)
+  } catch {
+    snapshotCapability.value = null
+  }
+}
+
+/** 这个 PVC 不能打快照的原因（禁用项的 tooltip）；能打返回空串 */
+function snapshotBlock(row: K8sPvc): string {
+  if (row.phase !== 'Bound') return 'PVC 未绑定'
+  const sc = snapshotCapability.value?.storageClasses.find((s) => s.name === row.storageClassName)
+  return sc && sc.snapshotClasses.length > 0 ? '' : UNSUPPORTED_TEXT
+}
+
+const snapshotVisible = ref(false)
+const snapshotPvc = ref<string | null>(null)
+
+function openSnapshot(row: K8sPvc): void {
+  snapshotPvc.value = row.name
+  snapshotVisible.value = true
+}
+
 function onRowCommand(cmd: string, row: K8sPvc): void {
   if (cmd === 'resize') openResize(row)
+  else if (cmd === 'snapshot') openSnapshot(row)
   else if (cmd === 'delete') void onDelete(row)
 }
 
@@ -176,6 +212,25 @@ function resolveApiGroup(kind: string): string {
   if (kind === 'VolumeSnapshot') return 'snapshot.storage.k8s.io'
   return form.dsApiGroup.trim()
 }
+
+/** dsKind=VolumeSnapshot 时的候选：当前命名空间里已可用的快照 */
+const readySnapshots = ref<K8sVolumeSnapshot[]>([])
+
+watch(
+  () => [form.dataSourceEnabled, form.dsKind] as const,
+  async ([enabled, kind]) => {
+    if (!enabled || kind !== 'VolumeSnapshot' || !ready.value) return
+    form.dsName = ''
+    form.dsNamespace = ''
+    try {
+      readySnapshots.value = (await volumeSnapshotApi.list(ctxParams.value)).filter(
+        (s) => s.readyToUse === true && !s.deletionTimestamp,
+      )
+    } catch {
+      readySnapshots.value = []
+    }
+  },
+)
 
 function openCreate(): void {
   form.name = ''
@@ -433,6 +488,10 @@ const contextDesc = computed(() => {
                       调整容量
                     </span>
                   </el-dropdown-item>
+                  <!-- 存储类不支持时显示但禁用：现有 nfs-subdir 上的 PVC 就是这样，用户要知道得先迁移 -->
+                  <el-dropdown-item v-if="canSnapshot" command="snapshot" :disabled="!!snapshotBlock(row)">
+                    <span :title="snapshotBlock(row)">创建快照</span>
+                  </el-dropdown-item>
                   <el-dropdown-item command="delete" divided :disabled="isManaged(row)">删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -487,9 +546,20 @@ const contextDesc = computed(() => {
             <el-input v-model="form.dsKindCustom" placeholder="来源对象的 Kind" />
           </el-form-item>
           <el-form-item label="来源名称 name" required>
-            <el-input v-model="form.dsName" placeholder="来源对象名称" />
+            <!-- 卷快照只能从同命名空间恢复：改成下拉，只列已可用的快照，并隐藏「来源命名空间」 -->
+            <el-select
+              v-if="form.dsKind === 'VolumeSnapshot'"
+              v-model="form.dsName"
+              filterable
+              placeholder="选择当前命名空间里已可用的快照"
+              no-data-text="当前命名空间没有可用的快照"
+              style="width: 100%"
+            >
+              <el-option v-for="s in readySnapshots" :key="s.name" :label="s.name" :value="s.name" />
+            </el-select>
+            <el-input v-else v-model="form.dsName" placeholder="来源对象名称" />
           </el-form-item>
-          <el-form-item label="来源命名空间">
+          <el-form-item v-if="form.dsKind !== 'VolumeSnapshot'" label="来源命名空间">
             <el-input v-model="form.dsNamespace" placeholder="留空 = 当前命名空间（跨命名空间需开启特性门）" />
           </el-form-item>
         </template>
@@ -499,6 +569,15 @@ const contextDesc = computed(() => {
         <el-button type="primary" :loading="saving" @click="submit">确定</el-button>
       </template>
     </el-dialog>
+
+    <VolumeSnapshotCreateDialog
+      v-if="ready && snapshotCapability"
+      v-model="snapshotVisible"
+      :ctx="ctxParams"
+      :capability="snapshotCapability"
+      :pvcs="list"
+      :pvc-name="snapshotPvc"
+    />
 
     <!-- 详情 -->
     <el-drawer v-model="drawerVisible" :title="`PVC · ${detail?.name ?? ''}`" size="640px">

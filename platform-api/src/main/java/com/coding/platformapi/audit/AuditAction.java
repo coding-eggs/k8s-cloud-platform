@@ -65,6 +65,13 @@ public final class AuditAction {
 
     public static final String PVC_DELETE = "pvc:delete";
 
+    // ---- 卷快照（S4.3，2 个写端点全量；恢复走 PVC 创建）----
+
+    public static final String VOLUME_SNAPSHOT_CREATE = "volumesnapshot:create";
+
+    /** 删快照：快照类的 deletionPolicy=Delete 时会连带销毁存储后端的数据 */
+    public static final String VOLUME_SNAPSHOT_DELETE = "volumesnapshot:delete";
+
     // ---- 命名空间（7 个写端点全量）----
 
     public static final String NAMESPACE_CREATE = "namespace:create";

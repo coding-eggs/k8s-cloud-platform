@@ -11,7 +11,7 @@
 | 画像 | BUSINESS / MANAGEMENT |
 | release / namespace | `platform-csi-driver-nfs` / `kube-system` |
 | 探测判据 | `kube-system` Deployment `csi-nfs-controller`（镜像含 `sig-storage/nfsplugin`） |
-| 平台功能 | `volume-snapshot`（卷快照，页面在 S4.3 实现） |
+| 平台功能 | `volume-snapshot`（卷快照） |
 | 安装单元 | 驱动 + `snapshot-controller` + 三个快照 CRD + 存储类 `nfs-csi` + 快照类 `nfs-csi-snapclass` |
 
 ## 2. 表单与契约

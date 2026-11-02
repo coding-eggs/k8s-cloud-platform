@@ -3,7 +3,12 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.VolumeExpansion;
+import com.coding.common.models.k8s.dto.StorageClassProvisionerDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotClassOptionDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotClassOptionsDTO;
+import com.coding.common.models.k8s.dto.VolumeSnapshotDTO;
 import com.coding.platformapi.k8s.K8sClient;
+import com.coding.platformapi.k8s.VolumeSnapshotClassClient;
 import com.coding.platformapi.models.PvcResizeRequest;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -34,7 +39,8 @@ class PvcServiceTest {
 
     private final K8sClient k8s = mock(K8sClient.class);
     private final StorageClassService storageClasses = mock(StorageClassService.class);
-    private final PvcService svc = new PvcService(k8s, storageClasses);
+    private final VolumeSnapshotClassClient snapshotClasses = mock(VolumeSnapshotClassClient.class);
+    private final PvcService svc = new PvcService(k8s, storageClasses, snapshotClasses);
 
     /** 集群上**现在**的这个 PVC（旧容量 + 它用的存储类 + 一个标签）。 */
     private PersistentVolumeClaimDTO existing(long bytes, String storageClass) {
@@ -234,5 +240,153 @@ class PvcServiceTest {
                 .isInstanceOf(CloudPlatformException.class)
                 .hasMessageContaining("resize");
         verify(k8s, never()).update(any());
+    }
+    // ---- 从快照恢复（spec §5.3）----
+
+    /** 集群上的快照：就绪、给定大小、用 nfs-csi-snapclass。 */
+    private VolumeSnapshotDTO snapshot(Boolean ready, Long restoreBytes) {
+        VolumeSnapshotDTO s = new VolumeSnapshotDTO();
+        s.setName("snap");
+        s.setNamespace("ns1");
+        s.setReadyToUse(ready);
+        s.setRestoreSize(restoreBytes == null ? null : BigDecimal.valueOf(restoreBytes));
+        s.setVolumeSnapshotClassName("nfs-csi-snapclass");
+        when(k8s.get(any(VolumeSnapshotDTO.class))).thenReturn(s);
+        return s;
+    }
+
+    /** 存储类 nfs-csi（nfs.csi.k8s.io）+ 快照类 nfs-csi-snapclass（驱动由参数给）。 */
+    private void drivers(String snapshotClassDriver) {
+        StorageClassProvisionerDTO sc = new StorageClassProvisionerDTO();
+        sc.setName("nfs-csi");
+        sc.setProvisioner("nfs.csi.k8s.io");
+        when(storageClasses.provisioners("c1")).thenReturn(List.of(sc));
+        VolumeSnapshotClassOptionDTO cls = new VolumeSnapshotClassOptionDTO();
+        cls.setName("nfs-csi-snapclass");
+        cls.setDriver(snapshotClassDriver);
+        VolumeSnapshotClassOptionsDTO options = new VolumeSnapshotClassOptionsDTO();
+        options.setCrdInstalled(true);
+        options.setClasses(List.of(cls));
+        when(snapshotClasses.options("c1")).thenReturn(options);
+    }
+
+    private static PersistentVolumeClaimDTO restore(String refNamespace, long bytes) {
+        PersistentVolumeClaimDTO body = new PersistentVolumeClaimDTO();
+        body.setName("snap-restore");
+        body.setTenantId("t1");
+        body.setClusterId("c1");
+        body.setNamespace("ns1");
+        body.setStorageClassName("nfs-csi");
+        body.setAccessModes(List.of("ReadWriteOnce"));
+        body.setStorage(BigDecimal.valueOf(bytes));
+        PersistentVolumeClaimDTO.DataSourceRef ref = new PersistentVolumeClaimDTO.DataSourceRef();
+        ref.setApiGroup("snapshot.storage.k8s.io");
+        ref.setKind("VolumeSnapshot");
+        ref.setName("snap");
+        ref.setNamespace(refNamespace);
+        body.setDataSourceRef(ref);
+        return body;
+    }
+
+    @Test
+    void restoreRejectsOtherNamespace() {
+        snapshot(true, GI);
+        drivers("nfs.csi.k8s.io");
+
+        assertThatThrownBy(() -> svc.create(restore("ns2", GI)))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("同一命名空间");
+        verify(k8s, never()).create(any());
+    }
+
+    @Test
+    void restoreRejectsMissingSnapshot() {
+        when(k8s.get(any(VolumeSnapshotDTO.class))).thenReturn(null);
+
+        assertThatThrownBy(() -> svc.create(restore(null, GI)))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("snap");
+        verify(k8s, never()).create(any());
+    }
+
+    @Test
+    void restoreRejectsNotReady() {
+        snapshot(false, GI);
+        drivers("nfs.csi.k8s.io");
+
+        assertThatThrownBy(() -> svc.create(restore(null, GI)))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("尚未可用");
+        verify(k8s, never()).create(any());
+    }
+
+    @Test
+    void restoreRejectsDeleting() {
+        snapshot(true, GI).setDeletionTimestamp("2026-11-02T00:00:00Z");
+        drivers("nfs.csi.k8s.io");
+
+        assertThatThrownBy(() -> svc.create(restore(null, GI)))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("正在删除");
+        verify(k8s, never()).create(any());
+    }
+
+    @Test
+    void restoreRejectsTooSmall() {
+        snapshot(true, 10 * GI);
+        drivers("nfs.csi.k8s.io");
+
+        assertThatThrownBy(() -> svc.create(restore(null, 5 * GI)))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("10Gi");
+        verify(k8s, never()).create(any());
+    }
+
+    @Test
+    void restoreAllowsNullOrZeroRestoreSize() {
+        // NFS 这类驱动可能不报快照大小，或报 0：不能因此拦下恢复
+        drivers("nfs.csi.k8s.io");
+        snapshot(true, null);
+        svc.create(restore(null, GI));
+        snapshot(true, 0L);
+        svc.create(restore(null, GI));
+
+        verify(k8s, org.mockito.Mockito.times(2)).create(any());
+    }
+
+    @Test
+    void restoreRejectsDriverMismatch() {
+        snapshot(true, GI);
+        drivers("ebs.csi.aws.com");
+
+        assertThatThrownBy(() -> svc.create(restore(null, GI)))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("驱动");
+        verify(k8s, never()).create(any());
+    }
+
+    @Test
+    void restoreDoesNotBlockWhenDriverUnknown() {
+        snapshot(true, GI);
+        when(storageClasses.provisioners("c1")).thenReturn(List.of());
+        VolumeSnapshotClassOptionsDTO none = new VolumeSnapshotClassOptionsDTO();
+        none.setCrdInstalled(true);
+        when(snapshotClasses.options("c1")).thenReturn(none);
+
+        svc.create(restore(null, GI));
+
+        verify(k8s).create(any());
+    }
+
+    @Test
+    void nonSnapshotDataSourceIsUntouched() {
+        PersistentVolumeClaimDTO body = restore(null, GI);
+        body.getDataSourceRef().setApiGroup(null);
+        body.getDataSourceRef().setKind("PersistentVolumeClaim");
+
+        svc.create(body);
+
+        verify(k8s, never()).get(any(VolumeSnapshotDTO.class));
+        verify(k8s).create(any());
     }
 }
