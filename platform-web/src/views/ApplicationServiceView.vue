@@ -26,6 +26,7 @@ import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import AppEnvEditor from '@/components/app-release/AppEnvEditor.vue'
 import StringListEditor from '@/components/app-release/StringListEditor.vue'
 import AppTagInput from '@/components/app-release/AppTagInput.vue'
+import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
 import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
@@ -337,6 +338,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 <template>
   <div class="app-svc" v-loading="loading && !row">
     <PageHeader :title="`服务 ${key}`" :description="app ? `${app.displayName || app.name} · ${app.namespace}` : undefined">
+      <AppReleaseGuide />
       <el-button @click="back">返回应用</el-button>
       <el-button type="danger" plain :disabled="!row || readonly" @click="remove">移除服务</el-button>
     </PageHeader>

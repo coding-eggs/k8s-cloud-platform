@@ -24,6 +24,7 @@ import AppReleaseHistory from '@/components/app-release/AppReleaseHistory.vue'
 import AppDependencyDialog from '@/components/app-release/AppDependencyDialog.vue'
 import AppDependencyDetail from '@/components/app-release/AppDependencyDetail.vue'
 import AppTopology from '@/components/app-release/AppTopology.vue'
+import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import { INIT_STATUS, depStatus, ownershipText, usersOf } from '@/components/app-release/dependencyUtil'
 import { isRunning } from '@/components/app-release/releaseUtil'
 import type { AppDependencyRow, AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
@@ -275,6 +276,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 <template>
   <div class="app-detail" v-loading="loading && !overview">
     <PageHeader :title="app?.displayName || app?.name || '应用'">
+      <AppReleaseGuide />
       <el-button @click="goList">返回列表</el-button>
       <el-button :loading="loading" @click="load()">刷新</el-button>
       <el-button
