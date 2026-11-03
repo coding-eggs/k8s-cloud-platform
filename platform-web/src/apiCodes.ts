@@ -38,6 +38,8 @@ export const apiCodes = {
   podListAll: 'platform:pod:list-all',
   /** 凭据写（新建/更新/删除）—— 页面内的写按钮置灰用 */
   credentialWrite: 'platform:credential:write',
+  /** OAuth 客户端写（新建/编辑/删除/启停/重置密钥）—— 页面内写按钮显隐用 */
+  oauthClientManage: 'platform:oauth-client:manage',
   /** 租户自管连接的写权限 —— 与上一个是**同一个按钮的 ANY-of**
    *  （租户角色不能持 platform: 码，只认上面那个会把租户管理员的按钮一直灰着） */
   credentialWriteTenant: 'tenant:credential:write',
