@@ -27,6 +27,8 @@ import AppEnvEditor from '@/components/app-release/AppEnvEditor.vue'
 import StringListEditor from '@/components/app-release/StringListEditor.vue'
 import AppTagInput from '@/components/app-release/AppTagInput.vue'
 import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
+import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
+import { parseQuantity } from '@/utils/quantity'
 import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
 import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
@@ -119,6 +121,18 @@ function buildDesired(): AppServiceDesired {
   else delete d.configFiles
   return d
 }
+
+/** 软校验：请求不能大于上限（K8s 会拒绝，发布时才报就晚了） */
+const resourceProblem = computed(() => {
+  const over = (req?: string | null, lim?: string | null): boolean => {
+    const r = parseQuantity(req); const l = parseQuantity(lim)
+    return Number.isFinite(r) && Number.isFinite(l) && r > l
+  }
+  const out: string[] = []
+  if (over(form.value.cpuRequest, form.value.cpuLimit)) out.push('CPU 请求大于上限')
+  if (over(form.value.memoryRequest, form.value.memoryLimit)) out.push('内存请求大于上限')
+  return out.join('；')
+})
 
 // ---------- 配置文件 ----------
 /**
@@ -441,10 +455,13 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 
           <el-tab-pane label="资源与命令" name="resources">
             <el-form label-width="110px" :disabled="readonly" @submit.prevent>
-              <el-form-item label="CPU 请求"><el-input v-model="form.cpuRequest" placeholder="如 100m" /></el-form-item>
-              <el-form-item label="CPU 上限"><el-input v-model="form.cpuLimit" placeholder="如 1" /></el-form-item>
-              <el-form-item label="内存请求"><el-input v-model="form.memoryRequest" placeholder="如 128Mi" /></el-form-item>
-              <el-form-item label="内存上限"><el-input v-model="form.memoryLimit" placeholder="如 512Mi" /></el-form-item>
+              <el-form-item label="CPU 请求"><AppQuantityInput v-model="form.cpuRequest" kind="cpu" :disabled="readonly" placeholder="如 0.1，留空不设" /></el-form-item>
+              <el-form-item label="CPU 上限"><AppQuantityInput v-model="form.cpuLimit" kind="cpu" :disabled="readonly" placeholder="如 1，留空不设" /></el-form-item>
+              <el-form-item label="内存请求"><AppQuantityInput v-model="form.memoryRequest" kind="memory" :disabled="readonly" placeholder="如 128，留空不设" /></el-form-item>
+              <el-form-item label="内存上限">
+                <AppQuantityInput v-model="form.memoryLimit" kind="memory" :disabled="readonly" placeholder="如 512，留空不设" />
+                <div v-if="resourceProblem" class="app-svc__file-err">{{ resourceProblem }}</div>
+              </el-form-item>
               <el-form-item label="启动命令"><StringListEditor v-model="form.command" :disabled="readonly" placeholder="一个参数，如 sh；留空则用镜像默认" /></el-form-item>
               <el-form-item label="启动参数"><StringListEditor v-model="form.args" :disabled="readonly" placeholder="一个参数，如 -c" /></el-form-item>
               <el-form-item label="拉取策略">
@@ -461,7 +478,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <el-form label-width="110px" :disabled="readonly" @submit.prevent>
               <el-form-item v-if="form.port" label="持久化"><el-switch v-model="form.persistenceEnabled" /></el-form-item>
               <template v-if="form.port && form.persistenceEnabled">
-                <el-form-item label="存储大小"><el-input v-model="form.storageSize" placeholder="如 10Gi" /></el-form-item>
+                <el-form-item label="存储大小"><AppQuantityInput v-model="form.storageSize" kind="storage" :disabled="readonly" placeholder="如 10" /></el-form-item>
                 <el-form-item label="存储类"><el-input v-model="form.storageClass" placeholder="留空使用默认" /></el-form-item>
                 <el-form-item label="挂载路径"><el-input v-model="form.mountPath" placeholder="如 /data" /></el-form-item>
               </template>
