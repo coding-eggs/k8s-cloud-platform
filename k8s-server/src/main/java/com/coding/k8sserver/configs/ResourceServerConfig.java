@@ -3,6 +3,7 @@ package com.coding.k8sserver.configs;
 
 import com.coding.common.components.jwt.JwtPermissionResolver;
 import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
+import com.coding.common.components.jwt.PlatformJwtValidators;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.k8sserver.components.BoundaryAuthorizationManager;
@@ -106,6 +107,13 @@ public class ResourceServerConfig {
 	@Bean
 	public JwtDecoder jwtDecoder(@Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String jwkSetUri,
 								 OAuth2JwtProperties oAuth2JwtProperties) {
+		NimbusJwtDecoder decoder = buildDecoder(jwkSetUri, oAuth2JwtProperties);
+		//自定义 decoder 会让 Boot 的 audiences 属性失效，aud 白名单必须在这里显式装上（理由见 PlatformJwtValidators）
+		decoder.setJwtValidator(PlatformJwtValidators.withAudiences(oAuth2JwtProperties.getAudiences()));
+		return decoder;
+	}
+
+	private NimbusJwtDecoder buildDecoder(String jwkSetUri, OAuth2JwtProperties oAuth2JwtProperties) {
 
 		if (StringUtils.hasText(oAuth2JwtProperties.getType()) && "JWE".equals(oAuth2JwtProperties.getType())) {
 

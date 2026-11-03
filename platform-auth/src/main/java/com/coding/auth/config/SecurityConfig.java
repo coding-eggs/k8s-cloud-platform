@@ -9,7 +9,6 @@ import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.system.SecurityRole;
 import com.coding.data.models.system.SecurityUser;
-import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -34,6 +33,10 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.core.annotation.Order;
+import jakarta.servlet.ServletException;
 import org.springframework.session.Session;
 import org.springframework.session.data.redis.RedisIndexedSessionRepository;
 import org.springframework.session.security.SpringSessionBackedSessionRegistry;
@@ -76,6 +79,25 @@ public class SecurityConfig {
 
 
 
+
+    /**
+     * 内部接口链（只给 platform-api）：无会话、不走表单登录（未带凭据不会被 302 到 login.html），
+     * 认证完全交给 {@link InternalTokenFilter} 的共享密钥。排在默认链之前、授权服务器链之后。
+     */
+    @Bean
+    @Order(1)
+    public SecurityFilterChain internalSecurityFilterChain(HttpSecurity http,
+                                                           @Value("${platform.internal.token:}") String internalToken) throws Exception {
+        InternalTokenFilter filter = new InternalTokenFilter(internalToken);
+        filter.afterPropertiesSet();
+        http.securityMatcher("/internal/**")
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .requestCache(AbstractHttpConfigurer::disable)
+                .authorizeHttpRequests(a -> a.anyRequest().permitAll())
+                .addFilterBefore(filter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
 
     // @formatter:off
     @Bean

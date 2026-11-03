@@ -117,7 +117,11 @@ public enum EnumResponseType {
 
     OAUTH2_JWE_KEY_LENGTH_MISMATCH(90014, "JWE 对称加密密钥长度不匹配: "),
 
-    OAUTH2_CLIENT_TOKEN_TTL_EXCEEDS_SESSION(90015, "Access Token 有效期必须小于会话空闲超时: ")
+    OAUTH2_CLIENT_TOKEN_TTL_EXCEEDS_SESSION(90015, "Access Token 有效期必须小于会话空闲超时: "),
+
+    OAUTH_CLIENT_BUILTIN_LOCKED(90016, "平台内置客户端不可删除、不可停用，且只能修改回调地址与 token 有效期"),
+
+    OAUTH_CLIENT_INVALID(90017, "客户端配置无效: ")
 
     ;
 

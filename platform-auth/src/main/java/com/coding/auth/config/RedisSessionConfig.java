@@ -38,7 +38,7 @@ public class RedisSessionConfig {
      *
      * <p>平台不变式：<b>Access Token TTL 必须严格小于本值</b>——否则 token 比 session 活得久，会出现
      * 「session 已失效但 token 仍有效」的孤儿窗口，用户活跃时反而被踢、被迫重登。该约束在客户端注册时由
-     * {@code ClientService#validate} 强制校验。本常量是会话超时的<b>唯一来源</b>：注解与注册校验都引用它，
+     * {@code ClientAdminService}（内置客户端的 TTL 上限）强制校验。本常量是会话超时的<b>唯一来源</b>：注解与注册校验都引用它，
      * 避免两处数值漂移。
      */
     public static final int SESSION_MAX_INACTIVE_SECONDS = 28800;

@@ -6,7 +6,7 @@ server:
   # ⚠️ 2026-10-27 实测，四处必须一起对齐：
   #   · 前端 VITE_OAUTH_ISSUER=/auth（拼出 /auth/oauth2/authorize 等相对路径）
   #   · platform-api / k8s-server 的 jwk-set-uri 要带 /auth（否则拉不到验签密钥，全站 401）
-  #   · 静态页面（login.html / consent.html / client-manage.html）里的接口地址必须是**相对路径**
+  #   · 静态页面（login.html / consent.html）里的接口地址必须是**相对路径**
   #   · 探针与文档入口随之变成 /auth/actuator/**、/auth/doc.html、/auth/.well-known/…
   # ⚠️ issuer 也随之变成 http://<host>/auth（SAS 按请求现算时会带上 context path；实测
   #    Location 为 http://host:port/auth/login.html、issuer 为 http://host:port/auth）。
@@ -72,7 +72,6 @@ spring:
       - "/swagger-ui.html"
       - "/swagger-resources/**"
       - "/webjars/**"
-      - "/test/**"
       - "/favicon.ico"
       - "/favicon-dark.svg"
       - "/favicon-light.svg"
@@ -124,6 +123,10 @@ jwt:
   enabled: true
   data-key: data
 platform:
+  internal:
+    # 客户端管理内部接口（/internal/clients/**）的共享密钥，platform-api 调用时放在 X-Platform-Internal-Token 头。
+    # ⚠️ 没有默认值：留空应用**拒启**。须与 platform-api 的 platform.auth.internal-token 同值（同一个 env）。
+    token: ${PLATFORM_INTERNAL_TOKEN:}
   jwt:
     # 是否把权限点 code 全闭包写进 token 的 data.permissions（默认 false，2026-10-09 起不再写）。
     # 那份列表随产品权限点总数增长，却要塞进有硬上限的容器（WS 握手 query 4KB / HTTP 头 8KB），

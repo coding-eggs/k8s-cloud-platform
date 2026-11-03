@@ -88,6 +88,7 @@ const router = createRouter({
         { path: 'roles', name: 'roles', component: () => import('@/views/RoleView.vue'), meta: { title: '角色与权限', domain: 'org', icon: 'Lock', order: 3, requiresPerm: [pageCodes.role] } },
         { path: 'permissions', name: 'permissions', component: () => import('@/views/PermissionView.vue'), meta: { title: '权限点', domain: 'org', icon: 'Key', order: 4, requiresPerm: [pageCodes.permission] } },
         { path: 'templates', name: 'templates', component: () => import('@/views/TemplateView.vue'), meta: { title: 'RBAC 模板', domain: 'org', icon: 'CollectionTag', order: 5, requiresPerm: [pageCodes.template] } },
+        { path: 'oauth-clients', name: 'oauth-clients', component: () => import('@/views/OAuthClientView.vue'), meta: { title: 'OAuth 客户端', domain: 'org', icon: 'Link', order: 6, requiresPerm: [pageCodes.oauthClient] } },
 
         // ============ 平台视图 · 运维（也是 both 面页面的平台落点） ============
         { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '审计日志', domain: 'ops', icon: 'Document', order: 1, requiresPerm: [pageCodes.audit] } },

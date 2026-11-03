@@ -41,6 +41,8 @@ export const pageCodes = {
   permission: 'platform:page:permission',
   /** S0.1 审计日志页（平台管理面，仅 admin） */
   audit: 'platform:page:audit',
+  /** OAuth 客户端管理页（平台管理面，仅 admin） */
+  oauthClient: 'platform:page:oauth-client',
   /** S0.2 凭据管理页（平台管理面，仅 admin） */
   credential: 'platform:page:credential',
   /** Git 凭据页的租户码（与上一行同路由，任一持有即可见 —— 过渡态，见 spec §6.4） */

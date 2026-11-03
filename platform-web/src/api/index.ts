@@ -132,6 +132,14 @@ import type {
 } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
+import type {
+  OAuthClient,
+  OAuthClientCreated,
+  OAuthClientRequest,
+  OAuthClientSecrets,
+  OAuthScope,
+  OAuthSecretKind,
+} from '@/types/oauthClient'
 
 /** 集群管理 /cluster */
 export const clusterApi = {
@@ -1276,4 +1284,17 @@ export const appReleaseApi = {
     http.post<never, AppExecution | null>('/application/execution/active', { appId, tenantId }),
   resume: (executionId: number, tenantId?: string) =>
     http.post<never, void>('/application/execution/resume', { executionId, tenantId }),
+}
+
+/** OAuth 客户端（平台管理面，仅 admin）。读接口不含任何密钥；创建 / 重置的响应里密钥只出现一次 */
+export const oauthClientApi = {
+  list: () => http.post<never, OAuthClient[]>('/oauth-clients/list', {}),
+  get: (id: string) => http.post<never, OAuthClient>('/oauth-clients/get', { id }),
+  scopes: () => http.post<never, OAuthScope[]>('/oauth-clients/scopes', {}),
+  create: (body: OAuthClientRequest) => http.post<never, OAuthClientCreated>('/oauth-clients/create', body),
+  update: (body: OAuthClientRequest) => http.post<never, OAuthClientCreated>('/oauth-clients/update', body),
+  remove: (id: string) => http.post<never, void>('/oauth-clients/delete', { id }),
+  enable: (id: string, enabled: boolean) => http.post<never, void>('/oauth-clients/enable', { id, enabled }),
+  resetSecret: (id: string, which: OAuthSecretKind) =>
+    http.post<never, OAuthClientSecrets>('/oauth-clients/reset-secret', { id, which }),
 }

@@ -21,6 +21,12 @@ thanos:
     url: http://192.168.31.80:19090
 
 platform:
+  auth:
+    # OAuth 客户端管理转调 platform-auth 的内部接口（/internal/clients/**）。
+    # ⚠️ 地址要带 /auth（auth 的 context-path），走内网直连，不经 nginx（nginx 把 /auth/internal/ 挡成 404）。
+    internal-url: http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth
+    # ⚠️ 没有默认值：留空应用**拒启**。须与 auth 的 platform.internal.token 同值（同一个 env）。
+    internal-token: ${PLATFORM_INTERNAL_TOKEN:}
   harbor:
     # 「装 Harbor」表单的默认值：域名与证书在部署里是固定的，表单留空就取这里，
     # 省得每次重放都重新粘一遍 PEM。
@@ -188,10 +194,15 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          # 不校验 audience：平台管理端接受 auth server 签发的任意客户端 token
+          # 允许的 aud = 平台自有客户端 client_id（逗号分隔）。只收这些客户端签出的 token；
+          # 不在名单里的客户端（哪怕是同一 auth server 签发、用户本人授权的）一律 401。
+          # ⚠️ 本模块的 JwtDecoder 是自定义 bean，Boot 不读这个键；由 ResourceServerConfig 显式装进校验器，为空拒启。
+          #    iss 有意不校验：签发方已由 jwk-set-uri 固定，issuer 又随访问入口变化（见 PlatformJwtValidators）。
+          #    须与 k8s-server 同值：api→k8s-server 透传的是同一个 token。
+          audiences: ${JWT_AUDIENCES:platform-web-client}
           # ⚠️ platform-auth 有 server.servlet.context-path=/auth，端点整体在 /auth 下。
           #    部署时若覆盖 OAUTH2_SERVER，务必带上 /auth，否则拉不到密钥 → 全站 401。
-          jwk-set-uri: http://127.0.0.1:9527/auth/oauth2/jwks
+          jwk-set-uri: http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth/oauth2/jwks
           type: JWS
           # 若 auth server 使用对称签名，可改为：
           #   jws:

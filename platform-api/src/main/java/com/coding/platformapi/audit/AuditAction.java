@@ -289,6 +289,19 @@ public final class AuditAction {
     /** 重下发某集群全部命名空间的默认拉取凭据（租户镜像能不能拉） */
     public static final String REGISTRY_SYNC_PULL_SECRET = "registry:sync-pull-secret";
 
+    // ---- OAuth 客户端 ----
+
+    public static final String OAUTH_CLIENT_CREATE = "oauth-client:create";
+
+    public static final String OAUTH_CLIENT_UPDATE = "oauth-client:update";
+
+    public static final String OAUTH_CLIENT_DELETE = "oauth-client:delete";
+
+    /** 启用与停用同一个动作码（请求体里的 enabled 区分；审计不记请求体，看路径即可） */
+    public static final String OAUTH_CLIENT_ENABLE = "oauth-client:enable";
+
+    public static final String OAUTH_CLIENT_RESET_SECRET = "oauth-client:reset-secret";
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *
