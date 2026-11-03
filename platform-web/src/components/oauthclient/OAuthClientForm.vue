@@ -427,6 +427,8 @@ async function submit(): Promise<void> {
 .oauth-tiles {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  /* el-radio-group 自带 align-items: center，会让同一行的选项块各按内容高度居中 —— 改成拉伸对齐 */
+  align-items: stretch;
   gap: 10px;
   width: 100%;
 }

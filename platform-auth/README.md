@@ -259,7 +259,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
   - 密钥一律服务端生成、只显示一次；client_secret 不设过期时间，重置时清掉老行遗留的过期时间。
   - 老行里库内已有、但不在可选项里的值（旧页面写进去的 scope / 授权方式 / 认证方式）保存时原样保留。
 - **停用**：`platform.client.enabled=false` → 主仓库（`EnabledOnlyRegisteredClientRepository`）返回 null，授权、换 token、refresh、续期都得到 `invalid_client`；已签出的 token 自然到期。
-- **scope 目录**（`PlatformScopes`）：`openid` / `profile` / `email` / `phone` / `address` / `message.read` / `message.write`，与旧页面一致。外部 token 目前只带 `sub` + `name`。
+- **scope 目录**（`PlatformScopes`）：只有 `openid` / `profile` —— 外部 token 目前只带 `sub` + `name`。旧页面的 email / phone / address / message.* 没有对应数据，经用户确认先去掉，要用时连同含义再补；老客户端身上已有的保存时原样保留。
 - **不回显密钥**：列表 / 详情只给 `hasClientSecret` / `hasJwsSecret` / `hasJweSecret` 与 kid。
 
 ---

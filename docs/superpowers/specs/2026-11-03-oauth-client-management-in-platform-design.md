@@ -68,7 +68,7 @@ platform-auth 里的客户端管理（`client-manage.html` + `/clients/**`）是
 | token 形态 | 保留现有能力：默认 JWS（auth 的 RSA 密钥，JWKS 可验）；可选 JWS 对称签名（HS256/384/512，沿用现有密钥长度校验）、JWE 对称加密（共享密钥）、JWE 非对称加密（客户端提供 `jwkSetUrl`，RSA/ECDH，`CustomJweEncoder` 已实现）。对称密钥（HMAC 签名密钥、JWE 共享密钥）**改由 auth 服务端按算法要求的长度生成**，与 client_secret 一样只在创建 / 重置时显示一次；**库里只存 auth 加密后的密文**（存储格式不变，签发时解密）；读接口不回任何密钥材料（设计方决定，见 §4.10） |
 | scope | 集中定义的可选列表（§8）。本次与用户授权相关的只有 `openid`、`profile`（外部 token 本就只给显示名，`email/phone/address` 无数据可给，去掉）；旧的演示 scope `message.read/write` 去掉，将来的业务 scope 加到同一列表 |
 
-> **2026-11-03 实施后更正（用户裁定）**：本节对外部客户端的收窄（认证方式只剩 basic、强制 PKCE、授权方式三选、scope 只留 openid/profile、算法下拉缩减）是实施时擅自做的删减，已全部恢复为旧管理页的能力：认证方式四选、PKCE 可关（仅机密）、设备码 / 会话续期、完整 scope 目录、RS/ES/HS 与含 GCMKW 的 JWE，且老行里的非常规值保存时原样保留。Token 交换经用户确认不恢复（RBAC 改造时已退役）。保留的两处变化经用户认可：密钥只由服务端生成；client_secret 不设过期时间（重置时清掉旧过期时间）。
+> **2026-11-03 实施后更正（用户裁定）**：本节对外部客户端的收窄（认证方式只剩 basic、强制 PKCE、授权方式三选、scope 只留 openid/profile、算法下拉缩减）是实施时擅自做的删减，已全部恢复为旧管理页的能力：认证方式四选、PKCE 可关（仅机密）、设备码 / 会话续期、RS/ES/HS 与含 GCMKW 的 JWE，且老行里的非常规值保存时原样保留。Token 交换经用户确认不恢复（RBAC 改造时已退役）；scope 目录经用户确认只留 openid / profile，其余没有对应数据，要用时再连同含义补回。保留的两处变化经用户认可：密钥只由服务端生成；client_secret 不设过期时间（重置时清掉旧过期时间）。
 
 ### 4.3 内置客户端
 
