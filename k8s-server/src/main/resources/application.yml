@@ -44,9 +44,9 @@ spring:
       matching-strategy: ant_path_matcher
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: ${MYSQL_URL:jdbc:mysql://192.168.31.80:1234/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true}
-    username: ${MYSQL_USERNAME:root}
-    password: ${MYSQL_PASSWORD:coding}
+    url: jdbc:mysql://${MYSQL_HOST:192.168.31.80}:${MYSQL_HOST:1234}/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+    username: root
+    password: coding
     hikari:
       minimum-idle: 3
       maximum-pool-size: 10
@@ -74,7 +74,7 @@ spring:
           audiences: gateway-code-client
           # ⚠️ platform-auth 有 server.servlet.context-path=/auth，端点整体在 /auth 下。
           #    部署时若覆盖 OAUTH2_SERVER，务必带上 /auth，否则拉不到密钥 → 全站 401。
-          jwk-set-uri: ${OAUTH2_SERVER:http://192.168.31.80:9527/auth/oauth2/jwks}
+          jwk-set-uri: http://127.0.0.1:9527/auth/oauth2/jwks
           type: JWS
 #          jwe:
 #            secret: 123231sdsadweasdasdsaqA23vvssa22
@@ -95,23 +95,23 @@ logging:
 platform:
   components:
     # S3.6：内置 chart 的根目录（镜像里由 Dockerfile COPY 到 /app/charts）
-    charts-dir: ${COMPONENT_CHARTS_DIR:charts}
+    charts-dir: charts
   object-storage:
     # SeaweedFS 组件在集群里的位置：命名空间 / 平台接管的 identities 配置 Secret / S3 网关 Deployment
-    namespace: ${OBJECT_STORAGE_NAMESPACE:platform-storage}
-    config-secret: ${OBJECT_STORAGE_CONFIG_SECRET:platform-seaweedfs-s3-config}
-    s3-deployment: ${OBJECT_STORAGE_S3_DEPLOYMENT:seaweedfs-s3}
+    namespace: platform-storage
+    config-secret: platform-seaweedfs-s3-config
+    s3-deployment: seaweedfs-s3
     # S3 的地址不在这里：由 platform-api 按集群配置（k8s_cluster.object_storage_url）下发
   pipeline:
     archive:
       # 关掉它的后果（spec §4.5 显式记过）：Pod 不会被删（回到 Tekton 的默认行为），
       # 而且运行记录**只在集群里**、不落库。这个开关是给"我就是要用 pruner 自己管"的部署留的。
-      enabled: ${PIPELINE_ARCHIVE_ENABLED:true}
+      enabled: true
     run:
-      timeout: ${PIPELINE_RUN_TIMEOUT:30m}
-      timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}
+      timeout: 30m
+      timeout-check: 30s
     log:
       # ⚠️ 与 platform-api 那份**保持一致**：归档在这里截断，而 platform-api 的
       # /pipeline/run/logs 在线看日志时也用同一个上限。两边不同的话，同一条日志
       # 「归档后」与「运行中」看到的长短会不一样。
-      max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}
+      max-bytes: 1048576

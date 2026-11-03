@@ -48,7 +48,7 @@ spring:
   security:
     oauth2:
       authorizationserver:
-        issuer: ${OAUTH2_SERVER:http://127.0.0.1:9527}
+        issuer: http://127.0.0.1:9527
     ignore-urls:
       - "/actuator/**"
       - "/doc.html"
@@ -85,9 +85,9 @@ spring:
       matching-strategy: ant_path_matcher
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: ${MYSQL_URL:jdbc:mysql://192.168.31.80:1234/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true}
-    username: ${MYSQL_USERNAME:root}
-    password: ${MYSQL_PASSWORD:coding}
+    url: jdbc:mysql://${MYSQL_HOST:192.168.31.80}:${MYSQL_HOST:1234}/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+    username: root
+    password: coding
     hikari:
       minimum-idle: 3
       maximum-pool-size: 10
@@ -97,9 +97,9 @@ spring:
   # Redis（Spring Session 会话存储）连接参数。
   data:
     redis:
-      host: ${REDIS_HOST:192.168.31.80}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
+      host: 192.168.31.80
+      port: 25358
+      password: Coding@123456     # ← 无密码则留空
       database: 1
       timeout: 5s
       connect-timeout: 5s
@@ -116,7 +116,7 @@ spring:
 #     显式启用（见 com.coding.auth.config.RedisSessionConfig），8h 空闲超时也在那里配置。
 jwt:
   enabled: true
-  issuer: ${OAUTH2_SERVER:http://127.0.0.1:9527}
+  issuer: http://127.0.0.1:9527
   data-key: data
 platform:
   jwt:
