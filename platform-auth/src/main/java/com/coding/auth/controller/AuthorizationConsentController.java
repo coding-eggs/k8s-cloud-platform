@@ -1,6 +1,7 @@
 package com.coding.auth.controller;
 
 import com.coding.auth.client.OAuth2Scope;
+import com.coding.auth.client.PlatformScopes;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 import org.springframework.security.oauth2.core.oidc.OidcScopes;
@@ -98,15 +99,7 @@ public class AuthorizationConsentController {
     }
 
     private OAuth2Scope toScopeDTO(String scope) {
-        return switch (scope) {
-            case "profile"      -> new OAuth2Scope("profile", "查看你的基本个人信息（昵称、头像、性别等）");
-            case "email"        -> new OAuth2Scope("email", "查看并使用你的邮箱地址");
-            case "phone"        -> new OAuth2Scope("phone", "查看你的手机号码");
-            case "address"      -> new OAuth2Scope("address", "查看你的收货地址");
-            case "message.read" -> new OAuth2Scope("message.read", "读取你的消息");
-            case "message.write"-> new OAuth2Scope("message.write", "发送消息");
-            default             -> new OAuth2Scope(scope, scope + " 权限");
-        };
+        return PlatformScopes.describe(scope);
     }
 
 
