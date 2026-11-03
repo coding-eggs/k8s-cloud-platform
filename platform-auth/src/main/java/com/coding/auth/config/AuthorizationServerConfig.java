@@ -4,6 +4,7 @@ package com.coding.auth.config;
 
 
 
+import com.coding.auth.client.EnabledOnlyRegisteredClientRepository;
 import com.coding.auth.grant.SessionRenewalAuthenticationToken;
 import com.coding.common.components.jwt.JwtProperties;
 import com.coding.common.components.jwt.PermissionClosureService;
@@ -141,11 +142,17 @@ public class AuthorizationServerConfig {
         return http.build();
     }
 
+    /** 原始仓库：只给客户端管理用（要能读到已停用的行） */
+    @Bean
+    public JdbcRegisteredClientRepository jdbcRegisteredClientRepository(JdbcTemplate jdbcTemplate) {
+        return new JdbcRegisteredClientRepository(jdbcTemplate);
+    }
+
+    /** 授权服务器各端点用的仓库：停用的客户端视为不存在 */
     @Bean
     @Primary
-    public RegisteredClientRepository registeredClientRepository(JdbcTemplate jdbcTemplate) {
-        JdbcRegisteredClientRepository registeredClientRepository = new JdbcRegisteredClientRepository(jdbcTemplate);
-        return registeredClientRepository;
+    public RegisteredClientRepository registeredClientRepository(JdbcRegisteredClientRepository jdbcRegisteredClientRepository) {
+        return new EnabledOnlyRegisteredClientRepository(jdbcRegisteredClientRepository);
     }
 
 
