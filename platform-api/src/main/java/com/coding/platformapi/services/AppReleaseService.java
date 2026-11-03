@@ -163,7 +163,8 @@ public class AppReleaseService {
             throw error("请至少勾选一项改动");
         }
         if (!plan.required.isEmpty()) {
-            throw error("勾选的服务引用了尚未发布的服务，请一并勾选：" + String.join("、", plan.required));
+            throw error("以下服务需要一并勾选（引用了尚未发布的服务，或引用的依赖连接信息已修改）："
+                    + String.join("、", plan.required));
         }
         List<String> problems = new ArrayList<>(plan.errors);
         if (problems.isEmpty()) {
@@ -486,7 +487,8 @@ public class AppReleaseService {
         PlatformApplication app = AppGuard.require(apps, appId, tenantId);
         AppSnapshot live = liveSnapshot(app);
         List<PlatformAppService> rows = services.selectByApp(app.getId());
-        List<AppPending.Change> changes = AppPending.compute(live.services(), rows);
+        List<AppPending.Change> changes = AppPending.compute(live.services(), rows,
+                AppPending.changedDependencies(live.dependencies(), dependencyRows.selectByApp(app.getId())));
         Map<String, AppPending.Change> byKey = changes.stream()
                 .collect(Collectors.toMap(AppPending.Change::key, c -> c, (a, b) -> a));
         Map<String, String> states = liveStates(app);
@@ -617,7 +619,9 @@ public class AppReleaseService {
             }
         }
 
-        List<AppPending.Change> changes = AppPending.compute(live.services(), rows);
+        List<PlatformAppDependency> currentDeps = dependencyRows.selectByApp(app.getId());
+        Set<String> changedDeps = AppPending.changedDependencies(live.dependencies(), currentDeps);
+        List<AppPending.Change> changes = AppPending.compute(live.services(), rows, changedDeps);
         Map<String, AppPending.Change> byKey = new LinkedHashMap<>();
         changes.forEach(c -> byKey.put(c.key(), c));
         Map<String, PlatformAppService> rowByKey = new HashMap<>();
@@ -662,10 +666,20 @@ public class AppReleaseService {
                 }
             }
         }
+        // 依赖连接信息改过：发布按当前台账整份渲染，没勾选的引用方也会被改到，所以必须一并勾选
+        if (!selected.isEmpty() && !changedDeps.isEmpty()) {
+            for (AppPending.Change c : changes) {
+                if ("CHANGED".equals(c.type()) && !selected.contains(c.key())
+                        && c.fields().stream().anyMatch(f -> changedDeps.stream()
+                                .anyMatch(d -> f.equals(AppPending.dependencyField(d))))) {
+                    required.add(c.key());
+                }
+            }
+        }
         if (!selected.isEmpty() && next.isEmpty()) {
             errors.add("发布后应用至少要保留一个服务");
         }
-        AppSnapshot snapshot = new AppSnapshot(next, dependencyRows.selectByApp(app.getId()));
+        AppSnapshot snapshot = new AppSnapshot(next, currentDeps);
         return new Plan(snapshot, changes, selected, new ArrayList<>(required), errors, overridden,
                 desiredByKey, live);
     }

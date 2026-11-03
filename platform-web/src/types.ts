@@ -3027,7 +3027,7 @@ export interface AppExternalConn {
   passwordKey?: string | null
 }
 
-/** /application/dependency/add|remove|init 的入参（后端同一个 DTO；多余字段会被拒） */
+/** /application/dependency/add|update|remove|init 的入参（后端同一个 DTO；多余字段会被拒） */
 export interface AppDependencyRequest {
   appId: string
   tenantId?: string

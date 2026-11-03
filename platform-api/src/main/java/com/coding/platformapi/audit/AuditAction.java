@@ -269,6 +269,9 @@ public final class AuditAction {
 
     public static final String APPLICATION_DEPENDENCY_ADD = "application:dependency-add";
 
+    /** 修改外部连接（地址 / 端口 / Secret 登记） */
+    public static final String APPLICATION_DEPENDENCY_UPDATE = "application:dependency-update";
+
     public static final String APPLICATION_DEPENDENCY_REMOVE = "application:dependency-remove";
 
     public static final String APPLICATION_DEPENDENCY_INIT = "application:dependency-init";

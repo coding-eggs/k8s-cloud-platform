@@ -8,17 +8,23 @@
  *   成功过的依赖再次执行需要确认（后端要 confirm=true）；ES 必须给目标路径。
  *   状态为 RUNNING 时由页面级轮询刷新概览（只在 RUNNING / 实例创建中轮询）。
  *   日志是初始化 Job 的原始输出，页面上明确提示。
+ * - 修改：只对外部连接（地址 / 端口 / Secret 登记；依赖名与协议不可改）。不动线上：引用它的服务被列为待发布，
+ *   下次发布生效，且发布时必须一并勾选（发布按当前依赖整份渲染，后端会要求）。中间件依赖的规格到实例页改。
  * - 移除：后端在仍被引用时拒绝并点名服务，原文原样显示。CREATED 依赖让用户选保留实例（默认）或删除实例。
  * 口令在这里的任何位置都不会出现。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { appDependencyApi, middlewareApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
 import type { AppDependencyRow, AppServiceRow, MiddlewareInstance } from '@/types'
-import { INDEX_PATH_PATTERN, INIT_CODES, INIT_STATUS, depStatus, ownershipText, refToken, usersOf } from './dependencyUtil'
+import {
+  INDEX_PATH_PATTERN, INIT_CODES, INIT_STATUS, depStatus, externalForm, externalPayload, ownershipText, refToken, usersOf,
+  type ExternalForm,
+} from './dependencyUtil'
 import { errMsg } from './releaseUtil'
+import AppExternalForm from './AppExternalForm.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -26,6 +32,9 @@ const props = defineProps<{
   services: AppServiceRow[]
   appId: string
   tenantId?: string
+  /** 应用所在集群 / 命名空间：修改外部连接时的 Secret 候选从这里取 */
+  clusterId: string
+  namespace: string
   canWrite: boolean
 }>()
 const emit = defineEmits<{
@@ -129,6 +138,48 @@ async function runInit(): Promise<void> {
 
 // 初始化进行中的轮询在页面级（ApplicationDetailView）：抽屉关了表格也照样更新
 
+// ---------------- 修改外部连接 ----------------
+const editVisible = ref(false)
+const editing = ref(false)
+const editError = ref('')
+const editExt = ref<ExternalForm>(externalForm())
+const editForm = ref<{ valid: boolean; reload: () => Promise<void> } | null>(null)
+const secretCtx = computed(() => ({ tenantId: props.tenantId, clusterId: props.clusterId, namespace: props.namespace }))
+
+function openEdit(): void {
+  editExt.value = externalForm(props.dep?.external ?? undefined)
+  editError.value = ''
+  editVisible.value = true
+  void nextTick(() => editForm.value?.reload())
+}
+const editChanged = computed(() => {
+  const before = JSON.stringify(externalPayload(externalForm(props.dep?.external ?? undefined)))
+  return JSON.stringify(externalPayload(editExt.value)) !== before
+})
+
+async function submitEdit(): Promise<void> {
+  if (!props.dep || editing.value || !editForm.value?.valid || !editChanged.value) return
+  editing.value = true
+  editError.value = ''
+  try {
+    await appDependencyApi.update({
+      appId: props.appId,
+      tenantId: props.tenantId,
+      key: props.dep.key,
+      external: externalPayload(editExt.value),
+    })
+    editVisible.value = false
+    ElMessage.success(users.value.length
+      ? `已保存；服务 ${users.value.join('、')} 已列为待发布，发布后生效`
+      : '已保存')
+    emit('refresh')
+  } catch (e) {
+    editError.value = errMsg(e, '保存失败')
+  } finally {
+    editing.value = false
+  }
+}
+
 // ---------------- 移除 ----------------
 const removeVisible = ref(false)
 const removing = ref(false)
@@ -203,6 +254,11 @@ watch(
           <el-descriptions-item label="密码键">{{ dep.external.passwordKey || '—' }}</el-descriptions-item>
         </template>
       </el-descriptions>
+      <div v-if="dep.type === 'EXTERNAL'" class="app-dep-drawer__actions">
+        <el-button size="small" :disabled="!canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openEdit">修改连接信息</el-button>
+        <span class="app-dep-drawer__tip">改动不影响线上，引用它的服务在下次发布时生效。</span>
+      </div>
+      <div v-else-if="dep.instanceId" class="app-dep-drawer__tip">副本、资源、账号等规格在中间件实例页修改（点上方实例名）。</div>
 
       <h4 class="app-dep-drawer__h">使用方</h4>
       <div v-if="users.length" class="app-dep-drawer__users">
@@ -254,6 +310,21 @@ watch(
 
   </el-drawer>
 
+  <el-dialog v-model="editVisible" :title="`修改外部连接 ${dep?.key ?? ''}`" width="620px" class="app-dep-dlg" :close-on-click-modal="false" destroy-on-close>
+    <el-form label-width="96px" @submit.prevent>
+      <AppExternalForm ref="editForm" v-model="editExt" :ctx="secretCtx" protocol-locked />
+    </el-form>
+    <el-alert type="info" :closable="false" show-icon
+      :title="users.length
+        ? `保存后线上不变：服务 ${users.join('、')} 会列为待发布，下次发布时生效；发布其它服务时也必须一并勾选它们。`
+        : '保存后线上不变：引用它的服务会列为待发布，下次发布时生效。'" />
+    <el-alert v-if="editError" type="error" :closable="false" show-icon :title="editError" class="app-dep-rm__warn" />
+    <template #footer>
+      <el-button @click="editVisible = false">取消</el-button>
+      <el-button type="primary" :loading="editing" :disabled="!editForm?.valid || !editChanged" @click="submitEdit">保存</el-button>
+    </template>
+  </el-dialog>
+
   <el-dialog v-model="removeVisible" :title="`移除依赖 ${dep?.key ?? ''}`" width="520px" class="app-dep-rm" :close-on-click-modal="false">
     <template v-if="dep?.ownership === 'CREATED'">
       <p class="app-dep-rm__p">这个依赖的实例是随应用创建的，移除时请选择实例的去向：</p>
@@ -279,6 +350,8 @@ watch(
 <style>
 /* el-drawer / el-dialog 内部节点没有 data-v-*，scoped 打不到；唯一前缀 app-dep-drawer / app-dep-rm */
 .app-dep-drawer .app-dep-drawer__h { margin: 20px 0 8px; font-size: 14px; }
+.app-dep-drawer .app-dep-drawer__actions { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.app-dep-drawer .app-dep-drawer__actions .app-dep-drawer__tip { margin-top: 0; }
 .app-dep-drawer .app-dep-drawer__muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .app-dep-drawer .app-dep-drawer__tip { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; margin-top: 4px; }
 .app-dep-drawer .app-dep-drawer__err { color: var(--el-color-danger); font-size: 12px; }

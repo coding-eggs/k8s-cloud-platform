@@ -151,7 +151,7 @@ order-service   运行正常 · 线上 #12            [发布 · 2 项改动]
 继续用 `ApplicationController`，路径都在 `/application/` 下：
 
 - 服务：`service/create`、`service/update`、`service/remove`、`service/restart`
-- 依赖：`dependency/add`、`dependency/remove`、`dependency/init`
+- 依赖：`dependency/add`、`dependency/update`（2026-11-03 补：只改外部连接）、`dependency/remove`、`dependency/init`
 - 发布：`overview`、`release/preview`、`release/create`、`release/list`、`release/get`、`release/rollback`、`execution/active`、`execution/resume`
 
 沿用 `tenant:application:read/write` 两个码。新权限行要显式绑定 admin、tenant_admin、tenant_member，读写范围与现有规则一致。

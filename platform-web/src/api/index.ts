@@ -1249,6 +1249,9 @@ export const appServiceApi = {
 export const appDependencyApi = {
   add: (payload: AppDependencyRequest) =>
     http.post<never, AppDependencyRow>('/application/dependency/add', payload),
+  /** 只改外部连接（appId + key + external）；依赖名与协议不可改，引用方下次发布生效 */
+  update: (payload: AppDependencyRequest) =>
+    http.post<never, AppDependencyRow>('/application/dependency/update', payload),
   remove: (payload: AppDependencyRequest) =>
     http.post<never, void>('/application/dependency/remove', payload),
   init: (payload: AppDependencyRequest) =>

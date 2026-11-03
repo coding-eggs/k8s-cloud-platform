@@ -305,6 +305,68 @@ class AppDependencyServiceTest {
         }
     }
 
+    // ------------------------------------------------------------------ 修改外部连接
+
+    PlatformAppDependency externalRow() {
+        PlatformAppDependency d = new PlatformAppDependency();
+        d.setId(7L);
+        d.setAppId("app1");
+        d.setDepKey("ext");
+        d.setType("EXTERNAL");
+        d.setExternalJson("{\"protocol\":\"mysql\",\"host\":\"old.corp.local\",\"port\":3306}");
+        return d;
+    }
+
+    @Test
+    void updateExternalRewritesOnlyExternalJson() {
+        when(deps.selectByKey("app1", "ext")).thenReturn(externalRow());
+
+        var view = service.update(externalReq(goodExternal()), "t1");
+
+        ArgumentCaptor<PlatformAppDependency> cap = ArgumentCaptor.forClass(PlatformAppDependency.class);
+        verify(deps).updateById(cap.capture());
+        assertThat(cap.getValue().getId()).isEqualTo(7L);
+        assertThat(cap.getValue().getExternalJson()).contains("db.corp.local").contains("ext-db");
+        // 选择性更新：类型、实例、初始化字段一个都不带
+        assertThat(cap.getValue().getType()).isNull();
+        assertThat(cap.getValue().getInstanceId()).isNull();
+        assertThat(view.external()).containsEntry("host", "db.corp.local");
+    }
+
+    @Test
+    void updateRejectsProtocolChangeMiddlewareMissingAndPasswordField() {
+        when(deps.selectByKey("app1", "ext")).thenReturn(externalRow());
+        Map<String, Object> pg = goodExternal();
+        pg.put("protocol", "postgresql");
+        assertThatThrownBy(() -> service.update(externalReq(pg), "t1")).hasMessageContaining("协议");
+
+        Map<String, Object> pwd = goodExternal();
+        pwd.put("password", "hunter2");
+        assertThatThrownBy(() -> service.update(externalReq(pwd), "t1"))
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("hunter2"));
+
+        PlatformAppDependency mw = externalRow();
+        mw.setType("MIDDLEWARE");
+        mw.setInstanceId("mwi_1");
+        when(deps.selectByKey("app1", "db")).thenReturn(mw);
+        AppDependencyRequest r = externalReq(goodExternal());
+        r.setKey("db");
+        assertThatThrownBy(() -> service.update(r, "t1")).hasMessageContaining("中间件实例页");
+
+        AppDependencyRequest gone = externalReq(goodExternal());
+        gone.setKey("nope");
+        assertThatThrownBy(() -> service.update(gone, "t1")).hasMessageContaining("不存在");
+        verify(deps, never()).updateById(any());
+    }
+
+    @Test
+    void updateOnOtherTenantsAppIsRejected() {
+        when(deps.selectByKey("app1", "ext")).thenReturn(externalRow());
+        assertThatThrownBy(() -> service.update(externalReq(goodExternal()), "t2"))
+                .isInstanceOf(CloudPlatformException.class);
+        verify(deps, never()).updateById(any());
+    }
+
     @Test
     void connectionsStillComeFromMiddlewareConnectionInfo() {
         PlatformAppDependency dep = new PlatformAppDependency();

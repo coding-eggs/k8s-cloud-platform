@@ -3,7 +3,7 @@
  * 规则与后端一致（AppServiceConfigService / AppDependencyService 的 KEY、RESERVED_SUFFIXES、HOST、INDEX_PATH；
  * AppEnvResolver 的字段集合）。前端只做软校验，权威校验在后端。
  */
-import type { AppDependencyRow, AppServiceDesired, AppServiceRow } from '@/types'
+import type { AppDependencyRequest, AppDependencyRow, AppServiceDesired, AppServiceRow } from '@/types'
 import type { Tone } from './releaseUtil'
 
 export const KEY_PATTERN = /^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/
@@ -23,6 +23,43 @@ export function keyProblem(key: string): string {
 export const EXTERNAL_PROTOCOLS = [
   'mysql', 'postgresql', 'redis', 'kafka', 'rabbitmq', 'elasticsearch', 'nacos', 'milvus',
 ]
+
+/** 外部连接表单（AppExternalForm）的值；空串 = 未填 */
+export interface ExternalForm {
+  protocol: string
+  host: string
+  port: number | undefined
+  secretName: string
+  usernameKey: string
+  passwordKey: string
+}
+
+export function emptyExternal(): ExternalForm {
+  return { protocol: 'mysql', host: '', port: undefined, secretName: '', usernameKey: '', passwordKey: '' }
+}
+
+/** 已登记的外部连接 → 表单初值（修改时回填） */
+export function externalForm(e?: AppDependencyRow['external']): ExternalForm {
+  const s = (v: unknown): string => (typeof v === 'string' ? v : '')
+  return {
+    protocol: s(e?.protocol) || 'mysql',
+    host: s(e?.host),
+    port: typeof e?.port === 'number' ? e.port : undefined,
+    secretName: s(e?.secretName),
+    usernameKey: s(e?.usernameKey),
+    passwordKey: s(e?.passwordKey),
+  }
+}
+
+/** 表单 → 接口的 external；空字段不带（后端白名单校验，多余字段会被拒） */
+export function externalPayload(e: ExternalForm): NonNullable<AppDependencyRequest['external']> {
+  const out: NonNullable<AppDependencyRequest['external']> = { protocol: e.protocol, host: e.host.trim() }
+  if (e.port) out.port = e.port
+  if (e.secretName.trim()) out.secretName = e.secretName.trim()
+  if (e.usernameKey.trim()) out.usernameKey = e.usernameKey.trim()
+  if (e.passwordKey.trim()) out.passwordKey = e.passwordKey.trim()
+  return out
+}
 
 /** 支持初始化脚本的中间件（与后端 AppInitSupport 同一份） */
 export const INIT_CODES = ['mysql', 'postgresql', 'redis', 'elasticsearch', 'kafka']

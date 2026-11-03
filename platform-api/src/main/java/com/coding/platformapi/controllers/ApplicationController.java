@@ -122,6 +122,13 @@ public class ApplicationController {
         return new ResponseData<>(dependency.add(request, operator(), auth.effectiveTenantId(request.getTenantId())));
     }
 
+    @PostMapping("/dependency/update")
+    @Auditable(action = AuditAction.APPLICATION_DEPENDENCY_UPDATE, target = "#request.appId + '/' + #request.key")
+    @Operation(summary = "修改外部连接（地址 / 端口 / Secret 登记；依赖名与协议不可改；引用方下次发布生效）")
+    public ResponseData<AppOverviewView.DependencyRow> dependencyUpdate(@RequestBody AppDependencyRequest request) {
+        return new ResponseData<>(dependency.update(request, auth.effectiveTenantId(request.getTenantId())));
+    }
+
     @PostMapping("/dependency/remove")
     @Auditable(action = AuditAction.APPLICATION_DEPENDENCY_REMOVE, target = "#request.appId + '/' + #request.key")
     @Operation(summary = "移除依赖（仍被引用时拒绝；CREATED 实例可选删除，默认保留）")

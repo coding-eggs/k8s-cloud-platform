@@ -5,7 +5,7 @@ import lombok.Data;
 import java.util.Map;
 
 /**
- * 依赖接口的入参（add / remove / init 共用）。
+ * 依赖接口的入参（add / update / remove / init 共用；update 只用 appId、key、external）。
  *
  * <p>没有任何口令字段：新建的实例口令由中间件模块生成，绑定的实例口令在它自己的 Secret 里，
  * 外部连接只收 Secret 名与键。{@code external} 是 Map 而不是类型化对象，

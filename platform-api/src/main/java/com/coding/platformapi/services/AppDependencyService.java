@@ -472,6 +472,41 @@ public class AppDependencyService {
         return out;
     }
 
+    // ================================================================== 修改
+
+    /**
+     * 只改外部连接的地址 / 端口 / Secret 登记；依赖名、类型、协议不可改。中间件依赖的规格在实例页改。
+     *
+     * <p>不改线上：引用它的服务在下次发布时才用上新值，届时它们被列为待发布、且必须一并勾选
+     * （{@link com.coding.platformapi.app.AppPending#changedDependencies}）。
+     * 去掉字段（端口、用户名键、密码键）时，仍引用该字段的服务会在发布预览里被拦下，与「引用不存在的字段」同一条路径。
+     */
+    public AppOverviewView.DependencyRow update(AppDependencyRequest req, String tenantId) {
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
+        PlatformAppDependency row = req.getKey() == null ? null : dependencies.selectByKey(app.getId(), req.getKey());
+        if (row == null) {
+            throw error("依赖不存在：" + req.getKey());
+        }
+        if (!EXTERNAL.equals(row.getType())) {
+            throw error("只有外部连接可以修改；中间件依赖的规格请到中间件实例页修改");
+        }
+        Map<String, Object> external = validateExternal(req.getExternal());
+        Map<String, Object> before = AppSnapshot.scrubExternal(row.getExternalJson());
+        if (before != null && before.get("protocol") != null
+                && !before.get("protocol").equals(external.get("protocol"))) {
+            throw error("协议不能修改；要换协议请新增一个依赖");
+        }
+        PlatformAppDependency patch = new PlatformAppDependency();
+        patch.setId(row.getId());
+        patch.setExternalJson(AppSnapshot.JSON.writeValueAsString(external));
+        patch.setUpdatedAt(new Date());
+        if (dependencies.updateById(patch) == 0) {
+            throw error("依赖 " + row.getDepKey() + " 已被移除");
+        }
+        row.setExternalJson(patch.getExternalJson());
+        return view(row);
+    }
+
     // ================================================================== 移除
 
     public void remove(AppDependencyRequest req, String operator, String tenantId) {

@@ -155,6 +155,66 @@ class AppReleaseServiceTest {
         verify(client, never()).init(any());
     }
 
+    /** 线上快照带一个外部依赖 ext（host=old），台账里的 ext 已改成 host=new；api 引用它，job 不引用但自己改了 tag */
+    private void externalDependencyEdited() {
+        app.setLiveReleaseNo(2);
+        PlatformAppRelease r = new PlatformAppRelease();
+        r.setReleaseNo(2);
+        r.setSnapshotJson(JSON.writeValueAsString(Map.of(
+                "services", Map.of("api", svc("1", "DB", "${ext.host}"), "job", svc("1")),
+                "dependencies", List.of(Map.of("key", "ext", "type", "EXTERNAL",
+                        "external", Map.of("protocol", "mysql", "host", "old.corp"))))));
+        r.setObjectsJson("[]");
+        when(releases.selectByNo("app1", 2)).thenReturn(r);
+        when(releases.selectMaxNo("app1")).thenReturn(2);
+        PlatformAppDependency ext = new PlatformAppDependency();
+        ext.setDepKey("ext");
+        ext.setType("EXTERNAL");
+        ext.setExternalJson("{\"protocol\":\"mysql\",\"host\":\"new.corp\"}");
+        when(depRows.selectByApp("app1")).thenReturn(List.of(ext));
+        when(services.selectByApp("app1")).thenReturn(List.of(
+                row("api", svc("1", "DB", "${ext.host}"), false), row("job", svc("2"), false)));
+    }
+
+    @Test
+    void editedExternalDependencyMakesReferencingServicesPending() {
+        externalDependencyEdited();
+        AppReleasePreviewView v = service.preview("app1", List.of(), Map.of(), "t1");
+        assertThat(v.pendingKeys()).containsExactlyInAnyOrder("api", "job");
+        assertThat(v.changes()).anySatisfy(c -> {
+            assertThat(c.key()).isEqualTo("api");
+            assertThat(c.type()).isEqualTo("CHANGED");
+            assertThat(c.fields()).containsExactly("依赖 ext");
+        });
+        assertThat(service.overview("app1", "t1").services())
+                .anySatisfy(s -> {
+                    assertThat(s.key()).isEqualTo("api");
+                    assertThat(s.pending()).isEqualTo("CHANGED");
+                });
+    }
+
+    @Test
+    void releasingAnotherServiceRequiresTheServicesUsingTheEditedDependency() {
+        externalDependencyEdited();
+        AppReleasePreviewView v = service.preview("app1", List.of("job"), Map.of(), "t1");
+        assertThat(v.requiredKeys()).containsExactly("api");
+        assertThatThrownBy(() -> service.create("app1", List.of("job"), Map.of(), null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("api");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void releasingTheReferencingServiceAloneCarriesTheNewConnectionInfo() {
+        externalDependencyEdited();
+        AppReleasePreviewView v = service.preview("app1", List.of("api"), Map.of(), "t1");
+        assertThat(v.requiredKeys()).isEmpty();
+
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
+        var snap = JSON.readTree(createdSnapshot());
+        assertThat(snap.get("dependencies").get(0).get("external").get("host").asText()).isEqualTo("new.corp");
+        assertThat(snap.get("services").get("job").get("imageTag").asText()).isEqualTo("1");   // 未勾选：仍是线上版本
+    }
+
     @Test
     void unchangedDesiredIsNotPending() {
         live(1, Map.of("api", svc("1")));

@@ -206,7 +206,7 @@ async function submit(): Promise<void> {
         type="warning"
         :closable="false"
         show-icon
-        :title="`所选服务引用了尚未发布的服务：${requiredKeys.join('、')}，需要一并勾选才能发布`"
+        :title="`以下服务需要一并勾选才能发布：${requiredKeys.join('、')}（所选服务引用了尚未发布的服务，或它们引用的依赖连接信息已修改）`"
       >
         <el-button size="small" @click="addRequired">一并勾选</el-button>
       </el-alert>

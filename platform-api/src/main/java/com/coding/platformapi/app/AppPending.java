@@ -1,13 +1,17 @@
 package com.coding.platformapi.app;
 
+import com.coding.data.models.system.PlatformAppDependency;
 import com.coding.data.models.system.PlatformAppService;
 import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * 待发布改动 = 期望配置 与 线上快照同名服务 的差异，不单独存储。
@@ -23,6 +27,16 @@ public final class AppPending {
     }
 
     public static List<Change> compute(Map<String, Map<String, Object>> live, List<PlatformAppService> rows) {
+        return compute(live, rows, Set.of());
+    }
+
+    /**
+     * 同上，另把「引用的依赖连接信息与线上快照不同」也算作改动（字段名 {@code 依赖 <key>}）。
+     * 发布总是按当前依赖台账整份渲染线上服务，所以这类服务即使期望配置没变，下次发布也会被改到 ——
+     * 必须显式列为待发布，由用户勾选。
+     */
+    public static List<Change> compute(Map<String, Map<String, Object>> live, List<PlatformAppService> rows,
+                                       Set<String> changedDependencies) {
         List<Change> out = new ArrayList<>();
         for (PlatformAppService row : rows) {
             boolean deployed = live.containsKey(row.getServiceKey());
@@ -36,8 +50,13 @@ public final class AppPending {
                 out.add(new Change(row.getServiceKey(), "ADDED", List.of()));
                 continue;
             }
-            List<String> fields = changedFields(live.get(row.getServiceKey()),
-                    AppSnapshot.parseMap(row.getDesiredJson()));
+            Map<String, Object> desired = AppSnapshot.parseMap(row.getDesiredJson());
+            List<String> fields = changedFields(live.get(row.getServiceKey()), desired);
+            if (!changedDependencies.isEmpty()) {
+                new TreeSet<>(AppServiceDesired.references(desired)).stream()
+                        .filter(changedDependencies::contains)
+                        .forEach(dep -> fields.add(dependencyField(dep)));
+            }
             if (!fields.isEmpty()) {
                 out.add(new Change(row.getServiceKey(), "CHANGED", fields));
             }
@@ -48,6 +67,32 @@ public final class AppPending {
         for (String liveKey : live.keySet()) {
             if (!rowKeys.contains(liveKey)) {
                 out.add(new Change(liveKey, "DELETED", List.of()));
+            }
+        }
+        return out;
+    }
+
+    public static String dependencyField(String depKey) {
+        return "依赖 " + depKey;
+    }
+
+    /**
+     * 连接信息与线上快照不同的外部依赖 key（只比白名单字段）。中间件依赖的连接信息发布时现取、实例不可换，不在此列；
+     * 线上快照里没有的依赖（新加的）不算：引用它的服务本身就有期望配置改动。
+     */
+    public static Set<String> changedDependencies(List<PlatformAppDependency> live,
+                                                  List<PlatformAppDependency> current) {
+        Map<String, PlatformAppDependency> now = new HashMap<>();
+        current.forEach(d -> now.put(d.getDepKey(), d));
+        Set<String> out = new TreeSet<>();
+        for (PlatformAppDependency old : live) {
+            PlatformAppDependency cur = now.get(old.getDepKey());
+            if (cur == null || !"EXTERNAL".equals(old.getType()) || !"EXTERNAL".equals(cur.getType())) {
+                continue;
+            }
+            if (!Objects.equals(AppSnapshot.scrubExternal(old.getExternalJson()),
+                    AppSnapshot.scrubExternal(cur.getExternalJson()))) {
+                out.add(old.getDepKey());
             }
         }
         return out;

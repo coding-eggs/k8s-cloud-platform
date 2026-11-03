@@ -453,6 +453,8 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
     />
     <AppDependencyDetail
       v-model="depDetailVisible"
+      :cluster-id="app?.clusterId ?? ''"
+      :namespace="app?.namespace ?? ''"
       :dep="depDetail"
       :services="overview?.services ?? []"
       :app-id="appId"

@@ -5,22 +5,22 @@
  * - 新建：在应用所在的集群和命名空间里建一个中间件实例，规格字段沿用中间件商店的表单定义（middlewareForms）；
  *   后端依赖请求只接收形态、版本、副本数、资源和存储，Milvus（需要对象存储来源）请先在商店创建再绑定。
  * - 绑定：只列同一集群、同一命名空间、还没被本应用绑定的实例。
- * - 外部：协议 + 地址 + 端口 + Secret 名与键。**没有口令输入框**：口令放在与应用同命名空间的 Secret 里；
- *   Secret 名与键从该命名空间的 Secret 里选（仍可手填），旁边给「新建 Secret」入口（新标签页）。
+ * - 外部：协议 + 地址 + 端口 + Secret 名与键（表单项见 AppExternalForm，与「修改外部连接」共用）。
+ *   **没有口令输入框**：口令放在与应用同命名空间的 Secret 里。
  * 依赖名与服务名共用一个命名空间；规则与后端一致（见 dependencyUtil）。
  * 提交失败的原文留在对话框内。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { appDependencyApi, middlewareApi } from '@/api'
 import { MIDDLEWARE_FIELDS, toQuantity, type MiddlewareField } from '@/components/middleware/middlewareForms'
 import type { AppDependencyRequest, MiddlewareCatalogItem, MiddlewareInstance } from '@/types'
 import {
-  CREATE_EXCLUDED, EXTERNAL_PROTOCOLS, HOST_PATTERN, keyProblem,
+  CREATE_EXCLUDED, emptyExternal, externalPayload, keyProblem, type ExternalForm,
 } from './dependencyUtil'
 import { errMsg } from './releaseUtil'
-import { useNamespaceSecrets, type SecretCtx } from './useNamespaceSecrets'
-import AppSecretCreateLink from './AppSecretCreateLink.vue'
+import type { SecretCtx } from './useNamespaceSecrets'
+import AppExternalForm from './AppExternalForm.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -164,35 +164,16 @@ function instLabel(i: MiddlewareInstance): string {
 }
 
 // ---------------- 外部 ----------------
-const ext = ref({ protocol: 'mysql', host: '', port: undefined as number | undefined, secretName: '', usernameKey: '', passwordKey: '' })
+const ext = ref<ExternalForm>(emptyExternal())
 const secretCtx = computed<SecretCtx>(() => ({ tenantId: props.tenantId, clusterId: props.clusterId, namespace: props.namespace }))
-const secrets = useNamespaceSecrets(secretCtx)
-const secretKeys = computed(() => secrets.keysOf(ext.value.secretName))
-/** 换了 Secret：键名在新 Secret 里没有就清掉；有 username / password 键就直接选上 */
-function pickSecret(name: string): void {
-  ext.value.secretName = name
-  const keys = secrets.keysOf(name)
-  if (!keys.length) return
-  const fit = (cur: string, guess: string): string =>
-    keys.includes(cur) ? cur : keys.includes(guess) ? guess : ''
-  ext.value.usernameKey = fit(ext.value.usernameKey, 'username')
-  ext.value.passwordKey = fit(ext.value.passwordKey, 'password')
-}
-const hostHint = computed(() => {
-  const h = ext.value.host.trim()
-  if (!h) return ''
-  return HOST_PATTERN.test(h) ? '' : '只能是主机名或 IPv4 地址，不要带协议、端口、路径或 user:pass@'
-})
-const secretHint = computed(() =>
-  (ext.value.usernameKey.trim() || ext.value.passwordKey.trim()) && !ext.value.secretName.trim()
-    ? '填写了键名就必须同时填写 Secret 名' : '')
+const extForm = ref<{ valid: boolean; reload: () => Promise<void> } | null>(null)
 
 // ---------------- 提交 ----------------
 const canSubmit = computed(() => {
   if (!key.value || keyHint.value || submitting.value) return false
   if (mode.value === 'CREATE') return !!code.value && !!item.value && itemReady(item.value)
   if (mode.value === 'BIND') return !!instanceId.value
-  return !!ext.value.host.trim() && !hostHint.value && !secretHint.value
+  return !!extForm.value?.valid
 })
 
 function buildRequest(): AppDependencyRequest {
@@ -201,13 +182,7 @@ function buildRequest(): AppDependencyRequest {
     return { ...base, type: 'MIDDLEWARE', source: 'BIND', instanceId: instanceId.value }
   }
   if (mode.value === 'EXTERNAL') {
-    const e = ext.value
-    const external: NonNullable<AppDependencyRequest['external']> = { protocol: e.protocol, host: e.host.trim() }
-    if (e.port) external.port = e.port
-    if (e.secretName.trim()) external.secretName = e.secretName.trim()
-    if (e.usernameKey.trim()) external.usernameKey = e.usernameKey.trim()
-    if (e.passwordKey.trim()) external.passwordKey = e.passwordKey.trim()
-    return { ...base, type: 'EXTERNAL', external }
+    return { ...base, type: 'EXTERNAL', external: externalPayload(ext.value) }
   }
   const req: AppDependencyRequest = {
     ...base, type: 'MIDDLEWARE', source: 'CREATE', code: code.value, shape: shape.value || undefined,
@@ -246,13 +221,14 @@ watch(() => props.modelValue, (open) => {
   error.value = ''
   instanceId.value = ''
   instances.value = []
-  ext.value = { protocol: 'mysql', host: '', port: undefined, secretName: '', usernameKey: '', passwordKey: '' }
+  ext.value = emptyExternal()
   void loadCreateOptions().then(resetCreate)
 })
 watch(mode, (m) => {
   error.value = ''
   if (m === 'BIND' && !instances.value.length) void loadInstances()
-  if (m === 'EXTERNAL') void secrets.reload()
+  // 外部表单在切到 EXTERNAL 后才渲染：等它挂上再拉 Secret 候选
+  if (m === 'EXTERNAL') void nextTick(() => extForm.value?.reload())
 })
 </script>
 
@@ -332,54 +308,7 @@ watch(mode, (m) => {
       </template>
 
       <!-- 外部 -->
-      <template v-else>
-        <el-form-item label="协议" required>
-          <el-select v-model="ext.protocol" style="width: 100%">
-            <el-option v-for="p in EXTERNAL_PROTOCOLS" :key="p" :label="p" :value="p" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="主机" required>
-          <el-input v-model="ext.host" spellcheck="false" placeholder="主机名或 IPv4，如 db.internal.example.com" />
-          <div v-if="hostHint" class="app-dep-dlg__err">{{ hostHint }}</div>
-        </el-form-item>
-        <el-form-item label="端口">
-          <el-input-number v-model="ext.port" :min="1" :max="65535" :controls="false" placeholder="可留空" />
-        </el-form-item>
-        <el-form-item label="Secret 名">
-          <div class="app-dep-dlg__row">
-            <el-select
-              :model-value="ext.secretName"
-              :loading="secrets.loading.value"
-              filterable
-              allow-create
-              clearable
-              default-first-option
-              placeholder="选择或输入与应用同命名空间的 Secret"
-              no-data-text="本命名空间没有 Secret"
-              style="flex: 1"
-              @update:model-value="(v: string) => pickSecret(v ?? '')"
-            >
-              <el-option v-for="s in secrets.options.value" :key="s.name" :label="s.name" :value="s.name">
-                <span>{{ s.name }}</span>
-                <span class="app-dep-dlg__opt-hint">{{ s.keys.join(', ') || '无键' }}</span>
-              </el-option>
-            </el-select>
-            <AppSecretCreateLink :ctx="secretCtx" :loading="secrets.loading.value" @refresh="secrets.reload" />
-          </div>
-        </el-form-item>
-        <el-form-item label="用户名键">
-          <el-select v-model="ext.usernameKey" filterable allow-create clearable default-first-option placeholder="Secret 里存用户名的键，如 username" :no-data-text="ext.secretName ? '没有候选键，可手填' : '先选 Secret'" style="width: 100%">
-            <el-option v-for="k in secretKeys" :key="k" :label="k" :value="k" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="密码键">
-          <el-select v-model="ext.passwordKey" filterable allow-create clearable default-first-option placeholder="Secret 里存密码的键，如 password" :no-data-text="ext.secretName ? '没有候选键，可手填' : '先选 Secret'" style="width: 100%">
-            <el-option v-for="k in secretKeys" :key="k" :label="k" :value="k" />
-          </el-select>
-          <div v-if="secretHint" class="app-dep-dlg__err">{{ secretHint }}</div>
-          <div class="app-dep-dlg__tip">平台不接收明文口令：Secret 建在命名空间 {{ namespace }}（可点「新建 Secret」在新标签页创建，建好回来点「刷新」），这里只登记它的名字和键名。</div>
-        </el-form-item>
-      </template>
+      <AppExternalForm v-else ref="extForm" v-model="ext" :ctx="secretCtx" />
 
       <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" />
     </el-form>
