@@ -85,6 +85,26 @@ export function refToken(key: string, field: string): string {
   return `\${${key}.${field}}`
 }
 
+export interface RefGroup { label: string; items: { token: string; field: string; hint: string }[] }
+
+/** 可引用字段，按「依赖 / 服务」分组（「插入引用」菜单与值输入框的下拉共用） */
+export function refGroups(dependencies?: AppDependencyRow[], serviceKeys?: string[]): RefGroup[] {
+  const out: RefGroup[] = []
+  for (const d of dependencies ?? []) {
+    out.push({
+      label: `依赖 ${d.key}`,
+      items: depFields(d).map((f) => ({ token: refToken(d.key, f), field: f, hint: DEP_FIELD_LABEL[f] ?? f })),
+    })
+  }
+  for (const k of serviceKeys ?? []) {
+    out.push({
+      label: `服务 ${k}`,
+      items: SVC_FIELDS.map((f) => ({ token: refToken(k, f), field: f, hint: SVC_FIELD_LABEL[f] ?? f })),
+    })
+  }
+  return out
+}
+
 export const DEP_STATUS: Record<string, { text: string; type: Tone }> = {
   READY: { text: '运行正常', type: 'success' },
   CREATING: { text: '创建中', type: 'warning' },

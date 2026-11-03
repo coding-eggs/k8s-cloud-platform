@@ -412,7 +412,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           </el-tab-pane>
 
           <el-tab-pane label="环境变量" name="env">
-            <AppEnvEditor v-model="form.env" :dependencies="deps" :service-keys="selfRefs" :disabled="readonly" />
+            <AppEnvEditor v-model="form.env" :dependencies="deps" :service-keys="selfRefs" :ctx="ctx" :disabled="readonly" />
           </el-tab-pane>
 
           <el-tab-pane label="配置文件" name="files">

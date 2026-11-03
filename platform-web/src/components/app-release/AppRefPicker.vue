@@ -8,7 +8,7 @@
  */
 import { computed } from 'vue'
 import type { AppDependencyRow } from '@/types'
-import { DEP_FIELD_LABEL, SVC_FIELD_LABEL, SVC_FIELDS, depFields, refToken } from './dependencyUtil'
+import { refGroups, type RefGroup } from './dependencyUtil'
 
 const props = defineProps<{
   dependencies?: AppDependencyRow[]
@@ -19,24 +19,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ (e: 'pick', token: string): void }>()
 
-interface Group { label: string; items: { token: string; field: string; hint: string }[] }
-
-const groups = computed<Group[]>(() => {
-  const out: Group[] = []
-  for (const d of props.dependencies ?? []) {
-    out.push({
-      label: `依赖 ${d.key}`,
-      items: depFields(d).map((f) => ({ token: refToken(d.key, f), field: f, hint: DEP_FIELD_LABEL[f] ?? f })),
-    })
-  }
-  for (const k of props.serviceKeys ?? []) {
-    out.push({
-      label: `服务 ${k}`,
-      items: SVC_FIELDS.map((f) => ({ token: refToken(k, f), field: f, hint: SVC_FIELD_LABEL[f] ?? f })),
-    })
-  }
-  return out
-})
+const groups = computed<RefGroup[]>(() => refGroups(props.dependencies, props.serviceKeys))
 </script>
 
 <template>

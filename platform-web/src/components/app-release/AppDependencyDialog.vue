@@ -5,7 +5,8 @@
  * - 新建：在应用所在的集群和命名空间里建一个中间件实例，规格字段沿用中间件商店的表单定义（middlewareForms）；
  *   后端依赖请求只接收形态、版本、副本数、资源和存储，Milvus（需要对象存储来源）请先在商店创建再绑定。
  * - 绑定：只列同一集群、同一命名空间、还没被本应用绑定的实例。
- * - 外部：协议 + 地址 + 端口 + Secret 名与键。**没有口令输入框**：口令放在与应用同命名空间的 Secret 里。
+ * - 外部：协议 + 地址 + 端口 + Secret 名与键。**没有口令输入框**：口令放在与应用同命名空间的 Secret 里；
+ *   Secret 名与键从该命名空间的 Secret 里选（仍可手填），旁边给「新建 Secret」入口（新标签页）。
  * 依赖名与服务名共用一个命名空间；规则与后端一致（见 dependencyUtil）。
  * 提交失败的原文留在对话框内。
  */
@@ -18,6 +19,8 @@ import {
   CREATE_EXCLUDED, EXTERNAL_PROTOCOLS, HOST_PATTERN, keyProblem,
 } from './dependencyUtil'
 import { errMsg } from './releaseUtil'
+import { useNamespaceSecrets, type SecretCtx } from './useNamespaceSecrets'
+import AppSecretCreateLink from './AppSecretCreateLink.vue'
 
 const props = defineProps<{
   modelValue: boolean
@@ -162,6 +165,19 @@ function instLabel(i: MiddlewareInstance): string {
 
 // ---------------- 外部 ----------------
 const ext = ref({ protocol: 'mysql', host: '', port: undefined as number | undefined, secretName: '', usernameKey: '', passwordKey: '' })
+const secretCtx = computed<SecretCtx>(() => ({ tenantId: props.tenantId, clusterId: props.clusterId, namespace: props.namespace }))
+const secrets = useNamespaceSecrets(secretCtx)
+const secretKeys = computed(() => secrets.keysOf(ext.value.secretName))
+/** 换了 Secret：键名在新 Secret 里没有就清掉；有 username / password 键就直接选上 */
+function pickSecret(name: string): void {
+  ext.value.secretName = name
+  const keys = secrets.keysOf(name)
+  if (!keys.length) return
+  const fit = (cur: string, guess: string): string =>
+    keys.includes(cur) ? cur : keys.includes(guess) ? guess : ''
+  ext.value.usernameKey = fit(ext.value.usernameKey, 'username')
+  ext.value.passwordKey = fit(ext.value.passwordKey, 'password')
+}
 const hostHint = computed(() => {
   const h = ext.value.host.trim()
   if (!h) return ''
@@ -236,6 +252,7 @@ watch(() => props.modelValue, (open) => {
 watch(mode, (m) => {
   error.value = ''
   if (m === 'BIND' && !instances.value.length) void loadInstances()
+  if (m === 'EXTERNAL') void secrets.reload()
 })
 </script>
 
@@ -329,15 +346,38 @@ watch(mode, (m) => {
           <el-input-number v-model="ext.port" :min="1" :max="65535" :controls="false" placeholder="可留空" />
         </el-form-item>
         <el-form-item label="Secret 名">
-          <el-input v-model="ext.secretName" spellcheck="false" placeholder="与应用同命名空间的 Secret 名" />
+          <div class="app-dep-dlg__row">
+            <el-select
+              :model-value="ext.secretName"
+              :loading="secrets.loading.value"
+              filterable
+              allow-create
+              clearable
+              default-first-option
+              placeholder="选择或输入与应用同命名空间的 Secret"
+              no-data-text="本命名空间没有 Secret"
+              style="flex: 1"
+              @update:model-value="(v: string) => pickSecret(v ?? '')"
+            >
+              <el-option v-for="s in secrets.options.value" :key="s.name" :label="s.name" :value="s.name">
+                <span>{{ s.name }}</span>
+                <span class="app-dep-dlg__opt-hint">{{ s.keys.join(', ') || '无键' }}</span>
+              </el-option>
+            </el-select>
+            <AppSecretCreateLink :ctx="secretCtx" :loading="secrets.loading.value" @refresh="secrets.reload" />
+          </div>
         </el-form-item>
         <el-form-item label="用户名键">
-          <el-input v-model="ext.usernameKey" spellcheck="false" placeholder="Secret 里存用户名的键，如 username" />
+          <el-select v-model="ext.usernameKey" filterable allow-create clearable default-first-option placeholder="Secret 里存用户名的键，如 username" :no-data-text="ext.secretName ? '没有候选键，可手填' : '先选 Secret'" style="width: 100%">
+            <el-option v-for="k in secretKeys" :key="k" :label="k" :value="k" />
+          </el-select>
         </el-form-item>
         <el-form-item label="密码键">
-          <el-input v-model="ext.passwordKey" spellcheck="false" placeholder="Secret 里存密码的键，如 password" />
+          <el-select v-model="ext.passwordKey" filterable allow-create clearable default-first-option placeholder="Secret 里存密码的键，如 password" :no-data-text="ext.secretName ? '没有候选键，可手填' : '先选 Secret'" style="width: 100%">
+            <el-option v-for="k in secretKeys" :key="k" :label="k" :value="k" />
+          </el-select>
           <div v-if="secretHint" class="app-dep-dlg__err">{{ secretHint }}</div>
-          <div class="app-dep-dlg__tip">平台不接收明文口令：请先在集群里建好 Secret，这里只登记它的名字和键名。</div>
+          <div class="app-dep-dlg__tip">平台不接收明文口令：Secret 建在命名空间 {{ namespace }}（可点「新建 Secret」在新标签页创建，建好回来点「刷新」），这里只登记它的名字和键名。</div>
         </el-form-item>
       </template>
 
@@ -354,5 +394,6 @@ watch(mode, (m) => {
 /* el-dialog 内部节点没有 data-v-*，scoped 打不到；唯一前缀 app-dep-dlg */
 .app-dep-dlg .app-dep-dlg__err { color: var(--el-color-danger); font-size: 12px; line-height: 1.5; }
 .app-dep-dlg .app-dep-dlg__tip { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
-.app-dep-dlg .app-dep-dlg__row { display: flex; align-items: center; gap: 8px; }
+.app-dep-dlg .app-dep-dlg__row { display: flex; align-items: center; gap: 8px; width: 100%; }
+.app-dep-dlg__opt-hint { float: right; margin-left: 12px; font-size: 12px; color: var(--el-text-color-secondary); }
 </style>
