@@ -235,7 +235,8 @@ platform-api/src/main/java/com/coding/platformapi/
 | `platform.namespace.protected-namespaces` | `kube-system`、`kube-public`、`kube-node-lease`、`calico-system`、`monitoring`、`operators`、`istio-system`、`ingress-nginx`、`cert-manager` | 受保护命名空间：**精确匹配**，命中者拒绝一切写操作（编辑/删除/配额/限制范围），**读仍开放**。须与集群内真实 ns 名一致，按部署环境增删 |
 | `spring.datasource.*` | MySQL `192.168.31.80:1234/k8s_cloud_platform` | 平台库（可用 `MYSQL_URL/USERNAME/PASSWORD` 覆盖） |
 | `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | `${OAUTH2_SERVER:http://127.0.0.1:9527/auth/oauth2/jwks}` | 验签密钥源 |
-| `…jwt.type` / `jws` / `jwe` | `JWS` | 本模块**有意不校验 audience**（接受 auth server 签发的任意客户端 token）；对称签名/加密另有分支 |
+| `…jwt.audiences` | `${JWT_AUDIENCES:platform-web-client}` | 允许的 aud（平台客户端 client_id，逗号分隔）；由 `ResourceServerConfig` 显式装进校验器（自定义 `JwtDecoder` 下 Boot 不读该键），为空拒启；**必须与 `k8s-server` 同值**。iss 有意不校验 |
+| `…jwt.type` / `jws` / `jwe` | `JWS` | 对称签名/加密另有分支 |
 | `spring.security.ignore-urls` | 见 yaml | 免登录放行（actuator、文档、静态资源等） |
 | `jwt.data-key` | `data` | JWT 中自定义用户 claim 的键名（与 `platform-auth` 一致） |
 | Knife4j | `/doc.html`、`/v3/api-docs` | 接口文档（中文） |

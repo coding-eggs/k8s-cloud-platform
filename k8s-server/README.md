@@ -221,7 +221,7 @@ k8s-server/src/main/java/com/coding/k8sserver/
 | `k8s.cloud.kubeconfig.aes-key` | 内置值 | kubeconfig 落库解密密钥，**必须与 `platform-api` 一致**，否则解不开集群凭据 |
 | `spring.datasource.*` | MySQL `192.168.31.80:1234/k8s_cloud_platform` | 只读边界所需的表：`k8s_cluster`、`platform_tenant`、`platform_tenant_namespace`、`platform_rbac_template`（可用 `MYSQL_URL/USERNAME/PASSWORD` 覆盖） |
 | `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | `${OAUTH2_SERVER:http://127.0.0.1:9527/auth/oauth2/jwks}` | 验签密钥源 |
-| `…jwt.audiences` | `gateway-code-client` | ⚠️ 见下方注意事项 |
+| `…jwt.audiences` | `${JWT_AUDIENCES:platform-web-client}` | 允许的 aud（平台客户端 client_id，逗号分隔）；**必须与 `platform-api` 同值**，为空拒启。⚠️ 见下方注意事项 |
 | `…jwt.type` / `jwe` | `JWS` | JWE 为对称密钥 / 非对称（非对称仍留 TODO） |
 | `spring.security.ignore-urls` | 见 yaml | 免登录放行（actuator、文档、静态资源等） |
 | `spring.servlet.multipart.max-file-size` | `5120MB` | 大对象上传 |
@@ -267,7 +267,7 @@ mvn -pl k8s-server test
 4. **WS 握手会被 `BoundaryAuthorizationManager` 判定**，而它拿到的 handler 是 `WebSocketHttpRequestHandler`（本对象被装饰器链包着）。管理器用 `WebSocketHandlerDecorator.unwrap(...)` 剥装饰器后读声明 —— **改动 WS 注册方式时别绕开这一步，否则握手 403**。
 5. **WS 的 thread-local 陷阱**：`afterConnectionEstablished` 跑在 Tomcat WS worker 线程，`SecurityContextHolder` 已空。身份由 `SecurityContextHandshakeInterceptor` 在握手期（HTTP 线程）存入 session attributes，`ResourceAccessResolver` 有显式身份重载接收它。
 6. **`/persistentvolumes/**` 的 `UPSTREAM` 是显式例外**，不是遗漏。它的跨租户收窄在 `platform-api` 的 `PersistentVolumeService`（按 `claimRef.namespace`）。新增集群级资源若需租户可见，覆写 `accessBoundary()` 并在类注释写明理由 —— 让例外可被一眼搜出。
-7. **`spring.security.oauth2.resourceserver.jwt.audiences: gateway-code-client`** 与 `platform-api`（有意不校验 audience）**不一致**。这是两跳之间的一个真实差异：直连本模块的 token 必须带该 audience。排查"api 能调通但直连 403/401"时先看这里。
+7. **aud 白名单由 `ResourceServerConfig` 显式装进校验器**（`PlatformJwtValidators`），不是靠 Boot：本模块自定义了 `JwtDecoder`，Boot 的自动配置退场、`audiences` 键它根本不读（历史上这里配过 `gateway-code-client`，从未生效）。两跳透传同一个 token，**两边 `audiences` 必须同值**；新增平台客户端时两边一起加，否则该客户端的 token 401。iss 有意不校验（签发方由 jwk-set-uri 固定，issuer 随访问入口变化）。
 8. **直连本模块的路径不受权限表约束**：`platform-api` 的细粒度权限只在那一跳生效。租户持有合法 token **直连** `k8s-server` 时，只有 ②③ 两层在把关。已知残留见 §3.4。
 9. **HTTP 状态码语义**：认证/授权失败由过滤器链返回 `{code, msg, data}` JSON 形态的 401/403（不进 `@ControllerAdvice`）；业务异常走 `GlobalExceptionHandler` 返回 `ResponseData`。`platform-api` 的 `K8sServerGateway` 刻意不用 `retrieve()`，而是统一读 body 的 `code`。
 10. **不要恢复联调端点**：`TestController` 里曾经的 `GET /test`（把整个 JWT 打到 stdout）与授权码 `println` 已删除，仅保留 `/callback` 占位。新增任何 handler 都受 §8.2 约束。
