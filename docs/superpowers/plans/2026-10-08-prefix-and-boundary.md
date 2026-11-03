@@ -83,7 +83,7 @@ WHERE domain = 'API' AND resource LIKE '/resource/%';
 - 必须带 `domain='API'`（Page 行的 resource 是前端路由）。
 - 有意不加 `deleted_at IS NULL`：软删行一并改写，避免将来恢复时留下指向不存在端点的幽灵行。
 - `uk_domain_resource_action` 已在 `V2026_09_24_2` 降级为普通索引，无唯一键冲突；
-  `k8s_cloud_platform.sql` dump 里**没有** `platform_permission` 的 INSERT，故无需同步 dump。
+  `../../dbback/k8s_cloud_platform.sql` dump 里**没有** `platform_permission` 的 INSERT，故无需同步 dump。
 
 ### 4. 测试
 

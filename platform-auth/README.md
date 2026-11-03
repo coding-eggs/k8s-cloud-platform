@@ -299,7 +299,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 
 ## 数据库表
 
-本模块读写的主要表（DDL 见仓库根 `k8s_cloud_platform.sql`）：
+本模块读写的主要表（DDL 见仓库根 `../docs/dbback/k8s_cloud_platform.sql`）：
 
 - `oauth2_registered_client` —— 客户端注册信息（SAS 标准结构，client_settings / token_settings 为 JSON）。
 - `oauth2_authorization` / `oauth2_authorization_...` —— 授权与令牌持久化。

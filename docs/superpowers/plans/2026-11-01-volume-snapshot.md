@@ -20,7 +20,7 @@
 - 门控活探测：不读 `k8s_cluster.capability`，不读组件状态。探测调用失败要报错，不能当作「不支持」。
 - 恢复只建新 PVC，只允许同命名空间。
 - 不做定时快照、导入已有快照、平台写快照类、平台删快照内容。
-- 工作区里有无关的未提交改动：每次提交都按文件名 `git add`，**绝不要 `git add -A`**，尤其不要带上 `k8s_cloud_platform.sql`。
+- 工作区里有无关的未提交改动：每次提交都按文件名 `git add`，**绝不要 `git add -A`**，尤其不要带上 `../../dbback/k8s_cloud_platform.sql`。
 - 提交信息结尾加 `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`。
 - Maven 统一用：`mvn -o test -pl <模块> -am -Dtest=<类> -Dsurefire.failIfNoSpecifiedTests=false`。
 

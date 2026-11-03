@@ -151,13 +151,13 @@ onMounted(async () => {
 
     <div v-else class="panel table-panel">
       <el-table v-loading="loading" :data="rows" stripe>
-        <el-table-column label="名称" min-width="160">
+        <el-table-column label="名称" min-width="260">
           <template #default="{ row }">
             {{ row.clientName || '—' }}
             <el-tag v-if="row.builtin" size="small" effect="plain" class="builtin-tag">内置</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="client_id" min-width="180">
+        <el-table-column label="client_id" min-width="280">
           <template #default="{ row }"><code class="res-name">{{ row.clientId }}</code></template>
         </el-table-column>
         <el-table-column label="类型" width="80">

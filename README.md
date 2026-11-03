@@ -196,7 +196,7 @@ platform-api **不依赖 fabric8**，也不直接连集群。
 ls platform-data/src/main/resources/db/migration   # V2026_09_24_1__... → 按序执行
 ```
 
-首次建库可以直接导入根目录的全量 dump `k8s_cloud_platform.sql`（它停留在较早的基线，**之后的新迁移仍要补跑**）。
+首次建库可以直接导入根目录的全量 dump `docs/dbback/k8s_cloud_platform.sql`（它停留在较早的基线，**之后的新迁移仍要补跑**）。
 规则：**先重放本次新增的 SQL，再启动新构建** —— 新代码里有过 fail-closed 的启动期交叉校验，缺表/缺权限行会直接拒启。
 
 ### 4.3 编译与测试

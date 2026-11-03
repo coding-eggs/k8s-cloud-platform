@@ -41,7 +41,7 @@ source V2026_10_01_1__user_platform_role_list.sql;    -- 用户平台角色回�
 - gateway client 的 grant_types UPDATE（移除 token-exchange）**dev 库已执行**；增量环境补一句
   （与 dump 终态一致）：
   `UPDATE oauth2_registered_client SET authorization_grant_types = 'refresh_token,authorization_code' WHERE client_id='gateway-code-client';`
-- **全新环境** = 导入 `k8s_cloud_platform.sql` dump → 然后**照跑 V1 + V2 + V2026_09_26_1 + V2026_09_27_1 + V2026_09_29_1 + V2026_09_29_2 + V2026_10_01_1**（V1 对 dump 库是 no-op）。
+- **全新环境** = 导入 `../../dbback/k8s_cloud_platform.sql` dump → 然后**照跑 V1 + V2 + V2026_09_26_1 + V2026_09_27_1 + V2026_09_29_1 + V2026_09_29_2 + V2026_10_01_1**（V1 对 dump 库是 no-op）。
   dump 只含结构 + `builtin_role_admin` 一行，`platform_permission` / `platform_role_permission`
   **没有任何 seed 行**——所以 **V2（及 B3 的 V2026_09_26_1、权限点管理的 V2026_09_27_1、资源域细粒度的 V2026_09_29_1 + admin 补挂的 V2026_09_29_2、用户角色回显的 V2026_10_01_1）不可省**，省了就是空权限表 → 启动被交叉校验拒绝（或 admin 缺资源页）。
 

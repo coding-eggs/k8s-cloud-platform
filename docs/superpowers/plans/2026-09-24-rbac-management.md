@@ -34,7 +34,7 @@ Task 1 → 2 → 3（数据层）→ 4（seed）→ 5（模型/工具）→ 6（
 - Create: `platform-data/src/main/java/com/coding/data/models/auth/RoleScope.java`
 - Modify: `platform-data/src/main/java/com/coding/data/models/auth/PlatformRole.java`
 - Modify: `platform-data/src/main/resources/mapper/auth/PlatformRoleMapper.xml`
-- Create: `platform-data/src/main/resources/db/migration/V2026_09_24_1__rbac_schema.sql`（若无 flyway，见 Step 5：改为手动执行 + 记录到 `k8s_cloud_platform.sql`）
+- Create: `platform-data/src/main/resources/db/migration/V2026_09_24_1__rbac_schema.sql`（若无 flyway，见 Step 5：改为手动执行 + 记录到 `../../dbback/k8s_cloud_platform.sql`）
 
 **Interfaces:**
 - Produces: `enum RoleScope { PLATFORM, TENANT }`；`PlatformRole.getScope():String`、`getBuiltIn():Byte`（列 `built_in`，字段驼峰 `builtIn`）。
@@ -101,7 +101,7 @@ UPDATE platform_role SET scope='PLATFORM', built_in=1 WHERE code='admin';
 
 - [ ] **Step 5: 应用到 dev 库 + 同步全量 dump**
 
-若项目用 flyway（`db/migration/` 存在即可能）：重启 platform-api/auth 自动迁移。若无：手动执行该 SQL 到 dev MySQL，并把两列的 DDL 与 `admin` 行的 seed 追加进根目录 `k8s_cloud_platform.sql` 的 `platform_role` 段（保持 dump 与实库一致，供新环境初始化）。
+若项目用 flyway（`db/migration/` 存在即可能）：重启 platform-api/auth 自动迁移。若无：手动执行该 SQL 到 dev MySQL，并把两列的 DDL 与 `admin` 行的 seed 追加进根目录 `../../dbback/k8s_cloud_platform.sql` 的 `platform_role` 段（保持 dump 与实库一致，供新环境初始化）。
 
 Run（手动应用时）: `mysql -u<user> -p<pwd> <db> < platform-data/src/main/resources/db/migration/V2026_09_24_1__rbac_schema.sql`
 
@@ -126,7 +126,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 ## Task 2: 新增关联表模型 + mapper（role_permission / user_tenant / user_tenant_role）
 
-三张表**在 schema 里已存在**（见 `k8s_cloud_platform.sql`），本任务只补 Java model + mapper + XML（当前完全没有）。这是写入口的地基。
+三张表**在 schema 里已存在**（见 `../../dbback/k8s_cloud_platform.sql`），本任务只补 Java model + mapper + XML（当前完全没有）。这是写入口的地基。
 
 **Files:**
 - Create: `platform-data/.../models/auth/PlatformRolePermission.java`, `PlatformUserTenant.java`, `PlatformUserTenantRole.java`
@@ -852,7 +852,7 @@ SET grant_types = REPLACE(grant_types, 'urn:ietf:params:oauth:grant-type:token-e
 WHERE client_id = 'gateway-code-client';
 ```
 
-（执行前 SELECT 确认列值形状；改到 dev 库并同步 `k8s_cloud_platform.sql` dump。）
+（执行前 SELECT 确认列值形状；改到 dev 库并同步 `../../dbback/k8s_cloud_platform.sql` dump。）
 
 - [ ] **Step 6: 编译 + 打包**
 
