@@ -54,13 +54,13 @@ public class LoginSuccessHandler extends SavedRequestAwareAuthenticationSuccessH
         userMapper.updateLastLoginTime(securityUser.getUsername(),LocalDateTime.now());
         map.put("userinfo",securityUser);
 
-        // 常规登录跳转
+        // 常规登录跳转：没有待续的授权请求时回平台首页（同源部署下 "/" 即平台前端）
         if(ObjectUtils.isEmpty(defaultSavedRequest) || "/".equals(defaultSavedRequest.getRequestURI())
                 || "undefined".equals(defaultSavedRequest.getRequestURI()) ){
-            map.put("requestURI","/client-manage.html");
+            map.put("requestURI","/");
         }else{
             if (defaultSavedRequest.getRequestURI().startsWith("/.well-known")) {
-                map.put("requestURI","/client-manage.html");
+                map.put("requestURI","/");
             } else {
                 map.put("requestURI",defaultSavedRequest.getRedirectUrl());
             }
