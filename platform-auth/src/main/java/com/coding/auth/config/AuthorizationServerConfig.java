@@ -248,10 +248,26 @@ public class AuthorizationServerConfig {
                                                                        @Value("${platform.jwt.permissions-in-token:false}") boolean permissionsInToken) {
 
         return context -> {
+            ClientSettings clientSettings = context.getRegisteredClient().getClientSettings();
+            //token 形态（JWS/JWE、对称/非对称）与客户端类别无关，所有 token 都要带上
+            setCustomClientSettings(context, clientSettings);
+
+            Object principal = context.getPrincipal().getPrincipal();
+            TokenClaimsPolicy.Kind kind = TokenClaimsPolicy.classify(context.getRegisteredClient(), principal);
+            if (kind == TokenClaimsPolicy.Kind.NO_USER) {
+                return;
+            }
             //通过username 查询用户信息
-            User securityUser = (User) context.getPrincipal().getPrincipal();
+            User securityUser = (User) principal;
             String username = securityUser.getUsername();
             PlatformUser platformUser = userMapper.selectByUsername(username);
+
+            if (kind == TokenClaimsPolicy.Kind.EXTERNAL_USER) {
+                //外部客户端只拿显示名，平台角色 / 租户 / 权限一概不给
+                context.getClaims().claim("name",
+                        TokenClaimsPolicy.externalDisplayName(platformUser.getDisplayName(), username));
+                return;
+            }
 
             TokenUserInfo tokenUserInfo = TokenUserInfo.builder()
                     .username(platformUser.getUsername())
@@ -283,10 +299,6 @@ public class AuthorizationServerConfig {
             }
 
             context.getClaims().claim(jwtProperties.getDataKey(), tokenUserInfo);
-            ClientSettings clientSettings = context.getRegisteredClient().getClientSettings();
-
-            //如果客户端需要jwe加密，则需要客户端自己提供公钥/secret
-            setCustomClientSettings(context, clientSettings);
         };
 
     }
