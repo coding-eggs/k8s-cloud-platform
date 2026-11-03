@@ -1,6 +1,12 @@
 server:
   port: 8081
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+
 k8s:
   # k8s-server（唯一 K8s 适配器）管理域地址，/admin/** 端点
   server:

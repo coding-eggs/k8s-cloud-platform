@@ -27,6 +27,12 @@ server:
   #    故保留本项。两处必须成对理解，见 platform-web/nginx.conf 的认证段落。
   forward-headers-strategy: framework
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics
+
 # MyBatis 配置
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml
@@ -116,7 +122,6 @@ spring:
 #     显式启用（见 com.coding.auth.config.RedisSessionConfig），8h 空闲超时也在那里配置。
 jwt:
   enabled: true
-  issuer: http://127.0.0.1:9527
   data-key: data
 platform:
   jwt:
