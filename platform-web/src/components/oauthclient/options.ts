@@ -4,7 +4,6 @@ export const GRANT_AUTH_CODE = 'authorization_code'
 export const GRANT_REFRESH = 'refresh_token'
 export const GRANT_CLIENT_CREDENTIALS = 'client_credentials'
 export const GRANT_DEVICE_CODE = 'urn:ietf:params:oauth:grant-type:device_code'
-export const GRANT_TOKEN_EXCHANGE = 'urn:ietf:params:oauth:grant-type:token-exchange'
 export const GRANT_SESSION_RENEWAL = 'urn:coding:grant-type:session-renewal'
 
 export interface GrantOption {
@@ -19,7 +18,6 @@ export const GRANT_OPTIONS: GrantOption[] = [
   { value: GRANT_REFRESH, label: '刷新令牌', publicOk: false },
   { value: GRANT_CLIENT_CREDENTIALS, label: '客户端凭据（无用户）', publicOk: false },
   { value: GRANT_DEVICE_CODE, label: '设备码', publicOk: false },
-  { value: GRANT_TOKEN_EXCHANGE, label: 'Token 交换', publicOk: false },
   { value: GRANT_SESSION_RENEWAL, label: '会话续期', publicOk: true },
 ]
 

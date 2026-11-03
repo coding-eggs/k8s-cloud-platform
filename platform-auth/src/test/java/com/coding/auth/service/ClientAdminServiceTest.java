@@ -323,9 +323,12 @@ class ClientAdminServiceTest {
     @Test
     void extendedGrantTypes() {
         ClientAdminRequest all = confidential(Set.of("authorization_code", "refresh_token", "client_credentials",
-                "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:token-exchange",
-                "urn:coding:grant-type:session-renewal"));
-        assertThat(repo.findById(svc.create(all).client().getId()).getAuthorizationGrantTypes()).hasSize(6);
+                "urn:ietf:params:oauth:grant-type:device_code", "urn:coding:grant-type:session-renewal"));
+        assertThat(repo.findById(svc.create(all).client().getId()).getAuthorizationGrantTypes()).hasSize(5);
+
+        //token 交换已于 RBAC 改造时退役，不再作为可选项
+        ClientAdminRequest exchange = confidential(Set.of("urn:ietf:params:oauth:grant-type:token-exchange"));
+        assertCode(() -> svc.create(exchange), EnumResponseType.OAUTH_CLIENT_INVALID);
 
         ClientAdminRequest deviceRefresh = confidential(Set.of("urn:ietf:params:oauth:grant-type:device_code", "refresh_token"));
         deviceRefresh.setRedirectUris(null);

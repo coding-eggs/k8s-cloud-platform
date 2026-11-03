@@ -19,7 +19,7 @@ import {
 /**
  * 新建 / 编辑 OAuth 客户端的抽屉。规则的权威在 platform-auth（这里只是不让人填出注定被拒的组合）：
  * - 公共客户端只有授权码（强制 PKCE）与会话续期，且不能用任何对称算法（没处保管密钥）；
- * - 机密客户端的认证方式、PKCE 开关、设备码 / Token 交换等与旧管理页一致，可以不配但都在；
+ * - 机密客户端的认证方式、PKCE 开关、设备码等与旧管理页一致，可以不配但都在；
  * - 内置客户端（平台前端）只能改回调地址、登出回调与 Access Token 有效期。
  * 对称密钥由服务端生成，保存后在一次性弹窗里展示。
  */
@@ -199,7 +199,7 @@ async function submit(): Promise<void> {
             >{{ g.label }}</el-checkbox>
           </el-checkbox-group>
           <div class="form-tip">
-            客户端凭据拿到的 token 不含任何用户信息。设备码、Token 交换、刷新令牌需要客户端能认证自己，公共客户端不可用。
+            客户端凭据拿到的 token 不含任何用户信息。设备码、刷新令牌需要客户端能认证自己，公共客户端不可用。
           </div>
         </el-form-item>
         <el-form-item label="认证方式" required>

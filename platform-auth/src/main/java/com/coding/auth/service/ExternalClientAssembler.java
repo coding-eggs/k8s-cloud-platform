@@ -31,8 +31,7 @@ import static com.coding.auth.service.ClientTokenForms.invalid;
 /**
  * 按规则组装外部客户端（spec §4.2）。创建与更新共用：更新时请求里为 null 的字段取库内值。
  *
- * <p>能力与旧客户端管理页对齐（可以不配，但不删）：认证方式四选、授权码可关 PKCE、设备码 / token 交换 /
- * 会话续期、全部 scope、RS/ES/HS 签名与含 GCMKW 的 JWE。老行里库内已有、但不在可选项里的值原样保留，
+ * <p>能力与旧客户端管理页对齐（可以不配，但不删）：认证方式四选、授权码可关 PKCE、设备码 / 会话续期、全部 scope、RS/ES/HS 签名与含 GCMKW 的 JWE。老行里库内已有、但不在可选项里的值原样保留，
  * 不在保存时静默丢弃。只有密钥改为服务端生成，且不再设过期时间。
  */
 final class ExternalClientAssembler {
@@ -41,7 +40,6 @@ final class ExternalClientAssembler {
     static final String REFRESH = AuthorizationGrantType.REFRESH_TOKEN.getValue();
     static final String CLIENT_CREDENTIALS = AuthorizationGrantType.CLIENT_CREDENTIALS.getValue();
     static final String DEVICE_CODE = AuthorizationGrantType.DEVICE_CODE.getValue();
-    static final String TOKEN_EXCHANGE = AuthorizationGrantType.TOKEN_EXCHANGE.getValue();
     static final String SESSION_RENEWAL = SessionRenewalGrantType.VALUE;
 
     static final String BASIC = ClientAuthenticationMethod.CLIENT_SECRET_BASIC.getValue();
@@ -58,12 +56,12 @@ final class ExternalClientAssembler {
     }
 
     /**
-     * SAS 只对「PKCE 换 token」请求做公共客户端认证，所以设备码 / 客户端凭据 / token 交换都要求客户端能认证自己（机密）；
+     * SAS 只对「PKCE 换 token」请求做公共客户端认证，所以设备码 / 客户端凭据都要求客户端能认证自己（机密）；
      * SAS 也不给公共客户端发 refresh_token。会话续期按 client_id 认客户端，两类都行。
      */
     static Set<String> allowedGrants(ClientType type) {
         return type == ClientType.PUBLIC ? Set.of(AUTH_CODE, SESSION_RENEWAL)
-                : Set.of(AUTH_CODE, REFRESH, CLIENT_CREDENTIALS, DEVICE_CODE, TOKEN_EXCHANGE, SESSION_RENEWAL);
+                : Set.of(AUTH_CODE, REFRESH, CLIENT_CREDENTIALS, DEVICE_CODE, SESSION_RENEWAL);
     }
 
     static Set<String> allowedAuthMethods(ClientType type) {
