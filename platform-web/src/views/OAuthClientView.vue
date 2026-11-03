@@ -188,20 +188,22 @@ onMounted(async () => {
             />
           </template>
         </el-table-column>
-        <el-table-column v-if="canManage" label="操作" width="200" fixed="right">
+        <el-table-column v-if="canManage" label="操作" width="220" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-dropdown v-if="row.hasClientSecret || row.hasJwsSecret || row.hasJweSecret" trigger="click">
-              <el-button link type="primary">重置密钥</el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-if="row.hasClientSecret" @click="onReset(row, 'client')">client_secret</el-dropdown-item>
-                  <el-dropdown-item v-if="row.hasJwsSecret" @click="onReset(row, 'jws')">JWS 签名密钥</el-dropdown-item>
-                  <el-dropdown-item v-if="row.hasJweSecret" @click="onReset(row, 'jwe')">JWE 加密密钥</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-button v-if="!row.builtin" link type="danger" class="del-btn" @click="onDelete(row)">删除</el-button>
+            <div class="row-ops">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-dropdown v-if="row.hasClientSecret || row.hasJwsSecret || row.hasJweSecret" trigger="click">
+                <el-button link type="primary">重置密钥</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-if="row.hasClientSecret" @click="onReset(row, 'client')">client_secret</el-dropdown-item>
+                    <el-dropdown-item v-if="row.hasJwsSecret" @click="onReset(row, 'jws')">JWS 签名密钥</el-dropdown-item>
+                    <el-dropdown-item v-if="row.hasJweSecret" @click="onReset(row, 'jwe')">JWE 加密密钥</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <el-button v-if="!row.builtin" link type="danger" @click="onDelete(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -232,7 +234,14 @@ onMounted(async () => {
 .grants {
   font-size: 12px;
 }
-.del-btn {
-  margin-left: 12px;
+/* 按钮被 el-dropdown 包住后，EP 的「相邻按钮 margin-left」不再生效，间距忽大忽小、窄时还会折行 —— 统一用 flex gap */
+.row-ops {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.row-ops .el-button + .el-button {
+  margin-left: 0;
 }
 </style>
