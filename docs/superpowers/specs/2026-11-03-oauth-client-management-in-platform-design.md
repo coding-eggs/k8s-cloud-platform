@@ -1,7 +1,7 @@
 # OAuth 客户端管理搬进平台 — 设计
 
 日期：2026-11-03
-状态：待用户审阅（已过一轮实现者视角评审）
+状态：已实施待部署（2026-11-03，分支 feat/oauth-client-management；单测 / 前端构建绿，真跑验收见 §7 未做）
 
 ## 1. 为什么做
 
@@ -126,7 +126,11 @@ platform-auth 里的客户端管理（`client-manage.html` + `/clients/**`）是
 
 ## 6. 部署与迁移注意
 
-- 顺序：重放迁移 → 重建 platform-auth、platform-api、platform-web → 管理员重新登录。
+- 顺序：
+  1. 重放 `V2026_11_03_2__oauth_client_management.sql`（内置标记 + 权限行；不重放的话 platform-api 拒启，平台前端的 token 会被当成外部 token → 全站 401）；
+  2. auth 与 platform-api 配同一个 `PLATFORM_INTERNAL_TOKEN`（任一侧为空即拒启）；platform-api 的 `platform.auth.internal-url` 默认 `http://${AUTH_HOST}:${AUTH_PORT}/auth`，走内网直连；
+  3. 重建 platform-auth、platform-api、k8s-server（aud 校验同批）、platform-web（含 nginx 的 `/auth/internal/` → 404）；
+  4. 管理员重新登录；在「组织 → OAuth 客户端」核对历史客户端（`gateway-code-client` 等）是否保留。
 - 现有库里除 `platform-web-client` 外的客户端（如历史的 `gateway-code-client` 或测试客户端）会自动归为「外部」：token 不再带内部信息、授权方式按 §4.2 收窄。上线前应在新页面逐个核对，不用的删掉。
 - 与 2026-11-03 的 aud 白名单改动同批上线。
 
@@ -140,6 +144,8 @@ platform-auth 里的客户端管理（`client-manage.html` + `/clients/**`）是
 - 新建外部客户端 → 用一个测试 RP 走完授权码 + PKCE → 拿到的 token 只有 `sub` 与显示名；该 token 调 platform-api 401。
 - 密钥只在创建 / 重置响应里出现一次；列表、详情、审计记录中都没有。
 - 停用后该客户端无法发起新授权。
+- 前门 `/auth/internal/clients/list` 得 404；内网直连不带 `X-Platform-Internal-Token` 得 401。
+- 停用外部客户端后，用它的 refresh_token 换 token 得 `invalid_client`；内置客户端不受影响。
 
 ## 8. 给将来「第三方调平台接口」留的口子
 
