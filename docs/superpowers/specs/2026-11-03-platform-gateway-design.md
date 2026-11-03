@@ -84,14 +84,19 @@ platform-api ──（集群内）──→ k8s-server（不经网关）
 
 ## 6. 技术选型（我的决定，评审时请重点看）
 
-**6.1 网关实现：Spring Cloud Gateway Server MVC（servlet 版）**，而非 WebFlux 版。
-- 理由：现有鉴权全是 servlet `AuthorizationManager<RequestAuthorizationContext>`，闭包查询走 MyBatis（阻塞）。
-  MVC 版可以几乎原样搬 `PermissionAuthorizationManager` + Spring Security servlet 链；WebFlux 版要整套改写成 reactive，
-  且 MyBatis 在 reactive 里只能包 `boundedElastic`，得不偿失。
-- 代价：MVC 版每连接一个线程，WS/长流会占线程。上 JDK 21 虚拟线程（`spring.threads.virtual.enabled=true`）缓解。
-- **需要实施前验证**：MVC 版对 WebSocket 的代理支持。若当前版本不支持 WS 透传，WS 路径（`/api/ws/**`）
-  由 nginx 直接打到 platform-api，鉴权留在 api 的握手拦截器里（现状即如此）——这是唯一允许绕网关的口子，必须在文档/代码里写明。**用户已接受这个例外**（2026-11-03）。
-  实施第一步就是这个 spike，结果决定 §4 拓扑图里 WS 的走向。
+**6.1 网关实现：Spring Cloud Gateway（WebFlux 版）**——**用户定（2026-11-04）**。
+- 理由：WebSocket / 长流式接口的转发是 WebFlux 版的成熟能力，少量线程扛长连接；
+  原先担心的「MVC 版能否代理 WS」不再是风险，§4 拓扑里 WS 照常经网关。
+- 代价（只落在网关，业务服务仍是 servlet，不动）：
+  - 鉴权改写成 `ReactiveAuthorizationManager<AuthorizationContext>`，安全链换 `ServerHttpSecurity`，
+    JWT 解码换 `ReactiveJwtDecoder`（同样的 aud/签名校验规则，见 `PlatformJwtValidators`）。
+  - 闭包查询（MyBatis，阻塞）与 DENIED 审计写库：包进 `Schedulers.boundedElastic()` 调用，**不换 R2DBC**。
+  - Redis 闭包缓存：用 `ReactiveRedisTemplate`，或同样包 `boundedElastic`（实施者定）。
+  - 测试改用 `WebTestClient`。
+- **公共库约束**：被网关与业务服务同时引用的部分（权限表匹配、闭包计算、豁免规则、审计记录模型）
+  只放纯逻辑，**不得依赖 servlet 或 reactive API**；两侧各写一层薄适配。否则网关会把 servlet 依赖拖进 WebFlux 应用
+  （Spring Boot 检测到 servlet 栈会按 MVC 启动）。
+- WS 例外（nginx 直连 api）原为 MVC 版兜底，WebFlux 下预计用不上；若实施时 WS 透传仍有问题，用户已接受该例外。
 
 **6.2 身份传递：服务继续本地校验 JWT**，网关原样转发 `Authorization` 头，不另造 `X-User-*` 头。
 - 理由：服务本来就是资源服务器，零改动；即使有人绕过网关直连服务也拿不到身份；不需要设计网关→服务之间的头签名。
@@ -108,18 +113,35 @@ platform-api ──（集群内）──→ k8s-server（不经网关）
 - 代码上（auth 管理接口）：**我的决定**：auth 管理接口本地校验 JWT（同 §6.2）但**不做权限判定**，依赖网关；
   因此 auth 管理接口必须靠网络隔离保证只有网关能访问。
   **用户已定（2026-11-03）：不加内部令牌**，网关只把用户的 JWT 原样透传，防绕过靠网络隔离。
-- 服务里保留一条兜底：没有被任何网关路由覆盖的 controller 端点，启动时报错（见 §8）。
+- 服务里保留一条兜底：没有被任何网关路由覆盖的 controller 端点，启动时报错（见 §8.5）。
 
-## 8. 权限表与端点的启动对账（重做）
+## 8. 权限表：网关如何知道、如何与业务对齐
 
-现在 `PermissionCrossCheckRunner` 在 api 进程里反射自己的 controller，确保「每个端点都有权限行或在豁免表」，否则拒启。
-网关反射不到别的服务的 controller，所以改成：
+**8.1 来源**：网关直连平台库，读同一张 `platform_permission`（`domain=API` 的行：`resource`=路径规则、
+`action`=HTTP 方法、`code`=权限码）。表是唯一真相，不需要服务向网关上报。
 
-- 每个业务服务（api、auth 管理部分）启动时**自检**：反射自己的端点，对照权限表 + 豁免表，缺行拒启——
-  也就是把现在的 Runner 搬进公共库，各服务各跑一份。检查的是「权限表里有没有这条路径」，不做判定。
-- 网关启动时检查：权限表里每一行的路径都能匹配到某条路由（防止权限行写了但流量根本到不了）。缺则 WARN，不拒启。
-- 路径前缀：权限表存的是服务内路径（如 `/oauth-clients/list`），网关按路由的前缀剥离规则换算后匹配。
-  auth 管理接口的权限行 `domain` 建议仍沿用现有 `V2026_11_03_2` 那 8 行，只是端点归属变了。
+**8.2 按服务区分（新增列，我的决定）**：表里现存的是 api 的服务内路径，没有「属于哪个服务」。
+auth 管理接口、将来拆出的服务进来后路径可能撞车，因此给 `platform_permission` 加一列 `service`
+（`platform-api` / `platform-auth` …），与网关路由 id 一一对应；现有 API 行回填 `platform-api`，
+`V2026_11_03_2` 的 8 行客户端管理行改 `platform-auth`（路径同步改成 auth 内部路径）。
+
+**8.3 判定**：请求 `/api/**` → 按路由识别服务 → 剥前缀得服务内路径 → 用（service, 路径, 方法）查码 →
+按用户 id 取闭包（Redis TTL 30s）→ ANY-of 命中放行。行多码、码多行的现有语义不变。
+
+**8.4 刷新**：现在 api 只在启动时加载一次权限表（`PermissionRegistryFactory`），权限点管理页改行后要重启才生效。
+网关改为**定时重载**（建议 60s，实施者定），载入失败保留上一份并 ERROR 日志，不清空（清空=全站 403）。
+角色/用户分配变化不需要重载——那走闭包缓存的 30s TTL。
+
+**8.5 两头对账**（替代 api 里的 `PermissionCrossCheckRunner`）：
+- 每个业务服务启动时反射自己的端点，对照「本服务的」权限行 + 豁免表，缺行拒启——Runner 搬进公共库，各服务各跑一份。
+  新加接口忘配权限，服务起不来。
+- 网关启动（及每次重载）检查：每一行都能对上一条路由；对不上 WARN，不拒启。
+
+**8.6 权限 / 角色管理接口放在哪（我的建议）**：角色增删改、给角色分配权限、权限点管理、可分配集合
+（`/role/permission/assignable`）、用户分配角色、`/user/me` 等**全部留在 platform-api**（或将来拆出的身份服务），
+**不进网关**。理由：它们是带业务规则的写接口（角色不变量、可分配集合、审计），放进网关等于网关写业务（反目标）。
+网关对这些表**只读**；管理接口改了表，网关靠 §8.4 的重载和闭包 TTL 自然看到。
+这些管理接口本身照常受网关鉴权（如 `role:manage`）。
 
 ## 9. 对已上线/在途功能的影响
 
@@ -146,3 +168,5 @@ platform-api ──（集群内）──→ k8s-server（不经网关）
 1. auth 管理接口防绕过：**不加内部令牌**，网关透传用户 JWT，靠网络隔离（§7）。
 2. `/jwk/generate` 缺口：**等网关一起修**，这期间不单独收紧（§9）。
 3. WS 若网关代理不了：**接受**由 nginx 直连 platform-api、鉴权留在 api 的例外（§6.1）。
+4. 网关用 **WebFlux 版**（2026-11-04，§6.1）。
+5. 权限 / 角色管理接口**留在 platform-api**，网关只读权限相关表（§8.6）——我的建议，待用户确认。
