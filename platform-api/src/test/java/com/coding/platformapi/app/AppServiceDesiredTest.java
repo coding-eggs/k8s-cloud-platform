@@ -41,6 +41,29 @@ class AppServiceDesiredTest {
     void underscoreOnlyNamesDoNotThrow() {
         assertThat(AppServiceDesired.warnings(with("_", "x"))).isEmpty();
         assertThat(AppServiceDesired.warnings(with("__", "x"))).isEmpty();
+        assertThat(AppServiceDesired.warnings(with(".-", "x"))).isEmpty();
+    }
+
+    @Test
+    void dottedAndDashedNamesAreSplitForTheSensitiveCheck() {
+        assertThat(AppServiceDesired.warnings(with("spring.datasource.password", "hunter2"))).hasSize(1);
+        assertThat(AppServiceDesired.warnings(with("auth-token", "abc"))).hasSize(1);
+        assertThat(AppServiceDesired.warnings(with("stripe.api.key", "sk"))).hasSize(1);
+        assertThat(AppServiceDesired.warnings(with("spring.datasource.url", "jdbc:x"))).isEmpty();
+    }
+
+    @Test
+    void envNamesFollowTheLegacyKubernetesRule() {
+        for (String ok : List.of("spring.datasource.url", "my-var", "_X", ".hidden", "A1_b.c-d")) {
+            Map<String, Object> d = base();
+            d.put("env", List.of(Map.of("name", ok, "kind", "LITERAL", "value", "v")));
+            assertThat(AppServiceDesired.normalize(d)).containsKey("env");
+        }
+        for (String bad : List.of("1abc", "a b", "a=b", "a:b", "")) {
+            Map<String, Object> d = base();
+            d.put("env", List.of(Map.of("name", bad, "kind", "LITERAL", "value", "v")));
+            rejects(d).hasMessageContaining("环境变量名不合法");
+        }
     }
     // ---------------------------------------------------------------- 配置文件
 

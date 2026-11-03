@@ -16,7 +16,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import type { AppDependencyRow, AppEnvRow } from '@/types'
-import { REF, refGroups } from './dependencyUtil'
+import { ENV_NAME_HINT, ENV_NAME_PATTERN, REF, refGroups } from './dependencyUtil'
 import { useNamespaceSecrets, type SecretCtx } from './useNamespaceSecrets'
 import AppRefPicker from './AppRefPicker.vue'
 import AppEnvImportDialog from './AppEnvImportDialog.vue'
@@ -117,7 +117,7 @@ function refProblem(r: AppEnvRow): string {
 }
 function nameProblem(r: AppEnvRow, i: number): string {
   if (!r.name) return ''
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(r.name)) return '变量名只能含字母、数字、下划线，且不能以数字开头'
+  if (!ENV_NAME_PATTERN.test(r.name)) return '变量名' + ENV_NAME_HINT
   if (model.value.some((o, idx) => idx !== i && o.name === r.name)) return '变量名重复'
   return ''
 }

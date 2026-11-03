@@ -41,7 +41,8 @@ public final class AppServiceDesired {
     /** 配置文件总大小上限：ConfigMap 硬上限 1MiB，快照与清单里还要各存一份 */
     private static final int FILES_TOTAL_BYTES_MAX = 512 * 1024;
 
-    private static final Pattern ENV_NAME = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
+    /** K8s 1.34 之前的规则（之后放宽到除 = 外的可打印 ASCII）：取它，新老集群都收；允许 spring.datasource.url 这类带点的名字 */
+    private static final Pattern ENV_NAME = Pattern.compile("^[-._A-Za-z][-._A-Za-z0-9]*$");
     private static final Set<String> SENSITIVE_LAST = Set.of("PASSWORD", "PWD", "PASSWD", "SECRET", "TOKEN", "APIKEY");
 
     private AppServiceDesired() {
@@ -269,9 +270,9 @@ public final class AppServiceDesired {
     }
 
     static boolean looksSensitive(String name) {
-        String[] t = name.toUpperCase().split("_");
+        String[] t = name.toUpperCase().split("[_.-]");
         if (t.length == 0) {
-            return false;   // 只由下划线组成的名字，split 得到空数组
+            return false;   // 只由分隔符组成的名字，split 得到空数组
         }
         String last = t[t.length - 1];
         if (SENSITIVE_LAST.contains(last)) {

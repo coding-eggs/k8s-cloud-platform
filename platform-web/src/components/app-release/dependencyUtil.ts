@@ -10,7 +10,9 @@ export const KEY_PATTERN = /^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$/
 export const RESERVED_SUFFIXES = ['-env', '-secret', '-headless', '-files']
 export const HOST_PATTERN = /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/
 export const INDEX_PATH_PATTERN = /^\/[A-Za-z0-9._~:,*+@=%/-]*$/
-export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+/** 与后端 AppServiceDesired.ENV_NAME 一致（K8s 1.34 前的规则，新老集群都收） */
+export const ENV_NAME_PATTERN = /^[-._A-Za-z][-._A-Za-z0-9]*$/
+export const ENV_NAME_HINT = '只能含字母、数字、下划线、点、中划线，且不能以数字开头'
 
 /** 依赖 / 服务共用的名称规则；返回空串 = 合法 */
 export function keyProblem(key: string): string {

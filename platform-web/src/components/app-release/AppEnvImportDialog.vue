@@ -8,7 +8,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import type { AppDependencyRow, AppEnvRow } from '@/types'
-import { DEP_FIELD_LABEL, ENV_NAME_PATTERN, depFields, envPrefix, refToken } from './dependencyUtil'
+import { DEP_FIELD_LABEL, ENV_NAME_HINT, ENV_NAME_PATTERN, depFields, envPrefix, refToken } from './dependencyUtil'
 
 const props = defineProps<{
   modelValue: boolean
@@ -64,7 +64,7 @@ function problem(l: Line, i: number): string {
   if (!l.checked) return ''
   const n = l.name
   if (!n) return '变量名不能为空'
-  if (!ENV_NAME_PATTERN.test(n)) return '只能含字母、数字、下划线，且不能以数字开头'
+  if (!ENV_NAME_PATTERN.test(n)) return ENV_NAME_HINT
   if (n.startsWith('_REF_')) return '_REF_ 是平台保留前缀'
   if (props.existingNames.includes(n)) return '已有同名变量'
   if (lines.value.some((o, idx) => idx !== i && o.checked && o.name === n)) return '变量名重复'

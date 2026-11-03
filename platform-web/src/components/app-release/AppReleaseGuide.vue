@@ -99,6 +99,7 @@ function onScroll() {
           <ul>
             <li><b>值 / 引用</b>：字面值，或含 <code>${名称.字段}</code> 的引用（可与文字拼接，如 <code>${api.url}/v1</code>）。</li>
             <li><b>Secret</b>：引用命名空间里已有的 Secret 的某个键。</li>
+            <li>变量名可含字母、数字、<code>_</code>、<code>.</code>、<code>-</code>，不能以数字开头，例如 <code>spring.datasource.url</code>。</li>
             <li>名字以 <code>PASSWORD</code> / <code>PWD</code> / <code>SECRET</code> / <code>TOKEN</code> / <code>API_KEY</code> 等结尾却写了明文时，发布预览会警告：请改用依赖引用或 Secret。</li>
           </ul>
           <h4>3.4 配置文件</h4>
