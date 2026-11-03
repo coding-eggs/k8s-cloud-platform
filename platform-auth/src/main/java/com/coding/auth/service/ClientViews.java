@@ -40,9 +40,12 @@ final class ClientViews {
         v.setEnabled(PlatformClientSettings.isEnabled(c));
         v.setGrantTypes(c.getAuthorizationGrantTypes().stream().map(AuthorizationGrantType::getValue)
                 .collect(Collectors.toCollection(LinkedHashSet::new)));
+        v.setClientAuthenticationMethods(c.getClientAuthenticationMethods().stream().map(ClientAuthenticationMethod::getValue)
+                .collect(Collectors.toCollection(LinkedHashSet::new)));
         v.setScopes(new LinkedHashSet<>(c.getScopes()));
         v.setRedirectUris(new LinkedHashSet<>(c.getRedirectUris()));
         v.setPostLogoutRedirectUris(new LinkedHashSet<>(c.getPostLogoutRedirectUris()));
+        v.setRequireProofKey(cs.isRequireProofKey());
         v.setRequireAuthorizationConsent(cs.isRequireAuthorizationConsent());
         v.setAccessTokenTimeToLive(ts.getAccessTokenTimeToLive().toSeconds());
         v.setRefreshTokenTimeToLive(ts.getRefreshTokenTimeToLive() != null ? ts.getRefreshTokenTimeToLive().toSeconds() : null);

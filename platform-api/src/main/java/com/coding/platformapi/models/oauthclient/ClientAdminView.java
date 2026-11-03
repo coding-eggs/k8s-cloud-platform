@@ -16,9 +16,11 @@ public class ClientAdminView {
     private boolean builtin;
     private boolean enabled;
     private Set<String> grantTypes;
+    private Set<String> clientAuthenticationMethods;
     private Set<String> scopes;
     private Set<String> redirectUris;
     private Set<String> postLogoutRedirectUris;
+    private boolean requireProofKey;
     private boolean requireAuthorizationConsent;
     private long accessTokenTimeToLive;
     private Long refreshTokenTimeToLive;

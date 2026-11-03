@@ -11,9 +11,11 @@ export interface OAuthClient {
   builtin: boolean
   enabled: boolean
   grantTypes: string[]
+  clientAuthenticationMethods: string[]
   scopes: string[]
   redirectUris: string[]
   postLogoutRedirectUris: string[]
+  requireProofKey: boolean
   requireAuthorizationConsent: boolean
   accessTokenTimeToLive: number
   refreshTokenTimeToLive: number | null
@@ -36,9 +38,11 @@ export interface OAuthClientRequest {
   clientName: string
   type?: OAuthClientType
   grantTypes: string[]
+  clientAuthenticationMethods: string[]
   scopes: string[]
   redirectUris: string[]
   postLogoutRedirectUris: string[]
+  requireProofKey: boolean
   requireAuthorizationConsent: boolean
   accessTokenTimeToLive: number
   refreshTokenTimeToLive: number

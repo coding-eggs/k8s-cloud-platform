@@ -9,6 +9,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import OAuthClientForm from '@/components/oauthclient/OAuthClientForm.vue'
 import SecretOnceDialog from '@/components/oauthclient/SecretOnceDialog.vue'
+import OAuthClientDetail from '@/components/oauthclient/OAuthClientDetail.vue'
+import { grantLabel } from '@/components/oauthclient/options'
 
 /**
  * OAuth 客户端（**平台管理员专属**）。外部系统接平台单点登录用；平台前端自己是「内置」客户端，
@@ -26,17 +28,8 @@ const editing = ref<OAuthClient | null>(null)
 const secretDialog = ref(false)
 const shownSecrets = ref<OAuthClientSecrets | null>(null)
 const shownClientId = ref('')
-
-const GRANT_LABELS: Record<string, string> = {
-  authorization_code: '授权码',
-  refresh_token: '刷新令牌',
-  client_credentials: '客户端凭据',
-  'urn:coding:grant-type:session-renewal': '会话续期',
-}
-
-function grantLabel(g: string): string {
-  return GRANT_LABELS[g] ?? g
-}
+const detailVisible = ref(false)
+const detailClient = ref<OAuthClient | null>(null)
 
 function tokenForm(row: OAuthClient): string {
   if (row.jwtType === 'JWE') return `JWE · ${row.jweKeyAlg ?? '?'} / ${row.jweEncMethod ?? 'A256GCM'}`
@@ -65,6 +58,11 @@ async function loadScopes(): Promise<void> {
 function openCreate(): void {
   editing.value = null
   drawer.value = true
+}
+
+function openDetail(row: OAuthClient): void {
+  detailClient.value = row
+  detailVisible.value = true
 }
 
 function openEdit(row: OAuthClient): void {
@@ -188,11 +186,12 @@ onMounted(async () => {
             />
           </template>
         </el-table-column>
-        <el-table-column v-if="canManage" label="操作" width="220" fixed="right">
+        <el-table-column label="操作" :width="canManage ? 260 : 80" fixed="right">
           <template #default="{ row }">
             <div class="row-ops">
-              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-dropdown v-if="row.hasClientSecret || row.hasJwsSecret || row.hasJweSecret" trigger="click">
+              <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+              <el-button v-if="canManage" link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-dropdown v-if="canManage && (row.hasClientSecret || row.hasJwsSecret || row.hasJweSecret)" trigger="click">
                 <el-button link type="primary">重置密钥</el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
@@ -202,7 +201,7 @@ onMounted(async () => {
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
-              <el-button v-if="!row.builtin" link type="danger" @click="onDelete(row)">删除</el-button>
+              <el-button v-if="canManage && !row.builtin" link type="danger" @click="onDelete(row)">删除</el-button>
             </div>
           </template>
         </el-table-column>
@@ -211,6 +210,7 @@ onMounted(async () => {
 
     <OAuthClientForm v-model="drawer" :client="editing" :scopes="scopes" @saved="onSaved" />
     <SecretOnceDialog v-model="secretDialog" :client-id="shownClientId" :secrets="shownSecrets" />
+    <OAuthClientDetail v-model="detailVisible" :client="detailClient" />
   </div>
 </template>
 

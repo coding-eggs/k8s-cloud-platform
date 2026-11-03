@@ -251,9 +251,15 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 
 - **入口**：平台「组织 → OAuth 客户端」页 → platform-api `/oauth-clients/**`（权限 `platform:oauth-client:view|manage`，只绑 admin；写操作进审计）→ 本模块 `/internal/clients/**`。写逻辑留在这里，因为对称密钥要用 auth 自己的加密密钥落库。
 - **内置客户端**（`platform.client.builtin=true`，迁移 `V2026_11_03_2` 给 `platform-web-client` 打标）：不可删除、不可停用，只能改回调地址、登出回调与 access token TTL（< 会话空闲超时）。
-- **外部客户端**：机密（`client_secret_basic`，可选授权码 / 刷新令牌 / 客户端凭据）或公共（`none`，只能授权码），建后类型与 client_id 不可改；授权码一律强制 PKCE；`refresh_token` 必须伴随授权码；client_id 留空则生成 `ext-` + 12 位。
+- **外部客户端**（能力与旧管理页对齐：可以不配，但不删）：
+  - 机密：认证方式 `client_secret_basic` / `client_secret_post` / `private_key_jwt`（可兼带 `none`），授权方式可选授权码、刷新令牌、客户端凭据、设备码、Token 交换、会话续期；授权码可关 PKCE。
+  - 公共：认证方式固定 `none`，授权方式只有授权码（强制 PKCE）与会话续期 —— SAS 只对「PKCE 换 token」请求做公共客户端认证，设备码等走不通。
+  - `private_key_jwt` 与非对称 JWE 共用对方的 JWK Set 地址；`refresh_token` 须伴随授权码或设备码；建后类型与 client_id 不可改；client_id 留空则生成 `ext-` + 12 位。
+  - 签名 RS256/384/512、ES256/384/512、HS256/384/512（非 RS256 的非对称算法要求平台已有对应 JWK）；JWE 含 `A*KW` / `A*GCMKW` / `dir` / `RSA-OAEP*` / `ECDH-ES*`。
+  - 密钥一律服务端生成、只显示一次；client_secret 不设过期时间，重置时清掉老行遗留的过期时间。
+  - 老行里库内已有、但不在可选项里的值（旧页面写进去的 scope / 授权方式 / 认证方式）保存时原样保留。
 - **停用**：`platform.client.enabled=false` → 主仓库（`EnabledOnlyRegisteredClientRepository`）返回 null，授权、换 token、refresh、续期都得到 `invalid_client`；已签出的 token 自然到期。
-- **scope 目录**：只有 `openid` / `profile`（`PlatformScopes`）。老行里目录外的 scope 在下次保存时被规整掉。
+- **scope 目录**（`PlatformScopes`）：`openid` / `profile` / `email` / `phone` / `address` / `message.read` / `message.write`，与旧页面一致。外部 token 目前只带 `sub` + `name`。
 - **不回显密钥**：列表 / 详情只给 `hasClientSecret` / `hasJwsSecret` / `hasJweSecret` 与 kid。
 
 ---

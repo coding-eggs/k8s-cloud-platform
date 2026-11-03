@@ -21,9 +21,13 @@ public class ClientAdminRequest {
     /** 创建时必填；更新时忽略 */
     private ClientType type;
     private Set<String> grantTypes;
+    /** client_secret_basic / client_secret_post / private_key_jwt / none；机密客户端至少一种非 none */
+    private Set<String> clientAuthenticationMethods;
     private Set<String> scopes;
     private Set<String> redirectUris;
     private Set<String> postLogoutRedirectUris;
+    /** 启用授权码时是否强制 PKCE；公共客户端恒为 true */
+    private Boolean requireProofKey;
     private Boolean requireAuthorizationConsent;
     /** 秒 */
     private Long accessTokenTimeToLive;
@@ -34,5 +38,6 @@ public class ClientAdminRequest {
     private String jwsSigAlg;
     private String jweKeyAlg;
     private String jweEncMethod;
+    /** 对方的 JWK Set 地址：private_key_jwt 认证与非对称 JWE 共用 */
     private String jweJwkUrl;
 }

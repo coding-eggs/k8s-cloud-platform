@@ -44,8 +44,10 @@ class PlatformClientSettingsTest {
 
     @Test
     void catalogIsOpenidAndProfileOnly() {
-        assertThat(PlatformScopes.CATALOG).extracting(OAuth2Scope::getName).containsExactly("openid", "profile");
-        assertThat(PlatformScopes.contains("message.read")).isFalse();
-        assertThat(PlatformScopes.describe("message.read").getDescription()).isEqualTo("message.read 权限");
+        assertThat(PlatformScopes.CATALOG).extracting(OAuth2Scope::getName)
+                .containsExactly("openid", "profile", "email", "phone", "address", "message.read", "message.write");
+        assertThat(PlatformScopes.contains("message.read")).isTrue();
+        assertThat(PlatformScopes.contains("order.read")).isFalse();
+        assertThat(PlatformScopes.describe("order.read").getDescription()).isEqualTo("order.read 权限");
     }
 }

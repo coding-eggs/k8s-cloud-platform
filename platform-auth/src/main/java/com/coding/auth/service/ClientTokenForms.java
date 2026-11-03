@@ -24,7 +24,8 @@ final class ClientTokenForms {
 
     private static final Map<String, Integer> HMAC_BYTES = Map.of("HS256", 32, "HS384", 48, "HS512", 64);
 
-    private static final Map<String, Integer> KW_BYTES = Map.of("A128KW", 16, "A192KW", 24, "A256KW", 32);
+    private static final Map<String, Integer> KW_BYTES = Map.of("A128KW", 16, "A192KW", 24, "A256KW", 32,
+            "A128GCMKW", 16, "A192GCMKW", 24, "A256GCMKW", 32);
 
     /** dir 模式下密钥直接当 CEK，长度由内容加密算法决定 */
     private static final Map<String, Integer> ENC_BYTES = Map.of(

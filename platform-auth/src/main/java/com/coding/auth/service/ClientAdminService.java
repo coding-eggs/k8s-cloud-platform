@@ -14,6 +14,7 @@ import com.coding.common.exception.EnumResponseType;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
@@ -115,9 +116,13 @@ public class ClientAdminService {
         RegisteredClient.Builder b = RegisteredClient.from(existing);
         switch (which == null ? "" : which) {
             case "client" -> {
-                if (ClientViews.typeOf(existing) != ClientType.CONFIDENTIAL) throw invalid("公共客户端没有 client_secret");
+                if (!ExternalClientAssembler.needsSecret(existing.getClientAuthenticationMethods().stream()
+                        .map(ClientAuthenticationMethod::getValue).toList())) {
+                    throw invalid("该客户端的认证方式不使用 client_secret");
+                }
                 out.setClientSecret(ExternalClientAssembler.newClientSecret());
-                b.clientSecret(passwordEncoder.encode(out.getClientSecret()));
+                //新密钥永不过期：老行可能带着旧页面默认的 30 天过期时间，不清掉的话重置出来的密钥可能一出生就过期
+                b.clientSecret(passwordEncoder.encode(out.getClientSecret())).clientSecretExpiresAt(null);
             }
             case "jws" -> {
                 String alg = ExternalClientAssembler.str(cs, CLIENT_SETTING_JWS_SIG_ALG);
