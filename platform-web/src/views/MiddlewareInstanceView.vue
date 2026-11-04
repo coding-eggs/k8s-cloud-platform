@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
       </el-table-column>
       <el-table-column prop="namespace" label="命名空间" width="140" />
       <el-table-column prop="mode" label="形态" width="120" />
-      <el-table-column label="版本" width="120">
+      <el-table-column label="版本" width="180">
         <template #default="{ row }">{{ row.version || '—' }}</template>
       </el-table-column>
       <el-table-column label="状态" width="110">
