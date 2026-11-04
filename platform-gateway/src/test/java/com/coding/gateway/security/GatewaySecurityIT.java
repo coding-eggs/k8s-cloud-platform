@@ -4,6 +4,7 @@ import com.coding.common.components.jwt.JwtPermissionResolver;
 import com.coding.common.components.jwt.PlatformJwtValidators;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.data.mapper.auth.PlatformPermissionMapper;
+import com.coding.data.mapper.system.PlatformAuditLogMapper;
 import com.coding.data.models.auth.PlatformPermission;
 import com.coding.gateway.support.UpstreamStub;
 import com.nimbusds.jose.JWSAlgorithm;
@@ -38,6 +39,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** 端到端：真安全链 + 本地 RSA 签 token + 桩上游。 */
@@ -77,6 +80,10 @@ class GatewaySecurityIT {
 
     @MockitoBean
     JwtPermissionResolver permissionResolver;
+
+    /** 被拒审计写库：不碰真库 */
+    @MockitoBean
+    PlatformAuditLogMapper auditLogMapper;
 
     @Autowired
     PermissionRegistryReloader reloader;
@@ -123,6 +130,7 @@ class GatewaySecurityIT {
                 .expectBody().json("{\"code\":" + EnumResponseType.NON_AUTH_ENTRY_POINT.getCode()
                         + ",\"msg\":\"" + EnumResponseType.NON_AUTH_ENTRY_POINT.getMsg() + "\",\"data\":null}", true);
         assertThat(AUTH.nothingReceived()).isTrue();
+        verify(auditLogMapper, timeout(2000)).insert(any());
     }
 
     @Test

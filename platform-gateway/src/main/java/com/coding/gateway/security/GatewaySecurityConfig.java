@@ -14,6 +14,8 @@ import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.mapper.auth.PlatformUserRoleMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantRoleMapper;
+import com.coding.data.mapper.system.PlatformAuditLogMapper;
+import com.coding.gateway.audit.GatewayDeniedAuditor;
 import com.coding.gateway.route.PlatformRouteProperties;
 import com.coding.gateway.route.PlatformRouteResolver;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +24,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
 import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
 import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
@@ -33,6 +36,7 @@ import org.springframework.security.web.server.context.NoOpServerSecurityContext
 import org.springframework.security.web.server.savedrequest.NoOpServerRequestCache;
 import org.springframework.security.web.server.util.matcher.ServerWebExchangeMatcher;
 import org.springframework.util.AntPathMatcher;
+import reactor.core.publisher.Mono;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
@@ -79,6 +83,12 @@ public class GatewaySecurityConfig {
         return new CachedPermissionClosureResolver(closureService, cache, Duration.ofSeconds(ttlSeconds));
     }
 
+    @Bean
+    public GatewayDeniedAuditor gatewayDeniedAuditor(PlatformAuditLogMapper mapper,
+                                                     @Value("${jwt.data-key:data}") String dataKey) {
+        return new GatewayDeniedAuditor(mapper, dataKey);
+    }
+
     /** 只支持 JWS（与 platform-api 当前部署一致）；aud 白名单为空拒启。 */
     @Bean
     public ReactiveJwtDecoder jwtDecoder(@Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String jwkSetUri,
@@ -98,12 +108,17 @@ public class GatewaySecurityConfig {
                                                        GatewayAuthorizationManager authorizationManager,
                                                        ReactiveJwtDecoder jwtDecoder,
                                                        JwtPermissionResolver permissionResolver,
+                                                       GatewayDeniedAuditor auditor,
                                                        @Value("${jwt.data-key:data}") String dataKey) {
         ServerWebExchangeMatcher publicPaths = publicPaths(routes, props.publicPaths());
         ServerAuthenticationEntryPoint unauthorized = (exchange, e) ->
                 AuthJsonResponses.write(exchange, HttpStatus.UNAUTHORIZED, EnumResponseType.USER_UN_LOGIN);
-        ServerAccessDeniedHandler forbidden = (exchange, e) ->
-                AuthJsonResponses.write(exchange, HttpStatus.FORBIDDEN, EnumResponseType.NON_AUTH_ENTRY_POINT);
+        // 403 = 已认证但无权：先审计（永不出错）再写响应体
+        ServerAccessDeniedHandler forbidden = (exchange, e) -> exchange.getPrincipal()
+                .ofType(Authentication.class)
+                .flatMap(a -> auditor.record(exchange, a))
+                .then(Mono.defer(() -> AuthJsonResponses.write(
+                        exchange, HttpStatus.FORBIDDEN, EnumResponseType.NON_AUTH_ENTRY_POINT)));
 
         return http
                 .csrf(ServerHttpSecurity.CsrfSpec::disable)
