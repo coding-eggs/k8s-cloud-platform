@@ -126,7 +126,8 @@ platform:
   internal:
     # 客户端管理内部接口（/internal/clients/**）的共享密钥，platform-api 调用时放在 X-Platform-Internal-Token 头。
     # ⚠️ 没有默认值：留空应用**拒启**。须与 platform-api 的 platform.auth.internal-token 同值（同一个 env）。
-    token: ${PLATFORM_INTERNAL_TOKEN:}
+    # openssl rand -base64 32
+    token: ${PLATFORM_INTERNAL_TOKEN:xxIRUQ9EdEi0E2EgPlcWwUojm43D78UE/S15Pqn5+1k=}
   jwt:
     # 是否把权限点 code 全闭包写进 token 的 data.permissions（默认 false，2026-10-09 起不再写）。
     # 那份列表随产品权限点总数增长，却要塞进有硬上限的容器（WS 握手 query 4KB / HTTP 头 8KB），
