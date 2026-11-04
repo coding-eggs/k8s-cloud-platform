@@ -265,8 +265,10 @@ const focusId = computed(() => (route.query.id as string) || '')
         <template #default="{ row }">
           <el-button link type="primary" @click="toEditor(row.id)">编辑</el-button>
           <el-button link type="primary" @click="toRuns(row.id!)">运行历史</el-button>
-          <el-button v-if="canRun" link type="primary" :icon="VideoPlay" title="运行"
-                     :disabled="capAvailable === false" @click="openRun(row)" />
+          <el-button v-if="canRun" link type="primary" title="运行"
+                     :disabled="capAvailable === false" @click="openRun(row)">
+            <el-icon :size="18"><VideoPlay /></el-icon>
+          </el-button>
           <el-button v-if="canManage" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
