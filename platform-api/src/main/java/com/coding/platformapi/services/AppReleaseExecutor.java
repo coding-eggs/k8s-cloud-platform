@@ -49,8 +49,12 @@ import java.util.stream.Collectors;
  *
  * <p>新版本健康之前不删旧对象，所以 HEALTH 在 PRUNE 之前。失败不自动回滚。
  *
- * <p>凭据是发起人的 token，只存内存。缺失或被 k8s-server 拒绝 → INTERRUPTED（等用户「继续」），不是 FAILED：
+ * <p>凭据是发起人的 token，只存内存。拿不到凭据、或被 k8s-server 拒绝 → INTERRUPTED（等用户「继续」），不是 FAILED：
  * 发布本身没有问题，只是缺一个能用的身份。
+ *
+ * <p><b>拿不到凭据 == 接管了一个已死实例的执行</b>：正常情况下执行有归属（owner_id + 租约续期，
+ * 见 {@link AppExecutionLease}），别的实例抢不到；能走到这里说明原进程的租约过期了。
+ * 两种原因的提示语分开写（一个要重新登录、一个不用），否则线上只能靠猜。
  */
 @Slf4j
 @Service
@@ -63,7 +67,10 @@ public class AppReleaseExecutor {
     static final String SUCCESS = "SUCCESS";
 
     private static final int MESSAGE_MAX = 1024;   // platform_app_execution.message 的列宽
-    private static final String CREDENTIAL_LOST = "发起人凭据已失效（平台重启或登录过期），请点击「继续」";
+    private static final String CREDENTIAL_LOST =
+            "发起人凭据已失效（平台重启或登录过期），请点击「继续」";
+    private static final String CREDENTIAL_REJECTED =
+            "k8s-server 拒绝了发起人的凭据（HTTP 401），请重新登录后点「继续」";
 
     private static final ObjectMapper JSON = JsonMapper.builder().build();
     private static final JavaType OBJECT_LIST =
@@ -75,6 +82,7 @@ public class AppReleaseExecutor {
     private final PlatformApplicationResourceMapper resources;
     private final K8sAppClient client;
     private final ApplicationDeployCredentials credentials;
+    private final AppExecutionLease leases;
     private final ObjectProvider<AppReleasePrecheck> precheck;
     private final ObjectProvider<AppReleaseRenderer> renderer;
     private final long timeoutMinutes;
@@ -85,6 +93,7 @@ public class AppReleaseExecutor {
                               PlatformApplicationResourceMapper resources,
                               K8sAppClient client,
                               ApplicationDeployCredentials credentials,
+                              AppExecutionLease leases,
                               ObjectProvider<AppReleasePrecheck> precheck,
                               ObjectProvider<AppReleaseRenderer> renderer,
                               @Value("${platform.application.timeout-minutes:30}") long timeoutMinutes) {
@@ -94,6 +103,7 @@ public class AppReleaseExecutor {
         this.resources = resources;
         this.client = client;
         this.credentials = credentials;
+        this.leases = leases;
         this.precheck = precheck;
         this.renderer = renderer;
         this.timeoutMinutes = timeoutMinutes;
@@ -103,7 +113,7 @@ public class AppReleaseExecutor {
     public void advance(PlatformAppExecution execution) {
         String authorization = credentials.getExecution(execution.getId());
         if (authorization == null) {
-            interrupt(execution);
+            interruptNoCredential(execution);
             return;
         }
         K8sServerGateway.runAs(authorization, () -> step(execution));
@@ -135,9 +145,11 @@ public class AppReleaseExecutor {
         }
         // 先记凭据再重开：否则 worker 可能抢在中间，因没有凭据又把它打回 INTERRUPTED
         credentials.rememberExecution(executionId, authorization);
+        Date now = new Date();
         int reopened;
         try {
-            reopened = executions.reopen(executionId, PENDING, new Date());
+            // 归属和租约一并写给续跑方：否则刚交接完就会被另一台实例抢走（只能连点「继续」的根因）
+            reopened = executions.reopen(executionId, PENDING, now, leases.instanceId(), leases.nextLease(now));
         } catch (DuplicateKeyException e) {
             // 与新发布的取代撞车：uk_app_exec_active 保证同一应用只有一条活动执行
             credentials.forgetExecution(executionId);
@@ -184,7 +196,7 @@ public class AppReleaseExecutor {
             }
         } catch (RuntimeException e) {
             if (isUnauthorized(e)) {
-                interrupt(execution);
+                interruptRejected(execution, e);
             } else {
                 fail(execution, e);
             }
@@ -369,10 +381,27 @@ public class AppReleaseExecutor {
         return null;
     }
 
+    /**
+     * 本进程没有这个执行的凭据。正常只发生在「接管了已死实例留下的执行」：租约没过期时别的实例抢不到，
+     * 能抢到就说明原进程已经不在了。不写 finished_at：INTERRUPTED 仍是活动执行。
+     */
+    private void interruptNoCredential(PlatformAppExecution execution) {
+        log.info("发布执行 {} 在阶段 {} 中断：本实例（{}）内存里没有它的凭据，原推进实例已不在",
+                execution.getId(), execution.getStage(), leases.instanceId());
+        interrupt(execution, CREDENTIAL_LOST);
+    }
+
+    /** k8s-server 明确拒绝（HTTP 401）：token 过期或验签不过，用户重新登录后点「继续」即可。与上面分开写，不再靠猜。 */
+    private void interruptRejected(PlatformAppExecution execution, RuntimeException cause) {
+        log.info("发布执行 {} 在阶段 {} 被 k8s-server 拒绝凭据（HTTP 401）：{}",
+                execution.getId(), execution.getStage(), cause.getMessage());
+        interrupt(execution, CREDENTIAL_REJECTED);
+    }
+
     /** 不写 finished_at：INTERRUPTED 仍是活动执行。 */
-    private void interrupt(PlatformAppExecution execution) {
+    private void interrupt(PlatformAppExecution execution, String message) {
         execution.setStatus(INTERRUPTED);
-        execution.setMessage(CREDENTIAL_LOST);
+        execution.setMessage(message);
         save(execution);
         credentials.forgetExecution(execution.getId());
     }

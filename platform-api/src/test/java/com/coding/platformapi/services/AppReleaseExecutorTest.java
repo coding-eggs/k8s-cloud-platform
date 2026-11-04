@@ -65,6 +65,7 @@ class AppReleaseExecutorTest {
     private PlatformApplicationResourceMapper resources;
     private K8sAppClient client;
     private ApplicationDeployCredentials credentials;
+    private AppExecutionLease leases;
     private AppReleasePrecheck precheck;
     private AppReleaseRenderer renderer;
     private AppReleaseExecutor executor;
@@ -80,13 +81,14 @@ class AppReleaseExecutorTest {
         resources = mock(PlatformApplicationResourceMapper.class);
         client = mock(K8sAppClient.class);
         credentials = new ApplicationDeployCredentials();
+        leases = new AppExecutionLease("test-instance");
         precheck = mock(AppReleasePrecheck.class);
         renderer = mock(AppReleaseRenderer.class);
         ObjectProvider<AppReleasePrecheck> precheckProvider = mock(ObjectProvider.class);
         ObjectProvider<AppReleaseRenderer> rendererProvider = mock(ObjectProvider.class);
         when(precheckProvider.getIfAvailable()).thenReturn(precheck);
         when(rendererProvider.getIfAvailable()).thenReturn(renderer);
-        executor = new AppReleaseExecutor(apps, releases, executions, resources, client, credentials,
+        executor = new AppReleaseExecutor(apps, releases, executions, resources, client, credentials, leases,
                 precheckProvider, rendererProvider, 30);
 
         app = new PlatformApplication();
@@ -450,6 +452,8 @@ class AppReleaseExecutorTest {
 
         assertThat(lastSaved().getStatus()).isEqualTo("INTERRUPTED");
         assertThat(lastSaved().getStage()).isEqualTo("HEALTH");
+        // 两种中断原因必须能分清：这一条是「本实例没有凭据」，不是 k8s-server 拒绝
+        assertThat(lastSaved().getMessage()).contains("凭据已失效").doesNotContain("401");
         verify(client, never()).status(any());
         verify(releases, never()).updateById(any());
     }
@@ -463,6 +467,7 @@ class AppReleaseExecutorTest {
 
         assertThat(lastSaved().getStatus()).isEqualTo("INTERRUPTED");
         assertThat(lastSaved().getStage()).isEqualTo("APPLY");
+        assertThat(lastSaved().getMessage()).contains("401");
         assertThat(credentials.getExecution(7L)).isNull();
     }
 
@@ -520,7 +525,7 @@ class AppReleaseExecutorTest {
         @SuppressWarnings("unchecked")
         ObjectProvider<AppReleaseRenderer> noneR = mock(ObjectProvider.class);
         AppReleaseExecutor bare = new AppReleaseExecutor(apps, releases, executions, resources, client,
-                credentials, none, noneR, 30);
+                credentials, leases, none, noneR, 30);
 
         bare.advance(at("PRECHECK"));
 
@@ -539,7 +544,7 @@ class AppReleaseExecutorTest {
         e.setStartedAt(new Date());
         when(executions.selectById(7L)).thenReturn(e);
         when(executions.selectLatestByApp("app_1")).thenReturn(e);
-        when(executions.reopen(eq(7L), eq("PENDING"), any())).thenReturn(1);
+        when(executions.reopen(eq(7L), eq("PENDING"), any(), any(), any())).thenReturn(1);
         return e;
     }
 
@@ -556,7 +561,7 @@ class AppReleaseExecutorTest {
 
         executor.resume(7L, "alice");
 
-        verify(executions).reopen(eq(7L), eq("PENDING"), any());
+        verify(executions).reopen(eq(7L), eq("PENDING"), any(), any(), any());
         verify(executions, never()).updateById(any());
         assertThat(credentials.getExecution(7L)).isEqualTo("Bearer fresh");
     }
@@ -571,7 +576,7 @@ class AppReleaseExecutorTest {
         executor.resume(7L, "alice");
 
         ArgumentCaptor<Date> clock = ArgumentCaptor.forClass(Date.class);
-        verify(executions).reopen(eq(7L), eq("PENDING"), clock.capture());
+        verify(executions).reopen(eq(7L), eq("PENDING"), clock.capture(), any(), any());
         assertThat(clock.getValue()).isAfterOrEqualTo(before);
     }
 
@@ -613,7 +618,7 @@ class AppReleaseExecutorTest {
         requestWithToken("Bearer fresh");
 
         assertThatThrownBy(() -> executor.resume(7L, "alice")).isInstanceOf(CloudPlatformException.class);
-        verify(executions, never()).reopen(anyLong(), anyString(), any());
+        verify(executions, never()).reopen(anyLong(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -625,7 +630,7 @@ class AppReleaseExecutorTest {
         requestWithToken("Bearer fresh");
 
         assertThatThrownBy(() -> executor.resume(7L, "alice")).isInstanceOf(CloudPlatformException.class);
-        verify(executions, never()).reopen(anyLong(), anyString(), any());
+        verify(executions, never()).reopen(anyLong(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -635,7 +640,7 @@ class AppReleaseExecutorTest {
         requestWithToken("Bearer fresh");
 
         assertThatThrownBy(() -> executor.resume(7L, "alice")).isInstanceOf(CloudPlatformException.class);
-        verify(executions, never()).reopen(anyLong(), anyString(), any());
+        verify(executions, never()).reopen(anyLong(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -643,13 +648,13 @@ class AppReleaseExecutorTest {
         stored("INTERRUPTED", "APPLY");
 
         assertThatThrownBy(() -> executor.resume(7L, "alice")).isInstanceOf(CloudPlatformException.class);
-        verify(executions, never()).reopen(anyLong(), anyString(), any());
+        verify(executions, never()).reopen(anyLong(), anyString(), any(), any(), any());
     }
 
     @Test
     void resumeLosingTheRaceIsRejectedAndLeavesNoToken() {
         stored("INTERRUPTED", "APPLY");
-        when(executions.reopen(eq(7L), eq("PENDING"), any())).thenReturn(0);
+        when(executions.reopen(eq(7L), eq("PENDING"), any(), any(), any())).thenReturn(0);
         requestWithToken("Bearer fresh");
 
         assertThatThrownBy(() -> executor.resume(7L, "alice")).isInstanceOf(CloudPlatformException.class);
@@ -659,7 +664,7 @@ class AppReleaseExecutorTest {
     @Test
     void resumeRacingWithSupersedeSurfacesBusinessErrorAndLeavesNoToken() {
         stored("FAILED", "APPLY");
-        when(executions.reopen(eq(7L), eq("PENDING"), any()))
+        when(executions.reopen(eq(7L), eq("PENDING"), any(), any(), any()))
                 .thenThrow(new org.springframework.dao.DuplicateKeyException("uk_app_exec_active"));
         requestWithToken("Bearer fresh");
 

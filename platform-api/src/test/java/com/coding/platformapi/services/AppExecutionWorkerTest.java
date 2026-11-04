@@ -34,17 +34,20 @@ import static org.mockito.Mockito.when;
 class AppExecutionWorkerTest {
 
     private static final long WAIT = 3000;
+    private static final String ME = "test-instance";
 
     private AppReleaseExecutor executor;
     private PlatformAppExecutionMapper executions;
+    private AppExecutionLease leases;
     private AppExecutionWorker worker;
 
     @BeforeEach
     void setUp() {
         executor = mock(AppReleaseExecutor.class);
         executions = mock(PlatformAppExecutionMapper.class);
-        worker = new AppExecutionWorker(executor, executions, 4);
-        when(executions.claim(anyLong(), any(), any())).thenReturn(1);
+        leases = new AppExecutionLease(ME);
+        worker = new AppExecutionWorker(executor, executions, leases, 4);
+        when(executions.claim(anyLong(), any(), any(), any())).thenReturn(1);
     }
 
     @AfterEach
@@ -55,6 +58,11 @@ class AppExecutionWorkerTest {
     private static boolean saved(PlatformAppExecutionMapper mapper) {
         return org.mockito.Mockito.mockingDetails(mapper).getInvocations().stream()
                 .anyMatch(i -> i.getMethod().getName().equals("updateById"));
+    }
+
+    private static long claimCount(PlatformAppExecutionMapper mapper) {
+        return org.mockito.Mockito.mockingDetails(mapper).getInvocations().stream()
+                .filter(i -> i.getMethod().getName().equals("claim")).count();
     }
 
     private PlatformAppExecution stored(long id, String status) {
@@ -84,10 +92,8 @@ class AppExecutionWorkerTest {
         assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(2));
 
         verify(executor, timeout(WAIT)).advance(b);
-        verify(executions, timeout(WAIT)).releaseLease(2L);
-        verify(executions, never()).releaseLease(1L);
         release.countDown();
-        verify(executions, timeout(WAIT)).releaseLease(1L);
+        verify(executor, timeout(WAIT)).advance(a);
     }
 
     @Test
@@ -105,28 +111,30 @@ class AppExecutionWorkerTest {
         worker.tick();
         worker.tick();
         release.countDown();
-        verify(executions, timeout(WAIT)).releaseLease(1L);
+        verify(executor, timeout(WAIT)).advance(a);
 
         verify(executor, times(1)).advance(any());
     }
 
     @Test
-    void claimLostSkipsAndKeepsTheOtherOwnersLease() throws Exception {
+    void claimLostSkipsAndKeepsTheOtherOwnersLease() {
         PlatformAppExecution a = stored(1, "RUNNING");
         PlatformAppExecution b = stored(2, "RUNNING");
         when(executions.selectActive()).thenReturn(List.of(a, b));
-        when(executions.claim(eq(1L), any(), any())).thenReturn(0);
+        when(executions.claim(eq(1L), any(), any(), any())).thenReturn(0);
 
         worker.tick();
 
         verify(executor, timeout(WAIT)).advance(b);
-        verify(executions, timeout(WAIT)).releaseLease(2L);
         verify(executor, never()).advance(a);
-        verify(executions, never()).releaseLease(1L);
     }
 
+    /**
+     * 另一台实例的租约还没过期时，这一拍什么都不做；续租窗口必须明显长于任何一步的最长耗时
+     * （HTTP 读超时 120s），否则推进到一半就被人抢走。
+     */
     @Test
-    void leaseIsTwoMinutes() {
+    void leaseIsThreeMinutesAndStampedWithThisInstance() {
         PlatformAppExecution a = stored(1, "RUNNING");
         when(executions.selectActive()).thenReturn(List.of(a));
 
@@ -134,8 +142,9 @@ class AppExecutionWorkerTest {
 
         ArgumentCaptor<Date> now = ArgumentCaptor.forClass(Date.class);
         ArgumentCaptor<Date> until = ArgumentCaptor.forClass(Date.class);
-        verify(executions, timeout(WAIT)).claim(eq(1L), now.capture(), until.capture());
-        assertThat(until.getValue().getTime() - now.getValue().getTime()).isEqualTo(120_000L);
+        verify(executions, timeout(WAIT)).claim(eq(1L), eq(ME), now.capture(), until.capture());
+        assertThat(until.getValue().getTime() - now.getValue().getTime())
+                .isEqualTo(AppExecutionLease.LEASE_MILLIS);
     }
 
     @Test
@@ -146,7 +155,7 @@ class AppExecutionWorkerTest {
         worker.tick();
         worker.shutdown();
 
-        verify(executions, never()).claim(anyLong(), any(), any());
+        verify(executions, never()).claim(anyLong(), any(), any(), any());
         verify(executor, never()).advance(any());
     }
 
@@ -179,47 +188,54 @@ class AppExecutionWorkerTest {
 
         worker.tick();
 
-        verify(executions, timeout(WAIT)).releaseLease(1L);
         verify(executor, never()).advance(any());
     }
 
+    /**
+     * 步骤抛异常也不能放开归属：放开租约等于每拍把执行让给没有凭据的另一台实例，
+     * 那正是「发布已中断」的成因。下一拍照旧由本实例 claim 续租。
+     */
     @Test
-    void leaseIsClearedEvenWhenTheStepThrows() {
+    void stepThrowingDoesNotReleaseOwnership() throws Exception {
         PlatformAppExecution a = stored(1, "RUNNING");
         when(executions.selectActive()).thenReturn(List.of(a));
         doThrow(new IllegalStateException("db down")).when(executor).advance(a);
 
         worker.tick();
-        verify(executions, timeout(WAIT)).releaseLease(1L);
-
         verify(executor, timeout(WAIT)).advance(a);
+        for (int i = 0; i < 100 && claimCount(executions) < 2; i++) {
+            worker.tick();
+            Thread.sleep(20);
+        }
+
+        verify(executions, timeout(WAIT).atLeast(2)).claim(eq(1L), eq(ME), any(), any());
     }
 
     /**
-     * Review Focus：platform-api 重启后，RUNNING 行还在库里、凭据已没了。
-     * 用真 executor + 真凭据：死进程留下的租约未过期时跳过，过期后必须落到 INTERRUPTED。
+     * Review Focus：实例死后执行停在 RUNNING、凭据随进程消失。
+     * 死进程的租约没过期时别的实例抢不到；过期后抢到，因为没有凭据必须落到 INTERRUPTED。
      */
     @Test
     @SuppressWarnings("unchecked")
-    void executionLeftRunningByARestartEndsInterrupted() throws Exception {
+    void executionLeftRunningByADeadInstanceEndsInterrupted() throws Exception {
         K8sAppClient client = mock(K8sAppClient.class);
         AppReleaseExecutor real = new AppReleaseExecutor(mock(PlatformApplicationMapper.class),
                 mock(PlatformAppReleaseMapper.class), executions, mock(PlatformApplicationResourceMapper.class),
-                client, new ApplicationDeployCredentials(),
+                client, new ApplicationDeployCredentials(), new AppExecutionLease("restarted"),
                 mock(ObjectProvider.class), mock(ObjectProvider.class), 30);
-        AppExecutionWorker restarted = new AppExecutionWorker(real, executions, 4);
+        AppExecutionWorker restarted = new AppExecutionWorker(real, executions, new AppExecutionLease("restarted"), 4);
         try {
             PlatformAppExecution orphan = stored(1, "RUNNING");
             when(executions.selectActive()).thenReturn(List.of(orphan));
 
             // 死进程的租约还没过期
-            when(executions.claim(eq(1L), any(), any())).thenReturn(0);
+            when(executions.claim(eq(1L), any(), any(), any())).thenReturn(0);
             restarted.tick();
-            verify(executions, timeout(WAIT)).claim(eq(1L), any(), any());
+            verify(executions, timeout(WAIT)).claim(eq(1L), any(), any(), any());
             verify(executions, never()).updateById(any());
 
             // 过期后
-            when(executions.claim(eq(1L), any(), any())).thenReturn(1);
+            when(executions.claim(eq(1L), any(), any(), any())).thenReturn(1);
             // 上一轮可能还没退出 in-flight，多拍几次才贴近定时任务的真实节奏
             for (int i = 0; i < 100 && !saved(executions); i++) {
                 restarted.tick();
@@ -230,7 +246,6 @@ class AppExecutionWorkerTest {
             verify(executions, timeout(WAIT).atLeastOnce()).updateById(saved.capture());
             assertThat(saved.getValue().getStatus()).isEqualTo("INTERRUPTED");
             assertThat(saved.getValue().getStage()).isEqualTo("HEALTH");
-            verify(executions, timeout(WAIT).atLeastOnce()).releaseLease(1L);
             verify(client, never()).status(any());
         } finally {
             restarted.shutdown();

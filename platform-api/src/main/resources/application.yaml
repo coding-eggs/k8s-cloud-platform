@@ -27,6 +27,12 @@ thanos:
     url: http://192.168.31.80:19090
 
 platform:
+  application:
+    # 发布执行的实例归属。默认取 HOSTNAME（容器里就是 Pod 名），本机起多个进程时可显式指定。
+    # 归属 + 租约（AppExecutionLease）保证：一条执行只有发起它的那个进程在推进，别的实例要等它
+    # 租约过期（进程已死）才接管。⚠️ 本地起的 platform-api **不要**与集群那套装同一个库 ——
+    # 两边会互相把对方的执行判成「发布已中断」（凭据只在发起请求的进程内存里）。
+    instance-id:
   auth:
     # OAuth 客户端管理转调 platform-auth 的内部接口（/internal/clients/**）。
     # ⚠️ 地址要带 /auth（auth 的 context-path），走内网直连，不经 nginx（nginx 把 /auth/internal/ 挡成 404）。

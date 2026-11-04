@@ -28,6 +28,14 @@ public class PlatformAppExecution {
     /** 执行者租约；为空或已过期才可被接管 */
     private Date leaseUntil;
 
+    /**
+     * 当前推进该执行的 platform-api 实例。
+     *
+     * <p>发起人的 token 只在本进程内存里，所以「谁有这个执行的凭据」必须先把「谁在推进它」钉住：
+     * 别的实例只有在 owner 的租约过期（进程已死）后才会接管。
+     */
+    private String ownerId;
+
     private String startedBy;
 
     private Date startedAt;

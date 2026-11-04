@@ -31,19 +31,26 @@ public interface PlatformAppExecutionMapper {
 
     int updateById(PlatformAppExecution record);
 
-    /** 抢租约：仅当 lease_until 为空或早于 now 时成功；返回 0 表示被别人持有。 */
-    int claim(@Param("id") Long id, @Param("now") Date now, @Param("leaseUntil") Date leaseUntil);
+    /**
+     * 抢租约并钉住归属：只有**上一拍就是本实例**、租约为空、或租约已过期时才成功。
+     *
+     * <p>归属必须在创建 / 继续时就写好（那时把租约也给出去）：否则别的实例会在「刚建好、
+     * 还没人推进」的那几秒抢到一条本进程才持有凭据的执行，然后因为没凭据把它判成中断。
+     *
+     * <p>返回 0 = 别人正持有（另一台还活着），这一拍什么都不做。
+     */
+    int claim(@Param("id") Long id, @Param("ownerId") String ownerId,
+              @Param("now") Date now, @Param("leaseUntil") Date leaseUntil);
 
     PlatformAppExecution selectById(@Param("id") Long id);
 
-    /** 清租约（updateById 写不了 null）。每步结束调用，不必等过期。 */
-    int releaseLease(@Param("id") Long id);
-
     /**
-     * 续跑：仅 FAILED / INTERRUPTED 可重开；清 finished_at / message / lease_until。
+     * 续跑：仅 FAILED / INTERRUPTED 可重开；清 finished_at / message。
      * started_at 重置为 startedAt，因为 HEALTH 超时按它计时，不重置的话中断久了一续跑就判超时。
+     * 同一事务里把**归属和租约**一并写给续跑方：否则刚交接完就会被另一台抢走（连点「继续」的根因）。
      * 同一条语句里还要求它仍是该应用最新的执行（派生表绕开 MySQL 的 1093），否则返回 0。
      * 返回 0 表示状态已变（并发续跑）或已不是最新。
      */
-    int reopen(@Param("id") Long id, @Param("status") String status, @Param("startedAt") Date startedAt);
+    int reopen(@Param("id") Long id, @Param("status") String status, @Param("startedAt") Date startedAt,
+               @Param("ownerId") String ownerId, @Param("leaseUntil") Date leaseUntil);
 }

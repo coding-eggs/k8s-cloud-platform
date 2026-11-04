@@ -74,6 +74,7 @@ public class AppReleaseService {
     private final AppReleasePipeline pipeline;
     private final AppReleaseExecutor executor;
     private final ApplicationDeployCredentials credentials;
+    private final AppExecutionLease leases;
     private final K8sAppClient client;
     private final AppImageUpdates imageUpdates;
     private final TransactionTemplate tx;
@@ -82,7 +83,7 @@ public class AppReleaseService {
                              PlatformAppDependencyMapper dependencyRows, PlatformAppReleaseMapper releases,
                              PlatformAppExecutionMapper executions, AppDependencyService dependencies,
                              AppReleasePipeline pipeline, AppReleaseExecutor executor,
-                             ApplicationDeployCredentials credentials, K8sAppClient client,
+                             ApplicationDeployCredentials credentials, AppExecutionLease leases, K8sAppClient client,
                              AppImageUpdates imageUpdates, PlatformTransactionManager transactionManager) {
         this.apps = apps;
         this.services = services;
@@ -93,6 +94,7 @@ public class AppReleaseService {
         this.pipeline = pipeline;
         this.executor = executor;
         this.credentials = credentials;
+        this.leases = leases;
         this.client = client;
         this.imageUpdates = imageUpdates;
         this.tx = new TransactionTemplate(transactionManager);
@@ -226,6 +228,9 @@ public class AppReleaseService {
                 execution.setStage("PRECHECK");
                 execution.setStartedBy(operator);
                 execution.setStartedAt(new Date());
+                // 归属与租约一起写：凭据只在本进程内存里，别人不该来抢这条执行（见 AppExecutionLease）
+                execution.setOwnerId(leases.instanceId());
+                execution.setLeaseUntil(leases.nextLease(execution.getStartedAt()));
                 try {
                     releases.insert(release);
                     executions.insert(execution);

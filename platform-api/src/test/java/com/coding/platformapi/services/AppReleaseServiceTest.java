@@ -77,7 +77,8 @@ class AppReleaseServiceTest {
         imageUpdates = mock(AppImageUpdates.class);
         pipeline = new AppReleasePipeline(apps, releases, dependencies);
         service = new AppReleaseService(apps, services, depRows, releases, executions, dependencies,
-                pipeline, executor, credentials, client, imageUpdates, mock(PlatformTransactionManager.class));
+                pipeline, executor, credentials, new AppExecutionLease("test-instance"), client, imageUpdates,
+                mock(PlatformTransactionManager.class));
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -141,6 +142,23 @@ class AppReleaseServiceTest {
         ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
         verify(releases).insert(cap.capture());
         return cap.getValue().getSnapshotJson();
+    }
+
+    /** 创建执行时就把归属和租约写进行里：只有本进程有这个执行的凭据，别的实例不该来抢。 */
+    @Test
+    void createdExecutionIsOwnedByThisInstanceWithALease() {
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", svc("1"), false));
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
+
+        ArgumentCaptor<PlatformAppExecution> cap = ArgumentCaptor.forClass(PlatformAppExecution.class);
+        verify(executions).insert(cap.capture());
+        PlatformAppExecution e = cap.getValue();
+        assertThat(e.getOwnerId()).isEqualTo("test-instance");
+        assertThat(e.getLeaseUntil().getTime() - e.getStartedAt().getTime())
+                .isEqualTo(AppExecutionLease.LEASE_MILLIS);
     }
 
     @Test
