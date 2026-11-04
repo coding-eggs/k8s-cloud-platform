@@ -1,0 +1,42 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: platform-gateway
+  main:
+    # 显式写死：classpath 上若意外出现 webmvc，Boot 会改按 servlet 启动，网关整套 reactive 配置随即失效
+    web-application-type: reactive
+
+  # 读 platform_permission（权限表）、算权限闭包、写被拒审计 —— 与 platform-api 同一个库
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:192.168.31.80}:${MYSQL_PORT:1234}/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:coding}
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 10
+      connection-test-query: SELECT 1
+
+  # 权限闭包缓存：**必须与 platform-api 同一个 Redis、同一个 database**，两边共用 platform:cache:perm:closure:* 键，
+  # 改角色后两边在同一个 TTL 内一起看到新值。Redis 不是依赖：读失败即直查库（RedisJsonCache）。
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.31.80}
+      port: ${REDIS_PORT:25358}
+      password: ${REDIS_PASSWORD:Coding@123456}
+      database: ${REDIS_DATABASE:1}
+      timeout: 2s
+      connect-timeout: 2s
+
+management:
+  endpoint:
+    health:
+      # 网关存活与否不该随 MySQL/Redis 抖动：库挂了网关仍能按已加载的权限表放行/拒绝
+      show-details: never
+  health:
+    db:
+      enabled: false
+    redis:
+      enabled: false
