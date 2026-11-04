@@ -238,8 +238,6 @@ platform-api/src/main/java/com/coding/platformapi/
 | `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` | `${OAUTH2_SERVER:http://127.0.0.1:9527/auth/oauth2/jwks}` | 验签密钥源 |
 | `…jwt.audiences` | `${JWT_AUDIENCES:platform-web-client}` | 允许的 aud（平台客户端 client_id，逗号分隔）；由 `ResourceServerConfig` 显式装进校验器（自定义 `JwtDecoder` 下 Boot 不读该键），为空拒启；**必须与 `k8s-server` 同值**。iss 有意不校验 |
 | `…jwt.type` / `jws` / `jwe` | `JWS` | 对称签名/加密另有分支 |
-| `platform.auth.internal-url` | `http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth` | platform-auth 内网地址（带 `/auth`，不经 nginx），OAuth 客户端管理转调用 |
-| `platform.auth.internal-token` | `${PLATFORM_INTERNAL_TOKEN:}`（**无默认**） | 调 auth 内部接口的共享密钥；**留空拒启**；须与 auth 的 `platform.internal.token` 同值 |
 | `spring.security.ignore-urls` | 见 yaml | 免登录放行（actuator、文档、静态资源等） |
 | `jwt.data-key` | `data` | JWT 中自定义用户 claim 的键名（与 `platform-auth` 一致） |
 | Knife4j | `/doc.html`、`/v3/api-docs` | 接口文档（中文） |

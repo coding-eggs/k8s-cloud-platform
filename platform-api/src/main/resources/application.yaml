@@ -21,12 +21,6 @@ thanos:
     url: http://192.168.31.80:19090
 
 platform:
-  auth:
-    # OAuth 客户端管理转调 platform-auth 的内部接口（/internal/clients/**）。
-    # ⚠️ 地址要带 /auth（auth 的 context-path），走内网直连，不经 nginx（nginx 把 /auth/internal/ 挡成 404）。
-    internal-url: http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth
-    # ⚠️ 没有默认值：留空应用**拒启**。须与 auth 的 platform.internal.token 同值（同一个 env）。
-    internal-token: ${PLATFORM_INTERNAL_TOKEN:xxIRUQ9EdEi0E2EgPlcWwUojm43D78UE/S15Pqn5+1k=}
   harbor:
     # 「装 Harbor」表单的默认值：域名与证书在部署里是固定的，表单留空就取这里，
     # 省得每次重放都重新粘一遍 PEM。

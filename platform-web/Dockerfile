@@ -26,25 +26,25 @@
 #    三者必须与 platform-auth 里 platform-web-client 注册的 redirect_uri 一字不差（同源铁律）。
 #
 # 运行 —— 两个后端地址由**运行时环境变量**给（改了重启容器即可，不用重新打镜像）：
-#   PLATFORM_API_URL   默认 http://platform-api:8081
-#   PLATFORM_AUTH_URL  默认 http://platform-auth:9527
+#   PLATFORM_GATEWAY_URL  默认 http://platform-gateway:8090（/api/** 一律经网关，不再直连 platform-api）
+#   PLATFORM_AUTH_URL     默认 http://platform-auth:9527
 #   写法 scheme://host:port，结尾不要带 /。
 #   ⚠️ nginx 启动时就要解析这两个地址里的主机名（解析不到直接起不来：host not found in upstream）。
 #   docker compose / k8s 里服务名对得上就不用设；单机调试指到能解析的地址：
 #   docker run --rm -p 80:80 \
-#     -e PLATFORM_API_URL=http://10.0.0.12:8081 \
+#     -e PLATFORM_GATEWAY_URL=http://10.0.0.12:8090 \
 #     -e PLATFORM_AUTH_URL=http://10.0.0.13:9527 \
 #     k8s-cloud-platform/web:latest
 #
 # 代理规则写在同一目录的 nginx.conf（是模板，启动时由 nginx 官方镜像的 envsubst 渲染）：
-# /api/** → platform-api（去 /api 前缀），/auth/** → platform-auth。
+# /api/** → platform-gateway（去 /api 前缀），/auth/** → platform-auth。
 # TLS 由本镜像的 nginx 终止时，把同目录的 nginx-https.conf 挂到
 # /etc/nginx/templates/default.conf.template（用法见它的文件头；挂到 conf.d 会被覆盖）。
 # 容器根文件系统只读时启动渲染写不进去：给 /etc/nginx/conf.d 挂一个可写的 emptyDir。
 
 FROM nginx:1.27-alpine
 
-ENV PLATFORM_API_URL=http://platform-api:8081 \
+ENV PLATFORM_GATEWAY_URL=http://platform-gateway:8090 \
     PLATFORM_AUTH_URL=http://platform-auth:9527 \
     NGINX_ENVSUBST_FILTER=^PLATFORM_
 

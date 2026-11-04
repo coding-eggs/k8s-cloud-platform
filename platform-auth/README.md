@@ -71,11 +71,12 @@ src/main/java/com/coding/auth/
 │   ├── InternalClientController.java   # /internal/clients/** —— 客户端管理内部接口（只给 platform-api）
 │   ├── SessionController.java          # /session/keepalive —— 会话滑动续期
 │   ├── AuthorizationConsentController.java # /oauth2/consent、/consent/details —— 授权同意页
-│   ├── JwkController.java              # /jwk/generate —— 生成并入库密钥对
+│   ├── JwkController.java              # /internal/jwk/generate —— 生成并入库密钥对（只经网关）
 │   └── CallbackController.java         # /callback —— 测试用回调（打印 code）
 ├── config/（节选）
 │   ├── TokenClaimsPolicy.java          # token 按客户端类别写 claim：平台用户 / 外部用户 / 无用户
-│   └── InternalTokenFilter.java        # /internal/** 共享密钥校验（未配置拒启）
+│   ├── InternalApiSecurityConfig.java  # /internal/** 链：校验网关透传的用户 JWT（aud 白名单，未配置拒启）
+│   └── InternalEndpointCrossCheckRunner.java # /internal/** 端点缺 service=platform-auth 权限行即拒启
 ├── service/
 │   ├── ClientAdminService.java         # 客户端管理入口（内置保护、启停、重置密钥）
 │   ├── ExternalClientAssembler.java    # 外部客户端组装规则（创建 / 更新共用，规整老行）
@@ -235,8 +236,8 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 | POST | `/user/login` | 表单登录（白名单放行） |
 | POST | `/session/logout` | 登出 —— **无 controller**，由 `SecurityFilterChain` 的 `LogoutFilter` 处理（排在授权过滤器之前，会话已过期时重复调用是幂等 no-op） |
 | GET | `/session/keepalive` | 会话滑动续期（需已登录） |
-| POST | `/internal/clients/{list,get,scopes,create,update,delete,enable,reset-secret}` | 客户端管理**内部接口**：只给 platform-api，须带 `X-Platform-Internal-Token`；nginx 前门对 `/auth/internal/` 一律 404 |
-| POST | `/jwk/generate` | 生成签名/加密密钥对并入库 |
+| POST | `/internal/clients/{list,get,scopes,create,update,delete,enable,reset-secret}` | 客户端管理**内部接口**：只经平台网关（浏览器 `/api/oauth-clients/*`），带用户 JWT；接口级权限由网关判、写操作在此记审计；nginx 前门对 `/auth/internal/` 一律 404 |
+| POST | `/internal/jwk/generate` | 生成签名/加密密钥（原 `/jwk/generate`）；同上只经网关，码 `platform:jwk:manage` 只绑 admin |
 | GET | `/oauth2/consent` | 授权同意页（重定向到 `consent.html`） |
 | GET | `/consent/details` | 待批准 / 已批准的 scope 明细 |
 | GET | `/callback` | 测试用回调（打印 code，非核心） |
@@ -275,7 +276,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 | `spring.data.redis.*` | `192.168.31.80:6379`, database `1` | Redis 会话存储（可用 `REDIS_HOST/PORT/PASSWORD` 覆盖） |
 | `jwt.enabled` / `jwt.issuer` / `jwt.data-key` | `true` / 同 issuer / `data` | JWT 组件开关、issuer、自定义用户 claim 的键名 |
 | `spring.security.ignore-urls` | 见 yaml | 免登录放行的 URL 白名单 |
-| `platform.internal.token` | `${PLATFORM_INTERNAL_TOKEN:}`（**无默认**） | 客户端管理内部接口的共享密钥；**留空拒启**；须与 platform-api 的 `platform.auth.internal-token` 同值 |
+| `platform.internal.jwt.audiences` | `${JWT_AUDIENCES:platform-web-client}` | `/internal/**` 校验 JWT 的 aud 白名单（逗号分隔）；**留空拒启**；与 platform-api / 网关同一个值 |
 | Knife4j / springdoc | `/doc.html`, `/v3/api-docs` | 接口文档（中文） |
 
 > ⚠️ **Redis 会话超时不在此文件**：由 `RedisSessionConfig` 的注解常量 `SESSION_MAX_INACTIVE_SECONDS`（8h）控制。
