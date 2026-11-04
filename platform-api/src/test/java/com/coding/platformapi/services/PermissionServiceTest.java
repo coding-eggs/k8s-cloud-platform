@@ -124,6 +124,35 @@ class PermissionServiceTest {
         assertThat(registry.requiredCodes("platform-api", "POST", "/role/list").orElseThrow()).contains("tenant:role:read");
     }
 
+    // ---------- 其它服务的行只读（本服务的写前校验看不到 auth 的端点；删错 = auth 下次重启自检拒启） ----------
+
+    private PlatformPermission authRow() {
+        PlatformPermission p = row("pa", "API", "/internal/clients/delete", "POST", "platform:oauth-client:manage");
+        p.setService("platform-auth");
+        return p;
+    }
+
+    @Test
+    void delete_row_of_other_service_rejected_and_zero_writes() {
+        db.add(authRow());
+        assertThatThrownBy(() -> svc.delete("pa"))
+                .isInstanceOfSatisfying(CloudPlatformException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo(1004);
+                    assertThat(e.getMsg()).contains("platform-auth");
+                });
+        verify(mapper, never()).softDeleteById(any());
+    }
+
+    @Test
+    void update_row_of_other_service_rejected_and_zero_writes() {
+        db.add(authRow());
+        var r = req("API", "/internal/clients/remove", "POST", "platform:oauth-client:manage");
+        r.setId("pa");
+        assertThatThrownBy(() -> svc.update(r))
+                .isInstanceOfSatisfying(CloudPlatformException.class, e -> assertThat(e.getCode()).isEqualTo(1004));
+        verify(mapper, never()).updateByPrimaryKeySelective(any());
+    }
+
     @Test
     void update_moving_pattern_away_from_endpoint_rejected() {
         var r = req("API", "/tenant/rename", "POST", "platform:tenant:provision"); // 覆盖从 /tenant/create 移走

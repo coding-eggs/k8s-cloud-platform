@@ -139,7 +139,7 @@ public class PermissionService {
 
     public void update(PermissionPointRequest req) {
         validateFields(req);
-        PlatformPermission existing = requireActive(req.getId());
+        PlatformPermission existing = requireOwnRow(req.getId());
         PlatformPermission merged = toRow(existing.getId(), existing.getCreatedAt(), req);
         assertCoversAllEndpoints(withCandidate(permMapper.selectAllActive(), existing.getId(), merged));
         writer.update(merged);
@@ -147,7 +147,7 @@ public class PermissionService {
     }
 
     public void delete(String id) {
-        requireActive(id);
+        requireOwnRow(id);
         assertCoversAllEndpoints(withCandidate(permMapper.selectAllActive(), id, null));
         writer.softDelete(id);
         applyToRuntime();
@@ -231,6 +231,20 @@ public class PermissionService {
         if ("Page".equals(req.getDomain()) && !resource.startsWith("/"))
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
                     "Page 域 resource 须为前端路由 path（以 / 开头，如 /resources/workloads）");
+    }
+
+    /**
+     * 只有本服务（platform-api）的行可在这里改删。其它服务（如 platform-auth 的 /internal/**）的行，
+     * 写前裸端点校验看不到那边的端点：删错一行网关即对该接口全拒，且 auth 下次重启自检拒启（登录服务整体不可用）。
+     * 那些行随迁移走。
+     */
+    private PlatformPermission requireOwnRow(String id) {
+        PlatformPermission p = requireActive(id);
+        String service = p.getService();
+        if (StringUtils.hasText(service) && !PlatformServices.API.equals(service))
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                    "该权限点属于 " + service + "，不能在此修改或删除（随迁移维护）: " + id);
+        return p;
     }
 
     private PlatformPermission requireActive(String id) {

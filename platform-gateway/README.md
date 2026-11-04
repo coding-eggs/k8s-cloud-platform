@@ -24,6 +24,8 @@
 
 - 权限表按 `service` 列区分服务（`platform-api` / `platform-auth`），`resource` 写**服务内路径**。
 - 权限表每 `permission-reload-interval`（默认 60s）重载一次；**首次加载失败拒启**，之后重载失败沿用旧表。
+- 权限点管理页只能改删 `service=platform-api` 的行；其它服务（auth 的 `/internal/**`）的行只读、随迁移维护 ——
+  api 的写前校验看不到 auth 的端点，删错一行会让 auth 下次重启自检拒启。
 - query 上的 `access_token` 只在 `/ws/**` 接受（WS 握手带不了头）。
 - SUCCESS / FAILED 审计不在网关：由各服务的 `@Auditable`（`platform-common` 的 `ServletAuditConfiguration`）记。
 
@@ -40,8 +42,9 @@
 
 ## 3. 部署顺序（缺一步就坏）
 
-1. **重放迁移**：`V2026_11_04_1`（权限表加 `service` 列 + JWK 行）→ `V2026_11_04_2`（OAuth 客户端 8 行挪到 platform-auth）。
-   本仓没有 Flyway，手工重放；新构建的 mapper 会读 `service` 列，缺列直接 SQL 报错。
+1. **重放迁移**：`V2026_11_03_2`（OAuth 客户端管理那一批，**若尚未重放**）→ `V2026_11_04_1`（权限表加 `service` 列 + JWK 行）
+   → `V2026_11_04_2`（OAuth 客户端 8 行挪到 platform-auth）。本仓没有 Flyway，手工重放；新构建的 mapper 会读 `service` 列，缺列直接 SQL 报错。
+   ⚠️ `V2026_11_04_2` 是按 id 的 UPDATE：`V2026_11_03_2` 没跑过时它静默影响 0 行，auth 启动自检随即拒启。
 2. **部署网关**：配好上表的变量。网关起不来最常见的原因是权限表读不到（首载失败拒启）。
 3. **部署 auth 与 api**：auth 用本批构建（`/internal/**` 改校验 JWT，启动自检要求 `/internal/**` 都有 `service=platform-auth` 的行）；
    api 用 **Task 11 的构建（`427753eb`），不含 Task 12** —— 这一步 api 仍自己判权限，网关漏判也不至于全开。

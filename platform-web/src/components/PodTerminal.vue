@@ -14,6 +14,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { getAccessToken } from '@/auth/oauth'
+import { chunkTerminalInput } from '@/utils/terminalInput'
 
 const props = defineProps<{
   /** scope=cluster（节点详情等集群域）：走 admin client，无需 tenantId */
@@ -185,7 +186,8 @@ onMounted(() => {
   term.open(containerEl.value)
   doFit()
 
-  term.onData((data) => send({ type: 'input', data }))
+  // 大段粘贴切块发：整段一帧会超 api（Tomcat）WS 文本缓冲 8192 字符 → 1009 断开
+  term.onData((data) => chunkTerminalInput(data).forEach((part) => send({ type: 'input', data: part })))
   window.addEventListener('resize', doFit)
 
   connect()
