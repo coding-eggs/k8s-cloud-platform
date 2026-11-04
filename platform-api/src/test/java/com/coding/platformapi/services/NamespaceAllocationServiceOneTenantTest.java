@@ -11,7 +11,7 @@ import com.coding.data.models.k8s.K8sCluster;
 import com.coding.data.models.k8s.PlatformRbacTemplate;
 import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.AllocationCreateRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

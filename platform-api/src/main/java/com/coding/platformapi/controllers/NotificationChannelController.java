@@ -5,7 +5,7 @@ import com.coding.data.models.alert.NotificationChannel;
 import com.coding.platformapi.models.NotificationChannelOption;
 import com.coding.platformapi.models.NotificationChannelRequest;
 import com.coding.platformapi.models.TenantRefRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.NotificationChannelService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

@@ -1,4 +1,4 @@
-package com.coding.platformapi.security;
+package com.coding.common.security;
 
 import com.coding.data.models.system.TokenUserInfo;
 import org.junit.jupiter.api.Test;

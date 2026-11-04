@@ -1,4 +1,4 @@
-package com.coding.platformapi.security;
+package com.coding.common.security;
 
 import com.coding.data.models.system.TokenUserInfo;
 import lombok.extern.slf4j.Slf4j;
@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -20,7 +19,6 @@ import tools.jackson.databind.json.JsonMapper;
  * {@code JwtProperties} 组件在 platform-api 未启用（jwt.enabled=false），故按 {@code @Value} 取值。
  */
 @Slf4j
-@Component
 public class AuthContext {
 
     private final JsonMapper jsonMapper;

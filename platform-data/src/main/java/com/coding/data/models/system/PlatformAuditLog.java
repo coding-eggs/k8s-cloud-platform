@@ -46,7 +46,7 @@ public class PlatformAuditLog {
     /** 目标对象名；DENIED 为空（拒绝发生在方法调用之前） */
     private String targetName;
 
-    /** SUCCESS / FAILED / DENIED（见 com.coding.platformapi.audit.AuditResult） */
+    /** SUCCESS / FAILED / DENIED（见 com.coding.common.audit.AuditResult） */
     private String result;
 
     private String errorCode;

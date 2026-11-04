@@ -1,12 +1,11 @@
-package com.coding.platformapi.audit;
+package com.coding.common.audit;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.data.models.system.PlatformAuditLog;
 import com.coding.data.models.system.TokenUserInfo;
 import com.coding.data.models.system.UserTenantInfo;
-import com.coding.platformapi.security.AuthContext;
-import com.coding.platformapi.services.AuditService;
+import com.coding.common.security.AuthContext;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.Test;
@@ -32,15 +31,15 @@ import static org.mockito.Mockito.when;
  * （路径参数 + DTO 混合），用来钉住 SpEL 与按名探测在那一层照样成立。
  *
  * <p>用**真实**的 {@link AuditTargetResolver}（它是纯函数、无 Spring 依赖），
- * 只把 {@link AuditService} 与 {@link AuthContext} 换成替身 —— 这样「目标/上下文从哪来」
+ * 只把 {@link AuditRecorder} 与 {@link AuthContext} 换成替身 —— 这样「目标/上下文从哪来」
  * 是一条端到端断言，而不是对着 mock 断言。
  */
 class AuditAspectTest {
 
-    AuditService auditService = mock(AuditService.class);
+    AuditRecorder auditRecorder = mock(AuditRecorder.class);
     AuthContext authContext = mock(AuthContext.class);
     AuditTargetResolver resolver = new AuditTargetResolver();
-    AuditAspect aspect = new AuditAspect(auditService, authContext, resolver);
+    AuditAspect aspect = new AuditAspect(auditRecorder, authContext, resolver);
 
     // ---- 被切的方法（只提供签名与参数名，不会被真正调用） ----
 
@@ -177,7 +176,7 @@ class AuditAspectTest {
     @Test
     void auditFailureNeverBreaksBusiness() throws Throwable {
         when(authContext.current()).thenReturn(user("alice"));
-        doThrow(new RuntimeException("db down")).when(auditService).record(any());
+        doThrow(new RuntimeException("db down")).when(auditRecorder).record(any());
 
         // service.record 本身已是 fail-open；这里再钉一次 Aspect 不得因此改变业务返回
         assertThat(aspect.around(deletePjp("ok", null), ann(""))).isEqualTo("ok");
@@ -192,7 +191,7 @@ class AuditAspectTest {
         aspect.around(pjp("lonely", new Class<?>[]{String.class}, new Object[]{"web-a"}, null, null), ann(""));
 
         PlatformAuditLog r = capture();
-        assertThat(r.getActorUsername()).isEqualTo(AuditService.UNKNOWN_ACTOR);
+        assertThat(r.getActorUsername()).isEqualTo(AuditRecorder.UNKNOWN_ACTOR);
         assertThat(r.getTargetName()).isEqualTo("web-a");
         assertThat(r.getResult()).isEqualTo(AuditResult.SUCCESS.name());
         // 单测里没有 request 上下文 → RequestContextHolder 取不到，这两项为空且不抛（spec §5.2）
@@ -223,7 +222,7 @@ class AuditAspectTest {
 
     private PlatformAuditLog capture() {
         ArgumentCaptor<PlatformAuditLog> captor = ArgumentCaptor.forClass(PlatformAuditLog.class);
-        verify(auditService).record(captor.capture());
+        verify(auditRecorder).record(captor.capture());
         return captor.getValue();
     }
 }

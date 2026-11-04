@@ -15,7 +15,7 @@ import com.coding.platformapi.models.AlertQueryRequest;
 import com.coding.platformapi.notify.AlertNotifyContextService;
 import com.coding.platformapi.notify.NotifyContext;
 import com.coding.platformapi.models.AlertWebhookRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;

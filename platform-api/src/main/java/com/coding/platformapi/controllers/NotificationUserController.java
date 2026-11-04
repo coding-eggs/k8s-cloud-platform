@@ -5,7 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.models.NotificationUserView;
 import com.coding.platformapi.models.TenantRefRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.NotificationUserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

@@ -1,4 +1,4 @@
-package com.coding.platformapi.audit;
+package com.coding.common.audit;
 
 import java.lang.reflect.Modifier;
 import java.util.Arrays;

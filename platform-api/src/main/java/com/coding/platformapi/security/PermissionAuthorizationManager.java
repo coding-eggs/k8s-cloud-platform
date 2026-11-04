@@ -3,7 +3,7 @@ package com.coding.platformapi.security;
 import com.coding.common.components.permission.PermissionDecider;
 import com.coding.common.components.permission.PermissionRegistry;
 import com.coding.common.components.permission.PlatformServices;
-import com.coding.platformapi.audit.AuditDenied;
+import com.coding.common.audit.AuditDenied;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;

@@ -31,7 +31,7 @@ public class GatewayDeniedAuditor {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayDeniedAuditor.class);
 
-    /** 身份取不到时记的字面量（与 api 的 AuditService.UNKNOWN_ACTOR 同值） */
+    /** 身份取不到时记的字面量（与 common 的 AuditRecorder.UNKNOWN_ACTOR 同值） */
     static final String UNKNOWN_ACTOR = "unknown";
 
     private final PlatformAuditLogMapper mapper;

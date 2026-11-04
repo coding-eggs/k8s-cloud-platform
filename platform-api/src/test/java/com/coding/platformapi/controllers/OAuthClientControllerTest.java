@@ -1,7 +1,7 @@
 package com.coding.platformapi.controllers;
 
-import com.coding.platformapi.audit.AuditAction;
-import com.coding.platformapi.audit.Auditable;
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.bind.annotation.PostMapping;
 

@@ -10,7 +10,7 @@ import com.coding.data.models.k8s.AlertSource;
 import com.coding.data.models.k8s.PlatformAlertEvent;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.models.AlertQueryRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;

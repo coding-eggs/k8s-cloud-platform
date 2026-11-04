@@ -3,7 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 

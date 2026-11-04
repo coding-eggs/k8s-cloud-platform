@@ -1,4 +1,4 @@
-package com.coding.platformapi.audit;
+package com.coding.common.audit;
 
 import jakarta.servlet.http.HttpServletRequest;
 

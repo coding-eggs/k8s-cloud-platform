@@ -13,7 +13,7 @@ import com.coding.platformapi.models.TenantCreateRequest;
 import com.coding.platformapi.models.TenantKeyRequest;
 import com.coding.platformapi.models.TenantMemberView;
 import com.coding.platformapi.models.TenantUpdateRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.security.TenantContextResolver;
 import com.coding.platformapi.services.NamespaceAllocationService;
 import com.coding.platformapi.services.TenantMemberService;

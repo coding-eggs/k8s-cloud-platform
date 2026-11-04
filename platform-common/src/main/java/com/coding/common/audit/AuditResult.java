@@ -1,4 +1,4 @@
-package com.coding.platformapi.audit;
+package com.coding.common.audit;
 
 /**
  * 审计结果。写进 {@code platform_audit_log.result}（存 {@link #name()}）。

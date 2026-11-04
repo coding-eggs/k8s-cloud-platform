@@ -1,8 +1,8 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
-import com.coding.platformapi.audit.AuditAction;
-import com.coding.platformapi.audit.Auditable;
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.CredentialCreateRequest;
 import com.coding.platformapi.models.CredentialIdRequest;
 import com.coding.platformapi.models.CredentialListRequest;
@@ -10,7 +10,7 @@ import com.coding.platformapi.models.CredentialTestRequest;
 import com.coding.platformapi.models.CredentialTestResult;
 import com.coding.platformapi.models.CredentialUpdateRequest;
 import com.coding.platformapi.models.CredentialView;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.CredentialService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

@@ -1,16 +1,14 @@
-package com.coding.platformapi.audit;
+package com.coding.common.audit;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.data.models.system.PlatformAuditLog;
 import com.coding.data.models.system.TokenUserInfo;
-import com.coding.platformapi.security.AuthContext;
-import com.coding.platformapi.services.AuditService;
+import com.coding.common.security.AuthContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
-import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -50,11 +48,10 @@ import java.util.Date;
  */
 @Slf4j
 @Aspect
-@Component
 @RequiredArgsConstructor
 public class AuditAspect {
 
-    private final AuditService auditService;
+    private final AuditRecorder auditRecorder;
 
     private final AuthContext authContext;
 
@@ -77,14 +74,14 @@ public class AuditAspect {
     /**
      * 记录本身再包一层 fail-open。
      *
-     * <p>为什么不能只靠 {@link AuditService#record} 里的 try/catch：那样「审计失败不影响业务」
+     * <p>为什么不能只靠 {@link AuditRecorder#record} 里的 try/catch：那样「审计失败不影响业务」
      * 这条契约就完全寄存在另一个类里 —— 谁把那个 try/catch 去掉，本切面会静默地开始破坏业务
      * （成功路径的记录调用一旦抛出，业务返回值就丢了）。包在这里，契约才是本地的。
      */
     private void recordQuietly(ProceedingJoinPoint pjp, Auditable auditable,
                                AuditResult result, Throwable error, long start) {
         try {
-            auditService.record(build(pjp, auditable, result, error, start));
+            auditRecorder.record(build(pjp, auditable, result, error, start));
         } catch (Throwable t) {
             log.error("审计记录失败（已忽略，不影响业务）action={} result={}",
                     auditable.action(), result, t);
@@ -101,7 +98,7 @@ public class AuditAspect {
 
         TokenUserInfo user = authContext.current();
         r.setActorUsername(user != null && StringUtils.hasText(user.getUsername())
-                ? user.getUsername() : AuditService.UNKNOWN_ACTOR);
+                ? user.getUsername() : AuditRecorder.UNKNOWN_ACTOR);
         r.setActorDisplayName(user == null ? null : user.getDisplayName());
 
         r.setTargetName(targetResolver.resolveTarget(pjp, auditable.target()));

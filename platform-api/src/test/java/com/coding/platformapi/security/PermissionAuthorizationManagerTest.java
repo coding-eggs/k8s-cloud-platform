@@ -1,7 +1,7 @@
 package com.coding.platformapi.security;
 
 import com.coding.common.components.permission.PermissionRegistry;
-import com.coding.platformapi.audit.AuditDenied;
+import com.coding.common.audit.AuditDenied;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;

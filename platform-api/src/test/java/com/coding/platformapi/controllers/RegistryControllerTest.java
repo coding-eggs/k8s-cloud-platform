@@ -1,6 +1,6 @@
 package com.coding.platformapi.controllers;
 
-import com.coding.platformapi.audit.Auditable;
+import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.RegistryConnectionView;
 import org.junit.jupiter.api.Test;
 

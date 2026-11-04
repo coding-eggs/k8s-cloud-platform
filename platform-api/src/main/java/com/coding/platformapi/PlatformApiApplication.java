@@ -4,6 +4,8 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Import;
+import com.coding.common.audit.ServletAuditConfiguration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
@@ -13,6 +15,8 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 @EnableScheduling
 @EnableTransactionManagement
 @ComponentScan(basePackages = {"com.coding.platformapi", "com.coding.common", "com.coding.data"})
+// 审计切面 + AuthContext：common 里刻意不打 @Configuration（k8s-server 也扫 com.coding.common），此处显式启用
+@Import(ServletAuditConfiguration.class)
 @MapperScan({
         "com.coding.data.mapper",
 })

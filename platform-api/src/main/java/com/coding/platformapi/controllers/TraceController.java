@@ -1,7 +1,7 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.trace.TraceDetailDTO;
 import com.coding.platformapi.trace.TraceSearchRequest;
 import com.coding.platformapi.trace.TraceService;

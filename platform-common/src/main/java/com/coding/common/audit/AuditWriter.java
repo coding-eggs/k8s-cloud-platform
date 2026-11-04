@@ -1,9 +1,8 @@
-package com.coding.platformapi.audit;
+package com.coding.common.audit;
 
 import com.coding.data.mapper.system.PlatformAuditLogMapper;
 import com.coding.data.models.system.PlatformAuditLog;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
  * <h3>REQUIRES_NEW 的第二个作用</h3>
  * 审计写失败不会污染业务事务（不会把它标记成 rollback-only），这是 fail-open 能成立的前提。
  */
-@Component
 @RequiredArgsConstructor
 public class AuditWriter {
 

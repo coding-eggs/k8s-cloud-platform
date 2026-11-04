@@ -6,7 +6,7 @@ import com.coding.common.components.jwt.PlatformJwtValidators;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.platformapi.security.PermissionAuthorizationManager;
-import com.coding.platformapi.services.AuditService;
+import com.coding.common.audit.AuditRecorder;
 import com.nimbusds.jose.*;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.proc.*;
@@ -59,7 +59,7 @@ public class ResourceServerConfig {
 	SecurityFilterChain securityFilterChain(HttpSecurity http, Properties properties,
 										   PermissionAuthorizationManager authorizationManager,
 										   JwtPermissionResolver permissionResolver,
-										   AuditService auditService,
+										   AuditRecorder auditRecorder,
 										   @Value("${jwt.data-key:data}") String dataKey) {
 
 		http
@@ -78,7 +78,7 @@ public class ResourceServerConfig {
 						.accessDeniedHandler((request, response, accessDeniedException) -> {
 							// S0.1 审计：403 = 已认证但无权。recordDenied 内部 fail-open，
 							// 它绝不能抛 —— 否则 403 会变成 500（spec §5.4）。
-							auditService.recordDenied(request);
+							auditRecorder.recordDenied(request);
 							writeAuthJson(response, 403, EnumResponseType.NON_AUTH_ENTRY_POINT);
 						}))
 				.oauth2ResourceServer(ors -> {

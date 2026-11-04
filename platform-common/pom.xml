@@ -53,6 +53,19 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- 审计切面（ServletAuditConfiguration，只被 api / auth @Import）。optional：网关与 k8s-server 不需要 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aspectj</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- AuditWriter 的 REQUIRES_NEW -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <dependency>
             <groupId>com.coding</groupId>
             <artifactId>platform-data</artifactId>

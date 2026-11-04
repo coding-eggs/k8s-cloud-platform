@@ -8,7 +8,7 @@ import com.coding.data.mapper.auth.PlatformUserMapper;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformUser;
 import com.coding.data.models.system.TokenUserInfo;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
