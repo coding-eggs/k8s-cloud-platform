@@ -302,6 +302,11 @@ public final class AuditAction {
 
     public static final String OAUTH_CLIENT_RESET_SECRET = "oauth-client:reset-secret";
 
+    // ---- 签名 / 加密密钥 ----
+
+    /** 生成 JWK 并按优先级入库（高优先级签名密钥 = 决定平台用哪把钥匙签 token） */
+    public static final String JWK_GENERATE = "jwk:generate";
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *

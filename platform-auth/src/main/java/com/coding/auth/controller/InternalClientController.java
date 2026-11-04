@@ -6,6 +6,8 @@ import com.coding.auth.client.ClientCreated;
 import com.coding.auth.client.ClientSecrets;
 import com.coding.auth.client.OAuth2Scope;
 import com.coding.auth.service.ClientAdminService;
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,8 +18,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 客户端管理的内部接口 —— 只给 platform-api 调（共享密钥见 {@code InternalTokenFilter}）。
- * 权限、审计都在 platform-api 的 {@code /oauth-clients/**}；这里只负责规则与读写，
+ * 客户端管理的内部接口，挂在平台网关后面：浏览器 {@code /api/oauth-clients/**} → 网关 → 这里（网关 spec §7）。
+ * 接口级权限由网关按权限表判（service=platform-auth 的行），本服务只认 JWT（见 {@code InternalApiSecurityConfig}）；
+ * 写操作审计在这里记（action / target 与原 api 转发层一致）。规则与读写都在 auth，
  * 因为对称密钥要用 auth 自己的加密密钥落库，私钥不出 auth（spec §4.6）。
  */
 @RestController
@@ -42,8 +45,8 @@ public class InternalClientController {
     }
 
     @PostMapping("/get")
-    public ResponseData<ClientAdminView> get(@RequestBody IdRequest req) {
-        return new ResponseData<>(clientAdminService.get(req.id()));
+    public ResponseData<ClientAdminView> get(@RequestBody IdRequest request) {
+        return new ResponseData<>(clientAdminService.get(request.id()));
     }
 
     @PostMapping("/scopes")
@@ -52,29 +55,34 @@ public class InternalClientController {
     }
 
     @PostMapping("/create")
-    public ResponseData<ClientCreated> create(@RequestBody ClientAdminRequest req) {
-        return new ResponseData<>(clientAdminService.create(req));
+    @Auditable(action = AuditAction.OAUTH_CLIENT_CREATE, target = "#request.clientId")
+    public ResponseData<ClientCreated> create(@RequestBody ClientAdminRequest request) {
+        return new ResponseData<>(clientAdminService.create(request));
     }
 
     @PostMapping("/update")
-    public ResponseData<ClientCreated> update(@RequestBody ClientAdminRequest req) {
-        return new ResponseData<>(clientAdminService.update(req));
+    @Auditable(action = AuditAction.OAUTH_CLIENT_UPDATE, target = "#request.id")
+    public ResponseData<ClientCreated> update(@RequestBody ClientAdminRequest request) {
+        return new ResponseData<>(clientAdminService.update(request));
     }
 
     @PostMapping("/delete")
-    public ResponseData<Void> delete(@RequestBody IdRequest req) {
-        clientAdminService.delete(req.id());
+    @Auditable(action = AuditAction.OAUTH_CLIENT_DELETE, target = "#request.id")
+    public ResponseData<Void> delete(@RequestBody IdRequest request) {
+        clientAdminService.delete(request.id());
         return new ResponseData<>();
     }
 
     @PostMapping("/enable")
-    public ResponseData<Void> enable(@RequestBody EnableRequest req) {
-        clientAdminService.setEnabled(req.id(), req.enabled());
+    @Auditable(action = AuditAction.OAUTH_CLIENT_ENABLE, target = "#request.id")
+    public ResponseData<Void> enable(@RequestBody EnableRequest request) {
+        clientAdminService.setEnabled(request.id(), request.enabled());
         return new ResponseData<>();
     }
 
     @PostMapping("/reset-secret")
-    public ResponseData<ClientSecrets> resetSecret(@RequestBody ResetSecretRequest req) {
-        return new ResponseData<>(clientAdminService.resetSecret(req.id(), req.which()));
+    @Auditable(action = AuditAction.OAUTH_CLIENT_RESET_SECRET, target = "#request.id")
+    public ResponseData<ClientSecrets> resetSecret(@RequestBody ResetSecretRequest request) {
+        return new ResponseData<>(clientAdminService.resetSecret(request.id(), request.which()));
     }
 }
