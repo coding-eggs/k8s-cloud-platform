@@ -9,9 +9,36 @@ import { sha256 } from './sha256'
 
 const ISSUER = import.meta.env.VITE_OAUTH_ISSUER
 const CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID
-// 同源约定下回调地址必然是「页面 origin + /callback」：不配就运行时取，同一份构建换域名/端口不用重打。
-// 显式配置（构建期内联）仍优先，留给回调必须与页面不同 origin 的特殊部署。
-const REDIRECT_URI = import.meta.env.VITE_OAUTH_REDIRECT_URI || `${window.location.origin}/callback`
+
+/**
+ * 回调地址的解析（优先级从高到低）：
+ *   1. **运行时配置** `window.__PLATFORM_RUNTIME_CONFIG__.oauthRedirectUri`
+ *      —— 部署时由容器环境变量 `PLATFORM_OAUTH_REDIRECT_URI` 经 nginx 现生成到 `/runtime-config.js`，
+ *         改完重启容器即生效，**不用重新构建**（VITE_* 是构建期内联的，这条路才是部署期可配的）；
+ *   2. 构建期 `VITE_OAUTH_REDIRECT_URI`（同一份构建给多处部署时的历史方式，保留兼容）；
+ *   3. 页面 origin + `/callback`（同源部署的默认值，换域名/端口不用管）。
+ *
+ * ⚠️ 无论取到哪个值，都必须在 platform-auth 的 `platform-web-client` 里登记**一字不差**的
+ *    redirect_uri（授权端点是精确匹配，不是前缀/通配匹配），否则授权请求直接被拒 ——
+ *    表现为「点登录后停在 auth 的错误页」，浏览器根本到不了 /callback。
+ */
+function resolveRedirectUri(
+  runtimeUri: string | undefined,
+  buildTimeUri: string | undefined,
+  origin: string,
+): string {
+  const fromRuntime = runtimeUri?.trim()
+  if (fromRuntime) return fromRuntime
+  const fromBuild = buildTimeUri?.trim()
+  if (fromBuild) return fromBuild
+  return `${origin}/callback`
+}
+
+const REDIRECT_URI = resolveRedirectUri(
+  window.__PLATFORM_RUNTIME_CONFIG__?.oauthRedirectUri,
+  import.meta.env.VITE_OAUTH_REDIRECT_URI,
+  window.location.origin,
+)
 
 const TOKEN_KEY = 'platform_access_token'
 const USER_KEY = 'platform_user'

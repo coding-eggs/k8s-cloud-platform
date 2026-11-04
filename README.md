@@ -238,8 +238,11 @@ cd platform-web && VITE_OAUTH_ISSUER=/auth VITE_OAUTH_CLIENT_ID=platform-web-cli
   npm ci && npm run build-only
 ```
 
-登录回调地址不用配：前端运行时取「页面 origin + `/callback`」。用哪个地址打开平台，就在 platform-auth 里给
-`platform-web-client` 登记哪个 redirect_uri（一字不差）；同一份构建换域名/端口不用重新构建。
+登录回调地址默认取「页面 origin + `/callback`」，不用配。要指定别的值，用 `platform-web` 容器的**运行时**
+环境变量 `PLATFORM_OAUTH_REDIRECT_URI`（nginx 启动时生成到 `/runtime-config.js`，改完重启容器即生效，不用重新构建）。
+无论哪种，platform-auth 里 `platform-web-client` 登记的 redirect_uri 必须与前端实际用的值**一字不差**
+（授权端点精确匹配，没有通配）——否则点登录会停在 auth 的错误页，浏览器根本到不了 `/callback`。
+同一份构建换域名/端口不用重新构建，只改环境变量 + 在库里补登记。
 
 ### 4.5 镜像构建（**两步，Dockerfile 不编译**）
 
@@ -276,7 +279,8 @@ docker build -f platform-api/Dockerfile -t k8s-cloud-platform/platform-api:lates
 | `PIPELINE_ARCHIVE_ENABLED` / `PIPELINE_RUN_TIMEOUT` / `PIPELINE_TIMEOUT_CHECK` | k8s-server | CI 归档与超时对账 |
 | `HARBOR_DEFAULT_HOST` / `HARBOR_TLS_CERT_FILE` / `HARBOR_TLS_KEY_FILE` | api | Harbor 安装表单默认值 |
 | `VITE_OAUTH_ISSUER` / `VITE_OAUTH_CLIENT_ID` | platform-web（**构建期**） | 改了要**重新构建**，不是重启容器 |
-| `VITE_OAUTH_REDIRECT_URI` | platform-web（**构建期，可选**） | 不配 = 运行时取页面 origin + `/callback`；只在回调与页面不同 origin 时才配 |
+| `PLATFORM_OAUTH_REDIRECT_URI` | platform-web（**运行时**） | 空 = 前端取页面 origin + `/callback`；非空则原样作为 OAuth redirect_uri（须与 auth 库里登记值一字不差） |
+| `VITE_OAUTH_REDIRECT_URI` | platform-web（**构建期，可选**） | 运行时值为空时才生效；仅为兼容保留，新部署用上面的运行时变量 |
 | `OAUTH_UPSTREAM` | platform-web dev server | 真实 auth 的 origin（不带 `/auth`） |
 
 ### 5.1 纳管集群的集群侧前提
