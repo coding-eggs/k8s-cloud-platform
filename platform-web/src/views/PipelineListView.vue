@@ -10,7 +10,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { MoreFilled } from '@element-plus/icons-vue'
 import { pipelineApi } from '@/api'
 import type { Pipeline } from '@/types'
 import { usePermission } from '@/stores/permission'
@@ -201,15 +200,6 @@ async function remove(row: Pipeline) {
 /** `?id=` 让运行历史页能跳回来（面包屑用） */
 const focusId = computed(() => (route.query.id as string) || '')
 
-/** 行操作下拉的分发（与集群列表同一形状） */
-function onCommand(cmd: string, row: Pipeline): void {
-  switch (cmd) {
-    case 'edit': toEditor(row.id); break
-    case 'runs': toRuns(row.id!); break
-    case 'run': void openRun(row); break
-    case 'remove': void remove(row); break
-  }
-}
 </script>
 
 <template>
@@ -268,29 +258,15 @@ function onCommand(cmd: string, row: Pipeline): void {
       <el-table-column label="更新时间" width="180">
         <template #default="{ row }">{{ row.updatedAt ?? row.createdAt ?? '—' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="90" align="center">
-        <!-- 行操作收敛成一个下拉（与集群 / 工作负载那几张列表页同一形状）：
-             行内平铺四个按钮既挤又容易点错，尤其「删除」跟「运行」挨着 -->
+      <!-- 行操作摊开成行内按钮（与运行历史页同一套，2026-11-04）：
+           不再收进下拉；「运行」在集群跑不了 CI 时禁用（上方横幅已说明原因） -->
+      <el-table-column label="操作" width="230" fixed="right">
         <template #default="{ row }">
-          <el-dropdown trigger="click" @command="(cmd: string) => onCommand(cmd, row)">
-            <el-button link type="primary" :icon="MoreFilled" />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="edit">
-                  <el-button link type="primary">编辑</el-button>
-                </el-dropdown-item>
-                <el-dropdown-item command="runs">
-                  <el-button link type="primary">运行历史</el-button>
-                </el-dropdown-item>
-                <el-dropdown-item v-if="canRun" command="run" :disabled="capAvailable === false">
-                  <el-button link type="primary" :disabled="capAvailable === false">运行</el-button>
-                </el-dropdown-item>
-                <el-dropdown-item v-if="canManage" divided command="remove">
-                  <el-button link type="danger">删除</el-button>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          <el-button link type="primary" @click="toEditor(row.id)">编辑</el-button>
+          <el-button link type="primary" @click="toRuns(row.id!)">运行历史</el-button>
+          <el-button v-if="canRun" link type="primary"
+                     :disabled="capAvailable === false" @click="openRun(row)">运行</el-button>
+          <el-button v-if="canManage" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
