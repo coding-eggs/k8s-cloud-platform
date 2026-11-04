@@ -136,6 +136,9 @@ public class AppReleaseService {
                 AppServiceDesired.warnings(d).forEach(w -> warnings.add("服务 " + key + "：" + w));
             }
         }
+        if (!plan.selected.isEmpty()) {
+            warnings.addAll(dependencies.degraded(AppReleasePipeline.referencedDependencies(plan.next)));
+        }
         return new AppReleasePreviewView(changes,
                 plan.changes.stream().map(AppPending.Change::key).toList(),
                 plan.selected, plan.required, added, removed, problems, warnings);

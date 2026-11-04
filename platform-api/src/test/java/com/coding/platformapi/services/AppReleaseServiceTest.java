@@ -331,6 +331,38 @@ class AppReleaseServiceTest {
     }
 
     @Test
+    void degradedMiddlewarePassesPrecheckAndWarnsInPreview() {
+        PlatformAppDependency dep = new PlatformAppDependency();
+        dep.setAppId("app1");
+        dep.setDepKey("es");
+        dep.setType("MIDDLEWARE");
+        dep.setInstanceId("mw1");
+        when(depRows.selectByApp("app1")).thenReturn(List.of(dep));
+        when(middleware.statusOf("mw1")).thenReturn("DEGRADED");
+        ConnInfo info = ConnInfo.of("elasticsearch", "es.demo.svc", 9200).build();
+        MiddlewareConnectionDTO dto = new MiddlewareConnectionDTO();
+        dto.setInfo(info);
+        when(middleware.connection("mw1", "t1")).thenReturn(dto);
+        when(services.selectByApp("app1")).thenReturn(List.of(
+                row("api", svc("1", "ES", "${es.host}"), false)));
+
+        AppReleasePreviewView v = service.preview("app1", List.of("api"), Map.of(), "t1");
+        assertThat(v.warnings()).anyMatch(w -> w.contains("es") && w.contains("降级"));
+
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
+        ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
+        verify(releases).insert(cap.capture());
+        PlatformAppRelease release = cap.getValue();
+        release.setReleaseNo(1);
+        when(releases.selectByNo("app1", 1)).thenReturn(release);
+        PlatformAppExecution exec = new PlatformAppExecution();
+        exec.setAppId("app1");
+        exec.setReleaseNo(1);
+
+        pipeline.check(exec);   // 降级不挡
+    }
+
+    @Test
     void activePendingOrRunningExecutionRejectsNewRelease() {
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
         for (String status : List.of("PENDING", "RUNNING")) {

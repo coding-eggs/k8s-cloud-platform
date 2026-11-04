@@ -62,6 +62,7 @@ public class AppDependencyService {
 
     static final String MIDDLEWARE = "MIDDLEWARE";
     static final String EXTERNAL = "EXTERNAL";
+    private static final String DEGRADED = "DEGRADED";
 
     private static final Pattern KEY = Pattern.compile("^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$");
     private static final Pattern HOST = Pattern.compile(
@@ -178,7 +179,10 @@ public class AppDependencyService {
         return out;
     }
 
-    /** 未就绪的依赖，每条一句话且含依赖名；空列表 = 全部就绪。EXTERNAL 不探测，视为就绪。 */
+    /**
+     * 挡发布的依赖，每条一句话且含依赖名；空列表 = 可以发布。EXTERNAL 不探测，视为就绪。
+     * DEGRADED 不挡：Pod 已有、连接地址和 Secret 都在，只是没全部就绪 / 附属组件或 Operator 有告警，见 {@link #degraded}。
+     */
     public List<String> notReady(List<PlatformAppDependency> deps) {
         List<String> out = new ArrayList<>();
         for (PlatformAppDependency dep : deps) {
@@ -186,8 +190,19 @@ public class AppDependencyService {
                 continue;
             }
             String status = statusOf(dep);
-            if (!"READY".equals(status)) {
+            if (!"READY".equals(status) && !DEGRADED.equals(status)) {
                 out.add("依赖 " + dep.getDepKey() + " 未就绪（当前状态 " + status + "）");
+            }
+        }
+        return out;
+    }
+
+    /** 降级中的依赖：不挡发布，作为预览警告提示。 */
+    public List<String> degraded(List<PlatformAppDependency> deps) {
+        List<String> out = new ArrayList<>();
+        for (PlatformAppDependency dep : deps) {
+            if (!EXTERNAL.equals(dep.getType()) && DEGRADED.equals(statusOf(dep))) {
+                out.add("依赖 " + dep.getDepKey() + " 处于降级状态，发布不受阻，但引用它的服务启动后可能连接不稳定");
             }
         }
         return out;
