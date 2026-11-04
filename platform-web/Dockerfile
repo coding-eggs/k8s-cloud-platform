@@ -5,12 +5,13 @@
 #   而第二遍拿不到依赖缓存（/cache 挂在构建节点上，不在 builder 里）。
 #
 # 用法（**两步，与流水线的两个节点一一对应**）：
-#   1) 先在 platform-web/ 里构建（产出 dist/）。⚠️ 那三个 VITE_* 是**构建期**被 Vite 内联进 JS 的，
-#      所以它们现在由**构建命令**给（不再是 --build-arg）：
+#   1) 先在 platform-web/ 里构建（产出 dist/）。⚠️ VITE_* 是**构建期**被 Vite 内联进 JS 的，
+#      所以它们由**构建命令**给（不再是 --build-arg）：
 #        VITE_OAUTH_ISSUER=/auth \
 #        VITE_OAUTH_CLIENT_ID=platform-web-client \
-#        VITE_OAUTH_REDIRECT_URI=http://your-host/callback \
 #        npm ci && npm run build-only
+#      回调地址不用给：前端运行时取「页面 origin + /callback」，同一镜像换域名/端口不用重新构建。
+#      （仍可显式给 VITE_OAUTH_REDIRECT_URI，构建期内联且优先，仅用于回调与页面不同 origin 的特殊部署）
 #      ⚠️ VITE_OAUTH_ISSUER **只写上下文路径 /auth**（platform-auth 的 server.servlet.context-path），
 #        代码拼出来的是 /auth/oauth2/... 这类相对路径，跟着本 nginx 的 origin 走，auth 由 nginx
 #        整块转发（见 nginx.conf 的 /auth/，auth 部署在远端也照此）。写死具体 host 会退化成跨站，
@@ -22,8 +23,9 @@
 # 流水线里对应：「Node 构建」节点（工作目录 platform-web、命令见上面第 1 步）
 #   → 「构建并推送镜像」节点（Dockerfile 路径 platform-web/Dockerfile、构建上下文 platform-web）
 #
-# ⚠️ 那三个 VITE_* 不是运行时读环境变量 —— 改域名/端口要**重新构建**（不是重启容器）。
-#    三者必须与 platform-auth 里 platform-web-client 注册的 redirect_uri 一字不差（同源铁律）。
+# ⚠️ VITE_* 不是运行时读环境变量 —— 改了要**重新构建**（不是重启容器）。
+#    换域名/端口时只需在 platform-auth 里给 platform-web-client 补登记 redirect_uri
+#    = 浏览器访问的 origin + /callback（一字不差，同源铁律）。
 #
 # 运行 —— 两个后端地址由**运行时环境变量**给（改了重启容器即可，不用重新打镜像）：
 #   PLATFORM_API_URL   默认 http://platform-api:8081

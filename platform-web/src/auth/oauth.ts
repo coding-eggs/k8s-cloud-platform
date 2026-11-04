@@ -9,7 +9,9 @@ import { sha256 } from './sha256'
 
 const ISSUER = import.meta.env.VITE_OAUTH_ISSUER
 const CLIENT_ID = import.meta.env.VITE_OAUTH_CLIENT_ID
-const REDIRECT_URI = import.meta.env.VITE_OAUTH_REDIRECT_URI
+// 同源约定下回调地址必然是「页面 origin + /callback」：不配就运行时取，同一份构建换域名/端口不用重打。
+// 显式配置（构建期内联）仍优先，留给回调必须与页面不同 origin 的特殊部署。
+const REDIRECT_URI = import.meta.env.VITE_OAUTH_REDIRECT_URI || `${window.location.origin}/callback`
 
 const TOKEN_KEY = 'platform_access_token'
 const USER_KEY = 'platform_user'
