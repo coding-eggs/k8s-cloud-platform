@@ -1,0 +1,65 @@
+package com.coding.gateway.security;
+
+import com.coding.common.components.permission.PermissionRegistry;
+import com.coding.data.mapper.auth.PlatformPermissionMapper;
+import com.coding.data.models.auth.PlatformPermission;
+import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+class PermissionRegistryReloaderTest {
+
+    private final PlatformPermissionMapper mapper = mock(PlatformPermissionMapper.class);
+    private final PermissionRegistry registry = new PermissionRegistry(List.of());
+    private final PermissionRegistryReloader reloader = new PermissionRegistryReloader(mapper, registry);
+
+    private static PlatformPermission row(String domain, String service, String path) {
+        PlatformPermission p = new PlatformPermission();
+        p.setDomain(domain);
+        p.setService(service);
+        p.setAction("POST");
+        p.setResource(path);
+        p.setCode("x:y");
+        return p;
+    }
+
+    @Test
+    void reloadFailureKeepsPreviousRules() {
+        when(mapper.selectAllActive())
+                .thenReturn(List.of(row("API", "platform-api", "/a"), row("API", "platform-auth", "/internal/b")))
+                .thenThrow(new DataAccessResourceFailureException("db down"))
+                .thenReturn(List.of(row("API", "platform-api", "/a"), row("API", "platform-api", "/c"),
+                        row("API", "platform-auth", "/internal/b")));
+
+        reloader.reload();
+        assertThat(registry.rules()).hasSize(2);
+        reloader.reload(); // 库抖动：保留旧表，绝不清空（清空 = 全站 403）
+        assertThat(registry.rules()).hasSize(2);
+        reloader.reload();
+        assertThat(registry.rules()).hasSize(3);
+    }
+
+    @Test
+    void onlyApiDomainRowsOfAllServices() {
+        when(mapper.selectAllActive()).thenReturn(List.of(
+                row("API", "platform-api", "/a"), row("API", "platform-auth", "/internal/b"), row("Page", null, "x")));
+
+        reloader.reload();
+
+        assertThat(registry.rules()).extracting(PermissionRegistry.Rule::service)
+                .containsExactlyInAnyOrder("platform-api", "platform-auth");
+    }
+
+    @Test
+    void firstLoadFailureAbortsStartup() {
+        when(mapper.selectAllActive()).thenThrow(new DataAccessResourceFailureException("db down"));
+
+        assertThatThrownBy(reloader::afterPropertiesSet).isInstanceOf(IllegalStateException.class);
+    }
+}

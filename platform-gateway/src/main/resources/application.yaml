@@ -40,3 +40,20 @@ management:
       enabled: false
     redis:
       enabled: false
+
+platform:
+  gateway:
+    # 权限点管理页改行后，网关最迟这么久生效（api 自己那份是即时热换）
+    permission-reload-interval: 60s
+    # 外部前缀 = nginx 去掉 /api 之后的路径；解析按前缀最长优先，书写顺序无关。
+    # 权限行的 resource 写服务内路径（internal-prefix 之后），与 service 一起匹配。
+    routes:
+      - { service: platform-auth, external-prefix: /oauth-clients/, internal-prefix: /internal/clients/, uri: "${PLATFORM_AUTH_URL:http://platform-auth:9527}", context-path: /auth }
+      - { service: platform-auth, external-prefix: /jwks/,          internal-prefix: /internal/jwk/,     uri: "${PLATFORM_AUTH_URL:http://platform-auth:9527}", context-path: /auth }
+      - { service: platform-api,  external-prefix: /,               internal-prefix: /,                  uri: "${PLATFORM_API_URL:http://platform-api:8081}",   context-path: "" }
+
+mybatis:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.coding.data.models
+  configuration:
+    map-underscore-to-camel-case: true
