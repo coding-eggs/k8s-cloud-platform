@@ -1,2 +1,6 @@
 /mvnw text eol=lf
 *.cmd text eol=crlf
+
+# 预置的 helm / kubectl 压缩包（见 scripts/fetch-k8s-tools.sh）：
+# 按二进制处理 —— 不做换行转换，也别在 diff 里展开
+k8s-server/docker/tools/**/*.gz binary

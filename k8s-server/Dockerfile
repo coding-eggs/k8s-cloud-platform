@@ -23,34 +23,52 @@
 #    它**不走** platform-api 那条出站代理白名单，部署时按集群的地址放行。
 # ⚠️ 流水线的归档/超时检查是**后台定时任务**，不要跑多副本（否则同一条运行会被归档两次；
 #    幂等挡住了重复写，但没必要）。
+#
+# ============================ 构建期**完全离线** ============================
+# 2026-11-04 改定：helm 与 kubectl **不再在构建时下载**。
+#   原来这里 RUN curl get.helm.sh / dl.k8s.io，内网构建机没有出网就整条构建链失败，
+#   而且每次构建拿到的字节取决于当时的外网（不可复现）。
+#   现在二进制预先提交在 k8s-server/docker/tools/linux-amd64/ 下，构建只做 COPY + 解压：
+#     docker/tools/linux-amd64/helm-v4.2.0-linux-amd64.tar.gz   （官方的 linux-amd64 tar 包）
+#     docker/tools/linux-amd64/kubectl-v1.37.2-linux-amd64.gz   （裸二进制 gzip 过，约 18MB）
+#   换版本：跑 `bash scripts/fetch-k8s-tools.sh`（会跟官方 sha256 比对），
+#           再把下面两处文件名与这里列出的版本一起改掉。**别只改一处**。
+# ⚠️ 仓库里只预置了 **linux-amd64**。真要出 arm64 镜像，先 `bash scripts/fetch-k8s-tools.sh arm64`
+#    并把下面的路径换掉，否则会在 tools 阶段看到一句明确的报错。
+# ⚠️ 因为不再装 apt 包，镜像里**没有** curl（构建期用不到，运行期也不需要）。
+#    ca-certificates 由 eclipse-temurin 基础镜像自带 —— 连 K8s API / auth 的 HTTPS 全靠它。
+# ==========================================================================
 
-FROM eclipse-temurin:21-jre
+# ---------- 阶段一：把压缩包解开成真实二进制 ----------
+# 单独一个阶段是为了让最终镜像里只有二进制，不残留那两个压缩包（省约 36MB）。
+FROM eclipse-temurin:21-jre AS tools
+
+ARG TARGETARCH=amd64
+RUN [ "$TARGETARCH" = "amd64" ] || {
+      echo "只预置了 linux-amd64 的 helm/kubectl；要出 $TARGETARCH 镜像请先跑 scripts/fetch-k8s-tools.sh $TARGETARCH" >&2
+      exit 1
+    }
 
 # S3.6：组件安装靠 PATH 上的 helm 二进制（HelmRunner 直接调 `helm`）。
 # ⚠️ 版本必须与平台验证过的一致：Helm 4 用 --rollback-on-failure，没有 --atomic。
-# ⚠️ 构建机需要能访问 get.helm.sh（内网可用 --build-arg HELM_BASE_URL=<镜像站>）；
-#    需要出网代理时按惯例传 --build-arg HTTP_PROXY/HTTPS_PROXY。
-ARG HELM_VERSION=v4.2.0
-ARG HELM_BASE_URL=https://get.helm.sh
+COPY docker/tools/linux-amd64/helm-v4.2.0-linux-amd64.tar.gz /tmp/helm.tgz
 # S3.6：超大 chart（Calico 的 CRD chart）不走 Helm release —— Helm 把整个 chart 存进 release
 # Secret，超过 1MiB 就装不了。那条路径用 `kubectl apply --server-side` 落盘，所以镜像里要有 kubectl。
-ARG KUBECTL_VERSION=v1.36.0
-ARG KUBECTL_BASE_URL=https://dl.k8s.io
-ARG TARGETARCH
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
- && curl -fsSL "${HELM_BASE_URL}/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" -o /tmp/helm.tgz \
- && tar -xzf /tmp/helm.tgz -C /tmp \
- && mv "/tmp/linux-${TARGETARCH}/helm" /usr/local/bin/helm \
- && chmod +x /usr/local/bin/helm \
+COPY docker/tools/linux-amd64/kubectl-v1.37.2-linux-amd64.gz /tmp/kubectl.gz
+
+# 解压后立刻各跑一次 --version：文件被截断 / 架构不对会在这里就失败，而不是等到装组件时。
+RUN tar -xzf /tmp/helm.tgz -C /tmp \
+ && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
+ && gunzip -c /tmp/kubectl.gz > /usr/local/bin/kubectl \
+ && chmod +x /usr/local/bin/helm /usr/local/bin/kubectl \
  && helm version --short \
- && curl -fsSL "${KUBECTL_BASE_URL}/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
-      -o /usr/local/bin/kubectl \
- && chmod +x /usr/local/bin/kubectl \
- && kubectl version --client \
- && rm -rf /tmp/helm.tgz "/tmp/linux-${TARGETARCH}" \
- && apt-get purge -y --auto-remove curl \
- && rm -rf /var/lib/apt/lists/*
+ && kubectl version --client
+
+# ---------- 阶段二：运行镜像 ----------
+FROM eclipse-temurin:21-jre
+
+COPY --from=tools /usr/local/bin/helm    /usr/local/bin/helm
+COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
 
 RUN useradd -m -u 1001 app
 WORKDIR /app

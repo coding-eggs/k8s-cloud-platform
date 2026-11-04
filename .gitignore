@@ -36,3 +36,6 @@ build/
 .vscode/
 .vite
 cert/
+
+# scripts/fetch-k8s-tools.sh 下载过程中的临时裸二进制（只有 .gz 该进仓库）
+k8s-server/docker/tools/**/*.raw
