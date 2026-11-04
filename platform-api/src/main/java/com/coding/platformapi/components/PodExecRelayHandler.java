@@ -12,6 +12,7 @@ import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.AbstractWebSocketHandler;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
@@ -35,6 +36,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * 的 query 那一行），exec 直接连不上。挪到 header 后该跳不再有 4KB 上限，且
  * k8s-server 的 {@code QueryParameterBearerTokenResolver} 本就 header 优先。
  * 附带收益：token 不再出现在 k8s-server 及任何网关的 access log 里（URL 会被记，header 不会）。
+ *
+ * <p><b>心跳</b>（网关计划 Task 8）：浏览器每 25s 发 {@code {"type":"ping"}}，本中继直接回 {@code {"type":"pong"}}，
+ * <b>不转发</b>给 k8s-server。作用是让 nginx / 网关 / LB 这几跳都看到流量（常见 LB 空闲上限 60s），
+ * 并让前端能判活（60s 收不到任何帧就当断线）。ping 到不了 kubelet，它的 streaming 空闲上限（默认 4h）不受影响。
  */
 @Slf4j
 @Component
@@ -74,13 +79,23 @@ public class PodExecRelayHandler extends AbstractWebSocketHandler {
                         closeQuietly(session, CloseStatus.SERVER_ERROR);
                         return;
                     }
-                    upstreams.put(session.getId(), upstream);
+                    registerUpstream(session.getId(), upstream);
                     log.debug("exec 中继已建立: {} → {}", session.getId(), upstreamUrl);
                 });
     }
 
+    /** 浏览器 session 与上游 session 配对（上游握手成功后调用） */
+    void registerUpstream(String browserSessionId, WebSocketSession upstream) {
+        upstreams.put(browserSessionId, upstream);
+    }
+
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+        if (isPing(message.getPayload())) {
+            // 上游没连上也回：握手慢不该被前端当成断线
+            sendJson(session, Map.of("type", "pong"));
+            return;
+        }
         WebSocketSession upstream = upstreams.get(session.getId());
         if (upstream == null || !upstream.isOpen()) {
             return;
@@ -197,6 +212,19 @@ public class PodExecRelayHandler extends AbstractWebSocketHandler {
             sb.append(pair);
         }
         return sb.toString();
+    }
+
+    /** 只认 {@code {"type":"ping"}}；不是 JSON / 解析失败一律当普通帧（照转发，不能因此断开） */
+    private boolean isPing(String payload) {
+        if (payload == null || payload.length() > 64 || !payload.contains("ping")) {
+            return false;
+        }
+        try {
+            JsonNode node = jsonMapper.readTree(payload);
+            return node.isObject() && "ping".equals(node.path("type").asString(null));
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void sendJson(WebSocketSession session, Map<String, Object> payload) {
