@@ -1,7 +1,7 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sNamespaceStatClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

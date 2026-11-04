@@ -5,7 +5,7 @@ import com.coding.common.models.k8s.dto.WorkloadProbeResultDTO;
 import com.coding.common.models.k8s.dto.WorkloadProbeTargetDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
 import com.coding.platformapi.components.ComponentDef;
 import com.coding.platformapi.components.ComponentProbe;

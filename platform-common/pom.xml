@@ -39,6 +39,13 @@
             <artifactId>spring-security-oauth2-jose</artifactId>
         </dependency>
 
+        <!-- RedisJsonCache / 权限闭包缓存（api 与网关共用）。optional：k8s-server 也依赖本模块，但用不到 Redis -->
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-redis</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- BearerTokenResolver 接口签名带 HttpServletRequest；运行时由 web 容器提供 -->
         <dependency>
             <groupId>jakarta.servlet</groupId>

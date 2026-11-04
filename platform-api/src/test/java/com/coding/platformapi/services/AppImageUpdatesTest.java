@@ -1,6 +1,6 @@
 package com.coding.platformapi.services;
 
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.registry.RegistrySuggestExecutor;
 import org.junit.jupiter.api.Test;
 import tools.jackson.core.type.TypeReference;

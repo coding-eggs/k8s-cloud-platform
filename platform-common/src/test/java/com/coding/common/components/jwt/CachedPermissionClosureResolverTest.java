@@ -1,7 +1,6 @@
-package com.coding.platformapi.security;
+package com.coding.common.components.jwt;
 
-import com.coding.common.components.jwt.PermissionClosureService;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -23,10 +22,10 @@ import static org.mockito.Mockito.when;
 /**
  * 权限闭包解析（platform-api 侧）：**键必须含租户**（否则切租户串号），失败必须 fail-closed。
  *
- * <p>缓存本身的命中/降级语义在 {@link com.coding.platformapi.cache.RedisJsonCacheTest} 里测，
+ * <p>缓存本身的命中/降级语义在 {@link com.coding.common.components.cache.RedisJsonCacheTest} 里测，
  * 这里用**真实的** RedisJsonCache（Redis 客户端是 mock）跑穿透，好让 loader 真的被执行到。
  */
-class PermissionClosureResolverTest {
+class CachedPermissionClosureResolverTest {
 
     StringRedisTemplate redis = mock(StringRedisTemplate.class);
     PermissionClosureService closureService = mock(PermissionClosureService.class);
@@ -35,9 +34,9 @@ class PermissionClosureResolverTest {
     ValueOperations<String, String> valueOps = mock(ValueOperations.class);
 
     RedisJsonCache cache = new RedisJsonCache(redis, JsonMapper.builder().build());
-    PermissionClosureResolver resolver = new PermissionClosureResolver(closureService, cache, 30);
+    CachedPermissionClosureResolver resolver = new CachedPermissionClosureResolver(closureService, cache, java.time.Duration.ofSeconds(30));
 
-    PermissionClosureResolverTest() {
+    CachedPermissionClosureResolverTest() {
         when(redis.opsForValue()).thenReturn(valueOps);
         when(valueOps.get(anyString())).thenReturn(null); // 默认未命中 → 走 loader
     }

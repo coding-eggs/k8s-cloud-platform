@@ -1,4 +1,4 @@
-package com.coding.platformapi.cache;
+package com.coding.common.components.cache;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.RedisConnection;

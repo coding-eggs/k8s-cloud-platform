@@ -1,11 +1,7 @@
-package com.coding.platformapi.security;
+package com.coding.common.components.jwt;
 
-import com.coding.common.components.jwt.JwtPermissionResolver;
-import com.coding.common.components.jwt.PermissionClosureService;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import tools.jackson.core.type.TypeReference;
 
@@ -13,7 +9,7 @@ import java.time.Duration;
 import java.util.List;
 
 /**
- * platform-api 的权限闭包取数：语义照抄 {@link PermissionClosureService}（与签发期同一实现，
+ * 权限闭包取数（platform-api 与 platform-gateway 各注册一份，**共用同一个 Redis 键**）：语义照抄 {@link PermissionClosureService}（与签发期同一实现，
  * 不复制一行判断），外面套一层 <b>Redis 共享</b>的 TTL 缓存。
  *
  * <p><b>为什么是 Redis 而不是进程内缓存</b>：多实例时本地缓存会让同一用户在两个实例上拿到不同的权限集
@@ -27,8 +23,7 @@ import java.util.List;
  * （fail-closed）+ ERROR 日志，且**不缓存失败**，因此一次 DB 抖动不会把这个用户钉死一个 TTL。
  */
 @Slf4j
-@Component
-public class PermissionClosureResolver implements JwtPermissionResolver {
+public class CachedPermissionClosureResolver implements JwtPermissionResolver {
 
     /** 逻辑键前缀（RedisJsonCache 还会再加全局前缀） */
     private static final String KEY_PREFIX = "perm:closure:";
@@ -40,12 +35,12 @@ public class PermissionClosureResolver implements JwtPermissionResolver {
     private final RedisJsonCache cache;
     private final Duration ttl;
 
-    public PermissionClosureResolver(PermissionClosureService closureService,
-                                     RedisJsonCache cache,
-                                     @Value("${platform.permissions.cache-ttl-seconds:30}") long ttlSeconds) {
+    public CachedPermissionClosureResolver(PermissionClosureService closureService,
+                                           RedisJsonCache cache,
+                                           Duration ttl) {
         this.closureService = closureService;
         this.cache = cache;
-        this.ttl = Duration.ofSeconds(ttlSeconds);
+        this.ttl = ttl;
     }
 
     @Override

@@ -1,4 +1,4 @@
-package com.coding.platformapi.cache;
+package com.coding.common.components.cache;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -6,7 +6,6 @@ import org.springframework.data.redis.connection.RedisStringCommands;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.types.Expiration;
-import org.springframework.stereotype.Component;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -37,7 +36,6 @@ import java.util.function.Supplier;
  * {@code docs/superpowers/plans/2026-10-09-permissions-out-of-token.md}。
  */
 @Slf4j
-@Component
 @RequiredArgsConstructor
 public class RedisJsonCache {
 
