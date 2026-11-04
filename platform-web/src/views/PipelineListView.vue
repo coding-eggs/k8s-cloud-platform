@@ -10,6 +10,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { VideoPlay } from '@element-plus/icons-vue'
 import { pipelineApi } from '@/api'
 import type { Pipeline } from '@/types'
 import { usePermission } from '@/stores/permission'
@@ -264,8 +265,8 @@ const focusId = computed(() => (route.query.id as string) || '')
         <template #default="{ row }">
           <el-button link type="primary" @click="toEditor(row.id)">编辑</el-button>
           <el-button link type="primary" @click="toRuns(row.id!)">运行历史</el-button>
-          <el-button v-if="canRun" link type="primary"
-                     :disabled="capAvailable === false" @click="openRun(row)">运行</el-button>
+          <el-button v-if="canRun" link type="primary" :icon="VideoPlay" title="运行"
+                     :disabled="capAvailable === false" @click="openRun(row)" />
           <el-button v-if="canManage" link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
