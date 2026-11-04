@@ -244,13 +244,18 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 
 > 白名单（`spring.security.ignore-urls`）：登录/注册/找回密码页、静态资源、Swagger/Knife4j 文档、`.well-known` 等，见 `application.yaml`。
 
+> **`/internal/**` 安全链**（`InternalApiSecurityConfig`，排在默认链之前）：无会话、不走表单登录；用本模块自己的 JWKSource 验网关透传的用户 JWT
+> （aud 白名单 `platform.internal.jwt.audiences`），**只要求已认证、不判权限码** —— 权限码在 [platform-gateway](../platform-gateway/README.md) 判。
+> 所以防绕过全靠两道网络隔离：nginx 对 `/auth/internal/` 回 404（`nginx.conf` 与 `nginx-https.conf` 都有）+ NetworkPolicy 只让 nginx 与网关直连本服务。
+> 新加内部端点必须同批加 `service='platform-auth'` 的权限行，否则 `InternalEndpointCrossCheckRunner` 拒启。
+
 ---
 
 ## 客户端管理与 Scope
 
 设计见 `docs/superpowers/specs/2026-11-03-oauth-client-management-in-platform-design.md`。
 
-- **入口**：平台「组织 → OAuth 客户端」页 → platform-api `/oauth-clients/**`（权限 `platform:oauth-client:view|manage`，只绑 admin；写操作进审计）→ 本模块 `/internal/clients/**`。写逻辑留在这里，因为对称密钥要用 auth 自己的加密密钥落库。
+- **入口**：平台「组织 → OAuth 客户端」页 → `/api/oauth-clients/**` → 平台网关（权限 `platform:oauth-client:view|manage`，只绑 admin）→ 本模块 `/internal/clients/**`（写操作在这里记审计）。写逻辑留在这里，因为对称密钥要用 auth 自己的加密密钥落库。
 - **内置客户端**（`platform.client.builtin=true`，迁移 `V2026_11_03_2` 给 `platform-web-client` 打标）：不可删除、不可停用，只能改回调地址、登出回调与 access token TTL（< 会话空闲超时）。
 - **外部客户端**（能力与旧管理页对齐：可以不配，但不删）：
   - 机密：认证方式 `client_secret_basic` / `client_secret_post` / `private_key_jwt`（可兼带 `none`），授权方式可选授权码、刷新令牌、客户端凭据、设备码、会话续期（Token 交换已于 RBAC 改造时退役，不再提供；老行若带着它保存时原样保留）；授权码可关 PKCE。

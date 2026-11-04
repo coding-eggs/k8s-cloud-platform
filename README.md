@@ -29,23 +29,26 @@
    │
    ▼
 platform-web（nginx）
-   ├── /api/**  ──▶  platform-api（:8081）── HTTP ──▶ k8s-server（:8080）── fabric8 ──▶ 被纳管的 K8s 集群
+   ├── /api/**  ──▶  platform-gateway（:8090）── 接口级鉴权 + 403 审计
+   │                    ├── /**              ──▶ platform-api（:8081）── HTTP ──▶ k8s-server（:8080）── fabric8 ──▶ 被纳管的 K8s 集群
+   │                    └── /oauth-clients/**、/jwks/** ──▶ platform-auth 的 /auth/internal/**
    └── /auth/** ──▶  platform-auth（:9527/auth）── 签发 JWT、暴露 JWKS
 
-platform-api / k8s-server 用 JWKS 校验 JWT；MySQL / Redis 由三个后端服务按需访问。
+网关 / platform-api / k8s-server / auth 的 /internal/** 都校验 JWT（网关原样透传 token）；MySQL / Redis 由后端服务按需访问。
 ```
 
 | 模块 | 类型 | 端口 | 职责 |
 |---|---|---|---|
 | [`platform-web`](platform-web) | 部署单元 | 80（dev 5173） | Vue 3 SPA + nginx 反向代理、TLS 终止（可选） |
-| [`platform-api`](platform-api) | 部署单元 | 8081 | 管理面 BFF：业务规则、权限判定、数据库、聚合与缓存 |
+| [`platform-gateway`](platform-gateway) | 部署单元 | 8090 | API 网关：接口级鉴权（权限表）、403 审计、路由到 api / auth |
+| [`platform-api`](platform-api) | 部署单元 | 8081 | 管理面 BFF：业务规则、数据库、聚合与缓存（只校验登录，接口级权限在网关） |
 | [`k8s-server`](k8s-server) | 部署单元 | 8080 | K8s **执行面/适配器**：零业务逻辑，唯一直接访问 K8s API 的进程 |
 | [`platform-auth`](platform-auth) | 部署单元 | 9527（`/auth`） | 统一认证与授权服务器：登录、OAuth2/OIDC、令牌签发、会话续期 |
 | [`k8s-core`](k8s-core) | 库 | — | fabric8 封装：operations / converter / factory，只被 k8s-server 依赖 |
 | [`platform-common`](platform-common) | 库 | — | 公共组件：JWT 编解码、响应码、通用模型与工具 |
 | [`platform-data`](platform-data) | 库 | — | 持久层：MyBatis Mapper、实体、**SQL 迁移脚本** |
 
-**请求链路**：浏览器 → nginx（`/api` 去前缀）→ platform-api（鉴权 + 业务）→ HTTP → k8s-server（边界判定 + K8s 调用）。
+**请求链路**：浏览器 → nginx（`/api` 去前缀）→ platform-gateway（接口级鉴权）→ platform-api（业务）→ HTTP → k8s-server（边界判定 + K8s 调用）。
 platform-api **不依赖 fabric8**，也不直接连集群。
 
 ---
@@ -216,16 +219,17 @@ mvn -B -pl platform-api -am -DskipTests package
 
 1. MySQL、Redis
 2. `platform-auth`（9527）—— **必须最先起**：其它服务首次校验令牌就要拉 JWKS，auth 没起来会全站 401
-3. `k8s-server`（8080）、`platform-api`（8081）
+3. `k8s-server`（8080）、`platform-api`（8081）、`platform-gateway`（8090，启动即读权限表）
 4. `platform-web`
 
 ```bash
 java -jar platform-auth/target/platform-auth-1.0.0.jar
 java -jar k8s-server/target/k8s-server-1.0.0.jar
 java -jar platform-api/target/platform-api-1.0.0.jar
+java -jar platform-gateway/target/platform-gateway-1.0.0.jar
 ```
 
-前端开发（Vite 代理 `/api` → 8081、`/auth` → `OAUTH_UPSTREAM`）：
+前端开发（Vite 代理 `/api` → 网关 8090、`/auth` → `OAUTH_UPSTREAM`）：
 
 ```bash
 cd platform-web && npm ci && npm run dev
@@ -261,7 +265,10 @@ docker build -f platform-api/Dockerfile -t k8s-cloud-platform/platform-api:lates
 |---|---|---|
 | `MYSQL_URL` / `MYSQL_USERNAME` / `MYSQL_PASSWORD` | api、auth、k8s-server | 同一个库 |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | api、auth | auth 会话固定用 database 1；api 缓存用 `REDIS_CACHE_DATABASE`（默认同为 1），同库不同键前缀（`spring:session:*` vs `platform:cache:*`） |
-| `OAUTH2_SERVER` | api、k8s-server | JWKS 地址，**必须带 `/auth`**，默认 `http://…:9527/auth/oauth2/jwks` |
+| `OAUTH2_SERVER` | api、k8s-server、gateway | JWKS 地址，**必须带 `/auth`**；api / k8s-server 写到 `/auth/oauth2/jwks`，网关只写到 `/auth`（自己拼 `/oauth2/jwks`） |
+| `JWT_AUDIENCES` | api、auth、gateway | aud 白名单（逗号分隔），**三处同值**，默认 `platform-web-client` |
+| `PLATFORM_API_URL` / `PLATFORM_AUTH_URL` | gateway | 网关的两个上游；auth 地址**不带** `/auth` |
+| `PLATFORM_GATEWAY_URL` / `PLATFORM_AUTH_URL` | platform-web（nginx） | `/api/**` 一律转网关（不再直连 api） |
 | `K8S_SERVER_URL` | api | k8s-server 地址，默认 `http://127.0.0.1:8080` |
 | `KUBECONFIG_AES_KEY` | api、k8s-server | 解密集群 kubeconfig；**与库中密文绑定**，不可随意更换 |
 | `CREDENTIAL_AES_KEY` | api | 凭据库主密钥；**留空拒启**，与库中密文绑定 |
@@ -291,7 +298,8 @@ k8s-cloud-platform/
 ├── k8s-core/            fabric8 operations / converter / factory（仅 k8s-server 依赖）
 ├── k8s-server/          K8s 执行面；内置 charts 与 Helm/kubectl 运行镜像
 ├── platform-auth/       OAuth2/OIDC 授权服务器（/auth）
-├── platform-api/        管理面 BFF：业务、权限、DB、聚合缓存
+├── platform-gateway/    API 网关：接口级鉴权、403 审计、路由
+├── platform-api/        管理面 BFF：业务、DB、聚合缓存
 ├── platform-common/     JWT、响应码、通用模型
 ├── platform-data/       MyBatis Mapper/实体 + resources/db/migration（**手工重放**）
 ├── platform-web/        Vue 3 SPA；nginx.conf / nginx-https.conf
@@ -315,8 +323,10 @@ k8s-cloud-platform/
 
 ### 7.2 权限是 fail-closed 的，权限行必须进迁移
 
-- API 域按 `(HTTP 方法, 路径)` 映射到权限码，默认拒绝；启动期 `PermissionCrossCheckRunner` 做交叉校验，
-  **漏配权限行 = 应用拒绝启动**。
+- API 域按 `(服务, HTTP 方法, 服务内路径)` 映射到权限码，默认拒绝，**判定在 platform-gateway**；
+  各服务启动期自检（api 的 `PermissionCrossCheckRunner`、auth 的 `InternalEndpointCrossCheckRunner`），
+  **漏配权限行 = 应用拒绝启动**。网关每 60s 重载权限表。
+- ⚠️ api 自己只校验登录：api / auth 端口必须只对网关开放（NetworkPolicy），见 [platform-gateway/README.md](platform-gateway/README.md)。
 - 权限码**不在 token 里**（2026-10-09 起）：platform-api 在请求期现算权限闭包（30s TTL 缓存），
   因此改角色**即时生效**，陈旧上界是一个缓存 TTL。
 - 回滚开关：`platform.jwt.permissions-in-token=true`。
@@ -338,7 +348,7 @@ HTTP → Controller（只做绑定与包装）→ Service（业务/编排/降级
 
 | 层 | 实现 | 判什么 |
 |---|---|---|
-| ① platform-api 权限表 | 权限码 ANY-of，默认拒绝 | 细粒度"能不能做这件事" |
+| ① 网关权限表（platform-gateway） | 权限码 ANY-of，默认拒绝 | 细粒度"能不能做这件事" |
 | ② k8s-server 端点边界 | `AccessBoundary`（`PLATFORM` / `TENANT` / `UPSTREAM`）+ `PLATFORM_SCOPE` | 哪个端点是平台侧 |
 | ③ k8s-server 资源边界 | `ResourceAccessResolver` + 分配表三元组 | 能碰哪些 namespace、用谁的凭据 |
 | ④ K8s RBAC | 租户 SA / admin kubeconfig | 集群侧第二道闸 |
@@ -401,6 +411,7 @@ K8s `Quantity` 在 DTO 层统一为 **`BigDecimal` 基础单位**：CPU = 核数
 | [docs/development/resource-protection.md](docs/development/resource-protection.md) | 受管资源保护（组件/中间件实例不可误删） |
 | [k8s-server/README.md](k8s-server/README.md) | 执行面设计原则、端点边界、模块协作 |
 | [platform-auth/README.md](platform-auth/README.md) | 授权服务器、令牌签发、session-renewal grant |
+| [platform-gateway/README.md](platform-gateway/README.md) | 网关：鉴权与审计、**部署顺序**、NetworkPolicy、长连接、验收清单 |
 | [docs/CHEATSHEET.md](docs/CHEATSHEET.md) | fabric8 Kubernetes Java Client 速查 |
 | [docs/superpowers/specs](docs/superpowers/specs) / [plans](docs/superpowers/plans) | 各批次设计规格与实施计划（含部署 runbook） |
 

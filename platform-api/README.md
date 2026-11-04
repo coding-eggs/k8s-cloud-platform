@@ -143,10 +143,14 @@ platform-api/src/main/java/com/coding/platformapi/
 - 过滤器链层的 401/403 不会进 `@ControllerAdvice`，由 `exceptionHandling` 统一返回 `ResponseData` JSON
 - WebSocket 握手无法带 `Authorization` 头 → `QueryParameterBearerTokenResolver` 允许 token 走 query `access_token`
 
-### 4.2 授权：表驱动，ANY-of，默认拒绝
-`PermissionAuthorizationManager` 的判定顺序：
+### 4.2 授权：表驱动，ANY-of，默认拒绝 —— **判定在平台网关**
+2026-11-04 起接口级判定上收到 [platform-gateway](../platform-gateway/README.md)：本模块的过滤器链只要求**已登录**
+（`anyRequest().authenticated()`），403 审计也在网关写。⚠️ 前提是本服务端口只对网关开放（NetworkPolicy），
+否则等于对所有登录用户全开。权限表本模块仍加载：`/permission/match` 按 URL 反查、启动交叉校验（§4.3）都要用。
 
-1. **命中权限行**（`platform_permission` 中 `domain='API'` 的行，`resource` 是 Ant 风格 URL pattern、`action` 是 HTTP 方法）→ 要求 token 持有该行 `code` 对应的 authority。同一 `(方法, 路径)` 的多行是 **ANY-of** 语义，命中任一个即放行；命中行但一个 code 都没有 → **直接拒绝，不回落豁免**。
+网关的判定顺序（`platform-common` 的 `PermissionDecider`，本模块与网关原先共用同一份）：
+
+1. **命中权限行**（`platform_permission` 中 `domain='API'` 且 `service='platform-api'` 的行，`resource` 是 Ant 风格 URL pattern、`action` 是 HTTP 方法）→ 要求 token 持有该行 `code` 对应的 authority。同一 `(方法, 路径)` 的多行是 **ANY-of** 语义，命中任一个即放行；命中行但一个 code 都没有 → **直接拒绝，不回落豁免**。
 2. **未命中但路径在 `ExemptPaths`** → 仅要求已登录。
 3. **其余一律拒绝**（默认拒绝）。
 

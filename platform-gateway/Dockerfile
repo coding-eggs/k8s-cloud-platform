@@ -1,4 +1,4 @@
-# platform-gateway（租户域业务层 + HTTP 入口）的**运行镜像**。
+# platform-gateway（平台 API 网关：接口级鉴权 + 403 审计 + 路由）的**运行镜像**。
 #
 # ⚠️ 2026-10-16 改定：**编译不在这里做** —— 交给流水线的「Java 构建」节点。
 #   理由：编译写在 Dockerfile 里的话，「Java 构建」节点刚编译一遍、`buildah bud` 又编译一遍，
@@ -20,22 +20,13 @@
 #    COPY 那一步 —— 那是设计如此，不是配置错误。
 #
 # 运行（默认端口 8090）：
-#   docker run --rm -p 8090:8090 \
-#     -e MYSQL_URL='jdbc:mysql://mysql:3306/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true' \
-#     -e MYSQL_USERNAME=root -e MYSQL_PASSWORD=*** \
-#     -e REDIS_HOST=redis -e REDIS_PASSWORD=*** \
-#     -e K8S_SERVER_URL=http://k8s-server:8080 \
-#     -e OAUTH2_SERVER=http://platform-auth:9527/auth/oauth2/jwks \
-#     -e CREDENTIAL_AES_KEY=*** -e KUBECONFIG_AES_KEY=*** \
-#     k8s-cloud-platform/platform-gateway:latest
+#   docker run --rm -p 8090:8090 #     -e MYSQL_HOST=mysql -e MYSQL_PORT=3306 -e MYSQL_USER=root -e MYSQL_PASSWORD=*** #     -e REDIS_HOST=redis -e REDIS_PORT=6379 -e REDIS_PASSWORD=*** -e REDIS_DATABASE=1 #     -e OAUTH2_SERVER=http://platform-auth:9527/auth #     -e PLATFORM_API_URL=http://platform-api:8081 -e PLATFORM_AUTH_URL=http://platform-auth:9527 #     k8s-cloud-platform/platform-gateway:latest
 #
-# ⚠️ 依赖地址在容器里必须显式覆盖（容器里的 127.0.0.1 是容器自己）：
-#    MYSQL_* · REDIS_* · K8S_SERVER_URL · OAUTH2_SERVER · THANOS_QUERY_URL
-# ⚠️ 两个 AES 主密钥（CREDENTIAL_AES_KEY / KUBECONFIG_AES_KEY）**必须与库里已有密文一致** ——
-#    换一个值，所有凭据与 kubeconfig 都会解不开（报"密文损坏或主密钥与写入时不一致"）。
-# ⚠️ 出站代理（OUTBOUND_PROXY_SERVER / _PORT / _TARGETS）：只有白名单目标走代理
-#    （Docker Hub / github 等），内网 Harbor 与集群一律直连。
-# ⚠️ 平台是**有状态**的：迁移要手工重放（本仓没有 Flyway），所以启动前先按 db/migration 顺序重放。
+# ⚠️ 依赖地址在容器里必须显式覆盖（容器里的 127.0.0.1 是容器自己）：MYSQL_* · REDIS_* · OAUTH2_SERVER · PLATFORM_*_URL
+# ⚠️ OAUTH2_SERVER 写到 /auth 为止（网关自己拼 /oauth2/jwks）；不带 /auth → 拉不到密钥 → 全站 401。
+# ⚠️ Redis 必须与 platform-api 同库同 database（共用权限闭包缓存键）；JWT_AUDIENCES 与 api / auth 同值。
+# ⚠️ 启动时读权限表，读不到拒启 —— 先重放 V2026_11_04_1 / V2026_11_04_2（本仓没有 Flyway，手工重放）。
+# 部署顺序与 NetworkPolicy 见 platform-gateway/README.md §3 / §4。
 
 FROM eclipse-temurin:21-jre
 
@@ -50,7 +41,7 @@ ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
 
 EXPOSE 8090
 
-# 存活探针：TCP 层（本服务没引 actuator）
+# 存活探针：TCP 层（与其它服务一致；网关虽带 actuator，health 不随 MySQL/Redis 抖动）
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
     CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/8090' || exit 1
 
