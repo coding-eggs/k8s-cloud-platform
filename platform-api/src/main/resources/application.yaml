@@ -6,6 +6,12 @@ management:
     web:
       exposure:
         include: health,metrics
+  # ES（日志查询）是 feature-gated 的可选后端，不该把集群状态绑进 API 整体健康：
+  # 集群 RED 时 ElasticsearchRestClientHealthIndicator 报 OUT_OF_SERVICE（Boot 4.x），
+  # 会拖垮 /actuator/health → 503。关掉它，ES 可用性直接看 ES 本身。
+  health:
+    elasticsearch:
+      enabled: false
 
 k8s:
   # k8s-server（唯一 K8s 适配器）管理域地址，/admin/** 端点
