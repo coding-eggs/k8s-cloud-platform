@@ -2561,6 +2561,15 @@ export interface PipelineCanvas {
 }
 
 /** 流水线**定义**（平台自己的表；集群里不留 Pipeline 对象）。 */
+/**
+ * 分页结果（后端 `com.coding.common.models.page.PageResult`）：所有走 PageHelper 的分页查询都回这个形状。
+ * items = 当前页数据，total = 总条数。不分页的调用方也回它（items=全量、total=全量条数）。
+ */
+export interface PageResult<T> {
+  items: T[]
+  total: number
+}
+
 export interface Pipeline {
   id?: string
   clusterId?: string

@@ -177,8 +177,8 @@ async function loadParentRunName(): Promise<void> {
     return
   }
   try {
-    const rows = await pipelineApi.runs(r.pipelineId)
-    parentRunName.value = rows.find((x) => x.id === r.parentRunId)?.runName ?? ''
+    const res = await pipelineApi.runs(r.pipelineId)
+    parentRunName.value = res.items.find((x) => x.id === r.parentRunId)?.runName ?? ''
   } catch {
     parentRunName.value = ''
   }

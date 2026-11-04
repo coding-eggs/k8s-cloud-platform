@@ -2,7 +2,9 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.PipelineDTO;
 import com.coding.common.models.k8s.dto.PipelineRunDTO;
+import com.coding.common.models.page.PageResult;
 import com.coding.common.models.pipeline.PipelineCanvasRequest;
+import com.coding.common.models.pipeline.PipelineRunListRequest;
 import com.coding.common.models.pipeline.PipelineRunLogDTO;
 import com.coding.common.models.pipeline.PipelineRetryPlanDTO;
 import com.coding.common.models.pipeline.PipelineRetryWorkspacesDTO;
@@ -281,11 +283,13 @@ public class PipelineController {
     }
 
     @PostMapping("/run/list")
-    @Operation(summary = "运行历史", description = "**只读库** —— 集群里的对象归档后已经删了")
-    public ResponseData<List<PlatformPipelineRun>> runList(@RequestBody PipelineDTO request) {
+    @Operation(summary = "运行历史", description = "**只读库** —— 集群里的对象归档后已经删了。"
+            + "带 page/size 走 PageHelper 分页，都不给 = 返回全量（详情页按 id 找 parent 名靠它）")
+    public ResponseData<PageResult<PlatformPipelineRun>> runList(@RequestBody PipelineRunListRequest request) {
         PipelineDTO pipeline = pipelineService.get(request.getId());
         return new ResponseData<>(runService.list(pipeline.getId(),
-                new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(), auth.hatTenantId())));
+                new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(), auth.hatTenantId()),
+                request.getPage(), request.getSize()));
     }
 
     @PostMapping("/run/get")

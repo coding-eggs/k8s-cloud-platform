@@ -211,7 +211,8 @@ class PipelineRunServiceTest {
         // 集群里的对象归档后已经删了 —— 读历史一律读库（spec §4.3）
         when(runMapper.listByPipeline("p1", "c1", "ns1")).thenReturn(List.of(running("r1")));
 
-        assertThat(svc.list("p1", ctx)).extracting(PlatformPipelineRun::getRunName).containsExactly("r1");
+        // page/size 都不给 = 全量（不走 PageHelper），这里只验证「读库不读集群」这条分界线
+        assertThat(svc.list("p1", ctx, null, null).items()).extracting(PlatformPipelineRun::getRunName).containsExactly("r1");
         verify(k8s, never()).getRun(anyString(), any(), anyString(), anyString());
     }
 

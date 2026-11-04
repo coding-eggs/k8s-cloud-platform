@@ -17,7 +17,6 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { MoreFilled } from '@element-plus/icons-vue'
 import { pipelineApi } from '@/api'
 import type { Pipeline, PipelineRun } from '@/types'
 import { usePermission } from '@/stores/permission'
@@ -38,6 +37,10 @@ const pipelineId = computed(() => (route.query.id as string) || '')
 const pipeline = ref<Pipeline | null>(null)
 const runs = ref<PipelineRun[]>([])
 const loading = ref(false)
+/** 分页：page/size 都发给后端走 PageHelper；total 由后端 count 查询回 */
+const page = ref(1)
+const size = ref(20)
+const total = ref(0)
 
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 /** 删运行历史要的是**改流水线**那个码（后端 `/pipeline/run/delete` 用的就是它，与清缓存同一条理由） */
@@ -66,9 +69,12 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     pipeline.value = await pipelineApi.get(pipelineId.value)
-    runs.value = await pipelineApi.runs(pipelineId.value)
+    const res = await pipelineApi.runs(pipelineId.value, page.value, size.value)
+    runs.value = res.items
+    total.value = res.total
   } catch {
     runs.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -106,24 +112,16 @@ async function confirmRun(maskedNodeIds: string[]): Promise<void> {
   }
 }
 
-/**
- * 行操作下拉（与 `ClusterView` 同一套：`MoreFilled` 图标 + `@command`）。
- *
- * ⚠️ 这里**只有执行得动的事**：查看详情（名称也可点，两条路都留着）、取消（只对正在跑的）、
- * 删除（只对已结束的）。**禁用而不是隐藏** —— 灰着能说明"这一条现在做不了"，
- * 比一个空菜单好读。
- */
-function onCommand(cmd: string, r: PipelineRun): void {
-  if (cmd === 'detail') {
-    openRun(r)
-    return
-  }
-  if (cmd === 'cancel') {
-    void cancel(r)
-  }
-  if (cmd === 'delete') {
-    void removeRun(r)
-  }
+/** 翻页 / 改每页条数：改完重拉当前页 */
+function onPageChange(p: number): void {
+  page.value = p
+  void load()
+}
+
+function onSizeChange(s: number): void {
+  size.value = s
+  page.value = 1
+  void load()
 }
 
 /** 取消：**先抓一次日志再取消**（见后端 cancel 的说明），所以取消之后日志仍然看得到 */
@@ -197,33 +195,30 @@ async function removeRun(r: PipelineRun): Promise<void> {
       <el-table-column label="耗时" width="90">
         <template #default="{ row }">{{ duration(row) }}</template>
       </el-table-column>
-      <!-- 行操作下拉：与 ClusterView 同一套（宽度 64、无列头、固定在右侧） -->
-      <el-table-column width="64" fixed="right">
+      <!-- 行内动作：三个都摊开（用户 2026-11-04 要求，别再收进下拉点两遍）。
+           取消只对正在跑的可点；删除要 manage 权限、还在跑的拒删（后端也拒） -->
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
-          <el-dropdown trigger="click" @command="(cmd: string) => onCommand(cmd, row)">
-            <el-button link type="primary" :icon="MoreFilled" />
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="detail">
-                  <el-button link type="primary">查看详情</el-button>
-                </el-dropdown-item>
-                <el-dropdown-item divided command="cancel" :disabled="row.status !== 'RUNNING'">
-                  <el-button link type="danger" :disabled="row.status !== 'RUNNING'">取消</el-button>
-                </el-dropdown-item>
-                <!-- ⚠️ 还在跑的那条删不了（后端也拒）：它的归档回写还要落在这行上，
-                     而集群里那次运行还在跑 —— 想停它就点「取消」 -->
-                <el-dropdown-item v-if="canManage" command="delete" :disabled="row.status === 'RUNNING'">
-                  <el-button link type="danger" :disabled="row.status === 'RUNNING'">删除</el-button>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          <el-button link type="primary" @click="openRun(row)">详情</el-button>
+          <el-button link type="danger" :disabled="row.status !== 'RUNNING'" @click="cancel(row)">取消</el-button>
+          <el-button v-if="canManage" link type="danger" :disabled="row.status === 'RUNNING'" @click="removeRun(row)">删除</el-button>
         </template>
       </el-table-column>
       <template #empty>
         <div class="empty">还没有运行过 —— 点右上角「运行」触发一次</div>
       </template>
     </el-table>
+    <div class="pager">
+      <el-pagination
+        :current-page="page"
+        :page-size="size"
+        :total="total"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="onPageChange"
+        @size-change="onSizeChange"
+      />
+    </div>
     <PipelineRunDialog
       v-model="runDialogOpen"
       :nodes="runCanvas.nodes"
@@ -277,5 +272,9 @@ async function removeRun(r: PipelineRun): Promise<void> {
   color: var(--text-3);
   font-size: 12px;
   padding: 12px 0;
+}
+.pager {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

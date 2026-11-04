@@ -4,10 +4,13 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import org.springframework.transaction.annotation.Transactional;
 import com.coding.common.models.k8s.dto.PipelineDTO;
+import com.coding.common.models.page.PageResult;
 import com.coding.common.models.pipeline.PipelineRunLogDTO;
 import com.coding.common.models.pipeline.PipelineRetryPlanDTO;
 import com.coding.common.models.pipeline.PipelineStepRefDTO;
 import com.coding.common.utils.ULIDGenerator;
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
 import com.coding.data.mapper.system.PlatformPipelineRunLogMapper;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
@@ -379,9 +382,20 @@ public class PipelineRunService {
         k8s.cancelRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(), runName);
     }
 
-    /** 运行历史。**只读库** —— 集群里的对象归档后已经删了（spec §4.3）。 */
-    public List<PlatformPipelineRun> list(String pipelineId, PipelineRunContext ctx) {
-        return runMapper.listByPipeline(pipelineId, ctx.clusterId(), ctx.namespace());
+    /**
+     * 运行历史。**只读库** —— 集群里的对象归档后已经删了（spec §4.3）。
+     *
+     * <p>分页走 PageHelper：page/size 都给了才 {@code startPage}，否则返回全量
+     * （详情页「按 id 找 parent 名」依赖全量）。total 取 PageHelper 的 count 查询；不分页时 = 行数。
+     */
+    public PageResult<PlatformPipelineRun> list(String pipelineId, PipelineRunContext ctx, Integer page, Integer size) {
+        boolean paged = page != null && size != null;
+        if (paged) {
+            PageHelper.startPage(page, size);
+        }
+        List<PlatformPipelineRun> rows = runMapper.listByPipeline(pipelineId, ctx.clusterId(), ctx.namespace());
+        long total = paged ? new PageInfo<>(rows).getTotal() : rows.size();
+        return PageResult.of(rows, total);
     }
 
     /**

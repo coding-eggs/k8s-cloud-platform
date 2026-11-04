@@ -86,7 +86,7 @@
     where pipeline_id = #{pipelineId,jdbcType=VARCHAR}
       and cluster_id = #{clusterId,jdbcType=VARCHAR}
       and namespace = #{namespace,jdbcType=VARCHAR}
-    order by created_at desc
+    order by created_at desc, id desc
   </select>
 
   <select id="listAll" resultMap="BaseResultMap">

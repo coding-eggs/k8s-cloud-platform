@@ -129,6 +129,7 @@ import type {
   MiddlewareUser,
   MiddlewareUserCredential,
   ComponentImageItem,
+  PageResult,
 } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
@@ -1017,7 +1018,9 @@ export const pipelineApi = {
    */
   runDelete: (runName: string) =>
     http.post<never, void>('/pipeline/run/delete', { name: runName }),
-  runs: (pipelineId: string) => http.post<never, PipelineRun[]>('/pipeline/run/list', { id: pipelineId }),
+  /** 运行历史（分页）：page/size 都给了走 PageHelper，都不给 = 全量。返回 `PageResult` */
+  runs: (pipelineId: string, page?: number, size?: number) =>
+    http.post<never, PageResult<PipelineRun>>('/pipeline/run/list', { id: pipelineId, page, size }),
   /** 详情（含**触发那一刻的画布**与**归档时抓的 YAML**）—— 列表行不带这两个大字段 */
   runGet: (runName: string) => http.post<never, PipelineRun>('/pipeline/run/get', { name: runName }),
   /** 每个节点**现在**的落点（运行详情的 DAG 着色）。⚠️ 只有还在跑才有：归档后返回空 */
