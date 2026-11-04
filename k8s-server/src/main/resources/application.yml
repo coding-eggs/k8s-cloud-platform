@@ -1,10 +1,15 @@
+# k8s-server 的默认配置。
+#
+# ⚠️ 部署期需要可覆盖的项一律写成 ${ENV_NAME:默认值}：容器里改地址 / 口令**不用重新构建镜像**。
+#    2026-11-03 的 181d1aba 曾把这些占位符整批换成字面量，README 与 Dockerfile 里记的环境变量
+#    因此全部失效。改这类行时请保留 ${...} 形式。
 server:
   port: 8080
 
 k8s:
   cloud:
     kubeconfig:
-      aes-key: daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=
+      aes-key: ${KUBECONFIG_AES_KEY:daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=}
 
 # MyBatis 配置
 mybatis:
@@ -51,8 +56,8 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${MYSQL_HOST:192.168.31.80}:${MYSQL_PORT:1234}/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
-    username: root
-    password: coding
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:coding}
     hikari:
       minimum-idle: 3
       maximum-pool-size: 10
@@ -104,23 +109,23 @@ logging:
 platform:
   components:
     # S3.6：内置 chart 的根目录（镜像里由 Dockerfile COPY 到 /app/charts）
-    charts-dir: charts
+    charts-dir: ${COMPONENT_CHARTS_DIR:charts}
   object-storage:
     # SeaweedFS 组件在集群里的位置：命名空间 / 平台接管的 identities 配置 Secret / S3 网关 Deployment
-    namespace: platform-storage
-    config-secret: platform-seaweedfs-s3-config
-    s3-deployment: seaweedfs-s3
+    namespace: ${OBJECT_STORAGE_NAMESPACE:platform-storage}
+    config-secret: ${OBJECT_STORAGE_CONFIG_SECRET:platform-seaweedfs-s3-config}
+    s3-deployment: ${OBJECT_STORAGE_S3_DEPLOYMENT:seaweedfs-s3}
     # S3 的地址不在这里：由 platform-api 按集群配置（k8s_cluster.object_storage_url）下发
   pipeline:
     archive:
       # 关掉它的后果（spec §4.5 显式记过）：Pod 不会被删（回到 Tekton 的默认行为），
       # 而且运行记录**只在集群里**、不落库。这个开关是给"我就是要用 pruner 自己管"的部署留的。
-      enabled: true
+      enabled: ${PIPELINE_ARCHIVE_ENABLED:true}
     run:
-      timeout: 30m
-      timeout-check: 30s
+      timeout: ${PIPELINE_RUN_TIMEOUT:30m}
+      timeout-check: ${PIPELINE_TIMEOUT_CHECK:30s}
     log:
       # ⚠️ 与 platform-api 那份**保持一致**：归档在这里截断，而 platform-api 的
       # /pipeline/run/logs 在线看日志时也用同一个上限。两边不同的话，同一条日志
       # 「归档后」与「运行中」看到的长短会不一样。
-      max-bytes: 1048576
+      max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}

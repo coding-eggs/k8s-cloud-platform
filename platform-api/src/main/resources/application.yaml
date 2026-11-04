@@ -1,3 +1,8 @@
+# platform-api 的默认配置。
+#
+# ⚠️ 部署期需要可覆盖的项一律写成 ${ENV_NAME:默认值}：容器里改地址 / 口令**不用重新构建镜像**。
+#    2026-11-03 的 181d1aba 曾把这些占位符整批换成字面量，README 与 Dockerfile 里记的环境变量
+#    因此全部失效（最典型的是 K8S_SERVER_URL 配了没反应）。改这类行时请保留 ${...} 形式。
 server:
   port: 8081
 
@@ -16,15 +21,15 @@ management:
 k8s:
   # k8s-server（唯一 K8s 适配器）管理域地址，/admin/** 端点
   server:
-    url: http://127.0.0.1:8080
+    url: ${K8S_SERVER_URL:http://127.0.0.1:8080}
   cloud:
     kubeconfig:
-      aes-key: daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=
+      aes-key: ${KUBECONFIG_AES_KEY:daXs1znnIStfQCVFyC8cvuS9OQZRTgeBJLLrrvu/hUM=}
 
 thanos:
   # Thanos Query（全局单端点、无鉴权）；各集群 Prometheus remote_write 汇入并统一打 cluster_name 标签
   query:
-    url: http://192.168.31.80:19090
+    url: ${THANOS_QUERY_URL:http://192.168.31.80:19090}
 
 platform:
   application:
@@ -42,41 +47,41 @@ platform:
   harbor:
     # 「装 Harbor」表单的默认值：域名与证书在部署里是固定的，表单留空就取这里，
     # 省得每次重放都重新粘一遍 PEM。
-    default-host: harbor.ackcp.cloud
+    default-host: ${HARBOR_DEFAULT_HOST:harbor.ackcp.cloud}
     # 证书/私钥（PEM）文件路径。表单里 HTTPS 证书留空时读它们；
     # 两者都不配 = 沿用集群里已有的 harbor-tls Secret（升级重放不会重传）。
-    tls-cert-file:
-    tls-key-file:
+    tls-cert-file: ${HARBOR_TLS_CERT_FILE:}
+    tls-key-file: ${HARBOR_TLS_KEY_FILE:}
   tempo:
-    query-url: http://192.168.31.80:21746
+    query-url: ${TEMPO_QUERY_URL:http://192.168.31.80:21746}
   object-storage:
     # 平台访问某个集群 S3 的**地址**不在这里：每集群一条连接配置（集群管理 → 编辑 →
     # 「对象存储地址」，存 k8s_cluster.object_storage_url）；没配则按组件安装位置推导集群内地址。
     # 这里只剩配额 / 下载上限这类平台策略。
     # 未给某租户单独设置时，每租户的桶数上限（页面里可单独调整）
-    default-max-buckets: 10
+    default-max-buckets: ${OBJECT_STORAGE_DEFAULT_MAX_BUCKETS:10}
     # 控制台单次下载上限（MB），超过提示用 SDK 直连
-    max-download-mb: 100
+    max-download-mb: ${OBJECT_STORAGE_MAX_DOWNLOAD_MB:100}
     # 控制台单次上传上限（MB），超过提示用 SDK 直连
-    max-upload-mb: 100
+    max-upload-mb: ${OBJECT_STORAGE_MAX_UPLOAD_MB:100}
   alert:
     webhook:
       # Alertmanager 的 webhook receiver 打到 /alert/webhook 时带的共享密钥（Bearer，带不带前缀都认）。
       # ⚠️ 必须配 —— 留空应用**拒启**（fail-closed）。一个"忘了配就等于全开"的入站端点不该存在。
       # 集群侧对应 AlertmanagerConfig 里 alertmanager 的 http_config.authorization.credentials。
-      token: Bearer sd
+      token: ${ALERT_WEBHOOK_TOKEN:Bearer sd}
   credential:
     # 凭据库（platform_credential）的 AES 主密钥。**独立于 k8s.cloud.kubeconfig.aes-key**：
     # 轮换边界独立，且不扩散后者把默认密钥硬编码在配置里的坏味道。
     # ⚠️ 没有默认值：留空应用会拒绝启动（CredentialCipher 的启动校验）。
     # 生成方式：调用 AESUtils.generateStrongKey()，把结果填进环境变量。
-    aes-key: CSPYDetoKRsG0u4Ds8zDbPs3S3XfWqUNFyo0i1lhADw=
+    aes-key: ${CREDENTIAL_AES_KEY:CSPYDetoKRsG0u4Ds8zDbPs3S3XfWqUNFyo0i1lhADw=}
   registry:
     dockerhub:
       # 内置的 Docker Hub 档。**它不是凭据表里的一行**（见 BuiltinRegistry）：没有行、没有 authType、
       # 没有密文、没有启停状态，重放迁移后开箱即用，不用任何人手动建。
       # 关掉它 = 平台不再内置这一档 —— 隔离内网里没人希望每次按键都朝一个不可达的地址打一发。
-      enabled: true
+      enabled: ${DOCKERHUB_ENABLED:true}
   outbound:
     proxy:
       # 出站代理：**只有 targets 里列出的目标走代理，其余一律直连**。
@@ -93,9 +98,9 @@ platform:
       # 宁可多写一行，也不要"以为配了一个域名、其实整个子域都被导出去了"。
       #
       # ⚠️ targets 留空 = **全直连**，代理形同不存在。
-      server: 192.168.85.1     # 代理服务器地址（不是"要走代理的域名"）
-      port: 7890
-      targets: hub.docker.com,github.com   # 逗号分隔；只有这些走代理
+      server: ${OUTBOUND_PROXY_SERVER:192.168.85.1}     # 代理服务器地址（不是"要走代理的域名"）
+      port: ${OUTBOUND_PROXY_PORT:7890}
+      targets: ${OUTBOUND_PROXY_TARGETS:hub.docker.com,github.com}   # 逗号分隔；只有这些走代理
   pipeline:
     # ===== CI（Tekton，S3.5 第 ① 片）=====
     # 设计见 docs/superpowers/specs/2026-10-15-ci-tekton-design.md §4.5 / §4bis。
@@ -103,8 +108,8 @@ platform:
     # 节拍器与归档链（整条链都在那边）。配在这一侧会变成"改了不生效"的静默坑。
     log:
       # 单步日志上限，超出截断并在 UI 上标注「已截断」
-      max-bytes: 1048576
-      retention-days: 90
+      max-bytes: ${PIPELINE_LOG_MAX_BYTES:1048576}
+      retention-days: ${PIPELINE_LOG_RETENTION_DAYS:90}
   namespace:
     # 受保护（系统）命名空间：命中者不可编辑 / 删除 / 设配额 / 设限制范围，读仍开放。
     # 精确匹配，须与集群内真实 ns 名一致；按部署环境增删。
@@ -145,17 +150,17 @@ spring:
     # 日志查询中心的 ES（spring-boot-starter-data-elasticsearch 的自动配置读这里：
     # 连接池 / Basic Auth / 超时都由它提供）。功能开关另见 platform.logs.es.url ——
     # 两者都由 PLATFORM_ES_URL 注入：env 没设时这里落到默认 localhost，但开关为空 → 页面提示未配置。
-    uris: http://192.168.31.80:9200
-    username: elastic
-    password: n6tsAcYY5FRF3iF7t780kFWN
+    uris: ${PLATFORM_ES_URL:http://192.168.31.80:9200}
+    username: ${PLATFORM_ES_USERNAME:elastic}
+    password: ${PLATFORM_ES_PASSWORD:n6tsAcYY5FRF3iF7t780kFWN}
   mvc:
     pathmatch:
       matching-strategy: ant_path_matcher
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${MYSQL_HOST:192.168.31.80}:${MYSQL_PORT:1234}/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
-    username: root
-    password: coding
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:coding}
     hikari:
       minimum-idle: 3
       maximum-pool-size: 10
@@ -169,10 +174,10 @@ spring:
   # ⚠️ 与 auth 会话共用一个 database：运维时**不要 FLUSHDB**（会连带踢掉所有登录会话）。
   data:
     redis:
-      host: 192.168.31.80
-      port: 25358
-      password: Coding@123456     # ← 无密码则留空
-      database: 1
+      host: ${REDIS_HOST:192.168.31.80}
+      port: ${REDIS_PORT:25358}
+      password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
+      database: ${REDIS_CACHE_DATABASE:1}
       timeout: 2s                # 卡住时不要拖慢请求路径（超时即直查源）
       connect-timeout: 2s
       lettuce:

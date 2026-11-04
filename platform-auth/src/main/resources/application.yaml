@@ -1,3 +1,8 @@
+# platform-auth 的默认配置。
+#
+# ⚠️ 部署期需要可覆盖的项一律写成 ${ENV_NAME:默认值}：容器里改地址 / 口令**不用重新构建镜像**。
+#    2026-11-03 的 181d1aba 曾把这些占位符整批换成字面量，README 与 Dockerfile 里记的环境变量
+#    因此全部失效。改这类行时请保留 ${...} 形式。
 server:
   port: 9527
   # 全局上下文路径：**所有端点**都在 /auth 下（/auth/oauth2/**、/auth/session/**、/auth/login.html、
@@ -54,6 +59,9 @@ spring:
   security:
     oauth2:
       authorizationserver:
+        # ⚠️ **必须留空**：留空时 SAS 按**每个请求**的 host/scheme/port 现算 issuer（见下方
+        #    server.forward-headers-strategy 那段），多入口 / 非 443 端口才对得上。
+        #    填死值会把 issuer 钉死在一个地址上，登录跳转与 token 的 iss 全部跟着跑偏。
         issuer:
     ignore-urls:
       - "/actuator/**"
@@ -91,8 +99,8 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${MYSQL_HOST:192.168.31.80}:${MYSQL_PORT:1234}/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
-    username: root
-    password: coding
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:coding}
     hikari:
       minimum-idle: 3
       maximum-pool-size: 10
@@ -102,9 +110,9 @@ spring:
   # Redis（Spring Session 会话存储）连接参数。
   data:
     redis:
-      host: 192.168.31.80
-      port: 25358
-      password: Coding@123456     # ← 无密码则留空
+      host: ${REDIS_HOST:192.168.31.80}
+      port: ${REDIS_PORT:25358}
+      password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
       database: 1
       timeout: 5s
       connect-timeout: 5s
