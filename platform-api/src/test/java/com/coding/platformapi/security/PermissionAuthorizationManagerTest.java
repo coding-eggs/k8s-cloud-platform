@@ -1,5 +1,6 @@
 package com.coding.platformapi.security;
 
+import com.coding.common.components.permission.PermissionRegistry;
 import com.coding.platformapi.audit.AuditDenied;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -36,7 +37,7 @@ class PermissionAuthorizationManagerTest {
 
     private PermissionRegistry registryWithTenantCreate() {
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("POST", "/tenant/create"))
+        when(reg.requiredCodes("platform-api", "POST", "/tenant/create"))
                 .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
         return reg;
     }
@@ -54,7 +55,7 @@ class PermissionAuthorizationManagerTest {
         // spec §5.4 自管理/委托契约：/tenant/member/add 接受多 code ANY-of，
         // 仅持有第二个 code 也必须放行
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("POST", "/tenant/member/add"))
+        when(reg.requiredCodes("platform-api", "POST", "/tenant/member/add"))
                 .thenReturn(Optional.of(Set.of("tenant:member:manage", "platform:member:manage")));
         var mgr = new PermissionAuthorizationManager(reg);
         AuthorizationResult d = mgr.authorize(() -> auth("PERM:platform:member:manage"),
@@ -110,7 +111,7 @@ class PermissionAuthorizationManagerTest {
     void row_on_exempt_path_denied_when_code_not_held() {
         // spec §5.1：权限行命中 > 豁免 —— 行可收紧豁免路径；命中行但无 code → 拒，不回落豁免
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("GET", "/context"))
+        when(reg.requiredCodes("platform-api", "GET", "/context"))
                 .thenReturn(Optional.of(Set.of("tenant:workload:list")));
         var mgr = new PermissionAuthorizationManager(reg);
         AuthorizationResult d = mgr.authorize(() -> auth("PERM:platform:cluster:manage"),
@@ -121,7 +122,7 @@ class PermissionAuthorizationManagerTest {
     @Test
     void row_on_exempt_path_granted_when_code_held() {
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("GET", "/context"))
+        when(reg.requiredCodes("platform-api", "GET", "/context"))
                 .thenReturn(Optional.of(Set.of("tenant:workload:list")));
         var mgr = new PermissionAuthorizationManager(reg);
         AuthorizationResult d = mgr.authorize(() -> auth("PERM:tenant:workload:list"),
@@ -134,7 +135,7 @@ class PermissionAuthorizationManagerTest {
     @Test
     void deny_marks_request_with_required_codes() {
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("POST", "/tenant/create"))
+        when(reg.requiredCodes("platform-api", "POST", "/tenant/create"))
                 .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
         var mgr = new PermissionAuthorizationManager(reg);
 
@@ -149,7 +150,7 @@ class PermissionAuthorizationManagerTest {
     @Test
     void allow_does_not_mark_request() {
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("POST", "/tenant/create"))
+        when(reg.requiredCodes("platform-api", "POST", "/tenant/create"))
                 .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
         var mgr = new PermissionAuthorizationManager(reg);
 
@@ -164,7 +165,7 @@ class PermissionAuthorizationManagerTest {
     void anonymous_does_not_mark_request() {
         // 未认证走的是 401 那条路（authenticationEntryPoint），有意不记；这里确认它不留下权限码标记
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes("POST", "/tenant/create"))
+        when(reg.requiredCodes("platform-api", "POST", "/tenant/create"))
                 .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
         var mgr = new PermissionAuthorizationManager(reg);
 

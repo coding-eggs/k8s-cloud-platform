@@ -4,6 +4,7 @@
   <resultMap id="BaseResultMap" type="com.coding.data.models.auth.PlatformPermission">
     <id column="id" jdbcType="VARCHAR" property="id" />
     <result column="domain" jdbcType="VARCHAR" property="domain" />
+    <result column="service" jdbcType="VARCHAR" property="service" />
     <result column="resource" jdbcType="VARCHAR" property="resource" />
     <result column="action" jdbcType="VARCHAR" property="action" />
     <result column="code" jdbcType="VARCHAR" property="code" />
@@ -12,7 +13,7 @@
     <result column="deleted_at" jdbcType="TIMESTAMP" property="deletedAt" />
   </resultMap>
   <sql id="Base_Column_List">
-    id, `domain`, `resource`, `action`, code, description, created_at, deleted_at
+    id, `domain`, service, `resource`, `action`, code, description, created_at, deleted_at
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select 
@@ -45,10 +46,12 @@
     where id = #{id,jdbcType=VARCHAR}
   </delete>
   <insert id="insert" parameterType="com.coding.data.models.auth.PlatformPermission">
-    insert into platform_permission (id, `domain`, `resource`, `action`,
+    insert into platform_permission (id, `domain`, service, `resource`, `action`,
       code, description, created_at
       )
-    values (#{id,jdbcType=VARCHAR}, #{domain,jdbcType=VARCHAR}, #{resource,jdbcType=VARCHAR}, #{action,jdbcType=VARCHAR},
+    <!-- service 列 NOT NULL：调用方没填（老代码路径）按 platform-api，与列默认值一致 -->
+    values (#{id,jdbcType=VARCHAR}, #{domain,jdbcType=VARCHAR}, IFNULL(#{service,jdbcType=VARCHAR}, 'platform-api'),
+      #{resource,jdbcType=VARCHAR}, #{action,jdbcType=VARCHAR},
       #{code,jdbcType=VARCHAR}, #{description,jdbcType=VARCHAR}, #{createdAt,jdbcType=TIMESTAMP}
       )
   </insert>
@@ -57,6 +60,9 @@
     <trim prefix="(" suffix=")" suffixOverrides=",">
       <if test="domain != null">
         `domain`,
+      </if>
+      <if test="service != null">
+        service,
       </if>
       <if test="resource != null">
         `resource`,
@@ -77,6 +83,9 @@
     <trim prefix="values (" suffix=")" suffixOverrides=",">
       <if test="domain != null">
         #{domain,jdbcType=VARCHAR},
+      </if>
+      <if test="service != null">
+        #{service,jdbcType=VARCHAR},
       </if>
       <if test="resource != null">
         #{resource,jdbcType=VARCHAR},
@@ -100,6 +109,9 @@
     <set>
       <if test="domain != null">
         `domain` = #{domain,jdbcType=VARCHAR},
+      </if>
+      <if test="service != null">
+        service = #{service,jdbcType=VARCHAR},
       </if>
       <if test="resource != null">
         `resource` = #{resource,jdbcType=VARCHAR},
@@ -125,6 +137,7 @@
   <update id="updateByPrimaryKey" parameterType="com.coding.data.models.auth.PlatformPermission">
     update platform_permission
     set `domain` = #{domain,jdbcType=VARCHAR},
+      service = IFNULL(#{service,jdbcType=VARCHAR}, service),
       `resource` = #{resource,jdbcType=VARCHAR},
       `action` = #{action,jdbcType=VARCHAR},
       code = #{code,jdbcType=VARCHAR},

@@ -4,7 +4,7 @@ import com.coding.common.exception.CloudPlatformException;
 import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.models.auth.PlatformPermission;
 import com.coding.platformapi.models.PermissionPointRequest;
-import com.coding.platformapi.security.PermissionRegistry;
+import com.coding.common.components.permission.PermissionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -112,7 +112,7 @@ class PermissionServiceTest {
                 });
         verify(mapper, never()).softDeleteById(any());
         // 运行时表未动
-        assertThat(registry.requiredCodes("POST", "/tenant/create")).isPresent();
+        assertThat(registry.requiredCodes("platform-api", "POST", "/tenant/create")).isPresent();
     }
 
     @Test
@@ -121,7 +121,7 @@ class PermissionServiceTest {
         svc.delete("p2");
         verify(mapper).softDeleteById("p2");
         // 换表后 /role/list 仍被剩余 code 覆盖
-        assertThat(registry.requiredCodes("POST", "/role/list").orElseThrow()).contains("tenant:role:read");
+        assertThat(registry.requiredCodes("platform-api", "POST", "/role/list").orElseThrow()).contains("tenant:role:read");
     }
 
     @Test
@@ -142,7 +142,7 @@ class PermissionServiceTest {
         assertThat(created.getCreatedAt()).isNotNull();
         verify(mapper).insert(created);
         // 换表后运行时含新规则（提交后实读）
-        assertThat(registry.requiredCodes("POST", "/role/list").orElseThrow()).contains("platform:role:read");
+        assertThat(registry.requiredCodes("platform-api", "POST", "/role/list").orElseThrow()).contains("platform:role:read");
     }
 
     @Test
@@ -199,7 +199,7 @@ class PermissionServiceTest {
         assertThat(cap.getValue().getId()).isEqualTo("p2");
         assertThat(cap.getValue().getResource()).isEqualTo("/role/**");
         // 放宽后通配仍命中 /role/list（提交后实读生效）
-        assertThat(registry.requiredCodes("POST", "/role/list").orElseThrow()).contains("platform:role:read");
+        assertThat(registry.requiredCodes("platform-api", "POST", "/role/list").orElseThrow()).contains("platform:role:read");
     }
 
     @Test
@@ -224,7 +224,7 @@ class PermissionServiceTest {
     void reload_rereads_db_and_swaps_table() {
         db.add(row("p4", "API", "/tenant/create", "POST", "platform:tenant:audit")); // 模拟 SQL 加行
         svc.reload();
-        assertThat(registry.requiredCodes("POST", "/tenant/create").orElseThrow()).contains("platform:tenant:audit");
+        assertThat(registry.requiredCodes("platform-api", "POST", "/tenant/create").orElseThrow()).contains("platform:tenant:audit");
     }
 
     @Test
@@ -233,7 +233,7 @@ class PermissionServiceTest {
         assertThatThrownBy(() -> svc.reload())
                 .isInstanceOfSatisfying(CloudPlatformException.class, e -> assertThat(e.getCode()).isEqualTo(10031));
         // 不换表：旧规则仍生效（fail-closed）
-        assertThat(registry.requiredCodes("POST", "/tenant/create").orElseThrow()).contains("platform:tenant:provision");
+        assertThat(registry.requiredCodes("platform-api", "POST", "/tenant/create").orElseThrow()).contains("platform:tenant:provision");
     }
 
     // ---------- helpers ----------
@@ -274,7 +274,7 @@ class PermissionServiceTest {
     private static List<PermissionRegistry.Rule> rulesOf(List<PlatformPermission> rows) {
         return rows.stream()
                 .filter(p -> "API".equals(p.getDomain()))
-                .map(p -> new PermissionRegistry.Rule(p.getAction(), p.getResource(), p.getCode()))
+                .map(p -> PermissionRegistry.Rule.from(p))
                 .toList();
     }
 }

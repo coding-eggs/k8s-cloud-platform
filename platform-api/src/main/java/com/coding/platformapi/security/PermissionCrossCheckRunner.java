@@ -1,6 +1,9 @@
 package com.coding.platformapi.security;
 
-import com.coding.platformapi.security.PermissionCrossCheck.Endpoint;
+import com.coding.common.components.permission.PermissionCrossCheck;
+import com.coding.common.components.permission.PermissionCrossCheck.Endpoint;
+import com.coding.common.components.permission.PermissionRegistry;
+import com.coding.common.components.permission.PlatformServices;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -36,8 +39,8 @@ public class PermissionCrossCheckRunner implements SmartInitializingSingleton {
 
     @Override
     public void afterSingletonsInstantiated() {
-        List<Endpoint> eps = PermissionCrossCheck.liveEndpoints(requestMappingHandlerMapping);
-        var gaps = PermissionCrossCheck.uncoveredEndpoints(eps, registry);
+        List<Endpoint> eps = MvcEndpoints.live(requestMappingHandlerMapping);
+        var gaps = PermissionCrossCheck.uncoveredEndpoints(PlatformServices.API, eps, registry);
         if (!gaps.isEmpty()) {
             String msg = "[RBAC] 以下 endpoint 既无权限行也不在豁免清单，启动失败: " + gaps;
             log.error(msg);
@@ -45,7 +48,7 @@ public class PermissionCrossCheckRunner implements SmartInitializingSingleton {
         }
         // §5.3 反向核账：规则匹配不到任何真实端点 = 幽灵行。只 WARN（v1 有意保留三条
         // "计划端点"行：/tenant/update、/user/update、/role/update，其 warn 即"未交付"标记）。
-        var ghosts = PermissionCrossCheck.ghostRules(eps, registry);
+        var ghosts = PermissionCrossCheck.ghostRules(PlatformServices.API, eps, registry);
         if (!ghosts.isEmpty()) {
             log.warn("[RBAC] 以下权限行匹配不到任何已注册 endpoint（幽灵行，不影响启动；"
                     + "计划端点可暂时保留，已删除/改名的须清理 seed）: {}", ghosts);

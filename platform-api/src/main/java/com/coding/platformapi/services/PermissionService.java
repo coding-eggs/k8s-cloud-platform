@@ -10,8 +10,10 @@ import com.coding.platformapi.models.PermissionMatchRequest;
 import com.coding.platformapi.models.PermissionMatchResponse;
 import com.coding.platformapi.models.PermissionPointRequest;
 import com.coding.platformapi.models.PermissionRuleView;
-import com.coding.platformapi.security.PermissionCrossCheck;
-import com.coding.platformapi.security.PermissionRegistry;
+import com.coding.common.components.permission.PermissionCrossCheck;
+import com.coding.common.components.permission.PermissionRegistry;
+import com.coding.common.components.permission.PlatformServices;
+import com.coding.platformapi.security.MvcEndpoints;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -92,8 +94,9 @@ public class PermissionService {
         List<PlatformPermission> matched = permMapper.selectAllActive().stream()
                 .filter(p -> "API".equals(p.getDomain()))
                 .filter(p -> p.getAction() != null && p.getResource() != null)
+                // 反查的是 platform-api 的 URL：只看本服务的行（同一路径在 auth 里是另一个端点）
                 .filter(p -> registry.runtimeMatches(
-                        new PermissionRegistry.Rule(p.getAction(), p.getResource(), p.getCode()), method, path))
+                        PermissionRegistry.Rule.from(p), PlatformServices.API, method, path))
                 .toList();
 
         List<PermissionGroup> groups = groupRows(matched);
@@ -159,8 +162,8 @@ public class PermissionService {
     /** 写前裸端点校验：候选规则集跑与启动 Runner 同款交叉校验，有缺口即拒绝（零写入）。 */
     private void assertCoversAllEndpoints(List<PlatformPermission> candidate) {
         PermissionRegistry candidateReg = new PermissionRegistry(rulesOf(candidate));
-        var gaps = PermissionCrossCheck.uncoveredEndpoints(
-                PermissionCrossCheck.liveEndpoints(requestMappingHandlerMapping), candidateReg);
+        var gaps = PermissionCrossCheck.uncoveredEndpoints(PlatformServices.API,
+                MvcEndpoints.live(requestMappingHandlerMapping), candidateReg);
         if (!gaps.isEmpty())
             throw new CloudPlatformException(EnumResponseType.PERMISSION_ENDPOINT_UNCOVERED,
                     "操作会使以下端点失去权限覆盖: " + gaps);
@@ -170,8 +173,8 @@ public class PermissionService {
     private void applyToRuntime() {
         List<PermissionRegistry.Rule> rules = rulesOf(permMapper.selectAllActive());
         registry.replaceRules(rules);
-        var ghosts = PermissionCrossCheck.ghostRules(
-                PermissionCrossCheck.liveEndpoints(requestMappingHandlerMapping), registry);
+        var ghosts = PermissionCrossCheck.ghostRules(PlatformServices.API,
+                MvcEndpoints.live(requestMappingHandlerMapping), registry);
         if (!ghosts.isEmpty())
             log.warn("[RBAC] 以下权限行匹配不到任何已注册 endpoint（幽灵行，不影响运行；"
                     + "计划端点可暂时保留，已删除/改名的须清理）: {}", ghosts);
@@ -196,11 +199,12 @@ public class PermissionService {
         return candidate;
     }
 
-    /** 与 PermissionRegistryFactory 同口径：仅 API 域行进规则（resource→URL pattern，action→HTTP method）。 */
+    /** 与 PermissionRegistryFactory 同口径：仅 API 域、本服务（platform-api）的行进规则。 */
     private static List<PermissionRegistry.Rule> rulesOf(List<PlatformPermission> rows) {
         return rows.stream()
                 .filter(p -> "API".equals(p.getDomain()))
-                .map(p -> new PermissionRegistry.Rule(p.getAction(), p.getResource(), p.getCode()))
+                .map(PermissionRegistry.Rule::from)
+                .filter(r -> PlatformServices.API.equals(r.service()))
                 .toList();
     }
 

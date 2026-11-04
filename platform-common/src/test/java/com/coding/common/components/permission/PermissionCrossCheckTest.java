@@ -1,4 +1,4 @@
-package com.coding.platformapi.security;
+package com.coding.common.components.permission;
 
 import org.junit.jupiter.api.Test;
 
@@ -16,11 +16,11 @@ class PermissionCrossCheckTest {
     @Test
     void flagged_uncovered_bare_endpoint() {
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes(anyString(), anyString())).thenReturn(Optional.empty());
-        when(reg.requiredCodes("POST", "/tenant/create"))
+        when(reg.requiredCodes(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
+        when(reg.requiredCodes("platform-api", "POST", "/tenant/create"))
                 .thenReturn(Optional.of(Set.of("platform:tenant:provision")));
 
-        var gaps = PermissionCrossCheck.uncoveredEndpoints(
+        var gaps = PermissionCrossCheck.uncoveredEndpoints("platform-api", 
                 List.of(new PermissionCrossCheck.Endpoint("POST", "/tenant/create"),
                         new PermissionCrossCheck.Endpoint("POST", "/user/create")), reg);
 
@@ -31,9 +31,9 @@ class PermissionCrossCheckTest {
     @Test
     void exempt_endpoints_not_flagged_even_without_rule() {
         PermissionRegistry reg = mock(PermissionRegistry.class);
-        when(reg.requiredCodes(anyString(), anyString())).thenReturn(Optional.empty());
+        when(reg.requiredCodes(anyString(), anyString(), anyString())).thenReturn(Optional.empty());
 
-        var gaps = PermissionCrossCheck.uncoveredEndpoints(
+        var gaps = PermissionCrossCheck.uncoveredEndpoints("platform-api", 
                 List.of(new PermissionCrossCheck.Endpoint("GET", "/context")), reg);
 
         assertThat(gaps).isEmpty();
@@ -44,11 +44,11 @@ class PermissionCrossCheckTest {
         // §5.3 反向：规则匹配不到任何真实端点 = 幽灵行（只 WARN，绝不抛错）。
         // /user/update 是 v1 有意保留的"计划端点"行；/tenant/create 有对应端点，不算幽灵。
         PermissionRegistry reg = new PermissionRegistry(List.of(
-                new PermissionRegistry.Rule("POST", "/tenant/create", "platform:tenant:provision"),
-                new PermissionRegistry.Rule("POST", "/user/update", "platform:user:manage")));
+                new PermissionRegistry.Rule("platform-api", "POST", "/tenant/create", "platform:tenant:provision"),
+                new PermissionRegistry.Rule("platform-api", "POST", "/user/update", "platform:user:manage")));
         var eps = List.of(new PermissionCrossCheck.Endpoint("POST", "/tenant/create"));
 
-        assertThat(PermissionCrossCheck.ghostRules(eps, reg))
+        assertThat(PermissionCrossCheck.ghostRules("platform-api", eps, reg))
                 .extracting(PermissionRegistry.Rule::pattern)
                 .containsExactly("/user/update");
     }
@@ -56,9 +56,9 @@ class PermissionCrossCheckTest {
     @Test
     void no_ghosts_when_every_rule_hits_an_endpoint() {
         PermissionRegistry reg = new PermissionRegistry(List.of(
-                new PermissionRegistry.Rule("POST", "/tenant/create", "platform:tenant:provision")));
+                new PermissionRegistry.Rule("platform-api", "POST", "/tenant/create", "platform:tenant:provision")));
         var eps = List.of(new PermissionCrossCheck.Endpoint("POST", "/tenant/create"));
 
-        assertThat(PermissionCrossCheck.ghostRules(eps, reg)).isEmpty();
+        assertThat(PermissionCrossCheck.ghostRules("platform-api", eps, reg)).isEmpty();
     }
 }

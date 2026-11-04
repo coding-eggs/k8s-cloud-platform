@@ -1,11 +1,8 @@
-package com.coding.platformapi.security;
+package com.coding.common.components.permission;
 
-import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
-import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 
 /**
  * 交叉核账：endpoint × 权限表（Task 11）。表驱动授权（Task 10）默认拒绝，
@@ -25,42 +22,22 @@ public final class PermissionCrossCheck {
 
     private PermissionCrossCheck() {}
 
-    /**
-     * 枚举主 MVC 映射的全部活端点（无 method 条件 → {@code "*"}）。
-     * 启动交叉校验（PermissionCrossCheckRunner）与权限点管理写前校验共用同一语义。
-     */
-    public static List<Endpoint> liveEndpoints(RequestMappingHandlerMapping handlerMapping) {
-        List<Endpoint> eps = new ArrayList<>();
-        for (RequestMappingInfo info : handlerMapping.getHandlerMethods().keySet()) {
-            Set<String> patterns = info.getPatternValues();
-            var methods = info.getMethodsCondition().getMethods();
-            if (patterns.isEmpty()) {
-                continue;
-            }
-            for (String p : patterns) {
-                if (methods.isEmpty()) {
-                    eps.add(new Endpoint("*", p));
-                } else {
-                    methods.forEach(m -> eps.add(new Endpoint(m.name(), p)));
-                }
-            }
-        }
-        return eps;
-    }
-
     /** 返回未被任何权限行、且非豁免的 endpoint（启动应失败）。 */
-    public static List<Endpoint> uncoveredEndpoints(List<Endpoint> endpoints, PermissionRegistry reg) {
+    public static List<Endpoint> uncoveredEndpoints(String service, List<Endpoint> endpoints, PermissionRegistry reg) {
         return endpoints.stream()
-                .filter(e -> !ExemptPaths.isExempt(e.pattern()))
-                .filter(e -> reg.requiredCodes(e.method(), e.pattern()).isEmpty())
+                .filter(e -> !ExemptPaths.isExempt(service, e.pattern()))
+                .filter(e -> reg.requiredCodes(service, e.method(), e.pattern()).isEmpty())
                 .toList();
     }
 
     /** §5.3 反向：返回匹配不到任何真实端点的规则（幽灵行）；只作 WARN 依据，绝不抛错。 */
-    public static List<PermissionRegistry.Rule> ghostRules(List<Endpoint> endpoints, PermissionRegistry reg) {
+    public static List<PermissionRegistry.Rule> ghostRules(String service, List<Endpoint> endpoints, PermissionRegistry reg) {
         List<PermissionRegistry.Rule> ghosts = new ArrayList<>();
         for (PermissionRegistry.Rule rule : reg.rules()) {
-            boolean hits = endpoints.stream().anyMatch(e -> reg.matches(rule, e.method(), e.pattern()));
+            if (!rule.service().equals(service)) {
+                continue; // 别的服务的行不归本服务核账
+            }
+            boolean hits = endpoints.stream().anyMatch(e -> reg.matches(rule, service, e.method(), e.pattern()));
             if (!hits) {
                 ghosts.add(rule);
             }

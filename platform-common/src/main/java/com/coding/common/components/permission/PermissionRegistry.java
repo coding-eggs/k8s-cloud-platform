@@ -1,5 +1,6 @@
-package com.coding.platformapi.security;
+package com.coding.common.components.permission;
 
+import com.coding.data.models.auth.PlatformPermission;
 import org.springframework.util.AntPathMatcher;
 
 import java.util.Collection;
@@ -10,15 +11,23 @@ import java.util.Set;
 
 /**
  * URL → 权限 code 注册表（表驱动，ANY-of 语义）。
- * 启动时由 {@link PermissionRegistryFactory} 从 platform_permission（API 域）加载。
+ * 行带 {@code service}（所属服务，与网关路由 id 对应）：同一路径在不同服务里是不同的端点，匹配必须先比服务。
+ * platform-api 只装本服务的行；网关装全部 API 域行。
  *
  * <p>热加载：{@link #replaceRules} 原子换整表 —— 读方（每请求调 {@link #requiredCodes}）
  * 只看到整旧或整新快照，不会新旧混合；AntPathMatcher 线程安全，无需加锁。
  */
 public final class PermissionRegistry {
 
-    /** 一条规则：HTTP 方法 + Ant 风格路径 + 权限 code。 */
-    public record Rule(String method, String pattern, String code) {}
+    /** 一条规则：所属服务 + HTTP 方法 + Ant 风格路径 + 权限 code。 */
+    public record Rule(String service, String method, String pattern, String code) {
+
+        /** 由权限行构造；service 为空（旧数据/未回填）按 platform-api 处理，与迁移的列默认值一致。 */
+        public static Rule from(PlatformPermission p) {
+            String service = p.getService() == null || p.getService().isBlank() ? PlatformServices.API : p.getService();
+            return new Rule(service, p.getAction(), p.getResource(), p.getCode());
+        }
+    }
 
     private volatile List<Rule> rules;
     private final AntPathMatcher matcher = new AntPathMatcher();
@@ -38,8 +47,9 @@ public final class PermissionRegistry {
     }
 
     /** pattern 是否 ant-match 给定实际路径（反向核账复用同一匹配语义）。 */
-    public boolean matches(Rule rule, String method, String path) {
-        return (rule.method().equalsIgnoreCase(method) || rule.method().equals("*") || method.equals("*"))
+    public boolean matches(Rule rule, String service, String method, String path) {
+        return rule.service().equals(service)
+                && (rule.method().equalsIgnoreCase(method) || rule.method().equals("*") || method.equals("*"))
                 && matcher.match(rule.pattern(), path);
     }
 
@@ -50,18 +60,18 @@ public final class PermissionRegistry {
      * 反查必须如实反映真实鉴权，不能比它更宽松。注意 {@code *} 方法在运行时**不是**通配；
      * {@link #matches} 认 {@code *} 是给反向核账用的，两者语义不同，不要混用。
      */
-    public boolean runtimeMatches(Rule rule, String method, String path) {
-        return rule.method().equalsIgnoreCase(method) && matcher.match(rule.pattern(), path);
+    public boolean runtimeMatches(Rule rule, String service, String method, String path) {
+        return rule.service().equals(service) && rule.method().equalsIgnoreCase(method) && matcher.match(rule.pattern(), path);
     }
 
     /**
-     * 返回匹配该 (method,path) 的权限 code 集合（多行 ANY-of）；无匹配返回 empty。
+     * 返回匹配该 (service,method,path) 的权限 code 集合（多行 ANY-of）；无匹配返回 empty。
      * method 比较忽略大小写。
      */
-    public Optional<Set<String>> requiredCodes(String method, String path) {
+    public Optional<Set<String>> requiredCodes(String service, String method, String path) {
         Set<String> codes = new LinkedHashSet<>();
         for (Rule r : rules) {
-            if (runtimeMatches(r, method, path)) {
+            if (runtimeMatches(r, service, method, path)) {
                 codes.add(r.code());
             }
         }

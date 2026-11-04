@@ -1,9 +1,10 @@
-package com.coding.platformapi.security;
+package com.coding.common.components.permission;
 
 import org.springframework.util.AntPathMatcher;
 
 /**
- * 豁免权限校验的路径清单（Ant 风格）。
+ * 豁免权限校验的路径清单（Ant 风格）。**只属于 platform-api**：其它服务（如 auth 的 /internal/**）没有豁免，
+ * 每个端点都必须有权限行。
  * /ws/** 为 pod-exec WebSocket 转发路径（handler 注册在 RequestMapping 之外），有意豁免。
  * springdoc 文档端点：knife4j 引入的 springdoc 是真实 @RestController，会出现在
  * RequestMappingHandlerMapping 里被 Task 11 交叉校验枚举；/v3/api-docs.yaml、
@@ -45,7 +46,10 @@ public final class ExemptPaths {
 
     private ExemptPaths() {}
 
-    public static boolean isExempt(String path) {
+    public static boolean isExempt(String service, String path) {
+        if (!PlatformServices.API.equals(service)) {
+            return false;
+        }
         for (String p : PREFIXES) {
             if (M.match(p, path)) {
                 return true;
