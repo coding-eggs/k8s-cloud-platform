@@ -13,6 +13,7 @@
     <description>平台 API 网关：JWT 校验 + 表驱动接口鉴权 + 被拒审计（WebFlux）</description>
 
     <properties>
+        <excludeSlow>slow</excludeSlow>
         <java.version>21</java.version>
     </properties>
     <dependencies>
@@ -75,6 +76,8 @@
                         <include>**/*Test.java</include>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!-- @Tag("slow") 的长连接用例（静默 70s / 等 21s）默认不跑；-DexcludeSlow= 打开 -->
+                    <excludedGroups>${excludeSlow}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>

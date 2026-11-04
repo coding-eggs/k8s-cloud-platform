@@ -1,9 +1,29 @@
 server:
   port: 8090
+  # 发布重启时让短请求收尾；WS 必断，由终端的断线提示 + 重连兜底。
+  # 不设 netty.idle-timeout：Reactor Netty 默认不掐空闲连接，静默终端靠前端 25s 心跳保活。
+  # 不开 Reactor Netty access log：WS 握手 URL 带 access_token。
+  shutdown: graceful
 
 spring:
   application:
     name: platform-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  cloud:
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            connect-timeout: 5000
+            # 有意不设 response-timeout：慢接口、大文件下载不由网关掐，nginx 的 1800s 兜底
+            pool:
+              # < 上游 Tomcat keepAliveTimeout(20s)：不复用对端已关的空闲连接（否则偶发 Connection prematurely closed → 502）
+              max-idle-time: 15s
+              max-life-time: 5m
+            websocket:
+              # 默认 64KB：终端里粘一大段文本就 1009 断开
+              max-frame-payload-length: 2097152
   main:
     # 显式写死：classpath 上若意外出现 webmvc，Boot 会改按 servlet 启动，网关整套 reactive 配置随即失效
     web-application-type: reactive
