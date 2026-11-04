@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 角色管理（鉴权走表驱动 PermissionAuthorizationManager：写操作 platform:role:manage，
+ * 角色管理（接口级鉴权在平台网关（表驱动）：写操作 platform:role:manage，
  * 读操作 platform:role:read；端点行见 V2026_09_24_2__rbac_seed.sql，
  * /permission/assignable 的行见 V2026_10_08_3__role_assignable_permissions.sql）
  */

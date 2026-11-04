@@ -21,7 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 用户管理（鉴权走表驱动 PermissionAuthorizationManager，platform:user:manage）。
+ * 用户管理（接口级鉴权在平台网关（表驱动），platform:user:manage）。
  * /me 与 /my-tenants 为登录即接口（ExemptPaths 豁免权限点，仅需 authenticated），供 SPA 引导权限与租户切换器。
  */
 @Tag(name = "用户管理", description = "平台用户创建/查询 + 平台域角色授予/回收 + 当前用户上下文")

@@ -61,7 +61,7 @@ public class GatewayDeniedAuditor {
         r.setActorUsername(StringUtils.hasText(username) ? username : UNKNOWN_ACTOR);
         r.setActorDisplayName(text(data.get("displayName")));
         r.setTenantId(data.get("tenantInfo") instanceof Map<?, ?> t ? text(t.get("tenantId")) : null);
-        // 与 api 的 AuditDenied.mark 同格式：逗号拼接、无方括号（审计页按 action = 权限码 精确筛选）；没命中权限行 → null
+        // 与 api 原 AuditDenied.mark 同格式（存量审计行一致）：逗号拼接、无方括号（审计页按 action = 权限码 精确筛选）；没命中权限行 → null
         Set<String> codes = exchange.getAttribute(GatewayAuthorizationManager.DENIED_CODES_ATTR);
         r.setAction(codes == null || codes.isEmpty() ? null : String.join(",", codes));
         r.setResult("DENIED");

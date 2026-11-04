@@ -16,7 +16,7 @@ import java.util.List;
 
 /**
  * 当前登录用户上下文查询（/user/me、/user/my-tenants 的数据源）。
- * 两接口在 ExemptPaths（登录即、无权限点要求），故授权已由 PermissionAuthorizationManager
+ * 两接口在 ExemptPaths（登录即、无权限点要求），故授权已由平台网关
  * 保证 authenticated；此处仅把「token 无有效 data claim」防御性映射为未登录。
  *
  * <p><b>权限闭包现算</b>（2026-10-09）：token 自本批起不再携带 {@code data.permissions}

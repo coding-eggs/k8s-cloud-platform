@@ -5,8 +5,6 @@ import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
 import com.coding.common.components.jwt.PlatformJwtValidators;
 import com.coding.common.components.jwt.QueryParameterBearerTokenResolver;
 import com.coding.common.exception.EnumResponseType;
-import com.coding.platformapi.security.PermissionAuthorizationManager;
-import com.coding.common.audit.AuditRecorder;
 import com.nimbusds.jose.*;
 import com.nimbusds.jose.jwk.*;
 import com.nimbusds.jose.proc.*;
@@ -41,7 +39,11 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * platform-api 作为资源服务器，校验 platform-auth 签发的 JWT
+ * platform-api 作为资源服务器，校验 platform-auth 签发的 JWT。
+ *
+ * <p>只校验「已登录」：接口级权限（权限表）与 403 审计都在平台网关（网关 spec §8）。
+ * ⚠️ 前提是 api 端口只对网关开放（NetworkPolicy）—— 绕过网关直连 api 等于对所有登录用户全开。
+ * 权限表本服务仍加载，只供 {@code /permission/match} 反查与启动交叉校验。
  */
 @EnableWebSecurity
 @Configuration(proxyBeanMethods = false)
@@ -57,9 +59,7 @@ public class ResourceServerConfig {
 
 	@Bean
 	SecurityFilterChain securityFilterChain(HttpSecurity http, Properties properties,
-										   PermissionAuthorizationManager authorizationManager,
 										   JwtPermissionResolver permissionResolver,
-										   AuditRecorder auditRecorder,
 										   @Value("${jwt.data-key:data}") String dataKey) {
 
 		http
@@ -69,18 +69,15 @@ public class ResourceServerConfig {
 				.csrf(AbstractHttpConfigurer::disable)
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers(properties.getIgnoreUrls()).permitAll()
-						//表驱动：命中权限行→PERM 校验；豁免→authenticated；其余拒绝（见 spec §5.1）
-						.anyRequest().access(authorizationManager))
+						//接口级判定（表驱动）已上收到网关，这里只要求登录
+						.anyRequest().authenticated())
 				//过滤器链层的认证/授权异常不会进 @ControllerAdvice，这里统一返回 ResponseData JSON
 				.exceptionHandling(ex -> ex
 						.authenticationEntryPoint((request, response, authException) ->
 								writeAuthJson(response, 401, EnumResponseType.USER_UN_LOGIN))
-						.accessDeniedHandler((request, response, accessDeniedException) -> {
-							// S0.1 审计：403 = 已认证但无权。recordDenied 内部 fail-open，
-							// 它绝不能抛 —— 否则 403 会变成 500（spec §5.4）。
-							auditRecorder.recordDenied(request);
-							writeAuthJson(response, 403, EnumResponseType.NON_AUTH_ENTRY_POINT);
-						}))
+						// 403 审计在网关（GatewayDeniedAuditor）；这里只剩方法级等少数拒绝，原样回 JSON
+						.accessDeniedHandler((request, response, accessDeniedException) ->
+								writeAuthJson(response, 403, EnumResponseType.NON_AUTH_ENTRY_POINT)))
 				.oauth2ResourceServer(ors -> {
 					//WS 握手无法带 Authorization 头，允许 token 走 query（access_token）
 					//⚠️ /alert/webhook 例外：它用的是**共享密钥**，不是 JWT —— 那个 "Bearer xxx"

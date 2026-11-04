@@ -18,7 +18,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * {@link AuditService}：查询的 limit 钳制、清理、动作码候选。写入（fail-open / recordDenied）见 platform-common 的 AuditRecorderTest。
+ * {@link AuditService}：查询的 limit 钳制、清理、动作码候选。写入（fail-open）见 platform-common 的 AuditRecorderTest；403 拒绝审计在网关（GatewayDeniedAuditorTest）。
  */
 class AuditServiceTest {
 

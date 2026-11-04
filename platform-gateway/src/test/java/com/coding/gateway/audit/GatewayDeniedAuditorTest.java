@@ -55,7 +55,7 @@ class GatewayDeniedAuditorTest {
 
         PlatformAuditLog r = recorded();
         assertThat(r.getResult()).isEqualTo("DENIED");
-        // 与 api 的 AuditDenied.mark 同格式（逗号拼接、无方括号）：审计页按 action = 权限码 精确筛选
+        // 与 api 原 AuditDenied.mark 同格式（逗号拼接、无方括号）：审计页按 action = 权限码 精确筛选
         assertThat(r.getAction()).isEqualTo("platform:oauth-client:manage");
         assertThat(r.getRequestPath()).isEqualTo("/ws/pod/exec");
         assertThat(r.getHttpMethod()).isEqualTo("GET");

@@ -28,8 +28,8 @@ public class ServletAuditConfiguration {
     }
 
     @Bean
-    public AuditRecorder auditRecorder(AuditWriter writer, AuthContext authContext) {
-        return new AuditRecorder(writer, authContext);
+    public AuditRecorder auditRecorder(AuditWriter writer) {
+        return new AuditRecorder(writer);
     }
 
     @Bean
