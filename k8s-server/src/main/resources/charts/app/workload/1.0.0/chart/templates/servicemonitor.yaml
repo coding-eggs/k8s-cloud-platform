@@ -3,6 +3,7 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "app.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "app.labels" . | nindent 4 }}
 spec:

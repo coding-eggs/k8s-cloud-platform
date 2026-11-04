@@ -4,6 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "app.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "app.labels" . | nindent 4 }}
   annotations:

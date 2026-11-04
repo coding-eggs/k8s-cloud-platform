@@ -90,6 +90,13 @@ public class AppRenderService {
                         continue;
                     }
                     String id = ref.getKind() + "/" + ref.getName();
+                    // apply 用 kubectl 且不带 -n：清单没写 namespace 的对象会落进 kubeconfig 的默认命名空间，
+                    // 健康检查却去目标命名空间找，发布永远卡在 HEALTH
+                    if (!Objects.equals(req.getNamespace(), declaredNamespace(doc))) {
+                        problems.add(AppProblemDTO.error(node.getKey(),
+                                "渲染结果未声明目标命名空间 " + req.getNamespace() + "：" + id));
+                        continue;
+                    }
                     if (!seen.add(id)) {
                         problems.add(AppProblemDTO.error(node.getKey(),
                                 "对象名冲突（两个节点生成了同一个对象）：" + id));
@@ -160,6 +167,16 @@ public class AppRenderService {
         ref.setName(root.path("metadata").path("name").asString(""));
         ref.setNamespace(root.path("metadata").path("namespace").asString(fallbackNamespace));
         return ref;
+    }
+
+    /** 文档自己写的 metadata.namespace；没写返回 null（refOf 会回落到请求的命名空间，这里不回落）。 */
+    static String declaredNamespace(String doc) {
+        try {
+            JsonNode ns = YAML.readTree(doc).path("metadata").path("namespace");
+            return ns.isString() && !ns.asString().isBlank() ? ns.asString() : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static Path writeValues(Map<String, Object> values) {

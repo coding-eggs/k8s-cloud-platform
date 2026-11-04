@@ -121,6 +121,28 @@ class AppWorkloadChartRenderTest {
     }
 
     @Test
+    void declaredNamespaceReadsOnlyWhatTheDocumentSays() {
+        assertThat(AppRenderService.declaredNamespace("kind: ConfigMap\nmetadata:\n  name: a\n  namespace: demo\n"))
+                .isEqualTo("demo");
+        assertThat(AppRenderService.declaredNamespace("kind: ConfigMap\nmetadata:\n  name: a\n")).isNull();
+    }
+
+    /** apply 走 kubectl 且不带 -n：清单里没写 namespace 的对象会落进 kubeconfig 的默认命名空间（真集群踩过） */
+    @Test
+    void everyRenderedObjectDeclaresTheReleaseNamespace() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        for (Map<String, Object> params : List.of(
+                Map.<String, Object>of("image", "nginx", "port", 80, "configFiles", List.of(FILE),
+                        "env", List.of(Map.of("name", "A", "value", "1"))),
+                Map.<String, Object>of("image", "nginx", "port", 80, "persistenceEnabled", true,
+                        "configFiles", List.of(FILE)))) {
+            List<Map<String, Object>> docs = render(params);
+            assertThat(docs).isNotEmpty().allSatisfy(d ->
+                    assertThat(at(d, "metadata").get("namespace")).as(d.get("kind") + "").isEqualTo("demo"));
+        }
+    }
+
+    @Test
     void noConfigFilesMeansNoFilesConfigMapAndNoVolumes() throws Exception {
         assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
         List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80));
