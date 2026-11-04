@@ -28,10 +28,28 @@ function resolveRedirectUri(
   origin: string,
 ): string {
   const fromRuntime = runtimeUri?.trim()
-  if (fromRuntime) return fromRuntime
+  if (fromRuntime) return normalizeRedirectUri(fromRuntime)
   const fromBuild = buildTimeUri?.trim()
-  if (fromBuild) return fromBuild
+  if (fromBuild) return normalizeRedirectUri(fromBuild)
   return `${origin}/callback`
+}
+
+/**
+ * 只填了 origin（漏掉 `/callback`）时补齐。
+ *
+ * <p>授权端点是精确匹配，少一段路径必然被拒，而「配了地址却漏路径」是最容易犯的错：
+ * 值形如 `http://host:port` 或 `http://host:port/` 时按「页面 origin + /callback」的意思处理。
+ */
+function normalizeRedirectUri(uri: string): string {
+  try {
+    const parsed = new URL(uri)
+    if (!parsed.pathname || parsed.pathname === '/') {
+      return `${parsed.origin}/callback`
+    }
+  } catch {
+    // 不是绝对 URL：原样交给 auth 判（相对值在授权端点也是合法的）
+  }
+  return uri
 }
 
 const REDIRECT_URI = resolveRedirectUri(
