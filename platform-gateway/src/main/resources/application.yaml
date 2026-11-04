@@ -30,6 +30,15 @@ spring:
       timeout: 2s
       connect-timeout: 2s
 
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # 与 platform-api 同值：网关把同一个 token 透传给 api / auth / k8s-server
+          audiences: ${JWT_AUDIENCES:platform-web-client}
+          # ⚠️ OAUTH2_SERVER 必须带 /auth（auth 的 context-path），否则拉不到密钥 → 全站 401
+          jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/auth}/oauth2/jwks
+
 management:
   endpoint:
     health:
@@ -45,6 +54,24 @@ platform:
   gateway:
     # 权限点管理页改行后，网关最迟这么久生效（api 自己那份是即时热换）
     permission-reload-interval: 60s
+    # 不需登录、不判权限、也不解析 Bearer（照抄 platform-api 的 spring.security.ignore-urls，只对 api 路由生效）。
+    # /alert/webhook 带的是 Alertmanager 共享密钥，不是 JWT；端点自己校验，密钥没配 api 拒启。
+    public-paths:
+      - "/actuator/**"
+      - "/doc.html"
+      - "/assets/**"
+      - "/404"
+      - "/500"
+      - "/v3/api-docs/**"
+      - "/v2/api-docs"
+      - "/swagger-ui/**"
+      - "/swagger-ui.html"
+      - "/swagger-resources/**"
+      - "/webjars/**"
+      - "/test/**"
+      - "/.well-known/**"
+      - "/manifest.json"
+      - "/alert/webhook"
     # 外部前缀 = nginx 去掉 /api 之后的路径；解析按前缀最长优先，书写顺序无关。
     # 权限行的 resource 写服务内路径（internal-prefix 之后），与 service 一起匹配。
     routes:
@@ -57,3 +84,6 @@ mybatis:
   type-aliases-package: com.coding.data.models
   configuration:
     map-underscore-to-camel-case: true
+
+jwt:
+  data-key: data

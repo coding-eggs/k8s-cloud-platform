@@ -46,7 +46,7 @@
 | 权限闭包计算 | 网关 | 复用 `platform-common` 的 `PermissionClosureService`，Redis TTL 30s 缓存跟着搬 |
 | 接口级鉴权（权限表） | **只在网关** | 现 `PermissionAuthorizationManager` 的逻辑整体迁过去 |
 | 豁免路径（`ExemptPaths`） | 网关 | 登录即可的路径（bootstrap、自助接口等） |
-| 租户上下文解析 | 网关解析并校验「用户属于该租户」；服务再按需读取 | 现 `TenantContextResolver` |
+| 租户上下文解析 | 网关**不读**请求里的 tenantId：权限闭包按 token 的 `data.tenantInfo.tenantId` 算；请求 tenantId 与 token 是否一致、用户是否属于该租户，仍由服务的 `TenantContextResolver` 判（业务校验）。（2026-11-04 实施时修正：原写「网关解析并校验」） | 现 `TenantContextResolver` |
 | 数据范围校验 | 服务 | 不动 |
 | 审计 SUCCESS / FAILED | 服务（公共库） | 见 §5 |
 | 审计 DENIED（403） | 网关 | 只有网关知道请求被拒了 |

@@ -12,13 +12,16 @@ import java.util.List;
  *
  * @param routes                   书写顺序无关，解析按外部前缀最长优先
  * @param permissionReloadInterval 权限表定时重载间隔（权限点管理页改行后，网关最迟这么久生效）
+ * @param publicPaths              不需登录、不判权限、也不解析 Bearer 的路径（ant 模式，按 platform-api 的服务内路径匹配；
+ *                                 照抄 api 的 spring.security.ignore-urls）
  */
 @ConfigurationProperties(prefix = "platform.gateway")
-public record PlatformRouteProperties(List<Route> routes, Duration permissionReloadInterval) {
+public record PlatformRouteProperties(List<Route> routes, Duration permissionReloadInterval, List<String> publicPaths) {
 
     public PlatformRouteProperties {
         routes = routes == null ? List.of() : List.copyOf(routes);
         permissionReloadInterval = permissionReloadInterval == null ? Duration.ofSeconds(60) : permissionReloadInterval;
+        publicPaths = publicPaths == null ? List.of() : List.copyOf(publicPaths);
     }
 
     /**
