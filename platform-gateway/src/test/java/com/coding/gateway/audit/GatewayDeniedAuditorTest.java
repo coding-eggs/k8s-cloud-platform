@@ -55,7 +55,8 @@ class GatewayDeniedAuditorTest {
 
         PlatformAuditLog r = recorded();
         assertThat(r.getResult()).isEqualTo("DENIED");
-        assertThat(r.getAction()).isEqualTo("[platform:oauth-client:manage]");
+        // 与 api 的 AuditDenied.mark 同格式（逗号拼接、无方括号）：审计页按 action = 权限码 精确筛选
+        assertThat(r.getAction()).isEqualTo("platform:oauth-client:manage");
         assertThat(r.getRequestPath()).isEqualTo("/ws/pod/exec");
         assertThat(r.getHttpMethod()).isEqualTo("GET");
         assertThat(r.getActorUsername()).isEqualTo("alice");
@@ -75,6 +76,17 @@ class GatewayDeniedAuditorTest {
         StepVerifier.create(auditor.record(ex, alice())).verifyComplete();
 
         assertThat(recorded().getClientIp()).isEqualTo("1.2.3.4");
+    }
+
+    @Test
+    void multipleCodesJoinedWithComma() {
+        MockServerWebExchange ex = MockServerWebExchange.from(MockServerHttpRequest.post("/x"));
+        ex.getAttributes().put(GatewayAuthorizationManager.DENIED_CODES_ATTR,
+                new LinkedHashSet<>(List.of("a:b:view", "c:d:view")));
+
+        StepVerifier.create(auditor.record(ex, alice())).verifyComplete();
+
+        assertThat(recorded().getAction()).isEqualTo("a:b:view,c:d:view");
     }
 
     /** 与 api 现状一致：没命中权限行的拒绝也记一条，action 为空 */

@@ -16,6 +16,7 @@ import reactor.core.scheduler.Schedulers;
 import java.net.InetSocketAddress;
 import java.util.Date;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 被拒（403）审计（spec §5）：只有网关知道请求被拒了，故 DENIED 由网关写；SUCCESS/FAILED 仍由业务服务写。
@@ -60,9 +61,9 @@ public class GatewayDeniedAuditor {
         r.setActorUsername(StringUtils.hasText(username) ? username : UNKNOWN_ACTOR);
         r.setActorDisplayName(text(data.get("displayName")));
         r.setTenantId(data.get("tenantInfo") instanceof Map<?, ?> t ? text(t.get("tenantId")) : null);
-        // 与 api 的 AuditDenied.codesOf 同格式：String.valueOf(LinkedHashSet)；没命中权限行 → null
-        Object codes = exchange.getAttribute(GatewayAuthorizationManager.DENIED_CODES_ATTR);
-        r.setAction(codes == null ? null : String.valueOf(codes));
+        // 与 api 的 AuditDenied.mark 同格式：逗号拼接、无方括号（审计页按 action = 权限码 精确筛选）；没命中权限行 → null
+        Set<String> codes = exchange.getAttribute(GatewayAuthorizationManager.DENIED_CODES_ATTR);
+        r.setAction(codes == null || codes.isEmpty() ? null : String.join(",", codes));
         r.setResult("DENIED");
         r.setHttpMethod(req.getMethod().name());
         r.setRequestPath(req.getPath().value());
