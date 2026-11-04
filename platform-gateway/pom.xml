@@ -16,6 +16,22 @@
         <excludeSlow>slow</excludeSlow>
         <java.version>21</java.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Spring Cloud 只在本模块导入。⚠️ 不能放根 pom：它的 BOM 管着 fabric8（spring-cloud-kubernetes），
+                 会把 kubernetes-client 7.9.0 底下的 model 压回 7.4.1，k8s-core 直接编译失败。
+                 2025.1.4 起兼容验证器接受 Boot 4.1.x，更早的 2025.1.x 只认 4.0.x，启动即失败 —— 升 Boot 小版本时先核对这里。 -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.cloud</groupId>

@@ -47,16 +47,6 @@
                 <scope>import</scope>
             </dependency>
 
-            <!-- Spring Cloud（目前只有 platform-gateway 用）。2025.1.4 起兼容验证器接受 Boot 4.1.x，
-                 更早的 2025.1.x 只认 4.0.x，启动即失败 —— 升 Boot 小版本时先核对这里。 -->
-            <dependency>
-                <groupId>org.springframework.cloud</groupId>
-                <artifactId>spring-cloud-dependencies</artifactId>
-                <version>${spring-cloud.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
             <!-- AOP 启动器：Spring Boot 4 把它从 spring-boot-starter-aop 改名成
                  spring-boot-starter-aspectj（Boot 3.5 起的名字已不在 4.x 的 BOM 里）。
                  版本由上面导入的 spring-boot-dependencies BOM 管理，这里不再单列 —— 曾经钉过
