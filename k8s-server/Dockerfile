@@ -46,9 +46,10 @@
 FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre AS tools
 
 ARG TARGETARCH=amd64
-RUN [ "$TARGETARCH" = "amd64" ] || {
-      echo "只预置了 linux-amd64 的 helm/kubectl；要出 $TARGETARCH 镜像请先跑 scripts/fetch-k8s-tools.sh $TARGETARCH" >&2
-      exit 1
+# ⚠️ Dockerfile 的 RUN 只认一行，多行必须每行末尾带 `\`（否则只把第一行交给 sh → "expecting }"）。
+RUN [ "$TARGETARCH" = "amd64" ] || { \
+      echo "只预置了 linux-amd64 的 helm/kubectl；要出 $TARGETARCH 镜像请先跑 scripts/fetch-k8s-tools.sh $TARGETARCH" >&2; \
+      exit 1; \
     }
 
 # S3.6：组件安装靠 PATH 上的 helm 二进制（HelmRunner 直接调 `helm`）。
