@@ -74,7 +74,8 @@ platform:
   gateway:
     # 权限点管理页改行后，网关最迟这么久生效（api 自己那份是即时热换）
     permission-reload-interval: 60s
-    # 不需登录、不判权限、也不解析 Bearer（照抄 platform-api 的 spring.security.ignore-urls，只对 api 路由生效）。
+    # 不需登录、不判权限、也不解析 Bearer（只对 api 路由生效）。
+    # ⚠️ 与 platform-api 的 spring.security.ignore-urls 是**同一份清单的两处副本**，改一处必须同步另一处。
     # /alert/webhook 带的是 Alertmanager 共享密钥，不是 JWT；端点自己校验，密钥没配 api 拒启。
     public-paths:
       - "/actuator/**"

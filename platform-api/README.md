@@ -15,7 +15,7 @@ K8s 云平台的**管理面 BFF（Backend for Frontend）与业务中枢**：面
 |------|------|
 | `platform-web` | 前端 SPA（Vue 3 + Vite），OAuth2 PKCE 公共客户端 |
 | `platform-auth` | 授权服务器：登录、发令牌（`:9527`） |
-| **`platform-api`** | **本模块 —— 管理面 BFF：业务规则 + 权限判定 + 数据库，`:8081`** |
+| **`platform-api`** | **本模块 —— 管理面 BFF：业务规则 + 数据库，`:8081`（接口级权限在 platform-gateway 判，本模块只校验登录）** |
 | `k8s-server` | K8s 执行面：零业务逻辑，只做边界转换（`:8080`） |
 | `k8s-core` | fabric8 client 封装（operations / converter / factory），仅被 `k8s-server` 依赖 |
 | `platform-data` | MyBatis Mapper 与实体 |
@@ -27,8 +27,9 @@ K8s 云平台的**管理面 BFF（Backend for Frontend）与业务中枢**：面
 浏览器 SPA
   │  Authorization: Bearer <access_token>（platform-auth 签发）
   ▼
-platform-api ── ① SecurityFilterChain：验签（JWKS）→ 401
-             ── ② PermissionAuthorizationManager：查权限表 → 403 / 放行
+platform-gateway ── 验签 + 查权限表（PermissionDecider）→ 401 / 403（DENIED 审计）/ 原样转发
+  ▼
+platform-api ── ① SecurityFilterChain：再验签（JWKS，纵深防御）→ 401；只要求已登录
              ── ③ Controller（只做参数绑定与 ResponseData 包装）
              ── ④ Service（业务规则、DTO 组装、DB 读写、跨资源编排）
              ── ⑤ K8s*Client / K8sServerGateway（原样透传 Authorization 头）
@@ -108,14 +109,12 @@ platform-api/src/main/java/com/coding/platformapi/
 │   ├── OAuth2JwtProperties.java           # JWS/JWE 解码配置载体
 │   ├── OpenApiConfig.java / GlobalExceptionHandler.java
 ├── security/
-│   ├── PermissionRegistry.java            # URL→code 规则表（不可变快照，可原子换表）
-│   ├── PermissionRegistryFactory.java     # 启动时从 platform_permission（API 域）加载
-│   ├── PermissionAuthorizationManager.java# 表驱动授权：命中行 → ANY-of PERM；否则豁免；否则拒绝
-│   ├── PermissionCrossCheck.java          # 端点 × 权限行 双向核账
-│   ├── PermissionCrossCheckRunner.java    # 启动期 fail-closed 校验
-│   ├── ExemptPaths.java                   # 豁免清单（登录即过）
-│   ├── AuthContext.java                   # 从 JWT data claim 解出当前用户身份
+│   ├── PermissionRegistryFactory.java     # 启动时从 platform_permission（API 域、service=platform-api）加载
+│   ├── PermissionCrossCheckRunner.java    # 启动期 fail-closed 校验（端点 × 权限行）
+│   ├── MvcEndpoints.java                  # 枚举真实 MVC 端点（交叉校验与权限点管理的写前校验共用）
 │   └── TenantContextResolver.java         # 生效租户解析（自管 vs 代管）
+│                                          # PermissionRegistry / PermissionDecider / ExemptPaths / PermissionCrossCheck
+│                                          # 在 platform-common（components.permission），AuthContext 在 common.security
 ├── controllers/                           # 28 个：资源域 + 平台域（cluster/tenant/user/role/permission/…）
 ├── services/                              # 34 个：业务规则在此
 ├── k8s/
@@ -163,7 +162,7 @@ platform-api/src/main/java/com/coding/platformapi/
 - **反向**：权限行匹配不到任何真实端点（幽灵行）→ **只 WARN**。不影响安全，但会误导审计闭包；v1 有意保留了几条"计划端点"行，其 warn 即是"未交付"标记。
 
 ### 4.4 豁免清单的纪律（改动前必读）
-`ExemptPaths` 里的前缀是**整族吞掉**的 —— 若把管理域端点挂到已豁免的前缀之下，该端点将永远不需要权限行、也永远不会被授予任何 code，授权语义静默退化为"登录即过"，而交叉校验**检测不到**这种情形（它只兜"非豁免且无行"）。
+`ExemptPaths`（platform-common，网关判定时用）里的前缀是**整族吞掉**的 —— 若把管理域端点挂到已豁免的前缀之下，该端点将永远不需要权限行、也永远不会被授予任何 code，授权语义静默退化为"登录即过"，而交叉校验**检测不到**这种情形（它只兜"非豁免且无行"）。
 
 当前豁免的实际成员（多数是"纯候选值查询"或"登录即需的上下文"）：`/context`、`/user/me`、`/user/my-tenants`、SM/PM 的 `relabel-labels` 与 `metric-names` 四端点、`/namespace/metrics/**`、`/mesh/gatewayclass-refs`、文档与 WS 路径等。**新增 controller 时须人工确认其前缀归属，勿把管理域路径塞进 `ExemptPaths`。**
 
@@ -195,7 +194,6 @@ platform-api/src/main/java/com/coding/platformapi/
 | `/role` | list / create / delete / permission **save·list·assignable** |
 | `/permission` | list / create / update / delete / reload |
 | `/rbacTemplate` | 模板 CRUD |
-| `/oauth-clients` | OAuth 客户端 list / get / scopes / create / update / delete / enable / reset-secret —— 转调 platform-auth 内部接口；只做权限（`platform:oauth-client:view·manage`，仅 admin）与审计 |
 | `/namespace` | 命名空间合并视图 CRUD + quota / limitrange 增删改查 + **metrics/cpu·memory·network·disk** |
 | `/context` | 资源管理上下文集联（租户→集群→命名空间） |
 | `/calico` | IPPool / IPReservation / BGP* 全 CRUD + IPAM 派生查询 + form-options |
@@ -282,7 +280,7 @@ java -jar platform-api/target/platform-api-1.0.0.jar
 访问：`http://127.0.0.1:8081/doc.html`（Knife4j）。
 
 ### 单测
-`platform-api/src/test/java/` 下有 19 个测试类，覆盖权限表语义（`PermissionAuthorizationManagerTest` / `PermissionCrossCheckTest` / `PermissionRegistryTest`）、各 Service 的业务规则（含 `NodeServiceTest` 用断言钉住"podstats 只调一次"的 N+1 修复）。
+`platform-api/src/test/java/` 覆盖各 Service 的业务规则；权限表语义的测试在 platform-common（`PermissionDeciderTest` / `PermissionCrossCheckTest` / `PermissionRegistryTest`），接口级判定在网关（`GatewayAuthorizationManagerTest` / `GatewaySecurityIT`）。Service 测试里有 `NodeServiceTest` 用断言钉住"podstats 只调一次"的 N+1 修复。
 
 ```bash
 mvn -pl platform-api test

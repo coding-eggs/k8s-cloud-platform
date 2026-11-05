@@ -57,13 +57,16 @@ public class PermissionRegistryReloader implements InitializingBean, DisposableB
         }
     }
 
-    /** 重读一次；失败保留旧表。 */
+    /**
+     * 重读一次；失败保留旧表。LinkageError（如 NoClassDefFoundError）也在这里接住：Reactor 虽不会因它停掉定时器，
+     * 但会把它当 jvm fatal 打成 scheduler「uncaught exception」，日志里看不出是权限表重载失败。
+     */
     public void reload() {
         try {
             List<PermissionRegistry.Rule> rules = load();
             registry.replaceRules(rules);
             log.debug("[RBAC] 网关权限表已重载：{} 条", rules.size());
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | LinkageError e) {
             log.error("[RBAC] 网关权限表重载失败，继续使用上一份（{} 条）", registry.rules().size(), e);
         }
     }

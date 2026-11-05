@@ -42,7 +42,7 @@ K8s 云平台的**统一身份认证与授权服务**：基于 Spring Authorizat
 4. **会话续期 grant（自定义）**：`urn:coding:grant-type:session-renewal` —— 解决 PKCE 公共客户端拿不到 refresh_token 的续期问题（详见下文「关键设计」）。
 5. **按客户端自定义 JWT 编码**：每个客户端可独立配置 JWS 签名算法（对称/非对称）与可选的 JWE 加密。
 6. **JWK 密钥管理**：生成签名 / 加密密钥对并入库，供 SAS 的 `/oauth2/jwks` 使用。
-7. **客户端管理（内部接口）**：`/internal/clients/**` 只给 platform-api 调（共享密钥），规则在 `ClientAdminService`：内置客户端保护、机密 / 公共两类、对称密钥服务端生成；停用即对授权端点不可见。
+7. **客户端管理（内部接口）**：`/internal/clients/**` 只经平台网关（用户 JWT，权限码由网关判），规则在 `ClientAdminService`：内置客户端保护、机密 / 公共两类、对称密钥服务端生成；停用即对授权端点不可见。
 8. **Redis 会话存储**：登录态（根凭证）存 Redis，支持多实例 / 重启不丢；8h 空闲超时 + keepalive 滑动续期。
 
 ---
@@ -68,7 +68,7 @@ src/main/java/com/coding/auth/
 │   ├── SessionRenewalAuthenticationConverter.java # 从请求构建载体（仅本 grant 生效，否则放行）
 │   └── SessionRenewalAuthenticationProvider.java  # 校验链 + 以端用户身份重签 access_token
 ├── controller/
-│   ├── InternalClientController.java   # /internal/clients/** —— 客户端管理内部接口（只给 platform-api）
+│   ├── InternalClientController.java   # /internal/clients/** —— 客户端管理内部接口（只经网关；写操作记审计）
 │   ├── SessionController.java          # /session/keepalive —— 会话滑动续期
 │   ├── AuthorizationConsentController.java # /oauth2/consent、/consent/details —— 授权同意页
 │   ├── JwkController.java              # /internal/jwk/generate —— 生成并入库密钥对（只经网关）

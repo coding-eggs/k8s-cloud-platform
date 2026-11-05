@@ -6,6 +6,7 @@ import com.coding.data.models.auth.PlatformPermission;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,6 +55,26 @@ class PermissionRegistryReloaderTest {
 
         assertThat(registry.rules()).extracting(PermissionRegistry.Rule::service)
                 .containsExactlyInAnyOrder("platform-api", "platform-auth");
+    }
+
+    /** 某次重载抛 Error（如 NoClassDefFoundError）：不能让定时订阅终止，之后照常重载 */
+    @Test
+    void periodicReloadSurvivesError() throws Exception {
+        when(mapper.selectAllActive())
+                .thenReturn(List.of(row("API", "platform-api", "/a")))
+                .thenThrow(new NoClassDefFoundError("boom"))
+                .thenReturn(List.of(row("API", "platform-api", "/a"), row("API", "platform-api", "/c")));
+        PermissionRegistryReloader periodic = new PermissionRegistryReloader(mapper, registry, Duration.ofMillis(50));
+        periodic.afterPropertiesSet();
+        try {
+            long deadline = System.currentTimeMillis() + 3000;
+            while (registry.rules().size() < 2 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20);
+            }
+            assertThat(registry.rules()).hasSize(2);
+        } finally {
+            periodic.destroy();
+        }
     }
 
     @Test

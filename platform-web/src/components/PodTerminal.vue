@@ -5,16 +5,18 @@
  *   C→S: {"type":"input","data"} / {"type":"resize","cols","rows"} / {"type":"ping"}
  *   S→C: {"type":"output","data"} / {"type":"exit","code"} / {"type":"error","message"} / {"type":"pong"}
  *
- * 心跳：open 状态每 25s 发 ping（api 中继直接回 pong、不转发给 k8s-server），让 nginx / 网关 / LB
- * 这几跳都看到流量（常见 LB 空闲上限 60s）。连续 60s 收不到任何帧（输出或 pong）→ 主动断开并提示。
- * 断开后可「重新连接」：用当前 token 新建连接 = 新的 shell 会话，旧会话状态不保留。
+ * 心跳（utils/terminalHeartbeat）：每 10s 检查一次，距上次 ping 满 25s 发 ping（api 中继直接回 pong、
+ * 不转发给 k8s-server），让 nginx / 网关 / LB 这几跳都看到流量（常见 LB 空闲上限 60s）。
+ * 连续 60s 收不到任何帧（输出或 pong）→ 主动断开并提示（最晚 70s 内发现）。
+ * 断开后可「重新连接」：token 快过期先续期，再新建连接 = 新的 shell 会话，旧会话状态不保留。
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { getAccessToken } from '@/auth/oauth'
+import { getAccessToken, renewIfDue } from '@/auth/oauth'
 import { chunkTerminalInput } from '@/utils/terminalInput'
+import { HEARTBEAT_CHECK_MS, heartbeatAction } from '@/utils/terminalHeartbeat'
 
 const props = defineProps<{
   /** scope=cluster（节点详情等集群域）：走 admin client，无需 tenantId */
@@ -26,9 +28,6 @@ const props = defineProps<{
   container?: string
 }>()
 
-const PING_INTERVAL_MS = 25_000
-const SILENCE_LIMIT_MS = 60_000
-
 const containerEl = ref<HTMLElement | null>(null)
 const status = ref<'connecting' | 'open' | 'closed'>('connecting')
 const exitCode = ref<number | null>(null)
@@ -39,6 +38,7 @@ let fit: FitAddon | null = null
 let ws: WebSocket | null = null
 let pingTimer: ReturnType<typeof setInterval> | null = null
 let lastFrameAt = 0
+let lastPingAt = 0
 
 function focusTerm(): void {
   term?.focus()
@@ -85,18 +85,22 @@ function stopHeartbeat(): void {
   }
 }
 
-/** 每个 tick：先查静默是否超限，再发 ping（检查间隔 25s，最晚约 85s 判定断线） */
+/** 每 10s 一个 tick：静默超限判断线，否则到点发 ping */
 function startHeartbeat(): void {
   stopHeartbeat()
   lastFrameAt = Date.now()
+  lastPingAt = lastFrameAt
   pingTimer = setInterval(() => {
-    if (Date.now() - lastFrameAt > SILENCE_LIMIT_MS) {
+    const now = Date.now()
+    const action = heartbeatAction(now, lastFrameAt, lastPingAt)
+    if (action === 'dead') {
       markClosed('\r\n\x1b[90m[连接已断开（心跳超时）]\x1b[0m\r\n')
       ws?.close()
-      return
+    } else if (action === 'ping') {
+      lastPingAt = now
+      send({ type: 'ping' })
     }
-    send({ type: 'ping' })
-  }, PING_INTERVAL_MS)
+  }, HEARTBEAT_CHECK_MS)
 }
 
 /** 置为 closed 并在终端写一行提示（只写一次） */
@@ -159,13 +163,19 @@ function connect(): void {
   }
 }
 
-function reconnect(): void {
+async function reconnect(): Promise<void> {
   try {
     ws?.close()
   } catch {
     /* ignore */
   }
   term?.write('\r\n\x1b[90m[正在打开新的会话…]\x1b[0m\r\n')
+  // 断线后可能隔了很久才点重连：token 过期的话握手只会 401，先续期（续不上照旧连，失败提示走原路径）
+  try {
+    await renewIfDue()
+  } catch {
+    /* 续期失败不挡重连 */
+  }
   connect()
   focusTerm()
 }

@@ -165,6 +165,8 @@ spring:
           min-idle: 0
           max-wait: 1000ms
   security:
+    # ⚠️ 与 platform-gateway 的 platform.gateway.public-paths 是**同一份清单的两处副本**，改一处必须同步另一处：
+    #    只改这里 → 网关先 401/403，请求到不了 api；只改网关 → api 自己 401。
     ignore-urls:
       - "/actuator/**"
       - "/doc.html"
