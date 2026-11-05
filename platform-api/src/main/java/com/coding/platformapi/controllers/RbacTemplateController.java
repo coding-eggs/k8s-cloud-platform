@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.models.RbacTemplateVO;
 import com.coding.platformapi.models.TemplateCreateRequest;
@@ -26,6 +28,7 @@ public class RbacTemplateController {
 
     @PostMapping("/create")
     @Operation(summary = "创建模板", description = "校验命名与规则后入库，并同步 ClusterRole（tn-tpl-<name>）到各启用集群")
+    @Auditable(action = AuditAction.RBAC_TEMPLATE_CREATE, target = "#request.name")
     public ResponseData<RbacTemplateVO> create(@RequestBody TemplateCreateRequest request) {
         return new ResponseData<>(templateService.create(request));
     }
@@ -44,12 +47,14 @@ public class RbacTemplateController {
 
     @PostMapping("/update")
     @Operation(summary = "更新模板", description = "描述/规则；内置模板不可改；规则变更即时同步各集群 ClusterRole")
+    @Auditable(action = AuditAction.RBAC_TEMPLATE_UPDATE, target = "#request.id")
     public ResponseData<RbacTemplateVO> update(@RequestBody TemplateUpdateRequest request) {
         return new ResponseData<>(templateService.update(request));
     }
 
     @PostMapping("/delete")
     @Operation(summary = "删除模板", description = "内置保护 + 被分配引用时禁删；软删后清理各集群 ClusterRole")
+    @Auditable(action = AuditAction.RBAC_TEMPLATE_DELETE, target = "#request.id")
     public ResponseData<Void> delete(@RequestBody TemplateKeyRequest request) {
         templateService.delete(request);
         return new ResponseData<>();
@@ -59,6 +64,7 @@ public class RbacTemplateController {
     @Operation(summary = "重下发全部模板到所有集群",
             description = "DB 是唯一真相：把每个模板的 rules 逐个 upsert 成各集群的 tn-tpl-* ClusterRole（返回处理的模板数）。"
                     + "保存单个模板时也会同步；本端点用于「库里的 rules 被迁移/手工改过」后一次性推平（best-effort，失败只告警）。")
+    @Auditable(action = AuditAction.RBAC_TEMPLATE_SYNC_ALL)
     public ResponseData<Integer> syncAll() {
         return new ResponseData<>(templateService.syncAll());
     }

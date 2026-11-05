@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.ConfigMapDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.ConfigMapService;
@@ -75,6 +77,7 @@ public class ConfigMapController {
 
     @PostMapping
     @Operation(summary = "创建 ConfigMap")
+    @Auditable(action = AuditAction.CONFIGMAP_CREATE)
     public ResponseData<ConfigMapDTO> create(@RequestBody ConfigMapDTO body) {
         //body 携带 tenantId/clusterId/namespace；K8sClient 将前两者提取进 query（k8s-server 以 query 为准）
         return new ResponseData<>(configMapService.create(body));
@@ -82,6 +85,7 @@ public class ConfigMapController {
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 ConfigMap")
+    @Auditable(action = AuditAction.CONFIGMAP_UPDATE)
     public ResponseData<ConfigMapDTO> update(@PathVariable String name, @RequestBody ConfigMapDTO body) {
         body.setName(name);
         return new ResponseData<>(configMapService.update(body));
@@ -89,6 +93,7 @@ public class ConfigMapController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 ConfigMap")
+    @Auditable(action = AuditAction.CONFIGMAP_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

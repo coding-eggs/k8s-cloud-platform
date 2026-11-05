@@ -307,6 +307,245 @@ public final class AuditAction {
     /** 生成 JWK 并按优先级入库（高优先级签名密钥 = 决定平台用哪把钥匙签 token） */
     public static final String JWK_GENERATE = "jwk:generate";
 
+    // ---- 告警 / 审计本身（2026-11-05 补齐） ----
+    public static final String ALERT_DELETE = "alert:delete";
+
+    /** 告警链路自检：往库里写测试告警行 */
+    public static final String ALERT_SELF_TEST = "alert:self-test";
+
+    /** 按时间范围删除审计记录 —— 删审计本身必须留痕 */
+    public static final String AUDIT_PURGE = "audit:purge";
+
+
+    // ---- 权限点 / 角色 / 用户 / 账号（2026-11-05 补齐） ----
+    public static final String PERMISSION_CREATE = "permission:create";
+
+    public static final String PERMISSION_UPDATE = "permission:update";
+
+    public static final String PERMISSION_DELETE = "permission:delete";
+
+    /** SQL 直接改库后重载运行时规则 */
+    public static final String PERMISSION_RELOAD = "permission:reload";
+
+    public static final String ROLE_CREATE = "role:create";
+
+    public static final String ROLE_DELETE = "role:delete";
+
+    /** 整体覆盖角色绑定的权限码 */
+    public static final String ROLE_PERMISSION_SAVE = "role:permission-save";
+
+    public static final String USER_CREATE = "user:create";
+
+    public static final String USER_PLATFORM_ROLE_GRANT = "user:platform-role-grant";
+
+    public static final String USER_PLATFORM_ROLE_REVOKE = "user:platform-role-revoke";
+
+    /** 自助改密码（auth，走登录会话） */
+    public static final String ACCOUNT_PASSWORD = "account:password";
+
+    /** 自助改昵称 / 邮箱（auth，走登录会话） */
+    public static final String ACCOUNT_PROFILE = "account:profile";
+
+
+    // ---- 租户（2026-11-05 补齐） ----
+    public static final String TENANT_CREATE = "tenant:create";
+
+    public static final String TENANT_UPDATE = "tenant:update";
+
+    public static final String TENANT_DELETE = "tenant:delete";
+
+    public static final String TENANT_PROVISION = "tenant:provision";
+
+    public static final String TENANT_NAMESPACE_ALLOCATE = "tenant:namespace-allocate";
+
+    public static final String TENANT_NAMESPACE_DEALLOCATE = "tenant:namespace-deallocate";
+
+    public static final String TENANT_MEMBER_ADD = "tenant:member-add";
+
+    public static final String TENANT_MEMBER_REMOVE = "tenant:member-remove";
+
+    public static final String TENANT_MEMBER_ROLE_GRANT = "tenant:member-role-grant";
+
+    public static final String TENANT_MEMBER_ROLE_REVOKE = "tenant:member-role-revoke";
+
+
+    // ---- 平台配置（2026-11-05 补齐） ----
+    public static final String RBAC_TEMPLATE_CREATE = "rbac-template:create";
+
+    public static final String RBAC_TEMPLATE_UPDATE = "rbac-template:update";
+
+    public static final String RBAC_TEMPLATE_DELETE = "rbac-template:delete";
+
+    /** 重下发全部模板到各租户 */
+    public static final String RBAC_TEMPLATE_SYNC_ALL = "rbac-template:sync-all";
+
+    public static final String NOTIFICATION_CHANNEL_CREATE = "notification-channel:create";
+
+    public static final String NOTIFICATION_CHANNEL_UPDATE = "notification-channel:update";
+
+    public static final String NOTIFICATION_CHANNEL_DELETE = "notification-channel:delete";
+
+    /** 重新探测集群能力（CRD / API 组）并刷新缓存 */
+    public static final String CLUSTER_REFRESH_CAPABILITY = "cluster:refresh-capability";
+
+
+    // ---- Pod ----
+    /** 删 Pod（控制器会重建 = 重启） */
+    public static final String POD_DELETE = "pod:delete";
+
+
+    // ---- ConfigMap ----
+    public static final String CONFIGMAP_CREATE = "configmap:create";
+
+    public static final String CONFIGMAP_UPDATE = "configmap:update";
+
+    public static final String CONFIGMAP_DELETE = "configmap:delete";
+
+
+    // ---- Secret ----
+    public static final String SECRET_CREATE = "secret:create";
+
+    public static final String SECRET_UPDATE = "secret:update";
+
+    public static final String SECRET_DELETE = "secret:delete";
+
+
+    // ---- Service ----
+    public static final String SERVICE_CREATE = "service:create";
+
+    public static final String SERVICE_UPDATE = "service:update";
+
+    public static final String SERVICE_DELETE = "service:delete";
+
+
+    // ---- HPA ----
+    public static final String HPA_CREATE = "hpa:create";
+
+    public static final String HPA_UPDATE = "hpa:update";
+
+    public static final String HPA_DELETE = "hpa:delete";
+
+
+    // ---- Gateway ----
+    public static final String GATEWAY_CREATE = "gateway:create";
+
+    public static final String GATEWAY_UPDATE = "gateway:update";
+
+    public static final String GATEWAY_DELETE = "gateway:delete";
+
+
+    // ---- HTTPRoute ----
+    public static final String HTTPROUTE_CREATE = "httproute:create";
+
+    public static final String HTTPROUTE_UPDATE = "httproute:update";
+
+    public static final String HTTPROUTE_DELETE = "httproute:delete";
+
+
+    // ---- GRPCRoute ----
+    public static final String GRPCROUTE_CREATE = "grpcroute:create";
+
+    public static final String GRPCROUTE_UPDATE = "grpcroute:update";
+
+    public static final String GRPCROUTE_DELETE = "grpcroute:delete";
+
+
+    // ---- TCPRoute ----
+    public static final String TCPROUTE_CREATE = "tcproute:create";
+
+    public static final String TCPROUTE_UPDATE = "tcproute:update";
+
+    public static final String TCPROUTE_DELETE = "tcproute:delete";
+
+
+    // ---- TLSRoute ----
+    public static final String TLSROUTE_CREATE = "tlsroute:create";
+
+    public static final String TLSROUTE_UPDATE = "tlsroute:update";
+
+    public static final String TLSROUTE_DELETE = "tlsroute:delete";
+
+
+    // ---- UDPRoute ----
+    public static final String UDPROUTE_CREATE = "udproute:create";
+
+    public static final String UDPROUTE_UPDATE = "udproute:update";
+
+    public static final String UDPROUTE_DELETE = "udproute:delete";
+
+
+    // ---- GatewayClass ----
+    public static final String GATEWAYCLASS_CREATE = "gatewayclass:create";
+
+    public static final String GATEWAYCLASS_UPDATE = "gatewayclass:update";
+
+    public static final String GATEWAYCLASS_DELETE = "gatewayclass:delete";
+
+
+    // ---- ServiceMonitor ----
+    public static final String SERVICEMONITOR_CREATE = "servicemonitor:create";
+
+    public static final String SERVICEMONITOR_UPDATE = "servicemonitor:update";
+
+    public static final String SERVICEMONITOR_DELETE = "servicemonitor:delete";
+
+
+    // ---- PodMonitor ----
+    public static final String PODMONITOR_CREATE = "podmonitor:create";
+
+    public static final String PODMONITOR_UPDATE = "podmonitor:update";
+
+    public static final String PODMONITOR_DELETE = "podmonitor:delete";
+
+
+    // ---- PrometheusRule ----
+    public static final String PROMETHEUSRULE_CREATE = "prometheusrule:create";
+
+    public static final String PROMETHEUSRULE_UPDATE = "prometheusrule:update";
+
+    public static final String PROMETHEUSRULE_DELETE = "prometheusrule:delete";
+
+
+    // ---- Calico IPPool ----
+    public static final String IPPOOL_CREATE = "ippool:create";
+
+    public static final String IPPOOL_UPDATE = "ippool:update";
+
+    public static final String IPPOOL_DELETE = "ippool:delete";
+
+
+    // ---- Calico IPReservation ----
+    public static final String IPRESERVATION_CREATE = "ipreservation:create";
+
+    public static final String IPRESERVATION_UPDATE = "ipreservation:update";
+
+    public static final String IPRESERVATION_DELETE = "ipreservation:delete";
+
+
+    // ---- Calico BGPConfiguration ----
+    public static final String BGPCONFIGURATION_CREATE = "bgpconfiguration:create";
+
+    public static final String BGPCONFIGURATION_UPDATE = "bgpconfiguration:update";
+
+    public static final String BGPCONFIGURATION_DELETE = "bgpconfiguration:delete";
+
+
+    // ---- Calico BGPPeer ----
+    public static final String BGPPEER_CREATE = "bgppeer:create";
+
+    public static final String BGPPEER_UPDATE = "bgppeer:update";
+
+    public static final String BGPPEER_DELETE = "bgppeer:delete";
+
+
+    // ---- Calico BGPFilter ----
+    public static final String BGPFILTER_CREATE = "bgpfilter:create";
+
+    public static final String BGPFILTER_UPDATE = "bgpfilter:update";
+
+    public static final String BGPFILTER_DELETE = "bgpfilter:delete";
+
+
     /**
      * 全部动作码（常量类的反射视图），按字母序。
      *

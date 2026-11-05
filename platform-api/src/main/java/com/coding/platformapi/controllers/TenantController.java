@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
@@ -50,6 +52,7 @@ public class TenantController {
 
     @PostMapping("/create")
     @Operation(summary = "创建租户", description = "校验 serviceAccount 命名规范与唯一性，入库后在各启用集群创建 SA（tn-<serviceAccount>）")
+    @Auditable(action = AuditAction.TENANT_CREATE, target = "#request.name")
     public ResponseData<PlatformTenant> create(@RequestBody TenantCreateRequest request) {
         return new ResponseData<>(tenantService.create(request));
     }
@@ -68,12 +71,14 @@ public class TenantController {
 
     @PostMapping("/update")
     @Operation(summary = "更新租户", description = "名称/状态；重新启用时补建各集群 SA（幂等）")
+    @Auditable(action = AuditAction.TENANT_UPDATE, target = "#request.id", scope = "#request.id")
     public ResponseData<PlatformTenant> update(@RequestBody TenantUpdateRequest request) {
         return new ResponseData<>(tenantService.update(request));
     }
 
     @PostMapping("/delete")
     @Operation(summary = "删除租户", description = "软删除 + 清理各集群 SA / RoleBinding + 清 client 缓存")
+    @Auditable(action = AuditAction.TENANT_DELETE, target = "#request.id", scope = "#request.id")
     public ResponseData<Void> delete(@RequestBody TenantKeyRequest request) {
         tenantService.delete(request);
         return new ResponseData<>();
@@ -81,6 +86,7 @@ public class TenantController {
 
     @PostMapping("/provision")
     @Operation(summary = "重新开通租户 SA", description = "幂等重跑各启用集群的 SA 创建")
+    @Auditable(action = AuditAction.TENANT_PROVISION, target = "#request.id", scope = "#request.id")
     public ResponseData<PlatformTenant> provision(@RequestBody TenantKeyRequest request) {
         return new ResponseData<>(tenantService.provision(request));
     }
@@ -89,6 +95,7 @@ public class TenantController {
 
     @PostMapping("/namespace/allocate")
     @Operation(summary = "分配命名空间", description = "先写分配记录（RoleBinding 端点边界前提），再执行 K8s 侧开通：ensure ns → sync 模板 ClusterRole → ensure SA → 建 RoleBinding，任一步失败回滚分配行；roleTemplateId 缺省用内置模板")
+    @Auditable(action = AuditAction.TENANT_NAMESPACE_ALLOCATE, target = "#request.namespace")
     public ResponseData<PlatformTenantNamespace> allocateNamespace(@RequestBody AllocationCreateRequest request) {
         return new ResponseData<>(allocationService.create(request));
     }
@@ -104,6 +111,7 @@ public class TenantController {
 
     @PostMapping("/namespace/deallocate")
     @Operation(summary = "取消命名空间分配", description = "删 RoleBinding + 物理删分配行；不删命名空间本身")
+    @Auditable(action = AuditAction.TENANT_NAMESPACE_DEALLOCATE, target = "#request.namespace")
     public ResponseData<Void> deallocateNamespace(@RequestBody AllocationDeleteRequest request) {
         allocationService.delete(request);
         return new ResponseData<>();
@@ -115,6 +123,7 @@ public class TenantController {
 
     @PostMapping("/member/add")
     @Operation(summary = "加入租户成员", description = "已存在则幂等；新成员默认授予内置角色「租户成员」")
+    @Auditable(action = AuditAction.TENANT_MEMBER_ADD, target = "#request.userId")
     public ResponseData<Void> memberAdd(@RequestBody MemberAddRequest request) {
         String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
         memberSvc.addMember(tid, request.getUserId());
@@ -123,6 +132,7 @@ public class TenantController {
 
     @PostMapping("/member/remove")
     @Operation(summary = "移除租户成员", description = "级联删除该成员在本租户的全部角色，无需先逐个回收")
+    @Auditable(action = AuditAction.TENANT_MEMBER_REMOVE, target = "#request.userId")
     public ResponseData<Void> memberRemove(@RequestBody MemberRemoveRequest request) {
         String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
         memberSvc.removeMember(tid, request.getUserId());
@@ -131,6 +141,7 @@ public class TenantController {
 
     @PostMapping("/member/role/grant")
     @Operation(summary = "授予租户角色", description = "要求目标已是该租户成员（不变量 2）")
+    @Auditable(action = AuditAction.TENANT_MEMBER_ROLE_GRANT, target = "#request.userId + ' / ' + #request.roleId")
     public ResponseData<Void> memberRoleGrant(@RequestBody MemberRoleRequest request) {
         String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
         memberSvc.grantRole(tid, request.getUserId(), request.getRoleId());
@@ -139,6 +150,7 @@ public class TenantController {
 
     @PostMapping("/member/role/revoke")
     @Operation(summary = "回收租户角色", description = "按 (用户, 租户, 角色) 删除；不拦最后一个管理员（零管理员是合法状态）")
+    @Auditable(action = AuditAction.TENANT_MEMBER_ROLE_REVOKE, target = "#request.userId + ' / ' + #request.roleId")
     public ResponseData<Void> memberRoleRevoke(@RequestBody MemberRoleRequest request) {
         String tid = ctx.requireContext(tokenTenantId(), request.getTenantId());
         memberSvc.revokeRole(tid, request.getUserId(), request.getRoleId());

@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.TcpRouteDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.TcpRouteService;
@@ -60,12 +62,14 @@ public class TcpRouteController {
 
     @PostMapping
     @Operation(summary = "创建 TCPRoute")
+    @Auditable(action = AuditAction.TCPROUTE_CREATE)
     public ResponseData<TcpRouteDTO> create(@RequestBody TcpRouteDTO body) {
         return new ResponseData<>(tcpRouteService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 TCPRoute")
+    @Auditable(action = AuditAction.TCPROUTE_UPDATE)
     public ResponseData<TcpRouteDTO> update(@PathVariable String name, @RequestBody TcpRouteDTO body) {
         body.setName(name);
         return new ResponseData<>(tcpRouteService.update(body));
@@ -73,6 +77,7 @@ public class TcpRouteController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 TCPRoute")
+    @Auditable(action = AuditAction.TCPROUTE_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

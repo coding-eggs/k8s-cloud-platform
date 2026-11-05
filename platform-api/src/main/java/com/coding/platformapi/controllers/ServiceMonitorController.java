@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.ServiceMonitorDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.models.ServiceMonitorKeyRequest;
@@ -71,12 +73,14 @@ public class ServiceMonitorController {
 
     @PostMapping
     @Operation(summary = "创建 ServiceMonitor")
+    @Auditable(action = AuditAction.SERVICEMONITOR_CREATE)
     public ResponseData<ServiceMonitorDTO> create(@RequestBody ServiceMonitorDTO body) {
         return new ResponseData<>(smService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 ServiceMonitor")
+    @Auditable(action = AuditAction.SERVICEMONITOR_UPDATE)
     public ResponseData<ServiceMonitorDTO> update(@PathVariable String name, @RequestBody ServiceMonitorDTO body) {
         body.setName(name);
         return new ResponseData<>(smService.update(body));
@@ -84,6 +88,7 @@ public class ServiceMonitorController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 ServiceMonitor")
+    @Auditable(action = AuditAction.SERVICEMONITOR_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

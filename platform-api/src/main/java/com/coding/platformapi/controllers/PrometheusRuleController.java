@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.PrometheusRuleDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.PrometheusRuleService;
@@ -57,12 +59,14 @@ public class PrometheusRuleController {
 
     @PostMapping
     @Operation(summary = "创建 PrometheusRule")
+    @Auditable(action = AuditAction.PROMETHEUSRULE_CREATE)
     public ResponseData<PrometheusRuleDTO> create(@RequestBody PrometheusRuleDTO body) {
         return new ResponseData<>(ruleService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 PrometheusRule")
+    @Auditable(action = AuditAction.PROMETHEUSRULE_UPDATE)
     public ResponseData<PrometheusRuleDTO> update(@PathVariable String name, @RequestBody PrometheusRuleDTO body) {
         body.setName(name);
         return new ResponseData<>(ruleService.update(body));
@@ -70,6 +74,7 @@ public class PrometheusRuleController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 PrometheusRule")
+    @Auditable(action = AuditAction.PROMETHEUSRULE_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

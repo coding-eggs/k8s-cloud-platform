@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.auth.PlatformRole;
 import com.coding.data.models.auth.PlatformTenant;
@@ -47,6 +49,7 @@ public class UserController {
 
     @PostMapping("/create")
     @Operation(summary = "创建用户", description = "用户名唯一，密码 BCrypt 加密存储；type=TENANT_USER、source=LOCAL")
+    @Auditable(action = AuditAction.USER_CREATE, target = "#request.username")
     public ResponseData<PlatformUser> create(@RequestBody UserCreateRequest request) {
         return new ResponseData<>(userService.create(request));
     }
@@ -67,12 +70,14 @@ public class UserController {
     @Operation(summary = "授予平台角色",
             description = "uk_user_role 唯一索引兜幂等，重复授予不报错。返回提示语（该用户若仍是某些租户的成员，"
                     + "说清那些关系现在只影响切换器的可见范围）")
+    @Auditable(action = AuditAction.USER_PLATFORM_ROLE_GRANT, target = "#request.userId + ' / ' + #request.roleId")
     public ResponseData<List<String>> grant(@RequestBody UserRoleGrantRequest request) {
         return new ResponseData<>(userService.grantPlatformRole(request.getUserId(), request.getRoleId()));
     }
 
     @PostMapping("/platformRole/revoke")
     @Operation(summary = "回收平台角色")
+    @Auditable(action = AuditAction.USER_PLATFORM_ROLE_REVOKE, target = "#request.userId + ' / ' + #request.roleId")
     public ResponseData<Void> revoke(@RequestBody UserRoleGrantRequest request) {
         userService.revokePlatformRole(request.getUserId(), request.getRoleId());
         return new ResponseData<>();

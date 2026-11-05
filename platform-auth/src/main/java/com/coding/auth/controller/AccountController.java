@@ -1,5 +1,7 @@
 package com.coding.auth.controller;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.auth.service.AccountChangeResult;
 import com.coding.auth.service.AccountService;
 import com.coding.common.exception.CloudPlatformException;
@@ -40,6 +42,7 @@ public class AccountController {
     @Operation(summary = "改我自己的密码",
             description = "必带原密码。成功后**踢掉我名下其它设备的会话**，当前这台保留（不用重登）。"
                     + "⚠️ 已签发的 access token 是自包含 JWT，最长还能再用 2 小时 —— 这只是「续不了期」。")
+    @Auditable(action = AuditAction.ACCOUNT_PASSWORD)
     public ResponseData<AccountChangeResult> changePassword(@RequestBody PasswordRequest req,
                                                             HttpServletRequest request) {
         return new ResponseData<>(account.changePassword(currentUsername(),
@@ -50,6 +53,7 @@ public class AccountController {
     @Operation(summary = "改我自己的资料（昵称 / 邮箱）",
             description = "昵称与邮箱留空 = 清掉（界面回落到用户名）。成功后**全部会话都踢掉**"
                     + "（含当前这台），调用方要回登录页 —— 这两个字段在 token 里，不重登就一直显示旧值。")
+    @Auditable(action = AuditAction.ACCOUNT_PROFILE)
     public ResponseData<AccountChangeResult> updateProfile(@RequestBody ProfileRequest req,
                                                            HttpServletRequest request) {
         return new ResponseData<>(account.updateProfile(currentUsername(),

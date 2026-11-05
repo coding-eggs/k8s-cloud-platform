@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.auth.PlatformPermission;
 import com.coding.data.models.auth.PlatformRole;
@@ -38,12 +40,14 @@ public class RoleController {
 
     @Operation(summary = "创建角色")
     @PostMapping("/create")
+    @Auditable(action = AuditAction.ROLE_CREATE, target = "#r.code")
     public ResponseData<PlatformRole> create(@RequestBody RoleCreateRequest r) {
         return new ResponseData<>(roleService.create(r));
     }
 
     @Operation(summary = "删除角色（内置角色拒绝）")
     @PostMapping("/delete")
+    @Auditable(action = AuditAction.ROLE_DELETE, target = "#r.id")
     public ResponseData<Void> delete(@RequestBody RoleKeyRequest r) {
         roleService.delete(r.getId());
         return new ResponseData<>();
@@ -51,6 +55,7 @@ public class RoleController {
 
     @Operation(summary = "保存角色权限（全量重存，scope 不变量校验）")
     @PostMapping("/permission/save")
+    @Auditable(action = AuditAction.ROLE_PERMISSION_SAVE, target = "#r.roleId")
     public ResponseData<Void> save(@RequestBody RolePermissionSaveRequest r) {
         roleService.savePermissions(r.getRoleId(), r.getPermissionCodes());
         return new ResponseData<>();

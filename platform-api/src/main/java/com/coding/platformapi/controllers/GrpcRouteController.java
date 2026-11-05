@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.GrpcRouteDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.GrpcRouteService;
@@ -58,12 +60,14 @@ public class GrpcRouteController {
 
     @PostMapping
     @Operation(summary = "创建 GRPCRoute")
+    @Auditable(action = AuditAction.GRPCROUTE_CREATE)
     public ResponseData<GrpcRouteDTO> create(@RequestBody GrpcRouteDTO body) {
         return new ResponseData<>(grpcRouteService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 GRPCRoute")
+    @Auditable(action = AuditAction.GRPCROUTE_UPDATE)
     public ResponseData<GrpcRouteDTO> update(@PathVariable String name, @RequestBody GrpcRouteDTO body) {
         body.setName(name);
         return new ResponseData<>(grpcRouteService.update(body));
@@ -71,6 +75,7 @@ public class GrpcRouteController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 GRPCRoute")
+    @Auditable(action = AuditAction.GRPCROUTE_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

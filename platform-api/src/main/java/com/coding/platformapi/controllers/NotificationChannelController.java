@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.alert.NotificationChannel;
 import com.coding.platformapi.models.NotificationChannelOption;
@@ -57,12 +59,14 @@ public class NotificationChannelController {
 
     @Operation(summary = "新建通知方式", description = "code 必须 K8s label 合法且全局唯一；密码加密落库")
     @PostMapping
+    @Auditable(action = AuditAction.NOTIFICATION_CHANNEL_CREATE, target = "#request.code")
     public ResponseData<NotificationChannel> create(@RequestBody NotificationChannelRequest request) {
         return new ResponseData<>(channelService.create(request));
     }
 
     @Operation(summary = "修改通知方式", description = "code 不可改；密码留空表示沿用原密码")
     @PutMapping("/{code}")
+    @Auditable(action = AuditAction.NOTIFICATION_CHANNEL_UPDATE, target = "#code")
     public ResponseData<NotificationChannel> update(@PathVariable("code") String code,
                                                     @RequestBody NotificationChannelRequest request) {
         return new ResponseData<>(channelService.update(code, request));
@@ -70,6 +74,7 @@ public class NotificationChannelController {
 
     @Operation(summary = "删除通知方式", description = "仍被规则绑定时拒绝")
     @DeleteMapping("/{code}")
+    @Auditable(action = AuditAction.NOTIFICATION_CHANNEL_DELETE, target = "#code")
     public ResponseData<Void> delete(@PathVariable("code") String code) {
         channelService.delete(code);
         return new ResponseData<>();

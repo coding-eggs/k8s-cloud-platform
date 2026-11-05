@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.MeshStatusDTO;
 import com.coding.common.models.k8s.dto.ParentGatewayRefDTO;
@@ -65,6 +67,7 @@ public class MeshController {
 
     @PostMapping("/gatewayclasses")
     @Operation(summary = "创建 GatewayClass")
+    @Auditable(action = AuditAction.GATEWAYCLASS_CREATE)
     public ResponseData<GatewayClassDTO> createGatewayClass(@RequestParam String clusterId,
                                                             @RequestBody GatewayClassDTO body) {
         body.setClusterId(clusterId);
@@ -73,6 +76,7 @@ public class MeshController {
 
     @PutMapping("/gatewayclasses/{name}")
     @Operation(summary = "更新 GatewayClass")
+    @Auditable(action = AuditAction.GATEWAYCLASS_UPDATE)
     public ResponseData<GatewayClassDTO> updateGatewayClass(@PathVariable String name,
                                                             @RequestParam String clusterId,
                                                             @RequestBody GatewayClassDTO body) {
@@ -83,6 +87,7 @@ public class MeshController {
 
     @DeleteMapping("/gatewayclasses/{name}")
     @Operation(summary = "删除 GatewayClass（被 Gateway 引用时由控制器拒绝，平台不做前置守卫）")
+    @Auditable(action = AuditAction.GATEWAYCLASS_DELETE)
     public ResponseData<Void> deleteGatewayClass(@PathVariable String name, @RequestParam String clusterId) {
         mesh.deleteGatewayClass(clusterId, name);
         return new ResponseData<>();

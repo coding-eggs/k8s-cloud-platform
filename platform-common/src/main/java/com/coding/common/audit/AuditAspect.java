@@ -9,6 +9,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -98,7 +101,7 @@ public class AuditAspect {
 
         TokenUserInfo user = authContext.current();
         r.setActorUsername(user != null && StringUtils.hasText(user.getUsername())
-                ? user.getUsername() : AuditRecorder.UNKNOWN_ACTOR);
+                ? user.getUsername() : sessionUsername());
         r.setActorDisplayName(user == null ? null : user.getDisplayName());
 
         r.setTargetName(targetResolver.resolveTarget(pjp, auditable.target()));
@@ -127,6 +130,19 @@ public class AuditAspect {
             r.setHttpMethod(sra.getRequest().getMethod());
         }
         return r;
+    }
+
+    /**
+     * 不是 JWT 身份时的兜底：auth 的自助接口（改密码 / 改资料）走登录会话，principal 是 UserDetails。
+     * 匿名 / 未登录 → unknown。
+     */
+    private static String sessionUsername() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated() || auth instanceof AnonymousAuthenticationToken
+                || !StringUtils.hasText(auth.getName())) {
+            return AuditRecorder.UNKNOWN_ACTOR;
+        }
+        return auth.getName();
     }
 
     private String truncate(String s, int max) {

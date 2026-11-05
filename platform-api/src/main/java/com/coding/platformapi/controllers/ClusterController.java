@@ -113,6 +113,7 @@ public class ClusterController {
 
     @PostMapping("/capability/refresh")
     @Operation(summary = "刷新集群 API 能力", description = "运行时 discovery 探测（getApiGroups）并持久化到 k8s_cluster.capability；失败透出错误")
+    @Auditable(action = AuditAction.CLUSTER_REFRESH_CAPABILITY, target = "#request.clusterId")
     public ResponseData<Void> refreshCapability(@RequestBody ClusterKeyRequest request) {
         clusterService.refreshCapabilityStrict(request.getClusterId());
         return new ResponseData<>();

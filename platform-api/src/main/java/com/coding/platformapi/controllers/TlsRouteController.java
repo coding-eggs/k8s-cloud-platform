@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.TlsRouteDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.TlsRouteService;
@@ -60,12 +62,14 @@ public class TlsRouteController {
 
     @PostMapping
     @Operation(summary = "创建 TLSRoute")
+    @Auditable(action = AuditAction.TLSROUTE_CREATE)
     public ResponseData<TlsRouteDTO> create(@RequestBody TlsRouteDTO body) {
         return new ResponseData<>(tlsRouteService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 TLSRoute")
+    @Auditable(action = AuditAction.TLSROUTE_UPDATE)
     public ResponseData<TlsRouteDTO> update(@PathVariable String name, @RequestBody TlsRouteDTO body) {
         body.setName(name);
         return new ResponseData<>(tlsRouteService.update(body));
@@ -73,6 +77,7 @@ public class TlsRouteController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 TLSRoute")
+    @Auditable(action = AuditAction.TLSROUTE_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

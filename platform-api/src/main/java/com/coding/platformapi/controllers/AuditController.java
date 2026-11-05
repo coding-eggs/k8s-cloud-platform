@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformAuditLog;
 import com.coding.data.models.system.PlatformAuditLogQuery;
@@ -42,6 +44,7 @@ public class AuditController {
 
     @Operation(summary = "按时间范围删除", description = "闭开区间 [from, to)；返回实际删除行数")
     @PostMapping("/purge")
+    @Auditable(action = AuditAction.AUDIT_PURGE, target = "new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm:ss').format(#req.from) + ' ~ ' + new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm:ss').format(#req.to)")
     public ResponseData<Integer> purge(@RequestBody AuditPurgeRequest req) {
         return new ResponseData<>(auditService.purge(req.getFrom(), req.getTo()));
     }

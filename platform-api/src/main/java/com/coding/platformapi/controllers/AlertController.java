@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.k8s.PlatformAlertEvent;
 import com.coding.platformapi.models.AlertQueryRequest;
@@ -40,12 +42,14 @@ public class AlertController {
 
     @PostMapping("/self-test")
     @Operation(summary = "告警链路自检 —— 平台给自己投一条测试告警，验证整条链路")
+    @Auditable(action = AuditAction.ALERT_SELF_TEST, target = "#clusterId")
     public ResponseData<AlertService.SelfTestResult> selfTest(@RequestParam String clusterId) {
         return new ResponseData<>(alertService.selfTest(clusterId));
     }
 
     @DeleteMapping("/{id}")
     @Operation(summary = "删除告警记录（清测试数据）")
+    @Auditable(action = AuditAction.ALERT_DELETE, target = "#id")
     public ResponseData<Void> delete(@PathVariable long id) {
         alertService.delete(id);
         return new ResponseData<>();

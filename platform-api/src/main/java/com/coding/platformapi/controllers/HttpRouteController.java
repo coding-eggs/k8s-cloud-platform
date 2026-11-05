@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.HttpRouteDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.HttpRouteService;
@@ -58,12 +60,14 @@ public class HttpRouteController {
 
     @PostMapping
     @Operation(summary = "创建 HTTPRoute")
+    @Auditable(action = AuditAction.HTTPROUTE_CREATE)
     public ResponseData<HttpRouteDTO> create(@RequestBody HttpRouteDTO body) {
         return new ResponseData<>(httpRouteService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 HTTPRoute")
+    @Auditable(action = AuditAction.HTTPROUTE_UPDATE)
     public ResponseData<HttpRouteDTO> update(@PathVariable String name, @RequestBody HttpRouteDTO body) {
         body.setName(name);
         return new ResponseData<>(httpRouteService.update(body));
@@ -71,6 +75,7 @@ public class HttpRouteController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 HTTPRoute")
+    @Auditable(action = AuditAction.HTTPROUTE_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

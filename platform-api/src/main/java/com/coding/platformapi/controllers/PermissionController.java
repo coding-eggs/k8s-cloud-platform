@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.auth.PlatformPermission;
 import com.coding.platformapi.models.PermissionGroup;
@@ -51,12 +53,14 @@ public class PermissionController {
 
     @Operation(summary = "新建权限点（写前裸端点校验，提交后热加载即时生效）")
     @PostMapping("/create")
+    @Auditable(action = AuditAction.PERMISSION_CREATE, target = "#r.code")
     public ResponseData<PlatformPermission> create(@RequestBody PermissionPointRequest r) {
         return new ResponseData<>(permissionService.create(r));
     }
 
     @Operation(summary = "编辑权限点（全量重存该行）")
     @PostMapping("/update")
+    @Auditable(action = AuditAction.PERMISSION_UPDATE, target = "#r.code")
     public ResponseData<Void> update(@RequestBody PermissionPointRequest r) {
         permissionService.update(r);
         return new ResponseData<>();
@@ -64,6 +68,7 @@ public class PermissionController {
 
     @Operation(summary = "删除权限点（软删；端点唯一覆盖行被裸端点保护拒绝）")
     @PostMapping("/delete")
+    @Auditable(action = AuditAction.PERMISSION_DELETE, target = "#r.id")
     public ResponseData<Void> delete(@RequestBody PermissionKeyRequest r) {
         permissionService.delete(r.getId());
         return new ResponseData<>();
@@ -71,6 +76,7 @@ public class PermissionController {
 
     @Operation(summary = "重载运行时授权规则（SQL 直接改库后的对齐入口；CRUD 本身自动生效）")
     @PostMapping("/reload")
+    @Auditable(action = AuditAction.PERMISSION_RELOAD)
     public ResponseData<Void> reload() {
         permissionService.reload();
         return new ResponseData<>();

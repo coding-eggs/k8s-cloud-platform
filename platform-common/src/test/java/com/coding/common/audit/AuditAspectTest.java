@@ -11,6 +11,10 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.AuthorityUtils;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -180,6 +184,36 @@ class AuditAspectTest {
 
         // service.record 本身已是 fail-open；这里再钉一次 Aspect 不得因此改变业务返回
         assertThat(aspect.around(deletePjp("ok", null), ann(""))).isEqualTo("ok");
+    }
+
+    /** auth 的自助接口（改密码 / 改资料）走登录会话，principal 不是 Jwt：退回登录名，不能记成 unknown */
+    @Test
+    void sessionLoginFallsBackToAuthenticationName() throws Throwable {
+        when(authContext.current()).thenReturn(null);
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated("bob", null, AuthorityUtils.NO_AUTHORITIES));
+        try {
+            aspect.around(pjp("lonely", new Class<?>[]{String.class}, new Object[]{"web-a"}, null, null), ann(""));
+
+            assertThat(capture().getActorUsername()).isEqualTo("bob");
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    /** 匿名身份不算登录名 */
+    @Test
+    void anonymousStaysUnknown() throws Throwable {
+        when(authContext.current()).thenReturn(null);
+        SecurityContextHolder.getContext().setAuthentication(new AnonymousAuthenticationToken(
+                "k", "anonymousUser", AuthorityUtils.createAuthorityList("ROLE_ANONYMOUS")));
+        try {
+            aspect.around(pjp("lonely", new Class<?>[]{String.class}, new Object[]{"web-a"}, null, null), ann(""));
+
+            assertThat(capture().getActorUsername()).isEqualTo(AuditRecorder.UNKNOWN_ACTOR);
+        } finally {
+            SecurityContextHolder.clearContext();
+        }
     }
 
     @Test
