@@ -93,12 +93,15 @@ platform:
       - "/.well-known/**"
       - "/manifest.json"
       - "/alert/webhook"
-    # 外部前缀 = nginx 去掉 /api 之后的路径；解析按前缀最长优先，书写顺序无关。
-    # 权限行的 resource 写服务内路径（internal-prefix 之后），与 service 一起匹配。
+    # 外部前缀 = 浏览器里的路径（nginx 原样转发，不去 /api）；解析按前缀最长优先，书写顺序无关。
+    # 不在 /api/ 下的请求没有上游：网关自己的 /actuator/health 除外（不转发）。
+    # 权限行的 resource 写服务内路径（internal-prefix 之后、不含 context-path），与 service 一起匹配。
+    # PLATFORM_API_CONTEXT_PATH：api 的 server.servlet.context-path。默认 /api；
+    #   部署第一阶段用的是加 /api 之前的 api 构建（427753eb），那时要设成空串。
     routes:
-      - { service: platform-auth, external-prefix: /oauth-clients/, internal-prefix: /internal/clients/, uri: "${PLATFORM_AUTH_URL:http://platform-auth:9527}", context-path: /auth }
-      - { service: platform-auth, external-prefix: /jwks/,          internal-prefix: /internal/jwk/,     uri: "${PLATFORM_AUTH_URL:http://platform-auth:9527}", context-path: /auth }
-      - { service: platform-api,  external-prefix: /,               internal-prefix: /,                  uri: "${PLATFORM_API_URL:http://platform-api:8081}",   context-path: "" }
+      - { service: platform-auth, external-prefix: /api/oauth-clients/, internal-prefix: /internal/clients/, uri: "${PLATFORM_AUTH_URL:http://platform-auth:9527}", context-path: /auth }
+      - { service: platform-auth, external-prefix: /api/jwks/,          internal-prefix: /internal/jwk/,     uri: "${PLATFORM_AUTH_URL:http://platform-auth:9527}", context-path: /auth }
+      - { service: platform-api,  external-prefix: /api/,               internal-prefix: /,                  uri: "${PLATFORM_API_URL:http://platform-api:8081}",   context-path: "${PLATFORM_API_CONTEXT_PATH:/api}" }
 
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml

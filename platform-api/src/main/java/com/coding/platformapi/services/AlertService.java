@@ -73,7 +73,8 @@ public class AlertService {
     private final RestClient.Builder restClientBuilder;
 
     private final String webhookToken;
-    private final int serverPort;
+    /** 自己的回环基址：http://127.0.0.1:{server.port}{context-path} */
+    private final String selfBaseUrl;
 
     /**
      * 生产构造器。
@@ -90,9 +91,10 @@ public class AlertService {
                         AlertDeliveryMapper deliveries,
                         AlertNotifyContextService notifyContext,
                         @Value("${platform.alert.webhook.token}") String webhookToken,
-                        @Value("${server.port}") int serverPort) {
+                        @Value("${server.port}") int serverPort,
+                        @Value("${server.servlet.context-path:}") String contextPath) {
         this(mapper, allocs, authContext, ruleSourceResolver, channels, deliveries, notifyContext,
-                RestClient.builder(), webhookToken, serverPort);
+                RestClient.builder(), webhookToken, "http://127.0.0.1:" + serverPort + contextPath);
     }
 
     /** 测试专用：传入已 bind 了 {@code MockRestServiceServer} 的 builder。 */
@@ -105,7 +107,7 @@ public class AlertService {
                  AlertNotifyContextService notifyContext,
                  RestClient.Builder restClientBuilder,
                  String webhookToken,
-                 int serverPort) {
+                 String selfBaseUrl) {
         this.mapper = mapper;
         this.allocs = allocs;
         this.authContext = authContext;
@@ -115,7 +117,7 @@ public class AlertService {
         this.notifyContext = notifyContext;
         this.restClientBuilder = restClientBuilder;
         this.webhookToken = webhookToken;
-        this.serverPort = serverPort;
+        this.selfBaseUrl = selfBaseUrl;
     }
 
     public List<PlatformAlertEvent> list(AlertQueryRequest req) {
@@ -261,11 +263,11 @@ public class AlertService {
      * <p>为什么要它：集群侧配好 Alertmanager 之前，验收「链路通不通」只能等真告警。
      * 这个端点让平台能自证 —— 而且它验的是**平台这一侧**的全部环节，与集群那一侧正交。
      *
-     * <p>⚠️ 刻意打**回环地址**（127.0.0.1:server.port）而不是直接调 ingest service：
+     * <p>⚠️ 刻意打**回环地址**（127.0.0.1:server.port + context-path）而不是直接调 ingest service：
      * 后者会把 HTTP 层、放行、密钥校验、body 解析全部绕过 —— 而那几层恰恰是最容易配错的。
      */
     public SelfTestResult selfTest(String clusterId) {
-        String url = "http://127.0.0.1:" + serverPort + "/alert/webhook?clusterId=" + clusterId;
+        String url = selfBaseUrl + "/alert/webhook?clusterId=" + clusterId;
         // 发**真实信封**（与 Alertmanager 推的形状一致），这样自检才验得到真实解析路径
         AlertWebhookRequest payload = new AlertWebhookRequest();
         payload.setVersion("4");

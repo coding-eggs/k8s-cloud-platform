@@ -45,7 +45,7 @@ class GatewayDeniedAuditorTest {
     @Test
     void deniedRecordCarriesIdentityCodesAndPathWithoutQuery() {
         MockServerWebExchange ex = MockServerWebExchange.from(MockServerHttpRequest
-                .get("/ws/pod/exec?access_token=xyz")
+                .get("/api/ws/pod/exec?access_token=xyz")
                 .header("X-Forwarded-For", "10.0.0.9, 10.0.0.1")
                 .header("User-Agent", "ua"));
         ex.getAttributes().put(GatewayAuthorizationManager.DENIED_CODES_ATTR,
@@ -57,7 +57,7 @@ class GatewayDeniedAuditorTest {
         assertThat(r.getResult()).isEqualTo("DENIED");
         // 与 api 原 AuditDenied.mark 同格式（逗号拼接、无方括号）：审计页按 action = 权限码 精确筛选
         assertThat(r.getAction()).isEqualTo("platform:oauth-client:manage");
-        assertThat(r.getRequestPath()).isEqualTo("/ws/pod/exec");
+        assertThat(r.getRequestPath()).isEqualTo("/api/ws/pod/exec");
         assertThat(r.getHttpMethod()).isEqualTo("GET");
         assertThat(r.getActorUsername()).isEqualTo("alice");
         assertThat(r.getActorDisplayName()).isEqualTo("Alice");

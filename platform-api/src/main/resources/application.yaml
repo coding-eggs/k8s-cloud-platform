@@ -1,5 +1,9 @@
 server:
   port: 8081
+  servlet:
+    # 与浏览器路径一致：/api/** 从浏览器经 nginx、网关到这里全程不改写（网关只换上游）。
+    # 下面 ignore-urls、权限行 resource、@RequestMapping 都是 context-path 之后的路径，不带 /api。
+    context-path: /api
 
 management:
   endpoints:

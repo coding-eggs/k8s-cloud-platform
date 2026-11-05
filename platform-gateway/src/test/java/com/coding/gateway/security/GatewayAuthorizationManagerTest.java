@@ -22,8 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class GatewayAuthorizationManagerTest {
 
     private final PlatformRouteResolver routes = new PlatformRouteResolver(List.of(
-            new PlatformRouteProperties.Route("platform-api", "/", "/", URI.create("http://api:8081"), ""),
-            new PlatformRouteProperties.Route("platform-auth", "/oauth-clients/", "/internal/clients/",
+            new PlatformRouteProperties.Route("platform-api", "/api/", "/", URI.create("http://api:8081"), "/api"),
+            new PlatformRouteProperties.Route("platform-auth", "/api/oauth-clients/", "/internal/clients/",
                     URI.create("http://auth:9527"), "/auth")));
     private final PermissionRegistry registry = new PermissionRegistry(List.of(
             new PermissionRegistry.Rule("platform-auth", "POST", "/internal/clients/list", "platform:oauth-client:view")));
@@ -47,17 +47,17 @@ class GatewayAuthorizationManagerTest {
 
     @Test
     void unauthenticatedDenied() {
-        assertThat(granted(Mono.empty(), post("/user/me"))).isFalse();
+        assertThat(granted(Mono.empty(), post("/api/user/me"))).isFalse();
     }
 
     @Test
     void holderOfCodeGrantedOnAuthRoute() {
-        assertThat(granted(user("PERM:platform:oauth-client:view"), post("/oauth-clients/list"))).isTrue();
+        assertThat(granted(user("PERM:platform:oauth-client:view"), post("/api/oauth-clients/list"))).isTrue();
     }
 
     @Test
     void missingCodeDeniedAndCodesRecordedForAudit() {
-        MockServerWebExchange ex = post("/oauth-clients/list");
+        MockServerWebExchange ex = post("/api/oauth-clients/list");
 
         assertThat(granted(user("PERM:other"), ex)).isFalse();
         assertThat(ex.<Set<String>>getAttribute(GatewayAuthorizationManager.DENIED_CODES_ATTR))
@@ -66,12 +66,12 @@ class GatewayAuthorizationManagerTest {
 
     @Test
     void exemptPathWithoutRowGranted() {
-        assertThat(granted(user(), MockServerWebExchange.from(MockServerHttpRequest.get("/user/me")))).isTrue();
+        assertThat(granted(user(), MockServerWebExchange.from(MockServerHttpRequest.get("/api/user/me")))).isTrue();
     }
 
     @Test
     void unknownPathWithoutRowDeniedWithoutCodes() {
-        MockServerWebExchange ex = post("/nobody/has/this");
+        MockServerWebExchange ex = post("/api/nobody/has/this");
 
         assertThat(granted(user("PERM:platform:oauth-client:view"), ex)).isFalse();
         assertThat((Object) ex.getAttribute(GatewayAuthorizationManager.DENIED_CODES_ATTR)).isNull();

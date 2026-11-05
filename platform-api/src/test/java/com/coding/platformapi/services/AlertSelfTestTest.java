@@ -44,13 +44,13 @@ class AlertSelfTestTest {
                 new RuleSourceResolver(mock(com.coding.platformapi.k8s.K8sClient.class)),
                 mock(com.coding.data.mapper.alert.NotificationChannelMapper.class),
                 mock(com.coding.data.mapper.alert.AlertDeliveryMapper.class),
-                mock(com.coding.platformapi.notify.AlertNotifyContextService.class), builder, "s3cret", 8081);
+                mock(com.coding.platformapi.notify.AlertNotifyContextService.class), builder, "s3cret", "http://127.0.0.1:8081/api");
     }
 
     /** self-test 打自己的回环地址，带正确的 Bearer —— 验的是完整 HTTP + 鉴权 + 解析 + 落库链路。 */
     @Test
     void self_test_posts_to_its_own_webhook_with_the_configured_token() {
-        server.expect(requestTo("http://127.0.0.1:8081/alert/webhook?clusterId=c1"))
+        server.expect(requestTo("http://127.0.0.1:8081/api/alert/webhook?clusterId=c1"))
                 .andExpect(header("Authorization", "Bearer s3cret"))
                 .andRespond(withSuccess("{\"data\":{\"accepted\":2}}", MediaType.APPLICATION_JSON));
         when(mapper.findIdsByAlertname("c1", "PlatformSelfTest")).thenReturn(List.of(7L, 8L));
@@ -63,7 +63,7 @@ class AlertSelfTestTest {
     /** 返回体里带 HTTP 状态、落库行数、生成的 id —— 用户要能一眼看出断在哪一层。 */
     @Test
     void self_test_reports_the_http_status_and_the_row_count() {
-        server.expect(requestTo(startsWith("http://127.0.0.1:8081/alert/webhook")))
+        server.expect(requestTo(startsWith("http://127.0.0.1:8081/api/alert/webhook")))
                 .andRespond(withSuccess("{\"data\":{\"accepted\":2}}", MediaType.APPLICATION_JSON));
         when(mapper.findIdsByAlertname(anyString(), anyString())).thenReturn(List.of(7L, 8L));
 
@@ -75,10 +75,10 @@ class AlertSelfTestTest {
         assertThat(r.error()).isNull();
     }
 
-    /** 回环地址由 server.port 拼出来，**不需要额外配置项**。 */
+    /** 回环地址由 server.port + context-path（/api）拼出来，**不需要额外配置项**。 */
     @Test
-    void the_loopback_url_is_derived_from_server_port() {
-        server.expect(requestTo("http://127.0.0.1:8081/alert/webhook?clusterId=c2"))
+    void the_loopback_url_is_derived_from_server_port_and_context_path() {
+        server.expect(requestTo("http://127.0.0.1:8081/api/alert/webhook?clusterId=c2"))
                 .andRespond(withSuccess("{\"data\":{\"accepted\":1}}", MediaType.APPLICATION_JSON));
         when(mapper.findIdsByAlertname(anyString(), anyString())).thenReturn(List.of(1L));
 
@@ -90,7 +90,7 @@ class AlertSelfTestTest {
     /** 回环请求本身失败（端口没起、鉴权被拒）→ 不抛，把原因放进结果里。 */
     @Test
     void a_failed_loopback_request_is_reported_not_thrown() {
-        server.expect(requestTo(startsWith("http://127.0.0.1:8081/alert/webhook")))
+        server.expect(requestTo(startsWith("http://127.0.0.1:8081/api/alert/webhook")))
                 .andRespond(withStatus(HttpStatus.UNAUTHORIZED));
 
         var r = svc.selfTest("c1");
@@ -105,7 +105,7 @@ class AlertSelfTestTest {
      */
     @Test
     void self_test_sends_a_firing_and_a_resolved_with_different_starts_at() {
-        server.expect(requestTo(startsWith("http://127.0.0.1:8081/alert/webhook")))
+        server.expect(requestTo(startsWith("http://127.0.0.1:8081/api/alert/webhook")))
                 .andExpect(jsonPath("$.alerts", hasSize(2)))
                 .andExpect(jsonPath("$.alerts[0].status", is("resolved")))
                 .andExpect(jsonPath("$.alerts[1].status", is("firing")))
@@ -134,7 +134,7 @@ class AlertSelfTestTest {
         PlatformTenantNamespace a = new PlatformTenantNamespace();
         a.setNamespace("mon-app");
         when(allocs.listByCluster("c1")).thenReturn(List.of(a));
-        server.expect(requestTo(startsWith("http://127.0.0.1:8081/alert/webhook")))
+        server.expect(requestTo(startsWith("http://127.0.0.1:8081/api/alert/webhook")))
                 .andExpect(jsonPath("$.alerts[0].labels.namespace", is("mon-app")))
                 .andRespond(withSuccess("{\"data\":{\"accepted\":2}}", MediaType.APPLICATION_JSON));
 

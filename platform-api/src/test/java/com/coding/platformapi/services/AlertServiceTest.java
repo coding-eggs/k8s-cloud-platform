@@ -54,7 +54,7 @@ class AlertServiceTest {
         when(notifyContext.ownership(any(), any()))
                 .thenReturn(com.coding.platformapi.notify.NotifyContext.EMPTY);
         svc = new AlertService(mapper, allocs, auth, new RuleSourceResolver(k8s), channels, deliveries,
-                notifyContext, org.springframework.web.client.RestClient.builder(), "t", 8081);
+                notifyContext, org.springframework.web.client.RestClient.builder(), "t", "http://127.0.0.1:8081/api");
     }
 
     private static AlertQueryRequest req() {

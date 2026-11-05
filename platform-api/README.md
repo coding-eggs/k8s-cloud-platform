@@ -27,8 +27,10 @@ K8s 云平台的**管理面 BFF（Backend for Frontend）与业务中枢**：面
 浏览器 SPA
   │  Authorization: Bearer <access_token>（platform-auth 签发）
   ▼
-platform-gateway ── 验签 + 查权限表（PermissionDecider）→ 401 / 403（DENIED 审计）/ 原样转发
+nginx /api/**（原样转发，不去前缀）
   ▼
+platform-gateway ── 验签 + 查权限表（PermissionDecider）→ 401 / 403（DENIED 审计）/ 原样转发
+  ▼   （本模块 context-path=/api：浏览器、网关、本模块看到的路径相同；@RequestMapping / ignore-urls / 权限行 resource 都不带 /api）
 platform-api ── ① SecurityFilterChain：再验签（JWKS，纵深防御）→ 401；只要求已登录
              ── ③ Controller（只做参数绑定与 ResponseData 包装）
              ── ④ Service（业务规则、DTO 组装、DB 读写、跨资源编排）
@@ -232,6 +234,7 @@ platform-api/src/main/java/com/coding/platformapi/
 | 配置 | 默认值 | 说明 |
 |------|--------|------|
 | `server.port` | `8081` | 服务端口 |
+| `server.servlet.context-path` | `/api` | 与浏览器路径一致；接口实际地址 = `/api` + `@RequestMapping` |
 | `k8s.server.url` | `${K8S_SERVER_URL:http://127.0.0.1:8080}` | `k8s-server` 地址 |
 | `k8s.cloud.kubeconfig.aes-key` | 内置值 | kubeconfig 落库加密密钥（与 `k8s-server` 必须一致，否则解不开） |
 | `thanos.query.url` | `${THANOS_QUERY_URL:http://192.168.31.80:19090}` | Thanos Query 全局单端点、无鉴权 |
@@ -242,7 +245,7 @@ platform-api/src/main/java/com/coding/platformapi/
 | `…jwt.type` / `jws` / `jwe` | `JWS` | 对称签名/加密另有分支 |
 | `spring.security.ignore-urls` | 见 yaml | 免登录放行（actuator、文档、静态资源等） |
 | `jwt.data-key` | `data` | JWT 中自定义用户 claim 的键名（与 `platform-auth` 一致） |
-| Knife4j | `/doc.html`、`/v3/api-docs` | 接口文档（中文） |
+| Knife4j | `/api/doc.html`、`/api/v3/api-docs` | 接口文档（中文） |
 
 > ⚠️ **Redis 未参与运行时逻辑**：`spring-boot-starter-data-redis` 在 pom 中已声明，但当前代码未使用 Redis（无 `RedisTemplate` 注入，yaml 也无 `spring.data.redis.*` 配置）。会话与令牌状态全在 `platform-auth` 侧。
 
@@ -277,7 +280,7 @@ mvn -pl platform-api -am package
 java -jar platform-api/target/platform-api-1.0.0.jar
 ```
 
-访问：`http://127.0.0.1:8081/doc.html`（Knife4j）。
+访问：`http://127.0.0.1:8081/api/doc.html`（Knife4j）。
 
 ### 单测
 `platform-api/src/test/java/` 覆盖各 Service 的业务规则；权限表语义的测试在 platform-common（`PermissionDeciderTest` / `PermissionCrossCheckTest` / `PermissionRegistryTest`），接口级判定在网关（`GatewayAuthorizationManagerTest` / `GatewaySecurityIT`）。Service 测试里有 `NodeServiceTest` 用断言钉住"podstats 只调一次"的 N+1 修复。

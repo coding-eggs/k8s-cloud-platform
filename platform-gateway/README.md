@@ -5,11 +5,14 @@
 实施计划见 [plan](../docs/superpowers/plans/2026-11-04-platform-gateway.md)。
 
 ```
-浏览器 ─▶ nginx /api/**（去前缀）─▶ platform-gateway :8090
-                                   ├─ /oauth-clients/**  ─▶ platform-auth  /auth/internal/clients/**
-                                   ├─ /jwks/**           ─▶ platform-auth  /auth/internal/jwk/**
-                                   └─ /**（含 /ws/**）   ─▶ platform-api   :8081
+浏览器 ─▶ nginx /api/**（原样，不去前缀）─▶ platform-gateway :8090
+                                   ├─ /api/oauth-clients/**  ─▶ platform-auth  /auth/internal/clients/**
+                                   ├─ /api/jwks/**           ─▶ platform-auth  /auth/internal/jwk/**
+                                   └─ /api/**（含 /api/ws/**）─▶ platform-api   :8081 /api/**（context-path=/api）
 ```
+
+**同一个请求在浏览器、nginx、网关、api 里路径相同**（auth 那两条除外：网关换成 auth 的实际路径）。
+不在 `/api/` 下的请求没有上游（网关自己的 `/actuator/health` 除外，公开、不转发）。
 
 ## 1. 它做什么
 
@@ -20,15 +23,16 @@
 | 授权 | `PermissionDecider`：命中权限行（同 `(service, 方法, 内部路径)` 多行 ANY-of）> 豁免 > 拒绝；匿名一律拒 |
 | 权限闭包 | 按 token 的 `data.tenantInfo.tenantId` 现算，与 platform-api **共用同一份 Redis 缓存**（TTL 30s） |
 | 403 审计 | `GatewayDeniedAuditor` 写 `platform_audit_log`（DENIED，action = 被判的码逗号拼接；requestPath 不含 query） |
-| 公开路径 | `platform.gateway.public-paths`（照抄 api 的 ignore-urls）：只对 api 路由生效，**不解析 Bearer**（`/alert/webhook` 带的是共享密钥） |
+| 公开路径 | `platform.gateway.public-paths`（照抄 api 的 ignore-urls，**按服务内路径写、不带 /api**）：只对 api 路由生效，**不解析 Bearer**（`/alert/webhook` 带的是共享密钥） |
 
-- 权限表按 `service` 列区分服务（`platform-api` / `platform-auth`），`resource` 写**服务内路径**。
+- 权限表按 `service` 列区分服务（`platform-api` / `platform-auth`），`resource` 写**服务内路径**（context-path 之后，api 的行不带 `/api`）。
 - 权限表每 `permission-reload-interval`（默认 60s）重载一次；**首次加载失败拒启**，之后重载失败沿用旧表。
 - 权限点管理页只能改删 `service=platform-api` 的行；其它服务（auth 的 `/internal/**`）的行只读、随迁移维护 ——
   api 的写前校验看不到 auth 的端点，删错一行会让 auth 下次重启自检拒启。
-- query 上的 `access_token` 只在 `/ws/**` 接受（WS 握手带不了头）。
+- query 上的 `access_token` 只在 api 的 `/ws/**`（外部 `/api/ws/**`）接受（WS 握手带不了头）。
 - SUCCESS / FAILED 审计不在网关：由各服务的 `@Auditable`（`platform-common` 的 `ServletAuditConfiguration`）记。
-  网关转发时**覆写**头 `X-Platform-Original-Path`（外部路径、不含 query），服务审计优先记它 —— 同一操作在 DENIED 与 SUCCESS/FAILED 里路径一致（如都是 `/oauth-clients/create`，而不是 auth 实收的 `/auth/internal/clients/create`）。
+  网关转发时**覆写**头 `X-Platform-Original-Path`（外部路径、不含 query），服务审计优先记它 —— 同一操作在 DENIED 与 SUCCESS/FAILED 里路径一致（如都是 `/api/oauth-clients/create`，而不是 auth 实收的 `/auth/internal/clients/create`）。
+  ⚠️ 2026-11 之前的审计行路径不带 `/api`（如 `/oauth-clients/create`），按路径查历史要两种都搜。
 - 权限行的 `service` 对不上任何路由（多半是迁移拼错）时，加载/重载会 WARN 一次（同一批不重复刷屏）；这些行照装但永远不生效。
 
 ## 2. 配置
@@ -38,6 +42,7 @@
 | `OAUTH2_SERVER` | `http://127.0.0.1:9527/auth` | auth 地址，**必须带 `/auth`**（网关自己拼 `/oauth2/jwks`），否则全站 401 |
 | `JWT_AUDIENCES` | `platform-web-client` | aud 白名单，**与 api / auth 同值** |
 | `PLATFORM_API_URL` | `http://platform-api:8081` | api 上游 |
+| `PLATFORM_API_CONTEXT_PATH` | `/api` | api 的 `server.servlet.context-path`。**只在部署第 3–5 步设成空串**（那时跑的是加 `/api` 之前的 api 构建），见 §3 |
 | `PLATFORM_AUTH_URL` | `http://platform-auth:9527` | auth 上游（**不带** `/auth`，路由的 context-path 会补） |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` | 研发库 | 读权限表、算闭包、写 DENIED 审计；与 api 同一个库 |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DATABASE` | 研发 Redis，database 1 | **必须与 api 同库同 database**（共用闭包缓存键）；Redis 挂了直查库 |
@@ -50,9 +55,13 @@
 2. **部署网关**：配好上表的变量。网关起不来最常见的原因是权限表读不到（首载失败拒启）。
 3. **部署 auth 与 api**：auth 用本批构建（`/internal/**` 改校验 JWT，启动自检要求 `/internal/**` 都有 `service=platform-auth` 的行）；
    api 用 **Task 11 的构建（`427753eb`），不含 Task 12** —— 这一步 api 仍自己判权限，网关漏判也不至于全开。
-4. **nginx 切 `PLATFORM_GATEWAY_URL`**（platform-web 镜像的运行时变量，默认 `http://platform-gateway:8090`）→ 重新登录 → 跑 §6 验收。
+   ⚠️ `427753eb` 的 api **没有** context-path `/api`：这一步网关要设 `PLATFORM_API_CONTEXT_PATH=`（空串）。
+4. **nginx 切 `PLATFORM_GATEWAY_URL`**（platform-web 镜像的运行时变量，默认 `http://platform-gateway:8090`，**不要以 `/` 结尾**——
+   nginx 原样转发 `/api/**`，带了 `/` 会把前缀剥掉）→ 重新登录 → 跑 §6 验收。
 5. **配 NetworkPolicy**（§4）：api 入站只放网关；auth 入站放 nginx + 网关。
-6. **确认 5 生效之后**，再部署含 Task 12 的 api 构建（`dc414717` 起：api 只校验登录）。
+6. **确认 5 生效之后**，再部署本分支最新的 api 构建（含 Task 12：只校验登录；context-path=`/api`），
+   **紧接着**把网关的 `PLATFORM_API_CONTEXT_PATH` 去掉（回默认 `/api`）并重启网关。两步之间 api 路由会 404 几秒（api 单副本，本来就会断）。
+   Alertmanager 若直连 api 推告警，webhook 地址同步改为带 `/api`。
    ⚠️ 顺序反了 = api 对所有登录用户全开（任何人直连 api 端口都不判权限码）。
 
 auth 的 `/internal/**` 不能只靠 NetworkPolicy 隔离：auth 的协议端点（登录、`/oauth2/**`）仍要 nginx 可达。
@@ -119,7 +128,7 @@ spec:
 | access log 泄露 token | WS 握手 URL 带 `access_token` | 不开 Reactor Netty access log |
 
 **终端心跳**（`PodTerminal.vue` ⇄ api 的 `PodExecRelayHandler`）：前端每 25s 发 `{"type":"ping"}`，
-api 中继直接回 `{"type":"pong"}`、**不转发给 k8s-server**；前端 60s 收不到任何消息（在心跳 tick 上检查，最迟约 85s 发现）
+api 中继直接回 `{"type":"pong"}`、**不转发给 k8s-server**；前端 60s 收不到任何消息（每 10s 检查一次，最迟 70s 发现）
 就主动关闭并显示「重新连接」按钮（重连是新会话）。
 
 **网关发布会断开所有打开的终端**：用户看到断开提示，点「重新连接」即可（shell 状态不保留）。

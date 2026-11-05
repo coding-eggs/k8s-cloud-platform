@@ -81,7 +81,7 @@ class GatewaySecurityIT {
 
     @Test
     void noTokenIs401WithLoginBody() {
-        client.post().uri("/oauth-clients/list").exchange()
+        client.post().uri("/api/oauth-clients/list").exchange()
                 .expectStatus().isUnauthorized()
                 .expectBody().json("{\"code\":" + EnumResponseType.USER_UN_LOGIN.getCode()
                         + ",\"msg\":\"" + EnumResponseType.USER_UN_LOGIN.getMsg() + "\",\"data\":null}", true);
@@ -89,7 +89,7 @@ class GatewaySecurityIT {
 
     @Test
     void foreignAudienceIs401() {
-        client.post().uri("/oauth-clients/list").header("Authorization", "Bearer " + TestJwt.token("other-client"))
+        client.post().uri("/api/oauth-clients/list").header("Authorization", "Bearer " + TestJwt.token("other-client"))
                 .exchange().expectStatus().isUnauthorized();
     }
 
@@ -97,7 +97,7 @@ class GatewaySecurityIT {
     void missingCodeIs403AndUpstreamUntouched() throws Exception {
         when(permissionResolver.resolve(anyString(), any())).thenReturn(List.of());
 
-        client.post().uri("/oauth-clients/list").header("Authorization", "Bearer " + TestJwt.token())
+        client.post().uri("/api/oauth-clients/list").header("Authorization", "Bearer " + TestJwt.token())
                 .exchange()
                 .expectStatus().isForbidden()
                 .expectBody().json("{\"code\":" + EnumResponseType.NON_AUTH_ENTRY_POINT.getCode()
@@ -111,7 +111,7 @@ class GatewaySecurityIT {
         when(permissionResolver.resolve(anyString(), any())).thenReturn(List.of("platform:oauth-client:view"));
         String jwt = TestJwt.token();
 
-        client.post().uri("/oauth-clients/list").header("Authorization", "Bearer " + jwt)
+        client.post().uri("/api/oauth-clients/list").header("Authorization", "Bearer " + jwt)
                 .exchange().expectStatus().isOk();
 
         assertThat(AUTH.take().authorization()).isEqualTo("Bearer " + jwt);
@@ -119,16 +119,31 @@ class GatewaySecurityIT {
 
     @Test
     void queryTokenNotAcceptedOutsideWs() {
-        client.get().uri("/pods/a/logs?access_token=" + TestJwt.token())
+        client.get().uri("/api/pods/a/logs?access_token=" + TestJwt.token())
                 .exchange().expectStatus().isUnauthorized();
     }
 
     @Test
     void alertWebhookSharedSecretIsNotParsedAsJwt() throws Exception {
-        client.post().uri("/alert/webhook").header("Authorization", "Bearer sd")
+        client.post().uri("/api/alert/webhook").header("Authorization", "Bearer sd")
                 .exchange().expectStatus().isOk();
 
         assertThat(API.take().authorization()).isEqualTo("Bearer sd");
     }
 
+    /** 网关自己的健康检查（不转发）：公开 */
+    @Test
+    void gatewayOwnHealthIsPublic() {
+        client.get().uri("/actuator/health").exchange().expectStatus().isOk();
+    }
+
+    /** 不在 /api 下的路径没有上游：要登录，登录了也 403 */
+    @Test
+    void pathOutsideApiPrefixIsRejected() {
+        when(permissionResolver.resolve(anyString(), any())).thenReturn(List.of("platform:oauth-client:view"));
+        client.get().uri("/pods/a/logs").exchange().expectStatus().isUnauthorized();
+        client.get().uri("/pods/a/logs").header("Authorization", "Bearer " + TestJwt.token())
+                .exchange().expectStatus().isForbidden();
+        assertThat(API.nothingReceived()).isTrue();
+    }
 }

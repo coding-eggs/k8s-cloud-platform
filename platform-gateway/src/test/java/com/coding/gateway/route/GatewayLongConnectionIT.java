@@ -56,12 +56,12 @@ class GatewayLongConnectionIT {
     /** api 上游：回显 WS + 慢速分块下载 */
     static final DisposableServer API = HttpServer.create().host("127.0.0.1").port(0)
             .route(r -> r
-                    .get("/ws/pod/exec", (req, res) -> {
+                    .get("/api/ws/pod/exec", (req, res) -> {
                         WS_URI_SEEN.set(req.uri());
                         return res.sendWebsocket((in, out) -> out.sendString(in.aggregateFrames(4 * MB).receive().asString()),
                                 WebsocketServerSpec.builder().maxFramePayloadLength(4 * MB).build());
                     })
-                    .get("/download", (req, res) -> res.header("Content-Type", "application/octet-stream")
+                    .get("/api/download", (req, res) -> res.header("Content-Type", "application/octet-stream")
                             .send(Flux.interval(Duration.ZERO, Duration.ofMillis(200)).take(10)
                                     .map(i -> Unpooled.wrappedBuffer(new byte[MB])))))
             .bindNow();
@@ -120,7 +120,7 @@ class GatewayLongConnectionIT {
     }
 
     private URI execUri() {
-        return URI.create("ws://127.0.0.1:" + port + "/ws/pod/exec?access_token=" + TestJwt.token() + "&ns=a");
+        return URI.create("ws://127.0.0.1:" + port + "/api/ws/pod/exec?access_token=" + TestJwt.token() + "&ns=a");
     }
 
     /** 收齐 expectedLength 个字符为止（大消息可能被拆成多帧） */
@@ -175,7 +175,7 @@ class GatewayLongConnectionIT {
         long start = System.nanoTime();
         AtomicLong firstChunkMs = new AtomicLong(-1);
 
-        Integer total = WebClient.create("http://127.0.0.1:" + port).get().uri("/download")
+        Integer total = WebClient.create("http://127.0.0.1:" + port).get().uri("/api/download")
                 .header("Authorization", "Bearer " + TestJwt.token())
                 .retrieve().bodyToFlux(DataBuffer.class)
                 .map(b -> {
@@ -200,10 +200,10 @@ class GatewayLongConnectionIT {
         WebClient c = WebClient.create("http://127.0.0.1:" + port);
         String auth = "Bearer " + TestJwt.token();
 
-        assertThat(c.get().uri("/oauth-clients/list").header("Authorization", auth)
+        assertThat(c.get().uri("/api/oauth-clients/list").header("Authorization", auth)
                 .retrieve().bodyToMono(String.class).block(Duration.ofSeconds(5))).isEqualTo("ok");
         Thread.sleep(21_000);
-        assertThat(c.get().uri("/oauth-clients/list").header("Authorization", auth)
+        assertThat(c.get().uri("/api/oauth-clients/list").header("Authorization", auth)
                 .retrieve().bodyToMono(String.class).block(Duration.ofSeconds(5))).isEqualTo("ok");
     }
 }

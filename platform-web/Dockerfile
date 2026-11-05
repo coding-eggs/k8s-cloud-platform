@@ -26,7 +26,7 @@
 #    三者必须与 platform-auth 里 platform-web-client 注册的 redirect_uri 一字不差（同源铁律）。
 #
 # 运行 —— 两个后端地址由**运行时环境变量**给（改了重启容器即可，不用重新打镜像）：
-#   PLATFORM_GATEWAY_URL  默认 http://platform-gateway:8090（/api/** 一律经网关，不再直连 platform-api）
+#   PLATFORM_GATEWAY_URL  默认 http://platform-gateway:8090（/api/** 一律经网关、原样转发不去前缀；**不要以 / 结尾**）
 #   PLATFORM_AUTH_URL     默认 http://platform-auth:9527
 #   写法 scheme://host:port，结尾不要带 /。
 #   ⚠️ nginx 启动时就要解析这两个地址里的主机名（解析不到直接起不来：host not found in upstream）。

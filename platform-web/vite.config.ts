@@ -54,13 +54,12 @@ export default defineConfig(({ mode }) => {
       //PORT 由启动环境注入（预览/CI），缺省 5173
       port:  5173,
       proxy: {
-        // /api/** → platform-gateway :8090（去掉 /api 前缀；ws: true 支持 Pod exec 的 WS 升级）
-        // 网关再按路由转 platform-api :8081 / platform-auth 的 /internal/**，本地要同时起网关
+        // /api/** → platform-gateway :8090（原样转发、不去前缀；ws: true 支持 Pod exec 的 WS 升级）
+        // 网关再按路由转 platform-api :8081（context-path=/api）/ platform-auth 的 /internal/**，本地要同时起网关
         '/api': {
           target: 'http://localhost:8090',
           changeOrigin: true,
           ws: true,
-          rewrite: (path) => path.replace(/^\/api/, ''),
         },
         // ---- platform-auth：同源入口（见上方注释）----
         // platform-auth 有 server.servlet.context-path=/auth，所有端点（/oauth2/**、/session/**、

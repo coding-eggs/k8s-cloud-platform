@@ -22,6 +22,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.core.Authentication;
@@ -129,13 +130,15 @@ public class GatewaySecurityConfig {
                 .requestCache(c -> c.requestCache(NoOpServerRequestCache.getInstance()))
                 .securityContextRepository(NoOpServerSecurityContextRepository.getInstance())
                 .authorizeExchange(a -> a
+                        // 网关自己的健康检查（不转发、不在 /api 下）
+                        .pathMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/**").permitAll()
                         .matchers(publicPaths).permitAll()
                         .anyExchange().access(authorizationManager))
                 .exceptionHandling(e -> e
                         .authenticationEntryPoint(unauthorized)
                         .accessDeniedHandler(forbidden))
                 .oauth2ResourceServer(o -> o
-                        .bearerTokenConverter(new PlatformBearerTokenConverter(publicPaths))
+                        .bearerTokenConverter(new PlatformBearerTokenConverter(publicPaths, routes))
                         .authenticationEntryPoint(unauthorized)
                         .accessDeniedHandler(forbidden)
                         .jwt(j -> j
