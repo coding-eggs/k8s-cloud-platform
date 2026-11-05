@@ -41,9 +41,9 @@
 |---|---|---|
 | `OAUTH2_SERVER` | `http://127.0.0.1:9527/auth` | auth 地址，**必须带 `/auth`**（网关自己拼 `/oauth2/jwks`），否则全站 401 |
 | `JWT_AUDIENCES` | `platform-web-client` | aud 白名单，**与 api / auth 同值** |
-| `PLATFORM_API_URL` | `http://platform-api:8081` | api 上游 |
+| `PLATFORM_API_URL` | `http://127.0.0.1:8081` | api 上游（本地默认；部署时必须覆盖，如 `http://platform-api:8081`） |
 | `PLATFORM_API_CONTEXT_PATH` | `/api` | api 的 `server.servlet.context-path`。**只在部署第 3–5 步设成空串**（那时跑的是加 `/api` 之前的 api 构建），见 §3 |
-| `PLATFORM_AUTH_URL` | `http://platform-auth:9527` | auth 上游（**不带** `/auth`，路由的 context-path 会补） |
+| `PLATFORM_AUTH_URL` | `http://127.0.0.1:9527` | auth 上游（**不带** `/auth`，路由的 context-path 会补；部署时必须覆盖） |
 | `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` | 研发库 | 读权限表、算闭包、写 DENIED 审计；与 api 同一个库 |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_DATABASE` | 研发 Redis，database 1 | **必须与 api 同库同 database**（共用闭包缓存键）；Redis 挂了直查库 |
 
