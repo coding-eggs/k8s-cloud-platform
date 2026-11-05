@@ -6,7 +6,6 @@ import com.coding.common.components.jwt.CachedPermissionClosureResolver;
 import com.coding.common.components.jwt.JwtPermissionResolver;
 import com.coding.common.components.jwt.PermissionClosureService;
 import com.coding.common.components.jwt.PlatformJwtAuthenticationConverter;
-import com.coding.common.components.jwt.PlatformJwtValidators;
 import com.coding.common.components.permission.PermissionDecider;
 import com.coding.common.components.permission.PermissionRegistry;
 import com.coding.common.exception.EnumResponseType;
@@ -19,6 +18,7 @@ import com.coding.gateway.audit.GatewayDeniedAuditor;
 import com.coding.gateway.route.PlatformRouteProperties;
 import com.coding.gateway.route.PlatformRouteResolver;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -27,8 +27,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
-import org.springframework.security.oauth2.jwt.NimbusReactiveJwtDecoder;
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.security.web.server.ServerAuthenticationEntryPoint;
@@ -41,7 +39,6 @@ import reactor.core.publisher.Mono;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -51,6 +48,7 @@ import java.util.List;
  */
 @Configuration(proxyBeanMethods = false)
 @EnableWebFluxSecurity
+@EnableConfigurationProperties(OAuth2JwtProperties.class)
 public class GatewaySecurityConfig {
 
     @Bean
@@ -90,16 +88,11 @@ public class GatewaySecurityConfig {
         return new GatewayDeniedAuditor(mapper, dataKey);
     }
 
-    /** 只支持 JWS（与 platform-api 当前部署一致）；aud 白名单为空拒启。 */
+    /** 三种 token（对称 JWE / HMAC JWS / jwk-set-uri JWS）与 platform-api 一一对应，见 {@link GatewayJwtDecoders}；aud 白名单为空拒启。 */
     @Bean
     public ReactiveJwtDecoder jwtDecoder(@Value("${spring.security.oauth2.resourceserver.jwt.jwk-set-uri}") String jwkSetUri,
-                                         @Value("${spring.security.oauth2.resourceserver.jwt.audiences}") String[] audiences) {
-        NimbusReactiveJwtDecoder decoder = NimbusReactiveJwtDecoder.withJwkSetUri(jwkSetUri)
-                .jwsAlgorithms(a -> a.addAll(List.of(SignatureAlgorithm.RS256, SignatureAlgorithm.RS384,
-                        SignatureAlgorithm.RS512, SignatureAlgorithm.ES256, SignatureAlgorithm.ES384, SignatureAlgorithm.ES512)))
-                .build();
-        decoder.setJwtValidator(PlatformJwtValidators.withAudiences(Arrays.asList(audiences)));
-        return decoder;
+                                         OAuth2JwtProperties jwtProperties) {
+        return GatewayJwtDecoders.build(jwkSetUri, jwtProperties);
     }
 
     @Bean

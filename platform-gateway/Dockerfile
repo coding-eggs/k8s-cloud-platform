@@ -28,7 +28,7 @@
 # ⚠️ 启动时读权限表，读不到拒启 —— 先重放 V2026_11_04_1 / V2026_11_04_2（本仓没有 Flyway，手工重放）。
 # 部署顺序与 NetworkPolicy 见 platform-gateway/README.md §3 / §4。
 
-FROM eclipse-temurin:21-jre
+FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre
 
 RUN useradd -m -u 1001 app
 WORKDIR /app

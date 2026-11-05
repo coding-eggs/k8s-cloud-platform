@@ -57,7 +57,17 @@ spring:
           # 与 platform-api 同值：网关把同一个 token 透传给 api / auth / k8s-server
           audiences: ${JWT_AUDIENCES:platform-web-client}
           # ⚠️ OAUTH2_SERVER 必须带 /auth（auth 的 context-path），否则拉不到密钥 → 全站 401
-          jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/auth}/oauth2/jwks
+          jwk-set-uri: http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth/oauth2/jwks
+          # 三种 token 与 platform-api / k8s-server 同一组键、必须配成同样的值（见 GatewayJwtDecoders）：
+          #   不配 jws/jwe      → 按 jwk-set-uri 验非对称签名（当前）
+          #   jws:              → 对称签名（HMAC）
+          #     secret: <与 auth server 一致的密钥>
+          #     secret-alg: HS256
+          #   type: JWE + jwe:  → 对称解密，内层签名仍按 jwk-set-uri 验
+          #     secret: <32 字节密钥>
+          #     secret-alg: dir        # 或 A256KW 等
+          #     enc-method: A256GCM
+          type: JWS
 
 management:
   endpoint:

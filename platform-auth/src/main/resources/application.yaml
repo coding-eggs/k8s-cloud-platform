@@ -113,7 +113,7 @@ spring:
       host: ${REDIS_HOST:192.168.31.80}
       port: ${REDIS_PORT:25358}
       password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
-      database: ${REDIS_CACHE_DATABASE:1}
+      database: ${REDIS_DATABASE:1}
       timeout: 5s
       connect-timeout: 5s
       lettuce:
