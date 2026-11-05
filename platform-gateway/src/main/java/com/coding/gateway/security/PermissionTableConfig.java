@@ -8,6 +8,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Configuration(proxyBeanMethods = false)
 @MapperScan({"com.coding.data.mapper.auth", "com.coding.data.mapper.system"})
@@ -22,6 +24,7 @@ public class PermissionTableConfig {
     public PermissionRegistryReloader permissionRegistryReloader(PlatformPermissionMapper mapper,
                                                                  PermissionRegistry registry,
                                                                  PlatformRouteProperties props) {
-        return new PermissionRegistryReloader(mapper, registry, props.permissionReloadInterval());
+        Set<String> routed = props.routes().stream().map(PlatformRouteProperties.Route::service).collect(Collectors.toSet());
+        return new PermissionRegistryReloader(mapper, registry, props.permissionReloadInterval(), routed);
     }
 }

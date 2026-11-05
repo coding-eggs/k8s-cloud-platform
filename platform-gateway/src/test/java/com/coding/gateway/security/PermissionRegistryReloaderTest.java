@@ -8,6 +8,13 @@ import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
+
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -74,6 +81,33 @@ class PermissionRegistryReloaderTest {
             assertThat(registry.rules()).hasSize(2);
         } finally {
             periodic.destroy();
+        }
+    }
+
+    /** service 写错（对不上任何网关路由）的行永远不生效：照装但 WARN；同一批孤儿行不在每次定时重载里重复刷屏 */
+    @Test
+    void warnsOnceAboutRowsWhoseServiceHasNoRoute() {
+        PlatformPermission typo = row("API", "platfrom-api", "/typo");
+        typo.setCode("platform:typo:manage");
+        when(mapper.selectAllActive()).thenReturn(List.of(row("API", "platform-api", "/a"), typo));
+        PermissionRegistryReloader checked = new PermissionRegistryReloader(mapper, registry, null,
+                Set.of("platform-api", "platform-auth"));
+
+        Logger logger = (Logger) LoggerFactory.getLogger(PermissionRegistryReloader.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            checked.afterPropertiesSet();
+            checked.reload();
+
+            List<ILoggingEvent> warns = appender.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+            assertThat(warns).hasSize(1);
+            assertThat(warns.get(0).getFormattedMessage())
+                    .contains("platfrom-api").contains("platform:typo:manage").contains("/typo");
+            assertThat(registry.rules()).hasSize(2); // 照装（fail-closed 本就不会放行），只告警
+        } finally {
+            logger.detachAppender(appender);
         }
     }
 

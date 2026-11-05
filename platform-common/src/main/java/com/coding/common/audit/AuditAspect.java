@@ -121,7 +121,9 @@ public class AuditAspect {
         if (attrs instanceof ServletRequestAttributes sra) {
             r.setClientIp(sra.getRequest().getRemoteAddr());
             r.setUserAgent(sra.getRequest().getHeader("User-Agent"));
-            r.setRequestPath(sra.getRequest().getRequestURI());
+            // 经网关时记外部路径（与网关写的 DENIED 同口径）；直连（本地开发）退回实收路径
+            String original = sra.getRequest().getHeader(AuditHeaders.ORIGINAL_PATH);
+            r.setRequestPath(StringUtils.hasText(original) ? original : sra.getRequest().getRequestURI());
             r.setHttpMethod(sra.getRequest().getMethod());
         }
         return r;

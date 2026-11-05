@@ -220,6 +220,22 @@ class AuditAspectTest {
         }
     }
 
+    /** 经网关转发时，记网关附的外部路径（auth 实收的是 /auth/internal/clients/...，与网关 DENIED 记的对不上） */
+    @Test
+    void requestPathPrefersGatewayOriginalPath() throws Throwable {
+        when(authContext.current()).thenReturn(user("alice"));
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/auth/internal/clients/create");
+        request.addHeader(AuditHeaders.ORIGINAL_PATH, "/oauth-clients/create");
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+        try {
+            aspect.around(deletePjp("ok", null), ann(""));
+
+            assertThat(capture().getRequestPath()).isEqualTo("/oauth-clients/create");
+        } finally {
+            RequestContextHolder.resetRequestAttributes();
+        }
+    }
+
     private PlatformAuditLog capture() {
         ArgumentCaptor<PlatformAuditLog> captor = ArgumentCaptor.forClass(PlatformAuditLog.class);
         verify(auditRecorder).record(captor.capture());

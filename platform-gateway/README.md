@@ -15,7 +15,7 @@
 
 | 步骤 | 说明 |
 |---|---|
-| 路由 | `platform.gateway.routes`：外部前缀**最长优先**；转发路径 = `context-path` + 内部路径，query 原样保留 |
+| 路由 | `platform.gateway.routes`：外部前缀**最长优先**；转发路径 = `context-path` + 内部路径，query 原样保留。命中哪条路由与鉴权用同一个 resolver（不用 Path 断言：`/x/**` 会连不带斜杠的 `/x` 一起吃掉） |
 | 认证 | 校验 JWT（`OAUTH2_SERVER` 的 JWKS + aud 白名单）；**原 token 原样透传**给上游（上游各自再校验，纵深防御） |
 | 授权 | `PermissionDecider`：命中权限行（同 `(service, 方法, 内部路径)` 多行 ANY-of）> 豁免 > 拒绝；匿名一律拒 |
 | 权限闭包 | 按 token 的 `data.tenantInfo.tenantId` 现算，与 platform-api **共用同一份 Redis 缓存**（TTL 30s） |
@@ -28,6 +28,8 @@
   api 的写前校验看不到 auth 的端点，删错一行会让 auth 下次重启自检拒启。
 - query 上的 `access_token` 只在 `/ws/**` 接受（WS 握手带不了头）。
 - SUCCESS / FAILED 审计不在网关：由各服务的 `@Auditable`（`platform-common` 的 `ServletAuditConfiguration`）记。
+  网关转发时**覆写**头 `X-Platform-Original-Path`（外部路径、不含 query），服务审计优先记它 —— 同一操作在 DENIED 与 SUCCESS/FAILED 里路径一致（如都是 `/oauth-clients/create`，而不是 auth 实收的 `/auth/internal/clients/create`）。
+- 权限行的 `service` 对不上任何路由（多半是迁移拼错）时，加载/重载会 WARN 一次（同一批不重复刷屏）；这些行照装但永远不生效。
 
 ## 2. 配置
 

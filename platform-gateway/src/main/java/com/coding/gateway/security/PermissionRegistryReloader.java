@@ -12,6 +12,9 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * 权限表加载与定时重载（spec §8.4）。
@@ -30,6 +33,10 @@ public class PermissionRegistryReloader implements InitializingBean, DisposableB
     private final PlatformPermissionMapper mapper;
     private final PermissionRegistry registry;
     private final Duration interval;
+    /** 网关路由覆盖的 service；null = 不校验 */
+    private final Set<String> routedServices;
+    /** 上次告警过的孤儿行，同一批不在每次定时重载里重复刷屏 */
+    private volatile Set<String> lastUnrouted = Set.of();
     private Disposable periodic;
 
     /** 只加载、不定时 */
@@ -38,9 +45,15 @@ public class PermissionRegistryReloader implements InitializingBean, DisposableB
     }
 
     public PermissionRegistryReloader(PlatformPermissionMapper mapper, PermissionRegistry registry, Duration interval) {
+        this(mapper, registry, interval, null);
+    }
+
+    public PermissionRegistryReloader(PlatformPermissionMapper mapper, PermissionRegistry registry, Duration interval,
+                                      Set<String> routedServices) {
         this.mapper = mapper;
         this.registry = registry;
         this.interval = interval;
+        this.routedServices = routedServices == null ? null : Set.copyOf(routedServices);
     }
 
     @Override
@@ -72,10 +85,31 @@ public class PermissionRegistryReloader implements InitializingBean, DisposableB
     }
 
     private List<PermissionRegistry.Rule> load() {
-        return mapper.selectAllActive().stream()
+        List<PermissionRegistry.Rule> rules = mapper.selectAllActive().stream()
                 .filter(p -> "API".equals(p.getDomain()))
                 .map(PermissionRegistry.Rule::from)
                 .toList();
+        warnUnrouted(rules);
+        return rules;
+    }
+
+    /**
+     * service 对不上任何网关路由的行（多半是迁移里拼错）永远匹配不到请求、等于不存在。照装不拦（fail-closed，
+     * 不会因此放行），但 WARN 出来，免得只能从「怎么都 403」倒查。spec §8.5。
+     */
+    private void warnUnrouted(List<PermissionRegistry.Rule> rules) {
+        if (routedServices == null) {
+            return;
+        }
+        Set<String> unrouted = rules.stream()
+                .filter(r -> !routedServices.contains(r.service()))
+                .map(r -> r.service() + " " + r.method() + " " + r.pattern() + " (" + r.code() + ")")
+                .collect(Collectors.toCollection(TreeSet::new));
+        if (!unrouted.isEmpty() && !unrouted.equals(lastUnrouted)) {
+            log.warn("[RBAC] {} 条 API 权限行的 service 不在网关路由 {} 里，永远不会生效：{}",
+                    unrouted.size(), new TreeSet<>(routedServices), unrouted);
+        }
+        lastUnrouted = unrouted;
     }
 
     @Override

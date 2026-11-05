@@ -65,4 +65,31 @@ class GatewayRoutingIT {
 
         assertThat(API.take().uri()).isEqualTo("/pods/a/logs?access_token=abc&tenantId=t1");
     }
+
+    /** 上游审计记外部路径（与网关 DENIED 同口径）：网关转发时附原始路径，不含 query */
+    @Test
+    void forwardsOriginalExternalPathForAudit() throws Exception {
+        client.post().uri("/oauth-clients/create?x=1").exchange().expectStatus().isOk();
+
+        UpstreamStub.Received r = AUTH.take();
+        assertThat(r.uri()).isEqualTo("/auth/internal/clients/create?x=1");
+        assertThat(r.originalPath()).isEqualTo("/oauth-clients/create");
+    }
+
+    /** 客户端自带的同名头不能透传：一律以网关算的为准 */
+    @Test
+    void clientSuppliedOriginalPathIsOverwritten() throws Exception {
+        client.get().uri("/pods/a/logs").header("X-Platform-Original-Path", "/evil").exchange().expectStatus().isOk();
+
+        assertThat(API.take().originalPath()).isEqualTo("/pods/a/logs");
+    }
+
+    /** 不带斜杠的 /oauth-clients 不属于 auth 路由（与鉴权解析一致）：落到 api，路径原样 */
+    @Test
+    void barePrefixWithoutTrailingSlashGoesToApi() throws Exception {
+        client.post().uri("/oauth-clients").exchange().expectStatus().isOk();
+
+        assertThat(API.take().uri()).isEqualTo("/oauth-clients");
+        assertThat(AUTH.nothingReceived()).isTrue();
+    }
 }
