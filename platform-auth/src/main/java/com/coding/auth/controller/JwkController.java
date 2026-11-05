@@ -1,5 +1,7 @@
 package com.coding.auth.controller;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.system.ResponseData;
 import com.coding.common.utils.KeyGenerator;
@@ -26,8 +28,13 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.UUID;
 
+/**
+ * JWK 生成（签名 / 加密密钥按优先级入库）。挂在 {@code /internal/jwk} 下：只经网关可达，
+ * 权限码 {@code platform:jwk:manage}（只绑 admin）由网关判 —— 能插高优先级签名密钥就能决定平台用哪把钥匙签 token。
+ * 以前在 {@code /jwk} 下走会话鉴权，任何登录用户都能调（2026-11-04 随网关收口）。
+ */
 @RestController
-@RequestMapping("/jwk")
+@RequestMapping("/internal/jwk")
 @RequiredArgsConstructor
 public class JwkController {
 
@@ -37,6 +44,7 @@ public class JwkController {
      * 生成密钥对并保存到数据库
      */
     @PostMapping("/generate")
+    @Auditable(action = AuditAction.JWK_GENERATE)
     public ResponseData<Oauth2Jwk> generateKeyPair(
             @RequestParam(defaultValue = "RS256", name = "签名算法") String sigAlg,          // 仅用于签名
             @RequestParam(defaultValue = "RSA-OAEP-256", name = "加密算法") String encAlg,   // 仅用于加密

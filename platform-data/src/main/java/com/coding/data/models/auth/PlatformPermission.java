@@ -18,6 +18,11 @@ public class PlatformPermission implements Serializable {
     private String domain;
 
     /**
+     * 所属服务（platform-api / platform-auth …），与网关路由的 service 对应；同一路径在不同服务里是不同端点
+     */
+    private String service;
+
+    /**
      * 资源：Deployment... / Page / API
      */
     private String resource;

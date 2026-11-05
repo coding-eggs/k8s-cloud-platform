@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.ServiceDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.ServiceService;
@@ -57,12 +59,14 @@ public class ServiceController {
 
     @PostMapping
     @Operation(summary = "创建 Service")
+    @Auditable(action = AuditAction.SERVICE_CREATE)
     public ResponseData<ServiceDTO> create(@RequestBody ServiceDTO body) {
         return new ResponseData<>(serviceService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 Service")
+    @Auditable(action = AuditAction.SERVICE_UPDATE)
     public ResponseData<ServiceDTO> update(@PathVariable String name, @RequestBody ServiceDTO body) {
         body.setName(name);
         return new ResponseData<>(serviceService.update(body));
@@ -70,6 +74,7 @@ public class ServiceController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 Service")
+    @Auditable(action = AuditAction.SERVICE_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

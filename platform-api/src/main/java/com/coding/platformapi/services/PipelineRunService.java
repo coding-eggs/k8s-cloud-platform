@@ -83,14 +83,14 @@ public class PipelineRunService {
      * 只用来取「**调用者是谁**」—— 连接授权按它判（见 {@link #resolveConnections}）。
      * K8s 侧的身份仍然用 {@code ctx.tenantId()}，两者不能混。
      */
-    private final com.coding.platformapi.security.AuthContext auth;
+    private final com.coding.common.security.AuthContext auth;
 
     public PipelineRunService(PlatformPipelineRunMapper runMapper,
                               PlatformPipelineRunLogMapper logMapper,
                               K8sPipelineClient k8s,
                               CredentialService credentials,
                               NamespaceAccessGuard access,
-                              com.coding.platformapi.security.AuthContext auth) {
+                              com.coding.common.security.AuthContext auth) {
         this.runMapper = runMapper;
         this.logMapper = logMapper;
         this.k8s = k8s;

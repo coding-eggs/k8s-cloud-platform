@@ -6,7 +6,7 @@ import com.coding.common.models.k8s.dto.PersistentVolumeDTO;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.platformapi.k8s.K8sClient;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

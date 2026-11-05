@@ -1,7 +1,7 @@
 # 平台 API 网关（接口级鉴权上收）设计
 
 - 日期：2026-11-03
-- 状态：**方案已定稿，本周不实施**（下周开工，先写实施计划）（用户：「先敲定个方案，然后不做。下周有 token 再做」）
+- 状态：**已实施待部署**（2026-11-04，分支 `feat/platform-gateway`，计划 `docs/superpowers/plans/2026-11-04-platform-gateway.md`）；部署顺序与验收见 `platform-gateway/README.md`，真集群验收未跑（§12）
 - 相关：`2026-11-03-oauth-client-management-in-platform-design.md`（本方案会替换其中的「api 转调 auth 内部接口」那一段）
 
 ## 1. 为什么做
@@ -46,7 +46,7 @@
 | 权限闭包计算 | 网关 | 复用 `platform-common` 的 `PermissionClosureService`，Redis TTL 30s 缓存跟着搬 |
 | 接口级鉴权（权限表） | **只在网关** | 现 `PermissionAuthorizationManager` 的逻辑整体迁过去 |
 | 豁免路径（`ExemptPaths`） | 网关 | 登录即可的路径（bootstrap、自助接口等） |
-| 租户上下文解析 | 网关解析并校验「用户属于该租户」；服务再按需读取 | 现 `TenantContextResolver` |
+| 租户上下文解析 | 网关**不读**请求里的 tenantId：权限闭包按 token 的 `data.tenantInfo.tenantId` 算；请求 tenantId 与 token 是否一致、用户是否属于该租户，仍由服务的 `TenantContextResolver` 判（业务校验）。（2026-11-04 实施时修正：原写「网关解析并校验」） | 现 `TenantContextResolver` |
 | 数据范围校验 | 服务 | 不动 |
 | 审计 SUCCESS / FAILED | 服务（公共库） | 见 §5 |
 | 审计 DENIED（403） | 网关 | 只有网关知道请求被拒了 |
@@ -170,3 +170,23 @@ auth 管理接口、将来拆出的服务进来后路径可能撞车，因此给
 3. WS 若网关代理不了：**接受**由 nginx 直连 platform-api、鉴权留在 api 的例外（§6.1）。
 4. 网关用 **WebFlux 版**（2026-11-04，§6.1）。
 5. 权限 / 角色管理接口**留在 platform-api**，网关只读权限相关表（§8.6）——用户已定（2026-11-04）。
+
+## 12. 实施结果与真跑验收（2026-11-04）
+
+- WS 经网关透传可行（`GatewayLongConnectionIT`），§11 第 3 条的例外**未启用**：nginx 的 `/api/**` 全部转网关。
+- `/jwk/generate` 已收进 auth 的 `/internal/jwk/generate`，码 `platform:jwk:manage` 只绑 admin（§11 第 2 条）。
+- 实施中发现 `nginx-https.conf` 缺 `/auth/internal/` → 404 那一段（客户端管理批次就漏了），已补；
+  否则 HTTPS 部署下任何登录用户可绕过网关直调 auth 的内部接口。
+
+真跑验收（逐项打勾回填，清单与 `platform-gateway/README.md` §6 同步）：
+
+- [ ] 登录后菜单与改造前一致；租户视图切换正常
+- [ ] 无权用户调有行接口 → 403，审计页出现一条网关写的 DENIED（requestPath 无 query）
+- [ ] OAuth 客户端页增删改、重置密钥、停用全部可用，审计页出现 auth 写的 SUCCESS 记录
+- [ ] 非管理员调 `/api/jwks/generate` → 403；直接访问 `/auth/jwk/generate` 与 `/auth/internal/jwk/generate` → 404
+- [ ] 终端静默 40 分钟后仍可输入（跨过 nginx 1800s 也不断 —— 心跳在跑）
+- [ ] 终端里粘贴 300KB 文本不断开
+- [ ] 下载 100MB 对象：进度立刻开始走，网关内存无明显上涨
+- [ ] 终端打开时滚动重启网关 → 终端提示断开，点「重新连接」恢复
+- [ ] 权限点管理页新增一行 → 60s 内网关按新行判定
+- [ ] Alertmanager 告警推送仍能进来（`/alert/webhook`）

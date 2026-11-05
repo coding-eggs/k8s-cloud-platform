@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.GatewayDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.GatewayService;
@@ -60,12 +62,14 @@ public class GatewayController {
 
     @PostMapping
     @Operation(summary = "创建 Gateway")
+    @Auditable(action = AuditAction.GATEWAY_CREATE)
     public ResponseData<GatewayDTO> create(@RequestBody GatewayDTO body) {
         return new ResponseData<>(gatewayService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 Gateway")
+    @Auditable(action = AuditAction.GATEWAY_UPDATE)
     public ResponseData<GatewayDTO> update(@PathVariable String name, @RequestBody GatewayDTO body) {
         body.setName(name);
         return new ResponseData<>(gatewayService.update(body));
@@ -73,6 +77,7 @@ public class GatewayController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 Gateway")
+    @Auditable(action = AuditAction.GATEWAY_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

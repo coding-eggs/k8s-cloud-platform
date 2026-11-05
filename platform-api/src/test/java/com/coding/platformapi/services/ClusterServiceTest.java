@@ -15,7 +15,7 @@ import com.coding.common.models.k8s.dto.ResourceCapacityDTO;
 import com.coding.common.models.k8s.dto.StorageStatDTO;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.models.ClusterCreateRequest;
 import com.coding.platformapi.k8s.K8sLifecycleClient;
 import org.junit.jupiter.api.Test;

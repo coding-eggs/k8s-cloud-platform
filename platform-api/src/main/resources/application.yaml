@@ -5,6 +5,10 @@
 #    因此全部失效（最典型的是 K8S_SERVER_URL 配了没反应）。改这类行时请保留 ${...} 形式。
 server:
   port: 8081
+  servlet:
+    # 与浏览器路径一致：/api/** 从浏览器经 nginx、网关到这里全程不改写（网关只换上游）。
+    # 下面 ignore-urls、权限行 resource、@RequestMapping 都是 context-path 之后的路径，不带 /api。
+    context-path: /api
 
 management:
   endpoints:
@@ -38,12 +42,6 @@ platform:
     # 租约过期（进程已死）才接管。⚠️ 本地起的 platform-api **不要**与集群那套装同一个库 ——
     # 两边会互相把对方的执行判成「发布已中断」（凭据只在发起请求的进程内存里）。
     instance-id:
-  auth:
-    # OAuth 客户端管理转调 platform-auth 的内部接口（/internal/clients/**）。
-    # ⚠️ 地址要带 /auth（auth 的 context-path），走内网直连，不经 nginx（nginx 把 /auth/internal/ 挡成 404）。
-    internal-url: http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth
-    # ⚠️ 没有默认值：留空应用**拒启**。须与 auth 的 platform.internal.token 同值（同一个 env）。
-    internal-token: ${PLATFORM_INTERNAL_TOKEN:xxIRUQ9EdEi0E2EgPlcWwUojm43D78UE/S15Pqn5+1k=}
   harbor:
     # 「装 Harbor」表单的默认值：域名与证书在部署里是固定的，表单留空就取这里，
     # 省得每次重放都重新粘一遍 PEM。
@@ -188,6 +186,8 @@ spring:
           min-idle: 0
           max-wait: 1000ms
   security:
+    # ⚠️ 与 platform-gateway 的 platform.gateway.public-paths 是**同一份清单的两处副本**，改一处必须同步另一处：
+    #    只改这里 → 网关先 401/403，请求到不了 api；只改网关 → api 自己 401。
     ignore-urls:
       - "/actuator/**"
       - "/doc.html"

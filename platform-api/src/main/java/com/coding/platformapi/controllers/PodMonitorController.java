@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.PodMonitorDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.models.PodMonitorKeyRequest;
@@ -71,12 +73,14 @@ public class PodMonitorController {
 
     @PostMapping
     @Operation(summary = "创建 PodMonitor")
+    @Auditable(action = AuditAction.PODMONITOR_CREATE)
     public ResponseData<PodMonitorDTO> create(@RequestBody PodMonitorDTO body) {
         return new ResponseData<>(pmService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 PodMonitor")
+    @Auditable(action = AuditAction.PODMONITOR_UPDATE)
     public ResponseData<PodMonitorDTO> update(@PathVariable String name, @RequestBody PodMonitorDTO body) {
         body.setName(name);
         return new ResponseData<>(pmService.update(body));
@@ -84,6 +88,7 @@ public class PodMonitorController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 PodMonitor")
+    @Auditable(action = AuditAction.PODMONITOR_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

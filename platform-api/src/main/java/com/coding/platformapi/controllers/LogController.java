@@ -4,7 +4,7 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.logs.LogEntryDTO;
 import com.coding.platformapi.logs.LogQueryRequest;
 import com.coding.platformapi.logs.LogQueryService;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;

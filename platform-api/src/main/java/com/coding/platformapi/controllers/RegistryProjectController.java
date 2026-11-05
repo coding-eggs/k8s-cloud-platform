@@ -1,11 +1,11 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
-import com.coding.platformapi.audit.AuditAction;
-import com.coding.platformapi.audit.Auditable;
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.RegistryProjectRequest;
 import com.coding.platformapi.models.RegistryProjectView;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.HarborRegistryService;
 import com.coding.platformapi.services.RegistryPullSecretService;
 import io.swagger.v3.oas.annotations.Operation;

@@ -2,8 +2,8 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.system.ResponseData;
-import com.coding.platformapi.audit.AuditAction;
-import com.coding.platformapi.audit.Auditable;
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.PvcResizeRequest;
 import com.coding.platformapi.services.PvcService;
 import io.swagger.v3.oas.annotations.Operation;

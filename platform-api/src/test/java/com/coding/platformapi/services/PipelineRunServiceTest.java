@@ -40,8 +40,8 @@ class PipelineRunServiceTest {
 
     private final PlatformPipelineRunLogMapper logMapper = mock(PlatformPipelineRunLogMapper.class);
 
-    private final com.coding.platformapi.security.AuthContext auth =
-            mock(com.coding.platformapi.security.AuthContext.class);
+    private final com.coding.common.security.AuthContext auth =
+            mock(com.coding.common.security.AuthContext.class);
 
     private final PipelineRunService svc =
             new PipelineRunService(runMapper, logMapper, k8s, credentials, access, auth);

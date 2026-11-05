@@ -6,7 +6,7 @@ import com.coding.data.models.auth.PlatformPermission;
 import com.coding.platformapi.models.PermissionGroup;
 import com.coding.platformapi.models.PermissionMatchRequest;
 import com.coding.platformapi.models.PermissionMatchResponse;
-import com.coding.platformapi.security.PermissionRegistry;
+import com.coding.common.components.permission.PermissionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
@@ -40,7 +40,7 @@ class PermissionMatchServiceTest {
     );
     PermissionRegistry registry = new PermissionRegistry(rows.stream()
             .filter(p -> "API".equals(p.getDomain()))
-            .map(p -> new PermissionRegistry.Rule(p.getAction(), p.getResource(), p.getCode()))
+            .map(p -> PermissionRegistry.Rule.from(p))
             .toList());
     PermissionService svc = new PermissionService(
             mapper, mock(PermissionRowWriter.class), registry, mock(RequestMappingHandlerMapping.class));
@@ -122,7 +122,7 @@ class PermissionMatchServiceTest {
         for (String[] c : cases) {
             Set<String> fromMatch = svc.match(req(c[0], c[1])).matched().stream()
                     .map(PermissionGroup::code).collect(Collectors.toSet());
-            Set<String> fromRuntime = registry.requiredCodes(c[0], c[1]).orElse(Set.of());
+            Set<String> fromRuntime = registry.requiredCodes("platform-api", c[0], c[1]).orElse(Set.of());
             assertThat(fromMatch).as("match vs requiredCodes for %s %s", c[0], c[1])
                     .isEqualTo(fromRuntime);
         }

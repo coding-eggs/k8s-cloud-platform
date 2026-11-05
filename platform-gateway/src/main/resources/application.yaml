@@ -1,0 +1,113 @@
+server:
+  port: 8090
+  # 发布重启时让短请求收尾；WS 必断，由终端的断线提示 + 重连兜底。
+  # 不设 netty.idle-timeout：Reactor Netty 默认不掐空闲连接，静默终端靠前端 25s 心跳保活。
+  # 不开 Reactor Netty access log：WS 握手 URL 带 access_token。
+  shutdown: graceful
+
+spring:
+  application:
+    name: platform-gateway
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  cloud:
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            connect-timeout: 5000
+            # 有意不设 response-timeout：慢接口、大文件下载不由网关掐，nginx 的 1800s 兜底
+            pool:
+              # < 上游 Tomcat keepAliveTimeout(20s)：不复用对端已关的空闲连接（否则偶发 Connection prematurely closed → 502）
+              max-idle-time: 15s
+              max-life-time: 5m
+            websocket:
+              # 默认 64KB：终端里粘一大段文本就 1009 断开
+              max-frame-payload-length: 2097152
+  main:
+    # 显式写死：classpath 上若意外出现 webmvc，Boot 会改按 servlet 启动，网关整套 reactive 配置随即失效
+    web-application-type: reactive
+
+  # 读 platform_permission（权限表）、算权限闭包、写被拒审计 —— 与 platform-api 同一个库
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${MYSQL_HOST:192.168.31.80}:${MYSQL_PORT:1234}/k8s_cloud_platform?useUnicode=true&characterEncoding=utf8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2B8&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:coding}
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 10
+      connection-test-query: SELECT 1
+
+  # 权限闭包缓存：**必须与 platform-api 同一个 Redis、同一个 database**，两边共用 platform:cache:perm:closure:* 键，
+  # 改角色后两边在同一个 TTL 内一起看到新值。Redis 不是依赖：读失败即直查库（RedisJsonCache）。
+  data:
+    redis:
+      host: ${REDIS_HOST:192.168.31.80}
+      port: ${REDIS_PORT:25358}
+      password: ${REDIS_PASSWORD:Coding@123456}
+      database: ${REDIS_DATABASE:1}
+      timeout: 2s
+      connect-timeout: 2s
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # 与 platform-api 同值：网关把同一个 token 透传给 api / auth / k8s-server
+          audiences: ${JWT_AUDIENCES:platform-web-client}
+          # ⚠️ OAUTH2_SERVER 必须带 /auth（auth 的 context-path），否则拉不到密钥 → 全站 401
+          jwk-set-uri: ${OAUTH2_SERVER:http://127.0.0.1:9527/auth}/oauth2/jwks
+
+management:
+  endpoint:
+    health:
+      # 网关存活与否不该随 MySQL/Redis 抖动：库挂了网关仍能按已加载的权限表放行/拒绝
+      show-details: never
+  health:
+    db:
+      enabled: false
+    redis:
+      enabled: false
+
+platform:
+  gateway:
+    # 权限点管理页改行后，网关最迟这么久生效（api 自己那份是即时热换）
+    permission-reload-interval: 60s
+    # 不需登录、不判权限、也不解析 Bearer（只对 api 路由生效）。
+    # ⚠️ 与 platform-api 的 spring.security.ignore-urls 是**同一份清单的两处副本**，改一处必须同步另一处。
+    # /alert/webhook 带的是 Alertmanager 共享密钥，不是 JWT；端点自己校验，密钥没配 api 拒启。
+    public-paths:
+      - "/actuator/**"
+      - "/doc.html"
+      - "/assets/**"
+      - "/404"
+      - "/500"
+      - "/v3/api-docs/**"
+      - "/v2/api-docs"
+      - "/swagger-ui/**"
+      - "/swagger-ui.html"
+      - "/swagger-resources/**"
+      - "/webjars/**"
+      - "/test/**"
+      - "/.well-known/**"
+      - "/manifest.json"
+      - "/alert/webhook"
+    # 外部前缀 = 浏览器里的路径（nginx 原样转发，不去 /api）；解析按前缀最长优先，书写顺序无关。
+    # 不在 /api/ 下的请求没有上游：网关自己的 /actuator/health 除外（不转发）。
+    # 权限行的 resource 写服务内路径（internal-prefix 之后、不含 context-path），与 service 一起匹配。
+    # PLATFORM_API_CONTEXT_PATH：api 的 server.servlet.context-path。默认 /api；
+    #   部署第一阶段用的是加 /api 之前的 api 构建（427753eb），那时要设成空串。
+    routes:
+      - { service: platform-auth, external-prefix: /api/oauth-clients/, internal-prefix: /internal/clients/, uri: "${PLATFORM_AUTH_URL:http://127.0.0.1:9527}", context-path: /auth }
+      - { service: platform-auth, external-prefix: /api/jwks/,          internal-prefix: /internal/jwk/,     uri: "${PLATFORM_AUTH_URL:http://127.0.0.1:9527}", context-path: /auth }
+      - { service: platform-api,  external-prefix: /api/,               internal-prefix: /,                  uri: "${PLATFORM_API_URL:http://127.0.0.1:8081}",   context-path: "${PLATFORM_API_CONTEXT_PATH:/api}" }
+
+mybatis:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.coding.data.models
+  configuration:
+    map-underscore-to-camel-case: true
+
+jwt:
+  data-key: data

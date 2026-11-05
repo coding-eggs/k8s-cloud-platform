@@ -6,7 +6,7 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.models.TenantOverviewRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.security.TenantContextResolver;
 import com.coding.platformapi.services.TenantOverviewService;
 import io.swagger.v3.oas.annotations.Operation;

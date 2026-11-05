@@ -2,14 +2,21 @@
 /**
  * Pod exec 完整终端（xterm.js）。
  * WS 协议（与 k8s-server PodExecWebSocketHandler 对齐，经 platform-api 中继）：
- *   C→S: {"type":"input","data"} / {"type":"resize","cols","rows"}
- *   S→C: {"type":"output","data"} / {"type":"exit","code"} / {"type":"error","message"}
+ *   C→S: {"type":"input","data"} / {"type":"resize","cols","rows"} / {"type":"ping"}
+ *   S→C: {"type":"output","data"} / {"type":"exit","code"} / {"type":"error","message"} / {"type":"pong"}
+ *
+ * 心跳（utils/terminalHeartbeat）：每 10s 检查一次，距上次 ping 满 25s 发 ping（api 中继直接回 pong、
+ * 不转发给 k8s-server），让 nginx / 网关 / LB 这几跳都看到流量（常见 LB 空闲上限 60s）。
+ * 连续 60s 收不到任何帧（输出或 pong）→ 主动断开并提示（最晚 70s 内发现）。
+ * 断开后可「重新连接」：token 快过期先续期，再新建连接 = 新的 shell 会话，旧会话状态不保留。
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { getAccessToken } from '@/auth/oauth'
+import { getAccessToken, renewIfDue } from '@/auth/oauth'
+import { chunkTerminalInput } from '@/utils/terminalInput'
+import { HEARTBEAT_CHECK_MS, heartbeatAction } from '@/utils/terminalHeartbeat'
 
 const props = defineProps<{
   /** scope=cluster（节点详情等集群域）：走 admin client，无需 tenantId */
@@ -29,6 +36,9 @@ const errorMsg = ref('')
 let term: Terminal | null = null
 let fit: FitAddon | null = null
 let ws: WebSocket | null = null
+let pingTimer: ReturnType<typeof setInterval> | null = null
+let lastFrameAt = 0
+let lastPingAt = 0
 
 function focusTerm(): void {
   term?.focus()
@@ -68,6 +78,108 @@ function doFit(): void {
   }
 }
 
+function stopHeartbeat(): void {
+  if (pingTimer !== null) {
+    clearInterval(pingTimer)
+    pingTimer = null
+  }
+}
+
+/** 每 10s 一个 tick：静默超限判断线，否则到点发 ping */
+function startHeartbeat(): void {
+  stopHeartbeat()
+  lastFrameAt = Date.now()
+  lastPingAt = lastFrameAt
+  pingTimer = setInterval(() => {
+    const now = Date.now()
+    const action = heartbeatAction(now, lastFrameAt, lastPingAt)
+    if (action === 'dead') {
+      markClosed('\r\n\x1b[90m[连接已断开（心跳超时）]\x1b[0m\r\n')
+      ws?.close()
+    } else if (action === 'ping') {
+      lastPingAt = now
+      send({ type: 'ping' })
+    }
+  }, HEARTBEAT_CHECK_MS)
+}
+
+/** 置为 closed 并在终端写一行提示（只写一次） */
+function markClosed(line: string): void {
+  stopHeartbeat()
+  if (status.value !== 'closed') {
+    status.value = 'closed'
+    term?.write(line)
+  }
+}
+
+function connect(): void {
+  stopHeartbeat()
+  status.value = 'connecting'
+  exitCode.value = null
+  errorMsg.value = ''
+  const socket = new WebSocket(buildUrl())
+  ws = socket
+  // 旧连接的迟到事件不能改动新连接的状态
+  const current = () => ws === socket
+  socket.onopen = () => {
+    if (!current()) return
+    status.value = 'open'
+    startHeartbeat()
+    //连接建立后再同步一次尺寸（首帧 resize）
+    doFit()
+  }
+  socket.onmessage = (ev) => {
+    if (!current() || !term) return
+    lastFrameAt = Date.now()
+    try {
+      const msg = JSON.parse(String(ev.data)) as { type: string; data?: string; code?: number; message?: string }
+      switch (msg.type) {
+        case 'output':
+          term.write(msg.data ?? '')
+          break
+        case 'exit':
+          exitCode.value = msg.code ?? null
+          markClosed(`\r\n\x1b[90m[进程已退出，code=${msg.code ?? '?'}]\x1b[0m\r\n`)
+          break
+        case 'error':
+          errorMsg.value = msg.message ?? '未知错误'
+          markClosed(`\r\n\x1b[31m[错误] ${errorMsg.value}\x1b[0m\r\n`)
+          break
+      }
+    } catch {
+      /* 非 JSON 帧忽略 */
+    }
+  }
+  socket.onerror = () => {
+    if (!current()) return
+    if (status.value === 'connecting') {
+      errorMsg.value = '连接失败（请检查登录状态与网络）'
+      markClosed(`\r\n\x1b[31m[错误] ${errorMsg.value}\x1b[0m\r\n`)
+    }
+  }
+  socket.onclose = () => {
+    if (!current()) return
+    markClosed('\r\n\x1b[90m[连接已断开]\x1b[0m\r\n')
+  }
+}
+
+async function reconnect(): Promise<void> {
+  try {
+    ws?.close()
+  } catch {
+    /* ignore */
+  }
+  term?.write('\r\n\x1b[90m[正在打开新的会话…]\x1b[0m\r\n')
+  // 断线后可能隔了很久才点重连：token 过期的话握手只会 401，先续期（续不上照旧连，失败提示走原路径）
+  try {
+    await renewIfDue()
+  } catch {
+    /* 续期失败不挡重连 */
+  }
+  connect()
+  focusTerm()
+}
+
 onMounted(() => {
   if (!containerEl.value) return
   term = new Terminal({
@@ -84,57 +196,20 @@ onMounted(() => {
   term.open(containerEl.value)
   doFit()
 
-  term.onData((data) => send({ type: 'input', data }))
+  // 大段粘贴切块发：整段一帧会超 api（Tomcat）WS 文本缓冲 8192 字符 → 1009 断开
+  term.onData((data) => chunkTerminalInput(data).forEach((part) => send({ type: 'input', data: part })))
   window.addEventListener('resize', doFit)
 
-  ws = new WebSocket(buildUrl())
-  ws.onopen = () => {
-    status.value = 'open'
-    //连接建立后再同步一次尺寸（首帧 resize）
-    doFit()
-  }
-  ws.onmessage = (ev) => {
-    if (!term) return
-    try {
-      const msg = JSON.parse(String(ev.data)) as { type: string; data?: string; code?: number; message?: string }
-      switch (msg.type) {
-        case 'output':
-          term.write(msg.data ?? '')
-          break
-        case 'exit':
-          exitCode.value = msg.code ?? null
-          status.value = 'closed'
-          term.write(`\r\n\x1b[90m[进程已退出，code=${msg.code ?? '?'}]\x1b[0m\r\n`)
-          break
-        case 'error':
-          errorMsg.value = msg.message ?? '未知错误'
-          status.value = 'closed'
-          term.write(`\r\n\x1b[31m[错误] ${errorMsg.value}\x1b[0m\r\n`)
-          break
-      }
-    } catch {
-      /* 非 JSON 帧忽略 */
-    }
-  }
-  ws.onerror = () => {
-    if (status.value === 'connecting') {
-      errorMsg.value = '连接失败（请检查登录状态与网络）'
-      status.value = 'closed'
-      term?.write(`\r\n\x1b[31m[错误] ${errorMsg.value}\x1b[0m\r\n`)
-    }
-  }
-  ws.onclose = () => {
-    if (status.value !== 'closed') {
-      status.value = 'closed'
-      term?.write('\r\n\x1b[90m[连接已断开]\x1b[0m\r\n')
-    }
-  }
+  connect()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', doFit)
+  stopHeartbeat()
+  const socket = ws
+  ws = null
   try {
-    ws?.close()
+    socket?.close()
   } catch {
     /* ignore */
   }
@@ -148,9 +223,13 @@ onBeforeUnmount(() => {
     <div class="terminal-status">
       <span v-if="status === 'connecting'" class="muted">连接中…</span>
       <span v-else-if="status === 'open'" class="ok">已连接</span>
-      <span v-else class="bad">
-        已断开<template v-if="exitCode !== null">（exit {{ exitCode }}）</template><template v-if="errorMsg">：{{ errorMsg }}</template>
-      </span>
+      <template v-else>
+        <span class="bad">
+          已断开<template v-if="exitCode !== null">（exit {{ exitCode }}）</template><template v-if="errorMsg">：{{ errorMsg }}</template>
+        </span>
+        <el-button size="small" link type="primary" @click="reconnect">重新连接</el-button>
+        <span class="muted">将打开新的会话</span>
+      </template>
     </div>
     <div ref="containerEl" class="terminal-box" @click="focusTerm" />
   </div>
@@ -163,6 +242,9 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 .terminal-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
 }
 .terminal-status .ok {

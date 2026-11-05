@@ -16,7 +16,7 @@ import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.AllocationCreateRequest;
 import com.coding.platformapi.models.AllocationDeleteRequest;
 import com.coding.platformapi.models.AllocationQueryRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

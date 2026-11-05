@@ -3,7 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThatCode;

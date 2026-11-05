@@ -4,7 +4,7 @@ import com.coding.data.mapper.auth.PlatformPermissionMapper;
 import com.coding.data.models.auth.PlatformPermission;
 import com.coding.platformapi.models.PermissionGroup;
 import com.coding.platformapi.models.PermissionRuleView;
-import com.coding.platformapi.security.PermissionRegistry;
+import com.coding.common.components.permission.PermissionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;

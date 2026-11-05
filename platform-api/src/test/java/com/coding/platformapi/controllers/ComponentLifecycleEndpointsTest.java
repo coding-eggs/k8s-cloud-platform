@@ -3,7 +3,7 @@ package com.coding.platformapi.controllers;
 import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.data.models.system.TokenUserInfo;
 import com.coding.platformapi.models.ComponentApplyRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.ComponentInstallService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

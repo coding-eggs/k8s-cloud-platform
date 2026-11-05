@@ -32,7 +32,7 @@ import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.system.PlatformMiddlewareInstance;
 import com.coding.data.models.system.PlatformMiddlewareOperation;
 import com.coding.data.models.system.PlatformMiddlewareOperator;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sClient;
 import com.coding.platformapi.k8s.K8sMiddlewareClient;
 import com.coding.platformapi.middleware.MiddlewareCatalog;

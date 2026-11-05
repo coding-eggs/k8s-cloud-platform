@@ -42,7 +42,7 @@ K8s 云平台的**统一身份认证与授权服务**：基于 Spring Authorizat
 4. **会话续期 grant（自定义）**：`urn:coding:grant-type:session-renewal` —— 解决 PKCE 公共客户端拿不到 refresh_token 的续期问题（详见下文「关键设计」）。
 5. **按客户端自定义 JWT 编码**：每个客户端可独立配置 JWS 签名算法（对称/非对称）与可选的 JWE 加密。
 6. **JWK 密钥管理**：生成签名 / 加密密钥对并入库，供 SAS 的 `/oauth2/jwks` 使用。
-7. **客户端管理（内部接口）**：`/internal/clients/**` 只给 platform-api 调（共享密钥），规则在 `ClientAdminService`：内置客户端保护、机密 / 公共两类、对称密钥服务端生成；停用即对授权端点不可见。
+7. **客户端管理（内部接口）**：`/internal/clients/**` 只经平台网关（用户 JWT，权限码由网关判），规则在 `ClientAdminService`：内置客户端保护、机密 / 公共两类、对称密钥服务端生成；停用即对授权端点不可见。
 8. **Redis 会话存储**：登录态（根凭证）存 Redis，支持多实例 / 重启不丢；8h 空闲超时 + keepalive 滑动续期。
 
 ---
@@ -68,14 +68,15 @@ src/main/java/com/coding/auth/
 │   ├── SessionRenewalAuthenticationConverter.java # 从请求构建载体（仅本 grant 生效，否则放行）
 │   └── SessionRenewalAuthenticationProvider.java  # 校验链 + 以端用户身份重签 access_token
 ├── controller/
-│   ├── InternalClientController.java   # /internal/clients/** —— 客户端管理内部接口（只给 platform-api）
+│   ├── InternalClientController.java   # /internal/clients/** —— 客户端管理内部接口（只经网关；写操作记审计）
 │   ├── SessionController.java          # /session/keepalive —— 会话滑动续期
 │   ├── AuthorizationConsentController.java # /oauth2/consent、/consent/details —— 授权同意页
-│   ├── JwkController.java              # /jwk/generate —— 生成并入库密钥对
+│   ├── JwkController.java              # /internal/jwk/generate —— 生成并入库密钥对（只经网关）
 │   └── CallbackController.java         # /callback —— 测试用回调（打印 code）
 ├── config/（节选）
 │   ├── TokenClaimsPolicy.java          # token 按客户端类别写 claim：平台用户 / 外部用户 / 无用户
-│   └── InternalTokenFilter.java        # /internal/** 共享密钥校验（未配置拒启）
+│   ├── InternalApiSecurityConfig.java  # /internal/** 链：校验网关透传的用户 JWT（aud 白名单，未配置拒启）
+│   └── InternalEndpointCrossCheckRunner.java # /internal/** 端点缺 service=platform-auth 权限行即拒启
 ├── service/
 │   ├── ClientAdminService.java         # 客户端管理入口（内置保护、启停、重置密钥）
 │   ├── ExternalClientAssembler.java    # 外部客户端组装规则（创建 / 更新共用，规整老行）
@@ -235,13 +236,18 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 | POST | `/user/login` | 表单登录（白名单放行） |
 | POST | `/session/logout` | 登出 —— **无 controller**，由 `SecurityFilterChain` 的 `LogoutFilter` 处理（排在授权过滤器之前，会话已过期时重复调用是幂等 no-op） |
 | GET | `/session/keepalive` | 会话滑动续期（需已登录） |
-| POST | `/internal/clients/{list,get,scopes,create,update,delete,enable,reset-secret}` | 客户端管理**内部接口**：只给 platform-api，须带 `X-Platform-Internal-Token`；nginx 前门对 `/auth/internal/` 一律 404 |
-| POST | `/jwk/generate` | 生成签名/加密密钥对并入库 |
+| POST | `/internal/clients/{list,get,scopes,create,update,delete,enable,reset-secret}` | 客户端管理**内部接口**：只经平台网关（浏览器 `/api/oauth-clients/*`），带用户 JWT；接口级权限由网关判、写操作在此记审计；nginx 前门对 `/auth/internal/` 一律 404 |
+| POST | `/internal/jwk/generate` | 生成签名/加密密钥（原 `/jwk/generate`）；同上只经网关，码 `platform:jwk:manage` 只绑 admin |
 | GET | `/oauth2/consent` | 授权同意页（重定向到 `consent.html`） |
 | GET | `/consent/details` | 待批准 / 已批准的 scope 明细 |
 | GET | `/callback` | 测试用回调（打印 code，非核心） |
 
 > 白名单（`spring.security.ignore-urls`）：登录/注册/找回密码页、静态资源、Swagger/Knife4j 文档、`.well-known` 等，见 `application.yaml`。
+
+> **`/internal/**` 安全链**（`InternalApiSecurityConfig`，排在默认链之前）：无会话、不走表单登录；用本模块自己的 JWKSource 验网关透传的用户 JWT
+> （aud 白名单 `platform.internal.jwt.audiences`），**只要求已认证、不判权限码** —— 权限码在 [platform-gateway](../platform-gateway/README.md) 判。
+> 所以防绕过全靠两道网络隔离：nginx 对 `/auth/internal/` 回 404（`nginx.conf` 与 `nginx-https.conf` 都有）+ NetworkPolicy 只让 nginx 与网关直连本服务。
+> 新加内部端点必须同批加 `service='platform-auth'` 的权限行，否则 `InternalEndpointCrossCheckRunner` 拒启。
 
 ---
 
@@ -249,7 +255,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 
 设计见 `docs/superpowers/specs/2026-11-03-oauth-client-management-in-platform-design.md`。
 
-- **入口**：平台「组织 → OAuth 客户端」页 → platform-api `/oauth-clients/**`（权限 `platform:oauth-client:view|manage`，只绑 admin；写操作进审计）→ 本模块 `/internal/clients/**`。写逻辑留在这里，因为对称密钥要用 auth 自己的加密密钥落库。
+- **入口**：平台「组织 → OAuth 客户端」页 → `/api/oauth-clients/**` → 平台网关（权限 `platform:oauth-client:view|manage`，只绑 admin）→ 本模块 `/internal/clients/**`（写操作在这里记审计）。写逻辑留在这里，因为对称密钥要用 auth 自己的加密密钥落库。
 - **内置客户端**（`platform.client.builtin=true`，迁移 `V2026_11_03_2` 给 `platform-web-client` 打标）：不可删除、不可停用，只能改回调地址、登出回调与 access token TTL（< 会话空闲超时）。
 - **外部客户端**（能力与旧管理页对齐：可以不配，但不删）：
   - 机密：认证方式 `client_secret_basic` / `client_secret_post` / `private_key_jwt`（可兼带 `none`），授权方式可选授权码、刷新令牌、客户端凭据、设备码、会话续期（Token 交换已于 RBAC 改造时退役，不再提供；老行若带着它保存时原样保留）；授权码可关 PKCE。
@@ -275,7 +281,7 @@ SPA 侧逻辑已落地在 `platform-web/src/auth/oauth.ts`：`renewAccessToken()
 | `spring.data.redis.*` | `192.168.31.80:6379`, database `1` | Redis 会话存储（可用 `REDIS_HOST/PORT/PASSWORD` 覆盖） |
 | `jwt.enabled` / `jwt.issuer` / `jwt.data-key` | `true` / 同 issuer / `data` | JWT 组件开关、issuer、自定义用户 claim 的键名 |
 | `spring.security.ignore-urls` | 见 yaml | 免登录放行的 URL 白名单 |
-| `platform.internal.token` | `${PLATFORM_INTERNAL_TOKEN:}`（**无默认**） | 客户端管理内部接口的共享密钥；**留空拒启**；须与 platform-api 的 `platform.auth.internal-token` 同值 |
+| `platform.internal.jwt.audiences` | `${JWT_AUDIENCES:platform-web-client}` | `/internal/**` 校验 JWT 的 aud 白名单（逗号分隔）；**留空拒启**；与 platform-api / 网关同一个值 |
 | Knife4j / springdoc | `/doc.html`, `/v3/api-docs` | 接口文档（中文） |
 
 > ⚠️ **Redis 会话超时不在此文件**：由 `RedisSessionConfig` 的注解常量 `SESSION_MAX_INACTIVE_SECONDS`（8h）控制。

@@ -1,8 +1,8 @@
 package com.coding.platformapi.controllers;
 
 import com.coding.common.models.system.ResponseData;
-import com.coding.platformapi.audit.AuditAction;
-import com.coding.platformapi.audit.Auditable;
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.AppDependencyRequest;
 import com.coding.platformapi.models.AppExecutionView;
 import com.coding.platformapi.models.AppOverviewView;
@@ -19,7 +19,7 @@ import com.coding.platformapi.models.ApplicationDeleteRequest;
 import com.coding.platformapi.models.ApplicationOptionsView;
 import com.coding.platformapi.models.ApplicationQueryRequest;
 import com.coding.platformapi.models.ApplicationView;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.ApplicationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

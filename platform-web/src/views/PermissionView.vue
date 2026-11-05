@@ -83,8 +83,8 @@ function normalizePath(raw: string): string {
     }
   }
   s = s.split('#')[0]!.split('?')[0]!
-  // 平台前端的接口都走 /api 前缀（nginx/vite 转发时剥掉）；权限行里存的是剥掉后的
-  // platform-api 路径。粘贴浏览器地址栏 / DevTools 里的完整 URL 时，把这一层也去掉。
+  // 平台前端的接口都走 /api 前缀（= platform-api 的 context-path）；权限行里存的是服务内路径
+  // （context-path 之后，不带 /api）。粘贴浏览器地址栏 / DevTools 里的完整 URL 时，把这一层去掉。
   if (s === '/api') s = '/'
   else if (s.startsWith('/api/')) s = s.slice(4)
   if (!s.startsWith('/')) s = `/${s}`

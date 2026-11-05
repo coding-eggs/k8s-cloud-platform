@@ -3,7 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.data.mapper.system.PlatformCredentialMapper;
 import com.coding.data.models.system.PlatformCredential;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.credential.CredentialCipher;
 import com.coding.platformapi.models.RegistryBrowseRequest;
 import com.coding.platformapi.models.RegistryConnectionView;

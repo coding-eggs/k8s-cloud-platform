@@ -3,7 +3,7 @@ package com.coding.platformapi.services;
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.k8s.dto.IpoolDTO;
 import com.coding.common.models.k8s.dto.PoolIpamSummaryDTO;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sCalicoClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;

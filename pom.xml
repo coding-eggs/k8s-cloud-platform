@@ -21,7 +21,7 @@
         <fabric8.kubernetes-client.version>7.9.0</fabric8.kubernetes-client.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <nimbus.version>10.4</nimbus.version>
-        <spring-cloud.version>2025.1.1</spring-cloud.version>
+        <spring-cloud.version>2025.1.4</spring-cloud.version>
         <crypto.tink.version>1.21.0</crypto.tink.version>
         <swagger.version>2.2.25</swagger.version>
     </properties>
@@ -33,6 +33,7 @@
         <module>platform-data</module>
         <module>platform-auth</module>
         <module>platform-api</module>
+        <module>platform-gateway</module>
     </modules>
 
     <dependencyManagement>

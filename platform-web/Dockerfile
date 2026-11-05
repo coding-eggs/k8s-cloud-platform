@@ -30,20 +30,20 @@
 #    登记的 redirect_uri 都必须与前端实际用的值**一字不差**（授权端点是精确匹配）。
 #
 # 运行 —— 三个参数由**运行时环境变量**给（改了重启容器即可，不用重新打镜像）：
-#   PLATFORM_API_URL   默认 http://platform-api:8081
-#   PLATFORM_AUTH_URL  默认 http://platform-auth:9527
+#   PLATFORM_GATEWAY_URL  默认 http://platform-gateway:8090（/api/** 一律经网关、原样转发不去前缀；**不要以 / 结尾**）
+#   PLATFORM_AUTH_URL     默认 http://platform-auth:9527
 #   PLATFORM_OAUTH_REDIRECT_URI  默认空 = 前端取「页面 origin + /callback」；
 #                     非空时原样作为 OAuth redirect_uri（例：http://192.168.85.1:30080/callback）
 #   写法 scheme://host:port，结尾不要带 /。
 #   ⚠️ nginx 启动时就要解析这两个地址里的主机名（解析不到直接起不来：host not found in upstream）。
 #   docker compose / k8s 里服务名对得上就不用设；单机调试指到能解析的地址：
 #   docker run --rm -p 80:80 \
-#     -e PLATFORM_API_URL=http://10.0.0.12:8081 \
+#     -e PLATFORM_GATEWAY_URL=http://10.0.0.12:8090 \
 #     -e PLATFORM_AUTH_URL=http://10.0.0.13:9527 \
 #     k8s-cloud-platform/web:latest
 #
 # 代理规则写在同一目录的 nginx.conf（是模板，启动时由 nginx 官方镜像的 envsubst 渲染）：
-# /api/** → platform-api（去 /api 前缀），/auth/** → platform-auth，
+# /api/** → platform-gateway（原样转发，不去 /api 前缀），/auth/** → platform-auth，
 # /runtime-config.js → 按上面的环境变量现生成 SPA 的运行时配置（回调地址等）。
 # TLS 由本镜像的 nginx 终止时，把同目录的 nginx-https.conf 挂到
 # /etc/nginx/templates/default.conf.template（用法见它的文件头；挂到 conf.d 会被覆盖）。
@@ -53,7 +53,7 @@
 # 镜像要先由 scripts/harbor-replication.py 复制进 Harbor 的 docker.io 项目，否则这里拉不到。
 FROM harbor.ackcp.cloud/docker.io/library/nginx:1.27-alpine
 
-ENV PLATFORM_API_URL=http://platform-api:8081 \
+ENV PLATFORM_GATEWAY_URL=http://platform-gateway:8090 \
     PLATFORM_AUTH_URL=http://platform-auth:9527 \
     PLATFORM_OAUTH_REDIRECT_URI="" \
     NGINX_ENVSUBST_FILTER=^PLATFORM_

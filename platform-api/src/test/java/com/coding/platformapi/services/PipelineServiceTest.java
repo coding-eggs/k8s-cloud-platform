@@ -6,7 +6,7 @@ import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformPipelineMapper;
 import com.coding.data.models.system.PlatformPipeline;
 import com.coding.platformapi.k8s.K8sPipelineClient;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import tools.jackson.databind.JsonNode;

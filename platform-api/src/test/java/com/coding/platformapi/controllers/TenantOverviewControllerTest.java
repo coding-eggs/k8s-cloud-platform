@@ -10,7 +10,7 @@ import com.coding.data.models.system.UserTenantInfo;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
 import com.coding.platformapi.models.TenantOverviewRequest;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.security.TenantContextResolver;
 import com.coding.platformapi.services.TenantOverviewService;
 import org.junit.jupiter.api.Test;

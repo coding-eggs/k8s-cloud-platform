@@ -508,8 +508,11 @@ async function keepalive(): Promise<KeepaliveVerdict> {
   }
 }
 
-/** token 到期前主动续期；续成功后按新 token 的 exp 重新排程 */
-async function renewIfDue(): Promise<void> {
+/**
+ * token 到期前主动续期；续成功后按新 token 的 exp 重新排程。
+ * 也给「拿当前 token 新建长连接」的地方用（终端重连）：快过期 / 已过期就先续，否则什么都不做。
+ */
+export async function renewIfDue(): Promise<void> {
   if (switchInFlight > 0) return // 手动切租户在途 → 让 switchTenant 独占 token 写入
   const token = getAccessToken()
   if (!token) return

@@ -39,11 +39,31 @@
             <artifactId>spring-security-oauth2-jose</artifactId>
         </dependency>
 
+        <!-- RedisJsonCache / 权限闭包缓存（api 与网关共用）。optional：k8s-server 也依赖本模块，但用不到 Redis -->
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-redis</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- BearerTokenResolver 接口签名带 HttpServletRequest；运行时由 web 容器提供 -->
         <dependency>
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
             <scope>provided</scope>
+        </dependency>
+
+        <!-- 审计切面（ServletAuditConfiguration，只被 api / auth @Import）。optional：网关与 k8s-server 不需要 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aspectj</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <!-- AuditWriter 的 REQUIRES_NEW -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <dependency>

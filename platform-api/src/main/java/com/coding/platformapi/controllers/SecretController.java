@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.SecretDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.SecretService;
@@ -56,12 +58,14 @@ public class SecretController {
 
     @PostMapping
     @Operation(summary = "创建 Secret")
+    @Auditable(action = AuditAction.SECRET_CREATE)
     public ResponseData<SecretDTO> create(@RequestBody SecretDTO body) {
         return new ResponseData<>(secretService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 Secret")
+    @Auditable(action = AuditAction.SECRET_UPDATE)
     public ResponseData<SecretDTO> update(@PathVariable String name, @RequestBody SecretDTO body) {
         body.setName(name);
         return new ResponseData<>(secretService.update(body));
@@ -69,6 +73,7 @@ public class SecretController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 Secret")
+    @Auditable(action = AuditAction.SECRET_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

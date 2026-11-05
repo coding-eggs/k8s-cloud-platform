@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.PodDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.metrics.MetricsService;
@@ -77,6 +79,7 @@ public class PodController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 Pod（由控制器重建）")
+    @Auditable(action = AuditAction.POD_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

@@ -2,7 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.models.k8s.dto.NamespaceSnapshotDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatDTO;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sNamespaceStatClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;

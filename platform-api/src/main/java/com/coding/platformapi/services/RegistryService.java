@@ -6,7 +6,7 @@ import com.coding.data.mapper.system.PlatformCredentialMapper;
 import com.coding.data.mapper.system.PlatformRegistryProjectMapper;
 import com.coding.data.models.system.PlatformCredential;
 import com.coding.data.models.system.PlatformRegistryProject;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.credential.CredentialCipher;
 import com.coding.platformapi.credential.CredentialSecret;
 import com.coding.platformapi.models.RegistryBrowseRequest;

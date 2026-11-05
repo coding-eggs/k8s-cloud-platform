@@ -1,0 +1,48 @@
+# platform-gateway（平台 API 网关：接口级鉴权 + 403 审计 + 路由）的**运行镜像**。
+#
+# ⚠️ 2026-10-16 改定：**编译不在这里做** —— 交给流水线的「Java 构建」节点。
+#   理由：编译写在 Dockerfile 里的话，「Java 构建」节点刚编译一遍、`buildah bud` 又编译一遍，
+#   而且第二遍**拿不到依赖缓存**（/cache 挂在构建节点上，不在 builder 里）——
+#   构建节点存在的意义就没了（用户 2026-10-16 的决定：打包阶段独立成节点）。
+#
+# 用法（**两步，与流水线的两个节点一一对应**）：
+#   1) 先在**仓库根**编译（产出 platform-gateway/target/*.jar）：
+#        mvn -B -pl platform-gateway -am -DskipTests package
+#   2) 再打包镜像，**上下文是模块目录**（不是仓库根 —— buildah/docker 会把整个上下文传给
+#      builder，模块目录小得多）：
+#        docker build -f platform-gateway/Dockerfile -t k8s-cloud-platform/platform-gateway:latest platform-gateway
+#
+# 流水线里对应：
+#   「Java 构建」节点：工作目录留空（仓库根）、命令 mvn -B -pl platform-gateway -am -DskipTests package
+#   「构建并推送镜像」节点：Dockerfile 路径 platform-gateway/Dockerfile、构建上下文 platform-gateway
+#
+# ⚠️ 本文件假定 `target/*.jar` **已经编译好了**（上面第 1 步）。单独 `docker build` 会失败在
+#    COPY 那一步 —— 那是设计如此，不是配置错误。
+#
+# 运行（默认端口 8090）：
+#   docker run --rm -p 8090:8090 #     -e MYSQL_HOST=mysql -e MYSQL_PORT=3306 -e MYSQL_USER=root -e MYSQL_PASSWORD=*** #     -e REDIS_HOST=redis -e REDIS_PORT=6379 -e REDIS_PASSWORD=*** -e REDIS_DATABASE=1 #     -e OAUTH2_SERVER=http://platform-auth:9527/auth #     -e PLATFORM_API_URL=http://platform-api:8081 -e PLATFORM_AUTH_URL=http://platform-auth:9527 #     k8s-cloud-platform/platform-gateway:latest
+#
+# ⚠️ 依赖地址在容器里必须显式覆盖（容器里的 127.0.0.1 是容器自己）：MYSQL_* · REDIS_* · OAUTH2_SERVER · PLATFORM_*_URL
+# ⚠️ OAUTH2_SERVER 写到 /auth 为止（网关自己拼 /oauth2/jwks）；不带 /auth → 拉不到密钥 → 全站 401。
+# ⚠️ Redis 必须与 platform-api 同库同 database（共用权限闭包缓存键）；JWT_AUDIENCES 与 api / auth 同值。
+# ⚠️ 启动时读权限表，读不到拒启 —— 先重放 V2026_11_04_1 / V2026_11_04_2（本仓没有 Flyway，手工重放）。
+# 部署顺序与 NetworkPolicy 见 platform-gateway/README.md §3 / §4。
+
+FROM eclipse-temurin:21-jre
+
+RUN useradd -m -u 1001 app
+WORKDIR /app
+# 相对**上下文**（= 模块目录）—— 那一个 jar 就是 spring-boot repackage 出来的可执行包
+COPY --chown=app:app target/*.jar /app/app.jar
+USER app
+
+ENV TZ=Asia/Shanghai
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+
+EXPOSE 8090
+
+# 存活探针：TCP 层（与其它服务一致；网关虽带 actuator，health 不随 MySQL/Redis 抖动）
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+    CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/8090' || exit 1
+
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar \"$@\"", "--"]

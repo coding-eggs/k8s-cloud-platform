@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.IpamBlockStatDTO;
 import com.coding.common.models.k8s.dto.IpamIpDetailDTO;
 import com.coding.common.models.k8s.dto.BgpConfigurationDTO;
@@ -63,6 +65,7 @@ public class CalicoController {
 
     @PostMapping("/ippool")
     @Operation(summary = "创建 IPPool")
+    @Auditable(action = AuditAction.IPPOOL_CREATE)
     public ResponseData<IpoolDTO> createIppool(@RequestParam String clusterId, @RequestBody IpoolDTO body) {
         body.setClusterId(clusterId);
         return new ResponseData<>(calico.createIppool(body));
@@ -70,6 +73,7 @@ public class CalicoController {
 
     @PutMapping("/ippool/{name}")
     @Operation(summary = "更新 IPPool")
+    @Auditable(action = AuditAction.IPPOOL_UPDATE)
     public ResponseData<IpoolDTO> updateIppool(@PathVariable String name, @RequestParam String clusterId,
                                                @RequestBody IpoolDTO body) {
         body.setName(name);
@@ -79,6 +83,7 @@ public class CalicoController {
 
     @DeleteMapping("/ippool/{name}")
     @Operation(summary = "删除 IPPool（带守卫：有已分配 IP 拒绝）")
+    @Auditable(action = AuditAction.IPPOOL_DELETE)
     public ResponseData<Void> deleteIppool(@PathVariable String name, @RequestParam String clusterId) {
         calico.deleteIppool(clusterId, name);
         return new ResponseData<>();
@@ -106,6 +111,7 @@ public class CalicoController {
 
     @PostMapping("/ipreservation")
     @Operation(summary = "创建 IPReservation（保留段）")
+    @Auditable(action = AuditAction.IPRESERVATION_CREATE)
     public ResponseData<IpReservationDTO> createIpreervation(@RequestParam String clusterId, @RequestBody IpReservationDTO body) {
         body.setClusterId(clusterId);
         return new ResponseData<>(calico.createIpreervation(body));
@@ -113,6 +119,7 @@ public class CalicoController {
 
     @PutMapping("/ipreservation/{name}")
     @Operation(summary = "更新 IPReservation（改保留段）")
+    @Auditable(action = AuditAction.IPRESERVATION_UPDATE)
     public ResponseData<IpReservationDTO> updateIpreervation(@PathVariable String name, @RequestParam String clusterId,
                                                               @RequestBody IpReservationDTO body) {
         body.setName(name);
@@ -122,6 +129,7 @@ public class CalicoController {
 
     @DeleteMapping("/ipreservation/{name}")
     @Operation(summary = "删除 IPReservation（释放保留段）")
+    @Auditable(action = AuditAction.IPRESERVATION_DELETE)
     public ResponseData<Void> deleteIpreervation(@PathVariable String name, @RequestParam String clusterId) {
         calico.deleteIpreervation(clusterId, name);
         return new ResponseData<>();
@@ -186,6 +194,7 @@ public class CalicoController {
 
     @PostMapping("/bgpconfiguration")
     @Operation(summary = "创建 BGPConfiguration（仅平台管理员）")
+    @Auditable(action = AuditAction.BGPCONFIGURATION_CREATE)
     public ResponseData<BgpConfigurationDTO> createBgpConfiguration(@RequestParam String clusterId,
                                                                     @RequestBody BgpConfigurationDTO body) {
         return new ResponseData<>(calico.createBgpConfiguration(body));
@@ -193,6 +202,7 @@ public class CalicoController {
 
     @PutMapping("/bgpconfiguration/{name}")
     @Operation(summary = "更新 BGPConfiguration（仅平台管理员）")
+    @Auditable(action = AuditAction.BGPCONFIGURATION_UPDATE)
     public ResponseData<BgpConfigurationDTO> updateBgpConfiguration(@PathVariable String name, @RequestParam String clusterId,
                                                                     @RequestBody BgpConfigurationDTO body) {
         return new ResponseData<>(calico.updateBgpConfiguration(body));
@@ -200,6 +210,7 @@ public class CalicoController {
 
     @DeleteMapping("/bgpconfiguration/{name}")
     @Operation(summary = "删除 BGPConfiguration（仅平台管理员）")
+    @Auditable(action = AuditAction.BGPCONFIGURATION_DELETE)
     public ResponseData<Void> deleteBgpConfiguration(@PathVariable String name, @RequestParam String clusterId) {
         calico.deleteBgpConfiguration(clusterId, name);
         return new ResponseData<>();
@@ -225,12 +236,14 @@ public class CalicoController {
 
     @PostMapping("/bgppeer")
     @Operation(summary = "创建 BGPPeer")
+    @Auditable(action = AuditAction.BGPPEER_CREATE)
     public ResponseData<BgpPeerDTO> createBgpPeer(@RequestParam String clusterId, @RequestBody BgpPeerDTO body) {
         return new ResponseData<>(calico.createBgpPeer(body));
     }
 
     @PutMapping("/bgppeer/{name}")
     @Operation(summary = "更新 BGPPeer")
+    @Auditable(action = AuditAction.BGPPEER_UPDATE)
     public ResponseData<BgpPeerDTO> updateBgpPeer(@PathVariable String name, @RequestParam String clusterId,
                                                   @RequestBody BgpPeerDTO body) {
         return new ResponseData<>(calico.updateBgpPeer(body));
@@ -238,6 +251,7 @@ public class CalicoController {
 
     @DeleteMapping("/bgppeer/{name}")
     @Operation(summary = "删除 BGPPeer")
+    @Auditable(action = AuditAction.BGPPEER_DELETE)
     public ResponseData<Void> deleteBgpPeer(@PathVariable String name, @RequestParam String clusterId) {
         calico.deleteBgpPeer(clusterId, name);
         return new ResponseData<>();
@@ -263,12 +277,14 @@ public class CalicoController {
 
     @PostMapping("/bgpfilter")
     @Operation(summary = "创建 BGPFilter")
+    @Auditable(action = AuditAction.BGPFILTER_CREATE)
     public ResponseData<BgpFilterDTO> createBgpFilter(@RequestParam String clusterId, @RequestBody BgpFilterDTO body) {
         return new ResponseData<>(calico.createBgpFilter(body));
     }
 
     @PutMapping("/bgpfilter/{name}")
     @Operation(summary = "更新 BGPFilter")
+    @Auditable(action = AuditAction.BGPFILTER_UPDATE)
     public ResponseData<BgpFilterDTO> updateBgpFilter(@PathVariable String name, @RequestParam String clusterId,
                                                       @RequestBody BgpFilterDTO body) {
         return new ResponseData<>(calico.updateBgpFilter(body));
@@ -276,6 +292,7 @@ public class CalicoController {
 
     @DeleteMapping("/bgpfilter/{name}")
     @Operation(summary = "删除 BGPFilter")
+    @Auditable(action = AuditAction.BGPFILTER_DELETE)
     public ResponseData<Void> deleteBgpFilter(@PathVariable String name, @RequestParam String clusterId) {
         calico.deleteBgpFilter(clusterId, name);
         return new ResponseData<>();

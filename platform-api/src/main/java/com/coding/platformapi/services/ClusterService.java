@@ -14,7 +14,7 @@ import com.coding.common.utils.AESUtils;
 import com.coding.common.utils.ULIDGenerator;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.ClusterCreateRequest;
 import com.coding.platformapi.models.ClusterKeyRequest;

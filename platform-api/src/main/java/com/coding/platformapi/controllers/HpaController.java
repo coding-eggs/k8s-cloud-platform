@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.HpaDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.HpaService;
@@ -57,6 +59,7 @@ public class HpaController {
 
     @PostMapping
     @Operation(summary = "创建 HPA")
+    @Auditable(action = AuditAction.HPA_CREATE)
     public ResponseData<HpaDTO> create(@RequestBody HpaDTO body) {
         //scaleTargetRef 重复绑定（一负载一 HPA）由 HpaService 校验
         return new ResponseData<>(hpaService.create(body));
@@ -64,6 +67,7 @@ public class HpaController {
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 HPA")
+    @Auditable(action = AuditAction.HPA_UPDATE)
     public ResponseData<HpaDTO> update(@PathVariable String name, @RequestBody HpaDTO body) {
         body.setName(name);
         return new ResponseData<>(hpaService.update(body));
@@ -71,6 +75,7 @@ public class HpaController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 HPA")
+    @Auditable(action = AuditAction.HPA_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

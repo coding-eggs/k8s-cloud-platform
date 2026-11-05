@@ -4,8 +4,8 @@ import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.k8s.K8sCluster;
-import com.coding.platformapi.audit.AuditAction;
-import com.coding.platformapi.audit.Auditable;
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.platformapi.metrics.MetricsService;
 import com.coding.platformapi.metrics.dto.ClusterMetricsRequest;
 import com.coding.platformapi.metrics.dto.MetricSeriesResponse;
@@ -20,7 +20,7 @@ import com.coding.platformapi.models.ComponentFlagDTO;
 import com.coding.platformapi.models.ComponentOperationQuery;
 import com.coding.platformapi.models.ComponentStatusDTO;
 import com.coding.platformapi.services.ClusterComponentService;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.ClusterService;
 import com.coding.platformapi.services.ComponentInstallService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -113,6 +113,7 @@ public class ClusterController {
 
     @PostMapping("/capability/refresh")
     @Operation(summary = "刷新集群 API 能力", description = "运行时 discovery 探测（getApiGroups）并持久化到 k8s_cluster.capability；失败透出错误")
+    @Auditable(action = AuditAction.CLUSTER_REFRESH_CAPABILITY, target = "#request.clusterId")
     public ResponseData<Void> refreshCapability(@RequestBody ClusterKeyRequest request) {
         clusterService.refreshCapabilityStrict(request.getClusterId());
         return new ResponseData<>();

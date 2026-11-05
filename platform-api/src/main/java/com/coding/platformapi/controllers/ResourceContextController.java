@@ -2,7 +2,7 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.k8s.dto.admin.ResourceContextDTO;
 import com.coding.common.models.system.ResponseData;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.ResourceContextService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;

@@ -12,7 +12,7 @@ import com.coding.common.models.k8s.dto.IpoolDTO;
 import com.coding.common.models.k8s.dto.IpReservationDTO;
 import com.coding.common.models.k8s.dto.PoolIpamSummaryDTO;
 import com.coding.common.models.k8s.dto.SecretRefOptionDTO;
-import com.coding.platformapi.cache.RedisJsonCache;
+import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.k8s.K8sCalicoClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

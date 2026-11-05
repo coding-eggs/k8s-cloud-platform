@@ -1,5 +1,6 @@
 package com.coding.auth;
 
+import com.coding.common.audit.ServletAuditConfiguration;
 import com.coding.common.components.JwkService;
 import com.nimbusds.jose.jwk.JWK;
 import com.nimbusds.jose.jwk.JWKSet;
@@ -11,6 +12,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.ComponentScans;
+import org.springframework.context.annotation.Import;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
@@ -23,6 +25,8 @@ import java.util.List;
         "com.coding.data.mapper",
 })
 @SpringBootApplication
+// 内部接口（客户端管理、JWK 生成）的写操作审计：common 里刻意不打 @Configuration（k8s-server 也扫 com.coding.common）
+@Import(ServletAuditConfiguration.class)
 public class PlatformAuthApplication {
 
     public static void main(String[] args) {

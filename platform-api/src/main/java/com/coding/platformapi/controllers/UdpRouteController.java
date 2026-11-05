@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.audit.AuditAction;
+import com.coding.common.audit.Auditable;
 import com.coding.common.models.k8s.dto.UdpRouteDTO;
 import com.coding.common.models.system.ResponseData;
 import com.coding.platformapi.services.UdpRouteService;
@@ -60,12 +62,14 @@ public class UdpRouteController {
 
     @PostMapping
     @Operation(summary = "创建 UDPRoute")
+    @Auditable(action = AuditAction.UDPROUTE_CREATE)
     public ResponseData<UdpRouteDTO> create(@RequestBody UdpRouteDTO body) {
         return new ResponseData<>(udpRouteService.create(body));
     }
 
     @PutMapping("/{name}")
     @Operation(summary = "更新 UDPRoute")
+    @Auditable(action = AuditAction.UDPROUTE_UPDATE)
     public ResponseData<UdpRouteDTO> update(@PathVariable String name, @RequestBody UdpRouteDTO body) {
         body.setName(name);
         return new ResponseData<>(udpRouteService.update(body));
@@ -73,6 +77,7 @@ public class UdpRouteController {
 
     @DeleteMapping("/{name}")
     @Operation(summary = "删除 UDPRoute")
+    @Auditable(action = AuditAction.UDPROUTE_DELETE)
     public ResponseData<Void> delete(@PathVariable String name,
                                      @RequestParam String tenantId,
                                      @RequestParam String clusterId,

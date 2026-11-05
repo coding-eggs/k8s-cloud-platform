@@ -7,7 +7,7 @@ import com.coding.platformapi.models.RegistrySuggestRequest;
 import com.coding.platformapi.models.RegistrySuggestResponse;
 import com.coding.platformapi.models.RegistryWarehouseView;
 import com.coding.platformapi.registry.BrowseResult;
-import com.coding.platformapi.security.AuthContext;
+import com.coding.common.security.AuthContext;
 import com.coding.platformapi.services.RegistryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
