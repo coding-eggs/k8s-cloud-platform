@@ -3,8 +3,7 @@ package com.coding.gateway.audit;
 import com.coding.data.mapper.system.PlatformAuditLogMapper;
 import com.coding.data.models.system.PlatformAuditLog;
 import com.coding.gateway.security.GatewayAuthorizationManager;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -27,9 +26,8 @@ import java.util.Set;
  * <p>{@link #record} <b>永不出错</b>：写库失败只记 ERROR，403 照常返回 —— 否则一次库抖动会把 403 变成 500。
  * 网关没有业务事务，直接 {@code insert}，不需要 api 那边的 REQUIRES_NEW。
  */
+@Slf4j
 public class GatewayDeniedAuditor {
-
-    private static final Logger log = LoggerFactory.getLogger(GatewayDeniedAuditor.class);
 
     /** 身份取不到时记的字面量（与 common 的 AuditRecorder.UNKNOWN_ACTOR 同值） */
     static final String UNKNOWN_ACTOR = "unknown";

@@ -2,8 +2,7 @@ package com.coding.gateway.security;
 
 import com.coding.common.components.permission.PermissionRegistry;
 import com.coding.data.mapper.auth.PlatformPermissionMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
 import reactor.core.Disposable;
@@ -26,9 +25,9 @@ import java.util.stream.Collectors;
  * </ul>
  * 装全部 API 域行（各服务都在），service 由路由区分。角色/用户分配的变化不走这里，那走闭包缓存的 TTL。
  */
+@Slf4j
 public class PermissionRegistryReloader implements InitializingBean, DisposableBean {
 
-    private static final Logger log = LoggerFactory.getLogger(PermissionRegistryReloader.class);
 
     private final PlatformPermissionMapper mapper;
     private final PermissionRegistry registry;
