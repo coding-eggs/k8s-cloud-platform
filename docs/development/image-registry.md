@@ -90,6 +90,8 @@ IMAGES = {
 - 规则名 = `mirror-<上游>-<仓库>-tN`，删规则/endpoint 脚本**不做**（避免误删），要删在 Harbor UI 里删。
 - **删规则前先停掉没结束的执行**，否则 Harbor 报 `contains executions that aren't in final status`。
   接口是 `PUT /api/v2.0/replication/executions/<id>` + `{"status":"Stopped"}`（**PATCH 会 405**）。
+- **优先挑体积小的镜像**：多平台 index 会把 Windows 等用不上的平台一起搬进 Harbor，
+  单这一项就能差出几十倍（`eclipse-temurin:21-jre` → 5GB，其中 4.5GB 是 Windows）。见 §3.7。
 
 ### 3.1 规则怎么配（手工等价操作）
 
@@ -244,6 +246,55 @@ registry endpoint 时直接报 `the registry is unhealthy`。
 > 另外注意 —— 配了代理之后 Harbor 拉上游不再依赖节点直连，但**节点拉 Harbor 本身**仍然走内网，
 > 不受影响。
 
+### 3.7 磁盘：优先挑小的镜像（2026-11-05）
+
+Harbor 的复制规则**没有平台过滤**：一个 tag 对应多平台 index 时，它会把**所有平台**的 manifest
+和 blob 一起搬过来 —— **包括 Windows**。所以「这镜像多大」不能只看你拉的那一份。
+
+实测 `eclipse-temurin:21-jre`（逐平台累加 `/v2/.../manifests/21-jre` 的层大小）：
+
+| 平台 | 压缩后 |
+|---|---|
+| **linux/amd64** | **110 MB** ← 构建实际只拉这一份 |
+| linux/arm64 | 108 MB |
+| linux/ppc64le | 117 MB |
+| linux/s390x | 107 MB |
+| **windows/amd64 × 2** | **2362 MB + 2204 MB** |
+| **Harbor 里合计** | **约 5.0 GB** |
+
+构建只用到 110MB，Harbor 却存了 5GB —— **96% 是那份用不上的 Windows 镜像**。
+
+#### 选镜像的三条规矩
+
+1. **能选 alpine / slim / distroless 就选**。这类变体通常只发 Linux 平台，Harbor 的占用直接掉一个数量级。
+   对**平台自身镜像的基础镜像**（见 §7）和内置 chart 里的镜像同样适用。
+2. **复制前先量一下**，别等搬完 5GB 才发现。下面这段只读、等价于 `docker pull` 的第一步：
+   ```bash
+   python3 - <<'PY'
+   import json, urllib.request
+   REG = 'https://harbor.ackcp.cloud/v2/docker.io/library/eclipse-temurin'   # 换成目标
+   TAG = '21-jre'
+   def m(p, a):
+       return json.load(urllib.request.urlopen(
+           urllib.request.Request(REG + p, headers={'Accept': a}), timeout=60))
+   idx = m('/manifests/' + TAG, 'application/vnd.oci.image.index.v1+json')
+   tot = 0
+   for x in idx['manifests']:
+       pf = x.get('platform') or {}
+       if pf.get('architecture') in (None, 'unknown'):
+           continue                                    # attestation，忽略
+       layers = m('/manifests/' + x['digest'],
+                  'application/vnd.oci.image.manifest.v1+json,'
+                  'application/vnd.docker.distribution.manifest.v2+json')['layers']
+       s = sum(l['size'] for l in layers); tot += s
+       print(f"{pf.get('os')}/{pf.get('architecture')}: {s/1048576:.0f} MB")
+   print(f"合计 {tot/1048576:.0f} MB")
+   PY
+   ```
+   私有仓库需要先取 token（`GET /service/token?service=harbor-registry&scope=repository:<repo>:pull`）。
+3. **别为了省空间去删 index 的子 manifest**。删掉 Windows 那两份会让 index 指向不存在的 manifest，
+   `docker pull` 反而可能出错。真要回收就删整个 repository，改用一个更小的 tag 重新复制。
+
 
 ## 4. 平台配置
 
@@ -277,12 +328,25 @@ registry endpoint 时直接报 `the registry is unhealthy`。
 | Pod `x509: certificate has expired` | Harbor 证书到期 | 见 [续期方案](../superpowers/specs/2026-10-28-harbor-tls-renewal-design.md) |
 | `no such host: harbor.ackcp.cloud` | 节点解析不到该域名 | 内网 DNS / 节点 hosts 加记录（**containerd 用节点解析器，不是 CoreDNS**） |
 | 装了组件但镜像仍走公网 | 该 chart 的 image 字段不在识别口径里 | 跑 `ChartImageRenderGuardTest`（本机有 helm 才会执行），它会渲染出具体是哪一份 chart 的哪个镜像还指向上游 |
+| Harbor 里一个镜像占了好几 GB，是不是复制错了 | 不是。多平台 index 会**全量**搬，含 Windows | 构建只拉当前平台那一份（通常一两百 MB）。选镜像时优先小体积，见 §3.7 |
+| 复制执行一直 `InProgress`、artifact 有子 manifest 但没有 tag | 同一个策略被并发触发了两次，两条执行互相抢推送锁 | 两条都 `Stopped` 后**重新触发一次**。停接口见 §3.0 最后一条 |
 
 ## 7. 平台自身镜像
 
 platform-api / k8s-server / platform-web / platform-auth 的 Deployment 不在本仓库里，平台只提供清单。
 **顺序很重要**：先把这 4 个镜像推到 `platform/...`（平台自己的构建产物放 `platform` 项目），再改部署清单的 image 与
 `imagePullSecrets`（若项目仍是私有）——否则 k8s-server 起不来，连"下发 Secret"的机会都没有。
+
+**这四个镜像的 `FROM` 全部指向平台 Harbor**（`harbor.ackcp.cloud/docker.io/library/…`，2026-11-05 改），
+构建期不再访问 Docker Hub。用到的两个基础镜像：
+
+| 镜像 | 用在哪 | Harbor 里的体积 |
+|---|---|---|
+| `eclipse-temurin:21-jre` | platform-api / platform-auth / k8s-server | 约 5.0 GB（其中 4.5 GB 是 Windows，构建只拉 linux/amd64 的 110 MB） |
+| `nginx:1.27-alpine` | platform-web | 161 MB（alpine 只发 Linux，没有这个问题） |
+
+**换基础镜像时按 §3.7 先量体积**，并同步改 `scripts/harbor-replication.py` 的 `IMAGES` 表和 Dockerfile。
+这两个镜像必须先复制进 Harbor 才能构建，否则 `FROM` 会直接拉取失败。
 
 ## 8. 改写覆盖到哪一层
 

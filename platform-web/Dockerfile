@@ -49,7 +49,9 @@
 # /etc/nginx/templates/default.conf.template（用法见它的文件头；挂到 conf.d 会被覆盖）。
 # 容器根文件系统只读时启动渲染写不进去：给 /etc/nginx/conf.d 挂一个可写的 emptyDir。
 
-FROM nginx:1.27-alpine
+# 基础镜像走平台 Harbor（不访问 Docker Hub）：<harbor>/<上游主机>/<仓库>。
+# 镜像要先由 scripts/harbor-replication.py 复制进 Harbor 的 docker.io 项目，否则这里拉不到。
+FROM harbor.ackcp.cloud/docker.io/library/nginx:1.27-alpine
 
 ENV PLATFORM_API_URL=http://platform-api:8081 \
     PLATFORM_AUTH_URL=http://platform-auth:9527 \

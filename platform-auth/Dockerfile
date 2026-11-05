@@ -25,7 +25,9 @@
 #    三者必须同 host 字符串（同源铁律），否则会话 Cookie 不随 fetch 发、续期全 302。
 #    做法见 platform-web/nginx.conf（它把 /auth/** 整块转发到这里）。
 
-FROM eclipse-temurin:21-jre
+# 基础镜像走平台 Harbor（不访问 Docker Hub）：<harbor>/<上游主机>/<仓库>。
+# 镜像要先由 scripts/harbor-replication.py 复制进 Harbor 的 docker.io 项目，否则这里拉不到。
+FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre
 
 # 非 root 跑
 RUN useradd -m -u 1001 app

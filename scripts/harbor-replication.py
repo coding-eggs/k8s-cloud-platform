@@ -36,6 +36,11 @@ import urllib.request
 # 不带 tag 会复制该仓库的**全部** tag（几百个、几十 GB），除非确实要全量，否则请写死 tag；
 # 中间件允许创建新版本时（ES / Milvus），把新 tag 加一行再重跑。
 # 镜像来自内置 chart 的 values + 中间件适配器里写死的常量；chart 升级后记得跟着改。
+#
+# ⚠️ 选镜像**优先挑体积小的**（alpine / slim / distroless）。复制规则没有平台过滤，
+#    多平台 index 会把 Windows 等用不上的平台一起搬进 Harbor —— eclipse-temurin:21-jre
+#    就这样占了 5GB，而构建实际只用其中 linux/amd64 的 110MB。
+#    量法见 docs/development/image-registry.md §3.7。
 # ---------------------------------------------------------------------------
 IMAGES = {
     'docker.io': [
@@ -52,6 +57,11 @@ IMAGES = {
         'istio/proxyv2:1.31.3',
         'istio/ztunnel:1.31.3',
         'library/busybox:latest',
+        # 平台自身四个镜像的**基础镜像**：platform-api / platform-auth / k8s-server 用
+        # eclipse-temurin，platform-web 用 nginx。它们的 Dockerfile 里 FROM 直接写 Harbor 地址，
+        # 不搬这两个的话构建就得回 docker.io —— 内网构建机直接失败。
+        'library/eclipse-temurin:21-jre',
+        'library/nginx:1.27-alpine',
         # 流水线预设节点的默认镜像（BuildStep / BuildPreset / GitCloneNode / ImagePushNode 里写死的那几个）
         'alpine/git:2.45.2',
         # go 只有这一个：预设与节点默认统一用 alpine（1.22 那个又大又慢，已弃用）

@@ -41,7 +41,9 @@
 
 # ---------- 阶段一：把压缩包解开成真实二进制 ----------
 # 单独一个阶段是为了让最终镜像里只有二进制，不残留那两个压缩包（省约 36MB）。
-FROM eclipse-temurin:21-jre AS tools
+# 基础镜像走平台 Harbor（不访问 Docker Hub）：<harbor>/<上游主机>/<仓库>。
+# 镜像要先由 scripts/harbor-replication.py 复制进 Harbor 的 docker.io 项目，否则这里拉不到。
+FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre AS tools
 
 ARG TARGETARCH=amd64
 RUN [ "$TARGETARCH" = "amd64" ] || {
@@ -65,7 +67,7 @@ RUN tar -xzf /tmp/helm.tgz -C /tmp \
  && kubectl version --client
 
 # ---------- 阶段二：运行镜像 ----------
-FROM eclipse-temurin:21-jre
+FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre
 
 COPY --from=tools /usr/local/bin/helm    /usr/local/bin/helm
 COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
