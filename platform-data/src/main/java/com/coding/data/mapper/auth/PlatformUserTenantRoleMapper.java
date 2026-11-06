@@ -15,6 +15,9 @@ public interface PlatformUserTenantRoleMapper {
 
     int deleteByUserAndTenant(@Param("userId") String userId, @Param("tenantId") String tenantId);
 
+    /** 删用户时收回其在所有租户内的角色 */
+    int deleteByUser(@Param("userId") String userId);
+
     List<PlatformUserTenantRole> selectByTenantAndUser(@Param("tenantId") String tenantId, @Param("userId") String userId);
 
     /**

@@ -398,6 +398,11 @@ export const platformUserApi = {
   list: () => http.post<never, PlatformUser[]>('/user/list'),
   create: (payload: { username: string; password: string; displayName?: string; email?: string; status?: number }) =>
     http.post<never, PlatformUser>('/user/create', payload),
+  /** 改显示名 / 邮箱 / 状态（用户名不可改）；空串 = 清空 */
+  update: (payload: { id: string; displayName?: string; email?: string; status?: number }) =>
+    http.post<never, void>('/user/update', payload),
+  /** 软删除，连带收回全部角色与租户成员关系；用户名不释放 */
+  delete: (id: string) => http.post<never, void>('/user/delete', { id }),
   get: (id: string) => http.post<never, PlatformUser>('/user/get', { id }),
   platformRoleGrant: (payload: { userId: string; roleId: string }) =>
     http.post<never, string[]>('/user/platformRole/grant', payload),
@@ -413,6 +418,9 @@ export const roleApi = {
   list: () => http.post<never, PlatformRole[]>('/role/list'),
   create: (payload: { name: string; code: string; description?: string; scope: string }) =>
     http.post<never, PlatformRole>('/role/create', payload),
+  /** 只改名称 / 描述（编码、角色族不可改；内置角色也可改名） */
+  update: (payload: { id: string; name: string; description?: string }) =>
+    http.post<never, void>('/role/update', payload),
   delete: (id: string) => http.post<never, void>('/role/delete', { id }),
   permissionSave: (payload: { roleId: string; permissionCodes: string[] }) =>
     http.post<never, void>('/role/permission/save', payload),

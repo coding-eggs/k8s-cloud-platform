@@ -11,6 +11,7 @@ import com.coding.data.models.auth.PlatformRole;
 import com.coding.data.models.auth.PlatformRolePermission;
 import com.coding.data.models.auth.RoleScope;
 import com.coding.platformapi.models.RoleCreateRequest;
+import com.coding.platformapi.models.RoleUpdateRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -65,6 +66,23 @@ public class RoleService {
         r.setUpdatedAt(now);
         roleMapper.insert(r);
         return r;
+    }
+
+    /**
+     * 只改名称与描述。code 不改（按码引用：告警默认收件人、最后管理员护栏等都按 code 找人）；
+     * scope 不改（改了之后已勾的权限就可能违反 {@link #assertScopeMatches} 的不变量）。内置角色同样可改名。
+     */
+    public void update(RoleUpdateRequest req) {
+        PlatformRole r = require(req.getId());
+        if (!StringUtils.hasText(req.getName()))
+            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION, "角色名称必填");
+        PlatformRole w = new PlatformRole();
+        w.setId(r.getId());
+        w.setName(req.getName().trim());
+        // selective 更新里 null = 不动，清空描述要写空串
+        w.setDescription(StringUtils.hasText(req.getDescription()) ? req.getDescription().trim() : "");
+        w.setUpdatedAt(new Date());
+        roleMapper.updateByPrimaryKeySelective(w);
     }
 
     @Transactional

@@ -12,7 +12,7 @@
  * - **可勾范围由后端给**：POST /role/permission/assignable 返回该角色可分配的权限点行，
  *   本页只渲染它、不按 code 前缀自行过滤（可分配范围是授权策略，前端再判一份必然与后端漂移）。
  *   后端规则：TENANT 角色只能持 tenant: 族；PLATFORM 角色两族都可（2026-10-08 起，详见 RoleService）。
- * - 内置角色（builtIn=1）：不可删、code/scope 不可改（后端无改名端点）；权限集允许 manage 重存 → 仍可勾选保存。
+ * - 内置角色（builtIn=1）：不可删、code/scope 不可改（名称 / 描述可改，/role/update）；权限集允许 manage 重存 → 仍可勾选保存。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -169,6 +169,36 @@ async function onDelete(role: PlatformRole): Promise<void> {
   }
 }
 
+// ---- 编辑名称 / 描述（编码、角色族不可改；内置角色也可改名） ----
+const editVisible = ref(false)
+const editing = ref(false)
+const editForm = reactive({ id: '', name: '', description: '' })
+
+function openEdit(role: PlatformRole): void {
+  editForm.id = role.id
+  editForm.name = role.name
+  editForm.description = role.description ?? ''
+  editVisible.value = true
+}
+
+async function submitEdit(): Promise<void> {
+  if (!editForm.name.trim()) {
+    ElMessage.warning('角色名称必填')
+    return
+  }
+  editing.value = true
+  try {
+    await roleApi.update({ id: editForm.id, name: editForm.name.trim(), description: editForm.description.trim() })
+    ElMessage.success('已保存')
+    editVisible.value = false
+    await loadRoles()   // 右侧标题跟着 selectedRole（computed 自 roles）刷新，已勾选的权限不受影响
+  } catch {
+    /* 拦截器提示 */
+  } finally {
+    editing.value = false
+  }
+}
+
 async function submitCreate(): Promise<void> {
   if (!createForm.name.trim() || !createForm.code.trim()) {
     ElMessage.warning('角色名称与编码必填')
@@ -264,11 +294,15 @@ onMounted(async () => {
     <div class="perm-col">
       <template v-if="selectedRole">
         <div class="perm-head">
+          <div>
           <div class="perm-title-line">
             <span class="perm-title">{{ selectedRole.name }}</span>
             <span class="perm-code">{{ selectedRole.code }}</span>
             <el-tag v-if="selectedRole.builtIn === 1" size="small" type="info">内置（不可删/不可改码；权限可重存）</el-tag>
             <el-tag v-else size="small" type="info">{{ selectedRole.scope === 'TENANT' ? '租户角色' : '平台角色' }}</el-tag>
+            <el-button link type="primary" size="small" @click="openEdit(selectedRole)">编辑名称</el-button>
+          </div>
+          <div v-if="selectedRole.description" class="perm-desc">{{ selectedRole.description }}</div>
           </div>
           <div class="perm-actions">
             <span class="perm-count">已选 {{ totalChecked }} 项</span>
@@ -325,6 +359,22 @@ onMounted(async () => {
       </template>
       <el-empty v-else description="选择左侧角色以编辑权限" />
     </div>
+
+    <el-dialog v-model="editVisible" title="编辑角色" width="520px">
+      <el-form label-width="80px">
+        <el-form-item label="名称" required>
+          <el-input v-model="editForm.name" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="editForm.description" />
+        </el-form-item>
+        <div class="form-hint">编码与角色族创建后不可改（编码被按码引用；改角色族会让已勾的权限违反约束）。</div>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editing" @click="submitEdit">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="createVisible" title="新建角色" width="520px">
       <el-form label-width="80px">
@@ -521,5 +571,16 @@ onMounted(async () => {
   color: var(--text-3);
   font-size: 13px;
   padding: 20px;
+}
+.perm-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-top: 4px;
+}
+.form-hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+  padding-left: 80px;
 }
 </style>

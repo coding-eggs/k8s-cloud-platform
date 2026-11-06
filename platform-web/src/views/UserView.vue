@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * 用户管理（Task 20）：平台用户列表 + 新建 + 平台角色授予/回收（带回显）。
- * 权限点 platform:user:manage（/user/list|create|get|platformRole/grant|revoke|list 同码，见 seed）。
+ * 用户管理（Task 20）：平台用户列表 + 新建 / 编辑 / 删除 + 平台角色授予/回收（带回显）。
+ * 权限点 platform:user:manage（/user/list|create|update|delete|get|platformRole/grant|revoke|list 同码，见 seed）。
+ * 编辑不改用户名、不改密码；删除是软删（用户名不释放），护栏（不能动自己 / 最后一个管理员）在后端。
  * 回显走 /user/platformRole/list（V2026_10_01_1）：对话框展示当前持有的 PLATFORM 角色、
  * 授予下拉只列尚未持有的角色；授予/回收成功后重新拉取持有列表。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { platformUserApi, roleApi } from '@/api'
 import type { PlatformRole, PlatformUser } from '@/types'
 import { fmtDate } from '@/utils/format'
@@ -36,12 +37,24 @@ const filtered = computed(() => {
   )
 })
 
-// ---- 新建对话框 ----
+// ---- 新建 / 编辑对话框（同一个表单；编辑时用户名只读、不出现密码） ----
 const dialogVisible = ref(false)
 const saving = ref(false)
+const editingId = ref<string | null>(null)
 const form = reactive({ username: '', password: '', displayName: '', email: '', status: 1 })
 
+function openEdit(row: PlatformUser): void {
+  editingId.value = row.id
+  form.username = row.username
+  form.password = ''
+  form.displayName = row.displayName ?? ''
+  form.email = row.email ?? ''
+  form.status = row.status === 1 ? 1 : 0
+  dialogVisible.value = true
+}
+
 function openCreate(): void {
+  editingId.value = null
   form.username = ''
   form.password = ''
   form.displayName = ''
@@ -51,6 +64,25 @@ function openCreate(): void {
 }
 
 async function submit(): Promise<void> {
+  if (editingId.value) {
+    saving.value = true
+    try {
+      await platformUserApi.update({
+        id: editingId.value,
+        displayName: form.displayName.trim(),
+        email: form.email.trim(),
+        status: form.status,
+      })
+      ElMessage.success('已保存')
+      dialogVisible.value = false
+      await load()
+    } catch {
+      /* 拦截器提示（含「不能禁用自己 / 最后一个管理员」） */
+    } finally {
+      saving.value = false
+    }
+    return
+  }
   if (!form.username.trim() || !form.password) {
     ElMessage.warning('用户名与密码必填')
     return
@@ -71,6 +103,26 @@ async function submit(): Promise<void> {
     /* 拦截器提示 */
   } finally {
     saving.value = false
+  }
+}
+
+async function onDelete(row: PlatformUser): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除用户「${row.username}」？将同时收回他的全部平台角色、租户成员关系与租户内角色，已登录的会话随即失去权限。`
+        + '删除后该用户名不能再用于新建用户。',
+      '删除用户',
+      { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await platformUserApi.delete(row.id)
+    ElMessage.success('已删除')
+    await load()
+  } catch {
+    /* 拦截器提示 */
   }
 }
 
@@ -174,19 +226,21 @@ onMounted(load)
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ fmtDate(row.createdAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="110" fixed="right">
+      <el-table-column label="操作" width="190" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link type="primary" @click="openPlatformRoles(row)">平台角色</el-button>
+          <el-button link type="danger" @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" title="新建用户" width="520px">
+    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑用户' : '新建用户'" width="520px">
       <el-form label-width="90px">
-        <el-form-item label="用户名" required>
-          <el-input v-model="form.username" placeholder="登录名，全局唯一" />
+        <el-form-item label="用户名" :required="!editingId">
+          <el-input v-model="form.username" :disabled="!!editingId" placeholder="登录名，全局唯一" />
         </el-form-item>
-        <el-form-item label="密码" required>
+        <el-form-item v-if="!editingId" label="密码" required>
           <el-input v-model="form.password" type="password" show-password placeholder="BCrypt 加密存储" />
         </el-form-item>
         <el-form-item label="显示名">
@@ -200,6 +254,7 @@ onMounted(load)
             <el-radio :value="1">正常</el-radio>
             <el-radio :value="0">禁用</el-radio>
           </el-radio-group>
+          <div v-if="editingId" class="form-hint">禁用后不能登录；已登录的会话最多 30 秒后失去全部权限。</div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -256,6 +311,12 @@ onMounted(load)
   display: flex;
   gap: 12px;
   align-items: center;
+}
+.form-hint {
+  width: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
 }
 .search {
   width: 260px;

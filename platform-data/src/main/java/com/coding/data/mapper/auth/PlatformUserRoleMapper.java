@@ -18,6 +18,9 @@ public interface PlatformUserRoleMapper {
      * 回收：按用户+角色删除授予行
      */
     int deleteByUserAndRole(@Param("userId") String userId, @Param("roleId") String roleId);
+
+    /** 删用户时收回其全部平台角色 */
+    int deleteByUser(@Param("userId") String userId);
     /**
      * 查询用户被授予的平台域角色 code 列表（仅启用且未删除的角色）
      */

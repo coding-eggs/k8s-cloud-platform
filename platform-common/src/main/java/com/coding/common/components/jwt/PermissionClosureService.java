@@ -42,14 +42,16 @@ public class PermissionClosureService {
     /**
      * @param username token 主体（{@code data.username} / {@code sub}）
      * @param tenantId 当前租户上下文；null/空 = 平台视图，只算平台族
-     * @return 权限 code 闭包（去重保序）；用户不存在（已删）→ 空闭包（fail-closed，不抛）
+     * @return 权限 code 闭包（去重保序）；用户不存在（已删）或已禁用 → 空闭包（fail-closed，不抛）
      */
     public List<String> permissions(String username, @Nullable String tenantId) {
         if (!StringUtils.hasText(username)) {
             return List.of();
         }
         PlatformUser user = userMapper.selectByUsername(username);
-        if (user == null) {
+        // 已删 / 已禁用 → 空闭包。禁用与登录口径一致（status 必须是 1）：否则禁用只挡新登录，
+        // 已登录的会话照样能用，"禁用"名不副实。请求期解析有 30s 缓存，故最多 30s 后生效。
+        if (user == null || user.getStatus() == null || user.getStatus() != 1) {
             return List.of();
         }
         List<String> platformPerms = codesOf(userRoleMapper.selectRoleIdsByUser(user.getId()));

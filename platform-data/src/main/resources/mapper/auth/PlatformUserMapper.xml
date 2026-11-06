@@ -28,6 +28,16 @@
     <select id="selectByUsername" resultType="com.coding.data.models.auth.PlatformUser">
       select * from platform_user where username = #{username} and deleted_at is null
     </select>
+    <update id="updateProfile">
+      update platform_user
+      set display_name = #{displayName}, email = #{email}, `status` = #{status}, updated_at = now()
+      where id = #{id} and deleted_at is null
+    </update>
+    <update id="softDelete">
+      update platform_user
+      set deleted_at = now(), `status` = 0, updated_at = now()
+      where id = #{id} and deleted_at is null
+    </update>
     <select id="listAllActive" resultType="com.coding.data.models.auth.PlatformUser">
       select * from platform_user where deleted_at is null
     </select>

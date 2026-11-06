@@ -202,4 +202,40 @@ class RoleServiceTest {
         r.setScope(scope);
         return r;
     }
+
+    // ---- /role/update：只改名称 / 描述；code、scope 永不改（code 被按码引用，scope 改了已勾权限就违反不变量） ----
+
+    private com.coding.platformapi.models.RoleUpdateRequest upd(String id, String name, String desc) {
+        var r = new com.coding.platformapi.models.RoleUpdateRequest();
+        r.setId(id);
+        r.setName(name);
+        r.setDescription(desc);
+        return r;
+    }
+
+    @Test void update_changes_only_name_and_description() {
+        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("auditor", "PLATFORM", (byte) 0));
+        svc.update(upd("r1", "  审计员 ", " 只读 "));
+        ArgumentCaptor<PlatformRole> cap = ArgumentCaptor.forClass(PlatformRole.class);
+        verify(roleMapper).updateByPrimaryKeySelective(cap.capture());
+        PlatformRole w = cap.getValue();
+        assertThat(w.getId()).isEqualTo("r1");
+        assertThat(w.getName()).isEqualTo("审计员");
+        assertThat(w.getDescription()).isEqualTo("只读");
+        assertThat(w.getCode()).isNull();      // selective：null = 不动
+        assertThat(w.getScope()).isNull();
+        assertThat(w.getBuiltIn()).isNull();
+    }
+
+    @Test void builtin_role_can_be_renamed() {
+        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("admin", "PLATFORM", (byte) 1));
+        svc.update(upd("r1", "超级管理员", null));
+        verify(roleMapper).updateByPrimaryKeySelective(any());
+    }
+
+    @Test void update_requires_name() {
+        when(roleMapper.selectByPrimaryKey("r1")).thenReturn(role("auditor", "PLATFORM", (byte) 0));
+        assertThatThrownBy(() -> svc.update(upd("r1", "  ", "x"))).isInstanceOf(CloudPlatformException.class);
+        verify(roleMapper, never()).updateByPrimaryKeySelective(any());
+    }
 }

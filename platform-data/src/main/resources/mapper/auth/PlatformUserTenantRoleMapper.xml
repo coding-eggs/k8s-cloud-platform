@@ -16,6 +16,9 @@
         delete from platform_user_tenant_role
         where user_id = #{userId} and tenant_id = #{tenantId} and role_id = #{roleId}
     </delete>
+    <delete id="deleteByUser">
+        delete from platform_user_tenant_role where user_id = #{userId}
+    </delete>
     <delete id="deleteByUserAndTenant">
         delete from platform_user_tenant_role
         where user_id = #{userId} and tenant_id = #{tenantId}

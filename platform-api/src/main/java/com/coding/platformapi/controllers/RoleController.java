@@ -8,6 +8,7 @@ import com.coding.data.models.auth.PlatformRole;
 import com.coding.platformapi.models.RoleCreateRequest;
 import com.coding.platformapi.models.RoleKeyRequest;
 import com.coding.platformapi.models.RolePermissionSaveRequest;
+import com.coding.platformapi.models.RoleUpdateRequest;
 import com.coding.platformapi.services.RoleService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,7 +25,7 @@ import java.util.List;
  * 读操作 platform:role:read；端点行见 V2026_09_24_2__rbac_seed.sql，
  * /permission/assignable 的行见 V2026_10_08_3__role_assignable_permissions.sql）
  */
-@Tag(name = "角色管理", description = "角色列表/创建/删除 + 权限勾选保存与回显")
+@Tag(name = "角色管理", description = "角色列表/创建/修改/删除 + 权限勾选保存与回显")
 @RestController
 @RequestMapping("/role")
 @RequiredArgsConstructor
@@ -43,6 +44,14 @@ public class RoleController {
     @Auditable(action = AuditAction.ROLE_CREATE, target = "#r.code")
     public ResponseData<PlatformRole> create(@RequestBody RoleCreateRequest r) {
         return new ResponseData<>(roleService.create(r));
+    }
+
+    @Operation(summary = "修改角色（只改名称与描述；编码、角色族不可改；内置角色可改名）")
+    @PostMapping("/update")
+    @Auditable(action = AuditAction.ROLE_UPDATE, target = "#r.id")
+    public ResponseData<Void> update(@RequestBody RoleUpdateRequest r) {
+        roleService.update(r);
+        return new ResponseData<>();
     }
 
     @Operation(summary = "删除角色（内置角色拒绝）")

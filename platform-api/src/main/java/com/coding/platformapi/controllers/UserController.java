@@ -10,6 +10,7 @@ import com.coding.data.models.system.TokenUserInfo;
 import com.coding.platformapi.models.UserCreateRequest;
 import com.coding.platformapi.models.UserKeyRequest;
 import com.coding.platformapi.models.UserRoleGrantRequest;
+import com.coding.platformapi.models.UserUpdateRequest;
 import com.coding.platformapi.services.CurrentUserQuery;
 import com.coding.platformapi.services.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,7 +27,7 @@ import java.util.List;
  * 用户管理（接口级鉴权在平台网关（表驱动），platform:user:manage）。
  * /me 与 /my-tenants 为登录即接口（ExemptPaths 豁免权限点，仅需 authenticated），供 SPA 引导权限与租户切换器。
  */
-@Tag(name = "用户管理", description = "平台用户创建/查询 + 平台域角色授予/回收 + 当前用户上下文")
+@Tag(name = "用户管理", description = "平台用户创建/修改/删除/查询 + 平台域角色授予/回收 + 当前用户上下文")
 @RestController
 @RequestMapping("/user")
 @RequiredArgsConstructor
@@ -52,6 +53,24 @@ public class UserController {
     @Auditable(action = AuditAction.USER_CREATE, target = "#request.username")
     public ResponseData<PlatformUser> create(@RequestBody UserCreateRequest request) {
         return new ResponseData<>(userService.create(request));
+    }
+
+    @PostMapping("/update")
+    @Operation(summary = "修改用户", description = "改显示名 / 邮箱 / 状态（用户名不可改）。不能禁用自己或最后一个可用的平台管理员；"
+            + "禁用对已登录会话最多 30 秒后生效")
+    @Auditable(action = AuditAction.USER_UPDATE, target = "#request.id")
+    public ResponseData<Void> update(@RequestBody UserUpdateRequest request) {
+        userService.update(request);
+        return new ResponseData<>();
+    }
+
+    @PostMapping("/delete")
+    @Operation(summary = "删除用户", description = "软删除，同时收回全部平台角色、租户成员关系与租户内角色；"
+            + "用户名不释放。不能删除自己或最后一个可用的平台管理员")
+    @Auditable(action = AuditAction.USER_DELETE, target = "#request.id")
+    public ResponseData<Void> delete(@RequestBody UserKeyRequest request) {
+        userService.delete(request.getId());
+        return new ResponseData<>();
     }
 
     @PostMapping("/list")

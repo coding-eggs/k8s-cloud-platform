@@ -5,6 +5,9 @@
         insert into platform_user_role (id, user_id, role_id, created_at)
         values (#{id}, #{userId}, #{roleId}, #{createdAt})
     </insert>
+    <delete id="deleteByUser">
+        delete from platform_user_role where user_id = #{userId}
+    </delete>
     <delete id="deleteByUserAndRole">
         delete from platform_user_role where user_id = #{userId} and role_id = #{roleId}
     </delete>

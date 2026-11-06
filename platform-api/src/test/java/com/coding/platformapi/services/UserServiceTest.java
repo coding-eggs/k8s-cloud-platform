@@ -27,7 +27,117 @@ class UserServiceTest {
     com.coding.data.mapper.auth.PlatformTenantMapper tenantMapper =
             mock(com.coding.data.mapper.auth.PlatformTenantMapper.class);
     PasswordEncoder encoder = mock(PasswordEncoder.class);
-    UserService svc = new UserService(userMapper, urMapper, roleMapper, tenantMapper, encoder);
+    com.coding.data.mapper.auth.PlatformUserTenantMapper utMapper =
+            mock(com.coding.data.mapper.auth.PlatformUserTenantMapper.class);
+    com.coding.data.mapper.auth.PlatformUserTenantRoleMapper utrMapper =
+            mock(com.coding.data.mapper.auth.PlatformUserTenantRoleMapper.class);
+    com.coding.common.security.AuthContext auth = mock(com.coding.common.security.AuthContext.class);
+    UserService svc = new UserService(userMapper, urMapper, roleMapper, tenantMapper, encoder, utMapper, utrMapper, auth);
+
+    private PlatformUser user(String id, String username, int status) {
+        var u = new PlatformUser();
+        u.setId(id);
+        u.setUsername(username);
+        u.setStatus((byte) status);
+        return u;
+    }
+
+    private void actingAs(String username) {
+        var t = new com.coding.data.models.system.TokenUserInfo();
+        t.setUsername(username);
+        when(auth.current()).thenReturn(t);
+    }
+
+    private com.coding.platformapi.models.UserUpdateRequest upd(String id, String displayName, String email, Integer status) {
+        var r = new com.coding.platformapi.models.UserUpdateRequest();
+        r.setId(id);
+        r.setDisplayName(displayName);
+        r.setEmail(email);
+        r.setStatus(status);
+        return r;
+    }
+
+    // ---- /user/update ----
+
+    @Test void update_writes_profile_and_blank_clears_field() {
+        actingAs("admin");
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(user("u1", "bob", 1));
+        svc.update(upd("u1", "  Bob  ", "  ", 1));
+        verify(userMapper).updateProfile("u1", "Bob", null, (byte) 1);
+    }
+
+    @Test void update_missing_user_rejected() {
+        actingAs("admin");
+        when(userMapper.selectByPrimaryKey("ghost")).thenReturn(null);
+        assertThatThrownBy(() -> svc.update(upd("ghost", "x", null, 1))).isInstanceOf(CloudPlatformException.class);
+        verify(userMapper, never()).updateProfile(any(), any(), any(), any());
+    }
+
+    @Test void cannot_disable_yourself() {
+        actingAs("bob");
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(user("u1", "bob", 1));
+        assertThatThrownBy(() -> svc.update(upd("u1", "Bob", null, 0)))
+            .isInstanceOf(CloudPlatformException.class).hasMessageContaining("自己");
+        verify(userMapper, never()).updateProfile(any(), any(), any(), any());
+    }
+
+    @Test void cannot_disable_last_enabled_admin() {
+        actingAs("root");
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(user("u1", "bob", 1));
+        when(urMapper.selectUserIdsByRoleCode("admin")).thenReturn(java.util.List.of("u1", "u2"));
+        when(userMapper.selectByIds(java.util.List.of("u1", "u2")))
+            .thenReturn(java.util.List.of(user("u1", "bob", 1), user("u2", "old", 0)));   // u2 已禁用
+        assertThatThrownBy(() -> svc.update(upd("u1", "Bob", null, 0)))
+            .isInstanceOf(CloudPlatformException.class).hasMessageContaining("管理员");
+    }
+
+    @Test void disabling_admin_ok_when_another_enabled_admin_remains() {
+        actingAs("root");
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(user("u1", "bob", 1));
+        when(urMapper.selectUserIdsByRoleCode("admin")).thenReturn(java.util.List.of("u1", "u2"));
+        when(userMapper.selectByIds(java.util.List.of("u1", "u2")))
+            .thenReturn(java.util.List.of(user("u1", "bob", 1), user("u2", "root", 1)));
+        svc.update(upd("u1", "Bob", null, 0));
+        verify(userMapper).updateProfile("u1", "Bob", null, (byte) 0);
+    }
+
+    // ---- /user/delete ----
+
+    @Test void delete_soft_deletes_and_drops_every_grant() {
+        actingAs("root");
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(user("u1", "bob", 1));
+        when(urMapper.selectUserIdsByRoleCode("admin")).thenReturn(java.util.List.of());
+        svc.delete("u1");
+        verify(userMapper).softDelete("u1");
+        verify(urMapper).deleteByUser("u1");
+        verify(utMapper).deleteByUser("u1");
+        verify(utrMapper).deleteByUser("u1");
+        verify(userMapper, never()).deleteByPrimaryKey(any());   // 软删：审计、流水线等处的引用仍能对上人
+    }
+
+    @Test void cannot_delete_yourself() {
+        actingAs("bob");
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(user("u1", "bob", 1));
+        assertThatThrownBy(() -> svc.delete("u1")).isInstanceOf(CloudPlatformException.class).hasMessageContaining("自己");
+        verify(userMapper, never()).softDelete(any());
+    }
+
+    @Test void cannot_delete_last_enabled_admin() {
+        actingAs("root");
+        when(userMapper.selectByPrimaryKey("u1")).thenReturn(user("u1", "bob", 1));
+        when(urMapper.selectUserIdsByRoleCode("admin")).thenReturn(java.util.List.of("u1"));
+        when(userMapper.selectByIds(java.util.List.of("u1"))).thenReturn(java.util.List.of(user("u1", "bob", 1)));
+        assertThatThrownBy(() -> svc.delete("u1")).isInstanceOf(CloudPlatformException.class).hasMessageContaining("管理员");
+        verify(userMapper, never()).softDelete(any());
+    }
+
+    @Test void create_with_username_held_by_deleted_user_explains() {
+        when(userMapper.selectByUsername("bob")).thenReturn(null);       // 未删除的里没有
+        when(encoder.encode(any())).thenReturn("HASH");
+        when(userMapper.insert(any())).thenThrow(new DuplicateKeyException("username"));   // 唯一索引仍被已删除用户占着
+        assertThatThrownBy(() -> svc.create(req("bob")))
+            .isInstanceOf(CloudPlatformException.class).hasMessageContaining("已删除");
+    }
 
     @Test void duplicate_username_rejected() {
         when(userMapper.selectByUsername("bob")).thenReturn(new PlatformUser());

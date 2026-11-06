@@ -337,10 +337,19 @@ public final class AuditAction {
 
     public static final String ROLE_DELETE = "role:delete";
 
+    /** 改角色名称 / 描述 */
+    public static final String ROLE_UPDATE = "role:update";
+
     /** 整体覆盖角色绑定的权限码 */
     public static final String ROLE_PERMISSION_SAVE = "role:permission-save";
 
     public static final String USER_CREATE = "user:create";
+
+    /** 管理员改用户资料 / 启停 */
+    public static final String USER_UPDATE = "user:update";
+
+    /** 管理员删除用户（软删，连带收回全部角色与租户成员关系） */
+    public static final String USER_DELETE = "user:delete";
 
     public static final String USER_PLATFORM_ROLE_GRANT = "user:platform-role-grant";
 

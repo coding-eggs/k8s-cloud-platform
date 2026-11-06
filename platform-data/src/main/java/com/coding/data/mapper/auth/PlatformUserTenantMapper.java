@@ -13,6 +13,9 @@ public interface PlatformUserTenantMapper {
 
     int deleteByUserAndTenant(@Param("userId") String userId, @Param("tenantId") String tenantId);
 
+    /** 删用户时移出全部租户 */
+    int deleteByUser(@Param("userId") String userId);
+
     boolean exists(@Param("userId") String userId, @Param("tenantId") String tenantId);
 
     /**

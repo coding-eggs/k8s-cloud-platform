@@ -37,7 +37,21 @@ class PermissionClosureServiceTest {
         PlatformUser u = new PlatformUser();
         u.setId(id);
         u.setUsername(username);
+        u.setStatus((byte) 1);
         when(userMapper.selectByUsername(username)).thenReturn(u);
+    }
+
+    /** 被禁用的用户：已登录的会话也不再有任何权限（与登录时的 status 判据一致），不碰角色表。 */
+    @Test
+    void disabled_user_gets_empty_closure() {
+        PlatformUser u = new PlatformUser();
+        u.setId("u9");
+        u.setUsername("bob");
+        u.setStatus((byte) 0);
+        when(userMapper.selectByUsername("bob")).thenReturn(u);
+
+        assertThat(svc.permissions("bob", "t1")).isEmpty();
+        verifyNoInteractions(userRoleMapper, userTenantRoleMapper);
     }
 
     /** 平台视图（base token）：只算平台族，**不碰**租户内的角色表。 */

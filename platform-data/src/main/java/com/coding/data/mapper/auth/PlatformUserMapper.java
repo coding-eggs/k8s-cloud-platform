@@ -23,6 +23,13 @@ public interface PlatformUserMapper {
 
     PlatformUser selectByUsername(String username);
 
+    /** 管理员改资料：显示名 / 邮箱 / 状态（null 即写 null，用于清空；用户名不可改） */
+    int updateProfile(@Param("id") String id, @Param("displayName") String displayName,
+                      @Param("email") String email, @Param("status") Byte status);
+
+    /** 软删除：置 deleted_at 并禁用；用户名唯一索引仍占着（不可复用） */
+    int softDelete(@Param("id") String id);
+
     /**
      * 全部未删除用户
      */
