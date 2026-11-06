@@ -113,4 +113,10 @@ public class K8sMiddlewareClient {
         return gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/instances/index", null, body,
                 gateway.responseType(EsIndexDetailDTO.class));
     }
+
+    /** 删除一个索引。 */
+    public void deleteIndex(String code, MiddlewareIndexRequestDTO body) {
+        gateway.exchange(HttpMethod.POST, "/middleware/" + code + "/instances/index/delete", null, body,
+                gateway.responseType(Boolean.class));
+    }
 }

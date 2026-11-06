@@ -153,6 +153,9 @@ public final class AuditAction {
     public static final String MIDDLEWARE_USER_PASSWORD = "middleware:user:password";
     public static final String MIDDLEWARE_USER_DELETE = "middleware:user:delete";
 
+    /** 删除 Elasticsearch 实例里的一个索引（数据随之删除，不可恢复） */
+    public static final String MIDDLEWARE_INDEX_DELETE = "middleware:index:delete";
+
     /** 安装/升级中间件 Operator（管理员） */
     public static final String MIDDLEWARE_OPERATOR_INSTALL = "middleware:operator:install";
 

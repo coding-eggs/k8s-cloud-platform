@@ -134,6 +134,16 @@ public class MiddlewareController {
                 auth.effectiveTenantId(request.getTenantId())));
     }
 
+    @PostMapping("/instance/index/delete")
+    @Auditable(action = AuditAction.MIDDLEWARE_INDEX_DELETE, target = "#request.instanceId + '/' + #request.index")
+    @Operation(summary = "删除一个索引（Elasticsearch，数据不可恢复）",
+            description = "只接受完整索引名；通配符 / 逗号列表 / _all 会被拒")
+    public ResponseData<Boolean> deleteIndex(@RequestBody MiddlewareIndexRequest request) {
+        service.deleteIndex(request.getInstanceId(), request.getIndex(),
+                auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>(true);
+    }
+
     @PostMapping("/instance/rename")
     @Auditable(action = AuditAction.MIDDLEWARE_RENAME, target = "#request.instanceId")
     @Operation(summary = "修改实例显示名（只改台账）")

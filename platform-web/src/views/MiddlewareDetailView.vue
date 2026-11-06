@@ -14,6 +14,8 @@ import YamlBlock from '@/components/YamlBlock.vue'
 import MiddlewareMetricsPanel from '@/components/middleware/MiddlewareMetricsPanel.vue'
 import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
 import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
 import type { EsIndexDetail, EsIndexSummary, MiddlewareInstanceDetail, MiddlewareOperation, MiddlewareUser, MiddlewareUserCredential } from '@/types'
 
 const route = useRoute()
@@ -129,9 +131,12 @@ const showUsers = computed(() => {
 // ---------------- 索引（Elasticsearch） ----------------
 /**
  * 索引不是 K8s 对象，集群里列不出来 —— 由后端到 ES 里现查（`_cat/indices`）。
- * 只读：平台不改也不删索引，改结构/删数据属于用户自己的运维动作。
+ * 平台只提供浏览 + 删除整个索引；改结构 / 改数据属于用户自己的运维动作。
  */
 const showIndices = computed(() => instance.value?.code === 'elasticsearch')
+/** 删索引 = 删数据：只给持中间件写权限的人（租户成员只读，按钮不出现；后端同样拒） */
+const perm = usePermission()
+const canDeleteIndex = computed(() => perm.has(apiCodes.middlewareWrite))
 
 const esIndices = ref<EsIndexSummary[]>([])
 const esLoading = ref(false)
@@ -196,6 +201,42 @@ async function openIndex(name: string): Promise<void> {
     esDetail.error = e instanceof Error ? e.message : '读取索引结构失败'
   } finally {
     esDetail.loading = false
+  }
+}
+
+/**
+ * 删除一个索引：要求手输完整索引名确认（数据不可恢复，误点代价太大，普通确认框不够）。
+ * 系统索引（. 开头）额外提示：多半是 ES / Kibana 自己的账本，删了对应功能会重建或报错。
+ */
+async function removeIndex(name: string): Promise<void> {
+  const inst = instance.value
+  if (!inst) return
+  const system = name.startsWith('.')
+    ? '这是系统索引（. 开头），通常由 ES / Kibana 自己维护，删除后相关功能可能重建它或报错。'
+    : ''
+  try {
+    await ElMessageBox.prompt(
+      `删除后索引里的全部文档一并删除，不可恢复。${system}请输入索引名「${name}」确认。`,
+      '删除索引',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
+        inputPlaceholder: name,
+        inputValidator: (v: string) => v === name || '索引名不一致',
+      },
+    )
+  } catch {
+    return
+  }
+  try {
+    await middlewareApi.esDeleteIndex(inst.id, name, tenantId.value)
+    ElMessage.success(`索引 ${name} 已删除`)
+    if (esDetail.visible && esDetail.name === name) esDetail.visible = false
+    await loadIndices()
+  } catch {
+    /* 拦截器已提示 */
   }
 }
 
@@ -836,7 +877,7 @@ watch(tenantId, () => void load())
             <span v-if="hiddenSystemCount" class="mw-form-help">已隐藏 {{ hiddenSystemCount }} 个</span>
             <el-button size="small" :loading="esLoading" @click="loadIndices">刷新</el-button>
             <span class="mw-form-help">
-              共 {{ esIndices.length }} 个索引；只读，点索引名看 mapping / settings / aliases
+              共 {{ esIndices.length }} 个索引；点索引名看 mapping / settings / aliases
             </span>
           </div>
           <el-alert v-if="esError" :title="esError" type="error" :closable="false" show-icon class="mw-indices-error" />
@@ -864,6 +905,11 @@ watch(tenantId, () => void load())
             </el-table-column>
             <el-table-column label="创建时间" width="210">
               <template #default="{ row }">{{ row.createdAt ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column v-if="canDeleteIndex" label="操作" width="80" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="danger" @click="removeIndex(row.name)">删除</el-button>
+              </template>
             </el-table-column>
           </el-table>
         </div>

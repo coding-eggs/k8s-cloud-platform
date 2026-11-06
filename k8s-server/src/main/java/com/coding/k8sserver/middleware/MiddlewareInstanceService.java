@@ -722,6 +722,12 @@ public class MiddlewareInstanceService {
         return ElasticsearchRest.indexDetail(client, req.getNamespace(), req.getName(), req.getIndex());
     }
 
+    /** 删除一个索引（数据一并删除）。名字校验在 {@link ElasticsearchRest#deleteIndex} 里。 */
+    public void deleteIndex(MiddlewareIndexRequestDTO req) {
+        KubernetesClient client = clientForEs(req);
+        ElasticsearchRest.deleteIndex(client, req.getNamespace(), req.getName(), req.getIndex());
+    }
+
     /** 索引类接口的公共前置：只支持 ES，且先过访问边界。 */
     private KubernetesClient clientForEs(MiddlewareIndexRequestDTO req) {
         if (!"elasticsearch".equals(req.getCode())) {

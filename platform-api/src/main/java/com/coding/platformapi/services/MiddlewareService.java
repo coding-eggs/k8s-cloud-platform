@@ -706,6 +706,17 @@ public class MiddlewareService {
         return client.index(instance.getCode(), req);
     }
 
+    /** 删除一个索引（数据一并删除，不可恢复）。名字是否为单个具体索引由 k8s-server 把关。 */
+    public void deleteIndex(String instanceId, String index, String tenantId) {
+        PlatformMiddlewareInstance instance = requireIndexableInstance(instanceId, tenantId);
+        if (index == null || index.isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "缺少索引名");
+        }
+        MiddlewareIndexRequestDTO req = indexRequest(instance);
+        req.setIndex(index);
+        client.deleteIndex(instance.getCode(), req);
+    }
+
     /** 台账定位 + 能力判断：只有 ES 有索引这个概念，其余直接拒，不白跑一次集群调用。 */
     private PlatformMiddlewareInstance requireIndexableInstance(String instanceId, String tenantId) {
         PlatformMiddlewareInstance instance = requireInstance(instanceId, tenantId);

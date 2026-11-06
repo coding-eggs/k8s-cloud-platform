@@ -37,7 +37,8 @@ class MiddlewarePermissionMigrationTest {
             Path.of(MIGRATIONS + "V2026_10_23_4__middleware_detail_permissions.sql"),
             Path.of(MIGRATIONS + "V2026_10_23_6__middleware_metrics_permission.sql"),
             Path.of(MIGRATIONS + "V2026_10_26_3__middleware_user_permissions.sql"),
-            Path.of(MIGRATIONS + "V2026_10_29_1__middleware_es_index_permissions.sql"));
+            Path.of(MIGRATIONS + "V2026_10_29_1__middleware_es_index_permissions.sql"),
+            Path.of(MIGRATIONS + "V2026_11_06_3__middleware_es_index_delete_permission.sql"));
 
     /** SQL 里 'API' 行的 (METHOD PATH) 集合 */
     private static final Pattern API_ROW = Pattern.compile(
@@ -107,5 +108,15 @@ class MiddlewarePermissionMigrationTest {
         assertThat(sql).contains("'builtin_role_admin'")
                 .contains("'builtin_role_tenant_admin'")
                 .contains("'builtin_role_tenant_member'");
+    }
+
+    @Test
+    void deletingAnIndexIsWriteAndNotGrantedToTenantMembers() throws Exception {
+        String sql = Files.readString(SQL_FILES.get(7));
+
+        assertThat(sql).contains("'/middleware/instance/index/delete'").contains("tenant:middleware:write");
+        assertThat(sql).contains("builtin_role_admin").contains("builtin_role_tenant_admin");
+        // 删索引 = 删数据；成员只读
+        assertThat(sql).doesNotContain("builtin_role_tenant_member");
     }
 }

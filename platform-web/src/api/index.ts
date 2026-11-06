@@ -1145,6 +1145,9 @@ export const middlewareApi = {
   /** 单个索引的 mapping / settings / aliases（aliases 里带 filter） */
   esIndex: (instanceId: string, index: string, tenantId?: string) =>
     http.post<never, EsIndexDetail>('/middleware/instance/index', { instanceId, index, tenantId }),
+  /** 删除一个索引（数据不可恢复）；后端只接受完整索引名，通配符 / 列表 / _all 会被拒 */
+  esDeleteIndex: (instanceId: string, index: string, tenantId?: string) =>
+    http.post<never, boolean>('/middleware/instance/index/delete', { instanceId, index, tenantId }),
   rename: (payload: { instanceId: string; displayName: string; tenantId?: string }) =>
     http.post<never, MiddlewareInstance>('/middleware/instance/rename', payload),
   /** 改实例的鉴权口令（Milvus）：新口令留空 = 平台生成；口令不回显，去 Secret <名称>-milvus-auth 取 */

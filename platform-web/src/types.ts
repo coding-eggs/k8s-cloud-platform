@@ -2791,7 +2791,7 @@ export interface MiddlewareInstanceDetail {
   liveError?: string | null
 }
 
-/** ES 的一个索引（`_cat/indices` 的一行）。只读展示，平台不改也不删索引 */
+/** ES 的一个索引（`_cat/indices` 的一行）。平台只浏览 + 整个删除，不改结构 */
 export interface EsIndexSummary {
   name: string
   health?: string | null

@@ -66,6 +66,8 @@ export const apiCodes = {
   clusterCapabilityView: 'tenant:cluster:capability:view',
   /** 应用写（V2026_11_02_11 / V2026_10_25_7：创建/删除应用、服务增删改、创建发布、继续执行） */
   applicationWrite: 'tenant:application:write',
+  /** 中间件写（删除实例 / 账号增删改 / 删除 ES 索引；V2026_11_06_3）—— 成员只读，不持有 */
+  middlewareWrite: 'tenant:middleware:write',
   /** 工作负载写（编辑/伸缩/暂停/ambient 开关共享该动词码）—— ambient 开关与 pause 同挂此码 */
   workloadUpdate: 'tenant:workload:update',
   /** Gateway 列表读（工作负载的 L7 开关要列本命名空间的 waypoint 候选） */

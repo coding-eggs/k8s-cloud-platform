@@ -160,4 +160,14 @@ public class MiddlewareInstanceController implements AccessBoundaryAware {
         request.setCode(code);
         return new ResponseData<>(service.indexDetail(request));
     }
+
+    @PostMapping("/{code}/instances/index/delete")
+    @Operation(summary = "删除一个索引（Elasticsearch，数据不可恢复）",
+            description = "只接受完整索引名；通配符 / 逗号列表 / _all 直接拒。应用层已按访问边界与权限校验")
+    public ResponseData<Boolean> deleteIndex(@PathVariable("code") String code,
+                                             @RequestBody MiddlewareIndexRequestDTO request) {
+        request.setCode(code);
+        service.deleteIndex(request);
+        return new ResponseData<>(true);
+    }
 }

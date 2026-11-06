@@ -75,6 +75,32 @@ final class ElasticsearchRest {
     }
 
     /**
+     * 删除**一个**索引（数据一并删除，不可恢复）。
+     *
+     * <p>只接受一个具体的索引名：通配符、逗号列表、{@code _all} 在 ES 里都会一次删一片，
+     * 这里先拒（不指望集群的 {@code action.destructive_requires_name} 一定开着）。
+     * 别名、数据流的 backing index、受限的系统索引由 ES 自己拒，错误原样带回。
+     */
+    static void deleteIndex(KubernetesClient client, String namespace, String name, String index) {
+        requireSingleIndexName(index);
+        call(client, namespace, name, null, "DELETE", "/" + encodeSegment(index), null, BROWSE_TIMEOUT);
+    }
+
+    /** 一个具体索引名，不能是会命中多个索引的表达式。 */
+    static void requireSingleIndexName(String index) {
+        if (index == null || index.isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "缺少索引名");
+        }
+        String trimmed = index.trim();
+        boolean pattern = trimmed.chars().anyMatch(c -> c == '*' || c == '?' || c == ',' || Character.isWhitespace(c))
+                || trimmed.startsWith("-") || trimmed.startsWith("_");
+        if (pattern || !trimmed.equals(index)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "只能按完整索引名删除一个索引，不支持通配符 / 列表 / _all：" + index);
+        }
+    }
+
+    /**
      * 集群健康是 red 时，说明**到底是哪些主分片坏了**。
      * <p>返回 null = 没有未分配的主分片，调用方退回通用文案。
      *

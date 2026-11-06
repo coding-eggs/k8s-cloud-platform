@@ -1,5 +1,6 @@
 package com.coding.k8sserver.middleware;
 
+import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.models.middleware.EsIndexDetailDTO;
 import com.coding.common.models.middleware.EsIndexSummaryDTO;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * ES REST 的**纯解析**部分：地址拼装、`_cat` 行 → DTO、未分配分片 → 降级消息。
@@ -148,5 +150,27 @@ class ElasticsearchRestTest {
                 [{"index":"a","shard":"0","prirep":"p","state":"UNASSIGNED"}]""");
 
         assertThat(ElasticsearchRest.redSummary(shards)).isEqualTo("1 个主分片未分配：a（原因未知）");
+    }
+
+    // ---------------------------------------------------------------- 删除索引
+
+    @Test
+    void deleteAcceptsOnlyOneConcreteIndexName() {
+        // 普通名、系统索引名（是否允许交给 ES 判）、带点和连字符的都放行
+        ElasticsearchRest.requireSingleIndexName("video");
+        ElasticsearchRest.requireSingleIndexName(".kibana_task_manager_8.15.0_001");
+        ElasticsearchRest.requireSingleIndexName("logs-2026.11.06");
+    }
+
+    @Test
+    void deleteRejectsExpressionsThatHitManyIndices() {
+        // 这些在 ES 的 DELETE /<expr> 里都会一次删一片
+        for (String bad : List.of("*", "logs-*", "a,b", "_all", "-video", "vid?o", "a b", " video", "")) {
+            assertThatThrownBy(() -> ElasticsearchRest.requireSingleIndexName(bad))
+                    .as(bad)
+                    .isInstanceOf(CloudPlatformException.class);
+        }
+        assertThatThrownBy(() -> ElasticsearchRest.requireSingleIndexName(null))
+                .isInstanceOf(CloudPlatformException.class);
     }
 }
