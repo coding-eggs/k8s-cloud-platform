@@ -166,20 +166,25 @@ const sortedBreakdown = computed(() =>
     }))
 /** 明细表的资源列（一列一种单位，避免「x 核 / y GiB」混排） */
 const RES_DIMS = [
-  { key: 'cpu' as const, label: 'CPU（已用 / 配额）↓' },
-  { key: 'mem' as const, label: '内存（已用 / 配额）↓' },
+  { key: 'cpu' as const, label: 'CPU（虚线 = 配额）↓' },
+  { key: 'mem' as const, label: '内存（虚线 = 配额）↓' },
 ]
 function resCell(row: K8sNamespaceStatEntry, dim: 'cpu' | 'mem') {
   const st = row.snapshot.stat
   const f = dim === 'cpu' ? fmtCpu : fmtMem
-  const hard = dim === 'cpu' ? st.quotaCpuHard : st.quotaMemHard
-  const used = dim === 'cpu' ? st.quotaCpuUsed : st.quotaMemUsed
+  const hard = (dim === 'cpu' ? st.quotaCpuHard : st.quotaMemHard) ?? null
+  // 有配额时 requests 取配额已用（与 hard 同口径），没有时取 requests 合计
+  const req = (hard != null ? (dim === 'cpu' ? st.quotaCpuUsed : st.quotaMemUsed) : (dim === 'cpu' ? st.cpuRequest : st.memRequest)) ?? null
+  const lim = (dim === 'cpu' ? st.cpuLimit : st.memLimit) ?? null
+  const scale = Math.max(hard ?? 0, req ?? 0, lim ?? 0)
+  const w = (v: number | null) => (v == null || scale <= 0 ? null : (v / scale) * 100)
+  const ratio = hard != null && hard > 0 && req != null ? (req / hard) * 100 : null
   return {
-    pct: occPct(used, hard) == null ? null : ((used as number) / (hard as number)) * 100,
-    used: f(used),
-    hard: f(hard),
-    req: f(dim === 'cpu' ? st.cpuRequest : st.memRequest),
-    lim: f(dim === 'cpu' ? st.cpuLimit : st.memLimit),
+    hardAt: hard != null && hard < scale ? w(hard) : null,
+    lines: [
+      { k: 'requests', w: w(req), cls: `tone-${ratio == null ? 'ok' : occTone(ratio)}`, text: hard != null ? `${f(req)} / ${f(hard)}` : `${f(req)} · 未配额` },
+      { k: 'limits', w: w(lim), cls: 'lim', text: f(lim) },
+    ],
   }
 }
 const occTone = (p: number) => (p >= 95 ? 'danger' : p >= 80 ? 'warning' : 'ok')
@@ -556,22 +561,19 @@ defineExpose({ reloadAll })
           <el-table-column label="集群" min-width="140">
             <template #default="{ row }"><span class="muted">{{ clusterNameOf(row.clusterId) }}</span></template>
           </el-table-column>
-          <!-- 按资源分列（一列一种单位）：主行 = 已用 / 配额 + 占用条 + 百分比（无配额时 = requests）；副行 = limits -->
-          <el-table-column v-for="dim in RES_DIMS" :key="dim.key" :label="dim.label" min-width="240">
+          <!-- 按资源分列（一列一种单位）：两行 requests / limits 共用一把尺（量程 = 三者最大），配额 hard = 虚线；
+               requests 已用与配额都取 ResourceQuota 的 requests.cpu / requests.memory，条按占配额比例变色；limits 越过虚线 = 超出配额 -->
+          <el-table-column v-for="dim in RES_DIMS" :key="dim.key" :label="dim.label" min-width="260">
             <template #default="{ row }">
               <div class="rc">
-                <div class="rc-main">
-                  <template v-if="resCell(row, dim.key).pct != null">
-                    <span class="bar"><span class="bar-fill" :class="`tone-${occTone(resCell(row, dim.key).pct!)}`" :style="{ width: Math.min(100, resCell(row, dim.key).pct!) + '%' }" /></span>
-                    <span class="mono">{{ resCell(row, dim.key).used }} / {{ resCell(row, dim.key).hard }}</span>
-                    <b class="occ-pct" :class="`t-${occTone(resCell(row, dim.key).pct!)}`">{{ resCell(row, dim.key).pct!.toFixed(0) }}%</b>
-                  </template>
-                  <template v-else>
-                    <span class="mono">requests {{ resCell(row, dim.key).req }}</span>
-                    <span class="muted rc-noq">未配额</span>
-                  </template>
+                <div v-for="ln in resCell(row, dim.key).lines" :key="ln.k" class="rc-row">
+                  <span class="rc-k">{{ ln.k }}</span>
+                  <span class="rc-bar">
+                    <span v-if="ln.w != null" class="rc-fill" :class="ln.cls" :style="{ width: ln.w + '%' }" />
+                    <span v-if="resCell(row, dim.key).hardAt != null" class="rc-hard" :style="{ left: resCell(row, dim.key).hardAt + '%' }" />
+                  </span>
+                  <span class="rc-v">{{ ln.text }}</span>
                 </div>
-                <div class="rc-sub">limits {{ resCell(row, dim.key).lim }}</div>
               </div>
             </template>
           </el-table-column>
@@ -749,9 +751,6 @@ defineExpose({ reloadAll })
   min-height: 120px;
 }
 
-.occ-pct { width: 40px; font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-2); }
-.occ-pct.t-warning { color: var(--warning); }
-.occ-pct.t-danger { color: var(--danger); }
 .bar-fill.tone-warning { background: var(--warning); }
 .bar-fill.tone-danger { background: var(--danger); }
 
@@ -767,10 +766,15 @@ defineExpose({ reloadAll })
   font-size: 13px;
   color: var(--success);
 }
-.rc { display: flex; flex-direction: column; gap: 3px; }
-.rc-main { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
-.rc-main .bar { width: 72px; flex-shrink: 0; }
-.rc-main .occ-pct { width: auto; font-weight: 600; }
-.rc-noq { font-size: 12px; }
-.rc-sub { font-size: 12px; color: var(--text-3); font-family: Consolas, 'JetBrains Mono', monospace; }
+.rc { display: flex; flex-direction: column; gap: 4px; }
+.rc-row { display: grid; grid-template-columns: 58px 84px auto; align-items: center; gap: 8px; white-space: nowrap; }
+.rc-k { font-size: 12px; color: var(--text-3); }
+.rc-bar { position: relative; height: 8px; border-radius: 4px; background: var(--panel-hover); }
+.rc-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.rc-fill.tone-ok { background: var(--accent); }
+.rc-fill.tone-warning { background: var(--warning); }
+.rc-fill.tone-danger { background: var(--danger); }
+.rc-fill.lim { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.rc-hard { position: absolute; top: -3px; bottom: -3px; border-left: 2px dashed var(--text-2); transform: translateX(-1px); }
+.rc-v { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-1); }
 </style>
