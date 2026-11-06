@@ -228,7 +228,7 @@ public class AppReleaseService {
                 execution.setStage("PRECHECK");
                 execution.setStartedBy(operator);
                 execution.setStartedAt(new Date());
-                // 归属与租约一起写：凭据只在本进程内存里，别人不该来抢这条执行（见 AppExecutionLease）
+                // 归属与租约一起写：本实例活着时别人不该来抢这条执行（见 AppExecutionLease）
                 execution.setOwnerId(leases.instanceId());
                 execution.setLeaseUntil(leases.nextLease(execution.getStartedAt()));
                 try {

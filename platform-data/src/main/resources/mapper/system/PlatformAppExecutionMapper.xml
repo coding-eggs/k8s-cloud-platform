@@ -113,4 +113,15 @@
             or lease_until &lt; #{now,jdbcType=TIMESTAMP})
   </update>
 
+  <update id="releaseLeases">
+    update platform_app_execution
+       set lease_until = null
+     where owner_id = #{ownerId,jdbcType=VARCHAR}
+       and `status` in ('PENDING', 'RUNNING')
+    <if test="excludeIds != null and excludeIds.size() > 0">
+       and id not in
+      <foreach collection="excludeIds" item="x" open="(" separator="," close=")">#{x,jdbcType=BIGINT}</foreach>
+    </if>
+  </update>
+
 </mapper>

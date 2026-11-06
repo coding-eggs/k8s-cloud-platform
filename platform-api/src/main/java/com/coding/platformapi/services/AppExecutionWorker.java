@@ -26,9 +26,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p><b>归属与租约</b>：每拍先 {@code claim} 抢租约并钉住 {@code owner_id}，
  * 抢到才推进，并顺带把租约续到 {@code now + LEASE_MILLIS}；<b>推进一步后不释放租约</b> ——
- * 放开就等于每 3 秒把执行让给别的实例一次，而凭据只在发起它的那个进程里，
- * 另一台拿到只会判「中断」（这就是「发布已中断」的成因）。
- * 于是只有进程死掉、租约过期后才会被别人接管，接管方拿不到凭据再落 INTERRUPTED，语义仍然成立。
+ * 放开就等于每 3 秒让别的实例来抢一次，两台交替推进同一条执行（曾表现为「发布已中断」、反复点「继续」）。
+ * 于是只有本实例停机或死掉后才会被别人接管：
+ * <ul>
+ *   <li>正常停机（滚动更新 / 缩容，含平台「发布自己」时旧 api Pod 被换掉）：{@link #shutdown} 先停调度、
+ *       等手上的步骤跑完，再释放<b>已停下</b>的那些执行的租约，新实例下一拍就接手；</li>
+ *   <li>被强杀（OOM / 节点宕机）：来不及释放，等租约自然过期。</li>
+ * </ul>
+ * 接手方从 {@link ApplicationDeployCredentials}（Redis，多实例共享）取凭据接着跑；取不到才落 INTERRUPTED。
  */
 @Slf4j
 @Component
@@ -43,6 +48,12 @@ public class AppExecutionWorker {
 
     /** 已入队或在跑的执行：慢步骤期间不重复入队，避免同一条占满队列。 */
     private final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
+
+    /** 停机中：不再入队、不再抢租约（否则刚释放的租约又被自己续上） */
+    private volatile boolean stopping;
+
+    /** 停机时等手上步骤跑完的上限（测试里调小） */
+    long shutdownWaitMillis = 10_000;
 
     public AppExecutionWorker(AppReleaseExecutor executor,
                               PlatformAppExecutionMapper executions,
@@ -62,6 +73,9 @@ public class AppExecutionWorker {
 
     @Scheduled(fixedDelayString = "${platform.application.worker-delay-ms:3000}")
     public void tick() {
+        if (stopping) {
+            return;
+        }
         for (PlatformAppExecution execution : executions.selectActive()) {
             if (!runnable(execution)) {
                 continue;
@@ -80,6 +94,9 @@ public class AppExecutionWorker {
 
     private void run(Long id) {
         try {
+            if (stopping) {
+                return;   // 停机前已入队、还没开始的：不抢，交给接手的实例
+            }
             Date now = new Date();
             // 抢租约 + 钉住当拍归属；返回 0 = 另一台实例还持有（凭据在它那儿），这一拍什么都不做
             if (executions.claim(id, leases.instanceId(), now, leases.nextLease(now)) == 0) {
@@ -103,16 +120,31 @@ public class AppExecutionWorker {
                 || AppReleaseExecutor.RUNNING.equals(execution.getStatus());
     }
 
+    /**
+     * 停机交接：停调度 → 等手上的步骤跑完（最多 10s）→ 释放本实例已停下的执行的租约。
+     * 10s 内没跑完的那几条<b>不释放</b>：放了接手方就会与这一步并发推进，只能等它的租约自然过期。
+     * 数据源在本 bean 之后才销毁（本 bean 依赖 mapper），所以这里还能写库。
+     */
     @PreDestroy
     public void shutdown() {
+        stopping = true;
         pool.shutdown();
         try {
-            if (!pool.awaitTermination(10, TimeUnit.SECONDS)) {
+            if (!pool.awaitTermination(shutdownWaitMillis, TimeUnit.MILLISECONDS)) {
                 pool.shutdownNow();
             }
         } catch (InterruptedException e) {
             pool.shutdownNow();
             Thread.currentThread().interrupt();
+        }
+        Set<Long> stillRunning = Set.copyOf(inFlight);
+        try {
+            int released = executions.releaseLeases(leases.instanceId(), stillRunning);
+            if (released > 0 || !stillRunning.isEmpty()) {
+                log.info("停机交接：释放 {} 条发布执行的租约；仍在跑、未释放：{}", released, stillRunning);
+            }
+        } catch (RuntimeException e) {
+            log.warn("停机交接：释放租约失败，接手方需等租约过期：{}", e.getMessage());
         }
     }
 }

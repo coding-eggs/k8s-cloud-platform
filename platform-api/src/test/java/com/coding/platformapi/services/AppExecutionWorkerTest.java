@@ -15,6 +15,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import java.time.Duration;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -209,6 +210,66 @@ class AppExecutionWorkerTest {
         }
 
         verify(executions, timeout(WAIT).atLeast(2)).claim(eq(1L), eq(ME), any(), any());
+    }
+
+    /** 停机交接：手上没在跑的 → 全部释放（不排除任何 id），新实例下一拍就能接手 */
+    @Test
+    void shutdownReleasesThisInstancesLeases() {
+        worker.shutdown();
+
+        verify(executions).releaseLeases(ME, Set.of());
+    }
+
+    /** 等待上限内没跑完的那条不能放：放了接手方会与这一步并发推进 */
+    @Test
+    void shutdownKeepsTheLeaseOfAStepStillRunning() throws Exception {
+        PlatformAppExecution a = stored(1, "RUNNING");
+        when(executions.selectActive()).thenReturn(List.of(a));
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(inv -> {
+            started.countDown();
+            // 不响应中断：模拟卡在一次阻塞调用里
+            while (true) {
+                try {
+                    if (release.await(10, TimeUnit.SECONDS)) {
+                        return null;
+                    }
+                } catch (InterruptedException ignored) {
+                    // 继续等
+                }
+            }
+        }).when(executor).advance(a);
+
+        worker.tick();
+        assertThat(started.await(WAIT, TimeUnit.MILLISECONDS)).isTrue();
+        worker.shutdownWaitMillis = 100;
+        worker.shutdown();
+        release.countDown();
+
+        verify(executions).releaseLeases(ME, Set.of(1L));
+    }
+
+    /** 停机后不再入队、不再抢租约：否则刚释放的租约又被自己续上 */
+    @Test
+    void nothingIsClaimedAfterShutdown() {
+        PlatformAppExecution a = stored(1, "RUNNING");
+        when(executions.selectActive()).thenReturn(List.of(a));
+
+        worker.shutdown();
+        worker.tick();
+
+        verify(executions, never()).selectActive();
+        verify(executions, never()).claim(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void releaseFailureDoesNotBreakShutdown() {
+        when(executions.releaseLeases(any(), any())).thenThrow(new IllegalStateException("db down"));
+
+        worker.shutdown();   // 不抛
+
+        verify(executions).releaseLeases(eq(ME), any());
     }
 
     /**

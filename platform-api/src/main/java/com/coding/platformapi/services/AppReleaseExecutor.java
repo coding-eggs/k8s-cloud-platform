@@ -49,11 +49,12 @@ import java.util.stream.Collectors;
  *
  * <p>新版本健康之前不删旧对象，所以 HEALTH 在 PRUNE 之前。失败不自动回滚。
  *
- * <p>凭据是发起人的 token，只存内存。拿不到凭据、或被 k8s-server 拒绝 → INTERRUPTED（等用户「继续」），不是 FAILED：
- * 发布本身没有问题，只是缺一个能用的身份。
+ * <p>凭据是发起人的 token，存内存 + Redis（TTL = token 剩余有效期，不落库）。拿不到凭据、或被 k8s-server 拒绝
+ * → INTERRUPTED（等用户「继续」），不是 FAILED：发布本身没有问题，只是缺一个能用的身份。
  *
- * <p><b>拿不到凭据 == 接管了一个已死实例的执行</b>：正常情况下执行有归属（owner_id + 租约续期，
- * 见 {@link AppExecutionLease}），别的实例抢不到；能走到这里说明原进程的租约过期了。
+ * <p><b>拿不到凭据 == 接管了别的实例的执行，且共享的那份也没有</b>：正常情况下执行有归属（owner_id + 租约续期，
+ * 见 {@link AppExecutionLease}），别的实例抢不到；能走到这里说明原进程已停机 / 租约过期，
+ * 而 Redis 里取不到（不通，或 token 已过期）。
  * 两种原因的提示语分开写（一个要重新登录、一个不用），否则线上只能靠猜。
  */
 @Slf4j
@@ -386,7 +387,7 @@ public class AppReleaseExecutor {
      * 能抢到就说明原进程已经不在了。不写 finished_at：INTERRUPTED 仍是活动执行。
      */
     private void interruptNoCredential(PlatformAppExecution execution) {
-        log.info("发布执行 {} 在阶段 {} 中断：本实例（{}）内存里没有它的凭据，原推进实例已不在",
+        log.info("发布执行 {} 在阶段 {} 中断：本实例（{}）内存与 Redis 里都没有它的凭据，原推进实例已不在",
                 execution.getId(), execution.getStage(), leases.instanceId());
         interrupt(execution, CREDENTIAL_LOST);
     }

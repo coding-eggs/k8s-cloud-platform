@@ -4,6 +4,7 @@ import com.coding.data.models.system.PlatformAppExecution;
 import org.apache.ibatis.annotations.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.Date;
 import java.util.List;
 
@@ -41,6 +42,13 @@ public interface PlatformAppExecutionMapper {
      */
     int claim(@Param("id") Long id, @Param("ownerId") String ownerId,
               @Param("now") Date now, @Param("leaseUntil") Date leaseUntil);
+
+    /**
+     * 停机交接：清掉本实例持有的活动执行的租约，别的实例下一拍就能接手，不必干等租约过期。
+     * {@code excludeIds} 是停机时仍在跑的那几条 —— 它们的租约不能放，否则接手方会与这一步并发推进。
+     * 只改 {@code owner_id = ownerId} 的行，不碰别的实例的。
+     */
+    int releaseLeases(@Param("ownerId") String ownerId, @Param("excludeIds") Collection<Long> excludeIds);
 
     PlatformAppExecution selectById(@Param("id") Long id);
 

@@ -13,7 +13,7 @@
 | 服务 | `platform_app_service` | 每个服务一行 `desired`（镜像、端口、副本、环境变量、配置文件……），带乐观锁 `version` |
 | 依赖 | `platform_app_dependency` | 中间件（应用创建 / 绑定已有）或外部连接；**中间件不进发布**，增删即生效；外部连接可改（§1.2） |
 | 发布 | `platform_app_release` | 一次发布的不可变快照：勾选服务的 desired + 解析结果；回滚 = 用旧快照再发一次 |
-| 执行 | `platform_app_execution` | 发布/回滚的阶段机，`PENDING → … → DONE`；platform-api 重启后进入「已中断」，可继续 |
+| 执行 | `platform_app_execution` | 发布/回滚的阶段机，`PENDING → … → DONE`；platform-api 正常重启 / 滚动更新时由新实例接着跑（凭据在 Redis，TTL=token 有效期）；凭据取不到（Redis 不通 / token 过期）才进入「已中断」，可继续 |
 | 对象台账 | `platform_application_resource` | 平台建过的 K8s 对象；prune 差集、冲突判定、删除应用时清理 |
 
 **待发布改动代替草稿**：服务页保存只改 `desired`；应用页列出「与线上不同」的服务，勾选后发布。
@@ -97,7 +97,7 @@ key 不能以它结尾。
    **k8s-server 必须先于 platform-api 部署，且升级窗口内不要发布**：新 platform-api 对旧 k8s-server 会写出
    未展开的 `$(_REF_n)` 值、丢掉 configFiles，并沿用旧的就绪判定。另外先让仍在进行的旧画布部署操作跑完再升级，
    它们的 worker 随升级一并删除，不会再被续跑。
-5. **platform-api 只能单副本**：执行器的进度、依赖初始化的恢复、「重启后进入已中断」都假设只有一个实例；
+5. **platform-api 只能单副本**：执行器的进度、依赖初始化的恢复都假设只有一个实例；
    多副本会出现两个实例同时推进同一个执行。
 6. **「重下发全部模板」**：私有镜像拉取依赖命名空间 default SA 已挂 `platform-registry-pull`
    （命名空间分配时下发；渲染时不再注入）。没挂的命名空间发布会卡在拉镜像。
@@ -130,7 +130,8 @@ key 不能以它结尾。
 - [ ] 只改环境变量会滚动 Pod，未勾选的服务不重启。
 - [ ] 只改配置文件会滚动 Pod；容器内文件内容与路径正确、只读；同目录其他文件还在。
 - [ ] 镜像拉取失败时，发布停在 HEALTH，旧 Pod 继续服务。
-- [ ] 重启 platform-api 后执行进入「已中断」，点继续能完成（顺带验证 `reopen` 的 SQL）。
+- [ ] 平台「发布自己」（或发布中滚动更新 platform-api）：旧 Pod 停机释放租约，新 Pod 几秒内接手并走到成功，不进「已中断」。
+- [ ] Redis 不通时重启 platform-api，执行进入「已中断」，点继续能完成（顺带验证 `reopen` 的 SQL）。
 - [ ] 已中断时直接发新版本，旧执行被取代（顺带验证 `supersedeInterrupted` 的 SQL）。
 - [ ] 一个应用卡住时，其他应用仍能发布。
 - [ ] 回滚后线上配置与旧快照一致。
