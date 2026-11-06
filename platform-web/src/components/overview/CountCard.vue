@@ -224,6 +224,7 @@ const bar = computed(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  margin-top: 0.25rem;
 }
 .ov-count-card {
   flex: 1;
