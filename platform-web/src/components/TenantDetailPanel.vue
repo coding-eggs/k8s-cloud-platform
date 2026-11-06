@@ -39,6 +39,7 @@ const props = defineProps<{
   /** 能否看概览（默认能；不能时概览页签只显示无权提示，不发请求） */
   overviewAllowed?: boolean
 }>()
+const emit = defineEmits<{ 'overview-loaded': [at: number]; 'overview-failed': [] }>()
 const showManage = computed(() => props.manageTabs !== false)
 const showOverview = computed(() => props.overviewAllowed !== false)
 
@@ -281,6 +282,13 @@ function refreshAll(): void {
 
 // tenantId 变化（切租户 / 列表换行）→ 重拉两个 tab 数据
 watch(() => props.tenantId, refreshAll, { immediate: true })
+const overviewRef = ref<{ reloadAll: () => void } | null>(null)
+/** 总览页头的刷新 / 自动刷新：只重拉概览（命名空间、成员两页签各有自己的刷新按钮） */
+function reloadOverview(): void {
+  overviewRef.value?.reloadAll()
+}
+defineExpose({ reloadOverview })
+
 watch(activeTab, (t) => {
   if (t === 'members') void loadRoleCatalog()
 })
@@ -291,7 +299,13 @@ watch(activeTab, (t) => {
     <el-tabs v-model="activeTab">
       <!-- 概览（首个 tab，lazy）：进面板即拉快照/明细/曲线；tenantId 变化自动重拉 -->
       <el-tab-pane label="概览" name="overview" lazy>
-        <TenantOverviewPanel v-if="showOverview" :tenant-id="tenantId" />
+        <TenantOverviewPanel
+          v-if="showOverview"
+          ref="overviewRef"
+          :tenant-id="tenantId"
+          @loaded="(at: number) => emit('overview-loaded', at)"
+          @failed="emit('overview-failed')"
+        />
         <div v-else class="no-perm">当前角色没有查看租户概览的权限。</div>
       </el-tab-pane>
 

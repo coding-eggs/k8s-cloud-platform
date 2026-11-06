@@ -319,7 +319,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
                 <WaterBar label="内存 limits" :used="statMem(podStat?.memLimitBytes)" :total="memoryLimit" unit="byte" />
               </section>
               <CountCard
-                title="Pod" kind="pod"
+                title="Pod" kind="pod" no-link
                 :total="podStat ? podStat.podCount : null"
                 :sub="`/ ${node.podsLimit ?? '—'} 上限`"
                 :segments="podStatSegments"

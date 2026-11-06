@@ -11,6 +11,7 @@ import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
 import QuickActions from '@/components/overview/QuickActions.vue'
+import RefreshControl from '@/components/overview/RefreshControl.vue'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
 import WaterBar from '@/components/overview/WaterBar.vue'
@@ -21,6 +22,10 @@ import type { PlatformOverview } from '@/types/overview'
 const perm = usePermission()
 
 const loading = ref(false)
+/** 最近一次成功取数的时刻（页头「更新于 X 前」）；刷新失败不更新 */
+const updatedAt = ref<number | null>(null)
+/** 最近一次刷新失败但还有上一次的数可显示（自动刷新偶发失败不该把整页打成错误态） */
+const refreshFailed = ref(false)
 const clusters = ref<K8sCluster[]>([])
 const tenants = ref<PlatformTenant[]>([])
 const allocations = ref<NamespaceAllocation[]>([])
@@ -32,12 +37,24 @@ async function load(): Promise<void> {
   try {
     // 各块对应各自的端点：无权限点则跳过，避免 403 连弹。门控用的是 **API 域** 码。
     // 有总览码时，租户 / 分配数由总览接口给出，不再单独拉两份全量列表。
-    ;[clusters.value, tenants.value, allocations.value, ov.value] = await Promise.all([
+    const [c, t, a, o] = await Promise.all([
       perm.has(apiCodes.clusterManage) ? clusterApi.list() : Promise.resolve([] as K8sCluster[]),
       !canOverview.value && perm.has(apiCodes.tenantRead) ? tenantApi.list() : Promise.resolve([] as PlatformTenant[]),
       !canOverview.value && perm.has(apiCodes.allocationList) ? tenantApi.namespaceList() : Promise.resolve([] as NamespaceAllocation[]),
       canOverview.value ? overviewApi.platform().catch(() => null) : Promise.resolve(null),
     ])
+    clusters.value = c
+    tenants.value = t
+    allocations.value = a
+    if (canOverview.value && o == null && ov.value != null) {
+      refreshFailed.value = true // 保留上一次的数，页头标红「刷新失败」
+    } else {
+      ov.value = o
+      refreshFailed.value = canOverview.value && o == null
+      if (!refreshFailed.value) updatedAt.value = Date.now()
+    }
+  } catch {
+    refreshFailed.value = true
   } finally {
     loading.value = false
   }
@@ -118,18 +135,34 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading">
+  <div>
     <div class="page-header">
       <div>
         <h2 class="ph-title">平台总览</h2>
         <p class="ph-desc">集群健康、平台对象与最近去过的地方</p>
       </div>
-      <el-button @click="load">刷新</el-button>
+      <RefreshControl :updated-at="updatedAt" :loading="loading" :failed="refreshFailed && ov != null" @refresh="load" />
     </div>
 
     <QuickActions :actions="quickActions" face="platform" />
 
-    <template v-if="ov">
+    <!-- 首次加载：骨架屏占位（之后的刷新保留旧数据，不再遮罩） -->
+    <div v-if="canOverview && !ov && loading" class="ov-skeleton">
+      <el-skeleton animated>
+        <template #template>
+          <el-skeleton-item variant="rect" class="sk-bar" />
+          <div class="ov-grid5">
+            <el-skeleton-item v-for="i in 5" :key="i" variant="rect" class="sk-card" />
+          </div>
+          <el-skeleton-item variant="rect" class="sk-water" />
+          <div class="ov-grid2">
+            <el-skeleton-item v-for="i in 2" :key="i" variant="rect" class="sk-pie" />
+          </div>
+        </template>
+      </el-skeleton>
+    </div>
+
+    <template v-else-if="ov">
       <!-- 健康条 -->
       <div class="panel health-bar">
         <div class="hb-item">
@@ -297,6 +330,10 @@ onMounted(load)
 @media (max-width: 1200px) {
   .ov-grid5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+.ov-skeleton .sk-bar { width: 100%; height: 46px; border-radius: 10px; margin-bottom: 14px; }
+.ov-skeleton .sk-card { width: 100%; height: 112px; border-radius: 10px; }
+.ov-skeleton .sk-water { width: 100%; height: 72px; border-radius: 10px; margin: 14px 0; }
+.ov-skeleton .sk-pie { width: 100%; height: 220px; border-radius: 10px; }
 .section-title {
   margin: 26px 0 12px;
   font-size: 14px;

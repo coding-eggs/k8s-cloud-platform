@@ -27,6 +27,8 @@ import { segmentsOf } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const props = defineProps<{ tenantId: string }>()
+/** loaded：快照取数成功（带时刻）；failed：刷新失败但保留了上一次的数（总览页头据此显示「更新于 / 刷新失败」） */
+const emit = defineEmits<{ loaded: [at: number]; failed: [] }>()
 
 const router = useRouter()
 const ctx = useResourceContext()
@@ -79,8 +81,7 @@ async function loadOverview(): Promise<void> {
   if (!target) return
   loading.value = true
   loadError.value = false
-  summary.value = null
-  // 计数卡独立降级：失败只是不显示这一行
+  // 计数卡独立降级：失败只是不显示这一行（刷新失败保留上一次的数；换租户时由下面的 watch 清空）
   tenantApi.summary(target)
     .then((s) => { if (target === props.tenantId) summary.value = s })
     .catch(() => { /* 不影响其它段 */ })
@@ -88,10 +89,12 @@ async function loadOverview(): Promise<void> {
     const data = await tenantApi.overview({ tenantId: target })
     if (target !== props.tenantId) return // 期间切了租户：丢弃这次结果
     overview.value = data
+    emit('loaded', Date.now())
   } catch {
     if (target === props.tenantId) {
-      overview.value = null
-      loadError.value = true
+      // 已有数据时（自动刷新 / 手动刷新）保留旧数，只通知页头；首次就失败才整块显示失败态
+      if (overview.value) emit('failed')
+      else loadError.value = true
     }
   } finally {
     if (target === props.tenantId) loading.value = false
@@ -194,6 +197,7 @@ watch(
   () => props.tenantId,
   () => {
     overview.value = null
+    summary.value = null
     loadError.value = false
     breakdown.value = null
     breakdownLoaded.value = false
@@ -205,16 +209,27 @@ watch(
   },
   { immediate: true },
 )
+
+defineExpose({ reloadAll })
 </script>
 
 <template>
-  <div v-loading="loading" class="tov">
+  <div class="tov">
     <!-- 快照整块失败：其余段不显示（没有范围事实可渲染）；可重试 -->
     <EmptyState v-if="loadError" title="租户概览加载失败" description="可能是后端或缓存暂时不可用，请稍后重试。">
       <el-button type="primary" :icon="Refresh" @click="reloadAll">重试</el-button>
     </EmptyState>
 
-    <div v-else-if="!overview" class="muted notice">加载中…</div>
+    <!-- 首次加载：骨架屏占位（之后的刷新保留旧数据，不遮罩） -->
+    <el-skeleton v-else-if="!overview" animated class="tov-skeleton">
+      <template #template>
+        <div class="tov-sk-cards">
+          <el-skeleton-item v-for="i in 5" :key="i" variant="rect" class="sk-card" />
+        </div>
+        <el-skeleton-item variant="rect" class="sk-block" />
+        <el-skeleton-item variant="rect" class="sk-block" />
+      </template>
+    </el-skeleton>
 
     <!-- 该租户没有任何命名空间（范围=0） -->
     <EmptyState
@@ -486,6 +501,15 @@ watch(
 </template>
 
 <style scoped>
+.tov-skeleton { padding-top: 4px; }
+.tov-sk-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.tov-skeleton .sk-card { width: 100%; height: 112px; border-radius: 10px; }
+.tov-skeleton .sk-block { width: 100%; height: 160px; border-radius: 10px; margin-bottom: 14px; }
 .tov-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

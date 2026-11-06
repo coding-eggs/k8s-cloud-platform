@@ -10,12 +10,13 @@
  * 概览能力 = ANY-of `tenant:overview:view` / `platform:allocation:list`（同 /tenant/overview 的授权）；
  * 两者都没有时不发请求，只显示无权提示 —— 否则每次进总览吃一个 403 红条。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
 import TenantDetailPanel from '@/components/TenantDetailPanel.vue'
 import QuickActions from '@/components/overview/QuickActions.vue'
+import RefreshControl from '@/components/overview/RefreshControl.vue'
 
 const perm = usePermission()
 
@@ -24,6 +25,25 @@ const tenantName = computed(() => tenant.value?.tenantName ?? tenant.value?.tena
 
 const canView = computed(() => perm.has(apiCodes.tenantOverviewView) || perm.has(apiCodes.allocationList))
 const canManage = computed(() => perm.has(pageCodes.tenant.self))
+
+// 页头「更新于 X 前 / 自动刷新」：只管概览页签的数据（快照成功才算更新）
+const panelRef = ref<{ reloadOverview: () => void } | null>(null)
+const updatedAt = ref<number | null>(null)
+const refreshing = ref(false)
+const refreshFailed = ref(false)
+function refresh(): void {
+  refreshing.value = true
+  panelRef.value?.reloadOverview()
+}
+function onLoaded(at: number): void {
+  updatedAt.value = at
+  refreshing.value = false
+  refreshFailed.value = false
+}
+function onFailed(): void {
+  refreshing.value = false
+  refreshFailed.value = true
+}
 
 const quickActions = computed(() =>
   [
@@ -39,27 +59,43 @@ const quickActions = computed(() =>
 <template>
   <div>
     <div class="page-header">
-      <h2 class="ph-title">{{ tenantName }}</h2>
-      <p class="ph-desc">
-        <template v-if="perm.isAdmin">当前代管 {{ tenantName }} —— 这里的数字只统计该租户</template>
-        <template v-else>你的租户概况、命名空间与成员</template>
-      </p>
+      <div>
+        <h2 class="ph-title">{{ tenantName }}</h2>
+        <p class="ph-desc">
+          <template v-if="perm.isAdmin">当前代管 {{ tenantName }} —— 这里的数字只统计该租户</template>
+          <template v-else>你的租户概况、命名空间与成员</template>
+        </p>
+      </div>
+      <RefreshControl
+        v-if="tenant && canView"
+        :updated-at="updatedAt"
+        :loading="refreshing"
+        :failed="refreshFailed"
+        @refresh="refresh"
+      />
     </div>
 
     <QuickActions :actions="quickActions" face="tenant" />
 
     <TenantDetailPanel
       v-if="tenant"
+      ref="panelRef"
       :tenant-id="tenant.tenantId"
       :tenant-name="tenantName"
       :manage-tabs="canManage"
       :overview-allowed="canView"
+      @overview-loaded="onLoaded"
+      @overview-failed="onFailed"
     />
   </div>
 </template>
 
 <style scoped>
 .page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 12px;
 }
 .ph-title {
