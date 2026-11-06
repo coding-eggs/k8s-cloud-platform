@@ -164,6 +164,24 @@ const sortedBreakdown = computed(() =>
       if (pa !== pb) return pb - pa
       return (a.row.clusterId + '/' + nsOf(a.row)).localeCompare(b.row.clusterId + '/' + nsOf(b.row))
     }))
+/** 明细表的资源列（一列一种单位，避免「x 核 / y GiB」混排） */
+const RES_DIMS = [
+  { key: 'cpu' as const, label: 'CPU（已用 / 配额）↓' },
+  { key: 'mem' as const, label: '内存（已用 / 配额）↓' },
+]
+function resCell(row: K8sNamespaceStatEntry, dim: 'cpu' | 'mem') {
+  const st = row.snapshot.stat
+  const f = dim === 'cpu' ? fmtCpu : fmtMem
+  const hard = dim === 'cpu' ? st.quotaCpuHard : st.quotaMemHard
+  const used = dim === 'cpu' ? st.quotaCpuUsed : st.quotaMemUsed
+  return {
+    pct: occPct(used, hard) == null ? null : ((used as number) / (hard as number)) * 100,
+    used: f(used),
+    hard: f(hard),
+    req: f(dim === 'cpu' ? st.cpuRequest : st.memRequest),
+    lim: f(dim === 'cpu' ? st.cpuLimit : st.memLimit),
+  }
+}
 const occTone = (p: number) => (p >= 95 ? 'danger' : p >= 80 ? 'warning' : 'ok')
 
 const hasAttention = computed(() => {
@@ -538,31 +556,23 @@ defineExpose({ reloadAll })
           <el-table-column label="集群" min-width="140">
             <template #default="{ row }"><span class="muted">{{ clusterNameOf(row.clusterId) }}</span></template>
           </el-table-column>
-          <el-table-column label="requests (CPU / 内存)" min-width="180">
+          <!-- 按资源分列（一列一种单位）：主行 = 已用 / 配额 + 占用条 + 百分比（无配额时 = requests）；副行 = limits -->
+          <el-table-column v-for="dim in RES_DIMS" :key="dim.key" :label="dim.label" min-width="240">
             <template #default="{ row }">
-              <span class="mono">{{ fmtCpu(row.snapshot.stat.cpuRequest) }} / {{ fmtMem(row.snapshot.stat.memRequest) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="limits (CPU / 内存)" min-width="180">
-            <template #default="{ row }">
-              <span class="mono">{{ fmtCpu(row.snapshot.stat.cpuLimit) }} / {{ fmtMem(row.snapshot.stat.memLimit) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="配额 hard (CPU / 内存)" min-width="180">
-            <template #default="{ row }">
-              <span class="mono">{{ fmtCpu(row.snapshot.stat.quotaCpuHard) }} / {{ fmtMem(row.snapshot.stat.quotaMemHard) }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="配额占用 ↓" min-width="230">
-            <template #default="{ $index }">
-              <template v-for="d in [{ k: 'CPU', p: sortedBreakdown[$index]?.cpu }, { k: '内存', p: sortedBreakdown[$index]?.mem }]" :key="d.k">
-                <div v-if="d.p != null" class="occ-row">
-                  <span class="occ-tag">{{ d.k }}</span>
-                  <span class="bar"><span class="bar-fill" :class="`tone-${occTone(d.p)}`" :style="{ width: Math.min(100, d.p) + '%' }" /></span>
-                  <span class="occ-pct" :class="`t-${occTone(d.p)}`">{{ d.p.toFixed(0) }}%</span>
+              <div class="rc">
+                <div class="rc-main">
+                  <template v-if="resCell(row, dim.key).pct != null">
+                    <span class="bar"><span class="bar-fill" :class="`tone-${occTone(resCell(row, dim.key).pct!)}`" :style="{ width: Math.min(100, resCell(row, dim.key).pct!) + '%' }" /></span>
+                    <span class="mono">{{ resCell(row, dim.key).used }} / {{ resCell(row, dim.key).hard }}</span>
+                    <b class="occ-pct" :class="`t-${occTone(resCell(row, dim.key).pct!)}`">{{ resCell(row, dim.key).pct!.toFixed(0) }}%</b>
+                  </template>
+                  <template v-else>
+                    <span class="mono">requests {{ resCell(row, dim.key).req }}</span>
+                    <span class="muted rc-noq">未配额</span>
+                  </template>
                 </div>
-              </template>
-              <span v-if="sortedBreakdown[$index]?.cpu == null && sortedBreakdown[$index]?.mem == null" class="muted">未配置配额</span>
+                <div class="rc-sub">limits {{ resCell(row, dim.key).lim }}</div>
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="200">
@@ -739,22 +749,11 @@ defineExpose({ reloadAll })
   min-height: 120px;
 }
 
-.occ-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 2px 0;
-}
 .occ-pct { width: 40px; font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-2); }
 .occ-pct.t-warning { color: var(--warning); }
 .occ-pct.t-danger { color: var(--danger); }
 .bar-fill.tone-warning { background: var(--warning); }
 .bar-fill.tone-danger { background: var(--danger); }
-.occ-tag {
-  width: 34px;
-  font-size: 11px;
-  color: var(--text-3);
-}
 
 .cap-inv { flex: 1; min-width: 0; margin-left: 12px; }
 .cap-bullets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
@@ -768,4 +767,10 @@ defineExpose({ reloadAll })
   font-size: 13px;
   color: var(--success);
 }
+.rc { display: flex; flex-direction: column; gap: 3px; }
+.rc-main { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.rc-main .bar { width: 72px; flex-shrink: 0; }
+.rc-main .occ-pct { width: auto; font-weight: 600; }
+.rc-noq { font-size: 12px; }
+.rc-sub { font-size: 12px; color: var(--text-3); font-family: Consolas, 'JetBrains Mono', monospace; }
 </style>
