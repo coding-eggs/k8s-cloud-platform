@@ -133,6 +133,7 @@ import type {
   PageResult,
 } from '@/types'
 import type { MetricSeriesResponse } from '@/types/metrics'
+import type { NodePodStat, PlatformOverview, ScopeSummary } from '@/types/overview'
 import type { WorkloadDetail, WorkloadRevision } from '@/types/workload'
 import type {
   OAuthClient,
@@ -231,6 +232,9 @@ export const clusterApi = {
    */
   overview: (clusterId: string) =>
     http.post<never, K8sClusterOverview>('/cluster/overview', { clusterId }),
+  /** 概览计数卡：应用 / 中间件 / CI / 告警（无读权限的块为 null）+ 节点与命名空间分类 */
+  summary: (clusterId: string) =>
+    http.post<never, ScopeSummary>('/cluster/summary', { clusterId }),
 
   /** 资源明细 per-namespace（「资源明细」tab 懒加载）；与 overview 同源同一份聚合快照。不可用返回 null。
    *  形状为命名空间切片（NamespaceStatEntry：clusterId + snapshot + quotaState），行数据在 snapshot.stat。 */
@@ -290,6 +294,9 @@ export const tenantApi = {
   /** 租户概览首屏快照：合计 + 逐集群小计 + 异常 Pod / 不健康工作负载名单 + 配额三档（逐集群降级） */
   overview: (body: TenantOverviewReq) =>
     http.post<never, K8sTenantOverview>('/tenant/overview', body),
+  /** 概览计数卡（应用 / 中间件 / CI / 告警 + 命名空间数 / 成员数）；tenantId 省略 = token 租户 */
+  summary: (tenantId?: string) =>
+    http.post<never, ScopeSummary>('/tenant/overview/summary', { tenantId }),
   /** 资源明细（per-namespace，懒加载）：每行回带 clusterId + quotaState（判定在后端） */
   overviewBreakdown: (body: TenantOverviewReq) =>
     http.post<never, K8sNamespaceStatEntry[]>('/tenant/overview/breakdown', body),
@@ -328,6 +335,9 @@ export const namespaceApi = {
   /** 单个命名空间视图（含 description/labels/分配信息）；不存在返回 null */
   get: (clusterId: string, namespace: string) =>
     http.post<never, NamespaceView | null>('/namespace/get', { clusterId, namespace }),
+  /** 概览计数卡：工作负载 / Pod / 配额 + 应用 / 中间件 / CI / 告警 */
+  summary: (clusterId: string, namespace: string) =>
+    http.post<never, ScopeSummary>('/namespace/summary', { clusterId, namespace }),
   /** 命名空间快照（采样切片 + 配额三档状态 quotaState）：租户概览/命名空间详情页的读取面。
    *  刻意与 /namespace/get 分离（后者是分配页/编辑器的读取面）。授权 platform:allocation:list */
   statGet: (clusterId: string, namespace: string) =>
@@ -794,6 +804,9 @@ export const nodeApi = {
     http.post<never, NodeDrainResult>('/nodes/drain', payload),
   pods: (name: string, clusterId: string) =>
     http.get<never, K8sPod[]>(`/nodes/${encodeURIComponent(name)}/pods`, { params: { clusterId } }),
+  /** 单节点 Pod 统计（requests / limits 合计 + 状态分桶） */
+  podStat: (name: string, clusterId: string) =>
+    http.get<never, NodePodStat>(`/nodes/${encodeURIComponent(name)}/podstat`, { params: { clusterId } }),
   /** 节点上某 Pod 的 YAML（只读；集群域 admin，无需 tenantId） */
   podYaml: (nodeName: string, clusterId: string, namespace: string, podName: string) =>
     http.get<never, string>(
@@ -1314,4 +1327,11 @@ export const oauthClientApi = {
   enable: (id: string, enabled: boolean) => http.post<never, void>('/oauth-clients/enable', { id, enabled }),
   resetSecret: (id: string, which: OAuthSecretKind) =>
     http.post<never, OAuthClientSecrets>('/oauth-clients/reset-secret', { id, which }),
+}
+
+// ==================== 平台总览 ====================
+
+/** 平台总览（/overview/platform，platform:overview:view） */
+export const overviewApi = {
+  platform: () => http.post<never, PlatformOverview>('/overview/platform'),
 }

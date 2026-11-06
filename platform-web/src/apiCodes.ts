@@ -16,6 +16,8 @@ export const apiCodes = {
   // ---- 平台族 ----
   /** 集群管理面（/cluster/list、/cluster/capability/refresh、/nodes/**、存储类等） */
   clusterManage: 'platform:cluster:manage',
+  /** 平台总览（/overview/platform） */
+  overviewView: 'platform:overview:view',
   /** 命名空间分配读（/namespace/list|get|yaml|quota/get、/cluster/options） */
   allocationList: 'platform:allocation:list',
   /** 命名空间分配写（创建/编辑/删除、配额与限制范围 upsert） */
