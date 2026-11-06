@@ -167,9 +167,8 @@ const router = createRouter({
         // 日志查询中心（租户可达；后端按分配表收窄命名空间）
         { path: 'observability/logs', name: 'observability-logs', component: () => import('@/views/observability/LogsView.vue'), meta: { title: '日志查询', domain: 'observe', icon: 'Document', order: 5, context: 'full', requiresPerm: [pageCodes.observability.logs] } },
 
-        // ============ 租户视图 · 组织 ============
-        // 自管轨「我的租户」：租户 hat 内、无代管权的成员可达；tenantId 不进 path，取当前租户上下文
-        { path: 'tenants/detail', name: 'tenant-detail', component: () => import('@/views/TenantDetailView.vue'), meta: { title: '我的租户', domain: 'org', icon: 'OfficeBuilding', order: 1, requiresPerm: [pageCodes.tenant.self] } },
+        // 原「租户视图 · 组织 › 我的租户」已并入租户总览（2026-11-06）：旧链接 / 书签重定向过去
+        { path: 'tenants/detail', redirect: { name: 'overview' } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

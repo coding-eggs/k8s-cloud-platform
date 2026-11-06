@@ -54,10 +54,10 @@ const LABELS: Record<NavDomainKey, string> = {
   observe: '观测',
 }
 
-/** 两个视图各自的域顺序（租户视图 6 域、平台视图 4 域） */
+/** 两个视图各自的域顺序（租户视图 5 域、平台视图 4 域；租户「组织」已并入总览） */
 const DOMAIN_LAYOUT: Record<NavFace, NavDomainKey[]> = {
   platform: ['cluster', 'network', 'org', 'ops'],
-  tenant: ['app', 'resource', 'storage', 'network', 'observe', 'org'],
+  tenant: ['app', 'resource', 'storage', 'network', 'observe'],
 }
 
 const VALID_DOMAINS = new Set<string>(Object.keys(LABELS))

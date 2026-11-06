@@ -11,6 +11,7 @@ import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
 import RecentVisits from '@/components/RecentVisits.vue'
+import QuickActions from '@/components/overview/QuickActions.vue'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
 import WaterBar from '@/components/overview/WaterBar.vue'
@@ -127,6 +128,8 @@ onMounted(load)
       <el-button @click="load">刷新</el-button>
     </div>
 
+    <QuickActions :actions="quickActions" />
+
     <template v-if="ov">
       <!-- 健康条 -->
       <div class="panel health-bar">
@@ -216,15 +219,6 @@ onMounted(load)
       </el-table-column>
     </el-table>
 
-    <!-- 快捷操作 -->
-    <h3 class="section-title">快捷操作</h3>
-    <div class="shortcut-grid">
-      <router-link v-for="a in quickActions" :key="a.path" :to="a.path" class="panel shortcut-card">
-        <el-icon class="sc-icon"><component :is="a.icon" /></el-icon>
-        <span class="sc-title">{{ a.title }}</span>
-      </router-link>
-    </div>
-
     <!-- 最近访问 -->
     <h3 class="section-title">最近访问</h3>
     <RecentVisits face="platform" />
@@ -312,36 +306,5 @@ onMounted(load)
   font-size: 14px;
   font-weight: 600;
   color: var(--text-2);
-}
-.shortcut-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-}
-.shortcut-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 16px;
-  text-decoration: none;
-  transition: all .15s;
-}
-.shortcut-card:hover {
-  border-color: var(--accent);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-.sc-icon {
-  font-size: 20px;
-  color: var(--accent);
-  flex-shrink: 0;
-}
-.sc-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-1);
-}
-@media (max-width: 1200px) {
-  .shortcut-grid { grid-template-columns: repeat(2, 1fr); }
 }
 </style>

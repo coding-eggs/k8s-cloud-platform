@@ -3,7 +3,9 @@
  * 租户详情面板（Task 20）：概览 + 命名空间分配 + 成员与角色 三个 tab。
  * 复用于两处（组件复用，靠 props + 权限位区分能力面）：
  *   1. TenantView（/tenants，代管轨）：admin 从列表选租户，drawer 内使用，delegate=true；
- *   2. /tenants/detail（自管轨，Task 18 裁定）：tenantId 强制取当前租户上下文，delegate=false。
+ *   2. 租户视图总览（自管轨，原 /tenants/detail 并入）：tenantId 取当前租户上下文，delegate=false；
+ *      管理页签按 `manageTabs` 显示（调用方按 tenant:page:tenant.self 判），概览能力按 `overviewAllowed`；
+ *      `overview-footer` 插槽挂在概览页签底部（总览放「最近访问」）。
  *
  * 后端边界（无需前端重复判定）：
  * - /tenant/member/*：TenantContextResolver 裁决 —— 自管 token 锁定本租户（tenantId 必与 hat 一致，
@@ -33,7 +35,13 @@ const props = defineProps<{
   tenantName: string
   /** 代管轨（admin）：可分配命名空间/添加成员；自管轨靠权限位自然收敛 */
   delegate?: boolean
+  /** 是否显示「命名空间分配 / 成员与角色」两个页签（默认显示；关掉时也不拉这两块数据） */
+  manageTabs?: boolean
+  /** 能否看概览（默认能；不能时概览页签只显示无权提示，不发请求） */
+  overviewAllowed?: boolean
 }>()
+const showManage = computed(() => props.manageTabs !== false)
+const showOverview = computed(() => props.overviewAllowed !== false)
 
 const perm = usePermission()
 const activeTab = ref('overview')
@@ -267,6 +275,7 @@ async function onRemoveMember(row: TenantMemberView): Promise<void> {
 }
 
 function refreshAll(): void {
+  if (!showManage.value) return
   void loadAllocations()
   void loadMembers()
 }
@@ -283,10 +292,12 @@ watch(activeTab, (t) => {
     <el-tabs v-model="activeTab">
       <!-- 概览（首个 tab，lazy）：进面板即拉快照/明细/曲线；tenantId 变化自动重拉 -->
       <el-tab-pane label="概览" name="overview" lazy>
-        <TenantOverviewPanel :tenant-id="tenantId" />
+        <TenantOverviewPanel v-if="showOverview" :tenant-id="tenantId" />
+        <div v-else class="no-perm">当前角色没有查看租户概览的权限。</div>
+        <slot name="overview-footer" />
       </el-tab-pane>
 
-      <el-tab-pane label="命名空间分配" name="ns">
+      <el-tab-pane v-if="showManage" label="命名空间分配" name="ns">
         <div class="toolbar">
           <el-button v-if="can('platform:allocation:manage')" type="primary" @click="allocDialogVisible = true">
             分配命名空间
@@ -314,7 +325,7 @@ watch(activeTab, (t) => {
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane label="成员与角色" name="members">
+      <el-tab-pane v-if="showManage" label="成员与角色" name="members">
         <div class="toolbar">
           <el-tooltip
             :disabled="canManageMembers && can('platform:user:manage')"
@@ -440,6 +451,11 @@ watch(activeTab, (t) => {
 </template>
 
 <style scoped>
+.no-perm {
+  padding: 18px 4px;
+  font-size: 13px;
+  color: var(--text-3);
+}
 .toolbar {
   margin-bottom: 12px;
   display: flex;
