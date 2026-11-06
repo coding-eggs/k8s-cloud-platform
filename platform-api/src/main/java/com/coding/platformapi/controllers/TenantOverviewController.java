@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.platformapi.models.overview.ScopeSummaryView;
+import com.coding.platformapi.services.overview.ScopeSummaryService;
 import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.k8s.dto.TenantOverviewDTO;
 import com.coding.common.models.system.ResponseData;
@@ -38,6 +40,7 @@ import java.util.Map;
 public class TenantOverviewController {
 
     private final TenantOverviewService overviewService;
+    private final ScopeSummaryService scopeSummaryService;
     private final MetricsService metricsService;
     private final TenantContextResolver ctx;
     private final AuthContext auth;
@@ -48,6 +51,13 @@ public class TenantOverviewController {
     public ResponseData<TenantOverviewDTO> overview(@RequestBody TenantOverviewRequest req) {
         String tid = ctx.requireContext(tokenTenantId(), req.getTenantId());
         return new ResponseData<>(overviewService.overview(tid));
+    }
+
+    @PostMapping("/summary")
+    @Operation(summary = "租户概览计数卡", description = "应用 / 中间件 / CI / 告警计数（无读权限的块为 null）+ 命名空间数 / 成员数；生效租户裁决同 /tenant/overview")
+    public ResponseData<ScopeSummaryView> summary(@RequestBody TenantOverviewRequest req) {
+        String tid = ctx.requireContext(tokenTenantId(), req.getTenantId());
+        return new ResponseData<>(scopeSummaryService.tenant(tid));
     }
 
     @PostMapping("/breakdown")

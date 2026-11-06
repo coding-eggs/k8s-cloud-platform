@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.platformapi.models.overview.ScopeSummaryView;
+import com.coding.platformapi.services.overview.ScopeSummaryService;
 import com.coding.common.models.k8s.dto.LimitRangeDTO;
 import com.coding.common.models.k8s.dto.NamespaceDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatEntry;
@@ -36,12 +38,21 @@ public class NamespaceController {
     private NamespaceService namespaceService;
 
     @Autowired
+    private ScopeSummaryService scopeSummaryService;
+
+    @Autowired
     private MetricsService metricsService;
 
     @PostMapping("/list")
     @Operation(summary = "集群命名空间列表", description = "K8s 命名空间 + 分配信息合并视图（名字/状态/创建时间/管理方式/已分配租户/描述/标签）")
     public ResponseData<List<NamespaceView>> list(@RequestBody ClusterKeyRequest request) {
         return new ResponseData<>(namespaceService.list(request.getClusterId()));
+    }
+
+    @PostMapping("/summary")
+    @Operation(summary = "命名空间概览计数卡", description = "工作负载 / Pod / 配额 + 应用 / 中间件 / CI / 告警计数（无读权限的块为 null）。授权 platform:allocation:list")
+    public ResponseData<ScopeSummaryView> summary(@RequestBody NamespaceKeyRequest request) {
+        return new ResponseData<>(scopeSummaryService.namespace(request.getClusterId(), request.getNamespace()));
     }
 
     @PostMapping("/get")

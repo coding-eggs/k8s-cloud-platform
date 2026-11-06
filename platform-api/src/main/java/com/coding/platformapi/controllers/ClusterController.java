@@ -1,5 +1,7 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.platformapi.models.overview.ScopeSummaryView;
+import com.coding.platformapi.services.overview.ScopeSummaryService;
 import com.coding.common.models.k8s.dto.ClusterOverviewDTO;
 import com.coding.common.models.k8s.dto.NamespaceStatEntry;
 import com.coding.common.models.system.ResponseData;
@@ -42,6 +44,9 @@ public class ClusterController {
 
     @Autowired
     private ClusterService clusterService;
+
+    @Autowired
+    private ScopeSummaryService scopeSummaryService;
 
     @Autowired
     private MetricsService metricsService;
@@ -200,6 +205,12 @@ public class ClusterController {
     }
 
     // ===== 集群概览（B4）：一页一 controller —— 概览页 ↔ 本类 =====
+
+    @PostMapping("/summary")
+    @Operation(summary = "集群概览计数卡", description = "应用 / 中间件 / CI / 告警计数（无读权限的块为 null）+ 节点与命名空间分类")
+    public ResponseData<ScopeSummaryView> summary(@RequestBody ClusterKeyRequest request) {
+        return new ResponseData<>(scopeSummaryService.cluster(request.getClusterId()));
+    }
 
     @PostMapping("/overview")
     @Operation(summary = "集群概览快照",

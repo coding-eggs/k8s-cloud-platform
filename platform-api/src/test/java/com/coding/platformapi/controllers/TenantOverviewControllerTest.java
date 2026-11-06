@@ -41,12 +41,14 @@ class TenantOverviewControllerTest {
 
     private final TenantOverviewService overviewService = mock(TenantOverviewService.class);
     private final MetricsService metricsService = mock(MetricsService.class);
+    private final com.coding.platformapi.services.overview.ScopeSummaryService scopeSummaryService =
+            mock(com.coding.platformapi.services.overview.ScopeSummaryService.class);
     private final AuthContext auth = mock(AuthContext.class);
     /** 真实 resolver：单测直接构造（无状态、无依赖）。 */
     private final TenantContextResolver ctx = new TenantContextResolver();
 
     private final TenantOverviewController controller =
-            new TenantOverviewController(overviewService, metricsService, ctx, auth);
+            new TenantOverviewController(overviewService, scopeSummaryService, metricsService, ctx, auth);
 
     private MockMvc mvc() {
         return MockMvcBuilders.standaloneSetup(controller).build();
@@ -59,6 +61,15 @@ class TenantOverviewControllerTest {
         when(auth.current()).thenReturn(selfTenant("t-self"));
 
         assertThatThrownBy(() -> controller.overview(req("t-other")))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasFieldOrPropertyWithValue("code", EnumResponseType.TENANT_MISMATCH.getCode());
+    }
+
+    @Test
+    void summary_self_track_rejects_foreign_tenant() {
+        when(auth.current()).thenReturn(selfTenant("t-self"));
+
+        assertThatThrownBy(() -> controller.summary(req("t-other")))
                 .isInstanceOf(CloudPlatformException.class)
                 .hasFieldOrPropertyWithValue("code", EnumResponseType.TENANT_MISMATCH.getCode());
     }
