@@ -25,7 +25,6 @@ import { formatMetricValue } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusCards from '@/components/overview/StatusCards.vue'
 import CapacityBullet from '@/components/overview/CapacityBullet.vue'
-import TopBars, { type TopBarItem } from '@/components/overview/TopBars.vue'
 import InventoryStrip, { type InventoryItem } from '@/components/overview/InventoryStrip.vue'
 import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, workloadSegments, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
@@ -149,35 +148,24 @@ const quotaOcc = computed(() =>
     const pct = (u?: number | null, h?: number | null) => (u != null && h != null && h > 0 ? (u / h) * 100 : null)
     return { row: r, cpu: pct(st.quotaCpuUsed, st.quotaCpuHard), mem: pct(st.quotaMemUsed, st.quotaMemHard) }
   }))
-const topDim = ref<'cpu' | 'mem'>('cpu')
 const multiCluster = computed(() => (overview.value?.clusters.length ?? 0) > 1)
-const nsTo = (r: K8sNamespaceStatEntry) =>
-  `/namespaces/detail?clusterId=${encodeURIComponent(r.clusterId)}&name=${encodeURIComponent(nsOf(r))}`
-const topQuotaItems = computed<TopBarItem[]>(() =>
-  quotaOcc.value
-    .filter((x) => x[topDim.value] != null)
-    .sort((a, b) => b[topDim.value]! - a[topDim.value]!)
-    .slice(0, 5)
-    .map((x) => {
-      const st = x.row.snapshot.stat
-      const used = topDim.value === 'cpu' ? fmtCpu(st.quotaCpuUsed) : fmtMem(st.quotaMemUsed)
-      const hard = topDim.value === 'cpu' ? fmtCpu(st.quotaCpuHard) : fmtMem(st.quotaMemHard)
-      return {
-        key: `${x.row.clusterId}/${nsOf(x.row)}`,
-        label: nsOf(x.row),
-        sub: multiCluster.value ? clusterNameOf(x.row.clusterId) : null,
-        pct: x[topDim.value]!,
-        text: `${used} / ${hard} · ${x[topDim.value]!.toFixed(0)}%`,
-        to: nsTo(x.row),
-        scope: { clusterId: x.row.clusterId, namespace: nsOf(x.row) },
-      }
-    }))
 /** 需要关注：配额占用 ≥ 80% 的命名空间（任一维） */
 const nearLimit = computed(() =>
   quotaOcc.value
     .filter((x) => (x.cpu ?? 0) >= 80 || (x.mem ?? 0) >= 80)
     .map((x) => ({ key: `${x.row.clusterId}/${nsOf(x.row)}`, ns: nsOf(x.row), row: x.row, pct: Math.max(x.cpu ?? 0, x.mem ?? 0), dim: (x.cpu ?? 0) >= (x.mem ?? 0) ? 'CPU' : '内存' }))
     .sort((a, b) => b.pct - a.pct))
+/** 明细表行序：配额占用（CPU / 内存取高者）降序；没有配额的排最后（按集群、名称） */
+const sortedBreakdown = computed(() =>
+  [...quotaOcc.value]
+    .sort((a, b) => {
+      const pa = Math.max(a.cpu ?? -1, a.mem ?? -1)
+      const pb = Math.max(b.cpu ?? -1, b.mem ?? -1)
+      if (pa !== pb) return pb - pa
+      return (a.row.clusterId + '/' + nsOf(a.row)).localeCompare(b.row.clusterId + '/' + nsOf(b.row))
+    }))
+const occTone = (p: number) => (p >= 95 ? 'danger' : p >= 80 ? 'warning' : 'ok')
+
 const hasAttention = computed(() => {
   const o = overview.value
   return !!o && (o.namespacesWithoutQuota.length > 0 || o.namespacesPartialQuota.length > 0
@@ -381,8 +369,7 @@ defineExpose({ reloadAll })
           <span class="sampled muted">数据截至 {{ sampledAtText }}</span>
         </div>
 
-        <div class="cap-grid">
-          <div class="cap-bullets">
+        <div class="cap-bullets">
             <CapacityBullet
               v-for="b in bullets"
               :key="b.key"
@@ -401,20 +388,6 @@ defineExpose({ reloadAll })
             <div v-if="quotaCoverage === 'partial'" class="cap-note muted">
               {{ overview.namespacesWithoutQuota.length }} 个命名空间没有配额，未计入量程；limits 与实际用量按全部命名空间统计，此处不画以免口径混淆。
             </div>
-          </div>
-          <div class="cap-top">
-            <div class="cap-top-head">
-              <span class="cap-top-title">配额占用 Top 5 命名空间</span>
-              <el-radio-group v-model="topDim" size="small">
-                <el-radio-button value="cpu">CPU</el-radio-button>
-                <el-radio-button value="mem">内存</el-radio-button>
-              </el-radio-group>
-            </div>
-            <TopBars
-              :items="topQuotaItems"
-              :empty-text="breakdownLoaded ? '没有配置该项配额的命名空间' : '加载中…'"
-            />
-          </div>
         </div>
       </section>
 
@@ -553,7 +526,7 @@ defineExpose({ reloadAll })
         <!-- 「还没拉」与「不可用」是两个结论，用 breakdownLoaded 区分 -->
         <div v-if="!breakdownLoaded || breakdownLoading" class="muted notice">加载中…</div>
         <div v-else-if="!breakdown" class="muted notice">明细不可用（取数失败）——本段显示「—」。</div>
-        <el-table v-else :data="breakdown" stripe max-height="480">
+        <el-table v-else :data="sortedBreakdown.map((x) => x.row)" stripe max-height="480">
           <el-table-column label="命名空间" width="200" fixed>
             <template #default="{ row }">
               <span v-if="canOpen(row)" class="name-link" @click="openNamespace(row)">{{ nsOf(row) }}</span>
@@ -580,24 +553,16 @@ defineExpose({ reloadAll })
               <span class="mono">{{ fmtCpu(row.snapshot.stat.quotaCpuHard) }} / {{ fmtMem(row.snapshot.stat.quotaMemHard) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="占用条" min-width="220">
-            <template #default="{ row }">
-              <div v-if="occPct(row.snapshot.stat.quotaCpuUsed, row.snapshot.stat.quotaCpuHard) != null" class="occ-row">
-                <span class="occ-tag">CPU</span>
-                <span class="bar"><span class="bar-fill" :style="{ width: occPct(row.snapshot.stat.quotaCpuUsed, row.snapshot.stat.quotaCpuHard) + '%' }" /></span>
-              </div>
-              <div v-if="occPct(row.snapshot.stat.quotaMemUsed, row.snapshot.stat.quotaMemHard) != null" class="occ-row">
-                <span class="occ-tag">内存</span>
-                <span class="bar"><span class="bar-fill" :style="{ width: occPct(row.snapshot.stat.quotaMemUsed, row.snapshot.stat.quotaMemHard) + '%' }" /></span>
-              </div>
-              <span
-                v-if="
-                  occPct(row.snapshot.stat.quotaCpuUsed, row.snapshot.stat.quotaCpuHard) == null &&
-                  occPct(row.snapshot.stat.quotaMemUsed, row.snapshot.stat.quotaMemHard) == null
-                "
-                class="muted"
-                >—</span
-              >
+          <el-table-column label="配额占用 ↓" min-width="230">
+            <template #default="{ $index }">
+              <template v-for="d in [{ k: 'CPU', p: sortedBreakdown[$index]?.cpu }, { k: '内存', p: sortedBreakdown[$index]?.mem }]" :key="d.k">
+                <div v-if="d.p != null" class="occ-row">
+                  <span class="occ-tag">{{ d.k }}</span>
+                  <span class="bar"><span class="bar-fill" :class="`tone-${occTone(d.p)}`" :style="{ width: Math.min(100, d.p) + '%' }" /></span>
+                  <span class="occ-pct" :class="`t-${occTone(d.p)}`">{{ d.p.toFixed(0) }}%</span>
+                </div>
+              </template>
+              <span v-if="sortedBreakdown[$index]?.cpu == null && sortedBreakdown[$index]?.mem == null" class="muted">未配置配额</span>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="200">
@@ -780,6 +745,11 @@ defineExpose({ reloadAll })
   gap: 6px;
   margin: 2px 0;
 }
+.occ-pct { width: 40px; font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-2); }
+.occ-pct.t-warning { color: var(--warning); }
+.occ-pct.t-danger { color: var(--danger); }
+.bar-fill.tone-warning { background: var(--warning); }
+.bar-fill.tone-danger { background: var(--danger); }
 .occ-tag {
   width: 34px;
   font-size: 11px;
@@ -787,24 +757,12 @@ defineExpose({ reloadAll })
 }
 
 .cap-inv { flex: 1; min-width: 0; margin-left: 12px; }
-.cap-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
-  gap: 28px;
+.cap-bullets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
+.cap-bullets .cap-note { grid-column: 1 / -1; }
+@media (max-width: 900px) {
+  .cap-bullets { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 1100px) {
-  .cap-grid { grid-template-columns: minmax(0, 1fr); }
-}
-.cap-bullets { display: flex; flex-direction: column; gap: 18px; }
 .cap-note { font-size: 12px; line-height: 1.6; }
-.cap-top-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-.cap-top-title { font-size: 13px; color: var(--text-2); }
 .all-good {
   padding: 10px 16px;
   font-size: 13px;
