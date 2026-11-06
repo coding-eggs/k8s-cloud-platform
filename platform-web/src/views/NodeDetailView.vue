@@ -15,6 +15,10 @@ import PodLogDialog from '@/components/PodLogDialog.vue'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { parseCpuCores, parseMemBytes, humanizeBytes } from '@/utils/metrics'
 import YamlBlock from '@/components/YamlBlock.vue'
+import CountCard from '@/components/overview/CountCard.vue'
+import WaterBar from '@/components/overview/WaterBar.vue'
+import type { Segment } from '@/components/overview/labels'
+import type { NodePodStat } from '@/types/overview'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,6 +47,11 @@ async function refresh(): Promise<void> {
   const target = name.value
   loading.value = true
   loadError.value = false
+  podStat.value = null
+  // Pod 统计（requests / limits 合计 + 状态分桶）独立降级：失败只是水位显示「—」
+  nodeApi.podStat(target, clusterId.value)
+    .then((s) => { if (target === name.value) podStat.value = s })
+    .catch(() => { /* 不影响其它段 */ })
   try {
     node.value = await nodeApi.get(target, clusterId.value)
     if (target !== name.value) return
@@ -182,6 +191,22 @@ const instance = computed(() => (node.value?.internalIp ? node.value.internalIp 
 const cpuLimit = computed(() => parseCpuCores(node.value?.cpuAllocatable))
 const memoryLimit = computed(() => parseMemBytes(node.value?.memoryAllocatable))
 
+// ---- 概览：本节点上 Pod 的 requests / limits 水位与状态分桶（GET /nodes/{name}/podstat）----
+const podStat = ref<NodePodStat | null>(null)
+const statCpu = (millicores: number | undefined): number | null => (podStat.value && millicores != null ? millicores / 1000 : null)
+const statMem = (bytes: number | undefined): number | null => (podStat.value && bytes != null ? bytes : null)
+const podStatSegments = computed<Segment[]>(() => {
+  const s = podStat.value
+  return s
+    ? [
+        { label: 'Running', value: s.podRunning, tone: 'success' },
+        { label: 'Pending', value: s.podPending, tone: 'warning' },
+        { label: '已完成', value: s.podSucceeded, tone: 'info' },
+        { label: '异常', value: s.podAbnormal, tone: 'danger' },
+      ]
+    : []
+})
+
 function capacityText(n: K8sNode, kind: 'cpu' | 'mem'): string {
   const alloc = kind === 'cpu' ? n.cpuAllocatable : n.memoryAllocatable
   if (alloc == null) return '—'
@@ -284,6 +309,21 @@ watch(name, () => { if (clusterId.value) void refresh() })
                   <div class="info-row col-row"><span class="k">标签</span><KvTags title="标签" :data="node.labels ?? {}" /></div>
                 </div>
               </section>
+
+              <!-- 水位（分母 = allocatable）+ Pod 状态 -->
+              <section class="info-card node-water">
+                <h3 class="info-title">资源水位</h3>
+                <WaterBar label="CPU requests" :used="statCpu(podStat?.cpuRequestMillicores)" :total="cpuLimit" unit="core" />
+                <WaterBar label="CPU limits" :used="statCpu(podStat?.cpuLimitMillicores)" :total="cpuLimit" unit="core" />
+                <WaterBar label="内存 requests" :used="statMem(podStat?.memRequestBytes)" :total="memoryLimit" unit="byte" />
+                <WaterBar label="内存 limits" :used="statMem(podStat?.memLimitBytes)" :total="memoryLimit" unit="byte" />
+              </section>
+              <CountCard
+                title="Pod"
+                :total="podStat ? podStat.podCount : null"
+                :sub="`/ ${node.podsLimit ?? '—'} 上限`"
+                :segments="podStatSegments"
+              />
             </aside>
 
             <main class="ov-main">
@@ -490,6 +530,9 @@ watch(name, () => { if (clusterId.value) void refresh() })
   align-items: start;
 }
 .ov-side, .ov-main { min-width: 0; }
+.ov-side { display: flex; flex-direction: column; gap: 12px; }
+.node-water { display: flex; flex-direction: column; gap: 12px; }
+.node-water .info-title { margin-bottom: 0; }
 @media (max-width: 960px) {
   .overview-grid { grid-template-columns: 1fr; }
 }
