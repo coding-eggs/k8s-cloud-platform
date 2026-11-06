@@ -61,6 +61,20 @@ export interface PlatformOverview {
   nodes: OverviewNodes | null
   namespaces: OverviewNamespaces | null
   quota: OverviewQuota | null
+  /** 按（集群, 命名空间）拆开的 Pod 分桶与不健康工作负载数（只列有 Pod 或有不健康的 ns）；没有可用集群 → null */
+  byNamespace: NamespaceCounts[] | null
+}
+
+/** 一个（集群, 命名空间）的计数：总览卡片点「异常 4」时据此决定跳到哪个命名空间 */
+export interface NamespaceCounts {
+  clusterId: string
+  clusterName?: string | null
+  namespace: string
+  running: number
+  pending: number
+  succeeded: number
+  abnormal: number
+  unhealthyWorkloads: number
 }
 
 export interface ScopeSummary {

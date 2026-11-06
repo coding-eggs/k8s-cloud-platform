@@ -23,7 +23,7 @@ import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate } from '@/utils/format'
 import { formatMetricValue } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
-import { segmentsOf } from '@/components/overview/labels'
+import { nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const props = defineProps<{ tenantId: string }>()
@@ -75,6 +75,20 @@ const clusterNameOf = (clusterId: string): string =>
   overview.value?.clusters.find((c) => c.clusterId === clusterId)?.clusterName ?? clusterId
 
 const summary = ref<ScopeSummary | null>(null)
+
+/** Pod / 工作负载卡：数取快照合计；点状态时按命名空间明细（breakdown，进面板即拉）定位到具体命名空间 */
+const tenantPodSegments = computed<Segment[]>(() => {
+  const t = overview.value?.total
+  if (!t) return []
+  const running = t.podRunning ?? 0
+  const pending = t.podPending ?? 0
+  const succeeded = t.podSucceeded ?? 0
+  return podSegments({ total: t.podCount, running, pending, succeeded, abnormal: Math.max(0, t.podCount - running - pending - succeeded) })
+})
+const tenantWorkloadSegments = computed<Segment[]>(() =>
+  overview.value ? [{ label: '不健康', value: overview.value.unhealthyWorkloadTotal, tone: 'danger', query: { status: 'unhealthy' } }] : [],
+)
+const tenantNsRows = computed(() => (breakdown.value ? nsCountsOf(breakdown.value, clusterNameOf) : null))
 
 async function loadOverview(): Promise<void> {
   const target = props.tenantId
@@ -253,13 +267,15 @@ defineExpose({ reloadAll })
         </template>
       </el-alert>
 
-      <!-- ===== 计数卡（/tenant/overview/summary；块为 null = 无该读权限，不渲染）===== -->
-      <div v-if="summary" class="tov-cards">
-        <CountCard v-if="summary.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
-        <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
-        <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
-        <CountCard v-if="summary.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
-        <CountCard title="命名空间 / 成员" kind="namespace" :total="summary.namespaceCount">
+      <!-- ===== 计数卡：工作负载 / Pod 来自快照（overview），其余来自 /tenant/overview/summary（块为 null = 无该读权限，不渲染）===== -->
+      <div class="tov-cards">
+        <CountCard title="工作负载" kind="workload" :total="workloadCount" :segments="tenantWorkloadSegments" :ns-rows="tenantNsRows" />
+        <CountCard title="Pod" kind="pod" :total="overview.total.podCount" :segments="tenantPodSegments" :ns-rows="tenantNsRows" />
+        <CountCard v-if="summary?.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+        <CountCard v-if="summary?.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+        <CountCard v-if="summary?.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+        <CountCard v-if="summary?.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+        <CountCard v-if="summary" title="命名空间 / 成员" kind="namespace" :total="summary.namespaceCount">
           <span>成员 {{ summary.memberCount ?? '—' }}</span>
         </CountCard>
       </div>

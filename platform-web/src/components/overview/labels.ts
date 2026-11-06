@@ -1,4 +1,5 @@
-import type { CountBreakdown, OverviewPods } from '@/types/overview'
+import type { CountBreakdown, NamespaceCounts, OverviewPods } from '@/types/overview'
+import type { K8sNamespaceStatEntry } from '@/types'
 
 export type Tone = 'success' | 'warning' | 'danger' | 'info'
 
@@ -87,4 +88,58 @@ export const COUNT_KIND_LINK: Record<CountKind, { list: string; empty?: { text: 
   alert: { list: '/alerts?status=firing', empty: { text: '没有触发中的告警', good: true } },
   tenant: { list: '/tenants', empty: { text: '还没有租户，点击去新建', path: '/tenants' } },
   namespace: { list: '/namespaces' },
+}
+
+/** 跳转范围：整张卡（和它的状态段）都按这个（集群[, 命名空间]）切顶栏再跳 —— 命名空间 / 集群概览页用 */
+export interface CardScope {
+  clusterId: string
+  namespace?: string
+}
+
+/** 「点异常 4 → 去哪个命名空间」的一个候选 */
+export interface NsTarget {
+  clusterId: string
+  clusterName?: string | null
+  namespace: string
+  count: number
+}
+
+/** 租户 / 集群概览的按命名空间明细行 → 计数行（口径同后端：abnormal = podCount − running − pending − succeeded） */
+export function nsCountsOf(rows: K8sNamespaceStatEntry[] | null | undefined, clusterName?: (id: string) => string | null | undefined): NamespaceCounts[] {
+  return (rows ?? []).map((r) => {
+    const st = r.snapshot.stat
+    const running = st.podRunning ?? 0
+    const pending = st.podPending ?? 0
+    const succeeded = st.podSucceeded ?? 0
+    return {
+      clusterId: r.clusterId,
+      clusterName: clusterName?.(r.clusterId) ?? null,
+      namespace: st.namespace,
+      running,
+      pending,
+      succeeded,
+      abnormal: Math.max(0, (st.podCount ?? 0) - running - pending - succeeded),
+      unhealthyWorkloads: r.snapshot.unhealthyWorkloadCount ?? 0,
+    }
+  })
+}
+
+/**
+ * 某张卡的某个状态段分布在哪些命名空间（按数量降序；为 0 的不列）。
+ * 只有 Pod（按 status 分桶）与工作负载（unhealthy）有按命名空间的数；其它返回 null（不做命名空间跳转）。
+ */
+export function nsTargetsOf(kind: CountKind | undefined, seg: Segment, rows: NamespaceCounts[]): NsTarget[] | null {
+  const status = seg.query?.status
+  let pick: ((r: NamespaceCounts) => number) | null = null
+  if (kind === 'pod' && status && ['running', 'pending', 'succeeded', 'abnormal'].includes(status)) {
+    pick = (r) => r[status as 'running' | 'pending' | 'succeeded' | 'abnormal']
+  } else if (kind === 'workload' && status === 'unhealthy') {
+    pick = (r) => r.unhealthyWorkloads
+  }
+  if (!pick) return null
+  const f = pick
+  return rows
+    .map((r) => ({ clusterId: r.clusterId, clusterName: r.clusterName, namespace: r.namespace, count: f(r) }))
+    .filter((t) => t.count > 0)
+    .sort((a, b) => b.count - a.count)
 }

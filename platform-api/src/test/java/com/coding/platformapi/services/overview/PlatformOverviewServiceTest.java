@@ -172,6 +172,41 @@ class PlatformOverviewServiceTest {
     }
 
     @Test
+    void byNamespaceSplitsPodBucketsPerClusterAndSkipsEmptyNamespaces() {
+        when(clusters.snapshot("A")).thenReturn(snap(List.of("demo", "idle")));
+        when(clusters.snapshot("B")).thenReturn(snap(List.of("demo")));
+        NamespaceSnapshotDTO busy = slice("demo", 3, null);
+        busy.getStat().setPodCount(7);      // 3 running + 1 pending + 1 succeeded + 2 异常
+        busy.getStat().setPodPending(1);
+        busy.getStat().setPodSucceeded(1);
+        busy.setUnhealthyWorkloadCount(2);
+        NamespaceSnapshotDTO idle = slice("idle", 0, null);   // 没 Pod、没不健康 → 不出现
+        when(stats.rows(eq(null), eq("A"), any())).thenReturn(List.of(busy, idle));
+        when(stats.rows(eq(null), eq("B"), any())).thenReturn(List.of(slice("demo", 1, null)));
+
+        List<PlatformOverviewView.NamespaceCounts> rows = service.overview().byNamespace();
+
+        assertThat(rows).extracting(PlatformOverviewView.NamespaceCounts::clusterId,
+                        PlatformOverviewView.NamespaceCounts::namespace)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("A", "demo"),
+                        org.assertj.core.groups.Tuple.tuple("B", "demo"));
+        PlatformOverviewView.NamespaceCounts a = rows.get(0);
+        assertThat(a.running()).isEqualTo(3);
+        assertThat(a.pending()).isEqualTo(1);
+        assertThat(a.succeeded()).isEqualTo(1);
+        assertThat(a.abnormal()).isEqualTo(2);
+        assertThat(a.unhealthyWorkloads()).isEqualTo(2);
+        assertThat(a.clusterName()).isEqualTo("A");
+    }
+
+    @Test
+    void byNamespaceNullWhenNoClusterConnected() {
+        when(clusters.snapshot(any())).thenReturn(null);
+
+        assertThat(service.overview().byNamespace()).isNull();
+    }
+
+    @Test
     void offlineClusterIsNotSampled() {
         K8sCluster down = cluster("B");
         down.setStatus(K8sCluster.ClusterStatus.ERROR);

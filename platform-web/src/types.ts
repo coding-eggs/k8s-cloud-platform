@@ -133,6 +133,10 @@ export interface K8sClusterResourceTotal {
 export interface K8sNamespaceResourceStat {
   namespace: string
   podCount: number
+  /** Pod 分桶（后端 NamespaceStatDTO.podRunning 等；与异常互斥，abnormal = podCount − 三者） */
+  podRunning?: number
+  podPending?: number
+  podSucceeded?: number
   deployCount: number
   stsCount: number
   dsCount: number

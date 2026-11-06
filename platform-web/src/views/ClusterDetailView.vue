@@ -31,7 +31,7 @@ import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
-import { segmentsOf, type Segment } from '@/components/overview/labels'
+import { nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const route = useRoute()
@@ -240,6 +240,29 @@ const offlineReason = computed(() => {
 
 // ---- Tab 1：计数卡（/cluster/summary；块为 null = 无该读权限，不渲染）----
 const summary = ref<ScopeSummary | null>(null)
+
+/** 计数卡跳转：应用 / 告警等切到本集群；Pod / 工作负载点状态时按资源明细定位到具体命名空间 */
+const clusterScope = computed(() => ({ clusterId: clusterId.value }))
+const clusterWorkloadTotal = computed(() => {
+  const t = overview.value?.resourceTotal
+  return t ? t.deploymentCount + t.statefulsetCount + t.daemonsetCount : null
+})
+const clusterWorkloadSegments = computed<Segment[]>(() => {
+  const n = overview.value?.unhealthyWorkloadTotal
+  return n == null ? [] : [{ label: '不健康', value: n, tone: 'danger', query: { status: 'unhealthy' } }]
+})
+const clusterPodSegments = computed<Segment[]>(() => {
+  const t = overview.value?.resourceTotal
+  if (!t) return []
+  const running = t.podRunning ?? 0
+  const pending = t.podPending ?? 0
+  const succeeded = t.podSucceeded ?? 0
+  return podSegments({ total: t.podCount, running, pending, succeeded, abnormal: Math.max(0, t.podCount - running - pending - succeeded) })
+})
+async function loadClusterNsRows() {
+  const id = clusterId.value
+  return nsCountsOf(await clusterApi.resourceBreakdown(id), () => cluster.value?.clusterName ?? id)
+}
 const summaryNodePie = computed<Segment[]>(() => {
   const n = summary.value?.nodes
   return n ? [{ label: 'Ready', value: n.ready, tone: 'success' }, { label: 'NotReady', value: n.notReady, tone: 'danger' }] : []
@@ -455,10 +478,12 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
         <el-tab-pane label="概览" name="overview">
           <template v-if="summary">
             <div class="ov-cards4">
-              <CountCard v-if="summary.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
-              <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
-              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
-              <CountCard v-if="summary.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+              <CountCard title="工作负载" kind="workload" :total="clusterWorkloadTotal" :segments="clusterWorkloadSegments" :load-ns-rows="loadClusterNsRows" />
+              <CountCard title="Pod" kind="pod" :total="overview?.resourceTotal?.podCount ?? null" :segments="clusterPodSegments" :load-ns-rows="loadClusterNsRows" />
+              <CountCard v-if="summary.applications" title="应用" kind="app" :scope="clusterScope" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+              <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :scope="clusterScope" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :scope="clusterScope" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+              <CountCard v-if="summary.alerts" title="告警触发中" kind="alert" :scope="clusterScope" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
             </div>
             <div v-if="summary.nodes || summary.namespaces" class="ov-pies2">
               <StatusPie v-if="summary.nodes" title="节点" :data="summaryNodePie" />

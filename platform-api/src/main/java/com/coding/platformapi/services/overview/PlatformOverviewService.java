@@ -18,6 +18,7 @@ import com.coding.platformapi.models.overview.PlatformOverviewView;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Capacity;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Clusters;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Namespaces;
+import com.coding.platformapi.models.overview.PlatformOverviewView.NamespaceCounts;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Nodes;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Pods;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Quota;
@@ -80,6 +81,7 @@ public class PlatformOverviewService {
         List<String> connectedIds = new ArrayList<>();
         List<String> unavailable = new ArrayList<>();
         List<NamespaceSnapshotDTO> slices = new ArrayList<>();
+        List<NamespaceCounts> byNamespace = new ArrayList<>();
         List<CountBreakdown> mw = new ArrayList<>();
         long ready = 0, notReady = 0, nsAllocated = 0, nsUnallocated = 0, nsSystem = 0;
         BigDecimal cpuAlloc = null, memAlloc = null;
@@ -95,6 +97,12 @@ public class PlatformOverviewService {
             connected++;
             connectedIds.add(c.getClusterId());
             slices.addAll(clusterSlices);
+            for (NamespaceSnapshotDTO s : clusterSlices) {
+                NamespaceCounts row = countsOf(c, s);
+                if (row != null) {
+                    byNamespace.add(row);
+                }
+            }
             for (NodeHealthDTO n : orEmpty(snap.getNodeHealth())) {
                 if (n.isReady()) {
                     ready++;
@@ -142,7 +150,20 @@ public class PlatformOverviewService {
                 any ? new Capacity(total.getCpuRequest(), cpuAlloc, total.getMemRequest(), memAlloc) : null,
                 any ? new Nodes(ready, notReady) : null,
                 any ? new Namespaces(nsAllocated, nsUnallocated, nsSystem) : null,
-                quota(slices));
+                quota(slices),
+                any ? byNamespace : null);
+    }
+
+    /** 一个 ns 切片 → 计数行；既没有 Pod 也没有不健康工作负载 → null（不列出）。 */
+    private static NamespaceCounts countsOf(K8sCluster c, NamespaceSnapshotDTO s) {
+        NamespaceStatDTO st = s.getStat();
+        if (st.getPodCount() == 0 && s.getUnhealthyWorkloadCount() == 0) {
+            return null;
+        }
+        long abnormal = Math.max(0, st.getPodCount() - st.getPodRunning() - st.getPodPending() - st.getPodSucceeded());
+        return new NamespaceCounts(c.getClusterId(), c.getClusterName() == null ? c.getClusterId() : c.getClusterName(),
+                st.getNamespace(), st.getPodRunning(), st.getPodPending(), st.getPodSucceeded(), abnormal,
+                s.getUnhealthyWorkloadCount());
     }
 
     /** 探活明确判为断开 / 错误的集群（CONNECTING 与未知状态仍去采样） */
