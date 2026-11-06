@@ -620,13 +620,14 @@ class MiddlewareServiceTest {
     }
 
     @Test
-    void liveStatusesKeepsStoredWhenProbeFails() {
+    void liveStatusesMarksUnknownWhenProbeFails() {
         PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
         i.setStatus("READY");
         when(instances.selectByCluster("c1", null)).thenReturn(List.of(i));
         when(client.status(anyString(), any())).thenThrow(new RuntimeException("cluster down"));
 
-        assertThat(service.liveStatuses("c1")).extracting(MiddlewareService.LiveStatus::status).containsExactly("READY");
+        // 读不到实时状态 ≠ 台账里的 READY：不能悄悄按「正常」计数
+        assertThat(service.liveStatuses("c1")).extracting(MiddlewareService.LiveStatus::status).containsExactly("UNKNOWN");
     }
 
     @Test

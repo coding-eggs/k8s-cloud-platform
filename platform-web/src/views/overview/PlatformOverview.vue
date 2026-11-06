@@ -145,17 +145,17 @@ onMounted(load)
         </div>
         <div class="hb-item">
           <span class="hb-label">告警触发中</span>
-          <b :class="ov.alertsFiring.total ? 'bad' : 'good'">{{ ov.alertsFiring.total }}</b>
-          <span v-if="ov.alertsFiring.byStatus.CRITICAL" class="hb-sub">严重 {{ ov.alertsFiring.byStatus.CRITICAL }}</span>
+          <b :class="ov.alertsFiring?.total ? 'bad' : 'good'">{{ ov.alertsFiring?.total ?? '—' }}</b>
+          <span v-if="ov.alertsFiring?.byStatus.CRITICAL" class="hb-sub">严重 {{ ov.alertsFiring.byStatus.CRITICAL }}</span>
         </div>
       </div>
 
       <!-- 资源汇总 -->
       <div class="ov-grid5">
-        <CountCard title="应用" :total="ov.applications.total" :segments="segmentsOf('app', ov.applications)" />
-        <CountCard title="中间件" :total="ov.middleware.total" :segments="segmentsOf('middleware', ov.middleware)" />
-        <CountCard title="工作负载" :total="ov.workloads.total" :segments="workloadSegments" />
-        <CountCard title="Pod" :total="ov.pods.total" :segments="podSegments(ov.pods)" />
+        <CountCard title="应用" :total="ov.applications?.total ?? null" :segments="segmentsOf('app', ov.applications)" />
+        <CountCard title="中间件" :total="ov.middleware?.total ?? null" :segments="segmentsOf('middleware', ov.middleware)" />
+        <CountCard title="工作负载" :total="ov.workloads?.total ?? null" :segments="workloadSegments" />
+        <CountCard title="Pod" :total="ov.pods?.total ?? null" :segments="podSegments(ov.pods)" />
         <CountCard title="租户" :total="ov.tenants.total" :segments="tenantSegments">
           <span>成员 {{ ov.tenants.members }}</span>
           <span>已分配命名空间 {{ ov.tenants.allocatedNamespaces }}</span>
@@ -163,8 +163,8 @@ onMounted(load)
       </div>
 
       <div class="panel ov-water-row">
-        <WaterBar label="集群 CPU（requests / 可分配）" :used="ov.capacity?.cpuRequest" :total="ov.capacity?.cpuAllocatable" unit="core" />
-        <WaterBar label="集群内存（requests / 可分配）" :used="ov.capacity?.memRequest" :total="ov.capacity?.memAllocatable" unit="byte" />
+        <WaterBar label="集群 CPU（requests / 可分配）" :used="ov.capacity?.cpuRequest" :total="ov.capacity?.cpuAllocatable" unit="core" missing-text="—" />
+        <WaterBar label="集群内存（requests / 可分配）" :used="ov.capacity?.memRequest" :total="ov.capacity?.memAllocatable" unit="byte" missing-text="—" />
       </div>
 
       <div class="ov-grid2">
@@ -173,8 +173,18 @@ onMounted(load)
       </div>
     </template>
 
+    <!-- 有总览权限但取数失败：明说，不退回旧摘要（那里的租户 / 分配数本次没拉，会显示成 0） -->
+    <el-alert
+      v-else-if="canOverview && !loading"
+      type="warning"
+      :closable="false"
+      title="平台总览数据暂时取不到"
+      description="其余区块不受影响，可点右上角刷新重试。"
+      class="ov-load-error"
+    />
+
     <!-- 统计（无总览权限时的旧摘要） -->
-    <div v-else class="stat-grid">
+    <div v-else-if="!canOverview" class="stat-grid">
       <div v-for="s in stats" :key="s.label" class="panel stat-card">
         <div class="stat-value">{{ s.value }}</div>
         <div class="stat-label">{{ s.label }}<span class="stat-sub">{{ s.sub }}</span></div>
@@ -263,6 +273,7 @@ onMounted(load)
   font-size: 12px;
   color: var(--text-3);
 }
+.ov-load-error { margin-bottom: 14px; }
 .health-bar {
   display: flex;
   flex-wrap: wrap;

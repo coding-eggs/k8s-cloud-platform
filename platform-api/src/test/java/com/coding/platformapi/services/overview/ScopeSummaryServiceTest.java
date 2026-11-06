@@ -87,6 +87,14 @@ class ScopeSummaryServiceTest {
     }
 
     @Test
+    void clusterScopeMiddlewareUnavailableWhenSnapshotMissing() {
+        when(clusters.snapshot("c1")).thenReturn(null);
+        when(middleware.liveStatuses("c1")).thenReturn(List.of(new MiddlewareService.LiveStatus("a", "t1", "READY")));
+
+        assertThat(service.cluster("c1").middleware()).isNull();
+    }
+
+    @Test
     void tenantScopeIgnoresOtherTenantsMiddlewareInSameNamespace() {
         when(tenantOverview.allocationsByCluster("t1")).thenReturn(Map.of("c1", List.of("a")));
         when(middleware.liveStatuses("c1")).thenReturn(List.of(

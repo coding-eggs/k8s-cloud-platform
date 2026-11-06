@@ -64,6 +64,10 @@ public final class OverviewBuckets {
 
     /** 中间件实时状态：READY→NORMAL、DEGRADED/FAILED→ABNORMAL、CREATING/DELETING→PROCESSING */
     public static CountBreakdown middleware(List<String> statuses) {
+        // 有实例的实时状态读不到 → 整块不可用（null，前端「—」），不拿残缺数冒充全量
+        if (statuses.contains("UNKNOWN")) {
+            return null;
+        }
         Map<String, Long> by = keys(List.of("NORMAL", "ABNORMAL", "PROCESSING"));
         long total = 0;
         for (String s : statuses) {
@@ -81,8 +85,11 @@ public final class OverviewBuckets {
         return new CountBreakdown(total, by);
     }
 
-    /** 多个范围（集群）的结果相加；null 视为没有 */
+    /** 多个范围（集群）的结果相加；null（该范围取不到）跳过；<b>全部</b>取不到 → null（不是 0）。空列表 → 0。 */
     public static CountBreakdown sum(List<CountBreakdown> parts) {
+        if (!parts.isEmpty() && parts.stream().allMatch(java.util.Objects::isNull)) {
+            return null;
+        }
         Map<String, Long> by = new LinkedHashMap<>();
         long total = 0;
         for (CountBreakdown p : parts) {

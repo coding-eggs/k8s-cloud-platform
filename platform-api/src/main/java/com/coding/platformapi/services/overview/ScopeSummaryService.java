@@ -63,10 +63,14 @@ public class ScopeSummaryService {
     private final OverviewPermissions permissions;
 
     public ScopeSummaryView cluster(String clusterId) {
+        ClusterSnapshotDTO snap = clusters.snapshot(clusterId);
         Blocks b = blocks(Map.of(clusterId, ALL), null);
+        if (snap == null) {
+            // 集群连不上：中间件实时状态必然读不到，不拿台账值冒充「正常」
+            b = new Blocks(b.apps, null, b.ci, b.alerts);
+        }
         Nodes nodes = null;
         Namespaces namespaces = null;
-        ClusterSnapshotDTO snap = clusters.snapshot(clusterId);
         if (snap != null) {
             long ready = 0, notReady = 0;
             for (NodeHealthDTO n : orEmpty(snap.getNodeHealth())) {

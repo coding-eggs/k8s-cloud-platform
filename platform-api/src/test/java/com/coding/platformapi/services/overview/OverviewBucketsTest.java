@@ -47,6 +47,17 @@ class OverviewBucketsTest {
     }
 
     @Test
+    void sumOfOnlyUnavailablePartsIsNull() {
+        assertThat(OverviewBuckets.sum(java.util.Arrays.asList(null, null))).isNull();
+        assertThat(OverviewBuckets.sum(List.of()).total()).isZero();
+    }
+
+    @Test
+    void middlewareWithUnknownStatusIsUnavailable() {
+        assertThat(OverviewBuckets.middleware(List.of("READY", "UNKNOWN"))).isNull();
+    }
+
+    @Test
     void middlewareDegradedIsAbnormal() {
         CountBreakdown b = OverviewBuckets.middleware(Arrays.asList("READY", "DEGRADED", "FAILED", "CREATING"));
 

@@ -139,12 +139,49 @@ class PlatformOverviewServiceTest {
     }
 
     @Test
-    void allClustersUnavailableGivesNullCapacity() {
+    void allClustersUnavailableGivesNullK8sBlocks() {
         when(clusters.snapshot(any())).thenReturn(null);
 
         PlatformOverviewView v = service.overview();
 
         assertThat(v.capacity()).isNull();
         assertThat(v.clusters().unavailable()).isEqualTo(2);
+        // 取不到 ≠ 0：前端显示「—」
+        assertThat(v.pods()).isNull();
+        assertThat(v.workloads()).isNull();
+        assertThat(v.nodes()).isNull();
+        assertThat(v.namespaces()).isNull();
+        assertThat(v.middleware()).isNull();
+    }
+
+    @Test
+    void appsAndAlertsCountOnlyConnectedClusters() {
+        when(clusters.snapshot("A")).thenReturn(snap(List.of("demo")));
+        when(clusters.snapshot("B")).thenReturn(null);
+        when(stats.rows(eq(null), eq("A"), any())).thenReturn(List.of(slice("demo", 1, null)));
+        com.coding.data.models.system.StatusCount ready = new com.coding.data.models.system.StatusCount();
+        ready.setStatus("READY");
+        ready.setCount(2);
+        when(apps.countByStatus(eq("A"), any())).thenReturn(List.of(ready));
+        when(apps.countByStatus(eq("B"), any())).thenReturn(List.of(ready));
+        when(apps.countByStatus(eq(null), any())).thenReturn(List.of(ready, ready));
+
+        assertThat(service.overview().applications().total()).isEqualTo(2);
+        org.mockito.Mockito.verify(alerts, org.mockito.Mockito.never()).countFiringBySeverity(eq(null), any());
+        org.mockito.Mockito.verify(alerts, org.mockito.Mockito.never()).countFiringBySeverity(eq("B"), any());
+    }
+
+    @Test
+    void offlineClusterIsNotSampled() {
+        K8sCluster down = cluster("B");
+        down.setStatus(K8sCluster.ClusterStatus.ERROR);
+        when(clusters.list()).thenReturn(List.of(cluster("A"), down));
+        when(clusters.snapshot("A")).thenReturn(snap(List.of("demo")));
+        when(stats.rows(eq(null), eq("A"), any())).thenReturn(List.of(slice("demo", 1, null)));
+
+        PlatformOverviewView v = service.overview();
+
+        assertThat(v.clusters().unavailableNames()).containsExactly("B");
+        org.mockito.Mockito.verify(clusters, org.mockito.Mockito.never()).snapshot("B");
     }
 }

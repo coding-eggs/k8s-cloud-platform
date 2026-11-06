@@ -37,13 +37,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+
+import com.coding.platformapi.services.overview.PlatformHealthProbe.ServiceHealth;
 
 /**
  * 平台总览：全部启用集群按资源类型汇总（不按集群拆，看单个集群去集群概览）。
  * <p>集群级事实（节点 / 容量 / ns 名单）取自聚合快照；Pod / 工作负载 / 配额由 ns 切片合并
  * （同 {@code ClusterService.overview} 口径）；应用 / 告警走 DB 计数；中间件走实时状态（45s 缓存）。
- * 某集群快照取不到 → 记为不可用，它的 k8s 侧数字不计入合计，DB 侧（应用 / 告警）照算。
+ * 某集群快照取不到（或探活已判离线）→ 记为不可用，它的数字（含应用 / 告警）一律不计入合计；
+ * 一个可用集群都没有 → 各计数块为 null（前端「—」），不是 0。
  */
 @Slf4j
 @Service
@@ -69,7 +73,11 @@ public class PlatformOverviewService {
                 .collect(Collectors.groupingBy(PlatformTenantNamespace::getClusterId,
                         Collectors.mapping(PlatformTenantNamespace::getNamespace, Collectors.toSet())));
 
+        // 健康探测（≤2s）与集群采样并行，不串在后面
+        CompletableFuture<ServiceHealth> services = CompletableFuture.supplyAsync(health::probe);
+
         int connected = 0;
+        List<String> connectedIds = new ArrayList<>();
         List<String> unavailable = new ArrayList<>();
         List<NamespaceSnapshotDTO> slices = new ArrayList<>();
         List<CountBreakdown> mw = new ArrayList<>();
@@ -77,13 +85,15 @@ public class PlatformOverviewService {
         BigDecimal cpuAlloc = null, memAlloc = null;
 
         for (K8sCluster c : enabled) {
-            ClusterSnapshotDTO snap = clusters.snapshot(c.getClusterId());
+            // 探活已判离线的集群直接计不可用：失败的采样不缓存，否则每次刷新都要对它整等一次超时
+            ClusterSnapshotDTO snap = isOffline(c) ? null : clusters.snapshot(c.getClusterId());
             List<NamespaceSnapshotDTO> clusterSlices = snap == null ? null : slicesOf(c.getClusterId(), snap);
             if (clusterSlices == null) {
                 unavailable.add(c.getClusterName() == null ? c.getClusterId() : c.getClusterName());
                 continue;
             }
             connected++;
+            connectedIds.add(c.getClusterId());
             slices.addAll(clusterSlices);
             for (NodeHealthDTO n : orEmpty(snap.getNodeHealth())) {
                 if (n.isReady()) {
@@ -107,25 +117,37 @@ public class PlatformOverviewService {
             mw.add(middlewareOf(c.getClusterId()));
         }
 
+        // 应用 / 告警也只算可用集群（spec：不可用集群不计入任何合计；断开集群的 firing 告警多半已陈旧）
+        List<CountBreakdown> appParts = new ArrayList<>();
+        List<CountBreakdown> alertParts = new ArrayList<>();
+        for (String id : connectedIds) {
+            appParts.add(OverviewBuckets.applications(orEmpty(apps.countByStatus(id, null))));
+            alertParts.add(OverviewBuckets.alerts(orEmpty(alerts.countFiringBySeverity(id, null))));
+        }
+
+        boolean any = connected > 0;   // 没有任何可用集群 → k8s 侧各块 null（前端「—」），不是 0
         ClusterTotalDTO total = NamespaceStatMerge.total(slices);
         long abnormal = Math.max(0, total.getPodCount() - total.getPodRunning() - total.getPodPending() - total.getPodSucceeded());
-        Capacity capacity = connected == 0 ? null
-                : new Capacity(total.getCpuRequest(), cpuAlloc, total.getMemRequest(), memAlloc);
 
         return new PlatformOverviewView(
-                health.probe(),
+                services.join(),
                 new Clusters(connected, unavailable.size(), unavailable),
-                OverviewBuckets.alerts(orEmpty(alerts.countFiringBySeverity(null, null))),
-                OverviewBuckets.applications(orEmpty(apps.countByStatus(null, null))),
-                OverviewBuckets.sum(mw),
-                new Workloads(total.getDeploymentCount() + total.getStatefulsetCount() + total.getDaemonsetCount(),
-                        NamespaceStatMerge.unhealthyTotal(slices)),
-                new Pods(total.getPodCount(), total.getPodRunning(), total.getPodPending(), total.getPodSucceeded(), abnormal),
+                any ? OverviewBuckets.sum(alertParts) : null,
+                any ? OverviewBuckets.sum(appParts) : null,
+                any ? OverviewBuckets.sum(mw) : null,
+                any ? new Workloads(total.getDeploymentCount() + total.getStatefulsetCount() + total.getDaemonsetCount(),
+                        NamespaceStatMerge.unhealthyTotal(slices)) : null,
+                any ? new Pods(total.getPodCount(), total.getPodRunning(), total.getPodPending(), total.getPodSucceeded(), abnormal) : null,
                 tenants(allocRows.size()),
-                capacity,
-                new Nodes(ready, notReady),
-                new Namespaces(nsAllocated, nsUnallocated, nsSystem),
+                any ? new Capacity(total.getCpuRequest(), cpuAlloc, total.getMemRequest(), memAlloc) : null,
+                any ? new Nodes(ready, notReady) : null,
+                any ? new Namespaces(nsAllocated, nsUnallocated, nsSystem) : null,
                 quota(slices));
+    }
+
+    /** 探活明确判为断开 / 错误的集群（CONNECTING 与未知状态仍去采样） */
+    private static boolean isOffline(K8sCluster c) {
+        return c.getStatus() == K8sCluster.ClusterStatus.DISCONNECTED || c.getStatus() == K8sCluster.ClusterStatus.ERROR;
     }
 
     /** ns 切片；取不到（网关异常）→ null，整个集群按不可用处理（与快照为 null 同语义）。 */

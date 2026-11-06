@@ -10,6 +10,8 @@ const props = defineProps<{
   used: number | null | undefined
   total: number | null | undefined
   unit: 'core' | 'byte'
+  /** total 为 null 时的文案（配额场景=「未配置」；容量场景取不到=「—」） */
+  missingText?: string
 }>()
 
 const pct = computed(() => {
@@ -19,7 +21,7 @@ const pct = computed(() => {
 const tone = computed(() => (pct.value == null ? '' : pct.value >= 90 ? 'danger' : pct.value >= 80 ? 'warning' : 'ok'))
 const fmt = (v: number) => formatMetricValue(v, props.unit === 'core' ? '核' : '字节', false)
 const text = computed(() => {
-  if (props.total == null) return '未配置'
+  if (props.total == null) return props.missingText ?? '未配置'
   if (props.used == null) return '—'
   return `${fmt(props.used)} / ${fmt(props.total)}`
 })

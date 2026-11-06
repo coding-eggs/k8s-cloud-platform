@@ -50,15 +50,16 @@ export interface OverviewQuota {
 export interface PlatformOverview {
   services: ServiceHealth
   clusters: { connected: number; unavailable: number; unavailableNames: string[] }
-  alertsFiring: CountBreakdown
-  applications: CountBreakdown
-  middleware: CountBreakdown
-  workloads: OverviewWorkloads
-  pods: OverviewPods
+  /** 以下 k8s / 计数块：没有任何可用集群（或中间件实时状态读不到）→ null，显示「—」 */
+  alertsFiring: CountBreakdown | null
+  applications: CountBreakdown | null
+  middleware: CountBreakdown | null
+  workloads: OverviewWorkloads | null
+  pods: OverviewPods | null
   tenants: { total: number; enabled: number; disabled: number; members: number; allocatedNamespaces: number }
   capacity: { cpuRequest: number | null; cpuAllocatable: number | null; memRequest: number | null; memAllocatable: number | null } | null
-  nodes: OverviewNodes
-  namespaces: OverviewNamespaces
+  nodes: OverviewNodes | null
+  namespaces: OverviewNamespaces | null
   quota: OverviewQuota | null
 }
 

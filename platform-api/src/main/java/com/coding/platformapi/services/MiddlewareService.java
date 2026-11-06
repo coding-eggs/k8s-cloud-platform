@@ -237,6 +237,9 @@ public class MiddlewareService {
     public record LiveStatus(String namespace, String tenantId, String status) {
     }
 
+    /** 实时状态读失败的实例在总览里的状态值（{@code OverviewBuckets.middleware} 见到它即整块「—」） */
+    public static final String UNKNOWN_STATUS = "UNKNOWN";
+
     /**
      * 某集群全部中间件实例的实时状态（总览计数用）。整集群一份，Redis 缓存 45s，
      * 与聚合快照同 TTL —— 总览刷新不会每次打 N 组 status 往返。过滤（租户 / ns）由调用方在结果上做。
@@ -246,22 +249,28 @@ public class MiddlewareService {
                 new tools.jackson.core.type.TypeReference<List<LiveStatus>>() {
                 },
                 () -> {
-                    List<PlatformMiddlewareInstance> rows = instances.selectByCluster(clusterId, null);
-                    rows.stream()
+                    List<LiveStatus> out = new ArrayList<>();
+                    instances.selectByCluster(clusterId, null).stream()
                             .collect(java.util.stream.Collectors.groupingBy(
                                     r -> r.getCode() + "|" + r.getNamespace(),
                                     java.util.LinkedHashMap::new,
                                     java.util.stream.Collectors.toList()))
                             .values()
-                            .forEach(this::refreshGroup);
-                    return rows.stream()
-                            .map(r -> new LiveStatus(r.getNamespace(), r.getTenantId(), r.getStatus()))
-                            .toList();
+                            .forEach(group -> {
+                                // 读不到实时状态 → UNKNOWN（台账值是「提交时」快照，不能当成现在正常）
+                                boolean live = refreshGroup(group);
+                                group.forEach(r -> out.add(new LiveStatus(r.getNamespace(), r.getTenantId(),
+                                        live ? r.getStatus() : UNKNOWN_STATUS)));
+                            });
+                    return out;
                 });
     }
 
-    /** 一次批量读同一 (code, namespace) 下所有实例的状态，失败静默保留台账值。 */
-    private void refreshGroup(List<PlatformMiddlewareInstance> group) {
+    /**
+     * 一次批量读同一 (code, namespace) 下所有实例的状态，失败静默保留台账值。
+     * @return 是否读到了（列表页忽略返回值；总览据此把读失败的实例标 {@code UNKNOWN}，不按台账值计数）
+     */
+    private boolean refreshGroup(List<PlatformMiddlewareInstance> group) {
         PlatformMiddlewareInstance first = group.get(0);
         try {
             MiddlewareStatusRequestDTO req = new MiddlewareStatusRequestDTO();
@@ -275,7 +284,7 @@ public class MiddlewareService {
             req.setTenantId(first.getTenantId());
             var result = client.status(first.getCode(), req);
             if (result == null || result.isEmpty()) {
-                return;
+                return true;
             }
             var byName = result.stream().collect(java.util.stream.Collectors.toMap(
                     com.coding.common.models.middleware.MiddlewareStatusResultDTO::getName, r -> r,
@@ -292,8 +301,10 @@ public class MiddlewareService {
                     }
                 }
             }
+            return true;
         } catch (RuntimeException ignored) {
             // 读状态失败不影响列表
+            return false;
         }
     }
 
