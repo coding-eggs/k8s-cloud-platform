@@ -392,12 +392,12 @@ watch(name, () => { if (clusterId.value) void refresh() })
           <!-- 计数卡（/namespace/summary）：块为 null = 无该读权限，不渲染 -->
           <template v-if="summary">
             <div class="ov-cards6">
-              <CountCard title="工作负载" :total="summary.workloads?.total ?? null" :segments="summary.workloads ? [{ label: '不健康', value: summary.workloads.unhealthy, tone: 'danger' }] : []" />
-              <CountCard title="Pod" :total="summary.pods?.total ?? null" :segments="podSegments(summary.pods)" />
-              <CountCard v-if="summary.applications" title="应用" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
-              <CountCard v-if="summary.middleware" title="中间件" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
-              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
-              <CountCard v-if="summary.alerts" title="告警触发中" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+              <CountCard title="工作负载" kind="workload" :total="summary.workloads?.total ?? null" :segments="summary.workloads ? [{ label: '不健康', value: summary.workloads.unhealthy, tone: 'danger' }] : []" />
+              <CountCard title="Pod" kind="pod" :total="summary.pods?.total ?? null" :segments="podSegments(summary.pods)" />
+              <CountCard v-if="summary.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+              <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+              <CountCard v-if="summary.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
             </div>
             <div class="ov-water2">
               <WaterBar label="配额 CPU" :used="summary.quota?.cpuUsed" :total="summary.quota?.cpuHard" unit="core" />

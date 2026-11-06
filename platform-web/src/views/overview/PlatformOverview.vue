@@ -154,11 +154,11 @@ onMounted(load)
 
       <!-- 资源汇总 -->
       <div class="ov-grid5">
-        <CountCard title="应用" :total="ov.applications?.total ?? null" :segments="segmentsOf('app', ov.applications)" />
-        <CountCard title="中间件" :total="ov.middleware?.total ?? null" :segments="segmentsOf('middleware', ov.middleware)" />
-        <CountCard title="工作负载" :total="ov.workloads?.total ?? null" :segments="workloadSegments" />
-        <CountCard title="Pod" :total="ov.pods?.total ?? null" :segments="podSegments(ov.pods)" />
-        <CountCard title="租户" :total="ov.tenants.total" :segments="tenantSegments">
+        <CountCard title="应用" kind="app" :total="ov.applications?.total ?? null" :segments="segmentsOf('app', ov.applications)" />
+        <CountCard title="中间件" kind="middleware" :total="ov.middleware?.total ?? null" :segments="segmentsOf('middleware', ov.middleware)" />
+        <CountCard title="工作负载" kind="workload" :total="ov.workloads?.total ?? null" :segments="workloadSegments" />
+        <CountCard title="Pod" kind="pod" :total="ov.pods?.total ?? null" :segments="podSegments(ov.pods)" />
+        <CountCard title="租户" kind="tenant" :total="ov.tenants.total" :segments="tenantSegments">
           <span>成员 {{ ov.tenants.members }}</span>
           <span>已分配命名空间 {{ ov.tenants.allocatedNamespaces }}</span>
         </CountCard>

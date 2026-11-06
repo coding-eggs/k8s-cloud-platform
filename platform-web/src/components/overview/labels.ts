@@ -54,3 +54,17 @@ export function podSegments(p: OverviewPods | null | undefined): Segment[] {
     { label: '异常', value: p.abnormal, tone: 'danger' },
   ]
 }
+
+/** 数量卡的资源类型 → 图标（与侧栏菜单同一个图标；Element Plus 图标已全局注册，按名字渲染） */
+export type CountKind = 'app' | 'middleware' | 'workload' | 'pod' | 'pipeline' | 'alert' | 'tenant' | 'namespace'
+
+export const COUNT_KIND_ICON: Record<CountKind, string> = {
+  app: 'Connection',
+  middleware: 'Grid',
+  workload: 'Box',
+  pod: 'Cpu',
+  pipeline: 'Operation',
+  alert: 'Bell',
+  tenant: 'OfficeBuilding',
+  namespace: 'FolderOpened',
+}

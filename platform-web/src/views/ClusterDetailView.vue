@@ -455,10 +455,10 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
         <el-tab-pane label="概览" name="overview">
           <template v-if="summary">
             <div class="ov-cards4">
-              <CountCard v-if="summary.applications" title="应用" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
-              <CountCard v-if="summary.middleware" title="中间件" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
-              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
-              <CountCard v-if="summary.alerts" title="告警触发中" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+              <CountCard v-if="summary.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+              <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+              <CountCard v-if="summary.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
             </div>
             <div v-if="summary.nodes || summary.namespaces" class="ov-pies2">
               <StatusPie v-if="summary.nodes" title="节点" :data="summaryNodePie" />

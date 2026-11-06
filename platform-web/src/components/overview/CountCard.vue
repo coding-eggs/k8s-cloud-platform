@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
  * 数量卡：大号总数 + 按状态的小段（值为 0 的段不显示）。total == null → 「—」（取不到，不是 0）。
+ * `kind` 给出右上角图标（与侧栏菜单同一个图标，一眼认出是什么）；告警卡有触发中的告警时图标转红。
  */
 import { computed } from 'vue'
-import type { Segment } from './labels'
+import { COUNT_KIND_ICON, type CountKind, type Segment } from './labels'
 
 const props = defineProps<{
   title: string
@@ -11,14 +12,24 @@ const props = defineProps<{
   segments?: Segment[]
   /** 总数旁的副标题（如「Pod 数 / 上限」） */
   sub?: string
+  /** 资源类型：决定右上角图标；不传则不显示图标 */
+  kind?: CountKind
 }>()
+
+const icon = computed(() => (props.kind ? COUNT_KIND_ICON[props.kind] : null))
+const alarming = computed(() => props.kind === 'alert' && (props.total ?? 0) > 0)
 
 const shown = computed(() => (props.segments ?? []).filter((s) => s.value > 0))
 </script>
 
 <template>
   <div class="ov-count-card">
-    <div class="ov-count-title">{{ title }}</div>
+    <div class="ov-count-head">
+      <span class="ov-count-title">{{ title }}</span>
+      <span v-if="icon" class="ov-count-icon" :class="{ alarming }">
+        <el-icon><component :is="icon" /></el-icon>
+      </span>
+    </div>
     <div class="ov-count-total">
       <span>{{ total == null ? '—' : total }}</span>
       <small v-if="sub" class="ov-count-sub">{{ sub }}</small>
@@ -40,14 +51,37 @@ const shown = computed(() => (props.segments ?? []).filter((s) => s.value > 0))
   background: var(--el-bg-color, transparent);
   min-width: 0;
 }
+.ov-count-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
 .ov-count-title {
   font-size: 13px;
   color: var(--text-2);
+  line-height: 28px;
+}
+.ov-count-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 16px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ov-count-icon.alarming {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
 }
 .ov-count-total {
   font-size: 26px;
   font-weight: 600;
-  margin: 6px 0 8px;
+  margin: 2px 0 8px;
   line-height: 1.2;
 }
 .ov-count-sub {
