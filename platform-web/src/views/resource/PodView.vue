@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MoreFilled, Search } from '@element-plus/icons-vue'
@@ -183,7 +184,7 @@ const contextDesc = computed(() => {
           <template #default="{ row }"><code class="res-name">{{ row.namespace ?? '-' }}</code></template>
         </el-table-column>
         <el-table-column label="名称" width="350">
-          <template #default="{ row }"><code class="res-name" :class="{ 'name-link': !allNs }" @click="onNameClick(row)">{{ row.name }}</code></template>
+          <template #default="{ row }"><code class="res-name" :class="{ 'name-link': !allNs }" @click="onNameClick(row)">{{ row.name }}</code><ManagedOwnerTag :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" /></template>
         </el-table-column>
         <el-table-column label="镜像" min-width="500">
           <template #default="{ row }">

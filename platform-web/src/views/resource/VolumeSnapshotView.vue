@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
@@ -249,7 +250,7 @@ const contextDesc = computed(() => {
       <div v-else class="panel table-panel">
         <el-table v-loading="loading" :data="list" stripe>
           <el-table-column label="名称" min-width="200">
-            <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
+            <template #default="{ row }"><code class="res-name">{{ row.name }}</code><ManagedOwnerTag :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" /></template>
           </el-table-column>
           <el-table-column label="来源 PVC" min-width="150">
             <template #default="{ row }"><span class="muted">{{ row.sourcePvcName ?? '—' }}</span></template>

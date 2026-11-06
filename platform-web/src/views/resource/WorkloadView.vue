@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { isManaged, managedByOf, managedReason } from '@/utils/managedResource'
+import { isManaged } from '@/utils/managedResource'
+import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -156,15 +157,13 @@ function ownerOf(row: K8sWorkload) {
   return refs.find((o) => o.controller) ?? refs[0]
 }
 
-/** op 标记的文字：属主的 kind（Milvus / Elasticsearch / Prometheus…）；只有 managedBy 没有属主时按托管方 */
+/** 非平台托管、但有属主的行（用户自己装的 Operator 等）：标属主的 kind；平台托管行走 ManagedOwnerTag */
 function opLabel(row: K8sWorkload): string {
   const kind = ownerOf(row)?.kind
-  if (kind) return `op: ${kind}`
-  return managedByOf(row) === 'MIDDLEWARE' ? '中间件' : '平台组件'
+  return kind ? `op: ${kind}` : 'Operator'
 }
 
 function opTip(row: K8sWorkload): string {
-  if (isManaged(row)) return managedReason(row)
   const o = ownerOf(row)
   return o ? `由 ${o.apiVersion} ${o.kind}「${o.name}」管理，不可编辑` : '由 Operator 管理，不可编辑'
 }
@@ -663,7 +662,9 @@ const contextDesc = computed(() => {
           <template #default="{ row }">
             <code class="res-name name-link" @click="goDetail(row.name)">{{ row.name }}</code>
             <AppOwnerLink v-if="appIdOf(row.labels)" :app-id="appIdOf(row.labels)" :cluster-id="state.clusterId" :tenant-id="state.tenantId" />
-            <el-tooltip v-if="isOpManaged(row)" :content="opTip(row)" placement="top">
+            <!-- 平台托管（中间件实例 / 平台组件）：标出具体是哪个实例；否则是普通 Operator/控制器属主 -->
+            <ManagedOwnerTag v-if="isManaged(row)" :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" />
+            <el-tooltip v-else-if="isOpManaged(row)" :content="opTip(row)" placement="top">
               <el-tag type="warning" size="small" effect="plain" class="op-tag">{{ opLabel(row) }}</el-tag>
             </el-tooltip>
             <el-tag v-if="row.kind === 'deployment' && row.paused" type="info" size="small" effect="plain" class="op-tag">已暂停</el-tag>

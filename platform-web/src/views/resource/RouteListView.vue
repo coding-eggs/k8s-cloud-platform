@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -258,7 +259,7 @@ onLoad()
           <template #default="{ row }"><el-tag size="small" effect="plain">{{ kindMeta(row._kind).label }}</el-tag></template>
         </el-table-column>
         <el-table-column label="名称" min-width="160">
-          <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code></template>
+          <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code><ManagedOwnerTag :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" /></template>
         </el-table-column>
         <el-table-column label="父资源" min-width="200">
           <template #default="{ row }">

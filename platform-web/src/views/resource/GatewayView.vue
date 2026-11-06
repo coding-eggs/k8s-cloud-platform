@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -162,7 +163,7 @@ const contextDesc = computed(() => {
     <div v-else class="panel table-panel">
       <el-table v-loading="loading || !ready" :data="rows" stripe>
         <el-table-column label="名称" min-width="180">
-          <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code></template>
+          <template #default="{ row }"><code class="res-name name-link" @click="openDetail(row)">{{ row.name }}</code><ManagedOwnerTag :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" /></template>
         </el-table-column>
         <el-table-column label="GatewayClass" min-width="160">
           <template #default="{ row }"><code class="mono">{{ row.gatewayClassName ?? '—' }}</code></template>

@@ -25,6 +25,7 @@ import { sumCpuCores, sumMemBytes } from '@/utils/metrics'
 import { formatBytes } from '@/utils/quantity'
 import FieldHelp from "@/components/workload/FieldHelp.vue";
 import YamlBlock from '@/components/YamlBlock.vue'
+import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -428,7 +429,8 @@ const contextDesc = computed(() => {
               <el-tag :effect="detail.kind === 'statefulset' ? 'success' : detail.kind === 'daemonset' ? 'warning' : 'plain'" size="small">{{ kindLabel }}</el-tag>
             </div>
             <div v-if="isOpManaged" class="info-row col-row op-row">
-              <el-tag type="warning" size="small" effect="plain" class="op-badge">Operator 管理</el-tag>
+              <ManagedOwnerTag v-if="isManaged(detail)" :row="detail" :cluster-id="state.clusterId" :tenant-id="state.tenantId" class="op-badge op-owner" />
+              <el-tag v-else type="warning" size="small" effect="plain" class="op-badge">Operator 管理</el-tag>
               <span class="v stack">
                 <div v-for="(o, i) in detail.ownerReferences ?? []" :key="i" class="stack-line mono owner-ref">{{ o.apiVersion }}.{{ o.kind }}.{{ o.name }}<FieldHelp tip="<apiVersion>.<kind>.<name>"></FieldHelp></div>
               </span>
@@ -773,6 +775,7 @@ const contextDesc = computed(() => {
 .vol-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .tol-line { display: inline-block; margin-bottom: 2px; }
 .op-badge { margin-bottom: 6px; }
+.op-owner { margin-left: 0; }
 .owner-ref { word-break: break-all; color: var(--text-1); }
 
 .list-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }

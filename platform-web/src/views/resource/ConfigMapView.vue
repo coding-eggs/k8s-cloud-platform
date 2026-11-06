@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -169,7 +170,7 @@ const contextDesc = computed(() => {
         </el-table-column>
         <el-table-column label="名称" width="500" >
           <template #default="{ row }" >
-            <code class="res-name" :class="{ 'name-link': !allNs }" @click="onNameClick(row)">{{ row.name }}</code>
+            <code class="res-name" :class="{ 'name-link': !allNs }" @click="onNameClick(row)">{{ row.name }}</code><ManagedOwnerTag :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" />
           </template>
         </el-table-column>
 
