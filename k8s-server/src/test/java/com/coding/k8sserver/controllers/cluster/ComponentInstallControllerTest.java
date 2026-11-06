@@ -8,6 +8,7 @@ import com.coding.k8sserver.components.ResourceAccessResolver;
 import com.coding.k8sserver.helm.ChartBundle;
 import com.coding.k8sserver.helm.HelmResult;
 import com.coding.k8sserver.helm.HelmRunner;
+import com.coding.k8sserver.kube.ManifestApplier;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import org.junit.jupiter.api.Test;
 
@@ -63,18 +64,18 @@ class ComponentInstallControllerTest {
     @Test
     void aServerSideApplyReleaseSkipsHelmAndWaitsForItsCrds() {
         // 超大 chart（Calico CRD，渲染后 3.5MB）不能建 Helm release：Secret 1MiB 上限。
-        // 这条 release 走 kubectl apply --server-side，并且要等 CRD Established 再装下一条
+        // 这条 release 走 server-side apply（ManifestApplier，不用 kubectl），并且要等 CRD Established 再装下一条
         // （否则 operator release 里的 Installation 还是 no matches for kind）
         HelmRunner helm = mock(HelmRunner.class);
+        ManifestApplier manifests = mock(ManifestApplier.class);
         when(helm.renderFull(anyString(), any(), any(), anyString(), anyString(), any()))
                 .thenReturn(new HelmResult(true, 0, CRD_MANIFEST));
-        when(helm.applyServerSide(anyString(), anyString()))
-                .thenReturn(new HelmResult(true, 0, "customresourcedefinition.apiextensions.k8s.io/"
-                        + "installations.operator.tigera.io serverside-applied"));
-        when(helm.waitCrdsEstablished(anyString(), any()))
+        when(manifests.applyServerSide(anyString(), anyString(), any()))
+                .thenReturn(new HelmResult(true, 0, "1 个对象已写入（server-side apply）"));
+        when(manifests.waitCrdsEstablished(anyString(), any()))
                 .thenReturn(new HelmResult(true, 0, "condition met"));
 
-        ComponentInstallResultDTO r = controller(helm, kubeClient("1", "37"))
+        ComponentInstallResultDTO r = controller(helm, manifests, kubeClient("1", "37"))
                 .apply(request("SERVER_SIDE_APPLY", "platform-calico-crds")).getData();
 
         assertThat(r.isSuccess()).isTrue();
@@ -84,8 +85,12 @@ class ComponentInstallControllerTest {
         @SuppressWarnings("unchecked")
         org.mockito.ArgumentCaptor<java.util.List<String>> crds =
                 org.mockito.ArgumentCaptor.forClass(java.util.List.class);
-        org.mockito.Mockito.verify(helm).waitCrdsEstablished(anyString(), crds.capture());
+        org.mockito.Mockito.verify(manifests).waitCrdsEstablished(anyString(), crds.capture());
         assertThat(crds.getValue()).containsExactly("installations.operator.tigera.io");
+        // 清单里缺 namespace 的命名空间级对象落到 release 的命名空间，而不是静默进 default
+        org.mockito.Mockito.verify(manifests).applyServerSide(anyString(), anyString(),
+                org.mockito.ArgumentMatchers.eq(request("SERVER_SIDE_APPLY", "platform-calico-crds")
+                        .getReleases().get(0).getNamespace()));
     }
 
     @Test
@@ -94,12 +99,13 @@ class ComponentInstallControllerTest {
         // 1.37 只认 v1（2026-10-22 实测：no matches for kind ... in version
         // "admissionregistration.k8s.io/v1beta1"）。必须按集群探测器渲染。
         HelmRunner helm = mock(HelmRunner.class);
+        ManifestApplier manifests = mock(ManifestApplier.class);
         when(helm.renderFull(anyString(), any(), any(), anyString(), anyString(), any()))
                 .thenReturn(new HelmResult(true, 0, CRD_MANIFEST));
-        when(helm.applyServerSide(anyString(), anyString())).thenReturn(new HelmResult(true, 0, "applied"));
-        when(helm.waitCrdsEstablished(anyString(), any())).thenReturn(new HelmResult(true, 0, "ok"));
+        when(manifests.applyServerSide(anyString(), anyString(), any())).thenReturn(new HelmResult(true, 0, "applied"));
+        when(manifests.waitCrdsEstablished(anyString(), any())).thenReturn(new HelmResult(true, 0, "ok"));
 
-        controller(helm, kubeClient("1", "37+"))
+        controller(helm, manifests, kubeClient("1", "37+"))
                 .apply(request("SERVER_SIDE_APPLY", "platform-calico-crds"));
 
         org.mockito.Mockito.verify(helm).renderFull(
@@ -112,9 +118,10 @@ class ComponentInstallControllerTest {
     @Test
     void aServerSideApplyFailureStopsTheFollowingHelmRelease() {
         HelmRunner helm = mock(HelmRunner.class);
+        ManifestApplier manifests = mock(ManifestApplier.class);
         when(helm.renderFull(anyString(), any(), any(), anyString(), anyString(), any()))
                 .thenReturn(new HelmResult(true, 0, CRD_MANIFEST));
-        when(helm.applyServerSide(anyString(), anyString()))
+        when(manifests.applyServerSide(anyString(), anyString(), any()))
                 .thenReturn(new HelmResult(false, 1, "no matches"));
 
         ComponentInstallRequestDTO req = request("SERVER_SIDE_APPLY", "platform-calico-crds");
@@ -126,7 +133,7 @@ class ComponentInstallControllerTest {
         second.setValues(Map.of());
         req.setReleases(List.of(req.getReleases().get(0), second));
 
-        ComponentInstallResultDTO r = controller(helm).apply(req).getData();
+        ComponentInstallResultDTO r = controller(helm, manifests, kubeClient("1", "35")).apply(req).getData();
 
         assertThat(r.isSuccess()).isFalse();
         assertThat(r.getReleases()).hasSize(1);
@@ -221,12 +228,17 @@ class ComponentInstallControllerTest {
 
     private static ComponentInstallController controller(
             HelmRunner helm, io.fabric8.kubernetes.client.KubernetesClient kube) {
+        return controller(helm, mock(ManifestApplier.class), kube);
+    }
+
+    private static ComponentInstallController controller(
+            HelmRunner helm, ManifestApplier manifests, io.fabric8.kubernetes.client.KubernetesClient kube) {
         KubernetesClientFactory factory = mock(KubernetesClientFactory.class);
         when(factory.adminKubeconfig("c1")).thenReturn("apiVersion: v1\nkind: Config\n");
         when(factory.getAdminClient("c1")).thenReturn(kube);
         ChartBundle bundle = mock(ChartBundle.class);
         when(bundle.chartDir(anyString(), anyString())).thenReturn(Path.of("/tmp/chart"));
-        return new ComponentInstallController(helm, bundle, factory,
+        return new ComponentInstallController(helm, manifests, bundle, factory,
                 mock(ResourceAccessResolver.class), mock(com.coding.k8sserver.components.ChartImageCatalogService.class));
     }
 

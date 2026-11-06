@@ -2,7 +2,6 @@ package com.coding.k8sserver.helm;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
-import com.coding.k8score.operations.ServerSideApply;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,8 +40,6 @@ public class HelmRunner {
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
     private final String binary;
-    /** 直接落盘（server-side apply）用的 kubectl；超大 chart 不走 Helm release，见 {@link #applyServerSide} */
-    private final String kubectlBinary;
     /** 测试注入：非空时命令以这个前缀开头（通常是 java -cp ... FakeHelm） */
     private final List<String> commandPrefix;
     private final Map<String, String> extraEnv;
@@ -54,24 +51,17 @@ public class HelmRunner {
     /** 生产构造器。类里有第二个构造器，Spring 不会自己挑 —— 必须标 @Autowired。 */
     @Autowired
     public HelmRunner(@Value("${platform.components.helm-binary:helm}") String binary,
-                      @Value("${platform.components.kubectl-binary:kubectl}") String kubectlBinary,
                       @Value("${platform.components.helm-timeout:15m}") Duration timeout) {
-        this(binary, kubectlBinary, null, Map.of(), Path.of(System.getProperty("java.io.tmpdir")), timeout);
+        this(binary, null, Map.of(), Path.of(System.getProperty("java.io.tmpdir")), timeout);
     }
 
     /**
      * 测试注入构造器（公开是为了让 {@code chart} 包的 ChartFetcherTest 也能用假 helm）。
-     * 生产代码只用上面的 {@link #HelmRunner(String, String, Duration)}。
+     * 生产代码只用上面的 {@link #HelmRunner(String, Duration)}。
      */
     public HelmRunner(String binary, List<String> commandPrefix, Map<String, String> extraEnv,
                       Path tempDir, Duration timeout) {
-        this(binary, "kubectl", commandPrefix, extraEnv, tempDir, timeout);
-    }
-
-    public HelmRunner(String binary, String kubectlBinary, List<String> commandPrefix,
-                      Map<String, String> extraEnv, Path tempDir, Duration timeout) {
         this.binary = binary;
-        this.kubectlBinary = kubectlBinary;
         this.commandPrefix = commandPrefix;
         this.extraEnv = extraEnv;
         this.tempDir = tempDir;
@@ -289,129 +279,6 @@ public class HelmRunner {
         HelmResult r = exec(kubeconfig, List.of("list", "--namespace", namespace,
                 "--deployed", "--filter", "^" + release + "$", "--short"));
         return r.ok() && r.output() != null && !r.output().isBlank();
-    }
-
-    /**
-     * 渲染结果直接用 {@code kubectl apply --server-side} 落盘，**不建 Helm release**。
-     *
-     * <p>为什么需要它：Helm 会把整个 chart 存进 release Secret（1MiB 上限）。Calico 的 CRD chart
-     * 渲染后 3.5MB、chart 本身同量级，{@code helm install} 直接报
-     * {@code Secret "sh.helm.release.v1...v1" is invalid: data: Too long}（2026-10-22 实测）。
-     * 官方 docs 对这套 CRD 也是 {@code helm template | kubectl apply --server-side}。
-     *
-     * <p>{@code --force-conflicts} + 平台 fieldManager：与其他 SSA 写入同一个身份，
-     * managedFields 里能看出是平台写的。
-     */
-    public HelmResult applyServerSide(String kubeconfig, String manifest) {
-        Path manifestFile = null;
-        Path kubeconfigFile = null;
-        try {
-            manifestFile = Files.createTempFile(tempDir, "manifests-", ".yaml");
-            Files.writeString(manifestFile, manifest, StandardCharsets.UTF_8);
-            kubeconfigFile = writeTemp(kubeconfig);
-            List<String> args = List.of(
-                    "apply", "--server-side", "--force-conflicts",
-                    "--field-manager=" + ServerSideApply.FIELD_MANAGER,
-                    "-f", manifestFile.toString(),
-                    "--kubeconfig", kubeconfigFile.toString());
-            return run(toolCommand(args), args);
-        } catch (Exception e) {
-            return new HelmResult(false, -1, "kubectl 执行失败: " + e.getMessage());
-        } finally {
-            deleteQuietly(manifestFile);
-            deleteQuietly(kubeconfigFile);
-        }
-    }
-
-    /**
-     * 删除 manifest 里列出的对象；不存在的对象不算失败（与 S3 删除语义一致）。
-     *
-     * <p>为什么用 kubectl 而不是 generic client：删除需要 kind → plural 的映射，平台没有维护全量 kind 表；
-     * 交给 kubectl 就绕开了这件事，且与 {@link #applyServerSide} 走同一把 kubeconfig 与临时文件规矩。
-     */
-    public HelmResult deleteManifest(String kubeconfig, String manifest) {
-        Path manifestFile = null;
-        Path kubeconfigFile = null;
-        try {
-            manifestFile = Files.createTempFile(tempDir, "delete-", ".yaml");
-            Files.writeString(manifestFile, manifest, StandardCharsets.UTF_8);
-            kubeconfigFile = writeTemp(kubeconfig);
-            List<String> args = List.of(
-                    "delete", "-f", manifestFile.toString(),
-                    "--ignore-not-found",
-                    "--kubeconfig", kubeconfigFile.toString());
-            return run(toolCommand(args), args);
-        } catch (Exception e) {
-            return new HelmResult(false, -1, "kubectl 执行失败: " + e.getMessage());
-        } finally {
-            deleteQuietly(manifestFile);
-            deleteQuietly(kubeconfigFile);
-        }
-    }
-
-    /** 等一个 Job 跑完（初始化动作）；超时或失败返回 ok=false。 */
-    public HelmResult waitJob(String kubeconfig, String job, String namespace, Duration timeout) {
-        Path kubeconfigFile = null;
-        try {
-            kubeconfigFile = writeTemp(kubeconfig);
-            List<String> args = List.of(
-                    "wait", "--for=condition=complete", "job/" + job,
-                    "--namespace", namespace,
-                    "--timeout=" + timeout.toSeconds() + "s",
-                    "--kubeconfig", kubeconfigFile.toString());
-            return run(toolCommand(args), args);
-        } catch (Exception e) {
-            return new HelmResult(false, -1, "kubectl 执行失败: " + e.getMessage());
-        } finally {
-            deleteQuietly(kubeconfigFile);
-        }
-    }
-
-    /** 取 Job 日志尾（初始化失败时给人看）；取不到返回空串，不抛。 */
-    public String jobLogs(String kubeconfig, String job, String namespace) {
-        Path kubeconfigFile = null;
-        try {
-            kubeconfigFile = writeTemp(kubeconfig);
-            List<String> args = List.of(
-                    "logs", "job/" + job, "--namespace", namespace, "--tail=100",
-                    "--kubeconfig", kubeconfigFile.toString());
-            HelmResult r = run(toolCommand(args), args);
-            return r.ok() ? r.output() : "";
-        } catch (Exception e) {
-            return "";
-        } finally {
-            deleteQuietly(kubeconfigFile);
-        }
-    }
-
-    /** 等 CRD 真的 Established 再装下一个 release（否则 CR 仍然 {@code no matches for kind}） */
-    public HelmResult waitCrdsEstablished(String kubeconfig, List<String> crds) {
-        Path kubeconfigFile = null;
-        try {
-            kubeconfigFile = writeTemp(kubeconfig);
-            List<String> args = new ArrayList<>(List.of(
-                    "wait", "--for=condition=Established", "--timeout=120s"));
-            crds.forEach(name -> args.add("customresourcedefinition/" + name));
-            args.add("--kubeconfig");
-            args.add(kubeconfigFile.toString());
-            return run(toolCommand(args), args);
-        } catch (Exception e) {
-            return new HelmResult(false, -1, "kubectl 执行失败: " + e.getMessage());
-        } finally {
-            deleteQuietly(kubeconfigFile);
-        }
-    }
-
-    /** 直接落盘用 kubectl；测试注入时与 helm 共用假二进制（FakeHelm 只记录 argv） */
-    private List<String> toolCommand(List<String> args) {
-        List<String> command = new ArrayList<>();
-        if (commandPrefix != null) {
-            command.addAll(commandPrefix);
-        } else {
-            command.add(kubectlBinary);
-        }
-        command.addAll(args);
-        return command;
     }
 
     /** 取 release 实际提交给集群的清单（装后复核用）。 */

@@ -47,6 +47,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import com.coding.k8sserver.helm.ChartBundle;
 import com.coding.k8sserver.helm.HelmResult;
 import com.coding.k8sserver.helm.HelmRunner;
+import com.coding.k8sserver.kube.ManifestApplier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
@@ -95,16 +96,19 @@ public class ComponentInstallController implements AccessBoundaryAware {
     private static final String APPLY_SERVER_SIDE = ReleaseInstallSpecDTO.APPLY_SERVER_SIDE;
 
     private final HelmRunner helm;
+    /** 超大 chart（Calico CRD）不建 Helm release，渲染结果由它直接 server-side apply */
+    private final ManifestApplier manifests;
     private final ChartBundle charts;
     private final KubernetesClientFactory clientFactory;
     private final ResourceAccessResolver accessResolver;
     private final ChartImageCatalogService imageCatalog;
 
-    public ComponentInstallController(HelmRunner helm, ChartBundle charts,
+    public ComponentInstallController(HelmRunner helm, ManifestApplier manifests, ChartBundle charts,
                                       KubernetesClientFactory clientFactory,
                                       ResourceAccessResolver accessResolver,
                                       ChartImageCatalogService imageCatalog) {
         this.helm = helm;
+        this.manifests = manifests;
         this.charts = charts;
         this.clientFactory = clientFactory;
         this.accessResolver = accessResolver;
@@ -176,7 +180,7 @@ public class ComponentInstallController implements AccessBoundaryAware {
                 // 直接 server-side apply；并等 CRD Established 再装下一条
                 // （否则下一条里的 CR 会报 no matches for kind）。2026-10-22 实测。
                 if (directApply) {
-                    HelmResult applied = helm.applyServerSide(kubeconfig, rendered.output());
+                    HelmResult applied = manifests.applyServerSide(kubeconfig, rendered.output(), spec.getNamespace());
                     if (!applied.ok()) {
                         st.setStatus("FAILED");
                         st.setMessage(applied.output());
@@ -188,7 +192,7 @@ public class ComponentInstallController implements AccessBoundaryAware {
                         break; // 失败即停
                     }
                     List<String> crds = crdNames(rendered.output());
-                    HelmResult waited = crds.isEmpty() ? null : helm.waitCrdsEstablished(kubeconfig, crds);
+                    HelmResult waited = crds.isEmpty() ? null : manifests.waitCrdsEstablished(kubeconfig, crds);
                     boolean waitOk = waited == null || waited.ok();
                     st.setStatus(waitOk ? "SUCCESS" : "FAILED");
                     st.setMessage(waitOk
@@ -871,7 +875,7 @@ public class ComponentInstallController implements AccessBoundaryAware {
     /**
      * 渲染清单里所有 CRD 的 {@code metadata.name}（去重、保持出现顺序）。
      *
-     * <p>用于 apply 之后 {@code kubectl wait --for=condition=Established}：CRD 写进去了不代表
+     * <p>用于 apply 之后等 CRD Established（{@code ManifestApplier.waitCrdsEstablished}）：CRD 写进去了不代表
      * 可以被发现，下一个 release 里的 CR 可能在几毫秒内仍然 {@code no matches for kind}。
      */
     static List<String> crdNames(String manifest) {

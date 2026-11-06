@@ -90,7 +90,7 @@ public class AppRenderService {
                         continue;
                     }
                     String id = ref.getKind() + "/" + ref.getName();
-                    // apply 用 kubectl 且不带 -n：清单没写 namespace 的对象会落进 kubeconfig 的默认命名空间，
+                    // 清单没写 namespace 的对象不会落进目标命名空间（apply 不带默认命名空间），
                     // 健康检查却去目标命名空间找，发布永远卡在 HEALTH
                     if (!Objects.equals(req.getNamespace(), declaredNamespace(doc))) {
                         problems.add(AppProblemDTO.error(node.getKey(),

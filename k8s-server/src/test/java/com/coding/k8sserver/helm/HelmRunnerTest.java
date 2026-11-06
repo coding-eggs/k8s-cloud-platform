@@ -221,41 +221,6 @@ class HelmRunnerTest {
     }
 
     @Test
-    void applyServerSideRunsKubectlWithServerSideApplyAndThePlatformFieldManager() throws Exception {
-        // 超大 chart（Calico CRD）不能建 Helm release：Helm 把整个 chart 存进 release Secret，
-        // 超过 1MiB 直接装不了。改用 kubectl apply --server-side（官方 docs 同款做法）。
-        Path log = tmp.resolve("argv.log");
-
-        HelmResult r = runner(log, 0).applyServerSide("apiVersion: v1\nkind: Config\n",
-                "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\n"
-                        + "metadata:\n  name: installations.operator.tigera.io\n");
-
-        assertThat(r.ok()).isTrue();
-        String argv = Files.readString(log);
-        assertThat(argv).contains("apply").contains("--server-side").contains("--force-conflicts")
-                // 与平台其它 SSA 写入同一个 fieldManager，managedFields 里能认出是谁改的
-                .contains("--field-manager=platform-system")
-                .contains("-f")
-                .contains("--kubeconfig");
-    }
-
-    @Test
-    void waitCrdsEstablishedWaitsOnTheGivenCrds() throws Exception {
-        // CRD 写进去不等于已 Established；不等的话下一个 release 里的 CR 还是 no matches for kind
-        Path log = tmp.resolve("argv.log");
-
-        HelmResult r = runner(log, 0).waitCrdsEstablished("apiVersion: v1\nkind: Config\n",
-                List.of("installations.operator.tigera.io", "ippools.projectcalico.org"));
-
-        assertThat(r.ok()).isTrue();
-        String argv = Files.readString(log);
-        assertThat(argv).contains("wait").contains("--for=condition=Established");
-        assertThat(argv).contains("customresourcedefinition/installations.operator.tigera.io");
-        assertThat(argv).contains("customresourcedefinition/ippools.projectcalico.org");
-        assertThat(argv).contains("--timeout");
-    }
-
-    @Test
     void theTemporaryKubeconfigIsRemovedEvenOnFailure() throws Exception {
         // 通过把 FAKE_HELM_LOG 指到不可写路径制造失败，断言 temp 文件仍被删
         Path bad = tmp.resolve("no-such-dir/argv.log");

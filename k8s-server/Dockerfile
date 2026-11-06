@@ -25,14 +25,15 @@
 #    幂等挡住了重复写，但没必要）。
 #
 # ============================ 构建期**完全离线** ============================
-# 2026-11-04 改定：helm 与 kubectl **不再在构建时下载**。
-#   原来这里 RUN curl get.helm.sh / dl.k8s.io，内网构建机没有出网就整条构建链失败，
+# 2026-11-04 改定：helm **不再在构建时下载**。
+#   原来这里 RUN curl get.helm.sh，内网构建机没有出网就整条构建链失败，
 #   而且每次构建拿到的字节取决于当时的外网（不可复现）。
 #   现在二进制预先提交在 k8s-server/docker/tools/linux-amd64/ 下，构建只做 COPY + 解压：
 #     docker/tools/linux-amd64/helm-v4.2.0-linux-amd64.tar.gz   （官方的 linux-amd64 tar 包）
-#     docker/tools/linux-amd64/kubectl-v1.37.2-linux-amd64.gz   （裸二进制 gzip 过，约 18MB）
 #   换版本：跑 `bash scripts/fetch-k8s-tools.sh`（会跟官方 sha256 比对），
-#           再把下面两处文件名与这里列出的版本一起改掉。**别只改一处**。
+#           再把下面 COPY 的文件名与这里列出的版本一起改掉。**别只改一处**。
+# 2026-11-06 改定：镜像里**不再有 kubectl**。清单直接落盘（Calico CRD、应用发布、初始化 Job）
+#   改由 fabric8 做（ManifestApplier）—— k8s-server 要适配多个版本的集群，钉死一个 kubectl 版本有版本偏差风险。
 # ⚠️ 仓库里只预置了 **linux-amd64**。真要出 arm64 镜像，先 `bash scripts/fetch-k8s-tools.sh arm64`
 #    并把下面的路径换掉，否则会在 tools 阶段看到一句明确的报错。
 # ⚠️ 因为不再装 apt 包，镜像里**没有** curl（构建期用不到，运行期也不需要）。
@@ -40,7 +41,7 @@
 # ==========================================================================
 
 # ---------- 阶段一：把压缩包解开成真实二进制 ----------
-# 单独一个阶段是为了让最终镜像里只有二进制，不残留那两个压缩包（省约 36MB）。
+# 单独一个阶段是为了让最终镜像里只有二进制，不残留压缩包（省约 19MB）。
 # 基础镜像走平台 Harbor（不访问 Docker Hub）：<harbor>/<上游主机>/<仓库>。
 # 镜像要先由 scripts/harbor-replication.py 复制进 Harbor 的 docker.io 项目，否则这里拉不到。
 FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre AS tools
@@ -48,30 +49,24 @@ FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre AS tools
 ARG TARGETARCH=amd64
 # ⚠️ Dockerfile 的 RUN 只认一行，多行必须每行末尾带 `\`（否则只把第一行交给 sh → "expecting }"）。
 RUN [ "$TARGETARCH" = "amd64" ] || { \
-      echo "只预置了 linux-amd64 的 helm/kubectl；要出 $TARGETARCH 镜像请先跑 scripts/fetch-k8s-tools.sh $TARGETARCH" >&2; \
+      echo "只预置了 linux-amd64 的 helm；要出 $TARGETARCH 镜像请先跑 scripts/fetch-k8s-tools.sh $TARGETARCH" >&2; \
       exit 1; \
     }
 
 # S3.6：组件安装靠 PATH 上的 helm 二进制（HelmRunner 直接调 `helm`）。
 # ⚠️ 版本必须与平台验证过的一致：Helm 4 用 --rollback-on-failure，没有 --atomic。
 COPY docker/tools/linux-amd64/helm-v4.2.0-linux-amd64.tar.gz /tmp/helm.tgz
-# S3.6：超大 chart（Calico 的 CRD chart）不走 Helm release —— Helm 把整个 chart 存进 release
-# Secret，超过 1MiB 就装不了。那条路径用 `kubectl apply --server-side` 落盘，所以镜像里要有 kubectl。
-COPY docker/tools/linux-amd64/kubectl-v1.37.2-linux-amd64.gz /tmp/kubectl.gz
 
-# 解压后立刻各跑一次 --version：文件被截断 / 架构不对会在这里就失败，而不是等到装组件时。
+# 解压后立刻跑一次 --version：文件被截断 / 架构不对会在这里就失败，而不是等到装组件时。
 RUN tar -xzf /tmp/helm.tgz -C /tmp \
  && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
- && gunzip -c /tmp/kubectl.gz > /usr/local/bin/kubectl \
- && chmod +x /usr/local/bin/helm /usr/local/bin/kubectl \
- && helm version --short \
- && kubectl version --client
+ && chmod +x /usr/local/bin/helm \
+ && helm version --short
 
 # ---------- 阶段二：运行镜像 ----------
 FROM harbor.ackcp.cloud/docker.io/library/eclipse-temurin:21-jre
 
-COPY --from=tools /usr/local/bin/helm    /usr/local/bin/helm
-COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
+COPY --from=tools /usr/local/bin/helm /usr/local/bin/helm
 
 RUN useradd -m -u 1001 app
 WORKDIR /app

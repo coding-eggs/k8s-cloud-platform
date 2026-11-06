@@ -46,6 +46,14 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- 清单直接落盘（ManifestApplier）的 YAML 解析：必须是 YAML 1.1 语义，与 kubectl 一致
+             （0644 = 八进制、yes/on/off = 布尔）；fabric8/Jackson 3 走的 YAML 1.2 会把它们当字符串。
+             版本由 Spring Boot BOM 管理，之前只是经 fabric8 间接带进来 —— 这里显式声明。 -->
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+
         <!-- 应用商店：渲染清单的 YAML 解析（Jackson 3，版本由 Spring Boot BOM 管理） -->
         <dependency>
             <groupId>tools.jackson.dataformat</groupId>

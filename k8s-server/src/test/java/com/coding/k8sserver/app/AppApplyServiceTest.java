@@ -3,7 +3,7 @@ package com.coding.k8sserver.app;
 import com.coding.common.models.app.AppApplyRequestDTO;
 import com.coding.common.models.app.AppObjectRefDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
-import com.coding.k8sserver.helm.HelmRunner;
+import com.coding.k8sserver.kube.ManifestApplier;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,16 +19,17 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AppApplyServiceTest {
 
-    private static HelmRunner helm(boolean ok) {
-        return new HelmRunner("true", List.of(), Map.of(), Path.of(System.getProperty("java.io.tmpdir")),
-                Duration.ofSeconds(5)) {
+    private static ManifestApplier helm(boolean ok) {
+        return new ManifestApplier() {
             @Override
-            public com.coding.k8sserver.helm.HelmResult applyServerSide(String kubeconfig, String manifest) {
+            public com.coding.k8sserver.helm.HelmResult applyServerSide(String kubeconfig, String manifest,
+                                                                        String defaultNamespace) {
                 return new com.coding.k8sserver.helm.HelmResult(ok, ok ? 0 : 1, ok ? "applied" : "boom");
             }
 
             @Override
-            public com.coding.k8sserver.helm.HelmResult deleteManifest(String kubeconfig, String manifest) {
+            public com.coding.k8sserver.helm.HelmResult deleteManifest(String kubeconfig, String manifest,
+                                                                       String defaultNamespace) {
                 return new com.coding.k8sserver.helm.HelmResult(true, 0, "");
             }
         };
