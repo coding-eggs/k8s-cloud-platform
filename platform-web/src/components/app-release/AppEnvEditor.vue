@@ -43,13 +43,21 @@ const refItems = computed(() => refGroups(props.dependencies, props.serviceKeys)
 /**
  * 空值：列全部引用，选中 = 整个值就是这个引用；
  * 末尾有没闭合的 `${`：按其后的文字过滤，选中 = 把这段补全成完整引用（前面的字面值保留）；
- * 其它情况（在写字面值）不弹，免得打扰。
+ * 没写 `${` 的纯文字（如 `auth`、`port`）：按「名称.字段」子串匹配，选中 = 整个值换成该引用；
+ * 匹配不到就不弹，照常当字面值写。值里已有完整引用时不弹，免得打扰。
  */
 function suggest(query: string, cb: (items: RefSuggestion[]) => void): void {
   const q = query ?? ''
   const open = q.lastIndexOf('${')
   const unclosed = open >= 0 && !q.slice(open).includes('}')
-  if (q && !unclosed) { cb([]); return }
+  if (q && !unclosed) {
+    const word = q.trim().toLowerCase()
+    if (!word || q.includes('${')) { cb([]); return }
+    cb(refItems.value
+      .filter((it) => it.token.slice(2, -1).toLowerCase().includes(word))
+      .map((it) => ({ value: it.token, token: it.token, hint: it.hint })))
+    return
+  }
   const head = unclosed ? q.slice(0, open) : ''
   const tail = unclosed ? q.slice(open + 2).toLowerCase() : ''
   // 按「名称.字段」前缀或名称子串匹配；不按整串子串，否则 ${ord 会把所有 password 字段都带出来
@@ -181,7 +189,7 @@ function nameProblem(r: AppEnvRow, i: number): string {
           :debounce="0"
           class="app-env__auto"
           popper-class="app-env-ref-popper"
-          placeholder="字面值；聚焦或输入 ${ 可选引用"
+          placeholder="字面值；聚焦或输入名称 / ${ 可选引用"
           @update:model-value="(v: string) => patch(i, { value: v, kind: v.includes('${') ? 'REF' : 'LITERAL' })"
         >
           <template #default="{ item }">
