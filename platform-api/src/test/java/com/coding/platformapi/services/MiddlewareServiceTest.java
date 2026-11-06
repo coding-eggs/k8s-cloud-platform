@@ -601,6 +601,35 @@ class MiddlewareServiceTest {
     }
 
     @Test
+    void liveStatusesOverridesStoredStatus() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setStatus("READY");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(i));
+        var live = new com.coding.common.models.middleware.MiddlewareStatusResultDTO();
+        live.setName(i.getName());
+        live.setStatus("DEGRADED");
+        when(client.status(org.mockito.ArgumentMatchers.eq("redis"), any())).thenReturn(List.of(live));
+
+        var out = service.liveStatuses("c1");
+
+        assertThat(out).singleElement().satisfies(s -> {
+            assertThat(s.status()).isEqualTo("DEGRADED");
+            assertThat(s.namespace()).isEqualTo(i.getNamespace());
+            assertThat(s.tenantId()).isEqualTo(i.getTenantId());
+        });
+    }
+
+    @Test
+    void liveStatusesKeepsStoredWhenProbeFails() {
+        PlatformMiddlewareInstance i = instance("redis", "STANDALONE");
+        i.setStatus("READY");
+        when(instances.selectByCluster("c1", null)).thenReturn(List.of(i));
+        when(client.status(anyString(), any())).thenThrow(new RuntimeException("cluster down"));
+
+        assertThat(service.liveStatuses("c1")).extracting(MiddlewareService.LiveStatus::status).containsExactly("READY");
+    }
+
+    @Test
     void tenantCanOnlySeeItsOwnInstances() {
         PlatformMiddlewareInstance mine = new PlatformMiddlewareInstance();
         mine.setId("mwi_1");

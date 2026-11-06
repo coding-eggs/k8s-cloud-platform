@@ -233,6 +233,33 @@ public class MiddlewareService {
         return rows;
     }
 
+    /** 总览用：一个实例的「所在 ns + 租户 + 实时状态」（状态口径同 {@link #list}）。 */
+    public record LiveStatus(String namespace, String tenantId, String status) {
+    }
+
+    /**
+     * 某集群全部中间件实例的实时状态（总览计数用）。整集群一份，Redis 缓存 45s，
+     * 与聚合快照同 TTL —— 总览刷新不会每次打 N 组 status 往返。过滤（租户 / ns）由调用方在结果上做。
+     */
+    public List<LiveStatus> liveStatuses(String clusterId) {
+        return cache.get("overview:mw:" + clusterId, Duration.ofSeconds(45),
+                new tools.jackson.core.type.TypeReference<List<LiveStatus>>() {
+                },
+                () -> {
+                    List<PlatformMiddlewareInstance> rows = instances.selectByCluster(clusterId, null);
+                    rows.stream()
+                            .collect(java.util.stream.Collectors.groupingBy(
+                                    r -> r.getCode() + "|" + r.getNamespace(),
+                                    java.util.LinkedHashMap::new,
+                                    java.util.stream.Collectors.toList()))
+                            .values()
+                            .forEach(this::refreshGroup);
+                    return rows.stream()
+                            .map(r -> new LiveStatus(r.getNamespace(), r.getTenantId(), r.getStatus()))
+                            .toList();
+                });
+    }
+
     /** 一次批量读同一 (code, namespace) 下所有实例的状态，失败静默保留台账值。 */
     private void refreshGroup(List<PlatformMiddlewareInstance> group) {
         PlatformMiddlewareInstance first = group.get(0);
