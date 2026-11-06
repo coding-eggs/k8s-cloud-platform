@@ -185,6 +185,28 @@ class ClusterAggregationOperationsTest {
     }
 
     @Test
+    void podPhaseBucketsSumToPodCount() {
+        Pod running = pod("a", "r", "Running", null, null, null, null);
+        Pod pending = pod("a", "p", "Pending", null, null, null, null);
+        Pod done = pod("a", "s", "Succeeded", null, null, null, null);
+        Pod crash = withContainerStatus(pod("a", "c", "Running", null, null, null, null), waiting("CrashLoopBackOff", 3));
+        Pod pullFail = withContainerStatus(pod("a", "i", "Pending", null, null, null, null), waiting("ImagePullBackOff", 0));
+
+        ClusterAggregateDTO agg = ops.aggregate(new ClusterObjects(
+                List.of(running, pending, done, crash, pullFail),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()), NOW);
+
+        NamespaceStatDTO a = row(agg, "a");
+        assertThat(a.getPodRunning()).isEqualTo(1);
+        assertThat(a.getPodPending()).isEqualTo(1);   // 只有「单纯 Pending」；拉镜像失败的归异常
+        assertThat(a.getPodSucceeded()).isEqualTo(1);
+        assertThat(a.getPodCount() - a.getPodRunning() - a.getPodPending() - a.getPodSucceeded()).isEqualTo(2);
+        assertThat(agg.getTotal().getPodRunning()).isEqualTo(1);
+        assertThat(agg.getTotal().getPodPending()).isEqualTo(1);
+        assertThat(agg.getTotal().getPodSucceeded()).isEqualTo(1);
+    }
+
+    @Test
     void aggregate_leaves_quota_null_when_namespace_has_none() {
         ClusterAggregateDTO agg = ops.aggregate(new ClusterObjects(
                 List.of(pod("a", "p", "Running", null, null, null, null)),

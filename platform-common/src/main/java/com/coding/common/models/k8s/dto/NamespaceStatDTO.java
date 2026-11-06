@@ -18,6 +18,12 @@ public class NamespaceStatDTO {
     private String namespace;
 
     private int podCount;
+    /** 非异常且 phase=Running 的 Pod 数 */
+    private int podRunning;
+    /** 异常原因恰为「Pending」的 Pod 数（单纯等调度 / 建容器；拉镜像失败等更严重的原因归异常） */
+    private int podPending;
+    /** 非异常且 phase=Succeeded（Job 跑完）的 Pod 数。异常数 = podCount - 三者之和 */
+    private int podSucceeded;
     private int deployCount;
     private int stsCount;
     private int dsCount;

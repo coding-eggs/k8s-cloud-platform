@@ -58,6 +58,9 @@ public final class NamespaceStatMerge {
             t.setCpuLimit(add(t.getCpuLimit(), r.getCpuLimit()));
             t.setMemLimit(add(t.getMemLimit(), r.getMemLimit()));
             t.setPodCount(t.getPodCount() + r.getPodCount());
+            t.setPodRunning(t.getPodRunning() + r.getPodRunning());
+            t.setPodPending(t.getPodPending() + r.getPodPending());
+            t.setPodSucceeded(t.getPodSucceeded() + r.getPodSucceeded());
             t.setDeploymentCount(t.getDeploymentCount() + r.getDeployCount());
             t.setStatefulsetCount(t.getStatefulsetCount() + r.getStsCount());
             t.setDaemonsetCount(t.getDaemonsetCount() + r.getDsCount());

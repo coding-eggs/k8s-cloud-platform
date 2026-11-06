@@ -302,6 +302,7 @@ public class ClusterAggregationOperations {
         acc.podCount = pods.size();
         for (Pod pod : pods) {
             addPodResources(acc, pod);
+            countPhase(acc, pod);
         }
         acc.deployCount = orEmpty(depByNs.get(ns)).size();
         acc.stsCount = orEmpty(stsByNs.get(ns)).size();
@@ -388,6 +389,19 @@ public class ClusterAggregationOperations {
     // ==================== pods ====================
 
     /** 累加一个 pod 的 requests/limits（只算 {@code spec.containers}，口径同节点页）。 */
+    /** Pod 状态分桶（口径见 NamespaceStatDTO.podRunning 等字段注释）；各桶与异常互斥。 */
+    private static void countPhase(NsAcc acc, Pod pod) {
+        String reason = abnormalReason(pod);
+        String phase = pod.getStatus() == null ? null : pod.getStatus().getPhase();
+        if ("Pending".equals(reason)) {
+            acc.podPending++;
+        } else if (reason == null && "Running".equals(phase)) {
+            acc.podRunning++;
+        } else if (reason == null && "Succeeded".equals(phase)) {
+            acc.podSucceeded++;
+        }
+    }
+
     private static void addPodResources(NsAcc acc, Pod pod) {
         if (pod.getSpec() == null || pod.getSpec().getContainers() == null) {
             return;
@@ -722,6 +736,9 @@ public class ClusterAggregationOperations {
             t.setCpuLimit(add(t.getCpuLimit(), r.getCpuLimit()));
             t.setMemLimit(add(t.getMemLimit(), r.getMemLimit()));
             t.setPodCount(t.getPodCount() + r.getPodCount());
+            t.setPodRunning(t.getPodRunning() + r.getPodRunning());
+            t.setPodPending(t.getPodPending() + r.getPodPending());
+            t.setPodSucceeded(t.getPodSucceeded() + r.getPodSucceeded());
             t.setDeploymentCount(t.getDeploymentCount() + r.getDeployCount());
             t.setStatefulsetCount(t.getStatefulsetCount() + r.getStsCount());
             t.setDaemonsetCount(t.getDaemonsetCount() + r.getDsCount());
@@ -736,6 +753,9 @@ public class ClusterAggregationOperations {
     /** 可变累加器（逐对象归并的阶段用；最后一次性转成 DTO）。 */
     private static final class NsAcc {
         private int podCount;
+        private int podRunning;
+        private int podPending;
+        private int podSucceeded;
         private int deployCount;
         private int stsCount;
         private int dsCount;
@@ -754,6 +774,9 @@ public class ClusterAggregationOperations {
             NamespaceStatDTO d = new NamespaceStatDTO();
             d.setNamespace(namespace);
             d.setPodCount(podCount);
+            d.setPodRunning(podRunning);
+            d.setPodPending(podPending);
+            d.setPodSucceeded(podSucceeded);
             d.setDeployCount(deployCount);
             d.setStsCount(stsCount);
             d.setDsCount(dsCount);
