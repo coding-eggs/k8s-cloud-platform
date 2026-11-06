@@ -14,7 +14,7 @@ import { formatQuantity } from '@/utils/quantity'
 import YamlBlock from '@/components/YamlBlock.vue'
 import CountCard from '@/components/overview/CountCard.vue'
 import WaterBar from '@/components/overview/WaterBar.vue'
-import { podSegments, segmentsOf } from '@/components/overview/labels'
+import { podSegments, segmentsOf, workloadSegments } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const summary = ref<ScopeSummary | null>(null)
@@ -394,7 +394,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
           <!-- 计数卡（/namespace/summary）：块为 null = 无该读权限，不渲染 -->
           <template v-if="summary">
             <div class="ov-cards6">
-              <CountCard :scope="nsScope" title="工作负载" kind="workload" :total="summary.workloads?.total ?? null" :segments="summary.workloads ? [{ label: '不健康', value: summary.workloads.unhealthy, tone: 'danger', query: { status: 'unhealthy' } }] : []" />
+              <CountCard :scope="nsScope" title="工作负载" kind="workload" :total="summary.workloads?.total ?? null" :segments="workloadSegments(summary.workloads?.total, summary.workloads?.unhealthy)" />
               <CountCard :scope="nsScope" title="Pod" kind="pod" :total="summary.pods?.total ?? null" :segments="podSegments(summary.pods)" />
               <CountCard :scope="nsScope" v-if="summary.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
               <CountCard :scope="nsScope" v-if="summary.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />

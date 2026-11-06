@@ -31,7 +31,7 @@ import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
-import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
+import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, workloadSegments, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const route = useRoute()
@@ -249,7 +249,7 @@ const clusterWorkloadTotal = computed(() => {
 })
 const clusterWorkloadSegments = computed<Segment[]>(() => {
   const n = overview.value?.unhealthyWorkloadTotal
-  return n == null ? [] : [{ label: '不健康', value: n, tone: 'danger', query: { status: 'unhealthy' } }]
+  return workloadSegments(clusterWorkloadTotal.value, n)
 })
 const clusterPodSegments = computed<Segment[]>(() => {
   const t = overview.value?.resourceTotal

@@ -15,7 +15,7 @@ import RefreshControl from '@/components/overview/RefreshControl.vue'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
 import WaterBar from '@/components/overview/WaterBar.vue'
-import { podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
+import { podSegments, segmentsOf, type Segment, workloadSegments as workloadSegmentsOf } from '@/components/overview/labels'
 import type { K8sCluster, NamespaceAllocation, PlatformTenant } from '@/types'
 import type { PlatformOverview } from '@/types/overview'
 
@@ -65,7 +65,7 @@ const pct = (used: number | null | undefined, total: number | null | undefined):
 
 const workloadSegments = computed<Segment[]>(() => {
   const w = ov.value?.workloads
-  return w ? [{ label: '不健康', value: w.unhealthy, tone: 'danger', query: { status: 'unhealthy' } }] : []
+  return w ? workloadSegmentsOf(w.total, w.unhealthy) : []
 })
 const tenantSegments = computed<Segment[]>(() => {
   const t = ov.value?.tenants

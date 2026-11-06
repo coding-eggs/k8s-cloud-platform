@@ -86,6 +86,18 @@ export function segmentsOf(kind: keyof typeof DEFS, b: CountBreakdown | null | u
   return Object.entries(def).map(([k, d]) => ({ label: d.label, tone: d.tone, query: d.query, value: b.byStatus?.[k] ?? 0 }))
 }
 
+/**
+ * 工作负载卡的段：正常 = 总数 − 不健康（与 Pod 卡一样有状态分布和比例条）。
+ * 不健康口径同后端（Deployment / StatefulSet 就绪副本 < 期望副本），可点 → 列表「只看不健康」；正常段不单独筛。
+ */
+export function workloadSegments(total: number | null | undefined, unhealthy: number | null | undefined): Segment[] {
+  if (total == null || unhealthy == null) return []
+  return [
+    { label: '正常', value: Math.max(0, total - unhealthy), tone: 'success' },
+    { label: '不健康', value: unhealthy, tone: 'danger', query: { status: 'unhealthy' } },
+  ]
+}
+
 export function podSegments(p: OverviewPods | null | undefined): Segment[] {
   if (!p) return []
   return [
@@ -97,7 +109,7 @@ export function podSegments(p: OverviewPods | null | undefined): Segment[] {
 }
 
 /** 数量卡的资源类型 → 图标（与侧栏菜单同一个图标；Element Plus 图标已全局注册，按名字渲染） */
-export type CountKind = 'app' | 'middleware' | 'workload' | 'pod' | 'pipeline' | 'alert' | 'tenant' | 'namespace'
+export type CountKind = 'app' | 'middleware' | 'workload' | 'pod' | 'pipeline' | 'alert' | 'tenant' | 'namespace' | 'service' | 'pvc'
 
 export const COUNT_KIND_ICON: Record<CountKind, string> = {
   app: 'Connection',
@@ -108,6 +120,8 @@ export const COUNT_KIND_ICON: Record<CountKind, string> = {
   alert: 'Bell',
   tenant: 'OfficeBuilding',
   namespace: 'FolderOpened',
+  service: 'Link',
+  pvc: 'Coin',
 }
 
 /**
@@ -124,6 +138,8 @@ export const COUNT_KIND_LINK: Record<CountKind, { list: string; empty?: { text: 
   alert: { list: '/alerts?status=firing', empty: { text: '没有触发中的告警', good: true } },
   tenant: { list: '/tenants', empty: { text: '还没有租户，点击去新建', path: '/tenants' } },
   namespace: { list: '/namespaces' },
+  service: { list: '/resources/services', empty: { text: '暂无 Service' } },
+  pvc: { list: '/resources/pvcs', empty: { text: '暂无 PVC' } },
 }
 
 /** 跳转范围：整张卡（和它的状态段）都按这个（集群[, 命名空间]）切顶栏再跳 —— 命名空间 / 集群概览页用 */

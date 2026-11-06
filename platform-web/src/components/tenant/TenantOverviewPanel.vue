@@ -23,7 +23,7 @@ import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate } from '@/utils/format'
 import { formatMetricValue } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
-import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
+import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, workloadSegments, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const props = defineProps<{ tenantId: string }>()
@@ -39,9 +39,6 @@ function fmtCpu(v?: number | null): string {
 }
 function fmtMem(v?: number | null): string {
   return v == null ? '—' : formatMetricValue(v, '字节', false)
-}
-function fmtCount(v?: number | null): string {
-  return v == null ? '—' : String(v)
 }
 /** 占用率（%）。hard 为 null/0（或 used 缺数）→ null（不画条、显示「—」）。 */
 function occPct(used?: number | null, hard?: number | null): number | null {
@@ -86,7 +83,7 @@ const tenantPodSegments = computed<Segment[]>(() => {
   return podSegments({ total: t.podCount, running, pending, succeeded, abnormal: Math.max(0, t.podCount - running - pending - succeeded) })
 })
 const tenantWorkloadSegments = computed<Segment[]>(() =>
-  overview.value ? [{ label: '不健康', value: overview.value.unhealthyWorkloadTotal, tone: 'danger', query: { status: 'unhealthy' } }] : [],
+  workloadSegments(workloadCount.value, overview.value?.unhealthyWorkloadTotal),
 )
 /** 中间件卡点状态时现拉：本租户各集群的实例 → 按命名空间计数 */
 async function loadTenantMwRows() {
@@ -274,7 +271,7 @@ defineExpose({ reloadAll })
         </template>
       </el-alert>
 
-      <!-- ===== 计数卡：工作负载 / Pod 来自快照（overview），其余来自 /tenant/overview/summary（块为 null = 无该读权限，不渲染）===== -->
+      <!-- ===== 计数卡：工作负载 / Pod / Service / PVC 来自快照（overview），其余来自 /tenant/overview/summary（块为 null = 无该读权限，不渲染）===== -->
       <div class="tov-cards">
         <CountCard title="工作负载" kind="workload" :total="workloadCount" :segments="tenantWorkloadSegments" :ns-rows="tenantNsRows" />
         <CountCard title="Pod" kind="pod" :total="overview.total.podCount" :segments="tenantPodSegments" :ns-rows="tenantNsRows" />
@@ -282,12 +279,14 @@ defineExpose({ reloadAll })
         <CountCard v-if="summary?.middleware" title="中间件" kind="middleware" :load-ns-rows="loadTenantMwRows" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
         <CountCard v-if="summary?.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
         <CountCard v-if="summary?.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+        <CountCard title="Service" kind="service" :total="overview.total.serviceCount ?? null" />
+        <CountCard title="PVC" kind="pvc" :total="overview.total.pvcCount ?? null" />
         <CountCard v-if="summary" title="命名空间 / 成员" kind="namespace" :total="summary.namespaceCount">
           <span>成员 {{ summary.memberCount ?? '—' }}</span>
         </CountCard>
       </div>
 
-      <!-- ===== KPI 区 ===== -->
+      <!-- ===== 资源与配额（数量类已在上方计数卡，这里只放 CPU / 内存的 requests、limits 与配额占用）===== -->
       <section class="card">
         <div class="card-head">
           <h3 class="section-title">资源与配额</h3>
@@ -323,14 +322,6 @@ defineExpose({ reloadAll })
               <span v-else class="muted">—</span>
             </span>
           </div>
-        </div>
-
-        <div class="stat-grid">
-          <div class="stat-tile"><div class="stat-value">{{ fmtCount(overview.total.podCount) }}</div><div class="stat-label">Pod</div></div>
-          <div class="stat-tile"><div class="stat-value">{{ fmtCount(workloadCount) }}</div><div class="stat-label">工作负载</div></div>
-          <div class="stat-tile"><div class="stat-value">{{ fmtCount(overview.total.serviceCount) }}</div><div class="stat-label">Service</div></div>
-          <div class="stat-tile"><div class="stat-value">{{ fmtCount(overview.total.pvcCount) }}</div><div class="stat-label">PVC</div></div>
-          <div class="stat-tile"><div class="stat-value">{{ fmtCount(overview.total.namespaceCount) }}</div><div class="stat-label">命名空间</div></div>
         </div>
       </section>
 
@@ -600,7 +591,6 @@ defineExpose({ reloadAll })
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin-bottom: 16px;
 }
 .res-line {
   display: flex;
@@ -641,29 +631,6 @@ defineExpose({ reloadAll })
   border-radius: 4px;
 }
 
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 12px;
-}
-.stat-tile {
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-hover);
-}
-.stat-value {
-  font-family: Consolas, 'JetBrains Mono', monospace;
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text-1);
-  word-break: break-all;
-}
-.stat-label {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text-3);
-}
 
 .attention {
   display: flex;
