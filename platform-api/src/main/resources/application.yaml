@@ -42,7 +42,7 @@ platform:
     health-targets:
       platform-auth: http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth/actuator/health
       k8s-server: ${K8S_SERVER_URL:http://127.0.0.1:8080}/actuator/health
-      platform-gateway: ${PLATFORM_GATEWAY_HEALTH_URL:}
+      platform-gateway: ${PLATFORM_GATEWAY_HEALTH_URL:http://127.0.0.1:8090}/actuator/health
   application:
     # 发布执行的实例归属。默认取 HOSTNAME（容器里就是 Pod 名），本机起多个进程时可显式指定。
     # 归属 + 租约（AppExecutionLease）保证：一条执行只有发起它的那个进程在推进，别的实例要等它
