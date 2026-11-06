@@ -10,7 +10,7 @@ import { Cpu, Monitor } from '@element-plus/icons-vue'
  * 锚点只是连线的落点（拓扑由变量引用生成，不能拖线），所以隐藏不显示：左侧出（使用方指向被使用的一方），右侧入。
  */
 const props = defineProps<{
-  data: { key: string; kind: string; params: Record<string, unknown>; state?: string; removing?: boolean }
+  data: { key: string; kind: string; params: Record<string, unknown>; state?: string; removing?: boolean; dimmed?: boolean }
   selected?: boolean
 }>()
 
@@ -66,7 +66,7 @@ const subtitle = computed(() => {
 <template>
   <div
     class="app-node"
-    :class="[kindClass, { 'app-node--selected': selected, 'app-node--failed': state === 'failed', 'app-node--removing': data.removing }]"
+    :class="[kindClass, { 'app-node--selected': selected, 'app-node--failed': state === 'failed', 'app-node--removing': data.removing, 'app-node--dimmed': data.dimmed }]"
     :title="data.removing ? '待删除：下次发布时下线' : undefined"
   >
     <Handle v-if="isCompute" id="l" type="source" :position="Position.Left" :connectable="false" class="port" />
@@ -133,6 +133,13 @@ const subtitle = computed(() => {
 .app-node--removing {
   border-style: dashed;
   opacity: 0.45;
+}
+/* 拓扑悬停时，与悬停节点不相连的节点变淡 */
+.app-node--dimmed {
+  opacity: 0.3;
+}
+.app-node--removing.app-node--dimmed {
+  opacity: 0.15;
 }
 
 .app-node__badge {

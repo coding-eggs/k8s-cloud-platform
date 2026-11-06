@@ -5,7 +5,7 @@
  * 节点 = 服务 + 依赖；边 = 服务的环境变量 / 配置文件里的 `${key.字段}` 引用（使用方 → 被使用的一方）。
  * 不存储、不可拖拽、不可连线：改关系就去改变量。点服务进服务详情，点依赖打开依赖详情。
  */
-import { computed, nextTick, useId } from 'vue'
+import { computed, nextTick, ref, useId } from 'vue'
 import { useRouter } from 'vue-router'
 import { MarkerType, VueFlow, useVueFlow } from '@vue-flow/core'
 import type { Edge, Node, NodeMouseEvent } from '@vue-flow/core'
@@ -14,7 +14,8 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
 import AppNodeCard from './AppNodeCard.vue'
-import { layeredLayout } from './appCanvasLayout'
+import AppTopologyEdge from './AppTopologyEdge.vue'
+import { edgeId, layeredLayout } from './appCanvasLayout'
 import { refsOf } from './dependencyUtil'
 import type { AppDependencyRow, AppServiceRow, AppServiceState } from '@/types'
 
@@ -73,30 +74,45 @@ const graph = computed(() => {
   return { nodes, edges }
 })
 
-const flowNodes = computed<Node[]>(() => {
-  const pos = layeredLayout(graph.value.nodes, graph.value.edges)
-  return graph.value.nodes.map((n) => ({
-    id: n.key,
-    type: 'app',
-    position: pos[n.key] ?? { x: 0, y: 0 },
-    data: n,
-    draggable: false,
-    connectable: false,
-    selectable: false,
-  }))
+const layout = computed(() => layeredLayout(graph.value.nodes, graph.value.edges))
+
+/** 悬停的节点：只亮它和它直接相连的节点 / 边，其余变淡 —— 节点多时看清「谁用谁」靠这个 */
+const hovered = ref<string | null>(null)
+const neighbours = computed(() => {
+  const h = hovered.value
+  if (!h) return null
+  const set = new Set([h])
+  for (const e of graph.value.edges) {
+    if (e.from === h) set.add(e.to)
+    if (e.to === h) set.add(e.from)
+  }
+  return set
 })
 
-const flowEdges = computed<Edge[]>(() => graph.value.edges.map((e) => ({
-  id: `${e.from}->${e.to}`,
-  source: e.from,
-  target: e.to,
-  sourceHandle: 'l',
-  targetHandle: 'r',
-  type: 'smoothstep',
-  markerEnd: MarkerType.ArrowClosed,
-  style: { strokeWidth: 1.6 },
+const flowNodes = computed<Node[]>(() => graph.value.nodes.map((n) => ({
+  id: n.key,
+  type: 'app',
+  position: layout.value.nodes[n.key] ?? { x: 0, y: 0 },
+  data: { ...n, dimmed: neighbours.value ? !neighbours.value.has(n.key) : false },
+  draggable: false,
+  connectable: false,
   selectable: false,
 })))
+
+const flowEdges = computed<Edge[]>(() => graph.value.edges.map((e) => {
+  const active = hovered.value != null && (e.from === hovered.value || e.to === hovered.value)
+  return {
+    id: edgeId(e.from, e.to),
+    source: e.from,
+    target: e.to,
+    sourceHandle: 'l',
+    targetHandle: 'r',
+    type: 'topology',
+    markerEnd: { type: MarkerType.ArrowClosed, color: active ? 'var(--el-color-primary)' : undefined },
+    data: { points: layout.value.edges[edgeId(e.from, e.to)], active, dimmed: hovered.value != null && !active },
+    selectable: false,
+  }
+}))
 
 function onNodeClick({ node }: NodeMouseEvent): void {
   const kind = String((node.data as { kind?: string }).kind)
@@ -128,14 +144,19 @@ function onNodesInitialized(): void {
       :min-zoom="0.3"
       :max-zoom="1.4"
       @node-click="onNodeClick"
+      @node-mouse-enter="({ node }) => (hovered = node.id)"
+      @node-mouse-leave="() => (hovered = null)"
       @nodes-initialized="onNodesInitialized"
     >
       <template #node-app="nodeProps">
         <AppNodeCard :data="nodeProps.data" />
       </template>
+      <template #edge-topology="edgeProps">
+        <AppTopologyEdge v-bind="edgeProps" />
+      </template>
       <Controls position="bottom-left" :show-interactive="false" />
     </VueFlow>
-    <div class="app-topo__hint">箭头由使用方指向被使用的一方，来自环境变量和配置文件里的 ${名称.字段} 引用；点击节点查看详情。</div>
+    <div class="app-topo__hint">箭头由使用方指向被使用的一方，来自环境变量和配置文件里的 ${名称.字段} 引用；悬停高亮相关节点，点击查看详情。</div>
   </div>
 </template>
 
