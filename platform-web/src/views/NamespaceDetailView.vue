@@ -13,7 +13,9 @@ import { fmtDate } from '@/utils/format'
 import { formatQuantity } from '@/utils/quantity'
 import YamlBlock from '@/components/YamlBlock.vue'
 import CountCard from '@/components/overview/CountCard.vue'
-import WaterBar from '@/components/overview/WaterBar.vue'
+import StatusCards from '@/components/overview/StatusCards.vue'
+import CapacityBullet from '@/components/overview/CapacityBullet.vue'
+import InventoryStrip, { type InventoryItem } from '@/components/overview/InventoryStrip.vue'
 import { podSegments, segmentsOf, workloadSegments } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
@@ -289,36 +291,19 @@ const quotaRows = computed<QuotaRow[]>(() => {
   })
 })
 
-/**
- * 概览用量摘要：requests.cpu / requests.memory 两行的 used/hard 读**命名空间快照切片** stat（同源三处之一：
- * 租户概览面板 / 集群「资源明细」/ 本页 —— 这两个 key 与配额状态从此一致）；
- * pods 行仍读完整 ResourceQuota 对象 quota（R16：不为少一次调用丢掉这一行）。
- * stat 请求失败时 cpu/mem 仍占位（值「—」），pods 行不受影响（分开降级）。
- */
-const statUsageRows = computed<QuotaRow[]>(() => {
-  const s = stat.value?.snapshot.stat
-  return [
-    { key: 'requestsCpu', label: 'requests.cpu', kind: 'cpu' as const, used: s?.quotaCpuUsed, hard: s?.quotaCpuHard },
-    { key: 'requestsMemory', label: 'requests.memory', kind: 'memory' as const, used: s?.quotaMemUsed, hard: s?.quotaMemHard },
-  ].map((d) => {
-    const used = d.used ?? null
-    const hard = d.hard ?? null
-    const percent = usagePercent(used, hard)
-    return {
-      key: d.key,
-      label: d.label,
-      usedText: numText(used, d.kind),
-      hardText: numText(hard, d.kind),
-      percent,
-      over: percent != null && percent > 100,
-    }
-  })
-})
+/** 概览「用量摘要」只留 Pod 配额：CPU / 内存已在上方「资源与配额」子弹图里（读同一份快照切片 stat；pods 行读完整 ResourceQuota 对象） */
+const overviewUsageRows = computed<QuotaRow[]>(() => quotaRows.value.filter((r) => r.key === 'pods'))
 
-/** 概览用量摘要三行（顺序）：requests.cpu、requests.memory（切片）→ pods（完整对象，可能因无配额而缺席）。 */
-const overviewUsageRows = computed<QuotaRow[]>(() => {
-  const pods = quotaRows.value.find((r) => r.key === 'pods')
-  return pods ? [...statUsageRows.value, pods] : statUsageRows.value
+/** 本命名空间的快照切片（子弹图 / 清单条用） */
+const nsStat = computed(() => stat.value?.snapshot.stat ?? null)
+const nsInventory = computed<InventoryItem[]>(() => {
+  const s = nsStat.value
+  if (!s) return []
+  const scope = nsScope.value
+  return [
+    { label: 'Service', value: s.svcCount, to: '/resources/services', scope },
+    { label: 'PVC', value: s.pvcCount, to: '/resources/pvcs', scope },
+  ]
 })
 
 /** 概览用量摘要的加载态：切片或配额任一仍在首拉中都显示转圈（已加载过就不再转）。 */
@@ -393,19 +378,36 @@ watch(name, () => { if (clusterId.value) void refresh() })
         <el-tab-pane label="概览" name="overview">
           <!-- 计数卡（/namespace/summary）：块为 null = 无该读权限，不渲染 -->
           <template v-if="summary">
-            <div class="ov-cards6">
+            <StatusCards>
               <CountCard :scope="nsScope" title="工作负载" kind="workload" :total="summary.workloads?.total ?? null" :segments="workloadSegments(summary.workloads?.total, summary.workloads?.unhealthy)" />
               <CountCard :scope="nsScope" title="Pod" kind="pod" :total="summary.pods?.total ?? null" :segments="podSegments(summary.pods)" />
               <CountCard :scope="nsScope" v-if="summary.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
               <CountCard :scope="nsScope" v-if="summary.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
               <CountCard :scope="nsScope" v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
               <CountCard :scope="nsScope" v-if="summary.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
-            </div>
-            <div class="ov-water2">
-              <WaterBar label="配额 CPU" :used="summary.quota?.cpuUsed" :total="summary.quota?.cpuHard" unit="core" />
-              <WaterBar label="配额内存" :used="summary.quota?.memUsed" :total="summary.quota?.memHard" unit="byte" />
-            </div>
+            </StatusCards>
           </template>
+          <!-- 资源与配额：清单条 + 配额子弹图（已用 / limits 对配额 hard；未配配额时按 requests / limits 画并明说） -->
+          <section v-if="nsStat" class="info-card ns-cap">
+            <div class="ns-cap-head">
+              <h3 class="info-title ns-cap-title">资源与配额</h3>
+              <InventoryStrip :items="nsInventory" />
+            </div>
+            <div class="ns-cap-grid">
+              <CapacityBullet
+                label="CPU" unit="core" :scale="nsStat.quotaCpuHard"
+                :filled="nsStat.quotaCpuHard != null ? nsStat.quotaCpuUsed : nsStat.cpuRequest"
+                :filled-name="nsStat.quotaCpuHard != null ? '配额已用' : 'requests'"
+                :limit="nsStat.cpuLimit" missing-text="未配置配额"
+              />
+              <CapacityBullet
+                label="内存" unit="byte" :scale="nsStat.quotaMemHard"
+                :filled="nsStat.quotaMemHard != null ? nsStat.quotaMemUsed : nsStat.memRequest"
+                :filled-name="nsStat.quotaMemHard != null ? '配额已用' : 'requests'"
+                :limit="nsStat.memLimit" missing-text="未配置配额"
+              />
+            </div>
+          </section>
           <div class="overview-grid">
             <aside class="ov-side">
               <section class="info-card">
@@ -598,18 +600,11 @@ watch(name, () => { if (clusterId.value) void refresh() })
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 
 /* 概览 tab：基本信息（左，窄）+ 用量摘要（右）；小分辨率上下堆叠 */
-.ov-cards6 {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.ov-water2 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-  margin-bottom: 16px;
-}
+.ns-cap { margin-bottom: 16px; }
+.ns-cap-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.info-title.ns-cap-title { margin: 0; }
+.ns-cap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+@media (max-width: 900px) { .ns-cap-grid { grid-template-columns: minmax(0, 1fr); } }
 .overview-grid {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);

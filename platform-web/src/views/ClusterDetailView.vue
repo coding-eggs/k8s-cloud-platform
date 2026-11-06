@@ -30,6 +30,9 @@ import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
+import StatusCards from '@/components/overview/StatusCards.vue'
+import CapacityBullet from '@/components/overview/CapacityBullet.vue'
+import InventoryStrip, { type InventoryItem } from '@/components/overview/InventoryStrip.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
 import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, workloadSegments, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
@@ -259,6 +262,18 @@ const clusterPodSegments = computed<Segment[]>(() => {
   const succeeded = t.podSucceeded ?? 0
   return podSegments({ total: t.podCount, running, pending, succeeded, abnormal: Math.max(0, t.podCount - running - pending - succeeded) })
 })
+/** 清单条：只有数、没有状态的对象；点击先切到本集群 */
+const clusterInventory = computed<InventoryItem[]>(() => {
+  const t = overview.value?.resourceTotal
+  if (!t) return []
+  const scope = clusterScope.value
+  return [
+    { label: '命名空间', value: t.namespaceCount, to: '/namespaces', scope },
+    { label: 'Service', value: t.serviceCount, to: '/resources/services', scope },
+    { label: 'PVC', value: t.pvcCount, to: '/resources/pvcs', scope },
+    { label: 'PV', value: t.pvCount, to: '/resources/persistentvolumes', scope },
+  ]
+})
 async function loadClusterMwRows() {
   const id = clusterId.value
   return middlewareNsCountsOf(await middlewareApi.instanceList(id), () => cluster.value?.clusterName ?? id)
@@ -481,19 +496,30 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
         <!-- ===== Tab 1：概览（首屏重点是健康/异常）===== -->
         <el-tab-pane label="概览" name="overview">
           <template v-if="summary">
-            <div class="ov-cards4">
+            <StatusCards>
               <CountCard title="工作负载" kind="workload" :scope="clusterScope" :total="clusterWorkloadTotal" :segments="clusterWorkloadSegments" :load-ns-rows="loadClusterNsRows" />
               <CountCard title="Pod" kind="pod" :scope="clusterScope" :total="overview?.resourceTotal?.podCount ?? null" :segments="clusterPodSegments" :load-ns-rows="loadClusterNsRows" />
               <CountCard v-if="summary.applications" title="应用" kind="app" :scope="clusterScope" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
               <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :scope="clusterScope" :load-ns-rows="loadClusterMwRows" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
               <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :scope="clusterScope" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
               <CountCard v-if="summary.alerts" title="告警触发中" kind="alert" :scope="clusterScope" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
-            </div>
+            </StatusCards>
             <div v-if="summary.nodes || summary.namespaces" class="ov-pies2">
               <StatusPie v-if="summary.nodes" title="节点" :data="summaryNodePie" />
               <StatusPie v-if="summary.namespaces" title="命名空间" :data="summaryNsPie" />
             </div>
           </template>
+          <!-- 容量与规模：清单条 + requests / limits 对节点可分配的子弹图（limits 超出即超卖） -->
+          <section v-if="overview?.resourceTotal" class="cap-card">
+            <div class="cap-head">
+              <h3 class="section-title cap-title">容量与规模</h3>
+              <InventoryStrip :items="clusterInventory" />
+            </div>
+            <div class="cap-grid">
+              <CapacityBullet label="CPU" unit="core" :scale="overview.resourceCapacity?.cpuAllocatable" scale-name="可分配" :filled="overview.resourceTotal.cpuRequest" filled-name="requests" :limit="overview.resourceTotal.cpuLimit" missing-text="—" />
+              <CapacityBullet label="内存" unit="byte" :scale="overview.resourceCapacity?.memoryAllocatable" scale-name="可分配" :filled="overview.resourceTotal.memRequest" filled-name="requests" :limit="overview.resourceTotal.memLimit" missing-text="—" />
+            </div>
+          </section>
           <section class="health-card">
             <h3 class="section-title">健康与异常</h3>
 
@@ -876,12 +902,11 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
 
 /* 首屏健康卡：最上，全宽 */
 .health-card { padding: 4px 0 8px; }
-.ov-cards4 {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
-}
+.cap-card { padding: 14px 16px 16px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
+.cap-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.section-title.cap-title { margin: 0; }
+.cap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+@media (max-width: 900px) { .cap-grid { grid-template-columns: minmax(0, 1fr); } }
 .ov-pies2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

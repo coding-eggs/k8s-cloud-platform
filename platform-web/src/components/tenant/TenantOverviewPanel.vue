@@ -23,6 +23,10 @@ import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate } from '@/utils/format'
 import { formatMetricValue } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
+import StatusCards from '@/components/overview/StatusCards.vue'
+import CapacityBullet from '@/components/overview/CapacityBullet.vue'
+import TopBars, { type TopBarItem } from '@/components/overview/TopBars.vue'
+import InventoryStrip, { type InventoryItem } from '@/components/overview/InventoryStrip.vue'
 import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, workloadSegments, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
@@ -92,6 +96,94 @@ async function loadTenantMwRows() {
   const lists = await Promise.all(ids.map((id) => middlewareApi.instanceList(id, undefined, target).catch(() => [])))
   return middlewareNsCountsOf(lists.flat(), clusterNameOf)
 }
+/** 清单条：只有数、没有状态的对象（不占状态卡位） */
+const inventory = computed<InventoryItem[]>(() => [
+  { label: 'Service', value: overview.value?.total.serviceCount, to: '/resources/services' },
+  { label: 'PVC', value: overview.value?.total.pvcCount, to: '/resources/pvcs' },
+  { label: '命名空间', value: summary.value?.namespaceCount ?? allocatedNamespaceCount.value },
+  { label: '成员', value: summary.value?.memberCount },
+])
+
+/**
+ * 容量子弹图的口径：配额 hard 只覆盖「配了配额的命名空间」。
+ * - 全部命名空间都有配额（或一个都没有）→ requests / limits / 实际用量和量程同口径，全画；
+ * - 部分有配额 → 实心段只画「配额已用」（与 hard 同口径），limits / 实际用量不画（口径不一会误导），并注明未计入的数量。
+ */
+const quotaCoverage = computed<'all' | 'none' | 'partial'>(() => {
+  const o = overview.value
+  if (!o || (o.quotaCpuHard == null && o.quotaMemHard == null)) return 'none'
+  return o.namespacesWithoutQuota.length ? 'partial' : 'all'
+})
+/** 监控当前值（曲线「用量」序列最后一个点）；取不到 → null */
+function currentUsed(key: CurveKey): number | null {
+  const ser = curve.value[key].series
+  const s = ser.find((x) => x.legend === '用量') ?? ser[0]
+  const last = s?.points[s.points.length - 1]
+  return last ? last.value : null
+}
+const bullets = computed(() => {
+  const o = overview.value
+  if (!o) return []
+  const cov = quotaCoverage.value
+  const dims = [
+    { key: 'cpu' as const, label: 'CPU', unit: 'core' as const, hard: o.quotaCpuHard, qUsed: o.quotaCpuUsed, req: o.total.cpuRequest, lim: o.total.cpuLimit },
+    { key: 'memory' as const, label: '内存', unit: 'byte' as const, hard: o.quotaMemHard, qUsed: o.quotaMemUsed, req: o.total.memRequest, lim: o.total.memLimit },
+  ]
+  return dims.map((d) => ({
+    key: d.key,
+    label: d.label,
+    unit: d.unit,
+    scale: d.hard ?? null,
+    filled: d.hard != null ? (d.qUsed ?? null) : (d.req ?? null),
+    filledName: d.hard != null ? '配额已用' : 'requests',
+    limit: cov === 'partial' ? null : (d.lim ?? null),
+    used: cov === 'partial' ? null : currentUsed(d.key),
+    req: d.req ?? null,
+  }))
+})
+
+/** 各命名空间配额占用（只算配了 hard 的那一维） */
+const quotaOcc = computed(() =>
+  (breakdown.value ?? []).map((r) => {
+    const st = r.snapshot.stat
+    const pct = (u?: number | null, h?: number | null) => (u != null && h != null && h > 0 ? (u / h) * 100 : null)
+    return { row: r, cpu: pct(st.quotaCpuUsed, st.quotaCpuHard), mem: pct(st.quotaMemUsed, st.quotaMemHard) }
+  }))
+const topDim = ref<'cpu' | 'mem'>('cpu')
+const multiCluster = computed(() => (overview.value?.clusters.length ?? 0) > 1)
+const nsTo = (r: K8sNamespaceStatEntry) =>
+  `/namespaces/detail?clusterId=${encodeURIComponent(r.clusterId)}&name=${encodeURIComponent(nsOf(r))}`
+const topQuotaItems = computed<TopBarItem[]>(() =>
+  quotaOcc.value
+    .filter((x) => x[topDim.value] != null)
+    .sort((a, b) => b[topDim.value]! - a[topDim.value]!)
+    .slice(0, 5)
+    .map((x) => {
+      const st = x.row.snapshot.stat
+      const used = topDim.value === 'cpu' ? fmtCpu(st.quotaCpuUsed) : fmtMem(st.quotaMemUsed)
+      const hard = topDim.value === 'cpu' ? fmtCpu(st.quotaCpuHard) : fmtMem(st.quotaMemHard)
+      return {
+        key: `${x.row.clusterId}/${nsOf(x.row)}`,
+        label: nsOf(x.row),
+        sub: multiCluster.value ? clusterNameOf(x.row.clusterId) : null,
+        pct: x[topDim.value]!,
+        text: `${used} / ${hard} · ${x[topDim.value]!.toFixed(0)}%`,
+        to: nsTo(x.row),
+        scope: { clusterId: x.row.clusterId, namespace: nsOf(x.row) },
+      }
+    }))
+/** 需要关注：配额占用 ≥ 80% 的命名空间（任一维） */
+const nearLimit = computed(() =>
+  quotaOcc.value
+    .filter((x) => (x.cpu ?? 0) >= 80 || (x.mem ?? 0) >= 80)
+    .map((x) => ({ key: `${x.row.clusterId}/${nsOf(x.row)}`, ns: nsOf(x.row), row: x.row, pct: Math.max(x.cpu ?? 0, x.mem ?? 0), dim: (x.cpu ?? 0) >= (x.mem ?? 0) ? 'CPU' : '内存' }))
+    .sort((a, b) => b.pct - a.pct))
+const hasAttention = computed(() => {
+  const o = overview.value
+  return !!o && (o.namespacesWithoutQuota.length > 0 || o.namespacesPartialQuota.length > 0
+    || o.abnormalPodTotal > 0 || o.unhealthyWorkloadTotal > 0 || nearLimit.value.length > 0)
+})
+
 const tenantNsRows = computed(() => (breakdown.value ? nsCountsOf(breakdown.value, clusterNameOf) : null))
 
 async function loadOverview(): Promise<void> {
@@ -271,73 +363,82 @@ defineExpose({ reloadAll })
         </template>
       </el-alert>
 
-      <!-- ===== 计数卡：工作负载 / Pod / Service / PVC 来自快照（overview），其余来自 /tenant/overview/summary（块为 null = 无该读权限，不渲染）===== -->
-      <div class="tov-cards">
+      <!-- ===== 状态卡（四个概览统一：工作负载 · Pod · 应用 · 中间件 · CI · 告警；无读权限的块不渲染）===== -->
+      <StatusCards>
         <CountCard title="工作负载" kind="workload" :total="workloadCount" :segments="tenantWorkloadSegments" :ns-rows="tenantNsRows" />
         <CountCard title="Pod" kind="pod" :total="overview.total.podCount" :segments="tenantPodSegments" :ns-rows="tenantNsRows" />
         <CountCard v-if="summary?.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
         <CountCard v-if="summary?.middleware" title="中间件" kind="middleware" :load-ns-rows="loadTenantMwRows" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
         <CountCard v-if="summary?.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
         <CountCard v-if="summary?.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
-        <CountCard title="Service" kind="service" :total="overview.total.serviceCount ?? null" />
-        <CountCard title="PVC" kind="pvc" :total="overview.total.pvcCount ?? null" />
-        <CountCard v-if="summary" title="命名空间 / 成员" kind="namespace" :total="summary.namespaceCount">
-          <span>成员 {{ summary.memberCount ?? '—' }}</span>
-        </CountCard>
-      </div>
+      </StatusCards>
 
-      <!-- ===== 资源与配额（数量类已在上方计数卡，这里只放 CPU / 内存的 requests、limits 与配额占用）===== -->
+      <!-- ===== 资源与配额：清单条 + 子弹图（CPU / 内存）+ 配额占用 Top 5 命名空间 ===== -->
       <section class="card">
         <div class="card-head">
           <h3 class="section-title">资源与配额</h3>
+          <InventoryStrip :items="inventory" class="cap-inv" />
           <span class="sampled muted">数据截至 {{ sampledAtText }}</span>
         </div>
 
-        <div class="res-lines">
-          <div class="res-line">
-            <span class="res-kind">CPU</span>
-            <span class="cell"><span class="lab">requests</span><b class="mono">{{ fmtCpu(overview.total.cpuRequest) }}</b></span>
-            <span class="cell"><span class="lab">limits</span><b class="mono">{{ fmtCpu(overview.total.cpuLimit) }}</b></span>
-            <span class="cell"><span class="lab">配额 hard</span><b class="mono">{{ fmtCpu(overview.quotaCpuHard) }}</b></span>
-            <span class="cell occ">
-              <span class="lab">占用</span>
-              <template v-if="occPct(overview.quotaCpuUsed, overview.quotaCpuHard) != null">
-                <span class="bar"><span class="bar-fill" :style="{ width: occPct(overview.quotaCpuUsed, overview.quotaCpuHard) + '%' }" /></span>
-                <span class="mono">{{ fmtCpu(overview.quotaCpuUsed) }} / {{ fmtCpu(overview.quotaCpuHard) }}</span>
-              </template>
-              <span v-else class="muted">—</span>
-            </span>
+        <div class="cap-grid">
+          <div class="cap-bullets">
+            <CapacityBullet
+              v-for="b in bullets"
+              :key="b.key"
+              :label="b.label"
+              :unit="b.unit"
+              :scale="b.scale"
+              scale-name="配额"
+              :filled="b.filled"
+              :filled-name="b.filledName"
+              :limit="b.limit"
+              :used="b.used"
+              missing-text="未配置配额"
+            >
+              <span v-if="b.scale != null && b.req != null && Math.abs(b.req - (b.filled ?? 0)) > 1e-6 * Math.max(1, b.req)" class="muted">requests 合计 {{ b.unit === 'core' ? fmtCpu(b.req) : fmtMem(b.req) }}</span>
+            </CapacityBullet>
+            <div v-if="quotaCoverage === 'partial'" class="cap-note muted">
+              {{ overview.namespacesWithoutQuota.length }} 个命名空间没有配额，未计入量程；limits 与实际用量按全部命名空间统计，此处不画以免口径混淆。
+            </div>
           </div>
-          <div class="res-line">
-            <span class="res-kind">内存</span>
-            <span class="cell"><span class="lab">requests</span><b class="mono">{{ fmtMem(overview.total.memRequest) }}</b></span>
-            <span class="cell"><span class="lab">limits</span><b class="mono">{{ fmtMem(overview.total.memLimit) }}</b></span>
-            <span class="cell"><span class="lab">配额 hard</span><b class="mono">{{ fmtMem(overview.quotaMemHard) }}</b></span>
-            <span class="cell occ">
-              <span class="lab">占用</span>
-              <template v-if="occPct(overview.quotaMemUsed, overview.quotaMemHard) != null">
-                <span class="bar"><span class="bar-fill" :style="{ width: occPct(overview.quotaMemUsed, overview.quotaMemHard) + '%' }" /></span>
-                <span class="mono">{{ fmtMem(overview.quotaMemUsed) }} / {{ fmtMem(overview.quotaMemHard) }}</span>
-              </template>
-              <span v-else class="muted">—</span>
-            </span>
+          <div class="cap-top">
+            <div class="cap-top-head">
+              <span class="cap-top-title">配额占用 Top 5 命名空间</span>
+              <el-radio-group v-model="topDim" size="small">
+                <el-radio-button value="cpu">CPU</el-radio-button>
+                <el-radio-button value="mem">内存</el-radio-button>
+              </el-radio-group>
+            </div>
+            <TopBars
+              :items="topQuotaItems"
+              :empty-text="breakdownLoaded ? '没有配置该项配额的命名空间' : '加载中…'"
+            />
           </div>
         </div>
       </section>
 
       <!-- ===== 需要关注 ===== -->
-      <section class="card">
+      <div v-if="!hasAttention" class="card all-good">✓ 没有需要关注的项目</div>
+      <section v-else class="card">
         <h3 class="section-title">需要关注</h3>
 
-        <div
-          v-if="
-            overview.namespacesWithoutQuota.length ||
-            overview.namespacesPartialQuota.length ||
-            overview.abnormalPodTotal > 0 ||
-            overview.unhealthyWorkloadTotal > 0
-          "
-          class="attention"
-        >
+        <div class="attention">
+          <!-- 配额接近上限（≥ 80%） -->
+          <div v-if="nearLimit.length" class="att-block">
+            <div class="att-k">配额接近上限 <span class="muted">≥ 80%</span></div>
+            <div class="att-tags">
+              <el-tag
+                v-for="n in nearLimit"
+                :key="n.key"
+                :type="n.pct >= 95 ? 'danger' : 'warning'"
+                size="small"
+              >
+                {{ multiCluster ? clusterNameOf(n.row.clusterId) + ' / ' : '' }}{{ n.ns }} {{ n.dim }} {{ n.pct.toFixed(0) }}%
+              </el-tag>
+            </div>
+          </div>
+
           <!-- 配额 -->
           <div v-if="overview.namespacesWithoutQuota.length || overview.namespacesPartialQuota.length" class="att-block">
             <div class="att-k">配额</div>
@@ -407,7 +508,6 @@ defineExpose({ reloadAll })
           </div>
         </div>
 
-        <div v-else class="muted positive">没有需要关注的项目</div>
       </section>
 
       <!-- ===== 两条曲线（各自独立降级）===== -->
@@ -524,12 +624,6 @@ defineExpose({ reloadAll })
 }
 .tov-skeleton .sk-card { width: 100%; height: 112px; border-radius: 10px; }
 .tov-skeleton .sk-block { width: 100%; height: 160px; border-radius: 10px; margin-bottom: 14px; }
-.tov-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
-}
 .tov {
   padding-bottom: 8px;
 }
@@ -539,10 +633,6 @@ defineExpose({ reloadAll })
 }
 .muted {
   color: var(--text-3);
-}
-.positive {
-  font-size: 13px;
-  padding: 4px 0;
 }
 .mono {
   font-family: Consolas, 'JetBrains Mono', monospace;
@@ -587,18 +677,6 @@ defineExpose({ reloadAll })
   font-size: 12px;
 }
 
-.res-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.res-line {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  flex-wrap: wrap;
-  font-size: 13px;
-}
 .res-kind {
   width: 44px;
   font-weight: 700;
@@ -706,5 +784,30 @@ defineExpose({ reloadAll })
   width: 34px;
   font-size: 11px;
   color: var(--text-3);
+}
+
+.cap-inv { flex: 1; min-width: 0; margin-left: 12px; }
+.cap-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 28px;
+}
+@media (max-width: 1100px) {
+  .cap-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.cap-bullets { display: flex; flex-direction: column; gap: 18px; }
+.cap-note { font-size: 12px; line-height: 1.6; }
+.cap-top-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.cap-top-title { font-size: 13px; color: var(--text-2); }
+.all-good {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--success);
 }
 </style>

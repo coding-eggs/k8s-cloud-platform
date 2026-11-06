@@ -14,7 +14,9 @@ import QuickActions from '@/components/overview/QuickActions.vue'
 import RefreshControl from '@/components/overview/RefreshControl.vue'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
-import WaterBar from '@/components/overview/WaterBar.vue'
+import StatusCards from '@/components/overview/StatusCards.vue'
+import CapacityBullet from '@/components/overview/CapacityBullet.vue'
+import InventoryStrip, { type InventoryItem } from '@/components/overview/InventoryStrip.vue'
 import { podSegments, segmentsOf, type Segment, workloadSegments as workloadSegmentsOf } from '@/components/overview/labels'
 import type { K8sCluster, NamespaceAllocation, PlatformTenant } from '@/types'
 import type { PlatformOverview } from '@/types/overview'
@@ -67,14 +69,17 @@ const workloadSegments = computed<Segment[]>(() => {
   const w = ov.value?.workloads
   return w ? workloadSegmentsOf(w.total, w.unhealthy) : []
 })
-const tenantSegments = computed<Segment[]>(() => {
+/** 清单条：租户规模（只有数、没有健康状态，不占状态卡位） */
+const inventory = computed<InventoryItem[]>(() => {
   const t = ov.value?.tenants
-  return t
-    ? [
-        { label: '启用', value: t.enabled, tone: 'success', query: { status: '1' } },
-        { label: '停用', value: t.disabled, tone: 'warning', query: { status: '0' } },
-      ]
-    : []
+  if (!t) return []
+  return [
+    { label: '租户', value: t.total, to: '/tenants' },
+    { label: '启用', value: t.enabled, to: '/tenants?status=1' },
+    { label: '停用', value: t.disabled, to: '/tenants?status=0' },
+    { label: '成员', value: t.members },
+    { label: '已分配命名空间', value: t.allocatedNamespaces },
+  ]
 })
 const nodePie = computed<Segment[]>(() => {
   const n = ov.value?.nodes
@@ -178,29 +183,28 @@ onMounted(load)
             <b class="bad">不可用 {{ ov.clusters.unavailable }}</b>
           </el-tooltip>
         </div>
-        <div class="hb-item">
-          <span class="hb-label">告警触发中</span>
-          <b :class="ov.alertsFiring?.total ? 'bad' : 'good'">{{ ov.alertsFiring?.total ?? '—' }}</b>
-          <span v-if="ov.alertsFiring?.byStatus.CRITICAL" class="hb-sub">严重 {{ ov.alertsFiring.byStatus.CRITICAL }}</span>
-        </div>
       </div>
 
-      <!-- 资源汇总 -->
-      <div class="ov-grid5">
-        <CountCard title="应用" kind="app" :total="ov.applications?.total ?? null" :segments="segmentsOf('app', ov.applications)" />
-        <CountCard title="中间件" kind="middleware" :ns-rows="ov.byNamespace" :total="ov.middleware?.total ?? null" :segments="segmentsOf('middleware', ov.middleware)" />
+      <!-- 状态卡（四个概览统一顺序：工作负载 · Pod · 应用 · 中间件 · [CI] · 告警；平台层没有 CI 汇总） -->
+      <StatusCards>
         <CountCard title="工作负载" kind="workload" :total="ov.workloads?.total ?? null" :segments="workloadSegments" :ns-rows="ov.byNamespace" />
         <CountCard title="Pod" kind="pod" :total="ov.pods?.total ?? null" :segments="podSegments(ov.pods)" :ns-rows="ov.byNamespace" />
-        <CountCard title="租户" kind="tenant" :total="ov.tenants.total" :segments="tenantSegments">
-          <span>成员 {{ ov.tenants.members }}</span>
-          <span>已分配命名空间 {{ ov.tenants.allocatedNamespaces }}</span>
-        </CountCard>
-      </div>
+        <CountCard title="应用" kind="app" :total="ov.applications?.total ?? null" :segments="segmentsOf('app', ov.applications)" />
+        <CountCard title="中间件" kind="middleware" :ns-rows="ov.byNamespace" :total="ov.middleware?.total ?? null" :segments="segmentsOf('middleware', ov.middleware)" />
+        <CountCard title="告警触发中" kind="alert" :total="ov.alertsFiring?.total ?? null" :segments="segmentsOf('alert', ov.alertsFiring)" />
+      </StatusCards>
 
-      <div class="panel ov-water-row">
-        <WaterBar label="集群 CPU（requests / 可分配）" :used="ov.capacity?.cpuRequest" :total="ov.capacity?.cpuAllocatable" unit="core" missing-text="—" />
-        <WaterBar label="集群内存（requests / 可分配）" :used="ov.capacity?.memRequest" :total="ov.capacity?.memAllocatable" unit="byte" missing-text="—" />
-      </div>
+      <!-- 容量与规模：清单条 + 集群 requests / 可分配 子弹图 -->
+      <section class="panel ov-cap">
+        <div class="ov-cap-head">
+          <h3 class="ov-cap-title">容量与规模</h3>
+          <InventoryStrip :items="inventory" />
+        </div>
+        <div class="ov-cap-grid">
+          <CapacityBullet label="CPU" unit="core" :scale="ov.capacity?.cpuAllocatable" scale-name="可分配" :filled="ov.capacity?.cpuRequest" filled-name="requests" missing-text="—" />
+          <CapacityBullet label="内存" unit="byte" :scale="ov.capacity?.memAllocatable" scale-name="可分配" :filled="ov.capacity?.memRequest" filled-name="requests" missing-text="—" />
+        </div>
+      </section>
 
       <div class="ov-grid2">
         <StatusPie title="节点" :data="nodePie" :note="nodeNote" />
@@ -320,13 +324,11 @@ onMounted(load)
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
-.ov-water-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-  padding: 16px 18px;
-  margin: 14px 0;
-}
+.ov-cap { padding: 14px 18px 16px; margin: 0 0 14px; }
+.ov-cap-head { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+.ov-cap-title { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: .04em; color: var(--text-2); }
+.ov-cap-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; }
+@media (max-width: 900px) { .ov-cap-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1200px) {
   .ov-grid5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
