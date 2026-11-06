@@ -176,6 +176,14 @@ public class ApplicationController {
                 operator(), auth.effectiveTenantId(request.getTenantId())));
     }
 
+    @PostMapping("/release/offline")
+    @Auditable(action = AuditAction.APPLICATION_RELEASE_OFFLINE, target = "#request.appId")
+    @Operation(summary = "下线：删除应用在集群里的全部对象（持久化数据卷保留），记一条下线发布（异步执行，返回执行 id）")
+    public ResponseData<Long> releaseOffline(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(release.offline(request.getAppId(), request.getNote(),
+                operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
     @PostMapping("/release/list")
     @Operation(summary = "发布记录（新到旧）")
     public ResponseData<List<AppReleaseView>> releaseList(@RequestBody AppReleaseRequest request) {

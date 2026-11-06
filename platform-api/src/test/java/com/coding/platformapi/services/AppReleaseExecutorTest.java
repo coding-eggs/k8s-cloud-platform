@@ -344,6 +344,81 @@ class AppReleaseExecutorTest {
         assertThat(req.getValue().getObjects()).extracting(AppObjectRefDTO::getName).containsExactly("demo-half");
     }
 
+    // ------------------------------------------------------------------ 下线
+
+    private void asOffline() {
+        release.setType(AppReleaseExecutor.OFFLINE_TYPE);
+        release.setManifest(null);
+        release.setObjectsJson(null);
+        app.setLiveReleaseNo(2);
+    }
+
+    @Test
+    void offlineSkipsPrecheckAndGoesStraightToPrune() {
+        asOffline();
+        PlatformAppExecution e = at("PRECHECK");
+
+        executor.advance(e);
+
+        verify(precheck, never()).check(any());
+        verify(client, never()).render(any());
+        assertThat(lastSaved().getStage()).isEqualTo("PRUNE");
+    }
+
+    /** 续跑停在中间阶段的下线（理论上到不了）：也不能去渲染 / 下发 */
+    @Test
+    void offlineNeverRendersOrAppliesEvenIfResumedMidway() {
+        asOffline();
+        for (String stage : List.of("RENDER", "CONFLICT", "APPLY", "HEALTH")) {
+            PlatformAppExecution e = at(stage);
+            executor.advance(e);
+            assertThat(e.getStage()).as(stage).isEqualTo("PRUNE");
+        }
+        verify(client, never()).render(any());
+        verify(client, never()).apply(any());
+        verify(client, never()).status(any());
+    }
+
+    /** 下线删台账里的全部对象（不分发布号、去重），PVC 保留；空清单守卫不挡它 */
+    @Test
+    void offlinePrunesEveryOwnedObjectOnceAndKeepsPvc() {
+        asOffline();
+        when(resources.selectByApp("app_1")).thenReturn(List.of(
+                ledger("Deployment", "demo-web"), ledger("Service", "demo-web"),
+                ledger("Deployment", "demo-web"), ledger("Deployment", "demo-half")));
+
+        executor.advance(at("PRUNE"));
+
+        ArgumentCaptor<AppPruneRequestDTO> req = ArgumentCaptor.forClass(AppPruneRequestDTO.class);
+        verify(client).prune(req.capture());
+        assertThat(req.getValue().getObjects()).extracting(o -> o.getKind() + "/" + o.getName())
+                .containsExactly("Deployment/demo-web", "Service/demo-web", "Deployment/demo-half");
+        assertThat(req.getValue().isDeletePvc()).isFalse();
+        verify(resources, never()).selectByRevisionRange(any(), anyInt(), anyInt());
+        assertThat(lastSaved().getStage()).isEqualTo("DONE");
+    }
+
+    @Test
+    void offlineFinishPointsLiveAtTheOfflineReleaseAndMarksAppOffline() {
+        asOffline();
+
+        executor.advance(at("DONE"));
+
+        ArgumentCaptor<PlatformApplication> patch = ArgumentCaptor.forClass(PlatformApplication.class);
+        verify(apps).updateById(patch.capture());
+        assertThat(patch.getValue().getStatus()).isEqualTo("OFFLINE");
+        assertThat(patch.getValue().getLiveReleaseNo()).isEqualTo(3);
+    }
+
+    @Test
+    void normalFinishStillMarksAppReady() {
+        executor.advance(at("DONE"));
+
+        ArgumentCaptor<PlatformApplication> patch = ArgumentCaptor.forClass(PlatformApplication.class);
+        verify(apps).updateById(patch.capture());
+        assertThat(patch.getValue().getStatus()).isEqualTo("READY");
+    }
+
     @Test
     void pruneSkipsWhenThereIsNothingStale() {
         executor.advance(at("PRUNE"));

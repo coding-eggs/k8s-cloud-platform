@@ -267,6 +267,9 @@ public final class AuditAction {
     /** 回滚到历史发布（源发布号记在 target 里） */
     public static final String APPLICATION_RELEASE_ROLLBACK = "application:release-rollback";
 
+    /** 下线：删掉应用的全部集群对象（PVC 保留），记一条 OFFLINE 发布 */
+    public static final String APPLICATION_RELEASE_OFFLINE = "application:release-offline";
+
     public static final String APPLICATION_DEPENDENCY_ADD = "application:dependency-add";
 
     /** 修改外部连接（地址 / 端口 / Secret 登记） */

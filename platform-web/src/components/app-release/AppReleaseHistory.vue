@@ -94,6 +94,7 @@ function externalText(ext?: Record<string, unknown> | null): string {
       <el-table-column label="类型" width="130">
         <template #default="{ row }">
           <template v-if="row.type === 'ROLLBACK'">回滚自 #{{ row.sourceReleaseNo }}</template>
+          <template v-else-if="row.type === 'OFFLINE'">下线</template>
           <template v-else>普通发布</template>
         </template>
       </el-table-column>
@@ -132,6 +133,7 @@ function externalText(ext?: Record<string, unknown> | null): string {
           <div class="app-rel-drawer__meta">
             <StatusBadge :label="RELEASE_STATUS[detail.status]?.text ?? detail.status" :type="RELEASE_STATUS[detail.status]?.type ?? 'neutral'" />
             <span v-if="detail.type === 'ROLLBACK'">回滚自 #{{ detail.sourceReleaseNo }}</span>
+            <span v-else-if="detail.type === 'OFFLINE'">下线（删除全部集群对象，数据卷保留）</span>
             <span>{{ detail.createdBy || '—' }} · {{ fmtDate(detail.createdAt) }}</span>
           </div>
           <p v-if="detail.note" class="app-rel-drawer__note">{{ detail.note }}</p>

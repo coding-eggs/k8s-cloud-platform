@@ -29,6 +29,7 @@ const statusMeta: Record<string, { text: string; type: 'info' | 'primary' | 'suc
   READY: { text: '运行正常', type: 'success' },
   FAILED: { text: '发布失败', type: 'danger' },
   INTERRUPTED: { text: '已中断', type: 'danger' },
+  OFFLINE: { text: '已下线', type: 'info' },
 }
 
 const canCreate = computed(() => !!clusterId.value && !!form.value.name.trim()

@@ -1279,6 +1279,9 @@ export const appReleaseApi = {
   }) => http.post<never, number>('/application/release/create', payload),
   rollback: (payload: { appId: string; releaseNo: number; note?: string; tenantId?: string }) =>
     http.post<never, number>('/application/release/rollback', payload),
+  /** 下线：删掉全部集群对象（数据卷保留），记一条 OFFLINE 发布；返回执行 id */
+  offline: (payload: { appId: string; note?: string; tenantId?: string }) =>
+    http.post<never, number>('/application/release/offline', payload),
   list: (appId: string, tenantId?: string) =>
     http.post<never, AppRelease[]>('/application/release/list', { appId, tenantId }),
   get: (appId: string, releaseNo: number, tenantId?: string) =>

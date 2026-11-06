@@ -322,6 +322,35 @@ public class AppReleaseService {
                 });
     }
 
+    // ------------------------------------------------------------------ 下线
+
+    /**
+     * 下线 = 一条 type=OFFLINE、快照不含任何服务的发布，走与发布相同的执行路径（租约、凭据、可「继续」）。
+     *
+     * <p>执行器对它跳过渲染 / 应用 / 健康检查，直接清掉本应用台账里的全部对象（PVC 保留，重新上线后挂回同一个卷），
+     * 成功后线上发布号指向这条下线记录 —— 线上快照为空，所有服务自然显示为待发布的新增；重新上线就是一次普通发布。
+     * 服务配置、依赖与中间件实例都不动。快照保留线上那份依赖，只清空服务。
+     */
+    public Long offline(String appId, String note, String operator, String tenantId) {
+        PlatformApplication app = AppGuard.require(apps, appId, tenantId);
+        String authorization = K8sServerGateway.currentAuthorization();
+        if (authorization == null || authorization.isBlank()) {
+            throw error("当前请求没有可用的凭据");
+        }
+        requireNoRunningExecution(app.getId());
+        int plannedLive = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
+        if (plannedLive <= 0) {
+            throw error("应用尚未上线，无需下线");
+        }
+        AppSnapshot live = liveSnapshot(app);
+        if (live.services().isEmpty()) {
+            throw error("应用已下线");
+        }
+        String snapshot = new AppSnapshot(new LinkedHashMap<>(), live.dependencies()).toJson();
+        return launch(app, authorization, plannedLive, snapshot, AppReleaseExecutor.OFFLINE_TYPE, null, note, operator,
+                () -> { });
+    }
+
     /** PENDING / RUNNING 正在推进，拒绝；INTERRUPTED 在等用户点继续，新发布会取代它。 */
     private void requireNoRunningExecution(String appId) {
         PlatformAppExecution running = executions.selectActiveByApp(appId);
@@ -755,9 +784,14 @@ public class AppReleaseService {
                 detail ? parseObjects(r.getObjectsJson()) : null);
     }
 
-    private static AppExecutionView executionView(PlatformAppExecution e) {
-        return e == null ? null : new AppExecutionView(e.getId(), e.getAppId(), e.getReleaseNo(), e.getStatus(),
-                e.getStage(), e.getMessage(), e.getStartedBy(), e.getStartedAt(), e.getFinishedAt());
+    private AppExecutionView executionView(PlatformAppExecution e) {
+        if (e == null) {
+            return null;
+        }
+        PlatformAppRelease r = e.getReleaseNo() == null ? null : releases.selectByNo(e.getAppId(), e.getReleaseNo());
+        return new AppExecutionView(e.getId(), e.getAppId(), e.getReleaseNo(), e.getStatus(),
+                e.getStage(), e.getMessage(), e.getStartedBy(), e.getStartedAt(), e.getFinishedAt(),
+                r == null ? null : r.getType());
     }
 
     private static List<AppObjectRefDTO> parseObjects(String json) {

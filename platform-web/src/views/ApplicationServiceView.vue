@@ -10,7 +10,8 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { appServiceApi, applicationApi, podApi, workloadApi } from '@/api'
+import { appServiceApi, applicationApi, podApi, serviceApi, workloadApi } from '@/api'
+import { useNodeAddresses } from '@/composables/useNodeAddresses'
 import { useApplicationContext } from '@/composables/useApplicationContext'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
@@ -31,7 +32,7 @@ import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
 import { parseQuantity } from '@/utils/quantity'
 import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
-import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod } from '@/types'
+import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod, K8sService } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
 
 const route = useRoute()
@@ -119,8 +120,26 @@ function buildDesired(): AppServiceDesired {
     .filter((f) => f.path || f.content)
   if (files.length) d.configFiles = files
   else delete d.configFiles
+  // 对外暴露：只有有端口的服务能选 NodePort；不暴露就不带这两个键（后端同样不存 none）
+  if (!d.port || d.expose !== 'nodeport') {
+    delete d.expose
+    delete d.nodePort
+  }
   return d
 }
+
+/** 对外暴露方式（表单里用 none 表示「不暴露」，保存时去掉） */
+const exposeMode = computed<string>({
+  get: () => (form.value.expose === 'nodeport' ? 'nodeport' : 'none'),
+  set: (v) => {
+    if (v === 'nodeport') form.value.expose = 'nodeport'
+    else { delete form.value.expose; delete form.value.nodePort }
+  },
+})
+const nodePortModel = computed<number | undefined>({
+  get: () => (typeof form.value.nodePort === 'number' ? form.value.nodePort : undefined),
+  set: (v) => { if (v == null) delete form.value.nodePort; else form.value.nodePort = v },
+})
 
 /** 软校验：请求不能大于上限（K8s 会拒绝，发布时才报就晚了） */
 const resourceProblem = computed(() => {
@@ -325,6 +344,24 @@ async function loadPods(): Promise<void> {
 }
 watch([tab, runtimeReady], ([t, ok]) => { if ((t === 'pods' || t === 'monitor') && ok && !wl.value) void loadPods() })
 
+// ---------- 对外访问（读线上 Service：自动分配的 NodePort 只有集群知道） ----------
+const liveSvc = ref<K8sService | null>(null)
+const addr = useNodeAddresses()
+async function loadLiveService(): Promise<void> {
+  liveSvc.value = null
+  if (!runtimeReady.value || row.value?.kind !== 'SERVICE') return
+  void addr.load(ctx.value.clusterId || null)
+  try {
+    liveSvc.value = await serviceApi.get(workloadName.value, ctx.value)
+  } catch {
+    // 读不到就不显示访问地址（拦截器已提示）
+  }
+}
+const liveNodePort = computed(() => (liveSvc.value?.type === 'NodePort' ? liveSvc.value.ports?.[0]?.nodePort ?? null : null))
+const nodePortUrl = computed(() => (liveNodePort.value && addr.defaultHost
+  ? `http://${addr.defaultHost}:${liveNodePort.value}` : ''))
+watch([runtimeReady, workloadName], ([ok]) => { if (ok) void loadLiveService(); else liveSvc.value = null }, { immediate: true })
+
 const logVisible = ref(false)
 const logPod = ref<K8sPod | null>(null)
 const allLogsVisible = ref(false)
@@ -338,6 +375,11 @@ function openWorkloadPage(): void {
   // 资源页按顶栏命名空间取数：先把上下文对到应用所在的命名空间
   setNamespace(app.value.namespace)
   router.push(`/resources/workloads/detail?name=${encodeURIComponent(workloadName.value)}`)
+}
+function openPodPage(p: K8sPod): void {
+  if (!app.value || !p.name) return
+  setNamespace(app.value.namespace)
+  router.push(`/resources/pods/detail?name=${encodeURIComponent(p.name)}&namespace=${encodeURIComponent(app.value.namespace)}`)
 }
 
 const selfRefs = computed(() => allRows.value.filter((s) => s.kind === 'SERVICE' && s.key !== key.value).map((s) => s.key))
@@ -378,6 +420,14 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           </div>
           <div v-if="row.kind === 'SERVICE'" class="app-svc__kv"><span class="k">集群内地址</span>
             <code>{{ workloadName }}:{{ row.desired.port }}</code>
+          </div>
+          <div v-if="row.kind === 'SERVICE'" class="app-svc__kv"><span class="k">对外访问</span>
+            <template v-if="liveNodePort">
+              <span>NodePort <code>{{ liveNodePort }}</code>（任一节点 IP:{{ liveNodePort }}）</span>
+              <el-link v-if="nodePortUrl" :href="nodePortUrl" target="_blank" rel="noopener" type="primary" :underline="false">{{ nodePortUrl }}</el-link>
+            </template>
+            <span v-else-if="runtimeReady" class="muted">不对外暴露（仅集群内可访问）</span>
+            <span v-else class="muted">未发布</span>
           </div>
           <div class="app-svc__kv"><span class="k">工作负载</span>
             <code>{{ workloadName }}</code>
@@ -420,6 +470,17 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
               <el-form-item label="端口">
                 <el-input-number v-model="form.port" :min="1" :max="65535" :controls="false" placeholder="留空" />
                 <span class="app-svc__tip">填了端口就是服务，清空则变为后台进程</span>
+              </el-form-item>
+              <el-form-item v-if="form.port" label="对外暴露">
+                <el-radio-group v-model="exposeMode">
+                  <el-radio value="none">不暴露</el-radio>
+                  <el-radio value="nodeport">NodePort</el-radio>
+                </el-radio-group>
+                <span class="app-svc__tip">NodePort：每台节点都开放同一个端口，集群外用「节点 IP:端口」访问</span>
+              </el-form-item>
+              <el-form-item v-if="form.port && exposeMode === 'nodeport'" label="NodePort 端口">
+                <el-input-number v-model="nodePortModel" :min="30000" :max="32767" :controls="false" placeholder="留空自动分配" />
+                <span class="app-svc__tip">30000-32767；留空由集群分配，发布后在「概览」查看。固定端口被占用时发布会失败</span>
               </el-form-item>
               <el-form-item label="副本数"><el-input-number v-model="form.replicas" :min="0" :max="100" /></el-form-item>
             </el-form>
@@ -518,14 +579,16 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <el-button :disabled="!pods.length" @click="allLogsVisible = true">聚合日志</el-button>
           </div>
           <el-table v-loading="podLoading" :data="pods" size="small" empty-text="当前没有 Pod">
-            <el-table-column label="名称" min-width="260"><template #default="{ row: p }"><code>{{ p.name }}</code></template></el-table-column>
+            <el-table-column label="名称" min-width="300">
+              <template #default="{ row: p }"><el-button link type="primary" @click="openPodPage(p)"><code>{{ p.name }}</code></el-button></template>
+            </el-table-column>
             <el-table-column label="就绪" width="80"><template #default="{ row: p }">{{ readyCount(p) }}</template></el-table-column>
             <el-table-column label="状态" width="120">
               <template #default="{ row: p }"><StatusBadgeTip :label="p.phase ?? 'Unknown'" :type="podPhaseType(p.phase)" :reason="p.statusReason" /></template>
             </el-table-column>
             <el-table-column label="重启" width="70"><template #default="{ row: p }">{{ p.restarts ?? 0 }}</template></el-table-column>
             <el-table-column label="节点" min-width="120"><template #default="{ row: p }">{{ p.nodeName ?? '—' }}</template></el-table-column>
-            <el-table-column label="存活" width="160">
+            <el-table-column label="存活" min-width="240">
               <template #default="{ row: p }">{{ fmtDate(p.creationTime) }}（{{ fmtAge(p.creationTime) }}）</template>
             </el-table-column>
             <el-table-column label="操作" width="90" fixed="right">

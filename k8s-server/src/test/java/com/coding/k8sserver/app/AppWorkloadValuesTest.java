@@ -92,7 +92,21 @@ class AppWorkloadValuesTest {
 
         assertThat(w).containsEntry("mode", "worker");
         assertThat((Map<String, Object>) w.get("persistence")).containsEntry("enabled", false);
-        assertThat((Map<String, Object>) w.get("expose")).containsEntry("type", "none");
+        assertThat((Map<String, Object>) w.get("expose")).containsEntry("type", "none").containsEntry("nodePort", 0);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void nodePortIsPassedOnlyWhenExposedAsNodePort() {
+        Map<String, Object> fixed = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "port", 80, "expose", "nodeport", "nodePort", 30080))));
+        assertThat((Map<String, Object>) fixed.get("expose"))
+                .containsEntry("type", "nodeport").containsEntry("nodePort", 30080);
+
+        Map<String, Object> stray = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "port", 80, "nodePort", 30080))));
+        assertThat((Map<String, Object>) stray.get("expose"))
+                .containsEntry("type", "none").containsEntry("nodePort", 0);
     }
 
     private static com.coding.common.models.app.AppInjectDTO inline(String name, String value) {

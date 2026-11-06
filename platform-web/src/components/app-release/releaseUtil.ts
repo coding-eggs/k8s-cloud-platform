@@ -27,6 +27,8 @@ export const EXEC_STAGE: Record<string, string> = {
   DONE: '完成', PRECHECK: '预检', RENDER: '渲染', CONFLICT: '冲突检查', APPLY: '下发', HEALTH: '健康检查', PRUNE: '清理旧对象',
 }
 export const STAGE_ORDER = ['PRECHECK', 'RENDER', 'CONFLICT', 'APPLY', 'HEALTH', 'PRUNE']
+/** 下线执行：PRECHECK 后直接 PRUNE（删本应用全部对象） */
+export const OFFLINE_STAGE_ORDER = ['PRECHECK', 'PRUNE']
 
 export const EXEC_STATUS: Record<string, { text: string; type: Tone }> = {
   PENDING: { text: '排队中', type: 'warning' },
@@ -40,9 +42,9 @@ export const EXEC_STATUS: Record<string, { text: string; type: Tone }> = {
 }
 
 /** 进度条位置：DONE（全部阶段走完）= 步骤总数，所有步骤都显示完成；未知阶段停在第一步 */
-export function stageStep(stage?: string | null): number {
-  if (stage === 'DONE') return STAGE_ORDER.length
-  return Math.max(0, STAGE_ORDER.indexOf(stage ?? ''))
+export function stageStep(stage?: string | null, order: string[] = STAGE_ORDER): number {
+  if (stage === 'DONE') return order.length
+  return Math.max(0, order.indexOf(stage ?? ''))
 }
 
 export const RELEASE_STATUS: Record<string, { text: string; type: Tone }> = {
@@ -57,6 +59,7 @@ export const RELEASE_STATUS: Record<string, { text: string; type: Tone }> = {
  */
 export function canRollbackTo(r: AppRelease, liveNo: number, maxNo: number): boolean {
   if (r.status !== 'DEPLOYED') return false
+  if (r.type === 'OFFLINE') return false   // 下线记录不含服务，后端拒绝回滚到它
   if (r.releaseNo === liveNo && r.releaseNo === maxNo) return false
   return true
 }
@@ -69,7 +72,7 @@ const FIELD_LABEL: Record<string, string> = {
   cpuRequest: 'CPU 请求', memoryRequest: '内存请求', cpuLimit: 'CPU 限制', memoryLimit: '内存限制',
   persistenceEnabled: '持久化', storageSize: '存储大小', storageClass: '存储类', mountPath: '挂载路径',
   autoscalingEnabled: '自动扩缩', minReplicas: '最小副本', maxReplicas: '最大副本', targetCpu: '目标 CPU',
-  probeEnabled: '健康探针', probePath: '探针路径', metricsEnabled: '指标采集', metricsPath: '指标路径', expose: '对外暴露',
+  probeEnabled: '健康探针', probePath: '探针路径', metricsEnabled: '指标采集', metricsPath: '指标路径', expose: '对外暴露', nodePort: 'NodePort 端口',
 }
 export const fieldLabel = (k: string): string => FIELD_LABEL[k] ?? k
 

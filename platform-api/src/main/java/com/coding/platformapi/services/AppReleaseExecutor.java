@@ -36,6 +36,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -66,6 +67,9 @@ public class AppReleaseExecutor {
     static final String INTERRUPTED = "INTERRUPTED";
     static final String FAILED = "FAILED";
     static final String SUCCESS = "SUCCESS";
+
+    /** 下线发布：快照不含服务，跳过渲染 / 应用 / 健康检查，直接清掉本应用的全部对象（见 {@link AppReleaseService#offline}） */
+    public static final String OFFLINE_TYPE = "OFFLINE";
 
     private static final int MESSAGE_MAX = 1024;   // platform_app_execution.message 的列宽
     private static final String CREDENTIAL_LOST =
@@ -209,7 +213,9 @@ public class AppReleaseExecutor {
         if (app.getNamespace() == null || app.getNamespace().isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用没有命名空间");
         }
-        requireRelease(execution);
+        if (isOffline(requireRelease(execution))) {
+            return "PRUNE";   // 下线不渲染、不校验依赖：没有要上线的东西
+        }
         AppReleasePrecheck check = precheck.getIfAvailable();
         if (check == null) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "发布校验器未注册");
@@ -220,6 +226,9 @@ public class AppReleaseExecutor {
 
     private String render(PlatformAppExecution execution) {
         PlatformAppRelease release = requireRelease(execution);
+        if (isOffline(release)) {
+            return "PRUNE";
+        }
         if (release.getManifest() != null && !release.getManifest().isBlank()) {
             return "CONFLICT";   // 续跑：已渲染过
         }
@@ -249,6 +258,9 @@ public class AppReleaseExecutor {
 
     /** 要写的对象已存在、又不在本应用台账里 → 拒绝。否则 SSA 会静默接管别人的对象，之后还可能被 prune 删掉。 */
     private String conflict(PlatformAppExecution execution) {
+        if (isOffline(requireRelease(execution))) {
+            return "PRUNE";
+        }
         PlatformApplication app = requireApp(execution);
         AppStatusResultDTO status = statusOf(app, objectsOf(requireRelease(execution)));
         Set<String> ours = resources.selectByApp(execution.getAppId()).stream()
@@ -273,6 +285,9 @@ public class AppReleaseExecutor {
     private String apply(PlatformAppExecution execution) {
         PlatformApplication app = requireApp(execution);
         PlatformAppRelease release = requireRelease(execution);
+        if (isOffline(release)) {
+            return "PRUNE";
+        }
         requireObjects(release);
         resources.deleteByAppRevision(execution.getAppId(), execution.getReleaseNo());
         String prefix = app.getSlug() + "-";
@@ -291,6 +306,9 @@ public class AppReleaseExecutor {
 
     /** 必须清单里每个对象都明确 READY；状态缺失不能当就绪，否则会误删旧版本。返回 null = 留在本阶段。 */
     private String health(PlatformAppExecution execution) {
+        if (isOffline(requireRelease(execution))) {
+            return "PRUNE";
+        }
         PlatformApplication app = requireApp(execution);
         List<AppObjectRefDTO> objects = requireObjects(requireRelease(execution));
         AppStatusResultDTO status = null;
@@ -346,9 +364,13 @@ public class AppReleaseExecutor {
      */
     private String prune(PlatformAppExecution execution) {
         PlatformApplication app = requireApp(execution);
+        PlatformAppRelease release = requireRelease(execution);
+        if (isOffline(release)) {
+            return pruneAll(app, execution);
+        }
         int live = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
         // 清单为空时 current 为空集，会把线上对象全部判成多余：必须先拦住
-        Set<String> current = requireObjects(requireRelease(execution)).stream()
+        Set<String> current = requireObjects(release).stream()
                 .map(r -> r.getKind() + "/" + r.getName())
                 .collect(Collectors.toSet());
         List<AppObjectRefDTO> stale = resources.selectByRevisionRange(execution.getAppId(), live, execution.getReleaseNo()).stream()
@@ -365,12 +387,36 @@ public class AppReleaseExecutor {
         return "DONE";
     }
 
+    /**
+     * 下线：台账里本应用的全部对象（不分发布号，连同中途失败留下的）都删，PVC 跳过。
+     * 删除幂等（不存在的对象直接跳过），中途失败点「继续」从 PRUNE 重来即可。
+     */
+    private String pruneAll(PlatformApplication app, PlatformAppExecution execution) {
+        Map<String, AppObjectRefDTO> all = new LinkedHashMap<>();
+        for (PlatformApplicationResource r : resources.selectByApp(execution.getAppId())) {
+            AppObjectRefDTO ref = toRef(r);
+            all.putIfAbsent(ref.getKind() + "/" + ref.getNamespace() + "/" + ref.getName(), ref);
+        }
+        if (!all.isEmpty()) {
+            AppPruneRequestDTO request = new AppPruneRequestDTO();
+            request.setClusterId(app.getClusterId());
+            request.setObjects(new ArrayList<>(all.values()));
+            request.setDeletePvc(false);
+            client.prune(request);
+        }
+        return "DONE";
+    }
+
+    static boolean isOffline(PlatformAppRelease release) {
+        return OFFLINE_TYPE.equals(release.getType());
+    }
+
     /** 执行记录最后写：中途崩溃时它仍在 DONE，下一拍重跑，前面的写入都幂等。 */
     private String finish(PlatformAppExecution execution) {
         PlatformApplication patch = new PlatformApplication();
         patch.setId(execution.getAppId());
         patch.setLiveReleaseNo(execution.getReleaseNo());
-        patch.setStatus("READY");
+        patch.setStatus(isOffline(requireRelease(execution)) ? "OFFLINE" : "READY");
         patch.setUpdatedAt(new Date());
         apps.updateById(patch);
         markRelease(execution, "DEPLOYED");

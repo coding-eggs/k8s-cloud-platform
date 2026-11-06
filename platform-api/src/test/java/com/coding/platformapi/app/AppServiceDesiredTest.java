@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class AppServiceDesiredTest {
 
@@ -165,5 +166,53 @@ class AppServiceDesiredTest {
         Map<String, Object> d = AppServiceDesired.normalize(withFiles(
                 file("/etc/app.yaml", "cache: ${cache.address}\nupstream: ${api.url}")));
         assertThat(AppServiceDesired.references(d)).containsExactlyInAnyOrder("cache", "api");
+    }
+
+    // ------------------------------------------------------------------ 对外暴露
+
+    private static Map<String, Object> svc(Object... kv) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("imageRepo", "nginx");
+        d.put("imageTag", "1");
+        d.put("port", 80);
+        for (int i = 0; i + 1 < kv.length; i += 2) {
+            d.put((String) kv[i], kv[i + 1]);
+        }
+        return d;
+    }
+
+    @Test
+    void noneAndBlankExposeAreNotStored() {
+        assertThat(AppServiceDesired.normalize(svc("expose", "none"))).doesNotContainKey("expose");
+        assertThat(AppServiceDesired.normalize(svc("expose", ""))).doesNotContainKey("expose");
+        assertThat(AppServiceDesired.normalize(svc())).doesNotContainKey("expose");
+    }
+
+    @Test
+    void nodePortIsNormalizedAndOptional() {
+        Map<String, Object> auto = AppServiceDesired.normalize(svc("expose", "NodePort"));
+        assertThat(auto).containsEntry("expose", "nodeport").doesNotContainKey("nodePort");
+        assertThat(AppServiceDesired.nodePort(auto)).isNull();
+
+        Map<String, Object> fixed = AppServiceDesired.normalize(svc("expose", "nodeport", "nodePort", "30080"));
+        assertThat(fixed).containsEntry("nodePort", 30080);
+        assertThat(AppServiceDesired.nodePort(fixed)).isEqualTo(30080);
+    }
+
+    @Test
+    void nodePortOutOfRangeOrWithoutExposeIsRejected() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("expose", "nodeport", "nodePort", 8080)))
+                .hasMessageContaining("30000-32767");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("nodePort", 30080)))
+                .hasMessageContaining("只有选择 NodePort");
+    }
+
+    @Test
+    void unsupportedExposeAndWorkerExposeAreRejected() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("expose", "httproute")))
+                .hasMessageContaining("不支持的暴露方式");
+        Map<String, Object> worker = svc("expose", "nodeport");
+        worker.remove("port");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(worker)).hasMessageContaining("后台进程");
     }
 }

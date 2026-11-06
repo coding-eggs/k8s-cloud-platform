@@ -28,9 +28,16 @@ public final class AppServiceDesired {
             "cpuRequest", "memoryRequest", "cpuLimit", "memoryLimit",
             "persistenceEnabled", "storageSize", "storageClass", "mountPath",
             "autoscalingEnabled", "minReplicas", "maxReplicas", "targetCpu",
-            "probeEnabled", "probePath", "metricsEnabled", "metricsPath", "expose");
+            "probeEnabled", "probePath", "metricsEnabled", "metricsPath");
 
-    private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env", "configFiles");
+    private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env", "configFiles",
+            "expose", "nodePort");
+
+    /** 对外暴露方式：目前只有 NodePort（HTTPRoute 等网关方式以后再加）。不暴露 = 不存这个键 */
+    public static final String EXPOSE_NODEPORT = "nodeport";
+    /** K8s 默认 service-node-port-range */
+    static final int NODE_PORT_MIN = 30000;
+    static final int NODE_PORT_MAX = 32767;
 
     /** 配置文件内容可引用的字段：都解析成普通值。username / password 是 Secret 位置，进不了 ConfigMap。 */
     public static final List<String> FILE_REF_FIELDS = List.of("host", "port", "address", "url");
@@ -83,6 +90,7 @@ public final class AppServiceDesired {
         if (!files.isEmpty()) {
             out.put("configFiles", files);   // 空列表不存：否则「没有 vs 空」会被当成待发布改动
         }
+        normalizeExpose(raw, port, out);
         for (Map.Entry<String, Object> e : raw.entrySet()) {
             String k = e.getKey();
             if (CORE.contains(k)) {
@@ -96,6 +104,40 @@ public final class AppServiceDesired {
             }
         }
         return out;
+    }
+
+    /**
+     * 对外暴露：{@code expose} 取 none / nodeport（大小写不敏感），none 与空都不存（否则「没有 vs none」会成待发布改动）。
+     * NodePort 只对有端口的服务有意义；{@code nodePort} 可空 = 由集群自动分配，填了必须在 30000-32767。
+     */
+    private static void normalizeExpose(Map<String, Object> raw, Integer port, Map<String, Object> out) {
+        String expose = text(raw.get("expose")).toLowerCase();
+        Integer nodePort = integer(raw.get("nodePort"), "NodePort 端口");
+        if (expose.isEmpty() || "none".equals(expose)) {
+            if (nodePort != null) {
+                throw bad("只有选择 NodePort 暴露时才能填 NodePort 端口");
+            }
+            return;
+        }
+        if (!EXPOSE_NODEPORT.equals(expose)) {
+            throw bad("不支持的暴露方式：" + raw.get("expose") + "（目前只支持 NodePort）");
+        }
+        if (port == null) {
+            throw bad("后台进程没有端口，不能对外暴露；请先填写端口");
+        }
+        out.put("expose", EXPOSE_NODEPORT);
+        if (nodePort != null) {
+            if (nodePort < NODE_PORT_MIN || nodePort > NODE_PORT_MAX) {
+                throw bad("NodePort 端口必须在 " + NODE_PORT_MIN + "-" + NODE_PORT_MAX + " 之间，留空则自动分配");
+            }
+            out.put("nodePort", nodePort);
+        }
+    }
+
+    /** 固定的 NodePort（没暴露或自动分配返回 null） */
+    public static Integer nodePort(Map<String, Object> desired) {
+        return desired != null && EXPOSE_NODEPORT.equals(desired.get("expose"))
+                && desired.get("nodePort") instanceof Number n ? n.intValue() : null;
     }
 
     private static List<Map<String, Object>> normalizeEnv(Object raw) {

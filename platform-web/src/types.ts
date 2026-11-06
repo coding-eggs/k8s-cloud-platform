@@ -2940,6 +2940,8 @@ export interface AppExecution {
   startedBy?: string | null
   startedAt?: string | null
   finishedAt?: string | null
+  /** 所属发布的类型：NORMAL / ROLLBACK / OFFLINE */
+  releaseType?: string | null
 }
 
 /** 服务的一个配置文件（ConfigMap 卷，subPath 只读挂载） */
@@ -2985,7 +2987,10 @@ export interface AppServiceDesired {
   probePath?: string
   metricsEnabled?: boolean
   metricsPath?: string
-  expose?: unknown
+  /** 对外暴露：目前只有 'nodeport'；不暴露 = 没有这个键 */
+  expose?: string
+  /** 固定 NodePort（30000-32767）；不填由集群分配 */
+  nodePort?: number
   [k: string]: unknown
 }
 

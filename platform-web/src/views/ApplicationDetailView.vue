@@ -10,7 +10,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { appServiceApi, applicationApi } from '@/api'
+import { appReleaseApi, appServiceApi, applicationApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
@@ -61,6 +61,7 @@ const APP_STATUS: Record<string, { text: string; type: 'success' | 'warning' | '
   READY: { text: '运行正常', type: 'success' },
   FAILED: { text: '发布失败', type: 'danger' },
   INTERRUPTED: { text: '已中断', type: 'danger' },
+  OFFLINE: { text: '已下线', type: 'info' },
 }
 
 const editable = computed(() => canWrite.value)
@@ -78,6 +79,38 @@ const lastFailed = computed(() => {
 const panelExecution = computed(() => active.value ?? lastFailed.value)
 /** PENDING / RUNNING 在推进，不能再发布；INTERRUPTED 可以（新发布取代它） */
 const publishing = computed(() => isRunning(active.value?.status))
+const isOffline = computed(() => (overview.value?.status ?? app.value?.status) === 'OFFLINE')
+/** 有线上发布且线上快照里有服务才能下线（已下线 / 从未发布的后端也会拒） */
+const canOffline = computed(() => live.value > 0 && !isOffline.value
+  && (overview.value?.services ?? []).some((s) => s.state !== 'NOT_RELEASED'))
+const offlining = ref(false)
+
+async function offlineApp(): Promise<void> {
+  if (!app.value) return
+  let note = ''
+  try {
+    const r = await ElMessageBox.prompt(
+      `将删除应用「${app.value.displayName || app.value.name}」在集群里的全部工作负载、Service、配置等对象，服务立即停止。`
+        + '持久化数据卷、服务配置和依赖的中间件都保留；之后重新发布即可上线。',
+      '确认下线',
+      { confirmButtonText: '下线', cancelButtonText: '取消', type: 'warning', inputPlaceholder: '下线说明（可选）',
+        inputValidator: (v: string) => (v && v.length > 200 ? '说明最多 200 字' : true) },
+    )
+    note = (r as { value?: string }).value?.trim() ?? ''
+  } catch {
+    return
+  }
+  offlining.value = true
+  try {
+    await appReleaseApi.offline({ appId: appId.value, note: note || undefined, tenantId: tenantId.value })
+    ElMessage.success('已开始下线')
+    await afterExecutionChange()
+  } catch {
+    // 拦截器已提示
+  } finally {
+    offlining.value = false
+  }
+}
 
 async function load(silent = false): Promise<void> {
   if (!appId.value) return
@@ -287,6 +320,17 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       >
         发布{{ pendingCount ? ` · ${pendingCount} 项改动` : '' }}
       </el-button>
+      <el-button
+        v-if="canOffline"
+        type="danger"
+        plain
+        :loading="offlining"
+        :disabled="!editable || publishing"
+        :title="blockedReason || (publishing ? '有进行中的发布，结束后才能下线' : '')"
+        @click="offlineApp"
+      >
+        下线
+      </el-button>
     </PageHeader>
 
     <EmptyState v-if="loadFailed" title="加载失败" description="应用不存在，或没有访问权限。">
@@ -296,7 +340,8 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
     <template v-else-if="overview && app">
       <div class="app-detail__meta">
         <StatusBadge :label="statusMeta.text" :type="statusMeta.type" />
-        <span>线上 <b>{{ live ? `#${live}` : '未发布' }}</b></span>
+        <span v-if="isOffline">已于 <b>#{{ live }}</b> 下线，重新发布即可上线</span>
+        <span v-else>线上 <b>{{ live ? `#${live}` : '未发布' }}</b></span>
         <span class="muted">命名空间 {{ app.namespace }}</span>
         <span v-if="app.description" class="muted">{{ app.description }}</span>
       </div>

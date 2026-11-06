@@ -120,6 +120,41 @@ class AppWorkloadChartRenderTest {
                 .anySatisfy(m -> assertThat(m.get("name")).isEqualTo("data"));
     }
 
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> servicePort(List<Map<String, Object>> docs) {
+        Map<String, Object> svc = find(docs, "Service", "shop-api");
+        assertThat(svc).isNotNull();
+        return ((List<Map<String, Object>>) at(svc, "spec").get("ports")).get(0);
+    }
+
+    @Test
+    void serviceIsClusterIpUnlessExposed() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80));
+
+        assertThat(at(find(docs, "Service", "shop-api"), "spec").get("type")).isEqualTo("ClusterIP");
+        assertThat(servicePort(docs)).doesNotContainKey("nodePort");
+    }
+
+    @Test
+    void nodePortWithoutAFixedPortLetsTheClusterAllocate() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80, "expose", "nodeport"));
+
+        assertThat(at(find(docs, "Service", "shop-api"), "spec").get("type")).isEqualTo("NodePort");
+        assertThat(servicePort(docs)).doesNotContainKey("nodePort");
+    }
+
+    @Test
+    void fixedNodePortIsRendered() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80,
+                "expose", "nodeport", "nodePort", 30080));
+
+        assertThat(at(find(docs, "Service", "shop-api"), "spec").get("type")).isEqualTo("NodePort");
+        assertThat(servicePort(docs)).containsEntry("nodePort", 30080).containsEntry("port", 80);
+    }
+
     @Test
     void declaredNamespaceReadsOnlyWhatTheDocumentSays() {
         assertThat(AppRenderService.declaredNamespace("kind: ConfigMap\nmetadata:\n  name: a\n  namespace: demo\n"))

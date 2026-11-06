@@ -14,4 +14,7 @@ spec:
     - name: http
       port: {{ .Values.workload.expose.port }}
       targetPort: http
+      {{- if and (eq .Values.workload.expose.type "nodeport") (gt (int .Values.workload.expose.nodePort) 0) }}
+      nodePort: {{ .Values.workload.expose.nodePort }}
+      {{- end }}
 {{- end }}

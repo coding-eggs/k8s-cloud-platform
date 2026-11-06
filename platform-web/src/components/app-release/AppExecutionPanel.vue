@@ -17,7 +17,7 @@ import { ElMessage } from 'element-plus'
 import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
 import type { AppExecution, AppServiceRow, AppServiceState } from '@/types'
-import { errMsg, EXEC_STAGE, EXEC_STATUS, isRunning, STAGE_ORDER, stageStep } from './releaseUtil'
+import { errMsg, EXEC_STAGE, EXEC_STATUS, isRunning, OFFLINE_STAGE_ORDER, STAGE_ORDER, stageStep } from './releaseUtil'
 
 const props = defineProps<{
   appId: string
@@ -76,7 +76,13 @@ const running = computed(() => isRunning(exec.value?.status))
 const interrupted = computed(() => exec.value?.status === 'INTERRUPTED')
 const failed = computed(() => exec.value?.status === 'FAILED')
 const statusMeta = computed(() => EXEC_STATUS[exec.value?.status ?? ''] ?? { text: exec.value?.status ?? '', type: 'neutral' as const })
-const stageIndex = computed(() => stageStep(exec.value?.stage))
+/** 下线只有「预检 → 删除对象」两步，其余阶段执行器直接跳过 */
+const offline = computed(() => exec.value?.releaseType === 'OFFLINE')
+const stages = computed(() => (offline.value ? OFFLINE_STAGE_ORDER : STAGE_ORDER))
+const stageLabel = (s?: string | null): string | undefined =>
+  s == null ? undefined : (offline.value && s === 'PRUNE' ? '删除对象' : EXEC_STAGE[s])
+const verb = computed(() => (offline.value ? '下线' : '发布'))
+const stageIndex = computed(() => stageStep(exec.value?.stage, stages.value))
 const stepStatus = computed(() => (failed.value || interrupted.value ? 'error' : 'process'))
 /** 只列有线上对象或本次相关的服务；NOT_RELEASED 的服务没有健康可言 */
 const healthRows = computed(() => props.services.filter((s) => s.state !== 'NOT_RELEASED'))
@@ -101,7 +107,7 @@ async function resume(): Promise<void> {
 <template>
   <section v-if="exec" class="panel app-exec">
     <div class="app-exec__head">
-      <h3>发布 #{{ exec.releaseNo }}</h3>
+      <h3>{{ verb }} #{{ exec.releaseNo }}</h3>
       <StatusBadge :label="statusMeta.text" :type="statusMeta.type" />
       <span v-if="exec.startedBy" class="app-exec__muted">发起人 {{ exec.startedBy }}</span>
       <span class="app-exec__spacer" />
@@ -112,7 +118,7 @@ async function resume(): Promise<void> {
     </div>
 
     <el-steps :active="stageIndex" :process-status="stepStatus" finish-status="success" align-center class="app-exec__steps">
-      <el-step v-for="s in STAGE_ORDER" :key="s" :title="EXEC_STAGE[s]" />
+      <el-step v-for="s in stages" :key="s" :title="stageLabel(s)" />
     </el-steps>
 
     <el-alert
@@ -120,7 +126,7 @@ async function resume(): Promise<void> {
       type="error"
       :closable="false"
       show-icon
-      :title="`发布失败，停在「${EXEC_STAGE[exec.stage ?? ''] ?? exec.stage ?? '未知阶段'}」`"
+      :title="`${verb}失败，停在「${stageLabel(exec.stage) ?? exec.stage ?? '未知阶段'}」`"
       :description="exec.message || undefined"
     >
       <div class="app-exec__hint">平台不会自动回滚。可以修复后重新执行（发布号不变，从失败阶段接着跑）、发布一个修复版本，或回滚。</div>
@@ -130,7 +136,7 @@ async function resume(): Promise<void> {
       type="warning"
       :closable="false"
       show-icon
-      title="发布已中断"
+      :title="`${verb}已中断`"
       :description="exec.message || undefined"
     >
       <div class="app-exec__hint">
@@ -143,8 +149,8 @@ async function resume(): Promise<void> {
       type="info"
       :closable="false"
       show-icon
-      :title="`进行中：${EXEC_STAGE[exec.stage ?? ''] ?? exec.stage ?? statusMeta.text}`"
-      :description="exec.message || '发布进行中，期间不能再次发布。'"
+      :title="`进行中：${stageLabel(exec.stage) ?? exec.stage ?? statusMeta.text}`"
+      :description="exec.message || (offline ? '正在删除应用的集群对象（数据卷保留），期间不能发布。' : '发布进行中，期间不能再次发布。')"
     />
     <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" class="app-exec__err" />
 

@@ -49,6 +49,21 @@
 应用页的「拓扑」页签是只读图：节点 = 服务 + 依赖，边由服务的环境变量与配置文件引用生成
 （使用方 → 被使用的一方）。不存储、不可拖拽、不可连线。点服务进服务页，点依赖打开依赖抽屉。
 
+### 1.4 下线（`/application/release/offline`）
+
+下线 = 一条 `type=OFFLINE`、快照不含服务的发布，走同一个执行器（租约、凭据、失败可「继续」都一样）：
+PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` 里本应用的**全部**对象（不分发布号、去重），
+**PVC 保留**（重新上线后 StatefulSet 挂回同一个卷）；结束时线上发布号指向这条下线记录、应用状态 `OFFLINE`。
+服务配置、依赖与中间件实例都不动。线上快照为空 → 所有服务显示为「新增，待发布」，**重新上线就是一次普通发布**。
+下线记录不能作为回滚目标（不含服务）；回滚到下线前的某个版本也可以重新上线。
+
+### 1.5 对外暴露（NodePort）
+
+服务配置「基本」页签：有端口的服务可选「不暴露 / NodePort」。NodePort 端口可留空（集群分配，发布后在服务「概览」
+看实际端口与 `http://节点IP:端口`），也可固定 30000-32767；同一应用里两个服务固定同一端口，发布前就拦下；
+与集群里别的 Service 撞端口只能在下发时由 K8s 报错。desired 存 `expose: nodeport` + 可选 `nodePort`，
+「不暴露」不存这两个键。HTTPRoute / 网关方式暂不做（入口网关的管理方式未定）。
+
 ## 2. 配置文件
 
 服务页「配置文件」页签：每条一个绝对路径 + 内容。
@@ -86,7 +101,8 @@ key 不能以它结尾。
    `V2026_11_02_12__application_release_rollback_permission` → `V2026_11_02_13__application_dependency_permissions` →
    `V2026_11_02_14__drop_application_canvas_legacy`。最后这条是画布遗留清理（§3.1），**第 0 步报
    「存在已部署的旧画布应用…」表不存在就说明第 1 步没做干净**：回到第 1 步删掉后再重放本条（它会跳过所有结构改动，
-   可重复执行）。之后再重放 `V2026_11_03_1__application_dependency_update_permission`（修改外部连接的权限行）。
+   可重复执行）。之后再重放 `V2026_11_03_1__application_dependency_update_permission`（修改外部连接的权限行）、
+   `V2026_11_06_1__application_release_offline_permission`（下线的权限行）。
    main 上的 `V2026_11_01_1__object_storage_platform_page`、`V2026_11_01_2` 与本批无关，照各自说明重放。
 3. **上线前在真 MySQL 上各跑一次两条条件更新**（单测只覆盖了 mock）：执行表 mapper 的 `reopen`
    （继续已中断的执行）和 `supersedeInterrupted`（新发布取代已中断的执行）。用一条手工造的
@@ -132,6 +148,8 @@ key 不能以它结尾。
 - [ ] 镜像拉取失败时，发布停在 HEALTH，旧 Pod 继续服务。
 - [ ] 平台「发布自己」（或发布中滚动更新 platform-api）：旧 Pod 停机释放租约，新 Pod 几秒内接手并走到成功，不进「已中断」。
 - [ ] Redis 不通时重启 platform-api，执行进入「已中断」，点继续能完成（顺带验证 `reopen` 的 SQL）。
+- [ ] 下线：对象全部删除、PVC 还在；再发布一次（全选）后服务恢复，StatefulSet 挂回原来的卷。
+- [ ] NodePort：留空时概览显示集群分配的端口且可访问；改成固定端口后发布，端口变成固定值；改回「不暴露」后 Service 变 ClusterIP。
 - [ ] 已中断时直接发新版本，旧执行被取代（顺带验证 `supersedeInterrupted` 的 SQL）。
 - [ ] 一个应用卡住时，其他应用仍能发布。
 - [ ] 回滚后线上配置与旧快照一致。
@@ -142,7 +160,7 @@ key 不能以它结尾。
 
 ## 6. 已知限制
 
-- 对外域名不在本次范围，第一版只提供 NodePort。
+- 对外域名 / HTTPRoute 不在本次范围，只提供 NodePort。
 - 依赖新建不支持 Milvus，以及 ES Kibana/TLS/IK、Redis 分片副本等高级参数：先去中间件商店建，再绑定。
 - ES 初始化的 `initPath` 可调该实例的任意 ES API（只作用于自己的实例，暂不收紧）；集群内 TLS 用 `curl -k`。
 - 初始化排队时间计入超时；`MYSQL_PWD` 已被 MySQL 标记弃用，但客户端仍认。

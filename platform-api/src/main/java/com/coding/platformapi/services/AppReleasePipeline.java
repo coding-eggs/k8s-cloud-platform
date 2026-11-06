@@ -148,6 +148,24 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
             }
             resolveFiles(e.getKey(), e.getValue(), ctx, out);
         }
+        out.addAll(nodePortClashes(snapshot));
+        return out;
+    }
+
+    /** 同一应用里两个服务填了同一个固定 NodePort：集群只会给第一个，第二个 apply 时才报错，在这里提前拦下 */
+    static List<String> nodePortClashes(AppSnapshot snapshot) {
+        Map<Integer, String> owner = new LinkedHashMap<>();
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, Map<String, Object>> e : snapshot.services().entrySet()) {
+            Integer np = AppServiceDesired.nodePort(e.getValue());
+            if (np == null) {
+                continue;
+            }
+            String first = owner.putIfAbsent(np, e.getKey());
+            if (first != null) {
+                out.add(e.getKey() + "：NodePort 端口 " + np + " 已被服务 " + first + " 使用");
+            }
+        }
         return out;
     }
 

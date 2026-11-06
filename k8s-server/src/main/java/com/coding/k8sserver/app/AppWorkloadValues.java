@@ -70,9 +70,12 @@ public final class AppWorkloadValues {
         workload.put("metrics", Map.of(
                 "enabled", bool(params.get("metricsEnabled")),
                 "path", strOrDefault(params.get("metricsPath"), "/metrics")));
+        String exposeType = worker ? "none" : strOrDefault(params.get("expose"), "none").toLowerCase();
         workload.put("expose", Map.of(
-                "type", worker ? "none" : strOrDefault(params.get("expose"), "none"),
-                "port", num(params.get("port"), 8080)));
+                "type", exposeType,
+                "port", num(params.get("port"), 8080),
+                // 0 = 由集群自动分配；只在 nodeport 时有意义
+                "nodePort", "nodeport".equals(exposeType) ? num(params.get("nodePort"), 0) : 0));
 
         Map<String, Object> app = new LinkedHashMap<>();
         app.put("id", appId);

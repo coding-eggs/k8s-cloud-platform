@@ -728,6 +728,81 @@ class AppReleaseServiceTest {
     }
 
     @Test
+    void twoServicesWithTheSameFixedNodePortAreReported() {
+        Map<String, Object> a = new LinkedHashMap<>(svc("1"));
+        a.put("expose", "nodeport");
+        a.put("nodePort", 30080);
+        Map<String, Object> b = new LinkedHashMap<>(a);
+        Map<String, Object> c = new LinkedHashMap<>(svc("1"));
+        c.put("expose", "nodeport");   // 自动分配不算冲突
+        AppSnapshot snap = new AppSnapshot(new java.util.TreeMap<>(Map.of("api", a, "web", b, "x", c)), List.of());
+
+        assertThat(AppReleasePipeline.nodePortClashes(snap))
+                .containsExactly("web：NodePort 端口 30080 已被服务 api 使用");
+    }
+
+    // ------------------------------------------------------------------ 下线
+
+    @Test
+    void offlineCreatesAnOfflineReleaseWithNoServicesAndKeepsDesired() {
+        live(3, Map.of("api", svc("2")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+        org.mockito.Mockito.doAnswer(inv -> {
+            ((PlatformAppExecution) inv.getArgument(0)).setId(78L);
+            return 1;
+        }).when(executions).insert(any());
+
+        Long id = service.offline("app1", "维护", "bob", "t1");
+
+        assertThat(id).isEqualTo(78L);
+        PlatformAppRelease r = inserted();
+        assertThat(r.getType()).isEqualTo("OFFLINE");
+        assertThat(r.getReleaseNo()).isEqualTo(4);
+        assertThat(AppSnapshot.parse(r.getSnapshotJson()).services()).isEmpty();
+        assertThat(r.getNote()).isEqualTo("维护");
+        assertThat(credentials.getExecution(78L)).isEqualTo("Bearer tok");
+        verify(services, never()).updateWithVersion(any());   // 服务配置不动
+        verify(services, never()).insert(any());
+    }
+
+    @Test
+    void offlineRefusesWhenNeverReleased() {
+        assertThatThrownBy(() -> service.offline("app1", null, "bob", "t1"))
+                .hasMessageContaining("尚未上线");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void offlineRefusesWhenAlreadyOffline() {
+        live(4, Map.of());
+
+        assertThatThrownBy(() -> service.offline("app1", null, "bob", "t1"))
+                .hasMessageContaining("已下线");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void offlineRefusesWhileAReleaseIsRunning() {
+        live(3, Map.of("api", svc("2")));
+        PlatformAppExecution running = new PlatformAppExecution();
+        running.setStatus("RUNNING");
+        when(executions.selectActiveByApp("app1")).thenReturn(running);
+
+        assertThatThrownBy(() -> service.offline("app1", null, "bob", "t1"))
+                .hasMessageContaining("进行中");
+    }
+
+    /** 下线后线上快照为空：所有服务显示为待发布的新增，重新上线就是一次普通发布 */
+    @Test
+    void afterOfflineEveryServiceIsPendingAsAdded() {
+        live(4, Map.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+
+        assertThat(service.overview("app1", "t1").pendingKeys()).containsExactly("api");
+    }
+
+    @Test
     void rollbackSyncsUneditedServicesAndKeepsEditedOnes() {
         live(3, Map.of("api", svc("2"), "web", svc("2")));
         history(1, "DEPLOYED", Map.of("api", svc("1"), "web", svc("1")), List.of());
