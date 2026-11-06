@@ -1134,8 +1134,9 @@ export const middlewareApi = {
   /** 概览的监控曲线：CPU/内存/网络/磁盘一次返回（start/end 为 unix 秒） */
   instanceMetrics: (instanceId: string, start: number, end: number, tenantId?: string) =>
     http.post<never, MiddlewareMetrics>('/middleware/instance/metrics', { instanceId, start, end, tenantId }),
-  instanceOperations: (instanceId: string, tenantId?: string) =>
-    http.post<never, MiddlewareOperation[]>('/middleware/instance/operations', { instanceId, tenantId }),
+  /** 实例操作记录（新到旧）；page/size 都给才分页 */
+  instanceOperations: (instanceId: string, page: number, size: number, tenantId?: string) =>
+    http.post<never, PageResult<MiddlewareOperation>>('/middleware/instance/operations', { instanceId, page, size, tenantId }),
   /** 索引页签（Elasticsearch）：索引不是 K8s 对象，后端去 ES 现查 */
   esIndices: (instanceId: string, tenantId?: string) =>
     http.post<never, EsIndexSummary[]>('/middleware/instance/indexes', { instanceId, tenantId }),

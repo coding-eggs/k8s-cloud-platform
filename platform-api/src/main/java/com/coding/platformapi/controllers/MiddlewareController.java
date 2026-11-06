@@ -6,7 +6,9 @@ import com.coding.common.models.middleware.MiddlewareCatalogItemDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.common.models.middleware.MiddlewareFormOptionsDTO;
 import com.coding.common.models.middleware.MiddlewareOperatorStatusDTO;
+import com.coding.common.models.page.PageResult;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.models.MiddlewareOperationListRequest;
 import com.coding.data.models.system.PlatformMiddlewareInstance;
 import com.coding.data.models.system.PlatformMiddlewareOperation;
 import com.coding.common.audit.AuditAction;
@@ -109,10 +111,11 @@ public class MiddlewareController {
     }
 
     @PostMapping("/instance/operations")
-    @Operation(summary = "实例的操作记录")
-    public ResponseData<List<PlatformMiddlewareOperation>> operations(@RequestBody MiddlewareQueryRequest request) {
+    @Operation(summary = "实例的操作记录（新到旧）", description = "带 page/size 走 PageHelper 分页，都不给 = 返回全量")
+    public ResponseData<PageResult<PlatformMiddlewareOperation>> operations(
+            @RequestBody MiddlewareOperationListRequest request) {
         return new ResponseData<>(service.operations(request.getInstanceId(),
-                auth.effectiveTenantId(request.getTenantId())));
+                auth.effectiveTenantId(request.getTenantId()), request.getPage(), request.getSize()));
     }
 
     @PostMapping("/instance/indexes")

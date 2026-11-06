@@ -346,12 +346,41 @@ async function load(): Promise<void> {
   loading.value = true
   try {
     detail.value = await middlewareApi.instanceDetail(instanceId.value, tenantId.value)
-    operations.value = (await middlewareApi.instanceOperations(instanceId.value, tenantId.value)) ?? []
+    // 整页重载（首次进入 / 编辑、扩缩等操作之后）：新操作排在最前面 → 回到第一页
+    opPage.value = 1
+    await loadOperations()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '加载实例详情失败')
   } finally {
     loading.value = false
   }
+}
+
+// ---------------- 操作记录（分页：page/size 发给后端走 PageHelper） ----------------
+const opPage = ref(1)
+const opSize = ref(10)
+const opTotal = ref(0)
+const opLoading = ref(false)
+
+async function loadOperations(): Promise<void> {
+  opLoading.value = true
+  try {
+    const res = await middlewareApi.instanceOperations(instanceId.value, opPage.value, opSize.value, tenantId.value)
+    operations.value = res?.items ?? []
+    opTotal.value = res?.total ?? 0
+  } finally {
+    opLoading.value = false
+  }
+}
+
+function onOpPageChange(p: number): void {
+  opPage.value = p
+  loadOperations().catch((e) => ElMessage.error(e instanceof Error ? e.message : '加载操作记录失败'))
+}
+function onOpSizeChange(s: number): void {
+  opSize.value = s
+  opPage.value = 1
+  loadOperations().catch((e) => ElMessage.error(e instanceof Error ? e.message : '加载操作记录失败'))
 }
 
 // ---------------- 编辑 ----------------
@@ -881,7 +910,7 @@ watch(tenantId, () => void load())
       </el-tab-pane>
 
       <el-tab-pane label="操作记录" name="operations">
-        <el-table :data="operations" class="panel" size="small" empty-text="还没有操作记录">
+        <el-table v-loading="opLoading" :data="operations" class="panel" size="small" empty-text="还没有操作记录">
           <el-table-column label="操作" width="90">
             <template #default="{ row }">{{ OP_ACTION[row.action] ?? row.action }}</template>
           </el-table-column>
@@ -897,6 +926,17 @@ watch(tenantId, () => void load())
           <el-table-column prop="finishedAt" label="结束" width="170" />
           <el-table-column prop="message" label="说明" min-width="220" />
         </el-table>
+        <div v-if="opTotal > 0" class="mw-op-pager">
+          <el-pagination
+            :current-page="opPage"
+            :page-size="opSize"
+            :total="opTotal"
+            :page-sizes="[10, 20, 50]"
+            layout="total, sizes, prev, pager, next"
+            @current-change="onOpPageChange"
+            @size-change="onOpSizeChange"
+          />
+        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -1032,6 +1072,7 @@ watch(tenantId, () => void load())
 </template>
 
 <style scoped>
+.mw-op-pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 .mw-detail { padding-bottom: 24px; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
 .mw-title { display: flex; align-items: center; gap: 10px; margin: 6px 0 4px; font-size: 18px; }

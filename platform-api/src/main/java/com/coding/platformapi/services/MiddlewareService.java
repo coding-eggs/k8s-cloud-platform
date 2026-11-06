@@ -47,6 +47,10 @@ import org.springframework.stereotype.Service;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.security.SecureRandom;
+import com.coding.common.models.page.PageResult;
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
+
 import java.util.ArrayList;
 import java.time.Duration;
 import java.util.Base64;
@@ -664,9 +668,20 @@ public class MiddlewareService {
         return out;
     }
 
-    public List<PlatformMiddlewareOperation> operations(String instanceId, String tenantId) {
+    /**
+     * 实例的操作记录（新到旧）。page/size 都给了才走 PageHelper 分页，否则全量；
+     * {@code startPage} 必须紧贴 {@code selectByInstance}（前面的归属校验也是查询，会把分页吃掉）。
+     */
+    public PageResult<PlatformMiddlewareOperation> operations(String instanceId, String tenantId,
+                                                             Integer page, Integer size) {
         requireInstance(instanceId, tenantId);
-        return operations.selectByInstance(instanceId);
+        boolean paged = page != null && size != null;
+        if (paged) {
+            PageHelper.startPage(page, size);
+        }
+        List<PlatformMiddlewareOperation> rows = operations.selectByInstance(instanceId);
+        long total = paged ? new PageInfo<>(rows).getTotal() : rows.size();
+        return PageResult.of(rows, total);
     }
 
     /**

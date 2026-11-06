@@ -439,7 +439,7 @@ class MiddlewareServiceTest {
         i.setTenantId("t1");
         when(instances.selectByPrimaryKey("mwi_1")).thenReturn(i);
 
-        assertThatThrownBy(() -> service.operations("mwi_1", "t2"))
+        assertThatThrownBy(() -> service.operations("mwi_1", "t2", null, null))
                 .hasMessageContaining("无权操作该实例");
     }
 
