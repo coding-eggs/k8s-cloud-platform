@@ -90,6 +90,7 @@ public class AppReleaseExecutor {
     private final AppExecutionLease leases;
     private final ObjectProvider<AppReleasePrecheck> precheck;
     private final ObjectProvider<AppReleaseRenderer> renderer;
+    private final AppExecutionJournal journal;
     private final long timeoutMinutes;
 
     public AppReleaseExecutor(PlatformApplicationMapper apps,
@@ -101,6 +102,7 @@ public class AppReleaseExecutor {
                               AppExecutionLease leases,
                               ObjectProvider<AppReleasePrecheck> precheck,
                               ObjectProvider<AppReleaseRenderer> renderer,
+                              AppExecutionJournal journal,
                               @Value("${platform.application.timeout-minutes:30}") long timeoutMinutes) {
         this.apps = apps;
         this.releases = releases;
@@ -111,6 +113,7 @@ public class AppReleaseExecutor {
         this.leases = leases;
         this.precheck = precheck;
         this.renderer = renderer;
+        this.journal = journal;
         this.timeoutMinutes = timeoutMinutes;
     }
 
@@ -177,6 +180,9 @@ public class AppReleaseExecutor {
         }
         log.info("发布执行 {} 由 {} 续跑，阶段 {}，发布号 {}", executionId, operator,
                 execution.getStage(), execution.getReleaseNo());
+        journal.info(execution, execution.getStage(), (operator == null ? "" : operator + " ")
+                + (FAILED.equals(execution.getStatus()) ? "重新执行" : "点了继续") + "，从「"
+                + stageName(execution.getStage()) + "」接着跑");
     }
 
     private void step(PlatformAppExecution execution) {
@@ -214,6 +220,7 @@ public class AppReleaseExecutor {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用没有命名空间");
         }
         if (isOffline(requireRelease(execution))) {
+            journal.info(execution, "PRECHECK", "下线：跳过渲染、冲突检查与健康检查，直接删除本应用的集群对象（数据卷保留）");
             return "PRUNE";   // 下线不渲染、不校验依赖：没有要上线的东西
         }
         AppReleasePrecheck check = precheck.getIfAvailable();
@@ -221,6 +228,7 @@ public class AppReleaseExecutor {
             throw new CloudPlatformException(EnumResponseType.ERROR, "发布校验器未注册");
         }
         check.check(execution);
+        journal.info(execution, "PRECHECK", "预检通过：引用的依赖已就绪，变量与配置文件引用均可解析");
         return "RENDER";
     }
 
@@ -230,6 +238,7 @@ public class AppReleaseExecutor {
             return "PRUNE";
         }
         if (release.getManifest() != null && !release.getManifest().isBlank()) {
+            journal.info(execution, "RENDER", "已渲染过（续跑），沿用上次的清单");
             return "CONFLICT";   // 续跑：已渲染过
         }
         AppReleaseRenderer builder = renderer.getIfAvailable();
@@ -253,6 +262,8 @@ public class AppReleaseExecutor {
                 throw new CloudPlatformException(EnumResponseType.ERROR, "渲染结果未能写入发布记录");
             }
         }
+        List<AppObjectRefDTO> objs = rendered.getObjects() == null ? List.of() : rendered.getObjects();
+        journal.info(execution, "RENDER", "渲染完成，共 " + objs.size() + " 个对象：" + names(objs));
         return "CONFLICT";
     }
 
@@ -275,6 +286,7 @@ public class AppReleaseExecutor {
                 }
             }
         }
+        journal.info(execution, "CONFLICT", "冲突检查通过：没有不属于本应用的同名对象");
         return "APPLY";
     }
 
@@ -301,6 +313,8 @@ public class AppReleaseExecutor {
         request.setClusterId(app.getClusterId());
         request.setManifest(release.getManifest());
         client.apply(request);
+        journal.info(execution, "APPLY", "已下发 " + rows.size() + " 个对象到命名空间 " + app.getNamespace()
+                + "，开始等待就绪");
         return "HEALTH";
     }
 
@@ -326,23 +340,40 @@ public class AppReleaseExecutor {
             status.getObjects().forEach(s -> states.put(s.getKind() + "/" + s.getName(), s.getState()));
         }
         Map<String, String> notes = new HashMap<>();
+        Map<String, List<String>> podIssues = new HashMap<>();
         if (status != null && status.getObjects() != null) {
-            status.getObjects().forEach(s -> notes.put(s.getKind() + "/" + s.getName(), s.getMessage()));
+            status.getObjects().forEach(s -> {
+                notes.put(s.getKind() + "/" + s.getName(), s.getMessage());
+                if (s.getPodIssues() != null && !s.getPodIssues().isEmpty()) {
+                    podIssues.put(s.getKind() + "/" + s.getName(), s.getPodIssues());
+                }
+            });
         }
         List<String> notReady = new ArrayList<>();
+        List<String> detail = new ArrayList<>();
         for (AppObjectRefDTO o : objects) {
             String key = o.getKind() + "/" + o.getName();
             String state = states.get(key);
             if (!"READY".equals(state)) {
                 String note = notes.get(key);
+                List<String> pods = podIssues.getOrDefault(key, List.of());
                 notReady.add(key + "（" + (state == null ? "无状态" : state)
-                        + (note == null || note.isBlank() ? "" : "：" + (note.length() > 200 ? note.substring(0, 200) + "…" : note)) + "）");
+                        + (note == null || note.isBlank() ? "" : "：" + (note.length() > 200 ? note.substring(0, 200) + "…" : note))
+                        + (pods.isEmpty() ? "" : "；" + pods.get(0)) + "）");
+                detail.add(key + " " + stateText(state) + (note == null || note.isBlank() ? "" : "（" + note + "）"));
+                pods.forEach(p -> detail.add("  · " + p));
             }
         }
         if (notReady.isEmpty()) {
             execution.setMessage("");
+            journal.info(execution, "HEALTH", "全部 " + objects.size() + " 个对象已就绪");
             return "PRUNE";
         }
+        if (status == null) {
+            detail.add(0, "（本拍查询对象状态失败，按未就绪处理）");
+        }
+        journal.infoIfChanged(execution, "HEALTH", "等待就绪（" + (objects.size() - notReady.size()) + "/"
+                + objects.size() + " 已就绪）：\n" + String.join("\n", detail));
         if (execution.getStartedAt() != null
                 && Duration.between(execution.getStartedAt().toInstant(), Instant.now())
                 .compareTo(Duration.ofMinutes(timeoutMinutes)) > 0) {
@@ -383,6 +414,9 @@ public class AppReleaseExecutor {
             request.setObjects(stale);
             request.setDeletePvc(false);
             client.prune(request);
+            journal.info(execution, "PRUNE", "清理旧版本留下的对象 " + stale.size() + " 个（数据卷保留）：" + names(stale));
+        } else {
+            journal.info(execution, "PRUNE", "没有需要清理的旧对象");
         }
         return "DONE";
     }
@@ -403,8 +437,47 @@ public class AppReleaseExecutor {
             request.setObjects(new ArrayList<>(all.values()));
             request.setDeletePvc(false);
             client.prune(request);
+            journal.info(execution, "PRUNE", "已删除 " + all.size() + " 个对象（数据卷保留）："
+                    + names(new ArrayList<>(all.values())));
+        } else {
+            journal.info(execution, "PRUNE", "台账里没有本应用的对象，无需删除");
         }
         return "DONE";
+    }
+
+    /** 「Deployment/x、Service/x …」；太长截断（日志列宽 2000） */
+    private static String names(List<AppObjectRefDTO> refs) {
+        String joined = refs.stream().map(r -> r.getKind() + "/" + r.getName()).collect(Collectors.joining("、"));
+        return joined.length() <= 1500 ? joined : joined.substring(0, 1499) + "…";
+    }
+
+    private static String stateText(String state) {
+        if (state == null) {
+            return "状态未知";
+        }
+        return switch (state) {
+            case "PENDING" -> "未就绪";
+            case "MISSING" -> "不存在";
+            case "FAILED" -> "失败";
+            case "UNKNOWN" -> "状态未知";
+            default -> state;
+        };
+    }
+
+    static String stageName(String stage) {
+        if (stage == null) {
+            return "预检";
+        }
+        return switch (stage) {
+            case "PRECHECK" -> "预检";
+            case "RENDER" -> "渲染";
+            case "CONFLICT" -> "冲突检查";
+            case "APPLY" -> "下发";
+            case "HEALTH" -> "健康检查";
+            case "PRUNE" -> "清理";
+            case "DONE" -> "完成";
+            default -> stage;
+        };
     }
 
     static boolean isOffline(PlatformAppRelease release) {
@@ -425,6 +498,8 @@ public class AppReleaseExecutor {
         execution.setFinishedAt(new Date());
         save(execution);
         credentials.forgetExecution(execution.getId());
+        journal.info(execution, "DONE", isOffline(requireRelease(execution))
+                ? "下线完成" : "发布完成，线上版本 #" + execution.getReleaseNo());
         return null;
     }
 
@@ -451,6 +526,7 @@ public class AppReleaseExecutor {
         execution.setMessage(message);
         save(execution);
         credentials.forgetExecution(execution.getId());
+        journal.warn(execution, execution.getStage(), "在「" + stageName(execution.getStage()) + "」中断：" + message);
     }
 
     private void fail(PlatformAppExecution execution, RuntimeException e) {
@@ -461,6 +537,7 @@ public class AppReleaseExecutor {
         execution.setFinishedAt(new Date());
         save(execution);
         credentials.forgetExecution(execution.getId());
+        journal.error(execution, execution.getStage(), "在「" + stageName(execution.getStage()) + "」失败：" + message);
         markRelease(execution, "FAILED");
 
         PlatformApplication patch = new PlatformApplication();

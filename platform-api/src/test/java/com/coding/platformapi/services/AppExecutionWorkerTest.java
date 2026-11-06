@@ -1,5 +1,6 @@
 package com.coding.platformapi.services;
 
+import com.coding.data.mapper.system.PlatformAppExecutionLogMapper;
 import com.coding.data.mapper.system.PlatformAppExecutionMapper;
 import com.coding.data.mapper.system.PlatformAppReleaseMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
@@ -283,7 +284,8 @@ class AppExecutionWorkerTest {
         AppReleaseExecutor real = new AppReleaseExecutor(mock(PlatformApplicationMapper.class),
                 mock(PlatformAppReleaseMapper.class), executions, mock(PlatformApplicationResourceMapper.class),
                 client, new ApplicationDeployCredentials(), new AppExecutionLease("restarted"),
-                mock(ObjectProvider.class), mock(ObjectProvider.class), 30);
+                mock(ObjectProvider.class), mock(ObjectProvider.class),
+                new AppExecutionJournal(mock(PlatformAppExecutionLogMapper.class)), 30);
         AppExecutionWorker restarted = new AppExecutionWorker(real, executions, new AppExecutionLease("restarted"), 4);
         try {
             PlatformAppExecution orphan = stored(1, "RUNNING");

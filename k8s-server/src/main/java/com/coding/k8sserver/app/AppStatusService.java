@@ -72,6 +72,9 @@ public class AppStatusService {
                         ? 0 : d.getStatus().getReplicas();
                 s.setState(deploymentState(want, have, updated, total, observed));
                 s.setMessage("可用副本 " + have + "/" + want + "，已更新 " + updated + "/" + want);
+                if (!"READY".equals(s.getState())) {
+                    s.setPodIssues(AppPodDiagnosis.diagnose(client, ref.getNamespace(), d.getSpec().getSelector()));
+                }
             }
             case "StatefulSet" -> {
                 StatefulSet sts = client.apps().statefulSets()
@@ -93,6 +96,9 @@ public class AppStatusService {
                         sts.getStatus().getCurrentRevision(), sts.getStatus().getUpdateRevision(), updated, want);
                 s.setState(statefulSetState(want, have, settled, observed));
                 s.setMessage("就绪副本 " + have + "/" + want + "，已更新 " + updated + "/" + want);
+                if (!"READY".equals(s.getState())) {
+                    s.setPodIssues(AppPodDiagnosis.diagnose(client, ref.getNamespace(), sts.getSpec().getSelector()));
+                }
             }
             default -> s.setState(exists(client, ref));
         }

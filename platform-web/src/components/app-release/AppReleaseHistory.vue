@@ -12,6 +12,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import AppExecutionLog from './AppExecutionLog.vue'
 import { fmtDate } from '@/utils/format'
 import type { AppEnvRow, AppRelease } from '@/types'
 import { canRollbackTo, errMsg, RELEASE_STATUS } from './releaseUtil'
@@ -160,6 +161,9 @@ function externalText(ext?: Record<string, unknown> | null): string {
             <span v-if="dep.instanceId"> · 实例 {{ dep.instanceId }}</span>
             <div v-if="dep.external" class="app-rel-drawer__muted">{{ externalText(dep.external) }}</div>
           </div>
+
+          <h4>过程日志</h4>
+          <AppExecutionLog :app-id="appId" :release-no="detail.releaseNo" :tenant-id="tenantId" :offline="detail.type === 'OFFLINE'" />
 
           <h4>集群对象</h4>
           <div v-if="!detail.objects?.length" class="app-rel-drawer__muted">无。</div>

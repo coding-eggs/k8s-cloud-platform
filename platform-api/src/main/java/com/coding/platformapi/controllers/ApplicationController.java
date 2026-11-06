@@ -4,6 +4,7 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.common.audit.AuditAction;
 import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.AppDependencyRequest;
+import com.coding.platformapi.models.AppExecutionLogView;
 import com.coding.platformapi.models.AppExecutionView;
 import com.coding.platformapi.models.AppOverviewView;
 import com.coding.platformapi.models.AppReleasePreviewView;
@@ -12,6 +13,7 @@ import com.coding.platformapi.models.AppReleaseView;
 import com.coding.platformapi.models.AppServiceRequest;
 import com.coding.platformapi.models.AppServiceView;
 import com.coding.platformapi.services.AppDependencyService;
+import com.coding.platformapi.services.AppExecutionLogService;
 import com.coding.platformapi.services.AppReleaseService;
 import com.coding.platformapi.services.AppServiceConfigService;
 import com.coding.platformapi.models.ApplicationCreateRequest;
@@ -41,6 +43,9 @@ public class ApplicationController {
 
     @Autowired
     private AuthContext auth;
+
+    @Autowired
+    private AppExecutionLogService executionLogs;
 
     private final AppServiceConfigService serviceConfig;
     private final AppReleaseService release;
@@ -201,6 +206,13 @@ public class ApplicationController {
     @Operation(summary = "当前活动执行（无则 data 为空）")
     public ResponseData<AppExecutionView> executionActive(@RequestBody AppReleaseRequest request) {
         return new ResponseData<>(release.activeExecution(request.getAppId(),
+                auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/execution/logs")
+    @Operation(summary = "某次发布的过程日志（每阶段做了什么、健康检查卡在哪），按时间正序")
+    public ResponseData<List<AppExecutionLogView>> executionLogs(@RequestBody AppReleaseRequest request) {
+        return new ResponseData<>(executionLogs.list(request.getAppId(), request.getReleaseNo(),
                 auth.effectiveTenantId(request.getTenantId())));
     }
 

@@ -16,6 +16,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
+import AppExecutionLog from './AppExecutionLog.vue'
 import type { AppExecution, AppServiceRow, AppServiceState } from '@/types'
 import { errMsg, EXEC_STAGE, EXEC_STATUS, isRunning, OFFLINE_STAGE_ORDER, STAGE_ORDER, stageStep } from './releaseUtil'
 
@@ -46,6 +47,10 @@ const STATE_META: Record<AppServiceState, { text: string; type: 'success' | 'war
 const current = ref<AppExecution | null>(props.execution)
 const acting = ref(false)
 const error = ref('')
+/** 每次轮询 +1，过程日志跟着重读 */
+const logTick = ref(0)
+/** 失败 / 中断 / 进行中默认展开日志；用户手动收起后不再自动展开 */
+const showLog = ref(true)
 
 let timer: number | null = null
 function stopPoll(): void {
@@ -55,6 +60,7 @@ async function poll(): Promise<void> {
   try {
     const e = await appReleaseApi.activeExecution(props.appId, props.tenantId)
     if (e) current.value = e
+    logTick.value++
     emit('tick')
     if (!e || !isRunning(e.status)) stopPoll()
   } catch {
@@ -94,6 +100,7 @@ async function resume(): Promise<void> {
   try {
     await appReleaseApi.resume(exec.value.id, props.tenantId)
     ElMessage.success(interrupted.value ? '已继续' : '已重新执行')
+    logTick.value++
     emit('changed')
   } catch (e) {
     error.value = errMsg(e, '操作失败')
@@ -154,6 +161,19 @@ async function resume(): Promise<void> {
     />
     <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" class="app-exec__err" />
 
+    <div class="app-exec__log-head">
+      <el-button link type="primary" @click="showLog = !showLog">{{ showLog ? '收起过程日志' : '展开过程日志' }}</el-button>
+      <span v-if="running" class="app-exec__muted">每 3 秒刷新；健康检查只在状态变化时追加一条</span>
+    </div>
+    <AppExecutionLog
+      v-if="showLog"
+      :app-id="appId"
+      :release-no="exec.releaseNo"
+      :tenant-id="tenantId"
+      :refresh-key="logTick"
+      :offline="offline"
+    />
+
     <div v-if="healthRows.length" class="app-exec__health">
       <span v-for="s in healthRows" :key="s.key" class="app-exec__svc">
         <b>{{ s.key }}</b>
@@ -170,6 +190,7 @@ async function resume(): Promise<void> {
 .app-exec__spacer { flex: 1; }
 .app-exec__muted { color: var(--text-3); font-size: 12px; }
 .app-exec__hint { font-size: 12px; margin-top: 4px; }
+.app-exec__log-head { display: flex; align-items: center; gap: 12px; margin-bottom: -6px; }
 .app-exec__health { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; }
 .app-exec__svc { display: inline-flex; align-items: center; gap: 8px; }
 </style>

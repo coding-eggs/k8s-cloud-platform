@@ -9,6 +9,7 @@ import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
 import com.coding.common.models.app.AppStatusResultDTO;
+import com.coding.data.mapper.system.PlatformAppExecutionLogMapper;
 import com.coding.data.mapper.system.PlatformAppExecutionMapper;
 import com.coding.data.mapper.system.PlatformAppReleaseMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
@@ -69,6 +70,7 @@ class AppReleaseExecutorTest {
     private AppReleasePrecheck precheck;
     private AppReleaseRenderer renderer;
     private AppReleaseExecutor executor;
+    private PlatformAppExecutionLogMapper logMapper;
     private PlatformApplication app;
     private PlatformAppRelease release;
 
@@ -88,8 +90,9 @@ class AppReleaseExecutorTest {
         ObjectProvider<AppReleaseRenderer> rendererProvider = mock(ObjectProvider.class);
         when(precheckProvider.getIfAvailable()).thenReturn(precheck);
         when(rendererProvider.getIfAvailable()).thenReturn(renderer);
+        logMapper = mock(PlatformAppExecutionLogMapper.class);
         executor = new AppReleaseExecutor(apps, releases, executions, resources, client, credentials, leases,
-                precheckProvider, rendererProvider, 30);
+                precheckProvider, rendererProvider, new AppExecutionJournal(logMapper), 30);
 
         app = new PlatformApplication();
         app.setId("app_1");
@@ -254,6 +257,41 @@ class AppReleaseExecutorTest {
 
         assertThat(e.getMessage()).contains("Deployment/demo-web").contains("PENDING").contains("0/2 副本就绪");
         assertThat(lastSaved().getMessage()).contains("Deployment/demo-web");
+    }
+
+    @Test
+    void healthJournalListsPodIssuesAndSkipsUnchangedTicks() {
+        AppStatusResultDTO s = statusOf("PENDING");
+        s.getObjects().get(0).setMessage("0/1 副本就绪");
+        s.getObjects().get(0).setPodIssues(List.of("Pod demo-web-abc：容器 web 拉取镜像失败（ImagePullBackOff）"));
+        when(client.status(any())).thenReturn(s);
+
+        PlatformAppExecution e = at("HEALTH");
+        executor.advance(e);
+
+        org.mockito.ArgumentCaptor<com.coding.data.models.system.PlatformAppExecutionLog> row =
+                org.mockito.ArgumentCaptor.forClass(com.coding.data.models.system.PlatformAppExecutionLog.class);
+        verify(logMapper).insert(row.capture());
+        assertThat(row.getValue().getStage()).isEqualTo("HEALTH");
+        assertThat(row.getValue().getMessage()).contains("0/1 已就绪").contains("Deployment/demo-web 未就绪")
+                .contains("  · Pod demo-web-abc：容器 web 拉取镜像失败");
+        assertThat(e.getMessage()).contains("ImagePullBackOff");
+
+        // 下一拍状态没变：不再追加
+        when(logMapper.selectLastByExecution(7L)).thenReturn(row.getValue());
+        executor.advance(at("HEALTH"));
+        verify(logMapper, org.mockito.Mockito.times(1)).insert(any());
+    }
+
+    @Test
+    void journalFailureDoesNotFailTheRelease() {
+        when(logMapper.insert(any())).thenThrow(new RuntimeException("表不存在"));
+        when(client.status(any())).thenReturn(statusOf("READY"));
+
+        executor.advance(at("HEALTH"));
+
+        assertThat(lastSaved().getStage()).isEqualTo("PRUNE");
+        assertThat(lastSaved().getStatus()).isEqualTo("RUNNING");
     }
 
     @Test
@@ -600,7 +638,7 @@ class AppReleaseExecutorTest {
         @SuppressWarnings("unchecked")
         ObjectProvider<AppReleaseRenderer> noneR = mock(ObjectProvider.class);
         AppReleaseExecutor bare = new AppReleaseExecutor(apps, releases, executions, resources, client,
-                credentials, leases, none, noneR, 30);
+                credentials, leases, none, noneR, new AppExecutionJournal(logMapper), 30);
 
         bare.advance(at("PRECHECK"));
 

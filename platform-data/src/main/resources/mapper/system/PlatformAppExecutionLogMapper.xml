@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.coding.data.mapper.system.PlatformAppExecutionLogMapper">
+
+  <resultMap id="BaseResultMap" type="com.coding.data.models.system.PlatformAppExecutionLog">
+    <id     column="id"           jdbcType="BIGINT"    property="id" />
+    <result column="execution_id" jdbcType="BIGINT"    property="executionId" />
+    <result column="app_id"       jdbcType="VARCHAR"   property="appId" />
+    <result column="release_no"   jdbcType="INTEGER"   property="releaseNo" />
+    <result column="stage"        jdbcType="VARCHAR"   property="stage" />
+    <result column="level"        jdbcType="VARCHAR"   property="level" />
+    <result column="message"      jdbcType="VARCHAR"   property="message" />
+    <result column="created_at"   jdbcType="TIMESTAMP" property="createdAt" />
+  </resultMap>
+
+  <sql id="Base_Column_List">
+    id, execution_id, app_id, release_no, stage, `level`, message, created_at
+  </sql>
+
+  <insert id="insert" parameterType="com.coding.data.models.system.PlatformAppExecutionLog"
+          useGeneratedKeys="true" keyProperty="id">
+    insert into platform_app_execution_log (execution_id, app_id, release_no, stage, `level`, message, created_at)
+    values (#{executionId,jdbcType=BIGINT}, #{appId,jdbcType=VARCHAR}, #{releaseNo,jdbcType=INTEGER},
+            #{stage,jdbcType=VARCHAR}, #{level,jdbcType=VARCHAR}, #{message,jdbcType=VARCHAR},
+            #{createdAt,jdbcType=TIMESTAMP})
+  </insert>
+
+  <select id="selectByRelease" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_execution_log
+    where app_id = #{appId,jdbcType=VARCHAR} and release_no = #{releaseNo,jdbcType=INTEGER}
+    order by id asc
+  </select>
+
+  <select id="selectLastByExecution" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_app_execution_log
+    where execution_id = #{executionId,jdbcType=BIGINT}
+    order by id desc
+    limit 1
+  </select>
+
+  <delete id="deleteByApp">
+    delete from platform_app_execution_log where app_id = #{appId,jdbcType=VARCHAR}
+  </delete>
+
+</mapper>

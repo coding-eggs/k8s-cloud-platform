@@ -2944,6 +2944,16 @@ export interface AppExecution {
   releaseType?: string | null
 }
 
+/** 发布过程日志的一行；message 可能多行（健康检查逐对象 / 逐 Pod） */
+export interface AppExecutionLog {
+  id: number
+  stage?: string | null
+  /** INFO / WARN / ERROR */
+  level: string
+  message: string
+  createdAt: string
+}
+
 /** 服务的一个配置文件（ConfigMap 卷，subPath 只读挂载） */
 export interface AppConfigFile {
   path: string

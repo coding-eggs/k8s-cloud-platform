@@ -64,6 +64,16 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 与集群里别的 Service 撞端口只能在下发时由 K8s 报错。desired 存 `expose: nodeport` + 可选 `nodePort`，
 「不暴露」不存这两个键。HTTPRoute / 网关方式暂不做（入口网关的管理方式未定）。
 
+### 1.6 过程日志（`/application/execution/logs`）
+
+表 `platform_app_execution_log`（迁移 `V2026_11_06_2`），执行器每个阶段追加一条：预检结论、渲染出哪些对象、
+冲突检查、下发到哪个命名空间、健康检查、清理 / 删除了哪些对象、完成 / 失败 / 中断（含原因）、谁点了继续。
+健康检查每 3 秒一拍，**只在内容变化时追加**（与该执行上一条相同就跳过）；内容逐个列出未就绪对象，
+工作负载再下钻到 Pod（k8s-server `AppPodDiagnosis`：调度失败、拉镜像失败、CrashLoopBackOff + 上次退出码、
+配置引用缺失、初始化容器未完成、探针没过；说不清时补该 Pod 最近一条 Warning 事件），最多 3 个 Pod。
+第一个 Pod 原因也拼进执行的 `message`，所以超时失败的报错里能直接看到。
+写日志失败只记 warn，不影响发布。前端：进度面板下方时间线（随轮询刷新）、发布记录详情抽屉里也有一份。
+
 ## 2. 配置文件
 
 服务页「配置文件」页签：每条一个绝对路径 + 内容。

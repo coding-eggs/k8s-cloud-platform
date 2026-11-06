@@ -1,6 +1,7 @@
 import http from './http'
 import type {
   AppExecution,
+  AppExecutionLog,
   AppDependencyRequest,
   AppDependencyRow,
   AppOverview,
@@ -1290,6 +1291,9 @@ export const appReleaseApi = {
     http.post<never, AppExecution | null>('/application/execution/active', { appId, tenantId }),
   resume: (executionId: number, tenantId?: string) =>
     http.post<never, void>('/application/execution/resume', { executionId, tenantId }),
+  /** 某次发布的过程日志（按时间正序） */
+  logs: (appId: string, releaseNo: number, tenantId?: string) =>
+    http.post<never, AppExecutionLog[]>('/application/execution/logs', { appId, releaseNo, tenantId }),
 }
 
 /** OAuth 客户端（平台管理面，仅 admin）。读接口不含任何密钥；创建 / 重置的响应里密钥只出现一次 */
