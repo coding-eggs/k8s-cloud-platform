@@ -2,6 +2,7 @@
 import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { isManaged, managedReason } from '@/utils/managedResource'
 import { computed, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, MoreFilled } from '@element-plus/icons-vue'
@@ -188,6 +189,16 @@ const contextDesc = computed(() => {
 
 function onLoad(): void { void load() }
 onLoad()
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  ...Object.fromEntries(
+    ROUTE_KINDS.map((k) => [
+      `create-${k.key}`,
+      { run: () => goCreate(k.key), ready: () => ready.value && canCreate.value && creatable.value.some((c) => c.key === k.key) },
+    ]),
+  ),
+})
 </script>
 
 <template>

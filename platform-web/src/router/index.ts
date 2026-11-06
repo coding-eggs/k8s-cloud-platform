@@ -30,7 +30,23 @@ declare module 'vue-router' {
     nav?: 'hidden'
     /** 域内排序，小在前；缺省 999。 */
     order?: number
+    /** 命令面板（Ctrl+K）的额外匹配词：英文 kind、缩写、同义词。标题本身与其拼音已自动参与匹配，不用重复写。 */
+    keywords?: string[]
+    /**
+     * 命令面板可直达的页内功能（新建 / 页级页签）。选中后跳到本页并带 `?do=<key>`，
+     * 页面用 `usePaletteAction({ <key>: ... })` 接住并执行 —— 声明了 action 的页面必须接，否则选中后什么也不发生。
+     */
+    actions?: PaletteActionMeta[]
   }
+}
+
+export interface PaletteActionMeta {
+  /** 与页面里 usePaletteAction 的键一致，进 query：`?do=<key>` */
+  key: string
+  title: string
+  keywords?: string[]
+  /** 只给平台管理员（页面里该按钮本身就只对管理员显示） */
+  adminOnly?: boolean
 }
 
 const router = createRouter({
@@ -50,122 +66,122 @@ const router = createRouter({
         { path: 'profile', name: 'profile', component: () => import('@/views/ProfileView.vue'), meta: { title: '个人中心', nav: 'hidden' } },
 
         // ============ 平台视图 · 集群 ============
-        { path: 'clusters', name: 'clusters', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群管理', domain: 'cluster', icon: 'Monitor', order: 1, requiresPerm: [pageCodes.cluster] } },
+        { path: 'clusters', name: 'clusters', component: () => import('@/views/ClusterView.vue'), meta: { title: '集群管理', domain: 'cluster', icon: 'Monitor', order: 1, requiresPerm: [pageCodes.cluster], keywords: ['cluster', 'k8s', 'kubeconfig', '集群列表'], actions: [{ key: 'create', title: '新增集群', keywords: ['add cluster', '接入集群', '导入集群'] }] } },
         { path: 'clusters/detail', name: 'cluster-detail', component: () => import('@/views/ClusterDetailView.vue'), meta: { title: '集群概览', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.cluster] } },
-        { path: 'nodes', name: 'nodes', component: () => import('@/views/NodeView.vue'), meta: { title: '节点管理', domain: 'cluster', icon: 'Cpu', order: 2, requiresPerm: [pageCodes.node.list] } },
+        { path: 'nodes', name: 'nodes', component: () => import('@/views/NodeView.vue'), meta: { title: '节点管理', domain: 'cluster', icon: 'Cpu', order: 2, requiresPerm: [pageCodes.node.list], keywords: ['node', 'no', '主机', '服务器', 'kubelet'] } },
         { path: 'nodes/detail', name: 'node-detail', component: () => import('@/views/NodeDetailView.vue'), meta: { title: '节点详情', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.node.detail] } },
-        { path: 'namespaces', name: 'namespaces', component: () => import('@/views/NamespaceView.vue'), meta: { title: '命名空间管理', domain: 'cluster', icon: 'FolderOpened', order: 3, requiresPerm: [pageCodes.namespace.list] } },
+        { path: 'namespaces', name: 'namespaces', component: () => import('@/views/NamespaceView.vue'), meta: { title: '命名空间管理', domain: 'cluster', icon: 'FolderOpened', order: 3, requiresPerm: [pageCodes.namespace.list], keywords: ['namespace', 'ns', '项目', '配额', 'quota'], actions: [{ key: 'create', title: '创建命名空间', keywords: ['new namespace'] }] } },
         { path: 'namespaces/editor', name: 'namespace-editor', component: () => import('@/views/NamespaceEditorView.vue'), meta: { title: '命名空间编辑', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.namespace.edit] } },
         { path: 'namespaces/detail', name: 'namespace-detail', component: () => import('@/views/NamespaceDetailView.vue'), meta: { title: '命名空间概览', domain: 'cluster', nav: 'hidden', requiresPerm: [pageCodes.namespace.detail] } },
         // 存储类：集群级、只读，**不挂顶栏上下文** —— 页面自己带一个集群选择器。
         // 它既不需要命名空间，也不需要顶栏那一套“租户/集群”记忆。
-        { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', domain: 'cluster', icon: 'Files', order: 4, requiresPerm: [pageCodes.storageClass.list] } },
+        { path: 'resources/storageclasses', name: 'storageclasses', component: () => import('@/views/resource/StorageClassView.vue'), meta: { title: '存储类', domain: 'cluster', icon: 'Files', order: 4, requiresPerm: [pageCodes.storageClass.list], keywords: ['storageclass', 'sc', '存储类型', 'provisioner'] } },
 
         // 快照类与快照内容（S4.3）：集群级、只读、仅平台管理员；页面自带集群选择器（与存储类同形）
-        { path: 'volume-snapshot-cluster', name: 'volume-snapshot-cluster', component: () => import('@/views/resource/VolumeSnapshotClusterView.vue'), meta: { title: '卷快照', domain: 'cluster', icon: 'CopyDocument', order: 4.5, requiresPerm: [pageCodes.volumeSnapshotCluster] } },
+        { path: 'volume-snapshot-cluster', name: 'volume-snapshot-cluster', component: () => import('@/views/resource/VolumeSnapshotClusterView.vue'), meta: { title: '卷快照', domain: 'cluster', icon: 'CopyDocument', order: 4.5, requiresPerm: [pageCodes.volumeSnapshotCluster], keywords: ['volumesnapshotclass', 'volumesnapshotcontent', 'vsc', '快照类', '快照内容'], actions: [{ key: 'contents', title: '快照内容', keywords: ['volumesnapshotcontent'] }] } },
 
         // ============ 平台视图 · 网络 ============
-        { path: 'mesh/gatewayclasses', name: 'gatewayclasses', component: () => import('@/views/mesh/GatewayClassView.vue'), meta: { title: 'GatewayClass', domain: 'network', icon: 'Guide', order: 1, requiresPerm: [pageCodes.mesh.gatewayClass.list] } },
+        { path: 'mesh/gatewayclasses', name: 'gatewayclasses', component: () => import('@/views/mesh/GatewayClassView.vue'), meta: { title: 'GatewayClass', domain: 'network', icon: 'Guide', order: 1, requiresPerm: [pageCodes.mesh.gatewayClass.list], keywords: ['gatewayclass', 'gc', 'gateway api', '网关类'], actions: [{ key: 'create', title: '创建 GatewayClass' }] } },
         { path: 'mesh/gatewayclasses/editor', name: 'gatewayclass-editor', component: () => import('@/views/mesh/GatewayClassEditorView.vue'), meta: { title: 'GatewayClass 编辑', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.mesh.gatewayClass.edit] } },
-        { path: 'ops/ippools', name: 'ippools', component: () => import('@/views/ops/IppoolView.vue'), meta: { title: '地址池', domain: 'network', icon: 'Grid', order: 2, requiresPerm: [pageCodes.ops.ippool.list] } },
+        { path: 'ops/ippools', name: 'ippools', component: () => import('@/views/ops/IppoolView.vue'), meta: { title: '地址池', domain: 'network', icon: 'Grid', order: 2, requiresPerm: [pageCodes.ops.ippool.list], keywords: ['ippool', 'calico', 'ipam', 'cidr', 'ip 池', '网段'], actions: [{ key: 'create', title: '创建地址池', keywords: ['new ippool'] }] } },
         { path: 'ops/ippools/detail', name: 'ippool-detail', component: () => import('@/views/ops/IppoolDetailView.vue'), meta: { title: '地址池详情', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.ippool.detail] } },
         { path: 'ops/ippools/editor', name: 'ippool-editor', component: () => import('@/views/ops/IppoolEditorView.vue'), meta: { title: '地址池编辑', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.ippool.edit] } },
-        { path: 'ops/ipreservations', name: 'ipreservations', component: () => import('@/views/ops/IpReservationView.vue'), meta: { title: '保留 IP', domain: 'network', icon: 'Lock', order: 3, requiresPerm: [pageCodes.ops.ipReservation.list] } },
+        { path: 'ops/ipreservations', name: 'ipreservations', component: () => import('@/views/ops/IpReservationView.vue'), meta: { title: '保留 IP', domain: 'network', icon: 'Lock', order: 3, requiresPerm: [pageCodes.ops.ipReservation.list], keywords: ['ipreservation', 'calico', '预留 ip', 'ip 保留'], actions: [{ key: 'create', title: '创建保留 IP' }] } },
         { path: 'ops/ipreservations/editor', name: 'ipreservation-editor', component: () => import('@/views/ops/IpReservationEditorView.vue'), meta: { title: '保留 IP 编辑', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.ipReservation.edit] } },
-        { path: 'ops/bgpconfigurations', name: 'bgpconfigurations', component: () => import('@/views/ops/BgpConfigurationView.vue'), meta: { title: 'BGP 配置', domain: 'network', icon: 'Connection', order: 4, requiresPerm: [pageCodes.ops.bgpConfiguration.list] } },
+        { path: 'ops/bgpconfigurations', name: 'bgpconfigurations', component: () => import('@/views/ops/BgpConfigurationView.vue'), meta: { title: 'BGP 配置', domain: 'network', icon: 'Connection', order: 4, requiresPerm: [pageCodes.ops.bgpConfiguration.list], keywords: ['bgpconfiguration', 'bgp', 'calico', 'asn', '路由宣告'], actions: [{ key: 'create', title: '创建 BGP 配置', adminOnly: true }] } },
         { path: 'ops/bgpconfigurations/detail', name: 'bgpconfiguration-detail', component: () => import('@/views/ops/BgpConfigurationDetailView.vue'), meta: { title: 'BGP 配置详情', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.bgpConfiguration.detail] } },
         { path: 'ops/bgpconfigurations/editor', name: 'bgpconfiguration-editor', component: () => import('@/views/ops/BgpConfigurationEditorView.vue'), meta: { title: 'BGP 配置编辑', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.bgpConfiguration.edit] } },
-        { path: 'ops/bgppeers', name: 'bgppeers', component: () => import('@/views/ops/BgpPeerView.vue'), meta: { title: 'BGP 对等体', domain: 'network', icon: 'Share', order: 5, requiresPerm: [pageCodes.ops.bgpPeer.list] } },
+        { path: 'ops/bgppeers', name: 'bgppeers', component: () => import('@/views/ops/BgpPeerView.vue'), meta: { title: 'BGP 对等体', domain: 'network', icon: 'Share', order: 5, requiresPerm: [pageCodes.ops.bgpPeer.list], keywords: ['bgppeer', 'bgp', 'calico', 'peer', '邻居'], actions: [{ key: 'create', title: '创建 BGP 对等体' }] } },
         { path: 'ops/bgppeers/detail', name: 'bgppeer-detail', component: () => import('@/views/ops/BgpPeerDetailView.vue'), meta: { title: 'BGP 对等体详情', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.bgpPeer.detail] } },
         { path: 'ops/bgppeers/editor', name: 'bgppeer-editor', component: () => import('@/views/ops/BgpPeerEditorView.vue'), meta: { title: 'BGP 对等体编辑', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.bgpPeer.edit] } },
-        { path: 'ops/bgpfilters', name: 'bgpfilters', component: () => import('@/views/ops/BgpFilterView.vue'), meta: { title: 'BGP 过滤器', domain: 'network', icon: 'Filter', order: 6, requiresPerm: [pageCodes.ops.bgpFilter.list] } },
+        { path: 'ops/bgpfilters', name: 'bgpfilters', component: () => import('@/views/ops/BgpFilterView.vue'), meta: { title: 'BGP 过滤器', domain: 'network', icon: 'Filter', order: 6, requiresPerm: [pageCodes.ops.bgpFilter.list], keywords: ['bgpfilter', 'bgp', 'calico', 'filter', '路由过滤'], actions: [{ key: 'create', title: '创建 BGP 过滤器' }] } },
         { path: 'ops/bgpfilters/detail', name: 'bgpfilter-detail', component: () => import('@/views/ops/BgpFilterDetailView.vue'), meta: { title: 'BGP 过滤器详情', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.bgpFilter.detail] } },
         { path: 'ops/bgpfilters/editor', name: 'bgpfilter-editor', component: () => import('@/views/ops/BgpFilterEditorView.vue'), meta: { title: 'BGP 过滤器编辑', domain: 'network', nav: 'hidden', requiresPerm: [pageCodes.ops.bgpFilter.edit] } },
 
         // ============ 平台视图 · 组织 ============
-        { path: 'tenants', name: 'tenants', component: () => import('@/views/TenantView.vue'), meta: { title: '租户管理', domain: 'org', icon: 'OfficeBuilding', order: 1, requiresPerm: [pageCodes.tenant.list] } },
-        { path: 'users', name: 'users', component: () => import('@/views/UserView.vue'), meta: { title: '用户管理', domain: 'org', icon: 'User', order: 2, requiresPerm: [pageCodes.user] } },
-        { path: 'roles', name: 'roles', component: () => import('@/views/RoleView.vue'), meta: { title: '角色与权限', domain: 'org', icon: 'Lock', order: 3, requiresPerm: [pageCodes.role] } },
-        { path: 'permissions', name: 'permissions', component: () => import('@/views/PermissionView.vue'), meta: { title: '权限点', domain: 'org', icon: 'Key', order: 4, requiresPerm: [pageCodes.permission] } },
-        { path: 'templates', name: 'templates', component: () => import('@/views/TemplateView.vue'), meta: { title: 'RBAC 模板', domain: 'org', icon: 'CollectionTag', order: 5, requiresPerm: [pageCodes.template] } },
-        { path: 'oauth-clients', name: 'oauth-clients', component: () => import('@/views/OAuthClientView.vue'), meta: { title: 'OAuth 客户端', domain: 'org', icon: 'Link', order: 6, requiresPerm: [pageCodes.oauthClient] } },
+        { path: 'tenants', name: 'tenants', component: () => import('@/views/TenantView.vue'), meta: { title: '租户管理', domain: 'org', icon: 'OfficeBuilding', order: 1, requiresPerm: [pageCodes.tenant.list], keywords: ['tenant', '组织', '团队', '分配命名空间'], actions: [{ key: 'create', title: '创建租户', keywords: ['new tenant'] }] } },
+        { path: 'users', name: 'users', component: () => import('@/views/UserView.vue'), meta: { title: '用户管理', domain: 'org', icon: 'User', order: 2, requiresPerm: [pageCodes.user], keywords: ['user', 'account', '账号', '成员'], actions: [{ key: 'create', title: '新建用户', keywords: ['add user', '添加用户'] }] } },
+        { path: 'roles', name: 'roles', component: () => import('@/views/RoleView.vue'), meta: { title: '角色与权限', domain: 'org', icon: 'Lock', order: 3, requiresPerm: [pageCodes.role], keywords: ['role', 'rbac', '授权', '权限'], actions: [{ key: 'create', title: '新建角色', keywords: ['new role'] }] } },
+        { path: 'permissions', name: 'permissions', component: () => import('@/views/PermissionView.vue'), meta: { title: '权限点', domain: 'org', icon: 'Key', order: 4, requiresPerm: [pageCodes.permission], keywords: ['permission', '权限码', 'api', 'url'], actions: [{ key: 'create', title: '创建权限点' }] } },
+        { path: 'templates', name: 'templates', component: () => import('@/views/TemplateView.vue'), meta: { title: 'RBAC 模板', domain: 'org', icon: 'CollectionTag', order: 5, requiresPerm: [pageCodes.template], keywords: ['template', 'rbac', 'clusterrole', '模板下发', '重下发'], actions: [{ key: 'create', title: '创建 RBAC 模板' }] } },
+        { path: 'oauth-clients', name: 'oauth-clients', component: () => import('@/views/OAuthClientView.vue'), meta: { title: 'OAuth 客户端', domain: 'org', icon: 'Link', order: 6, requiresPerm: [pageCodes.oauthClient], keywords: ['oauth', 'client', 'sso', 'redirect', '回调地址', '客户端'], actions: [{ key: 'create', title: '新建 OAuth 客户端' }] } },
 
         // ============ 平台视图 · 运维（也是 both 面页面的平台落点） ============
-        { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '审计日志', domain: 'ops', icon: 'Document', order: 1, requiresPerm: [pageCodes.audit] } },
+        { path: 'audit', name: 'audit', component: () => import('@/views/AuditView.vue'), meta: { title: '审计日志', domain: 'ops', icon: 'Document', order: 1, requiresPerm: [pageCodes.audit], keywords: ['audit', 'log', '操作日志', '操作记录'] } },
         // Git 凭据：**归租户**（2026-10-31 起）。顶栏/菜单只在租户视图出现 —— 不写 platformDomain，
         // 它的域 `app` 不在平台视图的域集合里，平台视图自然看不到入口。
-        { path: 'git-credentials', name: 'git-credentials', component: () => import('@/views/GitCredentialView.vue'), meta: { title: 'Git 凭据', domain: 'app', icon: 'Tickets', order: 5, requiresPerm: [pageCodes.credential, pageCodes.credentialTenant] } },
+        { path: 'git-credentials', name: 'git-credentials', component: () => import('@/views/GitCredentialView.vue'), meta: { title: 'Git 凭据', domain: 'app', icon: 'Tickets', order: 5, requiresPerm: [pageCodes.credential, pageCodes.credentialTenant], keywords: ['git', 'credential', 'token', 'ssh', '代码仓库', '凭证'], actions: [{ key: 'create', title: '新建 Git 凭据' }] } },
         // 通知方式：平台全局对象（渠道可留空=所有租户可用），页面不用资源上下文 ——
         // 不挂 context:'full'，否则顶栏会显示一个选了也不影响任何东西的“租户/集群/命名空间”级联。
-        { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', domain: 'ops', icon: 'Message', order: 3, requiresPerm: [pageCodes.notifyChannel] } },
+        { path: 'notification-channels', name: 'notification-channels', component: () => import('@/views/NotificationChannelView.vue'), meta: { title: '通知方式', domain: 'ops', icon: 'Message', order: 3, requiresPerm: [pageCodes.notifyChannel], keywords: ['notification', 'channel', 'webhook', '钉钉', '飞书', '企业微信', '邮件', '告警通知'], actions: [{ key: 'create', title: '新建通知方式' }] } },
         // 链路追踪：平台自研链路（数据源 = 中心 Tempo），平台/租户两套页代码，同上归两个视图
-        { path: 'mesh/traces', name: 'mesh-traces', component: () => import('@/views/mesh/TraceView.vue'), meta: { title: '链路追踪', domain: 'observe', platformDomain: 'ops', icon: 'Timer', order: 6, context: 'full', requiresPerm: [pageCodes.mesh.trace, pageCodes.mesh.traceTenant] } },
+        { path: 'mesh/traces', name: 'mesh-traces', component: () => import('@/views/mesh/TraceView.vue'), meta: { title: '链路追踪', domain: 'observe', platformDomain: 'ops', icon: 'Timer', order: 6, context: 'full', requiresPerm: [pageCodes.mesh.trace, pageCodes.mesh.traceTenant], keywords: ['trace', 'tracing', 'tempo', 'traceql', 'span', 'otel', '调用链'] } },
 
         // ============ 租户视图 · 应用 ============
-        { path: 'applications', name: 'applications', component: () => import('@/views/ApplicationListView.vue'), meta: { title: '应用', domain: 'app', icon: 'Connection', order: 1, context: 'full', requiresPerm: [pageCodes.application] } },
+        { path: 'applications', name: 'applications', component: () => import('@/views/ApplicationListView.vue'), meta: { title: '应用', domain: 'app', icon: 'Connection', order: 1, context: 'full', requiresPerm: [pageCodes.application], keywords: ['application', 'app', '应用编排', '发布', 'release'], actions: [{ key: 'create', title: '新建应用', keywords: ['new app'] }] } },
         { path: 'applications/:id', name: 'application-detail', component: () => import('@/views/ApplicationDetailView.vue'), meta: { title: '应用', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.application] } },
         { path: 'applications/:id/services/:key', name: 'application-service', component: () => import('@/views/ApplicationServiceView.vue'), meta: { title: '服务配置', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.application] } },
-        { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', domain: 'app', icon: 'Grid', order: 2, context: 'full', requiresPerm: [pageCodes.app] } },
+        { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', domain: 'app', icon: 'Grid', order: 2, context: 'full', requiresPerm: [pageCodes.app], keywords: ['middleware', 'mysql', 'redis', 'kafka', 'elasticsearch', 'es', 'mongodb', 'postgresql', 'nacos', 'milvus', 'rabbitmq', 'operator', '商店', 'store'], actions: [{ key: 'operator', title: 'Operator 管理', keywords: ['安装 operator'], adminOnly: true }] } },
         // 实例列表与商店共用 pageCodes.app：商店管清单与 Operator，这条管已建实例
-        { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', domain: 'app', icon: 'Files', order: 3, context: 'full', requiresPerm: [pageCodes.app] } },
+        { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', domain: 'app', icon: 'Files', order: 3, context: 'full', requiresPerm: [pageCodes.app], keywords: ['middleware', 'instance', '实例', 'mysql', 'redis', 'kafka', 'es'] } },
         { path: 'apps/:id', name: 'middleware-detail', component: () => import('@/views/MiddlewareDetailView.vue'), meta: { title: '中间件详情', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.app] } },
 
         // —— 同一「应用」域的后半段：从源码到制品（流水线 → 凭据 → 镜像仓库） ——
-        { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', domain: 'app', icon: 'Operation', order: 4, context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', domain: 'app', icon: 'Operation', order: 4, context: 'full', requiresPerm: [pageCodes.pipeline], keywords: ['pipeline', 'ci', 'cd', 'tekton', 'build', '构建', '持续集成'], actions: [{ key: 'create', title: '新建流水线', keywords: ['new pipeline'] }] } },
         { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
         { path: 'pipelines/runs', name: 'pipeline-runs', component: () => import('@/views/PipelineRunView.vue'), meta: { title: '流水线运行', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
         // 一次运行的详情：单独一页（原先挤在列表右侧 560px 那一栏里，DAG 与日志都没法看）
         { path: 'pipelines/run', name: 'pipeline-run-detail', component: () => import('@/views/PipelineRunDetailView.vue'), meta: { title: '运行详情', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
-        { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', domain: 'app', icon: 'Collection', order: 6, requiresPerm: [pageCodes.registry] } },
+        { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', domain: 'app', icon: 'Collection', order: 6, requiresPerm: [pageCodes.registry], keywords: ['registry', 'harbor', 'image', 'docker', '镜像'] } },
 
         // ============ 租户视图 · 资源 ============
-        { path: 'resources/workloads', name: 'workloads', component: () => import('@/views/resource/WorkloadView.vue'), meta: { title: '工作负载', domain: 'resource', icon: 'Box', order: 1, context: 'full', requiresPerm: [pageCodes.workload.list] } },
+        { path: 'resources/workloads', name: 'workloads', component: () => import('@/views/resource/WorkloadView.vue'), meta: { title: '工作负载', domain: 'resource', icon: 'Box', order: 1, context: 'full', requiresPerm: [pageCodes.workload.list], keywords: ['workload', 'deployment', 'deploy', 'statefulset', 'sts', 'daemonset', 'ds', 'job', 'cronjob', '负载'], actions: [{ key: 'create', title: '创建工作负载', keywords: ['new deployment', '创建 deployment', '创建 statefulset'] }] } },
         { path: 'resources/workloads/detail', name: 'workload-detail', component: () => import('@/views/resource/WorkloadDetailView.vue'), meta: { title: '工作负载详情', domain: 'resource', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.workload.detail] } },
         { path: 'resources/workloads/editor', name: 'workload-editor', component: () => import('@/views/resource/WorkloadEditorView.vue'), meta: { title: '工作负载编辑', domain: 'resource', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.workload.edit] } },
-        { path: 'resources/pods', name: 'pods', component: () => import('@/views/resource/PodView.vue'), meta: { title: 'Pod', domain: 'resource', icon: 'Cpu', order: 2, context: 'full', requiresPerm: [pageCodes.pod.list] } },
+        { path: 'resources/pods', name: 'pods', component: () => import('@/views/resource/PodView.vue'), meta: { title: 'Pod', domain: 'resource', icon: 'Cpu', order: 2, context: 'full', requiresPerm: [pageCodes.pod.list], keywords: ['pod', 'po', 'container', '容器', 'log', '日志', 'exec', '终端'] } },
         { path: 'resources/pods/detail', name: 'pod-detail', component: () => import('@/views/resource/PodDetailView.vue'), meta: { title: 'Pod 详情', domain: 'resource', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pod.detail] } },
         { path: 'resources/pods/container', name: 'container-detail', component: () => import('@/views/resource/ContainerDetailView.vue'), meta: { title: '容器详情', domain: 'resource', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pod.container] } },
-        { path: 'resources/hpas', name: 'hpas', component: () => import('@/views/resource/HpaView.vue'), meta: { title: 'HPA', domain: 'resource', icon: 'TrendCharts', order: 3, context: 'full', requiresPerm: [pageCodes.hpa.list] } },
+        { path: 'resources/hpas', name: 'hpas', component: () => import('@/views/resource/HpaView.vue'), meta: { title: 'HPA', domain: 'resource', icon: 'TrendCharts', order: 3, context: 'full', requiresPerm: [pageCodes.hpa.list], keywords: ['hpa', 'horizontalpodautoscaler', 'autoscale', '弹性伸缩', '自动扩缩容'], actions: [{ key: 'create', title: '创建 HPA' }] } },
         { path: 'resources/hpas/editor', name: 'hpa-editor', component: () => import('@/views/resource/HpaEditorView.vue'), meta: { title: 'HPA 编辑', domain: 'resource', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.hpa.edit] } },
-        { path: 'resources/configmaps', name: 'configmaps', component: () => import('@/views/resource/ConfigMapView.vue'), meta: { title: 'ConfigMap', domain: 'resource', icon: 'Document', order: 4, context: 'full', requiresPerm: [pageCodes.configmap.list] } },
+        { path: 'resources/configmaps', name: 'configmaps', component: () => import('@/views/resource/ConfigMapView.vue'), meta: { title: 'ConfigMap', domain: 'resource', icon: 'Document', order: 4, context: 'full', requiresPerm: [pageCodes.configmap.list], keywords: ['configmap', 'cm', '配置', 'config'], actions: [{ key: 'create', title: '创建 ConfigMap' }] } },
         { path: 'resources/configmaps/editor', name: 'configmap-editor', component: () => import('@/views/resource/ConfigMapEditorView.vue'), meta: { title: 'ConfigMap 编辑', domain: 'resource', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.configmap.edit] } },
-        { path: 'resources/secrets', name: 'secrets', component: () => import('@/views/resource/SecretView.vue'), meta: { title: 'Secret', domain: 'resource', icon: 'Key', order: 5, context: 'full', requiresPerm: [pageCodes.secret.list] } },
+        { path: 'resources/secrets', name: 'secrets', component: () => import('@/views/resource/SecretView.vue'), meta: { title: 'Secret', domain: 'resource', icon: 'Key', order: 5, context: 'full', requiresPerm: [pageCodes.secret.list], keywords: ['secret', '密钥', '证书', 'tls', 'dockerconfigjson', '密码'], actions: [{ key: 'create', title: '创建 Secret' }] } },
         { path: 'resources/secrets/editor', name: 'secret-editor', component: () => import('@/views/resource/SecretEditorView.vue'), meta: { title: 'Secret 编辑', domain: 'resource', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.secret.edit] } },
 
         // ============ 租户视图 · 存储 ============
-        { path: 'resources/pvcs', name: 'pvcs', component: () => import('@/views/resource/PvcView.vue'), meta: { title: 'PVC', domain: 'storage', icon: 'Coin', order: 1, context: 'full', requiresPerm: [pageCodes.pvc.list] } },
+        { path: 'resources/pvcs', name: 'pvcs', component: () => import('@/views/resource/PvcView.vue'), meta: { title: 'PVC', domain: 'storage', icon: 'Coin', order: 1, context: 'full', requiresPerm: [pageCodes.pvc.list], keywords: ['pvc', 'persistentvolumeclaim', '存储卷', '磁盘', 'volume'], actions: [{ key: 'create', title: '创建 PVC' }] } },
         // 卷快照（S4.3）：门控在页面内（每个集群不同，要调接口才知道），菜单不随能力隐藏
-        { path: 'resources/volumesnapshots', name: 'volumesnapshots', component: () => import('@/views/resource/VolumeSnapshotView.vue'), meta: { title: '卷快照', domain: 'storage', icon: 'CopyDocument', order: 1.5, context: 'full', requiresPerm: [pageCodes.volumeSnapshot] } },
+        { path: 'resources/volumesnapshots', name: 'volumesnapshots', component: () => import('@/views/resource/VolumeSnapshotView.vue'), meta: { title: '卷快照', domain: 'storage', icon: 'CopyDocument', order: 1.5, context: 'full', requiresPerm: [pageCodes.volumeSnapshot], keywords: ['volumesnapshot', 'snapshot', 'vs', '备份'], actions: [{ key: 'create', title: '创建卷快照' }] } },
         // 持久卷：租户只见绑定到本租户已分配命名空间的 PV（后端按 claimRef.namespace 收窄）
-        { path: 'resources/persistentvolumes', name: 'persistentvolumes', component: () => import('@/views/resource/PersistentVolumeView.vue'), meta: { title: '持久卷', domain: 'storage', icon: 'Box', order: 2, context: 'full', requiresPerm: [pageCodes.persistentVolume.list] } },
+        { path: 'resources/persistentvolumes', name: 'persistentvolumes', component: () => import('@/views/resource/PersistentVolumeView.vue'), meta: { title: '持久卷', domain: 'storage', icon: 'Box', order: 2, context: 'full', requiresPerm: [pageCodes.persistentVolume.list], keywords: ['pv', 'persistentvolume', 'volume', '存储卷'] } },
         // 对象存储（SeaweedFS 集群组件）：桶 / 凭据 / 对象浏览，集群级、无命名空间维度
         // 两面可见：页面码同时列 platform 与 tenant 两族 → nav 的 faceOf() 判 both。
         // 平台视图落「集群」域（与存储类并列），租户视图仍在「存储」域。
-        { path: 'object-storage', name: 'object-storage', component: () => import('@/views/ObjectStorageView.vue'), meta: { title: '对象存储', domain: 'storage', platformDomain: 'cluster', icon: 'Cloudy', order: 3, requiresPerm: [pageCodes.objectStoragePlatform, pageCodes.objectStorage] } },
+        { path: 'object-storage', name: 'object-storage', component: () => import('@/views/ObjectStorageView.vue'), meta: { title: '对象存储', domain: 'storage', platformDomain: 'cluster', icon: 'Cloudy', order: 3, requiresPerm: [pageCodes.objectStoragePlatform, pageCodes.objectStorage], keywords: ['s3', 'seaweedfs', 'bucket', 'oss', 'minio', '桶'], actions: [{ key: 'create', title: '创建桶', keywords: ['new bucket'], adminOnly: true }] } },
 
         // ============ 租户视图 · 网络 ============
-        { path: 'resources/services', name: 'services', component: () => import('@/views/resource/ServiceView.vue'), meta: { title: 'Service', domain: 'network', icon: 'Link', order: 1, context: 'full', requiresPerm: [pageCodes.service.list] } },
+        { path: 'resources/services', name: 'services', component: () => import('@/views/resource/ServiceView.vue'), meta: { title: 'Service', domain: 'network', icon: 'Link', order: 1, context: 'full', requiresPerm: [pageCodes.service.list], keywords: ['service', 'svc', 'clusterip', 'nodeport', 'loadbalancer', 'lb', '服务', '端口'], actions: [{ key: 'create', title: '创建 Service' }] } },
         { path: 'resources/services/editor', name: 'service-editor', component: () => import('@/views/resource/ServiceEditorView.vue'), meta: { title: 'Service 编辑', domain: 'network', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.service.edit] } },
-        { path: 'resources/gateways', name: 'gateways', component: () => import('@/views/resource/GatewayView.vue'), meta: { title: 'Gateway', domain: 'network', icon: 'Promotion', order: 2, context: 'full', requiresPerm: [pageCodes.mesh.gateway.list] } },
+        { path: 'resources/gateways', name: 'gateways', component: () => import('@/views/resource/GatewayView.vue'), meta: { title: 'Gateway', domain: 'network', icon: 'Promotion', order: 2, context: 'full', requiresPerm: [pageCodes.mesh.gateway.list], keywords: ['gateway', 'gw', 'ingress', 'waypoint', 'istio', '网关', '入口'], actions: [{ key: 'create', title: '创建 Gateway' }, { key: 'create-waypoint', title: '创建 Waypoint', keywords: ['l7'] }] } },
         { path: 'resources/gateways/editor', name: 'gateway-editor', component: () => import('@/views/resource/GatewayEditorView.vue'), meta: { title: 'Gateway 编辑', domain: 'network', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.mesh.gateway.edit] } },
         // 路由策略（Route 五合一）：一个页面管 5 种 route；requiresPerm 传 5 个码 = 任一命中即可进
-        { path: 'routes', name: 'routes', component: () => import('@/views/resource/RouteListView.vue'), meta: { title: '路由策略', domain: 'network', icon: 'Share', order: 3, context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.list, pageCodes.mesh.grpcRoute.list, pageCodes.mesh.tcpRoute.list, pageCodes.mesh.tlsRoute.list, pageCodes.mesh.udpRoute.list] } },
+        { path: 'routes', name: 'routes', component: () => import('@/views/resource/RouteListView.vue'), meta: { title: '路由策略', domain: 'network', icon: 'Share', order: 3, context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.list, pageCodes.mesh.grpcRoute.list, pageCodes.mesh.tcpRoute.list, pageCodes.mesh.tlsRoute.list, pageCodes.mesh.udpRoute.list], keywords: ['route', 'httproute', 'grpcroute', 'tcproute', 'tlsroute', 'udproute', 'ingress', '路由', '流量'], actions: [{ key: 'create-httproute', title: '创建 HTTPRoute' }, { key: 'create-grpcroute', title: '创建 GRPCRoute' }, { key: 'create-tcproute', title: '创建 TCPRoute' }, { key: 'create-tlsroute', title: '创建 TLSRoute' }, { key: 'create-udproute', title: '创建 UDPRoute' }] } },
         { path: 'routes/editor', name: 'route-editor', component: () => import('@/views/resource/RouteEditorView.vue'), meta: { title: '路由策略编辑', domain: 'network', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.edit, pageCodes.mesh.grpcRoute.edit, pageCodes.mesh.tcpRoute.edit, pageCodes.mesh.tlsRoute.edit, pageCodes.mesh.udpRoute.edit] } },
         // 网格拓扑（S2.4）：与 Gateway 共用一个码 —— 能看 Gateway 的人就能看拓扑
-        { path: 'mesh/topology', name: 'mesh-topology', component: () => import('@/views/mesh/MeshTopologyView.vue'), meta: { title: '网格拓扑', domain: 'network', icon: 'DataLine', order: 4, context: 'full', requiresPerm: [pageCodes.mesh.gateway.list] } },
+        { path: 'mesh/topology', name: 'mesh-topology', component: () => import('@/views/mesh/MeshTopologyView.vue'), meta: { title: '网格拓扑', domain: 'network', icon: 'DataLine', order: 4, context: 'full', requiresPerm: [pageCodes.mesh.gateway.list], keywords: ['topology', 'mesh', 'istio', 'kiali', '服务网格', '拓扑图', '调用关系'] } },
 
         // ============ 租户视图 · 观测 ============
-        { path: 'alerts', name: 'alerts', component: () => import('@/views/AlertView.vue'), meta: { title: '告警', domain: 'observe', icon: 'Bell', order: 1, context: 'full', requiresPerm: [pageCodes.alert] } },
-        { path: 'resources/servicemonitors', name: 'servicemonitors', component: () => import('@/views/resource/ServiceMonitorView.vue'), meta: { title: 'ServiceMonitor', domain: 'observe', icon: 'DataLine', order: 2, context: 'full', requiresPerm: [pageCodes.serviceMonitor.list] } },
+        { path: 'alerts', name: 'alerts', component: () => import('@/views/AlertView.vue'), meta: { title: '告警', domain: 'observe', icon: 'Bell', order: 1, context: 'full', requiresPerm: [pageCodes.alert], keywords: ['alert', 'alertmanager', '报警', '告警事件'] } },
+        { path: 'resources/servicemonitors', name: 'servicemonitors', component: () => import('@/views/resource/ServiceMonitorView.vue'), meta: { title: 'ServiceMonitor', domain: 'observe', icon: 'DataLine', order: 2, context: 'full', requiresPerm: [pageCodes.serviceMonitor.list], keywords: ['servicemonitor', 'smon', 'prometheus', 'metrics', '监控', '指标采集'], actions: [{ key: 'create', title: '创建 ServiceMonitor' }] } },
         { path: 'resources/servicemonitors/editor', name: 'servicemonitor-editor', component: () => import('@/views/resource/ServiceMonitorEditorView.vue'), meta: { title: 'ServiceMonitor 编辑', domain: 'observe', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.serviceMonitor.edit] } },
-        { path: 'resources/podmonitors', name: 'podmonitors', component: () => import('@/views/resource/PodMonitorView.vue'), meta: { title: 'PodMonitor', domain: 'observe', icon: 'DataLine', order: 3, context: 'full', requiresPerm: [pageCodes.podMonitor.list] } },
+        { path: 'resources/podmonitors', name: 'podmonitors', component: () => import('@/views/resource/PodMonitorView.vue'), meta: { title: 'PodMonitor', domain: 'observe', icon: 'DataLine', order: 3, context: 'full', requiresPerm: [pageCodes.podMonitor.list], keywords: ['podmonitor', 'pmon', 'prometheus', 'metrics', '监控', '指标采集'], actions: [{ key: 'create', title: '创建 PodMonitor' }] } },
         { path: 'resources/podmonitors/editor', name: 'podmonitor-editor', component: () => import('@/views/resource/PodMonitorEditorView.vue'), meta: { title: 'PodMonitor 编辑', domain: 'observe', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.podMonitor.edit] } },
-        { path: 'resources/prometheusrules', name: 'prometheusrules', component: () => import('@/views/resource/PrometheusRuleView.vue'), meta: { title: 'PrometheusRule', domain: 'observe', icon: 'Tickets', order: 4, context: 'full', requiresPerm: [pageCodes.prometheusRule.list] } },
+        { path: 'resources/prometheusrules', name: 'prometheusrules', component: () => import('@/views/resource/PrometheusRuleView.vue'), meta: { title: 'PrometheusRule', domain: 'observe', icon: 'Tickets', order: 4, context: 'full', requiresPerm: [pageCodes.prometheusRule.list], keywords: ['prometheusrule', 'rule', 'prometheus', 'promql', '告警规则', 'recording'], actions: [{ key: 'create', title: '创建 PrometheusRule', keywords: ['新建告警规则'] }] } },
         // 详情用 list 码：能看列表就能看详情（没有独立的 detail 页面码，也不值得单开一行）
         { path: 'resources/prometheusrules/detail', name: 'prometheusrule-detail', component: () => import('@/views/resource/PrometheusRuleDetailView.vue'), meta: { title: 'PrometheusRule 详情', domain: 'observe', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.prometheusRule.list] } },
         { path: 'resources/prometheusrules/editor', name: 'prometheusrule-editor', component: () => import('@/views/resource/PrometheusRuleEditorView.vue'), meta: { title: 'PrometheusRule 编辑', domain: 'observe', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.prometheusRule.edit] } },
         // 日志查询中心（租户可达；后端按分配表收窄命名空间）
-        { path: 'observability/logs', name: 'observability-logs', component: () => import('@/views/observability/LogsView.vue'), meta: { title: '日志查询', domain: 'observe', icon: 'Document', order: 5, context: 'full', requiresPerm: [pageCodes.observability.logs] } },
+        { path: 'observability/logs', name: 'observability-logs', component: () => import('@/views/observability/LogsView.vue'), meta: { title: '日志查询', domain: 'observe', icon: 'Document', order: 5, context: 'full', requiresPerm: [pageCodes.observability.logs], keywords: ['log', 'logs', 'loki', 'search', '日志检索'] } },
 
         // 原「租户视图 · 组织 › 我的租户」已并入租户总览（2026-11-06）：旧链接 / 书签重定向过去
         { path: 'tenants/detail', redirect: { name: 'overview' } },

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MoreFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
@@ -232,6 +233,11 @@ function statusTag(status?: K8sCluster['status']): { type: 'success' | 'danger' 
 }
 
 onMounted(load)
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: openCreate },
+})
 </script>
 
 <template>

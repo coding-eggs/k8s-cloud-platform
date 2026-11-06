@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, MoreFilled } from '@element-plus/icons-vue'
@@ -112,6 +113,11 @@ watch(detailTab, async (tab) => {
       yamlText.value = await meshApi.gatewayClass.getYaml(detail.value.name, clusterId.value)
     } catch { /* 拦截器已提示 */ }
   }
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: onCreate, ready: () => canCreate.value },
 })
 </script>
 

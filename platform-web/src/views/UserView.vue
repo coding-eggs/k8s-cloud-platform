@@ -7,6 +7,7 @@
  * 授予下拉只列尚未持有的角色；授予/回收成功后重新拉取持有列表。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { platformUserApi, roleApi } from '@/api'
 import type { PlatformRole, PlatformUser } from '@/types'
@@ -195,6 +196,11 @@ async function submitRoleAction(kind: 'grant' | 'revoke', roleId: string): Promi
 }
 
 onMounted(load)
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: openCreate },
+})
 </script>
 
 <template>

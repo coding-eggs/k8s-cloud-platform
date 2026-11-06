@@ -8,6 +8,7 @@
  * 用户完全可以先把流水线配好，等集群装完再点运行。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay } from '@element-plus/icons-vue'
@@ -201,6 +202,10 @@ async function remove(row: Pipeline) {
 /** `?id=` 让运行历史页能跳回来（面包屑用） */
 const focusId = computed(() => (route.query.id as string) || '')
 
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: () => toEditor(), ready: () => canManage.value },
+})
 </script>
 
 <template>

@@ -13,6 +13,7 @@
  * 写操作后失效共享缓存并重拉目录；后端提交后已热加载运行时规则。
  */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { permissionApi } from '@/api'
@@ -264,6 +265,11 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
 })
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: openCreate },
+})
 </script>
 
 <template>

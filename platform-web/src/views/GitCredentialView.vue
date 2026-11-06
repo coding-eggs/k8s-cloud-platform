@@ -6,6 +6,7 @@
  * <p>对租户开放：租户管理员可以给自己租户建连接（归属列显示自己的租户），平台级连接只读。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { credentialApi } from '@/api'
 import type { CredentialTestResult, CredentialView as Credential } from '@/types'
@@ -200,6 +201,11 @@ function applySuggested(): void {
 }
 
 onMounted(load)
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: openCreate, ready: () => canWrite.value },
+})
 </script>
 
 <template>

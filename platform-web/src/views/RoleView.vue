@@ -15,6 +15,7 @@
  * - 内置角色（builtIn=1）：不可删、code/scope 不可改（名称 / 描述可改，/role/update）；权限集允许 manage 重存 → 仍可勾选保存。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { roleApi } from '@/api'
@@ -229,6 +230,11 @@ async function submitCreate(): Promise<void> {
 // 权限目录不再在挂载时预取：可分配集合随角色变化（loadForRole）
 onMounted(async () => {
   await loadRoles()
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: () => { createVisible.value = true } },
 })
 </script>
 

@@ -7,6 +7,7 @@
  * **已建实例的列表在独立页面 `/apps/instances`**（原先是本页的一个 tab）。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { middlewareApi } from '@/api'
@@ -377,6 +378,11 @@ onBeforeUnmount(() => {
   if (pollTimer.value !== null) {
     window.clearTimeout(pollTimer.value)
   }
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  operator: { run: () => { tab.value = 'operator' }, ready: () => perm.isAdmin },
 })
 </script>
 

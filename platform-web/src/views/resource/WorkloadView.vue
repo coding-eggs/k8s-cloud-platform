@@ -2,6 +2,7 @@
 import { isManaged } from '@/utils/managedResource'
 import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { workloadApi, hpaApi, gatewayApi, podApi } from '@/api'
@@ -637,6 +638,11 @@ watch(
 const contextDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择租户 / 集群 / 命名空间'
   return `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''} / ${state.namespace}`
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: () => goEditor(null), ready: () => canCreate.value && ready.value },
 })
 </script>
 

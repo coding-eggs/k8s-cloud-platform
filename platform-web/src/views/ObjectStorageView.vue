@@ -9,6 +9,7 @@
  * 下载经平台代理（S3 网关只在集群内），单次上传/下载上限 100MB，超过请用 SDK 直连。
  */
 import { computed, onMounted, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { clusterApi, objectStorageApi, resourceContextApi, tenantApi } from '@/api'
 import { usePermission } from '@/stores/permission'
@@ -587,6 +588,11 @@ onMounted(async () => {
   await loadClusters()
   await loadTenants()
   await refresh()
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: openCreate, ready: () => perm.isAdmin && !!clusterId.value && !objBucket.value },
 })
 </script>
 

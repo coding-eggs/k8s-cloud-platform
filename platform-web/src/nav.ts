@@ -120,6 +120,60 @@ export function buildNav(face: NavFace, perm: PermissionFacade): NavDomain[] {
     .filter((d) => d.items.length > 0)
 }
 
+/** 命令面板的一条候选：菜单页本身，或某页上的一个页内功能 */
+export interface SearchEntry {
+  kind: 'page' | 'action'
+  title: string
+  /** 页内功能所在页面的标题（kind=page 时与 title 相同） */
+  pageTitle: string
+  path: string
+  /** 页内功能的 `do` 键；kind=page 时为空 */
+  action?: string
+  icon: string
+  domainLabel: string
+  face: NavFace
+  /** 来自另一个视图（只有管理员会看到这类候选） */
+  otherFace: boolean
+  keywords: string[]
+}
+
+/**
+ * 命令面板的搜索候选：当前视图的菜单页 + 页内功能；管理员额外拿到另一个视图的同类候选。
+ *
+ * 与 `buildNav` 同源（逐个视图调它），因此候选范围 = 两个侧栏的并集，不会搜出菜单里本来就进不去的页。
+ * both 面的页面只保留当前视图那一条（按 path 去重，当前视图先入）。
+ * 跳到另一个视图的页面不切 token：`resolveNavLocation().otherFace` 本来就支持跨视图深链，
+ * 平台视图看租户页走 ContextSelector 的代管轨。
+ */
+export function buildSearchEntries(face: NavFace, perm: PermissionFacade, isAdmin: boolean): SearchEntry[] {
+  const faces: NavFace[] = isAdmin ? [face, face === 'tenant' ? 'platform' : 'tenant'] : [face]
+  const seen = new Set<string>()
+  const out: SearchEntry[] = []
+  for (const f of faces) {
+    for (const d of buildNav(f, perm)) {
+      for (const item of d.items) {
+        if (seen.has(item.path)) continue
+        seen.add(item.path)
+        const meta = router.resolve(item.path).matched.at(-1)?.meta
+        const base = {
+          pageTitle: item.title,
+          path: item.path,
+          icon: item.icon,
+          domainLabel: d.label,
+          face: f,
+          otherFace: f !== face,
+        }
+        out.push({ ...base, kind: 'page', title: item.title, keywords: meta?.keywords ?? [] })
+        for (const a of meta?.actions ?? []) {
+          if (a.adminOnly && !isAdmin) continue
+          out.push({ ...base, kind: 'action', title: a.title, action: a.key, keywords: [...(a.keywords ?? []), ...(meta?.keywords ?? [])] })
+        }
+      }
+    }
+  }
+  return out
+}
+
 export interface NavLocation {
   domain: NavDomainKey
   /**

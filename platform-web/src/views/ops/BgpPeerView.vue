@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, MoreFilled } from '@element-plus/icons-vue'
@@ -81,6 +82,11 @@ function targetText(p: BgpPeer): string {
   if (p.nodeSelector) return p.nodeSelector
   return '—（所有节点）'
 }
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: onCreate, ready: () => hasCalico.value },
+})
 </script>
 
 <template>

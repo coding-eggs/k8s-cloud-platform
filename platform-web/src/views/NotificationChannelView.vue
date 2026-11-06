@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { notificationChannelApi, tenantApi } from '@/api'
 import type { NotificationChannel, NotificationChannelRequest, PlatformTenant } from '@/types'
@@ -123,6 +124,11 @@ async function onDelete(row: NotificationChannel): Promise<void> {
 
 onMounted(async () => {
   await Promise.all([refresh(), loadTenants()])
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: openCreate },
 })
 </script>
 

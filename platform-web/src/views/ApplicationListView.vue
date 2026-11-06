@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applicationApi } from '@/api'
@@ -123,6 +124,11 @@ watch([tenantId, clusterId], () => {
 onMounted(async () => {
   await ensure()
   await load()
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: () => void openCreate(), ready: () => !!clusterId.value && canWrite.value },
 })
 </script>
 

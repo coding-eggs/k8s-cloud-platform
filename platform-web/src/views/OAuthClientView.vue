@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { oauthClientApi } from '@/api'
 import type { OAuthClient, OAuthClientCreated, OAuthClientSecrets, OAuthScope, OAuthSecretKind } from '@/types/oauthClient'
@@ -137,6 +138,11 @@ async function onDelete(row: OAuthClient): Promise<void> {
 
 onMounted(async () => {
   await Promise.all([refresh(), loadScopes()])
+})
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  create: { run: openCreate, ready: () => canManage.value },
 })
 </script>
 

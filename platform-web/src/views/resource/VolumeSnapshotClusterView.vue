@@ -7,6 +7,7 @@
  * 平台不提供删除 —— 清理孤儿内容会动存储后端，本批不做。
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { usePaletteAction } from '@/composables/usePaletteAction'
 import { volumeSnapshotClusterApi } from '@/api'
 import type { K8sVolumeSnapshotClass, K8sVolumeSnapshotContent } from '@/types'
 import { useResourceContext } from '@/stores/context'
@@ -77,6 +78,11 @@ watch(
 const contextDesc = computed(() =>
   clusterReady.value ? `${currentCluster.value?.clusterName ?? ''} · 只读` : '请先选择集群',
 )
+
+// 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
+usePaletteAction({
+  contents: { run: () => { tab.value = 'contents' } },
+})
 </script>
 
 <template>

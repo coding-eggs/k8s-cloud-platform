@@ -2,14 +2,19 @@
 /**
  * 页面搜索面板（Ctrl / Cmd + K）。
  *
- * 纯前端：数据来自 nav.ts 的当前视图导航，不请求后端。
- * 只搜「当前视图可见」的页面 —— 与侧栏同源，因此不会搜到正在显示的菜单里没有的东西。
+ * 纯前端：数据来自 nav.ts 的导航（与侧栏同源），不请求后端。搜索范围：
+ * - 当前视图的菜单页，以及这些页上声明的页内功能（路由 meta.actions，如「创建 ConfigMap」）；
+ * - 管理员额外搜另一个视图（排在当前视图之后，带「平台视图 / 租户视图」标记，点了直接深链过去）；
+ * - 匹配：标题 / 关键词（meta.keywords）/ 拼音全拼与首字母 / 域名 / 路径，空格分隔 = 同时满足。
+ *   拼音库（pinyin-pro）首次打开面板时才懒加载。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { buildNav, type NavDomainKey } from '@/nav'
+import { buildSearchEntries, type NavFace, type SearchEntry } from '@/nav'
 import { usePermission } from '@/stores/permission'
 import { readRecentVisits } from '@/composables/useRecentVisits'
+import { PALETTE_ACTION_QUERY } from '@/composables/usePaletteAction'
+import { scoreEntry, type PinyinForms, type PinyinOf } from '@/utils/paletteSearch'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
@@ -17,33 +22,71 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 const router = useRouter()
 const perm = usePermission()
 
-interface Entry {
-  title: string
-  path: string
-  icon: string
-  domain: NavDomainKey
-  domainLabel: string
-}
+const MAX_RESULTS = 20
 
 const keyword = ref('')
 const cursor = ref(0)
 const inputEl = ref<HTMLInputElement | null>(null)
 
-const face = computed(() => (perm.currentTenant ? 'tenant' : 'platform'))
+const face = computed<NavFace>(() => (perm.currentTenant ? 'tenant' : 'platform'))
 
-const entries = computed<Entry[]>(() =>
-  buildNav(face.value, perm).flatMap((d) =>
-    d.items.map((i) => ({ title: i.title, path: i.path, icon: i.icon, domain: d.key, domainLabel: d.label })),
-  ),
-)
+const entries = computed<SearchEntry[]>(() => buildSearchEntries(face.value, perm, perm.isAdmin))
 
-const results = computed<Entry[]>(() => {
-  const k = keyword.value.trim().toLowerCase()
+// ---------- 拼音：懒加载 + 按文本缓存 ----------
+const pinyinOf = shallowRef<PinyinOf | null>(null)
+let pinyinLoading = false
+
+async function ensurePinyin(): Promise<void> {
+  if (pinyinOf.value || pinyinLoading) return
+  pinyinLoading = true
+  try {
+    const { pinyin } = await import('pinyin-pro')
+    const cache = new Map<string, PinyinForms>()
+    pinyinOf.value = (text: string) => {
+      let hit = cache.get(text)
+      if (!hit) {
+        // 只对中文部分取拼音：英文段混进来会拼出跨词假命中（「RBAC 模板」的 rbac·muban 里有 cm）
+        const zh = text.replace(/[^一-鿿]/g, '')
+        const strip = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '')
+        hit = {
+          full: strip(pinyin(zh, { toneType: 'none', separator: '' })),
+          initials: strip(pinyin(zh, { pattern: 'first', toneType: 'none', separator: '' })),
+        }
+        cache.set(text, hit)
+      }
+      return hit
+    }
+  } catch {
+    // 拉取失败（断网 / 部署缺 chunk）：没有拼音匹配而已，其余照常
+  } finally {
+    pinyinLoading = false
+  }
+}
+
+const results = computed<SearchEntry[]>(() => {
+  const k = keyword.value.trim()
   if (!k) return []
   return entries.value
-    .filter((e) => e.title.toLowerCase().includes(k) || e.domainLabel.includes(k))
-    .slice(0, 12)
+    .map((e, index) => ({ e, index, score: scoreEntry(k, e, pinyinOf.value) }))
+    .filter((r) => r.score > 0)
+    // 当前视图在前；同视图内按分数；同分时页面先于页内功能，再按导航原序
+    .sort(
+      (a, b) =>
+        Number(a.e.otherFace) - Number(b.e.otherFace) ||
+        b.score - a.score ||
+        Number(a.e.kind === 'action') - Number(b.e.kind === 'action') ||
+        a.index - b.index,
+    )
+    .slice(0, MAX_RESULTS)
+    .map((r) => r.e)
 })
+
+/** 结果列表里另一个视图的第一条之前插一个分组标题 */
+const firstOtherIndex = computed(() => results.value.findIndex((e) => e.otherFace))
+
+function faceLabel(f: NavFace): string {
+  return f === 'platform' ? '平台视图' : '租户视图'
+}
 
 const recent = computed(() => readRecentVisits().filter((v) => v.face === face.value).slice(0, 5))
 
@@ -53,6 +96,7 @@ watch(
     if (!open) return
     keyword.value = ''
     cursor.value = 0
+    void ensurePinyin()
     await nextTick()
     inputEl.value?.focus()
   },
@@ -71,9 +115,13 @@ function goPath(path: string): void {
   void router.push(path)
 }
 
-function choose(entry?: Entry): void {
+function choose(entry?: SearchEntry): void {
   const target = entry ?? results.value[cursor.value]
-  if (target) goPath(target.path)
+  if (!target) return
+  close()
+  void router.push(
+    target.action ? { path: target.path, query: { [PALETTE_ACTION_QUERY]: target.action } } : target.path,
+  )
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -107,7 +155,7 @@ function onKeydown(e: KeyboardEvent): void {
           ref="inputEl"
           v-model="keyword"
           class="cp-input"
-          placeholder="搜索页面…"
+          placeholder="搜索页面或功能，支持拼音 / 英文名，空格分隔多个词…"
           @keydown="onKeydown"
         />
         <kbd class="cp-kbd">Esc</kbd>
@@ -115,20 +163,28 @@ function onKeydown(e: KeyboardEvent): void {
 
       <div class="cp-list">
         <template v-if="keyword.trim()">
-          <button
-            v-for="(e, i) in results"
-            :key="e.path"
-            type="button"
-            class="cp-item"
-            :class="{ 'is-active': i === cursor }"
-            @mousemove="cursor = i"
-            @click="choose(e)"
-          >
-            <el-icon class="cp-item-icon"><component :is="e.icon" /></el-icon>
-            <span class="cp-item-title">{{ e.title }}</span>
-            <span class="cp-item-domain">{{ e.domainLabel }}</span>
-          </button>
-          <p v-if="!results.length" class="cp-empty">没有匹配的页面</p>
+          <template v-for="(e, i) in results" :key="e.path + '#' + (e.action ?? '')">
+            <p v-if="i === firstOtherIndex" class="cp-group-title">{{ faceLabel(e.face) }}</p>
+            <button
+              type="button"
+              class="cp-item"
+              :class="{ 'is-active': i === cursor }"
+              @mousemove="cursor = i"
+              @click="choose(e)"
+            >
+              <el-icon class="cp-item-icon">
+                <Plus v-if="e.kind === 'action'" />
+                <component :is="e.icon" v-else />
+              </el-icon>
+              <span class="cp-item-title">
+                {{ e.title }}
+                <span v-if="e.kind === 'action'" class="cp-item-sub">· {{ e.pageTitle }}</span>
+              </span>
+              <span v-if="e.otherFace" class="cp-item-face">{{ faceLabel(e.face) }}</span>
+              <span class="cp-item-domain">{{ e.domainLabel }}</span>
+            </button>
+          </template>
+          <p v-if="!results.length" class="cp-empty">没有匹配的页面或功能</p>
         </template>
 
         <template v-else>
@@ -144,7 +200,7 @@ function onKeydown(e: KeyboardEvent): void {
             <span class="cp-item-title">{{ v.title }}</span>
             <span class="cp-item-domain">{{ v.domainLabel }}</span>
           </button>
-          <p v-if="!recent.length" class="cp-empty">输入页面名开始搜索</p>
+          <p v-if="!recent.length" class="cp-empty">输入页面名或功能开始搜索</p>
         </template>
       </div>
     </div>
@@ -249,6 +305,17 @@ function onKeydown(e: KeyboardEvent): void {
 .cp-item-domain {
   font-size: 11px;
   color: var(--text-3);
+}
+.cp-item-sub {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.cp-item-face {
+  font-size: 11px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
 }
 .cp-empty {
   margin: 16px 12px;
