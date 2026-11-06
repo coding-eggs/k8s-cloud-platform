@@ -296,6 +296,16 @@ const overviewUsageRows = computed<QuotaRow[]>(() => quotaRows.value.filter((r) 
 
 /** 本命名空间的快照切片（子弹图 / 清单条用） */
 const nsStat = computed(() => stat.value?.snapshot.stat ?? null)
+const nsBullets = computed(() => {
+  const s = nsStat.value
+  if (!s) return []
+  return [
+    { key: 'cpu-req', label: 'CPU requests', unit: 'core' as const, hard: s.quotaCpuHard ?? null, qUsed: s.quotaCpuUsed ?? null, sum: s.cpuRequest ?? null, sumName: 'requests' },
+    { key: 'mem-req', label: '内存 requests', unit: 'byte' as const, hard: s.quotaMemHard ?? null, qUsed: s.quotaMemUsed ?? null, sum: s.memRequest ?? null, sumName: 'requests' },
+    { key: 'cpu-lim', label: 'CPU limits', unit: 'core' as const, hard: s.quotaLimitCpuHard ?? null, qUsed: s.quotaLimitCpuUsed ?? null, sum: s.cpuLimit ?? null, sumName: 'limits' },
+    { key: 'mem-lim', label: '内存 limits', unit: 'byte' as const, hard: s.quotaLimitMemHard ?? null, qUsed: s.quotaLimitMemUsed ?? null, sum: s.memLimit ?? null, sumName: 'limits' },
+  ]
+})
 const nsInventory = computed<InventoryItem[]>(() => {
   const s = nsStat.value
   if (!s) return []
@@ -394,17 +404,13 @@ watch(name, () => { if (clusterId.value) void refresh() })
               <InventoryStrip :items="nsInventory" />
             </div>
             <div class="ns-cap-grid">
+              <!-- requests 对 requests 配额、limits 对 limits 配额（两条独立的线）；左列 CPU、右列内存 -->
               <CapacityBullet
-                label="CPU" unit="core" :scale="nsStat.quotaCpuHard"
-                :filled="nsStat.quotaCpuHard != null ? nsStat.quotaCpuUsed : nsStat.cpuRequest"
-                :filled-name="nsStat.quotaCpuHard != null ? '配额已用' : 'requests'"
-                :limit="nsStat.cpuLimit" missing-text="未配置配额"
-              />
-              <CapacityBullet
-                label="内存" unit="byte" :scale="nsStat.quotaMemHard"
-                :filled="nsStat.quotaMemHard != null ? nsStat.quotaMemUsed : nsStat.memRequest"
-                :filled-name="nsStat.quotaMemHard != null ? '配额已用' : 'requests'"
-                :limit="nsStat.memLimit" missing-text="未配置配额"
+                v-for="b in nsBullets" :key="b.key"
+                :label="b.label" :unit="b.unit" :scale="b.hard" scale-name="配额"
+                :filled="b.hard != null ? b.qUsed : b.sum"
+                :filled-name="b.hard != null ? '配额已用' : b.sumName"
+                :missing-text="`未配置${b.sumName}配额`"
               />
             </div>
           </section>

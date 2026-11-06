@@ -47,4 +47,13 @@ public class NamespaceStatDTO {
     private BigDecimal quotaCpuUsed;
     /** ResourceQuota status.used["requests.memory"]（字节）；无 quota → null */
     private BigDecimal quotaMemUsed;
+
+    /** ResourceQuota spec.hard["limits.cpu"]（核）—— 约束「limits 之和」，与 requests 配额是两条线；未设 → null */
+    private BigDecimal quotaLimitCpuHard;
+    /** ResourceQuota spec.hard["limits.memory"]（字节）；未设 → null */
+    private BigDecimal quotaLimitMemHard;
+    /** ResourceQuota status.used["limits.cpu"]（核）；未设 → null */
+    private BigDecimal quotaLimitCpuUsed;
+    /** ResourceQuota status.used["limits.memory"]（字节）；未设 → null */
+    private BigDecimal quotaLimitMemUsed;
 }

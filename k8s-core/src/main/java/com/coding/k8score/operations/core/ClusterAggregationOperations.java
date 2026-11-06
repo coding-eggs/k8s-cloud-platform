@@ -110,6 +110,9 @@ public class ClusterAggregationOperations {
     /** ResourceQuota 里 CPU / 内存对应的 key —— 与平台配额编辑器的口径同一对（见 CoreV1ResourceQuotaConverter） */
     private static final String QUOTA_CPU = "requests.cpu";
     private static final String QUOTA_MEMORY = "requests.memory";
+    /** limits 配额（同样可在平台配额编辑器里设）：约束 limits 之和，单独成列，不与 requests 配额混 */
+    private static final String QUOTA_LIMIT_CPU = "limits.cpu";
+    private static final String QUOTA_LIMIT_MEMORY = "limits.memory";
 
     private final KubernetesClient client;
 
@@ -671,6 +674,10 @@ public class ClusterAggregationOperations {
         var st = rq.getStatus();
         acc.quotaCpuUsed = merge(acc.quotaCpuUsed, st == null ? null : base(st.getUsed(), QUOTA_CPU));
         acc.quotaMemUsed = merge(acc.quotaMemUsed, st == null ? null : base(st.getUsed(), QUOTA_MEMORY));
+        acc.quotaLimitCpuHard = merge(acc.quotaLimitCpuHard, rq.getSpec() == null ? null : base(rq.getSpec().getHard(), QUOTA_LIMIT_CPU));
+        acc.quotaLimitMemHard = merge(acc.quotaLimitMemHard, rq.getSpec() == null ? null : base(rq.getSpec().getHard(), QUOTA_LIMIT_MEMORY));
+        acc.quotaLimitCpuUsed = merge(acc.quotaLimitCpuUsed, st == null ? null : base(st.getUsed(), QUOTA_LIMIT_CPU));
+        acc.quotaLimitMemUsed = merge(acc.quotaLimitMemUsed, st == null ? null : base(st.getUsed(), QUOTA_LIMIT_MEMORY));
     }
 
     /**
@@ -769,6 +776,10 @@ public class ClusterAggregationOperations {
         private BigDecimal quotaMemHard;
         private BigDecimal quotaCpuUsed;
         private BigDecimal quotaMemUsed;
+        private BigDecimal quotaLimitCpuHard;
+        private BigDecimal quotaLimitMemHard;
+        private BigDecimal quotaLimitCpuUsed;
+        private BigDecimal quotaLimitMemUsed;
 
         private NamespaceStatDTO toDTO(String namespace) {
             NamespaceStatDTO d = new NamespaceStatDTO();
@@ -790,6 +801,10 @@ public class ClusterAggregationOperations {
             d.setQuotaMemHard(quotaMemHard);
             d.setQuotaCpuUsed(quotaCpuUsed);
             d.setQuotaMemUsed(quotaMemUsed);
+            d.setQuotaLimitCpuHard(quotaLimitCpuHard);
+            d.setQuotaLimitMemHard(quotaLimitMemHard);
+            d.setQuotaLimitCpuUsed(quotaLimitCpuUsed);
+            d.setQuotaLimitMemUsed(quotaLimitMemUsed);
             return d;
         }
     }

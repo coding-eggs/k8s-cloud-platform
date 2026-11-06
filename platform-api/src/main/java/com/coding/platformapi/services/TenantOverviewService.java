@@ -130,6 +130,10 @@ public class TenantOverviewService {
         BigDecimal memHard = null;
         BigDecimal cpuUsed = null;
         BigDecimal memUsed = null;
+        BigDecimal limCpuHard = null;
+        BigDecimal limMemHard = null;
+        BigDecimal limCpuUsed = null;
+        BigDecimal limMemUsed = null;
         for (NamespaceSnapshotDTO s : all) {
             NamespaceStatDTO st = s == null ? null : s.getStat();
             QuotaState state = QuotaClassifier.state(st);   // 三档判定只此一处（R7）
@@ -145,12 +149,20 @@ public class TenantOverviewService {
                 memHard = add(memHard, st.getQuotaMemHard());
                 cpuUsed = add(cpuUsed, st.getQuotaCpuUsed());
                 memUsed = add(memUsed, st.getQuotaMemUsed());
+                limCpuHard = add(limCpuHard, st.getQuotaLimitCpuHard());
+                limMemHard = add(limMemHard, st.getQuotaLimitMemHard());
+                limCpuUsed = add(limCpuUsed, st.getQuotaLimitCpuUsed());
+                limMemUsed = add(limMemUsed, st.getQuotaLimitMemUsed());
             }
         }
         out.setQuotaCpuHard(cpuHard);
         out.setQuotaMemHard(memHard);
         out.setQuotaCpuUsed(cpuUsed);
         out.setQuotaMemUsed(memUsed);
+        out.setQuotaLimitCpuHard(limCpuHard);
+        out.setQuotaLimitMemHard(limMemHard);
+        out.setQuotaLimitCpuUsed(limCpuUsed);
+        out.setQuotaLimitMemUsed(limMemUsed);
         out.setNamespacesWithoutQuota(withoutQuota);
         out.setNamespacesPartialQuota(partialQuota);
         return out;

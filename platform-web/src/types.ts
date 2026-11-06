@@ -151,6 +151,11 @@ export interface K8sNamespaceResourceStat {
   quotaMemHard?: number | null
   quotaCpuUsed?: number | null
   quotaMemUsed?: number | null
+  /** limits 配额（ResourceQuota limits.cpu / limits.memory）：约束 limits 之和，与上面的 requests 配额是两条线；未设 → null */
+  quotaLimitCpuHard?: number | null
+  quotaLimitMemHard?: number | null
+  quotaLimitCpuUsed?: number | null
+  quotaLimitMemUsed?: number | null
 }
 
 /** 异常 Pod 明细行；reason 是归组用的最严重原因（CrashLoopBackOff > OOMKilled > … > Pending） */
@@ -243,6 +248,11 @@ export interface K8sTenantOverview {
   /** Σ 有配额的行的 used */
   quotaCpuUsed?: number | null
   quotaMemUsed?: number | null
+  /** Σ 设了 limits 配额的行的 hard / used；都没设 → null */
+  quotaLimitCpuHard?: number | null
+  quotaLimitMemHard?: number | null
+  quotaLimitCpuUsed?: number | null
+  quotaLimitMemUsed?: number | null
   /** 没有任何 ResourceQuota 的命名空间名（QuotaState.MISSING） */
   namespacesWithoutQuota: string[]
   /** 有配额但缺 requests.cpu / requests.memory 任一 key 的命名空间名（QuotaState.PARTIAL） */

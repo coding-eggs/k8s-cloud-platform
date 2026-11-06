@@ -120,71 +120,80 @@ function currentUsed(key: CurveKey): number | null {
   const last = s?.points[s.points.length - 1]
   return last ? last.value : null
 }
+/**
+ * 四条子弹图（CPU / 内存 × requests / limits）：requests 对 requests 配额、limits 对 limits 配额，各用各的尺。
+ * 有配额时实心段取配额已用（与 hard 同口径），没有时取合计并标「未配置」；实际用量竖线画在 requests 那条上。
+ */
 const bullets = computed(() => {
   const o = overview.value
   if (!o) return []
   const cov = quotaCoverage.value
-  const dims = [
-    { key: 'cpu' as const, label: 'CPU', unit: 'core' as const, hard: o.quotaCpuHard, qUsed: o.quotaCpuUsed, req: o.total.cpuRequest, lim: o.total.cpuLimit },
-    { key: 'memory' as const, label: '内存', unit: 'byte' as const, hard: o.quotaMemHard, qUsed: o.quotaMemUsed, req: o.total.memRequest, lim: o.total.memLimit },
+  const t = o.total
+  const mk = (key: string, label: string, unit: 'core' | 'byte', hard: number | null | undefined, qUsed: number | null | undefined, sum: number | null | undefined, sumName: string, used: number | null) => ({
+    key, label, unit,
+    scale: hard ?? null,
+    filled: hard != null ? (qUsed ?? null) : (sum ?? null),
+    filledName: hard != null ? '配额已用' : sumName,
+    used,
+    missingText: `未配置${sumName}配额`,
+  })
+  // 网格两列：左列 CPU（requests 在上、limits 在下），右列内存
+  return [
+    mk('cpu-req', 'CPU requests', 'core', o.quotaCpuHard, o.quotaCpuUsed, t.cpuRequest, 'requests', cov === 'partial' ? null : currentUsed('cpu')),
+    mk('mem-req', '内存 requests', 'byte', o.quotaMemHard, o.quotaMemUsed, t.memRequest, 'requests', cov === 'partial' ? null : currentUsed('memory')),
+    mk('cpu-lim', 'CPU limits', 'core', o.quotaLimitCpuHard, o.quotaLimitCpuUsed, t.cpuLimit, 'limits', null),
+    mk('mem-lim', '内存 limits', 'byte', o.quotaLimitMemHard, o.quotaLimitMemUsed, t.memLimit, 'limits', null),
   ]
-  return dims.map((d) => ({
-    key: d.key,
-    label: d.label,
-    unit: d.unit,
-    scale: d.hard ?? null,
-    filled: d.hard != null ? (d.qUsed ?? null) : (d.req ?? null),
-    filledName: d.hard != null ? '配额已用' : 'requests',
-    limit: cov === 'partial' ? null : (d.lim ?? null),
-    used: cov === 'partial' ? null : currentUsed(d.key),
-    req: d.req ?? null,
-  }))
 })
 
-/** 各命名空间配额占用（只算配了 hard 的那一维） */
+/** 各命名空间配额占用（requests / limits 配额各两维，只算配了 hard 的维）；top = 最高的那一维 */
 const quotaOcc = computed(() =>
   (breakdown.value ?? []).map((r) => {
     const st = r.snapshot.stat
     const pct = (u?: number | null, h?: number | null) => (u != null && h != null && h > 0 ? (u / h) * 100 : null)
-    return { row: r, cpu: pct(st.quotaCpuUsed, st.quotaCpuHard), mem: pct(st.quotaMemUsed, st.quotaMemHard) }
+    const dims = [
+      { name: 'CPU requests', p: pct(st.quotaCpuUsed, st.quotaCpuHard) },
+      { name: '内存 requests', p: pct(st.quotaMemUsed, st.quotaMemHard) },
+      { name: 'CPU limits', p: pct(st.quotaLimitCpuUsed, st.quotaLimitCpuHard) },
+      { name: '内存 limits', p: pct(st.quotaLimitMemUsed, st.quotaLimitMemHard) },
+    ].filter((d) => d.p != null) as { name: string; p: number }[]
+    const top = dims.reduce<{ name: string; p: number } | null>((m, d) => (m == null || d.p > m.p ? d : m), null)
+    return { row: r, top }
   }))
 const multiCluster = computed(() => (overview.value?.clusters.length ?? 0) > 1)
 /** 需要关注：配额占用 ≥ 80% 的命名空间（任一维） */
 const nearLimit = computed(() =>
   quotaOcc.value
-    .filter((x) => (x.cpu ?? 0) >= 80 || (x.mem ?? 0) >= 80)
-    .map((x) => ({ key: `${x.row.clusterId}/${nsOf(x.row)}`, ns: nsOf(x.row), row: x.row, pct: Math.max(x.cpu ?? 0, x.mem ?? 0), dim: (x.cpu ?? 0) >= (x.mem ?? 0) ? 'CPU' : '内存' }))
+    .filter((x) => x.top != null && x.top.p >= 80)
+    .map((x) => ({ key: `${x.row.clusterId}/${nsOf(x.row)}`, ns: nsOf(x.row), row: x.row, pct: x.top!.p, dim: x.top!.name }))
     .sort((a, b) => b.pct - a.pct))
-/** 明细表行序：配额占用（CPU / 内存取高者）降序；没有配额的排最后（按集群、名称） */
+/** 明细表行序：配额占用（requests / limits、CPU / 内存四维取最高）降序；没有配额的排最后（按集群、名称） */
 const sortedBreakdown = computed(() =>
   [...quotaOcc.value]
     .sort((a, b) => {
-      const pa = Math.max(a.cpu ?? -1, a.mem ?? -1)
-      const pb = Math.max(b.cpu ?? -1, b.mem ?? -1)
+      const pa = a.top?.p ?? -1
+      const pb = b.top?.p ?? -1
       if (pa !== pb) return pb - pa
       return (a.row.clusterId + '/' + nsOf(a.row)).localeCompare(b.row.clusterId + '/' + nsOf(b.row))
     }))
 /** 明细表的资源列（一列一种单位，避免「x 核 / y GiB」混排） */
 const RES_DIMS = [
-  { key: 'cpu' as const, label: 'CPU（虚线 = 配额）↓' },
-  { key: 'mem' as const, label: '内存（虚线 = 配额）↓' },
+  { key: 'cpu' as const, label: 'CPU（已用 / 配额）↓' },
+  { key: 'mem' as const, label: '内存（已用 / 配额）↓' },
 ]
 function resCell(row: K8sNamespaceStatEntry, dim: 'cpu' | 'mem') {
   const st = row.snapshot.stat
   const f = dim === 'cpu' ? fmtCpu : fmtMem
-  const hard = (dim === 'cpu' ? st.quotaCpuHard : st.quotaMemHard) ?? null
-  // 有配额时 requests 取配额已用（与 hard 同口径），没有时取 requests 合计
-  const req = (hard != null ? (dim === 'cpu' ? st.quotaCpuUsed : st.quotaMemUsed) : (dim === 'cpu' ? st.cpuRequest : st.memRequest)) ?? null
-  const lim = (dim === 'cpu' ? st.cpuLimit : st.memLimit) ?? null
-  const scale = Math.max(hard ?? 0, req ?? 0, lim ?? 0)
-  const w = (v: number | null) => (v == null || scale <= 0 ? null : (v / scale) * 100)
-  const ratio = hard != null && hard > 0 && req != null ? (req / hard) * 100 : null
+  const line = (k: string, hard: number | null | undefined, qUsed: number | null | undefined, sum: number | null | undefined) => {
+    if (hard == null) return { k, w: null as number | null, cls: '', text: `${f(sum)} · 未配额` }
+    const used = qUsed ?? null
+    const p = used != null && hard > 0 ? (used / hard) * 100 : null
+    return { k, w: p == null ? null : Math.min(100, p), cls: `tone-${p == null ? 'ok' : occTone(p)}`, text: `${f(used)} / ${f(hard)}` }
+  }
   return {
-    hardAt: hard != null && hard < scale ? w(hard) : null,
-    lines: [
-      { k: 'requests', w: w(req), cls: `tone-${ratio == null ? 'ok' : occTone(ratio)}`, text: hard != null ? `${f(req)} / ${f(hard)}` : `${f(req)} · 未配额` },
-      { k: 'limits', w: w(lim), cls: 'lim', text: f(lim) },
-    ],
+    lines: dim === 'cpu'
+      ? [line('requests', st.quotaCpuHard, st.quotaCpuUsed, st.cpuRequest), line('limits', st.quotaLimitCpuHard, st.quotaLimitCpuUsed, st.cpuLimit)]
+      : [line('requests', st.quotaMemHard, st.quotaMemUsed, st.memRequest), line('limits', st.quotaLimitMemHard, st.quotaLimitMemUsed, st.memLimit)],
   }
 }
 const occTone = (p: number) => (p >= 95 ? 'danger' : p >= 80 ? 'warning' : 'ok')
@@ -402,14 +411,11 @@ defineExpose({ reloadAll })
               scale-name="配额"
               :filled="b.filled"
               :filled-name="b.filledName"
-              :limit="b.limit"
               :used="b.used"
-              missing-text="未配置配额"
-            >
-              <span v-if="b.scale != null && b.req != null && Math.abs(b.req - (b.filled ?? 0)) > 1e-6 * Math.max(1, b.req)" class="muted">requests 合计 {{ b.unit === 'core' ? fmtCpu(b.req) : fmtMem(b.req) }}</span>
-            </CapacityBullet>
+              :missing-text="b.missingText"
+            />
             <div v-if="quotaCoverage === 'partial'" class="cap-note muted">
-              {{ overview.namespacesWithoutQuota.length }} 个命名空间没有配额，未计入量程；limits 与实际用量按全部命名空间统计，此处不画以免口径混淆。
+              {{ overview.namespacesWithoutQuota.length }} 个命名空间没有配额，未计入 requests 量程；实际用量按全部命名空间统计，此处不画以免口径混淆。
             </div>
         </div>
       </section>
@@ -561,8 +567,8 @@ defineExpose({ reloadAll })
           <el-table-column label="集群" min-width="140">
             <template #default="{ row }"><span class="muted">{{ clusterNameOf(row.clusterId) }}</span></template>
           </el-table-column>
-          <!-- 按资源分列（一列一种单位）：两行 requests / limits 共用一把尺（量程 = 三者最大），配额 hard = 虚线；
-               requests 已用与配额都取 ResourceQuota 的 requests.cpu / requests.memory，条按占配额比例变色；limits 越过虚线 = 超出配额 -->
+          <!-- 按资源分列（一列一种单位）：两行 = requests 对 requests 配额、limits 对 limits 配额（ResourceQuota 的 requests.* / limits.* 是两条独立的线）；
+               条 = 占用比例，≥80% 橙、≥95% 红；没设该配额只写合计 + 未配额 -->
           <el-table-column v-for="dim in RES_DIMS" :key="dim.key" :label="dim.label" min-width="260">
             <template #default="{ row }">
               <div class="rc">
@@ -570,7 +576,6 @@ defineExpose({ reloadAll })
                   <span class="rc-k">{{ ln.k }}</span>
                   <span class="rc-bar">
                     <span v-if="ln.w != null" class="rc-fill" :class="ln.cls" :style="{ width: ln.w + '%' }" />
-                    <span v-if="resCell(row, dim.key).hardAt != null" class="rc-hard" :style="{ left: resCell(row, dim.key).hardAt + '%' }" />
                   </span>
                   <span class="rc-v">{{ ln.text }}</span>
                 </div>
@@ -774,7 +779,5 @@ defineExpose({ reloadAll })
 .rc-fill.tone-ok { background: var(--accent); }
 .rc-fill.tone-warning { background: var(--warning); }
 .rc-fill.tone-danger { background: var(--danger); }
-.rc-fill.lim { background: color-mix(in srgb, var(--accent) 35%, transparent); }
-.rc-hard { position: absolute; top: -3px; bottom: -3px; border-left: 2px dashed var(--text-2); transform: translateX(-1px); }
 .rc-v { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-1); }
 </style>

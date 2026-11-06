@@ -111,6 +111,23 @@ class TenantOverviewServiceTest {
     }
 
     @Test
+    void limits_quota_totals_sum_only_rows_that_set_it() {
+        when(allocationMapper.listByTenant("t1")).thenReturn(List.of(alloc("c1", "team-a"), alloc("c1", "team-b")));
+        NamespaceSnapshotDTO a = snapWithQuota("team-a", "2", "4Gi");
+        a.getStat().setQuotaLimitCpuHard(new BigDecimal("4"));
+        a.getStat().setQuotaLimitCpuUsed(new BigDecimal("3"));
+        NamespaceSnapshotDTO b = snapWithQuota("team-b", "1", "2Gi");   // 没设 limits 配额
+        when(statService.rows("t1", "c1", List.of("team-a", "team-b"))).thenReturn(List.of(a, b));
+
+        TenantOverviewDTO out = svc.overview("t1");
+
+        assertThat(out.getQuotaLimitCpuHard()).isEqualByComparingTo("4");
+        assertThat(out.getQuotaLimitCpuUsed()).isEqualByComparingTo("3");
+        assertThat(out.getQuotaLimitMemHard()).isNull();                // 谁都没设 → null，不是 0
+        assertThat(out.getQuotaCpuHard()).isEqualByComparingTo("3");    // requests 配额照旧
+    }
+
+    @Test
     void sampled_at_is_the_oldest_row_on_the_page() {
         when(allocationMapper.listByTenant("t1")).thenReturn(List.of(alloc("c1", "team-a"), alloc("c1", "team-b")));
         when(statService.rows("t1", "c1", List.of("team-a", "team-b")))

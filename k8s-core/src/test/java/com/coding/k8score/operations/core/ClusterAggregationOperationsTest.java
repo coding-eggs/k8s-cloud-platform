@@ -169,6 +169,36 @@ class ClusterAggregationOperationsTest {
     }
 
     @Test
+    void aggregate_fills_limits_quota_separately_from_requests_quota() {
+        // 平台配额编辑器也能设 limits.cpu / limits.memory：它约束「limits 之和」，与 requests 配额是两条独立的线
+        ResourceQuota quota = new ResourceQuotaBuilder()
+                .withNewMetadata().withNamespace("a").withName("q").endMetadata()
+                .withNewSpec()
+                .addToHard("requests.cpu", Quantity.parse("2"))
+                .addToHard("limits.cpu", Quantity.parse("4"))
+                .addToHard("limits.memory", Quantity.parse("8Gi"))
+                .endSpec()
+                .withNewStatus()
+                .addToUsed("requests.cpu", Quantity.parse("1"))
+                .addToUsed("limits.cpu", Quantity.parse("3500m"))
+                .addToUsed("limits.memory", Quantity.parse("1Gi"))
+                .endStatus()
+                .build();
+
+        ClusterAggregateDTO agg = ops.aggregate(new ClusterObjects(
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(quota), List.of(), List.of(), List.of()), NOW);
+
+        NamespaceStatDTO a = row(agg, "a");
+        assertThat(a.getQuotaCpuHard()).isEqualByComparingTo("2");
+        assertThat(a.getQuotaLimitCpuHard()).isEqualByComparingTo("4");
+        assertThat(a.getQuotaLimitCpuUsed()).isEqualByComparingTo("3.5");
+        assertThat(a.getQuotaLimitMemHard()).isEqualByComparingTo("8589934592");
+        assertThat(a.getQuotaLimitMemUsed()).isEqualByComparingTo("1073741824");
+        assertThat(a.getQuotaMemHard()).isNull();          // requests.memory 没设 → 仍是「没有」，不被 limits 顶替
+    }
+
+    @Test
     void quota_without_cpu_key_stays_null_not_zero() {
         // 「只限 pod 数、没限 CPU」的配额：CPU 列必须是「—」而不是 0（0 读起来像「CPU 全被禁」）
         ResourceQuota podOnly = new ResourceQuotaBuilder()

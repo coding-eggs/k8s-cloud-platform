@@ -31,6 +31,12 @@ public class TenantOverviewDTO {
     private BigDecimal quotaCpuUsed;
     private BigDecimal quotaMemUsed;
 
+    /** Σ 设了 limits 配额（limits.cpu / limits.memory）的行的 hard / used；都没设 → null。 */
+    private BigDecimal quotaLimitCpuHard;
+    private BigDecimal quotaLimitMemHard;
+    private BigDecimal quotaLimitCpuUsed;
+    private BigDecimal quotaLimitMemUsed;
+
     /** 没有任何 ResourceQuota 的命名空间名（{@code QuotaState.MISSING}）。 */
     private List<String> namespacesWithoutQuota;
     /** 有配额但缺 {@code requests.cpu} / {@code requests.memory} 任一 key 的命名空间名（{@code QuotaState.PARTIAL}）。 */
