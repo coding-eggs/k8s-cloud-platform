@@ -59,9 +59,21 @@ const images = computed<Record<string, string>>(() => {
 const tagEdited = (r: AppServiceRow): boolean =>
   !isDeleted(r) && !!(tags.value[r.key] ?? '').trim() && (tags.value[r.key] ?? '').trim() !== desiredTag(r)
 
+/** 改了发布 tag（手输 / 下拉 / 点「采用」）且与期望配置不同 → 这条服务就是要发的，自动勾上；改回原值不自动取消 */
+function setTag(key: string, v: string): void {
+  tags.value[key] = v
+  const r = rowOf(key)
+  if (r && tagEdited(r) && !selected.value.includes(key)) selected.value = [...selected.value, key]
+}
+
 function toggle(key: string, on: unknown): void {
   selected.value = on ? [...new Set([...selected.value, key])] : selected.value.filter((k) => k !== key)
 }
+
+// 预览防抖状态：必须声明在下面的 immediate watch 之前 —— 组件以打开状态挂载时，
+// watch 注册当刻就会调 schedulePreview，若这两个 let 还在后面会落进 TDZ 报错
+let seq = 0
+let timer: number | null = null
 
 watch(visible, (v) => {
   if (!v) return
@@ -73,8 +85,6 @@ watch(visible, (v) => {
   schedulePreview(0)
 }, { immediate: true })
 
-let seq = 0
-let timer: number | null = null
 function schedulePreview(delay = 300): void {
   if (timer != null) window.clearTimeout(timer)
   timer = window.setTimeout(() => { void refreshPreview() }, delay)
@@ -182,7 +192,7 @@ async function submit(): Promise<void> {
           <AppTagInput
             v-else
             :model-value="tags[row.key] ?? ''"
-            @update:model-value="(v: string) => { tags[row.key] = v }"
+            @update:model-value="(v: string) => setTag(row.key, v)"
             :repo="row.desired?.imageRepo ?? ''"
             size="small"
             :class="{ 'is-edited': tagEdited(row) }"
@@ -192,7 +202,7 @@ async function submit(): Promise<void> {
             type="warning"
             :underline="false"
             class="app-rel-dlg__newtag"
-            @click="tags[row.key] = row.newTag ?? ''"
+            @click="setTag(row.key, row.newTag ?? '')"
           >● 有新版本 {{ row.newTag }}，采用</el-link>
         </template>
       </el-table-column>

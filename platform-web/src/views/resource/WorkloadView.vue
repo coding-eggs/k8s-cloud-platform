@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { isManaged, managedReason } from '@/utils/managedResource'
+import { isManaged, managedByOf, managedReason } from '@/utils/managedResource'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -148,6 +148,25 @@ function replicasText(row: K8sWorkload): string {
 /** 是否由 Operator/控制器/更上层对象管理（ownerReferences 非空），或由平台组件/中间件实例托管 → 禁用编辑 */
 function isOpManaged(row: K8sWorkload): boolean {
   return (row.ownerReferences?.length ?? 0) > 0 || isManaged(row)
+}
+
+/** 管它的那个对象：优先 controller=true 的属主，否则第一个 */
+function ownerOf(row: K8sWorkload) {
+  const refs = row.ownerReferences ?? []
+  return refs.find((o) => o.controller) ?? refs[0]
+}
+
+/** op 标记的文字：属主的 kind（Milvus / Elasticsearch / Prometheus…）；只有 managedBy 没有属主时按托管方 */
+function opLabel(row: K8sWorkload): string {
+  const kind = ownerOf(row)?.kind
+  if (kind) return `op: ${kind}`
+  return managedByOf(row) === 'MIDDLEWARE' ? '中间件' : '平台组件'
+}
+
+function opTip(row: K8sWorkload): string {
+  if (isManaged(row)) return managedReason(row)
+  const o = ownerOf(row)
+  return o ? `由 ${o.apiVersion} ${o.kind}「${o.name}」管理，不可编辑` : '由 Operator 管理，不可编辑'
 }
 
 /** 对外暴露端口行：port:nodePort（跨所有绑定的 NodePort/LB Service 拍平）；无则空数组 */
@@ -644,8 +663,8 @@ const contextDesc = computed(() => {
           <template #default="{ row }">
             <code class="res-name name-link" @click="goDetail(row.name)">{{ row.name }}</code>
             <AppOwnerLink v-if="appIdOf(row.labels)" :app-id="appIdOf(row.labels)" :cluster-id="state.clusterId" :tenant-id="state.tenantId" />
-            <el-tooltip v-if="isOpManaged(row)" :content="isManaged(row) ? managedReason(row) : '由 Operator 管理，不可编辑'" placement="top">
-              <el-tag type="warning" size="small" effect="plain" class="op-tag">op</el-tag>
+            <el-tooltip v-if="isOpManaged(row)" :content="opTip(row)" placement="top">
+              <el-tag type="warning" size="small" effect="plain" class="op-tag">{{ opLabel(row) }}</el-tag>
             </el-tooltip>
             <el-tag v-if="row.kind === 'deployment' && row.paused" type="info" size="small" effect="plain" class="op-tag">已暂停</el-tag>
             <el-tooltip v-if="hpaNameOf(row)" :content="`已绑定 HPA「${hpaNameOf(row)}」`" placement="top">
