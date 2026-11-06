@@ -42,7 +42,8 @@ async function load(): Promise<void> {
   if (!target || !canView.value) return
   loading.value = true
   loadError.value = false
-  // 计数卡（应用 / 中间件 / CI / 告警）独立降级：失败只是不显示这几张卡
+  // 计数卡（应用 / 中间件 / CI / 告警）独立降级：失败只是不显示这几张卡；先清空，免得切租户时残留上一个租户的数
+  summary.value = null
   tenantApi.summary(target)
     .then((s) => { if (target === tenantId.value) summary.value = s })
     .catch(() => { if (target === tenantId.value) summary.value = null })

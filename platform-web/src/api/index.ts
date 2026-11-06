@@ -294,8 +294,8 @@ export const tenantApi = {
   /** 租户概览首屏快照：合计 + 逐集群小计 + 异常 Pod / 不健康工作负载名单 + 配额三档（逐集群降级） */
   overview: (body: TenantOverviewReq) =>
     http.post<never, K8sTenantOverview>('/tenant/overview', body),
-  /** 概览计数卡（应用 / 中间件 / CI / 告警 + 命名空间数 / 成员数）；tenantId 省略 = token 租户 */
-  summary: (tenantId?: string) =>
+  /** 概览计数卡（应用 / 中间件 / CI / 告警 + 命名空间数 / 成员数）；tenantId 必传（租户 token 下传空会被判 TENANT_MISMATCH） */
+  summary: (tenantId: string) =>
     http.post<never, ScopeSummary>('/tenant/overview/summary', { tenantId }),
   /** 资源明细（per-namespace，懒加载）：每行回带 clusterId + quotaState（判定在后端） */
   overviewBreakdown: (body: TenantOverviewReq) =>

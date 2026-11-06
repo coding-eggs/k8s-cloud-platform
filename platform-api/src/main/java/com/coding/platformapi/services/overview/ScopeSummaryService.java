@@ -155,6 +155,9 @@ public class ScopeSummaryService {
                 canCi ? OverviewBuckets.sum(c) : null, canAlerts ? OverviewBuckets.sum(al) : null);
     }
 
+    /**
+     * 按命名空间圈定后再按 tenantId 过滤：V2026_10_31_3 起一个命名空间只归一个租户，这一层只是防御。
+     */
     private CountBreakdown middlewareOf(String clusterId, Collection<String> namespaces, String tenantId) {
         try {
             Set<String> nsSet = namespaces == null ? null : new HashSet<>(namespaces);

@@ -64,4 +64,17 @@ class PlatformHealthProbeTest {
         assertThat(h.total()).isEqualTo(2);
         assertThat(h.down()).containsExactly("auth");
     }
+
+    @Test
+    void nestedUpWithTopLevelDownCountsAsDown() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        // 开了 show-components 时 DOWN 也可能被配置成 200；只认顶层 status
+        respond("/health", 200, "{\"status\":\"DOWN\",\"components\":{\"db\":{\"status\":\"UP\"}}}");
+        server.start();
+        String base = "http://127.0.0.1:" + server.getAddress().getPort();
+
+        PlatformHealthProbe.ServiceHealth h = new PlatformHealthProbe(Map.of("k8s-server", base + "/health")).probe();
+
+        assertThat(h.down()).containsExactly("k8s-server");
+    }
 }

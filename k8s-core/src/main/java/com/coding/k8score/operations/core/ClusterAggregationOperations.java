@@ -388,7 +388,6 @@ public class ClusterAggregationOperations {
 
     // ==================== pods ====================
 
-    /** 累加一个 pod 的 requests/limits（只算 {@code spec.containers}，口径同节点页）。 */
     /** Pod 状态分桶（口径见 NamespaceStatDTO.podRunning 等字段注释）；各桶与异常互斥。 */
     private static void countPhase(NsAcc acc, Pod pod) {
         String reason = abnormalReason(pod);
@@ -402,6 +401,7 @@ public class ClusterAggregationOperations {
         }
     }
 
+    /** 累加一个 pod 的 requests/limits（只算 {@code spec.containers}，口径同节点页）。 */
     private static void addPodResources(NsAcc acc, Pod pod) {
         if (pod.getSpec() == null || pod.getSpec().getContainers() == null) {
             return;
