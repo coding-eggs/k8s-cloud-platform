@@ -7,6 +7,7 @@ import { useApplicationContext } from '@/composables/useApplicationContext'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import type { ApplicationOptions, ApplicationView } from '@/types'
+import { useQueryFilter } from '@/composables/useQueryFilter'
 
 const router = useRouter()
 const perm = usePermission()
@@ -31,6 +32,12 @@ const statusMeta: Record<string, { text: string; type: 'info' | 'primary' | 'suc
   INTERRUPTED: { text: '已中断', type: 'danger' },
   OFFLINE: { text: '已下线', type: 'info' },
 }
+
+/** 状态筛选（台账原值，与 URL `?status=` 同步；总览应用卡点「失败 1」带 FAILED 过来） */
+const statusFilter = useQueryFilter('status')
+const shown = computed(() =>
+  statusFilter.value ? apps.value.filter((a) => a.status === statusFilter.value) : apps.value,
+)
 
 const canCreate = computed(() => !!clusterId.value && !!form.value.name.trim()
   && !!form.value.namespace)
@@ -132,7 +139,18 @@ onMounted(async () => {
       </div>
     </div>
 
-    <el-table v-loading="loading" :data="apps" class="panel" empty-text="还没有应用">
+    <div class="page__filters">
+      <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 140px">
+        <el-option v-for="(m, k) in statusMeta" :key="k" :label="m.text" :value="k" />
+      </el-select>
+    </div>
+
+    <el-table
+      v-loading="loading"
+      :data="shown"
+      class="panel"
+      :empty-text="statusFilter && apps.length ? '没有该状态的应用' : '还没有应用'"
+    >
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
           <el-link type="primary" @click="openApp(row)">{{ row.displayName || row.name }}</el-link>
@@ -189,6 +207,11 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.page__filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
 .page__header {
   display: flex;
   align-items: flex-start;

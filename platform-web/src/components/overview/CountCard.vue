@@ -5,6 +5,7 @@
  * - `kind` 给出右上角图标（与侧栏菜单同一个图标）；告警卡有触发中的告警时图标转红；
  * - 整张卡可点击：有数时去该资源的列表页，为 0 时去「从哪开始」的页面（见 COUNT_KIND_LINK）。
  *   目标页没有权限就不可点（不给死链）；`to` 可覆盖目标，`no-link` 关掉链接（如节点详情里的 Pod 卡）；
+ * - 带 `query` 的状态段（如 Pod「异常 4」）可单独点：去同一个列表页并带上筛选参数（列表页据此预先筛好）；
  * - 比例条：各段按 max(total, Σ段) 等比铺开，剩余部分是轨道底色 —— 工作负载卡只有「不健康」一段，
  *   红色占比就是不健康比例；
  * - total 为 0：数字变淡，并给一句引导（「还没有应用，点击去新建」/「没有触发中的告警」）。
@@ -44,11 +45,23 @@ const target = computed<string | null>(() => {
   return (isEmpty.value ? emptyHint.value?.path : undefined) ?? link.list
 })
 /** 目标页的页面码一个都没有 → 不可点（菜单里本来也看不到那一页） */
-const href = computed(() => {
-  if (!target.value) return null
-  const need = router.resolve(target.value).meta.requiresPerm
-  return !need?.length || perm.hasAny(need) ? target.value : null
+function permitted(path: string): boolean {
+  const need = router.resolve(path).meta.requiresPerm
+  return !need?.length || perm.hasAny(need)
+}
+const href = computed(() => (target.value && permitted(target.value) ? target.value : null))
+
+/** 状态段跳转的基准：列表页（不是空态引导页）；可能自带查询参数（告警页默认 status=firing） */
+const listPath = computed<string | null>(() => {
+  if (props.noLink) return null
+  const p = props.to ?? (props.kind ? COUNT_KIND_LINK[props.kind].list : null)
+  return p && permitted(p) ? p : null
 })
+function openSegment(s: Segment): void {
+  if (!listPath.value || !s.query) return
+  const base = router.resolve(listPath.value)
+  void router.push({ path: base.path, query: { ...base.query, ...s.query } })
+}
 
 const shown = computed(() => (props.segments ?? []).filter((s) => s.value > 0))
 const bar = computed(() => {
@@ -81,7 +94,14 @@ const bar = computed(() => {
     </div>
     <div class="ov-count-segs">
       <span v-if="emptyHint" class="ov-count-hint" :class="{ good: emptyHint.good }">{{ emptyHint.text }}</span>
-      <span v-for="s in shown" :key="s.label" class="ov-count-seg" :class="`tone-${s.tone}`">
+      <span
+        v-for="s in shown"
+        :key="s.label"
+        class="ov-count-seg"
+        :class="[`tone-${s.tone}`, { 'seg-link': !!(listPath && s.query) }]"
+        :title="listPath && s.query ? `只看「${s.label}」` : undefined"
+        @click="listPath && s.query ? ($event.preventDefault(), $event.stopPropagation(), openSegment(s)) : undefined"
+      >
         <i class="dot" />{{ s.label }} {{ s.value }}
       </span>
       <slot />
@@ -198,4 +218,14 @@ const bar = computed(() => {
 .tone-danger .dot { background: var(--danger); }
 .tone-info .dot { background: var(--info); }
 .ov-count-seg.tone-danger { color: var(--danger); }
+.ov-count-seg.seg-link {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+.ov-count-seg.seg-link:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  text-decoration: underline;
+}
 </style>

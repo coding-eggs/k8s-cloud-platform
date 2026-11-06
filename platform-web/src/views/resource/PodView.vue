@@ -16,6 +16,8 @@ import PodTerminal from '@/components/PodTerminal.vue'
 import PodLogDialog from '@/components/PodLogDialog.vue'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import YamlBlock from '@/components/YamlBlock.vue'
+import { useQueryFilter } from '@/composables/useQueryFilter'
+import { POD_BUCKET_OPTIONS, podBucket } from '@/utils/podBucket'
 
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
@@ -24,10 +26,15 @@ const loading = ref(false)
 const list = ref<K8sPod[]>([])
 /** 名称模糊搜索（前端过滤） */
 const keyword = ref('')
+/** 状态筛选（与总览 Pod 卡同一口径，见 utils/podBucket）；与 URL `?status=` 同步，总览点「异常 4」带过来 */
+const statusFilter = useQueryFilter('status')
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return list.value
-  return list.value.filter((r) => (r.name ?? '').toLowerCase().includes(kw))
+  return list.value.filter(
+    (r) =>
+      (!kw || (r.name ?? '').toLowerCase().includes(kw)) &&
+      (!statusFilter.value || podBucket(r) === statusFilter.value),
+  )
 })
 
 const ctxParams = computed(() => ({
@@ -170,6 +177,9 @@ const contextDesc = computed(() => {
     <div v-else class="panel table-panel">
       <div class="search-bar">
         <el-input v-model="keyword" placeholder="按名称搜索…" clearable :prefix-icon="Search" class="search-input" />
+        <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 130px">
+          <el-option v-for="o in POD_BUCKET_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
+        </el-select>
         <!-- 平台侧全局视图：跨全部命名空间。仅持 platform:pod:list-all 可见，且为只读 -->
         <el-checkbox v-if="canListAll" v-model="allNs" :disabled="!ready" @change="refresh">
           全部命名空间

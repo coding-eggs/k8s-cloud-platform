@@ -9,6 +9,7 @@
  * - labels / annotations 是 **JSON 串**，展示前要 parse —— 脏数据不能让整页崩（try/catch + 原文兜底）。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { alertApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
@@ -40,6 +41,10 @@ const loading = ref(false)
 /** 上一页是否满页；不满说明已到底（游标语义下没有「总数」可问） */
 const hasMore = ref(false)
 
+/** 总览「告警触发中」卡带过来的初始筛选（`?status=firing&severity=critical`）；之后由页面上的筛选控件接管 */
+const route = useRoute()
+const initialQuery = (k: string): string => (typeof route.query[k] === 'string' ? (route.query[k] as string) : '')
+
 const filters = reactive({
   /**
    * ⚠️ 存**字符串**不存 Date：后端的 Date 反序列化用的是全局 `yyyy-MM-dd HH:mm:ss`
@@ -47,8 +52,8 @@ const filters = reactive({
    * 症状是「筛选后永远是空列表」。`value-format` 让日期选择器直接吐这个格式。
    */
   range: null as [string, string] | null,
-  status: '',
-  severity: '',
+  status: initialQuery('status'),
+  severity: initialQuery('severity'),
   alertname: '',
   showWatchdog: false,
   /**

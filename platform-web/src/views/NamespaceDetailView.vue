@@ -392,7 +392,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
           <!-- 计数卡（/namespace/summary）：块为 null = 无该读权限，不渲染 -->
           <template v-if="summary">
             <div class="ov-cards6">
-              <CountCard title="工作负载" kind="workload" :total="summary.workloads?.total ?? null" :segments="summary.workloads ? [{ label: '不健康', value: summary.workloads.unhealthy, tone: 'danger' }] : []" />
+              <CountCard title="工作负载" kind="workload" :total="summary.workloads?.total ?? null" :segments="summary.workloads ? [{ label: '不健康', value: summary.workloads.unhealthy, tone: 'danger', query: { status: 'unhealthy' } }] : []" />
               <CountCard title="Pod" kind="pod" :total="summary.pods?.total ?? null" :segments="podSegments(summary.pods)" />
               <CountCard v-if="summary.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
               <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />

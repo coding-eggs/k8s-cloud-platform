@@ -35,6 +35,7 @@ import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import { fmtAge, fmtDate, workloadStatus } from '@/utils/format'
 import { Refresh, MoreFilled, Search, EditPen, TopRight } from '@element-plus/icons-vue'
 import YamlBlock from '@/components/YamlBlock.vue'
+import { useQueryFilter } from '@/composables/useQueryFilter'
 
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
 const router = useRouter()
@@ -48,6 +49,20 @@ const list = ref<K8sWorkload[]>([])
 const hpaBound = ref<Map<string, string>>(new Map())
 /**客户端类型过滤：all / deployment / statefulset / daemonset */
 const kindFilter = ref('all')
+/**
+ * 「只看不健康」（URL `?status=unhealthy`，总览工作负载卡点「不健康 3」带过来）。
+ * 口径同总览（ClusterAggregationOperations.unhealthyOf）：只算 Deployment / StatefulSet，
+ * 就绪副本 < 期望副本；replicas 缺省按 1、readyReplicas 缺省按 0；DaemonSet 不参与。
+ */
+const statusFilter = useQueryFilter('status')
+const onlyUnhealthy = computed({
+  get: () => statusFilter.value === 'unhealthy',
+  set: (v: boolean) => { statusFilter.value = v ? 'unhealthy' : '' },
+})
+function isUnhealthy(w: K8sWorkload): boolean {
+  if (w.kind !== 'deployment' && w.kind !== 'statefulset') return false
+  return (w.readyReplicas ?? 0) < (w.replicas ?? 1)
+}
 /** 名称模糊搜索（前端过滤） */
 const keyword = ref('')
 
@@ -115,6 +130,7 @@ const filtered = computed(() => {
   return list.value.filter(
     (w) =>
       (kindFilter.value === 'all' || w.kind === kindFilter.value) &&
+      (!onlyUnhealthy.value || isUnhealthy(w)) &&
       (!kw || (w.name ?? '').toLowerCase().includes(kw)),
   )
 })
@@ -638,13 +654,19 @@ const contextDesc = computed(() => {
           </el-radio-group>
         </div>
         <div class="toolbar-right">
+          <el-checkbox v-model="onlyUnhealthy">只看不健康</el-checkbox>
           <el-input v-model="keyword" placeholder="按名称搜索…" clearable :prefix-icon="Search" class="search-input" />
           <el-button :icon="Refresh" circle :disabled="!ready" @click="refresh" />
         </div>
       </div>
 
       <EmptyState
-        v-if="filtered.length === 0 && !loading"
+        v-if="onlyUnhealthy && filtered.length === 0 && list.length > 0 && !loading"
+        title="没有不健康的工作负载"
+        description="该命名空间下的 Deployment / StatefulSet 副本都已就绪。取消「只看不健康」可看全部。"
+      />
+      <EmptyState
+        v-else-if="filtered.length === 0 && !loading"
         title="该命名空间下暂无工作负载"
         :description="
           canCreate

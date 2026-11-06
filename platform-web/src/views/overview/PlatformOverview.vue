@@ -65,14 +65,14 @@ const pct = (used: number | null | undefined, total: number | null | undefined):
 
 const workloadSegments = computed<Segment[]>(() => {
   const w = ov.value?.workloads
-  return w ? [{ label: '不健康', value: w.unhealthy, tone: 'danger' }] : []
+  return w ? [{ label: '不健康', value: w.unhealthy, tone: 'danger', query: { status: 'unhealthy' } }] : []
 })
 const tenantSegments = computed<Segment[]>(() => {
   const t = ov.value?.tenants
   return t
     ? [
-        { label: '启用', value: t.enabled, tone: 'success' },
-        { label: '停用', value: t.disabled, tone: 'warning' },
+        { label: '启用', value: t.enabled, tone: 'success', query: { status: '1' } },
+        { label: '停用', value: t.disabled, tone: 'warning', query: { status: '0' } },
       ]
     : []
 })

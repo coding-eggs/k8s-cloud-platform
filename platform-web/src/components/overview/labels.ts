@@ -6,17 +6,20 @@ export interface Segment {
   label: string
   value: number
   tone: Tone
+  /** 点这一段时带到列表页的查询参数（列表页按它预先筛好）；不给 = 这一段不可单独点 */
+  query?: Record<string, string>
 }
 
-type Def = Record<string, { label: string; tone: Tone }>
+type Def = Record<string, { label: string; tone: Tone; query?: Record<string, string> }>
 
 /** 状态键 → 中文 + 色调（键与后端 OverviewBuckets 一致） */
+/** 应用的 query 用台账原值（应用列表按台账 status 筛）：RUNNING=READY、UNRELEASED=DRAFT */
 const APP: Def = {
-  RUNNING: { label: '运行', tone: 'success' },
-  DEPLOYING: { label: '发布中', tone: 'info' },
-  UNRELEASED: { label: '未发布', tone: 'info' },
-  FAILED: { label: '失败', tone: 'danger' },
-  OFFLINE: { label: '下线', tone: 'warning' },
+  RUNNING: { label: '运行', tone: 'success', query: { status: 'READY' } },
+  DEPLOYING: { label: '发布中', tone: 'info', query: { status: 'DEPLOYING' } },
+  UNRELEASED: { label: '未发布', tone: 'info', query: { status: 'DRAFT' } },
+  FAILED: { label: '失败', tone: 'danger', query: { status: 'FAILED' } },
+  OFFLINE: { label: '下线', tone: 'warning', query: { status: 'OFFLINE' } },
 }
 const MIDDLEWARE: Def = {
   NORMAL: { label: '正常', tone: 'success' },
@@ -30,9 +33,10 @@ const PIPELINE: Def = {
   CANCELLED: { label: '已取消', tone: 'warning' },
   NEVER: { label: '未运行', tone: 'info' },
 }
+/** 中间件实例 / 流水线列表暂无状态筛选（流水线列表不带最近一次运行状态），这两类的段不可单独点 */
 const ALERT: Def = {
-  CRITICAL: { label: '严重', tone: 'danger' },
-  WARNING: { label: '警告', tone: 'warning' },
+  CRITICAL: { label: '严重', tone: 'danger', query: { status: 'firing', severity: 'critical' } },
+  WARNING: { label: '警告', tone: 'warning', query: { status: 'firing', severity: 'warning' } },
   OTHER: { label: '其它', tone: 'info' },
 }
 
@@ -42,16 +46,16 @@ const DEFS = { app: APP, middleware: MIDDLEWARE, pipeline: PIPELINE, alert: ALER
 export function segmentsOf(kind: keyof typeof DEFS, b: CountBreakdown | null | undefined): Segment[] {
   if (!b) return []
   const def = DEFS[kind]
-  return Object.entries(def).map(([k, d]) => ({ label: d.label, tone: d.tone, value: b.byStatus?.[k] ?? 0 }))
+  return Object.entries(def).map(([k, d]) => ({ label: d.label, tone: d.tone, query: d.query, value: b.byStatus?.[k] ?? 0 }))
 }
 
 export function podSegments(p: OverviewPods | null | undefined): Segment[] {
   if (!p) return []
   return [
-    { label: 'Running', value: p.running, tone: 'success' },
-    { label: 'Pending', value: p.pending, tone: 'warning' },
-    { label: '已完成', value: p.succeeded, tone: 'info' },
-    { label: '异常', value: p.abnormal, tone: 'danger' },
+    { label: 'Running', value: p.running, tone: 'success', query: { status: 'running' } },
+    { label: 'Pending', value: p.pending, tone: 'warning', query: { status: 'pending' } },
+    { label: '已完成', value: p.succeeded, tone: 'info', query: { status: 'succeeded' } },
+    { label: '异常', value: p.abnormal, tone: 'danger', query: { status: 'abnormal' } },
   ]
 }
 
@@ -80,7 +84,7 @@ export const COUNT_KIND_LINK: Record<CountKind, { list: string; empty?: { text: 
   workload: { list: '/resources/workloads', empty: { text: '暂无工作负载' } },
   pod: { list: '/resources/pods', empty: { text: '暂无 Pod' } },
   pipeline: { list: '/pipelines', empty: { text: '还没有流水线，点击去新建', path: '/pipelines' } },
-  alert: { list: '/alerts', empty: { text: '没有触发中的告警', good: true } },
+  alert: { list: '/alerts?status=firing', empty: { text: '没有触发中的告警', good: true } },
   tenant: { list: '/tenants', empty: { text: '还没有租户，点击去新建', path: '/tenants' } },
   namespace: { list: '/namespaces' },
 }

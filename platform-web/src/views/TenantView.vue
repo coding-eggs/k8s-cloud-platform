@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { platformUserApi, tenantApi } from '@/api'
 import type { PlatformTenant, PlatformUser } from '@/types'
 import { fmtDate } from '@/utils/format'
 import TenantDetailPanel from '@/components/TenantDetailPanel.vue'
 import {MoreFilled} from "@element-plus/icons-vue";
+import { useQueryFilter } from '@/composables/useQueryFilter'
 
 const loading = ref(false)
 const list = ref<PlatformTenant[]>([])
+/** 启用 / 停用筛选（URL `?status=1|0`，总览租户卡点「停用 1」带过来） */
+const statusFilter = useQueryFilter('status')
+const shown = computed(() =>
+  statusFilter.value === '' ? list.value : list.value.filter((t) => String(t.status) === statusFilter.value),
+)
 
 async function load(): Promise<void> {
   loading.value = true
@@ -157,9 +163,13 @@ onMounted(load)
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">创建租户</el-button>
       <el-button @click="load">刷新</el-button>
+      <el-select v-model="statusFilter" placeholder="全部状态" clearable style="width: 120px; margin-left: 12px">
+        <el-option label="启用" value="1" />
+        <el-option label="停用" value="0" />
+      </el-select>
     </div>
 
-    <el-table v-loading="loading" :data="list" stripe>
+    <el-table v-loading="loading" :data="shown" stripe>
       <el-table-column prop="name"  label="租户名称" min-width="140" >
         <template #default="{ row }">
           <span class="name-link" @click="openDetail(row)">{{ row.name }}</span>
