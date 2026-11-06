@@ -641,14 +641,14 @@
 > ⚠️ 本批再次复现 S3.1 记过的那条：**`npx vue-tsc --noEmit` 会零报错放过真错误，
 > `npm run build` 才报** —— 前端收口一律用后者。
 
-#### S3.2 应用级交付（自研薄应用层）｜ 规模 L ｜ 前置：**D1**（**不需要** S0.2 —— kubeconfig 已在 `k8s_cluster` 表）
+#### S3.2 应用级交付（自研薄应用层）｜ 规模 L ｜ 前置：**D1**（**不需要** S0.2 —— kubeconfig 已在 `k8s_cluster` 表）｜ ✅ **已完成（2026-11-06 用户确认收口）**
 > 已定：自研（分析文档 §6.4）。产品形态自研、渲染引擎内部用 Helm。
 
 - [x] S3.2.1 **D1 决策** + 应用模型与表（应用 = 服务 desired + 依赖 + 不可变发布快照；平台自己存，不走 helm install）
 - [x] S3.2.2 渲染引擎（`helm template`，内置 chart `charts/app/workload/1.0.0`）
 - [x] S3.2.3 复用现有 SSA apply 通道（不新建写入路径）
 - [x] S3.2.4 应用列表 / 详情 / 发布 / 回滚页 + 权限点 + 迁移
-- [ ] S3.2.5 漂移处理（真相源在平台侧；检测到被外部改动时的策略）—— 未做：SSA 强制覆写，该服务下次发布时纠正，不做主动检测
+- [x] S3.2.5 漂移处理（真相源在平台侧；检测到被外部改动时的策略）—— 定为：SSA 强制覆写，该服务下次发布时纠正，**不做主动检测**（随 2026-11-06 收口接受）
 
 > **📌 2026-11-02 应用发布重做（分支 `feat/application-release`，已实施待部署）**
 >
@@ -662,6 +662,12 @@
 > 用线上现有构建删除**（否则其旧对象会无人认领，迁移第 0 步也会报错并跳过结构改动）；没部署过的由迁移转成空应用。
 > 部署：手工重放 `V2026_11_02_10` → `_11` → `_12` → `_13` → `_14` 后重建 k8s-server / platform-api / platform-web，
 > 「重下发全部模板」、重新登录；**platform-api 必须单副本**。**设计 §12 真集群验收未做**，清单在文档 §5。
+>
+> **📌 2026-11-03 ~ 11-06 增补（main，未推送）**：外部连接可改（`V2026_11_03_1`）；发布执行按实例归属 + 租约
+> （`V2026_11_04_3`）、凭据写穿 Redis + 停机交接（「平台发布自己」不再卡住，`50a984ab`）；应用**下线**
+> （OFFLINE 发布，PVC 保留，`V2026_11_06_1`）；服务 **NodePort 暴露**（HTTPRoute / 网关暴露按用户意见暂不做）；
+> 服务详情 Pod 列表可跳详情；**发布过程日志**（每阶段一条、健康检查下钻到 Pod 级原因，`V2026_11_06_2`）。
+> **2026-11-06 用户确认应用部分收口**，S3.2 结案。
 
 #### S3.3 Helm Chart 商店 ｜ 规模 M ｜ 前置：S3.2
 - [ ] S3.3.1 来源接入：**本地 Harbor（OCI chart）** + **Artifact Hub 公共索引**（发现/搜索）
@@ -1031,7 +1037,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ✅ **已完成（2026-10-19）**。部署：**先重放 `V2026_10_19_6` + `V2026_10_19_7`**，重建 platform-api + k8s-server + platform-web；集群侧配 ES 连接与 `monitor` 内的 ES 凭证 Secret。采集 = otel-operator 组件（operator + Tempo + collector + sidecar），查询 = 日志查询中心 + 链路追踪（租户按分配表收窄） | [spec](superpowers/specs/2026-10-18-otel-observability-design.md) · 组件文档在 `k8s-server/src/main/resources/charts/components/<chart>/<version>/README.md` |
 | **S2.4** | 服务网格可视化 | — | M-L | ✅ **已实施待部署**（2026-10-17，含 S2.4.5 Service 页补网格信息）。部署：**platform-api + platform-web**，先重放 `V2026_10_17_2`（S2.4.5 本身只动前端，随 platform-web 一起发）。S2.4.4 **已实测回答**；**S2.4.3 链路追踪后期会做**（集群里现在没有任何追踪后端） | [spec](superpowers/specs/2026-10-17-mesh-topology-design.md) · [plan](superpowers/plans/2026-10-17-mesh-topology.md) |
 | **S3.1** | 镜像仓库 | S0.2 | M | ✅ **已实施待部署**（含 2026-10-14 Docker Hub 增补） | [spec](superpowers/specs/2026-10-14-registry-design.md) · [plan](superpowers/plans/2026-10-14-registry.md)<br>增补：[spec](superpowers/specs/2026-10-14-registry-dockerhub-design.md) · [plan](superpowers/plans/2026-10-14-registry-dockerhub.md) |
-| **S3.2** | 应用级交付 | D1 | L | ⬜ **未开始**（2026-10-25 用户确认：chart 商店 / op 管理已收口，**应用级交付还没做**；计划①的 `/app/**` 已随通用商店下线） | — |
+| **S3.2** | 应用级交付 | D1 | L | ✅ **已完成（2026-11-06 用户确认收口）**，已实施待部署。去画布重做 + 依赖 / 外部连接 / 下线 / NodePort / 发布过程日志。部署：按序重放 `V2026_11_02_10..14`、`V2026_11_03_1`、`V2026_11_04_3`、`V2026_11_06_1`、`V2026_11_06_2`，重建 k8s-server + platform-api + platform-web，「重下发全部模板」、重新登录；**部署过的旧画布应用须在升级前删除**；真集群验收清单在 `docs/development/application-release.md` §5 | [spec](superpowers/specs/2026-11-01-application-release-redesign-design.md) · [plan](superpowers/plans/2026-11-01-application-release-redesign.md) · [文档](development/application-release.md) |
 | **S3.3** | Helm Chart 商店 | S3.2、S0.2 | M | ⛔ **否决（2026-10-22）** —— 不做通用 chart 商店；并入中间件商店 | — |
 | **S3.4** | Operator 管理 | S1.2、D1 | L | ✅ **已完成（2026-10-24）** —— 交付为中间件商店的「Operator」tab；无独立 Operator 视图（有意） | — |
 | **S3.5** | CI（Tekton） | S0.2 | XL | ✅ **已实施待部署**（2026-10-16 收口：片① + 片②） | [spec](superpowers/specs/2026-10-15-ci-tekton-design.md) |
@@ -1049,17 +1055,16 @@ S0.2 凭据/连接（git + registry 两类）
         ├──▶ S3.1 镜像仓库（同一条 registry 连接）──▶ (S3.5 CI 的产物去向)
         ├──▶ S3.3 Helm 商店（复用同一个 Harbor 连接）
         └──▶ S3.5 CI（git 凭据 + 注入构建 Pod）
-S3.2 应用级交付 ──▶ S3.3 Helm 商店        ← S3.3 已否决；S3.2 仍未开发，见 §S3.2
+S3.2 应用级交付 ──▶ S3.3 Helm 商店        ← S3.3 已否决；S3.2 已完成（2026-11-06）
 S1.2 集群组件展示 ──▶ S3.4 Operator 管理（另需 D1）  ← 已由中间件商店交付
 （其余各批互不依赖）
 ```
 
 ### 无依赖、可立即开工的批
 
-**S1.1 用户自助 · S1.2 集群组件展示 · S1.3 平台总览 ·
-S2.2 告警**
+**S1.3 平台总览**（2026-11-06 起为台账里唯一剩下的未开始项；S4.2 仍待定）
 
-> 已完成的从这份名单里划掉：S0.1 审计、S0.2 凭据、S2.1 工作负载级日志、S4.1 PVC 扩容、S2.4 服务网格可视化、S4.3 VolumeSnapshot。
+> 已完成的从这份名单里划掉：S0.1 审计、S0.2 凭据、S1.1 用户自助、S1.2 集群组件展示、S2.1 工作负载级日志、S2.2 告警、S4.1 PVC 扩容、S2.4 服务网格可视化、S4.3 VolumeSnapshot、S3.2 应用级交付。
 > S4.2 从「可立即开工」改为**待定**（用户要先想清「对外暴露」的产品规划）。
 
 > **S0.1（审计）建议最优先** —— 它是唯一「不做就补不回来」的，而且凭据使用、CI 触发、Operator 安装
