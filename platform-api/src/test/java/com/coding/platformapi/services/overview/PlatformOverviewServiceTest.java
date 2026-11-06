@@ -200,6 +200,30 @@ class PlatformOverviewServiceTest {
     }
 
     @Test
+    void byNamespaceCarriesMiddlewareBucketsIncludingNamespacesWithoutPods() {
+        when(clusters.snapshot("A")).thenReturn(snap(List.of("demo", "cache")));
+        when(stats.rows(eq(null), eq("A"), any())).thenReturn(List.of(slice("demo", 2, null)));
+        when(middleware.liveStatuses("A")).thenReturn(List.of(
+                new MiddlewareService.LiveStatus("demo", "t1", "FAILED"),
+                new MiddlewareService.LiveStatus("demo", "t1", "READY"),
+                new MiddlewareService.LiveStatus("demo", "t1", "DEGRADED"),
+                new MiddlewareService.LiveStatus("cache", "t1", "CREATING")));
+
+        List<PlatformOverviewView.NamespaceCounts> rows = service.overview().byNamespace();
+
+        assertThat(rows).extracting(PlatformOverviewView.NamespaceCounts::namespace)
+                .containsExactly("demo", "cache");
+        PlatformOverviewView.NamespaceCounts demo = rows.get(0);
+        assertThat(demo.running()).isEqualTo(2);
+        assertThat(demo.middlewareNormal()).isEqualTo(1);
+        assertThat(demo.middlewareAbnormal()).isEqualTo(2);
+        assertThat(demo.middlewareProcessing()).isZero();
+        PlatformOverviewView.NamespaceCounts cache = rows.get(1);   // 没有 Pod 快照也要列出（中间件在那）
+        assertThat(cache.running()).isZero();
+        assertThat(cache.middlewareProcessing()).isEqualTo(1);
+    }
+
+    @Test
     void byNamespaceNullWhenNoClusterConnected() {
         when(clusters.snapshot(any())).thenReturn(null);
 

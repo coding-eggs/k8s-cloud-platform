@@ -5,7 +5,7 @@
  * <p>与「中间件商店」分家：商店只管清单、创建与 Operator 安装，本页只管**已建实例**的
  * 查看 / 编辑 / 连接 / 删除。原先它是商店页里的一个 tab，实例一多就要在两个 tab 之间来回跳。
  */
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { middlewareApi } from '@/api'
@@ -13,6 +13,8 @@ import { usePermission } from '@/stores/permission'
 import MiddlewareConnectionDialog from '@/components/middleware/MiddlewareConnectionDialog.vue'
 import { loadMiddlewareClusters } from '@/components/middleware/middlewareClusters'
 import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
+import { middlewareBucket } from '@/components/overview/labels'
+import { useQueryFilter } from '@/composables/useQueryFilter'
 import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/types'
 
 const perm = usePermission()
@@ -28,6 +30,15 @@ const instances = ref<MiddlewareInstance[]>([])
 /** 类型过滤（空 = 全部）：按类型查，避免一次把所有类型的实时状态都拉一遍 */
 const code = ref('')
 const loading = ref(false)
+/** 状态筛选（总览桶：normal / abnormal / processing；空 = 全部）；与 URL ?status= 同步，总览卡片点「异常」带过来 */
+const statusFilter = useQueryFilter('status')
+const STATUS_FILTERS = [
+  { value: 'normal', label: '正常（运行中）' },
+  { value: 'abnormal', label: '异常（降级 / 失败）' },
+  { value: 'processing', label: '处理中（创建 / 删除中）' },
+]
+const shownInstances = computed(() =>
+  statusFilter.value ? instances.value.filter((i) => middlewareBucket(i.status) === statusFilter.value) : instances.value)
 /** 首轮加载完成前不响应顶栏变化（onMounted 自己会按上下文加载一次） */
 const ready = ref(false)
 
@@ -208,9 +219,13 @@ onBeforeUnmount(() => {
         <el-option v-for="i in catalog" :key="i.code" :label="i.name" :value="i.code" />
       </el-select>
       <span class="mw-form-help">按类型查询，只拉这一类实例的实时状态</span>
+      <span class="mw-filter-label mw-filter-gap">状态</span>
+      <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 200px">
+        <el-option v-for="o in STATUS_FILTERS" :key="o.value" :label="o.label" :value="o.value" />
+      </el-select>
     </div>
 
-    <el-table :data="instances" class="panel" empty-text="这个集群还没有中间件实例">
+    <el-table :data="shownInstances" class="panel" :empty-text="statusFilter && instances.length ? '没有该状态的实例' : '这个集群还没有中间件实例'">
       <el-table-column label="类型" width="140">
         <template #default="{ row }">{{ nameOf(row.code) }}</template>
       </el-table-column>
@@ -281,7 +296,8 @@ onBeforeUnmount(() => {
 .ph-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--text-1); }
 .ph-desc { margin: 4px 0 0; font-size: 12.5px; color: var(--text-3); }
 .ph-actions { display: flex; gap: 10px; align-items: center; }
-.mw-filter { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.mw-filter { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.mw-filter-gap { margin-left: 12px; }
 .mw-filter-label { color: var(--text-3); font-size: 12.5px; }
 .mw-form-help { margin-top: 4px; font-size: 12px; color: var(--text-3); line-height: 1.5; }
 .mw-src-gone { color: var(--text-3); font-size: 12.5px; }

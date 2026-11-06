@@ -12,7 +12,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { calicoApi, clusterApi, storageClassApi } from '@/api'
+import { calicoApi, clusterApi, middlewareApi, storageClassApi } from '@/api'
 import { clusterMetrics, type ClusterMetricsReq } from '@/api/metrics'
 import type {
   K8sAbnormalPod, K8sCluster, K8sClusterOverview, K8sNamespaceStatEntry, K8sNodeHealth,
@@ -31,7 +31,7 @@ import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
-import { nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
+import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const route = useRoute()
@@ -259,6 +259,10 @@ const clusterPodSegments = computed<Segment[]>(() => {
   const succeeded = t.podSucceeded ?? 0
   return podSegments({ total: t.podCount, running, pending, succeeded, abnormal: Math.max(0, t.podCount - running - pending - succeeded) })
 })
+async function loadClusterMwRows() {
+  const id = clusterId.value
+  return middlewareNsCountsOf(await middlewareApi.instanceList(id), () => cluster.value?.clusterName ?? id)
+}
 async function loadClusterNsRows() {
   const id = clusterId.value
   return nsCountsOf(await clusterApi.resourceBreakdown(id), () => cluster.value?.clusterName ?? id)
@@ -478,10 +482,10 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
         <el-tab-pane label="概览" name="overview">
           <template v-if="summary">
             <div class="ov-cards4">
-              <CountCard title="工作负载" kind="workload" :total="clusterWorkloadTotal" :segments="clusterWorkloadSegments" :load-ns-rows="loadClusterNsRows" />
-              <CountCard title="Pod" kind="pod" :total="overview?.resourceTotal?.podCount ?? null" :segments="clusterPodSegments" :load-ns-rows="loadClusterNsRows" />
+              <CountCard title="工作负载" kind="workload" :scope="clusterScope" :total="clusterWorkloadTotal" :segments="clusterWorkloadSegments" :load-ns-rows="loadClusterNsRows" />
+              <CountCard title="Pod" kind="pod" :scope="clusterScope" :total="overview?.resourceTotal?.podCount ?? null" :segments="clusterPodSegments" :load-ns-rows="loadClusterNsRows" />
               <CountCard v-if="summary.applications" title="应用" kind="app" :scope="clusterScope" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
-              <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :scope="clusterScope" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+              <CountCard v-if="summary.middleware" title="中间件" kind="middleware" :scope="clusterScope" :load-ns-rows="loadClusterMwRows" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
               <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" kind="pipeline" :scope="clusterScope" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
               <CountCard v-if="summary.alerts" title="告警触发中" kind="alert" :scope="clusterScope" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
             </div>

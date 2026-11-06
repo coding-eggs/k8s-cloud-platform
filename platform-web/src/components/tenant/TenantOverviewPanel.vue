@@ -14,7 +14,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh } from '@element-plus/icons-vue'
-import { tenantApi } from '@/api'
+import { middlewareApi, tenantApi } from '@/api'
 import type { K8sAbnormalPod, K8sNamespaceStatEntry, K8sQuotaState, K8sTenantOverview } from '@/types'
 import type { MetricSeries } from '@/types/metrics'
 import MetricChart from '@/components/workload/MetricChart.vue'
@@ -23,7 +23,7 @@ import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate } from '@/utils/format'
 import { formatMetricValue } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
-import { nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
+import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
 const props = defineProps<{ tenantId: string }>()
@@ -88,6 +88,13 @@ const tenantPodSegments = computed<Segment[]>(() => {
 const tenantWorkloadSegments = computed<Segment[]>(() =>
   overview.value ? [{ label: '不健康', value: overview.value.unhealthyWorkloadTotal, tone: 'danger', query: { status: 'unhealthy' } }] : [],
 )
+/** 中间件卡点状态时现拉：本租户各集群的实例 → 按命名空间计数 */
+async function loadTenantMwRows() {
+  const target = props.tenantId
+  const ids = (overview.value?.clusters ?? []).map((c) => c.clusterId)
+  const lists = await Promise.all(ids.map((id) => middlewareApi.instanceList(id, undefined, target).catch(() => [])))
+  return middlewareNsCountsOf(lists.flat(), clusterNameOf)
+}
 const tenantNsRows = computed(() => (breakdown.value ? nsCountsOf(breakdown.value, clusterNameOf) : null))
 
 async function loadOverview(): Promise<void> {
@@ -272,7 +279,7 @@ defineExpose({ reloadAll })
         <CountCard title="工作负载" kind="workload" :total="workloadCount" :segments="tenantWorkloadSegments" :ns-rows="tenantNsRows" />
         <CountCard title="Pod" kind="pod" :total="overview.total.podCount" :segments="tenantPodSegments" :ns-rows="tenantNsRows" />
         <CountCard v-if="summary?.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
-        <CountCard v-if="summary?.middleware" title="中间件" kind="middleware" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+        <CountCard v-if="summary?.middleware" title="中间件" kind="middleware" :load-ns-rows="loadTenantMwRows" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
         <CountCard v-if="summary?.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
         <CountCard v-if="summary?.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
         <CountCard v-if="summary" title="命名空间 / 成员" kind="namespace" :total="summary.namespaceCount">

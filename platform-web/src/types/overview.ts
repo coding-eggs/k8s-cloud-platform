@@ -75,6 +75,10 @@ export interface NamespaceCounts {
   succeeded: number
   abnormal: number
   unhealthyWorkloads: number
+  /** 中间件实例按总览桶计数（集群 / 租户概览的资源明细里没有这三项，按 0 处理） */
+  middlewareNormal?: number
+  middlewareAbnormal?: number
+  middlewareProcessing?: number
 }
 
 export interface ScopeSummary {

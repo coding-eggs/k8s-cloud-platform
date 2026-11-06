@@ -71,18 +71,23 @@ public final class OverviewBuckets {
         Map<String, Long> by = keys(List.of("NORMAL", "ABNORMAL", "PROCESSING"));
         long total = 0;
         for (String s : statuses) {
-            String k = s == null ? null : switch (s) {
-                case "READY" -> "NORMAL";
-                case "DEGRADED", "FAILED" -> "ABNORMAL";
-                case "CREATING", "DELETING" -> "PROCESSING";
-                default -> null;
-            };
+            String k = middlewareKey(s);
             if (k != null) {
                 by.merge(k, 1L, Long::sum);
                 total++;
             }
         }
         return new CountBreakdown(total, by);
+    }
+
+    /** 中间件台账 / 实时状态 → 总览桶（NORMAL / ABNORMAL / PROCESSING）；不认识的 → null（不计）。 */
+    public static String middlewareKey(String status) {
+        return status == null ? null : switch (status) {
+            case "READY" -> "NORMAL";
+            case "DEGRADED", "FAILED" -> "ABNORMAL";
+            case "CREATING", "DELETING" -> "PROCESSING";
+            default -> null;
+        };
     }
 
     /** 多个范围（集群）的结果相加；null（该范围取不到）跳过；<b>全部</b>取不到 → null（不是 0）。空列表 → 0。 */

@@ -53,7 +53,8 @@ public record PlatformOverviewView(
 
     /** 一个（集群, 命名空间）的计数；口径同 {@link Pods}（abnormal = podCount − running − pending − succeeded）。 */
     public record NamespaceCounts(String clusterId, String clusterName, String namespace,
-                                  long running, long pending, long succeeded, long abnormal, long unhealthyWorkloads) {
+                                  long running, long pending, long succeeded, long abnormal, long unhealthyWorkloads,
+                                  long middlewareNormal, long middlewareAbnormal, long middlewareProcessing) {
     }
 
     /** 只算配了 hard 的 ns（CPU 与内存各自独立判断）。 */

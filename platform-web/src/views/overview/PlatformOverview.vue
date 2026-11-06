@@ -188,7 +188,7 @@ onMounted(load)
       <!-- 资源汇总 -->
       <div class="ov-grid5">
         <CountCard title="应用" kind="app" :total="ov.applications?.total ?? null" :segments="segmentsOf('app', ov.applications)" />
-        <CountCard title="中间件" kind="middleware" :total="ov.middleware?.total ?? null" :segments="segmentsOf('middleware', ov.middleware)" />
+        <CountCard title="中间件" kind="middleware" :ns-rows="ov.byNamespace" :total="ov.middleware?.total ?? null" :segments="segmentsOf('middleware', ov.middleware)" />
         <CountCard title="工作负载" kind="workload" :total="ov.workloads?.total ?? null" :segments="workloadSegments" :ns-rows="ov.byNamespace" />
         <CountCard title="Pod" kind="pod" :total="ov.pods?.total ?? null" :segments="podSegments(ov.pods)" :ns-rows="ov.byNamespace" />
         <CountCard title="租户" kind="tenant" :total="ov.tenants.total" :segments="tenantSegments">

@@ -101,7 +101,7 @@ async function openSegment(e: MouseEvent, s: Segment): Promise<void> {
   if (!to) return
   e.preventDefault()
   e.stopPropagation()
-  if (props.scope) return go(to, props.scope)
+  if (!props.nsRows && !props.loadNsRows) return go(to, props.scope)
   let rows = props.nsRows ?? null
   if (!rows && props.loadNsRows) {
     pickerLoading.value = true
@@ -114,7 +114,7 @@ async function openSegment(e: MouseEvent, s: Segment): Promise<void> {
     }
   }
   const targets = rows ? nsTargetsOf(props.kind, s, rows) : null
-  if (!targets || targets.length === 0) return go(to) // 没有按命名空间的数：按当前顶栏跳
+  if (!targets || targets.length === 0) return go(to, props.scope) // 定位不到命名空间：按 scope / 当前顶栏跳
   if (targets.length === 1) {
     const t = targets[0]!
     return go(to, { clusterId: t.clusterId, namespace: t.namespace })

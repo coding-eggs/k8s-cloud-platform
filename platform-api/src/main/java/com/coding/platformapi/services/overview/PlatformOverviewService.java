@@ -97,12 +97,8 @@ public class PlatformOverviewService {
             connected++;
             connectedIds.add(c.getClusterId());
             slices.addAll(clusterSlices);
-            for (NamespaceSnapshotDTO s : clusterSlices) {
-                NamespaceCounts row = countsOf(c, s);
-                if (row != null) {
-                    byNamespace.add(row);
-                }
-            }
+            List<MiddlewareService.LiveStatus> mwStatuses = liveStatusesOf(c.getClusterId());
+            byNamespace.addAll(countsOf(c, clusterSlices, mwStatuses));
             for (NodeHealthDTO n : orEmpty(snap.getNodeHealth())) {
                 if (n.isReady()) {
                     ready++;
@@ -122,7 +118,8 @@ public class PlatformOverviewService {
                     case UNALLOCATED -> nsUnallocated++;
                 }
             }
-            mw.add(middlewareOf(c.getClusterId()));
+            mw.add(mwStatuses == null ? null : OverviewBuckets.middleware(
+                    mwStatuses.stream().map(MiddlewareService.LiveStatus::status).toList()));
         }
 
         // 应用 / 告警也只算可用集群（spec：不可用集群不计入任何合计；断开集群的 firing 告警多半已陈旧）
@@ -154,16 +151,37 @@ public class PlatformOverviewService {
                 any ? byNamespace : null);
     }
 
-    /** 一个 ns 切片 → 计数行；既没有 Pod 也没有不健康工作负载 → null（不列出）。 */
-    private static NamespaceCounts countsOf(K8sCluster c, NamespaceSnapshotDTO s) {
-        NamespaceStatDTO st = s.getStat();
-        if (st.getPodCount() == 0 && s.getUnhealthyWorkloadCount() == 0) {
-            return null;
+    /**
+     * 一个集群的按 ns 计数行（前端「点异常 → 跳到对应命名空间」用）：Pod 分桶 / 不健康工作负载来自 ns 切片，
+     * 中间件分桶来自实时状态（读不到的 UNKNOWN 不计）。Pod、不健康、中间件全为 0 的 ns 不列出；
+     * 只有中间件、没有切片的 ns 也列出（Pod 各项记 0）。
+     */
+    private static List<NamespaceCounts> countsOf(K8sCluster c, List<NamespaceSnapshotDTO> slices,
+                                                  List<MiddlewareService.LiveStatus> mwStatuses) {
+        Map<String, long[]> mwByNs = new java.util.LinkedHashMap<>();   // [normal, abnormal, processing]
+        for (MiddlewareService.LiveStatus m : orEmpty(mwStatuses)) {
+            String k = OverviewBuckets.middlewareKey(m.status());
+            if (k == null || m.namespace() == null) {
+                continue;
+            }
+            long[] n = mwByNs.computeIfAbsent(m.namespace(), x -> new long[3]);
+            n[switch (k) { case "NORMAL" -> 0; case "ABNORMAL" -> 1; default -> 2; }]++;
         }
-        long abnormal = Math.max(0, st.getPodCount() - st.getPodRunning() - st.getPodPending() - st.getPodSucceeded());
-        return new NamespaceCounts(c.getClusterId(), c.getClusterName() == null ? c.getClusterId() : c.getClusterName(),
-                st.getNamespace(), st.getPodRunning(), st.getPodPending(), st.getPodSucceeded(), abnormal,
-                s.getUnhealthyWorkloadCount());
+        String name = c.getClusterName() == null ? c.getClusterId() : c.getClusterName();
+        List<NamespaceCounts> out = new ArrayList<>();
+        for (NamespaceSnapshotDTO s : slices) {
+            NamespaceStatDTO st = s.getStat();
+            long[] m = mwByNs.remove(st.getNamespace());
+            if (st.getPodCount() == 0 && s.getUnhealthyWorkloadCount() == 0 && m == null) {
+                continue;
+            }
+            m = m == null ? new long[3] : m;
+            long abnormal = Math.max(0, st.getPodCount() - st.getPodRunning() - st.getPodPending() - st.getPodSucceeded());
+            out.add(new NamespaceCounts(c.getClusterId(), name, st.getNamespace(), st.getPodRunning(), st.getPodPending(),
+                    st.getPodSucceeded(), abnormal, s.getUnhealthyWorkloadCount(), m[0], m[1], m[2]));
+        }
+        mwByNs.forEach((ns, m) -> out.add(new NamespaceCounts(c.getClusterId(), name, ns, 0, 0, 0, 0, 0, m[0], m[1], m[2])));
+        return out;
     }
 
     /** 探活明确判为断开 / 错误的集群（CONNECTING 与未知状态仍去采样） */
@@ -184,10 +202,10 @@ public class PlatformOverviewService {
         }
     }
 
-    private CountBreakdown middlewareOf(String clusterId) {
+    /** 某集群中间件实时状态；取不到 → null（中间件块不计入该集群）。 */
+    private List<MiddlewareService.LiveStatus> liveStatusesOf(String clusterId) {
         try {
-            return OverviewBuckets.middleware(orEmpty(middleware.liveStatuses(clusterId)).stream()
-                    .map(MiddlewareService.LiveStatus::status).toList());
+            return orEmpty(middleware.liveStatuses(clusterId));
         } catch (Exception e) {
             log.warn("集群 {} 中间件状态不可用（平台总览不计入）：{}", clusterId, e.getMessage());
             return null;
