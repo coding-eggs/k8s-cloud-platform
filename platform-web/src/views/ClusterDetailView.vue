@@ -492,7 +492,7 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
         概览数据加载失败（聚合超时或集群未响应）—— 基本信息与能力摘要不受影响，可点右上角刷新重试。
       </div>
 
-      <el-tabs v-model="activeTab">
+      <el-tabs v-model="activeTab" class="ov-tabs">
         <!-- ===== Tab 1：概览（首屏重点是健康/异常）===== -->
         <el-tab-pane label="概览" name="overview">
           <template v-if="summary">
@@ -880,6 +880,10 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
 </template>
 
 <style scoped>
+/* el-tabs 内容区默认 overflow: hidden：概览状态卡悬浮时上移 1px + 阴影，顶边和两侧会被裁掉。面板是 v-show 切换，放开不影响隐藏 */
+.ov-tabs > :deep(.el-tabs__content) {
+  overflow: visible;
+}
 .cluster-page { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .cluster-detail {
   flex: 1 1 auto;

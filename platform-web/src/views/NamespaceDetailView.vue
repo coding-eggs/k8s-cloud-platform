@@ -383,7 +383,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
     </EmptyState>
 
     <div v-else-if="ns" class="ns-detail panel">
-      <el-tabs v-model="activeTab">
+      <el-tabs v-model="activeTab" class="ov-tabs">
         <!-- 概览：基本信息（左）+ 用量摘要（右） -->
         <el-tab-pane label="概览" name="overview">
           <!-- 计数卡（/namespace/summary）：块为 null = 无该读权限，不渲染 -->
@@ -596,6 +596,10 @@ watch(name, () => { if (clusterId.value) void refresh() })
 </template>
 
 <style scoped>
+/* el-tabs 内容区默认 overflow: hidden：概览状态卡悬浮时上移 1px + 阴影，顶边和两侧会被裁掉。面板是 v-show 切换，放开不影响隐藏 */
+.ov-tabs > :deep(.el-tabs__content) {
+  overflow: visible;
+}
 .ns-page { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 .ns-detail {
   flex: 1 1 auto;

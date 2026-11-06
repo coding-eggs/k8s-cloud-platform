@@ -296,7 +296,7 @@ watch(activeTab, (t) => {
 
 <template>
   <div class="panel px-2.5">
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" class="ov-tabs">
       <!-- 概览（首个 tab，lazy）：进面板即拉快照/明细/曲线；tenantId 变化自动重拉 -->
       <el-tab-pane label="概览" name="overview" lazy>
         <TenantOverviewPanel
@@ -463,6 +463,10 @@ watch(activeTab, (t) => {
 </template>
 
 <style scoped>
+/* el-tabs 内容区默认 overflow: hidden：概览状态卡悬浮时上移 1px + 阴影，顶边和两侧会被裁掉。面板是 v-show 切换，放开不影响隐藏 */
+.ov-tabs > :deep(.el-tabs__content) {
+  overflow: visible;
+}
 .no-perm {
   padding: 18px 4px;
   font-size: 13px;
