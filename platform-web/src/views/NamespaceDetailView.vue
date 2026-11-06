@@ -12,6 +12,12 @@ import NamespaceMetricsPanel from '@/components/namespace/NamespaceMetricsPanel.
 import { fmtDate } from '@/utils/format'
 import { formatQuantity } from '@/utils/quantity'
 import YamlBlock from '@/components/YamlBlock.vue'
+import CountCard from '@/components/overview/CountCard.vue'
+import WaterBar from '@/components/overview/WaterBar.vue'
+import { podSegments, segmentsOf } from '@/components/overview/labels'
+import type { ScopeSummary } from '@/types/overview'
+
+const summary = ref<ScopeSummary | null>(null)
 
 const route = useRoute()
 const router = useRouter()
@@ -80,6 +86,13 @@ async function refresh(): Promise<void> {
       lrLoaded.value = true
     }
     loadError.value = ns.value == null
+    summary.value = null
+    if (!loadError.value) {
+      // 计数卡独立降级：失败只是不显示这一行
+      namespaceApi.summary(cid, target)
+        .then((s) => { if (cid === clusterId.value && target === name.value) summary.value = s })
+        .catch(() => { /* 不影响其它段 */ })
+    }
     if (!loadError.value) await loadActiveTab()
   } catch {
     if (cid === clusterId.value && target === name.value) loadError.value = true
@@ -376,6 +389,21 @@ watch(name, () => { if (clusterId.value) void refresh() })
       <el-tabs v-model="activeTab">
         <!-- 概览：基本信息（左）+ 用量摘要（右） -->
         <el-tab-pane label="概览" name="overview">
+          <!-- 计数卡（/namespace/summary）：块为 null = 无该读权限，不渲染 -->
+          <template v-if="summary">
+            <div class="ov-cards6">
+              <CountCard title="工作负载" :total="summary.workloads?.total ?? null" :segments="summary.workloads ? [{ label: '不健康', value: summary.workloads.unhealthy, tone: 'danger' }] : []" />
+              <CountCard title="Pod" :total="summary.pods?.total ?? null" :segments="podSegments(summary.pods)" />
+              <CountCard v-if="summary.applications" title="应用" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+              <CountCard v-if="summary.middleware" title="中间件" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+              <CountCard v-if="summary.alerts" title="告警触发中" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+            </div>
+            <div class="ov-water2">
+              <WaterBar label="配额 CPU" :used="summary.quota?.cpuUsed" :total="summary.quota?.cpuHard" unit="core" />
+              <WaterBar label="配额内存" :used="summary.quota?.memUsed" :total="summary.quota?.memHard" unit="byte" />
+            </div>
+          </template>
           <div class="overview-grid">
             <aside class="ov-side">
               <section class="info-card">
@@ -568,6 +596,18 @@ watch(name, () => { if (clusterId.value) void refresh() })
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 
 /* 概览 tab：基本信息（左，窄）+ 用量摘要（右）；小分辨率上下堆叠 */
+.ov-cards6 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ov-water2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  margin-bottom: 16px;
+}
 .overview-grid {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);

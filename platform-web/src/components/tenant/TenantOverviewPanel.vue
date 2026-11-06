@@ -22,6 +22,9 @@ import EmptyState from '@/components/EmptyState.vue'
 import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate } from '@/utils/format'
 import { formatMetricValue } from '@/utils/metrics'
+import CountCard from '@/components/overview/CountCard.vue'
+import { segmentsOf } from '@/components/overview/labels'
+import type { ScopeSummary } from '@/types/overview'
 
 const props = defineProps<{ tenantId: string }>()
 
@@ -69,11 +72,18 @@ const sampledAtText = computed(() => {
 const clusterNameOf = (clusterId: string): string =>
   overview.value?.clusters.find((c) => c.clusterId === clusterId)?.clusterName ?? clusterId
 
+const summary = ref<ScopeSummary | null>(null)
+
 async function loadOverview(): Promise<void> {
   const target = props.tenantId
   if (!target) return
   loading.value = true
   loadError.value = false
+  summary.value = null
+  // 计数卡独立降级：失败只是不显示这一行
+  tenantApi.summary(target)
+    .then((s) => { if (target === props.tenantId) summary.value = s })
+    .catch(() => { /* 不影响其它段 */ })
   try {
     const data = await tenantApi.overview({ tenantId: target })
     if (target !== props.tenantId) return // 期间切了租户：丢弃这次结果
@@ -227,6 +237,17 @@ watch(
           <el-button link type="primary" :icon="Refresh" @click="reloadAll">重试</el-button>
         </template>
       </el-alert>
+
+      <!-- ===== 计数卡（/tenant/overview/summary；块为 null = 无该读权限，不渲染）===== -->
+      <div v-if="summary" class="tov-cards">
+        <CountCard v-if="summary.applications" title="应用" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+        <CountCard v-if="summary.middleware" title="中间件" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+        <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+        <CountCard v-if="summary.alerts" title="告警触发中" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+        <CountCard title="命名空间 / 成员" :total="summary.namespaceCount">
+          <span>成员 {{ summary.memberCount ?? '—' }}</span>
+        </CountCard>
+      </div>
 
       <!-- ===== KPI 区 ===== -->
       <section class="card">
@@ -465,6 +486,12 @@ watch(
 </template>
 
 <style scoped>
+.tov-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
 .tov {
   padding-bottom: 8px;
 }

@@ -29,6 +29,10 @@ import { useComponentOperations } from '@/composables/useComponentOperations'
 import { useResourceContext } from '@/stores/context'
 import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
+import CountCard from '@/components/overview/CountCard.vue'
+import StatusPie from '@/components/overview/StatusPie.vue'
+import { segmentsOf, type Segment } from '@/components/overview/labels'
+import type { ScopeSummary } from '@/types/overview'
 
 const route = useRoute()
 const router = useRouter()
@@ -182,6 +186,7 @@ async function refresh(): Promise<void> {
   loadError.value = false
   overviewError.value = false
   overview.value = null // 刷新期间不留旧快照：宁可显示「—」，也不显示上一轮的数
+  summary.value = null
   try {
     cluster.value = await clusterApi.get(target)
   } catch {
@@ -189,6 +194,10 @@ async function refresh(): Promise<void> {
     loading.value = false
     return
   }
+  // 计数卡（应用 / 中间件 / CI / 告警 + 节点 / 命名空间饼图）：独立降级，失败只是不显示这一行
+  clusterApi.summary(target)
+    .then((s) => { if (target === clusterId.value) summary.value = s })
+    .catch(() => { /* 不影响其它段 */ })
   try {
     const o = await clusterApi.overview(target)
     if (target !== clusterId.value) return // 期间切了集群：丢弃这次结果
@@ -227,6 +236,23 @@ const offlineReason = computed(() => {
   if (c.status === 'ERROR') return '集群连接错误'
   if (c.status === 'DISCONNECTED') return '集群未连接'
   return ''
+})
+
+// ---- Tab 1：计数卡（/cluster/summary；块为 null = 无该读权限，不渲染）----
+const summary = ref<ScopeSummary | null>(null)
+const summaryNodePie = computed<Segment[]>(() => {
+  const n = summary.value?.nodes
+  return n ? [{ label: 'Ready', value: n.ready, tone: 'success' }, { label: 'NotReady', value: n.notReady, tone: 'danger' }] : []
+})
+const summaryNsPie = computed<Segment[]>(() => {
+  const n = summary.value?.namespaces
+  return n
+    ? [
+        { label: '已分配', value: n.allocated, tone: 'success' },
+        { label: '未分配', value: n.unallocated, tone: 'warning' },
+        { label: '平台系统', value: n.system, tone: 'info' },
+      ]
+    : []
 })
 
 // ---- Tab 1：健康与异常（首屏重点）----
@@ -427,6 +453,18 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
       <el-tabs v-model="activeTab">
         <!-- ===== Tab 1：概览（首屏重点是健康/异常）===== -->
         <el-tab-pane label="概览" name="overview">
+          <template v-if="summary">
+            <div class="ov-cards4">
+              <CountCard v-if="summary.applications" title="应用" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+              <CountCard v-if="summary.middleware" title="中间件" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+              <CountCard v-if="summary.pipelines" title="CI（最近一次运行）" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+              <CountCard v-if="summary.alerts" title="告警触发中" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+            </div>
+            <div v-if="summary.nodes || summary.namespaces" class="ov-pies2">
+              <StatusPie v-if="summary.nodes" title="节点" :data="summaryNodePie" />
+              <StatusPie v-if="summary.namespaces" title="命名空间" :data="summaryNsPie" />
+            </div>
+          </template>
           <section class="health-card">
             <h3 class="section-title">健康与异常</h3>
 
@@ -809,6 +847,18 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
 
 /* 首屏健康卡：最上，全宽 */
 .health-card { padding: 4px 0 8px; }
+.ov-cards4 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.ov-pies2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 8px;
+}
 .section-title { margin: 0 0 12px; font-size: 13px; font-weight: 700; letter-spacing: .04em; color: var(--text-2); }
 .muted { color: var(--text-3); }
 .notice { font-size: 12.5px; margin-bottom: 8px; }
