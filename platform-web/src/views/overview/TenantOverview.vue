@@ -2,10 +2,10 @@
 /**
  * 租户视图总览：当前租户的工作台。
  *
- * 首屏只打 `/tenant/overview` 一次 —— 后端一次返回合计、逐集群小计、
- * 异常 Pod 名单、不健康工作负载名单与配额三档，够回答「现在有什么需要我管」。
+ * 首屏两次请求：`/tenant/overview`（合计、异常 Pod / 不健康工作负载名单、配额三档）+
+ * `/tenant/overview/summary`（应用 / 中间件 / CI / 告警计数，无读权限的块为 null）。
  *
- * 单位口径沿用 TenantOverviewPanel：CPU=核、内存=字节，格式化走 formatMetricValue。
+ * 单位口径沿用 TenantOverviewPanel：CPU=核、内存=字节（WaterBar 内部走 formatMetricValue）。
  * null 一律显示「—」，不显示 0（B4 口径）。
  */
 import { computed, onMounted, ref } from 'vue'
@@ -14,14 +14,18 @@ import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
 import RecentVisits from '@/components/RecentVisits.vue'
-import { formatMetricValue } from '@/utils/metrics'
 import type { K8sTenantOverview } from '@/types'
+import CountCard from '@/components/overview/CountCard.vue'
+import WaterBar from '@/components/overview/WaterBar.vue'
+import { podSegments, segmentsOf, type Segment } from '@/components/overview/labels'
+import type { ScopeSummary } from '@/types/overview'
 
 const perm = usePermission()
 
 const loading = ref(false)
 const loadError = ref(false)
 const overview = ref<K8sTenantOverview | null>(null)
+const summary = ref<ScopeSummary | null>(null)
 
 const tenantId = computed(() => perm.currentTenant?.tenantId ?? null)
 const tenantName = computed(() => perm.currentTenant?.tenantName ?? perm.currentTenant?.tenantId ?? '当前租户')
@@ -38,6 +42,10 @@ async function load(): Promise<void> {
   if (!target || !canView.value) return
   loading.value = true
   loadError.value = false
+  // 计数卡（应用 / 中间件 / CI / 告警）独立降级：失败只是不显示这几张卡
+  tenantApi.summary(target)
+    .then((s) => { if (target === tenantId.value) summary.value = s })
+    .catch(() => { if (target === tenantId.value) summary.value = null })
   try {
     const data = await tenantApi.overview({ tenantId: target })
     if (target !== tenantId.value) return // 期间切了租户：丢弃这次结果
@@ -52,21 +60,22 @@ async function load(): Promise<void> {
   }
 }
 
-function fmtCpu(v?: number | null): string {
-  return v == null ? '—' : formatMetricValue(v, '核', false)
-}
-function fmtMem(v?: number | null): string {
-  return v == null ? '—' : formatMetricValue(v, '字节', false)
-}
 
-const cards = computed(() => {
-  const o = overview.value
-  return [
-    { label: 'CPU 配额占用', value: `${fmtCpu(o?.quotaCpuUsed)} / ${fmtCpu(o?.quotaCpuHard)}` },
-    { label: '内存配额占用', value: `${fmtMem(o?.quotaMemUsed)} / ${fmtMem(o?.quotaMemHard)}` },
-    { label: '异常 Pod', value: o ? String(o.abnormalPodTotal) : '—' },
-    { label: '不健康工作负载', value: o ? String(o.unhealthyWorkloadTotal) : '—' },
-  ]
+/** 工作负载 / Pod 卡来自 /tenant/overview；应用 / 中间件 / CI / 告警卡来自 /tenant/overview/summary（无读权限的块为 null → 不渲染） */
+const workloadTotal = computed(() => {
+  const t = overview.value?.total
+  return t ? t.deploymentCount + t.statefulsetCount + t.daemonsetCount : null
+})
+const workloadSegments = computed<Segment[]>(() =>
+  overview.value ? [{ label: '不健康', value: overview.value.unhealthyWorkloadTotal, tone: 'danger' }] : [],
+)
+const podSegs = computed<Segment[]>(() => {
+  const t = overview.value?.total
+  if (!t) return []
+  const running = t.podRunning ?? 0
+  const pending = t.podPending ?? 0
+  const succeeded = t.podSucceeded ?? 0
+  return podSegments({ total: t.podCount, running, pending, succeeded, abnormal: Math.max(0, t.podCount - running - pending - succeeded) })
 })
 
 /** 异常 reason 取前 3 个（后端已按严重度降序） */
@@ -132,11 +141,17 @@ onMounted(load)
         description="可能是集群不可用或聚合未就绪。其余页面不受影响，可稍后重试。"
       />
 
-      <div class="stat-grid">
-        <div v-for="c in cards" :key="c.label" class="panel stat-card">
-          <div class="stat-value">{{ c.value }}</div>
-          <div class="stat-label">{{ c.label }}</div>
-        </div>
+      <div class="ov-cards6">
+        <CountCard v-if="summary?.applications" title="应用" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+        <CountCard v-if="summary?.middleware" title="中间件" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+        <CountCard title="工作负载" :total="workloadTotal" :segments="workloadSegments" />
+        <CountCard title="Pod" :total="overview?.total?.podCount ?? null" :segments="podSegs" />
+        <CountCard v-if="summary?.pipelines" title="CI（最近一次运行）" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
+        <CountCard v-if="summary?.alerts" title="告警触发中" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
+      </div>
+      <div class="panel ov-water2">
+        <WaterBar label="配额 CPU" :used="overview?.quotaCpuUsed" :total="overview?.quotaCpuHard" unit="core" />
+        <WaterBar label="配额内存" :used="overview?.quotaMemUsed" :total="overview?.quotaMemHard" unit="byte" />
       </div>
 
       <h3 class="section-title">需要关注</h3>
@@ -199,24 +214,17 @@ onMounted(load)
   font-size: 13px;
   color: var(--text-3);
 }
-.stat-grid {
+.ov-cards6 {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
 }
-.stat-card {
-  padding: 18px;
-}
-.stat-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-1);
-  line-height: 1.2;
-}
-.stat-label {
-  margin-top: 6px;
-  font-size: 12.5px;
-  color: var(--text-3);
+.ov-water2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  padding: 16px 18px;
+  margin-top: 14px;
 }
 .section-title {
   margin: 26px 0 12px;
@@ -278,7 +286,6 @@ onMounted(load)
   color: var(--text-1);
 }
 @media (max-width: 1200px) {
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .shortcut-grid { grid-template-columns: repeat(3, 1fr); }
 }
 </style>

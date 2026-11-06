@@ -116,6 +116,10 @@ export interface K8sClusterResourceTotal {
   cpuLimit?: number | null
   memLimit?: number | null
   podCount: number
+  /** Pod 状态分桶（异常 = podCount − 三者之和） */
+  podRunning?: number
+  podPending?: number
+  podSucceeded?: number
   deploymentCount: number
   statefulsetCount: number
   daemonsetCount: number
