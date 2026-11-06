@@ -32,22 +32,49 @@ const emit = defineEmits<{ (e: 'rollback', releaseNo: number): void }>()
 const rows = ref<AppRelease[]>([])
 const loading = ref(false)
 const loadError = ref('')
+/** 分页：page/size 发给后端走 PageHelper，total 由后端 count 回 */
+const page = ref(1)
+const size = ref(10)
+const total = ref(0)
 
+let seq = 0
 async function load(): Promise<void> {
+  const my = ++seq
   loading.value = true
   loadError.value = ''
   try {
-    rows.value = await appReleaseApi.list(props.appId, props.tenantId)
+    const res = await appReleaseApi.list(props.appId, page.value, size.value, props.tenantId)
+    if (my !== seq) return
+    rows.value = res.items
+    total.value = res.total
   } catch (e) {
+    if (my !== seq) return
+    rows.value = []
+    total.value = 0
     loadError.value = errMsg(e, '加载失败')
   } finally {
-    loading.value = false
+    if (my === seq) loading.value = false
   }
 }
 onMounted(load)
-watch(() => [props.reloadKey, props.appId], load)
+// 发布 / 回滚 / 执行结束后新记录出现在最前面 → 回到第一页
+watch(() => [props.reloadKey, props.appId], () => { page.value = 1; void load() })
 
-const maxNo = computed(() => rows.value.reduce((m, r) => Math.max(m, r.releaseNo), 0))
+function onPageChange(p: number): void {
+  page.value = p
+  void load()
+}
+function onSizeChange(s: number): void {
+  size.value = s
+  page.value = 1
+  void load()
+}
+
+/**
+ * 全局最新的发布号。列表按发布号倒序，所以它只会是第 1 页第 1 行；
+ * 翻到后面的页时，本页没有任何一行是最新发布 → 用 +∞，让 canRollbackTo 里「线上且最新」恒不成立。
+ */
+const maxNo = computed(() => (page.value === 1 && rows.value.length ? rows.value[0]!.releaseNo : Number.POSITIVE_INFINITY))
 const showRollback = (r: AppRelease): boolean => props.canWrite && canRollbackTo(r, props.liveNo, maxNo.value)
 
 // ---------- 详情 ----------
@@ -126,6 +153,17 @@ function externalText(ext?: Record<string, unknown> | null): string {
         </template>
       </el-table-column>
     </el-table>
+    <div v-if="total > 0" class="app-rel-hist__pager">
+      <el-pagination
+        :current-page="page"
+        :page-size="size"
+        :total="total"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="onPageChange"
+        @size-change="onSizeChange"
+      />
+    </div>
 
     <el-drawer v-model="detailVisible" :title="detail ? `发布 #${detail.releaseNo}` : '发布详情'" size="640px" class="app-rel-drawer" destroy-on-close>
       <div v-loading="detailLoading" class="app-rel-drawer__body">
@@ -176,6 +214,7 @@ function externalText(ext?: Record<string, unknown> | null): string {
 
 <style scoped>
 .app-rel-hist__tag { margin-left: 6px; }
+.app-rel-hist__pager { display: flex; justify-content: flex-end; margin-top: 12px; }
 </style>
 
 <style>

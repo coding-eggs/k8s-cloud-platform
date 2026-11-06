@@ -1,6 +1,8 @@
 package com.coding.platformapi.controllers;
 
+import com.coding.common.models.page.PageResult;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.models.AppReleaseListRequest;
 import com.coding.common.audit.AuditAction;
 import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.AppDependencyRequest;
@@ -190,9 +192,10 @@ public class ApplicationController {
     }
 
     @PostMapping("/release/list")
-    @Operation(summary = "发布记录（新到旧）")
-    public ResponseData<List<AppReleaseView>> releaseList(@RequestBody AppReleaseRequest request) {
-        return new ResponseData<>(release.list(request.getAppId(), auth.effectiveTenantId(request.getTenantId())));
+    @Operation(summary = "发布记录（新到旧）", description = "带 page/size 走 PageHelper 分页，都不给 = 返回全量")
+    public ResponseData<PageResult<AppReleaseView>> releaseList(@RequestBody AppReleaseListRequest request) {
+        return new ResponseData<>(release.list(request.getAppId(), auth.effectiveTenantId(request.getTenantId()),
+                request.getPage(), request.getSize()));
     }
 
     @PostMapping("/release/get")

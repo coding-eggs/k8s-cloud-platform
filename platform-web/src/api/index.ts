@@ -1283,8 +1283,9 @@ export const appReleaseApi = {
   /** 下线：删掉全部集群对象（数据卷保留），记一条 OFFLINE 发布；返回执行 id */
   offline: (payload: { appId: string; note?: string; tenantId?: string }) =>
     http.post<never, number>('/application/release/offline', payload),
-  list: (appId: string, tenantId?: string) =>
-    http.post<never, AppRelease[]>('/application/release/list', { appId, tenantId }),
+  /** 发布记录（新到旧）；page/size 都给才分页 */
+  list: (appId: string, page: number, size: number, tenantId?: string) =>
+    http.post<never, PageResult<AppRelease>>('/application/release/list', { appId, page, size, tenantId }),
   get: (appId: string, releaseNo: number, tenantId?: string) =>
     http.post<never, AppRelease>('/application/release/get', { appId, releaseNo, tenantId }),
   activeExecution: (appId: string, tenantId?: string) =>

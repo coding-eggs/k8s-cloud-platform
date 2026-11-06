@@ -8,6 +8,9 @@ import com.coding.common.models.app.AppProblemDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
 import com.coding.common.models.app.AppStatusRequestDTO;
 import com.coding.common.models.app.AppStatusResultDTO;
+import com.coding.common.models.page.PageResult;
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
 import com.coding.data.mapper.system.PlatformAppDependencyMapper;
 import com.coding.data.mapper.system.PlatformAppExecutionMapper;
 import com.coding.data.mapper.system.PlatformAppReleaseMapper;
@@ -491,9 +494,19 @@ public class AppReleaseService {
 
     // ------------------------------------------------------------------ 读
 
-    public List<AppReleaseView> list(String appId, String tenantId) {
+    /**
+     * 发布记录（按发布号倒序）。page/size 都给了才走 PageHelper 分页，否则全量；
+     * {@code startPage} 必须紧贴 {@code selectByApp}（前面的归属校验也是查询，会把分页吃掉）。
+     */
+    public PageResult<AppReleaseView> list(String appId, String tenantId, Integer page, Integer size) {
         PlatformApplication app = AppGuard.require(apps, appId, tenantId);
-        return releases.selectByApp(app.getId()).stream().map(r -> releaseView(app, r, false)).toList();
+        boolean paged = page != null && size != null;
+        if (paged) {
+            PageHelper.startPage(page, size);
+        }
+        List<PlatformAppRelease> rows = releases.selectByApp(app.getId());
+        long total = paged ? new PageInfo<>(rows).getTotal() : rows.size();
+        return PageResult.of(rows.stream().map(r -> releaseView(app, r, false)).toList(), total);
     }
 
     public AppReleaseView get(String appId, Integer releaseNo, String tenantId) {
