@@ -12,4 +12,17 @@ public class NodePodStatDTO {
     private long cpuRequestMillicores;
     /** sum(pod.memory.requests)，字节 */
     private long memRequestBytes;
+
+    private long cpuLimitMillicores;
+
+    private long memLimitBytes;
+
+    /** Pod 状态分桶，口径同集群聚合（NamespaceStatDTO.podRunning 等）；podAbnormal = 其余全部 */
+    private long podRunning;
+
+    private long podPending;
+
+    private long podSucceeded;
+
+    private long podAbnormal;
 }

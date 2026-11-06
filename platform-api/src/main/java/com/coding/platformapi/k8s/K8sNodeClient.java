@@ -61,6 +61,12 @@ public class K8sNodeClient {
                 gateway.listResponseType(NodePodStatDTO.class));
     }
 
+    /** 单节点 Pod 统计：GET /nodes/{name}/podstat?clusterId */
+    public NodePodStatDTO podStat(String name, String clusterId) {
+        return gateway.exchange(HttpMethod.GET, "/nodes/" + name + "/podstat",
+                Map.of("clusterId", clusterId), null, gateway.responseType(NodePodStatDTO.class));
+    }
+
     /**
      * 节点地址窄投影：GET /nodes/addresses?clusterId（只回 name + 内网/外网 IP + Ready）。
      * k8s-server 侧该端点是 UPSTREAM 边界（租户可达，租户 SA 没有 nodes 读权限，故用 admin 凭据），

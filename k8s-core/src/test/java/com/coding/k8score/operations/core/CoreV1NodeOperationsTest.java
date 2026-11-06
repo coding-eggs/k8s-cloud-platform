@@ -35,6 +35,35 @@ class CoreV1NodeOperationsTest {
     }
 
     @Test
+    void aggregateSumsLimitsAndBuckets() {
+        Pod ok = new PodBuilder()
+                .withMetadata(new ObjectMetaBuilder().withNamespace("a").withName("ok").build())
+                .withSpec(new PodSpecBuilder().withNodeName("n1").withContainers(new ContainerBuilder().withName("c")
+                        .withResources(new ResourceRequirementsBuilder()
+                                .addToLimits("cpu", new Quantity("500m")).addToLimits("memory", new Quantity("1Gi")).build())
+                        .build()).build())
+                .withNewStatus().withPhase("Running").endStatus().build();
+        Pod bad = new PodBuilder()
+                .withMetadata(new ObjectMetaBuilder().withNamespace("a").withName("bad").build())
+                .withSpec(new PodSpecBuilder().withNodeName("n1").withContainers(new ContainerBuilder().withName("c")
+                        .withResources(new ResourceRequirementsBuilder()
+                                .addToLimits("cpu", new Quantity("1")).addToLimits("memory", new Quantity("512Mi")).build())
+                        .build()).build())
+                .withNewStatus().withPhase("Pending").withContainerStatuses(new io.fabric8.kubernetes.api.model.ContainerStatusBuilder()
+                        .withName("c").withNewState().withNewWaiting().withReason("ImagePullBackOff").endWaiting().endState().build())
+                .endStatus().build();
+
+        NodePodStatDTO n1 = ops.aggregate(List.of(ok, bad)).get(0);
+
+        assertThat(n1.getCpuLimitMillicores()).isEqualTo(1500L);
+        assertThat(n1.getMemLimitBytes()).isEqualTo(1610612736L);
+        assertThat(n1.getPodRunning()).isEqualTo(1L);
+        assertThat(n1.getPodPending()).isEqualTo(0L);
+        assertThat(n1.getPodSucceeded()).isEqualTo(0L);
+        assertThat(n1.getPodAbnormal()).isEqualTo(1L);
+    }
+
+    @Test
     void aggregate_groups_by_nodeName_and_sums_requests() {
         List<Pod> pods = List.of(
                 pod("a", "p1", "n1", "200m", "128Mi"),

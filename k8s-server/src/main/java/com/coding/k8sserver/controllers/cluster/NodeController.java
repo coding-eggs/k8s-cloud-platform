@@ -128,6 +128,13 @@ public class NodeController implements AccessBoundaryAware {
         return new ResponseData<>(ops(clusterId).listPodStats());
     }
 
+    @GetMapping("/{name}/podstat")
+    @Operation(summary = "单节点 Pod 统计：数量 + requests / limits + 状态分桶（节点概览用）")
+    public ResponseData<NodePodStatDTO> podstat(@PathVariable String name, @RequestParam String clusterId) {
+        accessResolver.assertClusterAccess(clusterId);
+        return new ResponseData<>(ops(clusterId).podStat(name));
+    }
+
     @GetMapping("/{name}/pods")
     @Operation(summary = "列出节点上的 Pod（按 spec.nodeName，跨命名空间）")
     public ResponseData<List<PodDTO>> pods(@PathVariable String name, @RequestParam String clusterId) {

@@ -222,6 +222,18 @@ public class CoreV1NodeOperations {
         return null;
     }
 
+    /** 单节点的 Pod 统计（节点概览用）：只列该节点上的 Pod；没有 Pod 时返回全 0。 */
+    public NodePodStatDTO podStat(String nodeName) {
+        requireName(nodeName);
+        List<NodePodStatDTO> stats = aggregate(client.pods().inAnyNamespace()
+                .withField("spec.nodeName", nodeName).list().getItems());
+        return stats.stream().filter(s -> nodeName.equals(s.getNodeName())).findFirst().orElseGet(() -> {
+            NodePodStatDTO empty = new NodePodStatDTO();
+            empty.setNodeName(nodeName);
+            return empty;
+        });
+    }
+
     /** 集群级 pod 列表按 nodeName 聚合：count + cpu/mem requests 之和。 */
     public List<NodePodStatDTO> listPodStats() {
         return aggregate(client.pods().inAnyNamespace().list().getItems());
@@ -229,25 +241,39 @@ public class CoreV1NodeOperations {
 
     /** 包内可见，便于单测：按 nodeName 聚合 count + cpu/mem requests（不依赖 client）。 */
     List<NodePodStatDTO> aggregate(List<Pod> pods) {
-        Map<String, long[]> byNode = new ConcurrentHashMap<>(); // [count, cpuMilli, memBytes]
+        // [count, cpuMilli, memBytes, cpuLimitMilli, memLimitBytes, running, pending, succeeded]
+        Map<String, long[]> byNode = new ConcurrentHashMap<>();
         for (Pod pod : pods) {
             if (pod.getSpec() == null || !StringUtils.hasText(pod.getSpec().getNodeName())) {
                 continue;
             }
             String nodeName = pod.getSpec().getNodeName();
-            long[] acc = byNode.computeIfAbsent(nodeName, k -> new long[3]);
+            long[] acc = byNode.computeIfAbsent(nodeName, k -> new long[8]);
             acc[0]++;
+            String reason = ClusterAggregationOperations.abnormalReason(pod);
+            String phase = pod.getStatus() == null ? null : pod.getStatus().getPhase();
+            if ("Pending".equals(reason)) {
+                acc[6]++;
+            } else if (reason == null && "Running".equals(phase)) {
+                acc[5]++;
+            } else if (reason == null && "Succeeded".equals(phase)) {
+                acc[7]++;
+            }
             List<Container> containers = pod.getSpec().getContainers();
             if (containers == null) {
                 continue;
             }
             for (Container c : containers) {
                 var req = c.getResources() != null ? c.getResources().getRequests() : null;
-                if (req == null) {
-                    continue;
+                if (req != null) {
+                    acc[1] += cpuToMilli(req.get("cpu"));
+                    acc[2] += memToBytes(req.get("memory"));
                 }
-                acc[1] += cpuToMilli(req.get("cpu"));
-                acc[2] += memToBytes(req.get("memory"));
+                var lim = c.getResources() != null ? c.getResources().getLimits() : null;
+                if (lim != null) {
+                    acc[3] += cpuToMilli(lim.get("cpu"));
+                    acc[4] += memToBytes(lim.get("memory"));
+                }
             }
         }
         List<NodePodStatDTO> out = new ArrayList<>();
@@ -257,6 +283,12 @@ public class CoreV1NodeOperations {
             s.setPodCount(a[0]);
             s.setCpuRequestMillicores(a[1]);
             s.setMemRequestBytes(a[2]);
+            s.setCpuLimitMillicores(a[3]);
+            s.setMemLimitBytes(a[4]);
+            s.setPodRunning(a[5]);
+            s.setPodPending(a[6]);
+            s.setPodSucceeded(a[7]);
+            s.setPodAbnormal(a[0] - a[5] - a[6] - a[7]);
             out.add(s);
         });
         return out;

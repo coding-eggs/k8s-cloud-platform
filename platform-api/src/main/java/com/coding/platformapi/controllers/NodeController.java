@@ -110,6 +110,12 @@ public class NodeController {
         return new ResponseData<>(nodeService.podStats(clusterId));
     }
 
+    @GetMapping("/{name}/podstat")
+    @Operation(summary = "单节点 Pod 统计：数量 + requests / limits + 状态分桶")
+    public ResponseData<NodePodStatDTO> podstat(@PathVariable String name, @RequestParam String clusterId) {
+        return new ResponseData<>(nodeService.podStat(name, clusterId));
+    }
+
     @GetMapping("/{name}/pods")
     @Operation(summary = "列出节点上的 Pod")
     public ResponseData<List<PodDTO>> pods(@PathVariable String name, @RequestParam String clusterId) {

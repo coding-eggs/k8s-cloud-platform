@@ -102,6 +102,11 @@ public class NodeService {
         return nodeClient.podStats(clusterId);
     }
 
+    /** 单节点 Pod 统计（节点概览） */
+    public NodePodStatDTO podStat(String name, String clusterId) {
+        return nodeClient.podStat(name, clusterId);
+    }
+
     /**列出节点上的 Pod（按 spec.nodeName，跨命名空间） */
     public List<PodDTO> pods(String name, String clusterId) {
         return nodeClient.pods(name, clusterId);
