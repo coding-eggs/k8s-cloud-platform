@@ -16,7 +16,7 @@ import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { parseCpuCores, parseMemBytes, humanizeBytes } from '@/utils/metrics'
 import YamlBlock from '@/components/YamlBlock.vue'
 import CountCard from '@/components/overview/CountCard.vue'
-import WaterBar from '@/components/overview/WaterBar.vue'
+import CapacityBullet from '@/components/overview/CapacityBullet.vue'
 import type { Segment } from '@/components/overview/labels'
 import type { NodePodStat } from '@/types/overview'
 
@@ -310,13 +310,19 @@ watch(name, () => { if (clusterId.value) void refresh() })
                 </div>
               </section>
 
-              <!-- 水位（分母 = allocatable）+ Pod 状态 -->
+              <!-- 容量子弹图（量程 = allocatable）：requests 实心、limits 浅色，limits 超出可分配即超卖 + Pod 状态 -->
               <section class="info-card node-water">
-                <h3 class="info-title">资源水位</h3>
-                <WaterBar label="CPU requests" :used="statCpu(podStat?.cpuRequestMillicores)" :total="cpuLimit" unit="core" />
-                <WaterBar label="CPU limits" :used="statCpu(podStat?.cpuLimitMillicores)" :total="cpuLimit" unit="core" />
-                <WaterBar label="内存 requests" :used="statMem(podStat?.memRequestBytes)" :total="memoryLimit" unit="byte" />
-                <WaterBar label="内存 limits" :used="statMem(podStat?.memLimitBytes)" :total="memoryLimit" unit="byte" />
+                <h3 class="info-title">资源与容量</h3>
+                <CapacityBullet
+                  label="CPU" unit="core" :scale="cpuLimit" scale-name="可分配"
+                  :filled="statCpu(podStat?.cpuRequestMillicores)" filled-name="requests"
+                  :limit="statCpu(podStat?.cpuLimitMillicores)" missing-text="—"
+                />
+                <CapacityBullet
+                  label="内存" unit="byte" :scale="memoryLimit" scale-name="可分配"
+                  :filled="statMem(podStat?.memRequestBytes)" filled-name="requests"
+                  :limit="statMem(podStat?.memLimitBytes)" missing-text="—"
+                />
               </section>
               <CountCard
                 title="Pod" kind="pod" no-link
@@ -531,7 +537,7 @@ watch(name, () => { if (clusterId.value) void refresh() })
 }
 .ov-side, .ov-main { min-width: 0; }
 .ov-side { display: flex; flex-direction: column; gap: 12px; }
-.node-water { display: flex; flex-direction: column; gap: 12px; }
+.node-water { display: flex; flex-direction: column; gap: 16px; }
 .node-water .info-title { margin-bottom: 0; }
 @media (max-width: 960px) {
   .overview-grid { grid-template-columns: 1fr; }
