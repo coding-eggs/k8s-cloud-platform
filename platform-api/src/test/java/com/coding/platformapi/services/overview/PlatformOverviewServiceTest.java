@@ -83,6 +83,8 @@ class PlatformOverviewServiceTest {
         st.setPodRunning(running);
         st.setCpuRequest(new BigDecimal("1"));
         st.setMemRequest(new BigDecimal("100"));
+        st.setCpuLimit(new BigDecimal("12"));
+        st.setMemLimit(new BigDecimal("300"));
         st.setQuotaCpuHard(cpuHard);
         NamespaceSnapshotDTO s = new NamespaceSnapshotDTO();
         s.setStat(st);
@@ -112,6 +114,8 @@ class PlatformOverviewServiceTest {
         assertThat(v.nodes().ready()).isEqualTo(2);
         assertThat(v.capacity().cpuAllocatable()).isEqualByComparingTo("8");
         assertThat(v.capacity().cpuRequest()).isEqualByComparingTo("1");
+        assertThat(v.capacity().cpuLimit()).isEqualByComparingTo("12");   // limits 合计（可超过可分配 = 超卖）
+        assertThat(v.capacity().memLimit()).isEqualByComparingTo("300");
     }
 
     @Test

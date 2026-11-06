@@ -41,8 +41,9 @@ public record PlatformOverviewView(
     public record Tenants(long total, long enabled, long disabled, long members, long allocatedNamespaces) {
     }
 
-    /** requests ÷ allocatable 的分子分母（核 / 字节）。 */
-    public record Capacity(BigDecimal cpuRequest, BigDecimal cpuAllocatable, BigDecimal memRequest, BigDecimal memAllocatable) {
+    /** requests ÷ allocatable 的分子分母（核 / 字节）；limits 合计与可分配比 = 超卖倍数。 */
+    public record Capacity(BigDecimal cpuRequest, BigDecimal cpuAllocatable, BigDecimal memRequest, BigDecimal memAllocatable,
+                           BigDecimal cpuLimit, BigDecimal memLimit) {
     }
 
     public record Nodes(long ready, long notReady) {

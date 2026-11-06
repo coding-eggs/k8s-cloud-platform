@@ -194,15 +194,15 @@ onMounted(load)
         <CountCard title="告警触发中" kind="alert" :total="ov.alertsFiring?.total ?? null" :segments="segmentsOf('alert', ov.alertsFiring)" />
       </StatusCards>
 
-      <!-- 容量与规模：清单条 + 集群 requests / 可分配 子弹图 -->
+      <!-- 容量与规模：清单条 + 集群 requests / 可分配 子弹图（limits 合计为标记，超出可分配即超卖） -->
       <section class="panel ov-cap">
         <div class="ov-cap-head">
           <h3 class="ov-cap-title">容量与规模</h3>
           <InventoryStrip :items="inventory" />
         </div>
         <div class="ov-cap-grid">
-          <CapacityBullet label="CPU" unit="core" :scale="ov.capacity?.cpuAllocatable" scale-name="可分配" :filled="ov.capacity?.cpuRequest" filled-name="requests" missing-text="—" />
-          <CapacityBullet label="内存" unit="byte" :scale="ov.capacity?.memAllocatable" scale-name="可分配" :filled="ov.capacity?.memRequest" filled-name="requests" missing-text="—" />
+          <CapacityBullet label="CPU" unit="core" :scale="ov.capacity?.cpuAllocatable" scale-name="可分配" :filled="ov.capacity?.cpuRequest" filled-name="requests" :limit="ov.capacity?.cpuLimit" missing-text="—" />
+          <CapacityBullet label="内存" unit="byte" :scale="ov.capacity?.memAllocatable" scale-name="可分配" :filled="ov.capacity?.memRequest" filled-name="requests" :limit="ov.capacity?.memLimit" missing-text="—" />
         </div>
       </section>
 

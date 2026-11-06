@@ -57,7 +57,7 @@ export interface PlatformOverview {
   workloads: OverviewWorkloads | null
   pods: OverviewPods | null
   tenants: { total: number; enabled: number; disabled: number; members: number; allocatedNamespaces: number }
-  capacity: { cpuRequest: number | null; cpuAllocatable: number | null; memRequest: number | null; memAllocatable: number | null } | null
+  capacity: { cpuRequest: number | null; cpuAllocatable: number | null; memRequest: number | null; memAllocatable: number | null; cpuLimit: number | null; memLimit: number | null } | null
   nodes: OverviewNodes | null
   namespaces: OverviewNamespaces | null
   quota: OverviewQuota | null
