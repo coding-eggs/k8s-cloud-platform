@@ -2,8 +2,8 @@
 /**
  * 租户视图总览 = 我的租户（原「组织 › 我的租户」并入，2026-11-06）。
  *
- * 结构：页头 → 常用操作（一行紧凑按钮）→ TenantDetailPanel 三页签
- *   - 概览：TenantOverviewPanel（计数卡 / 配额 / 需要关注 / 曲线 / 命名空间明细），底部挂「最近访问」；
+ * 结构：页头 → 常用操作 / 最近访问（两行紧凑按钮）→ TenantDetailPanel 三页签
+ *   - 概览：TenantOverviewPanel（计数卡 / 配额 / 需要关注 / 曲线 / 命名空间明细）；
  *   - 命名空间分配 / 成员与角色：只对持 `tenant:page:tenant.self` 的人显示（沿用原「我的租户」页的门槛），
  *     只能看概览的最小权限角色不会多看到成员信息。
  *
@@ -14,7 +14,6 @@ import { computed } from 'vue'
 import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
-import RecentVisits from '@/components/RecentVisits.vue'
 import TenantDetailPanel from '@/components/TenantDetailPanel.vue'
 import QuickActions from '@/components/overview/QuickActions.vue'
 
@@ -47,7 +46,7 @@ const quickActions = computed(() =>
       </p>
     </div>
 
-    <QuickActions :actions="quickActions" />
+    <QuickActions :actions="quickActions" face="tenant" />
 
     <TenantDetailPanel
       v-if="tenant"
@@ -55,12 +54,7 @@ const quickActions = computed(() =>
       :tenant-name="tenantName"
       :manage-tabs="canManage"
       :overview-allowed="canView"
-    >
-      <template #overview-footer>
-        <h3 class="section-title">最近访问</h3>
-        <RecentVisits face="tenant" />
-      </template>
-    </TenantDetailPanel>
+    />
   </div>
 </template>
 
@@ -78,11 +72,5 @@ const quickActions = computed(() =>
   margin: 4px 0 0;
   font-size: 12.5px;
   color: var(--text-3);
-}
-.section-title {
-  margin: 26px 0 12px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-2);
 }
 </style>

@@ -10,7 +10,6 @@ import { clusterApi, overviewApi, tenantApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
-import RecentVisits from '@/components/RecentVisits.vue'
 import QuickActions from '@/components/overview/QuickActions.vue'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusPie from '@/components/overview/StatusPie.vue'
@@ -128,7 +127,7 @@ onMounted(load)
       <el-button @click="load">刷新</el-button>
     </div>
 
-    <QuickActions :actions="quickActions" />
+    <QuickActions :actions="quickActions" face="platform" />
 
     <template v-if="ov">
       <!-- 健康条 -->
@@ -219,9 +218,6 @@ onMounted(load)
       </el-table-column>
     </el-table>
 
-    <!-- 最近访问 -->
-    <h3 class="section-title">最近访问</h3>
-    <RecentVisits face="platform" />
   </div>
 </template>
 

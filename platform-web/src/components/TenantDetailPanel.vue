@@ -4,8 +4,7 @@
  * 复用于两处（组件复用，靠 props + 权限位区分能力面）：
  *   1. TenantView（/tenants，代管轨）：admin 从列表选租户，drawer 内使用，delegate=true；
  *   2. 租户视图总览（自管轨，原 /tenants/detail 并入）：tenantId 取当前租户上下文，delegate=false；
- *      管理页签按 `manageTabs` 显示（调用方按 tenant:page:tenant.self 判），概览能力按 `overviewAllowed`；
- *      `overview-footer` 插槽挂在概览页签底部（总览放「最近访问」）。
+ *      管理页签按 `manageTabs` 显示（调用方按 tenant:page:tenant.self 判），概览能力按 `overviewAllowed`。
  *
  * 后端边界（无需前端重复判定）：
  * - /tenant/member/*：TenantContextResolver 裁决 —— 自管 token 锁定本租户（tenantId 必与 hat 一致，
@@ -294,7 +293,6 @@ watch(activeTab, (t) => {
       <el-tab-pane label="概览" name="overview" lazy>
         <TenantOverviewPanel v-if="showOverview" :tenant-id="tenantId" />
         <div v-else class="no-perm">当前角色没有查看租户概览的权限。</div>
-        <slot name="overview-footer" />
       </el-tab-pane>
 
       <el-tab-pane v-if="showManage" label="命名空间分配" name="ns">
