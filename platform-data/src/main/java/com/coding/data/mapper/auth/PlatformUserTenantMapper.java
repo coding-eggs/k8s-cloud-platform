@@ -21,4 +21,7 @@ public interface PlatformUserTenantMapper {
     List<String> selectTenantIdsByUser(@Param("userId") String userId);
 
     List<PlatformUserTenant> selectByTenantId(@Param("tenantId") String tenantId);
+
+    /** 去重成员数；tenantId 为 null = 全平台 */
+    long countDistinctUsers(@Param("tenantId") String tenantId);
 }

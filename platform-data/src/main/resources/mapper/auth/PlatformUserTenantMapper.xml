@@ -28,4 +28,9 @@
     <select id="selectByTenantId" resultMap="Base">
         select id, user_id, tenant_id, created_at from platform_user_tenant where tenant_id = #{tenantId}
     </select>
+    <!-- 去重用户数；tenantId 为 null = 全平台 -->
+    <select id="countDistinctUsers" resultType="long">
+        select count(distinct user_id) from platform_user_tenant
+        <if test="tenantId != null">where tenant_id = #{tenantId}</if>
+    </select>
 </mapper>

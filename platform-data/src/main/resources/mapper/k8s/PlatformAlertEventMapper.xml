@@ -98,4 +98,20 @@
       and starts_at = #{startsAt,jdbcType=TIMESTAMP}
   </select>
 
+  <resultMap id="StatusCountMap" type="com.coding.data.models.system.StatusCount">
+    <result column="status" property="status" jdbcType="VARCHAR"/>
+    <result column="cnt" property="count" jdbcType="BIGINT"/>
+  </resultMap>
+  <select id="countFiringBySeverity" resultMap="StatusCountMap">
+    select severity status, count(*) cnt from platform_alert_event
+    where status = 'firing' and alertname &lt;&gt; 'Watchdog'
+    <if test="clusterId != null">and cluster_id = #{clusterId}</if>
+    <if test="namespaces != null">
+      <choose>
+        <when test="namespaces.isEmpty()">and 1 = 0</when>
+        <otherwise>and namespace in <foreach collection="namespaces" item="ns" open="(" separator="," close=")">#{ns}</foreach></otherwise>
+      </choose>
+    </if>
+    group by severity
+  </select>
 </mapper>

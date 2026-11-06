@@ -1,5 +1,7 @@
 package com.coding.data.mapper.k8s;
 
+import java.util.Collection;
+import com.coding.data.models.system.StatusCount;
 import com.coding.data.models.k8s.PlatformAlertEvent;
 import com.coding.data.models.k8s.PlatformAlertEventQuery;
 import org.apache.ibatis.annotations.Param;
@@ -32,4 +34,8 @@ public interface PlatformAlertEventMapper {
     PlatformAlertEvent selectByEpisode(@Param("clusterId") String clusterId,
                                        @Param("fingerprint") String fingerprint,
                                        @Param("startsAt") Date startsAt);
+
+    /** 概览计数；clusterId 为 null = 全部集群，namespaces 为 null = 不限、空集合 = 无结果 */
+    List<StatusCount> countFiringBySeverity(@Param("clusterId") String clusterId,
+                                            @Param("namespaces") Collection<String> namespaces);
 }

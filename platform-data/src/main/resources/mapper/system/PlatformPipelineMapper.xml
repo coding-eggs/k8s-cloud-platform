@@ -60,4 +60,25 @@
     order by name
   </select>
 
+  <resultMap id="StatusCountMap" type="com.coding.data.models.system.StatusCount">
+    <result column="status" property="status" jdbcType="VARCHAR"/>
+    <result column="cnt" property="count" jdbcType="BIGINT"/>
+  </resultMap>
+  <!-- 每条流水线最近一次运行（created_at 最大，同刻取 id 最大）的状态；从没跑过的 status 为 null -->
+  <select id="countLatestRunStatus" resultMap="StatusCountMap">
+    select r.status status, count(*) cnt
+    from platform_pipeline p
+    left join platform_pipeline_run r on r.id = (
+      select r2.id from platform_pipeline_run r2 where r2.pipeline_id = p.id
+      order by r2.created_at desc, r2.id desc limit 1)
+    where 1 = 1
+    <if test="clusterId != null">and p.cluster_id = #{clusterId}</if>
+    <if test="namespaces != null">
+      <choose>
+        <when test="namespaces.isEmpty()">and 1 = 0</when>
+        <otherwise>and p.namespace in <foreach collection="namespaces" item="ns" open="(" separator="," close=")">#{ns}</foreach></otherwise>
+      </choose>
+    </if>
+    group by r.status
+  </select>
 </mapper>

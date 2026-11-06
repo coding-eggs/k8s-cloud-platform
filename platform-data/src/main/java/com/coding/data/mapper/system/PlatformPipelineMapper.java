@@ -1,5 +1,7 @@
 package com.coding.data.mapper.system;
 
+import java.util.Collection;
+import com.coding.data.models.system.StatusCount;
 import com.coding.data.models.system.PlatformPipeline;
 import org.apache.ibatis.annotations.Param;
 import org.springframework.stereotype.Repository;
@@ -30,4 +32,8 @@ public interface PlatformPipelineMapper {
 
     List<PlatformPipeline> listByNamespace(@Param("clusterId") String clusterId,
                                            @Param("namespace") String namespace);
+
+    /** 概览计数；clusterId 为 null = 全部集群，namespaces 为 null = 不限、空集合 = 无结果 */
+    List<StatusCount> countLatestRunStatus(@Param("clusterId") String clusterId,
+                                           @Param("namespaces") Collection<String> namespaces);
 }
