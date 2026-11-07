@@ -18,16 +18,21 @@ export const FEATURE_LABELS: Record<string, string> = {
   'ambient-mesh': '服务网格',
 }
 
+/** L7 选的 waypoint 名；其余模式 null */
 export function waypointNameOf(s?: AppSettings | null): string | null {
-  const v = (s?.mesh?.useWaypoint ?? '').trim()
-  return v && v !== 'none' ? v : null
+  return s?.mesh?.mode === 'l7' ? (s.mesh.waypoint ?? '').trim() || null : null
+}
+
+/** 网格是否让服务加入 ambient（L4 / L7） */
+export function inMesh(s?: AppSettings | null): boolean {
+  return s?.mesh?.mode === 'l4' || s?.mesh?.mode === 'l7'
 }
 
 /** 应用设置本身需要的旗标（保存应用设置时的门禁） */
 export function settingsRequiredFlags(s?: AppSettings | null): string[] {
   const out: string[] = []
   if (s?.tracing) out.push('otel-collection')
-  if (s?.mesh?.dataplaneMode === 'ambient' || waypointNameOf(s)) out.push('ambient-mesh')
+  if (inMesh(s)) out.push('ambient-mesh')
   return out
 }
 
@@ -46,7 +51,6 @@ export function requiredFlags(d?: AppServiceDesired | null, s?: AppSettings | nu
   const appLogs = !!(o?.logs && o.logMode !== 'file')
   if (isTraced(d, s) || appLogs) out.push('otel-collection')
   if (o?.logs) out.push('otel-logs')
-  const mesh = s?.mesh
-  if (mesh?.dataplaneMode === 'ambient' || (d.port && waypointNameOf(s))) out.push('ambient-mesh')
+  if (inMesh(s)) out.push('ambient-mesh')
   return out
 }

@@ -40,13 +40,16 @@ function canon(s?: AppSettings | null): string {
     out.tracing = true
     if (s.sampling != null) out.sampling = s.sampling
   }
-  const m: AppServiceMesh = {}
-  if (s?.mesh?.dataplaneMode) m.dataplaneMode = s.mesh.dataplaneMode
-  if (s?.mesh?.useWaypoint) m.useWaypoint = s.mesh.useWaypoint
-  if (m.dataplaneMode || m.useWaypoint) out.mesh = m
+  if (s?.mesh?.mode) {
+    const m: AppServiceMesh = { mode: s.mesh.mode }
+    if (s.mesh.mode === 'l7' && s.mesh.waypoint) m.waypoint = s.mesh.waypoint
+    out.mesh = m
+  }
   return JSON.stringify(out)
 }
 const dirty = computed(() => canon(form.value) !== canon(props.view.settings))
+/** L7 必须选 waypoint，否则后端会拒；这里先不让保存 */
+const invalid = computed(() => form.value.mesh?.mode === 'l7' && !form.value.mesh.waypoint)
 /** 期望值与线上快照不同 = 有待发布改动 */
 const pending = computed(() => canon(props.view.settings) !== canon(props.view.live))
 
@@ -109,7 +112,7 @@ async function save(): Promise<void> {
                  :readonly="!editable" :mesh-available="meshAvailable"
                  :mesh-reason="comps.unavailableReason('ambient-mesh')" />
     <div class="app-settings__save">
-      <el-button type="primary" :loading="saving" :disabled="!editable || !dirty" @click="save">保存</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!editable || !dirty || invalid" :title="invalid ? 'L7 需要选择 waypoint' : ''" @click="save">保存</el-button>
       <el-button :disabled="!editable || !dirty" @click="reset">还原</el-button>
       <el-tag v-if="pending && !dirty" type="warning" effect="light" size="small">有待发布改动</el-tag>
       <span class="muted">保存只改期望值；发布时勾选「应用设置」后作用于全部服务（会让所有服务滚动重启）。</span>

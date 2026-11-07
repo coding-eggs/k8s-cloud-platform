@@ -88,18 +88,18 @@ class AppFeatureGateTest {
     @Test
     void waypointMustHandleService() {
         when(gateways.waypointRefs("t1", "c1", "demo")).thenReturn(List.of(wp("wl", "workload"), wp("svc", "service")));
-        assertThatThrownBy(() -> gate.assertWaypoint("t1", "c1", "demo", d("mesh", Map.of("useWaypoint", "wl"))))
+        assertThatThrownBy(() -> gate.assertWaypoint("t1", "c1", "demo", "wl"))
                 .isInstanceOf(CloudPlatformException.class).hasMessageContaining("wl");
-        assertThatThrownBy(() -> gate.assertWaypoint("t1", "c1", "demo", d("mesh", Map.of("useWaypoint", "nope"))))
+        assertThatThrownBy(() -> gate.assertWaypoint("t1", "c1", "demo", "nope"))
                 .isInstanceOf(CloudPlatformException.class).hasMessageContaining("nope");
-        gate.assertWaypoint("t1", "c1", "demo", d("mesh", Map.of("useWaypoint", "svc")));
-        gate.assertWaypoint("t1", "c1", "demo", d("mesh", Map.of("useWaypoint", "none")));
+        gate.assertWaypoint("t1", "c1", "demo", "svc");
+        gate.assertWaypoint("t1", "c1", "demo", null);
     }
 
     @Test
     void waypointLookupFailureLetsSaveThrough() {
         when(gateways.waypointRefs(any(), any(), any())).thenThrow(new IllegalStateException("cluster unreachable"));
-        gate.assertWaypoint("t1", "c1", "demo", d("mesh", Map.of("useWaypoint", "svc")));
+        gate.assertWaypoint("t1", "c1", "demo", "svc");
     }
 
     @Test
@@ -125,7 +125,7 @@ class AppFeatureGateTest {
         Map<String, Object> java = d("otel", Map.of("language", "java", "logs", false));
         Map<String, Object> tracing = Map.of("tracing", true);
         AppFeatureGate.Report r = gate.release(app, snap(Map.of("a", java, "b", java, "c", d())),
-                new AppSnapshot(new LinkedHashMap<>(Map.of("a", java, "b", java, "c", d())), List.of(),
+                new AppSnapshot(new java.util.TreeMap<>(Map.of("a", java, "b", java, "c", d())), List.of(),
                         new LinkedHashMap<>(tracing)),
                 List.of("@app"));
         // c 没选语言：不追踪，不需要组件；a、b 合并成一条
@@ -147,7 +147,7 @@ class AppFeatureGateTest {
         when(gateways.waypointRefs("t1", "c1", "demo")).thenReturn(List.of());
         flags.put("ambient-mesh", new ComponentFlagDTO(true, null, List.of()));
         AppSnapshot withWp = new AppSnapshot(new LinkedHashMap<>(Map.of("a", d())), List.of(),
-                new LinkedHashMap<>(Map.of("mesh", Map.of("useWaypoint", "gone"))));
+                new LinkedHashMap<>(Map.of("mesh", Map.of("mode", "l7", "waypoint", "gone"))));
         AppFeatureGate.Report picked = gate.release(app, snap(Map.of("a", d())), withWp, List.of("@app"));
         assertThat(picked.problems()).singleElement().asString().contains("应用设置").contains("gone");
         AppFeatureGate.Report unpicked = gate.release(app, withWp, withWp, List.of("a"));
@@ -162,6 +162,8 @@ class AppFeatureGateTest {
         // 已开着的继续保存不拦
         gate.assertSettings(app, Map.of("tracing", true), Map.of("tracing", true, "sampling", 10));
         // none / 跟随 不需要组件
-        gate.assertSettings(app, Map.of(), Map.of("mesh", Map.of("dataplaneMode", "none")));
+        gate.assertSettings(app, Map.of(), Map.of("mesh", Map.of("mode", "none")));
+        assertThatThrownBy(() -> gate.assertSettings(app, Map.of(), Map.of("mesh", Map.of("mode", "l4"))))
+                .isInstanceOf(CloudPlatformException.class);
     }
 }

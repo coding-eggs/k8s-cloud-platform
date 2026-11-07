@@ -26,9 +26,12 @@ class AppSettingsTest {
         assertThat(AppSettings.normalize(null)).isEmpty();
         assertThat(AppSettings.normalize(Map.of("tracing", false, "sampling", 20, "mesh", Map.of()))).isEmpty();
         assertThat(AppSettings.normalize(Map.of("tracing", true, "sampling", "30",
-                "mesh", Map.of("dataplaneMode", "AMBIENT", "useWaypoint", " wp "))))
+                "mesh", Map.of("mode", "L7", "waypoint", " wp "))))
                 .isEqualTo(Map.of("tracing", true, "sampling", 30,
-                        "mesh", Map.of("dataplaneMode", "ambient", "useWaypoint", "wp")));
+                        "mesh", Map.of("mode", "l7", "waypoint", "wp")));
+        // L4 / none 不带 waypoint（传了也丢掉）
+        assertThat(AppSettings.normalize(Map.of("mesh", Map.of("mode", "l4", "waypoint", "wp"))))
+                .isEqualTo(Map.of("mesh", Map.of("mode", "l4")));
     }
 
     @Test
@@ -36,9 +39,11 @@ class AppSettingsTest {
         assertThatThrownBy(() -> AppSettings.normalize(Map.of("foo", 1))).hasMessageContaining("foo");
         assertThatThrownBy(() -> AppSettings.normalize(Map.of("tracing", true, "sampling", 0)))
                 .hasMessageContaining("采样率");
-        assertThatThrownBy(() -> AppSettings.normalize(Map.of("mesh", Map.of("dataplaneMode", "sidecar"))))
+        assertThatThrownBy(() -> AppSettings.normalize(Map.of("mesh", Map.of("mode", "sidecar"))))
                 .hasMessageContaining("sidecar");
-        assertThatThrownBy(() -> AppSettings.normalize(Map.of("mesh", Map.of("useWaypoint", "Bad_Name"))))
+        assertThatThrownBy(() -> AppSettings.normalize(Map.of("mesh", Map.of("mode", "l7"))))
+                .hasMessageContaining("L7 需要选择 waypoint");
+        assertThatThrownBy(() -> AppSettings.normalize(Map.of("mesh", Map.of("mode", "l7", "waypoint", "Bad_Name"))))
                 .hasMessageContaining("waypoint");
     }
 
@@ -55,24 +60,31 @@ class AppSettingsTest {
     }
 
     @Test
-    void effectiveMeshDropsWaypointForWorkers() {
-        Map<String, Object> settings = Map.of("mesh", Map.of("dataplaneMode", "ambient", "useWaypoint", "wp"));
-        assertThat(AppSettings.effective(svc(), settings).get("mesh"))
-                .isEqualTo(Map.of("dataplaneMode", "ambient", "useWaypoint", "wp"));
+    void effectiveTranslatesMeshModes() {
         Map<String, Object> worker = svc();
         worker.remove("port");
-        assertThat(AppSettings.effective(worker, settings).get("mesh")).isEqualTo(Map.of("dataplaneMode", "ambient"));
-        worker.put("x", 1);
-        assertThat(AppSettings.effective(worker, Map.of("mesh", Map.of("useWaypoint", "wp")))).doesNotContainKey("mesh");
+        Map<String, Object> l7 = Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp"));
+        assertThat(AppSettings.effective(svc(), l7).get("mesh"))
+                .isEqualTo(Map.of("dataplaneMode", "ambient", "useWaypoint", "wp"));
+        // 后台进程没有 Service：L7 也只有 L4
+        assertThat(AppSettings.effective(worker, l7).get("mesh")).isEqualTo(Map.of("dataplaneMode", "ambient"));
+        // L4：显式不走 waypoint（盖过命名空间级的 use-waypoint）
+        assertThat(AppSettings.effective(svc(), Map.of("mesh", Map.of("mode", "l4"))).get("mesh"))
+                .isEqualTo(Map.of("dataplaneMode", "ambient", "useWaypoint", "none"));
+        assertThat(AppSettings.effective(svc(), Map.of("mesh", Map.of("mode", "none"))).get("mesh"))
+                .isEqualTo(Map.of("dataplaneMode", "none"));
+        assertThat(AppSettings.effective(svc(), Map.of())).doesNotContainKey("mesh");
     }
 
     @Test
     void requiredAndNewlyEnabled() {
         assertThat(AppSettings.required(Map.of("tracing", true))).containsExactly("otel-collection");
-        assertThat(AppSettings.required(Map.of("mesh", Map.of("dataplaneMode", "none", "useWaypoint", "none")))).isEmpty();
-        assertThat(AppSettings.required(Map.of("mesh", Map.of("useWaypoint", "wp")))).containsExactly("ambient-mesh");
-        assertThat(AppSettings.newlyEnabled(Map.of("mesh", Map.of("useWaypoint", "a")),
-                Map.of("mesh", Map.of("useWaypoint", "b")))).containsExactly("ambient-mesh");
+        assertThat(AppSettings.required(Map.of("mesh", Map.of("mode", "none")))).isEmpty();
+        assertThat(AppSettings.required(Map.of("mesh", Map.of("mode", "l4")))).containsExactly("ambient-mesh");
+        assertThat(AppSettings.newlyEnabled(Map.of("mesh", Map.of("mode", "l7", "waypoint", "a")),
+                Map.of("mesh", Map.of("mode", "l7", "waypoint", "b")))).containsExactly("ambient-mesh");
+        assertThat(AppSettings.newlyEnabled(Map.of("mesh", Map.of("mode", "l4")),
+                Map.of("mesh", Map.of("mode", "l7", "waypoint", "b")))).isEmpty();
         assertThat(AppSettings.newlyEnabled(Map.of("tracing", true), Map.of("tracing", true, "sampling", 5))).isEmpty();
     }
 

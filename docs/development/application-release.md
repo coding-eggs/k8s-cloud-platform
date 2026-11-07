@@ -89,7 +89,13 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 | 服务 `autoscalingEnabled` / `minReplicas` / `maxReplicas` / `targetCpu` / `targetMemory` | HPA | CPU 指标始终生成（`targetCpu` 缺省 60）；`targetMemory` 有值才加内存指标；只在 HPA 相关字段变化时校验 `1 ≤ min ≤ max` |
 | 服务 `otel {language, logs, logMode, logFile}` | Pod 模板注解 + 容器 env（+ file 模式的 emptyDir 卷） | 与工作负载页「可观测接入」共用 `OtelInjection`；`OTEL_SERVICE_NAME` 固定为工作负载名 `<slug>-<key>`；语言与日志都没有 = 不存这个键；服务里写 `tracing` / `sampling` / `mesh` 会被拒（提示去应用设置） |
 | 应用 `tracing` / `sampling` | 同上（探针注解 + 采样 env） | 只对**选了语言**的服务生效；没选语言的服务（Nginx、Go）不注入、也不需要组件 |
-| 应用 `mesh {dataplaneMode, useWaypoint}` | 全部服务 Pod 模板标签 `istio.io/dataplane-mode`；有端口服务的 Service 标签 `istio.io/use-waypoint` | 跟随命名空间 = 不写；候选只列 `waypoint-for` 为 service / all |
+| 应用 `mesh {mode, waypoint}` | 见下表 | 没有 `mesh` = 跟随命名空间（不写任何标签）；L7 的 waypoint 必填，候选只列本命名空间 `waypoint-for` 为 service / all |
+
+| `mesh.mode` | Pod 模板 `istio.io/dataplane-mode` | 有端口服务的 Service `istio.io/use-waypoint` | 得到什么 |
+|---|---|---|---|
+| `none` | `none` | 不写 | 显式不加入网格（盖过命名空间的 ambient） |
+| `l4` | `ambient` | `none` | ztunnel：自动 mTLS、按身份 / 端口的 L4 授权、TCP 指标；显式不走 waypoint（盖过命名空间级 waypoint） |
+| `l7` | `ambient` | `<waypoint>` | L4 全部 + 经 waypoint：HTTP 路由（HTTPRoute 挂 Service）、重试超时、L7 授权、请求级指标与拓扑 L7 边；后台进程没有 Service，只有 L4 |
 
 **发布**：应用设置的期望值与线上快照 `app` 不同时，待发布列表多一项伪 key `@app`（`AppSettings.KEY`），发布对话框里单独一行。
 勾选才带新值（全部服务滚动），不勾沿用线上值。回滚与服务同口径：期望 = 线上（没有未发布编辑）才同步为旧快照的值，否则保留为待发布。
@@ -228,7 +234,8 @@ HPA / 可观测 / 服务网格（§1.7）：
 - [ ] **真跑**：HPA 经 scale 子资源写的 replicas 在 managedFields 里是独立 manager，之后连续发布两次，HPA 扩出的副本不被打回。结论：（待回填）
 - [ ] 没装 metrics-server / Prometheus Operator / OTel / Istio 的集群：对应开关置灰；直接调接口开启被拒；已开启的服务在组件卸载后仍能发布，预览有警告；关闭能发布。
 - [ ] 应用设置开链路追踪 + 一个 Java 服务选语言、一个 Nginx 服务不选：只勾「应用设置」发布，两个服务都滚动，只有 Java 服务带探针注解；日志在 ES、链路在 Tempo，服务概览「历史日志」「链路」直接过滤到它。
-- [ ] 应用设置 ambient：全部服务纳管后网格拓扑能看到；设 waypoint 后有端口的服务出现 L7 边，后台进程不受影响。
+- [ ] 应用设置 L4：全部服务纳管后网格拓扑能看到（只有 TCP 边）；命名空间另配了 waypoint 时，本应用服务仍不走它。
+- [ ] 应用设置 L7 选 waypoint：有端口的服务出现 L7 边，后台进程不受影响；waypoint 删掉后发布预览报「应用设置：…不存在」。
 - [ ] 回滚到接入前的版本，注解 / 标签随之消失。
 - [ ] 卸载 OTel 后回滚到接入后的版本：确认框有警告，回滚照常完成。
 

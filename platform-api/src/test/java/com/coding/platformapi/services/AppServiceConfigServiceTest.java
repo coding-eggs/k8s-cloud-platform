@@ -227,7 +227,7 @@ class AppServiceConfigServiceTest {
         assertThat(before.getValue()).containsEntry("imageTag", "1").doesNotContainKey("autoscalingEnabled");
         assertThat(after.getValue()).containsEntry("autoscalingEnabled", true);
         // waypoint 没变：不查（被删的 waypoint 不该挡住只改镜像的保存）
-        verify(gate, org.mockito.Mockito.never()).assertWaypoint(any(), any(), any(), any());
+        verify(gate, org.mockito.Mockito.never()).assertWaypoint(any(), any(), any(), org.mockito.ArgumentMatchers.<String>any());
     }
 
     @Test
@@ -256,16 +256,16 @@ class AppServiceConfigServiceTest {
         com.coding.platformapi.models.AppSettingsRequest r = new com.coding.platformapi.models.AppSettingsRequest();
         r.setAppId("app1");
         r.setVersion(3);
-        r.setSettings(Map.of("mesh", Map.of("dataplaneMode", "ambient")));
+        r.setSettings(Map.of("mesh", Map.of("mode", "l4")));
         assertThatThrownBy(() -> service.updateSettings(r, "t1")).hasMessageContaining("冲突");
         r.setVersion(4);
         var view = service.updateSettings(r, "t1");
         assertThat(view.version()).isEqualTo(5);
         verify(gate).assertSettings(org.mockito.ArgumentMatchers.eq(app),
                 org.mockito.ArgumentMatchers.eq(Map.of("tracing", true)),
-                org.mockito.ArgumentMatchers.eq(Map.of("mesh", Map.of("dataplaneMode", "ambient"))));
+                org.mockito.ArgumentMatchers.eq(Map.of("mesh", Map.of("mode", "l4"))));
         verify(apps).updateSettings(org.mockito.ArgumentMatchers.eq("app1"),
-                org.mockito.ArgumentMatchers.eq("{\"mesh\":{\"dataplaneMode\":\"ambient\"}}"),
+                org.mockito.ArgumentMatchers.eq("{\"mesh\":{\"mode\":\"l4\"}}"),
                 org.mockito.ArgumentMatchers.eq(4), any());
     }
 

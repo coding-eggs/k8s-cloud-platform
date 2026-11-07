@@ -12,7 +12,7 @@ public class AppSettingsRequest {
 
     private String tenantId;
 
-    /** {tracing, sampling, mesh:{dataplaneMode, useWaypoint}}；null / 空 = 全部跟随 */
+    /** {tracing, sampling, mesh:{mode: none|l4|l7, waypoint}}；null / 空 = 全部跟随 */
     private Map<String, Object> settings;
 
     /** 读到的 settingsVersion，必须一致（乐观锁） */

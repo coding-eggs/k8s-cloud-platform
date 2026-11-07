@@ -54,8 +54,8 @@ public class AppFeatureGate {
         }
     }
 
-    public void assertWaypoint(String tenantId, String clusterId, String namespace, Map<String, Object> after) {
-        String name = AppServiceFeatures.waypointName(after);
+    /** waypoint 存在且能处理服务流量；name 为 null 不查 */
+    public void assertWaypoint(String tenantId, String clusterId, String namespace, String name) {
         if (name == null) {
             return;
         }
@@ -77,8 +77,8 @@ public class AppFeatureGate {
         for (String code : AppSettings.newlyEnabled(before, after)) {
             guard.require(app.getClusterId(), code, "开启" + AppServiceFeatures.LABELS.getOrDefault(code, code));
         }
-        if (!java.util.Objects.equals(AppServiceFeatures.waypointName(before), AppServiceFeatures.waypointName(after))) {
-            assertWaypoint(app.getTenantId(), app.getClusterId(), app.getNamespace(), after);
+        if (!java.util.Objects.equals(AppSettings.waypoint(before), AppSettings.waypoint(after))) {
+            assertWaypoint(app.getTenantId(), app.getClusterId(), app.getNamespace(), AppSettings.waypoint(after));
         }
     }
 
@@ -126,7 +126,7 @@ public class AppFeatureGate {
         problems.forEach((msg, keys) -> outProblems.add("服务 " + String.join("、", keys) + "：" + msg));
         warnings.forEach((msg, keys) -> outWarnings.add("服务 " + String.join("、", keys) + "：" + msg));
 
-        String wp = AppServiceFeatures.waypointName(next.app());
+        String wp = AppSettings.waypoint(next.app());
         if (wp != null && anyService) {
             try {
                 String problem = waypointProblem(wp, app.getNamespace(),

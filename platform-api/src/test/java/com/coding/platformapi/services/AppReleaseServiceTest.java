@@ -1216,11 +1216,12 @@ class AppReleaseServiceTest {
         Map<String, Object> d = svc("1");
         d.put("otel", Map.of("language", "java", "logs", false));
         AppSnapshot snap = new AppSnapshot(new java.util.TreeMap<>(Map.of("s0", d)), List.of(),
-                new LinkedHashMap<>(Map.of("tracing", true, "mesh", Map.of("dataplaneMode", "ambient"))));
+                new LinkedHashMap<>(Map.of("tracing", true, "mesh", Map.of("mode", "l4"))));
         Map<String, Object> params = pipeline.buildRequest(app, 1, snap).getSpec().getNodes().get(0).getParams();
 
         assertThat(params).doesNotContainKeys("otel", "mesh")
                 .containsEntry("podLabels", Map.of("istio.io/dataplane-mode", "ambient"))
+                .containsEntry("serviceLabels", Map.of("istio.io/use-waypoint", "none"))   // L4：显式不走 waypoint
                 .containsKey("podAnnotations");
         assertThat(params.get("extraEnv")).isEqualTo(List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "shop-s0")));
     }
@@ -1234,7 +1235,7 @@ class AppReleaseServiceTest {
         worker.remove("port");
         AppSnapshot snap = new AppSnapshot(new java.util.TreeMap<>(Map.of("a", java, "b", nginx, "c", worker)),
                 List.of(), new LinkedHashMap<>(Map.of("tracing", true, "sampling", 30,
-                        "mesh", Map.of("dataplaneMode", "ambient", "useWaypoint", "wp"))));
+                        "mesh", Map.of("mode", "l7", "waypoint", "wp"))));
         Map<String, Map<String, Object>> byKey = new LinkedHashMap<>();
         pipeline.buildRequest(app, 1, snap).getSpec().getNodes().forEach(n -> byKey.put(n.getKey(), n.getParams()));
 
@@ -1343,7 +1344,7 @@ class AppReleaseServiceTest {
         when(services.updateWithVersion(any())).thenReturn(1);
         when(releases.selectMaxNo("app1")).thenReturn(3);
 
-        app.setSettingsJson("{\"mesh\":{\"dataplaneMode\":\"ambient\"}}");   // 有未发布编辑：保留
+        app.setSettingsJson("{\"mesh\":{\"mode\":\"l4\"}}");   // 有未发布编辑：保留
         service.rollback("app1", 1, null, "bob", "t1");
         verify(apps, never()).updateSettings(any(), any(), any(), any());
     }

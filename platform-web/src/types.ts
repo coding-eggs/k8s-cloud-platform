@@ -3001,12 +3001,14 @@ export interface AppServiceOtel {
   logFile?: string
 }
 
-/** 应用级服务网格：缺省 = 跟随命名空间 */
+/**
+ * 应用级服务网格：缺省（没有 mesh）= 跟随命名空间。
+ * none = 不加入网格；l4 = ambient（ztunnel），显式不走 waypoint；l7 = ambient + 有端口的服务走 waypoint（必选）。
+ */
 export interface AppServiceMesh {
-  /** Pod 模板 istio.io/dataplane-mode：ambient / none */
-  dataplaneMode?: 'ambient' | 'none'
-  /** Service istio.io/use-waypoint：waypoint 名 / none（只有服务） */
-  useWaypoint?: string
+  mode?: 'none' | 'l4' | 'l7'
+  /** l7 必填：同命名空间、waypoint-for 为 service / all 的 waypoint 名 */
+  waypoint?: string
 }
 
 /** 服务期望配置（desired_json）。后端白名单，未知字段会被拒绝 */

@@ -92,8 +92,9 @@ const meshParts = computed<string[]>(() => {
   const m = props.live ? props.liveSettings?.mesh : null
   if (!m) return []
   const out: string[] = []
-  if (m.dataplaneMode) out.push(m.dataplaneMode === 'ambient' ? '数据面 ambient' : '数据面 none（不加入网格）')
-  if (m.useWaypoint && props.live?.port) out.push(m.useWaypoint === 'none' ? 'waypoint 显式不使用' : `waypoint ${m.useWaypoint}`)
+  if (m.mode === 'none') out.push('不加入网格')
+  else if (m.mode === 'l4' || (m.mode === 'l7' && !props.live?.port)) out.push('L4（ztunnel）')
+  else if (m.mode === 'l7') out.push(`L7（waypoint ${m.waypoint ?? ''}）`)
   if (out.length) out.push('（应用级）')
   return out
 })
