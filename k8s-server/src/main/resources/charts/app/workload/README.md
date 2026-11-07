@@ -30,7 +30,11 @@ charts/app/workload/
 | `workload.configFiles[]` | `{key, path, content}` → **ConfigMap** `…-files`，每个文件以只读 `subPath` 挂到 `path`；内容由 platform-api 替换好引用，**不含凭据** |
 | `workload.configHash` | Pod 模板注解 `platform.coding/config-hash`：env / secretEnv / inlineEnv / configFiles 的摘要，不含发布号 |
 | `workload.imagePullSecrets[]` | 只取自发布快照；平台 Harbor 的拉取凭据靠命名空间 default SA |
-| `workload.resources` / `persistence` / `autoscaling` / `metrics` / `expose` | 见 `values.yaml` 注释 |
+| `workload.resources` / `persistence` / `autoscaling` / `metrics` / `expose` | 见 `values.yaml` 注释；`autoscaling.targetMemory` > 0 才加内存指标（CPU 指标始终有） |
+| `workload.podAnnotations` / `podLabels` | 合并进 Pod 模板注解 / 标签（OTel 注入、`istio.io/dataplane-mode`）；不进 `configHash` |
+| `workload.serviceLabels` | 合并进 Service 标签（`istio.io/use-waypoint`） |
+| `workload.extraEnv[]` | `{name, value}` 直接写进容器 env，排在 `inlineEnv` 之后（OTel 服务名 / 采样） |
+| `workload.logVolume` | `{enabled, mountDir}`：emptyDir 卷 `platform-otel-logs` 挂到 `mountDir`（OTel 读文件日志） |
 
 ## 产物对照
 
@@ -39,7 +43,7 @@ charts/app/workload/
 | 默认（`mode=service`，无持久化） | Deployment + Service(ClusterIP)（有 env 时加 ConfigMap `-env`，有配置文件时加 ConfigMap `-files`） |
 | `mode=worker` | Deployment（无端口、无 Service、无探针） |
 | `mode=service` + `persistence.enabled=true` | **StatefulSet** + Service + Headless Service（不再有 Deployment） |
-| `autoscaling.enabled` | 加 HPA（`scaleTargetRef` 会自动指向 Deployment 或 StatefulSet） |
+| `autoscaling.enabled` | 加 HPA（`scaleTargetRef` 会自动指向 Deployment 或 StatefulSet）；**Deployment / StatefulSet 不写 `spec.replicas`**（否则 SSA forceConflicts 每次发布把 HPA 的副本打回） |
 | `metrics.enabled` 且 `mode=service` | 加 ServiceMonitor（`/metrics`，端口名 `http`） |
 | `expose.type=nodeport` | Service 类型改 NodePort |
 

@@ -74,6 +74,39 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 第一个 Pod 原因也拼进执行的 `message`，所以超时失败的报错里能直接看到。
 写日志失败只记 warn，不影响发布。前端：进度面板下方时间线（随轮询刷新）、发布记录详情抽屉里也有一份。
 
+### 1.7 HPA / 可观测 / 服务网格（设计 `docs/superpowers/specs/2026-11-07-app-service-hpa-observability-mesh-design.md`）
+
+三项都存在服务的 desired 里，**随发布渲染**；资源页不能改应用对象（`platform.coding/managed=true` 被
+`ManagedResourceGuard` 拒绝写入），所以不在工作负载页 / Service 页配。服务页只做配置与摘要，细节跳已有页面。
+
+| desired 键 | 渲染到 | 说明 |
+|---|---|---|
+| `autoscalingEnabled` / `minReplicas` / `maxReplicas` / `targetCpu` / `targetMemory` | HPA | CPU 指标始终生成（`targetCpu` 缺省 60）；`targetMemory` 有值才加内存指标；只在 HPA 相关字段变化时校验 `1 ≤ min ≤ max` |
+| `otel {language, tracing, logs, logMode, logFile, sampling}` | Pod 模板注解 + 容器 env（+ file 模式的 emptyDir 卷） | 与工作负载页「可观测接入」共用 `OtelInjection`；`OTEL_SERVICE_NAME` 固定为工作负载名 `<slug>-<key>`；两项都关 = 不存这个键 |
+| `mesh {dataplaneMode, useWaypoint}` | Pod 模板标签 `istio.io/dataplane-mode`；Service 标签 `istio.io/use-waypoint` | 跟随命名空间 = 不写；`useWaypoint` 只有有端口的服务能设，候选只列 `waypoint-for` 为 service / all |
+
+**组件门禁**（`AppFeatureGate` → `ComponentFeatureGuard`，未探测 = 不可用）：
+
+| 功能 | 旗标 |
+|---|---|
+| HPA | `hpa-resource-metrics` |
+| 暴露指标（ServiceMonitor） | `servicemonitor` |
+| 链路追踪 / 日志框架方式的日志 | `otel-collection` |
+| 日志采集（两种方式） | `otel-logs` |
+| ambient / 具体 waypoint | `ambient-mesh`（「跟随」和 `none` 任何时候都能设） |
+
+- **保存**只拦「从关到开」（换成另一个 waypoint 也算开）；已开的始终能关、能保留。waypoint 换了名才校验是否存在且能处理服务流量，
+  查询本身失败（集群断开、无 RBAC）放行。
+- **发布预览 / 创建**：勾选服务里相对线上新开启、而组件不可用的 → 拦；其余生效中但组件已不可用的 → 只警告，照常发布（不追溯）。
+- **回滚**不调门禁：回滚是止血手段，确认框里只列警告。
+- 前端：开关在组件不可用且保存值为关时置灰并给原因；服务概览只按**线上快照**显示「自动扩缩容 / 可观测 / 服务网格」三行，
+  按钮跳 HPA 列表、日志查询（`?workload=`）、链路追踪（`?service=`）、网格拓扑（`?focus=<ns>/<workload>`），目标页无权限则不显示。
+  HPA 行只有当前副本 / min–max / 指标目标：`HpaDTO` 没有 status（当前指标值、`ScalingActive` 等条件），要看去 HPA 页。
+
+**HPA 开启时清单不写 `spec.replicas`**（Deployment 与 StatefulSet 都是）：发布带 SSA `forceConflicts`，写了就会每次把
+HPA 扩出来的副本强制打回。配置页「副本数」此时只读。从「手动副本」切到 HPA 的那次发布副本是否会被重置为 1，
+见 §5 的真跑项。
+
 ## 2. 配置文件
 
 服务页「配置文件」页签：每条一个绝对路径 + 内容。
@@ -129,6 +162,10 @@ key 不能以它结尾。
    （命名空间分配时下发；渲染时不再注入）。没挂的命名空间发布会卡在拉镜像。
 7. **重新登录**：权限行有新增，旧会话拿不到新码。
 
+**HPA / 可观测 / 服务网格（§1.7）这批不需要 SQL**，也没有新权限行。重建 k8s-server → platform-api → platform-web，
+**k8s-server 先部署**：新 platform-api 发的注入参数（`podAnnotations` / `podLabels` / `serviceLabels` / `extraEnv` /
+`logMountDir` / `targetMemory`）旧 k8s-server 不认，会被静默忽略 —— 发布成功但注解、标签、内存指标都不生效。
+
 ### 3.1 画布遗留清理（V2026_11_02_14）
 
 画布模型的遗留在代码和库里都已删除：
@@ -167,6 +204,16 @@ key 不能以它结尾。
 - [ ] 依赖初始化：MySQL / PostgreSQL / Redis / ES / Kafka 各成功一次、各故意失败一次，失败时状态为失败且日志可读。
 - [ ] Harbor 选 tag、新版本提示、资源页跳转在真实 Harbor 上可用。
 - [ ] 清理迁移：有部署过的旧应用时第 0 步报错且表结构不变；删掉后重放，两列两表与 5 条权限行消失，未部署的旧应用变成可发布的空应用。
+
+HPA / 可观测 / 服务网格（§1.7）：
+
+- [ ] **真跑**：从「手动副本 3」切到 HPA（min 2）的那次发布，副本是否被重置为 1（`spec.replicas` 失去全部 manager 时会被删除、回默认值）。结论：（待回填）
+- [ ] **真跑**：HPA 经 scale 子资源写的 replicas 在 managedFields 里是独立 manager，之后连续发布两次，HPA 扩出的副本不被打回。结论：（待回填）
+- [ ] 没装 metrics-server / Prometheus Operator / OTel / Istio 的集群：对应开关置灰；直接调接口开启被拒；已开启的服务在组件卸载后仍能发布，预览有警告；关闭能发布。
+- [ ] 接入 Java 服务：日志在 ES、链路在 Tempo，服务概览「历史日志」「链路」直接过滤到它。
+- [ ] ambient 纳管后网格拓扑能看到它；设 waypoint 后出现 L7 边。
+- [ ] 回滚到接入前的版本，注解 / 标签随之消失。
+- [ ] 卸载 OTel 后回滚到接入后的版本：确认框有警告，回滚照常完成。
 
 ## 6. 已知限制
 
