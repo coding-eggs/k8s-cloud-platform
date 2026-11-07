@@ -192,7 +192,7 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
    没打标签的被拒（`NotAllowedByListeners`）；去掉标签后路由会被摘掉。
 2. 租户的 RBAC 模板改不了命名空间标签。
 3. 新 Gateway 加 `parametersRef` ConfigMap 后，nodePort 等于 listener 端口；和旧入口并存时没有端口冲突。
-4. TCP 段：TCPRoute 挂上后能连通。注意 TCPRoute 现在还是 Experimental channel 的 `v1alpha2`，要确认集群装了这个 CRD。
+4. TCP 段：TCPRoute 挂上后能连通。TCPRoute 长期在 Experimental channel，要确认集群装了它的 CRD 以及具体版本。
 
 **第二期开始前**：
 5. 普通 `istio` 网关类接受 ListenerSet（`Accepted / Programmed`），和 Harbor 一起共用 443 时按 SNI 选证书正确。
