@@ -41,6 +41,7 @@ class AppServiceConfigServiceTest {
     private PlatformAppReleaseMapper releases;
     private PlatformAppExecutionMapper executions;
     private AppServiceConfigService service;
+    private AppFeatureGate gate;
     private PlatformApplication app;
     private com.coding.platformapi.registry.HarborInstallLocator harbor;
 
@@ -52,10 +53,13 @@ class AppServiceConfigServiceTest {
         releases = mock(PlatformAppReleaseMapper.class);
         executions = mock(PlatformAppExecutionMapper.class);
         harbor = mock(com.coding.platformapi.registry.HarborInstallLocator.class);
-        service = new AppServiceConfigService(apps, services, deps, releases, executions, harbor);
+        gate = mock(AppFeatureGate.class);
+        service = new AppServiceConfigService(apps, services, deps, releases, executions, harbor, gate);
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
+        app.setClusterId("c1");
+        app.setNamespace("demo");
         app.setSlug("shop");
         app.setLiveReleaseNo(0);
         when(apps.selectById("app1")).thenReturn(app);
@@ -204,6 +208,57 @@ class AppServiceConfigServiceTest {
         verify(services).updateWithVersion(cap.capture());
         assertThat(cap.getValue().getVersion()).isEqualTo(3);
         assertThat(cap.getValue().getDesiredJson()).contains("\"imageTag\":\"2\"");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void updateCallsGateWithStoredDesired() {
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 3));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        Map<String, Object> next = web("2");
+        next.put("autoscalingEnabled", true);
+        AppServiceRequest r = req("api", next);
+        r.setVersion(3);
+        service.update(r, "t1");
+
+        ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+        verify(gate).assertCanEnable(org.mockito.ArgumentMatchers.eq("c1"), before.capture(), after.capture());
+        assertThat(before.getValue()).containsEntry("imageTag", "1").doesNotContainKey("autoscalingEnabled");
+        assertThat(after.getValue()).containsEntry("autoscalingEnabled", true);
+        // waypoint 没变：不查（被删的 waypoint 不该挡住只改镜像的保存）
+        verify(gate, org.mockito.Mockito.never()).assertWaypoint(any(), any(), any(), any());
+    }
+
+    @Test
+    void changedWaypointIsValidated() {
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 3));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        Map<String, Object> next = web("1");
+        next.put("mesh", Map.of("useWaypoint", "wp"));
+        AppServiceRequest r = req("api", next);
+        r.setVersion(3);
+        service.update(r, "t1");
+        verify(gate).assertWaypoint(org.mockito.ArgumentMatchers.eq("t1"), org.mockito.ArgumentMatchers.eq("c1"),
+                org.mockito.ArgumentMatchers.eq("demo"), any());
+    }
+
+    @Test
+    void gateRejectionStopsTheSave() {
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 3));
+        org.mockito.Mockito.doThrow(new com.coding.common.exception.CloudPlatformException(
+                com.coding.common.exception.EnumResponseType.OPERATION_NOT_SUPPORTED, "无法开启自动扩缩容"))
+                .when(gate).assertCanEnable(any(), any(), any());
+        AppServiceRequest r = req("api", web("2"));
+        r.setVersion(3);
+        assertThatThrownBy(() -> service.update(r, "t1")).hasMessageContaining("自动扩缩容");
+        verify(services, org.mockito.Mockito.never()).updateWithVersion(any());
+    }
+
+    @Test
+    void createCallsGateWithNullBefore() {
+        service.create(req("web", web("1")), "t1");
+        verify(gate).assertCanEnable(org.mockito.ArgumentMatchers.eq("c1"), org.mockito.ArgumentMatchers.isNull(), any());
     }
 
     @Test

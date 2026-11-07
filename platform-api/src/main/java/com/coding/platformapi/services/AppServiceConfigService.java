@@ -12,6 +12,7 @@ import com.coding.data.models.system.PlatformAppRelease;
 import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.platformapi.app.AppServiceDesired;
+import com.coding.platformapi.app.AppServiceFeatures;
 import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.models.AppServiceRequest;
 import com.coding.platformapi.models.AppServiceView;
@@ -48,17 +49,19 @@ public class AppServiceConfigService {
 
     private final PlatformAppExecutionMapper executions;
     private final HarborInstallLocator harbor;
+    private final AppFeatureGate featureGate;
 
     public AppServiceConfigService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
                                    PlatformAppDependencyMapper dependencies, PlatformAppReleaseMapper releases,
                                    PlatformAppExecutionMapper executions,
-                                   HarborInstallLocator harbor) {
+                                   HarborInstallLocator harbor, AppFeatureGate featureGate) {
         this.apps = apps;
         this.services = services;
         this.dependencies = dependencies;
         this.releases = releases;
         this.executions = executions;
         this.harbor = harbor;
+        this.featureGate = featureGate;
     }
 
     /**
@@ -89,6 +92,7 @@ public class AppServiceConfigService {
         String key = req.getServiceKey();
         assertValidKey(key);
         Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
+        checkFeatures(app, null, desired);
 
         if (dependencies.selectByKey(app.getId(), key) != null) {
             throw error("名称 " + key + " 已被依赖占用");
@@ -127,6 +131,7 @@ public class AppServiceConfigService {
             throw conflict();
         }
         Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
+        checkFeatures(app, AppSnapshot.parseMap(row.getDesiredJson()), desired);
         row.setDesiredJson(JSON.writeValueAsString(desired));
         row.setUpdatedAt(new Date());
         if (services.updateWithVersion(row) == 0) {
@@ -136,6 +141,15 @@ public class AppServiceConfigService {
     }
 
     /** 从未发布过的直接删行；已发布过的标记待删除，下次发布勾选后才真正移除。 */
+    /** HPA 区间（只在 HPA 字段变化时）+ 组件门禁（只拦从关到开）+ waypoint 存在且能处理服务流量 */
+    private void checkFeatures(PlatformApplication app, Map<String, Object> before, Map<String, Object> after) {
+        AppServiceDesired.validateHpaChange(before, after);
+        featureGate.assertCanEnable(app.getClusterId(), before, after);
+        if (!java.util.Objects.equals(AppServiceFeatures.waypointName(before), AppServiceFeatures.waypointName(after))) {
+            featureGate.assertWaypoint(app.getTenantId(), app.getClusterId(), app.getNamespace(), after);
+        }
+    }
+
     public void remove(AppServiceRequest req, String tenantId) {
         PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppService row = require(app, req.getServiceKey());

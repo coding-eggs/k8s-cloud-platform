@@ -58,6 +58,7 @@ class AppReleaseServiceTest {
     private AppReleasePipeline pipeline;
     private PlatformApplication app;
     private AppImageUpdates imageUpdates;
+    private ClusterComponentService componentFlags;
 
     @BeforeEach
     void setUp() {
@@ -75,10 +76,13 @@ class AppReleaseServiceTest {
                 mock(com.coding.data.mapper.system.PlatformApplicationReferenceMapper.class), middleware, client,
                 Runnable::run);
         imageUpdates = mock(AppImageUpdates.class);
+        componentFlags = mock(ClusterComponentService.class);
+        when(componentFlags.flags(any())).thenReturn(Map.of());
         pipeline = new AppReleasePipeline(apps, releases, dependencies);
         service = new AppReleaseService(apps, services, depRows, releases, executions, dependencies,
                 pipeline, executor, credentials, new AppExecutionLease("test-instance"), client, imageUpdates,
-                mock(PlatformTransactionManager.class));
+                mock(PlatformTransactionManager.class),
+                new AppFeatureGate(new ComponentFeatureGuard(componentFlags), componentFlags, mock(GatewayService.class)));
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -231,6 +235,32 @@ class AppReleaseServiceTest {
         var snap = JSON.readTree(createdSnapshot());
         assertThat(snap.get("dependencies").get(0).get("external").get("host").asText()).isEqualTo("new.corp");
         assertThat(snap.get("services").get("job").get("imageTag").asText()).isEqualTo("1");   // 未勾选：仍是线上版本
+    }
+
+    @Test
+    void createBlocksNewlyEnabledFeatureWhoseComponentIsMissing() {
+        live(1, Map.of("api", svc("1")));
+        Map<String, Object> hpa = svc("1");
+        hpa.put("autoscalingEnabled", true);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", hpa, false)));
+
+        AppReleasePreviewView v = service.preview("app1", List.of("api"), Map.of(), "t1");
+        assertThat(v.problems()).anySatisfy(p -> assertThat(p).contains("api").contains("自动扩缩容"));
+        assertThatThrownBy(() -> service.create("app1", List.of("api"), Map.of(), null, "bob", "t1"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("自动扩缩容");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void liveFeatureWithMissingComponentOnlyWarns() {
+        Map<String, Object> hpa = svc("1");
+        hpa.put("autoscalingEnabled", true);
+        live(1, Map.of("api", hpa, "job", svc("1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", hpa, false), row("job", svc("2"), false)));
+
+        AppReleasePreviewView v = service.preview("app1", List.of("job"), Map.of(), "t1");
+        assertThat(v.problems()).isEmpty();
+        assertThat(v.warnings()).anySatisfy(w -> assertThat(w).contains("api").contains("自动扩缩容"));
     }
 
     @Test
@@ -800,6 +830,23 @@ class AppReleaseServiceTest {
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
 
         assertThat(service.overview("app1", "t1").pendingKeys()).containsExactly("api");
+    }
+
+    @Test
+    void rollbackIgnoresFeatureGate() {
+        Map<String, Object> hpa = svc("1");
+        hpa.put("autoscalingEnabled", true);
+        live(3, Map.of("api", svc("2")));
+        history(1, "DEPLOYED", Map.of("api", hpa), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+        org.mockito.Mockito.doAnswer(inv -> {
+            ((PlatformAppExecution) inv.getArgument(0)).setId(78L);
+            return 1;
+        }).when(executions).insert(any());
+
+        assertThat(service.rollback("app1", 1, null, "bob", "t1")).isEqualTo(78L);
     }
 
     @Test

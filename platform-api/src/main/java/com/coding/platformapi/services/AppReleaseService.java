@@ -81,13 +81,15 @@ public class AppReleaseService {
     private final K8sAppClient client;
     private final AppImageUpdates imageUpdates;
     private final TransactionTemplate tx;
+    private final AppFeatureGate featureGate;
 
     public AppReleaseService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
                              PlatformAppDependencyMapper dependencyRows, PlatformAppReleaseMapper releases,
                              PlatformAppExecutionMapper executions, AppDependencyService dependencies,
                              AppReleasePipeline pipeline, AppReleaseExecutor executor,
                              ApplicationDeployCredentials credentials, AppExecutionLease leases, K8sAppClient client,
-                             AppImageUpdates imageUpdates, PlatformTransactionManager transactionManager) {
+                             AppImageUpdates imageUpdates, PlatformTransactionManager transactionManager,
+                             AppFeatureGate featureGate) {
         this.apps = apps;
         this.services = services;
         this.dependencyRows = dependencyRows;
@@ -101,6 +103,7 @@ public class AppReleaseService {
         this.client = client;
         this.imageUpdates = imageUpdates;
         this.tx = new TransactionTemplate(transactionManager);
+        this.featureGate = featureGate;
     }
 
     // ------------------------------------------------------------------ 预览
@@ -113,7 +116,10 @@ public class AppReleaseService {
         List<String> problems = new ArrayList<>(plan.errors);
         List<String> added = List.of();
         List<String> removed = List.of();
+        AppFeatureGate.Report gate = plan.selected.isEmpty() ? null
+                : featureGate.release(app, plan.live, plan.next, plan.selected);
         if (plan.errors.isEmpty() && plan.required.isEmpty() && !plan.selected.isEmpty()) {
+            problems.addAll(gate.problems());
             problems.addAll(pipeline.problems(app, plan.next));
             if (problems.isEmpty()) {
                 try {
@@ -143,6 +149,7 @@ public class AppReleaseService {
         }
         if (!plan.selected.isEmpty()) {
             warnings.addAll(dependencies.degraded(AppReleasePipeline.referencedDependencies(plan.next)));
+            warnings.addAll(gate.warnings());
         }
         return new AppReleasePreviewView(changes,
                 plan.changes.stream().map(AppPending.Change::key).toList(),
@@ -175,6 +182,10 @@ public class AppReleaseService {
                     + String.join("、", plan.required));
         }
         List<String> problems = new ArrayList<>(plan.errors);
+        if (problems.isEmpty()) {
+            // 组件门禁：勾选且新开启的功能组件不可用 → 拦；回滚不走这里（止血不能被门禁挡住）
+            problems.addAll(featureGate.release(app, plan.live, plan.next, plan.selected).problems());
+        }
         if (problems.isEmpty()) {
             problems.addAll(pipeline.problems(app, plan.next));
         }
