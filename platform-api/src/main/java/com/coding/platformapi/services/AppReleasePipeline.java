@@ -18,6 +18,7 @@ import com.coding.platformapi.app.AppEnvResolver;
 import com.coding.platformapi.app.AppEnvResolver.ServiceAddr;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppServiceDesired;
+import com.coding.platformapi.app.AppServiceInjection;
 import com.coding.platformapi.app.AppSnapshot;
 import org.springframework.stereotype.Component;
 
@@ -37,7 +38,7 @@ import java.util.stream.Collectors;
 @Component
 public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRenderer {
 
-    private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env", "configFiles");
+    private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env", "configFiles", "otel", "mesh");
 
     private final PlatformApplicationMapper apps;
     private final PlatformAppReleaseMapper releases;
@@ -97,6 +98,8 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
                 }
             });
             params.put("image", AppServiceDesired.image(desired));
+            // otel / mesh 翻译成通用注入参数（k8s-server 只透传）；没有这两块时什么都不加
+            params.putAll(AppServiceInjection.params(desired, AppObjectNames.objectName(app.getSlug(), e.getKey())));
             if (!files.isEmpty()) {
                 params.put("configFiles", files);   // 引用已替换成值；没有配置文件就不带这个键（参数不变 = 不滚动）
             }

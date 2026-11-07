@@ -1165,6 +1165,25 @@ class AppReleaseServiceTest {
     }
 
     @Test
+    void buildRequestOmitsRawOtelMeshKeys() {
+        Map<String, Object> d = svc("1");
+        d.put("otel", Map.of("language", "java", "tracing", true, "logs", false, "logMode", "app"));
+        d.put("mesh", Map.of("dataplaneMode", "ambient"));
+        Map<String, Object> params = pipeline.buildRequest(app, 1, snapshotOf(d)).getSpec().getNodes().get(0).getParams();
+
+        assertThat(params).doesNotContainKeys("otel", "mesh")
+                .containsEntry("podLabels", Map.of("istio.io/dataplane-mode", "ambient"))
+                .containsKey("podAnnotations");
+        assertThat(params.get("extraEnv")).isEqualTo(List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "shop-s0")));
+    }
+
+    @Test
+    void buildRequestUnchangedWithoutBlocks() {
+        Map<String, Object> params = pipeline.buildRequest(app, 1, snapshotOf(svc("1"))).getSpec().getNodes().get(0).getParams();
+        assertThat(params).doesNotContainKeys("podAnnotations", "podLabels", "serviceLabels", "extraEnv", "logMountDir");
+    }
+
+    @Test
     void rollbackRendersTheOldSnapshotsListExactly() {
         Map<String, Object> d = svc("1");
         d.put("imagePullSecrets", List.of("mine", "platform-registry-pull"));
