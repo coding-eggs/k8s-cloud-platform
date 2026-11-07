@@ -52,8 +52,7 @@
 | 域名 | `https://<域名>`（443） | 是 | 有 | 二 |
 | NodePort（保留现状） | `<节点IP>:<NodePort>` | 否 | 无 | 已有 |
 
-「节点 IP」由管理员在集群上配置一个对外访问地址，可以是某个节点 IP、VIP 或者企业前置代理的地址。
-不配置时展示「任一节点 IP」。
+「节点 IP」就是集群节点的 IP。NodePort 在每个节点上都能访问，概览里直接列出集群节点的 InternalIP，不需要另外配置对外地址。
 
 ## 5. 网关端口池（第一期核心）
 
@@ -78,22 +77,22 @@ spec:
       tls: { certificateRefs: [{ name: harbor-tls }] }   # 手工 Secret 复制到 istio-system
       allowedRoutes: { namespaces: { from: All } }
     # legacy-*：15 个遗留端口原样迁移
-    - name: p20001                                  # 端口池：HTTP 段
-      port: 20001
+    - name: p20000                                  # 端口池：HTTP 段
+      port: 20000
       protocol: HTTP
       allowedRoutes:
         namespaces:
           from: Selector
-          selector: { matchLabels: { ingress.platform.coding/p20001: allowed } }
+          selector: { matchLabels: { ingress.platform.coding/p20000: allowed } }
     # … p20002 …
-    - name: p21001                                  # 端口池：TCP 段
-      port: 21001
+    - name: p24000                                  # 端口池：TCP 段
+      port: 24000
       protocol: TCP
       allowedRoutes:
         kinds: [{ kind: TCPRoute }]
         namespaces:
           from: Selector
-          selector: { matchLabels: { ingress.platform.coding/p21001: allowed } }
+          selector: { matchLabels: { ingress.platform.coding/p24000: allowed } }
 ```
 
 ### 5.2 分配不改 Gateway
@@ -111,15 +110,21 @@ spec:
 
 nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管被分配的端口。所以：
 - 端口池要避开节点上已有的服务端口（22、6443、2379-2380、10250、9100 等），以及遗留的 15 个端口。
-  默认用 20001-20030（HTTP）和 21001-21010（TCP），管理员可以改。
+  **整段 20000-25999 保留给端口池**：HTTP 用 20000-23999，TCP 用 24000-25999，管理员可以改。
+  这只是保留的地址空间，真正建出来多少个 listener，由 §5.4 的分片决定。
 - 现有的 NodePort 暴露（应用可以填固定 nodePort）也在同一个端口空间里。平台要拒绝应用的 NodePort 落进端口池段，
   并且同样拒绝上面那些保留端口。这一条要补到现有的 NodePort 校验里。
 
 ### 5.4 容量与扩容
 
-- 一个 Gateway 最多 64 个 listener。扣掉 Harbor 和 15 个遗留端口，最多还能放 48 个池端口。
-- 不够时建 `platform-ingress-2`：Istio 会为它生成独立的 Deployment 和 Service，配自己的 ConfigMap 和端口段。
-  分配表的 `gateway` 列记录端口在哪个 Gateway 上。这条路就是现有入口的机制，不需要额外验证。
+- 一个 Gateway 最多 64 个 listener，这是 Gateway API 的硬上限。所以端口池要做大，就是**按分片建多个池 Gateway**：
+  - `platform-ingress` 只放 Harbor、遗留端口和少量池端口（48 个以内）；
+  - `platform-ingress-pool-1`、`-pool-2`…每个 64 个池端口，各自生成独立的 Deployment 和 Service，各配自己的 ConfigMap。
+  - 初始化时默认建 2 个池分片（约 128 个端口，加上主 Gateway 共约 170 个）。可用端口低于 20% 时提示管理员扩一个分片。
+- 分配表的 `gateway` 列记录端口在哪个 Gateway 上。这条路就是现有入口的机制，不需要额外验证。
+- 代价：每个分片都多一组网关 Pod（Envoy），按 2 副本算，每个分片大约多 200m CPU / 256Mi 内存。
+- 可选的优化：如果实测 ListenerSet 新增的端口能自动进入网关 Service，并且能固定 nodePort（§9 第 8 项），
+  端口池就可以按命名空间建 ListenerSet，不需要分片 Gateway。第一期不依赖这一条。
 - 端口池只在初始化或扩容时改 Gateway 和 ConfigMap，会让网关 Pod 滚动一次，这是管理员的计划内操作。
 
 ### 5.5 HTTPS
@@ -150,7 +155,7 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
   和其他应用对象一样进快照、随勾选下发。下发前确保命名空间已经打上该端口的放行标签。
 - 下线：删掉路由，释放端口，去掉命名空间标签。
 - 回滚：路由跟着快照回到旧版本，端口不变（端口锁定在服务上，不在快照里）。
-- 概览：展示访问地址 `http://<对外地址>:<端口>`，以及路由的 `Accepted / ResolvedRefs`。
+- 概览：展示访问地址 `http://<节点IP>:<端口>`（列出各节点 IP），以及路由的 `Accepted / ResolvedRefs`。
   `NotAllowedByListeners` 这类原因原样显示。
 
 ### 6.3 依赖门禁
@@ -160,7 +165,7 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
 
 ## 7. 域名方式（第二期，可选）
 
-- 集群设置「入口域名后缀」（如 `apps.corp.local`）和对应的通配证书。前提是企业 DNS 已经把 `*.apps.corp.local` 解析到对外地址。
+- 集群设置「入口域名后缀」（如 `apps.corp.local`）和对应的通配证书。前提是企业 DNS 已经把 `*.apps.corp.local` 解析到集群节点。
   **不配置，前端就不出现域名方式。**
 - 平台默认域名 `<服务>-<应用>-<租户>.<后缀>`，挂在 443 上按 SNI / Host 分流。
 - 自定义域名：租户提交申请，平台管理员审批。私有云的 DNS 通常在企业 IT 手里，租户加不了 TXT 记录，
@@ -178,6 +183,7 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
 ## 8. 灰度（第二期）
 
 - 服务开启灰度后，平台多建一份 `<服务>-canary` Deployment 和 Service，用新镜像或新配置，副本数单独设。
+  **应用设置（链路追踪、服务网格）与 stable 完全一样**，否则 v1 / v2 的指标没法公平对比。
 - 应用的 HTTPRoute 在 `backendRefs` 里写 stable 和 canary 两个后端，按权重分（如 90 / 10）。
   也可以加一条 `matches.headers`（如 `x-canary: true`），只把带这个头的请求转给 canary。
   端口方式和域名方式都可以用，访问地址不变。
@@ -198,6 +204,7 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
 5. 普通 `istio` 网关类接受 ListenerSet（`Accepted / Programmed`），和 Harbor 一起共用 443 时按 SNI 选证书正确。
 6. ListenerSet 跨命名空间通过 ReferenceGrant 引用通配证书。
 7. 两个 ListenerSet 写同一个域名时，后建的那个被标为 `Conflicted`。
+8. （可选）ListenerSet 里的端口 listener 是否会进入网关 Service，nodePort 能否固定——决定将来能否去掉分片 Gateway。
 
 ## 10. 入口重建步骤
 
@@ -219,9 +226,8 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
 
 ## 12. 未决项
 
-- 「对外地址」配置在哪里：集群设置里单独一项，还是在网关组件的参数里。
-- 端口池默认段与大小（目前写的是 20001-20030 / 21001-21010），需要你确认节点上没有冲突。
-- 灰度的 canary 是否也要同步走应用设置（追踪、网格），默认跟 stable 一样。
+- 确认节点上 20000-25999 没有被其他服务占用。
+- 已定：对外地址就是集群节点；canary 的应用设置与 stable 一样；端口池按分片 Gateway 放大。
 
 ## 参考
 
