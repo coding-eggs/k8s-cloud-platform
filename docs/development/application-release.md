@@ -76,14 +76,24 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 
 ### 1.7 HPA / 可观测 / 服务网格（设计 `docs/superpowers/specs/2026-11-07-app-service-hpa-observability-mesh-design.md`）
 
-三项都存在服务的 desired 里，**随发布渲染**；资源页不能改应用对象（`platform.coding/managed=true` 被
-`ManagedResourceGuard` 拒绝写入），所以不在工作负载页 / Service 页配。服务页只做配置与摘要，细节跳已有页面。
+都**随发布渲染**；资源页不能改应用对象（`platform.coding/managed=true` 被 `ManagedResourceGuard` 拒绝写入），
+所以不在工作负载页 / Service 页配。服务页只做配置与摘要，细节跳已有页面。
 
-| desired 键 | 渲染到 | 说明 |
+**链路追踪与服务网格是应用级设置**（应用详情「应用设置」，存 `platform_application.settings_json`，发布快照的 `app` 字段）：
+一条链路跨多个服务，只开一部分就断，采样由入口决定（parent-based），各服务各设采样率没有意义；网格的 mTLS / L7 策略也要调用双方都在网格里。
+日志采集、HPA、指标各服务确实不同，留在服务级。渲染与门禁前先用 `AppSettings.effective` 把应用设置合并进每个服务，
+之后的注入（`AppServiceInjection`）和旗标判定（`AppServiceFeatures`）不区分设置来自哪一级。
+
+| 位置 / 键 | 渲染到 | 说明 |
 |---|---|---|
-| `autoscalingEnabled` / `minReplicas` / `maxReplicas` / `targetCpu` / `targetMemory` | HPA | CPU 指标始终生成（`targetCpu` 缺省 60）；`targetMemory` 有值才加内存指标；只在 HPA 相关字段变化时校验 `1 ≤ min ≤ max` |
-| `otel {language, tracing, logs, logMode, logFile, sampling}` | Pod 模板注解 + 容器 env（+ file 模式的 emptyDir 卷） | 与工作负载页「可观测接入」共用 `OtelInjection`；`OTEL_SERVICE_NAME` 固定为工作负载名 `<slug>-<key>`；两项都关 = 不存这个键 |
-| `mesh {dataplaneMode, useWaypoint}` | Pod 模板标签 `istio.io/dataplane-mode`；Service 标签 `istio.io/use-waypoint` | 跟随命名空间 = 不写；`useWaypoint` 只有有端口的服务能设，候选只列 `waypoint-for` 为 service / all |
+| 服务 `autoscalingEnabled` / `minReplicas` / `maxReplicas` / `targetCpu` / `targetMemory` | HPA | CPU 指标始终生成（`targetCpu` 缺省 60）；`targetMemory` 有值才加内存指标；只在 HPA 相关字段变化时校验 `1 ≤ min ≤ max` |
+| 服务 `otel {language, logs, logMode, logFile}` | Pod 模板注解 + 容器 env（+ file 模式的 emptyDir 卷） | 与工作负载页「可观测接入」共用 `OtelInjection`；`OTEL_SERVICE_NAME` 固定为工作负载名 `<slug>-<key>`；语言与日志都没有 = 不存这个键；服务里写 `tracing` / `sampling` / `mesh` 会被拒（提示去应用设置） |
+| 应用 `tracing` / `sampling` | 同上（探针注解 + 采样 env） | 只对**选了语言**的服务生效；没选语言的服务（Nginx、Go）不注入、也不需要组件 |
+| 应用 `mesh {dataplaneMode, useWaypoint}` | 全部服务 Pod 模板标签 `istio.io/dataplane-mode`；有端口服务的 Service 标签 `istio.io/use-waypoint` | 跟随命名空间 = 不写；候选只列 `waypoint-for` 为 service / all |
+
+**发布**：应用设置的期望值与线上快照 `app` 不同时，待发布列表多一项伪 key `@app`（`AppSettings.KEY`），发布对话框里单独一行。
+勾选才带新值（全部服务滚动），不勾沿用线上值。回滚与服务同口径：期望 = 线上（没有未发布编辑）才同步为旧快照的值，否则保留为待发布。
+下线快照保留 `app`，重新上线不会显示成改动。
 
 **组件门禁**（`AppFeatureGate` → `ComponentFeatureGuard`，未探测 = 不可用）：
 
@@ -95,9 +105,11 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 | 日志采集（两种方式） | `otel-logs` |
 | ambient / 具体 waypoint | `ambient-mesh`（「跟随」和 `none` 任何时候都能设） |
 
-- **保存**只拦「从关到开」（换成另一个 waypoint 也算开）；已开的始终能关、能保留。waypoint 换了名才校验是否存在且能处理服务流量，
+- **保存**只拦「从关到开」（换成另一个 waypoint 也算开）；已开的始终能关、能保留。服务保存看合并后的生效配置：
+  应用开着追踪时给服务首次选语言 = 该服务开始被追踪，同样要组件。应用设置的 waypoint 换了名才校验是否存在且能处理服务流量，
   查询本身失败（集群断开、无 RBAC）放行。
-- **发布预览 / 创建**：勾选服务里相对线上新开启、而组件不可用的 → 拦；其余生效中但组件已不可用的 → 只警告，照常发布（不追溯）。
+- **发布预览 / 创建**：勾选的服务（勾了 `@app` 则是全部服务）里相对线上新开启、而组件不可用的 → 拦；其余生效中但组件已不可用的 →
+  只警告，照常发布（不追溯）。同一原因涉及多个服务合并成一条；waypoint 只查一次，报「应用设置：…」。
 - **回滚**不调门禁：回滚是止血手段，确认框里只列警告。
 - 前端：开关在组件不可用且保存值为关时置灰并给原因；服务概览只按**线上快照**显示「自动扩缩容 / 可观测 / 服务网格」三行，
   按钮跳 HPA 列表、日志查询（`?workload=`）、链路追踪（`?service=`）、网格拓扑（`?focus=<ns>/<workload>`），目标页无权限则不显示。
@@ -165,7 +177,9 @@ key 不能以它结尾。
    （命名空间分配时下发；渲染时不再注入）。没挂的命名空间发布会卡在拉镜像。
 7. **重新登录**：权限行有新增，旧会话拿不到新码。
 
-**HPA / 可观测 / 服务网格（§1.7）这批不需要 SQL**，也没有新权限行。重建 k8s-server → platform-api → platform-web，
+**HPA / 可观测 / 服务网格（§1.7）**：先重放 **V2026_11_07_1**（`platform_application` 加 `settings_json` / `settings_version`
+两列 + `/application/settings/update` 权限行，绑 admin / tenant_admin；新 mapper 读这两列，不重放直接 SQL 报错），
+重新登录拿新码。然后重建 k8s-server → platform-api → platform-web，
 **k8s-server 先部署**：新 platform-api 发的注入参数（`podAnnotations` / `podLabels` / `serviceLabels` / `extraEnv` /
 `logMountDir` / `targetMemory`）旧 k8s-server 不认，会被静默忽略 —— 发布成功但注解、标签、内存指标都不生效。
 
@@ -213,8 +227,8 @@ HPA / 可观测 / 服务网格（§1.7）：
 - [ ] **真跑**：从「手动副本 3」切到 HPA（min 2）的那次发布，副本保持 3、不被重置为 1（交接 manager 生效；managedFields 里 `spec.replicas` 归 `platform-app-replicas-handover`）。StatefulSet 与 Deployment 各验一次。结论：（待回填）
 - [ ] **真跑**：HPA 经 scale 子资源写的 replicas 在 managedFields 里是独立 manager，之后连续发布两次，HPA 扩出的副本不被打回。结论：（待回填）
 - [ ] 没装 metrics-server / Prometheus Operator / OTel / Istio 的集群：对应开关置灰；直接调接口开启被拒；已开启的服务在组件卸载后仍能发布，预览有警告；关闭能发布。
-- [ ] 接入 Java 服务：日志在 ES、链路在 Tempo，服务概览「历史日志」「链路」直接过滤到它。
-- [ ] ambient 纳管后网格拓扑能看到它；设 waypoint 后出现 L7 边。
+- [ ] 应用设置开链路追踪 + 一个 Java 服务选语言、一个 Nginx 服务不选：只勾「应用设置」发布，两个服务都滚动，只有 Java 服务带探针注解；日志在 ES、链路在 Tempo，服务概览「历史日志」「链路」直接过滤到它。
+- [ ] 应用设置 ambient：全部服务纳管后网格拓扑能看到；设 waypoint 后有端口的服务出现 L7 边，后台进程不受影响。
 - [ ] 回滚到接入前的版本，注解 / 标签随之消失。
 - [ ] 卸载 OTel 后回滚到接入后的版本：确认框有警告，回滚照常完成。
 
