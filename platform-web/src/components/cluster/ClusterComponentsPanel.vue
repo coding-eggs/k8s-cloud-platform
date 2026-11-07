@@ -2395,7 +2395,8 @@ function copyImage(text: string): void {
   font-size: 13px; font-weight: 600; color: var(--text-2);
 }
 .cc-section-title:first-of-type { margin-top: 4px; }
-.cc-form-label { flex: 0 0 150px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
+/* 240px：最长的「NFS 服务地址（必填，安装后不可改）」一行放得下，不再折成两行 */
+.cc-form-label { flex: 0 0 240px; font-size: 13px; color: var(--text-2); padding-top: 6px; }
 .cc-form-control { flex: 1 1 auto; min-width: 300px; }
 .cc-sf-select { max-width: 360px; width: 100%; }
 /* 对象存储表单：三列字段，label 在上、控件在下，宽度统一 */
