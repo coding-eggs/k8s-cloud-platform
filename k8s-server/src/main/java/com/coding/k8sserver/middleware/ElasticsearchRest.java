@@ -79,11 +79,53 @@ final class ElasticsearchRest {
      *
      * <p>只接受一个具体的索引名：通配符、逗号列表、{@code _all} 在 ES 里都会一次删一片，
      * 这里先拒（不指望集群的 {@code action.destructive_requires_name} 一定开着）。
-     * 别名、数据流的 backing index、受限的系统索引由 ES 自己拒，错误原样带回。
+     * 别名、数据流的写索引、受限的系统索引由 ES 自己拒 —— 名字上判不准（同是 `.` 开头，
+     * 有的超管能删有的不能），所以不在前面猜，而是把 ES 的拒绝翻译成人话（{@link #deleteRejection}）。
      */
     static void deleteIndex(KubernetesClient client, String namespace, String name, String index) {
         requireSingleIndexName(index);
-        call(client, namespace, name, null, "DELETE", "/" + encodeSegment(index), null, BROWSE_TIMEOUT);
+        HttpResponse<String> response = send(client, namespace, name, null, "DELETE",
+                "/" + encodeSegment(index), null, BROWSE_TIMEOUT);
+        if (response.statusCode() / 100 != 2) {
+            String friendly = deleteRejection(index, response.body());
+            throw new CloudPlatformException(EnumResponseType.ERROR, friendly != null ? friendly
+                    : rejectedMessage(response));
+        }
+    }
+
+    /**
+     * ES 拒绝删除时，认得出的两种情形给出说明；认不出返回 null（调用方原样带回 ES 的错误）。
+     *
+     * <ul>
+     *   <li><b>受限系统索引</b>（{@code security_exception} + {@code restricted indices}）：
+     *       ES 8 起 {@code superuser} 也不含受限索引的写权限，{@code .kibana*}、{@code .security*}
+     *       以及它们数据流的 backing index（{@code .ds-.kibana_*}）都在此列。这是 ES 有意的保护，
+     *       换账号、改平台权限都没用。</li>
+     *   <li><b>数据流的写索引</b>：数据流至少要留一个写索引，只能删整个数据流或先 rollover。</li>
+     * </ul>
+     */
+    static String deleteRejection(String index, String body) {
+        JsonNode root;
+        try {
+            root = body == null || body.isBlank() ? null : JSON.readTree(body);
+        } catch (Exception e) {
+            return null;
+        }
+        JsonNode error = root == null ? null : root.get("error");
+        if (error == null || !error.isObject()) {
+            return null;
+        }
+        String type = text(error, "type");
+        String reason = String.valueOf(text(error, "reason"));
+        if ("security_exception".equals(type) && reason.contains("restricted indices")) {
+            return "索引 " + index + " 是 Elasticsearch 的受限系统索引（由 ES / Kibana 自己维护），"
+                    + "ES 不允许任何用户（包括 elastic 超管）删除它；这是 ES 的内置保护，不是平台权限问题。";
+        }
+        if (reason.contains("write index for data stream")) {
+            return "索引 " + index + " 是数据流当前的写索引，不能单独删除：需要删除整个数据流，"
+                    + "或先 rollover 让它不再是写索引。";
+        }
+        return null;
     }
 
     /** 一个具体索引名，不能是会命中多个索引的表达式。 */
@@ -122,6 +164,21 @@ final class ElasticsearchRest {
     static String call(KubernetesClient client, String namespace, String instanceName,
                        GenericKubernetesResource es, String method, String path,
                        Object body, Duration timeout) {
+        HttpResponse<String> response = send(client, namespace, instanceName, es, method, path, body, timeout);
+        if (response.statusCode() / 100 != 2) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, rejectedMessage(response));
+        }
+        return response.body();
+    }
+
+    private static String rejectedMessage(HttpResponse<String> response) {
+        return "Elasticsearch 拒绝了请求（HTTP " + response.statusCode() + "）：" + snippet(response.body());
+    }
+
+    /** 发请求、拿响应，不判状态码（交给调用方：删除要按 ES 的错误体给说明）。 */
+    private static HttpResponse<String> send(KubernetesClient client, String namespace, String instanceName,
+                                             GenericKubernetesResource es, String method, String path,
+                                             Object body, Duration timeout) {
         GenericKubernetesResource cr = es != null ? es
                 : client.genericKubernetesResources(ElasticsearchMiddlewareAdapter.CRD)
                         .inNamespace(namespace).withName(instanceName).get();
@@ -145,14 +202,8 @@ final class ElasticsearchRest {
                 default -> builder.method(method, HttpRequest.BodyPublishers.ofString(
                         body == null ? "" : JSON.writeValueAsString(body), StandardCharsets.UTF_8)).build();
             };
-            HttpResponse<String> response = httpClient(https, caPem, timeout).send(request,
+            return httpClient(https, caPem, timeout).send(request,
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() / 100 != 2) {
-                throw new CloudPlatformException(EnumResponseType.ERROR,
-                        "Elasticsearch 拒绝了请求（HTTP " + response.statusCode() + "）："
-                                + snippet(response.body()));
-            }
-            return response.body();
         } catch (CloudPlatformException e) {
             throw e;
         } catch (InterruptedException e) {

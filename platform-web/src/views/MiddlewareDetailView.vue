@@ -212,7 +212,7 @@ async function removeIndex(name: string): Promise<void> {
   const inst = instance.value
   if (!inst) return
   const system = name.startsWith('.')
-    ? '这是系统索引（. 开头），通常由 ES / Kibana 自己维护，删除后相关功能可能重建它或报错。'
+    ? '这是系统索引（. 开头），通常由 ES / Kibana 自己维护，删除后相关功能可能重建它或报错；其中受限的系统索引（如 .kibana* / .security*）ES 会直接拒绝删除。'
     : ''
   try {
     await ElMessageBox.prompt(

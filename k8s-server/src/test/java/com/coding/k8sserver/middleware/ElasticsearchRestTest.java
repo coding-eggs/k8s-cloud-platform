@@ -173,4 +173,35 @@ class ElasticsearchRestTest {
         assertThatThrownBy(() -> ElasticsearchRest.requireSingleIndexName(null))
                 .isInstanceOf(CloudPlatformException.class);
     }
+
+    @Test
+    void deleteRejectionExplainsRestrictedSystemIndex() {
+        // 真集群原样拿到的响应（截短 reason 尾部）：superuser 也删不了受限系统索引
+        String body = """
+                {"error":{"root_cause":[{"type":"security_exception","reason":"action [indices:admin/delete] is unauthorized for user [elastic] with effective roles [superuser] on restricted indices [.ds-.kibana_change_history-2026.10.23-000001], this action is granted by the index privileges [delete_index,manage,all]"}],
+                 "type":"security_exception","reason":"action [indices:admin/delete] is unauthorized for user [elastic] with effective roles [superuser] on restricted indices [.ds-.kibana_change_history-2026.10.23-000001], this action is granted by the index privileges [delete_index,manage,all]"},"status":403}
+                """;
+        assertThat(ElasticsearchRest.deleteRejection(".ds-.kibana_change_history-2026.10.23-000001", body))
+                .contains("受限系统索引").contains("不是平台权限问题");
+    }
+
+    @Test
+    void deleteRejectionExplainsDataStreamWriteIndex() {
+        String body = """
+                {"error":{"type":"illegal_argument_exception","reason":"index [.ds-logs-app-2026.11.06-000001] is the write index for data stream [logs-app] and cannot be deleted"},"status":400}
+                """;
+        assertThat(ElasticsearchRest.deleteRejection(".ds-logs-app-2026.11.06-000001", body))
+                .contains("数据流当前的写索引");
+    }
+
+    @Test
+    void deleteRejectionFallsBackForUnknownErrors() {
+        // 认不出的就交回原始错误：别把 404 之类也说成「受限」
+        assertThat(ElasticsearchRest.deleteRejection("video",
+                "{\"error\":{\"type\":\"index_not_found_exception\",\"reason\":\"no such index [video]\"},\"status\":404}"))
+                .isNull();
+        assertThat(ElasticsearchRest.deleteRejection("video", "not json")).isNull();
+        assertThat(ElasticsearchRest.deleteRejection("video", "")).isNull();
+        assertThat(ElasticsearchRest.deleteRejection("video", null)).isNull();
+    }
 }
