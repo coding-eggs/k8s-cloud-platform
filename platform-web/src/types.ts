@@ -2987,6 +2987,28 @@ export interface AppEnvRow {
   secretKey?: string
 }
 
+/** 服务的 OTel 接入（与工作负载页「可观测接入」同语义）；OTEL_SERVICE_NAME 固定为工作负载名 */
+export interface AppServiceOtel {
+  /** java / python；开追踪或应用日志时必填 */
+  language?: string
+  tracing: boolean
+  logs: boolean
+  /** app = 日志框架（默认）/ file = sidecar 读日志文件 */
+  logMode?: 'app' | 'file'
+  /** file 模式：容器内具体日志文件的绝对路径 */
+  logFile?: string
+  /** 1-100；不填跟随组件默认，只在追踪开启时生效 */
+  sampling?: number
+}
+
+/** 服务网格：缺省 = 跟随命名空间 */
+export interface AppServiceMesh {
+  /** Pod 模板 istio.io/dataplane-mode：ambient / none */
+  dataplaneMode?: 'ambient' | 'none'
+  /** Service istio.io/use-waypoint：waypoint 名 / none（只有服务） */
+  useWaypoint?: string
+}
+
 /** 服务期望配置（desired_json）。后端白名单，未知字段会被拒绝 */
 export interface AppServiceDesired {
   imageRepo: string
@@ -3011,6 +3033,12 @@ export interface AppServiceDesired {
   minReplicas?: number
   maxReplicas?: number
   targetCpu?: number
+  /** 内存目标利用率 %；不填 = 只按 CPU */
+  targetMemory?: number
+  /** 可观测接入（OTel）；不接入 = 没有这个键 */
+  otel?: AppServiceOtel
+  /** 服务网格；全部跟随命名空间 = 没有这个键 */
+  mesh?: AppServiceMesh
   probeEnabled?: boolean
   probePath?: string
   metricsEnabled?: boolean

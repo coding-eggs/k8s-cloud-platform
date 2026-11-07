@@ -29,6 +29,9 @@ import StringListEditor from '@/components/app-release/StringListEditor.vue'
 import AppTagInput from '@/components/app-release/AppTagInput.vue'
 import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
+import AppServiceOtelForm from '@/components/app-release/AppServiceOtelForm.vue'
+import AppServiceMeshForm from '@/components/app-release/AppServiceMeshForm.vue'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import { parseQuantity } from '@/utils/quantity'
 import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
@@ -76,6 +79,20 @@ const baseline = ref('')
 /** 读到/保存后的期望配置原样副本：用来区分「原本就有的空串参数」和「用户新加了没填的空行」 */
 let original: AppServiceDesired = { imageRepo: '', imageTag: '' }
 const version = ref<number | null>(null)
+/** 已保存的期望配置（响应式副本）：组件门禁只拦「从关到开」，保存里已开的始终可关 / 可保留 */
+const saved = ref<AppServiceDesired | null>(null)
+
+// ---------- 组件门禁（spec 2026-11-07 §2）：未探测 = 不可用 ----------
+const comps = useClusterComponents(computed(() => app.value?.clusterId))
+const GATED_CODES = ['hpa-resource-metrics', 'servicemonitor', 'otel-collection', 'otel-logs', 'ambient-mesh']
+const flagAvailable = computed<Record<string, boolean>>(() =>
+  Object.fromEntries(GATED_CODES.map((c) => [c, comps.available(c)])))
+const flagReasons = computed<Record<string, string>>(() =>
+  Object.fromEntries(GATED_CODES.map((c) => [c, comps.unavailableReason(c)])))
+const hpaLocked = computed(() =>
+  !form.value.autoscalingEnabled && !saved.value?.autoscalingEnabled && !flagAvailable.value['hpa-resource-metrics'])
+const metricsLocked = computed(() =>
+  !form.value.metricsEnabled && !saved.value?.metricsEnabled && !flagAvailable.value.servicemonitor)
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
@@ -85,6 +102,7 @@ function snapshotOf(): string {
 }
 function fillForm(d: AppServiceDesired): void {
   original = clone(d)
+  saved.value = clone(d)
   const c = clone(d)
   c.env = (c.env ?? []).map((e) => ({ ...e }))
   form.value = c
@@ -124,6 +142,12 @@ function buildDesired(): AppServiceDesired {
   if (!d.port || d.expose !== 'nodeport') {
     delete d.expose
     delete d.nodePort
+  }
+  // waypoint 只挂在 Service 上：无端口的服务不带 useWaypoint（后端同样拒绝）
+  if (!d.port && d.mesh?.useWaypoint) {
+    const { useWaypoint: _drop, ...rest } = d.mesh
+    if (rest.dataplaneMode) d.mesh = rest
+    else delete d.mesh
   }
   return d
 }
@@ -482,7 +506,10 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
                 <el-input-number v-model="nodePortModel" :min="30000" :max="32767" :controls="false" placeholder="留空自动分配" />
                 <span class="app-svc__tip">30000-32767；留空由集群分配，发布后在「概览」查看。固定端口被占用时发布会失败</span>
               </el-form-item>
-              <el-form-item label="副本数"><el-input-number v-model="form.replicas" :min="0" :max="100" /></el-form-item>
+              <el-form-item label="副本数">
+                <el-input-number v-model="form.replicas" :min="0" :max="100" :disabled="readonly || !!form.autoscalingEnabled" />
+                <span v-if="form.autoscalingEnabled" class="app-svc__tip">副本数由 HPA 在 {{ form.minReplicas ?? 1 }}–{{ form.maxReplicas ?? '?' }} 间调整（见「高级」）</span>
+              </el-form-item>
             </el-form>
           </el-tab-pane>
 
@@ -543,20 +570,46 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
                 <el-form-item label="存储类"><el-input v-model="form.storageClass" placeholder="留空使用默认" /></el-form-item>
                 <el-form-item label="挂载路径"><el-input v-model="form.mountPath" placeholder="如 /data" /></el-form-item>
               </template>
-              <el-form-item label="自动扩缩容"><el-switch v-model="form.autoscalingEnabled" /></el-form-item>
+              <el-form-item label="自动扩缩容">
+                <el-tooltip :disabled="!hpaLocked" :content="flagReasons['hpa-resource-metrics']" placement="top">
+                  <span><el-switch v-model="form.autoscalingEnabled" :disabled="hpaLocked" /></span>
+                </el-tooltip>
+                <span v-if="hpaLocked" class="app-svc__tip warn">{{ flagReasons['hpa-resource-metrics'] }}</span>
+              </el-form-item>
               <template v-if="form.autoscalingEnabled">
                 <el-form-item label="最小副本"><el-input-number v-model="form.minReplicas" :min="1" /></el-form-item>
                 <el-form-item label="最大副本"><el-input-number v-model="form.maxReplicas" :min="1" /></el-form-item>
-                <el-form-item label="目标 CPU %"><el-input-number v-model="form.targetCpu" :min="1" :max="100" /></el-form-item>
+                <el-form-item label="目标 CPU %"><el-input-number v-model="form.targetCpu" :min="1" :max="100" placeholder="默认 60" /></el-form-item>
+                <el-form-item label="目标内存 %">
+                  <el-input-number v-model="form.targetMemory" :min="1" :max="100" placeholder="不设" />
+                  <span class="app-svc__tip">按内存请求的百分比；不填只按 CPU 扩缩。需设置内存请求</span>
+                </el-form-item>
               </template>
               <!-- 后端缺省=开启（!FALSE.equals）：没写 probeEnabled 就是开；切换时一律写显式 true/false -->
               <el-form-item label="健康探针">
                 <el-switch :model-value="form.probeEnabled !== false" @update:model-value="(v: string | number | boolean) => (form.probeEnabled = v === true)" />
               </el-form-item>
               <el-form-item v-if="form.probeEnabled !== false" label="探针路径"><el-input v-model="form.probePath" placeholder="默认 /，如 /healthz" /></el-form-item>
-              <el-form-item label="暴露指标"><el-switch v-model="form.metricsEnabled" /></el-form-item>
+              <el-form-item label="暴露指标">
+                <el-tooltip :disabled="!metricsLocked || !form.port" :content="flagReasons.servicemonitor" placement="top">
+                  <span><el-switch v-model="form.metricsEnabled" :disabled="!!form.port && metricsLocked" /></span>
+                </el-tooltip>
+                <span v-if="form.port && metricsLocked" class="app-svc__tip warn">{{ flagReasons.servicemonitor }}</span>
+              </el-form-item>
               <el-form-item v-if="form.metricsEnabled" label="指标路径"><el-input v-model="form.metricsPath" placeholder="如 /metrics" /></el-form-item>
             </el-form>
+          </el-tab-pane>
+
+          <el-tab-pane label="可观测" name="observability">
+            <AppServiceOtelForm v-model="form.otel" :original="saved?.otel" :workload-name="workloadName"
+                                :readonly="readonly" :available="flagAvailable" :reasons="flagReasons" />
+          </el-tab-pane>
+
+          <el-tab-pane label="服务网格" name="mesh">
+            <AppServiceMeshForm v-model="form.mesh" :original="saved?.mesh"
+                                :tenant-id="ctx.tenantId" :cluster-id="ctx.clusterId" :namespace="ctx.namespace"
+                                :is-service="!!form.port" :readonly="readonly"
+                                :mesh-available="!!flagAvailable['ambient-mesh']" :mesh-reason="flagReasons['ambient-mesh']" />
           </el-tab-pane>
         </el-tabs>
 
@@ -630,6 +683,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 .app-svc__conflict-actions { margin-top: 8px; }
 .app-svc__cfg { margin-top: 4px; }
 .app-svc__tip { margin-left: 10px; color: var(--text-3); font-size: 12px; }
+.app-svc__tip.warn { color: var(--el-color-warning); }
 .app-svc__save { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
 .app-svc__bar { display: flex; gap: 8px; margin-bottom: 10px; }
 .app-svc__files-hint { margin-bottom: 12px; color: var(--text-3); font-size: 12.5px; line-height: 1.6; }
