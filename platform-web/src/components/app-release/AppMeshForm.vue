@@ -20,6 +20,7 @@ import type { AppServiceMesh, K8sGateway, WaypointRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { canHandleService, isWaypointGateway, toWaypointRef, waypointOptionLabel } from '@/utils/waypoint'
+import AppMeshGuide from './AppMeshGuide.vue'
 
 const props = defineProps<{
   modelValue?: AppServiceMesh
@@ -103,7 +104,7 @@ const MODE_TIP: Record<string, string> = {
         <el-radio value="l4" :disabled="l4Locked">L4</el-radio>
         <el-radio value="l7" :disabled="l7Locked">L7（需 waypoint）</el-radio>
       </el-radio-group>
-      <div class="form-tip">{{ MODE_TIP[mode] ?? '' }}</div>
+      <div class="form-tip">{{ MODE_TIP[mode] ?? '' }} <AppMeshGuide /></div>
       <div v-if="l4Locked || l7Locked" class="form-tip warn">ambient 网格不可用（{{ meshReason || '依赖的集群组件未安装或未就绪' }}）：只能选跟随或不加入。</div>
     </el-form-item>
     <el-form-item v-if="mode === 'l7'" label="Waypoint" required>

@@ -79,7 +79,7 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 都**随发布渲染**；资源页不能改应用对象（`platform.coding/managed=true` 被 `ManagedResourceGuard` 拒绝写入），
 所以不在工作负载页 / Service 页配。服务页只做配置与摘要，细节跳已有页面。
 
-**链路追踪与服务网格是应用级设置**（应用详情「应用设置」，存 `platform_application.settings_json`，发布快照的 `app` 字段）：
+**链路追踪与服务网格是应用级设置**（网格的使用说明在应用设置「服务网格」旁的「网格说明」，`AppMeshGuide.vue`，行为改了要同步）（应用详情「应用设置」，存 `platform_application.settings_json`，发布快照的 `app` 字段）：
 一条链路跨多个服务，只开一部分就断，采样由入口决定（parent-based），各服务各设采样率没有意义；网格的 mTLS / L7 策略也要调用双方都在网格里。
 日志采集、HPA、指标各服务确实不同，留在服务级。渲染与门禁前先用 `AppSettings.effective` 把应用设置合并进每个服务，
 之后的注入（`AppServiceInjection`）和旗标判定（`AppServiceFeatures`）不区分设置来自哪一级。
