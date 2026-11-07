@@ -215,4 +215,85 @@ class AppServiceDesiredTest {
         worker.remove("port");
         assertThatThrownBy(() -> AppServiceDesired.normalize(worker)).hasMessageContaining("后台进程");
     }
+
+    // ---------- otel / mesh / HPA（2026-11-07） ----------
+
+    @Test
+    void otelNormalizesAndRejectsUnknownField() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
+                Map.of("language", "java", "tracing", true, "foo", 1))))
+                .hasMessageContaining("foo");
+        Map<String, Object> ok = AppServiceDesired.normalize(svc("otel",
+                Map.of("language", "java", "tracing", true, "sampling", 20)));
+        assertThat(ok.get("otel")).isEqualTo(Map.of("language", "java", "tracing", true, "logs", false,
+                "logMode", "app", "sampling", 20));
+        assertThat(AppServiceDesired.normalize(svc("otel", Map.of("tracing", false, "logs", false))))
+                .doesNotContainKey("otel");
+    }
+
+    @Test
+    void otelAgentRequiresLanguage() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel", Map.of("tracing", true))))
+                .hasMessageContaining("语言");
+        Map<String, Object> file = AppServiceDesired.normalize(svc("otel",
+                Map.of("logs", true, "logMode", "file", "logFile", "/var/log/nginx/access.log")));
+        assertThat(file).containsKey("otel");
+    }
+
+    @Test
+    void otelFileModeRequiresFilePath() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
+                Map.of("logs", true, "logMode", "file", "logFile", "/var/log/nginx/"))))
+                .hasMessageContaining("日志文件");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
+                Map.of("logs", true, "logMode", "file", "logFile", "access.log"))))
+                .hasMessageContaining("日志文件");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
+                Map.of("tracing", true, "language", "java", "sampling", 0))))
+                .hasMessageContaining("采样率");
+    }
+
+    @Test
+    void otelReservedEnvRejected() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc(
+                "env", List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "x")),
+                "otel", Map.of("language", "java", "tracing", true))))
+                .hasMessageContaining("OTEL_SERVICE_NAME");
+        // 没接入时用户可以自己写
+        assertThat(AppServiceDesired.normalize(svc(
+                "env", List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "x"))))).isNotNull();
+    }
+
+    @Test
+    void meshNormalizes() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("mesh", Map.of("dataplaneMode", "foo"))))
+                .hasMessageContaining("foo");
+        assertThat(AppServiceDesired.normalize(svc("mesh", Map.of()))).doesNotContainKey("mesh");
+        assertThat(AppServiceDesired.normalize(svc("mesh", Map.of("dataplaneMode", "ambient", "useWaypoint", "waypoint")))
+                .get("mesh")).isEqualTo(Map.of("dataplaneMode", "ambient", "useWaypoint", "waypoint"));
+        Map<String, Object> worker = svc("mesh", Map.of("useWaypoint", "waypoint"));
+        worker.remove("port");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(worker)).hasMessageContaining("waypoint");
+    }
+
+    @Test
+    void targetMemoryIsKept() {
+        assertThat(AppServiceDesired.normalize(svc("autoscalingEnabled", true, "targetMemory", 70)))
+                .containsEntry("targetMemory", 70);
+    }
+
+    @Test
+    void validateHpaChangeMinMax() {
+        Map<String, Object> after = svc("autoscalingEnabled", true, "minReplicas", 5, "maxReplicas", 2);
+        assertThatThrownBy(() -> AppServiceDesired.validateHpaChange(null, after))
+                .hasMessageContaining("副本");
+    }
+
+    @Test
+    void unrelatedSaveSkipsHpaChecks() {
+        Map<String, Object> before = svc("autoscalingEnabled", true, "minReplicas", 5, "maxReplicas", 2);
+        Map<String, Object> after = new LinkedHashMap<>(before);
+        after.put("imageTag", "1.28");
+        AppServiceDesired.validateHpaChange(before, after);
+    }
 }

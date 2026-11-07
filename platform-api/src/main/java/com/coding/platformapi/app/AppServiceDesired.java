@@ -27,11 +27,22 @@ public final class AppServiceDesired {
             "command", "args", "imagePullPolicy", "imagePullSecrets",
             "cpuRequest", "memoryRequest", "cpuLimit", "memoryLimit",
             "persistenceEnabled", "storageSize", "storageClass", "mountPath",
-            "autoscalingEnabled", "minReplicas", "maxReplicas", "targetCpu",
+            "autoscalingEnabled", "minReplicas", "maxReplicas", "targetCpu", "targetMemory",
             "probeEnabled", "probePath", "metricsEnabled", "metricsPath");
 
     private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env", "configFiles",
-            "expose", "nodePort");
+            "expose", "nodePort", "otel", "mesh");
+
+    /** 接入 OTel 后由平台写的环境变量：用户同名变量与平台值谁生效不可预期，故接入时拒绝 */
+    public static final Set<String> OTEL_RESERVED_ENV = Set.of(
+            "OTEL_SERVICE_NAME", "OTEL_TRACES_SAMPLER", "OTEL_TRACES_SAMPLER_ARG");
+    private static final Set<String> OTEL_FIELDS = Set.of("language", "tracing", "logs", "logMode", "logFile", "sampling");
+    private static final Set<String> OTEL_LANGUAGES = Set.of("java", "python");
+    private static final Set<String> MESH_FIELDS = Set.of("dataplaneMode", "useWaypoint");
+    private static final Set<String> DATAPLANE_MODES = Set.of("ambient", "none");
+    private static final Pattern DNS_LABEL = Pattern.compile("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$");
+    private static final List<String> HPA_KEYS = List.of(
+            "autoscalingEnabled", "minReplicas", "maxReplicas", "targetCpu", "targetMemory");
 
     /** 对外暴露方式：目前只有 NodePort（HTTPRoute 等网关方式以后再加）。不暴露 = 不存这个键 */
     public static final String EXPOSE_NODEPORT = "nodeport";
@@ -55,6 +66,7 @@ public final class AppServiceDesired {
     private AppServiceDesired() {
     }
 
+    @SuppressWarnings("unchecked")
     public static Map<String, Object> normalize(Map<String, Object> raw) {
         if (raw == null) {
             throw bad("服务配置为空");
@@ -91,6 +103,19 @@ public final class AppServiceDesired {
             out.put("configFiles", files);   // 空列表不存：否则「没有 vs 空」会被当成待发布改动
         }
         normalizeExpose(raw, port, out);
+        Map<String, Object> otel = normalizeOtel(raw.get("otel"));
+        if (otel != null) {
+            for (Map<String, Object> row : (List<Map<String, Object>>) out.get("env")) {
+                if (OTEL_RESERVED_ENV.contains(row.get("name"))) {
+                    throw bad("已接入可观测，环境变量 " + row.get("name") + " 由平台设置，请删除");
+                }
+            }
+            out.put("otel", otel);
+        }
+        Map<String, Object> mesh = normalizeMesh(raw.get("mesh"), port);
+        if (mesh != null) {
+            out.put("mesh", mesh);
+        }
         for (Map.Entry<String, Object> e : raw.entrySet()) {
             String k = e.getKey();
             if (CORE.contains(k)) {
@@ -131,6 +156,124 @@ public final class AppServiceDesired {
                 throw bad("NodePort 端口必须在 " + NODE_PORT_MIN + "-" + NODE_PORT_MAX + " 之间，留空则自动分配");
             }
             out.put("nodePort", nodePort);
+        }
+    }
+
+    /**
+     * 可观测接入：追踪 / 日志都关 = 不存（返回 null）。语义与工作负载页「可观测接入」一致（{@code OtelInjection}）。
+     */
+    private static Map<String, Object> normalizeOtel(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (!(raw instanceof Map<?, ?> m)) {
+            throw bad("可观测配置格式错误");
+        }
+        for (Object k : m.keySet()) {
+            if (!OTEL_FIELDS.contains(String.valueOf(k))) {
+                throw bad("不支持的可观测配置项：" + k);
+            }
+        }
+        boolean tracing = Boolean.TRUE.equals(m.get("tracing"));
+        boolean logs = Boolean.TRUE.equals(m.get("logs"));
+        if (!tracing && !logs) {
+            return null;
+        }
+        String logMode = text(m.get("logMode")).isEmpty() ? "app" : text(m.get("logMode")).toLowerCase();
+        if (!"app".equals(logMode) && !"file".equals(logMode)) {
+            throw bad("不支持的日志采集方式：" + m.get("logMode"));
+        }
+        boolean fileLogs = logs && "file".equals(logMode);
+        String language = text(m.get("language")).toLowerCase();
+        boolean agent = tracing || (logs && !fileLogs);
+        if (agent && !OTEL_LANGUAGES.contains(language)) {
+            throw bad("开启追踪或应用日志时请选择应用语言（java / python）");
+        }
+        if (!language.isEmpty() && !OTEL_LANGUAGES.contains(language)) {
+            throw bad("不支持的应用语言：" + m.get("language"));
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (!language.isEmpty()) {
+            out.put("language", language);
+        }
+        out.put("tracing", tracing);
+        out.put("logs", logs);
+        out.put("logMode", logMode);
+        if (fileLogs) {
+            String file = text(m.get("logFile"));
+            int slash = file.lastIndexOf('/');
+            if (!file.startsWith("/") || slash <= 0 || slash == file.length() - 1) {
+                throw bad("日志文件必须是容器内具体文件的绝对路径（如 /var/log/nginx/access.log）");
+            }
+            out.put("logFile", file);
+        }
+        Integer sampling = integer(m.get("sampling"), "采样率");
+        if (sampling != null && tracing) {
+            if (sampling < 1 || sampling > 100) {
+                throw bad("采样率必须在 1-100 之间，留空跟随组件默认");
+            }
+            out.put("sampling", sampling);
+        }
+        return out;
+    }
+
+    /** 服务网格：两项都缺省（跟随命名空间）= 不存。waypoint 只对有端口的服务（写在 Service 上）。 */
+    private static Map<String, Object> normalizeMesh(Object raw, Integer port) {
+        if (raw == null) {
+            return null;
+        }
+        if (!(raw instanceof Map<?, ?> m)) {
+            throw bad("服务网格配置格式错误");
+        }
+        for (Object k : m.keySet()) {
+            if (!MESH_FIELDS.contains(String.valueOf(k))) {
+                throw bad("不支持的服务网格配置项：" + k);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        String mode = text(m.get("dataplaneMode")).toLowerCase();
+        if (!mode.isEmpty()) {
+            if (!DATAPLANE_MODES.contains(mode)) {
+                throw bad("不支持的网格数据面模式：" + m.get("dataplaneMode") + "（ambient / none）");
+            }
+            out.put("dataplaneMode", mode);
+        }
+        String waypoint = text(m.get("useWaypoint"));
+        if (!waypoint.isEmpty()) {
+            if (port == null) {
+                throw bad("后台进程没有 Service，不能设置 waypoint");
+            }
+            if (!DNS_LABEL.matcher(waypoint).matches()) {
+                throw bad("waypoint 名称不合法：" + waypoint);
+            }
+            out.put("useWaypoint", waypoint);
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /**
+     * HPA 区间校验：只在 HPA 相关键有变化时跑（{@code before} 为 null = 新建），
+     * 与 HPA 无关的保存（比如只改镜像）不因存量脏数据被拒。
+     */
+    public static void validateHpaChange(Map<String, Object> before, Map<String, Object> after) {
+        if (after == null || !Boolean.TRUE.equals(after.get("autoscalingEnabled"))) {
+            return;
+        }
+        if (before != null && HPA_KEYS.stream().allMatch(k -> java.util.Objects.equals(before.get(k), after.get(k)))) {
+            return;
+        }
+        Integer min = integer(after.get("minReplicas"), "最小副本");
+        Integer max = integer(after.get("maxReplicas"), "最大副本");
+        int lo = min == null ? 1 : min;
+        int hi = max == null ? 10 : max;
+        if (lo < 1 || lo > hi) {
+            throw bad("自动扩缩容的副本范围不合法：需要 1 ≤ 最小副本 ≤ 最大副本");
+        }
+        for (String k : List.of("targetCpu", "targetMemory")) {
+            Integer t = integer(after.get(k), "目标利用率");
+            if (t != null && (t < 1 || t > 100)) {
+                throw bad("目标利用率必须在 1-100 之间");
+            }
         }
     }
 
