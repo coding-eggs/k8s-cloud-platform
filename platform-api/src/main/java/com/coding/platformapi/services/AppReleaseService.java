@@ -24,11 +24,13 @@ import com.coding.data.models.system.PlatformApplication;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppPending;
 import com.coding.platformapi.app.AppServiceDesired;
+import com.coding.platformapi.app.AppSettings;
 import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.k8s.K8sAppClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.models.AppExecutionView;
 import com.coding.platformapi.models.AppOverviewView;
+import com.coding.platformapi.models.AppSettingsView;
 import com.coding.platformapi.models.AppReleasePreviewView;
 import com.coding.platformapi.models.AppReleaseView;
 import lombok.extern.slf4j.Slf4j;
@@ -319,8 +321,17 @@ public class AppReleaseService {
             throw error("无法回滚到发布 " + sourceReleaseNo + "：" + String.join("；", problems));
         }
         DesiredSync sync = syncDesired(app, target);
+        // 应用设置与服务同口径：没有未发布编辑（期望 = 线上）才同步为旧快照的值；有编辑的保留，回滚后仍是待发布
+        Map<String, Object> settingsNow = AppSnapshot.parseMap(app.getSettingsJson());
+        boolean syncSettings = AppPending.changedFields(liveSnapshot(app).app(), settingsNow).isEmpty()
+                && !AppPending.changedFields(settingsNow, target.app()).isEmpty();
         return launch(app, authorization, plannedLive, target.toJson(), "ROLLBACK", sourceReleaseNo, note, operator,
                 () -> {
+                    if (syncSettings && apps.updateSettings(app.getId(),
+                            target.app().isEmpty() ? null : JSON.writeValueAsString(target.app()),
+                            app.getSettingsVersion() == null ? 0 : app.getSettingsVersion(), new Date()) == 0) {
+                        throw error("配置冲突：应用设置已被他人修改，请刷新后重试");
+                    }
                     for (PlatformAppService row : sync.updates) {
                         if (services.updateWithVersion(row) == 0) {
                             throw error("配置冲突：服务 " + row.getServiceKey() + " 已被他人修改，请刷新后重试");
@@ -360,7 +371,8 @@ public class AppReleaseService {
         if (live.services().isEmpty()) {
             throw error("应用已下线");
         }
-        String snapshot = new AppSnapshot(new LinkedHashMap<>(), live.dependencies()).toJson();
+        // 应用设置照留：重新上线时它不该显示成待发布改动
+        String snapshot = new AppSnapshot(new LinkedHashMap<>(), live.dependencies(), live.app()).toJson();
         return launch(app, authorization, plannedLive, snapshot, AppReleaseExecutor.OFFLINE_TYPE, null, note, operator,
                 () -> { });
     }
@@ -550,6 +562,12 @@ public class AppReleaseService {
         List<PlatformAppService> rows = services.selectByApp(app.getId());
         List<AppPending.Change> changes = AppPending.compute(live.services(), rows,
                 AppPending.changedDependencies(live.dependencies(), dependencyRows.selectByApp(app.getId())));
+        Map<String, Object> settings = AppSnapshot.parseMap(app.getSettingsJson());
+        List<String> pendingKeys = new ArrayList<>();
+        if (!AppPending.changedFields(live.app(), settings).isEmpty()) {
+            pendingKeys.add(AppSettings.KEY);
+        }
+        changes.forEach(c -> pendingKeys.add(c.key()));
         Map<String, AppPending.Change> byKey = changes.stream()
                 .collect(Collectors.toMap(AppPending.Change::key, c -> c, (a, b) -> a));
         Map<String, String> states = liveStates(app);
@@ -594,10 +612,11 @@ public class AppReleaseService {
                         dependencies.codeOf(d)))
                 .toList();
         return new AppOverviewView(app.getId(), app.getStatus(), app.getLiveReleaseNo(),
-                serviceRows, depRows,
-                changes.stream().map(AppPending.Change::key).toList(),
+                serviceRows, depRows, pendingKeys,
                 executionView(executions.selectActiveByApp(app.getId())),
-                executionView(executions.selectLatestByApp(app.getId())));
+                executionView(executions.selectLatestByApp(app.getId())),
+                new AppSettingsView(settings, live.app(),
+                        app.getSettingsVersion() == null ? 0 : app.getSettingsVersion()));
     }
 
     /**
@@ -687,8 +706,15 @@ public class AppReleaseService {
         changes.forEach(c -> byKey.put(c.key(), c));
         Map<String, PlatformAppService> rowByKey = new HashMap<>();
         rows.forEach(r -> rowByKey.put(r.getServiceKey(), r));
+        // 应用设置（链路追踪 / 网格）：期望值 vs 线上快照的 app 字段；勾选「@app」才带上新值，否则沿用线上
+        Map<String, Object> settings = AppSnapshot.parseMap(app.getSettingsJson());
+        List<String> appFields = AppPending.changedFields(live.app(), settings);
         for (String key : selected) {
-            if (!byKey.containsKey(key)) {
+            if (AppSettings.KEY.equals(key)) {
+                if (appFields.isEmpty()) {
+                    errors.add("应用设置没有待发布的改动");
+                }
+            } else if (!byKey.containsKey(key)) {
                 errors.add("服务 " + key + " 没有待发布的改动");
             }
         }
@@ -740,7 +766,12 @@ public class AppReleaseService {
         if (!selected.isEmpty() && next.isEmpty()) {
             errors.add("发布后应用至少要保留一个服务");
         }
-        AppSnapshot snapshot = new AppSnapshot(next, currentDeps);
+        AppSnapshot snapshot = new AppSnapshot(next, currentDeps,
+                selected.contains(AppSettings.KEY) ? settings : live.app());
+        if (!appFields.isEmpty()) {
+            changes = new ArrayList<>(changes);
+            changes.add(0, new AppPending.Change(AppSettings.KEY, "CHANGED", appFields));
+        }
         return new Plan(snapshot, changes, selected, new ArrayList<>(required), errors, overridden,
                 desiredByKey, live);
     }

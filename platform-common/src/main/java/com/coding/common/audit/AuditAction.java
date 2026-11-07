@@ -264,6 +264,9 @@ public final class AuditAction {
 
     public static final String APPLICATION_SERVICE_REMOVE = "application:service-remove";
 
+    /** 修改应用设置（链路追踪 / 服务网格，只写期望值，发布时生效） */
+    public static final String APPLICATION_SETTINGS_UPDATE = "application:settings-update";
+
     /** 创建发布（勾选的服务 key 记在 target 里） */
     public static final String APPLICATION_RELEASE_CREATE = "application:release-create";
 

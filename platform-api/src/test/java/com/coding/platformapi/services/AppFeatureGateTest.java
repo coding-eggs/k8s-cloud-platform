@@ -114,19 +114,54 @@ class AppFeatureGateTest {
     @Test
     void releaseBlocksSelectedNewlyEnabled() {
         AppFeatureGate.Report r = gate.release(app, snap(Map.of("api", d())),
-                snap(Map.of("api", d("otel", Map.of("language", "java", "tracing", true, "logs", false, "logMode", "app")))),
+                snap(Map.of("api", d("otel", Map.of("language", "java", "logs", true, "logMode", "app")))),
                 List.of("api"));
-        assertThat(r.problems()).singleElement().asString().contains("api");
+        // 「日志框架」方式：探针 + 日志两个组件都缺，各一条
+        assertThat(r.problems()).hasSize(2).allSatisfy(p -> assertThat(p).contains("api"));
     }
 
     @Test
-    void releaseWaypointMissingBlocksSelectedWarnsOthers() {
+    void releaseAppTracingBlocksAllServicesInOneLine() {
+        Map<String, Object> java = d("otel", Map.of("language", "java", "logs", false));
+        Map<String, Object> tracing = Map.of("tracing", true);
+        AppFeatureGate.Report r = gate.release(app, snap(Map.of("a", java, "b", java, "c", d())),
+                new AppSnapshot(new LinkedHashMap<>(Map.of("a", java, "b", java, "c", d())), List.of(),
+                        new LinkedHashMap<>(tracing)),
+                List.of("@app"));
+        // c 没选语言：不追踪，不需要组件；a、b 合并成一条
+        assertThat(r.problems()).singleElement().asString().contains("a、b").doesNotContain("c");
+    }
+
+    @Test
+    void releaseAppTracingUnpickedOnlyWarns() {
+        Map<String, Object> java = d("otel", Map.of("language", "java", "logs", false));
+        AppSnapshot both = new AppSnapshot(new LinkedHashMap<>(Map.of("a", java)), List.of(),
+                new LinkedHashMap<>(Map.of("tracing", true)));
+        AppFeatureGate.Report r = gate.release(app, both, both, List.of("a"));
+        assertThat(r.problems()).isEmpty();
+        assertThat(r.warnings()).singleElement().asString().contains("a");
+    }
+
+    @Test
+    void releaseWaypointMissingBlocksWhenAppPickedWarnsOtherwise() {
         when(gateways.waypointRefs("t1", "c1", "demo")).thenReturn(List.of());
         flags.put("ambient-mesh", new ComponentFlagDTO(true, null, List.of()));
-        Map<String, Object> withWp = d("mesh", Map.of("useWaypoint", "gone"));
-        AppFeatureGate.Report r = gate.release(app, snap(Map.of("a", withWp, "b", d())),
-                snap(Map.of("a", withWp, "b", withWp)), List.of("b"));
-        assertThat(r.problems()).singleElement().asString().contains("b");
-        assertThat(r.warnings()).singleElement().asString().contains("a");
+        AppSnapshot withWp = new AppSnapshot(new LinkedHashMap<>(Map.of("a", d())), List.of(),
+                new LinkedHashMap<>(Map.of("mesh", Map.of("useWaypoint", "gone"))));
+        AppFeatureGate.Report picked = gate.release(app, snap(Map.of("a", d())), withWp, List.of("@app"));
+        assertThat(picked.problems()).singleElement().asString().contains("应用设置").contains("gone");
+        AppFeatureGate.Report unpicked = gate.release(app, withWp, withWp, List.of("a"));
+        assertThat(unpicked.problems()).isEmpty();
+        assertThat(unpicked.warnings()).singleElement().asString().contains("gone");
+    }
+
+    @Test
+    void settingsSaveGatesOnlyOffToOn() {
+        assertThatThrownBy(() -> gate.assertSettings(app, Map.of(), Map.of("tracing", true)))
+                .isInstanceOf(CloudPlatformException.class);
+        // 已开着的继续保存不拦
+        gate.assertSettings(app, Map.of("tracing", true), Map.of("tracing", true, "sampling", 10));
+        // none / 跟随 不需要组件
+        gate.assertSettings(app, Map.of(), Map.of("mesh", Map.of("dataplaneMode", "none")));
     }
 }

@@ -13,6 +13,8 @@
     <result column="description"      jdbcType="VARCHAR"   property="description" />
     <result column="status"           jdbcType="VARCHAR"   property="status" />
     <result column="live_release_no"  jdbcType="INTEGER"   property="liveReleaseNo" />
+    <result column="settings_json"    jdbcType="LONGVARCHAR" property="settingsJson" />
+    <result column="settings_version" jdbcType="INTEGER"   property="settingsVersion" />
     <result column="created_by"       jdbcType="VARCHAR"   property="createdBy" />
     <result column="created_at"       jdbcType="TIMESTAMP" property="createdAt" />
     <result column="updated_at"       jdbcType="TIMESTAMP" property="updatedAt" />
@@ -21,7 +23,7 @@
 
   <sql id="Base_Column_List">
     id, tenant_id, cluster_id, `namespace`, `name`, slug, display_name, description, `status`,
-    live_release_no, created_by, created_at, updated_at, deleted_at
+    live_release_no, settings_json, settings_version, created_by, created_at, updated_at, deleted_at
   </sql>
 
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformApplication">
@@ -48,6 +50,15 @@
       updated_at = #{updatedAt,jdbcType=TIMESTAMP}
     </set>
     where id = #{id,jdbcType=VARCHAR}
+  </update>
+
+  <update id="updateSettings">
+    update platform_application
+       set settings_json = #{settingsJson,jdbcType=LONGVARCHAR},
+           settings_version = settings_version + 1,
+           updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+     where id = #{id,jdbcType=VARCHAR}
+       and settings_version = #{version,jdbcType=INTEGER}
   </update>
 
   <select id="selectById" resultMap="BaseResultMap">

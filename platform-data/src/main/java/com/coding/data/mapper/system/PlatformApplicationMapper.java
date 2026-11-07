@@ -17,6 +17,10 @@ public interface PlatformApplicationMapper {
 
     int updateById(PlatformApplication record);
 
+    /** 应用设置的乐观锁写：version 不匹配返回 0；settingsJson 为 null = 清空 */
+    int updateSettings(@Param("id") String id, @Param("settingsJson") String settingsJson,
+                       @Param("version") Integer version, @Param("updatedAt") Date updatedAt);
+
     PlatformApplication selectById(@Param("id") String id);
 
     /** clusterId 为空 = 该租户在所有集群的应用 */

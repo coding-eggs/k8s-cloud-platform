@@ -221,19 +221,31 @@ class AppServiceDesiredTest {
     @Test
     void otelNormalizesAndRejectsUnknownField() {
         assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
-                Map.of("language", "java", "tracing", true, "foo", 1))))
+                Map.of("language", "java", "foo", 1))))
                 .hasMessageContaining("foo");
-        Map<String, Object> ok = AppServiceDesired.normalize(svc("otel",
-                Map.of("language", "java", "tracing", true, "sampling", 20)));
-        assertThat(ok.get("otel")).isEqualTo(Map.of("language", "java", "tracing", true, "logs", false,
-                "logMode", "app", "sampling", 20));
-        assertThat(AppServiceDesired.normalize(svc("otel", Map.of("tracing", false, "logs", false))))
+        // 只选语言（等应用级链路追踪生效）也存
+        assertThat(AppServiceDesired.normalize(svc("otel", Map.of("language", "java"))).get("otel"))
+                .isEqualTo(Map.of("language", "java", "logs", false));
+        assertThat(AppServiceDesired.normalize(svc("otel",
+                Map.of("language", "python", "logs", true))).get("otel"))
+                .isEqualTo(Map.of("language", "python", "logs", true, "logMode", "app"));
+        assertThat(AppServiceDesired.normalize(svc("otel", Map.of("logs", false))))
                 .doesNotContainKey("otel");
     }
 
     @Test
+    void tracingAndSamplingAreAppLevel() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
+                Map.of("language", "java", "tracing", true))))
+                .hasMessageContaining("应用级");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
+                Map.of("language", "java", "sampling", 20))))
+                .hasMessageContaining("应用级");
+    }
+
+    @Test
     void otelAgentRequiresLanguage() {
-        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel", Map.of("tracing", true))))
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel", Map.of("logs", true))))
                 .hasMessageContaining("语言");
         Map<String, Object> file = AppServiceDesired.normalize(svc("otel",
                 Map.of("logs", true, "logMode", "file", "logFile", "/var/log/nginx/access.log")));
@@ -262,16 +274,13 @@ class AppServiceDesiredTest {
         assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
                 Map.of("logs", true, "logMode", "file", "logFile", "access.log"))))
                 .hasMessageContaining("日志文件");
-        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
-                Map.of("tracing", true, "language", "java", "sampling", 0))))
-                .hasMessageContaining("采样率");
     }
 
     @Test
     void otelReservedEnvRejected() {
         assertThatThrownBy(() -> AppServiceDesired.normalize(svc(
                 "env", List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "x")),
-                "otel", Map.of("language", "java", "tracing", true))))
+                "otel", Map.of("language", "java"))))
                 .hasMessageContaining("OTEL_SERVICE_NAME");
         // 没接入时用户可以自己写
         assertThat(AppServiceDesired.normalize(svc(
@@ -279,15 +288,9 @@ class AppServiceDesiredTest {
     }
 
     @Test
-    void meshNormalizes() {
-        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("mesh", Map.of("dataplaneMode", "foo"))))
-                .hasMessageContaining("foo");
-        assertThat(AppServiceDesired.normalize(svc("mesh", Map.of()))).doesNotContainKey("mesh");
-        assertThat(AppServiceDesired.normalize(svc("mesh", Map.of("dataplaneMode", "ambient", "useWaypoint", "waypoint")))
-                .get("mesh")).isEqualTo(Map.of("dataplaneMode", "ambient", "useWaypoint", "waypoint"));
-        Map<String, Object> worker = svc("mesh", Map.of("useWaypoint", "waypoint"));
-        worker.remove("port");
-        assertThatThrownBy(() -> AppServiceDesired.normalize(worker)).hasMessageContaining("waypoint");
+    void meshIsAppLevel() {
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("mesh", Map.of("dataplaneMode", "ambient"))))
+                .hasMessageContaining("应用级");
     }
 
     @Test

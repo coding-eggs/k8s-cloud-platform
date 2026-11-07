@@ -32,7 +32,7 @@ class ApplicationPermissionMigrationTest {
         }
 
         // 旧画布接口在 V2026_10_25_7，去画布版的发布接口在 V2026_11_02_11，回滚在 V2026_11_02_12，依赖在 V2026_11_02_13，
-        // 修改外部连接在 V2026_11_03_1，下线在 V2026_11_06_1，过程日志在 V2026_11_06_2
+        // 修改外部连接在 V2026_11_03_1，下线在 V2026_11_06_1，过程日志在 V2026_11_06_2，应用设置在 V2026_11_07_1
         String sql = Files.readString(Path.of(
                 "../platform-data/src/main/resources/db/migration/V2026_10_25_7__application.sql"))
                 + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
@@ -46,7 +46,9 @@ class ApplicationPermissionMigrationTest {
                 + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
                 + "V2026_11_06_1__application_release_offline_permission.sql"))
                 + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
-                + "V2026_11_06_2__application_execution_log.sql"));
+                + "V2026_11_06_2__application_execution_log.sql"))
+                + Files.readString(Path.of("../platform-data/src/main/resources/db/migration/"
+                + "V2026_11_07_1__application_settings.sql"));
 
         assertThat(endpoints).isNotEmpty();
         for (String endpoint : endpoints) {

@@ -6,6 +6,8 @@ import com.coding.platformapi.models.AppReleaseListRequest;
 import com.coding.common.audit.AuditAction;
 import com.coding.common.audit.Auditable;
 import com.coding.platformapi.models.AppDependencyRequest;
+import com.coding.platformapi.models.AppSettingsRequest;
+import com.coding.platformapi.models.AppSettingsView;
 import com.coding.platformapi.models.AppExecutionLogView;
 import com.coding.platformapi.models.AppExecutionView;
 import com.coding.platformapi.models.AppOverviewView;
@@ -120,6 +122,13 @@ public class ApplicationController {
     public ResponseData<Void> serviceRemove(@RequestBody AppServiceRequest request) {
         serviceConfig.remove(request, auth.effectiveTenantId(request.getTenantId()));
         return new ResponseData<>();
+    }
+
+    @PostMapping("/settings/update")
+    @Auditable(action = AuditAction.APPLICATION_SETTINGS_UPDATE, target = "#request.appId")
+    @Operation(summary = "修改应用设置（链路追踪 / 服务网格；只写期望值，发布勾选「应用设置」后生效；version 乐观锁）")
+    public ResponseData<AppSettingsView> settingsUpdate(@RequestBody AppSettingsRequest request) {
+        return new ResponseData<>(serviceConfig.updateSettings(request, auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/dependency/add")

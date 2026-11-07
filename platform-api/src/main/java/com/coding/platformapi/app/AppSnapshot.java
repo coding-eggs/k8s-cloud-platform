@@ -12,17 +12,31 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * 发布快照：服务期望配置（引用保持未解析）+ 依赖清单。
+ * 发布快照：服务期望配置（引用保持未解析）+ 依赖清单 + 应用级设置（{@link AppSettings}，空 = 未设置，JSON 里不出现）。
  *
  * <p>不含任何口令值：服务侧由 {@link AppServiceDesired} 白名单保证，
  * 外部依赖只留连接地址和 Secret 名/键（{@link #scrubExternal} 白名单之外的字段一律丢掉）。
  */
-public record AppSnapshot(Map<String, Map<String, Object>> services, List<PlatformAppDependency> dependencies) {
+public record AppSnapshot(Map<String, Map<String, Object>> services, List<PlatformAppDependency> dependencies,
+                          Map<String, Object> app) {
 
     public static final ObjectMapper JSON = JsonMapper.builder().build();
 
+    public AppSnapshot {
+        app = app == null ? new LinkedHashMap<>() : app;
+    }
+
+    public AppSnapshot(Map<String, Map<String, Object>> services, List<PlatformAppDependency> dependencies) {
+        this(services, dependencies, null);
+    }
+
     public static AppSnapshot empty() {
         return new AppSnapshot(new TreeMap<>(), List.of());
+    }
+
+    /** 该服务在本快照里的生效配置（合并了应用级设置）；快照里没有该服务返回 null */
+    public Map<String, Object> effective(String key) {
+        return AppSettings.effective(services.get(key), app);
     }
 
     @SuppressWarnings("unchecked")
@@ -53,7 +67,12 @@ public record AppSnapshot(Map<String, Map<String, Object>> services, List<Platfo
                 deps.add(dep);
             }
         }
-        return new AppSnapshot(services, deps);
+        Map<String, Object> app = null;
+        JsonNode a = root.get("app");
+        if (a != null && a.isObject()) {
+            app = JSON.convertValue(a, Map.class);
+        }
+        return new AppSnapshot(services, deps, app);
     }
 
     public String toJson() {
@@ -73,6 +92,9 @@ public record AppSnapshot(Map<String, Map<String, Object>> services, List<Platfo
             deps.add(m);
         }
         root.put("dependencies", deps);
+        if (!app.isEmpty()) {
+            root.put("app", app);   // 没设置不写：存量快照与引入本功能前逐字相同
+        }
         return JSON.writeValueAsString(root);
     }
 

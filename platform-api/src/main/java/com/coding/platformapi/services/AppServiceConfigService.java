@@ -12,10 +12,12 @@ import com.coding.data.models.system.PlatformAppRelease;
 import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.platformapi.app.AppServiceDesired;
-import com.coding.platformapi.app.AppServiceFeatures;
+import com.coding.platformapi.app.AppSettings;
 import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.models.AppServiceRequest;
 import com.coding.platformapi.models.AppServiceView;
+import com.coding.platformapi.models.AppSettingsRequest;
+import com.coding.platformapi.models.AppSettingsView;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
@@ -140,16 +142,38 @@ public class AppServiceConfigService {
         return view(row.getServiceKey(), desired, false, row.getVersion() + 1);
     }
 
-    /** 从未发布过的直接删行；已发布过的标记待删除，下次发布勾选后才真正移除。 */
-    /** HPA 区间（只在 HPA 字段变化时）+ 组件门禁（只拦从关到开）+ waypoint 存在且能处理服务流量 */
+    /**
+     * HPA 区间（只在 HPA 字段变化时）+ 组件门禁（只拦从关到开）。门禁看生效配置（合并当前应用设置）：
+     * 应用开着追踪时给服务选上语言 = 这个服务开始被追踪，同样要求组件可用。
+     */
     private void checkFeatures(PlatformApplication app, Map<String, Object> before, Map<String, Object> after) {
         AppServiceDesired.validateHpaChange(before, after);
-        featureGate.assertCanEnable(app.getClusterId(), before, after);
-        if (!java.util.Objects.equals(AppServiceFeatures.waypointName(before), AppServiceFeatures.waypointName(after))) {
-            featureGate.assertWaypoint(app.getTenantId(), app.getClusterId(), app.getNamespace(), after);
-        }
+        Map<String, Object> settings = AppSnapshot.parseMap(app.getSettingsJson());
+        featureGate.assertCanEnable(app.getClusterId(),
+                AppSettings.effective(before, settings), AppSettings.effective(after, settings));
     }
 
+    /**
+     * 改应用设置（链路追踪 / 服务网格）：只写期望值，下次发布勾选「应用设置」后对全部服务生效。
+     * 门禁只拦从关到开；waypoint 名变了查它存在且能处理服务流量。
+     */
+    public AppSettingsView updateSettings(AppSettingsRequest req, String tenantId) {
+        PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
+        int current = app.getSettingsVersion() == null ? 0 : app.getSettingsVersion();
+        if (req.getVersion() == null || req.getVersion() != current) {
+            throw error("配置冲突：应用设置已被他人修改，请刷新后重试");
+        }
+        Map<String, Object> before = AppSnapshot.parseMap(app.getSettingsJson());
+        Map<String, Object> after = AppSettings.normalize(req.getSettings());
+        featureGate.assertSettings(app, before, after);
+        String json = after.isEmpty() ? null : JSON.writeValueAsString(after);
+        if (apps.updateSettings(app.getId(), json, current, new Date()) == 0) {
+            throw error("配置冲突：应用设置已被他人修改，请刷新后重试");
+        }
+        return new AppSettingsView(after, null, current + 1);
+    }
+
+    /** 从未发布过的直接删行；已发布过的标记待删除，下次发布勾选后才真正移除。 */
     public void remove(AppServiceRequest req, String tenantId) {
         PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppService row = require(app, req.getServiceKey());

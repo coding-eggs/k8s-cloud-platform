@@ -4,12 +4,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 应用页首屏：服务（现读状态）、依赖、待发布与执行进度。
+ * 应用页首屏：服务（现读状态）、依赖、待发布与执行进度、应用设置。
+ *
+ * <p>pendingKeys 里的 {@code @app}（{@code AppSettings.KEY}）表示应用设置有待发布改动。
  */
 public record AppOverviewView(String appId, String status, Integer liveReleaseNo,
                               List<ServiceRow> services,
                               List<DependencyRow> dependencies, List<String> pendingKeys,
-                              AppExecutionView activeExecution, AppExecutionView lastExecution) {
+                              AppExecutionView activeExecution, AppExecutionView lastExecution,
+                              AppSettingsView settings) {
 
     /**
      * state：READY / PENDING / FAILED / MISSING / UNKNOWN 为线上现读状态；

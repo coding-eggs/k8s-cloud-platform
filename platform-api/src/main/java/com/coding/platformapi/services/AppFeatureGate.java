@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.WaypointRefDTO;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.platformapi.app.AppServiceFeatures;
+import com.coding.platformapi.app.AppSettings;
 import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.models.ComponentFlagDTO;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -21,6 +23,7 @@ import java.util.stream.Collectors;
  *
  * <ul>
  *   <li>保存：只拦「从关到开」（{@link AppServiceFeatures#newlyEnabled}），判据与报错走 {@link ComponentFeatureGuard}；</li>
+ *   <li>保存应用设置（链路追踪 / 网格）：同上，见 {@link #assertSettings}；</li>
  *   <li>发布（预览 / 创建）：勾选且相对线上新开启的功能不可用 → 拦；其余生效中但组件已不可用 → 警告（不追溯）；</li>
  *   <li>回滚不调本类：回滚是止血手段，不能被门禁挡住（前端确认框自己列警告）。</li>
  * </ul>
@@ -69,54 +72,73 @@ public class AppFeatureGate {
         }
     }
 
+    /** 保存应用设置：只拦从关到开；waypoint 名变了才查它存在且能处理服务流量 */
+    public void assertSettings(PlatformApplication app, Map<String, Object> before, Map<String, Object> after) {
+        for (String code : AppSettings.newlyEnabled(before, after)) {
+            guard.require(app.getClusterId(), code, "开启" + AppServiceFeatures.LABELS.getOrDefault(code, code));
+        }
+        if (!java.util.Objects.equals(AppServiceFeatures.waypointName(before), AppServiceFeatures.waypointName(after))) {
+            assertWaypoint(app.getTenantId(), app.getClusterId(), app.getNamespace(), after);
+        }
+    }
+
+    /**
+     * 发布前门禁。逐服务看<b>生效配置</b>（服务期望 + 快照里的应用设置，{@link AppSnapshot#effective}）：
+     * 勾选的服务（或勾选了应用设置时的全部服务）新开启、且组件不可用 → 拦；其余生效中但组件不可用 → 警告。
+     * 同一原因涉及多个服务时合并成一条。waypoint 是应用级的，只查一次。
+     */
     public Report release(PlatformApplication app, AppSnapshot live, AppSnapshot next, Collection<String> selected) {
-        List<String> problems = new ArrayList<>();
-        List<String> warnings = new ArrayList<>();
+        boolean appPicked = selected.contains(AppSettings.KEY);
+        Map<String, List<String>> problems = new LinkedHashMap<>();
+        Map<String, List<String>> warnings = new LinkedHashMap<>();
         Map<String, ComponentFlagDTO> flags = null;
-        List<WaypointRefDTO> candidates = null;
-        boolean candidatesLoaded = false;
-        for (Map.Entry<String, Map<String, Object>> e : next.services().entrySet()) {
-            String key = e.getKey();
-            Map<String, Object> desired = e.getValue();
-            boolean picked = selected.contains(key);
+        boolean anyService = false;
+        for (String key : next.services().keySet()) {
+            Map<String, Object> desired = next.effective(key);
+            anyService |= desired.get("port") != null;
             var required = AppServiceFeatures.required(desired);
-            if (!required.isEmpty()) {
-                if (flags == null) {
-                    flags = components.flags(app.getClusterId());
-                }
-                var newly = picked ? AppServiceFeatures.newlyEnabled(live.services().get(key), desired) : java.util.Set.of();
-                for (String code : required) {
-                    ComponentFlagDTO flag = flags.get(code);
-                    if (flag != null && flag.available()) {
-                        continue;
-                    }
-                    String reason = flag == null || flag.reason() == null || flag.reason().isBlank()
-                            ? "依赖的集群组件未安装或未就绪" : flag.reason();
-                    String label = AppServiceFeatures.LABELS.getOrDefault(code, code);
-                    if (newly.contains(code)) {
-                        problems.add("服务 " + key + "：无法开启" + label + "：" + reason);
-                    } else {
-                        warnings.add("服务 " + key + "：" + label + "依赖的组件当前不可用（" + reason + "），发布后不生效");
-                    }
-                }
+            if (required.isEmpty()) {
+                continue;
             }
-            String wp = AppServiceFeatures.waypointName(desired);
-            if (wp != null) {
-                if (!candidatesLoaded) {
-                    candidatesLoaded = true;
-                    try {
-                        candidates = gateways.waypointRefs(app.getTenantId(), app.getClusterId(), app.getNamespace());
-                    } catch (Exception ex) {
-                        log.warn("发布前校验 waypoint 失败（跳过）：{}", ex.getMessage());
-                    }
+            if (flags == null) {
+                flags = components.flags(app.getClusterId());
+            }
+            boolean picked = appPicked || selected.contains(key);
+            var newly = picked ? AppServiceFeatures.newlyEnabled(live.effective(key), desired) : java.util.Set.of();
+            for (String code : required) {
+                ComponentFlagDTO flag = flags.get(code);
+                if (flag != null && flag.available()) {
+                    continue;
                 }
-                String problem = candidates == null ? null : waypointProblem(wp, app.getNamespace(), candidates);
-                if (problem != null) {
-                    (picked ? problems : warnings).add("服务 " + key + "：" + problem);
+                String reason = flag == null || flag.reason() == null || flag.reason().isBlank()
+                        ? "依赖的集群组件未安装或未就绪" : flag.reason();
+                String label = AppServiceFeatures.LABELS.getOrDefault(code, code);
+                if (newly.contains(code)) {
+                    problems.computeIfAbsent("无法开启" + label + "：" + reason, k -> new ArrayList<>()).add(key);
+                } else {
+                    warnings.computeIfAbsent(label + "依赖的组件当前不可用（" + reason + "），发布后不生效",
+                            k -> new ArrayList<>()).add(key);
                 }
             }
         }
-        return new Report(problems, warnings);
+        List<String> outProblems = new ArrayList<>();
+        List<String> outWarnings = new ArrayList<>();
+        problems.forEach((msg, keys) -> outProblems.add("服务 " + String.join("、", keys) + "：" + msg));
+        warnings.forEach((msg, keys) -> outWarnings.add("服务 " + String.join("、", keys) + "：" + msg));
+
+        String wp = AppServiceFeatures.waypointName(next.app());
+        if (wp != null && anyService) {
+            try {
+                String problem = waypointProblem(wp, app.getNamespace(),
+                        gateways.waypointRefs(app.getTenantId(), app.getClusterId(), app.getNamespace()));
+                if (problem != null) {
+                    (appPicked ? outProblems : outWarnings).add("应用设置：" + problem);
+                }
+            } catch (Exception ex) {
+                log.warn("发布前校验 waypoint 失败（跳过）：{}", ex.getMessage());
+            }
+        }
+        return new Report(outProblems, outWarnings);
     }
 
     private static String waypointProblem(String name, String namespace, List<WaypointRefDTO> candidates) {

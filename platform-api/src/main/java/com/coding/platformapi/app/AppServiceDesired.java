@@ -31,16 +31,13 @@ public final class AppServiceDesired {
             "probeEnabled", "probePath", "metricsEnabled", "metricsPath");
 
     private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env", "configFiles",
-            "expose", "nodePort", "otel", "mesh");
+            "expose", "nodePort", "otel");
 
     /** 接入 OTel 后由平台写的环境变量：用户同名变量与平台值谁生效不可预期，故接入时拒绝 */
     public static final Set<String> OTEL_RESERVED_ENV = Set.of(
             "OTEL_SERVICE_NAME", "OTEL_TRACES_SAMPLER", "OTEL_TRACES_SAMPLER_ARG");
-    private static final Set<String> OTEL_FIELDS = Set.of("language", "tracing", "logs", "logMode", "logFile", "sampling");
+    private static final Set<String> OTEL_FIELDS = Set.of("language", "logs", "logMode", "logFile");
     private static final Set<String> OTEL_LANGUAGES = Set.of("java", "python");
-    private static final Set<String> MESH_FIELDS = Set.of("dataplaneMode", "useWaypoint");
-    private static final Set<String> DATAPLANE_MODES = Set.of("ambient", "none");
-    private static final Pattern DNS_LABEL = Pattern.compile("^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$");
     private static final List<String> HPA_KEYS = List.of(
             "autoscalingEnabled", "minReplicas", "maxReplicas", "targetCpu", "targetMemory");
 
@@ -112,9 +109,8 @@ public final class AppServiceDesired {
             }
             out.put("otel", otel);
         }
-        Map<String, Object> mesh = normalizeMesh(raw.get("mesh"), port);
-        if (mesh != null) {
-            out.put("mesh", mesh);
+        if (raw.containsKey("mesh")) {
+            throw bad("服务网格是应用级设置，请在应用的「应用设置」里配置");
         }
         for (Map.Entry<String, Object> e : raw.entrySet()) {
             String k = e.getKey();
@@ -160,7 +156,9 @@ public final class AppServiceDesired {
     }
 
     /**
-     * 可观测接入：追踪 / 日志都关 = 不存（返回 null）。语义与工作负载页「可观测接入」一致（{@code OtelInjection}）。
+     * 服务级可观测：应用语言 + 日志采集。链路追踪是应用级设置（{@link AppSettings}），这里只存语言——
+     * 应用开了追踪时，选了语言的服务才注入探针。语言与日志都没有 = 不存（返回 null）。
+     * 语义与工作负载页「可观测接入」一致（{@code OtelInjection}）。
      */
     private static Map<String, Object> normalizeOtel(Object raw, String dataMount) {
         if (raw == null) {
@@ -170,13 +168,19 @@ public final class AppServiceDesired {
             throw bad("可观测配置格式错误");
         }
         for (Object k : m.keySet()) {
+            if ("tracing".equals(k) || "sampling".equals(k)) {
+                throw bad("链路追踪是应用级设置，请在应用的「应用设置」里开关");
+            }
             if (!OTEL_FIELDS.contains(String.valueOf(k))) {
                 throw bad("不支持的可观测配置项：" + k);
             }
         }
-        boolean tracing = Boolean.TRUE.equals(m.get("tracing"));
         boolean logs = Boolean.TRUE.equals(m.get("logs"));
-        if (!tracing && !logs) {
+        String language = text(m.get("language")).toLowerCase();
+        if (!language.isEmpty() && !OTEL_LANGUAGES.contains(language)) {
+            throw bad("不支持的应用语言：" + m.get("language"));
+        }
+        if (!logs && language.isEmpty()) {
             return null;
         }
         String logMode = text(m.get("logMode")).isEmpty() ? "app" : text(m.get("logMode")).toLowerCase();
@@ -184,21 +188,17 @@ public final class AppServiceDesired {
             throw bad("不支持的日志采集方式：" + m.get("logMode"));
         }
         boolean fileLogs = logs && "file".equals(logMode);
-        String language = text(m.get("language")).toLowerCase();
-        boolean agent = tracing || (logs && !fileLogs);
-        if (agent && !OTEL_LANGUAGES.contains(language)) {
-            throw bad("开启追踪或应用日志时请选择应用语言（java / python）");
-        }
-        if (!language.isEmpty() && !OTEL_LANGUAGES.contains(language)) {
-            throw bad("不支持的应用语言：" + m.get("language"));
+        if (logs && !fileLogs && language.isEmpty()) {
+            throw bad("「日志框架」方式采集日志时请选择应用语言（java / python）");
         }
         Map<String, Object> out = new LinkedHashMap<>();
         if (!language.isEmpty()) {
             out.put("language", language);
         }
-        out.put("tracing", tracing);
         out.put("logs", logs);
-        out.put("logMode", logMode);
+        if (logs) {
+            out.put("logMode", logMode);
+        }
         if (fileLogs) {
             String file = text(m.get("logFile"));
             int slash = file.lastIndexOf('/');
@@ -211,48 +211,7 @@ public final class AppServiceDesired {
             }
             out.put("logFile", file);
         }
-        Integer sampling = integer(m.get("sampling"), "采样率");
-        if (sampling != null && tracing) {
-            if (sampling < 1 || sampling > 100) {
-                throw bad("采样率必须在 1-100 之间，留空跟随组件默认");
-            }
-            out.put("sampling", sampling);
-        }
         return out;
-    }
-
-    /** 服务网格：两项都缺省（跟随命名空间）= 不存。waypoint 只对有端口的服务（写在 Service 上）。 */
-    private static Map<String, Object> normalizeMesh(Object raw, Integer port) {
-        if (raw == null) {
-            return null;
-        }
-        if (!(raw instanceof Map<?, ?> m)) {
-            throw bad("服务网格配置格式错误");
-        }
-        for (Object k : m.keySet()) {
-            if (!MESH_FIELDS.contains(String.valueOf(k))) {
-                throw bad("不支持的服务网格配置项：" + k);
-            }
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        String mode = text(m.get("dataplaneMode")).toLowerCase();
-        if (!mode.isEmpty()) {
-            if (!DATAPLANE_MODES.contains(mode)) {
-                throw bad("不支持的网格数据面模式：" + m.get("dataplaneMode") + "（ambient / none）");
-            }
-            out.put("dataplaneMode", mode);
-        }
-        String waypoint = text(m.get("useWaypoint"));
-        if (!waypoint.isEmpty()) {
-            if (port == null) {
-                throw bad("后台进程没有 Service，不能设置 waypoint");
-            }
-            if (!DNS_LABEL.matcher(waypoint).matches()) {
-                throw bad("waypoint 名称不合法：" + waypoint);
-            }
-            out.put("useWaypoint", waypoint);
-        }
-        return out.isEmpty() ? null : out;
     }
 
     /**

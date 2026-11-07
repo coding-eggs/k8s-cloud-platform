@@ -231,16 +231,56 @@ class AppServiceConfigServiceTest {
     }
 
     @Test
-    void changedWaypointIsValidated() {
+    @SuppressWarnings("unchecked")
+    void serviceGateSeesAppLevelTracing() {
+        app.setSettingsJson("{\"tracing\":true,\"sampling\":20}");
         when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 3));
         when(services.updateWithVersion(any())).thenReturn(1);
         Map<String, Object> next = web("1");
-        next.put("mesh", Map.of("useWaypoint", "wp"));
+        next.put("otel", Map.of("language", "java"));
         AppServiceRequest r = req("api", next);
         r.setVersion(3);
         service.update(r, "t1");
-        verify(gate).assertWaypoint(org.mockito.ArgumentMatchers.eq("t1"), org.mockito.ArgumentMatchers.eq("c1"),
-                org.mockito.ArgumentMatchers.eq("demo"), any());
+        ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+        verify(gate).assertCanEnable(org.mockito.ArgumentMatchers.eq("c1"), any(), after.capture());
+        // 应用开着追踪 + 本服务选了语言 = 本服务开始被追踪，门禁看到的是合并后的生效配置
+        assertThat((Map<String, Object>) after.getValue().get("otel"))
+                .containsEntry("tracing", true).containsEntry("sampling", 20);
+    }
+
+    @Test
+    void updateSettingsChecksVersionGateAndWrites() {
+        app.setSettingsVersion(4);
+        app.setSettingsJson("{\"tracing\":true}");
+        when(apps.updateSettings(any(), any(), any(), any())).thenReturn(1);
+        com.coding.platformapi.models.AppSettingsRequest r = new com.coding.platformapi.models.AppSettingsRequest();
+        r.setAppId("app1");
+        r.setVersion(3);
+        r.setSettings(Map.of("mesh", Map.of("dataplaneMode", "ambient")));
+        assertThatThrownBy(() -> service.updateSettings(r, "t1")).hasMessageContaining("冲突");
+        r.setVersion(4);
+        var view = service.updateSettings(r, "t1");
+        assertThat(view.version()).isEqualTo(5);
+        verify(gate).assertSettings(org.mockito.ArgumentMatchers.eq(app),
+                org.mockito.ArgumentMatchers.eq(Map.of("tracing", true)),
+                org.mockito.ArgumentMatchers.eq(Map.of("mesh", Map.of("dataplaneMode", "ambient"))));
+        verify(apps).updateSettings(org.mockito.ArgumentMatchers.eq("app1"),
+                org.mockito.ArgumentMatchers.eq("{\"mesh\":{\"dataplaneMode\":\"ambient\"}}"),
+                org.mockito.ArgumentMatchers.eq(4), any());
+    }
+
+    @Test
+    void clearingSettingsWritesNull() {
+        app.setSettingsVersion(1);
+        app.setSettingsJson("{\"tracing\":true}");
+        when(apps.updateSettings(any(), any(), any(), any())).thenReturn(1);
+        com.coding.platformapi.models.AppSettingsRequest r = new com.coding.platformapi.models.AppSettingsRequest();
+        r.setAppId("app1");
+        r.setVersion(1);
+        r.setSettings(Map.of("tracing", false, "mesh", Map.of()));
+        service.updateSettings(r, "t1");
+        verify(apps).updateSettings(org.mockito.ArgumentMatchers.eq("app1"), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(1), any());
     }
 
     @Test

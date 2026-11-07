@@ -35,6 +35,12 @@ public class PlatformApplication {
     /** 线上发布号；0 = 尚未发布（发布模型，见 platform_app_release） */
     private Integer liveReleaseNo;
 
+    /** 应用级设置（链路追踪 / 服务网格）的期望值 JSON；null = 未设置。发布时按勾选写进快照的 app 字段 */
+    private String settingsJson;
+
+    /** settings_json 的乐观锁版本 */
+    private Integer settingsVersion;
+
     private String createdBy;
 
     private Date createdAt;

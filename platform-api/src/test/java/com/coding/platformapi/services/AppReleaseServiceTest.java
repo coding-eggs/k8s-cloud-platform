@@ -1214,14 +1214,138 @@ class AppReleaseServiceTest {
     @Test
     void buildRequestOmitsRawOtelMeshKeys() {
         Map<String, Object> d = svc("1");
-        d.put("otel", Map.of("language", "java", "tracing", true, "logs", false, "logMode", "app"));
-        d.put("mesh", Map.of("dataplaneMode", "ambient"));
-        Map<String, Object> params = pipeline.buildRequest(app, 1, snapshotOf(d)).getSpec().getNodes().get(0).getParams();
+        d.put("otel", Map.of("language", "java", "logs", false));
+        AppSnapshot snap = new AppSnapshot(new java.util.TreeMap<>(Map.of("s0", d)), List.of(),
+                new LinkedHashMap<>(Map.of("tracing", true, "mesh", Map.of("dataplaneMode", "ambient"))));
+        Map<String, Object> params = pipeline.buildRequest(app, 1, snap).getSpec().getNodes().get(0).getParams();
 
         assertThat(params).doesNotContainKeys("otel", "mesh")
                 .containsEntry("podLabels", Map.of("istio.io/dataplane-mode", "ambient"))
                 .containsKey("podAnnotations");
         assertThat(params.get("extraEnv")).isEqualTo(List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "shop-s0")));
+    }
+
+    @Test
+    void appTracingSkipsServicesWithoutLanguageAndWaypointSkipsWorkers() {
+        Map<String, Object> java = svc("1");
+        java.put("otel", Map.of("language", "java", "logs", false));
+        Map<String, Object> nginx = svc("1");
+        Map<String, Object> worker = svc("1");
+        worker.remove("port");
+        AppSnapshot snap = new AppSnapshot(new java.util.TreeMap<>(Map.of("a", java, "b", nginx, "c", worker)),
+                List.of(), new LinkedHashMap<>(Map.of("tracing", true, "sampling", 30,
+                        "mesh", Map.of("dataplaneMode", "ambient", "useWaypoint", "wp"))));
+        Map<String, Map<String, Object>> byKey = new LinkedHashMap<>();
+        pipeline.buildRequest(app, 1, snap).getSpec().getNodes().forEach(n -> byKey.put(n.getKey(), n.getParams()));
+
+        assertThat(byKey.get("a")).containsKey("podAnnotations");
+        assertThat(byKey.get("b")).doesNotContainKeys("podAnnotations", "extraEnv");   // 没选语言：不追踪
+        assertThat(byKey.get("c")).doesNotContainKey("serviceLabels");                // 没端口：没有 Service
+        for (String k : List.of("a", "b", "c")) {
+            assertThat(byKey.get(k)).containsEntry("podLabels", Map.of("istio.io/dataplane-mode", "ambient"));
+        }
+        assertThat(byKey.get("a")).containsEntry("serviceLabels", Map.of("istio.io/use-waypoint", "wp"));
+    }
+
+    private void liveWithApp(int no, Map<String, Map<String, Object>> liveServices, Map<String, Object> appSettings) {
+        app.setLiveReleaseNo(no);
+        PlatformAppRelease r = new PlatformAppRelease();
+        r.setReleaseNo(no);
+        r.setStatus("DEPLOYED");
+        r.setSnapshotJson(new AppSnapshot(new java.util.TreeMap<>(liveServices), List.of(),
+                new LinkedHashMap<>(appSettings)).toJson());
+        r.setObjectsJson("[]");
+        when(releases.selectByNo("app1", no)).thenReturn(r);
+    }
+
+    private PlatformAppRelease oldRelease() {
+        PlatformAppRelease old = new PlatformAppRelease();
+        old.setReleaseNo(1);
+        old.setStatus("DEPLOYED");
+        old.setSnapshotJson(new AppSnapshot(new java.util.TreeMap<>(Map.of("api", svc("1"))), List.of()).toJson());
+        when(releases.selectByNo("app1", 1)).thenReturn(old);
+        return old;
+    }
+
+    @Test
+    void appSettingsChangeIsPendingAndOnlyShipsWhenPicked() {
+        live(1, Map.of("api", svc("1")));
+        app.setSettingsJson("{\"tracing\":true}");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(1);
+
+        AppReleasePreviewView v = service.preview("app1", List.of(), Map.of(), "t1");
+        assertThat(v.pendingKeys()).containsExactly("@app", "api");
+        assertThat(v.changes()).anySatisfy(c -> {
+            assertThat(c.key()).isEqualTo("@app");
+            assertThat(c.fields()).containsExactly("tracing");
+        });
+
+        service.create("app1", List.of("api"), Map.of(), null, "bob", "t1");
+        assertThat(JSON.readTree(createdSnapshot()).has("app")).isFalse();   // 没勾选：沿用线上（空）
+    }
+
+    @Test
+    void pickingAppSettingsAloneShipsThemWithLiveServices() {
+        live(1, Map.of("api", svc("1")));
+        app.setSettingsJson("{\"tracing\":true,\"sampling\":10}");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(1);
+
+        service.create("app1", List.of("@app"), Map.of(), null, "bob", "t1");
+
+        AppSnapshot snap = AppSnapshot.parse(createdSnapshot());
+        assertThat(snap.app()).isEqualTo(Map.of("tracing", true, "sampling", 10));
+        assertThat(snap.services().get("api").get("imageTag")).isEqualTo("1");   // 服务未勾选：仍是线上
+    }
+
+    @Test
+    void pickingUnchangedAppSettingsIsAnError() {
+        liveWithApp(1, Map.of("api", svc("1")), Map.of("tracing", true));
+        app.setSettingsJson("{\"tracing\":true}");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+        assertThatThrownBy(() -> service.create("app1", List.of("@app"), Map.of(), null, "bob", "t1"))
+                .hasMessageContaining("应用设置没有待发布的改动");
+        assertThat(service.overview("app1", "t1").pendingKeys()).isEmpty();
+    }
+
+    @Test
+    void offlineKeepsAppSettingsInTheSnapshot() {
+        liveWithApp(3, Map.of("api", svc("2")), Map.of("tracing", true));
+        app.setSettingsJson("{\"tracing\":true}");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+        service.offline("app1", null, "bob", "t1");
+        assertThat(AppSnapshot.parse(inserted().getSnapshotJson()).app()).isEqualTo(Map.of("tracing", true));
+    }
+
+    @Test
+    void rollbackSyncsUneditedAppSettings() {
+        liveWithApp(3, Map.of("api", svc("2")), Map.of("tracing", true));
+        oldRelease();
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+        when(apps.updateSettings(any(), any(), any(), any())).thenReturn(1);
+
+        app.setSettingsJson("{\"tracing\":true}");   // = 线上：同步为旧快照（空）
+        app.setSettingsVersion(2);
+        service.rollback("app1", 1, null, "bob", "t1");
+        verify(apps).updateSettings(org.mockito.ArgumentMatchers.eq("app1"), org.mockito.ArgumentMatchers.isNull(),
+                org.mockito.ArgumentMatchers.eq(2), any());
+    }
+
+    @Test
+    void rollbackKeepsEditedAppSettings() {
+        liveWithApp(3, Map.of("api", svc("2")), Map.of("tracing", true));
+        oldRelease();
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("2"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+
+        app.setSettingsJson("{\"mesh\":{\"dataplaneMode\":\"ambient\"}}");   // 有未发布编辑：保留
+        service.rollback("app1", 1, null, "bob", "t1");
+        verify(apps, never()).updateSettings(any(), any(), any(), any());
     }
 
     @Test

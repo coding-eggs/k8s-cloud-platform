@@ -99,7 +99,9 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
             });
             params.put("image", AppServiceDesired.image(desired));
             // otel / mesh 翻译成通用注入参数（k8s-server 只透传）；没有这两块时什么都不加
-            params.putAll(AppServiceInjection.params(desired, AppObjectNames.objectName(app.getSlug(), e.getKey())));
+            // 链路追踪 / 网格是应用级设置：先合并进该服务的生效配置
+            params.putAll(AppServiceInjection.params(snapshot.effective(e.getKey()),
+                    AppObjectNames.objectName(app.getSlug(), e.getKey())));
             if (!files.isEmpty()) {
                 params.put("configFiles", files);   // 引用已替换成值；没有配置文件就不带这个键（参数不变 = 不滚动）
             }
