@@ -9,7 +9,7 @@
  *    前端的租户选择只是**平台管理员**用来筛选的。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, CopyDocument, InfoFilled, Search } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -33,6 +33,7 @@ const SEVERITIES = ['ERROR', 'WARN', 'INFO', 'DEBUG']
 const PAGE_SIZE = 100
 
 const router = useRouter()
+const route = useRoute()
 const { state, currentCluster, load } = useResourceContext()
 const perm = usePermission()
 
@@ -285,6 +286,9 @@ async function copyBody(): Promise<void> {
 onMounted(async () => {
   await load() // 载入租户树（页面可能不是从资源页进的）
   syncFromContext()
+  // 深链（应用服务「历史日志」等）：?workload= / ?pod= 预填对应过滤；无参数行为不变
+  if (typeof route.query.workload === 'string') filters.workload = route.query.workload
+  if (typeof route.query.pod === 'string') filters.pod = route.query.pod
   void query()
   // 顶栏切换 → 重查。watcher 在首次 sync 之后注册，避免 mount 时重复打一轮
   watch(() => [state.tenantId, state.clusterId, state.namespace], () => {

@@ -480,6 +480,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       v-model="rollbackVisible"
       :app-id="appId"
       :tenant-id="tenantId"
+      :cluster-id="app?.clusterId"
       :target-no="rollbackTarget"
       :live-no="live || null"
       @rolled-back="afterExecutionChange"

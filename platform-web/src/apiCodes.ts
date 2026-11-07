@@ -74,6 +74,8 @@ export const apiCodes = {
   workloadUpdate: 'tenant:workload:update',
   /** Gateway 列表读（工作负载的 L7 开关要列本命名空间的 waypoint 候选） */
   gatewayList: 'tenant:gateway:list',
+  /** HPA 详情读（应用服务概览的「自动扩缩容」行） */
+  hpaGet: 'tenant:hpa:get',
 
   // ---- CI（流水线）----
   /** 定义与运行历史（只读）—— 列表/详情/节点元数据/预览/运行历史共用一个码 */

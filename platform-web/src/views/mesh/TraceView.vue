@@ -254,6 +254,8 @@ onMounted(async () => {
   // 筛选范围 = 顶栏三级（租户/集群/命名空间）。必须等树加载完再映射 clusterId → clusterName。
   await loadContext()
   syncFromContext()
+  // 深链（应用服务「链路」）：?service= 预填服务名；无参数行为不变
+  if (typeof route.query.service === 'string') filters.serviceName = route.query.service
   void loadServices()
   void search()
 

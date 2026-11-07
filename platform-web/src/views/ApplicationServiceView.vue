@@ -10,7 +10,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { appServiceApi, applicationApi, podApi, serviceApi, workloadApi } from '@/api'
+import { appReleaseApi, appServiceApi, applicationApi, podApi, serviceApi, workloadApi } from '@/api'
 import { useNodeAddresses } from '@/composables/useNodeAddresses'
 import { useApplicationContext } from '@/composables/useApplicationContext'
 import { usePermission } from '@/stores/permission'
@@ -31,6 +31,7 @@ import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
 import AppServiceOtelForm from '@/components/app-release/AppServiceOtelForm.vue'
 import AppServiceMeshForm from '@/components/app-release/AppServiceMeshForm.vue'
+import AppServiceRuntimeRows from '@/components/app-release/AppServiceRuntimeRows.vue'
 import { useClusterComponents } from '@/composables/useClusterComponents'
 import { parseQuantity } from '@/utils/quantity'
 import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
@@ -352,6 +353,20 @@ const ctx = computed(() => ({
 }))
 const runtimeReady = computed(() => !!row.value && row.value.state !== 'NOT_RELEASED' && !!app.value)
 
+/** 线上快照里本服务的期望配置（概览三行只看它：改了没发布的不算） */
+const liveDesired = ref<AppServiceDesired | null>(null)
+async function loadLiveDesired(): Promise<void> {
+  const no = app.value?.liveReleaseNo
+  if (!runtimeReady.value || no == null) { liveDesired.value = null; return }
+  try {
+    const r = await appReleaseApi.get(appId.value, no, tenantId.value ?? undefined)
+    liveDesired.value = r?.snapshot?.services?.[key.value] ?? null
+  } catch {
+    liveDesired.value = null
+  }
+}
+watch([runtimeReady, () => app.value?.liveReleaseNo, key], () => { void loadLiveDesired() }, { immediate: true })
+
 async function loadPods(): Promise<void> {
   if (!runtimeReady.value) return
   podLoading.value = true
@@ -437,7 +452,9 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           <div class="app-svc__kv"><span class="k">类型</span>{{ row.kind === 'SERVICE' ? '服务（有端口）' : '后台进程（无端口）' }}</div>
           <div class="app-svc__kv"><span class="k">期望镜像</span><code>{{ row.image }}</code></div>
           <div class="app-svc__kv"><span class="k">线上镜像</span><code v-if="row.liveImage">{{ row.liveImage }}</code><span v-else class="muted">未发布</span></div>
-          <div class="app-svc__kv"><span class="k">副本数</span>{{ row.replicas ?? '—' }}</div>
+          <div class="app-svc__kv"><span class="k">副本数</span>{{ row.replicas ?? '—' }}
+            <span v-if="liveDesired?.autoscalingEnabled" class="muted">（由 HPA 管理）</span>
+          </div>
           <div class="app-svc__kv"><span class="k">待发布</span>
             <el-tag v-if="row.pending" type="warning" effect="light" size="small">{{ PENDING_TEXT[row.pending] }}</el-tag>
             <span v-else class="muted">无</span>
@@ -457,6 +474,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <code>{{ workloadName }}</code>
             <el-button v-if="runtimeReady" link type="primary" @click="openWorkloadPage">查看工作负载详情</el-button>
           </div>
+          <AppServiceRuntimeRows v-if="runtimeReady" :live="liveDesired" :workload-name="workloadName" :ctx="ctx" />
           <el-alert v-if="orphan" class="app-svc__alert" type="warning" :closable="false" show-icon
                     title="线上有这个服务，但应用里已没有它的配置记录。配置不可编辑，可在发布时勾选删除。" />
         </section>

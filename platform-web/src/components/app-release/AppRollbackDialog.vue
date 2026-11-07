@@ -12,11 +12,15 @@ import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
 import type { AppRelease } from '@/types'
 import { diffDependencies, diffServices, errMsg, imageTag } from './releaseUtil'
+import { FEATURE_LABELS, requiredFlags } from './appFeatures'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 
 const props = defineProps<{
   modelValue: boolean
   appId: string
   tenantId?: string
+  /** 应用所在集群：回滚目标里依赖组件的功能不可用时列警告（不阻止） */
+  clusterId?: string
   /** 要回滚到的发布号 */
   targetNo: number | null
   /** 当前线上发布号 */
@@ -61,6 +65,20 @@ watch(() => [props.modelValue, props.targetNo, props.liveNo] as const, async ([o
     loading.value = false
   }
 }, { immediate: true })
+
+// 组件门禁对回滚只警告：回滚是止血手段，不能被挡住（后端 rollback 同样不调门禁）
+const comps = useClusterComponents(computed(() => props.clusterId))
+const featureWarnings = computed<string[]>(() => {
+  const services = target.value?.snapshot?.services ?? {}
+  const out: string[] = []
+  for (const key of Object.keys(services).sort()) {
+    for (const code of requiredFlags(services[key])) {
+      if (comps.available(code)) continue
+      out.push(`服务 ${key}：${FEATURE_LABELS[code] ?? code}依赖的组件当前不可用（${comps.unavailableReason(code)}），回滚后不生效`)
+    }
+  }
+  return out
+})
 
 const backToLive = computed(() => props.targetNo != null && props.targetNo === props.liveNo)
 const serviceDiffs = computed(() => (target.value && live.value ? diffServices(live.value.snapshot, target.value.snapshot) : []))
@@ -129,6 +147,10 @@ async function submit(): Promise<void> {
             <b>依赖 {{ d.key }}</b>
           </li>
         </ul>
+        <el-alert v-if="featureWarnings.length" class="app-rb-dlg__warn" type="warning" :closable="false" show-icon
+                  title="以下功能依赖的集群组件当前不可用（不影响回滚）">
+          <div v-for="w in featureWarnings" :key="w">{{ w }}</div>
+        </el-alert>
       </template>
     </div>
 
@@ -156,4 +178,5 @@ async function submit(): Promise<void> {
 .app-rb-dlg .app-rb-dlg__list li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
 .app-rb-dlg .app-rb-dlg__env { font-family: var(--el-font-family-mono, monospace); font-size: 12px; color: var(--el-text-color-secondary); }
 .app-rb-dlg .app-rb-dlg__note { margin-top: 12px; }
+.app-rb-dlg .app-rb-dlg__warn { margin-top: 12px; }
 </style>
