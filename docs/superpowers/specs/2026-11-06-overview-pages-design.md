@@ -93,7 +93,7 @@
 | 命名空间三类 | **平台系统** = `ProbeNamespaces.DEFAULT` ∪ 平台自身所在命名空间（`platform-system`）∪ `kube-` 前缀；**已分配** = 在 `platform_tenant_namespace`（且不属于平台系统）；**未分配** = 其余。平台系统判定优先 |
 | 命名空间配额整体用量 | Σ quota used / Σ quota hard（只算配了 hard 的；全都没配则显示「—」） |
 | 集群整体水位 | Σ requests / Σ allocatable，只算可用集群 |
-| 平台服务 | platform-api（自身）、platform-auth、platform-gateway、k8s-server 的 actuator health；UP=正常。**分母 = 配了探测地址的服务数**：某服务没配地址（例如某环境没部署网关）就不探测、不计入分母，避免常年显示「3/4」。platform-web 不探测（用户正在看它）〔实现方决定〕 |
+| 平台服务 | platform-api（自身）、platform-auth、k8s-server 的 actuator health（2026-11-07 去掉 platform-gateway：总览请求经它进来，探它恒为 UP，且 api → 网关是反向调用）；UP=正常。**分母 = 配了探测地址的服务数**：某服务没配地址（例如某环境没部署网关）就不探测、不计入分母，避免常年显示「3/4」。platform-web 不探测（用户正在看它）〔实现方决定〕 |
 | 不可用集群 | 不计入任何合计；健康条显示「不可用 m」并给 tooltip 列名字。整页不因此报错 |
 | 空值 | 取不到显示「—」，不显示 0（沿用 B4 口径） |
 | 租户 | 总数 / 启用 / 停用来自租户表；成员数 = `platform_user_tenant` 去重用户数（需新 count 查询）；已分配命名空间 = 分配表行数 |

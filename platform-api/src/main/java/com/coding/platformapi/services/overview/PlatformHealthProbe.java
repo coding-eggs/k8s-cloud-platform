@@ -22,7 +22,7 @@ import java.util.concurrent.CompletableFuture;
  * 平台自身服务的健康（总览顶部「平台服务 x/y」）。
  * <p>并行 GET 各服务的 {@code /actuator/health}（auth / k8s-server 都已匿名放行 {@code /actuator/**}），
  * 每个 2s 超时；2xx 且 body 顶层 status 为 UP 才算 UP —— 只看状态码会把被网关重定向到登录页的 200 也算成健康。
- * platform-api 自身能回答这个请求，固定算 UP。
+ * platform-api 自身能回答这个请求，固定算 UP；platform-gateway 同理（请求经它进来）不探测、不计入，见 application.yaml。
  */
 @Component
 public class PlatformHealthProbe {

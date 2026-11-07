@@ -310,7 +310,7 @@
 - [x] S1.3.3 前端改造（现 `OverviewView` 是管理员形状的静态统计 + 快捷入口）
 - [x] S1.3.4 各维度概览补全：集群 / 命名空间 / 租户（平台侧详情 + 租户工作台）/ 节点 加计数卡与水位
 
-> **部署**：**先重放 `V2026_11_06_4`**（否则 platform-api 启动 fail-closed）→ 重建 platform-common + k8s-core + k8s-server + platform-data + platform-api + platform-web → 重新登录。可选配置 `PLATFORM_GATEWAY_HEALTH_URL`（空 = 平台服务健康不探测网关）。auth / k8s-server 的 `/actuator/**` 已匿名放行，无需改安全配置。
+> **部署**：**先重放 `V2026_11_06_4`**（否则 platform-api 启动 fail-closed）→ 重建 platform-common + k8s-core + k8s-server + platform-data + platform-api + platform-web → 重新登录。平台服务健康只探 auth + k8s-server（网关不探测，2026-11-07 去掉 `PLATFORM_GATEWAY_HEALTH_URL`）。auth / k8s-server 的 `/actuator/**` 已匿名放行，无需改安全配置。
 >
 > **收口期增补（2026-11-06 ~ 11-07，同批部署，无新迁移）**：
 > - 各概览统一版式（状态卡 / 容量子弹图 / 清单条），节点详情改用子弹图；租户 Top 5 去掉，明细按配额占用排序
