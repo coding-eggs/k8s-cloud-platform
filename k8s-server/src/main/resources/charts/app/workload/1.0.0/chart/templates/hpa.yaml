@@ -20,4 +20,12 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.workload.autoscaling.targetCpu }}
+    {{- if gt (int .Values.workload.autoscaling.targetMemory) 0 }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.workload.autoscaling.targetMemory }}
+    {{- end }}
 {{- end }}

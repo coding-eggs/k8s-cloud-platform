@@ -197,4 +197,13 @@ class AppWorkloadValuesTest {
         assertThat((List<Object>) workload(AppWorkloadValues.build("a", "d", 1,
                 node(Map.of("image", "nginx")))).get("imagePullSecrets")).isEmpty();
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void autoscalingDefaultsTargetCpu60AndNoMemory() {
+        Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "autoscalingEnabled", true))));
+        Map<String, Object> a = (Map<String, Object>) w.get("autoscaling");
+        assertThat(a).containsEntry("enabled", true).containsEntry("targetCpu", 60).containsEntry("targetMemory", 0);
+    }
 }

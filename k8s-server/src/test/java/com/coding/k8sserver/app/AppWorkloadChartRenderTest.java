@@ -186,6 +186,56 @@ class AppWorkloadChartRenderTest {
         assertThat(at(find(docs, "Deployment", "shop-api"), "spec", "template", "spec")).doesNotContainKey("volumes");
     }
 
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> hpaMetrics(List<Map<String, Object>> docs) {
+        Map<String, Object> hpa = find(docs, "HorizontalPodAutoscaler", "shop-api");
+        assertThat(hpa).isNotNull();
+        return (List<Map<String, Object>>) at(hpa, "spec").get("metrics");
+    }
+
+    /** HPA 开启时清单不写 replicas：SSA forceConflicts 会把 HPA 扩出的副本每次发布都打回去 */
+    @Test
+    void hpaEnabledOmitsReplicasOnDeployment() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80,
+                "replicas", 3, "autoscalingEnabled", true));
+
+        assertThat(at(find(docs, "Deployment", "shop-api"), "spec")).doesNotContainKey("replicas");
+        assertThat(hpaMetrics(docs)).hasSize(1);
+        assertThat(at(hpaMetrics(docs).get(0), "resource").get("name")).isEqualTo("cpu");
+        assertThat(at(hpaMetrics(docs).get(0), "resource", "target").get("averageUtilization")).isEqualTo(60);
+    }
+
+    @Test
+    void hpaEnabledOmitsReplicasOnStatefulSet() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80,
+                "replicas", 3, "persistenceEnabled", true, "autoscalingEnabled", true));
+
+        assertThat(at(find(docs, "StatefulSet", "shop-api"), "spec")).doesNotContainKey("replicas");
+    }
+
+    @Test
+    void hpaWithMemoryAddsSecondMetric() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80,
+                "autoscalingEnabled", true, "targetMemory", 70));
+
+        List<Map<String, Object>> metrics = hpaMetrics(docs);
+        assertThat(metrics).hasSize(2);
+        assertThat(at(metrics.get(1), "resource").get("name")).isEqualTo("memory");
+        assertThat(at(metrics.get(1), "resource", "target").get("averageUtilization")).isEqualTo(70);
+    }
+
+    @Test
+    void hpaDisabledKeepsReplicas() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80, "replicas", 3));
+
+        assertThat(at(find(docs, "Deployment", "shop-api"), "spec")).containsEntry("replicas", 3);
+        assertThat(find(docs, "HorizontalPodAutoscaler", "shop-api")).isNull();
+    }
+
     /** helm 是否在 PATH 上。 */
     static final class HelmProbe {
         static boolean available() {

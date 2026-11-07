@@ -10,7 +10,10 @@ metadata:
     {{- include "app.revision" . | nindent 4 }}
 spec:
   serviceName: {{ printf "%s-headless" (include "app.name" .) | quote }}
+  {{- /* HPA 开启时不写 replicas：SSA forceConflicts 会把 HPA 扩出的副本每次发布都打回去 */}}
+  {{- if not .Values.workload.autoscaling.enabled }}
   replicas: {{ .Values.workload.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "app.selector" . | nindent 6 }}

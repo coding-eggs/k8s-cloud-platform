@@ -34,6 +34,8 @@ workload:
     minReplicas: 1
     maxReplicas: 10
     targetCpu: 60
+    # 内存目标利用率 %；0 = 不加内存指标
+    targetMemory: 0
   probe:
     # 关掉探针：非 HTTP 服务（gRPC / 只监听 TCP）必须关，否则 Pod 永远 NotReady
     enabled: true

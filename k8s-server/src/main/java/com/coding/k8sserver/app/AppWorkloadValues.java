@@ -231,7 +231,9 @@ public final class AppWorkloadValues {
                 "enabled", bool(params.get("autoscalingEnabled")),
                 "minReplicas", num(params.get("minReplicas"), 1),
                 "maxReplicas", num(params.get("maxReplicas"), 10),
-                "targetCpu", num(params.get("targetCpu"), 60));
+                "targetCpu", num(params.get("targetCpu"), 60),
+                // 0 = 不加内存指标（存量快照没有这个键，渲染结果不变）
+                "targetMemory", num(params.get("targetMemory"), 0));
     }
 
     @SuppressWarnings("unchecked")
