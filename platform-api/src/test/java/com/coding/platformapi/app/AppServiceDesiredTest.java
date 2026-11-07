@@ -241,6 +241,20 @@ class AppServiceDesiredTest {
     }
 
     @Test
+    void otelLogDirMustNotCollideWithDataMount() {
+        Map<String, Object> otel = Map.of("logs", true, "logMode", "file", "logFile", "/data/app.log");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("persistenceEnabled", true, "otel", otel)))
+                .hasMessageContaining("日志目录");
+        assertThatThrownBy(() -> AppServiceDesired.normalize(svc("persistenceEnabled", true, "mountPath", "/var/lib/app",
+                "otel", Map.of("logs", true, "logMode", "file", "logFile", "/var/lib/app/x.log"))))
+                .hasMessageContaining("日志目录");
+        // 数据卷之内的子目录可以（嵌套挂载合法）；没开持久化时 /data 也可以
+        assertThat(AppServiceDesired.normalize(svc("persistenceEnabled", true,
+                "otel", Map.of("logs", true, "logMode", "file", "logFile", "/data/logs/app.log")))).containsKey("otel");
+        assertThat(AppServiceDesired.normalize(svc("otel", otel))).containsKey("otel");
+    }
+
+    @Test
     void otelFileModeRequiresFilePath() {
         assertThatThrownBy(() -> AppServiceDesired.normalize(svc("otel",
                 Map.of("logs", true, "logMode", "file", "logFile", "/var/log/nginx/"))))

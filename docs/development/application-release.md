@@ -104,8 +104,11 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
   HPA 行只有当前副本 / min–max / 指标目标：`HpaDTO` 没有 status（当前指标值、`ScalingActive` 等条件），要看去 HPA 页。
 
 **HPA 开启时清单不写 `spec.replicas`**（Deployment 与 StatefulSet 都是）：发布带 SSA `forceConflicts`，写了就会每次把
-HPA 扩出来的副本强制打回。配置页「副本数」此时只读。从「手动副本」切到 HPA 的那次发布副本是否会被重置为 1，
-见 §5 的真跑项。
+HPA 扩出来的副本强制打回。配置页「副本数」此时只读。只省略还不够：字段若只有 `platform-app` 拥有（手动副本，
+或 HPA 还没改过它），SSA 省略它会把字段删掉、回默认 1（StatefulSet 会被缩到 1 个序号）。所以 k8s-server
+`AppApplyService` 在 apply 前，对清单里不写 replicas 且线上已存在的 Deployment / StatefulSet，先用 fieldManager
+`platform-app-replicas-handover` 按**线上当前值**认领一次 `spec.replicas`（K8s SSA 文档「Transferring ownership」），
+交接失败就不写清单、发布报错。真集群结论见 §5 的真跑项。
 
 ## 2. 配置文件
 
@@ -207,7 +210,7 @@ key 不能以它结尾。
 
 HPA / 可观测 / 服务网格（§1.7）：
 
-- [ ] **真跑**：从「手动副本 3」切到 HPA（min 2）的那次发布，副本是否被重置为 1（`spec.replicas` 失去全部 manager 时会被删除、回默认值）。结论：（待回填）
+- [ ] **真跑**：从「手动副本 3」切到 HPA（min 2）的那次发布，副本保持 3、不被重置为 1（交接 manager 生效；managedFields 里 `spec.replicas` 归 `platform-app-replicas-handover`）。StatefulSet 与 Deployment 各验一次。结论：（待回填）
 - [ ] **真跑**：HPA 经 scale 子资源写的 replicas 在 managedFields 里是独立 manager，之后连续发布两次，HPA 扩出的副本不被打回。结论：（待回填）
 - [ ] 没装 metrics-server / Prometheus Operator / OTel / Istio 的集群：对应开关置灰；直接调接口开启被拒；已开启的服务在组件卸载后仍能发布，预览有警告；关闭能发布。
 - [ ] 接入 Java 服务：日志在 ES、链路在 Tempo，服务概览「历史日志」「链路」直接过滤到它。

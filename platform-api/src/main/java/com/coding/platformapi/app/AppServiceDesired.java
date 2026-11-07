@@ -103,7 +103,7 @@ public final class AppServiceDesired {
             out.put("configFiles", files);   // 空列表不存：否则「没有 vs 空」会被当成待发布改动
         }
         normalizeExpose(raw, port, out);
-        Map<String, Object> otel = normalizeOtel(raw.get("otel"));
+        Map<String, Object> otel = normalizeOtel(raw.get("otel"), dataMountPath(raw, port));
         if (otel != null) {
             for (Map<String, Object> row : (List<Map<String, Object>>) out.get("env")) {
                 if (OTEL_RESERVED_ENV.contains(row.get("name"))) {
@@ -162,7 +162,7 @@ public final class AppServiceDesired {
     /**
      * 可观测接入：追踪 / 日志都关 = 不存（返回 null）。语义与工作负载页「可观测接入」一致（{@code OtelInjection}）。
      */
-    private static Map<String, Object> normalizeOtel(Object raw) {
+    private static Map<String, Object> normalizeOtel(Object raw, String dataMount) {
         if (raw == null) {
             return null;
         }
@@ -204,6 +204,10 @@ public final class AppServiceDesired {
             int slash = file.lastIndexOf('/');
             if (!file.startsWith("/") || slash <= 0 || slash == file.length() - 1) {
                 throw bad("日志文件必须是容器内具体文件的绝对路径（如 /var/log/nginx/access.log）");
+            }
+            // 日志目录会挂一个 emptyDir：与数据卷同一个挂载点会被 apiserver 拒绝（重复 mountPath），保存时就拦
+            if (dataMount != null && file.substring(0, slash).equals(dataMount)) {
+                throw bad("日志目录 " + dataMount + " 与持久化数据卷的挂载路径相同，请把日志写到子目录（如 " + dataMount + "/logs/）");
             }
             out.put("logFile", file);
         }

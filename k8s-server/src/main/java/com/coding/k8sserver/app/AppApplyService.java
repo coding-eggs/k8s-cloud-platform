@@ -8,11 +8,23 @@ import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8sserver.helm.HelmResult;
 import com.coding.k8sserver.kube.ManifestApplier;
+import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import org.springframework.stereotype.Service;
+
+import java.util.Map;
+import java.util.Set;
 
 /** 只做事实与落盘：apply 一次合并后的 manifest；prune 按平台给的清单删。 */
 @Service
 public class AppApplyService {
+
+    /**
+     * 副本数交接用的 fieldManager。HPA 开启时清单不写 {@code spec.replicas}；如果此前只有 platform-app 拥有该字段
+     * （手动副本，或 HPA 还没改过它），SSA 省略它会把字段删掉、回默认 1 —— StatefulSet 会被缩到 1 个序号。
+     * 所以先用这个 manager 按线上当前值认领一次（K8s SSA 文档「Transferring ownership」的做法），再正常 apply。
+     */
+    public static final String REPLICAS_HANDOVER_MANAGER = "platform-app-replicas-handover";
+    private static final Set<String> SCALABLE_KINDS = Set.of("Deployment", "StatefulSet");
 
     private final ManifestApplier manifests;
     private final KubernetesClientFactory clients;
@@ -25,9 +37,43 @@ public class AppApplyService {
     public void apply(AppApplyRequestDTO req) {
         String kubeconfig = kubeconfig(req.getClusterId());
         // 渲染阶段已强制每个对象声明目标命名空间（AppRenderService），这里不需要默认命名空间
+        handOverReplicas(kubeconfig, req.getManifest());
         HelmResult r = manifests.applyServerSide(kubeconfig, req.getManifest(), null);
         if (!r.ok()) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用清单写入失败：" + r.output());
+        }
+    }
+
+    /** 清单里不写 replicas 的 Deployment / StatefulSet：线上存在则先按线上副本交接所有权（见 {@link #REPLICAS_HANDOVER_MANAGER}） */
+    void handOverReplicas(String kubeconfig, String manifest) {
+        for (GenericKubernetesResource obj : ManifestApplier.parse(manifest)) {
+            if (!SCALABLE_KINDS.contains(obj.getKind()) || obj.getMetadata() == null) {
+                continue;
+            }
+            Object spec = obj.getAdditionalProperties().get("spec");
+            if (spec instanceof Map<?, ?> m && m.containsKey("replicas")) {
+                continue;
+            }
+            String ns = obj.getMetadata().getNamespace();
+            String name = obj.getMetadata().getName();
+            Integer live = manifests.liveReplicas(kubeconfig, obj.getApiVersion(), obj.getKind(), ns, name);
+            if (live == null) {
+                continue; // 新对象：没有可保留的副本
+            }
+            String handover = """
+                    apiVersion: %s
+                    kind: %s
+                    metadata:
+                      name: %s
+                      namespace: %s
+                    spec:
+                      replicas: %d
+                    """.formatted(obj.getApiVersion(), obj.getKind(), name, ns, live);
+            HelmResult r = manifests.applyServerSide(kubeconfig, handover, null, REPLICAS_HANDOVER_MANAGER);
+            if (!r.ok()) {
+                throw new CloudPlatformException(EnumResponseType.ERROR,
+                        "交接副本数失败（" + obj.getKind() + "/" + name + "），为避免副本被重置未写入清单：" + r.output());
+            }
         }
     }
 

@@ -96,4 +96,83 @@ class AppApplyServiceTest {
             deleted.add(ref.getKind() + "/" + ref.getName());
         }
     }
+
+    /** 记录调用顺序的假 applier：live 副本按 kind/name 给 */
+    private static ManifestApplier recording(List<String> calls, Map<String, Integer> live) {
+        return new ManifestApplier() {
+            @Override
+            public com.coding.k8sserver.helm.HelmResult applyServerSide(String kubeconfig, String manifest,
+                                                                        String defaultNamespace) {
+                calls.add("apply:" + manifest.length());
+                return new com.coding.k8sserver.helm.HelmResult(true, 0, "applied");
+            }
+
+            @Override
+            public com.coding.k8sserver.helm.HelmResult applyServerSide(String kubeconfig, String manifest,
+                                                                        String defaultNamespace, String fieldManager) {
+                calls.add("handover:" + fieldManager + ":" + manifest.replace("\n", " ").trim());
+                return new com.coding.k8sserver.helm.HelmResult(true, 0, "applied");
+            }
+
+            @Override
+            public Integer liveReplicas(String kubeconfig, String apiVersion, String kind, String namespace, String name) {
+                return live.get(kind + "/" + name);
+            }
+        };
+    }
+
+    private static final String HPA_MANIFEST = """
+            apiVersion: apps/v1
+            kind: StatefulSet
+            metadata:
+              name: shop-db
+              namespace: demo
+            spec:
+              serviceName: shop-db-headless
+            ---
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: shop-api
+              namespace: demo
+            spec:
+              replicas: 2
+            ---
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: shop-new
+              namespace: demo
+            spec: {}
+            """;
+
+    @Test
+    void workloadWithoutReplicasIsHandedOverAtLiveCountBeforeApply() {
+        List<String> calls = new ArrayList<>();
+        AppApplyService svc = new AppApplyService(recording(calls, Map.of("StatefulSet/shop-db", 3)), null);
+        AppApplyRequestDTO req = new AppApplyRequestDTO();
+        req.setClusterId("c1");
+        req.setManifest(HPA_MANIFEST);
+
+        svc.apply(req);
+
+        // shop-db：清单不写 replicas、线上有 3 → 先由交接 manager 认领 3；shop-api 写了 replicas、shop-new 线上不存在 → 不交接
+        assertThat(calls).hasSize(2);
+        assertThat(calls.get(0)).startsWith("handover:" + AppApplyService.REPLICAS_HANDOVER_MANAGER + ":")
+                .contains("kind: StatefulSet").contains("name: shop-db").contains("namespace: demo").contains("replicas: 3");
+        assertThat(calls.get(1)).startsWith("apply:");
+    }
+
+    @Test
+    void manifestWithReplicasSkipsHandover() {
+        List<String> calls = new ArrayList<>();
+        AppApplyService svc = new AppApplyService(recording(calls, Map.of("Deployment/shop-api", 5)), null);
+        AppApplyRequestDTO req = new AppApplyRequestDTO();
+        req.setClusterId("c1");
+        req.setManifest("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: shop-api\n  namespace: demo\nspec:\n  replicas: 2\n");
+
+        svc.apply(req);
+
+        assertThat(calls).singleElement().asString().startsWith("apply:");
+    }
 }

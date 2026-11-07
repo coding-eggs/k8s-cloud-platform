@@ -73,7 +73,24 @@ public class ManifestApplier {
 
     /** 写入清单（server-side apply，平台 fieldManager + forceConflicts）。 */
     public HelmResult applyServerSide(String kubeconfig, String manifest, String defaultNamespace) {
-        return apply(kubeconfig, manifest, defaultNamespace, false);
+        return apply(kubeconfig, manifest, defaultNamespace, false, ServerSideApply.FIELD_MANAGER);
+    }
+
+    /** 同上，但用指定的 fieldManager（字段所有权交接用：让另一个 manager 先认领某字段）。 */
+    public HelmResult applyServerSide(String kubeconfig, String manifest, String defaultNamespace, String fieldManager) {
+        return apply(kubeconfig, manifest, defaultNamespace, false, fieldManager);
+    }
+
+    /** 线上对象的 {@code spec.replicas}；对象不存在或没有该字段返回 null。 */
+    public Integer liveReplicas(String kubeconfig, String apiVersion, String kind, String namespace, String name) {
+        try (KubernetesClient client = open(kubeconfig)) {
+            GenericKubernetesResource live = client.genericKubernetesResources(apiVersion, kind)
+                    .inNamespace(namespace).withName(name).get();
+            if (live == null || !(live.getAdditionalProperties().get("spec") instanceof Map<?, ?> spec)) {
+                return null;
+            }
+            return spec.get("replicas") instanceof Number n ? n.intValue() : null;
+        }
     }
 
     /**
@@ -82,6 +99,11 @@ public class ManifestApplier {
      * <p>逐个对象写，<b>某个失败不中断</b>，最后汇总（与 kubectl apply -f 一致：能写的都写上，再整体报错）。
      */
     HelmResult apply(String kubeconfig, String manifest, String defaultNamespace, boolean dryRun) {
+        return apply(kubeconfig, manifest, defaultNamespace, dryRun, ServerSideApply.FIELD_MANAGER);
+    }
+
+    private HelmResult apply(String kubeconfig, String manifest, String defaultNamespace, boolean dryRun,
+                             String fieldManager) {
         List<GenericKubernetesResource> objects;
         try {
             objects = parse(manifest);
@@ -96,9 +118,9 @@ public class ManifestApplier {
                 try {
                     Resource<GenericKubernetesResource> res = resource(client, obj, defaultNamespace);
                     if (dryRun) {
-                        res.dryRun().fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+                        res.dryRun().fieldManager(fieldManager).forceConflicts().serverSideApply();
                     } else {
-                        res.fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+                        res.fieldManager(fieldManager).forceConflicts().serverSideApply();
                     }
                     applied.add(id);
                 } catch (RuntimeException e) {
@@ -201,7 +223,7 @@ public class ManifestApplier {
      * 多文档 YAML → 通用对象列表。跳过空文档 / 纯注释文档 / 没有 kind 的文档；{@code kind: XxxList} 展开 items
      * （kubectl 同样会展开）。
      */
-    static List<GenericKubernetesResource> parse(String manifest) {
+    public static List<GenericKubernetesResource> parse(String manifest) {
         List<GenericKubernetesResource> out = new ArrayList<>();
         if (manifest == null || manifest.isBlank()) {
             return out;
