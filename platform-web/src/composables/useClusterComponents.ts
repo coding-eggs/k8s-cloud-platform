@@ -93,6 +93,19 @@ export function useClusterComponents(clusterId: Ref<string | null | undefined>) 
   function available(code: string): boolean { return flags.value[code]?.available ?? false }
   function reasonOf(code: string): string { return flags.value[code]?.reason ?? '' }
   function missingOf(code: string): string[] { return flags.value[code]?.missing ?? [] }
+  /**
+   * 功能不可用时给用户看的原因（可用时为空串）。2026-11-07 口径：**未探测 = 不可用**，
+   * 依赖组件的功能只有旗标明确 available 才允许开启（后端 ComponentFeatureGuard 同一判据），
+   * 所以「没权限读 / 还在读 / 读失败」也要各给一句原因，而不是静默放行。
+   */
+  function unavailableReason(code: string): string {
+    if (available(code)) return ''
+    if (!clusterId.value) return '未选择集群'
+    if (!canRead()) return '当前身份无权读取集群组件状态，按不可用处理'
+    if (loading.value) return '正在读取集群组件状态…'
+    if (!probed.value) return '未能读取集群组件状态，按不可用处理'
+    return reasonOf(code) || '依赖的集群组件未安装或未就绪'
+  }
   function statusOf(code: string): K8sComponentStatus | undefined {
     return statuses.value.find((s) => s.code === code)
   }
@@ -104,7 +117,7 @@ export function useClusterComponents(clusterId: Ref<string | null | undefined>) 
 
   return {
     flags, statuses, loading, statusesLoading, probed,
-    available, reasonOf, missingOf, statusOf,
+    available, reasonOf, missingOf, statusOf, unavailableReason,
     /** 是否有权读旗标（ANY-of） */
     canRead: computed(canRead),
     /** 全量投影与「重新探测」需要 platform:cluster:manage */

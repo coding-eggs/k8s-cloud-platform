@@ -35,7 +35,7 @@ import VolumeEditor from '@/components/workload/VolumeEditor.vue'
 import PvcTemplateEditor from '@/components/workload/PvcTemplateEditor.vue'
 import FieldHelp from '@/components/workload/FieldHelp.vue'
 import { useClusterCapability } from '@/composables/useClusterCapability'
-import { useMeshStatus } from '@/composables/useMeshStatus'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import { containsInCidr, expandCidrToIps, isIp } from '@/utils/ipUtil'
 import { CALICO_POOL_LABEL, DEFAULT_IPV4_POOL, DEFAULT_IPV6_POOL } from '@/utils/calico'
 import {
@@ -326,13 +326,15 @@ watch(() => state.clusterId, () => {
 
 // ---------- 服务网格 Ambient（B3 §11；pod template 的 istio 两个保留 label） ----------
 /**
- * 门禁：租户侧只能从集群能力快照知道「装没装 Istio」（`istio.io` / `networking.istio.io`），
- * **ambient 是否真的在跑只有平台侧的 ztunnel 活探测知道**（见 useMeshStatus）。故这里以 hasIstio 为准，
- * 不拿 ambient 当硬门禁 —— 写这两个标签本身无害（没装 ambient 时 istio 直接忽略），
- * 而"完全不显示开关"会让租户连表达意图的机会都没有。
+ * 门禁（2026-11-07 口径）：看组件旗标 `ambient-mesh`（Istio 组件健康，含 ztunnel 数据面），**未探测 = 不可用**。
+ * 不可用时只锁「开启」（纳入 ambient / 指定具体 waypoint），清除与 none 仍可选 —— 已开启的要能关掉；
+ * 后端 ComponentFeatureGuard 同一口径硬拦。
  */
-const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
-const meshAvailable = computed(() => mesh.hasIstio.value)
+const meshComponents = useClusterComponents(computed(() => state.clusterId ?? null))
+const meshAvailable = computed(() => meshComponents.available('ambient-mesh'))
+const meshReason = computed(() => meshComponents.unavailableReason('ambient-mesh'))
+/** 编辑态打开时的线上值：不可用时只允许保留它或关掉，不允许换成新的开启值 */
+const originalMesh = reactive({ dataplane: '', waypoint: '' })
 
 /** 本命名空间的 waypoint 候选（租户域 /gateways，名字 + 类型；判定规则同后端） */
 const waypointOptions = ref<WaypointRef[]>([])
@@ -603,6 +605,10 @@ function normalizeEmpty(v: unknown): unknown {
 
 function applyDetail(d: WorkloadDetail): void {
   Object.assign(form, normalizeEmpty(d) as WorkloadDetail)
+  if (editing.value) {
+    originalMesh.dataplane = form.labels?.[LABEL_DATAPLANE_MODE] ?? ''
+    originalMesh.waypoint = form.labels?.[LABEL_USE_WAYPOINT] ?? ''
+  }
   const spec = form.podTemplate?.spec
   // 保证 podTemplate.spec + 非空 containers；B1：restartPolicy 固定 Always
   if (!form.podTemplate || !spec || (spec.containers?.length ?? 0) === 0) {
@@ -980,18 +986,20 @@ const contextDesc = computed(() => {
                   <el-alert v-for="w in staticIpWarnings" :key="w.ip" :title="w.text" :type="w.level" :closable="false" class="static-ip-warn" />
                 </el-form-item>
                 <!-- 服务网格 Ambient（B3 §11）：写 pod template 的两个 istio 保留 label -->
-                <el-form-item v-if="meshAvailable">
+                <el-form-item v-if="meshAvailable || dataplaneMode || useWaypoint">
                   <template #label>服务网格（Ambient）<FieldHelp tip="pod template 标签 istio.io/dataplane-mode（纳入 / 排除 ambient）与 istio.io/use-waypoint（本工作负载的七层流量走哪个 waypoint）。都留空 = 跟随命名空间设置 —— Pod 上的标签优先于命名空间。⚠️ 两条静默失败：①waypoint 不存在 → ztunnel 直接放行；②Pod 级 use-waypoint 只影响「目标是 Pod / VM IP」的流量，所以 waypoint 的 istio.io/waypoint-for 必须是 workload 或 all（默认值 service 不行）。两种情况都不报错、L7 策略悄悄不生效。⚠️ 改的是 pod template，保存后会触发一次滚动更新，存量 Pod 需重建才带新标签。" /></template>
                   <div class="pool-selects">
                     <el-select v-model="dataplaneMode" style="width: 100%" placeholder="跟随命名空间（不设标签）">
                       <el-option label="跟随命名空间（不设标签）" value="" />
-                      <el-option v-for="m in DATAPLANE_MODES" :key="m.value" :label="m.label" :value="m.value" />
+                      <el-option v-for="m in DATAPLANE_MODES" :key="m.value" :label="m.label" :value="m.value"
+                                 :disabled="!meshAvailable && m.value === 'ambient' && originalMesh.dataplane !== 'ambient'" />
                     </el-select>
                     <el-select v-model="useWaypoint" style="width: 100%" placeholder="跟随命名空间（不设标签）">
                       <el-option label="跟随命名空间（不设标签）" value="" />
                       <el-option label="不使用 waypoint（none）" :value="USE_WAYPOINT_NONE" />
                       <!-- 只列能承接 Pod 流量的候选；不匹配的连条目都不出现 -->
-                      <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name" />
+                      <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name"
+                                 :disabled="!meshAvailable && r.name !== originalMesh.waypoint" />
                       <!-- 当前值不可选时的回显项（disabled，见 currentUnusableWaypoint 说明） -->
                       <el-option
                         v-if="currentUnusableWaypoint" :key="`current-${currentUnusableWaypoint.name}`"
@@ -1000,7 +1008,8 @@ const contextDesc = computed(() => {
                       />
                     </el-select>
                   </div>
-                  <div v-if="!perm.has(apiCodes.gatewayList)" class="form-tip">无 Gateway 列表读权限，候选取不到（已有值仍可回显提交）。</div>
+                  <div v-if="!meshAvailable" class="form-tip warn">ambient 网格不可开启（{{ meshReason }}）：只能清除标签或设为 none。</div>
+                  <div v-else-if="!perm.has(apiCodes.gatewayList)" class="form-tip">无 Gateway 列表读权限，候选取不到（已有值仍可回显提交）。</div>
                   <div v-else-if="!waypointLoaded" class="form-tip">正在加载本命名空间的 waypoint 候选…</div>
                   <div v-else-if="!waypointOptions.length" class="form-tip">
                     本命名空间还没有 waypoint Gateway——L7 需要先有 waypoint（「Gateway」页 →「创建 Waypoint」）；此处仍可手输名字，但名字不存在时 istio 会静默放行、L7 策略不生效。

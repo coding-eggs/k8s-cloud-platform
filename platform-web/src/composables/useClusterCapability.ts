@@ -66,20 +66,20 @@ export function useClusterCapability(clusterId: Ref<string | null | undefined>) 
 
   const probed = computed(() => Object.keys(cap.value).length > 0)
   /**
-   * metrics-server 是否可用（S1.2 收口）：旗标拿到了就以组件为准（组件 {@code metrics-server}，
-   * 功能码 {@code hpa-resource-metrics}），否则退回 capability 列 —— 两条来源的**降级方向**是
-   * "组件优先"，因为组件判据同时看了 group 与工作负载健康。
+   * metrics-server 是否可用：**只看组件旗标** {@code hpa-resource-metrics}（2026-11-07 口径：
+   * 没装/不健康/未探测都不允许开启，后端 HpaService 同一判据硬拦），不再退回 capability 列。
    */
-  const hasMetricsServer = computed(() =>
-    comp.probed.value ? comp.available('hpa-resource-metrics') : 'metrics.k8s.io' in cap.value)
+  const hasMetricsServer = computed(() => comp.available('hpa-resource-metrics'))
+  /** 资源指标不可用时的原因（可用时为空串） */
+  const metricsServerReason = computed(() => comp.unavailableReason('hpa-resource-metrics'))
   const hasCustomMetrics = computed(() => 'custom.metrics.k8s.io' in cap.value)
   const hasExternalMetrics = computed(() => 'external.metrics.k8s.io' in cap.value)
   /** 探测到 autoscaling 且无 v2 → false；未探测 → true（默认 V2） */
   const hpaSupportsBehavior = computed(() =>
     !probed.value ? true : (cap.value['autoscaling'] ?? []).includes('v2'))
-  /** 页面级门禁：探测过且三类 metrics 全无 → 禁创建 */
+  /** 页面级门禁：三类 metrics 全无（含未探测）→ 禁创建 */
   const metricsAvailable = computed(() =>
-    !probed.value || hasMetricsServer.value || hasCustomMetrics.value || hasExternalMetrics.value)
+    hasMetricsServer.value || hasCustomMetrics.value || hasExternalMetrics.value)
 
   // ---- Calico（网络）能力门禁：纯 discovery，无活探测。未探测（cap 空）→ false（保守，可点「刷新能力」补探）----
   // ⚠️ S1.2 收口时**有意不改读组件旗标**（与 HPA 那一格不同）：hasCalicoCrd 问的是
@@ -94,7 +94,7 @@ export function useClusterCapability(clusterId: Ref<string | null | undefined>) 
   watch(clusterId, () => { void load() }, { immediate: true })
 
   return {
-    cap, loading, probed, hasMetricsServer, hasCustomMetrics, hasExternalMetrics,
+    cap, loading, probed, hasMetricsServer, metricsServerReason, hasCustomMetrics, hasExternalMetrics,
     hpaSupportsBehavior, metricsAvailable, hasCalico, hasCalicoCrd,
     /** 当前身份是否有权读能力快照（消费方可在无权限时隐藏/改写门禁提示，而不是让它静默恒真） */
     canRead: computed(() => canRead()),

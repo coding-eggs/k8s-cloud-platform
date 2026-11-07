@@ -46,8 +46,9 @@ class NamespaceServiceTest {
     private final PlatformTenantMapper tenantMapper = mock(PlatformTenantMapper.class);
     private final NamespaceProtectionProperties protection = new NamespaceProtectionProperties();
     private final NamespaceStatService statService = mock(NamespaceStatService.class);
+    private final ComponentFeatureGuard guard = mock(ComponentFeatureGuard.class);
     private final NamespaceService svc = new NamespaceService(
-            k8s, clusterMapper, allocationMapper, tenantMapper, protection, statService);
+            k8s, clusterMapper, allocationMapper, tenantMapper, protection, statService, guard);
 
     private void clusterExists() {
         K8sCluster c = new K8sCluster();

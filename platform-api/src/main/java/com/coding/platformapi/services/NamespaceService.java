@@ -73,6 +73,9 @@ public class NamespaceService {
     /** ns 切片的唯一读写入口（缓存优先）；本层的 {@link #statGet} 用它取一行快照。 */
     private final NamespaceStatService statService;
 
+    /** 命名空间 ambient 标签只在「从关到开」时要求 ambient 网格可用；清除 / none 放行 */
+    private final ComponentFeatureGuard featureGuard;
+
     /**
      * 集群命名空间视图：K8s 列表 + 分配信息叠加（哪个租户占用了该 ns），按名字升序。
      */
@@ -127,6 +130,9 @@ public class NamespaceService {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_EXIST,
                     "命名空间「" + req.getName() + "」已存在");
         }
+        if (ComponentFeatureGuard.opensAmbient(req.getDataplaneMode(), null, req.getUseWaypoint(), null)) {
+            featureGuard.require(req.getClusterId(), ComponentFeatureGuard.AMBIENT_MESH, "将命名空间纳入 ambient 网格");
+        }
         NamespaceDTO dto = toDto(req);
         NamespaceDTO created = k8s.create(dto);
         ensureDefaultLimitRange(req.getClusterId(), req.getName());
@@ -176,6 +182,14 @@ public class NamespaceService {
      */
     public NamespaceDTO update(NamespaceUpsertRequest req) {
         requireEditable(req.getClusterId(), req.getName());
+        // 只有新值是开启值时才读线上现值比对（null = 不动、空串 = 清除、none 都直接放行）
+        if (ComponentFeatureGuard.opensAmbient(req.getDataplaneMode(), null, req.getUseWaypoint(), null)) {
+            NamespaceDTO existing = k8s.get(dto(req.getClusterId(), req.getName()));
+            if (ComponentFeatureGuard.opensAmbient(req.getDataplaneMode(), existing == null ? null : existing.getDataplaneMode(),
+                    req.getUseWaypoint(), existing == null ? null : existing.getUseWaypoint())) {
+                featureGuard.require(req.getClusterId(), ComponentFeatureGuard.AMBIENT_MESH, "将命名空间纳入 ambient 网格");
+            }
+        }
         NamespaceDTO dto = toDto(req);
         NamespaceDTO updated = k8s.update(dto);
         log.info("集群 {} 更新命名空间 {}", req.getClusterId(), req.getName());

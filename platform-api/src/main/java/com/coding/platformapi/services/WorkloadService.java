@@ -85,6 +85,8 @@ public class WorkloadService {
     private final K8sWorkloadClient workloadClient;
     private final WorkloadValidator validator;
     private final GatewayService gatewayService;
+    /** 依赖组件的开关（ambient / OTel）只在「从关到开」时过这道门禁，关闭与无关编辑放行 */
+    private final ComponentFeatureGuard featureGuard;
 
     // ==================== 列表页行内动作（改镜像 / 历史版本 / 回滚）====================
     //
@@ -236,6 +238,7 @@ public class WorkloadService {
 
     public WorkloadDTO create(WorkloadDTO dto) {
         validator.validate(dto);
+        requireComponentsForTemplate(dto, null);
         ensureRegistryPullSecret(dto.getPodTemplate());
         return k8s.create(dto);
     }
@@ -243,8 +246,77 @@ public class WorkloadService {
     public WorkloadDTO update(WorkloadDTO dto) {
         if (dto.getPodTemplate() == null) graftExistingSpec(dto); // 仅伸缩快捷（无 Pod 模板）：先取现有规格，否则校验会以「缺少 Pod 模板」拒绝
         validator.validate(dto);
+        // 只有新规格里出现了依赖组件的开关才去读线上现值比对 —— 绝大多数编辑不多打一次集群
+        if (templateOpensAnything(dto.getPodTemplate())) {
+            requireComponentsForTemplate(dto, k8s.get(dto));
+        }
         ensureRegistryPullSecret(dto.getPodTemplate());
         return k8s.update(dto);
+    }
+
+    // ==================== 组件门禁（2026-11-07：没装不让开启，已开启的允许关闭） ====================
+
+    /**
+     * 整对象 create/update 也能直接写 istio 标签与 OTel 注入注解（编辑器的网格模块、YAML 往返），
+     * 不能只在两个开关端点上拦。按「新规格相对线上现值是不是在开启」判：
+     * 新建 = 相对空；更新 = 相对 {@code existing}（读不到按空处理，从严）。
+     */
+    private void requireComponentsForTemplate(WorkloadDTO next, WorkloadDTO existing) {
+        PodTemplateDTO nt = next.getPodTemplate();
+        PodTemplateDTO ot = existing == null ? null : existing.getPodTemplate();
+        Map<String, String> nl = nt == null ? null : nt.getLabels();
+        Map<String, String> ol = ot == null ? null : ot.getLabels();
+        if (ComponentFeatureGuard.opensAmbient(labelOf(nl, LABEL_DATAPLANE_MODE), labelOf(ol, LABEL_DATAPLANE_MODE),
+                labelOf(nl, LABEL_USE_WAYPOINT), labelOf(ol, LABEL_USE_WAYPOINT))) {
+            featureGuard.require(next.getClusterId(), ComponentFeatureGuard.AMBIENT_MESH, "将工作负载纳入 ambient 网格");
+        }
+        Map<String, Object> na = nt == null ? null : nt.getAnnotations();
+        Map<String, Object> oa = ot == null ? null : ot.getAnnotations();
+        if (otelTracingOn(na) && !otelTracingOn(oa)) {
+            featureGuard.require(next.getClusterId(), ComponentFeatureGuard.OTEL_COLLECTION, "开启链路追踪");
+        }
+        if (otelLogsOn(na) && !otelLogsOn(oa)) {
+            featureGuard.require(next.getClusterId(), ComponentFeatureGuard.OTEL_LOGS, "开启日志采集");
+        }
+    }
+
+    /** 新规格里有没有任何「依赖组件的开关」处于开启值（没有就不必读线上现值比对） */
+    private static boolean templateOpensAnything(PodTemplateDTO pt) {
+        if (pt == null) return false;
+        Map<String, String> l = pt.getLabels();
+        return ComponentFeatureGuard.opensAmbient(labelOf(l, LABEL_DATAPLANE_MODE), null, labelOf(l, LABEL_USE_WAYPOINT), null)
+                || otelTracingOn(pt.getAnnotations()) || otelLogsOn(pt.getAnnotations());
+    }
+
+    private static String labelOf(Map<String, String> labels, String key) {
+        return labels == null ? null : labels.get(key);
+    }
+
+    /**
+     * 追踪开着 = 有任一语言的注入注解（按前缀认，YAML 里写 nodejs/go 等也算）且不是"只日志"那份 Instrumentation。
+     * 值为 {@code false} 是 operator 认的"显式不注入"。
+     */
+    static boolean otelTracingOn(Map<String, Object> annotations) {
+        if (annotations == null) return false;
+        return annotations.entrySet().stream().anyMatch(e -> e.getKey().startsWith(OTEL_INJECT_PREFIX)
+                && injectEnabled(e.getValue())
+                && !String.valueOf(e.getValue()).trim().endsWith("/platform-instrumentation-logs"));
+    }
+
+    /** 日志开着 = agent 应用日志（-logs / -all 那份 Instrumentation）或文件日志 sidecar 注入 */
+    static boolean otelLogsOn(Map<String, Object> annotations) {
+        if (annotations == null) return false;
+        boolean agentLogs = annotations.entrySet().stream().anyMatch(e -> e.getKey().startsWith(OTEL_INJECT_PREFIX)
+                && injectEnabled(e.getValue())
+                && (String.valueOf(e.getValue()).trim().endsWith("/platform-instrumentation-logs")
+                || String.valueOf(e.getValue()).trim().endsWith("/platform-instrumentation-all")));
+        return agentLogs || injectEnabled(annotations.get(OTEL_SIDECAR_ANNOTATION));
+    }
+
+    private static boolean injectEnabled(Object value) {
+        if (value == null) return false;
+        String v = String.valueOf(value).trim();
+        return !v.isEmpty() && !"false".equalsIgnoreCase(v);
     }
 
     /** 平台的默认拉取凭据 Secret 名（与 {@link RegistryPullSecretService} 同一个，别各写一份） */
@@ -325,7 +397,6 @@ public class WorkloadService {
                     "dataplaneMode 与 useWaypoint 至少要传一个（null = 不动，空串 = 移除该 label）");
         }
         requireDataplaneMode(req.getDataplaneMode());
-        requireWaypointTargetable(req);
 
         WorkloadDTO query = dto(req.getName(), req.getTenantId(), req.getClusterId(), req.getNamespace());
         query.setKind(req.getKind()); // 可不传：k8s-server 按 name 跨 kind 查找
@@ -339,6 +410,12 @@ public class WorkloadService {
         Map<String, String> labels = existing.getPodTemplate().getLabels() == null
                 ? new LinkedHashMap<>()
                 : new LinkedHashMap<>(existing.getPodTemplate().getLabels());
+        // 组件门禁先于 waypoint 校验：没装 Istio 时该报「没装」，而不是「waypoint 不存在」
+        if (ComponentFeatureGuard.opensAmbient(req.getDataplaneMode(), labels.get(LABEL_DATAPLANE_MODE),
+                req.getUseWaypoint(), labels.get(LABEL_USE_WAYPOINT))) {
+            featureGuard.require(req.getClusterId(), ComponentFeatureGuard.AMBIENT_MESH, "将工作负载纳入 ambient 网格");
+        }
+        requireWaypointTargetable(req);
         // 规整掉取消开关时留下的空值：pod template 里挂一个空串 label 是无效/无意义的元数据
         labels.values().removeIf(v -> v == null || v.isBlank());
         applyMeshLabel(labels, LABEL_DATAPLANE_MODE, req.getDataplaneMode());
@@ -402,6 +479,14 @@ public class WorkloadService {
         }
         if (existing.getPodTemplate() == null) {
             existing.setPodTemplate(new PodTemplateDTO());
+        }
+        // 组件门禁：只拦「从关到开」—— 关闭、改采样率、切日志方式都放行（已开启的不追溯）
+        Map<String, Object> current = existing.getPodTemplate().getAnnotations();
+        if (req.isTracing() && !otelTracingOn(current)) {
+            featureGuard.require(req.getClusterId(), ComponentFeatureGuard.OTEL_COLLECTION, "开启链路追踪");
+        }
+        if (req.isLogs() && !otelLogsOn(current)) {
+            featureGuard.require(req.getClusterId(), ComponentFeatureGuard.OTEL_LOGS, "开启日志采集");
         }
         Map<String, Object> annotations = existing.getPodTemplate().getAnnotations() == null
                 ? new LinkedHashMap<>()

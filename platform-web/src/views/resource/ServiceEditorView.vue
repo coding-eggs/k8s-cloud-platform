@@ -8,7 +8,7 @@ import type { WorkloadDetail } from '@/types/workload'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
-import { useMeshStatus } from '@/composables/useMeshStatus'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import {
   canHandleService,
   isWaypointGateway,
@@ -128,11 +128,13 @@ const ipLocked = computed(() => !!editing.value)
  * 平台此前只有命名空间级与 Pod 级（工作负载），缺的正是 **Service 级** —— 而 service 型 waypoint 最贴切的
  * 粒度就是"某个服务"（例如只让 reviews 走 L7，同命名空间其它服务不走）。
  *
- * <p>门禁同工作负载侧：租户只知道装没装 Istio（能力快照），ambient 是否真在跑只有平台侧知道，故以
- * hasIstio 为准、不作硬门禁（写这个 label 本身无害）。
+ * <p>门禁同工作负载侧：看组件旗标 `ambient-mesh`，未探测 = 不可用；不可用时只能清除或设 none（后端同口径硬拦）。
  */
-const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
-const meshAvailable = computed(() => mesh.hasIstio.value)
+const meshComponents = useClusterComponents(computed(() => state.clusterId ?? null))
+const meshAvailable = computed(() => meshComponents.available('ambient-mesh'))
+const meshReason = computed(() => meshComponents.unavailableReason('ambient-mesh'))
+/** 编辑态打开时的线上值：不可用时只允许保留它或关掉 */
+const originalWaypoint = ref('')
 
 /** 本命名空间的 waypoint 候选（租户域 /gateways；名字 + 类型） */
 const waypointOptions = ref<WaypointRef[]>([])
@@ -204,6 +206,7 @@ async function loadDetail(): Promise<void> {
     form.name = d.name
     form.type = d.type || 'ClusterIP'
     form.labels = { ...(d.labels ?? {}) }
+    originalWaypoint.value = d.labels?.[LABEL_USE_WAYPOINT] ?? ''
     const ports = (d.ports ?? []).map((p) => ({
       name: p.name ?? '',
       port: p.port ?? null,
@@ -438,13 +441,14 @@ const contextDesc = computed(() => {
               <LabelEditor v-model="form.labels" :exclude-keys="SERVICE_RESERVED_LABELS" class="sub-editor" style="max-width: 520px" />
             </el-form-item>
             <!-- 服务网格（Service 级 use-waypoint）：pod template 那一套的 Service 版 -->
-            <el-form-item v-if="meshAvailable" label="服务网格">
+            <el-form-item v-if="meshAvailable || useWaypoint" label="服务网格">
               <div class="mesh-block">
                 <el-select v-model="useWaypoint" style="width: 360px" placeholder="跟随命名空间（不设标签）">
                   <el-option label="跟随命名空间（不设标签）" value="" />
                   <el-option label="显式不使用（none）" :value="USE_WAYPOINT_NONE" />
                   <!-- 只列能承接服务流量的候选；不匹配的连条目都不出现 -->
-                  <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name" />
+                  <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name"
+                             :disabled="!meshAvailable && r.name !== originalWaypoint" />
                   <!-- 当前值不可选时的回显项（disabled） -->
                   <el-option
                     v-if="currentUnusableWaypoint" :key="`current-${currentUnusableWaypoint.name}`"
@@ -453,7 +457,8 @@ const contextDesc = computed(() => {
                   />
                 </el-select>
                 <FieldHelp tip="Service 标签 istio.io/use-waypoint：本服务的七层流量走哪个 waypoint。优先级是 Pod > Service > Namespace —— 设了就压过命名空间级的设置。⚠️ 两条静默失败：①waypoint 不存在 → ztunnel 直接放行；②类型不匹配 → 这里只影响「目标是服务」的流量，waypoint 的 istio.io/waypoint-for 必须是 service 或 all。该标签由本字段独占管理，故不在上方通用「标签」区显示。" />
-                <div v-if="!perm.has(apiCodes.gatewayList)" class="form-tip">无 Gateway 列表读权限，候选取不到（已有值仍可回显提交）。</div>
+                <div v-if="!meshAvailable" class="form-tip warn">ambient 网格不可用（{{ meshReason }}）：只能清除标签或设为 none。</div>
+                <div v-else-if="!perm.has(apiCodes.gatewayList)" class="form-tip">无 Gateway 列表读权限，候选取不到（已有值仍可回显提交）。</div>
                 <div v-else-if="!waypointLoaded" class="form-tip">正在加载本命名空间的 waypoint 候选…</div>
                 <div v-else-if="!waypointOptions.length" class="form-tip">本命名空间还没有 waypoint Gateway——要在「Gateway」页用「创建 Waypoint」建一个。</div>
                 <div v-else-if="!waypointUsable.length" class="form-tip warn">本命名空间的 waypoint 都不处理服务流量（waypoint-for 是 workload / none）——要服务流量的 L7，需把目标 waypoint 的类型改成 service 或 all。</div>

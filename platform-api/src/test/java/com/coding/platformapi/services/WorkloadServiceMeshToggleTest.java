@@ -44,7 +44,8 @@ class WorkloadServiceMeshToggleTest {
     private final K8sClient k8s = mock(K8sClient.class);
     private final WorkloadValidator validator = mock(WorkloadValidator.class);
     private final GatewayService gatewayService = mock(GatewayService.class);
-    private final WorkloadService svc = new WorkloadService(k8s, mock(K8sWorkloadClient.class), validator, gatewayService);
+    private final ComponentFeatureGuard guard = mock(ComponentFeatureGuard.class);
+    private final WorkloadService svc = new WorkloadService(k8s, mock(K8sWorkloadClient.class), validator, gatewayService, guard);
 
     private static WorkloadDTO workload(Map<String, String> podLabels) {
         WorkloadDTO w = new WorkloadDTO();
@@ -131,6 +132,7 @@ class WorkloadServiceMeshToggleTest {
 
     @Test
     void unknown_waypoint_is_rejected_with_existing_candidates_in_message() {
+        when(k8s.get(any(WorkloadDTO.class))).thenReturn(workload(Map.of())); // 门禁比对要读线上现值
         when(gatewayService.waypointRefs("t1", "c1", "team-a")).thenReturn(List.of(ref("waypoint-a", "workload")));
         assertThatThrownBy(() -> svc.meshToggle(req(null, "typo")))
                 .isInstanceOf(CloudPlatformException.class)
@@ -143,6 +145,7 @@ class WorkloadServiceMeshToggleTest {
     void service_type_waypoint_is_rejected_for_a_pod_level_label() {
         // Pod 上的 use-waypoint 只影响"最初目标是 Pod/VM IP"的流量 → waypoint 必须是 workload/all。
         // 平台建 waypoint 的默认值就是 service，所以这个组合是最容易踩、且 istio 侧完全静默的那个。
+        when(k8s.get(any(WorkloadDTO.class))).thenReturn(workload(Map.of())); // 门禁比对要读线上现值
         when(gatewayService.waypointRefs("t1", "c1", "team-a"))
                 .thenReturn(List.of(ref("waypoint", "service")));   // 也代表"没打标签"（缺省即 service）
 
@@ -165,6 +168,7 @@ class WorkloadServiceMeshToggleTest {
     @Test
     void none_type_waypoint_is_rejected_too() {
         // waypoint-for: none = 不处理任何流量（用于测试）→ 指向它必然不生效
+        when(k8s.get(any(WorkloadDTO.class))).thenReturn(workload(Map.of())); // 门禁比对要读线上现值
         when(gatewayService.waypointRefs("t1", "c1", "team-a")).thenReturn(List.of(ref("waypoint", "none")));
         assertThatThrownBy(() -> svc.meshToggle(req(null, "waypoint")))
                 .isInstanceOf(CloudPlatformException.class)

@@ -38,6 +38,8 @@ public class PrometheusRuleService {
     private final K8sClusterMapper clusterMapper;
     private final PromRulesClient promRules;
     private final RuleNotifyBinder notifyBinder;
+    /** 新建要求 Prometheus Operator 可用（功能码 servicemonitor）；编辑已有规则不拦 */
+    private final ComponentFeatureGuard featureGuard;
 
     /** 规则刚建、Prometheus 还没 reload 的宽限期。覆盖 prometheus-operator 的 reload 延迟。 */
     private static final Duration LOAD_GRACE = Duration.ofMinutes(5);
@@ -74,6 +76,7 @@ public class PrometheusRuleService {
     }
 
     public PrometheusRuleDTO create(PrometheusRuleDTO body) {
+        featureGuard.require(body.getClusterId(), ComponentFeatureGuard.SERVICE_MONITOR, "创建告警规则");
         stampNamespace(body);
         // ⚠️ 先校验、再剥离、再写集群、**最后**写绑定：
         //   - 参数不对要在什么都没改的前提下被拒（不是写完 K8s 对象才报错）；

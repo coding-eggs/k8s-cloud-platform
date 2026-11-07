@@ -41,21 +41,15 @@ const ctxParams = computed(() => ({
 
 /** 组件旗标：`otel-logs` 决定工作负载日志开关能不能打开（采集栈没开应用日志时禁掉） */
 const components = useClusterComponents(computed(() => state.clusterId ?? null))
-/** 未探测到旗标时不拦（读不到 ≠ 不可用）；只有明确 false 才禁 */
-const otelLogsAvailable = computed(() =>
-  !components.probed.value || components.available('otel-logs'))
-const otelLogsReason = computed(() =>
-  components.probed.value && !components.available('otel-logs') ? components.reasonOf('otel-logs') : '')
-
 /**
- * 集群是否启用「工作负载可观测」（OTel 采集栈健康）。没开时「可观测」按钮禁用：
- * 表单写进去的是注入注解，没有采集栈消费，填了也没数据。
+ * 2026-11-07 口径：未探测 = 不可用（只有旗标明确 available 才允许开启，后端同一判据硬拦）。
+ * 不可用时入口仍可打开 —— 已开启的追踪/日志要能关掉；弹窗里只锁「从关到开」。
  */
-const otelAvailable = computed(() =>
-  !components.probed.value || components.available('otel-collection'))
-const otelReason = computed(() =>
-  components.probed.value && !components.available('otel-collection')
-    ? components.reasonOf('otel-collection') : '')
+const otelLogsAvailable = computed(() => components.available('otel-logs'))
+const otelLogsReason = computed(() => components.unavailableReason('otel-logs'))
+/** 集群是否启用「工作负载可观测」（OTel 采集栈健康） */
+const otelAvailable = computed(() => components.available('otel-collection'))
+const otelReason = computed(() => components.unavailableReason('otel-collection'))
 
 const detail = ref<WorkloadDetail | null>(null)
 const pods = ref<K8sPod[]>([])
@@ -398,8 +392,8 @@ const contextDesc = computed(() => {
         全部 Pod 日志
       </el-button>
       <el-tooltip :disabled="otelAvailable" placement="bottom"
-                  :content="`集群未启用工作负载可观测（${otelReason || '缺 OTel 采集栈'}）：这里填的注入注解没人消费，先到集群组件页安装 otel-operator`">
-        <el-button size="small" :disabled="!detail || !otelAvailable || isOpManaged" @click="observabilityVisible = true">
+                  :content="`工作负载可观测不可开启（${otelReason}）；已开启的仍可在这里关闭`">
+        <el-button size="small" :disabled="!detail || isOpManaged" @click="observabilityVisible = true">
           可观测
         </el-button>
       </el-tooltip>

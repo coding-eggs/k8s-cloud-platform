@@ -24,6 +24,11 @@ import java.util.Map;
 public class ServiceService {
 
     private final K8sClient k8s;
+    /** Service 级 istio.io/use-waypoint 只在「从关到开」时要求 ambient 网格可用 */
+    private final ComponentFeatureGuard featureGuard;
+
+    /** 与 WorkloadService.LABEL_USE_WAYPOINT 同值 */
+    private static final String LABEL_USE_WAYPOINT = "istio.io/use-waypoint";
 
     public List<ServiceDTO> list(ServiceDTO query) {
         return k8s.list(query);
@@ -42,13 +47,29 @@ public class ServiceService {
     }
 
     public ServiceDTO create(ServiceDTO body) {
+        requireMeshFor(body, null);
         resolveSelector(body);
         return k8s.create(body);
     }
 
     public ServiceDTO update(ServiceDTO body) {
+        // 只有新值是「具体 waypoint 名」时才读线上现值比对：原值不变 = 不是开启，放行
+        if (ComponentFeatureGuard.opensAmbient(null, null, waypointOf(body), null)) {
+            requireMeshFor(body, k8s.get(dto(body.getName(), body.getTenantId(), body.getClusterId(), body.getNamespace())));
+        }
         resolveSelector(body);
         return k8s.update(body);
+    }
+
+    /** 新值相对线上现值是在给 Service 挂 waypoint → 要求 ambient 网格可用（移除 / none / 原值不变都放行） */
+    private void requireMeshFor(ServiceDTO body, ServiceDTO existing) {
+        if (ComponentFeatureGuard.opensAmbient(null, null, waypointOf(body), existing == null ? null : waypointOf(existing))) {
+            featureGuard.require(body.getClusterId(), ComponentFeatureGuard.AMBIENT_MESH, "为 Service 指定 waypoint");
+        }
+    }
+
+    private static String waypointOf(ServiceDTO s) {
+        return s.getLabels() == null ? null : s.getLabels().get(LABEL_USE_WAYPOINT);
     }
 
     /**查询 DTO：apiPath 内置于 DTO */

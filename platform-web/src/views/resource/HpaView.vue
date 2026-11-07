@@ -151,16 +151,16 @@ usePaletteAction({
       <el-button v-if="canCreate" type="primary" :disabled="!ready || !cap.metricsAvailable.value" @click="goCreate">创建 HPA</el-button>
     </PageHeader>
 
-    <!-- 能力门禁提示（探测过且三类 metrics 全无 → 禁创建；未探测 → 软提示） -->
+    <!-- 能力门禁提示（三类 metrics 全无 → 禁创建；未探测按不可用，2026-11-07 口径） -->
     <el-alert
-      v-if="ready && cap.probed.value && !cap.metricsAvailable.value"
+      v-if="ready && !cap.loading.value && !cap.metricsAvailable.value"
       type="warning"
       :closable="false"
       class="cap-banner"
     >
       <template #title>
         <div class="cap-banner-inner">
-          <span>该集群未安装 metrics-server / prometheus-adapter，HPA 指标不可用，创建已禁用</span>
+          <span>HPA 指标不可用，创建已禁用：{{ cap.metricsServerReason.value || '缺 metrics-server' }}；也未探测到 prometheus-adapter（custom / external）</span>
           <el-button size="small" type="primary" plain :loading="refreshingCap" @click="onRefreshCapability">刷新能力</el-button>
         </div>
       </template>
@@ -173,7 +173,7 @@ usePaletteAction({
     >
       <template #title>
         <div class="cap-banner-inner">
-          <span>集群 API 能力尚未探测，指标可用性未知；点「刷新能力」后按实际集群能力门禁。</span>
+          <span>集群 API 能力尚未探测，自定义 / 外部指标按不可用处理；点「刷新能力」后按实际集群能力门禁。</span>
           <el-button size="small" type="primary" plain :loading="refreshingCap" @click="onRefreshCapability">刷新能力</el-button>
         </div>
       </template>

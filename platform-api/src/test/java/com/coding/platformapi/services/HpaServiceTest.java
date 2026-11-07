@@ -19,7 +19,7 @@ import static org.mockito.Mockito.when;
 class HpaServiceTest {
 
     private final K8sClient k8s = mock(K8sClient.class);
-    private final HpaService svc = new HpaService(k8s);
+    private final HpaService svc = new HpaService(k8s, mock(ComponentFeatureGuard.class), mock(ClusterCapabilityService.class));
 
     private HpaDTO hpa(String name, String kind, String targetName) {
         HpaDTO d = new HpaDTO();

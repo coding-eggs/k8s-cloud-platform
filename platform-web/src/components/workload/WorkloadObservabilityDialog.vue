@@ -29,9 +29,8 @@ const props = defineProps<{
   /** 已接入文件日志时，应用容器上平台卷的挂载目录（日志文件的父目录，从 volumeMount 反推） */
   fileLogDirectory?: string
   /**
-   * 集群是否启用了「工作负载可观测」（OTel 采集栈健康）。false 时整个表单禁用：
-   * 没有 otel-operator 时写进去的注入注解不会有人消费 —— 填了也没有数据。
-   * undefined = 还没探测到（读不到 ≠ 不可用，不拦）。
+   * 集群是否启用了「工作负载可观测」（OTel 采集栈健康）。false 时追踪/日志**不能从关到开**，
+   * 但已开启的可以关闭（2026-11-07：没装不让开启、已开启不追溯；后端同一口径硬拦）。
    */
   otelAvailable?: boolean
   /** 上面为 false 时的原因（来自组件旗标，如「缺 OTel 采集栈」） */
@@ -64,13 +63,19 @@ const containerName = ref('')
 /** 工作负载级采样率（百分比）；null = 跟随组件默认（会移除这两个 env） */
 const sampling = ref<number | null>(null)
 const saving = ref(false)
+/** 打开弹窗时的线上状态：门禁只拦「从关到开」，原本开着的可以关、关了也能再开回去 */
+const initialTracing = ref(false)
+const initialLogs = ref(false)
 
-/**
- * 集群没开「工作负载可观测」时整个表单不可填：
- * 注入注解由 otel-operator 的 Instrumentation 消费，operator 不在写进去也没人管。
- * 只有明确 false 才禁（undefined = 还没探测到，不拦）。
- */
+/** 集群没开「工作负载可观测」（采集栈不健康 / 未探测）：只允许关闭 */
 const stackUnavailable = computed(() => props.otelAvailable === false)
+/** 追踪开关能否打开：采集栈可用，或原本就开着 */
+const tracingLocked = computed(() => stackUnavailable.value && !initialTracing.value)
+/** 日志开关能否打开：采集栈 + 应用日志都可用，或原本就开着 */
+const logsLocked = computed(() =>
+  (stackUnavailable.value || props.logsAvailable === false) && !initialLogs.value)
+/** 采集栈不可用且原本什么都没开 → 没有可关的，保存无意义 */
+const nothingToClose = computed(() => stackUnavailable.value && !initialTracing.value && !initialLogs.value)
 const stackReason = computed(() =>
   props.otelUnavailableReason || '集群未安装或未就绪 OTel 采集栈（otel-operator）')
 
@@ -100,6 +105,8 @@ function init(): void {
     logMode.value = 'app'
   }
   tracing.value = value.endsWith('platform-instrumentation') || value.endsWith('-all')
+  initialTracing.value = tracing.value
+  initialLogs.value = logs.value
   serviceName.value = props.workloadName
   containerName.value = props.containers[0] ?? ''
   // 工作负载级采样率回填：env 里存的是比例（0.1），表单用百分比
@@ -108,8 +115,8 @@ function init(): void {
 }
 
 async function submit(): Promise<void> {
-  if (stackUnavailable.value) {
-    ElMessage.warning('集群未启用工作负载可观测（OTel 采集栈不可用），现在填写不会生效')
+  if ((tracing.value && tracingLocked.value) || (logs.value && logsLocked.value)) {
+    ElMessage.warning('依赖的集群组件不可用，不能开启（已开启的可以关闭）')
     return
   }
   if (logs.value && logMode.value === 'file') {
@@ -152,12 +159,12 @@ async function submit(): Promise<void> {
              @update:model-value="emit('update:visible', $event)">
     <el-alert v-if="stackUnavailable" type="warning" :closable="false" show-icon class="wl-otel-alert"
               :title="'集群未启用工作负载可观测：' + stackReason"
-              description="这个表单写的是 OTel 注入注解（日志 / 追踪都靠采集栈消费），没有采集栈时填了也不会生效。请先在集群组件页安装 otel-operator 并等它就绪。" />
+              description="追踪 / 日志都靠采集栈消费，现在不能开启；已开启的仍可关闭。请先在集群组件页安装 otel-operator 并等它就绪。" />
     <div class="wl-otel-tip">
       开启后平台给 Pod 注入 OpenTelemetry agent，只影响新建的 Pod（会触发滚动更新）。
       两个开关都关闭时，保存会移除平台写入的注入注解与文件日志卷。
     </div>
-    <el-form label-width="110px" :disabled="stackUnavailable">
+    <el-form label-width="110px" :disabled="nothingToClose">
       <el-form-item label="应用类型">
         <el-select v-model="language" style="width: 100%">
           <el-option label="Java（Logback / Log4j2）" value="java" />
@@ -166,7 +173,7 @@ async function submit(): Promise<void> {
         </el-select>
       </el-form-item>
       <el-form-item label="追踪">
-        <el-switch v-model="tracing" />
+        <el-switch v-model="tracing" :disabled="tracingLocked && !tracing" />
         <span class="wl-otel-hint">traces 写入 Tempo</span>
       </el-form-item>
       <el-form-item v-if="tracing" label="采样率">
@@ -179,11 +186,11 @@ async function submit(): Promise<void> {
         </div>
       </el-form-item>
       <el-form-item label="日志采集">
-        <el-switch v-model="logs" :disabled="logsAvailable === false && !logs" />
+        <el-switch v-model="logs" :disabled="logsLocked && !logs" />
         <span class="wl-otel-hint">容器 stdout 不采；只采应用日志框架或指定文件</span>
-        <div v-if="logsAvailable === false" class="wl-otel-hint wl-otel-block">
+        <div v-if="logsLocked" class="wl-otel-hint wl-otel-block">
           {{ logsUnavailableReason || '集群的 OTel 采集栈未开启「应用日志」' }}。
-          现在打开也不会有数据，需先在集群组件页打开「应用日志」并重新提交
+          不能开启，需先在集群组件页打开「应用日志」
         </div>
       </el-form-item>
       <el-form-item v-if="logs" label="采集方式">
@@ -215,7 +222,7 @@ async function submit(): Promise<void> {
     </div>
     <template #footer>
       <el-button @click="emit('update:visible', false)">取消</el-button>
-      <el-button type="primary" :loading="saving" :disabled="stackUnavailable" @click="submit">保存</el-button>
+      <el-button type="primary" :loading="saving" :disabled="nothingToClose" @click="submit">保存</el-button>
     </template>
   </el-dialog>
 </template>

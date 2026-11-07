@@ -101,6 +101,11 @@ const mesh = useMeshStatus(clusterId)
 const ambientKnown = computed(() => mesh.ambientKnown.value)
 /** 集群确实装了 ambient（ztunnel 在跑） */
 const ambientAvailable = computed(() => mesh.istioAmbient.value)
+/**
+ * 打开编辑时的线上值。ambient 不可用时（2026-11-07 口径）只锁「开启」：
+ * 可以清除 / 设 none / 保留原值，不能新纳入或换成别的 waypoint（后端 NamespaceService 同口径硬拦）。
+ */
+const originalMesh = reactive({ dataplane: '', waypoint: '' })
 
 /** 该命名空间的 waypoint 候选（平台侧 /mesh/gateways）。Gateway 是租户域资源而本页无租户上下文，故不能走 /gateways */
 const waypointOptions = ref<WaypointRef[]>([])
@@ -187,6 +192,8 @@ async function loadDetail(): Promise<void> {
     form.ipv6Pools = [...(ns.ipv6Pools ?? [])]
     form.dataplaneMode = ns.dataplaneMode ?? ''
     form.useWaypoint = ns.useWaypoint ?? ''
+    originalMesh.dataplane = form.dataplaneMode
+    originalMesh.waypoint = form.useWaypoint
     detailState.value = 'loaded'
   } catch {
     detailState.value = 'error'
@@ -357,17 +364,19 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
             <template v-if="ambientKnown">
               <el-form-item>
                 <template #label>数据面模式 <FieldHelp tip="命名空间标签 istio.io/dataplane-mode。纳入 ambient 后，本命名空间内的工作负载由节点级 ztunnel 接管四层流量；排除（none）则显式退出网格。不设标签 = 不纳入网格 —— Istio 没有集群级默认，是否纳入只看命名空间 / Pod 上的这个标签（取值只有 ambient / none）。Pod 上的同名标签优先于命名空间。" /></template>
-                <el-select v-model="form.dataplaneMode" :disabled="!ambientAvailable" style="width: 320px" placeholder="不设标签（不纳入网格）">
+                <el-select v-model="form.dataplaneMode" style="width: 320px" placeholder="不设标签（不纳入网格）">
                   <el-option label="不设标签（不纳入网格）" value="" />
-                  <el-option v-for="m in DATAPLANE_MODES" :key="m.value" :label="m.label" :value="m.value" />
+                  <el-option v-for="m in DATAPLANE_MODES" :key="m.value" :label="m.label" :value="m.value"
+                             :disabled="!ambientAvailable && m.value === 'ambient' && originalMesh.dataplane !== 'ambient'" />
                 </el-select>
               </el-form-item>
               <el-form-item>
                 <template #label>使用 waypoint <FieldHelp tip="命名空间标签 istio.io/use-waypoint。取值 = 本命名空间 waypoint Gateway 的名字，本命名空间内所有工作负载的七层流量都会经过它（L7 路由/鉴权/遥测）；选 none 表示显式不使用 —— 用来压过从上层继承的 waypoint。不设标签 = 不使用。⚠️ 两条静默失败：①waypoint 不存在 → ztunnel 直接放行；②类型不匹配 → 命名空间级只影响「目标是服务」的流量，故 waypoint 的 istio.io/waypoint-for 必须是 service 或 all（默认值就是 service，故不带标签的 waypoint 可用；标成 workload 的则不行）。两种情况都不报错、L7 策略悄悄不生效。" /></template>
-                <el-select v-model="form.useWaypoint" :disabled="!ambientAvailable" style="width: 320px" placeholder="不使用 waypoint（不设标签）">
+                <el-select v-model="form.useWaypoint" style="width: 320px" placeholder="不使用 waypoint（不设标签）">
                   <el-option label="不使用 waypoint（不设标签）" value="" />
                   <el-option label="显式不使用（none）" :value="USE_WAYPOINT_NONE" />
-                  <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name" />
+                  <el-option v-for="r in waypointUsable" :key="r.name" :label="waypointOptionLabel(r)" :value="r.name"
+                             :disabled="!ambientAvailable && r.name !== originalMesh.waypoint" />
                   <!-- 当前值不可选时的回显项（disabled，见 currentUnusableWaypoint 说明） -->
                   <el-option
                     v-if="currentUnusableWaypoint" :key="`current-${currentUnusableWaypoint.name}`"
@@ -375,7 +384,7 @@ const pageTitle = computed(() => (editing.value ? '编辑命名空间' : '创建
                     :value="currentUnusableWaypoint.name" disabled
                   />
                 </el-select>
-                <div v-if="!ambientAvailable" class="form-tip warn">该集群未探测到 ambient（istio-system/ztunnel DaemonSet 不存在）—— 这两个标签暂不生效，字段已禁用以免误配。</div>
+                <div v-if="!ambientAvailable" class="form-tip warn">该集群未探测到 ambient（istio-system/ztunnel DaemonSet 不存在）—— 不能新纳入 ambient 或指定 waypoint；已有的标签可以清除或设为 none。</div>
                 <div v-else-if="!editing" class="form-tip">waypoint Gateway 需建在一个已存在的命名空间里，故创建阶段没有候选；先创建命名空间，再回来选。</div>
                 <div v-else-if="waypointLoaded && !waypointOptions.length" class="form-tip">该命名空间还没有 waypoint Gateway——要在「Gateway」页用「创建 Waypoint」建一个（可以建多个，按类型各管一类流量）。</div>
                 <div v-else-if="waypointLoaded && !waypointUsable.length" class="form-tip warn">本命名空间的 waypoint 都不处理服务流量（waypoint-for 是 workload / none）——命名空间级只作用于发往服务的流量，选它们不会生效。要服务流量的 L7，需把目标 waypoint 的类型改成 service 或 all。</div>

@@ -2,6 +2,7 @@
 import ManagedOwnerTag from '@/components/ManagedOwnerTag.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { usePaletteAction } from '@/composables/usePaletteAction'
+import { useClusterComponents } from '@/composables/useClusterComponents'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { podMonitorApi } from '@/api'
@@ -17,6 +18,13 @@ import YamlBlock from '@/components/YamlBlock.vue'
 
 const router = useRouter()
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
+/**
+ * 新建要求 Prometheus Operator 可用（组件旗标 servicemonitor；未探测 = 不可用，2026-11-07 口径，后端同判据硬拦）。
+ * 只拦新建：已有对象的编辑 / 删除照常。
+ */
+const components = useClusterComponents(computed(() => state.clusterId ?? null))
+const operatorAvailable = computed(() => components.available('servicemonitor'))
+const operatorReason = computed(() => components.unavailableReason('servicemonitor'))
 const perm = usePermission()
 /** 「创建 PodMonitor」= 进入编辑器页，门禁与路由 requiresPerm 同源（只读角色没有它 → 按钮不渲染） */
 const canCreate = computed(() => perm.has(pageCodes.podMonitor.edit))
@@ -109,7 +117,7 @@ const contextDesc = computed(() => {
 
 // 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
 usePaletteAction({
-  create: { run: goCreate, ready: () => canCreate.value && ready.value },
+  create: { run: goCreate, ready: () => canCreate.value && ready.value && operatorAvailable.value },
 })
 </script>
 
@@ -117,8 +125,11 @@ usePaletteAction({
   <div>
     <PageHeader title="PodMonitor" :description="contextDesc">
       <el-button @click="refresh" :disabled="!ready">刷新</el-button>
-      <el-button v-if="canCreate" type="primary" :disabled="!ready" @click="goCreate">创建 PodMonitor</el-button>
+      <el-button v-if="canCreate" type="primary" :disabled="!ready || !operatorAvailable" @click="goCreate">创建 PodMonitor</el-button>
     </PageHeader>
+
+    <el-alert v-if="ready && canCreate && !operatorAvailable && !components.loading.value" type="warning" :closable="false" show-icon
+              :title="`不能创建 PodMonitor：${operatorReason}`" style="margin-bottom: 12px" />
 
     <EmptyState
       v-if="ready && list.length === 0 && !loading"

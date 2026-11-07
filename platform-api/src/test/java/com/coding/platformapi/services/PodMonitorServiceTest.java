@@ -30,7 +30,7 @@ class PodMonitorServiceTest {
     private final K8sClient k8s = mock(K8sClient.class);
     private final K8sClusterMapper clusterMapper = mock(K8sClusterMapper.class);
     private final PromDiscoveryClient prom = mock(PromDiscoveryClient.class);
-    private final PodMonitorService svc = new PodMonitorService(k8s, clusterMapper, prom);
+    private final PodMonitorService svc = new PodMonitorService(k8s, clusterMapper, prom, mock(ComponentFeatureGuard.class));
 
     private PodMonitorDTO base() {
         PodMonitorDTO dto = new PodMonitorDTO();

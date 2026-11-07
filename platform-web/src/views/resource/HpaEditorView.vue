@@ -272,6 +272,7 @@ async function loadDetail(): Promise<void> {
     form.minReplicas = d.minReplicas ?? null
     form.maxReplicas = d.maxReplicas ?? null
     form.metrics = (d.metrics ?? []).map(k8sToRow)
+    originalGroups.value = new Set(form.metrics.map((m) => TYPE_GROUP[m.type as MetricType]).filter(Boolean))
     if (form.metrics.length === 0) form.metrics = [newMetricRow()]
     form.scaleUp = k8sRuleToForm(d.behavior?.scaleUp)
     form.scaleDown = k8sRuleToForm(d.behavior?.scaleDown)
@@ -316,8 +317,10 @@ watch([() => state.clusterId, () => state.namespace], () => {
 
 const formVisible = computed(() => !editing.value || detailState.value === 'loaded')
 
-/** 未探测到任何 metrics API group：软提示（不硬阻断，五类仍全可选） */
+/** 未探测到集群能力：按不可用处理（2026-11-07 口径），给一条提示说明为什么选项是灰的 */
 const notProbedTip = computed(() => ready.value && !cap.loading.value && !cap.probed.value)
+/** 编辑态打开时已在用的指标来源：不追溯（组件卸了也能改 min/max），后端同口径只拦新加的来源 */
+const originalGroups = ref<Set<string>>(new Set())
 
 // ---------- 指标类型门禁：按真实依赖的 API group 精确禁用 ----------
 const TYPE_GROUP: Record<MetricType, 'metrics' | 'custom' | 'external'> = {
@@ -327,8 +330,13 @@ const TYPE_HINT: Record<'metrics' | 'custom' | 'external', string> = {
   metrics: '需 metrics-server', custom: '需 prometheus-adapter（custom）', external: '需 prometheus-adapter（external）',
 }
 const typeAvailable = (t: MetricType) =>
-  !cap.probed.value || (TYPE_GROUP[t] === 'metrics' ? cap.hasMetricsServer.value : TYPE_GROUP[t] === 'custom' ? cap.hasCustomMetrics.value : cap.hasExternalMetrics.value)
-const typeHint = (t: MetricType) => (typeAvailable(t) ? '' : TYPE_HINT[TYPE_GROUP[t]])
+  originalGroups.value.has(TYPE_GROUP[t])
+  || (TYPE_GROUP[t] === 'metrics' ? cap.hasMetricsServer.value : TYPE_GROUP[t] === 'custom' ? cap.hasCustomMetrics.value : cap.hasExternalMetrics.value)
+const typeHint = (t: MetricType) => {
+  if (typeAvailable(t)) return ''
+  if (TYPE_GROUP[t] === 'metrics') return cap.metricsServerReason.value || TYPE_HINT.metrics
+  return TYPE_HINT[TYPE_GROUP[t]]
+}
 
 const METRIC_TYPE_DESC: Record<MetricType, string> = {
   Resource: 'Resource=按 Pod 整体资源（cpu/memory）利用率',
@@ -468,7 +476,7 @@ const contextDesc = computed(() => {
             type="info"
             :closable="false"
             class="cap-tip"
-            title="集群 API 能力尚未探测，指标可用性未知；可点列表页「刷新能力」。当前五类指标默认可选。"
+            title="集群 API 能力尚未探测，按不可用处理（自定义/外部指标不可选）；可点列表页「刷新能力」。"
           />
           <div v-for="(m, idx) in form.metrics" :key="idx" class="metric-block">
             <div class="metric-head">

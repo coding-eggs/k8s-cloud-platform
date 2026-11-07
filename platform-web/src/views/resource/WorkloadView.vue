@@ -15,7 +15,6 @@ import { useClusterComponents } from '@/composables/useClusterComponents'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
-import { useMeshStatus } from '@/composables/useMeshStatus'
 import { useImageSuggest } from '@/composables/useImageSuggest'
 import { nodeHost, useNodeAddresses } from '@/composables/useNodeAddresses'
 import {
@@ -75,21 +74,15 @@ const ctxParams = computed(() => ({
 
 /** 组件旗标：`otel-logs` 决定可观测弹窗里的日志开关能不能打开 */
 const components = useClusterComponents(computed(() => state.clusterId ?? null))
-/** 未探测到旗标时不拦（读不到 ≠ 不可用）；只有明确 false 才禁 */
-const otelLogsAvailable = computed(() =>
-  !components.probed.value || components.available('otel-logs'))
-const otelLogsReason = computed(() =>
-  components.probed.value && !components.available('otel-logs') ? components.reasonOf('otel-logs') : '')
-
 /**
- * 集群是否启用「工作负载可观测」（OTel 采集栈健康）。
- * 没开时整个可观测表单不可填：注入注解没人消费，填了也没数据。
+ * 2026-11-07 口径：未探测 = 不可用（只有旗标明确 available 才允许开启，后端同一判据硬拦）。
+ * 不可用时入口仍可打开 —— 已开启的追踪/日志要能关掉；弹窗里只锁「从关到开」。
  */
-const otelAvailable = computed(() =>
-  !components.probed.value || components.available('otel-collection'))
-const otelReason = computed(() =>
-  components.probed.value && !components.available('otel-collection')
-    ? components.reasonOf('otel-collection') : '')
+const otelLogsAvailable = computed(() => components.available('otel-logs'))
+const otelLogsReason = computed(() => components.unavailableReason('otel-logs'))
+/** 集群是否启用「工作负载可观测」（OTel 采集栈健康） */
+const otelAvailable = computed(() => components.available('otel-collection'))
+const otelReason = computed(() => components.unavailableReason('otel-collection'))
 
 /** canonical 键：小写 kind/name —— 与 HpaEditorView 同一全局约定 */
 function canonicalKey(kind: string | null | undefined, name: string | null | undefined): string {
@@ -464,8 +457,9 @@ async function openLogs(row: K8sWorkload): Promise<void> {
  * 开=写 ambient；关=写 none（<b>显式排除</b>，不是"跟随"）——回到「跟随」要在编辑器里选，
  * 这样列表上的"关"只有一个含义，不会因为命名空间后来开了 ambient 又被悄悄纳管。
  */
-const mesh = useMeshStatus(computed(() => state.clusterId ?? null))
-const meshAvailable = computed(() => mesh.hasIstio.value)
+// 门禁（2026-11-07）：组件旗标 ambient-mesh，未探测 = 不可用；不可用时菜单只留「排除 / 回到跟随 / 不使用」这类关闭项
+const meshAvailable = computed(() => components.available('ambient-mesh'))
+const meshReason = computed(() => components.unavailableReason('ambient-mesh'))
 /** 工作负载写权限：编辑/伸缩/网格开关/改镜像/回滚共用同一个动词码 */
 const canWrite = computed(() => perm.has(apiCodes.workloadUpdate))
 /**
@@ -770,12 +764,12 @@ usePaletteAction({
                   <el-dropdown-item command="rollback" :disabled="!canWrite || isOpManaged(row)">回滚</el-dropdown-item>
                   <el-dropdown-item v-if="row.kind !== 'daemonset' && !hpaNameOf(row)" command="addHpa">添加 HPA</el-dropdown-item>
                   <!-- 可观测：写 pod template 的注入注解 / OTEL_SERVICE_NAME（共享 tenant:workload:update）。
-                       集群没开 OTel 采集栈时禁用 —— 注解没有消费者，填了也没数据 -->
-                  <el-dropdown-item command="observability" :disabled="!canWrite || !otelAvailable">
-                    可观测{{ otelAvailable ? '' : '（集群未启用 OTel 采集）' }}
+                       集群没开 OTel 采集栈时仍可进入（已开启的要能关掉），弹窗里只锁「从关到开」 -->
+                  <el-dropdown-item command="observability" :disabled="!canWrite">
+                    可观测{{ otelAvailable ? '' : '（仅可关闭）' }}
                   </el-dropdown-item>
                   <el-dropdown-item v-if="!otelAvailable" disabled>
-                    {{ otelReason || '缺 OTel 采集栈' }}；先到集群组件页安装 otel-operator
+                    {{ otelReason }}
                   </el-dropdown-item>
                   <el-dropdown-item command="yaml">Yaml</el-dropdown-item>
                   <!-- 日志：只读动作，紧挨 Yaml 排在只读这一组。点它要先取 Pod（两次往返，见 openLogs），
@@ -785,20 +779,21 @@ usePaletteAction({
                   <!-- 服务网格（B3 §11.4）：两态开关表达不了三态（跟随 / 纳入 / 排除），故用带当前态的菜单项。
                        禁用项只作分组标题，把"当前是什么"写在标题里；下面是可点的目标态（当前态不出现在列表里）。
                        「关」一律写 none（显式排除），回到跟随是单独一项 —— 两者的区别对使用者是有意义的。 -->
-                  <template v-if="meshAvailable">
+                  <template v-if="meshAvailable || ambientLabel(row) || waypointLabel(row)">
                     <el-dropdown-item divided disabled>ambient 流量 · {{ ambientStateText(row) }}</el-dropdown-item>
-                    <el-dropdown-item v-if="ambientLabel(row) !== 'ambient'" command="ambient-on" :disabled="!meshEditable(row)">纳入 ambient</el-dropdown-item>
+                    <el-dropdown-item v-if="!meshAvailable" disabled>{{ meshReason }}（仅可关闭）</el-dropdown-item>
+                    <el-dropdown-item v-if="meshAvailable && ambientLabel(row) !== 'ambient'" command="ambient-on" :disabled="!meshEditable(row)">纳入 ambient</el-dropdown-item>
                     <el-dropdown-item v-if="ambientLabel(row) !== 'none'" command="ambient-none" :disabled="!meshEditable(row)">排除出 mesh（none）</el-dropdown-item>
                     <el-dropdown-item v-if="ambientLabel(row)" command="ambient-follow" :disabled="!meshEditable(row)">回到跟随命名空间</el-dropdown-item>
 
                     <el-dropdown-item divided disabled>L7 流量 · {{ l7StateText(row) }}</el-dropdown-item>
                     <!-- 只列能承接 Pod 流量的候选：不匹配的既不可选、也不作为条目出现（只在"一个都不能选"时给一句说明） -->
                     <el-dropdown-item
-                      v-for="r in waypointAlternatives(row)" :key="r.name"
+                      v-for="r in (meshAvailable ? waypointAlternatives(row) : [])" :key="r.name"
                       :command="`l7-use:${r.name}`" :disabled="!meshEditable(row)"
                     >经过 waypoint「{{ r.name }}」（{{ r.waypointFor }}）</el-dropdown-item>
                     <el-dropdown-item v-if="waypointOptions.length && !hasUsableWaypoint" disabled>本命名空间的 waypoint 都不处理 Pod 流量（waypoint-for 需为 workload 或 all）</el-dropdown-item>
-                    <el-dropdown-item v-if="!waypointOptions.length && !waypointLabel(row)" command="l7-create" :disabled="!meshEditable(row)">创建 waypoint Gateway…</el-dropdown-item>
+                    <el-dropdown-item v-if="meshAvailable && !waypointOptions.length && !waypointLabel(row)" command="l7-create" :disabled="!meshEditable(row)">创建 waypoint Gateway…</el-dropdown-item>
                     <el-dropdown-item v-if="waypointLabel(row) && waypointLabel(row) !== USE_WAYPOINT_NONE" command="l7-none" :disabled="!meshEditable(row)">不使用 waypoint（none）</el-dropdown-item>
                     <el-dropdown-item v-if="waypointLabel(row)" command="l7-follow" :disabled="!meshEditable(row)">回到跟随命名空间</el-dropdown-item>
                   </template>

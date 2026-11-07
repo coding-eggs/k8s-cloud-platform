@@ -36,6 +36,8 @@ public class ServiceMonitorService {
     private final K8sClient k8s;
     private final K8sClusterMapper clusterMapper;
     private final PromDiscoveryClient promDiscovery;
+    /** 新建要求 Prometheus Operator 可用（功能码 servicemonitor）；编辑已有对象不拦 */
+    private final ComponentFeatureGuard featureGuard;
 
     public List<ServiceMonitorDTO> list(ServiceMonitorDTO query) {
         return k8s.list(query);
@@ -54,6 +56,7 @@ public class ServiceMonitorService {
     }
 
     public ServiceMonitorDTO create(ServiceMonitorDTO body) {
+        featureGuard.require(body.getClusterId(), ComponentFeatureGuard.SERVICE_MONITOR, "创建 ServiceMonitor");
         resolveSelector(body);
         return k8s.create(body);
     }

@@ -33,7 +33,7 @@ class WorkloadServiceActionsTest {
     private final K8sWorkloadClient workloadClient = mock(K8sWorkloadClient.class);
     private final WorkloadValidator validator = mock(WorkloadValidator.class);
     private final GatewayService gatewayService = mock(GatewayService.class);
-    private final WorkloadService svc = new WorkloadService(k8s, workloadClient, validator, gatewayService);
+    private final WorkloadService svc = new WorkloadService(k8s, workloadClient, validator, gatewayService, mock(ComponentFeatureGuard.class));
 
     private WorkloadImageRequest imageRequest(String containerName, String image) {
         WorkloadImageRequest r = new WorkloadImageRequest();

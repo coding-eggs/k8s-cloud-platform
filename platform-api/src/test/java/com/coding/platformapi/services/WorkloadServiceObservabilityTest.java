@@ -37,8 +37,9 @@ class WorkloadServiceObservabilityTest {
     private static final String INJECT_PYTHON = "instrumentation.opentelemetry.io/inject-python";
 
     private final K8sClient k8s = mock(K8sClient.class);
+    private final ComponentFeatureGuard guard = mock(ComponentFeatureGuard.class);
     private final WorkloadService svc = new WorkloadService(k8s, mock(K8sWorkloadClient.class),
-            mock(WorkloadValidator.class), mock(GatewayService.class));
+            mock(WorkloadValidator.class), mock(GatewayService.class), guard);
 
     @Test
     void tracingAndLogsSelectTheAllInstrumentationAndSetTheServiceName() {

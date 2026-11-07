@@ -30,7 +30,7 @@ class PrometheusRuleServiceTest {
     void setUp() {
         k8s = mock(K8sClient.class);
         binder = mock(RuleNotifyBinder.class);
-        svc = new PrometheusRuleService(k8s, mock(K8sClusterMapper.class), mock(PromRulesClient.class), binder);
+        svc = new PrometheusRuleService(k8s, mock(K8sClusterMapper.class), mock(PromRulesClient.class), binder, mock(ComponentFeatureGuard.class));
     }
 
     private static PrometheusRuleDTO sample(String ns) {
