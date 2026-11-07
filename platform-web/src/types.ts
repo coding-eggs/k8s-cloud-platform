@@ -2987,21 +2987,21 @@ export interface AppEnvRow {
   secretKey?: string
 }
 
-/** 服务的 OTel 接入（与工作负载页「可观测接入」同语义）；OTEL_SERVICE_NAME 固定为工作负载名 */
+/**
+ * 服务级可观测：语言 + 日志采集（与工作负载页「可观测接入」同语义）；OTEL_SERVICE_NAME 固定为工作负载名。
+ * 链路追踪是应用级设置（AppSettings.tracing）：应用开启时，选了语言的服务才被追踪。
+ */
 export interface AppServiceOtel {
-  /** java / python；开追踪或应用日志时必填 */
+  /** java / python；「日志框架」方式必填；应用开了追踪时也靠它决定本服务是否被追踪 */
   language?: string
-  tracing: boolean
   logs: boolean
   /** app = 日志框架（默认）/ file = sidecar 读日志文件 */
   logMode?: 'app' | 'file'
   /** file 模式：容器内具体日志文件的绝对路径 */
   logFile?: string
-  /** 1-100；不填跟随组件默认，只在追踪开启时生效 */
-  sampling?: number
 }
 
-/** 服务网格：缺省 = 跟随命名空间 */
+/** 应用级服务网格：缺省 = 跟随命名空间 */
 export interface AppServiceMesh {
   /** Pod 模板 istio.io/dataplane-mode：ambient / none */
   dataplaneMode?: 'ambient' | 'none'
@@ -3037,8 +3037,6 @@ export interface AppServiceDesired {
   targetMemory?: number
   /** 可观测接入（OTel）；不接入 = 没有这个键 */
   otel?: AppServiceOtel
-  /** 服务网格；全部跟随命名空间 = 没有这个键 */
-  mesh?: AppServiceMesh
   probeEnabled?: boolean
   probePath?: string
   metricsEnabled?: boolean
@@ -3125,15 +3123,32 @@ export interface AppDependencyRequest {
   confirm?: boolean
 }
 
+/** 应用级设置：链路追踪 / 服务网格；全部缺省 = 空对象 */
+export interface AppSettings {
+  tracing?: boolean
+  /** 1-100；不填跟随组件默认 */
+  sampling?: number
+  mesh?: AppServiceMesh
+}
+
+/** settings = 期望值；live = 线上快照里的值；version = 乐观锁 */
+export interface AppSettingsView {
+  settings: AppSettings
+  live?: AppSettings | null
+  version: number
+}
+
 export interface AppOverview {
   appId: string
   status: string
   liveReleaseNo?: number | null
   services: AppServiceRow[]
   dependencies: AppDependencyRow[]
+  /** 含 '@app'（appFeatures.APP_SETTINGS_KEY）时表示应用设置有待发布改动 */
   pendingKeys: string[]
   activeExecution?: AppExecution | null
   lastExecution?: AppExecution | null
+  settings: AppSettingsView
 }
 
 /** 发布预览（/application/release/preview）。problems 阻断发布；warnings 只提示 */
@@ -3171,6 +3186,8 @@ export interface AppRelease {
   live: boolean
   snapshot?: {
     services?: Record<string, AppServiceDesired>
+    /** 应用级设置（链路追踪 / 网格）；没设置时不出现 */
+    app?: AppSettings | null
     dependencies?: Array<{ key: string; type: string; ownership?: string | null; instanceId?: string | null; external?: Record<string, unknown> | null }>
   } | null
   objects?: AppObjectRef[] | null

@@ -25,6 +25,7 @@ import AppDependencyDialog from '@/components/app-release/AppDependencyDialog.vu
 import AppDependencyDetail from '@/components/app-release/AppDependencyDetail.vue'
 import AppTopology from '@/components/app-release/AppTopology.vue'
 import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
+import AppSettingsPanel from '@/components/app-release/AppSettingsPanel.vue'
 import { INIT_STATUS, depStatus, ownershipText, usersOf } from '@/components/app-release/dependencyUtil'
 import { isRunning } from '@/components/app-release/releaseUtil'
 import type { AppDependencyRow, AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
@@ -440,6 +441,15 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
             <template #default="{ row }"><el-button link type="primary" @click="openDepDetail(row)">详情</el-button></template>
           </el-table-column>
         </el-table>
+      </section>
+
+      <section v-if="overview.settings" class="panel app-detail__sec">
+        <div class="app-detail__sec-head">
+          <h3>应用设置</h3>
+          <span class="muted">链路追踪与服务网格作用于全部服务</span>
+        </div>
+        <AppSettingsPanel :app-id="appId" :tenant-id="tenantId" :cluster-id="app?.clusterId" :namespace="app?.namespace"
+                          :view="overview.settings" :editable="editable" @saved="load(true)" />
       </section>
 
       <el-tabs v-model="bottomTab" class="app-detail__tabs">

@@ -11,7 +11,7 @@ import { ElMessage } from 'element-plus'
 import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
 import type { AppRelease } from '@/types'
-import { diffDependencies, diffServices, errMsg, imageTag } from './releaseUtil'
+import { diffAppSettings, diffDependencies, diffServices, errMsg, imageTag } from './releaseUtil'
 import { FEATURE_LABELS, requiredFlags } from './appFeatures'
 import { useClusterComponents } from '@/composables/useClusterComponents'
 
@@ -70,9 +70,10 @@ watch(() => [props.modelValue, props.targetNo, props.liveNo] as const, async ([o
 const comps = useClusterComponents(computed(() => props.clusterId))
 const featureWarnings = computed<string[]>(() => {
   const services = target.value?.snapshot?.services ?? {}
+  const settings = target.value?.snapshot?.app ?? null
   const out: string[] = []
   for (const key of Object.keys(services).sort()) {
-    for (const code of requiredFlags(services[key])) {
+    for (const code of requiredFlags(services[key], settings)) {
       if (comps.available(code)) continue
       out.push(`服务 ${key}：${FEATURE_LABELS[code] ?? code}依赖的组件当前不可用（${comps.unavailableReason(code)}），回滚后不生效`)
     }
@@ -82,6 +83,7 @@ const featureWarnings = computed<string[]>(() => {
 
 const backToLive = computed(() => props.targetNo != null && props.targetNo === props.liveNo)
 const serviceDiffs = computed(() => (target.value && live.value ? diffServices(live.value.snapshot, target.value.snapshot) : []))
+const appDiff = computed(() => (target.value && live.value ? diffAppSettings(live.value.snapshot, target.value.snapshot) : []))
 const depDiffs = computed(() => (target.value && live.value ? diffDependencies(live.value.snapshot, target.value.snapshot) : []))
 const TYPE_META = {
   ADDED: { text: '将重建', type: 'success' },
@@ -130,8 +132,13 @@ async function submit(): Promise<void> {
         <div v-if="backToLive" class="app-rb-dlg__muted">
           目标就是线上快照，服务配置没有差异；若上一次发布已经下发了部分对象，回滚会按这份快照重新对齐。
         </div>
-        <div v-else-if="!serviceDiffs.length && !depDiffs.length" class="app-rb-dlg__muted">两份快照没有差异。</div>
+        <div v-else-if="!serviceDiffs.length && !depDiffs.length && !appDiff.length" class="app-rb-dlg__muted">两份快照没有差异。</div>
         <ul v-else class="app-rb-dlg__list">
+          <li v-if="appDiff.length">
+            <StatusBadge :label="TYPE_META.CHANGED.text" :type="TYPE_META.CHANGED.type" />
+            <b>应用设置</b>
+            <span class="app-rb-dlg__muted">{{ appDiff.join('、') }}（作用于全部服务）</span>
+          </li>
           <li v-for="d in serviceDiffs" :key="'s' + d.key">
             <StatusBadge :label="TYPE_META[d.type].text" :type="TYPE_META[d.type].type" />
             <b>服务 {{ d.key }}</b>

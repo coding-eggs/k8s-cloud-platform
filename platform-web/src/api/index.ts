@@ -9,6 +9,8 @@ import type {
   AppReleasePreview,
   AppServiceDesired,
   AppServiceView,
+  AppSettings,
+  AppSettingsView,
   ApplicationOptions,
   ApplicationView,
   AuditLog,
@@ -1282,6 +1284,9 @@ export const appServiceApi = {
   }) => http.post<never, AppServiceView>('/application/service/update', payload),
   remove: (payload: { appId: string; serviceKey: string; version: number; tenantId?: string }) =>
     http.post<never, void>('/application/service/remove', payload),
+  /** 应用设置（链路追踪 / 网格）；只写期望值，发布勾选「应用设置」后生效 */
+  updateSettings: (payload: { appId: string; settings: AppSettings; version: number; tenantId?: string }) =>
+    http.post<never, AppSettingsView>('/application/settings/update', payload),
 }
 
 /** 应用依赖（/application/dependency/*）：添加（新建 / 绑定 / 外部）、移除、初始化 */

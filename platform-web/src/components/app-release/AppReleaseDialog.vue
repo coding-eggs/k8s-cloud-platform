@@ -7,6 +7,7 @@
  * 「日常发版」= 只改某服务的 tag：行内 tag 输入框与期望配置不同时，作为 `images` 覆盖随预览与创建一起发出，
  * 不需要先去服务配置页保存。
  * 创建失败（含「线上已变化，请刷新后重试」）时错误原文留在对话框内，重新拉预览，勾选与说明保持不动。
+ * 应用设置（链路追踪 / 网格）有待发布改动时单列一行，勾选键为 APP_SETTINGS_KEY；勾上会让全部服务滚动。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -15,6 +16,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import AppTagInput from './AppTagInput.vue'
 import type { AppReleasePreview, AppServiceRow } from '@/types'
 import { errMsg, imageTag } from './releaseUtil'
+import { APP_SETTINGS_KEY } from './appFeatures'
 
 const props = defineProps<{
   modelValue: boolean
@@ -41,6 +43,9 @@ const previewing = ref(false)
 const submitting = ref(false)
 /** 创建 / 预览失败的原文，留在对话框内 */
 const error = ref('')
+
+const appPending = computed(() => props.pendingKeys.includes(APP_SETTINGS_KEY))
+const keyLabel = (key: string): string => (key === APP_SETTINGS_KEY ? '应用设置' : key)
 
 const rowOf = (key: string): AppServiceRow | undefined => props.services.find((s) => s.key === key)
 const isDeleted = (r: AppServiceRow): boolean => r.pending === 'DELETED'
@@ -208,7 +213,15 @@ async function submit(): Promise<void> {
       </el-table-column>
     </el-table>
 
-    <div v-if="!selected.length" class="app-rel-dlg__empty">请至少勾选一个服务。</div>
+    <div v-if="appPending" class="app-rel-dlg__app">
+      <el-checkbox :model-value="selected.includes(APP_SETTINGS_KEY)" @change="(v: unknown) => toggle(APP_SETTINGS_KEY, v)">
+        <b>应用设置</b>
+      </el-checkbox>
+      <el-tag size="small" effect="light" type="warning">有改动</el-tag>
+      <span class="app-rel-dlg__muted">链路追踪 / 服务网格作用于全部服务：勾选后所有服务都会滚动重启。</span>
+    </div>
+
+    <div v-if="!selected.length" class="app-rel-dlg__empty">请至少勾选一项。</div>
 
     <div v-loading="previewing" class="app-rel-dlg__preview">
       <el-alert
@@ -237,7 +250,7 @@ async function submit(): Promise<void> {
         <ul v-else class="app-rel-dlg__changes">
           <li v-for="c in preview.changes" :key="c.key" :class="{ 'is-out': !preview.selectedKeys.includes(c.key) }">
             <StatusBadge :label="CHANGE_META[c.type]?.text ?? c.type" :type="CHANGE_META[c.type]?.type ?? 'neutral'" />
-            <b>{{ c.key }}</b>
+            <b>{{ keyLabel(c.key) }}</b>
             <span v-if="c.fromImage || c.toImage">
               <code>{{ imageTag(c.fromImage) || '—' }}</code> → <code>{{ imageTag(c.toImage) || '—' }}</code>
             </span>
@@ -275,6 +288,7 @@ async function submit(): Promise<void> {
 .app-rel-dlg .app-rel-dlg__tag { margin-left: 8px; }
 .app-rel-dlg .app-rel-dlg__newtag { display: block; font-size: 12px; margin-top: 2px; }
 .app-rel-dlg .app-rel-dlg__muted { color: var(--el-text-color-secondary); font-size: 12px; }
+.app-rel-dlg .app-rel-dlg__app { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .app-rel-dlg .app-rel-dlg__empty { margin: 10px 0; color: var(--el-text-color-secondary); font-size: 13px; }
 .app-rel-dlg .app-rel-dlg__preview { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 24px; }
 .app-rel-dlg .app-rel-dlg__preview h4 { margin: 6px 0 0; font-size: 13px; }

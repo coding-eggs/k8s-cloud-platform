@@ -30,13 +30,12 @@ import AppTagInput from '@/components/app-release/AppTagInput.vue'
 import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
 import AppServiceOtelForm from '@/components/app-release/AppServiceOtelForm.vue'
-import AppServiceMeshForm from '@/components/app-release/AppServiceMeshForm.vue'
 import AppServiceRuntimeRows from '@/components/app-release/AppServiceRuntimeRows.vue'
 import { useClusterComponents } from '@/composables/useClusterComponents'
 import { parseQuantity } from '@/utils/quantity'
 import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
-import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, ApplicationView, K8sPod, K8sService } from '@/types'
+import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, AppSettings, ApplicationView, K8sPod, K8sService } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
 
 const route = useRoute()
@@ -53,6 +52,8 @@ const app = ref<ApplicationView | null>(null)
 const row = ref<AppServiceRow | null>(null)
 const pendingKeys = ref<string[]>([])
 const allRows = ref<AppServiceRow[]>([])
+/** 应用设置（期望值）：可观测页签据此说明本服务是否会被链路追踪 */
+const appSettings = ref<AppSettings>({})
 const deps = ref<AppDependencyRow[]>([])
 const loading = ref(false)
 const notFound = ref(false)
@@ -85,7 +86,7 @@ const saved = ref<AppServiceDesired | null>(null)
 
 // ---------- 组件门禁（spec 2026-11-07 §2）：未探测 = 不可用 ----------
 const comps = useClusterComponents(computed(() => app.value?.clusterId))
-const GATED_CODES = ['hpa-resource-metrics', 'servicemonitor', 'otel-collection', 'otel-logs', 'ambient-mesh']
+const GATED_CODES = ['hpa-resource-metrics', 'servicemonitor', 'otel-collection', 'otel-logs']
 const flagAvailable = computed<Record<string, boolean>>(() =>
   Object.fromEntries(GATED_CODES.map((c) => [c, comps.available(c)])))
 const flagReasons = computed<Record<string, string>>(() =>
@@ -143,12 +144,6 @@ function buildDesired(): AppServiceDesired {
   if (!d.port || d.expose !== 'nodeport') {
     delete d.expose
     delete d.nodePort
-  }
-  // waypoint 只挂在 Service 上：无端口的服务不带 useWaypoint（后端同样拒绝）
-  if (!d.port && d.mesh?.useWaypoint) {
-    const { useWaypoint: _drop, ...rest } = d.mesh
-    if (rest.dataplaneMode) d.mesh = rest
-    else delete d.mesh
   }
   return d
 }
@@ -248,6 +243,7 @@ async function load(opts: { keepForm?: boolean } = {}): Promise<void> {
     allRows.value = o.services
     pendingKeys.value = o.pendingKeys
     deps.value = o.dependencies
+    appSettings.value = o.settings?.settings ?? {}
     const r = o.services.find((s) => s.key === target) ?? null
     row.value = r
     if (!r) { notFound.value = true; return }
@@ -353,16 +349,19 @@ const ctx = computed(() => ({
 }))
 const runtimeReady = computed(() => !!row.value && row.value.state !== 'NOT_RELEASED' && !!app.value)
 
-/** 线上快照里本服务的期望配置（概览三行只看它：改了没发布的不算） */
+/** 线上快照里本服务的期望配置与应用设置（概览三行只看它们：改了没发布的不算） */
 const liveDesired = ref<AppServiceDesired | null>(null)
+const liveSettings = ref<AppSettings | null>(null)
 async function loadLiveDesired(): Promise<void> {
   const no = app.value?.liveReleaseNo
-  if (!runtimeReady.value || no == null) { liveDesired.value = null; return }
+  if (!runtimeReady.value || no == null) { liveDesired.value = null; liveSettings.value = null; return }
   try {
     const r = await appReleaseApi.get(appId.value, no, tenantId.value ?? undefined)
     liveDesired.value = r?.snapshot?.services?.[key.value] ?? null
+    liveSettings.value = r?.snapshot?.app ?? null
   } catch {
     liveDesired.value = null
+    liveSettings.value = null
   }
 }
 watch([runtimeReady, () => app.value?.liveReleaseNo, key], () => { void loadLiveDesired() }, { immediate: true })
@@ -474,7 +473,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <code>{{ workloadName }}</code>
             <el-button v-if="runtimeReady" link type="primary" @click="openWorkloadPage">查看工作负载详情</el-button>
           </div>
-          <AppServiceRuntimeRows v-if="runtimeReady" :live="liveDesired" :workload-name="workloadName" :ctx="ctx" />
+          <AppServiceRuntimeRows v-if="runtimeReady" :live="liveDesired" :live-settings="liveSettings" :workload-name="workloadName" :ctx="ctx" />
           <el-alert v-if="orphan" class="app-svc__alert" type="warning" :closable="false" show-icon
                     title="线上有这个服务，但应用里已没有它的配置记录。配置不可编辑，可在发布时勾选删除。" />
         </section>
@@ -620,14 +619,8 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 
           <el-tab-pane label="可观测" name="observability">
             <AppServiceOtelForm v-model="form.otel" :original="saved?.otel" :workload-name="workloadName"
-                                :readonly="readonly" :available="flagAvailable" :reasons="flagReasons" />
-          </el-tab-pane>
-
-          <el-tab-pane label="服务网格" name="mesh">
-            <AppServiceMeshForm v-model="form.mesh" :original="saved?.mesh"
-                                :tenant-id="ctx.tenantId" :cluster-id="ctx.clusterId" :namespace="ctx.namespace"
-                                :is-service="!!form.port" :readonly="readonly"
-                                :mesh-available="!!flagAvailable['ambient-mesh']" :mesh-reason="flagReasons['ambient-mesh']" />
+                                :readonly="readonly" :available="flagAvailable" :reasons="flagReasons"
+                                :app-tracing="!!appSettings.tracing" />
           </el-tab-pane>
         </el-tabs>
 

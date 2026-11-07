@@ -73,6 +73,9 @@ const FIELD_LABEL: Record<string, string> = {
   persistenceEnabled: '持久化', storageSize: '存储大小', storageClass: '存储类', mountPath: '挂载路径',
   autoscalingEnabled: '自动扩缩', minReplicas: '最小副本', maxReplicas: '最大副本', targetCpu: '目标 CPU',
   probeEnabled: '健康探针', probePath: '探针路径', metricsEnabled: '指标采集', metricsPath: '指标路径', expose: '对外暴露', nodePort: 'NodePort 端口',
+  targetMemory: '目标内存', otel: '可观测',
+  // 应用设置的字段
+  tracing: '链路追踪', sampling: '采样率', mesh: '服务网格',
 }
 export const fieldLabel = (k: string): string => FIELD_LABEL[k] ?? k
 
@@ -141,6 +144,14 @@ export function diffServices(live: AppRelease['snapshot'], target: AppRelease['s
     }
   }
   return out
+}
+
+/** 应用设置（链路追踪 / 网格）的差异字段；没差异返回空数组 */
+export function diffAppSettings(live: AppRelease['snapshot'], target: AppRelease['snapshot']): string[] {
+  const l = (live?.app ?? {}) as Record<string, unknown>
+  const t = (target?.app ?? {}) as Record<string, unknown>
+  return [...new Set([...Object.keys(l), ...Object.keys(t)])].sort()
+    .filter((f) => !same(l[f], t[f])).map(fieldLabel)
 }
 
 export interface DependencyDiff { key: string; type: 'ADDED' | 'REMOVED' | 'CHANGED' }
