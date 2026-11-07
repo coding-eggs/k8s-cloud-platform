@@ -57,7 +57,7 @@ spring:
           # 与 platform-api 同值：网关把同一个 token 透传给 api / auth / k8s-server
           audiences: ${JWT_AUDIENCES:platform-web-client}
           # ⚠️ OAUTH2_SERVER 必须带 /auth（auth 的 context-path），否则拉不到密钥 → 全站 401
-          jwk-set-uri: http://${AUTH_HOST:127.0.0.1}:${AUTH_PORT:9527}/auth/oauth2/jwks
+          jwk-set-uri: ${AUTH_URL:http://127.0.0.1:9527}/auth/oauth2/jwks
           # 三种 token 与 platform-api / k8s-server 同一组键、必须配成同样的值（见 GatewayJwtDecoders）：
           #   不配 jws/jwe      → 按 jwk-set-uri 验非对称签名（当前）
           #   jws:              → 对称签名（HMAC）
@@ -109,9 +109,9 @@ platform:
     # PLATFORM_API_CONTEXT_PATH：api 的 server.servlet.context-path。默认 /api；
     #   部署第一阶段用的是加 /api 之前的 api 构建（427753eb），那时要设成空串。
     routes:
-      - { service: platform-auth, external-prefix: /api/oauth-clients/, internal-prefix: /internal/clients/, uri: "${PLATFORM_AUTH_URL:http://127.0.0.1:9527}", context-path: /auth }
-      - { service: platform-auth, external-prefix: /api/jwks/,          internal-prefix: /internal/jwk/,     uri: "${PLATFORM_AUTH_URL:http://127.0.0.1:9527}", context-path: /auth }
-      - { service: platform-api,  external-prefix: /api/,               internal-prefix: /,                  uri: "${PLATFORM_API_URL:http://127.0.0.1:8081}",   context-path: "${PLATFORM_API_CONTEXT_PATH:/api}" }
+      - { service: platform-auth, external-prefix: /api/oauth-clients/, internal-prefix: /internal/clients/, uri: "${AUTH_URL:http://127.0.0.1:9527}", context-path: /auth }
+      - { service: platform-auth, external-prefix: /api/jwks/,          internal-prefix: /internal/jwk/,     uri: "${AUTH_URL:http://127.0.0.1:9527}", context-path: /auth }
+      - { service: platform-api,  external-prefix: /api/,               internal-prefix: /,                  uri: "${API_URL:http://127.0.0.1:8081}",   context-path: "${API_CONTEXT_PATH:/api}" }
 
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml
