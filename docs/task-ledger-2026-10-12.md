@@ -302,7 +302,7 @@
 > 因此 S3.5 里只做一次**最小 capability 探测**，并在其 spec 里写明「将来 S1.2 接手这块门控」，
 > 免得探测逻辑写死在两处。
 
-#### S1.3 平台总览 ｜ 规模 M ｜ ✅ **已实施待部署（2026-11-06）**
+#### S1.3 平台总览 ｜ 规模 M ｜ ✅ **已完成（2026-11-07 用户确认收口）**，已实施待部署
 > 租户概览已在做；本项是**平台视角**的总览（分析文档 T4-2 对侧）。
 
 - [x] S1.3.1 **D5 决策**（口径）
@@ -311,6 +311,11 @@
 - [x] S1.3.4 各维度概览补全：集群 / 命名空间 / 租户（平台侧详情 + 租户工作台）/ 节点 加计数卡与水位
 
 > **部署**：**先重放 `V2026_11_06_4`**（否则 platform-api 启动 fail-closed）→ 重建 platform-common + k8s-core + k8s-server + platform-data + platform-api + platform-web → 重新登录。可选配置 `PLATFORM_GATEWAY_HEALTH_URL`（空 = 平台服务健康不探测网关）。auth / k8s-server 的 `/actuator/**` 已匿名放行，无需改安全配置。
+>
+> **收口期增补（2026-11-06 ~ 11-07，同批部署，无新迁移）**：
+> - 各概览统一版式（状态卡 / 容量子弹图 / 清单条），节点详情改用子弹图；租户 Top 5 去掉，明细按配额占用排序
+> - limits 口径：平台 / 集群总览与节点页 **limits 对可分配量**（= 超卖倍数）；租户 / 命名空间概览 **requests 对 requests 配额、limits 对 limits 配额**（ResourceQuota `limits.cpu` / `limits.memory`，两条独立的线），明细行与「需要关注」取四维最高
+> - 顺带补齐 `/user/update`、`/user/delete`（软删，用户名不释放；不能动自己 / 最后一个启用的管理员）、`/role/update`（只改名称 / 描述）—— 消掉启动时的 RBAC 幽灵行告警；禁用用户后已登录会话 ≤30s 失去全部权限（权限闭包看 `status`）。权限行早在 seed 里、admin 按 `platform:%` 全绑，**无需 SQL**；涉及 platform-common，随上面的重建一起发
 
 ---
 
@@ -1034,7 +1039,7 @@ Prometheus 的 management recipe）；异步操作记录 + 轮询；release 名�
 | **S0.2** | 凭据与连接管理 | — | M | ✅ **已实施待部署** | [spec](superpowers/specs/2026-10-13-credential-management-design.md) · [plan](superpowers/plans/2026-10-13-credential-management.md) |
 | **S1.1** | 用户自助 | — | S | ✅ **已实施待部署**（2026-10-16；`5d8fd8e`+`a2ac99d`+`f427ae6`+`bb955a6`。改密码 / 改资料 + 清掉两个死 URL。**要重建 platform-auth + platform-web**；无迁移。⚠️ 顺手修了个既有配置错：`@EnableRedisHttpSession` 建的是**无索引版**仓库，"按用户名踢会话"要 `@EnableRedisIndexedHttpSession` —— 见 `RedisSessionConfig`。S1.1.4（登录失败锁定 / 在线会话管理）**按用户决定未做**） | — |
 | **S1.2** | 集群组件展示 | — | M | ✅ **已实施待部署**（2026-10-17；9 任务 / 全模块测试绿；真集群实测 10 装 1 缺）。部署：**k8s-server + platform-api + platform-web**，先重放 `V2026_10_17_4` | [spec](superpowers/specs/2026-10-17-cluster-components-design.md) · [plan](superpowers/plans/2026-10-17-cluster-components.md) |
-| **S1.3** | 平台总览 + 各维度概览 | — | M | ✅ **已实施待部署**（2026-11-06）。部署：**先重放 `V2026_11_06_4`**，重建 platform-common + k8s-core + k8s-server + platform-data + platform-api + platform-web，**重新登录** | [spec](superpowers/specs/2026-11-06-overview-pages-design.md) · [plan](superpowers/plans/2026-11-06-overview-pages.md) |
+| **S1.3** | 平台总览 + 各维度概览 | — | M | ✅ **已完成（2026-11-07 用户确认收口）**，已实施待部署。部署：**先重放 `V2026_11_06_4`**，重建 platform-common + k8s-core + k8s-server + platform-data + platform-api + platform-web，**重新登录** | [spec](superpowers/specs/2026-11-06-overview-pages-design.md) · [plan](superpowers/plans/2026-11-06-overview-pages.md) |
 | **S2.1** | 工作负载级日志 | — | M | ✅ **已实施待部署**（2026-10-16 收口；**2026-10-17 用户验收通过，需求完结**） | [spec](superpowers/specs/2026-10-16-workload-logs-design.md) · [plan](superpowers/plans/2026-10-16-workload-logs.md) |
 | **S2.2** | 告警 | — | L | ✅ **已实施待部署**（2026-10-17 主体 19 任务；**2026-10-20 补 S2.2.4 通知方式 + S2.2.5 收口**，全项目 983 绿）。部署：**先重放 `V2026_10_17_3` 再重放 `V2026_10_19_8`**，再起构建；重建 platform-data + platform-common + k8s-core + k8s-server + platform-api + platform-web，**重新登录**；⚠️ `ALERT_WEBHOOK_TOKEN` 不配则 platform-api **拒启**；集群侧四步见 cluster-prerequisites §1.8（matcherStrategy 与 sendResolved 会静默半工作）；**部署后到「通知方式」页建一条邮件渠道并设默认**，否则投递记 `FAILED("未配置通知渠道")` | [spec](superpowers/specs/2026-10-17-alerting-design.md) · [plan](superpowers/plans/2026-10-17-alerting.md) · S2.2.4 [spec](superpowers/specs/2026-10-19-notification-design.md) [plan](superpowers/plans/2026-10-19-notification.md) |
 | **S2.3** | 日志采集 + OTel | S0.2、D2/D3 | L | ✅ **已完成（2026-10-19）**。部署：**先重放 `V2026_10_19_6` + `V2026_10_19_7`**，重建 platform-api + k8s-server + platform-web；集群侧配 ES 连接与 `monitor` 内的 ES 凭证 Secret。采集 = otel-operator 组件（operator + Tempo + collector + sidecar），查询 = 日志查询中心 + 链路追踪（租户按分配表收窄） | [spec](superpowers/specs/2026-10-18-otel-observability-design.md) · 组件文档在 `k8s-server/src/main/resources/charts/components/<chart>/<version>/README.md` |
@@ -1069,6 +1074,10 @@ S1.2 集群组件展示 ──▶ S3.4 Operator 管理（另需 D1）  ← 已�
 
 > 已完成的从这份名单里划掉：S0.1 审计、S0.2 凭据、S1.1 用户自助、S1.2 集群组件展示、S2.1 工作负载级日志、S2.2 告警、S4.1 PVC 扩容、S2.4 服务网格可视化、S4.3 VolumeSnapshot、S3.2 应用级交付、S1.3 平台总览。
 > S4.2 从「可立即开工」改为**待定**（用户要先想清「对外暴露」的产品规划）。
+>
+> **2026-11-07：本台账的可做批已全部收口**（用户确认）。仍挂着、但都不是「漏做」的只有两项：
+> **S4.2 Istio 表单补偿**（⏸ 待定，等「对外暴露」产品规划）、**S2.4.3 链路追踪**（后期会做，需先有追踪后端 + 业务透传 `traceparent`）。
+> 各批「已实施待部署」的部署前置（迁移重放顺序、重下发模板、重新登录）见上表各行。
 
 > **S0.1（审计）建议最优先** —— 它是唯一「不做就补不回来」的，而且凭据使用、CI 触发、Operator 安装
 > 这些高危动作都指望它留痕。
