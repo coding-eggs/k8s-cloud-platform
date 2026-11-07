@@ -6,6 +6,7 @@ import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.GatewayListenerDTO;
 import com.coding.common.models.k8s.dto.PersistentVolumeClaimDTO;
 import com.coding.common.models.k8s.dto.ReleaseInstallSpecDTO;
+import com.coding.common.models.k8s.dto.StorageClassDTO;
 import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.components.ComponentRecipe;
@@ -50,7 +51,6 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
@@ -254,7 +254,7 @@ public class ComponentInstallService {
         // Tempo 的持久化是 STS 的 volumeClaimTemplates（不可变）：已装实例上改会在下发时被拒。
         // 只拿**成功**记录比：失败记录里的值还没真正落成 STS，不该挡用户改
         validateTempoPersistence(merged, last);
-        validateCsiNfsStorageClass(merged, last);
+        validateCsiNfsStorageClass(req.getClusterId(), merged);
         // 对象存储的 PVC / 副本数落在嵌套结构里（volume.dataDirs 是 list），由表单参数拼进来
         if (seaweed != null) {
             merged = applySeaweedValues(merged, seaweed);
@@ -437,39 +437,72 @@ public class ComponentInstallService {
      * {@code nfs-csi} 存储类的两条规则，都要赶在 helm 之前说人话：
      * <ul>
      *   <li>NFS 地址 / 导出目录必填：空值下 chart 能渲染成功，但建出来的存储类永远开不出卷；</li>
-     *   <li>已装实例上不能改：StorageClass 的 parameters / reclaimPolicy 不可变，
+     *   <li>和<b>集群里实际的</b>存储类冲突就拒：StorageClass 的 parameters / reclaimPolicy 不可变，
      *       改了 helm 会在中途被 API server 拒。</li>
      * </ul>
+     *
+     * <p>比的是线上存储类，<b>不是</b>上次成功操作的快照：
+     * <ul>
+     *   <li>存储类不在（管理员为了换回收策略先删掉了它）→ 放行，helm 按新值重建 —— 这是改这几项唯一走得通的路；</li>
+     *   <li>线上与本次一致 → 放行（快照落后于集群时也能借此对齐：2026-11-07 手工按 Delete 重建过 nfs-csi，
+     *       快照还记着 Retain，按快照比会把「对齐到集群」也拦掉）；</li>
+     *   <li>不一致 → 拒，并告诉用户要先删存储类。</li>
+     * </ul>
      */
-    @SuppressWarnings("unchecked")
-    private static void validateCsiNfsStorageClass(List<ReleaseSpec> releases,
-                                                   PlatformComponentOperation lastSuccess) {
-        Map<String, Map<String, Object>> previous = lastSuccess == null
-                ? Map.of() : parseSnapshot(lastSuccess.getValuesSnapshot());
+    private void validateCsiNfsStorageClass(String clusterId, List<ReleaseSpec> releases) {
         for (ReleaseSpec release : releases) {
             if (!"csi-driver-nfs".equals(release.chartCode())
-                    || !(release.contractValues().get("storageClass") instanceof Map<?, ?> sc)) {
+                    || !(release.contractValues().get("storageClass") instanceof Map<?, ?>)) {
                 continue;
             }
-            Map<String, Object> params = sc.get("parameters") instanceof Map<?, ?> p
-                    ? (Map<String, Object>) p : Map.of();
-            if (!StringUtils.hasText(String.valueOf(params.getOrDefault("server", "")))
-                    || !StringUtils.hasText(String.valueOf(params.getOrDefault("share", "")))) {
+            List<StorageClassDTO> live;
+            try {
+                StorageClassDTO query = new StorageClassDTO();
+                query.setClusterId(clusterId);
+                live = k8s.list(query);
+            } catch (Exception ex) {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
-                        "请填写 NFS 服务地址和导出目录");
+                        "读不到集群里的存储类，无法确认 " + ComponentRecipeCatalog.CSI_NFS_STORAGE_CLASS
+                                + " 能否按本次的值更新：" + ex.getMessage());
             }
-            Map<String, Object> prevValues = previous.get(release.releaseName());
-            if (prevValues == null || !(prevValues.get("storageClass") instanceof Map<?, ?> before)) {
-                continue;
-            }
-            Map<String, Object> prevParams = before.get("parameters") instanceof Map<?, ?> p
-                    ? (Map<String, Object>) p : Map.of();
-            if (!params.equals(prevParams) || !Objects.equals(sc.get("reclaimPolicy"), before.get("reclaimPolicy"))) {
-                throw new CloudPlatformException(EnumResponseType.ERROR,
-                        "存储类 " + ComponentRecipeCatalog.CSI_NFS_STORAGE_CLASS
-                                + " 的 NFS 地址、导出目录和回收策略在已安装的实例上不能修改：StorageClass 这几项不可变");
+            String problem = csiNfsStorageClassProblem(release, live == null ? List.of() : live);
+            if (problem != null) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, problem);
             }
         }
+    }
+
+    /** 纯判定（单测覆盖）：返回 null = 可以下发；否则是给用户的说明。 */
+    @SuppressWarnings("unchecked")
+    static String csiNfsStorageClassProblem(ReleaseSpec release, List<StorageClassDTO> liveClasses) {
+        Map<String, Object> sc = (Map<String, Object>) release.contractValues().get("storageClass");
+        Map<String, Object> params = sc.get("parameters") instanceof Map<?, ?> p
+                ? (Map<String, Object>) p : Map.of();
+        if (!StringUtils.hasText(String.valueOf(params.getOrDefault("server", "")))
+                || !StringUtils.hasText(String.valueOf(params.getOrDefault("share", "")))) {
+            return "请填写 NFS 服务地址和导出目录";
+        }
+        StorageClassDTO live = liveClasses.stream()
+                .filter(c -> ComponentRecipeCatalog.CSI_NFS_STORAGE_CLASS.equals(c.getName()))
+                .findFirst().orElse(null);
+        if (live == null) {
+            return null;
+        }
+        Map<String, String> wanted = new LinkedHashMap<>();
+        params.forEach((k, v) -> wanted.put(k, v == null ? null : String.valueOf(v)));
+        // null = k8s-server 还是旧版、没回这个字段（新版对无参数的存储类回空 map）→ 参数当未知、只比回收策略，
+        // 否则先发 platform-api 后发 k8s-server 的窗口里，nfs-csi 的任何编辑都会被误拦
+        boolean paramsKnown = live.getParameters() != null;
+        Map<String, String> actual = paramsKnown ? live.getParameters() : Map.of();
+        // chart 不写 reclaimPolicy 时 k8s 默认 Delete
+        String wantedPolicy = sc.get("reclaimPolicy") == null ? "Delete" : String.valueOf(sc.get("reclaimPolicy"));
+        String actualPolicy = live.getReclaimPolicy() == null ? "Delete" : live.getReclaimPolicy();
+        if ((!paramsKnown || wanted.equals(actual)) && wantedPolicy.equals(actualPolicy)) {
+            return null;
+        }
+        return "存储类 " + ComponentRecipeCatalog.CSI_NFS_STORAGE_CLASS + " 的 NFS 地址、导出目录和回收策略创建后不可修改"
+                + "（集群里现在是：" + actual.getOrDefault("server", "?") + ":" + actual.getOrDefault("share", "?")
+                + "，回收策略 " + actualPolicy + "）。如需更改，请先删除该存储类（不影响已有的卷），再保存";
     }
 
     /**

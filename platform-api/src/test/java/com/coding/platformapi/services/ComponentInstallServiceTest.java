@@ -1533,9 +1533,15 @@ class ComponentInstallServiceTest {
 
     @Test
     void csiNfsStorageClassCannotChangeOnAnInstalledCluster() {
-        // StorageClass 的 parameters / reclaimPolicy 不可变：不先拒，helm 会在中途失败
+        // StorageClass 的 parameters / reclaimPolicy 不可变：不先拒，helm 会在中途失败。
+        // 判据是集群里实际的存储类（不是快照），细分支见 CsiNfsStorageClassCheckTest
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "csi-driver-nfs")).thenReturn(0);
+        com.coding.common.models.k8s.dto.StorageClassDTO live = new com.coding.common.models.k8s.dto.StorageClassDTO();
+        live.setName("nfs-csi");
+        live.setReclaimPolicy("Retain");
+        live.setParameters(Map.of("server", "192.168.31.80", "share", "/data"));
+        when(k8s.list(any(com.coding.common.models.k8s.dto.StorageClassDTO.class))).thenReturn(List.of(live));
 
         PlatformComponentOperation prev = new PlatformComponentOperation();
         prev.setStatus("SUCCESS");
@@ -1547,7 +1553,7 @@ class ComponentInstallServiceTest {
                 Map.of("storageClass.parameters.share", "/other"));
 
         assertThatThrownBy(() -> service().apply(req, "admin"))
-                .hasMessageContaining("不能修改");
+                .hasMessageContaining("不可修改").hasMessageContaining("请先删除该存储类");
         verify(mapper, never()).insert(any());
     }
 

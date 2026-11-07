@@ -46,6 +46,7 @@ public class CoreV1StorageClassConverter implements CommonConverter<StorageClass
         }
         dto.setProvisioner(sc.getProvisioner());
         dto.setReclaimPolicy(sc.getReclaimPolicy());
+        dto.setParameters(sc.getParameters() != null ? Map.copyOf(sc.getParameters()) : Map.of());
         dto.setAllowVolumeExpansion(sc.getAllowVolumeExpansion());
         return dto;
     }

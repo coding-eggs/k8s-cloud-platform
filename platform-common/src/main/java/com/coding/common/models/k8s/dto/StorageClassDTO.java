@@ -18,6 +18,12 @@ public class StorageClassDTO extends BaseResources {
     /** 回收策略：Retain / Delete */
     private String reclaimPolicy;
 
+    /**
+     * 供应参数（仅查询返回），如 NFS 的 {@code server} / {@code share}。
+     * <p>与 provisioner、reclaimPolicy 一样创建后不可变 —— 组件编辑据此判断「改了会不会被 API server 拒」。
+     */
+    private java.util.Map<String, String> parameters;
+
     /** 是否允许扩容（仅查询返回） */
     private Boolean allowVolumeExpansion;
 
