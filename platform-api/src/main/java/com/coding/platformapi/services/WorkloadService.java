@@ -22,6 +22,7 @@ import com.coding.platformapi.k8s.K8sWorkloadClient;
 import com.coding.platformapi.models.WorkloadImageRequest;
 import com.coding.platformapi.models.WorkloadMeshToggleRequest;
 import com.coding.platformapi.models.WorkloadObservabilityRequest;
+import com.coding.platformapi.app.OtelInjection;
 import com.coding.platformapi.models.WorkloadRollbackRequest;
 import com.coding.platformapi.services.validation.WorkloadValidator;
 import lombok.RequiredArgsConstructor;
@@ -61,25 +62,16 @@ public class WorkloadService {
 
     // ==================== OTel 可观测接入（批次一） ====================
 
-    /** 注入注解前缀；第一批只支持 java / python */
-    private static final String OTEL_INJECT_PREFIX = "instrumentation.opentelemetry.io/inject-";
-    private static final Map<String, String> OTEL_INJECT_KEYS = Map.of(
-            "java", OTEL_INJECT_PREFIX + "java",
-            "python", OTEL_INJECT_PREFIX + "python");
-    private static final String OTEL_SERVICE_NAME_ENV = "OTEL_SERVICE_NAME";
-    /** 工作负载级采样率：这两个 env 会覆盖 Instrumentation 里的全局 sampler */
-    private static final String OTEL_TRACES_SAMPLER_ENV = "OTEL_TRACES_SAMPLER";
-    private static final String OTEL_TRACES_SAMPLER_ARG_ENV = "OTEL_TRACES_SAMPLER_ARG";
-    private static final String OTEL_SAMPLER_TYPE = "parentbased_traceidratio";
-    /** Instrumentation 所在命名空间（平台固定） */
-    private static final String OTEL_NAMESPACE = "monitor";
-    /** 文件日志：sidecar 注入注解与平台固定卷名（与 OtelObjects 的 sidecar CR 一致） */
-    private static final String OTEL_SIDECAR_ANNOTATION = "sidecar.opentelemetry.io/inject";
-    private static final String OTEL_SIDECAR_VALUE = OTEL_NAMESPACE + "/platform-otel-sidecar";
-    private static final String OTEL_LOG_VOLUME = "platform-otel-logs";
-    /** 平台写入的具体日志文件（sidecar 视角的路径），sidecar 用它拼 filelog include */
-    private static final String OTEL_LOG_FILE_ANNOTATION = "platform.coding/otel-log-file";
-    private static final String LOG_MODE_FILE = "file";
+    // 常量与计算都在 OtelInjection（与应用服务的 desired.otel 共用），这里只做别名，保持下方读线上对象的代码不变
+    private static final String OTEL_INJECT_PREFIX = OtelInjection.INJECT_PREFIX;
+    private static final Map<String, String> OTEL_INJECT_KEYS = OtelInjection.INJECT_KEYS;
+    private static final String OTEL_SERVICE_NAME_ENV = OtelInjection.SERVICE_NAME_ENV;
+    private static final String OTEL_TRACES_SAMPLER_ENV = OtelInjection.SAMPLER_ENV;
+    private static final String OTEL_TRACES_SAMPLER_ARG_ENV = OtelInjection.SAMPLER_ARG_ENV;
+    private static final String OTEL_SIDECAR_ANNOTATION = OtelInjection.SIDECAR_ANNOTATION;
+    private static final String OTEL_SIDECAR_VALUE = OtelInjection.SIDECAR_VALUE;
+    private static final String OTEL_LOG_VOLUME = OtelInjection.LOG_VOLUME;
+    private static final String OTEL_LOG_FILE_ANNOTATION = OtelInjection.LOG_FILE_ANNOTATION;
 
     private final K8sClient k8s;
     private final K8sWorkloadClient workloadClient;
@@ -438,38 +430,10 @@ public class WorkloadService {
      * {@code OTEL_SERVICE_NAME} 等字段不动。
      */
     public WorkloadDTO observability(WorkloadObservabilityRequest req) {
-        boolean fileLogs = req.isLogs() && LOG_MODE_FILE.equalsIgnoreCase(req.getLogMode());
-        // 应用日志（agent appender）才需要 Instrumentation；文件日志靠 sidecar 注入
-        boolean agentEnabled = req.isTracing() || (req.isLogs() && !fileLogs);
-        String language = req.getLanguage() == null ? null : req.getLanguage().trim().toLowerCase();
-        if (agentEnabled && !OTEL_INJECT_KEYS.containsKey(language)) {
-            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "不支持的应用类型：" + req.getLanguage() + "（第一批只支持 java / python）");
-        }
-        // 文件日志指定**具体文件**（不是整个目录）：平台把父目录挂成 emptyDir，
-        // sidecar 侧只采这一个文件（支持 access.log* 这样的 glob，连带轮转文件）
-        String logDir = null;
-        String logFileName = null;
-        if (fileLogs) {
-            String logFile = req.getLogFile() == null ? "" : req.getLogFile().trim();
-            int slash = logFile.lastIndexOf('/');
-            if (!logFile.startsWith("/") || slash <= 0) {
-                throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                        "日志文件必须是容器内的绝对路径（以 / 开头）");
-            }
-            if (slash == logFile.length() - 1) {
-                throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                        "请填到具体日志文件（如 /var/log/nginx/access.log），不要填目录");
-            }
-            logDir = logFile.substring(0, slash);
-            logFileName = logFile.substring(slash + 1);
-        }
-        // 采样率：空 = 跟随组件默认；给了就必须是 1..100
-        Integer sampling = req.getSampling();
-        if (sampling != null && (sampling < 1 || sampling > 100)) {
-            throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
-                    "采样率必须在 1..100 之间（收到 " + sampling + "）");
-        }
+        String serviceName = StringUtils.hasText(req.getServiceName()) ? req.getServiceName().trim() : req.getName();
+        // 校验与注解 / env 计算都在 OtelInjection（先于读集群：参数错了不发请求）
+        OtelInjection.Plan plan = OtelInjection.plan(req.getLanguage(), req.isTracing(), req.isLogs(),
+                req.getLogMode(), req.getLogFile(), req.getSampling(), serviceName);
 
         WorkloadDTO query = dto(req.getName(), req.getTenantId(), req.getClusterId(), req.getNamespace());
         query.setKind(req.getKind());
@@ -491,44 +455,29 @@ public class WorkloadService {
         Map<String, Object> annotations = existing.getPodTemplate().getAnnotations() == null
                 ? new LinkedHashMap<>()
                 : new LinkedHashMap<>(existing.getPodTemplate().getAnnotations());
-        // 先清掉所有语言的注入注解：切换语言 / 关闭时都不残留
+        // 先清掉所有语言的注入注解与平台自己的 sidecar 注解：切换语言 / 关闭 / 切日志方式时都不残留
         OTEL_INJECT_KEYS.values().forEach(annotations::remove);
-        if (agentEnabled) {
-            // 文件日志走 sidecar 的 filelog，不开应用日志 appender；此时即使 logs=true 也只选 tracing 版
-            String instrumentation = req.isTracing() && req.isLogs() && !fileLogs
-                    ? "platform-instrumentation-all"
-                    : req.isTracing() ? "platform-instrumentation" : "platform-instrumentation-logs";
-            annotations.put(OTEL_INJECT_KEYS.get(language),
-                    OTEL_NAMESPACE + "/" + instrumentation);
+        if (OTEL_SIDECAR_VALUE.equals(annotations.get(OTEL_SIDECAR_ANNOTATION))) {
+            annotations.remove(OTEL_SIDECAR_ANNOTATION);
         }
-        // 文件日志：sidecar 注入注解 + 具体文件注解；切回应用日志/关闭时只移除**平台自己的**注解值
-        if (fileLogs) {
-            annotations.put(OTEL_SIDECAR_ANNOTATION, OTEL_SIDECAR_VALUE);
-            // sidecar 把共享卷挂在 /var/log/app —— include 用这个视角的文件名
-            annotations.put(OTEL_LOG_FILE_ANNOTATION, "/var/log/app/" + logFileName);
-        } else {
-            if (OTEL_SIDECAR_VALUE.equals(annotations.get(OTEL_SIDECAR_ANNOTATION))) {
-                annotations.remove(OTEL_SIDECAR_ANNOTATION);
-            }
-            annotations.remove(OTEL_LOG_FILE_ANNOTATION);
-        }
+        annotations.remove(OTEL_LOG_FILE_ANNOTATION);
+        annotations.putAll(plan.podAnnotations());
         existing.getPodTemplate().setAnnotations(annotations.isEmpty() ? null : annotations);
 
-        if (fileLogs) {
+        if (plan.logMountDir() != null) {
             ContainerDTO container = targetContainer(existing, req.getContainerName());
             ensureLogVolume(existing.getPodTemplate());
-            ensureLogMount(container, logDir);
+            ensureLogMount(container, plan.logMountDir());
         } else {
             removeLogVolumeAndMounts(existing.getPodTemplate());
         }
 
-        if (agentEnabled) {
-            String serviceName = StringUtils.hasText(req.getServiceName())
-                    ? req.getServiceName().trim() : req.getName();
-            setServiceNameEnv(existing, req.getContainerName(), serviceName);
+        String name = plan.env().get(OTEL_SERVICE_NAME_ENV);
+        if (name != null) {
+            setServiceNameEnv(existing, req.getContainerName(), name);
         }
-        // 采样率：非空写工作负载级 env（覆盖组件默认），空则移除，回到组件采样率
-        setSamplingEnvs(existing, req.getContainerName(), req.isTracing() ? sampling : null);
+        // 采样率：有就写工作负载级 env（覆盖组件默认），没有则移除，回到组件采样率
+        setSamplingEnvs(existing, req.getContainerName(), plan.env());
         return k8s.update(existing);
     }
 
@@ -575,15 +524,16 @@ public class WorkloadService {
      * <p>为什么这样能覆盖组件默认：operator 注入 Instrumentation 的 sampler 时，
      * **容器里已有同名 env 就整块跳过**（v0.161.0 {@code internal/instrumentation/sdk.go}）。
      */
-    private static void setSamplingEnvs(WorkloadDTO workload, String containerName, Integer sampling) {
+    private static void setSamplingEnvs(WorkloadDTO workload, String containerName, Map<String, String> planEnv) {
         ContainerDTO container = targetContainer(workload, containerName);
         List<EnvDTO> envs = container.getEnvs() == null
                 ? new ArrayList<>() : new ArrayList<>(container.getEnvs());
         envs.removeIf(env -> OTEL_TRACES_SAMPLER_ENV.equals(env.getName())
                 || OTEL_TRACES_SAMPLER_ARG_ENV.equals(env.getName()));
-        if (sampling != null) {
-            envs.add(otelEnv(OTEL_TRACES_SAMPLER_ENV, OTEL_SAMPLER_TYPE));
-            envs.add(otelEnv(OTEL_TRACES_SAMPLER_ARG_ENV, samplingRatio(sampling)));
+        for (String key : List.of(OTEL_TRACES_SAMPLER_ENV, OTEL_TRACES_SAMPLER_ARG_ENV)) {
+            if (planEnv.containsKey(key)) {
+                envs.add(otelEnv(key, planEnv.get(key)));
+            }
         }
         container.setEnvs(envs);
     }
@@ -593,12 +543,6 @@ public class WorkloadService {
         env.setName(name);
         env.setValue(value);
         return env;
-    }
-
-    /** 20 → "0.2"、1 → "0.01"、100 → "1"（BigDecimal 免得出现 0.30000000000000004） */
-    private static String samplingRatio(int percent) {
-        return java.math.BigDecimal.valueOf(percent).movePointLeft(2)
-                .stripTrailingZeros().toPlainString();
     }
 
     /** 文件日志的平台卷（emptyDir）；同名卷不是 emptyDir → 拒绝，避免覆盖用户卷 */    private static void ensureLogVolume(PodTemplateDTO podTemplate) {
