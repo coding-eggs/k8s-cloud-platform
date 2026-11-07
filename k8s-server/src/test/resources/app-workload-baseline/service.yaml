@@ -1,0 +1,179 @@
+---
+# Source: app-workload/templates/configmap-files.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-api-files
+  namespace: "demo"
+  labels:
+    app.kubernetes.io/name: "shop"
+    app.kubernetes.io/managed-by: k8s-cloud-platform
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+    platform.coding/managed: "true"
+  annotations:
+    platform.coding/revision: "1"
+data:
+  "file-0": "a: 1\nb: \"x\"\n"
+
+---
+# Source: app-workload/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-api-env
+  namespace: "demo"
+  labels:
+    app.kubernetes.io/name: "shop"
+    app.kubernetes.io/managed-by: k8s-cloud-platform
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+    platform.coding/managed: "true"
+  annotations:
+    platform.coding/revision: "1"
+data:
+  "A": "1"
+
+---
+# Source: app-workload/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: "shop-api"
+  namespace: "demo"
+  labels:
+    app.kubernetes.io/name: "shop"
+    app.kubernetes.io/managed-by: k8s-cloud-platform
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+    platform.coding/managed: "true"
+spec:
+  type: ClusterIP
+  selector:
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+
+---
+# Source: app-workload/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "shop-api"
+  namespace: "demo"
+  labels:
+    app.kubernetes.io/name: "shop"
+    app.kubernetes.io/managed-by: k8s-cloud-platform
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+    platform.coding/managed: "true"
+  annotations:
+    platform.coding/revision: "1"
+spec:
+  selector:
+    matchLabels:
+      platform.coding/app: "app_1"
+      platform.coding/app-node: "api"
+  template:
+    metadata:
+      labels:
+        platform.coding/app: "app_1"
+        platform.coding/app-node: "api"
+      annotations:
+        platform.coding/config-hash: "bcaac8002fadce31b0f069b4d738ef26"
+    spec:
+      volumes:
+        - name: config-files
+          configMap:
+            name: shop-api-files
+      containers:
+        - name: app
+          image: "nginx"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: A
+              valueFrom:
+                configMapKeyRef:
+                  name: shop-api-env
+                  key: A
+          volumeMounts:
+            - name: config-files
+              mountPath: "/etc/app/app.yaml"
+              subPath: "file-0"
+              readOnly: true
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            failureThreshold: 3
+
+---
+# Source: app-workload/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: "shop-api"
+  namespace: "demo"
+  labels:
+    app.kubernetes.io/name: "shop"
+    app.kubernetes.io/managed-by: k8s-cloud-platform
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+    platform.coding/managed: "true"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: "shop-api"
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+
+---
+# Source: app-workload/templates/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: "shop-api"
+  namespace: "demo"
+  labels:
+    app.kubernetes.io/name: "shop"
+    app.kubernetes.io/managed-by: k8s-cloud-platform
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+    platform.coding/managed: "true"
+spec:
+  selector:
+    matchLabels:
+      platform.coding/app: "app_1"
+      platform.coding/app-node: "api"
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

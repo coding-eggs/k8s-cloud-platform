@@ -6,6 +6,9 @@ metadata:
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "app.labels" . | nindent 4 }}
+    {{- range $k, $v := .Values.workload.serviceLabels }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
 spec:
   type: {{ if eq .Values.workload.expose.type "nodeport" }}NodePort{{ else }}ClusterIP{{ end }}
   selector:

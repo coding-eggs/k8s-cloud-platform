@@ -70,6 +70,14 @@ public final class AppWorkloadValues {
         workload.put("metrics", Map.of(
                 "enabled", bool(params.get("metricsEnabled")),
                 "path", strOrDefault(params.get("metricsPath"), "/metrics")));
+        // 通用注入参数（platform-api 由 desired.otel / desired.mesh 翻译而来，这里只透传，不做业务判断）。
+        // 不进 configHash：都在 Pod 模板 / Service 上，改了自然滚动；进哈希会让存量服务升级时无谓重启
+        workload.put("podAnnotations", stringMap(params.get("podAnnotations")));
+        workload.put("podLabels", stringMap(params.get("podLabels")));
+        workload.put("serviceLabels", stringMap(params.get("serviceLabels")));
+        workload.put("extraEnv", nameValues(params.get("extraEnv")));
+        String logMountDir = str(params.get("logMountDir"));
+        workload.put("logVolume", Map.of("enabled", !logMountDir.isBlank(), "mountDir", logMountDir));
         String exposeType = worker ? "none" : strOrDefault(params.get("expose"), "none").toLowerCase();
         workload.put("expose", Map.of(
                 "type", exposeType,
@@ -205,6 +213,31 @@ public final class AppWorkloadValues {
     private static List<Map<String, Object>> envList(Map<String, Object> params) {
         Object raw = params.get("env");
         return raw instanceof List<?> list ? (List<Map<String, Object>>) list : List.of();
+    }
+
+    private static Map<String, String> stringMap(Object raw) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (raw instanceof Map<?, ?> m) {
+            m.forEach((k, v) -> {
+                if (k != null && v != null) {
+                    out.put(String.valueOf(k), String.valueOf(v));
+                }
+            });
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> nameValues(Object raw) {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m && m.get("name") != null) {
+                    out.add(Map.of("name", String.valueOf(m.get("name")),
+                            "value", m.get("value") == null ? "" : String.valueOf(m.get("value"))));
+                }
+            }
+        }
+        return out;
     }
 
     private static Map<String, Object> resources(Map<String, Object> params) {

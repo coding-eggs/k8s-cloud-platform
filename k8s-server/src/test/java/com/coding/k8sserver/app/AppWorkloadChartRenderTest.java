@@ -32,6 +32,20 @@ class AppWorkloadChartRenderTest {
         return n;
     }
 
+    private static String renderRaw(Map<String, Object> params, String kind) throws Exception {
+        AppNodeDTO n = node(params);
+        n.setKind(kind);
+        Map<String, Object> values = AppWorkloadValues.build("app_1", "shop", 1, n);
+        Path file = Files.createTempFile("app-values", ".yaml");
+        Files.writeString(file, YAML.writeValueAsString(values));
+        Process p = new ProcessBuilder("helm", "template", "t", CHART.toAbsolutePath().toString(),
+                "--namespace", "demo", "-f", file.toAbsolutePath().toString()).start();
+        String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(p.waitFor(60, TimeUnit.SECONDS)).isTrue();
+        assertThat(p.exitValue()).isZero();
+        return out.replace("\r\n", "\n");
+    }
+
     private static List<Map<String, Object>> render(Map<String, Object> params) throws Exception {
         Map<String, Object> values = AppWorkloadValues.build("app_1", "shop", 1, node(params));
         Path file = Files.createTempFile("app-values", ".yaml");
@@ -234,6 +248,88 @@ class AppWorkloadChartRenderTest {
 
         assertThat(at(find(docs, "Deployment", "shop-api"), "spec")).containsEntry("replicas", 3);
         assertThat(find(docs, "HorizontalPodAutoscaler", "shop-api")).isNull();
+    }
+
+    // ---------- 通用注入参数（OTel / 网格，2026-11-07） ----------
+
+    private static final Path BASELINE = Path.of("src/test/resources/app-workload-baseline");
+
+    private static Map<String, Map<String, Object>> baselineShapes() {
+        Map<String, Map<String, Object>> m = new java.util.LinkedHashMap<>();
+        m.put("service", Map.of("image", "nginx", "port", 80, "env", List.of(Map.of("name", "A", "value", "1")),
+                "configFiles", List.of(FILE), "autoscalingEnabled", true, "metricsEnabled", true));
+        m.put("worker", Map.of("image", "busybox", "command", List.of("sleep", "1d")));
+        m.put("stateful", Map.of("image", "nginx", "port", 80, "persistenceEnabled", true,
+                "expose", "nodeport", "nodePort", 30080, "replicas", 2));
+        return m;
+    }
+
+    /** 没有注入参数的服务渲染结果必须与引入注入前逐字相同（否则存量服务升级后会滚动）。基线由改模板前的 chart 生成。 */
+    @Test
+    void noInjectionRendersUnchanged() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        for (Map.Entry<String, Map<String, Object>> e : baselineShapes().entrySet()) {
+            String kind = "worker".equals(e.getKey()) ? "WORKER" : "SERVICE";
+            String out = renderRaw(e.getValue(), kind);
+            Path file = BASELINE.resolve(e.getKey() + ".yaml");
+            if (Boolean.getBoolean("app.chart.writeBaseline")) {
+                Files.createDirectories(BASELINE);
+                Files.writeString(file, out);
+            }
+            assertThat(out).as(e.getKey()).isEqualTo(Files.readString(file).replace("\r\n", "\n"));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void injectionRendered() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> params = new java.util.LinkedHashMap<>();
+        params.put("image", "nginx");
+        params.put("port", 80);
+        params.put("env", List.of(Map.of("name", "A", "value", "1")));
+        params.put("podAnnotations", Map.of("instrumentation.opentelemetry.io/inject-java", "monitor/platform-instrumentation"));
+        params.put("podLabels", Map.of("istio.io/dataplane-mode", "ambient"));
+        params.put("serviceLabels", Map.of("istio.io/use-waypoint", "waypoint"));
+        params.put("extraEnv", List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "shop-api")));
+        params.put("logMountDir", "/var/log/nginx");
+        List<Map<String, Object>> docs = render(params);
+
+        Map<String, Object> dep = find(docs, "Deployment", "shop-api");
+        assertThat(at(dep, "spec", "template", "metadata", "annotations"))
+                .containsKey("platform.coding/config-hash")
+                .containsEntry("instrumentation.opentelemetry.io/inject-java", "monitor/platform-instrumentation");
+        assertThat(at(dep, "spec", "template", "metadata", "labels")).containsEntry("istio.io/dataplane-mode", "ambient");
+        assertThat(at(dep, "spec", "selector", "matchLabels")).doesNotContainKey("istio.io/dataplane-mode");
+        assertThat(at(find(docs, "Service", "shop-api"), "metadata", "labels"))
+                .containsEntry("istio.io/use-waypoint", "waypoint");
+        Map<String, Object> podSpec = at(dep, "spec", "template", "spec");
+        Map<String, Object> container = ((List<Map<String, Object>>) podSpec.get("containers")).get(0);
+        List<Map<String, Object>> env = (List<Map<String, Object>>) container.get("env");
+        assertThat(env.get(env.size() - 1)).isEqualTo(Map.of("name", "OTEL_SERVICE_NAME", "value", "shop-api"));
+        assertThat((List<Map<String, Object>>) podSpec.get("volumes")).anySatisfy(v -> {
+            assertThat(v.get("name")).isEqualTo("platform-otel-logs");
+            assertThat(v).containsKey("emptyDir");
+        });
+        assertThat((List<Map<String, Object>>) container.get("volumeMounts")).anySatisfy(m -> {
+            assertThat(m.get("name")).isEqualTo("platform-otel-logs");
+            assertThat(m.get("mountPath")).isEqualTo("/var/log/nginx");
+        });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void statefulSetGetsInjectionToo() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80, "persistenceEnabled", true,
+                "podLabels", Map.of("istio.io/dataplane-mode", "none"), "logMountDir", "/var/log/app"));
+        Map<String, Object> sts = find(docs, "StatefulSet", "shop-api");
+        assertThat(at(sts, "spec", "template", "metadata", "labels")).containsEntry("istio.io/dataplane-mode", "none");
+        Map<String, Object> container = ((List<Map<String, Object>>) at(sts, "spec", "template", "spec")
+                .get("containers")).get(0);
+        assertThat((List<Map<String, Object>>) container.get("volumeMounts"))
+                .anySatisfy(m -> assertThat(m.get("name")).isEqualTo("data"))
+                .anySatisfy(m -> assertThat(m.get("name")).isEqualTo("platform-otel-logs"));
     }
 
     /** helm 是否在 PATH 上。 */

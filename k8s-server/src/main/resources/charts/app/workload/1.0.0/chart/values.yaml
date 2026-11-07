@@ -43,6 +43,16 @@ workload:
   metrics:
     enabled: false
     path: /metrics
+  # 通用注入（platform-api 由 desired.otel / desired.mesh 翻译，k8s-server 只透传）
+  podAnnotations: {}
+  podLabels: {}
+  serviceLabels: {}
+  # [{name, value}]：排在 inlineEnv 之后写进容器 env[].value
+  extraEnv: []
+  # 文件日志：emptyDir 卷 platform-otel-logs 挂到主容器 mountDir
+  logVolume:
+    enabled: false
+    mountDir: ""
   expose:
     # none（仅集群内 ClusterIP）/ nodeport
     type: none

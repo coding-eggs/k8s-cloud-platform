@@ -1,0 +1,43 @@
+---
+# Source: app-workload/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "shop-api"
+  namespace: "demo"
+  labels:
+    app.kubernetes.io/name: "shop"
+    app.kubernetes.io/managed-by: k8s-cloud-platform
+    platform.coding/app: "app_1"
+    platform.coding/app-node: "api"
+    platform.coding/managed: "true"
+  annotations:
+    platform.coding/revision: "1"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      platform.coding/app: "app_1"
+      platform.coding/app-node: "api"
+  template:
+    metadata:
+      labels:
+        platform.coding/app: "app_1"
+        platform.coding/app-node: "api"
+      annotations:
+        platform.coding/config-hash: "714b78e97c8c5d2c90049f01d11d122a"
+    spec:
+      containers:
+        - name: app
+          image: "busybox"
+          imagePullPolicy: IfNotPresent
+          command: 
+            - sleep
+            - 1d
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 128Mi

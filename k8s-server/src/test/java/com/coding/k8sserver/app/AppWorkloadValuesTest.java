@@ -206,4 +206,38 @@ class AppWorkloadValuesTest {
         Map<String, Object> a = (Map<String, Object>) w.get("autoscaling");
         assertThat(a).containsEntry("enabled", true).containsEntry("targetCpu", 60).containsEntry("targetMemory", 0);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void injectionParamsPassThrough() {
+        Map<String, Object> params = new java.util.LinkedHashMap<>();
+        params.put("image", "nginx");
+        params.put("port", 80);
+        params.put("podAnnotations", Map.of("a", "1"));
+        params.put("podLabels", Map.of("istio.io/dataplane-mode", "ambient"));
+        params.put("serviceLabels", Map.of("istio.io/use-waypoint", "wp"));
+        params.put("extraEnv", List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "demo-web")));
+        params.put("logMountDir", "/var/log/nginx");
+        Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1, node(params)));
+        assertThat(w).containsEntry("podAnnotations", Map.of("a", "1"))
+                .containsEntry("podLabels", Map.of("istio.io/dataplane-mode", "ambient"))
+                .containsEntry("serviceLabels", Map.of("istio.io/use-waypoint", "wp"))
+                .containsEntry("extraEnv", List.of(Map.of("name", "OTEL_SERVICE_NAME", "value", "demo-web")))
+                .containsEntry("logVolume", Map.of("enabled", true, "mountDir", "/var/log/nginx"));
+
+        Map<String, Object> bare = workload(AppWorkloadValues.build("app_1", "demo", 1, node(Map.of("image", "nginx"))));
+        assertThat(bare).containsEntry("podAnnotations", Map.of()).containsEntry("podLabels", Map.of())
+                .containsEntry("serviceLabels", Map.of()).containsEntry("extraEnv", List.of())
+                .containsEntry("logVolume", Map.of("enabled", false, "mountDir", ""));
+    }
+
+    @Test
+    void configHashIgnoresInjection() {
+        Map<String, Object> base = Map.of("image", "nginx", "env", List.of(Map.of("name", "A", "value", "1")));
+        Map<String, Object> injected = new java.util.LinkedHashMap<>(base);
+        injected.put("podAnnotations", Map.of("a", "1"));
+        injected.put("extraEnv", List.of(Map.of("name", "X", "value", "y")));
+        assertThat(workload(AppWorkloadValues.build("app_1", "demo", 1, node(injected))).get("configHash"))
+                .isEqualTo(workload(AppWorkloadValues.build("app_1", "demo", 1, node(base))).get("configHash"));
+    }
 }

@@ -21,9 +21,17 @@ spec:
     metadata:
       labels:
         {{- include "app.selector" . | nindent 8 }}
-      {{- with .Values.workload.configHash }}
+        {{- range $k, $v := .Values.workload.podLabels }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+      {{- if or .Values.workload.configHash .Values.workload.podAnnotations }}
       annotations:
+        {{- with .Values.workload.configHash }}
         platform.coding/config-hash: {{ . | quote }}
+        {{- end }}
+        {{- range $k, $v := .Values.workload.podAnnotations }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
       {{- end }}
     spec:
       {{- with .Values.workload.imagePullSecrets }}
@@ -32,11 +40,17 @@ spec:
         - name: {{ . | quote }}
         {{- end }}
       {{- end }}
-      {{- if .Values.workload.configFiles }}
+      {{- if or .Values.workload.configFiles .Values.workload.logVolume.enabled }}
       volumes:
+        {{- if .Values.workload.configFiles }}
         - name: config-files
           configMap:
             name: {{ include "app.name" . }}-files
+        {{- end }}
+        {{- if .Values.workload.logVolume.enabled }}
+        - name: platform-otel-logs
+          emptyDir: {}
+        {{- end }}
       {{- end }}
       containers:
         - name: app
@@ -51,7 +65,7 @@ spec:
           {{- with .Values.workload.args }}
           args: {{ toYaml . | nindent 12 }}
           {{- end }}
-          {{- if or .Values.workload.env .Values.workload.secretEnv .Values.workload.inlineEnv }}
+          {{- if or .Values.workload.env .Values.workload.secretEnv .Values.workload.inlineEnv .Values.workload.extraEnv }}
           env:
             {{- range .Values.workload.env }}
             - name: {{ .name }}
@@ -71,6 +85,10 @@ spec:
             - name: {{ .name }}
               value: {{ .value | quote }}
             {{- end }}
+            {{- range .Values.workload.extraEnv }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: data
@@ -81,6 +99,10 @@ spec:
               subPath: {{ .key | quote }}
               readOnly: true
           {{- end }}
+            {{- if .Values.workload.logVolume.enabled }}
+            - name: platform-otel-logs
+              mountPath: {{ .Values.workload.logVolume.mountDir | quote }}
+            {{- end }}
           resources:
             {{- toYaml .Values.workload.resources | nindent 12 }}
           {{- if .Values.workload.probe.enabled }}
