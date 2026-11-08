@@ -1,77 +1,71 @@
-# 应用对外暴露（Istio 入口端口池 + 可选域名）与灰度 设计
+# 应用对外暴露（Istio 入口 + ListenerSet 端口池 + 可选域名）与灰度 设计
 
-> 状态：方案整理稿（2026-11-08），**尚未实现**。
-> **第一步先做 §0 的 ListenerSet 验证。** 结果决定端口池走方案 A（ListenerSet）还是方案 B（分片 Gateway），
-> §1、§5、§6.2、§9、§10 中标了「待 §0」的地方会随结果改写。
+> 状态：方案稿（2026-11-08），**尚未实现**。§0 的真集群验证已完成，结论是采用方案 A（ListenerSet 端口池）。
 > 前置：应用模块去画布重做（`docs/development/application-release.md`），现只有 NodePort 暴露（§1.5）。
 
-## 0. 先验证 ListenerSet（决定端口池方案）
+## 0. ListenerSet 验证结果（2026-11-08，coding-cluster）
 
-端口池有两条路，都能满足「没有域名、按端口暴露、容量能放大」：
+用临时命名空间 `lsprobe-*` 建了两个测试网关，各验证一种模式：一个是 Istio 自动部署的网关，一个是和生产一样的手动部署网关（Service 自建、`spec.addresses` 绑定）。
+验证完已全部删除，生产的 `external-gateway` 在验证前后都是 `Programmed=True`。
 
-| | 方案 A：ListenerSet 端口池 | 方案 B：分片 Gateway 端口池 |
+| # | 验证项 | 结果 |
 |---|---|---|
-| 做法 | 每个命名空间一个平台生成的 ListenerSet `platform-ports`，分到的每个端口是其中一个 listener，挂到主 Gateway | 预建多个池 Gateway（每个 64 个端口），平台在库里分配，给命名空间打放行标签 |
-| 容量 | 每个 ListenerSet 64 个，ListenerSet 个数不限（以实测的实际上限为准） | 每个分片 64 个，要更多就再加分片 |
-| 资源 | 只有一组网关 Pod | 每个分片多一组网关 Pod |
-| 分配端口时改什么 | 生成或更新 ListenerSet，还要更新固定 nodePort 的 ConfigMap | 只打命名空间标签，不改 Gateway 和 ConfigMap |
-| 隔离 | 天然：listener 在租户自己的命名空间里，`allowedRoutes.from: Same` | 靠命名空间标签加 Selector |
-| 依赖 | 普通 `istio` 网关类支持 ListenerSet，并且新端口能进 Service、能固定 nodePort | 只用现有机制，不需要额外验证 |
+| A1 | `istio` 网关类（Istio 1.31.3，Gateway API bundle v1.6.2）接受 ListenerSet | ✅ ListenerSet 和其中的 listener 都是 `Accepted / Programmed`，Gateway `attachedListenerSets` 计数正确 |
+| A2 | ListenerSet 的端口能用 | ✅ HTTP 和 TCP 都打通。自动部署模式下 Istio 会把端口加到网关 Service 上；手动部署模式下不会改 Service，见 A3 |
+| A3 | 固定 nodePort 等于端口 | ✅ 手动部署模式：Service 预先声明 `nodePort: 20011`，之后再给 ListenerSet 加 `p20011`，本机直接访问 `节点IP:20011` 返回 200 |
+| A3' | 端口没在 Service 上预先声明 | ⚠️ listener 自己显示 `Programmed=True`，但**整个 Gateway 变成 `Programmed=False（AddressNotUsable）`**。别的端口照常通，状态却全挂红。**所以平台只能分配 Service 上已经声明的端口** |
+| A4 | 删除 listener 或 ListenerSet | ✅ 自动部署模式下 Service 端口会收回；路由变成 `NoMatchingParent`，端口不再通 |
+| A5 | 容量 | ✅ 一个 Gateway 挂了 2 个 ListenerSet，各 60 个 listener，加上自身，合计 122 个，全部 `Programmed`，Envoy 实际监听了 120 个端口 |
+| A6 | 隔离 | ✅ 没打放行标签的命名空间建 ListenerSet，被拒为 `NotAllowed`；别的命名空间的 HTTPRoute 挂到 `from: Same` 的 listener，被拒为 `NotAllowedByListeners` |
+| A7 | Gateway 自身的 HTTPS 和 ListenerSet 的 HTTPS 共用一个端口 | ✅ 同一个 20443 端口，按 SNI 分别返回各自的证书，各自路由到各自的后端（模拟 Harbor 443 的场景） |
+| A8 | 冲突 | ✅ 后建的 ListenerSet 用了相同端口：同协议时报 `HostnameConflict`，不同协议时报 `ProtocolConflict`，都被标成 `Conflicted`。先建的那个继续正常工作 |
+| A9 | 加减 listener 会不会让网关 Pod 重启 | ✅ 整个验证过程中两个网关 Pod 都没有重启 |
 
-**倾向方案 A**（资源省、隔离更自然，域名方式也是同一套对象），前提是下面几项全部通过。只要有一项不通过，就走方案 B。
+另外核实到的几件事：
 
-验证项（测试命名空间，临时对象，用一个独立的测试 Gateway，不碰 `external-gateway`）：
-- A1. `istio` 网关类（Istio 1.31.3）接受 ListenerSet：ListenerSet 和其中每个 listener 都是 `Accepted / Programmed`，
-  Gateway 的 `status.attachedListenerSets` 能正确计数。
-- A2. ListenerSet 里的端口 listener 会**自动加到网关 Service 上**（HTTP 和 TCP 两种都要测）。
-- A3. 新增的端口能**固定 nodePort 等于端口**（通过 `parametersRef` ConfigMap 或其他方式）。
-  同时记录改 ConfigMap 时网关 Pod 会不会滚动、现有连接会不会断。
-- A4. 删除 ListenerSet 或其中某个 listener 后，Service 端口能收回，路由被摘掉。
-- A5. 容量：一个 Gateway 挂多个 ListenerSet、合计超过 64 个端口（例如 150 个）时仍然全部 `Programmed`。
-- A6. 隔离：别的命名空间的 HTTPRoute 挂不上 `from: Same` 的 listener；主 Gateway 用 `allowedListeners: Selector`
-  可以拒绝没打平台标签的命名空间建的 ListenerSet。
-- A7. Harbor 的 443 listener 留在主 Gateway 上，跟 ListenerSet 共存时不受影响。
+- **生产入口实际是手动部署模式**：`istio-system/external-gateway` 这个 Gateway 带着 `platform.coding/component: istio` 和
+  `platform.coding/managed: "true"` 标签，并用 `spec.addresses` 绑定到 helm chart `gateway-1.31.3`（release `external-gateway`）建的 Service。
+  Service 的端口和 nodePort 都写在 helm values 里，nodePort 等于端口，比如 `80→80`、`443→443`。
+  旧记忆里说的 `customnodeport` ConfigMap 已经不存在了。
+- TCPRoute 有 `v1`（bundle v1.6.2 experimental channel），用 `v1alpha2` 会提示已弃用。所以 TCPRoute **用 v1**。
+- **nodePort 范围是 1-65535，Service 不写 nodePort 时会随机分配**。验证中一个没写 nodePort 的端口就被分到了 1340。
+  现有的 `monitor/platform-tempo-nodeport`（21746）和 `platform-system/platform-redis-nodeport`（25358）也是随机分到的。
+  这意味着任何 NodePort Service 都可能抢走端口池里的端口，甚至抢到节点上的服务端口。见 §5.3。
 
-验证完成后，在本节补上结果和最终选定的方案，再改写下面标了「待 §0」的章节。
+## 1. 结论
 
-## 1. 结论（端口池部分待 §0）
-
-- 这是私有云平台，用户多半**没有域名**，而且集群**没有 LB**。所以默认的暴露方式是**网关端口**：
-  访问地址为 `http://<节点IP>:<端口>`，流量经过 Istio 入口网关，可以用 HTTPRoute 的 L7 能力，包括灰度。
-- 重建一个平台管理的主 Gateway `istio-system/platform-ingress`，沿用现有入口的机制：
-  NodePort 类型的 Service，用 `customnodeport` 固定 nodePort，按端口建 listener，HTTPRoute 按 `sectionName` 挂载。
-- 主 Gateway 上**预建一段端口池**，`customnodeport` 一次性固定好对应的 nodePort。
-  集群的 nodePort 范围已经放开到 1-65535，所以**listener 端口 = nodePort**，展示地址就是 `节点IP:端口`。
-  平台只在库里分配端口，再下发 HTTPRoute 或 TCPRoute。日常发布不修改 Gateway，也不修改 ConfigMap。
-- 端口池不够时，再建一个平台 Gateway。它有独立的 Deployment 和 Service，带自己的端口池。
-- **域名是第二期的可选能力**：管理员给集群配置入口域名后缀后才出现。在 443 上按域名分流，
-  用每个命名空间一个 ListenerSet 来承载域名 listener。没配域名的集群用不到 ListenerSet。
-- 灰度（第二期）在应用的 HTTPRoute 上按权重或 header 分流，端口方式和域名方式都能用。
+- 这是私有云，用户多半**没有域名**，集群也**没有 LB**。所以默认的暴露方式是**网关端口**：
+  访问地址是 `http://<节点IP>:<端口>`，流量经过 Istio 入口网关，能用 HTTPRoute 的 L7 能力，包括灰度。
+- **不重建入口**：直接在现有的、已经由平台管理的 `external-gateway` 上加。Gateway 上补 `allowedListeners`；
+  helm values 里给网关 Service 预先声明一段端口池（nodePort 等于端口）。原有的 listener 和路由都不动，也不需要停机切换。
+- **每个命名空间一个平台生成的 ListenerSet `platform-ingress`**，分到的每个端口是其中一个 listener，listener 的协议在分配时决定（HTTP 或 TCP）。
+  应用只生成自己的 HTTPRoute 或 TCPRoute，挂到这个 ListenerSet 上。
+- 64 个 listener 的上限只限制单个 Gateway 或单个 ListenerSet，ListenerSet 的数量不限。
+  实际容量由 Service 预先声明了多少个端口决定，扩容就是管理员改一次 helm values。
+- **域名是第二期的可选能力**：管理员给集群配置入口域名后缀后才出现。域名 listener 也放进同一个命名空间 ListenerSet，在 443 上按 SNI 分流（A7 已验证）。
+- 灰度（第二期）在应用的 HTTPRoute 上按权重或 header 分流，端口方式和域名方式都能用；canary 的应用设置和 stable 一样。
 
 ## 2. 现状
 
-- 唯一的对外入口是 `istio-system/external-gateway`，由用户手工创建：
-  - `gatewayClassName: istio`，注解 `networking.istio.io/service-type: NodePort`，
-    `infrastructure.parametersRef` 指向 ConfigMap `customnodeport`，用来固定 nodePort。
-  - 按端口建了 15 个 listener，`allowedRoutes.from: All`。挂着 11 条不带 hostname 的遗留 HTTPRoute，都是手工 `kubectl apply` 的。
-  - Harbor：443 listener 在网关上终止 TLS，证书 Secret 是手工创建的，HTTPRoute 通过 `sectionName` 挂到这个 listener。
-- apiserver 的 `service-node-port-range` 为 1-65535。
-- 没有 LB。
-- 平台看不见这个入口：`istio-system` 不在任何租户的分配表里，建 HTTPRoute 时父资源只能手填。
+- `istio-system/external-gateway`：`gatewayClassName: istio`，手动部署模式，Service 来自平台 Istio 组件安装的 helm release，类型是 NodePort。
+- Gateway 上按端口建了 listener（`http2:80`、`harbor-https:443`、`platform-auth:9527`、`kibana:5601`、`elasticsearch:9200`、
+  `thanos:19090` 等），都是 `allowedRoutes.from: All`。
+  Harbor 的 TLS 在这个网关上终止（`harbor-tls` 是手工建的 Secret），HTTPRoute 按 `sectionName` 挂上来。
+- 节点：master `192.168.85.180`、node1 `.161`、node2 `.162`。
 - 应用目前只能用 NodePort 暴露，不经过网关，没有 L7 能力。
-- 环境：Istio 1.31.3，Gateway API v1.6.x。一个 Gateway 最多 64 个 listener。
+- 平台看不见这个入口：`istio-system` 不在任何租户的分配表里，建 HTTPRoute 时父资源只能手填。
 
 ## 3. 目标 / 非目标
 
 **目标**
-- 没有域名也能用：应用的 HTTP 服务经网关端口对外，TCP 服务也能经网关端口对外。
+- 没有域名也能用：应用的 HTTP 和 TCP 服务都能经网关端口对外。
 - 暴露配置是应用期望配置的一部分，随发布、回滚、下线一起生效，访问地址在概览里展示。
 - 灰度发布（第二期）。
 - 有内网 DNS 的集群可以按域名暴露（第二期）。
 
 **非目标**
-- 不让租户编辑 Gateway、ListenerSet、`customnodeport`。
-- 遗留的 15 个端口和 11 条路由原样迁移，不改造。
+- 不让租户编辑 Gateway、ListenerSet、网关 Service。
+- 现有的 listener 和路由不迁移、不改造。
 - 不引入 LB（MetalLB 等）。
 - 第一期不做 mTLS 客户端证书、WAF、限流。
 
@@ -83,87 +77,105 @@
 | 域名 | `https://<域名>`（443） | 是 | 有 | 二 |
 | NodePort（保留现状） | `<节点IP>:<NodePort>` | 否 | 无 | 已有 |
 
-「节点 IP」就是集群节点的 IP。NodePort 在每个节点上都能访问，概览里直接列出集群节点的 InternalIP，不需要另外配置对外地址。
+「节点 IP」就是集群节点的 IP。NodePort 在每个节点上都能访问，所以概览直接列出集群节点的 InternalIP。
 
 ## 5. 网关端口池（第一期核心）
 
-> **待 §0**：本节按方案 B（分片 Gateway）写。§0 通过的话改写为方案 A：
-> 每个命名空间一个 `platform-ports` ListenerSet；分配端口时生成 listener 并固定 nodePort；不再需要命名空间放行标签和池分片。
-> §5.3 的端口段、§5.5 的 HTTPS 限制两个方案都适用。
+### 5.1 网关侧（管理员一次性配置，平台 Istio 组件管理）
 
-### 5.1 主 Gateway
+Gateway 增加 `allowedListeners`，其余不变：
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
-metadata:
-  name: platform-ingress
-  namespace: istio-system
-  annotations: { networking.istio.io/service-type: NodePort }
+metadata: { name: external-gateway, namespace: istio-system }
 spec:
   gatewayClassName: istio
-  infrastructure:
-    parametersRef: { group: "", kind: ConfigMap, name: platform-ingress-nodeport }  # 固定 nodePort = 端口
-  listeners:
-    - name: harbor                                  # 原样迁移
-      port: 443
-      protocol: HTTPS
-      hostname: harbor.ackcp.cloud
-      tls: { certificateRefs: [{ name: harbor-tls }] }   # 手工 Secret 复制到 istio-system
-      allowedRoutes: { namespaces: { from: All } }
-    # legacy-*：15 个遗留端口原样迁移
-    - name: p20000                                  # 端口池：HTTP 段
-      port: 20000
-      protocol: HTTP
-      allowedRoutes:
-        namespaces:
-          from: Selector
-          selector: { matchLabels: { ingress.platform.coding/p20000: allowed } }
-    # … p20002 …
-    - name: p24000                                  # 端口池：TCP 段
-      port: 24000
-      protocol: TCP
-      allowedRoutes:
-        kinds: [{ kind: TCPRoute }]
-        namespaces:
-          from: Selector
-          selector: { matchLabels: { ingress.platform.coding/p24000: allowed } }
+  addresses: [{ type: Hostname, value: external-gateway.istio-system.svc.cluster.local }]
+  allowedListeners:
+    namespaces:
+      from: Selector
+      selector: { matchLabels: { ingress.platform.coding/ports: "true" } }
+  listeners: [ … 现有 listener 原样保留 … ]
 ```
 
-### 5.2 分配不改 Gateway
+helm values 里，网关 Service 预先声明端口池，nodePort 等于端口：
 
-- listener 的协议在预建时就定了，所以池分成 HTTP 段和 TCP 段，各段大小由管理员在初始化时决定。
-  要调整比例，只需要改 Gateway 上 listener 的 `protocol`（端口不变，ConfigMap 不用改），这是管理员操作。
-- **隔离靠命名空间标签**：每个池 listener 只接受带 `ingress.platform.coding/p<端口>=allowed` 标签的命名空间。
-  平台把端口分给某个命名空间时给它打上这个标签，回收时去掉。这样分配端口不用改 Gateway，
-  其他命名空间即使手写 HTTPRoute 挂过来也挂不上（Gateway API 原生拒绝，状态里能看到 `NotAllowedByListeners`）。
-  前提是租户改不了命名空间标签（§9 验证）。
-- 分配记录：`platform_ingress_port`（`cluster_id, gateway, port, protocol, namespace, app_id, service_key, status, released_at`），
-  `(cluster_id, port)` 唯一。下线时释放，冷却 10 分钟后再分配，避免客户端还连着旧服务。
+```yaml
+service:
+  ports:
+    # … 现有端口 …
+    - { name: pool-20000, port: 20000, targetPort: 20000, nodePort: 20000 }
+    # … 一直到 pool-20299
+```
 
-### 5.3 端口段的选择
+- **池端口不区分协议**：Service 端口都是 TCP，listener 写 HTTP 还是 TCP 在分配时决定。
+- 这些端口在 Envoy 上平时不监听：没有对应的 listener 时，连接会被拒绝。
+- 扩容（加端口）只改 Service，不重启网关 Pod。
+- 端口池的范围记在平台的集群设置里（默认 `20000-20299`）。平台以**网关 Service 实际声明的端口**为准，两边对不上时报警。
 
-nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管被分配的端口。所以：
-- 端口池要避开节点上已有的服务端口（22、6443、2379-2380、10250、9100 等），以及遗留的 15 个端口。
-  **整段 20000-25999 保留给端口池**：HTTP 用 20000-23999，TCP 用 24000-25999，管理员可以改。
-  这只是保留的地址空间，真正建出来多少个 listener，由 §5.4 的分片决定。
-- 现有的 NodePort 暴露（应用可以填固定 nodePort）也在同一个端口空间里。平台要拒绝应用的 NodePort 落进端口池段，
-  并且同样拒绝上面那些保留端口。这一条要补到现有的 NodePort 校验里。
+### 5.2 命名空间侧（平台在分配端口时生成）
 
-### 5.4 容量与扩容
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: platform-ingress
+  namespace: shop-prod            # 命名空间上要有 ingress.platform.coding/ports=true（平台打）
+  labels: { platform.coding/managed: "true" }
+spec:
+  parentRef: { name: external-gateway, namespace: istio-system }
+  listeners:
+    - { name: p20001, port: 20001, protocol: HTTP, allowedRoutes: { namespaces: { from: Same } } }
+    - { name: p20002, port: 20002, protocol: TCP,  allowedRoutes: { namespaces: { from: Same } } }
+```
 
-- 一个 Gateway 最多 64 个 listener，这是 Gateway API 的硬上限。所以端口池要做大，就是**按分片建多个池 Gateway**：
-  - `platform-ingress` 只放 Harbor、遗留端口和少量池端口（48 个以内）；
-  - `platform-ingress-pool-1`、`-pool-2`…每个 64 个池端口，各自生成独立的 Deployment 和 Service，各配自己的 ConfigMap。
-  - 初始化时默认建 2 个池分片（约 128 个端口，加上主 Gateway 共约 170 个）。可用端口低于 20% 时提示管理员扩一个分片。
-- 分配表的 `gateway` 列记录端口在哪个 Gateway 上。这条路就是现有入口的机制，不需要额外验证。
-- 代价：每个分片都多一组网关 Pod（Envoy），按 2 副本算，每个分片大约多 200m CPU / 256Mi 内存。
-- 端口池只在初始化或扩容时改 Gateway 和 ConfigMap，会让网关 Pod 滚动一次，这是管理员的计划内操作。
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: { name: platform-app-shop-api, namespace: shop-prod }
+spec:
+  parentRefs: [{ group: gateway.networking.k8s.io, kind: ListenerSet, name: platform-ingress, sectionName: p20001 }]
+  rules: [{ backendRefs: [{ name: api, port: 8080 }] }]
+---
+apiVersion: gateway.networking.k8s.io/v1      # TCPRoute 用 v1
+kind: TCPRoute
+metadata: { name: platform-app-shop-db, namespace: shop-prod }
+spec:
+  parentRefs: [{ group: gateway.networking.k8s.io, kind: ListenerSet, name: platform-ingress, sectionName: p20002 }]
+  rules: [{ backendRefs: [{ name: db, port: 5432 }] }]
+```
 
-### 5.5 HTTPS
+- **为什么每个命名空间一个 ListenerSet，而不是每个应用一个**：第二期的域名 listener 要被同一命名空间里的多个应用按路径共用。如果把它挂在某个应用名下，那个应用下线就会把别人的入口带走。端口 listener 也放在一起，这样一个命名空间只有一个平台对象。
+- 一个 ListenerSet 最多 64 个 listener。一个命名空间超过 64 个时，平台再生成 `platform-ingress-2`（实际很少用到）。
+- **端口分配记在平台库**，端口全局唯一：`platform_ingress_port`（`cluster_id, port, namespace, app_id, service_key, protocol, status, released_at`），
+  `(cluster_id, port)` 唯一。下线时释放，冷却 10 分钟后才能再分配，避免客户端还连着旧服务。
+- **只分配 Service 上已经声明的端口**（A3'）：分配前先读网关 Service 核对。否则整个 Gateway 会变成 `AddressNotUsable`。
+- 隔离有三层：
+  1. 平台库保证一个端口只分给一个命名空间；
+  2. 主 Gateway 用 `allowedListeners` 只接受打了平台标签的命名空间；
+  3. listener 用 `from: Same`，别的命名空间的路由挂不上来。
+
+  如果有人绕过平台建了同端口的 listener，Gateway API 让先建的那个生效，后建的标 `Conflicted`（A8），已经在跑的应用不受影响。平台发现 `Conflicted` 就告警。
+- RBAC：租户 RBAC 模板不给 `listenersets` 写权限，也不给命名空间 `patch` 权限（实现时核对现有模板）。
+
+### 5.3 端口段与随机 nodePort 风险
+
+nodePort 范围是 1-65535，所以：
+- **池端口必须在 Service 里预先声明**。预先声明就等于提前占住这些 nodePort，别的 Service 就随机不到它们了。
+- 池范围要避开节点上的服务端口（22、6443、2379-2380、10250 等），以及集群里已经占用的 nodePort。
+  默认的 `20000-20299` 已经核对过，当前没有被占用（已占用的有 21746、23646、25358）。
+- **任何不写 nodePort 的 NodePort Service，都可能随机落到低端口**。验证里就随机到过 1340，理论上也可能撞上节点上的服务端口。
+  平台的「NodePort 暴露」要做两件事：
+  - 填了固定 nodePort 的：拒绝落进池段的，也拒绝落进节点保留端口的。
+  - 没填的：由平台在一个安全区间里替它选一个写进去，不交给 K8s 随机分配。
+
+  这一条与端口池无关，属于现有功能的缺陷，单独修。
+
+### 5.4 HTTPS
 
 端口方式没有域名，平台证书对不上，所以**网关端口只提供 HTTP 和 TCP**。
-需要 HTTPS 的服务有两种做法：自己终止 TLS，走 TCP 段（TLS 透传）；或者等第二期用域名方式。
+需要 HTTPS 的服务有两种做法：自己终止 TLS，走 TCP 透传；或者用第二期的域名方式。
 
 ## 6. 应用侧配置与发布
 
@@ -172,8 +184,8 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
 服务期望配置里的 `expose` 扩展为：
 
 ```jsonc
-"expose": "gateway-http"   // 分配一个 HTTP 段端口，HTTPRoute 转发到服务端口
-"expose": "gateway-tcp"    // 分配一个 TCP 段端口，TCPRoute 转发到服务端口
+"expose": "gateway-http"   // 分配一个池端口，listener 协议 HTTP，生成 HTTPRoute
+"expose": "gateway-tcp"    // 分配一个池端口，listener 协议 TCP，生成 TCPRoute
 "expose": "nodeport", "nodePort": 30080   // 现有，不变
 // 第二期："expose": "domain", "routes": [{ "domain": "...", "path": "/", "port": 8080 }]
 ```
@@ -182,84 +194,70 @@ nodePort 放开到 1-65535 以后，kube-proxy 会在**每个节点**上接管�
   改成不暴露或下线时释放。
 - 一个服务对外一个端口（服务本来就只有一个端口）。
 
-### 6.2 发布 / 回滚 / 下线（待 §0：方案 A 下「打标签」换成「更新 ListenerSet」）
+### 6.2 发布 / 回滚 / 下线
 
-- 发布：HTTPRoute `platform-app-<应用>-<服务>`（`parentRefs: platform-ingress, sectionName: p<端口>`）
-  和其他应用对象一样进快照、随勾选下发。下发前确保命名空间已经打上该端口的放行标签。
-- 下线：删掉路由，释放端口，去掉命名空间标签。
-- 回滚：路由跟着快照回到旧版本，端口不变（端口锁定在服务上，不在快照里）。
-- 概览：展示访问地址 `http://<节点IP>:<端口>`（列出各节点 IP），以及路由的 `Accepted / ResolvedRefs`。
-  `NotAllowedByListeners` 这类原因原样显示。
+- 发布：
+  1. 先确保命名空间带 `ingress.platform.coding/ports=true` 标签。
+  2. 重算本命名空间 ListenerSet 的 listener 列表（来源是分配表里本命名空间的有效端口）并下发。
+  3. 应用的 HTTPRoute 或 TCPRoute 和其他应用对象一样进快照、随勾选下发。
+- 下线：删掉路由 → 释放端口 → 重算 ListenerSet（删掉这个 listener）。命名空间里没有端口了，就删掉 ListenerSet、去掉标签。
+- 回滚：路由跟着快照回到旧版本。端口锁定在服务上、不在快照里，所以回滚不换端口。
+- ListenerSet 是命名空间级的共享对象，不进任何应用的快照，由平台按分配表**重算后整体下发**（SSA，平台独占这个对象）。
+- 概览展示：
+  - 访问地址 `http://<节点IP>:<端口>`，列出各节点 IP；
+  - listener 的 `Programmed / Conflicted`；
+  - 路由的 `Accepted / ResolvedRefs`。
+
+  `NotAllowedByListeners`、`HostnameConflict`、`AddressNotUsable` 这类原因原样显示。
 
 ### 6.3 依赖门禁
 
-新增组件旗标 `platform-ingress`：平台 Gateway 已经 `Programmed`，并且端口池已经初始化。
+新增组件旗标 `platform-ingress`：入口 Gateway 已经 `Programmed`、带 `allowedListeners`，并且 Service 上声明了端口池。
 按现有「没装不让开、已开可关」的规则拦截（`ComponentFeatureGuard` / `AppFeatureGate`）。
 
 ## 7. 域名方式（第二期，可选）
 
-- 集群设置「入口域名后缀」（如 `apps.corp.local`）和对应的通配证书。前提是企业 DNS 已经把 `*.apps.corp.local` 解析到集群节点。
+- 集群设置「入口域名后缀」（如 `apps.corp.local`）和对应的通配证书，前提是企业 DNS 已经把 `*.apps.corp.local` 解析到集群节点。
   **不配置，前端就不出现域名方式。**
-- 平台默认域名 `<服务>-<应用>-<租户>.<后缀>`，挂在 443 上按 SNI / Host 分流。
-- 自定义域名：租户提交申请，平台管理员审批。私有云的 DNS 通常在企业 IT 手里，租户加不了 TXT 记录，
-  所以不做 DNS 验证。唯一性由平台库保证（`platform_domain`，`domain` 唯一）。证书由租户上传，平台校验 SAN 和到期时间。
-- 承载：每个命名空间一个平台生成的 ListenerSet `platform-domains`，本命名空间在用的每个域名是其中一个 listener
-  （`allowedRoutes.from: Same`）。应用自己的 HTTPRoute 挂到这个 ListenerSet 上。
-  - 不按应用建 ListenerSet：同一个域名可以被同命名空间的多个应用按路径共用，listener 挂在某个应用名下，
-    这个应用下线时会把别人的入口带走。
-  - 主 Gateway 用 `allowedListeners: Selector` 只放行带平台标签的命名空间；租户 RBAC 模板不给 `listenersets` 写权限。
-  - 同端口同域名冲突时，按「主 Gateway 优先 → ListenerSet 创建得早的优先 → 按名称字母序」裁决，落选的被标 `Conflicted`。
-    平台已经保证唯一，所以出现 `Conflicted` 就要告警。
-  - 跨命名空间引用 `istio-system` 下的通配证书需要 ReferenceGrant（ReferenceGrant 不会从 Gateway 继承）。
-- ListenerSet 在 Gateway API v1.5 进入 Standard。普通 `istio` 网关类是否支持，要在第二期开始前实测（§9）。
+- 平台默认域名 `<服务>-<应用>-<租户>.<后缀>`，挂在 443 上按 SNI / Host 分流。Harbor 继续留在 Gateway 自己的 443 listener 上（A7 已验证可以共存）。
+- 自定义域名：租户提交申请，平台管理员审批。私有云的 DNS 通常在企业 IT 手里，租户加不了 TXT 记录，所以不做 DNS 验证。
+  唯一性由平台库保证（`platform_domain`，`domain` 唯一）。证书由租户上传，平台校验 SAN 和到期时间。
+- 承载：放进命名空间的同一个 ListenerSet `platform-ingress`，每个在用的域名一个 HTTPS listener（`port: 443`，带 hostname）。
+  默认域名引用 `istio-system` 的通配证书，需要 ReferenceGrant，而且 ReferenceGrant 不会从 Gateway 继承；自定义域名的证书放在本命名空间，不需要 ReferenceGrant。
+- 第二期开始前还要补验两项：跨命名空间引用证书走 ReferenceGrant；Harbor 的 443 listener 和 ListenerSet 的 443 共存时（A7 是在 20443 上模拟的），Harbor 不受影响。
 
 ## 8. 灰度（第二期）
 
 - 服务开启灰度后，平台多建一份 `<服务>-canary` Deployment 和 Service，用新镜像或新配置，副本数单独设。
   **应用设置（链路追踪、服务网格）与 stable 完全一样**，否则 v1 / v2 的指标没法公平对比。
 - 应用的 HTTPRoute 在 `backendRefs` 里写 stable 和 canary 两个后端，按权重分（如 90 / 10）。
-  也可以加一条 `matches.headers`（如 `x-canary: true`），只把带这个头的请求转给 canary。
-  端口方式和域名方式都可以用，访问地址不变。
+  也可以加一条 `matches.headers`（如 `x-canary: true`），只把带这个头的请求转给 canary。端口方式和域名方式都能用，访问地址不变。
 - 操作：调整权重 → 全量（把 canary 的版本写回 stable，再删掉 canary）→ 或者回退（删掉 canary）。每一步都是一次发布记录。
-- TCP 段只能按权重分连接，不能按 header 分。
+- TCP 只能按权重分连接，不能按 header 分。
 - 服务之间调用的灰度需要 L7 waypoint，复用应用设置里的网格 L7。入口灰度不依赖网格。
 
-## 9. 真集群验证（ListenerSet 端口池部分见 §0）
+## 9. 上线步骤（不停机）
 
-**第一期开始前**（在测试命名空间用临时对象，不碰现有入口）：
-1. 池 listener 用 `allowedRoutes.namespaces.from: Selector`：打了标签的命名空间能挂上，
-   没打标签的被拒（`NotAllowedByListeners`）；去掉标签后路由会被摘掉。
-2. 租户的 RBAC 模板改不了命名空间标签。
-3. 新 Gateway 加 `parametersRef` ConfigMap 后，nodePort 等于 listener 端口；和旧入口并存时没有端口冲突。
-4. TCP 段：TCPRoute 挂上后能连通。TCPRoute 长期在 Experimental channel，要确认集群装了它的 CRD 以及具体版本。
+1. 修复 NodePort 随机分配的风险（§5.3 末尾），并检查现有的 NodePort Service 有没有落在池段里。
+2. 改平台 Istio 组件：
+   - helm values 给网关 Service 加端口池；
+   - Gateway 加 `allowedListeners`；
+   - 租户 RBAC 模板确认没有 `listenersets` 写权限和命名空间 `patch` 权限，改完后要「重下发全部模板」。
+3. 平台入口 Gateway 对租户只读可见，这样平台里手工建 HTTPRoute 时能选到父资源，补上父资源只能手填的盲区。
+4. 现有 listener 和路由不动，所以没有切换窗口。
 
-**第二期开始前**：
-5. 普通 `istio` 网关类接受 ListenerSet（`Accepted / Programmed`），和 Harbor 一起共用 443 时按 SNI 选证书正确。
-6. ListenerSet 跨命名空间通过 ReferenceGrant 引用通配证书。
-7. 两个 ListenerSet 写同一个域名时，后建的那个被标为 `Conflicted`。
-
-## 10. 入口重建步骤（待 §0：方案 A 不建池分片）
-
-1. 新建 `platform-ingress`（含 ConfigMap、Harbor listener、遗留 15 个 listener、端口池）。
-   遗留端口和 443 跟旧入口重复，所以**不能并存**：先把新 Gateway 的端口池部分建好验证，再在维护窗口做切换。
-2. 切换：删除旧 `external-gateway` → 新 Gateway 补上 Harbor 和遗留 listener → 把 11 条遗留路由和 Harbor 路由的
-   `parentRefs` 改指 `platform-ingress`（sectionName 保持原名，原样迁移时 listener 名不变）。
-3. 验证 Harbor 和遗留端口都能访问。
-4. 平台侧：Istio 组件安装把 `platform-ingress` 纳入管理；平台 Gateway 默认对租户只读可见，
-   这样平台里建 HTTPRoute 时能选到父资源，补上现在父资源只能手填的盲区。
-
-## 11. 分期
+## 10. 分期
 
 | 期 | 内容 |
 |---|---|
-| 一 | 入口重建；端口池（HTTP / TCP 段）；应用「网关端口」暴露；访问地址与状态展示；NodePort 保留端口校验；组件门禁 |
-| 二 | 入口灰度（权重 / header）；域名方式（后缀 + 默认域名 + 自定义域名审批 + ListenerSet） |
-| 三 | 服务之间调用的灰度（依赖 L7 waypoint）；遗留端口清理；端口池扩容到第二个 Gateway 的界面化 |
+| 一 | 端口池（Service 预声明 + 命名空间 ListenerSet + 分配表）；应用「网关 HTTP / TCP」暴露；访问地址与状态展示；NodePort 端口校验修复；组件门禁 |
+| 二 | 入口灰度（权重 / header）；域名方式（后缀 + 默认域名 + 自定义域名审批） |
+| 三 | 服务之间调用的灰度（依赖 L7 waypoint）；遗留 listener 清理 |
 
-## 12. 未决项
+## 11. 未决项
 
-- 确认节点上 20000-25999 没有被其他服务占用。
-- 已定：对外地址就是集群节点；canary 的应用设置与 stable 一样；端口池按分片 Gateway 放大。
+- 端口池默认大小：暂定 `20000-20299`（300 个），你可以改。
+- 已定：对外地址就是集群节点；canary 的应用设置与 stable 一样；端口池走 ListenerSet（§0 已验证）。
 
 ## 参考
 
