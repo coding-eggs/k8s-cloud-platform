@@ -273,7 +273,8 @@ nodePort 范围是 1-65535，所以：
 ## 11. 未决项
 
 - 已定：端口池默认 `20000-20999`（1000 个），上限 5000。
-- 上线前核对 kube-proxy 的模式，以及按 5000 个端口算的规则同步耗时。
+- 已核实（2026-11-08）：kube-proxy 是 ipvs 模式，几千个 Service 端口没有问题。
+- 实现计划：`docs/superpowers/plans/2026-11-08-app-gateway-port-pool.md`。
 - 已定：对外地址就是集群节点；canary 的应用设置与 stable 一样；端口池走 ListenerSet（§0 已验证）。
 
 ## 参考
