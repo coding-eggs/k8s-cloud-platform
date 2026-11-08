@@ -140,10 +140,12 @@ public class ApplicationService {
         }
         apps.softDelete(req.getAppId(), new Date());
         // 网关端口：对象已清掉，端口释放并同步命名空间 ListenerSet（失败只记日志：下次该命名空间发布会补齐）
-        ingressPorts.releaseApp(req.getAppId());
         try {
-            ingressListeners.sync(row.getClusterId(), row.getNamespace());
+            ingressListeners.syncReleasing(row.getClusterId(), row.getNamespace(),
+                    p -> req.getAppId().equals(p.getAppId()), () -> ingressPorts.releaseApp(req.getAppId()));
         } catch (RuntimeException e) {
+            // 应用已删，端口不能永远挂在它名下：照样释放（残留 listener 由该命名空间下次同步摘掉）
+            ingressPorts.releaseApp(req.getAppId());
             log.warn("删除应用 {} 后同步 ListenerSet 失败：{}", req.getAppId(), e.getMessage());
         }
         // 依赖：CREATED 实例保留并转交中间件模块（删应用不静默删数据），引用行与依赖行清掉，

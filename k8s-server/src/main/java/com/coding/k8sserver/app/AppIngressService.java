@@ -2,6 +2,7 @@ package com.coding.k8sserver.app;
 
 import com.coding.common.models.k8s.dto.IngressListenerSetRequestDTO;
 import com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO;
+import com.coding.k8sserver.components.ExternalGatewayObjects;
 import com.coding.k8sserver.components.IngressListenerSetObjects;
 import com.coding.k8score.factory.KubernetesClientFactory;
 import com.coding.k8score.operations.ServerSideApply;
@@ -34,7 +35,7 @@ public class AppIngressService {
         this.clients = clients;
     }
 
-    /** listeners 非空：先打放行标签，再 SSA ListenerSet；为空：删 ListenerSet、摘标签。CRD 缺失返回 false */
+    /** listeners 非空：先打放行标签，再 SSA ListenerSet；为空：删 ListenerSet、摘标签。CRD 或父 Gateway 缺失返回 false */
     public boolean apply(IngressListenerSetRequestDTO request) {
         IngressListenerSetObjects.validate(request);
         KubernetesClient client = clients.getAdminClient(request.getClusterId());
@@ -48,6 +49,11 @@ public class AppIngressService {
                     .inNamespace(request.getNamespace()).withName(request.getName()).delete();
             applyNamespaceLabels(client, request.getNamespace(), Map.of());
             return true;
+        }
+        // 父 Gateway 不存在时 SSA 也会成功，但 ListenerSet 永远不会被接受、路由挂不上：当作「不支持」返回
+        if (client.genericKubernetesResources(ExternalGatewayObjects.CRD)
+                .inNamespace(request.getParentNamespace()).withName(request.getParentName()).get() == null) {
+            return false;
         }
         Map<String, String> labels = request.getNamespaceLabels() == null ? Map.of() : request.getNamespaceLabels();
         applyNamespaceLabels(client, request.getNamespace(), labels);

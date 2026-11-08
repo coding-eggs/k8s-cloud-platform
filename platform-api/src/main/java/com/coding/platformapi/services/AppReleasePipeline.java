@@ -115,31 +115,34 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
                 desiredGateway.add(row.getServiceKey());
             }
         }
-        boolean released = false;
+        Set<String> leaving = new java.util.LinkedHashSet<>();
         List<PlatformIngressPort> held = ports.activeOfApp(app.getId());
         for (PlatformIngressPort p : held == null ? List.<PlatformIngressPort>of() : held) {
             if (!wanted.containsKey(p.getServiceKey()) && !desiredGateway.contains(p.getServiceKey())) {
-                ports.release(app.getId(), p.getServiceKey());
-                released = true;
+                leaving.add(p.getServiceKey());
             }
         }
-        if (!wanted.isEmpty() || released) {
-            listeners.sync(app.getClusterId(), app.getNamespace());
+        if (!wanted.isEmpty() || !leaving.isEmpty()) {
+            // 下发成功后才释放：失败时 listener 还在集群上，端口保持 ACTIVE
+            listeners.syncReleasing(app.getClusterId(), app.getNamespace(),
+                    p -> app.getId().equals(p.getAppId()) && leaving.contains(p.getServiceKey()),
+                    () -> leaving.forEach(key -> ports.release(app.getId(), key)));
         }
     }
 
-    /** 下线完成后：释放本应用全部网关端口并同步 ListenerSet；失败只记日志（下次该命名空间发布会补齐） */
+    /** 下线完成后：摘掉本应用的 listener 并释放全部网关端口；同步失败只记日志、端口保留 */
     @Override
     public void afterOffline(PlatformAppExecution execution) {
         PlatformApplication app = apps.selectById(execution.getAppId());
         if (app == null) {
             return;
         }
-        ports.releaseApp(app.getId());
         try {
-            listeners.sync(app.getClusterId(), app.getNamespace());
+            listeners.syncReleasing(app.getClusterId(), app.getNamespace(),
+                    p -> app.getId().equals(p.getAppId()), () -> ports.releaseApp(app.getId()));
         } catch (RuntimeException e) {
-            log.warn("应用 {} 下线后同步 ListenerSet 失败：{}", app.getId(), e.getMessage());
+            // 端口保留（listener 还在集群上）：再上线直接复用，删应用时释放
+            log.warn("应用 {} 下线后同步 ListenerSet 失败，网关端口保留：{}", app.getId(), e.getMessage());
         }
     }
 

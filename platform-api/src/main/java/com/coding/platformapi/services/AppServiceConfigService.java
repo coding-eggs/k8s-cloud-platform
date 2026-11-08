@@ -121,11 +121,12 @@ public class AppServiceConfigService {
         row.setPendingDelete(false);
         row.setCreatedAt(new Date());
         row.setUpdatedAt(new Date());
-        lockGatewayPort(app, key, desired);
+        boolean allocated = lockGatewayPort(app, key, desired);
         try {
             services.insert(row);
         } catch (DuplicateKeyException e) {
-            if (AppServiceDesired.gatewayProtocol(desired) != null) {
+            // 只放这次新分到的：并发建同名服务时输家拿到的是赢家的端口
+            if (allocated) {
                 ports.release(app.getId(), key);
             }
             throw error("服务 " + key + " 已存在");
@@ -145,7 +146,7 @@ public class AppServiceConfigService {
         Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
         Map<String, Object> before = AppSnapshot.parseMap(row.getDesiredJson());
         checkFeatures(app, before, desired);
-        lockGatewayPort(app, row.getServiceKey(), desired);
+        boolean allocated = lockGatewayPort(app, row.getServiceKey(), desired);
         // 改离网关方式：没上过线的端口立即释放；线上还在用的等发布（PRECHECK）时再放，否则线上入口先断
         if (AppServiceDesired.gatewayProtocol(before) != null && AppServiceDesired.gatewayProtocol(desired) == null
                 && !isPublished(app, row.getServiceKey())) {
@@ -154,6 +155,9 @@ public class AppServiceConfigService {
         row.setDesiredJson(JSON.writeValueAsString(desired));
         row.setUpdatedAt(new Date());
         if (services.updateWithVersion(row) == 0) {
+            if (allocated) {
+                ports.release(app.getId(), row.getServiceKey());
+            }
             throw conflict();
         }
         return view(app.getId(), row.getServiceKey(), desired, false, row.getVersion() + 1);
@@ -225,16 +229,17 @@ public class AppServiceConfigService {
      * 网关方式：从应用端口池分配并锁定端口（一个服务一个端口，重复保存返回原端口；只换协议不换端口）。
      * 端口不写进 desired（spec §6.1）：它锁在服务上，不随快照 / 回滚变化。
      */
-    private void lockGatewayPort(PlatformApplication app, String key, Map<String, Object> desired) {
+    /** @return true = 这次新分配了端口（保存失败时要放掉） */
+    private boolean lockGatewayPort(PlatformApplication app, String key, Map<String, Object> desired) {
         String protocol = AppServiceDesired.gatewayProtocol(desired);
         if (protocol == null) {
-            return;
+            return false;
         }
         IngressPortService.PortRange pool = ports.currentPool(app.getClusterId());
         if (pool == null) {
             throw error("集群未启用应用端口池（Istio 组件编辑里配置）");
         }
-        ports.allocate(app.getClusterId(), app.getNamespace(), app.getId(), key, protocol, pool);
+        return ports.lock(app.getClusterId(), app.getNamespace(), app.getId(), key, protocol, pool);
     }
 
     /** 没上过线的服务被删：端口释放；万一之前某次失败的发布已经同步过 listener，顺手摘掉（失败只记日志） */
@@ -242,10 +247,13 @@ public class AppServiceConfigService {
         if (ports.portOf(app.getId(), key) == null) {
             return;
         }
-        ports.release(app.getId(), key);
         try {
-            listeners.sync(app.getClusterId(), app.getNamespace());
+            listeners.syncReleasing(app.getClusterId(), app.getNamespace(),
+                    p -> app.getId().equals(p.getAppId()) && key.equals(p.getServiceKey()),
+                    () -> ports.release(app.getId(), key));
         } catch (RuntimeException e) {
+            // 服务行已删，端口不能挂在不存在的服务名下：照样释放（没上过线，残留 listener 也没有路由挂着）
+            ports.release(app.getId(), key);
             log.warn("删除服务 {}/{} 后同步 ListenerSet 失败（下次发布会补齐）：{}", app.getId(), key, e.getMessage());
         }
     }

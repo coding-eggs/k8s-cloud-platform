@@ -473,7 +473,7 @@ class AppServiceConfigServiceTest {
 
         service.create(req("api", d), "t1");
 
-        verify(ports).allocate("c1", "demo", "app1", "api", "HTTP", POOL);
+        verify(ports).lock("c1", "demo", "app1", "api", "HTTP", POOL);
         ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
         verify(services).insert(cap.capture());
         // 端口锁在分配表里，不进期望配置（快照 / 回滚不带端口）
@@ -532,9 +532,60 @@ class AppServiceConfigServiceTest {
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", before, 3)));
         AppServiceRequest r = req("api", null);
         r.setVersion(3);
+        org.mockito.Mockito.doAnswer(inv -> {
+            inv.<Runnable>getArgument(3).run();
+            return null;
+        }).when(listeners).syncReleasing(any(), any(), any(), any());
 
         service.remove(r, "t1");
 
         verify(ports).release("app1", "api");
+    }
+
+    // ------------------------------------------------------------ 终审修复（I2）
+
+    @Test
+    void versionConflictReleasesAPortThisSaveJustAllocated() {
+        when(ports.currentPool("c1")).thenReturn(POOL);
+        when(ports.lock(any(), any(), any(), any(), any(), any())).thenReturn(true);
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 3));
+        when(services.updateWithVersion(any())).thenReturn(0);
+        Map<String, Object> d = web("1");
+        d.put("expose", "gateway-http");
+        AppServiceRequest r = req("api", d);
+        r.setVersion(3);
+
+        assertThatThrownBy(() -> service.update(r, "t1"));
+        verify(ports).release("app1", "api");
+    }
+
+    @Test
+    void versionConflictKeepsAPortHeldBeforeThisSave() {
+        Map<String, Object> before = web("1");
+        before.put("expose", "gateway-http");
+        when(ports.currentPool("c1")).thenReturn(POOL);
+        when(ports.lock(any(), any(), any(), any(), any(), any())).thenReturn(false);
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", before, 3));
+        when(services.updateWithVersion(any())).thenReturn(0);
+        Map<String, Object> d = web("1");
+        d.put("expose", "gateway-tcp");
+        AppServiceRequest r = req("api", d);
+        r.setVersion(3);
+
+        assertThatThrownBy(() -> service.update(r, "t1"));
+        verify(ports, never()).release(any(), any());
+    }
+
+    @Test
+    void duplicateCreateDoesNotReleaseTheWinnersPort() {
+        // 两个请求同时建同名服务：输家的 lock 拿到的是赢家的端口（created=false），不能把它放掉
+        when(ports.currentPool("c1")).thenReturn(POOL);
+        when(ports.lock(any(), any(), any(), any(), any(), any())).thenReturn(false);
+        when(services.insert(any())).thenThrow(new org.springframework.dao.DuplicateKeyException("uk"));
+        Map<String, Object> d = web("1");
+        d.put("expose", "gateway-http");
+
+        assertThatThrownBy(() -> service.create(req("api", d), "t1")).hasMessageContaining("已存在");
+        verify(ports, never()).release(any(), any());
     }
 }

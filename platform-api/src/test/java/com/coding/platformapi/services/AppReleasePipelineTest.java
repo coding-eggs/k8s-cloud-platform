@@ -26,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -136,7 +138,7 @@ class AppReleasePipelineTest {
         pipeline.check(e);
 
         verify(ports).allocate("c1", "demo", "app1", "api", "TCP", POOL);
-        verify(sync).sync("c1", "demo");
+        verify(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
     }
 
     @Test
@@ -144,7 +146,7 @@ class AppReleasePipelineTest {
         PlatformAppExecution e = execution(Map.of("api", svc("gateway-http")));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("gateway-http"))));
         doThrow(new CloudPlatformException(EnumResponseType.ERROR, "集群缺少 ListenerSet CRD 或入口 Gateway"))
-                .when(sync).sync("c1", "demo");
+                .when(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
 
         assertThatThrownBy(() -> pipeline.check(e)).hasMessageContaining("ListenerSet");
     }
@@ -156,7 +158,7 @@ class AppReleasePipelineTest {
         when(ports.currentPool("c1")).thenReturn(null);
 
         assertThatThrownBy(() -> pipeline.check(e)).hasMessageContaining("端口池");
-        verify(sync, never()).sync(anyString(), anyString());
+        verify(sync, never()).syncReleasing(anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -169,11 +171,37 @@ class AppReleasePipelineTest {
         held.setServiceKey("api");
         held.setPort(20001);
         when(ports.activeOfApp("app1")).thenReturn(List.of(held));
+        runReleaseCallback();
 
         pipeline.check(e);
 
         verify(ports).release("app1", "api");
-        verify(sync).sync("c1", "demo");
+        verify(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
+    }
+
+    @Test
+    void precheckKeepsPortsWhenTheListenerSetSyncFails() {
+        // 同步失败 → 端口不释放（listener 还在集群上），发布在 PRECHECK 失败
+        PlatformAppExecution e = execution(Map.of("api", svc(null)));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc(null))));
+        PlatformIngressPort held = new PlatformIngressPort();
+        held.setAppId("app1");
+        held.setServiceKey("api");
+        held.setPort(20001);
+        when(ports.activeOfApp("app1")).thenReturn(List.of(held));
+        doThrow(new CloudPlatformException(EnumResponseType.ERROR, "集群不可达"))
+                .when(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
+
+        assertThatThrownBy(() -> pipeline.check(e)).hasMessageContaining("集群不可达");
+        verify(ports, never()).release(anyString(), anyString());
+    }
+
+    /** sync 是 mock：让它像真的一样在下发成功后执行释放回调 */
+    private void runReleaseCallback() {
+        doAnswer(inv -> {
+            inv.<Runnable>getArgument(3).run();
+            return null;
+        }).when(sync).syncReleasing(anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -199,26 +227,29 @@ class AppReleasePipelineTest {
 
         pipeline.check(e);
 
-        verify(sync, never()).sync(anyString(), anyString());
+        verify(sync, never()).syncReleasing(anyString(), anyString(), any(), any());
     }
 
     @Test
     void afterOfflineReleasesPortsAndSyncs() {
         PlatformAppExecution e = execution(Map.of());
+        runReleaseCallback();
 
         pipeline.afterOffline(e);
 
         verify(ports).releaseApp("app1");
-        verify(sync).sync("c1", "demo");
+        verify(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
     }
 
     @Test
-    void afterOfflineSwallowsSyncFailure() {
+    void afterOfflineKeepsPortsWhenSyncFails() {
+        // 下线已成功，不因此失败；端口保留（listener 还在），再上线复用、删应用时再放
         PlatformAppExecution e = execution(Map.of());
-        doThrow(new RuntimeException("集群不可达")).when(sync).sync("c1", "demo");
+        doThrow(new RuntimeException("集群不可达"))
+                .when(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
 
         pipeline.afterOffline(e);
 
-        verify(ports).releaseApp("app1");
+        verify(ports, never()).releaseApp("app1");
     }
 }

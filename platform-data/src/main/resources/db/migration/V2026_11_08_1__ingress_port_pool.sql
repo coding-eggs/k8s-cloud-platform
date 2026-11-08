@@ -6,6 +6,9 @@
 -- 设计见 docs/superpowers/specs/2026-11-08-app-istio-exposure-design.md §5。
 --
 -- - (cluster_id, port) 唯一：一个端口同一时刻只属于一个服务；并发分配靠它兜底。
+-- - active_service（生成列，只在 ACTIVE 行非空）唯一：一个服务同一时刻只持有一个端口
+--   （同一服务并发保存时后到的拿赢家的端口，不会出现两条 ACTIVE）。
+--   ⚠️ 若已重放过本文件的旧版本（无此列）：表里不会有数据（功能未上线），DROP TABLE 后重放。
 -- - 释放后行保留为 RELEASED（released_at 记时间）：冷却 10 分钟后才会被复用（复用 = 原地改回 ACTIVE）。
 -- - 不加外键；不新增接口，所以没有权限行。
 --
@@ -26,8 +29,11 @@ CREATE TABLE IF NOT EXISTS platform_ingress_port (
   released_at   datetime     NULL COMMENT '释放时间；冷却期从这里算',
   created_at    datetime     NOT NULL,
   updated_at    datetime     NOT NULL,
+  active_service varchar(129) GENERATED ALWAYS AS
+                 (IF(status = 'ACTIVE', CONCAT(app_id, '/', service_key), NULL)) STORED,
   PRIMARY KEY (id),
   UNIQUE KEY uk_ingress_port (cluster_id, port),
+  UNIQUE KEY uk_ingress_active_service (active_service),
   KEY idx_ingress_port_app (app_id, service_key),
   KEY idx_ingress_port_ns (cluster_id, namespace)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='应用网关端口池分配';

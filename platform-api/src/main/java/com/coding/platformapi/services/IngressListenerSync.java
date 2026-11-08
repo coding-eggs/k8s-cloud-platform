@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * 把命名空间里所有 ACTIVE 端口整份同步成一个 ListenerSet（spec §5.3）。
@@ -29,10 +30,12 @@ public class IngressListenerSync {
 
     private final IngressPortService ports;
     private final K8sAppClient client;
+    private final IngressNamespaceLock lock;
 
-    public IngressListenerSync(IngressPortService ports, K8sAppClient client) {
+    public IngressListenerSync(IngressPortService ports, K8sAppClient client, IngressNamespaceLock lock) {
         this.ports = ports;
         this.client = client;
+        this.lock = lock;
     }
 
     public static String sectionName(int port) {
@@ -40,8 +43,28 @@ public class IngressListenerSync {
     }
 
     public void sync(String clusterId, String namespace) {
+        syncReleasing(clusterId, namespace, p -> false, () -> { });
+    }
+
+    /**
+     * 在命名空间锁里：按分配表整份下发，但不含 {@code leaving} 的端口；下发成功后才执行 {@code release}
+     * （真正把这些端口标成 RELEASED）。下发失败抛异常、端口保持 ACTIVE —— listener 还在集群上，
+     * 不能让它冷却后分给别的命名空间（终审 I4）。
+     */
+    public void syncReleasing(String clusterId, String namespace, Predicate<PlatformIngressPort> leaving,
+                              Runnable release) {
+        lock.run(clusterId, namespace, () -> {
+            apply(clusterId, namespace, leaving);
+            release.run();
+        });
+    }
+
+    private void apply(String clusterId, String namespace, Predicate<PlatformIngressPort> leaving) {
         List<IngressListenerDTO> listeners = new ArrayList<>();
         for (PlatformIngressPort p : ports.activeInNamespace(clusterId, namespace)) {
+            if (leaving.test(p)) {
+                continue;
+            }
             IngressListenerDTO l = new IngressListenerDTO();
             l.setName(sectionName(p.getPort()));
             l.setPort(p.getPort());

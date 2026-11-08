@@ -20,7 +20,12 @@ class IngressListenerSyncTest {
 
     private final IngressPortService ports = mock(IngressPortService.class);
     private final K8sAppClient client = mock(K8sAppClient.class);
-    private final IngressListenerSync sync = new IngressListenerSync(ports, client);
+    private final java.util.List<String> locked = new java.util.ArrayList<>();
+    private final IngressNamespaceLock lock = (cluster, ns, body) -> {
+        locked.add(cluster + "/" + ns);
+        body.run();
+    };
+    private final IngressListenerSync sync = new IngressListenerSync(ports, client, lock);
 
     private static PlatformIngressPort port(int p, String protocol) {
         PlatformIngressPort r = new PlatformIngressPort();
@@ -83,5 +88,57 @@ class IngressListenerSyncTest {
     @Test
     void sectionNameIsPPlusPort() {
         assertThat(IngressListenerSync.sectionName(20003)).isEqualTo("p20003");
+    }
+
+    // ------------------------------------------------------------ 终审修复
+
+    private static PlatformIngressPort owned(int p, String app, String key) {
+        PlatformIngressPort r = port(p, "HTTP");
+        r.setAppId(app);
+        r.setServiceKey(key);
+        return r;
+    }
+
+    @Test
+    void syncRunsUnderTheNamespaceLock() {
+        // 同命名空间两次整份同步交错会丢 listener（I3）：读分配表 + 下发必须在锁里
+        when(ports.activeInNamespace("c1", "demo")).thenReturn(List.of(port(20001, "HTTP")));
+        when(client.applyIngressListenerSet(any())).thenAnswer(inv -> {
+            assertThat(locked).containsExactly("c1/demo");
+            return true;
+        });
+
+        sync.sync("c1", "demo");
+
+        assertThat(locked).containsExactly("c1/demo");
+    }
+
+    @Test
+    void syncReleasingLeavesOutReleasedPortsAndReleasesAfterApply() {
+        when(ports.activeInNamespace("c1", "demo"))
+                .thenReturn(List.of(owned(20001, "app1", "api"), owned(20002, "app2", "web")));
+        when(client.applyIngressListenerSet(any())).thenReturn(true);
+        Runnable release = mock(Runnable.class);
+
+        sync.syncReleasing("c1", "demo", p -> "app1".equals(p.getAppId()), release);
+
+        ArgumentCaptor<IngressListenerSetRequestDTO> req = ArgumentCaptor.forClass(IngressListenerSetRequestDTO.class);
+        var order = org.mockito.Mockito.inOrder(client, release);
+        order.verify(client).applyIngressListenerSet(req.capture());
+        order.verify(release).run();
+        assertThat(req.getValue().getListeners()).extracting(IngressListenerDTO::getName).containsExactly("p20002");
+    }
+
+    @Test
+    void portsStayHeldWhenTheListenerSetCannotBeApplied() {
+        // 下发失败不释放：否则 listener 留在集群上、端口冷却后分给别的命名空间 → 冲突（I4）
+        when(ports.activeInNamespace("c1", "demo"))
+                .thenReturn(List.of(owned(20001, "app1", "api"), owned(20002, "app2", "web")));
+        when(client.applyIngressListenerSet(any())).thenReturn(false);
+        Runnable release = mock(Runnable.class);
+
+        assertThatThrownBy(() -> sync.syncReleasing("c1", "demo", p -> "app1".equals(p.getAppId()), release))
+                .hasMessageContaining("ListenerSet");
+        org.mockito.Mockito.verifyNoInteractions(release);
     }
 }

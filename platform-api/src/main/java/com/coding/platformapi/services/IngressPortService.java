@@ -75,20 +75,48 @@ public class IngressPortService {
      * 以成功记录为准：只有成功下发的范围才真的声明在网关 Service 上。
      */
     public PortRange currentPool(String clusterId) {
+        // 组件变更进行中：网关 Service 的端口可能正在缩，这时分出去的端口可能落进被删的段（终审 I5）
+        if (operations.countRunning(clusterId, "istio") > 0) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "Istio 组件正在变更，暂不能分配网关端口，请等组件操作完成后重试");
+        }
         var last = operations.selectLatestSuccess(clusterId, "istio");
         return last == null ? null : IngressPortPool.fromSnapshot(last.getValuesSnapshot());
     }
 
+    /** 发布 PRECHECK 用：确保有端口，协议以快照为准（已有端口换协议只改协议） */
     public int allocate(String clusterId, String namespace, String appId, String serviceKey,
                         String protocol, PortRange pool) {
         PlatformIngressPort mine = mapper.selectActiveByService(appId, serviceKey);
-        Date now = Date.from(clock.instant());
         if (mine != null) {
             if (!protocol.equals(mine.getProtocol())) {
-                mapper.updateProtocol(mine.getId(), protocol, now);
+                mapper.updateProtocol(mine.getId(), protocol, Date.from(clock.instant()));
             }
             return mine.getPort();
         }
+        return claim(clusterId, namespace, appId, serviceKey, protocol, pool).port();
+    }
+
+    /**
+     * 保存时用：锁定端口但<b>不改已有端口的协议</b> —— 已上线的 HTTP 路由还挂在 listener 上，
+     * 保存时就改协议，任何一次同命名空间的同步都会让线上入口在发布前断掉（终审 I1）。
+     *
+     * @return true = 这次新分配的（保存失败时调用方要把它放掉）；false = 原本就有 / 并发请求先分到了
+     */
+    public boolean lock(String clusterId, String namespace, String appId, String serviceKey,
+                        String protocol, PortRange pool) {
+        if (mapper.selectActiveByService(appId, serviceKey) != null) {
+            return false;
+        }
+        return claim(clusterId, namespace, appId, serviceKey, protocol, pool).created();
+    }
+
+    private record Claim(int port, boolean created) {
+    }
+
+    private Claim claim(String clusterId, String namespace, String appId, String serviceKey,
+                        String protocol, PortRange pool) {
+        Date now = Date.from(clock.instant());
         Set<Integer> declared = new HashSet<>(components.servicePorts(clusterId, GATEWAY_NAMESPACE, GATEWAY_SERVICE));
         Map<Integer, PlatformIngressPort> byPort = new HashMap<>();
         for (PlatformIngressPort r : mapper.selectByCluster(clusterId)) {
@@ -129,15 +157,20 @@ public class IngressPortService {
             try {
                 if (existing == null) {
                     mapper.insert(rec);
-                    return candidate;
+                    return new Claim(candidate, true);
                 }
                 rec.setId(existing.getId());
                 rec.setCooldownCutoff(Date.from(cutoff));
                 if (mapper.reactivate(rec) > 0) {
-                    return candidate;
+                    return new Claim(candidate, true);
                 }
             } catch (DuplicateKeyException e) {
-                // 被并发请求抢先：换下一个端口
+                // 两种撞法：同一服务的并发请求先分到了（(app_id, service_key) ACTIVE 唯一）→ 用它的；
+                // 别的服务抢了这个端口（(cluster_id, port) 唯一）→ 换下一个
+                PlatformIngressPort winner = mapper.selectActiveByService(appId, serviceKey);
+                if (winner != null) {
+                    return new Claim(winner.getPort(), false);
+                }
             }
         }
         throw new CloudPlatformException(EnumResponseType.ERROR, "端口分配冲突，请稍后重试");

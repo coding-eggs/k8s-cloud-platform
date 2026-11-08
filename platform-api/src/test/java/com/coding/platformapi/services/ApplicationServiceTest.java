@@ -190,9 +190,30 @@ class ApplicationServiceTest {
         ApplicationDeleteRequest req = new ApplicationDeleteRequest();
         req.setAppId("app_1");
 
+        org.mockito.Mockito.doAnswer(inv -> {
+            inv.<Runnable>getArgument(3).run();
+            return null;
+        }).when(listeners).syncReleasing(any(), any(), any(), any());
+
         service.delete(req, "admin", null);
 
         verify(ports).releaseApp("app_1");
-        verify(listeners).sync(row().getClusterId(), row().getNamespace());
+        verify(listeners).syncReleasing(org.mockito.ArgumentMatchers.eq(row().getClusterId()),
+                org.mockito.ArgumentMatchers.eq(row().getNamespace()), any(), any());
+    }
+
+    @Test
+    void deleteReleasesGatewayPortsEvenWhenSyncFails() {
+        // 应用没了，端口不能永远挂在它名下：同步失败也释放（listener 残留由下次该命名空间同步摘掉）
+        when(apps.selectById("app_1")).thenReturn(row());
+        when(resources.selectByApp("app_1")).thenReturn(List.of());
+        org.mockito.Mockito.doThrow(new RuntimeException("集群不可达"))
+                .when(listeners).syncReleasing(any(), any(), any(), any());
+        ApplicationDeleteRequest req = new ApplicationDeleteRequest();
+        req.setAppId("app_1");
+
+        service.delete(req, "admin", null);
+
+        verify(ports).releaseApp("app_1");
     }
 }

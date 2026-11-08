@@ -155,4 +155,45 @@ class IngressPortServiceTest {
         when(operations.selectLatestSuccess("c2", "istio")).thenReturn(null);
         assertThat(svc.currentPool("c2")).isNull();
     }
+
+    // ------------------------------------------------------------ 终审修复
+
+    @Test
+    void lockKeepsProtocolOfAnAlreadyHeldPort() {
+        // 保存时不改协议：已上线的 HTTP 路由还挂着，协议在发布 PRECHECK 才按快照改（I1）
+        PlatformIngressPort mine = row(9, 20003, "ACTIVE", null);
+        mine.setAppId("app1");
+        mine.setServiceKey("api");
+        when(mapper.selectActiveByService("app1", "api")).thenReturn(mine);
+
+        assertThat(svc.lock(C, "shop", "app1", "api", "TCP", POOL)).isFalse();
+        verify(mapper, never()).updateProtocol(anyLong(), any(), any());
+    }
+
+    @Test
+    void lockReportsANewlyCreatedPort() {
+        assertThat(svc.lock(C, "shop", "app1", "api", "HTTP", POOL)).isTrue();
+        verify(mapper).insert(any());
+    }
+
+    @Test
+    void concurrentAllocationForTheSameServiceReturnsTheWinnersPort() {
+        // 同一服务两个请求并发：后到的撞 (app_id, service_key) ACTIVE 唯一键，拿赢家的端口，不另占一个（I2）
+        PlatformIngressPort winner = row(5, 20004, "ACTIVE", null);
+        winner.setAppId("app1");
+        winner.setServiceKey("api");
+        when(mapper.selectActiveByService("app1", "api")).thenReturn(null, winner);
+        doThrow(new DuplicateKeyException("uk_ingress_active_service")).when(mapper).insert(any());
+
+        assertThat(svc.lock(C, "shop", "app1", "api", "HTTP", POOL)).isFalse();
+        verify(mapper, times(1)).insert(any());
+    }
+
+    @Test
+    void currentPoolRefusedWhileAnIstioOperationRuns() {
+        // 组件变更进行中：网关 Service 端口可能正在缩，此时分配可能落进被删的段（I5）
+        when(operations.countRunning(C, "istio")).thenReturn(1);
+
+        assertThatThrownBy(() -> svc.currentPool(C)).hasMessageContaining("Istio");
+    }
 }

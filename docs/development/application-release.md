@@ -75,6 +75,12 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
     整份同步（同命名空间多个应用共用一个）；缺 ListenerSet CRD、没开端口池在这里就失败，不会下发半截；
   - 释放：服务从未发布过时改回不暴露 / 删服务立即释放；**已上线的端口等发布时**（快照和期望配置都不再是网关方式）才释放，
     否则线上入口会在发布前就断；下线、删除应用释放全部端口并同步 ListenerSet；
+  - 释放一律「先下发、后释放」：ListenerSet 同步失败时端口保持占用（listener 还在集群上），发布在 PRECHECK 失败；
+    下线时同步失败只记日志、端口保留（再上线复用）；删应用 / 删未上线服务时同步失败也释放（残留 listener 由该命名空间下次同步摘掉）；
+  - 保存时**不改**已有端口的协议（HTTP ↔ TCP），协议在发布 PRECHECK 按快照改，线上入口在发布前不受影响；
+  - 同一 (集群, 命名空间) 的 ListenerSet 同步用 MySQL `GET_LOCK` 串行（跨实例），等锁 30 秒；
+  - Istio 组件操作进行中（PENDING / RUNNING）时不分配网关端口（端口池可能正在缩）；
+  - 入口 Gateway 不存在时同步按「不支持」处理（PRECHECK 失败），不会下发挂不上的 ListenerSet；
   - 释放后冷却 10 分钟才会分给别的服务；**下线后再发布可能换端口**；
   - 门禁：依赖 Istio 的 `routes` 旗标（没装不让开、已开可关）。
 - 「不暴露」不存 `expose` / `nodePort`。
@@ -203,6 +209,7 @@ key 不能以它结尾。
 
 **网关端口暴露（§1.5）**：
 1. 重放 **V2026_11_08_1**（`platform_ingress_port` 表；新 mapper 读它，不重放保存网关方式直接 SQL 报错）。
+   若重放过 11-08 早先的版本（没有 `active_service` 生成列 / `uk_ingress_active_service`）：表里没有数据，`DROP TABLE` 后重放。
 2. 重建 k8s-server → platform-api → platform-web，**k8s-server 先部署**（新 platform-api 调的
    `/application/ingress-listenerset` 等端点旧 k8s-server 没有；旧 k8s-server 的 HEALTH 也不认 HTTPRoute / TCPRoute）。
 3. 到 Istio 组件「编辑」里确认「应用端口池」范围并**保存一次**：生成网关 Service 的 `pool-<端口>` 端口（nodePort = 端口）
@@ -279,6 +286,9 @@ HPA / 可观测 / 服务网格（§1.7）：
 ## 6. 已知限制
 
 - 对外域名、入口灰度不在本次范围（网关端口第二期）；网关 HTTP 不终止 TLS（HTTPS 服务用网关 TCP 透传）。
+- 下线后再上线几乎总会换端口（自己刚释放的端口也在冷却里），概览显示新地址。
+- 一个命名空间最多 64 条 listener（ListenerSet 上限）：第 65 个网关服务能保存，但该命名空间的发布会在 PRECHECK 失败。
+- 缩小端口池的拦截只看分配表里的 ACTIVE 行，不看集群上残留的 listener。
 - 未固定端口的 NodePort 在本集群（nodePort 范围 1-65535）会随机分配，可能落进应用端口池（设计 §5.3，待修）。
 - 依赖新建不支持 Milvus，以及 ES Kibana/TLS/IK、Redis 分片副本等高级参数：先去中间件商店建，再绑定。
 - ES 初始化的 `initPath` 可调该实例的任意 ES API（只作用于自己的实例，暂不收紧）；集群内 TLS 用 `curl -k`。
