@@ -310,6 +310,29 @@ public class K8sComponentClient {
         return Boolean.TRUE.equals(ok);
     }
 
+    /** 某个 Service 声明的端口（应用端口池只分配网关 Service 上已声明的端口）；Service 不存在返回空列表。 */
+    public List<Integer> servicePorts(String clusterId, String namespace, String name) {
+        Map<String, String> params = Map.of("clusterId", clusterId, "namespace", namespace, "name", name);
+        List<Integer> ports = gateway.exchange(HttpMethod.GET, "/components/service-ports", params, null,
+                gateway.listResponseType(Integer.class));
+        return ports == null ? List.of() : ports;
+    }
+
+    /** 下发/删除命名空间的应用端口池 ListenerSet；ListenerSet CRD 缺失返回 false。 */
+    public boolean applyIngressListenerSet(com.coding.common.models.k8s.dto.IngressListenerSetRequestDTO body) {
+        Boolean ok = gateway.exchange(HttpMethod.POST, "/components/ingress-listenerset", null, body,
+                gateway.responseType(Boolean.class));
+        return Boolean.TRUE.equals(ok);
+    }
+
+    /** 命名空间应用端口池 ListenerSet 的状态（每个 listener 是否生效 / 冲突）。 */
+    public com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO ingressListenerSetStatus(
+            String clusterId, String namespace, String name) {
+        Map<String, String> params = Map.of("clusterId", clusterId, "namespace", namespace, "name", name);
+        return gateway.exchange(HttpMethod.GET, "/components/ingress-listenerset", params, null,
+                gateway.responseType(com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO.class));
+    }
+
     /** 查询某条 Telemetry 是否存在及其采样率（waypoint 编辑页回填）。 */
     public OtelTelemetryStateDTO otelTelemetryState(String clusterId, String namespace, String name) {
         Map<String, String> params = Map.of(
