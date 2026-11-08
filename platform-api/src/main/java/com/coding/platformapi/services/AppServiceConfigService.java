@@ -55,12 +55,15 @@ public class AppServiceConfigService {
     private final AppFeatureGate featureGate;
     private final IngressPortService ports;
     private final IngressListenerSync listeners;
+    private final AppNodePortAllocator nodePorts;
 
     public AppServiceConfigService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
                                    PlatformAppDependencyMapper dependencies, PlatformAppReleaseMapper releases,
                                    PlatformAppExecutionMapper executions,
                                    HarborInstallLocator harbor, AppFeatureGate featureGate,
-                                   IngressPortService ports, IngressListenerSync listeners) {
+                                   IngressPortService ports, IngressListenerSync listeners,
+                                   AppNodePortAllocator nodePorts) {
+        this.nodePorts = nodePorts;
         this.ports = ports;
         this.listeners = listeners;
         this.apps = apps;
@@ -101,6 +104,7 @@ public class AppServiceConfigService {
         assertValidKey(key);
         Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
         checkFeatures(app, null, desired);
+        desired = nodePorts.assign(app, key, desired);
 
         if (dependencies.selectByKey(app.getId(), key) != null) {
             throw error("名称 " + key + " 已被依赖占用");
@@ -146,6 +150,7 @@ public class AppServiceConfigService {
         Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
         Map<String, Object> before = AppSnapshot.parseMap(row.getDesiredJson());
         checkFeatures(app, before, desired);
+        desired = nodePorts.assign(app, row.getServiceKey(), desired);
         boolean allocated = lockGatewayPort(app, row.getServiceKey(), desired);
         // 改离网关方式：没上过线的端口立即释放；线上还在用的等发布（PRECHECK）时再放，否则线上入口先断
         if (AppServiceDesired.gatewayProtocol(before) != null && AppServiceDesired.gatewayProtocol(desired) == null

@@ -26,6 +26,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,6 +47,7 @@ class AppServiceConfigServiceTest {
     private com.coding.platformapi.registry.HarborInstallLocator harbor;
     private IngressPortService ports;
     private IngressListenerSync listeners;
+    private AppNodePortAllocator nodePorts;
     private static final IngressPortService.PortRange POOL = new IngressPortService.PortRange(20000, 20999);
 
     @BeforeEach
@@ -59,8 +61,10 @@ class AppServiceConfigServiceTest {
         gate = mock(AppFeatureGate.class);
         ports = mock(IngressPortService.class);
         listeners = mock(IngressListenerSync.class);
+        nodePorts = mock(AppNodePortAllocator.class);
+        when(nodePorts.assign(any(), any(), any())).thenAnswer(inv -> inv.getArgument(2));
         service = new AppServiceConfigService(apps, services, deps, releases, executions, harbor, gate,
-                ports, listeners);
+                ports, listeners, nodePorts);
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -120,6 +124,24 @@ class AppServiceConfigServiceTest {
         when(services.selectByKey("app1", "api")).thenReturn(row("api", web("1"), 0));
         assertThatThrownBy(() -> service.create(req("api", web("1")), "t1"))
                 .isInstanceOf(CloudPlatformException.class).hasMessageContaining("api");
+    }
+
+    @Test
+    void createStoresThePlatformChosenNodePort() {
+        Map<String, Object> d = web("1.0");
+        d.put("expose", "nodeport");
+        when(nodePorts.assign(any(), eq("api"), any())).thenAnswer(inv -> {
+            Map<String, Object> out = new java.util.LinkedHashMap<>(inv.getArgument(2));
+            out.put("nodePort", 31555);
+            return out;
+        });
+
+        var view = service.create(req("api", d), "t1");
+
+        ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).insert(cap.capture());
+        assertThat(cap.getValue().getDesiredJson()).contains("\"nodePort\":31555");
+        assertThat(view.desired()).containsEntry("nodePort", 31555);
     }
 
     @Test

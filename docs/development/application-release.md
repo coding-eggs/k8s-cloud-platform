@@ -62,9 +62,11 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 服务配置「基本」页签：有端口的服务可选「不暴露 / NodePort / 网关 HTTP / 网关 TCP」
 （设计 `docs/superpowers/specs/2026-11-08-app-istio-exposure-design.md`）。
 
-- **NodePort**：端口可留空（集群分配，发布后在服务「概览」看实际端口与 `http://节点IP:端口`），也可固定 30000-32767；
-  同一应用里两个服务固定同一端口，发布前就拦下；与集群里别的 Service 撞端口只能在下发时由 K8s 报错。
-  desired 存 `expose: nodeport` + 可选 `nodePort`。
+- **NodePort**：端口固定在 30000-32767。留空则**保存时由平台挑一个空闲端口写进 desired**（`AppNodePortAllocator`），
+  之后发布 / 回滚都不变——不交给 K8s 随机（本集群 nodePort 范围是 1-65535，随机会落到低端口或端口池段）。
+  「空闲」= 集群所有 Service 已占用的 nodePort（k8s-server `GET /application/node-ports`）∪ 同集群其他应用服务已保存的
+  nodePort；自己的线上 Service / 台账行不算。填了的端口被占就在保存时拒绝。读不到集群则保存失败，不猜。
+  并发两次保存挑到同一端口的极小概率由发布时 K8s 报「端口已占用」兜底。desired 存 `expose: nodeport` + `nodePort`。
 - **网关 HTTP / TCP**（`expose: gateway-http | gateway-tcp`）：经 `istio-system/external-gateway` 转发，集群外用
   「节点 IP:端口」访问。端口从 Istio 组件的「应用端口池」分配（默认 20000-20999），**不进 desired**，锁在分配表
   `platform_ingress_port` 里：
@@ -299,7 +301,6 @@ HPA / 可观测 / 服务网格（§1.7）：
 
 - 对外域名、入口灰度不在本次范围（网关端口第二期）；网关 HTTP 不终止 TLS（HTTPS 服务用网关 TCP 透传）。
 - 缩小端口池的拦截只看分配表里的 ACTIVE 行，不看集群上残留的 listener。
-- 未固定端口的 NodePort 在本集群（nodePort 范围 1-65535）会随机分配，可能落进应用端口池（设计 §5.3，待修）。
 - 依赖新建不支持 Milvus，以及 ES Kibana/TLS/IK、Redis 分片副本等高级参数：先去中间件商店建，再绑定。
 - ES 初始化的 `initPath` 可调该实例的任意 ES API（只作用于自己的实例，暂不收紧）；集群内 TLS 用 `curl -k`。
 - 初始化排队时间计入超时；`MYSQL_PWD` 已被 MySQL 标记弃用，但客户端仍认。

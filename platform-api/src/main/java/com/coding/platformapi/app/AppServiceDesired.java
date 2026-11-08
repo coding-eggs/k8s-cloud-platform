@@ -133,7 +133,8 @@ public final class AppServiceDesired {
     /**
      * 对外暴露：{@code expose} 取 none / nodeport / gateway-http / gateway-tcp（大小写不敏感），
      * none 与空都不存（否则「没有 vs none」会成待发布改动）。都只对有端口的服务有意义。
-     * {@code nodePort} 只属于 NodePort 方式：可空 = 由集群自动分配，填了必须在 30000-32767。
+     * {@code nodePort} 只属于 NodePort 方式：填了必须在 30000-32767；可空 = 保存时由平台挑一个空闲的写进来
+     * （{@code AppNodePortAllocator}，不交给 K8s 随机）。
      * 网关方式的端口由平台从应用端口池分配（保存时锁定），这里不收。
      */
     private static void normalizeExpose(Map<String, Object> raw, Integer port, Map<String, Object> out) {
@@ -162,7 +163,7 @@ public final class AppServiceDesired {
         out.put("expose", EXPOSE_NODEPORT);
         if (nodePort != null) {
             if (nodePort < NODE_PORT_MIN || nodePort > NODE_PORT_MAX) {
-                throw bad("NodePort 端口必须在 " + NODE_PORT_MIN + "-" + NODE_PORT_MAX + " 之间，留空则自动分配");
+                throw bad("NodePort 端口必须在 " + NODE_PORT_MIN + "-" + NODE_PORT_MAX + " 之间，留空由平台分配");
             }
             out.put("nodePort", nodePort);
         }

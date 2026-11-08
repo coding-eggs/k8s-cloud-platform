@@ -85,6 +85,26 @@ public class AppIngressService {
         return svc.getSpec().getPorts().stream().map(ServicePort::getPort).filter(Objects::nonNull).toList();
     }
 
+    /** 集群里所有 Service 已占用的 nodePort（全部命名空间、每个端口一条）；给平台挑 NodePort 时避让用 */
+    public List<com.coding.common.models.app.NodePortUseDTO> usedNodePorts(String clusterId) {
+        List<com.coding.common.models.app.NodePortUseDTO> out = new java.util.ArrayList<>();
+        for (Service svc : clients.getAdminClient(clusterId).services().inAnyNamespace().list().getItems()) {
+            if (svc.getSpec() == null || svc.getSpec().getPorts() == null) {
+                continue;
+            }
+            for (ServicePort p : svc.getSpec().getPorts()) {
+                if (p.getNodePort() != null && p.getNodePort() > 0) {
+                    com.coding.common.models.app.NodePortUseDTO u = new com.coding.common.models.app.NodePortUseDTO();
+                    u.setNamespace(svc.getMetadata().getNamespace());
+                    u.setName(svc.getMetadata().getName());
+                    u.setNodePort(p.getNodePort());
+                    out.add(u);
+                }
+            }
+        }
+        return out;
+    }
+
     private static void applyNamespaceLabels(KubernetesClient client, String namespace, Map<String, String> labels) {
         Namespace ns = new NamespaceBuilder()
                 .withNewMetadata().withName(namespace).withLabels(new LinkedHashMap<>(labels)).endMetadata()

@@ -108,4 +108,11 @@ public class AppController implements AccessBoundaryAware {
                                                               @RequestParam String name) {
         return new ResponseData<>(ingress.servicePorts(clusterId, namespace, name));
     }
+
+    @GetMapping("/node-ports")
+    @Operation(summary = "查询集群里所有 Service 已占用的 nodePort（平台给 NodePort 暴露挑端口时避让）")
+    public ResponseData<java.util.List<com.coding.common.models.app.NodePortUseDTO>> usedNodePorts(
+            @RequestParam String clusterId) {
+        return new ResponseData<>(ingress.usedNodePorts(clusterId));
+    }
 }

@@ -30,6 +30,15 @@
     where app_id = #{appId,jdbcType=VARCHAR} and service_key = #{serviceKey,jdbcType=VARCHAR}
   </select>
 
+  <select id="selectNodePortServicesInCluster" resultMap="BaseResultMap">
+    select s.id, s.app_id, s.service_key, s.desired_json, s.pending_delete, s.version, s.created_at, s.updated_at
+    from platform_app_service s
+    join platform_application a on a.id = s.app_id
+    where a.cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and a.deleted_at is null
+      and s.desired_json like '%"nodePort"%'
+  </select>
+
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformAppService"
           useGeneratedKeys="true" keyProperty="id">
     insert into platform_app_service

@@ -567,8 +567,8 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
                 <span v-else class="muted">保存后分配</span>
               </el-form-item>
               <el-form-item v-if="form.port && exposeMode === 'nodeport'" label="NodePort 端口">
-                <el-input-number v-model="nodePortModel" :min="30000" :max="32767" :controls="false" placeholder="留空自动分配" />
-                <span class="app-svc__tip">30000-32767；留空由集群分配，发布后在「概览」查看。固定端口被占用时发布会失败</span>
+                <el-input-number v-model="nodePortModel" :min="30000" :max="32767" :controls="false" placeholder="留空由平台分配" />
+                <span class="app-svc__tip">30000-32767；留空则保存时由平台挑一个空闲端口填上，之后不变。已被其他服务占用的端口保存时会被拒绝</span>
               </el-form-item>
               <el-form-item label="副本数">
                 <el-input-number v-model="form.replicas" :min="0" :max="100" :disabled="readonly || !!form.autoscalingEnabled" />

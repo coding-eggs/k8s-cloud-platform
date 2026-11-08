@@ -60,6 +60,14 @@ public class K8sAppClient {
         return ports == null ? List.of() : ports;
     }
 
+    /** 集群里所有 Service 已占用的 nodePort。 */
+    public List<com.coding.common.models.app.NodePortUseDTO> usedNodePorts(String clusterId) {
+        List<com.coding.common.models.app.NodePortUseDTO> out = gateway.exchange(HttpMethod.GET,
+                "/application/node-ports", Map.of("clusterId", clusterId), null,
+                gateway.listResponseType(com.coding.common.models.app.NodePortUseDTO.class));
+        return out == null ? List.of() : out;
+    }
+
     /** 下发/删除命名空间的应用端口池 ListenerSet；ListenerSet CRD 缺失返回 false。 */
     public boolean applyIngressListenerSet(IngressListenerSetRequestDTO body) {
         Boolean ok = gateway.exchange(HttpMethod.POST, "/application/ingress-listenerset", Map.of(), body,
