@@ -48,6 +48,8 @@
 | 权限沿用应用的发布权限，不新加码 | 我定 |
 | canary 不能改端口、暴露方式、服务类型（服务 / 后台进程） | 我定：路由的端口和协议由 stable 决定 |
 | 只有无状态服务（Deployment）能灰度；有状态服务（StatefulSet）不支持 | 我定：canary 的数据卷归属说不清，第一版不碰 |
+| 回退 = 回到灰度开始前（全量失败时也是），不只是删 canary | 用户 |
+| 探针补 TCP 类型，随灰度一起做 | 用户 |
 
 ## 4. 模型
 
@@ -117,7 +119,7 @@ rules:
 | 开始灰度 | `CANARY_START` | 加 `canary` 块 |
 | 调整（权重 / header / canary 配置 / 副本数） | `CANARY_UPDATE` | 改 `canary` 块 |
 | 全量 | `CANARY_PROMOTE` | stable desired := canary desired，去掉 `canary` 块 |
-| 回退 | `CANARY_ABORT` | 去掉 `canary` 块 |
+| 回退 | `CANARY_ABORT` | 以线上快照为基准去掉 `canary` 块；stable 台账还原为线上快照里的版本（§5.2） |
 
 发布历史里这四类显示为「灰度开始 / 灰度调整 / 灰度全量 / 灰度回退」，带服务名。
 
@@ -146,7 +148,14 @@ rules:
 ### 5.2 失败与续跑
 
 - 开始灰度失败（FAILED 不算活动执行）：可以「继续」重跑，也可以直接回退。回退快照里没有 canary，PRUNE 会把建了一半的 canary 删掉。
-- 调整、全量失败：同样可以继续或回退。全量失败停在 HEALTH 时 stable 处于滚动中，路由仍是灰度权重，回退会把 stable 留在新版本。所以回退前提示「stable 已部分更新为新版本，回退只会删掉 canary」，要真正还原就再做一次普通发布或回滚。
+- 调整失败：可以继续，或回退。
+- **全量失败**（stable 滚动后一直不就绪，比如配额不够、新节点拉不到镜像、全量流量下探针超时）：执行停在 HEALTH，
+  路由保持灰度权重，canary 照常接流量。可以「继续」（解决问题后接着等 stable 就绪），也可以**回退**。
+- **回退 = 回到灰度开始前的状态**（用户确认）。线上发布号只在成功时才切换，所以全量失败时线上快照仍是
+  「stable 旧配置 + canary 块」。回退以它为基准：
+  1. 服务台账里 stable 的 desired 还原为线上快照里的 stable desired（全量创建时已被改写成 canary 的配置），version + 1；
+  2. 发布去掉 canary 块的快照：stable 滚回旧版本，路由切回 100% stable，PRUNE 删掉 canary。
+  不需要再做一次回滚。任何时候的回退都按这个规则走，没有全量失败时第 1 步是空操作。
 
 ## 6. 约束（服务端校验）
 
@@ -167,6 +176,16 @@ rules:
 - canary desired 走与普通保存相同的 normalize 和校验；端口、`expose`、服务类型必须与 stable 一致。
 - 镜像与 stable 相同时不拦，只在弹窗里提示「镜像没变」。
 - `weight` 范围 0-100；`header` 只有 HTTP 能填。
+
+## 6.3 探针类型（随灰度一起做）
+
+现有的「健康检查」只有 HTTP GET（readinessProbe + livenessProbe 打服务端口的 `probePath`），默认开启。
+纯 TCP 服务（如网关 TCP 暴露的非 HTTP 服务）用 HTTP 探针会一直失败。补一个探针类型：
+
+- desired 加 `probeType`：`http`（默认，沿用 `probePath`）/ `tcp`（`tcpSocket` 探服务端口，不用路径）。
+- 没写 `probeType` = `http`，旧数据不变。暴露方式选「网关 TCP」时，前端默认把类型切成 `tcp`（可改回）。
+- chart 按类型渲染 `httpGet` 或 `tcpSocket`，initialDelay 与 failureThreshold 不变。
+- 灰度依赖它：探针开着时「就绪」= 探针通过；探针关了时就绪只代表进程已启动，开始灰度的弹窗里提示这一点。
 
 ## 7. 指标（灰度面板）
 
