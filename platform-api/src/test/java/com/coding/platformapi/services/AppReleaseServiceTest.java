@@ -555,6 +555,35 @@ class AppReleaseServiceTest {
     }
 
     @Test
+    void overviewCarriesTheLiveNodePortOfEachService() {
+        // 自动分配的 NodePort 只有集群知道：概览按线上 Service 现读，挂到对应服务行上
+        live(1, Map.of("api", svc("1"), "worker", svc("1")));
+        PlatformAppRelease r = releases.selectByNo("app1", 1);
+        r.setObjectsJson("[{\"kind\":\"Service\",\"namespace\":\"ns\",\"name\":\"shop-api\"},"
+                + "{\"kind\":\"Deployment\",\"namespace\":\"ns\",\"name\":\"shop-api\"}]");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false), row("worker", svc("1"), false)));
+        com.coding.common.models.app.AppObjectStatusDTO svcStatus = new com.coding.common.models.app.AppObjectStatusDTO();
+        svcStatus.setKind("Service");
+        svcStatus.setName("shop-api");
+        svcStatus.setState("READY");
+        svcStatus.setNodePort(31234);
+        com.coding.common.models.app.AppObjectStatusDTO dep = new com.coding.common.models.app.AppObjectStatusDTO();
+        dep.setKind("Deployment");
+        dep.setName("shop-api");
+        dep.setState("READY");
+        com.coding.common.models.app.AppStatusResultDTO result = new com.coding.common.models.app.AppStatusResultDTO();
+        result.setObjects(List.of(svcStatus, dep));
+        when(client.status(any())).thenReturn(result);
+
+        var rows = service.overview("app1", "t1").services();
+
+        var api = rows.stream().filter(x -> x.key().equals("api")).findFirst().orElseThrow();
+        assertThat(api.nodePort()).isEqualTo(31234);
+        assertThat(api.state()).isEqualTo("READY");
+        assertThat(rows.stream().filter(x -> x.key().equals("worker")).findFirst().orElseThrow().nodePort()).isNull();
+    }
+
+    @Test
     void overviewIngressStatusUnknownWhenTheClusterCannotBeRead() {
         Map<String, Object> d = svc("1");
         d.put("expose", "gateway-http");

@@ -124,9 +124,24 @@ public class AppStatusService {
                     s.setPodIssues(AppPodDiagnosis.diagnose(client, ref.getNamespace(), sts.getSpec().getSelector()));
                 }
             }
+            case "Service" -> {
+                io.fabric8.kubernetes.api.model.Service svc = client.services()
+                        .inNamespace(ref.getNamespace()).withName(ref.getName()).get();
+                s.setState(svc == null ? "MISSING" : "READY");
+                s.setNodePort(nodePortOf(svc));
+            }
             default -> s.setState(exists(client, ref));
         }
         return s;
+    }
+
+    /** NodePort 类型 Service 第一个端口的 nodePort；其余类型或还没分配为 null。 */
+    static Integer nodePortOf(io.fabric8.kubernetes.api.model.Service svc) {
+        if (svc == null || svc.getSpec() == null || !"NodePort".equals(svc.getSpec().getType())
+                || svc.getSpec().getPorts() == null || svc.getSpec().getPorts().isEmpty()) {
+            return null;
+        }
+        return svc.getSpec().getPorts().get(0).getNodePort();
     }
 
     /**

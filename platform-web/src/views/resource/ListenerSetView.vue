@@ -80,13 +80,35 @@ function condStatus(conditions: K8sCondition[] | null | undefined, type: string)
   return (conditions ?? []).find((c) => c.type === type)?.status ?? null
 }
 
-function statusTag(row: K8sListenerSet): { text: string; type: 'success' | 'danger' | 'info' } {
+/**
+ * 列表状态按「每条 listener」判，不按顶层 Programmed：
+ * 顶层 Programmed 是父 Gateway 的地址判定（Istio 把 Gateway 的 AddressNotUsable 原样抄给每个 ListenerSet），
+ * 只要网关 Service 上有任何一个端口在 istiod 索引里查不到端点，所有 ListenerSet 顶层都会是 False，
+ * 但各 listener 自己 Programmed=True、流量照通（2026-11-08 实测）。顶层原因放进 tooltip。
+ */
+function statusTag(row: K8sListenerSet): { text: string; type: 'success' | 'warning' | 'danger' | 'info'; tip: string } {
   const accepted = condStatus(row.conditions, 'Accepted')
-  const programmed = condStatus(row.conditions, 'Programmed')
-  if (accepted == null && programmed == null) return { text: '未知', type: 'info' }
-  if (accepted === 'False') return { text: '未接受', type: 'danger' }
-  if (programmed === 'False') return { text: '未生效', type: 'danger' }
-  return { text: '已生效', type: 'success' }
+  const top = (row.conditions ?? []).find((c) => c.type === 'Programmed' && c.status === 'False')
+  const topTip = top ? `父 Gateway 地址告警（不影响已生效的监听器）：${top.reason ?? ''} ${top.message ?? ''}`.trim() : ''
+  if (accepted === 'False') return { text: '未接受', type: 'danger', tip: '' }
+  const listeners = row.listeners ?? []
+  const statuses = row.listenerStatuses ?? []
+  if (listeners.length && statuses.length) {
+    let ok = 0
+    let conflicted = 0
+    for (const l of listeners) {
+      const st = statuses.find((s) => s.name === l.name)
+      if (condStatus(st?.conditions, 'Conflicted') === 'True') conflicted++
+      else if (condStatus(st?.conditions, 'Programmed') === 'True') ok++
+    }
+    if (conflicted) return { text: '端口冲突', type: 'danger', tip: `${conflicted} 个监听器端口冲突` }
+    if (ok === listeners.length) return { text: '已生效', type: 'success', tip: topTip }
+    if (ok > 0) return { text: '部分生效', type: 'warning', tip: `${ok}/${listeners.length} 个监听器已生效` }
+    return { text: '未生效', type: 'danger', tip: topTip }
+  }
+  if (accepted == null && !top) return { text: '未知', type: 'info', tip: '' }
+  if (top) return { text: '未生效', type: 'danger', tip: topTip }
+  return { text: '已生效', type: 'success', tip: '' }
 }
 
 function ownerOf(row: K8sListenerSet | null, listenerName?: string | null): K8sListenerOwner | undefined {
@@ -191,7 +213,9 @@ const contextDesc = computed(() => {
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag size="small" :type="statusTag(row).type">{{ statusTag(row).text }}</el-tag>
+            <el-tooltip :disabled="!statusTag(row).tip" :content="statusTag(row).tip" placement="top">
+              <el-tag size="small" :type="statusTag(row).type">{{ statusTag(row).text }}</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="创建时间" width="170">

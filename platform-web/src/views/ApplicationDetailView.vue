@@ -246,6 +246,22 @@ function imageTag(image?: string | null): string {
   const i = image.lastIndexOf(':')
   return i > image.lastIndexOf('/') ? image.slice(i + 1) : image
 }
+/** 网关端口的 listener 状态：已生效时列表里不再多挂一个标签，只在异常 / 未知时提示 */
+function ingressState(row: AppServiceRow): { text: string; type: 'success' | 'danger' | 'info' } {
+  const ing = row.ingress
+  if (!ing || ing.programmed == null) return { text: '状态未知', type: 'info' }
+  if (ing.conflicted) return { text: '端口冲突', type: 'danger' }
+  return ing.programmed ? { text: '已生效', type: 'success' } : { text: '未生效', type: 'danger' }
+}
+
+function exposeTip(row: AppServiceRow): string {
+  const ing = row.ingress
+  if (!ing) return ''
+  const base = `集群外用「任一节点 IP:${ing.port}」访问（${ing.protocol}）`
+  const why = `${ing.reason ?? ''} ${ing.message ?? ''}`.trim()
+  return ingressState(row).type === 'danger' && why ? `${base}；${why}` : base
+}
+
 function tagCell(row: AppServiceRow): string {
   const want = imageTag(row.image)
   const cur = imageTag(row.liveImage)
@@ -383,6 +399,25 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
           </el-table-column>
           <el-table-column label="副本" width="80">
             <template #default="{ row }">{{ row.replicas ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column label="对外端口" min-width="170">
+            <template #default="{ row }">
+              <template v-if="row.ingress">
+                <el-tooltip :content="exposeTip(row)" placement="top">
+                  <span class="app-detail__expose">
+                    <el-tag size="small" effect="plain">网关 {{ row.ingress.protocol }}</el-tag>
+                    <code>{{ row.ingress.port }}</code>
+                    <el-tag v-if="ingressState(row).type !== 'success'" size="small" :type="ingressState(row).type" effect="light">{{ ingressState(row).text }}</el-tag>
+                  </span>
+                </el-tooltip>
+              </template>
+              <span v-else-if="row.nodePort" class="app-detail__expose">
+                <el-tag size="small" effect="plain">NodePort</el-tag>
+                <code>{{ row.nodePort }}</code>
+              </span>
+              <span v-else-if="row.kind === 'SERVICE' && row.state !== 'NOT_RELEASED'" class="muted">仅集群内</span>
+              <span v-else class="muted">—</span>
+            </template>
           </el-table-column>
           <el-table-column label="状态" width="130">
             <template #default="{ row }">
@@ -570,6 +605,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 .app-detail__sec-head h3 { margin: 0; font-size: 15px; }
 .app-detail__kind { margin-left: 8px; }
 .app-detail__newtag { margin-left: 8px; }
+.app-detail__expose { display: inline-flex; align-items: center; gap: 6px; }
 .app-detail__tabs { margin: 0 4px; }
 </style>
 

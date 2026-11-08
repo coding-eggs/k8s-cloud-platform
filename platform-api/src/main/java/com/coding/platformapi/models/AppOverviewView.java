@@ -21,10 +21,11 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
      * desired / version：编辑表单的初值与乐观锁；线上有、台账无行的孤儿服务 desired 取线上快照，version 为 null。
      * newTag：镜像仓库里比线上 tag 更晚推送的 tag（见 AppImageUpdates）；没有、不适用或没查成为 null。
      * ingress：网关方式分到的端口及其 listener 状态；没分端口为 null。
+     * nodePort：线上 Service 为 NodePort 类型时实际的 nodePort（现读）；不是 NodePort 或读不到为 null。
      */
     public record ServiceRow(String key, String kind, String image, String liveImage, Integer replicas,
                              String state, String pending, Map<String, Object> desired, Integer version,
-                             String newTag, Ingress ingress) {
+                             String newTag, Ingress ingress, Integer nodePort) {
     }
 
     /**

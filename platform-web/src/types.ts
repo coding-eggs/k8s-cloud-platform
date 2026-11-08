@@ -3095,6 +3095,8 @@ export interface AppServiceRow {
   newTag?: string | null
   /** 网关方式分到的对外端口与 listener 状态；没分端口为空 */
   ingress?: AppServiceIngress | null
+  /** 线上 Service 为 NodePort 时实际的 nodePort（现读，自动分配的也在）；否则为空 */
+  nodePort?: number | null
 }
 
 /** programmed / conflicted 为 null = 状态未知（集群读不到或 listener 尚未下发） */

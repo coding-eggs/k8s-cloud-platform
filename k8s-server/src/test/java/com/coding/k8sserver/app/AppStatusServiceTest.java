@@ -61,4 +61,17 @@ class AppStatusServiceTest {
         assertThat(AppStatusService.customKind("ServiceMonitor").getPlural()).isEqualTo("servicemonitors");
         assertThat(AppStatusService.customKind("Foo")).isNull();
     }
+
+    @Test
+    void nodePortIsReadOnlyFromNodePortServices() {
+        io.fabric8.kubernetes.api.model.Service np = new io.fabric8.kubernetes.api.model.ServiceBuilder()
+                .withNewSpec().withType("NodePort").addNewPort().withPort(80).withNodePort(31234).endPort().endSpec()
+                .build();
+        io.fabric8.kubernetes.api.model.Service cip = new io.fabric8.kubernetes.api.model.ServiceBuilder()
+                .withNewSpec().withType("ClusterIP").addNewPort().withPort(80).endPort().endSpec()
+                .build();
+        assertThat(AppStatusService.nodePortOf(np)).isEqualTo(31234);
+        assertThat(AppStatusService.nodePortOf(cip)).isNull();
+        assertThat(AppStatusService.nodePortOf(null)).isNull();
+    }
 }

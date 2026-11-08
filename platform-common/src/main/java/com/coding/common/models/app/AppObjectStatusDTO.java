@@ -21,4 +21,7 @@ public class AppObjectStatusDTO {
      * 每条一行，最多几条；就绪或非工作负载为空。
      */
     private List<String> podIssues;
+
+    /** Service 且为 NodePort 类型时，第一个端口线上实际的 nodePort（自动分配的只有集群知道）；其余为空。 */
+    private Integer nodePort;
 }

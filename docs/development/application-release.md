@@ -87,6 +87,12 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
   - 门禁：依赖 Istio 的 `routes` 旗标（没装不让开、已开可关）；
   - 查看：「网络 → ListenerSet」只读页（租户视角看本命名空间，平台视角直接列集群全部命名空间），
     `platform-ingress` 标「平台维护」，每条 listener 显示归属的应用 / 服务；分配表里没有的标「无归属（残留）」。
+  - 状态按**每条 listener** 的 Programmed / Conflicted 判，不看 ListenerSet 顶层 Programmed：顶层是父 Gateway 的
+    地址判定，Istio 1.31 会把 Gateway 的 `AddressNotUsable`（"port N not found for hostname"）抄给所有 ListenerSet。
+    成因（读 istiod 源码确认）：`ServiceIndex.instancesByPort` 只在 **Service 变化**时重建，EndpointSlice 的端点增量
+    不触发重建；端口池扩进 Service 时端点还没就绪，索引就缺这些端口，直到集群里**任意** Service 再变一次（或 istiod
+    重启）才恢复。此时各 listener 仍 Programmed=True、流量正常（2026-11-08 实测 20000 端口 200）。
+  - 应用详情页服务列表有「对外端口」列：网关端口（异常时带状态）/ 线上 NodePort（概览现读 Service，自动分配的也能看到）/ 仅集群内。
 - 「不暴露」不存 `expose` / `nodePort`。
 - k8s-server 侧端点在 `/application/ingress-listenerset`、`/application/service-ports`（UPSTREAM 边界：调用方是租户的
   保存 / 发布，`/components/**` 要求平台侧身份会 403）。命名空间放行标签 `ingress.platform.coding/ports` 用独立

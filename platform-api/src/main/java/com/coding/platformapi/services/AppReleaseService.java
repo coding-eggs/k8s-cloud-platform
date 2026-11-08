@@ -572,7 +572,8 @@ public class AppReleaseService {
         changes.forEach(c -> pendingKeys.add(c.key()));
         Map<String, AppPending.Change> byKey = changes.stream()
                 .collect(Collectors.toMap(AppPending.Change::key, c -> c, (a, b) -> a));
-        Map<String, String> states = liveStates(app);
+        Map<String, Integer> nodePorts = new HashMap<>();
+        Map<String, String> states = liveStates(app, nodePorts);
         Map<String, String> newTags = newTags(live, byKey, tenantId);
         Map<String, AppOverviewView.Ingress> ingress = ingressOf(app);
 
@@ -592,7 +593,8 @@ public class AppReleaseService {
                     liveDesired == null ? null : AppServiceDesired.image(liveDesired),
                     desired.get("replicas") instanceof Number n ? n.intValue() : null,
                     state, change == null ? null : change.type(), desired, row.getVersion(),
-                    newTags.get(row.getServiceKey()), ingress.get(row.getServiceKey())));
+                    newTags.get(row.getServiceKey()), ingress.get(row.getServiceKey()),
+                    deployed ? nodePorts.get(objectName) : null));
         }
         // 线上有、台账无行的孤儿服务（待删除）：照样列出来，才有地方勾选删除
         Set<String> rowKeys = rows.stream().map(PlatformAppService::getServiceKey).collect(Collectors.toSet());
@@ -606,7 +608,7 @@ public class AppReleaseService {
                     AppServiceDesired.image(liveDesired), AppServiceDesired.image(liveDesired),
                     liveDesired.get("replicas") instanceof Number n ? n.intValue() : null,
                     states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null, null,
-                    ingress.get(c.key())));
+                    ingress.get(c.key()), nodePorts.get(objectName)));
         }
         Map<String, String> depStatus = dependencies.statusOf(dependencyRows.selectByApp(app.getId()));
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
@@ -835,8 +837,11 @@ public class AppReleaseService {
         return release == null ? List.of() : parseObjects(release.getObjectsJson());
     }
 
-    /** 现读线上对象状态：对象名 → state。查询失败不让概览整页失败，状态记 UNKNOWN。 */
-    private Map<String, String> liveStates(PlatformApplication app) {
+    /**
+     * 现读线上对象状态：对象名 → state。查询失败不让概览整页失败，状态记 UNKNOWN。
+     * 顺带把 NodePort 类型 Service 的实际 nodePort 填进 {@code nodePorts}（对象名 → 端口）。
+     */
+    private Map<String, String> liveStates(PlatformApplication app, Map<String, Integer> nodePorts) {
         List<AppObjectRefDTO> objects = liveObjects(app);
         Map<String, String> out = new HashMap<>();
         if (objects.isEmpty()) {
@@ -851,6 +856,8 @@ public class AppReleaseService {
                 for (AppObjectStatusDTO s : result.getObjects()) {
                     if ("Deployment".equals(s.getKind()) || "StatefulSet".equals(s.getKind())) {
                         out.put(s.getName(), s.getState());
+                    } else if ("Service".equals(s.getKind()) && s.getNodePort() != null) {
+                        nodePorts.put(s.getName(), s.getNodePort());
                     }
                 }
             }
