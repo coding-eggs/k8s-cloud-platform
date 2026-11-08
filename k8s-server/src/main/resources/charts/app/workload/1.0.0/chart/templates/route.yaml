@@ -1,0 +1,19 @@
+{{- if and (eq .Values.workload.mode "service") .Values.workload.route.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: {{ if eq .Values.workload.route.kind "tcp" }}TCPRoute{{ else }}HTTPRoute{{ end }}
+metadata:
+  name: {{ include "app.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: ListenerSet
+      name: {{ .Values.workload.route.parentName | quote }}
+      sectionName: {{ .Values.workload.route.sectionName | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ include "app.name" . | quote }}
+          port: {{ .Values.workload.route.port }}
+{{- end }}

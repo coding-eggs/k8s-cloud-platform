@@ -35,6 +35,7 @@ charts/app/workload/
 | `workload.serviceLabels` | 合并进 Service 标签（`istio.io/use-waypoint`） |
 | `workload.extraEnv[]` | `{name, value}` 直接写进容器 env，排在 `inlineEnv` 之后（OTel 服务名 / 采样） |
 | `workload.logVolume` | `{enabled, mountDir}`：emptyDir 卷 `platform-otel-logs` 挂到 `mountDir`（OTel 读文件日志） |
+| `workload.route` | `{enabled, kind, parentName, sectionName, port}`：网关端口池暴露（2026-11-08）。`kind=http` → HTTPRoute，`tcp` → TCPRoute（都是 `gateway.networking.k8s.io/v1`）；`parentRefs` 指向命名空间 ListenerSet（`kind: ListenerSet`）的 listener `sectionName`；`port` = 服务端口。Service 保持 ClusterIP（`expose.type=none`）；worker 不生成 |
 
 ## 产物对照
 
@@ -46,6 +47,7 @@ charts/app/workload/
 | `autoscaling.enabled` | 加 HPA（`scaleTargetRef` 会自动指向 Deployment 或 StatefulSet）；**Deployment / StatefulSet 不写 `spec.replicas`**（否则 SSA forceConflicts 每次发布把 HPA 的副本打回） |
 | `metrics.enabled` 且 `mode=service` | 加 ServiceMonitor（`/metrics`，端口名 `http`） |
 | `expose.type=nodeport` | Service 类型改 NodePort |
+| `route.enabled` 且 `mode=service` | 加 HTTPRoute 或 TCPRoute（与 Service 同名），挂到 ListenerSet 的 listener |
 
 ## 标签与只读保护（别改）
 

@@ -344,4 +344,43 @@ class AppWorkloadChartRenderTest {
             }
         }
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void routeTemplateRendersTcpRouteV1() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 8080, "route",
+                Map.of("kind", "tcp", "parentName", "platform-ingress", "sectionName", "p20002")));
+
+        Map<String, Object> route = find(docs, "TCPRoute", "shop-api");
+        assertThat(route).isNotNull();
+        assertThat(route.get("apiVersion")).isEqualTo("gateway.networking.k8s.io/v1");
+        Map<String, Object> parent = ((List<Map<String, Object>>) at(route, "spec").get("parentRefs")).get(0);
+        assertThat(parent).containsEntry("group", "gateway.networking.k8s.io").containsEntry("kind", "ListenerSet")
+                .containsEntry("name", "platform-ingress").containsEntry("sectionName", "p20002");
+        Map<String, Object> rule = ((List<Map<String, Object>>) at(route, "spec").get("rules")).get(0);
+        assertThat((List<Map<String, Object>>) rule.get("backendRefs"))
+                .containsExactly(Map.of("name", "shop-api", "port", 8080));
+        assertThat(find(docs, "HTTPRoute", "shop-api")).isNull();
+        assertThat(at(find(docs, "Service", "shop-api"), "spec").get("type")).isEqualTo("ClusterIP");
+    }
+
+    @Test
+    void routeTemplateRendersHttpRouteV1() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80, "route",
+                Map.of("kind", "http", "parentName", "platform-ingress", "sectionName", "p20000")));
+
+        Map<String, Object> route = find(docs, "HTTPRoute", "shop-api");
+        assertThat(route).isNotNull();
+        assertThat(route.get("apiVersion")).isEqualTo("gateway.networking.k8s.io/v1");
+        assertThat(find(docs, "TCPRoute", "shop-api")).isNull();
+    }
+
+    @Test
+    void noRouteRenderedByDefault() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80));
+        assertThat(docs).noneMatch(d -> "HTTPRoute".equals(d.get("kind")) || "TCPRoute".equals(d.get("kind")));
+    }
 }

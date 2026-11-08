@@ -85,11 +85,32 @@ public final class AppWorkloadValues {
                 // 0 = 由集群自动分配；只在 nodeport 时有意义
                 "nodePort", "nodeport".equals(exposeType) ? num(params.get("nodePort"), 0) : 0));
 
+        workload.put("route", route(params, worker));
+
         Map<String, Object> app = new LinkedHashMap<>();
         app.put("id", appId);
         app.put("slug", slug);
         app.put("revision", revision);
         return Map.of("app", app, "workload", workload);
+    }
+
+    /**
+     * 网关端口池暴露：{@code params.route = {kind: http|tcp, parentName, sectionName}}（platform-api 分配端口后生成）。
+     * 路由挂到命名空间 ListenerSet 的某个 listener 上，后端是本服务的 ClusterIP Service；
+     * 后台进程没有 Service，不生成。
+     */
+    private static Map<String, Object> route(Map<String, Object> params, boolean worker) {
+        if (worker || !(params.get("route") instanceof Map<?, ?> r)) {
+            return Map.of("enabled", false);
+        }
+        String kind = str(r.get("kind")).toLowerCase();
+        String parentName = str(r.get("parentName"));
+        String sectionName = str(r.get("sectionName"));
+        if (!("http".equals(kind) || "tcp".equals(kind)) || parentName.isBlank() || sectionName.isBlank()) {
+            return Map.of("enabled", false);
+        }
+        return Map.of("enabled", true, "kind", kind, "parentName", parentName,
+                "sectionName", sectionName, "port", num(params.get("port"), 8080));
     }
 
     /** 用户手填的普通变量 + 依赖注入的普通值。 */

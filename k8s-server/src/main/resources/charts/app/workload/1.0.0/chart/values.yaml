@@ -53,6 +53,13 @@ workload:
   logVolume:
     enabled: false
     mountDir: ""
+  # 网关端口池暴露：挂到命名空间 ListenerSet 的 listener（kind: http → HTTPRoute，tcp → TCPRoute）
+  route:
+    enabled: false
+    kind: http
+    parentName: ""
+    sectionName: ""
+    port: 8080
   expose:
     # none（仅集群内 ClusterIP）/ nodeport
     type: none

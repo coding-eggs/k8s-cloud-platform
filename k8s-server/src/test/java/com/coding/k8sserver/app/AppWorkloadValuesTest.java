@@ -240,4 +240,30 @@ class AppWorkloadValuesTest {
         assertThat(workload(AppWorkloadValues.build("app_1", "demo", 1, node(injected))).get("configHash"))
                 .isEqualTo(workload(AppWorkloadValues.build("app_1", "demo", 1, node(base))).get("configHash"));
     }
+
+    @Test
+    void routeValuesFromParams() {
+        Map<String, Object> v = AppWorkloadValues.build("app_1", "demo", 1, node(Map.of("image", "nginx",
+                "port", 8080, "route",
+                Map.of("kind", "tcp", "parentName", "platform-ingress", "sectionName", "p20002"))));
+        assertThat(workload(v).get("route")).isEqualTo(Map.of("enabled", true, "kind", "tcp",
+                "parentName", "platform-ingress", "sectionName", "p20002", "port", 8080));
+        // 网关方式下 Service 保持 ClusterIP
+        assertThat(workload(v).get("expose")).isEqualTo(Map.of("type", "none", "port", 8080, "nodePort", 0));
+    }
+
+    @Test
+    void noRouteForWorker() {
+        AppNodeDTO n = node(Map.of("image", "busybox", "route",
+                Map.of("kind", "http", "parentName", "platform-ingress", "sectionName", "p20000")));
+        n.setKind("WORKER");
+        assertThat(workload(AppWorkloadValues.build("app_1", "demo", 1, n)).get("route"))
+                .isEqualTo(Map.of("enabled", false));
+    }
+
+    @Test
+    void noRouteWithoutParam() {
+        assertThat(workload(AppWorkloadValues.build("app_1", "demo", 1, node(Map.of("image", "nginx"))))
+                .get("route")).isEqualTo(Map.of("enabled", false));
+    }
 }
