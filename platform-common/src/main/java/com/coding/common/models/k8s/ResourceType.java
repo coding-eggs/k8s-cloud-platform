@@ -8,6 +8,7 @@ import com.coding.common.models.k8s.dto.ConfigMapDTO;
 import com.coding.common.models.k8s.dto.DeploymentDTO;
 import com.coding.common.models.k8s.dto.GatewayClassDTO;
 import com.coding.common.models.k8s.dto.GatewayDTO;
+import com.coding.common.models.k8s.dto.ListenerSetDTO;
 import com.coding.common.models.k8s.dto.GrpcRouteDTO;
 import com.coding.common.models.k8s.dto.HpaDTO;
 import com.coding.common.models.k8s.dto.HttpRouteDTO;
@@ -72,6 +73,8 @@ public enum ResourceType {
     // 归属：GATEWAY_CLASS 集群级（admin client、PLATFORM 边界）；其余 6 类命名空间级（分配表边界）。
     GATEWAY_CLASS(GatewayClassDTO.class),
     GATEWAY(GatewayDTO.class),
+    // ListenerSet（Gateway API v1.6 起 v1）：命名空间级、租户域、只读（写只走应用发布的 /application/ingress-listenerset）
+    LISTENER_SET(ListenerSetDTO.class),
     HTTP_ROUTE(HttpRouteDTO.class),
     // GRPCRoute 自 Gateway API v1.1 GA；TCP/TLS/UDPRoute 自 v1.6 起 GA 于 v1（更早的集群只有 v1alpha2）。
     // 后三者的 CRD 版本由 KubernetesOperationsFactory.resolveL4Version 按集群 capability 分派。

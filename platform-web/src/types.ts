@@ -1988,6 +1988,32 @@ export interface K8sGatewayListenerStatus {
 }
 
 /** Gateway（gateway.networking.k8s.io/v1，命名空间级、租户域） */
+/** ListenerSet（gateway.networking.k8s.io/v1，命名空间级，只读）。owners / platformManaged 由 platform-api 补全 */
+export interface K8sListenerSet {
+  name: string
+  namespace?: string | null
+  clusterId?: string | null
+  parentNamespace?: string | null
+  parentName?: string | null
+  listeners?: { name?: string | null; hostname?: string | null; port?: number | null; protocol?: string | null }[] | null
+  conditions?: K8sCondition[] | null
+  listenerStatuses?: { name?: string | null; attachedRoutes?: number | null; conditions?: K8sCondition[] | null }[] | null
+  creationTime?: string | null
+  labels?: Record<string, string> | null
+  /** 平台维护（应用网关端口的 platform-ingress） */
+  platformManaged?: boolean | null
+  /** 平台维护时每条 listener 的归属；appId 为空 = 分配表里没有（残留） */
+  owners?: K8sListenerOwner[] | null
+}
+
+export interface K8sListenerOwner {
+  listenerName?: string | null
+  port?: number | null
+  appId?: string | null
+  appName?: string | null
+  serviceKey?: string | null
+}
+
 export interface K8sGateway {
   name: string
   namespace?: string | null

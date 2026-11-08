@@ -135,6 +135,8 @@ export const pageCodes = {
     },
     /** 租户资源面：命名空间来自分配上下文，同 serviceMonitor */
     gateway: { list: 'tenant:page:gateway.list', edit: 'tenant:page:gateway.edit' },
+    /** ListenerSet 只读页：平台 / 租户两个视角共用（两个码任一命中即可进，同链路追踪） */
+    listenerSet: { list: 'tenant:page:listenerset.list', platform: 'platform:page:listenerset' },
     httpRoute: { list: 'tenant:page:httproute.list', edit: 'tenant:page:httproute.edit' },
     grpcRoute: { list: 'tenant:page:grpcroute.list', edit: 'tenant:page:grpcroute.edit' },
     tcpRoute: { list: 'tenant:page:tcproute.list', edit: 'tenant:page:tcproute.edit' },

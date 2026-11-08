@@ -44,6 +44,7 @@ import type {
   K8sTenantOverview,
   K8sConfigMap,
   K8sGateway,
+  K8sListenerSet,
   ParentGatewayRef,
   WaypointRef,
   K8sGatewayClass,
@@ -760,6 +761,16 @@ export const logApi = {
 
 /** Gateway /gateways（CRD，集群未装 Gateway API 时透传 404；租户域） */
 export const gatewayApi = makeResourceApi<K8sGateway>('gateways')
+
+/** ListenerSet /listener-sets（CRD，只读：没有 create / update / delete；平台视角走 list-all） */
+export const listenerSetApi = {
+  list: (ctx: ListCtx) => http.post<never, K8sListenerSet[]>('/listener-sets/list', ctx),
+  listAll: (ctx: ListAllCtx) => http.post<never, K8sListenerSet[]>('/listener-sets/list-all', ctx),
+  get: (name: string, ctx: Ctx3) =>
+    http.get<never, K8sListenerSet>(`/listener-sets/${encodeURIComponent(name)}`, { params: ctx }),
+  getYaml: (name: string, ctx: Ctx3) =>
+    http.get<never, string>(`/listener-sets/${encodeURIComponent(name)}/yaml`, { params: ctx }),
+}
 
 /** HTTPRoute /httproutes（CRD，集群未装 Gateway API 时透传 404；租户域） */
 export const httpRouteApi = makeResourceApi<K8sHttpRoute>('httproutes')

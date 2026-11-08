@@ -84,7 +84,9 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
   - 释放后冷却 10 分钟才会分给别的服务；下线后再上线 / 改回网关方式时**优先拿回这个服务上次的端口**（不受冷却限制），
     只有原端口已被别的服务占了才换；
   - 一个命名空间最多 64 个网关端口（ListenerSet 上限），满了保存时就拒绝；
-  - 门禁：依赖 Istio 的 `routes` 旗标（没装不让开、已开可关）。
+  - 门禁：依赖 Istio 的 `routes` 旗标（没装不让开、已开可关）；
+  - 查看：「网络 → ListenerSet」只读页（租户视角看本命名空间，平台视角直接列集群全部命名空间），
+    `platform-ingress` 标「平台维护」，每条 listener 显示归属的应用 / 服务；分配表里没有的标「无归属（残留）」。
 - 「不暴露」不存 `expose` / `nodePort`。
 - k8s-server 侧端点在 `/application/ingress-listenerset`、`/application/service-ports`（UPSTREAM 边界：调用方是租户的
   保存 / 发布，`/components/**` 要求平台侧身份会 403）。命名空间放行标签 `ingress.platform.coding/ports` 用独立
@@ -218,6 +220,8 @@ key 不能以它结尾。
    和 Gateway 的 `allowedListeners`。不保存则集群没有端口池，网关方式保存时报「集群未启用应用端口池」。
    保存前检查现有 NodePort Service 没有落在池段里（本集群 nodePort 范围是 1-65535，未固定的 NodePort 会随机分配）。
 4. 租户 RBAC 模板不需要 `listenersets` 写权限（ListenerSet 由平台用集群管理员身份下发）。
+5. ListenerSet 只读页：重放 **V2026_11_08_2**（权限行 + 租户模板加 `listenersets` 的 get/list/watch），
+   然后在 RBAC 模板页点一次「重下发全部模板」，否则租户打开页面会被 K8s 403。
 
 **HPA / 可观测 / 服务网格（§1.7）**：先重放 **V2026_11_07_1**（`platform_application` 加 `settings_json` / `settings_version`
 两列 + `/application/settings/update` 权限行，绑 admin / tenant_admin；新 mapper 读这两列，不重放直接 SQL 报错），

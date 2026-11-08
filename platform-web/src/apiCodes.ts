@@ -38,6 +38,8 @@ export const apiCodes = {
    *  （含不属于任何租户的命名空间），是显式的数据面扩张，可单独授予/收回。 */
   configmapListAll: 'platform:configmap:list-all',
   podListAll: 'platform:pod:list-all',
+  /** 跨全部命名空间列出 ListenerSet（平台视角；V2026_11_08_2） */
+  listenerSetListAll: 'platform:listenerset:list-all',
   /** 凭据写（新建/更新/删除）—— 页面内的写按钮置灰用 */
   credentialWrite: 'platform:credential:write',
   /** OAuth 客户端写（新建/编辑/删除/启停/重置密钥）—— 页面内写按钮显隐用 */

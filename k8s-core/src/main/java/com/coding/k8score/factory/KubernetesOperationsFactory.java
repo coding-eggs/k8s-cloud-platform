@@ -28,6 +28,7 @@ import com.coding.k8score.converter.impl.snapshot.VolumeSnapshotClassConverter;
 import com.coding.k8score.converter.impl.snapshot.VolumeSnapshotContentConverter;
 import com.coding.k8score.converter.impl.snapshot.VolumeSnapshotConverter;
 import com.coding.k8score.converter.impl.gateway.GatewayConverter;
+import com.coding.k8score.converter.impl.gateway.ListenerSetConverter;
 import com.coding.k8score.converter.impl.gateway.GrpcRouteConverter;
 import com.coding.k8score.converter.impl.gateway.HttpRouteConverter;
 import com.coding.k8score.converter.impl.gateway.TcpRouteConverter;
@@ -73,6 +74,7 @@ import com.coding.k8score.operations.snapshot.VolumeSnapshotClassOperations;
 import com.coding.k8score.operations.snapshot.VolumeSnapshotContentOperations;
 import com.coding.k8score.operations.snapshot.VolumeSnapshotOperations;
 import com.coding.k8score.operations.gateway.GatewayOperations;
+import com.coding.k8score.operations.gateway.ListenerSetOperations;
 import com.coding.k8score.operations.gateway.GrpcRouteOperations;
 import com.coding.k8score.operations.gateway.HttpRouteOperations;
 import com.coding.k8score.operations.gateway.TcpRouteOperations;
@@ -252,6 +254,7 @@ public class KubernetesOperationsFactory {
             // Gateway API（B6）：GatewayClass / Gateway / HTTPRoute 三类都自 v1 起 GA → 单版本。
             case GATEWAY_CLASS -> new GatewayClassOperations(client, new GatewayClassConverter());
             case GATEWAY -> new GatewayOperations(client, new GatewayConverter());
+            case LISTENER_SET -> new ListenerSetOperations(client, new ListenerSetConverter());
             case HTTP_ROUTE -> new HttpRouteOperations(client, new HttpRouteConverter());
             // GRPCRoute 自 v1.1 GA（单挂 v1，不回退 v1alpha2 —— pre-v1.1 的 v1alpha2 结构不同）；
             // TCP/TLS/UDPRoute 自 v1.6 起 GA 于 v1，更早的集群只有 v1alpha2 → 按 capability 分派版本。
