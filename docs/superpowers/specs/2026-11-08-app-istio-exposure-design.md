@@ -112,7 +112,21 @@ service:
 - **池端口不区分协议**：Service 端口都是 TCP，listener 写 HTTP 还是 TCP 在分配时决定。
 - 这些端口在 Envoy 上平时不监听：没有对应的 listener 时，连接会被拒绝。
 - 扩容（加端口）只改 Service，不重启网关 Pod。
-- 端口池的范围记在平台的集群设置里（默认 `20000-20299`）。平台以**网关 Service 实际声明的端口**为准，两边对不上时报警。
+- 平台在分配时以**网关 Service 实际声明的端口**为准。表单里配置的范围和 Service 实际声明的端口对不上时报警。
+
+**Istio 组件表单的改动**（「编辑」对话框，external-gateway release）：
+- 现有的「端口列表」不动。它的每一行同时生成 Service 端口和 Gateway listener，用来放 Harbor、80 和遗留端口。
+- 新增一个「应用端口池」，**只需要一个范围**（起始端口、结束端口两个输入框），默认 `20000-20299`，留空表示不启用。
+  不按 HTTP / TCP 分成两个范围，因为协议是在分配时写到 ListenerSet 的 listener 上的，同一个池端口哪种协议都能用。
+- 渲染 helm values 时，平台把这个范围展开成 Service 端口（`name: pool-<端口>`、`nodePort` 等于端口、不生成 listener），
+  接在端口列表后面写进 `service.ports`。范围本身单独存成一个可编辑值，例如 `platform.ingressPortPool: {from, to}`，
+  这样表单里显示的是范围，而不是展开后的 300 行。
+- 保存时的校验：
+  - 范围不能和端口列表里的 port / nodePort 重叠；
+  - 不能和集群里其他 Service 已经占用的 nodePort 重叠（保存前读一次）；
+  - 范围大小不超过 1000（Service 端口太多会拖慢 kube-proxy 和 Envoy）。
+  - **缩小范围或停用时，如果有已分配的端口落在被删掉的那部分里，就拒绝保存**，并列出占用这些端口的应用。
+- 改范围只改 Service，不重启网关 Pod。
 
 ### 5.2 命名空间侧（平台在分配端口时生成）
 
