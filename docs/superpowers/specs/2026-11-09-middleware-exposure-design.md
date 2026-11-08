@@ -49,7 +49,9 @@ Nacos（2.x 客户端连「HTTP 端口 + 1000」的 gRPC，端口池给不出这
   `POST /middleware/instance/expose/update`（`tenant:middleware:write`，审计）。
 - k8s-server（零业务，TENANT 边界）：`POST /middleware/expose/apply`（按给定参数建 / 删路由与 NodePort Service）、
   `POST /middleware/expose/delete-all`（按实例标签清理）。对象名 `<实例名>-expose-<key>`，
-  标签 `platform.coding/middleware-expose=<实例名>`。
+  标签 `platform.coding/middleware-expose=<实例名>` + `platform.coding/managed-by=middleware-expose`：后者让
+  `ManagedResourceGuard` 判成 MIDDLEWARE —— 路由策略 / 服务页显示归属并置灰编辑删除，直接调 API 也被拒，
+  只能在中间件详情「对外访问」里取消。
 
 ## 5. 页面
 

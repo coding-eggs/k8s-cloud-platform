@@ -73,8 +73,15 @@ final class MiddlewareExposeObjects {
         }
     }
 
+    /** 受管标签值：{@code ManagedResourceGuard} 按 {@code middleware*} 判成 MIDDLEWARE，路由 / Service 页只读不可删 */
+    static final String MANAGED_BY = "middleware-expose";
+
+    /**
+     * 实例标签（删实例时按它清理）+ {@code platform.coding/managed-by}：资源页（路由策略 / 服务）据此置灰编辑删除，
+     * 后端写入也会被拒 —— 只能在中间件详情「对外访问」里取消。
+     */
     static Map<String, String> labels(String instanceName) {
-        return Map.of(LABEL, instanceName);
+        return Map.of(LABEL, instanceName, "platform.coding/managed-by", MANAGED_BY);
     }
 
     static GenericKubernetesResource route(MiddlewareExposeRequestDTO r) {

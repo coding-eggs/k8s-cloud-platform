@@ -19,7 +19,14 @@ export function isManaged(row: unknown): boolean {
 
 /** 行内提示文案（菜单里的禁用项 / tooltip） */
 export function managedReason(row: unknown): string {
-  return managedByOf(row) === 'MIDDLEWARE'
-    ? '由中间件实例管理，请到「中间件」页操作'
-    : '由平台组件管理，请到「集群组件」页操作'
+  if (managedByOf(row) !== 'MIDDLEWARE') return '由平台组件管理，请到「集群组件」页操作'
+  return isMiddlewareExpose(row)
+    ? '由中间件的「对外访问」生成，只能在中间件实例详情里取消'
+    : '由中间件实例管理，请到「中间件」页操作'
+}
+
+/** 中间件对外暴露生成的路由 / NodePort Service（k8s-server 打的标签） */
+export function isMiddlewareExpose(row: unknown): boolean {
+  const labels = (row as { labels?: Record<string, string> | null } | null)?.labels
+  return labels?.['platform.coding/managed-by'] === 'middleware-expose'
 }

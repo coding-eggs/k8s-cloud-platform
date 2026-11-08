@@ -8,7 +8,7 @@
  * 组件行不发请求：/cluster/components 要实时查集群且是管理员接口，直接用对象上的 helm release 注解。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { managedByOf, managedReason } from '@/utils/managedResource'
+import { isMiddlewareExpose, managedByOf, managedReason } from '@/utils/managedResource'
 import { helmReleaseOf, matchInstance, middlewareTypeName } from '@/utils/managedOwner'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
@@ -43,6 +43,9 @@ const tip = computed(() => {
   const i = instance.value
   if (by.value === 'MIDDLEWARE' && i) {
     const app = i.appName ? `，来自应用「${i.appName}」` : ''
+    if (isMiddlewareExpose(props.row)) {
+      return `由${middlewareTypeName(i.code)}实例「${i.displayName || i.name}」的「对外访问」生成，不能在这里修改或删除；点击到实例详情里取消`
+    }
     return `由${middlewareTypeName(i.code)}实例「${i.displayName || i.name}」（${i.namespace}/${i.name}）管理${app}；点击到实例页操作`
   }
   return managedReason(props.row)

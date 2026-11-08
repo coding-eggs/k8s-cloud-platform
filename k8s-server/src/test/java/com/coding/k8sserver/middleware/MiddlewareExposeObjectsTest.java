@@ -48,6 +48,20 @@ class MiddlewareExposeObjectsTest {
     }
 
     @Test
+    void exposeObjectsAreMarkedManagedSoResourcePagesCannotEditOrDeleteThem() {
+        com.coding.k8sserver.components.ManagedResourceGuard guard =
+                new com.coding.k8sserver.components.ManagedResourceGuard("platform-system");
+        var route = MiddlewareExposeObjects.route(req("GATEWAY", "TCP"));
+        assertThat(guard.managedBy(route.getMetadata().getLabels(), null, null))
+                .isEqualTo(com.coding.k8sserver.components.ManagedResourceGuard.MIDDLEWARE);
+        Service target = new ServiceBuilder().withNewSpec().withSelector(Map.of("a", "b"))
+                .addNewPort().withPort(3306).endPort().endSpec().build();
+        Service np = MiddlewareExposeObjects.nodePortService(req("NODEPORT", null), target);
+        assertThatThrownBy(() -> guard.assertMutable(np.getMetadata().getLabels(), null, null))
+                .isInstanceOf(com.coding.common.exception.CloudPlatformException.class);
+    }
+
+    @Test
     void httpProtocolBuildsAnHttpRoute() {
         assertThat(MiddlewareExposeObjects.route(req("GATEWAY", "HTTP")).getKind()).isEqualTo("HTTPRoute");
     }
