@@ -19,7 +19,9 @@ export function isManaged(row: unknown): boolean {
 
 /** 行内提示文案（菜单里的禁用项 / tooltip） */
 export function managedReason(row: unknown): string {
-  if (managedByOf(row) !== 'MIDDLEWARE') return '由平台组件管理，请到「集群组件」页操作'
+  if (managedByOf(row) !== 'MIDDLEWARE') {
+    return appIdOf(row) ? '由应用发布生成，请到应用详情里修改后重新发布' : '由平台组件管理，请到「集群组件」页操作'
+  }
   return isMiddlewareExpose(row)
     ? '由中间件的「对外访问」生成，只能在中间件实例详情里取消'
     : '由中间件实例管理，请到「中间件」页操作'
@@ -27,6 +29,14 @@ export function managedReason(row: unknown): string {
 
 /** 中间件对外暴露生成的路由 / NodePort Service（k8s-server 打的标签） */
 export function isMiddlewareExpose(row: unknown): boolean {
-  const labels = (row as { labels?: Record<string, string> | null } | null)?.labels
-  return labels?.['platform.coding/managed-by'] === 'middleware-expose'
+  return labelsOf(row)?.['platform.coding/managed-by'] === 'middleware-expose'
+}
+
+function labelsOf(row: unknown): Record<string, string> | null | undefined {
+  return (row as { labels?: Record<string, string> | null } | null)?.labels
+}
+
+/** 应用发布生成的对象（workload chart 打 `platform.coding/app=<应用 id>`）；后端仍判成 COMPONENT */
+export function appIdOf(row: unknown): string | null {
+  return labelsOf(row)?.['platform.coding/app'] || null
 }

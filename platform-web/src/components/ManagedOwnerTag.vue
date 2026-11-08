@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
  * 资源页的「受管归属」标记：中间件行显示「Elasticsearch · 实例显示名」并可跳实例详情；
- * 平台组件行显示「平台组件 · <helm release>」。非受管行不渲染。
+ * 平台组件行显示「平台组件 · <helm release>」；应用发布生成的行显示「应用」并可跳应用详情。非受管行不渲染。
  *
  * 实例名反查用整页**一次**实例列表请求（模块级按 租户+集群 缓存 30 秒，N 行共享同一个 Promise，
  * 不会 N+1）；只有存在中间件行时才发。没权限 / 请求失败 / 实例已删 → 回退成「中间件」，并且不放死链接。
  * 组件行不发请求：/cluster/components 要实时查集群且是管理员接口，直接用对象上的 helm release 注解。
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { isMiddlewareExpose, managedByOf, managedReason } from '@/utils/managedResource'
+import { appIdOf, isMiddlewareExpose, managedByOf, managedReason } from '@/utils/managedResource'
 import { helmReleaseOf, matchInstance, middlewareTypeName } from '@/utils/managedOwner'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
@@ -20,6 +20,9 @@ const perm = usePermission()
 const by = computed(() => managedByOf(props.row))
 const instance = ref<MiddlewareInstance | null>(null)
 const canOpenMiddleware = computed(() => perm.has(pageCodes.app))
+/** 应用发布生成的对象：归属显示「应用」，有应用页权限时可跳应用详情 */
+const appId = computed(() => (by.value === 'COMPONENT' ? appIdOf(props.row) : null))
+const appLink = computed(() => (appId.value && perm.has(pageCodes.application) ? appId.value : null))
 
 async function resolve(): Promise<void> {
   instance.value = null
@@ -35,6 +38,7 @@ const label = computed(() => {
     const i = instance.value
     return i ? `${middlewareTypeName(i.code)} · ${i.displayName || i.name}` : '中间件'
   }
+  if (appId.value) return '应用'
   const rel = helmReleaseOf(props.row)
   return rel ? `平台组件 · ${rel}` : '平台组件'
 })
@@ -48,6 +52,7 @@ const tip = computed(() => {
     }
     return `由${middlewareTypeName(i.code)}实例「${i.displayName || i.name}」（${i.namespace}/${i.name}）管理${app}；点击到实例页操作`
   }
+  if (appLink.value) return '由应用发布生成，不能在这里修改或删除；点击到应用详情里修改后重新发布'
   return managedReason(props.row)
 })
 </script>
@@ -80,6 +85,14 @@ function instancesOf(clusterId: string, tenantId?: string): Promise<MiddlewareIn
       <router-link
         v-if="instance"
         :to="{ name: 'middleware-detail', params: { id: instance.id } }"
+        class="managed-owner-link"
+        @click.stop
+      >
+        <el-tag type="warning" size="small" effect="plain">{{ label }}</el-tag>
+      </router-link>
+      <router-link
+        v-else-if="appLink"
+        :to="{ name: 'application-detail', params: { id: appLink } }"
         class="managed-owner-link"
         @click.stop
       >
