@@ -177,7 +177,7 @@ rules:
 - 镜像与 stable 相同时不拦，只在弹窗里提示「镜像没变」。
 - `weight` 范围 0-100；`header` 只有 HTTP 能填。
 
-## 6.3 探针类型（随灰度一起做）
+### 6.3 探针类型（随灰度一起做）
 
 现有的「健康检查」只有 HTTP GET（readinessProbe + livenessProbe 打服务端口的 `probePath`），默认开启。
 纯 TCP 服务（如网关 TCP 暴露的非 HTTP 服务）用 HTTP 探针会一直失败。补一个探针类型：
