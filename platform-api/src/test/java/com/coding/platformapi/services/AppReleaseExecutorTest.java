@@ -803,4 +803,21 @@ class AppReleaseExecutorTest {
 
         verify(precheck, never()).afterOffline(any());
     }
+
+    @Test
+    void normalFinishRunsTheAfterReleaseHook() {
+        // 改离网关方式的端口在发布成功后才释放（M6）
+        executor.advance(at("DONE"));
+
+        verify(precheck).afterRelease(any());
+    }
+
+    @Test
+    void offlineFinishDoesNotRunTheAfterReleaseHook() {
+        asOffline();
+
+        executor.advance(at("DONE"));
+
+        verify(precheck, never()).afterRelease(any());
+    }
 }

@@ -196,4 +196,41 @@ class IngressPortServiceTest {
 
         assertThatThrownBy(() -> svc.currentPool(C)).hasMessageContaining("Istio");
     }
+
+    // ------------------------------------------------------------ M1 / M2
+
+    @Test
+    void reallocationPrefersTheServicesPreviousPortEvenDuringCooldown() {
+        // 下线再上线：上次用的端口还没被别人占 → 拿回原端口（不受冷却限制），地址不变
+        PlatformIngressPort previous = row(4, 20004, "RELEASED", NOW.minusSeconds(60));
+        previous.setAppId("app1");
+        previous.setServiceKey("api");
+        rows.add(previous);
+
+        assertThat(svc.allocate(C, "shop", "app1", "api", "HTTP", POOL)).isEqualTo(20004);
+        verify(mapper).reactivate(any());
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void previousPortTakenByAnotherServiceFallsBackToTheLowestFree() {
+        // 原端口被别的服务拿走又释放过（行的归属已变）→ 不算「自己的」，按常规找最小空闲端口
+        PlatformIngressPort taken = row(4, 20004, "RELEASED", NOW.minusSeconds(60));
+        rows.add(taken);
+
+        assertThat(svc.allocate(C, "shop", "app1", "api", "HTTP", POOL)).isEqualTo(20000);
+    }
+
+    @Test
+    void namespaceListenerLimitRejectedAtAllocation() {
+        // ListenerSet 最多 64 条 listener：满了在保存时就拦，不能等到同步时让整个命名空间的发布失败
+        List<PlatformIngressPort> full = new ArrayList<>();
+        for (int i = 0; i < IngressPortService.MAX_LISTENERS_PER_NAMESPACE; i++) {
+            full.add(row(100 + i, 21000 + i, "ACTIVE", null));
+        }
+        when(mapper.selectActiveByNamespace(C, "shop")).thenReturn(full);
+
+        assertThatThrownBy(() -> svc.lock(C, "shop", "app1", "api", "HTTP", POOL)).hasMessageContaining("64");
+        verify(mapper, never()).insert(any());
+    }
 }

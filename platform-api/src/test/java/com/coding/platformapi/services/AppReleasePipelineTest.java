@@ -138,7 +138,7 @@ class AppReleasePipelineTest {
         pipeline.check(e);
 
         verify(ports).allocate("c1", "demo", "app1", "api", "TCP", POOL);
-        verify(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
+        verify(sync).sync("c1", "demo");
     }
 
     @Test
@@ -146,7 +146,7 @@ class AppReleasePipelineTest {
         PlatformAppExecution e = execution(Map.of("api", svc("gateway-http")));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("gateway-http"))));
         doThrow(new CloudPlatformException(EnumResponseType.ERROR, "集群缺少 ListenerSet CRD 或入口 Gateway"))
-                .when(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
+                .when(sync).sync("c1", "demo");
 
         assertThatThrownBy(() -> pipeline.check(e)).hasMessageContaining("ListenerSet");
     }
@@ -158,42 +158,67 @@ class AppReleasePipelineTest {
         when(ports.currentPool("c1")).thenReturn(null);
 
         assertThatThrownBy(() -> pipeline.check(e)).hasMessageContaining("端口池");
+        verify(sync, never()).sync(anyString(), anyString());
+    }
+
+    @Test
+    void precheckLeavesPortsOfServicesLeavingTheGatewayInPlace() {
+        // 改离网关方式：发布前不摘 listener —— 发布失败时线上旧版本的路由还要用它（M6）
+        PlatformAppExecution e = execution(Map.of("api", svc(null)));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc(null))));
+        when(ports.activeOfApp("app1")).thenReturn(List.of(held("api")));
+
+        pipeline.check(e);
+
+        verify(ports, never()).release(anyString(), anyString());
         verify(sync, never()).syncReleasing(anyString(), anyString(), any(), any());
     }
 
     @Test
-    void precheckReleasesPortsNoLongerExposedThroughTheGateway() {
-        // 服务改回不暴露并发布：快照与期望配置都不是网关方式 → 端口释放，ListenerSet 同步摘掉
+    void afterReleaseReleasesPortsNoLongerExposedThroughTheGateway() {
         PlatformAppExecution e = execution(Map.of("api", svc(null)));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc(null))));
-        PlatformIngressPort held = new PlatformIngressPort();
-        held.setAppId("app1");
-        held.setServiceKey("api");
-        held.setPort(20001);
-        when(ports.activeOfApp("app1")).thenReturn(List.of(held));
+        when(ports.activeOfApp("app1")).thenReturn(List.of(held("api")));
         runReleaseCallback();
 
-        pipeline.check(e);
+        pipeline.afterRelease(e);
 
         verify(ports).release("app1", "api");
         verify(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
     }
 
     @Test
-    void precheckKeepsPortsWhenTheListenerSetSyncFails() {
-        // 同步失败 → 端口不释放（listener 还在集群上），发布在 PRECHECK 失败
+    void afterReleaseKeepsPortOfAServiceSavedAsGatewayButNotSelected() {
+        PlatformAppExecution e = execution(Map.of("api", svc(null)));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("gateway-http"))));
+        when(ports.activeOfApp("app1")).thenReturn(List.of(held("api")));
+
+        pipeline.afterRelease(e);
+
+        verify(ports, never()).release(anyString(), anyString());
+        verify(sync, never()).syncReleasing(anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void afterReleaseKeepsPortsWhenSyncFails() {
+        // 发布已成功，不因此失败；端口保留，下次成功发布再放
         PlatformAppExecution e = execution(Map.of("api", svc(null)));
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc(null))));
-        PlatformIngressPort held = new PlatformIngressPort();
-        held.setAppId("app1");
-        held.setServiceKey("api");
-        held.setPort(20001);
-        when(ports.activeOfApp("app1")).thenReturn(List.of(held));
-        doThrow(new CloudPlatformException(EnumResponseType.ERROR, "集群不可达"))
+        when(ports.activeOfApp("app1")).thenReturn(List.of(held("api")));
+        doThrow(new RuntimeException("集群不可达"))
                 .when(sync).syncReleasing(eq("c1"), eq("demo"), any(), any());
 
-        assertThatThrownBy(() -> pipeline.check(e)).hasMessageContaining("集群不可达");
+        pipeline.afterRelease(e);
+
         verify(ports, never()).release(anyString(), anyString());
+    }
+
+    private static PlatformIngressPort held(String key) {
+        PlatformIngressPort p = new PlatformIngressPort();
+        p.setAppId("app1");
+        p.setServiceKey(key);
+        p.setPort(20001);
+        return p;
     }
 
     /** sync 是 mock：让它像真的一样在下发成功后执行释放回调 */
@@ -227,7 +252,7 @@ class AppReleasePipelineTest {
 
         pipeline.check(e);
 
-        verify(sync, never()).syncReleasing(anyString(), anyString(), any(), any());
+        verify(sync, never()).sync(anyString(), anyString());
     }
 
     @Test

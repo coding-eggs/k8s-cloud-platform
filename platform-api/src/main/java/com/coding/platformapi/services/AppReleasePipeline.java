@@ -87,8 +87,8 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
      * 网关端口与 ListenerSet 对账（spec §5.3 / §6）：
      * <ul>
      *   <li>快照里网关方式的服务：确保有端口（下线后重新上线、回滚到旧版本时端口已释放 → 重新分配），协议以快照为准；</li>
-     *   <li>本应用持有、但快照<b>和</b>期望配置都不再是网关方式的端口：释放（只看快照会把「已保存、这次没勾选」的端口放掉）；</li>
-     *   <li>有任何变化或仍在用网关方式时，整份同步命名空间的 ListenerSet。</li>
+     *   <li>快照里有网关方式的服务时，整份同步命名空间的 ListenerSet；</li>
+     *   <li>改离网关方式的端口<b>不在这里放</b>，见 {@link #afterRelease}。</li>
      * </ul>
      */
     private void reconcileIngress(PlatformApplication app, AppSnapshot snapshot) {
@@ -108,25 +108,51 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
             wanted.forEach((key, protocol) ->
                     ports.allocate(app.getClusterId(), app.getNamespace(), app.getId(), key, protocol, pool));
         }
-        Set<String> desiredGateway = new java.util.HashSet<>();
+        if (!wanted.isEmpty()) {
+            listeners.sync(app.getClusterId(), app.getNamespace());
+        }
+    }
+
+    /**
+     * 发布成功后：本应用持有、但快照<b>和</b>期望配置都不再是网关方式的端口，摘掉 listener 并释放（M6）。
+     * 放在发布前会让「发布失败、线上仍是旧版本」时旧路由先失去 listener。失败只记日志、端口保留，下次成功发布再放。
+     */
+    @Override
+    public void afterRelease(PlatformAppExecution execution) {
+        PlatformApplication app = apps.selectById(execution.getAppId());
+        PlatformAppRelease release = releases.selectByNo(execution.getAppId(), execution.getReleaseNo());
+        if (app == null || release == null) {
+            return;
+        }
+        AppSnapshot snapshot = AppSnapshot.parse(release.getSnapshotJson());
+        Set<String> keep = new java.util.HashSet<>();
+        snapshot.services().forEach((key, desired) -> {
+            if (AppServiceDesired.gatewayProtocol(desired) != null) {
+                keep.add(key);
+            }
+        });
         for (PlatformAppService row : services.selectByApp(app.getId())) {
             if (!Boolean.TRUE.equals(row.getPendingDelete())
                     && AppServiceDesired.gatewayProtocol(AppSnapshot.parseMap(row.getDesiredJson())) != null) {
-                desiredGateway.add(row.getServiceKey());
+                keep.add(row.getServiceKey());
             }
         }
         Set<String> leaving = new java.util.LinkedHashSet<>();
         List<PlatformIngressPort> held = ports.activeOfApp(app.getId());
         for (PlatformIngressPort p : held == null ? List.<PlatformIngressPort>of() : held) {
-            if (!wanted.containsKey(p.getServiceKey()) && !desiredGateway.contains(p.getServiceKey())) {
+            if (!keep.contains(p.getServiceKey())) {
                 leaving.add(p.getServiceKey());
             }
         }
-        if (!wanted.isEmpty() || !leaving.isEmpty()) {
-            // 下发成功后才释放：失败时 listener 还在集群上，端口保持 ACTIVE
+        if (leaving.isEmpty()) {
+            return;
+        }
+        try {
             listeners.syncReleasing(app.getClusterId(), app.getNamespace(),
                     p -> app.getId().equals(p.getAppId()) && leaving.contains(p.getServiceKey()),
                     () -> leaving.forEach(key -> ports.release(app.getId(), key)));
+        } catch (RuntimeException e) {
+            log.warn("应用 {} 发布后释放网关端口失败（端口保留，下次成功发布再放）：{}", app.getId(), e.getMessage());
         }
     }
 

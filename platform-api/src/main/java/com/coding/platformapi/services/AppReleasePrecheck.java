@@ -10,4 +10,8 @@ public interface AppReleasePrecheck {
     /** 下线完成（对象已清掉）之后：释放应用占用的网关端口等。失败只记日志，不改变下线结论。 */
     default void afterOffline(PlatformAppExecution execution) {
     }
+
+    /** 发布（非下线）成功之后：释放改离网关方式的服务端口等。失败只记日志，不改变发布结论。 */
+    default void afterRelease(PlatformAppExecution execution) {
+    }
 }

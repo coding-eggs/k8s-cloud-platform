@@ -39,6 +39,8 @@ public class IngressPortService {
     public static final String GATEWAY_SERVICE = "external-gateway";
     static final Duration COOLDOWN = Duration.ofMinutes(10);
     private static final int MAX_ATTEMPTS = 3;
+    /** 一个 ListenerSet 最多 64 条 listener（Gateway API 上限） */
+    public static final int MAX_LISTENERS_PER_NAMESPACE = 64;
 
     /** 端口区间（闭区间） */
     public record PortRange(int from, int to) {
@@ -117,12 +119,22 @@ public class IngressPortService {
     private Claim claim(String clusterId, String namespace, String appId, String serviceKey,
                         String protocol, PortRange pool) {
         Date now = Date.from(clock.instant());
+        List<PlatformIngressPort> inNamespace = mapper.selectActiveByNamespace(clusterId, namespace);
+        if (inNamespace != null && inNamespace.size() >= MAX_LISTENERS_PER_NAMESPACE) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "命名空间 " + namespace
+                    + " 的网关端口已达上限 " + MAX_LISTENERS_PER_NAMESPACE + " 个（一个 ListenerSet 最多 "
+                    + MAX_LISTENERS_PER_NAMESPACE + " 条 listener），请改用 NodePort 或把服务拆到别的命名空间");
+        }
         Set<Integer> declared = new HashSet<>(components.servicePorts(clusterId, GATEWAY_NAMESPACE, GATEWAY_SERVICE));
         Map<Integer, PlatformIngressPort> byPort = new HashMap<>();
         for (PlatformIngressPort r : mapper.selectByCluster(clusterId)) {
             byPort.put(r.getPort(), r);
         }
         Instant cutoff = clock.instant().minus(COOLDOWN);
+        Claim previous = reclaimPrevious(byPort, declared, pool, namespace, appId, serviceKey, protocol, now);
+        if (previous != null) {
+            return previous;
+        }
         Set<Integer> tried = new HashSet<>();
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             Integer candidate = null;
@@ -174,6 +186,38 @@ public class IngressPortService {
             }
         }
         throw new CloudPlatformException(EnumResponseType.ERROR, "端口分配冲突，请稍后重试");
+    }
+
+    /**
+     * 下线再上线 / 改回网关方式：这个服务上次用的端口若还没被别人拿走（RELEASED 行的归属仍是它），
+     * 直接拿回、不受冷却限制 —— 冷却是防「别的服务」接到旧客户端，自己拿回没有这个问题。地址因此不变。
+     */
+    private Claim reclaimPrevious(Map<Integer, PlatformIngressPort> byPort, Set<Integer> declared, PortRange pool,
+                                  String namespace, String appId, String serviceKey, String protocol, Date now) {
+        PlatformIngressPort last = byPort.values().stream()
+                .filter(r -> PlatformIngressPort.RELEASED.equals(r.getStatus()))
+                .filter(r -> appId.equals(r.getAppId()) && serviceKey.equals(r.getServiceKey()))
+                .filter(r -> pool.contains(r.getPort()) && declared.contains(r.getPort()))
+                .max(java.util.Comparator.comparing(r -> r.getReleasedAt() == null ? new Date(0) : r.getReleasedAt()))
+                .orElse(null);
+        if (last == null) {
+            return null;
+        }
+        PlatformIngressPort rec = new PlatformIngressPort();
+        rec.setId(last.getId());
+        rec.setNamespace(namespace);
+        rec.setAppId(appId);
+        rec.setServiceKey(serviceKey);
+        rec.setProtocol(protocol);
+        rec.setUpdatedAt(now);
+        // released_at < now+1s 恒成立：跳过冷却，但仍要求行还是 RELEASED（并发被抢走则走常规分配）
+        rec.setCooldownCutoff(Date.from(clock.instant().plusSeconds(1)));
+        try {
+            return mapper.reactivate(rec) > 0 ? new Claim(last.getPort(), true) : null;
+        } catch (DuplicateKeyException e) {
+            PlatformIngressPort winner = mapper.selectActiveByService(appId, serviceKey);
+            return winner == null ? null : new Claim(winner.getPort(), false);
+        }
     }
 
     private static boolean reusable(PlatformIngressPort r, Instant cutoff) {

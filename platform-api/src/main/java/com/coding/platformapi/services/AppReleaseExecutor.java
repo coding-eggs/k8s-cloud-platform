@@ -503,6 +503,12 @@ public class AppReleaseExecutor {
             if (hook != null) {
                 hook.afterOffline(execution);
             }
+        } else {
+            // 发布成功：改离网关方式的服务这时才摘 listener、放端口（实现自己吞异常）
+            AppReleasePrecheck hook = precheck.getIfAvailable();
+            if (hook != null) {
+                hook.afterRelease(execution);
+            }
         }
         credentials.forgetExecution(execution.getId());
         journal.info(execution, "DONE", isOffline(requireRelease(execution))
