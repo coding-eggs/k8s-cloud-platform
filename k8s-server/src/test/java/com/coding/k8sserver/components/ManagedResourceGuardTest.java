@@ -33,6 +33,13 @@ class ManagedResourceGuardTest {
     }
 
     @Test
+    void middlewareExposeInstanceLabelAloneMarksMiddleware() {
+        // 旧版 k8s-server 建的暴露路由 / NodePort Service 只有实例标签，没有 managed-by
+        assertThat(guard.managedBy(Map.of("platform.coding/middleware-expose", "mw-redis-f591b8f9"), Map.of(), null))
+                .isEqualTo(ManagedResourceGuard.MIDDLEWARE);
+    }
+
+    @Test
     void platformManagedTrueLabelIsComponent() {
         // 组件的 Gateway/Secret 等对象用的是 managed=true + component=<code>（2026-10-22 复审 C1）
         assertThat(guard.managedBy(

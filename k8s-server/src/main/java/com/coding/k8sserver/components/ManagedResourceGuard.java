@@ -19,7 +19,8 @@ import java.util.stream.Collectors;
  * 判定顺序（命中即停）：
  * <ol>
  *   <li>标签 {@code platform.coding/managed-by}：{@code middleware*} → MIDDLEWARE，其它 → COMPONENT；</li>
- *   <li>标签 {@code platform.coding/managed=true} → COMPONENT（平台组件对象一直用的是这个标签）；</li>
+ *   <li>标签 {@code platform.coding/managed=true} → COMPONENT（平台组件对象一直用的是这个标签）；
+ *       标签 {@code platform.coding/middleware-expose} → MIDDLEWARE（中间件对外访问生成的路由 / Service）；</li>
  *   <li>Helm 注解 {@code meta.helm.sh/release-name}：{@code mw-} → MIDDLEWARE，{@code platform-} → COMPONENT；
  *       否则若 {@code meta.helm.sh/release-namespace} 是平台命名空间（istio-system/monitor/...）→ COMPONENT；</li>
  *   <li>ownerReferences 的属主名：{@code mw-} → MIDDLEWARE，{@code platform-} → COMPONENT
@@ -41,6 +42,7 @@ public class ManagedResourceGuard {
 
     private static final String MANAGED_BY_LABEL = "platform.coding/managed-by";
     private static final String MANAGED_LABEL = "platform.coding/managed";
+    private static final String MIDDLEWARE_EXPOSE_LABEL = "platform.coding/middleware-expose";
     private static final String RELEASE_ANNOTATION = "meta.helm.sh/release-name";
     private static final String RELEASE_NS_ANNOTATION = "meta.helm.sh/release-namespace";
 
@@ -75,6 +77,10 @@ public class ManagedResourceGuard {
             }
             if ("true".equals(labels.get(MANAGED_LABEL))) {
                 return COMPONENT;
+            }
+            // 中间件「对外访问」的路由 / NodePort Service：实例标签本身就够判（兼容只打了这一个标签的存量对象）
+            if (labels.containsKey(MIDDLEWARE_EXPOSE_LABEL)) {
+                return MIDDLEWARE;
             }
         }
 

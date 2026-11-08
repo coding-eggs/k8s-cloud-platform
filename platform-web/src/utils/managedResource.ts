@@ -29,7 +29,8 @@ export function managedReason(row: unknown): string {
 
 /** 中间件对外暴露生成的路由 / NodePort Service（k8s-server 打的标签） */
 export function isMiddlewareExpose(row: unknown): boolean {
-  return labelsOf(row)?.['platform.coding/managed-by'] === 'middleware-expose'
+  const labels = labelsOf(row)
+  return !!labels && ('platform.coding/middleware-expose' in labels || labels['platform.coding/managed-by'] === 'middleware-expose')
 }
 
 function labelsOf(row: unknown): Record<string, string> | null | undefined {
