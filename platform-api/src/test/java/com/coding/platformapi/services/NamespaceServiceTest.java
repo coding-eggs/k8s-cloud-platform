@@ -542,4 +542,23 @@ class NamespaceServiceTest {
                 .isInstanceOf(CloudPlatformException.class)
                 .hasFieldOrPropertyWithValue("code", EnumResponseType.CLUSTER_NOT_EXIST.getCode());
     }
+
+    @Test
+    void update_strips_reserved_ingress_labels() {
+        // ingress.platform.coding/ 前缀由应用端口池独立维护（单独的 field manager）：
+        // 表单回传时不能被平台的 field manager 共同持有，否则端口池摘不掉它
+        clusterExists();
+        when(k8s.get(any(NamespaceDTO.class))).thenReturn(ns("foreign", false));
+        when(k8s.update(any(NamespaceDTO.class))).thenAnswer(i -> i.getArgument(0));
+        NamespaceUpsertRequest req = new NamespaceUpsertRequest();
+        req.setClusterId("c1");
+        req.setName("foreign");
+        req.setLabels(Map.of("team", "sre", "ingress.platform.coding/ports", "true"));
+
+        svc.update(req);
+
+        ArgumentCaptor<NamespaceDTO> cap = ArgumentCaptor.forClass(NamespaceDTO.class);
+        verify(k8s).update(cap.capture());
+        assertThat(cap.getValue().getLabels()).containsOnlyKeys("team");
+    }
 }

@@ -2,7 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.data.mapper.system.PlatformIngressPortMapper;
 import com.coding.data.models.system.PlatformIngressPort;
-import com.coding.platformapi.k8s.K8sComponentClient;
+import com.coding.platformapi.k8s.K8sAppClient;
 import com.coding.platformapi.services.IngressPortService.PortRange;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,15 +34,17 @@ class IngressPortServiceTest {
     private static final Instant NOW = Instant.parse("2026-11-08T10:00:00Z");
 
     private PlatformIngressPortMapper mapper;
-    private K8sComponentClient components;
+    private K8sAppClient components;
     private IngressPortService svc;
+    private com.coding.data.mapper.system.PlatformComponentOperationMapper operations;
     private final List<PlatformIngressPort> rows = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
         mapper = mock(PlatformIngressPortMapper.class);
-        components = mock(K8sComponentClient.class);
-        svc = new IngressPortService(mapper, components, Clock.fixed(NOW, ZoneId.of("UTC")));
+        components = mock(K8sAppClient.class);
+        operations = mock(com.coding.data.mapper.system.PlatformComponentOperationMapper.class);
+        svc = new IngressPortService(mapper, components, operations, Clock.fixed(NOW, ZoneId.of("UTC")));
         rows.clear();
         when(mapper.selectByCluster(C)).thenReturn(rows);
         // 20002 未在 Service 上声明
@@ -141,5 +143,16 @@ class IngressPortServiceTest {
         assertThat(POOL.contains(20009)).isTrue();
         assertThat(POOL.contains(20010)).isFalse();
         verify(mapper, never()).updateProtocol(anyLong(), any(), any());
+    }
+
+    @Test
+    void currentPoolComesFromTheLastSuccessfulIstioOperation() {
+        com.coding.data.models.system.PlatformComponentOperation last =
+                new com.coding.data.models.system.PlatformComponentOperation();
+        last.setValuesSnapshot("{\"external-gateway\":{\"platform\":{\"ingressPortPool\":{\"from\":20000,\"to\":20099}}}}");
+        when(operations.selectLatestSuccess(C, "istio")).thenReturn(last);
+        assertThat(svc.currentPool(C)).isEqualTo(new PortRange(20000, 20099));
+        when(operations.selectLatestSuccess("c2", "istio")).thenReturn(null);
+        assertThat(svc.currentPool("c2")).isNull();
     }
 }

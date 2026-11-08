@@ -9,11 +9,14 @@ import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppSpecDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO.ConnInfo;
 import com.coding.data.mapper.system.PlatformAppReleaseMapper;
+import com.coding.data.mapper.system.PlatformAppServiceMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.models.system.PlatformAppDependency;
 import com.coding.data.models.system.PlatformAppExecution;
 import com.coding.data.models.system.PlatformAppRelease;
+import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
+import com.coding.data.models.system.PlatformIngressPort;
 import com.coding.platformapi.app.AppEnvResolver;
 import com.coding.platformapi.app.AppEnvResolver.ServiceAddr;
 import com.coding.platformapi.app.AppObjectNames;
@@ -35,6 +38,7 @@ import java.util.stream.Collectors;
  * <p>引用在这里（RENDER 时）才解析：快照里存的是 {@code ${依赖.字段}} 原文，
  * 连接信息每次都从中间件现取，不会把地址或凭据位置固化进发布记录。
  */
+@lombok.extern.slf4j.Slf4j
 @Component
 public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRenderer {
 
@@ -43,12 +47,19 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
     private final PlatformApplicationMapper apps;
     private final PlatformAppReleaseMapper releases;
     private final AppDependencyService dependencies;
+    private final PlatformAppServiceMapper services;
+    private final IngressPortService ports;
+    private final IngressListenerSync listeners;
 
     public AppReleasePipeline(PlatformApplicationMapper apps, PlatformAppReleaseMapper releases,
-                              AppDependencyService dependencies) {
+                              AppDependencyService dependencies, PlatformAppServiceMapper services,
+                              IngressPortService ports, IngressListenerSync listeners) {
         this.apps = apps;
         this.releases = releases;
         this.dependencies = dependencies;
+        this.services = services;
+        this.ports = ports;
+        this.listeners = listeners;
     }
 
     @Override
@@ -68,6 +79,68 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         if (!problems.isEmpty()) {
             throw error(String.join("；", problems));
         }
+        // 在下发任何路由之前：端口到位、ListenerSet 同步好（缺 CRD / 没开端口池在这里就拦下）
+        reconcileIngress(app, snapshot);
+    }
+
+    /**
+     * 网关端口与 ListenerSet 对账（spec §5.3 / §6）：
+     * <ul>
+     *   <li>快照里网关方式的服务：确保有端口（下线后重新上线、回滚到旧版本时端口已释放 → 重新分配），协议以快照为准；</li>
+     *   <li>本应用持有、但快照<b>和</b>期望配置都不再是网关方式的端口：释放（只看快照会把「已保存、这次没勾选」的端口放掉）；</li>
+     *   <li>有任何变化或仍在用网关方式时，整份同步命名空间的 ListenerSet。</li>
+     * </ul>
+     */
+    private void reconcileIngress(PlatformApplication app, AppSnapshot snapshot) {
+        Map<String, String> wanted = new LinkedHashMap<>();
+        snapshot.services().forEach((key, desired) -> {
+            String protocol = AppServiceDesired.gatewayProtocol(desired);
+            if (protocol != null) {
+                wanted.put(key, protocol);
+            }
+        });
+        if (!wanted.isEmpty()) {
+            IngressPortService.PortRange pool = ports.currentPool(app.getClusterId());
+            if (pool == null) {
+                throw error("集群未启用应用端口池（Istio 组件编辑里配置），不能用网关方式暴露："
+                        + String.join("、", wanted.keySet()));
+            }
+            wanted.forEach((key, protocol) ->
+                    ports.allocate(app.getClusterId(), app.getNamespace(), app.getId(), key, protocol, pool));
+        }
+        Set<String> desiredGateway = new java.util.HashSet<>();
+        for (PlatformAppService row : services.selectByApp(app.getId())) {
+            if (!Boolean.TRUE.equals(row.getPendingDelete())
+                    && AppServiceDesired.gatewayProtocol(AppSnapshot.parseMap(row.getDesiredJson())) != null) {
+                desiredGateway.add(row.getServiceKey());
+            }
+        }
+        boolean released = false;
+        List<PlatformIngressPort> held = ports.activeOfApp(app.getId());
+        for (PlatformIngressPort p : held == null ? List.<PlatformIngressPort>of() : held) {
+            if (!wanted.containsKey(p.getServiceKey()) && !desiredGateway.contains(p.getServiceKey())) {
+                ports.release(app.getId(), p.getServiceKey());
+                released = true;
+            }
+        }
+        if (!wanted.isEmpty() || released) {
+            listeners.sync(app.getClusterId(), app.getNamespace());
+        }
+    }
+
+    /** 下线完成后：释放本应用全部网关端口并同步 ListenerSet；失败只记日志（下次该命名空间发布会补齐） */
+    @Override
+    public void afterOffline(PlatformAppExecution execution) {
+        PlatformApplication app = apps.selectById(execution.getAppId());
+        if (app == null) {
+            return;
+        }
+        ports.releaseApp(app.getId());
+        try {
+            listeners.sync(app.getClusterId(), app.getNamespace());
+        } catch (RuntimeException e) {
+            log.warn("应用 {} 下线后同步 ListenerSet 失败：{}", app.getId(), e.getMessage());
+        }
     }
 
     @Override
@@ -76,6 +149,15 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
     }
 
     public AppRenderRequestDTO buildRequest(PlatformApplication app, int releaseNo, AppSnapshot snapshot) {
+        return buildRequest(app, releaseNo, snapshot, false);
+    }
+
+    /**
+     * @param preview true = 发布预览：网关端口可能还没分配（下线后重新上线，PRECHECK 才重新分配），
+     *                路由用占位 sectionName 渲染，只用于对象差异展示，不会下发
+     */
+    public AppRenderRequestDTO buildRequest(PlatformApplication app, int releaseNo, AppSnapshot snapshot,
+                                            boolean preview) {
         if (snapshot.services().isEmpty()) {
             throw error("发布不含任何服务");
         }
@@ -105,6 +187,16 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
             if (!files.isEmpty()) {
                 params.put("configFiles", files);   // 引用已替换成值；没有配置文件就不带这个键（参数不变 = 不滚动）
             }
+            String gateway = AppServiceDesired.gatewayProtocol(desired);
+            if (gateway != null) {
+                // 网关方式：Service 保持 ClusterIP，路由挂到命名空间 ListenerSet 上分到的那个 listener
+                params.put("expose", "none");
+                params.remove("nodePort");
+                params.put("route", Map.of(
+                        "kind", gateway.toLowerCase(java.util.Locale.ROOT),
+                        "parentName", IngressListenerSync.LISTENER_SET,
+                        "sectionName", sectionName(app, e.getKey(), preview)));
+            }
             // 拉取权限不在这里补：imagePullSecrets 只取自快照（用户意图，回滚才能逐字还原）。
             // 平台 Harbor 的拉取凭据靠命名空间 default SA 上挂着的 platform-registry-pull —— 它在分配命名空间时
             // 下发，也可由「重下发全部模板」补；chart 不设 serviceAccountName，Pod 走 default SA，由 SA 准入带上。
@@ -132,6 +224,17 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         req.setSpec(spec);
         req.setInjectByNode(inject);
         return req;
+    }
+
+    private String sectionName(PlatformApplication app, String key, boolean preview) {
+        Integer port = ports.portOf(app.getId(), key);
+        if (port != null) {
+            return IngressListenerSync.sectionName(port);
+        }
+        if (preview) {
+            return "p-unallocated";
+        }
+        throw error("服务 " + key + " 的网关端口尚未分配（发布前校验会分配，请重试发布）");
     }
 
     /** 快照里所有引用能否解析；每条问题带服务名。连接信息取不到时只报这一条。 */

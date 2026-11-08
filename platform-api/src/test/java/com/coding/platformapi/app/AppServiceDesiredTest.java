@@ -313,4 +313,27 @@ class AppServiceDesiredTest {
         after.put("imageTag", "1.28");
         AppServiceDesired.validateHpaChange(before, after);
     }
+
+    @Test
+    void gatewayExposeNeedsPortAndNoNodePort() {
+        assertThat(AppServiceDesired.normalize(svc("expose", "gateway-tcp")).get("expose")).isEqualTo("gateway-tcp");
+        assertThat(AppServiceDesired.normalize(svc("expose", "Gateway-HTTP")).get("expose")).isEqualTo("gateway-http");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        AppServiceDesired.normalize(svc("expose", "gateway-http", "nodePort", 30001)))
+                .hasMessageContaining("NodePort");
+        Map<String, Object> worker = svc("expose", "gateway-http");
+        worker.remove("port");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> AppServiceDesired.normalize(worker))
+                .hasMessageContaining("端口");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> AppServiceDesired.normalize(svc("expose", "lb")))
+                .hasMessageContaining("网关 HTTP");
+    }
+
+    @Test
+    void gatewayProtocolOfDesired() {
+        assertThat(AppServiceDesired.gatewayProtocol(Map.of("expose", "gateway-http"))).isEqualTo("HTTP");
+        assertThat(AppServiceDesired.gatewayProtocol(Map.of("expose", "gateway-tcp"))).isEqualTo("TCP");
+        assertThat(AppServiceDesired.gatewayProtocol(Map.of("expose", "nodeport"))).isNull();
+        assertThat(AppServiceDesired.gatewayProtocol(null)).isNull();
+    }
 }

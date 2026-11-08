@@ -787,4 +787,20 @@ class AppReleaseExecutorTest {
         verify(releases, never()).updateById(any());
         verify(apps, never()).updateById(any());
     }
+
+    @Test
+    void offlineFinishReleasesGatewayPorts() {
+        asOffline();
+
+        executor.advance(at("DONE"));
+
+        verify(precheck).afterOffline(any());
+    }
+
+    @Test
+    void normalFinishDoesNotReleasePorts() {
+        executor.advance(at("DONE"));
+
+        verify(precheck, never()).afterOffline(any());
+    }
 }

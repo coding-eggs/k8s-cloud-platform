@@ -18,6 +18,8 @@ public final class AppServiceFeatures {
     public static final String OTEL_COLLECTION = "otel-collection";
     public static final String OTEL_LOGS = "otel-logs";
     public static final String AMBIENT_MESH = "ambient-mesh";
+    /** 网关端口池暴露：HTTPRoute / TCPRoute + ListenerSet（Istio 组件的 routes 旗标） */
+    public static final String ROUTES = "routes";
 
     /** 旗标码 → 人读的功能名（报错与警告用） */
     public static final Map<String, String> LABELS = Map.of(
@@ -25,7 +27,8 @@ public final class AppServiceFeatures {
             SERVICE_MONITOR, "指标采集",
             OTEL_COLLECTION, "链路追踪 / 应用日志接入",
             OTEL_LOGS, "日志采集",
-            AMBIENT_MESH, "服务网格");
+            AMBIENT_MESH, "服务网格",
+            ROUTES, "网关暴露");
 
     private AppServiceFeatures() {
     }
@@ -55,6 +58,9 @@ public final class AppServiceFeatures {
         }
         if ("ambient".equals(dataplaneMode(desired)) || waypointName(desired) != null) {
             out.add(AMBIENT_MESH);
+        }
+        if (desired.get("port") != null && AppServiceDesired.gatewayProtocol(desired) != null) {
+            out.add(ROUTES);
         }
         return out;
     }

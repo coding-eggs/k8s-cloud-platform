@@ -126,7 +126,7 @@ public class AppReleaseService {
             if (problems.isEmpty()) {
                 try {
                     int nextNo = nextReleaseNo(app.getId());
-                    AppRenderResultDTO rendered = client.render(pipeline.buildRequest(app, nextNo, plan.next));
+                    AppRenderResultDTO rendered = client.render(pipeline.buildRequest(app, nextNo, plan.next, true));
                     List<AppProblemDTO> renderProblems = rendered.getProblems() == null
                             ? List.of() : rendered.getProblems();
                     renderProblems.stream().filter(p -> "ERROR".equals(p.getSeverity()))

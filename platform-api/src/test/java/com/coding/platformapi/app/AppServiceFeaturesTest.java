@@ -64,4 +64,12 @@ class AppServiceFeaturesTest {
         assertThat(AppServiceFeatures.newlyEnabled(d("autoscalingEnabled", true),
                 d("autoscalingEnabled", true, "replicas", 3))).isEmpty();
     }
+
+    @Test
+    void gatewayExposeNeedsRoutes() {
+        assertThat(AppServiceFeatures.required(d("port", 80, "expose", "gateway-http")))
+                .contains(AppServiceFeatures.ROUTES);
+        assertThat(AppServiceFeatures.required(d("port", 80, "expose", "nodeport")))
+                .doesNotContain(AppServiceFeatures.ROUTES);
+    }
 }

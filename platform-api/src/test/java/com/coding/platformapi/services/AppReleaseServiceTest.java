@@ -78,7 +78,8 @@ class AppReleaseServiceTest {
         imageUpdates = mock(AppImageUpdates.class);
         componentFlags = mock(ClusterComponentService.class);
         when(componentFlags.flags(any())).thenReturn(Map.of());
-        pipeline = new AppReleasePipeline(apps, releases, dependencies);
+        pipeline = new AppReleasePipeline(apps, releases, dependencies, services,
+                mock(IngressPortService.class), mock(IngressListenerSync.class));
         service = new AppReleaseService(apps, services, depRows, releases, executions, dependencies,
                 pipeline, executor, credentials, new AppExecutionLease("test-instance"), client, imageUpdates,
                 mock(PlatformTransactionManager.class),

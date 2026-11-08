@@ -32,6 +32,7 @@ import java.util.UUID;
  * 应用台账：建、查、删与新建表单的可选项。服务、依赖、发布分别在
  * {@link AppServiceConfigService}、{@link AppDependencyService}、{@link AppReleaseService}。集群写入一律经 k8s-server。
  */
+@lombok.extern.slf4j.Slf4j
 @Service
 public class ApplicationService {
 
@@ -42,6 +43,8 @@ public class ApplicationService {
     private final K8sAppClient client;
     private final AppDependencyService appDependencies;
     private final PlatformAppExecutionMapper appExecutions;
+    private final IngressPortService ingressPorts;
+    private final IngressListenerSync ingressListeners;
 
     public ApplicationService(PlatformApplicationMapper apps,
                               PlatformApplicationResourceMapper resources,
@@ -49,7 +52,11 @@ public class ApplicationService {
                               NamespaceAccessGuard namespaceGuard,
                               K8sAppClient client,
                               AppDependencyService appDependencies,
-                              PlatformAppExecutionMapper appExecutions) {
+                              PlatformAppExecutionMapper appExecutions,
+                              IngressPortService ingressPorts,
+                              IngressListenerSync ingressListeners) {
+        this.ingressPorts = ingressPorts;
+        this.ingressListeners = ingressListeners;
         this.apps = apps;
         this.resources = resources;
         this.allocations = allocations;
@@ -132,6 +139,13 @@ public class ApplicationService {
             client.prune(prune);
         }
         apps.softDelete(req.getAppId(), new Date());
+        // 网关端口：对象已清掉，端口释放并同步命名空间 ListenerSet（失败只记日志：下次该命名空间发布会补齐）
+        ingressPorts.releaseApp(req.getAppId());
+        try {
+            ingressListeners.sync(row.getClusterId(), row.getNamespace());
+        } catch (RuntimeException e) {
+            log.warn("删除应用 {} 后同步 ListenerSet 失败：{}", req.getAppId(), e.getMessage());
+        }
         // 依赖：CREATED 实例保留并转交中间件模块（删应用不静默删数据），引用行与依赖行清掉，
         // 否则实例会被一个已删除的应用永远占着、实例页也删不掉
         appDependencies.detachForAppDelete(req.getAppId());

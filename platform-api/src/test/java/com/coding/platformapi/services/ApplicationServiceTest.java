@@ -45,8 +45,10 @@ class ApplicationServiceTest {
         client = mock(K8sAppClient.class);
         appDependencies = mock(AppDependencyService.class);
         appExecutions = mock(com.coding.data.mapper.system.PlatformAppExecutionMapper.class);
+        ports = mock(IngressPortService.class);
+        listeners = mock(IngressListenerSync.class);
         service = new ApplicationService(apps, resources, allocations, namespaceGuard, client, appDependencies,
-                appExecutions);
+                appExecutions, ports, listeners);
     }
 
     private static ApplicationCreateRequest req() {
@@ -176,5 +178,21 @@ class ApplicationServiceTest {
         verify(client).prune(any());
         verify(apps).softDelete(eq("app_1"), any());
         verify(appDependencies).detachForAppDelete("app_1");
+    }
+
+    private IngressPortService ports;
+    private IngressListenerSync listeners;
+
+    @Test
+    void deleteReleasesGatewayPortsAndSyncs() {
+        when(apps.selectById("app_1")).thenReturn(row());
+        when(resources.selectByApp("app_1")).thenReturn(List.of());
+        ApplicationDeleteRequest req = new ApplicationDeleteRequest();
+        req.setAppId("app_1");
+
+        service.delete(req, "admin", null);
+
+        verify(ports).releaseApp("app_1");
+        verify(listeners).sync(row().getClusterId(), row().getNamespace());
     }
 }

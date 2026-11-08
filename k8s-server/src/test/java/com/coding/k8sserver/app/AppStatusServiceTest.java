@@ -51,4 +51,14 @@ class AppStatusServiceTest {
         assertThat(AppStatusService.revisionSettled("a", "b", 3, 3)).isTrue();
         assertThat(AppStatusService.revisionSettled(null, null, 0, 3)).isFalse();
     }
+
+    @Test
+    void gatewayRoutesAreKnownKinds() {
+        // 应用 chart 会生成 HTTPRoute / TCPRoute（网关端口池暴露）：不认识的 kind 会让 HEALTH 永远等下去
+        assertThat(AppStatusService.customKind("HTTPRoute").getGroup()).isEqualTo("gateway.networking.k8s.io");
+        assertThat(AppStatusService.customKind("HTTPRoute").getVersion()).isEqualTo("v1");
+        assertThat(AppStatusService.customKind("TCPRoute").getPlural()).isEqualTo("tcproutes");
+        assertThat(AppStatusService.customKind("ServiceMonitor").getPlural()).isEqualTo("servicemonitors");
+        assertThat(AppStatusService.customKind("Foo")).isNull();
+    }
 }

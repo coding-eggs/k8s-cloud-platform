@@ -44,6 +44,9 @@ class AppServiceConfigServiceTest {
     private AppFeatureGate gate;
     private PlatformApplication app;
     private com.coding.platformapi.registry.HarborInstallLocator harbor;
+    private IngressPortService ports;
+    private IngressListenerSync listeners;
+    private static final IngressPortService.PortRange POOL = new IngressPortService.PortRange(20000, 20999);
 
     @BeforeEach
     void setUp() {
@@ -54,7 +57,10 @@ class AppServiceConfigServiceTest {
         executions = mock(PlatformAppExecutionMapper.class);
         harbor = mock(com.coding.platformapi.registry.HarborInstallLocator.class);
         gate = mock(AppFeatureGate.class);
-        service = new AppServiceConfigService(apps, services, deps, releases, executions, harbor, gate);
+        ports = mock(IngressPortService.class);
+        listeners = mock(IngressListenerSync.class);
+        service = new AppServiceConfigService(apps, services, deps, releases, executions, harbor, gate,
+                ports, listeners);
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -455,5 +461,80 @@ class AppServiceConfigServiceTest {
 
         assertThat(updatedDesired().get("configFiles")).isEqualTo(files);
         assertThat(view.desired().get("configFiles")).isEqualTo(files);
+    }
+
+    // ------------------------------------------------------------------ 网关端口池
+
+    @Test
+    void savingGatewayExposeAllocatesPort() {
+        when(ports.currentPool("c1")).thenReturn(POOL);
+        Map<String, Object> d = web("1");
+        d.put("expose", "gateway-http");
+
+        service.create(req("api", d), "t1");
+
+        verify(ports).allocate("c1", "demo", "app1", "api", "HTTP", POOL);
+        ArgumentCaptor<PlatformAppService> cap = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).insert(cap.capture());
+        // 端口锁在分配表里，不进期望配置（快照 / 回滚不带端口）
+        assertThat(cap.getValue().getDesiredJson()).doesNotContain("20000");
+    }
+
+    @Test
+    void gatewayExposeRejectedWithoutPool() {
+        when(ports.currentPool("c1")).thenReturn(null);
+        Map<String, Object> d = web("1");
+        d.put("expose", "gateway-tcp");
+
+        assertThatThrownBy(() -> service.create(req("api", d), "t1")).hasMessageContaining("端口池");
+        verify(services, never()).insert(any());
+    }
+
+    @Test
+    void switchingToNoneReleasesPort() {
+        // 从未发布过的服务：端口没上过线，改回不暴露立即释放
+        Map<String, Object> before = web("1");
+        before.put("expose", "gateway-http");
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", before, 3));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        AppServiceRequest r = req("api", web("1"));
+        r.setVersion(3);
+
+        service.update(r, "t1");
+
+        verify(ports).release("app1", "api");
+    }
+
+    @Test
+    void switchingAwayOnAPublishedServiceKeepsThePortUntilRelease() {
+        // 线上还在用这个端口：保存只改期望配置，端口在发布（PRECHECK）时才释放
+        Map<String, Object> before = web("1");
+        before.put("expose", "gateway-http");
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", before, 3));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        app.setLiveReleaseNo(1);
+        com.coding.data.models.system.PlatformAppRelease live = new com.coding.data.models.system.PlatformAppRelease();
+        live.setSnapshotJson(new com.coding.platformapi.app.AppSnapshot(Map.of("api", before), List.of()).toJson());
+        when(releases.selectByNo("app1", 1)).thenReturn(live);
+        AppServiceRequest r = req("api", web("1"));
+        r.setVersion(3);
+
+        service.update(r, "t1");
+
+        verify(ports, never()).release(any(), any());
+    }
+
+    @Test
+    void removingAnUnpublishedGatewayServiceReleasesItsPort() {
+        Map<String, Object> before = web("1");
+        before.put("expose", "gateway-http");
+        when(services.selectByKey("app1", "api")).thenReturn(row("api", before, 3));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", before, 3)));
+        AppServiceRequest r = req("api", null);
+        r.setVersion(3);
+
+        service.remove(r, "t1");
+
+        verify(ports).release("app1", "api");
     }
 }

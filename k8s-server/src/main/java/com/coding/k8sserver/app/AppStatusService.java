@@ -30,6 +30,30 @@ public class AppStatusService {
             .withNamespaced(true)
             .build();
 
+    /** 网关端口池暴露生成的路由（gateway.networking.k8s.io/v1；TCPRoute 需 experimental 通道 v1.6+） */
+    private static final ResourceDefinitionContext HTTP_ROUTE = route("HTTPRoute", "httproutes");
+    private static final ResourceDefinitionContext TCP_ROUTE = route("TCPRoute", "tcproutes");
+
+    private static ResourceDefinitionContext route(String kind, String plural) {
+        return new ResourceDefinitionContext.Builder()
+                .withGroup("gateway.networking.k8s.io")
+                .withVersion("v1")
+                .withKind(kind)
+                .withPlural(plural)
+                .withNamespaced(true)
+                .build();
+    }
+
+    /** 应用 chart 会生成的 CRD 对象；其余返回 null */
+    static ResourceDefinitionContext customKind(String kind) {
+        return switch (kind) {
+            case "ServiceMonitor" -> SERVICE_MONITOR;
+            case "HTTPRoute" -> HTTP_ROUTE;
+            case "TCPRoute" -> TCP_ROUTE;
+            default -> null;
+        };
+    }
+
     private final KubernetesClientFactory clients;
 
     public AppStatusService(KubernetesClientFactory clients) {
@@ -145,10 +169,13 @@ public class AppStatusService {
                     .inNamespace(ref.getNamespace()).withName(ref.getName()).get() != null;
             case "HorizontalPodAutoscaler" -> client.autoscaling().v2().horizontalPodAutoscalers()
                     .inNamespace(ref.getNamespace()).withName(ref.getName()).get() != null;
-            case "ServiceMonitor" -> client.genericKubernetesResources(SERVICE_MONITOR)
-                    .inNamespace(ref.getNamespace()).withName(ref.getName()).get() != null;
-            // 不认识的 kind：既不敢说存在也不敢说不存在
-            default -> null;
+            // ServiceMonitor / HTTPRoute / TCPRoute（CRD）：只看存在与否
+            default -> {
+                ResourceDefinitionContext ctx = customKind(ref.getKind());
+                // 不认识的 kind：既不敢说存在也不敢说不存在
+                yield ctx == null ? null : client.genericKubernetesResources(ctx)
+                        .inNamespace(ref.getNamespace()).withName(ref.getName()).get() != null;
+            }
         };
         if (present == null) {
             return "UNKNOWN";

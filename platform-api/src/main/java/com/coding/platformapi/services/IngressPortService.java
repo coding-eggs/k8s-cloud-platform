@@ -2,9 +2,11 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.data.mapper.system.PlatformComponentOperationMapper;
 import com.coding.data.mapper.system.PlatformIngressPortMapper;
 import com.coding.data.models.system.PlatformIngressPort;
-import com.coding.platformapi.k8s.K8sComponentClient;
+import com.coding.platformapi.components.IngressPortPool;
+import com.coding.platformapi.k8s.K8sAppClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -50,18 +52,31 @@ public class IngressPortService {
     }
 
     private final PlatformIngressPortMapper mapper;
-    private final K8sComponentClient components;
+    private final K8sAppClient components;
+    private final PlatformComponentOperationMapper operations;
     private final Clock clock;
 
     @Autowired
-    public IngressPortService(PlatformIngressPortMapper mapper, K8sComponentClient components) {
-        this(mapper, components, Clock.systemDefaultZone());
+    public IngressPortService(PlatformIngressPortMapper mapper, K8sAppClient components,
+                              PlatformComponentOperationMapper operations) {
+        this(mapper, components, operations, Clock.systemDefaultZone());
     }
 
-    IngressPortService(PlatformIngressPortMapper mapper, K8sComponentClient components, Clock clock) {
+    IngressPortService(PlatformIngressPortMapper mapper, K8sAppClient components,
+                       PlatformComponentOperationMapper operations, Clock clock) {
         this.mapper = mapper;
         this.components = components;
+        this.operations = operations;
         this.clock = clock;
+    }
+
+    /**
+     * 集群当前生效的应用端口池（istio 组件「上次成功」的 values 快照）；没装 / 停用返回 null。
+     * 以成功记录为准：只有成功下发的范围才真的声明在网关 Service 上。
+     */
+    public PortRange currentPool(String clusterId) {
+        var last = operations.selectLatestSuccess(clusterId, "istio");
+        return last == null ? null : IngressPortPool.fromSnapshot(last.getValuesSnapshot());
     }
 
     public int allocate(String clusterId, String namespace, String appId, String serviceKey,

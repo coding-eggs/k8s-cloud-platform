@@ -37,6 +37,7 @@ import java.util.regex.Pattern;
  * 与依赖共用一个命名空间。不能以 -env / -secret / -headless / -files 结尾：台账按这些后缀把对象归并回服务，
  * 允许的话 {@code api-env} 会和 api 的 ConfigMap 混成同一个服务。
  */
+@lombok.extern.slf4j.Slf4j
 @Service
 public class AppServiceConfigService {
 
@@ -52,11 +53,16 @@ public class AppServiceConfigService {
     private final PlatformAppExecutionMapper executions;
     private final HarborInstallLocator harbor;
     private final AppFeatureGate featureGate;
+    private final IngressPortService ports;
+    private final IngressListenerSync listeners;
 
     public AppServiceConfigService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
                                    PlatformAppDependencyMapper dependencies, PlatformAppReleaseMapper releases,
                                    PlatformAppExecutionMapper executions,
-                                   HarborInstallLocator harbor, AppFeatureGate featureGate) {
+                                   HarborInstallLocator harbor, AppFeatureGate featureGate,
+                                   IngressPortService ports, IngressListenerSync listeners) {
+        this.ports = ports;
+        this.listeners = listeners;
         this.apps = apps;
         this.services = services;
         this.dependencies = dependencies;
@@ -115,9 +121,13 @@ public class AppServiceConfigService {
         row.setPendingDelete(false);
         row.setCreatedAt(new Date());
         row.setUpdatedAt(new Date());
+        lockGatewayPort(app, key, desired);
         try {
             services.insert(row);
         } catch (DuplicateKeyException e) {
+            if (AppServiceDesired.gatewayProtocol(desired) != null) {
+                ports.release(app.getId(), key);
+            }
             throw error("服务 " + key + " 已存在");
         }
         return view(key, desired, false, 0);
@@ -133,7 +143,14 @@ public class AppServiceConfigService {
             throw conflict();
         }
         Map<String, Object> desired = withPlatformPullSecret(AppServiceDesired.normalize(req.getDesired()));
-        checkFeatures(app, AppSnapshot.parseMap(row.getDesiredJson()), desired);
+        Map<String, Object> before = AppSnapshot.parseMap(row.getDesiredJson());
+        checkFeatures(app, before, desired);
+        lockGatewayPort(app, row.getServiceKey(), desired);
+        // 改离网关方式：没上过线的端口立即释放；线上还在用的等发布（PRECHECK）时再放，否则线上入口先断
+        if (AppServiceDesired.gatewayProtocol(before) != null && AppServiceDesired.gatewayProtocol(desired) == null
+                && !isPublished(app, row.getServiceKey())) {
+            ports.release(app.getId(), row.getServiceKey());
+        }
         row.setDesiredJson(JSON.writeValueAsString(desired));
         row.setUpdatedAt(new Date());
         if (services.updateWithVersion(row) == 0) {
@@ -191,6 +208,7 @@ public class AppServiceConfigService {
         }
         if (!isPublished(app, key)) {
             services.deleteById(row.getId());
+            releaseUnpublishedPort(app, key);
             return;
         }
         PlatformAppService patch = new PlatformAppService();
@@ -200,6 +218,35 @@ public class AppServiceConfigService {
         patch.setUpdatedAt(new Date());
         if (services.updateWithVersion(patch) == 0) {
             throw conflict();
+        }
+    }
+
+    /**
+     * 网关方式：从应用端口池分配并锁定端口（一个服务一个端口，重复保存返回原端口；只换协议不换端口）。
+     * 端口不写进 desired（spec §6.1）：它锁在服务上，不随快照 / 回滚变化。
+     */
+    private void lockGatewayPort(PlatformApplication app, String key, Map<String, Object> desired) {
+        String protocol = AppServiceDesired.gatewayProtocol(desired);
+        if (protocol == null) {
+            return;
+        }
+        IngressPortService.PortRange pool = ports.currentPool(app.getClusterId());
+        if (pool == null) {
+            throw error("集群未启用应用端口池（Istio 组件编辑里配置）");
+        }
+        ports.allocate(app.getClusterId(), app.getNamespace(), app.getId(), key, protocol, pool);
+    }
+
+    /** 没上过线的服务被删：端口释放；万一之前某次失败的发布已经同步过 listener，顺手摘掉（失败只记日志） */
+    private void releaseUnpublishedPort(PlatformApplication app, String key) {
+        if (ports.portOf(app.getId(), key) == null) {
+            return;
+        }
+        ports.release(app.getId(), key);
+        try {
+            listeners.sync(app.getClusterId(), app.getNamespace());
+        } catch (RuntimeException e) {
+            log.warn("删除服务 {}/{} 后同步 ListenerSet 失败（下次发布会补齐）：{}", app.getId(), key, e.getMessage());
         }
     }
 

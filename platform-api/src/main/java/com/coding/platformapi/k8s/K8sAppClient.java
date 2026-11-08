@@ -8,9 +8,12 @@ import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
 import com.coding.common.models.app.AppStatusRequestDTO;
 import com.coding.common.models.app.AppStatusResultDTO;
+import com.coding.common.models.k8s.dto.IngressListenerSetRequestDTO;
+import com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 
 /** 应用编排的集群侧调用（渲染 / 落盘 / 清理 / 状态）。 */
@@ -47,5 +50,27 @@ public class K8sAppClient {
     public AppStatusResultDTO status(AppStatusRequestDTO body) {
         return gateway.exchange(HttpMethod.POST, "/application/status", Map.of(), body,
                 gateway.responseType(AppStatusResultDTO.class));
+    }
+
+    /** 某个 Service 声明的端口（应用端口池只分配网关 Service 上已声明的端口）；Service 不存在返回空列表。 */
+    public List<Integer> servicePorts(String clusterId, String namespace, String name) {
+        Map<String, String> params = Map.of("clusterId", clusterId, "namespace", namespace, "name", name);
+        List<Integer> ports = gateway.exchange(HttpMethod.GET, "/application/service-ports", params, null,
+                gateway.listResponseType(Integer.class));
+        return ports == null ? List.of() : ports;
+    }
+
+    /** 下发/删除命名空间的应用端口池 ListenerSet；ListenerSet CRD 缺失返回 false。 */
+    public boolean applyIngressListenerSet(IngressListenerSetRequestDTO body) {
+        Boolean ok = gateway.exchange(HttpMethod.POST, "/application/ingress-listenerset", Map.of(), body,
+                gateway.responseType(Boolean.class));
+        return Boolean.TRUE.equals(ok);
+    }
+
+    /** 命名空间应用端口池 ListenerSet 的状态（每个 listener 是否生效 / 冲突）。 */
+    public IngressListenerSetStatusDTO ingressListenerSetStatus(String clusterId, String namespace, String name) {
+        Map<String, String> params = Map.of("clusterId", clusterId, "namespace", namespace, "name", name);
+        return gateway.exchange(HttpMethod.GET, "/application/ingress-listenerset", params, null,
+                gateway.responseType(IngressListenerSetStatusDTO.class));
     }
 }

@@ -43,6 +43,9 @@ public final class AppServiceDesired {
 
     /** 对外暴露方式：目前只有 NodePort（HTTPRoute 等网关方式以后再加）。不暴露 = 不存这个键 */
     public static final String EXPOSE_NODEPORT = "nodeport";
+    /** 网关端口池暴露（HTTP → HTTPRoute，TCP → TCPRoute）；端口锁在分配表里，不进期望配置 */
+    public static final String EXPOSE_GATEWAY_HTTP = "gateway-http";
+    public static final String EXPOSE_GATEWAY_TCP = "gateway-tcp";
     /** K8s 默认 service-node-port-range */
     static final int NODE_PORT_MIN = 30000;
     static final int NODE_PORT_MAX = 32767;
@@ -128,8 +131,10 @@ public final class AppServiceDesired {
     }
 
     /**
-     * 对外暴露：{@code expose} 取 none / nodeport（大小写不敏感），none 与空都不存（否则「没有 vs none」会成待发布改动）。
-     * NodePort 只对有端口的服务有意义；{@code nodePort} 可空 = 由集群自动分配，填了必须在 30000-32767。
+     * 对外暴露：{@code expose} 取 none / nodeport / gateway-http / gateway-tcp（大小写不敏感），
+     * none 与空都不存（否则「没有 vs none」会成待发布改动）。都只对有端口的服务有意义。
+     * {@code nodePort} 只属于 NodePort 方式：可空 = 由集群自动分配，填了必须在 30000-32767。
+     * 网关方式的端口由平台从应用端口池分配（保存时锁定），这里不收。
      */
     private static void normalizeExpose(Map<String, Object> raw, Integer port, Map<String, Object> out) {
         String expose = text(raw.get("expose")).toLowerCase();
@@ -140,11 +145,19 @@ public final class AppServiceDesired {
             }
             return;
         }
-        if (!EXPOSE_NODEPORT.equals(expose)) {
-            throw bad("不支持的暴露方式：" + raw.get("expose") + "（目前只支持 NodePort）");
+        boolean gateway = EXPOSE_GATEWAY_HTTP.equals(expose) || EXPOSE_GATEWAY_TCP.equals(expose);
+        if (!EXPOSE_NODEPORT.equals(expose) && !gateway) {
+            throw bad("不支持的暴露方式：" + raw.get("expose") + "（可选 NodePort / 网关 HTTP / 网关 TCP）");
         }
         if (port == null) {
             throw bad("后台进程没有端口，不能对外暴露；请先填写端口");
+        }
+        if (gateway) {
+            if (nodePort != null) {
+                throw bad("只有选择 NodePort 暴露时才能填 NodePort 端口（网关方式的端口由平台从端口池分配）");
+            }
+            out.put("expose", expose);
+            return;
         }
         out.put("expose", EXPOSE_NODEPORT);
         if (nodePort != null) {
@@ -241,6 +254,15 @@ public final class AppServiceDesired {
     }
 
     /** 固定的 NodePort（没暴露或自动分配返回 null） */
+    /** 网关方式的协议：HTTP / TCP；不是网关方式返回 null */
+    public static String gatewayProtocol(Map<String, Object> desired) {
+        Object expose = desired == null ? null : desired.get("expose");
+        if (EXPOSE_GATEWAY_HTTP.equals(expose)) {
+            return "HTTP";
+        }
+        return EXPOSE_GATEWAY_TCP.equals(expose) ? "TCP" : null;
+    }
+
     public static Integer nodePort(Map<String, Object> desired) {
         return desired != null && EXPOSE_NODEPORT.equals(desired.get("expose"))
                 && desired.get("nodePort") instanceof Number n ? n.intValue() : null;

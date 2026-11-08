@@ -497,6 +497,13 @@ public class AppReleaseExecutor {
         execution.setStatus(SUCCESS);
         execution.setFinishedAt(new Date());
         save(execution);
+        if (isOffline(requireRelease(execution))) {
+            // 对象已清掉：释放网关端口、同步 ListenerSet（实现自己吞异常，不改变下线结论）
+            AppReleasePrecheck hook = precheck.getIfAvailable();
+            if (hook != null) {
+                hook.afterOffline(execution);
+            }
+        }
         credentials.forgetExecution(execution.getId());
         journal.info(execution, "DONE", isOffline(requireRelease(execution))
                 ? "下线完成" : "发布完成，线上版本 #" + execution.getReleaseNo());

@@ -431,12 +431,33 @@ public class NamespaceService {
         dto.setClusterId(req.getClusterId());
         dto.setName(req.getName());
         dto.setDescription(req.getDescription());
-        dto.setLabels(req.getLabels());
+        dto.setLabels(withoutReservedLabels(req.getLabels()));
         dto.setIpv4Pools(req.getIpv4Pools());
         dto.setIpv6Pools(req.getIpv6Pools());
         dto.setDataplaneMode(req.getDataplaneMode());
         dto.setUseWaypoint(req.getUseWaypoint());
         return dto;
+    }
+
+    /** 应用端口池维护的放行标签前缀（独立 field manager 持有，见 IngressListenerSync） */
+    static final String RESERVED_INGRESS_LABEL_PREFIX = "ingress.platform.coding/";
+
+    /**
+     * 去掉平台保留标签：它们由应用端口池用独立的 field manager 维护。表单回传时若一并提交，
+     * 平台的 field manager 会共同持有这个键，端口池之后摘标签就摘不掉（Gateway 仍放行该命名空间）。
+     * 不报错：编辑表单本来就会把现有标签原样带回来，报错会让这类命名空间根本没法编辑。
+     */
+    static Map<String, String> withoutReservedLabels(Map<String, String> labels) {
+        if (labels == null) {
+            return null;
+        }
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        labels.forEach((k, v) -> {
+            if (k != null && !k.startsWith(RESERVED_INGRESS_LABEL_PREFIX)) {
+                out.put(k, v);
+            }
+        });
+        return out;
     }
 
     private boolean isManaged(Map<String, String> labels) {

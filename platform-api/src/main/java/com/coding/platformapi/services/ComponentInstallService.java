@@ -2294,15 +2294,6 @@ public class ComponentInstallService {
         return out;
     }
 
-    /**
-     * 集群当前生效的应用端口池（istio 组件「上次成功」的 values 快照）；没装 / 停用返回 null。
-     * 应用侧分配端口时以它为准 —— 只有成功下发的范围才真的声明在网关 Service 上。
-     */
-    public IngressPortService.PortRange currentIngressPortPool(String clusterId) {
-        PlatformComponentOperation last = mapper.selectLatestSuccess(clusterId, "istio");
-        return last == null ? null : IngressPortPool.fromSnapshot(last.getValuesSnapshot());
-    }
-
     /** 各命名空间 ListenerSet 挂到 external-gateway 的准入标签（与 IngressListenerSync 打的标签一致） */
     public static final Map<String, String> INGRESS_LISTENER_LABELS = Map.of("ingress.platform.coding/ports", "true");
 

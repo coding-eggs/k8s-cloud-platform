@@ -9,7 +9,10 @@ import com.coding.common.models.app.AppRenderResultDTO;
 import com.coding.common.models.app.AppStatusRequestDTO;
 import com.coding.common.models.app.AppStatusResultDTO;
 import com.coding.common.models.system.ResponseData;
+import com.coding.common.models.k8s.dto.IngressListenerSetRequestDTO;
+import com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO;
 import com.coding.k8sserver.app.AppApplyService;
+import com.coding.k8sserver.app.AppIngressService;
 import com.coding.k8sserver.app.AppInitService;
 import com.coding.k8sserver.app.AppRenderService;
 import com.coding.k8sserver.app.AppStatusService;
@@ -17,9 +20,11 @@ import com.coding.k8sserver.components.AccessBoundary;
 import com.coding.k8sserver.components.AccessBoundaryAware;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -34,13 +39,15 @@ public class AppController implements AccessBoundaryAware {
     private final AppApplyService apply;
     private final AppStatusService status;
     private final AppInitService init;
+    private final AppIngressService ingress;
 
     public AppController(AppRenderService render, AppApplyService apply, AppStatusService status,
-                         AppInitService init) {
+                         AppInitService init, AppIngressService ingress) {
         this.render = render;
         this.apply = apply;
         this.status = status;
         this.init = init;
+        this.ingress = ingress;
     }
 
     @Override
@@ -77,5 +84,28 @@ public class AppController implements AccessBoundaryAware {
     @Operation(summary = "现读这些对象的就绪状态")
     public ResponseData<AppStatusResultDTO> status(@RequestBody AppStatusRequestDTO request) {
         return new ResponseData<>(status.status(request));
+    }
+
+    @PostMapping("/ingress-listenerset")
+    @Operation(summary = "下发/删除命名空间的应用端口池 ListenerSet",
+            description = "幂等 SSA；listeners 为空 = 删除并去掉命名空间放行标签；ListenerSet CRD 缺失返回 false")
+    public ResponseData<Boolean> ingressListenerSet(@RequestBody IngressListenerSetRequestDTO request) {
+        return new ResponseData<>(ingress.apply(request));
+    }
+
+    @GetMapping("/ingress-listenerset")
+    @Operation(summary = "查询命名空间应用端口池 ListenerSet 状态")
+    public ResponseData<IngressListenerSetStatusDTO> ingressListenerSetStatus(@RequestParam String clusterId,
+                                                                             @RequestParam String namespace,
+                                                                             @RequestParam String name) {
+        return new ResponseData<>(ingress.status(clusterId, namespace, name));
+    }
+
+    @GetMapping("/service-ports")
+    @Operation(summary = "查询 Service 声明的端口（应用端口池只分配网关 Service 上已声明的端口）")
+    public ResponseData<java.util.List<Integer>> servicePorts(@RequestParam String clusterId,
+                                                              @RequestParam String namespace,
+                                                              @RequestParam String name) {
+        return new ResponseData<>(ingress.servicePorts(clusterId, namespace, name));
     }
 }
