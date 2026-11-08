@@ -36,6 +36,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -59,6 +60,7 @@ class AppReleaseServiceTest {
     private PlatformApplication app;
     private AppImageUpdates imageUpdates;
     private ClusterComponentService componentFlags;
+    private IngressPortService ingressPorts;
 
     @BeforeEach
     void setUp() {
@@ -80,10 +82,12 @@ class AppReleaseServiceTest {
         when(componentFlags.flags(any())).thenReturn(Map.of());
         pipeline = new AppReleasePipeline(apps, releases, dependencies, services,
                 mock(IngressPortService.class), mock(IngressListenerSync.class));
+        ingressPorts = mock(IngressPortService.class);
         service = new AppReleaseService(apps, services, depRows, releases, executions, dependencies,
                 pipeline, executor, credentials, new AppExecutionLease("test-instance"), client, imageUpdates,
                 mock(PlatformTransactionManager.class),
-                new AppFeatureGate(new ComponentFeatureGuard(componentFlags), componentFlags, mock(GatewayService.class)));
+                new AppFeatureGate(new ComponentFeatureGuard(componentFlags), componentFlags, mock(GatewayService.class)),
+                ingressPorts);
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");
@@ -516,6 +520,56 @@ class AppReleaseServiceTest {
         assertThat(s.state()).isEqualTo("NOT_RELEASED");
         assertThat(s.version()).isEqualTo(1);
         assertThat(s.desired()).containsEntry("imageTag", "1");
+    }
+
+    @Test
+    void overviewShowsIngressStatus() {
+        Map<String, Object> d = svc("1");
+        d.put("expose", "gateway-tcp");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", d, false), row("web", svc("1"), false)));
+        com.coding.data.models.system.PlatformIngressPort held = new com.coding.data.models.system.PlatformIngressPort();
+        held.setAppId("app1");
+        held.setServiceKey("api");
+        held.setPort(20003);
+        held.setProtocol("TCP");
+        when(ingressPorts.activeOfApp("app1")).thenReturn(List.of(held));
+        com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO st =
+                new com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO();
+        st.setExists(true);
+        com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO.Listener l =
+                new com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO.Listener();
+        l.setName("p20003");
+        l.setPort(20003);
+        l.setProgrammed(true);
+        st.setListeners(List.of(l));
+        when(client.ingressListenerSetStatus(any(), any(), eq("platform-ingress"))).thenReturn(st);
+
+        var rows = service.overview("app1", "t1").services();
+
+        var api = rows.stream().filter(r -> r.key().equals("api")).findFirst().orElseThrow();
+        assertThat(api.ingress().port()).isEqualTo(20003);
+        assertThat(api.ingress().protocol()).isEqualTo("TCP");
+        assertThat(api.ingress().programmed()).isTrue();
+        assertThat(api.ingress().conflicted()).isFalse();
+        assertThat(rows.stream().filter(r -> r.key().equals("web")).findFirst().orElseThrow().ingress()).isNull();
+    }
+
+    @Test
+    void overviewIngressStatusUnknownWhenTheClusterCannotBeRead() {
+        Map<String, Object> d = svc("1");
+        d.put("expose", "gateway-http");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", d, false)));
+        com.coding.data.models.system.PlatformIngressPort held = new com.coding.data.models.system.PlatformIngressPort();
+        held.setServiceKey("api");
+        held.setPort(20001);
+        held.setProtocol("HTTP");
+        when(ingressPorts.activeOfApp("app1")).thenReturn(List.of(held));
+        when(client.ingressListenerSetStatus(any(), any(), any())).thenThrow(new RuntimeException("down"));
+
+        var api = service.overview("app1", "t1").services().get(0);
+
+        assertThat(api.ingress().port()).isEqualTo(20001);
+        assertThat(api.ingress().programmed()).isNull();   // 前端显示「状态未知」
     }
 
     @Test

@@ -86,7 +86,7 @@ const saved = ref<AppServiceDesired | null>(null)
 
 // ---------- 组件门禁（spec 2026-11-07 §2）：未探测 = 不可用 ----------
 const comps = useClusterComponents(computed(() => app.value?.clusterId))
-const GATED_CODES = ['hpa-resource-metrics', 'servicemonitor', 'otel-collection', 'otel-logs']
+const GATED_CODES = ['hpa-resource-metrics', 'servicemonitor', 'otel-collection', 'otel-logs', 'routes']
 const flagAvailable = computed<Record<string, boolean>>(() =>
   Object.fromEntries(GATED_CODES.map((c) => [c, comps.available(c)])))
 const flagReasons = computed<Record<string, string>>(() =>
@@ -95,6 +95,10 @@ const hpaLocked = computed(() =>
   !form.value.autoscalingEnabled && !saved.value?.autoscalingEnabled && !flagAvailable.value['hpa-resource-metrics'])
 const metricsLocked = computed(() =>
   !form.value.metricsEnabled && !saved.value?.metricsEnabled && !flagAvailable.value.servicemonitor)
+/** 网关暴露（HTTPRoute / TCPRoute）依赖 Istio 的 routes 旗标；已保存为网关方式的始终可选（不追溯） */
+const GATEWAY_EXPOSES = ['gateway-http', 'gateway-tcp']
+const isGatewayExpose = (v: unknown): boolean => typeof v === 'string' && GATEWAY_EXPOSES.includes(v)
+const gatewayLocked = computed(() => !isGatewayExpose(saved.value?.expose) && !flagAvailable.value.routes)
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
@@ -140,9 +144,12 @@ function buildDesired(): AppServiceDesired {
     .filter((f) => f.path || f.content)
   if (files.length) d.configFiles = files
   else delete d.configFiles
-  // 对外暴露：只有有端口的服务能选 NodePort；不暴露就不带这两个键（后端同样不存 none）
-  if (!d.port || d.expose !== 'nodeport') {
+  // 对外暴露：只有有端口的服务能暴露；不暴露就不带这两个键（后端同样不存 none）。
+  // nodePort 只属于 NodePort 方式；网关方式的端口由平台分配，不在 desired 里
+  if (!d.port || (d.expose !== 'nodeport' && !isGatewayExpose(d.expose))) {
     delete d.expose
+    delete d.nodePort
+  } else if (d.expose !== 'nodeport') {
     delete d.nodePort
   }
   return d
@@ -150,11 +157,25 @@ function buildDesired(): AppServiceDesired {
 
 /** 对外暴露方式（表单里用 none 表示「不暴露」，保存时去掉） */
 const exposeMode = computed<string>({
-  get: () => (form.value.expose === 'nodeport' ? 'nodeport' : 'none'),
+  get: () => (form.value.expose === 'nodeport' || isGatewayExpose(form.value.expose)
+    ? form.value.expose as string : 'none'),
   set: (v) => {
     if (v === 'nodeport') form.value.expose = 'nodeport'
+    else if (isGatewayExpose(v)) { form.value.expose = v; delete form.value.nodePort }
     else { delete form.value.expose; delete form.value.nodePort }
   },
+})
+/** 网关方式的访问地址：节点 IP + 平台分到的端口（与 NodePort 地址同一个节点 IP 来源） */
+const gatewayAddress = computed(() => {
+  const ing = row.value?.ingress
+  if (!ing || !addr.defaultHost) return ''
+  return ing.protocol === 'HTTP' ? `http://${addr.defaultHost}:${ing.port}` : `${addr.defaultHost}:${ing.port}`
+})
+const gatewayStatus = computed<{ text: string; type: 'success' | 'danger' | 'info' }>(() => {
+  const ing = row.value?.ingress
+  if (!ing || ing.programmed == null) return { text: '状态未知', type: 'info' }
+  if (ing.conflicted) return { text: '端口冲突', type: 'danger' }
+  return ing.programmed ? { text: '已生效', type: 'success' } : { text: '未生效', type: 'danger' }
 })
 const nodePortModel = computed<number | undefined>({
   get: () => (typeof form.value.nodePort === 'number' ? form.value.nodePort : undefined),
@@ -462,7 +483,17 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <code>{{ workloadName }}:{{ row.desired.port }}</code>
           </div>
           <div v-if="row.kind === 'SERVICE'" class="app-svc__kv"><span class="k">对外访问</span>
-            <template v-if="liveNodePort">
+            <template v-if="row.ingress">
+              <span>网关 {{ row.ingress.protocol }} 端口 <code>{{ row.ingress.port }}</code>（任一节点 IP:{{ row.ingress.port }}）</span>
+              <el-link v-if="gatewayAddress && row.ingress.protocol === 'HTTP'" :href="gatewayAddress" target="_blank"
+                       rel="noopener" type="primary" :underline="false">{{ gatewayAddress }}</el-link>
+              <code v-else-if="gatewayAddress">{{ gatewayAddress }}</code>
+              <el-tag :type="gatewayStatus.type" effect="light" size="small">{{ gatewayStatus.text }}</el-tag>
+              <span v-if="row.ingress.conflicted || (row.ingress.programmed === false && row.ingress.message)" class="muted">
+                {{ row.ingress.reason }} {{ row.ingress.message }}
+              </span>
+            </template>
+            <template v-else-if="liveNodePort">
               <span>NodePort <code>{{ liveNodePort }}</code>（任一节点 IP:{{ liveNodePort }}）</span>
               <el-link v-if="nodePortUrl" :href="nodePortUrl" target="_blank" rel="noopener" type="primary" :underline="false">{{ nodePortUrl }}</el-link>
             </template>
@@ -516,8 +547,24 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
                 <el-radio-group v-model="exposeMode">
                   <el-radio value="none">不暴露</el-radio>
                   <el-radio value="nodeport">NodePort</el-radio>
+                  <el-tooltip :disabled="!gatewayLocked" :content="flagReasons.routes" placement="top">
+                    <span class="app-svc__radio-wrap">
+                      <el-radio value="gateway-http" :disabled="gatewayLocked">网关 HTTP</el-radio>
+                      <el-radio value="gateway-tcp" :disabled="gatewayLocked">网关 TCP</el-radio>
+                    </span>
+                  </el-tooltip>
                 </el-radio-group>
-                <span class="app-svc__tip">NodePort：每台节点都开放同一个端口，集群外用「节点 IP:端口」访问</span>
+                <span v-if="exposeMode === 'nodeport'" class="app-svc__tip">NodePort：每台节点都开放同一个端口，集群外用「节点 IP:端口」访问</span>
+                <span v-else-if="exposeMode === 'gateway-http' || exposeMode === 'gateway-tcp'" class="app-svc__tip">
+                  经集群入口网关转发，集群外用「节点 IP:端口」访问。网关 HTTP 只支持 HTTP，HTTPS 服务请选网关 TCP（TLS 透传）；
+                  端口由平台分配，改暴露方式为不暴露后端口会被回收
+                </span>
+              </el-form-item>
+              <el-form-item v-if="form.port && (exposeMode === 'gateway-http' || exposeMode === 'gateway-tcp')" label="对外端口">
+                <span v-if="row?.ingress && isGatewayExpose(saved?.expose)">
+                  <code>{{ row.ingress.port }}</code>（保存时由平台分配，之后不变）
+                </span>
+                <span v-else class="muted">保存后分配</span>
               </el-form-item>
               <el-form-item v-if="form.port && exposeMode === 'nodeport'" label="NodePort 端口">
                 <el-input-number v-model="nodePortModel" :min="30000" :max="32767" :controls="false" placeholder="留空自动分配" />
@@ -694,6 +741,8 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 .app-svc__conflict-actions { margin-top: 8px; }
 .app-svc__cfg { margin-top: 4px; }
 .app-svc__tip { margin-left: 10px; color: var(--text-3); font-size: 12px; }
+.app-svc__radio-wrap { display: inline-flex; gap: 0; }
+.app-svc__radio-wrap .el-radio { margin-right: 30px; }
 .app-svc__tip.warn { color: var(--el-color-warning); }
 .app-svc__save { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
 .app-svc__bar { display: flex; gap: 8px; margin-bottom: 10px; }

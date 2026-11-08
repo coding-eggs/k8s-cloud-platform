@@ -20,10 +20,19 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
      * pending：ADDED / CHANGED / DELETED / null。
      * desired / version：编辑表单的初值与乐观锁；线上有、台账无行的孤儿服务 desired 取线上快照，version 为 null。
      * newTag：镜像仓库里比线上 tag 更晚推送的 tag（见 AppImageUpdates）；没有、不适用或没查成为 null。
+     * ingress：网关方式分到的端口及其 listener 状态；没分端口为 null。
      */
     public record ServiceRow(String key, String kind, String image, String liveImage, Integer replicas,
                              String state, String pending, Map<String, Object> desired, Integer version,
-                             String newTag) {
+                             String newTag, Ingress ingress) {
+    }
+
+    /**
+     * 网关端口 + 命名空间 ListenerSet 里对应 listener（{@code p<端口>}）的状态。
+     * programmed / conflicted 为 null = 状态未知（集群读不到、或 listener 还没下发）。
+     */
+    public record Ingress(Integer port, String protocol, Boolean programmed, Boolean conflicted,
+                          String reason, String message) {
     }
 
     /**

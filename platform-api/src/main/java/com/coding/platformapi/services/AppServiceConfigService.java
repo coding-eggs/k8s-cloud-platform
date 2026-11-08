@@ -130,7 +130,7 @@ public class AppServiceConfigService {
             }
             throw error("服务 " + key + " 已存在");
         }
-        return view(key, desired, false, 0);
+        return view(app.getId(), key, desired, false, 0);
     }
 
     public AppServiceView update(AppServiceRequest req, String tenantId) {
@@ -156,7 +156,7 @@ public class AppServiceConfigService {
         if (services.updateWithVersion(row) == 0) {
             throw conflict();
         }
-        return view(row.getServiceKey(), desired, false, row.getVersion() + 1);
+        return view(app.getId(), row.getServiceKey(), desired, false, row.getVersion() + 1);
     }
 
     /**
@@ -289,8 +289,10 @@ public class AppServiceConfigService {
         }
     }
 
-    private static AppServiceView view(String key, Map<String, Object> desired, boolean pendingDelete, int version) {
-        return new AppServiceView(key, AppServiceDesired.kindOf(desired), desired, pendingDelete, version);
+    private AppServiceView view(String appId, String key, Map<String, Object> desired, boolean pendingDelete,
+                                int version) {
+        Integer port = AppServiceDesired.gatewayProtocol(desired) == null ? null : ports.portOf(appId, key);
+        return new AppServiceView(key, AppServiceDesired.kindOf(desired), desired, pendingDelete, version, port);
     }
 
     private static CloudPlatformException conflict() {

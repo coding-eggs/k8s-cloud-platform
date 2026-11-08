@@ -84,6 +84,7 @@ public class AppReleaseService {
     private final AppImageUpdates imageUpdates;
     private final TransactionTemplate tx;
     private final AppFeatureGate featureGate;
+    private final IngressPortService ingressPorts;
 
     public AppReleaseService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
                              PlatformAppDependencyMapper dependencyRows, PlatformAppReleaseMapper releases,
@@ -91,7 +92,8 @@ public class AppReleaseService {
                              AppReleasePipeline pipeline, AppReleaseExecutor executor,
                              ApplicationDeployCredentials credentials, AppExecutionLease leases, K8sAppClient client,
                              AppImageUpdates imageUpdates, PlatformTransactionManager transactionManager,
-                             AppFeatureGate featureGate) {
+                             AppFeatureGate featureGate, IngressPortService ingressPorts) {
+        this.ingressPorts = ingressPorts;
         this.apps = apps;
         this.services = services;
         this.dependencyRows = dependencyRows;
@@ -572,6 +574,7 @@ public class AppReleaseService {
                 .collect(Collectors.toMap(AppPending.Change::key, c -> c, (a, b) -> a));
         Map<String, String> states = liveStates(app);
         Map<String, String> newTags = newTags(live, byKey, tenantId);
+        Map<String, AppOverviewView.Ingress> ingress = ingressOf(app);
 
         List<AppOverviewView.ServiceRow> serviceRows = new ArrayList<>();
         for (PlatformAppService row : rows) {
@@ -589,7 +592,7 @@ public class AppReleaseService {
                     liveDesired == null ? null : AppServiceDesired.image(liveDesired),
                     desired.get("replicas") instanceof Number n ? n.intValue() : null,
                     state, change == null ? null : change.type(), desired, row.getVersion(),
-                    newTags.get(row.getServiceKey())));
+                    newTags.get(row.getServiceKey()), ingress.get(row.getServiceKey())));
         }
         // 线上有、台账无行的孤儿服务（待删除）：照样列出来，才有地方勾选删除
         Set<String> rowKeys = rows.stream().map(PlatformAppService::getServiceKey).collect(Collectors.toSet());
@@ -602,7 +605,8 @@ public class AppReleaseService {
             serviceRows.add(new AppOverviewView.ServiceRow(c.key(), AppServiceDesired.kindOf(liveDesired),
                     AppServiceDesired.image(liveDesired), AppServiceDesired.image(liveDesired),
                     liveDesired.get("replicas") instanceof Number n ? n.intValue() : null,
-                    states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null, null));
+                    states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null, null,
+                    ingress.get(c.key())));
         }
         Map<String, String> depStatus = dependencies.statusOf(dependencyRows.selectByApp(app.getId()));
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
@@ -617,6 +621,36 @@ public class AppReleaseService {
                 executionView(executions.selectLatestByApp(app.getId())),
                 new AppSettingsView(settings, live.app(),
                         app.getSettingsVersion() == null ? 0 : app.getSettingsVersion()));
+    }
+
+    /**
+     * 每个持有网关端口的服务 → 端口 + listener 状态。一个应用只查一次 ListenerSet（命名空间共用）；
+     * 查不到（集群断开、CRD 缺失、还没下发）时状态为未知，端口照样显示。不让概览失败。
+     */
+    private Map<String, AppOverviewView.Ingress> ingressOf(PlatformApplication app) {
+        List<com.coding.data.models.system.PlatformIngressPort> held = ingressPorts.activeOfApp(app.getId());
+        if (held == null || held.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO.Listener> byName = new HashMap<>();
+        try {
+            var status = client.ingressListenerSetStatus(app.getClusterId(), app.getNamespace(),
+                    IngressListenerSync.LISTENER_SET);
+            if (status != null && status.getListeners() != null) {
+                status.getListeners().forEach(l -> byName.put(l.getName(), l));
+            }
+        } catch (RuntimeException e) {
+            log.debug("读取应用 {} 的 ListenerSet 状态失败：{}", app.getId(), e.getMessage());
+        }
+        Map<String, AppOverviewView.Ingress> out = new HashMap<>();
+        for (var p : held) {
+            var l = byName.get(IngressListenerSync.sectionName(p.getPort()));
+            out.put(p.getServiceKey(), l == null
+                    ? new AppOverviewView.Ingress(p.getPort(), p.getProtocol(), null, null, null, null)
+                    : new AppOverviewView.Ingress(p.getPort(), p.getProtocol(), l.isProgrammed(), l.isConflicted(),
+                            l.getReason(), l.getMessage()));
+        }
+        return out;
     }
 
     /**

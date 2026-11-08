@@ -3043,7 +3043,7 @@ export interface AppServiceDesired {
   probePath?: string
   metricsEnabled?: boolean
   metricsPath?: string
-  /** 对外暴露：目前只有 'nodeport'；不暴露 = 没有这个键 */
+  /** 对外暴露：'nodeport' / 'gateway-http' / 'gateway-tcp'；不暴露 = 没有这个键（网关端口由平台分配，不在这里） */
   expose?: string
   /** 固定 NodePort（30000-32767）；不填由集群分配 */
   nodePort?: number
@@ -3067,6 +3067,18 @@ export interface AppServiceRow {
   version: number | null
   /** 镜像仓库里比线上 tag 更晚推送的 tag；没有、非 Harbor 镜像或查询失败为空 */
   newTag?: string | null
+  /** 网关方式分到的对外端口与 listener 状态；没分端口为空 */
+  ingress?: AppServiceIngress | null
+}
+
+/** programmed / conflicted 为 null = 状态未知（集群读不到或 listener 尚未下发） */
+export interface AppServiceIngress {
+  port: number
+  protocol: 'HTTP' | 'TCP' | string
+  programmed?: boolean | null
+  conflicted?: boolean | null
+  reason?: string | null
+  message?: string | null
 }
 
 export interface AppDependencyRow {
@@ -3201,6 +3213,8 @@ export interface AppServiceView {
   desired: AppServiceDesired
   pendingDelete: boolean
   version: number
+  /** 网关方式分到的对外端口；没有为空 */
+  ingressPort?: number | null
 }
 
 export interface ApplicationOptions {
