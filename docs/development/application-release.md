@@ -57,12 +57,30 @@ PRECHECK 后直接跳到 PRUNE，删掉台账 `platform_application_resource` �
 服务配置、依赖与中间件实例都不动。线上快照为空 → 所有服务显示为「新增，待发布」，**重新上线就是一次普通发布**。
 下线记录不能作为回滚目标（不含服务）；回滚到下线前的某个版本也可以重新上线。
 
-### 1.5 对外暴露（NodePort）
+### 1.5 对外暴露（NodePort / 网关端口）
 
-服务配置「基本」页签：有端口的服务可选「不暴露 / NodePort」。NodePort 端口可留空（集群分配，发布后在服务「概览」
-看实际端口与 `http://节点IP:端口`），也可固定 30000-32767；同一应用里两个服务固定同一端口，发布前就拦下；
-与集群里别的 Service 撞端口只能在下发时由 K8s 报错。desired 存 `expose: nodeport` + 可选 `nodePort`，
-「不暴露」不存这两个键。HTTPRoute / 网关方式暂不做（入口网关的管理方式未定）。
+服务配置「基本」页签：有端口的服务可选「不暴露 / NodePort / 网关 HTTP / 网关 TCP」
+（设计 `docs/superpowers/specs/2026-11-08-app-istio-exposure-design.md`）。
+
+- **NodePort**：端口可留空（集群分配，发布后在服务「概览」看实际端口与 `http://节点IP:端口`），也可固定 30000-32767；
+  同一应用里两个服务固定同一端口，发布前就拦下；与集群里别的 Service 撞端口只能在下发时由 K8s 报错。
+  desired 存 `expose: nodeport` + 可选 `nodePort`。
+- **网关 HTTP / TCP**（`expose: gateway-http | gateway-tcp`）：经 `istio-system/external-gateway` 转发，集群外用
+  「节点 IP:端口」访问。端口从 Istio 组件的「应用端口池」分配（默认 20000-20999），**不进 desired**，锁在分配表
+  `platform_ingress_port` 里：
+  - 保存时分配并锁定，一个服务一个端口；HTTP ↔ TCP 切换只改协议、端口不变；
+  - 渲染：Service 保持 ClusterIP，另生成 HTTPRoute / TCPRoute，`parentRefs` 指向命名空间 ListenerSet
+    `platform-ingress` 的 listener `p<端口>`；网关 HTTP 只支持 HTTP，HTTPS 服务选网关 TCP（TLS 透传）；
+  - PRECHECK：快照里网关方式的服务确保有端口（下线后重新上线、回滚到旧版本时重新分配），再把命名空间 ListenerSet
+    整份同步（同命名空间多个应用共用一个）；缺 ListenerSet CRD、没开端口池在这里就失败，不会下发半截；
+  - 释放：服务从未发布过时改回不暴露 / 删服务立即释放；**已上线的端口等发布时**（快照和期望配置都不再是网关方式）才释放，
+    否则线上入口会在发布前就断；下线、删除应用释放全部端口并同步 ListenerSet；
+  - 释放后冷却 10 分钟才会分给别的服务；**下线后再发布可能换端口**；
+  - 门禁：依赖 Istio 的 `routes` 旗标（没装不让开、已开可关）。
+- 「不暴露」不存 `expose` / `nodePort`。
+- k8s-server 侧端点在 `/application/ingress-listenerset`、`/application/service-ports`（UPSTREAM 边界：调用方是租户的
+  保存 / 发布，`/components/**` 要求平台侧身份会 403）。命名空间放行标签 `ingress.platform.coding/ports` 用独立
+  field manager `platform-ingress-label` 维护；命名空间编辑提交的 `ingress.platform.coding/` 前缀标签会被剔除。
 
 ### 1.6 过程日志（`/application/execution/logs`）
 
@@ -183,6 +201,15 @@ key 不能以它结尾。
    （命名空间分配时下发；渲染时不再注入）。没挂的命名空间发布会卡在拉镜像。
 7. **重新登录**：权限行有新增，旧会话拿不到新码。
 
+**网关端口暴露（§1.5）**：
+1. 重放 **V2026_11_08_1**（`platform_ingress_port` 表；新 mapper 读它，不重放保存网关方式直接 SQL 报错）。
+2. 重建 k8s-server → platform-api → platform-web，**k8s-server 先部署**（新 platform-api 调的
+   `/application/ingress-listenerset` 等端点旧 k8s-server 没有；旧 k8s-server 的 HEALTH 也不认 HTTPRoute / TCPRoute）。
+3. 到 Istio 组件「编辑」里确认「应用端口池」范围并**保存一次**：生成网关 Service 的 `pool-<端口>` 端口（nodePort = 端口）
+   和 Gateway 的 `allowedListeners`。不保存则集群没有端口池，网关方式保存时报「集群未启用应用端口池」。
+   保存前检查现有 NodePort Service 没有落在池段里（本集群 nodePort 范围是 1-65535，未固定的 NodePort 会随机分配）。
+4. 租户 RBAC 模板不需要 `listenersets` 写权限（ListenerSet 由平台用集群管理员身份下发）。
+
 **HPA / 可观测 / 服务网格（§1.7）**：先重放 **V2026_11_07_1**（`platform_application` 加 `settings_json` / `settings_version`
 两列 + `/application/settings/update` 权限行，绑 admin / tenant_admin；新 mapper 读这两列，不重放直接 SQL 报错），
 重新登录拿新码。然后重建 k8s-server → platform-api → platform-web，
@@ -228,6 +255,16 @@ key 不能以它结尾。
 - [ ] Harbor 选 tag、新版本提示、资源页跳转在真实 Harbor 上可用。
 - [ ] 清理迁移：有部署过的旧应用时第 0 步报错且表结构不变；删掉后重放，两列两表与 5 条权限行消失，未部署的旧应用变成可发布的空应用。
 
+网关端口暴露（§1.5）：
+
+- [ ] 网关 HTTP：`curl http://节点IP:端口` 通；网关 TCP（如 MySQL / TLS 服务）`节点IP:端口` 通；概览显示「已生效」。
+- [ ] HTTP 与 TCP 互相切换并发布：端口不变，路由类型（HTTPRoute / TCPRoute）与 listener 协议正确。
+- [ ] 同一命名空间两个应用各有网关服务：ListenerSet 里两条 listener 都在；其中一个下线后另一个不受影响。
+- [ ] 下线：本应用端口释放；命名空间里没有别的网关服务时 ListenerSet 删除、命名空间标签 `ingress.platform.coding/ports` 去掉。
+- [ ] 下线后再发布：重新分到端口并可访问（端口可能变化）。
+- [ ] Istio 组件里把端口池缩小到不含在用端口：保存被拦下，逐条列出「应用 / 服务 / 端口」；端口池与端口表重叠被拦下。
+- [ ] 没装 Istio（或没有 ListenerSet CRD）的集群：网关选项置灰；发布含网关服务的旧快照在 PRECHECK 失败并提示 ListenerSet。
+
 HPA / 可观测 / 服务网格（§1.7）：
 
 - [ ] **真跑**：从「手动副本 3」切到 HPA（min 2）的那次发布，副本保持 3、不被重置为 1（交接 manager 生效；managedFields 里 `spec.replicas` 归 `platform-app-replicas-handover`）。StatefulSet 与 Deployment 各验一次。结论：（待回填）
@@ -241,7 +278,8 @@ HPA / 可观测 / 服务网格（§1.7）：
 
 ## 6. 已知限制
 
-- 对外域名 / HTTPRoute 不在本次范围，只提供 NodePort。
+- 对外域名、入口灰度不在本次范围（网关端口第二期）；网关 HTTP 不终止 TLS（HTTPS 服务用网关 TCP 透传）。
+- 未固定端口的 NodePort 在本集群（nodePort 范围 1-65535）会随机分配，可能落进应用端口池（设计 §5.3，待修）。
 - 依赖新建不支持 Milvus，以及 ES Kibana/TLS/IK、Redis 分片副本等高级参数：先去中间件商店建，再绑定。
 - ES 初始化的 `initPath` 可调该实例的任意 ES API（只作用于自己的实例，暂不收紧）；集群内 TLS 用 `curl -k`。
 - 初始化排队时间计入超时；`MYSQL_PWD` 已被 MySQL 标记弃用，但客户端仍认。

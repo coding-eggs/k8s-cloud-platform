@@ -272,6 +272,10 @@ nodePort 范围是 1-65535，所以：
 
 ## 11. 未决项
 
+> **第一期已实现（未部署）**，2026-11-08，main 上 `f08adf1..`（计划 `docs/superpowers/plans/2026-11-08-app-gateway-port-pool.md`）。
+> 与本文的出入：ListenerSet / Service 端口端点放在 k8s-server `/application/**`（UPSTREAM）而不是 `/components/**`
+> （租户 token 会 403）；已上线服务改离网关方式时端口在发布时释放而不是保存时；§9 第 1 步 NodePort 随机分配的修复未做。
+
 - 已定：端口池默认 `20000-20999`（1000 个），上限 5000。
 - 已核实（2026-11-08）：kube-proxy 是 ipvs 模式，几千个 Service 端口没有问题。
 - 实现计划：`docs/superpowers/plans/2026-11-08-app-gateway-port-pool.md`。
