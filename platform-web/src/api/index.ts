@@ -765,7 +765,8 @@ export const gatewayApi = makeResourceApi<K8sGateway>('gateways')
 /** ListenerSet /listener-sets（CRD，只读：没有 create / update / delete；平台视角走 list-all） */
 export const listenerSetApi = {
   list: (ctx: ListCtx) => http.post<never, K8sListenerSet[]>('/listener-sets/list', ctx),
-  listAll: (ctx: ListAllCtx) => http.post<never, K8sListenerSet[]>('/listener-sets/list-all', ctx),
+  /** 平台侧：只需集群（list-all 不看租户） */
+  listAll: (ctx: { clusterId: string }) => http.post<never, K8sListenerSet[]>('/listener-sets/list-all', ctx),
   get: (name: string, ctx: Ctx3) =>
     http.get<never, K8sListenerSet>(`/listener-sets/${encodeURIComponent(name)}`, { params: ctx }),
   getYaml: (name: string, ctx: Ctx3) =>

@@ -12,6 +12,8 @@ declare module 'vue-router' {
     title?: string
     /** 顶栏上下文控件：'full' = 租户→集群→命名空间级联 */
     context?: 'full'
+    /** 平台视图（无当前租户）下的顶栏上下文：'none' = 不显示级联，页内自己选集群（如 ListenerSet 跨命名空间只读页）。 */
+    platformContext?: 'none'
     /** 进入该页所需的权限点 code，ANY-of（命中任一即放行）；缺则守卫跳总览、菜单隐藏。
      *
      *  ⚠️ 只放 **Page 域** 码（pageCodes.ts）。页面可见性与接口授权是两件事：这里的码决定"能不能进这个页面"，
@@ -163,7 +165,7 @@ const router = createRouter({
         { path: 'resources/services', name: 'services', component: () => import('@/views/resource/ServiceView.vue'), meta: { title: 'Service', domain: 'network', icon: 'Link', order: 1, context: 'full', requiresPerm: [pageCodes.service.list], keywords: ['service', 'svc', 'clusterip', 'nodeport', 'loadbalancer', 'lb', '服务', '端口'], actions: [{ key: 'create', title: '创建 Service' }] } },
         { path: 'resources/services/editor', name: 'service-editor', component: () => import('@/views/resource/ServiceEditorView.vue'), meta: { title: 'Service 编辑', domain: 'network', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.service.edit] } },
         { path: 'resources/gateways', name: 'gateways', component: () => import('@/views/resource/GatewayView.vue'), meta: { title: 'Gateway', domain: 'network', icon: 'Promotion', order: 2, context: 'full', requiresPerm: [pageCodes.mesh.gateway.list], keywords: ['gateway', 'gw', 'ingress', 'waypoint', 'istio', '网关', '入口'], actions: [{ key: 'create', title: '创建 Gateway' }, { key: 'create-waypoint', title: '创建 Waypoint', keywords: ['l7'] }] } },
-        { path: 'resources/listenersets', name: 'listenersets', component: () => import('@/views/resource/ListenerSetView.vue'), meta: { title: 'ListenerSet', domain: 'network', icon: 'Tickets', order: 2.5, context: 'full', requiresPerm: [pageCodes.mesh.listenerSet.list, pageCodes.mesh.listenerSet.platform], keywords: ['listenerset', 'listener', 'ingress', 'port', '网关端口', '监听器', '入口'] } },
+        { path: 'resources/listenersets', name: 'listenersets', component: () => import('@/views/resource/ListenerSetView.vue'), meta: { title: 'ListenerSet', domain: 'network', icon: 'Tickets', order: 2.5, context: 'full', platformContext: 'none', requiresPerm: [pageCodes.mesh.listenerSet.list, pageCodes.mesh.listenerSet.platform], keywords: ['listenerset', 'listener', 'ingress', 'port', '网关端口', '监听器', '入口'] } },
         { path: 'resources/gateways/editor', name: 'gateway-editor', component: () => import('@/views/resource/GatewayEditorView.vue'), meta: { title: 'Gateway 编辑', domain: 'network', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.mesh.gateway.edit] } },
         // 路由策略（Route 五合一）：一个页面管 5 种 route；requiresPerm 传 5 个码 = 任一命中即可进
         { path: 'routes', name: 'routes', component: () => import('@/views/resource/RouteListView.vue'), meta: { title: '路由策略', domain: 'network', icon: 'Share', order: 3, context: 'full', requiresPerm: [pageCodes.mesh.httpRoute.list, pageCodes.mesh.grpcRoute.list, pageCodes.mesh.tcpRoute.list, pageCodes.mesh.tlsRoute.list, pageCodes.mesh.udpRoute.list], keywords: ['route', 'httproute', 'grpcroute', 'tcproute', 'tlsroute', 'udproute', 'ingress', '路由', '流量'], actions: [{ key: 'create-httproute', title: '创建 HTTPRoute' }, { key: 'create-grpcroute', title: '创建 GRPCRoute' }, { key: 'create-tcproute', title: '创建 TCPRoute' }, { key: 'create-tlsroute', title: '创建 TLSRoute' }, { key: 'create-udproute', title: '创建 UDPRoute' }] } },

@@ -176,7 +176,8 @@ const sidebarTitle = computed(() =>
 // ---------- 顶栏 ----------
 // 顶栏不再显示面包屑：域 tab + 侧栏当前项已经回答了「我在哪」（见 docs/superpowers/specs/2026-10-30-frontend-navigation-ia-design.md §6.1）
 // 资源管理页在顶栏展示全局上下文级联（租户→集群→命名空间）
-const showContextSelector = computed(() => route.meta.context === 'full')
+const showContextSelector = computed(() => route.meta.context === 'full'
+  && !(perm.currentTenant == null && route.meta.platformContext === 'none'))
 
 // 用户按钮：头像 + 名称，下拉里展示角色与退出
 const userInfo = getUserInfo()

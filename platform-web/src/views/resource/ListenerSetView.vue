@@ -3,17 +3,18 @@ import { computed, onMounted, ref, watch } from 'vue'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import YamlBlock from '@/components/YamlBlock.vue'
-import { listenerSetApi } from '@/api'
+import { clusterApi, listenerSetApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
-import type { K8sCondition, K8sListenerOwner, K8sListenerSet } from '@/types'
+import type { K8sCluster, K8sCondition, K8sListenerOwner, K8sListenerSet } from '@/types'
 import { fmtDate } from '@/utils/format'
 
 /**
  * ListenerSet 只读页（命名空间级、租户域）。
  * - 租户视角：顶栏命名空间里的全部 ListenerSet；
- * - 平台视角（持 platform:listenerset:list-all）：直接列出所选集群全部命名空间的 ListenerSet。
+ * - 平台视角（持 platform:listenerset:list-all）：直接列出所选集群全部命名空间的 ListenerSet；
+ *   只选集群，用页内下拉（路由 platformContext:'none' 让顶栏不出级联），不需要租户 / 命名空间。
  * 没有创建 / 编辑 / 删除：平台维护的 platform-ingress 由应用发布按端口分配表整份重算，改了也会被覆盖。
  */
 const { state, ready, currentTenant, currentCluster, load } = useResourceContext()
@@ -21,6 +22,21 @@ const perm = usePermission()
 
 /** 平台视角：没有当前租户（管理员平台面）且持全局列举码 */
 const platformFace = computed(() => !perm.currentTenant && perm.has(apiCodes.listenerSetListAll))
+
+// ---------- 平台视角：页内集群下拉 ----------
+const clusters = ref<K8sCluster[]>([])
+const platformClusterId = ref('')
+async function loadClusters(): Promise<void> {
+  try {
+    clusters.value = await clusterApi.list()
+  } catch {
+    clusters.value = []
+  }
+  const first = clusters.value.find((c) => c.enabled === 1) ?? clusters.value[0]
+  if (first && !platformClusterId.value) platformClusterId.value = first.clusterId
+}
+/** 能不能查：平台视角看页内集群，租户视角看顶栏三元组 */
+const canQuery = computed(() => (platformFace.value ? !!platformClusterId.value : ready.value))
 
 const ctxParams = computed(() => ({
   tenantId: state.tenantId!,
@@ -39,11 +55,12 @@ const filtered = computed(() => {
 })
 
 async function refresh(): Promise<void> {
-  if (!ready.value) return
+  if (!canQuery.value) return
   loading.value = true
   try {
+    // list-all 不看租户（k8s-server 只认平台侧身份）
     rows.value = platformFace.value
-      ? await listenerSetApi.listAll({ tenantId: state.tenantId!, clusterId: state.clusterId! })
+      ? await listenerSetApi.listAll({ clusterId: platformClusterId.value })
       : await listenerSetApi.list(ctxParams.value)
   } catch {
     rows.value = [] // 集群没有 ListenerSet CRD 时 404：拦截器已提示
@@ -58,7 +75,7 @@ const detail = ref<K8sListenerSet | null>(null)
 const detailTab = ref('info')
 const yamlText = ref('')
 /** 平台视角跨命名空间时，按名取 YAML 会按顶栏命名空间判边界、落到别的对象上 → 只在同一命名空间开放 */
-const yamlAvailable = computed(() => !!detail.value && detail.value.namespace === state.namespace)
+const yamlAvailable = computed(() => !platformFace.value && !!detail.value && detail.value.namespace === state.namespace)
 
 function openDetail(row: K8sListenerSet): void {
   detail.value = row
@@ -151,27 +168,31 @@ function appLink(o?: K8sListenerOwner): string | null {
 
 // ---------- 上下文联动 ----------
 onMounted(() => {
-  void load()
+  if (platformFace.value) void loadClusters()
+  else void load()
   void refresh()
 })
+watch(platformFace, (p) => { if (p && !clusters.value.length) void loadClusters() })
 watch(
-  [() => [state.tenantId, state.clusterId, state.namespace], ready, platformFace],
-  () => { if (ready.value) void refresh() },
+  [() => [state.tenantId, state.clusterId, state.namespace], ready, platformFace, platformClusterId],
+  () => { if (canQuery.value) void refresh() },
 )
 
 const contextDesc = computed(() => {
-  if (!ready.value) return '请在顶栏选择租户 / 集群 / 命名空间'
-  return platformFace.value
-    ? `${currentCluster.value?.clusterName ?? ''} · 全部命名空间（只读）`
-    : `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''} / ${state.namespace}（只读）`
+  if (platformFace.value) return '所选集群 · 全部命名空间（只读）'
+  if (!ready.value) return '请在顶栏选择集群 / 命名空间'
+  return `${currentTenant.value?.name ?? ''} · ${currentCluster.value?.clusterName ?? ''} / ${state.namespace}（只读）`
 })
 </script>
 
 <template>
   <div>
     <PageHeader title="ListenerSet" :description="contextDesc">
+      <el-select v-if="platformFace" v-model="platformClusterId" placeholder="选择集群" class="ls-cluster">
+        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
+      </el-select>
       <el-input v-model="keyword" placeholder="按名称 / 命名空间过滤" clearable class="ls-search" />
-      <el-button @click="refresh" :disabled="!ready">刷新</el-button>
+      <el-button @click="refresh" :disabled="!canQuery">刷新</el-button>
     </PageHeader>
 
     <el-alert type="info" :closable="false" show-icon class="ls-tip">
@@ -182,13 +203,13 @@ const contextDesc = computed(() => {
     </el-alert>
 
     <EmptyState
-      v-if="ready && !filtered.length && !loading"
+      v-if="canQuery && !filtered.length && !loading"
       :title="platformFace ? '该集群暂无 ListenerSet' : '该命名空间下暂无 ListenerSet'"
       description="ListenerSet 属于 Gateway API（gateway.networking.k8s.io/v1）；集群未安装对应 CRD 时会提示错误。"
     />
 
     <div v-else class="ls-panel">
-      <el-table v-loading="loading || !ready" :data="filtered" stripe>
+      <el-table v-loading="loading || !canQuery" :data="filtered" stripe>
         <el-table-column label="名称" min-width="190">
           <template #default="{ row }">
             <code class="ls-name ls-link" @click="openDetail(row)">{{ row.name }}</code>
@@ -278,7 +299,7 @@ const contextDesc = computed(() => {
             <YamlBlock v-if="yamlText" :yaml="yamlText" />
             <div v-else class="ls-muted">加载中…</div>
           </template>
-          <div v-else class="ls-muted">跨命名空间查看时不提供 YAML：请在顶栏切到命名空间「{{ detail?.namespace }}」后再看。</div>
+          <div v-else class="ls-muted">平台视角（跨命名空间）不提供 YAML：概览里已有全部字段；需要原文请到租户视角的命名空间「{{ detail?.namespace }}」查看。</div>
         </el-tab-pane>
       </el-tabs>
     </el-drawer>
@@ -288,6 +309,7 @@ const contextDesc = computed(() => {
 <style>
 /* 非 scoped + ls- 前缀：抽屉内容渲染在 teleport 里，scoped 选择器打不到（见 Element Plus 弹窗 scoped CSS 坑） */
 .ls-search { width: 220px; margin-right: 8px; }
+.ls-cluster { width: 200px; margin-right: 8px; }
 .ls-tip { margin-bottom: 12px; }
 .ls-panel { padding: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
 .ls-name { font-family: Consolas, 'JetBrains Mono', monospace; font-size: 13px; }
