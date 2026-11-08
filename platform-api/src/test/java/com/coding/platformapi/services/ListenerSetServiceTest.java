@@ -21,7 +21,9 @@ class ListenerSetServiceTest {
     private final K8sClient k8s = mock(K8sClient.class);
     private final IngressPortService ports = mock(IngressPortService.class);
     private final PlatformApplicationMapper apps = mock(PlatformApplicationMapper.class);
-    private final ListenerSetService svc = new ListenerSetService(k8s, ports, apps);
+    private final com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper middleware =
+            mock(com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper.class);
+    private final ListenerSetService svc = new ListenerSetService(k8s, ports, apps, middleware);
 
     private static ListenerSetDTO set(String name, String ns, int... listenerPorts) {
         ListenerSetDTO d = new ListenerSetDTO();
@@ -117,5 +119,23 @@ class ListenerSetServiceTest {
 
         verify(ports).activeInNamespace("c1", "a");
         verify(ports).activeInNamespace("c1", "b");
+    }
+
+    @Test
+    void middlewareOwnedListenersShowTheInstanceName() {
+        when(k8s.get(any())).thenReturn(set(IngressListenerSync.LISTENER_SET, "shop", 20001));
+        PlatformIngressPort r = port(20001, "mwi_1", "rw");
+        r.setOwnerKind(PlatformIngressPort.OWNER_MIDDLEWARE);
+        when(ports.activeInNamespace("c1", "shop")).thenReturn(List.of(r));
+        com.coding.data.models.system.PlatformMiddlewareInstance inst = new com.coding.data.models.system.PlatformMiddlewareInstance();
+        inst.setId("mwi_1");
+        inst.setName("orders");
+        when(middleware.selectByPrimaryKey("mwi_1")).thenReturn(inst);
+
+        var o = svc.get(IngressListenerSync.LISTENER_SET, "t1", "c1", "shop").getOwners().get(0);
+
+        assertThat(o.getOwnerKind()).isEqualTo("MIDDLEWARE");
+        assertThat(o.getAppName()).isEqualTo("orders");
+        verify(apps, never()).selectById(any());
     }
 }

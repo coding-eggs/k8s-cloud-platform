@@ -2012,6 +2012,8 @@ export interface K8sListenerOwner {
   appId?: string | null
   appName?: string | null
   serviceKey?: string | null
+  /** APP / MIDDLEWARE：MIDDLEWARE 时 appId = 实例 id、appName = 实例名、serviceKey = 端点 key */
+  ownerKind?: 'APP' | 'MIDDLEWARE' | string | null
 }
 
 export interface K8sGateway {
@@ -2817,6 +2819,33 @@ export interface MiddlewareCatalogItem {
   upgradeAvailable?: boolean
   operatorMessage?: string | null
   instanceCount: number
+}
+
+export type MiddlewareExposeMode = 'NONE' | 'GATEWAY' | 'NODEPORT'
+
+/** 中间件对外访问：unsupportedReason 非空 = 整个实例不支持；gatewayUnavailableReason 非空 = 网关方式当前不可用 */
+export interface MiddlewareExpose {
+  unsupportedReason?: string | null
+  gatewayUnavailableReason?: string | null
+  /** 实例没开鉴权（Milvus）：开启前要二次确认 */
+  unauthenticated: boolean
+  endpoints: MiddlewareExposeEndpoint[]
+}
+
+export interface MiddlewareExposeEndpoint {
+  key: string
+  label: string
+  /** 集群内 Service:端口 */
+  target: string
+  /** 走网关时的协议 HTTP / TCP（由端点决定） */
+  protocol: string
+  mode: MiddlewareExposeMode
+  /** 网关端口或 nodePort；NONE 为空 */
+  port?: number | null
+  /** 只在 GATEWAY 时有；null = 状态未知 */
+  programmed?: boolean | null
+  conflicted?: boolean | null
+  reason?: string | null
 }
 
 export interface MiddlewareConnection {

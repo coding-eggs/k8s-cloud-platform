@@ -127,6 +127,8 @@ import type {
   MiddlewareFormOptions,
   MiddlewareInstanceDetail,
   MiddlewareInstance,
+  MiddlewareExpose,
+  MiddlewareExposeMode,
   MiddlewareMetrics,
   MiddlewareOperation,
   MiddlewareOperatorStatus,
@@ -1185,6 +1187,12 @@ export const middlewareApi = {
     http.post<never, boolean>('/middleware/instance/index/delete', { instanceId, index, tenantId }),
   rename: (payload: { instanceId: string; displayName: string; tenantId?: string }) =>
     http.post<never, MiddlewareInstance>('/middleware/instance/rename', payload),
+  /** 对外访问方式：每个可暴露端点一行（不支持的类型返回原因） */
+  exposeList: (instanceId: string, tenantId?: string) =>
+    http.post<never, MiddlewareExpose>('/middleware/instance/expose/list', { instanceId, tenantId }),
+  /** 改一个端点的对外访问方式，立即生效；返回刷新后的整份 */
+  exposeUpdate: (payload: { instanceId: string; endpointKey: string; mode: MiddlewareExposeMode; tenantId?: string }) =>
+    http.post<never, MiddlewareExpose>('/middleware/instance/expose/update', payload),
   /** 改实例的鉴权口令（Milvus）：新口令留空 = 平台生成；口令不回显，去 Secret <名称>-milvus-auth 取 */
   changePassword: (payload: { instanceId: string; newPassword?: string; tenantId?: string }) =>
     http.post<never, boolean>('/middleware/instance/password', payload),

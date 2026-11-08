@@ -43,10 +43,29 @@ public class MiddlewareInstanceController implements AccessBoundaryAware {
 
     private final MiddlewareInstanceService service;
     private final MiddlewareUserService users;
+    private final com.coding.k8sserver.middleware.MiddlewareExposeService expose;
 
-    public MiddlewareInstanceController(MiddlewareInstanceService service, MiddlewareUserService users) {
+    public MiddlewareInstanceController(MiddlewareInstanceService service, MiddlewareUserService users,
+                                        com.coding.k8sserver.middleware.MiddlewareExposeService expose) {
         this.service = service;
         this.users = users;
+        this.expose = expose;
+    }
+
+    @PostMapping("/expose/apply")
+    @Operation(summary = "下发中间件端点的对外暴露对象（网关路由 / NodePort Service / 全删）")
+    public ResponseData<Boolean> exposeApply(
+            @RequestBody com.coding.common.models.middleware.MiddlewareExposeRequestDTO request) {
+        expose.apply(request);
+        return new ResponseData<>(true);
+    }
+
+    @PostMapping("/expose/delete-all")
+    @Operation(summary = "删除某实例的全部对外暴露对象（按标签）")
+    public ResponseData<Boolean> exposeDeleteAll(
+            @RequestBody com.coding.common.models.middleware.MiddlewareExposeRequestDTO request) {
+        expose.deleteAll(request);
+        return new ResponseData<>(true);
     }
 
     @Override

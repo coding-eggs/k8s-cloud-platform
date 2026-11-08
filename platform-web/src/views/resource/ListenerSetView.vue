@@ -163,7 +163,9 @@ function listenerState(r: { programmed: string | null; conflicted: string | null
 /** 应用详情只在租户视角可跳（平台视角跨租户，应用页按顶栏租户判归属） */
 function appLink(o?: K8sListenerOwner): string | null {
   if (platformFace.value || !o?.appId || !o.appName) return null
-  return `/applications/${encodeURIComponent(o.appId)}`
+  return o.ownerKind === 'MIDDLEWARE'
+    ? `/apps/${encodeURIComponent(o.appId)}`
+    : `/applications/${encodeURIComponent(o.appId)}`
 }
 
 // ---------- 上下文联动 ----------
@@ -272,11 +274,12 @@ const contextDesc = computed(() => {
                 </el-tooltip>
               </template>
             </el-table-column>
-            <el-table-column v-if="detail?.platformManaged" label="归属（应用 / 服务）" min-width="200">
+            <el-table-column v-if="detail?.platformManaged" label="归属（应用 / 服务 或 中间件 / 端点）" min-width="220">
               <template #default="{ row }">
                 <template v-if="row.owner?.appId">
+                  <el-tag v-if="row.owner.ownerKind === 'MIDDLEWARE'" size="small" effect="plain" class="ls-managed">中间件</el-tag>
                   <router-link v-if="appLink(row.owner)" :to="appLink(row.owner)!" class="ls-link">{{ row.owner.appName }}</router-link>
-                  <span v-else>{{ row.owner.appName ?? `已删除的应用（${row.owner.appId}）` }}</span>
+                  <span v-else>{{ row.owner.appName ?? `已删除的${row.owner.ownerKind === 'MIDDLEWARE' ? '实例' : '应用'}（${row.owner.appId}）` }}</span>
                   <span class="ls-muted"> / </span><code class="ls-mono">{{ row.owner.serviceKey }}</code>
                 </template>
                 <el-tooltip v-else content="端口分配表里没有这个端口：多半是同步失败留下的残留，该命名空间下次发布 / 下线时会被摘掉" placement="top">

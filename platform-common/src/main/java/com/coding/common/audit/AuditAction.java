@@ -144,6 +144,7 @@ public final class AuditAction {
 
     /** 修改中间件实例显示名（只改台账） */
     public static final String MIDDLEWARE_RENAME = "middleware:rename";
+    public static final String MIDDLEWARE_EXPOSE = "middleware:expose";
 
     /** 改中间件实例的鉴权口令（Milvus；新口令由平台生成或用户填写） */
     public static final String MIDDLEWARE_PASSWORD = "middleware:password";

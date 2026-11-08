@@ -93,6 +93,9 @@ public class MiddlewareService {
     /** 引用守卫：被应用引用的实例不能删 */
     private final ApplicationReferenceGuard referenceGuard;
 
+    /** 删实例时一并清理对外暴露（路由 / NodePort Service / 网关端口） */
+    private final MiddlewareExposeService expose;
+
     public MiddlewareService(PlatformMiddlewareInstanceMapper instances,
                              PlatformMiddlewareOperationMapper operations,
                              PlatformMiddlewareOperatorMapper operators,
@@ -106,7 +109,9 @@ public class MiddlewareService {
                              ObjectStorageService objectStorage,
                              ClusterComponentService components,
                              ApplicationReferenceGuard referenceGuard,
-                             com.coding.platformapi.images.ImageRegistryService imageRegistry) {
+                             com.coding.platformapi.images.ImageRegistryService imageRegistry,
+                             MiddlewareExposeService expose) {
+        this.expose = expose;
         this.instances = instances;
         this.operations = operations;
         this.operators = operators;
@@ -1018,6 +1023,7 @@ public class MiddlewareService {
             dto.setInstanceId(instance.getId());
             dto.setTenantId(tenantId);
             client.delete(instance.getCode(), dto);
+            expose.cleanup(instance);
 
             // 实例已经删掉，再清外部对象存储（仅平台桶；用户自带的桶不碰）；失败只记日志
             Map<String, Object> spec = parseSpec(instance.getSpecJson());

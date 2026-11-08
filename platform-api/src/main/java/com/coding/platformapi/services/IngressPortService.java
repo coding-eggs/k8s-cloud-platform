@@ -96,7 +96,7 @@ public class IngressPortService {
             }
             return mine.getPort();
         }
-        return claim(clusterId, namespace, appId, serviceKey, protocol, pool).port();
+        return claim(clusterId, namespace, PlatformIngressPort.OWNER_APP, appId, serviceKey, protocol, pool).port();
     }
 
     /**
@@ -107,16 +107,25 @@ public class IngressPortService {
      */
     public boolean lock(String clusterId, String namespace, String appId, String serviceKey,
                         String protocol, PortRange pool) {
-        if (mapper.selectActiveByService(appId, serviceKey) != null) {
+        return lock(clusterId, namespace, PlatformIngressPort.OWNER_APP, appId, serviceKey, protocol, pool);
+    }
+
+    /**
+     * 同 {@link #lock(String, String, String, String, String, PortRange)}，带归属类型：中间件端点
+     * （{@code ownerId}=实例 id、{@code key}=端点 key、{@code ownerKind}=MIDDLEWARE）也从同一个池里分。
+     */
+    public boolean lock(String clusterId, String namespace, String ownerKind, String ownerId, String key,
+                        String protocol, PortRange pool) {
+        if (mapper.selectActiveByService(ownerId, key) != null) {
             return false;
         }
-        return claim(clusterId, namespace, appId, serviceKey, protocol, pool).created();
+        return claim(clusterId, namespace, ownerKind, ownerId, key, protocol, pool).created();
     }
 
     private record Claim(int port, boolean created) {
     }
 
-    private Claim claim(String clusterId, String namespace, String appId, String serviceKey,
+    private Claim claim(String clusterId, String namespace, String ownerKind, String appId, String serviceKey,
                         String protocol, PortRange pool) {
         Date now = Date.from(clock.instant());
         List<PlatformIngressPort> inNamespace = mapper.selectActiveByNamespace(clusterId, namespace);
@@ -131,7 +140,7 @@ public class IngressPortService {
             byPort.put(r.getPort(), r);
         }
         Instant cutoff = clock.instant().minus(COOLDOWN);
-        Claim previous = reclaimPrevious(byPort, declared, pool, namespace, appId, serviceKey, protocol, now);
+        Claim previous = reclaimPrevious(byPort, declared, pool, namespace, ownerKind, appId, serviceKey, protocol, now);
         if (previous != null) {
             return previous;
         }
@@ -163,6 +172,7 @@ public class IngressPortService {
             rec.setNamespace(namespace);
             rec.setAppId(appId);
             rec.setServiceKey(serviceKey);
+            rec.setOwnerKind(ownerKind);
             rec.setProtocol(protocol);
             rec.setCreatedAt(now);
             rec.setUpdatedAt(now);
@@ -193,7 +203,8 @@ public class IngressPortService {
      * 直接拿回、不受冷却限制 —— 冷却是防「别的服务」接到旧客户端，自己拿回没有这个问题。地址因此不变。
      */
     private Claim reclaimPrevious(Map<Integer, PlatformIngressPort> byPort, Set<Integer> declared, PortRange pool,
-                                  String namespace, String appId, String serviceKey, String protocol, Date now) {
+                                  String namespace, String ownerKind, String appId, String serviceKey,
+                                  String protocol, Date now) {
         PlatformIngressPort last = byPort.values().stream()
                 .filter(r -> PlatformIngressPort.RELEASED.equals(r.getStatus()))
                 .filter(r -> appId.equals(r.getAppId()) && serviceKey.equals(r.getServiceKey()))
@@ -208,6 +219,7 @@ public class IngressPortService {
         rec.setNamespace(namespace);
         rec.setAppId(appId);
         rec.setServiceKey(serviceKey);
+        rec.setOwnerKind(ownerKind);
         rec.setProtocol(protocol);
         rec.setUpdatedAt(now);
         // released_at < now+1s 恒成立：跳过冷却，但仍要求行还是 RELEASED（并发被抢走则走常规分配）

@@ -95,6 +95,17 @@ class IngressPortServiceTest {
     }
 
     @Test
+    void middlewareClaimsAreRecordedWithTheirOwnerKindAndAppClaimsDefaultToApp() {
+        svc.lock(C, "shop", PlatformIngressPort.OWNER_MIDDLEWARE, "mwi_1", "rw", "TCP", POOL);
+        svc.lock(C, "shop", "app1", "web", "HTTP", POOL);
+        org.mockito.ArgumentCaptor<PlatformIngressPort> cap = org.mockito.ArgumentCaptor.forClass(PlatformIngressPort.class);
+        verify(mapper, times(2)).insert(cap.capture());
+        assertThat(cap.getAllValues().get(0).getOwnerKind()).isEqualTo("MIDDLEWARE");
+        assertThat(cap.getAllValues().get(0).getAppId()).isEqualTo("mwi_1");
+        assertThat(cap.getAllValues().get(1).getOwnerKind()).isEqualTo("APP");
+    }
+
+    @Test
     void retriesOnDuplicateKey() {
         doThrow(new DuplicateKeyException("dup")).doReturn(1).when(mapper).insert(any());
         assertThat(svc.allocate(C, "shop", "app1", "web", "HTTP", POOL)).isEqualTo(20001);

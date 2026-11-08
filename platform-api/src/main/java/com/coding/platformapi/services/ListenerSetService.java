@@ -28,6 +28,7 @@ public class ListenerSetService {
     private final K8sClient k8s;
     private final IngressPortService ports;
     private final PlatformApplicationMapper apps;
+    private final com.coding.data.mapper.system.PlatformMiddlewareInstanceMapper middleware;
 
     public List<ListenerSetDTO> list(ListenerSetDTO query) {
         return enrich(k8s.list(query), query.getClusterId());
@@ -54,7 +55,7 @@ public class ListenerSetService {
         if (items == null) {
             return List.of();
         }
-        Map<String, Optional<PlatformApplication>> appCache = new HashMap<>();
+        Map<String, Optional<String>> nameCache = new HashMap<>();
         for (ListenerSetDTO d : items) {
             boolean managed = IngressListenerSync.LISTENER_SET.equals(d.getName());
             d.setPlatformManaged(managed);
@@ -76,14 +77,28 @@ public class ListenerSetService {
                 if (r != null) {
                     o.setAppId(r.getAppId());
                     o.setServiceKey(r.getServiceKey());
-                    appCache.computeIfAbsent(r.getAppId(), id -> Optional.ofNullable(apps.selectById(id)))
-                            .ifPresent(a -> o.setAppName(a.getName()));
+                    boolean mw = PlatformIngressPort.OWNER_MIDDLEWARE.equals(r.getOwnerKind());
+                    o.setOwnerKind(mw ? PlatformIngressPort.OWNER_MIDDLEWARE : PlatformIngressPort.OWNER_APP);
+                    nameCache.computeIfAbsent(r.getAppId(), id -> Optional.ofNullable(mw
+                                    ? middlewareName(id) : appName(id)))
+                            .ifPresent(o::setAppName);
                 }
                 owners.add(o);
             }
             d.setOwners(owners);
         }
         return items;
+    }
+
+    private String appName(String id) {
+        PlatformApplication a = apps.selectById(id);
+        return a == null ? null : a.getName();
+    }
+
+    /** 已删除的实例不给名字（页面显示「已删除」） */
+    private String middlewareName(String id) {
+        var i = middleware.selectByPrimaryKey(id);
+        return i == null || i.getDeletedAt() != null ? null : i.getName();
     }
 
     private static ListenerSetDTO dto(String name, String tenantId, String clusterId, String namespace) {

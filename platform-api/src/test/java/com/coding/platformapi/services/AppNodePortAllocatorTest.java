@@ -29,7 +29,9 @@ class AppNodePortAllocatorTest {
 
     private final K8sAppClient client = mock(K8sAppClient.class);
     private final PlatformAppServiceMapper services = mock(PlatformAppServiceMapper.class);
-    private final AppNodePortAllocator allocator = new AppNodePortAllocator(client, services, new Random(7));
+    private final com.coding.data.mapper.system.PlatformMiddlewareExposeMapper middleware =
+            mock(com.coding.data.mapper.system.PlatformMiddlewareExposeMapper.class);
+    private final AppNodePortAllocator allocator = new AppNodePortAllocator(client, services, middleware, new Random(7));
     private PlatformApplication app;
 
     @BeforeEach
@@ -130,5 +132,26 @@ class AppNodePortAllocatorTest {
 
         assertThatThrownBy(() -> allocator.assign(app, "api", nodeport(null)))
                 .isInstanceOf(CloudPlatformException.class);
+    }
+
+    @Test
+    void middlewareAllocatedPortsAreAvoidedButTheEndpointsOwnIsNot() {
+        com.coding.data.models.system.PlatformMiddlewareExpose other = new com.coding.data.models.system.PlatformMiddlewareExpose();
+        other.setInstanceId("mwi_other");
+        other.setEndpointKey("rw");
+        other.setNodePort(31000);
+        when(client.usedNodePorts("c1")).thenReturn(List.of(use("x", "a", 31000)));
+        when(services.selectNodePortServicesInCluster("c1")).thenReturn(List.of());
+        when(middleware.selectNodePortsInCluster("c1")).thenReturn(List.of(other));
+
+        assertThatThrownBy(() -> allocator.assign(app, "api", nodeport(31000)))
+                .isInstanceOf(CloudPlatformException.class);
+        // 同一个端点再分配：自己的行不算占用（集群里没有别人占 31000 时可以拿到它）
+        when(client.usedNodePorts("c1")).thenReturn(List.of());
+        java.util.Set<Integer> got = new java.util.HashSet<>();
+        for (int i = 0; i < 50; i++) {
+            got.add(allocator.allocate("c1", "shop", "orders-expose-rw", "mwi_other", "rw"));
+        }
+        assertThat(got).allMatch(p -> p >= 30000 && p <= 32767);
     }
 }

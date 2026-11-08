@@ -12,6 +12,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { middlewareApi } from '@/api'
 import YamlBlock from '@/components/YamlBlock.vue'
 import MiddlewareMetricsPanel from '@/components/middleware/MiddlewareMetricsPanel.vue'
+import MiddlewareExposePanel from '@/components/middleware/MiddlewareExposePanel.vue'
 import { useMiddlewareTenant } from '@/components/middleware/middlewareTenant'
 import { useResourceContext } from '@/stores/context'
 import { usePermission } from '@/stores/permission'
@@ -718,6 +719,14 @@ watch(tenantId, () => void load())
           </div>
           <p class="mw-form-help">{{ connection.note }}</p>
         </el-card>
+
+        <MiddlewareExposePanel
+          v-if="instance"
+          :instance-id="instance.id"
+          :cluster-id="instance.clusterId"
+          :tenant-id="tenantId"
+          :can-write="perm.has(apiCodes.middlewareWrite)"
+        />
       </el-tab-pane>
 
       <el-tab-pane label="资源对象" name="resources">

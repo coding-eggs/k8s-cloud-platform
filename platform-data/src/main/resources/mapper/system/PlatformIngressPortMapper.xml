@@ -9,6 +9,7 @@
     <result column="namespace"   jdbcType="VARCHAR"   property="namespace" />
     <result column="app_id"      jdbcType="VARCHAR"   property="appId" />
     <result column="service_key" jdbcType="VARCHAR"   property="serviceKey" />
+    <result column="owner_kind"  jdbcType="VARCHAR"   property="ownerKind" />
     <result column="protocol"    jdbcType="VARCHAR"   property="protocol" />
     <result column="status"      jdbcType="VARCHAR"   property="status" />
     <result column="released_at" jdbcType="TIMESTAMP" property="releasedAt" />
@@ -17,7 +18,7 @@
   </resultMap>
 
   <sql id="Base_Column_List">
-    id, cluster_id, port, namespace, app_id, service_key, protocol, status, released_at, created_at, updated_at
+    id, cluster_id, port, namespace, app_id, service_key, owner_kind, protocol, status, released_at, created_at, updated_at
   </sql>
 
   <select id="selectByCluster" resultMap="BaseResultMap">
@@ -52,10 +53,11 @@
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformIngressPort"
           useGeneratedKeys="true" keyProperty="id">
     insert into platform_ingress_port
-      (cluster_id, port, namespace, app_id, service_key, protocol, status, released_at, created_at, updated_at)
+      (cluster_id, port, namespace, app_id, service_key, owner_kind, protocol, status, released_at, created_at, updated_at)
     values
       (#{clusterId,jdbcType=VARCHAR}, #{port,jdbcType=INTEGER}, #{namespace,jdbcType=VARCHAR},
-       #{appId,jdbcType=VARCHAR}, #{serviceKey,jdbcType=VARCHAR}, #{protocol,jdbcType=VARCHAR},
+       #{appId,jdbcType=VARCHAR}, #{serviceKey,jdbcType=VARCHAR}, coalesce(#{ownerKind,jdbcType=VARCHAR}, 'APP'),
+       #{protocol,jdbcType=VARCHAR},
        'ACTIVE', null, #{createdAt,jdbcType=TIMESTAMP}, #{updatedAt,jdbcType=TIMESTAMP})
   </insert>
 
@@ -64,6 +66,7 @@
     set namespace = #{namespace,jdbcType=VARCHAR},
         app_id = #{appId,jdbcType=VARCHAR},
         service_key = #{serviceKey,jdbcType=VARCHAR},
+        owner_kind = coalesce(#{ownerKind,jdbcType=VARCHAR}, 'APP'),
         protocol = #{protocol,jdbcType=VARCHAR},
         status = 'ACTIVE',
         released_at = null,

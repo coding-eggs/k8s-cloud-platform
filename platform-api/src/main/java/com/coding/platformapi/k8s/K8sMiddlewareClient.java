@@ -55,6 +55,18 @@ public class K8sMiddlewareClient {
                 gateway.responseType(Boolean.class));
     }
 
+    /** 下发一个端点的对外暴露对象（网关路由 / NodePort Service / 全删） */
+    public void exposeApply(com.coding.common.models.middleware.MiddlewareExposeRequestDTO body) {
+        gateway.exchange(HttpMethod.POST, "/middleware/expose/apply", null, body,
+                gateway.responseType(Boolean.class));
+    }
+
+    /** 删掉某实例的全部对外暴露对象 */
+    public void exposeDeleteAll(com.coding.common.models.middleware.MiddlewareExposeRequestDTO body) {
+        gateway.exchange(HttpMethod.POST, "/middleware/expose/delete-all", null, body,
+                gateway.responseType(Boolean.class));
+    }
+
     public Boolean delete(String code, MiddlewareDeleteRequestDTO body) {
         return gateway.exchangeSlow(HttpMethod.POST, "/middleware/" + code + "/instances/delete", null, body,
                 gateway.responseType(Boolean.class));

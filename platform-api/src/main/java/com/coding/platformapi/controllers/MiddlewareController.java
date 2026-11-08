@@ -51,13 +51,33 @@ public class MiddlewareController {
 
     private final MiddlewareService service;
     private final MiddlewareUserService users;
+    private final com.coding.platformapi.services.MiddlewareExposeService expose;
 
     @Autowired
     private AuthContext auth;
 
-    public MiddlewareController(MiddlewareService service, MiddlewareUserService users) {
+    public MiddlewareController(MiddlewareService service, MiddlewareUserService users,
+                                com.coding.platformapi.services.MiddlewareExposeService expose) {
         this.service = service;
         this.users = users;
+        this.expose = expose;
+    }
+
+    @PostMapping("/instance/expose/list")
+    @Operation(summary = "实例的对外访问方式（每个可暴露端点一行）")
+    public ResponseData<com.coding.platformapi.models.MiddlewareExposeView> exposeList(
+            @RequestBody MiddlewareQueryRequest request) {
+        return new ResponseData<>(expose.list(request.getInstanceId(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/instance/expose/update")
+    @Auditable(action = AuditAction.MIDDLEWARE_EXPOSE,
+            target = "#request.instanceId + '/' + #request.endpointKey + '=' + #request.mode")
+    @Operation(summary = "修改端点的对外访问方式（不暴露 / 网关 / NodePort），立即生效")
+    public ResponseData<com.coding.platformapi.models.MiddlewareExposeView> exposeUpdate(
+            @RequestBody com.coding.platformapi.models.MiddlewareExposeRequest request) {
+        return new ResponseData<>(expose.update(request.getInstanceId(), request.getEndpointKey(), request.getMode(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/catalog")

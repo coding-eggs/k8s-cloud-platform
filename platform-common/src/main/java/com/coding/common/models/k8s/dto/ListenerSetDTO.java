@@ -69,6 +69,8 @@ public class ListenerSetDTO extends BaseResources {
         private String appId;
         private String appName;
         private String serviceKey;
+        /** APP / MIDDLEWARE：MIDDLEWARE 时 appId = 实例 id、appName = 实例名、serviceKey = 端点 key */
+        private String ownerKind;
     }
 
     @Override

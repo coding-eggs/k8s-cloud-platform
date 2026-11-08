@@ -38,7 +38,8 @@ class MiddlewarePermissionMigrationTest {
             Path.of(MIGRATIONS + "V2026_10_23_6__middleware_metrics_permission.sql"),
             Path.of(MIGRATIONS + "V2026_10_26_3__middleware_user_permissions.sql"),
             Path.of(MIGRATIONS + "V2026_10_29_1__middleware_es_index_permissions.sql"),
-            Path.of(MIGRATIONS + "V2026_11_06_3__middleware_es_index_delete_permission.sql"));
+            Path.of(MIGRATIONS + "V2026_11_06_3__middleware_es_index_delete_permission.sql"),
+            Path.of(MIGRATIONS + "V2026_11_09_1__middleware_expose.sql"));
 
     /** SQL 里 'API' 行的 (METHOD PATH) 集合 */
     private static final Pattern API_ROW = Pattern.compile(
