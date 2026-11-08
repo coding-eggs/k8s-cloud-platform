@@ -81,7 +81,25 @@ public class K8sComponentClient {
     public boolean ensureExternalGateway(String clusterId, String namespace, String name,
                                          String serviceName, List<GatewayListenerDTO> listeners,
                                          boolean merge) {
+        return sendExternalGateway(clusterId, namespace, name, serviceName, listeners, merge, null);
+    }
+
+    /**
+     * 整份下发（merge=false）并设置 Gateway 的 {@code allowedListeners}：
+     * labels 非空 = 只放行带这些标签的命名空间里的 ListenerSet；null = 不放行任何 ListenerSet。
+     */
+    public boolean ensureExternalGateway(String clusterId, String namespace, String name,
+                                         String serviceName, List<GatewayListenerDTO> listeners,
+                                         Map<String, String> allowedListenerLabels) {
+        return sendExternalGateway(clusterId, namespace, name, serviceName, listeners, false,
+                allowedListenerLabels);
+    }
+
+    private boolean sendExternalGateway(String clusterId, String namespace, String name, String serviceName,
+                                        List<GatewayListenerDTO> listeners, boolean merge,
+                                        Map<String, String> allowedListenerLabels) {
         ExternalGatewayRequestDTO body = new ExternalGatewayRequestDTO();
+        body.setAllowedListenerLabels(allowedListenerLabels);
         body.setClusterId(clusterId);
         body.setNamespace(namespace);
         body.setName(name);

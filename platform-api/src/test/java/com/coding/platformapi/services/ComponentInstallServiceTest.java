@@ -56,6 +56,7 @@ class ComponentInstallServiceTest {
             mock(com.coding.platformapi.images.ImageRegistryService.class);
     private final com.coding.platformapi.k8s.K8sClient k8s =
             mock(com.coding.platformapi.k8s.K8sClient.class);
+    private final IngressPortService ingressPorts = mock(IngressPortService.class);
 
     @BeforeEach
     void insertReturnsAnId() {
@@ -81,7 +82,7 @@ class ComponentInstallServiceTest {
 
     private ComponentInstallService service(ComponentRecipeCatalog catalog) {
         return new ComponentInstallService(mapper, client, catalog, clusterService, components,
-                harborRegistry, objectStorage, tenantService, imageRegistry, k8s);
+                harborRegistry, objectStorage, tenantService, imageRegistry, k8s, ingressPorts);
     }
 
     @Test
@@ -117,7 +118,8 @@ class ComponentInstallServiceTest {
         when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
         when(mapper.countRunning("c1", "istio")).thenReturn(0);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any()))
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any()))
                 .thenReturn(true);
 
         service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null, Map.of()), "admin");
@@ -130,14 +132,18 @@ class ComponentInstallServiceTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> ports = (List<Map<String, Object>>)
                 ((Map<String, Object>) gatewayRelease.getValues().get("service")).get("ports");
-        assertThat(ports).hasSize(3);
-        assertThat(ports).extracting(p -> p.get("port")).containsExactly(15021, 80, 443);
+        // 前 3 行是端口表；其后是默认应用端口池 20000-20999 展开的 1000 行
+        assertThat(ports).hasSize(3 + 1000);
+        assertThat(ports.subList(0, 3)).extracting(p -> p.get("port")).containsExactly(15021, 80, 443);
+        assertThat(ports.get(3)).containsEntry("name", "pool-20000").containsEntry("nodePort", 20000);
+        assertThat(gatewayRelease.getValues()).doesNotContainKey("platform");
         assertThat(ports).allSatisfy(p -> assertThat(p).doesNotContainKeys("listener", "tlsSecret"));
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<GatewayListenerDTO>> listeners = ArgumentCaptor.forClass(List.class);
         verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
-                eq("external-gateway"), eq("external-gateway"), listeners.capture());
+                eq("external-gateway"), eq("external-gateway"), listeners.capture(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any());
         // 15021 仅 Service（不监听）；80 → HTTP；443 → TLS Passthrough
         assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getPort)
                 .containsExactly(80, 443);
@@ -165,7 +171,8 @@ class ComponentInstallServiceTest {
                 + "{\"name\":\"https\",\"port\":443,\"targetPort\":443,\"protocol\":\"TCP\",\"nodePort\":443}]}}}");
         when(mapper.selectLatestSuccess("c1", "istio")).thenReturn(last);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any()))
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any()))
                 .thenReturn(true);
 
         service().apply(new ComponentApplyRequest("c1", "istio", "UPGRADE", null, Map.of()), "admin");
@@ -173,7 +180,8 @@ class ComponentInstallServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<GatewayListenerDTO>> listeners = ArgumentCaptor.forClass(List.class);
         verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
-                eq("external-gateway"), eq("external-gateway"), listeners.capture());
+                eq("external-gateway"), eq("external-gateway"), listeners.capture(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any());
         assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getPort)
                 .containsExactly(80, 443);
         assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getProtocol)
@@ -190,7 +198,8 @@ class ComponentInstallServiceTest {
         when(clusterService.requireName("c1")).thenReturn("coding-cluster");
         when(mapper.countRunning("c1", "istio")).thenReturn(0);
         when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
-        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any()))
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any()))
                 .thenReturn(true);
         Map<String, Object> editable = Map.of("service.ports", List.of(
                 Map.of("name", "status-port", "port", 15021, "targetPort", 15021,
@@ -205,9 +214,73 @@ class ComponentInstallServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<GatewayListenerDTO>> listeners = ArgumentCaptor.forClass(List.class);
         verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
-                eq("external-gateway"), eq("external-gateway"), listeners.capture());
+                eq("external-gateway"), eq("external-gateway"), listeners.capture(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any());
         assertThat(listeners.getValue()).extracting(GatewayListenerDTO::getPort)
                 .containsExactly(80);
+    }
+
+    @Test
+    void shrinkingPoolBelowActivePortsRejected() {
+        // 缩小端口池时，新范围之外还有应用在用的端口 → 拒绝并逐条列出（否则那些应用会静默断流）
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        com.coding.data.models.system.PlatformIngressPort used = new com.coding.data.models.system.PlatformIngressPort();
+        used.setAppId("shop");
+        used.setServiceKey("api");
+        used.setPort(20500);
+        when(ingressPorts.activeOutside("c1", new IngressPortService.PortRange(20000, 20099)))
+                .thenReturn(List.of(used));
+
+        assertThatThrownBy(() -> service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null,
+                Map.of("platform.ingressPortPool", Map.of("from", 20000, "to", 20099))), "admin"))
+                .hasMessageContaining("shop").hasMessageContaining("20500");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void poolOverlappingThePortTableRejected() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+
+        assertThatThrownBy(() -> service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null,
+                Map.of("platform.ingressPortPool", Map.of("from", 1, "to", 100))), "admin"))
+                .hasMessageContaining("80");
+        verify(mapper, never()).insert(any());
+    }
+
+    @Test
+    void gatewayGetsAllowedListenersWhenPoolEnabled() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any())).thenReturn(true);
+
+        service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null, Map.of()), "admin");
+
+        verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
+                eq("external-gateway"), eq("external-gateway"), any(),
+                eq(Map.of("ingress.platform.coding/ports", "true")));
+    }
+
+    @Test
+    void gatewayGetsNoAllowedListenersWhenPoolDisabled() {
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any())).thenReturn(true);
+        java.util.Map<String, Object> cleared = new java.util.HashMap<>();
+        cleared.put("from", null);
+        cleared.put("to", null);
+
+        service().apply(new ComponentApplyRequest("c1", "istio", "INSTALL", null,
+                Map.of("platform.ingressPortPool", cleared)), "admin");
+
+        verify(client, timeout(5000)).ensureExternalGateway(eq("c1"), eq("istio-system"),
+                eq("external-gateway"), eq("external-gateway"), any(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>isNull());
     }
 
     @Test

@@ -1458,7 +1458,7 @@ export interface K8sEditableField {
    * duration = 时长输入（30d / 12h）；
    * json = 多行 JSON 文本域（其余按 defaultValue 的 JS 类型）
    */
-  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size' | 'resources' | 'select' | 'ports' | 'duration'
+  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size' | 'resources' | 'select' | 'ports' | 'duration' | 'portRange'
   /** 分组标题；前端按组渲染小节 */
   group?: string
   /** type=select 的候选值 */

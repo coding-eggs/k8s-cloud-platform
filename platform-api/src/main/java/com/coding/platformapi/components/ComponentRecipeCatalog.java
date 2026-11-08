@@ -254,8 +254,10 @@ public class ComponentRecipeCatalog {
             new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.31.3",
                     Map.of("name", "external-gateway"),
                     // 对外入口的 Service：类型 + 端口列表都可在「编辑」表单里改
+                    // 应用端口池：池里每个端口预声明在 Service 上（nodePort = port），应用对外暴露从这里分配
                     Map.of("service.type", "LoadBalancer",
-                            "service.ports", GATEWAY_SERVICE_PORTS)).withAppVersion("1.31.3"));
+                            "service.ports", GATEWAY_SERVICE_PORTS,
+                            IngressPortPool.KEY, Map.of("from", 20000, "to", 20999))).withAppVersion("1.31.3"));
 
     // ==================== tekton ====================
 
@@ -789,6 +791,7 @@ public class ComponentRecipeCatalog {
             Map.entry("resources", "资源限制"),
             Map.entry("service.type", "Service 类型"),
             Map.entry("service.ports", "端口列表"),
+            Map.entry(IngressPortPool.KEY, "应用端口池"),
             Map.entry("compactor.retention.resolutionRaw", "原始数据保留期"),
             Map.entry("compactor.retention.resolution5m", "5m 降采样保留期"),
             Map.entry("compactor.retention.resolution1h", "1h 降采样保留期"),
@@ -838,6 +841,7 @@ public class ComponentRecipeCatalog {
             Map.entry("resources", "控制面（istiod）"),
             Map.entry("service.type", "对外入口（external-gateway）"),
             Map.entry("service.ports", "对外入口（external-gateway）"),
+            Map.entry(IngressPortPool.KEY, "对外入口（external-gateway）"),
             Map.entry("compactor.retention.resolutionRaw", "Thanos 对象存储（管理集群）"),
             Map.entry("compactor.retention.resolution5m", "Thanos 对象存储（管理集群）"),
             Map.entry("compactor.retention.resolution1h", "Thanos 对象存储（管理集群）"),

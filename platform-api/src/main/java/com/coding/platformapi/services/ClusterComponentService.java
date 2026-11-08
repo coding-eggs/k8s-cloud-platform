@@ -629,6 +629,10 @@ public class ClusterComponentService {
         if (key.equals("service.ports") || key.endsWith(".service.ports")) {
             return "ports";
         }
+        // 应用端口池：起始 / 结束两个数字框（{from,to}；都空 = 停用）
+        if (key.endsWith("ingressPortPool")) {
+            return "portRange";
+        }
         // 时长（Prometheus/Thanos 语法：30d / 12h / 1w）—— 校验格式，不给自由文本
         if (key.endsWith(".retention.resolutionRaw") || key.endsWith(".retention.resolution5m")
                 || key.endsWith(".retention.resolution1h")) {

@@ -12,6 +12,7 @@ import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.components.ComponentRecipe;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.components.DeepMerge;
+import com.coding.platformapi.components.IngressPortPool;
 import com.coding.platformapi.components.OtelObjects;
 import com.coding.platformapi.components.OtelRecipe;
 import com.coding.platformapi.components.ReleaseSpec;
@@ -136,6 +137,8 @@ public class ComponentInstallService {
     /** 镜像来源：解析该集群的镜像仓库，并把 values 里的镜像改写到平台 Harbor */
     private final com.coding.platformapi.images.ImageRegistryService imageRegistry;
     private final K8sClient k8s;
+    /** 应用端口池：缩小池子前查「新范围之外还在用的端口」 */
+    private final IngressPortService ingressPorts;
 
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -255,6 +258,7 @@ public class ComponentInstallService {
         // 只拿**成功**记录比：失败记录里的值还没真正落成 STS，不该挡用户改
         validateTempoPersistence(merged, last);
         validateCsiNfsStorageClass(req.getClusterId(), merged);
+        validateIngressPortPool(req.getClusterId(), merged);
         // 对象存储的 PVC / 副本数落在嵌套结构里（volume.dataDirs 是 list），由表单参数拼进来
         if (seaweed != null) {
             merged = applySeaweedValues(merged, seaweed);
@@ -2035,7 +2039,8 @@ public class ComponentInstallService {
                     List<GatewayListenerDTO> listeners = externalGatewayListeners(releases);
                     if (listeners.isEmpty()
                             || !client.ensureExternalGateway(clusterId, "istio-system",
-                                    "external-gateway", "external-gateway", listeners)) {
+                                    "external-gateway", "external-gateway", listeners,
+                                    allowedListenerLabels(releases))) {
                         log.info("集群 {} 的 Gateway API CRD 未就绪或端口表没有可监听的端口，跳过 external-gateway CR",
                                 clusterId);
                     }
@@ -2223,8 +2228,9 @@ public class ComponentInstallService {
             // null = 普通 Helm release；SERVER_SIDE_APPLY = 渲染后直接落盘（超大 chart，见 ReleaseSpec）
             dto.setApplyMode(r.applyMode());
             // 端口表里的 listener/tlsSecret 是平台生成 Gateway CR 用的，不能进 Helm 的 Service values
+            // 应用端口池先展开成 Service 端口（并删掉只给平台用的 platform 键），再裁 listener 字段
             dto.setValues("istio-gateway".equals(r.chartCode())
-                    ? withoutGatewayListenerFields(r.contractValues())
+                    ? withoutGatewayListenerFields(IngressPortPool.render(r.contractValues()))
                     : r.contractValues());
             if (registry != null && registry.enabled()) {
                 dto.setImageRegistryHost(registry.host());
@@ -2286,6 +2292,62 @@ public class ComponentInstallService {
             out.add(dto);
         }
         return out;
+    }
+
+    /**
+     * 集群当前生效的应用端口池（istio 组件「上次成功」的 values 快照）；没装 / 停用返回 null。
+     * 应用侧分配端口时以它为准 —— 只有成功下发的范围才真的声明在网关 Service 上。
+     */
+    public IngressPortService.PortRange currentIngressPortPool(String clusterId) {
+        PlatformComponentOperation last = mapper.selectLatestSuccess(clusterId, "istio");
+        return last == null ? null : IngressPortPool.fromSnapshot(last.getValuesSnapshot());
+    }
+
+    /** 各命名空间 ListenerSet 挂到 external-gateway 的准入标签（与 IngressListenerSync 打的标签一致） */
+    public static final Map<String, String> INGRESS_LISTENER_LABELS = Map.of("ingress.platform.coding/ports", "true");
+
+    /** 端口池启用时 Gateway 才放行 ListenerSet；停用 = null（k8s-server 去掉 allowedListeners） */
+    private static Map<String, String> allowedListenerLabels(List<ReleaseSpec> releases) {
+        return releases.stream()
+                .filter(r -> "external-gateway".equals(r.releaseName()))
+                .findFirst()
+                .map(r -> IngressPortPool.fromValues(r.contractValues()) != null ? INGRESS_LISTENER_LABELS : null)
+                .orElse(null);
+    }
+
+    /**
+     * 应用端口池的三项校验（spec §5.1）：范围合法；不与端口表重叠；新范围之外不能还有应用在用的端口
+     * （缩池 / 停用会让那些应用的入口静默失效，必须先让用户处理）。
+     */
+    @SuppressWarnings("unchecked")
+    private void validateIngressPortPool(String clusterId, List<ReleaseSpec> releases) {
+        ReleaseSpec gateway = releases.stream()
+                .filter(r -> "external-gateway".equals(r.releaseName()))
+                .findFirst().orElse(null);
+        if (gateway == null) {
+            return;
+        }
+        IngressPortService.PortRange pool = IngressPortPool.fromValues(gateway.contractValues());
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (gateway.contractValues().get("service") instanceof Map<?, ?> service
+                && service.get("ports") instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m) {
+                    rows.add((Map<String, Object>) m);
+                }
+            }
+        }
+        IngressPortPool.assertNoOverlap(pool, rows);
+        List<com.coding.data.models.system.PlatformIngressPort> stranded = ingressPorts.activeOutside(clusterId, pool);
+        if (stranded != null && !stranded.isEmpty()) {
+            String detail = stranded.stream()
+                    .map(p -> p.getAppId() + " / " + p.getServiceKey() + " / " + p.getPort())
+                    .collect(java.util.stream.Collectors.joining("；"));
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    (pool == null ? "不能停用应用端口池：" : "新的应用端口池范围之外")
+                            + "还有应用在用的端口（应用 / 服务 / 端口）：" + detail
+                            + "。请先修改这些服务的对外暴露方式");
+        }
     }
 
     /** 把端口行裁成 Helm 的 Service 端口字段（listener/tlsSecret 只给平台用） */

@@ -356,6 +356,24 @@ interface PortRow {
 }
 
 const PORT_PROTOCOLS = ['TCP', 'UDP', 'SCTP']
+
+// 应用端口池（Istio 组件）：上限与提示阈值和后端 IngressPortPool.MAX / WARN 一致
+const PORT_POOL_MAX = 5000
+const PORT_POOL_WARN = 1000
+
+function portOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : null
+}
+
+/** 提交值：两端都空 = {from:null,to:null}（停用；Map 才能在后端深合并里盖掉旧范围） */
+function toPortRange(from: unknown, to: unknown): { from: number | null; to: number | null } {
+  return { from: portOrNull(from), to: portOrNull(to) }
+}
+
+function portRangeSize(key: string): number {
+  const r = toPortRange(applyDialog.value.values[`${key}.from`], applyDialog.value.values[`${key}.to`])
+  return r.from != null && r.to != null && r.to >= r.from ? r.to - r.from + 1 : 0
+}
 const LISTENER_PROTOCOLS = ['HTTP', 'HTTPS', 'TLS', 'TCP', 'UDP']
 
 function toPortRows(value: unknown): PortRow[] {
@@ -724,6 +742,12 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
       const rows = toPortRows(start)
       portRows[f.key] = rows
       initial[f.key] = JSON.stringify(fromPortRows(rows))
+    } else if (f.type === 'portRange') {
+      // 应用端口池：起止两个数字框平铺在 values 里；初始快照与提交走同一个拼装函数
+      const range = (start ?? {}) as { from?: number | null; to?: number | null }
+      values[`${f.key}.from`] = range.from ?? undefined
+      values[`${f.key}.to`] = range.to ?? undefined
+      initial[f.key] = JSON.stringify(toPortRange(values[`${f.key}.from`], values[`${f.key}.to`]))
     } else {
       values[f.key] = start
       initial[f.key] = JSON.stringify(start)
@@ -1032,6 +1056,24 @@ function confirmApply(): void {
         return
       }
       const value = fromPortRows(rows)
+      if (JSON.stringify(value) === d.initial[f.key]) continue
+      editable[f.key] = value
+    } else if (f.type === 'portRange') {
+      const value = toPortRange(d.values[`${f.key}.from`], d.values[`${f.key}.to`])
+      if ((value.from == null) !== (value.to == null)) {
+        ElMessage.error(`「${f.label}」需要同时填写起始和结束端口（都留空 = 停用）`)
+        return
+      }
+      if (value.from != null && value.to != null) {
+        if (value.from > value.to) {
+          ElMessage.error(`「${f.label}」的起始端口不能大于结束端口`)
+          return
+        }
+        if (value.to - value.from + 1 > PORT_POOL_MAX) {
+          ElMessage.error(`「${f.label}」最多 ${PORT_POOL_MAX} 个端口`)
+          return
+        }
+      }
       if (JSON.stringify(value) === d.initial[f.key]) continue
       editable[f.key] = value
     } else if (f.type === 'duration') {
@@ -1526,6 +1568,26 @@ function copyImage(text: string): void {
                 每个端口可选择是否生成 Gateway listener（空 = 仅 Service，如 15021）。
                 HTTP/HTTPS 才能挂 HTTPRoute；HTTPS = 终止 TLS，必须填证书 Secret；TLS = Passthrough（不挂证书）；
                 listener 端口取 targetPort。选 NodePort 时可在对应列固定端口，留空则随机分配
+              </div>
+            </div>
+            <!-- 应用端口池：起始 / 结束；都留空 = 停用 -->
+            <div v-else-if="f.type === 'portRange'" class="cc-port-range">
+              <div class="cc-port-range-inputs">
+                <el-input-number v-model="applyDialog.values[f.key + '.from']" :min="1" :max="65535"
+                                 :controls="false" placeholder="起始端口" :value-on-clear="null" />
+                <span class="cc-port-range-sep">—</span>
+                <el-input-number v-model="applyDialog.values[f.key + '.to']" :min="1" :max="65535"
+                                 :controls="false" placeholder="结束端口" :value-on-clear="null" />
+                <span v-if="portRangeSize(f.key) > 0" class="cc-port-range-count">
+                  共 {{ portRangeSize(f.key) }} 个端口
+                </span>
+              </div>
+              <div v-if="portRangeSize(f.key) > PORT_POOL_WARN" class="cc-form-hint cc-port-range-warn">
+                端口数超过 {{ PORT_POOL_WARN }}：上线前核对 kube-proxy 规则同步耗时
+              </div>
+              <div class="cc-form-hint">
+                应用「对外暴露」从这里分配端口：每个端口都声明在网关 Service 上（nodePort = 端口），
+                访问地址 = 任一节点 IP:端口。不能与上面的端口表重叠；最多 {{ PORT_POOL_MAX }} 个；都留空 = 停用
               </div>
             </div>
             <el-select v-else-if="f.type === 'select'" v-model="applyDialog.values[f.key]"
@@ -2410,6 +2472,12 @@ function copyImage(text: string): void {
 .cc-resource-line { display: flex; align-items: center; gap: 8px; }
 .cc-resource-label { flex: 0 0 64px; font-size: 12px; color: var(--text-3); }
 .cc-ports { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; overflow-x: auto; }
+.cc-port-range { display: flex; flex-direction: column; gap: 4px; }
+.cc-port-range-inputs { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cc-port-range-inputs .el-input-number { width: 140px; }
+.cc-port-range-sep { color: var(--el-text-color-secondary); }
+.cc-port-range-count { color: var(--el-text-color-regular); font-size: 13px; }
+.cc-port-range-warn { color: var(--el-color-warning); }
 .cc-port-row {
   display: grid;
   grid-template-columns: minmax(110px, 1fr) 70px 90px 90px 90px 110px 110px 140px auto;
