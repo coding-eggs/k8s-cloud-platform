@@ -5,6 +5,8 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.ComponentInstallRequestDTO;
 import com.coding.common.models.k8s.dto.ComponentInstallResultDTO;
 import com.coding.common.models.k8s.dto.ExternalGatewayRequestDTO;
+import com.coding.common.models.k8s.dto.IngressListenerSetRequestDTO;
+import com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO;
 import com.coding.common.models.k8s.dto.GatewayListenerDTO;
 import com.coding.common.models.k8s.dto.HarborExternalSecretsRequestDTO;
 import com.coding.common.models.k8s.dto.HarborSecretsRequestDTO;
@@ -28,6 +30,7 @@ import com.coding.k8sserver.components.AccessBoundaryAware;
 import com.coding.k8sserver.components.ChartImageCatalogService;
 import com.coding.k8sserver.components.ChartImageOverlay;
 import com.coding.k8sserver.components.ExternalGatewayObjects;
+import com.coding.k8sserver.components.IngressListenerSetObjects;
 import com.coding.k8sserver.components.HarborExternalSecretObjects;
 import com.coding.k8sserver.components.HarborSecretObjects;
 import com.coding.k8sserver.components.PlatformAlertingObjects;
@@ -746,6 +749,7 @@ public class ComponentInstallController implements AccessBoundaryAware {
         }
         // merge=true：只把本次的 listener 并进已有 Gateway（组件专用），不整份覆盖 Istio 的端口表
         List<Map<String, Object>> specs = ExternalGatewayObjects.listenerSpecs(request.getListeners());
+        Map<String, String> allowedLabels = request.getAllowedListenerLabels();
         if (Boolean.TRUE.equals(request.getMerge())) {
             var existing = client.genericKubernetesResources(ExternalGatewayObjects.CRD)
                     .inNamespace(request.getNamespace()).withName(request.getName()).get();
@@ -756,14 +760,100 @@ public class ComponentInstallController implements AccessBoundaryAware {
             List<Map<String, Object>> current = existingListeners instanceof List<?> list
                     ? (List<Map<String, Object>>) list : List.of();
             specs = ExternalGatewayObjects.mergeByName(current, specs);
+            // 组件合并只带自己的 listener：现有的 allowedListeners（应用端口池）原样保留，否则会被 SSA 抹掉
+            if (allowedLabels == null || allowedLabels.isEmpty()) {
+                allowedLabels = ExternalGatewayObjects.allowedListenerLabelsOf(existing);
+            }
         }
         client.genericKubernetesResources(ExternalGatewayObjects.CRD)
                 .inNamespace(request.getNamespace())
                 .resource(ExternalGatewayObjects.buildWithSpecs(request.getNamespace(), request.getName(),
-                        request.getServiceName(), specs))
+                        request.getServiceName(), specs, allowedLabels))
                 .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
         return new ResponseData<>(true);
     }
+
+    /**
+     * 应用端口池：命名空间级 ListenerSet（平台生成，租户不可写）。
+     *
+     * <p>listeners 非空：先给命名空间打放行标签（独立 field manager，只管这几个键），再 SSA ListenerSet；
+     * listeners 为空：删 ListenerSet、摘标签。ListenerSet CRD 缺失返回 false。
+     * 端口 / 协议 / 标签都由 platform-api 算好，这里只校验格式（零业务）。
+     */
+    @PostMapping("/ingress-listenerset")
+    @Operation(summary = "下发/删除命名空间的应用端口池 ListenerSet",
+            description = "幂等 SSA；listeners 为空 = 删除并去掉命名空间放行标签；ListenerSet CRD 缺失返回 false")
+    public ResponseData<Boolean> ingressListenerSet(@RequestBody IngressListenerSetRequestDTO request) {
+        accessResolver.assertClusterAccess(request.getClusterId());
+        IngressListenerSetObjects.validate(request);
+        var client = clientFactory.getAdminClient(request.getClusterId());
+        if (client.apiextensions().v1().customResourceDefinitions()
+                .withName(IngressListenerSetObjects.CRD_NAME).get() == null) {
+            return new ResponseData<>(false);
+        }
+        boolean empty = request.getListeners() == null || request.getListeners().isEmpty();
+        Map<String, String> labels = request.getNamespaceLabels() == null ? Map.of() : request.getNamespaceLabels();
+        if (empty) {
+            client.genericKubernetesResources(IngressListenerSetObjects.CRD)
+                    .inNamespace(request.getNamespace()).withName(request.getName()).delete();
+            applyIngressNamespaceLabels(client, request.getNamespace(), Map.of());
+            return new ResponseData<>(true);
+        }
+        applyIngressNamespaceLabels(client, request.getNamespace(), labels);
+        client.genericKubernetesResources(IngressListenerSetObjects.CRD)
+                .inNamespace(request.getNamespace())
+                .resource(IngressListenerSetObjects.build(request))
+                .fieldManager(ServerSideApply.FIELD_MANAGER).forceConflicts().serverSideApply();
+        return new ResponseData<>(true);
+    }
+
+    /** 命名空间 ListenerSet 的状态（每个 listener 是否生效 / 冲突）；对象不存在时 exists=false */
+    @GetMapping("/ingress-listenerset")
+    @Operation(summary = "查询命名空间应用端口池 ListenerSet 状态")
+    public ResponseData<IngressListenerSetStatusDTO> ingressListenerSetStatus(@RequestParam String clusterId,
+                                                                             @RequestParam String namespace,
+                                                                             @RequestParam String name) {
+        accessResolver.assertClusterAccess(clusterId);
+        var client = clientFactory.getAdminClient(clusterId);
+        if (client.apiextensions().v1().customResourceDefinitions()
+                .withName(IngressListenerSetObjects.CRD_NAME).get() == null) {
+            return new ResponseData<>(new IngressListenerSetStatusDTO());
+        }
+        var resource = client.genericKubernetesResources(IngressListenerSetObjects.CRD)
+                .inNamespace(namespace).withName(name).get();
+        return new ResponseData<>(IngressListenerSetObjects.status(resource));
+    }
+
+    /** 某个 Service 声明的端口（应用端口池只分配网关 Service 上已声明的端口）；Service 不存在返回空 */
+    @GetMapping("/service-ports")
+    @Operation(summary = "查询 Service 声明的端口列表")
+    public ResponseData<List<Integer>> servicePorts(@RequestParam String clusterId,
+                                                    @RequestParam String namespace,
+                                                    @RequestParam String name) {
+        accessResolver.assertClusterAccess(clusterId);
+        var svc = clientFactory.getAdminClient(clusterId).services().inNamespace(namespace).withName(name).get();
+        if (svc == null || svc.getSpec() == null || svc.getSpec().getPorts() == null) {
+            return new ResponseData<>(List.of());
+        }
+        return new ResponseData<>(svc.getSpec().getPorts().stream()
+                .map(io.fabric8.kubernetes.api.model.ServicePort::getPort)
+                .filter(java.util.Objects::nonNull).toList());
+    }
+
+    /**
+     * 用独立的 field manager SSA 命名空间标签：只拥有这几个键，给空 Map 就是把它们全部摘掉，
+     * 不碰命名空间上由别处管理的标签。
+     */
+    private static void applyIngressNamespaceLabels(io.fabric8.kubernetes.client.KubernetesClient client,
+                                                    String namespace, Map<String, String> labels) {
+        io.fabric8.kubernetes.api.model.Namespace ns = new io.fabric8.kubernetes.api.model.NamespaceBuilder()
+                .withNewMetadata().withName(namespace).withLabels(new java.util.LinkedHashMap<>(labels)).endMetadata()
+                .build();
+        client.namespaces().resource(ns).fieldManager(INGRESS_LABEL_FIELD_MANAGER).forceConflicts().serverSideApply();
+    }
+
+    /** 命名空间放行标签专用的 field manager */
+    static final String INGRESS_LABEL_FIELD_MANAGER = "platform-ingress-label";
 
     /**
      * Istio Telemetry（批次二）：ingress gateway / waypoint 的链路追踪开关。

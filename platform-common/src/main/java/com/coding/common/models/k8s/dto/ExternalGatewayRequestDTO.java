@@ -29,4 +29,10 @@ public class ExternalGatewayRequestDTO {
      * Istio 的端口表整份覆盖掉。
      */
     private Boolean merge;
+
+    /**
+     * 主 Gateway 的 {@code spec.allowedListeners} 放行哪些命名空间（matchLabels）。
+     * 空 = 不写 allowedListeners（不接受任何 ListenerSet）；应用端口池启用时由 platform-api 传入。
+     */
+    private java.util.Map<String, String> allowedListenerLabels;
 }

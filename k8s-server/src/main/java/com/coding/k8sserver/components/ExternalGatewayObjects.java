@@ -106,15 +106,45 @@ public final class ExternalGatewayObjects {
         return m;
     }
 
+    /** 现有 Gateway 的 allowedListeners matchLabels（合并路径保留用）；没有返回 null */
+    public static Map<String, String> allowedListenerLabelsOf(GenericKubernetesResource existing) {
+        if (existing == null || !(existing.getAdditionalProperties().get("spec") instanceof Map<?, ?> spec)
+                || !(spec.get("allowedListeners") instanceof Map<?, ?> al)
+                || !(al.get("namespaces") instanceof Map<?, ?> ns)
+                || !(ns.get("selector") instanceof Map<?, ?> sel)
+                || !(sel.get("matchLabels") instanceof Map<?, ?> labels)) {
+            return null;
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        labels.forEach((k, v) -> out.put(String.valueOf(k), String.valueOf(v)));
+        return out;
+    }
+
     /** 低层构建：listener 已经是要写进 CR 的结构（合并路径用） */
     public static GenericKubernetesResource buildWithSpecs(String namespace, String name,
                                                            String serviceName,
                                                            List<Map<String, Object>> specs) {
+        return buildWithSpecs(namespace, name, serviceName, specs, null);
+    }
+
+    /**
+     * @param allowedListenerLabels 非空时写 {@code spec.allowedListeners}：只放行带这些标签的命名空间挂 ListenerSet
+     *                              （应用端口池）；空 = 不写（Gateway API 默认不接受任何 ListenerSet）
+     */
+    public static GenericKubernetesResource buildWithSpecs(String namespace, String name,
+                                                           String serviceName,
+                                                           List<Map<String, Object>> specs,
+                                                           Map<String, String> allowedListenerLabels) {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("gatewayClassName", "istio");
         spec.put("addresses", List.of(Map.of(
                 "type", "Hostname",
                 "value", serviceName + "." + namespace + ".svc.cluster.local")));
+        if (allowedListenerLabels != null && !allowedListenerLabels.isEmpty()) {
+            spec.put("allowedListeners", Map.of("namespaces", Map.of(
+                    "from", "Selector",
+                    "selector", Map.of("matchLabels", new LinkedHashMap<>(allowedListenerLabels)))));
+        }
         spec.put("listeners", specs);
 
         GenericKubernetesResource resource = new GenericKubernetesResource();

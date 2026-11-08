@@ -100,4 +100,21 @@ class ExternalGatewayObjectsTest {
         assertThat(merged.get(0).get("tls").toString()).contains("new-cert")
                 .doesNotContain("old-cert");
     }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> specOf(GenericKubernetesResource r) {
+        return (Map<String, Object>) r.getAdditionalProperties().get("spec");
+    }
+
+    @Test
+    void allowedListenersWrittenOnlyWhenLabelsGiven() {
+        GenericKubernetesResource withLabels = ExternalGatewayObjects.buildWithSpecs("istio-system",
+                "external-gateway", "external-gateway", List.of(), Map.of("ingress.platform.coding/ports", "true"));
+        assertThat(specOf(withLabels).get("allowedListeners")).isEqualTo(Map.of("namespaces", Map.of(
+                "from", "Selector",
+                "selector", Map.of("matchLabels", Map.of("ingress.platform.coding/ports", "true")))));
+        GenericKubernetesResource without = ExternalGatewayObjects.buildWithSpecs("istio-system",
+                "external-gateway", "external-gateway", List.of(), null);
+        assertThat(specOf(without)).doesNotContainKey("allowedListeners");
+    }
 }
