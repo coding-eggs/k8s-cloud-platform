@@ -1,6 +1,14 @@
 # 应用服务内部灰度 设计
 
-> 状态：设计稿，待审。在「应用入口灰度」（`2026-11-09-app-canary-release-design.md`，下称「入口灰度」）之上扩展，
+> 状态：**已实现（未部署）**，2026-11-09，计划 `docs/superpowers/plans/2026-11-09-app-internal-canary.md`。
+> 实现与本文的出入：
+> - §6 指标「网关进来」只按 `reporter="source"` 区分，不加 `source_workload` 匹配（§10 第 2 条因此不需要）；两组都按
+>   `destination_workload` 拆 stable / canary，响应 `{window, protocol, internal, external}`，没有的组为 null。
+> - chart 的 ServiceMonitor 端口原写死 `http`，随 Service 端口名改为跟 `expose.portName`（否则 TCP 服务抓不到）。
+> - §10 第 1 条：网格路由放新模板 `templates/route-mesh.yaml`，values 为 `meshRoute {kind, canary}`；TCP 用参数 `protocol=tcp` → `expose.portName=tcp`。
+> - §10 第 3 条：网格锁在 `AppServiceConfigService.updateSettings` 与 `AppReleaseService`（发布勾选 `@app`）两处，比较 `AppSettings.l7Waypoint`。
+>
+> 原状态：设计稿，待审。在「应用入口灰度」（`2026-11-09-app-canary-release-design.md`，下称「入口灰度」）之上扩展，
 > 那篇的模型、执行阶段、四个操作、锁、界面入口都沿用；本文只写变化。
 
 ## 1. 意图

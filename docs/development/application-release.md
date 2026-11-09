@@ -166,7 +166,7 @@ HPA 扩出来的副本强制打回。配置页「副本数」此时只读。只�
 
 ### 1.8 入口灰度（设计 `docs/superpowers/specs/2026-11-09-app-canary-release-design.md`）
 
-**模型**：灰度状态只存在发布快照里 —— `services.<key>.canary = {desired, replicas, weight, header{name,value}|null}`，
+**模型**：灰度状态只存在发布快照里 —— `services.<key>.canary = {desired, replicas, weight, header{name,value}|null, external}`，
 不建新表。线上快照带这个块 = 该服务正在灰度；服务台账的 desired 始终是 stable。`AppCanary` 是唯一读写这个块的地方；
 `AppPending` 不把它算作待发布改动。
 
@@ -183,8 +183,9 @@ HTTP 且开了 header 时再加一条优先的 header 匹配规则直达 canary�
 | 全量 `/application/canary/promote` | `CANARY_PROMOTE` | = 灰度版本 desired，去掉灰度块 | 写成灰度版本 desired |
 | 回退 `/application/canary/abort` | `CANARY_ABORT` | = 线上 stable，去掉灰度块 | 与线上 stable 不同时写回 |
 
-前提：服务已上线、网关暴露（HTTP / TCP）、无状态（`persistenceEnabled` 不为 true，与 chart 选 StatefulSet 同一判据）、
-应用没有进行中的执行；灰度版本的端口、暴露方式、服务类型必须与 stable 一致；权重 0-100；header 只对 HTTP。
+前提：服务已上线、**应用线上设置为 L7 网格或服务网关暴露（HTTP / TCP）**（见下「内部灰度」）、无状态（`persistenceEnabled` 不为 true，
+与 chart 选 StatefulSet 同一判据）、应用没有进行中的执行；灰度版本的端口、暴露方式、服务类型、协议（HTTP / TCP）必须与 stable 一致；
+权重 0-100；header 只对 HTTP 服务。
 live_release_no 只在执行成功时切换，所以失败的操作不改变「是否在灰度」：全量失败后可以回退，回退会把台账一并写回 stable。
 
 **ROUTE 阶段**：`PRECHECK → RENDER → CONFLICT → APPLY → HEALTH → ROUTE → PRUNE → DONE`。APPLY 跳过
@@ -197,12 +198,31 @@ live_release_no 只在执行成功时切换，所以失败的操作不改变「�
 
 **指标** `/application/canary/metrics`（`window` 只收 5m / 15m / 1h，其余按 15m）：Istio `istio_requests_total` /
 `istio_request_duration_milliseconds_bucket`（HTTP：请求/秒、5xx 错误率、P50 / P99）与 `istio_tcp_*`（TCP：新建连接/秒、
-收发字节/秒），按 `cluster_name` + `destination_service_namespace` + `destination_service_name=~"<stable>|<canary>"` 过滤、
-`sum by (destination_service_name)` 拆两列；不加 reporter 过滤。查不到为 null（前端「暂无数据」）。
+收发字节/秒），按 `cluster_name` + `destination_workload_namespace` + `destination_workload=~"<stable>|<canary>"` + `reporter`
+过滤、`sum by (destination_workload)` 拆两列（canary 不是独立 Service，只能按工作负载分）。返回
+`{window, protocol, internal, external}`：`internal` = `reporter="waypoint"`（集群内调用，应用为 L7 时才有），
+`external` = `reporter="source"`（网关进来，服务网关暴露时才有），没有的组为 null；单项查不到为 null（前端「暂无数据」）。
 前端只在 canary 错误率比 stable 高 1 个百分点以上时标橙，不拦操作。
 
-**界面**：入口在应用页服务列表的操作列 —— 未灰度显示「开启灰度」（直接弹对话框；未上线 / 非网关暴露 / 有状态时置灰并提示原因），
-灰度中显示「管理灰度」（抽屉：权重滑块 + 快捷档、header 规则、指标对比、两个版本的 Pod、修改灰度版本配置 / 全量 / 回退）；
+**内部灰度**（设计 `docs/superpowers/specs/2026-11-09-app-internal-canary-design.md`）：
+
+- 前提三分：应用线上设置为 L7 网格（`mesh.mode=l7` 且选了 waypoint，`AppSettings.isL7`）→ 集群内调用也分流，没网关暴露的服务也能灰度；
+  非 L7 但网关暴露 → 只分网关流量（同入口灰度）；两者都不是 → 不能灰度。
+- 网格路由：L7 时灰度中的服务多一条 GAMMA 路由 `<slug>-<key>-mesh`（HTTP 服务 HTTPRoute，TCP 服务 TCPRoute），
+  parentRef 是 stable Service 本身（`group: ""`、`kind: Service`、`port`），后端权重 / header 规则与网关路由同一份。
+  k8s-server 只认通用参数 `meshRoute` / `protocol`，不知道「灰度」。没在灰度的服务不渲染、调用路径不变。
+- 协议：`expose=gateway-tcp` → TCP；否则 `probeType=tcp` → TCP；否则 HTTP。TCP 服务的 Service 端口名（及 ServiceMonitor 端口）
+  为 `tcp`（chart `expose.portName`），`targetPort` 仍是 `http`。
+- `external`（「外部流量参与灰度」，默认 true）：只在 L7 且网关暴露时可关；关掉后网关路由不带 canary 后端，网关流量全进 stable。
+  非 L7 时传 false 报错；没有网关暴露时存 false。旧灰度块没有这个字段按 true 读。**一个权重**同时管内部与外部。
+- header 直达对集群内调用同样生效，但需要调用方把请求头往下传（平台不注入）。
+- 网格锁：有服务在灰度时，应用设置不能进出 L7、不能换 waypoint（`AppServiceConfigService.updateSettings` 与发布勾选
+  「应用设置」两处都拦，「有服务在灰度（…），先全量或回退再改网格」）；跟随 / 不加入 / L4 之间、链路追踪仍可改。前端：原本 L7 → 网格整块只读；
+  原本非 L7 → L7 选项置灰。
+
+**界面**：入口在应用页服务列表的操作列 —— 未灰度显示「开启灰度」（直接弹对话框，顶部说明分流范围；未上线 / 非 L7 且无网关暴露 / 有状态时置灰并提示原因），
+灰度中显示「管理灰度」（抽屉：分流范围说明、权重滑块 + 快捷档、「外部流量参与」开关（L7 且网关暴露才有）、header 规则、
+指标按「内部调用」「网关进来」分两张表、两个版本的 Pod、修改灰度版本配置 / 全量 / 回退）；
 服务详情页不放灰度；应用详情页状态旁「灰度中 N%」；发布对话框里灰度中的服务不可勾选；
 发布记录显示四种灰度类型。
 
@@ -286,6 +306,10 @@ key 不能以它结尾。
    旧 k8s-server 不认，APPLY 会把路由一并下发（canary 没就绪就接流量），ROUTE 再下发一次；chart 的 canary values 旧版也没有。
 3. 重新登录或等权限缓存 30 秒。
 
+**内部灰度（§1.8「内部灰度」）**：无 SQL。重建 k8s-server → platform-api → platform-web，**k8s-server 先部署**：
+新 platform-api 发的 `meshRoute` / `protocol` 旧 k8s-server 不认，会被静默忽略 —— 灰度「成功」但集群内调用不分流、TCP 服务端口名不变。
+注意 TCP 服务（`probeType=tcp` 或网关 TCP）下次发布 Service 端口名会从 `http` 变成 `tcp`（滚动不影响连接，但按端口名匹配的外部配置要跟着改）。
+
 ### 3.1 画布遗留清理（V2026_11_02_14）
 
 画布模型的遗留在代码和库里都已删除：
@@ -356,9 +380,20 @@ HPA / 可观测 / 服务网格（§1.7）：
 - [ ] TCP 服务按权重分连接。
 - [ ] 全量失败（如新配置起不来）后回退：服务恢复为灰度前配置，台账不残留待发布改动。
 
+内部灰度（§1.8「内部灰度」，设计 §9）：
+
+- [ ] waypoint 上挂 Service 的 HTTPRoute 按权重分流，含 0 / 100 边界；header 规则优先于权重；集群内另一个服务（如 web）调 stable Service 的结果符合权重。
+- [ ] TCPRoute 挂 Service 在 waypoint 上是否支持。不支持则 TCP 服务前提里加一条（L7 下也不能内部灰度），HTTP 不受影响。结论：（待回填）
+- [ ] `external=false` 时网关进来的请求 100% 进 stable；`external=true` 时按权重。
+- [ ] 指标：`reporter`（`waypoint` / `source`）与 `destination_workload` 的实际取值，两组、两个版本能分开且不重复计数。结论：（待回填）
+- [ ] 结束灰度后网格路由被删除，内部调用全部回到 stable，没有 5xx 尖峰。
+- [ ] 非 L7 网格、网关暴露的服务灰度行为与入口灰度一致，且不渲染网格路由。
+- [ ] TCP 服务 Service 端口名改为 `tcp` 后，网关 TCP 暴露、L4 / L7 网格下连接正常，ServiceMonitor 照常抓取。
+
 ## 6. 已知限制
 
-- **入口灰度**：canary 只接网关进来的流量（集群内服务间调用仍走 stable 的 ClusterIP Service）；有状态服务不能灰度；
+- **灰度**：集群内调用分流依赖应用为 L7 网格（非 L7 时 canary 只接网关进来的流量）；内部 header 直达要调用方透传请求头；
+  TCPRoute 挂 Service 在 waypoint 上未核对（见 §5）；有状态服务不能灰度；
   灰度版本不自动扩缩；指标 label 名与 reporter 取值未在真集群核对（见 §5）；灰度配置弹窗开放镜像、环境变量、配置文件、资源与命令（开始时另有副本数），
   探针、HPA、可观测、持久化等沿用 stable（接口本身接受完整 desired）。
 
