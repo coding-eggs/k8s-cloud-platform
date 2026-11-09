@@ -156,7 +156,7 @@ spring:
     # 日志查询中心的 ES（spring-boot-starter-data-elasticsearch 的自动配置读这里：
     # 连接池 / Basic Auth / 超时都由它提供）。功能开关另见 platform.logs.es.url ——
     # 两者都由 PLATFORM_ES_URL 注入：env 没设时这里落到默认 localhost，但开关为空 → 页面提示未配置。
-    uris: ${PLATFORM_ES_URL:http://192.168.31.80:9200}
+    uris: ${PLATFORM_ES_URL:http://192.168.31.80:20002}
     username: ${PLATFORM_ES_USERNAME:elastic}
     password: ${PLATFORM_ES_PASSWORD:n6tsAcYY5FRF3iF7t780kFWN}
   mvc:
@@ -181,7 +181,7 @@ spring:
   data:
     redis:
       host: ${REDIS_HOST:192.168.31.80}
-      port: ${REDIS_PORT:25358}
+      port: ${REDIS_PORT:20001}
       password: ${REDIS_PASSWORD:Coding@123456}     # ← 无密码则留空
       database: ${REDIS_DATABASE:1}
       timeout: 2s                # 卡住时不要拖慢请求路径（超时即直查源）
