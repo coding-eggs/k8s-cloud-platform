@@ -213,7 +213,7 @@ public class AppReleaseService {
      * 记凭据、置 DEPLOYING。凭据在执行行插入之后、提交之前记下：worker 只能看到已提交的行，那时凭据一定在；
      * 回滚则一并忘掉。
      */
-    private Long launch(PlatformApplication app, String authorization, int plannedLive, String snapshotJson,
+    Long launch(PlatformApplication app, String authorization, int plannedLive, String snapshotJson,
                         String type, Integer sourceNo, String note, String operator, Runnable writes) {
         AtomicReference<Long> remembered = new AtomicReference<>();
         try {
@@ -380,7 +380,7 @@ public class AppReleaseService {
     }
 
     /** PENDING / RUNNING 正在推进，拒绝；INTERRUPTED 在等用户点继续，新发布会取代它。 */
-    private void requireNoRunningExecution(String appId) {
+    void requireNoRunningExecution(String appId) {
         PlatformAppExecution running = executions.selectActiveByApp(appId);
         if (running != null && !"INTERRUPTED".equals(running.getStatus())) {
             throw error("该应用已有进行中的发布，请等它结束后再发布");
@@ -822,7 +822,7 @@ public class AppReleaseService {
 
     // ------------------------------------------------------------------ 内部
 
-    private AppSnapshot liveSnapshot(PlatformApplication app) {
+    AppSnapshot liveSnapshot(PlatformApplication app) {
         int no = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
         if (no <= 0) {
             return AppSnapshot.empty();
