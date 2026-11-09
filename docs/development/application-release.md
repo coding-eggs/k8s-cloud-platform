@@ -164,6 +164,47 @@ HPA 扩出来的副本强制打回。配置页「副本数」此时只读。只�
 `platform-app-replicas-handover` 按**线上当前值**认领一次 `spec.replicas`（K8s SSA 文档「Transferring ownership」），
 交接失败就不写清单、发布报错。真集群结论见 §5 的真跑项。
 
+### 1.8 入口灰度（设计 `docs/superpowers/specs/2026-11-09-app-canary-release-design.md`）
+
+**模型**：灰度状态只存在发布快照里 —— `services.<key>.canary = {desired, replicas, weight, header{name,value}|null}`，
+不建新表。线上快照带这个块 = 该服务正在灰度；服务台账的 desired 始终是 stable。`AppCanary` 是唯一读写这个块的地方；
+`AppPending` 不把它算作待发布改动。
+
+**渲染**：灰度中的服务 `X` 多一个节点 `X-canary`（对象名 `<slug>-X-canary`），用灰度版本的 desired 渲染，
+副本取 `canary.replicas`，不自动扩缩、不暴露、不带路由。stable 的路由带两个加权后端（`weight` / `100-weight`），
+HTTP 且开了 header 时再加一条优先的 header 匹配规则直达 canary。`-canary` 是保留后缀，服务 key 不能以它结尾。
+
+**四个操作**都是普通发布（`AppCanaryService`，走同一执行路径）：
+
+| 操作 | 发布 type | 快照里的服务 | 台账 |
+|---|---|---|---|
+| 开始 `/application/canary/start` | `CANARY_START` | stable + 灰度块（默认副本 1、权重 10、HTTP 默认 `x-canary: true`） | 不动 |
+| 调整 `/application/canary/update` | `CANARY_UPDATE` | 只改给出的字段 | 不动 |
+| 全量 `/application/canary/promote` | `CANARY_PROMOTE` | = 灰度版本 desired，去掉灰度块 | 写成灰度版本 desired |
+| 回退 `/application/canary/abort` | `CANARY_ABORT` | = 线上 stable，去掉灰度块 | 与线上 stable 不同时写回 |
+
+前提：服务已上线、网关暴露（HTTP / TCP）、无状态（`persistenceEnabled` 不为 true，与 chart 选 StatefulSet 同一判据）、
+应用没有进行中的执行；灰度版本的端口、暴露方式、服务类型必须与 stable 一致；权重 0-100；header 只对 HTTP。
+live_release_no 只在执行成功时切换，所以失败的操作不改变「是否在灰度」：全量失败后可以回退，回退会把台账一并写回 stable。
+
+**ROUTE 阶段**：`PRECHECK → RENDER → CONFLICT → APPLY → HEALTH → ROUTE → PRUNE → DONE`。APPLY 跳过
+`HTTPRoute` / `TCPRoute`（`AppApplyRequestDTO.skipKinds`），HEALTH 不看路由，全部工作负载就绪后 ROUTE 只下发路由
+（`onlyKinds`；k8s-server 按 `---` 切文档保留原文过滤）。所以 canary 没就绪前权重不会生效；ROUTE 只确认写入成功，
+不读 Istio 的 Programmed（顶层状态在本集群不可信）。下线仍是 `PRECHECK → PRUNE`。
+
+**锁**：灰度中的服务不能改配置、不能移除、不能在普通发布里勾选；有任何服务在灰度时不能回滚、不能下线。
+回滚目标快照里若带灰度块会被剥掉（回滚只还原 stable）。
+
+**指标** `/application/canary/metrics`（`window` 只收 5m / 15m / 1h，其余按 15m）：Istio `istio_requests_total` /
+`istio_request_duration_milliseconds_bucket`（HTTP：请求/秒、5xx 错误率、P50 / P99）与 `istio_tcp_*`（TCP：新建连接/秒、
+收发字节/秒），按 `cluster_name` + `destination_service_namespace` + `destination_service_name=~"<stable>|<canary>"` 过滤、
+`sum by (destination_service_name)` 拆两列；不加 reporter 过滤。查不到为 null（前端「暂无数据」）。
+前端只在 canary 错误率比 stable 高 1 个百分点以上时标橙，不拦操作。
+
+**界面**：服务页「灰度」页签（未灰度：说明 + 开始；灰度中：权重滑块 + 快捷档、header 规则、指标对比、两个版本的 Pod、
+修改灰度版本配置 / 全量 / 回退）；应用详情页状态旁「灰度中 N%」；发布对话框里灰度中的服务不可勾选；
+发布记录显示四种灰度类型。
+
 ## 2. 配置文件
 
 服务页「配置文件」页签：每条一个绝对路径 + 内容。
@@ -237,6 +278,13 @@ key 不能以它结尾。
 **k8s-server 先部署**：新 platform-api 发的注入参数（`podAnnotations` / `podLabels` / `serviceLabels` / `extraEnv` /
 `logMountDir` / `targetMemory`）旧 k8s-server 不认，会被静默忽略 —— 发布成功但注解、标签、内存指标都不生效。
 
+**入口灰度（§1.8）**：
+1. 重放 **V2026_11_09_2**（五条权限行：四个写端点 `tenant:application:write`、指标 `tenant:application:read`；
+   按已持有「创建发布」/「应用概览」的角色回填绑定）。不重放则 platform-api 被 `PermissionCrossCheckRunner` 拒启。
+2. 重建 k8s-server → platform-api → platform-web，**k8s-server 先部署**：新 platform-api 发的 `skipKinds` / `onlyKinds`
+   旧 k8s-server 不认，APPLY 会把路由一并下发（canary 没就绪就接流量），ROUTE 再下发一次；chart 的 canary values 旧版也没有。
+3. 重新登录或等权限缓存 30 秒。
+
 ### 3.1 画布遗留清理（V2026_11_02_14）
 
 画布模型的遗留在代码和库里都已删除：
@@ -297,7 +345,21 @@ HPA / 可观测 / 服务网格（§1.7）：
 - [ ] 回滚到接入前的版本，注解 / 标签随之消失。
 - [ ] 卸载 OTel 后回滚到接入后的版本：确认框有警告，回滚照常完成。
 
+入口灰度（§1.8，设计 §10）：
+
+- [ ] 网关按权重分流，含 0 和 100 两个边界；HTTP 带 `x-canary: true` 的请求总进 canary（header 规则优先于权重）。
+- [ ] 开始灰度时 canary 镜像不存在：执行停在 HEALTH 失败，canary 收不到任何流量（ROUTE 没执行）；之后可直接「回退」。
+- [ ] 全量期间持续请求不中断，没有 5xx 尖峰。
+- [ ] 指标 label 核对：`destination_service_name` / `destination_service_namespace` / `cluster_name` 在网关上报的序列上存在，
+      两个版本能分开统计；HTTP 延迟用 `_milliseconds_bucket`。结论：（待回填）
+- [ ] TCP 服务按权重分连接。
+- [ ] 全量失败（如新配置起不来）后回退：服务恢复为灰度前配置，台账不残留待发布改动。
+
 ## 6. 已知限制
+
+- **入口灰度**：canary 只接网关进来的流量（集群内服务间调用仍走 stable 的 ClusterIP Service）；有状态服务不能灰度；
+  灰度版本不自动扩缩；指标 label 名与 reporter 取值未在真集群核对（见 §5）；灰度配置弹窗只开放镜像、环境变量、副本数，
+  其余字段沿用 stable（接口本身接受完整 desired）。
 
 - 对外域名、入口灰度不在本次范围（网关端口第二期）；网关 HTTP 不终止 TLS（HTTPS 服务用网关 TCP 透传）。
 - 缩小端口池的拦截只看分配表里的 ACTIVE 行，不看集群上残留的 listener。

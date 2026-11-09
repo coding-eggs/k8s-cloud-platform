@@ -2,7 +2,14 @@
 
 > 前置：应用发布（`docs/development/application-release.md`）、网关端口暴露第一期
 > （`docs/superpowers/specs/2026-11-08-app-istio-exposure-design.md`，本文是其 §8 的展开）。
-> 状态：设计稿，待审。域名方式（原 §7）另起一篇，不在本文。
+> 状态：**已实现（未部署）**，提交范围 `16befb3..HEAD`（main，2026-11-09）。域名方式（原 §7）另起一篇，不在本文。
+>
+> 实现与设计的出入：
+> - 指标端点是 `POST /application/canary/metrics`（请求体 `{appId, serviceKey, window}`），不是 GET —— 与 `/application` 其他端点一致。
+> - 指标不加 reporter 过滤（§7 写的「限定为网关一侧」）：本集群 reporter 只有 `source` / `waypoint`，按目标 Service 过滤已足够。
+> - ROUTE 阶段只确认路由写入成功，不读 `status.parents`（§11 的开放项）。
+> - 灰度配置弹窗只开放镜像、环境变量、副本数（开始时另有权重与 header）；其余字段沿用 stable。接口接受完整 desired。
+> - 额外校验（设计未写）：灰度副本 1-100；header 名 `^[A-Za-z0-9][A-Za-z0-9-]{0,63}$`、值至多 256 字符。
 
 ## 1. 意图
 
