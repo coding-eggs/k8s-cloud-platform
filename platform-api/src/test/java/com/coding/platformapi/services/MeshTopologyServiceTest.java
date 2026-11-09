@@ -357,7 +357,7 @@ class MeshTopologyServiceTest {
     }
 
     @Test
-    void ztunnelHopsThroughAWaypointAreDroppedButTheRealCallStays() {
+    void ztunnelHopsThroughAWaypointAreFlaggedAndTheRealCallStaysUnflagged() {
         cluster();
         // 2026-11-09 真集群形状：api→k8s-server 经 waypoint，ztunnel 记成两段 L4 中转；waypoint 记 L7 真实两端
         waypointRows = List.of(waypointPod("ps", "ps-waypoint-79b47b4479-4ttcv"));
@@ -369,10 +369,15 @@ class MeshTopologyServiceTest {
 
         MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
 
-        assertThat(resp.getEdges()).extracting(e -> e.getSource() + ">" + e.getTarget() + ":" + e.getLevel())
-                .containsExactlyInAnyOrder("ps/api>ps/k8s-server:L7", "ps/api>ps/redis:L4");
-        assertThat(resp.getNodes()).extracting(MeshTopologyResponse.MeshNode::getId)
-                .doesNotContain("ps/ps-waypoint");
+        // 中转边照样返回（「显示 waypoint」时要画），但打上标记；真实调用与普通 L4 不带标记
+        assertThat(resp.getEdges()).extracting(e -> e.getSource() + ">" + e.getTarget() + ":" + e.getLevel() + ":" + e.isWaypointHop())
+                .containsExactlyInAnyOrder(
+                        "ps/api>ps/k8s-server:L7:false",
+                        "ps/api>ps/ps-waypoint:L4:true",
+                        "ps/ps-waypoint>ps/k8s-server:L4:true",
+                        "ps/api>ps/redis:L4:false");
+        assertThat(resp.getNodes()).filteredOn(MeshTopologyResponse.MeshNode::isWaypoint)
+                .extracting(MeshTopologyResponse.MeshNode::getId).containsExactly("ps/ps-waypoint");
     }
 
     @Test
@@ -384,7 +389,7 @@ class MeshTopologyServiceTest {
 
         MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
 
-        assertThat(resp.getEdges()).hasSize(1);
+        assertThat(resp.getEdges()).singleElement().satisfies(e -> assertThat(e.isWaypointHop()).isFalse());
         assertThat(resp.getNodes()).noneMatch(MeshTopologyResponse.MeshNode::isWaypoint);
     }
 

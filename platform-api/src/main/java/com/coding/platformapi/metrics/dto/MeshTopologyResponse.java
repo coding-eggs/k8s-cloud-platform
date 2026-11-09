@@ -47,10 +47,7 @@ public class MeshTopologyResponse {
         @Schema(description = "是否外部网关")
         private boolean gateway;
 
-        /**
-         * waypoint 代理本身。正常情况下它不会出现在图里（ztunnel 记的中转 L4 边已剔除），
-         * 出现了说明有直接打到 waypoint 的流量，前端弱化显示。
-         */
+        /** waypoint 代理本身（由 reporter="waypoint" 的指标反查）。前端默认隐藏、弱化显示。 */
         @Schema(description = "是否 waypoint 代理")
         private boolean waypoint;
     }
@@ -88,5 +85,12 @@ public class MeshTopologyResponse {
         /** L4 的流量口径：字节/秒。仅 L4 边，或"同一对端点也有 L4 流量"的 L7 边。 */
         @Schema(description = "字节/秒（L4 流量；没有则为 null）")
         private Double bytesPerSec;
+
+        /**
+         * ztunnel 记的 waypoint 中转连接（一端是 waypoint）。同一次调用的真实两端已有 L7 边，
+         * 前端默认隐藏，勾「显示 waypoint」才画。
+         */
+        @Schema(description = "是否 waypoint 中转连接（前端默认隐藏）")
+        private boolean waypointHop;
     }
 }

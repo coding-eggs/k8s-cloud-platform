@@ -39,14 +39,13 @@ const scopeToNamespace = ref(false)
 const currentNamespace = computed(() => ctx.state.namespace ?? '')
 const namespace = computed(() => (scopeToNamespace.value ? currentNamespace.value : ''))
 const windowSeconds = ref(300)
+/** 显示 L4 连接（虚线）。关掉 = 只看有请求数/错误率的 L7 调用，图会干净很多 */
+const showL4 = ref(true)
 /**
- * 显示哪一层（用户定：两个**默认都不勾**，进页先空着，自己勾要看的层）。
- * L7 = 有请求数/错误率/延迟的调用（实线）；L4 = ztunnel 看到的连接与字节（虚线）。
+ * 显示 waypoint（**默认不勾**）：经 waypoint 的调用，ztunnel 记成「A → waypoint」「waypoint → B」两段 L4，
+ * 而真实的 A → B 已有 L7 边。画出来 waypoint 会变成假的中心节点，所以默认藏起来，排查代理时再勾。
  */
-const showL7 = ref(false)
-const showL4 = ref(false)
-/** 两层都没勾：画布空着，给一句提示而不是「没有流量」 */
-const noLayerSelected = computed(() => !showL7.value && !showL4.value)
+const showWaypoint = ref(false)
 const WINDOWS = [
   { label: '5 分钟', value: 300 },
   { label: '1 小时', value: 3600 },
@@ -89,33 +88,14 @@ const focusState = computed<'off' | 'on' | 'missing'>(() => {
   return focusKeep.value ? 'on' : 'missing'
 })
 
-/**
- * 按勾选的层过滤边：
- * - L7 边勾了 L7 就留；没勾 L7、但勾了 L4 且它带字节数 → 降成一条 L4 边留下
- *   （后端把同一对端点的 L4 字节并进了 L7 边，只看 L4 时不能因此丢掉这对连接）。
- * - L4 边只看 L4 勾没勾。
- */
-function edgesForLayers(edges: MeshTopologyEdge[]): MeshTopologyEdge[] {
-  const out: MeshTopologyEdge[] = []
-  for (const e of edges) {
-    if (e.level === 'L4') {
-      if (showL4.value) out.push(e)
-    } else if (showL7.value) {
-      out.push(e)
-    } else if (showL4.value && e.bytesPerSec != null) {
-      out.push({ ...e, level: 'L4', rps: 0, errorRate: 0, p95Ms: null })
-    }
-  }
-  return out
-}
-
-/** 实际参与画布渲染的拓扑（聚焦后只留子图；按勾选的层过滤边，并去掉因此没有边的节点） */
+/** 实际参与画布渲染的拓扑（聚焦后只留子图；按开关过滤 L4 / waypoint 中转边，并去掉因此没有边的节点） */
 const viewTopo = computed<MeshTopology | null>(() => {
   const t = topo.value
   if (!t) return t
   const keep = focusKeep.value
   const scoped = keep ? t.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) : t.edges
-  const edges = edgesForLayers(scoped)
+  const edges = scoped.filter((e) =>
+    (showL4.value || e.level !== 'L4') && (showWaypoint.value || !e.waypointHop))
   const touched = new Set(edges.flatMap((e) => [e.source, e.target]))
   const nodes = t.nodes.filter((n) => touched.has(n.id))
   return { ...t, nodes, edges }
@@ -156,7 +136,7 @@ function stopTimer(): void {
   }
 }
 
-watch([showL7, showL4], () => dragOffsets.clear())   // 换了一张图（节点/层次都变），旧的手工位置不再适用
+watch([showL4, showWaypoint], () => dragOffsets.clear())   // 换了一张图（节点/层次都变），旧的手工位置不再适用
 
 watch([clusterId, namespace, windowSeconds], () => {
   forced.value = false
@@ -600,8 +580,8 @@ onMounted(() => {
       <el-checkbox v-model="scopeToNamespace" :disabled="!currentNamespace">
         仅当前命名空间<template v-if="currentNamespace">（{{ currentNamespace }}）</template>
       </el-checkbox>
-      <el-checkbox v-model="showL7">L7 调用</el-checkbox>
-      <el-checkbox v-model="showL4">L4 连接</el-checkbox>
+      <el-checkbox v-model="showL4">显示 L4 连接</el-checkbox>
+      <el-checkbox v-model="showWaypoint">显示 waypoint</el-checkbox>
       <el-radio-group v-model="windowSeconds" size="small">
         <el-radio-button v-for="w in WINDOWS" :key="w.value" :value="w.value">{{ w.label }}</el-radio-button>
       </el-radio-group>
@@ -634,11 +614,7 @@ onMounted(() => {
         <el-button link type="primary" @click="clearFocus">看全图</el-button>
       </div>
 
-      <div v-if="noLayerSelected" class="layer-hint">
-        勾选上方的 <strong>L7 调用</strong>（请求数 / 错误率 / 延迟）或 <strong>L4 连接</strong>（连接与字节）查看拓扑。
-      </div>
-
-      <div v-else-if="scrapedButEmpty" class="empty-banner">
+      <div v-if="scrapedButEmpty" class="empty-banner">
         在采集，但<strong>这段时间没有 L7 调用</strong> —— 可能是确实没有流量，也可能是网格里没有
         负载、或目标服务没挂 waypoint。把时间窗调大再看。
       </div>
@@ -665,7 +641,7 @@ onMounted(() => {
       <strong>实线（L7）</strong>：有请求数 / 响应码 / 延迟 —— 来自外部网关（南北向）和挂了 waypoint 的工作负载（东西向）。<br/>
       <strong>虚线（L4）</strong>：只有连接与字节 —— ztunnel 看到的全部 TCP，所以它的目标<strong>可能是不在网格里的</strong>
       工作负载（mysql / redis 这类），但调用本身是从网格内发起的。<br/>
-      经 waypoint 的调用直接画成「调用方 → 被调方」：ztunnel 记的「→ waypoint」「waypoint →」两段中转连接不单独画。<br/>
+      经 waypoint 的调用直接画成「调用方 → 被调方」：ztunnel 记的「→ waypoint」「waypoint →」两段中转连接默认不画，勾「显示 waypoint」才画。<br/>
       两层都看不见的：完全不经过 ztunnel 的流量。这是 Istio 的机制决定的，不是平台少画了。
     </p>
 
@@ -763,14 +739,6 @@ onMounted(() => {
   font-family: Consolas, 'JetBrains Mono', monospace;
   color: var(--text-1);
 }
-.layer-hint {
-  padding: 10px 14px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  font-size: 13px;
-  color: var(--text-2);
-}
-.layer-hint strong { color: var(--text-1); }
 .coverage {
   margin: 0;
   padding: 10px 14px;

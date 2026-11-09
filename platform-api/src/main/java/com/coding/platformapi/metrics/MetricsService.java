@@ -482,15 +482,13 @@ public class MetricsService {
             if (rps.containsKey(p)) {
                 continue;   // 已在 ① 里并进 L7 那条边
             }
-            if (waypoints.contains(p.source()) || waypoints.contains(p.target())) {
-                // ztunnel 记的 waypoint 中转跳（A→waypoint、waypoint→B）：同一次调用的真实两端
-                // 已由 waypoint 上报的 L7 边画出，再画一遍只会让 waypoint 变成假的中心节点
-                continue;
-            }
             MeshTopologyResponse.MeshEdge edge = new MeshTopologyResponse.MeshEdge();
             edge.setSource(p.source());
             edge.setTarget(p.target());
             edge.setLevel(L4);
+            // ztunnel 记的 waypoint 中转跳（A→waypoint、waypoint→B）：同一次调用的真实两端已由
+            // waypoint 上报的 L7 边画出。照样返回但打标记，前端默认不画（「显示 waypoint」才画）
+            edge.setWaypointHop(waypoints.contains(p.source()) || waypoints.contains(p.target()));
             edge.setRps(0);
             edge.setErrorRate(0);
             edge.setP95Ms(null);

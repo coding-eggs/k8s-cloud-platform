@@ -2289,7 +2289,7 @@ export interface MeshTopologyNode {
   workload: string
   /** 外部网关（istio-system 里那些）：它是"外部入口"，画得跟业务节点不一样 */
   gateway: boolean
-  /** waypoint 代理本身。ztunnel 记的中转边后端已剔除，正常不出现；出现了就弱化显示 */
+  /** waypoint 代理本身。默认随中转边一起隐藏；勾「显示 waypoint」后弱化显示 */
   waypoint?: boolean
 }
 
@@ -2305,6 +2305,8 @@ export interface MeshTopologyEdge {
   p95Ms?: number | null
   /** L4 的流量口径：字节/秒。仅 L4 边，或同一对端点也有 L4 流量的 L7 边。 */
   bytesPerSec?: number | null
+  /** ztunnel 记的 waypoint 中转连接（一端是 waypoint）。默认隐藏，勾「显示 waypoint」才画 */
+  waypointHop?: boolean
 }
 
 export interface MeshTopology {
