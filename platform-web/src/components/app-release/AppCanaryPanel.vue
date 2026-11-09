@@ -61,6 +61,7 @@ const startBlocked = computed(() => {
   if (!props.canWrite) return '没有应用写权限'
   if (props.busy) return '有进行中的执行，结束后再操作'
   if (props.row.state === 'NOT_RELEASED' || !props.liveDesired) return '服务尚未上线'
+  if (props.liveDesired.port == null) return '后台进程没有端口，不能灰度'
   if (!props.l7 && !exposed.value) return '应用未开启 L7 网格（在应用设置里开启并选择 waypoint），且服务没有网关暴露'
   if (props.liveDesired.persistenceEnabled) return '有状态服务（开启了持久化）不能灰度'
   return ''

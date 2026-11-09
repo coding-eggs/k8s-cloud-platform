@@ -157,6 +157,7 @@ function canaryStartBlocked(row: AppServiceRow): string {
   if (!canWrite.value) return '没有应用写权限'
   if (publishing.value) return '有进行中的执行，结束后再操作'
   if (row.state === 'NOT_RELEASED') return '服务尚未上线'
+  if (row.desired?.port == null) return '后台进程没有端口，不能灰度'
   if (!l7.value && !row.ingress) return '应用未开启 L7 网格（在应用设置里开启并选择 waypoint），且服务没有网关暴露'
   if (row.desired?.persistenceEnabled) return '有状态服务（开启了持久化）不能灰度'
   return ''

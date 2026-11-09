@@ -497,4 +497,15 @@ class AppCanaryServiceTest {
         verify(metrics, org.mockito.Mockito.times(1))
                 .canaryCompare(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
     }
+
+
+    @Test
+    void portlessWorkerInL7AppIsRejected() {
+        Map<String, Object> worker = svc("1", null);
+        worker.remove("port");
+        liveWithApp(Map.of("api", worker), L7);
+        row("api", worker);
+        assertThatThrownBy(() -> canary.start(copyStable(), "bob", "t1")).hasMessageContaining("没有端口");
+        verify(releases, never()).insert(any());
+    }
 }

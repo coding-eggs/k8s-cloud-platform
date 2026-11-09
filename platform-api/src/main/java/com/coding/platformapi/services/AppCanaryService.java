@@ -224,7 +224,11 @@ public class AppCanaryService {
      * L7 时集群内调用分流；非 L7 只分网关流量（入口灰度）。
      */
     private static void requireEligible(String key, Map<String, Object> stable, boolean l7) {
-        if (!l7 && AppServiceDesired.gatewayProtocol(stable) == null) {
+        if (AppServiceDesired.port(stable) == null) {
+            // 后台进程没有 Service：网格路由挂不上、网关也没暴露，灰度版本收不到任何流量（内部灰度设计 §5.1）
+            throw error("服务 " + key + " 没有端口（后台进程），不能灰度");
+        }
+        if (!l7 &&AppServiceDesired.gatewayProtocol(stable) == null) {
             throw error("服务 " + key + " 不能灰度：应用未开启 L7 网格（内部调用分流需要），服务也没有网关暴露");
         }
         if (stateful(stable)) {
