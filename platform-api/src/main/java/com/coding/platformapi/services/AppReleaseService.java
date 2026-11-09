@@ -763,6 +763,10 @@ public class AppReleaseService {
             } else if (AppSettings.KEY.equals(key)) {
                 if (appFields.isEmpty()) {
                     errors.add("应用设置没有待发布的改动");
+                } else if (!inCanary.isEmpty() && !Objects.equals(AppSettings.l7Waypoint(live.app()),
+                        AppSettings.l7Waypoint(settings))) {
+                    // 内部灰度设计 §5.2：灰度期间不能切入 / 切出 L7、不能换 waypoint
+                    errors.add("有服务在灰度（" + String.join("、", inCanary) + "），先全量或回退再改网格");
                 }
             } else if (!byKey.containsKey(key)) {
                 errors.add("服务 " + key + " 没有待发布的改动");

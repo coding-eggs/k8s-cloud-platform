@@ -105,4 +105,11 @@ class AppSettingsTest {
         assertThat(AppSettings.isL7(Map.of())).isFalse();
         assertThat(AppSettings.isL7(null)).isFalse();
     }
+
+    @Test
+    void l7Waypoint() {
+        assertThat(AppSettings.l7Waypoint(Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp")))).isEqualTo("wp");
+        assertThat(AppSettings.l7Waypoint(Map.of("mesh", Map.of("mode", "l4")))).isNull();
+        assertThat(AppSettings.l7Waypoint(null)).isNull();
+    }
 }

@@ -150,6 +150,14 @@ public final class AppSettings {
         return "l7".equals(meshMode(settings)) && waypoint(settings) != null;
     }
 
+    /**
+     * 灰度期间网格锁的比较键（内部灰度设计 §5.2）：L7 时为 waypoint，否则 null。
+     * 前后不等 = 切入 / 切出 L7 或换了 waypoint；none / follow / l4 互切都是 null → null。
+     */
+    public static String l7Waypoint(Map<String, Object> settings) {
+        return isL7(settings) ? waypoint(settings) : null;
+    }
+
     /** L7 选的 waypoint 名；其余模式返回 null */
     public static String waypoint(Map<String, Object> settings) {
         return "l7".equals(meshMode(settings)) && settings.get("mesh") instanceof Map<?, ?> mesh

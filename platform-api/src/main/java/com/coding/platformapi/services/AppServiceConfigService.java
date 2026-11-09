@@ -193,6 +193,13 @@ public class AppServiceConfigService {
         }
         Map<String, Object> before = AppSnapshot.parseMap(app.getSettingsJson());
         Map<String, Object> after = AppSettings.normalize(req.getSettings());
+        if (!java.util.Objects.equals(AppSettings.l7Waypoint(before), AppSettings.l7Waypoint(after))) {
+            // 内部灰度设计 §5.2：切入 / 切出 L7 或换 waypoint 会让灰度的内部分流静默变化
+            List<String> canaries = activeCanaryKeys(app);
+            if (!canaries.isEmpty()) {
+                throw error("有服务在灰度（" + String.join("、", canaries) + "），先全量或回退再改网格");
+            }
+        }
         featureGate.assertSettings(app, before, after);
         String json = after.isEmpty() ? null : JSON.writeValueAsString(after);
         if (apps.updateSettings(app.getId(), json, current, new Date()) == 0) {
@@ -288,17 +295,33 @@ public class AppServiceConfigService {
 
     /** 灰度中（线上或进行中的那次发布带 canary 块）的服务锁住：只能全量或回退，否则 stable 会在灰度期间被改走 */
     private void requireNotInCanary(PlatformApplication app, String key) {
+        for (AppSnapshot s : liveAndActiveSnapshots(app)) {
+            if (com.coding.platformapi.app.AppCanary.of(s.services().get(key)) != null) {
+                throw error("服务 " + key + " 灰度中，先全量或回退");
+            }
+        }
+    }
+
+    /** 线上或进行中的那次发布里正在灰度的服务（去重、按字母序） */
+    private List<String> activeCanaryKeys(PlatformApplication app) {
+        java.util.TreeSet<String> out = new java.util.TreeSet<>();
+        liveAndActiveSnapshots(app).forEach(s -> out.addAll(com.coding.platformapi.app.AppCanary.activeKeys(s)));
+        return new java.util.ArrayList<>(out);
+    }
+
+    private List<AppSnapshot> liveAndActiveSnapshots(PlatformApplication app) {
         PlatformAppExecution active = executions.selectActiveByApp(app.getId());
+        List<AppSnapshot> out = new java.util.ArrayList<>();
         for (Integer no : java.util.Arrays.asList(app.getLiveReleaseNo(), active == null ? null : active.getReleaseNo())) {
             if (no == null || no <= 0) {
                 continue;
             }
             PlatformAppRelease release = releases.selectByNo(app.getId(), no);
-            if (release != null && com.coding.platformapi.app.AppCanary.of(
-                    AppSnapshot.parse(release.getSnapshotJson()).services().get(key)) != null) {
-                throw error("服务 " + key + " 灰度中，先全量或回退");
+            if (release != null) {
+                out.add(AppSnapshot.parse(release.getSnapshotJson()));
             }
         }
+        return out;
     }
 
     private boolean inRelease(String appId, Integer releaseNo, String key) {

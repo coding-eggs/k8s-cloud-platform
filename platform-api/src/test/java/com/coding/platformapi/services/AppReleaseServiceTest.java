@@ -1606,4 +1606,33 @@ class AppReleaseServiceTest {
         assertThat(c.external()).isTrue();
         assertThat(rows.stream().filter(x -> x.key().equals("web")).findFirst().orElseThrow().canary()).isNull();
     }
+
+    // ---------- 内部灰度：网格锁（2026-11-09） ----------
+
+    private Map<String, Map<String, Object>> canaryLive() {
+        Map<String, Object> api = com.coding.platformapi.app.AppCanary.with(gw("1"),
+                new com.coding.platformapi.app.AppCanary.Spec(gw("2"), 1, 10, null));
+        return Map.of("api", api, "web", svc("1"));
+    }
+
+    @Test
+    void releasingAppSettingsThatChangeL7IsRejectedDuringCanary() {
+        liveWithApp(1, canaryLive(), Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp")));
+        app.setSettingsJson("{\"mesh\":{\"mode\":\"l4\"}}");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("1"), false), row("web", svc("1"), false)));
+        assertThatThrownBy(() -> service.create("app1", List.of("@app"), Map.of(), null, "bob", "t1"))
+                .hasMessageContaining("先全量或回退再改网格");
+    }
+
+    @Test
+    void releasingAppSettingsTracingOnlyIsAllowedDuringCanary() {
+        // L4 → L4 + tracing：网格 L7 性质不变（L7→L7 不变的情形由 AppServiceConfigServiceTest 覆盖；
+        // 这里用 L4 避开发布前 waypoint 存在性校验，那个 mock 没有 waypoint）
+        liveWithApp(1, canaryLive(), Map.of("mesh", Map.of("mode", "l4")));
+        app.setSettingsJson("{\"tracing\":true,\"mesh\":{\"mode\":\"l4\"}}");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("1"), false), row("web", svc("1"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(1);
+        service.create("app1", List.of("@app"), Map.of(), null, "bob", "t1");
+        assertThat(AppSnapshot.parse(createdSnapshot()).app()).containsEntry("tracing", true);
+    }
 }

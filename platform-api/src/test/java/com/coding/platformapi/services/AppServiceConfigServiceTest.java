@@ -645,4 +645,76 @@ class AppServiceConfigServiceTest {
         verify(services, never()).updateWithVersion(any());
         verify(services, never()).deleteById(any());
     }
+
+    // ---------- 内部灰度：网格锁（2026-11-09） ----------
+
+    private void liveCanaryAt(int no) {
+        Map<String, Object> stable = web("1");
+        stable.put("expose", "gateway-http");
+        Map<String, Object> inCanary = com.coding.platformapi.app.AppCanary.with(stable,
+                new com.coding.platformapi.app.AppCanary.Spec(web("2"), 1, 10, null));
+        PlatformAppRelease r = new PlatformAppRelease();
+        r.setSnapshotJson("{\"services\":{\"api\":" + JSON.writeValueAsString(inCanary) + "},\"dependencies\":[]}");
+        when(releases.selectByNo("app1", no)).thenReturn(r);
+    }
+
+    private com.coding.platformapi.models.AppSettingsRequest settings(Map<String, Object> s) {
+        com.coding.platformapi.models.AppSettingsRequest r = new com.coding.platformapi.models.AppSettingsRequest();
+        r.setAppId("app1");
+        r.setVersion(1);
+        r.setSettings(s);
+        return r;
+    }
+
+    private static final Map<String, Object> L7_WP = Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp"));
+
+    @Test
+    void settingsCannotLeaveL7WhileCanary() {
+        app.setLiveReleaseNo(2);
+        liveCanaryAt(2);
+        app.setSettingsVersion(1);
+        app.setSettingsJson(JSON.writeValueAsString(L7_WP));
+        assertThatThrownBy(() -> service.updateSettings(settings(Map.of("mesh", Map.of("mode", "l4"))), "t1"))
+                .hasMessageContaining("先全量或回退");
+        verify(apps, never()).updateSettings(any(), any(), any(), any());
+    }
+
+    @Test
+    void settingsCannotEnterL7OrSwitchWaypointWhileCanary() {
+        app.setLiveReleaseNo(2);
+        liveCanaryAt(2);
+        app.setSettingsVersion(1);
+        app.setSettingsJson(null);
+        assertThatThrownBy(() -> service.updateSettings(settings(L7_WP), "t1")).hasMessageContaining("先全量或回退");
+        app.setSettingsJson(JSON.writeValueAsString(L7_WP));
+        assertThatThrownBy(() -> service.updateSettings(
+                settings(Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp2"))), "t1"))
+                .hasMessageContaining("先全量或回退");
+    }
+
+    @Test
+    void settingsMayToggleNonL7ModesWhileCanary() {
+        app.setLiveReleaseNo(2);
+        liveCanaryAt(2);
+        app.setSettingsVersion(1);
+        app.setSettingsJson(null);
+        when(apps.updateSettings(any(), any(), any(), any())).thenReturn(1);
+        service.updateSettings(settings(Map.of("mesh", Map.of("mode", "l4"))), "t1");
+        app.setSettingsJson(JSON.writeValueAsString(L7_WP));
+        service.updateSettings(settings(Map.of("tracing", true, "mesh", Map.of("mode", "l7", "waypoint", "wp"))), "t1");
+        verify(apps, org.mockito.Mockito.times(2)).updateSettings(any(), any(), any(), any());
+    }
+
+    @Test
+    void settingsLockAlsoSeesActiveExecution() {
+        PlatformAppExecution active = new PlatformAppExecution();
+        active.setAppId("app1");
+        active.setReleaseNo(3);
+        active.setStatus("RUNNING");
+        when(executions.selectActiveByApp("app1")).thenReturn(active);
+        liveCanaryAt(3);
+        app.setSettingsVersion(1);
+        app.setSettingsJson(null);
+        assertThatThrownBy(() -> service.updateSettings(settings(L7_WP), "t1")).hasMessageContaining("先全量或回退");
+    }
 }
