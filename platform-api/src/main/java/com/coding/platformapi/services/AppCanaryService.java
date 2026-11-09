@@ -177,20 +177,31 @@ public class AppCanaryService {
     private static final List<String> WINDOWS = List.of("5m", "15m", "1h");
     private static final String DEFAULT_WINDOW = "15m";
 
-    /** 两个版本的网关侧指标；只读，不需要凭据与执行锁。时间窗只收 5m / 15m / 1h，其他按 15m。 */
+    /**
+     * 两个版本的指标，按来源分组（内部灰度设计 §6）：L7 网格时有「内部调用」（reporter=waypoint），
+     * 有网关暴露时有「网关进来」（reporter=source）。只读，不需要凭据与执行锁。时间窗只收 5m / 15m / 1h，其他按 15m。
+     */
     public AppCanaryMetricsView metrics(String appId, String serviceKey, String window, String tenantId) {
         PlatformApplication app = AppGuard.require(apps, appId, tenantId);
-        Map<String, Object> liveService = releases.liveSnapshot(app).services().get(serviceKey);
+        AppSnapshot live = releases.liveSnapshot(app);
+        Map<String, Object> liveService = live.services().get(serviceKey);
         if (AppCanary.of(liveService) == null) {
             throw error("服务 " + serviceKey + " 不在灰度中");
         }
         String w = WINDOWS.contains(window) ? window : DEFAULT_WINDOW;
-        String protocol = AppServiceDesired.gatewayProtocol(liveService);
-        Map<String, Map<String, Double>> m = metrics.canaryCompare(app.getClusterId(), app.getNamespace(),
-                AppObjectNames.objectName(app.getSlug(), serviceKey),
-                AppObjectNames.objectName(app.getSlug(), AppCanary.nodeKey(serviceKey)), w, "TCP".equals(protocol));
-        return new AppCanaryMetricsView(w, protocol, m.getOrDefault("stable", Map.of()),
-                m.getOrDefault("canary", Map.of()));
+        String protocol = AppServiceDesired.serviceProtocol(liveService);
+        String stableWl = AppObjectNames.objectName(app.getSlug(), serviceKey);
+        String canaryWl = AppObjectNames.objectName(app.getSlug(), AppCanary.nodeKey(serviceKey));
+        java.util.function.Function<String, AppCanaryMetricsView.Group> group = reporter -> {
+            Map<String, Map<String, Double>> m = metrics.canaryCompare(app.getClusterId(), app.getNamespace(),
+                    stableWl, canaryWl, w, "TCP".equals(protocol), reporter);
+            return new AppCanaryMetricsView.Group(m.getOrDefault("stable", Map.of()), m.getOrDefault("canary", Map.of()));
+        };
+        AppCanaryMetricsView.Group internal = AppSettings.isL7(live.app())
+                ? group.apply(MetricsService.REPORTER_WAYPOINT) : null;
+        AppCanaryMetricsView.Group external = AppServiceDesired.gatewayProtocol(liveService) != null
+                ? group.apply(MetricsService.REPORTER_GATEWAY) : null;
+        return new AppCanaryMetricsView(w, protocol, internal, external);
     }
 
     // ------------------------------------------------------------------ 内部

@@ -363,12 +363,12 @@ class AppCanaryServiceTest {
         assertThatThrownBy(() -> canary.metrics("app1", "api", "15m", "t1")).hasMessageContaining("不在灰度");
 
         live(Map.of("api", inCanary(svc("1", "gateway-http"), svc("2", "gateway-http"))));
-        when(metrics.canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false))
+        when(metrics.canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false, "source"))
                 .thenReturn(Map.of("stable", Map.of(), "canary", Map.of()));
 
         var view = canary.metrics("app1", "api", "7d", "t1");
 
-        verify(metrics).canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false);
+        verify(metrics).canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false, "source");
         assertThat(view.window()).isEqualTo("15m");
         assertThat(view.protocol()).isEqualTo("HTTP");
     }
@@ -465,5 +465,36 @@ class AppCanaryServiceTest {
 
         canary.start(copyStable(), "bob", "t1");
         assertThat(AppCanary.of(AppSnapshot.parse(inserted().getSnapshotJson()).services().get("api")).header()).isNull();
+    }
+
+    @Test
+    void metricsReturnsInternalOnlyForUnexposedL7Service() {
+        liveWithApp(Map.of("api", inCanary(svc("1", null), svc("2", null))), L7);
+        when(metrics.canaryCompare(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any()))
+                .thenReturn(Map.of("stable", Map.of("rps", 1.0), "canary", Map.of()));
+
+        var view = canary.metrics("app1", "api", "15m", "t1");
+
+        assertThat(view.internal()).isNotNull();
+        assertThat(view.internal().stable()).containsEntry("rps", 1.0);
+        assertThat(view.external()).isNull();
+        verify(metrics).canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false, "waypoint");
+        verify(metrics, org.mockito.Mockito.times(1))
+                .canaryCompare(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    void metricsReturnsExternalOnlyWithoutL7() {
+        live(Map.of("api", inCanary(svc("1", "gateway-http"), svc("2", "gateway-http"))));
+        when(metrics.canaryCompare(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any()))
+                .thenReturn(Map.of("stable", Map.of(), "canary", Map.of()));
+
+        var view = canary.metrics("app1", "api", "15m", "t1");
+
+        assertThat(view.internal()).isNull();
+        assertThat(view.external()).isNotNull();
+        verify(metrics).canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false, "source");
+        verify(metrics, org.mockito.Mockito.times(1))
+                .canaryCompare(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), any());
     }
 }

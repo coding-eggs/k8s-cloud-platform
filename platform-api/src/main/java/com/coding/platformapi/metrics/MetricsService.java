@@ -22,7 +22,7 @@ import com.coding.platformapi.metrics.labels.MeshEdgeLabels;
 import com.coding.platformapi.metrics.labels.MeshErrorLabels;
 import com.coding.platformapi.metrics.labels.MeshLatencyLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
-import com.coding.platformapi.metrics.labels.ServiceNameLabels;
+import com.coding.platformapi.metrics.labels.DestinationWorkloadLabels;
 import com.coding.platformapi.metrics.labels.NamespaceLabels;
 import com.coding.platformapi.metrics.model.PromResult;
 import lombok.RequiredArgsConstructor;
@@ -702,12 +702,19 @@ public class MetricsService {
      * stable / canary 两个 Service 的网关侧指标即时值。外层 key {@code stable} / {@code canary}；
      * 内层 HTTP 为 rps / errorRate / p50 / p99，TCP 为 cps / bytes；查不到（含 NaN、总量为 0 的错误率）为 null。
      */
+    /** 灰度指标来源：经 waypoint 的集群内调用 */
+    public static final String REPORTER_WAYPOINT = "waypoint";
+    /** 灰度指标来源：网关进来的（本集群 ambient 下只有网关以 source 身份上报） */
+    public static final String REPORTER_GATEWAY = "source";
+
     public Map<String, Map<String, Double>> canaryCompare(String clusterId, String namespace, String stableSvc,
-                                                          String canarySvc, String window, boolean tcp) {
+                                                          String canarySvc, String window, boolean tcp,
+                                                          String reporter) {
         String cluster = clusterName(clusterId);
         String names = stableSvc + "|" + canarySvc;   // 对象名是 DNS 标签，没有正则元字符
         java.util.function.Function<MetricQuery, Map<String, Double>> run = q -> byService(client.query(
-                String.format(q.sql(), cluster, namespace, names, window), null, ServiceNameLabels.class));
+                String.format(q.sql(), cluster, namespace, names, window, reporter), null,
+                DestinationWorkloadLabels.class));
         Map<String, Map<String, Double>> out = new LinkedHashMap<>();
         if (tcp) {
             Map<String, Double> cps = run.apply(MetricQuery.CANARY_TCP_CONNECTIONS);
@@ -738,12 +745,13 @@ public class MetricsService {
         return out;
     }
 
-    private Map<String, Double> byService(List<PromResult<ServiceNameLabels>> rows) {
+    private Map<String, Double> byService(List<PromResult<DestinationWorkloadLabels>> rows) {
         Map<String, Double> out = new java.util.HashMap<>();
-        for (PromResult<ServiceNameLabels> r : rows == null ? List.<PromResult<ServiceNameLabels>>of() : rows) {
+        for (PromResult<DestinationWorkloadLabels> r
+                : rows == null ? List.<PromResult<DestinationWorkloadLabels>>of() : rows) {
             Double v = instantValue(r);
-            if (v != null && r.getMetric() != null && r.getMetric().getServiceName() != null) {
-                out.merge(r.getMetric().getServiceName(), v, Double::sum);
+            if (v != null && r.getMetric() != null && r.getMetric().getWorkload() != null) {
+                out.merge(r.getMetric().getWorkload(), v, Double::sum);
             }
         }
         return out;
